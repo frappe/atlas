@@ -63,6 +63,23 @@ droplet's `/etc/ssh/ssh_host_ed25519_key.pub` over the *first* SSH and
 pinning it). Both add a field to `Server` and a one-time write. Not
 breaking.
 
+## Near-term hedges
+
+Cheap structural changes to make **near-term** (not now — but before any
+production load), because they're much more expensive to retrofit later than
+to set up early. These are not on the lists above. None change current
+behavior; they just keep doors open.
+
+- **Secret indirection for SSH keys and provider tokens.** Keep the field on
+  `Server Provider`, but route reads through a single helper so the storage
+  backend can be swapped to an external secret store without touching
+  callers. DB-as-keystore is fine for the PoC; not fine once customers exist.
+- **SSH scripts call `sudo` explicitly.** No-op as `root` today, but turns
+  the planned move to an unprivileged user (see below) from "rewrite every
+  script" into "create the user."
+- **Spill Task `stdout`/`stderr` over N KB to a file.** The Task row keeps a
+  capped excerpt + a pointer. Avoids the DocType becoming a log store.
+
 ## Concrete next steps after this iteration
 
 - **Unprivileged user on the server**. Move from `root` to an `atlas` user
