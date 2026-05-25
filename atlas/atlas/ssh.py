@@ -117,6 +117,22 @@ def run_task_on_server(
 	)
 
 
+def wait_for_ssh(connection: dict, timeout_seconds: int = 300, poll_seconds: int = 5) -> None:
+	"""Poll the host until SSH accepts a `true` command, or raise."""
+	_ensure_known_hosts_directory()
+	deadline = time.monotonic() + timeout_seconds
+	with _ssh_key_file(connection["ssh_private_key"]) as key_path:
+		while True:
+			_, _, exit_code = _run_ssh(connection, key_path, "true", timeout_seconds=30)
+			if exit_code == 0:
+				return
+			if time.monotonic() >= deadline:
+				raise frappe.ValidationError(
+					f"SSH to {connection['host']} not ready after {timeout_seconds}s"
+				)
+			time.sleep(poll_seconds)
+
+
 def upload_files(connection: dict, files: list[tuple[str, str]]) -> None:
 	"""scp files to the server. `files` is (local_path, remote_path) pairs.
 
@@ -164,7 +180,9 @@ def _execute_into(
 			elapsed_ms=int((time.monotonic() - start_clock) * 1000),
 		)
 		raise frappe.ValidationError(f"Task {task.name} timed out after {timeout_seconds}s")
-	except FileNotFoundError as exception:
+	except Exception as exception:
+		# scp/ssh failures during upload, missing script, etc. Mark the row
+		# Failure before re-raising so it doesn't linger in Running forever.
 		_finalize(
 			task,
 			stdout="",
@@ -173,7 +191,9 @@ def _execute_into(
 			status="Failure",
 			elapsed_ms=int((time.monotonic() - start_clock) * 1000),
 		)
-		raise frappe.ValidationError(str(exception))
+		if isinstance(exception, frappe.ValidationError):
+			raise
+		raise frappe.ValidationError(str(exception)) from exception
 
 	elapsed_ms = int((time.monotonic() - start_clock) * 1000)
 	status = "Success" if exit_code == 0 else "Failure"

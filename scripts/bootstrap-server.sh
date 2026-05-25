@@ -73,7 +73,10 @@ sudo install -d -m 0755 /var/lib/atlas/bin
 
 # 7. Helper scripts and systemd unit are uploaded alongside this script by
 #    the caller, into /var/lib/atlas/bin/ and /etc/systemd/system/. See
-#    spec/03-bootstrapping.md for the exact list.
+#    spec/03-bootstrapping.md for the exact list. scp preserves source perms,
+#    so set the executable bit here to be safe — systemd invokes these
+#    directly via ExecStartPost / ExecStopPost.
+sudo chmod 0755 /var/lib/atlas/bin/*.sh
 sudo systemctl daemon-reload
 
 # 8. Report state for Atlas to record.

@@ -1,10 +1,11 @@
+import json
 import re
 
 import frappe
 from frappe.model.document import Document
 
-from atlas.atlas.secrets import get_secret
-from atlas.atlas.ssh import run_task, upload_files
+from atlas.atlas import scripts_catalog
+from atlas.atlas.ssh import run_task, run_task_on_server, upload_files
 
 BOOTSTRAP_UPLOADS = [
 	("scripts/vm-network-up.sh", "/var/lib/atlas/bin/vm-network-up.sh"),
@@ -47,13 +48,60 @@ class Server(Document):
 
 	@frappe.whitelist()
 	def reboot(self) -> str:
-		"""Stub in phase 3. Real implementation in phase 7."""
-		frappe.throw("Reboot is wired in phase 7")
+		"""Run reboot-server.sh as a Task. SSH drops mid-Task — Task ends in
+		Failure; the operator confirms reboot by waiting and reconnecting."""
+		return self.run_task_dialog(script="reboot-server.sh", variables={})
 
 	@frappe.whitelist()
 	def run_task_dialog(self, script: str, variables: dict | str | None = None) -> str:
-		"""Stub in phase 3. Real implementation in phase 7."""
-		frappe.throw("Run Task is wired in phase 7")
+		"""Operator escape hatch. Same code path as bootstrap/provision.
+
+		`variables` is a dict (JS form post) or JSON string. Returns Task name.
+		"""
+		if isinstance(variables, str):
+			variables = json.loads(variables or "{}")
+		if variables is None:
+			variables = {}
+		if not isinstance(variables, dict):
+			frappe.throw("variables must be a JSON object")
+		if script not in scripts_catalog.allowed_scripts():
+			frappe.throw(f"Unknown script: {script}")
+		task = run_task_on_server(
+			server=self.name,
+			script=script,
+			variables=variables,
+			timeout_seconds=1800,
+		)
+		return task.name
+
+	@frappe.whitelist()
+	def get_scripts(self) -> list[str]:
+		"""Whitelisted: scripts available for Run Task dialog."""
+		return scripts_catalog.allowed_scripts()
+
+	@frappe.whitelist()
+	def get_form_extras(self) -> dict:
+		"""Whitelisted: lists rendered into HTML areas on the form."""
+		virtual_machines = frappe.get_all(
+			"Virtual Machine",
+			filters={"server": self.name},
+			fields=["name", "description", "status", "vcpus",
+			        "memory_megabytes", "ipv6_address"],
+			order_by="creation desc",
+			limit=50,
+		)
+		recent_tasks = frappe.get_all(
+			"Task",
+			filters={"server": self.name},
+			fields=["name", "script", "status", "duration_milliseconds",
+			        "creation"],
+			order_by="creation desc",
+			limit=10,
+		)
+		return {
+			"virtual_machines": virtual_machines,
+			"recent_tasks": recent_tasks,
+		}
 
 	def _absorb_bootstrap_output(self, stdout: str) -> None:
 		fields = {"FIRECRACKER_VERSION": "firecracker_version",

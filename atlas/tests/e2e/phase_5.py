@@ -8,16 +8,20 @@ import traceback
 import frappe
 
 from atlas.atlas.ssh import run_task_on_server
-from atlas.tests.e2e._shared import get_client, sweep_old_droplets
+from atlas.tests.e2e._shared import (
+	cleanup_droplet,
+	ensure_bootstrapped_server,
+	ensure_image_on_server,
+	sweep_old_droplets,
+)
 
 
-def run() -> None:
+def run(reuse: bool = True, keep: bool = True) -> None:
 	start_clock = time.monotonic()
-	client = get_client()
+	server, client, created_now = ensure_bootstrapped_server(reuse=reuse, keep=keep)
 	sweep_old_droplets(client)
-
-	server = _pick_active_server()
-	image = _pick_synced_image(server.name)
+	image_doc = ensure_image_on_server(server.name)
+	image = image_doc.name
 
 	keypair_dir = _make_ephemeral_keypair()
 	public_key = (open(f"{keypair_dir}/id.pub").read()).strip()
@@ -62,23 +66,12 @@ def run() -> None:
 		print(f"phase-5: FAIL in {elapsed:.0f}s")
 		traceback.print_exc()
 		raise
+	finally:
+		if created_now and not keep and server.provider_resource_id:
+			cleanup_droplet(client, int(server.provider_resource_id))
 
 	elapsed = time.monotonic() - start_clock
 	print(f"phase-5: OK in {elapsed:.0f}s")
-
-
-def _pick_active_server() -> "frappe.model.document.Document":
-	names = frappe.get_all("Server", filters={"status": "Active"}, pluck="name")
-	if not names:
-		raise AssertionError("no Active Server available; run phase 3 first")
-	return frappe.get_doc("Server", names[0])
-
-
-def _pick_synced_image(server_name: str) -> str:
-	names = frappe.get_all("Virtual Machine Image", filters={"is_active": 1}, pluck="name")
-	if not names:
-		raise AssertionError("no Virtual Machine Image; run phase 4 first")
-	return names[0]
 
 
 def _make_ephemeral_keypair() -> str:

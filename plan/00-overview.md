@@ -159,6 +159,10 @@ These are excluded from every phase, per
 - No address reuse on archive.
 - No log-spill-to-file. The Task `Code` field holds full stdout/stderr.
 - No automatic retries.
+- No automatic server reuse outside e2e. The `ensure_bootstrapped_server`
+  reuse policy applies only to the e2e harness, where re-bootstrapping a
+  fresh droplet for every phase is prohibitively slow and expensive.
+  Production code always provisions explicitly.
 
 ## Open items intentionally deferred
 

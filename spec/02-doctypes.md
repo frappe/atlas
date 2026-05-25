@@ -71,7 +71,7 @@ One row per host. Name is operator-chosen (e.g. `server-blr1-01`).
 | `region`               | Data                          | Y    | Read-only.                                     |
 | `size`                 | Data                          | Y    | Read-only.                                     |
 | `ipv4_address`         | Data                          | Y    | The SSH endpoint for Atlas.                    |
-| `ipv6_address`         | Data                          | Y    | The server's own IPv6 (host's `::1` of /64).   |
+| `ipv6_address`         | Data                          | Y    | The server's own IPv6 (typically `::1` of /64; whatever DO assigns). |
 | `ipv6_prefix`          | Data                          | Y    | The /64 routed to this server.                 |
 | `ipv6_virtual_machine_range` | Data                    | Y    | The /124 carved from the /64 we hand out from. |
 | `status`               | Select                        | Y    | `Pending`, `Bootstrapping`, `Active`, `Draining`, `Broken`, `Archived`. |
@@ -91,7 +91,12 @@ Buttons:
   Idempotent.
 - **Run Task** — opens a dialog with a script picker + variables. Runs as a
   Task.
-- **Reboot** — `systemctl reboot` over SSH.
+- **Reboot** — runs [`scripts/reboot-server.sh`](../scripts/reboot-server.sh)
+  (`systemctl reboot` over SSH). The resulting Task may end in `Failure`
+  (SSH drops before the script returns) or `Success` (`systemctl reboot`
+  exits before the connection is torn down). Either outcome is normal; the
+  meaning is "the server is rebooting." Operators confirm reboot by
+  watching for SSH to come back, not by reading the Task status.
 
 ### Server form wireframe
 
@@ -142,7 +147,7 @@ predictable, stable identity that survives deletion.
 
 | Field                  | Type                          | Reqd | Notes                                                   |
 | ---------------------- | ----------------------------- | ---- | ------------------------------------------------------- |
-| `name`                 | UUID                          | Y    | Primary key. Set by `autoname` on insert.               |
+| `name`                 | UUID                          | Y    | Primary key. Set in `before_insert` via `uuid.uuid4()`. |
 | `server`               | Link → Server                 | Y    | Immutable after first provision.                        |
 | `image`                | Link → Virtual Machine Image  | Y    | Immutable.                                              |
 | `vcpus`                | Int                           | Y    | Defaults to 1. Immutable.                               |
@@ -266,7 +271,7 @@ One row per shell script execution against a server. Append-only.
 
 | Field                 | Type                   | Reqd | Notes                                       |
 | --------------------- | ---------------------- | ---- | ------------------------------------------- |
-| `name`                | (autoname `hash`)      | Y    | UUID.                                       |
+| `name`                | (autoname `hash`)      | Y    | 10-char random hex (Frappe `autoname = "hash"`). |
 | `server`              | Link → Server          | Y    |                                             |
 | `virtual_machine`     | Link → Virtual Machine |      | Set when the task is for one VM.            |
 | `script`              | Data                   | Y    | Path under `atlas/scripts/`, e.g. `provision-vm.sh`. |

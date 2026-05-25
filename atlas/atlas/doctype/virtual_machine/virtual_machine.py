@@ -54,7 +54,7 @@ class VirtualMachine(Document):
 				script="provision-vm.sh",
 				variables=self._provision_variables(),
 				virtual_machine=self.name,
-				timeout_seconds=120,
+				timeout_seconds=30,
 			)
 		except Exception:
 			self.reload()
@@ -66,6 +66,65 @@ class VirtualMachine(Document):
 		self.reload()
 		self.status = "Running"
 		self.last_started = frappe.utils.now_datetime()
+		self.save(ignore_permissions=True)
+		return task.name
+
+	@frappe.whitelist()
+	def start(self) -> str:
+		if self.status != "Stopped":
+			frappe.throw(f"Cannot start from {self.status}")
+		task = run_task_on_server(
+			server=self.server,
+			script="start-vm.sh",
+			variables={"VIRTUAL_MACHINE_NAME": self.name},
+			virtual_machine=self.name,
+			timeout_seconds=30,
+		)
+		self.reload()
+		self.status = "Running"
+		self.last_started = frappe.utils.now_datetime()
+		self.save(ignore_permissions=True)
+		return task.name
+
+	@frappe.whitelist()
+	def stop(self) -> str:
+		if self.status != "Running":
+			frappe.throw(f"Cannot stop from {self.status}")
+		task = run_task_on_server(
+			server=self.server,
+			script="stop-vm.sh",
+			variables={"VIRTUAL_MACHINE_NAME": self.name},
+			virtual_machine=self.name,
+			timeout_seconds=30,
+		)
+		self.reload()
+		self.status = "Stopped"
+		self.last_stopped = frappe.utils.now_datetime()
+		self.save(ignore_permissions=True)
+		return task.name
+
+	@frappe.whitelist()
+	def restart(self) -> dict:
+		"""Stop (if Running) then Start. Two Tasks."""
+		if self.status not in ("Running", "Stopped"):
+			frappe.throw(f"Cannot restart from {self.status}")
+		stop_task = self.stop() if self.status == "Running" else None
+		start_task = self.start()
+		return {"stop_task": stop_task, "start_task": start_task}
+
+	@frappe.whitelist()
+	def delete_vm(self) -> str:
+		if self.status == "Archived":
+			frappe.throw("VM is already archived")
+		task = run_task_on_server(
+			server=self.server,
+			script="delete-vm.sh",
+			variables={"VIRTUAL_MACHINE_NAME": self.name},
+			virtual_machine=self.name,
+			timeout_seconds=60,
+		)
+		self.reload()
+		self.status = "Archived"
 		self.save(ignore_permissions=True)
 		return task.name
 

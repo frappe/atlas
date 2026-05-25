@@ -82,6 +82,19 @@ behavior; they just keep doors open.
 
 ## Concrete next steps after this iteration
 
+- **Stuck-task reaper**. A scheduled job that looks at Tasks in `Running`
+  state older than 2× their declared timeout and marks them `Failure` with
+  a synthetic "worker presumed dead" note. The e2e harness already does
+  this via `mark_orphan_tasks_failure`; production needs the same
+  guarantee. Pair with the "Server lock doctype" if we ever want
+  concurrent-sync protection. Additive.
+
+- **Server lock doctype**. A single-row lock keyed by `(server, resource)`
+  that long-running mutating Tasks (sync-image, provision) take before
+  doing work. Today two concurrent syncs of the same image-on-server are
+  a benign race that wastes bandwidth; with more operators it stops being
+  benign. Additive.
+
 - **Unprivileged user on the server**. Move from `root` to an `atlas` user
   with `sudo` on a narrow allowlist. Then drop `sudo` for the Firecracker
   binary in favor of the **jailer**. Touches `Server Provider` (the user

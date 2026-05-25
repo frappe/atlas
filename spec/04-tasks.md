@@ -25,21 +25,20 @@ Concretely, a Task is a row in `Task` with:
 ```
 atlas/atlas/atlas/ssh.py:
 
-    def run_task(server, script, variables, virtual_machine=None) -> Task:
-        task = create_task_row(server, script, variables, virtual_machine)
-        try:
-            scp(script_path, server, "/tmp/atlas/")     # one subprocess.run
-            stdout, stderr, rc = ssh_run(server, env=variables,
-                                         command=f"bash -x /tmp/atlas/{script}")
-            update_task(task, stdout, stderr, rc)
-        except SSHError as exception:
-            mark_task_failed(task, exception)
-            raise
-        return task
+    def run_task(connection, script, variables, ...) -> Task:
+        # Low-level primitive: takes an already-built connection dict and
+        # runs one script. Used directly during bootstrap (before a Server
+        # row exists).
+        ...
+
+    def run_task_on_server(server, script, variables, ...) -> Task:
+        # Convenience wrapper: builds the connection dict from a Server doc
+        # and delegates to run_task. This is what every DocType button calls.
+        ...
 ```
 
-`scp` and `ssh` here are the system commands, invoked via `subprocess.run()`.
-Not paramiko. Not fabric. Not anything else.
+`scp` and `ssh` inside `run_task` are the system commands, invoked via
+`subprocess.run()`. Not paramiko. Not fabric. Not anything else.
 
 ### Why the system `ssh`
 

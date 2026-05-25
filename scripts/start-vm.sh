@@ -9,5 +9,5 @@ set -euo pipefail
 
 : "${VIRTUAL_MACHINE_NAME:?required}"
 
-systemctl start "firecracker-vm@${VIRTUAL_MACHINE_NAME}.service"
-systemctl is-active "firecracker-vm@${VIRTUAL_MACHINE_NAME}.service"
+sudo systemctl start "firecracker-vm@${VIRTUAL_MACHINE_NAME}.service"
+sudo systemctl is-active "firecracker-vm@${VIRTUAL_MACHINE_NAME}.service"

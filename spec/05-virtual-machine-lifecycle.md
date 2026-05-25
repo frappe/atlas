@@ -61,11 +61,16 @@ Steps in Python (one DocType method, `Virtual Machine.provision`):
      The allocator selects `Server` for update, scans existing
      `Virtual Machine.ipv6_address` for that server, picks the next, commits.
    - `mac_address`: `06:00:` + first 4 bytes of the UUID, hex-formatted.
-   - `tap_device`: `atlas-` + first 10 chars of the UUID with `-` removed.
-     Linux IFNAMSIZ is 16; `atlas-` (6) + 10 = 16 exactly.
+   - `tap_device`: `atlas-` + first 9 chars of the UUID with `-` removed.
+     Linux `IFNAMSIZ` is 16 *bytes* including the null terminator, so the
+     usable interface-name length is 15: `atlas-` (6) + 9 = 15 exactly.
 
-2. **Ensure the image is on the server**. If not, run `sync-image.sh` (this
-   is its own Task; provisioning waits on it).
+2. **Verify the image is on the server**. If not, **fail fast** with a clear
+   error that points the operator at the **Sync to Server** action on the
+   Image record. Provision does not auto-sync — image sync is a
+   multi-minute operation and we want it deliberate, predictable, and
+   visible as its own Task. This is also why `provision-vm.sh` is fast and
+   synchronous.
 
 3. **Run the provisioning task**:
    `run_task(server, "provision-vm.sh", variables, virtual_machine=name)`.
@@ -76,8 +81,8 @@ Steps in Python (one DocType method, `Virtual Machine.provision`):
 4. **Update status**: on Task success, `status = Running`,
    `last_started = now()`.
 
-This is one Task per VM creation. Two on the first VM of an image on a
-server (one for the image sync).
+This is one Task per VM creation. (The image sync, if needed, is a
+separate Task triggered explicitly by the operator before provisioning.)
 
 ## Start / Stop / Restart
 
@@ -108,6 +113,11 @@ Runs [`delete-vm.sh`](../scripts/delete-vm.sh), which:
 
 Then Python sets `status = Archived`. **The UUID does not change.** The Task
 row that did the delete remains attached to the archived VM.
+
+If the Delete Task fails (SSH dropped, script error, etc.), the row stays
+in its prior status. The operator clicks Delete again — the script is
+idempotent (each step is a no-op if its target is already gone), so a
+second invocation is the correct retry.
 
 ## The systemd unit
 

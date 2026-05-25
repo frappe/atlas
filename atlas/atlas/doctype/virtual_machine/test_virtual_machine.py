@@ -74,6 +74,9 @@ class TestVirtualMachine(IntegrationTestCase):
 	def setUp(self) -> None:
 		_ensure_server()
 		_ensure_image()
+		# Clear VMs from prior tests so the /124 IPv6 range has capacity.
+		for name in frappe.get_all("Virtual Machine", pluck="name"):
+			frappe.delete_doc("Virtual Machine", name, force=1, ignore_permissions=True)
 
 	def test_before_insert_sets_uuid_mac_tap_ipv6(self) -> None:
 		vm = _new_vm()
@@ -82,7 +85,7 @@ class TestVirtualMachine(IntegrationTestCase):
 		self.assertEqual(vm.name.count("-"), 4)
 		self.assertTrue(vm.mac_address.startswith("06:00:"))
 		self.assertTrue(vm.tap_device.startswith("atlas-"))
-		self.assertEqual(len(vm.tap_device), 16)
+		self.assertEqual(len(vm.tap_device), 15)
 		self.assertTrue(vm.ipv6_address.startswith("2001:db8:1::"))
 		self.assertEqual(vm.status, "Pending")
 

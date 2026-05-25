@@ -8,4 +8,4 @@ set -euo pipefail
 
 : "${VIRTUAL_MACHINE_NAME:?required}"
 
-systemctl stop "firecracker-vm@${VIRTUAL_MACHINE_NAME}.service"
+sudo systemctl stop "firecracker-vm@${VIRTUAL_MACHINE_NAME}.service"

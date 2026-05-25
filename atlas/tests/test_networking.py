@@ -96,10 +96,12 @@ class TestNetworking(IntegrationTestCase):
 		# 06:00 + 4 octets = 6 octets total = 17 chars including colons.
 		self.assertEqual(len(mac), 17)
 
-	def test_derive_tap_length_16(self) -> None:
+	def test_derive_tap_length_15(self) -> None:
+		# Linux IFNAMSIZ is 16 bytes including the null terminator, so the
+		# real max is 15 characters.
 		for _ in range(20):
 			tap = derive_tap(str(uuid.uuid4()))
-			self.assertEqual(len(tap), 16, tap)
+			self.assertEqual(len(tap), 15, tap)
 			self.assertTrue(tap.startswith("atlas-"))
 
 	def test_allocate_ipv6_starts_at_2(self) -> None:

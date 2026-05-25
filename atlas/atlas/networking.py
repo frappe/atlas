@@ -27,9 +27,13 @@ def derive_mac(virtual_machine_name: str) -> str:
 
 
 def derive_tap(virtual_machine_name: str) -> str:
-	"""atlas-<first 10 hex chars of UUID>. Length 16, IFNAMSIZ-safe."""
+	"""atlas-<first 9 hex chars of UUID>. Length 15, IFNAMSIZ-safe.
+
+	Linux IFNAMSIZ is 16 bytes including the null terminator, so 15 chars
+	is the real max usable length. `atlas-` (6) + 9 hex = 15.
+	"""
 	hex_only = uuid.UUID(virtual_machine_name).hex
-	return f"atlas-{hex_only[:10]}"
+	return f"atlas-{hex_only[:9]}"
 
 
 def allocate_ipv6(server_name: str) -> str:

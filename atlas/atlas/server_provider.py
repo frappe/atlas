@@ -9,7 +9,7 @@ import frappe
 from atlas.atlas.digitalocean import DigitalOceanClient, public_ipv4, public_ipv6
 from atlas.atlas.networking import carve_virtual_machine_range
 from atlas.atlas.secrets import get_secret
-from atlas.atlas.ssh import connection_for_server  # noqa: F401  re-exported
+from atlas.atlas.ssh import connection_for_server, wait_for_ssh  # noqa: F401  re-exported
 
 
 def provision_server(provider, server_name: str) -> str:
@@ -68,6 +68,8 @@ def finish_provisioning(server_name: str, droplet_id: int) -> None:
 	server.status = "Bootstrapping"
 	server.save(ignore_permissions=True)
 	frappe.db.commit()
+
+	wait_for_ssh(connection_for_server(server), timeout_seconds=300)
 
 	try:
 		server.bootstrap()

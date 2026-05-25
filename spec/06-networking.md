@@ -65,8 +65,9 @@ UUIDs share the first 4 bytes — practically impossible for UUID4.
 
 ## TAP device
 
-`tap_device = "atlas-" + uuid_hex_no_dashes[:10]`. Length 16, the Linux
-IFNAMSIZ limit.
+`tap_device = "atlas-" + uuid_hex_no_dashes[:9]`. Linux `IFNAMSIZ` is 16
+*bytes* including the null terminator, so usable interface-name length is
+15: `atlas-` (6) + 9 = 15 exactly.
 
 ## Host-side configuration
 
@@ -87,8 +88,13 @@ uplink for each VM address, the host answers on the VM's behalf. The
 upstream router delivers to the host MAC; the host's route table sends it
 out the right tap.
 
-We also create one nftables table at bootstrap (`inet atlas`) with one
-`forward` chain. Per-VM forward rules are added by `vm-network-up.sh`.
+We also create one nftables table (`inet atlas`) with one `forward` chain.
+The table is **not** persisted to `/etc/nftables.conf`; instead
+[`vm-network-up.sh`](../scripts/vm-network-up.sh) recreates it
+idempotently at each unit-start and re-applies the IPv6 forwarding /
+proxy-ndp sysctls defensively. This keeps each VM unit self-sufficient on
+cold boot — after a host reboot, the first VM unit to start brings the
+scaffold back. Per-VM forward rules are added by the same script.
 
 ## Per-VM, on the host
 

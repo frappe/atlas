@@ -21,6 +21,17 @@ virtual_machine_name="${1:?virtual machine name required}"
 
 uplink="$(ip -j -6 route show default | jq -r '.[0].dev')"
 
+# Idempotent nftables scaffold. The bootstrap script creates these on first
+# install, but they're not persisted across host reboots by default. Recreating
+# here keeps each VM's network self-contained.
+sudo nft list table inet atlas >/dev/null 2>&1 || sudo nft add table inet atlas
+sudo nft list chain inet atlas forward >/dev/null 2>&1 || \
+    sudo nft "add chain inet atlas forward { type filter hook forward priority filter; policy accept; }"
+
+# Sysctls cleared on reboot if not persisted via /etc/sysctl.d. Bootstrap
+# writes /etc/sysctl.d/60-atlas.conf, but a defensive re-apply costs nothing.
+sudo sysctl -q -w net.ipv6.conf.all.forwarding=1 net.ipv6.conf.all.proxy_ndp=1 || true
+
 # Tap device: clean re-create so a restart picks up correct state.
 sudo ip link del "$TAP_DEVICE" 2>/dev/null || true
 sudo ip tuntap add "$TAP_DEVICE" mode tap

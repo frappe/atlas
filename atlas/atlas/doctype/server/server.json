@@ -22,6 +22,10 @@
   "architecture",
   "firecracker_version",
   "kernel_version",
+  "section_break_virtual_machines",
+  "virtual_machines_html",
+  "section_break_recent_tasks",
+  "recent_tasks_html",
   "section_break_notes",
   "notes"
  ],
@@ -120,6 +124,26 @@
    "read_only": 1
   },
   {
+   "fieldname": "section_break_virtual_machines",
+   "fieldtype": "Section Break",
+   "label": "Virtual Machines on this Server"
+  },
+  {
+   "fieldname": "virtual_machines_html",
+   "fieldtype": "HTML",
+   "label": "Virtual Machines"
+  },
+  {
+   "fieldname": "section_break_recent_tasks",
+   "fieldtype": "Section Break",
+   "label": "Recent Tasks"
+  },
+  {
+   "fieldname": "recent_tasks_html",
+   "fieldtype": "HTML",
+   "label": "Recent Tasks"
+  },
+  {
    "fieldname": "section_break_notes",
    "fieldtype": "Section Break",
    "label": "Notes"
@@ -139,13 +163,17 @@
  "owner": "Administrator",
  "permissions": [
   {
+   "amend": 0,
+   "cancel": 0,
    "create": 1,
    "delete": 1,
    "export": 1,
+   "import": 0,
    "read": 1,
    "report": 1,
    "role": "System Manager",
    "share": 1,
+   "submit": 0,
    "write": 1
   }
  ],

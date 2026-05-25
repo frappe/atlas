@@ -94,12 +94,13 @@ class TestServerProvider(IntegrationTestCase):
 		fake_client.wait_for_active.return_value = fake_droplet
 
 		with patch.object(module, "DigitalOceanClient", return_value=fake_client):
-			with patch(
-				"atlas.atlas.doctype.server.server.Server.bootstrap",
-				side_effect=frappe.ValidationError("bootstrap broke"),
-			):
-				with self.assertRaises(frappe.ValidationError):
-					module.finish_provisioning(server_name, 1234)
+			with patch.object(module, "wait_for_ssh"):
+				with patch(
+					"atlas.atlas.doctype.server.server.Server.bootstrap",
+					side_effect=frappe.ValidationError("bootstrap broke"),
+				):
+					with self.assertRaises(frappe.ValidationError):
+						module.finish_provisioning(server_name, 1234)
 		server.reload()
 		self.assertEqual(server.status, "Broken")
 		frappe.db.delete("Server", {"server_name": server_name})
