@@ -37,12 +37,16 @@ class TestServerBootstrap(IntegrationTestCase):
 	def test_bootstrap_uploads_helpers_then_runs_script(self) -> None:
 		from atlas.atlas.doctype.server import server as server_module
 
-		task = fake_task(name="task-x", stdout="")
+		task = fake_task(
+			name="task-x",
+			stdout='{"firecracker_version": "", "kernel_version": "", "architecture": ""}',
+		)
 
 		with patch.object(server_module, "upload_files") as upload:
 			with patch.object(server_module, "run_task", return_value=task) as run:
-				with patch(
-					"atlas.atlas.ssh.connection_for_server",
+				with patch.object(
+					server_module,
+					"connection_for_server",
 					return_value=Connection(host="x", ssh_private_key="k"),
 				):
 					self.server.bootstrap()
@@ -50,21 +54,22 @@ class TestServerBootstrap(IntegrationTestCase):
 		upload.assert_called_once()
 		run.assert_called_once()
 
-	def test_bootstrap_parses_trailing_key_values(self) -> None:
+	def test_bootstrap_parses_trailing_json_line(self) -> None:
 		from atlas.atlas.doctype.server import server as server_module
 
 		stdout = (
 			"+ some bash trace\n"
-			"FIRECRACKER_VERSION=1.15.1\n"
-			"KERNEL_VERSION=6.8.0-31-generic\n"
-			"ARCHITECTURE=x86_64\n"
+			'{"firecracker_version": "1.15.1",'
+			' "kernel_version": "6.8.0-31-generic",'
+			' "architecture": "x86_64"}\n'
 		)
 		task = fake_task(name="task-y", stdout=stdout)
 
 		with patch.object(server_module, "upload_files"):
 			with patch.object(server_module, "run_task", return_value=task):
-				with patch(
-					"atlas.atlas.ssh.connection_for_server",
+				with patch.object(
+					server_module,
+					"connection_for_server",
 					return_value=Connection(host="x", ssh_private_key="k"),
 				):
 					self.server.bootstrap()

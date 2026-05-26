@@ -18,16 +18,10 @@ from atlas.atlas._ssh.transport import (
 	upload_files,
 	wait_for_ssh,
 )
-from atlas.atlas.scripts_catalog import (
-	SCRIPT_SEARCH_PATHS,
-	SCRIPTS_DIRECTORY,
-)
 
 __all__ = [
 	"KNOWN_HOSTS_PATH",
 	"REMOTE_STAGING_DIRECTORY",
-	"SCRIPTS_DIRECTORY",
-	"SCRIPT_SEARCH_PATHS",
 	"SSH_OPTIONS",
 	"Connection",
 	"connection_for_server",

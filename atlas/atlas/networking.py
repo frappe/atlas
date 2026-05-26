@@ -3,6 +3,8 @@
 import ipaddress
 import uuid
 
+import frappe
+
 
 def carve_virtual_machine_range(prefix_cidr: str) -> str:
 	"""Return the first /124 of the given /64.
@@ -39,10 +41,9 @@ def derive_tap(virtual_machine_name: str) -> str:
 def allocate_ipv6(server_name: str) -> str:
 	"""Lowest unused address in the server's /124.
 
-	Skips ::0 (subnet id) and ::1 (host). Considers Archived VMs as still
+	Skips ::0 (subnet id) and ::1 (host). Considers Terminated VMs as still
 	holding their address — we do not reuse.
 	"""
-	import frappe  # noqa: PLC0415
 	server = frappe.get_doc("Server", server_name, for_update=True)
 	network = ipaddress.IPv6Network(server.ipv6_virtual_machine_range)
 	used = {

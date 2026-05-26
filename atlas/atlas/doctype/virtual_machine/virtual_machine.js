@@ -5,12 +5,11 @@ frappe.ui.form.on("Virtual Machine", {
 		}
 		const status = frm.doc.status;
 		const allowed = {
-			Pending:      ["provision", "delete_vm"],
-			Provisioning: [],
-			Running:      ["stop", "restart", "delete_vm"],
-			Stopped:      ["start", "restart", "delete_vm"],
-			Failed:       ["provision", "delete_vm"],
-			Archived:     [],
+			Pending:    ["provision", "terminate"],
+			Running:    ["stop", "restart", "terminate"],
+			Stopped:    ["start", "restart", "terminate"],
+			Failed:     ["provision", "terminate"],
+			Terminated: [],
 		}[status] ?? [];
 
 		const buttons = {
@@ -18,7 +17,7 @@ frappe.ui.form.on("Virtual Machine", {
 			start:     ["Start", "start"],
 			stop:      ["Stop", "stop"],
 			restart:   ["Restart", "restart"],
-			delete_vm: ["Delete", "delete_vm"],
+			terminate: ["Terminate", "terminate"],
 		};
 		for (const [action, [label, method]] of Object.entries(buttons)) {
 			if (!allowed.includes(action)) continue;

@@ -7,7 +7,7 @@ set -euo pipefail
 virtual_machine_name="${1:?virtual machine name required}"
 network_env="/var/lib/atlas/virtual-machines/${virtual_machine_name}/network.env"
 
-# If the env file is gone (delete-vm already ran) we still want to do our
+# If the env file is gone (terminate-vm already ran) we still want to do our
 # best to clean up. Try to source, but accept absence.
 if [ -f "$network_env" ]; then
     . "$network_env"

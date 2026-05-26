@@ -7,6 +7,7 @@ from atlas.tests.e2e._shared import (
 	assert_probe,
 	ensure_image_on_server,
 	ephemeral_public_key,
+	expect_validation_error,
 	phase,
 )
 
@@ -32,25 +33,15 @@ def run(reuse: bool = True, keep: bool = True) -> None:
 		# Negative: temporarily move the image aside.
 		_move_image(server.name, image, "aside")
 		try:
-			raised = False
-			try:
+			with expect_validation_error("not present", "missing"):
 				vm.provision()
-			except frappe.ValidationError as exception:
-				raised = True
-				assert "not present" in str(exception).lower() or "missing" in str(exception).lower()
-			assert raised, "provision should have raised when image absent"
-			vm.reload()
-			# Probe failure already marked Failed; ok.
 		finally:
 			# Always restore the image, even if the assertion above failed —
 			# otherwise the next run starts with the rootfs in .bak and the
 			# positive path can't recover.
 			_move_image(server.name, image, "back")
 
-		# Recover state for the positive path.
-		vm.status = "Pending"
-		vm.save(ignore_permissions=True)
-
+		# Failed provision does not mutate the row; status stays Pending.
 		vm.provision()
 		vm.reload()
 		assert vm.status == "Running", vm.status

@@ -12,6 +12,7 @@ No retry on transient 5xx in this iteration. One shot, fail loud. Operator
 retries.
 """
 
+import ipaddress
 import time
 
 import requests
@@ -126,6 +127,5 @@ def public_ipv4(droplet: dict) -> str:
 
 
 def _network_cidr(address: str, prefix_length: int) -> str:
-	import ipaddress  # noqa: PLC0415
 	network = ipaddress.IPv6Network(f"{address}/{prefix_length}", strict=False)
 	return str(network)

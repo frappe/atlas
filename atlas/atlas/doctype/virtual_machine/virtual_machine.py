@@ -11,22 +11,36 @@ IMMUTABLE_AFTER_INSERT = ("server", "image", "vcpus", "memory_megabytes", "disk_
 
 class VirtualMachine(Document):
 	def autoname(self) -> None:
-		# autoname() runs from set_new_name(), which is called by Document.insert()
-		# after before_insert(). We assign the UUID here and derive the dependent
-		# fields in before_validate() (which runs after set_new_name).
+		# autoname() runs from set_new_name(), called by Document.insert()
+		# after before_insert(). Dependent fields are derived in
+		# before_validate(), which runs after set_new_name.
 		self.name = str(uuid.uuid4())
+
+	def before_insert(self) -> None:
+		self.set_status_default()
+		self.set_ipv6_address()
 
 	def before_validate(self) -> None:
 		if not self.is_new():
 			return
-		if not self.mac_address:
-			self.mac_address = derive_mac(self.name)
-		if not self.tap_device:
-			self.tap_device = derive_tap(self.name)
-		if not self.ipv6_address:
-			self.ipv6_address = allocate_ipv6(self.server)
+		self.set_mac_address()
+		self.set_tap_device()
+
+	def set_status_default(self) -> None:
 		if not self.status:
 			self.status = "Pending"
+
+	def set_ipv6_address(self) -> None:
+		if not self.ipv6_address:
+			self.ipv6_address = allocate_ipv6(self.server)
+
+	def set_mac_address(self) -> None:
+		if not self.mac_address:
+			self.mac_address = derive_mac(self.name)
+
+	def set_tap_device(self) -> None:
+		if not self.tap_device:
+			self.tap_device = derive_tap(self.name)
 
 	def validate(self) -> None:
 		if self.is_new():
@@ -40,34 +54,18 @@ class VirtualMachine(Document):
 
 	@frappe.whitelist()
 	def provision(self) -> str:
-		"""Run provision-vm.sh. The script's step 0 fails loud if the image is
-		not on the server — provision is one Task per VM creation."""
 		if self.status not in ("Pending", "Failed"):
 			frappe.throw(f"Cannot provision from {self.status}")
-
-		self.status = "Provisioning"
-		self.save(ignore_permissions=True)
-		frappe.db.commit()
-
-		try:
-			task = run_task(
-				server=self.server,
-				script="provision-vm.sh",
-				variables=self._provision_variables(),
-				virtual_machine=self.name,
-				timeout_seconds=30,
-			)
-		except Exception:
-			self.reload()
-			self.status = "Failed"
-			self.save(ignore_permissions=True)
-			frappe.db.commit()
-			raise
-
-		self.reload()
+		task = run_task(
+			server=self.server,
+			script="provision-vm.sh",
+			variables=self._provision_variables(),
+			virtual_machine=self.name,
+			timeout_seconds=30,
+		)
 		self.status = "Running"
 		self.last_started = frappe.utils.now_datetime()
-		self.save(ignore_permissions=True)
+		self.save()
 		return task.name
 
 	@frappe.whitelist()
@@ -81,10 +79,9 @@ class VirtualMachine(Document):
 			virtual_machine=self.name,
 			timeout_seconds=30,
 		)
-		self.reload()
 		self.status = "Running"
 		self.last_started = frappe.utils.now_datetime()
-		self.save(ignore_permissions=True)
+		self.save()
 		return task.name
 
 	@frappe.whitelist()
@@ -98,10 +95,9 @@ class VirtualMachine(Document):
 			virtual_machine=self.name,
 			timeout_seconds=30,
 		)
-		self.reload()
 		self.status = "Stopped"
 		self.last_stopped = frappe.utils.now_datetime()
-		self.save(ignore_permissions=True)
+		self.save()
 		return task.name
 
 	@frappe.whitelist()
@@ -114,19 +110,18 @@ class VirtualMachine(Document):
 		return {"stop_task": stop_task, "start_task": start_task}
 
 	@frappe.whitelist()
-	def delete_vm(self) -> str:
-		if self.status == "Archived":
-			frappe.throw("VM is already archived")
+	def terminate(self) -> str:
+		if self.status == "Terminated":
+			frappe.throw("VM is already terminated")
 		task = run_task(
 			server=self.server,
-			script="delete-vm.sh",
+			script="terminate-vm.sh",
 			variables={"VIRTUAL_MACHINE_NAME": self.name},
 			virtual_machine=self.name,
 			timeout_seconds=60,
 		)
-		self.reload()
-		self.status = "Archived"
-		self.save(ignore_permissions=True)
+		self.status = "Terminated"
+		self.save()
 		return task.name
 
 	def _provision_variables(self) -> dict:

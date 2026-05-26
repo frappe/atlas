@@ -69,7 +69,9 @@ class TestVirtualMachine(IntegrationTestCase):
 		mocked.assert_called_once()
 		self.assertEqual(mocked.call_args.kwargs["script"], "provision-vm.sh")
 
-	def test_provision_failure_marks_failed(self) -> None:
+	def test_provision_failure_leaves_status_pending(self) -> None:
+		"""On failure the row is not mutated (Pilot shape). Task row carries
+		the failure; operator re-clicks Provision (scripts are idempotent)."""
 		from atlas.atlas.doctype.virtual_machine import virtual_machine as module
 
 		vm = _new_vm()
@@ -81,4 +83,4 @@ class TestVirtualMachine(IntegrationTestCase):
 			with self.assertRaises(frappe.ValidationError):
 				vm.provision()
 		vm.reload()
-		self.assertEqual(vm.status, "Failed")
+		self.assertEqual(vm.status, "Pending")

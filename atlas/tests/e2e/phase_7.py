@@ -12,6 +12,7 @@ import time
 import frappe
 
 from atlas.tests.e2e._shared import (
+	expect_validation_error,
 	phase,
 	server_is_reachable,
 )
@@ -33,12 +34,8 @@ def run(reuse: bool = True, keep: bool = True) -> None:
 		assert task.server == server.name
 
 		# 2. Unknown script must raise.
-		raised = False
-		try:
+		with expect_validation_error("unknown script"):
 			server.run_task_dialog(script="nope.sh", variables={})
-		except frappe.ValidationError:
-			raised = True
-		assert raised, "run_task_dialog should reject unknown scripts"
 
 		# 3. Reboot. SSH drops mid-Task -> Failure. Then probe until server is back.
 		reboot_task_name = server.reboot()

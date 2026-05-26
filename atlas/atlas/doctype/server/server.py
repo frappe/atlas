@@ -1,34 +1,28 @@
 import json
-import re
+from typing import ClassVar
 
 import frappe
 from frappe.model.document import Document
 
 from atlas.atlas import scripts_catalog
-from atlas.atlas.ssh import run_task, upload_files
-
-BOOTSTRAP_UPLOADS = [
-	("vm-network-up.sh", "/var/lib/atlas/bin/vm-network-up.sh"),
-	("vm-network-down.sh", "/var/lib/atlas/bin/vm-network-down.sh"),
-	("systemd/firecracker-vm@.service", "/etc/systemd/system/firecracker-vm@.service"),
-]
-
-BOOTSTRAP_ALLOWED_STATUS = {"Pending", "Bootstrapping", "Active", "Broken"}
-
-KEY_VALUE_LINE = re.compile(r"^([A-Z][A-Z0-9_]*)=(.+)$")
+from atlas.atlas.ssh import connection_for_server, run_task, upload_files
 
 
 class Server(Document):
+	BOOTSTRAP_ALLOWED_STATUS: ClassVar[set[str]] = {"Pending", "Bootstrapping", "Active", "Broken"}
+	BOOTSTRAP_UPLOAD_SOURCES: ClassVar[list[tuple[str, str]]] = [
+		("vm-network-up.sh", "/var/lib/atlas/bin/vm-network-up.sh"),
+		("vm-network-down.sh", "/var/lib/atlas/bin/vm-network-down.sh"),
+		("systemd/firecracker-vm@.service", "/etc/systemd/system/firecracker-vm@.service"),
+	]
+
 	@frappe.whitelist()
 	def bootstrap(self) -> str:
 		"""Upload helpers + unit, run bootstrap-server.sh. Returns Task name."""
-		if self.status not in BOOTSTRAP_ALLOWED_STATUS:
+		if self.status not in self.BOOTSTRAP_ALLOWED_STATUS:
 			frappe.throw(f"Cannot bootstrap from status {self.status}")
 
-		from atlas.atlas.ssh import connection_for_server  # noqa: PLC0415
-
-		connection = connection_for_server(self)
-		upload_files(connection, _resolved_uploads())
+		upload_files(connection_for_server(self), self._bootstrap_uploads())
 
 		task = run_task(
 			server=self.name,
@@ -75,23 +69,22 @@ class Server(Document):
 		"""Whitelisted: scripts available for Run Task dialog."""
 		return scripts_catalog.allowed_scripts()
 
+	def _bootstrap_uploads(self) -> list[tuple[str, str]]:
+		directory = scripts_catalog.scripts_directory()
+		return [
+			(str(directory / source), destination)
+			for source, destination in self.BOOTSTRAP_UPLOAD_SOURCES
+		]
+
 	def _absorb_bootstrap_output(self, stdout: str) -> None:
-		fields = {"FIRECRACKER_VERSION": "firecracker_version",
-		          "KERNEL_VERSION": "kernel_version",
-		          "ARCHITECTURE": "architecture"}
-		for line in stdout.splitlines():
-			match = KEY_VALUE_LINE.match(line.strip())
-			if not match:
-				continue
-			key, value = match.group(1), match.group(2).strip()
-			fieldname = fields.get(key)
-			if fieldname:
-				setattr(self, fieldname, value)
-
-
-def _resolved_uploads() -> list[tuple[str, str]]:
-	from atlas.atlas.ssh import SCRIPTS_DIRECTORY  # noqa: PLC0415
-	return [
-		(str(SCRIPTS_DIRECTORY / source), destination)
-		for source, destination in BOOTSTRAP_UPLOADS
-	]
+		# Script tail-prints /var/lib/atlas/bootstrap.json (compact, single
+		# line) as the canonical source of truth. `set -x` writes to stderr,
+		# so stdout is clean — the last non-empty line is the JSON object.
+		last_line = next(
+			(line for line in reversed(stdout.splitlines()) if line.strip()),
+			"",
+		)
+		parsed = json.loads(last_line)
+		self.firecracker_version = parsed["firecracker_version"]
+		self.kernel_version = parsed["kernel_version"]
+		self.architecture = parsed["architecture"]

@@ -8,6 +8,7 @@ from atlas.tests.e2e._shared import (
 	assert_probe,
 	ensure_image_on_server,
 	ephemeral_public_key,
+	expect_validation_error,
 	phase,
 )
 
@@ -65,11 +66,11 @@ def run(reuse: bool = True, keep: bool = True) -> None:
 		assert vm.last_started > before_start, "last_started did not advance on restart"
 		assert_probe(server.name, "phase5-is-active.sh", VIRTUAL_MACHINE_NAME=vm.name)
 
-		# Delete
+		# Terminate
 		tap_device = vm.tap_device
-		vm.delete_vm()
+		vm.terminate()
 		vm.reload()
-		assert vm.status == "Archived", vm.status
+		assert vm.status == "Terminated", vm.status
 		assert_probe(
 			server.name,
 			"phase6-assert-gone.sh",
@@ -77,10 +78,6 @@ def run(reuse: bool = True, keep: bool = True) -> None:
 			TAP_DEVICE=tap_device,
 		)
 
-		# Delete again -> raises
-		raised = False
-		try:
-			vm.delete_vm()
-		except frappe.ValidationError:
-			raised = True
-		assert raised, "second delete should raise"
+		# Terminate again -> raises
+		with expect_validation_error("already terminated"):
+			vm.terminate()

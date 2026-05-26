@@ -53,15 +53,15 @@ def list_droplets() -> None:
 		print(droplet["id"], droplet["name"], droplet["status"], v4)
 
 
-def archive_all_vms() -> None:
-	"""Mark every Virtual Machine row Archived. Use to clean up leaked rows
+def terminate_all_vms() -> None:
+	"""Mark every Virtual Machine row Terminated. Use to clean up leaked rows
 	from crashed e2e runs. Does NOT touch the server-side systemd state — run
-	delete-vm.sh on the host separately if the VMs are still around."""
-	rows = frappe.get_all("Virtual Machine", filters={"status": ["!=", "Archived"]}, pluck="name")
+	terminate-vm.sh on the host separately if the VMs are still around."""
+	rows = frappe.get_all("Virtual Machine", filters={"status": ["!=", "Terminated"]}, pluck="name")
 	for name in rows:
-		frappe.db.set_value("Virtual Machine", name, "status", "Archived")
+		frappe.db.set_value("Virtual Machine", name, "status", "Terminated")
 	frappe.db.commit()
-	print(f"archived {len(rows)} VM row(s)")
+	print(f"terminated {len(rows)} VM row(s)")
 
 
 def rebootstrap(server_name: str) -> None:

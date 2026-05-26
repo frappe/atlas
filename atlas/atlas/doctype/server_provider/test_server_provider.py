@@ -33,7 +33,7 @@ class TestServerProvider(IntegrationTestCase):
 				self.provider.test_connection()
 
 	def test_provision_server_inserts_and_enqueues(self) -> None:
-		from atlas.atlas import server_provider as module
+		from atlas.atlas.doctype.server_provider import server_provider as module
 
 		server_name = "test-srv-1"
 		frappe.db.delete("Server", {"server_name": server_name})
@@ -42,7 +42,7 @@ class TestServerProvider(IntegrationTestCase):
 		fake_client.create_droplet.return_value = {"id": 999}
 		with patch.object(module, "DigitalOceanClient", return_value=fake_client):
 			with patch.object(module.frappe, "enqueue") as enqueue:
-				returned = module.provision_server(self.provider, server_name)
+				returned = self.provider.provision_server(server_name)
 
 		self.assertEqual(returned, server_name)
 		server = frappe.get_doc("Server", server_name)
@@ -55,7 +55,7 @@ class TestServerProvider(IntegrationTestCase):
 		frappe.db.delete("Server", {"server_name": server_name})
 
 	def test_finish_provisioning_marks_broken_on_bootstrap_failure(self) -> None:
-		from atlas.atlas import server_provider as module
+		from atlas.atlas.doctype.server_provider import server_provider as module
 
 		server_name = "test-srv-broken"
 		frappe.db.delete("Server", {"server_name": server_name})

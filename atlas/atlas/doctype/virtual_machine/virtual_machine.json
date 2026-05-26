@@ -123,7 +123,7 @@
    "in_list_view": 1,
    "in_standard_filter": 1,
    "label": "Status",
-   "options": "Pending\nProvisioning\nRunning\nStopped\nFailed\nArchived",
+   "options": "Pending\nRunning\nStopped\nFailed\nTerminated",
    "reqd": 1
   },
   {

@@ -39,6 +39,7 @@ from atlas.tests.e2e._image import (
 )
 from atlas.tests.e2e._tasks import (
 	assert_probe,
+	expect_validation_error,
 	mark_orphan_tasks_failure,
 	wait_for_task,
 )
@@ -56,6 +57,7 @@ __all__ = [
 	"ensure_e2e_provider",
 	"ensure_image_on_server",
 	"ephemeral_public_key",
+	"expect_validation_error",
 	"get_client",
 	"get_image",
 	"get_phase1_connection",

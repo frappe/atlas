@@ -5,7 +5,6 @@ import traceback
 
 import frappe
 
-from atlas.atlas.server_provider import provision_server
 from atlas.atlas.ssh import run_task
 from atlas.tests.e2e._shared import (
 	cleanup_droplet,
@@ -25,7 +24,7 @@ def run() -> None:
 	server_doc = None
 
 	try:
-		provision_server(provider, server_name)
+		provider.provision_server(server_name)
 		server_doc = _wait_for_status(server_name, target={"Active", "Broken"}, timeout=600)
 		assert server_doc.status == "Active", f"expected Active, got {server_doc.status}"
 		assert server_doc.firecracker_version, "firecracker_version not recorded"

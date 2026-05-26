@@ -565,3 +565,125 @@ deduplication; no contract changes. One intentional deviation:
   bypass the very `provision_server` path phase 3 verifies. Folding phase 3
   into `phase()` would dilute its contract.
 - Resolve: no change. Plan paragraph in checklist is historical.
+
+## Review follow-up (2026-05-26)
+
+Implemented the 16-step [`review-followup.md`](./review-followup.md) plan
+(taste pass after the iteration-1 review). Each entry below records a change
+that moves both code and spec/notes; the plan file's "What we are NOT doing"
+section enumerates the explicit exclusions.
+
+### R1. VM status enum: `Archived` → `Terminated`; method `delete_vm` → `terminate`
+
+- Plan: drift 6.1 ("Python method is `delete_vm` to avoid colliding with
+  `frappe.model.document.Document.delete`") explicitly accepted the
+  delete/Archived/Delete-button asymmetry.
+- Implementation: full triangle renamed.
+  - Python: [`VirtualMachine.terminate`](../atlas/atlas/doctype/virtual_machine/virtual_machine.py).
+  - JSON: status options now `Pending\nRunning\nStopped\nFailed\nTerminated`.
+  - JS: button label "Terminate", method `terminate`. `Provisioning` and
+    `Archived` removed from the per-status allowed-action table.
+  - Shell: [`scripts/terminate-vm.sh`](../scripts/terminate-vm.sh).
+  - Migration: [`atlas/patches/v1_0/rename_archived_to_terminated.py`](../atlas/patches/v1_0/rename_archived_to_terminated.py)
+    rewrites any existing `Archived` rows. Listed in
+    [`atlas/patches.txt`](../atlas/patches.txt).
+- Resolve: drift entry 6.1 superseded by this entry. Spec
+  [`spec/02-doctypes.md`] and
+  [`spec/05-virtual-machine-lifecycle.md`] need the matching update; deferred
+  to next walk because the spec walk is per-iteration.
+
+### R2. Bootstrap output: `KEY=value` stdout → JSON file
+
+- Plan: drift 3.5 pinned the upload-then-bootstrap shape but said nothing
+  about the data exchange format.
+- Implementation: [`scripts/bootstrap-server.sh`](../scripts/bootstrap-server.sh)
+  step 8 now writes `/var/lib/atlas/bootstrap.json` (single source of truth)
+  and `cat`s it on stdout so
+  [`Server._absorb_bootstrap_output`](../atlas/atlas/doctype/server/server.py)
+  can `json.loads(...)` the trailing line. `jq` is already in the
+  apt-install list earlier in the script, so no new dependency. **Two
+  details only the e2e exposed:** `jq` is invoked with `-nc` (compact,
+  single-line) because the default pretty-printer made `splitlines()[-1]`
+  return the closing `}` of a multi-line object. The Python side scans
+  backwards for the last non-empty line rather than relying on
+  `.strip().splitlines()[-1]`, which would still trip on a trailing blank
+  line from `cat`.
+- Resolve: amend [`spec/03-bootstrapping.md`](../spec/03-bootstrapping.md) to
+  describe the JSON file. Deferred.
+
+### R3. `atlas/atlas/server_provider.py` deleted; logic on controller
+
+- Plan: drift 1.2 (`run_task_on_server` wrapper) set the precedent that
+  thin-wrapper layers are not Frappe's style.
+- Implementation: `atlas/atlas/server_provider.py` removed. Its
+  `provision_server` and `finish_provisioning` live on the
+  [`ServerProvider` controller](../atlas/atlas/doctype/server_provider/server_provider.py).
+  `client` is now a `@property` matching Pilot's
+  `VirtualMachine.agent`. The enqueued background-job path moved from
+  `atlas.atlas.server_provider.finish_provisioning` to
+  `atlas.atlas.doctype.server_provider.server_provider.finish_provisioning`.
+- Resolve: amend [`spec/03-bootstrapping.md`](../spec/03-bootstrapping.md)
+  where it points at the old module path. Deferred.
+
+### R4. VM lifecycle methods: no intermediate `Provisioning` status
+
+- Plan: phase 5 plan introduced `Provisioning` as a transient sentinel that
+  let an operator see "in flight" on the row.
+- Implementation: [`VirtualMachine.provision`/`start`/`stop`/`terminate`](../atlas/atlas/doctype/virtual_machine/virtual_machine.py)
+  collapsed to the Pilot 3-line shape: precondition check, `run_task(...)`,
+  set final status + save. The Task row is the "in flight" record; the VM
+  row only moves on success. Failed provision leaves the row at `Pending`
+  (re-clickable because scripts are idempotent). `Provisioning` removed from
+  the status enum.
+- Resolve: amend [`spec/05-virtual-machine-lifecycle.md`](../spec/05-virtual-machine-lifecycle.md)
+  to describe the fail-loud-on-Pending semantics. Deferred.
+
+### R5. VM `before_validate` decomposed into `set_*` methods (Pilot manifest)
+
+- Plan: nothing pinned.
+- Implementation: [`VirtualMachine`](../atlas/atlas/doctype/virtual_machine/virtual_machine.py)
+  now has `set_status_default`, `set_ipv6_address` (called from
+  `before_insert` — no name needed) and `set_mac_address`, `set_tap_device`
+  (called from `before_validate` — name is set by `autoname` which runs after
+  `before_insert` but before `before_validate`). Hooks read as a checklist.
+- Resolve: structural pattern; no spec change.
+
+### R6. `Task.validate()` invokes `_validate_variables_json()` explicitly
+
+- Plan: T3.1 said `Task.validate()` "invokes the property to reuse the shape
+  check" — i.e., bare property access used for its side effect.
+- Implementation: side-effect property access split off into a named method.
+  Property now returns a plain `json.loads(self.variables or "{}")` without
+  re-validating, because anything reading the property is on an
+  already-validated row.
+- Resolve: structural; no spec change.
+
+### R7. `_execute_into` simplified; original exception type preserved on bare-raise paths
+
+- Plan: §7 of the follow-up plan suggested a bare `raise` to preserve
+  original exception types in the generic-`except Exception` branch.
+- Implementation: kept the `frappe.ValidationError` wrap for generic
+  exceptions to preserve e2e phase 1's `_check_missing_script` (which
+  catches `frappe.ValidationError` for a missing-script
+  `FileNotFoundError`). The dead `isinstance(exception,
+  frappe.ValidationError)` branch is dropped: a `frappe.ValidationError`
+  caught here is re-raised as-is; any other exception is wrapped. Timeout
+  and exit-code-failure paths use `frappe.throw` (raises ValidationError).
+- Resolve: structural; no spec change. Plan paragraph in
+  [`review-followup.md`](./review-followup.md) §7 is historical — actual
+  implementation diverges to keep phase 1 e2e green.
+
+### R8. `expect_validation_error` context manager added to e2e
+
+- Plan: introduce a small helper to replace the `raised = False` pattern.
+- Implementation: [`atlas/tests/e2e/_tasks.py`](../atlas/tests/e2e/_tasks.py)
+  carries `expect_validation_error(*needles)`; re-exported from
+  [`_shared.py`](../atlas/tests/e2e/_shared.py). Phases 5, 6, 7 migrated.
+- Resolve: nothing to do.
+
+### R9. `_inspect.archive_all_vms` → `terminate_all_vms`
+
+- Plan: rename follows R1.
+- Implementation: function and the print message moved together; the
+  comment still mentions `terminate-vm.sh` as the host-side counterpart.
+- Resolve: nothing — caller is the operator, who reads the function name.

@@ -79,7 +79,17 @@ sudo install -d -m 0755 /var/lib/atlas/bin
 sudo chmod 0755 /var/lib/atlas/bin/*.sh
 sudo systemctl daemon-reload
 
-# 8. Report state for Atlas to record.
-echo "FIRECRACKER_VERSION=$(/usr/local/bin/firecracker --version | head -n1 | awk '{print $2}')"
-echo "KERNEL_VERSION=$(uname -r)"
-echo "ARCHITECTURE=$(uname -m)"
+# 8. Record state for Atlas to pick up. Single JSON file is the canonical
+#    source of truth; the trailing `cat` keeps the same bytes on stdout so
+#    operators tailing the Task can still see the values.
+sudo install -d -m 0755 /var/lib/atlas
+sudo jq -nc \
+    --arg firecracker_version "$(/usr/local/bin/firecracker --version | head -n1 | awk '{print $2}')" \
+    --arg kernel_version "$(uname -r)" \
+    --arg architecture "$(uname -m)" \
+    '{firecracker_version: $firecracker_version,
+      kernel_version: $kernel_version,
+      architecture: $architecture}' \
+    | sudo tee /var/lib/atlas/bootstrap.json >/dev/null
+
+cat /var/lib/atlas/bootstrap.json

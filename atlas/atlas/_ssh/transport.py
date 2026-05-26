@@ -11,6 +11,7 @@ import shlex
 import subprocess
 import tempfile
 import time
+from contextlib import contextmanager
 from pathlib import Path
 
 import frappe
@@ -37,7 +38,7 @@ def wait_for_ssh(connection: Connection, timeout_seconds: int = 300, poll_second
 	"""Poll the host until SSH accepts a `true` command, or raise."""
 	_ensure_known_hosts_directory()
 	deadline = time.monotonic() + timeout_seconds
-	with _ssh_key_file(connection.ssh_private_key) as key_path:
+	with ssh_key_file(connection.ssh_private_key) as key_path:
 		while True:
 			_, _, exit_code = run_ssh(connection, key_path, "true", timeout_seconds=30)
 			if exit_code == 0:
@@ -59,7 +60,7 @@ def upload_files(connection: Connection, files: list[tuple[str, str]]) -> None:
 		return
 
 	_ensure_known_hosts_directory()
-	with _ssh_key_file(connection.ssh_private_key) as key_path:
+	with ssh_key_file(connection.ssh_private_key) as key_path:
 		remote_dirs = sorted({os.path.dirname(remote) for _, remote in files if os.path.dirname(remote)})
 		if remote_dirs:
 			mkdir_command = "mkdir -p " + " ".join(shlex.quote(d) for d in remote_dirs)
@@ -119,36 +120,24 @@ def run_scp(
 		)
 
 
-class _ssh_key_file:
-	"""Context manager that writes the SSH private key to a 0600 tempfile and
-	deletes it on exit."""
-
-	def __init__(self, private_key: str):
-		self.private_key = private_key
-		self.path: str | None = None
-
-	def __enter__(self) -> str:
-		handle = tempfile.NamedTemporaryFile(
-			mode="w", delete=False, prefix="atlas-ssh-", suffix=".key"
-		)
+@contextmanager
+def ssh_key_file(private_key: str):
+	"""Write the SSH private key to a 0600 tempfile; delete it on exit."""
+	handle = tempfile.NamedTemporaryFile(
+		mode="w", delete=False, prefix="atlas-ssh-", suffix=".key"
+	)
+	try:
+		os.chmod(handle.name, 0o600)
+		key = private_key if private_key.endswith("\n") else private_key + "\n"
+		handle.write(key)
+		handle.flush()
+		handle.close()
+		yield handle.name
+	finally:
 		try:
-			os.chmod(handle.name, 0o600)
-			key = self.private_key
-			if not key.endswith("\n"):
-				key += "\n"
-			handle.write(key)
-			handle.flush()
-		finally:
-			handle.close()
-		self.path = handle.name
-		return handle.name
-
-	def __exit__(self, exc_type, exc, tb) -> None:
-		if self.path and os.path.exists(self.path):
-			try:
-				os.unlink(self.path)
-			except OSError:
-				pass
+			os.unlink(handle.name)
+		except OSError:
+			pass
 
 
 def _ensure_known_hosts_directory() -> None:

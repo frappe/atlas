@@ -1,8 +1,27 @@
 """Task-row helpers for the e2e harness."""
 
 import time
+from contextlib import contextmanager
 
 import frappe
+
+
+@contextmanager
+def expect_validation_error(*needles: str):
+	"""Assert the wrapped block raises a frappe.ValidationError whose lowercased
+	message contains at least one of `needles` (also lowercased)."""
+	try:
+		yield
+	except frappe.ValidationError as exception:
+		message = str(exception).lower()
+		if not any(needle.lower() in message for needle in needles):
+			raise AssertionError(
+				f"ValidationError did not contain any of {needles}: {message}"
+			) from exception
+		return
+	raise AssertionError(
+		f"expected frappe.ValidationError containing {needles}, no exception raised"
+	)
 
 
 def wait_for_task(

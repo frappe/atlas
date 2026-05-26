@@ -19,7 +19,7 @@ Files:
 - `sync-image.sh` — download a kernel + rootfs pair onto a server.
 - `provision-vm.sh` — create per-VM rootfs, write config, set up networking,
   enable the systemd unit.
-- `start-vm.sh`, `stop-vm.sh`, `delete-vm.sh` — lifecycle.
+- `start-vm.sh`, `stop-vm.sh`, `terminate-vm.sh` — lifecycle.
 - `vm-network-up.sh`, `vm-network-down.sh` — invoked by the systemd unit on
   start/stop. Laid down by `bootstrap-server.sh`.
 - `systemd/firecracker-vm@.service` — systemd unit template, laid down by

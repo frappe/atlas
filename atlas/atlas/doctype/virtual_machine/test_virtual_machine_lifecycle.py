@@ -105,46 +105,46 @@ class TestVirtualMachineLifecycle(IntegrationTestCase):
 		with self.assertRaises(frappe.ValidationError):
 			vm.restart()
 
-	def test_delete_vm_succeeds_from_running_archives_row(self) -> None:
+	def test_terminate_succeeds_from_running_marks_row(self) -> None:
 		from atlas.atlas.doctype.virtual_machine import virtual_machine as module
 
 		vm = _vm_with_status("Running")
 		task = fake_task(name="task-del-1")
 		with patch.object(module, "run_task", return_value=task) as mocked:
-			result = vm.delete_vm()
+			result = vm.terminate()
 		self.assertEqual(result, "task-del-1")
 		vm.reload()
-		self.assertEqual(vm.status, "Archived")
+		self.assertEqual(vm.status, "Terminated")
 		mocked.assert_called_once()
-		self.assertEqual(mocked.call_args.kwargs["script"], "delete-vm.sh")
+		self.assertEqual(mocked.call_args.kwargs["script"], "terminate-vm.sh")
 
-	def test_delete_vm_failure_does_not_archive(self) -> None:
+	def test_terminate_failure_does_not_mark(self) -> None:
 		from atlas.atlas.doctype.virtual_machine import virtual_machine as module
 
 		vm = _vm_with_status("Running")
 		with patch.object(
 			module,
 			"run_task",
-			side_effect=frappe.ValidationError("delete broke"),
+			side_effect=frappe.ValidationError("terminate broke"),
 		):
 			with self.assertRaises(frappe.ValidationError):
-				vm.delete_vm()
+				vm.terminate()
 		vm.reload()
 		self.assertEqual(vm.status, "Running")
 
-	def test_delete_vm_raises_when_already_archived(self) -> None:
+	def test_terminate_raises_when_already_terminated(self) -> None:
 		vm = _vm_with_status("Running")
-		vm.status = "Archived"
+		vm.status = "Terminated"
 		vm.save(ignore_permissions=True)
 		with self.assertRaises(frappe.ValidationError):
-			vm.delete_vm()
+			vm.terminate()
 
-	def test_delete_vm_from_pending_succeeds(self) -> None:
+	def test_terminate_from_pending_succeeds(self) -> None:
 		from atlas.atlas.doctype.virtual_machine import virtual_machine as module
 
 		vm = _new_vm()  # Pending
 		task = fake_task(name="task-del-p")
 		with patch.object(module, "run_task", return_value=task):
-			vm.delete_vm()
+			vm.terminate()
 		vm.reload()
-		self.assertEqual(vm.status, "Archived")
+		self.assertEqual(vm.status, "Terminated")

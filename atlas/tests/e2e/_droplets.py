@@ -117,11 +117,9 @@ def ensure_bootstrapped_server(
 			print(f"[e2e] marked {name} Broken (SSH unreachable)")
 
 	# No reusable Active server. Provision fresh via the phase 3 path.
-	from atlas.atlas.server_provider import provision_server
-
 	provider = ensure_e2e_provider()
 	server_name = f"atlas-e2e-shared-{int(time.time())}"
-	provision_server(provider, server_name)
+	provider.provision_server(server_name)
 
 	deadline = time.monotonic() + 600
 	while time.monotonic() < deadline:

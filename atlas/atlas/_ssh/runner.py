@@ -11,9 +11,9 @@ from atlas.atlas._ssh.transport import (
 	REMOTE_STAGING_DIRECTORY,
 	Connection,
 	_ensure_known_hosts_directory,
-	_ssh_key_file,
 	run_scp,
 	run_ssh,
+	ssh_key_file,
 )
 
 if TYPE_CHECKING:
@@ -92,51 +92,42 @@ def _execute_into(
 	variables: dict,
 	timeout_seconds: int,
 ) -> None:
+	_mark_running(task)
+	start = time.monotonic()
+	try:
+		stdout, stderr, exit_code = _run_remote_script(
+			connection, script, variables, timeout_seconds
+		)
+	except subprocess.TimeoutExpired as timeout:
+		_finalize(task, "", f"Timed out after {timeout.timeout}s", None,
+			"Failure", _elapsed_ms(start))
+		frappe.throw(f"Task {task.name} timed out after {timeout.timeout}s")
+	except Exception as exception:
+		_finalize(task, "", str(exception), None, "Failure",
+			_elapsed_ms(start))
+		if isinstance(exception, frappe.ValidationError):
+			raise
+		raise frappe.ValidationError(str(exception)) from exception
+
+	status = "Success" if exit_code == 0 else "Failure"
+	_finalize(task, stdout, stderr, exit_code, status, _elapsed_ms(start))
+	if status == "Failure":
+		# Tail, not head: scripts run under `bash -x`, so the first hundreds of
+		# chars are tracing noise and the real error message lives near the end.
+		frappe.throw(
+			f"Task {task.name} ({script}) exited {exit_code}: {stderr[-500:]}"
+		)
+
+
+def _mark_running(task: "Task") -> None:
 	task.status = "Running"
 	task.started = frappe.utils.now_datetime()
 	task.save(ignore_permissions=True)
 	frappe.db.commit()
 
-	start_clock = time.monotonic()
-	try:
-		stdout, stderr, exit_code = _run_remote_script(
-			connection, script, variables, timeout_seconds
-		)
-	except subprocess.TimeoutExpired:
-		_finalize(
-			task,
-			stdout="",
-			stderr=f"Timed out after {timeout_seconds}s",
-			exit_code=None,
-			status="Failure",
-			elapsed_ms=int((time.monotonic() - start_clock) * 1000),
-		)
-		raise frappe.ValidationError(f"Task {task.name} timed out after {timeout_seconds}s")
-	except Exception as exception:
-		# scp/ssh failures during upload, missing script, etc. Mark the row
-		# Failure before re-raising so it doesn't linger in Running forever.
-		_finalize(
-			task,
-			stdout="",
-			stderr=str(exception),
-			exit_code=None,
-			status="Failure",
-			elapsed_ms=int((time.monotonic() - start_clock) * 1000),
-		)
-		if isinstance(exception, frappe.ValidationError):
-			raise
-		raise frappe.ValidationError(str(exception)) from exception
 
-	elapsed_ms = int((time.monotonic() - start_clock) * 1000)
-	status = "Success" if exit_code == 0 else "Failure"
-	_finalize(task, stdout, stderr, exit_code, status, elapsed_ms)
-
-	if status == "Failure":
-		# Tail, not head: scripts run under `bash -x`, so the first hundreds of
-		# chars are tracing noise and the real error message lives near the end.
-		raise frappe.ValidationError(
-			f"Task {task.name} ({script}) exited {exit_code}: {stderr[-500:]}"
-		)
+def _elapsed_ms(start: float) -> int:
+	return int((time.monotonic() - start) * 1000)
 
 
 def _finalize(
@@ -170,7 +161,7 @@ def _run_remote_script(
 
 	_ensure_known_hosts_directory()
 
-	with _ssh_key_file(connection.ssh_private_key) as key_path:
+	with ssh_key_file(connection.ssh_private_key) as key_path:
 		run_ssh(
 			connection,
 			key_path,
@@ -179,7 +170,7 @@ def _run_remote_script(
 		)
 
 		for local, remote in files_to_upload(script):
-			local_path = (scripts_catalog.SCRIPTS_DIRECTORY / ".." / local).resolve()
+			local_path = (scripts_catalog.scripts_directory() / ".." / local).resolve()
 			run_scp(connection, key_path, str(local_path), remote, timeout_seconds=300)
 
 		remote_script_path = f"{REMOTE_STAGING_DIRECTORY}/{script}"
