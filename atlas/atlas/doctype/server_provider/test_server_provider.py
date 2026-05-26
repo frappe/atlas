@@ -89,3 +89,63 @@ class TestServerProvider(IntegrationTestCase):
 		server.reload()
 		self.assertEqual(server.status, "Broken")
 		frappe.db.delete("Server", {"server_name": server_name})
+
+	def test_provision_server_rejects_duplicate(self) -> None:
+		from atlas.atlas.doctype.server_provider import server_provider as module
+
+		server_name = "dup-server"
+		frappe.db.delete("Server", {"server_name": server_name})
+		frappe.get_doc({
+			"doctype": "Server",
+			"server_name": server_name,
+			"provider": self.provider.name,
+			"provider_resource_id": "1",
+			"status": "Pending",
+		}).insert(ignore_permissions=True)
+
+		fake_client = MagicMock()
+		with patch.object(module, "DigitalOceanClient", return_value=fake_client):
+			with self.assertRaises(frappe.ValidationError) as raised:
+				self.provider.provision_server(server_name)
+		self.assertIn("already exists", str(raised.exception))
+		fake_client.create_droplet.assert_not_called()
+		frappe.db.delete("Server", {"server_name": server_name})
+
+	def test_finish_provisioning_marks_active_on_success(self) -> None:
+		from atlas.atlas.doctype.server_provider import server_provider as module
+
+		server_name = "test-srv-ok"
+		frappe.db.delete("Server", {"server_name": server_name})
+		server = frappe.get_doc({
+			"doctype": "Server",
+			"server_name": server_name,
+			"provider": self.provider.name,
+			"provider_resource_id": "4242",
+			"status": "Pending",
+		}).insert(ignore_permissions=True)
+
+		fake_droplet = {
+			"id": 4242,
+			"status": "active",
+			"networks": {
+				"v4": [{"type": "public", "ip_address": "5.6.7.8"}],
+				"v6": [{"type": "public", "ip_address": "2a03:b0c0:abcd:5678::1", "netmask": 64}],
+			},
+		}
+		fake_client = MagicMock()
+		fake_client.wait_for_active.return_value = fake_droplet
+
+		with patch.object(module, "DigitalOceanClient", return_value=fake_client):
+			with patch.object(module, "wait_for_ssh"):
+				with patch(
+					"atlas.atlas.doctype.server.server.Server.bootstrap",
+					return_value="task-name",
+				):
+					module.finish_provisioning(server_name, 4242)
+
+		server.reload()
+		self.assertEqual(server.status, "Active")
+		self.assertEqual(server.ipv4_address, "5.6.7.8")
+		self.assertEqual(server.ipv6_address, "2a03:b0c0:abcd:5678::1")
+		self.assertEqual(server.ipv6_prefix, "2a03:b0c0:abcd:5678::/64")
+		frappe.db.delete("Server", {"server_name": server_name})

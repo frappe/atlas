@@ -84,3 +84,80 @@ class TestVirtualMachine(IntegrationTestCase):
 				vm.provision()
 		vm.reload()
 		self.assertEqual(vm.status, "Pending")
+
+	def test_provision_rejects_from_running(self) -> None:
+		from atlas.atlas.doctype.virtual_machine import virtual_machine as module
+
+		vm = _new_vm()
+		vm.db_set("status", "Running")
+		vm.reload()
+		with patch.object(module, "run_task") as mocked:
+			with self.assertRaises(frappe.ValidationError) as raised:
+				vm.provision()
+		self.assertIn("Cannot provision from Running", str(raised.exception))
+		mocked.assert_not_called()
+
+	def test_validate_skips_when_no_before_save(self) -> None:
+		# Defensive branch: a non-new VM whose `_doc_before_save` was cleared
+		# should early-return from validate without comparing immutables.
+		vm = _new_vm()
+		vm._doc_before_save = None
+		vm.vcpus = 99
+		# Directly invoke validate; should not throw.
+		vm.validate()
+
+	def test_set_status_default_assigns_pending_when_empty(self) -> None:
+		# Frappe's JSON default pre-populates status, so we have to clear it
+		# in-memory to exercise the assignment branch.
+		vm = frappe.get_doc({
+			"doctype": "Virtual Machine",
+			"server": _ensure_test_server(),
+			"image": _ensure_test_image(),
+			"vcpus": 1,
+			"memory_megabytes": 512,
+			"disk_gigabytes": 2,
+			"ssh_public_key": "ssh-ed25519 AAAA",
+		})
+		vm.status = None
+		vm.set_status_default()
+		self.assertEqual(vm.status, "Pending")
+
+	def test_set_status_default_keeps_existing(self) -> None:
+		# `set_status_default` is a no-op when status is already populated.
+		# Construct an in-memory VM and exercise the helper directly.
+		vm = frappe.get_doc({
+			"doctype": "Virtual Machine",
+			"server": _ensure_test_server(),
+			"image": _ensure_test_image(),
+			"status": "Stopped",
+			"vcpus": 1,
+			"memory_megabytes": 512,
+			"disk_gigabytes": 2,
+			"ssh_public_key": "ssh-ed25519 AAAA",
+		})
+		vm.set_status_default()
+		self.assertEqual(vm.status, "Stopped")
+
+	def test_set_ipv6_address_keeps_existing(self) -> None:
+		vm = make_virtual_machine(
+			_ensure_test_server(),
+			_ensure_test_image(),
+			ipv6_address="2001:db8:1::abcd",
+		)
+		self.assertEqual(vm.ipv6_address, "2001:db8:1::abcd")
+
+	def test_set_mac_address_keeps_existing(self) -> None:
+		vm = make_virtual_machine(
+			_ensure_test_server(),
+			_ensure_test_image(),
+			mac_address="06:00:11:22:33:44",
+		)
+		self.assertEqual(vm.mac_address, "06:00:11:22:33:44")
+
+	def test_set_tap_device_keeps_existing(self) -> None:
+		vm = make_virtual_machine(
+			_ensure_test_server(),
+			_ensure_test_image(),
+			tap_device="atlas-aabbccdd1",
+		)
+		self.assertEqual(vm.tap_device, "atlas-aabbccdd1")

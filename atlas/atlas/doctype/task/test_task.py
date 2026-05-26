@@ -38,3 +38,71 @@ class TestTask(IntegrationTestCase):
 		task.script = "different.sh"
 		with self.assertRaises(frappe.ValidationError):
 			task.save(ignore_permissions=True)
+
+	def test_variables_dict_property_round_trips(self) -> None:
+		task = self._make(variables=json.dumps({"FOO": "bar", "BAZ": "qux"}))
+		self.assertEqual(task.variables_dict, {"FOO": "bar", "BAZ": "qux"})
+
+	def test_variables_dict_property_returns_empty_when_variables_empty(self) -> None:
+		# Construct in-memory (don't insert; insert validates non-empty).
+		task = frappe.get_doc({
+			"doctype": "Task",
+			"script": "noop.sh",
+			"variables": "",
+			"status": "Pending",
+			"triggered_by": "Administrator",
+		})
+		self.assertEqual(task.variables_dict, {})
+
+	def test_variables_dict_setter_serializes_to_json(self) -> None:
+		task = frappe.get_doc({
+			"doctype": "Task",
+			"script": "noop.sh",
+			"variables": "{}",
+			"status": "Pending",
+			"triggered_by": "Administrator",
+		})
+		task.variables_dict = {"NAME": "alice"}
+		self.assertEqual(json.loads(task.variables), {"NAME": "alice"})
+
+	def test_variables_dict_setter_rejects_non_dict(self) -> None:
+		task = frappe.get_doc({
+			"doctype": "Task",
+			"script": "noop.sh",
+			"variables": "{}",
+			"status": "Pending",
+			"triggered_by": "Administrator",
+		})
+		with self.assertRaises(frappe.ValidationError):
+			task.variables_dict = "not a dict"
+
+	def test_validate_rejects_empty_variables(self) -> None:
+		with self.assertRaises(frappe.ValidationError) as raised:
+			frappe.get_doc({
+				"doctype": "Task",
+				"script": "noop.sh",
+				"variables": "",
+				"status": "Pending",
+				"triggered_by": "Administrator",
+			}).insert(ignore_permissions=True)
+		self.assertIn("variables", str(raised.exception))
+
+	def test_validate_immutability_skips_when_no_before_save(self) -> None:
+		# Defensive branch: a non-new doc whose `_doc_before_save` was cleared
+		# should pass immutability validation without comparing fields.
+		task = self._make()
+		task.script = "different.sh"
+		task._doc_before_save = None
+		# `_validate_immutability` should early-return rather than throw.
+		task._validate_immutability()
+
+	def test_validate_rejects_non_object_json(self) -> None:
+		with self.assertRaises(frappe.ValidationError) as raised:
+			frappe.get_doc({
+				"doctype": "Task",
+				"script": "noop.sh",
+				"variables": "[1, 2, 3]",
+				"status": "Pending",
+				"triggered_by": "Administrator",
+			}).insert(ignore_permissions=True)
+		self.assertIn("JSON object", str(raised.exception))

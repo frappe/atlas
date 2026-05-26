@@ -106,3 +106,57 @@ class TestDigitalOceanClient(IntegrationTestCase):
 	def test_public_ipv4_from_droplet_fixture(self) -> None:
 		droplet = _fixture("droplet_active")["droplet"]
 		self.assertEqual(public_ipv4(droplet), "139.59.1.2")
+
+	def test_list_droplets_by_tag_returns_array(self) -> None:
+		fake = _FakeResponse(200, {"droplets": [{"id": 1}, {"id": 2}]})
+		with patch("atlas.atlas.digitalocean.requests.request", return_value=fake) as request:
+			droplets = self.client.list_droplets_by_tag("atlas-e2e")
+		self.assertEqual([d["id"] for d in droplets], [1, 2])
+		args, _ = request.call_args
+		self.assertIn("tag_name=atlas-e2e", args[1])
+
+	def test_list_droplets_by_tag_handles_missing_droplets_key(self) -> None:
+		fake = _FakeResponse(200, {})
+		with patch("atlas.atlas.digitalocean.requests.request", return_value=fake):
+			droplets = self.client.list_droplets_by_tag("nonexistent")
+		self.assertEqual(droplets, [])
+
+	def test_request_handles_204_no_content(self) -> None:
+		fake = _FakeResponse(204)
+		with patch("atlas.atlas.digitalocean.requests.request", return_value=fake):
+			result = self.client._request("DELETE", "/droplets/1")
+		self.assertEqual(result, {})
+
+	def test_request_handles_empty_200_body(self) -> None:
+		class EmptyResponse:
+			status_code = 200
+			text = ""
+			content = b""
+
+			def json(self):
+				return {}
+
+		with patch("atlas.atlas.digitalocean.requests.request", return_value=EmptyResponse()):
+			result = self.client._request("GET", "/something")
+		self.assertEqual(result, {})
+
+	def test_public_ipv6_raises_without_public_entry(self) -> None:
+		droplet = {
+			"id": 1,
+			"networks": {"v6": [{"type": "private", "ip_address": "fd00::1"}]},
+		}
+		with self.assertRaises(DigitalOceanError):
+			public_ipv6(droplet)
+
+	def test_public_ipv6_raises_when_v6_missing(self) -> None:
+		droplet = {"id": 2, "networks": {}}
+		with self.assertRaises(DigitalOceanError):
+			public_ipv6(droplet)
+
+	def test_public_ipv4_raises_without_public_entry(self) -> None:
+		droplet = {
+			"id": 3,
+			"networks": {"v4": [{"type": "private", "ip_address": "10.0.0.1"}]},
+		}
+		with self.assertRaises(DigitalOceanError):
+			public_ipv4(droplet)

@@ -1,5 +1,6 @@
 from unittest.mock import patch
 
+import frappe
 from frappe.tests import IntegrationTestCase
 
 from atlas.atlas.networking import carve_virtual_machine_range
@@ -77,3 +78,17 @@ class TestServerBootstrap(IntegrationTestCase):
 		self.assertEqual(self.server.firecracker_version, "1.15.1")
 		self.assertEqual(self.server.kernel_version, "6.8.0-31-generic")
 		self.assertEqual(self.server.architecture, "x86_64")
+
+	def test_bootstrap_rejects_from_disallowed_status(self) -> None:
+		# `Terminated` is not in BOOTSTRAP_ALLOWED_STATUS. Set in-memory only
+		# so the shared server fixture isn't mutated for other tests.
+		self.server.status = "Terminated"
+		with self.assertRaises(frappe.ValidationError) as raised:
+			self.server.bootstrap()
+		self.assertIn("Cannot bootstrap", str(raised.exception))
+
+	def test_get_scripts_returns_allowed_scripts(self) -> None:
+		from atlas.atlas import scripts_catalog
+
+		expected = scripts_catalog.allowed_scripts()
+		self.assertEqual(self.server.get_scripts(), expected)

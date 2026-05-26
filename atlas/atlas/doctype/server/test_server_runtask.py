@@ -74,6 +74,14 @@ class TestRunTaskDialog(IntegrationTestCase):
 
 		self.assertEqual(run.call_args.kwargs["variables"], {})
 
+	def test_rejects_non_dict_after_json_parse(self) -> None:
+		with self.assertRaises(frappe.ValidationError) as raised:
+			self.server.run_task_dialog(
+				script="bootstrap-server.sh",
+				variables=json.dumps([1, 2, 3]),
+			)
+		self.assertIn("JSON object", str(raised.exception))
+
 	def test_reboot_invokes_reboot_script(self) -> None:
 		from atlas.atlas.doctype.server import server as server_module
 
