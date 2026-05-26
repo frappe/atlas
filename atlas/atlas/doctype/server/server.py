@@ -31,13 +31,12 @@ class Server(Document):
 		upload_files(connection, _resolved_uploads())
 
 		task = run_task(
-			connection=connection,
+			server=self.name,
 			script="bootstrap-server.sh",
 			variables={
 				"FIRECRACKER_VERSION": "v1.15.1",
 				"ARCHITECTURE": "x86_64",
 			},
-			server=self.name,
 		)
 		self._absorb_bootstrap_output(task.stdout)
 		self.save(ignore_permissions=True)

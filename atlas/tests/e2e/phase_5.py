@@ -31,16 +31,21 @@ def run(reuse: bool = True, keep: bool = True) -> None:
 
 		# Negative: temporarily move the image aside.
 		_move_image(server.name, image, "aside")
-		raised = False
 		try:
-			vm.provision()
-		except frappe.ValidationError as exception:
-			raised = True
-			assert "not present" in str(exception).lower() or "missing" in str(exception).lower()
-		assert raised, "provision should have raised when image absent"
-		vm.reload()
-		# Probe failure already marked Failed; ok.
-		_move_image(server.name, image, "back")
+			raised = False
+			try:
+				vm.provision()
+			except frappe.ValidationError as exception:
+				raised = True
+				assert "not present" in str(exception).lower() or "missing" in str(exception).lower()
+			assert raised, "provision should have raised when image absent"
+			vm.reload()
+			# Probe failure already marked Failed; ok.
+		finally:
+			# Always restore the image, even if the assertion above failed —
+			# otherwise the next run starts with the rootfs in .bak and the
+			# positive path can't recover.
+			_move_image(server.name, image, "back")
 
 		# Recover state for the positive path.
 		vm.status = "Pending"

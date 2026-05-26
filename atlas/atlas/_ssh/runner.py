@@ -132,8 +132,10 @@ def _execute_into(
 	_finalize(task, stdout, stderr, exit_code, status, elapsed_ms)
 
 	if status == "Failure":
+		# Tail, not head: scripts run under `bash -x`, so the first hundreds of
+		# chars are tracing noise and the real error message lives near the end.
 		raise frappe.ValidationError(
-			f"Task {task.name} ({script}) exited {exit_code}: {stderr[:500]}"
+			f"Task {task.name} ({script}) exited {exit_code}: {stderr[-500:]}"
 		)
 
 
