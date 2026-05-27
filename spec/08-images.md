@@ -36,11 +36,12 @@ The guest unit file [`scripts/guest/atlas-network.service`](../scripts/guest/atl
 is uploaded to the server alongside `sync-image.sh` before the script runs.
 The script's `GUEST_NETWORK_UNIT` env var points at it. The upload is
 declared via the `SCRIPT_UPLOADS` map in
-[`atlas/atlas/script_uploads.py`](../atlas/atlas/script_uploads.py): every
-script lists its sidecar uploads there, and `run_task_on_server()` picks
-them up. Keeping the unit file as a real file (not a heredoc inside the
-script) means we can lint it, diff it, and edit it without touching shell
-code.
+[`atlas/atlas/script_uploads.py`](../atlas/atlas/script_uploads.py); the
+general mechanism (any script can declare sidecar uploads, picked up by
+`run_task`) is described in
+[04-tasks.md → Sidecar uploads](./04-tasks.md#sidecar-uploads-script_uploads).
+Keeping the unit file as a real file (not a heredoc inside the script) means
+we can lint it, diff it, and edit it without touching shell code.
 
 ### Why we convert squashfs → ext4 server-side
 

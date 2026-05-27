@@ -22,18 +22,41 @@ Concretely, a Task is a row in `Task` with:
 
 ## How it runs
 
-```
-atlas/atlas/atlas/ssh.py:
+The public SSH surface lives in [`atlas/atlas/ssh.py`](../atlas/atlas/ssh.py)
+(a re-export shim over `atlas/atlas/_ssh/{runner,transport}.py`). Five
+symbols, used by every controller and test:
 
-    def run_task(*, script, variables, server=None, connection=None,
-                 virtual_machine=None, timeout_seconds=1800) -> Task:
-        # One entry point with two modes (exactly one required):
-        #   server=<name>     — production path. Loads the Server doc and
-        #                       builds the Connection from it. This is what
-        #                       every DocType button calls.
-        #   connection=<obj>  — bootstrap path. Used before the Server row's
-        #                       provider linkage is usable.
-        ...
+```python
+def run_task(*, script, variables, server=None, connection=None,
+             virtual_machine=None, timeout_seconds=1800) -> Task:
+    """Insert a Task row, run the script over SSH, update the row.
+
+    Exactly one of `server` or `connection` is required:
+      - server=<name>  — production path. Loads the Server doc and builds
+                         the Connection from it. Every DocType button calls
+                         this form.
+      - connection=<Connection> — bootstrap path. Used before the Server
+                         row has a usable provider linkage (`finish_provisioning`
+                         uses it indirectly through `wait_for_ssh`).
+    """
+
+def execute_task(task_name: str) -> None:
+    """Background-job entrypoint. Reads an already-inserted Pending Task,
+    runs it via the same code path, updates the row. Called via
+    `frappe.enqueue` for long Tasks (image sync)."""
+
+def connection_for_server(server) -> Connection:
+    """Build the SSH Connection from a Server doc (reads the provider's
+    private key via `get_secret`)."""
+
+def upload_files(connection, files: list[tuple[str, str]]) -> None:
+    """scp a list of (local, remote) pairs. Not a Task. Used by
+    `Server.bootstrap()` to lay down helpers + the systemd unit before
+    the bootstrap script runs."""
+
+def wait_for_ssh(connection, timeout_seconds: int = 300) -> None:
+    """Poll the host until `ssh ... true` returns 0, or raise. Used after
+    droplet create, before bootstrap."""
 ```
 
 `scp` and `ssh` inside `run_task` are the system commands, invoked via
@@ -133,6 +156,41 @@ The method is sync from the caller's perspective. For long tasks, callers
 wrap it in `frappe.enqueue` (Frappe's background job queue) so the operator
 isn't blocked in Desk.
 
+### Sync vs queued, by script
+
+| Script                | Path                     | Why                                                                 |
+| --------------------- | ------------------------ | ------------------------------------------------------------------- |
+| `bootstrap-server.sh` | Queued (`finish_provisioning`) | 30–60s; chained after `wait_for_active` + `wait_for_ssh`. |
+| `sync-image.sh`       | Queued (`execute_task`)  | Minutes; downloads ~600MB.                                          |
+| `provision-vm.sh`     | Sync                     | ~3s; operator waits.                                                |
+| `start-vm.sh` / `stop-vm.sh` / `terminate-vm.sh` | Sync | <1s.                                                  |
+| `reboot-server.sh`    | Sync (via `run_task_dialog`) | The SSH drops mid-Task; the operator confirms by reconnecting. |
+| Ad-hoc via Run Task   | Sync                     | The dialog is the operator's "I want to see this finish" path.      |
+
+The "queue or not" decision lives in the calling DocType method, not in
+`run_task`. Both paths funnel through the same `_execute_into` core.
+
+### Queued-task ownership
+
+For queued Tasks, the button handler runs in the request and the script
+runs in the worker. The two-step pattern is:
+
+1. **In the request**: the handler inserts a Task row with
+   `status = "Pending"` and the full variables block, commits, then calls
+   `frappe.enqueue("atlas.atlas.ssh.execute_task", task_name=task.name,
+   queue="long", timeout=...)`. Returns the task name.
+2. **In the worker**: `execute_task(task_name)` loads the row, builds the
+   Connection from `task.server`, runs the script, and updates the row.
+
+The Pending row is the operator's receipt: it shows up in the Task list
+immediately, even before the worker has picked it up. If the worker never
+runs (queue down), the row sits in `Pending` forever — visible enough that
+the operator notices.
+
+For sync Tasks (Provision/Start/Stop/Terminate, Run Task dialog) the
+button handler calls `run_task` directly; row insert and run happen back
+to back in one process.
+
 ## Idempotency
 
 Every script in `atlas/scripts/` is idempotent. Re-running a script with the
@@ -152,13 +210,59 @@ If a script exits non-zero:
 The Task row is the authoritative record; the doc's status is a denormalized
 view of the latest task.
 
+## Sidecar uploads (`SCRIPT_UPLOADS`)
+
+Some scripts need a supporting file on the server before they run. The
+canonical example is `sync-image.sh`, which needs the guest
+`atlas-network.service` unit file staged so it can be embedded into the
+ext4 it builds.
+
+Rather than grow a Python "do this first" hook per Task type, we keep a
+single map in
+[`atlas/atlas/script_uploads.py`](../atlas/atlas/script_uploads.py):
+
+```python
+SCRIPT_UPLOADS: dict[str, list[tuple[str, str]]] = {
+    "sync-image.sh": [
+        ("scripts/guest/atlas-network.service",
+         "/tmp/atlas/atlas-network.service"),
+    ],
+}
+```
+
+`run_task` consults this map before each invocation and `scp`s the listed
+files alongside the script itself. The script reads them via env vars
+(e.g. `GUEST_NETWORK_UNIT=/tmp/atlas/atlas-network.service`).
+
+Bootstrap's helper scripts (`vm-network-up.sh`, `vm-network-down.sh`,
+`firecracker-vm@.service`) are **not** in this map — they're durable
+state, placed by `Server.bootstrap()` calling `upload_files` directly, not
+re-uploaded on every Task. See [03-bootstrapping.md](./03-bootstrapping.md).
+
+## Scripts catalog
+
+The list of scripts an operator can run lives in
+[`atlas/atlas/scripts_catalog.py`](../atlas/atlas/scripts_catalog.py):
+
+- `allowed_scripts()` returns the sorted `.sh` filenames directly under
+  [`scripts/`](../scripts/). This is the whitelist used by the Run Task
+  dialog and by `Server.reboot()`. `scripts/guest/` and `scripts/systemd/`
+  are excluded — they aren't host-runnable shell scripts.
+- `resolve(script)` locates a script file in either `scripts/` or the
+  e2e-only `atlas/tests/e2e/scripts/` directory (used by tests).
+
 ## "Run Task" — the escape hatch
 
 On `Server` there is a `Run Task` button. It opens a dialog with:
 
-- A picker over the scripts directory (so an operator can run any known
-  script ad-hoc).
+- A Select populated from `scripts_catalog.allowed_scripts()`.
 - A JSON text field for variables.
+
+The whitelisted method `Server.run_task_dialog(script, variables)` rejects
+any script not in `allowed_scripts()`, parses `variables` (string or dict),
+and runs the same `run_task` code path. Reboot is implemented as
+`run_task_dialog(script="reboot-server.sh", variables={})` — uniform path,
+recorded as a Task, same audit story.
 
 This is the same code path Atlas itself uses, including being recorded in
 the Task table. It's how we debug, and how we run one-off operations without

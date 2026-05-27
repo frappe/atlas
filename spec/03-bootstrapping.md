@@ -55,18 +55,54 @@ of `atlas/scripts/` as the single source of truth. Before running
 The `Server.bootstrap()` Python method orchestrates this:
 
 ```
-1. open ssh connection
-2. mkdir -p /tmp/atlas-bootstrap, /var/lib/atlas/bin
-3. scp the helper scripts and unit file into place, chmod 0755
-4. scp bootstrap-server.sh into /tmp/atlas-bootstrap/
-5. ssh "FIRECRACKER_VERSION=v1.15.1 ARCHITECTURE=x86_64 bash -x /tmp/atlas-bootstrap/bootstrap-server.sh"
-6. parse trailing JSON object from stdout into Server fields
-7. systemctl daemon-reload happens at the end of step 5
+1. open ssh connection (via `connection_for_server`)
+2. upload_files: vm-network-up.sh, vm-network-down.sh, firecracker-vm@.service
+   (mkdir of parent directories happens inside upload_files)
+3. run_task(server=..., script="bootstrap-server.sh",
+            variables={"FIRECRACKER_VERSION": ..., "ARCHITECTURE": ...})
+   — scp of bootstrap-server.sh + ssh exec happen inside run_task.
+4. parse trailing JSON object from stdout into Server fields
+   (firecracker_version, kernel_version, architecture)
+5. save the Server row.
 ```
 
 This is one Task: `bootstrap-server.sh`. The pre-copy step is not a Task,
 it's plumbing, and its commands are not interesting individually. They do
 appear on stderr of the task because we run the SSH wrapper with `-x`.
+
+## Provisioning a server end-to-end
+
+`Server Provider.provision_server(server_name)` (whitelisted, called from
+the button) is sync from the operator's perspective for the cheap part
+and async for the slow part:
+
+```
+1. Validate server_name is unique.
+2. DigitalOceanClient.create_droplet(...).
+3. Insert a Server row with status = "Pending" and provider_resource_id =
+   droplet["id"] (region, size copied from provider defaults).
+4. frappe.enqueue("...finish_provisioning", queue="long",
+                  server_name=..., droplet_id=...).
+5. Return the server name immediately.
+```
+
+`finish_provisioning(server_name, droplet_id)` runs in the long queue:
+
+```
+1. wait_for_active(droplet_id, timeout=600s).
+2. Write ipv4_address, ipv6_address, ipv6_prefix, and
+   ipv6_virtual_machine_range (the /124 carved from the /64) onto the Server.
+3. status = "Bootstrapping". Save.
+4. wait_for_ssh(connection_for_server(server), timeout=300s).
+5. server.bootstrap()  — synchronous inside the worker; no nested enqueue.
+6. On success: status = "Active". On any exception: status = "Broken"
+   and re-raise so the Task row carries the failure.
+```
+
+Failure handling is symmetric: a `Broken` server can be re-bootstrapped by
+clicking **Bootstrap** on the form because `bootstrap-server.sh` is
+idempotent. The droplet is left intact for the operator to delete in DO if
+they choose.
 
 ### Idempotency
 

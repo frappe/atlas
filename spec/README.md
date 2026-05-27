@@ -4,9 +4,10 @@ Atlas is a Frappe app for managing Firecracker virtual machines on servers.
 It is the lowest layer of a Frappe hosting platform. Sites, benches, IAM, and
 billing live in separate apps on top.
 
-The spec describes the system as it is. When the spec and code disagree, the
-code is the source of truth and the spec gets updated to match, unless the
-disagreement reveals a code defect.
+The spec describes the system as it is and is the source of truth. When the
+spec and code disagree, the spec is authoritative: update the code to match,
+unless the spec is wrong — in which case update the spec deliberately and
+keep it the source of truth.
 
 ## Goals
 
@@ -87,8 +88,53 @@ operator-facing flows do.
 
 ## Testing
 
-E2E tests are grouped by the use cases above, not by implementation phase.
-Each module owns the happy path, the operator-visible negative paths, and
-the DocType-level validation throws that guard the same method.
-[`plan/e2e-testing.md`](../plan/e2e-testing.md) is the going-forward
-guideline; the historical phase-by-phase plan files are kept for context.
+E2E tests are grouped by the use cases above, not by implementation
+detail. The mapping is one module per use case under
+[`atlas/tests/e2e/use_cases/`](../atlas/tests/e2e/use_cases); the
+filenames mirror the table above (`server_provisioning.py`,
+`image_sync.py`, `virtual_machine_provisioning.py`,
+`virtual_machine_lifecycle.py`, `run_task.py`, `digitalocean_client.py`,
+`ssh_primitive.py`).
+
+Each use-case module is the **single source of truth** for that
+operation's end-to-end coverage. It owns:
+
+1. The happy path — one full pass against a real server.
+2. The operator-visible negative paths for that use case (e.g. the
+   image-missing path lives in `virtual_machine_provisioning` because
+   that's where the operator triggers it).
+3. The DocType-level validation throws that guard the same method —
+   immutability, required fields, JSON shape, state-machine guards.
+4. Synchronous-path coverage for the background jobs the use case
+   normally enqueues (e.g. `image_sync` calls `execute_task` directly,
+   not only via `frappe.enqueue`).
+
+Bias toward adding a check to an existing use case. Add a new use-case
+module only when the operator gets a new button.
+
+### Entry points
+
+- `bench --site atlas.local execute atlas.tests.e2e.run_all` — runs
+  every use case that takes a server against **one shared bootstrapped
+  droplet** (`reuse=True, keep=True`), then deletes it at the end. The
+  regression entry point.
+- `bench --site atlas.local execute atlas.tests.e2e.run_all_coverage` —
+  same, plus the dedicated-droplet use cases
+  (`digitalocean_client.run`, `server_provisioning.run`). Cost: three
+  billable droplets.
+- `bench --site atlas.local execute atlas.tests.e2e.use_cases.<use_case>.run`
+  — happy-path-plus-validation for one use case. Use cases that need
+  the shared bootstrapped server expose `run_against_shared(reuse=True,
+  keep=True)` as well; they use the `phase()` context manager from
+  `_droplets.py`.
+
+Every e2e-created droplet is tagged `atlas-e2e`. The harness pre-sweep
+prints droplets older than 30 minutes so the operator can delete them
+by hand (the DO account also hosts production).
+
+### Shared helpers
+
+`_config.py`, `_droplets.py`, `_image.py`, `_tasks.py` (and the
+`_shared.py` re-export shim) under [`atlas/tests/e2e/`](../atlas/tests/e2e)
+are the substrate. Add helpers there when at least two use cases would
+benefit; single-use helpers stay private to their module.
