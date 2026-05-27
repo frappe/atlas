@@ -91,8 +91,12 @@ class TestServerBootstrap(IntegrationTestCase):
 			self.server.bootstrap()
 		self.assertIn("Cannot bootstrap", str(raised.exception))
 
-	def test_get_scripts_returns_allowed_scripts(self) -> None:
+	def test_get_scripts_returns_operator_visible_scripts(self) -> None:
 		from atlas.atlas import scripts_catalog
 
-		expected = scripts_catalog.allowed_scripts()
+		expected = scripts_catalog.operator_visible_scripts()
 		self.assertEqual(self.server.get_scripts(), expected)
+		# Lifecycle scripts must not leak into the desk picker.
+		hidden = {"provision-vm.sh", "start-vm.sh", "stop-vm.sh",
+			"terminate-vm.sh", "restart-vm.sh"}
+		self.assertFalse(hidden & set(self.server.get_scripts()))

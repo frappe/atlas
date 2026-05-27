@@ -69,8 +69,13 @@ class Server(Document):
 
 	@frappe.whitelist()
 	def get_scripts(self) -> list[str]:
-		"""Whitelisted: scripts available for Run Task dialog."""
-		return scripts_catalog.allowed_scripts()
+		"""Whitelisted: operator-visible scripts for the Run Task dialog.
+
+		The desk picker is intentionally shorter than `allowed_scripts()`.
+		Lifecycle scripts (provision-vm, terminate-vm, vm-network-up, ...) are
+		invoked from VM/Image controllers, not by hand from this dialog.
+		"""
+		return scripts_catalog.operator_visible_scripts()
 
 	def _bootstrap_uploads(self) -> list[tuple[str, str]]:
 		directory = scripts_catalog.scripts_directory()

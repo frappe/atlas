@@ -172,9 +172,19 @@ the raw `Variables (JSON)` Code field with a script-aware form:
 | `reboot-server.sh`   | (no fields — but typed confirm, see §5)                       |
 | `sync-image.sh`      | `Image` (Link → Virtual Machine Image, required)              |
 
-The mapping lives in a small client-side dict next to the dialog
-opener; on `Script` change the dialog calls `dialog.set_fields(...)`
-(supported on `frappe.ui.Dialog`) with the matching field list.
+The mapping lives in a small client-side dict (`SCRIPT_FORMS`) at the
+top of `server.js`. Every per-script field is declared on the dialog
+once, gated by `depends_on: "eval:doc.script === '<script>'"`. On
+`Script` change the dialog calls `dialog.refresh_dependency()` and
+Frappe's standard depends-on machinery shows/hides the matching
+fields. Submission collects only the visible fields.
+
+**Drift note (implementation):** The spec said
+`dialog.set_fields([...])` would re-render the dialog. That API isn't
+stable on `frappe.ui.Dialog` — rebuilding the dialog body wipes the
+field state and breaks the user's selection. Using `depends_on` +
+`refresh_dependency` is the standard Frappe pattern and survives
+re-renders cleanly.
 
 The submitted `Variables (JSON)` is built client-side from the typed
 fields and posted to the existing `run_task_dialog` method — no server

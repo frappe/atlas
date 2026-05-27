@@ -1,6 +1,10 @@
 """Catalog of scripts that can be invoked as Tasks on a Server.
 
-`allowed_scripts()` is the operator-visible whitelist for the Run Task dialog.
+`allowed_scripts()` lists every script the SSH runner will execute on a host.
+`operator_visible_scripts()` is the subset that the desk's Run Task dialog
+exposes — anything that should only run from a VM/Image controller is
+deliberately excluded.
+
 `resolve()` is the file-system lookup used by the SSH runner; it searches both
 the production scripts directory and the e2e test-only directory, because e2e
 probe scripts (which never appear in the picker) need to be findable too.
@@ -10,6 +14,12 @@ import functools
 from pathlib import Path
 
 import frappe
+
+OPERATOR_VISIBLE: frozenset[str] = frozenset({
+	"bootstrap-server.sh",
+	"reboot-server.sh",
+	"sync-image.sh",
+})
 
 
 @functools.lru_cache(maxsize=1)
@@ -41,6 +51,11 @@ def allowed_scripts() -> list[str]:
 		for entry in directory.iterdir()
 		if entry.is_file() and entry.suffix == ".sh"
 	)
+
+
+def operator_visible_scripts() -> list[str]:
+	"""Subset of allowed_scripts() that the Run Task dialog should expose."""
+	return sorted(name for name in allowed_scripts() if name in OPERATOR_VISIBLE)
 
 
 def resolve(script: str) -> Path:
