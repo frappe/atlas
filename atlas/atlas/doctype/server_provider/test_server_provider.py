@@ -21,6 +21,19 @@ class TestServerProvider(IntegrationTestCase):
 		self.assertTrue(result["ok"])
 		self.assertEqual(result["email"], "ok@example.com")
 
+	def test_preview_cost_returns_static_dict_value(self) -> None:
+		preview = self.provider.preview_cost()
+		self.assertEqual(preview["provider_type"], "DigitalOcean")
+		self.assertEqual(preview["region"], "blr1")
+		self.assertEqual(preview["size"], "s-2vcpu-4gb-intel")
+		self.assertEqual(preview["monthly_cost_usd"], 24)
+		self.assertEqual(preview["currency"], "USD")
+
+	def test_preview_cost_returns_none_for_unknown_size(self) -> None:
+		self.provider.default_size = "no-such-size"
+		preview = self.provider.preview_cost()
+		self.assertIsNone(preview["monthly_cost_usd"])
+
 	def test_test_connection_bad(self) -> None:
 		from atlas.atlas.digitalocean import DigitalOceanError
 		fake_client = MagicMock()

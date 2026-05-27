@@ -13,6 +13,21 @@ from atlas.atlas.ssh import connection_for_server, wait_for_ssh
 
 DIGITALOCEAN_REQUIRED = ("api_token", "ssh_key_id", "default_region", "default_size", "default_image")
 
+# Monthly USD price per size, updated by hand when DigitalOcean publishes
+# changes — same maintenance model as `default_image`. Not every size we run
+# in production is here; missing entries surface as "—" in the dialog rather
+# than a wrong number.
+DIGITALOCEAN_MONTHLY_COST_USD = {
+	"s-1vcpu-1gb": 6,
+	"s-1vcpu-2gb": 12,
+	"s-2vcpu-2gb": 18,
+	"s-2vcpu-4gb-intel": 24,
+	"s-2vcpu-4gb": 24,
+	"s-4vcpu-8gb": 48,
+	"c-2": 40,
+	"c-4": 80,
+}
+
 
 class ServerProvider(Document):
 	def validate(self) -> None:
@@ -30,6 +45,27 @@ class ServerProvider(Document):
 			frappe.throw("Test Connection is only supported for DigitalOcean providers")
 		account = self.client.account()
 		return {"ok": True, "email": account.get("email")}
+
+	@frappe.whitelist()
+	def preview_cost(self) -> dict:
+		"""Static preview of what `Provision Server` would create.
+
+		The cost number is from a hand-maintained dict (same policy as
+		`default_image`). Returns `monthly_cost_usd: None` if the size isn't
+		in the dict — the desk dialog renders that as "—" rather than guess.
+		"""
+		monthly_cost = (
+			DIGITALOCEAN_MONTHLY_COST_USD.get(self.default_size)
+			if self.provider_type == "DigitalOcean" else None
+		)
+		return {
+			"provider_type": self.provider_type,
+			"region": self.default_region,
+			"size": self.default_size,
+			"image": self.default_image,
+			"monthly_cost_usd": monthly_cost,
+			"currency": "USD",
+		}
 
 	@frappe.whitelist()
 	def provision_server(
