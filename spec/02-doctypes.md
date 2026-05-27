@@ -100,18 +100,26 @@ conditionally is a desk-only nicety; the spec does not require it.)
 
 ### Buttons
 
-- **Provision Server** — opens a dialog. The dialog's fields depend on
-  `provider_type`:
-  - `DigitalOcean`: one field, `server_name`. Atlas calls the DO API,
-    inserts the `Server`, runs the bootstrap task. Region, size, image
-    come from the provider defaults.
+- **Provision Server** (primary) — opens a dialog. The dialog's fields
+  depend on `provider_type`:
+  - `DigitalOcean`: one field, `server_name`. The dialog shows a
+    defaults preview (region, size + estimated monthly USD cost,
+    image) sourced from a new whitelisted `preview_cost()` method on
+    the provider, then asks for an orange "Create a billable droplet?"
+    confirmation before calling the DO API.
   - `Self-Managed`: `server_name`, `ipv4_address`, `ipv6_address`,
     `ipv6_prefix`, `ipv6_virtual_machine_range`. Atlas inserts the
     `Server` directly with the operator-supplied values and runs the
     bootstrap task. No API call. See
     [03-bootstrapping.md](./03-bootstrapping.md).
-- **Test Connection** — `DigitalOcean` only: pings the DO account
-  endpoint. Hidden for `Self-Managed`.
+- **Test Connection** — `DigitalOcean` only; under the `Actions ▾`
+  menu. Pings the DO account endpoint. Hidden for `Self-Managed`.
+
+Monthly cost in the preview comes from a hand-maintained
+`DIGITALOCEAN_MONTHLY_COST_USD` dict in `server_provider.py` — same
+maintenance policy as `default_image`, because DO doesn't expose
+per-size pricing in their API. Sizes not in the dict render as "—"
+rather than guess.
 
 ---
 
@@ -178,16 +186,22 @@ notes
 
 ### Buttons
 
-- **Bootstrap** — runs [`scripts/bootstrap-server.sh`](../scripts/bootstrap-server.sh).
+- **Bootstrap** (primary on `Pending` / `Bootstrapping` / `Broken`;
+  folds under `Actions ▾` as **Re-bootstrap** on `Active`) — runs
+  [`scripts/bootstrap-server.sh`](../scripts/bootstrap-server.sh).
   Idempotent.
-- **Run Task** — opens a dialog with a script picker + variables. Runs as a
-  Task.
-- **Reboot** — runs [`scripts/reboot-server.sh`](../scripts/reboot-server.sh)
+- **Run Task** (under `Actions ▾`) — opens a script-aware dialog;
+  see [04-tasks.md § Run Task](./04-tasks.md#run-task--the-escape-hatch).
+- **Reboot** (under `Actions ▾`, danger) — runs
+  [`scripts/reboot-server.sh`](../scripts/reboot-server.sh)
   (`systemctl reboot` over SSH). The resulting Task may end in `Failure`
   (SSH drops before the script returns) or `Success` (`systemctl reboot`
   exits before the connection is torn down). Either outcome is normal; the
   meaning is "the server is rebooting." Operators confirm reboot by
-  watching for SSH to come back, not by reading the Task status.
+  watching for SSH to come back, not by reading the Task status. The
+  desk requires the operator to type the server name into a
+  text-match dialog before the red button enables — see
+  [10-desk-ui.md](./10-desk-ui.md).
 
 Frappe's standard Connections dashboard renders below the form, linking
 Virtual Machines and Tasks via their `server` field (configured in
@@ -261,13 +275,19 @@ last_started
 
 ### Buttons
 
-- **Provision** — only enabled when `status` is `Pending` or `Failed`. Runs
+Tiering is keyed off `status` — see [10-desk-ui.md § Virtual Machine](./10-desk-ui.md#virtual-machine):
+
+- **Provision** (primary on `Pending` / `Failed`) — runs
   [`scripts/provision-vm.sh`](../scripts/provision-vm.sh).
-- **Start** — `Stopped` → `Running`.
-- **Stop** — `Running` → `Stopped`.
-- **Restart** — `Stopped`/`Running` → `Running`.
-- **Terminate** — runs [`scripts/terminate-vm.sh`](../scripts/terminate-vm.sh),
-  sets `status = Terminated`. The UUID does not change.
+- **Start** (primary on `Stopped`) — `Stopped` → `Running`.
+- **Stop** (primary on `Running`) — `Running` → `Stopped`.
+- **Restart** (secondary on `Stopped` / `Running`) → `Running`.
+- **Terminate** (under `Actions ▾`, danger; available until
+  `Terminated`) — runs
+  [`scripts/terminate-vm.sh`](../scripts/terminate-vm.sh), sets
+  `status = Terminated`. The UUID does not change. The desk requires
+  the operator to type the VM's 8-char short ID into a text-match
+  dialog before the red button enables.
 
 ---
 
@@ -322,9 +342,14 @@ which inserts the row for you. See [08-images.md](./08-images.md).
 
 ### Buttons
 
-- **Sync to All Servers** — runs [`scripts/sync-image.sh`](../scripts/sync-image.sh)
-  against every active server.
-- **Sync to Server** — same, for a single server.
+- **Sync to Server** (secondary) — runs
+  [`scripts/sync-image.sh`](../scripts/sync-image.sh) on a single
+  server. The picker uses `only_select: 1` (no "+ Create" affordance)
+  and a `status = Active` filter — see
+  [10-desk-ui.md § Virtual Machine Image](./10-desk-ui.md#virtual-machine-image).
+- **Sync to All Servers** (under `Actions ▾`) — same, against every
+  active server. Before fanning out the desk shows an orange
+  confirmation listing the active targets.
 
 ---
 
@@ -339,6 +364,7 @@ the run finishes.
 | Field                   | Type                   | Reqd | Read-only | Default | Notes                                       |
 | ----------------------- | ---------------------- | ---- | --------- | ------- | ------------------------------------------- |
 | `name`                  | (autoname `hash`)      | Y    | Y         |         | 10-char random hex (Frappe `autoname = "hash"`). |
+| `subject`               | Data                   |      | Y         |         | Set in `before_insert` from `(script, virtual_machine, server)` — e.g. `Provision VM · verify vnet_hdr fix on bootstrap-server-…`. `title_field` so the form breadcrumb reads it instead of the hash. Indexed. |
 | `server`                | Link → Server          |      | Y         |         | Indexed.                                    |
 | `virtual_machine`       | Link → Virtual Machine |      | Y         |         | Set when the task is for one VM. Indexed.   |
 | `script`                | Data                   | Y    | Y         |         | Path under `atlas/scripts/`, e.g. `provision-vm.sh`. Indexed. |
@@ -363,6 +389,7 @@ record.
 ### Form layout
 
 ```
+subject
 server
 virtual_machine
 script
@@ -380,10 +407,21 @@ stdout
 stderr
 ```
 
+The client script overlays this with a status-coloured dashboard
+headline, related-record chips, sibling-tasks list, and a Retry button
+on Failure. See [10-desk-ui.md § Task](./10-desk-ui.md#task) for the
+full behavior.
+
+The controller publishes a `task_update` realtime event (scoped to
+the Task's document room) from `after_insert` and `on_update`, with
+`{name, status, exit_code, duration_milliseconds, server, virtual_machine, subject}`.
+The Task form subscribes and reloads on each tick — long-running
+Tasks aren't a black box.
+
 ### List view
 
-- Columns (left to right): `server`, `virtual_machine`, `script`, `status`,
-  `duration_milliseconds`, `started`.
+- Columns (left to right): `subject`, `server`, `virtual_machine`,
+  `script`, `status`, `duration_milliseconds`, `started`.
   (Frappe orders list columns by their position in the field schema.
   `started` lives in the Timing section, after the header, so it lands at
   the end of the row. Putting it first would require moving the field

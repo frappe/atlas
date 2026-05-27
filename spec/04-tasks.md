@@ -245,18 +245,43 @@ The list of scripts an operator can run lives in
 [`atlas/atlas/scripts_catalog.py`](../atlas/atlas/scripts_catalog.py):
 
 - `allowed_scripts()` returns the sorted `.sh` filenames directly under
-  [`scripts/`](../scripts/). This is the whitelist used by the Run Task
-  dialog and by `Server.reboot()`. `scripts/guest/` and `scripts/systemd/`
-  are excluded — they aren't host-runnable shell scripts.
+  [`scripts/`](../scripts/). This is the whitelist used by the SSH
+  runner and the `Server.run_task_dialog` controller method.
+  `scripts/guest/` and `scripts/systemd/` are excluded — they aren't
+  host-runnable shell scripts.
+- `operator_visible_scripts()` is the strict subset the desk's `Run Task`
+  picker is allowed to expose: `bootstrap-server.sh`,
+  `reboot-server.sh`, `sync-image.sh`. Everything else
+  (`provision-vm.sh`, `start-vm.sh`, `terminate-vm.sh`, …) is a
+  state-machine move that must originate from a VM or Image controller
+  method — the operator drives it via the VM form's lifecycle buttons,
+  not by hand-firing the script with empty variables.
 - `resolve(script)` locates a script file in either `scripts/` or the
   e2e-only `atlas/tests/e2e/scripts/` directory (used by tests).
+
+The split is enforced at the boundary, not deep in: `Server.get_scripts()`
+returns `operator_visible_scripts()` for the desk picker, while
+`Server.run_task_dialog` continues to validate against
+`allowed_scripts()`. Internal callers (`Server.bootstrap`, `Server.reboot`,
+VM lifecycle methods) keep working unchanged.
 
 ## "Run Task" — the escape hatch
 
 On `Server` there is a `Run Task` button. It opens a dialog with:
 
-- A Select populated from `scripts_catalog.allowed_scripts()`.
-- A JSON text field for variables.
+- A Select populated from `Server.get_scripts()` (the operator-visible
+  three).
+- A per-script form: bootstrap-server.sh asks for
+  `FIRECRACKER_VERSION` and `ARCHITECTURE`; sync-image.sh asks for
+  `IMAGE_NAME` (Link → Virtual Machine Image, filtered to
+  `is_active = 1`); reboot-server.sh asks for nothing. Per-script
+  fields are gated by `depends_on: doc.script === ...` and toggled on
+  change. The raw `Variables (JSON)` Code field is no longer the
+  default surface.
+- A `Show advanced (System Manager)` toggle that brings the raw-JSON
+  field back. This preserves the "hand-fire a script with custom
+  vars" capability we use for debugging while keeping the default
+  safe for everyone else.
 
 The whitelisted method `Server.run_task_dialog(script, variables)` rejects
 any script not in `allowed_scripts()`, parses `variables` (string or dict),
@@ -267,3 +292,25 @@ recorded as a Task, same audit story.
 This is the same code path Atlas itself uses, including being recorded in
 the Task table. It's how we debug, and how we run one-off operations without
 adding a new DocType method.
+
+## Retrying a failed Task
+
+Failed Tasks expose a **Retry** button on the form. `Task.retry()` is a
+whitelisted method that:
+
+- For VM lifecycle scripts (`provision-vm.sh`, `start-vm.sh`,
+  `stop-vm.sh`, `restart-vm.sh`, `terminate-vm.sh`): loads the linked
+  Virtual Machine and calls the matching controller method
+  (`vm.provision()`, `vm.start()`, …). The state-machine guards on the
+  VM live there; Retry does not duplicate them. If the VM is in a
+  state that disallows the action, the controller's existing
+  `frappe.throw` surfaces to the operator.
+- For operator-visible server scripts (`bootstrap-server.sh`,
+  `reboot-server.sh`, `sync-image.sh`): re-invokes
+  `Server.run_task_dialog(self.script, self.variables_dict)` so the
+  retry is recorded as a fresh Task row with the original variables.
+- For anything else (e.g. an ad-hoc `noop.sh`): throws "not retriable
+  from the Task form."
+
+A retry is a new Task row, not a mutation of the failed one. The audit
+trail keeps both.

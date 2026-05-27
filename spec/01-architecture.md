@@ -81,6 +81,14 @@ The connections between DocTypes (Server → Virtual Machine → Task) are
 rendered by Frappe's standard Connections dashboard on each form, driven
 by `<doctype>_dashboard.py` next to each DocType controller.
 
+Across all five Atlas doctypes the desk form goes through a small
+shared client layer
+([`atlas/public/js/atlas_form_overrides.js`](../atlas/public/js/atlas_form_overrides.js),
+wired via `doctype_js`) that hides the right rail and timeline, gives
+buttons a primary / secondary / danger hierarchy, and demands typed
+confirmation for destructive or billable actions. See
+[10-desk-ui.md](./10-desk-ui.md) for the full convention.
+
 ### Server Provider
 
 Two provider types are implemented:

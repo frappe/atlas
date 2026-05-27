@@ -64,6 +64,7 @@ keep it the source of truth.
 7. [Filesystem layout on the server](./07-filesystem-layout.md)
 8. [Images](./08-images.md)
 9. [Roadmap and deferred decisions](./09-roadmap.md)
+10. [Desk UI](./10-desk-ui.md)
 
 ## First run on a fresh site
 

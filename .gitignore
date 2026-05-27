@@ -63,3 +63,6 @@ plan/layouts.md
 
 ### Playwright
 .playwright-mcp/
+
+# Claude
+.claude/
