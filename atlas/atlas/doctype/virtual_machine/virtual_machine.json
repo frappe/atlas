@@ -10,19 +10,24 @@
   "description",
   "server",
   "image",
+  "column_break_header",
+  "status",
   "section_break_resources",
   "vcpus",
+  "column_break_resources_1",
   "memory_megabytes",
+  "column_break_resources_2",
   "disk_gigabytes",
-  "section_break_networking",
-  "ipv6_address",
-  "mac_address",
-  "tap_device",
   "section_break_access",
   "ssh_public_key",
-  "section_break_state",
-  "status",
+  "section_break_networking",
+  "ipv6_address",
+  "column_break_networking",
+  "mac_address",
+  "tap_device",
+  "section_break_activity",
   "last_started",
+  "column_break_activity",
   "last_stopped"
  ],
  "fields": [
@@ -52,6 +57,21 @@
    "reqd": 1
   },
   {
+   "fieldname": "column_break_header",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "Pending",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Status",
+   "options": "Pending\nRunning\nStopped\nFailed\nTerminated",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
    "fieldname": "section_break_resources",
    "fieldtype": "Section Break",
    "label": "Resources"
@@ -64,11 +84,19 @@
    "reqd": 1
   },
   {
+   "fieldname": "column_break_resources_1",
+   "fieldtype": "Column Break"
+  },
+  {
    "default": "512",
    "fieldname": "memory_megabytes",
    "fieldtype": "Int",
    "label": "Memory (MB)",
    "reqd": 1
+  },
+  {
+   "fieldname": "column_break_resources_2",
+   "fieldtype": "Column Break"
   },
   {
    "default": "4",
@@ -78,15 +106,32 @@
    "reqd": 1
   },
   {
+   "fieldname": "section_break_access",
+   "fieldtype": "Section Break",
+   "label": "Access"
+  },
+  {
+   "fieldname": "ssh_public_key",
+   "fieldtype": "Long Text",
+   "label": "SSH Public Key",
+   "reqd": 1
+  },
+  {
    "fieldname": "section_break_networking",
    "fieldtype": "Section Break",
+   "collapsible": 1,
    "label": "Networking"
   },
   {
    "fieldname": "ipv6_address",
    "fieldtype": "Data",
+   "in_list_view": 1,
    "label": "IPv6 Address",
    "read_only": 1
+  },
+  {
+   "fieldname": "column_break_networking",
+   "fieldtype": "Column Break"
   },
   {
    "fieldname": "mac_address",
@@ -101,36 +146,20 @@
    "read_only": 1
   },
   {
-   "fieldname": "section_break_access",
+   "fieldname": "section_break_activity",
    "fieldtype": "Section Break",
-   "label": "Access"
-  },
-  {
-   "fieldname": "ssh_public_key",
-   "fieldtype": "Long Text",
-   "label": "SSH Public Key",
-   "reqd": 1
-  },
-  {
-   "fieldname": "section_break_state",
-   "fieldtype": "Section Break",
-   "label": "State"
-  },
-  {
-   "default": "Pending",
-   "fieldname": "status",
-   "fieldtype": "Select",
-   "in_list_view": 1,
-   "in_standard_filter": 1,
-   "label": "Status",
-   "options": "Pending\nRunning\nStopped\nFailed\nTerminated",
-   "reqd": 1
+   "collapsible": 1,
+   "label": "Activity"
   },
   {
    "fieldname": "last_started",
    "fieldtype": "Datetime",
    "label": "Last Started",
    "read_only": 1
+  },
+  {
+   "fieldname": "column_break_activity",
+   "fieldtype": "Column Break"
   },
   {
    "fieldname": "last_stopped",
@@ -140,7 +169,7 @@
   }
  ],
  "links": [],
- "modified": "2026-05-25 00:00:00.000000",
+ "modified": "2026-05-27 00:00:00.000000",
  "modified_by": "Administrator",
  "module": "Atlas",
  "name": "Virtual Machine",

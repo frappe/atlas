@@ -1,18 +1,18 @@
 # Virtual machine lifecycle
 
-The lifecycle is intentionally narrow: **provision, start, stop, delete**. No
-resize, no migrate, no snapshot, no clone. Changing CPU/RAM means archiving
-and provisioning a new VM. Each operation is exactly one Task.
+The lifecycle is intentionally narrow: **provision, start, stop, terminate**.
+No resize, no migrate, no snapshot, no clone. Changing CPU/RAM means
+terminating and provisioning a new VM. Each operation is exactly one Task.
 
 ## Identity
 
 A `Virtual Machine.name` is a **UUID** assigned at insert. It never changes —
-including on archive. This means:
+including on terminate. This means:
 
 - The on-host directory path
   (`/var/lib/atlas/virtual-machines/<uuid>/`) is stable forever.
 - The systemd unit instance name (`firecracker-vm@<uuid>.service`) is stable.
-- Tasks referencing the VM stay valid after archive.
+- Tasks referencing the VM stay valid after terminate.
 - The operator does not have to invent a name; they use `description` for a
   human-readable label.
 
@@ -28,26 +28,28 @@ The MAC and TAP device are derived from the UUID so they are also stable.
                               |
                   (Provision button)
                               |
-                              v
-                       Provisioning
-                              |
                   +-----------+-----------+
                   v                       v
               Running                 Failed
                   |                       |
-       (Stop)     |                       | (Delete cleans up)
+       (Stop)     |                       | (Terminate cleans up)
                   v                       v
-              Stopped                 Archived
+              Stopped                Terminated
                   |
        (Start)    |
                   +---> Running
                           |
-       (Delete from any non-Archived state)
+       (Terminate from any non-Terminated state)
                           v
-                       Archived
+                       Terminated
 ```
 
-`Archived` is terminal. The doc stays in the table forever for history.
+There is no transient `Provisioning` status — the Task row is the "in-flight"
+record; the VM row only moves to `Running` after a successful Provision Task,
+and stays at `Pending` if it fails (re-clickable because the script is
+idempotent).
+
+`Terminated` is terminal. The doc stays in the table forever for history.
 
 ## Provision
 
@@ -87,7 +89,7 @@ Each is a single Task running a one-line script:
 
 - `start-vm.sh`: `systemctl start firecracker-vm@<name>.service`
 - `stop-vm.sh`: `systemctl stop firecracker-vm@<name>.service`
-- `delete-vm.sh`: see below
+- `terminate-vm.sh`: see below
 
 Restart is `stop-vm.sh` then `start-vm.sh`, but as the Python method's
 choice — we do not add a `restart-vm.sh`, because the only thing `systemctl
@@ -97,9 +99,9 @@ Status updates happen after the Task succeeds. We do not poll the server
 to verify; the source of truth is the Task. If the operator wants ground
 truth, they click `Run Task` with `script=systemctl status ...`.
 
-## Delete
+## Terminate
 
-Runs [`delete-vm.sh`](../scripts/delete-vm.sh), which:
+Runs [`terminate-vm.sh`](../scripts/terminate-vm.sh), which:
 
 1. `systemctl disable --now firecracker-vm@<uuid>.service` (no-op if already
    stopped).
@@ -108,11 +110,11 @@ Runs [`delete-vm.sh`](../scripts/delete-vm.sh), which:
 3. `rm -rf /var/lib/atlas/virtual-machines/<uuid>` and removes the API
    socket.
 
-Then Python sets `status = Archived`. **The UUID does not change.** The Task
-row that did the delete remains attached to the archived VM.
+Then Python sets `status = Terminated`. **The UUID does not change.** The
+Task row that did the terminate remains attached to the terminated VM.
 
-If the Delete Task fails (SSH dropped, script error, etc.), the row stays
-in its prior status. The operator clicks Delete again — the script is
+If the Terminate Task fails (SSH dropped, script error, etc.), the row stays
+in its prior status. The operator clicks Terminate again — the script is
 idempotent (each step is a no-op if its target is already gone), so a
 second invocation is the correct retry.
 
@@ -140,8 +142,8 @@ Frappe DB does not have to be consulted on host reboot.
 ## Why immutable resource fields
 
 `server`, `image`, `vcpus`, `memory_megabytes`, `disk_gigabytes` are not
-editable after first provision. To change them, the operator archives the VM
-and provisions a new one. This keeps the on-host state derivable from the
+editable after first provision. To change them, the operator terminates the
+VM and provisions a new one. This keeps the on-host state derivable from the
 doc — no migration logic, no resize commands, no out-of-sync moments. The
 moment we let those fields change, we add code paths that have to handle
 "the on-host VM was provisioned with the old values, now the doc says

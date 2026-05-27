@@ -9,6 +9,19 @@ permission for `System Manager`.
 4. [Virtual Machine Image](#virtual-machine-image)
 5. [Task](#task)
 
+Each DocType is specified by three sections: **Fields** (the schema), **Form
+layout** (the section/column structure of the desk form), and **List view**
+(column order and standard filters). Together these are enough to
+regenerate the JSON without consulting the implementation.
+
+Notation in the Form layout sections:
+
+- `── <label> ──` is a Section Break with that label.
+- `(collapsible)` after a section label means the section is collapsed by
+  default.
+- `|` is a Column Break inside a section. Fields after `|` lay out in the
+  next column.
+
 ---
 
 ## Server Provider
@@ -16,46 +29,47 @@ permission for `System Manager`.
 One row per cloud account. Only `DigitalOcean` is implemented in this
 iteration.
 
-| Field             | Type                 | Reqd | Notes                                              |
-| ----------------- | -------------------- | ---- | -------------------------------------------------- |
-| `provider_name`   | Data                 | Y    | Primary key. e.g. `digitalocean-production`.       |
-| `provider_type`   | Select               | Y    | Options: `DigitalOcean`.                           |
-| `api_token`       | Password             | Y    | DigitalOcean personal access token.                |
-| `default_region`  | Data                 | Y    | e.g. `blr1`.                                       |
-| `default_size`    | Data                 | Y    | Must support nested virtualization.                |
-| `default_image`   | Data                 | Y    | e.g. `ubuntu-24-04-x64`.                           |
-| `ssh_key_id`      | Data                 | Y    | Fingerprint of the SSH key pre-loaded on droplets. |
-| `ssh_private_key` | Password (Long Text) | Y    | Matching private key. Atlas uses this to SSH in.   |
-| `is_active`       | Check                |      | Defaults to 1.                                     |
+### Fields
 
-Buttons:
+| Field             | Type     | Reqd | Read-only | Default | Notes                                              |
+| ----------------- | -------- | ---- | --------- | ------- | -------------------------------------------------- |
+| `provider_name`   | Data     | Y    |           |         | Primary key. Unique. e.g. `digitalocean-production`. |
+| `provider_type`   | Select   | Y    |           |         | Options: `DigitalOcean`.                           |
+| `is_active`       | Check    |      |           | 1       |                                                    |
+| `api_token`       | Password | Y    |           |         | DigitalOcean personal access token.                |
+| `ssh_key_id`      | Data     | Y    |           |         | Fingerprint of the SSH key pre-loaded on droplets. |
+| `ssh_private_key` | Password | Y    |           |         | Matching private key. Atlas uses this to SSH in.   |
+| `default_region`  | Data     | Y    |           |         | e.g. `blr1`.                                       |
+| `default_size`    | Data     | Y    |           |         | Must support nested virtualization.                |
+| `default_image`   | Data     | Y    |           |         | e.g. `ubuntu-24-04-x64`.                           |
+
+### Form layout
+
+```
+provider_name
+provider_type
+| is_active
+── Authentication ──
+api_token
+ssh_key_id
+ssh_private_key
+── Defaults for new servers ──
+default_region
+| default_size
+  default_image
+```
+
+### List view
+
+- Columns (left to right): `provider_name`, `provider_type`, `is_active`,
+  `default_region`.
+- Standard filters: `provider_type`, `is_active`.
+
+### Buttons
 
 - **Provision Server** — opens a dialog asking for a `server_name`; creates a
   droplet, inserts a `Server`, runs the bootstrap task.
 - **Test Connection** — pings the DigitalOcean account endpoint.
-
-### Server Provider form wireframe
-
-```
-+-----------------------------------------------------------+
-| Server Provider: digitalocean-production       [Active]   |
-+-----------------------------------------------------------+
-|  Provider Name *      [ digitalocean-production         ] |
-|  Provider Type *      [ DigitalOcean                  v ] |
-|  API Token *          [ ************************        ] |
-|                                                           |
-|  Defaults                                                 |
-|  Default Region *     [ blr1                            ] |
-|  Default Size *       [ s-2vcpu-4gb-intel               ] |
-|  Default Image *      [ ubuntu-24-04-x64                ] |
-|  SSH Key ID *         [ 12:34:56:...:ab                 ] |
-|  SSH Private Key *    [ -----BEGIN OPENSSH PRIVATE KEY- ] |
-|                                                           |
-|  [x] Is Active                                            |
-|                                                           |
-|  [ Test Connection ]    [ Provision Server ]             |
-+-----------------------------------------------------------+
-```
 
 ---
 
@@ -63,29 +77,60 @@ Buttons:
 
 One row per host. Name is operator-chosen (e.g. `server-blr1-01`).
 
-| Field                  | Type                          | Reqd | Notes                                          |
-| ---------------------- | ----------------------------- | ---- | ---------------------------------------------- |
-| `server_name`          | Data                          | Y    | Primary key.                                   |
-| `provider`             | Link → Server Provider        | Y    |                                                |
-| `provider_resource_id` | Data                          | Y    | DigitalOcean droplet id. Read-only after set.  |
-| `region`               | Data                          | Y    | Read-only.                                     |
-| `size`                 | Data                          | Y    | Read-only.                                     |
-| `ipv4_address`         | Data                          | Y    | The SSH endpoint for Atlas.                    |
-| `ipv6_address`         | Data                          | Y    | The server's own IPv6 (typically `::1` of /64; whatever DO assigns). |
-| `ipv6_prefix`          | Data                          | Y    | The /64 routed to this server.                 |
-| `ipv6_virtual_machine_range` | Data                    | Y    | The /124 carved from the /64 we hand out from. |
-| `status`               | Select                        | Y    | `Pending`, `Bootstrapping`, `Active`, `Draining`, `Broken`, `Archived`. |
-| `architecture`         | Data                          |      | Set by bootstrap.                              |
-| `firecracker_version`  | Data                          |      | Set by bootstrap.                              |
-| `kernel_version`       | Data                          |      | Set by bootstrap.                              |
-| `notes`                | Text                          |      |                                                |
+### Fields
+
+| Field                          | Type                   | Reqd | Read-only | Default | Notes                                                          |
+| ------------------------------ | ---------------------- | ---- | --------- | ------- | -------------------------------------------------------------- |
+| `server_name`                  | Data                   | Y    |           |         | Primary key. Unique.                                           |
+| `provider`                     | Link → Server Provider | Y    |           |         |                                                                |
+| `status`                       | Select                 | Y    |           | Pending | `Pending`, `Bootstrapping`, `Active`, `Draining`, `Broken`, `Archived`. |
+| `provider_resource_id`         | Data                   |      | Y         |         | DigitalOcean droplet id.                                       |
+| `region`                       | Data                   |      | Y         |         | Copied from provider defaults at insert.                       |
+| `size`                         | Data                   |      | Y         |         | Copied from provider defaults at insert.                       |
+| `ipv4_address`                 | Data                   |      | Y         |         | The SSH endpoint. Set by `finish_provisioning`.                |
+| `ipv6_address`                 | Data                   |      | Y         |         | The server's own IPv6 (typically `::1` of /64; whatever DO assigns). |
+| `ipv6_prefix`                  | Data                   |      | Y         |         | The /64 routed to this server.                                 |
+| `ipv6_virtual_machine_range`   | Data                   |      | Y         |         | The /124 carved from the /64 we hand out from.                 |
+| `architecture`                 | Data                   |      | Y         |         | Set by bootstrap.                                              |
+| `firecracker_version`          | Data                   |      | Y         |         | Set by bootstrap.                                              |
+| `kernel_version`               | Data                   |      | Y         |         | Set by bootstrap.                                              |
+| `notes`                        | Text                   |      |           |         |                                                                |
 
 The split between `ipv6_prefix` (/64) and `ipv6_virtual_machine_range` (/124)
 is because DigitalOcean assigns a /64 but only the first /124 is actually
 routable inside DO's fabric. We hand out addresses inside the /124 only.
 Details in [06-networking.md](./06-networking.md).
 
-Buttons:
+### Form layout
+
+```
+server_name
+provider
+| status
+── Provider resource ──
+provider_resource_id
+| region
+  size
+── Networking ──
+ipv4_address
+ipv6_address
+| ipv6_prefix
+  ipv6_virtual_machine_range
+── Host info ── (collapsible)
+architecture
+| firecracker_version
+  kernel_version
+── Notes ── (collapsible)
+notes
+```
+
+### List view
+
+- Columns (left to right): `server_name`, `provider`, `status`, `region`,
+  `ipv4_address`.
+- Standard filters: `provider`, `status`, `region`.
+
+### Buttons
 
 - **Bootstrap** — runs [`scripts/bootstrap-server.sh`](../scripts/bootstrap-server.sh).
   Idempotent.
@@ -98,115 +143,81 @@ Buttons:
   meaning is "the server is rebooting." Operators confirm reboot by
   watching for SSH to come back, not by reading the Task status.
 
-### Server form wireframe
-
-```
-+-----------------------------------------------------------------+
-| Server: server-blr1-01                          [Active]    [v] |
-+-----------------------------------------------------------------+
-|  Server Name *         [ server-blr1-01                      ]  |
-|  Provider *            [ digitalocean-production       v ]      |
-|  Provider Resource ID  [ 412345678              ] (read-only)   |
-|  Region                [ blr1                   ] (read-only)   |
-|  Size                  [ s-2vcpu-4gb-intel      ] (read-only)   |
-|                                                                 |
-|  Networking                                                     |
-|  IPv4 Address *        [ 139.59.x.y                          ]  |
-|  IPv6 Address *        [ 2a03:b0c0:abcd:1234::1              ]  |
-|  IPv6 Prefix *         [ 2a03:b0c0:abcd:1234::/64            ]  |
-|  IPv6 VM Range *       [ 2a03:b0c0:abcd:1234::/124           ]  |
-|                                                                 |
-|  State                                                          |
-|  Status *              [ Active                          v ]    |
-|  Architecture          [ x86_64                 ]               |
-|  Firecracker Version   [ 1.15.1                 ]               |
-|  Kernel Version        [ 6.8.0-31-generic       ]               |
-|                                                                 |
-|  Notes                                                          |
-|  [                                                           ]  |
-|                                                                 |
-|  [ Bootstrap ]  [ Run Task ]  [ Reboot ]                        |
-+-----------------------------------------------------------------+
-
 Frappe's standard Connections dashboard renders below the form, linking
 Virtual Machines and Tasks via their `server` field (configured in
-`server_dashboard.py`). No bespoke HTML render.
-```
+`server_dashboard.py`).
 
 ---
 
 ## Virtual Machine
 
 One row per microVM. The primary key is a UUID assigned at insert and never
-changes — not even on archive. This is the change from the previous draft:
-predictable, stable identity that survives deletion.
+changes — not even on terminate. Predictable, stable identity that survives
+deletion.
 
-| Field                  | Type                          | Reqd | Notes                                                   |
-| ---------------------- | ----------------------------- | ---- | ------------------------------------------------------- |
-| `name`                 | UUID                          | Y    | Primary key. Set in `before_insert` via `uuid.uuid4()`. |
-| `server`               | Link → Server                 | Y    | Immutable after first provision.                        |
-| `image`                | Link → Virtual Machine Image  | Y    | Immutable.                                              |
-| `vcpus`                | Int                           | Y    | Defaults to 1. Immutable.                               |
-| `memory_megabytes`     | Int                           | Y    | Defaults to 512. Immutable.                             |
-| `disk_gigabytes`       | Int                           | Y    | Defaults to 4. Immutable.                               |
-| `ipv6_address`         | Data                          | Y    | From the server's /124.                                 |
-| `mac_address`          | Data                          | Y    | Derived from `name`.                                    |
-| `tap_device`           | Data                          | Y    | Derived from `name`.                                    |
-| `ssh_public_key`       | Long Text                     | Y    | Injected into the rootfs.                               |
-| `status`               | Select                        | Y    | `Pending`, `Provisioning`, `Running`, `Stopped`, `Failed`, `Archived`. |
-| `last_started`         | Datetime                      |      |                                                         |
-| `last_stopped`         | Datetime                      |      |                                                         |
-| `description`          | Data                          |      | Free text (since name is a UUID).                       |
+### Fields
 
-Because the name is a UUID, the operator needs a `description` to recognize
-a VM in lists. Optional but recommended.
+| Field              | Type                          | Reqd | Read-only | Default | Notes                                                            |
+| ------------------ | ----------------------------- | ---- | --------- | ------- | ---------------------------------------------------------------- |
+| `name`             | UUID                          | Y    | Y         |         | Primary key. Set in `before_insert` via `uuid.uuid4()`.          |
+| `description`      | Data                          |      |           |         | Title field; free text (since name is a UUID).                   |
+| `server`           | Link → Server                 | Y    |           |         | Immutable after first provision.                                 |
+| `image`            | Link → Virtual Machine Image  | Y    |           |         | Immutable.                                                       |
+| `status`           | Select                        | Y    | Y         | Pending | `Pending`, `Running`, `Stopped`, `Failed`, `Terminated`. Driven by lifecycle methods only. |
+| `vcpus`            | Int                           | Y    |           | 1       | Immutable.                                                       |
+| `memory_megabytes` | Int                           | Y    |           | 512     | Immutable.                                                       |
+| `disk_gigabytes`   | Int                           | Y    |           | 4       | Immutable.                                                       |
+| `ssh_public_key`   | Long Text                     | Y    |           |         | Injected into the rootfs.                                        |
+| `ipv6_address`     | Data                          |      | Y         |         | From the server's /124. Set in `before_insert`.                  |
+| `mac_address`      | Data                          |      | Y         |         | Derived from `name`. Set in `before_validate`.                   |
+| `tap_device`       | Data                          |      | Y         |         | Derived from `name`. Set in `before_validate`.                   |
+| `last_started`     | Datetime                      |      | Y         |         |                                                                  |
+| `last_stopped`     | Datetime                      |      | Y         |         |                                                                  |
 
-Buttons:
+Because the name is a UUID, the operator needs `description` to recognize a
+VM in lists. Optional but recommended; it's the form's title field.
+
+`status` is read-only on the form because it is only ever set by lifecycle
+methods (Provision/Start/Stop/Restart/Terminate); see
+[05-virtual-machine-lifecycle.md](./05-virtual-machine-lifecycle.md).
+
+### Form layout
+
+```
+description
+server
+image
+| status
+── Resources ──
+vcpus
+| memory_megabytes
+| disk_gigabytes
+── Access ──
+ssh_public_key
+── Networking ── (collapsible)
+ipv6_address
+| mac_address
+  tap_device
+── Activity ── (collapsible)
+last_started
+| last_stopped
+```
+
+### List view
+
+- Columns (left to right): `description`, `server`, `image`, `status`,
+  `ipv6_address`.
+- Standard filters: `server`, `image`, `status`.
+
+### Buttons
 
 - **Provision** — only enabled when `status` is `Pending` or `Failed`. Runs
   [`scripts/provision-vm.sh`](../scripts/provision-vm.sh).
 - **Start** — `Stopped` → `Running`.
 - **Stop** — `Running` → `Stopped`.
 - **Restart** — `Stopped`/`Running` → `Running`.
-- **Delete** — runs [`scripts/delete-vm.sh`](../scripts/delete-vm.sh), sets
-  `status = Archived`. The UUID does not change.
-
-### Virtual Machine form wireframe
-
-```
-+-----------------------------------------------------------------+
-| Virtual Machine: d4f7c1a2-...-9b3e            [Running]     [v] |
-+-----------------------------------------------------------------+
-|  Name              d4f7c1a2-7e0a-4f1b-93cc-ad96b9b39b3e         |
-|  Description       [ first try, blr1                         ]  |
-|  Server *          [ server-blr1-01                    v ]      |
-|  Image *           [ ubuntu-24.04                      v ]      |
-|                                                                 |
-|  Resources                                                      |
-|  vCPUs *             [ 2     ]                                  |
-|  Memory (MB) *       [ 2048  ]                                  |
-|  Disk (GB) *         [ 4     ]                                  |
-|                                                                 |
-|  Networking                                                     |
-|  IPv6 Address *      [ 2a03:b0c0:abcd:1234::2               ]   |
-|  MAC Address *       [ 06:00:d4:f7:c1:a2                    ]   |
-|  TAP Device *        [ atlas-d4f7c1a27e               ]         |
-|                                                                 |
-|  Access                                                         |
-|  SSH Public Key *    [ ssh-ed25519 AAAA... user@host        ]   |
-|                                                                 |
-|  State                                                          |
-|  Status *            [ Running                           v ]    |
-|  Last Started        [ 2026-05-25 13:11:02                  ]   |
-|  Last Stopped        [                                      ]   |
-|                                                                 |
-|  [ Provision ]  [ Start ]  [ Stop ]  [ Restart ]  [ Delete ]    |
-|                                                                 |
-|  ── Recent Tasks ─────────────────────────────────────────      |
-|  2026-05-25 13:11  provision-vm.sh     Success   3.4s           |
-|  2026-05-25 13:14  stop-vm.sh          Success   0.3s           |
-+-----------------------------------------------------------------+
-```
+- **Terminate** — runs [`scripts/terminate-vm.sh`](../scripts/terminate-vm.sh),
+  sets `status = Terminated`. The UUID does not change.
 
 ---
 
@@ -214,128 +225,111 @@ Buttons:
 
 A kernel + rootfs pair, identified by a name.
 
-| Field                  | Type   | Reqd | Notes                                                |
-| ---------------------- | ------ | ---- | ---------------------------------------------------- |
-| `image_name`           | Data   | Y    | Primary key. e.g. `ubuntu-24.04`.                    |
-| `description`          | Data   |      |                                                      |
-| `kernel_url`           | Data   | Y    | HTTPS URL of the uncompressed `vmlinux`.             |
-| `kernel_filename`      | Data   | Y    | Filename on the server.                              |
-| `kernel_sha256`        | Data   | Y    | Hex digest of the kernel.                            |
-| `rootfs_url`           | Data   | Y    | HTTPS URL of the source squashfs.                    |
-| `rootfs_filename`      | Data   | Y    | Filename of the resulting ext4 on the server.        |
-| `rootfs_sha256`        | Data   | Y    | Hex digest of the source squashfs.                   |
-| `default_disk_gigabytes` | Int  | Y    | Size of the pristine ext4 (per-VM disk grows from this). |
-| `is_active`            | Check  |      | Defaults to 1.                                       |
+### Fields
 
-Buttons:
+| Field                    | Type   | Reqd | Read-only | Default | Notes                                                |
+| ------------------------ | ------ | ---- | --------- | ------- | ---------------------------------------------------- |
+| `image_name`             | Data   | Y    |           |         | Primary key. Unique. `set_only_once`. e.g. `ubuntu-24.04`. |
+| `description`            | Data   |      |           |         |                                                      |
+| `is_active`              | Check  |      |           | 1       |                                                      |
+| `default_disk_gigabytes` | Int    | Y    |           | 4       | Size of the pristine ext4 (per-VM disk grows from this). |
+| `kernel_url`             | Data   | Y    |           |         | HTTPS URL of the uncompressed `vmlinux`.             |
+| `kernel_filename`        | Data   | Y    |           |         | Filename on the server.                              |
+| `kernel_sha256`          | Data   | Y    |           |         | Hex digest of the kernel.                            |
+| `rootfs_url`             | Data   | Y    |           |         | HTTPS URL of the source squashfs.                    |
+| `rootfs_filename`        | Data   | Y    |           |         | Filename of the resulting ext4 on the server.        |
+| `rootfs_sha256`          | Data   | Y    |           |         | Hex digest of the source squashfs.                   |
 
-- **Sync to All Servers** — run [`scripts/sync-image.sh`](../scripts/sync-image.sh)
+### Form layout
+
+```
+image_name
+description
+| is_active
+  default_disk_gigabytes
+── Kernel ──
+kernel_url
+kernel_filename
+| kernel_sha256
+── Rootfs ──
+rootfs_url
+rootfs_filename
+| rootfs_sha256
+```
+
+### List view
+
+- Columns (left to right): `image_name`, `description`,
+  `default_disk_gigabytes`, `is_active`.
+- Standard filters: `is_active`.
+
+### Buttons
+
+- **Sync to All Servers** — runs [`scripts/sync-image.sh`](../scripts/sync-image.sh)
   against every active server.
 - **Sync to Server** — same, for a single server.
-
-### Virtual Machine Image form wireframe
-
-```
-+-----------------------------------------------------------------+
-| Virtual Machine Image: ubuntu-24.04             [Active]    [v] |
-+-----------------------------------------------------------------+
-|  Image Name *        [ ubuntu-24.04                          ]  |
-|  Description         [ Firecracker CI Ubuntu 24.04 rootfs    ]  |
-|                                                                 |
-|  Kernel                                                         |
-|  Kernel URL *        [ https://s3.amazonaws.com/.../vmlinux- ]  |
-|  Kernel Filename *   [ vmlinux-6.1.141                       ]  |
-|  Kernel SHA-256 *    [ a3f9...                               ]  |
-|                                                                 |
-|  Rootfs                                                         |
-|  Rootfs URL *        [ https://s3.amazonaws.com/.../ubuntu-2 ]  |
-|  Rootfs Filename *   [ ubuntu-24.04.ext4                     ]  |
-|  Rootfs SHA-256 *    [ 7b21...                               ]  |
-|  Default Disk (GB) * [ 4                                     ]  |
-|                                                                 |
-|  [x] Is Active                                                  |
-|                                                                 |
-|  [ Sync to All Servers ]                                        |
-+-----------------------------------------------------------------+
-```
 
 ---
 
 ## Task
 
-One row per shell script execution against a server. Append-only.
+One row per shell script execution against a server. Append-only: every field
+is read-only on the form. The system writes the row at insert and again when
+the run finishes.
 
-| Field                 | Type                   | Reqd | Notes                                       |
-| --------------------- | ---------------------- | ---- | ------------------------------------------- |
-| `name`                | (autoname `hash`)      | Y    | 10-char random hex (Frappe `autoname = "hash"`). |
-| `server`              | Link → Server          | Y    |                                             |
-| `virtual_machine`     | Link → Virtual Machine |      | Set when the task is for one VM.            |
-| `script`              | Data                   | Y    | Path under `atlas/scripts/`, e.g. `provision-vm.sh`. |
-| `variables`           | Long Text (JSON)       | Y    | The env-var dictionary passed to the script.|
-| `status`              | Select                 | Y    | `Pending`, `Running`, `Success`, `Failure`. |
-| `exit_code`           | Int                    |      |                                             |
-| `stdout`              | Code                   |      |                                             |
-| `stderr`              | Code                   |      |                                             |
-| `started`             | Datetime               |      |                                             |
-| `ended`               | Datetime               |      |                                             |
-| `duration_milliseconds` | Int                  |      | For sortable list views.                    |
-| `triggered_by`        | Link → User            | Y    | `Administrator` for scheduled jobs.         |
+### Fields
 
-Read-only after insert. Indexed: `server`, `virtual_machine`, `status`, `script`.
+| Field                   | Type                   | Reqd | Read-only | Default | Notes                                       |
+| ----------------------- | ---------------------- | ---- | --------- | ------- | ------------------------------------------- |
+| `name`                  | (autoname `hash`)      | Y    | Y         |         | 10-char random hex (Frappe `autoname = "hash"`). |
+| `server`                | Link → Server          |      | Y         |         | Indexed.                                    |
+| `virtual_machine`       | Link → Virtual Machine |      | Y         |         | Set when the task is for one VM. Indexed.   |
+| `script`                | Data                   | Y    | Y         |         | Path under `atlas/scripts/`, e.g. `provision-vm.sh`. Indexed. |
+| `triggered_by`          | Link → User            | Y    | Y         |         | `Administrator` for scheduled jobs.         |
+| `status`                | Select                 | Y    | Y         | Pending | `Pending`, `Running`, `Success`, `Failure`. Indexed. |
+| `exit_code`             | Int                    |      | Y         |         |                                             |
+| `duration_milliseconds` | Int                    |      | Y         |         | Indexed. For sortable list views.           |
+| `started`               | Datetime               |      | Y         |         |                                             |
+| `ended`                 | Datetime               |      | Y         |         |                                             |
+| `variables`             | Long Text (JSON)       | Y    | Y         |         | The env-var dictionary passed to the script.|
+| `stdout`                | Code                   |      | Y         |         |                                             |
+| `stderr`                | Code                   |      | Y         |         |                                             |
+
+Every operator-visible field is read-only on the form; the table column is
+the contract for what the row holds, not for what an operator can type.
 
 `variables` stores the inputs so a task can be replayed by reading the row.
 Secrets are not put in `variables`. If a task needs a secret, the secret is
 read from another DocType at execution time and not echoed into the Task
 record.
 
-### Task list wireframe
+### Form layout
 
 ```
-+-----------------------------------------------------------------+
-| Tasks                                                           |
-+-----------------------------------------------------------------+
-|  Server          VM        Script             Status   Dur      |
-|  server-blr1-01  d4f7...   provision-vm.sh    Success   3.4s    |
-|  server-blr1-01  —         bootstrap-server.. Success  12.3s    |
-|  server-blr1-01  d4f7...   stop-vm.sh         Success   0.3s    |
-|  server-blr1-02  19ae...   provision-vm.sh    Failure   2.1s    |
-+-----------------------------------------------------------------+
+server
+virtual_machine
+script
+triggered_by
+| status
+  exit_code
+  duration_milliseconds
+── Timing ──
+started
+| ended
+── Inputs ──
+variables
+── Output ──
+stdout
+stderr
 ```
 
-### Task form wireframe
+### List view
 
-```
-+-----------------------------------------------------------------+
-| Task: 8f3a...                                   [Success]       |
-+-----------------------------------------------------------------+
-|  Server           [ server-blr1-01                ]             |
-|  Virtual Machine  [ d4f7c1a2-...-9b3e             ]             |
-|  Script           [ provision-vm.sh               ]             |
-|  Triggered By     [ aditya@adityahase.com         ]             |
-|                                                                 |
-|  Variables (JSON)                                               |
-|  ┌───────────────────────────────────────────────────────────┐  |
-|  │ {                                                         │  |
-|  │   "VIRTUAL_MACHINE_NAME": "d4f7c1a2-...",                 │  |
-|  │   "IMAGE_NAME": "ubuntu-24.04",                           │  |
-|  │   ...                                                     │  |
-|  │ }                                                         │  |
-|  └───────────────────────────────────────────────────────────┘  |
-|                                                                 |
-|  Status          [ Success ]                                    |
-|  Exit Code       [ 0       ]                                    |
-|  Started         [ 2026-05-25 13:11:02.114                  ]   |
-|  Ended           [ 2026-05-25 13:11:05.503                  ]   |
-|  Duration        [ 3389 ms                                  ]   |
-|                                                                 |
-|  Stdout                                                         |
-|  ┌───────────────────────────────────────────────────────────┐  |
-|  │ Provisioned d4f7c1a2-7e0a-4f1b-93cc-ad96b9b39b3e.         │  |
-|  └───────────────────────────────────────────────────────────┘  |
-|  Stderr                                                         |
-|  ┌───────────────────────────────────────────────────────────┐  |
-|  │ + install -d -m 0700 /var/lib/atlas/virtual-machines/...  │  |
-|  │ + cp ...                                                  │  |
-|  └───────────────────────────────────────────────────────────┘  |
-+-----------------------------------------------------------------+
-```
+- Columns (left to right): `server`, `virtual_machine`, `script`, `status`,
+  `duration_milliseconds`, `started`.
+  (Frappe orders list columns by their position in the field schema.
+  `started` lives in the Timing section, after the header, so it lands at
+  the end of the row. Putting it first would require moving the field
+  ahead of the header, which would break the form layout. Operators can
+  still sort the list by `started`.)
+- Standard filters: `server`, `virtual_machine`, `script`, `status`.

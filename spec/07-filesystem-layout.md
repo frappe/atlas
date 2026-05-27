@@ -58,7 +58,7 @@ to overlayfs by changing one script, no doc-type changes needed.
 ## What if `/var/lib/atlas/` runs out of space?
 
 The operator gets paged (out of scope for this iteration), runs `df`, deletes
-archived VMs (they should already be cleaned by `delete-vm.sh`), or
+terminated VMs (they should already be cleaned by `terminate-vm.sh`), or
 provisions another server. No janitor in this iteration.
 
 ## Where the Atlas helper scripts come from

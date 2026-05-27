@@ -59,3 +59,4 @@ jspm_packages/
 .coverage*
 .coveragerc
 coverage*.xml
+plan/layouts.md

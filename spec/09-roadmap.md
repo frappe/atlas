@@ -120,7 +120,7 @@ behavior; they just keep doors open.
   record at it. Additive.
 
 - **Overlayfs-backed rootfs**: shrink per-VM disk by ~10×. Internal to
-  `provision-vm.sh` and `delete-vm.sh`. Additive.
+  `provision-vm.sh` and `terminate-vm.sh`. Additive.
 
 - **Snapshots**: Firecracker supports them. Adds a state and a DocType.
   *Breaking* for code that pattern-matches the current state machine —

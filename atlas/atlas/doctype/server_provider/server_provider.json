@@ -9,6 +9,7 @@
  "field_order": [
   "provider_name",
   "provider_type",
+  "column_break_header",
   "is_active",
   "section_break_credentials",
   "api_token",
@@ -16,6 +17,7 @@
   "ssh_private_key",
   "section_break_defaults",
   "default_region",
+  "column_break_defaults",
   "default_size",
   "default_image"
  ],
@@ -32,21 +34,27 @@
    "fieldname": "provider_type",
    "fieldtype": "Select",
    "in_list_view": 1,
+   "in_standard_filter": 1,
    "label": "Provider Type",
    "options": "DigitalOcean",
    "reqd": 1
+  },
+  {
+   "fieldname": "column_break_header",
+   "fieldtype": "Column Break"
   },
   {
    "default": "1",
    "fieldname": "is_active",
    "fieldtype": "Check",
    "in_list_view": 1,
+   "in_standard_filter": 1,
    "label": "Is Active"
   },
   {
    "fieldname": "section_break_credentials",
    "fieldtype": "Section Break",
-   "label": "Credentials"
+   "label": "Authentication"
   },
   {
    "fieldname": "api_token",
@@ -69,13 +77,18 @@
   {
    "fieldname": "section_break_defaults",
    "fieldtype": "Section Break",
-   "label": "Defaults"
+   "label": "Defaults for new servers"
   },
   {
    "fieldname": "default_region",
    "fieldtype": "Data",
+   "in_list_view": 1,
    "label": "Default Region",
    "reqd": 1
+  },
+  {
+   "fieldname": "column_break_defaults",
+   "fieldtype": "Column Break"
   },
   {
    "fieldname": "default_size",
@@ -91,7 +104,7 @@
   }
  ],
  "links": [],
- "modified": "2026-05-25 00:00:00.000000",
+ "modified": "2026-05-27 00:00:00.000000",
  "modified_by": "Administrator",
  "module": "Atlas",
  "name": "Server Provider",

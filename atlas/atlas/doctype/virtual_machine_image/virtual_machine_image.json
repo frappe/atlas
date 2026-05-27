@@ -9,16 +9,19 @@
  "field_order": [
   "image_name",
   "description",
+  "column_break_header",
   "is_active",
+  "default_disk_gigabytes",
   "section_break_kernel",
   "kernel_url",
   "kernel_filename",
+  "column_break_kernel",
   "kernel_sha256",
   "section_break_rootfs",
   "rootfs_url",
   "rootfs_filename",
-  "rootfs_sha256",
-  "default_disk_gigabytes"
+  "column_break_rootfs",
+  "rootfs_sha256"
  ],
  "fields": [
   {
@@ -27,19 +30,34 @@
    "in_list_view": 1,
    "label": "Image Name",
    "reqd": 1,
+   "set_only_once": 1,
    "unique": 1
   },
   {
    "fieldname": "description",
    "fieldtype": "Data",
+   "in_list_view": 1,
    "label": "Description"
+  },
+  {
+   "fieldname": "column_break_header",
+   "fieldtype": "Column Break"
   },
   {
    "default": "1",
    "fieldname": "is_active",
    "fieldtype": "Check",
    "in_list_view": 1,
+   "in_standard_filter": 1,
    "label": "Is Active"
+  },
+  {
+   "default": "4",
+   "fieldname": "default_disk_gigabytes",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Default Disk (GB)",
+   "reqd": 1
   },
   {
    "fieldname": "section_break_kernel",
@@ -57,6 +75,10 @@
    "fieldtype": "Data",
    "label": "Kernel Filename",
    "reqd": 1
+  },
+  {
+   "fieldname": "column_break_kernel",
+   "fieldtype": "Column Break"
   },
   {
    "fieldname": "kernel_sha256",
@@ -82,21 +104,18 @@
    "reqd": 1
   },
   {
+   "fieldname": "column_break_rootfs",
+   "fieldtype": "Column Break"
+  },
+  {
    "fieldname": "rootfs_sha256",
    "fieldtype": "Data",
    "label": "Rootfs SHA-256",
    "reqd": 1
-  },
-  {
-   "default": "4",
-   "fieldname": "default_disk_gigabytes",
-   "fieldtype": "Int",
-   "label": "Default Disk (GB)",
-   "reqd": 1
   }
  ],
  "links": [],
- "modified": "2026-05-25 00:00:00.000000",
+ "modified": "2026-05-27 00:00:00.000000",
  "modified_by": "Administrator",
  "module": "Atlas",
  "name": "Virtual Machine Image",

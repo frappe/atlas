@@ -9,17 +9,22 @@
  "field_order": [
   "server_name",
   "provider",
+  "column_break_header",
+  "status",
+  "section_break_provider_resource",
   "provider_resource_id",
+  "column_break_provider_resource",
   "region",
   "size",
   "section_break_networking",
   "ipv4_address",
   "ipv6_address",
+  "column_break_networking",
   "ipv6_prefix",
   "ipv6_virtual_machine_range",
-  "section_break_state",
-  "status",
+  "section_break_host_info",
   "architecture",
+  "column_break_host_info",
   "firecracker_version",
   "kernel_version",
   "section_break_notes",
@@ -44,14 +49,39 @@
    "reqd": 1
   },
   {
+   "fieldname": "column_break_header",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "Pending",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Status",
+   "options": "Pending\nBootstrapping\nActive\nDraining\nBroken\nArchived",
+   "reqd": 1
+  },
+  {
+   "fieldname": "section_break_provider_resource",
+   "fieldtype": "Section Break",
+   "label": "Provider resource"
+  },
+  {
    "fieldname": "provider_resource_id",
    "fieldtype": "Data",
    "label": "Provider Resource ID",
    "read_only": 1
   },
   {
+   "fieldname": "column_break_provider_resource",
+   "fieldtype": "Column Break"
+  },
+  {
    "fieldname": "region",
    "fieldtype": "Data",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
    "label": "Region",
    "read_only": 1
   },
@@ -69,43 +99,47 @@
   {
    "fieldname": "ipv4_address",
    "fieldtype": "Data",
-   "label": "IPv4 Address"
+   "in_list_view": 1,
+   "label": "IPv4 Address",
+   "read_only": 1
   },
   {
    "fieldname": "ipv6_address",
    "fieldtype": "Data",
-   "label": "IPv6 Address"
+   "label": "IPv6 Address",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_networking",
+   "fieldtype": "Column Break"
   },
   {
    "fieldname": "ipv6_prefix",
    "fieldtype": "Data",
-   "label": "IPv6 Prefix (/64)"
+   "label": "IPv6 Prefix (/64)",
+   "read_only": 1
   },
   {
    "fieldname": "ipv6_virtual_machine_range",
    "fieldtype": "Data",
-   "label": "IPv6 VM Range (/124)"
+   "label": "IPv6 VM Range (/124)",
+   "read_only": 1
   },
   {
-   "fieldname": "section_break_state",
+   "fieldname": "section_break_host_info",
    "fieldtype": "Section Break",
-   "label": "State"
-  },
-  {
-   "default": "Pending",
-   "fieldname": "status",
-   "fieldtype": "Select",
-   "in_list_view": 1,
-   "in_standard_filter": 1,
-   "label": "Status",
-   "options": "Pending\nBootstrapping\nActive\nDraining\nBroken\nArchived",
-   "reqd": 1
+   "collapsible": 1,
+   "label": "Host info"
   },
   {
    "fieldname": "architecture",
    "fieldtype": "Data",
    "label": "Architecture",
    "read_only": 1
+  },
+  {
+   "fieldname": "column_break_host_info",
+   "fieldtype": "Column Break"
   },
   {
    "fieldname": "firecracker_version",
@@ -122,6 +156,7 @@
   {
    "fieldname": "section_break_notes",
    "fieldtype": "Section Break",
+   "collapsible": 1,
    "label": "Notes"
   },
   {
@@ -131,7 +166,7 @@
   }
  ],
  "links": [],
- "modified": "2026-05-25 00:00:00.000000",
+ "modified": "2026-05-27 00:00:00.000000",
  "modified_by": "Administrator",
  "module": "Atlas",
  "name": "Server",
