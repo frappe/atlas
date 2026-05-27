@@ -6,3 +6,4 @@
 # Patches added in this section will be executed after doctypes are migrated
 atlas.patches.v1_0.rename_archived_to_terminated
 atlas.patches.v1_0.install_atlas_sidebar
+atlas.patches.v1_0.backfill_task_subject

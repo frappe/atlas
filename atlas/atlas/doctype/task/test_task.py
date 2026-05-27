@@ -106,3 +106,36 @@ class TestTask(IntegrationTestCase):
 				"triggered_by": "Administrator",
 			}).insert(ignore_permissions=True)
 		self.assertIn("JSON object", str(raised.exception))
+
+	def test_subject_set_for_known_script(self) -> None:
+		from atlas.tests.fixtures import make_server
+
+		server = make_server(name="task-test-server-subject")
+		task = self._make(script="bootstrap-server.sh", server=server.name)
+		self.assertEqual(task.subject, f"Bootstrap · {server.name}")
+
+	def test_subject_set_for_unknown_script_falls_back_to_filename(self) -> None:
+		from atlas.tests.fixtures import make_server
+
+		server = make_server(name="task-test-server-subject-unknown")
+		task = self._make(script="noop.sh", server=server.name)
+		self.assertEqual(task.subject, f"noop.sh · {server.name}")
+
+	def test_subject_without_server_or_vm(self) -> None:
+		task = self._make(script="bootstrap-server.sh", server=None)
+		self.assertEqual(task.subject, "Bootstrap")
+
+	def test_retry_rejects_non_failure(self) -> None:
+		task = self._make(script="bootstrap-server.sh", server=None, status="Pending")
+		with self.assertRaises(frappe.ValidationError) as raised:
+			task.retry()
+		self.assertIn("failed", str(raised.exception).lower())
+
+	def test_retry_rejects_non_retriable_script(self) -> None:
+		task = self._make(script="noop.sh", server=None)
+		# Drive into Failure without going through the runner.
+		frappe.db.set_value("Task", task.name, "status", "Failure")
+		task.reload()
+		with self.assertRaises(frappe.ValidationError) as raised:
+			task.retry()
+		self.assertIn("not retriable", str(raised.exception).lower())
