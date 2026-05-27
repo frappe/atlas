@@ -1,3 +1,6 @@
+const CREDENTIAL_CHECK_TTL_MS = 5 * 60 * 1000;
+
+
 frappe.ui.form.on("Server Provider", {
 	refresh(frm) {
 		if (frm.is_new()) {
@@ -6,9 +9,44 @@ frappe.ui.form.on("Server Provider", {
 		frappe.atlas.add_primary(frm, "Provision Server", () => open_provision_dialog(frm));
 		if (frm.doc.provider_type === "DigitalOcean") {
 			frappe.atlas.add_action(frm, "Test Connection", () => run_test_connection(frm));
+			render_credential_indicator(frm);
 		}
 	},
 });
+
+
+function render_credential_indicator(frm) {
+	const cache = frm._atlas_credential_cache;
+	const fresh = cache && (Date.now() - cache.at) < CREDENTIAL_CHECK_TTL_MS;
+	if (fresh) {
+		paint_credential_indicator(frm, cache.result);
+		return;
+	}
+	frm.call("credential_check").then(({message}) => {
+		if (!message) return;
+		frm._atlas_credential_cache = {at: Date.now(), result: message};
+		paint_credential_indicator(frm, message);
+	});
+}
+
+
+function paint_credential_indicator(frm, result) {
+	if (!result || result.skipped) return;
+	if (result.ok) {
+		const remaining = result.rate_remaining != null
+			? `${result.rate_remaining}/${result.rate_limit}`
+			: __("rate-limit unknown");
+		frm.dashboard.add_indicator(
+			`✓ ${__("API token valid")} <span class="text-muted small">(${frappe.utils.escape_html(remaining)})</span>`,
+			"green",
+		);
+	} else {
+		frm.dashboard.add_indicator(
+			`✗ ${__("API token invalid")} <span class="text-muted small">${frappe.utils.escape_html(result.error || "")}</span>`,
+			"red",
+		);
+	}
+}
 
 
 function run_test_connection(frm) {
@@ -17,6 +55,9 @@ function run_test_connection(frm) {
 			message: __("OK: {0}", [message.email]),
 			indicator: "green",
 		});
+		// Re-render the credential indicator off the freshly-validated call.
+		frm._atlas_credential_cache = null;
+		render_credential_indicator(frm);
 	});
 }
 

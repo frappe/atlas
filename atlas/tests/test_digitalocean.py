@@ -20,11 +20,12 @@ def _fixture(name: str) -> dict:
 
 
 class _FakeResponse:
-	def __init__(self, status_code: int, body: dict | None = None):
+	def __init__(self, status_code: int, body: dict | None = None, headers: dict | None = None):
 		self.status_code = status_code
 		self._body = body or {}
 		self.text = json.dumps(self._body) if body is not None else ""
 		self.content = self.text.encode() if self.text else b""
+		self.headers = headers or {}
 
 	def json(self):
 		return self._body
@@ -160,3 +161,28 @@ class TestDigitalOceanClient(IntegrationTestCase):
 		}
 		with self.assertRaises(DigitalOceanError):
 			public_ipv4(droplet)
+
+	def test_verify_credentials_extracts_rate_limit_headers(self) -> None:
+		fake = _FakeResponse(
+			200,
+			_fixture("account"),
+			headers={"RateLimit-Limit": "5000", "RateLimit-Remaining": "4998"},
+		)
+		with patch("atlas.atlas.digitalocean.requests.request", return_value=fake):
+			result = self.client.verify_credentials()
+		self.assertEqual(result["email"], "test@example.com")
+		self.assertEqual(result["rate_limit"], 5000)
+		self.assertEqual(result["rate_remaining"], 4998)
+
+	def test_verify_credentials_handles_missing_headers(self) -> None:
+		fake = _FakeResponse(200, _fixture("account"), headers={})
+		with patch("atlas.atlas.digitalocean.requests.request", return_value=fake):
+			result = self.client.verify_credentials()
+		self.assertIsNone(result["rate_limit"])
+		self.assertIsNone(result["rate_remaining"])
+
+	def test_verify_credentials_raises_on_bad_token(self) -> None:
+		fake = _FakeResponse(401, _fixture("error_unauthorized"))
+		with patch("atlas.atlas.digitalocean.requests.request", return_value=fake):
+			with self.assertRaises(DigitalOceanError):
+				self.client.verify_credentials()

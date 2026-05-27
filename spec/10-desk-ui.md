@@ -143,6 +143,14 @@ Bookmarks and the sidebar Home button hit `/app/atlas` directly.
   from a hand-maintained `DIGITALOCEAN_MONTHLY_COST_USD` dict — same
   policy as `default_image` (DO doesn't expose pricing per size in
   their API). Missing sizes render as "—" rather than guess.
+- A **credential indicator** auto-runs on form refresh for DigitalOcean
+  providers. `Server Provider.credential_check` hits the DO `/account`
+  endpoint and returns `{ok, email, rate_limit, rate_remaining}` or
+  `{ok: false, error}`; the client paints a green
+  `✓ API token valid (4999/5000)` or a red `✗ API token invalid` chip
+  via `frm.dashboard.add_indicator`. Result is cached for five minutes
+  in `frm._atlas_credential_cache`; the **Test Connection** action
+  invalidates the cache so the operator can re-verify on demand.
 
 ### Server
 

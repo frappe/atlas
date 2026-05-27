@@ -35,6 +35,27 @@ class DigitalOceanClient:
 	def account(self) -> dict:
 		return self._request("GET", "/account")["account"]
 
+	def verify_credentials(self) -> dict:
+		"""Like account(), but also returns the rate-limit headers DO sets on
+		every response. The Server Provider form surfaces them as
+		"4998 / 5000 remaining" so the operator can see token health at a
+		glance without opening the network tab. Raises DigitalOceanError on
+		non-2xx so the caller can render a red indicator on failure.
+		"""
+		response = self._raw_request("GET", "/account")
+		if response.status_code >= 400:
+			raise DigitalOceanError(
+				f"GET /account -> {response.status_code}: {response.text}"
+			)
+		body = response.json()
+		return {
+			"email": body.get("account", {}).get("email"),
+			"rate_limit": int(response.headers["RateLimit-Limit"])
+				if "RateLimit-Limit" in response.headers else None,
+			"rate_remaining": int(response.headers["RateLimit-Remaining"])
+				if "RateLimit-Remaining" in response.headers else None,
+		}
+
 	def create_droplet(
 		self,
 		*,
@@ -80,19 +101,7 @@ class DigitalOceanClient:
 		return self._request("GET", f"/droplets?tag_name={tag}").get("droplets", [])
 
 	def _request(self, method: str, path: str, json: dict | None = None, allow_404: bool = False):
-		url = f"{self.base_url}{path}"
-		headers = {
-			"Authorization": f"Bearer {self.token}",
-			"Content-Type": "application/json",
-			"Accept": "application/json",
-		}
-		response = requests.request(
-			method,
-			url,
-			json=json,
-			headers=headers,
-			timeout=DEFAULT_TIMEOUT,
-		)
+		response = self._raw_request(method, path, json=json)
 		if response.status_code == 204:
 			return {}
 		if response.status_code == 404 and allow_404:
@@ -104,6 +113,25 @@ class DigitalOceanClient:
 		if not response.content:
 			return {}
 		return response.json()
+
+	def _raw_request(self, method: str, path: str, json: dict | None = None) -> "requests.Response":
+		"""HTTP call that returns the full Response so callers can read
+		headers (rate-limit, ETag, etc.). Status handling lives in
+		`_request`; callers that bypass `_request` (verify_credentials)
+		check the status themselves."""
+		url = f"{self.base_url}{path}"
+		headers = {
+			"Authorization": f"Bearer {self.token}",
+			"Content-Type": "application/json",
+			"Accept": "application/json",
+		}
+		return requests.request(
+			method,
+			url,
+			json=json,
+			headers=headers,
+			timeout=DEFAULT_TIMEOUT,
+		)
 
 
 def public_ipv6(droplet: dict) -> tuple[str, str]:

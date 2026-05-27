@@ -45,6 +45,37 @@ class TestServerProvider(IntegrationTestCase):
 			with self.assertRaises(DigitalOceanError):
 				self.provider.test_connection()
 
+	def test_credential_check_ok_returns_rate_limit(self) -> None:
+		fake_client = MagicMock()
+		fake_client.verify_credentials.return_value = {
+			"email": "ok@example.com",
+			"rate_limit": 5000,
+			"rate_remaining": 4998,
+		}
+		with patch(
+			"atlas.atlas.doctype.server_provider.server_provider.DigitalOceanClient",
+			return_value=fake_client,
+		):
+			result = self.provider.credential_check()
+		self.assertTrue(result["ok"])
+		self.assertEqual(result["email"], "ok@example.com")
+		self.assertEqual(result["rate_limit"], 5000)
+		self.assertEqual(result["rate_remaining"], 4998)
+
+	def test_credential_check_bad_returns_error_without_raising(self) -> None:
+		from atlas.atlas.digitalocean import DigitalOceanError
+		fake_client = MagicMock()
+		fake_client.verify_credentials.side_effect = DigitalOceanError(
+			"GET /account -> 401: Unauthorized"
+		)
+		with patch(
+			"atlas.atlas.doctype.server_provider.server_provider.DigitalOceanClient",
+			return_value=fake_client,
+		):
+			result = self.provider.credential_check()
+		self.assertFalse(result["ok"])
+		self.assertIn("401", result["error"])
+
 	def test_provision_server_inserts_and_enqueues(self) -> None:
 		from atlas.atlas.doctype.server_provider import server_provider as module
 
@@ -263,3 +294,8 @@ class TestSelfManagedProvider(IntegrationTestCase):
 	def test_test_connection_rejected_for_self_managed(self) -> None:
 		with self.assertRaises(frappe.ValidationError):
 			self.provider.test_connection()
+
+	def test_credential_check_skipped_for_self_managed(self) -> None:
+		result = self.provider.credential_check()
+		self.assertTrue(result["ok"])
+		self.assertTrue(result["skipped"])

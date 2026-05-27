@@ -238,6 +238,33 @@ already tells us.
 - Session cache: `frm._atlas_provider_check_at` for the 5-min refresh
   window.
 
+**Implementation status (landed):** The API-token indicator is wired.
+On form refresh of a `DigitalOcean` provider the client calls a new
+`Server Provider.credential_check` whitelisted method that returns
+`{ok, email, rate_limit, rate_remaining}` on success or
+`{ok: false, error}` on failure. The form renders a green
+`✓ API token valid (4999/5000)` indicator or a red
+`✗ API token invalid <reason>` indicator without ever throwing a Frappe
+error dialog. The result is cached for 5 minutes per form lifecycle
+(`frm._atlas_credential_cache`); the existing **Test Connection**
+button under Actions invalidates the cache and re-renders the indicator
+on its way out.
+
+**Drift note:**
+
+- The SSH-private-key format indicator from the spec is **not landed.**
+  The field is a Password — its value cannot be read client-side, so a
+  "format OK" check would have to round-trip to the server. Skipping
+  this part: a malformed key already surfaces at the first SSH attempt
+  with a clear "Permission denied (publickey)" error in the Task log.
+- DigitalOcean's response headers use `RateLimit-Limit` /
+  `RateLimit-Remaining` (the IETF draft naming) — not the
+  `X-RateLimit-*` shape the wireframe text used. The indicator text
+  shows the actual remaining/limit pair regardless of header name.
+- Verified in Playwright against a real DO token and a known-bad
+  token row (`atlas-e2e-bogus-token`) — green and red indicators both
+  render as designed.
+
 ### Fighting Desk?
 No.
 

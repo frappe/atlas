@@ -202,11 +202,16 @@ Once the three above are in, the next-best uses of effort are:
    doesn't silently invalidate the audit trail. **(Landed [04 §4].)**
 
 After that the long tail of polish: ANSI colours, autocomplete on
-provider region/size/image, VM-creation form size presets and capacity
-preview ([05 §6](./05-virtual-machine-solution.md#6-creation-form-is-too-generic)),
-provider dashboard indicators ([02 §4](./02-server-provider-solution.md#4-api-token-and-ssh-private-key-unverifiable))
-and live autocomplete for default region/size/image
+provider region/size/image, and live autocomplete for default
+region/size/image
 ([02 §5](./02-server-provider-solution.md#5-default-regionsizeimage-are-free-text-data-fields)).
+The API-token validity indicator
+([02 §4](./02-server-provider-solution.md#4-api-token-and-ssh-private-key-unverifiable))
+has landed. The VM-creation form polish — size presets, capacity
+preview, description nudge
+([05 §6](./05-virtual-machine-solution.md#6-creation-form-is-too-generic)) —
+has also landed; only the deferred `default_vm_public_key` field
+remains.
 
 ## What deliberately does not land
 

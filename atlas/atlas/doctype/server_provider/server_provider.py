@@ -3,6 +3,7 @@ from frappe.model.document import Document
 
 from atlas.atlas.digitalocean import (
 	DigitalOceanClient,
+	DigitalOceanError,
 	public_ipv4,
 	public_ipv6,
 )
@@ -45,6 +46,27 @@ class ServerProvider(Document):
 			frappe.throw("Test Connection is only supported for DigitalOcean providers")
 		account = self.client.account()
 		return {"ok": True, "email": account.get("email")}
+
+	@frappe.whitelist()
+	def credential_check(self) -> dict:
+		"""Auto-called on form refresh by the Server Provider client script to
+		paint a green/red API-token indicator. Returns
+		`{ok, email, rate_limit, rate_remaining, error?}` — the same payload
+		shape on both success and failure so the client only has to look at
+		`ok`. Raising would route to Frappe's error dialog, which would be
+		louder than the spec calls for (the indicator is the surface)."""
+		if self.provider_type != "DigitalOcean":
+			return {"ok": True, "skipped": True, "reason": "non-DigitalOcean provider"}
+		try:
+			result = self.client.verify_credentials()
+			return {
+				"ok": True,
+				"email": result.get("email"),
+				"rate_limit": result.get("rate_limit"),
+				"rate_remaining": result.get("rate_remaining"),
+			}
+		except DigitalOceanError as exception:
+			return {"ok": False, "error": str(exception)}
 
 	@frappe.whitelist()
 	def preview_cost(self) -> dict:
