@@ -66,7 +66,7 @@ keep it the source of truth.
 
 ## Operator use cases
 
-Everything Atlas does for an operator falls into one of seven use cases.
+Everything Atlas does for an operator falls into one of eight use cases.
 The list is the spec's index of operator-visible behavior; the e2e suite
 mirrors it exactly (one module per use case, see
 [`atlas/tests/e2e/use_cases/`](../atlas/tests/e2e/use_cases)). New
@@ -79,12 +79,48 @@ operator-facing features add to this list; new tests follow it.
 | Provision a virtual machine    | `Virtual Machine` → **Provision**                       | [05-virtual-machine-lifecycle.md](./05-virtual-machine-lifecycle.md) |
 | Operate a virtual machine      | `Virtual Machine` → **Start / Stop / Restart / Terminate** | [05-virtual-machine-lifecycle.md](./05-virtual-machine-lifecycle.md) |
 | Run an ad-hoc task / reboot    | `Server` → **Run Task / Reboot**                        | [04-tasks.md](./04-tasks.md) |
+| Click any button on the desk   | every form button driven through `run_doc_method`       | (this section, *Desk-button coverage*) |
 | Talk to DigitalOcean           | (internal) verify the DO HTTP client                    | [01-architecture.md](./01-architecture.md) |
 | Run a script over SSH directly | (internal) `run_task(connection=…)` before a `Server` row exists | [04-tasks.md](./04-tasks.md) |
 
 The last two are internal contracts the higher use cases depend on; they
 have their own e2e modules because they fail in different ways than the
-operator-facing flows do.
+operator-facing flows do. *Desk-button coverage* sits between them and
+the operator flows: it re-runs every button through the HTTP layer the
+desk uses, catching failures the direct-Python use cases miss.
+
+### Desk-button coverage
+
+The five operator-facing use cases above call controller methods
+directly: `provider.provision_server(name)`, `vm.start()`,
+`image.sync_to_server(server)`. That covers the methods but skips the
+layer the desk actually hits — Frappe's
+`/api/method/run_doc_method` endpoint that `frm.call(...)` posts to.
+Two failure shapes only show up at that layer:
+
+1. **Failures from DigitalOcean.** When the operator's DO token is
+   expired or scoped wrong, `provision_server` raises `DigitalOceanError`
+   before any `Server` row is inserted. Direct Python calls in tests
+   don't exercise the "row must not leak when the API rejects us" branch.
+2. **Argument-shape failures from dialogs.** The `Run Task` Code field
+   posts `variables` as a JSON *string*, not a dict. The `Sync to
+   Server` Link field and `Provision Server` Data field post strings.
+   Direct Python calls pass typed Python values and skip the
+   string-decode paths — so malformed JSON in the `Run Task` dialog
+   surfaces to the operator as an opaque 500 instead of a clean
+   ValidationError.
+
+The [`desk_buttons`](../atlas/tests/e2e/use_cases/desk_buttons.py) use
+case drives every button through `frappe.handler.run_doc_method` with
+the exact argument shape the desk sends, plus the negative paths an
+operator can trigger by hand: bad DO token, malformed JSON, duplicate
+server name, wrong-state lifecycle button, unknown script. It piggybacks
+on the shared bootstrapped server; the bad-token path uses a throwaway
+provider so no droplet is ever created.
+
+When a button is added to a form, its happy path and the dialog's
+operator-visible negative paths go here, not in the
+corresponding direct-Python use case.
 
 ## Testing
 
@@ -93,8 +129,8 @@ detail. The mapping is one module per use case under
 [`atlas/tests/e2e/use_cases/`](../atlas/tests/e2e/use_cases); the
 filenames mirror the table above (`server_provisioning.py`,
 `image_sync.py`, `virtual_machine_provisioning.py`,
-`virtual_machine_lifecycle.py`, `run_task.py`, `digitalocean_client.py`,
-`ssh_primitive.py`).
+`virtual_machine_lifecycle.py`, `run_task.py`, `desk_buttons.py`,
+`digitalocean_client.py`, `ssh_primitive.py`).
 
 Each use-case module is the **single source of truth** for that
 operation's end-to-end coverage. It owns:

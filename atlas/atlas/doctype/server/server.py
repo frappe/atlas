@@ -49,7 +49,10 @@ class Server(Document):
 		`variables` is a dict (JS form post) or JSON string. Returns Task name.
 		"""
 		if isinstance(variables, str):
-			variables = json.loads(variables or "{}")
+			try:
+				variables = json.loads(variables or "{}")
+			except json.JSONDecodeError as exception:
+				frappe.throw(f"variables must be valid JSON: {exception}")
 		if variables is None:
 			variables = {}
 		if not isinstance(variables, dict):

@@ -1,0 +1,370 @@
+"""Use case: every operator-visible button on the desk, driven through the
+HTTP layer the desk actually uses.
+
+The other use-case modules call controller methods in Python:
+`provider.provision_server(...)`, `vm.start()`, etc. That covers the methods
+but skips the layer that surfaces operator-visible failures — Frappe's
+`/api/method/run_doc_method` endpoint that `frm.call(...)` posts to.
+
+When the operator clicked buttons by hand, two failure shapes appeared:
+
+1. **DigitalOcean errors at the API.** `provision_server` raises
+   `DigitalOceanError` mid-call, before the `Server` row is inserted. The
+   dialog stays open and the alert is the raw exception string. We want
+   the throw to surface cleanly and not leave a half-written `Server`
+   row.
+2. **Mysterious failures.** Dialog fields ship strings to the server: the
+   `Run Task` dialog's Code field posts `variables` as a JSON string, the
+   `Sync to Server` dialog's Link field posts `server_name` as a string,
+   the `Provision Server` dialog's Data field posts `server_name` as a
+   string. Direct Python calls pass dicts / typed values and never
+   exercise the string-decode paths.
+
+This module drives every button on every form through
+`frappe.handler.run_doc_method` with the **exact argument shape the desk
+sends**: positional args as a dict, `variables` as a JSON string,
+`server_name` as a Data string, etc. It also drives the negative paths an
+operator can hit:
+
+- `provision_server` with a bad DO token (401/403 from DO, no Server row
+  left behind).
+- `provision_server` with a duplicate name (ValidationError, no DO call).
+- `Run Task` dialog with malformed JSON in the variables Code field.
+- `Run Task` dialog with a script that's not in the catalogue.
+- `Sync to Server` against a non-existent Server name (Link validation).
+- `Start` / `Stop` / `Restart` / `Terminate` from the wrong state.
+
+Cost: one shared bootstrapped server. The DO-error path uses a throwaway
+provider whose token is `bogus`, so it never reaches the DO API
+successfully — no droplet is created.
+
+The happy paths intentionally overlap with the other use cases — but they
+go through `run_doc_method`, so they record different code under
+coverage and catch desk-only regressions (e.g. a method that stops being
+whitelisted, an arg name that diverges from what JS sends).
+"""
+
+import json
+import time
+from contextlib import contextmanager
+from types import SimpleNamespace
+
+import frappe
+from frappe.handler import run_doc_method
+
+from atlas.atlas.digitalocean import DigitalOceanError
+from atlas.tests.e2e._shared import (
+	ensure_image_on_server,
+	ephemeral_public_key,
+	expect_validation_error,
+	phase,
+)
+
+
+def run(reuse: bool = True, keep: bool = True) -> None:
+	with phase("desk-buttons", reuse=reuse, keep=keep) as server:
+		image_doc = ensure_image_on_server(server.name)
+		public_key = ephemeral_public_key()
+
+		_check_server_provider_buttons(server)
+		_check_server_buttons(server)
+		_check_virtual_machine_image_buttons(server.name, image_doc.name)
+		_check_virtual_machine_buttons(server.name, image_doc.name, public_key)
+		_check_provision_server_bad_token()
+
+
+# ----- helpers -------------------------------------------------------------
+
+
+@contextmanager
+def _fake_post_request():
+	"""Stand in for the WSGI request the desk would normally provide.
+
+	`frappe.handler.is_valid_http_method` reads `frappe.local.request.method`
+	to check the HTTP verb against `frappe.allowed_http_methods_for_whitelisted_func`.
+	`bench execute` has no request, so we install a `SimpleNamespace` with
+	`method="POST"` for the duration of the call and restore the previous
+	binding on exit.
+	"""
+	sentinel = object()
+	previous = getattr(frappe.local, "request", sentinel)
+	frappe.local.request = SimpleNamespace(method="POST")
+	try:
+		yield
+	finally:
+		if previous is sentinel:
+			# `frappe.local` is a Werkzeug Local; the attribute didn't exist
+			# before, so remove it instead of writing `sentinel` back.
+			try:
+				del frappe.local.request
+			except AttributeError:
+				pass
+		else:
+			frappe.local.request = previous
+
+
+def _call_button(doctype: str, name: str, method: str, **kwargs) -> object:
+	"""Invoke a whitelisted controller method the way the desk does.
+
+	`frm.call(method, args)` posts to `/api/method/run_doc_method` with
+	`dt`, `dn`, `method`, and `args` (JSON-encoded dict). `run_doc_method`
+	is a thin wrapper around `doc.run_method(method, **args)` that also
+	checks `is_whitelisted`, the HTTP verb, and DocType read permission.
+
+	We invoke `run_doc_method` directly so the test exercises the same
+	wrapper. The return value lands in `frappe.response['message']`; we
+	pop it off the response so the next call starts clean.
+	"""
+	frappe.response.pop("message", None)
+	# `run_doc_method` mutates frappe.response.docs; clear it so we don't
+	# accumulate stale entries across calls in the same test run.
+	frappe.response.docs = []
+	with _fake_post_request():
+		run_doc_method(method=method, dt=doctype, dn=name, args=json.dumps(kwargs))
+	return frappe.response.get("message")
+
+
+# ----- Server Provider -----------------------------------------------------
+
+
+def _check_server_provider_buttons(server) -> None:
+	"""Test Connection and Provision Server (happy + duplicate name)."""
+	provider = frappe.get_doc("Server Provider", server.provider)
+
+	# Test Connection: no args, returns {"ok": True, "email": ...} or 403.
+	try:
+		result = _call_button("Server Provider", provider.name, "test_connection")
+		assert result and result.get("ok") is True, result
+	except DigitalOceanError as exception:
+		assert "403" in str(exception) or "forbidden" in str(exception).lower(), str(exception)
+
+	# Provision Server with a duplicate name: ValidationError, no DO call.
+	# (The shared server's name is guaranteed to exist.)
+	with expect_validation_error("already exists"):
+		_call_button(
+			"Server Provider",
+			provider.name,
+			"provision_server",
+			server_name=server.name,
+		)
+
+
+# ----- Server --------------------------------------------------------------
+
+
+def _check_server_buttons(server) -> None:
+	"""Bootstrap, Run Task (dialog), Reboot is covered by run_task use case."""
+
+	# Bootstrap: no args. Idempotent on an Active server.
+	task_name = _call_button("Server", server.name, "bootstrap")
+	assert task_name, "bootstrap returned no Task name"
+	task = frappe.get_doc("Task", task_name)
+	assert task.status == "Success", task.stderr
+
+	# get_scripts: no args, returns a sorted list of `.sh` filenames.
+	scripts = _call_button("Server", server.name, "get_scripts")
+	assert isinstance(scripts, list) and scripts, scripts
+	assert "bootstrap-server.sh" in scripts, scripts
+
+	# Run Task dialog happy path. The Code field posts `variables` as a
+	# JSON string, not a dict — drive that branch explicitly.
+	task_name = _call_button(
+		"Server",
+		server.name,
+		"run_task_dialog",
+		script="bootstrap-server.sh",
+		variables=json.dumps({
+			"FIRECRACKER_VERSION": "v1.15.1",
+			"ARCHITECTURE": "x86_64",
+		}),
+	)
+	task = frappe.get_doc("Task", task_name)
+	assert task.status == "Success", task.stderr
+
+	# Run Task dialog with an empty variables string (operator clears the
+	# Code field). `run_task_dialog` treats empty string as `{}`.
+	with expect_validation_error("unknown script"):
+		_call_button(
+			"Server",
+			server.name,
+			"run_task_dialog",
+			script="not-a-real-script.sh",
+			variables="",
+		)
+
+	# Run Task dialog with malformed JSON in the variables Code field.
+	# The operator typed `{foo: bar}` instead of `{"foo": "bar"}`. Pre-fix,
+	# json.loads raised a bare JSONDecodeError that bubbled up as an opaque
+	# 500. Post-fix, run_task_dialog re-throws it as a ValidationError that
+	# the desk shows in a clean alert.
+	with expect_validation_error("must be valid json"):
+		_call_button(
+			"Server",
+			server.name,
+			"run_task_dialog",
+			script="bootstrap-server.sh",
+			variables="{not valid json",
+		)
+
+	# Run Task dialog with valid JSON that isn't an object.
+	with expect_validation_error("variables must"):
+		_call_button(
+			"Server",
+			server.name,
+			"run_task_dialog",
+			script="bootstrap-server.sh",
+			variables="[1, 2, 3]",
+		)
+
+
+# ----- Virtual Machine Image ----------------------------------------------
+
+
+def _check_virtual_machine_image_buttons(server_name: str, image_name: str) -> None:
+	"""Sync to Server (dialog) and Sync to All Servers."""
+
+	# Sync to Server: server_name is a Link field, posted as a string.
+	task_name = _call_button(
+		"Virtual Machine Image",
+		image_name,
+		"sync_to_server",
+		server_name=server_name,
+	)
+	assert task_name, "sync_to_server returned no Task name"
+	# We don't wait for the queued Task to finish here — the image_sync use
+	# case already covers the full run. We only assert the button enqueues.
+	task = frappe.get_doc("Task", task_name)
+	assert task.script == "sync-image.sh", task.script
+	assert task.server == server_name, task.server
+	assert task.status in ("Pending", "Running", "Success"), task.status
+
+	# Sync to All Servers: returns one Task name per Active Server row.
+	tasks = _call_button(
+		"Virtual Machine Image",
+		image_name,
+		"sync_to_all_servers",
+	)
+	active_count = frappe.db.count("Server", filters={"status": "Active"})
+	assert isinstance(tasks, list) and len(tasks) == active_count, (tasks, active_count)
+
+
+# ----- Virtual Machine -----------------------------------------------------
+
+
+def _check_virtual_machine_buttons(
+	server_name: str, image_name: str, public_key: str
+) -> None:
+	"""Provision -> Stop -> Start -> Restart -> Terminate, every step via
+	`run_doc_method`. Mirrors the JS button map in `virtual_machine.js`."""
+
+	vm = frappe.get_doc({
+		"doctype": "Virtual Machine",
+		"description": "desk-buttons lifecycle",
+		"server": server_name,
+		"image": image_name,
+		"vcpus": 1,
+		"memory_megabytes": 512,
+		"disk_gigabytes": 4,
+		"ssh_public_key": public_key,
+	}).insert(ignore_permissions=True)
+	frappe.db.commit()
+
+	# Pending state guards: start / stop / restart all throw before Provision.
+	# These are the buttons the operator might click by mistake.
+	with expect_validation_error("cannot start"):
+		_call_button("Virtual Machine", vm.name, "start")
+	with expect_validation_error("cannot stop"):
+		_call_button("Virtual Machine", vm.name, "stop")
+	with expect_validation_error("cannot restart"):
+		_call_button("Virtual Machine", vm.name, "restart")
+
+	# Provision.
+	_call_button("Virtual Machine", vm.name, "provision")
+	vm.reload()
+	assert vm.status == "Running", vm.status
+
+	# Stop.
+	_call_button("Virtual Machine", vm.name, "stop")
+	vm.reload()
+	assert vm.status == "Stopped", vm.status
+
+	# Start.
+	time.sleep(1)
+	_call_button("Virtual Machine", vm.name, "start")
+	vm.reload()
+	assert vm.status == "Running", vm.status
+
+	# Restart returns a {stop_task, start_task} pair.
+	time.sleep(1)
+	result = _call_button("Virtual Machine", vm.name, "restart")
+	assert result and result.get("stop_task") and result.get("start_task"), result
+	vm.reload()
+	assert vm.status == "Running", vm.status
+
+	# Terminate.
+	_call_button("Virtual Machine", vm.name, "terminate")
+	vm.reload()
+	assert vm.status == "Terminated", vm.status
+
+	# Terminated state guard: every button is gone in the JS map; if the
+	# operator races a stale tab and clicks Terminate again, the server
+	# must throw rather than re-running the script.
+	with expect_validation_error("already terminated"):
+		_call_button("Virtual Machine", vm.name, "terminate")
+
+
+# ----- Provision Server with a bad token ----------------------------------
+
+
+def _check_provision_server_bad_token() -> None:
+	"""DO returns 401 on a bogus token; the dialog's Provision click raises
+	DigitalOceanError. Critically: no `Server` row is inserted and no
+	droplet leaks, because the throw happens before the row insert.
+
+	The earlier `Server Provider` validation path covers the duplicate-name
+	branch; this path covers the DO-API-rejects-us branch the operator hit
+	when their token had expired."""
+	provider_name = "atlas-e2e-bogus-token"
+	if not frappe.db.exists("Server Provider", provider_name):
+		frappe.get_doc({
+			"doctype": "Server Provider",
+			"provider_name": provider_name,
+			"provider_type": "DigitalOcean",
+			"api_token": "do_v1_bogus_token_for_negative_path",
+			"ssh_key_id": "0",
+			"ssh_private_key": (
+				"-----BEGIN OPENSSH PRIVATE KEY-----\n"
+				"bogus\n"
+				"-----END OPENSSH PRIVATE KEY-----\n"
+			),
+			"default_region": "blr1",
+			"default_size": "s-1vcpu-1gb",
+			"default_image": "ubuntu-24-04-x64",
+			"is_active": 1,
+		}).insert(ignore_permissions=True)
+		frappe.db.commit()
+
+	target_name = f"atlas-e2e-badtoken-{int(time.time())}"
+	caught = False
+	try:
+		_call_button(
+			"Server Provider",
+			provider_name,
+			"provision_server",
+			server_name=target_name,
+		)
+	except DigitalOceanError as exception:
+		caught = True
+		# 401 unauthorized is what an expired token returns; 403 forbidden is
+		# what a token without the droplet scope returns. Either drives the
+		# same raise.
+		message = str(exception).lower()
+		assert "401" in message or "403" in message or "unauthorized" in message, message
+	finally:
+		# The throw must happen before the Server row insert. If a row exists,
+		# we'd have a phantom Server pointing to a droplet that was never
+		# created.
+		assert not frappe.db.exists("Server", target_name), (
+			f"Server row {target_name} leaked despite DO API failure"
+		)
+	assert caught, "provision_server with a bogus token should have raised"

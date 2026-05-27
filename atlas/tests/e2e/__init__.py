@@ -28,6 +28,7 @@ from atlas.tests.e2e._shared import (
 	sweep_old_droplets,
 )
 from atlas.tests.e2e.use_cases import (
+	desk_buttons,
 	image_sync,
 	run_task,
 	server_provisioning,
@@ -65,6 +66,7 @@ def run_all() -> None:
 		("vm-provisioning", virtual_machine_provisioning.run),
 		("vm-lifecycle", virtual_machine_lifecycle.run),
 		("run-task", run_task.run),
+		("desk-buttons", desk_buttons.run),
 		("server-provisioning (validation)", server_provisioning.run_against_shared),
 		("ssh-primitive (transport+bootstrap)", ssh_primitive.run_against_shared),
 	]
