@@ -46,8 +46,91 @@ frappe.ui.form.on("Server", {
 			return;
 		}
 		add_buttons(frm);
+		render_running_task_headline(frm);
+		render_recent_tasks(frm);
+		subscribe_to_realtime(frm);
 	},
 });
+
+
+function render_running_task_headline(frm) {
+	frm.dashboard.clear_headline?.();
+	frappe.db.get_list("Task", {
+		fields: ["name", "subject", "script", "status", "started", "modified"],
+		filters: {
+			server: frm.doc.name,
+			status: ["in", ["Pending", "Running"]],
+		},
+		order_by: "modified desc",
+		limit: 1,
+	}).then((rows) => {
+		if (!rows.length) return;
+		const task = rows[0];
+		const subject = task.subject || task.script || task.name;
+		const when_started_html = task.started
+			? frappe.datetime.comment_when(task.started)
+			: `<span class="text-muted small">${__("just now")}</span>`;
+		const link = `<a href="/app/task/${encodeURIComponent(task.name)}">${frappe.utils.escape_html(subject)} →</a>`;
+		frm.dashboard.set_headline_alert(
+			`⏵ ${__("Running task")}: ${link} <span class="text-muted small">${when_started_html}</span>`,
+			"yellow",
+		);
+	});
+}
+
+
+function render_recent_tasks(frm) {
+	const wrapper_id = "atlas-server-recent-tasks";
+	frm.dashboard.wrapper?.find(`#${wrapper_id}`).remove();
+	frappe.db.get_list("Task", {
+		fields: ["name", "subject", "script", "status", "modified"],
+		filters: {server: frm.doc.name},
+		order_by: "modified desc",
+		limit: 5,
+	}).then((rows) => {
+		if (!rows.length) return;
+		const list = rows.map((row) => {
+			const title = row.subject || row.script || row.name;
+			// comment_when() returns a full HTML <span> with relative-time
+			// tooltip; embed it directly (do not html-escape).
+			const ago = frappe.datetime.comment_when(row.modified);
+			return `<li class="d-flex align-items-center mb-1" style="gap: 0.5em;">
+				<span class="indicator-pill ${indicator_color(row.status)}">${frappe.utils.escape_html(row.status || "—")}</span>
+				<a href="/app/task/${encodeURIComponent(row.name)}" class="flex-grow-1">${frappe.utils.escape_html(title)}</a>
+				<span class="text-muted small">${ago}</span>
+			</li>`;
+		}).join("");
+		const html = `
+			<div id="${wrapper_id}" class="form-section">
+				<div class="section-head text-uppercase text-muted small mb-2">${__("Recent Tasks")}</div>
+				<ul class="list-unstyled">${list}</ul>
+				<a href="/app/task/view/list?server=${encodeURIComponent(frm.doc.name)}" class="small">${__("View all")} →</a>
+			</div>
+		`;
+		frm.dashboard.add_section(html, "atlas-recent-tasks");
+	});
+}
+
+
+function indicator_color(status) {
+	return {
+		Pending: "orange",
+		Running: "yellow",
+		Success: "green",
+		Failure: "red",
+	}[status] || "grey";
+}
+
+
+function subscribe_to_realtime(frm) {
+	if (frm._atlas_server_realtime_registered) return;
+	frm._atlas_server_realtime_registered = true;
+	frappe.realtime.on("task_update", (data) => {
+		if (!data || data.server !== frm.doc.name) return;
+		render_running_task_headline(frm);
+		render_recent_tasks(frm);
+	});
+}
 
 
 function add_buttons(frm) {

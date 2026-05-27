@@ -108,15 +108,28 @@ server, the listener refetches the headline.
 
 ### Frappe components used
 - `frm.dashboard.set_headline_alert(html, color)`.
-- Existing `frm.dashboard` connections dashboard (already wired in
-  `server_dashboard.py`); a small render override turns the Task tile
-  into a list.
+- A dedicated **Recent Tasks** HTML section rendered via
+  `frm.dashboard.add_section`; we did not override the Connections
+  dashboard tile because the standard tile is locked to a count badge
+  and replacing the inner render plays poorly with Frappe re-renders.
 - `frappe.realtime.on("task_update", ...)`.
 
+**Implementation status (landed):** §2 is wired. The Server form now
+shows a yellow headline alert when there's a Pending/Running Task for
+this server (`⏵ Running task: <subject> →`), and a "Recent Tasks"
+section listing the last 5 Tasks (status pill + subject + relative
+time). Both subscribe to the `task_update` realtime event and re-render
+on every status transition.
+
+**Drift note:** The connections dashboard tile is unchanged (still shows
+total count), and the new "Recent Tasks" lives as a separate
+`add_section` HTML region underneath. Overriding the Connections tile's
+render proved fragile under Frappe re-renders; the side-by-side panel
+keeps both pieces of information visible without fighting Desk.
+
 ### Fighting Desk?
-**Mild.** The default Connections dashboard renders counts only; we
-override the Task tile to render rows. The override is local to the
-Server form's client script so it doesn't affect any other doctype.
+No — we add a panel via `frm.dashboard.add_section`; we do not override
+the standard tile.
 
 ---
 
