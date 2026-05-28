@@ -74,14 +74,49 @@ Steps in Python (one DocType method, `Virtual Machine.provision`):
    at the **Sync to Server** action. Provision does not auto-sync — image
    sync is a multi-minute operation and we want it deliberate, predictable,
    and visible as its own Task. The remaining steps (rootfs copy, resize,
-   SSH key injection, config write, systemd enable+start) happen inside the
-   same SSH session. See [`atlas/scripts/provision-vm.sh`](../scripts/provision-vm.sh).
+   SSH key injection, per-VM hostname `atlas-<first-8-of-uuid>` written to
+   `/etc/hostname` and `/etc/hosts`, 512 MiB `/swapfile`, fresh per-VM
+   `/etc/ssh/ssh_host_*` keypairs, per-VM `/etc/machine-id`, config
+   write, systemd enable+start) happen inside the same SSH session.
+   The per-VM identity writes share the rootfs mount with the SSH-key
+   injection — no per-VM systemd unit needed. See
+   [`atlas/scripts/provision-vm.sh`](../scripts/provision-vm.sh).
 
 3. **Update status**: on Task success, `status = Running`,
    `last_started = now()`.
 
 One Task per VM creation. (The image sync, if needed, is a separate Task
 triggered explicitly by the operator before provisioning.)
+
+### Guest-side identity contract
+
+A freshly provisioned VM presents the following to an operator who SSHes
+in. These are the contract `provision-vm.sh` writes and the e2e suite
+([`phase5-guest-identity.sh`](../atlas/tests/e2e/scripts/phase5-guest-identity.sh))
+asserts on every run:
+
+- `hostname` is `atlas-<first-8-of-uuid>`. Same string in `/etc/hostname`
+  and as a `127.0.1.1` entry in `/etc/hosts`.
+- `/etc/machine-id` is unique per VM (derived from the UUID; the leaked
+  CI value `4833ad8775a24dcc9d4b159af4e84d08` is gone).
+- `/etc/ssh/ssh_host_*` keypairs are unique per VM — generated on the
+  host at provision time with `ssh-keygen` and written into the mounted
+  rootfs. The CI build-container comment `root@bf0feaa40806` does not
+  appear.
+- No global IPv4 on `eth0` — the `fcnet.service` that derived a phantom
+  `91.83.x.x/30` from the MAC is removed at image-sync time.
+- `/etc/hosts` has no Docker bridge leftover; just localhost, the
+  per-VM 127.0.1.1 line, and the ip6-* aliases.
+- Root password locked (`root:!:` in `/etc/shadow`). `sshd -T` reports
+  `passwordauthentication no` — key-only by contract.
+- `/swapfile` is active swap (512 MiB by default), referenced by the
+  `/etc/fstab` installed at image-sync time.
+
+This list is short for a reason: it is the operator-visible delta
+between a Firecracker CI test artifact and a VM that looks like the
+operator's own. When the upstream image changes, every bullet either
+stays a no-op (good) or needs a new strip (a regression to fix in
+`sync-image.sh`).
 
 ## Start / Stop / Restart
 

@@ -94,13 +94,8 @@ def get_image() -> str:
 	return frappe.conf.get("atlas_test_image", "ubuntu-24-04-x64")
 
 
-def ephemeral_public_key() -> str:
-	"""Return the public half of a stable ed25519 keypair under `~/.cache/atlas-e2e/`.
-
-	Generates the keypair on first call, reuses it forever after. Returning
-	the same `.pub` lets phases 5 and 6 inject an SSH key the operator can
-	point at the same authorized_keys entry across runs.
-	"""
+def _ephemeral_key_path() -> str:
+	"""Stable ed25519 keypair under `~/.cache/atlas-e2e/`; generated once."""
 	directory = os.path.expanduser("~/.cache/atlas-e2e")
 	os.makedirs(directory, exist_ok=True)
 	key_path = os.path.join(directory, "id")
@@ -110,5 +105,19 @@ def ephemeral_public_key() -> str:
 			check=True,
 		)
 	os.chmod(key_path, 0o600)
-	with open(f"{key_path}.pub") as handle:
+	return key_path
+
+
+def ephemeral_public_key() -> str:
+	"""Return the public half of the stable ed25519 keypair. Returning the same
+	`.pub` lets phases 5 and 6 inject an SSH key the operator can point at the
+	same authorized_keys entry across runs."""
+	with open(f"{_ephemeral_key_path()}.pub") as handle:
 		return handle.read().strip()
+
+
+def ephemeral_private_key() -> str:
+	"""Return the private half of the stable ed25519 keypair, for probes that
+	need to SSH back into a freshly provisioned VM."""
+	with open(_ephemeral_key_path()) as handle:
+		return handle.read()

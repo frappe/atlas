@@ -31,11 +31,34 @@ def run(reuse: bool = True, keep: bool = True) -> None:
 	with phase("image-sync", reuse=reuse, keep=keep) as server:
 		image = ensure_default_image_row()
 
+		_clear_cached_rootfs(server.name, image)
 		_check_sync_to_server(server.name, image)
 		_check_resync_short_circuits(server.name, image)
 		_check_execute_task_sync(server.name, image)
 		_check_image_url_validation()
 		_check_sync_to_all_servers()
+
+
+def _clear_cached_rootfs(server_name: str, image) -> None:
+	"""Delete the on-server rootfs so sync-image.sh re-runs the full pipeline.
+
+	With a shared droplet, the rootfs accumulates across e2e runs and the
+	short-circuit at sync-image.sh:47 hides any change in the download +
+	normalize + mkfs path. Clearing here turns every run into a real
+	regression test of the sync script.
+	"""
+	from atlas.atlas.ssh import run_task
+
+	task = run_task(
+		server=server_name,
+		script="phase4-clear-image.sh",
+		variables={
+			"IMAGE_NAME": image.image_name,
+			"ROOTFS_FILENAME": image.rootfs_filename,
+		},
+		timeout_seconds=15,
+	)
+	assert task.status == "Success", task.stderr
 
 
 def _check_sync_to_server(server_name: str, image) -> None:

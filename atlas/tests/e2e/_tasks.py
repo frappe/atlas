@@ -76,11 +76,17 @@ def mark_orphan_tasks_failure(older_than_minutes: int = 10) -> int:
 	return len(stuck)
 
 
-def assert_probe(server_name: str, script: str, **variables: str) -> None:
+def assert_probe(
+	server_name: str,
+	script: str,
+	timeout_seconds: int = 15,
+	**variables: str,
+) -> None:
 	"""Run `script` on `server_name` and assert it exits Success.
 
 	The probe's success is the assertion — its script is expected to `exit 0`
-	when the condition holds and non-zero otherwise.
+	when the condition holds and non-zero otherwise. Probes that need to wait
+	on something (e.g. a guest VM booting) bump `timeout_seconds`.
 	"""
 	from atlas.atlas.ssh import run_task
 
@@ -88,6 +94,6 @@ def assert_probe(server_name: str, script: str, **variables: str) -> None:
 		server=server_name,
 		script=script,
 		variables=variables,
-		timeout_seconds=15,
+		timeout_seconds=timeout_seconds,
 	)
 	assert task.status == "Success", task.stderr

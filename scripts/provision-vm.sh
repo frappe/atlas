@@ -53,7 +53,7 @@ if [ ! -f "$rootfs_path" ]; then
     sudo mv "${rootfs_path}.part" "$rootfs_path"
 fi
 
-# 2. Inject SSH key and per-VM network env.
+# 2. Inject SSH key, per-VM network env, hostname, swap.
 mount_point="$(sudo mktemp -d /tmp/atlas-mount-XXXXXX)"
 sudo mount -o loop "$rootfs_path" "$mount_point"
 trap 'sudo umount "$mount_point" 2>/dev/null || true; sudo rmdir "$mount_point" 2>/dev/null || true' EXIT
@@ -64,6 +64,49 @@ printf '%s\n' "$SSH_PUBLIC_KEY" | sudo install -m 0600 /dev/stdin "${mount_point
 sudo install -m 0644 /dev/stdin "${mount_point}/etc/atlas-network.env" <<EOF
 VIRTUAL_MACHINE_IPV6=${VIRTUAL_MACHINE_IPV6}
 EOF
+
+# 2a. Per-VM hostname. The VM UUID is stable forever (see
+#     spec/05-virtual-machine-lifecycle.md#Identity); first 8 chars are
+#     enough to be recognizable in shell prompts and journal lines
+#     without dragging the full 36-char UUID everywhere. The hosts-file
+#     entry under 127.0.1.1 is the Debian convention and what
+#     `hostname -f` resolves against.
+vm_hostname="atlas-${VIRTUAL_MACHINE_NAME:0:8}"
+echo "$vm_hostname" | sudo install -m 0644 /dev/stdin "${mount_point}/etc/hostname"
+printf '\n127.0.1.1\t%s\n' "$vm_hostname" | \
+    sudo tee -a "${mount_point}/etc/hosts" >/dev/null
+
+# 2b. Swapfile. 512 MiB is enough to keep small apt installs from OOMing
+#     on the 484-MiB default; users with bigger VMs can replace it.
+#     Created inside the rootfs while mounted so it lands at /swapfile
+#     on boot — the fstab from sync-image picks it up.
+sudo dd if=/dev/zero of="${mount_point}/swapfile" bs=1M count=512 status=none
+sudo chmod 0600 "${mount_point}/swapfile"
+sudo mkswap "${mount_point}/swapfile" >/dev/null
+
+# 2c. SSH host keys. sync-image.sh deletes the shared CI keys from the
+#     image; we expected the guest to regenerate via `ssh-keygen -A` at
+#     first boot, but the Firecracker CI rootfs has no first-boot
+#     mechanism (no cloud-init, no ssh-keygen.service), so sshd dies
+#     when keys are missing. Generate per-VM keys here on the host and
+#     drop them in — each VM still gets unique keys, no first-boot
+#     dependency. ssh-keygen accepts arbitrary output paths so we can
+#     write directly into the mounted rootfs.
+sudo install -d -m 0755 "${mount_point}/etc/ssh"
+for key_type in rsa ecdsa ed25519; do
+    key_path="${mount_point}/etc/ssh/ssh_host_${key_type}_key"
+    sudo rm -f "${key_path}" "${key_path}.pub"
+    sudo ssh-keygen -q -t "$key_type" -f "$key_path" -N "" -C "root@${vm_hostname}"
+done
+
+# 2d. machine-id. sync-image.sh truncated it to zero bytes expecting
+#     systemd to regenerate at first boot — same caveat as 2c, the
+#     stripped image has no reliable first-boot path. Write 32
+#     lowercase hex chars at provision time (the format
+#     systemd-machine-id-setup uses). Derived from the VM UUID so it's
+#     stable across reboots of the same VM.
+machine_id="$(printf '%s' "$VIRTUAL_MACHINE_NAME" | tr -d '-' | head -c 32)"
+echo "$machine_id" | sudo install -m 0444 /dev/stdin "${mount_point}/etc/machine-id"
 
 sudo umount "$mount_point"
 sudo rmdir "$mount_point"

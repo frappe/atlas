@@ -26,6 +26,7 @@ from atlas.atlas.ssh import run_task
 from atlas.tests.e2e._shared import (
 	assert_probe,
 	ensure_image_on_server,
+	ephemeral_private_key,
 	ephemeral_public_key,
 	expect_validation_error,
 	phase,
@@ -71,10 +72,13 @@ def _check_provision_image_missing(server_name: str, image: str) -> None:
 		# and the happy path can't recover.
 		_move_image(server_name, image_doc, "back")
 
-	# Failed provision does not mutate the row; status stays Pending so the
-	# operator can click Provision again after running Sync to Server.
+	# Failed provision lands in either Pending (run_task raised before any
+	# status flip) or Failed (Task.on_update propagated Failure to the VM,
+	# see task.py::_propagate_status_to_virtual_machine). Both are
+	# re-provisionable by Virtual Machine.provision(), so the operator can
+	# click Provision again after running Sync to Server.
 	vm.reload()
-	assert vm.status == "Pending", vm.status
+	assert vm.status in ("Pending", "Failed"), vm.status
 
 	# Tidy up the VM row we used to exercise the negative path.
 	frappe.delete_doc("Virtual Machine", vm.name, force=True, ignore_permissions=True)
@@ -98,6 +102,19 @@ def _check_provision_happy_path(server_name: str, image: str, public_key: str) -
 	assert vm.last_started
 
 	assert_probe(server_name, "phase5-is-active.sh", VIRTUAL_MACHINE_NAME=vm.name)
+
+	# SSH into the guest over its IPv6 and assert the fit-and-finish
+	# guarantees from llm/plan/real-vm-fitfinish.md: per-VM hostname,
+	# regenerated machine-id and ssh host keys, no fcnet IPv4 leftover,
+	# clean /etc/hosts, locked root, sshd password-auth off, swap on.
+	assert_probe(
+		server_name,
+		"phase5-guest-identity.sh",
+		timeout_seconds=180,
+		VIRTUAL_MACHINE_NAME=vm.name,
+		VIRTUAL_MACHINE_IPV6=vm.ipv6_address,
+		SSH_PRIVATE_KEY=ephemeral_private_key(),
+	)
 
 	# Provision again from Running -> throw (cleanup happens via the test's
 	# server teardown — this row stays Running so the lifecycle use case can

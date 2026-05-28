@@ -37,8 +37,10 @@ The script:
    not.
 2. Ensures the rootfs ext4 exists. Downloads the source squashfs,
    unsquashes it, drops in `/etc/systemd/system/atlas-network.service` and
-   a placeholder `/etc/atlas-network.env`, and packs the result into an ext4
-   of `default_disk_gigabytes`. Skips if the rootfs is already present.
+   a placeholder `/etc/atlas-network.env`, **normalizes the rootfs** (see
+   *Image normalization at sync time* below), and packs the result into an
+   ext4 of `default_disk_gigabytes` labelled `atlas-root`. Skips if the
+   rootfs is already present.
 
 The guest unit file [`scripts/guest/atlas-network.service`](../scripts/guest/atlas-network.service)
 is uploaded to the server alongside `sync-image.sh` before the script runs.
@@ -50,6 +52,44 @@ general mechanism (any script can declare sidecar uploads, picked up by
 [04-tasks.md → Sidecar uploads](./04-tasks.md#sidecar-uploads-script_uploads).
 Keeping the unit file as a real file (not a heredoc inside the script) means
 we can lint it, diff it, and edit it without touching shell code.
+
+### Image normalization at sync time
+
+The upstream Firecracker CI rootfs is built for the test harness, not for
+end users. `sync-image.sh` strips a fixed set of CI artifacts before
+building the per-server ext4:
+
+- `fcnet.service` + `/usr/local/bin/fcnet-setup.sh` (assigns a phantom
+  IPv4/30 derived from the MAC — useful for the Firecracker test
+  harness, meaningless for us and confusing to a user reading `ip a`).
+- All `/etc/ssh/ssh_host_*` keypairs (otherwise every VM would share
+  host keys and SSH TOFU would be a lie). Per-VM keys are regenerated
+  at provision time by `provision-vm.sh` — the stripped image has no
+  reliable first-boot key-regen path (no cloud-init,
+  no `ssh-keygen.service`).
+- `/etc/machine-id` (cleared at sync time and rewritten per VM at
+  provision time, again because the image has no first-boot mechanism
+  we can rely on).
+- `/etc/hosts` overwritten — the shipped file maps a Docker bridge IP
+  to the build-container hostname.
+- Root password locked, SSH password-auth disabled (key-only by
+  contract). The sshd directive is *prepended* to `sshd_config` rather
+  than sed-edited in place — the stripped image often has no
+  `PasswordAuthentication` line for sed to match, and a header-prepend
+  works either way (first-match-wins in sshd_config).
+- `/home/ubuntu` chown'd to uid/gid 1000.
+- motd: `50-motd-news` (network nag) and `60-unminimize` (image-is-
+  half-baked nag) removed.
+- `/etc/fstab` replaced with a real entry (`LABEL=atlas-root /` plus
+  the swapfile from provision-time).
+
+If we ever switch to a different upstream rootfs (e.g. real Ubuntu
+cloud image), this list becomes the regression-test checklist: each
+item should be a no-op on the new image, not a removal.
+
+The per-VM half of the contract (hostname, machine-id, ssh host keys,
+swapfile, /etc/hosts 127.0.1.1 line) is written at provision time. See
+[05-virtual-machine-lifecycle.md → Guest-side identity contract](./05-virtual-machine-lifecycle.md#guest-side-identity-contract).
 
 ### Why we convert squashfs → ext4 server-side
 
@@ -69,10 +109,15 @@ When `provision-vm.sh` runs, it:
 1. Copies the pristine ext4 into the VM directory.
 2. `truncate -s <disk_gigabytes>G` to grow the file.
 3. `e2fsck -fy` + `resize2fs` to extend the filesystem.
-4. `mount -o loop` to write `/root/.ssh/authorized_keys` and
-   `/etc/atlas-network.env`. The `atlas-network.service` is already in the
-   pristine image and already wanted by `multi-user.target`, so we don't
-   need to touch systemd inside the rootfs.
+4. `mount -o loop` to write `/root/.ssh/authorized_keys`,
+   `/etc/atlas-network.env`, `/etc/hostname` + a matching `127.0.1.1`
+   line in `/etc/hosts`, a 512 MiB `/swapfile` (referenced by the
+   fstab installed at image-sync time), fresh `/etc/ssh/ssh_host_*`
+   keypairs (`ssh-keygen` on the host writes directly into the
+   mounted rootfs), and a derived `/etc/machine-id`. The
+   `atlas-network.service` is already in the pristine image and
+   already wanted by `multi-user.target`, so we don't need to touch
+   systemd inside the rootfs.
 5. `umount`.
 
 This means a freshly booted VM comes up with the right IPv6, the right SSH
