@@ -110,20 +110,39 @@ class TestTask(IntegrationTestCase):
 	def test_subject_set_for_known_script(self) -> None:
 		from atlas.tests.fixtures import make_server
 
-		server = make_server(name="task-test-server-subject")
+		server = make_server(title="task-test-server-subject")
 		task = self._make(script="bootstrap-server.sh", server=server.name)
-		self.assertEqual(task.subject, f"Bootstrap · {server.name}")
+		# Subject is just the verb-noun label now — target identity lives on
+		# the Server column, not in the subject.
+		self.assertEqual(task.subject, "Bootstrap Server")
 
 	def test_subject_set_for_unknown_script_falls_back_to_filename(self) -> None:
 		from atlas.tests.fixtures import make_server
 
-		server = make_server(name="task-test-server-subject-unknown")
+		server = make_server(title="task-test-server-subject-unknown")
 		task = self._make(script="noop.sh", server=server.name)
-		self.assertEqual(task.subject, f"noop.sh · {server.name}")
+		self.assertEqual(task.subject, "noop.sh")
 
 	def test_subject_without_server_or_vm(self) -> None:
 		task = self._make(script="bootstrap-server.sh", server=None)
-		self.assertEqual(task.subject, "Bootstrap")
+		self.assertEqual(task.subject, "Bootstrap Server")
+
+	def test_states_array_paints_status_pills(self) -> None:
+		"""DocType `states` array drives the list-view colour pill for the
+		Status column. Pinning the colour mapping here so a future PR can't
+		silently re-colour Failure (or drop a status)."""
+		import json
+		import pathlib
+
+		json_path = (
+			pathlib.Path(__file__).parent / "task.json"
+		)
+		schema = json.loads(json_path.read_text())
+		states = {row["title"]: row["color"] for row in schema["states"]}
+		self.assertEqual(
+			states,
+			{"Pending": "Yellow", "Running": "Blue", "Success": "Green", "Failure": "Red"},
+		)
 
 	def test_retry_rejects_non_failure(self) -> None:
 		task = self._make(script="bootstrap-server.sh", server=None, status="Pending")

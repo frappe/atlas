@@ -45,6 +45,8 @@ whitelisted, an arg name that diverges from what JS sends).
 """
 
 import json
+import os
+import tempfile
 import time
 from contextlib import contextmanager
 from types import SimpleNamespace
@@ -58,7 +60,24 @@ from atlas.tests.e2e._shared import (
 	ephemeral_public_key,
 	expect_validation_error,
 	phase,
+	wait_for_vm_running,
 )
+
+
+def _bogus_key_path() -> str:
+	"""Return an absolute path to a tempfile containing a bogus PEM-shaped
+	string. The e2e negative-path provider only needs a path that resolves to
+	an existing file; nothing ever SSHes with this key."""
+	path = os.path.join(tempfile.gettempdir(), "atlas-e2e-bogus-key.pem")
+	if not os.path.isfile(path):
+		with open(path, "w") as handle:
+			handle.write(
+				"-----BEGIN OPENSSH PRIVATE KEY-----\n"
+				"bogus\n"
+				"-----END OPENSSH PRIVATE KEY-----\n"
+			)
+		os.chmod(path, 0o600)
+	return path
 
 
 def run(reuse: bool = True, keep: bool = True) -> None:
@@ -139,13 +158,13 @@ def _check_server_provider_buttons(server) -> None:
 		assert "403" in str(exception) or "forbidden" in str(exception).lower(), str(exception)
 
 	# Provision Server with a duplicate name: ValidationError, no DO call.
-	# (The shared server's name is guaranteed to exist.)
+	# (The shared server's title is guaranteed to exist.)
 	with expect_validation_error("already exists"):
 		_call_button(
 			"Server Provider",
 			provider.name,
 			"provision_server",
-			server_name=server.name,
+			title=server.title,
 		)
 
 
@@ -261,12 +280,14 @@ def _check_virtual_machine_image_buttons(server_name: str, image_name: str) -> N
 def _check_virtual_machine_buttons(
 	server_name: str, image_name: str, public_key: str
 ) -> None:
-	"""Provision -> Stop -> Start -> Restart -> Terminate, every step via
-	`run_doc_method`. Mirrors the JS button map in `virtual_machine.js`."""
+	"""Auto-provision (insert -> Running) -> Stop -> Start -> Restart ->
+	Terminate, every step via `run_doc_method`. Mirrors the JS button map in
+	`virtual_machine.js`. Per Phase 4 the form's Provision button is gone on
+	Pending — `after_insert` enqueues `auto_provision`."""
 
 	vm = frappe.get_doc({
 		"doctype": "Virtual Machine",
-		"description": "desk-buttons lifecycle",
+		"title": "desk-buttons lifecycle",
 		"server": server_name,
 		"image": image_name,
 		"vcpus": 1,
@@ -276,17 +297,8 @@ def _check_virtual_machine_buttons(
 	}).insert(ignore_permissions=True)
 	frappe.db.commit()
 
-	# Pending state guards: start / stop / restart all throw before Provision.
-	# These are the buttons the operator might click by mistake.
-	with expect_validation_error("cannot start"):
-		_call_button("Virtual Machine", vm.name, "start")
-	with expect_validation_error("cannot stop"):
-		_call_button("Virtual Machine", vm.name, "stop")
-	with expect_validation_error("cannot restart"):
-		_call_button("Virtual Machine", vm.name, "restart")
-
-	# Provision.
-	_call_button("Virtual Machine", vm.name, "provision")
+	# Auto-provision worker flips Pending -> Running. No explicit button click.
+	wait_for_vm_running(vm.name, timeout_seconds=120)
 	vm.reload()
 	assert vm.status == "Running", vm.status
 
@@ -339,11 +351,7 @@ def _check_provision_server_bad_token() -> None:
 			"provider_type": "DigitalOcean",
 			"api_token": "do_v1_bogus_token_for_negative_path",
 			"ssh_key_id": "0",
-			"ssh_private_key": (
-				"-----BEGIN OPENSSH PRIVATE KEY-----\n"
-				"bogus\n"
-				"-----END OPENSSH PRIVATE KEY-----\n"
-			),
+			"ssh_private_key_path": _bogus_key_path(),
 			"default_region": "blr1",
 			"default_size": "s-1vcpu-1gb",
 			"default_image": "ubuntu-24-04-x64",
@@ -351,14 +359,14 @@ def _check_provision_server_bad_token() -> None:
 		}).insert(ignore_permissions=True)
 		frappe.db.commit()
 
-	target_name = f"atlas-e2e-badtoken-{int(time.time())}"
+	target_title = f"atlas-e2e-badtoken-{int(time.time())}"
 	caught = False
 	try:
 		_call_button(
 			"Server Provider",
 			provider_name,
 			"provision_server",
-			server_name=target_name,
+			title=target_title,
 		)
 	except DigitalOceanError as exception:
 		caught = True
@@ -371,7 +379,7 @@ def _check_provision_server_bad_token() -> None:
 		# The throw must happen before the Server row insert. If a row exists,
 		# we'd have a phantom Server pointing to a droplet that was never
 		# created.
-		assert not frappe.db.exists("Server", target_name), (
-			f"Server row {target_name} leaked despite DO API failure"
+		assert not frappe.db.exists("Server", {"title": target_title}), (
+			f"Server row with title {target_title!r} leaked despite DO API failure"
 		)
 	assert caught, "provision_server with a bogus token should have raised"

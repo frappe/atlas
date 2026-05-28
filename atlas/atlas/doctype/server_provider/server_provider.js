@@ -6,10 +6,15 @@ frappe.ui.form.on("Server Provider", {
 		if (frm.is_new()) {
 			return;
 		}
-		frappe.atlas.add_primary(frm, "Provision Server", () => open_provision_dialog(frm));
+		if (frm.doc.is_active) {
+			frappe.atlas.add_primary(frm, "Provision Server", () => open_provision_dialog(frm));
+		}
 		if (frm.doc.provider_type === "DigitalOcean") {
 			frappe.atlas.add_action(frm, "Test Connection", () => run_test_connection(frm));
 			render_credential_indicator(frm);
+		}
+		if (frm.doc.is_active) {
+			frappe.atlas.add_danger(frm, "Archive", () => confirm_archive(frm));
 		}
 	},
 });
@@ -59,7 +64,6 @@ function run_test_connection(frm) {
 			message: __("OK: {0}", [message.email]),
 			indicator: "green",
 		});
-		// Re-render the credential indicator off the freshly-validated call.
 		frm._atlas_credential_cache = null;
 		render_credential_indicator(frm);
 	});
@@ -67,17 +71,20 @@ function run_test_connection(frm) {
 
 
 function open_provision_dialog(frm) {
-	frm.call("preview_cost").then(({message: preview}) => {
-		const is_self_managed = frm.doc.provider_type === "Self-Managed";
-		const fields = build_provision_fields(preview, is_self_managed);
+	const is_self_managed = frm.doc.provider_type === "Self-Managed";
+	const options_call = is_self_managed
+		? Promise.resolve({message: {regions: [], sizes: [], images: []}})
+		: frappe.call({method: "atlas.atlas.api.provider_options.provider_options"});
+
+	options_call.then(({message: options}) => {
 		const dialog = new frappe.ui.Dialog({
 			title: __("Provision Server"),
-			fields: fields,
+			fields: build_provision_fields(frm, options, is_self_managed),
 			primary_action_label: __("Provision"),
 			primary_action(values) {
-				if (!validate_server_name(dialog, values.server_name)) return;
+				if (!validate_server_title(dialog, values.title)) return;
 				dialog.hide();
-				confirm_provision(frm, preview, values, is_self_managed);
+				confirm_provision(frm, values, is_self_managed);
 			},
 		});
 		dialog.show();
@@ -85,16 +92,11 @@ function open_provision_dialog(frm) {
 }
 
 
-function build_provision_fields(preview, is_self_managed) {
+function build_provision_fields(frm, options, is_self_managed) {
 	const fields = [
 		{
-			fieldname: "preview",
-			fieldtype: "HTML",
-			options: render_preview_html(preview, is_self_managed),
-		},
-		{
-			fieldname: "server_name",
-			label: __("Server Name"),
+			fieldname: "title",
+			label: __("Title"),
 			fieldtype: "Data",
 			reqd: 1,
 			description: __("lowercase + digits + hyphens, max 63 chars"),
@@ -131,51 +133,47 @@ function build_provision_fields(preview, is_self_managed) {
 				description: __("Subnet Atlas allocates VM addresses from. Any prefix length."),
 			},
 		);
+	} else {
+		fields.push(
+			{
+				fieldname: "region",
+				label: __("Region"),
+				fieldtype: "Select",
+				options: options.regions.join("\n"),
+				default: frm.doc.default_region,
+				reqd: 1,
+			},
+			{
+				fieldname: "size",
+				label: __("Size"),
+				fieldtype: "Select",
+				options: options.sizes.join("\n"),
+				default: frm.doc.default_size,
+				reqd: 1,
+			},
+			{
+				fieldname: "image",
+				label: __("Image"),
+				fieldtype: "Select",
+				options: options.images.join("\n"),
+				default: frm.doc.default_image,
+				reqd: 1,
+			},
+		);
 	}
-	fields.push({
-		fieldname: "footer_hint",
-		fieldtype: "HTML",
-		options: is_self_managed
-			? `<div class="text-muted small">${__("Atlas will SSH to your host and run bootstrap-server.sh. Nothing is created remotely.")}</div>`
-			: `<div class="text-muted small">${__("Provisioning takes ~90 seconds. The new Server form opens automatically and the bootstrap Task runs in the background.")}</div>`,
-	});
 	return fields;
 }
 
 
-function render_preview_html(preview, is_self_managed) {
-	if (is_self_managed) {
-		return `<div class="text-muted small">${__("Provider type: Self-Managed. You provide the IP addresses below.")}</div>`;
-	}
-	const cost = preview.monthly_cost_usd != null
-		? `≈ $${preview.monthly_cost_usd}/mo`
-		: "—";
-	const rows = [
-		[__("Region"), preview.region],
-		[__("Size"), `${preview.size} <span class="text-muted">(${cost})</span>`],
-		[__("Image"), preview.image],
-	].map(([label, value]) => `
-		<div class="row" style="padding: 4px 0">
-			<div class="col-sm-4 text-muted">${frappe.utils.escape_html(label)}</div>
-			<div class="col-sm-8">${value}</div>
-		</div>
-	`).join("");
-	return `
-		<div class="text-muted small mb-2">${__("Using defaults from {0}:", [frappe.utils.escape_html(preview.provider_type || "this provider")])}</div>
-		${rows}
-	`;
-}
-
-
-function validate_server_name(dialog, name) {
-	if (!/^[a-z0-9][a-z0-9-]{1,62}$/.test(name)) {
+function validate_server_title(dialog, title) {
+	if (!/^[a-z0-9][a-z0-9-]{1,62}$/.test(title)) {
 		dialog.set_df_property(
-			"server_name",
+			"title",
 			"description",
 			__("Lowercase + digits + hyphens, max 63 chars, must start with a letter or digit."),
 		);
 		frappe.show_alert({
-			message: __("Server Name does not match the expected pattern."),
+			message: __("Title does not match the expected pattern."),
 			indicator: "orange",
 		});
 		return false;
@@ -184,10 +182,13 @@ function validate_server_name(dialog, name) {
 }
 
 
-function confirm_provision(frm, preview, values, is_self_managed) {
+function confirm_provision(frm, values, is_self_managed) {
 	const body = is_self_managed
 		? `<p>${__("Atlas will SSH to {0} as root and run bootstrap-server.sh. Nothing is created remotely.", [`<b>${frappe.utils.escape_html(values.ipv4_address)}</b>`])}</p>`
-		: build_cost_body_html(preview);
+		: `<p>${__("This will create a {0} droplet in {1}.", [
+			`<b>${frappe.utils.escape_html(values.size)}</b>`,
+			`<b>${frappe.utils.escape_html(values.region)}</b>`,
+		])}</p>`;
 
 	frappe.atlas.confirm_cost({
 		title: is_self_managed ? __("Bootstrap a self-managed server?") : __("Create a billable droplet?"),
@@ -196,7 +197,7 @@ function confirm_provision(frm, preview, values, is_self_managed) {
 		proceed() {
 			frm.call("provision_server", values).then(({message: server_name}) => {
 				frappe.show_alert({
-					message: __("Provisioning {0}; watch the Task list.", [server_name]),
+					message: __("Provisioning {0}; watch the Task list.", [values.title]),
 					indicator: "blue",
 				});
 				frappe.set_route("Form", "Server", server_name);
@@ -206,16 +207,21 @@ function confirm_provision(frm, preview, values, is_self_managed) {
 }
 
 
-function build_cost_body_html(preview) {
-	const cost = preview.monthly_cost_usd != null
-		? __("≈ ${0}/mo", [preview.monthly_cost_usd])
-		: __("price not available");
-	return `
-		<p>${__("This will create a {0} droplet in {1} ({2}).", [
-			`<b>${frappe.utils.escape_html(preview.size)}</b>`,
-			`<b>${frappe.utils.escape_html(preview.region)}</b>`,
-			cost,
-		])}</p>
-		<p>${__("It starts billing immediately and cannot be paused.")}</p>
-	`;
+function confirm_archive(frm) {
+	frappe.atlas.confirm_destructive({
+		title: __("Archive {0}?", [frm.doc.provider_name]),
+		body_html: "",
+		match_string: frm.doc.provider_name,
+		match_label: __("Type the provider name to confirm"),
+		proceed_label: __("Archive"),
+		proceed() {
+			frm.call("archive").then(() => {
+				frappe.show_alert({
+					message: __("Provider archived."),
+					indicator: "blue",
+				});
+				frm.reload_doc();
+			});
+		},
+	});
 }

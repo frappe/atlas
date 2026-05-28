@@ -31,6 +31,22 @@ directly.
 One Task per server-image pair, running
 [`scripts/sync-image.sh`](../scripts/sync-image.sh).
 
+Sync is **automatic** on image creation:
+`Virtual Machine Image.after_insert` enumerates every `Server` with
+`status = Active` and calls `self.sync_to_server(server)` for each.
+The operator only saves the image; the fan-out enqueues one Task per
+target. New `Active` servers added later are caught up via the same
+`sync_to_server` method, invoked from the Server form's **Sync Image**
+Actions item (a one-field dialog picking an `is_active = 1` image) or
+from the e2e harness — there is no operator-facing button on the
+Image form for ad-hoc per-server sync.
+
+The image row itself is immutable from insert. Every non-`is_active`
+field carries `set_only_once`, and `_validate_immutability` raises if
+a backdoor write tries to mutate kernel/rootfs URLs or checksums.
+Rotating an image means inserting a new row (which auto-syncs) and
+archiving the old one via the `archive()` controller method.
+
 The script:
 
 1. Ensures the kernel file exists on the server. Downloads and checksums if
@@ -132,19 +148,32 @@ place for inspection.
 
 ## Bumping an image
 
-To roll to a new Ubuntu CI release:
+Image rows are immutable after insert. To roll to a new Ubuntu CI
+release, **create a new `Virtual Machine Image` row** and archive the
+old one:
 
-1. Update `kernel_url`, `kernel_sha256`, `rootfs_url`, `rootfs_sha256` on
-   the `Virtual Machine Image`.
-2. Click **Sync to All Servers**. Each server's Task downloads and rebuilds
-   the ext4. The existing ext4 stays put because the script checks for
-   filename presence — so old VMs continue to work from the old image bytes
-   on the server.
+1. Insert a new `Virtual Machine Image` with a distinct `image_name`
+   (e.g. include the release date or the upstream tag), the new URLs,
+   and the new SHA-256 digests. Saving the row triggers
+   `after_insert`, which fans out one `sync-image.sh` Task per `Active`
+   Server automatically.
+2. On the old row, run **Archive** under `Actions ▾`. This flips
+   `is_active = 0` and removes it from the image picker on new VM
+   forms. The on-disk kernel + rootfs are *not* deleted — VMs already
+   provisioned from the old image keep working from their per-VM ext4
+   copy, and the per-server kernel + rootfs files survive until the
+   operator cleans them up by hand.
 
-This is intentional: bumping an image does not affect existing VMs. To put
-a new VM on the new image, archive and re-provision (changing `image` is
-not allowed; see [05-virtual-machine-lifecycle.md](./05-virtual-machine-lifecycle.md)).
+Bumping an image does not affect existing VMs: per-VM rootfs files are
+full copies, not overlays, so the image's bytes on the server are
+irrelevant once a VM is provisioned. Changing `image` on a VM row is
+forbidden (`_validate_immutability`); see
+[05-virtual-machine-lifecycle.md](./05-virtual-machine-lifecycle.md). To
+move a VM onto the new image, terminate it and re-provision against the
+new row.
 
-If you want the new bits everywhere on a fresh sync, change the
-`rootfs_filename` to a new value (e.g. include the release date). Then the
-old file remains for old VMs, the new file gets built, and new VMs use it.
+The old contract — "edit the image's URLs + checksums in place, then
+click Sync to All Servers" — is gone. Editing in place would silently
+invalidate any audit row that referenced the old digest, so the
+controller now refuses kernel/rootfs URL or SHA-256 mutations
+post-insert.

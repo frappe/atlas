@@ -43,11 +43,11 @@ def run() -> None:
 	sweep_old_droplets(client)
 
 	provider = ensure_e2e_provider()
-	server_name = f"atlas-e2e-fresh-{int(time.time())}"
+	title = f"atlas-e2e-fresh-{int(time.time())}"
 	server_doc = None
 
 	try:
-		provider.provision_server(server_name)
+		server_name = provider.provision_server(title)
 		server_doc = _wait_for_status(server_name, target={"Active", "Broken"}, timeout=600)
 		assert server_doc.status == "Active", f"expected Active, got {server_doc.status}"
 		assert server_doc.firecracker_version, "firecracker_version not recorded"
@@ -132,10 +132,10 @@ def _check_provision_server_duplicate_name(server) -> None:
 	provider = frappe.get_doc("Server Provider", server.provider)
 	caught = False
 	try:
-		provider.provision_server(server.name)
+		provider.provision_server(server.title)
 	except frappe.ValidationError as exception:
 		caught = "already exists" in str(exception).lower()
-	assert caught, "provision_server with duplicate name should have raised"
+	assert caught, "provision_server with duplicate title should have raised"
 
 
 def _check_bootstrap_status_guard(server) -> None:

@@ -182,14 +182,3 @@
 .frappe-control[data-fieldname="stderr"] .CodeMirror {
 	min-height: 24em;
 }
-
-
-/* ---------------------------------------------------------------------- *
- * Hide the bare reqd-asterisk text node Frappe's form layout emits at
- * the top of a form column when the first field is required — the real
- * label asterisk is still rendered next to the field name.
- * ---------------------------------------------------------------------- */
-
-.form-column .section-body > .reqd:not(.frappe-control) {
-	display: none !important;
-}

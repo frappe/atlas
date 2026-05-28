@@ -75,40 +75,20 @@ action reads as the page's single hero. On forms with no custom
 primary (Active server, idle Task) Save stays solid, correctly
 becoming the page's only primary.
 
-### Form-embedded lists reuse the workspace `quick_list` widget
+### Form-embedded lists — only on the workspace now
 
-Three forms surface a short list of related records inside a dashboard
-section: Server > **Recent Tasks**, Task > **Sibling Tasks**, and
-Virtual Machine Image > **Sync Status**. The Atlas workspace also
-surfaces one — **Recent activity** — via Frappe's native `quick_list`
-block. Rather than carry our own row template and indicator-colour map
-on each form, the form lists instantiate the same widget directly:
+The earlier design surfaced three form-embedded `quick_list` panels
+(Server > **Recent Tasks**, Task > **Sibling Tasks**, Virtual Machine
+Image > **Sync Status**). All three are **gone** — Frappe's Connections
+dashboard on Server / VM / Image already exposes the same Task count
+and link affordance from the standard `_dashboard.py` config, and
+duplicating the navigation inside the form added clutter without
+adding signal.
 
-```js
-frappe.widget.make_widget({
-  widget_type: "quick_list",
-  document_type: "Task",
-  label: __("Recent Tasks"),
-  quick_list_filter: JSON.stringify([["server", "=", frm.doc.name]]),
-  container: $section,
-  options: {},
-});
-```
-
-That gives every form list the workspace's row markup
-(`.quick-list-item` with stacked title + relative time, status pill on
-the right, hover, chevron), pill colours from
-`frappe.get_indicator()` (same as the Task list view), and the
-refresh / filter / "View List" affordances — with **no Atlas CSS**.
-The widget hardcodes `page_length: 4` and orders by `creation desc`;
-both are accepted in exchange for parity with the workspace block.
-
-The Sync Status panel on Virtual Machine Image is the one exception:
-its rows are one-per-active-server with a conditional right cell
-("Sync now" vs. last-synced timestamp), not a single-doctype list, so
-the widget can't render it. The renderer is bespoke but emits the
-same `.quick-list-widget-box` / `.quick-list-item` markup, so it
-inherits the same Frappe CSS without an Atlas stylesheet.
+The workspace's **Recent activity** block keeps the `quick_list`
+widget (10 most recent Task rows, status pill, relative time) — that's
+the operator's home, not a form section, and the at-a-glance affordance
+earns its keep there.
 
 ### Confirmation helpers
 
@@ -121,15 +101,16 @@ frappe.atlas.confirm_destructive({title, body_html, match_string,
 `confirm_cost` wraps `frappe.warn` with the orange Provision-style
 indicator. Used for actions that are not destructive but spend real
 money or bandwidth: Provision Server (creates a billable droplet).
-Sync to All Servers uses a dedicated `MultiCheck` dialog instead so
-the operator can pick the subset of servers to sync to — see
-[Virtual Machine Image](#virtual-machine-image).
+There is no Sync-to-All operator action — image sync is automatic on
+image insert; see [Virtual Machine Image](#virtual-machine-image).
 
 `confirm_destructive` is a custom dialog with a text-match input. The
 red primary button stays disabled until what the operator types
 matches `match_string` exactly. Used for: Reboot a server (match the
-server name), Terminate a VM (match the VM's 8-char short ID), Delete
-a Terminated VM record.
+server `title`), Terminate a VM (match the VM `title`), Delete
+a Terminated VM record (match the VM `title`), Archive a Server / Image
+(match the row's `title`). The dialog body is empty — typing the title
+is the entire deterrent.
 
 The match-string pattern is the same one GitHub uses for "delete
 repository": the operator can't muscle-memory through it.
@@ -152,8 +133,10 @@ knows what's normal.
 `refresh` for the five Atlas doctypes, hides:
 
 - `frm.page.sidebar` — the right rail (Assign, Tags, Share, …).
-- `.new-timeline` and `.comment-input-container` inside
-  `frm.page.wrapper` — the activity panel and comment box.
+- `.new-timeline`, `.comment-input-container`, `.comment-input-wrapper`,
+  `.comment-input-placeholder`, `.comment-box`, `.comment-box-container`
+  inside `frm.page.wrapper` — the activity panel and every known shape
+  of the comment box / placeholder Frappe emits across versions.
 
 The main column then expands from `col-lg-8` to `col-lg-12` so the
 form breathes. We hide DOM nodes; we don't monkeypatch Frappe globals.
@@ -161,6 +144,16 @@ form breathes. We hide DOM nodes; we don't monkeypatch Frappe globals.
 Connections dashboards (the count tiles for Workloads, Tasks, …) stay
 visible — those *are* useful and Frappe renders them on the form
 itself, not in the right rail.
+
+### Page title
+
+`frappe.atlas.set_window_title(frm)` overrides Frappe's default
+`<title> — <name>` (which duplicates the operator-facing label and the
+autoname on DocTypes that carry a separate `title` field — Server, VM,
+Image). The override sets `document.title` to
+`${frm.doc.title || frm.doc.name} — Atlas`. On DocTypes where the
+user-defined name *is* the autoname (Server Provider, Task) the
+override falls through cleanly to `name`.
 
 ## The workspace
 
@@ -180,7 +173,14 @@ sections, top-to-bottom:
    are satisfied the widget collapses itself and can be permanently
    dismissed — no Atlas code, no fixture HTML/CSS/JS. The earlier
    custom-HTML implementation (`atlas-bootstrap-checklist`,
-   `bootstrap_status()`) is gone.
+   `bootstrap_status()`) is gone. Sites bootstrapped before the
+   onboarding fixture landed are migrated by
+   [`atlas/patches/v1_0/migrate_workspace_to_onboarding.py`](../atlas/patches/v1_0/migrate_workspace_to_onboarding.py),
+   which rewrites the workspace `content` JSON to match
+   [`atlas/atlas/workspace/atlas/atlas.json`](../atlas/atlas/workspace/atlas/atlas.json)
+   and force-deletes the orphaned `Custom HTML Block atlas-bootstrap-checklist`
+   row if it survived. The patch is idempotent — re-running it on a
+   clean site is a no-op.
 2. **Fleet at a glance** — four `number_card` blocks: Active Servers,
    Running Virtual Machines, Pending Virtual Machines (tinted amber to
    draw the eye when stuck), Failed Tasks (24h) (tinted red). Frappe's
@@ -235,22 +235,25 @@ so values read louder than their labels. Section headers, modal
 titles, and dialog labels are untouched — the rule is scoped to
 `.frappe-control`.
 
-### Tab Break separators on heavy forms
+### Single-tab forms with collapsible sections
 
-Server, Virtual Machine, Virtual Machine Image, and Task each carried
-4–6 vertical sections; the form was scroll-heavy. The doctype JSON
-files now group those sections into tabs via `fieldtype: "Tab Break"`:
+Every Atlas form now collapses to a single `Overview` Tab Break with
+the rest of the layout sitting under it as collapsible Section Breaks.
+The earlier multi-tab shape (Networking / Host info / Activity / Image
+data / Output as siblings of Overview) was scroll-light but
+attention-heavy: the operator had to click across tabs to confirm one
+fact. Sections under a single tab keep the same vertical density while
+letting the operator skim and expand only what matters.
 
-| Doctype | Tabs |
+| Doctype | Layout |
 | --- | --- |
-| Server                | Overview · Networking · Host info |
-| Virtual Machine       | Overview · Networking · Activity |
-| Virtual Machine Image | Overview · Image data |
-| Task                  | Overview · Output |
+| Server                | Overview (Identity · Networking · Host info) |
+| Virtual Machine       | Overview (Identity · Resources · Networking · Security · Activity) |
+| Virtual Machine Image | Overview (Identity · Image data) |
+| Task                  | Overview (Status · Variables · Output) |
 
-No fields moved between sections; only the section/tab boundary
-changed. Dashboard panels (Operations, Recent Tasks, headlines)
-render *above* the tab strip and remain visible across all tabs.
+Dashboard panels (Operations, headlines) render above the tab strip
+and remain visible regardless of which section is expanded.
 
 ### Tonal dropdown items — red and green
 
@@ -288,16 +291,6 @@ which catches both the plain textarea and the CodeMirror wrapper
 (Desk swaps between them depending on the Code field's `options`).
 The earlier JS-side `enlarge_log_panes` helper is gone.
 
-### Orphan reqd-asterisk
-
-Some Frappe versions emit a bare `*` element above a column whose
-first field is required — duplicating the asterisk already rendered
-next to the label. A one-line rule
-(`.form-column .section-body > .reqd:not(.frappe-control) { display: none }`)
-hides the wrapper case. The text-node case (no element to target)
-is still stripped by `suppress_orphan_asterisks` in
-`atlas_form_overrides.js` — CSS can't select text nodes.
-
 ## Per-doctype consequences
 
 ### Server Provider
@@ -305,12 +298,20 @@ is still stripped by `suppress_orphan_asterisks` in
 - **Provision Server** is the primary action.
 - **Test Connection** lives under `Actions ▾`. It's a cheap read-only
   ping; it doesn't need top-bar real estate.
-- The Provision dialog shows a defaults preview block (region, size,
-  monthly USD cost, image) above the Server Name field, then hands
-  off to `confirm_cost` ("Create a billable droplet?"). Cost comes
-  from a hand-maintained `DIGITALOCEAN_MONTHLY_COST_USD` dict — same
-  policy as `default_image` (DO doesn't expose pricing per size in
-  their API). Missing sizes render as "—" rather than guess.
+- **Archive** lives under `Actions ▾`, shown only while `is_active = 1`.
+  Confirms via `frappe.confirm` (no destructive type-the-title dance —
+  archiving is not deletion). The controller's `archive()` flips
+  `is_active = 0` via `db.set_value` so the framework's
+  `set_only_once` lock is bypassed cleanly.
+- The Provision dialog uses standard fieldtype inputs — three editable
+  `Select` controls for `region`, `size`, `image` (DigitalOcean), or
+  the four networking inputs for Self-Managed. Options for the DO
+  selects come from `atlas.atlas.api.provider_options.provider_options`,
+  same hand-maintained shape as `DIGITALOCEAN_MONTHLY_COST_USD`. The
+  defaults preview HTML block (and the "Provisioning takes ~90s"
+  paragraph) is gone — operators read the values straight out of the
+  inputs. The dialog still hands off to `confirm_cost` ("Create a
+  billable droplet?") before the DO API call.
 - A **credential indicator** auto-runs on form refresh for DigitalOcean
   providers. `Server Provider.credential_check` hits the DO `/account`
   endpoint and returns `{ok, email, rate_limit, rate_remaining}` or
@@ -322,65 +323,88 @@ is still stripped by `suppress_orphan_asterisks` in
   Connection also fires a blue `Testing connection…` toast
   immediately on click so the operator knows the click landed before
   the network round-trip resolves.
+- Every Auth + Defaults field paints read-only after first save via
+  the framework's `set_only_once` flag. Rotating the API token or the
+  SSH key is *not* a form edit — operators replace the file on disk
+  (for the SSH key) or create a new Provider row and archive the old
+  one (for the token).
 
 ### Server
 
+- The Server row's `name` is a UUID; the operator-facing label lives in
+  the `title` field. List view, breadcrumbs, and the browser tab title
+  all read `title`, not `name`. `set_only_once` freezes `title` and
+  `provider` after the first save; the rest of the row is locked once
+  written via the controller's `_validate_immutability` (which allows
+  `None → value`, so the DigitalOcean provision flow can fill IPv4/6
+  after insert).
 - **Bootstrap** is primary when the server is `Pending` /
   `Bootstrapping` / `Broken`. On an Active server it folds under
   `Actions ▾` as **Re-bootstrap** — re-bootstrapping a healthy host
   is rare enough not to compete for top-bar real estate.
-- **Run Task** and **Reboot** always live under `Actions ▾`. The Run
-  Task dialog is 100% server-driven: `Server.get_scripts()` returns
-  `[{name, intro, fields}, ...]` straight out of
-  `scripts_catalog.SCRIPT_FORMS`, and the client passes each entry's
-  `fields` to `frappe.ui.Dialog` after gating them with `depends_on:
-  'eval:doc.script === "<name>"'`. No script schema lives client-side
-  — adding a new operator-visible script means adding one entry to
-  `SCRIPT_FORMS`, nothing else.
-- **Reboot** is danger. It demands the operator type the server name
-  in a `confirm_destructive` dialog that also shows the running-VM
-  count.
+- **Sync Image** lives under `Actions ▾` on `Active` servers. It opens
+  a one-field dialog (a Link to `Virtual Machine Image`, filtered to
+  `is_active=1`) and calls `Server.sync_image(image)` — a thin wrapper
+  around `Virtual Machine Image.sync_to_server(self.name)`.
+- **Archive** lives under `Actions ▾` (hidden once the row is already
+  Archived). Confirms via a type-the-title dialog, then sets
+  `status = "Archived"`. The row stays in the database; existing FKs
+  from Virtual Machine and Task rows continue to work.
+- **Reboot** is danger. It demands the operator type the server `title`
+  into a `confirm_destructive` dialog; the dialog body is empty
+  (no caveat copy) — typing the title is the entire deterrent.
+- There is no operator-driven "Run Task" catch-all on the form. The
+  `Server.run_task_dialog` controller method is kept for
+  `Task.retry`, but the desk surface only exposes scripts that are
+  first-class buttons (`Bootstrap`, `Sync Image`, `Reboot`). Lifecycle
+  scripts that don't earn a top-level button live on the relevant
+  DocType (VM start/stop/restart on the VM form, etc.).
 - A yellow **headline alert** announces any Pending/Running Task on
   this server, linking to the Task form. The alert refreshes on the
   `task_update` realtime event.
-- A **Recent Tasks** dashboard section lists recent Tasks for this
-  server. Rendered by Frappe's native `quick_list` widget (see
-  [Form-embedded lists reuse the workspace `quick_list` widget](#form-embedded-lists-reuse-the-workspace-quick_list-widget)),
-  so the row markup, pill colours, and "View List" footer match the
-  workspace **Recent activity** block. The `task_update` realtime hook
-  on this form tears down and recreates the widget so the list stays
-  current as Tasks transition.
+- The bespoke **Recent Tasks** quick_list has been removed — Frappe's
+  Connections dashboard panel (Operations) already exposes the
+  Task count and a link to the filtered list.
 
 ### Virtual Machine
 
 - Lifecycle buttons follow a status-keyed hierarchy:
-  - `Pending` / `Failed` → **Provision** primary.
+  - `Pending` → no primary; `after_insert` already enqueued provision.
+    The operator clicks `Save` and the worker takes it from there.
+  - `Failed` → **Provision** primary (manual retry after an
+    auto-provision failure).
   - `Stopped` → **Start** primary, **Restart** secondary.
   - `Running` → **Stop** primary, **Restart** secondary.
   - `Terminated` → no lifecycle buttons; instead **Re-provision as
     new** is primary and **Delete record** is danger (under
     `Actions ▾`).
 - **Terminate** is always available (until status = Terminated),
-  under `Actions ▾`, danger. The `confirm_destructive` dialog shows
-  IPv6, image, server, and demands the operator type the VM's 8-char
-  short ID.
+  under `Actions ▾`, danger. The `confirm_destructive` dialog body is
+  empty — typing the VM's `title` into the match field is the entire
+  deterrent. IPv6/Image/Server details live in the form behind the
+  dialog; the dialog doesn't repeat them.
+- Every non-status field paints read-only after first save via the
+  controller's `_validate_immutability` (and `set_only_once` on
+  `title` / `server` / `ssh_public_key`). The framework's read-only
+  hint is mirrored on the client in `refresh` so the lock is visible
+  to the operator, not just enforced at save time.
 - The form header carries an `IPv6 [...]` indicator chip painted via
   `frm.dashboard.add_indicator` (green when Running, orange when
   Pending, red when Failed, grey otherwise). The Networking section
   auto-expands while the VM is `Pending` so the address is visible
   before Provision.
-- The Access section carries an `ssh_command` field — a `Code` field
-  with `is_virtual: 1` + `read_only: 1`, value computed by an
-  `@property ssh_command` on the VM controller (`ssh root@<ipv6>`).
-  Frappe's read-only Code control paints its own copy button, so we
-  ship no markup of our own. The IPv6 is the only stable identifier
-  outside the desk.
+- The Security section (renamed from Access) carries an `ssh_command`
+  field — a `Code` field with `is_virtual: 1` + `read_only: 1`, value
+  computed by an `@property ssh_command` on the VM controller
+  (`ssh root@<ipv6>`). Frappe's read-only Code control paints its own
+  copy button, so we ship no markup of our own. The IPv6 is the only
+  stable identifier outside the desk.
 - **Terminated** records render a red dashboard headline
   (`⛔ Terminated <when>. This record is kept for audit; the VM no
   longer exists.`); the **Re-provision as new** button opens a new VM
   form with the same server / image / vcpus / memory / disk / ssh key
-  and a `(clone)`-suffixed description pre-filled.
-- The list view shows `<description> · <short id>` in the subject
+  and a `(clone)`-suffixed title pre-filled.
+- The list view shows `<title> · <short id>` in the subject
   column, an IPv6 copy chip, and status-coloured indicators
   (`Pending` orange, `Running` green, `Stopped`/`Terminated` grey,
   `Failed` red).
@@ -388,88 +412,92 @@ is still stripped by `suppress_orphan_asterisks` in
   Task.on_update hook flips the VM's `status` from `Pending`/`Running`
   to `Failed` via `frappe.db.set_value` and publishes a
   `virtual_machine_update` realtime event. The VM form subscribes and
-  reloads. For `Pending`/`Failed` VMs the client also renders a red
-  intro that links to the most recent provision-vm.sh Failure Task —
-  the operator clicks the link, reads the error, and clicks Provision
+  reloads. For `Failed` VMs the client also renders a red intro that
+  links to the most recent provision-vm.sh Failure Task — the
+  operator clicks the link, reads the error, and clicks Provision
   again to retry.
-- The **creation form** (new VM) shows three affordances on top of the
-  raw schema: a yellow `Description` nudge until the operator types a
-  label; a `size_preset` `Select` field (Custom / Small / Medium /
+- The **creation form** (new VM) shows two affordances on top of the
+  raw schema: a `size_preset` `Select` field (Custom / Small / Medium /
   Large, each labelled with its `vCPU / MB / GB`) at the top of the
   Resources section that writes all three Int fields in one click via
-  a one-line `size_preset(frm)` change handler; and a dashboard
-  headline `Server capacity: X requested + Y used / Z total (N VMs)`.
-  The headline turns orange at the cap and red — with a `⚠ Server is
-  oversubscribed` suffix — when projected use exceeds total. Capacity
-  is computed by `atlas.atlas.api.server_capacity.capacity_for_server`,
-  backed by a hand-maintained `size → vCPUs` dict (same maintenance
-  model as the monthly-cost dict on Server Provider).
+  a one-line `size_preset(frm)` change handler; and — *only* when the
+  server is oversubscribed — a red dashboard headline
+  `⚠ Server is oversubscribed` with the projected use vs. total. The
+  green/blue informational variants of the capacity headline are
+  dropped: the operator only needs the warning when something's
+  wrong. Capacity is computed by
+  `atlas.atlas.api.server_capacity.capacity_for_server`, backed by a
+  hand-maintained `size → vCPUs` dict (same maintenance model as the
+  monthly-cost dict on Server Provider). The yellow `Description`
+  nudge is gone — `reqd: 1` on `title` is the framework's native cue.
+  When exactly one Active `Server` exists, the new-VM form's `server`
+  field is pre-selected via a 2-row `frappe.db.get_list` lookup in
+  `onload`.
 
 ### Virtual Machine Image
 
-- **Sync to Server** is the top-bar secondary action. The picker uses
-  `only_select: 1` (no "+ Create a new Server" affordance) and a
-  `status = Active` filter — syncing to a Pending/Bootstrapping server
-  is wrong because the bootstrap installs Firecracker and the sync
-  target directory.
-- **Sync to All Servers** lives under `Actions ▾`. Before fanning
-  out it opens a `frappe.ui.Dialog` with a `MultiCheck` field
-  pre-populated with every Active server (all checked); the operator
-  can deselect any they didn't intend to sync to. The dialog primary
-  posts the selected list to `sync_to_all_servers(servers=[...])`. The
-  controller falls back to "every Active server" when called with no
-  list, so non-desk callers (bootstrap, e2e) keep the old shape.
-- A **Sync Status** panel at the top of the form lists each Active
-  server with the last successful `sync-image.sh` Task for this image
-  (`<when ago>` and a green **Synced** pill — clicking the row opens
-  the Task). Servers never synced show a grey **Never** pill plus a
-  **Sync now →** link that opens the Sync to Server dialog with the
-  server pre-filled. The panel emits `.quick-list-widget-box` /
-  `.quick-list-item` markup — same as the `quick_list` widget the
-  Server and Task lists use (see [Form-embedded lists reuse the
-  workspace `quick_list` widget](#form-embedded-lists-reuse-the-workspace-quick_list-widget))
-  — but the rows are computed by the controller's `sync_status()`
-  method rather than `quick_list` itself, because one row per active
-  server with conditional right-cell logic doesn't fit the widget's
-  single-doctype query model.
-- Once any successful sync exists for an image, the kernel and rootfs
-  fields (`kernel_url`, `kernel_filename`, `kernel_sha256`,
-  `rootfs_url`, `rootfs_filename`, `rootfs_sha256`) are **locked**.
-  Server-side `validate` throws on any change; the client mirrors the
-  lock via `read_only` and shows a blue intro: "This image has been
-  synced. To change kernel or rootfs, create a new image
-  (e.g. `<name>-v2`)." Editing in place would silently invalidate prior
-  audit rows that reference a different digest.
+- The form is **read-only after insert** — there is no primary
+  action, no Sync to Server dialog, no Sync to All Servers Actions
+  item, no Sync Status panel. Image identity (URLs, checksums,
+  filenames, default disk size) is immutable from creation; the
+  framework's `set_only_once` paints every field read-only after the
+  first save, and the controller's `_validate_immutability` raises on
+  any backdoor mutation. Editing in place would silently invalidate
+  prior audit rows that reference a different digest.
+- **Auto-sync on insert.** `Virtual Machine Image.after_insert`
+  enqueues one `sync-image.sh` Task per `Active` Server. The operator
+  drops kernel/rootfs URLs + checksums into the form, clicks Save,
+  and the fan-out happens automatically. Tracking per-attempt happens
+  through the resulting Task rows (filter the Task list by
+  `script = sync-image.sh`); the dedicated `Virtual Machine Image
+  Sync` DocType scoped in the plan was deferred for the PoC.
+- **Archive** lives under `Actions ▾`, shown only while
+  `is_active = 1`. Calls the controller's `archive()` method to flip
+  `is_active = 0`. Rotating an image is "create a new row, archive the
+  old one" — there's no in-place upgrade.
+- Ad-hoc per-server sync (e.g. catching up a freshly-Active server)
+  goes through the Server form's **Sync Image** Actions item — see
+  the Server section above. That dialog calls `Server.sync_image(image)`
+  which delegates to `Virtual Machine Image.sync_to_server(self.name)`.
 
 ### Task
 
 - The form is read-only (`disable_save()`).
-- Status-coloured dashboard headline:
+- The list view's Status column renders a coloured pill in its own
+  column (driven by the DocType's `states` JSON: `Pending` yellow,
+  `Running` blue, `Success` green, `Failure` red). The previous
+  Subject-cell-only indicator is gone.
+- Status-coloured dashboard headline (the only headline shape on the
+  form):
   - Pending → blue, "Queued — waiting for worker."
   - Running → yellow, "Running on <server> — started 12s ago."
   - Success → green, "Completed in 28s. Exit code 0."
-  - Failure → red, "Failed in 16s. Exit code 1." + the first
-    non-trace stderr line as a one-line hint.
-- Header chips for the related Server, Virtual Machine, and
-  triggered-by User. VM is shown by description, not UUID.
+  - Failure → red, "Failed in 16s. Exit code 1." The first-stderr-line
+    excerpt is gone — the full stderr is one collapsible Output
+    section click away.
+- **No header chips.** The legacy Server / Virtual Machine /
+  Triggered-by chips above the body are removed; those values are
+  already fields in the form body and columns in the list view.
 - **Retry** button (primary) when status = Failure. Delegates to the
   matching VM controller method (`provision()`, `start()`,
   `terminate()`, …) for VM-scoped scripts, or to
   `Server.run_task_dialog(...)` for server-scoped scripts. The
   state-machine guards live in those methods — the Retry button does
   not duplicate them.
-- **Sibling Tasks** — the most recent other Tasks for the same VM
-  (or Server when the Task has no VM) — so the operator can hop
-  between Tasks for one workload without navigating through the VM
-  form. Rendered by Frappe's `quick_list` widget filtered by
-  `virtual_machine` (or `server`) with the current Task excluded; see
-  [Form-embedded lists reuse the workspace `quick_list` widget](#form-embedded-lists-reuse-the-workspace-quick_list-widget).
+- **No Sibling Tasks panel.** The framework's Connections dashboard
+  on the linked Server / Virtual Machine already exposes Task count
+  + link; surfacing a second list inside the Task form duplicated
+  navigation that's one click away.
 - The `Variables (JSON)` field is **pretty-printed for read**: a
   one-shot client formatter parses `frm.doc.variables` on refresh,
   rewrites it with 2-space indent if and only if the parsed value
   round-trips, and refreshes the field without marking the form
   dirty. The stored value is untouched; only the on-screen render
   changes.
+- The Output section (stdout + stderr) folds under the Overview tab
+  as a collapsible Section Break rather than the old Output tab.
+  Routine inspection collapses with one click; debugging expands
+  inline without the tab-strip click.
 - `Task.on_update` propagates status to linked records. For Failure
   with `script = provision-vm.sh` it flips the linked VM's status to
   `Failed` and publishes a `virtual_machine_update` realtime event —
@@ -478,28 +506,30 @@ is still stripped by `suppress_orphan_asterisks` in
 ## Why this isn't a custom SPA
 
 Every win above lives in a Frappe `Dialog`, a `Module Onboarding`
-widget, a `quick_list` widget, a `MultiCheck` field, a button group,
-a form intro, a dashboard indicator, a `doctype_js` client script,
-or one small scoped CSS file. We don't replace the Desk form. We
-don't add a route. We don't add a build step. The whole thing is
-Desk plus ~1.4k lines of shared client JS across the five
-doctype scripts + helper module, ~200 lines of scoped CSS
+widget, a `quick_list` widget, a button group, a form intro, a
+dashboard indicator, a `doctype_js` client script, or one small
+scoped CSS file. We don't replace the Desk form. We don't add a
+route. We don't add a build step. The whole thing is Desk plus
+~1.4k lines of shared client JS across the five doctype scripts +
+helper module, ~200 lines of scoped CSS
 ([Visual polish](#visual-polish)), and a handful of whitelisted
-controller methods (`preview_cost`, `retry`, `get_scripts`,
-`sync_status`, `capacity_for_server`, …).
+controller methods (`provider_options`, `credential_check`,
+`archive`, `retry`, `sync_image`, `capacity_for_server`, …).
 
-Anything that *looks* bespoke is borrowed: form-embedded activity
-panels use Frappe's `quick_list` widget; the workspace onboarding
-checklist is Frappe's `Module Onboarding` doctype; the Run Task
-dialog renders from a server-side script catalog
-(`scripts_catalog.SCRIPT_FORMS`); the VM size presets are a `Select`
-field; the VM SSH command is a virtual `Code` field whose value comes
-from a `@property` on the controller; the Sync-to-All targets picker
-is a `MultiCheck`. The pattern: if Desk has a primitive for it, we
-pass parameters to that primitive — we don't hand-roll markup.
+Anything that *looks* bespoke is borrowed: the workspace onboarding
+checklist is Frappe's `Module Onboarding` doctype; the workspace
+**Recent activity** block is a `quick_list` widget; the per-script
+operator dialogs (Sync Image on Server) are `frappe.ui.Dialog` with
+typed fields; the VM size presets are a `Select` field; the VM SSH
+command is a virtual `Code` field whose value comes from a
+`@property` on the controller; Task list-view status pills come from
+the DocType's `states` JSON. The pattern: if Desk has a primitive
+for it, we pass parameters to that primitive — we don't hand-roll
+markup.
 
 The two places we explicitly fight Desk are documented at the call
 site: the chrome strip (right rail + timeline) on every form, and the
-Task form's read-only/headline override that suppresses the standard
-six-field top row in favor of the dashboard headline + chips. Both
-are intentional; both are reversible by removing one client script.
+Task form's `disable_save()` + dashboard-headline overlay that replaces
+the standard read-only field-list affordance with a status-coloured
+headline + collapsible Output section. Both are intentional; both are
+reversible by removing one client script.

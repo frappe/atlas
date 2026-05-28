@@ -16,7 +16,7 @@ from atlas.tests.e2e._config import (
 	get_region,
 	get_size,
 	get_ssh_key_id,
-	get_ssh_private_key,
+	get_ssh_private_key_path,
 )
 
 
@@ -118,8 +118,8 @@ def ensure_bootstrapped_server(
 
 	# No reusable Active server. Provision fresh via the phase 3 path.
 	provider = ensure_e2e_provider()
-	server_name = f"atlas-e2e-shared-{int(time.time())}"
-	provider.provision_server(server_name)
+	title = f"atlas-e2e-shared-{int(time.time())}"
+	server_name = provider.provision_server(title)
 
 	deadline = time.monotonic() + 600
 	while time.monotonic() < deadline:
@@ -129,11 +129,11 @@ def ensure_bootstrapped_server(
 			break
 		time.sleep(5)
 	else:
-		raise AssertionError(f"server {server_name} did not become Active within 600s")
+		raise AssertionError(f"server {title!r} ({server_name}) did not become Active within 600s")
 
 	if server.status != "Active":
 		raise AssertionError(
-			f"server {server_name} ended in status {server.status}, expected Active"
+			f"server {title!r} ({server_name}) ended in status {server.status}, expected Active"
 		)
 	return server, client, True
 
@@ -148,7 +148,7 @@ def ensure_e2e_provider() -> "frappe.model.document.Document":
 		"provider_type": "DigitalOcean",
 		"api_token": frappe.conf.get("atlas_do_token"),
 		"ssh_key_id": get_ssh_key_id(),
-		"ssh_private_key": get_ssh_private_key(),
+		"ssh_private_key_path": get_ssh_private_key_path(),
 		"default_region": get_region(),
 		"default_size": get_size(),
 		"default_image": get_image(),
@@ -205,11 +205,11 @@ def teardown_all() -> None:
 		seen[droplet["id"]] = droplet["name"]
 	for row in frappe.get_all(
 		"Server",
-		filters={"server_name": ["like", "atlas-e2e-%"]},
-		fields=["name", "provider_resource_id"],
+		filters={"title": ["like", "atlas-e2e-%"]},
+		fields=["name", "title", "provider_resource_id"],
 	):
 		if row["provider_resource_id"]:
-			seen[int(row["provider_resource_id"])] = row["name"]
+			seen[int(row["provider_resource_id"])] = row["title"]
 	if not seen:
 		print("[e2e] no e2e droplets found")
 		return

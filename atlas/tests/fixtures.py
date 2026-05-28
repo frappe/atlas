@@ -8,12 +8,28 @@ Production code never touches these; they exist purely so test files don't
 each carry a `_make_provider` reimplementation.
 """
 
+import pathlib
+import tempfile
 from typing import Any
 
 import frappe
 from frappe.model.document import Document
 
 from atlas.tests.e2e._shared import DEFAULT_IMAGE
+
+
+_FAKE_KEY_PEM = "-----BEGIN OPENSSH PRIVATE KEY-----\nfake\n-----END OPENSSH PRIVATE KEY-----\n"
+
+
+def _ensure_fake_ssh_key_path() -> str:
+	"""Write a deterministic fake SSH key to a tempfile (one per session)
+	and return its path. Tests that need to read the contents get a stable
+	file; tests that only need `ssh_private_key_path` set get a real path."""
+	path = pathlib.Path(tempfile.gettempdir()) / "atlas-test-ssh-key.pem"
+	if not path.is_file():
+		path.write_text(_FAKE_KEY_PEM)
+		path.chmod(0o600)
+	return str(path)
 
 
 def make_provider(name: str = "test-provider", **overrides: Any) -> Document:
@@ -30,7 +46,7 @@ def make_provider(name: str = "test-provider", **overrides: Any) -> Document:
 		"provider_type": "DigitalOcean",
 		"api_token": "dop_v1_fake",
 		"ssh_key_id": "fp:fingerprint",
-		"ssh_private_key": "-----BEGIN OPENSSH PRIVATE KEY-----\nfake\n",
+		"ssh_private_key_path": _ensure_fake_ssh_key_path(),
 		"default_region": "blr1",
 		"default_size": "s-2vcpu-4gb-intel",
 		"default_image": "ubuntu-24-04-x64",
@@ -42,20 +58,33 @@ def make_provider(name: str = "test-provider", **overrides: Any) -> Document:
 
 def make_server(
 	provider: Document | None = None,
-	name: str = "test-server",
+	title: str = "test-server",
 	**overrides: Any,
 ) -> Document:
-	"""Create a `Server` row if it doesn't already exist.
+	"""Create a `Server` row if one with the given `title` does not exist.
 
-	If `provider` is omitted, a default test provider is created.
+	`Server.name` is a UUID assigned by the controller's `autoname()`;
+	tests look up by `title` so they stay deterministic across runs. If
+	`provider` is omitted, a default test provider is created.
+
+	If a row with the given title already exists, mutable fields named in
+	`overrides` (typically `status`) are written back so the row matches the
+	caller's expectation even across test runs that left polluted state.
 	"""
-	if frappe.db.exists("Server", name):
-		return frappe.get_doc("Server", name)
+	existing = frappe.db.get_value("Server", {"title": title}, "name")
+	if existing:
+		server = frappe.get_doc("Server", existing)
+		# Mutable fields that tests routinely override (`status`) need to be
+		# reapplied; immutable fields are silently ignored.
+		for field, value in overrides.items():
+			if server.get(field) != value:
+				frappe.db.set_value("Server", existing, field, value, update_modified=False)
+		return frappe.get_doc("Server", existing)
 	if provider is None:
 		provider = make_provider()
 	doc = {
 		"doctype": "Server",
-		"server_name": name,
+		"title": title,
 		"provider": provider.name,
 		"provider_resource_id": None,
 		"region": provider.default_region,
@@ -78,7 +107,7 @@ def make_image(name: str = "test-image", **overrides: Any) -> Document:
 	doc = {
 		"doctype": "Virtual Machine Image",
 		"image_name": name,
-		"description": DEFAULT_IMAGE["description"],
+		"title": DEFAULT_IMAGE["title"],
 		"kernel_url": "https://example.com/vmlinux",
 		"kernel_filename": DEFAULT_IMAGE["kernel_filename"],
 		"kernel_sha256": "a" * 64,
@@ -107,7 +136,7 @@ def make_virtual_machine(
 	image_name = image.name if isinstance(image, Document) else image
 	doc = {
 		"doctype": "Virtual Machine",
-		"description": "test vm",
+		"title": "test vm",
 		"server": server_name,
 		"image": image_name,
 		"vcpus": 1,

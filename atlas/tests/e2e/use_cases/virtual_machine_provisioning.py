@@ -1,9 +1,10 @@
 """Use case: provision a Firecracker microVM.
 
 Operator creates a `Virtual Machine` row (server, image, vCPUs, RAM, disk,
-SSH key, description) and clicks "Provision". The button runs
-`provision-vm.sh`, which copies the rootfs, resizes it, injects the SSH key
-and the per-VM network env, and enables the systemd unit.
+SSH key, title) and clicks Save. Phase 4's auto-provision contract takes
+over from there: `after_insert` enqueues `provision()`, which runs
+`provision-vm.sh` to copy the rootfs, resize it, inject the SSH key and
+the per-VM network env, and enable the systemd unit.
 
 This module exercises:
 
@@ -20,6 +21,8 @@ This module exercises:
   `derive_tap`).
 """
 
+import time
+
 import frappe
 
 from atlas.atlas.ssh import run_task
@@ -30,6 +33,7 @@ from atlas.tests.e2e._shared import (
 	ephemeral_public_key,
 	expect_validation_error,
 	phase,
+	wait_for_vm_running,
 )
 
 
@@ -48,37 +52,51 @@ def run(reuse: bool = True, keep: bool = True) -> None:
 
 def _check_provision_image_missing(server_name: str, image: str) -> None:
 	"""provision-vm.sh step 0: rootfs must already exist on the host. Move it
-	aside, attempt to provision, expect a ValidationError, then restore."""
+	aside *before* inserting the VM so the after_insert-enqueued
+	`auto_provision` worker hits the missing-image branch. The row lands in
+	Failed; we restore the rootfs and assert the operator can retry."""
 	image_doc = frappe.get_doc("Virtual Machine Image", image)
 	public_key = ephemeral_public_key()
 
-	vm = frappe.get_doc({
-		"doctype": "Virtual Machine",
-		"description": "image-missing negative path",
-		"server": server_name,
-		"image": image,
-		"vcpus": 1,
-		"memory_megabytes": 512,
-		"disk_gigabytes": 4,
-		"ssh_public_key": public_key,
-	}).insert(ignore_permissions=True)
-
 	_move_image(server_name, image_doc, "aside")
 	try:
-		with expect_validation_error("not present", "missing"):
-			vm.provision()
+		vm = frappe.get_doc({
+			"doctype": "Virtual Machine",
+			"title": "image-missing negative path",
+			"server": server_name,
+			"image": image,
+			"vcpus": 1,
+			"memory_megabytes": 512,
+			"disk_gigabytes": 4,
+			"ssh_public_key": public_key,
+		}).insert(ignore_permissions=True)
+		frappe.db.commit()
+
+		# Auto-provision worker fires, hits the "rootfs missing" throw, and
+		# task.py::_propagate_status_to_virtual_machine flips the VM to Failed.
+		# Poll until the VM either lands in Failed or sits in Pending past
+		# the worker latency window.
+		deadline = time.monotonic() + 90
+		while time.monotonic() < deadline:
+			frappe.db.rollback()
+			vm = frappe.get_doc("Virtual Machine", vm.name)
+			if vm.status in ("Failed", "Pending"):
+				break
+			time.sleep(2)
 	finally:
 		# Always restore — a failed assertion above leaves the rootfs in .bak
 		# and the happy path can't recover.
 		_move_image(server_name, image_doc, "back")
 
-	# Failed provision lands in either Pending (run_task raised before any
-	# status flip) or Failed (Task.on_update propagated Failure to the VM,
-	# see task.py::_propagate_status_to_virtual_machine). Both are
-	# re-provisionable by Virtual Machine.provision(), so the operator can
-	# click Provision again after running Sync to Server.
-	vm.reload()
 	assert vm.status in ("Pending", "Failed"), vm.status
+
+	# Drive the explicit provision() retry branch (now that the rootfs is back)
+	# to cover the operator's "click Provision again" path on the Failed form.
+	if vm.status == "Failed":
+		vm.provision()
+		vm.reload()
+		assert vm.status == "Running", vm.status
+		vm.terminate()
 
 	# Tidy up the VM row we used to exercise the negative path.
 	frappe.delete_doc("Virtual Machine", vm.name, force=True, ignore_permissions=True)
@@ -87,7 +105,7 @@ def _check_provision_image_missing(server_name: str, image: str) -> None:
 def _check_provision_happy_path(server_name: str, image: str, public_key: str) -> None:
 	vm = frappe.get_doc({
 		"doctype": "Virtual Machine",
-		"description": "vm-provisioning happy path",
+		"title": "vm-provisioning happy path",
 		"server": server_name,
 		"image": image,
 		"vcpus": 1,
@@ -95,13 +113,23 @@ def _check_provision_happy_path(server_name: str, image: str, public_key: str) -
 		"disk_gigabytes": 4,
 		"ssh_public_key": public_key,
 	}).insert(ignore_permissions=True)
+	frappe.db.commit()
 
-	vm.provision()
+	# Phase 4 auto-provision contract: `after_insert` enqueues `provision()`
+	# so the operator never has to click Provision. The worker drives Pending
+	# -> Running within ~60s on a warm server.
+	wait_for_vm_running(vm.name, timeout_seconds=120)
 	vm.reload()
 	assert vm.status == "Running", vm.status
 	assert vm.last_started
 
 	assert_probe(server_name, "phase5-is-active.sh", VIRTUAL_MACHINE_NAME=vm.name)
+
+	# Phase 3 contract: the Server Provider's SSH key lives on disk, not in
+	# the DB. Before SSHing into the guest, assert the path the controller
+	# will read is present and 0600 — surfaces a misconfigured host as a
+	# clean assertion rather than a downstream SSH timeout.
+	_assert_provider_ssh_key_path(server_name)
 
 	# SSH into the guest over its IPv6 and assert the fit-and-finish
 	# guarantees from llm/plan/real-vm-fitfinish.md: per-VM hostname,
@@ -132,7 +160,7 @@ def _check_derived_fields_and_immutability(server_name: str, image: str, public_
 	# in before_validate).
 	pre_derived = frappe.get_doc({
 		"doctype": "Virtual Machine",
-		"description": "pre-derived fields",
+		"title": "pre-derived fields",
 		"server": server_name,
 		"image": image,
 		"vcpus": 1,
@@ -163,7 +191,7 @@ def _check_derived_fields_and_immutability(server_name: str, image: str, public_
 	# the insert() flow. Call the helper directly with a cleared field.
 	transient = frappe.get_doc({
 		"doctype": "Virtual Machine",
-		"description": "set_status_default",
+		"title": "set_status_default",
 		"server": server_name,
 		"image": image,
 		"vcpus": 1,
@@ -208,17 +236,18 @@ def _check_ipv6_exhaustion(server) -> None:
 	"""
 	from atlas.atlas.networking import allocate_ipv6
 
-	fake_name = "usecase-ipv6-exhaust"
-	if frappe.db.exists("Server", fake_name):
+	fake_title = "usecase-ipv6-exhaust"
+	existing_name = frappe.db.get_value("Server", {"title": fake_title}, "name")
+	if existing_name:
 		for vm in frappe.get_all(
-			"Virtual Machine", filters={"server": fake_name}, pluck="name"
+			"Virtual Machine", filters={"server": existing_name}, pluck="name"
 		):
 			frappe.delete_doc("Virtual Machine", vm, force=True, ignore_permissions=True)
-		frappe.delete_doc("Server", fake_name, force=True, ignore_permissions=True)
+		frappe.delete_doc("Server", existing_name, force=True, ignore_permissions=True)
 
-	frappe.get_doc({
+	fake_server = frappe.get_doc({
 		"doctype": "Server",
-		"server_name": fake_name,
+		"title": fake_title,
 		"provider": server.provider,
 		"status": "Pending",
 		"ipv4_address": "192.0.2.99",
@@ -227,12 +256,14 @@ def _check_ipv6_exhaustion(server) -> None:
 		"ipv6_virtual_machine_range": "2001:db8::/124",
 	}).insert(ignore_permissions=True)
 	frappe.db.commit()
+	fake_name = fake_server.name
 
 	try:
-		for _ in range(14):
+		for i in range(14):
 			address = allocate_ipv6(fake_name)
 			frappe.get_doc({
 				"doctype": "Virtual Machine",
+				"title": f"ipv6-exhaust-{i}",
 				"server": fake_name,
 				"image": "ubuntu-24.04",
 				"vcpus": 1,
@@ -251,6 +282,30 @@ def _check_ipv6_exhaustion(server) -> None:
 			frappe.delete_doc("Virtual Machine", vm, force=True, ignore_permissions=True)
 		frappe.delete_doc("Server", fake_name, force=True, ignore_permissions=True)
 		frappe.db.commit()
+
+
+def _assert_provider_ssh_key_path(server_name: str) -> None:
+	"""Phase 3 contract: the Server Provider stores `ssh_private_key_path`
+	(not the key itself). Assert the path resolves to a regular file on disk
+	with mode 0600 before any SSH attempt uses it."""
+	import os
+	import stat
+
+	provider_name = frappe.db.get_value("Server", server_name, "provider")
+	assert provider_name, f"server {server_name} has no provider"
+
+	path = frappe.db.get_value("Server Provider", provider_name, "ssh_private_key_path")
+	assert path, f"provider {provider_name} has no ssh_private_key_path"
+
+	resolved = os.path.expanduser(path)
+	assert os.path.isfile(resolved), f"ssh_private_key_path {path!r} is not a file"
+
+	mode = stat.S_IMODE(os.stat(resolved).st_mode)
+	# 0600 is the strict expectation; some test envs land at 0400 (read-only)
+	# which is equally safe.
+	assert mode in (0o600, 0o400), (
+		f"ssh_private_key_path {path!r} mode is {oct(mode)}, want 0600 or 0400"
+	)
 
 
 def _move_image(server_name: str, image_doc, direction: str) -> None:

@@ -22,7 +22,7 @@ from atlas.tests.e2e._config import (
 	get_region,
 	get_size,
 	get_ssh_key_id,
-	get_ssh_private_key,
+	get_ssh_private_key_path,
 )
 from atlas.tests.e2e._droplets import (
 	cleanup_droplet,
@@ -43,6 +43,7 @@ from atlas.tests.e2e._tasks import (
 	expect_validation_error,
 	mark_orphan_tasks_failure,
 	wait_for_task,
+	wait_for_vm_running,
 )
 
 __all__ = [
@@ -66,11 +67,12 @@ __all__ = [
 	"get_region",
 	"get_size",
 	"get_ssh_key_id",
-	"get_ssh_private_key",
+	"get_ssh_private_key_path",
 	"mark_orphan_tasks_failure",
 	"phase",
 	"server_is_reachable",
 	"sweep_old_droplets",
 	"teardown_all",
 	"wait_for_task",
+	"wait_for_vm_running",
 ]

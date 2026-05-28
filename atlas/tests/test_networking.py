@@ -12,17 +12,19 @@ from atlas.atlas.networking import (
 from atlas.tests.fixtures import make_image, make_provider, make_server
 
 
-def _provider_and_server(server_name: str) -> None:
+def _provider_and_server(title: str) -> str:
+	"""Ensure a Server row with the given `title` exists and return its UUID `name`."""
 	provider = make_provider("test-prov-networking")
-	make_server(
+	server = make_server(
 		provider,
-		server_name,
+		title,
 		ipv4_address="10.0.0.1",
 		ipv6_address="2001:db8::1",
 		ipv6_prefix="2001:db8::/64",
 		ipv6_virtual_machine_range="2001:db8::/124",
 		status="Active",
 	)
+	return server.name
 
 
 def _ensure_image() -> str:
@@ -36,7 +38,7 @@ def _insert_vm(server: str, address: str, status: str = "Pending") -> str:
 	frappe.get_doc({
 		"doctype": "Virtual Machine",
 		"__newname": name,
-		"description": f"used-{address}",
+		"title": f"used-{address}",
 		"server": server,
 		"image": _ensure_image(),
 		"vcpus": 1,
@@ -86,42 +88,38 @@ class TestNetworking(IntegrationTestCase):
 			self.assertTrue(tap.startswith("atlas-"))
 
 	def test_allocate_ipv6_starts_at_2(self) -> None:
-		server_name = "alloc-server-1"
-		_provider_and_server(server_name)
+		server = _provider_and_server("alloc-server-1")
 		# Clean any existing VMs on this test server.
-		for name in frappe.get_all("Virtual Machine", filters={"server": server_name}, pluck="name"):
+		for name in frappe.get_all("Virtual Machine", filters={"server": server}, pluck="name"):
 			frappe.delete_doc("Virtual Machine", name, ignore_permissions=True, force=True)
-		self.assertEqual(allocate_ipv6(server_name), "2001:db8::2")
+		self.assertEqual(allocate_ipv6(server), "2001:db8::2")
 
 	def test_allocate_ipv6_skips_used(self) -> None:
-		server_name = "alloc-server-2"
-		_provider_and_server(server_name)
-		for name in frappe.get_all("Virtual Machine", filters={"server": server_name}, pluck="name"):
+		server = _provider_and_server("alloc-server-2")
+		for name in frappe.get_all("Virtual Machine", filters={"server": server}, pluck="name"):
 			frappe.delete_doc("Virtual Machine", name, ignore_permissions=True, force=True)
-		_insert_vm(server_name, "2001:db8::2")
-		_insert_vm(server_name, "2001:db8::3")
-		self.assertEqual(allocate_ipv6(server_name), "2001:db8::4")
+		_insert_vm(server, "2001:db8::2")
+		_insert_vm(server, "2001:db8::3")
+		self.assertEqual(allocate_ipv6(server), "2001:db8::4")
 
 	def test_allocate_ipv6_raises_when_full(self) -> None:
-		server_name = "alloc-server-3"
-		_provider_and_server(server_name)
-		for name in frappe.get_all("Virtual Machine", filters={"server": server_name}, pluck="name"):
+		server = _provider_and_server("alloc-server-3")
+		for name in frappe.get_all("Virtual Machine", filters={"server": server}, pluck="name"):
 			frappe.delete_doc("Virtual Machine", name, ignore_permissions=True, force=True)
 		# /124 has 16 addresses (::0..::f); skip ::0 (subnet) and ::1 (host), so 14
 		# usable. Fill them all.
 		for octet in range(2, 16):
-			_insert_vm(server_name, f"2001:db8::{octet:x}")
+			_insert_vm(server, f"2001:db8::{octet:x}")
 		with self.assertRaises(frappe.ValidationError):
-			allocate_ipv6(server_name)
+			allocate_ipv6(server)
 
 	def test_allocate_ipv6_reuses_terminated_addresses(self) -> None:
 		"""Terminated VMs release their address back into the pool."""
-		server_name = "alloc-server-4"
-		_provider_and_server(server_name)
-		for name in frappe.get_all("Virtual Machine", filters={"server": server_name}, pluck="name"):
+		server = _provider_and_server("alloc-server-4")
+		for name in frappe.get_all("Virtual Machine", filters={"server": server}, pluck="name"):
 			frappe.delete_doc("Virtual Machine", name, ignore_permissions=True, force=True)
 		# ::2 held by a Terminated VM, ::3 still live. The next allocation should
 		# pick ::2 (lowest unused, ignoring Terminated holders).
-		_insert_vm(server_name, "2001:db8::2", status="Terminated")
-		_insert_vm(server_name, "2001:db8::3", status="Running")
-		self.assertEqual(allocate_ipv6(server_name), "2001:db8::2")
+		_insert_vm(server, "2001:db8::2", status="Terminated")
+		_insert_vm(server, "2001:db8::3", status="Running")
+		self.assertEqual(allocate_ipv6(server), "2001:db8::2")

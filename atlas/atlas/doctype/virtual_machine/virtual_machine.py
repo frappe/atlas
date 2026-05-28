@@ -6,7 +6,15 @@ from frappe.model.document import Document
 from atlas.atlas.networking import allocate_ipv6, derive_mac, derive_tap
 from atlas.atlas.ssh import run_task
 
-IMMUTABLE_AFTER_INSERT = ("server", "image", "vcpus", "memory_megabytes", "disk_gigabytes")
+IMMUTABLE_AFTER_INSERT = (
+	"title",
+	"server",
+	"image",
+	"ssh_public_key",
+	"vcpus",
+	"memory_megabytes",
+	"disk_gigabytes",
+)
 
 
 class VirtualMachine(Document):
@@ -32,6 +40,16 @@ class VirtualMachine(Document):
 	def before_insert(self) -> None:
 		self.set_status_default()
 		self.set_ipv6_address()
+
+	def after_insert(self) -> None:
+		"""Auto-provision: enqueue the provision job so the operator never
+		has to click `Provision` on a freshly-created Pending VM."""
+		frappe.enqueue(
+			"atlas.atlas.doctype.virtual_machine.virtual_machine.auto_provision",
+			queue="long",
+			timeout=300,
+			virtual_machine_name=self.name,
+		)
 
 	def before_validate(self) -> None:
 		if not self.is_new():
@@ -152,4 +170,14 @@ class VirtualMachine(Document):
 			"VIRTUAL_MACHINE_IPV6": self.ipv6_address,
 			"SSH_PUBLIC_KEY": self.ssh_public_key,
 		}
+
+
+def auto_provision(virtual_machine_name: str) -> None:
+	"""Background-job entrypoint. Called by `after_insert` so the operator
+	doesn't have to click Provision. No-op if the VM has moved past Pending
+	(operator intervened, manual provision raced us, etc.)."""
+	virtual_machine = frappe.get_doc("Virtual Machine", virtual_machine_name)
+	if virtual_machine.status != "Pending":
+		return
+	virtual_machine.provision()
 

@@ -8,7 +8,7 @@
  "engine": "InnoDB",
  "field_order": [
   "tab_overview",
-  "description",
+  "title",
   "server",
   "image",
   "column_break_header",
@@ -21,7 +21,7 @@
   "memory_megabytes",
   "column_break_resources_2",
   "disk_gigabytes",
-  "tab_networking",
+  "section_break_security",
   "ssh_public_key",
   "ssh_command",
   "section_break_networking",
@@ -29,7 +29,7 @@
   "column_break_networking",
   "mac_address",
   "tap_device",
-  "tab_activity",
+  "section_break_activity",
   "last_started",
   "column_break_activity",
   "last_stopped"
@@ -41,11 +41,13 @@
    "label": "Overview"
   },
   {
-   "fieldname": "description",
+   "fieldname": "title",
    "fieldtype": "Data",
    "in_list_view": 1,
    "in_global_search": 1,
-   "label": "Description"
+   "label": "Title",
+   "reqd": 1,
+   "set_only_once": 1
   },
   {
    "fieldname": "server",
@@ -127,20 +129,17 @@
    "reqd": 1
   },
   {
-   "fieldname": "tab_networking",
-   "fieldtype": "Tab Break",
-   "label": "Networking"
-  },
-  {
-   "fieldname": "section_break_access",
+   "collapsible": 1,
+   "fieldname": "section_break_security",
    "fieldtype": "Section Break",
-   "label": "Access"
+   "label": "Security"
   },
   {
    "fieldname": "ssh_public_key",
    "fieldtype": "Long Text",
    "label": "SSH Public Key",
-   "reqd": 1
+   "reqd": 1,
+   "set_only_once": 1
   },
   {
    "description": "IPv6 is the only stable identifier outside the desk.",
@@ -151,9 +150,10 @@
    "read_only": 1
   },
   {
+   "collapsible": 1,
    "fieldname": "section_break_networking",
    "fieldtype": "Section Break",
-   "label": "Addresses"
+   "label": "Networking"
   },
   {
    "fieldname": "ipv6_address",
@@ -179,8 +179,9 @@
    "read_only": 1
   },
   {
-   "fieldname": "tab_activity",
-   "fieldtype": "Tab Break",
+   "collapsible": 1,
+   "fieldname": "section_break_activity",
+   "fieldtype": "Section Break",
    "label": "Activity"
   },
   {
@@ -201,7 +202,7 @@
   }
  ],
  "links": [],
- "modified": "2026-05-27 00:00:00.000000",
+ "modified": "2026-05-28 00:00:00.000000",
  "modified_by": "Administrator",
  "module": "Atlas",
  "name": "Virtual Machine",
@@ -223,10 +224,10 @@
    "write": 1
   }
  ],
- "search_fields": "description,status,server",
+ "search_fields": "title,status,server",
  "sort_field": "creation",
  "sort_order": "DESC",
  "states": [],
- "title_field": "description",
+ "title_field": "title",
  "track_changes": 1
 }

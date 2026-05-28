@@ -18,7 +18,7 @@ SWEEP_AGE_SECONDS = 30 * 60
 # Public Firecracker CI Ubuntu 24.04 artifacts (pinned for stability).
 DEFAULT_IMAGE = {
 	"image_name": "ubuntu-24.04",
-	"description": "Firecracker CI Ubuntu 24.04 rootfs",
+	"title": "Firecracker CI Ubuntu 24.04 rootfs",
 	"kernel_url": "https://s3.amazonaws.com/spec.ccfc.min/firecracker-ci/v1.12/x86_64/vmlinux-6.1.128",
 	"kernel_filename": "vmlinux-6.1.128",
 	"kernel_sha256": "27a8310b9a727517e9eb02044524b6ceb77de5728e3491b6974d5c846227ecc8",
@@ -75,11 +75,31 @@ def get_ssh_key_id() -> str:
 	return key_id
 
 
-def get_ssh_private_key() -> str:
-	key = frappe.conf.get("atlas_ssh_private_key")
-	if not key:
-		raise MissingConfig("e2e needs atlas_ssh_private_key in site config")
-	return _load_key(key)
+def get_ssh_private_key_path() -> str:
+	"""Return an absolute path on disk to the SSH private key the e2e
+	provider should use. Reads `atlas_ssh_private_key_path` from site
+	config first; falls back to the legacy `atlas_ssh_private_key` (PEM
+	contents) by spilling them to a tempfile so older site configs keep
+	working without an operator step."""
+	path = frappe.conf.get("atlas_ssh_private_key_path")
+	if path:
+		expanded = os.path.expanduser(path)
+		if not os.path.isfile(expanded):
+			raise MissingConfig(f"atlas_ssh_private_key_path {path!r} is not a file")
+		return expanded
+	pem = frappe.conf.get("atlas_ssh_private_key")
+	if not pem:
+		raise MissingConfig(
+			"e2e needs atlas_ssh_private_key_path in site config (or the legacy "
+			"atlas_ssh_private_key with PEM contents / a path)."
+		)
+	cache_dir = os.path.expanduser("~/.cache/atlas-e2e")
+	os.makedirs(cache_dir, exist_ok=True)
+	spilled = os.path.join(cache_dir, "provider-key.pem")
+	with open(spilled, "w") as handle:
+		handle.write(_load_key(pem))
+	os.chmod(spilled, 0o600)
+	return spilled
 
 
 def get_region() -> str:

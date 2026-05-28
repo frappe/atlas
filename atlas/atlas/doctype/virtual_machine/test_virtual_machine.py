@@ -182,3 +182,48 @@ class TestVirtualMachine(IntegrationTestCase):
 			tap_device="atlas-aabbccdd1",
 		)
 		self.assertEqual(vm.tap_device, "atlas-aabbccdd1")
+
+	def test_after_insert_enqueues_auto_provision(self) -> None:
+		from atlas.atlas.doctype.virtual_machine import virtual_machine as module
+
+		with patch.object(module.frappe, "enqueue") as enqueue:
+			vm = _new_vm()
+		enqueue.assert_called_once()
+		_, kwargs = enqueue.call_args
+		self.assertEqual(
+			kwargs["virtual_machine_name"],
+			vm.name,
+		)
+
+	def test_auto_provision_is_noop_when_not_pending(self) -> None:
+		from atlas.atlas.doctype.virtual_machine import virtual_machine as module
+
+		vm = _new_vm()
+		vm.db_set("status", "Running")
+		with patch.object(module, "run_task") as mocked:
+			module.auto_provision(vm.name)
+		mocked.assert_not_called()
+
+	def test_auto_provision_calls_provision_when_pending(self) -> None:
+		from atlas.atlas.doctype.virtual_machine import virtual_machine as module
+
+		vm = _new_vm()
+		task = fake_task(name="task-auto-1")
+		with patch.object(module, "run_task", return_value=task):
+			module.auto_provision(vm.name)
+		vm.reload()
+		self.assertEqual(vm.status, "Running")
+
+	def test_title_is_immutable(self) -> None:
+		vm = _new_vm()
+		vm.title = "renamed"
+		with self.assertRaises(frappe.ValidationError) as raised:
+			vm.save(ignore_permissions=True)
+		self.assertIn("title is immutable", str(raised.exception))
+
+	def test_ssh_public_key_is_immutable(self) -> None:
+		vm = _new_vm()
+		vm.ssh_public_key = "ssh-ed25519 NEW"
+		with self.assertRaises(frappe.ValidationError) as raised:
+			vm.save(ignore_permissions=True)
+		self.assertIn("ssh_public_key is immutable", str(raised.exception))

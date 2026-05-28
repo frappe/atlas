@@ -1,5 +1,4 @@
 const PRIMARY_BY_STATUS = {
-	Pending: {label: "Provision", method: "provision"},
 	Failed: {label: "Provision", method: "provision"},
 	Stopped: {label: "Start", method: "start"},
 	Running: {label: "Stop", method: "stop"},
@@ -19,6 +18,11 @@ const SIZE_PRESETS = {
 
 
 frappe.ui.form.on("Virtual Machine", {
+	onload(frm) {
+		if (frm.is_new()) {
+			auto_select_server(frm);
+		}
+	},
 	refresh(frm) {
 		if (frm.is_new()) {
 			render_creation_messages(frm);
@@ -48,46 +52,36 @@ frappe.ui.form.on("Virtual Machine", {
 			render_creation_messages(frm);
 		}
 	},
-	description(frm) {
-		if (frm.is_new()) {
-			render_creation_messages(frm);
-		}
-	},
 });
 
 
+function auto_select_server(frm) {
+	if (frm.doc.server) return;
+	frappe.db.get_list("Server", {
+		filters: {status: "Active"},
+		pluck: "name",
+		limit: 2,
+	}).then((rows) => {
+		if (rows.length === 1) {
+			frm.set_value("server", rows[0]);
+		}
+	});
+}
+
+
 function render_creation_messages(frm) {
-	// `set_intro` and `dashboard.set_headline_alert` share one DOM slot
-	// (form-message-container) and stack on each call; clearing must happen
-	// once at the top, before re-emitting both the description nudge and
-	// the capacity headline. The render token discards stale async capacity
-	// responses when multiple events (server, vcpus, description) fire in
-	// quick succession.
 	frm._atlas_creation_render_token = (frm._atlas_creation_render_token || 0) + 1;
 	const token = frm._atlas_creation_render_token;
 	frm.dashboard.clear_headline();
-	render_description_nudge(frm);
 	if (frm.doc.server) {
 		render_capacity_indicator(frm, token);
 	}
 }
 
 
-function render_description_nudge(frm) {
-	if (frm.doc.description && frm.doc.description.trim()) {
-		return;
-	}
-	frm.dashboard.set_headline_alert(
-		__("Without a description the list will show only a UUID. Add at least a one-word label."),
-		"yellow",
-	);
-}
-
-
 function render_capacity_indicator(frm, token) {
-	// Caller (render_creation_messages) is responsible for clearing the
-	// shared headline slot before calling us — we only append. The token
-	// gates against late-resolving responses from a prior render cycle.
+	// Only surface the headline when the host is oversubscribed — green/blue
+	// "you have headroom" banners crowd the form without adding signal.
 	frappe.call({
 		method: "atlas.atlas.api.server_capacity.capacity_for_server",
 		args: {server: frm.doc.server},
@@ -98,19 +92,14 @@ function render_capacity_indicator(frm, token) {
 		const used = message.used_vcpus;
 		const requested = parseInt(frm.doc.vcpus || 0, 10);
 		const projected = used + requested;
-		const total_label = total != null ? total : "—";
-		const oversubscribed = total != null && projected > total;
-		const color = oversubscribed ? "red" : (total != null && projected === total ? "orange" : "blue");
+		if (total == null || projected <= total) {
+			return;
+		}
 		const text = __(
-			"Server capacity: {0} vCPUs requested + {1} used / {2} total ({3} VMs)",
-			[requested, used, total_label, message.virtual_machine_count],
+			"Server is oversubscribed: {0} requested + {1} used / {2} total ({3} VMs). Provision may fail.",
+			[requested, used, total, message.virtual_machine_count],
 		);
-		frm.dashboard.set_headline_alert(
-			oversubscribed
-				? `⚠ ${text} — ${__("Server is oversubscribed. Provision may fail.")}`
-				: text,
-			color,
-		);
+		frm.dashboard.set_headline_alert(`⚠ ${text}`, "red");
 	});
 }
 
@@ -118,7 +107,6 @@ function render_capacity_indicator(frm, token) {
 function add_lifecycle_buttons(frm) {
 	const status = frm.doc.status;
 	if (status === "Terminated") {
-		// Terminated VMs get their own button set (see add_terminated_actions).
 		return;
 	}
 	const primary = PRIMARY_BY_STATUS[status];
@@ -140,7 +128,7 @@ function add_terminated_actions(frm) {
 
 
 function confirm_lifecycle(frm, action) {
-	frappe.confirm(__("{0} {1}?", [action.label, frm.doc.name.slice(0, 8)]), () => {
+	frappe.confirm(__("{0} {1}?", [action.label, frm.doc.title || frm.doc.name.slice(0, 8)]), () => {
 		frm.call(action.method).then(({message: task_name}) => {
 			if (typeof task_name === "string") {
 				frappe.atlas.task_started(frm, action.label, task_name);
@@ -153,18 +141,12 @@ function confirm_lifecycle(frm, action) {
 
 
 function confirm_terminate(frm) {
-	const short_id = frm.doc.name.slice(0, 8);
-	const body = `
-		<p>${__("IPv6: {0}", [`<code>${frappe.utils.escape_html(frm.doc.ipv6_address || "—")}</code>`])}</p>
-		<p>${__("Image: {0}", [`<b>${frappe.utils.escape_html(frm.doc.image || "—")}</b>`])}</p>
-		<p>${__("Server: {0}", [`<b>${frappe.utils.escape_html(frm.doc.server || "—")}</b>`])}</p>
-		<p>${__("This deletes the VM's disk artifacts on the host. The UUID and Task history are preserved.")}</p>
-	`;
+	const match = frm.doc.title || frm.doc.name;
 	frappe.atlas.confirm_destructive({
-		title: __("Terminate {0}?", [frm.doc.description || short_id]),
-		body_html: body,
-		match_string: short_id,
-		match_label: __("Type the short ID ({0}) to confirm", [short_id]),
+		title: __("Terminate {0}?", [match]),
+		body_html: "",
+		match_string: match,
+		match_label: __("Type the title to confirm"),
 		proceed_label: __("Terminate"),
 		proceed() {
 			frm.call("terminate").then(({message: task_name}) => {
@@ -176,20 +158,17 @@ function confirm_terminate(frm) {
 
 
 function confirm_delete(frm) {
-	const short_id = frm.doc.name.slice(0, 8);
+	const match = frm.doc.title || frm.doc.name;
 	frappe.atlas.confirm_destructive({
-		title: __("Delete record for {0}?", [frm.doc.description || short_id]),
-		body_html: `
-			<p>${__("This removes the Virtual Machine row from Atlas. Task history is preserved (the FK is set null on delete).")}</p>
-			<p class="text-muted small">${__("Only available for Terminated VMs.")}</p>
-		`,
-		match_string: short_id,
-		match_label: __("Type the short ID ({0}) to confirm", [short_id]),
+		title: __("Delete record for {0}?", [match]),
+		body_html: "",
+		match_string: match,
+		match_label: __("Type the title to confirm"),
 		proceed_label: __("Delete record"),
 		proceed() {
 			frappe.db.delete_doc("Virtual Machine", frm.doc.name).then(() => {
 				frappe.show_alert({
-					message: __("Deleted {0}.", [short_id]),
+					message: __("Deleted {0}.", [match]),
 					indicator: "green",
 				});
 				frappe.set_route("List", "Virtual Machine");
@@ -207,7 +186,7 @@ function reprovision_as_new(frm) {
 		memory_megabytes: frm.doc.memory_megabytes,
 		disk_gigabytes: frm.doc.disk_gigabytes,
 		ssh_public_key: frm.doc.ssh_public_key,
-		description: frm.doc.description ? `${frm.doc.description} (clone)` : "",
+		title: frm.doc.title ? `${frm.doc.title} (clone)` : "",
 	});
 	if (clone && typeof clone.then === "function") {
 		clone.then(() => maybe_alert_cloned());
@@ -243,9 +222,6 @@ function render_status_intro(frm) {
 	const status = frm.doc.status;
 
 	if (status === "Terminated") {
-		// comment_when() returns HTML, so build the headline as a string and
-		// inline the timestamp; otherwise escape_html (from the __() helper)
-		// would mangle the <span> tag.
 		const when_html = frm.doc.last_stopped
 			? frappe.datetime.comment_when(frm.doc.last_stopped)
 			: `<span>${__("earlier")}</span>`;
@@ -257,7 +233,6 @@ function render_status_intro(frm) {
 	}
 
 	if (status === "Failed" || status === "Pending") {
-		// Surface the most recent Failure for provision-vm.sh on this VM.
 		frappe.db.get_list("Task", {
 			fields: ["name", "subject", "status", "modified", "script"],
 			filters: {
@@ -283,9 +258,6 @@ function render_status_intro(frm) {
 
 function expand_networking_for_pending(frm) {
 	if (frm.doc.status !== "Pending" || !frm.doc.ipv6_address) return;
-	// Open the collapsed Networking section so the IPv6 is visible before
-	// Provision is clicked. The form's section iterator API varies between
-	// Frappe versions; try the most common shapes.
 	const section = (cur_frm?.layout?.sections || []).find(
 		(s) => s.df && s.df.fieldname === "section_break_networking",
 	);
@@ -302,8 +274,6 @@ function subscribe_to_realtime(frm) {
 		if (!data || data.name !== frm.doc.name) return;
 		frm.reload_doc();
 	});
-	// Tasks for this VM also drive form refresh — when a provision Task
-	// completes (Failure or Success), the controller updates VM status.
 	frappe.realtime.on("task_update", (data) => {
 		if (!data || data.virtual_machine !== frm.doc.name) return;
 		frm.reload_doc();

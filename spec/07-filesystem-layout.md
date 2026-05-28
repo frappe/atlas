@@ -68,3 +68,26 @@ The scripts under `/var/lib/atlas/bin/` are the canonical files from
 edit a script in this repo, re-running Bootstrap on every server pushes the
 new copy. The Frappe DB is the source of which version of the script *should*
 be there; the file on disk is just a cache of the last bootstrap.
+
+## Atlas-host side: SSH private keys
+
+The Atlas host itself (the machine running the Frappe site) keeps one
+SSH private key per `Server Provider` on disk under
+`/etc/atlas/keys/<provider_name>.pem`. The `Server Provider` row
+stores the path in `ssh_private_key_path`; the key is *not* in the DB.
+
+- Mode `0600` on every key file. Mode `0700` on `/etc/atlas/keys/`.
+  Both owned by the Frappe user.
+- Atlas reads the file at SSH-connect time via
+  `secrets.get_ssh_key_from_disk(path)`. The result is held in memory
+  for the duration of the SSH session and not cached.
+- Rotating a key is a file-replace operation. There is no UI for
+  rotation — the operator overwrites the file (or points
+  `ssh_private_key_path` at a new file via a one-off `db.set_value`
+  bypass; the field is `set_only_once` for the standard form flow).
+- The legacy `ssh_private_key` Password column on the row is migrated
+  to disk by `atlas/patches/v1_0/migrate_ssh_key_to_disk.py`. The
+  patch is idempotent and writes to disk *before* clearing the DB
+  reference, so a partial run is recoverable. The legacy column is
+  not dropped — Frappe doesn't drop columns — it just stops being
+  read by any controller.

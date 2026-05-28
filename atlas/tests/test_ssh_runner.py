@@ -42,7 +42,7 @@ class TestRunTaskWithServer(IntegrationTestCase):
 		self.provider = make_provider("runner-provider")
 		self.server = make_server(
 			provider=self.provider,
-			name="runner-server",
+			title="runner-server",
 			ipv4_address="10.0.0.5",
 			provider_resource_id="555",
 		)
@@ -66,7 +66,7 @@ class TestExecuteTask(IntegrationTestCase):
 		self.provider = make_provider("exec-provider")
 		self.server = make_server(
 			provider=self.provider,
-			name="exec-server",
+			title="exec-server",
 			ipv4_address="10.0.0.6",
 			provider_resource_id="556",
 		)
@@ -112,7 +112,7 @@ class TestConnectionForServer(IntegrationTestCase):
 		provider = make_provider("noip-provider")
 		server = make_server(
 			provider=provider,
-			name="noip-server",
+			title="noip-server",
 			ipv4_address=None,
 			provider_resource_id="777",
 		)
@@ -127,7 +127,7 @@ class TestConnectionForServer(IntegrationTestCase):
 		provider = make_provider("noprov-provider")
 		server = make_server(
 			provider=provider,
-			name="noprov-server",
+			title="noprov-server",
 			ipv4_address="10.0.0.99",
 			provider_resource_id="888",
 		)

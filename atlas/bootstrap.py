@@ -15,7 +15,8 @@ both enqueue background jobs that this script waits on.
 Site config keys (set with `bench --site <site> set-config -p <key> <value>`):
 
     atlas_provider_type           "DigitalOcean" or "Self-Managed"
-    atlas_ssh_private_key         PEM contents or path to private key
+    atlas_ssh_private_key_path    absolute path to the SSH private key on disk
+                                  (0600, readable by the Frappe user)
 
 DigitalOcean providers also need:
 
@@ -48,7 +49,7 @@ IMAGE_NAME = "ubuntu-24.04"
 
 DEFAULT_IMAGE = {
 	"image_name": IMAGE_NAME,
-	"description": "Firecracker CI Ubuntu 24.04 rootfs",
+	"title": "Firecracker CI Ubuntu 24.04 rootfs",
 	"kernel_url": "https://s3.amazonaws.com/spec.ccfc.min/firecracker-ci/v1.12/x86_64/vmlinux-6.1.128",
 	"kernel_filename": "vmlinux-6.1.128",
 	"kernel_sha256": "27a8310b9a727517e9eb02044524b6ceb77de5728e3491b6974d5c846227ecc8",
@@ -83,7 +84,7 @@ def ensure_provider() -> "frappe.model.document.Document":
 		"provider_name": PROVIDER_NAME,
 		"provider_type": provider_type,
 		"is_active": 1,
-		"ssh_private_key": load_key(require_config("atlas_ssh_private_key")),
+		"ssh_private_key_path": require_config("atlas_ssh_private_key_path"),
 	}
 	if provider_type == "DigitalOcean":
 		values.update({
@@ -101,19 +102,19 @@ def ensure_provider() -> "frappe.model.document.Document":
 
 
 def provision_server(provider: "frappe.model.document.Document") -> str:
-	server_name = f"bootstrap-server-{int(time.time())}"
+	title = f"bootstrap-server-{int(time.time())}"
 	if provider.provider_type == "DigitalOcean":
-		provider.provision_server(server_name)
+		server_name = provider.provision_server(title)
 	else:
-		provider.provision_server(
-			server_name,
+		server_name = provider.provision_server(
+			title,
 			ipv4_address=require_config("atlas_self_managed_ipv4"),
 			ipv6_address=require_config("atlas_self_managed_ipv6"),
 			ipv6_prefix=require_config("atlas_self_managed_ipv6_prefix"),
 			ipv6_virtual_machine_range=require_config("atlas_self_managed_ipv6_vm_range"),
 		)
 	frappe.db.commit()
-	print(f"[bootstrap] provisioning Server {server_name!r} (background job enqueued)")
+	print(f"[bootstrap] provisioning Server {title!r} (name={server_name!r}; background job enqueued)")
 	return server_name
 
 
@@ -153,7 +154,7 @@ def sync_image(server_name: str, timeout_seconds: int = 900) -> None:
 def provision_virtual_machine(server_name: str) -> str:
 	virtual_machine = frappe.get_doc({
 		"doctype": "Virtual Machine",
-		"description": "bootstrap test vm",
+		"title": "bootstrap test vm",
 		"server": server_name,
 		"image": IMAGE_NAME,
 		"vcpus": 1,
@@ -163,10 +164,36 @@ def provision_virtual_machine(server_name: str) -> str:
 	}).insert(ignore_permissions=True)
 	frappe.db.commit()
 	print(f"[bootstrap] created Virtual Machine {virtual_machine.name!r}")
-	task_name = virtual_machine.provision()
+	# `after_insert` enqueues `auto_provision` so we don't have to call
+	# `provision()` explicitly. Pull the most recent provision-vm Task for
+	# this VM out of the queue and wait on it.
+	task_name = _wait_for_provision_task(virtual_machine.name)
 	print(f"[bootstrap] provisioning Virtual Machine (Task {task_name!r})")
 	wait_for_task(task_name, timeout_seconds=300)
 	return virtual_machine.name
+
+
+def _wait_for_provision_task(virtual_machine_name: str, timeout_seconds: int = 60) -> str:
+	"""Block until the after_insert worker has created the provision Task
+	row, then return its name. We poll the Task list rather than sleep on a
+	hard delay because the worker latency is short but non-zero."""
+	deadline = time.monotonic() + timeout_seconds
+	while time.monotonic() < deadline:
+		frappe.db.rollback()
+		rows = frappe.get_all(
+			"Task",
+			filters={
+				"virtual_machine": virtual_machine_name,
+				"script": "provision-vm.sh",
+			},
+			pluck="name",
+			order_by="creation desc",
+			limit=1,
+		)
+		if rows:
+			return rows[0]
+		time.sleep(2)
+	frappe.throw(f"No provision Task appeared for {virtual_machine_name!r} within {timeout_seconds}s")
 
 
 def wait_for_task(task_name: str, timeout_seconds: int) -> None:

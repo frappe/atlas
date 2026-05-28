@@ -1,14 +1,14 @@
 {
  "actions": [],
  "allow_rename": 0,
- "autoname": "field:server_name",
+ "autoname": "hash",
  "creation": "2026-05-25 00:00:00.000000",
  "doctype": "DocType",
  "editable_grid": 0,
  "engine": "InnoDB",
  "field_order": [
   "tab_overview",
-  "server_name",
+  "title",
   "provider",
   "column_break_header",
   "status",
@@ -17,13 +17,13 @@
   "column_break_provider_resource",
   "region",
   "size",
-  "tab_networking",
+  "section_break_networking",
   "ipv4_address",
   "ipv6_address",
   "column_break_networking",
   "ipv6_prefix",
   "ipv6_virtual_machine_range",
-  "tab_host_info",
+  "section_break_host_info",
   "architecture",
   "column_break_host_info",
   "firecracker_version",
@@ -38,12 +38,12 @@
    "label": "Overview"
   },
   {
-   "fieldname": "server_name",
+   "fieldname": "title",
    "fieldtype": "Data",
    "in_list_view": 1,
-   "label": "Server Name",
+   "label": "Title",
    "reqd": 1,
-   "unique": 1
+   "set_only_once": 1
   },
   {
    "fieldname": "provider",
@@ -52,7 +52,8 @@
    "in_standard_filter": 1,
    "label": "Provider",
    "options": "Server Provider",
-   "reqd": 1
+   "reqd": 1,
+   "set_only_once": 1
   },
   {
    "fieldname": "column_break_header",
@@ -66,6 +67,7 @@
    "in_standard_filter": 1,
    "label": "Status",
    "options": "Pending\nBootstrapping\nActive\nDraining\nBroken\nArchived",
+   "read_only": 1,
    "reqd": 1
   },
   {
@@ -98,8 +100,9 @@
    "read_only": 1
   },
   {
-   "fieldname": "tab_networking",
-   "fieldtype": "Tab Break",
+   "collapsible": 1,
+   "fieldname": "section_break_networking",
+   "fieldtype": "Section Break",
    "label": "Networking"
   },
   {
@@ -132,8 +135,9 @@
    "read_only": 1
   },
   {
-   "fieldname": "tab_host_info",
-   "fieldtype": "Tab Break",
+   "collapsible": 1,
+   "fieldname": "section_break_host_info",
+   "fieldtype": "Section Break",
    "label": "Host info"
   },
   {
@@ -159,9 +163,9 @@
    "read_only": 1
   },
   {
+   "collapsible": 1,
    "fieldname": "section_break_notes",
    "fieldtype": "Section Break",
-   "collapsible": 1,
    "label": "Notes"
   },
   {
@@ -171,11 +175,11 @@
   }
  ],
  "links": [],
- "modified": "2026-05-27 00:00:00.000000",
+ "modified": "2026-05-28 00:00:00.000000",
  "modified_by": "Administrator",
  "module": "Atlas",
  "name": "Server",
- "naming_rule": "By fieldname",
+ "naming_rule": "Random",
  "owner": "Administrator",
  "permissions": [
   {
@@ -195,6 +199,14 @@
  ],
  "sort_field": "creation",
  "sort_order": "DESC",
- "states": [],
+ "states": [
+  {"title": "Pending", "color": "Yellow"},
+  {"title": "Bootstrapping", "color": "Blue"},
+  {"title": "Active", "color": "Green"},
+  {"title": "Draining", "color": "Orange"},
+  {"title": "Broken", "color": "Red"},
+  {"title": "Archived", "color": "Gray"}
+ ],
+ "title_field": "title",
  "track_changes": 1
 }

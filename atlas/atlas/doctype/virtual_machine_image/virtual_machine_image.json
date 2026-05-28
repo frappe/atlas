@@ -9,13 +9,11 @@
  "field_order": [
   "tab_overview",
   "image_name",
-  "description",
+  "title",
   "column_break_header",
   "is_active",
   "default_disk_gigabytes",
-  "section_break_sync_status",
-  "sync_status_html",
-  "tab_image_data",
+  "section_break_image_data",
   "section_break_kernel",
   "kernel_url",
   "kernel_filename",
@@ -36,17 +34,17 @@
   {
    "fieldname": "image_name",
    "fieldtype": "Data",
-   "in_list_view": 1,
    "label": "Image Name",
    "reqd": 1,
    "set_only_once": 1,
    "unique": 1
   },
   {
-   "fieldname": "description",
+   "fieldname": "title",
    "fieldtype": "Data",
    "in_list_view": 1,
-   "label": "Description"
+   "label": "Title",
+   "set_only_once": 1
   },
   {
    "fieldname": "column_break_header",
@@ -66,22 +64,13 @@
    "fieldtype": "Int",
    "in_list_view": 1,
    "label": "Default Disk (GB)",
-   "reqd": 1
+   "reqd": 1,
+   "set_only_once": 1
   },
   {
-   "fieldname": "section_break_sync_status",
+   "collapsible": 1,
+   "fieldname": "section_break_image_data",
    "fieldtype": "Section Break",
-   "label": "Sync Status",
-   "collapsible": 0
-  },
-  {
-   "fieldname": "sync_status_html",
-   "fieldtype": "HTML",
-   "label": "Sync Status"
-  },
-  {
-   "fieldname": "tab_image_data",
-   "fieldtype": "Tab Break",
    "label": "Image data"
   },
   {
@@ -93,13 +82,15 @@
    "fieldname": "kernel_url",
    "fieldtype": "Data",
    "label": "Kernel URL",
-   "reqd": 1
+   "reqd": 1,
+   "set_only_once": 1
   },
   {
    "fieldname": "kernel_filename",
    "fieldtype": "Data",
    "label": "Kernel Filename",
-   "reqd": 1
+   "reqd": 1,
+   "set_only_once": 1
   },
   {
    "fieldname": "column_break_kernel",
@@ -109,7 +100,8 @@
    "fieldname": "kernel_sha256",
    "fieldtype": "Data",
    "label": "Kernel SHA-256",
-   "reqd": 1
+   "reqd": 1,
+   "set_only_once": 1
   },
   {
    "fieldname": "section_break_rootfs",
@@ -120,13 +112,15 @@
    "fieldname": "rootfs_url",
    "fieldtype": "Data",
    "label": "Rootfs URL",
-   "reqd": 1
+   "reqd": 1,
+   "set_only_once": 1
   },
   {
    "fieldname": "rootfs_filename",
    "fieldtype": "Data",
    "label": "Rootfs Filename",
-   "reqd": 1
+   "reqd": 1,
+   "set_only_once": 1
   },
   {
    "fieldname": "column_break_rootfs",
@@ -136,11 +130,12 @@
    "fieldname": "rootfs_sha256",
    "fieldtype": "Data",
    "label": "Rootfs SHA-256",
-   "reqd": 1
+   "reqd": 1,
+   "set_only_once": 1
   }
  ],
  "links": [],
- "modified": "2026-05-27 00:00:00.000000",
+ "modified": "2026-05-28 00:00:00.000000",
  "modified_by": "Administrator",
  "module": "Atlas",
  "name": "Virtual Machine Image",
@@ -165,5 +160,6 @@
  "sort_field": "creation",
  "sort_order": "DESC",
  "states": [],
+ "title_field": "title",
  "track_changes": 1
 }

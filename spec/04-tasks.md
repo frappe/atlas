@@ -74,8 +74,12 @@ def wait_for_ssh(connection, timeout_seconds: int = 300) -> None:
 ### Connection details
 
 - User: `root`.
-- Auth: SSH private key from `Server Provider.ssh_private_key`, written to a
-  short-lived tempfile (`mode 0600`) when the SSH command runs.
+- Auth: SSH private key read from the path on
+  `Server Provider.ssh_private_key_path` (a `0600` PEM on the Atlas host,
+  see [07-filesystem-layout.md § SSH keys](./07-filesystem-layout.md)).
+  The key is loaded via `secrets.get_ssh_key_from_disk(path)` at
+  SSH-connect time and written to a short-lived tempfile (`mode 0600`)
+  for the `ssh`/`scp` invocation.
 - Options we always pass:
   - `-o StrictHostKeyChecking=accept-new` — accept on first contact, fail on
     later changes. (Host-key pinning is on the [roadmap](./09-roadmap.md).)
@@ -265,33 +269,59 @@ returns `operator_visible_scripts()` for the desk picker, while
 `allowed_scripts()`. Internal callers (`Server.bootstrap`, `Server.reboot`,
 VM lifecycle methods) keep working unchanged.
 
-## "Run Task" — the escape hatch
+## Task subject
 
-On `Server` there is a `Run Task` button. It opens a dialog with:
+The `subject` field is the operator-facing label on every Task row.
+The rule, encoded in `SCRIPT_LABELS` on `Task` and applied at
+`before_insert`:
 
-- A Select populated from `Server.get_scripts()` (the operator-visible
-  three).
-- A per-script form: bootstrap-server.sh asks for
-  `FIRECRACKER_VERSION` and `ARCHITECTURE`; sync-image.sh asks for
-  `IMAGE_NAME` (Link → Virtual Machine Image, filtered to
-  `is_active = 1`); reboot-server.sh asks for nothing. Per-script
-  fields are gated by `depends_on: doc.script === ...` and toggled on
-  change. The raw `Variables (JSON)` Code field is no longer the
-  default surface.
-- A `Show advanced (System Manager)` toggle that brings the raw-JSON
-  field back. This preserves the "hand-fire a script with custom
-  vars" capability we use for debugging while keeping the default
-  safe for everyone else.
+- **Verb only** when the script operates on the same object the Task
+  is anchored to — `Reboot`, `Start`, `Stop`, `Restart`, `Terminate`.
+  The Server / Virtual Machine column on the row carries the target
+  identity; the subject doesn't need to repeat it.
+- **Verb + Noun** when the script creates a new object — `Bootstrap
+  Server` (creates host state from nothing), `Sync Image` (creates
+  server-side state for an existing image), `Create Virtual Machine`
+  (creates a new VM).
 
-The whitelisted method `Server.run_task_dialog(script, variables)` rejects
-any script not in `allowed_scripts()`, parses `variables` (string or dict),
-and runs the same `run_task` code path. Reboot is implemented as
-`run_task_dialog(script="reboot-server.sh", variables={})` — uniform path,
-recorded as a Task, same audit story.
+The legacy `<verb> · <target>` shape (e.g. `Provision VM · verify
+vnet_hdr fix on bootstrap-server-…`) is gone — the target identity
+lives in the row's columns and the form's link fields. Existing rows
+were rewritten by
+[`atlas/patches/v1_0/rebuild_task_subjects.py`](../atlas/patches/v1_0/rebuild_task_subjects.py).
 
-This is the same code path Atlas itself uses, including being recorded in
-the Task table. It's how we debug, and how we run one-off operations without
-adding a new DocType method.
+The Task list-view's Status column renders a coloured pill driven by
+the `states` JSON on the DocType (`Pending` yellow, `Running` blue,
+`Success` green, `Failure` red); the legacy
+`task_list.js::indicator` is gone for the status — the list_js file
+still owns the `subject` formatter's duration suffix.
+
+## Per-script dialogs — no catch-all Run Task
+
+There is no generic **Run Task** dialog on the Server form. Each
+operator-visible script gets its own first-class Actions item with a
+typed dialog:
+
+- **Sync Image** — a one-field dialog (Link → Virtual Machine Image,
+  `only_select: 1`, `is_active = 1` filter). Calls
+  `Server.sync_image(image)`, which delegates to `Virtual Machine
+  Image.sync_to_server(self.name)`.
+- **Re-bootstrap** — a `confirm_destructive` dialog (type the server
+  title). Calls `Server.bootstrap()`.
+- **Reboot** — a `confirm_destructive` dialog (type the server title).
+  Calls `Server.reboot()`.
+
+The whitelisted `Server.run_task_dialog(script, variables)` method
+survives for two non-operator callers: `Task.retry()` (so a failed
+Task can be re-fired against any whitelisted script) and the
+`desk_buttons` e2e suite. It is no longer surfaced as a button on the
+form.
+
+The `operator_visible_scripts()` subset stays narrow — currently just
+`bootstrap-server.sh`, `reboot-server.sh`, `sync-image.sh`. Lifecycle
+scripts (`provision-vm.sh`, `start-vm.sh`, `terminate-vm.sh`, …) are
+state-machine moves that originate from the VM controller's lifecycle
+buttons, never from a Server-form picker.
 
 ## Retrying a failed Task
 

@@ -14,7 +14,7 @@
   "section_break_credentials",
   "api_token",
   "ssh_key_id",
-  "ssh_private_key",
+  "ssh_private_key_path",
   "section_break_defaults",
   "default_region",
   "column_break_defaults",
@@ -28,6 +28,7 @@
    "in_list_view": 1,
    "label": "Provider Name",
    "reqd": 1,
+   "set_only_once": 1,
    "unique": 1
   },
   {
@@ -50,7 +51,8 @@
    "fieldtype": "Check",
    "in_list_view": 1,
    "in_standard_filter": 1,
-   "label": "Is Active"
+   "label": "Is Active",
+   "set_only_once": 1
   },
   {
    "fieldname": "section_break_credentials",
@@ -60,18 +62,22 @@
   {
    "fieldname": "api_token",
    "fieldtype": "Password",
-   "label": "API Token"
+   "label": "API Token",
+   "set_only_once": 1
   },
   {
    "fieldname": "ssh_key_id",
    "fieldtype": "Data",
-   "label": "SSH Key ID"
+   "label": "SSH Key ID",
+   "set_only_once": 1
   },
   {
-   "fieldname": "ssh_private_key",
-   "fieldtype": "Password",
-   "label": "SSH Private Key",
-   "reqd": 1
+   "description": "Absolute path on the Atlas host where the SSH private key lives. 0600 owned by the Frappe user.",
+   "fieldname": "ssh_private_key_path",
+   "fieldtype": "Data",
+   "label": "SSH Private Key Path",
+   "reqd": 1,
+   "set_only_once": 1
   },
   {
    "fieldname": "section_break_defaults",
@@ -82,7 +88,8 @@
    "fieldname": "default_region",
    "fieldtype": "Data",
    "in_list_view": 1,
-   "label": "Default Region"
+   "label": "Default Region",
+   "set_only_once": 1
   },
   {
    "fieldname": "column_break_defaults",
@@ -91,12 +98,14 @@
   {
    "fieldname": "default_size",
    "fieldtype": "Data",
-   "label": "Default Size"
+   "label": "Default Size",
+   "set_only_once": 1
   },
   {
    "fieldname": "default_image",
    "fieldtype": "Data",
-   "label": "Default Image"
+   "label": "Default Image",
+   "set_only_once": 1
   }
  ],
  "links": [],

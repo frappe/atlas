@@ -13,28 +13,28 @@ including on terminate. This means:
   (`/var/lib/atlas/virtual-machines/<uuid>/`) is stable forever.
 - The systemd unit instance name (`firecracker-vm@<uuid>.service`) is stable.
 - Tasks referencing the VM stay valid after terminate.
-- The operator does not have to invent a name; they use `description` for a
-  human-readable label.
+- The operator does not have to invent a name; they use `title` for a
+  human-readable label (the framework's `title_field`).
 
 The MAC and TAP device are derived from the UUID so they are also stable.
 
 ## States
 
 ```
-                  (insert via Create dialog)
+                  (insert via Create form — Save)
                               |
                               v
                           Pending
                               |
-                  (Provision button)
+                  (after_insert → auto_provision worker)
                               |
                   +-----------+-----------+
                   v                       v
               Running                 Failed
                   |                       |
-       (Stop)     |                       | (Terminate cleans up)
+       (Stop)     |     (Provision retry) |
                   v                       v
-              Stopped                Terminated
+              Stopped                 Running / Failed
                   |
        (Start)    |
                   +---> Running
@@ -53,8 +53,13 @@ idempotent).
 
 ## Provision
 
-Trigger: operator fills the Create dialog (server, image, vCPUs, RAM, disk,
-SSH key, description) and clicks `Provision`.
+Trigger: operator fills the Create form (server, image, vCPUs, RAM,
+disk, SSH key, title) and clicks `Save`. `Virtual Machine.after_insert`
+enqueues `auto_provision` on the `long` queue; the worker calls
+`Virtual Machine.provision()` on the freshly inserted row. There is no
+operator-facing `Provision` primary on a `Pending` form — saving *is*
+the provision trigger. The `Provision` primary returns on `Failed` as
+a manual retry path.
 
 Steps in Python (one DocType method, `Virtual Machine.provision`):
 
@@ -87,6 +92,19 @@ Steps in Python (one DocType method, `Virtual Machine.provision`):
 
 One Task per VM creation. (The image sync, if needed, is a separate Task
 triggered explicitly by the operator before provisioning.)
+
+### Host-side precondition
+
+Before the guest-side probe runs, the e2e suite asserts the Atlas
+host carries the Provider's SSH key on disk as
+[07-filesystem-layout.md § SSH keys](./07-filesystem-layout.md)
+describes: `Server Provider.ssh_private_key_path` resolves to a regular
+file with mode `0600` (or `0400`, equally safe). This is a Python-side
+check in
+[`use_cases/virtual_machine_provisioning.py::_assert_provider_ssh_key_path`](../atlas/tests/e2e/use_cases/virtual_machine_provisioning.py),
+not a bash probe — the file lives on the Atlas host, not in the guest.
+A missing or wrong-mode key surfaces here as a clean AssertionError
+rather than as a noisy SSH timeout in the guest probe.
 
 ### Guest-side identity contract
 

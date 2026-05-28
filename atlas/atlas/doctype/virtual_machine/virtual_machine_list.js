@@ -1,15 +1,15 @@
 frappe.listview_settings["Virtual Machine"] = {
-	add_fields: ["status", "ipv6_address", "name", "description"],
+	add_fields: ["status", "ipv6_address", "name", "title"],
 
 	formatters: {
-		// Frappe renders the description (the list "subject" column) inside an
+		// Frappe renders the title (the list "subject" column) inside an
 		// anchor where the value is plain-text escaped — HTML in the formatter
 		// would show as literal angle brackets. We append the short ID with a
 		// `·` separator instead and let the muted styling come from the IPv6
 		// + ID columns next to it.
-		description(value, _df, doc) {
+		title(value, _df, doc) {
 			const short = (doc.name || "").slice(0, 8);
-			const label = value || "(no description)";
+			const label = value || "(no title)";
 			return `${label} · ${short}`;
 		},
 

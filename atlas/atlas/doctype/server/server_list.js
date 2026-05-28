@@ -14,7 +14,7 @@ frappe.listview_settings["Server"] = {
 	},
 
 	formatters: {
-		server_name(value, _df, doc) {
+		title(value, _df, doc) {
 			if (!doc.region) return value;
 			return `${value} · ${doc.region}`;
 		},

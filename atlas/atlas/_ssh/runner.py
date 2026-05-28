@@ -75,14 +75,16 @@ def execute_task(task_name: str) -> None:
 
 def connection_for_server(server) -> Connection:
 	"""Build the SSH Connection from a Server doc."""
-	from atlas.atlas.secrets import get_secret
+	from atlas.atlas.secrets import get_ssh_key_from_disk
 
 	if not server.ipv4_address:
 		frappe.throw(f"Server {server.name} has no ipv4_address; cannot SSH")
 	if not server.provider:
 		frappe.throw(f"Server {server.name} has no provider; cannot SSH")
-	private_key = get_secret("Server Provider", server.provider, "ssh_private_key")
-	return Connection(host=server.ipv4_address, ssh_private_key=private_key)
+	path = frappe.db.get_value("Server Provider", server.provider, "ssh_private_key_path")
+	if not path:
+		frappe.throw(f"Server Provider {server.provider} has no ssh_private_key_path")
+	return Connection(host=server.ipv4_address, ssh_private_key=get_ssh_key_from_disk(path))
 
 
 def _execute_into(

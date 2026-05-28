@@ -202,7 +202,7 @@ def _check_connection_for_server_validation() -> None:
 	"""connection_for_server requires ipv4_address and provider."""
 	transient = frappe.get_doc({
 		"doctype": "Server",
-		"server_name": "usecase-no-ip",
+		"title": "usecase-no-ip",
 		"status": "Pending",
 	})
 	with expect_validation_error("no ipv4_address"):

@@ -14,6 +14,18 @@ from atlas.atlas.ssh import connection_for_server, wait_for_ssh
 
 DIGITALOCEAN_REQUIRED = ("api_token", "ssh_key_id", "default_region", "default_size", "default_image")
 
+IMMUTABLE_AFTER_INSERT = (
+	"provider_name",
+	"provider_type",
+	"is_active",
+	"api_token",
+	"ssh_key_id",
+	"ssh_private_key_path",
+	"default_region",
+	"default_size",
+	"default_image",
+)
+
 # Monthly USD price per size, updated by hand when DigitalOcean publishes
 # changes — same maintenance model as `default_image`. Not every size we run
 # in production is here; missing entries surface as "—" in the dialog rather
@@ -32,12 +44,34 @@ DIGITALOCEAN_MONTHLY_COST_USD = {
 
 class ServerProvider(Document):
 	def validate(self) -> None:
+		self._validate_provider_type_requirements()
+		self._validate_immutability()
+
+	def _validate_provider_type_requirements(self) -> None:
 		if self.provider_type == "DigitalOcean":
 			missing = [field for field in DIGITALOCEAN_REQUIRED if not self.get(field)]
 			if missing:
 				frappe.throw(
 					f"DigitalOcean providers require: {', '.join(missing)}"
 				)
+
+	def _validate_immutability(self) -> None:
+		if self.is_new():
+			return
+		original = self.get_doc_before_save()
+		if not original:
+			return
+		for field in IMMUTABLE_AFTER_INSERT:
+			if getattr(self, field) != getattr(original, field):
+				frappe.throw(f"{field} is immutable after insert")
+
+	@frappe.whitelist()
+	def archive(self) -> None:
+		"""Decommission this provider. Sets is_active=0. Existing Servers keep
+		their FK reference so historical Tasks remain queryable."""
+		if not self.is_active:
+			frappe.throw("Provider is already archived")
+		frappe.db.set_value(self.doctype, self.name, "is_active", 0)
 
 	@frappe.whitelist()
 	def test_connection(self) -> dict:
@@ -92,7 +126,10 @@ class ServerProvider(Document):
 	@frappe.whitelist()
 	def provision_server(
 		self,
-		server_name: str,
+		title: str,
+		region: str | None = None,
+		size: str | None = None,
+		image: str | None = None,
 		ipv4_address: str | None = None,
 		ipv6_address: str | None = None,
 		ipv6_prefix: str | None = None,
@@ -100,14 +137,23 @@ class ServerProvider(Document):
 	) -> str:
 		"""Insert a Server row and enqueue bootstrap.
 
+		`title` is the user-facing label. The row's `name` is a UUID
+		assigned by `Server.autoname()`. The DigitalOcean droplet tag and
+		create-droplet `name` parameter both use `title` (DigitalOcean
+		needs a slug, not a UUID).
+
 		On `DigitalOcean` providers, this creates a droplet first and then
 		enqueues `finish_provisioning` which waits for the droplet to come up
 		before writing IPs. On `Self-Managed` providers, the operator supplies
 		IPv4 / IPv6 inputs — Atlas writes them straight to the Server row and
 		enqueues `finish_provisioning` to bootstrap.
+
+		`region` / `size` / `image` default to the provider's `default_*`
+		fields when omitted — same shape as before, just exposed to the
+		Provision dialog so the operator can override per-server.
 		"""
-		if frappe.db.exists("Server", server_name):
-			frappe.throw(f"Server {server_name} already exists")
+		if frappe.db.exists("Server", {"title": title}):
+			frappe.throw(f"Server with title {title!r} already exists")
 
 		if self.provider_type == "Self-Managed":
 			for label, value in [
@@ -118,9 +164,9 @@ class ServerProvider(Document):
 			]:
 				if not value:
 					frappe.throw(f"Self-Managed providers require {label}")
-			frappe.get_doc({
+			server = frappe.get_doc({
 				"doctype": "Server",
-				"server_name": server_name,
+				"title": title,
 				"provider": self.name,
 				"status": "Pending",
 				"ipv4_address": ipv4_address,
@@ -129,22 +175,25 @@ class ServerProvider(Document):
 				"ipv6_virtual_machine_range": ipv6_virtual_machine_range,
 			}).insert(ignore_permissions=True)
 		else:
+			effective_region = region or self.default_region
+			effective_size = size or self.default_size
+			effective_image = image or self.default_image
 			droplet = self.client.create_droplet(
-				name=server_name,
-				region=self.default_region,
-				size=self.default_size,
-				image=self.default_image,
+				name=title,
+				region=effective_region,
+				size=effective_size,
+				image=effective_image,
 				ssh_key_ids=[self.ssh_key_id],
-				tags=["atlas", server_name],
+				tags=["atlas", title],
 				ipv6=True,
 			)
-			frappe.get_doc({
+			server = frappe.get_doc({
 				"doctype": "Server",
-				"server_name": server_name,
+				"title": title,
 				"provider": self.name,
 				"provider_resource_id": str(droplet["id"]),
-				"region": self.default_region,
-				"size": self.default_size,
+				"region": effective_region,
+				"size": effective_size,
 				"status": "Pending",
 			}).insert(ignore_permissions=True)
 
@@ -154,9 +203,9 @@ class ServerProvider(Document):
 			"atlas.atlas.doctype.server_provider.server_provider.finish_provisioning",
 			queue="long",
 			timeout=1800,
-			server_name=server_name,
+			server_name=server.name,
 		)
-		return server_name
+		return server.name
 
 	@property
 	def client(self) -> DigitalOceanClient:

@@ -126,12 +126,22 @@ frappe.atlas.strip_desk_chrome = function (frm) {
 				".new-timeline",
 				".timeline",
 				".comment-input-container",
+				".comment-input-wrapper",
+				".comment-input-placeholder",
 				".comment-box",
+				".comment-box-container",
 				".form-comments",
 				".comments",
 				".timeline-content",
 			].join(", "))
 			.hide();
+	}
+};
+
+frappe.atlas.set_window_title = function (frm) {
+	const label = frm.doc.title || frm.doc.name;
+	if (label) {
+		document.title = `${label} — Atlas`;
 	}
 };
 
@@ -145,25 +155,13 @@ for (const doctype of [
 	frappe.ui.form.on(doctype, {
 		onload(frm) {
 			frappe.atlas.strip_desk_chrome(frm);
+			frm.set_window_title = function () {
+				frappe.atlas.set_window_title(frm);
+			};
 		},
 		refresh(frm) {
 			frappe.atlas.strip_desk_chrome(frm);
-			suppress_orphan_asterisks(frm);
+			frappe.atlas.set_window_title(frm);
 		},
-	});
-}
-
-// Some Frappe versions emit the orphan `*` as a bare text node sibling of the
-// `.section-body`'s frappe-controls — text nodes are not styleable via CSS,
-// so we strip them in JS after every refresh.
-function suppress_orphan_asterisks(frm) {
-	const $body = frm.page && frm.page.wrapper;
-	if (!$body || !$body.find) return;
-	$body.find(".form-column .section-body").each(function () {
-		for (const node of Array.from(this.childNodes)) {
-			if (node.nodeType === Node.TEXT_NODE && /^\s*\*\s*$/.test(node.textContent || "")) {
-				node.parentNode.removeChild(node);
-			}
-		}
 	});
 }

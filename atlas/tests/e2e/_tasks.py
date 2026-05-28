@@ -51,6 +51,36 @@ def wait_for_task(
 	raise AssertionError(f"task {task_name} did not finish within {timeout_seconds}s")
 
 
+def wait_for_vm_running(
+	virtual_machine_name: str,
+	timeout_seconds: int = 60,
+	poll_seconds: float = 1.0,
+) -> "frappe.model.document.Document":
+	"""Wait for `after_insert` auto-provision to flip a VM to Running.
+
+	Phase 4's auto-provision contract: inserting a Virtual Machine row
+	enqueues `provision()` from `after_insert`. Callers no longer click
+	the Provision button; instead they wait for the background worker to
+	drive the state transition. Raises if the VM is still Pending past
+	the deadline (worker didn't pick up the job) or lands in Failed.
+	"""
+	deadline = time.monotonic() + timeout_seconds
+	while time.monotonic() < deadline:
+		frappe.db.rollback()
+		vm = frappe.get_doc("Virtual Machine", virtual_machine_name)
+		if vm.status == "Running":
+			return vm
+		if vm.status == "Failed":
+			raise AssertionError(
+				f"VM {virtual_machine_name} reached Failed during auto-provision"
+			)
+		time.sleep(poll_seconds)
+	raise AssertionError(
+		f"VM {virtual_machine_name} did not reach Running within {timeout_seconds}s "
+		f"(auto-provision worker likely didn't run)"
+	)
+
+
 def mark_orphan_tasks_failure(older_than_minutes: int = 10) -> int:
 	"""Mark Running Tasks older than N minutes as Failure. Safety net for
 	workers that died mid-job. Returns count marked.

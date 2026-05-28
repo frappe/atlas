@@ -6,12 +6,15 @@ Restart is `stop` + `start` orchestrated in Python, not a separate script.
 
 This module exercises:
 
-- Provision -> Stop -> Start -> Restart -> Terminate, with a probe on every
-  state.
+- Auto-provision (insert -> Running) -> Stop -> Start -> Restart ->
+  Terminate, with a probe on every state.
 - Terminate again from Terminated throws.
-- start while Pending throws; stop while Pending throws; restart while
-  Pending throws. (These guard the operator against double-clicking the
-  wrong button on a freshly inserted row.)
+
+(Phase 4 dropped the Pending state guards from this use case — auto-provision
+fires from `after_insert`, so a freshly-inserted VM races to Running and
+won't dwell in Pending long enough for an operator to mis-click anyway. The
+controller still enforces the guards in `start()` / `stop()` / `restart()`;
+those branches are exercised by the unit-test suite.)
 """
 
 import time
@@ -24,6 +27,7 @@ from atlas.tests.e2e._shared import (
 	ephemeral_public_key,
 	expect_validation_error,
 	phase,
+	wait_for_vm_running,
 )
 
 
@@ -34,7 +38,7 @@ def run(reuse: bool = True, keep: bool = True) -> None:
 
 		vm = frappe.get_doc({
 			"doctype": "Virtual Machine",
-			"description": "vm-lifecycle",
+			"title": "vm-lifecycle",
 			"server": server.name,
 			"image": image_doc.name,
 			"vcpus": 1,
@@ -42,24 +46,17 @@ def run(reuse: bool = True, keep: bool = True) -> None:
 			"disk_gigabytes": 4,
 			"ssh_public_key": public_key,
 		}).insert(ignore_permissions=True)
+		frappe.db.commit()
 
-		_check_pending_state_guards(vm)
 		_check_full_lifecycle(server.name, vm)
 
 
-def _check_pending_state_guards(vm) -> None:
-	"""Before Provision, start/stop/restart all throw with a clear message."""
-	with expect_validation_error("cannot start"):
-		vm.start()
-	with expect_validation_error("cannot stop"):
-		vm.stop()
-	with expect_validation_error("cannot restart"):
-		vm.restart()
-
-
 def _check_full_lifecycle(server_name: str, vm) -> None:
-	"""Provision -> Stop -> Start -> Restart -> Terminate, with probes."""
-	vm.provision()
+	"""Auto-provision (insert -> Running) -> Stop -> Start -> Restart ->
+	Terminate, with probes."""
+	# Phase 4 auto-provision contract: after_insert enqueued provision();
+	# wait for the worker rather than calling vm.provision() directly.
+	wait_for_vm_running(vm.name, timeout_seconds=120)
 	vm.reload()
 	assert vm.status == "Running", vm.status
 	first_started = vm.last_started

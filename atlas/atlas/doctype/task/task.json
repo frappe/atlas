@@ -144,8 +144,9 @@
    "reqd": 1
   },
   {
+   "collapsible": 1,
    "fieldname": "tab_output",
-   "fieldtype": "Tab Break",
+   "fieldtype": "Section Break",
    "label": "Output"
   },
   {
@@ -192,7 +193,12 @@
  "search_fields": "script,status,server,virtual_machine,subject",
  "sort_field": "creation",
  "sort_order": "DESC",
- "states": [],
+ "states": [
+  {"title": "Pending", "color": "Yellow"},
+  {"title": "Running", "color": "Blue"},
+  {"title": "Success", "color": "Green"},
+  {"title": "Failure", "color": "Red"}
+ ],
  "title_field": "subject",
  "track_changes": 0
 }

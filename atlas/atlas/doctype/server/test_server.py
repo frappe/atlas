@@ -108,3 +108,110 @@ class TestServerBootstrap(IntegrationTestCase):
 		hidden = {"provision-vm.sh", "start-vm.sh", "stop-vm.sh",
 			"terminate-vm.sh", "restart-vm.sh"}
 		self.assertFalse(hidden & {entry["name"] for entry in entries})
+
+
+class TestServerArchive(IntegrationTestCase):
+	def setUp(self) -> None:
+		# Reset so each test starts from a non-Archived state.
+		frappe.db.delete("Server", {"title": "test-server-archive"})
+		provider = make_provider("test-provider-archive")
+		self.server = make_server(
+			provider,
+			"test-server-archive",
+			provider_resource_id="44",
+			ipv4_address="10.0.0.50",
+			ipv6_address="2a03:b0c0:abcd:9999::1",
+			ipv6_prefix="2a03:b0c0:abcd:9999::/64",
+			ipv6_virtual_machine_range="2a03:b0c0:abcd:9999::/124",
+			status="Active",
+		)
+
+	def test_archive_sets_status_archived(self) -> None:
+		self.server.archive()
+		self.assertEqual(
+			frappe.db.get_value("Server", self.server.name, "status"),
+			"Archived",
+		)
+
+	def test_archive_throws_when_already_archived(self) -> None:
+		self.server.archive()
+		self.server.reload()
+		with self.assertRaises(frappe.ValidationError):
+			self.server.archive()
+
+
+class TestServerSyncImage(IntegrationTestCase):
+	def test_sync_image_delegates_to_image_controller(self) -> None:
+		from atlas.tests.fixtures import make_image
+
+		provider = make_provider("test-provider-sync")
+		server = make_server(
+			provider,
+			"test-server-sync",
+			provider_resource_id="55",
+			ipv4_address="10.0.0.55",
+			ipv6_address="2a03:b0c0:abcd:8888::1",
+			ipv6_prefix="2a03:b0c0:abcd:8888::/64",
+			ipv6_virtual_machine_range="2a03:b0c0:abcd:8888::/124",
+			status="Active",
+		)
+		image = make_image("test-image-sync")
+		with patch("frappe.enqueue"):
+			task_name = server.sync_image(image.name)
+		task = frappe.get_doc("Task", task_name)
+		self.assertEqual(task.script, "sync-image.sh")
+		self.assertEqual(task.server, server.name)
+
+
+class TestServerImmutability(IntegrationTestCase):
+	def setUp(self) -> None:
+		frappe.db.delete("Server", {"title": "test-server-immut"})
+		provider = make_provider("test-provider-immut")
+		self.server = make_server(
+			provider,
+			"test-server-immut",
+			provider_resource_id="66",
+			ipv4_address="10.0.0.66",
+			ipv6_address="2a03:b0c0:abcd:7777::1",
+			ipv6_prefix="2a03:b0c0:abcd:7777::/64",
+			ipv6_virtual_machine_range="2a03:b0c0:abcd:7777::/124",
+			status="Active",
+		)
+
+	def test_provider_is_immutable_once_set(self) -> None:
+		other_provider = make_provider("other-provider-immut")
+		self.server.provider = other_provider.name
+		with self.assertRaises(frappe.ValidationError) as raised:
+			self.server.save(ignore_permissions=True)
+		self.assertIn("provider is immutable", str(raised.exception))
+
+	def test_title_is_immutable_once_set(self) -> None:
+		self.server.reload()
+		self.server.title = "renamed-server"
+		with self.assertRaises(frappe.ValidationError) as raised:
+			self.server.save(ignore_permissions=True)
+		self.assertIn("title is immutable", str(raised.exception))
+
+	def test_name_is_a_uuid(self) -> None:
+		import uuid
+
+		# Round-trip the UUID parser: raises if `name` isn't a UUID.
+		uuid.UUID(self.server.name)
+
+	def test_ipv4_can_be_set_when_initially_blank(self) -> None:
+		"""DigitalOcean provision flow: server starts Pending with no IPs;
+		`finish_provisioning` later writes them. The immutability check
+		should allow None → value transitions."""
+		# Reset so the test is hermetic across re-runs (the previous run
+		# would have set ipv4_address, which set_only_once then locks).
+		frappe.db.delete("Server", {"title": "test-server-blank"})
+		blank = make_server(
+			make_provider("test-provider-blank"),
+			"test-server-blank",
+			provider_resource_id="77",
+			status="Pending",
+		)
+		blank.ipv4_address = "10.0.0.77"
+		blank.save(ignore_permissions=True)
+		blank.reload()
+		self.assertEqual(blank.ipv4_address, "10.0.0.77")

@@ -1,7 +1,10 @@
 import frappe
 from frappe.model.document import Document
 
-LOCKED_AFTER_SYNC = (
+IMMUTABLE_AFTER_INSERT = (
+	"image_name",
+	"title",
+	"default_disk_gigabytes",
 	"kernel_url",
 	"kernel_filename",
 	"kernel_sha256",
@@ -17,42 +20,36 @@ class VirtualMachineImage(Document):
 			value = self.get(field) or ""
 			if value and not value.startswith("https://"):
 				frappe.throw(f"{field} must be an https:// URL, got: {value}")
-		self._enforce_locked_after_sync()
+		self._validate_immutability()
 
-	def _enforce_locked_after_sync(self) -> None:
-		"""Once a successful sync exists, kernel/rootfs fields are frozen.
-
-		Editing them post-sync silently invalidates the audit trail (old Task
-		rows record one digest; the image row now claims another). The fix is
-		to create a new image (`ubuntu-24.04-v2`) instead.
-		"""
-		if self.is_new():
+	def after_insert(self) -> None:
+		"""Auto-sync: enqueue one Task per Active server so the operator never
+		has to click `Sync to All Servers` on a fresh image row."""
+		if not self.is_active:
 			return
-		if not self._has_successful_sync():
+		for server in frappe.get_all("Server", filters={"status": "Active"}, pluck="name"):
+			self.sync_to_server(server)
+
+	def _validate_immutability(self) -> None:
+		"""Every non-`is_active` field is immutable from insert onward.
+		The operator's escape hatch is to insert a new image row (e.g.
+		`ubuntu-24.04-v2`) — never rewriting an existing one."""
+		if self.is_new():
 			return
 		original = self.get_doc_before_save()
 		if not original:
 			return
-		for field in LOCKED_AFTER_SYNC:
+		for field in IMMUTABLE_AFTER_INSERT:
 			if getattr(self, field) != getattr(original, field):
-				frappe.throw(
-					f"{field} cannot change after the image has been synced. "
-					f"Create a new image (e.g. {self.name}-v2) instead."
-				)
+				frappe.throw(f"{field} is immutable after insert")
 
-	def _has_successful_sync(self) -> bool:
-		"""Returns True if any Task with script=sync-image.sh and status=Success
-		references this image in its variables."""
-		return bool(
-			frappe.db.exists(
-				"Task",
-				{
-					"script": "sync-image.sh",
-					"status": "Success",
-					"variables": ("like", f'%"IMAGE_NAME": "{self.name}"%'),
-				},
-			)
-		)
+	@frappe.whitelist()
+	def archive(self) -> None:
+		"""Decommission this image. Sets is_active=0; the row stays in the
+		DB so historical Task references remain queryable."""
+		if not self.is_active:
+			frappe.throw("Image is already archived")
+		frappe.db.set_value(self.doctype, self.name, "is_active", 0)
 
 	@frappe.whitelist()
 	def sync_status(self) -> list[dict]:

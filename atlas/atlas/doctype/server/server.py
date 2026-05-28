@@ -1,4 +1,5 @@
 import json
+import uuid
 from typing import ClassVar
 
 import frappe
@@ -8,6 +9,19 @@ from atlas.atlas import scripts_catalog
 from atlas.atlas.ssh import connection_for_server, run_task, upload_files
 
 
+IMMUTABLE_AFTER_INSERT = (
+	"title",
+	"provider",
+	"provider_resource_id",
+	"region",
+	"size",
+	"ipv4_address",
+	"ipv6_address",
+	"ipv6_prefix",
+	"ipv6_virtual_machine_range",
+)
+
+
 class Server(Document):
 	BOOTSTRAP_ALLOWED_STATUS: ClassVar[set[str]] = {"Pending", "Bootstrapping", "Active", "Broken"}
 	BOOTSTRAP_UPLOAD_SOURCES: ClassVar[list[tuple[str, str]]] = [
@@ -15,6 +29,44 @@ class Server(Document):
 		("vm-network-down.sh", "/var/lib/atlas/bin/vm-network-down.sh"),
 		("systemd/firecracker-vm@.service", "/etc/systemd/system/firecracker-vm@.service"),
 	]
+
+	def autoname(self) -> None:
+		# UUID identity: title is the human label, name is opaque.
+		self.name = str(uuid.uuid4())
+
+	def validate(self) -> None:
+		self._validate_immutability()
+
+	def _validate_immutability(self) -> None:
+		"""Lock fields once they carry a value. Allow None → value transitions
+		so the DigitalOcean provision flow (`finish_provisioning`) can write
+		IPv4/6 onto a freshly-inserted Pending row whose addresses weren't
+		known at insert time."""
+		if self.is_new():
+			return
+		original = self.get_doc_before_save()
+		if not original:
+			return
+		for field in IMMUTABLE_AFTER_INSERT:
+			old_value = getattr(original, field)
+			new_value = getattr(self, field)
+			if not old_value:
+				continue  # initial population is allowed
+			if old_value != new_value:
+				frappe.throw(f"{field} is immutable after insert")
+
+	@frappe.whitelist()
+	def archive(self) -> None:
+		"""Set status to Archived. Idempotent."""
+		if self.status == "Archived":
+			frappe.throw("Server is already archived")
+		frappe.db.set_value(self.doctype, self.name, "status", "Archived")
+
+	@frappe.whitelist()
+	def sync_image(self, image: str) -> str:
+		"""Single-server convenience wrapper around `Virtual Machine Image.sync_to_server`."""
+		image_doc = frappe.get_doc("Virtual Machine Image", image)
+		return image_doc.sync_to_server(self.name)
 
 	@frappe.whitelist()
 	def bootstrap(self) -> str:

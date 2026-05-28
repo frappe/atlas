@@ -87,18 +87,24 @@ inserted — a `bench worker` must be running for the row to leave
 is no UI signal that anything is wrong. The same applies to
 `Virtual Machine Image.sync_to_server` (see [08-images.md](./08-images.md)).
 
+The operator picks a `title` (the user-facing label); the Server row's
+`name` is a UUID assigned by `Server.autoname()`. The `provision_server`
+controller returns the new UUID — call sites that route to the form
+should use the returned name, not the title.
+
 ### DigitalOcean
 
-Signature: `provision_server(server_name)`. Sync for the cheap part,
-async for the slow part:
+Signature: `provision_server(title, region=None, size=None, image=None)`.
+Sync for the cheap part, async for the slow part:
 
 ```
-1. Validate server_name is unique.
-2. DigitalOceanClient.create_droplet(...).
-3. Insert a Server row with status = "Pending" and provider_resource_id =
-   droplet["id"] (region, size copied from provider defaults).
-4. frappe.enqueue("...finish_provisioning", queue="long", server_name=...).
-5. Return the server name immediately.
+1. Validate no existing Server row carries this title.
+2. DigitalOceanClient.create_droplet(name=title, ...).
+3. Insert a Server row with status = "Pending", a UUID name, the title,
+   and provider_resource_id = droplet["id"] (region, size copied from
+   the dialog or from provider defaults).
+4. frappe.enqueue("...finish_provisioning", queue="long", server_name=<uuid>).
+5. Return the new UUID name immediately.
 ```
 
 The `finish_provisioning(server_name)` worker:
@@ -115,23 +121,23 @@ The `finish_provisioning(server_name)` worker:
    and re-raise so the Task row carries the failure.
 ```
 
-The worker takes only `server_name`; the droplet id lives on the row, so
-re-running the worker (idempotency check, retry) does not need the caller
-to remember it.
+The worker takes only `server_name` (the row's UUID); the droplet id
+lives on the row, so re-running the worker (idempotency check, retry)
+does not need the caller to remember it.
 
 ### Self-Managed
 
-Signature: `provision_server(server_name, ipv4_address, ipv6_address,
+Signature: `provision_server(title, ipv4_address, ipv6_address,
 ipv6_prefix, ipv6_virtual_machine_range)`. There is no droplet to create
 and nothing to wait for — the host already exists:
 
 ```
-1. Validate server_name is unique.
-2. Insert a Server row with status = "Pending", provider_resource_id =
-   "" (empty), region / size empty, and the IPv4 / IPv6 fields copied
-   from the dialog inputs.
-3. frappe.enqueue("...finish_provisioning", queue="long", server_name=...).
-4. Return the server name immediately.
+1. Validate no existing Server row carries this title.
+2. Insert a Server row with status = "Pending", a UUID name, the title,
+   provider_resource_id = "" (empty), region / size empty, and the
+   IPv4 / IPv6 fields copied from the dialog inputs.
+3. frappe.enqueue("...finish_provisioning", queue="long", server_name=<uuid>).
+4. Return the new UUID name immediately.
 ```
 
 `finish_provisioning` on a Self-Managed server skips the "wait for the

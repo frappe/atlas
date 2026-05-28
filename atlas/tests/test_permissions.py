@@ -8,12 +8,11 @@ new DocType or relaxes a perms block can't silently widen access.
 import frappe
 from frappe.tests import IntegrationTestCase
 
-from atlas.tests.fixtures import make_provider
+from atlas.tests.fixtures import _ensure_fake_ssh_key_path, make_provider
 
 PROVIDER_NAME = "atlas-perm-test-provider"
 BASIC_USER_EMAIL = "atlas-perm-basic@example.com"
 SYSMGR_USER_EMAIL = "atlas-perm-sysmgr@example.com"
-PRIVATE_KEY_PLAINTEXT = "-----BEGIN OPENSSH PRIVATE KEY-----\nperm-test-secret\n"
 
 
 def _ensure_system_manager_user() -> str:
@@ -61,7 +60,7 @@ class TestPermissions(IntegrationTestCase):
 			PROVIDER_NAME,
 			api_token="dop_v1_perm_test",
 			ssh_key_id="fp:perm-test",
-			ssh_private_key=PRIVATE_KEY_PLAINTEXT,
+			ssh_private_key_path=_ensure_fake_ssh_key_path(),
 		)
 		self.basic_user = _make_basic_user()
 		self.addCleanup(frappe.set_user, "Administrator")
@@ -73,13 +72,15 @@ class TestPermissions(IntegrationTestCase):
 			"basic user must not be able to read Server Provider",
 		)
 
-	def test_ssh_private_key_not_in_get_doc_response(self) -> None:
+	def test_api_token_not_in_get_doc_response(self) -> None:
 		# Password fields are stored in the auth table, not on the row.
-		# A fresh get_doc must not surface plaintext.
+		# A fresh get_doc must not surface plaintext. The SSH private key is
+		# no longer a Password field on the row (it lives on disk now), so
+		# the analogous secret we keep on the doc is `api_token`.
 		doc = frappe.get_doc("Server Provider", self.provider.name)
 		serialized = doc.as_dict()
-		self.assertNotIn(PRIVATE_KEY_PLAINTEXT, str(serialized))
-		self.assertNotEqual(serialized.get("ssh_private_key"), PRIVATE_KEY_PLAINTEXT)
+		self.assertNotIn("dop_v1_perm_test", str(serialized))
+		self.assertNotEqual(serialized.get("api_token"), "dop_v1_perm_test")
 
 	def test_task_delete_blocked_by_perms(self) -> None:
 		import json

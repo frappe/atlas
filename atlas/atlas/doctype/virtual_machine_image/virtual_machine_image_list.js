@@ -1,5 +1,5 @@
 frappe.listview_settings["Virtual Machine Image"] = {
-	add_fields: ["is_active", "description"],
+	add_fields: ["is_active", "title"],
 
 	get_indicator(doc) {
 		if (!doc.is_active) {
@@ -10,8 +10,8 @@ frappe.listview_settings["Virtual Machine Image"] = {
 
 	formatters: {
 		image_name(value, _df, doc) {
-			if (!doc.description) return value;
-			return `${value} · ${doc.description}`;
+			if (!doc.title) return value;
+			return `${value} · ${doc.title}`;
 		},
 	},
 };

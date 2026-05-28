@@ -7,9 +7,11 @@ from atlas.atlas.script_uploads import files_to_upload
 from atlas.tests.fixtures import make_image, make_provider, make_server
 
 
-def _provider_and_server(server_name: str, status: str) -> None:
+def _provider_and_server(title: str, status: str) -> str:
+	"""Ensure a Server row with the given title exists. Returns its UUID `name`."""
 	provider = make_provider("test-provider-image")
-	make_server(provider, server_name, status=status)
+	server = make_server(provider, title, status=status)
+	return server.name
 
 
 class TestVirtualMachineImage(IntegrationTestCase):
@@ -33,17 +35,17 @@ class TestVirtualMachineImage(IntegrationTestCase):
 			bad.insert(ignore_permissions=True)
 
 	def test_sync_to_server_enqueues_task(self) -> None:
-		_provider_and_server("test-srv-sync", "Active")
+		server_name = _provider_and_server("test-srv-sync", "Active")
 		with patch("frappe.enqueue") as enqueue:
-			task_name = self.image.sync_to_server("test-srv-sync")
+			task_name = self.image.sync_to_server(server_name)
 		enqueue.assert_called_once()
 		task = frappe.get_doc("Task", task_name)
 		self.assertEqual(task.status, "Pending")
 		self.assertEqual(task.script, "sync-image.sh")
-		self.assertEqual(task.server, "test-srv-sync")
+		self.assertEqual(task.server, server_name)
 
 	def test_sync_to_all_servers_enqueues_one_per_active(self) -> None:
-		_provider_and_server("srv-active-1", "Active")
+		active_name = _provider_and_server("srv-active-1", "Active")
 		_provider_and_server("srv-broken-1", "Broken")
 		_provider_and_server("srv-archived-1", "Archived")
 		with patch("frappe.enqueue") as enqueue:
@@ -52,7 +54,7 @@ class TestVirtualMachineImage(IntegrationTestCase):
 		# from other tests; we filter to the ones we just created.
 		our_tasks = [
 			t for t in tasks
-			if frappe.db.get_value("Task", t, "server") == "srv-active-1"
+			if frappe.db.get_value("Task", t, "server") == active_name
 		]
 		self.assertEqual(len(our_tasks), 1)
 		# enqueue called once per Active server in the system (>=1 from ours).
@@ -61,3 +63,98 @@ class TestVirtualMachineImage(IntegrationTestCase):
 	def test_files_to_upload_for_sync_image(self) -> None:
 		uploads = files_to_upload("sync-image.sh")
 		self.assertTrue(any("atlas-network.service" in remote for _, remote in uploads))
+
+
+class TestVirtualMachineImageAutoSync(IntegrationTestCase):
+	def test_after_insert_enqueues_one_task_per_active_server(self) -> None:
+		# Two Active servers + one Broken server + one Archived: only the
+		# two Active should get a sync task.
+		active_1 = _provider_and_server("auto-srv-active-1", "Active")
+		active_2 = _provider_and_server("auto-srv-active-2", "Active")
+		_provider_and_server("auto-srv-broken", "Broken")
+
+		# Reset image name to ensure a fresh insert.
+		frappe.db.delete("Virtual Machine Image", {"image_name": "auto-sync-image"})
+		with patch("frappe.enqueue") as enqueue:
+			image = frappe.get_doc({
+				"doctype": "Virtual Machine Image",
+				"image_name": "auto-sync-image",
+				"title": "auto sync image",
+				"kernel_url": "https://example.com/k",
+				"kernel_filename": "k",
+				"kernel_sha256": "a" * 64,
+				"rootfs_url": "https://example.com/r",
+				"rootfs_filename": "r",
+				"rootfs_sha256": "b" * 64,
+				"default_disk_gigabytes": 4,
+				"is_active": 1,
+			}).insert(ignore_permissions=True)
+
+		# Inserts a sync Task per Active server we just created.
+		our_tasks = frappe.get_all(
+			"Task",
+			filters={
+				"script": "sync-image.sh",
+				"server": ("in", [active_1, active_2]),
+			},
+			pluck="name",
+		)
+		self.assertGreaterEqual(len(our_tasks), 2)
+		# enqueue called once per Task insert (execute_task background worker).
+		self.assertGreaterEqual(enqueue.call_count, 2)
+
+	def test_after_insert_skips_when_inactive(self) -> None:
+		_provider_and_server("inactive-srv-1", "Active")
+		frappe.db.delete("Virtual Machine Image", {"image_name": "inactive-image"})
+		with patch("frappe.enqueue") as enqueue:
+			frappe.get_doc({
+				"doctype": "Virtual Machine Image",
+				"image_name": "inactive-image",
+				"title": "inactive image",
+				"kernel_url": "https://example.com/k",
+				"kernel_filename": "k",
+				"kernel_sha256": "a" * 64,
+				"rootfs_url": "https://example.com/r",
+				"rootfs_filename": "r",
+				"rootfs_sha256": "b" * 64,
+				"default_disk_gigabytes": 4,
+				"is_active": 0,
+			}).insert(ignore_permissions=True)
+		# No syncs enqueued when is_active=0.
+		self.assertEqual(enqueue.call_count, 0)
+
+
+class TestVirtualMachineImageImmutability(IntegrationTestCase):
+	def setUp(self) -> None:
+		frappe.db.delete(
+			"Virtual Machine Image",
+			{"image_name": "immutable-image"},
+		)
+		self.image = make_image("immutable-image")
+
+	def test_kernel_url_is_immutable(self) -> None:
+		self.image.kernel_url = "https://example.com/new-vmlinux"
+		with self.assertRaises(frappe.ValidationError) as raised:
+			self.image.save(ignore_permissions=True)
+		self.assertIn("kernel_url is immutable", str(raised.exception))
+
+	def test_title_is_immutable(self) -> None:
+		self.image.title = "renamed image"
+		with self.assertRaises(frappe.ValidationError) as raised:
+			self.image.save(ignore_permissions=True)
+		self.assertIn("title is immutable", str(raised.exception))
+
+	def test_is_active_remains_editable(self) -> None:
+		# is_active is the one field we don't lock; the Archive flow flips it.
+		self.image.is_active = 0
+		self.image.save(ignore_permissions=True)
+		self.image.reload()
+		self.assertEqual(self.image.is_active, 0)
+
+	def test_archive_sets_is_active_zero(self) -> None:
+		self.image.reload()
+		self.image.archive()
+		self.assertEqual(
+			frappe.db.get_value("Virtual Machine Image", self.image.name, "is_active"),
+			0,
+		)

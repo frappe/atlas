@@ -7,14 +7,16 @@ from frappe.model.document import Document
 IMMUTABLE_AFTER_INSERT = ("server", "virtual_machine", "script", "variables", "triggered_by")
 
 SCRIPT_LABELS = {
-	"bootstrap-server.sh": "Bootstrap",
+	# Verb + Noun when the script creates a *new* object.
+	"bootstrap-server.sh": "Bootstrap Server",
+	"sync-image.sh": "Sync Image",
+	"provision-vm.sh": "Create Virtual Machine",
+	# Verb-only when the script operates on the *same* object.
 	"reboot-server.sh": "Reboot",
-	"sync-image.sh": "Sync image",
-	"provision-vm.sh": "Provision VM",
-	"start-vm.sh": "Start VM",
-	"stop-vm.sh": "Stop VM",
-	"restart-vm.sh": "Restart VM",
-	"terminate-vm.sh": "Terminate VM",
+	"start-vm.sh": "Start",
+	"stop-vm.sh": "Stop",
+	"restart-vm.sh": "Restart",
+	"terminate-vm.sh": "Terminate",
 }
 
 # Scripts a Failure-state Task is allowed to retry from the form button.
@@ -82,25 +84,10 @@ class Task(Document):
 		frappe.throw(f"Script {self.script} is not retriable from the Task form.")
 
 	def _build_subject(self) -> str:
-		label = SCRIPT_LABELS.get(self.script, self.script or "Task")
-		target = self._target_short()
-		return f"{label} · {target}" if target else label
-
-	def _target_short(self) -> str:
-		if self.virtual_machine:
-			row = frappe.db.get_value(
-				"Virtual Machine",
-				self.virtual_machine,
-				["description", "name"],
-				as_dict=True,
-			)
-			if not row:
-				return self.virtual_machine[:8]
-			label = row.description or row.name[:8]
-			if self.server:
-				return f"{label} on {self.server}"
-			return label
-		return self.server or ""
+		"""Subject is the verb (or verb-noun) label for the script.
+		Target identity (Server / VM) lives in dedicated columns and
+		dashboard chips — duplicating it in the subject was noise."""
+		return SCRIPT_LABELS.get(self.script, self.script or "Task")
 
 	def _validate_variables_json(self) -> None:
 		try:
