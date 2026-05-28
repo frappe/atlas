@@ -106,7 +106,7 @@ def run_all_coverage() -> None:
 	use cases orchestrated by `run_all`), the DigitalOcean-client round
 	trip's throwaway, and the server-provisioning fresh-provision flow's
 	droplet. Server-provisioning is the only path that hits
-	`Server Provider.provision_server` and `finish_provisioning` against a
+	`Provider.provision_server` and `finish_provisioning` against a
 	fresh droplet, so it must run if those modules are to be covered.
 	"""
 	from atlas.tests.e2e.use_cases import digitalocean_client

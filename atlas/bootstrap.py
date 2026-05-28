@@ -4,10 +4,11 @@ Run with:
 
     bench --site <site> execute atlas.bootstrap.run
 
-This creates a Server Provider, provisions a Server, registers the default
-Virtual Machine Image, syncs it to the server, and provisions one Virtual
-Machine. All inputs come from the site config so the script takes no
-arguments.
+This sets up `Atlas Settings`, vendor-specific Settings, the active
+`Provider` row, the size/image catalog rows, provisions a Server,
+registers the default Virtual Machine Image, syncs it to the server,
+and provisions one Virtual Machine. All inputs come from the site
+config so the script takes no arguments.
 
 A `bench worker` must be running — `provision_server` and `sync_to_server`
 both enqueue background jobs that this script waits on.
@@ -17,14 +18,18 @@ Site config keys (set with `bench --site <site> set-config -p <key> <value>`):
     atlas_provider_type           "DigitalOcean" or "Self-Managed"
     atlas_ssh_private_key_path    absolute path to the SSH private key on disk
                                   (0600, readable by the Frappe user)
+    atlas_ssh_fingerprint         vendor-side fingerprint of the SSH key
+                                  (DigitalOcean only; required for DO)
+    atlas_ssh_public_key          optional OpenSSH public key body for vendors
+                                  that upload at provision time
 
 DigitalOcean providers also need:
 
     atlas_do_token                DO personal access token
-    atlas_ssh_key_id              fingerprint of the SSH key pre-loaded on droplets
-    atlas_default_region          e.g. "blr1"
-    atlas_default_size            e.g. "s-2vcpu-4gb-intel"
-    atlas_default_image           e.g. "ubuntu-24-04-x64"
+    atlas_do_region               e.g. "blr1"
+    atlas_do_default_size         vendor-native slug, e.g. "s-2vcpu-4gb-intel"
+                                  (Atlas prefixes "DigitalOcean/" internally)
+    atlas_do_default_image        vendor-native slug, e.g. "ubuntu-24-04-x64"
 
 Self-Managed providers also need:
 
@@ -43,6 +48,7 @@ import os
 import time
 
 import frappe
+import frappe.utils.password
 
 PROVIDER_NAME = "bootstrap-provider"
 IMAGE_NAME = "ubuntu-24.04"
@@ -61,7 +67,7 @@ DEFAULT_IMAGE = {
 
 
 def run() -> None:
-	"""End-to-end: provider → server → image → virtual machine."""
+	"""End-to-end: settings → provider → server → image → virtual machine."""
 	provider = ensure_provider()
 	server_name = provision_server(provider)
 	wait_for_active_server(server_name)
@@ -73,32 +79,105 @@ def run() -> None:
 def ensure_provider() -> "frappe.model.document.Document":
 	provider_type = require_config("atlas_provider_type")
 	if provider_type not in ("DigitalOcean", "Self-Managed"):
-		frappe.throw(f"atlas_provider_type must be DigitalOcean or Self-Managed, got {provider_type!r}")
+		frappe.throw(
+			f"atlas_provider_type must be DigitalOcean or Self-Managed, got {provider_type!r}"
+		)
 
-	if frappe.db.exists("Server Provider", PROVIDER_NAME):
-		print(f"[bootstrap] reusing Server Provider {PROVIDER_NAME!r}")
-		return frappe.get_doc("Server Provider", PROVIDER_NAME)
+	# Ensure the Provider row exists, then write the Singles.
+	if not frappe.db.exists("Provider", PROVIDER_NAME):
+		frappe.get_doc({
+			"doctype": "Provider",
+			"provider_name": PROVIDER_NAME,
+			"provider_type": provider_type,
+			"is_active": 1,
+		}).insert(ignore_permissions=True)
+		print(f"[bootstrap] created Provider {PROVIDER_NAME!r} ({provider_type})")
+	else:
+		print(f"[bootstrap] reusing Provider {PROVIDER_NAME!r}")
 
-	values = {
-		"doctype": "Server Provider",
-		"provider_name": PROVIDER_NAME,
-		"provider_type": provider_type,
-		"is_active": 1,
-		"ssh_private_key_path": require_config("atlas_ssh_private_key_path"),
-	}
+	# Atlas Settings — provider link + SSH triplet.
+	frappe.db.set_single_value(
+		"Atlas Settings", "provider", PROVIDER_NAME, update_modified=False
+	)
+	frappe.db.set_single_value(
+		"Atlas Settings", "ssh_private_key_path",
+		require_config("atlas_ssh_private_key_path"), update_modified=False,
+	)
 	if provider_type == "DigitalOcean":
-		values.update({
-			"api_token": require_config("atlas_do_token"),
-			"ssh_key_id": require_config("atlas_ssh_key_id"),
-			"default_region": require_config("atlas_default_region"),
-			"default_size": require_config("atlas_default_size"),
-			"default_image": require_config("atlas_default_image"),
-		})
+		frappe.db.set_single_value(
+			"Atlas Settings", "ssh_fingerprint",
+			require_config("atlas_ssh_fingerprint"), update_modified=False,
+		)
+	public_key = frappe.conf.get("atlas_ssh_public_key")
+	if public_key:
+		frappe.db.set_single_value(
+			"Atlas Settings", "ssh_public_key", public_key, update_modified=False
+		)
 
-	provider = frappe.get_doc(values).insert(ignore_permissions=True)
+	if provider_type == "DigitalOcean":
+		region = require_config("atlas_do_region")
+		size_slug = require_config("atlas_do_default_size")
+		image_slug = require_config("atlas_do_default_image")
+
+		# Seed the catalog rows the Settings will Link to.
+		_ensure_provider_size(provider_type, size_slug)
+		_ensure_provider_image(provider_type, image_slug)
+
+		frappe.db.set_single_value("DigitalOcean Settings", "region", region, update_modified=False)
+		frappe.db.set_single_value(
+			"DigitalOcean Settings", "default_size",
+			f"DigitalOcean/{size_slug}", update_modified=False,
+		)
+		frappe.db.set_single_value(
+			"DigitalOcean Settings", "default_image",
+			f"DigitalOcean/{image_slug}", update_modified=False,
+		)
+		frappe.utils.password.set_encrypted_password(
+			"DigitalOcean Settings", "DigitalOcean Settings",
+			require_config("atlas_do_token"), "api_token",
+		)
+
+		# Seed the wider catalog so the Refresh Catalog button is exercising
+		# real data, not just the slugs the operator named in site config.
+		from atlas.atlas.doctype.provider.provider import upsert_catalog
+		from atlas.atlas.providers.digitalocean import DigitalOceanProvider
+
+		try:
+			capabilities = DigitalOceanProvider().discover()
+			upsert_catalog(provider_type, capabilities)
+		except Exception as exception:
+			print(f"[bootstrap] WARN: catalog discover() failed: {exception}")
+
 	frappe.db.commit()
-	print(f"[bootstrap] created Server Provider {provider.name!r} ({provider_type})")
-	return provider
+	return frappe.get_doc("Provider", PROVIDER_NAME)
+
+
+def _ensure_provider_size(provider_type: str, slug: str) -> None:
+	name = f"{provider_type}/{slug}"
+	if frappe.db.exists("Provider Size", name):
+		return
+	import json
+	frappe.get_doc({
+		"doctype": "Provider Size",
+		"provider_type": provider_type,
+		"slug": slug,
+		"enabled": 1,
+		"provider_metadata": json.dumps({}),
+	}).insert(ignore_permissions=True)
+
+
+def _ensure_provider_image(provider_type: str, slug: str) -> None:
+	name = f"{provider_type}/{slug}"
+	if frappe.db.exists("Provider Image", name):
+		return
+	import json
+	frappe.get_doc({
+		"doctype": "Provider Image",
+		"provider_type": provider_type,
+		"slug": slug,
+		"enabled": 1,
+		"provider_metadata": json.dumps({}),
+	}).insert(ignore_permissions=True)
 
 
 def provision_server(provider: "frappe.model.document.Document") -> str:
@@ -164,9 +243,6 @@ def provision_virtual_machine(server_name: str) -> str:
 	}).insert(ignore_permissions=True)
 	frappe.db.commit()
 	print(f"[bootstrap] created Virtual Machine {virtual_machine.name!r}")
-	# `after_insert` enqueues `auto_provision` so we don't have to call
-	# `provision()` explicitly. Pull the most recent provision-vm Task for
-	# this VM out of the queue and wait on it.
 	task_name = _wait_for_provision_task(virtual_machine.name)
 	print(f"[bootstrap] provisioning Virtual Machine (Task {task_name!r})")
 	wait_for_task(task_name, timeout_seconds=300)
@@ -174,9 +250,6 @@ def provision_virtual_machine(server_name: str) -> str:
 
 
 def _wait_for_provision_task(virtual_machine_name: str, timeout_seconds: int = 60) -> str:
-	"""Block until the after_insert worker has created the provision Task
-	row, then return its name. We poll the Task list rather than sleep on a
-	hard delay because the worker latency is short but non-zero."""
 	deadline = time.monotonic() + timeout_seconds
 	while time.monotonic() < deadline:
 		frappe.db.rollback()
@@ -213,7 +286,9 @@ def wait_for_task(task_name: str, timeout_seconds: int) -> None:
 def require_config(key: str) -> str:
 	value = frappe.conf.get(key)
 	if not value:
-		frappe.throw(f"site config missing {key!r}. Set with: bench --site <site> set-config -p {key} <value>")
+		frappe.throw(
+			f"site config missing {key!r}. Set with: bench --site <site> set-config -p {key} <value>"
+		)
 	return value
 
 

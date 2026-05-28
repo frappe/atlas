@@ -60,7 +60,24 @@ def create_test_droplet(client: DigitalOceanClient, name_suffix: str) -> dict:
 		tags=[TAG, f"phase-{name_suffix}"],
 		ipv6=True,
 	)
-	return client.wait_for_active(droplet["id"], timeout_seconds=300)
+	return _wait_for_droplet_active(client, droplet["id"], timeout_seconds=300)
+
+
+def _wait_for_droplet_active(client: DigitalOceanClient, droplet_id: int, timeout_seconds: int = 300) -> dict:
+	"""Replacement for the removed DigitalOceanClient.wait_for_active."""
+	deadline = time.monotonic() + timeout_seconds
+	while True:
+		droplet = client.get_droplet(droplet_id)
+		if droplet.get("status") == "active":
+			return droplet
+		if time.monotonic() >= deadline:
+			from atlas.atlas.digitalocean import DigitalOceanError
+
+			raise DigitalOceanError(
+				f"Droplet {droplet_id} not active after {timeout_seconds}s "
+				f"(status={droplet.get('status')})"
+			)
+		time.sleep(5)
 
 
 def cleanup_droplet(client: DigitalOceanClient, droplet_id: int) -> None:
@@ -107,52 +124,119 @@ def ensure_bootstrapped_server(
 	client = get_client()
 
 	if reuse:
-		for name in frappe.get_all(
-			"Server", filters={"status": "Active"}, pluck="name"
-		):
+		active = frappe.get_all("Server", filters={"status": "Active"}, pluck="name")
+		print(f"[e2e] reuse: scanning {len(active)} Active Server row(s) for SSH reachability")
+		for name in active:
 			if server_is_reachable(name, timeout_seconds=5):
+				print(f"[e2e] reuse: {name} is reachable, returning it")
 				return frappe.get_doc("Server", name), client, False
 			frappe.db.set_value("Server", name, "status", "Broken")
 			frappe.db.commit()
 			print(f"[e2e] marked {name} Broken (SSH unreachable)")
 
 	# No reusable Active server. Provision fresh via the phase 3 path.
+	print("[e2e] no reusable Active server, ensuring e2e provider")
 	provider = ensure_e2e_provider()
 	title = f"atlas-e2e-shared-{int(time.time())}"
+	print(f"[e2e] provisioning new server {title!r} via Provider {provider.name!r}")
 	server_name = provider.provision_server(title)
+	print(f"[e2e] inserted Server {server_name!r}; enqueued finish_provisioning worker job")
 
 	deadline = time.monotonic() + 600
+	last_logged_status = None
 	while time.monotonic() < deadline:
 		frappe.db.rollback()
 		server = frappe.get_doc("Server", server_name)
+		if server.status != last_logged_status:
+			elapsed = int(time.monotonic() - (deadline - 600))
+			print(
+				f"[e2e] {server_name!r} status={server.status!r} "
+				f"prid={server.provider_resource_id!r} "
+				f"ipv4={server.ipv4_address!r} (t+{elapsed}s)"
+			)
+			last_logged_status = server.status
 		if server.status in ("Active", "Broken"):
 			break
 		time.sleep(5)
 	else:
+		print(
+			f"[e2e] timeout: dumping recent Tasks for {server_name!r}"
+		)
+		for task in frappe.get_all(
+			"Task",
+			filters={"server": server_name},
+			fields=["name", "script", "status", "creation"],
+			order_by="creation desc",
+			limit=5,
+		):
+			print(f"[e2e]   task {task.name} script={task.script} status={task.status} ({task.creation})")
 		raise AssertionError(f"server {title!r} ({server_name}) did not become Active within 600s")
 
 	if server.status != "Active":
 		raise AssertionError(
 			f"server {title!r} ({server_name}) ended in status {server.status}, expected Active"
 		)
+	print(f"[e2e] server {server_name!r} is Active in {int(time.monotonic() - (deadline - 600))}s")
 	return server, client, True
 
 
 def ensure_e2e_provider() -> "frappe.model.document.Document":
+	"""Seed the e2e Provider row + Atlas Settings + DigitalOcean Settings +
+	Provider Size / Provider Image rows from site config. Idempotent."""
+	import frappe.utils.password
+	from atlas.tests.fixtures import seed_catalogs
+
+	seed_catalogs()
 	name = "atlas-e2e-provider"
-	if frappe.db.exists("Server Provider", name):
-		return frappe.get_doc("Server Provider", name)
-	return frappe.get_doc({
-		"doctype": "Server Provider",
-		"provider_name": name,
-		"provider_type": "DigitalOcean",
-		"api_token": frappe.conf.get("atlas_do_token"),
-		"ssh_key_id": get_ssh_key_id(),
-		"ssh_private_key_path": get_ssh_private_key_path(),
-		"default_region": get_region(),
-		"default_size": get_size(),
-		"default_image": get_image(),
-		"is_active": 1,
+	if not frappe.db.exists("Provider", name):
+		frappe.get_doc({
+			"doctype": "Provider",
+			"provider_name": name,
+			"provider_type": "DigitalOcean",
+			"is_active": 1,
+		}).insert(ignore_permissions=True)
+	provider = frappe.get_doc("Provider", name)
+
+	frappe.db.set_single_value("Atlas Settings", "provider", name, update_modified=False)
+	frappe.db.set_single_value(
+		"Atlas Settings", "ssh_fingerprint", get_ssh_key_id(), update_modified=False
+	)
+	frappe.db.set_single_value(
+		"Atlas Settings", "ssh_private_key_path", get_ssh_private_key_path(),
+		update_modified=False,
+	)
+
+	# DigitalOcean Settings
+	size_name = f"DigitalOcean/{get_size()}"
+	image_name = f"DigitalOcean/{get_image()}"
+	# Make sure the rows exist (seed_catalogs above seeds the known list,
+	# but the operator could be pointing at a custom slug via site config).
+	_ensure_catalog_row("Provider Size", size_name, "DigitalOcean", get_size())
+	_ensure_catalog_row("Provider Image", image_name, "DigitalOcean", get_image())
+
+	frappe.db.set_single_value("DigitalOcean Settings", "region", get_region(), update_modified=False)
+	frappe.db.set_single_value("DigitalOcean Settings", "default_size", size_name, update_modified=False)
+	frappe.db.set_single_value("DigitalOcean Settings", "default_image", image_name, update_modified=False)
+	token = frappe.conf.get("atlas_do_token")
+	if token:
+		frappe.utils.password.set_encrypted_password(
+			"DigitalOcean Settings", "DigitalOcean Settings", token, "api_token"
+		)
+
+	frappe.db.commit()
+	return provider
+
+
+def _ensure_catalog_row(doctype: str, name: str, provider_type: str, slug: str) -> None:
+	if frappe.db.exists(doctype, name):
+		return
+	import json
+	frappe.get_doc({
+		"doctype": doctype,
+		"provider_type": provider_type,
+		"slug": slug,
+		"enabled": 1,
+		"provider_metadata": json.dumps({}),
 	}).insert(ignore_permissions=True)
 
 

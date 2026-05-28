@@ -1,5 +1,5 @@
 frappe.listview_settings["Server"] = {
-	add_fields: ["status", "region"],
+	add_fields: ["status"],
 
 	get_indicator(doc) {
 		const config = {
@@ -11,12 +11,5 @@ frappe.listview_settings["Server"] = {
 			Archived: ["Archived", "grey", "status,=,Archived"],
 		}[doc.status];
 		return config ? [__(config[0]), config[1], config[2]] : null;
-	},
-
-	formatters: {
-		title(value, _df, doc) {
-			if (!doc.region) return value;
-			return `${value} · ${doc.region}`;
-		},
 	},
 };

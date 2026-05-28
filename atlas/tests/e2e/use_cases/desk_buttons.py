@@ -85,7 +85,7 @@ def run(reuse: bool = True, keep: bool = True) -> None:
 		image_doc = ensure_image_on_server(server.name)
 		public_key = ephemeral_public_key()
 
-		_check_server_provider_buttons(server)
+		_check_provider_buttons(server)
 		_check_server_buttons(server)
 		_check_virtual_machine_image_buttons(server.name, image_doc.name)
 		_check_virtual_machine_buttons(server.name, image_doc.name, public_key)
@@ -143,25 +143,26 @@ def _call_button(doctype: str, name: str, method: str, **kwargs) -> object:
 	return frappe.response.get("message")
 
 
-# ----- Server Provider -----------------------------------------------------
+# ----- Provider ------------------------------------------------------------
 
 
-def _check_server_provider_buttons(server) -> None:
-	"""Test Connection and Provision Server (happy + duplicate name)."""
-	provider = frappe.get_doc("Server Provider", server.provider)
+def _check_provider_buttons(server) -> None:
+	"""Authenticate and Provision Server (happy + duplicate name)."""
+	provider = frappe.get_doc("Provider", server.provider)
 
-	# Test Connection: no args, returns {"ok": True, "email": ...} or 403.
-	try:
-		result = _call_button("Server Provider", provider.name, "test_connection")
-		assert result and result.get("ok") is True, result
-	except DigitalOceanError as exception:
-		assert "403" in str(exception) or "forbidden" in str(exception).lower(), str(exception)
+	# Authenticate: returns AuthResult-as-dict; either ok=True or ok=False
+	# with an error message (e.g. for a bogus token).
+	result = _call_button("Provider", provider.name, "authenticate")
+	assert result and "ok" in result, result
+	if not result["ok"]:
+		error = result.get("error") or ""
+		assert "401" in error or "403" in error or "forbidden" in error.lower(), error
 
 	# Provision Server with a duplicate name: ValidationError, no DO call.
 	# (The shared server's title is guaranteed to exist.)
 	with expect_validation_error("already exists"):
 		_call_button(
-			"Server Provider",
+			"Provider",
 			provider.name,
 			"provision_server",
 			title=server.title,
@@ -340,45 +341,61 @@ def _check_provision_server_bad_token() -> None:
 	DigitalOceanError. Critically: no `Server` row is inserted and no
 	droplet leaks, because the throw happens before the row insert.
 
-	The earlier `Server Provider` validation path covers the duplicate-name
-	branch; this path covers the DO-API-rejects-us branch the operator hit
-	when their token had expired."""
+	This path covers the DO-API-rejects-us branch the operator hit when
+	their token had expired. We temporarily swap `Atlas Settings.provider`
+	to a throwaway Provider row and clobber `DigitalOcean Settings.api_token`
+	with a bogus value, then restore both. The mutation is shared state,
+	so this test cannot run in parallel with other use cases — a guard
+	rail if e2e parallelism ever lands.
+	"""
+	import frappe.utils.password
+
 	provider_name = "atlas-e2e-bogus-token"
-	if not frappe.db.exists("Server Provider", provider_name):
+	if not frappe.db.exists("Provider", provider_name):
 		frappe.get_doc({
-			"doctype": "Server Provider",
+			"doctype": "Provider",
 			"provider_name": provider_name,
 			"provider_type": "DigitalOcean",
-			"api_token": "do_v1_bogus_token_for_negative_path",
-			"ssh_key_id": "0",
-			"ssh_private_key_path": _bogus_key_path(),
-			"default_region": "blr1",
-			"default_size": "s-1vcpu-1gb",
-			"default_image": "ubuntu-24-04-x64",
 			"is_active": 1,
 		}).insert(ignore_permissions=True)
 		frappe.db.commit()
+
+	previous_provider = frappe.db.get_single_value("Atlas Settings", "provider")
+	previous_token = frappe.utils.password.get_decrypted_password(
+		"DigitalOcean Settings", "DigitalOcean Settings", "api_token",
+		raise_exception=False,
+	)
+	frappe.db.set_single_value("Atlas Settings", "provider", provider_name, update_modified=False)
+	frappe.utils.password.set_encrypted_password(
+		"DigitalOcean Settings", "DigitalOcean Settings",
+		"do_v1_bogus_token_for_negative_path", "api_token",
+	)
+	frappe.db.commit()
 
 	target_title = f"atlas-e2e-badtoken-{int(time.time())}"
 	caught = False
 	try:
 		_call_button(
-			"Server Provider",
+			"Provider",
 			provider_name,
 			"provision_server",
 			title=target_title,
 		)
 	except DigitalOceanError as exception:
 		caught = True
-		# 401 unauthorized is what an expired token returns; 403 forbidden is
-		# what a token without the droplet scope returns. Either drives the
-		# same raise.
 		message = str(exception).lower()
 		assert "401" in message or "403" in message or "unauthorized" in message, message
 	finally:
-		# The throw must happen before the Server row insert. If a row exists,
-		# we'd have a phantom Server pointing to a droplet that was never
-		# created.
+		if previous_provider:
+			frappe.db.set_single_value(
+				"Atlas Settings", "provider", previous_provider, update_modified=False
+			)
+		if previous_token:
+			frappe.utils.password.set_encrypted_password(
+				"DigitalOcean Settings", "DigitalOcean Settings",
+				previous_token, "api_token",
+			)
+		frappe.db.commit()
 		assert not frappe.db.exists("Server", {"title": target_title}), (
 			f"Server row with title {target_title!r} leaked despite DO API failure"
 		)

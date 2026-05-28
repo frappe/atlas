@@ -99,10 +99,10 @@ frappe.atlas.confirm_destructive = function ({
 	return dialog;
 };
 
-frappe.atlas.confirm_archive = function (frm, {match, match_label, alert_message}) {
+frappe.atlas.confirm_archive = function (frm, {match, match_label, alert_message, body_html}) {
 	frappe.atlas.confirm_destructive({
 		title: __("Archive {0}?", [match]),
-		body_html: "",
+		body_html: body_html || "",
 		match_string: match,
 		match_label: match_label,
 		proceed_label: __("Archive"),
@@ -166,7 +166,12 @@ frappe.atlas.set_window_title = function (frm) {
 
 for (const doctype of [
 	"Server",
-	"Server Provider",
+	"Provider",
+	"Atlas Settings",
+	"DigitalOcean Settings",
+	"Self-Managed Settings",
+	"Provider Size",
+	"Provider Image",
 	"Virtual Machine",
 	"Virtual Machine Image",
 	"Task",

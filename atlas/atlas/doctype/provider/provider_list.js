@@ -1,4 +1,4 @@
-frappe.listview_settings["Server Provider"] = {
+frappe.listview_settings["Provider"] = {
 	add_fields: ["is_active", "provider_type"],
 
 	get_indicator(doc) {

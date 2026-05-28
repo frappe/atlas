@@ -15,8 +15,8 @@
   "section_break_provider_resource",
   "provider_resource_id",
   "column_break_provider_resource",
-  "region",
   "size",
+  "image",
   "section_break_networking",
   "ipv4_address",
   "ipv6_address",
@@ -28,6 +28,8 @@
   "column_break_host_info",
   "firecracker_version",
   "kernel_version",
+  "section_break_metadata",
+  "provider_metadata",
   "section_break_notes",
   "notes"
  ],
@@ -51,7 +53,7 @@
    "in_list_view": 1,
    "in_standard_filter": 1,
    "label": "Provider",
-   "options": "Server Provider",
+   "options": "Provider",
    "reqd": 1,
    "set_only_once": 1
   },
@@ -86,17 +88,17 @@
    "fieldtype": "Column Break"
   },
   {
-   "fieldname": "region",
-   "fieldtype": "Data",
-   "in_list_view": 1,
-   "in_standard_filter": 1,
-   "label": "Region",
+   "fieldname": "size",
+   "fieldtype": "Link",
+   "label": "Size",
+   "options": "Provider Size",
    "read_only": 1
   },
   {
-   "fieldname": "size",
-   "fieldtype": "Data",
-   "label": "Size",
+   "fieldname": "image",
+   "fieldtype": "Link",
+   "label": "Image",
+   "options": "Provider Image",
    "read_only": 1
   },
   {
@@ -160,6 +162,19 @@
    "fieldname": "kernel_version",
    "fieldtype": "Data",
    "label": "Kernel Version",
+   "read_only": 1
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "section_break_metadata",
+   "fieldtype": "Section Break",
+   "label": "Provider metadata"
+  },
+  {
+   "fieldname": "provider_metadata",
+   "fieldtype": "Code",
+   "label": "Provider Metadata",
+   "options": "JSON",
    "read_only": 1
   },
   {

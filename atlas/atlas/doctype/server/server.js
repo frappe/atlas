@@ -56,6 +56,7 @@ function confirm_archive(frm) {
 		match: frm.doc.title,
 		match_label: __("Type the server title to confirm"),
 		alert_message: __("Server archived."),
+		body_html: `<p>${__("Atlas will destroy the vendor resource. This is irreversible.")}</p>`,
 	});
 }
 

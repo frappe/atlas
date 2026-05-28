@@ -1,0 +1,70 @@
+{
+ "actions": [],
+ "creation": "2026-05-28 00:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 0,
+ "engine": "InnoDB",
+ "field_order": [
+  "api_token",
+  "region",
+  "section_break_defaults",
+  "default_size",
+  "default_image"
+ ],
+ "fields": [
+  {
+   "fieldname": "api_token",
+   "fieldtype": "Password",
+   "label": "API Token",
+   "reqd": 1,
+   "set_only_once": 1,
+   "description": "DigitalOcean personal access token. Rotate by clearing the field via db.set_value, then re-saving."
+  },
+  {
+   "fieldname": "region",
+   "fieldtype": "Data",
+   "label": "Region",
+   "reqd": 1,
+   "description": "DO is multi-region; Atlas is single-region. Pick one (blr1, nyc3, ...)."
+  },
+  {
+   "fieldname": "section_break_defaults",
+   "fieldtype": "Section Break",
+   "label": "Defaults for new servers"
+  },
+  {
+   "fieldname": "default_size",
+   "fieldtype": "Link",
+   "label": "Default Size",
+   "options": "Provider Size",
+   "reqd": 1
+  },
+  {
+   "fieldname": "default_image",
+   "fieldtype": "Link",
+   "label": "Default Image",
+   "options": "Provider Image",
+   "reqd": 1
+  }
+ ],
+ "issingle": 1,
+ "links": [],
+ "modified": "2026-05-28 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Atlas",
+ "name": "DigitalOcean Settings",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "read": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}

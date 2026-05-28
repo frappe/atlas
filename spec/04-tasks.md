@@ -46,8 +46,11 @@ def execute_task(task_name: str) -> None:
     `frappe.enqueue` for long Tasks (image sync)."""
 
 def connection_for_server(server) -> Connection:
-    """Build the SSH Connection from a Server doc (reads the provider's
-    private key via `get_secret`)."""
+    """Build the SSH Connection from a Server doc. Reads the private-key
+    path off `Atlas Settings.ssh_private_key_path` via
+    `atlas.get_ssh_private_key_path()` and loads the PEM at SSH-connect
+    time. Only guard is `Server.ipv4_address` — `Server.provider` is not
+    read by this function (the SSH key is vendor-agnostic)."""
 
 def upload_files(connection, files: list[tuple[str, str]]) -> None:
     """scp a list of (local, remote) pairs. Not a Task. Used by
@@ -75,7 +78,7 @@ def wait_for_ssh(connection, timeout_seconds: int = 300) -> None:
 
 - User: `root`.
 - Auth: SSH private key read from the path on
-  `Server Provider.ssh_private_key_path` (a `0600` PEM on the Atlas host,
+  `Atlas Settings.ssh_private_key_path` (a `0600` PEM on the Atlas host,
   see [07-filesystem-layout.md § SSH keys](./07-filesystem-layout.md)).
   The key is loaded via `secrets.get_ssh_key_from_disk(path)` at
   SSH-connect time and written to a short-lived tempfile (`mode 0600`)
@@ -293,8 +296,9 @@ were rewritten by
 The Task list-view's Status column renders a coloured pill driven by
 the `states` JSON on the DocType (`Pending` yellow, `Running` blue,
 `Success` green, `Failure` red); the legacy
-`task_list.js::indicator` is gone for the status — the list_js file
-still owns the `subject` formatter's duration suffix.
+`task_list.js::indicator` is gone for the status. The `subject`
+formatter renders the bare subject — the earlier ` · <duration>`
+suffix was dropped (duration is one column away on the form).
 
 ## Per-script dialogs — no catch-all Run Task
 

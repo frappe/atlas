@@ -70,10 +70,11 @@ production load), because they're much more expensive to retrofit later than
 to set up early. These are not on the lists above. None change current
 behavior; they just keep doors open.
 
-- **Secret indirection for SSH keys and provider tokens.** Keep the field on
-  `Server Provider`, but route reads through a single helper so the storage
-  backend can be swapped to an external secret store without touching
-  callers. DB-as-keystore is fine for the PoC; not fine once customers exist.
+- **Secret indirection for SSH keys and provider tokens.** Keep the
+  fields on `Atlas Settings` / per-vendor Settings, but route reads
+  through a single helper so the storage backend can be swapped to an
+  external secret store without touching callers. DB-as-keystore is
+  fine for the PoC; not fine once customers exist.
 - **SSH scripts call `sudo` explicitly.** No-op as `root` today, but turns
   the planned move to an unprivileged user (see below) from "rewrite every
   script" into "create the user."
@@ -95,10 +96,11 @@ behavior; they just keep doors open.
   a benign race that wastes bandwidth; with more operators it stops being
   benign. Additive.
 
-- **Unprivileged user on the server**. Move from `root` to an `atlas` user
-  with `sudo` on a narrow allowlist. Then drop `sudo` for the Firecracker
-  binary in favor of the **jailer**. Touches `Server Provider` (the user
-  the SSH key is for) and the wrapper that prepends `sudo`. Not breaking.
+- **Unprivileged user on the server**. Move from `root` to an `atlas`
+  user with `sudo` on a narrow allowlist. Then drop `sudo` for the
+  Firecracker binary in favor of the **jailer**. Touches the wrapper
+  that prepends `sudo` and the SSH connection layer (which user the
+  key authenticates as). Not breaking.
 
 - **Host-key pinning**. See above.
 

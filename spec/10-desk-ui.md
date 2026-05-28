@@ -65,15 +65,14 @@ an Atlas lifecycle hero also rendered as `btn-primary`, the page head
 ends up with **two solid-black buttons** — breaking the "one primary
 button per page" rule from [`llm/Taste.md`](../llm/Taste.md).
 
-[`atlas/public/css/atlas_desk.css`](../atlas/public/css/atlas_desk.css)
-fixes this with a scoped `:has()` rule: whenever a custom
-`.btn-primary` exists in `.page-actions .custom-actions`, the sibling
-`Save` is demoted to a Subtle / Outline variant (white background,
-ink-gray-7 text, gray-3 border). Save keeps its click handler and
-Ctrl/Cmd+S binding — only the visual weight drops, so the lifecycle
-action reads as the page's single hero. On forms with no custom
-primary (Active server, idle Task) Save stays solid, correctly
-becoming the page's only primary.
+`frappe.atlas.add_primary` fixes this: after promoting the custom
+button to `.btn-primary`, the helper demotes the page-head Save
+(`frm.page.btn_primary`) from `.btn-primary` to `.btn-default` for the
+current refresh cycle. Save keeps its click handler and Ctrl/Cmd+S
+binding — only the visual weight drops, so the lifecycle action reads
+as the page's single hero. On forms with no custom primary (Active
+server, idle Task) `add_primary` doesn't run, so `frm.page.set_primary_action`
+leaves Save solid as the page's only primary.
 
 ### Form-embedded lists — only on the workspace now
 
@@ -152,8 +151,8 @@ itself, not in the right rail.
 autoname on DocTypes that carry a separate `title` field — Server, VM,
 Image). The override sets `document.title` to
 `${frm.doc.title || frm.doc.name} — Atlas`. On DocTypes where the
-user-defined name *is* the autoname (Server Provider, Task) the
-override falls through cleanly to `name`.
+user-defined name *is* the autoname (Provider, Task) the override
+falls through cleanly to `name`.
 
 ## The workspace
 
@@ -162,8 +161,9 @@ sections, top-to-bottom:
 
 1. **Bootstrap checklist** — Frappe's native `Module Onboarding` widget,
    wired into the workspace `content` as a `type: "onboarding"` block.
-   The four steps (Add Server Provider → Provision Server → Add Virtual
-   Machine Image → Provision Virtual Machine) ship as
+   The four steps (Add Provider + configure vendor Settings → Provision
+   Server → Add Virtual Machine Image → Provision Virtual Machine) ship
+   as
    [`module_onboarding/atlas_setup/`](../atlas/atlas/module_onboarding/atlas_setup/)
    plus four
    [`onboarding_step/<slug>/`](../atlas/atlas/onboarding_step/)
@@ -216,13 +216,10 @@ Desk's stock sidebar items run edge-to-edge with no hover radius. The
 Frappe UI `<Sidebar>` (used by CRM and Gameplan) gives every item an
 8px horizontal inset and an 8px-radius hover/active fill. Atlas
 applies the same shape to `.body-sidebar .standard-sidebar-item`
-(and the nested `.sidebar-child-item`). Active items pick up
-`--surface-gray-3`; hover lands on `--surface-gray-2`.
-
-Frappe marks the current workspace with `.active-sidebar` (not
-`.selected`, which an older spec assumed) — the selector in the CSS
-file matches the live DOM. The inner `.item-anchor` is forced
-transparent so the radius can clip the fill cleanly.
+(and the nested `.sidebar-child-item`). Atlas adds the 8px horizontal
+inset; Frappe's stock sidebar already paints the 8px-radius hover and
+active fill (and the active-state shadow) via `hover-mixin` and
+`.active-sidebar` in `scss/desk/sidebar.scss`.
 
 ### Form field labels — softened to ink-gray-5
 
@@ -274,60 +271,93 @@ breathing room. The CSS centers `.list-view .no-result`, caps it at
 new …" button below the message. Frappe already ships the icon and
 the CTA — Atlas only adjusts the layout, no controller method needed.
 
-### One primary per page — Save demotion
-
-Documented above under [Button-tier convention](#button-tier-convention).
-The same CSS file owns the `:has()` rule that demotes Desk's `Save`
-to outline whenever an Atlas custom `.btn-primary` exists in the page
-head, so the lifecycle action reads as the page's single hero.
-
 ### Log panes — taller stdout / stderr on Task
 
-`Task.stdout` and `Task.stderr` are `Code` fields. Desk's default pane
-height makes any non-trivial run a scroll-inside-a-textarea exercise.
-A scoped CSS rule sets `min-height: 24em` on
-`.frappe-control[data-fieldname="stdout"|"stderr"] textarea, .CodeMirror`,
-which catches both the plain textarea and the CodeMirror wrapper
-(Desk swaps between them depending on the Code field's `options`).
-The earlier JS-side `enlarge_log_panes` helper is gone.
+`Task.stdout` and `Task.stderr` are `Code` fields, which Frappe renders
+as Ace editors. Desk's default pane height makes any non-trivial run a
+scroll-inside-an-editor exercise. Both fields carry `"min_lines": 24`
+on the schema, which Frappe's Code control forwards to Ace's
+`minLines` option — the editors open ~24 lines tall by default,
+matching the framework-supported height knob rather than overriding
+the rendered DOM from CSS.
 
 ## Per-doctype consequences
 
-### Server Provider
+### Atlas Settings
+
+- Single DocType — no list view, no `name` field on the form. The
+  `provider` Link drives `atlas.get_provider()`; switching it does not
+  retro-affect existing Server rows (they keep their FK to whatever
+  Provider they were provisioned through).
+- No primary action. Save is the only button — Frappe demotes it to
+  outline per the per-page-single-primary rule, but on a Single with no
+  competing action it lands as the page's only call to action.
+- The SSH-key fields are operator-supplied. `ssh_private_key_path`
+  points at a `0600` PEM on the Atlas host; rotating the key is a
+  file-replace operation per
+  [07-filesystem-layout.md § SSH keys](./07-filesystem-layout.md), not
+  a form edit. The `ssh_fingerprint` and `ssh_public_key` fields are
+  read by providers that need them (DigitalOcean reads the fingerprint;
+  future vendors that upload keys read the body).
+
+### Provider
 
 - **Provision Server** is the primary action.
-- **Test Connection** lives under `Actions ▾`. It's a cheap read-only
-  ping; it doesn't need top-bar real estate.
+- **Authenticate** lives under `Actions ▾`. Calls
+  `provider.authenticate()` — cheap read-only ping; doesn't need
+  top-bar real estate. For Self-Managed it returns
+  `{ok: True, account_label: "local"}` so the chip still paints green.
+- **Refresh Catalog** lives under `Actions ▾`. Calls
+  `provider.discover()` and upserts `Provider Size` + `Provider Image`
+  rows. Disappeared slugs flip to `enabled = 0`.
 - **Archive** lives under `Actions ▾`, shown only while `is_active = 1`.
   Confirms via `frappe.confirm` (no destructive type-the-title dance —
-  archiving is not deletion). The controller's `archive()` flips
-  `is_active = 0` via `db.set_value` so the framework's
-  `set_only_once` lock is bypassed cleanly.
-- The Provision dialog uses standard fieldtype inputs — three editable
-  `Select` controls for `region`, `size`, `image` (DigitalOcean), or
-  the four networking inputs for Self-Managed. Options for the DO
-  selects come from `atlas.atlas.api.provider_options.provider_options`,
-  same hand-maintained shape as `DIGITALOCEAN_MONTHLY_COST_USD`. The
-  defaults preview HTML block (and the "Provisioning takes ~90s"
-  paragraph) is gone — operators read the values straight out of the
-  inputs. The dialog still hands off to `confirm_cost` ("Create a
-  billable droplet?") before the DO API call.
-- A **credential indicator** auto-runs on form refresh for DigitalOcean
-  providers. `Server Provider.credential_check` hits the DO `/account`
-  endpoint and returns `{ok, email, rate_limit, rate_remaining}` or
-  `{ok: false, error}`; the client paints a green
-  `✓ API token valid (4999/5000)` or a red `✗ API token invalid` chip
-  via `frm.dashboard.add_indicator`. Result is cached for five minutes
-  in `frm._atlas_credential_cache`; the **Test Connection** action
-  invalidates the cache so the operator can re-verify on demand. Test
-  Connection also fires a blue `Testing connection…` toast
-  immediately on click so the operator knows the click landed before
-  the network round-trip resolves.
-- Every Auth + Defaults field paints read-only after first save via
-  the framework's `set_only_once` flag. Rotating the API token or the
-  SSH key is *not* a form edit — operators replace the file on disk
-  (for the SSH key) or create a new Provider row and archive the old
-  one (for the token).
+  archiving the Provider does not destroy its Servers). The
+  controller's `archive()` flips `is_active = 0` via `db.set_value`.
+- The Provision dialog uses standard fieldtype inputs — a `title` Data
+  field common to both types, then:
+  - **DigitalOcean**: two editable Link controls (`size` → `Provider
+    Size`, `image` → `Provider Image`, both filtered to
+    `provider_type=DigitalOcean, enabled=1`) defaulting to
+    `DigitalOcean Settings.default_size` / `default_image`. Region is
+    fixed at `DigitalOcean Settings.region` and not shown. The dialog
+    still hands off to `confirm_cost` ("Create a billable droplet?")
+    before the DO API call. Monthly cost in the preview reads
+    `Provider Size.monthly_cost_usd`; sizes without a cost render as
+    "—" rather than guess.
+  - **Self-Managed**: the four operator-supplied networking inputs.
+- No auto-painted credential indicator lives on this form. Operators
+  verify the token via **Authenticate** or via Test Connection on
+  `DigitalOcean Settings`; both surface their result as a toast.
+
+### DigitalOcean Settings
+
+- Single DocType. Form layout mirrors the schema (api_token, region,
+  default_size, default_image).
+- **Test Connection** lives under `Actions ▾`. Calls the same
+  `provider.authenticate()` path as the Provider form's Authenticate
+  button — exposed here as a courtesy when the operator is mid-credentials.
+  The result paints a toast (`OK: <account>` / `Failed: <error>`); the
+  form itself stays free of auto-painted dashboard chips.
+- `api_token` paints read-only after first save via `set_only_once`.
+  Rotating the token: clear the field via `db.set_value`, re-enter,
+  re-save. No UI gymnastics.
+
+### Self-Managed Settings
+
+- Single DocType. Today the form is empty — a single section break and
+  no fields. No buttons. Exists so future Self-Managed-only knobs have
+  a home and the registry doesn't have to special-case its absence.
+
+### Provider Size / Provider Image
+
+- Regular DocTypes. Operators don't create rows by hand — the **Refresh
+  Catalog** button on Provider seeds them. The list view exists so the
+  operator can spot-check the catalog and flip `enabled` if they want
+  to hide a slug from the Provision dialog without re-running
+  `discover()`.
+- `provider_metadata` is a `Code` field with `read_only: 1`. The form
+  renders the raw vendor JSON for debugging; operators don't edit it.
 
 ### Server
 
@@ -359,9 +389,9 @@ The earlier JS-side `enlarge_log_panes` helper is gone.
   first-class buttons (`Bootstrap`, `Sync Image`, `Reboot`). Lifecycle
   scripts that don't earn a top-level button live on the relevant
   DocType (VM start/stop/restart on the VM form, etc.).
-- A yellow **headline alert** announces any Pending/Running Task on
-  this server, linking to the Task form. The alert refreshes on the
-  `task_update` realtime event.
+- **No dashboard headlines or indicator chips.** The form header
+  carries only buttons; the operator opens the Task list (linked from
+  the Connections dashboard's Operations panel) to see what's running.
 - The bespoke **Recent Tasks** quick_list has been removed — Frappe's
   Connections dashboard panel (Operations) already exposes the
   Task count and a link to the filtered list.
@@ -384,26 +414,27 @@ The earlier JS-side `enlarge_log_panes` helper is gone.
   deterrent. IPv6/Image/Server details live in the form behind the
   dialog; the dialog doesn't repeat them.
 - Every non-status field paints read-only after first save via the
-  controller's `_validate_immutability` (and `set_only_once` on
-  `title` / `server` / `ssh_public_key`). The framework's read-only
-  hint is mirrored on the client in `refresh` so the lock is visible
-  to the operator, not just enforced at save time.
-- The form header carries an `IPv6 [...]` indicator chip painted via
-  `frm.dashboard.add_indicator` (green when Running, orange when
-  Pending, red when Failed, grey otherwise). The Networking section
-  auto-expands while the VM is `Pending` so the address is visible
-  before Provision.
+  controller's `_validate_immutability` and `set_only_once` on the
+  identity + resource fields (`title`, `server`, `image`,
+  `ssh_public_key`, `size_preset`, `vcpus`, `memory_megabytes`,
+  `disk_gigabytes`). The framework paints them read-only on the form,
+  so the lock is visible to the operator, not just enforced at save
+  time.
+- **No header indicator chips.** The Networking section auto-expands
+  while the VM is `Pending` so the IPv6 is visible before Provision —
+  the dedicated chip is gone.
 - The Security section (renamed from Access) carries an `ssh_command`
   field — a `Code` field with `is_virtual: 1` + `read_only: 1`, value
   computed by an `@property ssh_command` on the VM controller
   (`ssh root@<ipv6>`). Frappe's read-only Code control paints its own
   copy button, so we ship no markup of our own. The IPv6 is the only
   stable identifier outside the desk.
-- **Terminated** records render a red dashboard headline
-  (`⛔ Terminated <when>. This record is kept for audit; the VM no
-  longer exists.`); the **Re-provision as new** button opens a new VM
-  form with the same server / image / vcpus / memory / disk / ssh key
-  and a `(clone)`-suffixed title pre-filled.
+- **Terminated** records expose **Re-provision as new** (primary) and
+  **Delete record** (danger) in the button row; the dashboard-headline
+  banner that earlier announced "Terminated <when>" has been removed.
+  **Re-provision as new** opens a new VM form with the same server /
+  image / vcpus / memory / disk / ssh key and a `(clone)`-suffixed
+  title pre-filled.
 - The list view shows `<title> · <short id>` in the subject
   column, an IPv6 copy chip, and status-coloured indicators
   (`Pending` orange, `Running` green, `Stopped`/`Terminated` grey,
@@ -416,23 +447,16 @@ The earlier JS-side `enlarge_log_panes` helper is gone.
   links to the most recent provision-vm.sh Failure Task — the
   operator clicks the link, reads the error, and clicks Provision
   again to retry.
-- The **creation form** (new VM) shows two affordances on top of the
+- The **creation form** (new VM) shows one affordance on top of the
   raw schema: a `size_preset` `Select` field (Custom / Small / Medium /
   Large, each labelled with its `vCPU / MB / GB`) at the top of the
   Resources section that writes all three Int fields in one click via
-  a one-line `size_preset(frm)` change handler; and — *only* when the
-  server is oversubscribed — a red dashboard headline
-  `⚠ Server is oversubscribed` with the projected use vs. total. The
-  green/blue informational variants of the capacity headline are
-  dropped: the operator only needs the warning when something's
-  wrong. Capacity is computed by
-  `atlas.atlas.api.server_capacity.capacity_for_server`, backed by a
-  hand-maintained `size → vCPUs` dict (same maintenance model as the
-  monthly-cost dict on Server Provider). The yellow `Description`
-  nudge is gone — `reqd: 1` on `title` is the framework's native cue.
-  When exactly one Active `Server` exists, the new-VM form's `server`
-  field is pre-selected via a 2-row `frappe.db.get_list` lookup in
-  `onload`.
+  a one-line `size_preset(frm)` change handler. The earlier
+  oversubscribed-server dashboard headline is gone — capacity is still
+  enforced at provision time. The yellow `Description` nudge is gone —
+  `reqd: 1` on `title` is the framework's native cue. When exactly one
+  Active `Server` exists, the new-VM form's `server` field is
+  pre-selected via a 2-row `frappe.db.get_list` lookup in `onload`.
 
 ### Virtual Machine Image
 
@@ -467,17 +491,10 @@ The earlier JS-side `enlarge_log_panes` helper is gone.
   column (driven by the DocType's `states` JSON: `Pending` yellow,
   `Running` blue, `Success` green, `Failure` red). The previous
   Subject-cell-only indicator is gone.
-- Status-coloured dashboard headline (the only headline shape on the
-  form):
-  - Pending → blue, "Queued — waiting for worker."
-  - Running → yellow, "Running on <server> — started 12s ago."
-  - Success → green, "Completed in 28s. Exit code 0."
-  - Failure → red, "Failed in 16s. Exit code 1." The first-stderr-line
-    excerpt is gone — the full stderr is one collapsible Output
-    section click away.
-- **No header chips.** The legacy Server / Virtual Machine /
-  Triggered-by chips above the body are removed; those values are
-  already fields in the form body and columns in the list view.
+- **No dashboard headlines or indicator chips.** The status pill in
+  the list view's Status column, the status field on the form itself,
+  and the exit code / stderr in the Output section carry the same
+  signal the earlier status-coloured headline used to repeat.
 - **Retry** button (primary) when status = Failure. Delegates to the
   matching VM controller method (`provision()`, `start()`,
   `terminate()`, …) for VM-scoped scripts, or to
@@ -513,8 +530,9 @@ route. We don't add a build step. The whole thing is Desk plus
 ~1.4k lines of shared client JS across the five doctype scripts +
 helper module, ~200 lines of scoped CSS
 ([Visual polish](#visual-polish)), and a handful of whitelisted
-controller methods (`provider_options`, `credential_check`,
-`archive`, `retry`, `sync_image`, `capacity_for_server`, …).
+controller methods (`provision_server`, `authenticate`,
+`refresh_catalog`, `archive`, `retry`, `sync_image`,
+`capacity_for_server`, …).
 
 Anything that *looks* bespoke is borrowed: the workspace onboarding
 checklist is Frappe's `Module Onboarding` doctype; the workspace

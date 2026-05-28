@@ -17,9 +17,9 @@ Two entry points:
 
 Also folds in the argument-validation throws that guard the entry point
 (`run_task` requires exactly one of `server=` or `connection=`,
-`connection_for_server` requires `ipv4_address` and `provider`,
-`execute_task` requires a Task with a `server`). These do not require a
-droplet at all; they ride along on whichever entry point is convenient.
+`connection_for_server` requires `ipv4_address`, `execute_task` requires
+a Task with a `server`). These do not require a droplet at all; they
+ride along on whichever entry point is convenient.
 """
 
 import time
@@ -199,17 +199,15 @@ def _check_server_bootstrap_rerun(server) -> None:
 
 
 def _check_connection_for_server_validation() -> None:
-	"""connection_for_server requires ipv4_address and provider."""
+	"""connection_for_server requires ipv4_address. The SSH key path now lives
+	on Atlas Settings (not Server.provider), so the legacy "no provider" guard
+	is gone."""
 	transient = frappe.get_doc({
 		"doctype": "Server",
 		"title": "usecase-no-ip",
 		"status": "Pending",
 	})
 	with expect_validation_error("no ipv4_address"):
-		connection_for_server(transient)
-
-	transient.ipv4_address = "192.0.2.1"
-	with expect_validation_error("no provider"):
 		connection_for_server(transient)
 
 

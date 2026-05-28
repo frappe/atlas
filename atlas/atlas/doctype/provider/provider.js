@@ -1,4 +1,4 @@
-frappe.ui.form.on("Server Provider", {
+frappe.ui.form.on("Provider", {
 	refresh(frm) {
 		if (frm.is_new()) {
 			return;
@@ -6,9 +6,8 @@ frappe.ui.form.on("Server Provider", {
 		if (frm.doc.is_active) {
 			frappe.atlas.add_primary(frm, "Provision Server", () => open_provision_dialog(frm));
 		}
-		if (frm.doc.provider_type === "DigitalOcean") {
-			frappe.atlas.add_action(frm, "Test Connection", () => run_test_connection(frm));
-		}
+		frappe.atlas.add_action(frm, "Authenticate", () => run_authenticate(frm));
+		frappe.atlas.add_action(frm, "Refresh Catalog", () => run_refresh_catalog(frm));
 		if (frm.doc.is_active) {
 			frappe.atlas.add_danger(frm, "Archive", () => confirm_archive(frm));
 		}
@@ -16,30 +15,41 @@ frappe.ui.form.on("Server Provider", {
 });
 
 
-function run_test_connection(frm) {
-	frappe.show_alert({
-		message: __("Testing connection…"),
-		indicator: "blue",
+function run_authenticate(frm) {
+	frappe.show_alert({message: __("Authenticating…"), indicator: "blue"});
+	frm.call("authenticate").then(({message}) => {
+		if (message.ok) {
+			const label = message.account_label || frm.doc.provider_name;
+			frappe.show_alert({
+				message: __("OK: {0}", [label]),
+				indicator: "green",
+			});
+		} else {
+			frappe.show_alert({
+				message: __("Failed: {0}", [message.error || __("unknown error")]),
+				indicator: "red",
+			});
+		}
 	});
-	frm.call("test_connection").then(({message}) => {
-		frappe.show_alert({
-			message: __("OK: {0}", [message.email]),
-			indicator: "green",
-		});
+}
+
+
+function run_refresh_catalog(frm) {
+	frappe.show_alert({message: __("Refreshing catalog…"), indicator: "blue"});
+	frm.call("discover_and_upsert").then(({message}) => {
+		const summary = __("Catalog refreshed: {0} inserted, {1} updated, {2} disabled",
+			[message.inserted, message.updated, message.disabled]);
+		frappe.show_alert({message: summary, indicator: "green"});
 	});
 }
 
 
 function open_provision_dialog(frm) {
 	const is_self_managed = frm.doc.provider_type === "Self-Managed";
-	const options_call = is_self_managed
-		? Promise.resolve({message: {regions: [], sizes: [], images: []}})
-		: frappe.call({method: "atlas.atlas.api.provider_options.provider_options"});
-
-	options_call.then(({message: options}) => {
+	frappe.db.get_doc(`${frm.doc.provider_type} Settings`).then((settings) => {
 		const dialog = new frappe.ui.Dialog({
 			title: __("Provision Server"),
-			fields: build_provision_fields(frm, options, is_self_managed),
+			fields: build_provision_fields(frm, settings, is_self_managed),
 			primary_action_label: __("Provision"),
 			primary_action(values) {
 				if (!validate_server_title(dialog, values.title)) return;
@@ -52,7 +62,7 @@ function open_provision_dialog(frm) {
 }
 
 
-function build_provision_fields(frm, options, is_self_managed) {
+function build_provision_fields(frm, settings, is_self_managed) {
 	const fields = [
 		{
 			fieldname: "title",
@@ -94,30 +104,25 @@ function build_provision_fields(frm, options, is_self_managed) {
 			},
 		);
 	} else {
+		const link_filters = {provider_type: frm.doc.provider_type, enabled: 1};
 		fields.push(
-			{
-				fieldname: "region",
-				label: __("Region"),
-				fieldtype: "Select",
-				options: options.regions.join("\n"),
-				default: frm.doc.default_region,
-				reqd: 1,
-			},
 			{
 				fieldname: "size",
 				label: __("Size"),
-				fieldtype: "Select",
-				options: options.sizes.join("\n"),
-				default: frm.doc.default_size,
+				fieldtype: "Link",
+				options: "Provider Size",
+				default: settings ? settings.default_size : null,
 				reqd: 1,
+				get_query: () => ({filters: link_filters}),
 			},
 			{
 				fieldname: "image",
 				label: __("Image"),
-				fieldtype: "Select",
-				options: options.images.join("\n"),
-				default: frm.doc.default_image,
+				fieldtype: "Link",
+				options: "Provider Image",
+				default: settings ? settings.default_image : null,
 				reqd: 1,
+				get_query: () => ({filters: link_filters}),
 			},
 		);
 	}
@@ -145,13 +150,12 @@ function validate_server_title(dialog, title) {
 function confirm_provision(frm, values, is_self_managed) {
 	const body = is_self_managed
 		? `<p>${__("Atlas will SSH to {0} as root and run bootstrap-server.sh. Nothing is created remotely.", [`<b>${frappe.utils.escape_html(values.ipv4_address)}</b>`])}</p>`
-		: `<p>${__("This will create a {0} droplet in {1}.", [
+		: `<p>${__("This will create a {0} server.", [
 			`<b>${frappe.utils.escape_html(values.size)}</b>`,
-			`<b>${frappe.utils.escape_html(values.region)}</b>`,
 		])}</p>`;
 
 	frappe.warn(
-		is_self_managed ? __("Bootstrap a self-managed server?") : __("Create a billable droplet?"),
+		is_self_managed ? __("Bootstrap a self-managed server?") : __("Create a billable server?"),
 		body,
 		() => {
 			frm.call("provision_server", values).then(({message: server_name}) => {

@@ -51,7 +51,8 @@ keep it the source of truth.
    zx), reimplement the small subset we need. We avoid library coupling on a
    foundational layer.
 7. **Names are full words.** `Server`, `Task`, `Virtual Machine`,
-   `Virtual Machine Image`, `Server Provider`. No `VM`, `Cmd`, or `Metal Node`.
+   `Virtual Machine Image`, `Provider`, `Atlas Settings`. No `VM`,
+   `Cmd`, or `Metal Node`.
 
 ## Read this in order
 
@@ -70,10 +71,15 @@ keep it the source of truth.
 
 The operator-visible setup order on the desk is:
 
-1. **Server Provider** — credentials and defaults for one source of servers.
-2. **Server** — provisioned by clicking **Provision Server** on a provider.
-3. **Virtual Machine Image** — the kernel + rootfs pair to install.
-4. **Virtual Machine** — created against a Server and an Image, then
+1. **Atlas Settings** — SSH key (fingerprint, public key, on-disk path)
+   and the active `Provider`.
+2. **Provider** — one row per configured vendor; pick a `provider_type`.
+3. **Per-vendor Settings** (e.g. `DigitalOcean Settings`) — API token,
+   region, default size + image. Skip for `Self-Managed`.
+4. **Server** — provisioned by clicking **Provision Server** on the
+   active provider.
+5. **Virtual Machine Image** — the kernel + rootfs pair to install.
+6. **Virtual Machine** — created against a Server and an Image, then
    **Provision**ed.
 
 To skip the clicking and stand up provider → server → image → VM in one
@@ -84,10 +90,12 @@ bench --site <site> execute atlas.bootstrap.run
 ```
 
 It reads everything from site config (`atlas_provider_type`,
-`atlas_do_token`, `atlas_ssh_key_id`, …) and uses only the same
-whitelisted methods the desk buttons call. Requires a `bench worker`
-running because `provision_server` and `sync_to_server` both enqueue
-background jobs. The file's docstring lists every config key.
+`atlas_do_token`, `atlas_ssh_fingerprint`, …), populates Atlas Settings
+and the matching per-vendor Single, seeds the `Provider Size` /
+`Provider Image` catalogs, and uses only the same whitelisted methods
+the desk buttons call. Requires a `bench worker` running because
+`provision_server` and `sync_to_server` both enqueue background jobs.
+The file's docstring lists every config key.
 
 ## Operator use cases
 
@@ -99,7 +107,7 @@ operator-facing features add to this list; new tests follow it.
 
 | Use case                       | Operator action                                         | Spec |
 | ------------------------------ | ------------------------------------------------------- | ---- |
-| Provision a server             | `Server Provider` → **Provision Server**                | [03-bootstrapping.md](./03-bootstrapping.md) |
+| Provision a server             | `Provider` → **Provision Server**                       | [03-bootstrapping.md](./03-bootstrapping.md) |
 | Sync an image to a server      | `Virtual Machine Image` → **Sync to Server / All**      | [08-images.md](./08-images.md) |
 | Provision a virtual machine    | `Virtual Machine` → **Provision**                       | [05-virtual-machine-lifecycle.md](./05-virtual-machine-lifecycle.md) |
 | Operate a virtual machine      | `Virtual Machine` → **Start / Stop / Restart / Terminate** | [05-virtual-machine-lifecycle.md](./05-virtual-machine-lifecycle.md) |

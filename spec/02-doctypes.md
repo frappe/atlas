@@ -1,13 +1,25 @@
 # DocTypes
 
-Five DocTypes. Module `Atlas`. None are submittable. All track changes. Read
-permission for `System Manager`.
+Nine DocTypes. Module `Atlas`. None are submittable. All track changes.
+Read permission for `System Manager`.
 
-1. [Server Provider](#server-provider)
-2. [Server](#server)
-3. [Virtual Machine](#virtual-machine)
-4. [Virtual Machine Image](#virtual-machine-image)
-5. [Task](#task)
+1. [Atlas Settings](#atlas-settings) — vendor-agnostic Atlas config (Single).
+2. [Provider](#provider) — one row per configured vendor.
+3. [DigitalOcean Settings](#digitalocean-settings) — DO API config (Single).
+4. [Self-Managed Settings](#self-managed-settings) — Self-Managed config (Single).
+5. [Provider Size](#provider-size) — vendor catalog of machine sizes.
+6. [Provider Image](#provider-image) — vendor catalog of OS images.
+7. [Server](#server)
+8. [Virtual Machine](#virtual-machine)
+9. [Virtual Machine Image](#virtual-machine-image)
+10. [Task](#task)
+
+The first six form the **Provider abstraction**: a single ABC in
+`atlas/atlas/providers/base.py` with one implementation per
+`Provider.provider_type`. Every vendor call goes through that interface;
+controllers never branch on `provider_type`. See
+[provider-abstraction.md](../llm/plan/provider-abstraction.md) for the
+implementation plan.
 
 Each DocType is specified by three sections: **Fields** (the schema), **Form
 layout** (the section/column structure of the desk form), and **List view**
@@ -24,59 +36,64 @@ Notation in the Form layout sections:
 
 ---
 
-## Server Provider
+## Atlas Settings
 
-One row per source of servers. Two provider types are implemented:
-
-- `DigitalOcean` — Atlas calls the DO API to create the droplet.
-- `Self-Managed` — the operator brings their own host. Atlas does not
-  create or destroy anything; the provider only carries the SSH
-  credentials.
-
-The required-ness of every field below depends on `provider_type`. The
-"Reqd" column lists which types require it.
+A Single DocType. Holds Atlas-wide configuration that is not vendor-specific:
+which `Provider` is currently active, and the operator's SSH key (fingerprint,
+public-key body, on-disk path). Every `get_provider()` call in the codebase
+reads `Atlas Settings.provider` to pick the implementation — this is the
+indirection layer.
 
 ### Fields
 
-| Field                  | Type     | Reqd                  | Read-only | Default | Notes                                              |
-| ---------------------- | -------- | --------------------- | --------- | ------- | -------------------------------------------------- |
-| `provider_name`        | Data     | All                   |           |         | Primary key. Unique. `set_only_once`. e.g. `digitalocean-production`, `home-lab`. |
-| `provider_type`        | Select   | All                   |           |         | Options: `DigitalOcean`, `Self-Managed`. `set_only_once`. |
-| `is_active`            | Check    |                       |           | 1       | `set_only_once`. Flip via the `archive()` controller method, not the form. |
-| `api_token`            | Password | `DigitalOcean`        |           |         | `set_only_once`. DigitalOcean personal access token. Ignored for `Self-Managed`. |
-| `ssh_key_id`           | Data     | `DigitalOcean`        |           |         | `set_only_once`. Fingerprint of the SSH key pre-loaded on droplets. Ignored for `Self-Managed` (no API to register the key with). |
-| `ssh_private_key_path` | Data     | All                   |           |         | `set_only_once`. Absolute path on the Atlas host where the SSH private key lives. Atlas reads the PEM at SSH-connect time via `secrets.get_ssh_key_from_disk(path)`. Keep the file `0600` owned by the Frappe user. |
-| `default_region`       | Data     | `DigitalOcean`        |           |         | `set_only_once`. e.g. `blr1`. Ignored for `Self-Managed`. |
-| `default_size`         | Data     | `DigitalOcean`        |           |         | `set_only_once`. Must support nested virtualization. Ignored for `Self-Managed`. |
-| `default_image`        | Data     | `DigitalOcean`        |           |         | `set_only_once`. e.g. `ubuntu-24-04-x64`. Ignored for `Self-Managed`. |
+| Field                  | Type             | Reqd | Notes                                                              |
+| ---------------------- | ---------------- | ---- | ------------------------------------------------------------------ |
+| `provider`             | Link → Provider  | Y    | The currently-active Provider row. `atlas.get_provider()` reads this. |
+| `ssh_fingerprint`      | Data             |      | Vendor-side fingerprint of the SSH key, when the vendor needs one (DigitalOcean). Format is vendor-specific (DO uses SHA-256 hex). |
+| `ssh_public_key`       | Long Text        |      | OpenSSH public key body. Crosses the provider interface for vendors that upload at provision time. Not required for DO. |
+| `ssh_private_key_path` | Data             | Y    | Absolute path on the Atlas host where the matching private key lives. Atlas reads the PEM at SSH-connect time via `secrets.get_ssh_key_from_disk(path)`. `0600`, owned by the Frappe user. |
 
-The controller's `validate` enforces the table: switching `provider_type`
-is forbidden (the field is `set_only_once`); the DO-only fields are
-required when `provider_type = DigitalOcean` and otherwise left blank.
-Self-Managed rows that accidentally carry a DO field are not rejected —
-the field is ignored. Every Auth + Defaults field carries
-`set_only_once`, so the form paints them read-only after first save.
-A defense-in-depth `_validate_immutability` in the controller also
-raises if a `frappe.db.set_value`-style backdoor mutation ever sneaks
-in.
+Why one Single instead of fields on each `Provider` row: the SSH key, the
+active provider, and any other cross-vendor switch are properties of the
+Atlas instance, not of a vendor. Routing reads through a single helper
+also lets the storage backend swap to an external secret store later
+without touching callers.
 
-Concrete examples for a fresh `DigitalOcean` row: `default_region = blr1`,
-`default_size = s-2vcpu-4gb-intel` (any size that supports nested
-virtualisation works), `default_image = ubuntu-24-04-x64`. `ssh_key_id`
-is the SHA-256 fingerprint of the SSH key already registered in your DO
-account — get it from `doctl compute ssh-key list` or the DO control
-panel. `ssh_private_key_path` points at a `0600` PEM on disk —
-typically `/etc/atlas/keys/<provider_name>.pem`. Atlas reads it once
-per SSH connection; rotating the key is a file-replace operation, no
-DocType edit.
+### Form layout
 
-For `Self-Managed`, all four networking inputs to the **Provision
-Server** dialog are operator-supplied: `ipv4_address` is the SSH
-endpoint, `ipv6_address` is whatever the host answers on, `ipv6_prefix`
-is the full prefix routed to the host (typically `/64`), and
-`ipv6_virtual_machine_range` is the subnet Atlas is allowed to allocate
-VM addresses from. The split between the latter two is explained in the
-`Server` section below.
+```
+── Active provider ──
+provider
+── SSH key ──
+ssh_fingerprint
+ssh_public_key
+| ssh_private_key_path
+```
+
+### Buttons
+
+None. The form saves on edit and `atlas.get_provider()` picks up the new
+value on the next call. Switching the active provider does not destroy
+any existing Server rows — they keep their `provider` FK pointing at
+whatever they were provisioned through.
+
+---
+
+## Provider
+
+One row per configured vendor. Thin link table — no credentials, no
+defaults. Vendor-specific configuration lives on the per-vendor Single
+Settings DocType (e.g. `DigitalOcean Settings`).
+
+`Server.provider` is a Link → Provider, frozen on first save.
+
+### Fields
+
+| Field           | Type   | Reqd | Default | Notes                                                              |
+| --------------- | ------ | ---- | ------- | ------------------------------------------------------------------ |
+| `provider_name` | Data   | Y    |         | Primary key. Unique. `set_only_once`. e.g. `digitalocean-production`, `home-lab`. |
+| `provider_type` | Select | Y    |         | Options: `DigitalOcean`, `Self-Managed`. `set_only_once`. The provider registry (`atlas/atlas/providers/__init__.py`) keys off this value to pick the implementation class. |
+| `is_active`     | Check  |      | 1       | Flipped to 0 via the `archive()` controller method. `get_provider()` refuses to instantiate an archived row. |
 
 ### Form layout
 
@@ -84,61 +101,144 @@ VM addresses from. The split between the latter two is explained in the
 provider_name
 provider_type
 | is_active
-── Authentication ──
-api_token
-ssh_key_id
-ssh_private_key_path
-── Defaults for new servers ──
-default_region
-| default_size
-  default_image
 ```
-
-The DigitalOcean-only sections stay on the form for both types but the
-fields inside them are non-required for `Self-Managed`. (Hiding them
-conditionally is a desk-only nicety; the spec does not require it.)
 
 ### List view
 
-- Columns (left to right): `provider_name`, `provider_type`, `is_active`,
-  `default_region`.
+- Columns: `provider_name`, `provider_type`, `is_active`.
 - Standard filters: `provider_type`, `is_active`.
 
 ### Buttons
 
-- **Provision Server** (primary) — opens a dialog. The dialog asks for
-  a `title` (the user-facing label; lowercase + digits + hyphens, max 63
-  chars). The Server row's `name` is assigned a UUID at insert; the
-  title is passed through to the DigitalOcean droplet `name` and tag.
-  Remaining fields depend on `provider_type`:
-  - `DigitalOcean`: three editable `Select` fields (`region`, `size`,
-    `image`) defaulting to the provider's `default_*`, sourced from
-    `atlas.atlas.api.provider_options.provider_options`. Then asks for
-    an orange "Create a billable droplet?" confirmation before calling
-    the DO API.
-  - `Self-Managed`: `title`, `ipv4_address`, `ipv6_address`,
-    `ipv6_prefix`, `ipv6_virtual_machine_range`. Atlas inserts the
-    `Server` directly with the operator-supplied values and runs the
-    bootstrap task. No API call. See
-    [03-bootstrapping.md](./03-bootstrapping.md).
-
+- **Provision Server** (primary) — opens a dialog. Common field:
+  `title` (lowercase + digits + hyphens, max 63 chars; passed through
+  to the vendor as the server's name and tag). The remaining inputs
+  are produced by the provider implementation's `discover()`-backed
+  dialog schema:
+  - **DigitalOcean**: `size` (Link → Provider Size, filtered to
+    `provider_type=DigitalOcean, enabled=1`), `image` (Link → Provider
+    Image, same filter), defaulting to `DigitalOcean Settings.default_size`
+    / `default_image`. Then `confirm_cost` ("Create a billable
+    droplet?") before the DO API call.
+  - **Self-Managed**: `ipv4_address`, `ipv6_address`, `ipv6_prefix`,
+    `ipv6_virtual_machine_range`. Atlas inserts the `Server` directly
+    with the operator-supplied values and runs bootstrap. No API call.
   The whitelisted `provision_server(title, ...)` controller method
-  returns the new row's UUID `name` (so the client can route to the
-  form), not the title.
-- **Test Connection** — `DigitalOcean` only; under the `Actions ▾`
-  menu. Pings the DO account endpoint. Hidden for `Self-Managed`.
-- **Archive** — `Actions ▾` menu, shown only when `is_active = 1`.
-  Calls the whitelisted `archive()` controller method, which flips
-  `is_active = 0` via `db.set_value` (bypassing `set_only_once`).
-  Existing Servers keep their FK reference so historical Tasks stay
-  queryable; a full decommission flow (cascade across child Servers,
-  cost-center accounting) is a follow-up plan, out of scope here.
+  returns the new Server row's UUID `name`. See
+  [03-bootstrapping.md](./03-bootstrapping.md).
+- **Authenticate** — under `Actions ▾`. Calls `provider.authenticate()`,
+  which probes the vendor (DigitalOcean: `GET /account`) and reports
+  back account label, rate-limit headers, and `missing_scopes`. Hidden
+  for vendors without remote credentials (Self-Managed returns
+  `ok=True, account_label="local"` so the form still paints a green
+  chip on refresh).
+- **Refresh Catalog** — under `Actions ▾`. Calls `provider.discover()`
+  and upserts `Provider Size` and `Provider Image` rows. Slugs the
+  vendor no longer returns are flipped to `enabled=0`; historical
+  Server rows keep their Link.
+- **Archive** — `Actions ▾`, shown only when `is_active = 1`. Calls
+  `archive()` which flips `is_active = 0` via `db.set_value`. Existing
+  Servers keep their FK reference so historical Tasks stay queryable.
 
-Monthly cost in the preview comes from a hand-maintained
-`DIGITALOCEAN_MONTHLY_COST_USD` dict in `server_provider.py` — same
-maintenance policy as `default_image`, because DO doesn't expose
-per-size pricing in their API. Sizes not in the dict render as "—"
-rather than guess.
+The Provider form has no auto-painted credential indicator; the
+operator clicks **Authenticate** when they need to verify.
+
+---
+
+## DigitalOcean Settings
+
+A Single DocType. Only fields that DigitalOcean's API needs.
+
+### Fields
+
+| Field           | Type                  | Reqd | Notes                                                              |
+| --------------- | --------------------- | ---- | ------------------------------------------------------------------ |
+| `api_token`     | Password              | Y    | `set_only_once`. DigitalOcean personal access token. Rotate by clearing the field via `db.set_value`, then re-saving. |
+| `region`        | Data                  | Y    | DO is multi-region; Atlas is single-region. Pick one (`blr1`, `nyc3`, …). `provision_server` throws if the dialog overrides this. |
+| `default_size`  | Link → Provider Size  | Y    | Filtered to `provider_type=DigitalOcean, enabled=1`. Default selection in the Provision dialog. |
+| `default_image` | Link → Provider Image | Y    | Same filter as `default_size`.                                     |
+
+### Form layout
+
+```
+api_token
+region
+── Defaults for new servers ──
+default_size
+| default_image
+```
+
+### Buttons
+
+- **Test Connection** — under `Actions ▾`. Calls
+  `DigitalOceanProvider.authenticate()` (same as the Provider form's
+  Authenticate button, mirrored here for the operator who's mid-credentials).
+  Result surfaces via a toast (`OK: <account>` / `Failed: <error>`);
+  there is no auto-painted dashboard indicator.
+
+Monthly cost preview for the Provision dialog reads `Provider Size.monthly_cost_usd`
+directly. Sizes without a cost render as "—" rather than guess.
+
+---
+
+## Self-Managed Settings
+
+A Single DocType. Empty stub today — Self-Managed has no vendor-side
+configuration (everything Atlas needs for a Self-Managed host lives in
+`Atlas Settings` plus the operator-supplied IPs at provision time).
+The DocType exists so future Self-Managed-only knobs have a home; the
+form ships with a single section break and no fields.
+
+---
+
+## Provider Size
+
+A regular DocType. One row per vendor-advertised machine size that Atlas
+is willing to provision. Seeded at first run by `bootstrap.py` and
+refreshed via the Provider form's **Refresh Catalog** button (which
+calls `provider.discover()`).
+
+### Fields
+
+| Field               | Type   | Reqd | Read-only | Default | Notes                                                              |
+| ------------------- | ------ | ---- | --------- | ------- | ------------------------------------------------------------------ |
+| `name`              | Data   | Y    | Y         |         | Primary key. Format: `{provider_type}/{slug}` (e.g. `DigitalOcean/s-2vcpu-4gb-intel`). Assigned in `autoname()`. |
+| `provider_type`     | Select | Y    |           |         | Same options as `Provider.provider_type`. `set_only_once`.         |
+| `slug`              | Data   | Y    |           |         | Vendor-native slug — the string sent on the API wire (`s-2vcpu-4gb-intel`). `set_only_once`. |
+| `enabled`           | Check  |      |           | 1       | Flipped by `discover()` when the vendor drops a slug. Disabled rows do not appear in the Provision dialog but remain pointable from historical Server rows. |
+| `monthly_cost_usd`  | Int    |      |           |         | Hand-maintained for vendors without per-size pricing in the API (DO). Renders as "—" when blank. |
+| `provider_metadata` | Code (JSON) |  | Y      |         | Raw vendor response for this size — vCPU count, RAM, disk tier, anything the vendor returns. Read-only on the form. |
+
+### List view
+
+- Columns: `slug`, `provider_type`, `enabled`, `monthly_cost_usd`.
+- Standard filters: `provider_type`, `enabled`.
+
+---
+
+## Provider Image
+
+A regular DocType. One row per vendor-advertised OS image that Atlas is
+willing to provision a server with. Same lifecycle as `Provider Size`.
+
+Distinct from `Virtual Machine Image`: this is the *server's* base image
+(the OS Atlas bootstraps on top of), not the guest rootfs+kernel pair
+that runs inside a Firecracker microVM.
+
+### Fields
+
+| Field               | Type   | Reqd | Read-only | Default | Notes                                                              |
+| ------------------- | ------ | ---- | --------- | ------- | ------------------------------------------------------------------ |
+| `name`              | Data   | Y    | Y         |         | Primary key. Format: `{provider_type}/{slug}` (e.g. `DigitalOcean/ubuntu-24-04-x64`). |
+| `provider_type`     | Select | Y    |           |         | `set_only_once`.                                                   |
+| `slug`              | Data   | Y    |           |         | Vendor-native slug (DO `ubuntu-24-04-x64`, future AWS `ami-…`). `set_only_once`. |
+| `enabled`           | Check  |      |           | 1       | Flipped by `discover()`.                                           |
+| `provider_metadata` | Code (JSON) |  | Y      |         | Raw vendor response — architecture, distribution, release date, …  |
+
+### List view
+
+- Columns: `slug`, `provider_type`, `enabled`.
+- Standard filters: `provider_type`, `enabled`.
 
 ---
 
@@ -149,34 +249,43 @@ operator-facing label lives in `title` (e.g. `server-blr1-01`).
 
 ### Fields
 
-| Field                          | Type                   | Reqd | Read-only | Default | Notes                                                          |
-| ------------------------------ | ---------------------- | ---- | --------- | ------- | -------------------------------------------------------------- |
-| `name`                         | UUID (autoname)        | Y    | Y         |         | Primary key. UUID minted in `Server.autoname()`. Stable for the row's lifetime; no rename UI. |
-| `title`                        | Data                   | Y    |           |         | Operator-chosen label. `set_only_once` — first save freezes it. |
-| `provider`                     | Link → Server Provider | Y    |           |         | `set_only_once`. |
-| `status`                       | Select                 | Y    | Y         | Pending | `Pending`, `Bootstrapping`, `Active`, `Draining`, `Broken`, `Archived`. Controllers mutate via `db.set_value`. |
-| `provider_resource_id`         | Data                   |      | Y         |         | DigitalOcean droplet id. Empty for `Self-Managed` providers. Locked once written by the controller. |
-| `region`                       | Data                   |      | Y         |         | Copied from provider defaults at insert. Empty for `Self-Managed`. |
-| `size`                         | Data                   |      | Y         |         | Copied from provider defaults at insert. Empty for `Self-Managed`. |
-| `ipv4_address`                 | Data                   |      | Y         |         | The SSH endpoint. Set by `finish_provisioning` (DigitalOcean) or by the operator at provision time (Self-Managed). Locked once written. |
-| `ipv6_address`                 | Data                   |      | Y         |         | The server's own IPv6. Whatever the host actually answers on. |
-| `ipv6_prefix`                  | Data                   |      | Y         |         | The full prefix routed to this server (typically a /64). Informational. |
-| `ipv6_virtual_machine_range`   | Data                   |      | Y         |         | The subnet Atlas allocates VM addresses from. Any prefix length: `/64`, `/80`, `/124`, ... For `DigitalOcean` this is the /124 derived from the /64 (see [06-networking.md](./06-networking.md)). For `Self-Managed` the operator types it in; it can be the whole extra subnet the host already has routed to it. |
-| `architecture`                 | Data                   |      | Y         |         | Set by bootstrap. Allowed to change on re-bootstrap. |
-| `firecracker_version`          | Data                   |      | Y         |         | Set by bootstrap. Allowed to change on re-bootstrap. |
-| `kernel_version`               | Data                   |      | Y         |         | Set by bootstrap. Allowed to change on re-bootstrap. |
-| `notes`                        | Text                   |      |           |         |                                                                |
+| Field                          | Type                  | Reqd | Read-only | Default | Notes                                                          |
+| ------------------------------ | --------------------- | ---- | --------- | ------- | -------------------------------------------------------------- |
+| `name`                         | UUID (autoname)       | Y    | Y         |         | Primary key. UUID minted in `Server.autoname()`. Stable for the row's lifetime; no rename UI. |
+| `title`                        | Data                  | Y    |           |         | Operator-chosen label. `set_only_once` — first save freezes it. |
+| `provider`                     | Link → Provider       | Y    |           |         | `set_only_once`. |
+| `status`                       | Select                | Y    | Y         | Pending | `Pending`, `Bootstrapping`, `Active`, `Draining`, `Broken`, `Archived`. Controllers mutate via `db.set_value`. |
+| `provider_resource_id`         | Data                  |      | Y         |         | Vendor's primary key for this host (DigitalOcean droplet id, future AWS instance id, …). Empty for `Self-Managed`. Locked once written. |
+| `size`                         | Link → Provider Size  |      | Y         |         | Populated by `provider.describe()` after provision. Empty for `Self-Managed`. |
+| `image`                        | Link → Provider Image |      | Y         |         | Server's base OS image. Populated by `provider.describe()`. Empty for `Self-Managed`. |
+| `ipv4_address`                 | Data                  |      | Y         |         | The SSH endpoint. Set by `provider.describe()` (DigitalOcean) or by the operator at provision time (Self-Managed). Locked once written. |
+| `ipv6_address`                 | Data                  |      | Y         |         | The server's own IPv6. Whatever the host actually answers on. |
+| `ipv6_prefix`                  | Data                  |      | Y         |         | The full prefix routed to this server (typically a /64). Informational. |
+| `ipv6_virtual_machine_range`   | Data                  |      | Y         |         | The subnet Atlas allocates VM addresses from. Any prefix length: `/64`, `/80`, `/124`, ... Produced by `provider.describe()`. For `DigitalOcean` it's the /124 carved from the /64 (see [06-networking.md](./06-networking.md)); for `Self-Managed` it's the operator-typed value. |
+| `provider_metadata`            | Code (JSON)           |      | Y         |         | Raw vendor blob returned by `describe()`. Holds anything the vendor reports that doesn't have a named column (DigitalOcean `created_at`, future AWS placement group, …). Forward-compatibility seam — read-only. |
+| `architecture`                 | Data                  |      | Y         |         | Set by bootstrap. Allowed to change on re-bootstrap. |
+| `firecracker_version`          | Data                  |      | Y         |         | Set by bootstrap. Allowed to change on re-bootstrap. |
+| `kernel_version`               | Data                  |      | Y         |         | Set by bootstrap. Allowed to change on re-bootstrap. |
+| `notes`                        | Text                  |      |           |         |                                                                |
+
+Atlas is single-region: there is no `Server.region` column. A vendor
+that operates in multiple regions stores its operating region on its
+own Settings Single (e.g. `DigitalOcean Settings.region`), and one
+Atlas instance pins one region per vendor.
 
 Immutability is enforced by `Server._validate_immutability()` (lock
-once a value is written; allow `None → value` for fields the
-DigitalOcean provision flow populates lazily, like IPv4/6). The
-framework `set_only_once` flag covers `title` and `provider` because
-those are populated at insert time and never legitimately change.
+once a value is written; allow `None → value` so `finish_provisioning`
+can write the IPs, size, image, and `provider_metadata` onto a freshly
+inserted Pending row). The framework `set_only_once` flag covers
+`title` and `provider` because those are populated at insert time and
+never legitimately change.
 
 ### Controller methods
 
-- `archive()` — sets `status = "Archived"`. Idempotent (rejects if
-  already Archived). Existing FKs from Virtual Machine and Task rows
+- `archive()` — calls `provider.destroy(provider_resource_id)` first
+  (no-op for Self-Managed, releases the droplet for DigitalOcean), then
+  sets `status = "Archived"` via `db.set_value`. Idempotent (rejects
+  if already Archived). Existing FKs from Virtual Machine and Task rows
   are preserved.
 - `sync_image(image)` — single-server convenience wrapper around
   `Virtual Machine Image.sync_to_server(self.name)`. Used by the
@@ -205,8 +314,8 @@ provider
 | status
 ── Provider resource ──
 provider_resource_id
-| region
-  size
+| size
+  image
 ── Networking (collapsible) ──
 ipv4_address
 ipv6_address
@@ -216,15 +325,17 @@ ipv6_address
 architecture
 | firecracker_version
   kernel_version
+── Provider metadata (collapsible) ──
+provider_metadata
 ── Notes (collapsible) ──
 notes
 ```
 
 ### List view
 
-- Columns (left to right): `title`, `provider`, `status`, `region`,
+- Columns (left to right): `title`, `provider`, `status`, `size`,
   `ipv4_address`.
-- Standard filters: `provider`, `status`, `region`.
+- Standard filters: `provider`, `status`, `size`.
 
 ### Buttons
 
@@ -239,8 +350,13 @@ notes
   button live on the relevant DocType (VM start/stop on the VM form,
   etc.). The `run_task_dialog` controller method is kept for
   `Task.retry` only.
-- **Archive** (under `Actions ▾`, on non-`Archived` rows) — confirms via
-  type-the-title dialog, then sets `status = "Archived"`.
+- **Archive** (under `Actions ▾`, on non-`Archived` rows, danger) —
+  confirms via a type-the-title dialog. Calls
+  `provider.destroy(provider_resource_id)` first (releases the
+  DigitalOcean droplet; no-op for Self-Managed), then sets
+  `status = "Archived"`. Archive is the destroy trigger — there is no
+  separate Destroy button. The dialog body warns that the vendor
+  resource will be released.
 - **Reboot** (under `Actions ▾`, danger) — runs
   [`scripts/reboot-server.sh`](../scripts/reboot-server.sh)
   (`systemctl reboot` over SSH). The resulting Task may end in `Failure`
@@ -273,11 +389,11 @@ deletion.
 | `name`             | UUID                          | Y    | Y         |         | Primary key. Set in `before_insert` via `uuid.uuid4()`.          |
 | `title`            | Data                          | Y    |           |         | Operator-chosen label; `title_field` for the form. `set_only_once`. |
 | `server`           | Link → Server                 | Y    |           |         | `set_only_once` (in addition to the controller's `_validate_immutability`). |
-| `image`            | Link → Virtual Machine Image  | Y    |           |         | Immutable after insert (via `_validate_immutability`).           |
+| `image`            | Link → Virtual Machine Image  | Y    |           |         | `set_only_once` (in addition to the controller's `_validate_immutability`). |
 | `status`           | Select                        | Y    | Y         | Pending | `Pending`, `Running`, `Stopped`, `Failed`, `Terminated`. Driven by lifecycle methods only. |
-| `vcpus`            | Int                           | Y    |           | 1       | Immutable after insert.                                          |
-| `memory_megabytes` | Int                           | Y    |           | 512     | Immutable after insert.                                          |
-| `disk_gigabytes`   | Int                           | Y    |           | 4       | Immutable after insert.                                          |
+| `vcpus`            | Int                           | Y    |           | 1       | `set_only_once` (in addition to the controller's `_validate_immutability`). |
+| `memory_megabytes` | Int                           | Y    |           | 512     | `set_only_once` (in addition to the controller's `_validate_immutability`). |
+| `disk_gigabytes`   | Int                           | Y    |           | 4       | `set_only_once` (in addition to the controller's `_validate_immutability`). |
 | `ssh_public_key`   | Long Text                     | Y    |           |         | `set_only_once`. Injected into the rootfs.                       |
 | `ipv6_address`     | Data                          |      | Y         |         | From the server's /124. Set in `before_insert`.                  |
 | `mac_address`      | Data                          |      | Y         |         | Derived from `name`. Set in `before_validate`.                   |
@@ -295,7 +411,8 @@ methods (Provision/Start/Stop/Restart/Terminate); see
 
 `ssh_public_key` is the key injected into the *guest's*
 `/root/.ssh/authorized_keys` — it is how the operator SSHes into the
-VM, not into the host. The host key lives on the `Server Provider`.
+VM, not into the host. The host key lives on `Atlas Settings`
+(`ssh_fingerprint`, `ssh_public_key`, `ssh_private_key_path`).
 
 ### Auto-provision contract
 

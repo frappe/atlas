@@ -96,9 +96,9 @@ triggered explicitly by the operator before provisioning.)
 ### Host-side precondition
 
 Before the guest-side probe runs, the e2e suite asserts the Atlas
-host carries the Provider's SSH key on disk as
+host carries the SSH key on disk as
 [07-filesystem-layout.md § SSH keys](./07-filesystem-layout.md)
-describes: `Server Provider.ssh_private_key_path` resolves to a regular
+describes: `Atlas Settings.ssh_private_key_path` resolves to a regular
 file with mode `0600` (or `0400`, equally safe). This is a Python-side
 check in
 [`use_cases/virtual_machine_provisioning.py::_assert_provider_ssh_key_path`](../atlas/tests/e2e/use_cases/virtual_machine_provisioning.py),

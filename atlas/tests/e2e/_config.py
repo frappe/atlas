@@ -69,6 +69,12 @@ def get_client() -> DigitalOceanClient:
 
 
 def get_ssh_key_id() -> str:
+	"""Read the SSH fingerprint for e2e from site config.
+
+	Site config is the source of truth for the e2e harness — Atlas Settings
+	gets written *to* during `ensure_e2e_provider`, so reading from it would
+	pick up stale values left by prior runs (e.g. unit-test fixtures'
+	`fp:fingerprint`)."""
 	key_id = frappe.conf.get("atlas_ssh_key_id")
 	if not key_id:
 		raise MissingConfig("e2e needs atlas_ssh_key_id in site config")
@@ -76,11 +82,12 @@ def get_ssh_key_id() -> str:
 
 
 def get_ssh_private_key_path() -> str:
-	"""Return an absolute path on disk to the SSH private key the e2e
-	provider should use. Reads `atlas_ssh_private_key_path` from site
-	config first; falls back to the legacy `atlas_ssh_private_key` (PEM
-	contents) by spilling them to a tempfile so older site configs keep
-	working without an operator step."""
+	"""Absolute path on disk to the SSH private key for e2e.
+
+	Reads from site config (`atlas_ssh_private_key_path` direct, or
+	`atlas_ssh_private_key` inline-PEM that we spill to a cache file).
+	Site config wins over Atlas Settings for the same reason as
+	`get_ssh_key_id` — the Single is a write target during e2e setup."""
 	path = frappe.conf.get("atlas_ssh_private_key_path")
 	if path:
 		expanded = os.path.expanduser(path)
@@ -90,8 +97,7 @@ def get_ssh_private_key_path() -> str:
 	pem = frappe.conf.get("atlas_ssh_private_key")
 	if not pem:
 		raise MissingConfig(
-			"e2e needs atlas_ssh_private_key_path in site config (or the legacy "
-			"atlas_ssh_private_key with PEM contents / a path)."
+			"e2e needs atlas_ssh_private_key_path or atlas_ssh_private_key in site config."
 		)
 	cache_dir = os.path.expanduser("~/.cache/atlas-e2e")
 	os.makedirs(cache_dir, exist_ok=True)

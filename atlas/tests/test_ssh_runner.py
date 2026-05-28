@@ -120,10 +120,10 @@ class TestConnectionForServer(IntegrationTestCase):
 			connection_for_server(server)
 		self.assertIn("no ipv4_address", str(raised.exception))
 
-	def test_raises_when_server_has_no_provider(self) -> None:
-		# `provider` is mandatory on Server, so we insert with one then clear
-		# it in-memory before exercising the check. The DB row is not saved
-		# back, so we don't violate the mandatory constraint.
+	def test_raises_when_atlas_settings_has_no_ssh_private_key_path(self) -> None:
+		# connection_for_server now reads ssh_private_key_path from Atlas
+		# Settings (not from Server Provider). Clear the field temporarily
+		# and confirm the check throws.
 		provider = make_provider("noprov-provider")
 		server = make_server(
 			provider=provider,
@@ -131,10 +131,18 @@ class TestConnectionForServer(IntegrationTestCase):
 			ipv4_address="10.0.0.99",
 			provider_resource_id="888",
 		)
-		server.provider = None
-		with self.assertRaises(frappe.ValidationError) as raised:
-			connection_for_server(server)
-		self.assertIn("no provider", str(raised.exception))
+		previous = frappe.db.get_single_value("Atlas Settings", "ssh_private_key_path")
+		try:
+			frappe.db.set_single_value(
+				"Atlas Settings", "ssh_private_key_path", "", update_modified=False
+			)
+			with self.assertRaises(frappe.ValidationError) as raised:
+				connection_for_server(server)
+			self.assertIn("ssh_private_key_path", str(raised.exception))
+		finally:
+			frappe.db.set_single_value(
+				"Atlas Settings", "ssh_private_key_path", previous, update_modified=False
+			)
 
 
 class TestExceptionWrapping(IntegrationTestCase):

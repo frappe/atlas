@@ -17,7 +17,7 @@
  "owner": "Administrator",
  "steps": [
   {
-   "step": "Add Server Provider"
+   "step": "Configure Atlas"
   },
   {
    "step": "Provision Server"

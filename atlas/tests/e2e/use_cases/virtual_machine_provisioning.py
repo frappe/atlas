@@ -125,10 +125,11 @@ def _check_provision_happy_path(server_name: str, image: str, public_key: str) -
 
 	assert_probe(server_name, "phase5-is-active.sh", VIRTUAL_MACHINE_NAME=vm.name)
 
-	# Phase 3 contract: the Server Provider's SSH key lives on disk, not in
-	# the DB. Before SSHing into the guest, assert the path the controller
-	# will read is present and 0600 — surfaces a misconfigured host as a
-	# clean assertion rather than a downstream SSH timeout.
+	# Phase 3 contract: the SSH key lives on disk (Atlas Settings
+	# .ssh_private_key_path), not in the DB. Before SSHing into the guest,
+	# assert the path the controller will read is present and 0600 —
+	# surfaces a misconfigured host as a clean assertion rather than a
+	# downstream SSH timeout.
 	_assert_provider_ssh_key_path(server_name)
 
 	# SSH into the guest over its IPv6 and assert the fit-and-finish
@@ -285,17 +286,14 @@ def _check_ipv6_exhaustion(server) -> None:
 
 
 def _assert_provider_ssh_key_path(server_name: str) -> None:
-	"""Phase 3 contract: the Server Provider stores `ssh_private_key_path`
-	(not the key itself). Assert the path resolves to a regular file on disk
-	with mode 0600 before any SSH attempt uses it."""
+	"""Phase 3 contract: `Atlas Settings.ssh_private_key_path` stores the
+	path (not the key itself). Assert the path resolves to a regular file
+	on disk with mode 0600 before any SSH attempt uses it."""
 	import os
 	import stat
 
-	provider_name = frappe.db.get_value("Server", server_name, "provider")
-	assert provider_name, f"server {server_name} has no provider"
-
-	path = frappe.db.get_value("Server Provider", provider_name, "ssh_private_key_path")
-	assert path, f"provider {provider_name} has no ssh_private_key_path"
+	path = frappe.db.get_single_value("Atlas Settings", "ssh_private_key_path")
+	assert path, "Atlas Settings.ssh_private_key_path is empty"
 
 	resolved = os.path.expanduser(path)
 	assert os.path.isfile(resolved), f"ssh_private_key_path {path!r} is not a file"

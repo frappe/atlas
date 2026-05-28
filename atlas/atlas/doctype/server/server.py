@@ -13,8 +13,8 @@ IMMUTABLE_AFTER_INSERT = (
 	"title",
 	"provider",
 	"provider_resource_id",
-	"region",
 	"size",
+	"image",
 	"ipv4_address",
 	"ipv6_address",
 	"ipv6_prefix",
@@ -57,9 +57,13 @@ class Server(Document):
 
 	@frappe.whitelist()
 	def archive(self) -> None:
-		"""Set status to Archived. Idempotent."""
+		"""Destroy the vendor resource (idempotent), then mark Archived."""
+		import atlas
+
 		if self.status == "Archived":
 			frappe.throw("Server is already archived")
+		if self.provider_resource_id:
+			atlas.get_provider().destroy(self.provider_resource_id)
 		frappe.db.set_value(self.doctype, self.name, "status", "Archived")
 
 	@frappe.whitelist()

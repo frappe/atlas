@@ -19,7 +19,7 @@ disagree, the script wins. Update both.
 
 | Variable               | Notes                                                  |
 | ---------------------- | ------------------------------------------------------ |
-| `FIRECRACKER_VERSION`  | Pinned in the `Server Provider` defaults, currently `v1.15.1`. |
+| `FIRECRACKER_VERSION`  | Pinned in `atlas/atlas/doctype/server/server.py`, currently `v1.15.1`. |
 | `ARCHITECTURE`         | `x86_64` for this iteration.                           |
 
 ### What the script does
@@ -76,9 +76,11 @@ appear on stderr of the task because we run the SSH wrapper with `-x`.
 
 ## Provisioning a server end-to-end
 
-`Server Provider.provision_server(...)` is whitelisted and called from the
-**Provision Server** button. Both provider types funnel into the same
-`finish_provisioning` step that actually runs bootstrap.
+`Provider.provision_server(...)` is whitelisted and called from the
+**Provision Server** button. It calls the provider implementation
+(`atlas.get_provider().provision(request)`) in the web request, then
+enqueues `finish_provisioning` to run `describe()` (DigitalOcean) or
+no-op (Self-Managed) and run bootstrap.
 
 `finish_provisioning` is enqueued (`frappe.enqueue(..., queue="long")`),
 not run inline. The button returns the moment the `Server` row is
@@ -92,17 +94,42 @@ The operator picks a `title` (the user-facing label); the Server row's
 controller returns the new UUID — call sites that route to the form
 should use the returned name, not the title.
 
+### The Provider interface boundary
+
+The controller does not know which vendor it is talking to. It builds a
+`ProvisionRequest` dataclass from the dialog inputs and hands it to
+`atlas.get_provider().provision(request)`. The result is a
+`ProvisionResult` carrying `provider_resource_id`, `ready`, and
+optionally a `ServerNetworking` block. Two contracts the interface
+enforces:
+
+- `provision()` must return within ~30 seconds. Long-running vendor
+  creates (Scaleway Elastic Metal, AWS spot) return `ready=False` with
+  a placeholder id; the worker polls `describe()` until ready.
+- `describe()` is the authoritative source for Server fields after
+  provision. The worker writes `size`, `image`, IPs,
+  `ipv6_virtual_machine_range`, and `provider_metadata` from its result
+  — `provision()`'s output is treated as a hint, not the truth.
+
+See [02-doctypes.md § Provider abstraction](./02-doctypes.md#provider) and
+[llm/plan/provider-abstraction.md](../llm/plan/provider-abstraction.md)
+for the full interface.
+
 ### DigitalOcean
 
-Signature: `provision_server(title, region=None, size=None, image=None)`.
-Sync for the cheap part, async for the slow part:
+Signature: `provision_server(title, size=None, image=None)`. The region
+is fixed at `DigitalOcean Settings.region` (Atlas is single-region);
+the dialog has no region field, and the controller throws if a request
+carries one. Sync for the cheap part, async for the slow part:
 
 ```
 1. Validate no existing Server row carries this title.
-2. DigitalOceanClient.create_droplet(name=title, ...).
+2. atlas.get_provider().provision(ProvisionRequest(
+       title, size, image, ssh_key=atlas.get_ssh_key(), networking=DUAL_STACK
+   )) → ProvisionResult(provider_resource_id=droplet_id, ready=False, ...)
 3. Insert a Server row with status = "Pending", a UUID name, the title,
-   and provider_resource_id = droplet["id"] (region, size copied from
-   the dialog or from provider defaults).
+   provider_resource_id from the result. size / image left empty —
+   describe() will fill them on the worker side.
 4. frappe.enqueue("...finish_provisioning", queue="long", server_name=<uuid>).
 5. Return the new UUID name immediately.
 ```
@@ -110,14 +137,21 @@ Sync for the cheap part, async for the slow part:
 The `finish_provisioning(server_name)` worker:
 
 ```
-1. Load Server, read provider_resource_id from the row.
-2. wait_for_active(provider_resource_id, timeout=600s).
-3. Write ipv4_address, ipv6_address, ipv6_prefix, and
-   ipv6_virtual_machine_range (the /124 carved from the /64) onto the Server.
-4. status = "Bootstrapping". Save.
-5. wait_for_ssh(connection_for_server(server), timeout=300s).
-6. server.bootstrap()  — synchronous inside the worker; no nested enqueue.
-7. On success: status = "Active". On any exception: status = "Broken"
+1. Load Server.
+2. identifier = Server.provider_resource_id or Server.name
+   — Self-Managed has no vendor-side id; the worker passes the row's
+     UUID so describe() can look it up.
+3. result = wait_until_ready(provider, identifier, timeout=600s)
+   — polls provider.describe() at 5s intervals until ready=True.
+4. Apply result.networking to Server: ipv4_address, ipv6_address,
+   ipv6_prefix, ipv6_virtual_machine_range (DO: /124 carved from /64).
+5. Apply result.size, result.image, result.provider_metadata.
+   Empty size / image are skipped (Self-Managed returns "") so
+   operator-entered values are not clobbered.
+6. status = "Bootstrapping". Save.
+7. wait_for_ssh(connection_for_server(server), timeout=300s).
+8. server.bootstrap()  — synchronous inside the worker; no nested enqueue.
+9. On success: status = "Active". On any exception: status = "Broken"
    and re-raise so the Task row carries the failure.
 ```
 
@@ -129,20 +163,26 @@ does not need the caller to remember it.
 
 Signature: `provision_server(title, ipv4_address, ipv6_address,
 ipv6_prefix, ipv6_virtual_machine_range)`. There is no droplet to create
-and nothing to wait for — the host already exists:
+and nothing to wait for — the host already exists. The controller
+builds a `ProvisionRequest` with `prebuilt_networking` populated and
+calls `provision()`:
 
 ```
 1. Validate no existing Server row carries this title.
-2. Insert a Server row with status = "Pending", a UUID name, the title,
-   provider_resource_id = "" (empty), region / size empty, and the
-   IPv4 / IPv6 fields copied from the dialog inputs.
-3. frappe.enqueue("...finish_provisioning", queue="long", server_name=<uuid>).
-4. Return the new UUID name immediately.
+2. atlas.get_provider().provision(ProvisionRequest(
+       title, prebuilt_networking=ServerNetworking(ipv4, ipv6, prefix, range), ...
+   )) → ProvisionResult(provider_resource_id="", ready=True, networking=...)
+3. Insert a Server row with status = "Pending", a UUID name, the title,
+   the operator-supplied IPv4 / IPv6 fields, empty provider_resource_id,
+   empty size / image.
+4. frappe.enqueue("...finish_provisioning", queue="long", server_name=<uuid>).
+5. Return the new UUID name immediately.
 ```
 
-`finish_provisioning` on a Self-Managed server skips the "wait for the
-provider API" and "write networking fields" steps (they were already
-written at insert) and goes straight to:
+`finish_provisioning` on a Self-Managed server: the
+`SelfManagedProvider.describe()` returns the row's existing networking
+unchanged with `ready=True`, so the polling loop exits on the first
+iteration with no field updates. Then:
 
 ```
 1. status = "Bootstrapping". Save.
@@ -151,9 +191,9 @@ written at insert) and goes straight to:
 4. On success: status = "Active". On any exception: status = "Broken".
 ```
 
-The worker branches on `server.provider.provider_type`. The two paths
-share `wait_for_ssh` and `server.bootstrap()`; only the wait-for-API and
-write-networking-fields steps are DO-specific.
+The worker does not branch on provider type — both paths run the same
+`wait_until_ready → apply networking → bootstrap` sequence. The
+vendor-specific behavior lives entirely inside `provider.describe()`.
 
 ### Common: failure handling
 
@@ -178,9 +218,10 @@ mode and there will not be one.
 
 ### Pinned versions
 
-`FIRECRACKER_VERSION = v1.15.1`. To bump, edit the default on the
-`Server Provider`, re-run `Bootstrap` on every server. The script is
-idempotent so re-running is the only thing the operator does.
+`FIRECRACKER_VERSION = v1.15.1`. To bump, edit the constant in
+`atlas/atlas/doctype/server/server.py` and re-run `Bootstrap` on every
+server. The script is idempotent so re-running is the only thing the
+operator does.
 
 `ARCHITECTURE = x86_64`. `aarch64` is on the roadmap.
 

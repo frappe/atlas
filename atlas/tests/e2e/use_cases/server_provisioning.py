@@ -1,6 +1,6 @@
 """Use case: provision a Firecracker host.
 
-Operator clicks "Provision Server" on a `Server Provider`. The button calls
+Operator clicks "Provision Server" on a `Provider`. The button calls
 DO to create a droplet, inserts a `Server` row, waits for SSH, runs
 `bootstrap-server.sh`, and parses the JSON tail-line back onto the row.
 
@@ -9,7 +9,7 @@ This module exercises:
 - The happy path end-to-end against a fresh droplet ([run](#run)).
 - The validation throws that guard the same code path
   ([run_against_shared](#run_against_shared)):
-  - `Server Provider.test_connection()` (token works or 403s cleanly).
+  - `Provider.authenticate()` (token works or 403s cleanly).
   - `provision_server` rejects a duplicate name.
   - `Server.bootstrap()` from a non-Active status throws.
   - `Server.get_scripts()` returns the catalogue.
@@ -116,20 +116,18 @@ def _assert_remote_layout(server_name: str) -> None:
 
 
 def _check_test_connection(server) -> None:
-	"""test_connection returns ok or DigitalOceanError (403). Either drives
-	the same code path."""
-	from atlas.atlas.digitalocean import DigitalOceanError
-
-	provider = frappe.get_doc("Server Provider", server.provider)
-	try:
-		result = provider.test_connection()
-		assert result.get("ok") is True, result
-	except DigitalOceanError as exception:
-		assert "403" in str(exception) or "forbidden" in str(exception).lower(), str(exception)
+	"""authenticate() returns AuthResult. Either ok=True or ok=False with
+	an explanatory error message; both drive the same code path."""
+	provider = frappe.get_doc("Provider", server.provider)
+	result = provider.authenticate()
+	assert "ok" in result, result
+	if not result["ok"]:
+		error = result.get("error") or ""
+		assert "401" in error or "403" in error or "forbidden" in error.lower(), error
 
 
 def _check_provision_server_duplicate_name(server) -> None:
-	provider = frappe.get_doc("Server Provider", server.provider)
+	provider = frappe.get_doc("Provider", server.provider)
 	caught = False
 	try:
 		provider.provision_server(server.title)
@@ -159,7 +157,7 @@ def _check_get_scripts(server) -> None:
 def _check_finish_provisioning_idempotent(server) -> None:
 	"""finish_provisioning normally runs in a worker. Every step is idempotent;
 	re-running it against an already-Active row should leave the row Active."""
-	from atlas.atlas.doctype.server_provider.server_provider import finish_provisioning
+	from atlas.atlas.providers.worker import finish_provisioning
 
 	assert server.provider_resource_id, "shared server has no provider_resource_id"
 	finish_provisioning(server.name)

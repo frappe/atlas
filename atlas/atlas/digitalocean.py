@@ -13,14 +13,11 @@ retries.
 """
 
 import ipaddress
-import time
 
 import requests
 
 DEFAULT_BASE_URL = "https://api.digitalocean.com/v2"
 DEFAULT_TIMEOUT = 30
-ACTIVE_POLL_INTERVAL = 5
-DEFAULT_ACTIVE_TIMEOUT = 300
 
 
 class DigitalOceanError(Exception):
@@ -37,7 +34,7 @@ class DigitalOceanClient:
 
 	def verify_credentials(self) -> dict:
 		"""Like account(), but also returns the rate-limit headers DO sets on
-		every response. The Server Provider form surfaces them as
+		every response. The DigitalOcean Settings form surfaces them as
 		"4998 / 5000 remaining" so the operator can see token health at a
 		glance without opening the network tab. Raises DigitalOceanError on
 		non-2xx so the caller can render a red indicator on failure.
@@ -80,19 +77,6 @@ class DigitalOceanClient:
 
 	def get_droplet(self, droplet_id: int) -> dict:
 		return self._request("GET", f"/droplets/{droplet_id}")["droplet"]
-
-	def wait_for_active(self, droplet_id: int, timeout_seconds: int = DEFAULT_ACTIVE_TIMEOUT) -> dict:
-		deadline = time.monotonic() + timeout_seconds
-		while True:
-			droplet = self.get_droplet(droplet_id)
-			if droplet.get("status") == "active":
-				return droplet
-			if time.monotonic() >= deadline:
-				raise DigitalOceanError(
-					f"Droplet {droplet_id} not active after {timeout_seconds}s "
-					f"(status={droplet.get('status')})"
-				)
-			time.sleep(ACTIVE_POLL_INTERVAL)
 
 	def delete_droplet(self, droplet_id: int) -> None:
 		self._request("DELETE", f"/droplets/{droplet_id}", allow_404=True)

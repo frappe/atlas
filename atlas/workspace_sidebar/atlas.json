@@ -21,11 +21,23 @@
   {
    "child": 0,
    "collapsible": 1,
+   "icon": "settings",
+   "indent": 0,
+   "keep_closed": 0,
+   "label": "Atlas Settings",
+   "link_to": "Atlas Settings",
+   "link_type": "DocType",
+   "show_arrow": 0,
+   "type": "Link"
+  },
+  {
+   "child": 0,
+   "collapsible": 1,
    "icon": "cloud",
    "indent": 0,
    "keep_closed": 0,
-   "label": "Server Provider",
-   "link_to": "Server Provider",
+   "label": "Provider",
+   "link_to": "Provider",
    "link_type": "DocType",
    "show_arrow": 0,
    "type": "Link"

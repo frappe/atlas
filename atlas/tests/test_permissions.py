@@ -8,7 +8,7 @@ new DocType or relaxes a perms block can't silently widen access.
 import frappe
 from frappe.tests import IntegrationTestCase
 
-from atlas.tests.fixtures import _ensure_fake_ssh_key_path, make_provider
+from atlas.tests.fixtures import make_provider
 
 PROVIDER_NAME = "atlas-perm-test-provider"
 BASIC_USER_EMAIL = "atlas-perm-basic@example.com"
@@ -56,28 +56,27 @@ def _make_basic_user() -> str:
 
 class TestPermissions(IntegrationTestCase):
 	def setUp(self) -> None:
-		self.provider = make_provider(
-			PROVIDER_NAME,
-			api_token="dop_v1_perm_test",
-			ssh_key_id="fp:perm-test",
-			ssh_private_key_path=_ensure_fake_ssh_key_path(),
-		)
+		self.provider = make_provider(PROVIDER_NAME)
 		self.basic_user = _make_basic_user()
 		self.addCleanup(frappe.set_user, "Administrator")
 
-	def test_only_system_manager_can_read_server_provider(self) -> None:
+	def test_only_system_manager_can_read_provider(self) -> None:
 		frappe.set_user(self.basic_user)
 		self.assertFalse(
-			frappe.has_permission("Server Provider", "read", doc=self.provider.name),
-			"basic user must not be able to read Server Provider",
+			frappe.has_permission("Provider", "read", doc=self.provider.name),
+			"basic user must not be able to read Provider",
 		)
 
 	def test_api_token_not_in_get_doc_response(self) -> None:
-		# Password fields are stored in the auth table, not on the row.
-		# A fresh get_doc must not surface plaintext. The SSH private key is
-		# no longer a Password field on the row (it lives on disk now), so
-		# the analogous secret we keep on the doc is `api_token`.
-		doc = frappe.get_doc("Server Provider", self.provider.name)
+		# api_token now lives on DigitalOcean Settings, not on the Provider
+		# row. Password fields land in the auth table; a fresh get_doc must
+		# not surface plaintext.
+		import frappe.utils.password
+		frappe.utils.password.set_encrypted_password(
+			"DigitalOcean Settings", "DigitalOcean Settings",
+			"dop_v1_perm_test", "api_token",
+		)
+		doc = frappe.get_single("DigitalOcean Settings")
 		serialized = doc.as_dict()
 		self.assertNotIn("dop_v1_perm_test", str(serialized))
 		self.assertNotEqual(serialized.get("api_token"), "dop_v1_perm_test")

@@ -8,7 +8,12 @@
                 |    atlas.local                   |
                 |                                  |
                 |  DocTypes:                       |
-                |   - Server Provider              |
+                |   - Atlas Settings (Single)      |
+                |   - Provider                     |
+                |   - DigitalOcean Settings        |
+                |   - Self-Managed Settings        |
+                |   - Provider Size                |
+                |   - Provider Image               |
                 |   - Server                       |
                 |   - Virtual Machine              |
                 |   - Virtual Machine Image        |
@@ -89,33 +94,52 @@ buttons a primary / secondary / danger hierarchy, and demands typed
 confirmation for destructive or billable actions. See
 [10-desk-ui.md](./10-desk-ui.md) for the full convention.
 
-### Server Provider
+### Provider abstraction
+
+Atlas talks to vendors through one Python interface (a `Provider` ABC at
+`atlas/atlas/providers/base.py`) with five methods: `authenticate`,
+`discover`, `provision`, `describe`, `destroy`. One subclass per
+vendor; the registry keys off `Provider.provider_type`. Controllers
+never branch on the vendor — they call `atlas.get_provider()` and use
+the returned object.
 
 Two provider types are implemented:
 
-- **DigitalOcean.** The `Server Provider` document stores the DO API token
-  and the defaults Atlas uses to create droplets. The provider knows how to
-  create and delete a droplet.
+- **DigitalOcean.** `DigitalOcean Settings` (Single) holds the API
+  token, the operating region (Atlas is single-region per vendor), and
+  the default size + image Link references. `DigitalOceanProvider`
+  wraps the DO REST client at `atlas/atlas/digitalocean.py`.
 - **Self-Managed.** The operator has already built the host (any cloud,
-  bare metal, a server in a cupboard). The provider document only stores
-  the SSH credentials Atlas uses to reach those hosts. There is no API to
-  call; "Provision Server" just registers a `Server` row pointing at an
-  IPv4 the operator types in, then bootstraps it.
+  bare metal, a server in a cupboard). There is no API to call;
+  `provision()` validates the operator-supplied IPv4 / IPv6 inputs and
+  returns them as the Server's networking. `destroy()` is a no-op.
+  `Self-Managed Settings` is an empty stub today.
 
-Both types end up at the same place — a `Server` row Atlas can SSH into —
-and from there every other DocType behaves identically. The provider
-abstraction is not designed for multi-cloud; it is designed to keep the
+Cross-vendor configuration lives on `Atlas Settings` (Single): the
+active `Provider` link, and the SSH key (fingerprint, public key body,
+on-disk path). Vendor catalogs (machine sizes, OS images) live in the
+`Provider Size` / `Provider Image` DocTypes — seeded at first run,
+refreshed via the Provider form's **Refresh Catalog** button which
+calls `provider.discover()`. See [02-doctypes.md](./02-doctypes.md) for
+the full schema and [llm/plan/provider-abstraction.md](../llm/plan/provider-abstraction.md)
+for the implementation plan.
+
+Both vendor types end up at the same place — a `Server` row Atlas can
+SSH into — and from there every other DocType behaves identically. The
+abstraction is not designed for multi-cloud orchestration; it keeps the
 "how did this host come to exist?" question out of the rest of the
 system.
 
 ### Server
 
 A `Server` document represents one host. It is created by clicking
-"Provision Server" on a `Server Provider`. For `DigitalOcean` providers
-this calls the DO API and waits for the droplet to come up; for
-`Self-Managed` providers the operator types in the IP and IPv6 details of
-a host they have already built. Both paths end the same way: insert the
-`Server` row, wait for SSH, then bootstrap the host.
+"Provision Server" on a `Provider`. For `DigitalOcean` providers this
+calls the DO API, then a worker polls `provider.describe()` until the
+droplet is ready and writes the IPs / size / image / `provider_metadata`
+back to the row. For `Self-Managed` providers the operator types in
+the IP and IPv6 details of a host they have already built; `provision()`
+returns them as the Server's networking immediately. Both paths end
+the same way: wait for SSH, then bootstrap the host.
 
 ### Virtual Machine
 
@@ -175,7 +199,11 @@ One task per lifecycle operation. Not one task per shell command. See
 
 | State                          | Where                                  | Authoritative? |
 | ------------------------------ | -------------------------------------- | -------------- |
-| Server IPs, sizes, providers   | Frappe DB                              | Yes            |
+| Server IPs, size, image, provider | Frappe DB                           | Yes            |
+| Vendor catalogs (sizes, images) | Frappe DB (`Provider Size`, `Provider Image`) | Yes (mirrors vendor; refreshed via `discover()`) |
+| Provider credentials           | Frappe DB (per-vendor Settings Single) | Yes            |
+| SSH key (fingerprint, public key) | Frappe DB (`Atlas Settings`)        | Yes            |
+| SSH private key                | Atlas host disk, `/etc/atlas/keys/*.pem` | Yes (DB stores the path only) |
 | VM specs (vCPU, RAM, disk)     | Frappe DB                              | Yes            |
 | VM-to-server placement         | Frappe DB                              | Yes            |
 | IPv6 address assignments       | Frappe DB                              | Yes            |

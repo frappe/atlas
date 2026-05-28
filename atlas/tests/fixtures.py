@@ -8,17 +8,22 @@ Production code never touches these; they exist purely so test files don't
 each carry a `_make_provider` reimplementation.
 """
 
+import json
 import pathlib
 import tempfile
 from typing import Any
 
 import frappe
+import frappe.utils.password
 from frappe.model.document import Document
 
 from atlas.tests.e2e._shared import DEFAULT_IMAGE
 
 
 _FAKE_KEY_PEM = "-----BEGIN OPENSSH PRIVATE KEY-----\nfake\n-----END OPENSSH PRIVATE KEY-----\n"
+
+DEFAULT_DIGITALOCEAN_SIZE = "DigitalOcean/s-2vcpu-4gb-intel"
+DEFAULT_DIGITALOCEAN_IMAGE = "DigitalOcean/ubuntu-24-04-x64"
 
 
 def _ensure_fake_ssh_key_path() -> str:
@@ -32,28 +37,116 @@ def _ensure_fake_ssh_key_path() -> str:
 	return str(path)
 
 
-def make_provider(name: str = "test-provider", **overrides: Any) -> Document:
-	"""Create a `Server Provider` row if it doesn't already exist.
-
-	Token shape pinned to `dop_v1_*` so callers see what the production DO
-	library expects.
-	"""
-	if frappe.db.exists("Server Provider", name):
-		return frappe.get_doc("Server Provider", name)
+def make_provider_row(
+	name: str = "test-provider",
+	provider_type: str = "DigitalOcean",
+	**overrides: Any,
+) -> Document:
+	"""Insert a `Provider` row (thin link table). Idempotent."""
+	if frappe.db.exists("Provider", name):
+		return frappe.get_doc("Provider", name)
 	doc = {
-		"doctype": "Server Provider",
+		"doctype": "Provider",
 		"provider_name": name,
-		"provider_type": "DigitalOcean",
-		"api_token": "dop_v1_fake",
-		"ssh_key_id": "fp:fingerprint",
-		"ssh_private_key_path": _ensure_fake_ssh_key_path(),
-		"default_region": "blr1",
-		"default_size": "s-2vcpu-4gb-intel",
-		"default_image": "ubuntu-24-04-x64",
+		"provider_type": provider_type,
 		"is_active": 1,
 	}
 	doc.update(overrides)
 	return frappe.get_doc(doc).insert(ignore_permissions=True)
+
+
+def set_atlas_settings(
+	provider: str | Document,
+	ssh_fingerprint: str | None = "fp:fingerprint",
+	ssh_private_key_path: str | None = None,
+	ssh_public_key: str | None = None,
+) -> None:
+	"""Write Atlas Settings Single via set_single_value (bypasses reqd)."""
+	provider_name = provider.name if isinstance(provider, Document) else provider
+	frappe.db.set_single_value("Atlas Settings", "provider", provider_name, update_modified=False)
+	if ssh_fingerprint is not None:
+		frappe.db.set_single_value("Atlas Settings", "ssh_fingerprint", ssh_fingerprint, update_modified=False)
+	if ssh_public_key is not None:
+		frappe.db.set_single_value("Atlas Settings", "ssh_public_key", ssh_public_key, update_modified=False)
+	frappe.db.set_single_value(
+		"Atlas Settings",
+		"ssh_private_key_path",
+		ssh_private_key_path or _ensure_fake_ssh_key_path(),
+		update_modified=False,
+	)
+
+
+def set_digitalocean_settings(
+	api_token: str = "dop_v1_fake",
+	region: str = "blr1",
+	default_size: str = DEFAULT_DIGITALOCEAN_SIZE,
+	default_image: str = DEFAULT_DIGITALOCEAN_IMAGE,
+) -> None:
+	"""Write DigitalOcean Settings Single."""
+	frappe.db.set_single_value("DigitalOcean Settings", "region", region, update_modified=False)
+	frappe.db.set_single_value("DigitalOcean Settings", "default_size", default_size, update_modified=False)
+	frappe.db.set_single_value("DigitalOcean Settings", "default_image", default_image, update_modified=False)
+	# api_token is a Password field; route through the encryption helper.
+	frappe.utils.password.set_encrypted_password(
+		"DigitalOcean Settings", "DigitalOcean Settings", api_token, "api_token"
+	)
+
+
+def seed_catalogs() -> None:
+	"""Seed the test catalog rows used by make_server and provider tests."""
+	from atlas.atlas.providers.digitalocean import (
+		DIGITALOCEAN_MONTHLY_COST_USD,
+		KNOWN_DIGITALOCEAN_IMAGES,
+		KNOWN_DIGITALOCEAN_SIZES,
+	)
+
+	for slug in KNOWN_DIGITALOCEAN_SIZES:
+		name = f"DigitalOcean/{slug}"
+		if frappe.db.exists("Provider Size", name):
+			continue
+		frappe.get_doc({
+			"doctype": "Provider Size",
+			"provider_type": "DigitalOcean",
+			"slug": slug,
+			"enabled": 1,
+			"monthly_cost_usd": DIGITALOCEAN_MONTHLY_COST_USD.get(slug),
+			"provider_metadata": json.dumps({}),
+		}).insert(ignore_permissions=True)
+	for slug in KNOWN_DIGITALOCEAN_IMAGES:
+		name = f"DigitalOcean/{slug}"
+		if frappe.db.exists("Provider Image", name):
+			continue
+		frappe.get_doc({
+			"doctype": "Provider Image",
+			"provider_type": "DigitalOcean",
+			"slug": slug,
+			"enabled": 1,
+			"provider_metadata": json.dumps({}),
+		}).insert(ignore_permissions=True)
+
+
+def make_provider(name: str = "test-provider", **overrides: Any) -> Document:
+	"""Compatibility shim: insert a Provider row, set Atlas Settings and
+	DigitalOcean Settings, and seed the test catalogs.
+
+	Callers that still write `make_provider(...).default_size` expect a
+	`Document`-like result; we return the Provider row, with `default_size`
+	/ `default_image` attributes monkeyed in for backward compatibility
+	with the (small) number of unit tests that haven't been split apart
+	yet.
+	"""
+	provider_type = overrides.pop("provider_type", "DigitalOcean")
+	# Strip legacy kwargs from the old Server Provider shape.
+	for legacy in ("api_token", "ssh_key_id", "ssh_private_key_path",
+		"default_region", "default_size", "default_image"):
+		overrides.pop(legacy, None)
+
+	seed_catalogs()
+	provider = make_provider_row(name=name, provider_type=provider_type, **overrides)
+	set_atlas_settings(provider)
+	if provider_type == "DigitalOcean":
+		set_digitalocean_settings()
+	return provider
 
 
 def make_server(
@@ -61,21 +154,10 @@ def make_server(
 	title: str = "test-server",
 	**overrides: Any,
 ) -> Document:
-	"""Create a `Server` row if one with the given `title` does not exist.
-
-	`Server.name` is a UUID assigned by the controller's `autoname()`;
-	tests look up by `title` so they stay deterministic across runs. If
-	`provider` is omitted, a default test provider is created.
-
-	If a row with the given title already exists, mutable fields named in
-	`overrides` (typically `status`) are written back so the row matches the
-	caller's expectation even across test runs that left polluted state.
-	"""
+	"""Create a `Server` row if one with the given `title` does not exist."""
 	existing = frappe.db.get_value("Server", {"title": title}, "name")
 	if existing:
 		server = frappe.get_doc("Server", existing)
-		# Mutable fields that tests routinely override (`status`) need to be
-		# reapplied; immutable fields are silently ignored.
 		for field, value in overrides.items():
 			if server.get(field) != value:
 				frappe.db.set_value("Server", existing, field, value, update_modified=False)
@@ -87,8 +169,7 @@ def make_server(
 		"title": title,
 		"provider": provider.name,
 		"provider_resource_id": None,
-		"region": provider.default_region,
-		"size": provider.default_size,
+		"size": DEFAULT_DIGITALOCEAN_SIZE,
 		"status": "Pending",
 	}
 	doc.update(overrides)
@@ -96,12 +177,7 @@ def make_server(
 
 
 def make_image(name: str = "test-image", **overrides: Any) -> Document:
-	"""Create a `Virtual Machine Image` row if it doesn't already exist.
-
-	Defaults mirror `DEFAULT_IMAGE` from the e2e shared module — same field
-	shapes, but the URLs/SHAs are placeholders that never get fetched in
-	unit tests.
-	"""
+	"""Create a `Virtual Machine Image` row if it doesn't already exist."""
 	if frappe.db.exists("Virtual Machine Image", name):
 		return frappe.get_doc("Virtual Machine Image", name)
 	doc = {
@@ -126,12 +202,7 @@ def make_virtual_machine(
 	image: Document | str,
 	**overrides: Any,
 ) -> Document:
-	"""Create a `Virtual Machine` row.
-
-	`Virtual Machine.name` is assigned by the controller's `before_insert`
-	via `uuid.uuid4()`, so there is no "if exists, return" shortcut: every
-	call inserts a fresh row.
-	"""
+	"""Create a `Virtual Machine` row."""
 	server_name = server.name if isinstance(server, Document) else server
 	image_name = image.name if isinstance(image, Document) else image
 	doc = {

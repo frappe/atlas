@@ -3,9 +3,8 @@
 Exercises every code path on the DO HTTP client that an operator can trigger:
 
 - `account()` smoke (token works).
-- Real-droplet round trip: create -> wait_for_active -> get -> delete.
-- Error paths: 404 on get_droplet, silent 404 on delete_droplet,
-  wait_for_active against a bogus id.
+- Real-droplet round trip: create -> poll for active -> get -> delete.
+- Error paths: 404 on get_droplet, silent 404 on delete_droplet.
 - Pure helpers `public_ipv4` / `public_ipv6` / `_network_cidr` covering
   every "no public address" branch.
 
@@ -38,7 +37,6 @@ def run() -> None:
 		_check_account()
 		_check_get_droplet_bogus()
 		_check_delete_droplet_bogus_is_silent()
-		_check_wait_for_active_times_out()
 		_check_public_ipv4_missing()
 		_check_public_ipv6_missing()
 		_check_network_cidr_helper()
@@ -77,20 +75,6 @@ def _check_delete_droplet_bogus_is_silent() -> None:
 	"""allow_404 path: deleting a non-existent id returns silently."""
 	client = get_client()
 	client.delete_droplet(1)
-
-
-def _check_wait_for_active_times_out() -> None:
-	"""wait_for_active(<bogus>) raises. With a non-existent id, the inner
-	get_droplet call raises 404 first; that still drives the entry path of
-	wait_for_active and is the production behaviour. The internal timeout
-	branch is covered by unit tests where the HTTP layer can be mocked."""
-	client = get_client()
-	caught = False
-	try:
-		client.wait_for_active(1, timeout_seconds=1)
-	except DigitalOceanError:
-		caught = True
-	assert caught, "wait_for_active(1) should have raised"
 
 
 def _check_public_ipv4_missing() -> None:

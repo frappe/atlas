@@ -127,14 +127,18 @@ class TestServerArchive(IntegrationTestCase):
 		)
 
 	def test_archive_sets_status_archived(self) -> None:
-		self.server.archive()
+		from unittest.mock import MagicMock, patch
+		with patch("atlas.atlas.atlas_settings.providers.for_provider", return_value=MagicMock()):
+			self.server.archive()
 		self.assertEqual(
 			frappe.db.get_value("Server", self.server.name, "status"),
 			"Archived",
 		)
 
 	def test_archive_throws_when_already_archived(self) -> None:
-		self.server.archive()
+		from unittest.mock import MagicMock, patch
+		with patch("atlas.atlas.atlas_settings.providers.for_provider", return_value=MagicMock()):
+			self.server.archive()
 		self.server.reload()
 		with self.assertRaises(frappe.ValidationError):
 			self.server.archive()

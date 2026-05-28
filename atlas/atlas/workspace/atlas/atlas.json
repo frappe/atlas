@@ -17,16 +17,46 @@
    "hidden": 0,
    "is_query_report": 0,
    "label": "Infrastructure",
-   "link_count": 2,
+   "link_count": 5,
    "onboard": 0,
    "type": "Card Break"
   },
   {
    "hidden": 0,
    "is_query_report": 0,
-   "label": "Server Provider",
+   "label": "Atlas Settings",
    "link_count": 0,
-   "link_to": "Server Provider",
+   "link_to": "Atlas Settings",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Provider",
+   "link_count": 0,
+   "link_to": "Provider",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "DigitalOcean Settings",
+   "link_count": 0,
+   "link_to": "DigitalOcean Settings",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Self-Managed Settings",
+   "link_count": 0,
+   "link_to": "Self-Managed Settings",
    "link_type": "DocType",
    "onboard": 0,
    "type": "Link"

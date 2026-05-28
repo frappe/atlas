@@ -3,7 +3,7 @@
 Returns "what does this Server have, and how much of it is already spoken for?"
 so the operator can see oversubscription before clicking Provision. vCPU totals
 come from a small static dict keyed by DigitalOcean size slug — same maintenance
-model as `default_image` and the monthly-cost dict on Server Provider.
+model as `Provider Size.monthly_cost_usd`.
 """
 
 import frappe
@@ -31,7 +31,10 @@ def capacity_for_server(server: str) -> dict:
 	`used` sums `vcpus` of non-Terminated VMs.
 	"""
 	size = frappe.db.get_value("Server", server, "size")
-	total = DIGITALOCEAN_VCPUS_BY_SIZE.get(size) if size else None
+	# Server.size is now a Link to Provider Size, stored as "{type}/{slug}".
+	# Strip the prefix before looking up vCPUs in the legacy slug-keyed dict.
+	slug = size.split("/", 1)[1] if size and "/" in size else size
+	total = DIGITALOCEAN_VCPUS_BY_SIZE.get(slug) if slug else None
 	used_rows = frappe.get_all(
 		"Virtual Machine",
 		filters={"server": server, "status": ["!=", "Terminated"]},

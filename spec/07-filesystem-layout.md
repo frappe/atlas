@@ -71,12 +71,21 @@ be there; the file on disk is just a cache of the last bootstrap.
 
 ## Atlas-host side: SSH private keys
 
-The Atlas host itself (the machine running the Frappe site) keeps one
-SSH private key per `Server Provider` on disk under
-`/etc/atlas/keys/<provider_name>.pem`. The `Server Provider` row
-stores the path in `ssh_private_key_path`; the key is *not* in the DB.
+The Atlas host itself (the machine running the Frappe site) keeps the
+SSH private key on disk under `/etc/atlas/keys/atlas.pem` (or whatever
+path the operator chose). `Atlas Settings.ssh_private_key_path` stores
+the path; the key body is *not* in the DB. The matching public-key body
+*is* in the DB at `Atlas Settings.ssh_public_key` — providers that
+upload keys at provision time (future Scaleway, AWS) read it from
+there, and `Atlas Settings.ssh_fingerprint` carries the vendor-side
+reference for providers that need a pre-registered fingerprint
+(DigitalOcean).
 
-- Mode `0600` on every key file. Mode `0700` on `/etc/atlas/keys/`.
+One Atlas instance, one SSH key. Multi-account ("prod + staging on the
+same vendor") is foreclosed by the per-vendor Single Settings model:
+stand up a second Atlas site instead.
+
+- Mode `0600` on the key file. Mode `0700` on `/etc/atlas/keys/`.
   Both owned by the Frappe user.
 - Atlas reads the file at SSH-connect time via
   `secrets.get_ssh_key_from_disk(path)`. The result is held in memory

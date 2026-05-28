@@ -43,7 +43,12 @@ app_include_css = "/assets/atlas/css/atlas_desk.css"
 
 doctype_js = {
 	"Server": "public/js/atlas_form_overrides.js",
-	"Server Provider": "public/js/atlas_form_overrides.js",
+	"Provider": "public/js/atlas_form_overrides.js",
+	"Atlas Settings": "public/js/atlas_form_overrides.js",
+	"DigitalOcean Settings": "public/js/atlas_form_overrides.js",
+	"Self-Managed Settings": "public/js/atlas_form_overrides.js",
+	"Provider Size": "public/js/atlas_form_overrides.js",
+	"Provider Image": "public/js/atlas_form_overrides.js",
 	"Virtual Machine": "public/js/atlas_form_overrides.js",
 	"Virtual Machine Image": "public/js/atlas_form_overrides.js",
 	"Task": "public/js/atlas_form_overrides.js",

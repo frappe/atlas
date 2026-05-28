@@ -62,7 +62,7 @@ class VirtualMachineImage(Document):
 		servers = frappe.get_all(
 			"Server",
 			filters={"status": "Active"},
-			fields=["name", "region"],
+			fields=["name"],
 			order_by="name asc",
 		)
 		results: list[dict] = []
@@ -87,7 +87,6 @@ class VirtualMachineImage(Document):
 			row = last[0] if last else None
 			results.append({
 				"server": server.name,
-				"region": server.region,
 				"synced_at": row["modified"].isoformat() if row else None,
 				"task": row["name"] if row else None,
 			})

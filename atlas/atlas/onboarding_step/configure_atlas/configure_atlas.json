@@ -1,0 +1,21 @@
+{
+ "action": "Update Settings",
+ "action_label": "Configure Atlas",
+ "creation": "2026-05-28 00:00:00.000000",
+ "description": "## Configure Atlas\n\nSet the active Provider and the SSH key Atlas uses to reach your servers. Vendor-specific credentials (DigitalOcean PAT, region, defaults) live on `DigitalOcean Settings`.",
+ "docstatus": 0,
+ "doctype": "Onboarding Step",
+ "idx": 1,
+ "is_complete": 0,
+ "is_single": 1,
+ "is_skipped": 0,
+ "modified": "2026-05-28 00:00:00.000000",
+ "modified_by": "Administrator",
+ "name": "Configure Atlas",
+ "owner": "Administrator",
+ "reference_document": "Atlas Settings",
+ "show_form_tour": 0,
+ "show_full_form": 0,
+ "title": "Configure Atlas",
+ "validate_action": 1
+}

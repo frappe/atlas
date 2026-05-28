@@ -5,6 +5,7 @@ atlas.patches.v1_0.rename_server_to_uuid
 atlas.patches.v1_0.rename_vm_description_to_title
 atlas.patches.v1_0.rename_image_description_to_title
 atlas.patches.v1_0.migrate_ssh_key_to_disk
+atlas.patches.v1_0.migrate_to_provider_abstraction
 
 [post_model_sync]
 # Patches added in this section will be executed after doctypes are migrated

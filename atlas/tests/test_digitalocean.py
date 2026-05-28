@@ -71,28 +71,6 @@ class TestDigitalOceanClient(IntegrationTestCase):
 		self.assertEqual(body["tags"], ["atlas-e2e"])
 		self.assertTrue(body["ipv6"])
 
-	def test_wait_for_active_polls_until_active(self) -> None:
-		responses = [
-			_FakeResponse(200, _fixture("droplet_new")),
-			_FakeResponse(200, _fixture("droplet_new")),
-			_FakeResponse(200, _fixture("droplet_active")),
-		]
-		with patch("atlas.atlas.digitalocean.requests.request", side_effect=responses):
-			with patch("atlas.atlas.digitalocean.time.sleep"):
-				droplet = self.client.wait_for_active(412345678, timeout_seconds=60)
-		self.assertEqual(droplet["status"], "active")
-
-	def test_wait_for_active_times_out(self) -> None:
-		fake = _FakeResponse(200, _fixture("droplet_new"))
-		with patch("atlas.atlas.digitalocean.requests.request", return_value=fake):
-			with patch("atlas.atlas.digitalocean.time.sleep"):
-				with patch(
-					"atlas.atlas.digitalocean.time.monotonic",
-					side_effect=[0, 1, 1000],
-				):
-					with self.assertRaises(DigitalOceanError):
-						self.client.wait_for_active(412345678, timeout_seconds=60)
-
 	def test_delete_droplet_treats_404_as_success(self) -> None:
 		fake = _FakeResponse(404)
 		with patch("atlas.atlas.digitalocean.requests.request", return_value=fake):
