@@ -105,6 +105,213 @@ class TestVirtualMachineLifecycle(IntegrationTestCase):
 		with self.assertRaises(frappe.ValidationError):
 			vm.restart()
 
+	def test_rebuild_from_image_runs_script(self) -> None:
+		from atlas.atlas.doctype.virtual_machine import virtual_machine as module
+
+		vm = _vm_with_status("Stopped")
+		task = fake_task(name="task-rebuild-img")
+		with patch.object(module, "run_task", return_value=task) as mocked:
+			result = vm.rebuild("image")
+		self.assertEqual(result, "task-rebuild-img")
+		self.assertEqual(mocked.call_args.kwargs["script"], "rebuild-vm.sh")
+		variables = mocked.call_args.kwargs["variables"]
+		self.assertEqual(variables["IMAGE_NAME"], _ensure_test_image())
+		self.assertNotIn("SNAPSHOT_ROOTFS_PATH", variables)
+		# VM stays Stopped after rebuild.
+		vm.reload()
+		self.assertEqual(vm.status, "Stopped")
+
+	def test_rebuild_from_snapshot_runs_script(self) -> None:
+		from atlas.atlas.doctype.virtual_machine import virtual_machine as module
+
+		vm = _vm_with_status("Stopped")
+		snapshot = frappe.get_doc({
+			"doctype": "Virtual Machine Snapshot",
+			"title": "snap",
+			"virtual_machine": vm.name,
+			"server": vm.server,
+			"status": "Available",
+			"rootfs_path": f"/var/lib/atlas/virtual-machines/{vm.name}/snapshots/s1/rootfs.ext4",
+		}).insert(ignore_permissions=True)
+		task = fake_task(name="task-rebuild-snap")
+		with patch.object(module, "run_task", return_value=task) as mocked:
+			result = vm.rebuild("snapshot", snapshot.name)
+		self.assertEqual(result, "task-rebuild-snap")
+		variables = mocked.call_args.kwargs["variables"]
+		self.assertEqual(variables["SNAPSHOT_ROOTFS_PATH"], snapshot.rootfs_path)
+		self.assertNotIn("IMAGE_NAME", variables)
+
+	def test_rebuild_rejects_when_not_stopped(self) -> None:
+		vm = _vm_with_status("Running")
+		with self.assertRaises(frappe.ValidationError) as raised:
+			vm.rebuild("image")
+		self.assertIn("Stop the VM before rebuilding", str(raised.exception))
+
+	def test_rebuild_snapshot_of_other_vm_rejected(self) -> None:
+		vm = _vm_with_status("Stopped")
+		other = _new_vm()
+		snapshot = frappe.get_doc({
+			"doctype": "Virtual Machine Snapshot",
+			"title": "foreign",
+			"virtual_machine": other.name,
+			"server": other.server,
+			"status": "Available",
+			"rootfs_path": "/var/lib/atlas/virtual-machines/x/snapshots/s/rootfs.ext4",
+		}).insert(ignore_permissions=True)
+		with self.assertRaises(frappe.ValidationError) as raised:
+			vm.rebuild("snapshot", snapshot.name)
+		self.assertIn("different Virtual Machine", str(raised.exception))
+
+	def test_rebuild_unavailable_snapshot_rejected(self) -> None:
+		vm = _vm_with_status("Stopped")
+		snapshot = frappe.get_doc({
+			"doctype": "Virtual Machine Snapshot",
+			"title": "pending-snap",
+			"virtual_machine": vm.name,
+			"server": vm.server,
+			"status": "Pending",
+		}).insert(ignore_permissions=True)
+		with self.assertRaises(frappe.ValidationError) as raised:
+			vm.rebuild("snapshot", snapshot.name)
+		self.assertIn("not Available", str(raised.exception))
+
+	def test_rebuild_unknown_source_type_rejected(self) -> None:
+		vm = _vm_with_status("Stopped")
+		with self.assertRaises(frappe.ValidationError) as raised:
+			vm.rebuild("banana")
+		self.assertIn("Unknown rebuild source_type", str(raised.exception))
+
+	def test_rebuild_snapshot_without_source_rejected(self) -> None:
+		vm = _vm_with_status("Stopped")
+		with self.assertRaises(frappe.ValidationError) as raised:
+			vm.rebuild("snapshot")
+		self.assertIn("requires a snapshot", str(raised.exception))
+
+	def test_pause_from_running_succeeds(self) -> None:
+		from atlas.atlas.doctype.virtual_machine import virtual_machine as module
+
+		vm = _vm_with_status("Running")
+		task = fake_task(name="task-pause-1")
+		with patch.object(module, "run_task", return_value=task) as mocked:
+			result = vm.pause()
+		self.assertEqual(result, "task-pause-1")
+		self.assertEqual(mocked.call_args.kwargs["script"], "pause-vm.sh")
+		vm.reload()
+		self.assertEqual(vm.status, "Paused")
+
+	def test_pause_from_stopped_raises(self) -> None:
+		vm = _vm_with_status("Stopped")
+		with self.assertRaises(frappe.ValidationError):
+			vm.pause()
+
+	def test_resume_from_paused_succeeds(self) -> None:
+		from atlas.atlas.doctype.virtual_machine import virtual_machine as module
+
+		vm = _vm_with_status("Running")
+		vm.status = "Paused"
+		vm.save(ignore_permissions=True)
+		task = fake_task(name="task-resume-1")
+		with patch.object(module, "run_task", return_value=task) as mocked:
+			result = vm.resume()
+		self.assertEqual(result, "task-resume-1")
+		self.assertEqual(mocked.call_args.kwargs["script"], "resume-vm.sh")
+		vm.reload()
+		self.assertEqual(vm.status, "Running")
+
+	def test_resume_from_running_raises(self) -> None:
+		vm = _vm_with_status("Running")
+		with self.assertRaises(frappe.ValidationError):
+			vm.resume()
+
+	def test_stop_from_paused_succeeds(self) -> None:
+		from atlas.atlas.doctype.virtual_machine import virtual_machine as module
+
+		vm = _vm_with_status("Running")
+		vm.status = "Paused"
+		vm.save(ignore_permissions=True)
+		with patch.object(module, "run_task", return_value=fake_task(name="task-stop-p")):
+			vm.stop()
+		vm.reload()
+		self.assertEqual(vm.status, "Stopped")
+
+	def test_terminate_from_paused_succeeds(self) -> None:
+		from atlas.atlas.doctype.virtual_machine import virtual_machine as module
+
+		vm = _vm_with_status("Running")
+		vm.status = "Paused"
+		vm.save(ignore_permissions=True)
+		with patch.object(module, "run_task", return_value=fake_task(name="task-term-p")):
+			vm.terminate()
+		vm.reload()
+		self.assertEqual(vm.status, "Terminated")
+
+	def test_restart_from_paused_raises(self) -> None:
+		vm = _vm_with_status("Running")
+		vm.status = "Paused"
+		vm.save(ignore_permissions=True)
+		with self.assertRaises(frappe.ValidationError):
+			vm.restart()
+
+	def test_start_from_paused_raises(self) -> None:
+		vm = _vm_with_status("Running")
+		vm.status = "Paused"
+		vm.save(ignore_permissions=True)
+		with self.assertRaises(frappe.ValidationError):
+			vm.start()
+
+	def test_resize_from_stopped_persists_and_runs_script(self) -> None:
+		from atlas.atlas.doctype.virtual_machine import virtual_machine as module
+
+		vm = _vm_with_status("Stopped")
+		task = fake_task(name="task-resize-1")
+		with patch.object(module, "run_task", return_value=task) as mocked:
+			result = vm.resize(vcpus=4, memory_megabytes=4096, disk_gigabytes=20)
+		self.assertEqual(result, "task-resize-1")
+		self.assertEqual(mocked.call_args.kwargs["script"], "resize-vm.sh")
+		variables = mocked.call_args.kwargs["variables"]
+		self.assertEqual(variables["VCPUS"], "4")
+		self.assertEqual(variables["MEMORY_MB"], "4096")
+		self.assertEqual(variables["DISK_GB"], "20")
+		vm.reload()
+		self.assertEqual(vm.vcpus, 4)
+		self.assertEqual(vm.memory_megabytes, 4096)
+		self.assertEqual(vm.disk_gigabytes, 20)
+		self.assertEqual(vm.status, "Stopped")
+
+	def test_resize_defaults_unspecified_fields(self) -> None:
+		from atlas.atlas.doctype.virtual_machine import virtual_machine as module
+
+		vm = _vm_with_status("Stopped")
+		before_memory = vm.memory_megabytes
+		before_disk = vm.disk_gigabytes
+		with patch.object(module, "run_task", return_value=fake_task()):
+			vm.resize(vcpus=2)
+		vm.reload()
+		self.assertEqual(vm.vcpus, 2)
+		self.assertEqual(vm.memory_megabytes, before_memory)
+		self.assertEqual(vm.disk_gigabytes, before_disk)
+
+	def test_resize_rejects_when_not_stopped(self) -> None:
+		vm = _vm_with_status("Running")
+		with self.assertRaises(frappe.ValidationError) as raised:
+			vm.resize(vcpus=2)
+		self.assertIn("Stop the VM before resizing", str(raised.exception))
+
+	def test_resize_rejects_disk_shrink(self) -> None:
+		vm = _vm_with_status("Stopped")
+		# fixtures default disk is 2 GB; ask for 1.
+		with self.assertRaises(frappe.ValidationError) as raised:
+			vm.resize(disk_gigabytes=1)
+		self.assertIn("can only grow", str(raised.exception))
+
+	def test_ordinary_save_of_resource_field_still_blocked(self) -> None:
+		# The drift guard must stay live: only resize() may move these fields.
+		vm = _vm_with_status("Stopped")
+		vm.vcpus = 8
+		with self.assertRaises(frappe.ValidationError) as raised:
+			vm.save(ignore_permissions=True)
+		self.assertIn("vcpus is immutable", str(raised.exception))
+
 	def test_terminate_succeeds_from_running_marks_row(self) -> None:
 		from atlas.atlas.doctype.virtual_machine import virtual_machine as module
 

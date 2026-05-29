@@ -27,6 +27,7 @@ frappe.listview_settings["Virtual Machine"] = {
 		const config = {
 			Pending: ["Pending", "orange", "status,=,Pending"],
 			Running: ["Running", "green", "status,=,Running"],
+			Paused: ["Paused", "yellow", "status,=,Paused"],
 			Stopped: ["Stopped", "grey", "status,=,Stopped"],
 			Failed: ["Failed", "red", "status,=,Failed"],
 			Terminated: ["Terminated", "darkgrey", "status,=,Terminated"],

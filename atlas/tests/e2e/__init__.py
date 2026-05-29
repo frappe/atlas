@@ -35,6 +35,7 @@ from atlas.tests.e2e.use_cases import (
 	ssh_primitive,
 	virtual_machine_lifecycle,
 	virtual_machine_provisioning,
+	virtual_machine_snapshot,
 )
 
 
@@ -65,6 +66,7 @@ def run_all() -> None:
 		("image-sync", image_sync.run),
 		("vm-provisioning", virtual_machine_provisioning.run),
 		("vm-lifecycle", virtual_machine_lifecycle.run),
+		("vm-snapshot", virtual_machine_snapshot.run_against_shared),
 		("run-task", run_task.run),
 		("desk-buttons", desk_buttons.run),
 		("server-provisioning (validation)", server_provisioning.run_against_shared),

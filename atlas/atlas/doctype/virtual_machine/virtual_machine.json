@@ -21,6 +21,7 @@
   "memory_megabytes",
   "column_break_resources_2",
   "disk_gigabytes",
+  "clone_source_rootfs",
   "section_break_security",
   "ssh_public_key",
   "ssh_command",
@@ -80,7 +81,7 @@
    "in_list_view": 1,
    "in_standard_filter": 1,
    "label": "Status",
-   "options": "Pending\nRunning\nStopped\nFailed\nTerminated",
+   "options": "Pending\nRunning\nPaused\nStopped\nFailed\nTerminated",
    "read_only": 1,
    "reqd": 1
   },
@@ -107,8 +108,7 @@
    "fieldname": "vcpus",
    "fieldtype": "Int",
    "label": "vCPUs",
-   "reqd": 1,
-   "set_only_once": 1
+   "reqd": 1
   },
   {
    "fieldname": "column_break_resources_1",
@@ -119,8 +119,7 @@
    "fieldname": "memory_megabytes",
    "fieldtype": "Int",
    "label": "Memory (MB)",
-   "reqd": 1,
-   "set_only_once": 1
+   "reqd": 1
   },
   {
    "fieldname": "column_break_resources_2",
@@ -131,7 +130,16 @@
    "fieldname": "disk_gigabytes",
    "fieldtype": "Int",
    "label": "Disk (GB)",
-   "reqd": 1,
+   "reqd": 1
+  },
+  {
+   "description": "Internal: on-host snapshot rootfs to seed this VM's disk from (clone). Empty for a normal image-backed VM.",
+   "fieldname": "clone_source_rootfs",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "Clone Source Rootfs",
+   "no_copy": 1,
+   "read_only": 1,
    "set_only_once": 1
   },
   {

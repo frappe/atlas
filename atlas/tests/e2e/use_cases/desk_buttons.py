@@ -190,7 +190,12 @@ def _check_server_buttons(server) -> None:
 	assert isinstance(scripts, list) and scripts, scripts
 	names = {entry["name"] for entry in scripts}
 	assert "sync-image.sh" in names, names
-	for hidden in ("bootstrap-server.sh", "reboot-server.sh", "provision-vm.sh", "start-vm.sh", "stop-vm.sh", "terminate-vm.sh"):
+	for hidden in (
+		"bootstrap-server.sh", "reboot-server.sh", "provision-vm.sh",
+		"start-vm.sh", "stop-vm.sh", "terminate-vm.sh",
+		"snapshot-vm.sh", "rebuild-vm.sh", "resize-vm.sh",
+		"pause-vm.sh", "resume-vm.sh", "delete-snapshot-vm.sh",
+	):
 		assert hidden not in names, f"{hidden} leaked into operator-visible scripts: {names}"
 
 	# Run Task dialog happy path. The Code field posts `variables` as a
@@ -321,7 +326,10 @@ def _check_virtual_machine_buttons(
 	vm.reload()
 	assert vm.status == "Running", vm.status
 
-	# Terminate.
+	_check_pause_resume_buttons(vm)
+	_check_snapshot_family_buttons(vm)
+
+	# Terminate (from Stopped, where the snapshot-family checks leave it).
 	_call_button("Virtual Machine", vm.name, "terminate")
 	vm.reload()
 	assert vm.status == "Terminated", vm.status
@@ -331,6 +339,101 @@ def _check_virtual_machine_buttons(
 	# must throw rather than re-running the script.
 	with expect_validation_error("already terminated"):
 		_call_button("Virtual Machine", vm.name, "terminate")
+
+
+def _check_pause_resume_buttons(vm) -> None:
+	"""Pause / Resume through run_doc_method, plus the wrong-state negatives.
+	Enters with the VM Running; leaves it Running."""
+	# Resume from Running is rejected.
+	with expect_validation_error("cannot resume"):
+		_call_button("Virtual Machine", vm.name, "resume")
+
+	_call_button("Virtual Machine", vm.name, "pause")
+	vm.reload()
+	assert vm.status == "Paused", vm.status
+
+	# Pause again from Paused is rejected.
+	with expect_validation_error("cannot pause"):
+		_call_button("Virtual Machine", vm.name, "pause")
+
+	_call_button("Virtual Machine", vm.name, "resume")
+	vm.reload()
+	assert vm.status == "Running", vm.status
+
+
+def _check_snapshot_family_buttons(vm) -> None:
+	"""Snapshot / Restore / Rebuild / Resize / Clone and their dialog-shaped
+	arguments and negatives. Enters Running; leaves the VM Stopped."""
+	# Snapshot is rejected while Running — operator must stop first.
+	with expect_validation_error("stop the vm before snapshotting"):
+		_call_button("Virtual Machine", vm.name, "snapshot", title="too early")
+	# Resize is rejected while Running.
+	with expect_validation_error("stop the vm before resizing"):
+		_call_button("Virtual Machine", vm.name, "resize", vcpus=2)
+
+	_call_button("Virtual Machine", vm.name, "stop")
+	vm.reload()
+	assert vm.status == "Stopped", vm.status
+
+	# Snapshot (Stopped). Title posts as a Data string from the prompt.
+	snapshot_name = _call_button("Virtual Machine", vm.name, "snapshot", title="desk snap")
+	assert snapshot_name, "snapshot returned no name"
+	snapshot = frappe.get_doc("Virtual Machine Snapshot", snapshot_name)
+	assert snapshot.status == "Available", snapshot.status
+
+	# Restore the snapshot onto its own VM (Snapshot form's button).
+	restore_task = _call_button("Virtual Machine Snapshot", snapshot_name, "restore_to_vm")
+	assert restore_task, "restore_to_vm returned no Task"
+	vm.reload()
+	assert vm.status == "Stopped", vm.status
+
+	# Rebuild from image (source posts as strings the dialog sends).
+	rebuild_task = _call_button(
+		"Virtual Machine", vm.name, "rebuild", source_type="image", source=vm.image
+	)
+	assert rebuild_task, "rebuild returned no Task"
+
+	# Rebuild with an unknown source_type is rejected cleanly.
+	with expect_validation_error("unknown rebuild source_type"):
+		_call_button("Virtual Machine", vm.name, "rebuild", source_type="banana")
+
+	# Resize (Stopped). Int fields post as strings from the prompt.
+	resize_task = _call_button(
+		"Virtual Machine", vm.name, "resize",
+		vcpus="2", memory_megabytes="1024", disk_gigabytes="6",
+	)
+	assert resize_task, "resize returned no Task"
+	vm.reload()
+	assert vm.vcpus == 2 and vm.disk_gigabytes == 6, (vm.vcpus, vm.disk_gigabytes)
+
+	# Disk shrink rejected.
+	with expect_validation_error("can only grow"):
+		_call_button("Virtual Machine", vm.name, "resize", disk_gigabytes="4")
+
+	# Clone into a new VM (Snapshot form's button). Returns the new VM name.
+	clone_name = _call_button(
+		"Virtual Machine Snapshot", snapshot_name, "clone_to_new_vm",
+		title="desk clone", ssh_public_key=ephemeral_public_key(),
+	)
+	assert clone_name and clone_name != vm.name, clone_name
+	clone = frappe.get_doc("Virtual Machine", clone_name)
+	assert clone.clone_source_rootfs == snapshot.rootfs_path
+	# `_call_button` runs the whitelisted method in-process and does NOT commit
+	# (a real HTTP request would). Commit the clone row now: the enqueued
+	# auto_provision worker is a separate process that can only load a committed
+	# row, and wait_for_vm_running's first act is frappe.db.rollback() — without
+	# this commit that rollback discards the uncommitted insert and the VM 404s.
+	frappe.db.commit()
+	# Don't wait for the clone to provision here — the snapshot use case covers
+	# the full clone boot. Terminate it so it doesn't linger on the shared box.
+	wait_for_vm_running(clone.name, timeout_seconds=120)
+	clone.reload()
+	clone.terminate()
+
+	# Delete the snapshot row (cascades the on-host file delete). The VM is
+	# still alive, so on_trash runs delete-snapshot-vm.sh.
+	frappe.delete_doc("Virtual Machine Snapshot", snapshot_name, ignore_permissions=True)
+	assert not frappe.db.exists("Virtual Machine Snapshot", snapshot_name)
 
 
 # ----- Provision Server with a bad token ----------------------------------

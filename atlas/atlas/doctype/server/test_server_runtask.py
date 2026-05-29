@@ -104,7 +104,8 @@ class TestScriptsCatalog(IntegrationTestCase):
 
 	def test_allowed_scripts_excludes_subdirectories(self) -> None:
 		scripts = scripts_catalog.allowed_scripts()
-		# nothing under scripts/guest/ or scripts/systemd/ leaks in
+		# nothing under scripts/guest/, scripts/systemd/ or scripts/lib/ leaks in
+		# (lib/ holds sourced shell libraries like prepare-rootfs.sh, not Tasks)
 		for entry in scripts:
 			self.assertTrue(entry.endswith(".sh"))
 			self.assertNotIn("/", entry)

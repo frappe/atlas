@@ -1,6 +1,6 @@
 # DocTypes
 
-Nine DocTypes. Module `Atlas`. None are submittable. All track changes.
+Ten DocTypes. Module `Atlas`. None are submittable. All track changes.
 Read permission for `System Manager`.
 
 1. [Atlas Settings](#atlas-settings) — vendor-agnostic Atlas config (Single).
@@ -12,7 +12,8 @@ Read permission for `System Manager`.
 7. [Server](#server)
 8. [Virtual Machine](#virtual-machine)
 9. [Virtual Machine Image](#virtual-machine-image)
-10. [Task](#task)
+10. [Virtual Machine Snapshot](#virtual-machine-snapshot) — a disk snapshot of a VM.
+11. [Task](#task)
 
 The first six form the **Provider abstraction**: a single ABC in
 `atlas/atlas/providers/base.py` with one implementation per
@@ -390,11 +391,12 @@ deletion.
 | `title`            | Data                          | Y    |           |         | Operator-chosen label; `title_field` for the form. `set_only_once`. |
 | `server`           | Link → Server                 | Y    |           |         | `set_only_once` (in addition to the controller's `_validate_immutability`). |
 | `image`            | Link → Virtual Machine Image  | Y    |           |         | `set_only_once` (in addition to the controller's `_validate_immutability`). |
-| `status`           | Select                        | Y    | Y         | Pending | `Pending`, `Running`, `Stopped`, `Failed`, `Terminated`. Driven by lifecycle methods only. |
-| `vcpus`            | Int                           | Y    |           | 1       | `set_only_once` (in addition to the controller's `_validate_immutability`). |
-| `memory_megabytes` | Int                           | Y    |           | 512     | `set_only_once` (in addition to the controller's `_validate_immutability`). |
-| `disk_gigabytes`   | Int                           | Y    |           | 4       | `set_only_once` (in addition to the controller's `_validate_immutability`). |
+| `status`           | Select                        | Y    | Y         | Pending | `Pending`, `Running`, `Paused`, `Stopped`, `Failed`, `Terminated`. Driven by lifecycle methods only. |
+| `vcpus`            | Int                           | Y    |           | 1       | Frozen on ordinary saves; mutable via `resize()` on a Stopped VM. No `set_only_once` (the controller is the gate). |
+| `memory_megabytes` | Int                           | Y    |           | 512     | Same resize rule as `vcpus`.                                     |
+| `disk_gigabytes`   | Int                           | Y    |           | 4       | Same resize rule. Resize may only grow it.                       |
 | `ssh_public_key`   | Long Text                     | Y    |           |         | `set_only_once`. Injected into the rootfs.                       |
+| `clone_source_rootfs` | Data                       |      | Y         |         | Internal, hidden. On-host snapshot rootfs to seed this VM's disk from (clone). Empty for a normal image-backed VM. `set_only_once`, `no_copy`. |
 | `ipv6_address`     | Data                          |      | Y         |         | From the server's /124. Set in `before_insert`.                  |
 | `mac_address`      | Data                          |      | Y         |         | Derived from `name`. Set in `before_validate`.                   |
 | `tap_device`       | Data                          |      | Y         |         | Derived from `name`. Set in `before_validate`.                   |
@@ -465,15 +467,90 @@ Tiering is keyed off `status` — see [10-desk-ui.md § Virtual Machine](./10-de
   auto-provision failure. Runs
   [`scripts/provision-vm.sh`](../scripts/provision-vm.sh).
 - **Start** (primary on `Stopped`) — `Stopped` → `Running`.
-- **Stop** (primary on `Running`) — `Running` → `Stopped`.
+- **Stop** (primary on `Running`) — `Running` → `Stopped`. Also offered
+  (secondary) on `Paused`.
+- **Resume** (primary on `Paused`) — `Paused` → `Running`.
 - **Restart** (secondary on `Stopped` / `Running`) → `Running`.
+- **Pause** (secondary on `Running`) — `Running` → `Paused` via the API
+  socket. Runs [`scripts/pause-vm.sh`](../scripts/pause-vm.sh).
+- **Snapshot / Rebuild / Resize** (secondaries on `Stopped`, each opens a
+  dialog) — disk and size operations; see
+  [05-virtual-machine-lifecycle.md](./05-virtual-machine-lifecycle.md). They
+  appear only while Stopped, which is the deterrent against resizing or
+  snapshotting a live VM (the controllers also enforce it).
 - **Terminate** (under `Actions ▾`, danger; available until
   `Terminated`) — runs
   [`scripts/terminate-vm.sh`](../scripts/terminate-vm.sh), sets
-  `status = Terminated`. The UUID does not change. The desk requires
-  the operator to type the VM's `title` into a `confirm_destructive`
-  dialog before the red button enables; the dialog body is empty —
-  typing the title is the entire deterrent.
+  `status = Terminated` and deletes the VM's snapshot rows. The UUID does
+  not change. The desk requires the operator to type the VM's `title` into a
+  `confirm_destructive` dialog before the red button enables; the dialog body
+  is empty — typing the title is the entire deterrent.
+
+---
+
+## Virtual Machine Snapshot
+
+A disk snapshot of one VM — a copy of its `rootfs.ext4` at a point in time.
+Not a Firecracker memory-state snapshot. Created from a Stopped VM; the bytes
+live on the same server as the VM, under
+`/var/lib/atlas/virtual-machines/<vm-uuid>/snapshots/<snapshot-uuid>/`.
+
+### Fields
+
+| Field             | Type                          | Reqd | Read-only | Default | Notes                                                            |
+| ----------------- | ----------------------------- | ---- | --------- | ------- | ---------------------------------------------------------------- |
+| `name`            | UUID (autoname `hash`)        | Y    | Y         |         | Primary key; names the on-host snapshot directory.               |
+| `title`           | Data                          | Y    |           |         | Operator label. `title_field`. `set_only_once`.                  |
+| `virtual_machine` | Link → Virtual Machine        | Y    |           |         | `set_only_once`. The VM this snapshot is of.                     |
+| `server`          | Link → Server                 |      | Y         |         | Denormalized from the VM so the snapshot is locatable without loading it. |
+| `status`          | Select                        | Y    | Y         | Pending | `Pending`, `Available`, `Failed`. Set by the controller after the copy Task. |
+| `source_image`    | Link → Virtual Machine Image  |      | Y         |         | The image the VM ran when snapshotted (provenance; the clone's kernel comes from it). |
+| `disk_gigabytes`  | Int                           |      | Y         |         | Disk size captured, so restore/clone restore the right size.     |
+| `size_bytes`      | Long Int                      |      | Y         |         | Actual on-host bytes of the copied rootfs (from the Task output). `Long Int` (bigint) — a 32-bit `Int` overflows on a multi-GB rootfs. |
+| `rootfs_path`     | Data                          |      | Y         |         | Absolute on-host path to the snapshot rootfs.                    |
+
+### Form layout
+
+```
+── Overview ──
+title
+virtual_machine
+server
+| status
+── Disk ──
+source_image
+disk_gigabytes
+| size_bytes
+  rootfs_path
+```
+
+### List view
+
+- Columns: `title`, `virtual_machine`, `status`.
+- Standard filters: `virtual_machine`, `status`, `server`.
+
+### Controller methods
+
+- `restore_to_vm()` — restore this snapshot onto its own VM (rollback in
+  place). Thin wrapper around `Virtual Machine.rebuild("snapshot", self.name)`
+  so the Stopped-state guard lives in one place. Returns the Task name.
+- `clone_to_new_vm(title, ssh_public_key, vcpus?, memory_megabytes?,
+  disk_gigabytes?)` — create a new VM seeded from this snapshot (fresh
+  identity). Disk defaults to the snapshot's size and can only grow.
+- `on_trash` — runs [`delete-snapshot-vm.sh`](../scripts/delete-snapshot-vm.sh)
+  to delete the on-host files, skipped when the VM is already Terminated
+  (its directory is gone).
+
+### Buttons
+
+Shown only on `Available` snapshots:
+
+- **Clone to new VM** (primary) — dialog for new title + SSH key; creates a
+  fresh VM and routes to it.
+- **Restore to VM** (secondary) — confirm, then `restore_to_vm()`. The VM
+  must be Stopped (the underlying `rebuild` enforces it).
+- **Delete** (danger) — `confirm_destructive`; deletes the row, which
+  cascades the on-host file delete.
 
 ---
 

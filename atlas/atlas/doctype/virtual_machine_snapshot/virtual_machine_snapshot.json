@@ -1,0 +1,135 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "hash",
+ "creation": "2026-05-29 00:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 0,
+ "engine": "InnoDB",
+ "field_order": [
+  "tab_overview",
+  "title",
+  "virtual_machine",
+  "server",
+  "column_break_header",
+  "status",
+  "section_break_disk",
+  "source_image",
+  "disk_gigabytes",
+  "column_break_disk",
+  "size_bytes",
+  "rootfs_path"
+ ],
+ "fields": [
+  {
+   "fieldname": "tab_overview",
+   "fieldtype": "Tab Break",
+   "label": "Overview"
+  },
+  {
+   "fieldname": "title",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "in_global_search": 1,
+   "label": "Title",
+   "reqd": 1,
+   "set_only_once": 1
+  },
+  {
+   "fieldname": "virtual_machine",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Virtual Machine",
+   "options": "Virtual Machine",
+   "reqd": 1,
+   "set_only_once": 1
+  },
+  {
+   "fieldname": "server",
+   "fieldtype": "Link",
+   "in_standard_filter": 1,
+   "label": "Server",
+   "options": "Server",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_header",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "Pending",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Status",
+   "options": "Pending\nAvailable\nFailed",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "section_break_disk",
+   "fieldtype": "Section Break",
+   "label": "Disk"
+  },
+  {
+   "fieldname": "source_image",
+   "fieldtype": "Link",
+   "label": "Source Image",
+   "options": "Virtual Machine Image",
+   "read_only": 1
+  },
+  {
+   "fieldname": "disk_gigabytes",
+   "fieldtype": "Int",
+   "label": "Disk (GB)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_disk",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "size_bytes",
+   "fieldtype": "Long Int",
+   "label": "Size (bytes)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "rootfs_path",
+   "fieldtype": "Data",
+   "label": "Rootfs Path",
+   "read_only": 1
+  }
+ ],
+ "links": [],
+ "modified": "2026-05-29 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Atlas",
+ "name": "Virtual Machine Snapshot",
+ "naming_rule": "Random",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "amend": 0,
+   "cancel": 0,
+   "create": 1,
+   "delete": 1,
+   "export": 1,
+   "import": 0,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "submit": 0,
+   "write": 1
+  }
+ ],
+ "search_fields": "title,virtual_machine,status",
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "title",
+ "track_changes": 1
+}

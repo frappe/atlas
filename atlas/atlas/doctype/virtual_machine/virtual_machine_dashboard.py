@@ -6,5 +6,6 @@ def get_data():
 		"fieldname": "virtual_machine",
 		"transactions": [
 			{"label": _("Operations"), "items": ["Task"]},
+			{"label": _("Disk"), "items": ["Virtual Machine Snapshot"]},
 		],
 	}

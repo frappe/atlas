@@ -11,12 +11,18 @@ SCRIPT_LABELS = {
 	"bootstrap-server.sh": "Bootstrap Server",
 	"sync-image.sh": "Sync Image",
 	"provision-vm.sh": "Create Virtual Machine",
+	"snapshot-vm.sh": "Snapshot Virtual Machine",
 	# Verb-only when the script operates on the *same* object.
 	"reboot-server.sh": "Reboot",
 	"start-vm.sh": "Start",
 	"stop-vm.sh": "Stop",
 	"restart-vm.sh": "Restart",
+	"pause-vm.sh": "Pause",
+	"resume-vm.sh": "Resume",
+	"rebuild-vm.sh": "Rebuild",
+	"resize-vm.sh": "Resize",
 	"terminate-vm.sh": "Terminate",
+	"delete-snapshot-vm.sh": "Delete Snapshot",
 }
 
 # Scripts a Failure-state Task is allowed to retry from the form button.

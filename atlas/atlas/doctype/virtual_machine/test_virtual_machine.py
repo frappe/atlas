@@ -214,6 +214,64 @@ class TestVirtualMachine(IntegrationTestCase):
 		vm.reload()
 		self.assertEqual(vm.status, "Running")
 
+	def test_snapshot_from_stopped_creates_available_row(self) -> None:
+		from atlas.atlas.doctype.virtual_machine import virtual_machine as module
+
+		vm = _new_vm()
+		vm.db_set("status", "Stopped")
+		vm.reload()
+		task = fake_task(name="task-snap-1", stdout="+ stat\nSIZE_BYTES=4294967296\nSnapshotted.")
+
+		with patch.object(module, "run_task", return_value=task) as mocked:
+			snapshot_name = vm.snapshot("nightly")
+
+		self.assertEqual(mocked.call_args.kwargs["script"], "snapshot-vm.sh")
+		snapshot = frappe.get_doc("Virtual Machine Snapshot", snapshot_name)
+		self.assertEqual(snapshot.status, "Available")
+		self.assertEqual(snapshot.virtual_machine, vm.name)
+		self.assertEqual(snapshot.server, vm.server)
+		self.assertEqual(snapshot.source_image, vm.image)
+		self.assertEqual(snapshot.disk_gigabytes, vm.disk_gigabytes)
+		self.assertEqual(snapshot.size_bytes, 4294967296)
+		self.assertIn(snapshot.name, snapshot.rootfs_path)
+		self.assertIn(vm.name, snapshot.rootfs_path)
+
+	def test_snapshot_rejects_when_not_stopped(self) -> None:
+		from atlas.atlas.doctype.virtual_machine import virtual_machine as module
+
+		vm = _new_vm()
+		vm.db_set("status", "Running")
+		vm.reload()
+		with patch.object(module, "run_task") as mocked:
+			with self.assertRaises(frappe.ValidationError) as raised:
+				vm.snapshot("nope")
+		self.assertIn("Stop the VM before snapshotting", str(raised.exception))
+		mocked.assert_not_called()
+
+	def test_terminate_deletes_snapshot_rows(self) -> None:
+		from atlas.atlas.doctype.virtual_machine import virtual_machine as module
+
+		vm = _new_vm()
+		vm.db_set("status", "Stopped")
+		vm.reload()
+		with patch.object(module, "run_task", return_value=fake_task(stdout="SIZE_BYTES=1")):
+			snapshot_name = vm.snapshot("doomed")
+		self.assertTrue(frappe.db.exists("Virtual Machine Snapshot", snapshot_name))
+
+		# Terminate cascades the snapshot rows; on_trash skips SSH because the
+		# VM is Terminated, so run_task is only the terminate-vm.sh call.
+		with patch.object(module, "run_task", return_value=fake_task(name="task-term")):
+			vm.terminate()
+		self.assertFalse(frappe.db.exists("Virtual Machine Snapshot", snapshot_name))
+
+	def test_parse_size_bytes(self) -> None:
+		from atlas.atlas.doctype.virtual_machine.virtual_machine import _parse_size_bytes
+
+		self.assertEqual(_parse_size_bytes("+ cmd\nSIZE_BYTES=512\ndone"), 512)
+		self.assertEqual(_parse_size_bytes("no size line here"), 0)
+		self.assertEqual(_parse_size_bytes("SIZE_BYTES=notanumber"), 0)
+		self.assertEqual(_parse_size_bytes(""), 0)
+
 	def test_title_is_immutable(self) -> None:
 		vm = _new_vm()
 		vm.title = "renamed"

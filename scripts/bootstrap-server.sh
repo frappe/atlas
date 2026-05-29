@@ -23,9 +23,36 @@ if [ ! -r /dev/kvm ] || [ ! -w /dev/kvm ]; then
 fi
 
 # 2. Install packages.
+#    A freshly-booted cloud image still has cloud-init / unattended-upgrades
+#    running its own apt for the first minutes, holding the apt locks. apt's
+#    `DPkg::Lock::Timeout` does NOT cover the `apt-get update` *lists* lock
+#    (/var/lib/apt/lists/lock) on this apt version, so update failed fast with
+#    "Could not get lock" and left fresh droplets Broken. Wait for cloud-init
+#    to finish and the locks to clear before touching apt at all.
 export DEBIAN_FRONTEND=noninteractive
-sudo apt-get update
-sudo apt-get install -y \
+
+# cloud-init owns the first-boot apt run; block until it's done (best-effort —
+# `status --wait` returns promptly if cloud-init isn't present or already done).
+sudo cloud-init status --wait >/dev/null 2>&1 || true
+
+# Belt-and-suspenders: poll the apt/dpkg locks in case unattended-upgrades or a
+# late apt timer still holds them after cloud-init reports done. Cap the wait so
+# a genuinely stuck lock still surfaces as a bootstrap failure rather than hang.
+wait_for_apt_locks() {
+    local deadline=$(( SECONDS + 300 ))
+    while sudo fuser /var/lib/apt/lists/lock /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock >/dev/null 2>&1; do
+        if [ "$SECONDS" -ge "$deadline" ]; then
+            echo "apt/dpkg lock still held after 300s; aborting bootstrap" >&2
+            return 1
+        fi
+        echo "waiting for apt/dpkg lock to be released..." >&2
+        sleep 5
+    done
+}
+wait_for_apt_locks
+
+sudo apt-get -o DPkg::Lock::Timeout=300 update
+sudo apt-get -o DPkg::Lock::Timeout=300 install -y \
     ca-certificates \
     curl \
     e2fsprogs \

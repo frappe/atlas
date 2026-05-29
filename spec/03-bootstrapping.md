@@ -29,8 +29,17 @@ Read the file. It is ~70 lines.
 In summary, in this order:
 
 1. Verifies architecture matches and `/dev/kvm` is readable+writable.
-2. Installs `ca-certificates`, `curl`, `e2fsprogs`, `iproute2`, `jq`,
-   `nftables`, `squashfs-tools`.
+2. Waits for the apt locks to clear, then installs `ca-certificates`,
+   `curl`, `e2fsprogs`, `iproute2`, `jq`, `nftables`, `squashfs-tools`.
+   A freshly-booted cloud image still has cloud-init / unattended-upgrades
+   running its own `apt-get` for the first minutes, holding the apt locks;
+   the script blocks on `cloud-init status --wait` and then polls the
+   apt/dpkg lock files (capped) before touching apt. Without this, the very
+   first `apt-get update` raced cloud-init and failed with
+   "Could not get lock /var/lib/apt/lists/lock", landing fresh droplets in
+   `Broken`. (apt's `DPkg::Lock::Timeout` is set too, but it does not cover
+   the `apt-get update` *lists* lock on this apt version, so the explicit
+   wait is the load-bearing fix.)
 3. Installs Firecracker at `/usr/local/bin/firecracker` if not at the pinned
    version.
 4. Writes `/etc/sysctl.d/60-atlas.conf` with IPv6 forwarding, proxy NDP, and
@@ -210,7 +219,8 @@ it beyond SSH.
 
 Every action is idempotent:
 
-- `apt-get install -y` is idempotent.
+- `apt-get install -y` is idempotent (and waits out the first-boot apt-lock
+  race before running — see step 2).
 - The Firecracker install is gated on `firecracker --version`.
 - File writes use `install -m mode -T` (atomic, overwrite).
 - nftables creates are guarded with `nft list ... || nft add ...`.
@@ -234,7 +244,7 @@ operator does.
 | -------------------------------- | ----------------------- | ----------------------------- |
 | SSH never comes up               | `Pending`               | Investigate the droplet on DO.|
 | `/dev/kvm` missing               | `Broken`                | Wrong droplet size — recreate.|
-| `apt-get` fails                  | `Broken`                | Re-run Bootstrap.             |
+| `apt-get` fails                  | `Broken`                | Re-run Bootstrap. (First-boot apt-lock race is waited out in step 2.) |
 | Firecracker download fails       | `Broken`                | Re-run Bootstrap.             |
 | Architecture mismatch            | `Broken`                | Wrong droplet image — recreate.|
 

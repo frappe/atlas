@@ -2,12 +2,25 @@ const PRIMARY_BY_STATUS = {
 	Failed: {label: "Provision", method: "provision"},
 	Stopped: {label: "Start", method: "start"},
 	Running: {label: "Stop", method: "stop"},
+	Paused: {label: "Resume", method: "resume"},
 };
 
+// Plain no-arg lifecycle methods invoked through confirm_lifecycle.
 const SECONDARY_BY_STATUS = {
-	Running: [{label: "Restart", method: "restart"}],
+	Running: [
+		{label: "Restart", method: "restart"},
+		{label: "Pause", method: "pause"},
+	],
 	Stopped: [{label: "Restart", method: "restart"}],
+	Paused: [{label: "Stop", method: "stop"}],
 };
+
+// Stopped-only actions that open a dialog (they take arguments).
+const DIALOG_ACTIONS_WHEN_STOPPED = [
+	{label: "Snapshot", handler: open_snapshot_dialog},
+	{label: "Rebuild", handler: open_rebuild_dialog},
+	{label: "Resize", handler: open_resize_dialog},
+];
 
 
 const SIZE_PRESETS = {
@@ -68,6 +81,14 @@ function add_lifecycle_buttons(frm) {
 	}
 	for (const action of SECONDARY_BY_STATUS[status] || []) {
 		frappe.atlas.add_secondary(frm, action.label, () => confirm_lifecycle(frm, action));
+	}
+	if (status === "Stopped") {
+		// Disk/size actions are rare and deliberate (each opens a dialog and
+		// spends real disk + time) — they live under `Actions ▾`, not on the
+		// top bar, so Start/Restart stay the visible siblings.
+		for (const action of DIALOG_ACTIONS_WHEN_STOPPED) {
+			frappe.atlas.add_action(frm, action.label, () => action.handler(frm));
+		}
 	}
 	frappe.atlas.add_danger(frm, "Terminate", () => confirm_terminate(frm));
 }
@@ -154,6 +175,146 @@ function maybe_alert_cloned() {
 		message: __("New Virtual Machine prefilled. Review and Save to insert."),
 		indicator: "blue",
 	}, 5);
+}
+
+
+function open_snapshot_dialog(frm) {
+	frappe.prompt(
+		[
+			{
+				fieldname: "title",
+				label: __("Snapshot title"),
+				fieldtype: "Data",
+				reqd: 1,
+				default: frm.doc.title ? `${frm.doc.title} snapshot` : "",
+			},
+			{
+				fieldname: "cost_hint",
+				fieldtype: "HTML",
+				options: `<p class="text-muted small">${__(
+					"Copies the whole {0} GB rootfs to a new snapshot file — up to a few minutes for a large disk.",
+					[frm.doc.disk_gigabytes],
+				)}</p>`,
+			},
+		],
+		({title}) => {
+			frm.call("snapshot", {title}).then(({message: snapshot_name}) => {
+				frappe.show_alert({
+					message: __("Snapshot {0} created.", [snapshot_name]),
+					indicator: "green",
+				}, 6);
+				frm.reload_doc();
+			});
+		},
+		__("Snapshot {0}", [frm.doc.title || frm.doc.name.slice(0, 8)]),
+		__("Create snapshot"),
+	);
+}
+
+
+function open_rebuild_dialog(frm) {
+	const dialog = new frappe.ui.Dialog({
+		title: __("Rebuild {0}", [frm.doc.title || frm.doc.name.slice(0, 8)]),
+		fields: [
+			{
+				fieldname: "source_type",
+				label: __("Rebuild from"),
+				fieldtype: "Select",
+				options: [
+					{value: "image", label: __("Base image (fresh disk)")},
+					{value: "snapshot", label: __("A snapshot of this VM")},
+				],
+				default: "image",
+				reqd: 1,
+			},
+			{
+				fieldname: "image",
+				label: __("Image"),
+				fieldtype: "Link",
+				options: "Virtual Machine Image",
+				default: frm.doc.image,
+				depends_on: "eval:doc.source_type == 'image'",
+				description: __("Defaults to the current image. Wipes stored data."),
+			},
+			{
+				fieldname: "snapshot",
+				label: __("Snapshot"),
+				fieldtype: "Link",
+				options: "Virtual Machine Snapshot",
+				depends_on: "eval:doc.source_type == 'snapshot'",
+				get_query: () => ({
+					filters: {virtual_machine: frm.doc.name, status: "Available"},
+				}),
+			},
+			{
+				fieldname: "cost_hint",
+				fieldtype: "HTML",
+				options: `<p class="text-muted small">${__(
+					"Swaps this VM's disk bytes in place — current data is overwritten. Takes up to a few minutes; the VM stays Stopped.",
+				)}</p>`,
+			},
+		],
+		primary_action_label: __("Rebuild"),
+		primary_action(values) {
+			const source = values.source_type === "snapshot" ? values.snapshot : values.image;
+			dialog.hide();
+			frappe.atlas.confirm_cost({
+				title: __("Rebuild {0}?", [frm.doc.title || frm.doc.name.slice(0, 8)]),
+				body_html: `<p>${__("This overwrites the VM's disk and cannot be undone.")}</p>`,
+				proceed_label: __("Rebuild"),
+				proceed() {
+					frm.call("rebuild", {source_type: values.source_type, source}).then(
+						({message: task_name}) => frappe.atlas.task_started(frm, "Rebuild", task_name),
+					);
+				},
+			});
+		},
+	});
+	dialog.show();
+}
+
+
+function open_resize_dialog(frm) {
+	frappe.prompt(
+		[
+			{
+				fieldname: "vcpus",
+				label: __("vCPUs"),
+				fieldtype: "Int",
+				default: frm.doc.vcpus,
+				reqd: 1,
+			},
+			{
+				fieldname: "memory_megabytes",
+				label: __("Memory (MB)"),
+				fieldtype: "Int",
+				default: frm.doc.memory_megabytes,
+				reqd: 1,
+			},
+			{
+				fieldname: "disk_gigabytes",
+				label: __("Disk (GB)"),
+				fieldtype: "Int",
+				default: frm.doc.disk_gigabytes,
+				reqd: 1,
+				description: __("Disk can only grow."),
+			},
+			{
+				fieldname: "cost_hint",
+				fieldtype: "HTML",
+				options: `<p class="text-muted small">${__(
+					"Rewrites the Firecracker config and grows the rootfs — up to ~2 minutes. The VM stays Stopped.",
+				)}</p>`,
+			},
+		],
+		(values) => {
+			frm.call("resize", values).then(({message: task_name}) =>
+				frappe.atlas.task_started(frm, "Resize", task_name),
+			);
+		},
+		__("Resize {0}", [frm.doc.title || frm.doc.name.slice(0, 8)]),
+		__("Resize"),
+	);
 }
 
 

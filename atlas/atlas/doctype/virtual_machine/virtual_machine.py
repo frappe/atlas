@@ -12,11 +12,19 @@ from atlas.atlas.networking import (
 )
 from atlas.atlas.ssh import run_task
 
+# Never change after insert — identity and the key the rootfs was built with.
 IMMUTABLE_AFTER_INSERT = (
 	"title",
 	"server",
 	"image",
 	"ssh_public_key",
+)
+
+# Frozen on ordinary saves (drift protection: the on-host VM must match the
+# doc) but mutable through resize() on a Stopped VM, which rewrites the
+# firecracker config and grows the disk to match. The resize() path sets
+# `flags.resizing` so validate() lets these through.
+RESIZE_MUTABLE = (
 	"vcpus",
 	"memory_megabytes",
 	"disk_gigabytes",
@@ -85,7 +93,11 @@ class VirtualMachine(Document):
 		original = self.get_doc_before_save()
 		if not original:
 			return
-		for field in IMMUTABLE_AFTER_INSERT:
+		guarded = IMMUTABLE_AFTER_INSERT
+		if not self.flags.resizing:
+			# Outside resize(), the resource fields are frozen too.
+			guarded = guarded + RESIZE_MUTABLE
+		for field in guarded:
 			if getattr(self, field) != getattr(original, field):
 				frappe.throw(f"{field} is immutable after insert")
 
@@ -123,7 +135,9 @@ class VirtualMachine(Document):
 
 	@frappe.whitelist()
 	def stop(self) -> str:
-		if self.status != "Running":
+		# A Paused VM's unit is still active (vCPUs frozen, not shut down), so
+		# `systemctl stop` is the correct full shutdown from either state.
+		if self.status not in ("Running", "Paused"):
 			frappe.throw(f"Cannot stop from {self.status}")
 		task = run_task(
 			server=self.server,
@@ -139,12 +153,190 @@ class VirtualMachine(Document):
 
 	@frappe.whitelist()
 	def restart(self) -> dict:
-		"""Stop (if Running) then Start. Two Tasks."""
+		"""Stop (if Running) then Start. Two Tasks. A Paused VM must resume or
+		stop first — restart is deliberately Running/Stopped only."""
 		if self.status not in ("Running", "Stopped"):
 			frappe.throw(f"Cannot restart from {self.status}")
 		stop_task = self.stop() if self.status == "Running" else None
 		start_task = self.start()
 		return {"stop_task": stop_task, "start_task": start_task}
+
+	@frappe.whitelist()
+	def pause(self) -> str:
+		"""Freeze a Running VM's vCPUs via Firecracker's API socket. RAM stays
+		resident (unlike Stop, which is a full shutdown). Reversible with
+		resume()."""
+		if self.status != "Running":
+			frappe.throw(f"Cannot pause from {self.status}")
+		task = run_task(
+			server=self.server,
+			script="pause-vm.sh",
+			variables={"VIRTUAL_MACHINE_NAME": self.name},
+			virtual_machine=self.name,
+			timeout_seconds=30,
+		)
+		self.status = "Paused"
+		self.save()
+		return task.name
+
+	@frappe.whitelist()
+	def resume(self) -> str:
+		"""Unfreeze a Paused VM's vCPUs via the API socket."""
+		if self.status != "Paused":
+			frappe.throw(f"Cannot resume from {self.status}")
+		task = run_task(
+			server=self.server,
+			script="resume-vm.sh",
+			variables={"VIRTUAL_MACHINE_NAME": self.name},
+			virtual_machine=self.name,
+			timeout_seconds=30,
+		)
+		self.status = "Running"
+		self.last_started = frappe.utils.now_datetime()
+		self.save()
+		return task.name
+
+	@frappe.whitelist()
+	def snapshot(self, title: str) -> str:
+		"""Copy the rootfs of this Stopped VM into a new Virtual Machine
+		Snapshot row. Returns the snapshot's name.
+
+		Stopped-only because copying a mounted/live ext4 risks a torn
+		filesystem; a cleanly unmounted rootfs copies consistently. The
+		operator stops first (the form offers the prompt)."""
+		if self.status != "Stopped":
+			frappe.throw(f"Stop the VM before snapshotting (status is {self.status})")
+		snapshot = frappe.get_doc({
+			"doctype": "Virtual Machine Snapshot",
+			"title": title,
+			"virtual_machine": self.name,
+			"server": self.server,
+			"status": "Pending",
+			"source_image": self.image,
+			"disk_gigabytes": self.disk_gigabytes,
+		}).insert(ignore_permissions=True)
+		rootfs_path = (
+			f"/var/lib/atlas/virtual-machines/{self.name}/snapshots/{snapshot.name}/rootfs.ext4"
+		)
+		task = run_task(
+			server=self.server,
+			script="snapshot-vm.sh",
+			variables={
+				"VIRTUAL_MACHINE_NAME": self.name,
+				"SNAPSHOT_ROOTFS_PATH": rootfs_path,
+			},
+			virtual_machine=self.name,
+			timeout_seconds=300,
+		)
+		# One atomic update: the Task already succeeded and the on-host file
+		# exists, so the row must end up Available. Folding the three writes into
+		# a single db_set means there's no window where rootfs_path/size_bytes
+		# landed but status didn't (a half-update that stranded the row in
+		# Pending). size_bytes is a Long Int / bigint column — a real multi-GB
+		# rootfs overflows a plain Int.
+		snapshot.db_set({
+			"rootfs_path": rootfs_path,
+			"size_bytes": _parse_size_bytes(task.stdout),
+			"status": "Available",
+		})
+		return snapshot.name
+
+	@frappe.whitelist()
+	def rebuild(self, source_type: str, source: str | None = None) -> str:
+		"""Replace this Stopped VM's disk while keeping its identity.
+
+		`source_type` is "snapshot" (restore one of this VM's own snapshots)
+		or "image" (lay down a fresh rootfs from a base image; `source`
+		defaults to the VM's current image). Name, IPv6, MAC, tap and SSH key
+		are unchanged — only the disk bytes are swapped. The VM stays Stopped;
+		the operator starts it when ready."""
+		if self.status != "Stopped":
+			frappe.throw(f"Stop the VM before rebuilding (status is {self.status})")
+		variables = self._rebuild_variables(source_type, source)
+		task = run_task(
+			server=self.server,
+			script="rebuild-vm.sh",
+			variables=variables,
+			virtual_machine=self.name,
+			timeout_seconds=300,
+		)
+		return task.name
+
+	def _rebuild_variables(self, source_type: str, source: str | None) -> dict:
+		# Rebuild rewrites the guest's network env, so it must re-inject the
+		# NAT44 v4 link or the rebuilt guest would boot with no v4 egress.
+		base = {
+			"VIRTUAL_MACHINE_NAME": self.name,
+			"DISK_GB": str(self.disk_gigabytes),
+			"VIRTUAL_MACHINE_IPV6": self.ipv6_address,
+			"SSH_PUBLIC_KEY": self.ssh_public_key,
+			**self._ipv4_link_variables(),
+		}
+		if source_type == "snapshot":
+			if not source:
+				frappe.throw("Rebuild from snapshot requires a snapshot")
+			snapshot = frappe.get_doc("Virtual Machine Snapshot", source)
+			if snapshot.virtual_machine != self.name:
+				frappe.throw("Snapshot belongs to a different Virtual Machine")
+			if snapshot.status != "Available":
+				frappe.throw(f"Snapshot is not Available (status is {snapshot.status})")
+			return {**base, "SNAPSHOT_ROOTFS_PATH": snapshot.rootfs_path}
+		if source_type == "image":
+			image_name = source or self.image
+			image = frappe.get_doc("Virtual Machine Image", image_name)
+			return {
+				**base,
+				"IMAGE_NAME": image.image_name,
+				"ROOTFS_FILENAME": image.rootfs_filename,
+			}
+		frappe.throw(f"Unknown rebuild source_type: {source_type!r}")
+
+	@frappe.whitelist()
+	def resize(
+		self,
+		vcpus: int | None = None,
+		memory_megabytes: int | None = None,
+		disk_gigabytes: int | None = None,
+	) -> str:
+		"""Change vCPU / memory / disk on a Stopped VM.
+
+		Firecracker can't resize a running VM (machine-config is pre-boot
+		only), so the operator stops first. Disk may only grow — ext4 shrink
+		is unsafe and the on-host rootfs is already that large. The new values
+		are persisted, then resize-vm.sh rewrites the firecracker config and
+		grows the rootfs to match. The VM stays Stopped."""
+		if self.status != "Stopped":
+			frappe.throw(f"Stop the VM before resizing (status is {self.status})")
+		new_vcpus = int(vcpus) if vcpus else self.vcpus
+		new_memory = int(memory_megabytes) if memory_megabytes else self.memory_megabytes
+		new_disk = int(disk_gigabytes) if disk_gigabytes else self.disk_gigabytes
+		if new_disk < self.disk_gigabytes:
+			frappe.throw(
+				f"Disk can only grow: {self.disk_gigabytes} GB → {new_disk} GB is a shrink"
+			)
+		# Run the on-host resize first; run_task raises on failure, so we only
+		# persist the new values once the config and disk actually changed.
+		# Saving before the Task would let a failed resize-vm.sh leave the doc
+		# claiming a size the host never applied — the exact drift the freeze
+		# guards against.
+		task = run_task(
+			server=self.server,
+			script="resize-vm.sh",
+			variables={
+				"VIRTUAL_MACHINE_NAME": self.name,
+				"VCPUS": str(new_vcpus),
+				"MEMORY_MB": str(new_memory),
+				"DISK_GB": str(new_disk),
+			},
+			virtual_machine=self.name,
+			timeout_seconds=120,
+		)
+		self.vcpus = new_vcpus
+		self.memory_megabytes = new_memory
+		self.disk_gigabytes = new_disk
+		self.flags.resizing = True
+		self.save()
+		return task.name
 
 	@frappe.whitelist()
 	def terminate(self) -> str:
@@ -159,16 +351,35 @@ class VirtualMachine(Document):
 		)
 		self.status = "Terminated"
 		self.save()
+		self._delete_snapshots()
 		return task.name
+
+	def _delete_snapshots(self) -> None:
+		"""Drop this VM's snapshot rows after terminate. terminate-vm.sh
+		rm -rf'd the VM directory (snapshots included), so the rows point at
+		files that no longer exist. on_trash skips the SSH cleanup for a
+		Terminated VM, so this is a pure row delete."""
+		for name in frappe.get_all(
+			"Virtual Machine Snapshot", filters={"virtual_machine": self.name}, pluck="name"
+		):
+			frappe.delete_doc("Virtual Machine Snapshot", name, ignore_permissions=True)
+
+	def _ipv4_link_variables(self) -> dict:
+		"""The per-VM NAT44 egress link, derived from the v6 address — no
+		stored field. The guest gets a private v4 + default route; the host
+		masquerades it (see scripts/vm-network-up.sh, spec/06-networking.md).
+		Shared by provision (clone too) and rebuild, which both re-inject the
+		guest network env."""
+		host_cidr, guest_cidr = derive_ipv4_link(self.ipv6_address)
+		return {
+			"IPV4_HOST_CIDR": host_cidr,
+			"IPV4_GUEST_CIDR": guest_cidr,
+			"IPV4_GATEWAY": str(ipaddress.ip_interface(host_cidr).ip),
+		}
 
 	def _provision_variables(self) -> dict:
 		image = frappe.get_doc("Virtual Machine Image", self.image)
-		# Per-VM NAT44 egress link, derived from the v6 address — no stored
-		# field. The guest gets a private v4 + default route; the host
-		# masquerades it (see scripts/vm-network-up.sh, spec/06-networking.md).
-		ipv4_host_cidr, ipv4_guest_cidr = derive_ipv4_link(self.ipv6_address)
-		ipv4_gateway = str(ipaddress.ip_interface(ipv4_host_cidr).ip)
-		return {
+		variables = {
 			"VIRTUAL_MACHINE_NAME": self.name,
 			"IMAGE_NAME": self.image,
 			"KERNEL_FILENAME": image.kernel_filename,
@@ -179,11 +390,32 @@ class VirtualMachine(Document):
 			"MAC_ADDRESS": self.mac_address,
 			"TAP_DEVICE": self.tap_device,
 			"VIRTUAL_MACHINE_IPV6": self.ipv6_address,
-			"IPV4_HOST_CIDR": ipv4_host_cidr,
-			"IPV4_GUEST_CIDR": ipv4_guest_cidr,
-			"IPV4_GATEWAY": ipv4_gateway,
 			"SSH_PUBLIC_KEY": self.ssh_public_key,
+			**self._ipv4_link_variables(),
 		}
+		# Clone: seed the disk from a snapshot's rootfs instead of the pristine
+		# image. The kernel still comes from the image; provision-vm.sh's image
+		# probe (step 0) stays meaningful. Identity is re-derived from this VM's
+		# own UUID, so the clone never shares host keys / machine-id with its
+		# source.
+		if self.clone_source_rootfs:
+			variables["SNAPSHOT_ROOTFS_PATH"] = self.clone_source_rootfs
+		return variables
+
+
+def _parse_size_bytes(stdout: str) -> int:
+	"""Pull the snapshot byte count from snapshot-vm.sh stdout.
+
+	The script prints a `SIZE_BYTES=<n>` line; the rest is `bash -x` trace
+	noise. Absent (older script, truncated output) → 0 rather than raise:
+	the size is informational, not load-bearing."""
+	for line in (stdout or "").splitlines():
+		if line.startswith("SIZE_BYTES="):
+			try:
+				return int(line.split("=", 1)[1].strip())
+			except ValueError:
+				return 0
+	return 0
 
 
 def auto_provision(virtual_machine_name: str) -> None:

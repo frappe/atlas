@@ -81,6 +81,37 @@ means the FIRST run rebuilds the rootfs on the shared droplet (~minutes).
    - the rootfs actually rebuilt (new image name) — `phase4-probe`/layout shows
      `/var/lib/atlas/images/ubuntu-24.04-v2/`
 
+## Merge with main (vm-features: snapshot/rebuild/resize/pause/clone)
+
+Merged `main` (3 commits, incl. `3ecdf6f` VM lifecycle) into the branch.
+Conflicts resolved + v4 re-wired for the new VM-creation paths:
+
+- **`provision-vm.sh` step-2 refactor**: identity injection moved into
+  `scripts/lib/prepare-rootfs.sh::atlas_inject_identity`. Took main's structure;
+  added two REQUIRED params (`IPV4_GUEST_CIDR`, `IPV4_GATEWAY`) to that function
+  and write them into the guest `/etc/atlas-network.env`. So **provision, clone,
+  and rebuild all get v4 for free** (they all call atlas_inject_identity).
+- **`rebuild-vm.sh`**: now requires + forwards the two v4 vars (it rewrites the
+  guest env in place, so it must re-inject v4 or the rebuilt guest loses it).
+- **`resize-vm.sh`**: untouched — only edits firecracker.json + grows the
+  rootfs, never the network env. No v4 concern.
+- **controller**: extracted `_ipv4_link_variables()` (dedup) used by both
+  `_provision_variables()` (clone flows through this) and `_rebuild_variables()`.
+  `clone_to_new_vm` inserts a normal VM row → auto_provision → _provision_variables,
+  so the clone derives its OWN v4 from its OWN fresh ipv6 — distinct /30, no extra
+  wiring. Composes cleanly with main's IMMUTABLE/RESIZE_MUTABLE split and the
+  new Paused status (v4 is orthogonal to the state machine).
+- **e2e**: added the egress probe to the rebuild path in
+  `virtual_machine_snapshot.py` (highest-risk: in-place env rewrite). Clone +
+  fresh-provision egress covered via the shared atlas_inject_identity code path.
+- **spec**: updated `05-virtual-machine-lifecycle.md` fit-and-finish bullet
+  ("No global IPv4 on eth0" → "only the 100.64 egress v4"); `07` network.env
+  line now carries both the snapshots/ tree (main) and IPV4_HOST_CIDR (mine);
+  `03` summary auto-merged with both the apt-lock wait and my v4 steps.
+
+Static checks green post-merge (py_compile all touched Python; bash -n all
+touched scripts; zero conflict markers).
+
 ## Open (pre-READY)
 
 - Live e2e green (the above). Until then this is implement→review, not READY.

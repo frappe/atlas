@@ -51,6 +51,7 @@ doctype_js = {
 	"Provider Image": "public/js/atlas_form_overrides.js",
 	"Virtual Machine": "public/js/atlas_form_overrides.js",
 	"Virtual Machine Image": "public/js/atlas_form_overrides.js",
+	"Virtual Machine Snapshot": "public/js/atlas_form_overrides.js",
 	"Task": "public/js/atlas_form_overrides.js",
 }
 

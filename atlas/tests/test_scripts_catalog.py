@@ -21,6 +21,12 @@ class TestScriptsCatalog(unittest.TestCase):
 			"stop-vm.sh",
 			"restart-vm.sh",
 			"terminate-vm.sh",
+			"snapshot-vm.sh",
+			"rebuild-vm.sh",
+			"resize-vm.sh",
+			"pause-vm.sh",
+			"resume-vm.sh",
+			"delete-snapshot-vm.sh",
 			"vm-network-up.sh",
 			"vm-network-down.sh",
 		):

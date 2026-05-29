@@ -56,6 +56,21 @@ frappe.atlas.add_success = function (frm, label, fn) {
 	}
 };
 
+frappe.atlas.confirm_cost = function ({title, body_html, proceed_label, proceed}) {
+	// Cost tier: not destructive, but spends real money / disk / bandwidth
+	// (provision a billable server, copy a multi-GB rootfs, re-lay a disk).
+	// Thin wrapper over `frappe.warn` so the orange Provision-style indicator
+	// and copy live behind one signature the spec documents. Latency / size
+	// hints live in `body_html`, supplied by the caller.
+	frappe.warn(
+		title,
+		body_html || "",
+		proceed,
+		proceed_label || __("Proceed"),
+		true,
+	);
+};
+
 frappe.atlas.confirm_destructive = function ({
 	title,
 	body_html,
@@ -174,6 +189,7 @@ for (const doctype of [
 	"Provider Image",
 	"Virtual Machine",
 	"Virtual Machine Image",
+	"Virtual Machine Snapshot",
 	"Task",
 ]) {
 	frappe.ui.form.on(doctype, {

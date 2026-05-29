@@ -29,7 +29,9 @@ keep it the source of truth.
   guest and no per-VM public IPv4 (outbound v4 is via host NAT44).
 - No jailer, no unprivileged user, no SELinux or AppArmor. Root everywhere.
 - No image build pipeline. We download Firecracker CI images and use them.
-- No snapshots, live migration, or high availability.
+- No Firecracker memory-state snapshots, no live migration, no high
+  availability. (Disk snapshots — a copy of the VM's rootfs — are supported;
+  see [05-virtual-machine-lifecycle.md](./05-virtual-machine-lifecycle.md).)
 - No autoscaling, scheduling, or placement. The operator picks the server.
 - No metrics or alerting. `journalctl` is enough.
 - No web UI of our own. Desk is the UI.
@@ -112,7 +114,8 @@ operator-facing features add to this list; new tests follow it.
 | Provision a server             | `Provider` → **Provision Server**                       | [03-bootstrapping.md](./03-bootstrapping.md) |
 | Sync an image to a server      | `Virtual Machine Image` → **Sync to Server / All**      | [08-images.md](./08-images.md) |
 | Provision a virtual machine    | `Virtual Machine` → **Provision**                       | [05-virtual-machine-lifecycle.md](./05-virtual-machine-lifecycle.md) |
-| Operate a virtual machine      | `Virtual Machine` → **Start / Stop / Restart / Terminate** | [05-virtual-machine-lifecycle.md](./05-virtual-machine-lifecycle.md) |
+| Operate a virtual machine      | `Virtual Machine` → **Start / Stop / Restart / Pause / Resume / Terminate** | [05-virtual-machine-lifecycle.md](./05-virtual-machine-lifecycle.md) |
+| Manage a VM's disk and size    | `Virtual Machine` → **Snapshot / Rebuild / Resize**; `Virtual Machine Snapshot` → **Restore to VM / Clone to new VM / Delete** | [05-virtual-machine-lifecycle.md](./05-virtual-machine-lifecycle.md) |
 | Run an ad-hoc task / reboot    | `Server` → **Run Task / Reboot**                        | [04-tasks.md](./04-tasks.md) |
 | Click any button on the desk   | every form button driven through `run_doc_method`       | (this section, *Desk-button coverage*) |
 | Talk to DigitalOcean           | (internal) verify the DO HTTP client                    | [01-architecture.md](./01-architecture.md) |
@@ -164,8 +167,9 @@ detail. The mapping is one module per use case under
 [`atlas/tests/e2e/use_cases/`](../atlas/tests/e2e/use_cases); the
 filenames mirror the table above (`server_provisioning.py`,
 `image_sync.py`, `virtual_machine_provisioning.py`,
-`virtual_machine_lifecycle.py`, `run_task.py`, `desk_buttons.py`,
-`digitalocean_client.py`, `ssh_primitive.py`).
+`virtual_machine_lifecycle.py`, `virtual_machine_snapshot.py`,
+`run_task.py`, `desk_buttons.py`, `digitalocean_client.py`,
+`ssh_primitive.py`).
 
 Each use-case module is the **single source of truth** for that
 operation's end-to-end coverage. It owns:

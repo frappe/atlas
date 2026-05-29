@@ -120,9 +120,25 @@ behavior; they just keep doors open.
 - **Overlayfs-backed rootfs**: shrink per-VM disk by ~10×. Internal to
   `provision-vm.sh` and `terminate-vm.sh`. Additive.
 
-- **Snapshots**: Firecracker supports them. Adds a state and a DocType.
-  *Breaking* for code that pattern-matches the current state machine —
-  treat the status field as an open set when you write checks today.
+- **Snapshots** — *done (disk-only)*. Implemented as a copy of the VM's
+  `rootfs.ext4` into a `Virtual Machine Snapshot` DocType, with
+  restore/rebuild, clone, resize and pause/resume alongside. See
+  [05-virtual-machine-lifecycle.md](./05-virtual-machine-lifecycle.md) and
+  [02-doctypes.md § Virtual Machine Snapshot](./02-doctypes.md#virtual-machine-snapshot).
+  Still deferred here:
+  - **Firecracker memory-state snapshots** (`/snapshot/create` + `/snapshot/load`).
+    These would let an operator resume a *running* VM (RAM included) and do
+    true live clones. They need a forked boot path (load is pre-boot-only,
+    incompatible with `--config-file`), a RAM-sized memory file kept for the
+    VM's lifetime, and a guest-side identity-rotation story for the
+    duplicate-state hazard. Out of scope until there's a concrete need.
+  - **Snapshot retention / GC / quotas.** Today snapshots are created and
+    deleted by hand, guarded only by a `df` pre-flight in `snapshot-vm.sh`.
+    A scheduled reaper and per-server disk quotas belong here before any
+    real load.
+  - **Cross-server snapshots.** A snapshot lives on its VM's server; clone and
+    restore target the same server. Moving a snapshot to another host (for
+    rebalancing or as an image-build input) is additive but unbuilt.
 
 - **Health checks**: a scheduled job that runs `systemctl is-active …` per
   VM and reconciles `Virtual Machine.status`. Additive.

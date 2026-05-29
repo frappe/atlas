@@ -21,41 +21,16 @@
   {
    "child": 0,
    "collapsible": 1,
-   "icon": "settings",
-   "indent": 0,
+   "icon": "box",
+   "indent": 1,
    "keep_closed": 0,
-   "label": "Atlas Settings",
-   "link_to": "Atlas Settings",
+   "label": "Virtual",
    "link_type": "DocType",
    "show_arrow": 0,
-   "type": "Link"
+   "type": "Section Break"
   },
   {
-   "child": 0,
-   "collapsible": 1,
-   "icon": "cloud",
-   "indent": 0,
-   "keep_closed": 0,
-   "label": "Provider",
-   "link_to": "Provider",
-   "link_type": "DocType",
-   "show_arrow": 0,
-   "type": "Link"
-  },
-  {
-   "child": 0,
-   "collapsible": 1,
-   "icon": "server",
-   "indent": 0,
-   "keep_closed": 0,
-   "label": "Server",
-   "link_to": "Server",
-   "link_type": "DocType",
-   "show_arrow": 0,
-   "type": "Link"
-  },
-  {
-   "child": 0,
+   "child": 1,
    "collapsible": 1,
    "icon": "box",
    "indent": 0,
@@ -67,7 +42,7 @@
    "type": "Link"
   },
   {
-   "child": 0,
+   "child": 1,
    "collapsible": 1,
    "icon": "image",
    "indent": 0,
@@ -81,6 +56,29 @@
   {
    "child": 0,
    "collapsible": 1,
+   "icon": "server",
+   "indent": 1,
+   "keep_closed": 0,
+   "label": "Server",
+   "link_type": "DocType",
+   "show_arrow": 0,
+   "type": "Section Break"
+  },
+  {
+   "child": 1,
+   "collapsible": 1,
+   "icon": "server",
+   "indent": 0,
+   "keep_closed": 0,
+   "label": "Server",
+   "link_to": "Server",
+   "link_type": "DocType",
+   "show_arrow": 0,
+   "type": "Link"
+  },
+  {
+   "child": 1,
+   "collapsible": 1,
    "icon": "list-checks",
    "indent": 0,
    "keep_closed": 0,
@@ -89,10 +87,69 @@
    "link_type": "DocType",
    "show_arrow": 0,
    "type": "Link"
+  },
+  {
+   "child": 0,
+   "collapsible": 1,
+   "icon": "settings",
+   "indent": 1,
+   "keep_closed": 0,
+   "label": "Settings",
+   "link_type": "DocType",
+   "show_arrow": 0,
+   "type": "Section Break"
+  },
+  {
+   "child": 1,
+   "collapsible": 1,
+   "icon": "cloud",
+   "indent": 0,
+   "keep_closed": 0,
+   "label": "Provider",
+   "link_to": "Provider",
+   "link_type": "DocType",
+   "show_arrow": 0,
+   "type": "Link"
+  },
+  {
+   "child": 1,
+   "collapsible": 1,
+   "icon": "cloud",
+   "indent": 0,
+   "keep_closed": 0,
+   "label": "DigitalOcean Settings",
+   "link_to": "DigitalOcean Settings",
+   "link_type": "DocType",
+   "show_arrow": 0,
+   "type": "Link"
+  },
+  {
+   "child": 1,
+   "collapsible": 1,
+   "icon": "server",
+   "indent": 0,
+   "keep_closed": 0,
+   "label": "Self-Managed Settings",
+   "link_to": "Self-Managed Settings",
+   "link_type": "DocType",
+   "show_arrow": 0,
+   "type": "Link"
+  },
+  {
+   "child": 1,
+   "collapsible": 1,
+   "icon": "settings",
+   "indent": 0,
+   "keep_closed": 0,
+   "label": "Atlas Settings",
+   "link_to": "Atlas Settings",
+   "link_type": "DocType",
+   "show_arrow": 0,
+   "type": "Link"
   }
  ],
  "module": "Atlas",
- "modified": "2026-05-27 00:00:00.000000",
+ "modified": "2026-05-29 00:00:00.000000",
  "modified_by": "Administrator",
  "name": "Atlas",
  "owner": "Administrator",

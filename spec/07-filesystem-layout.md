@@ -15,6 +15,9 @@ else.
 │   │   ├── firecracker.json          # Firecracker --config-file
 │   │   ├── rootfs.ext4               # per-VM mutable rootfs
 │   │   ├── network.env               # TAP_DEVICE, VIRTUAL_MACHINE_IPV6, IPV4_HOST_CIDR
+│   │   ├── snapshots/                # disk snapshots of this VM
+│   │   │   └── <snapshot-uuid>/
+│   │   │       └── rootfs.ext4       # a copy taken while Stopped
 │   │   └── log/
 │   │       └── firecracker.log
 │   ├── 19ae...                       # one directory per VM, named by UUID
@@ -37,6 +40,9 @@ else.
   is the inventory.
 - Logs go inside the VM directory, not `/var/log/`. Easier to clean up;
   easier to ship in one tarball.
+- Disk snapshots live under the VM's own `snapshots/<snapshot-uuid>/`, so
+  terminating a VM (`rm -rf` of its directory) takes its snapshots with it.
+  A snapshot is just a copy of `rootfs.ext4` taken while the VM is Stopped.
 - API sockets live under `/var/lib/atlas/run/`, not `/var/run/firecracker/`.
   We do not share the path with anything else.
 - Images are read-only after sync. Provisioning copies the image rootfs into

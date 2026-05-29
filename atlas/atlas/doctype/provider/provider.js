@@ -150,14 +150,17 @@ function validate_server_title(dialog, title) {
 function confirm_provision(frm, values, is_self_managed) {
 	const body = is_self_managed
 		? `<p>${__("Atlas will SSH to {0} as root and run bootstrap-server.sh. Nothing is created remotely.", [`<b>${frappe.utils.escape_html(values.ipv4_address)}</b>`])}</p>`
-		: `<p>${__("This will create a {0} server.", [
+		: `<p>${__("This will create a {0} server (~90 s to bootstrap).", [
 			`<b>${frappe.utils.escape_html(values.size)}</b>`,
 		])}</p>`;
 
-	frappe.warn(
-		is_self_managed ? __("Bootstrap a self-managed server?") : __("Create a billable server?"),
-		body,
-		() => {
+	frappe.atlas.confirm_cost({
+		title: is_self_managed
+			? __("Bootstrap a self-managed server?")
+			: __("Create a billable server?"),
+		body_html: body,
+		proceed_label: __("Provision"),
+		proceed() {
 			frm.call("provision_server", values).then(({message: server_name}) => {
 				frappe.show_alert({
 					message: __("Provisioning {0}; watch the Task list.", [values.title]),
@@ -166,9 +169,7 @@ function confirm_provision(frm, values, is_self_managed) {
 				frappe.set_route("Form", "Server", server_name);
 			});
 		},
-		__("Provision"),
-		true,
-	);
+	});
 }
 
 
