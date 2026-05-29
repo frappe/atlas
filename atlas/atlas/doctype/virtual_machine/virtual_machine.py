@@ -1,9 +1,15 @@
+import ipaddress
 import uuid
 
 import frappe
 from frappe.model.document import Document
 
-from atlas.atlas.networking import allocate_ipv6, derive_mac, derive_tap
+from atlas.atlas.networking import (
+	allocate_ipv6,
+	derive_ipv4_link,
+	derive_mac,
+	derive_tap,
+)
 from atlas.atlas.ssh import run_task
 
 IMMUTABLE_AFTER_INSERT = (
@@ -157,6 +163,11 @@ class VirtualMachine(Document):
 
 	def _provision_variables(self) -> dict:
 		image = frappe.get_doc("Virtual Machine Image", self.image)
+		# Per-VM NAT44 egress link, derived from the v6 address — no stored
+		# field. The guest gets a private v4 + default route; the host
+		# masquerades it (see scripts/vm-network-up.sh, spec/06-networking.md).
+		ipv4_host_cidr, ipv4_guest_cidr = derive_ipv4_link(self.ipv6_address)
+		ipv4_gateway = str(ipaddress.ip_interface(ipv4_host_cidr).ip)
 		return {
 			"VIRTUAL_MACHINE_NAME": self.name,
 			"IMAGE_NAME": self.image,
@@ -168,6 +179,9 @@ class VirtualMachine(Document):
 			"MAC_ADDRESS": self.mac_address,
 			"TAP_DEVICE": self.tap_device,
 			"VIRTUAL_MACHINE_IPV6": self.ipv6_address,
+			"IPV4_HOST_CIDR": ipv4_host_cidr,
+			"IPV4_GUEST_CIDR": ipv4_guest_cidr,
+			"IPV4_GATEWAY": ipv4_gateway,
 			"SSH_PUBLIC_KEY": self.ssh_public_key,
 		}
 

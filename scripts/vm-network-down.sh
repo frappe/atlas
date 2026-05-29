@@ -21,6 +21,10 @@ fi
 
 if [ -n "${TAP_DEVICE:-}" ]; then
     sudo ip -6 route del "${VIRTUAL_MACHINE_IPV6}/128" dev "$TAP_DEVICE" 2>/dev/null || true
+    # Deleting the tap also drops its IPv4 /30 host address, so there is no
+    # separate v4 addr teardown. The masquerade rule is host-wide (matches the
+    # whole 100.64.0.0/16 source), so it is intentionally NOT removed per-VM —
+    # it stays for the next VM, exactly like the v6 forward chain scaffold.
     sudo ip link del "$TAP_DEVICE" 2>/dev/null || true
 fi
 

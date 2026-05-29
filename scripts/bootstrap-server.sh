@@ -51,18 +51,32 @@ if [ "$INSTALLED_VERSION" != "$WANTED_VERSION" ]; then
     rm -rf firecracker-install
 fi
 
-# 4. IPv6 forwarding and neighbor proxy.
+# 4. IPv6 forwarding and neighbor proxy, plus IPv4 forwarding for NAT44 egress.
+#    IPv6 is the guest's public address; IPv4 is egress-only via masquerade
+#    (see step 5 and spec/06-networking.md).
 sudo install -m 0644 /dev/stdin /etc/sysctl.d/60-atlas.conf <<'CONF'
 net.ipv6.conf.all.forwarding = 1
 net.ipv6.conf.default.forwarding = 1
 net.ipv6.conf.all.proxy_ndp = 1
+net.ipv4.ip_forward = 1
 CONF
 sudo sysctl --system >/dev/null
 
 # 5. nftables scaffold. Two-shot: create-if-missing, then ensure chains exist.
+#    One inet table holds both the v6 forward chain and the v4 egress NAT.
 sudo nft list table inet atlas >/dev/null 2>&1 || sudo nft add table inet atlas
 sudo nft list chain inet atlas forward >/dev/null 2>&1 || \
     sudo nft "add chain inet atlas forward { type filter hook forward priority filter; policy accept; }"
+
+# 5a. IPv4 egress: masquerade the per-VM private /30s (carved from
+#     100.64.0.0/16) out the host's public uplink. One host-wide rule covers
+#     every VM — the source range is fixed, so no per-VM NAT churn. The guest
+#     is reachable from outside over IPv6 only; this gives it *outbound* v4.
+uplink="$(ip -j route show default | jq -r '.[0].dev')"
+sudo nft list chain inet atlas postrouting >/dev/null 2>&1 || \
+    sudo nft "add chain inet atlas postrouting { type nat hook postrouting priority srcnat; policy accept; }"
+sudo nft list chain inet atlas postrouting | grep -q "ip saddr 100.64.0.0/16" || \
+    sudo nft add rule inet atlas postrouting ip saddr 100.64.0.0/16 oifname "$uplink" masquerade
 
 # 6. Directories.
 sudo install -d -m 0700 /var/lib/atlas

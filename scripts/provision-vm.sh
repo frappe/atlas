@@ -13,6 +13,9 @@
 #   MAC_ADDRESS           - e.g. 06:00:01:02:03:04
 #   TAP_DEVICE            - e.g. atlas-<first 10 chars of vm name>
 #   VIRTUAL_MACHINE_IPV6  - the VM's address inside the server's /124
+#   IPV4_HOST_CIDR        - host side of the per-VM NAT44 /30, e.g. 100.64.0.9/30
+#   IPV4_GUEST_CIDR       - guest side of the same /30, e.g. 100.64.0.10/30
+#   IPV4_GATEWAY          - host side address (no mask), the guest's v4 gateway
 #   SSH_PUBLIC_KEY        - injected into the rootfs
 
 set -euo pipefail
@@ -27,6 +30,9 @@ set -euo pipefail
 : "${MAC_ADDRESS:?required}"
 : "${TAP_DEVICE:?required}"
 : "${VIRTUAL_MACHINE_IPV6:?required}"
+: "${IPV4_HOST_CIDR:?required}"
+: "${IPV4_GUEST_CIDR:?required}"
+: "${IPV4_GATEWAY:?required}"
 : "${SSH_PUBLIC_KEY:?required}"
 
 image_directory="/var/lib/atlas/images/${IMAGE_NAME}"
@@ -63,6 +69,8 @@ printf '%s\n' "$SSH_PUBLIC_KEY" | sudo install -m 0600 /dev/stdin "${mount_point
 
 sudo install -m 0644 /dev/stdin "${mount_point}/etc/atlas-network.env" <<EOF
 VIRTUAL_MACHINE_IPV6=${VIRTUAL_MACHINE_IPV6}
+VIRTUAL_MACHINE_IPV4=${IPV4_GUEST_CIDR}
+VIRTUAL_MACHINE_IPV4_GATEWAY=${IPV4_GATEWAY}
 EOF
 
 # 2a. Per-VM hostname. The VM UUID is stable forever (see
@@ -145,6 +153,7 @@ EOF
 sudo install -m 0644 /dev/stdin "${vm_directory}/network.env" <<EOF
 TAP_DEVICE=${TAP_DEVICE}
 VIRTUAL_MACHINE_IPV6=${VIRTUAL_MACHINE_IPV6}
+IPV4_HOST_CIDR=${IPV4_HOST_CIDR}
 EOF
 
 # 5. Enable and start the systemd unit.

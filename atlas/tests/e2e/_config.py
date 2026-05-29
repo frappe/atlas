@@ -16,9 +16,15 @@ TAG = "atlas-e2e"
 SWEEP_AGE_SECONDS = 30 * 60
 
 # Public Firecracker CI Ubuntu 24.04 artifacts (pinned for stability).
+# image_name bumped to -v2 when the baked-in guest unit changed (NAT44 v4
+# egress). Images are immutable (see Virtual Machine Image controller): a
+# changed rootfs — and the guest atlas-network.service is part of the rootfs —
+# is a NEW image, never a rewrite. A fresh image_name has no rootfs on any
+# server, so sync-image.sh rebuilds instead of short-circuiting on the stale
+# ext4, and the new guest unit lands.
 DEFAULT_IMAGE = {
-	"image_name": "ubuntu-24.04",
-	"title": "Firecracker CI Ubuntu 24.04 rootfs",
+	"image_name": "ubuntu-24.04-v2",
+	"title": "Firecracker CI Ubuntu 24.04 rootfs (NAT44 v4 egress)",
 	"kernel_url": "https://s3.amazonaws.com/spec.ccfc.min/firecracker-ci/v1.12/x86_64/vmlinux-6.1.128",
 	"kernel_filename": "vmlinux-6.1.128",
 	"kernel_sha256": "27a8310b9a727517e9eb02044524b6ceb77de5728e3491b6974d5c846227ecc8",

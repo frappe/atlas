@@ -14,7 +14,7 @@ else.
 │   ├── d4f7c1a2-7e0a-4f1b-93cc-ad96b9b39b3e/
 │   │   ├── firecracker.json          # Firecracker --config-file
 │   │   ├── rootfs.ext4               # per-VM mutable rootfs
-│   │   ├── network.env               # TAP_DEVICE, VIRTUAL_MACHINE_IPV6
+│   │   ├── network.env               # TAP_DEVICE, VIRTUAL_MACHINE_IPV6, IPV4_HOST_CIDR
 │   │   └── log/
 │   │       └── firecracker.log
 │   ├── 19ae...                       # one directory per VM, named by UUID

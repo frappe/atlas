@@ -20,6 +20,7 @@ import frappe
 
 from atlas.atlas.ssh import run_task
 from atlas.tests.e2e._shared import (
+	DEFAULT_IMAGE,
 	ensure_default_image_row,
 	expect_validation_error,
 	phase,
@@ -157,7 +158,7 @@ def _check_image_url_validation() -> None:
 
 def _check_sync_to_all_servers() -> None:
 	"""sync_to_all_servers() returns one Task per Active Server row."""
-	image = frappe.get_doc("Virtual Machine Image", "ubuntu-24.04")
+	image = frappe.get_doc("Virtual Machine Image", DEFAULT_IMAGE["image_name"])
 	active_count = frappe.db.count("Server", filters={"status": "Active"})
 	tasks = image.sync_to_all_servers()
 	assert len(tasks) == active_count, (len(tasks), active_count)

@@ -33,8 +33,11 @@ In summary, in this order:
    `nftables`, `squashfs-tools`.
 3. Installs Firecracker at `/usr/local/bin/firecracker` if not at the pinned
    version.
-4. Writes `/etc/sysctl.d/60-atlas.conf` with IPv6 forwarding and proxy NDP.
-5. Creates the `inet atlas` nftables table and `forward` chain.
+4. Writes `/etc/sysctl.d/60-atlas.conf` with IPv6 forwarding, proxy NDP, and
+   IPv4 forwarding (`net.ipv4.ip_forward`, for NAT44 egress).
+5. Creates the `inet atlas` nftables table with a `forward` chain (IPv6
+   filter) and a `postrouting` chain holding the host-wide IPv4 masquerade
+   rule. See [06-networking.md](./06-networking.md).
 6. Creates the `/var/lib/atlas/` directory tree.
 7. Writes `FIRECRACKER_VERSION`, `KERNEL_VERSION`, `ARCHITECTURE` to
    `/var/lib/atlas/bootstrap.json` (the single source of truth) and

@@ -1,9 +1,15 @@
-"""Networking helpers: IPv6 carve, MAC/tap derivation, IPv6 allocation."""
+"""Networking helpers: IPv6 carve, MAC/tap derivation, IPv6 allocation, IPv4 egress link."""
 
 import ipaddress
 import uuid
 
 import frappe
+
+# Private (RFC 6598 CGNAT) supernet for per-VM NAT44 egress links. Chosen over
+# RFC 1918 so it cannot collide with a Self-Managed host's own LAN or with a
+# cloud provider's internal addressing. The address is masqueraded at the host
+# uplink and is never visible on the wire — it only needs to be unique per host.
+IPV4_EGRESS_SUPERNET = "100.64.0.0/16"
 
 
 def carve_virtual_machine_range(host_address: str, prefix_cidr: str) -> str:
@@ -68,3 +74,32 @@ def allocate_ipv6(server_name: str) -> str:
 		if str(candidate) not in used:
 			return str(candidate)
 	raise frappe.ValidationError("No IPv6 capacity on server")
+
+
+def derive_ipv4_link(ipv6_address: str) -> tuple[str, str]:
+	"""(host_side, guest_side) /30 CIDRs for a VM's private NAT44 egress link.
+
+	The guest's private IPv4 is masqueraded at the host uplink and never seen
+	on the wire, so it only needs to be unique per host. We derive it from the
+	VM's already-allocated IPv6 address — no separate allocator and no DocType
+	field — exactly like `derive_mac` / `derive_tap`.
+
+	Each VM gets a point-to-point /30 inside `IPV4_EGRESS_SUPERNET`, indexed by
+	the low bits of its IPv6 address. A /124 v6 range yields indices 2..15
+	(::0/::1 are never handed to VMs); a larger Self-Managed range stays unique
+	as long as it fits the /16 (16384 /30 links). Mirrors the v6 host part so
+	one VM's v4 and v6 share an index — easy to correlate in `ip addr`.
+
+	Example: ::2 -> ('100.64.0.9/30', '100.64.0.10/30').
+	"""
+	supernet = ipaddress.IPv4Network(IPV4_EGRESS_SUPERNET)
+	index = int(ipaddress.IPv6Address(ipv6_address)) & 0x3FFF
+	base = int(supernet.network_address) + index * 4
+	link = ipaddress.IPv4Network((base, 30))
+	if not supernet.supernet_of(link):
+		raise frappe.ValidationError("No IPv4 egress capacity on server")
+	hosts = list(link.hosts())
+	return (
+		f"{hosts[0]}/{link.prefixlen}",
+		f"{hosts[1]}/{link.prefixlen}",
+	)

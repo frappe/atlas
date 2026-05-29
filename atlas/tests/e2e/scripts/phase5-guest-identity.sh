@@ -105,9 +105,16 @@ fi
 [ -e /usr/local/bin/fcnet-setup.sh ] \
     && fail "/usr/local/bin/fcnet-setup.sh still present"
 
-# 7. eth0 has no global IPv4 (fcnet would have injected 91.83.x.x/30).
-ipv4="$(ip -4 -o addr show dev eth0 scope global 2>/dev/null || true)"
-[ -z "$ipv4" ] || fail "eth0 has unexpected IPv4: $ipv4"
+# 7. eth0's only global IPv4 is the Atlas NAT44 egress address (100.64.x.x).
+#    fcnet would have injected a 91.83.x.x/30; any non-100.64 global v4 is a
+#    leftover and fails. (The 100.64 link is asserted in phase5-ipv4-egress.sh.)
+ipv4="$(ip -4 -o addr show dev eth0 scope global 2>/dev/null | awk '{print $4}' || true)"
+for cidr in $ipv4; do
+    case "$cidr" in
+        100.64.*) : ;;
+        *) fail "eth0 has unexpected non-egress IPv4: $cidr" ;;
+    esac
+done
 
 # 8. Root password locked.
 shadow="$(grep '^root:' /etc/shadow)"

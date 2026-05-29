@@ -18,13 +18,15 @@ keep it the source of truth.
 - Provision, start, stop, and delete Ubuntu 24.04 Firecracker virtual machines.
 - Drive everything from Atlas over SSH; record every task.
 - Give each virtual machine a public IPv6 address.
+- Give each virtual machine outbound IPv4 reachability via host NAT44.
 
 ## Non-goals (this iteration)
 
 - No sites, benches, apps, databases, or workloads.
 - No users, teams, roles, billing, quotas.
 - No CLI. We will build one later on top of the same Frappe APIs.
-- No private networking, no overlay, no IPv4 to the guest.
+- No private networking between VMs, no overlay. No inbound IPv4 to the
+  guest and no per-VM public IPv4 (outbound v4 is via host NAT44).
 - No jailer, no unprivileged user, no SELinux or AppArmor. Root everywhere.
 - No image build pipeline. We download Firecracker CI images and use them.
 - No snapshots, live migration, or high availability.
