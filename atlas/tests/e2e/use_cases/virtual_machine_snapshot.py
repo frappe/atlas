@@ -76,6 +76,13 @@ def run_against_shared(reuse: bool = True, keep: bool = True) -> None:
 		clone.terminate()
 
 
+# Every snapshot/restore/resize/rebuild/clone/pause/resume step is probed
+# on-host; the unit-dup guards (shrink-rejected, pause-from-paused, clone
+# guards) are cheap in-memory throws that ride along. The smoke path is the
+# full run — there is no host work to trim without dropping a real disk op.
+run_smoke = run_against_shared
+
+
 def _check_snapshot_and_restore(server_name: str, vm) -> None:
 	"""Stop -> Snapshot -> Restore-onto-self -> Start, with on-host probes."""
 	vm.stop()
@@ -150,6 +157,16 @@ def _check_rebuild_from_image(server_name: str, vm) -> None:
 		"phase5-guest-identity.sh",
 		timeout_seconds=180,
 		VIRTUAL_MACHINE_NAME=vm.name,
+		VIRTUAL_MACHINE_IPV6=vm.ipv6_address,
+		SSH_PRIVATE_KEY=ephemeral_private_key(),
+	)
+	# Rebuild rewrites the guest network env in place (atlas_inject_identity),
+	# so prove the NAT44 v4 egress survives the rebuild — not just fresh
+	# provision (spec/06-networking.md).
+	assert_probe(
+		server_name,
+		"phase5-ipv4-egress.sh",
+		timeout_seconds=180,
 		VIRTUAL_MACHINE_IPV6=vm.ipv6_address,
 		SSH_PRIVATE_KEY=ephemeral_private_key(),
 	)

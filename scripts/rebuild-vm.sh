@@ -14,6 +14,8 @@
 #   VIRTUAL_MACHINE_NAME  - UUID; locates the VM directory and seeds identity
 #   DISK_GB               - target rootfs size (the VM's current disk size)
 #   VIRTUAL_MACHINE_IPV6  - injected into the rootfs network env
+#   IPV4_GUEST_CIDR       - guest side of the NAT44 /30, injected into the env
+#   IPV4_GATEWAY          - host side of the /30 (no mask), the guest's v4 gw
 #   SSH_PUBLIC_KEY        - injected into authorized_keys
 #   ATLAS_FC_UID          - per-VM uid; the rebuilt rootfs is chowned back to it
 #   One source, exactly:
@@ -28,6 +30,8 @@ set -euo pipefail
 : "${VIRTUAL_MACHINE_NAME:?required}"
 : "${DISK_GB:?required}"
 : "${VIRTUAL_MACHINE_IPV6:?required}"
+: "${IPV4_GUEST_CIDR:?required}"
+: "${IPV4_GATEWAY:?required}"
 : "${SSH_PUBLIC_KEY:?required}"
 : "${ATLAS_FC_UID:?required}"
 
@@ -62,7 +66,8 @@ fi
 # so remove it first to force the swap.
 sudo rm -f "$rootfs_path"
 atlas_copy_rootfs "$source_rootfs" "$rootfs_path" "$DISK_GB"
-atlas_inject_identity "$rootfs_path" "$VIRTUAL_MACHINE_NAME" "$VIRTUAL_MACHINE_IPV6" "$SSH_PUBLIC_KEY"
+atlas_inject_identity "$rootfs_path" "$VIRTUAL_MACHINE_NAME" "$VIRTUAL_MACHINE_IPV6" \
+    "$SSH_PUBLIC_KEY" "$IPV4_GUEST_CIDR" "$IPV4_GATEWAY"
 
 # The new rootfs was created by root (cp); hand it back to the per-VM uid so the
 # jailed Firecracker can open it RW.

@@ -124,6 +124,58 @@ class TestVirtualMachineImageAutoSync(IntegrationTestCase):
 		self.assertEqual(enqueue.call_count, 0)
 
 
+class TestShippedImageConstants(IntegrationTestCase):
+	"""The DEFAULT_IMAGE/MINIMAL_IMAGE dicts operators copy into the form (and
+	bootstrap.run inserts) must be well-formed: https URLs, 64-hex digests, and
+	insertable through the same validation an operator hits. A typo in a pinned
+	digest or URL is a real Phase-1 risk this catches without a bench."""
+
+	def _assert_shaped(self, image: dict) -> None:
+		for url_field in ("kernel_url", "rootfs_url"):
+			self.assertTrue(
+				image[url_field].startswith("https://"), image[url_field]
+			)
+		for sha_field in ("kernel_sha256", "rootfs_sha256"):
+			value = image[sha_field]
+			self.assertEqual(len(value), 64, sha_field)
+			int(value, 16)  # raises if not hex
+
+	def test_constants_well_formed(self) -> None:
+		from atlas.bootstrap import DEFAULT_IMAGE, MINIMAL_IMAGE
+
+		self._assert_shaped(DEFAULT_IMAGE)
+		self._assert_shaped(MINIMAL_IMAGE)
+		# Two distinct image rows.
+		self.assertNotEqual(
+			DEFAULT_IMAGE["image_name"], MINIMAL_IMAGE["image_name"]
+		)
+		# Distinct rootfs filenames so they don't clobber each other on a server.
+		self.assertNotEqual(
+			DEFAULT_IMAGE["rootfs_filename"], MINIMAL_IMAGE["rootfs_filename"]
+		)
+
+	def test_bootstrap_and_config_constants_match(self) -> None:
+		"""bootstrap.py and tests/e2e/_config.py pin the same bytes — drift
+		between them means the operator and the e2e suite test different images."""
+		from atlas.bootstrap import DEFAULT_IMAGE as B_DEFAULT
+		from atlas.bootstrap import MINIMAL_IMAGE as B_MINIMAL
+		from atlas.tests.e2e._config import DEFAULT_IMAGE as C_DEFAULT
+		from atlas.tests.e2e._config import MINIMAL_IMAGE as C_MINIMAL
+
+		for field in ("kernel_url", "kernel_sha256", "rootfs_url", "rootfs_sha256"):
+			self.assertEqual(B_DEFAULT[field], C_DEFAULT[field], field)
+			self.assertEqual(B_MINIMAL[field], C_MINIMAL[field], field)
+
+	def test_default_constant_inserts(self) -> None:
+		from atlas.bootstrap import DEFAULT_IMAGE
+
+		frappe.db.delete("Virtual Machine Image", {"image_name": DEFAULT_IMAGE["image_name"]})
+		image = frappe.get_doc({
+			"doctype": "Virtual Machine Image", **DEFAULT_IMAGE, "is_active": 0,
+		}).insert(ignore_permissions=True)
+		self.assertEqual(image.name, DEFAULT_IMAGE["image_name"])
+
+
 class TestVirtualMachineImageImmutability(IntegrationTestCase):
 	def setUp(self) -> None:
 		frappe.db.delete(

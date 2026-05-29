@@ -1,8 +1,24 @@
 # Images
 
-One image for this iteration: **Ubuntu 24.04** from Firecracker CI. The image
-is the (kernel, rootfs) pair referenced in the Firecracker getting-started
-guide.
+Guest images come from the **Ubuntu cloud-image archive**
+(`cloud-images.ubuntu.com`), not from Firecracker CI. Two variants ship for
+this iteration, both **Ubuntu 24.04 (noble)**, amd64:
+
+- **server** — `ubuntu-24.04-server-cloudimg-amd64` (the default).
+- **minimal** — `ubuntu-24.04-minimal-cloudimg-amd64` (a smaller rootfs).
+
+Each image is a (kernel, rootfs) pair:
+
+- **rootfs**: the upstream `*.squashfs` (converted to ext4 server-side, as
+  before).
+- **kernel**: the `vmlinuz-generic` from the matching `unpacked/` directory.
+  It is a packed, zstd-compressed bzImage; `sync-image.sh` decompresses it to
+  the uncompressed `vmlinux` Firecracker requires (see *Kernel extraction*).
+
+URLs are pinned to a **dated** release (`release-YYYYMMDD/`), not the floating
+`release/` pointer, so the bytes — and therefore the SHA-256 — never change
+under us. Server and minimal noble ship the *same* generic kernel (identical
+digest).
 
 ## Image record
 
@@ -18,13 +34,15 @@ holds:
 Image bytes never live in the Frappe DB. They live as files on each server
 and as a URL anywhere else.
 
-The canonical values for the supported Ubuntu 24.04 image (URLs,
-filenames, SHA-256s) live as a `DEFAULT_IMAGE` constant in
-[`atlas/bootstrap.py`](../atlas/bootstrap.py) and
+The canonical values for both supported images (URLs, filenames,
+SHA-256s) live as `DEFAULT_IMAGE` (server) and `MINIMAL_IMAGE` (minimal)
+constants in [`atlas/bootstrap.py`](../atlas/bootstrap.py) and
 [`atlas/tests/e2e/_config.py`](../atlas/tests/e2e/_config.py). New
-operators should copy that dict into the form rather than typing seven
-hex-and-URL fields by hand; `atlas.bootstrap.run` inserts the row
-directly.
+operators should copy a dict into the form rather than typing seven
+hex-and-URL fields by hand; `atlas.bootstrap.run` inserts the server row
+directly. `kernel_sha256` is the digest of the *downloaded packed*
+`vmlinuz` (matching upstream `SHA256SUMS`); the extracted `vmlinux` is a
+derived artifact and is not separately pinned.
 
 ## Sync to a server
 
@@ -49,14 +67,35 @@ archiving the old one via the `archive()` controller method.
 
 The script:
 
-1. Ensures the kernel file exists on the server. Downloads and checksums if
-   not.
+1. Ensures the kernel file exists on the server. Downloads the packed
+   `vmlinuz`, checksums it against `kernel_sha256`, then **decompresses the
+   zstd payload to an uncompressed `vmlinux`** (see *Kernel extraction*).
+   Skips if the final `vmlinux` is already present.
 2. Ensures the rootfs ext4 exists. Downloads the source squashfs,
    unsquashes it, drops in `/etc/systemd/system/atlas-network.service` and
    a placeholder `/etc/atlas-network.env`, **normalizes the rootfs** (see
    *Image normalization at sync time* below), and packs the result into an
    ext4 of `default_disk_gigabytes` labelled `atlas-root`. Skips if the
    rootfs is already present.
+
+### Kernel extraction
+
+The Ubuntu cloud kernel ships as a packed **PE/EFI bzImage** whose payload is
+a **zstd frame followed by a 4-byte size trailer**; Firecracker boots an
+uncompressed ELF `vmlinux` directly (no bootloader). `sync-image.sh` locates
+the zstd magic (`28 b5 2f fd`) inside the bzImage, decompresses from that
+offset with **`zstd -dc -f`**, and verifies the result starts with the ELF
+magic (`7f 45 4c 46`).
+
+The `-f` (force) flag is load-bearing: plain `unzstd` / `zstd -d` reject the
+stream as "unsupported format" because of the trailing size bytes after the
+frame; `-f` decompresses the valid frame and ignores the trailer.
+
+We deliberately do **not** use the kernel.org `extract-vmlinux` helper: it
+verifies the result with `readelf` (not installed on a stock Firecracker host),
+so it silently yields a 0-byte file. The direct magic-scan + `zstd -dc -f` +
+ELF-check is host-tool-independent (`xxd`, `zstd` only). Verified booting on a
+real Firecracker host.
 
 The guest unit file [`scripts/guest/atlas-network.service`](../scripts/guest/atlas-network.service)
 is uploaded to the server alongside `sync-image.sh` before the script runs.
@@ -71,37 +110,51 @@ we can lint it, diff it, and edit it without touching shell code.
 
 ### Image normalization at sync time
 
-The upstream Firecracker CI rootfs is built for the test harness, not for
-end users. `sync-image.sh` strips a fixed set of CI artifacts before
-building the per-server ext4:
+The Ubuntu cloud image is built for a generic cloud with a metadata
+datasource and a first-boot agent (cloud-init) — neither of which exists in
+Atlas's model (static IPv6 brought up by `atlas-network.service`, identity
+injected by mounting the rootfs at provision time). Left untouched it would
+**hang boot forever** waiting on a datasource and a network that never
+arrives. `sync-image.sh` neutralizes that and strips per-VM-shared identity
+before building the per-server ext4:
 
-- `fcnet.service` + `/usr/local/bin/fcnet-setup.sh` (assigns a phantom
-  IPv4/30 derived from the MAC — useful for the Firecracker test
-  harness, meaningless for us and confusing to a user reading `ip a`).
-- All `/etc/ssh/ssh_host_*` keypairs (otherwise every VM would share
-  host keys and SSH TOFU would be a lie). Per-VM keys are regenerated
-  at provision time by `provision-vm.sh` — the stripped image has no
-  reliable first-boot key-regen path (no cloud-init,
-  no `ssh-keygen.service`).
-- `/etc/machine-id` (cleared at sync time and rewritten per VM at
-  provision time, again because the image has no first-boot mechanism
-  we can rely on).
-- `/etc/hosts` overwritten — the shipped file maps a Docker bridge IP
-  to the build-container hostname.
-- Root password locked, SSH password-auth disabled (key-only by
-  contract). The sshd directive is *prepended* to `sshd_config` rather
-  than sed-edited in place — the stripped image often has no
-  `PasswordAuthentication` line for sed to match, and a header-prepend
-  works either way (first-match-wins in sshd_config).
-- `/home/ubuntu` chown'd to uid/gid 1000.
-- motd: `50-motd-news` (network nag) and `60-unminimize` (image-is-
-  half-baked nag) removed.
-- `/etc/fstab` replaced with a real entry (`LABEL=atlas-root /` plus
-  the swapfile from provision-time).
+- **cloud-init + boot-blocking services masked.** `cloud-init.service`,
+  `cloud-init-local`, `cloud-config`, `cloud-final`,
+  `systemd-networkd-wait-online.service`, and snapd
+  (`snapd.seeded`/`snapd.service`/`snapd.socket`) are symlinked to
+  `/dev/null` so they cannot start; `/etc/cloud/cloud-init.disabled` is also
+  set. **Verified on a real Firecracker boot:** without this the guest never
+  reaches a login prompt (it spins on `systemd-networkd-wait-online` and
+  `snapd.seeded`).
+- All `/etc/ssh/ssh_host_*` keypairs removed (otherwise every VM would share
+  host keys). Per-VM keys are written at provision time by `provision-vm.sh`;
+  we do not rely on first-boot regeneration (cloud-init is masked).
+- `/etc/machine-id` cleared at sync time and rewritten per VM at provision
+  time.
+- `/etc/hosts` overwritten with a minimal template (Atlas owns it; per-VM
+  `127.0.1.1` line added at provision time).
+- Root password locked, SSH password-auth disabled (key-only by contract).
+  The cloud image's `sshd_config` has `Include sshd_config.d/*.conf` and
+  ships `60-cloudimg-settings.conf` enabling password auth, so Atlas drops a
+  lexically-first `sshd_config.d/00-atlas.conf` — it wins by first-match
+  rather than relying on prepend ordering against the Include.
+- `/home/ubuntu` chown'd to uid/gid 1000 **only if it exists** — the cloud
+  image does *not* ship it (cloud-init would create the `ubuntu` user on first
+  boot, which we've masked). Atlas SSHes in as root, so the `ubuntu` user is
+  irrelevant; this is a guarded no-op on the cloud image.
+- motd: `50-motd-news` and `60-unminimize` removed (no-op if absent).
+- `/etc/fstab` replaced with a real entry (`LABEL=atlas-root /` plus the
+  swapfile from provision-time).
+- `fcnet.service` + `/usr/local/bin/fcnet-setup.sh` removed. **No-op on the
+  Ubuntu cloud image** (those are Firecracker-CI artifacts). Kept as harmless
+  `rm -f` calls so the step documents the contract and survives a future
+  image that does ship them.
 
-If we ever switch to a different upstream rootfs (e.g. real Ubuntu
-cloud image), this list becomes the regression-test checklist: each
-item should be a no-op on the new image, not a removal.
+This list is the **regression-test checklist** for any upstream rootfs swap:
+each item must be a no-op or a correct strip on the new image, never silently
+dropped. The cloud-init/networkd/snapd masks are the load-bearing items for
+*this* image; the fcnet removal is the load-bearing item for the old CI image
+and now a documented no-op.
 
 The per-VM half of the contract (hostname, machine-id, ssh host keys,
 swapfile, /etc/hosts 127.0.1.1 line) is written at provision time. See
@@ -112,8 +165,8 @@ swapfile, /etc/hosts 127.0.1.1 line) is written at provision time. See
 We could pre-build ext4 images on our own bucket. We don't, because:
 
 - We avoid building and storing our own artifacts for the building block.
-- The Firecracker CI squashfs is public and stable for the supported
-  releases.
+- The Ubuntu cloud squashfs is public, signed, and stable for a pinned
+  dated release.
 - Conversion on the server is a few seconds, once per server per image.
 
 When we add custom images (extra packages, custom users), we'll revisit.
@@ -148,9 +201,9 @@ place for inspection.
 
 ## Bumping an image
 
-Image rows are immutable after insert. To roll to a new Ubuntu CI
-release, **create a new `Virtual Machine Image` row** and archive the
-old one:
+Image rows are immutable after insert. To roll to a newer Ubuntu cloud
+release (a later dated `release-YYYYMMDD/`), **create a new
+`Virtual Machine Image` row** and archive the old one:
 
 1. Insert a new `Virtual Machine Image` with a distinct `image_name`
    (e.g. include the release date or the upstream tag), the new URLs,

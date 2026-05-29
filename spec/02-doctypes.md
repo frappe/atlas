@@ -607,11 +607,12 @@ rootfs_filename
 - Standard filters: `is_active`.
 
 A first-time operator does not need to invent any of these values. The
-Firecracker CI Ubuntu 24.04 image constants live in
-[`atlas/bootstrap.py`](../atlas/bootstrap.py) as `DEFAULT_IMAGE` and in
-[`atlas/tests/e2e/_config.py`](../atlas/tests/e2e/_config.py) as
-`DEFAULT_IMAGE`. Copy them into the form, or run `atlas.bootstrap.run`
-which inserts the row for you. See [08-images.md](./08-images.md).
+Ubuntu 24.04 cloud image constants live in
+[`atlas/bootstrap.py`](../atlas/bootstrap.py) as `DEFAULT_IMAGE` (server)
+and `MINIMAL_IMAGE` (minimal), mirrored in
+[`atlas/tests/e2e/_config.py`](../atlas/tests/e2e/_config.py). Copy one
+into the form, or run `atlas.bootstrap.run` which inserts the server row
+for you. See [08-images.md](./08-images.md).
 
 ### Auto-sync contract
 

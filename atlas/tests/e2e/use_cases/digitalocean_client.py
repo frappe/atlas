@@ -50,6 +50,26 @@ def run() -> None:
 	print(f"digitalocean-client: OK in {elapsed:.0f}s")
 
 
+def run_smoke() -> None:
+	"""Host/API-only path for development. Smoke the token, then the real
+	droplet create → poll active → get → delete round trip — the live-API
+	facts only DigitalOcean can confirm.
+
+	Skips the get/delete 404 paths and the pure `public_ipv4` / `public_ipv6` /
+	`_network_cidr` helpers (covered by `test_digitalocean.py`)."""
+	start_clock = time.monotonic()
+	try:
+		_check_account()
+		_check_real_droplet_round_trip()
+	except Exception:
+		elapsed = time.monotonic() - start_clock
+		print(f"digitalocean-client (smoke): FAIL in {elapsed:.0f}s")
+		traceback.print_exc()
+		raise
+	elapsed = time.monotonic() - start_clock
+	print(f"digitalocean-client (smoke): OK in {elapsed:.0f}s")
+
+
 def _check_account() -> None:
 	"""account() returns a dict or 403s if the token lacks `account:read`.
 	Either outcome exercises the same code path."""

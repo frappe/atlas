@@ -4,26 +4,17 @@ Atlas's lowest-level primitive is `run_task(connection=..., script=..., variable
 which uploads a script over scp and runs it over ssh. It is what
 `Server.bootstrap()` uses before a `Server` row's provider linkage is usable.
 
-Two entry points:
-
-- [run](#run)  — exercises `run_task` against an operator-provided
-  droplet (no DO API, no Server row). The host comes from `frappe.conf`:
-  `atlas_phase1_host` + `atlas_phase1_ssh_private_key`. This is the
-  "developer mode" path — invoked directly with `bench execute`, not from
-  `run_all`.
-- [run_against_shared](#run_against_shared)  — exercises `upload_files`,
-  `wait_for_ssh`, `run_scp`, and `Server.bootstrap()` re-run against the
-  shared bootstrapped server used by `run_all`.
+[run_against_shared](#run_against_shared) exercises `upload_files`,
+`wait_for_ssh`, `run_scp`, and `Server.bootstrap()` re-run against the
+shared bootstrapped server used by `run_all`. The happy/failure/missing-script
+paths of `run_task` itself live in the `run_task` use case.
 
 Also folds in the argument-validation throws that guard the entry point
 (`run_task` requires exactly one of `server=` or `connection=`,
 `connection_for_server` requires `ipv4_address`, `execute_task` requires
 a Task with a `server`). These do not require a droplet at all; they
-ride along on whichever entry point is convenient.
+ride along on this entry point.
 """
-
-import time
-import traceback
 
 import frappe
 
@@ -36,38 +27,7 @@ from atlas.atlas._ssh.transport import (
 	wait_for_ssh,
 )
 from atlas.atlas.ssh import connection_for_server as public_connection_for_server
-from atlas.tests.e2e._shared import (
-	MissingConfig,
-	expect_validation_error,
-	get_phase1_connection,
-	phase,
-)
-
-
-def run() -> None:
-	"""Operator-provided droplet path. Verifies the SSH primitive in isolation
-	from any DigitalOcean state. Requires `atlas_phase1_host` /
-	`atlas_phase1_ssh_private_key` in site config."""
-	start_clock = time.monotonic()
-	try:
-		connection = get_phase1_connection()
-	except MissingConfig as exception:
-		print(str(exception))
-		raise
-
-	try:
-		_check_happy_path(connection)
-		_check_failure(connection)
-		_check_missing_script(connection)
-		_check_run_task_argument_validation(connection)
-	except Exception:
-		elapsed = time.monotonic() - start_clock
-		print(f"ssh-primitive: FAIL in {elapsed:.0f}s")
-		traceback.print_exc()
-		raise
-
-	elapsed = time.monotonic() - start_clock
-	print(f"ssh-primitive: OK in {elapsed:.0f}s")
+from atlas.tests.e2e._shared import expect_validation_error, phase
 
 
 def run_against_shared(reuse: bool = True, keep: bool = True) -> None:
@@ -81,50 +41,25 @@ def run_against_shared(reuse: bool = True, keep: bool = True) -> None:
 		_check_scp_failure(connection)
 		_check_wait_for_ssh_timeout()
 		_check_server_bootstrap_rerun(server)
+		_check_run_task_argument_validation(connection)
 		_check_connection_for_server_validation()
 		_check_execute_task_no_server()
 
 
-# ----- operator-provided droplet (run) -------------------------------------
+def run_smoke(reuse: bool = True, keep: bool = True) -> None:
+	"""Host-only path for development. Drives the transport primitives against
+	the live host: a real scp upload, the non-zero-returncode scp branch, and
+	a full `Server.bootstrap()` re-run.
 
-
-def _check_happy_path(connection: Connection) -> None:
-	task = run_task(
-		connection=connection,
-		script="phase1-probe.sh",
-		variables={"NAME": "hi"},
-	)
-	assert task.status == "Success", f"expected Success, got {task.status}"
-	assert task.exit_code == 0
-	assert "hello hi" in task.stdout, f"stdout missing 'hello hi': {task.stdout!r}"
-
-
-def _check_failure(connection: Connection) -> None:
-	caught = False
-	try:
-		run_task(connection=connection, script="phase1-fail.sh", variables={})
-	except frappe.ValidationError:
-		caught = True
-	assert caught, "phase1-fail.sh should have raised"
-
-	task = frappe.get_last_doc("Task", filters={"script": "phase1-fail.sh"})
-	assert task.status == "Failure"
-	assert task.exit_code == 7
-	assert "boom" in task.stderr
-
-
-def _check_missing_script(connection: Connection) -> None:
-	caught = False
-	try:
-		run_task(connection=connection, script="does-not-exist.sh", variables={})
-	except frappe.ValidationError:
-		caught = True
-	assert caught, "missing script should have raised"
-
-	task = frappe.get_last_doc("Task", filters={"script": "does-not-exist.sh"})
-	# Clean Failure (not stuck Running/Pending) — every code path that creates
-	# a Task row also finalizes it.
-	assert task.status == "Failure", f"expected Failure, got {task.status}"
+	Skips the argument-validation throws, `connection_for_server` no-ipv4,
+	`execute_task` no-server, and the `wait_for_ssh` unroutable-host timeout —
+	all pure logic, covered by `test_ssh_runner.py` and
+	`test_ssh_transport.py`."""
+	with phase("ssh-primitive (smoke)", reuse=reuse, keep=keep) as server:
+		connection = public_connection_for_server(server)
+		_check_upload_files_happy(connection)
+		_check_scp_failure(connection)
+		_check_server_bootstrap_rerun(server)
 
 
 def _check_run_task_argument_validation(connection: Connection) -> None:

@@ -13,6 +13,9 @@
 #   MAC_ADDRESS           - e.g. 06:00:01:02:03:04
 #   TAP_DEVICE            - e.g. atlas-<first 9 hex of vm name>
 #   VIRTUAL_MACHINE_IPV6  - the VM's address inside the server's /124
+#   IPV4_HOST_CIDR        - host side of the per-VM NAT44 /30, e.g. 100.64.0.9/30
+#   IPV4_GUEST_CIDR       - guest side of the same /30, e.g. 100.64.0.10/30
+#   IPV4_GATEWAY          - host side address (no mask), the guest's v4 gateway
 #   SSH_PUBLIC_KEY        - injected into the rootfs
 #   ATLAS_FC_UID          - per-VM uid the jailer drops Firecracker to (gid == uid)
 #   ATLAS_NETNS           - per-VM network namespace name
@@ -33,6 +36,9 @@ set -euo pipefail
 : "${MAC_ADDRESS:?required}"
 : "${TAP_DEVICE:?required}"
 : "${VIRTUAL_MACHINE_IPV6:?required}"
+: "${IPV4_HOST_CIDR:?required}"
+: "${IPV4_GUEST_CIDR:?required}"
+: "${IPV4_GATEWAY:?required}"
 : "${SSH_PUBLIC_KEY:?required}"
 : "${ATLAS_FC_UID:?required}"
 : "${ATLAS_NETNS:?required}"
@@ -95,8 +101,10 @@ fi
 atlas_copy_rootfs "$source_rootfs" "$rootfs_path" "$DISK_GB"
 
 # 2. Inject this VM's identity (SSH key, network env, hostname, swap, host
-#    keys, machine-id) into the rootfs.
-atlas_inject_identity "$rootfs_path" "$VIRTUAL_MACHINE_NAME" "$VIRTUAL_MACHINE_IPV6" "$SSH_PUBLIC_KEY"
+#    keys, machine-id) into the rootfs. The v4 egress link goes into the
+#    guest's network env here too, so clone/rebuild get it for free.
+atlas_inject_identity "$rootfs_path" "$VIRTUAL_MACHINE_NAME" "$VIRTUAL_MACHINE_IPV6" \
+    "$SSH_PUBLIC_KEY" "$IPV4_GUEST_CIDR" "$IPV4_GATEWAY"
 
 # 3. Kernel inside the jail. Hard-link (not copy) the immutable image kernel so
 #    we don't duplicate it per VM; same filesystem (/var/lib/atlas), so the link
@@ -149,6 +157,7 @@ VIRTUAL_MACHINE_IPV6=${VIRTUAL_MACHINE_IPV6}
 ATLAS_NETNS=${ATLAS_NETNS}
 HOST_VETH=${HOST_VETH}
 NAMESPACE_VETH=${NAMESPACE_VETH}
+IPV4_HOST_CIDR=${IPV4_HOST_CIDR}
 EOF
 
 # 7. Sidecar that the systemd unit reads (EnvironmentFile) for the jailer flags.

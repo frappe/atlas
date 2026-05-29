@@ -105,9 +105,16 @@ fi
 [ -e /usr/local/bin/fcnet-setup.sh ] \
     && fail "/usr/local/bin/fcnet-setup.sh still present"
 
-# 7. eth0 has no global IPv4 (fcnet would have injected 91.83.x.x/30).
-ipv4="$(ip -4 -o addr show dev eth0 scope global 2>/dev/null || true)"
-[ -z "$ipv4" ] || fail "eth0 has unexpected IPv4: $ipv4"
+# 7. eth0's only global IPv4 is the Atlas NAT44 egress address (100.64.x.x).
+#    fcnet would have injected a 91.83.x.x/30; any non-100.64 global v4 is a
+#    leftover and fails. (The 100.64 link is asserted in phase5-ipv4-egress.sh.)
+ipv4="$(ip -4 -o addr show dev eth0 scope global 2>/dev/null | awk '{print $4}' || true)"
+for cidr in $ipv4; do
+    case "$cidr" in
+        100.64.*) : ;;
+        *) fail "eth0 has unexpected non-egress IPv4: $cidr" ;;
+    esac
+done
 
 # 8. Root password locked.
 shadow="$(grep '^root:' /etc/shadow)"
@@ -118,15 +125,42 @@ esac
 
 # 9. sshd password auth off. sshd -T output is lowercase keys, value as-is.
 #    Use awk to extract the global setting tolerantly (whitespace, CR/LF).
+#    awk must NOT `exit` on first match: under `set -o pipefail` an early exit
+#    closes the pipe while `sshd -T` is still writing, `sshd` takes SIGPIPE
+#    (141), and the whole `set -e` block aborts. Drain all output and keep the
+#    last match instead.
 pwauth="$(sshd -T 2>/dev/null \
-    | awk 'tolower($1)=="passwordauthentication"{print tolower($2); exit}' \
+    | awk 'tolower($1)=="passwordauthentication"{v=tolower($2)} END{print v}' \
     | tr -d '\r')"
 [ "$pwauth" = "no" ] \
     || fail "sshd PasswordAuthentication is '$pwauth', want 'no'"
 
-# 10. Swap on /swapfile.
-swapon --show=NAME --noheadings | grep -qx /swapfile \
+# 10. Swap on /swapfile. Capture first (a bare `... | grep -q` would let grep
+#     exit on match and SIGPIPE the producer under pipefail, as in check 9).
+swap_names="$(swapon --show=NAME --noheadings)"
+printf '%s\n' "$swap_names" | grep -qx /swapfile \
     || fail "swap on /swapfile not active"
+
+# 11. This is the Ubuntu cloud image (the source we cut over to).
+grep -q 'VERSION_ID="24.04"' /etc/os-release \
+    || fail "/etc/os-release is not Ubuntu 24.04"
+
+# 12. cloud-init is neutralized (sync-image.sh masks it). If it were live it
+#     would race Atlas's mount-time identity injection. A masked unit reports
+#     as 'masked'; reaching this prompt at all already proves the boot-blocking
+#     waits (networkd-wait-online, snapd.seeded) are not hanging.
+ci_state="$(systemctl is-enabled cloud-init.service 2>/dev/null || true)"
+case "$ci_state" in
+    masked|disabled|"") : ;;
+    *) fail "cloud-init.service is '${ci_state}', want masked/disabled" ;;
+esac
+
+# 13. systemd-networkd-wait-online masked (Phase 0 caught it hanging boot).
+wait_state="$(systemctl is-enabled systemd-networkd-wait-online.service 2>/dev/null || true)"
+case "$wait_state" in
+    masked|disabled|"") : ;;
+    *) fail "systemd-networkd-wait-online is '${wait_state}', want masked" ;;
+esac
 
 echo "OK ${expected_hostname}"
 REMOTE

@@ -33,6 +33,8 @@ from atlas.tests.e2e._shared import (
 
 
 def run(reuse: bool = True, keep: bool = True) -> None:
+	"""Full path: HOST run/failure/timeout/reboot + the dialog and Task-DocType
+	validation the unit suite also covers. See [run_smoke](#run_smoke)."""
 	with phase("run-task", reuse=reuse, keep=keep) as server:
 		_check_run_task_dialog_happy(server)
 		_check_run_task_dialog_argument_shapes(server)
@@ -41,6 +43,26 @@ def run(reuse: bool = True, keep: bool = True) -> None:
 		_check_run_task_remote_failure(server)
 		_check_run_task_timeout(server)
 		_check_reboot(server)
+
+
+def run_smoke(reuse: bool = True, keep: bool = True, reboot: bool = False) -> None:
+	"""Host-only path for development. Runs a real script, drives the
+	remote-failure and remote-timeout branches (exit code + Failure row), which
+	need a live host to prove.
+
+	`reboot=False` by default: `_check_reboot` is a flat 30s drop + up to 300s
+	reconnect poll — the most expensive non-provision wait in the suite. Pass
+	`reboot=True` when you touched `reboot-server.sh` or the reconnect path.
+
+	Skips dialog argument shapes and Task DocType validation (pure logic,
+	covered by `test_ssh_runner.py`, `task/test_task.py`,
+	`server/test_server_runtask.py`)."""
+	with phase("run-task (smoke)", reuse=reuse, keep=keep) as server:
+		_check_run_task_dialog_happy(server)
+		_check_run_task_remote_failure(server)
+		_check_run_task_timeout(server)
+		if reboot:
+			_check_reboot(server)
 
 
 def _check_run_task_dialog_happy(server) -> None:

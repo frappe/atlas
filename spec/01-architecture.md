@@ -149,10 +149,10 @@ the form (`Provision`, `Start`, `Stop`, `Delete`) translate to one task each.
 
 ### Virtual Machine Image
 
-A kernel + rootfs pair. One image for this iteration: Ubuntu 24.04 from
-Firecracker CI. Image bytes live on each server under
-`/var/lib/atlas/images/`; the document tracks the canonical URLs and
-checksums.
+A kernel + rootfs pair. Images for this iteration: Ubuntu 24.04 (noble)
+server and minimal cloud images from `cloud-images.ubuntu.com`. Image
+bytes live on each server under `/var/lib/atlas/images/`; the document
+tracks the canonical URLs and checksums.
 
 ### Task
 

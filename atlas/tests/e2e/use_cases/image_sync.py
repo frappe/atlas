@@ -19,7 +19,10 @@ This module exercises:
 import frappe
 
 from atlas.atlas.ssh import run_task
+from atlas.tests.e2e._config import MINIMAL_IMAGE
+from atlas.tests.e2e._image import ensure_image_row
 from atlas.tests.e2e._shared import (
+	DEFAULT_IMAGE,
 	ensure_default_image_row,
 	expect_validation_error,
 	phase,
@@ -28,6 +31,8 @@ from atlas.tests.e2e._shared import (
 
 
 def run(reuse: bool = True, keep: bool = True) -> None:
+	"""Full path: HOST sync checks + url validation / sync_to_all count that
+	the unit suite also covers. See [run_smoke](#run_smoke)."""
 	with phase("image-sync", reuse=reuse, keep=keep) as server:
 		image = ensure_default_image_row()
 
@@ -37,6 +42,33 @@ def run(reuse: bool = True, keep: bool = True) -> None:
 		_check_execute_task_sync(server.name, image)
 		_check_image_url_validation()
 		_check_sync_to_all_servers()
+		_check_minimal_variant(server.name)
+
+
+def run_smoke(reuse: bool = True, keep: bool = True) -> None:
+	"""Host-only path for development. Clears the cached rootfs and runs the
+	full download + sha256 + unsquash + mkfs pipeline, probes the on-server
+	layout, then asserts the second sync short-circuits.
+
+	Skips url-https validation and the `sync_to_all_servers` count (pure
+	logic, covered by `virtual_machine_image/test_virtual_machine_image.py`),
+	the in-process `execute_task` duplicate, and the minimal-image variant —
+	a second 900s download that proves the same pipeline as default."""
+	with phase("image-sync (smoke)", reuse=reuse, keep=keep) as server:
+		image = ensure_default_image_row()
+		_clear_cached_rootfs(server.name, image)
+		_check_sync_to_server(server.name, image)
+		_check_resync_short_circuits(server.name, image)
+
+
+def _check_minimal_variant(server_name: str) -> None:
+	"""The minimal cloud image syncs and probes exactly like server: same
+	sync-image.sh path (zstd kernel extract + normalize), different rootfs.
+	Clearing first turns this into a real download+build, not a short-circuit.
+	"""
+	image = ensure_image_row(MINIMAL_IMAGE)
+	_clear_cached_rootfs(server_name, image)
+	_check_sync_to_server(server_name, image)
 
 
 def _clear_cached_rootfs(server_name: str, image) -> None:
@@ -157,7 +189,7 @@ def _check_image_url_validation() -> None:
 
 def _check_sync_to_all_servers() -> None:
 	"""sync_to_all_servers() returns one Task per Active Server row."""
-	image = frappe.get_doc("Virtual Machine Image", "ubuntu-24.04")
+	image = frappe.get_doc("Virtual Machine Image", DEFAULT_IMAGE["image_name"])
 	active_count = frappe.db.count("Server", filters={"status": "Active"})
 	tasks = image.sync_to_all_servers()
 	assert len(tasks) == active_count, (len(tasks), active_count)

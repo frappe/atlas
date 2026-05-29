@@ -25,13 +25,16 @@ atlas_copy_rootfs() {
     sudo mv "${dest_rootfs}.part" "$dest_rootfs"
 }
 
-# atlas_inject_identity ROOTFS VM_NAME IPV6 SSH_PUBLIC_KEY
+# atlas_inject_identity ROOTFS VM_NAME IPV6 SSH_PUBLIC_KEY IPV4_GUEST_CIDR IPV4_GATEWAY
 #   Mount ROOTFS and write this VM's identity into it: authorized_keys, the
-#   per-VM network env, hostname + hosts entry, a 512 MiB swapfile, fresh SSH
-#   host keys, and a UUID-derived machine-id. Unmounts on return (and on error,
-#   via the trap the caller is expected to leave to us).
+#   per-VM network env (IPv6 + the private IPv4 egress link), hostname + hosts
+#   entry, a 512 MiB swapfile, fresh SSH host keys, and a UUID-derived
+#   machine-id. Unmounts on return (and on error, via the trap the caller is
+#   expected to leave to us). The v4 args are required so a rebuilt/cloned VM
+#   never silently loses its egress config.
 atlas_inject_identity() {
     local rootfs_path="$1" vm_name="$2" vm_ipv6="$3" ssh_public_key="$4"
+    local vm_ipv4="$5" vm_ipv4_gateway="$6"
     local mount_point
     mount_point="$(sudo mktemp -d /tmp/atlas-mount-XXXXXX)"
     sudo mount -o loop "$rootfs_path" "$mount_point"
@@ -42,6 +45,8 @@ atlas_inject_identity() {
 
     sudo install -m 0644 /dev/stdin "${mount_point}/etc/atlas-network.env" <<EOF
 VIRTUAL_MACHINE_IPV6=${vm_ipv6}
+VIRTUAL_MACHINE_IPV4=${vm_ipv4}
+VIRTUAL_MACHINE_IPV4_GATEWAY=${vm_ipv4_gateway}
 EOF
 
     # Per-VM hostname. First 8 chars of the stable UUID are enough to recognize

@@ -1,0 +1,1 @@
+Harden the Firecracker host using Ubuntu and Firecracker CIS benchmarks. Ubuntu might have a way to do this.

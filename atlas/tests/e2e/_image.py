@@ -6,28 +6,48 @@ from atlas.tests.e2e._config import DEFAULT_IMAGE
 from atlas.tests.e2e._tasks import wait_for_task
 
 
-def ensure_default_image_row() -> "frappe.model.document.Document":
-	"""Insert or refresh the default `Virtual Machine Image` row to `DEFAULT_IMAGE`.
+def ensure_image_row(image_spec: dict) -> "frappe.model.document.Document":
+	"""Ensure a `Virtual Machine Image` row matches `image_spec` exactly.
 
-	Returns the Document. Does not touch any server. Phase 4 uses this when
-	it wants to exercise `sync_to_server` explicitly without the probe
-	short-circuit baked into `ensure_image_on_server`.
+	Image rows are immutable after insert (URLs, checksums, title, …), so a
+	stale row from an earlier run with different bytes cannot be `save()`-d
+	into the new spec — it would throw "<field> is immutable". The harness
+	owns these rows and treats them as disposable: if an existing row differs
+	on any spec field, delete and re-insert. Returns the Document. Does not
+	touch any server.
 	"""
-	image_name = DEFAULT_IMAGE["image_name"]
-	if frappe.db.exists("Virtual Machine Image", image_name):
-		image = frappe.get_doc("Virtual Machine Image", image_name)
-		image.update(DEFAULT_IMAGE)
-		image.is_active = 1
-		image.save(ignore_permissions=True)
-		frappe.db.commit()
-		return image
+	name = image_spec["image_name"]
+	if frappe.db.exists("Virtual Machine Image", name):
+		current = frappe.get_doc("Virtual Machine Image", name)
+		if current.is_active and all(current.get(k) == v for k, v in image_spec.items()):
+			return current
+		# Differs (e.g. constants bumped) — drop the immutable row and re-insert.
+		_delete_image_and_vms(name)
 	image = frappe.get_doc({
-		"doctype": "Virtual Machine Image",
-		**DEFAULT_IMAGE,
-		"is_active": 1,
+		"doctype": "Virtual Machine Image", **image_spec, "is_active": 1,
 	}).insert(ignore_permissions=True)
 	frappe.db.commit()
 	return image
+
+
+def _delete_image_and_vms(image_name: str) -> None:
+	"""Force-delete an image row and any VM rows that Link to it (the Link
+	would otherwise block deletion). Test-only — operators archive, never
+	delete."""
+	for vm in frappe.get_all(
+		"Virtual Machine", filters={"image": image_name}, pluck="name"
+	):
+		frappe.delete_doc("Virtual Machine", vm, force=True, ignore_permissions=True)
+	frappe.delete_doc(
+		"Virtual Machine Image", image_name, force=True, ignore_permissions=True
+	)
+	frappe.db.commit()
+
+
+def ensure_default_image_row() -> "frappe.model.document.Document":
+	"""Ensure the default (server) `Virtual Machine Image` row matches
+	`DEFAULT_IMAGE`. Thin wrapper over `ensure_image_row`."""
+	return ensure_image_row(DEFAULT_IMAGE)
 
 
 def ensure_image_on_server(server_name: str) -> "frappe.model.document.Document":

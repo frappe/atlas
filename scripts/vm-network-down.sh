@@ -21,9 +21,19 @@ if [ -n "${VIRTUAL_MACHINE_IPV6:-}" ] && [ -n "$uplink" ]; then
     sudo ip -6 neigh del proxy "$VIRTUAL_MACHINE_IPV6" dev "$uplink" 2>/dev/null || true
 fi
 
-# Host-side /128 route into the namespace.
-if [ -n "${VIRTUAL_MACHINE_IPV6:-}" ] && [ -n "${HOST_VETH:-}" ]; then
-    sudo ip -6 route del "${VIRTUAL_MACHINE_IPV6}/128" dev "$HOST_VETH" 2>/dev/null || true
+# Host-side routes into the namespace (v6 /128 and the v4 /30). The tap, its
+# IPv4 /30 host address, and the namespace-side veth all live inside the
+# namespace, so deleting the namespace drops them in one go — no per-device v4
+# teardown needed. The masquerade rule is host-wide (matches the whole
+# 100.64.0.0/16 source), so it is intentionally NOT removed per-VM — it stays
+# for the next VM, exactly like the v6 forward chain scaffold.
+if [ -n "${HOST_VETH:-}" ]; then
+    if [ -n "${VIRTUAL_MACHINE_IPV6:-}" ]; then
+        sudo ip -6 route del "${VIRTUAL_MACHINE_IPV6}/128" dev "$HOST_VETH" 2>/dev/null || true
+    fi
+    if [ -n "${IPV4_HOST_CIDR:-}" ]; then
+        sudo ip -4 route del "$IPV4_HOST_CIDR" dev "$HOST_VETH" 2>/dev/null || true
+    fi
 fi
 
 # The namespace owns the tap and the namespace-side veth; deleting it takes both.

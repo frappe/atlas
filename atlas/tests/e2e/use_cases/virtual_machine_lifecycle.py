@@ -51,6 +51,14 @@ def run(reuse: bool = True, keep: bool = True) -> None:
 		_check_full_lifecycle(server.name, vm)
 
 
+# The lifecycle IS the host fact — every state transition is probed on-host and
+# only a real VM can prove them. The lone unit-dup (terminate-already-terminated
+# throw, covered by `virtual_machine/test_virtual_machine_lifecycle.py`) is an
+# in-memory check at the tail with no host cost, so the smoke path is the full
+# run rather than a trimmed one.
+run_smoke = run
+
+
 def _check_full_lifecycle(server_name: str, vm) -> None:
 	"""Auto-provision (insert -> Running) -> Stop -> Start -> Restart ->
 	Terminate, with probes."""

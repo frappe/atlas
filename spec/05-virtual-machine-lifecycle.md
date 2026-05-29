@@ -155,8 +155,12 @@ asserts on every run:
   host at provision time with `ssh-keygen` and written into the mounted
   rootfs. The CI build-container comment `root@bf0feaa40806` does not
   appear.
-- No global IPv4 on `eth0` — the `fcnet.service` that derived a phantom
-  `91.83.x.x/30` from the MAC is removed at image-sync time.
+- The only global IPv4 on `eth0` is the Atlas NAT44 egress address
+  (`100.64.x.x/30`, see [06-networking.md](./06-networking.md)). The
+  `fcnet.service` that derived a phantom `91.83.x.x/30` from the MAC is
+  removed at image-sync time, so any *non-`100.64`* global v4 is a
+  regression. (The egress address and its reachability are asserted
+  separately by the `phase5-ipv4-egress.sh` probe.)
 - `/etc/hosts` has no Docker bridge leftover; just localhost, the
   per-VM 127.0.1.1 line, and the ip6-* aliases.
 - Root password locked (`root:!:` in `/etc/shadow`). `sshd -T` reports
@@ -165,7 +169,7 @@ asserts on every run:
   `/etc/fstab` installed at image-sync time.
 
 This list is short for a reason: it is the operator-visible delta
-between a Firecracker CI test artifact and a VM that looks like the
+between a stock Ubuntu cloud image and a VM that looks like the
 operator's own. When the upstream image changes, every bullet either
 stays a no-op (good) or needs a new strip (a regression to fix in
 `sync-image.sh`).

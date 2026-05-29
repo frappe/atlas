@@ -10,21 +10,38 @@ import subprocess
 import frappe
 
 from atlas.atlas.digitalocean import DigitalOceanClient
-from atlas.atlas.ssh import Connection
 
 TAG = "atlas-e2e"
 SWEEP_AGE_SECONDS = 30 * 60
 
-# Public Firecracker CI Ubuntu 24.04 artifacts (pinned for stability).
+# Ubuntu cloud images (noble), pinned to a dated release for stability.
+# kernel_sha256 is the digest of the DOWNLOADED packed vmlinuz; sync-image.sh
+# decompresses the zstd payload to a raw vmlinux on the server. Mirrors
+# atlas.bootstrap.DEFAULT_IMAGE / MINIMAL_IMAGE — keep the two in sync.
+_NOBLE_RELEASE = "https://cloud-images.ubuntu.com/releases/noble/release-20260518"
+_NOBLE_MINIMAL_RELEASE = "https://cloud-images.ubuntu.com/minimal/releases/noble/release-20260521"
+
 DEFAULT_IMAGE = {
 	"image_name": "ubuntu-24.04",
-	"title": "Firecracker CI Ubuntu 24.04 rootfs",
-	"kernel_url": "https://s3.amazonaws.com/spec.ccfc.min/firecracker-ci/v1.12/x86_64/vmlinux-6.1.128",
-	"kernel_filename": "vmlinux-6.1.128",
-	"kernel_sha256": "27a8310b9a727517e9eb02044524b6ceb77de5728e3491b6974d5c846227ecc8",
-	"rootfs_url": "https://s3.amazonaws.com/spec.ccfc.min/firecracker-ci/v1.12/x86_64/ubuntu-24.04.squashfs",
-	"rootfs_filename": "ubuntu-24.04.ext4",
-	"rootfs_sha256": "88821a26b5a38c92b84a064d452167d7f80f9e17cf4441d1ebbae7569e340aee",
+	"title": "Ubuntu 24.04 server cloud image",
+	"kernel_url": f"{_NOBLE_RELEASE}/unpacked/ubuntu-24.04-server-cloudimg-amd64-vmlinuz-generic",
+	"kernel_filename": "vmlinux-noble-server",
+	"kernel_sha256": "3a33b65c88f98a5563c926d5b163ebe09706e5084ba587a19c1b15bd3e7a82d6",
+	"rootfs_url": f"{_NOBLE_RELEASE}/ubuntu-24.04-server-cloudimg-amd64.squashfs",
+	"rootfs_filename": "ubuntu-24.04-server.ext4",
+	"rootfs_sha256": "bb4bc95d539df92c96ad0ed34c017363e4a7a62772c6af1dc3553e06ce710b74",
+	"default_disk_gigabytes": 4,
+}
+
+MINIMAL_IMAGE = {
+	"image_name": "ubuntu-24.04-minimal",
+	"title": "Ubuntu 24.04 minimal cloud image",
+	"kernel_url": f"{_NOBLE_MINIMAL_RELEASE}/unpacked/ubuntu-24.04-minimal-cloudimg-amd64-vmlinuz-generic",
+	"kernel_filename": "vmlinux-noble-minimal",
+	"kernel_sha256": "3a33b65c88f98a5563c926d5b163ebe09706e5084ba587a19c1b15bd3e7a82d6",
+	"rootfs_url": f"{_NOBLE_MINIMAL_RELEASE}/ubuntu-24.04-minimal-cloudimg-amd64.squashfs",
+	"rootfs_filename": "ubuntu-24.04-minimal.ext4",
+	"rootfs_sha256": "a288f0bd499e1a747f86fda8ec9822dd99a4e3c0721d89ffd9dd57608ff21072",
 	"default_disk_gigabytes": 4,
 }
 
@@ -46,16 +63,6 @@ def _load_key(value: str) -> str:
 		raise MissingConfig(f"ssh private key not found at {path!r}")
 	with open(path) as handle:
 		return handle.read()
-
-
-def get_phase1_connection() -> Connection:
-	host = frappe.conf.get("atlas_phase1_host")
-	key = frappe.conf.get("atlas_phase1_ssh_private_key")
-	if not host or not key:
-		raise MissingConfig(
-			"Phase 1 e2e requires atlas_phase1_host and atlas_phase1_ssh_private_key in site config."
-		)
-	return Connection(host=host, ssh_private_key=_load_key(key))
 
 
 def get_client() -> DigitalOceanClient:

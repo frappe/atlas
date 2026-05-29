@@ -92,6 +92,26 @@ def run(reuse: bool = True, keep: bool = True) -> None:
 		_check_provision_server_bad_token()
 
 
+def run_smoke(reuse: bool = True, keep: bool = True) -> None:
+	"""Host-only path for development. Drives the operator buttons through the
+	`run_doc_method` HTTP wrapper against a live server + booted VM — the layer
+	the direct-Python use cases skip and the only reason this module exists.
+
+	Runs the Server, Image, and Virtual Machine button maps (which include the
+	wrong-state negatives inline, since they ride the same booted VM at no extra
+	host cost). Skips `_check_provision_server_bad_token`: it mutates shared
+	Atlas/DO Settings to prove a no-row-leak branch the controller unit test
+	already covers, and the mutation is the documented can't-run-in-parallel
+	hazard."""
+	with phase("desk-buttons (smoke)", reuse=reuse, keep=keep) as server:
+		image_doc = ensure_image_on_server(server.name)
+		public_key = ephemeral_public_key()
+
+		_check_server_buttons(server)
+		_check_virtual_machine_image_buttons(server.name, image_doc.name)
+		_check_virtual_machine_buttons(server.name, image_doc.name, public_key)
+
+
 # ----- helpers -------------------------------------------------------------
 
 

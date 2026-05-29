@@ -24,7 +24,7 @@ disagree, the script wins. Update both.
 
 ### What the script does
 
-Read the file. It is ~70 lines.
+Read the file. It is ~250 lines.
 
 In summary, in this order:
 
@@ -45,10 +45,16 @@ In summary, in this order:
    release tarball, so this is one download. Production runs every VM under the
    jailer; a host bootstrapped before the jailer existed picks it up on re-run
    (the gate checks both binaries).
-4. Writes `/etc/sysctl.d/60-atlas.conf` with IPv6 forwarding and proxy NDP.
-5. Creates the `inet atlas` nftables table and `forward` chain.
-6. Creates the `/var/lib/atlas/` directory tree.
-7. Writes `FIRECRACKER_VERSION`, `JAILER_VERSION`, `KERNEL_VERSION`,
+4. Writes `/etc/sysctl.d/60-atlas.conf` with IPv6 forwarding, proxy NDP, and
+   IPv4 forwarding (`net.ipv4.ip_forward`, for NAT44 egress), **plus the
+   CIS 3.3 network-hardening sysctls** — see *Host hardening* below.
+5. Writes the sshd hardening drop-in, the kernel-module blocklist, enables
+   unattended security updates, and disables KSM/swap — see *Host hardening*.
+6. Creates the `inet atlas` nftables table with a `forward` chain (IPv6
+   filter) and a `postrouting` chain holding the host-wide IPv4 masquerade
+   rule. See [06-networking.md](./06-networking.md).
+7. Creates the `/var/lib/atlas/` directory tree.
+8. Writes `FIRECRACKER_VERSION`, `JAILER_VERSION`, `KERNEL_VERSION`,
    `ARCHITECTURE` to `/var/lib/atlas/bootstrap.json` (the single source of
    truth) and `cat`s it on stdout. `firecracker_version` and `jailer_version`
    are always the same (one tarball) but both are recorded on the `Server` row.
@@ -57,6 +63,74 @@ The Python side `json.loads` the trailing JSON object and writes the
 fields onto the `Server` document. `jq` is invoked with `-nc` (compact,
 single-line) so the trailing line is a single object; the parser scans
 backwards for the last non-empty line.
+
+### Host hardening
+
+Bootstrap hardens the host as part of the same idempotent script. The
+controls are a cherry-picked subset of the **Firecracker production-host
+setup** doc and the **CIS Ubuntu 24.04 / CIS Distribution-Independent
+Linux** benchmarks — chosen because they reduce real attack surface on a
+microVM host without breaking it, and skipping everything that is box-ticking
+for a headless, key-only-root, machine-controlled host (no PAM/password
+policy, no AIDE, no auditd, no login banners, no service-disable sweep). All
+controls are expressed as `*.d` drop-in files (sysctl.d, sshd_config.d,
+modprobe.d, apt.conf.d) so they are idempotent overwrites and portable across
+Ubuntu 24.04 and 26.04 — we never invoke a release-pinned hardening tool.
+
+The hardening is **not** a separate operation, button, or Task: it is part of
+`bootstrap-server.sh`, re-applied (as a no-op) on every re-bootstrap.
+
+| Control | What | Benchmark |
+| --- | --- | --- |
+| Network sysctls | reject ICMP redirects, no source routing, no redirect-send, log martians, bogus/broadcast ICMP ignored, SYN cookies, IPv6 `accept_ra=0` — all in `/etc/sysctl.d/60-atlas.conf` alongside the forwarding lines | CIS 3.3.2–3.3.11 |
+| sshd drop-in | `/etc/ssh/sshd_config.d/60-atlas.conf`: key-only root, no password/empty-password/keyboard-interactive auth, `MaxAuthTries 4`, `LoginGraceTime 60`, `ClientAlive 300×3`, modern Ciphers/MACs/KexAlgorithms. Validated with `sshd -t` **before** reload so a bad drop-in can never brick SSH | CIS 5.1 |
+| Module blocklist | `/etc/modprobe.d/60-atlas-blocklist.conf`: unused filesystem modules (`cramfs`, `freevxfs`, `hfs`, `hfsplus`, `jffs2`, `udf`, `usb-storage`) and unused network protocols (`dccp`, `tipc`, `rds`, `sctp`). It must **never** list a load-bearing module — `tun`/`tap` (VM taps), `kvm`/`kvm_intel`/`kvm_amd` (Firecracker), `vhost`/`vhost_net` (virtio), `nf_tables`/`nft_*` (firewall); CIS only blocklists *unused* modules, so none of these appear, but the e2e probe asserts it. | CIS 1.1.1, 3.2 |
+| Security updates | install `unattended-upgrades`, scoped to the **security** pocket only, **no** automatic reboot (a reboot would kill running VMs) | CIS 1.2.2.1 |
+| KSM / swap off | disable Kernel Samepage Merging (cross-VM memory side channel) and swap (guest RAM remanence on disk) | Firecracker prod-host |
+
+#### Deliberate deviations
+
+Three benchmark items are **intentionally not applied** because they would
+break Atlas. A CIS audit will flag these three as failures — they are
+deliberate, documented here, and asserted by the e2e probe so they cannot
+silently regress:
+
+1. **IP forwarding stays on** (CIS 3.3.1 says disable it). The VM networking
+   model is a routed-tap topology — there is no bridge; the host routes packets
+   between its uplink and each per-VM tap, which *is* IP forwarding. With it
+   off, every VM is unreachable in both directions. Blast radius is contained at
+   the `inet atlas` nftables forward chain, not at the global switch. See
+   [06-networking.md](./06-networking.md).
+2. **`squashfs` is not blocklisted** (CIS 1.1.1.7 says blocklist it). `unsquashfs`
+   unpacks the rootfs image at sync time; blocklisting the module would break
+   image sync. The rest of the CIS module blocklist is applied.
+3. **`PermitRootLogin prohibit-password`** (CIS 5.1.20 says `no`). Atlas connects
+   as root over SSH with a key; there is no unprivileged user yet (that is a
+   [roadmap](./09-roadmap.md) item). `no` would lock Atlas out of every server.
+   `prohibit-password` is the CIS-acceptable middle form: key-only root, no
+   password login.
+
+#### Not done here (still deferred)
+
+Hardening this iteration is **host-level, as root**. The privilege-drop —
+an unprivileged `atlas` user, the Firecracker **jailer**, and the Firecracker
+**AppArmor** profile — is a larger, breaking change and remains on the
+[roadmap](./09-roadmap.md), along with `/tmp` `/dev/shm` mount hardening,
+`auditd`, and surfacing "reboot pending" after an unattended security update.
+
+#### What we deliberately skip (and won't re-litigate)
+
+The selection axis is *does this protect a Firecracker host without breaking it,
+in a way we can explain in one line and maintain* — not "what a CIS scan scores".
+So we **do not** run the full `usg`/CIS profile (it sets the three deviations
+wrong and drags in a long tail of PAM/password-policy, AIDE, auditd, and banner
+controls that are pure box-ticking on a headless, key-only-root, machine-driven
+host); `usg` is at most an audit *reporter*, never the apply mechanism. We also
+skip the Firecracker doc's hardware/boot-cmdline items — `nosmt` (halves a
+2-vCPU droplet; a multi-tenant-with-hostile-neighbors concern), ECC/TRR memory
+and early microcode (provider procurement), and cgroup/`quiet loglevel` GRUB
+tuning (don't fit an idempotent re-runnable bootstrap). These are provider- or
+tenancy-level concerns that sit above Atlas; revisit only with a concrete need.
 
 ### Files that must already be on the server
 
@@ -224,8 +298,12 @@ Every action is idempotent:
   race before running — see step 2).
 - The Firecracker + jailer install is gated on `firecracker --version` and
   `jailer --version` (re-run installs either if absent or wrong-versioned).
-- File writes use `install -m mode -T` (atomic, overwrite).
+- File writes use `install -m mode -T` (atomic, overwrite). The hardening
+  drop-ins (sysctl.d, sshd_config.d, modprobe.d, apt.conf.d) are all written
+  this way, so a re-bootstrap rewrites identical bytes — a clean no-op.
 - nftables creates are guarded with `nft list ... || nft add ...`.
+- `sshd -t` validates the drop-in before `systemctl reload ssh`; `swapoff -a`
+  and the KSM write are no-ops when already off.
 - `mkdir -p` and `systemctl daemon-reload` are naturally idempotent.
 
 Re-running `Bootstrap` is the recovery path. There is no separate "repair"
