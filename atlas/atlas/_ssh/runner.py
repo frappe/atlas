@@ -1,5 +1,6 @@
 """Task lifecycle and remote-script execution on top of `transport.py`."""
 
+import os
 import shlex
 import subprocess
 import time
@@ -160,24 +161,63 @@ def _run_remote_script(
 
 	_ensure_known_hosts_directory()
 
-	with ssh_key_file(connection.ssh_private_key) as key_path:
-		run_ssh(
-			connection,
-			key_path,
-			f"mkdir -p {shlex.quote(REMOTE_STAGING_DIRECTORY)}",
-			timeout_seconds=60,
-		)
+	uploads = files_to_upload(script)
 
-		for local, remote in files_to_upload(script):
+	with ssh_key_file(connection.ssh_private_key) as key_path:
+		# Create the staging dir and every remote parent directory the uploads
+		# need (the `atlas` package lands under /tmp/atlas/lib/atlas/, which scp
+		# will not create on its own) in one round trip.
+		remote_dirs = {REMOTE_STAGING_DIRECTORY}
+		remote_dirs.update(os.path.dirname(remote) for _, remote in uploads)
+		mkdir = "mkdir -p " + " ".join(shlex.quote(d) for d in sorted(remote_dirs) if d)
+		run_ssh(connection, key_path, mkdir, timeout_seconds=60)
+
+		for local, remote in uploads:
 			local_path = (scripts_catalog.scripts_directory() / ".." / local).resolve()
 			run_scp(connection, key_path, str(local_path), remote, timeout_seconds=300)
 
 		remote_script_path = f"{REMOTE_STAGING_DIRECTORY}/{script}"
 		run_scp(connection, key_path, str(script_path), remote_script_path, timeout_seconds=300)
 
-		env_prefix = " ".join(
-			f"{key}={shlex.quote(str(value))}" for key, value in variables.items()
-		)
-		command = f"env {env_prefix} bash -x {shlex.quote(remote_script_path)}".strip()
-
+		command = _remote_command(script, remote_script_path, variables)
 		return run_ssh(connection, key_path, command, timeout_seconds=timeout_seconds)
+
+
+def _remote_command(script: str, remote_script_path: str, variables: dict) -> str:
+	"""Build the remote invocation for a staged script.
+
+	Python tasks (`.py`) run as `python3 <script> --flag value …`: the variables
+	dict maps to CLI flags (UPPER_SNAKE → --kebab-case), the typed-input contract
+	the entry points parse with TaskInputs.from_args(). A list value becomes a
+	repeated flag (`--cgroup-arg a --cgroup-arg b`). Shell tasks (`.sh`) keep the
+	legacy `env VAR=val bash -x <script>` form. Both coexist so the migration can
+	proceed script by script.
+
+	The Python form is strictly better for the operator: a Task row now yields a
+	runnable, `--help`-able command line, not an `env …` blob.
+	"""
+	quoted_path = shlex.quote(remote_script_path)
+	if script.endswith(".py"):
+		args = _variables_to_flags(variables)
+		return f"python3 {quoted_path} {args}".strip()
+	env_prefix = " ".join(
+		f"{key}={shlex.quote(str(value))}" for key, value in variables.items()
+	)
+	return f"env {env_prefix} bash -x {quoted_path}".strip()
+
+
+def _variables_to_flags(variables: dict) -> str:
+	"""Render a variables dict as a CLI argument string: UPPER_SNAKE → --kebab,
+	list → repeated flag, everything quoted. Empty/None values are dropped (the
+	field's default applies), mirroring the shell's `${VAR:-}` for optionals."""
+	parts: list[str] = []
+	for key, value in variables.items():
+		flag = "--" + key.lower().replace("_", "-")
+		if isinstance(value, (list, tuple)):
+			for item in value:
+				parts += [flag, shlex.quote(str(item))]
+		elif value is None or value == "":
+			continue
+		else:
+			parts += [flag, shlex.quote(str(value))]
+	return " ".join(parts)

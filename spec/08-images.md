@@ -12,7 +12,7 @@ Each image is a (kernel, rootfs) pair:
 - **rootfs**: the upstream `*.squashfs` (converted to ext4 server-side, as
   before).
 - **kernel**: the `vmlinuz-generic` from the matching `unpacked/` directory.
-  It is a packed, zstd-compressed bzImage; `sync-image.sh` decompresses it to
+  It is a packed, zstd-compressed bzImage; `sync-image.py` decompresses it to
   the uncompressed `vmlinux` Firecracker requires (see *Kernel extraction*).
 
 URLs are pinned to a **dated** release (`release-YYYYMMDD/`), not the floating
@@ -47,7 +47,7 @@ derived artifact and is not separately pinned.
 ## Sync to a server
 
 One Task per server-image pair, running
-[`scripts/sync-image.sh`](../scripts/sync-image.sh).
+[`scripts/sync-image.py`](../scripts/sync-image.py).
 
 Sync is **automatic** on image creation:
 `Virtual Machine Image.after_insert` enumerates every `Server` with
@@ -82,7 +82,7 @@ The script:
 
 The Ubuntu cloud kernel ships as a packed **PE/EFI bzImage** whose payload is
 a **zstd frame followed by a 4-byte size trailer**; Firecracker boots an
-uncompressed ELF `vmlinux` directly (no bootloader). `sync-image.sh` locates
+uncompressed ELF `vmlinux` directly (no bootloader). `sync-image.py` locates
 the zstd magic (`28 b5 2f fd`) inside the bzImage, decompresses from that
 offset with **`zstd -dc -f`**, and verifies the result starts with the ELF
 magic (`7f 45 4c 46`).
@@ -98,7 +98,7 @@ ELF-check is host-tool-independent (`xxd`, `zstd` only). Verified booting on a
 real Firecracker host.
 
 The guest unit file [`scripts/guest/atlas-network.service`](../scripts/guest/atlas-network.service)
-is uploaded to the server alongside `sync-image.sh` before the script runs.
+is uploaded to the server alongside `sync-image.py` before the script runs.
 The script's `GUEST_NETWORK_UNIT` env var points at it. The upload is
 declared via the `SCRIPT_UPLOADS` map in
 [`atlas/atlas/script_uploads.py`](../atlas/atlas/script_uploads.py); the
@@ -115,7 +115,7 @@ datasource and a first-boot agent (cloud-init) — neither of which exists in
 Atlas's model (static IPv6 brought up by `atlas-network.service`, identity
 injected by mounting the rootfs at provision time). Left untouched it would
 **hang boot forever** waiting on a datasource and a network that never
-arrives. `sync-image.sh` neutralizes that and strips per-VM-shared identity
+arrives. `sync-image.py` neutralizes that and strips per-VM-shared identity
 before building the per-server ext4:
 
 - **cloud-init + boot-blocking services masked.** `cloud-init.service`,
@@ -127,7 +127,7 @@ before building the per-server ext4:
   reaches a login prompt (it spins on `systemd-networkd-wait-online` and
   `snapd.seeded`).
 - All `/etc/ssh/ssh_host_*` keypairs removed (otherwise every VM would share
-  host keys). Per-VM keys are written at provision time by `provision-vm.sh`;
+  host keys). Per-VM keys are written at provision time by `provision-vm.py`;
   we do not rely on first-boot regeneration (cloud-init is masked).
 - `/etc/machine-id` cleared at sync time and rewritten per VM at provision
   time.
@@ -173,7 +173,7 @@ When we add custom images (extra packages, custom users), we'll revisit.
 
 ### Base image as a read-only thin LV
 
-After the pristine ext4 file is built, `sync-image.sh` also imports it into a
+After the pristine ext4 file is built, `sync-image.py` also imports it into a
 **read-only LVM thin volume** named `atlas-image-<image_name>` (in the `atlas`
 volume group on thin pool `pool0`): a thin LV of `DEFAULT_DISK_GB` is created,
 the ext4 bytes are `dd`'d in, and the LV is flipped read-only (`lvchange
@@ -181,7 +181,7 @@ the ext4 bytes are `dd`'d in, and the LV is flipped read-only (`lvchange
 the base and every per-VM snapshot inherits it without a per-VM `lvextend`.
 
 This is what makes per-VM disk creation **instant**: instead of copying the
-whole ext4, `provision-vm.sh` takes a CoW thin snapshot of this base LV
+whole ext4, `provision-vm.py` takes a CoW thin snapshot of this base LV
 (`lvcreate -s`), which shares all unwritten base blocks (see
 [05-virtual-machine-lifecycle.md](./05-virtual-machine-lifecycle.md) and
 [07-filesystem-layout.md](./07-filesystem-layout.md)). The on-disk ext4 file
@@ -191,7 +191,7 @@ The LV name is derived from `image_name`, so there is no DocType field for it.
 
 ## Per-VM rootfs creation
 
-When `provision-vm.sh` runs, it:
+When `provision-vm.py` runs, it:
 
 1. Creates the VM's disk LV `atlas-vm-<uuid>` as an **instant CoW thin
    snapshot** (`lvcreate -s`) of the origin LV — the base image LV
@@ -238,7 +238,7 @@ release (a later dated `release-YYYYMMDD/`), **create a new
 1. Insert a new `Virtual Machine Image` with a distinct `image_name`
    (e.g. include the release date or the upstream tag), the new URLs,
    and the new SHA-256 digests. Saving the row triggers
-   `after_insert`, which fans out one `sync-image.sh` Task per `Active`
+   `after_insert`, which fans out one `sync-image.py` Task per `Active`
    Server automatically.
 2. On the old row, run **Archive** under `Actions ▾`. This flips
    `is_active = 0` and removes it from the image picker on new VM

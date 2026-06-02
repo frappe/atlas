@@ -42,7 +42,7 @@ class TestVirtualMachineLifecycle(IntegrationTestCase):
 		self.assertEqual(vm.status, "Running")
 		self.assertIsNotNone(vm.last_started)
 		mocked.assert_called_once()
-		self.assertEqual(mocked.call_args.kwargs["script"], "start-vm.sh")
+		self.assertEqual(mocked.call_args.kwargs["script"], "start-vm.py")
 
 	def test_start_from_running_raises(self) -> None:
 		vm = _vm_with_status("Running")
@@ -61,7 +61,7 @@ class TestVirtualMachineLifecycle(IntegrationTestCase):
 		self.assertEqual(vm.status, "Stopped")
 		self.assertIsNotNone(vm.last_stopped)
 		mocked.assert_called_once()
-		self.assertEqual(mocked.call_args.kwargs["script"], "stop-vm.sh")
+		self.assertEqual(mocked.call_args.kwargs["script"], "stop-vm.py")
 
 	def test_stop_from_stopped_raises(self) -> None:
 		vm = _vm_with_status("Stopped")
@@ -80,8 +80,8 @@ class TestVirtualMachineLifecycle(IntegrationTestCase):
 			result = vm.restart()
 		self.assertEqual(result, {"stop_task": "task-stop-r", "start_task": "task-start-r"})
 		self.assertEqual(mocked.call_count, 2)
-		self.assertEqual(mocked.call_args_list[0].kwargs["script"], "stop-vm.sh")
-		self.assertEqual(mocked.call_args_list[1].kwargs["script"], "start-vm.sh")
+		self.assertEqual(mocked.call_args_list[0].kwargs["script"], "stop-vm.py")
+		self.assertEqual(mocked.call_args_list[1].kwargs["script"], "start-vm.py")
 		vm.reload()
 		self.assertEqual(vm.status, "Running")
 
@@ -96,7 +96,7 @@ class TestVirtualMachineLifecycle(IntegrationTestCase):
 			result = vm.restart()
 		self.assertEqual(result, {"stop_task": None, "start_task": "task-start-only"})
 		mocked.assert_called_once()
-		self.assertEqual(mocked.call_args.kwargs["script"], "start-vm.sh")
+		self.assertEqual(mocked.call_args.kwargs["script"], "start-vm.py")
 		vm.reload()
 		self.assertEqual(vm.status, "Running")
 
@@ -113,7 +113,7 @@ class TestVirtualMachineLifecycle(IntegrationTestCase):
 		with patch.object(module, "run_task", return_value=task) as mocked:
 			result = vm.rebuild("image")
 		self.assertEqual(result, "task-rebuild-img")
-		self.assertEqual(mocked.call_args.kwargs["script"], "rebuild-vm.sh")
+		self.assertEqual(mocked.call_args.kwargs["script"], "rebuild-vm.py")
 		variables = mocked.call_args.kwargs["variables"]
 		self.assertEqual(variables["IMAGE_NAME"], _ensure_test_image())
 		self.assertNotIn("SNAPSHOT_ROOTFS_PATH", variables)
@@ -195,7 +195,7 @@ class TestVirtualMachineLifecycle(IntegrationTestCase):
 		with patch.object(module, "run_task", return_value=task) as mocked:
 			result = vm.pause()
 		self.assertEqual(result, "task-pause-1")
-		self.assertEqual(mocked.call_args.kwargs["script"], "pause-vm.sh")
+		self.assertEqual(mocked.call_args.kwargs["script"], "pause-vm.py")
 		vm.reload()
 		self.assertEqual(vm.status, "Paused")
 
@@ -214,7 +214,7 @@ class TestVirtualMachineLifecycle(IntegrationTestCase):
 		with patch.object(module, "run_task", return_value=task) as mocked:
 			result = vm.resume()
 		self.assertEqual(result, "task-resume-1")
-		self.assertEqual(mocked.call_args.kwargs["script"], "resume-vm.sh")
+		self.assertEqual(mocked.call_args.kwargs["script"], "resume-vm.py")
 		vm.reload()
 		self.assertEqual(vm.status, "Running")
 
@@ -267,7 +267,7 @@ class TestVirtualMachineLifecycle(IntegrationTestCase):
 		with patch.object(module, "run_task", return_value=task) as mocked:
 			result = vm.resize(vcpus=4, memory_megabytes=4096, disk_gigabytes=20)
 		self.assertEqual(result, "task-resize-1")
-		self.assertEqual(mocked.call_args.kwargs["script"], "resize-vm.sh")
+		self.assertEqual(mocked.call_args.kwargs["script"], "resize-vm.py")
 		variables = mocked.call_args.kwargs["variables"]
 		self.assertEqual(variables["VCPUS"], "4")
 		self.assertEqual(variables["MEMORY_MB"], "4096")
@@ -323,7 +323,7 @@ class TestVirtualMachineLifecycle(IntegrationTestCase):
 		vm.reload()
 		self.assertEqual(vm.status, "Terminated")
 		mocked.assert_called_once()
-		self.assertEqual(mocked.call_args.kwargs["script"], "terminate-vm.sh")
+		self.assertEqual(mocked.call_args.kwargs["script"], "terminate-vm.py")
 
 	def test_terminate_failure_does_not_mark(self) -> None:
 		from atlas.atlas.doctype.virtual_machine import virtual_machine as module

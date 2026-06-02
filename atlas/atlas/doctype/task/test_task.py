@@ -111,7 +111,7 @@ class TestTask(IntegrationTestCase):
 		from atlas.tests.fixtures import make_server
 
 		server = make_server(title="task-test-server-subject")
-		task = self._make(script="bootstrap-server.sh", server=server.name)
+		task = self._make(script="bootstrap-server.py", server=server.name)
 		# Subject is just the verb-noun label now — target identity lives on
 		# the Server column, not in the subject.
 		self.assertEqual(task.subject, "Bootstrap Server")
@@ -124,7 +124,7 @@ class TestTask(IntegrationTestCase):
 		self.assertEqual(task.subject, "noop.sh")
 
 	def test_subject_without_server_or_vm(self) -> None:
-		task = self._make(script="bootstrap-server.sh", server=None)
+		task = self._make(script="bootstrap-server.py", server=None)
 		self.assertEqual(task.subject, "Bootstrap Server")
 
 	def test_states_array_paints_status_pills(self) -> None:
@@ -145,7 +145,7 @@ class TestTask(IntegrationTestCase):
 		)
 
 	def test_retry_rejects_non_failure(self) -> None:
-		task = self._make(script="bootstrap-server.sh", server=None, status="Pending")
+		task = self._make(script="bootstrap-server.py", server=None, status="Pending")
 		with self.assertRaises(frappe.ValidationError) as raised:
 			task.retry()
 		self.assertIn("failed", str(raised.exception).lower())

@@ -342,7 +342,7 @@ notes
 
 - **Bootstrap** (primary on `Pending` / `Bootstrapping` / `Broken`;
   folds under `Actions ▾` as **Re-bootstrap** on `Active`) — runs
-  [`scripts/bootstrap-server.sh`](../scripts/bootstrap-server.sh).
+  [`scripts/bootstrap-server.py`](../scripts/bootstrap-server.py).
   Idempotent.
 - **Sync Image** (under `Actions ▾`, on `Active`) — opens a one-field
   dialog (Link to `Virtual Machine Image`) and calls
@@ -465,14 +465,14 @@ Tiering is keyed off `status` — see [10-desk-ui.md § Virtual Machine](./10-de
 - **Pending** — no primary; `after_insert` already enqueued provision.
 - **Provision** (primary on `Failed`) — manual retry after an
   auto-provision failure. Runs
-  [`scripts/provision-vm.sh`](../scripts/provision-vm.sh).
+  [`scripts/provision-vm.py`](../scripts/provision-vm.py).
 - **Start** (primary on `Stopped`) — `Stopped` → `Running`.
 - **Stop** (primary on `Running`) — `Running` → `Stopped`. Also offered
   (secondary) on `Paused`.
 - **Resume** (primary on `Paused`) — `Paused` → `Running`.
 - **Restart** (secondary on `Stopped` / `Running`) → `Running`.
 - **Pause** (secondary on `Running`) — `Running` → `Paused` via the API
-  socket. Runs [`scripts/pause-vm.sh`](../scripts/pause-vm.sh).
+  socket. Runs [`scripts/pause-vm.py`](../scripts/pause-vm.py).
 - **Snapshot / Rebuild / Resize** (secondaries on `Stopped`, each opens a
   dialog) — disk and size operations; see
   [05-virtual-machine-lifecycle.md](./05-virtual-machine-lifecycle.md). They
@@ -480,7 +480,7 @@ Tiering is keyed off `status` — see [10-desk-ui.md § Virtual Machine](./10-de
   snapshotting a live VM (the controllers also enforce it).
 - **Terminate** (under `Actions ▾`, danger; available until
   `Terminated`) — runs
-  [`scripts/terminate-vm.sh`](../scripts/terminate-vm.sh), sets
+  [`scripts/terminate-vm.py`](../scripts/terminate-vm.py), sets
   `status = Terminated` and deletes the VM's snapshot rows. The UUID does
   not change. The desk requires the operator to type the VM's `title` into a
   `confirm_destructive` dialog before the red button enables; the dialog body
@@ -537,7 +537,7 @@ disk_gigabytes
 - `clone_to_new_vm(title, ssh_public_key, vcpus?, memory_megabytes?,
   disk_gigabytes?)` — create a new VM seeded from this snapshot (fresh
   identity). Disk defaults to the snapshot's size and can only grow.
-- `on_trash` — runs [`delete-snapshot-vm.sh`](../scripts/delete-snapshot-vm.sh)
+- `on_trash` — runs [`delete-snapshot-vm.py`](../scripts/delete-snapshot-vm.py)
   to delete the on-host files, skipped when the VM is already Terminated
   (its directory is gone).
 
@@ -618,10 +618,10 @@ for you. See [08-images.md](./08-images.md).
 
 `Virtual Machine Image.after_insert` fans out to every `Server` with
 `status = Active`: for each one it calls `self.sync_to_server(server)`,
-which enqueues a `sync-image.sh` Task. The operator does *not* press
+which enqueues a `sync-image.py` Task. The operator does *not* press
 **Sync to Server** for the initial fan-out — saving the image is the
 trigger. Per-attempt tracking happens via the resulting Task rows
-(filter the Task list by `script = sync-image.sh`); a dedicated
+(filter the Task list by `script = sync-image.py`); a dedicated
 `Virtual Machine Image Sync` tracking DocType was scoped in the plan
 but deferred for the PoC.
 
@@ -656,7 +656,7 @@ the run finishes.
 | `subject`               | Data                   |      | Y         |         | Set in `before_insert` from `SCRIPT_LABELS[script]` (see [04-tasks.md § Task subject](./04-tasks.md#task-subject)). Verb-only when operating on an existing object (`Reboot`, `Start`, `Sync`), verb-noun when creating one (`Bootstrap Server`, `Create Virtual Machine`, `Sync Image`). `title_field` so the form breadcrumb reads it instead of the hash. Indexed. |
 | `server`                | Link → Server          |      | Y         |         | Indexed.                                    |
 | `virtual_machine`       | Link → Virtual Machine |      | Y         |         | Set when the task is for one VM. Indexed.   |
-| `script`                | Data                   | Y    | Y         |         | Path under `atlas/scripts/`, e.g. `provision-vm.sh`. Indexed. |
+| `script`                | Data                   | Y    | Y         |         | Path under `atlas/scripts/`, e.g. `provision-vm.py`. Indexed. |
 | `triggered_by`          | Link → User            | Y    | Y         |         | `Administrator` for scheduled jobs.         |
 | `status`                | Select                 | Y    | Y         | Pending | `Pending`, `Running`, `Success`, `Failure`. Indexed. |
 | `exit_code`             | Int                    |      | Y         |         |                                             |

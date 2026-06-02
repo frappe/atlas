@@ -53,13 +53,16 @@ keep it the source of truth.
 2. **The Frappe site is the source of truth.** A server is a cache; we can
    rebuild its on-disk state from the Frappe database. We do not scrape state
    back from the server.
-3. **One task, one shell script.** Atlas uploads a shell script to a server
-   over SSH and runs it. The script is the unit of work. We do not chain
-   per-step SSH calls. See [04-tasks.md](./04-tasks.md).
+3. **One task, one script.** Atlas uploads one script to a server over SSH and
+   runs it. The script is the unit of work; we do not chain per-step SSH calls.
+   Scripts are typed Python (`--kebab-case` flags in, one `ATLAS_RESULT=` JSON
+   line out); a couple of trivial shell scripts (e.g. `reboot-server.sh`)
+   remain. See [04-tasks.md](./04-tasks.md).
 4. **One virtual machine per server slot.** The operator picks the server
    when provisioning. No scheduler.
 5. **Few dependencies.** Frappe + standard library + the system `ssh` command.
-   On the server: `firecracker`, `systemd`, `iproute2`, `nftables`, `curl`,
+   On the server: the stock `python3` (the task scripts are stdlib-only — no
+   pip installs), `firecracker`, `systemd`, `iproute2`, `nftables`, `curl`,
    `jq`, `e2fsprogs`, `squashfs-tools`, `lvm2`, `thin-provisioning-tools`. No
    agent runs on the server.
 6. **Don't import — copy.** If a third-party library has a good idea (pyinfra,

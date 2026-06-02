@@ -1,39 +1,57 @@
 """Per-script sidecar uploads.
 
-Some scripts need supporting files on the server before they run. The Server
-bootstrap is special: its uploads are durable state (helper scripts + systemd
-unit) placed by `Server.bootstrap()` directly, not through this map.
+Every Python task imports the shared `atlas` package (lvm, paths, rootfs, _run,
+_task, …). The entry point adds `<staging>/lib` to sys.path and does
+`import atlas`, so the package must land at `<staging>/lib/atlas/*.py` next to
+the staged script. `package_uploads()` computes that file list from disk, so a
+new module in `scripts/lib/atlas/` is staged automatically — no map to update.
 
-The map below is consulted by `ssh.py::_run_remote_script()` before each
-script invocation. Paths in the value tuples are (local_relative_to_repo_root,
-remote_absolute).
+A few scripts need extra sidecars (sync-image needs the guest network unit it
+bakes into the image); those stay in SCRIPT_SIDECARS.
+
+The Server bootstrap is special: its uploads are DURABLE state (the package
+under /var/lib/atlas/bin + systemd units) placed by `Server.bootstrap()`
+directly, not through this module — see server.py.
+
+Consumed by `_ssh/runner.py::_run_remote_script()` before each invocation.
+Tuples are (local_relative_to_repo_root, remote_absolute).
 """
 
-# prepare-rootfs.sh is a sourced shell library (not a standalone Task). The
-# scripts that lay down a per-VM rootfs source it by relative path, so it must
-# land in the staging directory next to them.
-_PREPARE_ROOTFS = ("scripts/lib/prepare-rootfs.sh", "/tmp/atlas/prepare-rootfs.sh")
+from pathlib import Path
 
-# lvm.sh is the sourced LVM thin-pool helper library, same staging contract as
-# prepare-rootfs.sh. Every script that creates, exposes, or removes a per-VM
-# disk LV sources it by relative path, so it lands next to each caller. (The
-# bootstrap also needs it, but bootstrap's helpers are durable state placed by
-# Server.bootstrap() directly, not through this map — see the module docstring.)
-_LVM = ("scripts/lib/lvm.sh", "/tmp/atlas/lvm.sh")
+from atlas.atlas import scripts_catalog
 
-SCRIPT_UPLOADS: dict[str, list[tuple[str, str]]] = {
-	"sync-image.sh": [
+# Where the package lands remotely so `import atlas` resolves: the entry point's
+# sys.path shim adds `<staging>/lib`, so the package is `<staging>/lib/atlas/`.
+_REMOTE_PACKAGE_DIR = "/tmp/atlas/lib/atlas"
+
+# Extra per-script sidecars beyond the shared package. sync-image bakes the guest
+# atlas-network.service into the ext4 it builds, so it needs that file staged.
+SCRIPT_SIDECARS: dict[str, list[tuple[str, str]]] = {
+	"sync-image.py": [
 		("scripts/guest/atlas-network.service", "/tmp/atlas/atlas-network.service"),
-		_LVM,
 	],
-	"provision-vm.sh": [_PREPARE_ROOTFS, _LVM],
-	"rebuild-vm.sh": [_PREPARE_ROOTFS, _LVM],
-	"snapshot-vm.sh": [_LVM],
-	"delete-snapshot-vm.sh": [_LVM],
-	"resize-vm.sh": [_LVM],
-	"terminate-vm.sh": [_LVM],
 }
 
 
+def _package_files() -> list[tuple[str, str]]:
+	"""Every .py under scripts/lib/atlas/, mapped to its remote staging path.
+	Computed from disk so a new lib module is picked up with no edit here. The
+	test-only test_*.py files are skipped — they never run on a host."""
+	local_dir = scripts_catalog.scripts_directory() / "lib" / "atlas"
+	uploads: list[tuple[str, str]] = []
+	for entry in sorted(local_dir.glob("*.py")):
+		if entry.name.startswith("test_"):
+			continue
+		local = str(Path("scripts") / "lib" / "atlas" / entry.name)
+		uploads.append((local, f"{_REMOTE_PACKAGE_DIR}/{entry.name}"))
+	return uploads
+
+
 def files_to_upload(script: str) -> list[tuple[str, str]]:
-	return SCRIPT_UPLOADS.get(script, [])
+	"""Sidecar files to stage before `script` runs. Python tasks get the full
+	`atlas` package plus any per-script sidecars; the remaining shell tasks
+	(reboot-server.sh) get nothing."""
+	if not script.endswith(".py"):
+		return SCRIPT_SIDECARS.get(script, [])
+	return _package_files() + SCRIPT_SIDECARS.get(script, [])

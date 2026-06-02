@@ -51,7 +51,7 @@ def ensure_default_image_row() -> "frappe.model.document.Document":
 
 
 def ensure_image_on_server(server_name: str) -> "frappe.model.document.Document":
-	"""Sync DEFAULT_IMAGE to `server_name`. `sync-image.sh` is idempotent and
+	"""Sync DEFAULT_IMAGE to `server_name`. `sync-image.py` is idempotent and
 	short-circuits when the rootfs is already present on disk, so re-calling
 	is cheap (one SSH roundtrip).
 	"""

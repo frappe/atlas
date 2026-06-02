@@ -14,10 +14,12 @@ RequiresMountsFor=/var/lib/atlas/pool
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-# Source the durable helper library and re-assert the pool. atlas_pool_ensure is
+# Re-assert the pool via the durable atlas package. ThinPool().ensure() is
 # idempotent: if the pool LV already exists it only re-attaches the loop device
 # and activates the VG; otherwise it rebuilds pv/vg/pool from the backing file.
-ExecStart=/bin/bash -c '. /var/lib/atlas/bin/lvm.sh && atlas_pool_ensure'
+# The package lives under /var/lib/atlas/bin (placed by bootstrap), added to
+# sys.path here so `from atlas.lvm import ThinPool` resolves.
+ExecStart=/usr/bin/python3 -c "import sys; sys.path.insert(0, '/var/lib/atlas/bin'); from atlas.lvm import ThinPool; ThinPool().ensure()"
 
 [Install]
 WantedBy=multi-user.target

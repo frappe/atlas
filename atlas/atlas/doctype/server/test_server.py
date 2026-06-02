@@ -44,7 +44,7 @@ class TestServerBootstrap(IntegrationTestCase):
 
 		task = fake_task(
 			name="task-x",
-			stdout='{"firecracker_version": "", "jailer_version": "", "kernel_version": "", "architecture": ""}',
+			stdout='ATLAS_RESULT={"firecracker_version": "", "jailer_version": "", "kernel_version": "", "architecture": ""}',
 		)
 
 		with patch.object(server_module, "upload_files") as upload:
@@ -59,12 +59,14 @@ class TestServerBootstrap(IntegrationTestCase):
 		upload.assert_called_once()
 		run.assert_called_once()
 
-	def test_bootstrap_parses_trailing_json_line(self) -> None:
+	def test_bootstrap_parses_result_line(self) -> None:
 		from atlas.atlas.doctype.server import server as server_module
 
+		# bootstrap-server.py emits one ATLAS_RESULT=<json> line amid trace noise;
+		# the controller parses that, not a bare trailing JSON line.
 		stdout = (
 			"+ some bash trace\n"
-			'{"firecracker_version": "1.15.1",'
+			'ATLAS_RESULT={"firecracker_version": "1.15.1",'
 			' "jailer_version": "1.15.1",'
 			' "kernel_version": "6.8.0-31-generic",'
 			' "architecture": "x86_64"}\n'
@@ -107,8 +109,8 @@ class TestServerBootstrap(IntegrationTestCase):
 			self.assertIn("intro", entry)
 			self.assertIsInstance(entry["fields"], list)
 		# Lifecycle scripts must not leak into the desk picker.
-		hidden = {"provision-vm.sh", "start-vm.sh", "stop-vm.sh",
-			"terminate-vm.sh", "restart-vm.sh"}
+		hidden = {"provision-vm.py", "start-vm.py", "stop-vm.py",
+			"terminate-vm.py", "restart-vm.py"}
 		self.assertFalse(hidden & {entry["name"] for entry in entries})
 
 
@@ -165,7 +167,7 @@ class TestServerSyncImage(IntegrationTestCase):
 		with patch("frappe.enqueue"):
 			task_name = server.sync_image(image.name)
 		task = frappe.get_doc("Task", task_name)
-		self.assertEqual(task.script, "sync-image.sh")
+		self.assertEqual(task.script, "sync-image.py")
 		self.assertEqual(task.server, server.name)
 
 

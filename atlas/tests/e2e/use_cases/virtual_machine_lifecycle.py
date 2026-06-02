@@ -1,7 +1,7 @@
 """Use case: operate a running Firecracker VM.
 
 Operator clicks Start / Stop / Restart / Terminate. Each is one Task running
-a one-line shell script (`start-vm.sh`, `stop-vm.sh`, `terminate-vm.sh`);
+a one-line shell script (`start-vm.py`, `stop-vm.py`, `terminate-vm.py`);
 Restart is `stop` + `start` orchestrated in Python, not a separate script.
 
 This module exercises:

@@ -61,7 +61,7 @@ class VirtualMachineSnapshot(Document):
 		doesn't accumulate orphans. Idempotent script — a missing LV is a no-op.
 
 		Unlike the old file-backed snapshots (which lived under the VM directory
-		and were swept by terminate-vm.sh's `rm -rf`), a snapshot LV lives in the
+		and were swept by terminate-vm.py's `rm -rf`), a snapshot LV lives in the
 		thin pool, OUTSIDE the VM directory — so it survives terminate's directory
 		removal and MUST be lvremoved here even when terminate() cascades the row
 		deletions of a Terminated VM. (No Terminated short-circuit: that would
@@ -72,7 +72,7 @@ class VirtualMachineSnapshot(Document):
 			return
 		run_task(
 			server=self.server,
-			script="delete-snapshot-vm.sh",
+			script="delete-snapshot-vm.py",
 			variables={"SNAPSHOT_ROOTFS_PATH": self.rootfs_path},
 			virtual_machine=self.virtual_machine,
 			timeout_seconds=60,

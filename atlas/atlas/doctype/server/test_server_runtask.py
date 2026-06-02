@@ -40,7 +40,7 @@ class TestRunTaskDialog(IntegrationTestCase):
 
 		with patch.object(server_module, "run_task", return_value=task) as run:
 			result = self.server.run_task_dialog(
-				script="bootstrap-server.sh",
+				script="bootstrap-server.py",
 				variables={"FOO": "bar"},
 			)
 
@@ -48,7 +48,7 @@ class TestRunTaskDialog(IntegrationTestCase):
 		run.assert_called_once()
 		kwargs = run.call_args.kwargs
 		self.assertEqual(kwargs["server"], self.server.name)
-		self.assertEqual(kwargs["script"], "bootstrap-server.sh")
+		self.assertEqual(kwargs["script"], "bootstrap-server.py")
 		self.assertEqual(kwargs["variables"], {"FOO": "bar"})
 
 	def test_parses_string_variables_as_json(self) -> None:
@@ -58,7 +58,7 @@ class TestRunTaskDialog(IntegrationTestCase):
 
 		with patch.object(server_module, "run_task", return_value=task) as run:
 			self.server.run_task_dialog(
-				script="bootstrap-server.sh",
+				script="bootstrap-server.py",
 				variables=json.dumps({"A": "1", "B": "2"}),
 			)
 
@@ -70,14 +70,14 @@ class TestRunTaskDialog(IntegrationTestCase):
 		task = fake_task(name="task-runtask-3")
 
 		with patch.object(server_module, "run_task", return_value=task) as run:
-			self.server.run_task_dialog(script="bootstrap-server.sh", variables=None)
+			self.server.run_task_dialog(script="bootstrap-server.py", variables=None)
 
 		self.assertEqual(run.call_args.kwargs["variables"], {})
 
 	def test_rejects_non_dict_after_json_parse(self) -> None:
 		with self.assertRaises(frappe.ValidationError) as raised:
 			self.server.run_task_dialog(
-				script="bootstrap-server.sh",
+				script="bootstrap-server.py",
 				variables=json.dumps([1, 2, 3]),
 			)
 		self.assertIn("JSON object", str(raised.exception))
@@ -98,14 +98,18 @@ class TestRunTaskDialog(IntegrationTestCase):
 class TestScriptsCatalog(IntegrationTestCase):
 	def test_allowed_scripts_lists_real_files(self) -> None:
 		scripts = scripts_catalog.allowed_scripts()
-		self.assertIn("bootstrap-server.sh", scripts)
+		self.assertIn("bootstrap-server.py", scripts)
 		self.assertIn("reboot-server.sh", scripts)
-		self.assertIn("provision-vm.sh", scripts)
+		self.assertIn("provision-vm.py", scripts)
 
 	def test_allowed_scripts_excludes_subdirectories(self) -> None:
 		scripts = scripts_catalog.allowed_scripts()
 		# nothing under scripts/guest/, scripts/systemd/ or scripts/lib/ leaks in
-		# (lib/ holds sourced shell libraries like prepare-rootfs.sh, not Tasks)
+		# (lib/ holds the importable atlas package, not Task entry points). Tasks
+		# are .py (the ported CLI tasks) or .sh (reboot-server.sh stays shell).
 		for entry in scripts:
-			self.assertTrue(entry.endswith(".sh"))
+			self.assertTrue(entry.endswith((".py", ".sh")), entry)
 			self.assertNotIn("/", entry)
+		# the systemd hooks live in scripts/ but are excluded as non-Tasks
+		for hook in scripts_catalog.SYSTEMD_HOOKS:
+			self.assertNotIn(hook, scripts)

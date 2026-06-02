@@ -2,7 +2,7 @@
 
 Operator clicks "Sync to Server" (or "Sync to All Servers") on a
 `Virtual Machine Image`. The button enqueues a Task running
-`sync-image.sh`, which downloads the kernel and rootfs, verifies SHA-256,
+`sync-image.py`, which downloads the kernel and rootfs, verifies SHA-256,
 and unpacks the squashfs into an ext4.
 
 This module exercises:
@@ -63,7 +63,7 @@ def run_smoke(reuse: bool = True, keep: bool = True) -> None:
 
 def _check_minimal_variant(server_name: str) -> None:
 	"""The minimal cloud image syncs and probes exactly like server: same
-	sync-image.sh path (zstd kernel extract + normalize), different rootfs.
+	sync-image.py path (zstd kernel extract + normalize), different rootfs.
 	Clearing first turns this into a real download+build, not a short-circuit.
 	"""
 	image = ensure_image_row(MINIMAL_IMAGE)
@@ -72,10 +72,10 @@ def _check_minimal_variant(server_name: str) -> None:
 
 
 def _clear_cached_rootfs(server_name: str, image) -> None:
-	"""Delete the on-server rootfs so sync-image.sh re-runs the full pipeline.
+	"""Delete the on-server rootfs so sync-image.py re-runs the full pipeline.
 
 	With a shared droplet, the rootfs accumulates across e2e runs and the
-	short-circuit at sync-image.sh:47 hides any change in the download +
+	short-circuit at sync-image.py:47 hides any change in the download +
 	normalize + mkfs path. Clearing here turns every run into a real
 	regression test of the sync script.
 	"""
@@ -144,7 +144,7 @@ def _check_execute_task_sync(server_name: str, image) -> None:
 	task = frappe.get_doc({
 		"doctype": "Task",
 		"server": server_name,
-		"script": "sync-image.sh",
+		"script": "sync-image.py",
 		"status": "Pending",
 		"triggered_by": "Administrator",
 	})

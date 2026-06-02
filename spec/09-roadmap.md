@@ -82,7 +82,7 @@ behavior; they just keep doors open.
   capped excerpt + a pointer. Avoids the DocType becoming a log store.
 
 - **Key the image-sync short-circuit to guest content, not just the rootfs.**
-  `sync-image.sh` exits early ("rootfs already built") when the unpacked rootfs
+  `sync-image.py` exits early ("rootfs already built") when the unpacked rootfs
   is present, but the guest systemd unit
   ([`scripts/guest/atlas-network.service`](../scripts/guest/atlas-network.service))
   is baked in at sync time — so a change to the guest unit (as the NAT44 egress
@@ -196,7 +196,7 @@ behavior; they just keep doors open.
     slice the cross-server-snapshot item below now depends on.
   - **Pool autoscale / quota / GC / drift reconciler.** The pool over-commits;
     today the only guard is the ≥90% `data_percent`/`metadata_percent` pre-flight
-    in `snapshot-vm.sh`. Autogrowing the pool, per-server/per-team quotas, a
+    in `snapshot-vm.py`. Autogrowing the pool, per-server/per-team quotas, a
     snapshot reaper, and a reconciler that drops orphan LVs (LV with no matching
     DB row, or vice versa) all belong here before real load.
 
@@ -215,7 +215,7 @@ behavior; they just keep doors open.
     duplicate-state hazard. Out of scope until there's a concrete need.
   - **Snapshot retention / GC / quotas.** Today snapshots are created and
     deleted by hand, guarded only by the ≥90% pool-space (`data_percent`/
-    `metadata_percent`) pre-flight in `snapshot-vm.sh`. A scheduled reaper and
+    `metadata_percent`) pre-flight in `snapshot-vm.py`. A scheduled reaper and
     per-server/per-team pool quotas belong here before any real load (see the
     pool autoscale/quota/GC item under **LVM thin-pool disks** above).
   - **Cross-server snapshots.** A snapshot lives on its VM's server; clone and
@@ -237,7 +237,7 @@ behavior; they just keep doors open.
       the old "dies with the VM dir" coupling is already gone.)
     - **Kernel pairing.** A disk snapshot carries no kernel; clone/restore take
       it from `source_image`. The target host must already have the matching
-      `Virtual Machine Image` synced (reuse the `provision-vm.sh` step-0
+      `Virtual Machine Image` synced (reuse the `provision-vm.py` step-0
       image-present precondition).
     - **Transfer cost.** The naive slice is a full N-GB block stream (`dd` of the
       snapshot LV over SSH, fail-loud) and is in-grain. The fast slice — send only

@@ -131,7 +131,7 @@ UUIDs share the first 4 bytes — practically impossible for UUID4.
 
 ## Host-side configuration
 
-Done once by `bootstrap-server.sh`:
+Done once by `bootstrap-server.py`:
 
 ```
 # /etc/sysctl.d/60-atlas.conf
@@ -166,7 +166,7 @@ sends it out the right tap.
 On Self-Managed hosts where the entire `ipv6_virtual_machine_range` is
 **routed** to the host (not advertised on-link), the upstream router
 already knows where to send those packets and proxy-NDP is a no-op.
-`vm-network-up.sh` still adds the proxy-NDP entry — it costs nothing on
+`vm-network-up.py` still adds the proxy-NDP entry — it costs nothing on
 a routed prefix and keeps the script identical across providers.
 
 We also create one nftables table (`inet atlas`) with two chains: a `forward`
@@ -180,7 +180,7 @@ inet atlas postrouting:  ip saddr 100.64.0.0/16 oifname <uplink> masquerade
 The source match is the whole `100.64.0.0/16` supernet, so a single rule
 covers every VM — there is no per-VM NAT rule and nothing to remove when a VM
 is terminated. The table is **not** persisted to `/etc/nftables.conf`; instead
-[`vm-network-up.sh`](../scripts/vm-network-up.sh) recreates the table, both
+[`vm-network-up.py`](../scripts/vm-network-up.py) recreates the table, both
 chains, and the masquerade rule idempotently at each unit-start, and
 re-applies the IPv6 forwarding / proxy-ndp / `ip_forward` sysctls defensively.
 This keeps each VM unit self-sufficient on cold boot — after a host reboot, the
@@ -197,7 +197,7 @@ its namespace) as its gateway and sees only its own `/128`. The only difference
 from a host-netns tap is one extra link-local hop across the veth, entirely
 inside the host.
 
-[`vm-network-up.sh`](../scripts/vm-network-up.sh), invoked by the systemd
+[`vm-network-up.py`](../scripts/vm-network-up.py), invoked by the systemd
 unit's `ExecStartPre`, reads `network.env` (which carries `TAP_DEVICE`,
 `VIRTUAL_MACHINE_IPV6`, `ATLAS_NETNS`, `HOST_VETH`, `NAMESPACE_VETH`,
 `IPV4_HOST_CIDR`, `IPV4_GUEST_CIDR`) and:
@@ -234,7 +234,7 @@ via `--netns` and Firecracker attaches to the tap on startup, so the namespace
 and the tap (with `vnet_hdr`) must exist before the jailer's `ExecStart` fires.
 `ExecStartPre` runs to completion first, so this ordering holds.
 
-[`vm-network-down.sh`](../scripts/vm-network-down.sh) is symmetric and
+[`vm-network-down.py`](../scripts/vm-network-down.py) is symmetric and
 best-effort: it removes the proxy-NDP entry, the host route, then `ip netns del`
 (which takes the tap and the namespace-side veth with it), the host-side veth,
 and the nft rules.
@@ -244,7 +244,7 @@ and the nft rules.
 The Ubuntu cloud image is patched **at image sync time** (not at
 VM provision time) with a single systemd unit,
 [`scripts/guest/atlas-network.service`](../scripts/guest/atlas-network.service).
-It reads `/etc/atlas-network.env` (which `provision-vm.sh` writes per-VM
+It reads `/etc/atlas-network.env` (which `provision-vm.py` writes per-VM
 containing `VIRTUAL_MACHINE_IPV6=...`, `VIRTUAL_MACHINE_IPV4=...` (the guest's
 /30 CIDR), and `VIRTUAL_MACHINE_IPV4_GATEWAY=...` (the host side of the /30))
 and runs:
@@ -303,14 +303,14 @@ tells you where DO put the routable window** — never derive the
 
 ### Historical bug: vnet_hdr
 
-Before the systemd unit moved `vm-network-up.sh` to `ExecStartPre`,
+Before the systemd unit moved `vm-network-up.py` to `ExecStartPre`,
 firecracker's `ExecStart` won the race: it opened the tap fd first,
 the kernel auto-created an `atlas-…` tap *without* `IFF_VNET_HDR`,
 and firecracker's `TUNSETOFFLOAD` ioctl then failed with `EBADF`.
 Firecracker logged a one-line warning and proceeded; the guest came
 up with no working NIC. The fix in the unit is to create the tap
 explicitly with `ip tuntap add … vnet_hdr` *before* firecracker
-starts, which is why `vm-network-up.sh` is an `ExecStartPre` step
+starts, which is why `vm-network-up.py` is an `ExecStartPre` step
 even though it touches host routing.
 
 ## What we do not do

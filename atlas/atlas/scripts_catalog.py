@@ -18,9 +18,9 @@ import frappe
 OPERATOR_VISIBLE: frozenset[str] = frozenset({
 	# Bootstrap and Reboot have dedicated buttons with confirmation guards on
 	# the Server form; exposing the raw scripts in the Run Task picker
-	# duplicates those flows without the guards. `sync-image.sh` is the only
+	# duplicates those flows without the guards. `sync-image.py` is the only
 	# ad-hoc script the operator should reach for from here.
-	"sync-image.sh",
+	"sync-image.py",
 })
 
 
@@ -29,7 +29,7 @@ OPERATOR_VISIBLE: frozenset[str] = frozenset({
 # entry is `{intro: str, fields: list[dict]}`; field dicts use Frappe Dialog
 # field shapes (`fieldname`, `fieldtype`, `label`, `default`, `reqd`, ...).
 SCRIPT_FORMS: dict[str, dict] = {
-	"bootstrap-server.sh": {
+	"bootstrap-server.py": {
 		"intro": "Idempotent. Safe to re-run on an Active server.",
 		"fields": [
 			{
@@ -49,11 +49,12 @@ SCRIPT_FORMS: dict[str, dict] = {
 			},
 		],
 	},
+	# reboot-server.sh stays a shell script (two lines; not worth porting).
 	"reboot-server.sh": {
 		"intro": "Reboots the host. SSH drops mid-Task; the Task may end Failure — that is normal.",
 		"fields": [],
 	},
-	"sync-image.sh": {
+	"sync-image.py": {
 		"intro": "Downloads kernel + rootfs from the image URLs onto the server.",
 		"fields": [
 			{
@@ -95,15 +96,32 @@ def _search_paths() -> list[Path]:
 	return [scripts_directory(), e2e_scripts_directory()]
 
 
+# Systemd-invoked hooks live in scripts/ but are NOT Task-runnable: they take a
+# positional VM uuid (passed by the unit's ExecStartPre/ExecStopPost as `%i`),
+# not the --flag CLI contract a Task uses, and they import the durable package.
+# Excluded from the catalog so the runner never executes them as a Task.
+SYSTEMD_HOOKS: frozenset[str] = frozenset({
+	"vm-disk-up.py",
+	"vm-network-up.py",
+	"vm-network-down.py",
+})
+
+
 def allowed_scripts() -> list[str]:
-	"""Return the sorted list of `.sh` filenames runnable on a server host."""
+	"""Return the sorted list of task-runnable script filenames on a server host.
+
+	Both `.py` (the typed CLI tasks) and `.sh` (the few remaining shell tasks,
+	e.g. reboot-server.sh) are runnable. The systemd hooks are excluded — they
+	are not Tasks (see SYSTEMD_HOOKS)."""
 	directory = scripts_directory()
 	if not directory.is_dir():
 		return []
 	return sorted(
 		entry.name
 		for entry in directory.iterdir()
-		if entry.is_file() and entry.suffix == ".sh"
+		if entry.is_file()
+		and entry.suffix in (".py", ".sh")
+		and entry.name not in SYSTEMD_HOOKS
 	)
 
 

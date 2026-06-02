@@ -15,7 +15,7 @@ TAG = "atlas-e2e"
 SWEEP_AGE_SECONDS = 30 * 60
 
 # Ubuntu cloud images (noble), pinned to a dated release for stability.
-# kernel_sha256 is the digest of the DOWNLOADED packed vmlinuz; sync-image.sh
+# kernel_sha256 is the digest of the DOWNLOADED packed vmlinuz; sync-image.py
 # decompresses the zstd payload to a raw vmlinux on the server. Mirrors
 # atlas.bootstrap.DEFAULT_IMAGE / MINIMAL_IMAGE — keep the two in sync.
 _NOBLE_RELEASE = "https://cloud-images.ubuntu.com/releases/noble/release-20260518"

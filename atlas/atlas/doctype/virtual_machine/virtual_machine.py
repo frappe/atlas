@@ -16,6 +16,7 @@ from atlas.atlas.networking import (
 	resource_limit_args,
 )
 from atlas.atlas.ssh import run_task
+from atlas.atlas.task_results import parse_result
 
 # Never change after insert — identity and the key the rootfs was built with.
 IMMUTABLE_AFTER_INSERT = (
@@ -112,7 +113,7 @@ class VirtualMachine(Document):
 			frappe.throw(f"Cannot provision from {self.status}")
 		task = run_task(
 			server=self.server,
-			script="provision-vm.sh",
+			script="provision-vm.py",
 			variables=self._provision_variables(),
 			virtual_machine=self.name,
 			timeout_seconds=30,
@@ -128,7 +129,7 @@ class VirtualMachine(Document):
 			frappe.throw(f"Cannot start from {self.status}")
 		task = run_task(
 			server=self.server,
-			script="start-vm.sh",
+			script="start-vm.py",
 			variables={"VIRTUAL_MACHINE_NAME": self.name},
 			virtual_machine=self.name,
 			timeout_seconds=30,
@@ -146,7 +147,7 @@ class VirtualMachine(Document):
 			frappe.throw(f"Cannot stop from {self.status}")
 		task = run_task(
 			server=self.server,
-			script="stop-vm.sh",
+			script="stop-vm.py",
 			variables={"VIRTUAL_MACHINE_NAME": self.name},
 			virtual_machine=self.name,
 			timeout_seconds=30,
@@ -175,7 +176,7 @@ class VirtualMachine(Document):
 			frappe.throw(f"Cannot pause from {self.status}")
 		task = run_task(
 			server=self.server,
-			script="pause-vm.sh",
+			script="pause-vm.py",
 			variables={"VIRTUAL_MACHINE_NAME": self.name},
 			virtual_machine=self.name,
 			timeout_seconds=30,
@@ -191,7 +192,7 @@ class VirtualMachine(Document):
 			frappe.throw(f"Cannot resume from {self.status}")
 		task = run_task(
 			server=self.server,
-			script="resume-vm.sh",
+			script="resume-vm.py",
 			variables={"VIRTUAL_MACHINE_NAME": self.name},
 			virtual_machine=self.name,
 			timeout_seconds=30,
@@ -227,7 +228,7 @@ class VirtualMachine(Document):
 		rootfs_path = f"/dev/atlas/atlas-snap-{snapshot.name}"
 		task = run_task(
 			server=self.server,
-			script="snapshot-vm.sh",
+			script="snapshot-vm.py",
 			variables={
 				"VIRTUAL_MACHINE_NAME": self.name,
 				"SNAPSHOT_ROOTFS_PATH": rootfs_path,
@@ -243,7 +244,7 @@ class VirtualMachine(Document):
 		# rootfs overflows a plain Int.
 		snapshot.db_set({
 			"rootfs_path": rootfs_path,
-			"size_bytes": _parse_size_bytes(task.stdout),
+			"size_bytes": parse_result(task.stdout)["size_bytes"],
 			"status": "Available",
 		})
 		return snapshot.name
@@ -262,7 +263,7 @@ class VirtualMachine(Document):
 		variables = self._rebuild_variables(source_type, source)
 		task = run_task(
 			server=self.server,
-			script="rebuild-vm.sh",
+			script="rebuild-vm.py",
 			variables=variables,
 			virtual_machine=self.name,
 			timeout_seconds=300,
@@ -311,7 +312,7 @@ class VirtualMachine(Document):
 		Firecracker can't resize a running VM (machine-config is pre-boot
 		only), so the operator stops first. Disk may only grow — ext4 shrink
 		is unsafe and the on-host rootfs is already that large. The new values
-		are persisted, then resize-vm.sh rewrites the firecracker config and
+		are persisted, then resize-vm.py rewrites the firecracker config and
 		grows the rootfs to match. The VM stays Stopped."""
 		if self.status != "Stopped":
 			frappe.throw(f"Stop the VM before resizing (status is {self.status})")
@@ -324,12 +325,12 @@ class VirtualMachine(Document):
 			)
 		# Run the on-host resize first; run_task raises on failure, so we only
 		# persist the new values once the config and disk actually changed.
-		# Saving before the Task would let a failed resize-vm.sh leave the doc
+		# Saving before the Task would let a failed resize-vm.py leave the doc
 		# claiming a size the host never applied — the exact drift the freeze
 		# guards against.
 		task = run_task(
 			server=self.server,
-			script="resize-vm.sh",
+			script="resize-vm.py",
 			variables={
 				"VIRTUAL_MACHINE_NAME": self.name,
 				"VCPUS": str(new_vcpus),
@@ -352,7 +353,7 @@ class VirtualMachine(Document):
 			frappe.throw("VM is already terminated")
 		task = run_task(
 			server=self.server,
-			script="terminate-vm.sh",
+			script="terminate-vm.py",
 			variables={"VIRTUAL_MACHINE_NAME": self.name},
 			virtual_machine=self.name,
 			timeout_seconds=60,
@@ -365,7 +366,7 @@ class VirtualMachine(Document):
 	def _delete_snapshots(self) -> None:
 		"""Drop this VM's snapshot rows after terminate. Each row's on_trash
 		lvremoves its snapshot LV — snapshot LVs live in the thin pool, OUTSIDE
-		the VM directory terminate-vm.sh rm -rf'd, so they survive that and must
+		the VM directory terminate-vm.py rm -rf'd, so they survive that and must
 		be removed via the per-snapshot delete path (one SSH round trip each;
 		the script is idempotent)."""
 		for name in frappe.get_all(
@@ -376,7 +377,7 @@ class VirtualMachine(Document):
 	def _ipv4_link_variables(self) -> dict:
 		"""The per-VM NAT44 egress link, derived from the v6 address — no
 		stored field. The guest gets a private v4 + default route; the host
-		masquerades it (see scripts/vm-network-up.sh, spec/06-networking.md).
+		masquerades it (see scripts/vm-network-up.py, spec/06-networking.md).
 		Shared by provision (clone too) and rebuild, which both re-inject the
 		guest network env."""
 		host_cidr, guest_cidr = derive_ipv4_link(self.ipv6_address)
@@ -403,28 +404,28 @@ class VirtualMachine(Document):
 			"SSH_PUBLIC_KEY": self.ssh_public_key,
 			# Jail isolation parameters. All derived from the VM's own UUID and
 			# resource fields, so the on-host jail is reconstructible from the
-			# row. provision-vm.sh bakes these into the per-VM jailer-launch.sh
+			# row. provision-vm.py bakes these into the per-VM jailer-launch.sh
 			# (exec'd by the systemd unit) and writes network.env (read by
-			# vm-network-up.sh) from them.
+			# vm-network-up.py) from them.
 			"ATLAS_FC_UID": str(derive_uid(self.name)),
 			"ATLAS_NETNS": derive_netns(self.name),
 			"HOST_VETH": host_veth,
 			"NAMESPACE_VETH": namespace_veth,
-			# Newline-joined (one argv token per line), NOT space-joined: the
-			# jailer's `--cgroup cpu.max=<quota> <period>` value carries an
-			# internal space, so a space-joined string fed through systemd's
-			# whitespace-splitting ExecStart would shatter "100000 100000" into
-			# a stray positional the jailer rejects. provision-vm.sh rebuilds
-			# the exact argv with `mapfile` into the per-VM launcher.
-			"ATLAS_CGROUP_ARGS": "\n".join(
+			# cgroup/resource LIMITS as values-only lists. The runner renders each
+			# as a repeatable CLI flag (--cgroup-arg <value>); provision-vm.py
+			# prefixes each with --cgroup / --resource-limit when it builds the
+			# per-VM launcher. A value with an internal space (cpu.max's "<quota>
+			# <period>") is one argv token end to end — no systemd word-splitting,
+			# so the shell's newline-join + mapfile workaround is gone.
+			"CGROUP_ARG": _cgroup_values(
 				cgroup_args(self.vcpus, self.memory_megabytes, self.disk_gigabytes)
 			),
-			"ATLAS_RESOURCE_ARGS": "\n".join(resource_limit_args(self.disk_gigabytes)),
+			"RESOURCE_ARG": _cgroup_values(resource_limit_args(self.disk_gigabytes)),
 			# Per-VM NAT44 v4 egress link (host/guest /30 + gateway).
 			**self._ipv4_link_variables(),
 		}
 		# Clone: seed the disk from a snapshot's rootfs instead of the pristine
-		# image. The kernel still comes from the image; provision-vm.sh's image
+		# image. The kernel still comes from the image; provision-vm.py's image
 		# probe (step 0) stays meaningful. Identity is re-derived from this VM's
 		# own UUID, so the clone never shares host keys / machine-id with its
 		# source.
@@ -433,19 +434,13 @@ class VirtualMachine(Document):
 		return variables
 
 
-def _parse_size_bytes(stdout: str) -> int:
-	"""Pull the snapshot byte count from snapshot-vm.sh stdout.
-
-	The script prints a `SIZE_BYTES=<n>` line; the rest is `bash -x` trace
-	noise. Absent (older script, truncated output) → 0 rather than raise:
-	the size is informational, not load-bearing."""
-	for line in (stdout or "").splitlines():
-		if line.startswith("SIZE_BYTES="):
-			try:
-				return int(line.split("=", 1)[1].strip())
-			except ValueError:
-				return 0
-	return 0
+def _cgroup_values(interleaved: list[str]) -> list[str]:
+	"""Drop the flag tokens from networking.cgroup_args/resource_limit_args,
+	which interleave `["--cgroup", "<value>", "--cgroup", "<value>"]`. The
+	provision task wants values only — it owns the --cgroup / --resource-limit
+	prefix when it builds the per-VM launcher — so keep every token that is not
+	itself a flag (does not start with '--')."""
+	return [token for token in interleaved if not token.startswith("--")]
 
 
 def auto_provision(virtual_machine_name: str) -> None:

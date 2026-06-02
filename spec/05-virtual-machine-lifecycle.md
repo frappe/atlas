@@ -84,7 +84,7 @@ is still active. It is reached only from `Running` and leaves to `Running`
 `Terminated` is terminal. The doc stays in the table forever for history;
 terminating a VM also deletes its snapshot rows. Each snapshot row's `on_trash`
 lvremoves its snapshot LV — snapshot LVs live in the thin pool, outside the VM
-directory, so they survive `terminate-vm.sh`'s `rm -rf` and must be removed
+directory, so they survive `terminate-vm.py`'s `rm -rf` and must be removed
 explicitly (one Task each).
 
 ## Provision
@@ -109,7 +109,7 @@ Steps in Python (one DocType method, `Virtual Machine.provision`):
      usable interface-name length is 15: `atlas-` (6) + 9 = 15 exactly.
 
 2. **Run the provisioning task**:
-   `run_task(server=name, script="provision-vm.sh", variables=…,
+   `run_task(server=name, script="provision-vm.py", variables=…,
    virtual_machine=name)`. The script's step 0 verifies the image is on the
    server; if not, it exits non-zero with a clear error pointing the operator
    at the **Sync to Server** action. Provision does not auto-sync — image
@@ -122,7 +122,7 @@ Steps in Python (one DocType method, `Virtual Machine.provision`):
    write, systemd enable+start) happen inside the same SSH session.
    The per-VM identity writes share the rootfs mount with the SSH-key
    injection — no per-VM systemd unit needed. See
-   [`atlas/scripts/provision-vm.sh`](../scripts/provision-vm.sh).
+   [`atlas/scripts/provision-vm.py`](../scripts/provision-vm.py).
 
 3. **Update status**: on Task success, `status = Running`,
    `last_started = now()`.
@@ -146,7 +146,7 @@ rather than as a noisy SSH timeout in the guest probe.
 ### Guest-side identity contract
 
 A freshly provisioned VM presents the following to an operator who SSHes
-in. These are the contract `provision-vm.sh` writes and the e2e suite
+in. These are the contract `provision-vm.py` writes and the e2e suite
 ([`phase5-guest-identity.sh`](../atlas/tests/e2e/scripts/phase5-guest-identity.sh))
 asserts on every run:
 
@@ -175,18 +175,18 @@ This list is short for a reason: it is the operator-visible delta
 between a stock Ubuntu cloud image and a VM that looks like the
 operator's own. When the upstream image changes, every bullet either
 stays a no-op (good) or needs a new strip (a regression to fix in
-`sync-image.sh`).
+`sync-image.py`).
 
 ## Start / Stop / Restart
 
 Each is a single Task running a one-line script:
 
-- `start-vm.sh`: `systemctl start firecracker-vm@<name>.service`
-- `stop-vm.sh`: `systemctl stop firecracker-vm@<name>.service`
-- `terminate-vm.sh`: see below
+- `start-vm.py`: `systemctl start firecracker-vm@<name>.service`
+- `stop-vm.py`: `systemctl stop firecracker-vm@<name>.service`
+- `terminate-vm.py`: see below
 
-Restart is `stop-vm.sh` then `start-vm.sh`, but as the Python method's
-choice — we do not add a `restart-vm.sh`, because the only thing `systemctl
+Restart is `stop-vm.py` then `start-vm.py`, but as the Python method's
+choice — we do not add a `restart-vm.py`, because the only thing `systemctl
 restart` adds is one fewer network round-trip and we already paid for both.
 
 Status updates happen after the Task succeeds. We do not poll the server
@@ -198,10 +198,10 @@ truth, they click `Run Task` with `script=systemctl status ...`.
 The only operations that talk to Firecracker's API socket. Each is one Task
 running a one-line `curl`:
 
-- `pause-vm.sh`: `PATCH /vm {"state":"Paused"}` over the in-jail socket
+- `pause-vm.py`: `PATCH /vm {"state":"Paused"}` over the in-jail socket
   `…/<uuid>/jail/firecracker/<uuid>/root/run/firecracker.socket`.
   `Running` → `Paused`.
-- `resume-vm.sh`: `PATCH /vm {"state":"Resumed"}`. `Paused` → `Running`.
+- `resume-vm.py`: `PATCH /vm {"state":"Resumed"}`. `Paused` → `Running`.
 
 `curl --fail` so a refused state change surfaces as a failed Task rather than
 a silent success. Idempotent: Firecracker accepts a redundant Pause/Resume.
@@ -214,7 +214,7 @@ reaching it — `curl --unix-socket` talks to it from the host as before.
 ## Snapshot
 
 `Virtual Machine.snapshot(title)` on a **Stopped** VM. Runs
-[`snapshot-vm.sh`](../scripts/snapshot-vm.sh):
+[`snapshot-vm.py`](../scripts/snapshot-vm.py):
 
 1. Pre-flight thin-pool check — refuse if the pool's `data_percent` or
    `metadata_percent` is ≥ 90%. A thin snapshot consumes no space up front, but
@@ -226,13 +226,16 @@ reaching it — `curl --unix-socket` talks to it from the host as before.
 2. `lvcreate -s atlas-vm-<uuid> -n atlas-snap-<snapshot-uuid>` — an instant CoW
    thin snapshot of the VM's disk LV. Pure host op, no jail interaction; the
    snapshot shares the disk's blocks until one side is written.
-3. Print `SIZE_BYTES=<n>` (from `blockdev --getsize64` on the snapshot LV).
+3. Emit the typed result `ATLAS_RESULT={"size_bytes": <n>}` (from `blockdev
+   --getsize64` on the snapshot LV), which the controller parses back with
+   `task_results.parse_result()` — the typed successor to the old `SIZE_BYTES=`
+   stdout scrape.
 
 The controller inserts a `Virtual Machine Snapshot` row (`Pending`), runs the
 Task, then records `rootfs_path` (the snapshot's `/dev/atlas/atlas-snap-<uuid>`
 device path), `size_bytes`, and flips it to `Available`. One snapshot = one row
 = one thin LV. Deleting the row runs
-[`delete-snapshot-vm.sh`](../scripts/delete-snapshot-vm.sh) via `on_trash`,
+[`delete-snapshot-vm.py`](../scripts/delete-snapshot-vm.py) via `on_trash`,
 which `lvremove`s the snapshot LV — always, even for a Terminated VM, because
 the snapshot LV lives in the pool (outside the VM directory) and is not swept by
 terminate's `rm -rf`. See
@@ -251,11 +254,12 @@ One controller method, `Virtual Machine.rebuild(source_type, source)`, on a
 - `source_type="image"` — **Rebuild**: lay down a fresh disk from a base image
   (wipes stored data). `source` defaults to the VM's current image.
 
-Both run [`rebuild-vm.sh`](../scripts/rebuild-vm.sh): `lvremove` the old disk
+Both run [`rebuild-vm.py`](../scripts/rebuild-vm.py): `lvremove` the old disk
 LV, recreate it as a fresh CoW snapshot of the source LV (a snapshot LV for
 Restore, the base image LV for Rebuild), grow it to the VM's disk size, then
 re-inject this VM's identity (SSH key, network env, hostname, swap, fresh host
-keys, machine-id) via the shared `prepare-rootfs.sh` library, and re-`mknod` the
+keys, machine-id) via the shared `atlas.rootfs` module (the Python successor to
+the `prepare-rootfs.sh` library), and re-`mknod` the
 jail's `rootfs.ext4` block node (the new LV's dev_t can differ). Because identity
 is re-derived from the VM's own UUID, a restored/rebuilt VM is indistinguishable
 from a freshly provisioned one of the same name. The VM stays `Stopped`; the
@@ -272,7 +276,7 @@ running state twice.
 
 Mechanically the clone reuses the normal provision flow: the new VM row
 carries an internal `clone_source_rootfs` field (the snapshot's LV device
-path), and `provision-vm.sh` snapshots the clone's disk LV from that snapshot
+path), and `provision-vm.py` snapshots the clone's disk LV from that snapshot
 LV instead of the base image LV (the kernel still comes from the image, so the
 image must be synced). A snapshot-of-a-snapshot is an independent thin LV — the
 clone never shares writable blocks with its source. Disk defaults to the
@@ -283,7 +287,7 @@ snapshot's size and can only grow.
 `Virtual Machine.resize(vcpus, memory_megabytes, disk_gigabytes)` on a
 **Stopped** VM. Firecracker reads `/machine-config` only at boot, so resize is
 stop-required; the next Start picks up the new config. Runs
-[`resize-vm.sh`](../scripts/resize-vm.sh): `jq`-edit `vcpu_count` /
+[`resize-vm.py`](../scripts/resize-vm.py): `jq`-edit `vcpu_count` /
 `mem_size_mib` in `firecracker.json`, then `lvextend -r` the disk LV to the new
 size (grows the LV and the ext4 on it in one shot). Disk may only **grow** —
 `lvextend` refuses to shrink and is a clean no-op when the size is already met.
@@ -293,11 +297,11 @@ values are persisted on the row through a guarded path (see
 
 ## Terminate
 
-Runs [`terminate-vm.sh`](../scripts/terminate-vm.sh), which:
+Runs [`terminate-vm.py`](../scripts/terminate-vm.py), which:
 
 1. `systemctl disable --now firecracker-vm@<uuid>.service` (no-op if already
    stopped).
-2. Calls `vm-network-down.sh` defensively in case the unit's `ExecStopPost`
+2. Calls `vm-network-down.py` defensively in case the unit's `ExecStopPost`
    didn't fire.
 3. `rm -rf /var/lib/atlas/virtual-machines/<uuid>` (takes the jail tree,
    including the `rootfs.ext4` block node, with it) and removes the API socket.
@@ -327,7 +331,7 @@ canonical artifact. Highlights:
   brings it back. "Keep them running."
 - **`ExecStart` runs a per-VM launcher that execs the `jailer`, not
   `firecracker` directly.** The launcher (`…/%i/jailer-launch.sh`, generated by
-  `provision-vm.sh`) builds the jailer command line and `exec`s it; the jailer
+  `provision-vm.py`) builds the jailer command line and `exec`s it; the jailer
   drops the Firecracker process to the VM's per-VM uid/gid, chroots it into
   `…/<uuid>/jail/firecracker/<uuid>/root`, applies cgroup-v2 memory/CPU caps
   and fd/file rlimits, and joins the VM's network namespace (`--netns`).
@@ -338,12 +342,18 @@ canonical artifact. Highlights:
   an internal space, and systemd word-splits an unquoted `$VAR` in `ExecStart`
   on *every* space, which would shatter that value into a stray positional the
   jailer rejects. The per-VM uid, netns name and cgroup/rlimit flags are baked
-  into the launcher at provision time (the cgroup/rlimit flags arrive
-  newline-delimited and are `mapfile`d back into the exact argv), so the unit
-  template stays static and the launcher is regenerated on every (re)provision.
-- `ExecStartPre=/var/lib/atlas/bin/vm-network-up.sh %i` (creates the netns +
-  veth + in-namespace tap, so they exist when the jailer joins the namespace)
-  and the matching `ExecStopPost` for `vm-network-down.sh`. `ExecStartPre` runs
+  into the launcher at provision time: `provision-vm.py` receives the cgroup and
+  resource limits as repeatable `--cgroup-arg` / `--resource-arg` flags (one argv
+  token per value, `shlex.quote`'d, so `cpu.max`'s internal space survives) and
+  writes each as its own continued line in the launcher's `exec`. The real argv
+  vector means the shell's `mapfile` dance is gone entirely. The unit template
+  stays static and the launcher is regenerated on every (re)provision.
+- `ExecStartPre=/usr/bin/python3 /var/lib/atlas/bin/vm-network-up.py %i`
+  (creates the netns + veth + in-namespace tap, so they exist when the jailer
+  joins the namespace) and the matching `ExecStopPost` for `vm-network-down.py`.
+  A third `ExecStartPre` runs `vm-disk-up.py %i` to re-activate the VM's disk LV
+  and refresh its in-jail block node (needed after a host reboot, when
+  activation-skip snapshots don't auto-activate). `ExecStartPre` runs
   to completion before `ExecStart`, so the namespace is ready at jailer exec.
   Networking is part of the unit's lifecycle, so a host reboot brings VMs back
   with networking intact.
@@ -359,14 +369,14 @@ canonical artifact. Highlights:
   so the jailed Firecracker dies with the unit rather than being orphaned.
 - `--config-file` is used, not the API socket, during boot. Fewer moving
   parts. The API socket is still created (`--api-sock`) inside the jail and used
-  after boot by `pause-vm.sh` / `resume-vm.sh`. Snapshot/restore/rebuild/resize
+  after boot by `pause-vm.py` / `resume-vm.py`. Snapshot/restore/rebuild/resize
   do **not** touch the socket — they are disk and config operations on a
   Stopped VM.
 
 ## Host reboot recovery
 
 Because every `firecracker-vm@<uuid>.service` is `WantedBy=multi-user.target`,
-a host reboot brings them all back. `vm-network-up.sh` re-creates the network
+a host reboot brings them all back. `vm-network-up.py` re-creates the network
 namespace, veth pair, in-namespace tap and nft rules from
 `/var/lib/atlas/virtual-machines/<uuid>/network.env`; the unit re-execs the
 per-VM `jailer-launch.sh`, which has the per-VM uid/caps/netns baked in. Both

@@ -8,21 +8,22 @@ IMMUTABLE_AFTER_INSERT = ("server", "virtual_machine", "script", "variables", "t
 
 SCRIPT_LABELS = {
 	# Verb + Noun when the script creates a *new* object.
-	"bootstrap-server.sh": "Bootstrap Server",
-	"sync-image.sh": "Sync Image",
-	"provision-vm.sh": "Create Virtual Machine",
-	"snapshot-vm.sh": "Snapshot Virtual Machine",
+	"bootstrap-server.py": "Bootstrap Server",
+	"sync-image.py": "Sync Image",
+	"provision-vm.py": "Create Virtual Machine",
+	"snapshot-vm.py": "Snapshot Virtual Machine",
 	# Verb-only when the script operates on the *same* object.
+	# reboot-server.sh stays a shell script (two lines).
 	"reboot-server.sh": "Reboot",
-	"start-vm.sh": "Start",
-	"stop-vm.sh": "Stop",
-	"restart-vm.sh": "Restart",
-	"pause-vm.sh": "Pause",
-	"resume-vm.sh": "Resume",
-	"rebuild-vm.sh": "Rebuild",
-	"resize-vm.sh": "Resize",
-	"terminate-vm.sh": "Terminate",
-	"delete-snapshot-vm.sh": "Delete Snapshot",
+	"start-vm.py": "Start",
+	"stop-vm.py": "Stop",
+	"restart-vm.py": "Restart",
+	"pause-vm.py": "Pause",
+	"resume-vm.py": "Resume",
+	"rebuild-vm.py": "Rebuild",
+	"resize-vm.py": "Resize",
+	"terminate-vm.py": "Terminate",
+	"delete-snapshot-vm.py": "Delete Snapshot",
 }
 
 # Scripts a Failure-state Task is allowed to retry from the form button.
@@ -30,13 +31,13 @@ SCRIPT_LABELS = {
 # re-run through the VM's matching controller method so state-machine guards
 # stay live.
 RETRYABLE_VM_SCRIPTS: ClassVar = {
-	"provision-vm.sh": "provision",
-	"start-vm.sh": "start",
-	"stop-vm.sh": "stop",
-	"restart-vm.sh": "restart",
-	"terminate-vm.sh": "terminate",
+	"provision-vm.py": "provision",
+	"start-vm.py": "start",
+	"stop-vm.py": "stop",
+	"restart-vm.py": "restart",
+	"terminate-vm.py": "terminate",
 }
-RETRYABLE_SERVER_SCRIPTS = frozenset({"bootstrap-server.sh", "reboot-server.sh", "sync-image.sh"})
+RETRYABLE_SERVER_SCRIPTS = frozenset({"bootstrap-server.py", "reboot-server.sh", "sync-image.py"})
 
 
 class Task(Document):
@@ -123,7 +124,7 @@ class Task(Document):
 		"""
 		if (
 			self.status != "Failure"
-			or self.script != "provision-vm.sh"
+			or self.script != "provision-vm.py"
 			or not self.virtual_machine
 		):
 			return

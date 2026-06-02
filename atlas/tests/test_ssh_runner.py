@@ -193,7 +193,7 @@ class TestSidecarUploads(IntegrationTestCase):
 		with patch("atlas.atlas._ssh.transport.subprocess.run", side_effect=capture):
 			run_task(
 				connection=CONNECTION,
-				script="sync-image.sh",
+				script="sync-image.py",
 				variables={"IMAGE_NAME": "test-image"},
 			)
 
@@ -202,13 +202,56 @@ class TestSidecarUploads(IntegrationTestCase):
 			any("atlas-network.service" in destination for destination in scp_destinations),
 			f"sidecar not in {scp_destinations}",
 		)
-		# Script always last, after sidecars.
+		# Script always last, after sidecars (which now include the atlas package).
 		script_index = next(
 			index for index, destination in enumerate(scp_destinations)
-			if destination.endswith("sync-image.sh")
+			if destination.endswith("sync-image.py")
 		)
 		sidecar_index = next(
 			index for index, destination in enumerate(scp_destinations)
 			if "atlas-network.service" in destination
 		)
 		self.assertLess(sidecar_index, script_index)
+
+
+class TestRemoteCommand(IntegrationTestCase):
+	"""The .py vs .sh dispatch in runner._remote_command — the heart of the
+	migration. A .py task runs as `python3 <script> --flag value`; a .sh task
+	keeps the legacy `env VAR=val bash -x <script>` form."""
+
+	def test_python_task_builds_flag_command(self) -> None:
+		command = runner._remote_command(
+			"snapshot-vm.py",
+			"/tmp/atlas/snapshot-vm.py",
+			{"VIRTUAL_MACHINE_NAME": "uuid-1", "SNAPSHOT_ROOTFS_PATH": "/dev/atlas/x"},
+		)
+		self.assertTrue(command.startswith("python3 /tmp/atlas/snapshot-vm.py "))
+		self.assertIn("--virtual-machine-name uuid-1", command)
+		self.assertIn("--snapshot-rootfs-path /dev/atlas/x", command)
+		self.assertNotIn("bash -x", command)
+
+	def test_python_task_repeats_list_flags(self) -> None:
+		# A list value becomes a repeated flag; a value with an internal space
+		# stays one shell-quoted token (the cpu.max "<quota> <period>" case).
+		command = runner._remote_command(
+			"provision-vm.py",
+			"/tmp/atlas/provision-vm.py",
+			{"CGROUP_ARG": ["memory.max=1", "cpu.max=200000 100000"]},
+		)
+		self.assertIn("--cgroup-arg memory.max=1", command)
+		self.assertIn("--cgroup-arg 'cpu.max=200000 100000'", command)
+
+	def test_python_task_drops_empty_optional(self) -> None:
+		command = runner._remote_command(
+			"provision-vm.py", "/tmp/atlas/provision-vm.py",
+			{"VIRTUAL_MACHINE_NAME": "uuid-1", "SNAPSHOT_ROOTFS_PATH": ""},
+		)
+		self.assertIn("--virtual-machine-name uuid-1", command)
+		self.assertNotIn("snapshot-rootfs-path", command)
+
+	def test_shell_task_keeps_bash_env_form(self) -> None:
+		command = runner._remote_command(
+			"reboot-server.sh", "/tmp/atlas/reboot-server.sh", {},
+		)
+		self.assertIn("bash -x /tmp/atlas/reboot-server.sh", command)
+		self.assertNotIn("python3", command)

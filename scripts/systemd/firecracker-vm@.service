@@ -20,12 +20,14 @@ ExecStartPre=/bin/rm -f /var/lib/atlas/virtual-machines/%i/jail/firecracker/%i/r
 # Disk (re-activate the thin-snapshot LV and refresh the in-jail block node)
 # must be present before the jailer opens rootfs.ext4. provision is not re-run
 # on boot and `lvcreate -s` disks are activation-skip, so without this a reboot
-# leaves the jail node dangling; vm-disk-up.sh is idempotent and self-heals it.
-ExecStartPre=/var/lib/atlas/bin/vm-disk-up.sh %i
+# leaves the jail node dangling; vm-disk-up.py is idempotent and self-heals it.
+# The hook imports the durable atlas package (its own sys.path shim adds its
+# directory, /var/lib/atlas/bin) and takes the VM uuid as a positional arg.
+ExecStartPre=/usr/bin/python3 /var/lib/atlas/bin/vm-disk-up.py %i
 # Networking (netns + veth + in-namespace tap) must exist before the jailer
 # joins the namespace; ExecStartPre runs to completion before ExecStart.
-ExecStartPre=/var/lib/atlas/bin/vm-network-up.sh %i
-# Run Firecracker under the jailer via the per-VM launcher that provision-vm.sh
+ExecStartPre=/usr/bin/python3 /var/lib/atlas/bin/vm-network-up.py %i
+# Run Firecracker under the jailer via the per-VM launcher that provision-vm.py
 # generated. The launcher (not this unit) assembles the jailer argv, because the
 # --cgroup cpu.max value carries an internal space that systemd's ExecStart
 # word-splitting would shatter. The launcher de-privileges Firecracker to the
@@ -33,7 +35,7 @@ ExecStartPre=/var/lib/atlas/bin/vm-network-up.sh %i
 # caps + fd/file rlimits, and joins the VM's own network namespace. It `exec`s
 # the jailer, so the jailer is this unit's main process (see KillMode below).
 ExecStart=/var/lib/atlas/virtual-machines/%i/jailer-launch.sh
-ExecStopPost=/var/lib/atlas/bin/vm-network-down.sh %i
+ExecStopPost=/usr/bin/python3 /var/lib/atlas/bin/vm-network-down.py %i
 StandardOutput=append:/var/lib/atlas/virtual-machines/%i/log/firecracker.log
 StandardError=append:/var/lib/atlas/virtual-machines/%i/log/firecracker.log
 Restart=always

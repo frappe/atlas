@@ -281,7 +281,7 @@ def _wait_for_provision_task(virtual_machine_name: str, timeout_seconds: int = 6
 			"Task",
 			filters={
 				"virtual_machine": virtual_machine_name,
-				"script": "provision-vm.sh",
+				"script": "provision-vm.py",
 			},
 			pluck="name",
 			order_by="creation desc",
