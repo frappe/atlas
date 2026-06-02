@@ -16,16 +16,28 @@
 | 5 Lifecycle+activity | ✅ | `data/actions.js` map, `Machine.vue`, `MachineActionDialog.vue`, `ActivityList.vue`, `test_action_map.py` (parser-verified) |
 | 6 Polish+spec | ✅ | one-primary-per-page enforced, `ErrorMessage` reused, dead `isGuest` removed, README #47/#26/#45 + principle #1/#4 rewritten, `spec/10` opener fixed |
 
-**Verification done locally (bench NOT live on this tree):** `yarn build`
-green (frappe-ui 0.1.278, all 13 components compile); `py_compile` + `ruff`
-clean on all new Python; all edited DocType JSON valid; action-map parser run
-standalone confirms one-primary-per-status and every method whitelisted.
+**Bench-flipped 2026-06-02 — unit suites GREEN (21/21):** `test_permissions`
+10, `test_placement` 5, `test_action_map` 3, `test_website_route` 3. `yarn
+build` green (frappe-ui 0.1.278). `/dashboard` verified over HTTP: guest → 301
+`/login`; authed → 200 SPA shell; hashed JS+CSS → 200.
 
-**Awaiting the operator's `atlas-tree ui` flip (Phase 7):** run the unit
-suites (`test_permissions`, `test_placement`, `test_action_map`,
-`test_website_route`) which need the site, then build the `user_dashboard.py`
-e2e use-case and run it on a real droplet. Until the flip, the unit tests are
-written but unrun — same single-bench rule as every other tree.
+**Two real bugs found + fixed on the flip:**
+1. **Layout depth → 404.** `www/` and the vite build output sat one dir too
+   deep. Frappe serves www + `/assets/atlas/…` from `get_app_path("atlas")`
+   (the package root, next to `hooks.py`). Moved `www/`→`atlas/www`; vite
+   `outDir`→`../public/frontend`; fixed `.gitignore` + `dashboard.py` index path.
+2. **Placement perms.** `placement.py` queried `Server`/`Image` as the acting
+   `Atlas User` (who can't read `Server`) → "no capacity". Added
+   `ignore_permissions=True` (system placement, not user-facing data access).
+
+Main was merged in (the shell→Python script-port commit) — clean auto-merge,
+no UI adaptation needed (the SPA drives whitelisted methods, not script names).
+
+**Still TODO — Phase 7 (e2e):** build `atlas/tests/e2e/use_cases/user_dashboard.py`
+and run it on a real droplet: a non-operator `Atlas User`, through the SPA's
+standard endpoints, creates+provisions a VM (placement fills server/image,
+auto-provision boots it), reaches it (IPv6 + key), reads its Tasks inline, and
+is denied another user's VM + Provider/Server/global-Task. Then → READY.
 
 ## 0. The one sentence
 
