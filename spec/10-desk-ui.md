@@ -1,11 +1,12 @@
 # Desk UI
 
-The desk is Atlas's only UI. We don't ship a custom SPA; we lean on
-Frappe's standard form, list, and dialog primitives. But every Atlas
-form goes through a small layer of shared client conventions so the
-operator sees a consistent action hierarchy and can't fire expensive
-or destructive things by accident. This section documents what that
-layer is and why it exists.
+The desk is Atlas's **operator** UI. (Users get a separate frappe-ui SPA
+at `/dashboard` — see [11-user-ui.md](./11-user-ui.md).) For operators we
+don't ship a custom SPA; we lean on Frappe's standard form, list, and
+dialog primitives. But every Atlas form goes through a small layer of
+shared client conventions so the operator sees a consistent action
+hierarchy and can't fire expensive or destructive things by accident.
+This section documents what that layer is and why it exists.
 
 A second, narrower layer — scoped CSS in
 [`atlas/public/css/atlas_desk.css`](../atlas/public/css/atlas_desk.css)

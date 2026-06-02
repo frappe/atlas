@@ -61,6 +61,14 @@ doctype_js = {
 # bookmarked `/app/atlas`, login redirect after manual login) already lands
 # here, so the residual one-click launcher cost is acceptable.
 # doctype_list_js = {"doctype" : "public/js/doctype_list.js"}
+
+# The user-facing SPA (frappe-ui) is served at /dashboard. The Vue app owns
+# every sub-path under it; the host page is atlas/www/dashboard.html, built
+# from atlas/frontend. Operators use Desk (/app/atlas); users use this.
+# See spec/11-user-ui.md.
+website_route_rules = [
+	{"from_route": "/dashboard/<path:app_path>", "to_route": "dashboard"},
+]
 # doctype_tree_js = {"doctype" : "public/js/doctype_tree.js"}
 # doctype_calendar_js = {"doctype" : "public/js/doctype_calendar.js"}
 
@@ -97,6 +105,14 @@ doctype_js = {
 # 	"methods": "atlas.utils.jinja_methods",
 # 	"filters": "atlas.utils.jinja_filters"
 # }
+
+# Fixtures
+# --------
+# The Atlas User role (the SPA's user audience). Scoped to just this role so a
+# migrate doesn't sweep every Role on the site. See spec/11-user-ui.md.
+fixtures = [
+	{"dt": "Role", "filters": [["name", "=", "Atlas User"]]},
+]
 
 # Installation
 # ------------
@@ -140,15 +156,20 @@ doctype_js = {
 
 # Permissions
 # -----------
-# Permissions evaluated in scripted ways
+# Row-level access for the Atlas User audience (the dashboard SPA). Operators
+# (System Manager) are unrestricted; users see only their own machines /
+# snapshots, and — for the inline Activity panel — only the Tasks of a machine
+# they own. See atlas/atlas/permissions.py and spec/11-user-ui.md.
 
-# permission_query_conditions = {
-# 	"Event": "frappe.desk.doctype.event.event.get_permission_query_conditions",
-# }
-#
-# has_permission = {
-# 	"Event": "frappe.desk.doctype.event.event.has_permission",
-# }
+permission_query_conditions = {
+	"Virtual Machine": "atlas.atlas.permissions.owner_only",
+	"Virtual Machine Snapshot": "atlas.atlas.permissions.owner_only",
+	"Task": "atlas.atlas.permissions.task_by_owned_vm",
+}
+
+has_permission = {
+	"Task": "atlas.atlas.permissions.task_has_permission",
+}
 
 # Document Events
 # ---------------

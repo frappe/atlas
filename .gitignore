@@ -66,3 +66,8 @@ plan/layouts.md
 
 # Claude
 .claude/
+# Atlas dashboard SPA build artifacts
+atlas/atlas/public/frontend/
+atlas/frontend/dist/
+atlas/frontend/auto-imports.d.ts
+atlas/frontend/components.d.ts

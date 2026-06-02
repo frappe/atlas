@@ -23,7 +23,10 @@ keep it the source of truth.
 ## Non-goals (this iteration)
 
 - No sites, benches, apps, databases, or workloads.
-- No users, teams, roles, billing, quotas.
+- No teams, billing, or quotas. There *are* now two roles — the operator
+  (System Manager) and the **Atlas User** who owns the machines they create in
+  the dashboard SPA (see [11-user-ui.md](./11-user-ui.md)) — but no team
+  abstraction, no sharing, no billing or quota enforcement.
 - No CLI. We will build one later on top of the same Frappe APIs.
 - No private networking between VMs, no overlay. No inbound IPv4 to the
   guest and no per-VM public IPv4 (outbound v4 is via host NAT44).
@@ -42,14 +45,29 @@ keep it the source of truth.
   availability. (Disk snapshots — instant copy-on-write LVM thin snapshots of
   the VM's disk — are supported; see
   [05-virtual-machine-lifecycle.md](./05-virtual-machine-lifecycle.md).)
-- No autoscaling, scheduling, or placement. The operator picks the server.
+- No autoscaling or scheduling. The operator picks the server in Desk; a user
+  creating a machine in the SPA gets the first Active server with room (a
+  default, not a scheduler — see [11-user-ui.md](./11-user-ui.md)).
 - No metrics or alerting. `journalctl` is enough.
-- No web UI of our own. Desk is the UI.
+- Two UIs, two audiences. **Operators** use Desk (`/app/atlas`) — the whole
+  fleet, providers, servers, image sync, ad-hoc tasks. **Users** use a small
+  frappe-ui SPA at `/dashboard` that exposes only their own Virtual Machines,
+  Images (read-only, shared), and Snapshots; Provider, Server, and Task are
+  invisible and access-denied to them. The SPA defines no new server-side
+  logic or API — it drives the existing whitelisted methods through standard
+  Frappe endpoints. See [11-user-ui.md](./11-user-ui.md). (Earlier iterations
+  said "no web UI of our own; Desk is the UI" — that held for the operator-only
+  PoC; the user SPA is the deliberate, scoped reversal documented in 11.)
 
 ## Operating principles
 
-1. **Desk is the UI.** Every operation is a DocType, a button on a DocType, or
-   a server method on a DocType. No custom pages.
+1. **Desk is the operator UI; the SPA is the user UI.** Every *operator*
+   operation is a DocType, a button on a DocType, or a server method on a
+   DocType, rendered in Desk — no custom operator pages. *Users* get a
+   separate frappe-ui SPA at `/dashboard` ([11-user-ui.md](./11-user-ui.md))
+   that is a thin client over those same DocTypes and whitelisted methods: it
+   adds no server-side logic and no API of its own, and it is scoped by
+   permissions to the user's own resources.
 2. **The Frappe site is the source of truth.** A server is a cache; we can
    rebuild its on-disk state from the Frappe database. We do not scrape state
    back from the server.
@@ -57,7 +75,11 @@ keep it the source of truth.
    over SSH and runs it. The script is the unit of work. We do not chain
    per-step SSH calls. See [04-tasks.md](./04-tasks.md).
 4. **One virtual machine per server slot.** The operator picks the server
-   when provisioning. No scheduler.
+   when provisioning in Desk. No scheduler. A *user* creating a machine in the
+   SPA does not pick a server — the controller fills the first Active server
+   with room and the default image ([11-user-ui.md](./11-user-ui.md),
+   `placement.py`); the operator still owns which servers are Active. That is a
+   default, not a scheduler.
 5. **Few dependencies.** Frappe + standard library + the system `ssh` command.
    On the server: `firecracker`, `systemd`, `iproute2`, `nftables`, `curl`,
    `jq`, `e2fsprogs`, `squashfs-tools`, `lvm2`, `thin-provisioning-tools`. No
@@ -80,7 +102,8 @@ keep it the source of truth.
 7. [Filesystem layout on the server](./07-filesystem-layout.md)
 8. [Images](./08-images.md)
 9. [Roadmap and deferred decisions](./09-roadmap.md)
-10. [Desk UI](./10-desk-ui.md)
+10. [Desk UI (operator)](./10-desk-ui.md)
+11. [User UI — the dashboard SPA](./11-user-ui.md)
 
 ## First run on a fresh site
 

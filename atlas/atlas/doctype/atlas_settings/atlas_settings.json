@@ -7,6 +7,8 @@
  "field_order": [
   "section_break_provider",
   "provider",
+  "section_break_user_dashboard",
+  "default_user_image",
   "section_break_ssh",
   "ssh_fingerprint",
   "ssh_public_key",
@@ -25,6 +27,18 @@
    "options": "Provider",
    "reqd": 1,
    "description": "The currently-active Provider. atlas.get_provider() reads this."
+  },
+  {
+   "fieldname": "section_break_user_dashboard",
+   "fieldtype": "Section Break",
+   "label": "User dashboard"
+  },
+  {
+   "fieldname": "default_user_image",
+   "fieldtype": "Link",
+   "label": "Default User Image",
+   "options": "Virtual Machine Image",
+   "description": "Base image a dashboard user's new machine is provisioned from. If unset, the single active image is used; if several are active, set this so placement is unambiguous."
   },
   {
    "fieldname": "section_break_ssh",

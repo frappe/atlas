@@ -1,0 +1,112 @@
+"""Placement defaults for user-created Virtual Machines.
+
+A dashboard user creates a VM with only name / size / SSH key; the controller
+fills `server` and `image` in before_insert (atlas/atlas/placement.py). These
+tests pin that the fill happens, that `owner` is stamped from the acting user,
+and that the no-capacity / ambiguous-image boundaries throw cleanly. No host —
+pure controller logic (the after_insert provision enqueue is a no-op under
+frappe.in_test).
+"""
+
+import frappe
+from frappe.tests import IntegrationTestCase
+
+from atlas.tests.fixtures import make_image, make_provider, make_server
+
+USER_EMAIL = "atlas-placement-user@example.com"
+
+
+def _atlas_user() -> str:
+	if not frappe.db.exists("Role", "Atlas User"):
+		frappe.get_doc({
+			"doctype": "Role",
+			"role_name": "Atlas User",
+			"desk_access": 0,
+		}).insert(ignore_permissions=True)
+	if frappe.db.exists("User", USER_EMAIL):
+		user = frappe.get_doc("User", USER_EMAIL)
+	else:
+		user = frappe.get_doc({
+			"doctype": "User",
+			"email": USER_EMAIL,
+			"first_name": "Place",
+			"last_name": "Ment",
+			"send_welcome_email": 0,
+			"enabled": 1,
+		}).insert(ignore_permissions=True)
+	for role_row in list(user.get("roles") or []):
+		user.remove(role_row)
+	user.append("roles", {"role": "Atlas User"})
+	user.save(ignore_permissions=True)
+	return user.name
+
+
+class TestPlacement(IntegrationTestCase):
+	def setUp(self) -> None:
+		self.provider = make_provider("atlas-placement-provider")
+		self.addCleanup(frappe.set_user, "Administrator")
+		frappe.db.set_single_value("Atlas Settings", "default_user_image", None)
+
+	def _new_machine(self, **overrides):
+		"""Insert a VM the way the dashboard does — no server, no image."""
+		doc = {
+			"doctype": "Virtual Machine",
+			"title": "placement-vm",
+			"size_preset": "Small (1 vCPU / 512 MB / 4 GB)",
+			"vcpus": 1,
+			"memory_megabytes": 512,
+			"disk_gigabytes": 4,
+			"ssh_public_key": "ssh-ed25519 AAAA",
+		}
+		doc.update(overrides)
+		return frappe.get_doc(doc).insert()
+
+	def test_fills_server_and_image_and_owner(self) -> None:
+		server = make_server("atlas-placement-server", provider=self.provider.name)
+		image = make_image("atlas-placement-image")
+		frappe.db.set_value("Server", server.name, "status", "Active")
+
+		user = _atlas_user()
+		frappe.set_user(user)
+		vm = self._new_machine()
+
+		self.assertEqual(vm.server, server.name, "server filled from the active server")
+		self.assertEqual(vm.image, image.name, "image filled from the single active image")
+		self.assertEqual(vm.owner, user, "owner is stamped from the acting user")
+		self.assertTrue(vm.ipv6_address, "ipv6 allocated against the filled server")
+
+	def test_explicit_server_image_not_overridden(self) -> None:
+		server = make_server("atlas-placement-server", provider=self.provider.name)
+		image = make_image("atlas-placement-image")
+		frappe.db.set_value("Server", server.name, "status", "Active")
+		# Operator path: both supplied — placement is a no-op.
+		vm = self._new_machine(server=server.name, image=image.name)
+		self.assertEqual(vm.server, server.name)
+		self.assertEqual(vm.image, image.name)
+
+	def test_no_active_server_throws(self) -> None:
+		make_image("atlas-placement-image")
+		# A server exists but is not Active.
+		make_server("atlas-placement-server", provider=self.provider.name)
+		frappe.set_user(_atlas_user())
+		with self.assertRaises(frappe.ValidationError):
+			self._new_machine()
+
+	def test_ambiguous_image_throws(self) -> None:
+		server = make_server("atlas-placement-server", provider=self.provider.name)
+		frappe.db.set_value("Server", server.name, "status", "Active")
+		make_image("atlas-placement-image-a")
+		make_image("atlas-placement-image-b")
+		frappe.set_user(_atlas_user())
+		with self.assertRaises(frappe.ValidationError):
+			self._new_machine()
+
+	def test_configured_default_image_resolves_ambiguity(self) -> None:
+		server = make_server("atlas-placement-server", provider=self.provider.name)
+		frappe.db.set_value("Server", server.name, "status", "Active")
+		make_image("atlas-placement-image-a")
+		image_b = make_image("atlas-placement-image-b")
+		frappe.db.set_single_value("Atlas Settings", "default_user_image", image_b.name)
+		frappe.set_user(_atlas_user())
+		vm = self._new_machine()
+		self.assertEqual(vm.image, image_b.name, "configured default wins over ambiguity")

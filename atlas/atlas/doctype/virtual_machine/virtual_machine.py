@@ -15,6 +15,7 @@ from atlas.atlas.networking import (
 	derive_veth_pair,
 	resource_limit_args,
 )
+from atlas.atlas.placement import apply_user_defaults
 from atlas.atlas.ssh import run_task
 
 # Never change after insert — identity and the key the rootfs was built with.
@@ -57,6 +58,10 @@ class VirtualMachine(Document):
 		self.name = str(uuid.uuid4())
 
 	def before_insert(self) -> None:
+		# A dashboard user creates a VM with no server/image; fill them before
+		# anything that depends on server (ipv6 allocation derives from it).
+		# No-op for the operator path, which supplies both. See placement.py.
+		apply_user_defaults(self)
 		self.set_status_default()
 		self.set_ipv6_address()
 
