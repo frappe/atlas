@@ -31,12 +31,26 @@ else.
 ├── pool/
 │   └── atlas-pool.img                # sparse loopback PV backing the thin pool
 │
-└── bin/                              # Helper scripts laid down by bootstrap
-    ├── vm-network-up.sh
-    ├── vm-network-down.sh
-    ├── vm-disk-up.sh                 # ExecStartPre: re-activate the VM's disk LV + refresh its jail node
-    └── lvm.sh                        # sourced thin-pool helpers (also by atlas-pool.service / vm-disk-up.sh)
+├── bootstrap.json                    # host facts written by bootstrap-server.py
+│
+└── bin/                              # Durable hooks + package laid down by bootstrap
+    ├── vm-network-up.py              # ExecStartPre: build the VM's netns + tap + veth
+    ├── vm-network-down.py            # ExecStopPost: tear the same down
+    ├── vm-disk-up.py                 # ExecStartPre: re-activate the VM's disk LV + refresh its jail node
+    └── atlas/                        # the durable stdlib-only package the hooks + atlas-pool.service import
+        ├── lvm.py                    # ThinPool/LogicalVolume (successor to lvm.sh)
+        ├── network_env.py            # read network.env, find default route device
+        ├── paths.py                  # VirtualMachinePaths, image_directory
+        ├── rootfs.py                 # per-VM identity injection (successor to prepare-rootfs.sh)
+        ├── _run.py                   # the one subprocess wrapper (set -x + abort-on-fail)
+        └── _task.py                  # TaskInputs/TaskResult (typed CLI + ATLAS_RESULT= line)
 ```
+
+The systemd hooks (`vm-network-up.py`, `vm-network-down.py`, `vm-disk-up.py`)
+take a positional VM uuid (the unit passes `%i`) and add their own directory to
+`sys.path` so `import atlas` resolves the package next to them. They are NOT
+Tasks — they are excluded from the script catalog so the runner never executes
+them as one.
 
 The VM disks themselves are **LVM thin volumes**, not files in this tree —
 they live in the `atlas` volume group on the thin pool `pool0`, reachable at
@@ -58,11 +72,11 @@ sparse file is the loopback PV that group sits on.
   `rm -rf` of the VM directory still takes everything with it. The disk itself
   is *not* a file here: `rootfs.ext4` is a block-special node `mknod`'d to point
   at the VM's disk LV (`/dev/atlas/atlas-vm-<uuid>`), so the `rm -rf` removes the
-  node but not the LV — `terminate-vm.sh` `lvremove`s the LV separately.
+  node but not the LV — `terminate-vm.py` `lvremove`s the LV separately.
 - Disk snapshots are **LVM thin snapshots** (`atlas-snap-<snapshot-uuid>`),
   not files under the VM directory. They live in the pool, independent of the
   VM's directory and of the origin VM disk, so terminating a VM does **not**
-  take its snapshots with it — `delete-snapshot-vm.sh` `lvremove`s the snapshot
+  take its snapshots with it — `delete-snapshot-vm.py` `lvremove`s the snapshot
   LV explicitly. A snapshot is an instant copy-on-write `lvcreate -s` of the
   VM's disk LV, taken while the VM is Stopped (see [spec/05](./05-virtual-machine-lifecycle.md)).
 - The API socket is created by Firecracker inside its jail
@@ -70,7 +84,7 @@ sparse file is the loopback PV that group sits on.
   The legacy `run/` directory is still created by bootstrap but is unused.
   Its absolute host path (~150 chars, the UUID nested twice) exceeds the
   108-byte `sun_path` limit for a Unix-domain socket address, so host tools that
-  talk to it (`pause-vm.sh`, `resume-vm.sh`) `cd` into the socket's directory
+  talk to it (`pause-vm.py`, `resume-vm.py`) `cd` into the socket's directory
   and connect via the short relative name `firecracker.socket`. Firecracker
   itself binds it as the relative `run/firecracker.socket` from inside the
   chroot, where the path is short, so the bind never hit the limit.
@@ -96,9 +110,10 @@ has none). The base image is itself a read-only thin LV imported at sync.
   (or even a base image) without checking for snapshots taken from it.
 - **Naming derives from UUIDs**, so this needed no DocType/schema change: the VG
   is `atlas`, the pool `pool0`, devices live at `/dev/atlas/atlas-vm-<uuid>`,
-  `atlas-snap-<uuid>`, `atlas-image-<image>`. The Python layer stays
-  path-string oriented; the storage model lives in the shell scripts +
-  [`lib/lvm.sh`](../scripts/lib/lvm.sh).
+  `atlas-snap-<uuid>`, `atlas-image-<image>`. The controller stays path-string
+  oriented; the storage model lives in the task scripts and the
+  [`atlas.lvm`](../scripts/lib/atlas/lvm.py) module (`ThinPool` / `LogicalVolume`),
+  which derive every name from the UUID — the single place the scheme lives.
 
 The PV under the pool is a sparse loopback file (`pool/atlas-pool.img`) on a
 stock droplet's root disk — a real attached block device is the spec/09
@@ -110,7 +125,7 @@ mechanics.
 
 A thin pool over-commits: the sum of VM disk *capacities* can exceed the pool's
 real size, and the pool fills as guests actually write. The host-side guard is
-pool-space accounting — `snapshot-vm.sh` (and any block-allocating op) refuses
+pool-space accounting — `snapshot-vm.py` (and any block-allocating op) refuses
 when the pool's `data_percent` or `metadata_percent` is ≥90% (read from `lvs`),
 rather than `df` on a filesystem. We watch the two percentages **separately**:
 metadata exhaustion is the nastier failure (it can wedge the whole pool, not
@@ -145,10 +160,10 @@ not, and both are reconstructed from on-disk state — never from the Frappe DB:
 - **Each VM's disk + jail node.** A VM disk's device-mapper minor can renumber
   across a reboot, which would dangle the `rootfs.ext4` block node mknod'd into
   the jail at provision time. Provision is not re-run on boot, so each
-  `firecracker-vm@.service` runs `vm-disk-up.sh` as an `ExecStartPre`: it
+  `firecracker-vm@.service` runs `vm-disk-up.py` as an `ExecStartPre`: it
   re-activates the VM's own disk LV (`-K`) and re-mknods the jail node from the
   LV's *current* major:minor (reading the per-VM uid from `network.env`). This
-  is the disk analogue of `vm-network-up.sh`, and it makes an enabled VM
+  is the disk analogue of `vm-network-up.py`, and it makes an enabled VM
   self-heal its disk on every start — reboot, dm-renumber, or a manual
   `lvchange -an` all recover with no operator action.
 

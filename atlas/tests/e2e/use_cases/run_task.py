@@ -68,7 +68,7 @@ def run_smoke(reuse: bool = True, keep: bool = True, reboot: bool = False) -> No
 def _check_run_task_dialog_happy(server) -> None:
 	"""Re-bootstrap via run_task_dialog — same code path as bootstrap()."""
 	task_name = server.run_task_dialog(
-		script="bootstrap-server.sh",
+		script="bootstrap-server.py",
 		variables={
 			"FIRECRACKER_VERSION": "v1.15.1",
 			"ARCHITECTURE": "x86_64",
@@ -76,7 +76,7 @@ def _check_run_task_dialog_happy(server) -> None:
 	)
 	task = frappe.get_doc("Task", task_name)
 	assert task.status == "Success", task.stderr
-	assert task.script == "bootstrap-server.sh"
+	assert task.script == "bootstrap-server.py"
 	assert task.server == server.name
 
 

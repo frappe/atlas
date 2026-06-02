@@ -53,7 +53,7 @@ class VirtualMachineImage(Document):
 
 	@frappe.whitelist()
 	def sync_status(self) -> list[dict]:
-		"""For each Active server, the last successful sync-image.sh Task
+		"""For each Active server, the last successful sync-image.py Task
 		referencing this image. None if never synced.
 
 		Returned shape:
@@ -72,7 +72,7 @@ class VirtualMachineImage(Document):
 				SELECT name, modified
 				FROM `tabTask`
 				WHERE server = %(server)s
-				  AND script = 'sync-image.sh'
+				  AND script IN ('sync-image.py', 'sync-image.sh')
 				  AND status = 'Success'
 				  AND variables LIKE %(image_pattern)s
 				ORDER BY modified DESC
@@ -121,7 +121,7 @@ class VirtualMachineImage(Document):
 		task = frappe.get_doc({
 			"doctype": "Task",
 			"server": server_name,
-			"script": "sync-image.sh",
+			"script": "sync-image.py",
 			"status": "Pending",
 			"triggered_by": frappe.session.user if frappe.session else "Administrator",
 		})

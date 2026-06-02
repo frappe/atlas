@@ -3,8 +3,10 @@
 set -euo pipefail
 
 for path in \
-    /var/lib/atlas/bin/vm-network-up.sh \
-    /var/lib/atlas/bin/vm-network-down.sh \
+    /var/lib/atlas/bin/vm-network-up.py \
+    /var/lib/atlas/bin/vm-network-down.py \
+    /var/lib/atlas/bin/vm-disk-up.py \
+    /var/lib/atlas/bin/atlas/lvm.py \
     /etc/systemd/system/firecracker-vm@.service; do
     test -f "$path"
     echo "$(basename "$path") OK"

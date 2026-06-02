@@ -41,7 +41,7 @@ class TestVirtualMachineImage(IntegrationTestCase):
 		enqueue.assert_called_once()
 		task = frappe.get_doc("Task", task_name)
 		self.assertEqual(task.status, "Pending")
-		self.assertEqual(task.script, "sync-image.sh")
+		self.assertEqual(task.script, "sync-image.py")
 		self.assertEqual(task.server, server_name)
 
 	def test_sync_to_all_servers_enqueues_one_per_active(self) -> None:
@@ -61,7 +61,7 @@ class TestVirtualMachineImage(IntegrationTestCase):
 		self.assertGreaterEqual(enqueue.call_count, 1)
 
 	def test_files_to_upload_for_sync_image(self) -> None:
-		uploads = files_to_upload("sync-image.sh")
+		uploads = files_to_upload("sync-image.py")
 		self.assertTrue(any("atlas-network.service" in remote for _, remote in uploads))
 
 
@@ -94,7 +94,7 @@ class TestVirtualMachineImageAutoSync(IntegrationTestCase):
 		our_tasks = frappe.get_all(
 			"Task",
 			filters={
-				"script": "sync-image.sh",
+				"script": "sync-image.py",
 				"server": ("in", [active_1, active_2]),
 			},
 			pluck="name",

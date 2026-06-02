@@ -21,7 +21,7 @@ def _stopped_vm() -> "frappe.model.document.Document":
 def _make_snapshot(vm) -> "frappe.model.document.Document":
 	from atlas.atlas.doctype.virtual_machine import virtual_machine as module
 
-	with patch.object(module, "run_task", return_value=fake_task(stdout="SIZE_BYTES=1024")):
+	with patch.object(module, "run_task", return_value=fake_task(stdout='ATLAS_RESULT={"size_bytes": 1024}')):
 		name = vm.snapshot("snap")
 	return frappe.get_doc("Virtual Machine Snapshot", name)
 
@@ -32,7 +32,7 @@ class TestVirtualMachineSnapshot(IntegrationTestCase):
 
 		_ensure_test_server()
 		_ensure_test_image()
-		# Snapshot.on_trash fires a real delete-snapshot-vm.sh over SSH for any
+		# Snapshot.on_trash fires a real delete-snapshot-vm.py over SSH for any
 		# leftover row whose VM is still live (the test server's 10.0.0.99 is
 		# unreachable, so a real call hangs until timeout). Cleanup is harness
 		# bookkeeping, not the behaviour under test — stub run_task while we
@@ -50,7 +50,7 @@ class TestVirtualMachineSnapshot(IntegrationTestCase):
 		with patch.object(module, "run_task", return_value=fake_task()) as mocked:
 			frappe.delete_doc("Virtual Machine Snapshot", snapshot.name, ignore_permissions=True)
 		mocked.assert_called_once()
-		self.assertEqual(mocked.call_args.kwargs["script"], "delete-snapshot-vm.sh")
+		self.assertEqual(mocked.call_args.kwargs["script"], "delete-snapshot-vm.py")
 		self.assertEqual(
 			mocked.call_args.kwargs["variables"]["SNAPSHOT_ROOTFS_PATH"], snapshot.rootfs_path
 		)
@@ -59,7 +59,7 @@ class TestVirtualMachineSnapshot(IntegrationTestCase):
 		from atlas.atlas.doctype.virtual_machine_snapshot import virtual_machine_snapshot as module
 
 		# A snapshot LV lives in the thin pool, OUTSIDE the VM directory that
-		# terminate-vm.sh rm -rf'd — so it survives terminate and on_trash MUST
+		# terminate-vm.py rm -rf'd — so it survives terminate and on_trash MUST
 		# still lvremove it, even for a Terminated VM. (The old file-backed model
 		# could skip this because the files were already gone with the directory.)
 		vm = _stopped_vm()
@@ -68,7 +68,7 @@ class TestVirtualMachineSnapshot(IntegrationTestCase):
 		with patch.object(module, "run_task", return_value=fake_task()) as mocked:
 			frappe.delete_doc("Virtual Machine Snapshot", snapshot.name, ignore_permissions=True)
 		mocked.assert_called_once()
-		self.assertEqual(mocked.call_args.kwargs["script"], "delete-snapshot-vm.sh")
+		self.assertEqual(mocked.call_args.kwargs["script"], "delete-snapshot-vm.py")
 
 	def test_clone_to_new_vm_creates_fresh_identity(self) -> None:
 		from atlas.atlas.doctype.virtual_machine import virtual_machine as vm_module

@@ -56,7 +56,7 @@ def list_droplets() -> None:
 def terminate_all_vms() -> None:
 	"""Mark every Virtual Machine row Terminated. Use to clean up leaked rows
 	from crashed e2e runs. Does NOT touch the server-side systemd state — run
-	terminate-vm.sh on the host separately if the VMs are still around."""
+	terminate-vm.py on the host separately if the VMs are still around."""
 	rows = frappe.get_all("Virtual Machine", filters={"status": ["!=", "Terminated"]}, pluck="name")
 	for name in rows:
 		frappe.db.set_value("Virtual Machine", name, "status", "Terminated")

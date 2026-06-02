@@ -7,6 +7,7 @@ from frappe.model.document import Document
 
 from atlas.atlas import scripts_catalog
 from atlas.atlas.ssh import connection_for_server, run_task, upload_files
+from atlas.atlas.task_results import parse_result
 
 
 IMMUTABLE_AFTER_INSERT = (
@@ -24,18 +25,18 @@ IMMUTABLE_AFTER_INSERT = (
 
 class Server(Document):
 	BOOTSTRAP_ALLOWED_STATUS: ClassVar[set[str]] = {"Pending", "Bootstrapping", "Active", "Broken"}
+	# Durable uploads beyond the atlas package (which _bootstrap_uploads()
+	# computes from disk). The systemd-invoked hooks are .py now (positional
+	# uuid); they and atlas-pool.service import the durable package under
+	# /var/lib/atlas/bin (their sys.path shim adds that dir). The package itself
+	# replaces the old durable lvm.sh — there is no shell helper library anymore.
 	BOOTSTRAP_UPLOAD_SOURCES: ClassVar[list[tuple[str, str]]] = [
-		("vm-network-up.sh", "/var/lib/atlas/bin/vm-network-up.sh"),
-		("vm-network-down.sh", "/var/lib/atlas/bin/vm-network-down.sh"),
-		# vm-disk-up.sh re-activates the VM's thin-snapshot disk LV and refreshes
+		("vm-network-up.py", "/var/lib/atlas/bin/vm-network-up.py"),
+		("vm-network-down.py", "/var/lib/atlas/bin/vm-network-down.py"),
+		# vm-disk-up.py re-activates the VM's thin-snapshot disk LV and refreshes
 		# its in-jail block node at every unit start — the disk analogue of
-		# vm-network-up.sh, so an enabled VM self-heals its disk after a reboot.
-		("vm-disk-up.sh", "/var/lib/atlas/bin/vm-disk-up.sh"),
-		# lvm.sh is the durable copy of the thin-pool helper library. It lands in
-		# /var/lib/atlas/bin/ so atlas-pool.service can source it to re-assert the
-		# pool's loop device after a reboot (bootstrap is not re-run on boot).
-		# Per-VM lifecycle scripts get their own staged copy via script_uploads.py.
-		("lib/lvm.sh", "/var/lib/atlas/bin/lvm.sh"),
+		# vm-network-up.py, so an enabled VM self-heals its disk after a reboot.
+		("vm-disk-up.py", "/var/lib/atlas/bin/vm-disk-up.py"),
 		("systemd/firecracker-vm@.service", "/etc/systemd/system/firecracker-vm@.service"),
 		("systemd/atlas-pool.service", "/etc/systemd/system/atlas-pool.service"),
 	]
@@ -84,7 +85,7 @@ class Server(Document):
 
 	@frappe.whitelist()
 	def bootstrap(self) -> str:
-		"""Upload helpers + unit, run bootstrap-server.sh. Returns Task name."""
+		"""Upload helpers + unit, run bootstrap-server.py. Returns Task name."""
 		if self.status not in self.BOOTSTRAP_ALLOWED_STATUS:
 			frappe.throw(f"Cannot bootstrap from status {self.status}")
 
@@ -92,7 +93,7 @@ class Server(Document):
 
 		task = run_task(
 			server=self.name,
-			script="bootstrap-server.sh",
+			script="bootstrap-server.py",
 			variables={
 				"FIRECRACKER_VERSION": "v1.15.1",
 				"ARCHITECTURE": "x86_64",
@@ -151,20 +152,27 @@ class Server(Document):
 
 	def _bootstrap_uploads(self) -> list[tuple[str, str]]:
 		directory = scripts_catalog.scripts_directory()
-		return [
+		uploads = [
 			(str(directory / source), destination)
 			for source, destination in self.BOOTSTRAP_UPLOAD_SOURCES
 		]
+		# The durable atlas package: every lib module lands under
+		# /var/lib/atlas/bin/atlas/ so the .py hooks and atlas-pool.service can
+		# `import atlas`. Computed from disk (test_*.py skipped) so a new module
+		# is shipped with no edit here — mirrors script_uploads.package staging.
+		package_dir = directory / "lib" / "atlas"
+		for entry in sorted(package_dir.glob("*.py")):
+			if entry.name.startswith("test_"):
+				continue
+			uploads.append((str(entry), f"/var/lib/atlas/bin/atlas/{entry.name}"))
+		return uploads
 
 	def _absorb_bootstrap_output(self, stdout: str) -> None:
-		# Script tail-prints /var/lib/atlas/bootstrap.json (compact, single
-		# line) as the canonical source of truth. `set -x` writes to stderr,
-		# so stdout is clean — the last non-empty line is the JSON object.
-		last_line = next(
-			(line for line in reversed(stdout.splitlines()) if line.strip()),
-			"",
-		)
-		parsed = json.loads(last_line)
+		# bootstrap-server.py emits a typed BootstrapResult as one
+		# `ATLAS_RESULT=<json>` line; parse_result pulls it out (the host still
+		# also writes /var/lib/atlas/bootstrap.json as the on-disk source of
+		# truth). Replaces the old "last non-empty stdout line is the JSON" scrape.
+		parsed = parse_result(stdout)
 		self.firecracker_version = parsed["firecracker_version"]
 		self.jailer_version = parsed["jailer_version"]
 		self.kernel_version = parsed["kernel_version"]

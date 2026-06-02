@@ -2,7 +2,7 @@
 
 Operator clicks "Provision Server" on a `Provider`. The button calls
 DO to create a droplet, inserts a `Server` row, waits for SSH, runs
-`bootstrap-server.sh`, and parses the JSON tail-line back onto the row.
+`bootstrap-server.py`, and parses the JSON tail-line back onto the row.
 
 This module exercises:
 
@@ -59,7 +59,7 @@ def run() -> None:
 
 		bootstrap_tasks = frappe.get_all(
 			"Task",
-			filters={"server": server_name, "script": "bootstrap-server.sh", "status": "Success"},
+			filters={"server": server_name, "script": "bootstrap-server.py", "status": "Success"},
 		)
 		assert bootstrap_tasks, "no successful bootstrap Task found"
 
@@ -139,13 +139,13 @@ def _assert_remote_layout(server_name: str) -> None:
 		timeout_seconds=30,
 	)
 	assert task.status == "Success"
-	assert "vm-network-up.sh OK" in task.stdout
-	assert "vm-network-down.sh OK" in task.stdout
+	assert "vm-network-up.py OK" in task.stdout
+	assert "vm-network-down.py OK" in task.stdout
 	assert "firecracker-vm@.service OK" in task.stdout
 
 
 def _assert_hardening_applied(server_name: str) -> None:
-	"""Read back the host-hardening state bootstrap-server.sh applies, including
+	"""Read back the host-hardening state bootstrap-server.py applies, including
 	the three deliberate deviations (forwarding stays on, squashfs stays
 	loadable, root keeps key-only login). The probe is fail-loud, so a missing
 	or wrong control surfaces as a non-Success Task."""
@@ -160,7 +160,7 @@ def _assert_hardening_applied(server_name: str) -> None:
 
 
 def _assert_pool_present(server_name: str) -> None:
-	"""Read back the LVM thin pool bootstrap-server.sh creates: dm_thin_pool
+	"""Read back the LVM thin pool bootstrap-server.py creates: dm_thin_pool
 	loaded + persisted, the atlas VG and pool0 thin LV present, and the
 	reboot-survival oneshot enabled. Fail-loud probe, so a missing piece
 	surfaces as a non-Success Task."""
@@ -213,7 +213,7 @@ def _check_get_scripts(server) -> None:
 	scripts = server.get_scripts()
 	assert isinstance(scripts, list) and scripts, scripts
 	names = {entry["name"] for entry in scripts}
-	assert "sync-image.sh" in names, names
+	assert "sync-image.py" in names, names
 
 
 def _check_finish_provisioning_idempotent(server) -> None:

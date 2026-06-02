@@ -3,13 +3,13 @@
 Operator creates a `Virtual Machine` row (server, image, vCPUs, RAM, disk,
 SSH key, title) and clicks Save. Phase 4's auto-provision contract takes
 over from there: `after_insert` enqueues `provision()`, which runs
-`provision-vm.sh` to copy the rootfs, resize it, inject the SSH key and
+`provision-vm.py` to copy the rootfs, resize it, inject the SSH key and
 the per-VM network env, and enable the systemd unit.
 
 This module exercises:
 
 - Happy path: provision, assert the VM boots, the systemd unit is active.
-- Image absent: provision-vm.sh exits non-zero with a "run Sync to Server"
+- Image absent: provision-vm.py exits non-zero with a "run Sync to Server"
   hint; the row stays at Pending and is re-provisionable.
 - Derived-field defaults: `mac_address`, `tap_device`, `ipv6_address` are
   computed in `before_validate`; pre-supplied values are honored.
@@ -69,7 +69,7 @@ def run_smoke(reuse: bool = True, keep: bool = True) -> None:
 
 
 def _check_provision_image_missing(server_name: str, image: str) -> None:
-	"""provision-vm.sh step 0: rootfs must already exist on the host. Move it
+	"""provision-vm.py step 0: rootfs must already exist on the host. Move it
 	aside *before* inserting the VM so the after_insert-enqueued
 	`auto_provision` worker hits the missing-image branch. The row lands in
 	Failed; we restore the rootfs and assert the operator can retry."""

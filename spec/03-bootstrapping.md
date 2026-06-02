@@ -10,17 +10,23 @@ into a Firecracker host.
 ## The script
 
 There is one script:
-[`atlas/scripts/bootstrap-server.sh`](../scripts/bootstrap-server.sh). It does
+[`atlas/scripts/bootstrap-server.py`](../scripts/bootstrap-server.py). It does
 everything in a single SSH session. It is the canonical artifact — the spec
 is a reading guide, not the source of truth. If the script and this document
-disagree, the script wins. Update both.
+disagree, the script wins. Update both. Like every task it is a typed Python
+program (see [04-tasks.md § Tasks are Python](./04-tasks.md)): its inputs are
+`--kebab-case` CLI flags and it emits one `ATLAS_RESULT=` JSON line carrying the
+host facts the controller records.
 
-### Inputs (environment variables)
+### Inputs (CLI flags)
 
-| Variable               | Notes                                                  |
-| ---------------------- | ------------------------------------------------------ |
-| `FIRECRACKER_VERSION`  | Pinned in `atlas/atlas/doctype/server/server.py`, currently `v1.15.1`. |
-| `ARCHITECTURE`         | `x86_64` for this iteration.                           |
+The controller's `variables` dict (UPPER_SNAKE keys) is rendered to
+`--kebab-case` flags by the runner, parsed by `BootstrapInputs.from_args()`.
+
+| Variable / flag                            | Notes                              |
+| ------------------------------------------ | ---------------------------------- |
+| `FIRECRACKER_VERSION` → `--firecracker-version` | Pinned in `atlas/atlas/doctype/server/server.py`, currently `v1.15.1`. |
+| `ARCHITECTURE` → `--architecture`          | `x86_64` for this iteration.       |
 
 ### What the script does
 
@@ -64,9 +70,9 @@ In summary, in this order:
    droplet has no spare block device; the only line that changes for a real
    attached device (the spec/09 follow-on) is the loop binding. Bootstrap is
    **not** re-run on reboot, so it also enables `atlas-pool.service` — a oneshot
-   that re-sources the durable `/var/lib/atlas/bin/lvm.sh` and re-asserts the
-   pool's loop device on boot, ordered before the VM units. See
-   [07-filesystem-layout.md](./07-filesystem-layout.md).
+   that imports the durable package (`from atlas.lvm import ThinPool`) and calls
+   `ThinPool().ensure()` to re-assert the pool's loop device on boot, ordered
+   before the VM units. See [07-filesystem-layout.md](./07-filesystem-layout.md).
 9. Writes `FIRECRACKER_VERSION`, `JAILER_VERSION`, `KERNEL_VERSION`,
    `ARCHITECTURE` to `/var/lib/atlas/bootstrap.json` (the single source of
    truth) and `cat`s it on stdout. `firecracker_version` and `jailer_version`
@@ -91,7 +97,7 @@ modprobe.d, apt.conf.d) so they are idempotent overwrites and portable across
 Ubuntu 24.04 and 26.04 — we never invoke a release-pinned hardening tool.
 
 The hardening is **not** a separate operation, button, or Task: it is part of
-`bootstrap-server.sh`, re-applied (as a no-op) on every re-bootstrap.
+`bootstrap-server.py`, re-applied (as a no-op) on every re-bootstrap.
 
 | Control | What | Benchmark |
 | --- | --- | --- |
@@ -147,32 +153,47 @@ tenancy-level concerns that sit above Atlas; revisit only with a concrete need.
 
 ### Files that must already be on the server
 
-The bootstrap script does not itself fetch helper scripts or the systemd unit
-template — uploading them is the caller's job, so that we keep the contents
-of `atlas/scripts/` as the single source of truth. Before running
-`bootstrap-server.sh`, the caller uploads:
+The bootstrap script does not itself fetch the systemd-invoked hooks, the
+systemd units, or the shared package — uploading them is the caller's job, so
+that we keep the contents of `atlas/scripts/` as the single source of truth.
+These are **durable** state (they live under `/var/lib/atlas/bin` and
+`/etc/systemd/system`, not the per-Task `/tmp/atlas` staging), so
+`Server.bootstrap()` places them directly via `upload_files`, not through the
+per-Task sidecar mechanism. Before running `bootstrap-server.py`, the caller
+uploads (see `_BOOTSTRAP_UPLOADS` + `_bootstrap_uploads()` in `server.py`):
 
-- `scripts/vm-network-up.sh` → `/var/lib/atlas/bin/vm-network-up.sh`
-- `scripts/vm-network-down.sh` → `/var/lib/atlas/bin/vm-network-down.sh`
+- `scripts/vm-network-up.py` → `/var/lib/atlas/bin/vm-network-up.py`
+- `scripts/vm-network-down.py` → `/var/lib/atlas/bin/vm-network-down.py`
+- `scripts/vm-disk-up.py` → `/var/lib/atlas/bin/vm-disk-up.py`
 - `scripts/systemd/firecracker-vm@.service` → `/etc/systemd/system/firecracker-vm@.service`
+- `scripts/systemd/atlas-pool.service` → `/etc/systemd/system/atlas-pool.service`
+- every `scripts/lib/atlas/*.py` (test files skipped) → `/var/lib/atlas/bin/atlas/*.py`
+
+The systemd hooks (`vm-network-up.py`, `vm-network-down.py`, `vm-disk-up.py`)
+are invoked by the unit as `python3 <path> %i` (a positional VM uuid, not Task
+`--flags`) and `import` the durable package next to them; the package
+(`/var/lib/atlas/bin/atlas/`) replaces the old durable `lvm.sh` shell library.
 
 The `Server.bootstrap()` Python method orchestrates this:
 
 ```
 1. open ssh connection (via `connection_for_server`)
-2. upload_files: vm-network-up.sh, vm-network-down.sh, firecracker-vm@.service
+2. upload_files: the durable hooks, both systemd units, and the atlas package
    (mkdir of parent directories happens inside upload_files)
-3. run_task(server=..., script="bootstrap-server.sh",
+3. run_task(server=..., script="bootstrap-server.py",
             variables={"FIRECRACKER_VERSION": ..., "ARCHITECTURE": ...})
-   — scp of bootstrap-server.sh + ssh exec happen inside run_task.
-4. parse trailing JSON object from stdout into Server fields
-   (firecracker_version, kernel_version, architecture)
+   — scp of bootstrap-server.py (+ its staged atlas package under /tmp/atlas)
+   and the ssh exec happen inside run_task.
+4. parse the ATLAS_RESULT= line from stdout into Server fields
+   (firecracker_version, jailer_version, kernel_version, architecture);
+   the same JSON is also persisted on the host at /var/lib/atlas/bootstrap.json.
 5. save the Server row.
 ```
 
-This is one Task: `bootstrap-server.sh`. The pre-copy step is not a Task,
+This is one Task: `bootstrap-server.py`. The pre-copy step is not a Task,
 it's plumbing, and its commands are not interesting individually. They do
-appear on stderr of the task because we run the SSH wrapper with `-x`.
+appear on stderr of the task because Python tasks echo each command (the
+`set -x` equivalent the `atlas._run.run` wrapper prints).
 
 ## Provisioning a server end-to-end
 
@@ -298,7 +319,7 @@ vendor-specific behavior lives entirely inside `provider.describe()`.
 ### Common: failure handling
 
 A `Broken` server can be re-bootstrapped by clicking **Bootstrap** on the
-form because `bootstrap-server.sh` is idempotent. For DigitalOcean the
+form because `bootstrap-server.py` is idempotent. For DigitalOcean the
 droplet is left intact for the operator to delete in DO if they choose.
 For Self-Managed the host is the operator's problem; Atlas never touches
 it beyond SSH.

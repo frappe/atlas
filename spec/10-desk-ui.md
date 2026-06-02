@@ -474,7 +474,7 @@ the rendered DOM from CSS.
   to `Failed` via `frappe.db.set_value` and publishes a
   `virtual_machine_update` realtime event. The VM form subscribes and
   reloads. For `Failed` VMs the client also renders a red intro that
-  links to the most recent provision-vm.sh Failure Task — the
+  links to the most recent provision-vm.py Failure Task — the
   operator clicks the link, reads the error, and clicks Provision
   again to retry.
 - The **creation form** (new VM) shows one affordance on top of the
@@ -523,11 +523,11 @@ the rendered DOM from CSS.
   any backdoor mutation. Editing in place would silently invalidate
   prior audit rows that reference a different digest.
 - **Auto-sync on insert.** `Virtual Machine Image.after_insert`
-  enqueues one `sync-image.sh` Task per `Active` Server. The operator
+  enqueues one `sync-image.py` Task per `Active` Server. The operator
   drops kernel/rootfs URLs + checksums into the form, clicks Save,
   and the fan-out happens automatically. Tracking per-attempt happens
   through the resulting Task rows (filter the Task list by
-  `script = sync-image.sh`); the dedicated `Virtual Machine Image
+  `script = sync-image.py`); the dedicated `Virtual Machine Image
   Sync` DocType scoped in the plan was deferred for the PoC.
 - **Archive** lives under `Actions ▾`, shown only while
   `is_active = 1`. Calls the controller's `archive()` method to flip
@@ -570,7 +570,7 @@ the rendered DOM from CSS.
   Routine inspection collapses with one click; debugging expands
   inline without the tab-strip click.
 - `Task.on_update` propagates status to linked records. For Failure
-  with `script = provision-vm.sh` it flips the linked VM's status to
+  with `script = provision-vm.py` it flips the linked VM's status to
   `Failed` and publishes a `virtual_machine_update` realtime event —
   the VM form re-renders without manual refresh.
 

@@ -65,9 +65,9 @@ class TestVirtualMachine(IntegrationTestCase):
 		vm.reload()
 		self.assertEqual(vm.status, "Running")
 		self.assertIsNotNone(vm.last_started)
-		# One Task per VM creation: provision-vm.sh's step 0 is the image probe.
+		# One Task per VM creation: provision-vm.py's step 0 is the image probe.
 		mocked.assert_called_once()
-		self.assertEqual(mocked.call_args.kwargs["script"], "provision-vm.sh")
+		self.assertEqual(mocked.call_args.kwargs["script"], "provision-vm.py")
 
 	def test_provision_variables_carry_jail_parameters(self) -> None:
 		from atlas.atlas.networking import (
@@ -85,22 +85,28 @@ class TestVirtualMachine(IntegrationTestCase):
 		self.assertEqual(variables["ATLAS_NETNS"], derive_netns(vm.name))
 		self.assertEqual(variables["HOST_VETH"], host_veth)
 		self.assertEqual(variables["NAMESPACE_VETH"], namespace_veth)
-		# Newline-joined (one argv token per line), NOT space-joined: the cgroup
-		# cpu.max value carries an internal space, so a space-join fed through a
-		# whitespace-splitting systemd ExecStart shatters it into a stray
-		# positional the jailer rejects. provision-vm.sh mapfile's these lines
-		# back into the exact argv. Asserting the newline join + the intact
-		# space-bearing token is the regression guard for that bug.
-		self.assertEqual(
-			variables["ATLAS_CGROUP_ARGS"],
-			"\n".join(cgroup_args(vm.vcpus, vm.memory_megabytes, vm.disk_gigabytes)),
-		)
-		self.assertEqual(
-			variables["ATLAS_RESOURCE_ARGS"],
-			"\n".join(resource_limit_args(vm.disk_gigabytes)),
-		)
-		cgroup_lines = variables["ATLAS_CGROUP_ARGS"].splitlines()
-		cpu_max = next(line for line in cgroup_lines if line.startswith("cpu.max="))
+		# cgroup/resource limits are values-only LISTS (the runner renders each as
+		# a repeatable --cgroup-arg / --resource-arg flag; provision-vm.py prefixes
+		# each with --cgroup / --resource-limit when it builds the launcher). The
+		# interleaved "--cgroup" flag tokens from networking.cgroup_args are
+		# stripped — every element is a bare value.
+		expected_cgroup = [
+			token
+			for token in cgroup_args(vm.vcpus, vm.memory_megabytes, vm.disk_gigabytes)
+			if not token.startswith("--")
+		]
+		expected_resource = [
+			token
+			for token in resource_limit_args(vm.disk_gigabytes)
+			if not token.startswith("--")
+		]
+		self.assertEqual(variables["CGROUP_ARG"], expected_cgroup)
+		self.assertEqual(variables["RESOURCE_ARG"], expected_resource)
+		# Regression guard for the word-splitting bug: cpu.max's "<quota> <period>"
+		# value keeps its internal space as a SINGLE list element. A list flag
+		# preserves it end to end — no mapfile, no systemd ExecStart shattering it
+		# into a stray positional the jailer rejects.
+		cpu_max = next(value for value in variables["CGROUP_ARG"] if value.startswith("cpu.max="))
 		self.assertIn(" ", cpu_max, "cpu.max must keep its '<quota> <period>' space as one token")
 
 	def test_provision_failure_flips_status_to_failed(self) -> None:
@@ -254,12 +260,12 @@ class TestVirtualMachine(IntegrationTestCase):
 		vm = _new_vm()
 		vm.db_set("status", "Stopped")
 		vm.reload()
-		task = fake_task(name="task-snap-1", stdout="+ stat\nSIZE_BYTES=4294967296\nSnapshotted.")
+		task = fake_task(name="task-snap-1", stdout='+ stat\nATLAS_RESULT={"size_bytes": 4294967296}\nSnapshotted.')
 
 		with patch.object(module, "run_task", return_value=task) as mocked:
 			snapshot_name = vm.snapshot("nightly")
 
-		self.assertEqual(mocked.call_args.kwargs["script"], "snapshot-vm.sh")
+		self.assertEqual(mocked.call_args.kwargs["script"], "snapshot-vm.py")
 		snapshot = frappe.get_doc("Virtual Machine Snapshot", snapshot_name)
 		self.assertEqual(snapshot.status, "Available")
 		self.assertEqual(snapshot.virtual_machine, vm.name)
@@ -290,13 +296,13 @@ class TestVirtualMachine(IntegrationTestCase):
 		vm = _new_vm()
 		vm.db_set("status", "Stopped")
 		vm.reload()
-		with patch.object(module, "run_task", return_value=fake_task(stdout="SIZE_BYTES=1")):
+		with patch.object(module, "run_task", return_value=fake_task(stdout='ATLAS_RESULT={"size_bytes": 1}')):
 			snapshot_name = vm.snapshot("doomed")
 		self.assertTrue(frappe.db.exists("Virtual Machine Snapshot", snapshot_name))
 
 		# Terminate cascades the snapshot rows. Each snapshot's on_trash runs
-		# delete-snapshot-vm.sh to lvremove its snapshot LV — snapshot LVs live in
-		# the thin pool, OUTSIDE the VM directory terminate-vm.sh rm -rf'd, so they
+		# delete-snapshot-vm.py to lvremove its snapshot LV — snapshot LVs live in
+		# the thin pool, OUTSIDE the VM directory terminate-vm.py rm -rf'd, so they
 		# must be removed explicitly (no Terminated short-circuit). on_trash uses
 		# the snapshot module's run_task, so patch that one too.
 		from atlas.atlas.doctype.virtual_machine_snapshot import (
@@ -309,15 +315,14 @@ class TestVirtualMachine(IntegrationTestCase):
 			vm.terminate()
 		self.assertFalse(frappe.db.exists("Virtual Machine Snapshot", snapshot_name))
 		# The snapshot LV was removed via the per-snapshot delete script.
-		self.assertEqual(mocked_snapshot.call_args.kwargs["script"], "delete-snapshot-vm.sh")
+		self.assertEqual(mocked_snapshot.call_args.kwargs["script"], "delete-snapshot-vm.py")
 
 	def test_parse_size_bytes(self) -> None:
-		from atlas.atlas.doctype.virtual_machine.virtual_machine import _parse_size_bytes
+		from atlas.atlas.task_results import parse_result
 
-		self.assertEqual(_parse_size_bytes("+ cmd\nSIZE_BYTES=512\ndone"), 512)
-		self.assertEqual(_parse_size_bytes("no size line here"), 0)
-		self.assertEqual(_parse_size_bytes("SIZE_BYTES=notanumber"), 0)
-		self.assertEqual(_parse_size_bytes(""), 0)
+		self.assertEqual(
+			parse_result('+ cmd\nATLAS_RESULT={"size_bytes": 512}\ndone')["size_bytes"], 512
+		)
 
 	def test_title_is_immutable(self) -> None:
 		vm = _new_vm()
