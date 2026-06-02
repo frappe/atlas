@@ -4,6 +4,9 @@ import { toast } from 'frappe-ui'
 
 const props = defineProps({
   value: { type: String, default: '' },
+  // Show only the copy icon (no text) — for places that render the value
+  // themselves, like the inline SSH snippet.
+  hideText: { type: Boolean, default: false },
 })
 
 const copied = ref(false)
@@ -25,7 +28,7 @@ function copy() {
     class="inline-flex items-center gap-1.5 text-ink-gray-7 hover:text-ink-gray-9"
     @click="copy"
   >
-    <span class="font-mono text-sm">{{ value }}</span>
+    <span v-if="!hideText" class="font-mono text-sm">{{ value }}</span>
     <span
       :class="[copied ? 'lucide-check' : 'lucide-copy', 'size-3.5']"
       aria-hidden="true"

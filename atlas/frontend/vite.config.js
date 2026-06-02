@@ -21,6 +21,14 @@ export default defineConfig({
     }),
     vue(),
   ],
+  server: {
+    // The frappeui proxy routes /api to http://<request-host>:<webserver_port>,
+    // so the SPA must be reached as http://atlas.tests.local:8087 (not
+    // localhost) for Frappe to resolve the right site. Vite 5's host check
+    // otherwise blocks that hostname.
+    host: true,
+    allowedHosts: true,
+  },
   resolve: {
     alias: {
       '@': path.resolve(__dirname, 'src'),
@@ -45,7 +53,14 @@ export default defineConfig({
       'feather-icons',
       'showdown',
       'tailwind.config.js',
+      // The socket.io client stack and its CJS-only `debug` dependency. With
+      // frappe-ui excluded from prebundling these reach the browser as raw
+      // CJS; `debug` has no ESM `default` export, so the bare `import debug
+      // from 'debug'` crashes the whole app to a blank page. Listing them
+      // here makes Vite prebundle each into ESM.
       'engine.io-client',
+      'socket.io-client',
+      'debug',
     ],
   },
 })

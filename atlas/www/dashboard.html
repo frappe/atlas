@@ -5,7 +5,7 @@
      from atlas/public/frontend/index.html. This file is only the fallback
      shown when no build exists yet (e.g. before `bench build --app atlas`):
      it tells the operator to build. See spec/11-user-ui.md. -->
-{% if spa_index %}{{ spa_index }}{% else %}
+{% if spa_index %}{{ spa_index | safe }}{% else %}
 <!DOCTYPE html>
 <html lang="en">
   <head>

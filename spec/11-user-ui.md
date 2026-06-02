@@ -71,35 +71,97 @@ endpoints without any Desk footprint.
   `rebuild`, `resize`, `terminate`). The UI is a client, not a second
   controller.
 - **It defines no new API endpoints.** It uses standard Frappe endpoints only:
-  `frappe.client.get_list` / `get` / `insert` (via the frappe-ui `useList` /
-  `useDoc` composables) and `run_doc_method` (what `frm.call` posts to). No
-  bespoke REST router.
-- **It exposes no placement choice.** A user never picks a server. On create,
-  the Virtual Machine controller fills `server` and `image` from defaults
+  `frappe.client.get_list` / `get` (via the frappe-ui `useList` / `useDoc`
+  composables), document insert/delete and lifecycle methods (via the
+  `useDoctype('Virtual Machine')` composable's `insert` / `delete` /
+  `runDocMethod`, which post to the standard `/api/v2/document/...` and
+  `run_doc_method` routes — the same contract `frm.call` uses). No bespoke REST
+  router, and no hand-built request envelopes.
+- **It exposes no *server* placement choice.** A user never picks a server. On
+  create they choose the **image** (from the shared, Active Virtual Machine
+  Images), and the Virtual Machine controller fills `server` from placement
   (`before_insert`); the operator still controls which servers are Active and
-  which image is the default. Placement stays "operator owns the fleet, the
-  system slots the VM" — consistent with operating principle #4.
+  which images exist. Server placement stays "operator owns the fleet, the
+  system slots the VM" — consistent with operating principle #4. (Capacity- and
+  availability-aware server selection is a later refinement of `default_server`;
+  today it is first-Active-with-room.) When the user omits an image — they can't
+  in the dialog, but the controller is called directly in tests — `default_image`
+  still applies the operator's configured default.
 
 ## Layout & components
 
 The SPA is a Vue 3 + frappe-ui app under `atlas/frontend/`, built to
 `atlas/public/frontend`, served via a `www/dashboard.html` page and a
-`website_route_rules` entry. It composes frappe-ui components (`Button`,
-`Badge`, `ListView`, `Dialog`, `FormControl`, `Breadcrumbs`, `Dropdown`) on
-the library's semantic tokens (`ink-*` / `surface-*` / `outline-*`). No
-hand-rolled markup, no raw palette colors.
+`website_route_rules` entry. It composes frappe-ui components (`Sidebar`,
+`Button`, `Badge`, `ListView`, `Dialog`, `FormControl`, `Breadcrumbs`,
+`Dropdown`) on the library's semantic tokens (`ink-*` / `surface-*` /
+`outline-*`). No hand-rolled markup, no raw palette colors.
+
+**Standard components first — the maintenance bar.** The SPA's review bar is
+*"is there a standard frappe-ui component/composable that covers this?"* — and
+if there is, we adopt it **even when a hand-rolled version would be shorter.**
+The reason is leverage, not line count: every bespoke surface is taste we must
+re-tune as the library evolves (spacing, hover/selected states, collapse,
+dark-mode, a11y); a standard component inherits those upstream for free. So:
+
+- **App shell** uses the library `Sidebar` / `SidebarHeader` / `SidebarSection`
+  / `SidebarItem` — not a hand-rolled `<aside>`. Nav items are a
+  `SidebarSection.items` data array (`label` / icon / route `to`); active-state,
+  collapse, and collapsed-tooltips come from the component. The user menu
+  (Log out) lives in the `SidebarHeader` menu. (Nav icons are passed as small
+  icon components rather than `lucide-*` strings — the pinned `SidebarItem`
+  renders a string icon as literal text; only the header menu, which routes
+  through `Dropdown`, takes the `lucide-*` string directly.)
+- **Lifecycle actions** post through the standard **`useDoctype('Virtual
+  Machine').runDocMethod` / `.delete`** composable — never a hand-built
+  `run_doc_method` envelope or a raw `frappe.client.delete`. (`runDocMethod`
+  does not refetch the doc, so the page still reloads the VM + its Tasks after
+  each action.) Creation still uses `frappe.client.insert` / `useDoctype.insert`.
+- **Confirms** use the library's imperative **`confirmDialog`** (the pinned
+  `frappe-ui@0.1.278` API) — not a hand-mounted `<Dialog>` and not a dynamic
+  `import('frappe-ui')` (the old code referenced a `dialog.*` namespace that
+  doesn't exist in this version, so those confirms were broken). Input-less
+  destructive actions (Rebuild, Terminate, Delete) are `confirmDialog` calls;
+  the action verb lives in the title since this version's confirm is title +
+  message only. **Form** actions keep a real `Dialog` component: Snapshot (name
+  the snapshot) and Resize (vCPU / memory / disk) live in `MachineActionDialog`.
+  *(A future frappe-ui that ships `dialog.danger` / `dialog.prompt` would let
+  Snapshot collapse into a prompt and drop the danger theme by hand — tracked
+  as a version-gated follow-up, not done on the pinned version.)*
+- **List empty states** are `ListView`'s built-in `options.emptyState` (title /
+  description / action button), not a standalone empty-state component. (The
+  built-in has no icon slot — a small, accepted visual trade for tracking the
+  library.)
+- **Relative time** uses the house `dayjs().fromNow()` re-exported by frappe-ui.
+
+A few surfaces are kept hand-rolled **only because the library ships no
+equivalent** (confirmed against the library and the CRM/Gameplan apps, which
+hand-roll the same): copy-to-clipboard (`CopyText`), the status→theme `Badge`
+wrapper (`StatusBadge`), the breadcrumb/title/actions bar (`PageHeader`), and
+the `ListView` `#cell` dispatch that renders our `badge` / `copy` / `time` /
+`link` cell types (ListView has no built-in cell types for these). These are
+the documented exceptions, not licence to hand-roll anything else.
 
 Screens (wireframes in [`ui/wireframes.md`](../ui/wireframes.md)):
 
-1. **App shell** — sidebar with three nav items (Machines, Images, Snapshots);
-   footer dropdown = Log out.
+1. **App shell** — the library `Sidebar` with three nav items (Machines,
+   Images, Snapshots); the `SidebarHeader` menu = Log out. (The header-vs-footer
+   placement of Log out follows the standard `SidebarHeader` idiom; a
+   `#footer-items` dropdown is the fallback if a footer is preferred.)
 2. **Machines list** — column-aligned rows, status badge, IPv6 copy chip; one
-   primary `New Machine`.
+   primary `New Machine` (the header button when populated; `ListView`'s
+   built-in empty-state button when empty).
 3. **Machine detail** — one status-keyed primary lifecycle action; siblings
    `subtle`; rare/destructive under `Actions ▾`; **the VM's own Tasks shown
-   inline** as an Activity list (Tasks have no nav home).
-4. **New Machine dialog** — three fields (Name, Size preset, SSH key); inserts
-   a Virtual Machine via the standard endpoint; auto-provision boots it.
+   inline** as an Activity list (Tasks have no nav home). Destructive input-less
+   actions (Terminate / Rebuild / Delete) are `confirmDialog` confirms; Snapshot
+   (name) and Resize (vCPU/memory/disk) are form dialogs (`MachineActionDialog`).
+   All lifecycle calls go through `useDoctype('Virtual Machine').runDocMethod`;
+   Delete through `.delete`.
+4. **New Machine dialog** — four fields (Name, Image, Size preset, SSH key); the
+   user picks the base image from the Active shared images, the server is placed
+   automatically; inserts a Virtual Machine via the standard endpoint;
+   auto-provision boots it.
 5. **Images / Snapshots lists** — read-mostly, same aligned shape.
 
 Design constraints (also the review bar): one primary action per page; color

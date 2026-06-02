@@ -1,10 +1,15 @@
 <script setup>
 import { computed, reactive, ref, watch } from 'vue'
-import { Dialog, FormControl, Button, ErrorMessage, call, toast } from 'frappe-ui'
+import { Dialog, FormControl, Button, ErrorMessage, toast } from 'frappe-ui'
 
+import { useMachineDoctype } from '../data/machines'
+
+// The form-input lifecycle actions: Snapshot (name a snapshot) and Resize
+// (grow the machine). Input-less destructive actions (Rebuild, Terminate) are
+// confirms on the Machine page, not this dialog.
 const props = defineProps({
   modelValue: { type: Boolean, default: false },
-  kind: { type: String, default: '' }, // 'snapshot' | 'rebuild' | 'resize'
+  kind: { type: String, default: '' }, // 'snapshot' | 'resize'
   machine: { type: String, required: true },
   doc: { type: Object, default: () => ({}) },
 })
@@ -15,15 +20,15 @@ const open = computed({
   set: (v) => emit('update:modelValue', v),
 })
 
-const TITLES = { snapshot: 'Snapshot', rebuild: 'Rebuild', resize: 'Resize' }
+const vm = useMachineDoctype()
+
+const TITLES = { snapshot: 'Snapshot', resize: 'Resize' }
 const HINTS = {
   snapshot: 'Copies the whole disk — up to a few minutes.',
-  rebuild: 'Replaces the disk in place. This cannot be undone.',
   resize: 'Grows the disk and rewrites the machine config. Disk can only grow.',
 }
 
 const form = reactive({ title: '', vcpus: 0, memory_megabytes: 0, disk_gigabytes: 0 })
-const saving = ref(false)
 const error = ref('')
 
 watch(
@@ -40,7 +45,6 @@ watch(
 
 function argsFor() {
   if (props.kind === 'snapshot') return { title: form.title }
-  if (props.kind === 'rebuild') return { source_type: 'image', source: props.doc.image }
   if (props.kind === 'resize')
     return {
       vcpus: form.vcpus,
@@ -52,20 +56,16 @@ function argsFor() {
 
 async function submit() {
   error.value = ''
-  saving.value = true
   try {
-    await call('run_doc_method', {
-      dt: 'Virtual Machine',
-      dn: props.machine,
+    await vm.runDocMethod.submit({
+      name: props.machine,
       method: props.kind,
-      args: JSON.stringify(argsFor()),
+      params: argsFor(),
     })
     toast.success(`${TITLES[props.kind]} started`)
     emit('done')
   } catch (e) {
-    error.value = e.messages?.[0] || e.message || 'Action failed'
-  } finally {
-    saving.value = false
+    error.value = vm.runDocMethod.error?.message || e.messages?.[0] || e.message || 'Action failed'
   }
 }
 </script>
@@ -107,7 +107,7 @@ async function submit() {
           variant="solid"
           theme="gray"
           :label="TITLES[kind] || 'Confirm'"
-          :loading="saving"
+          :loading="vm.runDocMethod.loading"
           @click="submit"
         />
       </div>

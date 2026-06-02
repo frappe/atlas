@@ -1,49 +1,50 @@
 <script setup>
-import { FrappeUIProvider, Dropdown } from 'frappe-ui'
+import { h } from 'vue'
+import { FrappeUIProvider, Sidebar } from 'frappe-ui'
 
 import { sessionUser, logout } from './data/session'
+import atlasLogo from './assets/atlas-logo.svg'
 
-const nav = [
-  { name: 'Machines', label: 'Machines', icon: 'lucide-server' },
-  { name: 'Images', label: 'Images', icon: 'lucide-disc' },
-  { name: 'Snapshots', label: 'Snapshots', icon: 'lucide-camera' },
+// The pinned frappe-ui (0.1.278) renders a SidebarItem string icon as literal
+// text — only the Dropdown path understands `lucide-*` strings. So nav icons
+// are passed as tiny components (the <component :is> branch), rendering the
+// same lucide span the rest of the app uses. The header menu icons below stay
+// plain strings because SidebarHeader feeds them through a Dropdown.
+const icon = (name) => () => h('span', { class: [name, 'size-4 text-ink-gray-7'] })
+
+// Three nav items — the user's whole world. No Provider / Server / Task.
+// SidebarItem derives its active state from the route, so we only give it `to`.
+const sections = [
+  {
+    items: [
+      { label: 'Machines', icon: icon('lucide-server'), to: { name: 'Machines' } },
+      { label: 'Images', icon: icon('lucide-disc'), to: { name: 'Images' } },
+      { label: 'Snapshots', icon: icon('lucide-camera'), to: { name: 'Snapshots' } },
+    ],
+  },
 ]
 
-const userActions = [{ label: 'Log out', icon: 'lucide-log-out', onClick: logout }]
+// Header doubles as the user menu: Atlas mark + the signed-in user + Log out.
+// sessionUser is resolved before mount (main.js boots the session in .finally),
+// so a static read of .value is settled by the time this shell renders.
+const header = {
+  title: 'Atlas',
+  subtitle: sessionUser.value,
+  menuItems: [{ label: 'Log out', icon: 'lucide-log-out', onClick: logout }],
+}
 </script>
 
 <template>
   <FrappeUIProvider>
     <div class="flex h-screen bg-surface-white text-ink-gray-9">
-      <aside
-        class="flex w-56 shrink-0 flex-col border-r border-outline-gray-1 px-2 py-3"
-      >
-        <div class="px-2 pb-3 text-base font-medium text-ink-gray-9">Atlas</div>
+      <Sidebar :header="header" :sections="sections">
+        <!-- Keep the Atlas logo mark in place of SidebarHeader's initial. -->
+        <template #header-logo>
+          <img :src="atlasLogo" alt="Atlas" class="size-8 rounded object-cover" />
+        </template>
+      </Sidebar>
 
-        <nav class="flex flex-1 flex-col gap-1">
-          <router-link
-            v-for="item in nav"
-            :key="item.name"
-            :to="{ name: item.name }"
-            class="flex items-center gap-2 rounded-md px-2 py-1.5 text-base text-ink-gray-7 hover:bg-surface-gray-2"
-            active-class="bg-surface-gray-2 text-ink-gray-9"
-          >
-            <span :class="[item.icon, 'size-4']" aria-hidden="true" />
-            {{ item.label }}
-          </router-link>
-        </nav>
-
-        <Dropdown :options="userActions" placement="top">
-          <button
-            class="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-base text-ink-gray-7 hover:bg-surface-gray-2"
-          >
-            <span class="lucide-circle-user size-4" aria-hidden="true" />
-            <span class="truncate">{{ sessionUser }}</span>
-          </button>
-        </Dropdown>
-      </aside>
-
-      <main class="flex-1 overflow-y-auto">
+      <main class="flex flex-1 flex-col overflow-hidden">
         <router-view />
       </main>
     </div>
