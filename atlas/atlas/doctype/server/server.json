@@ -30,9 +30,7 @@
   "jailer_version",
   "kernel_version",
   "section_break_metadata",
-  "provider_metadata",
-  "section_break_notes",
-  "notes"
+  "provider_metadata"
  ],
  "fields": [
   {
@@ -183,17 +181,6 @@
    "label": "Provider Metadata",
    "options": "JSON",
    "read_only": 1
-  },
-  {
-   "collapsible": 1,
-   "fieldname": "section_break_notes",
-   "fieldtype": "Section Break",
-   "label": "Notes"
-  },
-  {
-   "fieldname": "notes",
-   "fieldtype": "Text",
-   "label": "Notes"
   }
  ],
  "links": [],

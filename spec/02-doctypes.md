@@ -266,8 +266,8 @@ operator-facing label lives in `title` (e.g. `server-blr1-01`).
 | `provider_metadata`            | Code (JSON)           |      | Y         |         | Raw vendor blob returned by `describe()`. Holds anything the vendor reports that doesn't have a named column (DigitalOcean `created_at`, future AWS placement group, …). Forward-compatibility seam — read-only. |
 | `architecture`                 | Data                  |      | Y         |         | Set by bootstrap. Allowed to change on re-bootstrap. |
 | `firecracker_version`          | Data                  |      | Y         |         | Set by bootstrap. Allowed to change on re-bootstrap. |
+| `jailer_version`               | Data                  |      | Y         |         | Set by bootstrap. Allowed to change on re-bootstrap. |
 | `kernel_version`               | Data                  |      | Y         |         | Set by bootstrap. Allowed to change on re-bootstrap. |
-| `notes`                        | Text                  |      |           |         |                                                                |
 
 Atlas is single-region: there is no `Server.region` column. A vendor
 that operates in multiple regions stores its operating region on its
@@ -325,11 +325,10 @@ ipv6_address
 ── Host info (collapsible) ──
 architecture
 | firecracker_version
+  jailer_version
   kernel_version
 ── Provider metadata (collapsible) ──
 provider_metadata
-── Notes (collapsible) ──
-notes
 ```
 
 ### List view
