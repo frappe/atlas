@@ -8,6 +8,15 @@
 // optional action button — so it tracks the library instead of a bespoke
 // component.
 //
+// `!w-full` on <ListView> overrides the inner wrapper's `w-max`: ListView's
+// markup is an overflow-x-auto OUTER wrapping a `w-max min-w-full` INNER that
+// holds the grid rows, and passes our attrs (`class`) to that INNER. Left as
+// `w-max`, a long cell value lets the grid's max-content win and the row
+// overflows past the container (the "lopsided" balloon). Forcing the inner to
+// `!w-full` pins it to the container's content box so each `Nfr` column
+// distributes the *real* width instead of max-content, and Name (2fr) absorbs
+// the slack. (! beats the inner's own `w-max` regardless of stylesheet order.)
+//
 // Columns are plain frappe-ui ListView columns plus an optional `type` we read
 // in the #cell slot to render the right thing: 'badge' (StatusBadge),
 // 'copy' (CopyText), 'time' (relative time), 'link' (an emit'd row link),
@@ -64,6 +73,7 @@ const options = computed(() => ({
       :rows="rows"
       :options="options"
       row-key="name"
+      class="!w-full"
     >
       <template #cell="{ column, row, item, align }">
         <div v-if="column.type === 'machine'" class="min-w-0">

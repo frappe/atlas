@@ -15,10 +15,16 @@ const rows = computed(() =>
   })),
 )
 
+// Proportional columns (`minmax(content-floor, fr)`) so they spread evenly
+// instead of pinning Name to a `2fr` share that leaves a dead gutter mid-row
+// with Disk/Status clustered on the right edge. ResourceList forces the
+// ListView inner to `!w-full` so these `fr` units distribute the real container
+// width instead of max-content (see the note there); the rem floors stop any
+// column collapsing below its content when the viewport narrows.
 const columns = [
-  { label: 'Name', key: 'title', width: '2fr', getLabel: ({ row }) => row.title || row.image_name },
-  { label: 'Disk', key: 'default_disk_gigabytes', width: '8rem', getLabel: ({ row }) => `${row.default_disk_gigabytes} GB` },
-  { label: 'Status', key: '_status', type: 'badge', width: '8rem' },
+  { label: 'Name', key: 'title', width: 'minmax(14rem, 2fr)', getLabel: ({ row }) => row.title || row.image_name },
+  { label: 'Disk', key: 'default_disk_gigabytes', width: 'minmax(8rem, 1fr)', getLabel: ({ row }) => `${row.default_disk_gigabytes} GB` },
+  { label: 'Status', key: '_status', type: 'badge', width: 'minmax(8rem, 1fr)' },
 ]
 </script>
 

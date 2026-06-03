@@ -29,24 +29,27 @@ const rows = computed(() => {
 // when there are machines, the ListView empty-state button when there are none.
 const isEmpty = computed(() => !machines.loading && all.value.length === 0)
 
-// Columns are kept lean so the default list fits a laptop viewport without
-// horizontal scroll. frappe-ui's ListView sizes each row to max-content (its
-// inner wrapper is `w-max`), so fr columns don't shrink below their content —
-// every column we add widens the row. The IPv6 address (the widest field) and
-// tags therefore live on the detail page, not here; Name is the only flexible
-// column and the rest stay tight.
+// Every column is proportional (`minmax(content-floor, fr)`) so they spread
+// evenly across the row instead of pinning Name to a huge `2fr` share that
+// leaves a dead gutter mid-row with the data clustered on the right edge. The
+// `fr` weights (2 : 1 : 1.3 : 1) keep Name widest while Status/Specs/Updated
+// march out to fill the width; the rem floors stop any column collapsing below
+// its content when the viewport narrows. ResourceList forces the ListView inner
+// to `!w-full` so these `fr` units distribute the real container width instead
+// of max-content (see the note there). The IPv6 address (the widest field) and
+// tags live on the detail page, not here.
 const columns = [
   // 'machine' is read in ResourceList's #cell slot — name + OS subtitle.
-  { label: 'Name', key: 'name', type: 'machine', width: '2fr' },
-  { label: 'Status', key: 'status', type: 'badge', width: '6.5rem' },
+  { label: 'Name', key: 'name', type: 'machine', width: 'minmax(12rem, 2fr)' },
+  { label: 'Status', key: 'status', type: 'badge', width: 'minmax(6.5rem, 1fr)' },
   {
     label: 'Specs',
     key: 'specs',
-    width: '10rem',
+    width: 'minmax(11rem, 1.3fr)',
     getLabel: ({ row }) =>
       `${row.vcpus} vCPU · ${Math.round(row.memory_megabytes / 1024)} GB · ${row.disk_gigabytes} GB`,
   },
-  { label: 'Updated', key: 'modified', type: 'time', width: '7rem', align: 'right' },
+  { label: 'Updated', key: 'modified', type: 'time', width: 'minmax(7rem, 1fr)', align: 'right' },
 ]
 
 // The empty-state action, as ListView Button props (rendered by ListEmptyState).

@@ -18,17 +18,23 @@ const titleByName = computed(() =>
 
 const rows = computed(() => snapshots.data ?? [])
 
+// Proportional columns (`minmax(content-floor, fr)`) so they spread evenly
+// instead of leaving Size/Status crammed at the right edge while Name/Machine
+// take all the width. ResourceList forces the ListView inner to `!w-full` so
+// these `fr` units distribute the real container width instead of max-content
+// (see the note there); the rem floors stop any column collapsing below its
+// content when the viewport narrows.
 const columns = [
-  { label: 'Name', key: 'title', width: '2fr' },
+  { label: 'Name', key: 'title', width: 'minmax(12rem, 2fr)' },
   {
     label: 'Machine',
     key: 'virtual_machine',
     type: 'link',
-    width: '2fr',
+    width: 'minmax(12rem, 2fr)',
     getLabel: ({ row }) => titleByName.value[row.virtual_machine] || row.virtual_machine,
   },
-  { label: 'Size', key: 'size_bytes', width: '8rem', getLabel: ({ row }) => gigabytes(row.size_bytes) },
-  { label: 'Status', key: 'status', type: 'badge', width: '8rem' },
+  { label: 'Size', key: 'size_bytes', width: 'minmax(8rem, 1fr)', getLabel: ({ row }) => gigabytes(row.size_bytes) },
+  { label: 'Status', key: 'status', type: 'badge', width: 'minmax(8rem, 1fr)' },
 ]
 
 // Each row's Machine cell links back to its VM — the snapshot was created from
