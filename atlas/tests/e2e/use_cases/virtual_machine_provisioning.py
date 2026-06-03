@@ -189,8 +189,10 @@ def _check_provision_happy_path(server_name: str, image: str, public_key: str) -
 	# Internet egress both families (spec/06-networking.md): IPv4 via NAT44
 	# (derived 100.64.x.x/30 + v4 default route + curl to an IPv4 literal
 	# through the host masquerade) and IPv6 via the routed tap (curl to an
-	# IPv6 literal). Both use literals so no DNS is involved. We hop in over
-	# the guest's IPv6 either way.
+	# IPv6 literal). The egress checks use literals so no DNS is involved; the
+	# probe then resolves a hostname via getaddrinfo() to catch the
+	# systemd-resolved /etc/resolv.conf hijack (literals alone pass through it).
+	# We hop in over the guest's IPv6 either way.
 	assert_probe(
 		server_name,
 		"phase5-ipv4-egress.sh",

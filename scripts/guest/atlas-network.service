@@ -12,7 +12,7 @@ ExecStart=/usr/sbin/ip -6 addr add ${VIRTUAL_MACHINE_IPV6}/128 dev eth0
 ExecStart=/usr/sbin/ip -6 route add default via fe80::1 dev eth0
 ExecStart=/usr/sbin/ip addr add ${VIRTUAL_MACHINE_IPV4} dev eth0
 ExecStart=/usr/sbin/ip route add default via ${VIRTUAL_MACHINE_IPV4_GATEWAY} dev eth0
-ExecStart=/bin/sh -c 'echo "nameserver 2606:4700:4700::1111" > /etc/resolv.conf'
+ExecStart=/bin/sh -c 'rm -f /etc/resolv.conf; echo "nameserver 2606:4700:4700::1111" > /etc/resolv.conf'
 RemainAfterExit=yes
 
 [Install]

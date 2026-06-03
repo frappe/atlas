@@ -13,7 +13,14 @@
 #     which forces the v6 path and needs no DNS) — proves the routed-tap
 #     egress and host forwarding end to end
 #
-# We hop in over IPv6 (the guest's only inbound path) and run both checks
+#   DNS (system resolver):
+#   - the guest resolves a hostname through getaddrinfo() — the path apt uses.
+#     The two egress checks above use literals on purpose, so they pass even
+#     when /etc/resolv.conf is hijacked by systemd-resolved (the 127.0.0.53
+#     stub with zero upstreams). This check is the one that fails in that case:
+#     `getent hosts` exercises the real resolver, not `dig @<literal>`.
+#
+# We hop in over IPv6 (the guest's only inbound path) and run all checks
 # from inside the guest.
 #
 # Inputs:
@@ -87,6 +94,14 @@ curl -4 --max-time 15 -sS -o /dev/null https://1.1.1.1/ \
 curl -6 --max-time 15 -sS -o /dev/null 'https://[2606:4700:4700::1111]/' \
     || fail "curl -6 to 2606:4700:4700::1111 failed (IPv6 egress not working)"
 
+# 5. Resolve a hostname through the SYSTEM resolver (getaddrinfo), the path apt
+#    uses. Guards the systemd-resolved hijack: if /etc/resolv.conf is the
+#    127.0.0.53 stub with no upstreams, the literal-based checks above still
+#    pass but this fails — exactly the "ping works, apt update doesn't" report.
+getent hosts deb.debian.org >/dev/null \
+    || fail "getent hosts deb.debian.org failed (DNS broken — check /etc/resolv.conf is the Cloudflare v6 line, not the 127.0.0.53 resolved stub)"
+
 echo "OK ipv4-egress"
 echo "OK ipv6-egress"
+echo "OK dns-resolution"
 REMOTE

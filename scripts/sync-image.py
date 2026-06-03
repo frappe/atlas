@@ -69,10 +69,19 @@ LABEL=atlas-root  /  ext4  defaults,errors=remount-ro  0  1
 # systemd-networkd-wait-online + snapd seeding, all of which hang indefinitely
 # under Atlas (no datasource, static v6 brought up by atlas-network.service, no
 # need for snap). See step 3a.1b.
+#
+# systemd-resolved is here too: the cloud image enables it and symlinks
+# /etc/resolv.conf -> ../run/systemd/resolve/stub-resolv.conf, pointing the
+# system resolver at the 127.0.0.53 stub. Atlas brings the network up statically
+# with raw `ip` commands and never feeds resolved an upstream (no DHCP, no
+# netplan, no DNS= drop-in), so the stub has zero name servers: `dig
+# @2606:4700:4700::1111` works but getaddrinfo()/apt fail. We mask resolved and
+# (in 3a.4b) replace the symlink with a real file atlas-network.service owns.
 _MASKED_UNITS = (
     "cloud-init.service", "cloud-init-local.service", "cloud-config.service",
     "cloud-final.service", "systemd-networkd-wait-online.service",
     "snapd.seeded.service", "snapd.service", "snapd.socket",
+    "systemd-resolved.service",
 )
 
 
@@ -200,6 +209,18 @@ def _normalize_rootfs(root: str) -> None:
     #      (the 127.0.1.1 line) is added at provision time, not here. Overwriting
     #      is correct regardless of what the upstream file contains — Atlas owns it.
     install_file(_HOSTS, f"{root}/etc/hosts", mode="0644")
+
+    # 3a.4b Make /etc/resolv.conf a real, Atlas-owned file. The cloud image ships
+    #       it as a symlink to systemd-resolved's stub (../run/systemd/resolve/
+    #       stub-resolv.conf). resolved is masked in 3a.1b, but the dangling
+    #       symlink would still defeat atlas-network.service's `> /etc/resolv.conf`
+    #       (the write would follow the link into a tmpfs path that doesn't exist
+    #       at build time and is owned by a dead daemon at runtime). Replace it
+    #       with a regular file carrying the Cloudflare v6 resolver; the guest unit
+    #       re-asserts the same line at every boot. `rm -f` first so install_file
+    #       writes a real file rather than following the symlink.
+    run("sudo", "rm", "-f", f"{root}/etc/resolv.conf")
+    install_file("nameserver 2606:4700:4700::1111\n", f"{root}/etc/resolv.conf", mode="0644")
 
     # 3a.5 Lock root password (key-only by contract) and enforce key-only SSH.
     #      The Ubuntu cloud image's sshd_config has `Include

@@ -255,7 +255,7 @@ ip -6 addr add ${VIRTUAL_MACHINE_IPV6}/128 dev eth0
 ip -6 route add default via fe80::1 dev eth0
 ip addr add ${VIRTUAL_MACHINE_IPV4} dev eth0
 ip route add default via ${VIRTUAL_MACHINE_IPV4_GATEWAY} dev eth0
-echo "nameserver 2606:4700:4700::1111" > /etc/resolv.conf
+rm -f /etc/resolv.conf; echo "nameserver 2606:4700:4700::1111" > /etc/resolv.conf
 ```
 
 The guest does **not** use SLAAC, DHCPv6, or DHCP. Static addressing from
@@ -263,6 +263,19 @@ The guest does **not** use SLAAC, DHCPv6, or DHCP. Static addressing from
 an RA / DHCP daemon on the host. DNS is the Cloudflare IPv6 resolver — v4-only
 *destinations* are reached through the NAT, but DNS itself stays on v6, so no
 DNS64 is involved.
+
+The `rm -f` before the redirect is load-bearing: the Ubuntu cloud image ships
+`/etc/resolv.conf` as a **symlink** to systemd-resolved's stub
+(`../run/systemd/resolve/stub-resolv.conf`) and points the system resolver at
+`127.0.0.53`. A bare `> /etc/resolv.conf` follows that symlink and writes into
+the stub, which resolved owns — so the Atlas nameserver never wins and
+`getaddrinfo()`/`apt` get an empty stub (zero upstreams, because Atlas configures
+the network statically and never feeds resolved a `DNS=`). `sync-image.py` masks
+`systemd-resolved.service` and replaces the symlink with a real file at build
+time (steps 3a.1b / 3a.4b); the `rm -f` here re-asserts that at every boot so a
+future image that re-introduces the symlink can't silently break DNS again. The
+giveaway symptom: `dig @2606:4700:4700::1111 deb.debian.org` works but
+`getent hosts deb.debian.org` fails.
 
 Both egress families are proven end-to-end by the e2e suite from *inside* a
 booted guest, using literal addresses so no DNS is involved: `curl -6` to an
@@ -287,6 +300,7 @@ End-to-end check from any IPv6-capable client: `ping6
 | Everything on the host looks right      | Guest didn't apply its address                                | In the guest console (firecracker log): look for `atlas-network.service` failures, or `ip -6 addr show eth0` showing no `<VM_IPV6>/128`. |
 | IPv6 works, but IPv4 destinations time out (`curl -4 1.1.1.1` hangs) | NAT44 egress broken | On the host: `nft list chain inet atlas postrouting` should show the `100.64.0.0/16 … masquerade` rule, and `sysctl net.ipv4.ip_forward` should be `1`. In the guest: `ip -4 addr show eth0` should show a `100.64.x.x/30` and `ip -4 route show default` a route via the host side. |
 | Guest reaches the host but not the IPv6 internet (`curl -6 2606:4700:4700::1111` hangs) | IPv6 egress broken | On the host: `sysctl net.ipv6.conf.all.forwarding` should be `1` and the per-VM forward rules present (`nft list table inet atlas`). In the guest: `ip -6 route show default` should be `via fe80::1 dev eth0`. |
+| `ping`/`curl` to literal IPs work, but `apt update` / any hostname fails | DNS broken: systemd-resolved hijacked `/etc/resolv.conf` | In the guest: `dig @2606:4700:4700::1111 deb.debian.org` succeeds but `getent hosts deb.debian.org` fails. `ls -l /etc/resolv.conf` is a symlink to `…/stub-resolv.conf` and `cat` shows `nameserver 127.0.0.53` instead of the Cloudflare v6 line. Fix on a live guest: `systemctl disable --now systemd-resolved; rm -f /etc/resolv.conf; echo "nameserver 2606:4700:4700::1111" > /etc/resolv.conf`. Permanent fix is in the image (`sync-image.py` masks resolved + de-symlinks resolv.conf). |
 
 ### Historical bug: the carve
 
