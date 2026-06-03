@@ -66,10 +66,10 @@ export const FIXED = {
   priceHr: 0.036,
 }
 
-// image doc-name fragment → branding. Falls back to a neutral mark.
+// image doc-name fragment → OS name, for the list/detail subtitle.
 const OS_BRAND = [
-  { match: /ubuntu/i, name: 'Ubuntu', mark: 'U', tint: '#E86C13' },
-  { match: /debian/i, name: 'Debian', mark: 'D', tint: '#CC2929' },
+  { match: /ubuntu/i, name: 'Ubuntu' },
+  { match: /debian/i, name: 'Debian' },
 ]
 
 export function osBrand(image) {
@@ -77,9 +77,7 @@ export function osBrand(image) {
   const hit = OS_BRAND.find((o) => o.match.test(key))
   // Pull a "22.04" / "24.04" style version out of the image name if present.
   const version = (key.match(/\d{2}\.\d{2}|\d+/) || [''])[0]
-  return hit
-    ? { name: hit.name, mark: hit.mark, tint: hit.tint, version }
-    : { name: key || 'Image', mark: (key[0] || '?').toUpperCase(), tint: '#525252', version }
+  return { name: hit ? hit.name : key || 'Image', version }
 }
 
 // A small stable hash of the machine name, so synthesized values stay put
@@ -121,7 +119,7 @@ export function decorate(vm) {
 export function useMachineTasks(name) {
   return useList({
     doctype: 'Task',
-    fields: ['name', 'status', 'script', 'creation'],
+    fields: ['name', 'status', 'subject', 'script', 'creation'],
     filters: { virtual_machine: name },
     orderBy: 'creation desc',
     pageLength: 10,

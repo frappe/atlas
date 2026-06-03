@@ -37,7 +37,7 @@ defineExpose({ reload: () => tasks.reload() })
         class="flex items-center border-b border-outline-gray-1 py-2.5 text-base"
       >
         <div class="w-28 shrink-0"><StatusBadge :status="task.status" /></div>
-        <div class="flex-1 font-mono text-sm text-ink-gray-7">{{ task.script }}</div>
+        <div class="flex-1 text-sm text-ink-gray-7">{{ task.subject || task.script }}</div>
         <div class="w-24 shrink-0 text-right text-sm text-ink-gray-5">
           {{ relativeTime(task.creation) }}
         </div>

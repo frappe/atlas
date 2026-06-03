@@ -11,7 +11,7 @@
 // Columns are plain frappe-ui ListView columns plus an optional `type` we read
 // in the #cell slot to render the right thing: 'badge' (StatusBadge),
 // 'copy' (CopyText), 'time' (relative time), 'link' (an emit'd row link),
-// 'machine' (OS mark + name + OS subtitle), 'tags' (tag chips), or the default
+// 'machine' (name + OS subtitle), 'tags' (tag chips), or the default
 // truncated text. ListView has no built-in cell types for these, so this slot
 // stays ours. Anything ListView already does (getLabel, width, align, prefix)
 // still works.
@@ -66,19 +66,10 @@ const options = computed(() => ({
       row-key="name"
     >
       <template #cell="{ column, row, item, align }">
-        <div v-if="column.type === 'machine'" class="flex min-w-0 items-center gap-2.5">
-          <span
-            class="grid size-7 shrink-0 place-items-center rounded-md text-xs font-semibold text-white"
-            :style="{ background: row.os?.tint || '#525252' }"
-            aria-hidden="true"
-          >
-            {{ row.os?.mark || '?' }}
-          </span>
-          <div class="min-w-0">
-            <div class="truncate text-base text-ink-gray-9">{{ row.title || row.name }}</div>
-            <div class="truncate text-sm text-ink-gray-5">
-              {{ row.os?.name }} {{ row.os?.version }}
-            </div>
+        <div v-if="column.type === 'machine'" class="min-w-0">
+          <div class="truncate text-base text-ink-gray-9">{{ row.title || row.name }}</div>
+          <div class="truncate text-sm text-ink-gray-5">
+            {{ row.os?.name }} {{ row.os?.version }}
           </div>
         </div>
 

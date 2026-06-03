@@ -36,7 +36,7 @@ const isEmpty = computed(() => !machines.loading && all.value.length === 0)
 // tags therefore live on the detail page, not here; Name is the only flexible
 // column and the rest stay tight.
 const columns = [
-  // 'machine' is read in ResourceList's #cell slot — OS mark + name + subtitle.
+  // 'machine' is read in ResourceList's #cell slot — name + OS subtitle.
   { label: 'Name', key: 'name', type: 'machine', width: '2fr' },
   { label: 'Status', key: 'status', type: 'badge', width: '6.5rem' },
   {

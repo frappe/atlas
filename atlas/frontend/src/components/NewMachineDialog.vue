@@ -19,9 +19,9 @@ const imageOptions = computed(() =>
     .map((i) => ({ label: i.title || i.image_name || i.name, value: i.name })),
 )
 
-// The same options, decorated with OS branding (mark/tint/version) so the
-// picker renders selectable cards that match the list's OS marks. The first
-// active image is tagged "Recommended", mirroring the standalone.
+// The same options, decorated with OS name/version so the picker renders
+// selectable cards. The first active image is tagged "Recommended", mirroring
+// the standalone.
 const imageCards = computed(() =>
   (images.data ?? [])
     .filter((i) => i.is_active)
@@ -31,8 +31,6 @@ const imageCards = computed(() =>
         value: i.name,
         label: i.title || brand.name,
         version: brand.version,
-        mark: brand.mark,
-        tint: brand.tint,
         note: idx === 0 ? 'Recommended' : '',
       }
     }),
@@ -163,12 +161,6 @@ async function create() {
               "
               @click="form.image = img.value"
             >
-              <span
-                class="grid size-7 shrink-0 place-items-center rounded-md text-xs font-semibold text-white"
-                :style="{ background: img.tint }"
-                aria-hidden="true"
-                >{{ img.mark }}</span
-              >
               <div class="min-w-0 flex-1">
                 <div class="truncate text-sm font-medium text-ink-gray-9">{{ img.label }}</div>
                 <div class="truncate text-xs text-ink-gray-5">

@@ -73,8 +73,6 @@ const crumbs = computed(() => [
 ])
 
 const actions = computed(() => actionsFor(doc.value.status))
-const primary = computed(() => actions.value.find((a) => a.kind === 'primary'))
-const subtleActions = computed(() => actions.value.filter((a) => a.kind === 'subtle'))
 
 // MB → GB for the resource summary line, matching the standalone's "4 GB".
 const memGb = computed(() => Math.round((doc.value.memory_megabytes || 0) / 1024))
@@ -112,19 +110,23 @@ const dangerActions = computed(() =>
     .map((a) => ({ ...a, description: DANGER_DESC[a.label] || 'This cannot be undone.' })),
 )
 
+// "Open Bench" is the page's one primary action (header button). It's only
+// live while the bench is running; placeholder until the dashboard URL is a
+// real field.
+const benchReady = computed(() => doc.value.bench?.status === 'running')
 function openBench() {
-  // Placeholder until the bench dashboard URL is a real field.
   toast.info('Opening Bench dashboard…')
 }
 
+// Every lifecycle action lives in the header's ⋯ menu. Disruptive (Stop/
+// Restart/Pause) and danger (Terminate/Rebuild/Delete) render red; the rest
+// stay neutral. run() decides confirm-vs-immediate-vs-dialog per kind.
 const menuActions = computed(() =>
-  actions.value
-    .filter((a) => a.kind === 'action' || a.kind === 'danger')
-    .map((a) => ({
-      label: a.label,
-      theme: a.kind === 'danger' ? 'red' : 'gray',
-      onClick: () => run(a),
-    })),
+  actions.value.map((a) => ({
+    label: a.label,
+    theme: a.kind === 'disruptive' || a.kind === 'danger' ? 'red' : 'gray',
+    onClick: () => run(a),
+  })),
 )
 
 async function callMethod(method, args = {}) {
@@ -198,19 +200,12 @@ function onDialogDone() {
     </template>
     <template #actions>
       <Button
-        v-if="primary"
         variant="solid"
         theme="gray"
-        :label="primary.label"
-        :loading="vm.runDocMethod.loading"
-        @click="run(primary)"
-      />
-      <Button
-        v-for="a in subtleActions"
-        :key="a.label"
-        :label="a.label"
-        :disabled="vm.runDocMethod.loading"
-        @click="run(a)"
+        icon-left="lucide-arrow-up-right"
+        label="Open Bench"
+        :disabled="!benchReady"
+        @click="openBench"
       />
       <Dropdown v-if="menuActions.length" :options="menuActions">
         <Button icon="lucide-more-horizontal" :disabled="vm.runDocMethod.loading" />
@@ -241,14 +236,14 @@ function onDialogDone() {
       <!-- Network access -->
       <section class="rounded-lg border border-outline-gray-1 p-4">
         <h2 class="text-base font-medium text-ink-gray-9">Network access</h2>
-        <p class="mt-1 text-sm text-ink-gray-5">
+        <p class="mt-1 text-p-sm text-ink-gray-5">
           Reachable over IPv6. Connect as <span class="font-mono">root</span>.
         </p>
         <div class="mt-3 divide-y divide-outline-gray-1">
           <div class="flex items-center gap-3 py-2.5">
             <div class="flex w-24 shrink-0 items-center gap-1.5 text-sm text-ink-gray-5">
               IPv6
-              <Badge variant="subtle" theme="blue" label="Primary" />
+              <Badge variant="subtle" theme="gray" label="Primary" />
             </div>
             <div class="flex-1"><CopyText :value="doc.ipv6_address" /></div>
           </div>
@@ -285,7 +280,7 @@ function onDialogDone() {
           >
             <span :class="[spec.icon, 'size-4 shrink-0 text-ink-gray-5']" aria-hidden="true" />
             <span class="w-24 shrink-0 text-sm text-ink-gray-5">{{ spec.label }}</span>
-            <span class="text-base text-ink-gray-9">{{ spec.value }}</span>
+            <span class="text-sm text-ink-gray-9">{{ spec.value }}</span>
           </div>
         </div>
       </section>
@@ -296,7 +291,7 @@ function onDialogDone() {
           <span class="lucide-box size-5 shrink-0 text-ink-gray-7" aria-hidden="true" />
           <div class="flex-1">
             <div class="text-base font-medium text-ink-gray-9">Bench</div>
-            <div class="text-sm text-ink-gray-5">
+            <div class="text-p-sm text-ink-gray-5">
               Self-managed web interface · {{ doc.bench?.version }}
             </div>
           </div>
@@ -312,13 +307,6 @@ function onDialogDone() {
             <div class="text-xs text-ink-gray-5">{{ stat.label }}</div>
           </div>
         </div>
-        <Button
-          class="mt-4 w-full"
-          icon-left="lucide-arrow-up-right"
-          label="Open Bench dashboard"
-          :disabled="doc.bench?.status !== 'running'"
-          @click="openBench"
-        />
       </section>
 
       <!-- Danger zone: the destructive actions the header tucks into Actions ▾,
@@ -335,8 +323,8 @@ function onDialogDone() {
             class="flex items-center gap-3 py-3"
           >
             <div class="flex-1">
-              <div class="text-base text-ink-red-3">{{ a.label }}</div>
-              <div class="text-sm text-ink-gray-5">{{ a.description }}</div>
+              <div class="text-base font-medium text-ink-gray-9">{{ a.label }}</div>
+              <div class="text-p-sm text-ink-gray-5">{{ a.description }}</div>
             </div>
             <Button
               theme="red"
