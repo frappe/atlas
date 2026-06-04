@@ -82,9 +82,13 @@ endpoints without any Desk footprint.
   Images), and the Virtual Machine controller fills `server` from placement
   (`before_insert`); the operator still controls which servers are Active and
   which images exist. Server placement stays "operator owns the fleet, the
-  system slots the VM" — consistent with operating principle #4. (Capacity- and
-  availability-aware server selection is a later refinement of `default_server`;
-  today it is first-Active-with-room.) When the user omits an image — they can't
+  system slots the VM" — consistent with operating principle #4. "Room" is a
+  vCPU budget: a host's physical vCPU total times
+  `Atlas Settings.overprovision_factor` (default 1), minus the vCPUs of its
+  live VMs. A host whose size has no known vCPU total — an uncatalogued slug or
+  a self-managed host with none — counts as unlimited. (Richer availability-
+  aware selection is still a later refinement of `default_server`; today it is
+  first-Active-with-budget.) When the user omits an image — they can't
   in the dialog, but the controller is called directly in tests — `default_image`
   still applies the operator's configured default.
 

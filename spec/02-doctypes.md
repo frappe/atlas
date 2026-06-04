@@ -50,6 +50,8 @@ indirection layer.
 | Field                  | Type             | Reqd | Notes                                                              |
 | ---------------------- | ---------------- | ---- | ------------------------------------------------------------------ |
 | `provider`             | Link → Provider  | Y    | The currently-active Provider row. `atlas.get_provider()` reads this. |
+| `default_user_image`   | Link → Virtual Machine Image | | Base image a dashboard user's new machine provisions from when they don't pick one. Disambiguates placement when several images are active. See [11-user-ui.md](./11-user-ui.md). |
+| `overprovision_factor` | Float            |      | Fleet-wide vCPU oversubscription multiplier (default `1`). A host's *effective* vCPU budget — what `default_server` placement and the desk capacity helper check against — is its physical vCPU total times this factor. `1` means no oversubscription. Safe to raise because a VM's `vcpus` is a `cpu.max` *bandwidth* cap, not a pinned core. A host whose size has no known vCPU total (uncatalogued slug or self-managed) is unaffected — it always counts as having room. See [server_capacity.py](../atlas/atlas/api/server_capacity.py) and `placement.py`. |
 | `ssh_key_id`           | Data             |      | Vendor's handle for the uploaded SSH key, when the vendor needs one (DigitalOcean). Passed through to the provider as `SshKey.vendor_id`; format is vendor-specific (DO accepts the key's numeric id or its SHA-256 fingerprint). |
 | `ssh_public_key`       | Long Text        |      | OpenSSH public key body. Crosses the provider interface for vendors that upload at provision time. Not required for DO. |
 | `ssh_private_key_path` | Data             | Y    | Absolute path on the Atlas host where the matching private key lives. Atlas reads the PEM at SSH-connect time via `secrets.get_ssh_key_from_disk(path)`. `0600`, owned by the Frappe user. |
@@ -65,6 +67,10 @@ without touching callers.
 ```
 ── Active provider ──
 provider
+── User dashboard ──
+default_user_image
+── Capacity ──
+overprovision_factor
 ── SSH key ──
 ssh_key_id
 ssh_public_key

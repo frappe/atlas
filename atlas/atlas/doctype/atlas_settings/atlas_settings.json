@@ -9,6 +9,8 @@
   "provider",
   "section_break_user_dashboard",
   "default_user_image",
+  "section_break_capacity",
+  "overprovision_factor",
   "section_break_ssh",
   "ssh_key_id",
   "ssh_public_key",
@@ -39,6 +41,19 @@
    "label": "Default User Image",
    "options": "Virtual Machine Image",
    "description": "Base image a dashboard user's new machine is provisioned from. If unset, the single active image is used; if several are active, set this so placement is unambiguous."
+  },
+  {
+   "fieldname": "section_break_capacity",
+   "fieldtype": "Section Break",
+   "label": "Capacity"
+  },
+  {
+   "fieldname": "overprovision_factor",
+   "fieldtype": "Float",
+   "label": "Overprovision Factor",
+   "default": "1",
+   "non_negative": 1,
+   "description": "Fleet-wide vCPU oversubscription multiplier. A host's effective vCPU budget is its physical total times this factor; placement (and the capacity display) check against that budget. 1 = no oversubscription. Servers whose size has no known vCPU total are unaffected — they are always treated as having room."
   },
   {
    "fieldname": "section_break_ssh",

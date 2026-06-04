@@ -47,7 +47,10 @@ keep it the source of truth.
   [05-virtual-machine-lifecycle.md](./05-virtual-machine-lifecycle.md).)
 - No autoscaling or scheduling. The operator picks the server in Desk; a user
   creating a machine in the SPA gets the first Active server with room (a
-  default, not a scheduler — see [11-user-ui.md](./11-user-ui.md)).
+  default, not a scheduler — see [11-user-ui.md](./11-user-ui.md)). "Room" is
+  oversubscribable: a host's effective vCPU budget is its physical total times
+  `Atlas Settings.overprovision_factor` (default 1), and a host whose size we
+  can't price counts as unlimited.
 - No metrics or alerting. `journalctl` is enough.
 - Two UIs, two audiences. **Operators** use Desk (`/app/atlas`) — the whole
   fleet, providers, servers, image sync, ad-hoc tasks. **Users** use a small

@@ -46,6 +46,14 @@ class TestPlacement(IntegrationTestCase):
 		self.provider = make_provider("atlas-placement-provider")
 		self.addCleanup(frappe.set_user, "Administrator")
 		frappe.db.set_single_value("Atlas Settings", "default_user_image", None)
+		# No oversubscription unless a test opts in; keeps capacity assertions
+		# independent of suite order.
+		frappe.db.set_single_value("Atlas Settings", "overprovision_factor", 1)
+		# Wipe VMs left by other tests: servers are shared by title, so a stray
+		# VM on the reused server would count against its vCPU budget and skew
+		# the capacity-boundary tests below.
+		for name in frappe.get_all("Virtual Machine", pluck="name"):
+			frappe.delete_doc("Virtual Machine", name, force=1, ignore_permissions=True)
 		# Start from a clean slate: placement picks the first Active server and
 		# throws on >1 active image, so neutralize any left by other suites /
 		# fixtures so this test's own server+image are the only candidates.
@@ -117,6 +125,38 @@ class TestPlacement(IntegrationTestCase):
 		frappe.set_user(_atlas_user())
 		with self.assertRaises(frappe.ValidationError):
 			self._new_machine()
+
+	def _full_4vcpu_server(self):
+		"""An Active 4-vCPU server already running 4 vCPUs of VMs, plus a single
+		active image. Shared setup for the overprovisioning boundary tests."""
+		server = make_server(
+			self.provider,
+			title="atlas-placement-server",
+			size="DigitalOcean/s-4vcpu-8gb",
+			ipv6_address="2001:db8:1::1",
+			ipv6_prefix="2001:db8:1::/64",
+			ipv6_virtual_machine_range="2001:db8:1::/124",
+		)
+		image = make_image("atlas-placement-image")
+		frappe.db.set_value("Virtual Machine Image", image.name, "is_active", 1)
+		frappe.db.set_value("Server", server.name, "status", "Active")
+		frappe.set_user(_atlas_user())
+		self._new_machine(vcpus=4, memory_megabytes=512, disk_gigabytes=4)
+		return server
+
+	def test_full_server_throws_at_default_factor(self) -> None:
+		# Default factor 1: a 4-vCPU server with 4 vCPUs used has no room.
+		self._full_4vcpu_server()
+		with self.assertRaises(frappe.ValidationError):
+			self._new_machine()
+
+	def test_overprovision_factor_opens_room_on_full_server(self) -> None:
+		# A 16× factor lifts the budget to 64 effective vCPUs, so the same
+		# fully-booked server now accepts the VM.
+		frappe.db.set_single_value("Atlas Settings", "overprovision_factor", 16)
+		server = self._full_4vcpu_server()
+		vm = self._new_machine()
+		self.assertEqual(vm.server, server.name, "16× factor leaves room")
 
 	def test_ambiguous_image_throws(self) -> None:
 		server = make_server(

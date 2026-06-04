@@ -13,6 +13,9 @@ def _clean_virtual_machines() -> None:
 class TestServerCapacity(IntegrationTestCase):
 	def setUp(self) -> None:
 		_clean_virtual_machines()
+		# Reset to the no-oversubscription default so other suites can't leak a
+		# factor into these assertions; restore is unnecessary (1 is the default).
+		frappe.db.set_single_value("Atlas Settings", "overprovision_factor", 1)
 		self.provider = make_provider("capacity-test-provider")
 		self.server = make_server(
 			self.provider,
@@ -34,6 +37,17 @@ class TestServerCapacity(IntegrationTestCase):
 		self.assertEqual(result["used_vcpus"], 0)
 		self.assertEqual(result["virtual_machine_count"], 0)
 
+	def test_effective_vcpus_equals_total_at_default_factor(self) -> None:
+		# Default factor is 1 → effective budget is the physical total.
+		result = server_capacity.capacity_for_server(self.server.name)
+		self.assertEqual(result["effective_vcpus"], 2)
+
+	def test_effective_vcpus_scales_with_overprovision_factor(self) -> None:
+		frappe.db.set_single_value("Atlas Settings", "overprovision_factor", 16)
+		result = server_capacity.capacity_for_server(self.server.name)
+		self.assertEqual(result["total_vcpus"], 2, "physical total is unchanged")
+		self.assertEqual(result["effective_vcpus"], 32, "budget is total × factor")
+
 	def test_used_vcpus_sums_non_terminated_vms(self) -> None:
 		make_virtual_machine(self.server, self.image, vcpus=1)
 		make_virtual_machine(self.server, self.image, vcpus=2)
@@ -48,10 +62,20 @@ class TestServerCapacity(IntegrationTestCase):
 		self.server.db_set("size", "s-unknown-slug")
 		result = server_capacity.capacity_for_server(self.server.name)
 		self.assertIsNone(result["total_vcpus"])
+		self.assertIsNone(result["effective_vcpus"], "unknown size has unlimited budget")
 		self.assertEqual(result["size"], "s-unknown-slug")
+
+	def test_unknown_size_unlimited_even_with_factor(self) -> None:
+		# An uncatalogued size stays unlimited regardless of the multiplier —
+		# there is no physical total to scale.
+		frappe.db.set_single_value("Atlas Settings", "overprovision_factor", 16)
+		self.server.db_set("size", "s-unknown-slug")
+		result = server_capacity.capacity_for_server(self.server.name)
+		self.assertIsNone(result["effective_vcpus"])
 
 	def test_missing_size_returns_none_total(self) -> None:
 		self.server.db_set("size", None)
 		result = server_capacity.capacity_for_server(self.server.name)
 		self.assertIsNone(result["total_vcpus"])
+		self.assertIsNone(result["effective_vcpus"])
 		self.assertIsNone(result["size"])

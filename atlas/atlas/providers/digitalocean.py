@@ -45,6 +45,8 @@ DIGITALOCEAN_MONTHLY_COST_USD: dict[str, int] = {
 	"s-2vcpu-4gb-intel": 24,
 	"s-2vcpu-4gb": 24,
 	"s-4vcpu-8gb": 48,
+	"s-8vcpu-16gb-intel": 96,
+	"s-8vcpu-16gb": 96,
 	"c-2": 40,
 	"c-4": 80,
 }

@@ -42,10 +42,12 @@ def default_server(required_vcpus: int) -> str:
 	"""The first Active server with room for `required_vcpus`.
 
 	Capacity is the same vCPU accounting the desk capacity helper uses
-	(atlas/api/server_capacity.py): a server's vCPU total minus the vCPUs of
-	its non-Terminated VMs. Servers whose size has no known vCPU total (e.g.
-	self-managed) are treated as having room — the operator vouches for them by
-	marking them Active. Raises when nothing fits.
+	(atlas/api/server_capacity.py): a server's *effective* vCPU budget (physical
+	total times `Atlas Settings.overprovision_factor`) minus the vCPUs of its
+	non-Terminated VMs. Servers whose size has no known vCPU total — a size we
+	haven't catalogued, or a self-managed host with no slug — report
+	`effective_vcpus is None` and are treated as having unlimited room: the
+	operator vouches for them by marking them Active. Raises when nothing fits.
 
 	Runs with ignore_permissions: this is system placement, not user-facing
 	data access. The Atlas User who triggers it cannot read Server at all (by
@@ -63,8 +65,8 @@ def default_server(required_vcpus: int) -> str:
 		frappe.throw("No capacity available — contact your operator.")
 	for server in servers:
 		capacity = capacity_for_server(server)
-		total = capacity["total_vcpus"]
-		if total is None or capacity["used_vcpus"] + required_vcpus <= total:
+		budget = capacity["effective_vcpus"]
+		if budget is None or capacity["used_vcpus"] + required_vcpus <= budget:
 			return server
 	frappe.throw("No capacity available — contact your operator.")
 

@@ -69,7 +69,10 @@ So:
 Inside a /124 we have 16 addresses. The host uses one (typically `::1`),
 which leaves 15 for VMs. That is enough for the size of droplet we're using
 in this iteration (`s-2vcpu-4gb-intel` realistically fits 5–10 VMs anyway).
-When we move to bigger metal, we will revisit the addressing scheme.
+When we move to bigger metal, we will revisit the addressing scheme. Note
+this 15-VM ceiling is an *address* limit, independent of the vCPU
+*placement* budget (`Atlas Settings.overprovision_factor`, see
+[02-doctypes.md](./02-doctypes.md)) — whichever binds first stops placement.
 
 ### Self-Managed
 
