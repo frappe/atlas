@@ -401,6 +401,8 @@ deletion.
 | `memory_megabytes` | Int                           | Y    |           | 512     | Same resize rule as `vcpus`.                                     |
 | `disk_gigabytes`   | Int                           | Y    |           | 4       | Same resize rule. Resize may only grow it.                       |
 | `ssh_public_key`   | Long Text                     | Y    |           |         | `set_only_once`. Injected into the rootfs.                       |
+| `stop_protection`  | Check                         |      |           | 0       | When set, `stop()` refuses to stop the VM (and therefore `restart()`, which stops first). Off by default. The operator unchecks and saves before stopping — a deliberate two-step guard, the same shape as the immutability throws. Independent of `termination_protection`. |
+| `termination_protection` | Check                   |      |           | 0       | When set, `terminate()` refuses to terminate the VM. Off by default. Unchecked + saved before terminate. Independent of `stop_protection` (terminate does not go through `stop()`). |
 | `clone_source_rootfs` | Data                       |      | Y         |         | Internal, hidden. On-host snapshot rootfs to seed this VM's disk from (clone). Empty for a normal image-backed VM. `set_only_once`, `no_copy`. |
 | `ipv6_address`     | Data                          |      | Y         |         | From the server's /124. Set in `before_insert`.                  |
 | `mac_address`      | Data                          |      | Y         |         | Derived from `name`. Set in `before_validate`.                   |
@@ -448,6 +450,8 @@ vcpus
 | disk_gigabytes
 ── Security ── (collapsible)
 ssh_public_key
+| stop_protection
+  termination_protection
 ── Networking ── (collapsible)
 ipv6_address
 | mac_address
@@ -473,7 +477,8 @@ Tiering is keyed off `status` — see [10-desk-ui.md § Virtual Machine](./10-de
   [`scripts/provision-vm.py`](../scripts/provision-vm.py).
 - **Start** (primary on `Stopped`) — `Stopped` → `Running`.
 - **Stop** (primary on `Running`) — `Running` → `Stopped`. Also offered
-  (secondary) on `Paused`.
+  (secondary) on `Paused`. Refused while `stop_protection` is set (the
+  controller throws; the operator unchecks + saves first).
 - **Resume** (primary on `Paused`) — `Paused` → `Running`.
 - **Restart** (secondary on `Stopped` / `Running`) → `Running`.
 - **Pause** (secondary on `Running`) — `Running` → `Paused` via the API

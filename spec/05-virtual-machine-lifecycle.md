@@ -72,6 +72,12 @@ specific states a transition allows, never "anything but X". `stop()` accepts
 resumes or stops first). The disk operations (snapshot, rebuild, restore,
 resize) require `Stopped`.
 
+Two transitions carry an additional, operator-set **protection** gate
+orthogonal to status (see [Stop / Terminate protection](#stop--terminate-protection)):
+`stop()` is refused while `stop_protection` is set, and `terminate()` while
+`termination_protection` is set. Both default off; both are hard throws, not
+confirmations.
+
 There is no transient `Provisioning` status — the Task row is the "in-flight"
 record; the VM row only moves to `Running` after a successful Provision Task,
 and stays at `Pending` if it fails (re-clickable because the script is
@@ -192,6 +198,30 @@ restart` adds is one fewer network round-trip and we already paid for both.
 Status updates happen after the Task succeeds. We do not poll the server
 to verify; the source of truth is the Task. If the operator wants ground
 truth, they click `Run Task` with `script=systemctl status ...`.
+
+## Stop / Terminate protection
+
+Two optional, operator-set flags on `Virtual Machine` guard the destructive
+transitions, independent of status:
+
+- `stop_protection` gates `stop()` — and therefore `restart()`, which stops
+  first.
+- `termination_protection` gates `terminate()`.
+
+Both **default off** (a new VM is freely stoppable and terminable, as before)
+and both are **hard throws**, not confirmations: a protected `stop()`/
+`terminate()` raises ("Disable stop/termination protection before …") and runs
+no Task. To proceed, the operator unchecks the flag, **saves** the VM, then
+clicks the action — the same deliberate two-step shape as the immutability
+throws. The check is in the controller (`stop()` / `terminate()`), so it holds
+on every path (desk button, SPA, direct API), not just the desk.
+
+The two flags are independent. `terminate()` does not route through `stop()`
+(it `systemctl disable --now`s the unit directly via `terminate-vm.py`), so a
+VM can be termination-protected but freely stoppable, or stop-protected but
+terminable — whichever the operator chose. Protection is purely a Frappe-side
+guard on *initiating* the operation; it changes no on-host state and is not
+consulted by any script.
 
 ## Pause / Resume
 

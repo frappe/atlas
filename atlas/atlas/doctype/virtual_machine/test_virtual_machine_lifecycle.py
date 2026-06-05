@@ -355,3 +355,77 @@ class TestVirtualMachineLifecycle(IntegrationTestCase):
 			vm.terminate()
 		vm.reload()
 		self.assertEqual(vm.status, "Terminated")
+
+	def test_stop_protection_blocks_stop(self) -> None:
+		from atlas.atlas.doctype.virtual_machine import virtual_machine as module
+
+		vm = _vm_with_status("Running")
+		vm.stop_protection = 1
+		vm.save(ignore_permissions=True)
+		with patch.object(module, "run_task") as mocked:
+			with self.assertRaises(frappe.ValidationError) as raised:
+				vm.stop()
+		self.assertIn("stop protection", str(raised.exception))
+		mocked.assert_not_called()  # no Task runs when the gate trips
+		vm.reload()
+		self.assertEqual(vm.status, "Running")
+
+	def test_stop_protection_blocks_restart(self) -> None:
+		# restart() stops first, so stop protection blocks it too.
+		vm = _vm_with_status("Running")
+		vm.stop_protection = 1
+		vm.save(ignore_permissions=True)
+		with self.assertRaises(frappe.ValidationError) as raised:
+			vm.restart()
+		self.assertIn("stop protection", str(raised.exception))
+
+	def test_stop_protection_does_not_block_terminate(self) -> None:
+		# terminate() does not route through stop(); the gates are independent.
+		from atlas.atlas.doctype.virtual_machine import virtual_machine as module
+
+		vm = _vm_with_status("Running")
+		vm.stop_protection = 1
+		vm.save(ignore_permissions=True)
+		with patch.object(module, "run_task", return_value=fake_task(name="task-term-sp")):
+			vm.terminate()
+		vm.reload()
+		self.assertEqual(vm.status, "Terminated")
+
+	def test_termination_protection_blocks_terminate(self) -> None:
+		from atlas.atlas.doctype.virtual_machine import virtual_machine as module
+
+		vm = _vm_with_status("Running")
+		vm.termination_protection = 1
+		vm.save(ignore_permissions=True)
+		with patch.object(module, "run_task") as mocked:
+			with self.assertRaises(frappe.ValidationError) as raised:
+				vm.terminate()
+		self.assertIn("termination protection", str(raised.exception))
+		mocked.assert_not_called()
+		vm.reload()
+		self.assertEqual(vm.status, "Running")
+
+	def test_termination_protection_does_not_block_stop(self) -> None:
+		from atlas.atlas.doctype.virtual_machine import virtual_machine as module
+
+		vm = _vm_with_status("Running")
+		vm.termination_protection = 1
+		vm.save(ignore_permissions=True)
+		with patch.object(module, "run_task", return_value=fake_task(name="task-stop-tp")):
+			vm.stop()
+		vm.reload()
+		self.assertEqual(vm.status, "Stopped")
+
+	def test_terminate_after_clearing_protection_succeeds(self) -> None:
+		# The two-step path: uncheck + save, then terminate.
+		from atlas.atlas.doctype.virtual_machine import virtual_machine as module
+
+		vm = _vm_with_status("Running")
+		vm.termination_protection = 1
+		vm.save(ignore_permissions=True)
+		vm.termination_protection = 0
+		vm.save(ignore_permissions=True)
+		with patch.object(module, "run_task", return_value=fake_task(name="task-term-cleared")):
+			vm.terminate()
+		vm.reload()
+		self.assertEqual(vm.status, "Terminated")

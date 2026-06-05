@@ -25,6 +25,9 @@
   "section_break_security",
   "ssh_public_key",
   "ssh_command",
+  "column_break_security",
+  "stop_protection",
+  "termination_protection",
   "section_break_networking",
   "ipv6_address",
   "column_break_networking",
@@ -162,6 +165,24 @@
    "is_virtual": 1,
    "label": "SSH command",
    "read_only": 1
+  },
+  {
+   "fieldname": "column_break_security",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "0",
+   "description": "When set, stop() refuses to stop this VM. Uncheck and save before stopping.",
+   "fieldname": "stop_protection",
+   "fieldtype": "Check",
+   "label": "Stop Protection"
+  },
+  {
+   "default": "0",
+   "description": "When set, terminate() refuses to terminate this VM. Uncheck and save before terminating.",
+   "fieldname": "termination_protection",
+   "fieldtype": "Check",
+   "label": "Termination Protection"
   },
   {
    "collapsible": 1,

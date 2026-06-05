@@ -150,6 +150,8 @@ class VirtualMachine(Document):
 		# `systemctl stop` is the correct full shutdown from either state.
 		if self.status not in ("Running", "Paused"):
 			frappe.throw(f"Cannot stop from {self.status}")
+		if self.stop_protection:
+			frappe.throw("Disable stop protection before stopping this VM")
 		task = run_task(
 			server=self.server,
 			script="stop-vm.py",
@@ -356,6 +358,8 @@ class VirtualMachine(Document):
 	def terminate(self) -> str:
 		if self.status == "Terminated":
 			frappe.throw("VM is already terminated")
+		if self.termination_protection:
+			frappe.throw("Disable termination protection before terminating this VM")
 		task = run_task(
 			server=self.server,
 			script="terminate-vm.py",
