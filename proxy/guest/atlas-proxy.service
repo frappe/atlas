@@ -1,0 +1,18 @@
+[Unit]
+Description=Atlas Reverse Proxy (nginx + Lua)
+After=network-online.target atlas-network.service
+Wants=network-online.target
+
+[Service]
+Type=forking
+PIDFile=/run/atlas-proxy/nginx.pid
+ExecStartPre=/opt/atlas-proxy/sbin/nginx -t -c /opt/atlas-proxy/conf/nginx.conf
+ExecStart=/opt/atlas-proxy/sbin/nginx -c /opt/atlas-proxy/conf/nginx.conf
+ExecReload=/opt/atlas-proxy/sbin/nginx -s reload
+Restart=on-failure
+# Many upstream connections; the per-VM cgroup caps (vcpus, memory) are the real
+# resource bound — sized on the proxy VM, not pinned here (proxy-design.md §8).
+LimitNOFILE=1048576
+
+[Install]
+WantedBy=multi-user.target

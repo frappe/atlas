@@ -1,0 +1,54 @@
+# Proxy image-level release gate (proxy-design.md §9). Brings up the real proxy
+# stack (built by build.sh, byte-identical to the guest) plus two fake v6
+# upstreams. test_proxy.py drives the admin socket and asserts routing, remap
+# without reload, bulk /sync, restart reload, HTTP->HTTPS, HTTP/2, socket.io,
+# and TLS. Nothing is installed on the host; everything is in containers.
+
+services:
+  proxy:
+    build:
+      context: ..            # the proxy/ root, so build.sh sees conf/ lua/ html/
+      dockerfile: test/Dockerfile
+    networks:
+      sixnet:
+        ipv4_address: 172.30.0.10
+    ports:
+      - "127.0.0.1:8443:443"
+      - "127.0.0.1:8080:80"
+    # The admin socket lives on the container's own tmpfs (/run/atlas-proxy) —
+    # NOT a host bind-mount: nginx chmod()s the listen socket at startup and the
+    # macOS Docker bind-mount FUSE layer rejects that (EINVAL). The pytest driver
+    # reaches it via `docker compose exec` (curl --unix-socket) inside the
+    # container, which is also faithful to production: Atlas talks to the socket
+    # from INSIDE the guest over SSH, never from a host mount.
+    depends_on:
+      - vm-a
+      - vm-b
+
+  vm-a:
+    build:
+      context: .
+      dockerfile: upstream.Dockerfile
+    environment:
+      UPSTREAM_NAME: vm-a
+    networks:
+      sixnet:
+        ipv6_address: fd00:a71a:5::a
+
+  vm-b:
+    build:
+      context: .
+      dockerfile: upstream.Dockerfile
+    environment:
+      UPSTREAM_NAME: vm-b
+    networks:
+      sixnet:
+        ipv6_address: fd00:a71a:5::b
+
+networks:
+  sixnet:
+    enable_ipv6: true
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
+        - subnet: fd00:a71a:5::/64
