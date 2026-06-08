@@ -38,6 +38,15 @@ class Connection:
 	user: str = "root"
 
 
+def _bracket_host(host: str) -> str:
+	"""Wrap an IPv6 literal in brackets for scp's `host:path` syntax; leave IPv4
+	and hostnames untouched. A v6 literal is detected by the presence of a colon
+	(hostnames and v4 never contain one); already-bracketed hosts pass through."""
+	if ":" in host and not host.startswith("["):
+		return f"[{host}]"
+	return host
+
+
 def wait_for_ssh(connection: Connection, timeout_seconds: int = 300, poll_seconds: int = 5) -> None:
 	"""Poll the host until SSH accepts a `true` command, or raise."""
 	_ensure_known_hosts_directory()
@@ -115,13 +124,17 @@ def run_scp(
 	timeout_seconds: int,
 ) -> None:
 	_ensure_known_hosts_directory()
+	# scp's `host:path` form splits on the first colon, so an IPv6 literal host
+	# (e.g. a guest's /128) must be bracketed — `user@[2400:...]:/path` — or scp
+	# mangles the address. ssh doesn't need this (it takes a bare v6 as the host),
+	# so the bracketing lives only here. _bracket_host is a no-op for v4/hostnames.
 	args = [
 		"scp",
 		"-i",
 		key_path,
 		*SSH_OPTIONS,
 		local_path,
-		f"{connection.user}@{connection.host}:{remote_path}",
+		f"{connection.user}@{_bracket_host(connection.host)}:{remote_path}",
 	]
 	result = subprocess.run(
 		args,

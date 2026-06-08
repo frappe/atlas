@@ -133,6 +133,32 @@ class TestRunScp(IntegrationTestCase):
 				run_scp(CONNECTION, "/tmp/key", "/local/a", "/remote/a", timeout_seconds=30)
 		self.assertIn("permission denied", str(raised.exception))
 
+	def test_ipv4_destination_is_unbracketed(self) -> None:
+		captured = {}
+
+		def capture(args, **kwargs):
+			captured["args"] = args
+			return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+		with patch("atlas.atlas._ssh.transport.subprocess.run", side_effect=capture):
+			run_scp(CONNECTION, "/tmp/key", "/local/a", "/remote/a", timeout_seconds=30)
+		self.assertEqual(captured["args"][-1], "root@10.0.0.1:/remote/a")
+
+	def test_ipv6_destination_is_bracketed(self) -> None:
+		# scp's host:path syntax splits on the first colon, so a v6 literal (a
+		# guest /128) must be bracketed or scp mangles the address — the bug that
+		# broke the first real guest-SSH-over-v6 (proxy build_proxy scp).
+		v6 = Connection(host="2400:6180:100:d0:0:1:517f:8002", ssh_private_key=CONNECTION.ssh_private_key)
+		captured = {}
+
+		def capture(args, **kwargs):
+			captured["args"] = args
+			return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+		with patch("atlas.atlas._ssh.transport.subprocess.run", side_effect=capture):
+			run_scp(v6, "/tmp/key", "/local/a", "/remote/a", timeout_seconds=30)
+		self.assertEqual(captured["args"][-1], "root@[2400:6180:100:d0:0:1:517f:8002]:/remote/a")
+
 
 class TestSshKeyFile(IntegrationTestCase):
 	def test_writes_key_with_0600_and_deletes_on_exit(self) -> None:
