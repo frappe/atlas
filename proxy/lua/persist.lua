@@ -21,6 +21,11 @@ local persist = {}
 -- A debounce flag so a burst of writes coalesces into one dump (§6.3).
 local dump_scheduled = false
 
+-- Epoch seconds of the last successful dump, kept in the cross-worker `meta`
+-- shared dict (not a worker-local upvalue) so GET /healthz reports the dump
+-- regardless of which worker handled it. Exposed via persist.last_dump() (§6.2).
+local LAST_DUMP_KEY = "last_dump"
+
 -- Encode one string value exactly as Python's json does for a plain string:
 -- cjson.encode("x") yields the quoted, escaped JSON string. Site addresses are
 -- ASCII v6 literals (or "-"), so there is no Unicode-escaping divergence to
@@ -62,7 +67,14 @@ function persist.dump()
         ngx.log(ngx.ERR, "persist: rename failed: ", rename_err)
         return false
     end
+    ngx.shared.meta:set(LAST_DUMP_KEY, ngx.now())
     return true
+end
+
+-- Epoch seconds of the most recent successful dump (any worker), or nil if none
+-- has happened yet (e.g. a fresh boot that has only loaded). For GET /healthz.
+function persist.last_dump()
+    return ngx.shared.meta:get(LAST_DUMP_KEY)
 end
 
 -- Debounced dump: schedule a single dump 1s out, collapsing a write burst.

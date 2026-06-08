@@ -142,19 +142,31 @@ install -m 0644 "$SRC_DIR/lua/admin.lua"    "$PREFIX/lua/admin.lua"
 install -m 0644 "$SRC_DIR/lua/persist.lua"  "$PREFIX/lua/persist.lua"
 install -m 0644 "$SRC_DIR/html/not_found.html" "$PREFIX/html/not_found.html"
 
-# --- 7. Runtime dirs. The cert dir gets a self-signed placeholder so nginx -t
-# and a first boot succeed before Atlas pushes the real wildcard (§7.3). ---
+# --- 7. Runtime dirs + cert layout. Certs are region-scoped on disk
+# (certs/<region>/{fullchain,privkey}.pem — Atlas pushes them there, §7.3), but
+# nginx's static ssl_certificate can't interpolate the region, so it reads a flat
+# certs/{fullchain,privkey}.pem SYMLINK that points into the active region's dir.
+# build.sh doesn't know the real region yet (build_proxy writes it afterwards and
+# repoints the symlink), so the placeholder lives under a "_placeholder" region
+# and the flat symlinks point at it — enough for nginx -t and a first boot before
+# Atlas pushes the real wildcard. ---
 install -d -m 0750 /run/atlas-proxy
 install -d -m 0755 /var/log/atlas-proxy
 install -d -m 0750 /var/lib/atlas-proxy /var/lib/atlas-proxy/certs /var/lib/atlas-proxy/acme
 : > /var/lib/atlas-proxy/region
-if [ ! -f /var/lib/atlas-proxy/certs/fullchain.pem ]; then
+install -d -m 0750 /var/lib/atlas-proxy/certs/_placeholder
+if [ ! -f /var/lib/atlas-proxy/certs/_placeholder/fullchain.pem ]; then
 	openssl req -x509 -newkey rsa:2048 -nodes -days 3650 \
-		-keyout /var/lib/atlas-proxy/certs/privkey.pem \
-		-out /var/lib/atlas-proxy/certs/fullchain.pem \
+		-keyout /var/lib/atlas-proxy/certs/_placeholder/privkey.pem \
+		-out /var/lib/atlas-proxy/certs/_placeholder/fullchain.pem \
 		-subj "/CN=atlas-proxy-placeholder"
-	chmod 0640 /var/lib/atlas-proxy/certs/privkey.pem
+	chmod 0640 /var/lib/atlas-proxy/certs/_placeholder/privkey.pem
 fi
+# Point the flat path nginx reads at the placeholder region (repointed by
+# build_proxy once the real region is known). -n so we replace the symlink
+# itself, not follow it into the target dir on a re-run.
+ln -sfn _placeholder/fullchain.pem /var/lib/atlas-proxy/certs/fullchain.pem
+ln -sfn _placeholder/privkey.pem   /var/lib/atlas-proxy/certs/privkey.pem
 
 # --- 8. Guest unit + tmpfiles. Enable but do not start (this may be a chroot /
 # container build with no live systemd). ---

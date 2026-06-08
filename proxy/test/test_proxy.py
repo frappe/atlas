@@ -166,6 +166,22 @@ def test_get_map_is_canonical_json():
 	assert live == expected  # byte-identical to the Atlas-side serialization
 
 
+# --- healthz ---------------------------------------------------------------
+
+
+def test_healthz_reports_entries_and_last_dump():
+	# §6.2: GET /healthz = nginx up + dict entry count + last-dump time.
+	admin("POST", "/sync", json.dumps({"acme": VM_A, "widgets": VM_B}))
+	admin("POST", "/dump")  # force a dump so last_dump is populated
+	status, body = admin("GET", "/healthz")
+	assert status == 200
+	health = json.loads(body)
+	assert health["ok"] is True
+	assert health["entries"] == 2
+	# last_dump is epoch seconds of the most recent map.json write.
+	assert isinstance(health["last_dump"], (int, float)) and health["last_dump"] > 0
+
+
 # --- restart reload (persistence) ------------------------------------------
 
 

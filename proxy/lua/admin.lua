@@ -50,10 +50,13 @@ end
 local method = ngx.req.get_method()
 local uri = ngx.var.uri
 
--- GET /healthz — nginx up + dict entry count + last-dump info.
+-- GET /healthz — nginx up + dict entry count + last-dump time (§6.2). last_dump
+-- is epoch seconds of the most recent map.json write by any worker (tracked in
+-- the cross-worker `meta` dict), or null if none has happened yet (a fresh boot
+-- that has only loaded).
 if method == "GET" and uri == "/healthz" then
     local keys = sites:get_keys(0)
-    return send_json(200, { ok = true, entries = #keys })
+    return send_json(200, { ok = true, entries = #keys, last_dump = persist.last_dump() })
 end
 
 -- GET /map — the whole dict as canonical sorted pretty JSON (for the diff).
