@@ -61,7 +61,11 @@ def prepare_lv(origin: LogicalVolume, target: LogicalVolume, disk_gigabytes: int
 	# same shot; a no-op when sizes already match, so guard on it failing-clean.
 	run("sudo", "lvextend", "-r", "-L", f"{disk_gigabytes}G", device, check=False, quiet=True)
 	run("sudo", "e2fsck", "-fy", device, check=False, quiet=True)
-	run("sudo", "tune2fs", "-U", "random", "-L", "atlas-root", device)
+	# Split -U from -L so each gets its own timed trace line: -U random rewrites
+	# every metadata_csum checksum (seeded by the UUID), -L is a 16-byte
+	# superblock write. This isolates which one costs the ~2s seen on clone.
+	run("sudo", "tune2fs", "-U", "random", device)
+	run("sudo", "tune2fs", "-L", "atlas-root", device)
 	return target
 
 
