@@ -760,3 +760,69 @@ seeded rows) is out of scope for Phase 02.
   guest matches the controller (memory: py3.14-except trap — remote droplets may
   run older Python, but here bench.toml pins `python = "3.14"` and bench-cli
   builds its own venv, so this is contained).
+
+## Live host run (2026-06-10) — rename model proven end to end + the one bug it found
+
+> **OUTCOME — the rename model is now HOST-PROVEN from a clean slate.** On a fresh
+> `atlas.tests.local` (empty: no server, no snapshot, no settings) the full flow
+> was stood up and a real signup driven through: bootstrap → **golden image baked
+> from scratch by `build.sh`** (snapshot `m6tuh2lmou`, 434s — the from-scratch bake
+> M-6 left unproven) → proxy VM + reserved IPv4 + real LE-staging wildcard cert →
+> `request_site` → `verify()` → Site cloned from the golden snapshot → boot →
+> `deploy-site.py` → HTTP 200 → Subdomain → proxy reconcile → off-droplet HTTPS on
+> **both v4 (reserved IP) and v6 (proxy /128)**. Closes HANDOFF G1 (the re-bake)
+> and G2 (re-prove the rename model) — both of which the prior session could not
+> land (it fell back to a hand-fixed snapshot under the OLD new-site model).
+
+### L-1 — The rename `default_site` bug (CODE BUG, fixed) — the one host-only defect
+
+- **Symptom:** the deploy ran clean (dir renamed `site.local`→`<fqdn>`, admin pw
+  reset, `setup production` + the v6 listener all applied, `created: true`), but
+  `_serving` and the controller's `wait_for_http` never saw a 200 — every request
+  404'd **`site.local does not exist`** on *both* v4 and v6. So the Site timed out
+  at the readiness gate and flipped `Failed`; `auto_provision` never reached step 5,
+  so **no Subdomain was created and the proxy had no route** (which read as "the
+  proxy isn't routing" — it was, there was just nothing to route to).
+- **Root cause (proven live):** bench-cli's `frappe serve` does **not** resolve the
+  served site from the `Host` / `X-Frappe-Site-Name` header on a snapshot-booted
+  clone — `dns_multitenant` routing never engages for it. Every request falls back
+  to `default_site`, which the bake leaves as `site.local`. After the rename that
+  dir is gone → 404. Confirmed by hitting gunicorn directly on `:8000` with an
+  explicit `X-Frappe-Site-Name: <fqdn>` header: still 404 `site.local`. This is
+  exactly DRIFT D01-5 open item (a) ("no `host_name`/cache residue from
+  `site.local`") — the residue is `default_site`.
+- **Fix (`bench/deploy-site.py`):** new `_set_default_site(<fqdn>)` rewrites
+  `default_site` in `sites/common_site_config.json` to the FQDN, called in `main()`
+  on **every** deploy (idempotent — also runs on a rename-skipping re-run so a
+  half-completed deploy self-heals), plus `_restart_web()` after `setup production`
+  to recycle gunicorn so it re-reads the new `default_site` (a `setup production`
+  reload does not always restart a running web worker — also proven needed live).
+  With the fix, the site serves 200 `pong` on v4 + v6 and the user's own fresh
+  signup went green end to end through the proxy.
+- **No re-bake needed:** `deploy-site.py` is uploaded fresh per deploy (not baked),
+  so the fix applies to every clone of the existing golden snapshot.
+- **Spec/docs:** `spec/14` deploy steps (added step 3 "repoint default_site",
+  corrected the `dns_multitenant` claim, added the web restart) and `spec/08`
+  ("Why rename" now states the `default_site` host fact). `test_deploy_site.py`
+  gained `test_set_default_site_repoints_to_fqdn` (15 green).
+
+### L-2 — Bootstrap gaps the run surfaced (fixed)
+
+- **`ssh_public_key` was unset** → the Site clone path (`_provision_backing_vm`
+  reads `Atlas Settings.ssh_public_key` for `clone_to_new_vm`) would have thrown
+  `MandatoryError` on the first signup. `bootstrap.py` only set it from an explicit
+  `atlas_ssh_public_key` config key (rarely present). **Fix:** `_resolve_fleet_public_key`
+  derives it from `atlas_ssh_private_key_path` (`ssh-keygen -y`) when the config key
+  is absent, wired into `ensure_provider` + `restore_credentials`. A key-path-only
+  bootstrap now stands up signup with no extra config.
+- **`run_with_self_serve` doc** now spells out the three dev steps (bake golden →
+  run bootstrap → stand up a proxy) and the ~2 GB/site RAM budget, so another dev
+  can reproduce the flow.
+
+### L-3 — Host RAM caps concurrent sites (operational, not a bug)
+
+- On the shared dev droplet, running the proxy VM + multiple ~2 GB site VMs + the
+  build VM overcommits RAM; gunicorn in a site VM gets OOM-killed and nginx then
+  answers **502** (the proxy faithfully proxies that 502 — again, the proxy is
+  fine). This is a host-sizing fact, not a code defect: size the host for the
+  number of concurrent sites, or terminate the build VM after baking.

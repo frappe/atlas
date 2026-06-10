@@ -26,25 +26,26 @@ not-yet-built after the proxy shipped).
 
 ---
 
-## Remaining (host-bound, not yet proven on a real droplet)
+## Host-proven (2026-06-10)
 
-The code, unit tests, and spec are all done; what is **not** yet done is the
-single end-to-end host run that proves it on real infra. Per the plans'
-definition-of-done, that run is an operator turn (it is billable). Carried open
-items live in [`DRIFT.md`](./plans/self-serve/DRIFT.md):
+The end-to-end host run **landed** and the open D01/D03/D05 items are closed —
+see [`DRIFT.md` → "Live host run (2026-06-10)"](./plans/self-serve/DRIFT.md):
 
-- **The golden bake** (`bench/build.sh`) has never run on a real droplet — the
-  apt/clone/uv/node bake, `bench init` on Python 3.14 in the guest, and the 12 GB
-  disk sizing are host facts (D01 open, D05 open).
-- **`bench setup production` binding `[::]:80`** — the proxy's south hop is
-  v6-only; if bench-cli's nginx binds v4-only the deploy must add an explicit
-  `listen [::]:80` (D03 open).
-- **`is_setup_complete` persisting** via `bench frappe … execute` (D03 open).
-- **The full `self_serve_site` e2e** — imports clean, all reused seams resolve,
-  every layer's unit suite is green, but the host facts (golden clone serves,
-  worker-driven `Running`, v4+v6 inbound) are proven only by the real run
-  (D05 open). Run it with:
-  `bench --site atlas.tests.local execute atlas.tests.e2e.use_cases.self_serve_site.run_smoke`
-  (worker must be up; grep the log for FAIL).
+- **The golden bake** (`bench/build.sh`) ran from scratch on a real droplet
+  (snapshot `m6tuh2lmou`, ~7 min — apt/clone/uv/node + the baked `site.local`).
+- **`bench setup production` + the `[::]:80` listener** serve the site on v6; the
+  deploy's `_enable_ipv6_listeners` is confirmed needed and works.
+- **The full signup flow** ran green: `request_site` → `verify()` → cloned golden
+  site → `deploy-site.py` → HTTP 200 → Subdomain → proxy reconcile → off-droplet
+  HTTPS on **v4 (reserved IP) and v6 (proxy /128)**.
+- **The one host-only bug** the run found + fixed: the deploy must repoint
+  `default_site` to the FQDN — bench-cli's `frappe serve` resolves the served site
+  by `default_site`, not the `Host` header, on a snapshot-booted clone (DRIFT L-1).
 
-Trim or delete this file once that host run lands and D01/D03/D05 close.
+Reproduce: bake the golden image once
+(`atlas.tests.e2e.use_cases.bench_image.run_smoke`), run
+`atlas.bootstrap.run_with_self_serve`, stand up a proxy VM, then `/signup`. The
+worker must be up; size the host for ~2 GB per concurrent site (DRIFT L-3).
+
+This file can be deleted now that the work is shipped + host-proven; kept only as
+a pointer for in-flight readers.

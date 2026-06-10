@@ -30,11 +30,11 @@ signup form ─▶ email verify ─▶ Site row insert ─▶ VM provision (gold
 
 | # | Plan | Track | Gates on | Provable once | Status |
 | - | ---- | ----- | -------- | ------------- | ------ |
-| 01 | [Golden bench image](./01-golden-image.md) | T-IMG | nothing | a VM boots from it | built (bake = host fact, plan 05) |
+| 01 | [Golden bench image](./01-golden-image.md) | T-IMG | nothing | a VM boots from it | **built + host-proven (from-scratch bake, 2026-06-10)** |
 | 02 | [Site DocType + routing API](./02-site-doctype.md) | T1 | nothing (contracts frozen) | unit, milliseconds | **built + unit-green** |
-| 03 | [deploy-site.py + readiness gates](./03-deploy-site-script.md) | T2 | 01 (needs a booted golden VM) | against any golden VM | **built + unit-green** |
+| 03 | [deploy-site.py + readiness gates](./03-deploy-site-script.md) | T2 | 01 (needs a booted golden VM) | against any golden VM | **built + unit-green + host-proven (default_site fix, DRIFT L-1)** |
 | 04 | [Signup + email verification](./04-signup-verification.md) | T3 | 02 (needs Site doctype) | unit + once 02 lands | **built + unit-green (SPA Sites screen deferred)** |
-| 05 | [signup→live-site e2e proof](./05-e2e-proof.md) | Phase 7 | 01,02,03,04 + proxy/TLS | host, end-to-end | **built + import/preflight-green (host run = operator turn)** |
+| 05 | [signup→live-site e2e proof](./05-e2e-proof.md) | Phase 7 | 01,02,03,04 + proxy/TLS | host, end-to-end | **built + HOST-PROVEN end to end (signup→live site, v4+v6, 2026-06-10)** |
 | 06 | [Spec & docs surfaces](./06-spec-and-docs.md) | cross-cutting | the others | on landing each | **done — audited + roadmap closed (v0.7/0.8/0.9)** |
 | 07 | [Fast deploy (sub-5s, no pool)](./07-fast-deploy.md) | perf | 01–06 + HANDOFF G1/G2 | unit now; host on re-bake | **planned — gated on the in-flight re-bake** |
 

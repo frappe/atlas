@@ -267,12 +267,22 @@ the baked `site.local` has a throwaway admin password, which `deploy-site.py`
 baked one never reaches a user.
 
 **Why rename, not `bench new-site`.** In bench-cli a site's identity *is its
-directory name* under `sites/` — nginx's `server_name` is the dir name, Frappe
-resolves the `Host` header to `sites/<host>/`, and the db name lives in that
-dir's `site_config.json` (so it travels with the move; no DB rename). So the
-per-site routing identity (Contract A) is satisfied by `mv sites/site.local
-sites/<fqdn>` + an nginx regen — a sub-second move instead of the multi-minute
-schema-create + frappe-install `bench new-site` pays, which is baked once here.
+directory name* under `sites/` — nginx's `server_name` is the dir name, and the
+db name lives in that dir's `site_config.json` (so it travels with the move; no
+DB rename). So the per-site routing identity (Contract A) is satisfied by `mv
+sites/site.local sites/<fqdn>` + an nginx regen — a sub-second move instead of the
+multi-minute schema-create + frappe-install `bench new-site` pays, which is baked
+once here.
+
+One host fact the rename must honor (proven on a real droplet): bench-cli's
+`frappe serve` does **not** resolve the served site from the `Host` /
+`X-Frappe-Site-Name` header on a snapshot-booted clone — `dns_multitenant` routing
+never engages, so every request falls back to `default_site`. The bake leaves
+`default_site = site.local`; after the rename that dir is gone, so the deploy must
+also repoint `default_site` to the new FQDN (and restart the web worker so
+gunicorn re-reads it) or the site 404s *"site.local does not exist"*. A site VM is
+single-tenant, so `default_site = <fqdn>` is the correct model — see
+[14-self-serve.md](./14-self-serve.md) deploy step 3.
 
 Versions are pinned (bench-cli commit in `build.sh`, Frappe branch in
 `bench.toml`); bumping any is a deliberate update rolled as a new golden

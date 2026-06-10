@@ -1,5 +1,15 @@
 # Self-serve — session handoff (2026-06-10)
 
+> **RESOLVED 2026-06-10 (later run).** G1 + G2 below are **done** — the rename
+> model is host-proven end to end from a clean slate: the golden image was baked
+> from scratch by `build.sh` (snapshot `m6tuh2lmou`), and a real signup → verify →
+> cloned golden site → deploy → live HTTPS through the proxy on v4 + v6 went green.
+> The run surfaced and fixed the one remaining host-only bug — the deploy must
+> repoint `default_site` to the FQDN (bench-cli's `frappe serve` ignores the Host
+> header on a clone; it resolves by `default_site`). See **DRIFT.md → "Live host
+> run (2026-06-10)" L-1..L-3** for the record. The items below are kept for context;
+> the forward plan they describe has been consumed.
+
 State after a long manual-verification + bug-fixing session. The self-serve flow
 **was proven working end-to-end** (a fresh signup → live site, v4+v6) under the
 *old* new-site model; mid-session the code pivoted to the **rename model**, which
