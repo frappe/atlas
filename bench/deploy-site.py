@@ -165,6 +165,27 @@ def _rename_site(inputs: DeploySiteInputs) -> None:
 	_reset_admin_password(inputs)
 
 
+def _set_default_site(site_name: str) -> None:
+	"""Repoint `sites/common_site_config.json` `default_site` from the baked
+	`site.local` to the per-VM FQDN.
+
+	This is load-bearing on the rename model. bench-cli's `frappe serve` does NOT
+	resolve the site from the `Host` / `X-Frappe-Site-Name` header here (the
+	`dns_multitenant` request router never engages for it on a snapshot-booted
+	clone) — every request falls back to `default_site`. The bake leaves
+	`default_site = site.local`; after the rename that directory is gone, so every
+	request 404s "site.local does not exist" (proven on a real host). A site VM is
+	single-tenant — one site per VM — so pointing `default_site` at the renamed
+	FQDN is both the fix and the correct model. Rewritten in stdlib JSON (no jq in
+	the guest); a missing key is simply added."""
+	config_path = f"{SITES_DIR}/common_site_config.json"
+	with open(config_path) as handle:
+		config = json.load(handle)
+	config["default_site"] = site_name
+	with open(config_path, "w") as handle:
+		json.dump(config, handle, indent=1)
+
+
 def _reset_admin_password(inputs: DeploySiteInputs) -> None:
 	"""`bench frappe --site <fqdn> set-admin-password <pw>` — replace the baked
 	throwaway Administrator password with the per-VM secret the controller
@@ -175,15 +196,40 @@ def _reset_admin_password(inputs: DeploySiteInputs) -> None:
 
 
 def _setup_production() -> None:
-	"""Bring the bench up production-style so its OWN nginx serves every site by
-	Host header on :80. `bench setup production` enables dns_multitenant (Host
-	routing — the vm-inbound-ipv6-only shape), generates + installs the nginx +
-	supervisor config, and reloads them. The bench's nginx is the in-guest front
-	door; TLS still terminates at the EDGE proxy (plan 03 open Q — no in-guest
-	certbot), which routes the south hop to this :80. Whole-bench, not per-site,
-	so it is safe + idempotent to re-run after each new-site."""
+	"""Bring the bench up production-style so its OWN nginx serves the site on :80.
+	`bench setup production` generates + installs the nginx + supervisor config and
+	reloads them. The bench's nginx is the in-guest front door; TLS still terminates
+	at the EDGE proxy (plan 03 open Q — no in-guest certbot), which routes the south
+	hop to this :80. Whole-bench, not per-site, so it is safe + idempotent to re-run.
+
+	Note: bench-cli sets `dns_multitenant`, but on a snapshot-booted clone its
+	`frappe serve` does NOT actually resolve the site from the `Host` header — every
+	request falls back to `default_site` (proven on a real host). So `_set_default_site`
+	(run before this, in `main`) is what makes the renamed site serve, not Host
+	routing; this just brings nginx + supervisor up and `_restart_web` recycles
+	gunicorn so it reads the new `default_site`."""
 	_bench("setup", "production")
 	_enable_ipv6_listeners()
+	_restart_web()
+
+
+def _restart_web() -> None:
+	"""Restart the bench's supervisor-managed web process so gunicorn reloads
+	`common_site_config.json`.
+
+	`_set_default_site` rewrote `default_site` to the FQDN, but the gunicorn
+	workers baked into the snapshot started at boot against the old `site.local`
+	and cache the resolved default site in-process — `bench setup production`'s
+	supervisor reload does not always recycle an already-running web worker. An
+	explicit restart guarantees the new `default_site` takes effect (proven needed
+	on a real host). Best-effort: a missing supervisor program name must not fail
+	the deploy, so tolerate a non-zero exit."""
+	subprocess.run(
+		["sudo", "supervisorctl", "restart", f"{BENCH_NAME}:{BENCH_NAME}-web"],
+		env=_env(),
+		text=True,
+		check=False,
+	)
 
 
 def _enable_ipv6_listeners() -> None:
@@ -285,6 +331,10 @@ def main() -> None:
 		_rename_site(inputs)
 		created = True
 
+	# Always (re)point default_site at the FQDN — idempotent, and load-bearing even
+	# on a re-run that skipped the rename (a deploy that renamed but died before
+	# fixing default_site must self-heal on retry). See _set_default_site.
+	_set_default_site(inputs.site_name)
 	_setup_production()
 
 	result = DeploySiteResult(site=inputs.site_name, created=created, serving=_serving(inputs.site_name))

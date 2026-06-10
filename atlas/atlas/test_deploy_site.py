@@ -270,3 +270,27 @@ class TestGuestScriptTypedIO(IntegrationTestCase):
 		self.assertIn("set-admin-password", args)
 		self.assertIn(inputs.site_name, args)
 		self.assertIn(inputs.admin_password, args)
+
+	def test_set_default_site_repoints_to_fqdn(self) -> None:
+		"""The host-only bug fix: bench-cli's `frappe serve` resolves every request to
+		`default_site` (it does NOT honor the Host header on a snapshot-booted clone),
+		so the baked `default_site = site.local` must be repointed to the renamed FQDN
+		or the site 404s "site.local does not exist". `_set_default_site` rewrites the
+		key in common_site_config.json (preserving the rest), and is idempotent."""
+		import json
+		import os
+		import tempfile
+
+		with tempfile.TemporaryDirectory() as tmp:
+			config_path = os.path.join(tmp, "common_site_config.json")
+			with open(config_path, "w") as handle:
+				json.dump({"default_site": "site.local", "dns_multitenant": 1}, handle)
+			with patch.object(self.guest, "SITES_DIR", tmp):
+				self.guest._set_default_site("acme.blr1.frappe.dev")
+				# Idempotent — a second call is a no-op write of the same value.
+				self.guest._set_default_site("acme.blr1.frappe.dev")
+			with open(config_path) as handle:
+				config = json.load(handle)
+		self.assertEqual(config["default_site"], "acme.blr1.frappe.dev")
+		# Other keys are preserved (a targeted rewrite, not a clobber).
+		self.assertEqual(config["dns_multitenant"], 1)
