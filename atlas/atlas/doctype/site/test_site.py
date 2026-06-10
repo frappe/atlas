@@ -287,6 +287,12 @@ class TestSiteOrchestration(IntegrationTestCase):
 		http_args = mocks["http"].call_args.args
 		self.assertEqual(http_args[1], "cloned-vm")
 		mocks["sub"].assert_called_once()
+		# Each phase transition stamped its start time (drives the status page's
+		# per-phase timing). All three real phases were entered, so all three carry
+		# a stamp, in non-decreasing order.
+		stamps = [site.provisioning_started, site.deploying_started, site.running_started]
+		self.assertTrue(all(stamps), f"a phase entry left no timestamp: {stamps}")
+		self.assertEqual(stamps, sorted(stamps))
 
 	def test_deploy_failure_marks_failed_and_raises(self) -> None:
 		site = _new_site("acme")
@@ -302,6 +308,11 @@ class TestSiteOrchestration(IntegrationTestCase):
 		self.assertEqual(site.status, "Failed")
 		# No Subdomain was created on the failed path.
 		self.assertFalse(site.subdomain_doc)
+		# The deploy phase was entered (stamped) but never finished — so the page
+		# shows it as the broken phase with an elapsed-until-failure time, and the
+		# running phase never started (no stamp → no time shown).
+		self.assertTrue(site.deploying_started)
+		self.assertFalse(site.running_started)
 
 	def test_commits_after_clone_so_boot_job_can_run(self) -> None:
 		"""Regression: the clone's boot runs in a SEPARATE after_insert job that

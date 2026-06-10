@@ -15,6 +15,10 @@
   "virtual_machine",
   "column_break_backing",
   "subdomain_doc",
+  "section_break_timing",
+  "provisioning_started",
+  "deploying_started",
+  "running_started",
   "section_break_credentials",
   "admin_password"
  ],
@@ -84,6 +88,32 @@
    "fieldtype": "Link",
    "label": "Routing Entry",
    "options": "Subdomain",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_break_timing",
+   "fieldtype": "Section Break",
+   "label": "Timing"
+  },
+  {
+   "description": "When the controller entered the Provisioning phase (the clone + boot work began). Stamped by _set_status on the transition; the page derives the Preparing/Booting duration from the gap to the next phase. The Pending phase's start is the row's creation.",
+   "fieldname": "provisioning_started",
+   "fieldtype": "Datetime",
+   "label": "Provisioning Started",
+   "read_only": 1
+  },
+  {
+   "description": "When the controller entered the Deploying phase (the VM booted; deploy-site began). The Installing/Waiting duration is the gap from here to the Running entry, or to now while still deploying.",
+   "fieldname": "deploying_started",
+   "fieldtype": "Datetime",
+   "label": "Deploying Started",
+   "read_only": 1
+  },
+  {
+   "description": "When the controller marked the site Running (HTTP 200 observed; the route was created). End of the timed work. The Putting-online/Live duration is the gap from the Deploying entry to here.",
+   "fieldname": "running_started",
+   "fieldtype": "Datetime",
+   "label": "Running Started",
    "read_only": 1
   },
   {

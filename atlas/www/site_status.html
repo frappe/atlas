@@ -1,10 +1,12 @@
 {% extends "templates/web.html" %}
 
 {# /site-status — the live provisioning view a verified user lands on after
-   clicking the email link (see verify.py). Shows the six provisioning steps as
-   a checklist, updated live over realtime (event "site_provisioning", pushed by
-   Site.auto_provision) with a slow polling fallback. On Running it reveals the
-   live URL + the one-time Administrator password. See atlas/www/site_status.py. #}
+   clicking the email link (see verify.py). Shows the three timed provisioning
+   phases (the six steps merged onto the boundaries the controller clocks) as a
+   checklist, each with the time it took / is taking, updated live over realtime
+   (event "site_provisioning", pushed by Site.auto_provision) with a slow polling
+   fallback. On Running it reveals the live URL + the one-time Administrator
+   password. See atlas/www/site_status.py. #}
 
 {% block title %}Creating your site{% endblock %}
 
@@ -79,11 +81,71 @@ frappe.ready(() => {
   // initial paint and the live updates never disagree.
   const initial = {{ initial | safe }};
 
-  // step.state → the bullet glyph + css class. "running" gets a spinner.
+  // phase.state → the bullet glyph + css class. "running" gets a spinner.
   const GLYPH = { done: "✓", running: "", pending: "○", failed: "✕" };
 
+  // Seconds → a compact human duration: "6s", "1m 18s", "—" while unknown.
+  function formatDuration(seconds) {
+    if (seconds === null || seconds === undefined) return "";
+    const s = Math.round(seconds);
+    if (s < 60) return s + "s";
+    const m = Math.floor(s / 60);
+    const rem = s % 60;
+    return rem ? m + "m " + rem + "s" : m + "m";
+  }
+
+  // We render the THREE timed phases (payload.phases), not the six raw steps:
+  // each phase merges the steps that run together and carries the one duration
+  // the controller actually clocks. The member step labels show as a sub-line so
+  // the user still sees the fine-grained work. Fall back to a flat step list for
+  // an older payload shape that predates phases.
   function render(payload) {
-    if (!payload || !payload.steps) return;
+    if (!payload) return;
+    if (!payload.phases) return renderSteps(payload);
+    stepsEl.innerHTML = "";
+    for (const phase of payload.phases) {
+      const li = document.createElement("li");
+      li.className = "atlas-step atlas-step-" + phase.state;
+
+      const mark = document.createElement("span");
+      mark.className = "atlas-step-mark";
+      if (phase.state === "running") {
+        mark.classList.add("atlas-spinner");
+      } else {
+        mark.textContent = GLYPH[phase.state] || "○";
+      }
+
+      const body = document.createElement("span");
+      body.className = "atlas-step-body";
+      const label = document.createElement("span");
+      label.className = "atlas-step-label";
+      label.textContent = phase.label;
+      body.appendChild(label);
+
+      // The timing badge: a finished phase shows its measured duration, the
+      // in-flight one counts up (running, so styled live), and a not-yet-started
+      // phase shows nothing (null seconds). Pending phases stay quiet.
+      const time = formatDuration(phase.seconds);
+      if (time) {
+        const badge = document.createElement("span");
+        badge.className = "atlas-step-time";
+        if (phase.state === "running" || phase.state === "failed") {
+          badge.classList.add("atlas-step-time-live");
+        }
+        badge.textContent = time;
+        body.appendChild(badge);
+      }
+
+      li.appendChild(mark);
+      li.appendChild(body);
+      stepsEl.appendChild(li);
+    }
+    renderTerminal(payload);
+  }
+
+  // Legacy flat-step renderer — only reached if a payload lacks `phases`.
+  function renderSteps(payload) {
+    if (!payload.steps) return;
     stepsEl.innerHTML = "";
     for (const step of payload.steps) {
       const li = document.createElement("li");
@@ -102,7 +164,11 @@ frappe.ready(() => {
       li.appendChild(label);
       stepsEl.appendChild(li);
     }
+    renderTerminal(payload);
+  }
 
+  // The Running / Failed banner swap, shared by both renderers.
+  function renderTerminal(payload) {
     if (payload.status === "Running") {
       heading.textContent = "Your site is ready";
       sub.hidden = true;
@@ -181,6 +247,17 @@ frappe.ready(() => {
   display: inline-flex; align-items: center; justify-content: center;
   border-radius: 999px; font-size: 0.85rem; line-height: 1;
 }
+.atlas-step-body {
+  flex: 1 1 auto; display: flex; align-items: baseline;
+  justify-content: space-between; gap: 0.75rem; min-width: 0;
+}
+.atlas-step-time {
+  flex: 0 0 auto; font-size: 0.8rem; font-variant-numeric: tabular-nums;
+  color: var(--text-light, #9ca3af);
+}
+/* The in-flight (or failed) phase's timer is "live" — it counts up on each
+   realtime tick, so give it a touch more presence than a settled duration. */
+.atlas-step-time-live { color: var(--text-muted, #6b7280); font-weight: 500; }
 .atlas-step-pending .atlas-step-mark { color: var(--text-light, #9ca3af); }
 .atlas-step-pending .atlas-step-label { color: var(--text-light, #9ca3af); }
 .atlas-step-done .atlas-step-mark {

@@ -220,6 +220,16 @@ def auto_provision(site_name: str) -> None:
 		raise
 
 
+# The Site field that records when each real phase began. Drives the status
+# page's per-phase timing (site_status.steps_for). Pending's start is the row's
+# creation; the terminal Running/Failed states reuse the last stamp.
+_TIMING_FIELD = {
+	"Provisioning": "provisioning_started",
+	"Deploying": "deploying_started",
+	"Running": "running_started",
+}
+
+
 def _set_status(site, status: str) -> None:
 	"""Persist a Site status transition and push it to the owner's status page.
 
@@ -238,6 +248,14 @@ def _set_status(site, status: str) -> None:
 	the realtime payload never races ahead of the committed row."""
 	from atlas.atlas.site_status import progress_payload
 
+	# Stamp the entry time of this phase so the status page can show how long each
+	# phase took (the gap to the next phase's stamp). Only the three real phases
+	# carry a field — the six checklist steps merge into these; Pending's start is
+	# the row's creation, and Failed keeps the last good stamp (the in-flight phase
+	# shows elapsed-until-failure). _TIMING_FIELD maps a status to its field.
+	stamp_field = _TIMING_FIELD.get(status)
+	if stamp_field:
+		site.db_set(stamp_field, frappe.utils.now_datetime())
 	site.db_set("status", status)
 	frappe.db.commit()
 	frappe.publish_realtime(
