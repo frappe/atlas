@@ -132,6 +132,10 @@ def _check_provision_happy_path(server_name: str, image: str, public_key: str) -
 			"vcpus": 1,
 			"memory_megabytes": 512,
 			"disk_gigabytes": 4,
+			# A writable data disk, formatted ext4 and mounted at /home (the
+			# default mount point). phase-data-disk.sh proves it below.
+			"data_disk_gigabytes": 2,
+			"data_disk_format_and_mount": 1,
 			"ssh_public_key": public_key,
 		}
 	).insert(ignore_permissions=True)
@@ -188,6 +192,19 @@ def _check_provision_happy_path(server_name: str, image: str, public_key: str) -
 		VIRTUAL_MACHINE_NAME=vm.name,
 		VIRTUAL_MACHINE_IPV6=vm.ipv6_address,
 		SSH_PRIVATE_KEY=ephemeral_private_key(),
+	)
+
+	# Data-disk contract: the VM was provisioned with a 2 GB data disk
+	# (data_disk_format_and_mount on). Prove the guest's /home is a mounted,
+	# writable ext4 volume on the second drive (/dev/vdb) — the second LV + mkfs +
+	# fstab LABEL=atlas-data line all landed and came up at boot.
+	assert_probe(
+		server_name,
+		"phase-data-disk.sh",
+		timeout_seconds=180,
+		VIRTUAL_MACHINE_IPV6=vm.ipv6_address,
+		SSH_PRIVATE_KEY=ephemeral_private_key(),
+		MOUNT_AT="/home",
 	)
 
 	# Internet egress both families (spec/06-networking.md): IPv4 via NAT44

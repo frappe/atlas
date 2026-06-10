@@ -14,12 +14,16 @@ Two design rules keep this set small and safe:
   boot), the RAM-sized memory file, and the duplicate-identity hazard the
   [Firecracker docs](../../references/firecracker/docs/snapshotting/snapshot-support.md)
   call insecure. The boot path and the systemd unit are unchanged.
-- **Disk operations require the VM to be Stopped.** A thin snapshot of (or a
-  replacement under) an ext4 the guest still has mounted captures a torn,
-  mid-write filesystem; a cleanly unmounted disk LV is consistent. Firecracker also can't change vCPU/RAM on a running VM
-  (`/machine-config` is pre-boot only), so resize is stop-required too. The
-  desk surfaces these actions only while Stopped; the controllers enforce
-  it.
+- **Disk operations default to Stopped.** A CoW snapshot of (or a replacement
+  under) an ext4 the guest still has mounted is *crash-consistent* — atomic at
+  the block layer, but missing unflushed guest-cache writes and dependent on
+  journal replay; a cleanly unmounted disk LV is flush-clean and, with two disks,
+  mutually consistent. Restore/rebuild/resize stay Stopped-only (resize also
+  because Firecracker reads `/machine-config` pre-boot only). **Snapshot is the
+  one exception:** `snapshot(live=True)` takes a crash-consistent snapshot of a
+  Running/Paused VM without stopping (see [Snapshot](#snapshot)). The desk
+  surfaces the Stopped-only actions while Stopped and **Snapshot (live)** while
+  Running/Paused; the controllers enforce the rules.
 
 The only operation that touches Firecracker's API socket is **pause/resume**
 (`PATCH /vm {Paused|Resumed}`) — a runtime vCPU freeze that keeps RAM
@@ -161,9 +165,11 @@ asserts on every run:
 - `/etc/machine-id` is unique per VM (derived from the UUID; the leaked
   CI value `4833ad8775a24dcc9d4b159af4e84d08` is gone).
 - `/etc/ssh/ssh_host_*` keypairs are unique per VM — generated on the
-  host at provision time with `ssh-keygen` and written into the mounted
-  rootfs. The CI build-container comment `root@bf0feaa40806` does not
-  appear.
+  host at **provision** time with `ssh-keygen` (replacing the base image's
+  shared baked keys, so the CI build-container comment `root@bf0feaa40806`
+  does not appear). They are the VM's **SSH identity** and are **preserved**
+  across rebuild/restore (changing them would break clients' `known_hosts`);
+  the operator rotates them deliberately via [Regenerate host keys](#regenerate-host-keys).
 - The only global IPv4 on `eth0` is the Atlas NAT44 egress address
   (`100.64.x.x/30`, see [06-networking.md](./06-networking.md)). The
   `fcnet.service` that derived a phantom `91.83.x.x/30` from the MAC is
@@ -182,6 +188,34 @@ between a stock Ubuntu cloud image and a VM that looks like the
 operator's own. When the upstream image changes, every bullet either
 stays a no-op (good) or needs a new strip (a regression to fix in
 `sync-image.py`).
+
+## Data disk
+
+A VM may carry an optional **second writable disk** — a first-class **peer of
+the root disk** that rides through every disk operation with the same
+mechanisms. It is set by three fields ([02-doctypes.md](./02-doctypes.md)):
+`data_disk_gigabytes` (0 = none), `data_disk_format_and_mount` (default on),
+and `data_disk_mount_point` (default `/home`).
+
+- **Backing.** A blank thin volume `atlas-data-<uuid>` in the same pool (no
+  origin — its bytes are private), exposed into the jail as a second
+  block-special node `data.ext4` and attached as a non-root Firecracker drive,
+  so the guest sees it as `/dev/vda`'s peer `/dev/vdb`.
+- **Format + mount.** When `data_disk_format_and_mount` is on, `provision-vm.py`
+  lays down `ext4` labelled `atlas-data` (once, on first creation — never
+  reformatted, so data is never wiped) and `inject_identity` appends a
+  `LABEL=atlas-data  <mount_point>  ext4  defaults,nofail  0 2` line to the
+  guest's `/etc/fstab` (the same `LABEL=` idiom the root fs uses, so it survives
+  the per-VM UUID reroll). Off → a raw, unformatted, unmounted `/dev/vdb`.
+- **Parity across operations.** Snapshot captures it too; Restore and Clone
+  recreate it from the snapshot; Resize grows it; Terminate removes it; the
+  host-reboot disk hook re-activates it. The exception is Rebuild-from-image,
+  which has no image source for data and so **preserves** the live data disk.
+  Each operation's section below notes its data-disk behavior.
+
+The data disk's whole lifecycle lives in the same scripts as the root disk
+(`prepare_data_lv` in [`scripts/lib/atlas/rootfs.py`](../scripts/lib/atlas/rootfs.py),
+`ThinPool.data_disk` / `data_snapshot` in [`lvm.py`](../scripts/lib/atlas/lvm.py)).
 
 ## Start / Stop / Restart
 
@@ -243,7 +277,7 @@ reaching it — `curl --unix-socket` talks to it from the host as before.
 
 ## Snapshot
 
-`Virtual Machine.snapshot(title=None)` on a **Stopped** VM. `title` is optional:
+`Virtual Machine.snapshot(title=None, live=False)`. `title` is optional:
 omitted (or blank), it defaults to `<vm title> — <YYYY-MM-DD HH:mm>`, so a
 caller — the SPA's one-click snapshot, or a direct API call — need not invent a
 name. The dashboard pre-fills the same default but lets the user edit it. Runs
@@ -264,10 +298,39 @@ name. The dashboard pre-fills the same default but lets the user edit it. Runs
    `task_results.parse_result()` — the typed successor to the old `SIZE_BYTES=`
    stdout scrape.
 
+When the VM has a **data disk**, the same Task also `lvcreate -s`'s a second CoW
+snapshot `atlas-datasnap-<snapshot-uuid>` (same snapshot UUID) and emits its
+`data_size_bytes`. One snapshot row therefore describes **both** disks — it
+records `data_rootfs_path`, `data_size_bytes`, and the data disk's
+size + mount config alongside the root fields.
+
+### Consistency: Stopped (default) vs. `live`
+
+`live` selects the consistency the snapshot is taken under; the host op and the
+row are otherwise identical.
+
+- **`live=False` (default) — Stopped-only, flush-clean.** Requires a `Stopped`
+  VM. The guest has cleanly unmounted both filesystems (caches flushed, journals
+  committed), so the LV bytes are a quiesced, consistent image, and with two
+  disks the root/data pair is mutually consistent. The safe default.
+- **`live=True` — snapshot a Running/Paused VM, crash-consistent.** Skips the
+  stop. The LVM thin CoW snapshot is atomic *per volume*, but the captured image
+  is **crash-consistent** — the bytes as of that instant, equivalent to a power
+  cut: writes still in the guest's page cache (not yet on the virtio-blk device)
+  are absent, and ext4 replays its journal on the next mount. The host cannot
+  quiesce the guest first (there is no in-guest agent / `fsfreeze` path), and the
+  root and data LVs are snapshotted microseconds apart, so cross-disk consistency
+  is not guaranteed. This is the guarantee a cloud "crash-consistent volume
+  snapshot" gives — appropriate for journaling filesystems and apps with their
+  own crash recovery; stop first when you need a guaranteed-clean image. The desk
+  exposes it as **Snapshot (live)** on a Running/Paused VM (a normal **Snapshot**
+  remains a Stopped-only action).
+
 The controller inserts a `Virtual Machine Snapshot` row (`Pending`), runs the
 Task, then records `rootfs_path` (the snapshot's `/dev/atlas/atlas-snap-<uuid>`
-device path), `size_bytes`, and flips it to `Available`. One snapshot = one row
-= one thin LV. Deleting the row runs
+device path), `size_bytes` (plus the data-disk fields above), and flips it to
+`Available`. One snapshot = one row = one (or two) thin LV(s). Deleting the row
+runs
 [`delete-snapshot-vm.py`](../scripts/delete-snapshot-vm.py) via `on_trash`,
 which `lvremove`s the snapshot LV — always, even for a Terminated VM, because
 the snapshot LV lives in the pool (outside the VM directory) and is not swept by
@@ -290,13 +353,47 @@ One controller method, `Virtual Machine.rebuild(source_type, source)`, on a
 Both run [`rebuild-vm.py`](../scripts/rebuild-vm.py): `lvremove` the old disk
 LV, recreate it as a fresh CoW snapshot of the source LV (a snapshot LV for
 Restore, the base image LV for Rebuild), grow it to the VM's disk size, then
-re-inject this VM's identity (SSH key, network env, hostname, swap, fresh host
-keys, machine-id) via the shared `atlas.rootfs` module (the Python successor to
-the `prepare-rootfs.sh` library), and re-`mknod` the
-jail's `rootfs.ext4` block node (the new LV's dev_t can differ). Because identity
-is re-derived from the VM's own UUID, a restored/rebuilt VM is indistinguishable
-from a freshly provisioned one of the same name. The VM stays `Stopped`; the
-operator starts it when ready.
+re-inject this VM's identity (SSH authorized key, network env, hostname, swap,
+machine-id) via the shared `atlas.rootfs` module (the Python successor to the
+`prepare-rootfs.sh` library), and re-`mknod` the jail's `rootfs.ext4` block node
+(the new LV's dev_t can differ). The VM stays `Stopped`; the operator starts it
+when ready.
+
+**SSH host keys are PRESERVED** (`inject_identity(regenerate_host_keys=False)`).
+They are the VM's SSH identity; a restore carries the VM's own keys in the
+snapshot, and a rebuild keeps whatever the new disk has. Either way the VM's
+host key does not change, so a rollback never trips clients' `known_hosts` with
+a "host identity changed" refusal. (This is the bug-fix behavior — previously
+every rebuild/restore regenerated random host keys and locked clients out.) To
+*deliberately* change them, use [Regenerate host keys](#regenerate-host-keys);
+note a **rebuild-from-image** comes up with the base image's *shared* baked host
+keys until rotated.
+
+**Data disk.** Restore recreates it too: `lvremove` the live data disk and
+re-snapshot it from the snapshot's `atlas-datasnap-<id>` LV (a fresh host-side
+UUID, the `atlas-data` label and contents preserved), then re-`mknod` the
+`data.ext4` jail node. Rebuild-from-image has no data source, so it **leaves the
+live data disk untouched** — wiping a user's `/home` on an OS rebuild would be a
+footgun — and only re-injects its fstab line into the fresh rootfs. A restore of
+a snapshot that captured no data disk likewise leaves the current one alone.
+
+## Regenerate host keys
+
+`Virtual Machine.regenerate_host_keys()` on a **Stopped** VM rotates the guest's
+SSH host keys — the explicit, opt-in counterpart to the preserve-by-default rule
+above. Runs [`regenerate-host-keys-vm.py`](../scripts/regenerate-host-keys-vm.py):
+activate + mount the root LV on the host, replace `/etc/ssh/ssh_host_*` with
+fresh per-VM keys (the same `ssh-keygen` the provision path uses), unmount. The
+VM stays `Stopped`; the next Start presents the new keys.
+
+Use it when you actually want a new SSH identity — most commonly after a
+**rebuild-from-image** (which comes up with the image's shared baked keys) or to
+rotate a VM's keys on purpose. It necessarily invalidates clients' cached
+`known_hosts` entry (they must `ssh-keygen -R <address>` and re-accept) — that is
+the intended effect, which is exactly why it is a deliberate action and not a
+side effect of rebuild/restore. Stopped-only because the host mounts the rootfs
+to rewrite the keys. The desk surfaces it as a **Regenerate host keys** action
+(with a confirm) on a Stopped VM.
 
 ## Clone (create from snapshot)
 
@@ -315,6 +412,13 @@ image must be synced). A snapshot-of-a-snapshot is an independent thin LV — th
 clone never shares writable blocks with its source. Disk defaults to the
 snapshot's size and can only grow.
 
+The **data disk** clones too: the new VM carries the snapshot's data size +
+mount config and an internal `clone_source_data_rootfs` (the snapshot's
+`atlas-datasnap-<id>` path), and `provision-vm.py` seeds its data disk from that
+LV — so the clone's `/home` comes up with the source's data (a fresh host-side
+UUID, no shared writable blocks). A clone of a snapshot with no data disk has
+none.
+
 ## Resize
 
 `Virtual Machine.resize(vcpus, cpu_max_cores, memory_megabytes, disk_gigabytes)`
@@ -327,6 +431,11 @@ size (grows the LV and the ext4 on it in one shot). Disk may only **grow** —
 Unspecified fields keep their current value. The new
 values are persisted on the row through a guarded path (see
 [Why resource fields are frozen outside resize](#why-resource-fields-are-frozen-outside-resize)).
+
+**Data disk.** `resize(data_disk_gigabytes=…)` grows the data disk the same way
+(`lvextend -r`, grow-only). Resize only ever **grows an existing** data disk:
+adding one to a VM that never had one (0→N) would also need a new Firecracker
+drive and fstab line, so the controller rejects it — recreate the VM instead.
 
 **`cpu_max_cores` and the re-provision gap.** `cpu_max_cores` is the cgroup
 `cpu.max` bandwidth cap (distinct from `vcpus`, the guest `vcpu_count`). It is
@@ -358,11 +467,12 @@ which:
    didn't fire.
 3. `rm -rf /var/lib/atlas/virtual-machines/<uuid>` (takes the jail tree,
    including the `rootfs.ext4` block node, with it) and removes the API socket.
-4. `lvremove atlas-vm-<uuid>` — the VM's disk LV. Guarded: the helper refuses
-   to remove the thin pool or any `atlas-image-*` base LV, so a teardown bug
-   can never destroy shared state. The VM's snapshot LVs are **not** removed
-   here (their names aren't derivable from the VM UUID) — they go via the
-   per-snapshot delete path below.
+4. `lvremove atlas-vm-<uuid>` — the VM's disk LV — and `lvremove
+   atlas-data-<uuid>` — its data disk (a no-op when the VM had none). Guarded:
+   the helper refuses to remove the thin pool or any `atlas-image-*` base LV, so
+   a teardown bug can never destroy shared state. The VM's snapshot LVs (root and
+   data) are **not** removed here (their names aren't derivable from the VM UUID)
+   — they go via the per-snapshot delete path below.
 
 Then Python sets `status = Terminated`, **detaches the VM's `Reserved IP`** (if
 any) back to its Server's pool — clearing the VM's `public_ipv4` and leaving the
@@ -433,11 +543,14 @@ canonical artifact. Highlights:
 Because every `firecracker-vm@<uuid>.service` is `WantedBy=multi-user.target`,
 a host reboot brings them all back. `vm-network-up.py` re-creates the network
 namespace, veth pair, in-namespace tap and nft rules from
-`/var/lib/atlas/virtual-machines/<uuid>/network.env`; the unit re-execs the
-per-VM `jailer-launch.sh`, which has the per-VM uid/caps/netns baked in. Both
-artifacts were written at provision time and survive the reboot on disk. No
-Atlas-side intervention needed; the Frappe DB does not have to be consulted on
-host reboot.
+`/var/lib/atlas/virtual-machines/<uuid>/network.env`; `vm-disk-up.py`
+re-activates the VM's disk LVs (the thin snapshots carry LVM's activation-skip
+flag and their dev_t can renumber across a reboot) and refreshes the
+`rootfs.ext4` jail node — and the `data.ext4` node too when the VM has a data
+disk; the unit then re-execs the per-VM `jailer-launch.sh`, which has the per-VM
+uid/caps/netns baked in. All artifacts were written at provision time and
+survive the reboot on disk. No Atlas-side intervention needed; the Frappe DB
+does not have to be consulted on host reboot.
 
 ## Why resource fields are frozen outside resize
 

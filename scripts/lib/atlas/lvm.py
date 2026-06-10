@@ -199,8 +199,20 @@ class ThinPool:
 	def vm_disk(self, uuid: str) -> LogicalVolume:
 		return LogicalVolume(f"atlas-vm-{uuid}", self)
 
+	def data_disk(self, uuid: str) -> LogicalVolume:
+		"""The per-VM writable data disk (the root disk's peer). A blank thin
+		volume — or a CoW snapshot of a data-disk snapshot on clone/restore —
+		exposed as the guest's /dev/vdb."""
+		return LogicalVolume(f"atlas-data-{uuid}", self)
+
 	def snapshot(self, uuid: str) -> LogicalVolume:
 		return LogicalVolume(f"atlas-snap-{uuid}", self)
+
+	def data_snapshot(self, uuid: str) -> LogicalVolume:
+		"""The data-disk half of a Virtual Machine Snapshot (the `atlas-snap-`
+		root snapshot's peer). Named off the SAME snapshot UUID so the pair is
+		recoverable from the snapshot row's two device paths."""
+		return LogicalVolume(f"atlas-datasnap-{uuid}", self)
 
 	def base_image(self, image_name: str) -> LogicalVolume:
 		return LogicalVolume(f"atlas-image-{image_name}", self)
@@ -272,6 +284,30 @@ class ThinPool:
 				quiet=True,
 			)
 		run("sudo", "vgchange", "-ay", "-K", self.volume_group, quiet=True)
+
+	def create_thin(self, lv: LogicalVolume, disk_gigabytes: int) -> LogicalVolume:
+		"""Create `lv` as a blank thin volume of disk_gigabytes (its bytes private
+		to it — `-V`, no origin), then activate it. Idempotent: activate-and-return
+		if it already exists, so a re-provision reuses the same disk. This is how a
+		fresh data disk is born (the `import_base_image` shape minus the dd +
+		read-only flip — a data disk is writable and empty)."""
+		if lv.exists:
+			return lv.activate()
+		run(
+			"sudo",
+			"lvcreate",
+			"--type",
+			"thin",
+			"--thinpool",
+			self.pool_name,
+			"-V",
+			f"{disk_gigabytes}G",
+			"-n",
+			lv.name,
+			self.volume_group,
+			quiet=True,
+		)
+		return lv.activate()
 
 	def import_base_image(self, source_file: str, image_name: str, disk_gigabytes: int) -> LogicalVolume:
 		"""Create the read-only base image LV from a pristine ext4 FILE: a thin

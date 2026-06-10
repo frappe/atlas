@@ -63,6 +63,13 @@ class VirtualMachinePaths:
 		return f"{self.jail_root}/rootfs.ext4"
 
 	@property
+	def data_node(self) -> str:
+		"""The block-special node FC opens as the data disk (the guest's /dev/vdb),
+		jail-relative `data.ext4` — the peer of rootfs_node. Only present when the
+		VM has a data disk."""
+		return f"{self.jail_root}/data.ext4"
+
+	@property
 	def kernel(self) -> str:
 		return f"{self.jail_root}/vmlinux"
 

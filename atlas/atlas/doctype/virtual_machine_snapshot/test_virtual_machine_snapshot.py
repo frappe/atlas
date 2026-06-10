@@ -124,6 +124,53 @@ class TestVirtualMachineSnapshot(IntegrationTestCase):
 			snapshot.clone_to_new_vm(title="x", ssh_public_key="ssh-ed25519 X")
 		self.assertIn("not Available", str(raised.exception))
 
+	def test_clone_carries_data_disk(self) -> None:
+		from atlas.atlas.doctype.virtual_machine import virtual_machine as vm_module
+
+		source = _new_vm(data_disk_gigabytes=2, data_disk_format_and_mount=1, data_disk_mount_point="/home")
+		source.db_set("status", "Stopped")
+		source.reload()
+		with patch.object(
+			vm_module,
+			"run_task",
+			return_value=fake_task(stdout='ATLAS_RESULT={"size_bytes": 1024, "data_size_bytes": 2048}'),
+		):
+			snapshot = frappe.get_doc("Virtual Machine Snapshot", source.snapshot("snap-data"))
+
+		with patch.object(vm_module.frappe, "enqueue"):
+			clone = frappe.get_doc(
+				"Virtual Machine",
+				snapshot.clone_to_new_vm(title="clone-with-data", ssh_public_key="ssh-ed25519 C"),
+			)
+		# The clone inherits the data disk's size + mount config and seeds it from
+		# the snapshot's data half.
+		self.assertEqual(clone.data_disk_gigabytes, 2)
+		self.assertEqual(clone.data_disk_mount_point, "/home")
+		self.assertEqual(clone.clone_source_data_rootfs, snapshot.data_rootfs_path)
+		variables = clone._provision_variables()
+		self.assertEqual(variables["DATA_SNAPSHOT_ROOTFS_PATH"], snapshot.data_rootfs_path)
+		self.assertEqual(variables["DATA_DISK_GB"], "2")
+
+	def test_on_trash_removes_data_snapshot_lv(self) -> None:
+		from atlas.atlas.doctype.virtual_machine import virtual_machine as vm_module
+		from atlas.atlas.doctype.virtual_machine_snapshot import virtual_machine_snapshot as module
+
+		source = _new_vm(data_disk_gigabytes=2)
+		source.db_set("status", "Stopped")
+		source.reload()
+		with patch.object(
+			vm_module,
+			"run_task",
+			return_value=fake_task(stdout='ATLAS_RESULT={"size_bytes": 1, "data_size_bytes": 2}'),
+		):
+			snapshot = frappe.get_doc("Virtual Machine Snapshot", source.snapshot("doomed-data"))
+
+		with patch.object(module, "run_task", return_value=fake_task()) as mocked:
+			frappe.delete_doc("Virtual Machine Snapshot", snapshot.name, ignore_permissions=True)
+		self.assertEqual(
+			mocked.call_args.kwargs["variables"]["DATA_SNAPSHOT_ROOTFS_PATH"], snapshot.data_rootfs_path
+		)
+
 	def test_on_trash_skips_when_no_rootfs_path(self) -> None:
 		from atlas.atlas.doctype.virtual_machine_snapshot import virtual_machine_snapshot as module
 

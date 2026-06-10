@@ -65,6 +65,11 @@ def main() -> None:
 	# NOT removed here.
 	pool.vm_disk(inputs.virtual_machine_name).remove()
 
+	# Remove the data disk LV too (the root disk's peer). Idempotent no-op when the
+	# VM had none. Like the root disk it lives in the pool, outside the VM
+	# directory the rm -rf above cleared, so it must be lvremoved explicitly.
+	pool.data_disk(inputs.virtual_machine_name).remove()
+
 	print(f"Deleted {inputs.virtual_machine_name}.")
 
 

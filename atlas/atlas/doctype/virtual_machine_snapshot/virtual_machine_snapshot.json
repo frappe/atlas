@@ -16,9 +16,14 @@
   "section_break_disk",
   "source_image",
   "disk_gigabytes",
+  "data_disk_gigabytes",
+  "data_disk_mount_point",
+  "data_disk_format_and_mount",
   "column_break_disk",
   "size_bytes",
-  "rootfs_path"
+  "rootfs_path",
+  "data_size_bytes",
+  "data_rootfs_path"
  ],
  "fields": [
   {
@@ -87,6 +92,26 @@
    "read_only": 1
   },
   {
+   "description": "Data disk size captured by this snapshot (0 if the VM had no data disk).",
+   "fieldname": "data_disk_gigabytes",
+   "fieldtype": "Int",
+   "label": "Data Disk (GB)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "data_disk_mount_point",
+   "fieldtype": "Data",
+   "label": "Data Disk Mount Point",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "data_disk_format_and_mount",
+   "fieldtype": "Check",
+   "label": "Format & Mount Data Disk",
+   "read_only": 1
+  },
+  {
    "fieldname": "column_break_disk",
    "fieldtype": "Column Break"
   },
@@ -100,6 +125,19 @@
    "fieldname": "rootfs_path",
    "fieldtype": "Data",
    "label": "Rootfs Path",
+   "read_only": 1
+  },
+  {
+   "fieldname": "data_size_bytes",
+   "fieldtype": "Long Int",
+   "label": "Data Size (bytes)",
+   "read_only": 1
+  },
+  {
+   "description": "On-host device path of the data-disk snapshot LV (empty if the VM had no data disk).",
+   "fieldname": "data_rootfs_path",
+   "fieldtype": "Data",
+   "label": "Data Rootfs Path",
    "read_only": 1
   }
  ],

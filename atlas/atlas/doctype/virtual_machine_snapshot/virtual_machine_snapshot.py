@@ -51,6 +51,13 @@ class VirtualMachineSnapshot(Document):
 				"disk_gigabytes": disk,
 				"ssh_public_key": ssh_public_key,
 				"clone_source_rootfs": self.rootfs_path,
+				# The data disk clones too: carry its size + mount config from the
+				# snapshot, and seed it from the data-disk snapshot LV (empty when
+				# the source had no data disk → a plain image clone with no /vdb).
+				"data_disk_gigabytes": self.data_disk_gigabytes,
+				"data_disk_format_and_mount": self.data_disk_format_and_mount,
+				"data_disk_mount_point": self.data_disk_mount_point,
+				"clone_source_data_rootfs": self.data_rootfs_path,
 			}
 		).insert(ignore_permissions=True)
 		return clone.name
@@ -82,10 +89,16 @@ class VirtualMachineSnapshot(Document):
 			return
 		if not frappe.db.exists("Server", self.server):
 			return
+		# Remove both halves of the snapshot: the root snap LV and (when the VM had
+		# a data disk) the data snap LV. The empty data path is dropped by the Task
+		# runner, so a data-less snapshot's teardown is unchanged.
 		run_task(
 			server=self.server,
 			script="delete-snapshot-vm.py",
-			variables={"SNAPSHOT_ROOTFS_PATH": self.rootfs_path},
+			variables={
+				"SNAPSHOT_ROOTFS_PATH": self.rootfs_path,
+				"DATA_SNAPSHOT_ROOTFS_PATH": self.data_rootfs_path or "",
+			},
 			virtual_machine=self.virtual_machine,
 			timeout_seconds=60,
 		)

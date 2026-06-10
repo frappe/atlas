@@ -49,6 +49,15 @@ def main() -> None:
 	disk.activate()
 	disk.expose_in_jail(paths.rootfs_node, uid)
 
+	# Same dance for the data disk (the root disk's peer) when the VM has one. Its
+	# LV is also activation-skip-flagged and its dev_t can renumber across a reboot,
+	# so the data.ext4 jail node must be refreshed too or the guest's /dev/vdb would
+	# dangle. No-op when the VM has no data disk.
+	data_disk = pool.data_disk(uuid)
+	if data_disk.exists:
+		data_disk.activate()
+		data_disk.expose_in_jail(paths.data_node, uid)
+
 
 if __name__ == "__main__":
 	main()

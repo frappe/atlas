@@ -25,7 +25,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib
 from atlas._task import TaskInputs
 from atlas.lvm import ThinPool
 from atlas.paths import VirtualMachinePaths
-from atlas.rootfs import Identity, inject_identity, prepare_lv
+from atlas.rootfs import Identity, inject_identity, prepare_data_lv, prepare_lv
 
 
 @dataclass(frozen=True)
@@ -53,6 +53,16 @@ class RebuildInputs(TaskInputs):
 	snapshot_rootfs_path: str = ""  # absolute path to a snapshot rootfs (Restore)
 	image_name: str = ""  # a base image name (Rebuild)
 	rootfs_filename: str = ""  # the image's rootfs file (Rebuild)
+	# Data disk (the root disk's peer). data_disk_mount_at re-establishes the fstab
+	# mount line in the freshly-laid-down rootfs (both Restore and Rebuild).
+	# data_snapshot_rootfs_path is the data-disk snapshot to RESTORE the data disk
+	# from; empty (a Rebuild-from-image, or a snapshot with no data disk) leaves the
+	# live data disk untouched — we never silently wipe data. data_disk_format is an
+	# int (0/1), not a bool — see provision-vm.py.
+	data_disk_gb: int = 0
+	data_disk_format: int = 1
+	data_disk_mount_at: str = ""
+	data_snapshot_rootfs_path: str = ""
 
 
 def main() -> None:
@@ -94,13 +104,36 @@ def main() -> None:
 			ssh_public_key=inputs.ssh_public_key,
 			ipv4_guest_cidr=inputs.ipv4_guest_cidr,
 			ipv4_gateway=inputs.ipv4_gateway,
+			# Re-establish the data-disk fstab line in the fresh rootfs (empty when
+			# the VM has no data disk / format-and-mount is off → no line written).
+			data_disk_mount_at=inputs.data_disk_mount_at,
 		),
+		# PRESERVE the disk's SSH host keys. A restore carries the VM's own keys in
+		# the snapshot; a rebuild-from-image carries the image's keys. Either way we
+		# do NOT change the VM's SSH identity here — that would break clients'
+		# known_hosts on every rebuild/restore. Rotate explicitly via the
+		# Regenerate host keys action (regenerate-host-keys-vm.py) when wanted.
+		regenerate_host_keys=False,
 	)
 
 	# Re-mknod the jail node: the new LV's dev_t differs from the old one, so the
 	# existing node would point at a stale device. expose_in_jail removes and
 	# re-creates it, owned by the per-VM uid (0660) so the jailed FC can open it.
 	disk.expose_in_jail(paths.rootfs_node, inputs.atlas_fc_uid)
+
+	# Data disk: RESTORE recreates it from the data-disk snapshot (parallel to the
+	# root rebuild above), giving it a fresh host-side UUID while preserving its
+	# `atlas-data` label and contents. A Rebuild-from-image (no data snapshot path)
+	# leaves the live data disk untouched — there is no image source for data, and
+	# wiping a user's /home on an OS rebuild would be a footgun.
+	if inputs.data_snapshot_rootfs_path:
+		data_disk = pool.data_disk(inputs.virtual_machine_name)
+		data_origin = pool.from_device(inputs.data_snapshot_rootfs_path)
+		if not data_origin.exists:
+			sys.exit(f"data snapshot LV not found: {data_origin.name} (from {inputs.data_snapshot_rootfs_path})")
+		data_disk.remove()
+		prepare_data_lv(pool, data_disk, inputs.data_disk_gb, bool(inputs.data_disk_format), origin=data_origin)
+		data_disk.expose_in_jail(paths.data_node, inputs.atlas_fc_uid)
 
 	print(f"Rebuilt {inputs.virtual_machine_name} from {origin.name}.")
 

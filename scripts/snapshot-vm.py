@@ -31,11 +31,15 @@ class SnapshotInputs(TaskInputs):
 	command: typing.ClassVar[str] = "snapshot-vm"
 	virtual_machine_name: str  # UUID; identifies the source disk LV
 	snapshot_rootfs_path: str  # the snapshot's /dev/atlas/<name> device path
+	# The data-disk snapshot device path (atlas-datasnap-<id>). Empty when the VM
+	# has no data disk — then only the root disk is snapshotted.
+	data_snapshot_rootfs_path: str = ""
 
 
 @dataclass(frozen=True)
 class SnapshotResult(TaskResult):
 	size_bytes: int
+	data_size_bytes: int = 0  # 0 when the VM had no data disk
 
 
 def main() -> None:
@@ -52,7 +56,19 @@ def main() -> None:
 
 	disk.snapshot_into(snapshot)
 
-	SnapshotResult(size_bytes=snapshot.size_bytes).emit()
+	# Snapshot the data disk too (the root disk's peer) when the VM has one. Same
+	# instant CoW thin snapshot; the pair shares the snapshot's UUID so the
+	# controller can name and later remove both. A missing data disk is tolerated
+	# (the row claimed one but the LV is gone) — root is still captured.
+	data_size_bytes = 0
+	if inputs.data_snapshot_rootfs_path:
+		data_disk = pool.data_disk(inputs.virtual_machine_name)
+		if data_disk.exists:
+			data_snapshot = pool.from_device(inputs.data_snapshot_rootfs_path)
+			data_disk.snapshot_into(data_snapshot)
+			data_size_bytes = data_snapshot.size_bytes
+
+	SnapshotResult(size_bytes=snapshot.size_bytes, data_size_bytes=data_size_bytes).emit()
 	print(f"Snapshotted {inputs.virtual_machine_name} to {snapshot.name}.")
 
 

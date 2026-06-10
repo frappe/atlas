@@ -34,6 +34,17 @@ class TestLogicalVolumeNaming(unittest.TestCase):
 		self.assertEqual(self.pool.snapshot(UUID).name, f"atlas-snap-{UUID}")
 		self.assertEqual(self.pool.base_image("ubuntu-24").name, "atlas-image-ubuntu-24")
 
+	def test_data_disk_roles_get_prefixed_names(self):
+		# The data disk and its snapshot are the root disk's peers, named off the
+		# same UUID so the pair (VM disk / data disk, snapshot / data-snapshot) is
+		# recoverable from the device paths alone.
+		self.assertEqual(self.pool.data_disk(UUID).name, f"atlas-data-{UUID}")
+		self.assertEqual(self.pool.data_snapshot(UUID).name, f"atlas-datasnap-{UUID}")
+
+	def test_data_snapshot_roundtrips_with_device_path(self):
+		ds = self.pool.data_snapshot(UUID)
+		self.assertEqual(self.pool.from_device(ds.device_path), ds)
+
 	def test_device_path(self):
 		self.assertEqual(self.pool.vm_disk("x").device_path, "/dev/atlas/atlas-vm-x")
 
@@ -92,6 +103,11 @@ class TestProtection(unittest.TestCase):
 	def test_vm_disk_and_snapshot_removable(self):
 		self.assertFalse(self.pool.vm_disk(UUID).is_protected)
 		self.assertFalse(self.pool.snapshot(UUID).is_protected)
+
+	def test_data_disk_and_data_snapshot_removable(self):
+		# Per-VM data volumes must be lvremovable on terminate/snapshot-delete.
+		self.assertFalse(self.pool.data_disk(UUID).is_protected)
+		self.assertFalse(self.pool.data_snapshot(UUID).is_protected)
 
 	def test_remove_refuses_protected_before_any_host_call(self):
 		with self.assertRaises(ProtectedVolumeError):

@@ -15,11 +15,13 @@ const SECONDARY_BY_STATUS = {
 	Paused: [{ label: "Stop", method: "stop" }],
 };
 
-// Stopped-only actions that open a dialog (they take arguments).
+// Stopped-only actions that open a dialog or confirm (they take arguments or
+// have consequences worth a prompt).
 const DIALOG_ACTIONS_WHEN_STOPPED = [
 	{ label: "Snapshot", handler: open_snapshot_dialog },
 	{ label: "Rebuild", handler: open_rebuild_dialog },
 	{ label: "Resize", handler: open_resize_dialog },
+	{ label: "Regenerate host keys", handler: confirm_regenerate_host_keys },
 ];
 
 // Five tiers — keep in sync with atlas/atlas/sizes.py SIZE_PRESETS (the
@@ -95,6 +97,10 @@ function add_lifecycle_buttons(frm) {
 		for (const action of DIALOG_ACTIONS_WHEN_STOPPED) {
 			frappe.atlas.add_action(frm, action.label, () => action.handler(frm));
 		}
+	}
+	if (status === "Running" || status === "Paused") {
+		// Live snapshot: no stop required. Crash-consistent (the dialog says so).
+		frappe.atlas.add_action(frm, "Snapshot (live)", () => open_snapshot_dialog(frm, { live: true }));
 	}
 	frappe.atlas.add_danger(frm, "Terminate", () => confirm_terminate(frm));
 }
@@ -183,7 +189,18 @@ function maybe_alert_cloned() {
 	);
 }
 
-function open_snapshot_dialog(frm) {
+function open_snapshot_dialog(frm, { live = false } = {}) {
+	// A live snapshot is an instant LVM thin copy of the running disks: no stop,
+	// but crash-consistent (see snapshot() in virtual_machine.py). A normal
+	// snapshot is taken from a Stopped VM and is flush-clean.
+	const hint = live
+		? __(
+				"Snapshots the running VM in place — no stop. The image is <b>crash-consistent</b> (like a power-cut at this instant): unflushed writes may be missing and ext4 replays its journal on restore. Stop first if you need a guaranteed-clean snapshot."
+		  )
+		: __(
+				"Instant copy-on-write snapshot of the {0} GB rootfs (and the data disk, if any).",
+				[frm.doc.disk_gigabytes]
+		  );
 	frappe.prompt(
 		[
 			{
@@ -196,14 +213,11 @@ function open_snapshot_dialog(frm) {
 			{
 				fieldname: "cost_hint",
 				fieldtype: "HTML",
-				options: `<p class="text-muted small">${__(
-					"Copies the whole {0} GB rootfs to a new snapshot file — up to a few minutes for a large disk.",
-					[frm.doc.disk_gigabytes]
-				)}</p>`,
+				options: `<p class="text-muted small">${hint}</p>`,
 			},
 		],
 		({ title }) => {
-			frm.call("snapshot", { title }).then(({ message: snapshot_name }) => {
+			frm.call("snapshot", { title, live }).then(({ message: snapshot_name }) => {
 				frappe.show_alert(
 					{
 						message: __("Snapshot {0} created.", [snapshot_name]),
@@ -214,8 +228,25 @@ function open_snapshot_dialog(frm) {
 				frm.reload_doc();
 			});
 		},
-		__("Snapshot {0}", [frm.doc.title || frm.doc.name.slice(0, 8)]),
+		live
+			? __("Live snapshot {0}", [frm.doc.title || frm.doc.name.slice(0, 8)])
+			: __("Snapshot {0}", [frm.doc.title || frm.doc.name.slice(0, 8)]),
 		__("Create snapshot")
+	);
+}
+
+function confirm_regenerate_host_keys(frm) {
+	const who = frm.doc.title || frm.doc.name.slice(0, 8);
+	frappe.confirm(
+		__(
+			"Regenerate SSH host keys for {0}? This changes the VM's SSH identity — on next connect clients will see a changed host key and must clear the old entry (<code>ssh-keygen -R &lt;address&gt;</code>). Rebuild and restore deliberately keep the keys; only use this to rotate them on purpose.",
+			[who]
+		),
+		() => {
+			frm.call("regenerate_host_keys").then(({ message: task_name }) => {
+				frappe.atlas.task_started(frm, "Regenerate host keys", task_name);
+			});
+		}
 	);
 }
 

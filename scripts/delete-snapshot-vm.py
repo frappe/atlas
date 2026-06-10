@@ -24,6 +24,9 @@ class DeleteSnapshotInputs(TaskInputs):
 
 	command: typing.ClassVar[str] = "delete-snapshot-vm"
 	snapshot_rootfs_path: str  # the snapshot's /dev/atlas/<name> device path
+	# The data-disk snapshot device path (atlas-datasnap-<id>). Empty when the
+	# snapshot captured no data disk.
+	data_snapshot_rootfs_path: str = ""
 
 
 def main() -> None:
@@ -36,6 +39,11 @@ def main() -> None:
 	# disk it was taken from, nor any clone made from it (clones are independent
 	# thin LVs once created).
 	snapshot.remove()
+
+	# Remove the data-disk snapshot half too, when the snapshot had one. Same
+	# guarded, idempotent remove.
+	if inputs.data_snapshot_rootfs_path:
+		pool.from_device(inputs.data_snapshot_rootfs_path).remove()
 
 	print(f"Deleted snapshot {snapshot.name}.")
 

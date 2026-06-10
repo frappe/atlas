@@ -17,6 +17,7 @@ else.
 │   │   │       ├── firecracker        # copied in by the jailer
 │   │   │       ├── firecracker.json   # config, jail-relative paths
 │   │   │       ├── rootfs.ext4        # block-special node → the VM's disk LV (mknod'd in, per-VM uid)
+│   │   │       ├── data.ext4          # block-special node → the VM's data disk LV (only if it has one)
 │   │   │       ├── vmlinux            # hard-link to the image kernel
 │   │   │       └── run/firecracker.socket  # Firecracker API socket
 │   │   ├── network.env               # TAP/IPV6 + IPV4_HOST/GUEST_CIDR + netns + veth names
@@ -55,8 +56,10 @@ them as one.
 The VM disks themselves are **LVM thin volumes**, not files in this tree —
 they live in the `atlas` volume group on the thin pool `pool0`, reachable at
 `/dev/atlas/<name>` (base image `atlas-image-<image>`, per-VM disk
-`atlas-vm-<uuid>`, disk snapshot `atlas-snap-<uuid>`). The `pool/atlas-pool.img`
-sparse file is the loopback PV that group sits on.
+`atlas-vm-<uuid>`, disk snapshot `atlas-snap-<uuid>`). A VM with a data disk
+adds two more, its peers: the data disk `atlas-data-<uuid>` and its snapshot
+`atlas-datasnap-<snapshot-uuid>`. The `pool/atlas-pool.img` sparse file is the
+loopback PV that group sits on.
 
 ## Conventions
 
@@ -72,7 +75,9 @@ sparse file is the loopback PV that group sits on.
   `rm -rf` of the VM directory still takes everything with it. The disk itself
   is *not* a file here: `rootfs.ext4` is a block-special node `mknod`'d to point
   at the VM's disk LV (`/dev/atlas/atlas-vm-<uuid>`), so the `rm -rf` removes the
-  node but not the LV — `terminate-vm.py` `lvremove`s the LV separately.
+  node but not the LV — `terminate-vm.py` `lvremove`s the LV separately. A VM
+  with a data disk has a second such node, `data.ext4` → `atlas-data-<uuid>`
+  (the guest's `/dev/vdb`), removed the same way on terminate.
 - Disk snapshots are **LVM thin snapshots** (`atlas-snap-<snapshot-uuid>`),
   not files under the VM directory. They live in the pool, independent of the
   VM's directory and of the origin VM disk, so terminating a VM does **not**

@@ -32,6 +32,10 @@ class ResizeInputs(TaskInputs):
 	vcpus: int
 	memory_mb: int
 	disk_gb: int  # target rootfs size; grow-only
+	# Data disk (the root disk's peer), grow-only. 0 = the VM has no data disk.
+	# data_disk_format is an int (0/1), not a bool — see provision-vm.py.
+	data_disk_gb: int = 0
+	data_disk_format: int = 1
 
 
 def main() -> None:
@@ -74,9 +78,23 @@ def main() -> None:
 	#    so a re-run (or a resize that only changed vCPU/memory) does not error.
 	run("sudo", "lvextend", "-r", "-L", f"{inputs.disk_gb}G", disk.device_path, check=False, quiet=True)
 
+	# 3. Grow the data disk (the root disk's peer) when present. Grow-only, same as
+	#    root: -r resizes the ext4 too when formatted, else the block device only.
+	#    Skipped when the VM has no data disk; a clean no-op when the LV already
+	#    meets the size (idempotent re-run, or a resize that only touched vCPU/mem).
+	#    The controller rejects 0→N, so a data_disk_gb here always has a live LV.
+	if inputs.data_disk_gb > 0:
+		data_disk = pool.data_disk(inputs.virtual_machine_name)
+		if data_disk.exists:
+			grow = ["sudo", "lvextend"]
+			grow += ["-r"] if inputs.data_disk_format else []
+			grow += ["-L", f"{inputs.data_disk_gb}G", data_disk.device_path]
+			run(*grow, check=False, quiet=True)
+
 	print(
 		f"Resized {inputs.virtual_machine_name}: "
-		f"{inputs.vcpus} vCPU, {inputs.memory_mb} MB, {inputs.disk_gb} GB."
+		f"{inputs.vcpus} vCPU, {inputs.memory_mb} MB, {inputs.disk_gb} GB"
+		+ (f", data {inputs.data_disk_gb} GB." if inputs.data_disk_gb > 0 else ".")
 	)
 
 

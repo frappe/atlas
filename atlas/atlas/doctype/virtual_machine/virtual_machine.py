@@ -36,6 +36,7 @@ RESIZE_MUTABLE = (
 	"cpu_max_cores",
 	"memory_megabytes",
 	"disk_gigabytes",
+	"data_disk_gigabytes",
 )
 
 
@@ -221,21 +222,47 @@ class VirtualMachine(Document):
 		return task.name
 
 	@frappe.whitelist()
-	def snapshot(self, title: str | None = None) -> str:
-		"""Copy the rootfs of this Stopped VM into a new Virtual Machine
-		Snapshot row. Returns the snapshot's name.
+	def snapshot(self, title: str | None = None, live: bool = False) -> str:
+		"""Snapshot this VM's disk(s) into a new Virtual Machine Snapshot row —
+		the root disk and, if present, the data disk. Returns the snapshot's name.
 
 		`title` is optional: omitted, it defaults to `<vm title> — <timestamp>`,
 		so a caller (the SPA's one-click snapshot, or a direct API call) need not
 		invent a name. The dashboard pre-fills the same default but lets the user
 		edit it.
 
-		Stopped-only because copying a mounted/live ext4 risks a torn
-		filesystem; a cleanly unmounted rootfs copies consistently. The
-		operator stops first (the form offers the prompt)."""
-		if self.status != "Stopped":
-			frappe.throw(f"Stop the VM before snapshotting (status is {self.status})")
+		Consistency — `live`:
+
+		- Default (`live=False`): **Stopped-only**. A cleanly unmounted ext4 copies
+		  flush-consistent, and with two disks a Stopped VM makes the root/data pair
+		  mutually consistent. This is the safe default.
+		- `live=True`: snapshot a **Running** (or Paused) VM without stopping. The
+		  LVM thin CoW snapshot is atomic per volume, but the captured image is
+		  **crash-consistent** — equivalent to pulling power at that instant:
+		  unflushed guest-cache writes are absent and the guest replays its ext4
+		  journal on next mount. The host can't quiesce the guest (no in-guest
+		  agent), and the root/data LVs are snapshotted microseconds apart, so
+		  cross-disk consistency isn't guaranteed. This is the same guarantee a
+		  cloud "crash-consistent volume snapshot" gives; stop first for a
+		  guaranteed-clean image."""
+		# frm.call / REST send `live` as a JSON/stringy value; normalize to bool.
+		live = live in (True, 1, "1", "true", "True", "yes")
+		if live:
+			if self.status not in ("Running", "Paused"):
+				frappe.throw(
+					f"Live snapshot needs a Running or Paused VM (status is {self.status}); "
+					f"for a Stopped VM take a normal snapshot"
+				)
+		elif self.status != "Stopped":
+			frappe.throw(
+				f"Stop the VM before snapshotting (status is {self.status}), "
+				f"or pass live=True for a crash-consistent live snapshot"
+			)
 		title = (title or "").strip() or self._default_snapshot_title()
+		# A snapshot captures BOTH disks: the data disk is a first-class peer of
+		# root. We record its size + mount config on the row so a clone/restore can
+		# reconstruct the data disk faithfully even if the source VM later changes.
+		has_data = bool(self.data_disk_gigabytes)
 		snapshot = frappe.get_doc(
 			{
 				"doctype": "Virtual Machine Snapshot",
@@ -245,33 +272,44 @@ class VirtualMachine(Document):
 				"status": "Pending",
 				"source_image": self.image,
 				"disk_gigabytes": self.disk_gigabytes,
+				"data_disk_gigabytes": self.data_disk_gigabytes,
+				"data_disk_mount_point": self.data_disk_mount_point,
+				"data_disk_format_and_mount": self.data_disk_format_and_mount,
 			}
 		).insert(ignore_permissions=True)
 		# The snapshot is an LVM thin snapshot, not a file copy. rootfs_path holds
 		# its LV device path (derived from the snapshot's UUID, like the VM disk
 		# LV) — no schema change, and it flows unchanged into restore/clone, which
-		# read the LV name back from this path.
+		# read the LV name back from this path. The data snapshot LV is named off
+		# the SAME snapshot UUID (atlas-datasnap-<id>), so the pair is recoverable.
 		rootfs_path = f"/dev/atlas/atlas-snap-{snapshot.name}"
+		data_rootfs_path = f"/dev/atlas/atlas-datasnap-{snapshot.name}" if has_data else ""
+		variables = {
+			"VIRTUAL_MACHINE_NAME": self.name,
+			"SNAPSHOT_ROOTFS_PATH": rootfs_path,
+		}
+		if data_rootfs_path:
+			variables["DATA_SNAPSHOT_ROOTFS_PATH"] = data_rootfs_path
 		task = run_task(
 			server=self.server,
 			script="snapshot-vm.py",
-			variables={
-				"VIRTUAL_MACHINE_NAME": self.name,
-				"SNAPSHOT_ROOTFS_PATH": rootfs_path,
-			},
+			variables=variables,
 			virtual_machine=self.name,
 			timeout_seconds=300,
 		)
 		# One atomic update: the Task already succeeded and the on-host file
-		# exists, so the row must end up Available. Folding the three writes into
-		# a single db_set means there's no window where rootfs_path/size_bytes
+		# exists, so the row must end up Available. Folding the writes into a
+		# single db_set means there's no window where rootfs_path/size_bytes
 		# landed but status didn't (a half-update that stranded the row in
 		# Pending). size_bytes is a Long Int / bigint column — a real multi-GB
 		# rootfs overflows a plain Int.
+		result = parse_result(task.stdout)
 		snapshot.db_set(
 			{
 				"rootfs_path": rootfs_path,
-				"size_bytes": parse_result(task.stdout)["size_bytes"],
+				"size_bytes": result["size_bytes"],
+				"data_rootfs_path": data_rootfs_path,
+				"data_size_bytes": result.get("data_size_bytes", 0),
 				"status": "Available",
 			}
 		)
@@ -319,6 +357,10 @@ class VirtualMachine(Document):
 			"SSH_PUBLIC_KEY": self.ssh_public_key,
 			"ATLAS_FC_UID": str(derive_uid(self.name)),
 			**self._ipv4_link_variables(),
+			# Data-disk config so the rebuilt rootfs regains its fstab mount line.
+			# DATA_DISK_MOUNT_AT is the one consumed on a rebuild-from-image (data
+			# disk preserved); a restore also gets DATA_SNAPSHOT_ROOTFS_PATH below.
+			**self._data_disk_variables(),
 		}
 		if source_type == "snapshot":
 			if not source:
@@ -328,7 +370,14 @@ class VirtualMachine(Document):
 				frappe.throw("Snapshot belongs to a different Virtual Machine")
 			if snapshot.status != "Available":
 				frappe.throw(f"Snapshot is not Available (status is {snapshot.status})")
-			return {**base, "SNAPSHOT_ROOTFS_PATH": snapshot.rootfs_path}
+			# data_rootfs_path is empty when the snapshot captured no data disk;
+			# the runner drops the empty flag and rebuild-vm.py leaves the live
+			# data disk untouched (never silently destroys data).
+			return {
+				**base,
+				"SNAPSHOT_ROOTFS_PATH": snapshot.rootfs_path,
+				"DATA_SNAPSHOT_ROOTFS_PATH": snapshot.data_rootfs_path or "",
+			}
 		if source_type == "image":
 			image_name = source or self.image
 			image = frappe.get_doc("Virtual Machine Image", image_name)
@@ -346,6 +395,7 @@ class VirtualMachine(Document):
 		cpu_max_cores: float | None = None,
 		memory_megabytes: int | None = None,
 		disk_gigabytes: int | None = None,
+		data_disk_gigabytes: int | None = None,
 	) -> str:
 		"""Change vCPU / CPU bandwidth / memory / disk on a Stopped VM.
 
@@ -370,23 +420,39 @@ class VirtualMachine(Document):
 		new_vcpus = int(vcpus) if vcpus else self.vcpus
 		new_memory = int(memory_megabytes) if memory_megabytes else self.memory_megabytes
 		new_disk = int(disk_gigabytes) if disk_gigabytes else self.disk_gigabytes
+		new_data_disk = int(data_disk_gigabytes) if data_disk_gigabytes else self.data_disk_gigabytes
 		new_cpu_max = self._resolve_resize_cpu_max(cpu_max_cores, new_vcpus)
 		if new_disk < self.disk_gigabytes:
 			frappe.throw(f"Disk can only grow: {self.disk_gigabytes} GB → {new_disk} GB is a shrink")
+		# The data disk grows like the root disk, with one extra rule: resize only
+		# GROWS an existing data disk. Adding one to a VM that never had one would
+		# also need a new Firecracker drive + fstab line (a re-provision concern),
+		# so that path is recreate-the-VM, not resize.
+		if new_data_disk != self.data_disk_gigabytes:
+			if not self.data_disk_gigabytes:
+				frappe.throw("This VM has no data disk; recreate the VM to add one (resize only grows an existing data disk)")
+			if new_data_disk < self.data_disk_gigabytes:
+				frappe.throw(
+					f"Data disk can only grow: {self.data_disk_gigabytes} GB → {new_data_disk} GB is a shrink"
+				)
 		# Run the on-host resize first; run_task raises on failure, so we only
 		# persist the new values once the config and disk actually changed.
 		# Saving before the Task would let a failed resize-vm.py leave the doc
 		# claiming a size the host never applied — the exact drift the freeze
 		# guards against.
+		variables = {
+			"VIRTUAL_MACHINE_NAME": self.name,
+			"VCPUS": str(new_vcpus),
+			"MEMORY_MB": str(new_memory),
+			"DISK_GB": str(new_disk),
+		}
+		if new_data_disk:
+			variables["DATA_DISK_GB"] = str(new_data_disk)
+			variables["DATA_DISK_FORMAT"] = "1" if self.data_disk_format_and_mount else "0"
 		task = run_task(
 			server=self.server,
 			script="resize-vm.py",
-			variables={
-				"VIRTUAL_MACHINE_NAME": self.name,
-				"VCPUS": str(new_vcpus),
-				"MEMORY_MB": str(new_memory),
-				"DISK_GB": str(new_disk),
-			},
+			variables=variables,
 			virtual_machine=self.name,
 			timeout_seconds=120,
 		)
@@ -394,6 +460,7 @@ class VirtualMachine(Document):
 		self.cpu_max_cores = new_cpu_max
 		self.memory_megabytes = new_memory
 		self.disk_gigabytes = new_disk
+		self.data_disk_gigabytes = new_data_disk
 		self.flags.resizing = True
 		self.save()
 		return task.name
@@ -410,6 +477,27 @@ class VirtualMachine(Document):
 		if self.cpu_max_cores == float(self.vcpus):
 			return float(new_vcpus)
 		return float(self.cpu_max_cores)
+
+	@frappe.whitelist()
+	def regenerate_host_keys(self) -> str:
+		"""Rotate this VM's SSH host keys (change its SSH identity) on a **Stopped**
+		VM. Stopped-only because the host mounts the rootfs to rewrite the keys.
+
+		This is the explicit, opt-in counterpart to the preserve-by-default rule:
+		provision establishes host keys at birth and rebuild/restore PRESERVE them
+		(so a rollback never breaks clients' known_hosts), so changing them is a
+		deliberate action. After the next Start the VM presents new host keys and
+		clients must refresh known_hosts — that is the intended effect."""
+		if self.status != "Stopped":
+			frappe.throw(f"Stop the VM before regenerating host keys (status is {self.status})")
+		task = run_task(
+			server=self.server,
+			script="regenerate-host-keys-vm.py",
+			variables={"VIRTUAL_MACHINE_NAME": self.name},
+			virtual_machine=self.name,
+			timeout_seconds=60,
+		)
+		return task.name
 
 	@frappe.whitelist()
 	def terminate(self) -> str:
@@ -471,6 +559,20 @@ class VirtualMachine(Document):
 			"IPV4_GATEWAY": str(ipaddress.ip_interface(host_cidr).ip),
 		}
 
+	def _data_disk_variables(self) -> dict:
+		"""The data-disk Task vars, shared by provision/rebuild/resize. Empty when
+		the VM has no data disk (DATA_DISK_GB unset → the script's `0` default → no
+		data disk created). DATA_DISK_FORMAT is "1"/"0" (an int flag, not a bool —
+		the Task runner would render a bool as a truthy string); DATA_DISK_MOUNT_AT
+		is empty when format-and-mount is off, so the script skips the fstab line."""
+		if not self.data_disk_gigabytes:
+			return {}
+		return {
+			"DATA_DISK_GB": str(self.data_disk_gigabytes),
+			"DATA_DISK_FORMAT": "1" if self.data_disk_format_and_mount else "0",
+			"DATA_DISK_MOUNT_AT": self.data_disk_mount_point if self.data_disk_format_and_mount else "",
+		}
+
 	def _provision_variables(self) -> dict:
 		image = frappe.get_doc("Virtual Machine Image", self.image)
 		host_veth, namespace_veth = derive_veth_pair(self.name)
@@ -519,6 +621,12 @@ class VirtualMachine(Document):
 		# source.
 		if self.clone_source_rootfs:
 			variables["SNAPSHOT_ROOTFS_PATH"] = self.clone_source_rootfs
+		# Data disk (the root disk's peer): size + format/mount config, plus —
+		# when cloning — the data-disk snapshot to seed it from, so the clone's
+		# /home comes up with the source's data.
+		variables.update(self._data_disk_variables())
+		if self.clone_source_data_rootfs:
+			variables["DATA_SNAPSHOT_ROOTFS_PATH"] = self.clone_source_data_rootfs
 		return variables
 
 

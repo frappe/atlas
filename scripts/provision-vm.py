@@ -49,7 +49,7 @@ from atlas._run import install_directory, install_file, run
 from atlas._task import TaskInputs
 from atlas.lvm import ThinPool
 from atlas.paths import VirtualMachinePaths, image_directory
-from atlas.rootfs import Identity, inject_identity, prepare_lv
+from atlas.rootfs import Identity, inject_identity, prepare_data_lv, prepare_lv
 
 
 @dataclass(frozen=True)
@@ -97,6 +97,16 @@ class ProvisionInputs(TaskInputs):
 	# reason _ipv4_link_variables is re-injected on rebuild). Live attach/detach
 	# of a *running* VM goes through vm-reserved-ip.py, not provision.
 	reserved_ipv4: str = ""  # the attached Reserved IP, 1:1-NAT'd to the guest /30
+	# Optional second writable data disk (the guest's /dev/vdb). 0 = none.
+	# data_disk_format is an int (0/1), not a bool: the Task runner renders a bool
+	# as a truthy string, so "0" would read True — int parses cleanly to 0/1.
+	# data_disk_mount_at is the in-guest mount point (empty = don't format/mount).
+	# data_snapshot_rootfs_path seeds the data disk from a data-disk snapshot LV
+	# (clone); empty means a fresh blank data disk.
+	data_disk_gb: int = 0
+	data_disk_format: int = 1
+	data_disk_mount_at: str = ""
+	data_snapshot_rootfs_path: str = ""
 
 
 def main() -> None:
@@ -142,11 +152,24 @@ def main() -> None:
 	disk = pool.vm_disk(inputs.virtual_machine_name)
 	prepare_lv(origin, disk, inputs.disk_gb)
 
+	# 1b. Optional data disk (the guest's /dev/vdb), the root disk's peer. A blank
+	#     thin volume normally, or a CoW snapshot of a data-disk snapshot LV when
+	#     cloning (data_snapshot_rootfs_path set). Built here, before identity
+	#     injection, so its `atlas-data` ext4 label exists when the fstab
+	#     LABEL=atlas-data line is written into the root rootfs in step 2.
+	data_disk = None
+	if inputs.data_disk_gb > 0:
+		data_disk = pool.data_disk(inputs.virtual_machine_name)
+		data_origin = (
+			pool.from_device(inputs.data_snapshot_rootfs_path) if inputs.data_snapshot_rootfs_path else None
+		)
+		prepare_data_lv(pool, data_disk, inputs.data_disk_gb, bool(inputs.data_disk_format), origin=data_origin)
+
 	# 2. Inject this VM's identity (SSH key, network env, hostname, swap, host
-	#    keys, machine-id) into the disk. Mounts the LV device directly (no loop).
-	#    The v4 egress link goes into the guest's network env here too, so
-	#    clone/rebuild get it for free. Done outside the jail, before the jailer
-	#    starts.
+	#    keys, machine-id, data-disk fstab) into the disk. Mounts the LV device
+	#    directly (no loop). The v4 egress link goes into the guest's network env
+	#    here too, so clone/rebuild get it for free. Done outside the jail, before
+	#    the jailer starts.
 	inject_identity(
 		disk.device_path,
 		Identity(
@@ -155,7 +178,13 @@ def main() -> None:
 			ssh_public_key=inputs.ssh_public_key,
 			ipv4_guest_cidr=inputs.ipv4_guest_cidr,
 			ipv4_gateway=inputs.ipv4_gateway,
+			data_disk_mount_at=inputs.data_disk_mount_at,
 		),
+		# Birth of the VM: establish a fresh SSH host identity. The base image
+		# ships SHARED baked host keys, and a clone seeds from another VM's
+		# rootfs — both must be replaced so every VM is unique. (Rebuild/restore,
+		# by contrast, preserve the disk's keys.)
+		regenerate_host_keys=True,
 	)
 
 	# 3. Kernel inside the jail. Hard-link (not copy) the immutable image kernel
@@ -176,6 +205,13 @@ def main() -> None:
 	#     DAC. The jailer never deletes existing nodes, so it survives every
 	#     (re)start.
 	disk.expose_in_jail(paths.rootfs_node, uid)
+
+	# 4c. Expose the data disk inside the jail as a block node at data.ext4 — the
+	#     guest's second drive (/dev/vdb). Same mknod/chown mechanism as the rootfs
+	#     node; firecracker.json's `data` drive (path_on_host: "data.ext4") resolves
+	#     to it post-chroot. Only when the VM has a data disk.
+	if data_disk is not None:
+		data_disk.expose_in_jail(paths.data_node, uid)
 
 	# 5. Hand the jail tree to the per-VM uid/gid. The jailer also chowns the
 	#    jail root and the device nodes it creates, but the backing files we laid
@@ -277,6 +313,18 @@ def _firecracker_config(inputs: "ProvisionInputs") -> str:
 			"mem_size_mib": inputs.memory_mb,
 		},
 	}
+	# The data disk is a second, non-root drive (the guest's /dev/vdb), resolved
+	# post-chroot to the data.ext4 block node exposed in step 4c. Only when the VM
+	# has a data disk, so an ordinary VM's config is byte-identical to before.
+	if inputs.data_disk_gb > 0:
+		config["drives"].append(
+			{
+				"drive_id": "data",
+				"path_on_host": "data.ext4",
+				"is_root_device": False,
+				"is_read_only": False,
+			}
+		)
 	return json.dumps(config, indent=2) + "\n"
 
 

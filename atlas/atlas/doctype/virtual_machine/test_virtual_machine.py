@@ -318,6 +318,69 @@ class TestVirtualMachine(IntegrationTestCase):
 		self.assertIn("Stop the VM before snapshotting", str(raised.exception))
 		mocked.assert_not_called()
 
+	def test_live_snapshot_from_running_creates_available_row(self) -> None:
+		# live=True relaxes the Stopped requirement: a Running VM is snapshotted in
+		# place (crash-consistent). The row still lands Available like a clean one.
+		from atlas.atlas.doctype.virtual_machine import virtual_machine as module
+
+		vm = _new_vm()
+		vm.db_set("status", "Running")
+		vm.reload()
+		task = fake_task(name="task-live-snap", stdout='ATLAS_RESULT={"size_bytes": 4294967296}')
+		with patch.object(module, "run_task", return_value=task) as mocked:
+			snapshot_name = vm.snapshot("live one", live=True)
+		self.assertEqual(mocked.call_args.kwargs["script"], "snapshot-vm.py")
+		snapshot = frappe.get_doc("Virtual Machine Snapshot", snapshot_name)
+		self.assertEqual(snapshot.status, "Available")
+
+	def test_live_snapshot_accepts_stringy_true(self) -> None:
+		# frm.call / REST may send live as the string "true"; it must coerce to bool.
+		from atlas.atlas.doctype.virtual_machine import virtual_machine as module
+
+		vm = _new_vm()
+		vm.db_set("status", "Running")
+		vm.reload()
+		task = fake_task(name="task-live-snap-2", stdout='ATLAS_RESULT={"size_bytes": 1}')
+		with patch.object(module, "run_task", return_value=task):
+			snapshot_name = vm.snapshot("live two", live="true")
+		self.assertEqual(frappe.db.get_value("Virtual Machine Snapshot", snapshot_name, "status"), "Available")
+
+	def test_regenerate_host_keys_runs_script_when_stopped(self) -> None:
+		from atlas.atlas.doctype.virtual_machine import virtual_machine as module
+
+		vm = _new_vm()
+		vm.db_set("status", "Stopped")
+		vm.reload()
+		with patch.object(module, "run_task", return_value=fake_task(name="task-regen")) as mocked:
+			vm.regenerate_host_keys()
+		self.assertEqual(mocked.call_args.kwargs["script"], "regenerate-host-keys-vm.py")
+		self.assertEqual(mocked.call_args.kwargs["variables"]["VIRTUAL_MACHINE_NAME"], vm.name)
+
+	def test_regenerate_host_keys_rejects_when_not_stopped(self) -> None:
+		# Mounting the rootfs to rewrite keys needs the guest's fs unmounted.
+		from atlas.atlas.doctype.virtual_machine import virtual_machine as module
+
+		vm = _new_vm()
+		vm.db_set("status", "Running")
+		vm.reload()
+		with patch.object(module, "run_task") as mocked:
+			with self.assertRaises(frappe.ValidationError) as raised:
+				vm.regenerate_host_keys()
+		self.assertIn("Stop the VM before regenerating host keys", str(raised.exception))
+		mocked.assert_not_called()
+
+	def test_live_snapshot_rejects_when_pending(self) -> None:
+		# Live needs a Running/Paused VM — there is no live disk to snapshot from
+		# Pending/Failed/Terminated.
+		from atlas.atlas.doctype.virtual_machine import virtual_machine as module
+
+		vm = _new_vm()  # Pending
+		with patch.object(module, "run_task") as mocked:
+			with self.assertRaises(frappe.ValidationError) as raised:
+				vm.snapshot("nope", live=True)
+		self.assertIn("Live snapshot needs a Running or Paused VM", str(raised.exception))
+		mocked.assert_not_called()
+
 	def test_terminate_deletes_snapshot_rows(self) -> None:
 		from atlas.atlas.doctype.virtual_machine import virtual_machine as module
 
@@ -387,3 +450,104 @@ class TestVirtualMachine(IntegrationTestCase):
 		with self.assertRaises(frappe.ValidationError) as raised:
 			vm.save(ignore_permissions=True)
 		self.assertIn("ssh_public_key is immutable", str(raised.exception))
+
+	# --- data disk (the root disk's peer) ---
+
+	def test_provision_variables_omit_data_disk_when_none(self) -> None:
+		# Default VM has no data disk (data_disk_gigabytes=0) → no DATA_* vars, so
+		# provision-vm.py's defaults leave the second drive off entirely.
+		vm = _new_vm()
+		variables = vm._provision_variables()
+		self.assertNotIn("DATA_DISK_GB", variables)
+		self.assertNotIn("DATA_DISK_MOUNT_AT", variables)
+
+	def test_provision_variables_carry_data_disk(self) -> None:
+		vm = _new_vm(data_disk_gigabytes=3, data_disk_format_and_mount=1, data_disk_mount_point="/home")
+		variables = vm._provision_variables()
+		self.assertEqual(variables["DATA_DISK_GB"], "3")
+		self.assertEqual(variables["DATA_DISK_FORMAT"], "1")
+		self.assertEqual(variables["DATA_DISK_MOUNT_AT"], "/home")
+
+	def test_provision_variables_data_disk_unformatted_has_no_mount(self) -> None:
+		# format-and-mount off: raw block device, so no mount point is sent (the
+		# runner drops the empty value) and DATA_DISK_FORMAT is "0".
+		vm = _new_vm(data_disk_gigabytes=3, data_disk_format_and_mount=0)
+		variables = vm._provision_variables()
+		self.assertEqual(variables["DATA_DISK_FORMAT"], "0")
+		self.assertEqual(variables["DATA_DISK_MOUNT_AT"], "")
+
+	def test_resize_grows_data_disk(self) -> None:
+		from atlas.atlas.doctype.virtual_machine import virtual_machine as module
+
+		vm = _new_vm(data_disk_gigabytes=2)
+		vm.db_set("status", "Stopped")
+		vm.reload()
+		with patch.object(module, "run_task", return_value=fake_task(name="task-resize")) as mocked:
+			vm.resize(data_disk_gigabytes=5)
+		vm.reload()
+		self.assertEqual(vm.data_disk_gigabytes, 5)
+		self.assertEqual(mocked.call_args.kwargs["variables"]["DATA_DISK_GB"], "5")
+
+	def test_resize_data_disk_rejects_shrink(self) -> None:
+		from atlas.atlas.doctype.virtual_machine import virtual_machine as module
+
+		vm = _new_vm(data_disk_gigabytes=4)
+		vm.db_set("status", "Stopped")
+		vm.reload()
+		with patch.object(module, "run_task") as mocked:
+			with self.assertRaises(frappe.ValidationError) as raised:
+				vm.resize(data_disk_gigabytes=2)
+		self.assertIn("Data disk can only grow", str(raised.exception))
+		mocked.assert_not_called()
+
+	def test_resize_rejects_adding_data_disk_to_vm_without_one(self) -> None:
+		# 0 -> N is out of scope for resize (it would need a new Firecracker drive
+		# + fstab line): recreate the VM instead.
+		from atlas.atlas.doctype.virtual_machine import virtual_machine as module
+
+		vm = _new_vm()  # no data disk
+		vm.db_set("status", "Stopped")
+		vm.reload()
+		with patch.object(module, "run_task") as mocked:
+			with self.assertRaises(frappe.ValidationError) as raised:
+				vm.resize(data_disk_gigabytes=4)
+		self.assertIn("no data disk", str(raised.exception))
+		mocked.assert_not_called()
+
+	def test_snapshot_persists_data_disk_fields(self) -> None:
+		from atlas.atlas.doctype.virtual_machine import virtual_machine as module
+
+		vm = _new_vm(data_disk_gigabytes=2, data_disk_format_and_mount=1, data_disk_mount_point="/home")
+		vm.db_set("status", "Stopped")
+		vm.reload()
+		task = fake_task(
+			name="task-snap-data",
+			stdout='ATLAS_RESULT={"size_bytes": 4294967296, "data_size_bytes": 2147483648}',
+		)
+		with patch.object(module, "run_task", return_value=task) as mocked:
+			snapshot_name = vm.snapshot("with-data")
+
+		# The data half is snapshotted under the SAME snapshot UUID.
+		self.assertEqual(
+			mocked.call_args.kwargs["variables"]["DATA_SNAPSHOT_ROOTFS_PATH"],
+			f"/dev/atlas/atlas-datasnap-{snapshot_name}",
+		)
+		snapshot = frappe.get_doc("Virtual Machine Snapshot", snapshot_name)
+		self.assertEqual(snapshot.data_disk_gigabytes, 2)
+		self.assertEqual(snapshot.data_disk_mount_point, "/home")
+		self.assertEqual(snapshot.data_size_bytes, 2147483648)
+		self.assertEqual(snapshot.data_rootfs_path, f"/dev/atlas/atlas-datasnap-{snapshot_name}")
+
+	def test_snapshot_without_data_disk_has_no_data_snapshot(self) -> None:
+		from atlas.atlas.doctype.virtual_machine import virtual_machine as module
+
+		vm = _new_vm()  # no data disk
+		vm.db_set("status", "Stopped")
+		vm.reload()
+		task = fake_task(name="task-snap-nodata", stdout='ATLAS_RESULT={"size_bytes": 1024}')
+		with patch.object(module, "run_task", return_value=task) as mocked:
+			snapshot_name = vm.snapshot("no-data")
+		self.assertNotIn("DATA_SNAPSHOT_ROOTFS_PATH", mocked.call_args.kwargs["variables"])
+		snapshot = frappe.get_doc("Virtual Machine Snapshot", snapshot_name)
+		self.assertFalse(snapshot.data_rootfs_path)
+		self.assertEqual(snapshot.data_size_bytes, 0)

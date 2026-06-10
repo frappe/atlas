@@ -46,6 +46,11 @@ def run_against_shared(reuse: bool = True, keep: bool = True) -> None:
 				"vcpus": 1,
 				"memory_megabytes": 512,
 				"disk_gigabytes": 4,
+				# A data disk so snapshot/restore/resize/rebuild/clone all exercise
+				# the root disk's peer; the marker round-trip below proves its data
+				# survives a snapshot+restore and is carried into a clone.
+				"data_disk_gigabytes": 2,
+				"data_disk_format_and_mount": 1,
 				"ssh_public_key": public_key,
 			}
 		).insert(ignore_permissions=True)
@@ -86,7 +91,12 @@ run_smoke = run_against_shared
 
 
 def _check_snapshot_and_restore(server_name: str, vm) -> None:
-	"""Stop -> Snapshot -> Restore-onto-self -> Start, with on-host probes."""
+	"""Stop -> Snapshot -> mutate -> Restore-onto-self -> Start, with on-host
+	probes. Also proves the data disk round-trips: a marker written to /home
+	before the snapshot survives a restore even after being overwritten."""
+	# Seed a marker on the data disk while Running, then snapshot captures it.
+	_write_data_marker(server_name, vm, "before-snapshot")
+
 	vm.stop()
 	vm.reload()
 	assert vm.status == "Stopped", vm.status
@@ -95,14 +105,26 @@ def _check_snapshot_and_restore(server_name: str, vm) -> None:
 	snapshot = frappe.get_doc("Virtual Machine Snapshot", snapshot_name)
 	assert snapshot.status == "Available", snapshot.status
 	assert snapshot.size_bytes > 0, snapshot.size_bytes
+	# The data disk was captured too: a second snapshot LV with its own bytes.
+	assert snapshot.data_size_bytes > 0, snapshot.data_size_bytes
+	assert snapshot.data_rootfs_path, "snapshot is missing data_rootfs_path"
 	assert_probe(server_name, "phase-snapshot-present.sh", SNAPSHOT_ROOTFS_PATH=snapshot.rootfs_path)
+	assert_probe(server_name, "phase-snapshot-present.sh", SNAPSHOT_ROOTFS_PATH=snapshot.data_rootfs_path)
+
+	# Overwrite the marker so the restore has something to roll back.
+	vm.start()
+	vm.reload()
+	assert vm.status == "Running", vm.status
+	_write_data_marker(server_name, vm, "after-snapshot")
+	vm.stop()
+	vm.reload()
 
 	# Restore the snapshot back onto the same VM (rollback in place).
 	snapshot.restore_to_vm()
 	vm.reload()
 	assert vm.status == "Stopped", vm.status
 
-	# Boot it and confirm identity is intact (same UUID-derived hostname etc.).
+	# Boot it and confirm identity is intact (same UUID-derived hostname etc.)...
 	vm.start()
 	vm.reload()
 	assert vm.status == "Running", vm.status
@@ -114,6 +136,9 @@ def _check_snapshot_and_restore(server_name: str, vm) -> None:
 		VIRTUAL_MACHINE_IPV6=vm.ipv6_address,
 		SSH_PRIVATE_KEY=ephemeral_private_key(),
 	)
+	# ...and the data disk rolled back to the pre-snapshot marker (not the
+	# "after-snapshot" overwrite), proving restore reverted the data, not just root.
+	_expect_data_marker(server_name, vm, "before-snapshot")
 
 
 def _check_resize(server_name: str, vm) -> None:
@@ -150,6 +175,14 @@ def _check_rebuild_from_image(server_name: str, vm) -> None:
 	vm.rebuild("image")
 	vm.reload()
 	assert vm.status == "Stopped", vm.status
+	# Rebuild/restore now PRESERVE host keys (so a rollback never breaks clients'
+	# known_hosts). A rebuild-from-image therefore carries the image's *shared*
+	# baked host keys until rotated — so explicitly regenerate them here (the
+	# opt-in action), which also makes the guest-identity probe's "no CI
+	# build-container comment" check meaningful for this path.
+	vm.regenerate_host_keys()
+	vm.reload()
+	assert vm.status == "Stopped", vm.status
 	vm.start()
 	vm.reload()
 	assert_probe(
@@ -170,6 +203,18 @@ def _check_rebuild_from_image(server_name: str, vm) -> None:
 		VIRTUAL_MACHINE_IPV6=vm.ipv6_address,
 		SSH_PRIVATE_KEY=ephemeral_private_key(),
 	)
+	# Rebuild-from-image lays down a fresh root but PRESERVES the data disk (there
+	# is no image source for it). The pre-snapshot marker must still be on /home,
+	# and /home must still be a mounted ext4 (the fstab line was re-injected).
+	_expect_data_marker(server_name, vm, "before-snapshot")
+	assert_probe(
+		server_name,
+		"phase-data-disk.sh",
+		timeout_seconds=180,
+		VIRTUAL_MACHINE_IPV6=vm.ipv6_address,
+		SSH_PRIVATE_KEY=ephemeral_private_key(),
+		MOUNT_AT="/home",
+	)
 
 
 def _check_clone(server_name: str, vm):
@@ -185,6 +230,9 @@ def _check_clone(server_name: str, vm):
 	assert clone.name != vm.name
 	assert clone.ipv6_address != vm.ipv6_address
 	assert clone.clone_source_rootfs == snapshot.rootfs_path
+	# The data disk clones too: same size, seeded from the snapshot's data half.
+	assert clone.data_disk_gigabytes == vm.data_disk_gigabytes
+	assert clone.clone_source_data_rootfs == snapshot.data_rootfs_path
 
 	wait_for_vm_running(clone.name, timeout_seconds=120)
 	clone.reload()
@@ -198,6 +246,9 @@ def _check_clone(server_name: str, vm):
 		VIRTUAL_MACHINE_IPV6=clone.ipv6_address,
 		SSH_PRIVATE_KEY=ephemeral_private_key(),
 	)
+	# The clone's data disk carries the source's data: the pre-snapshot marker is
+	# on its /home (seeded from the data-disk snapshot, with a fresh ext4 UUID).
+	_expect_data_marker(server_name, clone, "before-snapshot")
 
 	# Bring the source VM back to Running so the pause/resume check has a
 	# running target.
@@ -226,3 +277,31 @@ def _check_pause_resume(server_name: str, vm) -> None:
 	# Stop it so the terminate at the end is from a quiet state.
 	vm.stop()
 	vm.reload()
+
+
+def _write_data_marker(server_name: str, vm, marker: str) -> None:
+	"""Write `marker` onto the VM's data disk (/home) over SSH."""
+	assert_probe(
+		server_name,
+		"phase-data-marker.sh",
+		timeout_seconds=180,
+		VIRTUAL_MACHINE_IPV6=vm.ipv6_address,
+		SSH_PRIVATE_KEY=ephemeral_private_key(),
+		MOUNT_AT="/home",
+		MODE="write",
+		MARKER=marker,
+	)
+
+
+def _expect_data_marker(server_name: str, vm, marker: str) -> None:
+	"""Assert the VM's data disk (/home) carries `marker`."""
+	assert_probe(
+		server_name,
+		"phase-data-marker.sh",
+		timeout_seconds=180,
+		VIRTUAL_MACHINE_IPV6=vm.ipv6_address,
+		SSH_PRIVATE_KEY=ephemeral_private_key(),
+		MOUNT_AT="/home",
+		MODE="expect",
+		MARKER=marker,
+	)

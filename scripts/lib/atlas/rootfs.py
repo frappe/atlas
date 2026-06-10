@@ -17,7 +17,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 from dataclasses import dataclass
 
-from atlas._run import install_directory, install_file, run, run_input
+from atlas._run import install_directory, install_file, run, run_input, run_ok
 from atlas.lvm import LogicalVolume
 
 
@@ -31,6 +31,10 @@ class Identity:
 	ssh_public_key: str
 	ipv4_guest_cidr: str
 	ipv4_gateway: str
+	# Where the data disk is mounted inside the guest. Empty means no data mount
+	# (no data disk, or format-and-mount disabled): inject_identity skips the
+	# fstab line entirely.
+	data_disk_mount_at: str = ""
 
 	@property
 	def hostname(self) -> str:
@@ -65,18 +69,81 @@ def prepare_lv(origin: LogicalVolume, target: LogicalVolume, disk_gigabytes: int
 	return target
 
 
-def inject_identity(device: str, identity: Identity) -> None:
+def prepare_data_lv(
+	pool, data_lv: LogicalVolume, disk_gigabytes: int, do_format: bool, origin: LogicalVolume | None = None
+) -> LogicalVolume:
+	"""Bring a per-VM data disk into being and leave it activated. The data-disk
+	peer of prepare_lv, with two sources:
+
+	- `origin is None` — a fresh, blank data disk. create_thin it (a private thin
+	  volume, no origin). If `do_format`, lay down ext4 labelled `atlas-data` the
+	  first time only (a freshly-minted LV); on a later grow, lvextend -r the LV +
+	  fs and e2fsck. If not `do_format`, attach the raw block device (grow with a
+	  plain lvextend -L, no fs to resize).
+	- `origin` set — clone/restore: a CoW thin snapshot of a data-disk snapshot LV,
+	  exactly like prepare_lv does for root. Grow to size with -r, then
+	  `tune2fs -U random` for a fresh host-side UUID while KEEPING the `atlas-data`
+	  label (the guest mounts by LABEL=atlas-data). No mkfs — the data is preserved.
+
+	Idempotent: snapshot_into / create_thin re-activate an existing LV, and the
+	grow/e2fsck/tune2fs steps are no-ops once satisfied, so a re-provision reuses
+	the same disk without wiping it.
+	"""
+	if origin is not None:
+		origin.snapshot_into(data_lv)
+		device = data_lv.device_path
+		run("sudo", "lvextend", "-r", "-L", f"{disk_gigabytes}G", device, check=False, quiet=True)
+		run("sudo", "e2fsck", "-fy", device, check=False, quiet=True)
+		run("sudo", "tune2fs", "-U", "random", "-L", "atlas-data", device)
+		return data_lv
+
+	freshly_created = not data_lv.exists
+	pool.create_thin(data_lv, disk_gigabytes)
+	device = data_lv.device_path
+	if do_format:
+		if freshly_created:
+			# -F: non-interactive even though the device is whole-disk (no partition).
+			run("sudo", "mkfs.ext4", "-q", "-L", "atlas-data", "-F", device)
+		else:
+			run("sudo", "lvextend", "-r", "-L", f"{disk_gigabytes}G", device, check=False, quiet=True)
+			run("sudo", "e2fsck", "-fy", device, check=False, quiet=True)
+	elif not freshly_created:
+		# Raw, unformatted disk: grow the block device only — there is no fs to -r.
+		run("sudo", "lvextend", "-L", f"{disk_gigabytes}G", device, check=False, quiet=True)
+	return data_lv
+
+
+def inject_identity(device: str, identity: Identity, *, regenerate_host_keys: bool = False) -> None:
 	"""Mount `device` and write this VM's identity into it: authorized_keys, the
 	network env (IPv6 + the private IPv4 egress link), hostname + hosts entry, a
-	512 MiB swapfile, fresh SSH host keys, a UUID-derived machine-id. Unmounts on
-	return and on error (the context manager guarantees it)."""
+	512 MiB swapfile, a UUID-derived machine-id, and the data-disk fstab line.
+	Unmounts on return and on error (the context manager guarantees it).
+
+	SSH **host keys** are PRESERVED by default — they are the VM's SSH identity,
+	and silently changing them on a rebuild/restore breaks every client's
+	known_hosts (looks like a MITM). They are (re)generated only when
+	`regenerate_host_keys` is set — provision establishes a fresh identity at
+	birth (and must replace the base image's shared baked keys), and the explicit
+	Regenerate action rotates them — or when the disk carries none at all (a
+	keyless sshd won't start). Rebuild/restore leave them untouched."""
 	with _mounted(device) as mount_point:
 		_write_authorized_keys(mount_point, identity.ssh_public_key)
 		_write_network_env(mount_point, identity)
 		_write_hostname(mount_point, identity.hostname)
 		_write_swapfile(mount_point)
-		_regenerate_host_keys(mount_point, identity.hostname)
+		_ensure_host_keys(mount_point, identity.hostname, force=regenerate_host_keys)
 		_write_machine_id(mount_point, identity.machine_id)
+		if identity.data_disk_mount_at:
+			_write_data_fstab(mount_point, identity.data_disk_mount_at)
+
+
+def regenerate_host_keys_on_device(device: str, hostname: str) -> None:
+	"""Mount `device` and replace its SSH host keys with fresh ones — the explicit
+	'rotate this VM's SSH identity' primitive, the on-demand counterpart to
+	inject_identity's preserve-by-default. The caller guarantees the VM is Stopped
+	(the rootfs is unmounted in the guest), so mounting it on the host is safe."""
+	with _mounted(device) as mount_point:
+		_regenerate_host_keys(mount_point, hostname)
 
 
 @contextmanager
@@ -134,10 +201,27 @@ def _write_swapfile(mount_point: str) -> None:
 	run("sudo", "mkswap", swapfile, quiet=True)
 
 
+def _ensure_host_keys(mount_point: str, hostname: str, *, force: bool) -> None:
+	"""Host keys are the VM's SSH identity. Preserve whatever the disk carries so a
+	rebuild/restore doesn't change identity out from under clients' known_hosts —
+	UNLESS `force` (establish/rotate a fresh identity: provision, or the explicit
+	Regenerate action) or the disk has NO host keys (a keyless sshd won't start;
+	self-heal). Preserve is the default."""
+	if force or not _has_host_keys(mount_point):
+		_regenerate_host_keys(mount_point, hostname)
+
+
+def _has_host_keys(mount_point: str) -> bool:
+	"""True if the rootfs already carries an ed25519 host key (the one sshd offers
+	by default). `test -f` via sudo because /etc/ssh is root-owned in the mount."""
+	return run_ok("sudo", "test", "-f", f"{mount_point}/etc/ssh/ssh_host_ed25519_key")
+
+
 def _regenerate_host_keys(mount_point: str, hostname: str) -> None:
-	# The CI rootfs has no first-boot keygen, so sshd dies without keys; generate
-	# per-VM keys here. On a snapshot/clone source this also overwrites the source
-	# VM's keys so the new VM is not a duplicate.
+	# Replace the rootfs's SSH host keys with fresh per-VM ones. Used to establish
+	# identity at provision (the base image ships SHARED baked keys that must not
+	# be reused across VMs) and to rotate it on demand. NOT called on a plain
+	# rebuild/restore — those preserve the disk's keys (see _ensure_host_keys).
 	install_directory(f"{mount_point}/etc/ssh", mode="0755")
 	for key_type in ("rsa", "ecdsa", "ed25519"):
 		key_path = f"{mount_point}/etc/ssh/ssh_host_{key_type}_key"
@@ -147,3 +231,27 @@ def _regenerate_host_keys(mount_point: str, hostname: str) -> None:
 
 def _write_machine_id(mount_point: str, machine_id: str) -> None:
 	install_file(machine_id + "\n", f"{mount_point}/etc/machine-id", mode="0444")
+
+
+def _write_data_fstab(mount_point: str, mount_at: str) -> None:
+	"""Mount the data disk at `mount_at` inside the guest. Create the mount dir
+	and append an fstab line keyed by `LABEL=atlas-data` (the same LABEL= idiom
+	sync-image.py uses for the root fs, so it survives the per-VM tune2fs UUID
+	reroll). `nofail` keeps a missing/unformatted data disk from blocking boot.
+
+	Idempotent: skip if an atlas-data line is already present — a rebuild lays
+	down a fresh rootfs (image fstab has no such line, so append once), while a
+	restore-from-snapshot or re-provision may already carry it (don't duplicate)."""
+	fstab = f"{mount_point}/etc/fstab"
+	if run_ok("sudo", "grep", "-q", "LABEL=atlas-data", fstab):
+		return
+	run("sudo", "mkdir", "-p", f"{mount_point}{mount_at}")
+	# tee -a appends and echoes; route the echo to /dev/null so it never lands in
+	# a Task's parsed stdout (same trick as _write_hostname).
+	run_input(
+		"sudo",
+		"sh",
+		"-c",
+		f"tee -a {fstab} >/dev/null",
+		stdin=f"LABEL=atlas-data\t{mount_at}\text4\tdefaults,nofail\t0\t2\n",
+	)

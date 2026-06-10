@@ -22,7 +22,11 @@
   "memory_megabytes",
   "column_break_resources_2",
   "disk_gigabytes",
+  "data_disk_gigabytes",
+  "data_disk_format_and_mount",
+  "data_disk_mount_point",
   "clone_source_rootfs",
+  "clone_source_data_rootfs",
   "section_break_security",
   "ssh_public_key",
   "ssh_command",
@@ -152,11 +156,44 @@
    "reqd": 1
   },
   {
+   "default": "0",
+   "description": "Optional second writable disk, attached as /dev/vdb. 0 = no data disk. Set at create; grow (never shrink) via Resize.",
+   "fieldname": "data_disk_gigabytes",
+   "fieldtype": "Int",
+   "label": "Data Disk (GB)"
+  },
+  {
+   "default": "1",
+   "depends_on": "data_disk_gigabytes",
+   "description": "Format the data disk ext4 and mount it at the mount point. Uncheck to attach a raw, unformatted/unmounted block device. Takes effect when the disk is first created.",
+   "fieldname": "data_disk_format_and_mount",
+   "fieldtype": "Check",
+   "label": "Format & Mount Data Disk"
+  },
+  {
+   "default": "/home",
+   "depends_on": "eval:doc.data_disk_gigabytes && doc.data_disk_format_and_mount",
+   "description": "Where the data disk is mounted inside the guest (via /etc/fstab LABEL=atlas-data).",
+   "fieldname": "data_disk_mount_point",
+   "fieldtype": "Data",
+   "label": "Data Disk Mount Point"
+  },
+  {
    "description": "Internal: on-host snapshot rootfs to seed this VM's disk from (clone). Empty for a normal image-backed VM.",
    "fieldname": "clone_source_rootfs",
    "fieldtype": "Data",
    "hidden": 1,
    "label": "Clone Source Rootfs",
+   "no_copy": 1,
+   "read_only": 1,
+   "set_only_once": 1
+  },
+  {
+   "description": "Internal: on-host data-disk snapshot to seed this VM's data disk from (clone). Empty for a normal VM.",
+   "fieldname": "clone_source_data_rootfs",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "Clone Source Data Rootfs",
    "no_copy": 1,
    "read_only": 1,
    "set_only_once": 1

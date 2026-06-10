@@ -428,10 +428,14 @@ deletion.
 | `cpu_max_cores`    | Float                         | Y    |           | 1       | cgroup `cpu.max` bandwidth cap in whole-core units (see [networking.cgroup_args](../atlas/atlas/networking.py)). Fractional for sub-1 sizes: `0.0625` is 1/16 of a core. Defaults to `vcpus` (whole-core behavior) when a caller sets only `vcpus` — the operator desk path, the bootstrap seed, direct API. The size presets ([sizes.py](../atlas/atlas/sizes.py)) set both. Same resize rule as `vcpus`; the bandwidth cap is baked into the per-VM jailer launcher at provision time, so a changed cap takes effect on re-provision (see [05 § Resize](./05-virtual-machine-lifecycle.md#resize)). |
 | `memory_megabytes` | Int                           | Y    |           | 512     | Same resize rule as `vcpus`.                                     |
 | `disk_gigabytes`   | Int                           | Y    |           | 4       | Same resize rule. Resize may only grow it.                       |
+| `data_disk_gigabytes` | Int                        |      |           | 0       | Optional second writable disk (the guest's `/dev/vdb`). `0` = none. Set at create; resize may only **grow** it (0→N is not a resize — recreate the VM). A first-class peer of the root disk: snapshotted, restored, cloned, terminated alongside it. |
+| `data_disk_format_and_mount` | Check               |      |           | 1       | Format the data disk `ext4` (label `atlas-data`) and mount it at the mount point. Uncheck to attach a raw, unformatted/unmounted block device. Takes effect when the disk is first created. `depends_on: data_disk_gigabytes`. |
+| `data_disk_mount_point` | Data                    |      |           | /home   | Where the data disk mounts inside the guest, via an `/etc/fstab` `LABEL=atlas-data` line. `depends_on: data_disk_gigabytes && data_disk_format_and_mount`. |
 | `ssh_public_key`   | Long Text                     | Y    |           |         | `set_only_once`. Injected into the rootfs.                       |
 | `stop_protection`  | Check                         |      |           | 0       | When set, `stop()` refuses to stop the VM (and therefore `restart()`, which stops first). Off by default. The operator unchecks and saves before stopping — a deliberate two-step guard, the same shape as the immutability throws. Independent of `termination_protection`. |
 | `termination_protection` | Check                   |      |           | 0       | When set, `terminate()` refuses to terminate the VM. Off by default. Unchecked + saved before terminate. Independent of `stop_protection` (terminate does not go through `stop()`). |
 | `clone_source_rootfs` | Data                       |      | Y         |         | Internal, hidden. On-host snapshot rootfs to seed this VM's disk from (clone). Empty for a normal image-backed VM. `set_only_once`, `no_copy`. |
+| `clone_source_data_rootfs` | Data                  |      | Y         |         | Internal, hidden. On-host data-disk snapshot to seed this VM's data disk from (clone). Empty for a normal VM. `set_only_once`, `no_copy`. |
 | `ipv6_address`     | Data                          |      | Y         |         | From the server's /124. Set in `before_insert`.                  |
 | `public_ipv4`      | Data                          |      | Y         |         | The attached public IPv4, denormalized from the `Reserved IP` row whose `virtual_machine` points here. Empty until one is attached. Maintained by `Reserved IP.attach()` / `detach()` (and cleared on terminate); never hand-edited. See [Reserved IP](#reserved-ip) and [06-networking.md](./06-networking.md). |
 | `mac_address`      | Data                          |      | Y         |         | Derived from `name`. Set in `before_validate`.                   |
@@ -480,6 +484,9 @@ vcpus
 cpu_max_cores
 | memory_megabytes
 | disk_gigabytes
+data_disk_gigabytes
+data_disk_format_and_mount
+data_disk_mount_point
 ── Security ── (collapsible)
 ssh_public_key
 | stop_protection
@@ -541,10 +548,12 @@ Tiering is keyed off `status` — see [10-desk-ui.md § Virtual Machine](./10-de
 
 ## Virtual Machine Snapshot
 
-A disk snapshot of one VM — a copy of its `rootfs.ext4` at a point in time.
-Not a Firecracker memory-state snapshot. Created from a Stopped VM; the bytes
-live on the same server as the VM, under
-`/var/lib/atlas/virtual-machines/<vm-uuid>/snapshots/<snapshot-uuid>/`.
+A disk snapshot of one VM at a point in time — **both** its disks: the root
+`rootfs.ext4` (LV `atlas-snap-<id>`) and, when the VM has one, the data disk
+(LV `atlas-datasnap-<id>`, same snapshot UUID). Not a Firecracker memory-state
+snapshot. Created from a Stopped VM; the snapshot LVs live in the thin pool
+(`/dev/atlas/`), independent of the VM directory. Restore and clone recreate
+both disks; see [05 § Snapshot/Restore](./05-virtual-machine-lifecycle.md).
 
 ### Fields
 
@@ -557,8 +566,13 @@ live on the same server as the VM, under
 | `status`          | Select                        | Y    | Y         | Pending | `Pending`, `Available`, `Failed`. Set by the controller after the copy Task. |
 | `source_image`    | Link → Virtual Machine Image  |      | Y         |         | The image the VM ran when snapshotted (provenance; the clone's kernel comes from it). |
 | `disk_gigabytes`  | Int                           |      | Y         |         | Disk size captured, so restore/clone restore the right size.     |
+| `data_disk_gigabytes` | Int                       |      | Y         | 0       | Data-disk size captured (`0` if the VM had no data disk).        |
+| `data_disk_mount_point` | Data                    |      | Y         |         | The data disk's mount point at snapshot time, carried so a clone reconstructs it faithfully. |
+| `data_disk_format_and_mount` | Check              |      | Y         | 0       | Whether the captured data disk was formatted+mounted.            |
 | `size_bytes`      | Long Int                      |      | Y         |         | Actual on-host bytes of the copied rootfs (from the Task output). `Long Int` (bigint) — a 32-bit `Int` overflows on a multi-GB rootfs. |
 | `rootfs_path`     | Data                          |      | Y         |         | Absolute on-host path to the snapshot rootfs.                    |
+| `data_size_bytes` | Long Int                      |      | Y         | 0       | Bytes of the data-disk snapshot (`0` if none). `Long Int`.       |
+| `data_rootfs_path`| Data                          |      | Y         |         | On-host device path of the data-disk snapshot LV (`atlas-datasnap-<id>`); empty if the VM had no data disk. |
 
 ### Form layout
 
@@ -571,8 +585,13 @@ server
 ── Disk ──
 source_image
 disk_gigabytes
+data_disk_gigabytes
+data_disk_mount_point
+data_disk_format_and_mount
 | size_bytes
   rootfs_path
+  data_size_bytes
+  data_rootfs_path
 ```
 
 ### List view
