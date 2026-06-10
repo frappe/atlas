@@ -103,6 +103,25 @@ class Server(Document):
 		return task.name
 
 	@frappe.whitelist()
+	def sync_scripts(self) -> int:
+		"""Re-upload the durable scripts (atlas package + systemd-invoked .py
+		hooks) to /var/lib/atlas/bin without re-running bootstrap.
+
+		The development fast path: after editing anything under scripts/lib/atlas/
+		(or vm-network-up.py et al.) push the change to a live host in one scp
+		sweep, instead of a full `bootstrap` (which also runs bootstrap-server.py
+		and mutates status). Bootstrap remains the single refresh point for unit
+		files; this is the subset that's pure code. Idempotent — a plain overwrite.
+
+		Returns the number of files uploaded.
+		"""
+		if not self.ipv4_address:
+			frappe.throw(f"Server {self.name} has no ipv4_address; cannot sync scripts")
+		uploads = self._script_uploads()
+		upload_files(connection_for_server(self), uploads)
+		return len(uploads)
+
+	@frappe.whitelist()
 	def reboot(self) -> str:
 		"""Run reboot-server.sh as a Task. SSH drops mid-Task — Task ends in
 		Failure; the operator confirms reboot by waiting and reconnecting."""
@@ -150,9 +169,19 @@ class Server(Document):
 		]
 
 	def _bootstrap_uploads(self) -> list[tuple[str, str]]:
+		return self._script_uploads() + self._unit_uploads()
+
+	def _script_uploads(self) -> list[tuple[str, str]]:
+		"""The durable scripts that live under /var/lib/atlas/bin: the importable
+		atlas package plus the systemd-invoked .py hooks. These are pure code — an
+		scp overwrite is all it takes for an edit to land, no daemon-reload. This
+		is exactly the set `sync_scripts()` refreshes during development; bootstrap
+		ships it alongside `_unit_uploads()`."""
 		directory = scripts_catalog.scripts_directory()
 		uploads = [
-			(str(directory / source), destination) for source, destination in self.BOOTSTRAP_UPLOAD_SOURCES
+			(str(directory / source), destination)
+			for source, destination in self.BOOTSTRAP_UPLOAD_SOURCES
+			if destination.startswith("/var/lib/atlas/bin/")
 		]
 		# The durable atlas package: every lib module lands under
 		# /var/lib/atlas/bin/atlas/ so the .py hooks and atlas-pool.service can
@@ -165,6 +194,18 @@ class Server(Document):
 			uploads.append((str(entry), f"/var/lib/atlas/bin/atlas/{entry.name}"))
 		return uploads
 
+	def _unit_uploads(self) -> list[tuple[str, str]]:
+		"""The bootstrap-only uploads that are NOT plain /var/lib/atlas/bin code —
+		systemd unit files under /etc/systemd/system. Editing one needs a
+		daemon-reload (a bootstrap concern), so `sync_scripts()` deliberately omits
+		these."""
+		directory = scripts_catalog.scripts_directory()
+		return [
+			(str(directory / source), destination)
+			for source, destination in self.BOOTSTRAP_UPLOAD_SOURCES
+			if not destination.startswith("/var/lib/atlas/bin/")
+		]
+
 	def _absorb_bootstrap_output(self, stdout: str) -> None:
 		# bootstrap-server.py emits a typed BootstrapResult as one
 		# `ATLAS_RESULT=<json>` line; parse_result pulls it out (the host still
@@ -175,3 +216,18 @@ class Server(Document):
 		self.jailer_version = parsed["jailer_version"]
 		self.kernel_version = parsed["kernel_version"]
 		self.architecture = parsed["architecture"]
+
+
+def sync_scripts_to_all() -> dict[str, int]:
+	"""Push the durable scripts to every Active server in one sweep.
+
+	The development convenience: edit a script under scripts/lib/atlas/ once, then
+	`bench --site <site> execute atlas.sync_scripts_to_all` (or `atlas.sync_scripts_to_all()`
+	in a console) to refresh every live host. Active-only because a Pending/Broken
+	server has no working SSH endpoint. Returns {server_name: files_uploaded}.
+	"""
+	results: dict[str, int] = {}
+	for name in frappe.get_all("Server", filters={"status": "Active"}, pluck="name"):
+		server = frappe.get_doc("Server", name)
+		results[name] = server.sync_scripts()
+	return results

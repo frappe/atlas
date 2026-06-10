@@ -6,3 +6,4 @@ from atlas.atlas.atlas_settings import (
 	get_ssh_private_key_path,
 	provision,
 )
+from atlas.atlas.doctype.server.server import sync_scripts_to_all

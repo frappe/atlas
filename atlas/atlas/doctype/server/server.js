@@ -20,6 +20,7 @@ function add_buttons(frm) {
 	}
 	if (status === "Active") {
 		frappe.atlas.add_action(frm, "Sync Image", () => open_sync_image_dialog(frm));
+		frappe.atlas.add_action(frm, "Sync Scripts", () => sync_scripts(frm));
 		frappe.atlas.add_action(frm, "Allocate Reserved IP", () => confirm_allocate_reserved_ip(frm));
 		frappe.atlas.add_action(frm, "Discover Reserved IPs", () => discover_reserved_ips(frm));
 	}
@@ -65,6 +66,22 @@ function discover_reserved_ips(frm) {
 			indicator: count ? "green" : "blue",
 		}, 6);
 		frm.dashboard.refresh();
+	});
+}
+
+
+function sync_scripts(frm) {
+	// Dev convenience: re-upload the durable atlas package + .py hooks to
+	// /var/lib/atlas/bin without a full bootstrap. Pure code overwrite, no
+	// vendor side effects, so no confirm.
+	frm.call("sync_scripts", {}, {
+		freeze: true,
+		freeze_message: __("Syncing scripts…"),
+	}).then(({message: count}) => {
+		frappe.show_alert({
+			message: __("Synced {0} script file(s) to {1}.", [count, frm.doc.title]),
+			indicator: "green",
+		}, 6);
 	});
 }
 
