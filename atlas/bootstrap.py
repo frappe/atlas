@@ -65,6 +65,20 @@ skipped with a printed note — `run_with_proxy` then behaves like `run`.
     atlas_acme_account_email         ACME registration / expiry-notice email
     atlas_acme_directory_url         ACME directory (default: LE STAGING — set the
                                      production URL for a trusted cert)
+
+Optional self-serve tail (run via `atlas.bootstrap.run_with_self_serve`):
+
+`run_with_proxy()` plus wiring the golden bench snapshot + outbound email so a
+site can take a public `/signup` (spec/14-self-serve.md). Both steps skip with a
+note when absent, so this stays a safe drop-in for `run_with_proxy`.
+
+    atlas_default_bench_snapshot     golden bench Virtual Machine Snapshot name
+                                     (else: newest Available golden-bench* is adopted)
+    atlas_smtp_host                  outbound SMTP server (omit to skip email setup)
+    atlas_smtp_port                  SMTP port (default 587)
+    atlas_smtp_login                 SMTP username
+    atlas_smtp_password              SMTP password
+    atlas_smtp_from                  From address (default: the SMTP login)
 """
 
 import os
@@ -148,6 +162,47 @@ def run_with_proxy() -> None:
 		return
 	ensure_tls_layer(tls_config)
 	issue_certificate(tls_config["domain"])
+
+
+def restore_credentials() -> None:
+	"""Re-write the four credential fields the unit suite clobbers, from site config.
+
+	The shared dev DB is also the test DB: a unit run leaves fake values in the
+	Singles (`set_atlas_settings`/`set_digitalocean_settings` write `dop_v1_fake`,
+	`atlas-test-ssh-key.pem`, `key-id-123`), so the next *real* provision/build/e2e
+	fails with a bogus token or an unusable key (memory: real-provision-traps #4).
+	This restores the real values from `common_site_config.json` —
+	`atlas_ssh_private_key_path`, `atlas_ssh_key_id`, optional `atlas_ssh_public_key`,
+	and the DO `atlas_do_token` — without `ensure_provider`'s catalog discover()
+	network call. Run it before any host turn:
+
+	    bench --site <site> execute atlas.bootstrap.restore_credentials
+
+	Idempotent; safe to re-run. Fails loud (`require_config`) if a key is missing,
+	since a half-restored credential set is worse than a clean error."""
+	frappe.db.set_single_value(
+		"Atlas Settings",
+		"ssh_private_key_path",
+		require_config("atlas_ssh_private_key_path"),
+		update_modified=False,
+	)
+	frappe.db.set_single_value(
+		"Atlas Settings",
+		"ssh_key_id",
+		require_config("atlas_ssh_key_id"),
+		update_modified=False,
+	)
+	public_key = frappe.conf.get("atlas_ssh_public_key")
+	if public_key:
+		frappe.db.set_single_value("Atlas Settings", "ssh_public_key", public_key, update_modified=False)
+	frappe.utils.password.set_encrypted_password(
+		"DigitalOcean Settings",
+		"DigitalOcean Settings",
+		require_config("atlas_do_token"),
+		"api_token",
+	)
+	frappe.db.commit()
+	print("[bootstrap] restored Atlas/DigitalOcean credentials from site config")
 
 
 def ensure_provider() -> "frappe.model.document.Document":
@@ -463,6 +518,114 @@ def issue_certificate(domain: str) -> str:
 		frappe.throw(f"TLS Certificate {cert_name} ended in status {status}, expected Active")
 	print(f"[bootstrap] issued {cert_name} for *.{domain} (status {status}, expires {expires_on})")
 	return cert_name
+
+
+def run_with_self_serve() -> None:
+	"""`run_with_proxy()` plus the self-serve tail: wire the golden bench snapshot
+	and outbound email so a fresh site can take a public `/signup`.
+
+	The compute + proxy + TLS bootstrap (`run_with_proxy`) always happens first —
+	it seeds the Root Domain that `Site.before_insert` resolves the region + FQDN
+	suffix from (spec/14, Contract A), so self-serve has no separate domain step.
+	Then two settings the signup flow needs:
+
+	  - `Atlas Settings.default_bench_snapshot` — the golden image a Site's backing
+	    VM clones from (plan 01). Wired from `atlas_default_bench_snapshot` if set,
+	    else from the most recent Available `golden-bench*` snapshot if one exists.
+	  - the outbound Email Account — so the verification email actually sends
+	    (`request_site` only queues it; spec/14 calls outbound email an operator
+	    prerequisite). Configured from the `atlas_smtp_*` keys.
+
+	Each step skips with a printed note when its inputs are absent, so this is a
+	safe drop-in for `run_with_proxy` — mirroring how the TLS tail degrades."""
+	run_with_proxy()
+	ensure_default_bench_snapshot()
+	ensure_outbound_email()
+
+
+def ensure_default_bench_snapshot() -> None:
+	"""Point `Atlas Settings.default_bench_snapshot` at an Available golden bench
+	snapshot. Prefers the explicitly configured `atlas_default_bench_snapshot`;
+	otherwise adopts the newest Available snapshot whose title starts `golden-bench`
+	(what the bake e2e leaves). Skips with a printed pointer if none exists — the
+	bake is a billable host run (plan 01), not something to trigger from bootstrap."""
+	configured = frappe.conf.get("atlas_default_bench_snapshot")
+	if configured:
+		status = frappe.db.get_value("Virtual Machine Snapshot", configured, "status")
+		if status != "Available":
+			frappe.throw(
+				f"atlas_default_bench_snapshot {configured!r} is not an Available snapshot (status {status})"
+			)
+		frappe.db.set_single_value(
+			"Atlas Settings", "default_bench_snapshot", configured, update_modified=False
+		)
+		frappe.db.commit()
+		print(f"[bootstrap] default_bench_snapshot = {configured} (configured)")
+		return
+
+	candidates = frappe.get_all(
+		"Virtual Machine Snapshot",
+		filters={"status": "Available", "title": ("like", "golden-bench%")},
+		fields=["name", "title"],
+		order_by="creation desc",
+		limit=1,
+	)
+	if not candidates:
+		print(
+			"[bootstrap] no golden bench snapshot found — self-serve signup will fail until one exists. "
+			"Bake it (billable host run, plan 01):\n"
+			"    bench --site <site> execute atlas.tests.e2e.use_cases.bench_image.run_smoke\n"
+			"  then re-run, or set atlas_default_bench_snapshot to its name."
+		)
+		return
+	snapshot = candidates[0]["name"]
+	frappe.db.set_single_value("Atlas Settings", "default_bench_snapshot", snapshot, update_modified=False)
+	frappe.db.commit()
+	print(f"[bootstrap] default_bench_snapshot = {snapshot} (adopted newest Available golden-bench)")
+
+
+def ensure_outbound_email() -> None:
+	"""Configure the default outbound Email Account from the `atlas_smtp_*` keys so
+	the signup verification email sends (request_site only queues it). Skips with a
+	note if the keys are absent — like the TLS tail, bootstrap stays runnable on a
+	site with no SMTP yet (the queue entry is then a harmless no-op)."""
+	host = frappe.conf.get("atlas_smtp_host")
+	if not host:
+		print(
+			"[bootstrap] no atlas_smtp_host — skipping outbound email setup. "
+			"Verification emails will queue but not send until an Email Account is configured."
+		)
+		return
+	login = require_config("atlas_smtp_login")
+	password = require_config("atlas_smtp_password")
+	from_address = frappe.conf.get("atlas_smtp_from") or login
+	port = int(frappe.conf.get("atlas_smtp_port", 587))
+
+	name = "Atlas Outbound"
+	if frappe.db.exists("Email Account", name):
+		account = frappe.get_doc("Email Account", name)
+	else:
+		account = frappe.new_doc("Email Account")
+		account.email_account_name = name
+	account.update(
+		{
+			"email_id": from_address,
+			"smtp_server": host,
+			"smtp_port": port,
+			# Frappe only reads login_id when login_id_is_different is set; otherwise
+			# it logs in as email_id. Flag it only when the SMTP user differs from From.
+			"login_id_is_different": 1 if login != from_address else 0,
+			"login_id": login,
+			"password": password,
+			"use_tls": 1,
+			"enable_outgoing": 1,
+			"default_outgoing": 1,
+			"awaiting_password": 0,
+		}
+	)
+	account.save(ignore_permissions=True)
+	frappe.db.commit()
+	print(f"[bootstrap] outbound Email Account {name!r} configured ({from_address} via {host}:{port})")
 
 
 def require_config(key: str) -> str:

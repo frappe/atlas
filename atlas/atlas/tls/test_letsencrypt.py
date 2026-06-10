@@ -12,7 +12,7 @@ import frappe
 from frappe.tests import IntegrationTestCase
 
 from atlas.atlas.dns.base import AuthResult as DnsAuthResult
-from atlas.atlas.dns.base import DnsProvider
+from atlas.atlas.dns.base import DnsProvider, WildcardTargets
 from atlas.atlas.tls import letsencrypt
 
 
@@ -27,6 +27,9 @@ class _StubDns(DnsProvider):
 
 	def certbot_authenticator(self) -> str:
 		return "route53"
+
+	def upsert_wildcard(self, domain: str, targets: WildcardTargets) -> list[str]:
+		return []
 
 
 def _provider(
