@@ -112,6 +112,35 @@ behavior; they just keep doors open.
   guarantee. Pair with the "Server lock doctype" if we ever want
   concurrent-sync protection. Additive.
 
+- **Fast self-serve deploy (sub-5s, no warm pool)**. The post-verify
+  `Site.auto_provision` ([14-self-serve.md](./14-self-serve.md)) is dominated
+  not by kernel boot (the CoW clone boots in single-digit seconds) but by
+  **per-signup work that produces identical output every time** plus
+  **poll-loop sleep slop**. Three additive changes remove the fixed cost
+  without pre-provisioning idle VMs:
+  1. **Bake `bench setup production` into the golden image** so a clone already
+     serves on `:80`; the per-signup deploy drops from `rename + full setup
+     production` (the rank-1 cost — supervisord + nginx regen, "takes minutes")
+     to `rename + at most one nginx reload`. The IPv6-listener fix
+     (`listen [::]:80;`) moves to bake time too. (Decide on a host whether a
+     wildcard/`dns_multitenant` `server_name` lets a renamed dir serve with
+     **zero** per-signup nginx regen — the real prize — or whether a minimal
+     `bench setup nginx` + reload is needed.)
+  2. **Tighten the poll intervals** in `_wait_for_vm_running` and
+     `wait_for_http` from 5s → 1s (leave the generous *timeouts* alone — only
+     the interval, so a legitimately-slow provision still can't spuriously
+     `Fail`).
+  3. **Bake `deploy-site.py` into the image** (it is already self-contained,
+     stdlib-only) so the per-signup path is a single SSH **execute**, not
+     `mkdir + scp + execute` — the first entrypoint of an eventual `atlas-guest`
+     baked CLI.
+  Changes 1 + 3 share one re-bake and repoint `default_bench_snapshot` at the
+  new golden (retire the old — keep exactly one). Contracts A/B/C are untouched:
+  HTTP-200 stays the single `Running` signal; this only removes slop and fixed
+  cost. The **warm pool** of pre-claimed VMs is the *next* lever if these three
+  don't hit sub-5s (boot + RQ-pickup are the only residuals they can't remove) —
+  explicitly deferred, not built here.
+
 - **Server lock doctype**. A single-row lock keyed by `(server, resource)`
   that long-running mutating Tasks (sync-image, provision) take before
   doing work. Today two concurrent syncs of the same image-on-server are

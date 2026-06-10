@@ -69,7 +69,7 @@ indirection layer.
 | ---------------------- | ---------------- | ---- | ------------------------------------------------------------------ |
 | `provider`             | Link → Provider  | Y    | The currently-active Provider row. `atlas.get_provider()` reads this. |
 | `default_user_image`   | Link → Virtual Machine Image | | Base image a dashboard user's new machine provisions from when they don't pick one. Disambiguates placement when several images are active. See [11-user-ui.md](./11-user-ui.md). |
-| `default_bench_snapshot` | Link → Virtual Machine Snapshot | | The golden bench snapshot a self-serve `Site`'s backing VM is cloned from (the baked bench + MariaDB + Redis, [01-golden-image](../llm/plans/self-serve/01-golden-image.md)). `Site.before_insert` placement resolves it; provisioning clones via `Virtual Machine Snapshot.clone_to_new_vm`. Must be set + `Available` before any Site is created. See [14-self-serve.md](./14-self-serve.md). |
+| `default_bench_snapshot` | Link → Virtual Machine Snapshot | | The golden bench snapshot a self-serve `Site`'s backing VM is cloned from (the baked bench + MariaDB + Redis, [08-images.md § golden bench image](./08-images.md)). `Site.before_insert` placement resolves it; provisioning clones via `Virtual Machine Snapshot.clone_to_new_vm`. Must be set + `Available` before any Site is created. See [14-self-serve.md](./14-self-serve.md). |
 | `overprovision_factor` | Float            |      | Fleet-wide vCPU oversubscription multiplier (default `1`). A host's *effective* vCPU budget — what `default_server` placement and the desk capacity helper check against — is its physical vCPU total times this factor. `1` means no oversubscription. Safe to raise because a VM's `vcpus` is a `cpu.max` *bandwidth* cap, not a pinned core. A host whose size has no known vCPU total (uncatalogued slug or self-managed) is unaffected — it always counts as having room. See [server_capacity.py](../atlas/atlas/api/server_capacity.py) and `placement.py`. |
 | `ssh_key_id`           | Data             |      | Vendor's handle for the uploaded SSH key, when the vendor needs one (DigitalOcean). Passed through to the provider as `SshKey.vendor_id`; format is vendor-specific (DO accepts the key's numeric id or its SHA-256 fingerprint). |
 | `ssh_public_key`       | Long Text        |      | OpenSSH public key body. Crosses the provider interface for vendors that upload at provision time. Not required for DO. |
@@ -1259,7 +1259,7 @@ scoped by `permission_query_conditions` (`atlas.atlas.permissions.owner_only`).
 - **Reserved denylist** — `www admin api proxy app dashboard mail ns root`
   (module-level `RESERVED_SUBDOMAINS`). Anything else already taken is caught by
   the FQDN-key uniqueness check, which throws a clean *"subdomain taken"* (the
-  signup race, [04-signup-verification](../llm/plans/self-serve/04-signup-verification.md)).
+  signup race, [14-self-serve.md](./14-self-serve.md)).
 - **Immutability** — `subdomain`, `region`, `virtual_machine` are frozen after
   insert (`IMMUTABLE_AFTER_INSERT`, guarded in `validate()`).
 

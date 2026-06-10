@@ -13,10 +13,10 @@ The end-to-end **signup → live Frappe site** flow is built and folded into spe
   [`02-doctypes.md`](../spec/02-doctypes.md) (Site #21, Site Request #22),
   [`11-user-ui.md`](../spec/11-user-ui.md) (signup on-ramp + `if_owner` perms),
   and the `v0.9` entry in [`09-roadmap.md`](../spec/09-roadmap.md).
-- **Plans:** the build was decomposed into
-  [`llm/plans/self-serve/`](./plans/self-serve/00-overview.md) (01 golden image,
-  02 Site doctype, 03 deploy-site, 04 signup, 05 e2e, 06 spec/docs), with the
-  planned-vs-actual drift tracked in
+- **Build record:** the build was decomposed into per-phase plans (golden image,
+  Site doctype, deploy-site, signup, e2e, spec/docs) that have since landed and
+  been folded into the spec above; the now-redundant plan files were removed. The
+  planned-vs-actual drift record is kept in
   [`plans/self-serve/DRIFT.md`](./plans/self-serve/DRIFT.md).
 
 This file's earlier "Tracks to build" + "Contracts to freeze" content is now

@@ -6,9 +6,8 @@ and puts it behind the regional proxy at `acme.blr1.frappe.dev`. The proxy
 ([12-proxy.md](./12-proxy.md)) and TLS ([13-tls.md](./13-tls.md)) halves already
 exist; this chapter is the **site layer** that drives them.
 
-Implementation tracks live under
-[llm/plans/self-serve/](../llm/plans/self-serve/00-overview.md); this chapter is
-the durable spec. **Build status** is called out per section — the `Site` layer,
+This chapter is the durable spec; the build history and planned-vs-actual drift
+record live under [llm/plans/self-serve/](../llm/plans/self-serve/DRIFT.md). **Build status** is called out per section — the `Site` layer,
 the in-guest deploy script + HTTP readiness probe (plan 03), and the
 signup/verification surface (plan 04) are built and unit-green. The golden-image
 bake (plan 01) and the end-to-end flow (plan 05) are **host-proven**: a golden
@@ -103,8 +102,12 @@ after the email is proven.
   prerequisite** (like the TLS controller-host deps) — with no email account
   configured the send is a no-op queue entry.
 - **`atlas/www/verify.py`** (`/verify?token=…`, guest) looks the request up by
-  token and calls `SiteRequest.verify()` — fulfilment is idempotent (a
-  double-clicked link returns the same Site, never provisions twice) and throws a
+  token and calls `SiteRequest.verify()` — fulfilment is idempotent even under
+  concurrency: `verify()` locks the request row `FOR UPDATE` and re-reads its
+  status, so a link fetched twice at once (mail-scanner prefetch + the user's
+  click) serializes — the second fetch sees `Fulfilled` and returns the same Site,
+  never provisioning twice or double-inserting the `User` (which would race two
+  `create_contact` jobs on `tabContact`). Throws a
   clean message on an expired token or a label taken since the request. On success
   it logs the user in (`login_manager.login_as`, the same path as Frappe's
   one-time login key) and redirects to `/site-status?site=<fqdn>` (the live
@@ -166,7 +169,7 @@ Fields, validation, permissions, and the full field table are in
 ### Why clone-from-snapshot, not `image=`
 
 The golden bench image is a **`Virtual Machine Snapshot`**
-([08-images.md](./08-images.md), [01-golden-image](../llm/plans/self-serve/01-golden-image.md)),
+([08-images.md § golden bench image](./08-images.md)),
 not a `Virtual Machine Image` catalogue row. The backing VM is **cloned** from it
 (the snapshot carries `source_image` + the grown `disk_gigabytes`), so the
 preinstalled bench + MariaDB + Redis come for free and `deploy-site.py` only does

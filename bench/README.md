@@ -6,9 +6,9 @@ Frappe clone, MariaDB + Redis, nginx + supervisor installed and enabled, **and a
 fully-created Frappe site baked under the fixed name `site.local`** — so
 `deploy-site.py` (plans/self-serve/03) only **renames** that baked site to the
 per-VM FQDN (a directory move) and runs `setup production`, never paying the
-multi-minute `bench new-site` per signup. The plan is
-[`../llm/plans/self-serve/01-golden-image.md`](../llm/plans/self-serve/01-golden-image.md);
-the spec slice is [`../spec/08-images.md`](../spec/08-images.md).
+multi-minute `bench new-site` per signup. The spec slice is
+[`../spec/08-images.md`](../spec/08-images.md) (§ golden bench image); the
+self-serve flow it feeds is [`../spec/14-self-serve.md`](../spec/14-self-serve.md).
 
 **The golden image is a VM snapshot**, not a from-URL `Virtual Machine Image`.
 It is built *inside* a plain Ubuntu VM (this directory's `build.sh`, run over
