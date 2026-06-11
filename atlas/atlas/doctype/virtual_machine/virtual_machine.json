@@ -125,8 +125,7 @@
    "reqd": 1
   },
   {
-   "default": "1",
-   "description": "Host CPU bandwidth cap in whole-core units (cgroup cpu.max). Fractional for sub-1 sizes (e.g. 0.0625 = 1/16 of a core). Defaults to vcpus.",
+   "description": "Host CPU bandwidth cap in whole-core units (cgroup cpu.max). Fractional for sub-1 sizes (e.g. 0.0625 = 1/16 of a core). Defaults to vcpus (set in the controller's before_validate — a JSON default here would mask that and pin every whole-core VM to 1).",
    "fieldname": "cpu_max_cores",
    "fieldtype": "Float",
    "label": "CPU bandwidth (cores)",

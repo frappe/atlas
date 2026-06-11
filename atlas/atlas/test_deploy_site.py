@@ -144,8 +144,11 @@ class TestDeploySite(IntegrationTestCase):
 		with (
 			patch.object(deploy_module, "run_ssh", return_value=("ATLAS_RESULT={}", "", 0)) as m_ssh,
 			patch.object(deploy_module, "run_scp") as m_scp,
+			patch.object(deploy_module, "wait_for_ssh") as m_wait,
 		):
 			password = deploy_module.deploy_site(vm_name, "acme.blr1.frappe.dev")
+		# The deploy gates on sshd answering before the first scp (clone boot-storm guard).
+		m_wait.assert_called_once()
 		self.assertTrue(password)
 		# A real generated secret, not the literal flag value or empty.
 		self.assertGreaterEqual(len(password), 16)
@@ -170,6 +173,7 @@ class TestDeploySite(IntegrationTestCase):
 		with (
 			patch.object(deploy_module, "run_ssh", return_value=("", "bench new-site exploded", 1)),
 			patch.object(deploy_module, "run_scp"),
+			patch.object(deploy_module, "wait_for_ssh"),
 		):
 			with self.assertRaises(frappe.ValidationError) as raised:
 				deploy_module.deploy_site(vm_name, "acme.blr1.frappe.dev")

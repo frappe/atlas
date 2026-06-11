@@ -70,14 +70,47 @@ skipped with a printed note — `run_with_proxy` then behaves like `run`.
     atlas_acme_directory_url         ACME directory (default: LE STAGING — set the
                                      production URL for a trusted cert)
 
-Optional self-serve tail (run via `atlas.bootstrap.run_with_self_serve`):
+Self-serve, one shot (run via `atlas.bootstrap.run_self_serve`):
 
-`run_with_proxy()` plus wiring the golden bench snapshot + outbound email so a
-site can take a public `/signup` (spec/14-self-serve.md). Both steps skip with a
-note when absent, so this stays a safe drop-in for `run_with_proxy`.
+`run_self_serve()` stands up the WHOLE signup flow on a fresh site in one call —
+compute + golden image + proxy + TLS + email — and leaves it running so `/signup`
+works end to end (spec/14-self-serve.md). It is the durable sibling of the
+`self_serve_site` e2e: it drives the same proven controller APIs
+(`bench_image.build_bench`, `proxy.build_proxy`, `Root Domain.issue_certificate`,
+`reserved_ip.allocate`/`attach`) but with NO teardown — the server, the proxy VM
+(with a reserved IPv4 + the pushed wildcard cert), and the golden snapshot all
+persist. The flow, in dependency order:
 
-    atlas_default_bench_snapshot     golden bench Virtual Machine Snapshot name
-                                     (else: newest Available golden-bench* is adopted)
+  1. `run()`                      — settings → provider → server → base images → a VM
+  2. `bake_golden_image(server)`  — build bench in a guest, snapshot it, wire
+                                    `Atlas Settings.default_bench_snapshot` (the
+                                    image self-serve site VMs clone from)
+  3. `ensure_tls_layer(config)`   — seed Domain/TLS providers + Root Domain (the
+                                    row `Site.before_insert` reads region+FQDN from)
+  4. `ensure_proxy(server, …)`    — proxy VM → `build_proxy` → reserved IPv4
+  5. issue + push the wildcard    — `issue_certificate` then `push_to_proxies`
+                                    (needs the proxy + reserved IP to exist first,
+                                    which is why it runs AFTER step 4, not in
+                                    `run_with_proxy`'s pre-proxy order)
+  6. `ensure_outbound_email()`    — the SMTP account the verification mail sends from
+
+It is billable: one droplet + a build VM + a proxy VM + one DO reserved IPv4, all
+left running. It needs the TLS config keys (`atlas_tls_*`), certbot + boto3 on the
+controller, and the DO credentials — the same prerequisites as the e2e. Run it on
+the operator's turn:
+
+    bench --site <site> execute atlas.bootstrap.run_self_serve
+
+The older `run_with_self_serve()` is kept as the *settings-only* tail (wire an
+already-baked snapshot + email, skip the billable bake/proxy) for the case where
+the golden image + proxy already exist; `run_self_serve()` is the from-scratch
+one-shot the wiped-site bootstrap uses.
+
+    atlas_default_bench_snapshot     golden bench Virtual Machine Snapshot name. If
+                                     set + Available, `run_self_serve` reuses it and
+                                     SKIPS the bake; else it bakes a fresh one. (The
+                                     settings-only `run_with_self_serve` adopts the
+                                     newest Available golden-bench* if this is unset.)
     atlas_smtp_host                  outbound SMTP server (omit to skip email setup)
     atlas_smtp_port                  SMTP port (default 587)
     atlas_smtp_login                 SMTP username
@@ -97,6 +130,19 @@ MINIMAL_IMAGE_NAME = "ubuntu-24.04-minimal"
 
 DOMAIN_PROVIDER_NAME = "bootstrap-route53"
 TLS_PROVIDER_NAME = "bootstrap-letsencrypt"
+
+# Golden bench build VM sizing — a Frappe clone + uv venv + node deps overflow the
+# 4 GB base image, so the build VM (and therefore the snapshot, and every site VM
+# cloned from it) gets a roomier disk + RAM. Mirrors bench_image.GOLDEN_DISK_GB /
+# GOLDEN_MEMORY_MB (the e2e bake) — keep the two in sync.
+GOLDEN_DISK_GB = 12
+GOLDEN_MEMORY_MB = 2048
+GOLDEN_SNAPSHOT_TITLE = "golden-bench"
+
+# Proxy VM sizing. The proxy runs nginx+Lua only (no site DB), so it is small; it
+# carries `is_proxy=1` + `region` so build_proxy and the cert push find it.
+PROXY_MEMORY_MB = 1024
+PROXY_DISK_GB = 4
 
 # Let's Encrypt staging — no rate limits, untrusted cert. The TLS tail defaults
 # here so an unattended bootstrap never burns LE production issuance quota; set
@@ -141,12 +187,41 @@ MINIMAL_IMAGE = {
 
 def run() -> None:
 	"""End-to-end: settings → provider → server → image → virtual machine."""
+	server_name = run_compute()
+	provision_virtual_machine(server_name)
+
+
+def run_compute(reuse_server: bool = True) -> str:
+	"""Settings → provider → server → base images synced. Returns the Server name.
+
+	The compute infrastructure WITHOUT the smoke VM — the shared prefix of `run()`
+	and `run_self_serve()`. `run()` adds a throwaway smoke VM on top (the original
+	compute-works proof); `run_self_serve()` skips it (the golden build VM + proxy VM
+	already prove provisioning, and a durable bootstrap shouldn't strand an unused
+	billable VM).
+
+	`reuse_server` (default) adopts an existing Active Server instead of provisioning
+	a fresh one, so a re-run after a mid-bootstrap failure doesn't strand a second
+	billable droplet. Pass False to force a brand-new server."""
 	provider = ensure_provider()
-	server_name = provision_server(provider)
-	wait_for_active_server(server_name)
+	server_name = _existing_active_server() if reuse_server else None
+	if server_name:
+		print(f"[bootstrap] reusing existing Active Server {server_name!r}")
+	else:
+		server_name = provision_server(provider)
+		wait_for_active_server(server_name)
 	ensure_image()
 	sync_image(server_name)
-	provision_virtual_machine(server_name)
+	return server_name
+
+
+def _existing_active_server() -> str | None:
+	"""The newest Active Server, or None. Adopted by `run_compute(reuse_server=True)`
+	so a re-run continues on the server a prior run already stood up."""
+	rows = frappe.get_all(
+		"Server", filters={"status": "Active"}, pluck="name", order_by="creation desc", limit=1
+	)
+	return rows[0] if rows else None
 
 
 def run_with_proxy() -> None:
@@ -166,6 +241,56 @@ def run_with_proxy() -> None:
 		return
 	ensure_tls_layer(tls_config)
 	issue_certificate(tls_config["domain"])
+
+
+def run_self_serve(force_bake: bool = False) -> None:
+	"""From-scratch one-shot: stand up the ENTIRE signup flow and leave it running.
+
+	The durable sibling of the `self_serve_site` e2e (it drives the same proven
+	controller APIs but tears nothing down). Dependency-ordered so each step's
+	prerequisite already exists when it runs — in particular the cert issue+push is
+	deferred until AFTER the proxy VM + its reserved IP exist (unlike
+	`run_with_proxy`, which issues the cert pre-proxy when the push is a no-op).
+
+	`force_bake=True` re-bakes the golden image even if an Available one is already
+	configured (proves the from-scratch `build.sh` bake); the default reuses a
+	configured Available snapshot and skips the slow bake.
+
+	Billable, leaves infra up. Requires the TLS config keys + certbot/boto3 (it
+	throws via `_read_tls_config` / the bake / the cert if a prerequisite is
+	missing, surfacing the gap before stranding half-built infra)."""
+	tls_config = _read_tls_config()
+	if tls_config is None:
+		frappe.throw(
+			"run_self_serve needs the TLS config (atlas_tls_domain + Route53 + ACME keys) — "
+			"the signup flow routes through the regional wildcard. Set them, or use run() for "
+			"compute-only bootstrap."
+		)
+
+	# 1. Compute: settings → provider → server → base images (no smoke VM — the
+	#    golden build VM + proxy VM below prove provisioning).
+	server_name = run_compute()
+
+	# 2. Golden bench image — the snapshot site VMs clone from. Wires
+	#    Atlas Settings.default_bench_snapshot.
+	bake_golden_image(server_name, force=force_bake)
+
+	# 3. TLS layer rows (Root Domain etc.) BEFORE the proxy: Site.before_insert and
+	#    build_proxy/cert-push all read the region off the Root Domain.
+	ensure_tls_layer(tls_config)
+
+	# 4. Proxy VM: build the stack + attach a reserved IPv4 (the public v4 front door).
+	proxy_vm_name = ensure_proxy(server_name, tls_config["region"], tls_config["domain"])
+
+	# 5. Issue the regional wildcard + push it to the proxy (cert + wildcard DNS).
+	#    Now that the proxy + reserved IP exist, the push actually lands.
+	issue_certificate(tls_config["domain"])
+	push_certificate_to_proxies(tls_config["domain"])
+
+	# 6. Outbound email so the verification mail sends (skips with a note if unset).
+	ensure_outbound_email()
+
+	_print_self_serve_summary(server_name, proxy_vm_name, tls_config["domain"])
 
 
 def restore_credentials() -> None:
@@ -377,10 +502,46 @@ def ensure_image() -> "frappe.model.document.Document":
 
 
 def sync_image(server_name: str, timeout_seconds: int = 900) -> None:
-	image = frappe.get_doc("Virtual Machine Image", IMAGE_NAME)
-	task_name = image.sync_to_server(server_name)
-	print(f"[bootstrap] syncing image to {server_name!r} (Task {task_name!r})")
+	"""Sync IMAGE_NAME to `server_name` and wait for it. Race-free + idempotent.
+
+	`Virtual Machine Image.after_insert` ALREADY enqueues a sync to every Active
+	server (so `ensure_image()` on a fresh row fires one before this is even called).
+	Enqueuing a *second* sync here makes two workers race on the same image dir —
+	the loser fails `sha256sum -c` because the winner already renamed the kernel
+	`.part` to its final name. So: adopt an existing in-flight / recent-success sync
+	Task for this image+server if there is one, and only enqueue a fresh sync when
+	none exists (the re-run case where the image row already existed, so
+	`after_insert` did not fire). Either way, wait on the one tracked Task."""
+	task_name = _latest_sync_task(server_name)
+	if task_name:
+		status = frappe.db.get_value("Task", task_name, "status")
+		print(f"[bootstrap] adopting existing sync Task {task_name!r} (status {status}) for {server_name!r}")
+	else:
+		image = frappe.get_doc("Virtual Machine Image", IMAGE_NAME)
+		task_name = image.sync_to_server(server_name)
+		print(f"[bootstrap] syncing image to {server_name!r} (Task {task_name!r})")
 	wait_for_task(task_name, timeout_seconds)
+
+
+def _latest_sync_task(server_name: str) -> str | None:
+	"""The most recent sync-image.py Task for IMAGE_NAME on `server_name` that is
+	still in flight (Pending/Running) or already Succeeded — i.e. one whose result
+	`sync_image` can wait on / adopt. A prior Failure is NOT adopted (re-sync it).
+	Matching is by the IMAGE_NAME variable so a multi-image server isn't confused."""
+	rows = frappe.get_all(
+		"Task",
+		filters={"server": server_name, "script": "sync-image.py"},
+		fields=["name", "status", "variables"],
+		order_by="creation desc",
+		limit=20,
+	)
+	for row in rows:
+		if row.status not in ("Pending", "Running", "Success"):
+			continue
+		variables = row.variables or ""
+		if f'"IMAGE_NAME": "{IMAGE_NAME}"' in variables or f"'IMAGE_NAME': '{IMAGE_NAME}'" in variables:
+			return row.name
+	return None
 
 
 def provision_virtual_machine(server_name: str) -> str:
@@ -530,6 +691,292 @@ def issue_certificate(domain: str) -> str:
 		frappe.throw(f"TLS Certificate {cert_name} ended in status {status}, expected Active")
 	print(f"[bootstrap] issued {cert_name} for *.{domain} (status {status}, expires {expires_on})")
 	return cert_name
+
+
+def push_certificate_to_proxies(domain: str) -> list[str]:
+	"""Re-push the domain's Active wildcard cert to every proxy VM in its region and
+	publish the wildcard DNS (A → reserved IPv4, AAAA → proxy /128).
+
+	`issue_certificate` already pushes on issue, but in `run_self_serve` the cert is
+	issued right after the proxy comes up; this explicit push is the belt-and-braces
+	re-push (idempotent) that also (re)publishes the wildcard now the proxy's
+	reserved IP is attached. Returns the proxy VM names pushed to."""
+	cert_name = frappe.db.get_value("TLS Certificate", {"root_domain": domain, "status": "Active"}, "name")
+	if not cert_name:
+		frappe.throw(f"no Active TLS Certificate for {domain!r} to push — issue it first")
+	pushed = frappe.get_doc("TLS Certificate", cert_name).push_to_proxies()
+	frappe.db.commit()
+	print(f"[bootstrap] pushed {cert_name} + published wildcard for *.{domain} to {pushed or '(no proxies)'}")
+	return pushed
+
+
+# --- golden bench image bake ---------------------------------------------
+
+
+def bake_golden_image(server_name: str, force: bool = False) -> str:
+	"""Bake the golden bench image on `server_name` and wire it as
+	`Atlas Settings.default_bench_snapshot` (the image self-serve site VMs clone
+	from). Returns the snapshot name.
+
+	Reuse-or-bake: if `default_bench_snapshot` already points at an Available
+	snapshot and `force` is False, reuse it (the slow apt+clone+uv+node bake is
+	skipped). Otherwise provision a build VM, build bench inside it over guest-SSH
+	(`bench_image.build_bench` — the proven controller path, robust to recycled IPs
+	+ mid-build resets), stop it, and snapshot it. The build VM is left Stopped (it
+	is e2e/bake scratch; terminate it once the snapshot is set if you want the RAM
+	back — the snapshot is the durable artifact)."""
+	from atlas.atlas import bench_image
+
+	configured = frappe.db.get_single_value("Atlas Settings", "default_bench_snapshot")
+	if configured and not force:
+		status = frappe.db.get_value("Virtual Machine Snapshot", configured, "status")
+		if status == "Available":
+			print(f"[bootstrap] reusing golden bench snapshot {configured} (Available); skipping bake")
+			return configured
+		print(f"[bootstrap] configured snapshot {configured} is {status!r}, not Available — re-baking")
+
+	image_name = ensure_image().name
+	sync_image(server_name)  # idempotent; ensures the base rootfs/kernel are on the server
+
+	vm = _provision_durable_vm(
+		server_name,
+		title="golden bench — build",
+		image=image_name,
+		memory_megabytes=GOLDEN_MEMORY_MB,
+		disk_gigabytes=GOLDEN_DISK_GB,
+		vcpus=2,
+	)
+	print(
+		f"[bootstrap] golden build VM {vm.name} Running (v6={vm.ipv6_address}); building bench in guest ..."
+	)
+
+	# Build bench-cli + `bench init` + the baked site.local inside the guest (slow:
+	# apt + clone Frappe + uv venv + node). The detached-build + forget_host
+	# machinery lives in build_bench (memory: real-provision-traps M-7).
+	bench_image.build_bench(vm.name)
+	print("[bootstrap] bench built in the guest; stopping + snapshotting ...")
+
+	vm.stop()
+	frappe.db.commit()
+	_wait_for_vm_status(vm.name, "Stopped", timeout_seconds=180)
+	vm.reload()
+	snapshot_name = vm.snapshot(title=GOLDEN_SNAPSHOT_TITLE)
+	frappe.db.commit()
+	_wait_for_snapshot_available(snapshot_name, timeout_seconds=600)
+
+	frappe.db.set_single_value(
+		"Atlas Settings", "default_bench_snapshot", snapshot_name, update_modified=False
+	)
+	frappe.db.commit()
+	print(f"[bootstrap] golden bench snapshot {snapshot_name} baked + wired as default_bench_snapshot")
+	return snapshot_name
+
+
+# --- proxy VM stand-up ----------------------------------------------------
+
+
+def ensure_proxy(server_name: str, region: str, domain: str) -> str:
+	"""Provision a proxy VM on `server_name`, build the nginx+Lua stack inside it,
+	and attach a reserved IPv4 — the public front door subdomains route through.
+	Returns the proxy VM name.
+
+	Idempotent-ish: if a Running `is_proxy` VM already exists on this server in this
+	region, reuse it (re-build + re-ensure a reserved IP) rather than provisioning a
+	second. The cert push is a SEPARATE step (`push_certificate_to_proxies`) the
+	caller runs after issuing, because the cert must exist first."""
+	from atlas.atlas import proxy
+
+	existing = frappe.get_all(
+		"Virtual Machine",
+		filters={"server": server_name, "is_proxy": 1, "region": region, "status": "Running"},
+		pluck="name",
+		limit=1,
+	)
+	if existing:
+		proxy_vm_name = existing[0]
+		print(f"[bootstrap] reusing existing proxy VM {proxy_vm_name} on {server_name}")
+	else:
+		image_name = ensure_image().name
+		vm = _provision_durable_vm(
+			server_name,
+			title=f"proxy — {region}",
+			image=image_name,
+			memory_megabytes=PROXY_MEMORY_MB,
+			disk_gigabytes=PROXY_DISK_GB,
+			vcpus=1,
+			is_proxy=True,
+			region=region,
+		)
+		proxy_vm_name = vm.name
+		print(
+			f"[bootstrap] proxy VM {proxy_vm_name} Running (v6={vm.ipv6_address}); building proxy stack ..."
+		)
+
+	# Build the proxy stack in the guest (compiles nginx+Lua; detached + forget_host
+	# handled inside build_proxy). Idempotent — build.sh re-runs cleanly.
+	proxy.build_proxy(proxy_vm_name)
+	print(f"[bootstrap] proxy stack built on {proxy_vm_name}; ensuring a reserved IPv4 ...")
+
+	_ensure_reserved_ipv4(server_name, proxy_vm_name)
+	return proxy_vm_name
+
+
+def _ensure_reserved_ipv4(server_name: str, vm_name: str) -> str:
+	"""Allocate a DO reserved IPv4 for the server and attach it to the proxy VM
+	(vendor assign + host 1:1-NAT). Returns the Reserved IP row name. If the VM
+	already has one attached, reuse it (a re-run must not allocate a second
+	billable IP)."""
+	from atlas.atlas.doctype.reserved_ip import reserved_ip as reserved_ip_module
+
+	attached = frappe.get_all("Reserved IP", filters={"virtual_machine": vm_name}, pluck="name", limit=1)
+	if attached:
+		ipv4 = frappe.db.get_value("Reserved IP", attached[0], "ip_address")
+		print(f"[bootstrap] proxy {vm_name} already has reserved IPv4 {ipv4} ({attached[0]})")
+		return attached[0]
+
+	reserved = reserved_ip_module.allocate(server_name)
+	frappe.db.commit()
+	frappe.get_doc("Reserved IP", reserved).attach(vm_name)
+	frappe.db.commit()
+	ipv4 = frappe.db.get_value("Reserved IP", reserved, "ip_address")
+	print(f"[bootstrap] reserved IPv4 {ipv4} attached to proxy {vm_name} ({reserved})")
+	return reserved
+
+
+# --- durable VM / snapshot helpers (no e2e/test imports) ------------------
+
+
+def _provision_durable_vm(
+	server_name: str,
+	title: str,
+	image: str,
+	memory_megabytes: int,
+	disk_gigabytes: int,
+	vcpus: int = 1,
+	is_proxy: bool = False,
+	region: str | None = None,
+) -> "frappe.model.document.Document":
+	"""Insert a Virtual Machine with the FLEET key (Atlas Settings.ssh_public_key) so
+	the control plane (`connection_for_guest`) can SSH in, commit so the
+	`after_insert` boot job runs on the worker, and wait for Running.
+
+	Uses the fleet key (not an ephemeral e2e key) because in a durable bootstrap the
+	only SSH consumer is the control plane — same key `Site._provision_backing_vm`
+	clones site VMs with. Requires a running worker (the boot is a background job)."""
+	public_key = frappe.db.get_single_value("Atlas Settings", "ssh_public_key")
+	if not public_key:
+		frappe.throw(
+			"Atlas Settings.ssh_public_key is unset — a build/proxy VM needs the fleet key in "
+			"authorized_keys for the control plane to SSH in. Run ensure_provider / restore_credentials "
+			"first (they derive it from the private key)."
+		)
+	fields = {
+		"doctype": "Virtual Machine",
+		"title": title,
+		"server": server_name,
+		"image": image,
+		"vcpus": vcpus,
+		"memory_megabytes": memory_megabytes,
+		"disk_gigabytes": disk_gigabytes,
+		"ssh_public_key": public_key,
+	}
+	if is_proxy:
+		fields["is_proxy"] = 1
+		fields["region"] = region
+	vm = frappe.get_doc(fields).insert(ignore_permissions=True)
+	frappe.db.commit()
+	print(f"[bootstrap] inserted VM {vm.name!r} ({title}); waiting for boot ...")
+	_wait_for_vm_running(vm.name)
+	vm.reload()
+	if vm.status != "Running":
+		frappe.throw(f"VM {vm.name} ended in status {vm.status}, expected Running")
+	return vm
+
+
+def _wait_for_vm_running(vm_name: str, timeout_seconds: int = 1500) -> None:
+	"""Poll the VM's COMMITTED status to Running (rollback() each loop to read the
+	worker's per-step writes). The boot is a separate background job, so this waits
+	across a commit boundary, not inline — the proven shape. Long
+	default: a cold dev box cloning + booting a 12 GB rootfs can take many minutes."""
+	deadline = time.monotonic() + timeout_seconds
+	last_status = None
+	while time.monotonic() < deadline:
+		frappe.db.rollback()
+		status = frappe.db.get_value("Virtual Machine", vm_name, "status")
+		if status != last_status:
+			elapsed = int(time.monotonic() - (deadline - timeout_seconds))
+			print(f"[bootstrap] VM {vm_name} status={status!r} (t+{elapsed}s)")
+			last_status = status
+		if status == "Running":
+			return
+		if status in ("Broken", "Failed", "Terminated"):
+			_dump_vm_tasks(vm_name)
+			frappe.throw(f"VM {vm_name} reached {status} during provisioning — check the Task list")
+		time.sleep(5)
+	_dump_vm_tasks(vm_name)
+	frappe.throw(
+		f"VM {vm_name} did not reach Running within {timeout_seconds}s "
+		"(is a worker running? on macOS it needs OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES)"
+	)
+
+
+def _wait_for_vm_status(vm_name: str, target: str, timeout_seconds: int = 180) -> None:
+	"""Poll a VM to an arbitrary committed status (e.g. Stopped before snapshot)."""
+	deadline = time.monotonic() + timeout_seconds
+	while time.monotonic() < deadline:
+		frappe.db.rollback()
+		if frappe.db.get_value("Virtual Machine", vm_name, "status") == target:
+			return
+		time.sleep(3)
+	frappe.throw(f"VM {vm_name} did not reach {target} within {timeout_seconds}s")
+
+
+def _wait_for_snapshot_available(snapshot_name: str, timeout_seconds: int = 600) -> None:
+	deadline = time.monotonic() + timeout_seconds
+	while time.monotonic() < deadline:
+		frappe.db.rollback()
+		status = frappe.db.get_value("Virtual Machine Snapshot", snapshot_name, "status")
+		if status == "Available":
+			return
+		if status == "Failed":
+			frappe.throw(f"Snapshot {snapshot_name} reached Failed")
+		time.sleep(3)
+	frappe.throw(f"Snapshot {snapshot_name} not Available within {timeout_seconds}s")
+
+
+def _dump_vm_tasks(vm_name: str) -> None:
+	for task in frappe.get_all(
+		"Task",
+		filters={"virtual_machine": vm_name},
+		fields=["name", "script", "status", "creation"],
+		order_by="creation desc",
+		limit=5,
+	):
+		print(f"[bootstrap]   task {task.name} script={task.script} status={task.status} ({task.creation})")
+
+
+def _print_self_serve_summary(server_name: str, proxy_vm_name: str, domain: str) -> None:
+	snapshot = frappe.db.get_single_value("Atlas Settings", "default_bench_snapshot")
+	reserved = frappe.get_all(
+		"Reserved IP", filters={"virtual_machine": proxy_vm_name}, pluck="name", limit=1
+	)
+	reserved_ipv4 = frappe.db.get_value("Reserved IP", reserved[0], "ip_address") if reserved else "(none)"
+	proxy_ipv6 = frappe.db.get_value("Virtual Machine", proxy_vm_name, "ipv6_address")
+	print("")
+	print("=" * 64)
+	print("SELF-SERVE SIGNUP FLOW STANDING — infra LEFT RUNNING (bills until torn down).")
+	for label, value in (
+		("server", server_name),
+		("golden snapshot", snapshot),
+		("proxy VM", proxy_vm_name),
+		("proxy v6", proxy_ipv6),
+		("reserved v4", reserved_ipv4),
+		("wildcard", f"*.{domain}"),
+	):
+		print(f"  {label:<16} {value}")
+	print("")
+	print(f"  /signup now provisions sites at <sub>.{domain} (v4 + v6).")
+	print("=" * 64)
 
 
 def run_with_self_serve() -> None:

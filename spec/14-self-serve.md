@@ -176,6 +176,25 @@ the per-site work. Placement resolves the snapshot from
 `Atlas Settings.default_bench_snapshot`; it fails loud when that is unset or not
 `Available`.
 
+The golden snapshot is a **durable artifact that outlives its build VM** — the
+bake leaves the build VM as scratch and terminates it (and its row may later be
+deleted entirely), but every self-serve site keeps cloning the golden
+indefinitely. So `clone_to_new_vm` takes the clone's `server` from the snapshot's
+own row (not the source VM) and reads the source VM only as a *sizing fallback*
+when it still exists. The site VM is cloned at an **explicit** size — the
+`Shared 4x` tier (2 GB / 0.25 core, `atlas.atlas.sizes`), via `Site._provision_backing_vm`
+— rather than inheriting whatever the build VM happened to be, which both gives
+the site the right tier and removes any dependency on the build VM surviving. The
+tier is **2 GB, not the 512 MB `Shared 1x` entry tier**: the golden clone
+auto-starts a full bench (MariaDB + Redis + gunicorn + workers), which at 512 MB
+under a 1/16-core cap thrashes into swap so hard that even `deploy-site`'s
+`wait_for_ssh` gate times out — the site never deploys. 2 GB matches the bake VM
+the bench was built on (`bench_image` `GOLDEN_MEMORY_MB`); see the "~2 GB/site"
+host-sizing note below.
+(Before this, a clone after the build VM was gone failed with a raw
+`DoesNotExistError` on the dangling `virtual_machine` link; it now fails loud with
+a clear message only if a caller passes *no* sizing and the source is gone.)
+
 ## The in-guest deploy (`deploy-site.py`) *(built)*
 
 The one piece that runs `bench` *inside* the guest. The controller side is

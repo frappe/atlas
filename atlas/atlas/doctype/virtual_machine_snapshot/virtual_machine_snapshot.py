@@ -11,6 +11,7 @@ class VirtualMachineSnapshot(Document):
 		title: str,
 		ssh_public_key: str,
 		vcpus: int | None = None,
+		cpu_max_cores: float | None = None,
 		memory_megabytes: int | None = None,
 		disk_gigabytes: int | None = None,
 	) -> str:
@@ -21,33 +22,42 @@ class VirtualMachineSnapshot(Document):
 		disk template, not a live-state resume — the safe path that avoids the
 		duplicate-identity hazard Firecracker warns about. Disk defaults to the
 		snapshot's size (the rootfs is already grown to it); a smaller value is
-		rejected because the filesystem can't shrink to fit."""
+		rejected because the filesystem can't shrink to fit.
+
+		The snapshot is a DURABLE artifact that outlives its build VM (self-serve
+		sites clone from the golden indefinitely; the bake leaves the build VM as
+		scratch and terminates it). So `server` comes from the snapshot's own row,
+		not the source VM — and the source VM is consulted only as a fallback for
+		the resource sizing a caller didn't pass. If the build VM is gone AND the
+		caller passed no sizing, we fail loud with a clear message rather than
+		`DoesNotExistError` deep in get_doc. The self-serve caller always passes
+		an explicit size, so it never depends on the build VM surviving."""
 		if self.status != "Available":
 			frappe.throw(f"Snapshot is not Available (status is {self.status})")
-		source_vm = frappe.get_doc("Virtual Machine", self.virtual_machine)
 		disk = int(disk_gigabytes) if disk_gigabytes else self.disk_gigabytes
 		if disk < self.disk_gigabytes:
 			frappe.throw(
 				f"Clone disk ({disk} GB) cannot be smaller than the snapshot ({self.disk_gigabytes} GB)"
 			)
-		new_vcpus = int(vcpus) if vcpus else source_vm.vcpus
-		# Inherit the source's CPU bandwidth cap. When vcpus is overridden but the
-		# source was whole-core, track the new vcpus; otherwise carry the source's
-		# cap so a fractional source clones to the same fraction (before_validate
-		# would otherwise default a missing cap up to vcpus).
-		if source_vm.cpu_max_cores == float(source_vm.vcpus):
-			clone_cpu_max = float(new_vcpus)
-		else:
-			clone_cpu_max = float(source_vm.cpu_max_cores)
+		# Source VM is a sizing fallback only — it may have been terminated and its
+		# row deleted (bake teardown) long after this durable golden was baked.
+		source_vm = (
+			frappe.get_doc("Virtual Machine", self.virtual_machine)
+			if frappe.db.exists("Virtual Machine", self.virtual_machine)
+			else None
+		)
+		new_vcpus, clone_cpu_max, clone_memory = self._clone_sizing(
+			source_vm, vcpus, cpu_max_cores, memory_megabytes
+		)
 		clone = frappe.get_doc(
 			{
 				"doctype": "Virtual Machine",
 				"title": title,
-				"server": source_vm.server,
+				"server": self.server,
 				"image": self.source_image,
 				"vcpus": new_vcpus,
 				"cpu_max_cores": clone_cpu_max,
-				"memory_megabytes": int(memory_megabytes) if memory_megabytes else source_vm.memory_megabytes,
+				"memory_megabytes": clone_memory,
 				"disk_gigabytes": disk,
 				"ssh_public_key": ssh_public_key,
 				"clone_source_rootfs": self.rootfs_path,
@@ -61,6 +71,44 @@ class VirtualMachineSnapshot(Document):
 			}
 		).insert(ignore_permissions=True)
 		return clone.name
+
+	def _clone_sizing(
+		self,
+		source_vm,
+		vcpus: int | None,
+		cpu_max_cores: float | None,
+		memory_megabytes: int | None,
+	) -> tuple[int, float, int]:
+		"""Resolve (vcpus, cpu_max_cores, memory_megabytes) for a clone.
+
+		Explicit caller args always win. For anything left unset we fall back to
+		the source VM's value — but only if that row still exists. A golden whose
+		build VM was terminated has no source to inherit from, so a caller that
+		passes nothing gets a clear error here instead of a `DoesNotExistError`
+		from get_doc on the dangling `virtual_machine` link."""
+		new_vcpus = int(vcpus) if vcpus else (source_vm.vcpus if source_vm else None)
+		clone_memory = (
+			int(memory_megabytes) if memory_megabytes else (source_vm.memory_megabytes if source_vm else None)
+		)
+		if cpu_max_cores:
+			clone_cpu_max = float(cpu_max_cores)
+		elif source_vm:
+			# Carry the source's cap so a fractional source clones to the same
+			# fraction; when vcpus is overridden but the source was whole-core,
+			# track the new vcpus (before_validate would otherwise default a
+			# missing cap up to vcpus).
+			if source_vm.cpu_max_cores == float(source_vm.vcpus):
+				clone_cpu_max = float(new_vcpus)
+			else:
+				clone_cpu_max = float(source_vm.cpu_max_cores)
+		else:
+			clone_cpu_max = None
+		if new_vcpus is None or clone_memory is None or clone_cpu_max is None:
+			frappe.throw(
+				f"Snapshot {self.name}'s build VM no longer exists — "
+				"pass vcpus, cpu_max_cores and memory_megabytes explicitly to clone it."
+			)
+		return new_vcpus, clone_cpu_max, clone_memory
 
 	@frappe.whitelist()
 	def restore_to_vm(self) -> str:

@@ -101,6 +101,62 @@ class TestVirtualMachineSnapshot(IntegrationTestCase):
 		# Kernel still comes from the image.
 		self.assertEqual(variables["IMAGE_NAME"], clone.image)
 
+	def test_clone_inherits_fractional_cpu_cap_from_source(self) -> None:
+		# A fractional-CPU source clones to the SAME fraction: the cap is carried,
+		# not defaulted up to vcpus. (Regression guard for the sizing-fallback path
+		# that still runs when the build VM is present.)
+		from atlas.atlas.doctype.virtual_machine import virtual_machine as vm_module
+
+		source = _stopped_vm()
+		source.db_set("cpu_max_cores", 0.0625)
+		source.reload()
+		snapshot = _make_snapshot(source)
+		with patch.object(vm_module.frappe, "enqueue"):
+			clone_name = snapshot.clone_to_new_vm(title="fractional clone", ssh_public_key="ssh-ed25519 F")
+		clone = frappe.get_doc("Virtual Machine", clone_name)
+		self.assertEqual(clone.vcpus, source.vcpus)
+		self.assertEqual(clone.cpu_max_cores, 0.0625)
+		self.assertEqual(clone.memory_megabytes, source.memory_megabytes)
+
+	def test_clone_when_build_vm_gone_uses_snapshot_server_and_explicit_size(self) -> None:
+		# The golden is a DURABLE artifact: its build VM is scratch that gets
+		# terminated and its row deleted, so the snapshot OUTLIVES it. A clone with
+		# explicit sizing (the self-serve Site path) must still work — server from
+		# the snapshot's own row, sizing from the args — not throw DoesNotExistError
+		# on the dangling `virtual_machine` link.
+		from atlas.atlas.doctype.virtual_machine import virtual_machine as vm_module
+
+		source = _stopped_vm()
+		snapshot = _make_snapshot(source)
+		frappe.delete_doc("Virtual Machine", source.name, force=1, ignore_permissions=True)
+		self.assertFalse(frappe.db.exists("Virtual Machine", snapshot.virtual_machine))
+
+		with patch.object(vm_module.frappe, "enqueue"):
+			clone_name = snapshot.clone_to_new_vm(
+				title="orphan clone",
+				ssh_public_key="ssh-ed25519 ORPHAN",
+				vcpus=1,
+				cpu_max_cores=0.0625,
+				memory_megabytes=512,
+			)
+		clone = frappe.get_doc("Virtual Machine", clone_name)
+		self.assertEqual(clone.server, snapshot.server)
+		self.assertEqual(clone.vcpus, 1)
+		self.assertEqual(clone.cpu_max_cores, 0.0625)
+		self.assertEqual(clone.memory_megabytes, 512)
+		self.assertEqual(clone.disk_gigabytes, snapshot.disk_gigabytes)
+		self.assertEqual(clone.clone_source_rootfs, snapshot.rootfs_path)
+
+	def test_clone_when_build_vm_gone_and_no_size_fails_loud(self) -> None:
+		# With no source VM to inherit from AND no explicit sizing, fail with a
+		# clear message at the boundary — not a DoesNotExistError deep in get_doc.
+		source = _stopped_vm()
+		snapshot = _make_snapshot(source)
+		frappe.delete_doc("Virtual Machine", source.name, force=1, ignore_permissions=True)
+		with self.assertRaises(frappe.ValidationError) as raised:
+			snapshot.clone_to_new_vm(title="no size", ssh_public_key="ssh-ed25519 X")
+		self.assertIn("build VM no longer exists", str(raised.exception))
+
 	def test_clone_disk_cannot_shrink_below_snapshot(self) -> None:
 		source = _stopped_vm()
 		snapshot = _make_snapshot(source)

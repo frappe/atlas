@@ -31,7 +31,7 @@ from pathlib import Path
 
 import frappe
 
-from atlas.atlas._ssh.transport import run_scp, run_ssh, ssh_key_file
+from atlas.atlas._ssh.transport import run_scp, run_ssh, ssh_key_file, wait_for_ssh
 from atlas.atlas.proxy import _record_guest_task, _remote_parent
 from atlas.atlas.ssh import connection_for_guest
 
@@ -81,6 +81,20 @@ def deploy_site(virtual_machine: str, site_name: str) -> str:
 	admin_password = frappe.generate_hash(length=24)
 	local_script = str(_deploy_script_path())
 	remote_script = f"{REMOTE_DEPLOY_DIRECTORY}/{DEPLOY_SCRIPT_NAME}"
+
+	# Wait for the guest's sshd to actually answer BEFORE the first scp. The Site
+	# orchestration only waits for VM *status* Running ("the microVM launched"), not
+	# for sshd to be serving. A site VM is a CLONE of the golden snapshot, which
+	# boots into a load storm — MariaDB/Redis/supervisor from the baked bench all
+	# auto-start and the thin-snapshot CoW thrashes — so for the first ~minute sshd's
+	# TCP port is open but the banner exchange times out under load. Going straight to
+	# scp (as this did) fails the whole deploy on that transient. wait_for_ssh polls
+	# the handshake until it succeeds (and forget_host's the address first, so a
+	# recycled /128 with a changed host key re-pins instead of hard-failing
+	# accept-new — the same trap build_proxy/build_bench guard). Mirrors the bench
+	# bake + proxy build, which never hit this only because they reach a freshly
+	# image-provisioned (light-boot) VM, not a service-heavy clone.
+	wait_for_ssh(connection, timeout_seconds=300)
 
 	with ssh_key_file(connection.ssh_private_key) as key_path:
 		run_ssh(

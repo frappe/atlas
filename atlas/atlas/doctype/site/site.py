@@ -16,11 +16,26 @@ import frappe
 from frappe.model.document import Document
 
 from atlas.atlas.placement import active_root_domain, default_bench_snapshot
+from atlas.atlas.sizes import SIZE_PRESETS
 from atlas.atlas.subdomain_label import (
 	RESERVED_SUBDOMAINS,
 	validate_label,
 	validate_reserved,
 )
+
+# The size every self-serve backing VM is cloned at, from sizes.py (one source of
+# truth for the ladder). A Site is provisioned at a fixed tier today; when paid
+# plans land this becomes a per-Site field.
+#
+# "Shared 4x" (2 GB / 0.25 core), NOT the "Shared 1x" entry tier: the golden clone
+# auto-starts a FULL bench (MariaDB + Redis + gunicorn + workers, baked to run on
+# boot), which thrashes into swap at 512 MB and gets so little CPU under the 1/16
+# -core cap that even sshd can't complete a banner exchange — so `deploy-site`'s
+# wait_for_ssh times out and the Site never deploys (proven on a real clone,
+# 2026-06-11; ~2 GB/site is the working budget, memory: rename-default-site). 2 GB
+# matches the bake VM (bench_image GOLDEN_MEMORY_MB) — the size the bench was built
+# and proven on.
+SITE_VM_SIZE = SIZE_PRESETS["Shared 4x"]
 
 # The routing key (subdomain + region) and the backing VM are the identity; once
 # written they are fixed. Repointing a live Site at a different VM or region is a
@@ -272,10 +287,26 @@ def _provision_backing_vm(site) -> str:
 	its own after_insert auto-provisions the VM. The Site shares its owner's SSH
 	key model via Atlas Settings' fleet key (the guest is reached by the control
 	plane, not the user — the user reaches the site over HTTPS through the
-	proxy)."""
+	proxy).
+
+	We pass an EXPLICIT size (`SITE_VM_SIZE`, see its note) rather than letting the
+	clone inherit the build VM's resources: a self-serve site wants the standard
+	tier, not whatever the bake VM happened to be — and, decisively, the build VM
+	is scratch that gets terminated and its row deleted, so inheriting from it
+	would fail once the golden has outlived its source (its whole point)."""
 	snapshot = frappe.get_doc("Virtual Machine Snapshot", default_bench_snapshot())
 	ssh_public_key = frappe.db.get_single_value("Atlas Settings", "ssh_public_key")
-	return snapshot.clone_to_new_vm(title=site.name, ssh_public_key=ssh_public_key)
+	size = SITE_VM_SIZE
+	return snapshot.clone_to_new_vm(
+		title=site.name,
+		ssh_public_key=ssh_public_key,
+		vcpus=size["vcpus"],
+		cpu_max_cores=size["cpu_max_cores"],
+		memory_megabytes=size["memory_megabytes"],
+		# Disk is not passed: the golden's rootfs is already grown to its own
+		# disk_gigabytes and the clone can't shrink below it. The snapshot's size
+		# is the floor; the entry tier's nominal disk would only ever be smaller.
+	)
 
 
 def _wait_for_vm_running(vm_name: str, timeout_seconds: int = 1500, poll_seconds: float = 5.0) -> None:
