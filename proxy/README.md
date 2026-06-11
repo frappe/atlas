@@ -4,8 +4,8 @@ A TLS-terminating reverse proxy that fronts many Frappe sites. Each site is a
 subdomain of a regional wildcard (`*.<region>.frappe.dev`) mapping to one site
 VM over public IPv6. The subdomain→VM map is **live and reload-free** — it lives
 in an nginx `lua_shared_dict`, written through a unix-socket admin API, and
-Atlas reconciles it over SSH-to-the-guest. The full design and rationale are in
-[`../llm/proxy-design.md`](../llm/proxy-design.md); the spec chapter is
+Atlas reconciles it over SSH-to-the-guest. The full design, rationale, and the
+accepted limitations are in the spec chapter,
 [`../spec/12-proxy.md`](../spec/12-proxy.md).
 
 **The proxy is an ordinary Atlas Virtual Machine**, not a host service. It is
@@ -71,8 +71,7 @@ Host/SNI forced onto the local published port.
 Atlas owns the map and reconciles each proxy guest from the controller — **not**
 via host Tasks but by SSHing directly *into the guest* (`connection_for_guest`).
 The implementation is `atlas/atlas/proxy.py` (see
-[`../llm/proxy-design.md`](../llm/proxy-design.md) §7 and
-[`../spec/12-proxy.md`](../spec/12-proxy.md)):
+[`../spec/12-proxy.md` § Control plane](../spec/12-proxy.md)):
 
 - `proxy.build_proxy(vm)` — SSH-to-guest, upload this tree, run `build.sh`, write
   the region, start the unit (the build path above).

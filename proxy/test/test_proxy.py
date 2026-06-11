@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Proxy image-level release gate (proxy-design.md §9). Drives the running
+# Proxy image-level release gate (spec/12-proxy.md). Drives the running
 # docker-compose stack: PUT/POST mappings through the admin socket, make HTTPS
 # requests with a forced Host/SNI, assert routing/remap/sync/restart/TLS/ws.
 #

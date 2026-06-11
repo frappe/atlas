@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# A tiny fake site VM for the proxy test harness (proxy-design.md §9). Listens on
+# A tiny fake site VM for the proxy test harness (spec/12-proxy.md). Listens on
 # [::]:80 (IPv6, plaintext) to mirror the real public-v6 site target, and echoes
 # back its own name + the Host header it saw so the test can assert the proxy
 # routed to the right upstream and preserved Host. Handles a /socket.io
