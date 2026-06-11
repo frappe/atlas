@@ -10,8 +10,7 @@ The lifecycle mirrors `Site` (spec/14): an immutable identity tuple guarded in
 validate(), a controller-written `status` Select (read-only on the form),
 after_insert() enqueues the run on `queue="long"` (it SSHes and waits ~10-20 min),
 and each status transition is committed + pushed to the operator over realtime so
-the desk form's checklist updates live. See spec/15-image-builder.md and
-llm/image-builder-design.md.
+the desk form's checklist updates live. See spec/15-image-builder.md.
 """
 
 import time

@@ -14,9 +14,7 @@ driven only from e2e test modules, with the provision→build→snapshot
 orchestration hand-rolled in e2e helpers. There was no operator button, no row
 recording *"this snapshot was baked from this recipe,"* and no place for a third
 image type to land without a third copy of the build verb. This layer removes all
-three gaps. The design rationale and the interview that locked it live in
-[`llm/image-builder-design.md`](../llm/image-builder-design.md); this chapter is
-the durable spec.
+three gaps.
 
 ## The shape
 
@@ -183,6 +181,30 @@ the snapshot's own row, not the (possibly-gone) build VM (see
   inserts an `Image Build` on that server and routes to its live-checklist form.
 - **`Image Build` → Re-bake** on an Available/Failed row.
 
+## Design decisions
+
+A few choices that aren't obvious from the field list:
+
+- **The recipe is code, not a DocType.** A recipe points entirely at committed
+  files (the `bench/` / `proxy/` tree, the pinned `build.sh`) and a `finalize`
+  callback, so a data row could only mirror it — the same call `sizes.py
+  SIZE_PRESETS` and the `bootstrap.py` image constants already make. A third image
+  type is a recipe entry plus a committed tree, no new module.
+- **Region is asked, not derived.** A proxy build takes its `region` from the
+  dialog (required for an `is_proxy` recipe) rather than reading it off the server.
+  Simpler than threading server→region, and it lets a build target a region label
+  directly.
+- **Distinct Task script names.** The audit Task keeps the per-recipe name
+  (`bench-build` / `proxy-build`, via `recipe.task_script`) rather than one generic
+  `image-build`, so the operator's Task list stays readable.
+- **No snapshot back-link.** Provenance rides the `Image Build.snapshot` forward
+  link only; `Virtual Machine Snapshot` stays frozen. A `Virtual Machine
+  Snapshot.image_build` back-link is a cheap future add if "what baked this
+  snapshot?" from the snapshot side becomes a real need.
+- **No concurrency lock.** A second `Image Build` on a busy server just provisions
+  another VM. Two bakes of the same recipe racing to `auto_register` the same Atlas
+  Settings field is last-writer-wins (acceptable).
+
 ## Testing
 
 - **Unit (milliseconds):**
@@ -206,5 +228,4 @@ the snapshot's own row, not the (possibly-gone) build VM (see
   are unchanged; they exercise the same `build_bench`/`build_proxy` verbs, which
   now route through `run_build`. Driving those e2e modules through the `Image
   Build` DocType (insert a row, assert it reaches `Available`) rather than the
-  bare build verbs is a documented follow-up (`llm/image-builder-design.md` §7),
-  host-verifiable on a real droplet.
+  bare build verbs is a follow-up, host-verifiable on a real droplet.
