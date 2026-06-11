@@ -529,6 +529,10 @@ Tiering is keyed off `status` — see [10-desk-ui.md § Virtual Machine](./10-de
   `memory_snapshot_on_stop` it runs the memory-capturing
   `snapshot-stop-vm.py`; the default is the plain `stop-vm.py`. See
   [05 § Memory snapshots](./05-virtual-machine-lifecycle.md#memory-snapshots-fast-stop--start).
+- **Stop (memory snapshot)** (under `Actions ▾` on `Running` / `Paused`) —
+  the one-off fast stop: calls `stop` with `{memory_snapshot: true}` without
+  touching the per-VM flag. The next Start resumes the captured state in
+  milliseconds.
 - **Resume** (primary on `Paused`) — `Paused` → `Running`.
 - **Restart** (secondary on `Stopped` / `Running`) → `Running`. On an
   opted-in VM this is a state-preserving power cycle, not a guest reboot;

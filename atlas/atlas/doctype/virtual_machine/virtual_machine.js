@@ -101,6 +101,16 @@ function add_lifecycle_buttons(frm) {
 	if (status === "Running" || status === "Paused") {
 		// Live snapshot: no stop required. Crash-consistent (the dialog says so).
 		frappe.atlas.add_action(frm, "Snapshot (live)", () => open_snapshot_dialog(frm, { live: true }));
+		// One-click fast stop: capture the guest's memory so the next Start
+		// resumes in milliseconds instead of cold-booting. The one-off form of
+		// the per-VM "Memory Snapshot on Stop" flag.
+		frappe.atlas.add_action(frm, "Stop (memory snapshot)", () =>
+			confirm_lifecycle(frm, {
+				label: "Stop (memory snapshot)",
+				method: "stop",
+				args: { memory_snapshot: true },
+			})
+		);
 	}
 	frappe.atlas.add_danger(frm, "Terminate", () => confirm_terminate(frm));
 }
@@ -115,7 +125,9 @@ function confirm_lifecycle(frm, action) {
 	frappe.confirm(
 		__("{0} {1}?", [action.label, frm.doc.title || frm.doc.name.slice(0, 8)]),
 		() => {
-			frm.call(action.method).then(({ message: task_name }) => {
+			// `args` is optional; most lifecycle methods take none. Stop (memory
+			// snapshot) posts {memory_snapshot: true} to the same stop() method.
+			frm.call(action.method, action.args).then(({ message: task_name }) => {
 				if (typeof task_name === "string") {
 					frappe.atlas.task_started(frm, action.label, task_name);
 				} else {

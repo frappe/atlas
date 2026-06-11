@@ -346,6 +346,20 @@ def _check_virtual_machine_buttons(server_name: str, image_name: str, public_key
 	vm.reload()
 	assert vm.status == "Running", vm.status
 
+	# Stop (memory snapshot) — the one-click fast stop posts the exact arg
+	# shape the desk sends ({"memory_snapshot": true}); the next plain Start
+	# must consume the snapshot (restore it on the host) and clear the flag.
+	time.sleep(1)
+	_call_button("Virtual Machine", vm.name, "stop", memory_snapshot=True)
+	vm.reload()
+	assert vm.status == "Stopped", vm.status
+	assert vm.has_memory_snapshot, "fast stop should have captured a memory snapshot"
+	time.sleep(1)
+	_call_button("Virtual Machine", vm.name, "start")
+	vm.reload()
+	assert vm.status == "Running", vm.status
+	assert not vm.has_memory_snapshot, "start should consume the memory snapshot"
+
 	# Restart returns a {stop_task, start_task} pair.
 	time.sleep(1)
 	result = _call_button("Virtual Machine", vm.name, "restart")

@@ -412,8 +412,15 @@ the rendered DOM from CSS.
     and spend real disk + time; keeping them off the bar leaves
     Start/Restart as the visible siblings (the same tiering Server uses
     for Sync Image / Archive).
-  - `Running` → **Stop** primary; **Restart** and **Pause** secondaries.
-  - `Paused` → **Resume** primary; **Stop** secondary.
+  - `Running` → **Stop** primary; **Restart** and **Pause** secondaries;
+    **Snapshot (live)** and **Stop (memory snapshot)** under `Actions ▾`.
+  - `Paused` → **Resume** primary; **Stop** secondary; **Snapshot (live)**
+    and **Stop (memory snapshot)** under `Actions ▾`.
+    **Stop (memory snapshot)** is the one-click fast stop: it posts
+    `stop` with `{memory_snapshot: true}`, capturing the guest's memory so
+    the next Start resumes in milliseconds — the one-off form of the per-VM
+    `memory_snapshot_on_stop` flag (see
+    [05 § Memory snapshots](./05-virtual-machine-lifecycle.md#memory-snapshots-fast-stop--start)).
   - `Terminated` → no lifecycle buttons; instead **Re-provision as
     new** is primary and **Delete record** is danger (under
     `Actions ▾`).
