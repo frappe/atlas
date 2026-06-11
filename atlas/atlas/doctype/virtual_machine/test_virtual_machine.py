@@ -451,6 +451,130 @@ class TestVirtualMachine(IntegrationTestCase):
 			vm.save(ignore_permissions=True)
 		self.assertIn("ssh_public_key is immutable", str(raised.exception))
 
+	# --- memory snapshots (fast stop/start) ---
+
+	def test_stop_captures_memory_snapshot_by_default(self) -> None:
+		from atlas.atlas.doctype.virtual_machine import virtual_machine as module
+		from atlas.atlas.networking import derive_uid
+
+		vm = _new_vm()  # memory_snapshot_on_stop defaults on
+		vm.db_set("status", "Running")
+		vm.reload()
+		task = fake_task(
+			name="task-stop-snap",
+			stdout='ATLAS_RESULT={"memory_snapshot": true, "reason": "", "memory_snapshot_bytes": 536870912}',
+		)
+		with patch.object(module, "run_task", return_value=task) as mocked:
+			vm.stop()
+		vm.reload()
+		self.assertEqual(vm.status, "Stopped")
+		self.assertTrue(vm.has_memory_snapshot)
+		self.assertEqual(mocked.call_args.kwargs["script"], "snapshot-stop-vm.py")
+		# The jailed Firecracker writes the snapshot, so the script needs the
+		# per-VM uid to hand it the directory.
+		self.assertEqual(mocked.call_args.kwargs["variables"]["ATLAS_FC_UID"], str(derive_uid(vm.name)))
+
+	def test_stop_fallback_leaves_flag_clear(self) -> None:
+		# The script falls back to a plain stop on any snapshot failure and
+		# reports memory_snapshot=false; the row must not claim a snapshot.
+		from atlas.atlas.doctype.virtual_machine import virtual_machine as module
+
+		vm = _new_vm()
+		vm.db_set("status", "Running")
+		vm.reload()
+		task = fake_task(
+			name="task-stop-fallback",
+			stdout='ATLAS_RESULT={"memory_snapshot": false, "reason": "API socket missing", "memory_snapshot_bytes": 0}',
+		)
+		with patch.object(module, "run_task", return_value=task):
+			vm.stop()
+		vm.reload()
+		self.assertEqual(vm.status, "Stopped")
+		self.assertFalse(vm.has_memory_snapshot)
+
+	def test_stop_plain_when_memory_snapshot_disabled(self) -> None:
+		from atlas.atlas.doctype.virtual_machine import virtual_machine as module
+
+		vm = _new_vm(memory_snapshot_on_stop=0)
+		vm.db_set("status", "Running")
+		vm.reload()
+		with patch.object(module, "run_task", return_value=fake_task(name="task-stop")) as mocked:
+			vm.stop()
+		vm.reload()
+		self.assertEqual(mocked.call_args.kwargs["script"], "stop-vm.py")
+		self.assertFalse(vm.has_memory_snapshot)
+
+	def test_start_consumes_the_memory_snapshot(self) -> None:
+		# The start consumes the on-host marker whether it restored or cold-booted,
+		# so the flag clears unconditionally.
+		from atlas.atlas.doctype.virtual_machine import virtual_machine as module
+
+		vm = _new_vm()
+		vm.db_set("status", "Stopped")
+		vm.db_set("has_memory_snapshot", 1)
+		vm.reload()
+		with patch.object(module, "run_task", return_value=fake_task(name="task-start")):
+			vm.start()
+		vm.reload()
+		self.assertEqual(vm.status, "Running")
+		self.assertFalse(vm.has_memory_snapshot)
+
+	def test_restart_cold_skips_the_memory_snapshot(self) -> None:
+		# cold=True is the true-reboot escape hatch: plain stop, full cold boot.
+		from atlas.atlas.doctype.virtual_machine import virtual_machine as module
+
+		vm = _new_vm()
+		vm.db_set("status", "Running")
+		vm.reload()
+		stop_task = fake_task(name="task-stop")
+		start_task = fake_task(name="task-start")
+		with patch.object(module, "run_task", side_effect=[stop_task, start_task]) as mocked:
+			vm.restart(cold=True)
+		self.assertEqual(mocked.call_args_list[0].kwargs["script"], "stop-vm.py")
+		self.assertEqual(mocked.call_args_list[1].kwargs["script"], "start-vm.py")
+
+	def test_restart_power_cycles_via_memory_snapshot(self) -> None:
+		from atlas.atlas.doctype.virtual_machine import virtual_machine as module
+
+		vm = _new_vm()
+		vm.db_set("status", "Running")
+		vm.reload()
+		stop_task = fake_task(
+			name="task-stop-snap",
+			stdout='ATLAS_RESULT={"memory_snapshot": true, "reason": "", "memory_snapshot_bytes": 1}',
+		)
+		start_task = fake_task(name="task-start")
+		with patch.object(module, "run_task", side_effect=[stop_task, start_task]) as mocked:
+			vm.restart()
+		self.assertEqual(mocked.call_args_list[0].kwargs["script"], "snapshot-stop-vm.py")
+		self.assertEqual(mocked.call_args_list[1].kwargs["script"], "start-vm.py")
+
+	def test_resize_invalidates_the_memory_snapshot(self) -> None:
+		# resize-vm.py drops the on-host snapshot (vmstate no longer matches the
+		# machine config); the row must mirror it.
+		from atlas.atlas.doctype.virtual_machine import virtual_machine as module
+
+		vm = _new_vm()
+		vm.db_set("status", "Stopped")
+		vm.db_set("has_memory_snapshot", 1)
+		vm.reload()
+		with patch.object(module, "run_task", return_value=fake_task(name="task-resize")):
+			vm.resize(memory_megabytes=1024)
+		vm.reload()
+		self.assertFalse(vm.has_memory_snapshot)
+
+	def test_rebuild_invalidates_the_memory_snapshot(self) -> None:
+		from atlas.atlas.doctype.virtual_machine import virtual_machine as module
+
+		vm = _new_vm()
+		vm.db_set("status", "Stopped")
+		vm.db_set("has_memory_snapshot", 1)
+		vm.reload()
+		with patch.object(module, "run_task", return_value=fake_task(name="task-rebuild")):
+			vm.rebuild(source_type="image")
+		vm.reload()
+		self.assertFalse(vm.has_memory_snapshot)
+
 	# --- data disk (the root disk's peer) ---
 
 	def test_provision_variables_omit_data_disk_when_none(self) -> None:
