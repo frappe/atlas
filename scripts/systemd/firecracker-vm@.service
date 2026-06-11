@@ -35,6 +35,14 @@ ExecStartPre=/usr/bin/python3 /var/lib/atlas/bin/vm-network-up.py %i
 # caps + fd/file rlimits, and joins the VM's own network namespace. It `exec`s
 # the jailer, so the jailer is this unit's main process (see KillMode below).
 ExecStart=/var/lib/atlas/virtual-machines/%i/jailer-launch.sh
+# When snapshot-stop-vm.py left a complete memory snapshot (marker present),
+# the launcher started Firecracker idle; this hook loads the snapshot, consumes
+# the marker, and resumes the guest — milliseconds instead of a cold boot. On a
+# cold boot (no marker) it exits 0 immediately. On a failed restore it removes
+# the marker and exits non-zero: the unit fails, Restart=always relaunches it,
+# and the marker-less launcher cold-boots — the fast path degrades to the
+# default path on its own.
+ExecStartPost=/usr/bin/python3 /var/lib/atlas/bin/vm-restore.py %i
 ExecStopPost=/usr/bin/python3 /var/lib/atlas/bin/vm-network-down.py %i
 StandardOutput=append:/var/lib/atlas/virtual-machines/%i/log/firecracker.log
 StandardError=append:/var/lib/atlas/virtual-machines/%i/log/firecracker.log

@@ -107,6 +107,7 @@ SYSTEMD_HOOKS: frozenset[str] = frozenset(
 		"vm-disk-up.py",
 		"vm-network-up.py",
 		"vm-network-down.py",
+		"vm-restore.py",
 	}
 )
 

@@ -36,6 +36,9 @@ class Server(Document):
 		# its in-jail block node at every unit start — the disk analogue of
 		# vm-network-up.py, so an enabled VM self-heals its disk after a reboot.
 		("vm-disk-up.py", "/var/lib/atlas/bin/vm-disk-up.py"),
+		# vm-restore.py resumes a pending memory snapshot at every unit start —
+		# the ExecStartPost counterpart of the two ExecStartPre hooks above.
+		("vm-restore.py", "/var/lib/atlas/bin/vm-restore.py"),
 		("systemd/firecracker-vm@.service", "/etc/systemd/system/firecracker-vm@.service"),
 		("systemd/atlas-pool.service", "/etc/systemd/system/atlas-pool.service"),
 	]
