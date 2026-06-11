@@ -101,6 +101,10 @@ function add_lifecycle_buttons(frm) {
 	if (status === "Running" || status === "Paused") {
 		// Live snapshot: no stop required. Crash-consistent (the dialog says so).
 		frappe.atlas.add_action(frm, "Snapshot (live)", () => open_snapshot_dialog(frm, { live: true }));
+		// Warm snapshot: capture the live guest's memory AND disk at one paused
+		// instant into a kind=Warm snapshot — no stop. Clones resume instead of
+		// cold-booting (see capture_warm_snapshot() in virtual_machine.py).
+		frappe.atlas.add_action(frm, "Warm snapshot", () => open_warm_snapshot_dialog(frm));
 		// One-click fast stop: capture the guest's memory so the next Start
 		// resumes in milliseconds instead of cold-booting. The one-off form of
 		// the per-VM "Memory Snapshot on Stop" flag.
@@ -244,6 +248,48 @@ function open_snapshot_dialog(frm, { live = false } = {}) {
 			? __("Live snapshot {0}", [frm.doc.title || frm.doc.name.slice(0, 8)])
 			: __("Snapshot {0}", [frm.doc.title || frm.doc.name.slice(0, 8)]),
 		__("Create snapshot")
+	);
+}
+
+function open_warm_snapshot_dialog(frm) {
+	// A warm snapshot pauses the live guest and captures its memory pair
+	// (vmstate + mem) AND an LVM disk snapshot at the SAME instant into a durable
+	// kind=Warm row, then resumes — the VM never stops (see
+	// capture_warm_snapshot() in virtual_machine.py). Restoring it onto its own
+	// VM is the fast resume shape; fanning it out into clones is only safe for a
+	// golden baked with the in-guest freshen unit.
+	const hint = __(
+		"Pauses the running VM, captures its <b>memory + disk</b> at one instant into a warm snapshot, then resumes — no stop. Clones can <b>resume</b> from it instead of cold-booting. Root disk only (no data disk)."
+	);
+	frappe.prompt(
+		[
+			{
+				fieldname: "title",
+				label: __("Snapshot title"),
+				fieldtype: "Data",
+				reqd: 1,
+				default: frm.doc.title ? `${frm.doc.title} warm` : "",
+			},
+			{
+				fieldname: "cost_hint",
+				fieldtype: "HTML",
+				options: `<p class="text-muted small">${hint}</p>`,
+			},
+		],
+		({ title }) => {
+			frm.call("capture_warm_snapshot", { title }).then(({ message: snapshot_name }) => {
+				frappe.show_alert(
+					{
+						message: __("Warm snapshot {0} created.", [snapshot_name]),
+						indicator: "green",
+					},
+					6
+				);
+				frm.reload_doc();
+			});
+		},
+		__("Warm snapshot {0}", [frm.doc.title || frm.doc.name.slice(0, 8)]),
+		__("Create warm snapshot")
 	);
 }
 
