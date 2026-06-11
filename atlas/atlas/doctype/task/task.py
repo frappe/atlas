@@ -17,6 +17,7 @@ SCRIPT_LABELS = {
 	"reboot-server.sh": "Reboot",
 	"start-vm.py": "Start",
 	"stop-vm.py": "Stop",
+	"snapshot-stop-vm.py": "Stop",
 	"restart-vm.py": "Restart",
 	"pause-vm.py": "Pause",
 	"resume-vm.py": "Resume",
@@ -34,6 +35,7 @@ RETRYABLE_VM_SCRIPTS: ClassVar = {
 	"provision-vm.py": "provision",
 	"start-vm.py": "start",
 	"stop-vm.py": "stop",
+	"snapshot-stop-vm.py": "stop",
 	"restart-vm.py": "restart",
 	"terminate-vm.py": "terminate",
 }
