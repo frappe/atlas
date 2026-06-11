@@ -27,6 +27,7 @@
   "data_disk_mount_point",
   "clone_source_rootfs",
   "clone_source_data_rootfs",
+  "warm_snapshot",
   "section_break_security",
   "ssh_public_key",
   "ssh_command",
@@ -196,6 +197,17 @@
    "hidden": 1,
    "label": "Clone Source Data Rootfs",
    "no_copy": 1,
+   "read_only": 1,
+   "set_only_once": 1
+  },
+  {
+   "description": "Internal: the Warm snapshot this VM restores from (memory pair + MMDS identity staged at provision). Empty for every ordinary VM.",
+   "fieldname": "warm_snapshot",
+   "fieldtype": "Link",
+   "hidden": 1,
+   "label": "Warm Snapshot",
+   "no_copy": 1,
+   "options": "Virtual Machine Snapshot",
    "read_only": 1,
    "set_only_once": 1
   },

@@ -34,6 +34,10 @@ class VirtualMachineSnapshot(Document):
 		an explicit size, so it never depends on the build VM surviving."""
 		if self.status != "Available":
 			frappe.throw(f"Snapshot is not Available (status is {self.status})")
+		if self.kind == "Warm":
+			return self._clone_warm(
+				title, ssh_public_key, vcpus, cpu_max_cores, memory_megabytes, disk_gigabytes
+			)
 		disk = int(disk_gigabytes) if disk_gigabytes else self.disk_gigabytes
 		if disk < self.disk_gigabytes:
 			frappe.throw(
@@ -68,6 +72,55 @@ class VirtualMachineSnapshot(Document):
 				"data_disk_format_and_mount": self.data_disk_format_and_mount,
 				"data_disk_mount_point": self.data_disk_mount_point,
 				"clone_source_data_rootfs": self.data_rootfs_path,
+			}
+		).insert(ignore_permissions=True)
+		return clone.name
+
+	def _clone_warm(
+		self,
+		title: str,
+		ssh_public_key: str,
+		vcpus: int | None,
+		cpu_max_cores: float | None,
+		memory_megabytes: int | None,
+		disk_gigabytes: int | None,
+	) -> str:
+		"""Clone that RESUMES this warm golden instead of booting it.
+
+		The frozen vmstate pins the machine: a warm clone restores at exactly the
+		captured vcpus/memory and on a byte-exact CoW of the captured disk (no
+		grow — the frozen RAM's filesystem cache must keep matching it), so any
+		mismatched override is rejected rather than silently breaking the
+		restore. `cpu_max_cores` is free: it is a host-side cgroup cap, invisible
+		to the guest. The clone keeps the golden's tap NAME (the vmstate binds
+		the tap by name; names are netns-scoped, so N clones don't collide) and
+		carries `warm_snapshot` so provision stages the memory pair + MMDS
+		identity."""
+		if vcpus and int(vcpus) != self.vcpus:
+			frappe.throw(f"A warm clone restores at the captured size: vcpus must be {self.vcpus}")
+		if memory_megabytes and int(memory_megabytes) != self.memory_megabytes:
+			frappe.throw(
+				f"A warm clone restores at the captured size: memory must be {self.memory_megabytes} MB"
+			)
+		if disk_gigabytes and int(disk_gigabytes) != self.disk_gigabytes:
+			frappe.throw(
+				f"A warm clone's disk cannot be resized: disk must be {self.disk_gigabytes} GB "
+				"(the frozen memory state matches that exact disk)"
+			)
+		clone = frappe.get_doc(
+			{
+				"doctype": "Virtual Machine",
+				"title": title,
+				"server": self.server,
+				"image": self.source_image,
+				"vcpus": self.vcpus,
+				"cpu_max_cores": float(cpu_max_cores) if cpu_max_cores else float(self.vcpus),
+				"memory_megabytes": self.memory_megabytes,
+				"disk_gigabytes": self.disk_gigabytes,
+				"ssh_public_key": ssh_public_key,
+				"clone_source_rootfs": self.rootfs_path,
+				"warm_snapshot": self.name,
+				"tap_device": self.tap_device,
 			}
 		).insert(ignore_permissions=True)
 		return clone.name
@@ -139,13 +192,17 @@ class VirtualMachineSnapshot(Document):
 			return
 		# Remove both halves of the snapshot: the root snap LV and (when the VM had
 		# a data disk) the data snap LV. The empty data path is dropped by the Task
-		# runner, so a data-less snapshot's teardown is unchanged.
+		# runner, so a data-less snapshot's teardown is unchanged. A warm row also
+		# owns its durable memory directory (vmstate/mem/host-signature) — same
+		# gesture: clone jails only hold hard links, so removing the directory
+		# never breaks a clone already provisioned from it.
 		run_task(
 			server=self.server,
 			script="delete-snapshot-vm.py",
 			variables={
 				"SNAPSHOT_ROOTFS_PATH": self.rootfs_path,
 				"DATA_SNAPSHOT_ROOTFS_PATH": self.data_rootfs_path or "",
+				"MEMORY_DIRECTORY": self.memory_directory or "",
 			},
 			virtual_machine=self.virtual_machine,
 			timeout_seconds=60,

@@ -15,7 +15,7 @@ methods that `frappe.throw` early on the wrong state.
 import frappe
 from frappe.model.document import Document
 
-from atlas.atlas.placement import active_root_domain, default_bench_snapshot
+from atlas.atlas.placement import active_root_domain, default_bench_snapshot, warm_bench_snapshot_for_server
 from atlas.atlas.sizes import SIZE_PRESETS
 from atlas.atlas.subdomain_label import (
 	RESERVED_SUBDOMAINS,
@@ -289,6 +289,15 @@ def _provision_backing_vm(site) -> str:
 	plane, not the user — the user reaches the site over HTTPS through the
 	proxy).
 
+	WARM-FIRST: the server choice still follows the cold golden's row (today's
+	placement), but when that server has an Available WARM golden the clone
+	RESUMES it — a pre-warmed, already-serving guest in low seconds instead of a
+	~17s+ cold boot. Warm is strictly an accelerator: no warm row (or a host that
+	drifted — vm-restore.py's signature guard) degrades to exactly today's cold
+	path. A warm clone restores at the CAPTURED vcpus/memory (the frozen vmstate
+	pins them — clone_to_new_vm rejects overrides), so only the cgroup CPU cap
+	comes from the tier; the cold path passes the explicit tier size as before.
+
 	We pass an EXPLICIT size (`SITE_VM_SIZE`, see its note) rather than letting the
 	clone inherit the build VM's resources: a self-serve site wants the standard
 	tier, not whatever the bake VM happened to be — and, decisively, the build VM
@@ -297,6 +306,15 @@ def _provision_backing_vm(site) -> str:
 	snapshot = frappe.get_doc("Virtual Machine Snapshot", default_bench_snapshot())
 	ssh_public_key = frappe.db.get_single_value("Atlas Settings", "ssh_public_key")
 	size = SITE_VM_SIZE
+	warm_name = warm_bench_snapshot_for_server(snapshot.server)
+	if warm_name and warm_name != snapshot.name:
+		snapshot = frappe.get_doc("Virtual Machine Snapshot", warm_name)
+	if snapshot.kind == "Warm":
+		return snapshot.clone_to_new_vm(
+			title=site.name,
+			ssh_public_key=ssh_public_key,
+			cpu_max_cores=size["cpu_max_cores"],
+		)
 	return snapshot.clone_to_new_vm(
 		title=site.name,
 		ssh_public_key=ssh_public_key,

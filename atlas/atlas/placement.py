@@ -107,6 +107,27 @@ def default_bench_snapshot() -> str:
 	return configured
 
 
+def warm_bench_snapshot_for_server(server: str) -> str | None:
+	"""The warm golden this server can fan out from, or None (→ cold clone).
+
+	Warm snapshots are PER-SERVER: a Firecracker memory snapshot only restores on
+	the CPU/kernel/Firecracker it was captured on, so the artifact lives (and is
+	resolved) by server — unlike `default_bench_snapshot`, the single cold
+	fallback pointer. Newest Available wins (the bake supersedes older rows, so
+	there is normally exactly one). This is an OPTIMISTIC pick: the authoritative
+	compatibility gate is vm-restore.py's host-signature guard on the server
+	itself, which cold-boots the clone when the host drifted (e.g. a DigitalOcean
+	live migration) — so a stale row costs one cold boot, never a wrong restore."""
+	rows = frappe.get_all(
+		"Virtual Machine Snapshot",
+		filters={"server": server, "kind": "Warm", "status": "Available"},
+		order_by="creation desc",
+		limit=1,
+		pluck="name",
+	)
+	return rows[0] if rows else None
+
+
 def active_root_domain() -> "frappe.model.document.Document":
 	"""The single active Root Domain a self-serve Site is fronted by.
 

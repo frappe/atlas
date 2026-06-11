@@ -589,14 +589,26 @@ class VirtualMachine(Document):
 		build VM (the bake leaves it as scratch) must NOT take the golden with it, or
 		the snapshot row stays "Available" while its LV is gone and the next clone
 		fails late in provision-vm.py ("snapshot LV not found"). So skip the snapshot
-		currently referenced by Atlas Settings.default_bench_snapshot."""
+		currently referenced by Atlas Settings.default_bench_snapshot — and every
+		Available WARM snapshot, the same durable-artifact contract: a warm golden is
+		the per-server fan-out source and outlives its build VM by design (its own
+		on_trash removes the LV + memory pair when the operator retires it)."""
 		golden = frappe.db.get_single_value("Atlas Settings", "default_bench_snapshot")
-		for name in frappe.get_all(
-			"Virtual Machine Snapshot", filters={"virtual_machine": self.name}, pluck="name"
+		for row in frappe.get_all(
+			"Virtual Machine Snapshot",
+			filters={"virtual_machine": self.name},
+			fields=["name", "kind", "status"],
 		):
-			if name == golden:
+			if row.name == golden:
 				continue
-			frappe.delete_doc("Virtual Machine Snapshot", name, ignore_permissions=True)
+			if row.kind == "Warm" and row.status == "Available":
+				continue
+			# force=1: a bake's snapshot is linked from its Image Build row, and
+			# delete_doc runs on_trash (host artifact removal, non-transactional)
+			# BEFORE the link check — a plain delete would destroy the artifacts
+			# and then abort on the link, stranding the row. The Image Build keeps
+			# a dangling audit link instead.
+			frappe.delete_doc("Virtual Machine Snapshot", row.name, ignore_permissions=True, force=1)
 
 	def _ipv4_link_variables(self) -> dict:
 		"""The per-VM NAT44 egress link, derived from the v6 address — no
@@ -673,6 +685,15 @@ class VirtualMachine(Document):
 		# source.
 		if self.clone_source_rootfs:
 			variables["SNAPSHOT_ROOTFS_PATH"] = self.clone_source_rootfs
+		# Warm clone: provision-vm.py additionally stages the golden memory pair
+		# behind a READY marker and this VM's identity as MMDS metadata, and the
+		# disk stays a byte-exact CoW (no grow/inject — the frozen RAM must keep
+		# matching it). The tap NAME already flows above: clone_to_new_vm pinned
+		# self.tap_device to the golden's (the vmstate binds the tap by name).
+		if self.warm_snapshot:
+			variables["WARM_SNAPSHOT_DIRECTORY"] = frappe.db.get_value(
+				"Virtual Machine Snapshot", self.warm_snapshot, "memory_directory"
+			)
 		# Data disk (the root disk's peer): size + format/mount config, plus —
 		# when cloning — the data-disk snapshot to seed it from, so the clone's
 		# /home comes up with the source's data.

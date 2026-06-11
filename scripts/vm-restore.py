@@ -29,6 +29,7 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from atlas._run import CommandError, firecracker_api
+from atlas.hostinfo import host_signature
 from atlas.paths import VirtualMachinePaths
 
 # Firecracker creates the API socket within milliseconds of exec; 10s is a
@@ -46,6 +47,19 @@ def main() -> None:
 	if not os.path.exists(paths.memory_snapshot_marker):
 		return  # cold boot: --config-file already booted the guest
 
+	# Warm-golden compatibility guard. A snapshot staged from a durable warm
+	# artifact carries the signature of the host it was captured on; a memory
+	# snapshot is only loadable on a matching CPU model / kernel / Firecracker
+	# (and DigitalOcean can live-migrate a droplet to a different CPU under us).
+	# On mismatch, consume the marker and fail this start: Restart=always
+	# relaunches, the launcher sees no marker, and the clone cold-boots the warm
+	# disk — slower, always correct. The same-VM fast stop/start pair stages no
+	# signature (same host by construction) and skips this.
+	mismatch = _signature_mismatch(paths)
+	if mismatch:
+		os.remove(paths.memory_snapshot_marker)
+		sys.exit(f"host signature mismatch ({mismatch}); marker consumed, relaunch cold-boots")
+
 	try:
 		_wait_for_socket(paths.api_socket)
 		# Load paused (resume_vm false) so the marker can be consumed strictly
@@ -53,6 +67,11 @@ def main() -> None:
 		# "marker still present, disk untouched, retry restores safely" or
 		# "marker gone, next start cold-boots"; never a double-restore.
 		_load_snapshot(paths)
+		# A warm clone's identity payload goes into MMDS while still paused, so
+		# the in-guest freshen unit sees it from its first post-resume poll. On
+		# failure the except path consumes the marker and the relaunch
+		# cold-boots — where the launcher preloads the same file via --metadata.
+		_stage_mmds(paths)
 	except (CommandError, TimeoutError) as error:
 		os.remove(paths.memory_snapshot_marker)
 		sys.exit(f"memory-snapshot restore failed ({error}); marker consumed, next start cold-boots")
@@ -65,6 +84,35 @@ def main() -> None:
 		'{"state": "Resumed"}',
 	)
 	print(f"Restored {uuid} from memory snapshot.")
+
+
+def _signature_mismatch(paths: VirtualMachinePaths) -> str:
+	"""A human-readable diff of captured-vs-live host signature, or "" when they
+	match (or none was staged). An unreadable signature file counts as a
+	mismatch — never load a pair we can't validate."""
+	if not os.path.exists(paths.memory_snapshot_signature):
+		return ""
+	try:
+		with open(paths.memory_snapshot_signature) as handle:
+			captured = json.load(handle)
+	except (OSError, ValueError) as error:
+		return f"unreadable host signature: {error}"
+	live = host_signature()
+	differences = [
+		f"{key}: captured {captured.get(key)!r} != live {live.get(key)!r}"
+		for key in sorted(set(captured) | set(live))
+		if captured.get(key) != live.get(key)
+	]
+	return "; ".join(differences)
+
+
+def _stage_mmds(paths: VirtualMachinePaths) -> None:
+	"""PUT the staged identity payload (if any) into the metadata service."""
+	if not os.path.exists(paths.metadata_file):
+		return
+	with open(paths.metadata_file) as handle:
+		payload = handle.read()
+	firecracker_api(paths.api_socket_directory, paths.api_socket_name, "PUT", "/mmds", payload)
 
 
 def _wait_for_socket(socket_path: str) -> None:

@@ -17,6 +17,7 @@
   "base_image",
   "section_break_options",
   "auto_register",
+  "warm",
   "terminate_build_vm",
   "section_break_artifacts",
   "build_virtual_machine",
@@ -104,6 +105,14 @@
    "fieldname": "auto_register",
    "fieldtype": "Check",
    "label": "Auto-register snapshot"
+  },
+  {
+   "default": "0",
+   "description": "Bake a WARM golden: after the build, bring the production stack up, pre-warm it with real HTTP, then capture the guest's memory + disk at one paused instant. Clones RESUME the warm guest in low seconds instead of booting. Per-server (a memory snapshot only restores on the host it was captured on); supersedes the server's previous warm snapshot. Only recipes with a warm entrypoint (bench) support it.",
+   "fieldname": "warm",
+   "fieldtype": "Check",
+   "label": "Warm bake (memory + disk)",
+   "set_only_once": 1
   },
   {
    "default": "0",

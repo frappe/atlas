@@ -63,18 +63,27 @@ class DeploySiteInputs:
 	bench new-site name on disk, the proxy Host header, and the Site key, one
 	string never transformed. `admin_password` is generated per-site by the
 	controller (the db root password is baked + shared, the Administrator
-	password is per-site) and returned to nobody but the owner."""
+	password is per-site) and returned to nobody but the owner. `warm_vm_uuid`
+	is set when this VM was warm-restored from a golden memory snapshot: the
+	deploy then asserts the in-guest identity freshen completed for exactly this
+	VM, and restarts the whole resumed supervisor group after the rename."""
 
 	site_name: str
 	admin_password: str
+	warm_vm_uuid: str = ""
 
 	@classmethod
 	def from_args(cls, argv: list[str] | None = None) -> "DeploySiteInputs":
 		parser = argparse.ArgumentParser(prog="deploy-site", description=cls.__doc__)
 		parser.add_argument("--site-name", required=True, help="Full FQDN, e.g. acme.blr1.frappe.dev")
 		parser.add_argument("--admin-password", required=True, help="Frappe Administrator password")
+		parser.add_argument(
+			"--warm-vm-uuid",
+			default="",
+			help="This VM's uuid when it was warm-restored; gates on the in-guest freshen",
+		)
 		ns = parser.parse_args(argv)
-		return cls(site_name=ns.site_name, admin_password=ns.admin_password)
+		return cls(site_name=ns.site_name, admin_password=ns.admin_password, warm_vm_uuid=ns.warm_vm_uuid)
 
 
 @dataclass(frozen=True)
@@ -118,6 +127,45 @@ def _run(args: list[str], *, capture: bool = False) -> str:
 def _bench(*args: str, capture: bool = False) -> str:
 	"""Invoke the baked bench-cli against the baked bench (`bench -b atlas …`)."""
 	return _run([BENCH, "-b", BENCH_NAME, *args], capture=capture)
+
+
+def _await_freshen(warm_vm_uuid: str, timeout_seconds: int = 60) -> None:
+	"""Gate a warm deploy on the in-guest identity freshen having completed for
+	THIS VM. Reaching the guest over its own /128 already implies the network
+	half happened (the freshen brings the clone's addresses up last), so the
+	marker is normally present on the first read — the wait covers the
+	marker-write race, the timeout the pathological 'reached over a stale path'
+	case. Fail loud: deploying a site onto a clone that still carries the
+	golden's identity must never proceed."""
+	import time
+
+	deadline = time.monotonic() + timeout_seconds
+	while time.monotonic() < deadline:
+		try:
+			with open("/etc/atlas-vm-uuid") as handle:
+				if handle.read().strip() == warm_vm_uuid:
+					return
+		except OSError:
+			pass
+		time.sleep(1)
+	sys.exit(
+		f"warm freshen did not complete for {warm_vm_uuid} within {timeout_seconds}s; "
+		"this clone still carries the golden's identity"
+	)
+
+
+def _restart_all() -> None:
+	"""Restart the whole supervisor group on a warm-restored clone. The resumed
+	processes (workers, scheduler, socketio — not just web) all started at bake
+	time against the baked `site.local`; after the rename they must re-read the
+	renamed site. Best-effort like _restart_web: supervisor program-name drift
+	must not fail the deploy."""
+	subprocess.run(
+		["sudo", "supervisorctl", "restart", "all"],
+		env=_env(),
+		text=True,
+		check=False,
+	)
 
 
 def _preflight() -> None:
@@ -323,6 +371,8 @@ def _local_ping(site_name: str, host_ip: str) -> bool:
 def main() -> None:
 	inputs = DeploySiteInputs.from_args()
 	_preflight()
+	if inputs.warm_vm_uuid:
+		_await_freshen(inputs.warm_vm_uuid)
 
 	created = False
 	if _site_exists(inputs.site_name):
@@ -336,6 +386,8 @@ def main() -> None:
 	# fixing default_site must self-heal on retry). See _set_default_site.
 	_set_default_site(inputs.site_name)
 	_setup_production()
+	if inputs.warm_vm_uuid:
+		_restart_all()
 
 	result = DeploySiteResult(site=inputs.site_name, created=created, serving=_serving(inputs.site_name))
 	result.emit()

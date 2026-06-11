@@ -45,7 +45,7 @@ from dataclasses import dataclass
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib"))
 
-from atlas._run import install_directory, install_file, run
+from atlas._run import install_directory, install_file, run, run_ok
 from atlas._task import TaskInputs
 from atlas.lvm import ThinPool
 from atlas.paths import VirtualMachinePaths, image_directory
@@ -107,6 +107,14 @@ class ProvisionInputs(TaskInputs):
 	data_disk_format: int = 1
 	data_disk_mount_at: str = ""
 	data_snapshot_rootfs_path: str = ""
+	# Optional warm-restore source: the durable directory holding a warm golden
+	# snapshot's vmstate.bin/mem.bin/host-signature.json (paired with
+	# snapshot_rootfs_path, which must be that golden's disk snapshot). When set,
+	# the clone's disk is a bare CoW of the golden (no grow/UUID-reroll/identity
+	# injection — the frozen RAM's filesystem cache must keep matching the disk),
+	# the golden pair is hard-linked into the jail behind a READY marker, and the
+	# clone's identity is staged as MMDS metadata for the in-guest freshen unit.
+	warm_snapshot_directory: str = ""
 
 
 def main() -> None:
@@ -141,8 +149,15 @@ def main() -> None:
 	install_directory(paths.jail_root, mode="0700")
 	install_directory(paths.api_socket_directory, mode="0700")
 
+	warm = bool(inputs.warm_snapshot_directory)
+	if warm and inputs.data_disk_gb > 0:
+		sys.exit("a warm clone cannot carry a data disk; the golden was captured without one")
+
 	# A (re)provision lays a fresh disk; a leftover memory snapshot would pair
-	# stale RAM with it. Drop it so the next start cold-boots.
+	# stale RAM with it. Drop it so the next start cold-boots. For a warm clone,
+	# a still-present marker proves the staged pair was never consumed (the
+	# guest never ran), so re-staging below is safe on an idempotent re-run.
+	marker_was_pending = run_ok("sudo", "test", "-f", paths.memory_snapshot_marker)
 	run("sudo", "rm", "-rf", paths.memory_snapshot_directory)
 
 	# 1. Per-VM disk LV. An instant CoW thin snapshot of an origin LV — the
@@ -152,9 +167,21 @@ def main() -> None:
 	#    identity injected in step 2 is freshly derived from THIS VM's UUID, so a
 	#    clone never shares host keys or machine-id with its source. Same origin
 	#    resolution and guards as rebuild.
+	#
+	#    Warm clone: the disk must stay a byte-exact CoW of the golden — the
+	#    frozen RAM's filesystem cache references exactly those blocks, so ANY
+	#    offline mutation (grow, tune2fs UUID reroll, identity injection) would
+	#    corrupt the resumed guest. Bare snapshot_into only; the warm pair is
+	#    staged only when this run created the disk (or the previous staging was
+	#    never consumed) — RAM must never be restored over a disk that diverged.
 	origin = _resolve_origin(inputs, pool)
 	disk = pool.vm_disk(inputs.virtual_machine_name)
-	prepare_lv(origin, disk, inputs.disk_gb)
+	if warm:
+		stage_warm = (not disk.exists) or marker_was_pending
+		origin.snapshot_into(disk)
+	else:
+		stage_warm = False
+		prepare_lv(origin, disk, inputs.disk_gb)
 
 	# 1b. Optional data disk (the guest's /dev/vdb), the root disk's peer. A blank
 	#     thin volume normally, or a CoW snapshot of a data-disk snapshot LV when
@@ -174,22 +201,29 @@ def main() -> None:
 	#    directly (no loop). The v4 egress link goes into the guest's network env
 	#    here too, so clone/rebuild get it for free. Done outside the jail, before
 	#    the jailer starts.
-	inject_identity(
-		disk.device_path,
-		Identity(
-			uuid=inputs.virtual_machine_name,
-			ipv6_address=inputs.virtual_machine_ipv6,
-			ssh_public_key=inputs.ssh_public_key,
-			ipv4_guest_cidr=inputs.ipv4_guest_cidr,
-			ipv4_gateway=inputs.ipv4_gateway,
-			data_disk_mount_at=inputs.data_disk_mount_at,
-		),
-		# Birth of the VM: establish a fresh SSH host identity. The base image
-		# ships SHARED baked host keys, and a clone seeds from another VM's
-		# rootfs — both must be replaced so every VM is unique. (Rebuild/restore,
-		# by contrast, preserve the disk's keys.)
-		regenerate_host_keys=True,
-	)
+	#
+	#    Warm clone: SKIPPED — mounting the disk would mutate it under the frozen
+	#    RAM. The identity travels as MMDS metadata instead (step 4d); the
+	#    in-guest freshen unit baked into the golden adopts it after resume (and
+	#    on the cold-boot fallback, where the launcher preloads MMDS from the
+	#    same file).
+	if not warm:
+		inject_identity(
+			disk.device_path,
+			Identity(
+				uuid=inputs.virtual_machine_name,
+				ipv6_address=inputs.virtual_machine_ipv6,
+				ssh_public_key=inputs.ssh_public_key,
+				ipv4_guest_cidr=inputs.ipv4_guest_cidr,
+				ipv4_gateway=inputs.ipv4_gateway,
+				data_disk_mount_at=inputs.data_disk_mount_at,
+			),
+			# Birth of the VM: establish a fresh SSH host identity. The base image
+			# ships SHARED baked host keys, and a clone seeds from another VM's
+			# rootfs — both must be replaced so every VM is unique. (Rebuild/restore,
+			# by contrast, preserve the disk's keys.)
+			regenerate_host_keys=True,
+		)
 
 	# 3. Kernel inside the jail. Hard-link (not copy) the immutable image kernel
 	#    so we don't duplicate it per VM; same filesystem (/var/lib/atlas), so
@@ -217,6 +251,14 @@ def main() -> None:
 	if data_disk is not None:
 		data_disk.expose_in_jail(paths.data_node, uid)
 
+	# 4d. Warm clone: stage this VM's identity as the MMDS payload. The guest
+	#     can't learn its identity from the disk (step 2 was skipped), so the
+	#     freshen unit baked into the golden reads it from the metadata service
+	#     at 169.254.169.254 — vm-restore.py PUTs this file into MMDS before
+	#     resuming, and the launcher preloads it (--metadata) on a cold boot.
+	if warm:
+		install_file(_mmds_metadata(inputs), paths.metadata_file, mode="0644")
+
 	# 5. Hand the jail tree to the per-VM uid/gid. The jailer also chowns the
 	#    jail root and the device nodes it creates, but the backing files we laid
 	#    down (kernel RO, config) must be owned by the uid too. The recursive
@@ -224,6 +266,21 @@ def main() -> None:
 	#    from step 4b) — correct and harmless; it chowns the node, not the LV it
 	#    points at. Do this last, after every file is in place.
 	run("sudo", "chown", "-R", f"{uid}:{uid}", paths.jail_chroot_base)
+
+	# 5b. Warm clone: stage the golden memory pair behind a READY marker, AFTER
+	#     the recursive chown — the pair is HARD-LINKED from the durable artifact
+	#     (N clones CoW-share one read-only mem file; same filesystem, so ln
+	#     always works), and a chown of the link would chown the shared inode
+	#     itself. The inodes stay root-owned 0644 (any per-VM uid can map them);
+	#     only the directory is handed to this VM's uid for traversal. The marker
+	#     is written LAST — it asserts a complete, matching pair, exactly the
+	#     same contract as snapshot-stop-vm.py's. vm-restore.py consumes the
+	#     marker (only ever the marker: the link targets are shared) and checks
+	#     the staged host signature before loading.
+	if stage_warm:
+		_stage_warm_pair(inputs.warm_snapshot_directory, paths, uid)
+	elif warm:
+		print("Disk LV already existed and was booted; staging no warm pair (next start cold-boots).")
 
 	# 6. Sidecar that vm-network-up.sh reads. Stable across host reboots —
 	#    carries the tap, address, and the per-VM netns + veth names so
@@ -287,6 +344,50 @@ def _resolve_origin(inputs: "ProvisionInputs", pool: ThinPool):
 	return origin
 
 
+def _mmds_metadata(inputs: "ProvisionInputs") -> str:
+	"""The MMDS payload for a warm clone: everything inject_identity would have
+	written to the disk, served to the guest over the metadata service instead.
+	The hostname/machine-id rules are Identity's own, so a warm clone's identity
+	matches what a cold provision of the same UUID would get."""
+	identity = Identity(
+		uuid=inputs.virtual_machine_name,
+		ipv6_address=inputs.virtual_machine_ipv6,
+		ssh_public_key=inputs.ssh_public_key,
+		ipv4_guest_cidr=inputs.ipv4_guest_cidr,
+		ipv4_gateway=inputs.ipv4_gateway,
+	)
+	return (
+		json.dumps(
+			{
+				"identity": {
+					"uuid": identity.uuid,
+					"hostname": identity.hostname,
+					"machine_id": identity.machine_id,
+					"ipv6": identity.ipv6_address,
+					"ipv4_cidr": identity.ipv4_guest_cidr,
+					"ipv4_gateway": identity.ipv4_gateway,
+					"ssh_public_key": identity.ssh_public_key,
+				}
+			},
+			indent=1,
+		)
+		+ "\n"
+	)
+
+
+def _stage_warm_pair(warm_snapshot_directory: str, paths: VirtualMachinePaths, uid: int) -> None:
+	"""Hard-link the durable golden pair into the clone jail and arm the marker."""
+	install_directory(paths.memory_snapshot_directory, mode="0700")
+	run("sudo", "chown", f"{uid}:{uid}", paths.memory_snapshot_directory)
+	for name in ("vmstate.bin", "mem.bin"):
+		source = f"{warm_snapshot_directory}/{name}"
+		if not run_ok("sudo", "test", "-s", source):
+			sys.exit(f"warm snapshot file missing or empty: {source}; re-bake the warm golden")
+		run("sudo", "ln", "-f", source, f"{paths.memory_snapshot_directory}/{name}")
+	run("sudo", "cp", f"{warm_snapshot_directory}/host-signature.json", paths.memory_snapshot_signature)
+	run("sudo", "touch", paths.memory_snapshot_marker)
+
+
 def _firecracker_config(inputs: "ProvisionInputs") -> str:
 	"""The jail's firecracker.json. Built from a dict + json.dumps for
 	cleanliness; the boot_args / drives / network-interfaces / machine-config
@@ -315,6 +416,16 @@ def _firecracker_config(inputs: "ProvisionInputs") -> str:
 		"machine-config": {
 			"vcpu_count": inputs.vcpus,
 			"mem_size_mib": inputs.memory_mb,
+		},
+		# The metadata service, on every VM. Inert unless something PUTs data
+		# (warm clones stage their identity payload; ordinary VMs serve nothing)
+		# — but it must be in the GOLDEN's boot config for the captured vmstate
+		# to carry the MMDS-enabled net device, and a uniform config keeps every
+		# VM bakeable. V1 pinned: the freshen unit does a plain GET, no session
+		# tokens.
+		"mmds-config": {
+			"version": "V1",
+			"network_interfaces": ["eth0"],
 		},
 	}
 	# The data disk is a second, non-root drive (the guest's /dev/vdb), resolved
@@ -397,10 +508,17 @@ def _jailer_launch(inputs: "ProvisionInputs", paths: VirtualMachinePaths) -> str
 		"set -euo pipefail\n"
 		"\n"
 		"# Cold boot passes --config-file. When a complete memory snapshot is\n"
-		"# pending (marker written by snapshot-stop-vm.py), Firecracker must start\n"
-		"# IDLE instead — /snapshot/load is pre-boot only and cannot coexist with\n"
-		"# --config-file. vm-restore.py (ExecStartPost) then loads and resumes it.\n"
+		"# pending (marker written by snapshot-stop-vm.py, or staged from a warm\n"
+		"# golden by provision-vm.py), Firecracker must start IDLE instead —\n"
+		"# /snapshot/load is pre-boot only and cannot coexist with --config-file.\n"
+		"# vm-restore.py (ExecStartPost) then loads and resumes it. A warm clone's\n"
+		"# staged MMDS payload (metadata.json) rides --metadata on the cold path\n"
+		"# (so the cold-boot FALLBACK still adopts the clone identity); on the\n"
+		"# idle path vm-restore.py PUTs it over the API instead.\n"
 		"boot_args=(--config-file firecracker.json)\n"
+		f"if [[ -f {paths.metadata_file} ]]; then\n"
+		"    boot_args+=(--metadata metadata.json)\n"
+		"fi\n"
 		f"if [[ -f {paths.memory_snapshot_marker} ]]; then\n"
 		"    boot_args=()\n"
 		"fi\n"

@@ -54,6 +54,11 @@ class ImageRecipe:
 	finalize: Callable | None = None
 	registers_as: str | None = None
 	is_proxy: bool = False
+	# The in-guest script (inside source_directory, like build_entrypoint) that
+	# arms a WARM bake: bring the production stack up, pre-warm it with real
+	# HTTP, and install the identity freshen unit — run right before the paused
+	# memory+disk capture. Empty = the recipe can only bake cold.
+	warm_entrypoint: str = ""
 
 	@property
 	def build_log_path(self) -> str:
@@ -116,6 +121,7 @@ RECIPES: dict[str, "ImageRecipe"] = {
 		snapshot_title="golden-bench",
 		task_script="bench-build",
 		registers_as="default_bench_snapshot",
+		warm_entrypoint="warm.sh",
 	),
 	"proxy": ImageRecipe(
 		name="proxy",

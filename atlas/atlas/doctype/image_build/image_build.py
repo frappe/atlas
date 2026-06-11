@@ -21,6 +21,7 @@ from frappe.model.document import Document
 from atlas.atlas.image_builder import run_build
 from atlas.atlas.image_recipes import get_recipe
 from atlas.atlas.placement import default_image
+from atlas.atlas.ssh import run_task
 
 # The routing identity of a build: what to bake, where, and on which base. Once
 # written they are fixed — re-baking with a different recipe/server/base is a new
@@ -48,6 +49,8 @@ class ImageBuild(Document):
 			self.base_image = default_image()
 		if recipe.is_proxy and not self.region:
 			frappe.throw(f"A region is required to build the {recipe.title}")
+		if self.warm and not recipe.warm_entrypoint:
+			frappe.throw(f"The {recipe.title} recipe has no warm entrypoint; it can only bake cold")
 		if not self.status:
 			self.status = "Draft"
 
@@ -123,10 +126,18 @@ def run(image_build_name: str) -> None:
 		# (on_task fires before run_build throws).
 		run_build(vm_name, recipe, on_task=lambda task_name: build.db_set("build_task", task_name))
 		_set_status(build, "Snapshotting")
-		snapshot_name = _stop_and_snapshot(build, recipe, vm_name)
+		if build.warm:
+			snapshot_name = _warm_snapshot(build, recipe, vm_name)
+		else:
+			snapshot_name = _stop_and_snapshot(build, recipe, vm_name)
 		build.db_set("snapshot", snapshot_name)
 		if build.auto_register and recipe.registers_as:
 			_register(recipe, snapshot_name)
+		if build.warm:
+			# AFTER register, so a previously-registered warm golden has already
+			# been replaced as the cold fallback and can be superseded cleanly
+			# (with auto_register off it stays registered and is kept).
+			_supersede_warm_snapshots(frappe.get_doc("Virtual Machine Snapshot", snapshot_name))
 		_set_status(build, "Available")
 		if build.terminate_build_vm:
 			_terminate_build_vm(vm_name)
@@ -211,6 +222,116 @@ def _stop_and_snapshot(build, recipe, vm_name: str) -> str:
 		vm.stop()
 		vm.reload()
 	return vm.snapshot(title=recipe.snapshot_title)
+
+
+def _warm_snapshot(build, recipe, vm_name: str) -> str:
+	"""The warm counterpart of _stop_and_snapshot: arm the RUNNING build VM
+	(production stack up + pre-warmed + the identity freshen unit live — the
+	recipe's warm entrypoint, in-guest), then capture its memory AND disk at one
+	paused instant into a `Warm` snapshot row whose durable artifacts live on the
+	server. Only then is the build VM stopped — the warmth is in the artifact,
+	not the scratch VM. Supersedes the server's previous warm snapshot (one
+	current warm golden per server). Returns the snapshot name."""
+	from atlas.atlas.networking import derive_uid
+	from atlas.atlas.task_results import parse_result
+
+	vm = frappe.get_doc("Virtual Machine", vm_name)
+	if vm.status != "Running":
+		frappe.throw(f"A warm bake needs the build VM Running at capture (status is {vm.status})")
+	_run_warm_entrypoint(recipe, vm)
+	snapshot = frappe.get_doc(
+		{
+			"doctype": "Virtual Machine Snapshot",
+			"title": recipe.snapshot_title,
+			"virtual_machine": vm.name,
+			"server": vm.server,
+			"status": "Pending",
+			"kind": "Warm",
+			"source_image": vm.image,
+			"disk_gigabytes": vm.disk_gigabytes,
+			# The frozen vmstate pins the machine and its tap name; a warm clone
+			# must reproduce all three exactly (clone_to_new_vm enforces it).
+			"vcpus": vm.vcpus,
+			"memory_megabytes": vm.memory_megabytes,
+			"tap_device": vm.tap_device,
+		}
+	).insert(ignore_permissions=True)
+	rootfs_path = f"/dev/atlas/atlas-snap-{snapshot.name}"
+	memory_directory = f"/var/lib/atlas/snapshots/{snapshot.name}"
+	task = run_task(
+		server=vm.server,
+		script="warm-snapshot-vm.py",
+		variables={
+			"VIRTUAL_MACHINE_NAME": vm.name,
+			"ATLAS_FC_UID": str(derive_uid(vm.name)),
+			"SNAPSHOT_ROOTFS_PATH": rootfs_path,
+			"MEMORY_DIRECTORY": memory_directory,
+		},
+		virtual_machine=vm.name,
+		timeout_seconds=600,
+	)
+	result = parse_result(task.stdout)
+	snapshot.db_set(
+		{
+			"rootfs_path": rootfs_path,
+			"size_bytes": result["size_bytes"],
+			"memory_directory": memory_directory,
+			"memory_bytes": result["memory_bytes"],
+			"host_signature": result["host_signature"],
+			"status": "Available",
+		}
+	)
+	# The capture resumed the golden; stop it now — the artifact is durable and
+	# the build VM is scratch from here on (kept Stopped unless terminate_build_vm).
+	vm.reload()
+	vm.stop()
+	return snapshot.name
+
+
+def _run_warm_entrypoint(recipe, vm) -> None:
+	"""Run the recipe's warm entrypoint in the guest (the tree run_build uploaded
+	is still in place — warm.sh runs from beside build.sh), recorded as a Task
+	like every guest op. Passes the build VM's uuid: it becomes the in-guest
+	'identity already adopted' marker the freshen unit compares MMDS against."""
+	import shlex
+
+	from atlas.atlas._ssh.transport import run_ssh, ssh_key_file
+	from atlas.atlas.proxy import _record_guest_task
+	from atlas.atlas.ssh import connection_for_guest
+
+	connection = connection_for_guest(vm)
+	command = (
+		f"bash {shlex.quote(f'{recipe.remote_directory}/{recipe.warm_entrypoint}')} {shlex.quote(vm.name)}"
+	)
+	with ssh_key_file(connection.ssh_private_key) as key_path:
+		stdout, stderr, code = run_ssh(connection, key_path, command, timeout_seconds=900)
+	_record_guest_task(vm.name, "bench-warm", {"recipe": recipe.name}, stdout, stderr, code)
+	if code != 0:
+		frappe.throw(f"Warm entrypoint on {vm.name} failed (exit {code}): {stderr[-500:]}")
+
+
+def _supersede_warm_snapshots(snapshot) -> None:
+	"""One current warm golden per server: trash older Warm rows on this server
+	(their on_trash removes the LV + memory directory). The row Atlas Settings
+	currently points at is left alone — never dangle the cold-fallback pointer;
+	it is replaced right after by _register (auto_register) or by the operator.
+
+	force=1 is load-bearing: an older warm row is linked from ITS Image Build
+	row (`snapshot`), and delete_doc runs on_trash (which destroys the host
+	artifacts, non-transactionally) BEFORE the link check — a plain delete would
+	abort on the link and roll back to an Available row whose LV and memory pair
+	are already gone, the exact stale-golden trap clone provisioning then trips
+	over. Skipping the link check leaves the old Image Build an audit row with a
+	dangling snapshot link, which Frappe tolerates."""
+	registered = frappe.db.get_single_value("Atlas Settings", "default_bench_snapshot")
+	for name in frappe.get_all(
+		"Virtual Machine Snapshot",
+		filters={"server": snapshot.server, "kind": "Warm", "name": ("!=", snapshot.name)},
+		pluck="name",
+	):
+		if name == registered:
+			continue
+		frappe.delete_doc("Virtual Machine Snapshot", name, ignore_permissions=True, force=1)
 
 
 def _register(recipe, snapshot_name: str) -> None:

@@ -14,8 +14,10 @@ from dataclasses import dataclass
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib"))
 
+from atlas._run import run
 from atlas._task import TaskInputs
 from atlas.lvm import ThinPool
+from atlas.paths import SNAPSHOTS_DIRECTORY
 
 
 @dataclass(frozen=True)
@@ -27,6 +29,10 @@ class DeleteSnapshotInputs(TaskInputs):
 	# The data-disk snapshot device path (atlas-datasnap-<id>). Empty when the
 	# snapshot captured no data disk.
 	data_snapshot_rootfs_path: str = ""
+	# A warm snapshot's durable memory directory (vmstate/mem/host-signature).
+	# Empty for a cold snapshot. Must live under /var/lib/atlas/snapshots — the
+	# guard keeps a malformed row from rm -rf'ing anything else.
+	memory_directory: str = ""
 
 
 def main() -> None:
@@ -44,6 +50,15 @@ def main() -> None:
 	# guarded, idempotent remove.
 	if inputs.data_snapshot_rootfs_path:
 		pool.from_device(inputs.data_snapshot_rootfs_path).remove()
+
+	# A warm snapshot's durable memory artifacts. Clone jails hold hard LINKS to
+	# the pair, so removing the directory never breaks an already-provisioned
+	# clone — only future warm staging. rm -rf is idempotent; the path guard
+	# keeps this from ever sweeping outside the snapshots tree.
+	if inputs.memory_directory:
+		if not inputs.memory_directory.startswith(SNAPSHOTS_DIRECTORY + "/"):
+			sys.exit(f"memory directory must live under {SNAPSHOTS_DIRECTORY}: {inputs.memory_directory}")
+		run("sudo", "rm", "-rf", inputs.memory_directory)
 
 	print(f"Deleted snapshot {snapshot.name}.")
 

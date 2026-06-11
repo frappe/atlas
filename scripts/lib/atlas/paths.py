@@ -19,6 +19,11 @@ ATLAS_ROOT = "/var/lib/atlas"
 IMAGES_DIRECTORY = f"{ATLAS_ROOT}/images"
 VIRTUAL_MACHINES_DIRECTORY = f"{ATLAS_ROOT}/virtual-machines"
 BIN_DIRECTORY = f"{ATLAS_ROOT}/bin"
+# Durable warm-snapshot artifacts (the golden mem/vmstate pair + host
+# signature), one directory per Virtual Machine Snapshot row. OUTSIDE any VM
+# directory: the golden outlives its build VM and is hard-linked into N clone
+# jails, so terminate's rm -rf of a VM tree must never take it.
+SNAPSHOTS_DIRECTORY = f"{ATLAS_ROOT}/snapshots"
 
 # AF_UNIX sun_path is 108 bytes including the NUL. The jailed socket's absolute
 # path blows past it, which is why the relative-cd dance exists.
@@ -104,11 +109,31 @@ class VirtualMachinePaths:
 	def memory_snapshot_mem(self) -> str:
 		return f"{self.memory_snapshot_directory}/mem.bin"
 
+	@property
+	def memory_snapshot_signature(self) -> str:
+		"""The host signature captured with a warm golden snapshot, staged beside
+		the marker by provision-vm.py. vm-restore.py compares it to the live host
+		before loading: a snapshot is only restorable on the CPU/kernel/Firecracker
+		it was captured on, and a mismatch must cold-boot instead. Absent for the
+		same-VM fast stop/start pair (same host by construction)."""
+		return f"{self.memory_snapshot_directory}/host-signature.json"
+
+	@property
+	def metadata_file(self) -> str:
+		"""The MMDS payload staged for a warm clone: this VM's identity (addresses,
+		hostname, machine-id, SSH key), served to the guest at 169.254.169.254 so
+		the in-guest freshen unit can adopt it after a restore — the clone's disk
+		is never mutated offline (the frozen RAM's filesystem cache must keep
+		matching it), so MMDS is the only identity channel. Absent for every
+		ordinary VM."""
+		return f"{self.jail_root}/metadata.json"
+
 	# Jail-relative forms for the Firecracker API bodies — the jailed process
 	# resolves snapshot paths after chroot, so they are relative to jail_root
 	# (same convention as firecracker.json's rootfs.ext4 / vmlinux).
 	memory_snapshot_vmstate_in_jail: str = "snapshot/vmstate.bin"
 	memory_snapshot_mem_in_jail: str = "snapshot/mem.bin"
+	metadata_in_jail: str = "metadata.json"
 
 	@property
 	def api_socket_directory(self) -> str:
@@ -138,3 +163,12 @@ class VirtualMachinePaths:
 
 def image_directory(image_name: str) -> str:
 	return f"{IMAGES_DIRECTORY}/{image_name}"
+
+
+def warm_snapshot_directory(snapshot_name: str) -> str:
+	"""The durable artifact directory of one warm Virtual Machine Snapshot:
+	vmstate.bin + mem.bin (the paused-instant pair warm-snapshot-vm.py captured)
+	and host-signature.json. provision-vm.py hard-links the pair into each clone
+	jail (N clones CoW-share one read-only mem file); the snapshot row's on_trash
+	removes the directory."""
+	return f"{SNAPSHOTS_DIRECTORY}/{snapshot_name}"

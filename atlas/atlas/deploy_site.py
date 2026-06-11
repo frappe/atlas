@@ -115,6 +115,12 @@ def deploy_site(virtual_machine: str, site_name: str) -> str:
 			f"--site-name {shlex.quote(site_name)} "
 			f"--admin-password {shlex.quote(admin_password)}"
 		)
+		# A warm-restored clone (resumed from a golden memory snapshot, not
+		# booted): the deploy gates on the in-guest identity freshen having
+		# completed for THIS VM and restarts the whole resumed supervisor group
+		# after the rename — see deploy-site.py's --warm-vm-uuid.
+		if vm.warm_snapshot:
+			command += f" --warm-vm-uuid {shlex.quote(vm.name)}"
 		stdout, stderr, code = run_ssh(connection, key_path, command, timeout_seconds=1800)
 	_record_guest_task(virtual_machine, "deploy-site", {"site": site_name}, stdout, stderr, code)
 	if code != 0:
