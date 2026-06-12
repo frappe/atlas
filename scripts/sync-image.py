@@ -88,6 +88,37 @@ _MASKED_UNITS = (
 	"systemd-resolved.service",
 )
 
+# Junk units to mask for boot speed. Unlike _MASKED_UNITS above, none of these
+# BLOCK boot — they run in parallel off the SSH critical path. We mask them
+# anyway because on a single-tenant guest VM they are pure overhead: they burn
+# CPU/IO during the boot storm (slowing the units that DO gate sshd) and inflate
+# time-to-ready. Measured on a real Firecracker boot, leaving them enabled cost
+# (in parallel) apport ~17s, ModemManager ~9s, plus multipathd/udisks2/polkit and
+# the snapd leaf units the core snapd mask above misses. Verified: masking these
+# survives unsquash -> pack -> provision -> boot, and again through a golden
+# snapshot -> clone -> boot, with MariaDB/Redis (load-bearing for a site VM) left
+# enabled. NOTE: this does NOT approach a ~1s boot on its own — the dominant
+# serial gates are apparmor.service (~10s) and the virtio dev-vda/tmpfiles chain;
+# those are the next levers and are deliberately NOT touched here.
+_JUNK_UNITS = (
+	"apport.service",
+	"apport-autoreport.path",
+	"apport-autoreport.timer",
+	"apport-forward.socket",
+	"ModemManager.service",
+	"multipathd.service",
+	"multipathd.socket",
+	"udisks2.service",
+	"snapd.apparmor.service",
+	"snapd.autoimport.service",
+	"snapd.core-fixup.service",
+	"snapd.recovery-chooser-trigger.service",
+	"snapd.system-shutdown.service",
+	"snapd.snap-repair.timer",
+	"lxd-installer.socket",
+	"polkit.service",
+)
+
 
 def _download_kernel(inputs: SyncImageInputs, image_dir: str) -> None:
 	# 1. Kernel. The Ubuntu cloud image ships a packed, zstd-compressed bzImage
@@ -204,6 +235,13 @@ def _normalize_rootfs(root: str) -> None:
 	install_directory(f"{root}/etc/cloud", mode="0755")
 	run("sudo", "touch", f"{root}/etc/cloud/cloud-init.disabled")
 	for unit in _MASKED_UNITS:
+		run("sudo", "ln", "-sf", "/dev/null", f"{root}/etc/systemd/system/{unit}")
+
+	# 3a.1c Mask the boot-speed junk units (see _JUNK_UNITS). Same /dev/null symlink
+	#       mechanism as the boot-blockers above; the difference is intent — these
+	#       don't hang boot, they just burn the boot storm. MariaDB/Redis are
+	#       deliberately NOT in the list: a site VM needs them.
+	for unit in _JUNK_UNITS:
 		run("sudo", "ln", "-sf", "/dev/null", f"{root}/etc/systemd/system/{unit}")
 
 	# 3a.2 Strip the shipped SSH host keys so every VM doesn't share one

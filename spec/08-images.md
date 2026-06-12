@@ -126,6 +126,17 @@ before building the per-server ext4:
   set. **Verified on a real Firecracker boot:** without this the guest never
   reaches a login prompt (it spins on `systemd-networkd-wait-online` and
   `snapd.seeded`).
+- **Boot-speed junk masked (`_JUNK_UNITS`).** `apport*`, `ModemManager`,
+  `multipathd`, `udisks2`, `polkit`, `lxd-installer.socket`, and the snapd
+  *leaf* units the core mask above misses (`snapd.apparmor`, `snapd.autoimport`,
+  `snapd.core-fixup`, …) are masked too. Unlike the boot-blockers, **none of
+  these gate boot** — they run in parallel — so masking them is a speed/hygiene
+  win, not a correctness fix: it removes the off-path boot-storm work (apport
+  ~17s, ModemManager ~9s, measured) that slows the units which *do* gate sshd.
+  `mariadb`/`redis` are deliberately left enabled (a site VM needs them). This
+  does **not** approach a ~1s boot on its own: the dominant *serial* gates are
+  `apparmor.service` (~10s) and the virtio `dev-vda`/tmpfiles chain — the next
+  levers, deliberately untouched here.
 - All `/etc/ssh/ssh_host_*` keypairs removed (otherwise every VM would share
   host keys). Per-VM keys are written at provision time by `provision-vm.py`;
   we do not rely on first-boot regeneration (cloud-init is masked).
