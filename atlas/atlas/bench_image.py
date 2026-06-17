@@ -11,8 +11,8 @@ lifecycle around it lives in the `Image Build` DocType.
 That snapshot is the reusable "golden bench image" — a VM with bench-cli, the uv
 venv, the Frappe clone, MariaDB + Redis, AND a fully-created site baked under the
 fixed name `site.local`, so `deploy-site.py` (spec/14-self-serve.md) only RENAMES
-that baked site to the per-VM FQDN (a directory move) + resets its admin password,
-never paying the multi-minute `bench new-site` per signup.
+that baked site to the per-VM FQDN (a directory move) + regenerates the nginx vhost
+(`bench setup nginx`), never paying the multi-minute `bench new-site` per signup.
 """
 
 from atlas.atlas.image_builder import run_build

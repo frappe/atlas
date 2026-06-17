@@ -122,7 +122,7 @@
    "label": "Credentials"
   },
   {
-   "description": "The Frappe Administrator password generated per-site by the in-guest deploy (the db root password is baked + shared; only this varies per site). Stored encrypted; shown once to the owner in the SPA so they can sign in. Controller-written.",
+   "description": "The Frappe Administrator password handed to the owner — the shared baked throwaway (the deploy no longer resets it per VM; the owner rotates it after first login). The db root password is baked + shared too. Stored encrypted; shown to the owner in the SPA so they can sign in. Controller-written.",
    "fieldname": "admin_password",
    "fieldtype": "Password",
    "label": "Administrator Password",

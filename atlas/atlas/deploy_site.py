@@ -6,18 +6,23 @@ seam `atlas.atlas.doctype.site.site` imports (`deploy_site`, `wait_for_http`). I
 is the sibling of `atlas.atlas.bench_image.build_bench`: drive an in-guest script
 over the SAME SSH-to-the-guest path (`connection_for_guest`), recording the op as
 a Task row. Where `build_bench` runs the heavy, per-site-INVARIANT bake
-(bench-cli + `bench init` + a baked `site.local`), this runs the per-site work the
-golden image can't bake because it carries the routing identity (Contract A):
-RENAME the baked `site.local` to `<fqdn>` (a directory move, since a bench-cli
-site's identity is its dir name) + reset the admin password + the production
-bring-up so the bench's own nginx serves the site on :80.
+(bench-cli + `bench init` + a baked `site.local`, brought up + frozen serving),
+this runs the ONE per-VM thing the golden image can't bake: the on-disk identity.
+RENAME model (Contract A) — the baked `site.local` is renamed to the per-VM FQDN,
+so the on-disk site name == the proxy Host header == the Site key. The production
+gunicorn is multitenant (no `--site`), resolving the site from the request Host
+per request, so the rename + a regenerated `server_name <fqdn>` vhost serve it
+with NO restart. The owner is handed the SHARED baked Administrator password
+(rotated after first login), so the deploy does NO `set-admin-password` — dropping
+that ~28s CPU-throttled `bench frappe` boot is the main latency win.
 
 Two functions, two execution sites (spec/14-self-serve.md "What runs where"):
 
-- `deploy_site` drives `bench/deploy-site.py` IN THE GUEST over guest-SSH. It
-  generates the per-site Administrator password (the db root password is
-  baked + shared; the admin password is per-site, never baked) and returns it so
-  the Site row can store it for the owner.
+- `deploy_site` drives `bench/deploy-site.py` IN THE GUEST over guest-SSH: it
+  renames the baked site to the FQDN, regenerates the bench's nginx vhost
+  (`bench setup nginx` + a v6 listener) and reloads — no password reset, no
+  restart. The db root password is baked + shared; the admin password is the baked
+  throwaway the owner rotates.
 - `wait_for_http` runs ON THE CONTROLLER, polling the guest's public /128 :80
   until an HTTP 200 — the readiness signal that, and ONLY that, flips a Site to
   Running (Contract B). NOT the VM's `status == Running` (that means "jailer
@@ -54,31 +59,47 @@ RESULT_MARKER = "ATLAS_RESULT="
 # so multitenant routing is exercised, not just "some site answers".
 READINESS_PATH = "/api/method/ping"
 READINESS_TIMEOUT_SECONDS = 600
-READINESS_POLL_SECONDS = 5
+# Initial poll, then geometric backoff to READINESS_MAX_POLL_SECONDS. A warm clone
+# is already serving and answers the first probe (or within a second of the web
+# restart settling), so a tight initial poll shaves up to ~5s of pure granularity
+# off a path the user is actively watching; the backoff keeps the rare slow cold
+# bring-up from hammering the guest.
+READINESS_POLL_SECONDS = 0.25
+READINESS_MAX_POLL_SECONDS = 2.0
 
 
 def _deploy_script_path() -> Path:
 	return Path(frappe.get_app_path("atlas", "..")).resolve() / "bench" / DEPLOY_SCRIPT_NAME
 
 
-def deploy_site(virtual_machine: str, site_name: str) -> str:
-	"""Deploy one Frappe site into the (already booted) golden bench VM and return
-	the generated Administrator password.
+def deploy_site(virtual_machine: str, site_name: str) -> None:
+	"""Deploy one Frappe site into the (already booted) golden bench VM.
 
 	Uploads `bench/deploy-site.py` to the guest and runs it as root over guest-SSH
 	(the same path build_bench/build_proxy use): it renames the baked `site.local`
-	to `<fqdn>` (a directory move — a bench-cli site's identity is its dir name),
-	resets the Administrator password to a freshly generated per-site secret, and
-	brings the bench up production-style so its nginx serves the site on :80 (the
-	port the edge proxy's south hop dials). `site_name` is the full FQDN (Contract
-	A) — the on-disk site name after the rename, never transformed.
+	dir to the FQDN (Contract A — the on-disk name now equals the proxy Host header
+	and the Site key), regenerates the bench's nginx vhost (`server_name <fqdn>` + a
+	v6 listener) and reloads, then confirms the bench serves on :80 (the port the
+	edge proxy's south hop dials). The production gunicorn is multitenant (no
+	`--site`), so it resolves the site from the request Host header per request — the
+	rename + reload take effect with NO restart. The owner is handed the SHARED baked
+	Administrator password (rotated after first login), so the deploy does NO
+	`set-admin-password` — dropping that ~28s CPU-throttled `bench frappe` boot is the
+	main latency win. A cold clone additionally runs `setup production` first.
 
 	Recorded as a `deploy-site` Task row for the operator's audit trail, like every
-	guest op. Fails loud (raises) on a non-zero exit so the Site is marked Failed;
-	the admin password is returned ONLY on success."""
+	guest op. Fails loud (raises) on a non-zero exit so the Site is marked Failed."""
+	import time
+
+	def _trace(message: str, since: float | None = None) -> None:
+		"""Sub-stage trace for the deploy, printed to the job log so the operator can
+		see the SSH-wait vs in-guest-run split live (the deploy is the longest, most
+		opaque stage of auto_provision). `since` adds the elapsed seconds."""
+		suffix = f" ({time.monotonic() - since:.1f}s)" if since is not None else ""
+		print(f"[deploy_site {site_name}] {message}{suffix}", flush=True)
+
 	vm = frappe.get_doc("Virtual Machine", virtual_machine)
 	connection = connection_for_guest(vm)
-	admin_password = frappe.generate_hash(length=24)
 	local_script = str(_deploy_script_path())
 	remote_script = f"{REMOTE_DEPLOY_DIRECTORY}/{DEPLOY_SCRIPT_NAME}"
 
@@ -94,7 +115,10 @@ def deploy_site(virtual_machine: str, site_name: str) -> str:
 	# accept-new — the same trap build_proxy/build_bench guard). Mirrors the bench
 	# bake + proxy build, which never hit this only because they reach a freshly
 	# image-provisioned (light-boot) VM, not a service-heavy clone.
+	_trace("waiting for guest sshd to answer …")
+	_t = time.monotonic()
 	wait_for_ssh(connection, timeout_seconds=300)
+	_trace("sshd up; uploading deploy-site.py", since=_t)
 
 	with ssh_key_file(connection.ssh_private_key) as key_path:
 		run_ssh(
@@ -106,26 +130,23 @@ def deploy_site(virtual_machine: str, site_name: str) -> str:
 		run_scp(connection, key_path, local_script, remote_script, timeout_seconds=300)
 		# python3 explicitly: an SSH `command` is non-interactive and the script's
 		# shebang is enough, but the deploy script needs the system python (it shells
-		# out to the baked bench-cli, which owns its own uv venv). The admin password
-		# is passed as an argv flag over the encrypted SSH channel, never written to a
-		# file on the guest. Long: `bench new-site` + `setup production` (nginx +
-		# supervisor) take minutes.
-		command = (
-			f"python3 {shlex.quote(remote_script)} "
-			f"--site-name {shlex.quote(site_name)} "
-			f"--admin-password {shlex.quote(admin_password)}"
-		)
+		# out to the baked bench-cli, which owns its own uv venv). Warm: rename +
+		# `setup nginx` + reload + probe (fast — no restart). Cold: also `setup
+		# production` (nginx + supervisor) first, which takes longer.
+		command = f"python3 {shlex.quote(remote_script)} --site-name {shlex.quote(site_name)}"
 		# A warm-restored clone (resumed from a golden memory snapshot, not
 		# booted): the deploy gates on the in-guest identity freshen having
-		# completed for THIS VM and restarts the whole resumed supervisor group
-		# after the rename — see deploy-site.py's --warm-vm-uuid.
+		# completed for THIS VM before it renames the site — see deploy-site.py's
+		# --warm-vm-uuid.
 		if vm.warm_snapshot:
 			command += f" --warm-vm-uuid {shlex.quote(vm.name)}"
+		_trace(f"running deploy-site.py in guest ({'warm' if vm.warm_snapshot else 'cold'} path) …")
+		_t = time.monotonic()
 		stdout, stderr, code = run_ssh(connection, key_path, command, timeout_seconds=1800)
+		_trace(f"in-guest deploy-site.py returned (exit {code})", since=_t)
 	_record_guest_task(virtual_machine, "deploy-site", {"site": site_name}, stdout, stderr, code)
 	if code != 0:
 		frappe.throw(f"Deploy of {site_name} on {virtual_machine} failed (exit {code}): {stderr[-500:]}")
-	return admin_password
 
 
 def wait_for_http(
@@ -135,7 +156,8 @@ def wait_for_http(
 	port: int = 80,
 	path: str = READINESS_PATH,
 	timeout_seconds: int = READINESS_TIMEOUT_SECONDS,
-	poll_seconds: int = READINESS_POLL_SECONDS,
+	poll_seconds: float = READINESS_POLL_SECONDS,
+	max_poll_seconds: float = READINESS_MAX_POLL_SECONDS,
 ) -> None:
 	"""Block until the guest answers HTTP 200 on :80 — the readiness gate that,
 	and only that, flips a Site to Running (Contract B). Mirrors `wait_for_ssh`'s
@@ -145,12 +167,18 @@ def wait_for_http(
 	Running` — that distinction IS Contract B; do not "optimize" it back to the VM
 	status. We probe over the VM's public /128 (the v6 literal goes in brackets in
 	the host arg — the `scp v6 needs brackets` trap applies to any v6 URL host),
-	for the FQDN Host header (Contract A) so the bench's multitenant nginx routes
-	to the right site. The controller is off-host, so this is an honest end-to-end
-	probe over the same south-hop path the proxy uses — not a host-local shortcut.
+	with the FQDN Host header (Contract A) — the same Host the edge proxy forwards.
+	The bench's nginx serves it via its default_server block (the on-disk site is
+	`site.local`, served for any Host), so this exercises the real south-hop path.
+	The controller is off-host, so this is an honest end-to-end probe over the same
+	path the proxy uses — not a host-local shortcut.
 
-	Raises frappe.ValidationError on timeout."""
+	The poll starts at `poll_seconds` and backs off geometrically to
+	`max_poll_seconds`: a warm clone answers the first probe, so the tight start
+	removes the old flat-5s granularity from the readiness wait. Raises
+	frappe.ValidationError on timeout."""
 	deadline = time.monotonic() + timeout_seconds
+	poll = poll_seconds
 	while True:
 		if _http_ok(ipv6_address, host_header, port, path):
 			return
@@ -158,7 +186,8 @@ def wait_for_http(
 			raise frappe.ValidationError(
 				f"HTTP 200 from {host_header} ([{ipv6_address}]:{port}{path}) not seen after {timeout_seconds}s"
 			)
-		time.sleep(poll_seconds)
+		time.sleep(poll)
+		poll = min(poll * 1.5, max_poll_seconds)
 
 
 def _http_ok(ipv6_address: str, host_header: str, port: int, path: str) -> bool:

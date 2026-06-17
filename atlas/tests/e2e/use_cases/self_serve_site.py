@@ -274,7 +274,8 @@ def _wait_for_site_running(fqdn: str, timeout_seconds: int = 1800) -> str:
 	Polls with rollback() so we read the worker's committed writes (db_set commits
 	per step). Raises on Failed (the job marked it) or on the deadline (the worker
 	didn't pick it up, or a step hung). Long timeout: the chain clones a VM, boots
-	it, runs new-site + setup production, and waits for the 200 — minutes."""
+	it, resets the admin password on the baked site, and waits for the 200 (a warm
+	clone is already serving; a cold clone also runs setup production)."""
 	deadline = time.monotonic() + timeout_seconds
 	last_status = None
 	while time.monotonic() < deadline:
@@ -318,11 +319,12 @@ def _dump_site_tasks(fqdn: str) -> None:
 
 
 def _assert_admin_password_set(fqdn: str) -> None:
-	"""The per-site Administrator password (generated in the guest deploy) is
-	stored encrypted on the Site and readable by the owner. Assert it is non-empty —
-	the backend reveal the SPA will surface (the SPA Sites screen is deferred).
-	We don't log in here: LE staging is untrusted (curl -k) and a real Desk
-	login adds nothing this proves over the 200 + password presence."""
+	"""The Administrator password handed to the owner — the SHARED baked throwaway
+	(the rename model dropped the per-VM reset; the owner rotates it after first
+	login) — is stored encrypted on the Site and readable by the owner. Assert it is
+	non-empty — the backend reveal the SPA will surface (the SPA Sites screen is
+	deferred). We don't log in here: LE staging is untrusted (curl -k) and a real
+	Desk login adds nothing this proves over the 200 + password presence."""
 	password = frappe.get_doc("Site", fqdn).get_password("admin_password")
 	assert password, f"Site {fqdn} has no admin_password stored after Running"
 	print(f"[e2e] admin password stored on {fqdn} ({len(password)} chars) OK")

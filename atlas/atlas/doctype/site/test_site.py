@@ -263,7 +263,7 @@ class TestSiteOrchestration(IntegrationTestCase):
 		with (
 			patch.object(site_module, "_provision_backing_vm", return_value=vm_name) as m_prov,
 			patch.object(site_module, "_wait_for_vm_running") as m_wait,
-			patch.object(site_module, "_deploy_site", return_value="admin-pw-xyz") as m_deploy,
+			patch.object(site_module, "_deploy_site") as m_deploy,
 			patch.object(site_module, "_wait_for_http") as m_http,
 			patch.object(site_module, "_create_subdomain", return_value="sub-1") as m_sub,
 			patch.object(site_module.frappe.db, "commit"),
@@ -284,8 +284,10 @@ class TestSiteOrchestration(IntegrationTestCase):
 		self.assertEqual(site.status, "Running")
 		self.assertEqual(site.virtual_machine, "cloned-vm")
 		self.assertEqual(site.subdomain_doc, "sub-1")
-		# The admin password the deploy returned was stored (encrypted) on the row.
-		self.assertEqual(site.get_password("admin_password"), "admin-pw-xyz")
+		# The owner is handed the SHARED baked Administrator password (rotated after
+		# first login) — stored (encrypted) on the row by the controller, NOT a value
+		# the deploy returns (the per-VM reset is gone). It is the build.sh constant.
+		self.assertEqual(site.get_password("admin_password"), site_module.BAKED_ADMIN_PASSWORD)
 		# The whole chain fired, in order.
 		mocks["prov"].assert_called_once()
 		mocks["wait"].assert_called_once_with("cloned-vm")
@@ -382,7 +384,7 @@ class TestSiteOrchestration(IntegrationTestCase):
 		with (
 			patch.object(site_module, "_provision_backing_vm", return_value=vm.name),
 			patch.object(site_module, "_wait_for_vm_running"),
-			patch.object(site_module, "_deploy_site", return_value="admin-pw"),
+			patch.object(site_module, "_deploy_site"),
 			patch.object(site_module, "_wait_for_http"),
 			patch.object(site_module.frappe.db, "commit"),
 		):

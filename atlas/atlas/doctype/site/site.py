@@ -37,6 +37,15 @@ from atlas.atlas.subdomain_label import (
 # and proven on.
 SITE_VM_SIZE = SIZE_PRESETS["Shared 4x"]
 
+# The Administrator password the golden image bakes into the site — a SHARED
+# throwaway, the same on every clone. The signup path no longer resets it per VM
+# (that reset cost a ~28s CPU-throttled `bench frappe` boot that dominated the
+# deploy); instead the owner is handed this and rotates it after first login.
+# MUST stay in lockstep with bench/build.sh BAKED_ADMIN_PASSWORD ("$BENCH_NAME
+# -baked", bench name "atlas") and warm.sh's pre-warm login — a drift would hand
+# the owner a password that does not authenticate.
+BAKED_ADMIN_PASSWORD = "atlas-baked"
+
 # The routing key (subdomain + region) and the backing VM are the identity; once
 # written they are fixed. Repointing a live Site at a different VM or region is a
 # delete-and-recreate, not an in-place edit — same shape as Subdomain.
@@ -122,10 +131,11 @@ class Site(Document):
 
 	def _set_name_from_routing(self) -> None:
 		"""Build the one routing string: `<subdomain>.<region domain>`, the FQDN
-		that is simultaneously the site-name-on-disk, the proxy Host header, and
-		this row's key. Never transformed afterward. Uniqueness throws a clean
-		"taken" message (this is the signup race), not a raw duplicate-
-		key error."""
+		that is simultaneously the proxy Host header and this row's key. (It is NOT
+		the on-disk site name — a single-tenant VM keeps the baked `site.local` on
+		disk and serves it for the FQDN Host; the FQDN identity lives at the proxy/Host
+		layer.) Never transformed afterward. Uniqueness throws a clean "taken" message
+		(this is the signup race), not a raw duplicate-key error."""
 		label = (self.subdomain or "").strip()
 		if not label:
 			frappe.throw("A subdomain is required")
@@ -177,6 +187,51 @@ class Site(Document):
 			vm.terminate()
 
 
+class _ProvisionClock:
+	"""Live, per-stage wall-clock trace for `auto_provision`, printed to stdout
+	(the RQ job log + the `worker` Procfile pane). Each `stage()` call closes out
+	the previous stage — printing how long it took — and announces the next, so the
+	operator watching the log sees both "what's happening now" and "that step took
+	N s". `done()`/`failed()` close the final stage and print the grand total.
+
+	Print, not `frappe.logger`: this is a follow-along trace meant to land in the
+	same stream as the worker's other job lines, with `flush=True` so a long stage
+	(the deploy) shows its start line immediately, not buffered until it returns."""
+
+	def __init__(self, site_name: str) -> None:
+		import time
+
+		self._now = time.monotonic
+		self._site = site_name
+		self._t0 = self._now()
+		self._stage_started = self._t0
+		self._current = None
+
+	def _emit(self, message: str) -> None:
+		elapsed = self._now() - self._t0
+		print(f"[auto_provision {self._site}] +{elapsed:6.1f}s {message}", flush=True)
+
+	def stage(self, label: str) -> None:
+		if self._current is not None:
+			took = self._now() - self._stage_started
+			self._emit(f"✓ {self._current} ({took:.1f}s)")
+		self._current = label
+		self._stage_started = self._now()
+		self._emit(f"→ {label} …")
+
+	def done(self) -> None:
+		if self._current is not None:
+			took = self._now() - self._stage_started
+			self._emit(f"✓ {self._current} ({took:.1f}s)")
+		self._emit(f"DONE — site Running in {self._now() - self._t0:.1f}s total")
+
+	def failed(self) -> None:
+		if self._current is not None:
+			took = self._now() - self._stage_started
+			self._emit(f"✗ FAILED during '{self._current}' after {took:.1f}s")
+		self._emit(f"FAILED after {self._now() - self._t0:.1f}s total")
+
+
 def auto_provision(site_name: str) -> None:
 	"""Background-job entrypoint (enqueued by after_insert). Drives the whole
 	signup→live-site flow for one Site:
@@ -199,8 +254,14 @@ def auto_provision(site_name: str) -> None:
 	site = frappe.get_doc("Site", site_name)
 	if site.status != "Pending":
 		return
+	# Per-stage wall-clock trace, printed to the job log (and the bench `worker`
+	# console) so the whole provision can be followed live and the slow stage
+	# pinpointed — `_stage` logs the prior stage's duration as the next begins.
+	# tail -f sites/<bench>/logs/worker.log (or the `worker` Procfile pane).
+	clock = _ProvisionClock(site_name)
 	try:
 		_set_status(site, "Provisioning")
+		clock.stage("clone backing VM")
 		vm_name = _provision_backing_vm(site)
 		site.db_set("virtual_machine", vm_name)
 		# COMMIT before waiting. The clone's own after_insert enqueued its
@@ -211,25 +272,32 @@ def auto_provision(site_name: str) -> None:
 		# "Virtual Machine <uuid> not found". So: persist the clone + the status,
 		# release the transaction, then wait on the boot job's COMMITTED progress.
 		frappe.db.commit()
+		clock.stage(f"wait for VM {vm_name} to boot (Running)")
 		_wait_for_vm_running(vm_name)
 		_set_status(site, "Deploying")
-		admin_password = _deploy_site(site, vm_name)
-		# The per-site Administrator password (generated in the guest deploy)
-		# is stored encrypted on the Site for the owner to read once via the
-		# SPA. db_set on a Password field round-trips through Frappe's
-		# field encryption. Stored BEFORE the readiness wait so it survives even if
-		# the http gate later times out — the site exists with that admin from
-		# new-site onward, so the owner can still reach it on a manual retry.
-		site.db_set("admin_password", admin_password)
+		clock.stage("deploy site in guest (wait_for_ssh + run deploy-site.py)")
+		_deploy_site(site, vm_name)
+		# The Administrator password handed to the owner is the SHARED baked
+		# throwaway (BAKED_ADMIN_PASSWORD) — the signup path no longer resets it
+		# per VM (that cost a full CPU-throttled `bench frappe` boot, ~28s under the
+		# 0.25-core cap, which dominated the deploy). The owner rotates it after
+		# first login. Stored encrypted on the Site BEFORE the readiness wait so the
+		# reveal survives even if the http gate later times out. db_set on a Password
+		# field round-trips through Frappe's field encryption.
+		site.db_set("admin_password", BAKED_ADMIN_PASSWORD)
+		clock.stage("wait for HTTP 200 from guest :80 (Contract B)")
 		_wait_for_http(site, vm_name)
+		clock.stage("create Subdomain (proxy route)")
 		subdomain_name = _create_subdomain(site, vm_name)
 		site.db_set("subdomain_doc", subdomain_name)
 		_set_status(site, "Running")
+		clock.done()
 	except Exception:
 		# Fail loud: mark the row so the operator/SPA sees the failure, and
 		# re-raise so the job log carries the traceback. COMMIT the Failed status
 		# before re-raising — otherwise the job's rollback reverts it back to
 		# Pending (and a stuck Pending is indistinguishable from "never ran").
+		clock.failed()
 		_set_status(site, "Failed")
 		raise
 
@@ -327,7 +395,12 @@ def _provision_backing_vm(site) -> str:
 	)
 
 
-def _wait_for_vm_running(vm_name: str, timeout_seconds: int = 1500, poll_seconds: float = 5.0) -> None:
+def _wait_for_vm_running(
+	vm_name: str,
+	timeout_seconds: int = 1500,
+	initial_poll_seconds: float = 0.25,
+	max_poll_seconds: float = 2.0,
+) -> None:
 	"""Block until the clone's own after_insert provision job flips it to Running.
 
 	The clone boots in a SEPARATE background job (its after_insert enqueue); we
@@ -336,10 +409,17 @@ def _wait_for_vm_running(vm_name: str, timeout_seconds: int = 1500, poll_seconds
 	Running the guest's SSH + microVM are up, so the deploy step that follows can
 	reach it. Raises on Failed (the boot job marked it) or on the deadline (the
 	worker never ran the boot job). Mirrors the e2e `_tasks.wait_for_vm_running`
-	shape — the proven contract for waiting on after_insert auto-provision."""
+	shape — the proven contract for waiting on after_insert auto-provision.
+
+	The poll starts tight (0.25s) and backs off geometrically to a 2s ceiling. A
+	warm clone reaches Running in low seconds, so the old flat 5s poll added up to
+	~5s of dead time waiting on a VM that was already up — pure granularity, on a
+	path the user is actively watching. The tight initial poll shaves that off
+	without busy-waiting on the rare slow cold boot (it settles to 2s)."""
 	import time
 
 	deadline = time.monotonic() + timeout_seconds
+	poll = initial_poll_seconds
 	while time.monotonic() < deadline:
 		frappe.db.rollback()
 		status = frappe.db.get_value("Virtual Machine", vm_name, "status")
@@ -347,18 +427,22 @@ def _wait_for_vm_running(vm_name: str, timeout_seconds: int = 1500, poll_seconds
 			return
 		if status == "Failed":
 			frappe.throw(f"Backing VM {vm_name} reached Failed during provision")
-		time.sleep(poll_seconds)
+		time.sleep(poll)
+		poll = min(poll * 1.5, max_poll_seconds)
 	frappe.throw(f"Backing VM {vm_name} did not reach Running within {timeout_seconds}s")
 
 
-def _deploy_site(site, vm_name: str) -> str:
-	"""Run deploy-site.py in the guest: `bench new-site <fqdn>` + bring-up on :80.
-	Returns the per-site Administrator password the guest generated.
+def _deploy_site(site, vm_name: str) -> None:
+	"""Run deploy-site.py in the guest: rename the baked `site.local` dir to the FQDN
+	(Contract A), regenerate the bench's nginx vhost (`server_name <fqdn>` + a v6
+	listener) and reload — no `set-admin-password`, no `setup production`, no restart
+	(the multitenant gunicorn resolves the site by Host header per request, so the
+	rename + reload serve it live). Confirms it answers on :80 before returning.
 
 	Seam for the in-guest deploy script + its guest-SSH driver."""
 	from atlas.atlas.deploy_site import deploy_site
 
-	return deploy_site(vm_name, site.name)
+	deploy_site(vm_name, site.name)
 
 
 def _wait_for_http(site, vm_name: str) -> None:

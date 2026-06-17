@@ -15,9 +15,11 @@ is something just a real droplet can prove:
      so two clones could never share one.
   3. warm serving: each clone answers HTTP 200 for the baked `site.local`
      straight from the resumed RAM — before any deploy step.
-  4. deploy-on-warm: the real per-site deploy (rename → FQDN, --warm-vm-uuid
-     gate, supervisor restart) on one clone, proven by an HTTP 200 for the
-     FQDN Host header.
+  4. deploy-on-warm: the real per-site deploy (--warm-vm-uuid freshen gate +
+     RENAME of the baked site.local to the FQDN + `bench setup nginx` + reload,
+     no `set-admin-password`, no restart) on one clone, proven by an HTTP 200
+     for the FQDN Host header (served by the renamed vhost's `server_name
+     <fqdn>`; the multitenant gunicorn resolves it by Host per request).
   5. cold-boot fallback: tamper the captured host signature → the next clone
      MUST cold-boot (fresh boot_id) yet still adopt its identity (the
      launcher's --metadata path) and serve.
@@ -189,14 +191,16 @@ def _fan_out_and_verify(server, snapshot, clones: list[str]) -> dict[str, dict]:
 
 
 def _verify_deploy_on_warm(clone_name: str) -> None:
-	"""The real per-site deploy on a warm clone: rename → FQDN with the
-	--warm-vm-uuid gate and the full supervisor restart, proven end to end by
-	an HTTP 200 for the FQDN Host header over the clone's /128."""
+	"""The real per-site deploy on a warm clone: the --warm-vm-uuid freshen gate +
+	the RENAME of the baked site.local to the FQDN + `bench setup nginx`
+	(`server_name <fqdn>` + v6 listener) + reload — NO `set-admin-password`, NO
+	`setup production`, NO restart (the warm stack's multitenant gunicorn resolves
+	the site by Host header per request, so the rename + reload serve the FQDN live).
+	Proven end to end by an HTTP 200 for the FQDN Host header over the clone's /128."""
 	from atlas.atlas.deploy_site import deploy_site, wait_for_http
 
 	started = time.monotonic()
-	admin_password = deploy_site(clone_name, DEPLOY_FQDN)
-	assert admin_password, "deploy returned no admin password"
+	deploy_site(clone_name, DEPLOY_FQDN)
 	vm = frappe.get_doc("Virtual Machine", clone_name)
 	wait_for_http(vm.ipv6_address, DEPLOY_FQDN, timeout_seconds=300)
 	print(f"[warm] deploy-on-warm OK in {time.monotonic() - started:.0f}s ({DEPLOY_FQDN})")
