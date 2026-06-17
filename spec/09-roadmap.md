@@ -214,11 +214,17 @@ behavior; they just keep doors open.
   1. **Bake `bench setup production` into the golden image** so a clone already
      serves on `:80`; the per-signup deploy drops from `rename + full setup
      production` (the rank-1 cost — supervisord + nginx regen, "takes minutes")
-     to `rename + at most one nginx reload`. The IPv6-listener fix
-     (`listen [::]:80;`) moves to bake time too. (Decide on a host whether a
-     wildcard/`dns_multitenant` `server_name` lets a renamed dir serve with
-     **zero** per-signup nginx regen — the real prize — or whether a minimal
-     `bench setup nginx` + reload is needed.)
+     to a light rename + `bench setup nginx`. The IPv6-listener fix (`listen
+     [::]:80;`) moves to bake time too. (**RESOLVED, then REVISED.** First take:
+     "don't rename at all" — keep `site.local`, mark the vhost `default_server`,
+     serve any `Host` via `default_site`. Revised: the per-signup deploy now
+     **renames** `site.local` → `<fqdn>` and runs `bench setup nginx` to regenerate
+     the vhost as `server_name <fqdn>` + a v6 listener + reload — NO `setup
+     production`, NO restart. The heavier change that came with it: drop the per-VM
+     `set-admin-password` entirely (it cost a ~28s CPU-throttled `bench frappe`
+     boot — the real rank-1 deploy cost, not nginx); the owner is handed the shared
+     baked password and rotates it. See [14-self-serve.md](./14-self-serve.md)
+     Contract A + the in-guest deploy.)
   2. **Tighten the poll intervals** in `_wait_for_vm_running` and
      `wait_for_http` from 5s → 1s (leave the generous *timeouts* alone — only
      the interval, so a legitimately-slow provision still can't spuriously
@@ -526,8 +532,9 @@ behavior; they just keep doors open.
   DocTypes: `Site Request` (the pre-verification holding row — email + subdomain
   + token; **no** droplet/site work until the email is verified, Contract C) and
   `Site` (the verified user's aggregate, keyed by the **one routing string**
-  `<subdomain>.<region domain>` that is at once site-name-on-disk, proxy Host
-  header, and `Site` key — Contract A). Fulfilment clones the golden bench
+  `<subdomain>.<region domain>` that is at once the proxy Host header and the
+  `Site` key — the routing identity, never written on disk; the baked site stays
+  `site.local` — Contract A). Fulfilment clones the golden bench
   snapshot (`Atlas Settings.default_bench_snapshot`), runs `deploy-site.py` in the
   guest, and flips the Site to `Running` **only on an observed HTTP 200** from
   `:80` (Contract B), then creates the `Subdomain`. A `/signup` www page + guest

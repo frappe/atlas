@@ -236,11 +236,26 @@ and disk creation is **instant** (a CoW snapshot, not a multi-second copy).
 
 Self-serve site VMs don't boot the plain `ubuntu-24.04` image — they boot a
 **golden bench image**: the same Ubuntu rootfs with bench-cli, its uv venv, the
-Frappe clone, MariaDB + Redis already installed and enabled, **and a
-fully-created Frappe site baked under the fixed name `site.local`**. Baking that
-once means `deploy-site.py` (the in-guest deploy) does only the per-site work —
-**rename** the baked site to the per-VM FQDN (a directory move) + reset its admin
-password + `setup production` — not a multi-minute `bench new-site` per signup.
+Frappe clone **plus ERPNext (version-16)**, MariaDB + Redis on a **mandatory ZFS
+pool**, nginx + supervisor configured and enabled, **a fully-created Frappe +
+ERPNext site baked under the fixed name `site.local`**, and the production stack
+left **running and serving** — so a snapshot-booted clone comes up answering on
+`:80` (IPv4 *and* IPv6) with no deploy step. Baking all of that once means
+`deploy-site.py` (the in-guest deploy) does only the per-VM work — **rename** the
+baked `site.local` dir to the FQDN + `bench setup nginx` (regenerate the vhost as
+`server_name <fqdn>` + reload), no admin reset (cold clones also `setup production`
+first) — not a multi-minute `bench new-site` + `install-app erpnext` per signup.
+
+**ZFS is mandatory** in the current bench-cli: `bench init` sets up a ZFS pool
+unconditionally on Linux. The build VM is a single-disk droplet, so `bench.toml`
+configures a **file-backed** pool (`[volume] backing = "image"`, a preallocated
+vdev on the root filesystem); `init` mounts the `benches` dataset at
+`/root/bench-cli/benches` and the `mariadb` dataset at `/var/lib/mysql`. Because
+the bench code *and* the MariaDB data live on ZFS, `build.sh` orders MariaDB and
+the bench-owned supervisord `After=` the ZFS mount, and runs that supervisord as
+a systemd unit (`atlas-bench.service`) so a cold boot of the snapshot brings the
+stack up unattended — bench-cli's supervisord is otherwise launched by hand by
+`bench start`, with no boot persistence.
 
 The golden image is a **`Virtual Machine Snapshot`, not a from-URL
 `Virtual Machine Image`** — it is built *inside* a VM and snapshotted, the same
@@ -252,10 +267,16 @@ build-in-guest pattern the proxy uses ([12-proxy.md](./12-proxy.md)):
    sibling of `proxy.build_proxy`. `build.sh` installs bench-cli at a pinned
    commit, drops the committed [`bench/bench.toml`](../bench/bench.toml), and
    runs `bench init` (the heavy, per-site-invariant step: apt MariaDB + Redis,
-   uv venv, Frappe clone, Node + npm deps, admin frontend), then bakes a
-   `site.local` site (`bench new-site`, past the setup-wizard gate). It leaves
-   the bench **stopped, with the baked site in place**.
-3. Stop the VM and `Virtual Machine.snapshot(...)` it. That snapshot **is** the
+   the mandatory ZFS pool, uv venv, Frappe clone, Node + npm deps, admin
+   frontend, and — because `[production].nginx = true` — the supervisor + nginx
+   bring-up). It then installs **ERPNext (version-16)**, bakes a `site.local`
+   site (`bench new-site` + `install-app erpnext`, past the setup-wizard gate),
+   runs `bench setup production` (adding IPv6 listeners and the boot-ordering
+   units), and leaves the production stack **running and serving** the baked site
+   on `:80` over both IPv4 and IPv6.
+3. Stop the VM and `Virtual Machine.snapshot(...)` it. The systemd boot wiring
+   (`atlas-bench.service`, ZFS-ordered MariaDB/nginx) makes a cold boot of the
+   snapshot come up serving without a deploy step. That snapshot **is** the
    golden image; site VMs clone from it via
    `Virtual Machine Snapshot.clone_to_new_vm`.
 
@@ -269,29 +290,30 @@ existing snapshot machinery for the rollable artifact. The bake is driven by the
 **The db secret.** `bench.toml` carries a fixed, baked MariaDB `root_password`
 shared across every VM from this image — correct because each VM is
 single-tenant and MariaDB binds localhost only (the south hop reaches Frappe's
-`:80`, never `3306`). The per-site secret that *does* vary — the Frappe
-Administrator password — is generated per VM by `deploy-site.py`, never baked:
-the baked `site.local` has a throwaway admin password, which `deploy-site.py`
-**resets** to the freshly generated per-VM secret right after the rename, so the
-baked one never reaches a user.
+`:80`, never `3306`). The Frappe Administrator password is **also baked + shared** —
+a throwaway the owner is handed and rotates after first login. The signup path no
+longer resets it per VM: that reset cost a full CPU-throttled `bench frappe` boot
+(~28s under the 0.25-core cap) that dominated the deploy, and dropping it is the
+main latency win (14-self-serve.md). Lazy per-site rotation (first login / a job)
+is deferred.
 
-**Why rename, not `bench new-site`.** In bench-cli a site's identity *is its
-directory name* under `sites/` — nginx's `server_name` is the dir name, and the
-db name lives in that dir's `site_config.json` (so it travels with the move; no
-DB rename). So the per-site routing identity (Contract A) is satisfied by `mv
-sites/site.local sites/<fqdn>` + an nginx regen — a sub-second move instead of the
-multi-minute schema-create + frappe-install `bench new-site` pays, which is baked
-once here.
+**Why bake the site, not `bench new-site` per signup.** The slow part of standing
+up a Frappe site — `bench new-site`'s schema-create + frappe-install, plus
+`install-app erpnext` — is per-site-invariant, so it is paid **once** here at bake
+time. A signup's `deploy-site.py` then does only the per-VM work — rename the baked
+dir to the FQDN + `bench setup nginx` — never that multi-minute path, and never a
+`set-admin-password` (the owner is handed the shared baked password and rotates it);
+see [14-self-serve.md](./14-self-serve.md).
 
-One host fact the rename must honor (proven on a real droplet): bench-cli's
-`frappe serve` does **not** resolve the served site from the `Host` /
-`X-Frappe-Site-Name` header on a snapshot-booted clone — `dns_multitenant` routing
-never engages, so every request falls back to `default_site`. The bake leaves
-`default_site = site.local`; after the rename that dir is gone, so the deploy must
-also repoint `default_site` to the new FQDN (and restart the web worker so
-gunicorn re-reads it) or the site 404s *"site.local does not exist"*. A site VM is
-single-tenant, so `default_site = <fqdn>` is the correct model — see
-[14-self-serve.md](./14-self-serve.md) deploy step 3.
+**Per-VM identity is the rename (Contract A).** The bake leaves the site as
+`site.local` on disk; the per-VM `deploy-site.py` renames `sites/site.local` →
+`sites/<fqdn>` and runs `bench setup nginx`, which regenerates the bench's vhost
+with `server_name <fqdn>` so the bench serves the FQDN the proxy forwards. The
+on-disk name, the proxy `Host`, and the `Site` key are then **one string** — there
+is no `default_site`/`default_server` indirection. The bake still marks the vhost
+`default_server` so a **pre-rename** probe (the warm resume, before the deploy runs)
+answers off the baked `site.local`; the deploy's `bench setup nginx` replaces that
+with the `server_name <fqdn>` vhost. A site VM is single-tenant (one site per VM).
 
 Versions are pinned (bench-cli commit in `build.sh`, Frappe branch in
 `bench.toml`); bumping any is a deliberate update rolled as a new golden

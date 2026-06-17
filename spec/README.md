@@ -376,9 +376,9 @@ a warm bake (`Image Build`, `warm=1`) on the shared droplet, then two clones
 restored from the one golden — asserting per-clone identity (distinct
 hostname / machine-id / SSH host key, `/etc/atlas-vm-uuid` adopted), the
 shared `boot_id` that proves a restore rather than a boot, warm serving of the
-baked `site.local` with no deploy step, the real `deploy_site` rename on a
-warm clone, and the cold-boot fallback when the captured host signature is
-tampered. Heavy (a full bench bake on first run) and so invoked directly, not
+baked `site.local` with no deploy step, the real `deploy_site` (admin-password
+reset on the baked `site.local`) on a warm clone, and the cold-boot fallback when
+the captured host signature is tampered. Heavy (a full bench bake on first run) and so invoked directly, not
 folded into `run_all_smoke`; re-runs reuse the server's Available warm golden.
 It needs the background worker (clone auto-provision).
 

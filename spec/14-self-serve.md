@@ -11,18 +11,33 @@ This chapter is the durable spec — the whole self-serve layer is built and
 probe, and the signup/verification surface are built and unit-green; the
 golden-image bake (`build.sh`) and the end-to-end flow are host-proven — a golden
 snapshot baked from scratch, and a real signup → verify → cloned golden site →
-deploy → live HTTPS through the proxy on IPv4 + IPv6, the rename model end to end.
-The deploy's `default_site` repoint (deploy step 3) was the one host-only bug that
-run surfaced and fixed.
+deploy → live HTTPS through the proxy on IPv4 + IPv6. The per-VM deploy **renames**
+the baked `site.local` dir to the FQDN and regenerates the bench's nginx vhost
+(`bench setup nginx`: `server_name <fqdn>` + a v6 listener) and reloads — no admin
+reset (the owner is handed the shared baked password and rotates it), no `setup
+production`, no `bench restart`. The production gunicorn is multitenant (no
+`--site`), so it resolves the renamed `<fqdn>` from the request `Host` header per
+request and the rename + reload serve it live.
 
 ## The one routing string (Contract A)
 
 One identity threads the whole system — never transformed between roles:
 
 ```
-site-name-on-disk  ==  subdomain FQDN  ==  proxy Host header  ==  Site doctype key
-                       e.g.  acme.blr1.frappe.dev
+subdomain FQDN  ==  proxy Host header  ==  Site doctype key
+                e.g.  acme.blr1.frappe.dev
 ```
+
+The FQDN is the **one routing identity** — the proxy `Host` header, the `Site`
+key, **and** the on-disk Frappe site name, one string never transformed between
+roles. The per-VM deploy renames the baked `site.local` dir to `<fqdn>`, so on
+disk it is `sites/<fqdn>`. The production gunicorn is **multitenant** — `frappe
+serve` (`frappe.app:application`) runs with no `--site`, so it resolves the site
+from the request `Host` header **per request** (`get_site_name(request.host)`,
+nothing cached at boot); once `sites/<fqdn>` exists and the bench's nginx vhost
+carries `server_name <fqdn>`, the running workers serve it with **no restart**. The
+bake still marks the vhost `default_server` so a pre-rename probe (the warm resume,
+before the deploy runs) answers off the baked `site.local`.
 
 - The **subdomain label** (`acme`) is a single DNS label — **no dots** — so the
   site stays inside the one regional wildcard `*.blr1.frappe.dev` the proxy
@@ -31,8 +46,9 @@ site-name-on-disk  ==  subdomain FQDN  ==  proxy Host header  ==  Site doctype k
 - The full FQDN is built once in `Site.autoname()` as
   `<subdomain>.<region domain>`, where the region domain comes from the single
   active [Root Domain](./02-doctypes.md#root-domain) — the same row that ties a
-  region to its wildcard zone for TLS. That FQDN is the Frappe site name on disk
-  in the guest, the Host header the proxy routes on, and the `Site` key.
+  region to its wildcard zone for TLS. That FQDN is the Host header the proxy
+  routes on, the `Site` key, and (after the per-VM rename) the on-disk site dir
+  name — one string in every role.
 - **Reserved denylist** — `www admin api proxy app dashboard mail ns root`, plus
   anything already taken (the FQDN-key uniqueness check throws a clean *"subdomain
   taken"*). Lives with the `Site` validation.
@@ -51,10 +67,12 @@ separated by the whole deploy run.
   uses, off-host so it is an honest end-to-end probe. It targets
   **`/api/method/ping`** (Frappe's built-in unauthenticated method, 200
   `{"message":"pong"}` once the web server is up *and* the site DB resolves) with
-  the **FQDN as the `Host` header** (Contract A), so the bench's multitenant nginx
-  routes the probe to *this* site, not just "any site on the VM". It polls until a
-  clean 200 (connection-refused / 502 are "not ready yet", swallowed) and raises
-  `frappe.ValidationError` on timeout.
+  the **FQDN as the `Host` header** (Contract A) — the same header the proxy
+  sends, so the probe is an honest mirror of the real request path: the renamed
+  `server_name <fqdn>` vhost answers it and the multitenant `frappe serve` resolves
+  `sites/<fqdn>` from that `Host`. It polls until a clean 200 (connection-refused /
+  502 are "not
+  ready yet", swallowed) and raises `frappe.ValidationError` on timeout.
 
 ## Ownership / verification ordering (Contract C)
 
@@ -152,7 +170,7 @@ Fields, validation, permissions, and the full field table are in
    | ---- | ------ | -------- |
    | 1 | Clone the backing VM from `Atlas Settings.default_bench_snapshot` (`Virtual Machine Snapshot.clone_to_new_vm` — carries the baked bench + grown disk). `status → Provisioning`. | this layer |
    | 2 | `wait_for_ssh` — the cloned VM booted. | existing |
-   | 3 | Run `deploy-site.py` in the guest: rename the baked `site.local` → `<fqdn>` + reset its admin password + `setup production` (nginx serves on `:80`). The per-site admin password → stored encrypted on the Site. `status → Deploying`. | deploy seam |
+   | 3 | Run `deploy-site.py` in the guest: rename the baked `site.local` dir to the FQDN + `bench setup nginx` (regenerate the vhost as `server_name <fqdn>` + a v6 listener) + reload — no admin reset, no restart (cold clones also `setup production` first to bring the stack up; a warm clone is already serving — see the in-guest deploy below). The owner is handed the shared baked admin password → stored encrypted on the Site. `status → Deploying`. | deploy seam |
    | 4 | `wait_for_http` — block on the guest's HTTP 200 (Contract B). | deploy seam |
    | 5 | Create the `Subdomain` row (this is what makes the proxy route it — its own `after_insert` reconciles the regional fleet). | this layer |
    | 6 | `status → Running`. | this layer |
@@ -204,8 +222,9 @@ because a memory snapshot only restores on the host it was captured on), the
 clone **resumes** the pre-warmed golden instead of booting it
 ([05-virtual-machine-lifecycle.md → Warm snapshot fan-out](./05-virtual-machine-lifecycle.md#warm-snapshot-fan-out-one-golden-n-restored-clones)):
 the signup's backing VM is serving the baked `site.local` within low seconds of
-provision, and only the per-site rename remains. Warm is **strictly an
-accelerator** with two independent degrade-to-cold layers: no warm row on the
+provision, and only the per-VM rename + nginx-vhost regenerate remains. Warm is
+**strictly an accelerator** with two independent degrade-to-cold layers: no warm row
+on the
 server → today's exact cold-clone path; a host that drifted under a stale row
 (live migration, kernel/Firecracker upgrade) → `vm-restore.py`'s signature
 guard cold-boots the warm disk, which still deploys correctly. A warm clone
@@ -230,64 +249,65 @@ with the fleet key), recording the op as a `deploy-site` Task row.
   1. **Pre-flights** — asserts bench-cli + the baked bench are present; a missing
      bench means the VM was cloned from the wrong snapshot, so it fails loud
      (unrecoverable, not retryable).
-  2. **Rename the baked `site.local` → `<fqdn>`** — `os.rename(sites/site.local →
-     sites/<fqdn>)`. In bench-cli a site's identity *is* its directory name, so a
-     directory move makes the on-disk site name the FQDN verbatim (Contract A) —
-     no `bench new-site`, no DB rename (the db name travels in the moved dir's
-     `site_config.json`). The slow schema-create + frappe-install is paid once at
-     bake time, not per signup — see "Why rename" in
-     [08-images.md](./08-images.md). Fails loud if the clone carries no baked
-     `site.local` (i.e. was cloned from a site-less snapshot).
-  3. **Repoint `default_site` → `<fqdn>`** (`sites/common_site_config.json`). This
-     is **load-bearing on a real host**: bench-cli's `frappe serve` does *not*
-     resolve the site from the `Host` / `X-Frappe-Site-Name` header on a
-     snapshot-booted clone — `dns_multitenant` routing never engages for it, so
-     every request falls back to `default_site`. The bake leaves
-     `default_site = site.local`; after the rename that directory is gone, so
-     without this step every request 404s *"site.local does not exist"* (the v4 +
-     v6 paths both fail). A site VM is single-tenant (one site per VM), so pointing
-     `default_site` at the renamed FQDN is both the fix and the correct model. Runs
-     on every deploy (idempotent), including a re-run that skipped the rename, so a
-     deploy that died mid-flight self-heals on retry.
-  4. **Resets the Administrator password** — `bench frappe --site <fqdn>
-     set-admin-password <pw>` against the just-renamed dir. The baked password is
-     a shared throwaway and must never reach a user; the per-site password is
-     generated by the controller (`frappe.generate_hash`) and passed as an argv
-     flag over the encrypted SSH channel — never written to a guest file. The db
-     root password comes from the baked `bench.toml` (shared + localhost-only;
-     only the admin password varies per site — see [08-images.md](./08-images.md)).
-     The setup-wizard gate is already cleared at bake time, so it is not re-set here.
-  5. **`bench setup production`** — generates + reloads the bench's **own** nginx +
-     supervisor config so nginx serves the site on `:80`. nginx + supervisor are
-     baked into the golden image (08-images.md), so this is config + reload, not an
-     install. bench-cli sets `dns_multitenant`, but (per step 3) that does *not*
-     actually drive Host-header routing on the clone — `default_site` is what
-     resolves the site; this step brings nginx + supervisor up. It then **adds an
-     explicit `listen [::]:80;`** beside each generated `listen 80;` and reloads:
-     bench-cli's vhosts bind v4-only, but the edge proxy reaches the site over the
-     VM's public **/128 (IPv6)** — the only inbound path (vm-inbound-ipv6-only) — so
-     without the v6 listener the site serves on v4 and 404s on the path that matters.
-     Finally it **restarts the bench web process** so gunicorn re-reads the new
-     `default_site` (a `setup production` reload does not always recycle a running
-     worker — proven needed on a real host).
-  - Idempotent: a re-run that finds the site already renamed to the FQDN skips the
-    rename but still re-points `default_site` and re-asserts serving.
-- `wait_for_http` runs **on the controller** — see Contract B above.
+  2. **Cold clone only: production bring-up.** A freshly image-provisioned VM whose
+     bench was never brought up runs **`bench setup production`** first —
+     regenerates + installs + reloads the bench's own nginx + supervisor config and
+     brings the stack up. A **warm clone** (resumed from a memory snapshot —
+     `--warm-vm-uuid` set) is already serving (`warm.sh` froze the stack up against
+     `site.local`), so it skips this entirely.
+  3. **Renames the baked site to the FQDN** — `os.rename(sites/site.local →
+     sites/<fqdn>)`, atomic and sub-millisecond (Contract A: the on-disk name now
+     equals the proxy `Host` and the `Site` key). The production gunicorn is
+     **multitenant** (`frappe.app:application`, no `--site`), so it resolves the
+     site from the request `Host` per request — the moment `sites/<fqdn>` exists and
+     the vhost says `server_name <fqdn>`, the running workers serve it with **no
+     restart**. Fails loud if neither the baked dir nor an already-renamed `<fqdn>`
+     dir exists (a site-less snapshot). The setup-wizard gate is cleared at bake
+     time; the db root password is baked + shared (08-images.md).
+  4. **Regenerates the nginx vhost** — `bench setup nginx` (NOT `setup production`):
+     pure bench-cli config-gen — it scans `sites/`, finds the renamed `<fqdn>` dir,
+     emits a vhost with `server_name <fqdn>` (matching the proxy's forwarded `Host`
+     — the old no-rename model needed a `default_server` catch-all precisely because
+     the on-disk name didn't match; the rename removes that need) and a
+     `root .../sites/<fqdn>/public` files block, then `nginx -t`s and `systemctl
+     reload`s. No Frappe boot, no process restart — sub-second. bench-cli only
+     *writes* current sites' confs (never deletes stale ones), so the deploy removes
+     the baked `site.local.conf` first. bench-cli's vhosts bind v4-only, but the edge
+     proxy reaches the site over the VM's public **/128 (IPv6)** — the only inbound
+     path (vm-inbound-ipv6-only) — so the deploy then adds `listen [::]:80;` beside
+     `listen 80;` and reloads once more. No `default_server` (the `server_name
+     <fqdn>` match is real now).
+  - **No `set-admin-password`.** The owner is handed the shared baked Administrator
+    password (rotated after first login); resetting it per VM cost a full
+    CPU-throttled `bench frappe` boot (~28s under the 0.25-core cap) that dominated
+    the deploy. Dropping it is the main latency win.
+  - Idempotent (spec taste #14: retry = re-run): a re-run finds `sites/<fqdn>`
+    already in place (the baked dir gone) and just re-asserts the vhost + serving.
+- `wait_for_http` runs **on the controller** — see Contract B above. It runs
+  *after* the rename, so it probes the FQDN `Host` against the new `server_name
+  <fqdn>` vhost — the real south-hop path.
 
 **Serving model.** The bench's own nginx is the in-guest front door on `:80`; the
 **edge proxy** (12-proxy.md) routes `Host: acme.blr1.frappe.dev` → `[<vm-v6>]:80`,
-where that nginx matches the site by `server_name`. **TLS terminates at the edge
-proxy, not in the guest** — there is no in-guest certbot; the south hop is
+where that nginx answers via the renamed **`server_name <fqdn>`** vhost, and the
+multitenant gunicorn resolves the site from the `Host` per request. (The bake also
+marks the vhost `default_server` so a pre-rename probe — the warm resume, before the
+deploy renames — still answers off the baked `site.local`.) **TLS terminates at the
+edge proxy, not in the guest** — there is no in-guest certbot; the south hop is
 plaintext `:80` over public v6 (the accepted limitation under
-[12-proxy.md § Accepted limitations](./12-proxy.md)). Baking the
-site past the wizard, the rename, and `setup production` *remove* the manual
-TLS/certbot steps a stand-alone bench would need.
+[12-proxy.md § Accepted limitations](./12-proxy.md)). Baking the site past the
+wizard and `setup production` *remove* the manual TLS/certbot steps a stand-alone
+bench would need.
 
-**Admin-password handoff.** The generated Administrator password is stored
-encrypted in the `Site.admin_password` (`Password` field), written by the
-orchestration *before* the readiness wait so it survives a later http-gate
-timeout. It is shown once to the owner in the SPA so they can sign in;
-the db root password is never surfaced (single-tenant, localhost-only).
+**Admin-password handoff.** The owner is handed the **shared baked** Administrator
+password (`Site.BAKED_ADMIN_PASSWORD`, in lockstep with build.sh's
+`BAKED_ADMIN_PASSWORD`) — the deploy no longer resets it per VM. It is stored
+encrypted in `Site.admin_password` (`Password` field) by the orchestration *before*
+the readiness wait so it survives a later http-gate timeout, and shown to the owner
+in the SPA so they can sign in (and rotate it). The db root password is never
+surfaced (single-tenant, localhost-only). Rotating the per-site password lazily
+(first login / a background job) is deferred — the signup path does zero password
+work, which is what removed the ~28s `bench frappe` boot.
 
 ## The Subdomain it creates
 
@@ -302,14 +322,15 @@ the user-owned aggregate. The Site stores the created Subdomain's name in
 - **Unit (milliseconds):**
   - *Site layer* — the routing-string validation (label/reserved/unique),
     immutability, the `auto_provision` state machine and its fail-loud path (host
-    steps mocked at the module seams, incl. the admin-password storage), the
+    steps mocked at the module seams, incl. storing the baked admin password), the
     `_create_subdomain` identity carry-through, `terminate`, and the owner-scoping
     permission contract. See `atlas/atlas/doctype/site/test_site.py`.
   - *Deploy layer* — `wait_for_http`'s poll/timeout loop and 200-only
     predicate (the single probe mocked); the `deploy_site` upload + run +
-    Task-record + fail-loud path (SSH transport mocked); and the in-guest script's
-    typed I/O (kebab-flag parsing, the one `ATLAS_RESULT` line, the on-disk
-    idempotency predicate). See `atlas/atlas/test_deploy_site.py`.
+    Task-record + fail-loud path (SSH transport mocked, no admin password); and the
+    in-guest script's typed I/O (kebab-flag parsing, the one `ATLAS_RESULT` line,
+    the rename + its idempotency/fail-loud, the v6-listener edit, the warm/cold
+    branch). See `atlas/atlas/test_deploy_site.py`.
   - *Status page* — `site_status.steps_for` maps each `Site.status` to
     the six-step checklist (Pending nothing-done, Provisioning both provision
     steps running, Deploying provision-done/deploy-running, Running all done,
@@ -317,10 +338,11 @@ the user-owned aggregate. The Site stores the created Subdomain's name in
     `atlas/atlas/test_site_status.py`. The realtime push + owner-gating ride on the
     `auto_provision` and permission contracts already covered in the Site layer.
 - **Host facts (e2e — `self_serve_site.py`):** the real signup → verify →
-  fulfil → golden-image clone + `deploy-site.py` (rename baked `site.local` +
-  `setup production` actually serving on `:80`) → HTTP-200 readiness → Subdomain → an
-  off-droplet `curl https://acme.<region domain>` over **both IPv4 and IPv6** —
-  proven on a real droplet, not in unit tests. It is the superset use case:
+  fulfil → golden-image clone + `deploy-site.py` (rename `site.local` → the FQDN +
+  `bench setup nginx`, served for the FQDN `Host` on `:80`) → HTTP-200 readiness →
+  Subdomain → an off-droplet `curl https://acme.<region domain>` over **both IPv4
+  and IPv6** — proven on a real droplet, not in unit tests. It is the superset use
+  case:
   reuses `proxy_vm`'s proxy + reserved-IP helpers, `tls_issuance`'s real
   LE-staging producer chain, and `bench_image`'s golden-snapshot bake (resolved
   from `Atlas Settings.default_bench_snapshot`, baked inline if absent). The

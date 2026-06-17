@@ -1303,13 +1303,13 @@ proxy map it creates once serving) and **not** the
 
 | Field           | Type                   | Reqd | Read-only | Notes                                                       |
 | --------------- | ---------------------- | ---- | --------- | ----------------------------------------------------------- |
-| `name`          | the FQDN               | Y    | Y         | Primary key, built in `autoname()` as `<subdomain>.<region domain>` — the one routing string (Contract A): site-name-on-disk == proxy Host header == this key. Never transformed. |
+| `name`          | the FQDN               | Y    | Y         | Primary key, built in `autoname()` as `<subdomain>.<region domain>` — the one routing string (Contract A): proxy Host header == this key. The routing identity, never written on disk (the baked site stays `site.local`). Never transformed. |
 | `subdomain`     | Data                   | Y    |           | The bare DNS label the user chose (`acme`). `set_only_once`. A single label, no dots, lowercase `[a-z0-9-]`, ≤63 chars, no leading/trailing hyphen; not in the reserved denylist. |
 | `region`        | Data                   |      | Y         | `set_only_once`. Resolved from the single active `Root Domain` at insert (the user never picks it). |
 | `status`        | Select                 |      | Y         | `Pending` → `Provisioning` → `Deploying` → `Running` / `Failed` / `Terminated`. Controller-written. `Running` is reached **only** on an observed HTTP 200 from the guest `:80` (Contract B), not when the backing VM boots. |
 | `virtual_machine` | Link → Virtual Machine |    | Y         | `set_only_once`. The backing VM, cloned from the golden bench snapshot by the background job (the user never picks it). |
 | `subdomain_doc` | Link → Subdomain       |      | Y         | The proxy-map row the site created once it began serving. Deleting it (or the Site) takes the site off the front door. |
-| `admin_password` | Password              |      | Y         | The Frappe Administrator password generated per-site by the in-guest deploy (the db root password is baked + shared; only this varies per site). Stored encrypted; shown once to the owner in the SPA so they can sign in. Controller-written. |
+| `admin_password` | Password              |      | Y         | The Frappe Administrator password handed to the owner — the **shared baked throwaway** (`Site.BAKED_ADMIN_PASSWORD`, in lockstep with build.sh; the deploy no longer resets it per VM, and the owner rotates it after first login). The db root password is baked + shared too. Stored encrypted; shown to the owner in the SPA so they can sign in. Controller-written. |
 
 `owner` (Frappe built-in) is the verified user (Contract C) — the ownership key,
 scoped by `permission_query_conditions` (`atlas.atlas.permissions.owner_only`).
