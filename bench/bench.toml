@@ -1,17 +1,26 @@
-# Golden bench image config (plans/self-serve/01-golden-image.md). build.sh
+# Golden bench image config (spec/08-images.md § golden bench image). build.sh
 # drops this over bench-cli's generated bench.toml so the baked image pins the
-# Frappe branch and the MariaDB credentials, not bench-cli's moving template.
-# After `bench init`, build.sh also bakes a site under the fixed name
-# `site.local`; deploy-site.py renames it to the per-VM FQDN at deploy time.
+# Frappe branch, the MariaDB credentials, the production process manager, and the
+# mandatory ZFS volume — not bench-cli's moving template. After `bench init`,
+# build.sh installs ERPNext, bakes a site under the fixed name `site.local`, runs
+# `bench setup production`, and leaves the stack RUNNING so a snapshot-booted
+# clone serves immediately. deploy-site.py renames the baked site to the per-VM
+# FQDN at deploy time.
+#
+# Schema tracks the current bench-cli (the root-disk-zfs merge + production
+# refactor — see build.sh's pinned commit). The notable shifts from the old
+# layout: a mandatory [volume] (ZFS is now hard-required on Linux by `bench
+# init`), [production] (process_manager + nginx, the supervisor/nginx bring-up
+# `bench init` runs when nginx=true), and the three-port [redis] block.
 #
 # MariaDB root_password: baked, fixed, and SHARED across every VM from this
 # image — and that is correct here. Each VM is single-tenant: its MariaDB binds
-# localhost only (no public port, the south hop reaches Frappe's :80, not 3306),
+# localhost only (no public port; the south hop reaches Frappe's :80, not 3306),
 # so the db secret never crosses a VM boundary. The per-SITE secret that DOES
 # vary — the Frappe Administrator password — is generated per VM by
-# deploy-site.py at site-creation time (plans/self-serve/03), never baked here.
-# (Resolves 01's + 03's shared "where does the db secret live" open question:
-# db root password = baked localhost-only; site admin password = per-site.)
+# deploy-site.py at site-creation time (spec/14-self-serve.md), never baked here.
+# (Resolves the shared "where does the db secret live" question: db root password
+# = baked localhost-only; site admin password = per-site.)
 
 [bench]
 name = "atlas"
@@ -27,25 +36,71 @@ host = "localhost"
 port = 3306
 root_password = "atlas"
 
+# Three Redis instances (cache / queue / socketio). bench-cli's current schema
+# wants explicit ports per role; the old single `port = 13000` is gone. Kept off
+# the default 6379 so nothing collides with a stray system Redis.
 [redis]
-port = 13000
-
-# Production serving: bench-cli's OWN nginx fronts every site by Host header on
-# :80 (the port the EDGE proxy's south hop dials — spec/12-proxy.md). deploy-site.py
-# runs `bench setup production`, which needs nginx.enabled + reads http_port; it
-# also flips dns_multitenant on (Host-header routing). TLS still terminates at the
-# edge proxy, NOT here — there is no in-guest certbot (plans/self-serve/03 open Q).
-[nginx]
-enabled = true
-http_port = 80
+cache_port = 13000
+queue_port = 11000
+socketio_port = 12000
 
 [workers]
 default = 2
 short = 1
 long = 1
 
+# Production serving: bench-cli's OWN nginx fronts every site by Host header on
+# :80 (the port the EDGE proxy's south hop dials — spec/12-proxy.md), and a
+# supervisor-managed process group runs gunicorn/socketio/workers/redis.
+#
+# `[production].nginx = true` makes `bench init` ALSO run the production bring-up
+# (process manager + nginx config), so the golden carries it from the start;
+# build.sh re-runs `bench setup production` after the site exists so the site
+# vhost is generated. process_manager = "supervisor" is load-bearing:
+# deploy-site.py and warm.sh drive the running stack with `supervisorctl`. TLS
+# terminates at the edge proxy, NOT here — letsencrypt.email is left unset so
+# `setup production` never attempts certbot (spec/14-self-serve.md).
+[production]
+process_manager = "supervisor"
+nginx = true
+
+[nginx]
+http_port = 80
+https_port = 443
+
+# Mandatory ZFS volume (the bench-cli root-disk-zfs merge made `bench init` set a
+# pool up unconditionally on Linux). The build VM is a single-disk droplet with
+# no spare block device, so the pool is a preallocated FILE vdev on the root
+# filesystem (`backing = "image"`) at /var/lib/bench-zfs/bench-pool.img — NOT a
+# dedicated disk and NOT "auto" (auto would size the image at 75% of free space
+# and overwrite the quotas below). At init the benches dataset mounts at
+# /root/bench-cli/benches and the mariadb dataset at /var/lib/mysql, so BOTH the
+# bench code and the MariaDB data live on ZFS — build.sh orders MariaDB + the
+# bench supervisord After= the zfs mount at boot.
+#
+# Sizing is deliberately conservative for the 12 GB build disk: a 7 GB image
+# leaves the root FS headroom for the OS + apt cache. The split is weighted toward
+# `benches`, which holds the heavy payload — frappe + erpnext + node_modules + the
+# baked site (~3.5-4.5 GB) — so it gets a 6 GB quota; the `mariadb` dataset holds
+# only one baked ERPNext schema (a few hundred MB), so 1 GB is ample. Each quota
+# fits inside the 7 GB pool individually (the validator checks them against the
+# backing one at a time, not summed), with small reservations under each quota.
+[volume]
+pool = "bench-pool"
+backing = "image"
+
+[volume.image]
+size = "7G"
+
+[volume.benches]
+quota = "6G"
+reservation = "512M"
+
+[volume.mariadb]
+quota = "1G"
+reservation = "256M"
+
 [admin]
 port = 8002
 enabled = false
-timeout = 180
 password = "atlas-admin"

@@ -57,23 +57,26 @@ systemctl daemon-reload
 systemctl enable atlas-warm-freshen.service
 systemctl restart atlas-warm-freshen.service
 
-# --- 2. Production bring-up against the baked site. deploy-site.py re-runs
-# this per clone after the rename (it is idempotent); here it exists so the
-# RUNNING stack is what gets frozen. ---
+# --- 2. Production bring-up against the baked site. The warm clone resumes THIS
+# running stack already serving site.local for any Host — so it is reachable the
+# instant it resumes, BEFORE the per-clone deploy renames it to the FQDN + runs
+# `bench setup nginx`. This is what must be frozen serving. ---
 "$BENCH_CLI_DIR/bench" -b "$BENCH_NAME" setup production
 
-# `bench setup production` emits vhosts with a bare `listen 80;` (IPv4 only),
-# but a restored clone is probed — and later served — over its public /128
-# (IPv6 is the only inbound path). Without `listen [::]:80;` the warm guest
-# answers v4 and refuses v6, so the controller's readiness probe never sees a
-# 200. Same fix deploy-site.py applies per deploy (_enable_ipv6_listeners),
-# done here so the FROZEN nginx already listens on v6. Idempotent.
+# `bench setup production` emits vhosts with a bare `listen 80;` (IPv4 only) and
+# `server_name site.local`. A restored clone is probed — and served — over its
+# public /128 with `Host: <fqdn>`, so the frozen nginx needs BOTH: `listen [::]:80`
+# (IPv6 is the only inbound path) AND `default_server` (the proxy's `<fqdn>` Host
+# doesn't match `server_name site.local`, so the single block must be the catch-all
+# that serves any Host → gunicorn → default_site = site.local). Same edit build.sh
+# and deploy-site.py apply. Baked here so the FROZEN nginx already serves any Host
+# on v4+v6 — the warm clone needs no nginx work at all. Idempotent.
 BENCH_DIR="$BENCH_CLI_DIR/benches/$BENCH_NAME"
 shopt -s nullglob
 for conf in "$BENCH_DIR"/config/nginx/sites/*.conf "$BENCH_DIR"/config/nginx.conf; do
 	[ -f "$conf" ] || continue
 	if ! grep -q 'listen \[::\]:80' "$conf"; then
-		sed -i 's/^\([[:space:]]*\)listen 80;/\1listen 80;\n\1listen [::]:80;/' "$conf"
+		sed -i 's/^\([[:space:]]*\)listen 80;/\1listen 80 default_server;\n\1listen [::]:80 default_server;/' "$conf"
 	fi
 done
 shopt -u nullglob
