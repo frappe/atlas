@@ -161,6 +161,49 @@ def get_tls_config() -> dict:
 	}
 
 
+# --- Scaleway -------------------------------------------------------------
+# The Scaleway provider e2e (atlas.tests.e2e.use_cases.scaleway_provisioning)
+# is a separate billable path from the DO harness — it provisions a real
+# Elastic Metal bare-metal server. Its inputs live in site config under
+# atlas_scw_* keys, read here so the seed helper and the use case share them.
+
+
+def get_scaleway_config() -> dict:
+	"""Read the Scaleway inputs the provider e2e needs from site config.
+
+	Raises `MissingConfig` naming the first absent required key, so a site that
+	hasn't configured Scaleway skips the provider e2e cleanly rather than failing
+	deep inside the API client.
+
+	Keys:
+	    atlas_scw_secret_key       IAM API key Secret Key (the X-Auth-Token value)
+	    atlas_scw_project_id       Project UUID every resource is scoped to
+	    atlas_scw_organization_id  optional; labels authenticate + filters projects
+	    atlas_scw_zone             one EM zone (default fr-par-2 — A610R stock)
+	    atlas_scw_size             Provider Size slug (default EM-A610R-NVME)
+	    atlas_scw_image            Provider Image slug (default Ubuntu_24.04)
+	    atlas_scw_billing          hourly | monthly (default hourly)
+	"""
+	required = ("atlas_scw_secret_key", "atlas_scw_project_id")
+	values = {}
+	for key in required:
+		value = frappe.conf.get(key)
+		if not value:
+			raise MissingConfig(
+				f"Scaleway e2e needs {key!r} in site config: bench --site <site> set-config -p {key} <value>"
+			)
+		values[key] = value
+	return {
+		"secret_key": values["atlas_scw_secret_key"],
+		"project_id": values["atlas_scw_project_id"],
+		"organization_id": frappe.conf.get("atlas_scw_organization_id"),
+		"zone": frappe.conf.get("atlas_scw_zone", "fr-par-2"),
+		"size": frappe.conf.get("atlas_scw_size", "EM-A610R-NVME"),
+		"image": frappe.conf.get("atlas_scw_image", "Ubuntu_24.04"),
+		"billing": frappe.conf.get("atlas_scw_billing", "hourly"),
+	}
+
+
 def get_region() -> str:
 	return frappe.conf.get("atlas_test_region", "blr1")
 
