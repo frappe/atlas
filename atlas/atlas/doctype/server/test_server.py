@@ -55,6 +55,18 @@ class TestServerBootstrap(IntegrationTestCase):
 		upload.assert_called_once()
 		run.assert_called_once()
 
+	def test_script_uploads_ship_task_entry_scripts_durably(self) -> None:
+		# The Task entry scripts (provision/start/stop/snapshot-stop) ship to
+		# /var/lib/atlas/bin so the runner invokes them in place — no per-Task scp.
+		from atlas.atlas import scripts_catalog
+
+		destinations = {dest for _src, dest in self.server._script_uploads()}
+		for script in ("provision-vm.py", "start-vm.py", "stop-vm.py", "snapshot-stop-vm.py"):
+			self.assertIn(f"/var/lib/atlas/bin/{script}", destinations)
+		# The durable set covers every host SSH Task entry point.
+		for script in scripts_catalog.host_task_scripts():
+			self.assertIn(f"/var/lib/atlas/bin/{script}", destinations)
+
 	def test_bootstrap_parses_result_line(self) -> None:
 		from atlas.atlas.doctype.server import server as server_module
 

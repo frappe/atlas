@@ -181,10 +181,10 @@ class Server(Document):
 
 	def _script_uploads(self) -> list[tuple[str, str]]:
 		"""The durable scripts that live under /var/lib/atlas/bin: the importable
-		atlas package plus the systemd-invoked .py hooks. These are pure code — an
-		scp overwrite is all it takes for an edit to land, no daemon-reload. This
-		is exactly the set `sync_scripts()` refreshes during development; bootstrap
-		ships it alongside `_unit_uploads()`."""
+		atlas package, the systemd-invoked .py hooks, and the Task entry scripts.
+		These are pure code — an scp overwrite is all it takes for an edit to land,
+		no daemon-reload. This is exactly the set `sync_scripts()` refreshes during
+		development; bootstrap ships it alongside `_unit_uploads()`."""
 		directory = scripts_catalog.scripts_directory()
 		uploads = [
 			(str(directory / source), destination)
@@ -200,6 +200,13 @@ class Server(Document):
 			if entry.name.startswith("test_"):
 				continue
 			uploads.append((str(entry), f"/var/lib/atlas/bin/atlas/{entry.name}"))
+		# The durable Task entry scripts: every host SSH Task (provision-vm.py,
+		# start/stop/snapshot-stop, …). Shipping them here lets the runner invoke
+		# each in place instead of scp'ing it per Task — the scp was the dominant
+		# latency of an otherwise-instant start/stop. Computed from disk
+		# (scripts_catalog) so a new Task script ships with no edit here.
+		for script in scripts_catalog.host_task_scripts():
+			uploads.append((str(directory / script), f"/var/lib/atlas/bin/{script}"))
 		return uploads
 
 	def _unit_uploads(self) -> list[tuple[str, str]]:

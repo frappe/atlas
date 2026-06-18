@@ -56,3 +56,21 @@ class TestScriptsCatalog(unittest.TestCase):
 	def test_operator_visible_is_sorted(self) -> None:
 		operator = scripts_catalog.operator_visible_scripts()
 		self.assertEqual(operator, sorted(operator))
+
+	def test_host_task_scripts_equals_allowed(self) -> None:
+		# Every host SSH Task entry point is shipped durably and invoked in place;
+		# the durable set is exactly the allowlist.
+		self.assertEqual(scripts_catalog.host_task_scripts(), scripts_catalog.allowed_scripts())
+
+	def test_durable_remote_path_for_shipped_script(self) -> None:
+		# A production Task script resolves to its durable /var/lib/atlas/bin path,
+		# which the runner invokes without a per-Task scp.
+		self.assertEqual(
+			scripts_catalog.durable_remote_path("start-vm.py"),
+			"/var/lib/atlas/bin/start-vm.py",
+		)
+
+	def test_durable_remote_path_none_for_e2e_probe(self) -> None:
+		# e2e probes live in the test-only directory, are not shipped durably, and
+		# must keep the staging path (None tells the runner to scp them per Task).
+		self.assertIsNone(scripts_catalog.durable_remote_path("phase1-probe.sh"))

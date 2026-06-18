@@ -145,6 +145,32 @@ def operator_visible_scripts() -> list[str]:
 	return sorted(name for name in allowed_scripts() if name in OPERATOR_VISIBLE)
 
 
+# Production Task scripts are shipped durably to the host's /var/lib/atlas/bin by
+# Server.bootstrap()/sync_scripts() — the same place the importable atlas package
+# and the systemd hooks already live — and invoked there by the SSH runner with
+# no per-Task scp (the dominant latency of a start/stop/snapshot Task). The dir
+# equals runner.DURABLE_PACKAGE_DIRECTORY; the literal is repeated here so
+# server.py and the runner agree on one location without importing each other.
+DURABLE_SCRIPT_DIRECTORY = "/var/lib/atlas/bin"
+
+
+def host_task_scripts() -> list[str]:
+	"""Production Task scripts shipped durably to /var/lib/atlas/bin — exactly
+	allowed_scripts(), every host SSH Task entry point. Bootstrap / sync_scripts
+	upload these so the runner invokes them in place. e2e probe scripts live in
+	the test-only directory, are not shipped durably, and keep the staging path."""
+	return allowed_scripts()
+
+
+def durable_remote_path(script: str) -> str | None:
+	"""The /var/lib/atlas/bin path the runner invokes for a durably-shipped Task
+	script, or None when the script isn't shipped durably (an e2e probe resolved
+	from the test directory) — which the runner stages per Task instead."""
+	if script in host_task_scripts():
+		return f"{DURABLE_SCRIPT_DIRECTORY}/{script}"
+	return None
+
+
 def resolve(script: str) -> Path:
 	"""Locate a script in either the production or e2e directory. Raises
 	FileNotFoundError if not present in either."""
