@@ -122,14 +122,29 @@ class TestProtection(unittest.TestCase):
 # --- PV backing selection: real NVMe device(s) vs the loopback fallback ---
 
 
+_DEFAULT_DISK_BYTES = 1 << 40  # 1 TiB — a real pool disk, well over the 1 GiB floor
+
+
 def _lsblk(*devices) -> str:
 	"""Build `lsblk -J` fixture JSON from (name, type, fstype, mountpoint,
-	children?) tuples — the shape discover_pool_disks parses."""
+	children?) tuples — the shape discover_pool_disks parses.
+
+	A 5th element may be the children list (as before) OR a dict of extra node
+	fields (e.g. {"size": 0, "rm": True}) to model a phantom/removable disk. A
+	disk with neither defaults to a real fixed disk: 1 TiB, non-removable — so
+	every pre-existing "picked" fixture still qualifies under the size/removable
+	guard without restating size on each tuple."""
 	nodes = []
 	for name, dtype, fstype, mountpoint, *rest in devices:
 		node = {"name": name, "type": dtype, "fstype": fstype, "mountpoint": mountpoint}
-		if rest and rest[0]:
-			node["children"] = rest[0]
+		extra = rest[0] if rest else None
+		if isinstance(extra, list):
+			node["children"] = extra
+		elif isinstance(extra, dict):
+			node.update(extra)
+		if dtype == "disk":
+			node.setdefault("size", _DEFAULT_DISK_BYTES)
+			node.setdefault("rm", False)
 		nodes.append(node)
 	return json.dumps({"blockdevices": nodes})
 
@@ -169,6 +184,44 @@ class TestDiscoverPoolDisks(unittest.TestCase):
 	def test_stock_droplet_has_no_spare_disk(self):
 		# Single partitioned+mounted disk → loopback fallback (empty list).
 		out = _lsblk(("vda", "disk", None, None, [{"name": "vda1", "type": "part", "mountpoint": "/"}]))
+		self.assertEqual(discover_pool_disks(out), [])
+
+	def test_zero_byte_phantom_disk_is_skipped(self):
+		# A Scaleway Elastic Metal box exposes an empty card-reader slot as a
+		# 0-byte removable `disk` (/dev/sda) that looks "unused" (no children/
+		# fstype/mount) but has no path names — feeding it to pvcreate fails
+		# "Device open 8:0 has no path names". It must NOT be selected.
+		out = _lsblk(("sda", "disk", None, None, {"size": 0, "rm": True}))
+		self.assertEqual(discover_pool_disks(out), [])
+
+	def test_removable_disk_is_skipped(self):
+		# Removable media (USB / card reader) is never pool backing, even if it
+		# reports a real size.
+		out = _lsblk(("sdb", "disk", None, None, {"size": _DEFAULT_DISK_BYTES, "rm": True}))
+		self.assertEqual(discover_pool_disks(out), [])
+
+	def test_below_min_size_disk_is_skipped(self):
+		# A tiny fixed disk (under 1 GiB) is not usable pool backing.
+		out = _lsblk(("sdc", "disk", None, None, {"size": 512 << 20, "rm": False}))
+		self.assertEqual(discover_pool_disks(out), [])
+
+	def test_string_size_and_rm_are_tolerated(self):
+		# Older lsblk renders size/rm as strings; the guard must still parse them.
+		out = _lsblk(
+			("sda", "disk", None, None, {"size": "0", "rm": "1"}),
+			("nvme0n1", "disk", None, None, {"size": str(_DEFAULT_DISK_BYTES), "rm": "0"}),
+		)
+		self.assertEqual(discover_pool_disks(out), ["/dev/nvme0n1"])
+
+	def test_live_scaleway_box_picks_nothing(self):
+		# The exact live-box topology that broke bootstrap: a 0-byte removable
+		# sda phantom + two NVMe disks fully consumed by the root RAID (children).
+		# Nothing qualifies → loopback fallback (empty list), no pvcreate on sda.
+		out = _lsblk(
+			("sda", "disk", None, None, {"size": 0, "rm": True}),
+			("nvme0n1", "disk", None, None, [{"name": "nvme0n1p4", "type": "part"}]),
+			("nvme1n1", "disk", None, None, [{"name": "nvme1n1p3", "type": "part"}]),
+		)
 		self.assertEqual(discover_pool_disks(out), [])
 
 	def test_empty_input_is_empty(self):

@@ -179,19 +179,37 @@ class LogicalVolume:
 			return False
 
 
+# Minimum size (bytes) for a disk to qualify as pool backing. Filters out a
+# bare-metal box's empty removable slots (an SD/card reader shows up as a
+# 0-byte `disk`), which would otherwise be picked as "unused" and then fail
+# pvcreate with "Device open 8:0 has no path names" (proven on a live Scaleway
+# Elastic Metal box: /dev/sda is a 0-byte phantom, the real storage is the two
+# NVMe drives already consumed by the root RAID). 1 GiB is far below any real
+# pool disk and far above any phantom.
+_MIN_POOL_DISK_BYTES = 1 << 30
+
+
 def discover_pool_disks(lsblk_json: str) -> list[str]:
 	"""Pick the whole-disk block devices that may back the pool PV, parsed from
-	`lsblk -J -b -o NAME,TYPE,MOUNTPOINT,FSTYPE,PKNAME` output.
+	`lsblk -J -b -o NAME,TYPE,MOUNTPOINT,FSTYPE,PKNAME,SIZE,RM` output.
 
 	A device qualifies only if it is a top-level `disk` (not a partition,
 	loop, or device-mapper node) that carries NO partitions, NO filesystem, and
-	NO mountpoint — i.e. a raw, unused disk. That is exactly what a Scaleway
-	Elastic Metal box's spare NVMe drives look like (the OS lives on a separate
-	disk), and exactly what a stock single-disk droplet does NOT have (its only
-	disk is partitioned + mounted as root) — so the same probe yields the NVMe
-	devices on bare metal and the empty list on a droplet, with no per-provider
-	branch. Pure: text in, sorted device-path list out, so it unit-tests with
-	fixture JSON and no host.
+	NO mountpoint — i.e. a raw, unused disk — AND is a real fixed disk of usable
+	size: NOT removable (`rm`) and at least `_MIN_POOL_DISK_BYTES`. The
+	size/removable guard is load-bearing on bare metal: a Scaleway Elastic Metal
+	box exposes an empty card-reader slot as a 0-byte removable `disk` (/dev/sda)
+	that otherwise looks "unused", and feeding it to pvcreate fails ("Device open
+	8:0 has no path names. Cannot use /dev/sda: device not found"). Skipping it
+	lets a box whose only real disks are already in the root RAID fall through to
+	the loopback backing instead of wedging bootstrap.
+
+	This is exactly what a box's genuine spare NVMe drives look like (the OS lives
+	elsewhere), and exactly what a stock single-disk droplet does NOT have (its
+	only disk is partitioned + mounted as root) — so the same probe yields the
+	spare devices on bare metal and the empty list on a droplet, with no
+	per-provider branch. Pure: text in, sorted device-path list out, so it
+	unit-tests with fixture JSON and no host.
 	"""
 	tree = json.loads(lsblk_json) if lsblk_json.strip() else {}
 	disks = []
@@ -203,6 +221,14 @@ def discover_pool_disks(lsblk_json: str) -> list[str]:
 		if node.get("children"):
 			continue
 		if node.get("fstype") or node.get("mountpoint"):
+			continue
+		# Removable media (card reader / USB) is never pool backing, and a phantom
+		# empty slot reports 0 bytes — reject both. `rm`/`size` come back as bools/
+		# ints with `-J -b`; tolerate string forms ("1"/"0") from older lsblk.
+		if str(node.get("rm")).lower() in ("1", "true"):
+			continue
+		size = node.get("size")
+		if size is None or int(size) < _MIN_POOL_DISK_BYTES:
 			continue
 		disks.append(f"/dev/{node['name']}")
 	return sorted(disks)
@@ -258,7 +284,9 @@ class PoolBacking:
 		persisted = self._persisted_devices()
 		if persisted:
 			return persisted
-		return discover_pool_disks(run("lsblk", "-J", "-b", "-o", "NAME,TYPE,MOUNTPOINT,FSTYPE,PKNAME"))
+		return discover_pool_disks(
+			run("lsblk", "-J", "-b", "-o", "NAME,TYPE,MOUNTPOINT,FSTYPE,PKNAME,SIZE,RM")
+		)
 
 	def _persist_devices(self, devices: list[str]) -> None:
 		install_directory(self.pool_directory, mode="0700")
