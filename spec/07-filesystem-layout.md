@@ -137,15 +137,45 @@ has none). The base image is itself a read-only thin LV imported at sync.
 The PV under the pool depends on the host. On a stock droplet (one disk,
 partitioned + mounted as root) there is no spare device, so the PV is a sparse
 loopback file (`pool/atlas-pool.img`) on the root disk. On a bare-metal box with
-real NVMe (Scaleway Elastic Metal — the OS lives on one disk, the NVMe drives are
-free) the PV is **the NVMe device(s) themselves**, and the pool spans them with
-no loopback indirection. `ThinPool`'s `PoolBacking` picks the backing: it honours
-an explicit `ATLAS_POOL_DEVICE`, else probes `lsblk` for raw, unpartitioned,
-unmounted whole disks (`discover_pool_disks`), else falls back to the loopback
-file — so the same `bootstrap-server.py` yields a real-device pool on bare metal
-and a loopback pool on a droplet with no per-provider branch. The chosen device
-set is recorded in `pool/pool-devices` so a reboot re-asserts the same backing.
-See [spec/08](./08-images.md) for the base-LV import and
+real NVMe (Scaleway Elastic Metal) the PV is a **real device** with no loopback
+indirection: either a free whole disk, or — the Scaleway default — the **RAID-1
+`data` array** (`/dev/md2`) the install lays down. `ThinPool`'s `PoolBacking`
+picks the backing: it honours an explicit `ATLAS_POOL_DEVICE`, else probes
+`lsblk` for a raw, unused block device — a whole unpartitioned disk OR a raw
+software-RAID array (`discover_pool_disks` recurses into the lsblk tree to reach
+md arrays, which are nested under their member partitions) — else falls back to
+the loopback file. So the same `bootstrap-server.py` yields a real-device pool on
+bare metal and a loopback pool on a droplet with no per-provider branch. The
+chosen device set is recorded in `pool/pool-devices` so a reboot re-asserts the
+same backing.
+
+### Scaleway disk partitioning
+
+Atlas drives the Scaleway Elastic Metal install with an explicit
+`partitioning_schema` rather than the vendor default (which lands boot/root on
+disk 0 and leaves the second disk inconsistent, so the pool backing is
+non-deterministic). The provider fetches the vendor's *default* schema for the
+chosen offer+OS (the source of truth for the box's real device names, which vary
+by hardware) and rewrites it into a symmetric, mirrored layout
+(`build_raid_partitioning_schema`). Both disks get an **identical, aligned**
+partition table — including a `uefi` partition on the second disk that is pure
+buffer (only disk 0's ESP is mounted), so the partition numbers line up across
+the mirror pair:
+
+| part | size  | RAID array | mount |
+|------|-------|------------|-------|
+| `uefi` | 512 MiB | — | `/boot/efi` (disk 0 only) |
+| `boot` | 1 GiB | `/dev/md0` (raid1) | `/boot` |
+| `root` | 64 GiB | `/dev/md1` (raid1) | `/` |
+| `data` | rest (`use_all_available_space`) | `/dev/md2` (raid1) | — (raw → LVM PV) |
+
+The `data` RAID (`md2`) is deliberately left out of the install's `filesystems`
+— no `mkfs`, no mountpoint — so it is a raw block device that `discover_pool_disks`
+picks up as the thin-pool PV. Boot/root arrays carry an ext4 filesystem + a
+mountpoint and are correctly skipped by the probe. A box that exposes fewer than
+two disks, or an offer/OS that does not support custom partitioning, falls back
+to the vendor default install (a free whole disk is then the pool backing as
+before). See [spec/08](./08-images.md) for the base-LV import and
 [spec/05](./05-virtual-machine-lifecycle.md) for clone/snapshot/resize/terminate
 mechanics.
 

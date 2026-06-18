@@ -121,6 +121,16 @@ class ScalewayClient:
 		"""List installable OS images in the configured zone."""
 		return self._request("GET", f"{self._bm()}/os?page_size=100").get("os", [])
 
+	def get_default_partitioning_schema(self, offer_id: str, os_id: str) -> dict:
+		"""The vendor's default `partitioning_schema` for an offer+OS pair, returned
+		as the bare `{disks, raids, filesystems, zfs}` object the `install` sub-object
+		takes. This is the authoritative source for the box's real device names (which
+		vary by hardware), so Atlas fetches it and mutates it rather than guessing the
+		layout (see `_build_raid_partitioning_schema`). Available on offers/OSs that
+		support custom partitioning; raises ScalewayError otherwise."""
+		path = f"{self._bm()}/partitioning-schemas/default?offer_id={offer_id}&os_id={os_id}"
+		return self._request("GET", path)
+
 	def create_server(
 		self,
 		*,

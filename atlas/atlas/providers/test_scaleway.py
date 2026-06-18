@@ -108,10 +108,21 @@ class TestScalewayProviderDiscover(IntegrationTestCase):
 		self.assertEqual(caps.images[0].provider_metadata["version"], "24.04 LTS (Noble Numbat)")
 
 
+_DEFAULT_SCHEMA_TWO_DISK = {
+	"disks": [
+		{"device": "/dev/nvme0n1", "partitions": [{"label": "uefi", "number": 1, "size": 536870912}]},
+		{"device": "/dev/nvme1n1", "partitions": []},
+	],
+	"raids": [],
+	"filesystems": [],
+}
+
+
 class TestScalewayProviderProvision(IntegrationTestCase):
 	def test_provision_assembles_install_and_returns_partial(self) -> None:
 		provider = _build_provider()
 		provider.client.create_server.return_value = {"id": "srv-uuid", "status": "delivering"}
+		provider.client.get_default_partitioning_schema.return_value = _DEFAULT_SCHEMA_TWO_DISK
 		# No v6 flexible IP yet → provision allocates + attaches one.
 		provider.client.list_flexible_ips.return_value = []
 		provider.client.create_flexible_ip.return_value = {
@@ -139,6 +150,11 @@ class TestScalewayProviderProvision(IntegrationTestCase):
 		self.assertEqual(kwargs["install"]["os_id"], "os-uuid-1")
 		self.assertEqual(kwargs["install"]["hostname"], "atlas-srv-1")
 		self.assertEqual(kwargs["install"]["ssh_key_ids"], ["ssh-key-uuid"])
+		# The RAID partitioning schema is built from the vendor default's device
+		# names and passed inline with the install.
+		schema = kwargs["install"]["partitioning_schema"]
+		self.assertEqual([d["device"] for d in schema["disks"]], ["/dev/nvme0n1", "/dev/nvme1n1"])
+		self.assertEqual([r["name"] for r in schema["raids"]], ["/dev/md0", "/dev/md1", "/dev/md2"])
 		# No cloud_init by default — Atlas bootstraps over SSH.
 		self.assertIsNone(kwargs["user_data"])
 		self.assertEqual(result.provider_resource_id, "srv-uuid")
@@ -154,6 +170,7 @@ class TestScalewayProviderProvision(IntegrationTestCase):
 		stack a second — reuse it."""
 		provider = _build_provider()
 		provider.client.create_server.return_value = {"id": "srv-uuid", "status": "delivering"}
+		provider.client.get_default_partitioning_schema.return_value = _DEFAULT_SCHEMA_TWO_DISK
 		provider.client.list_flexible_ips.return_value = [
 			{"id": "fip-v6-existing", "ip_address": "2001:bc8:ffff:9::/64", "server_id": "srv-uuid"}
 		]
@@ -173,6 +190,7 @@ class TestScalewayProviderProvision(IntegrationTestCase):
 	def test_provision_registers_ssh_key_when_only_body_given(self) -> None:
 		provider = _build_provider()
 		provider.client.create_server.return_value = {"id": "srv-uuid", "status": "delivering"}
+		provider.client.get_default_partitioning_schema.return_value = _DEFAULT_SCHEMA_TWO_DISK
 		provider.client.register_ssh_key.return_value = {"id": "new-key-uuid"}
 		provider.client.list_flexible_ips.return_value = []
 		provider.client.create_flexible_ip.return_value = {
@@ -347,6 +365,84 @@ class TestScalewayProviderReservedIp(IntegrationTestCase):
 		provider.client.delete_server.assert_called_once_with("srv-uuid")
 
 
+class TestBuildRaidPartitioningSchema(IntegrationTestCase):
+	"""The pure RAID-1 schema builder — device list in, schema dict out."""
+
+	def test_builds_symmetric_aligned_raid1_layout(self) -> None:
+		from atlas.atlas.providers.scaleway import build_raid_partitioning_schema
+
+		schema = build_raid_partitioning_schema(["/dev/nvme0n1", "/dev/nvme1n1"])
+		# Both disks get the IDENTICAL 4-partition table so numbers align — incl.
+		# the buffer uefi on disk 1 (only disk 0's ESP is mounted).
+		labels = [[p["label"] for p in d["partitions"]] for d in schema["disks"]]
+		self.assertEqual(labels, [["uefi", "boot", "root", "data"], ["uefi", "boot", "root", "data"]])
+		# data uses all remaining space on both disks; root is the fixed 64 GiB.
+		for disk in schema["disks"]:
+			data = disk["partitions"][3]
+			self.assertTrue(data["use_all_available_space"])
+			self.assertNotIn("size", data)
+			self.assertEqual(disk["partitions"][2]["size"], 64 * 1024 * 1024 * 1024)
+
+	def test_raid1_arrays_mirror_matching_partition_numbers(self) -> None:
+		from atlas.atlas.providers.scaleway import build_raid_partitioning_schema
+
+		schema = build_raid_partitioning_schema(["/dev/nvme0n1", "/dev/nvme1n1"])
+		raids = {r["name"]: r for r in schema["raids"]}
+		self.assertEqual(set(raids), {"/dev/md0", "/dev/md1", "/dev/md2"})
+		for raid in raids.values():
+			self.assertEqual(raid["level"], "raid_level_1")
+		# md0=boot(p2), md1=root(p3), md2=data(p4) — each across both disks.
+		self.assertEqual(raids["/dev/md0"]["devices"], ["/dev/nvme0n1p2", "/dev/nvme1n1p2"])
+		self.assertEqual(raids["/dev/md1"]["devices"], ["/dev/nvme0n1p3", "/dev/nvme1n1p3"])
+		self.assertEqual(raids["/dev/md2"]["devices"], ["/dev/nvme0n1p4", "/dev/nvme1n1p4"])
+
+	def test_data_raid_is_left_raw_for_the_lvm_pool(self) -> None:
+		from atlas.atlas.providers.scaleway import build_raid_partitioning_schema
+
+		schema = build_raid_partitioning_schema(["/dev/nvme0n1", "/dev/nvme1n1"])
+		# ESP on disk 0, ext4 on md0 (/boot) + md1 (/) — but md2 (data) is NOT
+		# formatted: it is left raw so ThinPool consumes it as the PV.
+		mounts = {f["device"]: f["mountpoint"] for f in schema["filesystems"]}
+		self.assertEqual(mounts["/dev/nvme0n1p1"], "/boot/efi")
+		self.assertEqual(mounts["/dev/md0"], "/boot")
+		self.assertEqual(mounts["/dev/md1"], "/")
+		self.assertNotIn("/dev/md2", mounts)
+
+	def test_sd_style_device_names_have_no_p_separator(self) -> None:
+		from atlas.atlas.providers.scaleway import build_raid_partitioning_schema
+
+		# sd/vd drives partition as /dev/sda1 (no `p`); nvme as /dev/nvme0n1p1.
+		schema = build_raid_partitioning_schema(["/dev/sda", "/dev/sdb"])
+		self.assertEqual(schema["raids"][0]["devices"], ["/dev/sda2", "/dev/sdb2"])
+		self.assertEqual(schema["filesystems"][0]["device"], "/dev/sda1")
+
+	def test_only_first_two_disks_are_mirrored(self) -> None:
+		from atlas.atlas.providers.scaleway import build_raid_partitioning_schema
+
+		schema = build_raid_partitioning_schema(["/dev/nvme0n1", "/dev/nvme1n1", "/dev/nvme2n1"])
+		self.assertEqual([d["device"] for d in schema["disks"]], ["/dev/nvme0n1", "/dev/nvme1n1"])
+
+
+class TestScalewayPartitioningSchemaFallback(IntegrationTestCase):
+	"""_build_partitioning_schema degrades to the vendor default (None) rather than
+	failing the provision when custom partitioning isn't possible."""
+
+	def test_returns_none_when_endpoint_unavailable(self) -> None:
+		from atlas.atlas.scaleway import ScalewayError
+
+		provider = _build_provider()
+		provider.client.get_default_partitioning_schema.side_effect = ScalewayError("404 not found")
+		self.assertIsNone(provider._build_partitioning_schema("offer", "os"))
+
+	def test_returns_none_with_single_disk_offer(self) -> None:
+		provider = _build_provider()
+		provider.client.get_default_partitioning_schema.return_value = {
+			"disks": [{"device": "/dev/sda", "partitions": []}],
+		}
+		# RAID-1 needs a mirror pair — a one-disk box falls back to the default.
+		self.assertIsNone(provider._build_partitioning_schema("offer", "os"))
+
+
 class TestScalewayClientMapping(IntegrationTestCase):
 	"""Pure mapping helpers — no HTTP, no provider."""
 
@@ -397,6 +493,20 @@ class TestScalewayClientHttp(IntegrationTestCase):
 		with patch.object(client, "_raw_request", return_value=self._response(200, api_payload)):
 			created = client.register_ssh_key(name="atlas-x", public_key="ssh-ed25519 AAAA x", project_id="p")
 		self.assertEqual(created["id"], "key-uuid-123")
+
+	def test_get_default_partitioning_schema_passes_offer_and_os(self) -> None:
+		"""The default-schema call is GET /partitioning-schemas/default with the
+		offer_id + os_id as query params, returning the bare schema object."""
+		client = self._client()
+		payload = {"disks": [{"device": "/dev/nvme0n1"}], "raids": [], "filesystems": []}
+		with patch.object(client, "_raw_request", return_value=self._response(200, payload)) as raw:
+			schema = client.get_default_partitioning_schema("offer-uuid", "os-uuid")
+		method, path = raw.call_args.args[0], raw.call_args.args[1]
+		self.assertEqual(method, "GET")
+		self.assertIn("/partitioning-schemas/default", path)
+		self.assertIn("offer_id=offer-uuid", path)
+		self.assertIn("os_id=os-uuid", path)
+		self.assertEqual(schema["disks"][0]["device"], "/dev/nvme0n1")
 
 	def test_register_ssh_key_unwraps_legacy_envelope(self) -> None:
 		"""If a future/legacy response DOES wrap the key in `{"ssh_key": ...}`, still
