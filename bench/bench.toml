@@ -1,136 +1,132 @@
 # Golden bench image config (spec/08-images.md § golden bench image). build.sh
 # drops this over bench-cli's generated bench.toml so the baked image pins the
-# Frappe branch, the MariaDB credentials, and the production process manager —
-# not bench-cli's moving template. After `bench init`, build.sh installs ERPNext,
-# bakes a site under the fixed name `site.local`, runs `bench setup production`,
-# and leaves the stack RUNNING so a snapshot-booted clone serves immediately.
-# deploy-site.py renames the baked site to the per-VM FQDN at deploy time.
+# Frappe branch and the production shape — not bench-cli's moving template.
 #
-# Schema tracks the current bench-cli (pinned in build.sh). Notable points vs the
-# bench-cli README defaults:
-#   * [redis] takes cache_port + queue_port ONLY — there is no socketio_port here
-#     (socket.io's port is [bench].socketio_port, default 9000) and no single
-#     `port`. An old `socketio_port` under [redis] is silently ignored.
-#   * Workers are an array-of-tables ([[workers]] with queues + count), NOT a
-#     [workers] table. The legacy `default/short/long` table form is silently
-#     ignored (you'd get one default group), so it is spelled out below.
-#   * ZFS is OPT-IN now (the optional-zfs merge): `bench init` sets up a pool only
-#     when [volume].enabled is true. We ENABLE it (operator preference) on a file
-#     vdev — the single-disk build VM has no spare block device. See [volume] below
-#     and build.sh's §1 DKMS module build + §7 boot ordering.
+# This is the PROVEN config (llm/references/bench-setup.md) with the Atlas pins.
+# The whole production stack — MariaDB, Redis, nginx, supervisor-equivalent — is
+# stood up and MANAGED by `bench init` + `bench start` because
+# `process_manager = "systemd"`: bench-cli installs `systemctl --user` units,
+# `loginctl enable-linger`s the bench user, and enables the bench target, so a
+# snapshot-booted clone comes back up serving with NO hand-rolled boot unit.
+# That is why build.sh is now ~the proven recipe and nothing more.
 #
-# MariaDB root_password: baked, fixed, and SHARED across every VM from this
-# image — and that is correct here. Each VM is single-tenant: its MariaDB binds
-# localhost only (no public port; the south hop reaches Frappe's :80, not 3306),
-# so the db secret never crosses a VM boundary. bench-cli sets this password on a
-# fresh install itself (ALTER USER … IDENTIFIED BY) and creates the site over the
-# unix socket, so build.sh no longer touches MariaDB auth. The per-SITE secret
-# that DOES vary — the Frappe Administrator password — is baked as a shared
-# throwaway too and rotated by the owner after first login (spec/14-self-serve.md);
-# it is not reset per VM (that cost a CPU-throttled `bench frappe` boot).
+# MariaDB is a DEDICATED per-bench instance (`instance = "atlas"`): bench-cli
+# provisions `mariadb@atlas` with its own socket + datadir and `systemctl enable
+# --now`s it, so it auto-starts at boot as an ordinary system service. We never
+# touch MariaDB auth ourselves — bench-cli secures it (ALTER USER over the
+# instance socket). The root password is baked, fixed, and SHARED across every VM
+# from this image, which is correct: each VM is single-tenant and MariaDB binds
+# 127.0.0.1 only (the south hop reaches Frappe's :80, never 3306), so the secret
+# never crosses a VM boundary.
 
 [bench]
 name = "atlas"
 python = "3.14"
+http_port = 8000
+socketio_port = 9000
+socketio_backend = "python"
 
 [[apps]]
 name = "frappe"
 repo = "https://github.com/frappe/frappe"
 branch = "version-16"
 
+# Dedicated MariaDB instance — bench-cli runs + manages `mariadb@atlas` (its own
+# socket, datadir, and enabled-at-boot systemd service). We don't configure or
+# worry about MariaDB at all.
 [mariadb]
 host = "localhost"
 port = 3306
-root_password = "atlas"
+root_password = "mariadb-root"
+admin_user = "root"
+socket_path = "/run/mysqld/mysqld-atlas.sock"
+instance = "atlas"
+data_dir = "/var/lib/mysql-atlas"
 
-# Redis: bench-cli's current schema reads cache_port + queue_port only (the
-# socket.io port is [bench].socketio_port, default 9000 — not a Redis key). Kept
-# off the default 6379 so nothing collides with a stray system Redis.
+# Redis: bench-cli's schema reads cache_port + queue_port only (the socket.io
+# port is [bench].socketio_port). Kept off the default 6379 so nothing collides
+# with a stray system Redis.
 [redis]
 cache_port = 13000
 queue_port = 11000
 
-# Workers are an array-of-tables: one [[workers]] block per group, each with its
-# queues + a process count. (The old `[workers]` table with default/short/long was
-# dropped in bench-cli — that form is now silently ignored, yielding a single
-# default group.)
-#
-# Each block MUST list a SINGLE queue. bench-cli's supervisor generator names a
-# worker program `atlas-worker-<queues-joined-by-comma>-<n>` and then splices that
-# name into the group's comma-separated `programs=` line — so a multi-queue block
-# (e.g. queues = ["default","short","long"]) produces `[program:atlas-worker-
-# default,short,long-1]`, whose commas make supervisord read it as three bogus
-# group members and abort the whole config ("names unknown program ...
-# atlas-worker-default"), so `bench start` never brings up redis/gunicorn. One
-# queue per block keeps every program name comma-free. Two default workers, one
-# each for short and long.
+# A single worker group. Under process_manager = "systemd" bench-cli runs ONE
+# `worker-pool --queue default,short,long` process (no per-queue program names),
+# so the multi-queue block is fine here — the comma-in-program-name problem that
+# needs one-queue-per-block is supervisor-only.
 [[workers]]
-queues = ["default"]
-count = 2
-
-[[workers]]
-queues = ["short"]
+queues = ["default", "short", "long"]
 count = 1
 
-[[workers]]
-queues = ["long"]
-count = 1
-
-# Production serving: bench-cli's OWN nginx fronts every site by Host header on
-# :80 (the port the EDGE proxy's south hop dials — spec/12-proxy.md), and a
-# supervisor-managed process group runs gunicorn/socketio/workers.
-#
-# `[production].nginx = true` makes `bench init` ALSO run the production bring-up
-# (process manager + nginx config), so the golden carries it from the start;
-# build.sh re-runs `bench setup production` after the site exists so the site
-# vhost is generated. process_manager = "supervisor" is load-bearing:
-# deploy-site.py and warm.sh drive the running stack with `supervisorctl`. TLS
-# terminates at the edge proxy, NOT here — letsencrypt.email is left unset so
-# `setup production` never attempts certbot (spec/14-self-serve.md).
+# Production serving managed by systemd. `[production].nginx = true` makes
+# `bench init` ALSO run the production bring-up (process manager + nginx +
+# dns_multitenant); `process_manager = "systemd"` makes that bring-up a set of
+# lingering `systemctl --user` units that survive reboot — the source of the
+# golden's "boots serving" property. TLS terminates at the edge proxy, so
+# [letsencrypt].email is left unset and certbot is never attempted.
 [production]
-process_manager = "supervisor"
+process_manager = "systemd"
 nginx = true
+use_companion_manager = false
 
 [nginx]
 http_port = 80
 https_port = 443
+config_dir = "/etc/nginx/conf.d"
+worker_processes = "auto"
+client_max_body_size = "50m"
 
-# ZFS is OPT-IN in the current bench-cli (the optional-zfs merge): `bench init`
-# sets up a pool only when [volume].enabled is true (init.py gates on `is_linux()
-# and volume.enabled`). We ENABLE it. The build VM is a single-disk droplet with
-# no spare block device, so the pool is a preallocated FILE vdev on the root
-# filesystem (`backing = "image"`) at /var/lib/bench-zfs/bench-pool.img — NOT a
-# dedicated disk and NOT "auto" (auto sizes the image at 75% of free space and
-# overwrites the quotas below). At init the benches dataset mounts at
-# /root/bench-cli/benches and the mariadb dataset at /var/lib/mysql, so BOTH the
-# bench code and the MariaDB data live on ZFS — build.sh orders MariaDB + the
-# bench supervisord After= the zfs mount at boot. The Firecracker vmlinux ships no
-# ZFS module, so build.sh §1 DKMS-builds zfs.ko against the running kernel first.
-#
-# Sizing is deliberately conservative for the 12 GB build disk: a 7 GB image
-# leaves the root FS headroom for the OS + apt cache. The split is weighted toward
-# `benches`, which holds the heavy payload — frappe + erpnext + node_modules + the
-# baked site (~3.5-4.5 GB) — so it gets a 6 GB quota; the `mariadb` dataset holds
-# only one baked ERPNext schema (a few hundred MB), so 1 GB is ample. Each quota
-# fits inside the 7 GB pool individually (the validator checks them against the
-# backing one at a time, not summed), with small reservations under each quota.
-[volume]
+[gunicorn]
+workers = 1
+threads = 4
+timeout = 120
+worker_class = "sync"
+malloc_arena_max = 2
+max_requests = 0
+max_requests_jitter = 0
+
+[letsencrypt]
+email = ""
+webroot_path = "/var/www/letsencrypt"
+
+# The admin app (bench-cli's management console). Under systemd it is a
+# socket-activated gunicorn on 127.0.0.1:(port+1). When [admin].domain is set,
+# `bench setup nginx` emits an `_admin.conf` vhost (`server_name <domain>`)
+# proxying to it — that is how MODE 1 ("domain maps to the admin URL") works.
+# build.sh leaves `domain` UNSET at bake time; deploy-site.py sets it per clone
+# in admin mode. The password is a shared baked throwaway, rotated after first
+# login.
+[admin]
+port = 8002
+timeout = 180
 enabled = true
+password = "admin-password"
+domain = ""
+
+# ZFS volume: bench code + MariaDB datadir on ZFS datasets, on a preallocated
+# file vdev (the build VM is a single disk with no spare block device). `bench
+# init` creates the pool + datasets and mounts them; the only ZFS thing build.sh
+# does itself is DKMS-build zfs.ko (the Firecracker vmlinux ships no ZFS module)
+# — everything else is bench-cli's job.
+#
+# No `enabled` key: at the pinned bench-cli, `_parse_volume` defaults `enabled` to
+# TRUE when a [volume] table is present (bench_config.py), so the table's mere
+# presence turns ZFS on — exactly as bench-setup.md relies on. (Cold-boot ZFS
+# auto-import/mount-ordering is NOT wired here yet — to be verified on a host.)
+[volume]
 pool = "bench-pool"
 backing = "image"
 
 [volume.image]
-size = "7G"
+size = "15G"
+path = "/var/lib/bench-zfs/bench-pool.img"
 
 [volume.benches]
-quota = "6G"
-reservation = "512M"
+reservation = "1G"
+quota = "9G"
+data_dir = "/home/bench"
 
 [volume.mariadb]
-quota = "1G"
-reservation = "256M"
-
-[admin]
-port = 8002
-enabled = false
-password = "atlas-admin"
+reservation = "1G"
+quota = "6G"
+data_dir = "/var/lib/mysql"
