@@ -1,0 +1,124 @@
+{
+ "actions": [],
+ "creation": "2026-06-18 00:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 0,
+ "engine": "InnoDB",
+ "field_order": [
+  "section_break_connection",
+  "url",
+  "api_key",
+  "api_secret",
+  "column_break_connection",
+  "region",
+  "enabled",
+  "section_break_registration",
+  "atlas_id",
+  "registered_on",
+  "column_break_registration",
+  "last_sync",
+  "last_event_status"
+ ],
+ "fields": [
+  {
+   "fieldname": "section_break_connection",
+   "fieldtype": "Section Break",
+   "label": "Connection"
+  },
+  {
+   "fieldname": "url",
+   "fieldtype": "Data",
+   "label": "URL",
+   "reqd": 1,
+   "description": "Base URL of the Central instance, e.g. https://central.frappe.cloud"
+  },
+  {
+   "fieldname": "api_key",
+   "fieldtype": "Data",
+   "label": "API Key",
+   "reqd": 1,
+   "description": "Public key id issued by Central."
+  },
+  {
+   "fieldname": "api_secret",
+   "fieldtype": "Password",
+   "label": "API Secret",
+   "reqd": 1,
+   "set_only_once": 1,
+   "description": "Secret paired with the API key. Rotate by clearing via db.set_value, then re-saving."
+  },
+  {
+   "fieldname": "column_break_connection",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "region",
+   "fieldtype": "Data",
+   "label": "Region",
+   "description": "This Atlas's region, announced at Register. Defaults from site config atlas_do_region if left blank."
+  },
+  {
+   "default": "0",
+   "fieldname": "enabled",
+   "fieldtype": "Check",
+   "label": "Enabled",
+   "description": "Master switch. When off, VM lifecycle events are not reported to Central."
+  },
+  {
+   "fieldname": "section_break_registration",
+   "fieldtype": "Section Break",
+   "label": "Registration"
+  },
+  {
+   "fieldname": "atlas_id",
+   "fieldtype": "Data",
+   "label": "Atlas ID",
+   "read_only": 1,
+   "description": "Central's id for this Atlas. Filled by Register."
+  },
+  {
+   "fieldname": "registered_on",
+   "fieldtype": "Datetime",
+   "label": "Registered On",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_registration",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "last_sync",
+   "fieldtype": "Datetime",
+   "label": "Last Sync",
+   "read_only": 1,
+   "description": "Last successful Fetch Sizes / Fetch Images."
+  },
+  {
+   "fieldname": "last_event_status",
+   "fieldtype": "Small Text",
+   "label": "Last Event Status",
+   "read_only": 1,
+   "description": "Outcome of the most recent event delivery."
+  }
+ ],
+ "issingle": 1,
+ "links": [],
+ "modified": "2026-06-18 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Atlas",
+ "name": "Central Settings",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "read": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}

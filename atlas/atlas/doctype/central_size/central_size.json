@@ -1,0 +1,131 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "field:slug",
+ "creation": "2026-06-18 00:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 0,
+ "engine": "InnoDB",
+ "field_order": [
+  "slug",
+  "title",
+  "column_break_header",
+  "enabled",
+  "monthly_cost_usd",
+  "section_break_resources",
+  "vcpus",
+  "cpu_max_cores",
+  "column_break_resources",
+  "memory_megabytes",
+  "disk_gigabytes",
+  "section_break_metadata",
+  "central_metadata"
+ ],
+ "fields": [
+  {
+   "fieldname": "slug",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Slug",
+   "reqd": 1,
+   "unique": 1,
+   "set_only_once": 1,
+   "description": "Central's identifier for this size, e.g. shared-1x."
+  },
+  {
+   "fieldname": "title",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Title"
+  },
+  {
+   "fieldname": "column_break_header",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "1",
+   "fieldname": "enabled",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Enabled"
+  },
+  {
+   "fieldname": "monthly_cost_usd",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Monthly Cost (USD)"
+  },
+  {
+   "fieldname": "section_break_resources",
+   "fieldtype": "Section Break",
+   "label": "Resources"
+  },
+  {
+   "fieldname": "vcpus",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "vCPUs"
+  },
+  {
+   "fieldname": "cpu_max_cores",
+   "fieldtype": "Float",
+   "in_list_view": 1,
+   "label": "CPU Max Cores",
+   "precision": "4",
+   "description": "cgroup CPU bandwidth cap, in whole-core units (fractional for shared tiers)."
+  },
+  {
+   "fieldname": "column_break_resources",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "memory_megabytes",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Memory (MB)"
+  },
+  {
+   "fieldname": "disk_gigabytes",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Disk (GB)"
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "section_break_metadata",
+   "fieldtype": "Section Break",
+   "label": "Central metadata"
+  },
+  {
+   "fieldname": "central_metadata",
+   "fieldtype": "Code",
+   "label": "Central Metadata",
+   "options": "JSON",
+   "read_only": 1
+  }
+ ],
+ "links": [],
+ "modified": "2026-06-18 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Atlas",
+ "name": "Central Size",
+ "naming_rule": "By fieldname",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "export": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "sort_field": "name",
+ "sort_order": "ASC",
+ "states": [],
+ "track_changes": 1
+}

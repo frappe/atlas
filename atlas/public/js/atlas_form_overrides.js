@@ -56,19 +56,13 @@ frappe.atlas.add_success = function (frm, label, fn) {
 	}
 };
 
-frappe.atlas.confirm_cost = function ({title, body_html, proceed_label, proceed}) {
+frappe.atlas.confirm_cost = function ({ title, body_html, proceed_label, proceed }) {
 	// Cost tier: not destructive, but spends real money / disk / bandwidth
 	// (provision a billable server, copy a multi-GB rootfs, re-lay a disk).
 	// Thin wrapper over `frappe.warn` so the orange Provision-style indicator
 	// and copy live behind one signature the spec documents. Latency / size
 	// hints live in `body_html`, supplied by the caller.
-	frappe.warn(
-		title,
-		body_html || "",
-		proceed,
-		proceed_label || __("Proceed"),
-		true,
-	);
+	frappe.warn(title, body_html || "", proceed, proceed_label || __("Proceed"), true);
 };
 
 frappe.atlas.confirm_destructive = function ({
@@ -82,13 +76,15 @@ frappe.atlas.confirm_destructive = function ({
 	const dialog = new frappe.ui.Dialog({
 		title: title,
 		fields: [
-			{fieldname: "body", fieldtype: "HTML", options: body_html},
+			{ fieldname: "body", fieldtype: "HTML", options: body_html },
 			{
 				fieldname: "confirmation",
 				label: match_label || __("Type to confirm"),
 				fieldtype: "Data",
 				reqd: 1,
-				description: __("Type {0} to enable the button below.", [`<b>${frappe.utils.escape_html(match_string)}</b>`]),
+				description: __("Type {0} to enable the button below.", [
+					`<b>${frappe.utils.escape_html(match_string)}</b>`,
+				]),
 			},
 		],
 		primary_action_label: proceed_label || __("Proceed"),
@@ -114,7 +110,7 @@ frappe.atlas.confirm_destructive = function ({
 	return dialog;
 };
 
-frappe.atlas.confirm_archive = function (frm, {match, match_label, alert_message, body_html}) {
+frappe.atlas.confirm_archive = function (frm, { match, match_label, alert_message, body_html }) {
 	frappe.atlas.confirm_destructive({
 		title: __("Archive {0}?", [match]),
 		body_html: body_html || "",
@@ -134,13 +130,18 @@ frappe.atlas.confirm_archive = function (frm, {match, match_label, alert_message
 };
 
 frappe.atlas.task_started = function (frm, label, task_name) {
-	frappe.show_alert({
-		message: __("{0} Task: {1}", [
-			label,
-			`<a href="/app/task/${encodeURIComponent(task_name)}">${frappe.utils.escape_html(task_name)}</a>`,
-		]),
-		indicator: "blue",
-	}, 6);
+	frappe.show_alert(
+		{
+			message: __("{0} Task: {1}", [
+				label,
+				`<a href="/app/task/${encodeURIComponent(task_name)}">${frappe.utils.escape_html(
+					task_name
+				)}</a>`,
+			]),
+			indicator: "blue",
+		},
+		6
+	);
 	frappe.set_route("Form", "Task", task_name);
 };
 
@@ -155,19 +156,21 @@ frappe.atlas.strip_desk_chrome = function (frm) {
 		// markup across versions — hide every known shape so the Comments
 		// section doesn't leak below the form.
 		$body
-			.find([
-				".form-timeline",
-				".new-timeline",
-				".timeline",
-				".comment-input-container",
-				".comment-input-wrapper",
-				".comment-input-placeholder",
-				".comment-box",
-				".comment-box-container",
-				".form-comments",
-				".comments",
-				".timeline-content",
-			].join(", "))
+			.find(
+				[
+					".form-timeline",
+					".new-timeline",
+					".timeline",
+					".comment-input-container",
+					".comment-input-wrapper",
+					".comment-input-placeholder",
+					".comment-box",
+					".comment-box-container",
+					".form-comments",
+					".comments",
+					".timeline-content",
+				].join(", ")
+			)
 			.hide();
 	}
 };
@@ -191,6 +194,9 @@ for (const doctype of [
 	"Lets Encrypt Settings",
 	"Root Domain",
 	"TLS Certificate",
+	"Central Settings",
+	"Central Size",
+	"Central Image",
 ]) {
 	frappe.ui.form.on(doctype, {
 		onload(frm) {

@@ -1,0 +1,112 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "field:image_name",
+ "creation": "2026-06-18 00:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 0,
+ "engine": "InnoDB",
+ "field_order": [
+  "image_name",
+  "title",
+  "series",
+  "column_break_header",
+  "enabled",
+  "bake_status",
+  "local_image",
+  "section_break_metadata",
+  "central_metadata"
+ ],
+ "fields": [
+  {
+   "fieldname": "image_name",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Image Name",
+   "reqd": 1,
+   "unique": 1,
+   "set_only_once": 1,
+   "description": "Central's identifier for the expected bench image, e.g. bench-v15."
+  },
+  {
+   "fieldname": "title",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Title"
+  },
+  {
+   "fieldname": "series",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Series",
+   "description": "v15 / v16 / develop."
+  },
+  {
+   "fieldname": "column_break_header",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "1",
+   "fieldname": "enabled",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Enabled"
+  },
+  {
+   "fieldname": "bake_status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Bake Status",
+   "options": "Expected\nBaked\nStale",
+   "read_only": 1,
+   "description": "Expectation vs reality: Baked when a matching active Virtual Machine Image exists; Stale when one exists but is inactive; otherwise Expected."
+  },
+  {
+   "fieldname": "local_image",
+   "fieldtype": "Link",
+   "label": "Local Image",
+   "options": "Virtual Machine Image",
+   "read_only": 1,
+   "description": "The baked Virtual Machine Image matching image_name, if any."
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "section_break_metadata",
+   "fieldtype": "Section Break",
+   "label": "Central metadata"
+  },
+  {
+   "fieldname": "central_metadata",
+   "fieldtype": "Code",
+   "label": "Central Metadata",
+   "options": "JSON",
+   "read_only": 1
+  }
+ ],
+ "links": [],
+ "modified": "2026-06-18 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Atlas",
+ "name": "Central Image",
+ "naming_rule": "By fieldname",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "export": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "sort_field": "name",
+ "sort_order": "ASC",
+ "states": [],
+ "track_changes": 1
+}

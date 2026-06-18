@@ -118,6 +118,7 @@ keep it the source of truth.
 13. [TLS & domain layer](./13-tls.md)
 14. [Self-serve sites](./14-self-serve.md)
 15. [Image builder](./15-image-builder.md)
+16. [Central — the global control plane](./16-central.md)
 
 ## First run on a fresh site
 

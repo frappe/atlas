@@ -61,6 +61,9 @@ doctype_js = {
 	"Lets Encrypt Settings": "public/js/atlas_form_overrides.js",
 	"Root Domain": "public/js/atlas_form_overrides.js",
 	"TLS Certificate": "public/js/atlas_form_overrides.js",
+	"Central Settings": "public/js/atlas_form_overrides.js",
+	"Central Size": "public/js/atlas_form_overrides.js",
+	"Central Image": "public/js/atlas_form_overrides.js",
 }
 
 # Note: redirecting `/desk` → `/app/atlas` is non-trivial (Frappe hardcodes
@@ -189,15 +192,24 @@ has_permission = {
 
 # Document Events
 # ---------------
-# Hook on document methods and events
+# Report VM lifecycle events to Central (spec/16-central.md § Event reporting).
+# Handlers enqueue a background POST gated on Central Settings.enabled, so a site
+# without Central configured pays nothing and a delivery failure never blocks the
+# operation.
 
-# doc_events = {
-# 	"*": {
-# 		"on_update": "method",
-# 		"on_cancel": "method",
-# 		"on_trash": "method"
-# 	}
-# }
+doc_events = {
+	"Virtual Machine": {
+		"after_insert": "atlas.atlas.central_report.on_vm_after_insert",
+		"on_update": "atlas.atlas.central_report.on_vm_update",
+		"on_trash": "atlas.atlas.central_report.on_vm_trash",
+	},
+	"Virtual Machine Snapshot": {
+		"on_update": "atlas.atlas.central_report.on_snapshot_update",
+	},
+	"Server": {
+		"on_update": "atlas.atlas.central_report.on_server_update",
+	},
+}
 
 # Scheduled Tasks
 # ---------------
