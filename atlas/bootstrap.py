@@ -15,12 +15,15 @@ both enqueue background jobs that this script waits on.
 
 Site config keys (set with `bench --site <site> set-config -p <key> <value>`):
 
-    atlas_provider_type           "DigitalOcean" or "Self-Managed"
+    atlas_provider_type           "DigitalOcean", "Scaleway", or "Self-Managed"
     atlas_ssh_private_key_path    absolute path to the SSH private key on disk
                                   (0600, readable by the Frappe user)
-    atlas_ssh_key_id              vendor's handle for the uploaded SSH key
-                                  (DigitalOcean only; required for DO — accepts
-                                  DO's numeric key id or its SHA-256 fingerprint).
+    atlas_ssh_key_id              vendor's handle for the uploaded SSH key.
+                                  DigitalOcean: required — accepts DO's numeric key
+                                  id or its SHA-256 fingerprint. Scaleway: optional —
+                                  the IAM SSH-key UUID; if unset the provider
+                                  registers atlas_ssh_public_key with IAM at
+                                  provision time. Self-Managed: unused.
     atlas_ssh_public_key          optional OpenSSH public key body. If omitted it
                                   is DERIVED from atlas_ssh_private_key_path
                                   (ssh-keygen -y) — self-serve needs it set on
@@ -35,6 +38,25 @@ DigitalOcean providers also need:
     atlas_do_default_size         vendor-native slug, e.g. "s-2vcpu-4gb-intel"
                                   (Atlas prefixes "DigitalOcean/" internally)
     atlas_do_default_image        vendor-native slug, e.g. "ubuntu-24-04-x64"
+
+Scaleway providers also need (Elastic Metal bare metal — discover() is
+load-bearing here: it is the only source of the per-zone offer_id / os_id UUIDs
+provision() resolves, so a Scaleway bootstrap fails loud if discover() fails,
+unlike DO's best-effort catalog refresh):
+
+    atlas_scw_secret_key          Scaleway IAM API key Secret Key (the
+                                  X-Auth-Token value — NOT the Access Key)
+    atlas_scw_project_id          Project UUID every resource is scoped to
+    atlas_scw_zone                one Elastic Metal zone, e.g. "fr-par-2"
+    atlas_scw_default_size        vendor-native offer name, case-sensitive,
+                                  e.g. "EM-A610R-NVME" (Atlas prefixes
+                                  "Scaleway/" internally)
+    atlas_scw_default_image       vendor-native OS slug, case-sensitive,
+                                  e.g. "Ubuntu_24.04" (Atlas prefixes
+                                  "Scaleway/" internally)
+    atlas_scw_organization_id     optional — filters the project lookup and
+                                  labels the authenticate result
+    atlas_scw_billing             optional — "hourly" (default) or "monthly"
 
 Self-Managed providers also need:
 
@@ -209,7 +231,7 @@ def run_compute(reuse_server: bool = True) -> str:
 		print(f"[bootstrap] reusing existing Active Server {server_name!r}")
 	else:
 		server_name = provision_server(provider)
-		wait_for_active_server(server_name)
+		wait_for_active_server(server_name, timeout_seconds=_active_timeout(provider))
 	ensure_image()
 	sync_image(server_name)
 	return server_name
@@ -294,21 +316,24 @@ def run_self_serve(force_bake: bool = False) -> None:
 
 
 def restore_credentials() -> None:
-	"""Re-write the four credential fields the unit suite clobbers, from site config.
+	"""Re-write the credential fields the unit suite clobbers, from site config.
 
 	The shared dev DB is also the test DB: a unit run leaves fake values in the
 	Singles (`set_atlas_settings`/`set_digitalocean_settings` write `dop_v1_fake`,
 	`atlas-test-ssh-key.pem`, `key-id-123`), so the next *real* provision/build/e2e
 	fails with a bogus token or an unusable key (memory: real-provision-traps #4).
 	This restores the real values from `common_site_config.json` —
-	`atlas_ssh_private_key_path`, `atlas_ssh_key_id`, optional `atlas_ssh_public_key`,
-	and the DO `atlas_do_token` — without `ensure_provider`'s catalog discover()
-	network call. Run it before any host turn:
+	`atlas_ssh_private_key_path`, optional `atlas_ssh_key_id` / `atlas_ssh_public_key`,
+	and the active provider's secret — without `ensure_provider`'s catalog
+	discover() network call. Which provider secret is restored is driven by
+	`atlas_provider_type` (DigitalOcean → `atlas_do_token`; Scaleway →
+	`atlas_scw_secret_key`; Self-Managed → none). Run it before any host turn:
 
 	    bench --site <site> execute atlas.bootstrap.restore_credentials
 
-	Idempotent; safe to re-run. Fails loud (`require_config`) if a key is missing,
-	since a half-restored credential set is worse than a clean error."""
+	Idempotent; safe to re-run. Fails loud (`require_config`) if a required key is
+	missing, since a half-restored credential set is worse than a clean error."""
+	provider_type = require_config("atlas_provider_type")
 	# Store the EXPANDED absolute path. Config often holds `~/.ssh/id_rsa`; the
 	# production reader (get_ssh_key_from_disk) expanduser()s it, but a stored raw
 	# `~` is a trap for any path that reads the field literally and a confusing
@@ -323,29 +348,42 @@ def restore_credentials() -> None:
 		key_path,
 		update_modified=False,
 	)
-	frappe.db.set_single_value(
-		"Atlas Settings",
-		"ssh_key_id",
-		require_config("atlas_ssh_key_id"),
-		update_modified=False,
-	)
+	# ssh_key_id is required for DO (its key handle) but optional for Scaleway (the
+	# provider self-registers the public key with IAM if unset) and unused for
+	# Self-Managed — so only require it for DO, restore it best-effort otherwise.
+	if provider_type == "DigitalOcean":
+		ssh_key_id = require_config("atlas_ssh_key_id")
+	else:
+		ssh_key_id = frappe.conf.get("atlas_ssh_key_id")
+	if ssh_key_id:
+		frappe.db.set_single_value("Atlas Settings", "ssh_key_id", ssh_key_id, update_modified=False)
 	public_key = _resolve_fleet_public_key()
 	if public_key:
 		frappe.db.set_single_value("Atlas Settings", "ssh_public_key", public_key, update_modified=False)
-	frappe.utils.password.set_encrypted_password(
-		"DigitalOcean Settings",
-		"DigitalOcean Settings",
-		require_config("atlas_do_token"),
-		"api_token",
-	)
+	if provider_type == "DigitalOcean":
+		frappe.utils.password.set_encrypted_password(
+			"DigitalOcean Settings",
+			"DigitalOcean Settings",
+			require_config("atlas_do_token"),
+			"api_token",
+		)
+	elif provider_type == "Scaleway":
+		frappe.utils.password.set_encrypted_password(
+			"Scaleway Settings",
+			"Scaleway Settings",
+			require_config("atlas_scw_secret_key"),
+			"secret_key",
+		)
 	frappe.db.commit()
-	print("[bootstrap] restored Atlas/DigitalOcean credentials from site config")
+	print(f"[bootstrap] restored Atlas/{provider_type} credentials from site config")
 
 
 def ensure_provider() -> "frappe.model.document.Document":
 	provider_type = require_config("atlas_provider_type")
-	if provider_type not in ("DigitalOcean", "Self-Managed"):
-		frappe.throw(f"atlas_provider_type must be DigitalOcean or Self-Managed, got {provider_type!r}")
+	if provider_type not in ("DigitalOcean", "Scaleway", "Self-Managed"):
+		frappe.throw(
+			f"atlas_provider_type must be DigitalOcean, Scaleway or Self-Managed, got {provider_type!r}"
+		)
 
 	# Ensure the Provider row exists, then write the Singles.
 	if not frappe.db.exists("Provider", PROVIDER_NAME):
@@ -420,8 +458,88 @@ def ensure_provider() -> "frappe.model.document.Document":
 		except Exception as exception:
 			print(f"[bootstrap] WARN: catalog discover() failed: {exception}")
 
+	elif provider_type == "Scaleway":
+		_seed_scaleway_settings()
+
 	frappe.db.commit()
 	return frappe.get_doc("Provider", PROVIDER_NAME)
+
+
+def _seed_scaleway_settings() -> None:
+	"""Seed `Scaleway Settings` + the catalog for a Scaleway (Elastic Metal)
+	bootstrap, mirroring the e2e `ensure_scaleway_provider` seed.
+
+	Unlike DO — whose `discover()` is best-effort gravy on top of the named
+	slugs — Scaleway's `discover()` is LOAD-BEARING: it is the only source of the
+	per-zone `offer_id` / `os_id` UUIDs that `provision()` reads back out of each
+	catalog row's `provider_metadata` (the create/install calls take UUIDs, not
+	slugs). So we discover BEFORE wiring the defaults, fail loud if it fails, and
+	then verify the named default size/image rows actually exist in the freshly
+	upserted catalog (a typo'd slug or wrong casing — e.g. EM-A610R-NVME vs
+	-NVMe — is an operator mistake worth surfacing now, not at provision time).
+
+	The IAM SSH key is uploaded at provision time, so unlike DO there is no
+	`ssh_key_id` to seed here: the provider registers `Atlas Settings.ssh_public_key`
+	with IAM if `ssh_key_id` is unset (ensure_provider derives the public key from
+	the private key path). An operator who already has a cached IAM key UUID can set
+	`atlas_ssh_key_id` to reuse it."""
+	import frappe.utils.password
+
+	zone = require_config("atlas_scw_zone")
+	project_id = require_config("atlas_scw_project_id")
+	size_slug = require_config("atlas_scw_default_size")
+	image_slug = require_config("atlas_scw_default_image")
+
+	frappe.db.set_single_value("Scaleway Settings", "zone", zone, update_modified=False)
+	frappe.db.set_single_value("Scaleway Settings", "project_id", project_id, update_modified=False)
+	organization_id = frappe.conf.get("atlas_scw_organization_id")
+	if organization_id:
+		frappe.db.set_single_value(
+			"Scaleway Settings", "organization_id", organization_id, update_modified=False
+		)
+	frappe.db.set_single_value(
+		"Scaleway Settings",
+		"billing",
+		frappe.conf.get("atlas_scw_billing") or "hourly",
+		update_modified=False,
+	)
+	frappe.utils.password.set_encrypted_password(
+		"Scaleway Settings", "Scaleway Settings", require_config("atlas_scw_secret_key"), "secret_key"
+	)
+	# default_size/default_image are reqd Links — set them only after discover()
+	# upserts the rows below, so the Link target exists when the Single saves.
+	if frappe.conf.get("atlas_ssh_key_id"):
+		frappe.db.set_single_value(
+			"Atlas Settings", "ssh_key_id", frappe.conf.get("atlas_ssh_key_id"), update_modified=False
+		)
+	frappe.db.commit()
+
+	# Discover the live per-zone catalog (the offer_id / os_id UUIDs). Load-bearing —
+	# let the exception propagate so a bad key/zone fails the bootstrap loudly here
+	# rather than at the first opaque provision().
+	from atlas.atlas.doctype.provider.provider import upsert_catalog
+	from atlas.atlas.providers.scaleway import ScalewayProvider
+
+	capabilities = ScalewayProvider().discover()
+	upsert_catalog("Scaleway", capabilities)
+	frappe.db.commit()
+
+	size_name = f"Scaleway/{size_slug}"
+	image_name = f"Scaleway/{image_slug}"
+	if not frappe.db.exists("Provider Size", size_name):
+		frappe.throw(
+			f"Provider Size {size_name!r} not in the discovered catalog — check atlas_scw_default_size "
+			f"against the live zone offers (casing matters, e.g. EM-A610R-NVME)."
+		)
+	if not frappe.db.exists("Provider Image", image_name):
+		frappe.throw(
+			f"Provider Image {image_name!r} not in the discovered catalog — check atlas_scw_default_image "
+			f"against the live zone OS list (casing matters, e.g. Ubuntu_24.04)."
+		)
+	frappe.db.set_single_value("Scaleway Settings", "default_size", size_name, update_modified=False)
+	frappe.db.set_single_value("Scaleway Settings", "default_image", image_name, update_modified=False)
+	frappe.db.commit()
+	print(f"[bootstrap] seeded Scaleway Settings (zone={zone}, size={size_name}, image={image_name})")
 
 
 def _ensure_provider_size(provider_type: str, slug: str) -> None:
@@ -460,9 +578,7 @@ def _ensure_provider_image(provider_type: str, slug: str) -> None:
 
 def provision_server(provider: "frappe.model.document.Document") -> str:
 	title = f"bootstrap-server-{int(time.time())}"
-	if provider.provider_type == "DigitalOcean":
-		server_name = provider.provision_server(title)
-	else:
+	if provider.provider_type == "Self-Managed":
 		server_name = provider.provision_server(
 			title,
 			ipv4_address=require_config("atlas_self_managed_ipv4"),
@@ -470,9 +586,32 @@ def provision_server(provider: "frappe.model.document.Document") -> str:
 			ipv6_prefix=require_config("atlas_self_managed_ipv6_prefix"),
 			ipv6_virtual_machine_range=require_config("atlas_self_managed_ipv6_vm_range"),
 		)
+	else:
+		# DigitalOcean + Scaleway: the vendor reads its own default size/image off
+		# its Settings Single, so the call needs only the title. (Scaleway's create
+		# is async — the Server lands Pending and the worker polls describe() to
+		# Active, which wait_for_active_server already handles via its longer timeout.)
+		server_name = provider.provision_server(title)
 	frappe.db.commit()
 	print(f"[bootstrap] provisioning Server {title!r} (name={server_name!r}; background job enqueued)")
 	return server_name
+
+
+def _active_timeout(provider: "frappe.model.document.Document") -> int:
+	"""How long to wait for a freshly-provisioned Server to reach Active.
+
+	A DO droplet is up in seconds; a Scaleway Elastic Metal box is a real bare-metal
+	OS install that takes minutes (up to ~1h worst case). So derive the wait from the
+	provider implementation's own `ready_timeout_seconds` (DO=600, Scaleway=3600) —
+	the same source the worker's describe()-poll uses — plus headroom for the
+	host-side bootstrap-server.py Task that runs AFTER the vendor reports ready.
+	Floored at the historical 900s default so DO is never waited on for LESS than
+	before."""
+	from atlas.atlas import providers
+
+	impl = providers.for_provider(provider.name)
+	vendor_ready = getattr(impl, "ready_timeout_seconds", 600)
+	return max(900, vendor_ready + 600)
 
 
 def wait_for_active_server(server_name: str, timeout_seconds: int = 900) -> None:
