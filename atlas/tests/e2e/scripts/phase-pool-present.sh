@@ -35,6 +35,27 @@ case "$pool_attr" in
 esac
 echo "thin pool OK (atlas/pool0)"
 
+# --- PV backing: real NVMe device vs loopback file ---
+# On a bare-metal box (Scaleway Elastic Metal) the pool's PV(s) must be real
+# disks, not a /dev/loopN over a sparse file. Print every PV the atlas VG sits on
+# so the operator sees the backing at a glance; the e2e gate asserts the device
+# case on Scaleway. A loopback PV here on bare metal means PoolBacking fell
+# through to the file fallback — the §8 real-device-PV change did not engage.
+pvs="$(sudo pvs --noheadings -o pv_name --select vg_name=atlas 2>/dev/null | tr -s ' \n' '  ' | sed 's/^ *//;s/ *$//' || true)"
+note "atlas PV(s): ${pvs:-<none>}"
+[ -n "$pvs" ] || fail "atlas VG has no PV"
+case "$pvs" in
+    *loop*) backing="loopback" ;;
+    *) backing="device" ;;
+esac
+echo "POOL BACKING: ${backing} (${pvs})"
+# Persisted device list (PoolBacking writes it on a real-device bring-up so the
+# reboot re-assert is deterministic). Absent ⇒ loopback backing.
+if sudo test -f /var/lib/atlas/pool/pool-devices; then
+    note "pool-devices: $(sudo tr '\n' ' ' < /var/lib/atlas/pool/pool-devices)"
+fi
+echo "pool PV OK"
+
 # --- reboot-survival oneshot enabled ---
 pool_svc="$(systemctl is-enabled atlas-pool.service 2>/dev/null || true)"
 note "atlas-pool.service: ${pool_svc:-<unknown>}"

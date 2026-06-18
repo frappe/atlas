@@ -172,14 +172,19 @@ def _assert_bootstrap_succeeded(server_name: str) -> None:
 
 
 def _assert_pool_present(server_name: str) -> None:
-	"""Read back the LVM thin pool: the atlas VG and pool0 thin LV exist and the
-	reboot-survival oneshot is enabled. Prints the probe output so the operator
-	can see the PV backing (loopback vs NVMe device) at a glance — the
-	real-device-on-NVMe gate (§8) is a separate slice."""
+	"""Read back the LVM thin pool: the atlas VG and pool0 thin LV exist, the
+	reboot-survival oneshot is enabled, AND the PV sits on a real NVMe device
+	(`POOL BACKING: device`), not a loopback file. On a Scaleway Elastic Metal box
+	`PoolBacking` must pick the NVMe disk(s); a loopback backing means it fell
+	through to the stock-droplet fallback — a host failure on bare metal (§8)."""
 	task = run_task(server=server_name, script="phase-pool-present.sh", variables={}, timeout_seconds=60)
 	assert task.status == "Success", task.stderr
 	assert "POOL PROBE OK" in task.stdout, task.stdout
 	print(f"[e2e/scw] pool probe output:\n{task.stdout}")
+	assert "POOL BACKING: device" in task.stdout, (
+		"thin pool is on a loopback file, not real NVMe — PoolBacking did not pick "
+		f"a device on bare metal:\n{task.stdout}"
+	)
 
 
 # ----- the IPv6 go/no-go gate -----------------------------------------------
