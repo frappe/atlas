@@ -16,6 +16,7 @@ from atlas.atlas._ssh.transport import (
 	run_ssh,
 	ssh_key_file,
 )
+from atlas.atlas.providers.fake_tasks import is_fake_server
 
 if TYPE_CHECKING:
 	from atlas.atlas.doctype.task.task import Task
@@ -56,6 +57,14 @@ def run_task(
 	if (server is None) == (connection is None):
 		frappe.throw("run_task: pass exactly one of server= or connection=")
 
+	# Fake provider (developer_mode): a Task on a Fake-backed Server succeeds (or
+	# fails on demand) with no SSH. Only the server= path can be fake — the
+	# connection= path is bootstrap's pre-row escape hatch, never a Fake host.
+	if server is not None and is_fake_server(server):
+		from atlas.atlas.providers.fake_tasks import run_fake_task
+
+		return run_fake_task(server, script, variables, virtual_machine)
+
 	if connection is None:
 		server_doc = frappe.get_doc("Server", server)
 		connection = connection_for_server(server_doc)
@@ -82,6 +91,15 @@ def execute_task(task_name: str) -> None:
 	task = frappe.get_doc("Task", task_name)
 	if not task.server:
 		frappe.throw(f"Task {task_name} has no server; cannot resolve connection")
+
+	# Fake server: finalize the existing row in place, no SSH. _fake_task_outcome
+	# reuses the same synthesis run_task uses, so a pre-inserted Task ends up
+	# identical to one created on the synchronous fake path.
+	if is_fake_server(task.server):
+		from atlas.atlas.providers.fake_tasks import finalize_fake_task
+
+		finalize_fake_task(task)
+		return
 
 	server_doc = frappe.get_doc("Server", task.server)
 	connection = connection_for_server(server_doc)

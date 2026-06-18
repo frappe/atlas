@@ -6,6 +6,7 @@ import frappe
 from frappe.model.document import Document
 
 from atlas.atlas import scripts_catalog
+from atlas.atlas.providers.fake_tasks import is_fake_server
 from atlas.atlas.ssh import connection_for_server, run_task, upload_files
 from atlas.atlas.task_results import parse_result
 
@@ -91,7 +92,11 @@ class Server(Document):
 		if self.status not in self.BOOTSTRAP_ALLOWED_STATUS:
 			frappe.throw(f"Cannot bootstrap from status {self.status}")
 
-		upload_files(connection_for_server(self), self._bootstrap_uploads())
+		# A Fake server has no host to scp the durable package onto; the
+		# bootstrap-server.py Task below is faked too and still records the host
+		# versions, so the row ends up Active exactly as a real bootstrap leaves it.
+		if not is_fake_server(self.name):
+			upload_files(connection_for_server(self), self._bootstrap_uploads())
 
 		task = run_task(
 			server=self.name,

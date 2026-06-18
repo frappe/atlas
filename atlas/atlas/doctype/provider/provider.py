@@ -65,6 +65,14 @@ class Provider(Document):
 		return _provision_server(self, title, dialog_fields)
 
 
+def _provider_settings(provider_type: str):
+	"""The per-vendor Settings Single for a provider type, or None when the
+	provider has none (the Fake provider). Vendors with an API always have one."""
+	if not frappe.db.exists("DocType", f"{provider_type} Settings"):
+		return None
+	return frappe.get_single(f"{provider_type} Settings")
+
+
 def _provision_server(provider_row: Provider, title: str, dialog_fields: dict[str, Any]) -> str:
 	"""Insert a Server row and enqueue bootstrap.
 
@@ -115,9 +123,14 @@ def _provision_server(provider_row: Provider, title: str, dialog_fields: dict[st
 			}
 		).insert(ignore_permissions=True)
 	else:
-		settings = frappe.get_single(f"{provider_row.provider_type} Settings")
-		size = dialog_fields.get("size") or settings.default_size
-		image = dialog_fields.get("image") or settings.default_image
+		# Vendors with an API read their per-vendor Settings Single for the
+		# default size/image. The Fake provider (developer_mode) has no Settings
+		# Single — it defaults size/image inside provision() — so fall back to the
+		# dialog values when no Settings DocType exists. DO/Scaleway are unchanged
+		# (their Single exists, so the defaults still apply).
+		settings = _provider_settings(provider_row.provider_type)
+		size = dialog_fields.get("size") or (settings.default_size if settings else "")
+		image = dialog_fields.get("image") or (settings.default_image if settings else "")
 		request = ProvisionRequest(
 			title=title,
 			size=size,

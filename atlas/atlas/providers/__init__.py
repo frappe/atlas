@@ -48,5 +48,6 @@ def _load_implementations() -> None:
 	"""
 	# Avoid circular imports at module-import time.
 	import atlas.atlas.providers.digitalocean
+	import atlas.atlas.providers.fake
 	import atlas.atlas.providers.scaleway
 	import atlas.atlas.providers.self_managed

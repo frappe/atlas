@@ -76,9 +76,15 @@ def finish_provisioning(server_name: str) -> None:
 		frappe.logger("atlas").info("finish_provisioning: prepare_host")
 		provider.prepare_host(server)
 
-		frappe.logger("atlas").info("finish_provisioning: waiting for SSH")
-		wait_for_ssh(connection_for_server(server), timeout_seconds=300)
-		frappe.logger("atlas").info("finish_provisioning: SSH reachable; running bootstrap script")
+		# A Fake server (developer_mode) has no host to reach; skip the SSH wait
+		# and go straight to bootstrap, whose Task is faked and still records the
+		# host versions onto the row. Real providers wait for root SSH first.
+		from atlas.atlas.providers.fake_tasks import is_fake_server
+
+		if not is_fake_server(server.name):
+			frappe.logger("atlas").info("finish_provisioning: waiting for SSH")
+			wait_for_ssh(connection_for_server(server), timeout_seconds=300)
+			frappe.logger("atlas").info("finish_provisioning: SSH reachable; running bootstrap script")
 
 		server.bootstrap()
 	except Exception as exception:

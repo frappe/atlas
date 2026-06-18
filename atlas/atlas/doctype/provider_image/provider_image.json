@@ -21,7 +21,7 @@
    "in_list_view": 1,
    "in_standard_filter": 1,
    "label": "Provider Type",
-   "options": "DigitalOcean\nScaleway\nSelf-Managed",
+   "options": "DigitalOcean\nScaleway\nSelf-Managed\nFake",
    "reqd": 1,
    "set_only_once": 1
   },

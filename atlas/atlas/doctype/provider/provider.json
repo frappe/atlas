@@ -10,7 +10,8 @@
   "provider_name",
   "provider_type",
   "column_break_header",
-  "is_active"
+  "is_active",
+  "fail_scripts"
  ],
  "fields": [
   {
@@ -28,7 +29,7 @@
    "in_list_view": 1,
    "in_standard_filter": 1,
    "label": "Provider Type",
-   "options": "DigitalOcean\nScaleway\nSelf-Managed",
+   "options": "DigitalOcean\nScaleway\nSelf-Managed\nFake",
    "reqd": 1,
    "set_only_once": 1
   },
@@ -44,6 +45,13 @@
    "in_standard_filter": 1,
    "label": "Is Active",
    "set_only_once": 1
+  },
+  {
+   "depends_on": "eval:doc.provider_type=='Fake'",
+   "description": "Developer-only (Fake provider). Comma/newline-separated script names whose Tasks should be made to FAIL instead of succeed (e.g. provision-vm.py), or * for every script. Lets you exercise error paths without a real host.",
+   "fieldname": "fail_scripts",
+   "fieldtype": "Small Text",
+   "label": "Fail Scripts (Fake provider)"
   }
  ],
  "links": [],

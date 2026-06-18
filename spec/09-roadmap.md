@@ -94,6 +94,81 @@ behavior; they just keep doors open.
   The fix is to stamp a content digest of the guest payload into the image row
   and key the short-circuit on it. Additive; not now.
 
+## Developer tooling
+
+Not product, not deferred — present-day scaffolding for anyone working on Atlas
+*integration* (the apps layered on top: Central, IAM, billing) who needs Servers,
+VMs, and Tasks to look at without standing up real cloud resources.
+
+### Fake provider
+
+A `provider_type = Fake` (`atlas/atlas/providers/fake.py`) under which **every
+action just works** — it transitions Frappe DB state without ever touching a real
+host or vendor API. The design point worth recording: faking the VM lifecycle
+needs **two** seams intercepted, not one.
+
+1. The `Provider` ABC covers only *server* creation + reserved IPs. `FakeProvider`
+   implements it: `provision()` returns a host already `ready` with synthetic,
+   *unroutable* networking (IPv4 in TEST-NET-3 `203.0.113.0/24`, IPv6 under
+   `2001:db8::/32`, both deterministic per server title); `destroy()` and the
+   reserved-IP methods are no-ops; reserved IPs draw from TEST-NET-2
+   `198.51.100.0/24`.
+2. Every *Virtual Machine* action, image sync, and `Server.bootstrap()` runs as a
+   **Task over SSH** through `run_task()`. So `run_task`/`execute_task` consult
+   `is_fake_server()` and, for a Fake-backed Server, hand off to
+   `atlas/atlas/providers/fake_tasks.py`, which finalizes a `Task` (Pending →
+   Running → Success) with no SSH — emitting a valid `ATLAS_RESULT=<json>` for the
+   four scripts whose controllers parse one (`bootstrap-server.py`,
+   `snapshot-vm.py`, `snapshot-stop-vm.py`, `warm-snapshot-vm.py`).
+
+Routing is **per-Server** (off the Server's own `provider`, not the globally
+active one), so a Fake provider and a historical real Server coexist and each
+Task goes the right way. The real worker still runs (`finish_provisioning` polls
+the instant-ready `describe()`, then runs the faked `bootstrap()`), so a Fake
+server marches Pending → Active through the real code path.
+
+**Failure injection.** To exercise error paths, name scripts that should fail
+either on the Fake `Provider` row's `fail_scripts` field (comma/newline list, or
+`*`) or per-call via `frappe.flags.fake_fail`. A faked failure is
+indistinguishable from a real one to the controller (Task `Failure`, non-zero
+exit, `frappe.throw`) — the VM lands `Failed`, the Server lands `Broken`, the
+retry button returns.
+
+**Safety.** Every mutating Fake method is gated on `developer_mode`; a Fake
+`Provider` row on a production site is inert and loud. The unroutable address
+blocks mean even an accidental real `ssh` can never reach a stranger's machine.
+
+The Provider controller's `_provision_server` reads a per-vendor Settings Single
+for default size/image; Fake has none, so the lookup falls back to the dialog
+values (DigitalOcean/Scaleway are unchanged — their Single exists).
+
+**Desk coverage.** The `fake_provider_desk` e2e
+([`atlas/tests/e2e/use_cases/fake_provider_desk.py`](../atlas/tests/e2e/use_cases/fake_provider_desk.py))
+is the Fake-provider analogue of `desk_buttons`: it drives *every* operator
+button through the exact HTTP layer the desk uses (`run_doc_method` for
+controller methods, `execute_cmd` for the Reserved IP module-function buttons),
+with the desk's real argument shapes — but against the Fake provider, so it runs
+anywhere `developer_mode` is on (e.g. `fake.local`) with no droplet, in seconds.
+It is self-contained (creates and tears down its own provider/server/image/VMs,
+restores `Atlas Settings.provider`) and includes the wrong-state and
+fault-injection negatives. Run it directly:
+`bench --site fake.local execute atlas.tests.e2e.use_cases.fake_provider_desk.run`.
+
+### Demo / populate script
+
+`atlas/atlas/demo.py` (data tables + builders in `demo_data.py`) stands up a
+realistic, varied fleet on the Fake provider:
+`bench --site <site> execute atlas.atlas.demo.run` (`--kwargs "{'reset': True}"`
+to wipe-and-rebuild). It drives the *real* controllers, so the rows are
+internally consistent and the script doubles as a smoke test of the fake seam.
+The dataset spans every Server status (Active / Bootstrapping / Broken / Draining
++ a Self-Managed host) and every VM status (Running / Stopped / Paused /
+Terminated / Failed) and feature (data disk, stop/termination protection,
+memory-snapshot-on-stop, relaxed-CPU burst, proxy with an attached public IPv4),
+plus Cold / Warm / Pending / Failed snapshots, Reserved IPs, and back-dated
+Tasks. `developer_mode`-gated; idempotent; scoped to Fake providers so a reset
+never touches real DO/Scaleway rows.
+
 ## Concrete next steps after this iteration
 
 - **Regenerate the jailer launcher on resize**. `resize-vm.py` rewrites

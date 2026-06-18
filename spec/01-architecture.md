@@ -104,7 +104,7 @@ vendor; the registry keys off `Provider.provider_type`. Controllers
 never branch on the vendor — they call `atlas.get_provider()` and use
 the returned object.
 
-Three provider types are implemented:
+Four provider types are implemented (the fourth, `Fake`, is developer-only):
 
 - **DigitalOcean.** `DigitalOcean Settings` (Single) holds the API
   token, the operating region (Atlas is single-region per vendor), and
@@ -126,6 +126,18 @@ Three provider types are implemented:
   `provision()` validates the operator-supplied IPv4 / IPv6 inputs and
   returns them as the Server's networking. `destroy()` is a no-op.
   `Self-Managed Settings` is an empty stub today.
+- **Fake.** A developer-only provider (`FakeProvider` at
+  `atlas/atlas/providers/fake.py`) that lets an engineer exercise the whole
+  Server / Virtual Machine lifecycle with **no real cloud resources and no
+  SSH**. It is the one provider that spans *both* seams: it implements the
+  `Provider` ABC (`provision()` returns a host that is already `ready` with
+  synthetic, unroutable networking; `destroy()` and the reserved-IP calls are
+  no-ops), **and** it short-circuits the Task/SSH seam — `run_task()` on a
+  Fake-backed `Server` produces a successful (or, on demand, failed) `Task`
+  without opening a connection (`atlas/atlas/providers/fake_tasks.py`). Every
+  mutating method is gated on `developer_mode`, so a Fake `Provider` row on a
+  production site is inert. Used by the demo/populate script
+  (`atlas/atlas/demo.py`). See [09-roadmap.md § Fake provider](./09-roadmap.md).
 
 Cross-vendor configuration lives on `Atlas Settings` (Single): the
 active `Provider` link, and the SSH key (fingerprint, public key body,
