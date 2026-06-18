@@ -11,6 +11,7 @@
                 |   - Atlas Settings (Single)      |
                 |   - Provider                     |
                 |   - DigitalOcean Settings        |
+                |   - Scaleway Settings            |
                 |   - Self-Managed Settings        |
                 |   - Provider Size                |
                 |   - Provider Image               |
@@ -103,12 +104,23 @@ vendor; the registry keys off `Provider.provider_type`. Controllers
 never branch on the vendor — they call `atlas.get_provider()` and use
 the returned object.
 
-Two provider types are implemented:
+Three provider types are implemented:
 
 - **DigitalOcean.** `DigitalOcean Settings` (Single) holds the API
   token, the operating region (Atlas is single-region per vendor), and
   the default size + image Link references. `DigitalOceanProvider`
   wraps the DO REST client at `atlas/atlas/digitalocean.py`.
+- **Scaleway.** `Scaleway Settings` (Single) holds the IAM secret key,
+  the project id, the operating zone, the billing mode (hourly/monthly),
+  and the default size + image. `ScalewayProvider` wraps the Elastic
+  Metal (bare-metal) REST client at `atlas/atlas/scaleway.py`. Bare metal
+  means a real NVMe-backed LVM pool (no loopback file) and a routed `/64`
+  per host (no `/124` carve, so the 15-VM ceiling is gone); the Elastic
+  Metal create is async, so `provision()` returns a `delivering` server
+  and the worker polls `describe()` until it is `ready` and the OS install
+  `completed`. Inbound IPv4 uses a routed **Flexible IP** (the `Reserved
+  IP` primitive) instead of a DO anchor. See
+  [06-networking.md](./06-networking.md).
 - **Self-Managed.** The operator has already built the host (any cloud,
   bare metal, a server in a cupboard). There is no API to call;
   `provision()` validates the operator-supplied IPv4 / IPv6 inputs and

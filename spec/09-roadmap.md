@@ -365,7 +365,6 @@ behavior; they just keep doors open.
   instant CoW operations sharing blocks until written — the density win the old
   "overlayfs-backed rootfs" item was after, without a doc-type change (LV names
   derive from UUIDs). See [07-filesystem-layout.md § Why LVM thin volumes](./07-filesystem-layout.md#why-lvm-thin-volumes-for-per-vm-disks).
-  Still deferred here:
   - **Real attached block-device PV.** The pool sits on a sparse loopback file
     (`pool/atlas-pool.img`) on the root disk because a stock DO droplet has no
     spare block device. A provider that attaches a dedicated volume (DO Block
@@ -539,3 +538,29 @@ behavior; they just keep doors open.
   guest, and flips the Site to `Running` **only on an observed HTTP 200** from
   `:80` (Contract B), then creates the `Subdomain`. A `/signup` www page + guest
   API is the one guest-reachable surface. See [14-self-serve.md](./14-self-serve.md).
+- `v0.10` — **Scaleway Elastic Metal provider.** A third `Provider.provider_type`
+  alongside DigitalOcean and Self-Managed — bare-metal hosts via the Scaleway
+  Elastic Metal API. `Scaleway Settings` (Single) holds the IAM secret key,
+  project id, zone, billing mode, and default size/image; `ScalewayProvider`
+  (`atlas/atlas/providers/scaleway.py`) wraps a raw-`requests` client
+  (`atlas/atlas/scaleway.py`) implementing all ten provider methods (server
+  lifecycle + Flexible-IP reserved-IP). Three things differ from DO, all already
+  fit by the abstraction: provision is **async** (create returns `delivering`;
+  the worker polls `describe()` until `ready` + install `completed`, with a
+  per-provider `ready_timeout_seconds` of 3600 and a `ProviderError` that
+  short-circuits a terminal vendor state to `Broken`); the **routed `/64`** for
+  VMs is a (free) **flexible IPv6** the provider allocates + attaches at provision
+  — the *bundled* subnet is on-link SLAAC, not routed — reported whole as
+  `ipv6_virtual_machine_range` (no `/124` carve, retiring the 15-VM ceiling);
+  inbound IPv4 is a **routed Flexible IP** (the already-built
+  `apply_routed_reserved_ip_nat` path — DNAT the IP itself, no anchor). The
+  Scaleway Ubuntu image blocks root SSH, so a `Provider.prepare_host` hook does a
+  one-shot `ubuntu`→root first-contact before the bootstrap, leaving the rest of
+  Atlas's root-SSH layer unchanged. `discover()` hits the API (the per-zone
+  `offer_id`/`os_id` UUIDs and prices live nowhere else) and stashes the UUIDs in
+  the catalog rows. Controller + client are fully unit-tested offline; the
+  **pure-L3 IPv6-to-guest (NDP-proxy, no Virtual MAC)** go/no-go and the
+  Flexible-IP inbound-v4 path are proven by the `scaleway_provisioning` e2e on a
+  real EM-A610R-NVME box. (The LVM pool on real NVMe is a separate slice — it
+  still backs on a loopback file.) See
+  [llm/references/scaleway-provider-plan.md](../llm/references/scaleway-provider-plan.md).

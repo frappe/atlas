@@ -46,6 +46,7 @@ doctype_js = {
 	"Provider": "public/js/atlas_form_overrides.js",
 	"Atlas Settings": "public/js/atlas_form_overrides.js",
 	"DigitalOcean Settings": "public/js/atlas_form_overrides.js",
+	"Scaleway Settings": "public/js/atlas_form_overrides.js",
 	"Self-Managed Settings": "public/js/atlas_form_overrides.js",
 	"Provider Size": "public/js/atlas_form_overrides.js",
 	"Provider Image": "public/js/atlas_form_overrides.js",

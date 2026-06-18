@@ -1,39 +1,40 @@
 # DocTypes
 
-Twenty-two DocTypes. Module `Atlas`. None are submittable. All track changes.
+Twenty-three DocTypes. Module `Atlas`. None are submittable. All track changes.
 Read permission for `System Manager`.
 
 1. [Atlas Settings](#atlas-settings) — vendor-agnostic Atlas config (Single).
 2. [Provider](#provider) — one row per configured vendor.
 3. [DigitalOcean Settings](#digitalocean-settings) — DO API config (Single).
-4. [Self-Managed Settings](#self-managed-settings) — Self-Managed config (Single).
-5. [Provider Size](#provider-size) — vendor catalog of machine sizes.
-6. [Provider Image](#provider-image) — vendor catalog of OS images.
-7. [Server](#server)
-8. [Virtual Machine](#virtual-machine)
-9. [Virtual Machine Image](#virtual-machine-image)
-10. [Virtual Machine Snapshot](#virtual-machine-snapshot) — a disk snapshot of a VM.
-11. [Reserved IP](#reserved-ip) — a public IPv4 allocated to a Server, optionally attached to a VM.
-12. [Subdomain](#subdomain) — a `<subdomain>.<region>.frappe.dev` routing entry pointing at a site VM.
-13. [SSH Key](#ssh-key) — a user's public key, chosen when creating a VM.
-14. [Task](#task)
-15. [Domain Provider](#domain-provider) — one row per configured DNS vendor (DNS-01).
-16. [Route53 Settings](#route53-settings) — AWS Route 53 API config (Single).
-17. [TLS Provider](#tls-provider) — one row per configured certificate issuer.
-18. [Lets Encrypt Settings](#lets-encrypt-settings) — ACME account config (Single).
-19. [Root Domain](#root-domain) — one wildcard zone == one region.
-20. [TLS Certificate](#tls-certificate) — the issued regional wildcard cert.
-21. [Site](#site) — a user's self-serve Frappe site at `<subdomain>.<region domain>`. See [14-self-serve.md](./14-self-serve.md).
-22. [Site Request](#site-request) — the pre-verification signup holding row (email + subdomain + token); fulfils into a `Site` only after the email is verified (Contract C). See [14-self-serve.md](./14-self-serve.md).
+4. [Scaleway Settings](#scaleway-settings) — Scaleway Elastic Metal API config (Single).
+5. [Self-Managed Settings](#self-managed-settings) — Self-Managed config (Single).
+6. [Provider Size](#provider-size) — vendor catalog of machine sizes.
+7. [Provider Image](#provider-image) — vendor catalog of OS images.
+8. [Server](#server)
+9. [Virtual Machine](#virtual-machine)
+10. [Virtual Machine Image](#virtual-machine-image)
+11. [Virtual Machine Snapshot](#virtual-machine-snapshot) — a disk snapshot of a VM.
+12. [Reserved IP](#reserved-ip) — a public IPv4 allocated to a Server, optionally attached to a VM.
+13. [Subdomain](#subdomain) — a `<subdomain>.<region>.frappe.dev` routing entry pointing at a site VM.
+14. [SSH Key](#ssh-key) — a user's public key, chosen when creating a VM.
+15. [Task](#task)
+16. [Domain Provider](#domain-provider) — one row per configured DNS vendor (DNS-01).
+17. [Route53 Settings](#route53-settings) — AWS Route 53 API config (Single).
+18. [TLS Provider](#tls-provider) — one row per configured certificate issuer.
+19. [Lets Encrypt Settings](#lets-encrypt-settings) — ACME account config (Single).
+20. [Root Domain](#root-domain) — one wildcard zone == one region.
+21. [TLS Certificate](#tls-certificate) — the issued regional wildcard cert.
+22. [Site](#site) — a user's self-serve Frappe site at `<subdomain>.<region domain>`. See [14-self-serve.md](./14-self-serve.md).
+23. [Site Request](#site-request) — the pre-verification signup holding row (email + subdomain + token); fulfils into a `Site` only after the email is verified (Contract C). See [14-self-serve.md](./14-self-serve.md).
 
-The first six form the **Provider abstraction**: a single ABC in
+The first seven form the **Provider abstraction**: a single ABC in
 `atlas/atlas/providers/base.py` with one implementation per
 `Provider.provider_type`. Every vendor call goes through that interface;
 controllers never branch on `provider_type`. See
 [provider-abstraction.md](../llm/plan/provider-abstraction.md) for the
 implementation plan.
 
-DocTypes 15–20 form the **TLS & Domain layer** ([13-tls.md](./13-tls.md)) — the
+DocTypes 16–21 form the **TLS & Domain layer** ([13-tls.md](./13-tls.md)) — the
 producer for the proxy's `push_cert`. They mirror the Provider shape with two
 more registries: `atlas/atlas/dns/` (a `DnsProvider` ABC per `Domain
 Provider.provider_type`) and `atlas/atlas/tls/` (a `TlsProvider` ABC per `TLS
@@ -118,7 +119,7 @@ Settings DocType (e.g. `DigitalOcean Settings`).
 | Field           | Type   | Reqd | Default | Notes                                                              |
 | --------------- | ------ | ---- | ------- | ------------------------------------------------------------------ |
 | `provider_name` | Data   | Y    |         | Primary key. Unique. `set_only_once`. e.g. `digitalocean-production`, `home-lab`. |
-| `provider_type` | Select | Y    |         | Options: `DigitalOcean`, `Self-Managed`. `set_only_once`. The provider registry (`atlas/atlas/providers/__init__.py`) keys off this value to pick the implementation class. |
+| `provider_type` | Select | Y    |         | Options: `DigitalOcean`, `Scaleway`, `Self-Managed`. `set_only_once`. The provider registry (`atlas/atlas/providers/__init__.py`) keys off this value to pick the implementation class. |
 | `is_active`     | Check  |      | 1       | Flipped to 0 via the `archive()` controller method. `get_provider()` refuses to instantiate an archived row. |
 
 ### Form layout
@@ -146,6 +147,14 @@ provider_type
     Image, same filter), defaulting to `DigitalOcean Settings.default_size`
     / `default_image`. Then `confirm_cost` ("Create a billable
     droplet?") before the DO API call.
+  - **Scaleway**: identical to DigitalOcean — `size` / `image` Links
+    filtered to `provider_type=Scaleway, enabled=1`, defaulting to
+    `Scaleway Settings.default_size` / `default_image`, then `confirm_cost`.
+    Scaleway is "a vendor with an API," so it takes the same dialog path as
+    DigitalOcean; only the catalog filter and the cost copy differ. Provision
+    is async (the Elastic Metal create returns `delivering`; the worker polls
+    `describe()` until `ready` + install `completed`, see
+    [03-bootstrapping.md](./03-bootstrapping.md)).
   - **Self-Managed**: `ipv4_address`, `ipv6_address`, `ipv6_prefix`,
     `ipv6_virtual_machine_range`. Atlas inserts the `Server` directly
     with the operator-supplied values and runs bootstrap. No API call.
@@ -204,6 +213,50 @@ default_size
 
 Monthly cost preview for the Provision dialog reads `Provider Size.monthly_cost_usd`
 directly. Sizes without a cost render as "—" rather than guess.
+
+---
+
+## Scaleway Settings
+
+A Single DocType. Only fields Scaleway's Elastic Metal (bare-metal) API needs.
+Mirrors `DigitalOcean Settings` — same shape, vendor-specific fields.
+
+### Fields
+
+| Field             | Type                  | Reqd | Notes                                                              |
+| ----------------- | --------------------- | ---- | ------------------------------------------------------------------ |
+| `secret_key`      | Password              | Y    | `set_only_once`. IAM API key **Secret Key** — the `X-Auth-Token` value, an opaque hyphenated string (NOT the Access Key). Rotate by clearing via `db.set_value`, then re-saving. |
+| `project_id`      | Data                  | Y    | Scaleway Project UUID every resource is scoped to. The default project's id equals the Organization id; non-default projects differ. |
+| `organization_id` | Data                  |      | Optional. Filters `GET /account/v3/projects` and labels the authenticate result. |
+| `zone`            | Data                  | Y    | Scaleway is multi-zone; Atlas is single-region per vendor. One Elastic Metal zone (`fr-par-1`, `fr-par-2`, `nl-ams-1`, `nl-ams-2`, `pl-waw-2`, `pl-waw-3` — **not** `pl-waw-1`). |
+| `billing`         | Select                |      | `hourly` (default) / `monthly`. Hourly has no upfront fee; monthly is cheaper to run but charges a one-time, non-refundable commitment fee. Hourly and monthly are **distinct offer ids**, so `discover()` filters offers to this mode. |
+| `default_size`    | Link → Provider Size  | Y    | Filtered to `provider_type=Scaleway, enabled=1`. |
+| `default_image`   | Link → Provider Image | Y    | Same filter as `default_size`. |
+
+### Form layout
+
+```
+secret_key
+project_id
+organization_id
+zone
+billing
+── Defaults for new servers ──
+default_size
+| default_image
+```
+
+### Buttons
+
+- **Test Connection** — under `Actions ▾`. Calls `ScalewayProvider.authenticate()`
+  (lists projects via `GET /account/v3/projects`). Result surfaces via a toast
+  (`OK: <project>` / `Failed: <error>`), no auto-painted indicator — mirrors
+  the DigitalOcean Settings form.
+
+The Scaleway networking model (the VM range is a routed **flexible IPv6 `/64`**
+the provider allocates — the bundled subnet is on-link, not routed — handed whole
+with no DigitalOcean-style `/124` carve, and inbound IPv4 via a routed **Flexible
+IP** rather than a DO anchor) is in [06-networking.md](./06-networking.md).
 
 ---
 

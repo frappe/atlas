@@ -62,16 +62,19 @@ Atlas reserves, binds, and releases the vendor object through the provider
 abstraction — five methods alongside the server-lifecycle five, so callers
 never branch on `provider_type`:
 
-| Method | DigitalOcean | Self-Managed |
-| --- | --- | --- |
-| `allocate_reserved_ip()` | `POST /reserved_ips {region}` — reserve a new v4 in the (single) region, unassigned | refuses (no vendor API; operator supplies the address by hand) |
-| `assign_reserved_ip(ip, droplet)` | `POST /reserved_ips/{ip}/actions {assign}` — bind to the droplet | no-op (operator routes it) |
-| `unassign_reserved_ip(ip)` | `POST /reserved_ips/{ip}/actions {unassign}` | no-op |
-| `list_reserved_ips()` | `GET /reserved_ips` — the account's reserved IPs, for discover/import | empty |
-| `release_reserved_ip(ip)` | `DELETE /reserved_ips/{ip}` | no-op |
+| Method | DigitalOcean | Scaleway (Flexible IP) | Self-Managed |
+| --- | --- | --- | --- |
+| `allocate_reserved_ip()` | `POST /reserved_ips {region}` — reserve a new v4 in the (single) region, unassigned | `POST /fips {project}` — reserve a Flexible IP in the zone | refuses (no vendor API; operator supplies the address by hand) |
+| `assign_reserved_ip(ip, droplet)` | `POST /reserved_ips/{ip}/actions {assign}` — bind to the droplet | `POST /fips/attach {server_id}` — bind to the server | no-op (operator routes it) |
+| `unassign_reserved_ip(ip)` | `POST /reserved_ips/{ip}/actions {unassign}` | `POST /fips/detach` (waits for `detaching` to settle) | no-op |
+| `list_reserved_ips()` | `GET /reserved_ips` — the account's reserved IPs, for discover/import | `GET /fips` | empty |
+| `release_reserved_ip(ip)` | `DELETE /reserved_ips/{ip}` | `DELETE /fips/{id}` | no-op |
 
 On DigitalOcean a reserved IP is keyed by its own address, so the vendor handle
-(`Reserved IP.provider_resource_id`) **is** the IP string. The `Reserved IP`
+(`Reserved IP.provider_resource_id`) **is** the IP string. **Scaleway keys a
+Flexible IP by its own UUID**, so there the handle is the FIP id (not the
+address), and `droplet_resource_id` maps to the FIP's `server_id`. The
+`Reserved IP`
 DocType drives these: `allocate(server)` reserves a fresh v4 and writes an
 `Allocated` row; `discover(server)` lists the account's reserved IPs and
 imports any bound to this Server's droplet that Atlas doesn't yet model (a
@@ -139,6 +142,16 @@ The reserved IP stays the **public identity** (recorded in Frappe, denormalized
 onto the VM, published in DNS); the **anchor** is only the on-droplet plumbing.
 The **guest contract is unchanged**: it still sees only its private
 `100.64.x.x/30` and never knows it's behind NAT, exactly as for egress today.
+
+On a **routed** host — Self-Managed, or **Scaleway** (whose Flexible IP is
+routed to the box via a fixed on-link gateway, `62.210.0.1`, not delivered via
+an anchor) — there is no anchor to discover or SNAT against. `reserved_ip_nat.py`
+detects this (`discover_reserved_ip_anchor()` returns `None` when there is no DO
+metadata) and falls back to `apply_routed_reserved_ip_nat()`: DNAT the **reserved
+IP itself** to the guest, a forward accept, and **no** SNAT or egress policy route
+(the vendor already accepts traffic sourced from the routed IP). The same one
+`vm-reserved-ip.py` script serves both delivery models — the only branch is
+anchor-vs-routed, decided by whether metadata is present.
 
 > **One reserved IP per host, for now.** The anchor is per-*droplet*, shared by
 > any reserved IPs bound to it, so the L3 DNAT can't distinguish two reserved IPs
@@ -209,6 +222,39 @@ any specific prefix length:
 
 A Self-Managed host with an extra /64 routed to it lifts the 15-VM cap
 that constrains DO droplets.
+
+### Scaleway
+
+A Scaleway Elastic Metal host's **bundled** `/64` arrives **on-link** (SLAAC,
+`proto ra`) — it is the host's own subnet, *not* routed to the box, so it is not
+a VM range. The routed `/64` Atlas hands to VMs is a (free) **flexible IPv6**
+that `ScalewayProvider.provision()` allocates and attaches; Scaleway's edge then
+routes that whole `/64` to the host's link. `describe()` reports it as
+`ipv6_virtual_machine_range` — the **whole /64**, no DigitalOcean-style `/124`
+carve, so `carve_virtual_machine_range` stays DO-specific. The host networking is
+otherwise identical — routed-tap, proxy-NDP, per-VM `/128` routes — and the same
+`allocate_ipv6()` allocator runs over a much larger pool.
+
+- `Server.ipv6_prefix` records the host's bundled (on-link) `/64`.
+- `Server.ipv6_virtual_machine_range` is the **flexible /64** (routed; not carved).
+
+So a Scaleway host lifts the 15-VM `/124` ceiling — the address space is
+effectively unbounded for VM addressing. (Capacity per host is then bounded by
+vCPU placement, not addresses.)
+
+> **Host-validation gate — PASSED.** Scaleway documents handing a flexible IP to
+> a *guest* via a Virtual MAC (an L2 path, for Proxmox/VMware). Atlas's model is
+> pure L3 — routed-tap + proxy-NDP, no L2 bridging. The `scaleway_provisioning`
+> e2e proved on a real EM-A610R-NVME box that the host answers NDP for a VM's
+> `/128` out of the routed flexible `/64` and the VM is reachable over the public
+> v6 internet with **no Virtual MAC** — the Scaleway analog of the DO `/124`-carve
+> and `vnet_hdr` bugs a live bench caught. The Flexible-IP inbound-v4 1:1-NAT path
+> was proven the same way.
+>
+> One first-contact wrinkle: Scaleway's Ubuntu image blocks root SSH (it forces
+> the `ubuntu` user), so `Provider.prepare_host` does a one-shot `ubuntu`→root
+> key copy before the bootstrap, leaving the rest of Atlas's root-SSH layer
+> unchanged.
 
 ## Allocation
 

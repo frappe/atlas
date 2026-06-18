@@ -21,9 +21,17 @@ DEFAULT_READY_TIMEOUT = 600
 def wait_until_ready(
 	provider: Provider,
 	identifier: str,
-	timeout_seconds: int = DEFAULT_READY_TIMEOUT,
+	timeout_seconds: int | None = None,
 ) -> ProvisionResult:
-	"""Poll `provider.describe(identifier)` until `ready=True` or timeout."""
+	"""Poll `provider.describe(identifier)` until `ready=True` or timeout.
+
+	`timeout_seconds` defaults to the provider's own `ready_timeout_seconds`
+	(droplets: seconds; Scaleway bare-metal installs: up to an hour). A
+	`ProviderError` raised by `describe()` — a terminal vendor state — is *not*
+	caught: it propagates so `finish_provisioning` marks the Server `Broken`
+	immediately rather than spinning out the full timeout."""
+	if timeout_seconds is None:
+		timeout_seconds = getattr(provider, "ready_timeout_seconds", DEFAULT_READY_TIMEOUT)
 	deadline = time.monotonic() + timeout_seconds
 	while True:
 		result = provider.describe(identifier)
@@ -47,24 +55,34 @@ def finish_provisioning(server_name: str) -> None:
 	# Server's UUID so describe() can look the row up.
 	identifier = server.provider_resource_id or server.name
 	frappe.logger("atlas").info(f"finish_provisioning: waiting for provider resource {identifier!r}")
-	result = wait_until_ready(provider, identifier)
-	frappe.logger("atlas").info(
-		f"finish_provisioning: ready ipv4={result.networking.ipv4_address if result.networking else None}"
-	)
 
-	_apply_describe_result(server, result)
-	server.status = "Bootstrapping"
-	server.save(ignore_permissions=True)
-	frappe.db.commit()
-
-	frappe.logger("atlas").info("finish_provisioning: waiting for SSH")
-	wait_for_ssh(connection_for_server(server), timeout_seconds=300)
-	frappe.logger("atlas").info("finish_provisioning: SSH reachable; running bootstrap script")
-
+	# Wrap the whole ready-wait → SSH → bootstrap path: any terminal failure
+	# (a ProviderError from describe(), a ready/SSH timeout, or a bootstrap
+	# error) lands the Server in Broken instead of leaving it stuck Pending.
 	try:
+		result = wait_until_ready(provider, identifier)
+		frappe.logger("atlas").info(
+			f"finish_provisioning: ready ipv4={result.networking.ipv4_address if result.networking else None}"
+		)
+
+		_apply_describe_result(server, result)
+		server.status = "Bootstrapping"
+		server.save(ignore_permissions=True)
+		frappe.db.commit()
+
+		# Provider hook: a vendor whose image blocks root login (Scaleway) does
+		# its one-shot 'first contact' here, before the root-SSH wait. Default
+		# is a no-op (DO/Self-Managed expose root directly).
+		frappe.logger("atlas").info("finish_provisioning: prepare_host")
+		provider.prepare_host(server)
+
+		frappe.logger("atlas").info("finish_provisioning: waiting for SSH")
+		wait_for_ssh(connection_for_server(server), timeout_seconds=300)
+		frappe.logger("atlas").info("finish_provisioning: SSH reachable; running bootstrap script")
+
 		server.bootstrap()
 	except Exception as exception:
-		frappe.logger("atlas").error(f"finish_provisioning: bootstrap failed: {exception}")
+		frappe.logger("atlas").error(f"finish_provisioning: failed: {exception}")
 		server.reload()
 		server.status = "Broken"
 		server.save(ignore_permissions=True)

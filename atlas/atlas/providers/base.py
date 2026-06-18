@@ -111,8 +111,22 @@ class AuthResult:
 	error: str | None = None
 
 
+class ProviderError(Exception):
+	"""A terminal, non-retryable provider failure raised from `describe()`.
+
+	The worker's poll loop lets this propagate (rather than spinning until the
+	ready timeout) so the Server is marked `Broken` immediately. Used for vendor
+	states a poll can never recover from — a Scaleway server stuck in
+	`error`/`out_of_stock`/`locked`, a deleted droplet, etc."""
+
+
 class Provider(ABC):
 	provider_type: ClassVar[str]
+
+	# How long the worker polls `describe()` for `ready=True` before giving up.
+	# Droplet-style vendors are ready in seconds; bare-metal installs (Scaleway)
+	# take minutes, so they override this. The worker reads it off the instance.
+	ready_timeout_seconds: ClassVar[int] = 600
 
 	@abstractmethod
 	def authenticate(self) -> AuthResult: ...
@@ -140,6 +154,19 @@ class Provider(ABC):
 		"""Release the vendor resource. Idempotent. Called from
 		`Server.archive()`."""
 		...
+
+	def prepare_host(self, server) -> None:
+		"""Hook run by the worker after the host is `ready` but BEFORE Atlas's
+		root-SSH wait + bootstrap. Default: no-op (DO/Self-Managed expose root
+		directly).
+
+		Scaleway's Ubuntu image force-blocks root login (the cloud-image
+		forced-command on root's authorized_keys); this hook does the one-shot
+		'first contact' as the `ubuntu` user — copy authorized_keys to /root and
+		strip the forced-command — so the rest of Atlas keeps using root
+		unchanged. Idempotent: re-running on an already-root-enabled host is a
+		harmless overwrite."""
+		return None
 
 	# --- Reserved IPs (the inbound-v4 primitive) -------------------------
 	# A reserved IP is allocated to a region, assigned to the *droplet*

@@ -1,0 +1,94 @@
+{
+ "actions": [],
+ "creation": "2026-06-17 00:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 0,
+ "engine": "InnoDB",
+ "field_order": [
+  "secret_key",
+  "project_id",
+  "organization_id",
+  "zone",
+  "billing",
+  "section_break_defaults",
+  "default_size",
+  "default_image"
+ ],
+ "fields": [
+  {
+   "fieldname": "secret_key",
+   "fieldtype": "Password",
+   "label": "Secret Key",
+   "reqd": 1,
+   "set_only_once": 1,
+   "description": "Scaleway IAM API key Secret Key (the X-Auth-Token value, an opaque hyphenated string — NOT the Access Key). Rotate by clearing the field via db.set_value, then re-saving."
+  },
+  {
+   "fieldname": "project_id",
+   "fieldtype": "Data",
+   "label": "Project ID",
+   "reqd": 1,
+   "description": "Scaleway Project UUID every resource is scoped to. The default project's id equals the Organization ID; non-default projects differ."
+  },
+  {
+   "fieldname": "organization_id",
+   "fieldtype": "Data",
+   "label": "Organization ID",
+   "description": "Optional. Used to filter GET /account/v3/projects and to label the authenticate result."
+  },
+  {
+   "fieldname": "zone",
+   "fieldtype": "Data",
+   "label": "Zone",
+   "reqd": 1,
+   "description": "Scaleway is multi-zone; Atlas is single-region per vendor. Pick one Elastic Metal zone: fr-par-1, fr-par-2, nl-ams-1, nl-ams-2, pl-waw-2, pl-waw-3 (NOT pl-waw-1)."
+  },
+  {
+   "fieldname": "billing",
+   "fieldtype": "Select",
+   "label": "Billing",
+   "options": "hourly\nmonthly",
+   "default": "hourly",
+   "description": "hourly has no upfront fee; monthly is cheaper to run but charges a one-time commitment fee (non-refundable for new subscriptions). Hourly and monthly are distinct offer IDs — discover() filters offers to this mode."
+  },
+  {
+   "fieldname": "section_break_defaults",
+   "fieldtype": "Section Break",
+   "label": "Defaults for new servers"
+  },
+  {
+   "fieldname": "default_size",
+   "fieldtype": "Link",
+   "label": "Default Size",
+   "options": "Provider Size",
+   "reqd": 1
+  },
+  {
+   "fieldname": "default_image",
+   "fieldtype": "Link",
+   "label": "Default Image",
+   "options": "Provider Image",
+   "reqd": 1
+  }
+ ],
+ "issingle": 1,
+ "links": [],
+ "modified": "2026-06-17 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Atlas",
+ "name": "Scaleway Settings",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "read": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}
