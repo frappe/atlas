@@ -12,6 +12,7 @@ SCRIPT_LABELS = {
 	"sync-image.py": "Sync Image",
 	"provision-vm.py": "Create Virtual Machine",
 	"snapshot-vm.py": "Snapshot Virtual Machine",
+	"warm-snapshot-vm.py": "Capture Warm Snapshot",
 	# Verb-only when the script operates on the *same* object.
 	# reboot-server.sh stays a shell script (two lines).
 	"reboot-server.sh": "Reboot",
@@ -25,6 +26,20 @@ SCRIPT_LABELS = {
 	"resize-vm.py": "Resize",
 	"terminate-vm.py": "Terminate",
 	"delete-snapshot-vm.py": "Delete Snapshot",
+	# Networking — one script drives reserved-IP attach and detach, so a
+	# neutral noun reads correctly in both directions.
+	"vm-reserved-ip.py": "Update Reserved IP",
+	# TLS.
+	"issue-cert.py": "Issue Certificate",
+	# Guest / recipe-side synthetic script names (no .py; run in-guest over
+	# guest-SSH and recorded for the audit trail — see proxy.py,
+	# image_build.py, image_recipes.py, deploy_site.py).
+	"bench-build": "Build Bench",
+	"bench-warm": "Warm Bench",
+	"deploy-site": "Deploy Site",
+	"proxy-build": "Build Proxy",
+	"proxy-sync": "Sync Proxy",
+	"proxy-push-cert": "Push Certificate",
 }
 
 # Scripts a Failure-state Task is allowed to retry from the form button.
