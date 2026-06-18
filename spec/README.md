@@ -23,10 +23,16 @@ keep it the source of truth.
 ## Non-goals (this iteration)
 
 - No sites, benches, apps, databases, or workloads.
-- No teams, billing, or quotas. There *are* now two roles — the operator
-  (System Manager) and the **Atlas User** who owns the machines they create in
-  the dashboard SPA (see [11-user-ui.md](./11-user-ui.md)) — but no team
-  abstraction, no sharing, no billing or quota enforcement.
+- No teams, billing, or quotas **enforced inside Atlas**. Those policies live
+  in **Central**, the global front door that drives Atlas (see
+  [16-central.md](./16-central.md)): Central owns end-users and teams, and
+  **pre-checks capability, billing, and quota** before it asks Atlas to act.
+  Atlas stays policy-unaware — it attributes each resource to a `Tenant`
+  ([02-doctypes.md § Tenant](./02-doctypes.md#tenant)) for grouping and enforces
+  only **physical capacity**. Two Atlas-local roles remain: the operator
+  (System Manager) and the legacy **Atlas User** who owns the machines they
+  create in the dashboard SPA (see [11-user-ui.md](./11-user-ui.md)); the SPA is
+  transitional and will be retired once Central fronts the user experience.
 - No CLI. We will build one later on top of the same Frappe APIs.
 - No private networking between VMs, no overlay. No inbound IPv4 to the
   guest and no per-VM public IPv4 (outbound v4 is via host NAT44).
@@ -65,6 +71,15 @@ keep it the source of truth.
   Frappe endpoints. See [11-user-ui.md](./11-user-ui.md). (Earlier iterations
   said "no web UI of our own; Desk is the UI" — that held for the operator-only
   PoC; the user SPA is the deliberate, scoped reversal documented in 11.)
+- **Central is the front door.** Above Atlas sits **Central**
+  ([16-central.md](./16-central.md)) — the global control plane that owns
+  identity, teams, and billing and is the face of all customer actions. Central
+  drives a regional Atlas by **logging in as a single service user and calling
+  the same whitelisted methods** the SPA does, passing the target `Tenant` in
+  the request payload. Atlas exposes no separate command API; Central is just an
+  authenticated client of the existing Frappe endpoints. The operator Desk and
+  the user SPA continue to work; the SPA is on a path to retirement as Central's
+  own console takes over the user surface.
 
 ## Operating principles
 

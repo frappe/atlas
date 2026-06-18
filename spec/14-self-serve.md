@@ -6,6 +6,14 @@ and puts it behind the regional proxy at `acme.blr1.frappe.dev`. The proxy
 ([12-proxy.md](./12-proxy.md)) and TLS ([13-tls.md](./13-tls.md)) halves already
 exist; this chapter is the **site layer** that drives them.
 
+> **Status (Central pivot).** This self-serve signup flow is **Atlas-local and
+> transitional**. Under the Central pivot ([16-central.md](./16-central.md)),
+> customer signup, identity, and team membership move to Central; Central then
+> drives site/VM creation in a region by calling Atlas's whitelisted methods as
+> a service user, passing the `Tenant`. The flow below (the `/signup`/`/verify`
+> on-ramp, local `Atlas User` creation) stays for this iteration and will be
+> retired as Central takes over the front door.
+
 This chapter is the durable spec — the whole self-serve layer is built and
 **host-proven**: the `Site` layer, the in-guest deploy script + HTTP readiness
 probe, and the signup/verification surface are built and unit-green; the

@@ -46,9 +46,15 @@
 
 ### Atlas (this app)
 
-A Frappe app installed on `atlas.local`. It owns the database of servers and
-virtual machines, exposes Desk forms for the operator, and runs background
-jobs that SSH into servers to make changes.
+A Frappe app installed on `atlas.local`, deployed **once per region**. It owns
+the database of servers and virtual machines in that region, exposes Desk forms
+for the operator, and runs background jobs that SSH into servers to make
+changes. Atlas is the regional **backend** of a larger platform: above it,
+**Central** ([16-central.md](./16-central.md)) is the global front door that
+owns users, teams, and billing and drives Atlas as an authenticated client of
+its whitelisted methods. Atlas trusts Central's session, attributes resources to
+a `Tenant`, and enforces only physical capacity — all policy (who, which team,
+paid-for-what) is decided in Central before it calls.
 
 There is no Atlas agent on the server. Everything Atlas does on a server is
 the result of one SSH invocation that runs one shell script. The script comes

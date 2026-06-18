@@ -17,6 +17,16 @@ This is a deliberate, documented reversal of the original PoC stance ("Desk is
 the UI; no web UI of our own"). The reversal is scoped: Desk stays the
 operator UI; the SPA is *additive* for users. Nothing in Desk is removed.
 
+> **Status (Central pivot).** Central ([16-central.md](./16-central.md)) is
+> becoming the customer-facing front door for the whole platform. The SPA
+> described here is **transitional**: it remains the user surface for this
+> iteration but will be **retired** once Central's console fronts the user
+> experience. Its permission model (owner-scoped,
+> [permissions.py](../atlas/atlas/permissions.py)) is **unchanged for now** —
+> Central drives Atlas as a service user and attributes resources via `Tenant`
+> ([02-doctypes.md § Tenant](./02-doctypes.md#tenant)) without yet superseding
+> owner-scoping.
+
 ## Why a second UI (and not more Desk)
 
 Desk is built for an operator reading infrastructure to act on the whole

@@ -28,6 +28,43 @@ set of whitelisted HTTP methods (see *The wire contract* below).
    state change back to Central, so the global dashboard reflects fleet state in
    near-real time.
 
+## Central as the front door
+
+Central is the **face of all customer actions**; Atlas is its regional backend.
+The customer never talks to Atlas directly — they act in Central, which (after
+checking who they are, which team they act for, and what they've paid for)
+performs the action against the right regional Atlas.
+
+Central does this **not** through a bespoke command API but by behaving as an
+ordinary authenticated Frappe client:
+
+- **One service user.** Central authenticates to a regional Atlas as a single
+  service user (a Frappe API key/secret), the same `token key:secret` header the
+  telemetry client uses in reverse. It is *not* a per-customer login.
+- **Existing whitelisted methods are the command surface.** Central calls the
+  same methods the dashboard SPA does — `Virtual Machine.provision` /
+  `start` / `stop` / `restart` / `pause` / `resume` / `snapshot` / `rebuild` /
+  `resize` / `terminate`, document insert via `/api/v2/document`,
+  `run_doc_method` — with the exact argument shape the SPA sends. Atlas adds no
+  inbound command endpoint.
+- **Tenant travels in the payload.** Central passes the target `Tenant`
+  ([02-doctypes.md § Tenant](./02-doctypes.md#tenant)) as a field on the create
+  call. The controller stamps it `set_only_once` / immutable; it is
+  **attribution only** — it does not gate permissions today (owner-scoping is
+  unchanged, [11-user-ui.md](./11-user-ui.md)).
+- **Authorization split.** Central **pre-checks** capability, billing, and
+  quota / entitlement before it calls. Atlas **trusts that session** — it runs
+  no `fc_teams` / capability engine of its own — and enforces only what only the
+  region knows: **physical capacity**. If Central authorized a create but no
+  Active server in the region has room, the create is rejected with a typed
+  no-capacity error ([placement.py](../atlas/atlas/placement.py)) and no
+  `Virtual Machine` row leaks; Central surfaces it (retry, queue, or alert the
+  operator to add a Server).
+
+The telemetry seam below (Atlas → Central event reporting, size / image fetch)
+is unchanged and complementary: it keeps Central's asset registry in sync with
+the fleet state the commands above produce.
+
 ## DocTypes
 
 - **Central Settings** (single) — the credentials, this Atlas's identity, and

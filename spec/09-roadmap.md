@@ -531,8 +531,13 @@ never touches real DO/Scaleway rows.
 - **Console access**: signed URL to the serial console via the API socket.
   Needs a small web service. Additive.
 
-- **Quotas / ownership / scheduling**: belongs in the layer above Atlas.
-  Atlas gains a `team` field on resources but stays unaware of policy.
+- **Quotas / ownership / scheduling**: belongs in the layer above Atlas — that
+  layer is now **Central** ([16-central.md](./16-central.md)), which pre-checks
+  capability, billing, and quota before driving Atlas. Atlas stays unaware of
+  policy: it attributes resources to a `Tenant` ([02-doctypes.md § Tenant](./02-doctypes.md#tenant),
+  an attribution-only link today, *not* a `team` field) and enforces only
+  physical **capacity** — a create Central authorized but the region can't fit
+  is rejected with a typed no-capacity error ([placement.py](../atlas/atlas/placement.py)).
 
 ## Things we will not do, regardless
 
