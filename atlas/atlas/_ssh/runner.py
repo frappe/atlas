@@ -208,20 +208,34 @@ def _run_remote_script(
 	from atlas.atlas import scripts_catalog
 	from atlas.atlas.script_uploads import files_to_upload
 
-	script_path = scripts_catalog.resolve(script)
-
 	_ensure_known_hosts_directory()
 
 	uploads = files_to_upload(script)
+	durable_remote = scripts_catalog.durable_remote_path(script)
 
 	with ssh_key_file(connection.ssh_private_key) as key_path:
-		# Create the staging dir and every remote parent directory the uploads
-		# need in one round trip. The purge first: hosts bootstrapped before the
-		# durable-package cutover still carry a per-Task staged copy of the lib
-		# at <staging>/lib, and the entry points' `sys.path.insert(0, <staging>/lib)`
+		# Fast path: the script is shipped durably at /var/lib/atlas/bin (by
+		# bootstrap/sync_scripts, like the atlas package and the systemd hooks) and
+		# needs no per-Task sidecar, so invoke it in place — one round trip, no
+		# mkdir+scp. This is the bulk of Tasks (every VM lifecycle op); the scp it
+		# skips was the dominant latency of an otherwise sub-second start/stop. A
+		# host bootstrapped before the durable-scripts cutover lacks the copy and
+		# must be re-bootstrapped / sync_scripts'd — the same refresh contract the
+		# durable atlas package already follows.
+		if durable_remote and not uploads:
+			command = _remote_command(script, durable_remote, variables)
+			return run_ssh(connection, key_path, command, timeout_seconds=timeout_seconds)
+
+		# Staging path: e2e probe scripts (resolved from the test directory, never
+		# shipped durably) and the few scripts with per-Task sidecars (sync-image).
+		# Create the staging dir and every remote parent directory the uploads need
+		# in one round trip. The purge first: hosts bootstrapped before the
+		# durable-package cutover still carry a per-Task staged copy of the lib at
+		# <staging>/lib, and the entry points' `sys.path.insert(0, <staging>/lib)`
 		# shim puts it AHEAD of PYTHONPATH — so a stale copy there shadows every
 		# durable-package update (e.g. an old paths.py without the new attributes).
 		# Removing it makes the shim the no-op the durable contract assumes.
+		script_path = scripts_catalog.resolve(script)
 		remote_dirs = {REMOTE_STAGING_DIRECTORY}
 		remote_dirs.update(os.path.dirname(remote) for _, remote in uploads)
 		mkdir = (

@@ -225,7 +225,9 @@ class TestSidecarUploads(IntegrationTestCase):
 		# durable-package update (the bug: provision-vm.py failing with
 		# "'VirtualMachinePaths' object has no attribute ..." after a
 		# bootstrap had already refreshed /var/lib/atlas/bin). The staging
-		# preamble must remove it before every Task.
+		# preamble must remove it before every staged Task. Use an e2e probe
+		# (resolved from the test dir, never shipped durably) so the staging
+		# path runs — durable production scripts now skip it entirely.
 		ssh_commands: list[str] = []
 
 		def capture(args, **kwargs):
@@ -236,14 +238,45 @@ class TestSidecarUploads(IntegrationTestCase):
 		with patch("atlas.atlas._ssh.transport.subprocess.run", side_effect=capture):
 			run_task(
 				connection=CONNECTION,
-				script="snapshot-vm.py",
-				variables={"VIRTUAL_MACHINE_NAME": "x", "SNAPSHOT_ROOTFS_PATH": "/dev/atlas/y"},
+				script="phase1-probe.sh",
+				variables={"NAME": "x"},
 			)
 
 		staging = next(command for command in ssh_commands if "mkdir -p" in command)
 		self.assertIn(f"rm -rf {runner.STALE_STAGED_PACKAGE_DIRECTORY}", staging)
 		# The purge must come before the mkdir that re-creates the staging dir.
 		self.assertLess(staging.index("rm -rf"), staging.index("mkdir -p"))
+
+
+class TestDurableScriptInvocation(IntegrationTestCase):
+	"""A durably-shipped Task script (provision/start/stop/…) is invoked in place
+	at /var/lib/atlas/bin — no per-Task mkdir+scp, just one run."""
+
+	def test_durable_script_skips_staging_and_scp(self) -> None:
+		ssh_commands: list[str] = []
+		scp_count = 0
+
+		def capture(args, **kwargs):
+			nonlocal scp_count
+			if args[0] == "ssh":
+				ssh_commands.append(args[-1])
+			elif args[0] == "scp":
+				scp_count += 1
+			return _ok(args, **kwargs)
+
+		with patch("atlas.atlas._ssh.transport.subprocess.run", side_effect=capture):
+			run_task(
+				connection=CONNECTION,
+				script="start-vm.py",
+				variables={"VIRTUAL_MACHINE_NAME": "uuid-1"},
+			)
+
+		# No script transfer and no staging mkdir — the whole staging round trip
+		# is gone; the only ssh runs the durable copy in place.
+		self.assertEqual(scp_count, 0)
+		self.assertFalse(any("mkdir -p" in command for command in ssh_commands))
+		self.assertEqual(len(ssh_commands), 1)
+		self.assertIn("/var/lib/atlas/bin/start-vm.py", ssh_commands[0])
 
 
 class TestRemoteCommand(IntegrationTestCase):
