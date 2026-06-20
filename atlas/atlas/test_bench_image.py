@@ -126,3 +126,171 @@ class TestBuildBench(IntegrationTestCase):
 			"Task", filters={"virtual_machine": vm.name, "script": "bench-build"}, pluck="status"
 		)
 		self.assertEqual(status, ["Failure"])
+
+
+# A clean site-mode guest run: serves pong, the baked password logs in (200 +
+# session cookie), and a wrong password is rejected (401). The exact labelled
+# shape sanity_check parses back out.
+_SANE_SITE_STDOUT = (
+	"=== SERVE ===\n"
+	"http_code=200\n"
+	'body={"message":"pong"}\n'
+	"=== LOGIN ===\n"
+	"http_code=200\n"
+	'body={"message":"Logged In"}\n'
+	"sid_cookie=1\n"
+	"=== NEGCTL ===\n"
+	"http_code=401\n"
+)
+
+# A clean ADMIN-mode run: /api/status serves 200, and GET / renders the Bench Admin
+# console page (marker present). No login fields (admin bakes no Frappe site).
+_SANE_ADMIN_STDOUT = (
+	"=== SERVE ===\n"
+	"http_code=200\n"
+	'body={"authenticated":false,"enabled":true,"name":"atlas"}\n'
+	"=== ADMINUI ===\n"
+	"http_code=200\n"
+	"marker=1\n"
+)
+
+
+class TestSanityFailureLogic(IntegrationTestCase):
+	"""The serve/login/negative-control verdict is pure string logic — unit-coverable
+	with no host. These are the cases the gate exists to catch."""
+
+	def test_clean_site_run_has_no_failures(self) -> None:
+		parsed = bench_image._parse_sanity(_SANE_SITE_STDOUT, "site")
+		self.assertEqual(bench_image._sanity_failures(parsed, "site"), [])
+
+	def test_serves_but_baked_password_rejected(self) -> None:
+		# The exact gap the unauthenticated ping gate misses: site serves, login 401.
+		out = _SANE_SITE_STDOUT.replace(
+			'http_code=200\nbody={"message":"Logged In"}\nsid_cookie=1',
+			'http_code=401\nbody={"message":"Invalid login credentials"}\nsid_cookie=0',
+		)
+		failures = bench_image._sanity_failures(bench_image._parse_sanity(out, "site"), "site")
+		self.assertEqual(len(failures), 1)
+		self.assertIn("did not log in", failures[0])
+
+	def test_open_door_login_is_untrustworthy(self) -> None:
+		# Login 200 but a wrong password is ALSO accepted → the login pass is meaningless.
+		out = _SANE_SITE_STDOUT.replace("=== NEGCTL ===\nhttp_code=401", "=== NEGCTL ===\nhttp_code=200")
+		failures = bench_image._sanity_failures(bench_image._parse_sanity(out, "site"), "site")
+		self.assertEqual(len(failures), 1)
+		self.assertIn("NOT rejected", failures[0])
+
+	def test_does_not_serve(self) -> None:
+		out = "=== SERVE ===\nhttp_code=502\nbody=\n"
+		failures = bench_image._sanity_failures(bench_image._parse_sanity(out, "site"), "site")
+		self.assertTrue(any("does not serve" in f for f in failures), failures)
+
+	def test_serves_200_without_pong_fails(self) -> None:
+		# A 200 from a wrong/default vhost that doesn't carry pong is not "serving this site".
+		out = "=== SERVE ===\nhttp_code=200\nbody=<html>default</html>\n"
+		failures = bench_image._sanity_failures(bench_image._parse_sanity(out, "site"), "site")
+		self.assertTrue(any("no pong" in f for f in failures), failures)
+
+	def test_clean_admin_run_has_no_failures(self) -> None:
+		# Admin bakes no Frappe site → serve (/api/status) + console-render check, no
+		# login fields parsed.
+		parsed = bench_image._parse_sanity(_SANE_ADMIN_STDOUT, "admin")
+		self.assertEqual(bench_image._sanity_failures(parsed, "admin"), [])
+		self.assertNotIn("login_http", parsed)
+
+	def test_admin_console_not_rendering_fails(self) -> None:
+		# /api/status is 200 but GET / 500s (broken console) — the gap a serve-only
+		# admin check would miss.
+		out = _SANE_ADMIN_STDOUT.replace("=== ADMINUI ===\nhttp_code=200", "=== ADMINUI ===\nhttp_code=500")
+		failures = bench_image._sanity_failures(bench_image._parse_sanity(out, "admin"), "admin")
+		self.assertEqual(len(failures), 1)
+		self.assertIn("does not render", failures[0])
+
+	def test_admin_console_200_without_marker_fails(self) -> None:
+		# GET / 200s but the page isn't the Bench Admin console (blank/wrong shell).
+		out = _SANE_ADMIN_STDOUT.replace(
+			"=== ADMINUI ===\nhttp_code=200\nmarker=1", "=== ADMINUI ===\nhttp_code=200\nmarker=0"
+		)
+		failures = bench_image._sanity_failures(bench_image._parse_sanity(out, "admin"), "admin")
+		self.assertEqual(len(failures), 1)
+		self.assertIn("not the Bench Admin console", failures[0])
+
+	def test_admin_not_serving_fails(self) -> None:
+		# /api/status itself down — serve failure short-circuits before the UI check.
+		out = "=== SERVE ===\nhttp_code=502\nbody=\n=== ADMINUI ===\nhttp_code=200\nmarker=1\n"
+		failures = bench_image._sanity_failures(bench_image._parse_sanity(out, "admin"), "admin")
+		self.assertTrue(any("does not serve" in f for f in failures), failures)
+
+
+@contextlib.contextmanager
+def _mock_sanity_ssh(stdout: str, exit_code: int = 0):
+	"""Patch the guest-SSH plumbing sanity_check uses so no host is touched."""
+	key_cm = MagicMock()
+	key_cm.__enter__ = MagicMock(return_value="/tmp/fake.key")
+	key_cm.__exit__ = MagicMock(return_value=False)
+	run_ssh = MagicMock(return_value=(stdout, "", exit_code))
+	with (
+		patch.object(bench_image, "run_ssh", run_ssh),
+		patch.object(bench_image, "ssh_key_file", return_value=key_cm),
+		patch.object(
+			bench_image,
+			"connection_for_guest",
+			return_value=MagicMock(ssh_private_key="KEY", host="2400::dead"),
+		),
+	):
+		yield run_ssh
+
+
+class TestSanityCheck(IntegrationTestCase):
+	def setUp(self) -> None:
+		_ensure_test_server()
+		_ensure_test_image()
+		_purge()
+
+	def test_passing_site_build_returns_parsed_result(self) -> None:
+		vm = _new_vm(build_mode="site")
+		with _mock_sanity_ssh(_SANE_SITE_STDOUT) as run_ssh:
+			result = bench_image.sanity_check(vm.name)
+		self.assertEqual(result["serve_http"], "200")
+		self.assertEqual(result["login_http"], "200")
+		# Site mode probes the baked password through the login endpoint.
+		remote = run_ssh.call_args.args[2]
+		self.assertIn("/api/method/login", remote)
+		self.assertIn(bench_image.BAKED_ADMIN_PASSWORD, remote)
+		self.assertIn("/api/method/ping", remote)
+
+	def test_failing_login_raises_and_names_the_problem(self) -> None:
+		vm = _new_vm(build_mode="site")
+		out = _SANE_SITE_STDOUT.replace("sid_cookie=1", "sid_cookie=0").replace(
+			'http_code=200\nbody={"message":"Logged In"}', "http_code=401\nbody=denied"
+		)
+		with _mock_sanity_ssh(out):
+			with self.assertRaisesRegex(frappe.ValidationError, "did not log in"):
+				bench_image.sanity_check(vm.name)
+
+	def test_unreachable_guest_raises(self) -> None:
+		vm = _new_vm(build_mode="site")
+		with _mock_sanity_ssh("", exit_code=255):
+			with self.assertRaisesRegex(frappe.ValidationError, "could not reach"):
+				bench_image.sanity_check(vm.name)
+
+	def test_admin_mode_probes_status_and_console_not_login(self) -> None:
+		vm = _new_vm(build_mode="admin")
+		with _mock_sanity_ssh(_SANE_ADMIN_STDOUT) as run_ssh:
+			result = bench_image.sanity_check(vm.name)
+		self.assertEqual(result["mode"], "admin")
+		self.assertEqual(result["adminui_http"], "200")
+		remote = run_ssh.call_args.args[2]
+		# Admin probes /api/status + renders the console at /, never the login endpoint.
+		self.assertIn("/api/status", remote)
+		self.assertIn("Bench Admin", remote)
+		self.assertNotIn("/api/method/login", remote)
+
+	def test_admin_console_render_failure_raises(self) -> None:
+		# The whole point: an admin build whose console doesn't render fails the gate
+		# (so image_build.run marks it Failed and never snapshots).
+		vm = _new_vm(build_mode="admin")
+		out = _SANE_ADMIN_STDOUT.replace("=== ADMINUI ===\nhttp_code=200", "=== ADMINUI ===\nhttp_code=500")
+		with _mock_sanity_ssh(out):
+			with self.assertRaisesRegex(frappe.ValidationError, "does not render"):
+				bench_image.sanity_check(vm.name)

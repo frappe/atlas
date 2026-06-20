@@ -205,6 +205,7 @@ in-place edit (the same shape as `Site` / `Virtual Machine`).
    | ---- | ------ | ------ |
    | 1 | Provision a scratch build VM at the recipe's size on `server` from `base_image` (an `is_proxy` recipe stamps `is_proxy` + `region`). **Commit**, then wait for its own after_insert provision job to reach Running. | `Provisioning` |
    | 2 | `run_build(vm, recipe)` — upload the tree + run `build.sh` in the guest (+ finalize). Links the `build_task`. | `Building` |
+   | 2a | **Sanity gate** (bench recipes only): `bench_image.sanity_check(vm)` SSHes the still-running build VM and proves it actually *works* — site: serves + the baked password logs in; admin: the admin console renders — before it is allowed to become a snapshot. See *The post-build sanity gate* below. A miss raises → the build fails here, never snapshots. | (still `Building`) |
    | 3 | Cold (default): stop the build VM and `snapshot(title=recipe.snapshot_title)`. **Warm** (`warm` checked): run the warm finalize instead — see below. Link it into `snapshot`. | `Snapshotting` → `Available` |
    | 4 | If `auto_register` and the recipe has `registers_as`, write the snapshot into that Atlas Settings field. | (still `Available`) |
    | 5 | If `terminate_build_vm`, terminate the scratch build VM. | |
@@ -227,6 +228,47 @@ The **commit-before-wait** in step 1 is load-bearing and copied from
 **separate** transaction that can't run until this one commits. Holding the
 transaction open and blocking on the wait would deadlock the boot, time out, and
 roll back the VM row — orphaning its boot job.
+
+### The post-build sanity gate
+
+`build.sh` already curls an **unauthenticated** `/api/method/ping` before it lets the
+bake finish, which proves the web server is up but says nothing about whether the
+baked site's **Administrator password actually works**, or — for an admin bake —
+whether the **admin console page actually renders**. A site build with a wrong/empty
+baked password serves a clean `pong`; an admin build whose console assets failed to
+build serves a `200` from `/api/status` while the page itself is blank — both
+snapshot clean and only break in front of a customer. Step 2a closes that gap at the
+source. After `run_build` returns (the production stack is up, the build VM still
+Running) and *before* the snapshot, `bench_image.sanity_check(vm)` SSHes the guest and
+asserts — over a **mode-specific endpoint**, because the two bakes serve differently
+on the *build* VM:
+
+**Site mode** — over `:80` with the baked-site `Host: site.local` (the FQDN rename
+happens only at deploy):
+- **serves** — `/api/method/ping` answers `200` + `pong`.
+- **logs in** — the baked Administrator password (`Site.BAKED_ADMIN_PASSWORD`, the one
+  place that string lives — imported, not re-spelled) authenticates: `200` + `Logged
+  In` + a `sid` session cookie.
+- **rejects a wrong password** — the negative control. Without it a login endpoint
+  that `200`s on anything would pass the login check falsely; the rejection proves the
+  auth is real, not an open door.
+
+**Admin mode** — the admin console is the bench-cli admin Flask app on the **internal
+admin gunicorn** at `127.0.0.1:(<[admin].port>+1)`. At bake time `[admin].domain` is
+still unset (`deploy-site.py` sets it per clone), so there is **no `:80` admin vhost
+yet** — `:80` is just the default nginx server. So the gate reads `[admin].port` from
+the guest `bench.toml` and probes the internal port directly:
+- **serves** — `/api/status` on the admin gunicorn answers `200`.
+- **console renders** — `GET /` returns `200` **and** the HTML carries the `Bench
+  Admin` console marker. `/api/status` can be `200` while the page is blank/`500`
+  (a bad asset build, a broken template); this asserts the admin URL a customer hits
+  after deploy actually renders.
+
+Any failed assertion (or an unreachable guest) `frappe.throw`s, so the build flips to
+`Failed` and **never snapshots** — a broken build is caught at bake time, not by the
+first customer. Proxy builds bake no Frappe/admin app, so they skip this gate (they
+keep their own in-`build.sh` health check). This is the controller's *only* serving
+assertion; everything else is `build.sh`'s job (spec taste #15).
 
 ### The warm bake (`warm`)
 
@@ -366,12 +408,16 @@ A few choices that aren't obvious from the field list:
   - *Controller* — `before_insert` defaults + the region requirement,
     immutability, the `run()` state machine (status transitions, artifact
     linking, auto-register on/off, terminate on/off, fail-loud, the
-    not-`Draft` no-op), and `rebake`. Host steps mocked at the module seams. See
+    not-`Draft` no-op, the **sanity gate** running for bench / skipped for proxy /
+    failing the build before any snapshot), and `rebake`. Host steps mocked at the
+    module seams. See
     [`atlas/atlas/doctype/image_build/test_image_build.py`](../atlas/atlas/doctype/image_build/test_image_build.py).
   - The two build verbs keep their own thin coverage of what they still own —
     `build_proxy`'s `is_proxy`/`region` guards
     ([`test_proxy.py`](../atlas/atlas/test_proxy.py)) and `build_bench`'s
-    delegation ([`test_bench_image.py`](../atlas/atlas/test_bench_image.py)).
+    delegation, plus the **sanity-gate** verdict logic (serve/login/wrong-password
+    cases, the site-vs-admin command shape, and the unreachable-guest throw) with
+    the guest SSH mocked ([`test_bench_image.py`](../atlas/atlas/test_bench_image.py)).
   - *Promote* — `promote_to_image` guards (not-Available, **warm-reject**,
     invalid/duplicate name, missing source kernel), the local-image row shape
     (URL-less, inherited kernel, `rootfs_filename` = LV name), the URL-less-image

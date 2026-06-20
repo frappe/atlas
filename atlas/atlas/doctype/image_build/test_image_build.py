@@ -101,6 +101,9 @@ class TestImageBuildRun(IntegrationTestCase):
 			),
 			_wait=patch.object(image_build_module, "_wait_for_vm_running"),
 			run_build=patch.object(image_build_module, "run_build"),
+			# The post-build serve+login gate SSHes a real guest; mock it here so the
+			# host-free run() flow doesn't try to reach the fake build VM.
+			sanity=patch.object(image_build_module.bench_image, "sanity_check"),
 			_snap=patch.object(image_build_module, "_stop_and_snapshot", return_value="snap-1"),
 			_register=patch.object(image_build_module, "_register"),
 			_terminate=patch.object(image_build_module, "_terminate_build_vm"),
@@ -110,13 +113,14 @@ class TestImageBuildRun(IntegrationTestCase):
 			defaults["_provision_build_vm"] as m_prov,
 			defaults["_wait"] as m_wait,
 			defaults["run_build"] as m_build,
+			defaults["sanity"] as m_sanity,
 			defaults["_snap"] as m_snap,
 			defaults["_register"] as m_register,
 			defaults["_terminate"] as m_terminate,
 			defaults["commit"],
 		):
 			image_build_module.run(build.name)
-		return m_prov, m_wait, m_build, m_snap, m_register, m_terminate
+		return m_prov, m_wait, m_build, m_sanity, m_snap, m_register, m_terminate
 
 	def test_happy_path_reaches_available_and_links_artifacts(self) -> None:
 		build = _new_build("bench-v16")
@@ -128,29 +132,65 @@ class TestImageBuildRun(IntegrationTestCase):
 
 	def test_bench_build_auto_registers_when_checked(self) -> None:
 		build = _new_build("bench-v16", auto_register=1)
-		_, _, _, _, m_register, _ = self._run_with_mocks(build)
+		_, _, _, _, _, m_register, _ = self._run_with_mocks(build)
 		m_register.assert_called_once()
 
 	def test_bench_build_skips_register_when_unchecked(self) -> None:
 		build = _new_build("bench-v16", auto_register=0)
-		_, _, _, _, m_register, _ = self._run_with_mocks(build)
+		_, _, _, _, _, m_register, _ = self._run_with_mocks(build)
 		m_register.assert_not_called()
 
 	def test_proxy_build_never_registers(self) -> None:
 		# The proxy recipe has no registers_as, so register is skipped even if the
 		# (harmless, defaulted-on) auto_register check is set.
 		build = _new_build("proxy", region="blr1", auto_register=1)
-		_, _, _, _, m_register, _ = self._run_with_mocks(build)
+		_, _, _, _, _, m_register, _ = self._run_with_mocks(build)
 		m_register.assert_not_called()
+
+	def test_bench_build_runs_sanity_gate_before_snapshot(self) -> None:
+		# A bench build must clear the serve+login gate on the build VM before it is
+		# allowed to snapshot.
+		build = _new_build("bench-v16")
+		_, _, _, m_sanity, _, _, _ = self._run_with_mocks(build)
+		m_sanity.assert_called_once_with("build-vm-1")
+
+	def test_proxy_build_skips_sanity_gate(self) -> None:
+		# The proxy bakes no Frappe site, so the Frappe serve+login gate doesn't apply.
+		build = _new_build("proxy", region="blr1")
+		_, _, _, m_sanity, _, _, _ = self._run_with_mocks(build)
+		m_sanity.assert_not_called()
+
+	def test_failed_sanity_gate_marks_build_failed_no_snapshot(self) -> None:
+		# The gate raising (a build that serves wrong / won't log in) must fail the
+		# build loud and never reach the snapshot step.
+		build = _new_build("bench-v16")
+		with (
+			patch.object(image_build_module, "_provision_build_vm", return_value="vm-x"),
+			patch.object(image_build_module, "_wait_for_vm_running"),
+			patch.object(image_build_module, "run_build"),
+			patch.object(
+				image_build_module.bench_image,
+				"sanity_check",
+				side_effect=frappe.ValidationError("did not log in"),
+			),
+			patch.object(image_build_module, "_stop_and_snapshot") as m_snap,
+			patch.object(image_build_module.frappe.db, "commit"),
+		):
+			with self.assertRaises(frappe.ValidationError):
+				image_build_module.run(build.name)
+		m_snap.assert_not_called()
+		build.reload()
+		self.assertEqual(build.status, "Failed")
+		self.assertIn("did not log in", build.error)
 
 	def test_terminate_build_vm_when_checked(self) -> None:
 		build = _new_build("bench-v16", terminate_build_vm=1)
-		_, _, _, _, _, m_terminate = self._run_with_mocks(build)
+		_, _, _, _, _, _, m_terminate = self._run_with_mocks(build)
 		m_terminate.assert_called_once_with("build-vm-1")
 
 	def test_keeps_build_vm_by_default(self) -> None:
 		build = _new_build("bench-v16")
-		_, _, _, _, _, m_terminate = self._run_with_mocks(build)
+		_, _, _, _, _, _, m_terminate = self._run_with_mocks(build)
 		m_terminate.assert_not_called()
 
 	def test_failure_marks_failed_and_records_error_and_reraises(self) -> None:

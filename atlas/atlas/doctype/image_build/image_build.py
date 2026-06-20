@@ -18,6 +18,7 @@ import time
 import frappe
 from frappe.model.document import Document
 
+from atlas.atlas import bench_image
 from atlas.atlas.image_builder import run_build
 from atlas.atlas.image_recipes import get_recipe
 from atlas.atlas.placement import default_image
@@ -160,6 +161,14 @@ def run(image_build_name: str) -> None:
 		# whose develop branches float, is traceable to the exact frappe/erpnext SHAs
 		# it baked. Best-effort: a parse miss never fails the bake.
 		_record_build_inputs(build)
+		# Sanity-gate a bench build BEFORE it snapshots: prove the freshly-baked VM
+		# actually serves and (site mode) that the baked Administrator password logs
+		# in. build.sh's own gate is unauthenticated ping only, so a broken-auth build
+		# would otherwise snapshot clean and break a customer at first login. A miss
+		# raises → the except below marks the build Failed, no snapshot. Proxy builds
+		# bake no Frappe site, so they keep their own in-build health check.
+		if not recipe.is_proxy:
+			bench_image.sanity_check(vm_name)
 		_set_status(build, "Snapshotting")
 		if build.warm:
 			snapshot_name = _warm_snapshot(build, recipe, vm_name)
