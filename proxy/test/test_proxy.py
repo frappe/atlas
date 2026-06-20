@@ -14,6 +14,7 @@
 import json
 import os
 import subprocess
+import threading
 import time
 
 import pytest
@@ -218,6 +219,22 @@ def test_put_empty_body_rejected():
 	status, body = admin("PUT", "/map/blank", "")
 	assert status == 400
 	assert "empty" in body.lower()
+
+
+def test_sync_malformed_body_rejected_without_corrupting_map():
+	# A scalar, garbage, or a NON-EMPTY array must 400 and leave the live map
+	# untouched. (cjson decodes a JSON array to a Lua table, so [1,2] would inject
+	# numeric "subdomains" if admin.lua didn't validate entry types — it does.)
+	# An empty array [] is accepted as "empty map" (a Lua empty table is
+	# indistinguishable from {}), which is harmless, so it's excluded here.
+	admin("PUT", "/map/keepme", VM_A)  # seed a known-good entry
+	for bad in ('"x"', "42", "not json", "[1,2]", '["a","b"]'):
+		status, _ = admin("POST", "/sync", bad)
+		assert status == 400, f"{bad!r} unexpectedly accepted ({status})"
+	# The seeded entry survived every rejected sync — no partial/garbage write.
+	status, body = admin("GET", "/map/keepme")
+	assert status == 200 and json.loads(body)["address"] == VM_A
+	admin("POST", "/sync", "{}")  # reset for the next test
 
 
 def test_unknown_admin_route_404s():
