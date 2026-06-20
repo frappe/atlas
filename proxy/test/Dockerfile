@@ -2,6 +2,11 @@
 # the docker-compose test harness exercises byte-identical conf + lua + nginx as
 # a real proxy VM (proxy-design.md §9). Docker is used ONLY for this test; the
 # shipped artifact is a VM snapshot, never this image.
+#
+# The base is plain ubuntu:24.04 (the guest's Ubuntu): build.sh itself adds the
+# official nginx.org apt repo, installs the stock nginx, and compiles only the
+# dynamic modules. So this gate proves the exact apt-base + dynamic-module stack
+# the real proxy guest runs — repo reachability, module ABI, cjson cpath, the lot.
 FROM ubuntu:24.04
 
 # Copy the whole proxy source tree so build.sh finds its sibling conf/lua/html.

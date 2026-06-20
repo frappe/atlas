@@ -14,6 +14,15 @@ is snapshotted — that snapshot is the reusable proxy image. There is no custom
 `Virtual Machine Image`, no exported rootfs, no host service: the Firecracker
 jail + per-VM netns + cgroup caps are the sandbox.
 
+The base nginx comes from the **official nginx.org apt repo** (stable), so
+`/usr/sbin/nginx` is a genuine, signed, dpkg-owned package and `nginx -V` is
+truthful. `build.sh` only **compiles the modules apt cannot supply** — OpenResty
+luajit2 plus the Lua / headers-more nginx modules, built as dynamic `.so`s
+(`--add-dynamic-module --with-compat`) against the exact installed nginx and
+loaded via `load_module` in `nginx.conf`. We own the frozen, mutually-compatible
+*module* set; apt owns the base binary and OpenSSL version (`apt-mark hold`ed in
+the snapshot).
+
 ## Layout
 
 ```
@@ -25,8 +34,8 @@ lua/persist.lua            dump/load the dict to canonical map.json (§6.3)
 html/not_found.html        branded 404/503 page (§5.4)
 guest/nginx.service        the guest systemd unit (§8)
 guest/tmpfiles.d/          /run/nginx (admin-socket dir) perms
-build.sh                   compile nginx+Lua INSIDE the guest, install the stack (§3.1)
-test/                      docker-compose release gate (§9)
+build.sh                   apt-install stock nginx + compile the Lua modules INSIDE the guest (§3.1)
+test/                      docker-compose release gate (§9): test_proxy.py + test_build.py
 ```
 
 Paths mirror the stock Ubuntu `nginx` package — binary `/usr/sbin/nginx`, config
@@ -45,34 +54,50 @@ and snapshotting the result. Atlas drives this from the controller —
 1. Provision an ordinary Atlas VM from the stock Ubuntu image, marked
    `is_proxy` with a `region`.
 2. `build_proxy(vm)` SSHes into the guest, uploads this `proxy/` tree, and runs
-   `build.sh`. It compiles vanilla nginx + OpenResty luajit2 + lua-nginx-module
-   from pinned sources, installs the binary at `/usr/sbin/nginx`, the config under
-   `/etc/nginx`, the three Lua modules, and the guest unit, enables
-   `nginx.service`, writes the region, and starts the unit. (Recorded as a
-   `proxy-build` Task row.)
+   `build.sh`. It installs the stock nginx from the nginx.org apt repo at
+   `/usr/sbin/nginx`, compiles the OpenResty luajit2 + Lua / headers-more modules
+   as dynamic `.so`s against it, installs the config under `/etc/nginx`, the three
+   Lua modules, and the guest unit, enables `nginx.service`, writes the region,
+   and starts the unit. (Recorded as a `proxy-build` Task row.)
 3. Snapshot the VM. That snapshot is the rollable proxy image.
 
-`build.sh` is idempotent: re-running rebuilds from the pinned sources. The
-pinned versions live at the top of the script; bumping one is a deliberate stack
-update rolled as a new snapshot.
+`build.sh` is idempotent: re-running reinstalls the held apt nginx and rebuilds
+the modules from the pinned sources. **Every** version is pinned at the top of the
+script — the nginx base (`NGINX_VERSION`, an exact nginx.org package version) as
+well as the compiled modules — so the base binary and the modules compiled against
+it can never drift apart, and two bakes far apart produce the same stack. The
+install fails loud if the pinned base can't be served (no silent substitution).
+Bumping any pin is a deliberate stack update rolled as a new snapshot.
 
 ## Test (the release gate: docker-compose)
 
-The compose harness runs the **same** `build.sh`, so a green run exercises the
-byte-identical stack a real proxy VM runs. It brings up the proxy plus two fake
-IPv6 upstreams and drives the admin socket.
+The compose harness runs the **same** `build.sh` on plain `ubuntu:24.04` (it adds
+the nginx.org repo itself), so a green run exercises the byte-identical stack a
+real proxy VM runs — apt base, dynamic-module ABI, cjson cpath, the lot. It
+brings up the proxy plus two fake IPv6 upstreams and drives the admin socket.
 
 ```sh
 cd test
-docker compose up --build -d          # build + start proxy + vm-a + vm-b
-python3 -m pytest test_proxy.py -v    # routing, remap-no-reload, /sync, restart,
-                                      #   HTTP->HTTPS, HTTP/2, socket.io, canonical JSON
+docker compose up --build -d                     # build + start proxy + vm-a + vm-b
+python3 -m pytest test_proxy.py test_build.py -v  # behavior + build-shape gate
 docker compose down -v
 ```
 
-The driver talks to the admin socket via `curl --unix-socket test/run/admin.sock`
-(bind-mounted out of the container) and makes HTTPS requests with the wildcard
-Host/SNI forced onto the local published port.
+Two test files:
+
+- **`test_proxy.py`** — behavior: routing, remap-without-reload, tombstone,
+  bulk `/sync` (incl. malformed-body rejection), per-subdomain CRUD, restart
+  persistence, HTTP→HTTPS, HTTP/2, socket.io, dead-upstream resilience, TLS floor.
+- **`test_build.py`** — build provenance: nginx is the dpkg-owned nginx.org
+  package, `apt-mark hold`ed, stable (not mainline), `--with-compat`; the three
+  dynamic modules are present *and* loaded at runtime; `cjson.safe` resolves;
+  luajit2 is the OpenResty fork; security headers survive the header chain.
+
+The driver reaches the admin socket via `docker compose exec proxy curl
+--unix-socket /run/nginx/admin.sock` (from *inside* the container — faithful to
+production, where Atlas reaches the socket over SSH-to-the-guest, never a host
+mount) and makes HTTPS requests with the wildcard Host/SNI forced onto the local
+published port.
 
 ## Control plane (Atlas-side)
 

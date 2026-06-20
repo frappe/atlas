@@ -146,6 +146,36 @@ def test_unmapped_serves_branded_404():
 	assert "isn't here" in body  # the branded page, no upstream contacted
 
 
+def test_tombstone_serves_503():
+	# router.lua §6.5: a known-but-suspended subdomain stores "-" and serves the
+	# branded page with 503 ("preparing") rather than 404 ("no such site"). This is
+	# a real router branch with no other coverage.
+	admin("PUT", "/map/paused", "-")
+	status, body, _ = fetch("paused")
+	assert status == 503
+	assert "isn't here" in body  # same branded page, different status
+
+
+def test_no_region_suffix_serves_404():
+	# A host that doesn't end in ".<region>.frappe.dev" has no derivable subdomain
+	# under a configured region → branded 404, never a 500.
+	admin("PUT", "/map/acme", VM_A)
+	host = "acme.wrongregion.example.com"
+	cmd = [
+		"curl",
+		"-sk",
+		"-o",
+		"/dev/null",
+		"-w",
+		"%{http_code}",
+		"--resolve",
+		f"{host}:8443:127.0.0.1",
+		f"https://{host}:8443/",
+	]
+	status = subprocess.run(cmd, capture_output=True, text=True).stdout.strip()
+	assert status == "404", status
+
+
 # --- bulk /sync ------------------------------------------------------------
 
 
@@ -164,6 +194,36 @@ def test_get_map_is_canonical_json():
 	_, live = admin("GET", "/map")
 	expected = json.dumps({"a": VM_A, "b": VM_B}, sort_keys=True, indent=2) + "\n"
 	assert live == expected  # byte-identical to the Atlas-side serialization
+
+
+# --- per-subdomain admin routes (GET/PUT/DELETE /map/<sub>) -----------------
+
+
+def test_put_then_get_then_delete_single():
+	# The per-subdomain CRUD the controller uses for incremental edits — each verb
+	# has its own admin.lua branch and none was covered.
+	status, _ = admin("PUT", "/map/solo", VM_A)
+	assert status == 200
+	status, body = admin("GET", "/map/solo")
+	assert status == 200 and json.loads(body)["address"] == VM_A
+	status, _ = admin("DELETE", "/map/solo")
+	assert status == 200
+	# Gone: both the admin lookup and the routed request 404.
+	assert admin("GET", "/map/solo")[0] == 404
+	assert fetch("solo")[0] == 404
+
+
+def test_put_empty_body_rejected():
+	# admin.lua rejects an empty address with 400 rather than mapping a blank.
+	status, body = admin("PUT", "/map/blank", "")
+	assert status == 400
+	assert "empty" in body.lower()
+
+
+def test_unknown_admin_route_404s():
+	status, body = admin("GET", "/nope")
+	assert status == 404
+	assert "unknown route" in body.lower()
 
 
 # --- healthz ---------------------------------------------------------------
@@ -244,6 +304,50 @@ def test_socketio_upgrade():
 	)
 	assert status == 101
 	assert "upgrade: websocket" in headers.lower()
+
+
+# --- resilience: a mapped-but-dead upstream ---------------------------------
+
+
+def test_dead_upstream_does_not_wedge_proxy():
+	# Map a subdomain to an in-subnet address with nothing listening. The proxy
+	# must fail that ONE request cleanly (a gateway error, or curl's own timeout if
+	# the SYN is dropped) and — the property that matters — keep serving every
+	# other route. It must never crash or wedge nginx.
+	admin("PUT", "/map/dead", "fd00:a71a:5::dead")
+	status, _, _ = fetch("dead", extra=["--max-time", "8"])
+	# 502/504 = nginx returned a gateway error; 0 = curl --max-time fired first on a
+	# dropped SYN. Both mean "no upstream, no garbage". A 200 would be very wrong.
+	assert status in (0, 502, 504), f"dead upstream gave {status}, expected gateway error/timeout"
+	# The live route still works right after — one dead upstream didn't wedge nginx.
+	admin("PUT", "/map/acme", VM_A)
+	assert "upstream=vm-a" in fetch("acme")[1]
+
+
+# --- TLS floor -------------------------------------------------------------
+
+
+def test_tls11_refused():
+	# nginx.conf pins ssl_protocols TLSv1.2 TLSv1.3. Forcing a 1.1-max handshake
+	# must be refused (curl can't negotiate → exits non-zero, status "000"). We
+	# cap at 1.1 with --tls-max so curl doesn't fall back up to an allowed version.
+	host = f"acme.{REGION}.frappe.dev"
+	cmd = [
+		"curl",
+		"-sk",
+		"-o",
+		"/dev/null",
+		"-w",
+		"%{http_code}",
+		"--tls-max",
+		"1.1",
+		"--resolve",
+		f"{host}:8443:127.0.0.1",
+		f"https://{host}:8443/",
+	]
+	res = subprocess.run(cmd, capture_output=True, text=True)
+	assert res.stdout.strip() in ("", "000"), f"TLS1.1 unexpectedly accepted: {res.stdout!r}"
+	assert res.returncode != 0, "curl should fail the handshake"
 
 
 # --- helpers ---------------------------------------------------------------
