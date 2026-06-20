@@ -78,6 +78,17 @@ if method == "POST" and uri == "/sync" then
     if type(desired) ~= "table" then
         return send_json(400, { error = "body must be a JSON object" })
     end
+    -- Validate the WHOLE body before mutating anything, so a malformed entry
+    -- rejects the sync atomically rather than leaving the live map half-written.
+    -- Every entry must be string subdomain -> string address: cjson decodes a
+    -- JSON array to a Lua table too (e.g. [1,2] -> {[1]=1,[2]=2}), which would
+    -- otherwise inject numeric "subdomains"/addresses into the dict. The
+    -- controller only ever sends a proper object; this guards a buggy caller.
+    for subdomain, addr in pairs(desired) do
+        if type(subdomain) ~= "string" or type(addr) ~= "string" then
+            return send_json(400, { error = "body must be a JSON object of subdomain->address strings" })
+        end
+    end
     -- Remove keys not in desired, then upsert desired. flush_all + reinsert is
     -- simpler and the dict is small; get_keys + targeted delete avoids a window
     -- where the dict is empty under concurrent reads, so prefer that.
