@@ -1,7 +1,7 @@
 -- admin.lua — the control path, unix-socket server only (proxy-design.md §6.2).
 --
--- Reachable ONLY over /run/atlas-proxy/admin.sock (nginx.conf binds it on a
--- unix listener, never TCP). Auth is the socket's file permissions: the only
+-- Reachable ONLY over /run/nginx/admin.sock (nginx.conf binds it on a unix
+-- listener, never TCP). Auth is the socket's file permissions: the only
 -- thing that can reach it is a process inside the guest, and the only way Atlas
 -- gets there is SSH-to-the-guest. No token.
 --

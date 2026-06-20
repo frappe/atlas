@@ -1,9 +1,9 @@
 -- persist.lua — snapshot the live dict to disk and reload it (proxy-design.md §6.3).
 --
 -- The shared dict is the source of truth in-process, but shared memory is wiped
--- on restart/reboot/rebuild. So we DUMP it to /var/lib/atlas-proxy/map.json
--- (atomic temp + rename) and LOAD it back at worker init. The file is read ONLY
--- at start; Atlas's reconcile (§7) is the durable backstop if the file is lost.
+-- on restart/reboot/rebuild. So we DUMP it to /var/lib/nginx/map.json (atomic
+-- temp + rename) and LOAD it back at worker init. The file is read ONLY at
+-- start; Atlas's reconcile (§7) is the durable backstop if the file is lost.
 --
 -- The serialization MUST be byte-identical to the Atlas side's
 -- json.dumps(map, sort_keys=True, indent=2): sorted keys, 2-space indent, one
@@ -13,7 +13,7 @@
 
 local cjson = require("cjson.safe")
 
-local MAP_PATH = "/var/lib/atlas-proxy/map.json"
+local MAP_PATH = "/var/lib/nginx/map.json"
 local TMP_PATH = MAP_PATH .. ".tmp"
 
 local persist = {}

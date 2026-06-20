@@ -23,11 +23,18 @@ lua/router.lua             request path — subdomain -> upstream via the shared
 lua/admin.lua              unix-socket admin API: GET/PUT/DELETE /map, POST /sync (§6.2)
 lua/persist.lua            dump/load the dict to canonical map.json (§6.3)
 html/not_found.html        branded 404/503 page (§5.4)
-guest/atlas-proxy.service  the guest systemd unit (§8)
-guest/tmpfiles.d/          /run/atlas-proxy perms
+guest/nginx.service        the guest systemd unit (§8)
+guest/tmpfiles.d/          /run/nginx (admin-socket dir) perms
 build.sh                   compile nginx+Lua INSIDE the guest, install the stack (§3.1)
 test/                      docker-compose release gate (§9)
 ```
+
+Paths mirror the stock Ubuntu `nginx` package — binary `/usr/sbin/nginx`, config
+`/etc/nginx/` (with `lua/` alongside), logs `/var/log/nginx/`, pid `/run/nginx.pid`,
+state (live `map.json`, `region`, `certs/`, `acme/`) under `/var/lib/nginx/`, the
+admin socket at `/run/nginx/admin.sock`, and the unit `nginx.service` — so an
+engineer debugging the guest finds everything where `apt install nginx` would put
+it.
 
 ## Build (the real path: in a guest)
 
@@ -39,9 +46,10 @@ and snapshotting the result. Atlas drives this from the controller —
    `is_proxy` with a `region`.
 2. `build_proxy(vm)` SSHes into the guest, uploads this `proxy/` tree, and runs
    `build.sh`. It compiles vanilla nginx + OpenResty luajit2 + lua-nginx-module
-   from pinned sources, installs `/opt/atlas-proxy`, the config, the three Lua
-   modules, and the guest unit, enables `atlas-proxy.service`, writes the region,
-   and starts the unit. (Recorded as a `proxy-build` Task row.)
+   from pinned sources, installs the binary at `/usr/sbin/nginx`, the config under
+   `/etc/nginx`, the three Lua modules, and the guest unit, enables
+   `nginx.service`, writes the region, and starts the unit. (Recorded as a
+   `proxy-build` Task row.)
 3. Snapshot the VM. That snapshot is the rollable proxy image.
 
 `build.sh` is idempotent: re-running rebuilds from the pinned sources. The
@@ -81,7 +89,7 @@ The implementation is `atlas/atlas/proxy.py` (see
   regional map on drift. One unreachable proxy is recorded as a failed Task and
   skipped; the others still serve.
 - `proxy.push_cert(vm, fullchain, privkey)` — SSH-to-guest, drop
-  `fullchain.pem`/`privkey.pem` into `/var/lib/atlas-proxy/certs/<region>/` (key
+  `fullchain.pem`/`privkey.pem` into `/var/lib/nginx/certs/<region>/` (key
   via stdin `tee`, never in argv), reload nginx.
 
 Each guest op records a `Task` row (`proxy-build` / `proxy-sync` /

@@ -14,14 +14,14 @@ RUN chmod +x /src/proxy/build.sh && /src/proxy/build.sh
 # the flat symlink at certs/<region>/. There's no real wildcard for the harness
 # (the TLS tests use curl -k), so the region's cert dir just reuses the
 # build-time placeholder PEMs. This keeps the gate faithful to the symlink path.
-RUN printf 'test\n' > /var/lib/atlas-proxy/region \
-    && mkdir -p /var/lib/atlas-proxy/certs/test \
-    && cp /var/lib/atlas-proxy/certs/_placeholder/fullchain.pem /var/lib/atlas-proxy/certs/test/fullchain.pem \
-    && cp /var/lib/atlas-proxy/certs/_placeholder/privkey.pem   /var/lib/atlas-proxy/certs/test/privkey.pem \
-    && ln -sfn test/fullchain.pem /var/lib/atlas-proxy/certs/fullchain.pem \
-    && ln -sfn test/privkey.pem   /var/lib/atlas-proxy/certs/privkey.pem
+RUN printf 'test\n' > /var/lib/nginx/region \
+    && mkdir -p /var/lib/nginx/certs/test \
+    && cp /var/lib/nginx/certs/_placeholder/fullchain.pem /var/lib/nginx/certs/test/fullchain.pem \
+    && cp /var/lib/nginx/certs/_placeholder/privkey.pem   /var/lib/nginx/certs/test/privkey.pem \
+    && ln -sfn test/fullchain.pem /var/lib/nginx/certs/fullchain.pem \
+    && ln -sfn test/privkey.pem   /var/lib/nginx/certs/privkey.pem
 
-# Foreground nginx (no systemd in this container). The admin socket and pidfile
-# land under /run/atlas-proxy, created by build.sh. tmpfiles isn't run here, so
-# ensure the dir exists at start.
-ENTRYPOINT ["/bin/sh", "-c", "mkdir -p /run/atlas-proxy && exec /opt/atlas-proxy/sbin/nginx -g 'daemon off;' -c /opt/atlas-proxy/conf/nginx.conf"]
+# Foreground nginx (no systemd in this container). The admin socket lands under
+# /run/nginx (created by build.sh) and the pidfile at /run/nginx.pid. tmpfiles
+# isn't run here, so ensure the socket dir exists at start.
+ENTRYPOINT ["/bin/sh", "-c", "mkdir -p /run/nginx && exec /usr/sbin/nginx -g 'daemon off;' -c /etc/nginx/nginx.conf"]

@@ -19,7 +19,7 @@ import time
 import pytest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-ADMIN_SOCK = "/run/atlas-proxy/admin.sock"  # inside the proxy container
+ADMIN_SOCK = "/run/nginx/admin.sock"  # inside the proxy container
 
 HTTPS = "127.0.0.1:8443"
 HTTP = "127.0.0.1:8080"
@@ -252,7 +252,7 @@ def test_socketio_upgrade():
 def _proxy_master_pid() -> str:
 	"""nginx master PID inside the proxy container — to prove no reload."""
 	out = subprocess.run(
-		["docker", "compose", "exec", "-T", "proxy", "cat", "/run/atlas-proxy/nginx.pid"],
+		["docker", "compose", "exec", "-T", "proxy", "cat", "/run/nginx.pid"],
 		cwd=HERE,
 		capture_output=True,
 		text=True,

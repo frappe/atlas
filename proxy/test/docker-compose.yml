@@ -15,7 +15,7 @@ services:
     ports:
       - "127.0.0.1:8443:443"
       - "127.0.0.1:8080:80"
-    # The admin socket lives on the container's own tmpfs (/run/atlas-proxy) —
+    # The admin socket lives on the container's own tmpfs (/run/nginx) —
     # NOT a host bind-mount: nginx chmod()s the listen socket at startup and the
     # macOS Docker bind-mount FUSE layer rejects that (EINVAL). The pytest driver
     # reaches it via `docker compose exec` (curl --unix-socket) inside the

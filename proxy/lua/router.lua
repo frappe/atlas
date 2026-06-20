@@ -14,7 +14,7 @@
 
 local sites = ngx.shared.sites
 
-local NOT_FOUND_PAGE = "/opt/atlas-proxy/html/not_found.html"
+local NOT_FOUND_PAGE = "/usr/share/nginx/html/not_found.html"
 local not_found_body  -- cached after first read
 
 local function serve_not_found(status)
