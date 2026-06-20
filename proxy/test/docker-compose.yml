@@ -9,6 +9,7 @@ services:
     build:
       context: ..            # the proxy/ root, so build.sh sees conf/ lua/ html/
       dockerfile: test/Dockerfile
+    image: test-proxy:latest  # named so proxy-noregion can reuse it (no 2nd build)
     networks:
       sixnet:
         ipv4_address: 172.30.0.10
@@ -22,6 +23,29 @@ services:
     # container, which is also faithful to production: Atlas talks to the socket
     # from INSIDE the guest over SSH, never from a host mount.
     depends_on:
+      - vm-a
+      - vm-b
+      - vm-bad
+
+  # The SAME built proxy image, but with an EMPTY region file — exercises
+  # router.lua's "no region configured → route by the first host label" fallback
+  # branch (router.lua:50-52), which the region-set `proxy` service can never
+  # hit. Reuses test-proxy:latest (no second build.sh run); the entrypoint just
+  # truncates /var/lib/nginx/region before starting nginx the same way the image
+  # does. Published on :8444 so test_proxy.py can target it directly.
+  proxy-noregion:
+    image: test-proxy:latest
+    networks:
+      sixnet:
+        ipv4_address: 172.30.0.11
+    ports:
+      - "127.0.0.1:8444:443"
+    entrypoint:
+      - /bin/sh
+      - -c
+      - ": > /var/lib/nginx/region && mkdir -p /run/nginx && exec /usr/sbin/nginx -g 'daemon off;' -c /etc/nginx/nginx.conf"
+    depends_on:
+      - proxy   # so test-proxy:latest is built before this reuses it
       - vm-a
       - vm-b
 
@@ -44,6 +68,17 @@ services:
     networks:
       sixnet:
         ipv6_address: fd00:a71a:5::b
+
+  # A deliberately-broken upstream (raw-socket, non-HTTP / truncated replies) for
+  # the robustness tests — the proxy must 502/close-clean, never crash or pass
+  # garbage through. Mode is chosen by the forwarded Host (see misbehave.py).
+  vm-bad:
+    build:
+      context: .
+      dockerfile: misbehave.Dockerfile
+    networks:
+      sixnet:
+        ipv6_address: fd00:a71a:5::bad
 
 networks:
   sixnet:

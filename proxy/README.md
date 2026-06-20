@@ -35,7 +35,7 @@ html/not_found.html        branded 404/503 page (§5.4)
 guest/nginx.service        the guest systemd unit (§8)
 guest/tmpfiles.d/          /run/nginx (admin-socket dir) perms
 build.sh                   apt-install stock nginx + compile the Lua modules INSIDE the guest (§3.1)
-test/                      docker-compose release gate (§9): test_proxy.py + test_build.py
+test/                      docker-compose release gate (§9): test_proxy.py + test_build.py + test_latency.py
 ```
 
 Paths mirror the stock Ubuntu `nginx` package — binary `/usr/sbin/nginx`, config
@@ -74,24 +74,44 @@ Bumping any pin is a deliberate stack update rolled as a new snapshot.
 The compose harness runs the **same** `build.sh` on plain `ubuntu:24.04` (it adds
 the nginx.org repo itself), so a green run exercises the byte-identical stack a
 real proxy VM runs — apt base, dynamic-module ABI, cjson cpath, the lot. It
-brings up the proxy plus two fake IPv6 upstreams and drives the admin socket.
+brings up the proxy plus a few fake IPv6 upstreams and drives the admin socket.
 
 ```sh
 cd test
-docker compose up --build -d                     # build + start proxy + vm-a + vm-b
-python3 -m pytest test_proxy.py test_build.py -v  # behavior + build-shape gate
+docker compose up --build -d                                  # build + start the stack
+python3 -m pytest test_proxy.py test_build.py test_latency.py -v  # the full gate
 docker compose down -v
 ```
 
-Two test files:
+The stack: the **proxy** (published on `:8443`/`:8080`); **`proxy-noregion`** (the
+same image with an empty region file, on `:8444`, for the first-label fallback);
+**`vm-a`/`vm-b`** (good IPv6 upstreams that echo the Host + the forwarded headers,
+plus `/__stream` and `/__conns` debug endpoints); and **`vm-bad`** (a raw-socket
+upstream that replies with non-HTTP garbage / truncated bodies, for the robustness
+tests). Three test files:
 
-- **`test_proxy.py`** — behavior: routing, remap-without-reload, tombstone,
-  bulk `/sync` (incl. malformed-body rejection), per-subdomain CRUD, restart
-  persistence, HTTP→HTTPS, HTTP/2, socket.io, dead-upstream resilience, TLS floor.
+- **`test_proxy.py`** — behavior + robustness: routing, remap-without-reload,
+  tombstone, bulk `/sync` (incl. malformed-body rejection), per-subdomain CRUD,
+  restart persistence, HTTP→HTTPS, HTTP/2, socket.io, dead-upstream resilience,
+  TLS floor; **plus** query-string/forwarded-header fidelity, case-insensitive
+  + SNI≠Host routing, security-header values on 200 *and* on the branded 404/503,
+  ACME passthrough, the full admin method/route dispatch matrix, bad-address /
+  misbehaving-upstream fail-clean (never a 200), weird Host/subdomain keys,
+  oversized `/sync` spill, concurrent-read atomicity, the dump debounce + its
+  durability window, corrupt-`map.json` boot, and the empty-region fallback.
 - **`test_build.py`** — build provenance: nginx is the dpkg-owned nginx.org
   package, `apt-mark hold`ed, stable (not mainline), `--with-compat`; the three
   dynamic modules are present *and* loaded at runtime; `cjson.safe` resolves;
-  luajit2 is the OpenResty fork; security headers survive the header chain.
+  luajit2 is the OpenResty fork; security headers survive the header chain; the
+  static config invariants (finite read-timeouts, `/sync` avoids `flush_all`, no
+  upstream pooling today).
+- **`test_latency.py`** — latency / timing / scale regression guards: per-request
+  routing overhead vs a direct upstream hit, `proxy_buffering off` streams the
+  first byte early, TLS session resumption works, a 2000-request concurrency soak
+  with zero errors and no reload, a 10k-entry map syncs + routes O(1), and the
+  cold-start route-ready-when-healthz-says-so invariant. These **print** the
+  observed numbers and assert only generous ceilings (regression guards, not
+  benchmarks).
 
 The driver reaches the admin socket via `docker compose exec proxy curl
 --unix-socket /run/nginx/admin.sock` (from *inside* the container — faithful to

@@ -187,12 +187,69 @@ def test_server_tokens_off_hides_version():
 	assert "/" not in server_line[0], f"version leaked: {server_line[0]}"
 
 
+# --- config invariants the behavior tests can't see directly ----------------
+
+
+def test_proxy_read_timeout_is_finite_and_nonzero():
+	# Both proxy locations carry a finite, nonzero proxy_read_timeout — a `0` (or a
+	# missing directive defaulting differently) would let a hung upstream pin a
+	# worker connection forever. We can't wait out the real 600s/3600s in a test,
+	# so we assert the STATIC invariant: location / = 600s, /socket.io = 3600s, and
+	# no `proxy_read_timeout 0` anywhere.
+	conf = exec_proxy("cat", "/etc/nginx/nginx.conf").stdout
+	assert "proxy_read_timeout 600s;" in conf, "location / read timeout drifted"
+	assert "proxy_read_timeout 3600s;" in conf, "/socket.io read timeout drifted"
+	assert "proxy_read_timeout 0" not in conf, "a zero (infinite) read timeout slipped in"
+
+
+def test_sync_uses_targeted_delete_not_flush_all():
+	# /sync must mutate via get_keys + per-key delete, NEVER flush_all — a flush_all
+	# would briefly empty the dict, so a concurrent reader could see an empty map
+	# mid-sync (the partial-read window test_concurrent_reads_during_sync guards at
+	# runtime; this is the cheap static half). admin.lua is installed in the image,
+	# so check the shipped copy.
+	src = exec_proxy("cat", "/etc/nginx/lua/admin.lua").stdout
+	# Match an actual CALL (`:flush_all(`), not the word in a comment — admin.lua's
+	# comment explains why it deliberately avoids flush_all.
+	assert ":flush_all(" not in src, "admin.lua calls flush_all — opens an empty-map window"
+	assert "get_keys" in src and "delete" in src, "admin.lua sync no longer does targeted delete"
+
+
+def test_upstream_not_pooled_today():
+	# Documents a CURRENT reality so a future change is a conscious one: location /
+	# clears Connection and there is no `upstream{}`/`keepalive` block, so the proxy
+	# opens a fresh TCP connection to the site per request (no pooling). vm-a counts
+	# accepted connections via /__conns; N keepalive client requests must bump it by
+	# N. If someone adds upstream keepalive, this flips and they update the test
+	# deliberately.
+	_ensure_mapped("pool")
+	before = _upstream_conns()
+	host = f"pool.{REGION}.frappe.dev"
+	# One curl, N requests on ONE client keepalive connection (so any pooling is the
+	# proxy's, not the client's).
+	urls = [f"https://{host}:{HTTPS_PORT}/"] * 10
+	cmd = ["curl", "-sk", "-o", "/dev/null", "--resolve", f"{host}:{HTTPS_PORT}:127.0.0.1", *urls]
+	subprocess.run(cmd, capture_output=True, text=True, check=False)
+	after = _upstream_conns()
+	# No pooling → ~one new upstream connection per request. Allow slack for any
+	# concurrent test traffic, but it must be clearly per-request, not a single
+	# reused connection.
+	assert after - before >= 8, f"expected ~10 new upstream connections (no pooling), saw {after - before}"
+
+
 # --- helpers (mirror test_proxy.py's transport) ----------------------------
 
 REGION = "test"
 VM_A = "fd00:a71a:5::a"
 HTTPS_PORT = "8443"
 BUILD_SH = os.path.join(HERE, "..", "build.sh")
+
+
+def _upstream_conns() -> int:
+	"""vm-a's accepted-connection counter (/__conns) — read from inside the proxy
+	container over the v6 south network."""
+	res = exec_proxy("curl", "-s", "http://[fd00:a71a:5::a]:80/__conns")
+	return json.loads(res.stdout)["conns"]
 
 
 def _build_pin(name: str) -> str:
