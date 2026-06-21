@@ -255,6 +255,23 @@ def test_proxy_read_timeout_is_finite_and_nonzero():
 	assert "proxy_read_timeout 0" not in conf, "a zero (infinite) read timeout slipped in"
 
 
+def test_package_default_conf_present_but_unincluded():
+	# We leave the nginx.org package's conf.d/default.conf in place (deleting a
+	# dpkg-owned conffile by hand desyncs dpkg's bookkeeping) but our nginx.conf
+	# does NOT `include conf.d`, so the package's default server never loads — our
+	# `server_name _` default_server owns :80/:443. Guard BOTH halves so a future
+	# conf.d re-include (which would shadow our default server) trips the gate.
+	ls = exec_proxy("ls", "/etc/nginx/conf.d/default.conf", check=False)
+	assert ls.returncode == 0, "package conf.d/default.conf missing (was it hand-deleted?)"
+	conf = exec_proxy("cat", "/etc/nginx/nginx.conf").stdout
+	included = [
+		line
+		for line in conf.splitlines()
+		if line.strip().startswith("include") and "conf.d" in line and not line.strip().startswith("#")
+	]
+	assert not included, f"nginx.conf includes conf.d — package default server would shadow ours: {included}"
+
+
 def test_sync_uses_targeted_delete_not_flush_all():
 	# /sync must mutate via get_keys + per-key delete, NEVER flush_all — a flush_all
 	# would briefly empty the dict, so a concurrent reader could see an empty map

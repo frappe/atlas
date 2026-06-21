@@ -79,7 +79,8 @@ MODULES_DIR="/etc/nginx/modules"      # dynamic .so's live here (load_module rea
 SBIN_PATH="/usr/sbin/nginx"
 RUN_DIR="/run/nginx"                  # admin socket dir (pid is /run/nginx.pid)
 LOG_DIR="/var/log/nginx"
-STATE_DIR="/var/lib/nginx"           # deb temp dirs (body/…) + our map.json/region/certs/acme
+STATE_DIR="/var/lib/nginx"           # 100% Atlas state (map.json/region/certs/acme); the
+                                     # nginx.org pkg uses /var/cache/nginx for its temp dirs
 BUILD_DIR="/usr/local/src/nginx-build"
 SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -250,7 +251,11 @@ ldconfig
 # config, which carries the load_module lines for the dynamic modules above. ---
 install -d "$CONF_DIR" "$LUA_DIR" "$HTML_DIR"
 install -m 0644 "$SRC_DIR/conf/nginx.conf"  "$CONF_DIR/nginx.conf"
-install -m 0644 "$SRC_DIR/conf/mime.types"  "$CONF_DIR/mime.types"
+# No custom mime.types: nginx.conf `include /etc/nginx/mime.types` reads the
+# nginx.org package's own ~90-entry conffile (installed in §1). The proxy serves
+# every location via proxy_pass (upstreams set Content-Type) and the one local
+# file not_found.html sets its Content-Type from Lua, so the map governs nothing
+# we emit — the stock file is strictly a superset of what a custom one would.
 install -m 0644 "$SRC_DIR/lua/router.lua"   "$LUA_DIR/router.lua"
 install -m 0644 "$SRC_DIR/lua/admin.lua"    "$LUA_DIR/admin.lua"
 install -m 0644 "$SRC_DIR/lua/persist.lua"  "$LUA_DIR/persist.lua"
@@ -261,10 +266,11 @@ install -m 0644 "$SRC_DIR/lua/stream_router.lua"  "$LUA_DIR/stream_router.lua"
 install -m 0644 "$SRC_DIR/lua/stream_admin.lua"   "$LUA_DIR/stream_admin.lua"
 install -m 0644 "$SRC_DIR/lua/stream_persist.lua" "$LUA_DIR/stream_persist.lua"
 install -m 0644 "$SRC_DIR/html/not_found.html" "$HTML_DIR/not_found.html"
-# The nginx.org package drops conf.d/default.conf, included by ITS nginx.conf.
-# Ours doesn't include conf.d, so this is dead weight — remove it so a curious
-# engineer doesn't think it's live.
-rm -f "$CONF_DIR/conf.d/default.conf"
+# The nginx.org package drops conf.d/default.conf, included by ITS nginx.conf. Our
+# nginx.conf does NOT include conf.d (see the note there), so it never loads — we
+# leave the dpkg-owned conffile in place rather than hand-deleting it and desyncing
+# dpkg's bookkeeping. test_build.py asserts conf.d stays unincluded so a future
+# re-include is caught.
 
 # The stream-admin line-protocol client (spec/17-tcp-proxy.md): the controller
 # runs `stream-admin GET` / `SYNC` over SSH-to-the-guest to reconcile the TCP port
@@ -282,7 +288,9 @@ install -m 0755 "$SRC_DIR/guest/stream-admin" /usr/local/bin/stream-admin
 # and the flat symlinks point at it — enough for nginx -t and a first boot before
 # Atlas pushes the real wildcard. ---
 install -d -m 0750 "$RUN_DIR"
-install -d -m 0755 "$LOG_DIR"
+# $LOG_DIR (/var/log/nginx) is created+owned by the nginx.org .deb at mode 0755 in
+# §1 (with logrotate), so we don't re-create it. $STATE_DIR (/var/lib/nginx) is
+# all-Atlas state the package never makes.
 install -d -m 0750 "$STATE_DIR" "$STATE_DIR/certs" "$STATE_DIR/acme"
 : > "$STATE_DIR/region"
 install -d -m 0750 "$STATE_DIR/certs/_placeholder"
@@ -299,21 +307,32 @@ fi
 ln -sfn _placeholder/fullchain.pem "$STATE_DIR/certs/fullchain.pem"
 ln -sfn _placeholder/privkey.pem   "$STATE_DIR/certs/privkey.pem"
 
-# --- 8. Guest unit + tmpfiles, named `nginx` so `systemctl status nginx` /
-# `journalctl -u nginx` work by reflex. We install OUR unit over whatever the apt
-# package dropped (the package's unit doesn't run our -t precheck / paths). Enable
-# but do not start (this may be a chroot / container build with no live systemd).
-# The package's own unit (lib/systemd) is shadowed by our /etc/systemd one. ---
-install -m 0644 "$SRC_DIR/guest/nginx.service" /etc/systemd/system/nginx.service
-install -d /etc/tmpfiles.d
-install -m 0644 "$SRC_DIR/guest/tmpfiles.d/nginx.conf" /etc/tmpfiles.d/nginx.conf
+# --- 8. systemd: a thin drop-in over the package's OWN nginx.service, NOT a full
+# shadow. The nginx.org unit ships Type=forking, PIDFile, ExecStart=-c ${CONFFILE}
+# (CONFFILE defaults to our /etc/nginx/nginx.conf), ExecReload (kill -HUP), ExecStop
+# and WantedBy=multi-user.target, so leaving it authoritative lets `apt upgrade
+# nginx` keep shipping base-unit fixes. The drop-in carries ONLY the deltas with no
+# stock equivalent: After=atlas-network.service (order after the guest's static /128
+# v6 is up), ExecStartPre=nginx -t (the package unit ships NO precheck — needed so a
+# bad config refuses to start instead of restart-looping under Restart=on-failure),
+# Restart=on-failure, LimitNOFILE (the ~20000-listener pool — the conf sets no
+# worker_rlimit_nofile), and RuntimeDirectory=nginx/RuntimeDirectoryMode=0750
+# (creates the 0750-root /run/nginx admin-socket dir, subsuming the old tmpfiles.d
+# file). `systemctl status nginx` / `journalctl -u nginx` keep working by reflex.
+# Enable but do not start (this may be a chroot / container build with no live
+# systemd). ---
+install -d /etc/systemd/system/nginx.service.d
+install -m 0644 "$SRC_DIR/guest/nginx.service.d/atlas.conf" \
+	/etc/systemd/system/nginx.service.d/atlas.conf
 if [ -d /run/systemd/system ]; then
 	systemctl daemon-reload
 	systemctl enable nginx.service
 else
-	# No live systemd (Docker build): enable by symlink so a real boot starts it.
+	# No live systemd (Docker build): enable the PACKAGE unit by symlink so a real
+	# boot starts it (the drop-in is read automatically alongside it). The package
+	# unit lives at /lib/systemd/system/nginx.service.
 	install -d /etc/systemd/system/multi-user.target.wants
-	ln -sf /etc/systemd/system/nginx.service \
+	ln -sf /lib/systemd/system/nginx.service \
 		/etc/systemd/system/multi-user.target.wants/nginx.service
 fi
 

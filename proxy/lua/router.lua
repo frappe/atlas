@@ -8,9 +8,11 @@
 -- region (the ".<region>.frappe.dev" suffix) is loaded once at init into the
 -- global atlas_region (see nginx.conf).
 --
--- We render the branded page FROM LUA rather than via error_page: error_page
--- does not intercept a Lua-phase ngx.exit, so a Lua handler that wants a custom
--- body + custom status is the reliable path. The page is read once and cached.
+-- We render the branded page FROM LUA rather than via error_page. (error_page
+-- CAN intercept a Lua-phase ngx.exit(<4xx/5xx>) issued before output — a stock
+-- error_page 404/503 = /not_found.html wiring would also work — but serving it
+-- inline keeps the body cached, shares the ngx.exit idiom with admin.lua, and
+-- sidesteps error_page's status-preservation footgun.) Read once and cached.
 
 local sites = ngx.shared.sites
 
