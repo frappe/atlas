@@ -44,7 +44,19 @@ NGINX_VERSION="1.30.3"               # nginx.org STABLE (even minor); base binar
 NGINX_PKG_RELEASE="1"                # the "-N~<codename>" deb revision (bump for a repackage)
 LUAJIT2_REF="v2.1-20250529"          # OpenResty's fork (NOT upstream LuaJIT)
 LUA_NGINX_MODULE_VERSION="0.10.29"
-NDK_VERSION="0.3.4"                   # ngx_devel_kit — MUST precede lua module
+# stream-lua-nginx-module is the L4 sibling of lua-nginx-module (spec/17-tcp-proxy.md):
+# a SEPARATE module — both must be compiled in — for the TCP forwarder's stream{}
+# Lua (preread router + line-protocol admin). The version is NOT free to pick: the
+# pinned lua-resty-core (0.1.32) asserts an EXACT subsystem version at startup —
+# its base.lua requires ngx_stream_lua_module == 0.0.17 (and ngx_http_lua_module
+# == 0.10.29), not ">=". So 0.0.17 is the stream tag that matches the already-
+# pinned resty-core + lua-nginx-module 0.10.29 set; a newer stream-lua (e.g.
+# 0.0.19rc4) compiles fine but nginx then ALERTS "ngx_stream_lua_module 0.0.17
+# required" and refuses to start. The compose release gate caught this version
+# lock — bumping any one of the three is a coordinated stack update, rolled as a
+# new proxy snapshot, same discipline as the rest of the pins.
+STREAM_LUA_MODULE_REF="v0.0.17"
+NDK_VERSION="0.3.4"                   # ngx_devel_kit — MUST precede both lua modules
 LUA_RESTY_CORE_VERSION="0.1.32"      # mandatory — nginx won't start without it
                                      # (0.1.33 was never cut as a stable tag —
                                      # only RCs exist; 0.1.32 is the last stable)
@@ -114,7 +126,14 @@ echo "installed stock nginx ${NGINX_VERSION} (${NGINX_PKG_VERSION}) from nginx.o
 # compiled against the same nginx source, which #includes these).
 apt-get install -y --no-install-recommends \
 	build-essential \
-	libpcre2-dev zlib1g-dev libssl-dev
+	libpcre2-dev zlib1g-dev libssl-dev \
+	python3
+# python3: the stdlib-only `stream-admin` client (spec/17-tcp-proxy.md) the
+# controller runs over SSH to drive the stream{} line-protocol admin socket — the
+# L4 analogue of `curl --unix-socket` for the http admin. Stock Ubuntu guests ship
+# it; install it explicitly so a from-scratch build container (and the compose
+# release gate) has it too. (ca-certificates/curl already came in with the
+# nginx.org repo setup above.)
 
 mkdir -p "$BUILD_DIR"
 cd "$BUILD_DIR"
@@ -148,10 +167,12 @@ ldconfig
 fetch "https://nginx.org/download/nginx-${NGINX_VERSION}.tar.gz" "nginx.tar.gz"
 fetch "https://github.com/vision5/ngx_devel_kit/archive/refs/tags/v${NDK_VERSION}.tar.gz" "ndk.tar.gz"
 fetch "https://github.com/openresty/lua-nginx-module/archive/refs/tags/v${LUA_NGINX_MODULE_VERSION}.tar.gz" "lua-nginx-module.tar.gz"
+fetch "https://github.com/openresty/stream-lua-nginx-module/archive/refs/tags/${STREAM_LUA_MODULE_REF}.tar.gz" "stream-lua-nginx-module.tar.gz"
 fetch "https://github.com/openresty/headers-more-nginx-module/archive/refs/tags/v${HEADERS_MORE_VERSION}.tar.gz" "headers-more.tar.gz"
 
 for pair in "nginx.tar.gz:nginx" "ndk.tar.gz:ndk" \
-	"lua-nginx-module.tar.gz:lua-nginx-module" "headers-more.tar.gz:headers-more"; do
+	"lua-nginx-module.tar.gz:lua-nginx-module" \
+	"stream-lua-nginx-module.tar.gz:stream-lua-nginx-module" "headers-more.tar.gz:headers-more"; do
 	tarball="${pair%%:*}"
 	dir="${pair##*:}"
 	rm -rf "$dir"
@@ -176,15 +197,22 @@ LUAJIT_LIB=/usr/local/lib LUAJIT_INC=/usr/local/include/luajit-2.1 \
 	--with-http_v2_module \
 	--with-http_ssl_module \
 	--with-http_realip_module \
+	--with-stream \
+	--with-stream_ssl_preread_module \
 	--with-ld-opt="-Wl,-rpath,/usr/local/lib" \
 	--add-dynamic-module="$BUILD_DIR/ndk" \
 	--add-dynamic-module="$BUILD_DIR/lua-nginx-module" \
+	--add-dynamic-module="$BUILD_DIR/stream-lua-nginx-module" \
 	--add-dynamic-module="$BUILD_DIR/headers-more"
 make -j"$(nproc)" modules
 install -d "$MODULES_DIR"
-# NDK builds no runtime .so of its own (it's linked into the lua module); only the
-# lua + headers-more .so's land here. Copy whatever objs/ produced.
+# NDK builds no runtime .so of its own (it's linked into the lua modules); the
+# http-lua, stream-lua, and headers-more .so's land here. The stream-lua module
+# is the L4 sibling of http-lua (spec/17-tcp-proxy.md) — same dynamic-module ABI,
+# loaded by the apt binary via a load_module line in nginx.conf. Copy whatever
+# objs/ produced.
 install -m 0644 objs/*.so "$MODULES_DIR/"
+
 
 # --- 5. Pure-Lua resty libs. NOT compiled into nginx — nginx loads them at
 # runtime from /usr/local/share/lua/5.1 (lua_package_path in nginx.conf).
@@ -226,11 +254,23 @@ install -m 0644 "$SRC_DIR/conf/mime.types"  "$CONF_DIR/mime.types"
 install -m 0644 "$SRC_DIR/lua/router.lua"   "$LUA_DIR/router.lua"
 install -m 0644 "$SRC_DIR/lua/admin.lua"    "$LUA_DIR/admin.lua"
 install -m 0644 "$SRC_DIR/lua/persist.lua"  "$LUA_DIR/persist.lua"
+# The stream{}-side trio (spec/17-tcp-proxy.md): the L4 forwarder's router,
+# line-protocol admin, and persist. Separate files because stream{} Lua runs in a
+# separate subsystem (own lua_shared_dict address space) from the http{} trio.
+install -m 0644 "$SRC_DIR/lua/stream_router.lua"  "$LUA_DIR/stream_router.lua"
+install -m 0644 "$SRC_DIR/lua/stream_admin.lua"   "$LUA_DIR/stream_admin.lua"
+install -m 0644 "$SRC_DIR/lua/stream_persist.lua" "$LUA_DIR/stream_persist.lua"
 install -m 0644 "$SRC_DIR/html/not_found.html" "$HTML_DIR/not_found.html"
 # The nginx.org package drops conf.d/default.conf, included by ITS nginx.conf.
 # Ours doesn't include conf.d, so this is dead weight — remove it so a curious
 # engineer doesn't think it's live.
 rm -f "$CONF_DIR/conf.d/default.conf"
+
+# The stream-admin line-protocol client (spec/17-tcp-proxy.md): the controller
+# runs `stream-admin GET` / `SYNC` over SSH-to-the-guest to reconcile the TCP port
+# map, the L4 analogue of `curl --unix-socket` for the http admin. On PATH so the
+# controller invokes it by bare name; the compose gate runs the identical binary.
+install -m 0755 "$SRC_DIR/guest/stream-admin" /usr/local/bin/stream-admin
 
 # --- 7. Runtime dirs + cert layout, all under the stock nginx state/run/log dirs
 # (/var/lib/nginx, /run/nginx, /var/log/nginx). Certs are region-scoped on disk
@@ -282,4 +322,4 @@ fi
 # require("cjson.safe") + lua-resty-core load at init. ---
 "$SBIN_PATH" -t -c "$CONF_DIR/nginx.conf"
 
-echo "nginx proxy stack built: stock nginx ${NGINX_VERSION} (apt) + dynamic lua-nginx-module ${LUA_NGINX_MODULE_VERSION} + headers-more ${HEADERS_MORE_VERSION}."
+echo "nginx proxy stack built: stock nginx ${NGINX_VERSION} (apt) + dynamic lua-nginx-module ${LUA_NGINX_MODULE_VERSION} + stream-lua ${STREAM_LUA_MODULE_REF} + headers-more ${HEADERS_MORE_VERSION} (HTTP + L4 TCP forwarder)."

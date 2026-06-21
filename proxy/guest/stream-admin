@@ -1,0 +1,57 @@
+#!/usr/bin/env python3
+# Client for the stream-admin LINE PROTOCOL (spec/17-tcp-proxy.md), installed into
+# the proxy guest by build.sh as /usr/local/bin/stream-admin. It is the L4
+# analogue of `curl --unix-socket` (which the http admin uses): the stream admin
+# is NOT HTTP (a 3-verb line protocol read off the raw downstream socket), so curl
+# can't drive it. Stdlib-only python3 (always present, spec principle #5), so the
+# controller's reconcile (atlas/atlas/tcp_proxy.py) drives the same transport
+# end-to-end — Atlas SSHes into the guest and runs `stream-admin GET` / `SYNC`,
+# exactly as it runs `curl --unix-socket` for the http side. The compose release
+# gate (proxy/test) drives the identical binary, so the tested transport and the
+# shipped transport are the same.
+#
+# Usage:
+#   stream-admin GET            -> prints the canonical port map JSON
+#   stream-admin STAT           -> prints {"entries":N,"last_dump":epoch|null}
+#   stream-admin DUMP           -> forces a persist, prints "ok"
+#   stream-admin SYNC           -> reads the JSON body from stdin, replaces the map
+#
+# Connects to /run/nginx/stream-admin.sock, sends "<VERB>\n" (+ the body for
+# SYNC), reads the whole reply until the server closes, prints it.
+
+import socket
+import sys
+
+SOCKET_PATH = "/run/nginx/stream-admin.sock"
+
+
+def main() -> int:
+	if len(sys.argv) < 2:
+		sys.stderr.write("usage: stream-admin GET|STAT|SYNC|DUMP\n")
+		return 2
+	verb = sys.argv[1].upper()
+
+	request = verb.encode() + b"\n"
+	if verb == "SYNC":
+		# The canonical JSON body arrives on stdin (mirrors curl --data-binary @-).
+		request += sys.stdin.buffer.read()
+
+	sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+	sock.connect(SOCKET_PATH)
+	sock.sendall(request)
+	# Half-close our side so the server's blocking receive() on the SYNC body sees
+	# the stream end after the object; for GET/DUMP it is harmless.
+	sock.shutdown(socket.SHUT_WR)
+	chunks = []
+	while True:
+		data = sock.recv(4096)
+		if not data:
+			break
+		chunks.append(data)
+	sock.close()
+	sys.stdout.buffer.write(b"".join(chunks))
+	return 0
+
+
+if __name__ == "__main__":
+	raise SystemExit(main())

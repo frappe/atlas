@@ -1,8 +1,10 @@
 # Proxy image-level release gate (proxy-design.md §9). Brings up the real proxy
-# stack (built by build.sh, byte-identical to the guest) plus two fake v6
-# upstreams. test_proxy.py drives the admin socket and asserts routing, remap
-# without reload, bulk /sync, restart reload, HTTP->HTTPS, HTTP/2, socket.io,
-# and TLS. Nothing is installed on the host; everything is in containers.
+# stack (built by build.sh, byte-identical to the guest) plus fake v6 upstreams.
+# test_proxy.py drives the admin socket and asserts routing, remap without
+# reload, bulk /sync, restart reload, HTTP->HTTPS, HTTP/2, socket.io, and TLS;
+# test_tcp.py drives the stream-admin socket and asserts the L4 TCP forwarder
+# (spec/17-tcp-proxy.md) against the raw-TCP tcp-a/tcp-b upstreams. Nothing is
+# installed on the host; everything is in containers.
 
 services:
   proxy:
@@ -16,6 +18,14 @@ services:
     ports:
       - "127.0.0.1:8443:443"
       - "127.0.0.1:8080:80"
+      # A few ports out of the pre-opened TCP pool (listen 10000-19999), published
+      # so test_tcp.py can connect to them on localhost. The proxy binds the WHOLE
+      # range; we only need a few exposed for the L4 forward + remap + robustness
+      # tests. 10002 is the "spare" port used for unmapped→mapped + dead-backend
+      # cases so it never races with the 10000/10001 happy-path fixtures.
+      - "127.0.0.1:10000:10000"
+      - "127.0.0.1:10001:10001"
+      - "127.0.0.1:10002:10002"
     # The admin socket lives on the container's own tmpfs (/run/nginx) —
     # NOT a host bind-mount: nginx chmod()s the listen socket at startup and the
     # macOS Docker bind-mount FUSE layer rejects that (EINVAL). The pytest driver
@@ -26,6 +36,10 @@ services:
       - vm-a
       - vm-b
       - vm-bad
+      - tcp-a
+      - tcp-b
+      - tcp-silent
+      - tcp-rst
 
   # The SAME built proxy image, but with an EMPTY region file — exercises
   # router.lua's "no region configured → route by the first host label" fallback
@@ -79,6 +93,56 @@ services:
     networks:
       sixnet:
         ipv6_address: fd00:a71a:5::bad
+
+  # Raw-TCP upstreams for the L4 forwarder test (spec/17-tcp-proxy.md): a v6 echo
+  # service that banners its name on connect, mirroring a tenant VM's service port
+  # reached over the public-v6 south hop. Two of them so the remap test can
+  # repoint a port from one to the other.
+  tcp-a:
+    build:
+      context: .
+      dockerfile: tcp_upstream.Dockerfile
+    environment:
+      UPSTREAM_NAME: tcp-a
+    networks:
+      sixnet:
+        ipv6_address: fd00:a71a:5::c
+
+  tcp-b:
+    build:
+      context: .
+      dockerfile: tcp_upstream.Dockerfile
+    environment:
+      UPSTREAM_NAME: tcp-b
+    networks:
+      sixnet:
+        ipv6_address: fd00:a71a:5::d
+
+  # Misbehaving raw-TCP backends for the L4 robustness tests (spec/17-tcp-proxy.md):
+  # the proxy must fail the ONE affected connection cleanly and keep serving every
+  # other mapped port — never crash or wedge. One container per failure mode (raw
+  # TCP carries no routing key the upstream can read, so the mode is per-container).
+  tcp-silent:
+    build:
+      context: .
+      dockerfile: tcp_misbehave.Dockerfile
+    environment:
+      UPSTREAM_NAME: tcp-silent
+      UPSTREAM_MODE: accept-silent   # accept, then never send a byte and never close
+    networks:
+      sixnet:
+        ipv6_address: fd00:a71a:5::e
+
+  tcp-rst:
+    build:
+      context: .
+      dockerfile: tcp_misbehave.Dockerfile
+    environment:
+      UPSTREAM_NAME: tcp-rst
+      UPSTREAM_MODE: accept-rst       # accept, then immediately close without sending
+    networks:
+      sixnet:
+        ipv6_address: fd00:a71a:5::f
 
 networks:
   sixnet:
