@@ -27,7 +27,6 @@ the snapshot).
 
 ```
 conf/nginx.conf            static config (§5): http{} listeners + TLS + server blocks, and the stream{} L4 forwarder (spec/17-tcp-proxy.md)
-conf/mime.types            asset MIME map
 lua/router.lua             HTTP request path — subdomain -> upstream via the shared dict (§6.1)
 lua/admin.lua              HTTP unix-socket admin API: GET/PUT/DELETE /map, POST /sync (§6.2)
 lua/persist.lua            dump/load the http `sites` dict to canonical map.json (§6.3)
@@ -35,8 +34,7 @@ lua/stream_router.lua      TCP request path — local port -> backend via the st
 lua/stream_admin.lua       TCP unix-socket admin: line protocol GET / SYNC / DUMP (spec/17)
 lua/stream_persist.lua     dump/load the stream `ports` dict to canonical stream-map.json (spec/17)
 html/not_found.html        branded 404/503 page (§5.4)
-guest/nginx.service        the guest systemd unit (§8)
-guest/tmpfiles.d/          /run/nginx (admin-socket dir) perms
+guest/nginx.service.d/     drop-in over the package's nginx.service (§8): boot order, fd ceiling, /run/nginx dir
 build.sh                   apt-install stock nginx + compile the Lua modules INSIDE the guest (§3.1)
 test/                      docker-compose release gate (§9): test_proxy.py + test_build.py + test_latency.py
 ```
@@ -60,8 +58,9 @@ and snapshotting the result. Atlas drives this from the controller —
    `build.sh`. It installs the stock nginx from the nginx.org apt repo at
    `/usr/sbin/nginx`, compiles the OpenResty luajit2 + Lua / headers-more modules
    as dynamic `.so`s against it, installs the config under `/etc/nginx`, the three
-   Lua modules, and the guest unit, enables `nginx.service`, writes the region,
-   and starts the unit. (Recorded as a `proxy-build` Task row.)
+   Lua modules, and the `nginx.service.d/atlas.conf` drop-in, enables the package's
+   `nginx.service`, writes the region, and starts the unit. (Recorded as a
+   `proxy-build` Task row.)
 3. Snapshot the VM. That snapshot is the rollable proxy image.
 
 `build.sh` is idempotent: re-running reinstalls the held apt nginx and rebuilds
