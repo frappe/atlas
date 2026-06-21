@@ -12,6 +12,9 @@ FROM ubuntu:24.04
 # Copy the whole proxy source tree so build.sh finds its sibling conf/lua/html.
 COPY . /src/proxy
 RUN chmod +x /src/proxy/build.sh && /src/proxy/build.sh
+# build.sh installs python3 + /usr/local/bin/stream-admin (the stream{} admin
+# line-protocol client, spec/17-tcp-proxy.md), so test_tcp.py drives the SAME
+# binary the controller runs over SSH — nothing extra to add here.
 
 # A test region so router.lua strips ".test.local". build.sh wrote an empty
 # region file and aimed the flat cert symlink at certs/_placeholder; here we do

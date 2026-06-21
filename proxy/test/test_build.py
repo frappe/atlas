@@ -23,13 +23,15 @@ import pytest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
-# The three dynamic modules build.sh compiles + nginx.conf load_module's. NDK is
-# linked into the lua module and ALSO ships its own ndk_http_module.so; all three
-# must be present and loaded. Keep this in lockstep with conf/nginx.conf's
-# load_module lines and build.sh §4.
+# The dynamic modules build.sh compiles + nginx.conf load_module's. NDK is
+# linked into the lua modules and ALSO ships its own ndk_http_module.so; all must
+# be present and loaded. ngx_stream_lua is the L4 sibling of ngx_http_lua
+# (spec/17-tcp-proxy.md) — a SEPARATE .so the stream{} forwarder needs. Keep this
+# in lockstep with conf/nginx.conf's load_module lines and build.sh §4.
 EXPECTED_MODULE_SOS = {
 	"ndk_http_module.so",
 	"ngx_http_lua_module.so",
+	"ngx_stream_lua_module.so",
 	"ngx_http_headers_more_filter_module.so",
 }
 
@@ -150,6 +152,57 @@ def test_cjson_safe_resolves_in_nginx_lua():
 	res = exec_proxy("curl", "-s", "--unix-socket", "/run/nginx/admin.sock", "http://localhost/map")
 	# Valid JSON object back == cjson.encode ran end to end.
 	assert json.loads(res.stdout) is not None or res.stdout.strip() in ("{}", "{}\n")
+
+
+def test_stream_block_declares_its_own_lua_package_cpath():
+	# stream{} is a SEPARATE Lua subsystem from http{} — lua_package_cpath set in
+	# http{} does NOT carry into stream{}. stream_admin.lua/stream_persist.lua
+	# require("cjson.safe"), so the stream{} block must name the cpath itself or the
+	# first stream-admin call crashes loading cjson (test_tcp.py's GET exercises it
+	# at runtime; this is the cheap static half that names the directive). Assert the
+	# cpath appears INSIDE the stream{} block, not just somewhere in http{}.
+	conf = exec_proxy("cat", "/etc/nginx/nginx.conf").stdout
+	stream_block = conf[conf.index("stream {") :]
+	assert "lua_package_cpath" in stream_block, (
+		"stream{} missing its own lua_package_cpath — cjson.safe won't resolve"
+	)
+
+
+def test_stream_lua_module_version_pinned_to_0_0_17():
+	# The release-gate fact the spec + memory both record: lua-resty-core 0.1.32's
+	# base.lua asserts ngx_stream_lua_module == 0.0.17 EXACTLY at startup. A newer
+	# stream-lua compiles fine but nginx then refuses to start ("0.0.17 required").
+	# Lock the build.sh pin so a silent bump to a newer tag trips the gate here, in
+	# milliseconds, instead of as a won't-boot proxy snapshot. (The .so being LOADED
+	# is proven by test_modules_loaded_at_runtime + test_tcp.py's live forward; this
+	# is the cheap static half that names the version.)
+	pin = _build_pin("STREAM_LUA_MODULE_REF")
+	assert pin == "v0.0.17", (
+		f"stream-lua pin is {pin}, not v0.0.17 — resty-core 0.1.32 requires exactly 0.0.17"
+	)
+
+
+def test_worker_connections_clears_the_listener_count():
+	# The compose gate's own original finding: nginx counts every LISTENING socket
+	# against worker_connections, and the TCP forwarder pre-opens ~20000 (the
+	# 10000-19999 pool on v4 AND v6) plus the http :80/:443 + two admin sockets. If
+	# worker_connections didn't clear that, nginx -t would fail "worker_connections
+	# are not enough for N listening sockets". Assert the configured value clears the
+	# pre-opened pool span with real headroom, so a regression that lowers it (or
+	# grows the pool past it) is caught statically. nginx -T expands the full config.
+	dump = exec_proxy("nginx", "-T").stdout + exec_proxy("nginx", "-T").stderr
+	wc_lines = [
+		ln
+		for ln in dump.splitlines()
+		if "worker_connections" in ln and "#" not in ln.split("worker_connections")[0]
+	]
+	assert wc_lines, "no worker_connections directive found in nginx -T"
+	# Parse the numeric value (e.g. "    worker_connections  65536;").
+	value = int(wc_lines[0].split("worker_connections")[1].strip().rstrip(";").split()[0])
+	# The v4+v6 pool is 2 * (19999 - 10000 + 1) = 20000 listeners; require clear
+	# headroom above that for real traffic. 65536 (the shipped value) passes; a drop
+	# to e.g. 16384 (the old http-only default) would fail.
+	assert value >= 20000 + 1024, f"worker_connections {value} too low for the ~20000-listener TCP pool"
 
 
 def test_luajit_is_openresty_fork():

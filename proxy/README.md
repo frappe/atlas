@@ -26,11 +26,14 @@ the snapshot).
 ## Layout
 
 ```
-conf/nginx.conf            static config (§5): listeners, TLS, the two server blocks
+conf/nginx.conf            static config (§5): http{} listeners + TLS + server blocks, and the stream{} L4 forwarder (spec/17-tcp-proxy.md)
 conf/mime.types            asset MIME map
-lua/router.lua             request path — subdomain -> upstream via the shared dict (§6.1)
-lua/admin.lua              unix-socket admin API: GET/PUT/DELETE /map, POST /sync (§6.2)
-lua/persist.lua            dump/load the dict to canonical map.json (§6.3)
+lua/router.lua             HTTP request path — subdomain -> upstream via the shared dict (§6.1)
+lua/admin.lua              HTTP unix-socket admin API: GET/PUT/DELETE /map, POST /sync (§6.2)
+lua/persist.lua            dump/load the http `sites` dict to canonical map.json (§6.3)
+lua/stream_router.lua      TCP request path — local port -> backend via the stream `ports` dict (spec/17)
+lua/stream_admin.lua       TCP unix-socket admin: line protocol GET / SYNC / DUMP (spec/17)
+lua/stream_persist.lua     dump/load the stream `ports` dict to canonical stream-map.json (spec/17)
 html/not_found.html        branded 404/503 page (§5.4)
 guest/nginx.service        the guest systemd unit (§8)
 guest/tmpfiles.d/          /run/nginx (admin-socket dir) perms
@@ -74,21 +77,25 @@ Bumping any pin is a deliberate stack update rolled as a new snapshot.
 The compose harness runs the **same** `build.sh` on plain `ubuntu:24.04` (it adds
 the nginx.org repo itself), so a green run exercises the byte-identical stack a
 real proxy VM runs — apt base, dynamic-module ABI, cjson cpath, the lot. It
-brings up the proxy plus a few fake IPv6 upstreams and drives the admin socket.
+brings up the proxy plus a few fake IPv6 upstreams (HTTP **and** a raw-TCP echo
+upstream) and drives both admin sockets.
 
 ```sh
 cd test
 docker compose up --build -d                                  # build + start the stack
-python3 -m pytest test_proxy.py test_build.py test_latency.py -v  # the full gate
+python3 -m pytest test_proxy.py test_build.py test_latency.py -v  # the full HTTP gate
+python3 -m pytest test_tcp.py -v                                  # the L4 TCP gate
 docker compose down -v
 ```
 
-The stack: the **proxy** (published on `:8443`/`:8080`); **`proxy-noregion`** (the
-same image with an empty region file, on `:8444`, for the first-label fallback);
-**`vm-a`/`vm-b`** (good IPv6 upstreams that echo the Host + the forwarded headers,
-plus `/__stream` and `/__conns` debug endpoints); and **`vm-bad`** (a raw-socket
-upstream that replies with non-HTTP garbage / truncated bodies, for the robustness
-tests). Three test files:
+The stack: the **proxy** (published on `:8443`/`:8080`, plus a couple of TCP-pool
+ports `:10000`/`:10001`); **`proxy-noregion`** (the same image with an empty region
+file, on `:8444`, for the first-label fallback); **`vm-a`/`vm-b`** (good IPv6 HTTP
+upstreams that echo the Host + the forwarded headers, plus `/__stream` and
+`/__conns` debug endpoints); **`vm-bad`** (a raw-socket upstream that replies with
+non-HTTP garbage / truncated bodies, for the robustness tests); and
+**`tcp-a`/`tcp-b`** (raw-TCP echo upstreams that banner their name on connect, for
+the L4 forwarder). Four test files:
 
 - **`test_proxy.py`** — behavior + robustness: routing, remap-without-reload,
   tombstone, bulk `/sync` (incl. malformed-body rejection), per-subdomain CRUD,
@@ -112,12 +119,17 @@ tests). Three test files:
   cold-start route-ready-when-healthz-says-so invariant. These **print** the
   observed numbers and assert only generous ceilings (regression guards, not
   benchmarks).
+- **`test_tcp.py`** — the L4 mirror of the HTTP gate (spec/17-tcp-proxy.md):
+  forward a published TCP-pool port to a raw upstream, remap-without-reload to the
+  other upstream, and byte-equality between `SYNC` and `GET` on the stream map.
 
-The driver reaches the admin socket via `docker compose exec proxy curl
+The HTTP driver reaches the admin socket via `docker compose exec proxy curl
 --unix-socket /run/nginx/admin.sock` (from *inside* the container — faithful to
 production, where Atlas reaches the socket over SSH-to-the-guest, never a host
 mount) and makes HTTPS requests with the wildcard Host/SNI forced onto the local
-published port.
+published port. The TCP driver speaks the line protocol to
+`/run/nginx/stream-admin.sock` (`SYNC`/`GET`) and connects to a published proxy
+port to assert the bytes round-trip to the raw upstream.
 
 ## Control plane (Atlas-side)
 
