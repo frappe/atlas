@@ -360,6 +360,13 @@ fi
 # --- 9. Validate the config compiles. The smoke test the build itself can do —
 # now ALSO proves the three load_module lines resolve the dynamic .so's and that
 # require("cjson.safe") + lua-resty-core load at init. ---
+# `nginx -t` actually opens every listen socket, so the stream{} block's
+# 10000-19999 pool (×2 for v4+v6, ~20000 listeners) needs ~20000 fds. At runtime
+# the nginx.service.d drop-in's LimitNOFILE=1048576 covers this, but this build-time
+# test runs as a bare process under the build shell's default RLIMIT_NOFILE (1024),
+# where socket() fails "(24: Too many open files)". Raise the soft limit to the hard
+# limit for the test alone (matches the unit's LimitNOFILE intent).
+ulimit -n "$(ulimit -Hn)"
 "$SBIN_PATH" -t -c "$CONF_DIR/nginx.conf"
 
 echo "nginx proxy stack built: stock nginx ${NGINX_VERSION} (apt) + dynamic lua-nginx-module ${LUA_NGINX_MODULE_VERSION} + stream-lua ${STREAM_LUA_MODULE_REF} + headers-more ${HEADERS_MORE_VERSION} (HTTP + L4 TCP forwarder)."
