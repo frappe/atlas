@@ -31,18 +31,24 @@ import frappe
 
 from atlas.atlas import bench_image
 from atlas.atlas._ssh.transport import run_ssh, ssh_key_file
+from atlas.atlas.image_recipes import get_recipe
 from atlas.atlas.ssh import connection_for_guest
 from atlas.tests.e2e._config import control_plane_public_key, ephemeral_public_key
 from atlas.tests.e2e._droplets import phase
 from atlas.tests.e2e._image import ensure_image_on_server
 from atlas.tests.e2e._tasks import wait_for_vm_running
 
-# The bake clones Frappe + builds a uv venv + Node deps; 4 GB is too tight, so
-# the build VM (and therefore the snapshot, and clones from it) gets a roomier
-# disk. The base ubuntu-24.04 image is 4 GB; provision-vm grows the per-VM rootfs
-# on a larger disk_gigabytes (spec/08 "Per-VM rootfs creation" step 2).
-GOLDEN_DISK_GB = 12
-GOLDEN_MEMORY_MB = 2048
+# The bake clones Frappe + builds a uv venv + Node deps; 4 GB is too tight, so the
+# build VM (and therefore the snapshot, and clones from it) gets a roomier disk and
+# 2 GB RAM. These constants USED to live here, but the bench recipe is now the
+# single source of truth for build-VM sizing (image_recipes._BENCH_DISK_GB /
+# _BENCH_MEMORY_MB — bumped 12→20→28 as the ZFS vdev grew, see the comment there).
+# Read them off the recipe so the e2e build VM can NEVER drift below what the bake
+# actually needs again — the stale local `12` caused a yarn-step ENOSPC bake failure
+# (root 100% full) that looked like a build bug but was just an undersized disk.
+_BENCH_RECIPE = get_recipe("bench")
+GOLDEN_DISK_GB = _BENCH_RECIPE.disk_gigabytes
+GOLDEN_MEMORY_MB = _BENCH_RECIPE.memory_megabytes
 
 
 def run(reuse: bool = False, keep: bool = True) -> dict:
@@ -145,8 +151,13 @@ def _assert_bench_works(vm) -> str:
 		stdout, stderr, code = run_ssh(
 			connection,
 			key_path,
-			# Drop to frappe through a login shell so ~/.bashrc's PATH is sourced.
-			"sudo -u frappe bash -lc 'bench -b atlas list-apps'",
+			# Drop to frappe and prepend bench-cli to PATH explicitly. A non-interactive
+			# `bash -lc` does NOT source ~/.bashrc on Ubuntu (the default ~/.profile only
+			# sources it for interactive shells, `case $- in *i*`), so the bench-cli PATH
+			# install.sh writes there is absent and a bare `bench` exits 127 — the same
+			# trap build.sh and the spec/18 self-routing step guard against by prepending
+			# /home/frappe/bench-cli to PATH. Match them here, don't rely on .bashrc.
+			"sudo -u frappe bash -lc 'export PATH=/home/frappe/bench-cli:$PATH; bench -b atlas list-apps'",
 			timeout_seconds=120,
 		)
 	assert code == 0, f"bench did not run in the guest (exit {code}): {stderr[-500:]}"
