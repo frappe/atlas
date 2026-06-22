@@ -157,6 +157,47 @@ class TestServerArchive(IntegrationTestCase):
 			self.server.archive()
 
 
+class TestServerRecover(IntegrationTestCase):
+	def setUp(self) -> None:
+		frappe.db.delete("Server", {"title": "test-server-recover"})
+		self.provider = make_provider("test-provider-recover")
+
+	def _server(
+		self, status: str, provider_resource_id: str | None = "99"
+	) -> "frappe.model.document.Document":
+		return make_server(
+			self.provider,
+			"test-server-recover",
+			provider_resource_id=provider_resource_id,
+			status=status,
+		)
+
+	def test_recover_re_enqueues_stuck_pending(self) -> None:
+		# A Pending row with a vendor id but NULL IPs (the lost-job case) — recover()
+		# must re-enqueue finish_provisioning, not run bootstrap directly.
+		server = self._server("Pending")
+		with patch("atlas.atlas.providers.worker.enqueue_finish_provisioning", return_value=True) as enqueue:
+			result = server.recover()
+		self.assertTrue(result)
+		enqueue.assert_called_once_with(server.name)
+
+	def test_recover_reports_already_in_flight(self) -> None:
+		server = self._server("Bootstrapping")
+		with patch("atlas.atlas.providers.worker.enqueue_finish_provisioning", return_value=False):
+			self.assertFalse(server.recover())
+
+	def test_recover_rejects_active(self) -> None:
+		server = self._server("Active")
+		with self.assertRaises(frappe.ValidationError):
+			server.recover()
+
+	def test_recover_rejects_row_without_resource_id(self) -> None:
+		server = self._server("Pending", provider_resource_id=None)
+		with self.assertRaises(frappe.ValidationError) as raised:
+			server.recover()
+		self.assertIn("provider_resource_id", str(raised.exception))
+
+
 class TestServerSyncImage(IntegrationTestCase):
 	def test_sync_image_delegates_to_image_controller(self) -> None:
 		from atlas.tests.fixtures import make_image

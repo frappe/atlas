@@ -53,7 +53,11 @@ def _ensure_root_domain() -> None:
 	the endpoints resolve against. Mirrors test_api_signup."""
 	if not frappe.db.exists("Domain Provider", "route53-routing-test"):
 		frappe.get_doc(
-			{"doctype": "Domain Provider", "provider_name": "route53-routing-test", "provider_type": "Route53"}
+			{
+				"doctype": "Domain Provider",
+				"provider_name": "route53-routing-test",
+				"provider_type": "Route53",
+			}
 		).insert(ignore_permissions=True)
 	if not frappe.db.exists("TLS Provider", "letsencrypt-routing-test"):
 		frappe.get_doc(
@@ -259,6 +263,7 @@ class TestRegister(_RoutingTestCase):
 		def racing_get_doc(*args, **kwargs):
 			doc = real_get_doc(*args, **kwargs)
 			if args and isinstance(args[0], dict) and args[0].get("doctype") == "Subdomain":
+
 				def boom(*_a, **_k):
 					raise frappe.DuplicateEntryError("Subdomain", "acme")
 
@@ -280,6 +285,7 @@ class TestRegister(_RoutingTestCase):
 		def racing_get_doc(*args, **kwargs):
 			doc = real_get_doc(*args, **kwargs)
 			if args and isinstance(args[0], dict) and args[0].get("doctype") == "Subdomain":
+
 				def boom(*_a, **_k):
 					raise frappe.UniqueValidationError("Subdomain", "acme", "subdomain")
 
@@ -328,7 +334,8 @@ class TestRegister(_RoutingTestCase):
 		with patch("frappe.enqueue") as enqueue:
 			self._as(vm.ipv6_address, bench_routing.register, label="acme")
 		reconciles = [
-			c for c in enqueue.call_args_list
+			c
+			for c in enqueue.call_args_list
 			if c.args and c.args[0] == "atlas.atlas.doctype.subdomain.subdomain.auto_reconcile_region"
 		]
 		self.assertEqual(len(reconciles), 1)
@@ -370,7 +377,8 @@ class TestDeregister(_RoutingTestCase):
 		with patch("frappe.enqueue") as enqueue:
 			self._as(vm.ipv6_address, bench_routing.deregister, label="acme")
 		reconciles = [
-			c for c in enqueue.call_args_list
+			c
+			for c in enqueue.call_args_list
 			if c.args and c.args[0] == "atlas.atlas.doctype.subdomain.subdomain.auto_reconcile_region"
 		]
 		self.assertEqual(len(reconciles), 1)
@@ -534,7 +542,9 @@ class TestDenylist(_RoutingTestCase):
 	def test_check_label_rejects_an_enabled_denylist_row(self) -> None:
 		self._add("stripe")
 		vm = _running_vm()
-		self.assertEqual(self._as(vm.ipv6_address, bench_routing.check_label, label="stripe")["status"], "reserved")
+		self.assertEqual(
+			self._as(vm.ipv6_address, bench_routing.check_label, label="stripe")["status"], "reserved"
+		)
 
 	def test_disabled_row_lifts_the_block_immediately(self) -> None:
 		self._add("paypal", enabled=0)
@@ -544,7 +554,9 @@ class TestDenylist(_RoutingTestCase):
 
 	def test_runtime_row_is_honored_on_next_call(self) -> None:
 		vm = _running_vm()
-		self.assertEqual(self._as(vm.ipv6_address, bench_routing.check_label, label="brandnew")["status"], "ok")
+		self.assertEqual(
+			self._as(vm.ipv6_address, bench_routing.check_label, label="brandnew")["status"], "ok"
+		)
 		self._add("brandnew")
 		self.assertEqual(
 			self._as(vm.ipv6_address, bench_routing.check_label, label="brandnew")["status"], "reserved"
@@ -557,9 +569,9 @@ class TestDenylist(_RoutingTestCase):
 		self.assertEqual(seed_denylist(), 0)
 
 	def test_denylist_label_is_lowercased(self) -> None:
-		frappe.get_doc(
-			{"doctype": "Subdomain Denylist", "label": "PayPal", "reason": "brand"}
-		).insert(ignore_permissions=True)
+		frappe.get_doc({"doctype": "Subdomain Denylist", "label": "PayPal", "reason": "brand"}).insert(
+			ignore_permissions=True
+		)
 		self.assertTrue(frappe.db.exists("Subdomain Denylist", "paypal"))
 
 
@@ -681,8 +693,21 @@ class TestTeardown(_RoutingTestCase):
 		# push-only).
 		from atlas import hooks
 
-		entries = [e for jobs in hooks.scheduler_events.values() for e in jobs]
-		for entry in entries:
+		# Flatten every scheduled method path. A scheduler event maps to either a
+		# list of method paths (e.g. "daily") or a cron sub-dict of
+		# {schedule: [paths]} (e.g. "cron") — handle both so this guard keeps
+		# inspecting real method paths if the shape grows.
+		def _method_paths(events: dict) -> list:
+			paths = []
+			for value in events.values():
+				if isinstance(value, dict):
+					for jobs in value.values():
+						paths.extend(jobs)
+				else:
+					paths.extend(value)
+			return paths
+
+		for entry in _method_paths(hooks.scheduler_events):
 			self.assertNotIn("bench_routing", entry)
 			self.assertNotIn("reconcile_bench", entry)
 			self.assertNotIn("sweep_stale", entry)
