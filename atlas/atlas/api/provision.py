@@ -74,6 +74,7 @@ def create_vm(
 			"ssh_public_key": ssh_public_key or load_vm_ssh_public_key(),
 		}
 	)
+
 	if cpu_max_cores:
 		vm.cpu_max_cores = float(cpu_max_cores)
 	vm.insert(ignore_permissions=True)
