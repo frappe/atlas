@@ -291,8 +291,29 @@ install -d -m 0750 "$RUN_DIR"
 # $LOG_DIR (/var/log/nginx) is created+owned by the nginx.org .deb at mode 0755 in
 # §1 (with logrotate), so we don't re-create it. $STATE_DIR (/var/lib/nginx) is
 # all-Atlas state the package never makes.
-install -d -m 0750 "$STATE_DIR" "$STATE_DIR/certs" "$STATE_DIR/acme"
+#
+# Workers run as the `nginx` user (nginx.conf `user nginx;`) and WRITE the live
+# snapshots map.json / stream-map.json here from a worker timer (persist.dump /
+# stream_persist.dump: write .tmp then rename). A rename needs write+exec on the
+# PARENT dir, so $STATE_DIR itself is group-writable by nginx — but root stays the
+# OWNER (root:nginx, 0770) so only the controller-as-root rewrites the tree
+# wholesale. The snapshot files persist.dump creates inherit the worker's nginx
+# ownership; the dir's group-write is what lets the rename land. certs/ is tighter
+# (root:root 0750, set below) — the privkey is read by the MASTER (root) at config
+# parse, never by a worker, so it never needs group-read (CIS 4.1.3). acme/ is a
+# worker READ (the .well-known root), so root:nginx 0750 is enough. region is a
+# MASTER-only read (init_by_lua) → leave it root:root, no chown.
+# Create certs first (default root:root), then re-create the parent with the group
+# bits so $STATE_DIR's 0770 root:nginx sticks while certs keeps 0750 root:root.
+install -d -m 0750 "$STATE_DIR/certs"
+install -d -o root -g nginx -m 0770 "$STATE_DIR"
+install -d -o root -g nginx -m 0750 "$STATE_DIR/acme"
 : > "$STATE_DIR/region"
+# certs/ and the privkey stay root-only (0750 dir / 0640 placeholder key; the real
+# key push_cert writes is 0600). The SSL core reads them at CONFIG PARSE, which runs
+# in the MASTER (root) — a worker never opens the key — so dropping workers to
+# `nginx` does NOT require the key to be group-readable. Leaving it root-only keeps
+# the wildcard private key off every lower-priv principal on the box (CIS 4.1.3).
 install -d -m 0750 "$STATE_DIR/certs/_placeholder"
 if [ ! -f "$STATE_DIR/certs/_placeholder/fullchain.pem" ]; then
 	openssl req -x509 -newkey rsa:2048 -nodes -days 3650 \

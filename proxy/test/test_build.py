@@ -307,6 +307,56 @@ def test_upstream_not_pooled_today():
 	assert after - before >= 8, f"expected ~10 new upstream connections (no pooling), saw {after - before}"
 
 
+# --- privilege separation: workers run as the stock nginx user (CIS 2.2.1) ----
+# These guard the `user root;` -> `user nginx;` drop. nginx -t can't see the
+# privilege drop (it doesn't spawn workers under the nginx user), so the runtime
+# checks below are the ONLY thing that catches a broken /var/lib/nginx mode — which
+# otherwise passes every static check and fails silently at the first worker dump.
+
+
+def test_master_is_root_workers_are_nginx():
+	# nginx.conf `user nginx;` drops the WORKERS to the package's locked/nologin
+	# nginx account while the MASTER stays root (binds :80/:443 + the 10000-19999
+	# pool, then setuid()s the workers). Assert both halves from the process table so
+	# a revert to `user root;` (every nginx process back to uid 0) trips the gate.
+	res = exec_proxy("ps", "-o", "user=,args=", "-C", "nginx")
+	rows = [ln.split(None, 1) for ln in res.stdout.splitlines() if len(ln.split(None, 1)) == 2]
+	masters = [u for u, cmd in rows if "master process" in cmd]
+	workers = [u for u, cmd in rows if "worker process" in cmd]
+	assert masters and all(u == "root" for u in masters), f"master not root: {rows}"
+	assert workers and all(u == "nginx" for u in workers), f"workers not nginx: {rows}"
+
+
+def test_worker_can_persist_map_to_disk():
+	# The worker (nginx user) WRITES map.json from a timer (persist.dump: .tmp then
+	# rename in /var/lib/nginx). If STATE_DIR isn't group-writable by nginx the dump
+	# silently fails (logged, returns false) and the map is lost on restart — the
+	# exact break the user-switch can introduce. Force a write via admin POST /dump
+	# and assert the file lands with our key, then that the dir carries the
+	# nginx-group write bit that makes the dump work.
+	_ensure_mapped("persisttest")
+	dump = exec_proxy(
+		"curl", "-s", "--unix-socket", "/run/nginx/admin.sock", "-X", "POST", "http://localhost/dump"
+	)
+	assert '"dumped":true' in dump.stdout.replace(" ", ""), f"POST /dump failed: {dump.stdout!r}"
+	cat = exec_proxy("cat", "/var/lib/nginx/map.json")
+	assert "persisttest" in cat.stdout, f"map.json missing the dumped key: {cat.stdout!r}"
+	stat = exec_proxy("stat", "-c", "%U %G %a", "/var/lib/nginx")
+	assert stat.stdout.strip().startswith("root nginx"), f"/var/lib/nginx not root:nginx: {stat.stdout!r}"
+
+
+def test_privkey_stays_root_only_after_user_switch():
+	# The wildcard privkey is read by the MASTER (root) at config parse, never by a
+	# worker, so the user-switch must NOT have widened it. Guard that nothing
+	# "helpfully" group/world-read the key (CIS 4.1.3). The flat symlink points at
+	# the placeholder key in this gate; -L follows it to the real file.
+	stat = exec_proxy("stat", "-c", "%U %a", "-L", "/var/lib/nginx/certs/privkey.pem")
+	owner, mode = stat.stdout.split()
+	assert owner == "root", f"privkey not root-owned: {stat.stdout!r}"
+	# group + other must carry NO read bit (last two octal digits == 0 for 0600/0640).
+	assert int(mode[-1]) == 0, f"privkey is group/world-accessible ({mode}) after user switch"
+
+
 # --- helpers (mirror test_proxy.py's transport) ----------------------------
 
 REGION = "test"
