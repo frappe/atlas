@@ -16,6 +16,7 @@ the desk form's checklist updates live. See spec/15-image-builder.md.
 import time
 
 import frappe
+from frappe import _
 from frappe.model.document import Document
 
 from atlas.atlas import bench_image
@@ -90,6 +91,7 @@ class ImageBuild(Document):
 			frappe.throw(f"Can only re-bake an Available or Failed build (status is {self.status})")
 		self.db_set("status", "Draft")
 		self.db_set("error", None)
+		# nosemgrep: frappe-manual-commit -- persist the Draft status reset before re-enqueuing the build so the background job sees the cleared state
 		frappe.db.commit()
 		self.after_insert()
 
@@ -116,7 +118,7 @@ class ImageBuild(Document):
 		if self.status != "Available":
 			frappe.throw(f"Can only promote an Available build (status is {self.status})")
 		if not self.snapshot:
-			frappe.throw("This build has no snapshot to promote.")
+			frappe.throw(_("This build has no snapshot to promote."))
 		recipe = get_recipe(self.recipe)
 		default_name = recipe.promote_image_name or f"{self.recipe}-{self.name}".lower()
 		image_name = (image_name or "").strip() or default_name
@@ -203,6 +205,7 @@ def _set_status(build, status: str) -> None:
 	update needs no client-side dance. Emitted after the commit so the realtime
 	payload never races ahead of the committed row."""
 	build.db_set("status", status)
+	# nosemgrep: frappe-manual-commit -- background job: commit each status transition so the desk form's polling sees it cross-transaction and the Failed write survives the job's rollback
 	frappe.db.commit()
 	frappe.publish_realtime(
 		event="image_build_progress",
@@ -414,6 +417,7 @@ def _register(recipe, snapshot_name: str) -> None:
 	bake left to the operator."""
 	settings = frappe.get_single("Atlas Settings")
 	settings.db_set(recipe.registers_as, snapshot_name)
+	# nosemgrep: frappe-manual-commit -- background job: persist the newly-registered golden snapshot pointer in Atlas Settings so self-serve clones find it
 	frappe.db.commit()
 
 

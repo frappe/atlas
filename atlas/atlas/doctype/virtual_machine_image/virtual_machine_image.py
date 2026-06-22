@@ -1,4 +1,5 @@
 import frappe
+from frappe import _
 from frappe.model.document import Document
 
 IMMUTABLE_AFTER_INSERT = (
@@ -89,7 +90,7 @@ class VirtualMachineImage(Document):
 		"""Decommission this image. Sets is_active=0; the row stays in the
 		DB so historical Task references remain queryable."""
 		if not self.is_active:
-			frappe.throw("Image is already archived")
+			frappe.throw(_("Image is already archived"))
 		frappe.db.set_value(self.doctype, self.name, "is_active", 0)
 
 	@frappe.whitelist()
@@ -180,6 +181,7 @@ class VirtualMachineImage(Document):
 		)
 		task.variables_dict = variables
 		task.insert(ignore_permissions=True)
+		# nosemgrep: frappe-manual-commit -- persist the Pending sync Task before enqueuing execute_task so the background job can find it cross-transaction
 		frappe.db.commit()
 
 		frappe.enqueue(

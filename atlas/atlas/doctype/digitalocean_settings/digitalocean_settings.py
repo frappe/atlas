@@ -1,6 +1,7 @@
 import dataclasses
 
 import frappe
+from frappe import _
 from frappe.model.document import Document
 
 
@@ -12,6 +13,6 @@ class DigitalOceanSettings(Document):
 
 		provider_name = frappe.db.get_single_value("Atlas Settings", "provider")
 		if not provider_name:
-			frappe.throw("Set Atlas Settings.provider before testing the connection")
+			frappe.throw(_("Set Atlas Settings.provider before testing the connection"))
 		result = providers.for_provider(provider_name).authenticate()
 		return dataclasses.asdict(result)

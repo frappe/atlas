@@ -108,6 +108,7 @@ def install_file(content: str, dest: str, *, mode: str = "0644", sudo: bool = Tr
 	spooled regular file is seekable, so install copies it 30/30."""
 	with tempfile.NamedTemporaryFile("w", prefix="atlas-install-", delete=False) as spool:
 		spool.write(content)
+		# nosemgrep: tempfile-without-flush -- false positive: the file is closed (and flushed) by the with-block exit before install reads src below
 		src = spool.name
 	try:
 		argv = (["sudo"] if sudo else []) + ["install", "-m", mode, src, dest]

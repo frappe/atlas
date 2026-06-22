@@ -98,6 +98,7 @@ def finish_provisioning(server_name: str) -> None:
 	server.reload()
 	server.status = "Active"
 	server.save(ignore_permissions=True)
+	# nosemgrep: frappe-manual-commit -- background job: persist the final Active state so it is durable and observers see provisioning completed
 	frappe.db.commit()
 	frappe.logger("atlas").info(f"finish_provisioning: server {server_name} is Active")
 

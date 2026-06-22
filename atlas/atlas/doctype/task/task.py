@@ -2,6 +2,7 @@ import json
 from typing import ClassVar
 
 import frappe
+from frappe import _
 from frappe.model.document import Document
 
 IMMUTABLE_AFTER_INSERT = ("server", "virtual_machine", "script", "variables", "triggered_by")
@@ -65,7 +66,7 @@ class Task(Document):
 	@variables_dict.setter
 	def variables_dict(self, value: dict) -> None:
 		if not isinstance(value, dict):
-			frappe.throw("Task.variables_dict must be a dict")
+			frappe.throw(_("Task.variables_dict must be a dict"))
 		self.variables = json.dumps(value, sort_keys=True)
 
 	def before_insert(self) -> None:
@@ -74,7 +75,7 @@ class Task(Document):
 
 	def validate(self) -> None:
 		if not self.variables:
-			frappe.throw("variables is required")
+			frappe.throw(_("variables is required"))
 		self._validate_variables_json()
 		self._validate_immutability()
 
@@ -119,7 +120,7 @@ class Task(Document):
 		except json.JSONDecodeError as exception:
 			frappe.throw(f"variables must be valid JSON: {exception}")
 		if not isinstance(parsed, dict):
-			frappe.throw("variables must be a JSON object")
+			frappe.throw(_("variables must be a JSON object"))
 
 	def _validate_immutability(self) -> None:
 		if self.is_new():

@@ -1,4 +1,5 @@
 import frappe
+from frappe import _
 from frappe.model.document import Document
 
 # The routing key is the allocated port (read-only) and the target VM + service
@@ -121,7 +122,7 @@ def allocate_port(region: str) -> int:
 	each other. The `{region}-{public_port}` unique name is the final backstop for
 	the first-row-in-an-empty-region race (one insert wins, the other retries)."""
 	if not region:
-		frappe.throw("Port Mapping needs a region before a port can be allocated")
+		frappe.throw(_("Port Mapping needs a region before a port can be allocated"))
 	low, high = port_pool()
 	# FOR UPDATE on the region's rows serializes concurrent allocations; the lock
 	# is released at transaction end. Reading the ports under the lock means a

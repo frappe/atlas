@@ -55,12 +55,14 @@ def execute() -> None:
 def _assign_uuid_names() -> None:
 	"""For every Server row whose `name` is not already a UUID, mint a
 	new UUID, update the row, and rewrite every FK pointer in raw SQL."""
+	# nosemgrep: frappe-sql-format-injection -- static query literal, no string interpolation
 	rows = frappe.db.sql("SELECT name FROM `tabServer`", as_dict=True)
 	for row in rows:
 		old_name = row["name"]
 		if _is_uuid(old_name):
 			continue
 		new_name = str(uuid.uuid4())
+		# nosemgrep: frappe-sql-format-injection -- %s-parameterized query, no interpolation
 		frappe.db.sql(
 			"UPDATE `tabServer` SET `name` = %s WHERE `name` = %s",
 			(new_name, old_name),
@@ -68,6 +70,7 @@ def _assign_uuid_names() -> None:
 		for table, column in FK_TARGETS:
 			if not _table_exists(table):
 				continue
+			# nosemgrep: frappe-sql-format-injection -- table/column identifiers from the hardcoded FK_TARGETS constant; SQL identifiers can't be %s-parameterized (the values are)
 			frappe.db.sql(
 				f"UPDATE `{table}` SET `{column}` = %s WHERE `{column}` = %s",
 				(new_name, old_name),
@@ -85,6 +88,7 @@ def _is_uuid(value: str) -> bool:
 
 def _table_exists(table: str) -> bool:
 	return bool(
+		# nosemgrep: frappe-sql-format-injection -- %s-parameterized query, no interpolation
 		frappe.db.sql(
 			"SELECT 1 FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = %s",
 			(table,),

@@ -45,8 +45,10 @@ def _render_built_index(boot: dict) -> str | None:
 	"""The built SPA shell with its boot block expanded, or None before
 	`bench build --app atlas` has run."""
 	try:
+		# nosemgrep: frappe-security-file-traversal -- fixed SPA_INDEX path derived from the app dir, not untrusted web input
 		with open(SPA_INDEX) as handle:
 			shell = handle.read()
 	except FileNotFoundError:
 		return None
+	# nosemgrep: frappe-ssti -- template is the app's own built SPA shell read from disk, not user input
 	return frappe.render_template(shell, {"boot": boot})

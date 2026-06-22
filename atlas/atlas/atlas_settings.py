@@ -11,6 +11,7 @@ canonical call is `atlas.get_provider()`.
 from __future__ import annotations
 
 import frappe
+from frappe import _
 
 from atlas.atlas import providers
 from atlas.atlas.providers.base import Provider, ProvisionRequest, ProvisionResult, SshKey
@@ -19,7 +20,7 @@ from atlas.atlas.providers.base import Provider, ProvisionRequest, ProvisionResu
 def get_provider() -> Provider:
 	name = frappe.get_single("Atlas Settings").provider
 	if not name:
-		frappe.throw("Atlas Settings has no active provider; set one before provisioning")
+		frappe.throw(_("Atlas Settings has no active provider; set one before provisioning"))
 	return providers.for_provider(name)
 
 
@@ -34,7 +35,7 @@ def get_ssh_key() -> SshKey:
 def get_ssh_private_key_path() -> str:
 	path = frappe.db.get_single_value("Atlas Settings", "ssh_private_key_path")
 	if not path:
-		frappe.throw("Atlas Settings has no ssh_private_key_path; cannot SSH")
+		frappe.throw(_("Atlas Settings has no ssh_private_key_path; cannot SSH"))
 	return path
 
 

@@ -14,6 +14,7 @@ after verifying.
 """
 
 import frappe
+from frappe import _
 
 # A subdomain label that is not the user's to take. `www admin api …` are the
 # operational names a fleet reserves; everything else is taken at insert by the
@@ -51,17 +52,17 @@ def validate_label(subdomain: str | None) -> None:
 	trailing hyphen, length cap. Throws a clear, field-specific message."""
 	label = normalize(subdomain)
 	if not label:
-		frappe.throw("A subdomain is required")
+		frappe.throw(_("A subdomain is required"))
 	if "." in label:
-		frappe.throw("Subdomain must be a single label with no dots")
+		frappe.throw(_("Subdomain must be a single label with no dots"))
 	if label != label.lower():
-		frappe.throw("Subdomain must be lowercase")
+		frappe.throw(_("Subdomain must be lowercase"))
 	if len(label) > LABEL_MAX_LENGTH:
 		frappe.throw(f"Subdomain must be at most {LABEL_MAX_LENGTH} characters")
 	if label.startswith("-") or label.endswith("-"):
-		frappe.throw("Subdomain must not start or end with a hyphen")
+		frappe.throw(_("Subdomain must not start or end with a hyphen"))
 	if not all((c.isascii() and c.isalnum()) or c == "-" for c in label):
-		frappe.throw("Subdomain may only contain lowercase letters, digits, and hyphens")
+		frappe.throw(_("Subdomain may only contain lowercase letters, digits, and hyphens"))
 
 
 def validate_reserved(subdomain: str | None) -> None:

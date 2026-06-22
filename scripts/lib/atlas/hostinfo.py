@@ -62,6 +62,7 @@ def parse_firecracker_version(output: str) -> str:
 def host_signature() -> dict:
 	"""The live host's signature: CPU identity + kernel + Firecracker version.
 	Compared by plain dict equality against the captured one."""
+	# nosemgrep: frappe-security-file-traversal -- host script; reads the fixed CPUINFO_PATH (/proc/cpuinfo), not web input
 	with open(CPUINFO_PATH) as handle:
 		signature = parse_cpu_signature(handle.read())
 	signature["kernel"] = platform.release()

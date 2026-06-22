@@ -7,6 +7,7 @@ import time
 from typing import TYPE_CHECKING
 
 import frappe
+from frappe import _
 
 from atlas.atlas._ssh.transport import (
 	REMOTE_STAGING_DIRECTORY,
@@ -63,7 +64,7 @@ def run_task(
 	timeout). The Task row is always saved with the outcome before the raise.
 	"""
 	if (server is None) == (connection is None):
-		frappe.throw("run_task: pass exactly one of server= or connection=")
+		frappe.throw(_("run_task: pass exactly one of server= or connection="))
 
 	# Fake provider (developer_mode): a Task on a Fake-backed Server succeeds (or
 	# fails on demand) with no SSH. Only the server= path can be fake — the
@@ -182,6 +183,7 @@ def _mark_running(task: "Task") -> None:
 	task.status = "Running"
 	task.started = frappe.utils.now_datetime()
 	task.save(ignore_permissions=True)
+	# nosemgrep: frappe-manual-commit -- background job: persist the Running state before the long-running SSH operation so a crash mid-run is observable and the Task isn't stuck Queued
 	frappe.db.commit()
 
 
@@ -204,6 +206,7 @@ def _finalize(
 	task.ended = frappe.utils.now_datetime()
 	task.duration_milliseconds = elapsed_ms
 	task.save(ignore_permissions=True)
+	# nosemgrep: frappe-manual-commit -- persist the Task outcome before run_task re-raises
 	frappe.db.commit()
 
 

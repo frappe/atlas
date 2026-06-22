@@ -174,6 +174,7 @@ def _await_freshen(warm_vm_uuid: str, timeout_seconds: int = 60) -> None:
 	deadline = time.monotonic() + timeout_seconds
 	while time.monotonic() < deadline:
 		try:
+			# nosemgrep: frappe-security-file-traversal -- guest script; reads the fixed /etc/atlas-vm-uuid path, not untrusted web input
 			with open("/etc/atlas-vm-uuid") as handle:
 				if handle.read().strip() == warm_vm_uuid:
 					return
@@ -265,6 +266,7 @@ def _set_admin_domain(fqdn: str) -> None:
 	TOML library in the guest, stdlib-only) then run `bench setup nginx`. Idempotent:
 	re-running rewrites the same line. Fails loud if the admin domain line is absent
 	(a clone from the wrong/old snapshot)."""
+	# nosemgrep: frappe-security-file-traversal -- guest script; reads the fixed BENCH_TOML path, not untrusted web input
 	with open(BENCH_TOML) as f:
 		text = f.read()
 	out_lines = []
@@ -278,6 +280,7 @@ def _set_admin_domain(fqdn: str) -> None:
 			out_lines.append(line)
 	if not replaced:
 		sys.exit(f"no [admin].domain line in {BENCH_TOML}; this VM was not baked from an admin-mode golden")
+	# nosemgrep: frappe-security-file-traversal -- guest script; writes the fixed BENCH_TOML path, not untrusted web input
 	with open(BENCH_TOML, "w") as f:
 		f.write("".join(out_lines))
 	_bench("setup", "nginx")

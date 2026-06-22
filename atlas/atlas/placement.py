@@ -11,6 +11,7 @@ never runs for them.
 """
 
 import frappe
+from frappe import _
 
 
 class NoCapacityError(frappe.ValidationError):
@@ -41,9 +42,9 @@ def default_image() -> str:
 		ignore_permissions=True,
 	)
 	if not active:
-		frappe.throw("No image is available — contact your operator.")
+		frappe.throw(_("No image is available — contact your operator."))
 	if len(active) > 1:
-		frappe.throw("Several images are active — ask your operator to set a default image.")
+		frappe.throw(_("Several images are active — ask your operator to set a default image."))
 	return active[0]
 
 
@@ -73,13 +74,13 @@ def default_server(required_vcpus: float) -> str:
 		ignore_permissions=True,
 	)
 	if not servers:
-		frappe.throw("No capacity available — contact your operator.", NoCapacityError)
+		frappe.throw(_("No capacity available — contact your operator."), NoCapacityError)
 	for server in servers:
 		capacity = capacity_for_server(server)
 		budget = capacity["effective_vcpus"]
 		if budget is None or capacity["used_vcpus"] + required_vcpus <= budget:
 			return server
-	frappe.throw("No capacity available — contact your operator.", NoCapacityError)
+	frappe.throw(_("No capacity available — contact your operator."), NoCapacityError)
 
 
 def apply_user_defaults(virtual_machine) -> None:
@@ -109,7 +110,7 @@ def default_bench_snapshot() -> str:
 	is unset or no longer Available — a Site can't be provisioned without it."""
 	configured = frappe.db.get_single_value("Atlas Settings", "default_bench_snapshot")
 	if not configured:
-		frappe.throw("No golden bench snapshot is configured — contact your operator.")
+		frappe.throw(_("No golden bench snapshot is configured — contact your operator."))
 	status = frappe.db.get_value("Virtual Machine Snapshot", configured, "status")
 	if status is None:
 		frappe.throw(f"Configured bench snapshot {configured} does not exist — contact your operator.")
@@ -156,7 +157,7 @@ def active_root_domain() -> "frappe.model.document.Document":
 		ignore_permissions=True,
 	)
 	if not active:
-		frappe.throw("No domain is configured — contact your operator.")
+		frappe.throw(_("No domain is configured — contact your operator."))
 	if len(active) > 1:
-		frappe.throw("Several domains are active — ask your operator to set a single active domain.")
+		frappe.throw(_("Several domains are active — ask your operator to set a single active domain."))
 	return frappe.get_doc("Root Domain", active[0]["name"])

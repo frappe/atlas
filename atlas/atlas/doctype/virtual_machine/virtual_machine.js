@@ -454,7 +454,7 @@ function render_status_intro(frm) {
 
 function expand_networking_for_pending(frm) {
 	if (frm.doc.status !== "Pending" || !frm.doc.ipv6_address) return;
-	const section = (cur_frm?.layout?.sections || []).find(
+	const section = (frm?.layout?.sections || []).find(
 		(s) => s.df && s.df.fieldname === "section_break_networking"
 	);
 	if (section && typeof section.collapse === "function") {

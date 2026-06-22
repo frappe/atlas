@@ -79,6 +79,7 @@ def _fetch_identity() -> dict | None:
 
 def _adopted_uuid() -> str:
 	try:
+		# nosemgrep: frappe-security-file-traversal -- guest script; reads the fixed VM_UUID_PATH marker, not untrusted web input
 		with open(VM_UUID_PATH) as handle:
 			return handle.read().strip()
 	except OSError:
@@ -90,6 +91,7 @@ def _reseed_rng(uuid: str) -> None:
 	Writing to /dev/urandom mixes without crediting entropy; RNDRESEEDCRNG then
 	makes the CRNG consume it immediately, so the very next getrandom() output
 	already diverges per clone."""
+	# nosemgrep: frappe-security-file-traversal -- guest script; writes the fixed /dev/urandom device, not untrusted web input
 	with open("/dev/urandom", "wb") as handle:
 		handle.write(f"{uuid}:{time.time_ns()}".encode() + os.urandom(32))
 		fcntl.ioctl(handle, RNDRESEEDCRNG)
@@ -128,6 +130,7 @@ def _apply(identity: dict) -> None:
 	)
 	_run("systemctl", "try-restart", "ssh.service")
 	_run("systemctl", "try-restart", "ssh.socket")
+	# nosemgrep: frappe-security-file-traversal -- guest script; writes the fixed /root/.ssh/authorized_keys path, not untrusted web input
 	with open("/root/.ssh/authorized_keys", "w") as handle:
 		handle.write(identity["ssh_public_key"] + "\n")
 
@@ -137,16 +140,20 @@ def _apply(identity: dict) -> None:
 	# sees the clone's.
 	for machine_id_path in ("/etc/machine-id", "/var/lib/dbus/machine-id"):
 		_run("sh", "-c", f"echo {identity['machine_id']} > {machine_id_path}")
+	# nosemgrep: frappe-security-file-traversal -- guest script; writes the fixed /etc/hostname path, not untrusted web input
 	with open("/etc/hostname", "w") as handle:
 		handle.write(hostname + "\n")
 	_run("hostname", hostname)
+	# nosemgrep: frappe-security-file-traversal -- guest script; reads the fixed /etc/hosts path, not untrusted web input
 	with open("/etc/hosts") as handle:
 		existing = handle.read()
+	# nosemgrep: frappe-security-file-traversal -- guest script; writes the fixed /etc/hosts path, not untrusted web input
 	with open("/etc/hosts", "w") as handle:
 		handle.write(hosts_lines(existing, hostname))
 
 	# 3. The on-disk network env, so a later plain reboot of this clone brings
 	# its own addresses up through the ordinary atlas-network.service path.
+	# nosemgrep: frappe-security-file-traversal -- guest script; writes the fixed NETWORK_ENV_PATH, not untrusted web input
 	with open(NETWORK_ENV_PATH, "w") as handle:
 		handle.write(network_env(identity))
 
@@ -172,6 +179,7 @@ def _apply(identity: dict) -> None:
 
 	# 7. The applied marker, last — also what tells a plain reboot of this clone
 	# (and an idempotent re-poll) that there is nothing left to adopt.
+	# nosemgrep: frappe-security-file-traversal -- guest script; writes the fixed VM_UUID_PATH marker, not untrusted web input
 	with open(VM_UUID_PATH, "w") as handle:
 		handle.write(identity["uuid"] + "\n")
 	print(f"freshen: adopted identity {identity['uuid']} ({hostname})", flush=True)

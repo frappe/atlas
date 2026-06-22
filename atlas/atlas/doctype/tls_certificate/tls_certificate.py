@@ -19,6 +19,7 @@ from __future__ import annotations
 import pathlib
 
 import frappe
+from frappe import _
 from frappe.model.document import Document
 
 from atlas.atlas import dns, proxy, tls
@@ -98,7 +99,7 @@ class TLSCertificate(Document):
 		that can't be reached is logged and skipped — one wedged guest never wedges
 		the fan-out (mirrors `proxy.reconcile_region`)."""
 		if not self.fullchain_path or not self.privkey_path:
-			frappe.throw("TLS Certificate has no PEM paths; issue it first")
+			frappe.throw(_("TLS Certificate has no PEM paths; issue it first"))
 		fullchain = _read_pem(self.fullchain_path)
 		privkey = _read_pem(self.privkey_path)
 		region = frappe.db.get_value("Root Domain", self.root_domain, "region")

@@ -13,6 +13,7 @@ per email (an attacker can't fan out a thousand Pending rows from one address).
 """
 
 import frappe
+from frappe import _
 from frappe.rate_limiter import rate_limit
 from frappe.utils import validate_email_address
 
@@ -25,6 +26,7 @@ from atlas.atlas.subdomain_label import is_taken, normalize, validate_label, val
 MAX_PENDING_PER_EMAIL = 3
 
 
+# nosemgrep: guest-whitelisted-method -- public signup on-ramp; email and subdomain are validated, the per-email pending count is capped, and the endpoint is rate-limited 5/hour per email
 @frappe.whitelist(allow_guest=True)
 @rate_limit(key="email", limit=5, seconds=60 * 60)
 def request_site(email: str, subdomain: str) -> dict:
@@ -43,7 +45,7 @@ def request_site(email: str, subdomain: str) -> dict:
 	both hammer the same address space."""
 	email = (email or "").strip().lower()
 	if not validate_email_address(email):
-		frappe.throw("Please enter a valid email address.")
+		frappe.throw(_("Please enter a valid email address."))
 
 	# Same Contract-A gate as Site, BEFORE we touch the DB or send mail.
 	validate_label(subdomain)
@@ -83,8 +85,9 @@ def _enforce_pending_cap(email: str) -> None:
 	pending = frappe.db.count("Site Request", {"email": email, "status": "Pending"})
 	if pending >= MAX_PENDING_PER_EMAIL:
 		frappe.throw(
-			"You already have a verification email in flight — check your inbox "
-			"(including spam) before requesting another."
+			_(
+				"You already have a verification email in flight — check your inbox (including spam) before requesting another."
+			)
 		)
 
 

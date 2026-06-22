@@ -60,6 +60,7 @@ def main() -> None:
 	guest_ipv4 = env.require("IPV4_GUEST_CIDR").split("/", 1)[0]
 	host_veth = env.require("HOST_VETH")
 
+	# nosemgrep: frappe-security-file-traversal -- host script; reads the per-VM network.env path derived from the VM name, not untrusted web input
 	with open(paths.network_env) as handle:
 		current = handle.read()
 

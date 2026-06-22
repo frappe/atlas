@@ -9,6 +9,7 @@ what the operator typed, `destroy()` is a no-op.
 from __future__ import annotations
 
 import frappe
+from frappe import _
 
 from atlas.atlas.providers import register
 from atlas.atlas.providers.base import (
@@ -34,7 +35,7 @@ class SelfManagedProvider(Provider):
 
 	def provision(self, request: ProvisionRequest) -> ProvisionResult:
 		if request.prebuilt_networking is None:
-			frappe.throw("Self-Managed provision requires prebuilt_networking")
+			frappe.throw(_("Self-Managed provision requires prebuilt_networking"))
 		return ProvisionResult(
 			provider_resource_id="",
 			size="",
@@ -82,8 +83,10 @@ class SelfManagedProvider(Provider):
 
 	def allocate_reserved_ip(self) -> ReservedIp:
 		frappe.throw(
-			"Self-Managed has no reserved-IP API; create the Reserved IP row "
-			"with an operator-supplied address instead of allocating one"
+			_(
+				"Self-Managed has no reserved-IP API; create the Reserved IP row "
+				"with an operator-supplied address instead of allocating one"
+			)
 		)
 
 	def assign_reserved_ip(self, provider_resource_id: str, droplet_resource_id: str) -> None:

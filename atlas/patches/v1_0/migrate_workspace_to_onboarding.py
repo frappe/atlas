@@ -21,6 +21,7 @@ def _fixture_content() -> str:
 	"""Load the canonical workspace content from the on-disk fixture."""
 	app_path = frappe.get_app_path("atlas")
 	fixture_path = os.path.join(app_path, "atlas", "workspace", "atlas", "atlas.json")
+	# nosemgrep: frappe-security-file-traversal -- fixed fixture path derived from frappe.get_app_path("atlas"), not untrusted web input
 	with open(fixture_path) as handle:
 		fixture = json.load(handle)
 	return fixture["content"]

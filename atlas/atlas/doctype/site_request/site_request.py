@@ -17,6 +17,7 @@ hands off to `Site` for the authoritative uniqueness + the provision flow.
 """
 
 import frappe
+from frappe import _
 from frappe.model.document import Document
 from frappe.utils import add_to_date, get_datetime, now_datetime
 
@@ -87,7 +88,7 @@ class SiteRequest(Document):
 			return frappe.get_doc("Site", frappe.db.get_value("Site Request", self.name, "site"))
 		if self.status == "Expired" or self.is_expired():
 			self._mark_expired()
-			frappe.throw("This verification link has expired — please sign up again.")
+			frappe.throw(_("This verification link has expired — please sign up again."))
 		if self.status != "Pending":
 			frappe.throw(f"This request cannot be verified (status is {self.status}).")
 
@@ -163,6 +164,7 @@ class SiteRequest(Document):
 		which the verify route surfaces. Restores the session user in `finally` so
 		fulfilment never leaves the request running as someone else."""
 		previous = frappe.session.user
+		# nosemgrep: frappe-setuser -- insert the Site AS the verified user so Frappe stamps owner = user (Contract C); reverted in the finally below
 		frappe.set_user(user)
 		try:
 			return frappe.get_doc(
@@ -173,4 +175,5 @@ class SiteRequest(Document):
 				}
 			).insert()
 		finally:
+			# nosemgrep: frappe-setuser -- restore the original session user after insert
 			frappe.set_user(previous)

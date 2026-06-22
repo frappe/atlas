@@ -93,6 +93,7 @@ def _signature_mismatch(paths: VirtualMachinePaths) -> str:
 	if not os.path.exists(paths.memory_snapshot_signature):
 		return ""
 	try:
+		# nosemgrep: frappe-security-file-traversal -- host script; reads the per-VM snapshot signature path derived from the VM name, not untrusted web input
 		with open(paths.memory_snapshot_signature) as handle:
 			captured = json.load(handle)
 	except (OSError, ValueError) as error:
@@ -110,6 +111,7 @@ def _stage_mmds(paths: VirtualMachinePaths) -> None:
 	"""PUT the staged identity payload (if any) into the metadata service."""
 	if not os.path.exists(paths.metadata_file):
 		return
+	# nosemgrep: frappe-security-file-traversal -- host script; reads the per-VM metadata file path derived from the VM name, not untrusted web input
 	with open(paths.metadata_file) as handle:
 		payload = handle.read()
 	firecracker_api(paths.api_socket_directory, paths.api_socket_name, "PUT", "/mmds", payload)

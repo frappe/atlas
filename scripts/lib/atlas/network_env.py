@@ -69,6 +69,7 @@ def read_network_env(path: str) -> NetworkEnv:
 	"""Read and parse a network.env file. Raises if the file is unreadable —
 	a missing env at disk-up/network-up time is a real failure (the VM was never
 	provisioned), so unlike the down path we do not tolerate absence here."""
+	# nosemgrep: frappe-security-file-traversal -- host/guest script; reads a per-VM network.env path derived from the VM name, not untrusted web input
 	with open(path) as handle:
 		return NetworkEnv.parse(handle.read())
 

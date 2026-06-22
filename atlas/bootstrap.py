@@ -145,6 +145,7 @@ import time
 
 import frappe
 import frappe.utils.password
+from frappe import _
 
 PROVIDER_NAME = "bootstrap-provider"
 IMAGE_NAME = "ubuntu-24.04"
@@ -284,9 +285,11 @@ def run_self_serve(force_bake: bool = False) -> None:
 	tls_config = _read_tls_config()
 	if tls_config is None:
 		frappe.throw(
-			"run_self_serve needs the TLS config (atlas_tls_domain + Route53 + ACME keys) — "
-			"the signup flow routes through the regional wildcard. Set them, or use run() for "
-			"compute-only bootstrap."
+			_(
+				"run_self_serve needs the TLS config (atlas_tls_domain + Route53 + ACME keys) — "
+				"the signup flow routes through the regional wildcard. Set them, or use run() for "
+				"compute-only bootstrap."
+			)
 		)
 
 	# 1. Compute: settings → provider → server → base images (no smoke VM — the
@@ -374,6 +377,7 @@ def restore_credentials() -> None:
 			require_config("atlas_scw_secret_key"),
 			"secret_key",
 		)
+	# nosemgrep: frappe-manual-commit -- bootstrap script: persist restored credentials so later bootstrap steps and enqueued jobs can read them
 	frappe.db.commit()
 	print(f"[bootstrap] restored Atlas/{provider_type} credentials from site config")
 
@@ -461,6 +465,7 @@ def ensure_provider() -> "frappe.model.document.Document":
 	elif provider_type == "Scaleway":
 		_seed_scaleway_settings()
 
+	# nosemgrep: frappe-manual-commit -- persist provider + seeded catalog before returning
 	frappe.db.commit()
 	return frappe.get_doc("Provider", PROVIDER_NAME)
 
@@ -512,8 +517,8 @@ def _seed_scaleway_settings() -> None:
 		frappe.db.set_single_value(
 			"Atlas Settings", "ssh_key_id", frappe.conf.get("atlas_ssh_key_id"), update_modified=False
 		)
+	# nosemgrep: frappe-manual-commit -- bootstrap script: persist Scaleway Settings before the load-bearing discover() call that needs them
 	frappe.db.commit()
-
 	# Discover the live per-zone catalog (the offer_id / os_id UUIDs). Load-bearing —
 	# let the exception propagate so a bad key/zone fails the bootstrap loudly here
 	# rather than at the first opaque provision().
@@ -522,6 +527,7 @@ def _seed_scaleway_settings() -> None:
 
 	capabilities = ScalewayProvider().discover()
 	upsert_catalog("Scaleway", capabilities)
+	# nosemgrep: frappe-manual-commit -- bootstrap script: persist discovered catalog rows so the default size/image Link targets exist below
 	frappe.db.commit()
 
 	size_name = f"Scaleway/{size_slug}"
@@ -538,6 +544,7 @@ def _seed_scaleway_settings() -> None:
 		)
 	frappe.db.set_single_value("Scaleway Settings", "default_size", size_name, update_modified=False)
 	frappe.db.set_single_value("Scaleway Settings", "default_image", image_name, update_modified=False)
+	# nosemgrep: frappe-manual-commit -- bootstrap script: persist default size/image so subsequent provision() calls read them off Scaleway Settings
 	frappe.db.commit()
 	print(f"[bootstrap] seeded Scaleway Settings (zone={zone}, size={size_name}, image={image_name})")
 
@@ -592,6 +599,7 @@ def provision_server(provider: "frappe.model.document.Document") -> str:
 		# is async — the Server lands Pending and the worker polls describe() to
 		# Active, which wait_for_active_server already handles via its longer timeout.)
 		server_name = provider.provision_server(title)
+	# nosemgrep: frappe-manual-commit -- bootstrap script: persist the Server row so the enqueued boot job sees it cross-transaction
 	frappe.db.commit()
 	print(f"[bootstrap] provisioning Server {title!r} (name={server_name!r}; background job enqueued)")
 	return server_name
@@ -635,6 +643,7 @@ def ensure_image() -> "frappe.model.document.Document":
 	image = frappe.get_doc({"doctype": "Virtual Machine Image", **DEFAULT_IMAGE, "is_active": 1}).insert(
 		ignore_permissions=True
 	)
+	# nosemgrep: frappe-manual-commit -- bootstrap script: persist the base image row before later provisioning steps reference it
 	frappe.db.commit()
 	print(f"[bootstrap] created Virtual Machine Image {image.name!r}")
 	return image
@@ -696,6 +705,7 @@ def provision_virtual_machine(server_name: str) -> str:
 			"ssh_public_key": load_vm_ssh_public_key(),
 		}
 	).insert(ignore_permissions=True)
+	# nosemgrep: frappe-manual-commit -- bootstrap script: persist the VM row so the after_insert boot job sees it cross-transaction
 	frappe.db.commit()
 	print(f"[bootstrap] created Virtual Machine {virtual_machine.name!r}")
 	task_name = _wait_for_provision_task(virtual_machine.name)
@@ -815,6 +825,7 @@ def ensure_tls_layer(config: dict) -> None:
 		print(f"[bootstrap] created Root Domain {config['domain']!r} (region {config['region']!r})")
 	else:
 		print(f"[bootstrap] reusing Root Domain {config['domain']!r}")
+	# nosemgrep: frappe-manual-commit -- persist TLS/Domain rows before the cert issue step
 	frappe.db.commit()
 
 
@@ -824,6 +835,7 @@ def issue_certificate(domain: str) -> str:
 	the region. Returns the TLS Certificate name."""
 	print(f"[bootstrap] issuing *.{domain} via Let's Encrypt over Route 53 DNS-01 ...")
 	cert_name = frappe.get_doc("Root Domain", domain).issue_certificate()
+	# nosemgrep: frappe-manual-commit -- bootstrap script: persist the issued TLS Certificate before reading its status/expiry back below
 	frappe.db.commit()
 	status, expires_on = frappe.db.get_value("TLS Certificate", cert_name, ["status", "expires_on"])
 	if status != "Active":
@@ -844,6 +856,7 @@ def push_certificate_to_proxies(domain: str) -> list[str]:
 	if not cert_name:
 		frappe.throw(f"no Active TLS Certificate for {domain!r} to push — issue it first")
 	pushed = frappe.get_doc("TLS Certificate", cert_name).push_to_proxies()
+	# nosemgrep: frappe-manual-commit -- persist cert push + published wildcard DNS state
 	frappe.db.commit()
 	print(f"[bootstrap] pushed {cert_name} + published wildcard for *.{domain} to {pushed or '(no proxies)'}")
 	return pushed
@@ -896,16 +909,19 @@ def bake_golden_image(server_name: str, force: bool = False) -> str:
 	print("[bootstrap] bench built in the guest; stopping + snapshotting ...")
 
 	vm.stop()
+	# nosemgrep: frappe-manual-commit -- bootstrap script: persist the stop request before polling the DB for the Stopped status set by the boot job
 	frappe.db.commit()
 	_wait_for_vm_status(vm.name, "Stopped", timeout_seconds=180)
 	vm.reload()
 	snapshot_name = vm.snapshot(title=GOLDEN_SNAPSHOT_TITLE)
+	# nosemgrep: frappe-manual-commit -- bootstrap script: persist the snapshot row before polling the DB for the Available status set by the snapshot job
 	frappe.db.commit()
 	_wait_for_snapshot_available(snapshot_name, timeout_seconds=600)
 
 	frappe.db.set_single_value(
 		"Atlas Settings", "default_bench_snapshot", snapshot_name, update_modified=False
 	)
+	# nosemgrep: frappe-manual-commit -- bootstrap script: persist default_bench_snapshot so self-serve clones find the freshly baked golden
 	frappe.db.commit()
 	print(f"[bootstrap] golden bench snapshot {snapshot_name} baked + wired as default_bench_snapshot")
 	return snapshot_name
@@ -974,8 +990,10 @@ def _ensure_reserved_ipv4(server_name: str, vm_name: str) -> str:
 		return attached[0]
 
 	reserved = reserved_ip_module.allocate(server_name)
+	# nosemgrep: frappe-manual-commit -- persist the allocated Reserved IP before the attach
 	frappe.db.commit()
 	frappe.get_doc("Reserved IP", reserved).attach(vm_name)
+	# nosemgrep: frappe-manual-commit -- persist the attach (vendor assign + NAT) state
 	frappe.db.commit()
 	ipv4 = frappe.db.get_value("Reserved IP", reserved, "ip_address")
 	print(f"[bootstrap] reserved IPv4 {ipv4} attached to proxy {vm_name} ({reserved})")
@@ -1005,9 +1023,11 @@ def _provision_durable_vm(
 	public_key = frappe.db.get_single_value("Atlas Settings", "ssh_public_key")
 	if not public_key:
 		frappe.throw(
-			"Atlas Settings.ssh_public_key is unset — a build/proxy VM needs the fleet key in "
-			"authorized_keys for the control plane to SSH in. Run ensure_provider / restore_credentials "
-			"first (they derive it from the private key)."
+			_(
+				"Atlas Settings.ssh_public_key is unset — a build/proxy VM needs the fleet key in "
+				"authorized_keys for the control plane to SSH in. Run ensure_provider / restore_credentials "
+				"first (they derive it from the private key)."
+			)
 		)
 	fields = {
 		"doctype": "Virtual Machine",
@@ -1023,6 +1043,7 @@ def _provision_durable_vm(
 		fields["is_proxy"] = 1
 		fields["region"] = region
 	vm = frappe.get_doc(fields).insert(ignore_permissions=True)
+	# nosemgrep: frappe-manual-commit -- bootstrap script: persist the VM row so the after_insert boot job sees it cross-transaction
 	frappe.db.commit()
 	print(f"[bootstrap] inserted VM {vm.name!r} ({title}); waiting for boot ...")
 	_wait_for_vm_running(vm.name)
@@ -1169,6 +1190,7 @@ def ensure_default_bench_snapshot() -> None:
 		frappe.db.set_single_value(
 			"Atlas Settings", "default_bench_snapshot", configured, update_modified=False
 		)
+		# nosemgrep: frappe-manual-commit -- bootstrap script: persist the configured default_bench_snapshot setting so self-serve clones find it
 		frappe.db.commit()
 		print(f"[bootstrap] default_bench_snapshot = {configured} (configured)")
 		return
@@ -1190,6 +1212,7 @@ def ensure_default_bench_snapshot() -> None:
 		return
 	snapshot = candidates[0]["name"]
 	frappe.db.set_single_value("Atlas Settings", "default_bench_snapshot", snapshot, update_modified=False)
+	# nosemgrep: frappe-manual-commit -- bootstrap script: persist the adopted default_bench_snapshot setting so self-serve clones find it
 	frappe.db.commit()
 	print(f"[bootstrap] default_bench_snapshot = {snapshot} (adopted newest Available golden-bench)")
 
@@ -1234,6 +1257,7 @@ def ensure_outbound_email() -> None:
 		}
 	)
 	account.save(ignore_permissions=True)
+	# nosemgrep: frappe-manual-commit -- bootstrap script: persist the outbound Email Account so verification emails can be sent
 	frappe.db.commit()
 	print(f"[bootstrap] outbound Email Account {name!r} configured ({from_address} via {host}:{port})")
 
@@ -1279,6 +1303,7 @@ def load_key(value: str) -> str:
 	path = os.path.expanduser(value)
 	if not os.path.isfile(path):
 		frappe.throw(f"key file not found at {path!r}")
+	# nosemgrep: frappe-security-file-traversal -- operator-supplied key path from site config (atlas_*_ssh_key), not untrusted web input
 	with open(path) as handle:
 		return handle.read().strip()
 
@@ -1293,5 +1318,6 @@ def load_vm_ssh_public_key() -> str:
 			"no SSH public key for the VM. Set atlas_vm_ssh_public_key in site "
 			f"config or place one at {default_path!r}"
 		)
+	# nosemgrep: frappe-security-file-traversal -- fixed ~/.ssh default path
 	with open(default_path) as handle:
 		return handle.read().strip()

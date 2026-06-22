@@ -10,6 +10,7 @@ from __future__ import annotations
 import dataclasses
 
 import frappe
+from frappe import _
 from frappe.model.document import Document
 
 from atlas.atlas import tls
@@ -35,7 +36,7 @@ class TLSProvider(Document):
 	def archive(self) -> None:
 		"""Flip is_active=0. Existing Root Domain FKs survive."""
 		if not self.is_active:
-			frappe.throw("TLS Provider is already archived")
+			frappe.throw(_("TLS Provider is already archived"))
 		frappe.db.set_value(self.doctype, self.name, "is_active", 0)
 
 	@frappe.whitelist()

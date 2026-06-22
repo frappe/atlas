@@ -27,6 +27,7 @@ from __future__ import annotations
 import hashlib
 
 import frappe
+from frappe import _
 
 from atlas.atlas.providers import register
 from atlas.atlas.providers.base import (
@@ -64,7 +65,7 @@ def require_developer_mode() -> None:
 	"""Throw unless the site is in developer_mode. The gate that keeps a Fake
 	provider inert on a production site."""
 	if not frappe.conf.developer_mode:
-		frappe.throw("The Fake provider is only available when developer_mode is enabled")
+		frappe.throw(_("The Fake provider is only available when developer_mode is enabled"))
 
 
 @register

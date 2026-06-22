@@ -206,6 +206,7 @@ def ensure_images() -> dict[str, str]:
 				ignore_permissions=True
 			)
 		result[key] = name
+	# nosemgrep: frappe-manual-commit -- persist the seeded demo images before later phases
 	frappe.db.commit()
 	return result
 
@@ -245,6 +246,7 @@ def ensure_servers(active_provider: str) -> dict[str, str]:
 			frappe.db.set_value("Server", name, "status", final_status)
 		result[key] = name
 	result["metal-01"] = _ensure_self_managed_server()
+	# nosemgrep: frappe-manual-commit -- demo seeder: persist the seeded demo servers before VMs are built on top of them
 	frappe.db.commit()
 	return result
 
@@ -290,6 +292,7 @@ def ensure_virtual_machines(servers: dict[str, str], images: dict[str, str]) -> 
 			result[spec["key"]] = existing
 			continue
 		result[spec["key"]] = _build_vm(spec, servers, images)
+	# nosemgrep: frappe-manual-commit -- demo seeder: persist the seeded demo VMs before snapshots and reserved IPs reference them
 	frappe.db.commit()
 	return result
 
@@ -376,6 +379,7 @@ def ensure_snapshots(machines: dict[str, str]) -> None:
 	if source:
 		_insert_snapshot_row(source, "pending-export", "Pending")
 		_insert_snapshot_row(source, "failed-export", "Failed")
+	# nosemgrep: frappe-manual-commit -- demo seeder: persist the seeded demo snapshots and the default_bench_snapshot setting
 	frappe.db.commit()
 
 
@@ -417,6 +421,7 @@ def ensure_reserved_ips(servers: dict[str, str], machines: dict[str, str]) -> No
 	other = servers.get("nyc3-01")
 	if other and not _server_has_free_ip(other):
 		reserved_ip_module.allocate(other)
+	# nosemgrep: frappe-manual-commit -- demo seeder: persist the seeded demo reserved IPs and their attachments
 	frappe.db.commit()
 
 
@@ -446,6 +451,7 @@ def backdate_tasks(servers: dict[str, str], machines: dict[str, str]) -> None:
 			continue
 		server = frappe.db.get_value("Virtual Machine", vm_name, "server")
 		_insert_backdated_task(server, vm_name, script, status, minutes_ago)
+	# nosemgrep: frappe-manual-commit -- demo seeder: persist the backdated demo Tasks so the Task list shows realistic history
 	frappe.db.commit()
 
 

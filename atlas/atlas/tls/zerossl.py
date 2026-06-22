@@ -10,6 +10,7 @@ than "no implementation for provider_type".
 from __future__ import annotations
 
 import frappe
+from frappe import _
 
 from atlas.atlas.dns.base import DnsProvider
 from atlas.atlas.tls import register
@@ -24,4 +25,4 @@ class ZeroSslProvider(TlsProvider):
 		return AuthResult(ok=False, error="ZeroSSL is not implemented yet")
 
 	def issue(self, domain: str, dns_provider: DnsProvider) -> IssuedCert:
-		frappe.throw("ZeroSSL issuance is not implemented yet")
+		frappe.throw(_("ZeroSSL issuance is not implemented yet"))

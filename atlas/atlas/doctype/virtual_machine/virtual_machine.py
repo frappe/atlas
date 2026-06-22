@@ -2,6 +2,7 @@ import ipaddress
 import uuid
 
 import frappe
+from frappe import _
 from frappe.model.document import Document
 
 from atlas.atlas.networking import (
@@ -200,7 +201,7 @@ class VirtualMachine(Document):
 		if self.status not in ("Running", "Paused"):
 			frappe.throw(f"Cannot stop from {self.status}")
 		if self.stop_protection:
-			frappe.throw("Disable stop protection before stopping this VM")
+			frappe.throw(_("Disable stop protection before stopping this VM"))
 		if memory_snapshot is None:
 			memory_snapshot = bool(self.memory_snapshot_on_stop)
 		# frm.call / REST send a JSON/stringy value; normalize to bool.
@@ -521,10 +522,10 @@ class VirtualMachine(Document):
 		}
 		if source_type == "snapshot":
 			if not source:
-				frappe.throw("Rebuild from snapshot requires a snapshot")
+				frappe.throw(_("Rebuild from snapshot requires a snapshot"))
 			snapshot = frappe.get_doc("Virtual Machine Snapshot", source)
 			if snapshot.virtual_machine != self.name:
-				frappe.throw("Snapshot belongs to a different Virtual Machine")
+				frappe.throw(_("Snapshot belongs to a different Virtual Machine"))
 			if snapshot.status != "Available":
 				frappe.throw(f"Snapshot is not Available (status is {snapshot.status})")
 			# data_rootfs_path is empty when the snapshot captured no data disk;
@@ -591,7 +592,7 @@ class VirtualMachine(Document):
 		if new_data_disk != self.data_disk_gigabytes:
 			if not self.data_disk_gigabytes:
 				# fmt: off
-				frappe.throw("This VM has no data disk; recreate the VM to add one (resize only grows an existing data disk)")
+				frappe.throw(_("This VM has no data disk; recreate the VM to add one (resize only grows an existing data disk)"))
 				# fmt: on
 			if new_data_disk < self.data_disk_gigabytes:
 				frappe.throw(
@@ -671,9 +672,9 @@ class VirtualMachine(Document):
 	@frappe.whitelist()
 	def terminate(self) -> str:
 		if self.status == "Terminated":
-			frappe.throw("VM is already terminated")
+			frappe.throw(_("VM is already terminated"))
 		if self.termination_protection:
-			frappe.throw("Disable termination protection before terminating this VM")
+			frappe.throw(_("Disable termination protection before terminating this VM"))
 		task = run_task(
 			server=self.server,
 			script="terminate-vm.py",

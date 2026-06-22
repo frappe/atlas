@@ -1,6 +1,7 @@
 import re
 
 import frappe
+from frappe import _
 from frappe.model.document import Document
 
 from atlas.atlas.ssh import run_task
@@ -230,21 +231,20 @@ class VirtualMachineSnapshot(Document):
 			frappe.throw(f"Snapshot is not Available (status is {self.status})")
 		if self.kind == "Warm":
 			frappe.throw(
-				"A warm snapshot cannot be promoted to an image — its value is the frozen "
-				"memory pair clones resume, which a cold-booting base image discards. "
-				"Promote a cold snapshot, or clone this one with Clone to new VM."
+				_(
+					"A warm snapshot cannot be promoted to an image — its value is the frozen memory pair clones resume, which a cold-booting base image discards. Promote a cold snapshot, or clone this one with Clone to new VM."
+				)
 			)
 		if self.data_disk_gigabytes:
 			frappe.throw(
-				"This snapshot has a data disk; a base image captures only the root disk "
-				"(the image has no data-disk fields), so promoting would silently drop it. "
-				"Clone this snapshot with Clone to new VM to keep the data disk, or promote "
-				"a data-less snapshot."
+				_(
+					"This snapshot has a data disk; a base image captures only the root disk (the image has no data-disk fields), so promoting would silently drop it. Clone this snapshot with Clone to new VM to keep the data disk, or promote a data-less snapshot."
+				)
 			)
 		if not self.source_image:
 			# The kernel is inherited from source_image; a snapshot with no recorded
 			# source image (a malformed row) has no kernel to point the image at.
-			frappe.throw("Snapshot has no source image to inherit a kernel from; cannot promote.")
+			frappe.throw(_("Snapshot has no source image to inherit a kernel from; cannot promote."))
 
 		image_name = (image_name or "").strip().lower()
 		if not _IMAGE_NAME_RE.match(image_name):

@@ -1,4 +1,5 @@
 import frappe
+from frappe import _
 from frappe.model.document import Document
 
 from atlas.atlas.central import (
@@ -66,7 +67,7 @@ class CentralSettings(Document):
 
 	def client(self) -> CentralClient:
 		if not self.url or not self.api_key:
-			frappe.throw("Set Central URL and API Key first")
+			frappe.throw(_("Set Central URL and API Key first"))
 		secret = get_secret("Central Settings", "Central Settings", "api_secret")
 		return CentralClient(self.url, self.api_key, secret)
 
@@ -77,7 +78,7 @@ class CentralSettings(Document):
 		`central.api.register` contract."""
 		region = self.region or frappe.conf.get("atlas_do_region")
 		if not region:
-			frappe.throw("Set a Region (or atlas_do_region in site config) before registering")
+			frappe.throw(_("Set a Region (or atlas_do_region in site config) before registering"))
 		return {
 			"region": region,
 			"base_url": frappe.utils.get_url(),

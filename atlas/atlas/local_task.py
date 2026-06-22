@@ -73,6 +73,7 @@ def _execute_local(
 	task.status = "Running"
 	task.started = frappe.utils.now_datetime()
 	task.save(ignore_permissions=True)
+	# nosemgrep: frappe-manual-commit -- background job: persist the Running state before the long-running local subprocess so a crash mid-run is observable and the Task isn't stuck Queued
 	frappe.db.commit()
 
 	start = time.monotonic()
@@ -133,6 +134,7 @@ def _finalize(
 	task.ended = frappe.utils.now_datetime()
 	task.duration_milliseconds = elapsed_ms
 	task.save(ignore_permissions=True)
+	# nosemgrep: frappe-manual-commit -- persist the Task outcome before run_local_task re-raises so the final status survives the raise
 	frappe.db.commit()
 
 

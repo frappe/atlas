@@ -18,6 +18,7 @@ import binascii
 import hashlib
 
 import frappe
+from frappe import _
 from frappe.model.document import Document
 
 # OpenSSH public-key type prefixes we accept. Covers the modern defaults
@@ -52,13 +53,13 @@ def fingerprint(public_key: str) -> str:
 	key stored now is an opaque SSH failure at provision time later."""
 	parts = (public_key or "").split()
 	if len(parts) < 2:
-		frappe.throw("Not an OpenSSH public key: expected '<type> <base64-key> [comment]'.")
+		frappe.throw(_("Not an OpenSSH public key: expected '<type> <base64-key> [comment]'."))
 	key_type, blob = parts[0], parts[1]
 	if key_type not in KNOWN_KEY_TYPES:
 		frappe.throw(f"Unsupported SSH key type {key_type!r}.")
 	try:
 		raw = base64.b64decode(blob, validate=True)
 	except binascii.Error, ValueError:
-		frappe.throw("SSH key body is not valid base64.")
+		frappe.throw(_("SSH key body is not valid base64."))
 	digest = base64.b64encode(hashlib.sha256(raw).digest()).decode().rstrip("=")
 	return f"SHA256:{digest}"

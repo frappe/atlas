@@ -45,6 +45,7 @@ def run(reset: bool = False) -> None:
 	_ensure_snapshots(machines)
 	_ensure_reserved_ips(servers, machines)
 	demo_data.backdate_tasks(servers, machines)
+	# nosemgrep: frappe-manual-commit -- demo seeder: persist the full seeded demo dataset before printing the summary
 	frappe.db.commit()
 	_print_summary(servers, machines)
 
@@ -65,6 +66,7 @@ def wipe() -> None:
 	_delete_demo_non_fake_providers()
 	# Leave the Fake Provider rows + catalog in place — cheap to reuse, and the
 	# active-provider pointer in Atlas Settings stays valid across a reset.
+	# nosemgrep: frappe-manual-commit -- demo teardown: commit after wipe so the demo-row deletions are durable
 	frappe.db.commit()
 
 
@@ -143,6 +145,7 @@ def _ensure_settings() -> None:
 	frappe.db.set_single_value(
 		"Atlas Settings", "ssh_private_key_path", _ensure_throwaway_ssh_key(), update_modified=False
 	)
+	# nosemgrep: frappe-manual-commit -- demo seeder: persist the seeded Atlas Settings so later seed phases see the active provider and SSH key
 	frappe.db.commit()
 
 
@@ -154,6 +157,7 @@ def _ensure_throwaway_ssh_key() -> str:
 	path = frappe.get_site_path("private", "files", "atlas-demo-key.pem")
 	if not os.path.exists(path):
 		os.makedirs(os.path.dirname(path), exist_ok=True)
+		# nosemgrep: frappe-security-file-traversal -- fixed path under the site's private files dir (frappe.get_site_path), not untrusted web input
 		with open(path, "w") as handle:
 			handle.write(
 				"-----BEGIN OPENSSH PRIVATE KEY-----\nfake-demo-key-never-used\n-----END OPENSSH PRIVATE KEY-----\n"
@@ -166,6 +170,7 @@ def _ensure_catalog() -> None:
 	"""Seed Provider Size / Provider Image for Fake via the real Refresh-Catalog
 	path, so every Server/size Link resolves."""
 	frappe.get_doc("Provider", ACTIVE_PROVIDER).discover_and_upsert()
+	# nosemgrep: frappe-manual-commit -- demo seeder: persist the seeded catalog so later seed phases' size and image Links resolve
 	frappe.db.commit()
 
 

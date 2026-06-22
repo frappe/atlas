@@ -14,6 +14,7 @@ import json
 from typing import Any
 
 import frappe
+from frappe import _
 from frappe.model.document import Document
 
 from atlas.atlas import providers
@@ -44,7 +45,7 @@ class Provider(Document):
 	def archive(self) -> None:
 		"""Flip is_active=0. Existing Server FKs survive."""
 		if not self.is_active:
-			frappe.throw("Provider is already archived")
+			frappe.throw(_("Provider is already archived"))
 		frappe.db.set_value(self.doctype, self.name, "is_active", 0)
 
 	@frappe.whitelist()
@@ -153,6 +154,7 @@ def _provision_server(provider_row: Provider, title: str, dialog_fields: dict[st
 			server_doc["provider_metadata"] = json.dumps(result.provider_metadata)
 		server = frappe.get_doc(server_doc).insert(ignore_permissions=True)
 
+	# nosemgrep: frappe-manual-commit -- persist the new Server row before enqueuing finish_provisioning so the background job can find it cross-transaction
 	frappe.db.commit()
 
 	frappe.enqueue(

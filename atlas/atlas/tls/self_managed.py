@@ -11,6 +11,7 @@ vendor.
 from __future__ import annotations
 
 import frappe
+from frappe import _
 
 from atlas.atlas.dns.base import DnsProvider
 from atlas.atlas.tls import register
@@ -26,6 +27,8 @@ class SelfManagedTlsProvider(TlsProvider):
 
 	def issue(self, domain: str, dns_provider: DnsProvider) -> IssuedCert:
 		frappe.throw(
-			"Self-Managed TLS does not issue certificates. Place fullchain.pem and "
-			"privkey.pem at the TLS Certificate's paths, then use Push to Proxies."
+			_(
+				"Self-Managed TLS does not issue certificates. Place fullchain.pem and "
+				"privkey.pem at the TLS Certificate's paths, then use Push to Proxies."
+			)
 		)

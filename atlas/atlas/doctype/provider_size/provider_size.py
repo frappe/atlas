@@ -1,11 +1,12 @@
 import frappe
+from frappe import _
 from frappe.model.document import Document
 
 
 class ProviderSize(Document):
 	def autoname(self) -> None:
 		if not self.provider_type or not self.slug:
-			frappe.throw("Provider Size requires provider_type and slug")
+			frappe.throw(_("Provider Size requires provider_type and slug"))
 		self.name = f"{self.provider_type}/{self.slug}"
 
 	def validate(self) -> None:

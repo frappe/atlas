@@ -13,6 +13,7 @@ methods that `frappe.throw` early on the wrong state.
 """
 
 import frappe
+from frappe import _
 from frappe.model.document import Document
 
 from atlas.atlas.placement import active_root_domain, default_bench_snapshot, warm_bench_snapshot_for_server
@@ -138,7 +139,7 @@ class Site(Document):
 		(this is the signup race), not a raw duplicate-key error."""
 		label = (self.subdomain or "").strip()
 		if not label:
-			frappe.throw("A subdomain is required")
+			frappe.throw(_("A subdomain is required"))
 		domain = active_root_domain().domain
 		fqdn = f"{label}.{domain}"
 		if frappe.db.exists("Site", fqdn):
@@ -156,7 +157,7 @@ class Site(Document):
 		VirtualMachine.terminate()'s cleanup-then-mark shape. Idempotent-ish: a
 		second call on an already-Terminated row throws."""
 		if self.status == "Terminated":
-			frappe.throw("Site is already terminated")
+			frappe.throw(_("Site is already terminated"))
 		self._delete_subdomain()
 		self._terminate_backing_vm()
 		self.status = "Terminated"
@@ -209,6 +210,7 @@ class _ProvisionClock:
 
 	def _emit(self, message: str) -> None:
 		elapsed = self._now() - self._t0
+		# nosemgrep: frappe-print-function-in-doctypes -- intentional: _ProvisionClock prints its follow-along trace to stdout so it lands in the RQ worker job log alongside the other job lines
 		print(f"[auto_provision {self._site}] +{elapsed:6.1f}s {message}", flush=True)
 
 	def stage(self, label: str) -> None:
@@ -339,6 +341,7 @@ def _set_status(site, status: str) -> None:
 	if stamp_field:
 		site.db_set(stamp_field, frappe.utils.now_datetime())
 	site.db_set("status", status)
+	# nosemgrep: frappe-manual-commit -- background job: commit each status transition so the owner's realtime polling sees it cross-transaction and progress survives a crash mid-provision
 	frappe.db.commit()
 	frappe.publish_realtime(
 		event="site_provisioning",

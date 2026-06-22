@@ -13,6 +13,7 @@ line, which we parse back into an `IssuedCert`.
 from __future__ import annotations
 
 import frappe
+from frappe import _
 
 from atlas.atlas.dns.base import DnsProvider
 from atlas.atlas.local_task import run_local_task
@@ -44,9 +45,9 @@ class LetsEncryptProvider(TlsProvider):
 
 	def issue(self, domain: str, dns_provider: DnsProvider) -> IssuedCert:
 		if not self.agree_tos:
-			frappe.throw("Lets Encrypt Settings: agree_tos must be checked before issuing")
+			frappe.throw(_("Lets Encrypt Settings: agree_tos must be checked before issuing"))
 		if not self.account_email:
-			frappe.throw("Lets Encrypt Settings: account_email is required")
+			frappe.throw(_("Lets Encrypt Settings: account_email is required"))
 
 		variables = {
 			"DOMAIN": domain,

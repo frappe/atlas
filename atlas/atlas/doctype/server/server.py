@@ -3,6 +3,7 @@ import uuid
 from typing import ClassVar
 
 import frappe
+from frappe import _
 from frappe.model.document import Document
 
 from atlas.atlas import scripts_catalog
@@ -75,7 +76,7 @@ class Server(Document):
 		import atlas
 
 		if self.status == "Archived":
-			frappe.throw("Server is already archived")
+			frappe.throw(_("Server is already archived"))
 		if self.provider_resource_id:
 			atlas.get_provider().destroy(self.provider_resource_id)
 		frappe.db.set_value(self.doctype, self.name, "status", "Archived")
@@ -149,7 +150,7 @@ class Server(Document):
 		if variables is None:
 			variables = {}
 		if not isinstance(variables, dict):
-			frappe.throw("variables must be a JSON object")
+			frappe.throw(_("variables must be a JSON object"))
 		if script not in scripts_catalog.allowed_scripts():
 			frappe.throw(f"Unknown script: {script}")
 		task = run_task(
