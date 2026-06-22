@@ -175,7 +175,7 @@ class LogicalVolume:
 	def _node_is_block_device(self) -> bool:
 		try:
 			return stat.S_ISBLK(os.stat(self.device_path).st_mode)
-		except FileNotFoundError, PermissionError:
+		except (FileNotFoundError, PermissionError):
 			return False
 
 
