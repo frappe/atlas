@@ -42,6 +42,9 @@ class _ReservedIpStubMixin:
 	def release_reserved_ip(self, provider_resource_id: str) -> None:
 		return None
 
+	def list_servers(self) -> tuple:
+		return ()
+
 
 class _StubProvider(_ReservedIpStubMixin, Provider):
 	provider_type = "Stub"

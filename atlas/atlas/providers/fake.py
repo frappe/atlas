@@ -33,6 +33,7 @@ from atlas.atlas.providers import register
 from atlas.atlas.providers.base import (
 	AuthResult,
 	Capabilities,
+	DiscoveredServer,
 	ImageInfo,
 	Provider,
 	ProvisionRequest,
@@ -59,6 +60,17 @@ FAKE_IMAGES: tuple[ImageInfo, ...] = (
 
 DEFAULT_FAKE_SIZE = f"{FAKE_PROVIDER_TYPE}/fake-2vcpu-4gb"
 DEFAULT_FAKE_IMAGE = f"{FAKE_PROVIDER_TYPE}/ubuntu-24.04"
+
+# Canned "account inventory" for discover/import. The vendor hostnames stand in
+# for boxes the operator built outside Atlas; the resource ids use the same
+# `fake-<token>` shape provision() mints, so import's authoritative describe(id)
+# resolves them to consistent synthetic networking. Deterministic so the picker
+# and the import test are stable.
+FAKE_DISCOVERED_TITLES: tuple[str, ...] = (
+	"fake-discovered-alpha",
+	"fake-discovered-bravo",
+	"fake-discovered-charlie",
+)
 
 
 def require_developer_mode() -> None:
@@ -110,6 +122,26 @@ class FakeProvider(Provider):
 	def destroy(self, provider_resource_id: str) -> None:
 		# Nothing was ever allocated at a vendor.
 		return None
+
+	def list_servers(self) -> tuple[DiscoveredServer, ...]:
+		"""Canned account inventory so the discover/import dialog and its tests run
+		with no host. Each entry's id matches provision()'s `fake-<token>` shape so
+		import's describe(id) resolves consistent networking. No developer_mode
+		gate — listing is read-only (it allocates nothing), like discover()."""
+		discovered = []
+		for title in FAKE_DISCOVERED_TITLES:
+			token = _token(title)
+			net = _fake_networking(token)
+			discovered.append(
+				DiscoveredServer(
+					provider_resource_id=f"fake-{token}",
+					title=title,
+					ipv4_address=net.ipv4_address,
+					size=DEFAULT_FAKE_SIZE,
+					provider_metadata={"fake": True, "title": title},
+				)
+			)
+		return tuple(discovered)
 
 	# prepare_host: inherit the no-op default (a Fake host exposes root directly).
 

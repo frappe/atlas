@@ -84,6 +84,26 @@ class TestFakeProvider(IntegrationTestCase):
 		self.assertTrue(described.ready)
 		self.assertEqual(described.networking, provisioned.networking)
 
+	def test_list_servers_returns_canned_inventory(self) -> None:
+		from atlas.atlas.providers.fake import FAKE_DISCOVERED_TITLES
+
+		discovered = FakeProvider().list_servers()
+		self.assertEqual(len(discovered), len(FAKE_DISCOVERED_TITLES))
+		titles = {server.title for server in discovered}
+		self.assertEqual(titles, set(FAKE_DISCOVERED_TITLES))
+		# Every id uses the fake-<token> shape provision() mints.
+		for server in discovered:
+			self.assertTrue(server.provider_resource_id.startswith("fake-"))
+			self.assertEqual(server.size, DEFAULT_FAKE_SIZE)
+
+	def test_list_servers_ids_resolve_via_describe(self) -> None:
+		"""The canned ids round-trip: describe(id) is ready and its IPv4 matches the
+		preview row's, so import's authoritative describe() agrees with the picker."""
+		for server in FakeProvider().list_servers():
+			described = FakeProvider().describe(server.provider_resource_id)
+			self.assertTrue(described.ready)
+			self.assertEqual(described.networking.ipv4_address, server.ipv4_address)
+
 	def test_destroy_is_noop(self) -> None:
 		self.assertIsNone(FakeProvider().destroy("fake-anything"))
 

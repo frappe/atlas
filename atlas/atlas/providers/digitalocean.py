@@ -27,6 +27,7 @@ from atlas.atlas.providers import register
 from atlas.atlas.providers.base import (
 	AuthResult,
 	Capabilities,
+	DiscoveredServer,
 	ImageInfo,
 	Provider,
 	ProvisionRequest,
@@ -151,6 +152,15 @@ class DigitalOceanProvider(Provider):
 	def destroy(self, provider_resource_id: str) -> None:
 		self.client.delete_droplet(int(provider_resource_id))
 
+	def list_servers(self) -> tuple[DiscoveredServer, ...]:
+		"""Every droplet in the account, for discover/import. The size label
+		mirrors describe()'s `DigitalOcean/<size_slug>` form so the preview reads
+		like the catalog. IPv4 is best-effort (a new droplet may have none yet —
+		describe() is the authority at import)."""
+		return tuple(
+			_discovered_from_droplet(self.provider_type, droplet) for droplet in self.client.list_droplets()
+		)
+
 	# --- Reserved IPs ----------------------------------------------------
 	# On DigitalOcean a reserved IP is keyed by its own address, so the
 	# vendor handle (`provider_resource_id`) IS the IP string. The droplet
@@ -171,6 +181,26 @@ class DigitalOceanProvider(Provider):
 
 	def release_reserved_ip(self, provider_resource_id: str) -> None:
 		self.client.delete_reserved_ip(provider_resource_id)
+
+
+def _discovered_from_droplet(provider_type: str, droplet: dict) -> DiscoveredServer:
+	"""Map a raw DO droplet payload to a DiscoveredServer for the picker. The
+	size label mirrors describe()'s `<provider_type>/<size_slug>` form; the IPv4
+	is best-effort (`public_ipv4` raises on a droplet with no public v4 yet, so a
+	new/locked droplet must not break discovery)."""
+	size_slug = droplet.get("size_slug")
+	size = f"{provider_type}/{size_slug}" if size_slug else None
+	try:
+		ipv4 = public_ipv4(droplet)
+	except DigitalOceanError:
+		ipv4 = None
+	return DiscoveredServer(
+		provider_resource_id=str(droplet["id"]),
+		title=droplet.get("name") or None,
+		ipv4_address=ipv4,
+		size=size,
+		provider_metadata=droplet,
+	)
 
 
 def _reserved_ip_from_payload(reserved: dict) -> ReservedIp:

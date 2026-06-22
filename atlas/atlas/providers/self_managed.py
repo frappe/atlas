@@ -74,6 +74,12 @@ class SelfManagedProvider(Provider):
 		# what to do with the physical host; Atlas just stops talking to it.
 		return None
 
+	def list_servers(self) -> tuple:
+		# There is no vendor to ask. Adoption of a self-managed box stays the
+		# manual Provision Server dialog where the operator types the IPs — the
+		# only Self-Managed path. Discovery has nothing to enumerate.
+		return ()
+
 	# --- Reserved IPs ----------------------------------------------------
 	# There is no vendor reserved-IP API. The operator owns a routable v4 and
 	# routes it to the guest themselves; the `Reserved IP` row is created by

@@ -185,6 +185,33 @@ def _check_provider_buttons(server) -> None:
 			title=server.title,
 		)
 
+	# Discover Servers (read-only): the unfiltered vendor list returns the live
+	# account's droplets, and the shared bootstrapped server — which Atlas already
+	# models — must come back flagged imported=true. Inserts nothing; a host fact
+	# that list_servers() hits the real account through the desk HTTP wrapper.
+	discovered = _call_button("Provider", provider.name, "discover_servers")
+	assert isinstance(discovered, list), discovered
+	by_id = {row["provider_resource_id"]: row for row in discovered}
+	assert server.provider_resource_id in by_id, (
+		f"shared server {server.provider_resource_id} missing from discover_servers",
+		list(by_id),
+	)
+	assert by_id[server.provider_resource_id]["imported"], "modeled server should be flagged imported"
+
+	# Import the already-modeled shared server through the desk wrapper (resource_ids
+	# as the dialog's JSON string): it must be SKIPPED, never double-inserted — the
+	# idempotent re-run guard, host-proven without creating any droplet.
+	import json as _json
+
+	imported = _call_button(
+		"Provider",
+		provider.name,
+		"import_servers",
+		resource_ids=_json.dumps([server.provider_resource_id]),
+	)
+	assert imported["imported"] == [], imported
+	assert server.provider_resource_id in imported["skipped"], imported
+
 
 # ----- Server --------------------------------------------------------------
 

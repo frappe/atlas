@@ -298,6 +298,50 @@ class TestScalewayProviderDestroy(IntegrationTestCase):
 		provider.client.delete_server.assert_called_once_with("srv-uuid")
 
 
+class TestScalewayProviderListServers(IntegrationTestCase):
+	def test_list_servers_maps_each_payload(self) -> None:
+		provider = _build_provider()
+		provider.client.list_servers.return_value = [
+			{
+				"id": "srv-aaa",
+				"name": "fr-par-2-bench-01",
+				"offer_name": "EM-A610R-NVMe",
+				"ips": [{"version": "IPv4", "address": "51.159.1.2"}],
+			},
+			{
+				"id": "srv-bbb",
+				"name": "my-scaleway-box",
+				"offer_name": "EM-B112X-SSD",
+				"ips": [{"version": "IPv4", "address": "62.210.3.4"}],
+			},
+		]
+		discovered = provider.list_servers()
+		self.assertEqual(len(discovered), 2)
+		first = discovered[0]
+		self.assertEqual(first.provider_resource_id, "srv-aaa")
+		self.assertEqual(first.title, "fr-par-2-bench-01")
+		self.assertEqual(first.ipv4_address, "51.159.1.2")
+		# Size label mirrors describe()'s Scaleway/<offer_name> form.
+		self.assertEqual(first.size, "Scaleway/EM-A610R-NVMe")
+
+	def test_list_servers_tolerates_box_without_ipv4(self) -> None:
+		"""A delivering box may have no IPv4 yet — `public_ipv4` raises there, so
+		discovery must yield ipv4=None for it, not break the whole list."""
+		provider = _build_provider()
+		provider.client.list_servers.return_value = [
+			{"id": "srv-new", "name": "delivering-box", "offer_name": "EM-A610R-NVMe", "ips": []},
+		]
+		discovered = provider.list_servers()
+		self.assertEqual(len(discovered), 1)
+		self.assertIsNone(discovered[0].ipv4_address)
+		self.assertEqual(discovered[0].provider_resource_id, "srv-new")
+
+	def test_list_servers_empty_account(self) -> None:
+		provider = _build_provider()
+		provider.client.list_servers.return_value = []
+		self.assertEqual(provider.list_servers(), ())
+
+
 class TestScalewayProviderReservedIp(IntegrationTestCase):
 	def test_allocate_maps_fip_id_not_address(self) -> None:
 		provider = _build_provider()
@@ -517,3 +561,16 @@ class TestScalewayClientHttp(IntegrationTestCase):
 		):
 			created = client.register_ssh_key(name="a", public_key="b", project_id="p")
 		self.assertEqual(created["id"], "wrapped")
+
+	def test_list_servers_is_unfiltered_zone_scoped(self) -> None:
+		"""Unfiltered list (discover/import): GET /servers?page_size=100 in the zone,
+		no `tags=` filter, returning the `servers` array."""
+		client = self._client()
+		payload = {"servers": [{"id": "srv-1"}, {"id": "srv-2"}]}
+		with patch.object(client, "_raw_request", return_value=self._response(200, payload)) as raw:
+			servers = client.list_servers()
+		method, path = raw.call_args.args[0], raw.call_args.args[1]
+		self.assertEqual(method, "GET")
+		self.assertIn("/baremetal/v1/zones/fr-par-2/servers", path)
+		self.assertNotIn("tags=", path)
+		self.assertEqual([s["id"] for s in servers], ["srv-1", "srv-2"])

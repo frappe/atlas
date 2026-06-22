@@ -102,6 +102,21 @@ class ReservedIp:
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
+class DiscoveredServer:
+	"""A server the vendor account already holds, for discover/import. Maps back
+	to a Server row via `provider_resource_id` (the dedup key). Carries just
+	enough to render the import picker — id, vendor hostname, an IPv4 and a size
+	label for the preview row. Import does NOT trust these into immutable Server
+	fields; it re-resolves each picked id authoritatively via `describe()`."""
+
+	provider_resource_id: str
+	title: str | None = None  # vendor hostname; import falls back to the id
+	ipv4_address: str | None = None  # for the preview row only
+	size: str | None = None  # vendor offer/size label, for the preview row
+	provider_metadata: dict | None = None
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
 class AuthResult:
 	ok: bool
 	account_label: str | None = None
@@ -153,6 +168,15 @@ class Provider(ABC):
 	def destroy(self, provider_resource_id: str) -> None:
 		"""Release the vendor resource. Idempotent. Called from
 		`Server.archive()`."""
+		...
+
+	@abstractmethod
+	def list_servers(self) -> tuple[DiscoveredServer, ...]:
+		"""Every server the account holds in this region/zone — UNFILTERED (not
+		tag-scoped), so a host built outside Atlas is discoverable. For the
+		discover/import picker: the preview renders these; import re-resolves each
+		picked id authoritatively via `describe()`. Vendors without an API
+		(Self-Managed) return `()`."""
 		...
 
 	def prepare_host(self, server) -> None:

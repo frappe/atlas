@@ -148,6 +148,50 @@ class TestDigitalOceanProviderDestroy(IntegrationTestCase):
 		provider.client.delete_droplet.assert_called_once_with(12345)
 
 
+class TestDigitalOceanProviderListServers(IntegrationTestCase):
+	def test_list_servers_maps_each_droplet(self) -> None:
+		provider = _build_provider()
+		provider.client.list_droplets.return_value = [
+			{
+				"id": 111,
+				"name": "web-1",
+				"size_slug": "s-2vcpu-4gb",
+				"networks": {"v4": [{"type": "public", "ip_address": "139.59.1.2"}]},
+			},
+			{
+				"id": 222,
+				"name": "db-1",
+				"size_slug": "s-4vcpu-8gb",
+				"networks": {"v4": [{"type": "public", "ip_address": "139.59.3.4"}]},
+			},
+		]
+		discovered = provider.list_servers()
+		self.assertEqual(len(discovered), 2)
+		first = discovered[0]
+		# Resource id is stringified (Server.provider_resource_id is a Data field).
+		self.assertEqual(first.provider_resource_id, "111")
+		self.assertEqual(first.title, "web-1")
+		self.assertEqual(first.ipv4_address, "139.59.1.2")
+		self.assertEqual(first.size, "DigitalOcean/s-2vcpu-4gb")
+
+	def test_list_servers_tolerates_droplet_without_public_ipv4(self) -> None:
+		"""A new/locked droplet may have no public v4 yet — `public_ipv4` raises
+		there, so discovery yields ipv4=None rather than breaking the list."""
+		provider = _build_provider()
+		provider.client.list_droplets.return_value = [
+			{"id": 333, "name": "fresh", "size_slug": "s-1vcpu-1gb", "networks": {"v4": []}},
+		]
+		discovered = provider.list_servers()
+		self.assertEqual(len(discovered), 1)
+		self.assertIsNone(discovered[0].ipv4_address)
+		self.assertEqual(discovered[0].provider_resource_id, "333")
+
+	def test_list_servers_empty_account(self) -> None:
+		provider = _build_provider()
+		provider.client.list_droplets.return_value = []
+		self.assertEqual(provider.list_servers(), ())
+
+
 class TestDigitalOceanProviderReservedIp(IntegrationTestCase):
 	def test_allocate_uses_provider_region_and_maps_payload(self) -> None:
 		provider = _build_provider()

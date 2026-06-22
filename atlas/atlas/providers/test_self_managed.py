@@ -76,6 +76,10 @@ class TestSelfManagedProvider(IntegrationTestCase):
 		# No exception, no return.
 		self.assertIsNone(SelfManagedProvider().destroy("anything"))
 
+	def test_list_servers_is_empty(self) -> None:
+		# No vendor to ask — adoption stays the manual Provision Server dialog.
+		self.assertEqual(SelfManagedProvider().list_servers(), ())
+
 	def test_allocate_reserved_ip_throws(self) -> None:
 		# Self-Managed has no reserved-IP API; the operator supplies the address.
 		with self.assertRaises(frappe.ValidationError):

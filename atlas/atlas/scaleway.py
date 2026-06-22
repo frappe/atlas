@@ -166,6 +166,23 @@ class ScalewayClient:
 	def list_servers_by_tag(self, tag: str) -> list[dict]:
 		return self._request("GET", f"{self._bm()}/servers?tags={tag}").get("servers", [])
 
+	def list_servers(self) -> list[dict]:
+		"""Every Elastic Metal server in the configured zone (first page, page_size
+		100) — unfiltered, for discover/import. The e2e pre-sweep uses the
+		tag-filtered sibling; discovery wants untagged, externally-built boxes too.
+		The account holds a handful of hosts per zone, so one page is enough; a
+		full page is logged so a (rare) overflow announces itself rather than
+		silently implying "this is everything"."""
+		servers = self._request("GET", f"{self._bm()}/servers?page_size=100").get("servers", [])
+		if len(servers) >= 100:
+			import frappe
+
+			frappe.logger("atlas").warning(
+				f"Scaleway list_servers hit the {len(servers)}-row page cap in zone {self.zone}; "
+				"some servers may be missing from discovery"
+			)
+		return servers
+
 	# --- Flexible IP (zone-scoped) ---------------------------------------
 
 	def create_flexible_ip(self, *, project_id: str, is_ipv6: bool = False) -> dict:

@@ -32,6 +32,7 @@ from atlas.atlas.providers import register
 from atlas.atlas.providers.base import (
 	AuthResult,
 	Capabilities,
+	DiscoveredServer,
 	ImageInfo,
 	Provider,
 	ProviderError,
@@ -187,6 +188,15 @@ class ScalewayProvider(Provider):
 			if str(fip.get("server_id")) == str(provider_resource_id):
 				self.client.delete_flexible_ip(str(fip["id"]))
 		self.client.delete_server(provider_resource_id)
+
+	def list_servers(self) -> tuple[DiscoveredServer, ...]:
+		"""Every Elastic Metal server in the zone, for discover/import. The size
+		label mirrors describe()'s `Scaleway/<offer_name>` form so the preview row
+		reads like the rest of the catalog. IPv4 is best-effort (a box still
+		delivering may have none yet — describe() is the authority at import)."""
+		return tuple(
+			_discovered_from_server(self.provider_type, server) for server in self.client.list_servers()
+		)
 
 	def prepare_host(self, server) -> None:
 		"""First contact: Scaleway's Ubuntu image force-blocks root SSH (the
@@ -382,6 +392,26 @@ def build_raid_partitioning_schema(devices: list[str]) -> dict:
 		# /dev/md2 (data) intentionally omitted — raw block device for the LVM pool.
 	]
 	return {"disks": [_table(disk0), _table(disk1)], "raids": raids, "filesystems": filesystems}
+
+
+def _discovered_from_server(provider_type: str, server: dict) -> DiscoveredServer:
+	"""Map a raw Scaleway server payload to a DiscoveredServer for the picker.
+	The size label mirrors describe()'s `<provider_type>/<offer_name>` form; the
+	IPv4 is best-effort (a delivering box may have none yet, and `public_ipv4`
+	raises in that case — discovery must not break on one v4-less box)."""
+	offer_name = server.get("offer_name")
+	size = f"{provider_type}/{offer_name}" if offer_name else None
+	try:
+		ipv4 = public_ipv4(server)
+	except ScalewayError:
+		ipv4 = None
+	return DiscoveredServer(
+		provider_resource_id=str(server["id"]),
+		title=server.get("name") or None,
+		ipv4_address=ipv4,
+		size=size,
+		provider_metadata=server,
+	)
 
 
 def _size_from_offer(offer: dict) -> SizeInfo:

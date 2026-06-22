@@ -101,6 +101,22 @@ class TestDigitalOceanClient(IntegrationTestCase):
 			droplets = self.client.list_droplets_by_tag("nonexistent")
 		self.assertEqual(droplets, [])
 
+	def test_list_droplets_unfiltered_returns_array(self) -> None:
+		fake = _FakeResponse(200, {"droplets": [{"id": 1}, {"id": 2}, {"id": 3}]})
+		with patch("atlas.atlas.digitalocean.requests.request", return_value=fake) as request:
+			droplets = self.client.list_droplets()
+		self.assertEqual([d["id"] for d in droplets], [1, 2, 3])
+		args, _ = request.call_args
+		# Unfiltered: no tag_name; a per_page so the account's handful comes back.
+		self.assertNotIn("tag_name", args[1])
+		self.assertIn("per_page=200", args[1])
+
+	def test_list_droplets_handles_missing_droplets_key(self) -> None:
+		fake = _FakeResponse(200, {})
+		with patch("atlas.atlas.digitalocean.requests.request", return_value=fake):
+			droplets = self.client.list_droplets()
+		self.assertEqual(droplets, [])
+
 	def test_request_handles_204_no_content(self) -> None:
 		fake = _FakeResponse(204)
 		with patch("atlas.atlas.digitalocean.requests.request", return_value=fake):

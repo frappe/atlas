@@ -9,6 +9,9 @@ frappe.ui.form.on("Provider", {
 		frappe.atlas.add_action(frm, "Authenticate", () => run_authenticate(frm));
 		frappe.atlas.add_action(frm, "Refresh Catalog", () => run_refresh_catalog(frm));
 		if (frm.doc.is_active) {
+			frappe.atlas.add_action(frm, "Discover Servers", () =>
+				open_discover_servers_dialog(frm)
+			);
 			frappe.atlas.add_danger(frm, "Archive", () => confirm_archive(frm));
 		}
 	},
@@ -170,6 +173,136 @@ function confirm_provision(frm, values, is_self_managed) {
 			});
 		},
 	});
+}
+
+function open_discover_servers_dialog(frm) {
+	frappe.show_alert({ message: __("Discovering servers…"), indicator: "blue" });
+	frm.call("discover_servers").then(({ message: servers }) => {
+		if (!servers || !servers.length) {
+			frappe.msgprint({
+				title: __("No servers found"),
+				message: __("The vendor account holds no servers in this region/zone."),
+				indicator: "orange",
+			});
+			return;
+		}
+		render_discover_dialog(frm, servers);
+	});
+}
+
+function render_discover_dialog(frm, servers) {
+	const dialog = new frappe.ui.Dialog({
+		title: __("Servers at {0}", [frm.doc.provider_name]),
+		size: "large",
+		fields: [
+			{
+				fieldname: "servers_html",
+				fieldtype: "HTML",
+				options: discover_table_html(servers),
+			},
+			{
+				fieldname: "caveat",
+				fieldtype: "HTML",
+				options: `<div class="text-muted small" style="margin-top: 8px;">${__(
+					"Imported servers land as Pending. A box built outside Atlas must be " +
+						"Bootstrapped before it can host VMs, and may not match Atlas's " +
+						"RAID-1 / LVM-pool layout — Bootstrap can fail on disk discovery if it doesn't."
+				)}</div>`,
+			},
+		],
+		primary_action_label: __("Import selected"),
+		primary_action() {
+			const ids = checked_resource_ids(dialog);
+			if (!ids.length) {
+				frappe.show_alert({
+					message: __("Tick at least one server to import."),
+					indicator: "orange",
+				});
+				return;
+			}
+			dialog.hide();
+			run_import_servers(frm, ids);
+		},
+	});
+	dialog.show();
+}
+
+function discover_table_html(servers) {
+	const rows = servers
+		.map((server) => {
+			const id = frappe.utils.escape_html(server.provider_resource_id);
+			const title = frappe.utils.escape_html(server.title || server.provider_resource_id);
+			const ipv4 = frappe.utils.escape_html(server.ipv4_address || "—");
+			const size = frappe.utils.escape_html(server.size || "—");
+			// Already-modeled servers render disabled + badged so a re-run can't
+			// double-insert — the same dedup discipline as Reserved IP.discover(),
+			// surfaced in the picker.
+			const badge = server.imported
+				? `<span class="indicator-pill gray">${__("imported")}</span>`
+				: "";
+			const checkbox = `<input type="checkbox" class="atlas-discover-pick" data-resource-id="${id}" ${
+				server.imported ? "disabled" : ""
+			}>`;
+			const dim = server.imported ? ' style="opacity: 0.5;"' : "";
+			return `<tr${dim}>
+				<td style="width: 32px; text-align: center;">${checkbox}</td>
+				<td>${title}</td>
+				<td>${ipv4}</td>
+				<td>${size}</td>
+				<td>${badge}</td>
+			</tr>`;
+		})
+		.join("");
+	return `<table class="table table-bordered" style="margin-bottom: 0;">
+		<thead>
+			<tr>
+				<th style="width: 32px;"></th>
+				<th>${__("Title")}</th>
+				<th>${__("IPv4")}</th>
+				<th>${__("Size")}</th>
+				<th></th>
+			</tr>
+		</thead>
+		<tbody>${rows}</tbody>
+	</table>`;
+}
+
+function checked_resource_ids(dialog) {
+	const ids = [];
+	dialog.$wrapper.find("input.atlas-discover-pick:checked").each(function () {
+		ids.push($(this).data("resource-id").toString());
+	});
+	return ids;
+}
+
+function run_import_servers(frm, resource_ids) {
+	frappe.show_alert({
+		message: __("Importing {0} server(s)…", [resource_ids.length]),
+		indicator: "blue",
+	});
+	// The dialog posts resource_ids as a JSON string; import_servers parses it.
+	frm.call("import_servers", { resource_ids: JSON.stringify(resource_ids) }).then(
+		({ message }) => {
+			const imported = (message && message.imported) || [];
+			if (!imported.length) {
+				frappe.show_alert({
+					message: __("Nothing imported (already modeled)."),
+					indicator: "orange",
+				});
+				return;
+			}
+			const names = imported.map((row) => row.title).join(", ");
+			frappe.msgprint({
+				title: __("Imported {0} server(s)", [imported.length]),
+				message: __("Imported: {0}. Open each and click Bootstrap to bring it Active.", [
+					frappe.utils.escape_html(names),
+				]),
+				indicator: "green",
+			});
+			// Route to the first imported Server form so the operator can Bootstrap it.
+			frappe.set_route("Form", "Server", imported[0].name);
+		}
+	);
 }
 
 function confirm_archive(frm) {

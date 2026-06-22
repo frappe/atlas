@@ -89,6 +89,23 @@ class DigitalOceanClient:
 	def list_droplets_by_tag(self, tag: str) -> list[dict]:
 		return self._request("GET", f"/droplets?tag_name={tag}").get("droplets", [])
 
+	def list_droplets(self) -> list[dict]:
+		"""Every droplet in the account (first page, per_page 200) — unfiltered,
+		for discover/import. The e2e pre-sweep uses the tag-filtered sibling;
+		discovery wants untagged, externally-built droplets too. The account holds
+		a handful, so one page is enough; a full page is logged so a (rare)
+		overflow announces itself rather than silently implying "this is
+		everything"."""
+		droplets = self._request("GET", "/droplets?per_page=200").get("droplets", [])
+		if len(droplets) >= 200:
+			import frappe
+
+			frappe.logger("atlas").warning(
+				f"DigitalOcean list_droplets hit the {len(droplets)}-row page cap; "
+				"some droplets may be missing from discovery"
+			)
+		return droplets
+
 	def create_reserved_ip(self, region: str) -> dict:
 		"""Allocate a reserved IP to a region (not yet assigned to a droplet).
 

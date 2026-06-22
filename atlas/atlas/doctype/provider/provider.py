@@ -65,6 +65,39 @@ class Provider(Document):
 	def provision_server(self, title: str, **dialog_fields: Any) -> str:
 		return _provision_server(self, title, dialog_fields)
 
+	@frappe.whitelist()
+	def discover_servers(self) -> list[dict]:
+		"""Discover Servers button. List the vendor's servers (unfiltered) and flag
+		which Atlas already models by provider_resource_id. Read-only — inserts
+		nothing; only `import_servers` writes."""
+		modeled = set(
+			frappe.get_all(
+				"Server",
+				filters={"provider": self.name},
+				pluck="provider_resource_id",
+			)
+		)
+		out: list[dict] = []
+		for discovered in providers.for_provider(self.name).list_servers():
+			out.append(
+				{
+					"provider_resource_id": discovered.provider_resource_id,
+					"title": discovered.title,
+					"ipv4_address": discovered.ipv4_address,
+					"size": discovered.size,
+					"imported": discovered.provider_resource_id in modeled,
+				}
+			)
+		return out
+
+	@frappe.whitelist()
+	def import_servers(self, resource_ids: list[str] | str) -> dict:
+		"""Import the picked vendor servers as Pending Server rows. Idempotent: an
+		already-modeled id is skipped, never double-inserted. The dialog posts
+		`resource_ids` as a JSON string, so parse it before use."""
+		resource_ids = frappe.parse_json(resource_ids)
+		return _import_servers(self, resource_ids)
+
 
 def _provider_settings(provider_type: str):
 	"""The per-vendor Settings Single for a provider type, or None when the
@@ -164,6 +197,73 @@ def _provision_server(provider_row: Provider, title: str, dialog_fields: dict[st
 		server_name=server.name,
 	)
 	return server.name
+
+
+def _import_servers(provider_row: Provider, resource_ids: list[str]) -> dict:
+	"""Adopt already-provisioned vendor servers as `Pending` Server rows.
+
+	For each picked vendor id (skipping any Atlas already models): re-resolve the
+	box authoritatively via `describe()` — the same path `finish_provisioning`
+	trusts — and write a Server row through `_apply_describe_result`, so import and
+	provision agree on how a `ProvisionResult` becomes the networking/size/image
+	fields. The human `title` comes from the vendor hostname (sourced from the same
+	`list_servers()` discovery the picker used), falling back to the resource id —
+	`describe()` doesn't surface a clean hostname, and `title` is an editable label,
+	not an immutable networking field. The row lands `Pending`: its origin is unknown
+	(hand-built or an old Atlas box) and Atlas has not bootstrapped it, so the
+	operator drives it to Active with Bootstrap / Re-bootstrap. Returns the names +
+	titles imported and the ids skipped as already-modeled (belt-and-braces dedup;
+	`discover_servers` already dims them)."""
+	from atlas.atlas.providers.worker import _apply_describe_result
+
+	provider_impl = providers.for_provider(provider_row.name)
+	modeled = set(
+		frappe.get_all(
+			"Server",
+			filters={"provider": provider_row.name},
+			pluck="provider_resource_id",
+		)
+	)
+	# Map vendor id → hostname from the same discovery source the picker rendered, so
+	# the imported row is titled with the friendly name the operator ticked, not a
+	# UUID. One list call regardless of how many ids were picked.
+	hostnames = {server.provider_resource_id: server.title for server in provider_impl.list_servers()}
+	imported: list[dict] = []
+	skipped: list[str] = []
+	for resource_id in resource_ids:
+		if resource_id in modeled:
+			skipped.append(resource_id)
+			continue
+		result = provider_impl.describe(resource_id)
+		preferred_title = hostnames.get(resource_id) or result.provider_resource_id or resource_id
+		server = frappe.get_doc(
+			{
+				"doctype": "Server",
+				"title": _unique_server_title(preferred_title),
+				"provider": provider_row.name,
+				"provider_resource_id": result.provider_resource_id or resource_id,
+				"status": "Pending",
+			}
+		)
+		_apply_describe_result(server, result)
+		server.insert(ignore_permissions=True)
+		modeled.add(resource_id)
+		imported.append({"name": server.name, "title": server.title})
+	return {"imported": imported, "skipped": skipped}
+
+
+def _unique_server_title(preferred: str) -> str:
+	"""A Server.title that doesn't collide with an existing row. Discovery's
+	preferred title is the vendor hostname (or the resource id when unnamed); a
+	box adopted under a name another Server already uses gets a `-2`, `-3`, …
+	suffix so the insert doesn't trip the unique-title guard `_provision_server`
+	enforces. Pure string work — no vendor call."""
+	if not frappe.db.exists("Server", {"title": preferred}):
+		return preferred
+	suffix = 2
+	while frappe.db.exists("Server", {"title": f"{preferred}-{suffix}"}):
+		suffix += 1
+	return f"{preferred}-{suffix}"
 
 
 def upsert_catalog(provider_type: str, capabilities) -> dict:
