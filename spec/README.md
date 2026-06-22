@@ -208,6 +208,7 @@ operator-facing features add to this list; new tests follow it.
 | Use case                       | Operator action                                         | Spec |
 | ------------------------------ | ------------------------------------------------------- | ---- |
 | Provision a server             | `Provider` → **Provision Server**                       | [03-bootstrapping.md](./03-bootstrapping.md) |
+| Adopt an existing server       | `Provider` → **Discover Servers** (preview the vendor's servers, tick which to import as `Pending` rows; Bootstrap takes each to Active) | [03-bootstrapping.md](./03-bootstrapping.md#adopting-an-already-provisioned-server) |
 | Sync an image to a server      | `Virtual Machine Image` → **Sync to Server / All**      | [08-images.md](./08-images.md) |
 | Bake an image                  | `Image Build` → **New / Re-bake**, or `Server` → **Bake Image** | [15-image-builder.md](./15-image-builder.md) |
 | Provision a virtual machine    | `Virtual Machine` → **Provision**                       | [05-virtual-machine-lifecycle.md](./05-virtual-machine-lifecycle.md) |

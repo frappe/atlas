@@ -217,6 +217,44 @@ The operator picks a `title` (the user-facing label); the Server row's
 controller returns the new UUID — call sites that route to the form
 should use the returned name, not the title.
 
+### Adopting an already-provisioned server
+
+A Server row may be created by **Provision Server** (above) *or adopted*
+from a box the vendor account already holds. The **Discover Servers**
+button on the `Provider` form — sibling of **Refresh Catalog**, same
+"ask the vendor what exists, reconcile into Atlas" mental model — drives
+this:
+
+- `Provider.discover_servers()` (whitelisted, read-only) calls
+  `provider.list_servers()`, the unfiltered list of every server in the
+  account/region (not the tag-filtered list the e2e pre-sweep uses — a
+  box built outside Atlas carries no `atlas` tag). It flags each one
+  `imported=true|false` by deduping against existing
+  `Server.provider_resource_id`. The picker dialog renders the list;
+  already-modeled servers are disabled and badged so a re-run can't
+  double-insert.
+- `Provider.import_servers(resource_ids)` (the dialog posts
+  `resource_ids` as a JSON *string* — parsed with `frappe.parse_json`)
+  re-resolves each picked id authoritatively via `describe()` — the same
+  path `finish_provisioning` trusts — and inserts a Server row through
+  the shared `_apply_describe_result` mapping. An already-modeled id is
+  skipped, never double-inserted.
+
+Imported rows land **`Pending`**, never `Active`: the box's origin is
+unknown (hand-built, or an old Atlas box) and Atlas has not bootstrapped
+it — the durable scripts, units, and version fields are absent or
+unverified. From `Pending` the operator clicks **Bootstrap** (a box
+built outside Atlas) or **Re-bootstrap** (one Atlas built earlier) to
+reach `Active`, exactly as a freshly-provisioned row does. There is
+deliberately no "mark Active without bootstrapping" shortcut — that
+would let a row claim `Active` while unable to host a VM. The import
+dialog warns that a box built outside Atlas may not match Atlas's RAID-1
+/ LVM-pool layout, so Bootstrap can legitimately fail on disk discovery.
+
+`SelfManagedProvider.list_servers()` returns `()` — there is no vendor
+to ask, so adoption of a self-managed box stays the manual **Provision
+Server** dialog where the operator types the IPs.
+
 ### The Provider interface boundary
 
 The controller does not know which vendor it is talking to. It builds a

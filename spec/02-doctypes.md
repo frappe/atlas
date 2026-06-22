@@ -172,6 +172,16 @@ provider_type
   and upserts `Provider Size` and `Provider Image` rows. Slugs the
   vendor no longer returns are flipped to `enabled=0`; historical
   Server rows keep their Link.
+- **Discover Servers** — under `Actions ▾`, shown only when
+  `is_active = 1`. Calls `discover_servers()` (read-only) to list the
+  vendor's servers — the *unfiltered* `provider.list_servers()`, so a box
+  built outside Atlas is found — and dedups each against existing
+  `Server.provider_resource_id`. The picker lets the operator tick which
+  to adopt; `import_servers(resource_ids)` re-resolves each via
+  `describe()` and inserts a `Pending` Server row (already-modeled ids
+  are skipped). Self-Managed has no discovery (`list_servers()` returns
+  `()`). See [03-bootstrapping.md § Adopting an already-provisioned
+  server](./03-bootstrapping.md#adopting-an-already-provisioned-server).
 - **Archive** — `Actions ▾`, shown only when `is_active = 1`. Calls
   `archive()` which flips `is_active = 0` via `db.set_value`. Existing
   Servers keep their FK reference so historical Tasks stay queryable.
