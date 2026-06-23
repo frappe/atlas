@@ -10,6 +10,7 @@ and from `bootstrap.py`. They resolve the implementation through the registry
 from __future__ import annotations
 
 import json
+import uuid
 from typing import Any
 
 import frappe
@@ -20,6 +21,42 @@ from atlas.atlas.providers.base import (
 	ProvisionRequest,
 	ServerNetworking,
 )
+
+
+def provision_region() -> str:
+	"""The region label that separates this bench's resources in a shared cloud
+	account (multiple developers share one DigitalOcean / Scaleway account).
+
+	Sourced from `frappe.conf` (`atlas_tls_region`, falling back to
+	`atlas_do_region`) — the same per-bench config `bootstrap.py` seeds the active
+	Root Domain from, and available from the very first bootstrap step (before the
+	Root Domain row exists). Falls back to the active Root Domain's region once
+	one is configured, then to `"x"` so an unconfigured dev bench still provisions.
+	"""
+	region = frappe.conf.get("atlas_tls_region") or frappe.conf.get("atlas_do_region")
+	if region:
+		return region
+	from atlas.atlas.placement import active_root_domain
+
+	try:
+		return active_root_domain().region
+	except frappe.ValidationError:
+		return "x"
+
+
+def region_server_title(role: str | None = None) -> str:
+	"""Self-describing `Server.title` for a box provisioned into a shared cloud
+	account: `x-<region>[-<role>]-<6hex>`.
+
+	The region (see `provision_region`) is the per-developer separator so each
+	bench's servers are recognizable in the DigitalOcean / Scaleway console; the
+	random suffix avoids title collisions without a count query. `role` tags
+	short-lived boxes (e.g. `"e2e"`); omit it for the long-lived bootstrap server.
+	`Server.name` stays a UUID — this is only the human label.
+	"""
+	region = provision_region()
+	parts = ["x", region, role, uuid.uuid4().hex[:6]] if role else ["x", region, uuid.uuid4().hex[:6]]
+	return "-".join(parts)
 
 
 def _provider_settings(provider_type: str):

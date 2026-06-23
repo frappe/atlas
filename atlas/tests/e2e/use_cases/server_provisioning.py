@@ -30,6 +30,7 @@ import traceback
 import frappe
 
 from atlas.atlas import providers
+from atlas.atlas.provisioning import region_server_title
 from atlas.atlas.ssh import run_task
 from atlas.tests.e2e._shared import (
 	cleanup_droplet,
@@ -48,7 +49,7 @@ def run() -> None:
 	sweep_old_droplets(client)
 
 	ensure_e2e_provider()
-	title = f"atlas-e2e-fresh-{int(time.time())}"
+	title = region_server_title("e2e")
 	server_doc = None
 
 	try:

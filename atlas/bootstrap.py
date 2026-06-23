@@ -567,7 +567,9 @@ def _ensure_provider_image(provider_type: str, slug: str) -> None:
 
 
 def provision_server(provider_type: str) -> str:
-	title = f"bootstrap-server-{int(time.time())}"
+	from atlas.atlas.provisioning import region_server_title
+
+	title = region_server_title()
 	settings = frappe.get_single("Atlas Settings")
 	if provider_type == "Self-Managed":
 		server_name = settings.provision_server(
