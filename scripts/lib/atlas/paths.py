@@ -52,6 +52,15 @@ class VirtualMachinePaths:
 		return f"{self.directory}/network.env"
 
 	@property
+	def firewall_env(self) -> str:
+		"""Sidecar carrying this VM's public-ingress firewall (spec/20-firewall.md):
+		its IPv6 and the allowed proto/port list. Read by vm-network-up.py to re-apply
+		the nft public_filter block at cold boot, and written/removed by
+		firewall-apply.py. Inside the VM tree so terminate's rm -rf sweeps it. Absent
+		for a VM with no firewall — which stays fully public."""
+		return f"{self.directory}/firewall.env"
+
+	@property
 	def tunnels_directory(self) -> str:
 		"""Per-VM directory of WireGuard tunnel sidecars (spec/19-vpn-broker.md).
 		vm-network-up.py re-applies every tunnel here at cold boot; vm-tunnel.py

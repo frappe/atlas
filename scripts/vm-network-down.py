@@ -15,6 +15,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from atlas._run import run
+from atlas.firewall import remove_firewall
 from atlas.network_env import default_route_device, read_network_env_optional
 from atlas.paths import VirtualMachinePaths
 from atlas.reserved_ip_nat import remove_reserved_ip_nat
@@ -100,6 +101,14 @@ def main() -> None:
 				handles.append(line.split()[-1])
 		for handle in handles:
 			run("sudo", "nft", "delete", "rule", "inet", "atlas", "forward", "handle", handle, check=False)
+
+		# The public-ingress firewall block lives in its own higher-priority chain
+		# (spec/20-firewall.md), in the host root netns — the namespace delete above
+		# does not touch it. Remove it too, so a future VM that reuses this IPv6 is not
+		# silently blocked by a stale drop. The firewall.env sidecar (in the VM dir) is
+		# swept by terminate's rm -rf; on a plain stop it persists and vm-network-up
+		# re-applies the block on the next start. Best-effort, idempotent.
+		remove_firewall(virtual_machine_ipv6)
 
 
 if __name__ == "__main__":

@@ -35,6 +35,7 @@ from atlas.reserved_ip_nat import (
 	apply_routed_reserved_ip_nat,
 	discover_reserved_ip_anchor,
 )
+from atlas.firewall import apply_persisted_firewall
 from atlas.wireguard import apply_persisted_tunnels
 
 
@@ -368,6 +369,12 @@ def main() -> None:
 	#    host veth, so it comes up functional only now that route exists. A VM with
 	#    no tunnels has no tunnels/ dir — a no-op.
 	apply_persisted_tunnels(VirtualMachinePaths(uuid).tunnels_directory)
+
+	# 10. Re-apply this VM's public-ingress firewall (spec/20-firewall.md), if one is
+	#     attached. Done last, after the VM's /128 route exists, so the public_filter
+	#     drop and the broad forward accept are both in place. No firewall.env (no
+	#     firewall attached) is a no-op — the VM stays fully public.
+	apply_persisted_firewall(VirtualMachinePaths(uuid).firewall_env)
 
 
 if __name__ == "__main__":
