@@ -333,5 +333,5 @@ def forget_host(host: str) -> None:
 			timeout=15,
 			check=False,
 		)
-	except FileNotFoundError, subprocess.SubprocessError:
+	except (FileNotFoundError, subprocess.SubprocessError):
 		pass

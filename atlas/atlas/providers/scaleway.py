@@ -469,7 +469,7 @@ def _metadata_value(doctype: str, name: str, key: str) -> str | None:
 		return None
 	try:
 		return json.loads(raw).get(key)
-	except ValueError, TypeError:
+	except (ValueError, TypeError):
 		return None
 
 

@@ -233,7 +233,7 @@ def _http_ok(ipv6_address: str, host_header: str, port: int, path: str) -> bool:
 		conn = http.client.HTTPConnection(ipv6_address, port, timeout=10)
 		conn.request("GET", path, headers={"Host": host_header})
 		return conn.getresponse().status == 200
-	except OSError, http.client.HTTPException:
+	except (OSError, http.client.HTTPException):
 		return False
 	finally:
 		if conn is not None:

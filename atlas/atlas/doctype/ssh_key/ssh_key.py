@@ -59,7 +59,7 @@ def fingerprint(public_key: str) -> str:
 		frappe.throw(f"Unsupported SSH key type {key_type!r}.")
 	try:
 		raw = base64.b64decode(blob, validate=True)
-	except binascii.Error, ValueError:
+	except (binascii.Error, ValueError):
 		frappe.throw(_("SSH key body is not valid base64."))
 	digest = base64.b64encode(hashlib.sha256(raw).digest()).decode().rstrip("=")
 	return f"SHA256:{digest}"

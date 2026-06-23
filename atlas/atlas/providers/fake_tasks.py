@@ -205,7 +205,7 @@ def _fake_disk_bytes(variables: dict) -> int:
 	"""A plausible rootfs size: the VM's disk in bytes, defaulting to ~4 GB."""
 	try:
 		gigabytes = int(variables.get("DISK_GB") or 4)
-	except TypeError, ValueError:
+	except (TypeError, ValueError):
 		gigabytes = 4
 	return gigabytes * 1024 * 1024 * 1024
 

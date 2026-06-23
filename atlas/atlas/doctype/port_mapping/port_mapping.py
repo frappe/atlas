@@ -103,7 +103,7 @@ def port_pool() -> tuple[int, int]:
 	try:
 		low_str, high_str = str(raw).split("-", 1)
 		low, high = int(low_str), int(high_str)
-	except ValueError, AttributeError:
+	except (ValueError, AttributeError):
 		frappe.throw(f"Atlas Settings.{PORT_POOL_FIELD} must be 'LOW-HIGH' (e.g. 10000-19999), got {raw!r}")
 	if low > high:
 		frappe.throw(f"Atlas Settings.{PORT_POOL_FIELD} range is inverted: {raw!r}")
