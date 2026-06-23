@@ -136,6 +136,7 @@ keep it the source of truth.
 16. [Central — the global control plane](./16-central.md)
 17. [The TCP proxy](./17-tcp-proxy.md)
 18. [Self-service subdomain routing (bench-admin sites)](./18-bench-self-routing.md)
+19. [The VPN broker (WireGuard tunnels)](./19-vpn-broker.md)
 
 ## First run on a fresh site
 
@@ -220,6 +221,7 @@ operator-facing features add to this list; new tests follow it.
 | Manage a VM's disk and size    | `Virtual Machine` → **Snapshot / Rebuild / Resize**; `Virtual Machine Snapshot` → **Restore to VM / Clone to new VM / Delete** | [05-virtual-machine-lifecycle.md](./05-virtual-machine-lifecycle.md) |
 | Promote a snapshot to an image | `Virtual Machine Snapshot` → **Promote to image** (or `Image Build` → **Promote to image**): same-server base image new VMs pick via the `image` field | [08-images.md](./08-images.md#two-origins-for-a-base-image-a-url-or-a-snapshot-promote) |
 | Attach a public IPv4 to a VM   | `Reserved IP` → **Attach / Detach** (the inbound-v4 primitive: DNAT in, SNAT out) | [06-networking.md](./06-networking.md#ipv4-ingress-reserved-ip) |
+| Broker a VPN tunnel to a VM    | (user/Central-driven) `request_tunnel` / `revoke` provisions a host-terminated WireGuard tunnel scoped to the owner's one VM | [19-vpn-broker.md](./19-vpn-broker.md) |
 | Issue a TLS cert for a region  | `Root Domain` → **Issue / Renew Certificate**; `TLS Certificate` → **Issue/Renew / Push to Proxies**; `Route53 Settings` / `Lets Encrypt Settings` → **Test Connection** | [13-tls.md](./13-tls.md) |
 | Route guest-created bench sites | (guest-driven, no operator action) the in-guest `atlas-route register`/`deregister`/`list` POSTs reserve/remove a `Subdomain` the controller arbitrates (uniqueness, brand denylist, per-VM cap, own-VM scoping by source `/128`); every call audited; `terminate()` is the only controller-side teardown | [18-bench-self-routing.md](./18-bench-self-routing.md) |
 | Run an ad-hoc task / reboot    | `Server` → **Run Task / Reboot**                        | [04-tasks.md](./04-tasks.md) |
