@@ -685,9 +685,23 @@ class VirtualMachine(Document):
 		self.status = "Terminated"
 		self.save()
 		self._detach_reserved_ip()
+		self._revoke_tunnels()
 		self._delete_subdomains()
 		self._delete_snapshots()
 		return task.name
+
+	def _revoke_tunnels(self) -> None:
+		"""Revoke every VPN Tunnel to this VM on terminate (spec/19-vpn-broker.md).
+		terminate-vm.py tears down the VM's netns/veth but the tunnel's wg interface
+		lives in the host ROOT netns and survives that, so each tunnel's revoke()
+		runs the host down Task to remove it. Idempotent: a VM with no tunnels is a
+		no-op; already-Revoked tunnels are skipped."""
+		for name in frappe.get_all(
+			"VPN Tunnel",
+			filters={"virtual_machine": self.name, "status": ["!=", "Revoked"]},
+			pluck="name",
+		):
+			frappe.get_doc("VPN Tunnel", name).revoke()
 
 	def _detach_reserved_ip(self) -> None:
 		"""Release the VM's attached public IPv4 (if any) back to its Server's

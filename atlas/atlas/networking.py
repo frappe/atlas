@@ -308,6 +308,28 @@ def tunnel_listen_port(slot_index: int) -> int:
 	return TUNNEL_PORT_BASE + slot_index
 
 
+def allocate_tunnel_slot(server_name: str) -> int:
+	"""Lowest unused per-server tunnel slot index. Scans the server's VPN Tunnel
+	rows whose status is not Revoked — a Revoked tunnel has released its slot back
+	to the pool (its port + overlay are free to reuse), exactly as a Terminated VM
+	releases its /128. Locks the Server row for the scan so two concurrent requests
+	cannot claim the same slot, mirroring allocate_ipv6."""
+	frappe.get_doc("Server", server_name, for_update=True)
+	used = {
+		index
+		for index in frappe.get_all(
+			"VPN Tunnel",
+			filters={"server": server_name, "status": ["!=", "Revoked"]},
+			pluck="slot_index",
+		)
+		if index is not None
+	}
+	index = 0
+	while index in used:
+		index += 1
+	return index
+
+
 def tunnel_overlay_link(slot_index: int) -> tuple[str, str]:
 	"""(host_side, client_side) /127 overlay CIDRs for a tunnel, indexed by its
 	per-server slot. A point-to-point link inside ATLAS_TUNNEL_SUPERNET: the host
