@@ -7,46 +7,28 @@ from frappe.tests import IntegrationTestCase
 from atlas.atlas.wireguard import (
 	ENCODED_KEY_LENGTH,
 	KEY_BYTES,
-	generate_keypair,
 	is_valid_public_key,
-	public_key_for,
 )
 
 
 class TestWireGuardKeys(IntegrationTestCase):
-	def test_generate_keypair_shape(self):
-		keypair = generate_keypair()
-		for key in (keypair.private_key, keypair.public_key):
-			self.assertEqual(len(key), ENCODED_KEY_LENGTH)
-			self.assertEqual(len(base64.b64decode(key, validate=True)), KEY_BYTES)
-		# Two halves of a keypair are never equal.
-		self.assertNotEqual(keypair.private_key, keypair.public_key)
+	def test_is_valid_public_key_accepts_a_real_wg_key(self):
+		# A 32-byte standard-base64 value, the shape `wg pubkey` emits.
+		key = base64.standard_b64encode(b"\x11" * KEY_BYTES).decode()
+		self.assertEqual(len(key), ENCODED_KEY_LENGTH)
+		self.assertTrue(is_valid_public_key(key))
 
-	def test_generate_keypair_is_random(self):
-		self.assertNotEqual(generate_keypair().private_key, generate_keypair().private_key)
-
-	def test_public_key_for_round_trips(self):
-		keypair = generate_keypair()
-		self.assertEqual(public_key_for(keypair.private_key), keypair.public_key)
-
-	def test_public_key_matches_wg_tool(self):
-		# Cross-check our base64/X25519 derivation against WireGuard's own
-		# `wg pubkey`, when the tool is on the controller. Skips cleanly without it
-		# (still host-free — a local subprocess, no remote host).
+	def test_is_valid_public_key_accepts_wg_tool_output(self):
+		# Cross-check against WireGuard's own key generation, when the tool is on
+		# the controller. Skips cleanly without it (still host-free — a local
+		# subprocess, no remote host).
 		if not shutil.which("wg"):
 			self.skipTest("wg not installed on the controller")
-		keypair = generate_keypair()
-		derived = subprocess.run(
-			["wg", "pubkey"],
-			input=keypair.private_key,
-			capture_output=True,
-			text=True,
-			check=True,
+		private = subprocess.run(["wg", "genkey"], capture_output=True, text=True, check=True).stdout.strip()
+		public = subprocess.run(
+			["wg", "pubkey"], input=private, capture_output=True, text=True, check=True
 		).stdout.strip()
-		self.assertEqual(derived, keypair.public_key)
-
-	def test_is_valid_public_key_accepts_real_key(self):
-		self.assertTrue(is_valid_public_key(generate_keypair().public_key))
+		self.assertTrue(is_valid_public_key(public))
 
 	def test_is_valid_public_key_rejects_malformed(self):
 		# Wrong length (short / long), a base64 value of the wrong byte count, and

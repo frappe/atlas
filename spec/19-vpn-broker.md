@@ -149,23 +149,40 @@ Per-server, sequential, in the spirit of `allocate_ipv6` / `derive_ipv4_link`
 The **client generates its own keypair and sends only its public key.** The
 client's private key never touches Atlas.
 
-- `request_tunnel(virtual_machine, client_public_key)` mints the **host-side**
-  keypair in the controller (X25519 via `cryptography`, WireGuard base64 — see
-  [`atlas/atlas/wireguard.py`](../atlas/atlas/wireguard.py)). The host private key
-  is stored encrypted on the `VPN Tunnel` row (Frappe is the source of truth) and
-  pushed to the host; it is **never** placed in the guest.
+The **host generates its own keypair, on the host**, exactly as Atlas already
+treats a guest's SSH **host** keys — host-resident crypto identity, not mirrored
+into the Frappe DB. This is deliberate: `Task.variables` is a plaintext, audited,
+immutable field a VM's owner can read for their own VM (`permissions.py`), so
+routing a private key through a Task — the only channel `run_task` has — would
+leave a private key in an audit row and on the host process table. Generating on
+the host keeps the private key in **one** place: a `0600` file under the VM dir,
+which `wg set` reads by path (never the command line).
+
+- [`vm-tunnel.py`](../scripts/vm-tunnel.py)`--action up` mints the host keypair
+  the first time (idempotent — a re-apply reuses the existing `<tunnel>.key`, so
+  the client's config never goes stale) and returns the **public** key.
+- `request_tunnel(virtual_machine, client_public_key)` stores that returned
+  `server_public_key` on the `VPN Tunnel` row (the public identity) and validates
+  the client's submitted key with
+  [`atlas/atlas/wireguard.py`](../atlas/atlas/wireguard.py)`.is_valid_public_key`
+  before dispatching, so a malformed key fails in the controller, not on the host.
 - The response carries the host `server_public_key`, the `endpoint`
   (`<server-v4>:<port>`), `allowed_ips` (`<vm-v6>/128`), the assigned
   `client_address` (`<client-overlay-v6>/128`), and a copy-paste client config
   template + setup instructions ([Client setup](#client-setup)).
+
+Principle #2 (Frappe is the source of truth) holds the same way it does for SSH
+host keys: the row records the public identity; the private material is
+host-resident and re-issued (a new tunnel) if the host is lost.
 
 ## Durability
 
 A tunnel is durable host state, reconstructible from the Frappe row, exactly like
 the rest of a VM's host networking:
 
-- The host config is persisted under the VM directory
-  (`/var/lib/atlas/virtual-machines/<uuid>/tunnels/<tunnel>.conf`).
+- The host config is persisted under the VM directory: a `<tunnel>.env` metadata
+  sidecar (`0644`) and a `<tunnel>.key` private-key file (`0600`) under
+  `/var/lib/atlas/virtual-machines/<uuid>/tunnels/`.
 - [`vm-network-up.py`](../scripts/vm-network-up.py) re-applies every persisted
   tunnel **after** it brings up the netns/veth, so tunnels survive a cold boot;
   [`vm-network-down.py`](../scripts/vm-network-down.py) tears them down with the
@@ -188,8 +205,8 @@ One row per tunnel, modelled on [`Reserved IP`](./02-doctypes.md#reserved-ip):
 | `status` | `Pending` → `Active` → `Revoked` |
 | `transport` | `public-ipv4` today; the seam for `private-vpc` later (see below) |
 | `client_public_key` | the client's WireGuard public key (immutable) |
-| `server_public_key` | host-side public key (returned to the client) |
-| `server_private_key` | host-side private key (encrypted; pushed to the host) |
+| `server_public_key` | host-side public key, returned by the host `up` Task and stored here (the private half stays host-only) |
+| `slot_index` | the per-server slot (drives `listen_port` + overlay); immutable |
 | `listen_port` | the allocated UDP port |
 | `interface_name` | `wg-<id>` |
 | `client_address` | `<client-overlay-v6>/128` assigned to the client |
@@ -199,9 +216,10 @@ One row per tunnel, modelled on [`Reserved IP`](./02-doctypes.md#reserved-ip):
 Controller methods, audited as Tasks:
 
 - `request_tunnel(virtual_machine, client_public_key)` (module-level,
-  whitelisted): allocate the slot, mint host keys, insert the row, run
-  `vm-tunnel.py --action up`, return the client config. Owner-scoped, and
-  Central-callable as the service user (the [16-central.md](./16-central.md)
+  whitelisted): validate the client key, allocate the slot, insert the row, run
+  `vm-tunnel.py --action up` (which mints the host key and returns its public
+  half), store `server_public_key`, and return the client config. Owner-scoped,
+  and Central-callable as the service user (the [16-central.md](./16-central.md)
   pattern, like `provision.create_vm`).
 - `revoke()`: run `vm-tunnel.py --action down`, set `Revoked`. Skips the host
   Task for a Terminated VM whose networking is already gone (the
