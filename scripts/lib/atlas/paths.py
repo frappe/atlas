@@ -52,6 +52,24 @@ class VirtualMachinePaths:
 		return f"{self.directory}/network.env"
 
 	@property
+	def tunnels_directory(self) -> str:
+		"""Per-VM directory of WireGuard tunnel sidecars (spec/19-vpn-broker.md).
+		vm-network-up.py re-applies every tunnel here at cold boot; vm-tunnel.py
+		writes/removes one per request. Inside the VM tree so terminate's rm -rf
+		sweeps it with the rest of the VM's host state."""
+		return f"{self.directory}/tunnels"
+
+	def tunnel_env(self, tunnel_name: str) -> str:
+		"""The KEY=value metadata sidecar for one tunnel (0644)."""
+		return f"{self.tunnels_directory}/{tunnel_name}.env"
+
+	def tunnel_key(self, tunnel_name: str) -> str:
+		"""The 0600 file holding the tunnel's host private key — `wg set` reads the
+		key from a path, never the command line, so the secret stays off the
+		process table and out of the Task audit row."""
+		return f"{self.tunnels_directory}/{tunnel_name}.key"
+
+	@property
 	def jail_chroot_base(self) -> str:
 		"""What the jailer's --chroot-base-dir points at."""
 		return f"{self.directory}/jail"

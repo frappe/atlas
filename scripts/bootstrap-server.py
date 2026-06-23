@@ -141,6 +141,7 @@ PACKAGES = [
 	"nftables",
 	"squashfs-tools",
 	"thin-provisioning-tools",
+	"wireguard-tools",
 ]
 
 

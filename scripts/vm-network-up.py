@@ -35,6 +35,7 @@ from atlas.reserved_ip_nat import (
 	apply_routed_reserved_ip_nat,
 	discover_reserved_ip_anchor,
 )
+from atlas.wireguard import apply_persisted_tunnels
 
 
 def main() -> None:
@@ -361,6 +362,12 @@ def main() -> None:
 			apply_reserved_ip_nat(anchor, ipv4_guest_address, host_veth)
 		else:
 			apply_routed_reserved_ip_nat(reserved_ipv4, ipv4_guest_address, host_veth)
+
+	# 9. Re-apply any persisted WireGuard tunnels (spec/19-vpn-broker.md). Each
+	#    terminates in this (host root) netns and routes to the VM's /128 via the
+	#    host veth, so it comes up functional only now that route exists. A VM with
+	#    no tunnels has no tunnels/ dir — a no-op.
+	apply_persisted_tunnels(VirtualMachinePaths(uuid).tunnels_directory)
 
 
 if __name__ == "__main__":
