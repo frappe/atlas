@@ -35,18 +35,8 @@ def _ensure_atlas_user_role() -> None:
 
 
 def _ensure_root_domain() -> None:
-	if not frappe.db.exists("Domain Provider", "route53-sr-test"):
-		frappe.get_doc(
-			{"doctype": "Domain Provider", "provider_name": "route53-sr-test", "provider_type": "Route53"}
-		).insert(ignore_permissions=True)
-	if not frappe.db.exists("TLS Provider", "letsencrypt-sr-test"):
-		frappe.get_doc(
-			{
-				"doctype": "TLS Provider",
-				"provider_name": "letsencrypt-sr-test",
-				"provider_type": "Let's Encrypt",
-			}
-		).insert(ignore_permissions=True)
+	frappe.db.set_single_value("Route53 Settings", "domain_provider_type", "Route53", update_modified=False)
+	frappe.db.set_single_value("Atlas Settings", "tls_provider_type", "Let's Encrypt", update_modified=False)
 	if not frappe.db.exists("Root Domain", ROOT_DOMAIN):
 		frappe.get_doc(
 			{
@@ -54,8 +44,8 @@ def _ensure_root_domain() -> None:
 				"domain": ROOT_DOMAIN,
 				"region": REGION,
 				"is_active": 1,
-				"domain_provider": "route53-sr-test",
-				"tls_provider": "letsencrypt-sr-test",
+				"domain_provider_type": "Route53",
+				"tls_provider_type": "Let's Encrypt",
 			}
 		).insert(ignore_permissions=True)
 	frappe.db.set_value("Root Domain", ROOT_DOMAIN, "is_active", 1)

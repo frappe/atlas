@@ -353,7 +353,7 @@ def _check_ipv6_exhaustion(server) -> None:
 		{
 			"doctype": "Server",
 			"title": fake_title,
-			"provider": server.provider,
+			"provider_type": server.provider_type,
 			"status": "Pending",
 			"ipv4_address": "192.0.2.99",
 			"ipv6_address": "2001:db8::1",

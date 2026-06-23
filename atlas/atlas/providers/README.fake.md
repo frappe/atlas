@@ -7,7 +7,7 @@ dashboard SPA) have Servers / VMs / Images / Tasks to work against without
 spinning up real cloud resources.
 
 It is **`developer_mode`-only**: every mutating Fake method throws on a site
-without `developer_mode`, so a stray Fake `Provider` row on production is inert.
+without `developer_mode`, so `Atlas Settings.provider_type = Fake` on production is inert.
 
 - Implementation: [`fake.py`](./fake.py) (the `Provider` ABC) and
   [`fake_tasks.py`](./fake_tasks.py) (the Task/SSH short-circuit).
@@ -27,8 +27,8 @@ Faking the VM lifecycle takes **two** interception points, not one:
    Fake-backed Server's Tasks to `fake_tasks.run_fake_task`, which finalizes the
    Task (Pending → Running → Success) with no SSH.
 
-Routing is **per-Server** (off the Server's own `provider`), so a Fake provider
-and a real Server can coexist on one site — each Task goes the right way.
+Routing is **per-Server** (off the Server's own `provider_type`), so a Fake-backed
+Server and a real Server can coexist on one site — each Task goes the right way.
 
 ## Set up the demo data on `fake.local`
 
@@ -49,16 +49,17 @@ bench --site fake.local execute atlas.atlas.demo.run
 ```
 
 It prints a row-count summary when it finishes. On a clean site you should see
-roughly: 4 Providers, 7 Servers, 12 Virtual Machines, 4 Images, 4 Snapshots,
+roughly: 7 Servers, 12 Virtual Machines, 4 Images, 4 Snapshots,
 2 Reserved IPs, ~35 Tasks.
 
 ### What gets created
 
 A deliberately varied fleet so every desk/SPA state has something to render:
 
-- **Providers** — `fake-prod` (the active one), `fake-lab` (a second Fake
-  provider), `demo-self-managed` (a Self-Managed host), and `do-legacy`
-  (an *archived* DigitalOcean row, so a non-Fake vendor is visible too).
+- **Active provider** — `Atlas Settings.provider_type = Fake`. The Fake-provisioned
+  fleet marches through the real (faked) worker; a Self-Managed host is stood up
+  alongside it directly (a Server carries its own `provider_type`), so the fleet
+  shows two vendor types even though only Fake is the active vendor.
 - **Servers** — across the whole status spectrum: `Active`, `Bootstrapping`,
   `Broken`, `Draining`, plus a Self-Managed host.
 - **Virtual Machines** — every status (`Running`, `Stopped`, `Paused`,
@@ -96,7 +97,7 @@ bench's `webserver_port` (8007 here — see the `web:` line in the Procfile). If
 The `fake_provider_desk` e2e drives **every operator button** through the exact
 HTTP layer the desk uses (`run_doc_method` for controller methods, `execute_cmd`
 for the Reserved IP module-function buttons), with the desk's real argument
-shapes — Provider (Authenticate / Refresh Catalog / Provision Server), Server
+shapes — Atlas Settings (Authenticate / Refresh Catalog / Provision Server), Server
 (Bootstrap / Run Task), Image (Sync to Server / All), the full VM lifecycle
 (Provision / Start / Stop / Pause / Resume / Restart / Snapshot / Restore /
 Rebuild / Resize / Clone / Terminate), Reserved IP (Allocate / Discover / Attach
@@ -107,8 +108,8 @@ bench --site fake.local execute atlas.tests.e2e.use_cases.fake_provider_desk.run
 ```
 
 It prints `[fake-desk] all Desk buttons OK` on success. It is self-contained —
-creates its own `fake-e2e` provider / server / image / VMs, tears them all down,
-and restores `Atlas Settings.provider` — so it leaves the demo fleet untouched
+creates its own `fake-e2e` server / image / VMs, tears them all down,
+and restores `Atlas Settings.provider_type` — so it leaves the demo fleet untouched
 and is safe to re-run. No droplet, no SSH; runs in seconds.
 
 ## Tear it down

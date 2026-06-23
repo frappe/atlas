@@ -22,20 +22,9 @@ class TestDigitalOceanSettings(IntegrationTestCase):
 		)
 		settings = frappe.get_single("DigitalOcean Settings")
 		with patch(
-			"atlas.atlas.providers.for_provider",
+			"atlas.atlas.providers.for_provider_type",
 			return_value=fake_impl,
 		):
 			result = settings.test_connection()
 		self.assertTrue(result["ok"])
 		self.assertEqual(result["account_label"], "x@y.com")
-
-	def test_test_connection_throws_without_provider(self) -> None:
-		previous = frappe.db.get_single_value("Atlas Settings", "provider")
-		try:
-			frappe.db.set_single_value("Atlas Settings", "provider", "", update_modified=False)
-			settings = frappe.get_single("DigitalOcean Settings")
-			with self.assertRaises(frappe.ValidationError):
-				settings.test_connection()
-		finally:
-			if previous:
-				frappe.db.set_single_value("Atlas Settings", "provider", previous, update_modified=False)

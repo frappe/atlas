@@ -147,12 +147,8 @@ import frappe
 import frappe.utils.password
 from frappe import _
 
-PROVIDER_NAME = "bootstrap-provider"
 IMAGE_NAME = "ubuntu-24.04"
 MINIMAL_IMAGE_NAME = "ubuntu-24.04-minimal"
-
-DOMAIN_PROVIDER_NAME = "bootstrap-route53"
-TLS_PROVIDER_NAME = "bootstrap-letsencrypt"
 
 # Golden bench build VM sizing — a Frappe clone + uv venv + node deps overflow the
 # 4 GB base image, so the build VM (and therefore the snapshot, and every site VM
@@ -226,13 +222,13 @@ def run_compute(reuse_server: bool = True) -> str:
 	`reuse_server` (default) adopts an existing Active Server instead of provisioning
 	a fresh one, so a re-run after a mid-bootstrap failure doesn't strand a second
 	billable droplet. Pass False to force a brand-new server."""
-	provider = ensure_provider()
+	provider_type = ensure_provider()
 	server_name = _existing_active_server() if reuse_server else None
 	if server_name:
 		print(f"[bootstrap] reusing existing Active Server {server_name!r}")
 	else:
-		server_name = provision_server(provider)
-		wait_for_active_server(server_name, timeout_seconds=_active_timeout(provider))
+		server_name = provision_server(provider_type)
+		wait_for_active_server(server_name, timeout_seconds=_active_timeout(provider_type))
 	ensure_image()
 	sync_image(server_name)
 	return server_name
@@ -382,29 +378,16 @@ def restore_credentials() -> None:
 	print(f"[bootstrap] restored Atlas/{provider_type} credentials from site config")
 
 
-def ensure_provider() -> "frappe.model.document.Document":
+def ensure_provider() -> str:
 	provider_type = require_config("atlas_provider_type")
 	if provider_type not in ("DigitalOcean", "Scaleway", "Self-Managed"):
 		frappe.throw(
 			f"atlas_provider_type must be DigitalOcean, Scaleway or Self-Managed, got {provider_type!r}"
 		)
 
-	# Ensure the Provider row exists, then write the Singles.
-	if not frappe.db.exists("Provider", PROVIDER_NAME):
-		frappe.get_doc(
-			{
-				"doctype": "Provider",
-				"provider_name": PROVIDER_NAME,
-				"provider_type": provider_type,
-				"is_active": 1,
-			}
-		).insert(ignore_permissions=True)
-		print(f"[bootstrap] created Provider {PROVIDER_NAME!r} ({provider_type})")
-	else:
-		print(f"[bootstrap] reusing Provider {PROVIDER_NAME!r}")
-
-	# Atlas Settings — provider link + SSH triplet.
-	frappe.db.set_single_value("Atlas Settings", "provider", PROVIDER_NAME, update_modified=False)
+	# Atlas Settings — active provider_type + SSH triplet.
+	frappe.db.set_single_value("Atlas Settings", "provider_type", provider_type, update_modified=False)
+	print(f"[bootstrap] set Atlas Settings.provider_type = {provider_type!r}")
 	frappe.db.set_single_value(
 		"Atlas Settings",
 		"ssh_private_key_path",
@@ -453,8 +436,8 @@ def ensure_provider() -> "frappe.model.document.Document":
 
 		# Seed the wider catalog so the Refresh Catalog button is exercising
 		# real data, not just the slugs the operator named in site config.
-		from atlas.atlas.doctype.provider.provider import upsert_catalog
 		from atlas.atlas.providers.digitalocean import DigitalOceanProvider
+		from atlas.atlas.provisioning import upsert_catalog
 
 		try:
 			capabilities = DigitalOceanProvider().discover()
@@ -467,7 +450,7 @@ def ensure_provider() -> "frappe.model.document.Document":
 
 	# nosemgrep: frappe-manual-commit -- persist provider + seeded catalog before returning
 	frappe.db.commit()
-	return frappe.get_doc("Provider", PROVIDER_NAME)
+	return provider_type
 
 
 def _seed_scaleway_settings() -> None:
@@ -522,8 +505,8 @@ def _seed_scaleway_settings() -> None:
 	# Discover the live per-zone catalog (the offer_id / os_id UUIDs). Load-bearing —
 	# let the exception propagate so a bad key/zone fails the bootstrap loudly here
 	# rather than at the first opaque provision().
-	from atlas.atlas.doctype.provider.provider import upsert_catalog
 	from atlas.atlas.providers.scaleway import ScalewayProvider
+	from atlas.atlas.provisioning import upsert_catalog
 
 	capabilities = ScalewayProvider().discover()
 	upsert_catalog("Scaleway", capabilities)
@@ -583,10 +566,11 @@ def _ensure_provider_image(provider_type: str, slug: str) -> None:
 	).insert(ignore_permissions=True)
 
 
-def provision_server(provider: "frappe.model.document.Document") -> str:
+def provision_server(provider_type: str) -> str:
 	title = f"bootstrap-server-{int(time.time())}"
-	if provider.provider_type == "Self-Managed":
-		server_name = provider.provision_server(
+	settings = frappe.get_single("Atlas Settings")
+	if provider_type == "Self-Managed":
+		server_name = settings.provision_server(
 			title,
 			ipv4_address=require_config("atlas_self_managed_ipv4"),
 			ipv6_address=require_config("atlas_self_managed_ipv6"),
@@ -598,14 +582,14 @@ def provision_server(provider: "frappe.model.document.Document") -> str:
 		# its Settings Single, so the call needs only the title. (Scaleway's create
 		# is async — the Server lands Pending and the worker polls describe() to
 		# Active, which wait_for_active_server already handles via its longer timeout.)
-		server_name = provider.provision_server(title)
+		server_name = settings.provision_server(title)
 	# nosemgrep: frappe-manual-commit -- bootstrap script: persist the Server row so the enqueued boot job sees it cross-transaction
 	frappe.db.commit()
 	print(f"[bootstrap] provisioning Server {title!r} (name={server_name!r}; background job enqueued)")
 	return server_name
 
 
-def _active_timeout(provider: "frappe.model.document.Document") -> int:
+def _active_timeout(provider_type: str) -> int:
 	"""How long to wait for a freshly-provisioned Server to reach Active.
 
 	A DO droplet is up in seconds; a Scaleway Elastic Metal box is a real bare-metal
@@ -617,7 +601,7 @@ def _active_timeout(provider: "frappe.model.document.Document") -> int:
 	before."""
 	from atlas.atlas import providers
 
-	impl = providers.for_provider(provider.name)
+	impl = providers.for_provider_type(provider_type)
 	vendor_ready = getattr(impl, "ready_timeout_seconds", 600)
 	return max(900, vendor_ready + 600)
 
@@ -791,34 +775,16 @@ def ensure_tls_layer(config: dict) -> None:
 	)
 	frappe.db.set_single_value("Lets Encrypt Settings", "agree_tos", 1, update_modified=False)
 
-	if not frappe.db.exists("Domain Provider", DOMAIN_PROVIDER_NAME):
-		frappe.get_doc(
-			{
-				"doctype": "Domain Provider",
-				"provider_name": DOMAIN_PROVIDER_NAME,
-				"provider_type": "Route53",
-				"is_active": 1,
-			}
-		).insert(ignore_permissions=True)
-		print(f"[bootstrap] created Domain Provider {DOMAIN_PROVIDER_NAME!r}")
-	if not frappe.db.exists("TLS Provider", TLS_PROVIDER_NAME):
-		frappe.get_doc(
-			{
-				"doctype": "TLS Provider",
-				"provider_name": TLS_PROVIDER_NAME,
-				"provider_type": "Let's Encrypt",
-				"is_active": 1,
-			}
-		).insert(ignore_permissions=True)
-		print(f"[bootstrap] created TLS Provider {TLS_PROVIDER_NAME!r}")
+	# The active DNS / TLS vendor types now live on the Settings singles; Root Domain
+	# denormalizes them at insert (its before_insert reads them).
+	frappe.db.set_single_value("Route53 Settings", "domain_provider_type", "Route53", update_modified=False)
+	frappe.db.set_single_value("Atlas Settings", "tls_provider_type", "Let's Encrypt", update_modified=False)
 	if not frappe.db.exists("Root Domain", config["domain"]):
 		frappe.get_doc(
 			{
 				"doctype": "Root Domain",
 				"domain": config["domain"],
 				"region": config["region"],
-				"domain_provider": DOMAIN_PROVIDER_NAME,
-				"tls_provider": TLS_PROVIDER_NAME,
 				"is_active": 1,
 			}
 		).insert(ignore_permissions=True)
@@ -954,7 +920,7 @@ def ensure_proxy(server_name: str, region: str, domain: str) -> str:
 		image_name = ensure_image().name
 		vm = _provision_durable_vm(
 			server_name,
-			title=f"proxy — {region}",
+			title=f"proxy.{region}.{domain}",
 			image=image_name,
 			memory_megabytes=PROXY_MEMORY_MB,
 			disk_gigabytes=PROXY_DISK_GB,

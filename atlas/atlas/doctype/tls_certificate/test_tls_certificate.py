@@ -25,35 +25,29 @@ from atlas.atlas.doctype.virtual_machine.test_virtual_machine import (
 from atlas.atlas.tls.base import IssuedCert
 
 
-def _ensure_providers() -> None:
-	if not frappe.db.exists("Domain Provider", "route53-test"):
-		frappe.get_doc(
-			{"doctype": "Domain Provider", "provider_name": "route53-test", "provider_type": "Route53"}
-		).insert(ignore_permissions=True)
-	if not frappe.db.exists("TLS Provider", "letsencrypt-test"):
-		frappe.get_doc(
-			{"doctype": "TLS Provider", "provider_name": "letsencrypt-test", "provider_type": "Let's Encrypt"}
-		).insert(ignore_permissions=True)
+def _set_provider_types() -> None:
+	frappe.db.set_single_value("Route53 Settings", "domain_provider_type", "Route53")
+	frappe.db.set_single_value("Atlas Settings", "tls_provider_type", "Let's Encrypt")
 
 
 def _make_domain(domain: str, region: str):
-	_ensure_providers()
+	_set_provider_types()
 	if frappe.db.exists("Root Domain", domain):
 		# A Root Domain with this name may survive from another suite (test_site
-		# seeds blr1.frappe.dev with its OWN providers, e.g. letsencrypt-site-test).
-		# Re-point it at THIS suite's providers so the denormalized tls_provider
-		# assertion sees letsencrypt-test, not whatever the neighbour seeded.
+		# seeds blr1.frappe.dev with its OWN provider types). Re-point it at THIS
+		# suite's types so the denormalized tls_provider_type assertion sees
+		# Let's Encrypt, not whatever the neighbour seeded.
 		existing = frappe.get_doc("Root Domain", domain)
-		existing.db_set("domain_provider", "route53-test")
-		existing.db_set("tls_provider", "letsencrypt-test")
+		existing.db_set("domain_provider_type", "Route53")
+		existing.db_set("tls_provider_type", "Let's Encrypt")
 		return existing
 	return frappe.get_doc(
 		{
 			"doctype": "Root Domain",
 			"domain": domain,
 			"region": region,
-			"domain_provider": "route53-test",
-			"tls_provider": "letsencrypt-test",
+			"domain_provider_type": "Route53",
+			"tls_provider_type": "Let's Encrypt",
 		}
 	).insert(ignore_permissions=True)
 
@@ -77,7 +71,7 @@ class TestCommonName(IntegrationTestCase):
 		cert = frappe.get_doc({"doctype": "TLS Certificate", "root_domain": "blr1.frappe.dev"}).insert(
 			ignore_permissions=True
 		)
-		self.assertEqual(cert.tls_provider, "letsencrypt-test")
+		self.assertEqual(cert.tls_provider_type, "Let's Encrypt")
 
 
 class TestIssueAndPush(IntegrationTestCase):
@@ -119,8 +113,8 @@ class TestIssueAndPush(IntegrationTestCase):
 			ignore_permissions=True
 		)
 
-		fake_tls = patch.object(module.tls, "for_tls_provider")
-		fake_dns = patch.object(module.dns, "for_domain_provider")
+		fake_tls = patch.object(module.tls, "for_tls_provider_type")
+		fake_dns = patch.object(module.dns, "for_dns_provider_type")
 		fake_push = patch.object(module.proxy, "push_cert")
 		with fake_tls as tls_for, fake_dns, fake_push as push:
 			tls_for.return_value.issue.return_value = self._issued()
@@ -144,7 +138,7 @@ class TestIssueAndPush(IntegrationTestCase):
 		cert = frappe.get_doc({"doctype": "TLS Certificate", "root_domain": "blr1.frappe.dev"}).insert(
 			ignore_permissions=True
 		)
-		with patch.object(module.tls, "for_tls_provider") as tls_for:
+		with patch.object(module.tls, "for_tls_provider_type") as tls_for:
 			tls_for.return_value.issue.side_effect = frappe.ValidationError("boom")
 			with self.assertRaises(frappe.ValidationError):
 				cert.issue()

@@ -36,33 +36,48 @@ def _ensure_fake_ssh_key_path() -> str:
 	return str(path)
 
 
+class _ProviderStub:
+	"""Stand-in for the deleted `Provider` row. The Provider DocType is gone — the
+	active vendor is `Atlas Settings.provider_type` — but a lot of tests still take a
+	"provider" handle and read `.provider_type` (and a couple read `.name` /
+	`.default_size`). This carries just those attributes so the fixtures' callers
+	don't each have to change. `name` aliases `provider_type` (the only stable
+	identifier left)."""
+
+	def __init__(self, provider_type: str, default_size: str = "", default_image: str = ""):
+		self.provider_type = provider_type
+		self.name = provider_type
+		self.default_size = default_size
+		self.default_image = default_image
+
+
 def make_provider_row(
 	name: str = "test-provider",
 	provider_type: str = "DigitalOcean",
 	**overrides: Any,
-) -> Document:
-	"""Insert a `Provider` row (thin link table). Idempotent."""
-	if frappe.db.exists("Provider", name):
-		return frappe.get_doc("Provider", name)
-	doc = {
-		"doctype": "Provider",
-		"provider_name": name,
-		"provider_type": provider_type,
-		"is_active": 1,
-	}
-	doc.update(overrides)
-	return frappe.get_doc(doc).insert(ignore_permissions=True)
+) -> _ProviderStub:
+	"""Set the active `Atlas Settings.provider_type` and return a provider stub.
+
+	The `Provider` DocType is gone; `name` is accepted for call-site compatibility
+	but ignored (there is no row to name). `fail_scripts` (Fake fault injection) now
+	lives on the Single."""
+	frappe.db.set_single_value("Atlas Settings", "provider_type", provider_type, update_modified=False)
+	if "fail_scripts" in overrides:
+		frappe.db.set_single_value(
+			"Atlas Settings", "fail_scripts", overrides["fail_scripts"], update_modified=False
+		)
+	return _ProviderStub(provider_type)
 
 
 def set_atlas_settings(
-	provider: str | Document,
+	provider: str | _ProviderStub,
 	ssh_key_id: str | None = "key-id-123",
 	ssh_private_key_path: str | None = None,
 	ssh_public_key: str | None = None,
 ) -> None:
 	"""Write Atlas Settings Single via set_single_value (bypasses reqd)."""
-	provider_name = provider.name if isinstance(provider, Document) else provider
-	frappe.db.set_single_value("Atlas Settings", "provider", provider_name, update_modified=False)
+	provider_type = provider.provider_type if isinstance(provider, _ProviderStub) else provider
+	frappe.db.set_single_value("Atlas Settings", "provider_type", provider_type, update_modified=False)
 	if ssh_key_id is not None:
 		frappe.db.set_single_value("Atlas Settings", "ssh_key_id", ssh_key_id, update_modified=False)
 	if ssh_public_key is not None:
@@ -128,16 +143,13 @@ def seed_catalogs() -> None:
 		).insert(ignore_permissions=True)
 
 
-def make_provider(name: str = "test-provider", **overrides: Any) -> Document:
-	"""Compatibility shim: insert a Provider row, set Atlas Settings and
-	DigitalOcean Settings, and seed the test catalogs.
+def make_provider(name: str = "test-provider", **overrides: Any) -> _ProviderStub:
+	"""Compatibility shim: set the active `Atlas Settings.provider_type`, seed
+	DigitalOcean Settings + the test catalogs, and return a provider stub.
 
-	Callers that still write `make_provider(...).default_size` expect a
-	`Document`-like result; we return the Provider row, with `default_size`
-	/ `default_image` attributes monkeyed in for backward compatibility
-	with the (small) number of unit tests that haven't been split apart
-	yet.
-	"""
+	The `Provider` DocType is gone; `name` is accepted but ignored. Callers still
+	read `.provider_type` (and a couple `.default_size` / `.default_image`) off the
+	returned stub."""
 	provider_type = overrides.pop("provider_type", "DigitalOcean")
 	# Strip legacy kwargs from the old Server Provider shape.
 	for legacy in (
@@ -155,11 +167,13 @@ def make_provider(name: str = "test-provider", **overrides: Any) -> Document:
 	set_atlas_settings(provider)
 	if provider_type == "DigitalOcean":
 		set_digitalocean_settings()
+		provider.default_size = DEFAULT_DIGITALOCEAN_SIZE
+		provider.default_image = DEFAULT_DIGITALOCEAN_IMAGE
 	return provider
 
 
 def make_server(
-	provider: Document | None = None,
+	provider: _ProviderStub | None = None,
 	title: str = "test-server",
 	**overrides: Any,
 ) -> Document:
@@ -176,7 +190,7 @@ def make_server(
 	doc = {
 		"doctype": "Server",
 		"title": title,
-		"provider": provider.name,
+		"provider_type": provider.provider_type,
 		"provider_resource_id": None,
 		"size": DEFAULT_DIGITALOCEAN_SIZE,
 		"status": "Pending",

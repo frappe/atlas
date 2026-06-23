@@ -15,20 +15,6 @@ from atlas.atlas.sizes import SIZE_PRESETS
 
 # --- Static data ---------------------------------------------------------
 
-# (provider_name, fail_scripts). fake-prod is the active one; fake-lab is a
-# second Fake provider so multi-provider UI has something to show.
-PROVIDERS = (
-	("fake-prod", ""),
-	("fake-lab", ""),
-)
-
-# The demo also creates two NON-Fake provider rows for variety: a Self-Managed
-# host and an archived DigitalOcean row. They are demo artifacts (named here), so
-# wipe() removes them by name — it never touches a real operator's rows.
-SELF_MANAGED_PROVIDER = "demo-self-managed"
-ARCHIVED_PROVIDER = "do-legacy"
-DEMO_NON_FAKE_PROVIDERS = (SELF_MANAGED_PROVIDER, ARCHIVED_PROVIDER)
-
 DEFAULT_USER_IMAGE = "ubuntu-24.04-server"
 
 # key -> Virtual Machine Image field dict. The last one is archived (is_active=0)
@@ -230,17 +216,17 @@ def delete_demo_images() -> None:
 			frappe.delete_doc("Virtual Machine Image", name, force=True, ignore_permissions=True)
 
 
-def ensure_servers(active_provider: str) -> dict[str, str]:
+def ensure_servers(active_provider_type: str) -> dict[str, str]:
 	from atlas.atlas.providers.worker import finish_provisioning
+	from atlas.atlas.provisioning import provision_server
 
-	provider = frappe.get_doc("Provider", active_provider)
 	result: dict[str, str] = {}
 	for key, (title, final_status) in SERVERS.items():
 		existing = frappe.db.get_value("Server", {"title": title}, "name")
 		if existing:
 			result[key] = existing
 			continue
-		name = provider.provision_server(title)
+		name = provision_server(active_provider_type, title, {})
 		finish_provisioning(name)  # Pending -> Active (faked bootstrap), inline
 		if final_status != "Active":
 			frappe.db.set_value("Server", name, "status", final_status)
@@ -252,26 +238,18 @@ def ensure_servers(active_provider: str) -> dict[str, str]:
 
 
 def _ensure_self_managed_server() -> str:
+	"""A Self-Managed host alongside the Fake fleet — a Server carries its own
+	provider_type, so the demo shows two vendor types even though only Fake is the
+	active vendor. Provisioned directly through the provisioning helper, not the
+	active-vendor path."""
+	from atlas.atlas.provisioning import provision_server
+
 	existing = frappe.db.get_value("Server", {"title": SELF_MANAGED_SERVER["title"]}, "name")
 	if existing:
 		return existing
-	_ensure_self_managed_provider()
-	provider = frappe.get_doc("Provider", SELF_MANAGED_PROVIDER)
-	name = provider.provision_server(SELF_MANAGED_SERVER["title"], **_self_managed_dialog())
+	name = provision_server("Self-Managed", SELF_MANAGED_SERVER["title"], _self_managed_dialog())
 	frappe.db.set_value("Server", name, "status", "Active")
 	return name
-
-
-def _ensure_self_managed_provider() -> None:
-	if not frappe.db.exists("Provider", SELF_MANAGED_PROVIDER):
-		frappe.get_doc(
-			{
-				"doctype": "Provider",
-				"provider_name": SELF_MANAGED_PROVIDER,
-				"provider_type": "Self-Managed",
-				"is_active": 1,
-			}
-		).insert(ignore_permissions=True)
 
 
 def _self_managed_dialog() -> dict:

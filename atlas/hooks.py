@@ -43,7 +43,6 @@ app_include_css = "/assets/atlas/css/atlas_desk.css"
 
 doctype_js = {
 	"Server": "public/js/atlas_form_overrides.js",
-	"Provider": "public/js/atlas_form_overrides.js",
 	"Atlas Settings": "public/js/atlas_form_overrides.js",
 	"DigitalOcean Settings": "public/js/atlas_form_overrides.js",
 	"Scaleway Settings": "public/js/atlas_form_overrides.js",
@@ -55,9 +54,7 @@ doctype_js = {
 	"Virtual Machine Snapshot": "public/js/atlas_form_overrides.js",
 	"Reserved IP": "public/js/atlas_form_overrides.js",
 	"Task": "public/js/atlas_form_overrides.js",
-	"Domain Provider": "public/js/atlas_form_overrides.js",
 	"Route53 Settings": "public/js/atlas_form_overrides.js",
-	"TLS Provider": "public/js/atlas_form_overrides.js",
 	"Lets Encrypt Settings": "public/js/atlas_form_overrides.js",
 	"Root Domain": "public/js/atlas_form_overrides.js",
 	"TLS Certificate": "public/js/atlas_form_overrides.js",

@@ -16,8 +16,33 @@ IMMUTABLE_AFTER_INSERT = ("domain", "region")
 
 
 class RootDomain(Document):
+	def before_insert(self) -> None:
+		self._denormalize_provider_types()
+
+	def _denormalize_provider_types(self) -> None:
+		"""Freeze the active DNS / TLS vendor types onto the row, so a later vendor
+		switch on the Settings singles never re-points an existing region's issuance.
+		Mirrors `Server.provider_type`."""
+		if not self.domain_provider_type:
+			self.domain_provider_type = frappe.db.get_single_value("Route53 Settings", "domain_provider_type")
+		if not self.tls_provider_type:
+			self.tls_provider_type = frappe.db.get_single_value("Atlas Settings", "tls_provider_type")
+
 	def validate(self) -> None:
+		self._require_provider_types()
 		self._validate_immutability()
+
+	def _require_provider_types(self) -> None:
+		"""Fail loud at save if a vendor type is still blank — otherwise issuance fails
+		far later with a cryptic 'No implementation for provider_type None'. The types
+		come from the active Settings singles (denormalized in before_insert), so a
+		blank means they were never configured."""
+		from frappe import _
+
+		if not self.domain_provider_type:
+			frappe.throw(_("Set Route53 Settings.domain_provider_type before creating a Root Domain"))
+		if not self.tls_provider_type:
+			frappe.throw(_("Set Atlas Settings.tls_provider_type before creating a Root Domain"))
 
 	def _validate_immutability(self) -> None:
 		if self.is_new():
@@ -50,7 +75,7 @@ class RootDomain(Document):
 			{
 				"doctype": "TLS Certificate",
 				"root_domain": self.name,
-				"tls_provider": self.tls_provider,
+				"tls_provider_type": self.tls_provider_type,
 				"status": "Pending",
 			}
 		).insert(ignore_permissions=True)

@@ -77,9 +77,9 @@ from atlas.tests.e2e.use_cases.proxy_vm import (
 	_teardown,
 )
 
-# DocType row names the harness owns (created + torn down each run).
-_DOMAIN_PROVIDER = "atlas-e2e-route53"
-_TLS_PROVIDER = "atlas-e2e-letsencrypt"
+# Active vendor types the harness configures on the Settings singles each run.
+_DOMAIN_PROVIDER_TYPE = "Route53"
+_TLS_PROVIDER_TYPE = "Let's Encrypt"
 
 
 def run(reuse: bool = True, keep: bool = True) -> None:
@@ -173,13 +173,21 @@ def _preflight_controller_deps() -> None:
 
 
 def _seed_tls_doctypes(config: dict) -> None:
-	"""Create the 5 TLS-layer rows from config, idempotently. Mirrors the operator
-	first-run order (spec/13-tls.md): Domain Provider, Route53 Settings, TLS
-	Provider, Lets Encrypt Settings, Root Domain."""
+	"""Configure the TLS-layer Settings singles + the Root Domain from config,
+	idempotently. Mirrors the operator first-run order (spec/13-tls.md): set the
+	active DNS vendor on Route53 Settings, the active TLS issuer on Atlas Settings,
+	their credential singles, then the Root Domain (which denormalizes both vendor
+	types in before_insert)."""
 	import frappe.utils.password
 
 	_cleanup_tls_doctypes(config)  # start from a clean slate (immutable fields)
 
+	frappe.db.set_single_value(
+		"Route53 Settings", "domain_provider_type", _DOMAIN_PROVIDER_TYPE, update_modified=False
+	)
+	frappe.db.set_single_value(
+		"Atlas Settings", "tls_provider_type", _TLS_PROVIDER_TYPE, update_modified=False
+	)
 	frappe.db.set_single_value(
 		"Route53 Settings", "access_key_id", config["access_key_id"], update_modified=False
 	)
@@ -196,18 +204,12 @@ def _seed_tls_doctypes(config: dict) -> None:
 	frappe.db.set_single_value("Lets Encrypt Settings", "agree_tos", 1, update_modified=False)
 
 	frappe.get_doc(
-		{"doctype": "Domain Provider", "provider_name": _DOMAIN_PROVIDER, "provider_type": "Route53"}
-	).insert(ignore_permissions=True)
-	frappe.get_doc(
-		{"doctype": "TLS Provider", "provider_name": _TLS_PROVIDER, "provider_type": "Let's Encrypt"}
-	).insert(ignore_permissions=True)
-	frappe.get_doc(
 		{
 			"doctype": "Root Domain",
 			"domain": config["domain"],
 			"region": config["region"],
-			"domain_provider": _DOMAIN_PROVIDER,
-			"tls_provider": _TLS_PROVIDER,
+			"domain_provider_type": _DOMAIN_PROVIDER_TYPE,
+			"tls_provider_type": _TLS_PROVIDER_TYPE,
 		}
 	).insert(ignore_permissions=True)
 	frappe.db.commit()
@@ -215,19 +217,14 @@ def _seed_tls_doctypes(config: dict) -> None:
 
 
 def _cleanup_tls_doctypes(config: dict) -> None:
-	"""Drop the cert + the 3 regular rows this run owns (the two Settings Singles
-	are left configured — they hold no per-run identity and the next run overwrites
-	them). Guarded so a half-seeded run still cleans up."""
+	"""Drop the cert + the Root Domain this run owns (the Settings Singles are left
+	configured — they hold no per-run identity and the next run overwrites them).
+	Guarded so a half-seeded run still cleans up."""
 	domain = config["domain"]
 	for cert in frappe.get_all("TLS Certificate", filters={"root_domain": domain}, pluck="name"):
 		frappe.delete_doc("TLS Certificate", cert, force=1, ignore_permissions=True)
-	for doctype, name in (
-		("Root Domain", domain),
-		("Domain Provider", _DOMAIN_PROVIDER),
-		("TLS Provider", _TLS_PROVIDER),
-	):
-		if frappe.db.exists(doctype, name):
-			frappe.delete_doc(doctype, name, force=1, ignore_permissions=True)
+	if frappe.db.exists("Root Domain", domain):
+		frappe.delete_doc("Root Domain", domain, force=1, ignore_permissions=True)
 	frappe.db.commit()
 
 
@@ -235,11 +232,12 @@ def _cleanup_tls_doctypes(config: dict) -> None:
 
 
 def _assert_route53_reachable() -> None:
-	"""Domain Provider.authenticate() against the real account — the GetHostedZone
-	read that proves the IAM creds carry the route53 permissions issuance needs."""
+	"""Route53 DNS provider authenticate() against the real account — the
+	GetHostedZone read that proves the IAM creds carry the route53 permissions
+	issuance needs."""
 	from atlas.atlas import dns
 
-	result = dns.for_domain_provider(_DOMAIN_PROVIDER).authenticate()
+	result = dns.for_dns_provider_type(_DOMAIN_PROVIDER_TYPE).authenticate()
 	assert result.ok, f"Route 53 authenticate failed: {result.error}"
 	print(f"[e2e] Route 53 reachable (account: {result.account_label}) OK")
 

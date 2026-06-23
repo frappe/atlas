@@ -12,32 +12,22 @@ from frappe.tests import IntegrationTestCase
 from atlas.atlas.doctype.tls_certificate import tls_certificate as cert_module
 
 
-def _ensure_providers() -> None:
-	if not frappe.db.exists("Domain Provider", "route53-test"):
-		frappe.get_doc(
-			{"doctype": "Domain Provider", "provider_name": "route53-test", "provider_type": "Route53"}
-		).insert(ignore_permissions=True)
-	if not frappe.db.exists("TLS Provider", "letsencrypt-test"):
-		frappe.get_doc(
-			{"doctype": "TLS Provider", "provider_name": "letsencrypt-test", "provider_type": "Let's Encrypt"}
-		).insert(ignore_permissions=True)
-
-
 def _make(domain: str, region: str):
-	_ensure_providers()
 	return frappe.get_doc(
 		{
 			"doctype": "Root Domain",
 			"domain": domain,
 			"region": region,
-			"domain_provider": "route53-test",
-			"tls_provider": "letsencrypt-test",
+			"domain_provider_type": "Route53",
+			"tls_provider_type": "Let's Encrypt",
 		}
 	).insert(ignore_permissions=True)
 
 
 class TestRootDomain(IntegrationTestCase):
 	def setUp(self) -> None:
+		frappe.db.set_single_value("Route53 Settings", "domain_provider_type", "Route53")
+		frappe.db.set_single_value("Atlas Settings", "tls_provider_type", "Let's Encrypt")
 		for name in frappe.get_all("TLS Certificate", pluck="name"):
 			frappe.delete_doc("TLS Certificate", name, force=1, ignore_permissions=True)
 		for name in frappe.get_all("Root Domain", pluck="name"):
@@ -63,7 +53,7 @@ class TestRootDomain(IntegrationTestCase):
 			cert_name = domain.issue_certificate()
 		cert = frappe.get_doc("TLS Certificate", cert_name)
 		self.assertEqual(cert.root_domain, "blr1.frappe.dev")
-		self.assertEqual(cert.tls_provider, "letsencrypt-test")
+		self.assertEqual(cert.tls_provider_type, "Let's Encrypt")
 
 	def test_issue_certificate_reuses_existing_cert(self) -> None:
 		domain = _make("blr1.frappe.dev", "blr1")
@@ -72,3 +62,22 @@ class TestRootDomain(IntegrationTestCase):
 			second = domain.issue_certificate()
 		self.assertEqual(first, second)
 		self.assertEqual(frappe.db.count("TLS Certificate", {"root_domain": "blr1.frappe.dev"}), 1)
+
+	def test_types_denormalized_from_settings_when_omitted(self) -> None:
+		# before_insert fills the types from the active Settings singles (set in setUp).
+		domain = frappe.get_doc(
+			{"doctype": "Root Domain", "domain": "den1.frappe.dev", "region": "den1"}
+		).insert(ignore_permissions=True)
+		self.assertEqual(domain.domain_provider_type, "Route53")
+		self.assertEqual(domain.tls_provider_type, "Let's Encrypt")
+
+	def test_blank_types_fail_loud(self) -> None:
+		# With the Settings singles unset, the denormalization leaves blanks and the
+		# require-guard throws at save with a clear message (not a cryptic issuance error).
+		frappe.db.set_single_value("Route53 Settings", "domain_provider_type", "")
+		frappe.db.set_single_value("Atlas Settings", "tls_provider_type", "")
+		with self.assertRaises(frappe.ValidationError) as raised:
+			frappe.get_doc(
+				{"doctype": "Root Domain", "domain": "blank1.frappe.dev", "region": "blank1"}
+			).insert(ignore_permissions=True)
+		self.assertIn("provider_type", str(raised.exception))

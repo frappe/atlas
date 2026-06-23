@@ -1,12 +1,11 @@
 """Unit tests for the provider registry.
 
-These tests stub out `frappe.get_doc` so they exercise the registry shape
-without requiring the `Provider` DocType to exist yet.
+The registry maps `provider_type` → implementation class directly (no `Provider`
+DocType row to load). These tests register a stub class and resolve it by type.
 """
 
 from __future__ import annotations
 
-from types import SimpleNamespace
 from unittest.mock import patch
 
 import frappe
@@ -110,31 +109,13 @@ class TestProviderRegistry(IntegrationTestCase):
 		finally:
 			providers._REGISTRY.pop("DecoratorStub", None)
 
-	def test_for_provider_instantiates_active_class(self) -> None:
-		row = SimpleNamespace(is_active=1, provider_type="Stub", name="stub-provider")
-		with (
-			patch.object(providers, "_load_implementations", lambda: None),
-			patch.object(frappe, "get_doc", return_value=row),
-		):
-			instance = providers.for_provider("stub-provider")
+	def test_for_provider_type_instantiates_registered_class(self) -> None:
+		with patch.object(providers, "_load_implementations", lambda: None):
+			instance = providers.for_provider_type("Stub")
 		self.assertIsInstance(instance, _StubProvider)
 
-	def test_for_provider_throws_on_archived(self) -> None:
-		row = SimpleNamespace(is_active=0, provider_type="Stub", name="stub-provider")
-		with (
-			patch.object(providers, "_load_implementations", lambda: None),
-			patch.object(frappe, "get_doc", return_value=row),
-		):
+	def test_for_provider_type_throws_on_unknown_type(self) -> None:
+		with patch.object(providers, "_load_implementations", lambda: None):
 			with self.assertRaises(frappe.ValidationError) as raised:
-				providers.for_provider("stub-provider")
-		self.assertIn("archived", str(raised.exception))
-
-	def test_for_provider_throws_on_unknown_type(self) -> None:
-		row = SimpleNamespace(is_active=1, provider_type="Unregistered", name="x")
-		with (
-			patch.object(providers, "_load_implementations", lambda: None),
-			patch.object(frappe, "get_doc", return_value=row),
-		):
-			with self.assertRaises(frappe.ValidationError) as raised:
-				providers.for_provider("x")
+				providers.for_provider_type("Unregistered")
 		self.assertIn("No implementation", str(raised.exception))

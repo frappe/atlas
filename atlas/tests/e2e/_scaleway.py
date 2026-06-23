@@ -8,8 +8,8 @@ separate because Scaleway is bare metal with a different auth/seed shape:
   key with IAM once and caches the returned UUID on `Atlas Settings.ssh_key_id`
   (the `SshKey.vendor_id` the provider installs). Re-runs reuse it.
 - `discover()` hits the live catalog (the only source of the per-zone
-  `offer_id` / `os_id` UUIDs), so the seed runs `discover_and_upsert` rather
-  than reading hand-maintained constants.
+  `offer_id` / `os_id` UUIDs), so the seed runs `Atlas Settings.refresh_catalog`
+  rather than reading hand-maintained constants.
 
 `sweep_old_scaleway_servers` mirrors the DO sweep: it LISTS (never auto-deletes)
 tagged Elastic Metal servers, because the account is shared. Per-run teardown is
@@ -24,6 +24,8 @@ import frappe
 from atlas.atlas.scaleway import ScalewayClient
 from atlas.tests.e2e._config import TAG, get_scaleway_config, get_ssh_private_key_path
 
+# The control-plane IAM SSH-key name prefix (the Provider DocType is gone; the
+# active vendor is `Atlas Settings.provider_type`).
 PROVIDER_NAME = "atlas-e2e-scaleway"
 
 
@@ -70,33 +72,22 @@ def _key_blob(public_key: str) -> str:
 	return parts[1] if len(parts) >= 2 else public_key
 
 
-def ensure_scaleway_provider() -> "frappe.model.document.Document":
-	"""Seed the Scaleway e2e Provider + Settings + catalog + Atlas Settings.
+def ensure_scaleway_provider() -> str:
+	"""Seed the Scaleway e2e Settings + catalog + Atlas Settings.
 
 	Idempotent. Registers the control-plane key with IAM (caching the UUID),
-	seeds `Scaleway Settings`, runs `discover_and_upsert` to populate Provider
-	Size / Provider Image rows with the live per-zone offer_id / os_id, points
-	`Atlas Settings.provider` at this provider, and verifies the configured
-	default size/image rows exist. Returns the Provider doc.
+	seeds `Scaleway Settings`, points `Atlas Settings.provider_type` at Scaleway,
+	runs `Atlas Settings.refresh_catalog` to populate Provider Size / Provider
+	Image rows with the live per-zone offer_id / os_id, and verifies the
+	configured default size/image rows exist. Returns the provider_type string
+	`"Scaleway"`.
 	"""
 	import frappe.utils.password
 
 	config = get_scaleway_config()
 	client = scaleway_client()
 
-	# 1. Provider row.
-	if not frappe.db.exists("Provider", PROVIDER_NAME):
-		frappe.get_doc(
-			{
-				"doctype": "Provider",
-				"provider_name": PROVIDER_NAME,
-				"provider_type": "Scaleway",
-				"is_active": 1,
-			}
-		).insert(ignore_permissions=True)
-	provider = frappe.get_doc("Provider", PROVIDER_NAME)
-
-	# 2. Scaleway Settings (secret via the password store, like DO's api_token).
+	# 1. Scaleway Settings (secret via the password store, like DO's api_token).
 	frappe.db.set_single_value("Scaleway Settings", "project_id", config["project_id"], update_modified=False)
 	if config["organization_id"]:
 		frappe.db.set_single_value(
@@ -108,10 +99,10 @@ def ensure_scaleway_provider() -> "frappe.model.document.Document":
 		"Scaleway Settings", "Scaleway Settings", config["secret_key"], "secret_key"
 	)
 
-	# 3. IAM key — register the control-plane key, cache the UUID on Atlas Settings.
+	# 2. IAM key — register the control-plane key, cache the UUID on Atlas Settings.
 	public_key = _control_plane_public_key()
 	key_id = _ensure_iam_ssh_key(client, config["project_id"], public_key)
-	frappe.db.set_single_value("Atlas Settings", "provider", PROVIDER_NAME, update_modified=False)
+	frappe.db.set_single_value("Atlas Settings", "provider_type", "Scaleway", update_modified=False)
 	frappe.db.set_single_value("Atlas Settings", "ssh_key_id", key_id, update_modified=False)
 	frappe.db.set_single_value("Atlas Settings", "ssh_public_key", public_key, update_modified=False)
 	frappe.db.set_single_value(
@@ -119,11 +110,11 @@ def ensure_scaleway_provider() -> "frappe.model.document.Document":
 	)
 	frappe.db.commit()
 
-	# 4. Catalog — discover live offers/OS (the only source of the UUIDs).
-	provider.discover_and_upsert()
+	# 3. Catalog — discover live offers/OS (the only source of the UUIDs).
+	frappe.get_single("Atlas Settings").refresh_catalog()
 	frappe.db.commit()
 
-	# 5. Settings defaults point at the chosen size/image rows.
+	# 4. Settings defaults point at the chosen size/image rows.
 	size_name = f"Scaleway/{config['size']}"
 	image_name = f"Scaleway/{config['image']}"
 	if not frappe.db.exists("Provider Size", size_name):
@@ -139,10 +130,8 @@ def ensure_scaleway_provider() -> "frappe.model.document.Document":
 	frappe.db.set_single_value("Scaleway Settings", "default_image", image_name, update_modified=False)
 	frappe.db.commit()
 
-	print(
-		f"[e2e/scw] provider {PROVIDER_NAME!r} ready: zone={config['zone']} size={size_name} key_id={key_id}"
-	)
-	return frappe.get_doc("Provider", PROVIDER_NAME)
+	print(f"[e2e/scw] Scaleway ready: zone={config['zone']} size={size_name} key_id={key_id}")
+	return "Scaleway"
 
 
 def sweep_old_scaleway_servers() -> None:

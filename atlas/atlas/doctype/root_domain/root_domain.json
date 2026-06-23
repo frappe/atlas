@@ -12,8 +12,8 @@
   "column_break_header",
   "is_active",
   "section_break_providers",
-  "domain_provider",
-  "tls_provider"
+  "domain_provider_type",
+  "tls_provider_type"
  ],
  "fields": [
   {
@@ -54,20 +54,20 @@
    "label": "Providers"
   },
   {
-   "fieldname": "domain_provider",
-   "fieldtype": "Link",
-   "label": "Domain Provider",
-   "options": "Domain Provider",
-   "reqd": 1,
-   "description": "DNS account that owns the zone (DNS-01 challenge)."
+   "fieldname": "domain_provider_type",
+   "fieldtype": "Select",
+   "label": "Domain Provider Type",
+   "options": "\nRoute53\nCloudflare",
+   "read_only": 1,
+   "description": "DNS vendor that owns the zone (DNS-01 challenge). Denormalized from Route53 Settings.domain_provider_type at insert; the DNS registry keys off it."
   },
   {
-   "fieldname": "tls_provider",
-   "fieldtype": "Link",
-   "label": "TLS Provider",
-   "options": "TLS Provider",
-   "reqd": 1,
-   "description": "Issuer that produces the wildcard certificate."
+   "fieldname": "tls_provider_type",
+   "fieldtype": "Select",
+   "label": "TLS Provider Type",
+   "options": "\nLet's Encrypt\nZeroSSL\nSelf-Managed",
+   "read_only": 1,
+   "description": "Issuer that produces the wildcard certificate. Denormalized from Atlas Settings.tls_provider_type at insert; the TLS registry keys off it."
   }
  ],
  "links": [

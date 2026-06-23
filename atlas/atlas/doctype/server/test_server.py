@@ -140,7 +140,7 @@ class TestServerArchive(IntegrationTestCase):
 	def test_archive_sets_status_archived(self) -> None:
 		from unittest.mock import MagicMock, patch
 
-		with patch("atlas.atlas.atlas_settings.providers.for_provider", return_value=MagicMock()):
+		with patch("atlas.atlas.atlas_settings.providers.for_provider_type", return_value=MagicMock()):
 			self.server.archive()
 		self.assertEqual(
 			frappe.db.get_value("Server", self.server.name, "status"),
@@ -150,7 +150,7 @@ class TestServerArchive(IntegrationTestCase):
 	def test_archive_throws_when_already_archived(self) -> None:
 		from unittest.mock import MagicMock, patch
 
-		with patch("atlas.atlas.atlas_settings.providers.for_provider", return_value=MagicMock()):
+		with patch("atlas.atlas.atlas_settings.providers.for_provider_type", return_value=MagicMock()):
 			self.server.archive()
 		self.server.reload()
 		with self.assertRaises(frappe.ValidationError):
@@ -236,12 +236,13 @@ class TestServerImmutability(IntegrationTestCase):
 			status="Active",
 		)
 
-	def test_provider_is_immutable_once_set(self) -> None:
-		other_provider = make_provider("other-provider-immut")
-		self.server.provider = other_provider.name
+	def test_provider_type_is_immutable_once_set(self) -> None:
+		# The fixture server is provisioned on DigitalOcean; switching the
+		# frozen provider_type to a different vendor must be rejected.
+		self.server.provider_type = "Scaleway"
 		with self.assertRaises(frappe.ValidationError) as raised:
 			self.server.save(ignore_permissions=True)
-		self.assertIn("provider is immutable", str(raised.exception))
+		self.assertIn("provider_type is immutable", str(raised.exception))
 
 	def test_title_is_immutable_once_set(self) -> None:
 		self.server.reload()

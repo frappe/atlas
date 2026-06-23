@@ -26,9 +26,7 @@ from atlas.tests.e2e._config import get_tls_config
 from atlas.tests.e2e._droplets import ensure_bootstrapped_server
 from atlas.tests.e2e._image import ensure_image_on_server
 from atlas.tests.e2e.use_cases.tls_issuance import (
-	_DOMAIN_PROVIDER,
 	_TEST_SUBDOMAIN,
-	_TLS_PROVIDER,
 	_allocate_and_attach,
 	_assert_inbound_https_routes_to_domain,
 	_assert_issue_task_recorded,
@@ -191,12 +189,7 @@ def teardown(proxy_vm: str, site_vm: str) -> None:
 	domain = frappe.conf.get("atlas_tls_domain")
 	for cert in frappe.get_all("TLS Certificate", filters={"root_domain": domain}, pluck="name"):
 		frappe.delete_doc("TLS Certificate", cert, force=1, ignore_permissions=True)
-	for doctype, name in (
-		("Root Domain", domain),
-		("Domain Provider", _DOMAIN_PROVIDER),
-		("TLS Provider", _TLS_PROVIDER),
-	):
-		if frappe.db.exists(doctype, name):
-			frappe.delete_doc(doctype, name, force=1, ignore_permissions=True)
+	if frappe.db.exists("Root Domain", domain):
+		frappe.delete_doc("Root Domain", domain, force=1, ignore_permissions=True)
 	frappe.db.commit()
 	print(f"[teardown] released reserved IP, terminated {proxy_vm[:8]} + {site_vm[:8]}, dropped TLS rows")

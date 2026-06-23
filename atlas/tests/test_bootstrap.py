@@ -3,11 +3,11 @@
 The end-to-end bootstrap is host-bound (it provisions real infra — that is the
 `scaleway_provisioning` e2e's job). What IS unit-answerable in milliseconds is
 the *seeding* logic `ensure_provider` does before any provision: that a
-`Scaleway` provider type seeds `Scaleway Settings`, runs the load-bearing
-catalog discover, wires the named default size/image, and fails loud when a
-named default isn't in the discovered catalog. We mock `discover()` (the only
-network call) so the test is hermetic, exactly as `test_scaleway.py` mocks the
-client.
+`Scaleway` provider type sets `Atlas Settings.provider_type`, seeds `Scaleway
+Settings`, runs the load-bearing catalog discover, wires the named default
+size/image, and fails loud when a named default isn't in the discovered catalog.
+We mock `discover()` (the only network call) so the test is hermetic, exactly as
+`test_scaleway.py` mocks the client.
 """
 
 from __future__ import annotations
@@ -63,11 +63,11 @@ def _patch_conf(overrides: dict):
 
 class TestEnsureProviderScaleway(IntegrationTestCase):
 	def setUp(self) -> None:
-		# Start from a clean slate: drop the bootstrap Provider row + any catalog
-		# rows a prior run left, so each test seeds from zero. The shared dev DB is
-		# also the test DB, so capture + restore the Singles we write (provider link
-		# + Scaleway Settings) — a committed fake left behind would break a later
-		# real provision, the same trap restore_credentials guards against.
+		# Start from a clean slate: drop any catalog rows a prior run left, so each
+		# test seeds from zero. The shared dev DB is also the test DB, so capture +
+		# restore the Singles we write (Atlas Settings.provider_type + Scaleway
+		# Settings) — a committed fake left behind would break a later real provision,
+		# the same trap restore_credentials guards against.
 		_cleanup()
 		self.addCleanup(_cleanup)
 		self.addCleanup(_restore_singles, _snapshot_singles())
@@ -83,11 +83,11 @@ class TestEnsureProviderScaleway(IntegrationTestCase):
 
 	def test_seeds_provider_settings_and_catalog(self) -> None:
 		with _patch_conf(SCALEWAY_CONFIG):
-			provider = bootstrap.ensure_provider()
+			provider_type = bootstrap.ensure_provider()
 
-		# Provider row created with the Scaleway type and pointed at by Atlas Settings.
-		self.assertEqual(provider.provider_type, "Scaleway")
-		self.assertEqual(frappe.db.get_single_value("Atlas Settings", "provider"), bootstrap.PROVIDER_NAME)
+		# ensure_provider returns the Scaleway type string and records it on Atlas Settings.
+		self.assertEqual(provider_type, "Scaleway")
+		self.assertEqual(frappe.db.get_single_value("Atlas Settings", "provider_type"), "Scaleway")
 
 		# Scaleway Settings seeded from config (the secret via the password store).
 		self.assertEqual(frappe.db.get_single_value("Scaleway Settings", "zone"), "fr-par-2")
@@ -141,7 +141,7 @@ class TestEnsureProviderValidation(IntegrationTestCase):
 
 
 _TOUCHED_SINGLES = (
-	("Atlas Settings", "provider"),
+	("Atlas Settings", "provider_type"),
 	("Scaleway Settings", "zone"),
 	("Scaleway Settings", "project_id"),
 	("Scaleway Settings", "organization_id"),
@@ -162,8 +162,6 @@ def _restore_singles(snapshot: dict) -> None:
 
 
 def _cleanup() -> None:
-	if frappe.db.exists("Provider", bootstrap.PROVIDER_NAME):
-		frappe.delete_doc("Provider", bootstrap.PROVIDER_NAME, force=True, ignore_permissions=True)
 	for size in (SIZE_SLUG, "EM-B112X-SSD", "EM-TYPO-NVME"):
 		name = f"Scaleway/{size}"
 		if frappe.db.exists("Provider Size", name):

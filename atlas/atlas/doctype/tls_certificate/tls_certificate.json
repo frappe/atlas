@@ -11,7 +11,7 @@
   "common_name",
   "status",
   "column_break_header",
-  "tls_provider",
+  "tls_provider_type",
   "issued_on",
   "expires_on",
   "section_break_paths",
@@ -51,10 +51,11 @@
    "fieldtype": "Column Break"
   },
   {
-   "fieldname": "tls_provider",
-   "fieldtype": "Link",
-   "label": "TLS Provider",
-   "options": "TLS Provider",
+   "fieldname": "tls_provider_type",
+   "fieldtype": "Select",
+   "label": "TLS Provider Type",
+   "options": "\nLet's Encrypt\nZeroSSL\nSelf-Managed",
+   "read_only": 1,
    "description": "Denormalized from the Root Domain; the issuer used."
   },
   {

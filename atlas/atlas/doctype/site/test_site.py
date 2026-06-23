@@ -56,18 +56,10 @@ def _make_atlas_user(email: str) -> str:
 
 
 def _ensure_root_domain() -> None:
-	if not frappe.db.exists("Domain Provider", "route53-site-test"):
-		frappe.get_doc(
-			{"doctype": "Domain Provider", "provider_name": "route53-site-test", "provider_type": "Route53"}
-		).insert(ignore_permissions=True)
-	if not frappe.db.exists("TLS Provider", "letsencrypt-site-test"):
-		frappe.get_doc(
-			{
-				"doctype": "TLS Provider",
-				"provider_name": "letsencrypt-site-test",
-				"provider_type": "Let's Encrypt",
-			}
-		).insert(ignore_permissions=True)
+	# The active DNS / TLS vendor types live on the Settings singles; Root Domain
+	# denormalizes them at insert.
+	frappe.db.set_single_value("Route53 Settings", "domain_provider_type", "Route53")
+	frappe.db.set_single_value("Atlas Settings", "tls_provider_type", "Let's Encrypt")
 	if not frappe.db.exists("Root Domain", ROOT_DOMAIN):
 		frappe.get_doc(
 			{
@@ -75,8 +67,8 @@ def _ensure_root_domain() -> None:
 				"domain": ROOT_DOMAIN,
 				"region": REGION,
 				"is_active": 1,
-				"domain_provider": "route53-site-test",
-				"tls_provider": "letsencrypt-site-test",
+				"domain_provider_type": "Route53",
+				"tls_provider_type": "Let's Encrypt",
 			}
 		).insert(ignore_permissions=True)
 	# Site placement resolves THE single active Root Domain, so other tests'

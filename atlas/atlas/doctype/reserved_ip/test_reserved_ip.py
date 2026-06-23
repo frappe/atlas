@@ -36,7 +36,7 @@ def _mock_host_side():
 	provider = MagicMock()
 	run_task = MagicMock(return_value=fake_task(name="task-rip"))
 	with (
-		patch.object(module, "for_provider", return_value=provider),
+		patch.object(module, "for_provider_type", return_value=provider),
 		patch.object(module, "run_task", run_task),
 	):
 		yield provider, run_task
@@ -191,7 +191,7 @@ class TestReservedIP(IntegrationTestCase):
 		# handle's timestamp is stale; reload before terminate() saves it.
 		vm.reload()
 		# terminate-vm.py (vm_module.run_task) AND the reserved-IP detach Task +
-		# vendor unbind (the reserved_ip module's run_task / for_provider) all fire;
+		# vendor unbind (the reserved_ip module's run_task / for_provider_type) all fire;
 		# patch both modules' side effects.
 		with (
 			patch.object(vm_module, "run_task", return_value=fake_task(name="task-term")),
@@ -225,7 +225,7 @@ class TestReservedIPAllocateDiscover(IntegrationTestCase):
 		provider.allocate_reserved_ip.return_value = ReservedIp(
 			ip_address="203.0.113.50", provider_resource_id="203.0.113.50"
 		)
-		with patch.object(module, "for_provider", return_value=provider):
+		with patch.object(module, "for_provider_type", return_value=provider):
 			name = module.allocate(server)
 		rip = frappe.get_doc("Reserved IP", name)
 		self.assertEqual(rip.ip_address, "203.0.113.50")
@@ -247,7 +247,7 @@ class TestReservedIPAllocateDiscover(IntegrationTestCase):
 			ReservedIp("203.0.113.62", "203.0.113.62", droplet_resource_id="droplet-2"),  # other host
 			ReservedIp("203.0.113.63", "203.0.113.63", droplet_resource_id=None),  # floating
 		]
-		with patch.object(module, "for_provider", return_value=provider):
+		with patch.object(module, "for_provider_type", return_value=provider):
 			created = module.discover(server)
 		self.assertEqual(len(created), 1)
 		new = frappe.get_doc("Reserved IP", created[0])
@@ -276,7 +276,7 @@ class TestReservedIPAllocateDiscover(IntegrationTestCase):
 		server = _ensure_test_server()
 		rip = _make_reserved_ip(server, "203.0.113.70")
 		provider = MagicMock()
-		with patch.object(module, "for_provider", return_value=provider):
+		with patch.object(module, "for_provider_type", return_value=provider):
 			rip.release()
 		provider.release_reserved_ip.assert_called_once_with("do-reserved-1")
 		self.assertFalse(frappe.db.exists("Reserved IP", rip.name))
@@ -288,7 +288,7 @@ class TestReservedIPAllocateDiscover(IntegrationTestCase):
 		with _mock_host_side():
 			rip.attach(vm.name)
 		provider = MagicMock()
-		with patch.object(module, "for_provider", return_value=provider):
+		with patch.object(module, "for_provider_type", return_value=provider):
 			with self.assertRaises(frappe.ValidationError) as raised:
 				rip.release()
 		self.assertIn("Detach", str(raised.exception))
@@ -298,9 +298,9 @@ class TestReservedIPAllocateDiscover(IntegrationTestCase):
 		# Deleting the Frappe row is a local drop; the vendor IP survives.
 		server = _ensure_test_server()
 		rip = _make_reserved_ip(server, "203.0.113.72")
-		with patch.object(module, "for_provider") as for_provider:
+		with patch.object(module, "for_provider_type") as for_provider_type:
 			frappe.delete_doc("Reserved IP", rip.name, ignore_permissions=True)
-		for_provider.assert_not_called()
+		for_provider_type.assert_not_called()
 
 	def test_delete_refuses_while_attached(self) -> None:
 		server = _ensure_test_server()

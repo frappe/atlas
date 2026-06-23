@@ -135,10 +135,10 @@ def ensure_bootstrapped_server(
 
 	# No reusable Active server. Provision fresh via the phase 3 path.
 	print("[e2e] no reusable Active server, ensuring e2e provider")
-	provider = ensure_e2e_provider()
+	provider_type = ensure_e2e_provider()
 	title = f"atlas-e2e-shared-{int(time.time())}"
-	print(f"[e2e] provisioning new server {title!r} via Provider {provider.name!r}")
-	server_name = provider.provision_server(title)
+	print(f"[e2e] provisioning new server {title!r} via provider_type {provider_type!r}")
+	server_name = frappe.get_single("Atlas Settings").provision_server(title)
 	print(f"[e2e] inserted Server {server_name!r}; enqueued finish_provisioning worker job")
 
 	deadline = time.monotonic() + 600
@@ -177,27 +177,18 @@ def ensure_bootstrapped_server(
 	return server, client, True
 
 
-def ensure_e2e_provider() -> "frappe.model.document.Document":
-	"""Seed the e2e Provider row + Atlas Settings + DigitalOcean Settings +
-	Provider Size / Provider Image rows from site config. Idempotent."""
+def ensure_e2e_provider() -> str:
+	"""Seed Atlas Settings.provider_type + DigitalOcean Settings + Provider Size /
+	Provider Image rows from site config. Returns the active provider_type.
+	Idempotent."""
 	import frappe.utils.password
 
 	from atlas.tests.fixtures import seed_catalogs
 
 	seed_catalogs()
-	name = "atlas-e2e-provider"
-	if not frappe.db.exists("Provider", name):
-		frappe.get_doc(
-			{
-				"doctype": "Provider",
-				"provider_name": name,
-				"provider_type": "DigitalOcean",
-				"is_active": 1,
-			}
-		).insert(ignore_permissions=True)
-	provider = frappe.get_doc("Provider", name)
+	provider_type = "DigitalOcean"
 
-	frappe.db.set_single_value("Atlas Settings", "provider", name, update_modified=False)
+	frappe.db.set_single_value("Atlas Settings", "provider_type", provider_type, update_modified=False)
 	frappe.db.set_single_value("Atlas Settings", "ssh_key_id", get_ssh_key_id(), update_modified=False)
 	frappe.db.set_single_value(
 		"Atlas Settings",
@@ -224,7 +215,7 @@ def ensure_e2e_provider() -> "frappe.model.document.Document":
 		)
 
 	frappe.db.commit()
-	return provider
+	return provider_type
 
 
 def _ensure_catalog_row(doctype: str, name: str, provider_type: str, slug: str) -> None:

@@ -1,8 +1,10 @@
 """TLS provider registry — twin of `atlas/atlas/providers/__init__.py`.
 
 Issuers register their `TlsProvider` subclass via `@register`. Callers ask for an
-instance via `for_tls_provider(provider_name)`, which looks up the `TLS Provider`
-DocType row, checks `is_active`, and instantiates the registered class.
+instance via `for_tls_provider_type(provider_type)`, which maps the type to its
+registered implementation class. There is no `TLS Provider` DocType row to load:
+the active issuer is `Atlas Settings.tls_provider_type`, and a `Root Domain` /
+`TLS Certificate` carries its own `tls_provider_type`.
 """
 
 from __future__ import annotations
@@ -24,19 +26,15 @@ def register(cls: type["TlsProvider"]) -> type["TlsProvider"]:
 	return cls
 
 
-def for_tls_provider(provider_name: str) -> "TlsProvider":
-	"""Return an instantiated `TlsProvider` for the given `TLS Provider` row.
+def for_tls_provider_type(provider_type: str) -> "TlsProvider":
+	"""Return an instantiated `TlsProvider` for the given `provider_type`.
 
-	Raises `frappe.ValidationError` if the row is archived (`is_active=0`)
-	or if its `provider_type` has no registered implementation.
+	Raises `frappe.ValidationError` if the type has no registered implementation.
 	"""
 	_load_implementations()
-	row = frappe.get_doc("TLS Provider", provider_name)
-	if not row.is_active:
-		frappe.throw(f"TLS Provider {provider_name!r} is archived")
-	factory = _REGISTRY.get(row.provider_type)
+	factory = _REGISTRY.get(provider_type)
 	if factory is None:
-		frappe.throw(f"No implementation for provider_type {row.provider_type!r}")
+		frappe.throw(f"No implementation for provider_type {provider_type!r}")
 	return factory()
 
 

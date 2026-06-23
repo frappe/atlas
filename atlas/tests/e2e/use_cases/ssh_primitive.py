@@ -135,8 +135,8 @@ def _check_server_bootstrap_rerun(server) -> None:
 
 def _check_connection_for_server_validation() -> None:
 	"""connection_for_server requires ipv4_address. The SSH key path now lives
-	on Atlas Settings (not Server.provider), so the legacy "no provider" guard
-	is gone."""
+	on Atlas Settings (not Server.provider_type), so the legacy "no provider"
+	guard is gone."""
 	transient = frappe.get_doc(
 		{
 			"doctype": "Server",

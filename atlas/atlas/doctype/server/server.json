@@ -9,7 +9,7 @@
  "field_order": [
   "tab_overview",
   "title",
-  "provider",
+  "provider_type",
   "column_break_header",
   "status",
   "section_break_provider_resource",
@@ -47,12 +47,13 @@
    "set_only_once": 1
   },
   {
-   "fieldname": "provider",
-   "fieldtype": "Link",
+   "fieldname": "provider_type",
+   "fieldtype": "Select",
    "in_list_view": 1,
    "in_standard_filter": 1,
-   "label": "Provider",
-   "options": "Provider",
+   "label": "Provider Type",
+   "options": "\nDigitalOcean\nScaleway\nSelf-Managed\nFake",
+   "read_only": 1,
    "reqd": 1,
    "set_only_once": 1
   },

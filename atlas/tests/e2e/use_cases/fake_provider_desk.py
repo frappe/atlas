@@ -19,8 +19,8 @@ Both with the exact argument shapes the desk sends (dialog fields ship strings).
 
 It is invoked directly (like `tls_issuance` / `self_serve_site`), not folded into
 `run_all_smoke`, because it needs no shared droplet and is self-contained: it
-creates its own Fake provider + server + image + VMs and tears them all down in a
-`finally`. Run it:
+points Atlas Settings at the Fake provider + creates its own server + image + VMs
+and tears them all down in a `finally`. Run it:
 
     bench --site fake.local execute atlas.tests.e2e.use_cases.fake_provider_desk.run
 """
@@ -38,7 +38,6 @@ from atlas.tests.e2e._tasks import expect_validation_error
 from atlas.tests.e2e.use_cases.desk_buttons import _call_button, _fake_post_request
 
 # A self-contained namespace so a run never collides with the demo fleet.
-PROVIDER_NAME = "fake-e2e"
 SERVER_TITLE = "fake-e2e-server"
 IMAGE_NAME = "fake-e2e-image"
 
@@ -55,26 +54,26 @@ def run() -> None:
 	from unittest.mock import patch
 
 	_require_developer_mode()
-	# Save the site's active provider — setup repoints it at our throwaway provider,
-	# which cleanup deletes; restore it so we never leave Atlas Settings dangling.
-	previous_provider = frappe.db.get_single_value("Atlas Settings", "provider")
+	# Save the site's active provider type — setup repoints it at the Fake vendor;
+	# restore it so we never leave Atlas Settings pointed at a dev-only provider.
+	previous_provider_type = frappe.db.get_single_value("Atlas Settings", "provider_type")
 	_cleanup()  # idempotent: clear any leftovers from a prior aborted run
 	with patch("frappe.enqueue"):
 		try:
-			provider = _setup_provider()
-			server = _provision_server_via_desk(provider)
+			_setup_provider()
+			server = _provision_server_via_desk()
 			image = _setup_image(server.name)
 			_check_server_buttons(server)
 			_check_image_buttons(server.name, image.name)
 			_check_reserved_ip_buttons(server)
 			_check_virtual_machine_lifecycle(server.name, image.name)
-			_check_fault_injection(provider, server.name, image.name)
+			_check_fault_injection(server.name, image.name)
 			print("[fake-desk] all Desk buttons OK")
 		finally:
 			_cleanup()
-			if previous_provider and frappe.db.exists("Provider", previous_provider):
+			if previous_provider_type:
 				frappe.db.set_single_value(
-					"Atlas Settings", "provider", previous_provider, update_modified=False
+					"Atlas Settings", "provider_type", previous_provider_type, update_modified=False
 				)
 				frappe.db.commit()
 
@@ -94,34 +93,22 @@ def _require_developer_mode() -> None:
 
 
 def _setup_provider():
-	"""Create + activate the Fake provider and seed its catalog via the desk's
-	Refresh Catalog button (discover_and_upsert)."""
-	if not frappe.db.exists("Provider", PROVIDER_NAME):
-		frappe.get_doc(
-			{
-				"doctype": "Provider",
-				"provider_name": PROVIDER_NAME,
-				"provider_type": FAKE_PROVIDER_TYPE,
-				"is_active": 1,
-			}
-		).insert(ignore_permissions=True)
-	frappe.db.set_single_value("Atlas Settings", "provider", PROVIDER_NAME, update_modified=False)
+	"""Activate the Fake provider on Atlas Settings and seed its catalog via the
+	desk's Refresh Catalog button (refresh_catalog)."""
+	frappe.db.set_single_value("Atlas Settings", "provider_type", FAKE_PROVIDER_TYPE, update_modified=False)
 	if not frappe.db.get_single_value("Atlas Settings", "ssh_private_key_path"):
 		frappe.db.set_single_value(
 			"Atlas Settings", "ssh_private_key_path", _throwaway_key(), update_modified=False
 		)
 	frappe.db.commit()
 
-	provider = frappe.get_doc("Provider", PROVIDER_NAME)
-
 	# Authenticate button: returns AuthResult-as-dict, ok=True for Fake.
-	result = _call_button("Provider", provider.name, "authenticate")
+	result = _call_button("Atlas Settings", "Atlas Settings", "authenticate")
 	assert result and result.get("ok"), result
 
 	# Refresh Catalog button: upserts Provider Size / Provider Image rows.
-	counts = _call_button("Provider", provider.name, "discover_and_upsert")
+	counts = _call_button("Atlas Settings", "Atlas Settings", "refresh_catalog")
 	assert counts and (counts["inserted"] or counts["updated"]), counts
-	return provider
 
 
 def _throwaway_key() -> str:
@@ -138,18 +125,18 @@ def _throwaway_key() -> str:
 	return os.path.abspath(path)
 
 
-def _provision_server_via_desk(provider):
+def _provision_server_via_desk():
 	"""Provision Server button: the dialog posts title (+ optional size/image) as
 	strings. The worker (faked) drives Pending -> Active inline here."""
 	from atlas.atlas.providers.worker import finish_provisioning
 
-	server_name = _call_button("Provider", provider.name, "provision_server", title=SERVER_TITLE)
+	server_name = _call_button("Atlas Settings", "Atlas Settings", "provision_server", title=SERVER_TITLE)
 	assert server_name, "provision_server returned no name"
 	frappe.db.commit()
 
 	# Duplicate-name negative: same title throws, no second row.
 	with expect_validation_error("already exists"):
-		_call_button("Provider", provider.name, "provision_server", title=SERVER_TITLE)
+		_call_button("Atlas Settings", "Atlas Settings", "provision_server", title=SERVER_TITLE)
 
 	# Run the worker inline (normally enqueued) so the rest of the pass has an
 	# Active server. This is the real worker path — faked SSH, real state machine.
@@ -407,11 +394,11 @@ def _check_snapshot_family(vm) -> None:
 # ----- fault injection -----------------------------------------------------
 
 
-def _check_fault_injection(provider, server_name: str, image_name: str) -> None:
-	"""The Fake provider's "fake a failed action": a provider with
+def _check_fault_injection(server_name: str, image_name: str) -> None:
+	"""The Fake provider's "fake a failed action": Atlas Settings with
 	fail_scripts="provision-vm.py" makes Provision fail through the desk exactly
 	like a real failure — the VM lands Failed and the Task is Failure."""
-	frappe.db.set_value("Provider", provider.name, "fail_scripts", "provision-vm.py")
+	frappe.db.set_value("Atlas Settings", "Atlas Settings", "fail_scripts", "provision-vm.py")
 	try:
 		vm = frappe.get_doc(
 			{
@@ -434,7 +421,7 @@ def _check_fault_injection(provider, server_name: str, image_name: str) -> None:
 		assert task.status == "Failure", task.status
 		vm.terminate()
 	finally:
-		frappe.db.set_value("Provider", provider.name, "fail_scripts", "")
+		frappe.db.set_value("Atlas Settings", "Atlas Settings", "fail_scripts", "")
 		frappe.db.commit()
 
 
@@ -484,10 +471,9 @@ def _make_running_vm(server_name: str, title: str):
 
 def _cleanup() -> None:
 	"""Remove everything this module creates, in dependency order. Idempotent."""
-	if frappe.db.exists("Provider", PROVIDER_NAME):
-		servers = frappe.get_all("Server", filters={"provider": PROVIDER_NAME}, pluck="name")
-	else:
-		servers = frappe.get_all("Server", filters={"title": SERVER_TITLE}, pluck="name")
+	servers = frappe.get_all(
+		"Server", filters={"provider_type": FAKE_PROVIDER_TYPE, "title": SERVER_TITLE}, pluck="name"
+	)
 	for ip in frappe.get_all("Reserved IP", filters={"server": ["in", servers or ["x"]]}, pluck="name"):
 		row = frappe.get_doc("Reserved IP", ip)
 		if row.virtual_machine:
@@ -500,6 +486,4 @@ def _cleanup() -> None:
 		frappe.delete_doc("Server", name, force=True, ignore_permissions=True)
 	if frappe.db.exists("Virtual Machine Image", IMAGE_NAME):
 		frappe.delete_doc("Virtual Machine Image", IMAGE_NAME, force=True, ignore_permissions=True)
-	if frappe.db.exists("Provider", PROVIDER_NAME):
-		frappe.delete_doc("Provider", PROVIDER_NAME, force=True, ignore_permissions=True)
 	frappe.db.commit()

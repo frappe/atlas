@@ -9,7 +9,7 @@ dance. Atlas *does* write the public `*.<domain>` A/AAAA records itself
 (`upsert_wildcard()`), so a client resolving `<sub>.<domain>` reaches the proxy
 fleet — that record is the durable routing entry, not a transient challenge. The
 seam mirrors the compute `Provider` ABC (`atlas/atlas/providers/base.py`): callers
-ask `for_domain_provider(name)` for an instance and never branch on `provider_type`.
+ask `for_dns_provider_type(type)` for an instance and never branch on `provider_type`.
 """
 
 from __future__ import annotations

@@ -1,10 +1,9 @@
 """Unit tests for the DNS provider registry — twin of
-`atlas/atlas/providers/test_registry.py`. Stubs `frappe.get_doc` so the registry
-shape is exercised without requiring the `Domain Provider` DocType to exist."""
+`atlas/atlas/providers/test_registry.py`. The registry maps `provider_type` →
+implementation class directly (no `Domain Provider` row to load)."""
 
 from __future__ import annotations
 
-from types import SimpleNamespace
 from unittest.mock import patch
 
 import frappe
@@ -59,31 +58,13 @@ class TestDnsProviderRegistry(IntegrationTestCase):
 		finally:
 			dns._REGISTRY.pop("DecoratorStub", None)
 
-	def test_for_domain_provider_instantiates_active_class(self) -> None:
-		row = SimpleNamespace(is_active=1, provider_type="Stub", name="route53-prod")
-		with (
-			patch.object(dns, "_load_implementations", lambda: None),
-			patch.object(frappe, "get_doc", return_value=row),
-		):
-			instance = dns.for_domain_provider("route53-prod")
+	def test_for_dns_provider_type_instantiates_registered_class(self) -> None:
+		with patch.object(dns, "_load_implementations", lambda: None):
+			instance = dns.for_dns_provider_type("Stub")
 		self.assertIsInstance(instance, _StubDnsProvider)
 
-	def test_for_domain_provider_throws_on_archived(self) -> None:
-		row = SimpleNamespace(is_active=0, provider_type="Stub", name="route53-prod")
-		with (
-			patch.object(dns, "_load_implementations", lambda: None),
-			patch.object(frappe, "get_doc", return_value=row),
-		):
+	def test_for_dns_provider_type_throws_on_unknown_type(self) -> None:
+		with patch.object(dns, "_load_implementations", lambda: None):
 			with self.assertRaises(frappe.ValidationError) as raised:
-				dns.for_domain_provider("route53-prod")
-		self.assertIn("archived", str(raised.exception))
-
-	def test_for_domain_provider_throws_on_unknown_type(self) -> None:
-		row = SimpleNamespace(is_active=1, provider_type="Unregistered", name="x")
-		with (
-			patch.object(dns, "_load_implementations", lambda: None),
-			patch.object(frappe, "get_doc", return_value=row),
-		):
-			with self.assertRaises(frappe.ValidationError) as raised:
-				dns.for_domain_provider("x")
+				dns.for_dns_provider_type("Unregistered")
 		self.assertIn("No implementation", str(raised.exception))

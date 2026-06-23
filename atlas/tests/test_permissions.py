@@ -6,7 +6,7 @@ Atlas has two audiences (see spec/11-user-ui.md):
 - **Users** hold the `Atlas User` role. They see only their own Virtual
   Machines and Snapshots, read the shared base Images, and — for the inline
   Activity panel — only the Tasks of a machine they own. They have no access
-  to Provider, Server, or the global Task log.
+  to Server or the global Task log.
 
 These tests pin both halves so a future PR that adds a DocType or relaxes a
 perms block can't silently widen access. The row-level scoping is enforced by
@@ -118,13 +118,6 @@ class TestPermissions(IntegrationTestCase):
 
 	# ----- operator-side contract (unchanged) -----------------------------
 
-	def test_only_system_manager_can_read_provider(self) -> None:
-		frappe.set_user(self.basic_user)
-		self.assertFalse(
-			frappe.has_permission("Provider", "read", doc=self.provider.name),
-			"basic user must not be able to read Provider",
-		)
-
 	def test_api_token_not_in_get_doc_response(self) -> None:
 		import frappe.utils.password
 
@@ -222,7 +215,7 @@ class TestPermissions(IntegrationTestCase):
 		names = {row.name for row in frappe.get_list("Virtual Machine", limit_page_length=0)}
 		self.assertIn(vm_a.name, names, "user A's list must include their own VM")
 
-	def test_atlas_user_denied_provider_and_server(self) -> None:
+	def test_atlas_user_denied_server(self) -> None:
 		user_a = _make_atlas_user(USER_A_EMAIL)
 		server = make_server(
 			self.provider,
@@ -232,10 +225,6 @@ class TestPermissions(IntegrationTestCase):
 			ipv6_virtual_machine_range="2001:db8:1::/124",
 		)
 		frappe.set_user(user_a)
-		self.assertFalse(
-			frappe.has_permission("Provider", "read", doc=self.provider.name),
-			"Atlas User must not read Provider",
-		)
 		self.assertFalse(
 			frappe.has_permission("Server", "read", doc=server.name),
 			"Atlas User must not read Server",

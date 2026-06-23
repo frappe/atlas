@@ -231,7 +231,7 @@ def _bake_status(local_image: str | None) -> str:
 
 def _disable_missing(doctype: str, seen: set[str]) -> int:
 	"""Set enabled=0 on rows Central no longer lists. Mirrors the disable pass
-	in provider.upsert_catalog so a removed size/image stops being offered
+	in provisioning.upsert_catalog so a removed size/image stops being offered
 	without deleting its history."""
 	disabled = 0
 	for name in frappe.get_all(doctype, filters={"enabled": 1}, pluck="name"):

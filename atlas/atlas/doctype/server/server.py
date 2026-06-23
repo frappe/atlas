@@ -13,7 +13,7 @@ from atlas.atlas.task_results import parse_result
 
 IMMUTABLE_AFTER_INSERT = (
 	"title",
-	"provider",
+	"provider_type",
 	"provider_resource_id",
 	"size",
 	"image",
@@ -72,13 +72,18 @@ class Server(Document):
 
 	@frappe.whitelist()
 	def archive(self) -> None:
-		"""Destroy the vendor resource (idempotent), then mark Archived."""
-		import atlas
+		"""Destroy the vendor resource (idempotent), then mark Archived.
+
+		Resolve the vendor by the Server's OWN frozen `provider_type`, not the active
+		one (`atlas.get_provider()`) — a host outlives a vendor switch, so destroy()
+		must hit the client that owns the resource. Mirrors `reserved_ip.py`'s
+		`_provider_for_server`."""
+		from atlas.atlas.providers import for_provider_type
 
 		if self.status == "Archived":
 			frappe.throw(_("Server is already archived"))
 		if self.provider_resource_id:
-			atlas.get_provider().destroy(self.provider_resource_id)
+			for_provider_type(self.provider_type).destroy(self.provider_resource_id)
 		frappe.db.set_value(self.doctype, self.name, "status", "Archived")
 
 	@frappe.whitelist()

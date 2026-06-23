@@ -5,11 +5,27 @@
  "editable_grid": 0,
  "engine": "InnoDB",
  "field_order": [
+  "domain_provider_type",
+  "section_break_credentials",
   "access_key_id",
   "secret_access_key",
   "region"
  ],
  "fields": [
+  {
+   "default": "Route53",
+   "fieldname": "domain_provider_type",
+   "fieldtype": "Select",
+   "label": "Domain Provider Type",
+   "options": "\nRoute53\nCloudflare",
+   "reqd": 1,
+   "description": "The active DNS vendor. The DNS registry maps this to the registered DnsProvider; Root Domain denormalizes it at insert. Only Route53 is implemented."
+  },
+  {
+   "fieldname": "section_break_credentials",
+   "fieldtype": "Section Break",
+   "label": "Credentials"
+  },
   {
    "fieldname": "access_key_id",
    "fieldtype": "Data",

@@ -54,6 +54,7 @@ from types import SimpleNamespace
 import frappe
 from frappe.handler import run_doc_method
 
+from atlas.atlas import providers
 from atlas.atlas.digitalocean import DigitalOceanError
 from atlas.tests.e2e._shared import (
 	ensure_image_on_server,
@@ -160,16 +161,20 @@ def _call_button(doctype: str, name: str, method: str, **kwargs) -> object:
 	return frappe.response.get("message")
 
 
-# ----- Provider ------------------------------------------------------------
+# ----- Provider (Atlas Settings) -------------------------------------------
 
 
 def _check_provider_buttons(server) -> None:
-	"""Authenticate and Provision Server (happy + duplicate name)."""
-	provider = frappe.get_doc("Provider", server.provider)
+	"""Authenticate and Provision Server (happy + duplicate name). The provider
+	buttons live on the `Atlas Settings` Single (docname "Atlas Settings"); it
+	keys off `provider_type` to pick the compute vendor."""
+	# Resolving the vendor impl is a smoke check that the Server's denormalized
+	# provider_type maps to a registered provider.
+	providers.for_provider_type(server.provider_type)
 
 	# Authenticate: returns AuthResult-as-dict; either ok=True or ok=False
 	# with an error message (e.g. for a bogus token).
-	result = _call_button("Provider", provider.name, "authenticate")
+	result = _call_button("Atlas Settings", "Atlas Settings", "authenticate")
 	assert result and "ok" in result, result
 	if not result["ok"]:
 		error = result.get("error") or ""
@@ -179,8 +184,8 @@ def _check_provider_buttons(server) -> None:
 	# (The shared server's title is guaranteed to exist.)
 	with expect_validation_error("already exists"):
 		_call_button(
-			"Provider",
-			provider.name,
+			"Atlas Settings",
+			"Atlas Settings",
 			"provision_server",
 			title=server.title,
 		)
@@ -189,7 +194,7 @@ def _check_provider_buttons(server) -> None:
 	# account's droplets, and the shared bootstrapped server — which Atlas already
 	# models — must come back flagged imported=true. Inserts nothing; a host fact
 	# that list_servers() hits the real account through the desk HTTP wrapper.
-	discovered = _call_button("Provider", provider.name, "discover_servers")
+	discovered = _call_button("Atlas Settings", "Atlas Settings", "discover_servers")
 	assert isinstance(discovered, list), discovered
 	by_id = {row["provider_resource_id"]: row for row in discovered}
 	assert server.provider_resource_id in by_id, (
@@ -204,8 +209,8 @@ def _check_provider_buttons(server) -> None:
 	import json as _json
 
 	imported = _call_button(
-		"Provider",
-		provider.name,
+		"Atlas Settings",
+		"Atlas Settings",
 		"import_servers",
 		resource_ids=_json.dumps([server.provider_resource_id]),
 	)
@@ -552,34 +557,22 @@ def _check_provision_server_bad_token() -> None:
 	droplet leaks, because the throw happens before the row insert.
 
 	This path covers the DO-API-rejects-us branch the operator hit when
-	their token had expired. We temporarily swap `Atlas Settings.provider`
-	to a throwaway Provider row and clobber `DigitalOcean Settings.api_token`
-	with a bogus value, then restore both. The mutation is shared state,
-	so this test cannot run in parallel with other use cases — a guard
-	rail if e2e parallelism ever lands.
+	their token had expired. We temporarily flip `Atlas Settings.provider_type`
+	to DigitalOcean and clobber `DigitalOcean Settings.api_token` with a bogus
+	value, then restore both. The mutation is shared state, so this test cannot
+	run in parallel with other use cases — a guard rail if e2e parallelism ever
+	lands.
 	"""
 	import frappe.utils.password
 
-	provider_name = "atlas-e2e-bogus-token"
-	if not frappe.db.exists("Provider", provider_name):
-		frappe.get_doc(
-			{
-				"doctype": "Provider",
-				"provider_name": provider_name,
-				"provider_type": "DigitalOcean",
-				"is_active": 1,
-			}
-		).insert(ignore_permissions=True)
-		frappe.db.commit()
-
-	previous_provider = frappe.db.get_single_value("Atlas Settings", "provider")
+	previous_provider_type = frappe.db.get_single_value("Atlas Settings", "provider_type")
 	previous_token = frappe.utils.password.get_decrypted_password(
 		"DigitalOcean Settings",
 		"DigitalOcean Settings",
 		"api_token",
 		raise_exception=False,
 	)
-	frappe.db.set_single_value("Atlas Settings", "provider", provider_name, update_modified=False)
+	frappe.db.set_single_value("Atlas Settings", "provider_type", "DigitalOcean", update_modified=False)
 	frappe.utils.password.set_encrypted_password(
 		"DigitalOcean Settings",
 		"DigitalOcean Settings",
@@ -592,8 +585,8 @@ def _check_provision_server_bad_token() -> None:
 	caught = False
 	try:
 		_call_button(
-			"Provider",
-			provider_name,
+			"Atlas Settings",
+			"Atlas Settings",
 			"provision_server",
 			title=target_title,
 		)
@@ -602,8 +595,10 @@ def _check_provision_server_bad_token() -> None:
 		message = str(exception).lower()
 		assert "401" in message or "403" in message or "unauthorized" in message, message
 	finally:
-		if previous_provider:
-			frappe.db.set_single_value("Atlas Settings", "provider", previous_provider, update_modified=False)
+		if previous_provider_type:
+			frappe.db.set_single_value(
+				"Atlas Settings", "provider_type", previous_provider_type, update_modified=False
+			)
 		if previous_token:
 			frappe.utils.password.set_encrypted_password(
 				"DigitalOcean Settings",
@@ -622,9 +617,9 @@ def _check_provision_server_bad_token() -> None:
 
 
 def _check_tls_buttons() -> None:
-	"""Domain Provider / TLS Provider / Root Domain / TLS Certificate buttons,
-	all through `run_doc_method` — the desk-layer regression net (a method that
-	stops being whitelisted, an arg name that diverges from the JS).
+	"""Route53 Settings / Lets Encrypt Settings / Root Domain / TLS Certificate
+	buttons, all through `run_doc_method` — the desk-layer regression net (a method
+	that stops being whitelisted, an arg name that diverges from the JS).
 
 	The external edges are mocked so this needs no certbot, no AWS, no proxy VM:
 	the TLS provider's `issue()` returns canned PEM paths and `proxy.push_cert` is
@@ -640,23 +635,21 @@ def _check_tls_buttons() -> None:
 	stamp = int(time.time())
 	domain = f"e2e-{stamp}.frappe.dev"
 	region = f"e2e-{stamp}"
-	dp_name = "atlas-e2e-route53"
-	tp_name = "atlas-e2e-letsencrypt"
 	created_certs: list[str] = []
 
 	def _cleanup() -> None:
 		for cert in created_certs:
 			if frappe.db.exists("TLS Certificate", cert):
 				frappe.delete_doc("TLS Certificate", cert, force=1, ignore_permissions=True)
-		for dt, name in (("Root Domain", domain), ("Domain Provider", dp_name), ("TLS Provider", tp_name)):
-			if frappe.db.exists(dt, name):
-				frappe.delete_doc(dt, name, force=1, ignore_permissions=True)
+		if frappe.db.exists("Root Domain", domain):
+			frappe.delete_doc("Root Domain", domain, force=1, ignore_permissions=True)
 		frappe.db.commit()
 
 	_cleanup()
 	# Dummy provider credentials so Test Connection runs its real auth path (and
 	# fails cleanly on the bogus creds / missing boto3) rather than throwing on a
-	# missing-secret read. Mirrors the operator order: configure, then test.
+	# missing-secret read. Mirrors the operator order: configure, then test. The
+	# Settings *_type fields name the active vendors the Root Domain denormalizes.
 	# `from … import` (not `import frappe.utils.password`) so we don't rebind the
 	# module-level `frappe` to a function local — the _cleanup closure reads it.
 	from frappe.utils.password import set_encrypted_password
@@ -665,36 +658,32 @@ def _check_tls_buttons() -> None:
 		"Route53 Settings", "Route53 Settings", "atlas-e2e-bogus-secret", "secret_access_key"
 	)
 	frappe.db.set_single_value("Route53 Settings", "access_key_id", "AKIAE2EBOGUS", update_modified=False)
+	frappe.db.set_single_value("Route53 Settings", "domain_provider_type", "Route53", update_modified=False)
 	frappe.db.set_single_value(
 		"Lets Encrypt Settings", "account_email", "e2e@frappe.dev", update_modified=False
 	)
 	frappe.db.set_single_value("Lets Encrypt Settings", "agree_tos", 1, update_modified=False)
+	frappe.db.set_single_value("Atlas Settings", "tls_provider_type", "Let's Encrypt", update_modified=False)
 	frappe.db.commit()
 
-	frappe.get_doc(
-		{"doctype": "Domain Provider", "provider_name": dp_name, "provider_type": "Route53"}
-	).insert(ignore_permissions=True)
-	frappe.get_doc(
-		{"doctype": "TLS Provider", "provider_name": tp_name, "provider_type": "Let's Encrypt"}
-	).insert(ignore_permissions=True)
 	frappe.get_doc(
 		{
 			"doctype": "Root Domain",
 			"domain": domain,
 			"region": region,
-			"domain_provider": dp_name,
-			"tls_provider": tp_name,
+			"domain_provider_type": "Route53",
+			"tls_provider_type": "Let's Encrypt",
 		}
 	).insert(ignore_permissions=True)
 	frappe.db.commit()
 
 	try:
-		# Test Connection on both providers: AuthResult-as-dict with an "ok" key.
-		# Real AWS/ACME isn't configured here, so ok is allowed to be False with an
-		# error — what matters is the wrapper returns the dict shape.
-		for provider_dt, provider_name in (("Domain Provider", dp_name), ("TLS Provider", tp_name)):
-			result = _call_button(provider_dt, provider_name, "authenticate")
-			assert result and "ok" in result, (provider_dt, result)
+		# Test Connection on both Settings Singles: AuthResult-as-dict with an "ok"
+		# key. Real AWS/ACME isn't configured here, so ok is allowed to be False with
+		# an error — what matters is the wrapper returns the dict shape.
+		for settings_dt in ("Route53 Settings", "Lets Encrypt Settings"):
+			result = _call_button(settings_dt, settings_dt, "test_connection")
+			assert result and "ok" in result, (settings_dt, result)
 
 		# Issue / Renew Certificate on Root Domain: creates the cert and runs the
 		# issue chain (mocked issuer + mocked push). Returns the cert name.
@@ -705,7 +694,7 @@ def _check_tls_buttons() -> None:
 			not_after="2026-09-06 00:00:00",
 		)
 		with (
-			patch.object(cert_module.tls, "for_tls_provider") as tls_for,
+			patch.object(cert_module.tls, "for_tls_provider_type") as tls_for,
 			patch.object(cert_module.proxy, "push_cert"),
 			# /dev/null isn't a readable PEM; short-circuit the on-disk read.
 			patch.object(cert_module, "_read_pem", return_value="PEM"),
@@ -719,11 +708,5 @@ def _check_tls_buttons() -> None:
 			# region, so the result is an empty list — but the wrapper + read path run.
 			pushed = _call_button("TLS Certificate", cert_name, "push_to_proxies")
 			assert pushed == [], pushed
-
-		# Archive flips is_active on both providers (the danger button).
-		_call_button("Domain Provider", dp_name, "archive")
-		assert not frappe.db.get_value("Domain Provider", dp_name, "is_active")
-		_call_button("TLS Provider", tp_name, "archive")
-		assert not frappe.db.get_value("TLS Provider", tp_name, "is_active")
 	finally:
 		_cleanup()

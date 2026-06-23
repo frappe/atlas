@@ -30,6 +30,12 @@ class Tenant(Document):
 	def autoname(self) -> None:
 		self.name = str(uuid.uuid4())
 
+	def before_insert(self) -> None:
+		# Central often omits `title`; default it so Desk lists read by a name, not a
+		# UUID. Editable afterwards (unlike `email` / `central_reference`).
+		if not self.title:
+			self.title = (self.email or "").strip().lower() or self.central_reference
+
 	def validate(self) -> None:
 		self.email = (self.email or "").strip().lower()
 		self._validate_immutability()

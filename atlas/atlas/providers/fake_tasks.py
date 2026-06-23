@@ -36,13 +36,10 @@ RESULT_MARKER = "ATLAS_RESULT="
 
 
 def is_fake_server(server_name: str | None) -> bool:
-	"""True iff `server_name`'s Provider is of type Fake. Two cheap reads."""
+	"""True iff `server_name`'s provider_type is Fake. One cheap read."""
 	if not server_name:
 		return False
-	provider = frappe.db.get_value("Server", server_name, "provider")
-	if not provider:
-		return False
-	return frappe.db.get_value("Provider", provider, "provider_type") == FAKE_PROVIDER_TYPE
+	return frappe.db.get_value("Server", server_name, "provider_type") == FAKE_PROVIDER_TYPE
 
 
 @dataclasses.dataclass(frozen=True)
@@ -109,15 +106,16 @@ def _elapsed_ms(start: float) -> int:
 # Two converging sources, simplest first:
 #   1. `frappe.flags.fake_fail` — a per-call override for tests. Either a script
 #      name (str), an iterable of names, or a dict {"script": ..., "reason": ...}.
-#   2. `Provider.fail_scripts` — a persistent, operator-facing list on the Fake
-#      provider row (comma/newline separated, or "*" for every script).
+#   2. `Atlas Settings.fail_scripts` — a persistent, developer-facing list on the
+#      Single (comma/newline separated, or "*" for every script). Only meaningful
+#      when provider_type is Fake.
 
 
 def _should_fail(server: str, script: str) -> _Failure | None:
 	flagged = _flag_failure(script)
 	if flagged is not None:
 		return flagged
-	return _configured_failure(server, script)
+	return _configured_failure(script)
 
 
 def _flag_failure(script: str) -> _Failure | None:
@@ -138,9 +136,8 @@ def _flag_failure(script: str) -> _Failure | None:
 	return None
 
 
-def _configured_failure(server: str, script: str) -> _Failure | None:
-	provider = frappe.db.get_value("Server", server, "provider")
-	raw = frappe.db.get_value("Provider", provider, "fail_scripts") if provider else None
+def _configured_failure(script: str) -> _Failure | None:
+	raw = frappe.db.get_single_value("Atlas Settings", "fail_scripts")
 	names = _parse_script_list(raw)
 	if "*" in names or script in names:
 		return _Failure(f"Fake provider configured to fail {script}")

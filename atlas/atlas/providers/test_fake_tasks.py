@@ -143,14 +143,14 @@ class TestFaultInjection(_FakeServerCase):
 		finally:
 			frappe.flags.fake_fail = None
 
-	def test_configured_fail_scripts_on_provider(self) -> None:
-		frappe.db.set_value("Provider", self.provider.name, "fail_scripts", "snapshot-vm.py")
+	def test_configured_fail_scripts_on_settings(self) -> None:
+		frappe.db.set_single_value("Atlas Settings", "fail_scripts", "snapshot-vm.py")
 		with self.assertRaises(frappe.ValidationError):
 			run_task(server=self.server.name, script="snapshot-vm.py", variables={"DISK_GB": "4"})
 		# A different script on the same server still succeeds.
 		task = run_task(server=self.server.name, script="start-vm.py", variables={})
 		self.assertEqual(task.status, "Success")
-		frappe.db.set_value("Provider", self.provider.name, "fail_scripts", "")
+		frappe.db.set_single_value("Atlas Settings", "fail_scripts", "")
 
 	def test_parse_script_list_handles_commas_and_newlines(self) -> None:
 		self.assertEqual(_parse_script_list("a.py, b.py\nc.py"), {"a.py", "b.py", "c.py"})

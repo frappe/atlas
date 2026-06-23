@@ -1,7 +1,7 @@
 import frappe
 from frappe.model.document import Document
 
-from atlas.atlas.providers import for_provider
+from atlas.atlas.providers import for_provider_type
 from atlas.atlas.ssh import run_task
 
 # The IP belongs to the Server for its lifetime; only the VM attachment moves.
@@ -144,10 +144,10 @@ class ReservedIP(Document):
 
 def _provider_for_server(server: str):
 	"""Resolve the Provider for a Reserved IP via its Server. Reserved IPs are
-	per-Server, so we use the Server's own provider rather than the globally
-	active one (`atlas.get_provider()`) — correct even with several providers."""
-	provider_name = frappe.db.get_value("Server", server, "provider")
-	return for_provider(provider_name)
+	per-Server, so we use the Server's own provider_type rather than the globally
+	active one (`atlas.get_provider()`) — correct even after a vendor switch."""
+	provider_type = frappe.db.get_value("Server", server, "provider_type")
+	return for_provider_type(provider_type)
 
 
 @frappe.whitelist()

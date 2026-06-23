@@ -1,6 +1,6 @@
 """Use case: provision a Firecracker host.
 
-Operator clicks "Provision Server" on a `Provider`. The button calls
+Operator clicks "Provision Server" on `Atlas Settings`. The button calls
 DO to create a droplet, inserts a `Server` row, waits for SSH, runs
 `bootstrap-server.py`, and parses the JSON tail-line back onto the row.
 
@@ -13,7 +13,7 @@ This module exercises:
   loadable, root keeps key-only login. See spec/03-bootstrapping.md.
 - The validation throws that guard the same code path
   ([run_against_shared](#run_against_shared)):
-  - `Provider.authenticate()` (token works or 403s cleanly).
+  - `Provider.authenticate()` for the Server's vendor (token works or 403s cleanly).
   - `provision_server` rejects a duplicate name.
   - `Server.bootstrap()` from a non-Active status throws.
   - `Server.get_scripts()` returns the catalogue.
@@ -29,6 +29,7 @@ import traceback
 
 import frappe
 
+from atlas.atlas import providers
 from atlas.atlas.ssh import run_task
 from atlas.tests.e2e._shared import (
 	cleanup_droplet,
@@ -46,12 +47,12 @@ def run() -> None:
 	client = get_client()
 	sweep_old_droplets(client)
 
-	provider = ensure_e2e_provider()
+	ensure_e2e_provider()
 	title = f"atlas-e2e-fresh-{int(time.time())}"
 	server_doc = None
 
 	try:
-		server_name = provider.provision_server(title)
+		server_name = frappe.get_single("Atlas Settings").provision_server(title)
 		server_doc = _wait_for_status(server_name, target={"Active", "Broken"}, timeout=600)
 		assert server_doc.status == "Active", f"expected Active, got {server_doc.status}"
 		assert server_doc.firecracker_version, "firecracker_version not recorded"
@@ -180,7 +181,7 @@ def _assert_pool_present(server_name: str) -> None:
 def _check_test_connection(server) -> None:
 	"""authenticate() returns AuthResult. Either ok=True or ok=False with
 	an explanatory error message; both drive the same code path."""
-	provider = frappe.get_doc("Provider", server.provider)
+	provider = providers.for_provider_type(server.provider_type)
 	result = provider.authenticate()
 	assert "ok" in result, result
 	if not result["ok"]:
@@ -189,10 +190,9 @@ def _check_test_connection(server) -> None:
 
 
 def _check_provision_server_duplicate_name(server) -> None:
-	provider = frappe.get_doc("Provider", server.provider)
 	caught = False
 	try:
-		provider.provision_server(server.title)
+		frappe.get_single("Atlas Settings").provision_server(server.title)
 	except frappe.ValidationError as exception:
 		caught = "already exists" in str(exception).lower()
 	assert caught, "provision_server with duplicate title should have raised"

@@ -59,9 +59,9 @@ def run(reuse: bool = True, keep: bool = True) -> None:
 	"""
 	start = time.monotonic()
 	sweep_old_scaleway_servers()
-	provider = ensure_scaleway_provider()
+	provider_type = ensure_scaleway_provider()
 
-	server, created_now = _ensure_active_server(provider, reuse=reuse)
+	server, created_now = _ensure_active_server(provider_type, reuse=reuse)
 	try:
 		_assert_bootstrap_succeeded(server.name)
 		_assert_pool_present(server.name)
@@ -98,8 +98,8 @@ def provision_only(reuse: bool = True) -> None:
 	      atlas.tests.e2e.use_cases.scaleway_provisioning.provision_only
 	"""
 	sweep_old_scaleway_servers()
-	provider = ensure_scaleway_provider()
-	server, _created = _ensure_active_server(provider, reuse=reuse)
+	provider_type = ensure_scaleway_provider()
+	server, _created = _ensure_active_server(provider_type, reuse=reuse)
 	_assert_bootstrap_succeeded(server.name)
 	_assert_pool_present(server.name)
 	print(f"[e2e/scw] host {server.name} Active at {server.ipv4_address} — bootstrap + pool OK")
@@ -108,13 +108,13 @@ def provision_only(reuse: bool = True) -> None:
 # ----- server bring-up ------------------------------------------------------
 
 
-def _ensure_active_server(provider, reuse: bool):
+def _ensure_active_server(provider_type: str, reuse: bool):
 	"""Return (server_doc, created_now). Reuse an Active+reachable Scaleway
 	server, else provision a fresh bare-metal box and poll it to Active."""
 	if reuse:
 		existing = frappe.get_all(
 			"Server",
-			filters={"status": "Active", "provider": provider.name},
+			filters={"status": "Active", "provider_type": provider_type},
 			pluck="name",
 		)
 		for name in existing:
@@ -124,7 +124,7 @@ def _ensure_active_server(provider, reuse: bool):
 
 	title = f"atlas-e2e-scw-{int(time.time())}"
 	print(f"[e2e/scw] provisioning {title!r} (bare-metal install can take minutes)")
-	server_name = provider.provision_server(title)
+	server_name = frappe.get_single("Atlas Settings").provision_server(title)
 	server = _wait_for_status(server_name, {"Active", "Broken"}, READY_TIMEOUT_SECONDS)
 	if server.status != "Active":
 		raise AssertionError(f"server {server_name} ended {server.status}, expected Active")
@@ -391,10 +391,10 @@ def keep_flexible_ips(server_title: str = "") -> None:
 	      atlas.tests.e2e.use_cases.scaleway_provisioning.keep_flexible_ips
 	"""
 	from atlas.tests.e2e._config import get_scaleway_config
-	from atlas.tests.e2e._scaleway import PROVIDER_NAME, scaleway_client
+	from atlas.tests.e2e._scaleway import scaleway_client
 
 	config = get_scaleway_config()
-	filters = {"provider": PROVIDER_NAME, "status": "Active"}
+	filters = {"provider_type": "Scaleway", "status": "Active"}
 	if server_title:
 		filters["title"] = server_title
 	rows = frappe.get_all("Server", filters=filters, fields=["name", "provider_resource_id", "ipv4_address"])
@@ -418,12 +418,10 @@ def keep_flexible_ips(server_title: str = "") -> None:
 def teardown() -> None:
 	"""Delete every Active Scaleway e2e server (and warn on tagged leaks). The
 	operator runs this to drop the box `run` left up."""
-	from atlas.tests.e2e._scaleway import PROVIDER_NAME
-
 	sweep_old_scaleway_servers()
 	rows = frappe.get_all(
 		"Server",
-		filters={"provider": PROVIDER_NAME},
+		filters={"provider_type": "Scaleway"},
 		fields=["name", "provider_resource_id", "status"],
 	)
 	if not rows:

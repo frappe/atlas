@@ -6,7 +6,10 @@
  "engine": "InnoDB",
  "field_order": [
   "section_break_provider",
-  "provider",
+  "provider_type",
+  "column_break_provider",
+  "tls_provider_type",
+  "fail_scripts",
   "section_break_user_dashboard",
   "default_user_image",
   "default_bench_snapshot",
@@ -26,12 +29,30 @@
    "label": "Active provider"
   },
   {
-   "fieldname": "provider",
-   "fieldtype": "Link",
-   "label": "Provider",
-   "options": "Provider",
+   "fieldname": "provider_type",
+   "fieldtype": "Select",
+   "label": "Provider Type",
+   "options": "\nDigitalOcean\nScaleway\nSelf-Managed\nFake",
    "reqd": 1,
-   "description": "The currently-active Provider. atlas.get_provider() reads this."
+   "description": "The active compute vendor. atlas.get_provider() maps this to the registered Provider implementation. Switching it is refused while any non-Archived Server was provisioned through a different vendor."
+  },
+  {
+   "fieldname": "column_break_provider",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "tls_provider_type",
+   "fieldtype": "Select",
+   "label": "TLS Provider Type",
+   "options": "\nLet's Encrypt\nZeroSSL\nSelf-Managed",
+   "description": "The active certificate issuer. The TLS registry maps this to the registered TlsProvider; Root Domain / TLS Certificate denormalize it at insert. Pairs with Lets Encrypt Settings for the ACME account."
+  },
+  {
+   "fieldname": "fail_scripts",
+   "fieldtype": "Small Text",
+   "label": "Fail Scripts",
+   "depends_on": "eval:doc.provider_type==\"Fake\"",
+   "description": "Developer-mode fault injection (Fake provider only). Comma/newline-separated script names whose Tasks should be made to FAIL; `*` fails every script."
   },
   {
    "fieldname": "section_break_user_dashboard",

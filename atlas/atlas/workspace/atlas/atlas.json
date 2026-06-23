@@ -34,16 +34,6 @@
   {
    "hidden": 0,
    "is_query_report": 0,
-   "label": "Provider",
-   "link_count": 0,
-   "link_to": "Provider",
-   "link_type": "DocType",
-   "onboard": 0,
-   "type": "Link"
-  },
-  {
-   "hidden": 0,
-   "is_query_report": 0,
    "label": "Provider Size",
    "link_count": 0,
    "link_to": "Provider Size",
@@ -84,6 +74,16 @@
   {
    "hidden": 0,
    "is_query_report": 0,
+   "label": "Scaleway Settings",
+   "link_count": 0,
+   "link_to": "Scaleway Settings",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
    "label": "Server",
    "link_count": 0,
    "link_to": "Server",
@@ -112,16 +112,6 @@
   {
    "hidden": 0,
    "is_query_report": 0,
-   "label": "Domain Provider",
-   "link_count": 0,
-   "link_to": "Domain Provider",
-   "link_type": "DocType",
-   "onboard": 0,
-   "type": "Link"
-  },
-  {
-   "hidden": 0,
-   "is_query_report": 0,
    "label": "Root Domain",
    "link_count": 0,
    "link_to": "Root Domain",
@@ -142,9 +132,9 @@
   {
    "hidden": 0,
    "is_query_report": 0,
-   "label": "TLS Provider",
+   "label": "Subdomain Denylist",
    "link_count": 0,
-   "link_to": "TLS Provider",
+   "link_to": "Subdomain Denylist",
    "link_type": "DocType",
    "onboard": 0,
    "type": "Link"
@@ -175,6 +165,16 @@
    "label": "Route53 Settings",
    "link_count": 0,
    "link_to": "Route53 Settings",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Bench Routing Audit",
+   "link_count": 0,
+   "link_to": "Bench Routing Audit",
    "link_type": "DocType",
    "onboard": 0,
    "type": "Link"
@@ -213,6 +213,54 @@
    "label": "SSH Key",
    "link_count": 0,
    "link_to": "SSH Key",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Central",
+   "link_count": 4,
+   "onboard": 0,
+   "type": "Card Break"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Tenant",
+   "link_count": 0,
+   "link_to": "Tenant",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Central Settings",
+   "link_count": 0,
+   "link_to": "Central Settings",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Central Image",
+   "link_count": 0,
+   "link_to": "Central Image",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Central Size",
+   "link_count": 0,
+   "link_to": "Central Size",
    "link_type": "DocType",
    "onboard": 0,
    "type": "Link"

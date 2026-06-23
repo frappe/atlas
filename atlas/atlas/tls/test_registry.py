@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-from types import SimpleNamespace
 from unittest.mock import patch
 
 import frappe
@@ -36,33 +35,15 @@ class TestTlsProviderRegistry(IntegrationTestCase):
 	def tearDown(self) -> None:
 		tls._REGISTRY.pop("Stub", None)
 
-	def test_for_tls_provider_instantiates_active_class(self) -> None:
-		row = SimpleNamespace(is_active=1, provider_type="Stub", name="letsencrypt-prod")
-		with (
-			patch.object(tls, "_load_implementations", lambda: None),
-			patch.object(frappe, "get_doc", return_value=row),
-		):
-			instance = tls.for_tls_provider("letsencrypt-prod")
+	def test_for_tls_provider_type_instantiates_registered_class(self) -> None:
+		with patch.object(tls, "_load_implementations", lambda: None):
+			instance = tls.for_tls_provider_type("Stub")
 		self.assertIsInstance(instance, _StubTlsProvider)
 
-	def test_for_tls_provider_throws_on_archived(self) -> None:
-		row = SimpleNamespace(is_active=0, provider_type="Stub", name="letsencrypt-prod")
-		with (
-			patch.object(tls, "_load_implementations", lambda: None),
-			patch.object(frappe, "get_doc", return_value=row),
-		):
+	def test_for_tls_provider_type_throws_on_unknown_type(self) -> None:
+		with patch.object(tls, "_load_implementations", lambda: None):
 			with self.assertRaises(frappe.ValidationError) as raised:
-				tls.for_tls_provider("letsencrypt-prod")
-		self.assertIn("archived", str(raised.exception))
-
-	def test_for_tls_provider_throws_on_unknown_type(self) -> None:
-		row = SimpleNamespace(is_active=1, provider_type="Unregistered", name="x")
-		with (
-			patch.object(tls, "_load_implementations", lambda: None),
-			patch.object(frappe, "get_doc", return_value=row),
-		):
-			with self.assertRaises(frappe.ValidationError) as raised:
-				tls.for_tls_provider("x")
+				tls.for_tls_provider_type("Unregistered")
 		self.assertIn("No implementation", str(raised.exception))
 
 	def test_real_implementations_register(self) -> None:

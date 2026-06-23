@@ -1,21 +1,18 @@
-"""Provider DocType — thin link table over the provider abstraction.
+"""Server provisioning helpers — the behavior the old `Provider` controller owned.
 
-The previous polymorphic blob (creds + defaults + key path) is gone; this
-controller stores only `provider_name` / `provider_type` / `is_active` and
-delegates `authenticate` / `discover_and_upsert` / `provision_server` to
-the registered Provider implementation
-([atlas.atlas.providers](../../providers/)).
+The `Provider` DocType is gone: the active vendor is `Atlas Settings.provider_type`
+and a Server carries its own `provider_type` (denormalized at insert). These
+helpers are driven from the `Atlas Settings` form's Provision / Discover buttons
+and from `bootstrap.py`. They resolve the implementation through the registry
+(`providers.for_provider_type`) and never branch on the vendor type themselves.
 """
 
 from __future__ import annotations
 
-import dataclasses
 import json
 from typing import Any
 
 import frappe
-from frappe import _
-from frappe.model.document import Document
 
 from atlas.atlas import providers
 from atlas.atlas.providers.base import (
@@ -23,80 +20,6 @@ from atlas.atlas.providers.base import (
 	ProvisionRequest,
 	ServerNetworking,
 )
-
-IMMUTABLE_AFTER_INSERT = ("provider_name", "provider_type")
-
-
-class Provider(Document):
-	def validate(self) -> None:
-		self._validate_immutability()
-
-	def _validate_immutability(self) -> None:
-		if self.is_new():
-			return
-		original = self.get_doc_before_save()
-		if not original:
-			return
-		for field in IMMUTABLE_AFTER_INSERT:
-			if getattr(self, field) != getattr(original, field):
-				frappe.throw(f"{field} is immutable after insert")
-
-	@frappe.whitelist()
-	def archive(self) -> None:
-		"""Flip is_active=0. Existing Server FKs survive."""
-		if not self.is_active:
-			frappe.throw(_("Provider is already archived"))
-		frappe.db.set_value(self.doctype, self.name, "is_active", 0)
-
-	@frappe.whitelist()
-	def authenticate(self) -> dict:
-		result = providers.for_provider(self.name).authenticate()
-		return dataclasses.asdict(result)
-
-	@frappe.whitelist()
-	def discover_and_upsert(self) -> dict:
-		"""Refresh Catalog button entry point. Reads the vendor's catalog and
-		upserts Provider Size / Provider Image rows; slugs missing from the
-		new list are flipped to enabled=0."""
-		capabilities = providers.for_provider(self.name).discover()
-		return upsert_catalog(self.provider_type, capabilities)
-
-	@frappe.whitelist()
-	def provision_server(self, title: str, **dialog_fields: Any) -> str:
-		return _provision_server(self, title, dialog_fields)
-
-	@frappe.whitelist()
-	def discover_servers(self) -> list[dict]:
-		"""Discover Servers button. List the vendor's servers (unfiltered) and flag
-		which Atlas already models by provider_resource_id. Read-only — inserts
-		nothing; only `import_servers` writes."""
-		modeled = set(
-			frappe.get_all(
-				"Server",
-				filters={"provider": self.name},
-				pluck="provider_resource_id",
-			)
-		)
-		out: list[dict] = []
-		for discovered in providers.for_provider(self.name).list_servers():
-			out.append(
-				{
-					"provider_resource_id": discovered.provider_resource_id,
-					"title": discovered.title,
-					"ipv4_address": discovered.ipv4_address,
-					"size": discovered.size,
-					"imported": discovered.provider_resource_id in modeled,
-				}
-			)
-		return out
-
-	@frappe.whitelist()
-	def import_servers(self, resource_ids: list[str] | str) -> dict:
-		"""Import the picked vendor servers as Pending Server rows. Idempotent: an
-		already-modeled id is skipped, never double-inserted. The dialog posts
-		`resource_ids` as a JSON string, so parse it before use."""
-		resource_ids = frappe.parse_json(resource_ids)
-		return _import_servers(self, resource_ids)
 
 
 def _provider_settings(provider_type: str):
@@ -107,22 +30,23 @@ def _provider_settings(provider_type: str):
 	return frappe.get_single(f"{provider_type} Settings")
 
 
-def _provision_server(provider_row: Provider, title: str, dialog_fields: dict[str, Any]) -> str:
+def provision_server(provider_type: str, title: str, dialog_fields: dict[str, Any]) -> str:
 	"""Insert a Server row and enqueue bootstrap.
 
 	`title` is the user-facing label. The row's `name` is a UUID assigned
-	by `Server.autoname()`. The vendor's `provision()` may return a
-	partial result — the worker fills the rest via `describe()`.
+	by `Server.autoname()`. The Server's `provider_type` is frozen from the
+	active vendor. The vendor's `provision()` may return a partial result —
+	the worker fills the rest via `describe()`.
 	"""
 	import atlas
 
 	if frappe.db.exists("Server", {"title": title}):
 		frappe.throw(f"Server with title {title!r} already exists")
 
-	provider_impl = providers.for_provider(provider_row.name)
+	provider_impl = providers.for_provider_type(provider_type)
 	ssh_key = atlas.get_ssh_key()
 
-	if provider_row.provider_type == "Self-Managed":
+	if provider_type == "Self-Managed":
 		prebuilt = ServerNetworking(
 			ipv4_address=dialog_fields.get("ipv4_address"),
 			ipv6_address=dialog_fields.get("ipv6_address"),
@@ -146,7 +70,7 @@ def _provision_server(provider_row: Provider, title: str, dialog_fields: dict[st
 			{
 				"doctype": "Server",
 				"title": title,
-				"provider": provider_row.name,
+				"provider_type": provider_type,
 				"status": "Pending",
 				"ipv4_address": result.networking.ipv4_address if result.networking else None,
 				"ipv6_address": result.networking.ipv6_address if result.networking else None,
@@ -162,7 +86,7 @@ def _provision_server(provider_row: Provider, title: str, dialog_fields: dict[st
 		# Single — it defaults size/image inside provision() — so fall back to the
 		# dialog values when no Settings DocType exists. DO/Scaleway are unchanged
 		# (their Single exists, so the defaults still apply).
-		settings = _provider_settings(provider_row.provider_type)
+		settings = _provider_settings(provider_type)
 		size = dialog_fields.get("size") or (settings.default_size if settings else "")
 		image = dialog_fields.get("image") or (settings.default_image if settings else "")
 		request = ProvisionRequest(
@@ -177,7 +101,7 @@ def _provision_server(provider_row: Provider, title: str, dialog_fields: dict[st
 		server_doc: dict[str, Any] = {
 			"doctype": "Server",
 			"title": title,
-			"provider": provider_row.name,
+			"provider_type": provider_type,
 			"provider_resource_id": result.provider_resource_id,
 			"size": result.size,
 			"image": result.image,
@@ -199,7 +123,32 @@ def _provision_server(provider_row: Provider, title: str, dialog_fields: dict[st
 	return server.name
 
 
-def _import_servers(provider_row: Provider, resource_ids: list[str]) -> dict:
+def discover_servers(provider_type: str) -> list[dict]:
+	"""List the active vendor's servers (unfiltered) and flag which Atlas already
+	models by provider_resource_id. Read-only — inserts nothing; only
+	`import_servers` writes."""
+	modeled = set(
+		frappe.get_all(
+			"Server",
+			filters={"provider_type": provider_type},
+			pluck="provider_resource_id",
+		)
+	)
+	out: list[dict] = []
+	for discovered in providers.for_provider_type(provider_type).list_servers():
+		out.append(
+			{
+				"provider_resource_id": discovered.provider_resource_id,
+				"title": discovered.title,
+				"ipv4_address": discovered.ipv4_address,
+				"size": discovered.size,
+				"imported": discovered.provider_resource_id in modeled,
+			}
+		)
+	return out
+
+
+def import_servers(provider_type: str, resource_ids: list[str]) -> dict:
 	"""Adopt already-provisioned vendor servers as `Pending` Server rows.
 
 	For each picked vendor id (skipping any Atlas already models): re-resolve the
@@ -216,11 +165,11 @@ def _import_servers(provider_row: Provider, resource_ids: list[str]) -> dict:
 	`discover_servers` already dims them)."""
 	from atlas.atlas.providers.worker import _apply_describe_result
 
-	provider_impl = providers.for_provider(provider_row.name)
+	provider_impl = providers.for_provider_type(provider_type)
 	modeled = set(
 		frappe.get_all(
 			"Server",
-			filters={"provider": provider_row.name},
+			filters={"provider_type": provider_type},
 			pluck="provider_resource_id",
 		)
 	)
@@ -240,7 +189,7 @@ def _import_servers(provider_row: Provider, resource_ids: list[str]) -> dict:
 			{
 				"doctype": "Server",
 				"title": _unique_server_title(preferred_title),
-				"provider": provider_row.name,
+				"provider_type": provider_type,
 				"provider_resource_id": result.provider_resource_id or resource_id,
 				"status": "Pending",
 			}
@@ -256,7 +205,7 @@ def _unique_server_title(preferred: str) -> str:
 	"""A Server.title that doesn't collide with an existing row. Discovery's
 	preferred title is the vendor hostname (or the resource id when unnamed); a
 	box adopted under a name another Server already uses gets a `-2`, `-3`, …
-	suffix so the insert doesn't trip the unique-title guard `_provision_server`
+	suffix so the insert doesn't trip the unique-title guard `provision_server`
 	enforces. Pure string work — no vendor call."""
 	if not frappe.db.exists("Server", {"title": preferred}):
 		return preferred

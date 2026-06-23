@@ -51,22 +51,8 @@ REGION = "blr1"
 def _ensure_root_domain() -> None:
 	"""A single active Root Domain `blr1.frappe.dev` (region blr1) — the active region
 	the endpoints resolve against. Mirrors test_api_signup."""
-	if not frappe.db.exists("Domain Provider", "route53-routing-test"):
-		frappe.get_doc(
-			{
-				"doctype": "Domain Provider",
-				"provider_name": "route53-routing-test",
-				"provider_type": "Route53",
-			}
-		).insert(ignore_permissions=True)
-	if not frappe.db.exists("TLS Provider", "letsencrypt-routing-test"):
-		frappe.get_doc(
-			{
-				"doctype": "TLS Provider",
-				"provider_name": "letsencrypt-routing-test",
-				"provider_type": "Let's Encrypt",
-			}
-		).insert(ignore_permissions=True)
+	frappe.db.set_single_value("Route53 Settings", "domain_provider_type", "Route53")
+	frappe.db.set_single_value("Atlas Settings", "tls_provider_type", "Let's Encrypt")
 	if not frappe.db.exists("Root Domain", ROOT_DOMAIN):
 		frappe.get_doc(
 			{
@@ -74,8 +60,8 @@ def _ensure_root_domain() -> None:
 				"domain": ROOT_DOMAIN,
 				"region": REGION,
 				"is_active": 1,
-				"domain_provider": "route53-routing-test",
-				"tls_provider": "letsencrypt-routing-test",
+				"domain_provider_type": "Route53",
+				"tls_provider_type": "Let's Encrypt",
 			}
 		).insert(ignore_permissions=True)
 	frappe.db.set_value("Root Domain", ROOT_DOMAIN, "is_active", 1)

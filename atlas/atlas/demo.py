@@ -28,7 +28,11 @@ import frappe
 from atlas.atlas import demo_data
 from atlas.atlas.providers.fake import FAKE_PROVIDER_TYPE, require_developer_mode
 
-ACTIVE_PROVIDER = "fake-prod"
+# The active compute vendor for the demo. Servers march Pending → Active through
+# the real (faked) worker. The demo also stands up a Self-Managed host directly —
+# a Server carries its own provider_type, so the fleet shows two vendor types even
+# though only one is "active".
+ACTIVE_PROVIDER_TYPE = FAKE_PROVIDER_TYPE
 
 
 def run(reset: bool = False) -> None:
@@ -36,7 +40,6 @@ def run(reset: bool = False) -> None:
 	require_developer_mode()
 	if reset:
 		wipe()
-	_ensure_providers()
 	_ensure_settings()
 	_ensure_catalog()
 	images = _ensure_images()
@@ -51,44 +54,30 @@ def run(reset: bool = False) -> None:
 
 
 def wipe() -> None:
-	"""Delete every row that hangs off a Fake provider, plus the demo images.
+	"""Delete every Server the demo created, plus the demo images.
 
-	A real operator's DigitalOcean / Scaleway / Self-Managed rows are never
-	touched: Fake rows go by provider_type, and the demo's own non-Fake artifacts
-	(its Self-Managed host + the archived `do-legacy` row) go by their well-known
-	names. Order matters: dependents before their parents."""
-	fake_providers = frappe.get_all("Provider", filters={"provider_type": FAKE_PROVIDER_TYPE}, pluck="name")
-	demo_servers = _demo_server_names(fake_providers)
+	A real operator's hosts are never touched: the demo identifies its own rows by
+	provider_type (Fake) plus the demo's own Self-Managed host (by its well-known
+	title). Order matters: dependents before their parents."""
+	demo_servers = _demo_server_names()
 	_delete_children_of_servers(demo_servers)
 	for server in demo_servers:
 		frappe.delete_doc("Server", server, force=True, ignore_permissions=True)
 	demo_data.delete_demo_images()
-	_delete_demo_non_fake_providers()
-	# Leave the Fake Provider rows + catalog in place — cheap to reuse, and the
-	# active-provider pointer in Atlas Settings stays valid across a reset.
+	# Leave the catalog + Atlas Settings provider_type in place — cheap to reuse,
+	# and the active-vendor pointer stays valid across a reset.
 	# nosemgrep: frappe-manual-commit -- demo teardown: commit after wipe so the demo-row deletions are durable
 	frappe.db.commit()
 
 
-def _demo_server_names(fake_providers: list[str]) -> list[str]:
-	"""Every Server the demo created: those on a Fake provider, plus the demo's
-	own Self-Managed host (created under a named demo provider, not a Fake one)."""
-	servers = (
-		frappe.get_all("Server", filters={"provider": ["in", fake_providers]}, pluck="name")
-		if fake_providers
-		else []
-	)
-	servers += frappe.get_all(
-		"Server", filters={"provider": ["in", demo_data.DEMO_NON_FAKE_PROVIDERS]}, pluck="name"
-	)
+def _demo_server_names() -> list[str]:
+	"""Every Server the demo created: the Fake-provisioned fleet, plus the demo's
+	own Self-Managed host (identified by its well-known title)."""
+	servers = frappe.get_all("Server", filters={"provider_type": FAKE_PROVIDER_TYPE}, pluck="name")
+	metal = frappe.db.get_value("Server", {"title": demo_data.SELF_MANAGED_SERVER["title"]}, "name")
+	if metal:
+		servers.append(metal)
 	return servers
-
-
-def _delete_demo_non_fake_providers() -> None:
-	"""Remove the demo's named non-Fake provider rows once their servers are gone."""
-	for provider in demo_data.DEMO_NON_FAKE_PROVIDERS:
-		if frappe.db.exists("Provider", provider):
-			frappe.delete_doc("Provider", provider, force=True, ignore_permissions=True)
 
 
 def _delete_children_of_servers(servers: list[str]) -> None:
@@ -106,33 +95,10 @@ def _delete_children_of_servers(servers: list[str]) -> None:
 			frappe.delete_doc(doctype, name, force=True, ignore_permissions=True)
 
 
-def _ensure_providers() -> None:
-	for name, fail_scripts in demo_data.PROVIDERS:
-		_upsert_provider(name, FAKE_PROVIDER_TYPE, fail_scripts=fail_scripts)
-	# A real-vendor row, archived, so the operator sees a non-Fake provider too.
-	_upsert_provider(demo_data.ARCHIVED_PROVIDER, "DigitalOcean", is_active=0)
-
-
-def _upsert_provider(name: str, provider_type: str, *, is_active: int = 1, fail_scripts: str = "") -> None:
-	if frappe.db.exists("Provider", name):
-		if fail_scripts is not None:
-			frappe.db.set_value("Provider", name, "fail_scripts", fail_scripts)
-		return
-	frappe.get_doc(
-		{
-			"doctype": "Provider",
-			"provider_name": name,
-			"provider_type": provider_type,
-			"is_active": is_active,
-			"fail_scripts": fail_scripts,
-		}
-	).insert(ignore_permissions=True)
-
-
 def _ensure_settings() -> None:
 	"""Point Atlas Settings at the Fake provider and set throwaway dev SSH values
 	+ a default user image + a little oversubscription so the capacity math shows."""
-	frappe.db.set_single_value("Atlas Settings", "provider", ACTIVE_PROVIDER, update_modified=False)
+	frappe.db.set_single_value("Atlas Settings", "provider_type", ACTIVE_PROVIDER_TYPE, update_modified=False)
 	frappe.db.set_single_value("Atlas Settings", "overprovision_factor", 1.5, update_modified=False)
 	frappe.db.set_single_value(
 		"Atlas Settings", "default_user_image", demo_data.DEFAULT_USER_IMAGE, update_modified=False
@@ -169,7 +135,7 @@ def _ensure_throwaway_ssh_key() -> str:
 def _ensure_catalog() -> None:
 	"""Seed Provider Size / Provider Image for Fake via the real Refresh-Catalog
 	path, so every Server/size Link resolves."""
-	frappe.get_doc("Provider", ACTIVE_PROVIDER).discover_and_upsert()
+	frappe.get_single("Atlas Settings").refresh_catalog()
 	# nosemgrep: frappe-manual-commit -- demo seeder: persist the seeded catalog so later seed phases' size and image Links resolve
 	frappe.db.commit()
 
@@ -185,7 +151,7 @@ def _ensure_servers() -> dict[str, str]:
 	Active servers go through the real provision → worker path (faked); the
 	off-nominal states (Bootstrapping / Broken / Draining / Self-Managed) are set
 	deliberately afterwards because the happy path can't land on them."""
-	return demo_data.ensure_servers(ACTIVE_PROVIDER)
+	return demo_data.ensure_servers(ACTIVE_PROVIDER_TYPE)
 
 
 def _ensure_virtual_machines(servers: dict[str, str], images: dict[str, str]) -> dict[str, str]:
@@ -204,7 +170,6 @@ def _print_summary(servers: dict[str, str], machines: dict[str, str]) -> None:
 	counts = {
 		doctype: frappe.db.count(doctype)
 		for doctype in (
-			"Provider",
 			"Server",
 			"Virtual Machine",
 			"Virtual Machine Image",
@@ -216,4 +181,7 @@ def _print_summary(servers: dict[str, str], machines: dict[str, str]) -> None:
 	print("[demo] populated the Fake fleet:")
 	for doctype, count in counts.items():
 		print(f"[demo]   {doctype}: {count}")
-	print(f"[demo] active provider = {ACTIVE_PROVIDER}; {len(servers)} servers, {len(machines)} VMs seeded")
+	print(
+		f"[demo] active provider_type = {ACTIVE_PROVIDER_TYPE}; "
+		f"{len(servers)} servers, {len(machines)} VMs seeded"
+	)

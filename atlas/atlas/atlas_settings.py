@@ -18,10 +18,10 @@ from atlas.atlas.providers.base import Provider, ProvisionRequest, ProvisionResu
 
 
 def get_provider() -> Provider:
-	name = frappe.get_single("Atlas Settings").provider
-	if not name:
-		frappe.throw(_("Atlas Settings has no active provider; set one before provisioning"))
-	return providers.for_provider(name)
+	provider_type = frappe.db.get_single_value("Atlas Settings", "provider_type")
+	if not provider_type:
+		frappe.throw(_("Atlas Settings has no provider_type; set one before provisioning"))
+	return providers.for_provider_type(provider_type)
 
 
 def get_ssh_key() -> SshKey:

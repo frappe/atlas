@@ -42,8 +42,8 @@ class TLSCertificate(Document):
 			self.common_name = f"*.{domain}"
 
 	def _denormalize_provider(self) -> None:
-		if not self.tls_provider:
-			self.tls_provider = frappe.db.get_value("Root Domain", self.root_domain, "tls_provider")
+		if not self.tls_provider_type:
+			self.tls_provider_type = frappe.db.get_value("Root Domain", self.root_domain, "tls_provider_type")
 
 	# --- Issue / renew ---------------------------------------------------
 
@@ -64,8 +64,8 @@ class TLSCertificate(Document):
 	def _issue_or_renew(self) -> None:
 		domain_row = frappe.get_doc("Root Domain", self.root_domain)
 		try:
-			tls_provider = tls.for_tls_provider(domain_row.tls_provider)
-			dns_provider = dns.for_domain_provider(domain_row.domain_provider)
+			tls_provider = tls.for_tls_provider_type(domain_row.tls_provider_type)
+			dns_provider = dns.for_dns_provider_type(domain_row.domain_provider_type)
 			issued = tls_provider.issue(domain_row.domain, dns_provider)
 		except Exception:
 			self._set_status("Failed")
@@ -80,7 +80,7 @@ class TLSCertificate(Document):
 				# format, the step scripts/lib/atlas/certs.py documents.
 				"issued_on": frappe.utils.get_datetime(issued.not_before),
 				"expires_on": frappe.utils.get_datetime(issued.not_after),
-				"tls_provider": domain_row.tls_provider,
+				"tls_provider_type": domain_row.tls_provider_type,
 				"status": "Active",
 			}
 		)
@@ -133,7 +133,7 @@ class TLSCertificate(Document):
 			)
 			return
 		try:
-			dns_provider = dns.for_domain_provider(domain_row.domain_provider)
+			dns_provider = dns.for_dns_provider_type(domain_row.domain_provider_type)
 			records = dns_provider.upsert_wildcard(
 				domain_row.domain, dns.WildcardTargets(ipv4=ipv4, ipv6=ipv6)
 			)

@@ -2,7 +2,7 @@
 
 A `TlsProvider` turns "(wildcard) domain + a DNS provider that can answer DNS-01"
 into PEMs on the controller's disk. It mirrors the compute `Provider` ABC: callers
-ask `for_tls_provider(name)` for an instance and never branch on `provider_type`.
+ask `for_tls_provider_type(type)` for an instance and never branch on `provider_type`.
 Let's Encrypt is the only implementation this iteration; ZeroSSL / Self-Managed
 are registered stubs so the Select options resolve.
 
