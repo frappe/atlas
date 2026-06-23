@@ -20,6 +20,14 @@ it does not restrict the *destination* of a decrypted inbound packet, so without
 the `drop` a client could address another VM and the host would route it. The
 `drop` closes that — anything from this interface that is not this VM is dropped.
 
+These two rules must sit at the **head** of the forward chain, above the broad
+per-VM forward-accept rules vm-network-up.py lays down (`ip6 daddr <vm> oifname
+<veth> accept`). Those rules do not constrain the input interface, so an appended
+tunnel `drop` is shadowed: a packet from this tunnel to *another* VM matches that
+VM's accept first (accept is terminal) and is forwarded — the exact leak the drop
+exists to stop. So we `insert` the pair (drop first, then accept, leaving
+[accept, drop, …per-VM…]) instead of appending it.
+
 Everything here is pure string/argv construction except `apply_tunnel` /
 `remove_tunnel` / `apply_persisted_tunnels`, which touch the host. The rule and
 command *generation*, and the `TunnelConfig` (de)serialization, are unit-testable
@@ -121,11 +129,11 @@ def wg_set_peer_argv(interface: str, client_public_key: str, client_address: str
 
 
 def accept_rule_argv(interface: str, virtual_machine_ipv6: str) -> list[str]:
-	"""forward: accept decrypted tunnel traffic destined to the VM. Appended before
-	the drop so the VM is reachable; everything else from the interface falls to
-	the drop."""
+	"""forward: accept decrypted tunnel traffic destined to the VM. Inserted at the
+	head AFTER the drop, so it ends up just above it ([accept, drop, …]); the VM is
+	reachable while everything else from the interface falls to the drop."""
 	return [
-		"add", "rule", "inet", "atlas", FORWARD,
+		"insert", "rule", "inet", "atlas", FORWARD,
 		"iifname", interface, "ip6", "daddr", virtual_machine_ipv6, "accept",
 	]  # fmt: skip
 
@@ -133,8 +141,9 @@ def accept_rule_argv(interface: str, virtual_machine_ipv6: str) -> list[str]:
 def drop_rule_argv(interface: str) -> list[str]:
 	"""forward: drop anything else arriving on this tunnel's interface — another
 	VM, the host, the internet. This is the isolation guarantee; without it a
-	client could address a VM that is not its own and the host would route it."""
-	return ["add", "rule", "inet", "atlas", FORWARD, "iifname", interface, "drop"]
+	client could address a VM that is not its own and the host would route it.
+	Inserted at the head (above the per-VM accepts that would otherwise shadow it)."""
+	return ["insert", "rule", "inet", "atlas", FORWARD, "iifname", interface, "drop"]
 
 
 def apply_tunnel(config: TunnelConfig) -> None:
@@ -160,11 +169,13 @@ def apply_tunnel(config: TunnelConfig) -> None:
 			"add chain inet atlas forward { type filter hook forward priority filter; policy accept; }",
 		)
 	forward = run("sudo", "nft", "list", "chain", *TABLE, FORWARD)
-	# Add accept BEFORE drop so the pair lands in the right order on a clean chain.
-	if not _has_accept(forward, config.interface, config.virtual_machine_ipv6):
-		run("sudo", "nft", *accept_rule_argv(config.interface, config.virtual_machine_ipv6))
+	# Insert at the head so the pair precedes the broad per-VM accepts. Each insert
+	# goes to the top, so insert drop FIRST and accept SECOND to leave the chain as
+	# [accept, drop, …per-VM…] — accept reachable, everything else dropped.
 	if not _has_drop(forward, config.interface):
 		run("sudo", "nft", *drop_rule_argv(config.interface))
+	if not _has_accept(forward, config.interface, config.virtual_machine_ipv6):
+		run("sudo", "nft", *accept_rule_argv(config.interface, config.virtual_machine_ipv6))
 
 
 def remove_tunnel(interface: str) -> None:

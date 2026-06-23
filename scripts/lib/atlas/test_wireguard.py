@@ -59,10 +59,12 @@ class TestCommandArgv(unittest.TestCase):
 		)
 
 	def test_accept_rule_targets_the_vm(self):
+		# `insert` (not `add`): the pair goes to the head of the forward chain, above
+		# the broad per-VM accepts that would otherwise shadow the drop below it.
 		self.assertEqual(
 			wg.accept_rule_argv(INTERFACE, VM_V6),
 			[
-				"add",
+				"insert",
 				"rule",
 				"inet",
 				"atlas",
@@ -77,10 +79,11 @@ class TestCommandArgv(unittest.TestCase):
 		)
 
 	def test_drop_rule_is_unconditional_for_the_interface(self):
-		# The isolation guarantee: anything else on this interface is dropped.
+		# The isolation guarantee: anything else on this interface is dropped. Inserted
+		# at the head so a per-VM accept for another VM cannot pre-empt it.
 		self.assertEqual(
 			wg.drop_rule_argv(INTERFACE),
-			["add", "rule", "inet", "atlas", "forward", "iifname", INTERFACE, "drop"],
+			["insert", "rule", "inet", "atlas", "forward", "iifname", INTERFACE, "drop"],
 		)
 
 
