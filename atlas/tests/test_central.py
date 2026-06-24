@@ -71,18 +71,6 @@ class TestCentralClient(IntegrationTestCase):
 		self.assertFalse(result.ok)
 		self.assertIn("down", result.error)
 
-	def test_register_returns_atlas_id(self) -> None:
-		with patch("atlas.atlas.central.requests.request") as request:
-			request.return_value = _response(body={"message": {"atlas_id": "atl_9", "label": "X"}})
-			result = self.client.register({"region": "blr1"})
-		self.assertEqual(result.atlas_id, "atl_9")
-
-	def test_register_without_atlas_id_raises(self) -> None:
-		with patch("atlas.atlas.central.requests.request") as request:
-			request.return_value = _response(body={"message": {}})
-			with self.assertRaises(CentralError):
-				self.client.register({})
-
 	def test_fetch_sizes_parses_rows(self) -> None:
 		payload = {
 			"message": {

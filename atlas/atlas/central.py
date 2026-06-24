@@ -7,14 +7,16 @@ requests wrapper, one *Error type, dataclasses for the typed responses.
 
 Atlas calls Central's whitelisted methods at `<url>/api/method/central.api.atlas.<name>`
 with a `token <api_key>:<api_secret>` header (spec/16-central.md § "The wire
-contract"). Central owns the `Atlas Instance` registry: the operator pre-creates
-one row per region (with this Atlas's callback `api_key`/`api_secret`), and:
+contract"). Registration is **Central-initiated** now (spec/19-tunnel.md): Central drives the
+tunnel handshake and pushes this Atlas's `atlas_id` + the per-Atlas service-user
+creds into `Central Settings` via `provision_tunnel`. Atlas no longer calls
+`register`; it only reports outward:
 
 - **ping** — `central.api.atlas.ping` returns `{label}`; a credential + reachability
   check for the Test Connection toast.
-- **register** — `central.api.atlas.register` matches the operator-created row by
-  region and stamps a stable `atlas_id`, which Atlas then stores and reports on
-  every event so Central can route them to this cluster.
+- **event** — `central.api.atlas.event` (via `post_event`) carries VM lifecycle
+  events, authenticated as the pushed per-Atlas service user. Atlas's outbound is
+  unrestricted, so this works regardless of the management-plane firewall.
 
 The route names and payloads are the single external dependency; the whole
 contract is absorbed here, so a change on Central's side is a one-file edit.
@@ -33,7 +35,6 @@ DEFAULT_TIMEOUT = 30
 # spec/16-central.md § "The wire contract".
 _ROUTES = {
 	"ping": "central.api.atlas.ping",
-	"register": "central.api.atlas.register",
 	"sizes": "central.api.atlas.sizes",
 	"images": "central.api.atlas.images",
 	"event": "central.api.atlas.event",
@@ -49,12 +50,6 @@ class CentralAuthResult:
 	ok: bool
 	label: str | None = None
 	error: str | None = None
-
-
-@dataclasses.dataclass(frozen=True, slots=True)
-class RegistrationResult:
-	atlas_id: str
-	label: str | None = None
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -94,16 +89,6 @@ class CentralClient:
 		except CentralError as exception:
 			return CentralAuthResult(ok=False, error=str(exception))
 		return CentralAuthResult(ok=True, label=body.get("label"))
-
-	def register(self, identity: dict) -> RegistrationResult:
-		"""Announce this Atlas to Central. `identity` is the region payload Central
-		matches against its operator-created `Atlas Instance` row; Central stamps
-		and returns the stable `atlas_id` Atlas reports on every event."""
-		body = self._request("POST", "register", json=identity)
-		atlas_id = body.get("atlas_id")
-		if not atlas_id:
-			raise CentralError("Central register returned no atlas_id")
-		return RegistrationResult(atlas_id=atlas_id, label=body.get("label"))
 
 	def fetch_sizes(self) -> tuple[CentralSizeInfo, ...]:
 		rows = self._request("GET", "sizes").get("sizes", [])
