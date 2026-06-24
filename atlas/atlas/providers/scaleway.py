@@ -279,19 +279,40 @@ class ScalewayProvider(Provider):
 		return os_id
 
 	def _ensure_ssh_key(self, request: ProvisionRequest) -> str | None:
-		"""Return the IAM SSH key id to install. Reuse the cached vendor_id when
-		set; otherwise register the public-key body with IAM and return the new
-		id. Atlas is one-key, so we don't write the id back here — the operator
-		caches it on Scaleway Settings.ssh_key_id once known."""
-		if request.ssh_key and request.ssh_key.vendor_id:
+		"""Return the IAM SSH key id to install, reusing an existing key for the
+		Atlas keypair rather than registering a fresh one on every provision.
+
+		Order: (1) the cached vendor_id (`Scaleway Settings.ssh_key_id`); (2) an
+		IAM key already registered with a matching body — Atlas is one-key, so a
+		prior provision (or a manual upload) leaves the key in IAM and re-running
+		would otherwise pile up duplicate records; (3) register it once and return
+		the new id. The operator caches the id on Scaleway Settings once known, so
+		the steady state is path (1)."""
+		if not (request.ssh_key and request.ssh_key.public_key):
+			return request.ssh_key.vendor_id if request.ssh_key else None
+		if request.ssh_key.vendor_id:
 			return request.ssh_key.vendor_id
-		if request.ssh_key and request.ssh_key.public_key:
-			created = self.client.register_ssh_key(
-				name=request.title,
-				public_key=request.ssh_key.public_key,
-				project_id=self.project_id,
-			)
-			return str(created["id"])
+		existing = self._find_ssh_key_id(request.ssh_key.public_key)
+		if existing:
+			return existing
+		created = self.client.register_ssh_key(
+			name=request.title,
+			public_key=request.ssh_key.public_key,
+			project_id=self.project_id,
+		)
+		return str(created["id"])
+
+	def _find_ssh_key_id(self, public_key: str) -> str | None:
+		"""The id of an IAM key in the project whose body matches `public_key`, or
+		None. Matched on the `<type> <base64>` core (first two tokens) so a
+		differing trailing comment — IAM keeps/derives its own — doesn't miss the
+		match."""
+		wanted = _ssh_key_identity(public_key)
+		if not wanted:
+			return None
+		for key in self.client.list_ssh_keys(self.project_id):
+			if _ssh_key_identity(key.get("public_key") or "") == wanted:
+				return str(key["id"])
 		return None
 
 	def _build_partitioning_schema(self, offer_id: str, os_id: str) -> dict | None:
@@ -446,6 +467,14 @@ def _image_from_os(os_image: dict) -> ImageInfo:
 	metadata = dict(os_image)
 	metadata["os_id"] = os_image.get("id")
 	return ImageInfo(slug=slug, provider_metadata=metadata)
+
+
+def _ssh_key_identity(public_key: str) -> str:
+	"""The comment-agnostic identity of an SSH public key: `<type> <base64>` (the
+	first two whitespace tokens). Two keys with the same body but different
+	trailing comments compare equal; empty/garbage input yields `""`."""
+	parts = (public_key or "").split()
+	return " ".join(parts[:2]) if len(parts) >= 2 else ""
 
 
 def _is_ipv6_fip(fip: dict) -> bool:

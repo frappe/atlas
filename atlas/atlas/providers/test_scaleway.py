@@ -187,10 +187,13 @@ class TestScalewayProviderProvision(IntegrationTestCase):
 			provider.provision(request)
 		provider.client.create_flexible_ip.assert_not_called()
 
-	def test_provision_registers_ssh_key_when_only_body_given(self) -> None:
+	def test_provision_registers_ssh_key_when_no_match_exists(self) -> None:
+		"""Only a body, no cached vendor_id, and IAM holds no matching key → register
+		it once and install the new id."""
 		provider = _build_provider()
 		provider.client.create_server.return_value = {"id": "srv-uuid", "status": "delivering"}
 		provider.client.get_default_partitioning_schema.return_value = _DEFAULT_SCHEMA_TWO_DISK
+		provider.client.list_ssh_keys.return_value = []
 		provider.client.register_ssh_key.return_value = {"id": "new-key-uuid"}
 		provider.client.list_flexible_ips.return_value = []
 		provider.client.create_flexible_ip.return_value = {
@@ -211,6 +214,37 @@ class TestScalewayProviderProvision(IntegrationTestCase):
 		provider.client.register_ssh_key.assert_called_once()
 		_, kwargs = provider.client.create_server.call_args
 		self.assertEqual(kwargs["install"]["ssh_key_ids"], ["new-key-uuid"])
+
+	def test_provision_reuses_matching_iam_key_without_registering(self) -> None:
+		"""Only a body, no cached vendor_id, but IAM already holds a key with the
+		same body (a prior provision) → reuse that id, do NOT register a duplicate.
+		The trailing comment differs to prove the match is comment-agnostic."""
+		provider = _build_provider()
+		provider.client.create_server.return_value = {"id": "srv-uuid", "status": "delivering"}
+		provider.client.get_default_partitioning_schema.return_value = _DEFAULT_SCHEMA_TWO_DISK
+		provider.client.list_ssh_keys.return_value = [
+			{"id": "unrelated-key", "public_key": "ssh-ed25519 ZZZZ other@host"},
+			{"id": "matching-key", "public_key": "ssh-ed25519 AAAA different-comment"},
+		]
+		provider.client.list_flexible_ips.return_value = []
+		provider.client.create_flexible_ip.return_value = {
+			"id": "fip-v6",
+			"ip_address": "2001:bc8:abcd:1::/64",
+		}
+		request = ProvisionRequest(
+			title="atlas-srv-4",
+			size="Scaleway/EM-A610R-NVMe",
+			image="Scaleway/Ubuntu_24.04",
+			ssh_key=SshKey(public_key="ssh-ed25519 AAAA user@host"),
+		)
+		with (
+			patch.object(provider, "_resolve_offer_id", return_value="offer-uuid-1"),
+			patch.object(provider, "_resolve_os_id", return_value="os-uuid-1"),
+		):
+			provider.provision(request)
+		provider.client.register_ssh_key.assert_not_called()
+		_, kwargs = provider.client.create_server.call_args
+		self.assertEqual(kwargs["install"]["ssh_key_ids"], ["matching-key"])
 
 
 class TestScalewayProviderDescribe(IntegrationTestCase):
