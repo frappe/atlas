@@ -1,0 +1,11 @@
+[Unit]
+Description=SSH Piper
+After=network.target
+
+[Service]
+Type=simple
+Restart=always
+ExecStart=/usr/local/bin/sshpiper /usr/local/bin/sshpiperd-atlas
+
+[Install]
+WantedBy=multi-user.target

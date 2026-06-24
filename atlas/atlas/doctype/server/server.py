@@ -68,6 +68,7 @@ class Server(Document):
 		("vm-restore.py", "/var/lib/atlas/bin/vm-restore.py"),
 		("systemd/firecracker-vm@.service", "/etc/systemd/system/firecracker-vm@.service"),
 		("systemd/atlas-pool.service", "/etc/systemd/system/atlas-pool.service"),
+		("systemd/sshpiper.service", "/etc/systemd/system/sshpiper.service"),
 	]
 
 	def autoname(self) -> None:
@@ -161,6 +162,7 @@ class Server(Document):
 			script="bootstrap-server.py",
 			variables={
 				"FIRECRACKER_VERSION": "v1.15.1",
+				"SSHPIPER_VERSION": "v1.5.4",
 				"ARCHITECTURE": "x86_64",
 			},
 		)
