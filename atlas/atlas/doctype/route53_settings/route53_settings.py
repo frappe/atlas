@@ -11,6 +11,7 @@ from __future__ import annotations
 import dataclasses
 
 import frappe
+import frappe.utils.password
 from frappe.model.document import Document
 
 
@@ -27,6 +28,19 @@ class Route53Settings(Document):
 		region: DF.Data | None
 		secret_access_key: DF.Password
 	# end: auto-generated types
+
+	@frappe.whitelist()
+	def setup(self, access_key_id: str, secret_access_key: str, region: str = "us-east-1") -> None:
+		"""Explicit, idempotent setter for Route53 Settings (the contract).
+
+		`region` is the AWS API region (default us-east-1) — unrelated to
+		`Atlas Settings.region`. Writes via `set_single_value` /
+		`set_encrypted_password` (NOT `doc.save()`) so it stays re-runnable."""
+		frappe.db.set_single_value("Route53 Settings", "access_key_id", access_key_id, update_modified=False)
+		frappe.db.set_single_value("Route53 Settings", "region", region or "us-east-1", update_modified=False)
+		frappe.utils.password.set_encrypted_password(
+			"Route53 Settings", "Route53 Settings", secret_access_key, "secret_access_key"
+		)
 
 	@frappe.whitelist()
 	def test_connection(self) -> dict:

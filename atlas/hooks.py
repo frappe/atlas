@@ -27,6 +27,13 @@ add_to_apps_screen = [
 app_include_css = "/assets/atlas/css/atlas_desk.css"
 # app_include_js = "/assets/atlas/js/atlas.js"
 
+# Frappe Setup Wizard — the human front-end of the explicit setup contract
+# (atlas/setup.py). `*_requires` ships the slide definitions; `*_stages` maps the
+# slide answers onto the Layer-1 setters; `*_complete` runs after all stages commit.
+setup_wizard_requires = "/assets/atlas/js/setup_wizard.js"
+setup_wizard_stages = "atlas.setup.get_setup_stages"
+setup_wizard_complete = "atlas.setup.on_complete"
+
 # include js, css files in header of web template
 # web_include_css = "/assets/atlas/css/atlas.css"
 # web_include_js = "/assets/atlas/js/atlas.js"

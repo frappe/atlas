@@ -15,6 +15,11 @@ import dataclasses
 import frappe
 from frappe.model.document import Document
 
+# Let's Encrypt staging — no rate limits, untrusted cert. The default keeps an
+# unattended setup from burning LE production issuance quota; pass the production
+# directory URL for a trusted cert. Mirrors bootstrap.LETS_ENCRYPT_STAGING.
+LETS_ENCRYPT_STAGING = "https://acme-staging-v02.api.letsencrypt.org/directory"
+
 
 class LetsEncryptSettings(Document):
 	# begin: auto-generated types
@@ -28,6 +33,24 @@ class LetsEncryptSettings(Document):
 		account_email: DF.Data
 		acme_directory_url: DF.Data
 	# end: auto-generated types
+
+	@frappe.whitelist()
+	def setup(self, account_email: str, acme_directory_url: str = LETS_ENCRYPT_STAGING) -> None:
+		"""Explicit, idempotent setter for Lets Encrypt Settings (the contract).
+
+		`acme_directory_url` defaults to LE STAGING so an unattended setup never burns
+		production issuance quota. Writes via `set_single_value` (NOT `doc.save()`) so
+		it stays re-runnable. (There is no `agree_tos` field on this Single — ToS
+		acceptance is implicit in the ACME account registration the provider drives.)"""
+		frappe.db.set_single_value(
+			"Lets Encrypt Settings", "account_email", account_email, update_modified=False
+		)
+		frappe.db.set_single_value(
+			"Lets Encrypt Settings",
+			"acme_directory_url",
+			acme_directory_url or LETS_ENCRYPT_STAGING,
+			update_modified=False,
+		)
 
 	@frappe.whitelist()
 	def test_connection(self) -> dict:

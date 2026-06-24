@@ -12,6 +12,8 @@ orphan live hosts from their vendor client.
 from __future__ import annotations
 
 import dataclasses
+import os
+import subprocess
 from typing import Any
 
 import frappe
@@ -70,6 +72,59 @@ class AtlasSettings(Document):
 					"through a different vendor (e.g. {1}). Archive them first."
 				).format(len(stranded), ", ".join(stranded))
 			)
+
+	@frappe.whitelist()
+	def setup(
+		self,
+		provider_type: str,
+		ssh_private_key_path: str,
+		region: str,
+		ssh_public_key: str | None = None,
+		default_bench_snapshot: str | None = None,
+	) -> None:
+		"""Explicit, idempotent setter for the vendor-agnostic config (the contract).
+
+		`region` is THIS Atlas's single region (the source of truth read at runtime by
+		`placement.atlas_region`) — NOT a vendor API region. A provider operates in
+		many regions; Atlas pins one. The vendor's own API region/zone lives on its
+		Settings (`DigitalOcean Settings.region`, `Scaleway Settings.zone`) and is set
+		by that vendor's `setup()`, independently of this value.
+
+		Writes via `set_single_value` (NOT `doc.save()`) so it stays re-runnable. The
+		key path is expanduser'd and must point at a real file; `ssh_public_key` is
+		derived from it via `ssh-keygen -y` when omitted (load-bearing for self-serve —
+		the Site clone path reads the public key off this Single)."""
+		if provider_type not in ("DigitalOcean", "Scaleway", "Self-Managed", "Fake"):
+			frappe.throw(
+				_("provider_type must be DigitalOcean, Scaleway, Self-Managed or Fake, got {0}").format(
+					provider_type
+				)
+			)
+		if not region:
+			frappe.throw(_("region is required — this Atlas's single region."))
+
+		expanded = os.path.expanduser(ssh_private_key_path)
+		if not os.path.isfile(expanded):
+			frappe.throw(_("ssh_private_key_path expands to {0}, which is not a file").format(expanded))
+
+		frappe.db.set_single_value("Atlas Settings", "region", region, update_modified=False)
+		frappe.db.set_single_value("Atlas Settings", "provider_type", provider_type, update_modified=False)
+		frappe.db.set_single_value("Atlas Settings", "ssh_private_key_path", expanded, update_modified=False)
+
+		public_key = ssh_public_key or self._derive_public_key(expanded)
+		if public_key:
+			frappe.db.set_single_value("Atlas Settings", "ssh_public_key", public_key, update_modified=False)
+		if default_bench_snapshot:
+			frappe.db.set_single_value(
+				"Atlas Settings", "default_bench_snapshot", default_bench_snapshot, update_modified=False
+			)
+
+	@staticmethod
+	def _derive_public_key(private_key_path: str) -> str | None:
+		"""Derive the OpenSSH public key from a private key via `ssh-keygen -y`, or
+		None if the key can't be read (mirrors bootstrap's `_resolve_fleet_public_key`)."""
+		result = subprocess.run(["ssh-keygen", "-y", "-f", private_key_path], capture_output=True, text=True)
+		return result.stdout.strip() if result.returncode == 0 else None
 
 	@frappe.whitelist()
 	def authenticate(self) -> dict:

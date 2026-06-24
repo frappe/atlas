@@ -19,3 +19,4 @@ atlas.patches.v1_0.rebuild_task_subjects
 atlas.patches.v1_0.migrate_workspace_to_onboarding
 atlas.patches.v1_0.move_settings_fields_off_singles
 atlas.patches.v1_0.move_region_to_atlas_settings
+atlas.patches.v1_0.seed_settings_from_site_config
