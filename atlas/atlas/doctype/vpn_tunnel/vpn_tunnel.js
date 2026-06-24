@@ -47,15 +47,22 @@ function render_intro(frm) {
 	}
 	const status = frm.doc.status;
 	if (status === "Pending") {
-		frm.set_intro(__("Saved but not yet on the host. Click Bring up to open the tunnel."), "orange");
+		frm.set_intro(
+			__("Saved but not yet on the host. Click Bring up to open the tunnel."),
+			"orange"
+		);
 	} else if (status === "Active") {
 		frm.set_intro(
-			__("Tunnel is live. Click Show client config for the connection details and setup steps."),
+			__(
+				"Tunnel is live. Click Show client config for the connection details and setup steps."
+			),
 			"green"
 		);
 	} else if (status === "Revoked") {
 		frm.set_intro(
-			__("This tunnel was revoked and torn down on the host. Create a new tunnel to reconnect."),
+			__(
+				"This tunnel was revoked and torn down on the host. Create a new tunnel to reconnect."
+			),
 			"red"
 		);
 	}
@@ -89,7 +96,10 @@ function open_config_dialog(frm, cfg) {
 						"below as <code>/etc/wireguard/atlas.conf</code> and replace " +
 						"<code>&lt;your client private key&gt;</code> with the contents of your " +
 						"<code>privatekey</code> file — Atlas never sees it.",
-					[frappe.utils.escape_html(frm.doc.virtual_machine), frappe.utils.escape_html(cfg.allowed_ips)]
+					[
+						frappe.utils.escape_html(frm.doc.virtual_machine),
+						frappe.utils.escape_html(cfg.allowed_ips),
+					]
 				)}</p>`,
 			},
 			{
@@ -102,12 +112,11 @@ function open_config_dialog(frm, cfg) {
 			{
 				fieldname: "instructions",
 				fieldtype: "HTML",
-				options:
-					`<div class="text-muted small" style="margin-top: var(--margin-sm)"><b>${__(
-						"Setup"
-					)}</b><pre style="white-space: pre-wrap; margin-top: var(--margin-xs)">${frappe.utils.escape_html(
-						cfg.instructions
-					)}</pre></div>`,
+				options: `<div class="text-muted small" style="margin-top: var(--margin-sm)"><b>${__(
+					"Setup"
+				)}</b><pre style="white-space: pre-wrap; margin-top: var(--margin-xs)">${frappe.utils.escape_html(
+					cfg.instructions
+				)}</pre></div>`,
 			},
 		],
 		primary_action_label: __("Copy config"),

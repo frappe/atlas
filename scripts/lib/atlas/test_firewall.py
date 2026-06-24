@@ -61,7 +61,7 @@ class TestRuleArgv(unittest.TestCase):
 				"state",
 				"established,related",
 				"accept",
-			],  # fmt: skip
+			],
 		)
 
 	def test_port_rule_targets_proto_and_port(self):
@@ -82,7 +82,7 @@ class TestRuleArgv(unittest.TestCase):
 				"dport",
 				"443",
 				"accept",
-			],  # fmt: skip
+			],
 		)
 
 	def test_drop_rule_closes_the_block(self):
@@ -100,7 +100,7 @@ class TestRuleArgv(unittest.TestCase):
 				"daddr",
 				VM_V6,
 				"drop",
-			],  # fmt: skip
+			],
 		)
 
 	def test_chain_runs_before_forward(self):

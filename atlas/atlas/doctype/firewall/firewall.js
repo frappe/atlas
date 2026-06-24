@@ -29,7 +29,9 @@ function render_intro(frm) {
 	}
 	if (!frm.doc.enabled) {
 		frm.set_intro(
-			__("Disabled — the VM is fully public. Tick Enabled and Apply to host to restrict it."),
+			__(
+				"Disabled — the VM is fully public. Tick Enabled and Apply to host to restrict it."
+			),
 			"orange"
 		);
 		return;
@@ -54,7 +56,10 @@ function render_intro(frm) {
 			"green"
 		);
 	} else {
-		frm.set_intro(__("Edited but not yet pushed. Click Apply to host to enforce these rules."), "orange");
+		frm.set_intro(
+			__("Edited but not yet pushed. Click Apply to host to enforce these rules."),
+			"orange"
+		);
 	}
 }
 

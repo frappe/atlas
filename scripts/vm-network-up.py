@@ -28,6 +28,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from atlas._run import run, run_ok
+from atlas.firewall import apply_persisted_firewall
 from atlas.network_env import default_route_device, read_network_env
 from atlas.paths import VirtualMachinePaths
 from atlas.reserved_ip_nat import (
@@ -35,7 +36,6 @@ from atlas.reserved_ip_nat import (
 	apply_routed_reserved_ip_nat,
 	discover_reserved_ip_anchor,
 )
-from atlas.firewall import apply_persisted_firewall
 from atlas.wireguard import apply_persisted_tunnels
 
 

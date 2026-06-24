@@ -59,7 +59,8 @@ import unittest
 # scripts use). scripts/lib is two parents up from this file (lib/atlas/<this>).
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from atlas.wireguard import (  # noqa: E402  (after the sys.path insert)
+# Imported after the sys.path insert above so the package resolves either way.
+from atlas.wireguard import (
 	_handles_for,
 	accept_rule_argv,
 	addr_add_argv,
@@ -114,7 +115,9 @@ def _can_run() -> tuple[bool, str]:
 			return False, f"missing tool: {tool}"
 	# Load the module if it isn't already; a kernel without it can't make wg links.
 	subprocess.run(["modprobe", "wireguard"], capture_output=True)
-	probe = subprocess.run(["ip", "link", "add", "e2e-probe", "type", "wireguard"], capture_output=True, text=True)
+	probe = subprocess.run(
+		["ip", "link", "add", "e2e-probe", "type", "wireguard"], capture_output=True, text=True
+	)
 	if probe.returncode != 0:
 		return False, f"cannot create a wireguard interface: {probe.stderr.strip()}"
 	subprocess.run(["ip", "link", "del", "e2e-probe"], capture_output=True)
@@ -136,7 +139,9 @@ class TunnelIsolationE2E(unittest.TestCase):
 		`check`, so a broken setup step fails loud with the kernel's own message."""
 		result = subprocess.run(argv, capture_output=True, text=True)
 		if check and result.returncode != 0:
-			raise RuntimeError(f"command failed ({result.returncode}): {' '.join(argv)}\n{result.stdout}{result.stderr}")
+			raise RuntimeError(
+				f"command failed ({result.returncode}): {' '.join(argv)}\n{result.stdout}{result.stderr}"
+			)
 		return result
 
 	@classmethod
@@ -193,7 +198,11 @@ class TunnelIsolationE2E(unittest.TestCase):
 			cls._ns(ns, "ip", "link", "set", "lo", "up")
 
 		# 2. veth pairs, created in the root ns then moved into place.
-		for a, b, ns_a, ns_b in ((TH, TC, HOST_NS, CLIENT_NS), (VH1, VN1, HOST_NS, VM1_NS), (VH2, VN2, HOST_NS, VM2_NS)):
+		for a, b, ns_a, ns_b in (
+			(TH, TC, HOST_NS, CLIENT_NS),
+			(VH1, VN1, HOST_NS, VM1_NS),
+			(VH2, VN2, HOST_NS, VM2_NS),
+		):
 			cls._sh(["ip", "link", "add", a, "type", "veth", "peer", "name", b])
 			cls._sh(["ip", "link", "set", a, "netns", ns_a])
 			cls._sh(["ip", "link", "set", b, "netns", ns_b])
@@ -221,7 +230,9 @@ class TunnelIsolationE2E(unittest.TestCase):
 		# 6. The inet atlas scaffold + the broad per-VM forward accepts that
 		#    vm-network-up.py lays down (the rules the tunnel drop must beat).
 		cls._host("nft", "add table inet atlas")
-		cls._host("nft", "add chain inet atlas forward { type filter hook forward priority filter; policy accept; }")
+		cls._host(
+			"nft", "add chain inet atlas forward { type filter hook forward priority filter; policy accept; }"
+		)
 		for vh, vm_v6 in ((VH1, VM1_V6), (VH2, VM2_V6)):
 			cls._host("nft", f"add rule inet atlas forward ip6 daddr {vm_v6} oifname {vh} accept")
 			cls._host("nft", f"add rule inet atlas forward ip6 saddr {vm_v6} iifname {vh} accept")
@@ -237,7 +248,9 @@ class TunnelIsolationE2E(unittest.TestCase):
 		cls._host(*link_up_argv(WG))
 		cls._host("nft", *drop_rule_argv(WG))
 		cls._host("nft", *accept_rule_argv(WG, VM1_V6))
-		cls._host("nft", "add chain inet atlas input { type filter hook input priority filter; policy accept; }")
+		cls._host(
+			"nft", "add chain inet atlas input { type filter hook input priority filter; policy accept; }"
+		)
 		cls._host("nft", *host_drop_rule_argv(WG))
 
 		# 8. The hostile client: AllowedIPs ::/0, routing vm1, vm2 AND the host overlay
@@ -276,7 +289,9 @@ class TunnelIsolationE2E(unittest.TestCase):
 		with open(path, "w") as handle:
 			handle.write(priv + "\n")
 		os.chmod(path, 0o600)
-		pub = subprocess.run(["wg", "pubkey"], input=priv + "\n", capture_output=True, text=True, check=True).stdout.strip()
+		pub = subprocess.run(
+			["wg", "pubkey"], input=priv + "\n", capture_output=True, text=True, check=True
+		).stdout.strip()
 		return path, pub
 
 	@classmethod
@@ -335,7 +350,9 @@ class TunnelIsolationE2E(unittest.TestCase):
 	def test_5_input_drop_is_what_blocks_the_host(self):
 		"""Causation: pull the input drop and the host becomes reachable; restore it
 		(with the shipping builder) and it's blocked again. Proves the fix is load-bearing."""
-		self.assertNotEqual(0, self._ping(HOST_OVERLAY), "host should be blocked with the input drop in place")
+		self.assertNotEqual(
+			0, self._ping(HOST_OVERLAY), "host should be blocked with the input drop in place"
+		)
 		listing = self._host("nft", "-a", "list", "chain", "inet", "atlas", "input").stdout
 		handles = list(_handles_for(listing, WG))
 		self.assertTrue(handles, "expected an input-chain drop for the tunnel interface")
@@ -359,7 +376,9 @@ class TunnelIsolationE2E(unittest.TestCase):
 		for handle in drop_handles:
 			self._host("nft", "delete", "rule", "inet", "atlas", "forward", "handle", handle)
 		try:
-			self.assertEqual(0, self._ping(VM2_V6), "WITHOUT the forward drop vm2 leaks via its own per-VM accept")
+			self.assertEqual(
+				0, self._ping(VM2_V6), "WITHOUT the forward drop vm2 leaks via its own per-VM accept"
+			)
 		finally:
 			self._host("nft", *drop_rule_argv(WG))  # restore the head-inserted drop
 		self.assertNotEqual(0, self._ping(VM2_V6), "re-applying the forward drop blocks vm2 again")
