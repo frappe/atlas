@@ -67,6 +67,8 @@ net.ipv6.conf.default.accept_ra = 0
 
 # --- sshd hardening drop-in, verbatim (step 5) ---
 SSHD_CONF = """\
+# Port 22 is for public ssh into firecracker vms via sshpiperd
+Port 222
 # 5.1.20 key-only root (NOT `no`: Atlas operates as root, no unpriv user yet)
 PermitRootLogin prohibit-password
 # turn "we happen to use keys" into "the server refuses anything else"
@@ -452,7 +454,7 @@ def main() -> None:
 	run("sudo", "systemctl", "enable", "atlas-pool.service", check=False, quiet=True)
 
 	# Generate root ssh key for use by sshpiper
-	run("sudo", "bash" "-c" "[ -e /root/.ssh/id_ed25519 ] || ssh-keygen -t ed25519 -f '/root/.ssh/id_ed25519' -q -N ''")
+	run("sudo", "bash", "-c", "[ -e '/root/.ssh/id_ed25519' ] || ssh-keygen -t ed25519 -f '/root/.ssh/id_ed25519' -q -N ''")
 
 	# 12. Record state for Atlas to pick up. Single JSON file is the canonical
 	#     source of truth. The bytes still land in /var/lib/atlas/bootstrap.json;
