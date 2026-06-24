@@ -31,7 +31,6 @@
    "fieldtype": "Data",
    "label": "Access Key ID",
    "reqd": 1,
-   "set_only_once": 1,
    "description": "AWS IAM access key id with route53:* on the hosted zone."
   },
   {

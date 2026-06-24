@@ -17,8 +17,7 @@
    "fieldtype": "Password",
    "label": "API Token",
    "reqd": 1,
-   "set_only_once": 1,
-   "description": "DigitalOcean personal access token. Rotate by clearing the field via db.set_value, then re-saving."
+   "description": "DigitalOcean personal access token."
   },
   {
    "fieldname": "region",

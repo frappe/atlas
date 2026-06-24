@@ -20,8 +20,7 @@
    "fieldtype": "Password",
    "label": "Secret Key",
    "reqd": 1,
-   "set_only_once": 1,
-   "description": "Scaleway IAM API key Secret Key (the X-Auth-Token value, an opaque hyphenated string — NOT the Access Key). Rotate by clearing the field via db.set_value, then re-saving."
+   "description": "Scaleway IAM API key Secret Key (the X-Auth-Token value, an opaque hyphenated string — NOT the Access Key)."
   },
   {
    "fieldname": "project_id",

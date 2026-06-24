@@ -23,7 +23,6 @@
    "fieldtype": "Data",
    "label": "Account Email",
    "reqd": 1,
-   "set_only_once": 1,
    "description": "ACME account registration and expiry-notice email."
   },
   {
