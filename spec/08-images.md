@@ -317,27 +317,26 @@ supervisord unit, ZFS boot drop-in, or nginx surgery; that is all bench-cli's jo
 
 **Two modes** (`build.sh`'s first arg → two golden snapshots): **`site`** bakes a
 fully-created Frappe + ERPNext site under the fixed name `site.local`, so a clone's
-domain maps to the **site URL** (`deploy-site.py` renames `sites/site.local` → the
-FQDN + `bench setup nginx`); **`admin`** bakes only the bench + the admin app, so a
-clone's domain maps to the **admin URL** (`deploy-site.py` sets `[admin].domain =
-<fqdn>` + `bench setup nginx`). Either way the per-VM deploy is a directory move /
-config-gen, never a multi-minute `bench new-site` + `install-app erpnext`.
+domain maps to the **site URL** (`deploy-site.py` renames `site.local` → the FQDN via
+`bench rename-site`); **`admin`** bakes only the bench + the admin app, so a clone's
+domain maps to the **admin URL** (`deploy-site.py` sets `[admin].domain = <fqdn>` +
+`bench setup production`). Either way the per-VM deploy is a rename / config-gen,
+never a multi-minute `bench new-site` + `install-app erpnext`.
 
-The bake runs as an unprivileged **`frappe` user** (uid 1000, passwordless sudo),
-not root: bench-cli's systemd boot persistence is per-user (`loginctl
-enable-linger frappe` + enabled `systemctl --user` units), so it needs a real
-lingering non-root user. The controller SSHes in as root; `build.sh` creates
-`frappe` and runs every bench step as it.
+The bake runs as an unprivileged **`frappe` user** (passwordless sudo), not root:
+bench-cli's systemd boot persistence is per-user (`loginctl enable-linger frappe` +
+enabled `systemctl --user` units), so it needs a real lingering non-root user. The
+controller SSHes in as root; `build.sh` runs bench-cli's `install.sh` as root to
+create `frappe` (+ its sudoers), then runs every bench step as it.
 
 **MariaDB** is a **dedicated per-bench instance** (`[mariadb].instance = "atlas"`):
 `bench init` provisions `mariadb@atlas` with its own socket + datadir and
 `systemctl enable --now`s it, so it auto-starts at boot as an ordinary system
 service. Atlas never touches MariaDB auth — bench-cli secures it.
 
-**ZFS.** `bench init` creates the pool + `benches`/`mariadb` datasets from
-`[volume]` in `bench.toml` (a preallocated **file vdev**, since the build VM is
-single-disk) and mounts them, so BOTH the bench code and the MariaDB data live on
-ZFS. At the pinned bench-cli the mere presence of a `[volume]` table enables ZFS.
+**ZFS.** `bench init` creates the pool + dataset from `[volume]` in `bench.toml`
+(a preallocated **file vdev**, since the build VM is single-disk) and mounts it,
+so BOTH the bench code and the MariaDB data live on ZFS. At the pinned bench-cli the mere presence of a `[volume]` table enables ZFS.
 The Firecracker `vmlinux` ships no ZFS module, so the **one** ZFS thing `build.sh`
 does itself is DKMS-build `zfs.ko` against the running kernel (`zfs-dkms` +
 `linux-headers-$(uname -r)` + `modprobe zfs`); the built `.ko` travels in the
@@ -352,9 +351,10 @@ build-in-guest pattern the proxy uses ([12-proxy.md](./12-proxy.md)):
 2. `atlas.atlas.bench_image.build_bench(<vm>)` uploads the committed
    [`bench/`](../bench/) tree and runs `bench/build.sh` over guest-SSH — the
    sibling of `proxy.build_proxy`. `build.sh` fixes setuid bits, DKMS-installs the
-   ZFS module, creates the `frappe` user, runs bench-cli's `install.sh` (at a
-   pinned commit), drops the committed [`bench/bench.toml`](../bench/bench.toml),
-   and runs `bench init` + `bench start` as `frappe`. `bench init` is the heavy,
+   ZFS module, runs bench-cli's `install.sh` (at a pinned commit) as root — which
+   creates the `frappe` user + sudoers — then again as `frappe` to install bench-cli,
+   drops the committed [`bench/bench.toml`](../bench/bench.toml), and runs
+   `bench init` + `bench start` as `frappe`. `bench init` is the heavy,
    per-site-invariant step (the dedicated MariaDB instance + Redis, the ZFS pool,
    the uv venv, the Frappe clone, Node deps, the admin frontend, and — because
    `[production].nginx = true` + `process_manager = "systemd"` — the production
@@ -388,21 +388,22 @@ is deferred.
 up a Frappe site — `bench new-site`'s schema-create + frappe-install, plus
 `install-app erpnext` — is per-site-invariant, so it is paid **once** here at bake
 time. A signup's `deploy-site.py` then does only the per-VM work — rename the baked
-dir to the FQDN + `bench setup nginx` — never that multi-minute path, and never a
+site to the FQDN via `bench rename-site` — never that multi-minute path, and never a
 `set-admin-password` (the owner is handed the shared baked password and rotates it);
 see [14-self-serve.md](./14-self-serve.md).
 
 **Per-VM identity is the rename (Contract A, site mode).** The bake leaves the
-site as `site.local` on disk; the per-VM `deploy-site.py` renames `sites/site.local`
-→ `sites/<fqdn>` and runs `bench setup nginx`, which regenerates the bench's vhost
-with `server_name <fqdn>` (on `listen 80;` + `listen [::]:80;`, both emitted by
-bench-cli) so the bench serves the FQDN the proxy forwards. The on-disk name, the
-proxy `Host`, and the `Site` key are then **one string** — no `default_site` /
-`default_server` indirection. The controller's FQDN readiness probe runs *after*
-the deploy's rename + `setup nginx`, so the post-rename `server_name <fqdn>` vhost
-matches it directly — there is no pre-rename catch-all to bake. A site VM is
+site as `site.local` on disk; the per-VM `deploy-site.py` runs
+`bench rename-site site.local <fqdn>`, which moves `sites/site.local` →
+`sites/<fqdn>`, rewrites `bench.toml`, removes the stale `site.local.conf`, and
+regenerates the bench's vhost with `server_name <fqdn>` (on `listen 80;` +
+`listen [::]:80;`, both emitted by bench-cli) so the bench serves the FQDN the proxy
+forwards. The on-disk name, the proxy `Host`, and the `Site` key are then **one
+string** — no `default_site` / `default_server` indirection. The controller's FQDN
+readiness probe runs *after* the rename, so the post-rename `server_name <fqdn>`
+vhost matches it directly — there is no pre-rename catch-all to bake. A site VM is
 single-tenant (one site per VM). In **admin** mode the equivalent identity step is
-setting `[admin].domain = <fqdn>` + `bench setup nginx`, mapping the FQDN to the
+setting `[admin].domain = <fqdn>` + `bench setup production`, mapping the FQDN to the
 admin app's vhost.
 
 **The bake mode rides snapshot → clone → first boot.** The build VM is stamped with

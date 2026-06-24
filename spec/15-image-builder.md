@@ -82,7 +82,7 @@ The three `*-admin` recipes bake the same `bench/` tree at each Frappe version b
 **`admin` mode**: `build.sh` skips `bench new-site` + ERPNext and leaves only the
 bench plus the bench-cli **admin console** (a Flask management app) running for the
 snapshot. A clone's first-boot `deploy-site.py --mode admin` sets `[admin].domain =
-<fqdn>` + `bench setup nginx` so the FQDN serves the admin app, and the readiness
+<fqdn>` + `bench setup production` so the FQDN serves the admin app, and the readiness
 probe is the admin app's `/api/status` (it has no Frappe `/api/method/ping`). They
 are cold-only and never register — the admin image is a distinct product, not the
 self-serve site golden. See *Bake mode (site vs admin)* in
