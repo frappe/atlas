@@ -325,9 +325,10 @@ the rendered DOM from CSS.
   points at a `0600` PEM on the Atlas host; rotating the key is a
   file-replace operation per
   [07-filesystem-layout.md § SSH keys](./07-filesystem-layout.md), not
-  a form edit. The `ssh_key_id` and `ssh_public_key` fields are
-  read by providers that need them (DigitalOcean reads the key id;
-  future vendors that upload keys read the body).
+  a form edit. The `ssh_public_key` body is read by providers that
+  upload keys at provision time; the vendor's handle for the key lives
+  on the active vendor's Settings (e.g. `DigitalOcean
+  Settings.ssh_key_id`), not here.
 
 ### DigitalOcean Settings
 

@@ -282,7 +282,7 @@ class ScalewayProvider(Provider):
 		"""Return the IAM SSH key id to install. Reuse the cached vendor_id when
 		set; otherwise register the public-key body with IAM and return the new
 		id. Atlas is one-key, so we don't write the id back here — the operator
-		caches it on Atlas Settings.ssh_key_id once known."""
+		caches it on Scaleway Settings.ssh_key_id once known."""
 		if request.ssh_key and request.ssh_key.vendor_id:
 			return request.ssh_key.vendor_id
 		if request.ssh_key and request.ssh_key.public_key:

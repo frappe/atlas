@@ -7,6 +7,7 @@
  "field_order": [
   "api_token",
   "region",
+  "ssh_key_id",
   "section_break_defaults",
   "default_size",
   "default_image"
@@ -25,6 +26,12 @@
    "label": "Region",
    "reqd": 1,
    "description": "DO is multi-region; Atlas is single-region. Pick one (blr1, nyc3, ...)."
+  },
+  {
+   "fieldname": "ssh_key_id",
+   "fieldtype": "Data",
+   "label": "SSH Key ID",
+   "description": "DigitalOcean's handle for the uploaded SSH key, installed on each new droplet. Accepts either the key's numeric id or its SHA-256 fingerprint. Vendor-specific — meaningless to other providers."
   },
   {
    "fieldname": "section_break_defaults",

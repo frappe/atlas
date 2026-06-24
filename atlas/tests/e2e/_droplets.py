@@ -189,7 +189,7 @@ def ensure_e2e_provider() -> str:
 	provider_type = "DigitalOcean"
 
 	frappe.db.set_single_value("Atlas Settings", "provider_type", provider_type, update_modified=False)
-	frappe.db.set_single_value("Atlas Settings", "ssh_key_id", get_ssh_key_id(), update_modified=False)
+	frappe.db.set_single_value("DigitalOcean Settings", "ssh_key_id", get_ssh_key_id(), update_modified=False)
 	frappe.db.set_single_value(
 		"Atlas Settings",
 		"ssh_private_key_path",

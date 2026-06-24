@@ -350,15 +350,19 @@ def restore_credentials() -> None:
 		key_path,
 		update_modified=False,
 	)
-	# ssh_key_id is required for DO (its key handle) but optional for Scaleway (the
-	# provider self-registers the public key with IAM if unset) and unused for
-	# Self-Managed — so only require it for DO, restore it best-effort otherwise.
+	# ssh_key_id is the vendor's own key handle, so it lives on the active vendor's
+	# Settings, not Atlas Settings. Required for DO (its key handle), optional for
+	# Scaleway (the provider self-registers the public key with IAM if unset) and
+	# absent for Self-Managed — require it only for DO, restore best-effort otherwise.
 	if provider_type == "DigitalOcean":
 		ssh_key_id = require_config("atlas_ssh_key_id")
 	else:
 		ssh_key_id = frappe.conf.get("atlas_ssh_key_id")
-	if ssh_key_id:
-		frappe.db.set_single_value("Atlas Settings", "ssh_key_id", ssh_key_id, update_modified=False)
+	vendor_single = {"DigitalOcean": "DigitalOcean Settings", "Scaleway": "Scaleway Settings"}.get(
+		provider_type
+	)
+	if ssh_key_id and vendor_single:
+		frappe.db.set_single_value(vendor_single, "ssh_key_id", ssh_key_id, update_modified=False)
 	public_key = _resolve_fleet_public_key()
 	if public_key:
 		frappe.db.set_single_value("Atlas Settings", "ssh_public_key", public_key, update_modified=False)
@@ -413,18 +417,18 @@ def ensure_provider() -> str:
 		require_config("atlas_ssh_private_key_path"),
 		update_modified=False,
 	)
-	if provider_type == "DigitalOcean":
-		frappe.db.set_single_value(
-			"Atlas Settings",
-			"ssh_key_id",
-			require_config("atlas_ssh_key_id"),
-			update_modified=False,
-		)
 	public_key = _resolve_fleet_public_key()
 	if public_key:
 		frappe.db.set_single_value("Atlas Settings", "ssh_public_key", public_key, update_modified=False)
 
 	if provider_type == "DigitalOcean":
+		# DO's key handle lives on DigitalOcean Settings (vendor-specific).
+		frappe.db.set_single_value(
+			"DigitalOcean Settings",
+			"ssh_key_id",
+			require_config("atlas_ssh_key_id"),
+			update_modified=False,
+		)
 		region = require_config("atlas_do_region")
 		size_slug = require_config("atlas_do_default_size")
 		image_slug = require_config("atlas_do_default_image")
@@ -487,9 +491,9 @@ def _seed_scaleway_settings() -> None:
 
 	The IAM SSH key is uploaded at provision time, so unlike DO there is no
 	`ssh_key_id` to seed here: the provider registers `Atlas Settings.ssh_public_key`
-	with IAM if `ssh_key_id` is unset (ensure_provider derives the public key from
-	the private key path). An operator who already has a cached IAM key UUID can set
-	`atlas_ssh_key_id` to reuse it."""
+	with IAM if `Scaleway Settings.ssh_key_id` is unset (ensure_provider derives the
+	public key from the private key path). An operator who already has a cached IAM
+	key UUID can set `atlas_ssh_key_id` to reuse it."""
 	import frappe.utils.password
 
 	zone = require_config("atlas_scw_zone")
@@ -517,7 +521,7 @@ def _seed_scaleway_settings() -> None:
 	# upserts the rows below, so the Link target exists when the Single saves.
 	if frappe.conf.get("atlas_ssh_key_id"):
 		frappe.db.set_single_value(
-			"Atlas Settings", "ssh_key_id", frappe.conf.get("atlas_ssh_key_id"), update_modified=False
+			"Scaleway Settings", "ssh_key_id", frappe.conf.get("atlas_ssh_key_id"), update_modified=False
 		)
 	# nosemgrep: frappe-manual-commit -- bootstrap script: persist Scaleway Settings before the load-bearing discover() call that needs them
 	frappe.db.commit()

@@ -242,10 +242,10 @@ SSH private key on disk under `/etc/atlas/keys/atlas.pem` (or whatever
 path the operator chose). `Atlas Settings.ssh_private_key_path` stores
 the path; the key body is *not* in the DB. The matching public-key body
 *is* in the DB at `Atlas Settings.ssh_public_key` — providers that
-upload keys at provision time (future Scaleway, AWS) read it from
-there, and `Atlas Settings.ssh_key_id` carries the vendor's handle for
-providers that need a pre-registered key (DigitalOcean — its key id or
-fingerprint).
+upload keys at provision time (Scaleway, future AWS) read it from
+there, and the active vendor's Settings (e.g. `DigitalOcean
+Settings.ssh_key_id`) carries the vendor's handle for providers that
+need a pre-registered key (DigitalOcean — its key id or fingerprint).
 
 One Atlas instance, one SSH key. Multi-account ("prod + staging on the
 same vendor") is foreclosed by the per-vendor Single Settings model:

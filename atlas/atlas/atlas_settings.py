@@ -25,11 +25,27 @@ def get_provider() -> Provider:
 
 
 def get_ssh_key() -> SshKey:
+	"""The Atlas keypair, with the active vendor's handle for it. The public key
+	is vendor-agnostic and lives on Atlas Settings; `vendor_id` is the vendor's
+	own id for the uploaded key (DO key id / fingerprint, Scaleway IAM id) and so
+	lives on the active vendor's Settings — a DO key id is meaningless to Scaleway.
+	Vendors that take IPs directly (Self-Managed) or have no API (Fake) carry no
+	such field, so `vendor_id` is simply None for them."""
 	settings = frappe.get_single("Atlas Settings")
 	return SshKey(
-		vendor_id=settings.ssh_key_id or None,
+		vendor_id=_active_vendor_ssh_key_id(settings.provider_type),
 		public_key=settings.ssh_public_key or None,
 	)
+
+
+def _active_vendor_ssh_key_id(provider_type: str) -> str | None:
+	vendor_single = {
+		"DigitalOcean": "DigitalOcean Settings",
+		"Scaleway": "Scaleway Settings",
+	}.get(provider_type)
+	if not vendor_single:
+		return None
+	return frappe.db.get_single_value(vendor_single, "ssh_key_id") or None
 
 
 def get_ssh_private_key_path() -> str:
