@@ -72,6 +72,7 @@ indirection layer; there is no `Provider` row to load.
 
 | Field                  | Type             | Reqd | Notes                                                              |
 | ---------------------- | ---------------- | ---- | ------------------------------------------------------------------ |
+| `region`               | Data             | Y    | This Atlas instance's single region (e.g. `blr1`, `nyc3`) — the **one source of truth** for region. It is the proxy-fleet join key shared by `Subdomain` / `Site` / `Port Mapping` / proxy `Virtual Machine.region`, the label that separates this bench's servers in a shared cloud account (`provisioning.provision_region`), the value `Root Domain` denormalizes at insert, and the region announced to Central at Register. Read everywhere through `placement.atlas_region()`, which fails loud when unset. `bootstrap.py` seeds it from `atlas_tls_region` (else the active vendor's region key). Atlas is single-region, so there is exactly one value. |
 | `provider_type`        | Select           | Y    | The currently-active vendor: `DigitalOcean` / `Scaleway` / `Self-Managed` (`Fake` is also an option in `developer_mode` / test builds). `atlas.get_provider()` reads this and calls `for_provider_type` against the registry directly. Guarded in `validate()` (see below). |
 | `tls_provider_type`    | Select           |      | The active certificate issuer: `Let's Encrypt` / `ZeroSSL` / `Self-Managed`. Drives the TLS registry (`tls.for_tls_provider_type`); denormalized onto `Root Domain` / `TLS Certificate` at insert. See [13-tls.md](./13-tls.md). |
 | `fail_scripts`         | Small Text       |      | Developer-mode fault injection, shown only when `provider_type=Fake`. Comma/newline-separated script names whose Tasks the Fake provider makes FAIL; `*` fails every script. Read by `fake_tasks._configured_failure` (replaces the old per-`Provider`-row field). |
@@ -338,10 +339,15 @@ operator-facing label lives in `title` (e.g. `server-blr1-01`).
 | `jailer_version`               | Data                  |      | Y         |         | Set by bootstrap. Allowed to change on re-bootstrap. |
 | `kernel_version`               | Data                  |      | Y         |         | Set by bootstrap. Allowed to change on re-bootstrap. |
 
-Atlas is single-region: there is no `Server.region` column. A vendor
-that operates in multiple regions stores its operating region on its
-own Settings Single (e.g. `DigitalOcean Settings.region`), and one
-Atlas instance pins one region per vendor.
+Atlas is single-region: there is no `Server.region` column. The
+instance's region is `Atlas Settings.region` (the single source of
+truth, read through `placement.atlas_region()`). That is distinct from a
+vendor's *operating* region — a vendor that operates in multiple regions
+stores the API region it provisions into on its own Settings Single
+(e.g. `DigitalOcean Settings.region`, `Scaleway Settings.zone`), and one
+Atlas instance pins one region per vendor. The two normally hold the same
+string; `Atlas Settings.region` answers "which proxy fleet / wildcard
+zone", the vendor key answers "which datacenter the API creates the box in".
 
 Immutability is enforced by `Server._validate_immutability()` (lock
 once a value is written; allow `None → value` so `finish_provisioning`
@@ -1375,7 +1381,7 @@ wildcard cert `*.blr1.frappe.dev` that fronts the proxy fleet in `region`.
 | ----------------- | --------------------- | ---- | ------------------------------------------------------------------ |
 | `name`            | = `domain` (autoname `field:domain`) | Y | Primary key is the domain itself. |
 | `domain`          | Data                  | Y    | The wildcard zone, e.g. `blr1.frappe.dev`. `unique`, `set_only_once`. The cert is `*.<domain>`. |
-| `region`          | Data                  | Y    | The proxy fleet this domain fronts. Join key to `Virtual Machine.region`. `set_only_once`. |
+| `region`          | Data                  |      | The proxy fleet this domain fronts. Join key to `Virtual Machine.region`. Read-only; denormalized from `Atlas Settings.region` (the single source of truth) at insert — the operator does not type it. `set_only_once`. |
 | `is_active`       | Check                 |      | Default 1. |
 | `domain_provider_type` | Select           |      | The DNS vendor that owns the zone (DNS-01). Read-only; denormalized from `Route53 Settings.domain_provider_type` at insert. |
 | `tls_provider_type`    | Select           |      | The issuer that produces the cert. Read-only; denormalized from `Atlas Settings.tls_provider_type` at insert. |
@@ -1478,7 +1484,7 @@ proxy map it creates once serving) and **not** the
 | --------------- | ---------------------- | ---- | --------- | ----------------------------------------------------------- |
 | `name`          | the FQDN               | Y    | Y         | Primary key, built in `autoname()` as `<subdomain>.<region domain>` — the one routing string (Contract A): proxy Host header == this key. The routing identity, never written on disk (the baked site stays `site.local`). Never transformed. |
 | `subdomain`     | Data                   | Y    |           | The bare DNS label the user chose (`acme`). `set_only_once`. A single label, no dots, lowercase `[a-z0-9-]`, ≤63 chars, no leading/trailing hyphen; not in the reserved denylist. |
-| `region`        | Data                   |      | Y         | `set_only_once`. Resolved from the single active `Root Domain` at insert (the user never picks it). |
+| `region`        | Data                   |      | Y         | `set_only_once`. Resolved from `Atlas Settings.region` (the single source of truth, via `placement.atlas_region()`) at insert; the user never picks it. The FQDN suffix is read from the active `Root Domain` — its `region` is denormalized from the same value, so the two stay consistent. |
 | `status`        | Select                 |      | Y         | `Pending` → `Provisioning` → `Deploying` → `Running` / `Failed` / `Terminated`. Controller-written. `Running` is reached **only** on an observed HTTP 200 from the guest `:80` (Contract B), not when the backing VM boots. |
 | `virtual_machine` | Link → Virtual Machine |    | Y         | `set_only_once`. The backing VM, cloned from the golden bench snapshot by the background job (the user never picks it). |
 | `subdomain_doc` | Link → Subdomain       |      | Y         | The proxy-map row the site created once it began serving. Deleting it (or the Site) takes the site off the front door. |

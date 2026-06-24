@@ -79,10 +79,12 @@ the fleet state the commands above produce.
 
 - **Central Settings** (single) — the credentials, this Atlas's identity, and
   the action buttons. Mirrors `DigitalOcean Settings`. Fields: `url`,
-  `api_key`, `api_secret` (Password, `set_only_once`), `region`, `enabled`
+  `api_key`, `api_secret` (Password, `set_only_once`), `enabled`
   (master switch — event reporting is skipped when off), and the read-only
   `atlas_id` / `registered_on` / `last_sync` / `last_event_status` filled by the
-  action methods.
+  action methods. The region announced at **Register** is **not** a Central
+  Settings field — it is read from `Atlas Settings.region` (the single source of
+  truth, via `placement.atlas_region()`).
 - **Central Size** — a size Central says this Atlas should offer (`slug`,
   `title`, `vcpus`, `cpu_max_cores`, `memory_megabytes`, `disk_gigabytes`,
   `monthly_cost_usd`, `enabled`, `central_metadata`). Distinct from
