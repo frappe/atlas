@@ -309,6 +309,9 @@ def _stage_provider(args: dict) -> None:
 		)
 
 
+LETS_ENCRYPT_PRODUCTION = "https://acme-v02.api.letsencrypt.org/directory"
+
+
 def _stage_tls(args: dict) -> None:
 	setup_tls_layer(
 		{
@@ -318,9 +321,20 @@ def _stage_tls(args: dict) -> None:
 			"secret_access_key": args.get("route53_secret_access_key"),
 			"aws_region": args.get("route53_region") or "us-east-1",
 			"account_email": args.get("acme_account_email"),
-			"acme_directory_url": args.get("acme_directory_url") or None,
+			"acme_directory_url": _resolve_acme_url(args),
 		}
 	)
+
+
+def _resolve_acme_url(args: dict) -> str | None:
+	"""Map the wizard's Certificate Environment Select onto an ACME directory URL.
+	`None` lets `setup_tls_layer` apply its staging default."""
+	environment = args.get("acme_environment") or ""
+	if environment.startswith("Production"):
+		return LETS_ENCRYPT_PRODUCTION
+	if environment.startswith("Custom"):
+		return args.get("acme_directory_url") or None
+	return None  # Staging (the default)
 
 
 def on_complete(args: dict | None = None) -> None:
@@ -331,3 +345,141 @@ def on_complete(args: dict | None = None) -> None:
 def _truthy(value: object) -> bool:
 	"""Frappe posts checkbox values as "0"/"1"/strings/bools — normalize."""
 	return str(value).lower() in ("1", "true", "yes", "on")
+
+
+# --- Wizard "Test Connection / Fetch Catalog" -------------------------------
+
+
+@frappe.whitelist()
+def wizard_discover(provider_type: str, credentials: dict | str | None = None) -> dict:
+	"""Probe the vendor with the credentials the operator JUST TYPED (not yet saved)
+	and return its live catalog, so the wizard can turn free-text slug boxes into
+	pick-lists and show a connection result — BEFORE Complete Setup writes anything.
+
+	Talks to the vendor *client* directly with the ad-hoc creds rather than the
+	Provider (which reads the saved Singles). Returns a plain dict:
+
+	    {"ok": bool, "account_label": str|None, "error": str|None,
+	     "sizes":  [{"value","label"}], "images": [{"value","label"}],
+	     "ssh_keys": [{"value","label"}], "projects": [{"value","label"}]}
+
+	`sizes`/`images` use the vendor-native slug as `value` (what the slug fields
+	store). Never raises — a bad credential comes back as `{"ok": False, "error": …}`
+	so the button renders a red toast instead of a traceback."""
+	import json
+
+	if isinstance(credentials, str):
+		credentials = json.loads(credentials) if credentials else {}
+	credentials = credentials or {}
+
+	if provider_type == "DigitalOcean":
+		return _discover_digitalocean(credentials)
+	if provider_type == "Scaleway":
+		return _discover_scaleway(credentials)
+	# Self-Managed / Fake have no remote catalog to fetch.
+	return {
+		"ok": True,
+		"account_label": None,
+		"error": None,
+		"sizes": [],
+		"images": [],
+		"ssh_keys": [],
+		"projects": [],
+	}
+
+
+def _discover_digitalocean(credentials: dict) -> dict:
+	from atlas.atlas.digitalocean import DigitalOceanClient
+	from atlas.atlas.providers.digitalocean import (
+		DIGITALOCEAN_MONTHLY_COST_USD,
+		KNOWN_DIGITALOCEAN_IMAGES,
+		KNOWN_DIGITALOCEAN_SIZES,
+	)
+
+	result = {
+		"ok": False,
+		"account_label": None,
+		"error": None,
+		# DO's catalog is hand-maintained constants (no live size/image API), so these
+		# are available regardless of the token — the auth check below gates the toast.
+		"sizes": [
+			{"value": slug, "label": _size_label(slug, DIGITALOCEAN_MONTHLY_COST_USD.get(slug))}
+			for slug in KNOWN_DIGITALOCEAN_SIZES
+		],
+		"images": [{"value": slug, "label": slug} for slug in KNOWN_DIGITALOCEAN_IMAGES],
+		"ssh_keys": [],  # DO exposes no SSH-key list endpoint in the client today.
+		"projects": [],
+	}
+	token = credentials.get("api_token")
+	if not token:
+		result["error"] = _("Enter an API Token, then Test Connection.")
+		return result
+	try:
+		auth = DigitalOceanClient(token=token).verify_credentials()
+	except Exception as exception:  # any failure becomes a red toast, never a traceback
+		result["error"] = str(exception)
+		return result
+	result["ok"] = True
+	rate = (
+		f" · {auth['rate_remaining']}/{auth['rate_limit']} API calls left"
+		if auth.get("rate_remaining") is not None
+		else ""
+	)
+	result["account_label"] = f"{auth.get('email') or 'DigitalOcean'}{rate}"
+	return result
+
+
+def _discover_scaleway(credentials: dict) -> dict:
+	from atlas.atlas.providers.scaleway import _image_from_os, _size_from_offer
+	from atlas.atlas.scaleway import ScalewayClient
+
+	result = {
+		"ok": False,
+		"account_label": None,
+		"error": None,
+		"sizes": [],
+		"images": [],
+		"ssh_keys": [],
+		"projects": [],
+	}
+	secret_key = credentials.get("secret_key")
+	zone = credentials.get("zone")
+	if not (secret_key and zone):
+		result["error"] = _("Enter a Secret Key and Zone, then Test Connection.")
+		return result
+	organization_id = credentials.get("organization_id") or None
+	project_id = credentials.get("project_id") or None
+	billing = credentials.get("billing") or "hourly"
+	client = ScalewayClient(secret_key=secret_key, zone=zone)
+	try:
+		auth = client.verify_credentials(organization_id)
+		result["projects"] = [
+			{"value": project["id"], "label": project.get("name") or project["id"]}
+			for project in client.list_projects(organization_id)
+		]
+		result["sizes"] = [
+			_size_label_dict(_size_from_offer(offer))
+			for offer in client.list_offers(subscription_period=billing)
+		]
+		result["images"] = [
+			{"value": img.slug, "label": img.slug} for img in map(_image_from_os, client.list_os())
+		]
+		if project_id:
+			result["ssh_keys"] = [
+				{"value": key["id"], "label": key.get("name") or key["id"]}
+				for key in client.list_ssh_keys(project_id)
+			]
+	except Exception as exception:  # any failure becomes a red toast, never a traceback
+		result["error"] = str(exception)
+		return result
+	result["ok"] = True
+	result["account_label"] = auth.get("account_label") or _("Scaleway")
+	return result
+
+
+def _size_label(slug: str, monthly_cost_usd: int | None) -> str:
+	return f"{slug} — ${monthly_cost_usd}/mo" if monthly_cost_usd else slug
+
+
+def _size_label_dict(size) -> dict:
+	return {"value": size.slug, "label": _size_label(size.slug, size.monthly_cost_usd or None)}

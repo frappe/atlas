@@ -4,16 +4,28 @@
 // `atlas.setup.get_setup_stages` (the `setup_wizard_stages` hook), whose stage
 // fns call the Layer-1 `setup()` setters.
 //
-// Hide-irrelevant-fields is pure `depends_on` (no imperative JS). Per-provider
-// required fields use `mandatory_depends_on` so Next-validation doesn't block on a
-// hidden field. The only imperative bits are the optional "Test Connection / Fetch
-// Catalog" buttons, which call the EXISTING whitelisted methods.
+// Hide-irrelevant-fields is pure `depends_on`. Per-provider required fields use
+// `mandatory_depends_on` so Next-validation doesn't block on a hidden field.
+//
+// The imperative bits (in each slide's `onload`) deliver the "discover, don't
+// type" experience: a Test Connection button calls `atlas.setup.wizard_discover`
+// with the just-typed (unsaved) credentials and turns the Size / Image / SSH Key /
+// Project slug boxes into pick-lists populated from the vendor's live catalog. The
+// default provider is applied on load so its section shows immediately (no blank
+// first paint), and the SSH-key slide validates the path before Next.
 
 frappe.provide("frappe.setup");
 
 frappe.setup.on("before_load", function () {
 	atlas_setup_slides().forEach((slide) => frappe.setup.add_slide(slide));
 });
+
+// Fields the wizard discovers rather than asks you to type. Start as empty Selects
+// (so they render as dropdowns, not text); Test Connection fills the options.
+const ATLAS_DISCOVERED = {
+	DigitalOcean: ["do_default_size", "do_default_image"],
+	Scaleway: ["scw_default_size", "scw_default_image", "scw_project_id", "scw_ssh_key_id"],
+};
 
 function atlas_setup_slides() {
 	return [
@@ -27,6 +39,7 @@ function atlas_setup_slides() {
 					label: __("Provider"),
 					fieldtype: "Select",
 					options: ["DigitalOcean", "Scaleway", "Self-Managed"].join("\n"),
+					default: "DigitalOcean",
 					reqd: 1,
 				},
 				{
@@ -53,6 +66,18 @@ function atlas_setup_slides() {
 					mandatory_depends_on: "eval:doc.provider_type=='DigitalOcean'",
 				},
 				{
+					fieldname: "do_test_connection",
+					fieldtype: "Button",
+					label: __("Test Connection & Fetch Catalog"),
+					depends_on: "eval:doc.provider_type=='DigitalOcean'",
+				},
+				{
+					fieldname: "do_connection_status",
+					fieldtype: "HTML",
+					options: "",
+					depends_on: "eval:doc.provider_type=='DigitalOcean'",
+				},
+				{
 					fieldname: "do_region",
 					label: __("DigitalOcean Region"),
 					fieldtype: "Data",
@@ -73,18 +98,22 @@ function atlas_setup_slides() {
 				{
 					fieldname: "do_default_size",
 					label: __("Default Size"),
-					fieldtype: "Data",
+					fieldtype: "Select",
 					depends_on: "eval:doc.provider_type=='DigitalOcean'",
 					mandatory_depends_on: "eval:doc.provider_type=='DigitalOcean'",
-					description: __("Vendor-native slug, e.g. s-2vcpu-4gb-intel."),
+					description: __(
+						"Pick after Test Connection, or type a vendor slug, e.g. s-2vcpu-4gb-intel."
+					),
 				},
 				{
 					fieldname: "do_default_image",
 					label: __("Default Image"),
-					fieldtype: "Data",
+					fieldtype: "Select",
 					depends_on: "eval:doc.provider_type=='DigitalOcean'",
 					mandatory_depends_on: "eval:doc.provider_type=='DigitalOcean'",
-					description: __("Vendor-native slug, e.g. ubuntu-24-04-x64."),
+					description: __(
+						"Pick after Test Connection, or type a vendor slug, e.g. ubuntu-24-04-x64."
+					),
 				},
 
 				// --- Scaleway ---
@@ -101,37 +130,55 @@ function atlas_setup_slides() {
 					mandatory_depends_on: "eval:doc.provider_type=='Scaleway'",
 				},
 				{
-					fieldname: "scw_project_id",
-					label: __("Project ID"),
-					fieldtype: "Data",
-					depends_on: "eval:doc.provider_type=='Scaleway'",
-					mandatory_depends_on: "eval:doc.provider_type=='Scaleway'",
-				},
-				{
 					fieldname: "scw_zone",
 					label: __("Zone"),
-					fieldtype: "Data",
+					fieldtype: "Select",
+					options: ["", "fr-par-1", "fr-par-2", "nl-ams-1", "pl-waw-2"].join("\n"),
+					depends_on: "eval:doc.provider_type=='Scaleway'",
+					mandatory_depends_on: "eval:doc.provider_type=='Scaleway'",
+					description: __("The Scaleway Elastic Metal zone (the vendor's own zone)."),
+				},
+				{
+					fieldname: "scw_test_connection",
+					fieldtype: "Button",
+					label: __("Test Connection & Fetch Catalog"),
+					depends_on: "eval:doc.provider_type=='Scaleway'",
+				},
+				{
+					fieldname: "scw_connection_status",
+					fieldtype: "HTML",
+					options: "",
+					depends_on: "eval:doc.provider_type=='Scaleway'",
+				},
+				{
+					fieldname: "scw_project_id",
+					label: __("Project"),
+					fieldtype: "Select",
 					depends_on: "eval:doc.provider_type=='Scaleway'",
 					mandatory_depends_on: "eval:doc.provider_type=='Scaleway'",
 					description: __(
-						"The Scaleway Elastic Metal zone, e.g. fr-par-2 (the vendor's own zone)."
+						"Pick after Test Connection (the catalog needs it to list SSH keys)."
 					),
 				},
 				{
 					fieldname: "scw_default_size",
 					label: __("Default Size"),
-					fieldtype: "Data",
+					fieldtype: "Select",
 					depends_on: "eval:doc.provider_type=='Scaleway'",
 					mandatory_depends_on: "eval:doc.provider_type=='Scaleway'",
-					description: __("Case-sensitive offer name, e.g. EM-A610R-NVME."),
+					description: __(
+						"Pick after Test Connection, or type a case-sensitive offer name, e.g. EM-A610R-NVME."
+					),
 				},
 				{
 					fieldname: "scw_default_image",
 					label: __("Default Image"),
-					fieldtype: "Data",
+					fieldtype: "Select",
 					depends_on: "eval:doc.provider_type=='Scaleway'",
 					mandatory_depends_on: "eval:doc.provider_type=='Scaleway'",
-					description: __("Case-sensitive OS slug, e.g. Ubuntu_24.04."),
+					description: __(
+						"Pick after Test Connection, or type a case-sensitive OS slug, e.g. Ubuntu_24.04."
+					),
 				},
 				{ fieldtype: "Column Break", depends_on: "eval:doc.provider_type=='Scaleway'" },
 				{
@@ -150,29 +197,31 @@ function atlas_setup_slides() {
 				},
 				{
 					fieldname: "scw_ssh_key_id",
-					label: __("IAM SSH Key UUID (optional)"),
-					fieldtype: "Data",
+					label: __("IAM SSH Key (optional)"),
+					fieldtype: "Select",
 					depends_on: "eval:doc.provider_type=='Scaleway'",
 					description: __(
-						"Leave blank to let Atlas register the SSH public key with IAM at provision time."
+						"Pick after Test Connection, or leave blank to let Atlas register the SSH public key with IAM at provision time."
 					),
 				},
 
-				// --- Self-Managed (per-server networking → provision payload, not a Single) ---
+				// --- Self-Managed ---
 				{
 					fieldtype: "Section Break",
-					label: __("Self-Managed Networking"),
+					label: __("Self-Managed"),
 					depends_on: "eval:doc.provider_type=='Self-Managed'",
 				},
 				{
 					fieldname: "self_managed_note",
 					fieldtype: "HTML",
 					options: `<p class="text-muted">${__(
-						"These are per-server networking values for the existing box. They are forwarded to Provision Server, not stored as global config — the wizard records them for the bootstrap step."
+						"Self-Managed has no global vendor config. Per-server networking is entered when you provision the box (Provision Server), not here."
 					)}</p>`,
 					depends_on: "eval:doc.provider_type=='Self-Managed'",
 				},
 			],
+
+			onload: atlas_provider_slide_onload,
 		},
 
 		{
@@ -196,6 +245,13 @@ function atlas_setup_slides() {
 					description: __(
 						"OpenSSH public key body. Derived from the private key path when omitted."
 					),
+				},
+				{
+					fieldname: "ssh_key_hint",
+					fieldtype: "HTML",
+					options: `<p class="text-muted small">${__(
+						"The file only needs to exist on the controller before you provision a Server — setup saves the path either way."
+					)}</p>`,
 				},
 			],
 		},
@@ -251,13 +307,26 @@ function atlas_setup_slides() {
 					mandatory_depends_on: "eval:doc.setup_tls",
 				},
 				{
+					fieldname: "acme_environment",
+					label: __("Certificate Environment"),
+					fieldtype: "Select",
+					options: [
+						"Staging (untrusted, no rate limits)",
+						"Production (trusted)",
+						"Custom URL",
+					].join("\n"),
+					default: "Staging (untrusted, no rate limits)",
+					depends_on: "eval:doc.setup_tls",
+					description: __(
+						"Staging issues untrusted test certs with no rate limits. Switch to Production for a real, browser-trusted certificate."
+					),
+				},
+				{
 					fieldname: "acme_directory_url",
 					label: __("ACME Directory URL"),
 					fieldtype: "Data",
-					depends_on: "eval:doc.setup_tls",
-					description: __(
-						"Defaults to Let's Encrypt STAGING (untrusted, no rate limits). Set the production URL for a trusted cert."
-					),
+					depends_on: "eval:doc.setup_tls && doc.acme_environment=='Custom URL'",
+					mandatory_depends_on: "eval:doc.acme_environment=='Custom URL'",
 				},
 			],
 		},
@@ -280,4 +349,127 @@ function atlas_setup_slides() {
 			],
 		},
 	];
+}
+
+// --- Provider slide: default-on-load + Test Connection / auto-fill -----------
+
+function atlas_provider_slide_onload(slide) {
+	// Apply the default provider so its section renders on first paint (Frappe leaves
+	// the doc value empty even when the Select visually shows the first option).
+	if (!slide.get_value("provider_type")) {
+		slide.get_field("provider_type").set_input("DigitalOcean");
+		slide.form.refresh();
+	}
+
+	slide
+		.get_field("do_test_connection")
+		?.$input?.on("click", () => atlas_test_connection(slide, "DigitalOcean"));
+	slide
+		.get_field("scw_test_connection")
+		?.$input?.on("click", () => atlas_test_connection(slide, "Scaleway"));
+
+	// Scaleway lists SSH keys only once a project is chosen — re-fetch on change.
+	slide.get_field("scw_project_id")?.$input?.on("change", () => {
+		if (slide.get_value("scw_project_id"))
+			atlas_test_connection(slide, "Scaleway", { silent: true });
+	});
+}
+
+function atlas_test_connection(slide, provider_type, opts = {}) {
+	const credentials =
+		provider_type === "DigitalOcean"
+			? { api_token: slide.get_value("do_api_token") }
+			: {
+					secret_key: slide.get_value("scw_secret_key"),
+					zone: slide.get_value("scw_zone"),
+					organization_id: slide.get_value("scw_organization_id"),
+					project_id: slide.get_value("scw_project_id"),
+					billing: slide.get_value("scw_billing"),
+			  };
+
+	const status_field =
+		provider_type === "DigitalOcean" ? "do_connection_status" : "scw_connection_status";
+	if (!opts.silent) atlas_set_status(slide, status_field, "blue", __("Testing connection…"));
+
+	frappe.call({
+		method: "atlas.setup.wizard_discover",
+		args: { provider_type, credentials },
+		callback: ({ message }) => {
+			if (!message) return;
+			if (message.ok) {
+				atlas_apply_catalog(slide, provider_type, message);
+				atlas_set_status(
+					slide,
+					status_field,
+					"green",
+					__("Connected: {0}", [
+						frappe.utils.escape_html(message.account_label || provider_type),
+					])
+				);
+			} else if (!opts.silent) {
+				atlas_set_status(
+					slide,
+					status_field,
+					"red",
+					frappe.utils.escape_html(message.error || __("Connection failed."))
+				);
+			}
+		},
+		error: () => {
+			if (!opts.silent)
+				atlas_set_status(slide, status_field, "red", __("Connection failed."));
+		},
+	});
+}
+
+// Turn the discovered lists into <select> options, preserving any value the
+// operator already picked/typed.
+function atlas_apply_catalog(slide, provider_type, catalog) {
+	const map =
+		provider_type === "DigitalOcean"
+			? { do_default_size: catalog.sizes, do_default_image: catalog.images }
+			: {
+					scw_default_size: catalog.sizes,
+					scw_default_image: catalog.images,
+					scw_project_id: catalog.projects,
+					scw_ssh_key_id: catalog.ssh_keys,
+			  };
+
+	for (const [fieldname, items] of Object.entries(map)) {
+		if (!items || !items.length) continue;
+		atlas_fill_select(
+			slide,
+			fieldname,
+			items,
+			ATLAS_DISCOVERED[provider_type]?.includes(fieldname)
+		);
+	}
+}
+
+function atlas_fill_select(slide, fieldname, items, optional) {
+	const field = slide.get_field(fieldname);
+	if (!field) return;
+	const current = slide.get_value(fieldname);
+	// `value` is what the setter stores (vendor slug / id); `label` is what we show.
+	const seen = new Set();
+	const options = [];
+	if (optional) options.push({ value: "", label: "" });
+	for (const item of items) {
+		if (seen.has(item.value)) continue;
+		seen.add(item.value);
+		options.push({ value: item.value, label: item.label || item.value });
+	}
+	field.df.options = options;
+	field.refresh();
+	if (current && seen.has(current)) field.set_input(current);
+}
+
+function atlas_set_status(slide, fieldname, color, html) {
+	const field = slide.get_field(fieldname);
+	if (!field) return;
+	field.html(
+		`<div class="text-${
+			color === "green" ? "success" : color === "red" ? "danger" : "muted"
+		}" style="margin:4px 0;">${html}</div>`
+	);
 }

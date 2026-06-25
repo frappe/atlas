@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import os
 import tempfile
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import frappe
 from frappe.tests import IntegrationTestCase
@@ -303,6 +303,88 @@ class TestWizardStages(IntegrationTestCase):
 		self.assertFalse(setup._truthy("0"))
 		self.assertFalse(setup._truthy(""))
 		self.assertFalse(setup._truthy(None))
+
+	def test_acme_environment_maps_to_directory_url(self) -> None:
+		# Staging is the default (None lets setup_tls_layer apply it).
+		self.assertIsNone(
+			setup._resolve_acme_url({"acme_environment": "Staging (untrusted, no rate limits)"})
+		)
+		self.assertIsNone(setup._resolve_acme_url({}))
+		self.assertEqual(
+			setup._resolve_acme_url({"acme_environment": "Production (trusted)"}),
+			setup.LETS_ENCRYPT_PRODUCTION,
+		)
+		self.assertEqual(
+			setup._resolve_acme_url(
+				{"acme_environment": "Custom URL", "acme_directory_url": "https://acme.test/dir"}
+			),
+			"https://acme.test/dir",
+		)
+
+
+class TestWizardDiscover(IntegrationTestCase):
+	"""`wizard_discover` probes the vendor with just-typed creds and returns a catalog
+	for the slide pick-lists. The clients are mocked (no network); we assert the auth
+	gate, the slug→option mapping, and that failures come back as a toast, not a raise."""
+
+	def test_digitalocean_returns_constant_catalog_after_auth(self) -> None:
+		fake_client = MagicMock()
+		fake_client.verify_credentials.return_value = {
+			"email": "ops@acme.com",
+			"rate_limit": 5000,
+			"rate_remaining": 4900,
+		}
+		with patch("atlas.atlas.digitalocean.DigitalOceanClient", return_value=fake_client):
+			result = setup.wizard_discover("DigitalOcean", {"api_token": "dop_v1_x"})
+		self.assertTrue(result["ok"])
+		self.assertIn("ops@acme.com", result["account_label"])
+		# DO's catalog is hand-maintained constants — sizes/images come back regardless.
+		self.assertIn("s-2vcpu-4gb-intel", [s["value"] for s in result["sizes"]])
+		self.assertIn("ubuntu-24-04-x64", [i["value"] for i in result["images"]])
+
+	def test_digitalocean_without_token_is_not_ok(self) -> None:
+		result = setup.wizard_discover("DigitalOcean", {})
+		self.assertFalse(result["ok"])
+		self.assertTrue(result["error"])
+
+	def test_digitalocean_bad_token_returns_error_not_raise(self) -> None:
+		from atlas.atlas.digitalocean import DigitalOceanError
+
+		fake_client = MagicMock()
+		fake_client.verify_credentials.side_effect = DigitalOceanError("401 Unauthorized")
+		with patch("atlas.atlas.digitalocean.DigitalOceanClient", return_value=fake_client):
+			result = setup.wizard_discover("DigitalOcean", {"api_token": "bad"})
+		self.assertFalse(result["ok"])
+		self.assertIn("401", result["error"])
+
+	def test_scaleway_maps_offers_os_projects_and_ssh_keys(self) -> None:
+		fake_client = MagicMock()
+		fake_client.verify_credentials.return_value = {"account_label": "Acme Project"}
+		fake_client.list_projects.return_value = [{"id": "proj-uuid", "name": "Acme Project"}]
+		fake_client.list_offers.return_value = [
+			{"id": "offer-uuid", "name": SCW_SIZE, "price_per_month": {"units": 40, "nanos": 0}}
+		]
+		fake_client.list_os.return_value = [{"id": "os-uuid", "name": "Ubuntu", "version": "24.04 LTS"}]
+		fake_client.list_ssh_keys.return_value = [{"id": "key-uuid", "name": "laptop"}]
+		with patch("atlas.atlas.scaleway.ScalewayClient", return_value=fake_client):
+			result = setup.wizard_discover(
+				"Scaleway",
+				{"secret_key": "scw", "zone": "fr-par-2", "project_id": "proj-uuid", "billing": "monthly"},
+			)
+		self.assertTrue(result["ok"])
+		self.assertEqual([p["value"] for p in result["projects"]], ["proj-uuid"])
+		self.assertIn(SCW_SIZE, [s["value"] for s in result["sizes"]])
+		self.assertIn(SCW_IMAGE, [i["value"] for i in result["images"]])
+		self.assertEqual([k["value"] for k in result["ssh_keys"]], ["key-uuid"])
+
+	def test_scaleway_without_secret_is_not_ok(self) -> None:
+		result = setup.wizard_discover("Scaleway", {"zone": "fr-par-2"})
+		self.assertFalse(result["ok"])
+
+	def test_self_managed_has_empty_catalog(self) -> None:
+		result = setup.wizard_discover("Self-Managed", {})
+		self.assertTrue(result["ok"])
+		self.assertEqual(result["sizes"], [])
 
 
 # --- shared cleanup / single snapshot --------------------------------------
