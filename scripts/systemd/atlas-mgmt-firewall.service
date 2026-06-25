@@ -1,0 +1,21 @@
+[Unit]
+# Fail-closed management-plane lockdown. Loads the CONFIRMED inet atlas_mgmt ruleset
+# (written by firewall-confirm.py) BEFORE any service is reachable, so a reboot has no
+# public-exposure window (spec/21-tunnel.md § Boot ordering). The nft rules match wg0
+# and the public iface by name (iifname), which loads fine even before those
+# interfaces exist, so there is no fragile cross-dependency on the tunnel coming up.
+# ConditionPathExists makes this a clean no-op once firewall-revert.py removes the
+# file (so a reverted host boots open, not locked). Enabled/disabled by confirm/revert.
+Description=Atlas management-plane firewall (fail-closed lockdown)
+DefaultDependencies=no
+Wants=network-pre.target
+Before=network-pre.target
+ConditionPathExists=/etc/atlas/mgmt-firewall.nft
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/nft -f /etc/atlas/mgmt-firewall.nft
+
+[Install]
+WantedBy=multi-user.target

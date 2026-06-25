@@ -13,7 +13,16 @@
   "section_break_registration",
   "atlas_id",
   "column_break_registration",
-  "status"
+  "status",
+  "section_break_tunnel",
+  "tunnel_ip",
+  "tunnel_cidr",
+  "hub_public_key",
+  "hub_endpoint",
+  "column_break_tunnel",
+  "wg_public_key",
+  "wg_listen_port",
+  "tunnel_status"
  ],
  "fields": [
   {
@@ -30,7 +39,7 @@
    "reqd": 1
   },
   {
-   "description": "API key of a privileged Central user. Atlas logs in to Central with this to register and report.",
+   "description": "API key of the per-Atlas Central service user. Set by Central via provision_tunnel; Atlas reports events with it.",
    "fieldname": "api_key",
    "fieldtype": "Data",
    "in_list_view": 1,
@@ -38,7 +47,7 @@
    "reqd": 1
   },
   {
-   "description": "API secret paired with the Central user's key. Rotate by clearing via db.set_value, then re-saving.",
+   "description": "API secret paired with the Central service user's key. Set by provision_tunnel; rotated by re-provisioning.",
    "fieldname": "api_secret",
    "fieldtype": "Password",
    "in_list_view": 1,
@@ -62,7 +71,7 @@
    "label": "Registration"
   },
   {
-   "description": "Central's id for this Atlas. Filled by Register.",
+   "description": "Central's id for this Atlas. Filled by Central during provisioning (provision_tunnel).",
    "fieldname": "atlas_id",
    "fieldtype": "Data",
    "label": "Atlas ID",
@@ -77,6 +86,68 @@
    "fieldname": "status",
    "fieldtype": "Small Text",
    "label": "Status",
+   "read_only": 1
+  },
+  {
+   "description": "The Central-managed WireGuard tunnel. Every field here is set by Central via provision_tunnel during registration — not hand-entered.",
+   "fieldname": "section_break_tunnel",
+   "fieldtype": "Section Break",
+   "label": "Tunnel"
+  },
+  {
+   "description": "This Atlas's /32 on wg0, e.g. 10.88.0.2.",
+   "fieldname": "tunnel_ip",
+   "fieldtype": "Data",
+   "label": "Tunnel IP",
+   "read_only": 1
+  },
+  {
+   "description": "The tunnel CIDR (the hub peer's allowed-ips), e.g. 10.88.0.0/16.",
+   "fieldname": "tunnel_cidr",
+   "fieldtype": "Data",
+   "label": "Tunnel CIDR",
+   "read_only": 1
+  },
+  {
+   "description": "The Central hub's WireGuard public key (the one peer).",
+   "fieldname": "hub_public_key",
+   "fieldtype": "Data",
+   "label": "Hub Public Key",
+   "read_only": 1
+  },
+  {
+   "description": "The hub's public ip:port the spoke dials, e.g. 203.0.113.1:51820.",
+   "fieldname": "hub_endpoint",
+   "fieldtype": "Data",
+   "label": "Hub Endpoint",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_tunnel",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "This Atlas's own WireGuard public key, returned to Central so the hub can peer (read-back).",
+   "fieldname": "wg_public_key",
+   "fieldtype": "Data",
+   "label": "WireGuard Public Key",
+   "read_only": 1
+  },
+  {
+   "default": "51820",
+   "description": "This Atlas's wg UDP listen port — the one port its public firewall accepts.",
+   "fieldname": "wg_listen_port",
+   "fieldtype": "Int",
+   "label": "WireGuard Listen Port",
+   "read_only": 1
+  },
+  {
+   "default": "Inactive",
+   "description": "Inactive → Provisioning (tunnel up, firewall armed) → Active (confirmed over the tunnel). Reverting when the auto-revert fired.",
+   "fieldname": "tunnel_status",
+   "fieldtype": "Select",
+   "label": "Tunnel Status",
+   "options": "Inactive\nProvisioning\nActive\nReverting",
    "read_only": 1
   }
  ],

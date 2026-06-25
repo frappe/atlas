@@ -23,8 +23,15 @@ class CentralSettings(Document):
 		api_secret: DF.Password
 		atlas_id: DF.Data | None
 		enabled: DF.Check
+		hub_endpoint: DF.Data | None
+		hub_public_key: DF.Data | None
 		status: DF.SmallText | None
+		tunnel_cidr: DF.Data | None
+		tunnel_ip: DF.Data | None
+		tunnel_status: DF.Literal["Inactive", "Provisioning", "Active", "Reverting"]
 		url: DF.Data
+		wg_listen_port: DF.Int
+		wg_public_key: DF.Data | None
 	# end: auto-generated types
 
 	@frappe.whitelist()
@@ -33,20 +40,6 @@ class CentralSettings(Document):
 		plain dict the form turns into a toast."""
 		result = self.client().ping()
 		return {"ok": result.ok, "label": result.label, "error": result.error}
-
-	@frappe.whitelist()
-	def register(self) -> dict:
-		"""Announce this Atlas to Central and store the returned atlas_id.
-
-		Central owns the Atlas Instance registry: the operator pre-creates one row
-		per region (carrying this Atlas's callback credentials). register() matches
-		that row by region and stamps a stable atlas_id, which Atlas reports on
-		every event so Central can route them back to this cluster."""
-		registration = self.client().register(self._identity())
-		self.atlas_id = registration.atlas_id
-		self.status = f"registered as {registration.atlas_id}"
-		self.save()
-		return {"ok": True, "atlas_id": registration.atlas_id, "label": registration.label}
 
 	@frappe.whitelist()
 	def fetch_sizes(self) -> dict:
@@ -63,19 +56,3 @@ class CentralSettings(Document):
 			frappe.throw(_("Set Central URL and API Key first"))
 		secret = get_secret("Central Settings", "Central Settings", "api_secret")
 		return CentralClient(self.url, self.api_key, secret)
-
-	def _identity(self) -> dict:
-		"""The registration payload Central matches against its operator-created
-		Atlas Instance row. Central keys on region; base_url is sent so the operator
-		can confirm the row points at this Atlas. Field names match Central's
-		`central.api.atlas.register` contract.
-
-		The region is the single `Atlas Settings.region` source of truth
-		(`placement.atlas_region`) — Central Settings no longer carries its own
-		region copy. Fails loud when unset."""
-		from atlas.atlas.placement import atlas_region
-
-		return {
-			"region": atlas_region(),
-			"base_url": frappe.utils.get_url(),
-		}

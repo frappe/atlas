@@ -1,0 +1,44 @@
+# /etc/sudoers.d/atlas-tunnel
+#
+# Privileged commands the Atlas tunnel + firewall scripts run via sudo. These run on
+# the Atlas controller host through atlas.atlas.local_task.run_local_task (the same
+# audited Task path as every host/guest op). This is an operator install step; the
+# Atlas app never edits sudoers. Install:
+#   sudo install -m 0440 -o root -g root \
+#       apps/atlas/scripts/sudoers.d/atlas-tunnel /etc/sudoers.d/atlas-tunnel
+#   sudo visudo -cf /etc/sudoers.d/atlas-tunnel
+# Also stage the boot unit (fail-closed lockdown at boot):
+#   sudo install -m 0644 apps/atlas/scripts/systemd/atlas-mgmt-firewall.service \
+#       /etc/systemd/system/atlas-mgmt-firewall.service && sudo systemctl daemon-reload
+#
+# Replace `frappe` with the bench OS user if different. Adjust binary paths per distro
+# (`command -v wg wg-quick nft systemctl systemd-run install cat test rm`). Requires
+# wireguard-tools + nftables installed.
+
+Cmnd_Alias ATLAS_TUNNEL_WG = \
+    /usr/bin/wg, \
+    /usr/bin/wg-quick, \
+    /usr/bin/systemctl enable wg-quick@wg0, \
+    /usr/bin/systemctl disable wg-quick@wg0, \
+    /usr/bin/install -m 0600 * /etc/wireguard/*, \
+    /usr/bin/cat /etc/wireguard/*, \
+    /usr/bin/test -f /etc/wireguard/*
+
+Cmnd_Alias ATLAS_TUNNEL_FW = \
+    /usr/sbin/nft -f /run/atlas-mgmt.nft, \
+    /usr/sbin/nft delete table inet atlas_mgmt, \
+    /usr/sbin/nft list table inet atlas_mgmt, \
+    /usr/sbin/nft list ruleset, \
+    /usr/bin/systemd-run --collect --on-active=* --unit=atlas-firewall-revert *, \
+    /usr/bin/systemctl stop atlas-firewall-revert.timer, \
+    /usr/bin/systemctl stop atlas-firewall-revert.service, \
+    /usr/bin/systemctl reset-failed atlas-firewall-revert.timer, \
+    /usr/bin/systemctl reset-failed atlas-firewall-revert.service, \
+    /usr/bin/systemctl enable atlas-mgmt-firewall.service, \
+    /usr/bin/systemctl disable atlas-mgmt-firewall.service, \
+    /usr/bin/install -m 0600 * /run/atlas-mgmt.nft, \
+    /usr/bin/install -d -m 0755 /etc/atlas, \
+    /usr/bin/install -m 0644 * /etc/atlas/mgmt-firewall.nft, \
+    /usr/bin/rm -f /etc/atlas/mgmt-firewall.nft
+
+frappe ALL=(root) NOPASSWD: ATLAS_TUNNEL_WG, ATLAS_TUNNEL_FW

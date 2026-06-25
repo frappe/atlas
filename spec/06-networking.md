@@ -356,6 +356,33 @@ This keeps each VM unit self-sufficient on cold boot — after a host reboot, th
 first VM unit to start brings the whole scaffold back. Per-VM IPv6 forward
 rules are added by the same script.
 
+## Host public-interface firewall (management plane)
+
+Independent of everything above, the Atlas **controller host** runs a
+**default-deny** firewall on its public interface so its *management plane* (Desk,
+the Frappe API, guest signup, SSH) is reachable **only over the Central WireGuard
+tunnel `wg0`**. The single inbound exception on the public interface is the
+WireGuard UDP port (`51820`) — the one packet that lets the Central hub dial in —
+plus loopback, established/related, ICMP, and an operator-configurable
+`public_allow_ports` list (default empty). On `wg0`, accept all. The full design
+(reversed registration, the provisioning handshake, the armed auto-revert that makes
+the lockdown safe to apply remotely, and the fail-closed boot ordering) is in
+[21-tunnel.md](./21-tunnel.md).
+
+This is a **separate nftables table** from the data-plane `inet atlas` table above:
+
+- **`inet atlas`** carries the **VM data plane** — the host-wide `100.64.0.0/16`
+  masquerade, per-VM IPv6 forward rules, and any Reserved-IP DNAT/SNAT. Recreated
+  idempotently per VM-unit start; **not** persisted.
+- the **management-plane firewall** carries the host's own public-interface
+  lockdown. Persisted via `nftables.service` (fail-closed at boot).
+
+The two never overlap: the data plane matches guest `/30`s and the `wg`/VM
+interfaces; the management firewall matches the host's public iface and `wg0`.
+Locking down the host's management plane does **not** touch hosted-site traffic,
+which never transits the controller host — it flows through proxy VMs' Reserved IPs
+([§ IPv4 ingress](#ipv4-ingress-reserved-ip)).
+
 ## Per-VM, on the host
 
 Each VM gets its **own network namespace**, so a jail breakout cannot see the

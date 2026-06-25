@@ -118,6 +118,14 @@ SYSTEMD_HOOKS: frozenset[str] = frozenset(
 CONTROLLER_ONLY: frozenset[str] = frozenset(
 	{
 		"issue-cert.py",
+		# Central-managed tunnel + management-plane firewall (spec/21-tunnel.md). These
+		# run on the Atlas host via run_local_task, driven by the central_link API
+		# during registration — never host SSH Tasks, never in the operator picker.
+		"tunnel-up.py",
+		"tunnel-down.py",
+		"mgmt-firewall-apply.py",
+		"mgmt-firewall-revert.py",
+		"mgmt-firewall-confirm.py",
 	}
 )
 
