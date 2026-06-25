@@ -182,6 +182,15 @@ def _seed_tls_doctypes(config: dict) -> None:
 
 	_cleanup_tls_doctypes(config)  # start from a clean slate (immutable fields)
 
+	# Atlas Settings.region is THE single source of truth for this instance's region
+	# (atlas_region()): the Site derives its region from it, Root Domain denormalizes
+	# it at insert, and the proxy fleet joins on it. Seed it FIRST so all three agree
+	# — mirrors the operator first-run order. Without this the Root Domain below is
+	# forced to config["region"] while the Site keeps a stale Atlas Settings.region,
+	# so the Subdomain lands in a different region than the proxy VM and the proxy's
+	# live map comes back empty (map_for_region finds no active row for the proxy's
+	# region).
+	frappe.db.set_single_value("Atlas Settings", "region", config["region"], update_modified=False)
 	frappe.db.set_single_value(
 		"Atlas Settings", "dns_provider_type", _DNS_PROVIDER_TYPE, update_modified=False
 	)
