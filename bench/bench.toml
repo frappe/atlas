@@ -93,15 +93,17 @@ webroot_path = "/var/www/letsencrypt"
 # socket-activated gunicorn on 127.0.0.1:(port+1). When [admin].domain is set,
 # `bench setup nginx` emits an `_admin.conf` vhost (`server_name <domain>`)
 # proxying to it — that is how MODE 1 ("domain maps to the admin URL") works.
-# build.sh leaves `domain` UNSET at bake time; deploy-site.py sets it per clone
-# in admin mode. The password is a shared baked throwaway, rotated after first
-# login.
+# build.sh bakes a placeholder `domain` (current bench-cli rejects an empty
+# `admin.domain` during production setup); deploy-site.py rewrites it to the FQDN
+# per clone in admin mode. The placeholder is never served — in site mode the FQDN
+# maps to the baked site, not the admin app. The password is a shared baked
+# throwaway, rotated after first login.
 [admin]
 port = 8002
 timeout = 180
 enabled = true
 password = "admin-password"
-domain = ""
+domain = "admin.localhost"
 
 # ZFS volume: bench code + MariaDB datadir on ZFS datasets, on a preallocated
 # file vdev (the build VM is a single disk with no spare block device). `bench

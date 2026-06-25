@@ -95,8 +95,17 @@ export DEBIAN_FRONTEND=noninteractive
 # (the bake hit exactly this: `bench new` → "command not found", exit 127). cd
 # into the bench-cli dir when it exists (it does for every call after install.sh);
 # the install.sh call itself runs from $HOME, before the dir exists.
+#
+# We also export XDG_RUNTIME_DIR (the bench user's /run/user/<uid>): current
+# bench-cli runs the production stack as `systemctl --user` units, and every
+# `systemctl --user` call needs the user bus path this points at. A bare
+# `sudo -u` login shell does NOT set it, so without this `bench setup production`
+# / `bench start` fail with "Failed to connect to bus: No medium found" and the
+# redis_queue/redis_cache units never come up (install-app then dies on
+# "Connection refused @ localhost:11000"). Lingering (enabled in §3) is what makes
+# /run/user/<uid> exist outside a login session.
 as_frappe() {
-	sudo -u "$BENCH_USER" bash -lc "export PATH='$BENCH_CLI_DIR':\$PATH; cd '$BENCH_CLI_DIR' 2>/dev/null || cd '$BENCH_HOME'; $*"
+	sudo -u "$BENCH_USER" bash -lc "export PATH='$BENCH_CLI_DIR':\$PATH; export XDG_RUNTIME_DIR=/run/user/\$(id -u); cd '$BENCH_CLI_DIR' 2>/dev/null || cd '$BENCH_HOME'; $*"
 }
 
 # --- 1. Fix setuid bits (bench-setup.md §1). The Ubuntu cloud rootfs is
@@ -134,6 +143,16 @@ modprobe zfs
 # a branch"). Re-running just re-fetches + re-pins the ref. ---
 INSTALL_URL="https://raw.githubusercontent.com/frappe/bench-cli/$BENCH_CLI_REF/install.sh"
 curl -fsSL "$INSTALL_URL" | bash -s -- --user "$BENCH_USER" -y
+
+# Enable lingering for the bench user NOW that it exists. Current bench-cli runs
+# the production stack (redis_queue/redis_cache, web, workers) as `systemctl --user`
+# units; lingering starts that user's systemd manager at boot — without it the units
+# only run inside a login session, so `bench setup production` can't bring them up at
+# bake time AND the golden would not "boot serving" (the property [production] in
+# bench.toml relies on). enable-linger also creates /run/user/<uid>, the bus path
+# as_frappe exports as XDG_RUNTIME_DIR. Idempotent.
+loginctl enable-linger "$BENCH_USER"
+
 if [ ! -d "$BENCH_CLI_DIR/.git" ]; then
 	as_frappe "curl -fsSL '$INSTALL_URL' | bash"
 fi
@@ -150,18 +169,23 @@ fi
 install -m 0644 -o "$BENCH_USER" -g "$BENCH_USER" "$SRC_DIR/bench.toml" "$BENCH_DIR/bench.toml"
 
 # --- 5. `bench init` (bench-setup.md §6). The heavy, idempotent step that sets
-# up EVERYTHING from bench.toml: the ZFS pool + datasets (volume.enabled), the
-# DEDICATED mariadb@atlas instance (provisioned, secured, enabled-at-boot) + Redis,
-# the uv venv, the Frappe clone, Node deps, the admin frontend, and — because
-# [production].nginx = true + process_manager = "systemd" — the production process
-# units + nginx config + dns_multitenant = 1.
+# up the per-bench substrate from bench.toml: the ZFS pool + datasets
+# (volume.enabled), the DEDICATED mariadb@atlas instance (provisioned, secured,
+# enabled-at-boot), the bench's Redis config, the uv venv, the Frappe clone, Node
+# deps, the admin frontend, and dns_multitenant = 1.
 #
-# This is the HEADLESS bake path: `bench init` does the full setup non-interactively
-# from bench.toml. (The new interactive `bench start` → browser setup-wizard flow in
-# bench-setup-manual.md is for an operator at a terminal; a bake has no browser, so
-# we keep `bench init`.) The old `source .admin-venv/bin/activate` pymysql workaround
-# is gone — current bench-cli runs `bench init` inside its managed admin venv itself,
-# so pymysql is found without a manual activate. ---
+# `bench init` does NOT bring the production stack up: in current bench-cli the
+# production `systemctl --user` units (redis_queue/redis_cache, web, workers, nginx)
+# are installed + enabled by a SEPARATE `bench setup production` (run per mode in §6
+# below), even though [production] is configured here. `bench start` only checks and
+# reports "systemd deployment is incomplete" if they are absent.
+#
+# This is the HEADLESS bake path: `bench init` does its setup non-interactively from
+# bench.toml. (The interactive `bench start` → browser setup-wizard flow in
+# bench-setup-manual.md is for an operator at a terminal; a bake has no browser.) The
+# old `source .admin-venv/bin/activate` pymysql workaround is gone — current bench-cli
+# runs `bench init` inside its managed admin venv itself, so pymysql is found without
+# a manual activate. ---
 as_frappe "bench -b '$BENCH_NAME' init"
 
 # --- 5b. Install the in-guest routing client (spec/18 Component D). The thin
@@ -189,7 +213,29 @@ if [ "$MODE" = "site" ]; then
 		as_frappe "bench -b '$BENCH_NAME' get-app https://github.com/frappe/erpnext --branch '$ERPNEXT_BRANCH'"
 	fi
 
-	as_frappe "bench -b '$BENCH_NAME' start"
+	# Bring the production stack up. `install-app erpnext` below enqueues background
+	# jobs, so redis_queue (11000) + redis_cache (13000) must be serving first. In
+	# current bench-cli the production units (redis, web, workers) are installed and
+	# enabled by `bench setup production`, NOT by `bench init` or `bench start` —
+	# `start` only reports "systemd deployment is incomplete" if they are absent. So
+	# we run `setup production` here (idempotent; ~17s on a re-run). Combined with the
+	# bench user's linger + XDG_RUNTIME_DIR (set above), this is what actually starts
+	# the `systemctl --user` redis units the rest of the bake depends on.
+	as_frappe "bench -b '$BENCH_NAME' setup production"
+
+	# Block until redis_queue is actually accepting connections before install-app —
+	# `setup production` returns once the units are started, but the socket may lag a
+	# beat, and a race here resurfaces the exact "Connection refused @ 11000" the
+	# stack was brought up to avoid.
+	for _ in $(seq 1 30); do
+		ss -ltn 2>/dev/null | grep -q ':11000' && break
+		sleep 1
+	done
+	if ! ss -ltn 2>/dev/null | grep -q ':11000'; then
+		echo "redis_queue (11000) did not come up after setup production" >&2
+		ss -ltnp 2>/dev/null | grep -E ':(11000|13000|6379)' >&2 || true
+		exit 1
+	fi
 
 	if [ ! -d "$BENCH_DIR/sites/$BAKED_SITE" ]; then
 		as_frappe "bench -b '$BENCH_NAME' new-site '$BAKED_SITE' --admin-password '$BAKED_ADMIN_PASSWORD' --apps erpnext"
@@ -215,8 +261,9 @@ else
 	# admin mode: bring the production stack up (admin app + nginx) and leave it
 	# running for the snapshot. The admin vhost is wired per-clone (deploy sets
 	# [admin].domain + `bench setup nginx`), so there is nothing to assert here
-	# beyond the stack being up.
-	as_frappe "bench -b '$BENCH_NAME' start"
+	# beyond the stack being up. As in site mode, `setup production` (not `start`)
+	# is what installs+enables the systemd --user units in current bench-cli.
+	as_frappe "bench -b '$BENCH_NAME' setup production"
 fi
 
 # --- 7. Stamp the resolved input commits. The Frappe branch (and ERPNext, and
