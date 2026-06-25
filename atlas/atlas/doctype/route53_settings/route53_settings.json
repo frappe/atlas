@@ -5,22 +5,12 @@
  "editable_grid": 0,
  "engine": "InnoDB",
  "field_order": [
-  "domain_provider_type",
   "section_break_credentials",
   "access_key_id",
   "secret_access_key",
   "region"
  ],
  "fields": [
-  {
-   "default": "Route53",
-   "fieldname": "domain_provider_type",
-   "fieldtype": "Select",
-   "label": "Domain Provider Type",
-   "options": "\nRoute53\nCloudflare",
-   "reqd": 1,
-   "description": "The active DNS vendor. The DNS registry maps this to the registered DnsProvider; Root Domain denormalizes it at insert. Only Route53 is implemented."
-  },
   {
    "fieldname": "section_break_credentials",
    "fieldtype": "Section Break",
@@ -31,7 +21,6 @@
    "fieldtype": "Data",
    "label": "Access Key ID",
    "reqd": 1,
-   "set_only_once": 1,
    "description": "AWS IAM access key id with route53:* on the hosted zone."
   },
   {
@@ -46,7 +35,7 @@
    "fieldname": "region",
    "fieldtype": "Data",
    "label": "Region",
-   "description": "AWS API region for signing. Route 53 is global; us-east-1 is a safe default."
+   "description": "AWS API region for signing. Route 53 is global, so this is not a placement region (that's the one `Atlas Settings.region`); us-east-1 is a safe default. Only change it for the AWS China partition."
   }
  ],
  "issingle": 1,

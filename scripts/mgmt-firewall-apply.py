@@ -4,7 +4,7 @@
 # loopback/established/ICMP; wg0 and every non-public iface stay open) and ARM an
 # auto-revert. The lockdown is live immediately but undoes itself after
 # --revert-seconds unless firewall-confirm cancels it first — so a failed handoff
-# can never permanently lock Central or the operator out (spec/19-tunnel.md).
+# can never permanently lock Central or the operator out (spec/21-tunnel.md).
 #
 # Runs on the Atlas host via atlas.atlas.local_task.run_local_task; nft / systemd-run
 # / systemctl are sudoers-pinned. The public interface is discovered from the default

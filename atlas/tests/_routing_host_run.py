@@ -33,6 +33,7 @@ from atlas.atlas.ssh import connection_for_guest
 from atlas.tests.e2e._config import (
 	control_plane_public_key,
 	ephemeral_public_key,
+	get_region,
 )
 from atlas.tests.e2e._droplets import ensure_bootstrapped_server, ensure_e2e_provider
 from atlas.tests.e2e._image import ensure_image_on_server
@@ -197,7 +198,7 @@ def setup() -> None:
 	server, _client, created = ensure_bootstrapped_server(reuse=True, keep=True)
 	print(f"[host-run] server={server.name} (created_now={created}) ipv4={server.ipv4_address}")
 
-	region = frappe.conf.get("atlas_test_region", "blr1")
+	region = get_region()
 	laptop_v6 = _laptop_public_v6()
 	controller_host = _controller_host()
 	print(f"[host-run] controller_host={controller_host}  laptop_public_v6={laptop_v6}")

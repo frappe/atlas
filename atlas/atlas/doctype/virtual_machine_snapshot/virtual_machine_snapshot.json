@@ -177,7 +177,7 @@
   },
   {
    "default": "Cold",
-   "description": "Cold: a disk-only snapshot (clones boot). Warm: the disk is paired with the guest's frozen memory state — clones RESUME the pre-warmed golden instead of booting.",
+   "description": "Cold: a disk-only snapshot (clones boot). Warm: the disk is paired with the guest's frozen memory state \u2014 clones RESUME the pre-warmed golden instead of booting.",
    "fieldname": "kind",
    "fieldtype": "Select",
    "in_standard_filter": 1,
@@ -207,7 +207,7 @@
   },
   {
    "depends_on": "eval:doc.kind=='Warm'",
-   "description": "Captured machine config — a warm clone must restore at exactly this size (the frozen vmstate encodes it).",
+   "description": "Captured machine config \u2014 a warm clone must restore at exactly this size (the frozen vmstate encodes it).",
    "fieldname": "vcpus",
    "fieldtype": "Int",
    "label": "vCPUs (captured)",
@@ -258,21 +258,6 @@
    "share": 1,
    "submit": 0,
    "write": 1
-  },
-  {
-   "amend": 0,
-   "cancel": 0,
-   "create": 1,
-   "delete": 1,
-   "export": 0,
-   "if_owner": 1,
-   "import": 0,
-   "read": 1,
-   "report": 0,
-   "role": "Atlas User",
-   "share": 0,
-   "submit": 0,
-   "write": 0
   }
  ],
  "search_fields": "title,virtual_machine,status",

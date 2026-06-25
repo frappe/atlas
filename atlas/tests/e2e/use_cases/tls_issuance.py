@@ -14,7 +14,7 @@ that nothing else does:
 
 What it proves, end to end, that only a live run can:
 
-- **Route 53 reachability** — `Domain Provider.authenticate()` lists hosted zones
+- **Route 53 reachability** — `Route53DnsProvider.authenticate()` lists hosted zones
   with the configured IAM creds (the same `route53:*` issuance needs).
 - **Real ACME DNS-01 issuance** — certbot runs on the controller, plants the TXT
   record in the real zone, and Let's Encrypt (staging) issues `*.<domain>`. Proves
@@ -78,7 +78,7 @@ from atlas.tests.e2e.use_cases.proxy_vm import (
 )
 
 # Active vendor types the harness configures on the Settings singles each run.
-_DOMAIN_PROVIDER_TYPE = "Route53"
+_DNS_PROVIDER_TYPE = "Route53"
 _TLS_PROVIDER_TYPE = "Let's Encrypt"
 
 
@@ -183,7 +183,7 @@ def _seed_tls_doctypes(config: dict) -> None:
 	_cleanup_tls_doctypes(config)  # start from a clean slate (immutable fields)
 
 	frappe.db.set_single_value(
-		"Route53 Settings", "domain_provider_type", _DOMAIN_PROVIDER_TYPE, update_modified=False
+		"Atlas Settings", "dns_provider_type", _DNS_PROVIDER_TYPE, update_modified=False
 	)
 	frappe.db.set_single_value(
 		"Atlas Settings", "tls_provider_type", _TLS_PROVIDER_TYPE, update_modified=False
@@ -201,14 +201,13 @@ def _seed_tls_doctypes(config: dict) -> None:
 	frappe.db.set_single_value(
 		"Lets Encrypt Settings", "account_email", config["account_email"], update_modified=False
 	)
-	frappe.db.set_single_value("Lets Encrypt Settings", "agree_tos", 1, update_modified=False)
 
 	frappe.get_doc(
 		{
 			"doctype": "Root Domain",
 			"domain": config["domain"],
 			"region": config["region"],
-			"domain_provider_type": _DOMAIN_PROVIDER_TYPE,
+			"dns_provider_type": _DNS_PROVIDER_TYPE,
 			"tls_provider_type": _TLS_PROVIDER_TYPE,
 		}
 	).insert(ignore_permissions=True)
@@ -237,7 +236,7 @@ def _assert_route53_reachable() -> None:
 	issuance needs."""
 	from atlas.atlas import dns
 
-	result = dns.for_dns_provider_type(_DOMAIN_PROVIDER_TYPE).authenticate()
+	result = dns.for_dns_provider_type(_DNS_PROVIDER_TYPE).authenticate()
 	assert result.ok, f"Route 53 authenticate failed: {result.error}"
 	print(f"[e2e] Route 53 reachable (account: {result.account_label}) OK")
 

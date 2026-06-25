@@ -12,6 +12,21 @@ IMMUTABLE_AFTER_INSERT = (
 
 
 class Subdomain(Document):
+	# begin: auto-generated types
+	# This code is auto-generated. Do not modify anything in this block.
+
+	from typing import TYPE_CHECKING
+
+	if TYPE_CHECKING:
+		from frappe.types import DF
+
+		active: DF.Check
+		address: DF.Data
+		region: DF.Data
+		subdomain: DF.Data
+		virtual_machine: DF.Link
+	# end: auto-generated types
+
 	def validate(self) -> None:
 		self._validate_immutability()
 		self._denormalize_address()

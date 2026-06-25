@@ -1,14 +1,12 @@
-"""Use case: signup → email verify → live Frappe site, end to end.
+"""Use case: Central create_site → live Frappe site, end to end.
 
 The superset host-bound proof of the self-serve site layer
 (spec/14-self-serve.md). It consumes everything
 the other tracks built — the golden bench snapshot, the `Site` doctype, the
-`deploy-site.py` + readiness gate, the signup/verify on-ramp — PLUS the already
-proven proxy + TLS layers, and drives the whole flow on a real droplet:
+`deploy-site.py` + readiness gate, the Central-facing `create_site` on-ramp — PLUS
+the already proven proxy + TLS layers, and drives the whole flow on a real droplet:
 
-    signup (request_site)  →  Site Request (Pending), NO Site/VM   (Contract C)
-        ↓ verify()
-    User + Site (owner = verified user)                            (Contract C)
+    create_site(central_reference, subdomain)  →  Tenant + Site (Pending)
         ↓ Site.after_insert → auto_provision (worker)
     clone golden snapshot → boot → deploy-site.py → HTTP 200       (01/03, Contract B)
         ↓
@@ -18,7 +16,7 @@ proven proxy + TLS layers, and drives the whole flow on a real droplet:
 
 What ONLY a live run can prove (everything below is unit-covered otherwise — the
 Site state machine in test_site.py, the validators in test_subdomain_label.py,
-the signup ordering in test_api_signup.py):
+the create_site API in test_api_site.py):
 
 - **The golden image actually serves.** A VM cloned from 01's snapshot, after
   03's deploy-site.py, answers HTTP 200 on :80 for its Host header — the full
@@ -29,9 +27,9 @@ the signup ordering in test_api_signup.py):
 - **The proxy routes the new subdomain end to end.** Once auto_provision creates
   the Subdomain, an OFF-droplet request to https://<sub>.<region>.<domain> reaches
   the site through the proxy — over BOTH the reserved IPv4 and public IPv6.
-- **Verification gates provision (Contract C).** request_site creates a Pending
-  Site Request and NOTHING billable (no Site, no VM) until verify() consumes the
-  token.
+- **Central drives provision.** `create_site` get-or-creates the Tenant and inserts
+  the Site (Pending), whose after_insert enqueues the worker chain — no User, no
+  email, no verification (Central already owns the tenant).
 
 Cost: the proxy_vm infra (one shared droplet, a proxy VM, one reserved IPv4) PLUS
 a real ACME issuance against a real Route 53 zone (LE staging) PLUS a golden-image
@@ -68,18 +66,19 @@ from atlas.tests.e2e.use_cases.proxy_vm import _teardown as _teardown_proxy
 # The subdomain label the run claims (Contract A: a single dotless DNS label,
 # inside the regional wildcard). Stable across runs so a leaked row is obvious.
 _TEST_SUBDOMAIN = "acme"
-# A throwaway email — the verified User that fulfilment creates is dropped in
-# teardown (a real User row persists past the transaction; the e2e is
+# The Central team this site is provisioned for. create_site get-or-creates a
+# Tenant keyed on it; the throwaway email seeds the Tenant on first use. Both are
+# dropped in teardown (the Tenant row persists past the transaction; the e2e is
 # non-transactional).
+_TEST_CENTRAL_REFERENCE = "self-serve-e2e-team"
 _TEST_EMAIL = "self-serve-e2e@example.com"
 
 
 def run(reuse: bool = True, keep: bool = True) -> None:
-	"""Full path: the smoke flow PLUS the Contract-C negative assertion under one
-	umbrella. The validator throws (Contract-A label/denylist) are unit-covered
-	(test_subdomain_label, test_site, test_api_signup); the only thing `run` adds
-	over `run_smoke` is asserting, on the real path, that an UNVERIFIED request
-	provisions nothing — which `run_smoke` also does inline before fulfilment."""
+	"""Alias of run_smoke. The validator throws (Contract-A label/denylist) and the
+	create_site/Tenant contract are unit-covered (test_subdomain_label, test_site,
+	test_api_site); the live run's value is the clone→deploy→route→HTTPS chain that
+	run_smoke drives."""
 	run_smoke(reuse=reuse, keep=keep)
 
 
@@ -115,17 +114,12 @@ def run_smoke(reuse: bool = True, keep: bool = True) -> None:
 			reserved = _allocate_and_attach(server.name, proxy_vm.name)
 			reserved_ipv4 = frappe.db.get_value("Reserved IP", reserved, "ip_address")
 
-			# 2. Contract C — the negative: signup creates a Pending Site Request and
-			#    NOTHING billable. Assert no Site, no VM, before we verify.
-			request_name = _request_site(_TEST_EMAIL, _TEST_SUBDOMAIN)
-			_assert_no_provision_yet(_TEST_SUBDOMAIN, domain)
-
-			# 3. Verify (skip SMTP by calling verify() directly, the same method the
-			#    /verify route calls). It creates the User + inserts the Site as owner;
-			#    the Site's after_insert enqueues auto_provision, which the worker runs
-			#    on the real droplet: clone golden snapshot → boot → deploy → 200 →
-			#    Subdomain → Running. This is the whole chain under test.
-			fqdn = _verify_request(request_name)
+			# 2. Central drives provision: create_site get-or-creates the Tenant and
+			#    inserts the Site (Pending). Its after_insert enqueues auto_provision,
+			#    which the worker runs on the real droplet: clone golden snapshot →
+			#    boot → deploy → 200 → Subdomain → Running. This is the whole chain
+			#    under test.
+			fqdn = _create_site(_TEST_CENTRAL_REFERENCE, _TEST_SUBDOMAIN, _TEST_EMAIL)
 			site_vm_name = _wait_for_site_running(fqdn)
 			_assert_admin_password_set(fqdn)
 
@@ -157,7 +151,7 @@ def run_smoke(reuse: bool = True, keep: bool = True) -> None:
 			#    proxy actually SERVES the guest-reserved site and STOPS on deregister.
 			_assert_bench_self_routing(server.name, site_vm_name, proxy_vm, region, domain)
 		finally:
-			_teardown(reserved, proxy_vm.name, _TEST_SUBDOMAIN, domain, _TEST_EMAIL)
+			_teardown(reserved, proxy_vm.name, _TEST_SUBDOMAIN, domain, _TEST_CENTRAL_REFERENCE)
 			tls_issuance._cleanup_tls_doctypes(config)
 			_restore_root_domains(quieted)
 
@@ -297,7 +291,7 @@ def _assert_bench_self_routing(
 	_stdout, stderr, code = guest(f"atlas-route register {stray}")
 	assert code == 0, f"register for the stray case failed: {stderr[-500:]}"
 	assert frappe.db.exists("Subdomain", stray), "register did not reserve the stray label"
-	stdout, stderr, code = guest("atlas-route list")
+	_stdout, stderr, code = guest("atlas-route list")
 	assert code == 0, f"guest atlas-route list failed: {stderr[-500:]}"
 	assert not frappe.db.exists("Subdomain", stray), (
 		f"list did not clear the stray {stray} (stderr: {stderr[-500:]})"
@@ -387,48 +381,28 @@ def _restore_root_domains(quieted: list[str]) -> None:
 		frappe.db.commit()
 
 
-# --- signup / verify (Contract C) ----------------------------------------
+# --- Central create_site on-ramp -----------------------------------------
 
 
-def _request_site(email: str, subdomain: str) -> str:
-	"""Drive the real signup endpoint and return the Site Request name.
+def _create_site(central_reference: str, subdomain: str, email: str) -> str:
+	"""Drive the real Central-facing endpoint and return the created Site's FQDN.
 
-	Calls `request_site.__wrapped__` to bypass the rate-limit decorator (it needs a
-	request context; the underlying logic is what we exercise — same shape the unit
-	tests use). Inserts a Pending Site Request and queues the verification mail; it
-	does NOT create a Site/VM (asserted next)."""
-	from atlas.atlas.api.signup import request_site
+	`create_site` get-or-creates the Tenant (keyed on `central_reference`, `email`
+	seeds it on first use) and inserts the Site (Pending); the Site's after_insert
+	enqueues auto_provision on the worker — the whole clone→deploy→route chain under
+	test. Asserts the returned mirror is shaped the way Central reflects it."""
+	from atlas.atlas.api.site import create_site
 
-	result = request_site.__wrapped__(email=email, subdomain=subdomain)
+	result = create_site(central_reference=central_reference, subdomain=subdomain, email=email)
 	frappe.db.commit()
-	name = frappe.db.get_value("Site Request", {"email": email, "subdomain": subdomain, "status": "Pending"})
-	assert name, f"request_site did not leave a Pending Site Request: {result}"
-	print(f"[e2e] signup -> Site Request {name} (Pending), no provision yet")
-	return name
-
-
-def _assert_no_provision_yet(subdomain: str, domain: str) -> None:
-	"""Contract C, the negative: an unverified request provisions nothing. No Site
-	row for the FQDN, and no Virtual Machine titled for it. Billable work only after
-	the token is consumed."""
-	fqdn = f"{subdomain}.{domain}"
-	assert not frappe.db.exists("Site", fqdn), f"Site {fqdn} exists before verification (Contract C broken)"
-	assert not frappe.db.exists("Virtual Machine", {"title": fqdn}), (
-		f"a VM for {fqdn} exists before verification (Contract C broken)"
-	)
-	print(f"[e2e] Contract C: no Site / no VM for {fqdn} before verification OK")
-
-
-def _verify_request(request_name: str) -> str:
-	"""Fulfil the request the way the /verify route does: SiteRequest.verify()
-	creates the User, inserts the Site as owner, and (via the Site's after_insert)
-	enqueues auto_provision on the worker. Returns the created Site's FQDN."""
-	request = frappe.get_doc("Site Request", request_name)
-	site = request.verify()
-	frappe.db.commit()
-	assert site and frappe.db.exists("Site", site.name), f"verify() did not create a Site: {site}"
-	print(f"[e2e] verify -> User {request.email} owns Site {site.name}; auto_provision enqueued")
-	return site.name
+	fqdn = result["name"]
+	assert frappe.db.exists("Site", fqdn), f"create_site did not insert a Site: {result}"
+	assert result["status"] == "Pending", f"new site should start Pending: {result}"
+	assert result["central_reference"] == central_reference, f"mirror missing central_reference: {result}"
+	tenant = frappe.db.get_value("Site", fqdn, "tenant")
+	assert tenant, f"Site {fqdn} not stamped with a Tenant"
+	print(f"[e2e] create_site -> Site {fqdn} (Pending) for tenant {tenant}; auto_provision enqueued")
+	return fqdn
 
 
 # --- readiness (Contract B, worker-driven) -------------------------------
@@ -487,12 +461,12 @@ def _dump_site_tasks(fqdn: str) -> None:
 
 
 def _assert_admin_password_set(fqdn: str) -> None:
-	"""The Administrator password handed to the owner — the SHARED baked throwaway
-	(the rename model dropped the per-VM reset; the owner rotates it after first
-	login) — is stored encrypted on the Site and readable by the owner. Assert it is
-	non-empty — the backend reveal the SPA will surface (the SPA Sites screen is
-	deferred). We don't log in here: LE staging is untrusted (curl -k) and a real
-	Desk login adds nothing this proves over the 200 + password presence."""
+	"""The Administrator password handed to the tenant — the SHARED baked throwaway
+	(the rename model dropped the per-VM reset; the tenant rotates it after first
+	login) — is stored encrypted on the Site and surfaced to Central (the
+	site.status_changed event + get_site poll). Assert it is non-empty. We don't log
+	in here: LE staging is untrusted (curl -k) and a real Desk login adds nothing
+	this proves over the 200 + password presence."""
 	password = frappe.get_doc("Site", fqdn).get_password("admin_password")
 	assert password, f"Site {fqdn} has no admin_password stored after Running"
 	print(f"[e2e] admin password stored on {fqdn} ({len(password)} chars) OK")
@@ -555,13 +529,13 @@ def _teardown(
 	proxy_vm_name: str,
 	subdomain: str,
 	domain: str,
-	email: str,
+	central_reference: str,
 ) -> None:
 	"""Billable-aware teardown, every step guarded so one failure doesn't strand the
-	rest (terminate the site VM, delete the Subdomain, release the reserved
-	IP, delete the Site / Site Request rows, and the created User — which persists
-	past the transaction). Site.terminate() already drops the Subdomain + the backing
-	VM, so we drive it first, then mop up the rows it doesn't own."""
+	rest (terminate the site VM, delete the Subdomain, release the reserved IP,
+	delete the Site row, and the created Tenant — which persists past the
+	transaction). Site.terminate() already drops the Subdomain + the backing VM, so
+	we drive it first, then mop up the rows it doesn't own."""
 	fqdn = f"{subdomain}.{domain}"
 
 	# 1. Site.terminate(): drops the Subdomain (proxy stops routing on reconcile)
@@ -577,18 +551,14 @@ def _teardown(
 		except Exception:
 			_warn(f"Site {fqdn} teardown failed — terminate/delete it by hand")
 
-	# 2. The Site Request + the created User (non-transactional rows that outlive
-	#    the run). Delete the request first (it links the Site), then the User.
-	for request in frappe.get_all("Site Request", filters={"email": email}, pluck="name"):
+	# 2. The Tenant create_site get-or-created (a non-transactional row that
+	#    outlives the run). The Site that linked it is gone from step 1.
+	tenant = frappe.db.get_value("Tenant", {"central_reference": central_reference})
+	if tenant:
 		try:
-			frappe.delete_doc("Site Request", request, force=1, ignore_permissions=True)
+			frappe.delete_doc("Tenant", tenant, force=1, ignore_permissions=True)
 		except Exception:
-			_warn(f"Site Request {request} delete failed")
-	if frappe.db.exists("User", email):
-		try:
-			frappe.delete_doc("User", email, force=1, ignore_permissions=True)
-		except Exception:
-			_warn(f"User {email} delete failed")
+			_warn(f"Tenant {tenant} delete failed")
 	frappe.db.commit()
 
 	# 3. The reserved IP + the proxy VM (reuse proxy_vm's teardown). The site VM is

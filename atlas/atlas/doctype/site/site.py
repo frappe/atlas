@@ -16,7 +16,12 @@ import frappe
 from frappe import _
 from frappe.model.document import Document
 
-from atlas.atlas.placement import active_root_domain, default_bench_snapshot, warm_bench_snapshot_for_server
+from atlas.atlas.placement import (
+	active_root_domain,
+	atlas_region,
+	default_bench_snapshot,
+	warm_bench_snapshot_for_server,
+)
 from atlas.atlas.sizes import SIZE_PRESETS
 from atlas.atlas.subdomain_label import (
 	RESERVED_SUBDOMAINS,
@@ -39,9 +44,9 @@ from atlas.atlas.subdomain_label import (
 SITE_VM_SIZE = SIZE_PRESETS["Shared 4x"]
 
 # The Administrator password the golden image bakes into the site — a SHARED
-# throwaway, the same on every clone. The signup path no longer resets it per VM
+# throwaway, the same on every clone. The deploy path no longer resets it per VM
 # (that reset cost a ~28s CPU-throttled `bench frappe` boot that dominated the
-# deploy); instead the owner is handed this and rotates it after first login.
+# deploy); instead the tenant is handed this and rotates it after first login.
 # MUST stay in lockstep with bench/build.sh BAKED_ADMIN_PASSWORD ("$BENCH_NAME
 # -baked", bench name "atlas") and warm.sh's pre-warm login — a drift would hand
 # the owner a password that does not authenticate.
@@ -63,17 +68,36 @@ IMMUTABLE_AFTER_INSERT = (
 
 
 class Site(Document):
+	# begin: auto-generated types
+	# This code is auto-generated. Do not modify anything in this block.
+
+	from typing import TYPE_CHECKING
+
+	if TYPE_CHECKING:
+		from frappe.types import DF
+
+		admin_password: DF.Password | None
+		deploying_started: DF.Datetime | None
+		provisioning_started: DF.Datetime | None
+		region: DF.Data | None
+		running_started: DF.Datetime | None
+		status: DF.Literal["Pending", "Provisioning", "Deploying", "Running", "Failed", "Terminated"]
+		subdomain: DF.Data
+		subdomain_doc: DF.Link | None
+		virtual_machine: DF.Link | None
+	# end: auto-generated types
+
 	def before_insert(self) -> None:
 		"""Fill what the user didn't pick and gate the routing string.
 
 		Validate the label *here* — before autoname() resolves the domain and
 		builds the FQDN — so a bad label fails with a clear "single label"/
 		"reserved" message rather than a downstream domain-resolution error.
-		Then resolve the active region (the user never picks it) and start
+		Then resolve the active region (Central never picks it) and start
 		Pending. The backing VM is created in the background job (after_insert),
-		not here — provisioning SSHes and must not block the insert. `owner` is
-		stamped by Frappe from the session user (signup ensures that's the
-		verified user); we never set it."""
+		not here — provisioning SSHes and must not block the insert. The owning
+		`tenant` (set by the Central-facing create_site API) carries attribution;
+		Atlas no longer owns end-users."""
 		self._validate_label()
 		self._validate_reserved()
 		self._apply_region_default()
@@ -91,7 +115,7 @@ class Site(Document):
 
 	def after_insert(self) -> None:
 		"""Auto-provision: enqueue the provision→deploy job so the user never has
-		to click anything after signup. queue=long because it SSHes (clone-boot-
+		to click anything after create_site. queue=long because it SSHes (clone-boot-
 		deploy-probe). Mirrors VirtualMachine.after_insert."""
 		frappe.enqueue(
 			"atlas.atlas.doctype.site.site.auto_provision",
@@ -123,12 +147,13 @@ class Site(Document):
 	# ----- routing identity (Contract A) ---------------------------------
 
 	def _apply_region_default(self) -> None:
-		"""Resolve the region from the single active Root Domain (the user never
-		picks it). No-op when already set (a retry, or an operator who supplied
-		it). The domain suffix is read back from the same row in
-		_set_name_from_routing."""
+		"""Resolve the region from `Atlas Settings.region` (the single source of
+		truth; the user never picks it). No-op when already set (a retry, or an
+		operator who supplied it). The domain suffix is read from the active Root
+		Domain in _set_name_from_routing — that row's region is denormalized from the
+		same Atlas Settings.region, so the two stay consistent."""
 		if not self.region:
-			self.region = active_root_domain().region
+			self.region = atlas_region()
 
 	def _set_name_from_routing(self) -> None:
 		"""Build the one routing string: `<subdomain>.<region domain>`, the FQDN
@@ -136,7 +161,7 @@ class Site(Document):
 		the on-disk site name — a single-tenant VM keeps the baked `site.local` on
 		disk and serves it for the FQDN Host; the FQDN identity lives at the proxy/Host
 		layer.) Never transformed afterward. Uniqueness throws a clean "taken" message
-		(this is the signup race), not a raw duplicate-key error."""
+		(this is the create_site race), not a raw duplicate-key error."""
 		label = (self.subdomain or "").strip()
 		if not label:
 			frappe.throw(_("A subdomain is required"))
@@ -236,7 +261,7 @@ class _ProvisionClock:
 
 def auto_provision(site_name: str) -> None:
 	"""Background-job entrypoint (enqueued by after_insert). Drives the whole
-	signup→live-site flow for one Site:
+	create_site→live-site flow for one Site:
 
 	  1. clone the backing VM from the golden bench snapshot and provision it,
 	  2. wait for the VM to boot (SSH up),
@@ -250,9 +275,8 @@ def auto_provision(site_name: str) -> None:
 	Pending (operator intervened, a manual retry raced us). Steps 3-4 are plan
 	03's contract — this owns the orchestration, 03 owns the script + probe.
 
-	Every status transition is pushed to the owner over realtime (`_set_status`)
-	so the verified user's status page (`atlas/www/site_status.py`) updates live
-	as the work happens, with no manual reload."""
+	Every status transition is committed (`_set_status`) so Central sees progress
+	cross-transaction (the `site.status_changed` event + the `get_site` poll)."""
 	site = frappe.get_doc("Site", site_name)
 	if site.status != "Pending":
 		return
@@ -279,13 +303,14 @@ def auto_provision(site_name: str) -> None:
 		_set_status(site, "Deploying")
 		clock.stage("deploy site in guest (wait_for_ssh + run deploy-site.py)")
 		_deploy_site(site, vm_name)
-		# The Administrator password handed to the owner is the SHARED baked
-		# throwaway (BAKED_ADMIN_PASSWORD) — the signup path no longer resets it
-		# per VM (that cost a full CPU-throttled `bench frappe` boot, ~28s under the
-		# 0.25-core cap, which dominated the deploy). The owner rotates it after
+		# The Administrator password handed to the tenant is the SHARED baked
+		# throwaway (BAKED_ADMIN_PASSWORD) — the deploy no longer resets it per VM
+		# (that cost a full CPU-throttled `bench frappe` boot, ~28s under the
+		# 0.25-core cap, which dominated the deploy). The tenant rotates it after
 		# first login. Stored encrypted on the Site BEFORE the readiness wait so the
-		# reveal survives even if the http gate later times out. db_set on a Password
-		# field round-trips through Frappe's field encryption.
+		# handoff (the site.status_changed event + get_site poll) survives even if
+		# the http gate later times out. db_set on a Password field round-trips
+		# through Frappe's field encryption.
 		site.db_set("admin_password", BAKED_ADMIN_PASSWORD)
 		clock.stage("wait for HTTP 200 from guest :80 (Contract B)")
 		_wait_for_http(site, vm_name)
@@ -295,8 +320,8 @@ def auto_provision(site_name: str) -> None:
 		_set_status(site, "Running")
 		clock.done()
 	except Exception:
-		# Fail loud: mark the row so the operator/SPA sees the failure, and
-		# re-raise so the job log carries the traceback. COMMIT the Failed status
+		# Fail loud: mark the row so the operator (and Central, via the event) sees
+		# the failure, and re-raise so the job log carries the traceback. COMMIT the Failed status
 		# before re-raising — otherwise the job's rollback reverts it back to
 		# Pending (and a stuck Pending is indistinguishable from "never ran").
 		clock.failed()
@@ -304,9 +329,9 @@ def auto_provision(site_name: str) -> None:
 		raise
 
 
-# The Site field that records when each real phase began. Drives the status
-# page's per-phase timing (site_status.steps_for). Pending's start is the row's
-# creation; the terminal Running/Failed states reuse the last stamp.
+# The Site field that records when each real phase began. Drives per-phase timing
+# Central can surface. Pending's start is the row's creation; the terminal
+# Running/Failed states reuse the last stamp.
 _TIMING_FIELD = {
 	"Provisioning": "provisioning_started",
 	"Deploying": "deploying_started",
@@ -315,39 +340,25 @@ _TIMING_FIELD = {
 
 
 def _set_status(site, status: str) -> None:
-	"""Persist a Site status transition and push it to the owner's status page.
+	"""Persist a Site status transition and report it to Central.
 
-	Three things, in order: db_set the status, COMMIT it (so a separate request —
-	the status page polling fallback — sees the new value, and so the Failed write
-	survives the job's rollback), then publish the derived step view to the owner's
-	realtime room. We commit on every transition (not just Failed) because the page
-	reads `status` cross-transaction; the original code already committed after the
-	clone and on failure, so this only adds the Provisioning/Deploying/Running
-	commits — cheap, and they make the live view honest.
-
-	Publishing to the *owner's user room* (not the doc room) means the page needs
-	no client-side subscribe/permission dance: the socket server auto-joins each
-	authenticated socket to its user room, and verify.py logged the owner in before
-	redirecting here. Emitted after the commit (direct emit, not after_commit) so
-	the realtime payload never races ahead of the committed row."""
-	from atlas.atlas.site_status import progress_payload
-
-	# Stamp the entry time of this phase so the status page can show how long each
-	# phase took (the gap to the next phase's stamp). Only the three real phases
-	# carry a field — the six checklist steps merge into these; Pending's start is
-	# the row's creation, and Failed keeps the last good stamp (the in-flight phase
+	Two things, in order: db_set the status (stamping the phase entry time), then
+	COMMIT it. The commit on every transition makes the state visible
+	cross-transaction so Central's `get_site` poll sees the new value, and — on
+	Failed — survives the job's rollback (a stuck Pending is indistinguishable
+	from 'never ran'). The push half is the `site.status_changed` event the Site's
+	on_update doc_event emits (atlas/atlas/central_report.py); committing here
+	(enqueue_after_commit) is what lets that delivery fire."""
+	# Stamp the entry time of this phase (drives the per-phase timing Central can
+	# surface). Only the three real phases carry a field; Pending's start is the
+	# row's creation, and Failed keeps the last good stamp (the in-flight phase
 	# shows elapsed-until-failure). _TIMING_FIELD maps a status to its field.
 	stamp_field = _TIMING_FIELD.get(status)
 	if stamp_field:
 		site.db_set(stamp_field, frappe.utils.now_datetime())
 	site.db_set("status", status)
-	# nosemgrep: frappe-manual-commit -- background job: commit each status transition so the owner's realtime polling sees it cross-transaction and progress survives a crash mid-provision
+	# nosemgrep: frappe-manual-commit -- background job: commit each status transition so Central's poll sees it cross-transaction, the status_changed event delivers, and progress survives a crash mid-provision
 	frappe.db.commit()
-	frappe.publish_realtime(
-		event="site_provisioning",
-		message=progress_payload(site),
-		user=site.owner,
-	)
 
 
 def _provision_backing_vm(site) -> str:
@@ -355,10 +366,9 @@ def _provision_backing_vm(site) -> str:
 
 	The snapshot already carries the preinstalled bench + the grown disk;
 	clone_to_new_vm re-derives a fresh identity (UUID, IPv6, MAC, host keys) and
-	its own after_insert auto-provisions the VM. The Site shares its owner's SSH
-	key model via Atlas Settings' fleet key (the guest is reached by the control
-	plane, not the user — the user reaches the site over HTTPS through the
-	proxy).
+	its own after_insert auto-provisions the VM. The guest is reached over the
+	fleet SSH key (Atlas Settings) by the control plane, not the tenant — the
+	tenant reaches the site over HTTPS through the proxy.
 
 	WARM-FIRST: the server choice still follows the cold golden's row (today's
 	placement), but when that server has an Available WARM golden the clone

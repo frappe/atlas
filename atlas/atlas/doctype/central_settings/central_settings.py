@@ -25,10 +25,7 @@ class CentralSettings(Document):
 		enabled: DF.Check
 		hub_endpoint: DF.Data | None
 		hub_public_key: DF.Data | None
-		last_event_status: DF.SmallText | None
-		last_sync: DF.Datetime | None
-		region: DF.Data | None
-		registered_on: DF.Datetime | None
+		status: DF.SmallText | None
 		tunnel_cidr: DF.Data | None
 		tunnel_ip: DF.Data | None
 		tunnel_status: DF.Literal["Inactive", "Provisioning", "Active", "Reverting"]
@@ -47,16 +44,12 @@ class CentralSettings(Document):
 	@frappe.whitelist()
 	def fetch_sizes(self) -> dict:
 		"""Pull Central's VM size catalog into Central Size rows."""
-		summary = upsert_central_sizes(self.client().fetch_sizes())
-		self.db_set("last_sync", frappe.utils.now_datetime())
-		return summary
+		return upsert_central_sizes(self.client().fetch_sizes())
 
 	@frappe.whitelist()
 	def fetch_images(self) -> dict:
 		"""Pull Central's expected bench images into Central Image rows."""
-		summary = upsert_central_images(self.client().fetch_images())
-		self.db_set("last_sync", frappe.utils.now_datetime())
-		return summary
+		return upsert_central_images(self.client().fetch_images())
 
 	def client(self) -> CentralClient:
 		if not self.url or not self.api_key:

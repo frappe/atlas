@@ -10,6 +10,7 @@
   "organization_id",
   "zone",
   "billing",
+  "ssh_key_id",
   "section_break_defaults",
   "default_size",
   "default_image"
@@ -20,8 +21,7 @@
    "fieldtype": "Password",
    "label": "Secret Key",
    "reqd": 1,
-   "set_only_once": 1,
-   "description": "Scaleway IAM API key Secret Key (the X-Auth-Token value, an opaque hyphenated string — NOT the Access Key). Rotate by clearing the field via db.set_value, then re-saving."
+   "description": "Scaleway IAM API key Secret Key (the X-Auth-Token value, an opaque hyphenated string — NOT the Access Key)."
   },
   {
    "fieldname": "project_id",
@@ -50,6 +50,12 @@
    "options": "hourly\nmonthly",
    "default": "hourly",
    "description": "hourly has no upfront fee; monthly is cheaper to run but charges a one-time commitment fee (non-refundable for new subscriptions). Hourly and monthly are distinct offer IDs — discover() filters offers to this mode."
+  },
+  {
+   "fieldname": "ssh_key_id",
+   "fieldtype": "Data",
+   "label": "SSH Key ID",
+   "description": "Scaleway's IAM SSH key id, installed on each new Elastic Metal server. Left blank, the provider registers Atlas Settings.ssh_public_key with IAM at provision time; cache the returned id here to reuse it. Vendor-specific — meaningless to other providers."
   },
   {
    "fieldname": "section_break_defaults",

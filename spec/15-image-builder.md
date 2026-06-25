@@ -82,7 +82,7 @@ The three `*-admin` recipes bake the same `bench/` tree at each Frappe version b
 **`admin` mode**: `build.sh` skips `bench new-site` + ERPNext and leaves only the
 bench plus the bench-cli **admin console** (a Flask management app) running for the
 snapshot. A clone's first-boot `deploy-site.py --mode admin` sets `[admin].domain =
-<fqdn>` + `bench setup nginx` so the FQDN serves the admin app, and the readiness
+<fqdn>` + `bench setup production` so the FQDN serves the admin app, and the readiness
 probe is the admin app's `/api/status` (it has no Frappe `/api/method/ping`). They
 are cold-only and never register — the admin image is a distinct product, not the
 self-serve site golden. See *Bake mode (site vs admin)* in
@@ -214,9 +214,9 @@ in-place edit (the same shape as `Site` / `Virtual Machine`).
    re-raises (fail loud — the job log carries the traceback). No-op if the build
    has moved past `Draft`. Every transition is committed and pushed to the
    operators' realtime room (`image_build_progress`, doc-scoped) so the desk
-   form's live checklist updates without a reload — the `Site.auto_provision` /
-   `/site-status` pattern ([14-self-serve.md](./14-self-serve.md)) applied to a
-   desk form.
+   form's live checklist updates without a reload — the same per-transition
+   commit-then-report pattern `Site.auto_provision`
+   ([14-self-serve.md](./14-self-serve.md)) uses, here pushed to a desk room.
 
 4. **`rebake()`** resets an `Available`/`Failed` row to `Draft` and re-enqueues —
    the operator's retry button. The whole pipeline is idempotent (`build.sh`

@@ -3,9 +3,9 @@
 These tests pin that the five tiers (Shared 1x/2x/4x/8x, Dedicated 1x) are
 internally consistent and that the Virtual Machine `size_preset` Select options
 in the doctype JSON are regenerated from `sizes.size_preset_options()` — so the
-JSON and the canonical dict can't drift. The desk `.js` and the SPA's
-NewMachineDialog.vue carry matching literals (JS can't import the Python source);
-they are documented as such and checked by eye against this module.
+JSON and the canonical dict can't drift. The desk `.js` carries matching
+literals (JS can't import the Python source); it is documented as such and
+checked by eye against this module.
 """
 
 import json

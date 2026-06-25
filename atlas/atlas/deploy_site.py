@@ -19,10 +19,10 @@ that ~28s CPU-throttled `bench frappe` boot is the main latency win.
 Two functions, two execution sites (spec/14-self-serve.md "What runs where"):
 
 - `deploy_site` drives `bench/deploy-site.py` IN THE GUEST over guest-SSH: it
-  renames the baked site to the FQDN, regenerates the bench's nginx vhost
-  (`bench setup nginx` + a v6 listener) and reloads — no password reset, no
-  restart. The db root password is baked + shared; the admin password is the baked
-  throwaway the owner rotates.
+  `bench rename-site`s the baked site to the FQDN (which regenerates the bench's
+  nginx vhost — v6 listener included — and re-runs production setup, a fast no-op
+  on a production-baked clone) — no password reset. The db root password is baked +
+  shared; the admin password is the baked throwaway the owner rotates.
 - `wait_for_http` runs ON THE CONTROLLER, polling the guest's public /128 :80
   until an HTTP 200 — the readiness signal that, and ONLY that, flips a Site to
   Running (Contract B). NOT the VM's `status == Running` (that means "jailer
@@ -149,8 +149,8 @@ def deploy_site(virtual_machine: str, site_name: str) -> None:
 		# python3 explicitly: an SSH `command` is non-interactive and the script's
 		# shebang is enough, but the deploy script needs the system python (it drops to
 		# the `frappe` user and shells out to the baked bench-cli, which owns its own uv
-		# venv). Warm: rename + `setup nginx` + reload + probe (fast — no restart). Cold:
-		# also an idempotent `bench start` first.
+		# venv). Warm: `bench rename-site` (rename + nginx + production setup) + probe.
+		# Cold: also an idempotent `bench start` first.
 		command = f"python3 {shlex.quote(remote_script)} --site-name {shlex.quote(site_name)}"
 		# The bake MODE is carried on the cloned VM (build_mode, set by
 		# clone_to_new_vm from the golden snapshot). site → rename the baked

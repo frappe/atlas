@@ -5,6 +5,19 @@ from atlas.atlas.subdomain_label import normalize
 
 
 class SubdomainDenylist(Document):
+	# begin: auto-generated types
+	# This code is auto-generated. Do not modify anything in this block.
+
+	from typing import TYPE_CHECKING
+
+	if TYPE_CHECKING:
+		from frappe.types import DF
+
+		enabled: DF.Check
+		label: DF.Data
+		reason: DF.Data | None
+	# end: auto-generated types
+
 	def validate(self) -> None:
 		"""Store the label lowercased and dot-free, so the enforcement query
 		(`is_denylisted`) — a single indexed `exists` on the lowercased label — never

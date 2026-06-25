@@ -189,20 +189,6 @@
    "share": 1,
    "submit": 0,
    "write": 1
-  },
-  {
-   "amend": 0,
-   "cancel": 0,
-   "create": 0,
-   "delete": 0,
-   "export": 0,
-   "import": 0,
-   "read": 1,
-   "report": 0,
-   "role": "Atlas User",
-   "share": 0,
-   "submit": 0,
-   "write": 0
   }
  ],
  "quick_entry": 0,
@@ -210,10 +196,22 @@
  "sort_field": "creation",
  "sort_order": "DESC",
  "states": [
-  {"title": "Pending", "color": "Yellow"},
-  {"title": "Running", "color": "Blue"},
-  {"title": "Success", "color": "Green"},
-  {"title": "Failure", "color": "Red"}
+  {
+   "title": "Pending",
+   "color": "Yellow"
+  },
+  {
+   "title": "Running",
+   "color": "Blue"
+  },
+  {
+   "title": "Success",
+   "color": "Green"
+  },
+  {
+   "title": "Failure",
+   "color": "Red"
+  }
  ],
  "title_field": "subject",
  "track_changes": 0

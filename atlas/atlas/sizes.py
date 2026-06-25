@@ -19,10 +19,9 @@ The vCPU ladder is `1/16, 1/8, 1/4, 1/2, 1, 2, 4`. Sub-1 sizes are honest CPU
 The two whole-core+ sizes (2 and 4 vCPU) set `cpu_max_cores == vcpus`, so they
 behave exactly as before this field existed.
 
-`atlas/frontend/src/components/NewMachineDialog.vue` and
-`atlas/atlas/doctype/virtual_machine/virtual_machine.js` carry matching literals
-(JS can't import Python); `atlas/tests/test_sizes.py` pins them in sync with
-this module and with the doctype JSON's `size_preset` options.
+`atlas/atlas/doctype/virtual_machine/virtual_machine.js` carries matching
+literals (JS can't import Python); `atlas/tests/test_sizes.py` pins them in sync
+with this module and with the doctype JSON's `size_preset` options.
 """
 
 # Ordered: smallest first. The key is the human label shown in the Select and
@@ -71,6 +70,6 @@ def size_preset_options() -> str:
 
 	`Custom` first (the doctype default for the operator who types raw resource
 	values), then the five tiers in ladder order. Newline-joined, the Frappe
-	Select-options format. Kept here so the doctype JSON and the desk/SPA
-	pickers are regenerated from one list."""
+	Select-options format. Kept here so the doctype JSON and the desk
+	picker are regenerated from one list."""
 	return "\n".join(["Custom", *SIZE_PRESETS.keys()])

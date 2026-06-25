@@ -3,7 +3,7 @@
 # boot default (write the persisted include + enable the fail-closed boot unit
 # atlas-mgmt-firewall.service, ordered Before=network-pre.target). Called by Central
 # OVER THE TUNNEL (central_link.confirm_tunnel) — arriving over wg0 proves end-to-end
-# reachability before the public side is made permanently dark (spec/19-tunnel.md).
+# reachability before the public side is made permanently dark (spec/21-tunnel.md).
 #
 # Runs on the Atlas host via atlas.atlas.local_task.run_local_task; nft / systemctl /
 # install are sudoers-pinned. Pass the SAME interface/port/allow-ports apply used so

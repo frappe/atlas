@@ -27,21 +27,14 @@ def provision_region() -> str:
 	"""The region label that separates this bench's resources in a shared cloud
 	account (multiple developers share one DigitalOcean / Scaleway account).
 
-	Sourced from `frappe.conf` (`atlas_tls_region`, falling back to
-	`atlas_do_region`) — the same per-bench config `bootstrap.py` seeds the active
-	Root Domain from, and available from the very first bootstrap step (before the
-	Root Domain row exists). Falls back to the active Root Domain's region once
-	one is configured, then to `"x"` so an unconfigured dev bench still provisions.
-	"""
-	region = frappe.conf.get("atlas_tls_region") or frappe.conf.get("atlas_do_region")
-	if region:
-		return region
-	from atlas.atlas.placement import active_root_domain
+	Just `Atlas Settings.region` — the single source of truth for this Atlas's
+	region (see `placement.atlas_region`). `bootstrap.py` seeds it before the first
+	provision, so it is available from the very first bootstrap step. Fails loud
+	when unset (no `"x"` placeholder): an unconfigured region is an operator
+	mistake, not a default."""
+	from atlas.atlas.placement import atlas_region
 
-	try:
-		return active_root_domain().region
-	except frappe.ValidationError:
-		return "x"
+	return atlas_region()
 
 
 def region_server_title(role: str | None = None) -> str:

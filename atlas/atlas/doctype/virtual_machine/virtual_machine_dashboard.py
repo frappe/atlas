@@ -7,5 +7,6 @@ def get_data():
 		"transactions": [
 			{"label": _("Operations"), "items": ["Task"]},
 			{"label": _("Disk"), "items": ["Virtual Machine Snapshot"]},
+			{"label": _("Network access"), "items": ["VPN Tunnel", "Firewall"]},
 		],
 	}

@@ -1,14 +1,17 @@
+import ipaddress
 import uuid
 
 import frappe
 from frappe.tests import IntegrationTestCase
 
 from atlas.atlas.networking import (
+	ATLAS_TUNNEL_SUPERNET,
 	CPU_MODE_RELAXED,
 	CPU_WEIGHT_MAX,
 	CPU_WEIGHT_MIN,
 	MAX_OPEN_FILES,
 	MEMORY_HEADROOM_MIB,
+	TUNNEL_PORT_BASE,
 	UID_BASE,
 	UID_SPAN,
 	allocate_ipv6,
@@ -18,9 +21,12 @@ from atlas.atlas.networking import (
 	derive_mac,
 	derive_netns,
 	derive_tap,
+	derive_tunnel_interface,
 	derive_uid,
 	derive_veth_pair,
 	resource_limit_args,
+	tunnel_listen_port,
+	tunnel_overlay_link,
 )
 from atlas.tests.fixtures import make_image, make_provider, make_server
 
@@ -182,6 +188,46 @@ class TestNetworking(IntegrationTestCase):
 			self.assertLessEqual(len(ns_veth), 15, ns_veth)
 			self.assertTrue(host_veth.startswith("atlas-h"))
 			self.assertTrue(ns_veth.startswith("atlas-n"))
+
+	def test_derive_tunnel_interface_stable_and_ifnamsiz_safe(self) -> None:
+		for _ in range(20):
+			name = str(uuid.uuid4())
+			interface = derive_tunnel_interface(name)
+			self.assertEqual(interface, derive_tunnel_interface(name))
+			self.assertTrue(interface.startswith("wg-"))
+			# IFNAMSIZ-safe (<= 15 chars) and distinct from the VM tap/veth names.
+			self.assertEqual(len(interface), len("wg-") + 11)
+			self.assertLessEqual(len(interface), 15, interface)
+			self.assertNotEqual(interface, derive_tap(name))
+			self.assertNotIn(interface, derive_veth_pair(name))
+
+	def test_tunnel_listen_port_indexes_from_base(self) -> None:
+		self.assertEqual(tunnel_listen_port(0), TUNNEL_PORT_BASE)
+		self.assertEqual(tunnel_listen_port(7), TUNNEL_PORT_BASE + 7)
+
+	def test_tunnel_overlay_link_point_to_point(self) -> None:
+		supernet = ipaddress.IPv6Network(ATLAS_TUNNEL_SUPERNET)
+		seen = set()
+		for slot in range(8):
+			host_cidr, client_cidr = tunnel_overlay_link(slot)
+			host = ipaddress.ip_interface(host_cidr)
+			client = ipaddress.ip_interface(client_cidr)
+			# /127 point-to-point: host is the lower address, client the upper,
+			# and the two sit in the same /127.
+			self.assertEqual(host.network.prefixlen, 127)
+			self.assertEqual(host.network, client.network)
+			self.assertLess(host.ip, client.ip)
+			# Inside the supernet and unique across slots (per-host uniqueness).
+			self.assertIn(host.ip, supernet)
+			self.assertIn(client.ip, supernet)
+			self.assertNotIn(host.ip, seen)
+			self.assertNotIn(client.ip, seen)
+			seen.update({host.ip, client.ip})
+		# Slot 0 anchors at the supernet base, ::1 is the client end.
+		self.assertEqual(
+			tunnel_overlay_link(0),
+			(f"{supernet.network_address}/127", f"{supernet.network_address + 1}/127"),
+		)
 
 	def test_cgroup_args_for_resource_triple(self) -> None:
 		# 2 cores' bandwidth, 1024 MiB RAM, 8 GiB disk. cpu_max_cores=2 →

@@ -148,15 +148,18 @@ def _finalize_proxy(virtual_machine, connection, key_path) -> tuple[str, str, in
 _BENCH_DISK_GB = 28
 _BENCH_MEMORY_MB = 2048
 
-# The proven bench-cli commit (main @ 2026-06-18, incl. the IPv6-listeners commit
-# dd14ad4) every bench variant builds with. bench-cli is the build *tool*, not the
+# The proven bench-cli commit (main @ 2026-06-25, incl. the two-path install.sh,
+# `bench rename-site`, and the IPv6-listeners commit dd14ad4) every bench variant
+# builds with. bench-cli is the build *tool*, not the
 # framework: it reads the Frappe branch + Python version from bench.toml and natively
 # knows `version-15`/`version-16`/`develop` (core/app.py), so ONE ref bakes all three
 # variants — the version lives in the per-recipe pins below, not in the tool. Pinned
 # (not `main`) so the golden is reproducible; a variant can override it if a future
 # Frappe release needs a newer bench-cli. Kept in lockstep with bench/build.sh's
 # BENCH_CLI_REF default (the value a direct `build.sh` run uses with no env override).
-_BENCH_CLI_REF = "f36a06c541162aec80dd7b9894ccb4691597b9d3"
+_BENCH_CLI_REF = (
+	"03a4272068f78a402d407c4ae9b071be5e00a14b"  # main @ 2026-06-25 (two-path install.sh + rename-site)
+)
 
 
 def _bench_variant(
@@ -243,7 +246,7 @@ RECIPES: dict[str, "ImageRecipe"] = {
 	# --- The admin-console line. Same three Frappe versions, but baked in `admin`
 	# mode: build.sh skips `new-site` + ERPNext entirely and leaves only the bench +
 	# the bench-cli admin app running (a Flask management console, NOT a Frappe site).
-	# A clone's first-boot deploy sets `[admin].domain = <fqdn>` + `bench setup nginx`
+	# A clone's first-boot deploy sets `[admin].domain = <fqdn>` + `bench setup production`
 	# so the FQDN maps to the admin app (deploy-site.py `--mode admin`); its readiness
 	# probe is the admin app's `/api/status`, not the Frappe `/api/method/ping`
 	# (spec/08, [[atlas-admin-mode-health-path]]). These are COLD goldens — no warm

@@ -5,10 +5,13 @@
  "editable_grid": 0,
  "engine": "InnoDB",
  "field_order": [
+  "section_break_instance",
+  "region",
   "section_break_provider",
   "provider_type",
   "column_break_provider",
   "tls_provider_type",
+  "dns_provider_type",
   "fail_scripts",
   "section_break_user_dashboard",
   "default_user_image",
@@ -18,11 +21,22 @@
   "section_break_tcp_proxy",
   "tcp_port_pool",
   "section_break_ssh",
-  "ssh_key_id",
   "ssh_public_key",
   "ssh_private_key_path"
  ],
  "fields": [
+  {
+   "fieldname": "section_break_instance",
+   "fieldtype": "Section Break",
+   "label": "Instance"
+  },
+  {
+   "fieldname": "region",
+   "fieldtype": "Data",
+   "label": "Region",
+   "reqd": 1,
+   "description": "This Atlas instance's single region (e.g. blr1, nyc3). The one source of truth for region: the proxy-fleet join key Subdomain/Site/Port Mapping/proxy VMs share, the label that separates this bench's servers in a shared cloud account, and the region announced to Central at Register. Root Domain denormalizes it at insert."
+  },
   {
    "fieldname": "section_break_provider",
    "fieldtype": "Section Break",
@@ -46,6 +60,13 @@
    "label": "TLS Provider Type",
    "options": "\nLet's Encrypt\nZeroSSL\nSelf-Managed",
    "description": "The active certificate issuer. The TLS registry maps this to the registered TlsProvider; Root Domain / TLS Certificate denormalize it at insert. Pairs with Lets Encrypt Settings for the ACME account."
+  },
+  {
+   "fieldname": "dns_provider_type",
+   "fieldtype": "Select",
+   "label": "DNS Provider Type",
+   "options": "\nRoute53\nCloudflare",
+   "description": "The active DNS vendor (DNS-01 challenge). The DNS registry maps this to the registered DnsProvider (dns.for_dns_provider_type); Root Domain denormalizes it at insert. Pairs with Route53 Settings for the credentials. Only Route53 is implemented; Cloudflare is reserved."
   },
   {
    "fieldname": "fail_scripts",
@@ -104,16 +125,10 @@
    "label": "SSH key"
   },
   {
-   "fieldname": "ssh_key_id",
-   "fieldtype": "Data",
-   "label": "SSH Key ID",
-   "description": "Vendor's handle for the uploaded SSH key, passed to the provider when creating a host. DigitalOcean accepts either the key's numeric id or its SHA-256 fingerprint here."
-  },
-  {
    "fieldname": "ssh_public_key",
    "fieldtype": "Long Text",
    "label": "SSH Public Key",
-   "description": "OpenSSH public key body. Crosses the provider interface for vendors that upload at provision time."
+   "description": "OpenSSH public key body. Crosses the provider interface for vendors that upload at provision time. The vendor's handle for the uploaded key (DO key id / fingerprint, Scaleway IAM id) is per-vendor — it lives on the active vendor's Settings (e.g. DigitalOcean Settings.ssh_key_id)."
   },
   {
    "fieldname": "ssh_private_key_path",

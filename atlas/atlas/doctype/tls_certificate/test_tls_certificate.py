@@ -26,7 +26,7 @@ from atlas.atlas.tls.base import IssuedCert
 
 
 def _set_provider_types() -> None:
-	frappe.db.set_single_value("Route53 Settings", "domain_provider_type", "Route53")
+	frappe.db.set_single_value("Atlas Settings", "dns_provider_type", "Route53")
 	frappe.db.set_single_value("Atlas Settings", "tls_provider_type", "Let's Encrypt")
 
 
@@ -38,7 +38,7 @@ def _make_domain(domain: str, region: str):
 		# suite's types so the denormalized tls_provider_type assertion sees
 		# Let's Encrypt, not whatever the neighbour seeded.
 		existing = frappe.get_doc("Root Domain", domain)
-		existing.db_set("domain_provider_type", "Route53")
+		existing.db_set("dns_provider_type", "Route53")
 		existing.db_set("tls_provider_type", "Let's Encrypt")
 		return existing
 	return frappe.get_doc(
@@ -46,7 +46,7 @@ def _make_domain(domain: str, region: str):
 			"doctype": "Root Domain",
 			"domain": domain,
 			"region": region,
-			"domain_provider_type": "Route53",
+			"dns_provider_type": "Route53",
 			"tls_provider_type": "Let's Encrypt",
 		}
 	).insert(ignore_permissions=True)

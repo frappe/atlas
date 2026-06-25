@@ -200,5 +200,62 @@ class TestCentralReport(IntegrationTestCase):
 			central_report.deliver("vm.created", {"name": "vm-1"})
 		settings.db_set.assert_called()
 		recorded = settings.db_set.call_args[0]
-		self.assertEqual(recorded[0], "last_event_status")
+		self.assertEqual(recorded[0], "status")
 		self.assertIn("error", recorded[1])
+
+
+class TestCentralReportSite(IntegrationTestCase):
+	"""Site lifecycle events: created on insert, status_changed on a status flip,
+	with the admin handoff (url + admin_password) only carried once Running."""
+
+	def _site(self, status="Pending", before_status=None, tenant=None):
+		doc = SimpleNamespace(
+			name="acme.blr1.frappe.dev", status=status, subdomain="acme", region="blr1", tenant=tenant
+		)
+		doc.get = lambda key, default=None: getattr(doc, key, default)
+		doc.get_password = lambda field: "atlas-baked"
+		doc.get_doc_before_save = lambda: (
+			SimpleNamespace(status=before_status) if before_status is not None else None
+		)
+		return doc
+
+	def test_after_insert_emits_created(self) -> None:
+		with (
+			patch.object(central_report, "_enabled", return_value=True),
+			patch.object(central_report.frappe, "enqueue") as enqueue,
+		):
+			central_report.on_site_after_insert(self._site())
+		kwargs = enqueue.call_args.kwargs
+		self.assertEqual(kwargs["event_type"], "site.created")
+		self.assertEqual(kwargs["payload"]["name"], "acme.blr1.frappe.dev")
+		self.assertEqual(kwargs["payload"]["subdomain"], "acme")
+
+	def test_status_change_emits_and_pending_hides_handoff(self) -> None:
+		with (
+			patch.object(central_report, "_enabled", return_value=True),
+			patch.object(central_report.frappe, "enqueue") as enqueue,
+		):
+			central_report.on_site_update(self._site(status="Provisioning", before_status="Pending"))
+		payload = enqueue.call_args.kwargs["payload"]
+		self.assertEqual(enqueue.call_args.kwargs["event_type"], "site.status_changed")
+		self.assertEqual(payload["status"], "Provisioning")
+		self.assertIsNone(payload["url"])
+		self.assertIsNone(payload["admin_password"])
+
+	def test_running_event_carries_handoff(self) -> None:
+		with (
+			patch.object(central_report, "_enabled", return_value=True),
+			patch.object(central_report.frappe, "enqueue") as enqueue,
+		):
+			central_report.on_site_update(self._site(status="Running", before_status="Deploying"))
+		payload = enqueue.call_args.kwargs["payload"]
+		self.assertEqual(payload["url"], "https://acme.blr1.frappe.dev")
+		self.assertEqual(payload["admin_password"], "atlas-baked")
+
+	def test_no_status_change_skips(self) -> None:
+		with (
+			patch.object(central_report, "_enabled", return_value=True),
+			patch.object(central_report.frappe, "enqueue") as enqueue,
+		):
+			central_report.on_site_update(self._site(status="Running", before_status="Running"))
+		enqueue.assert_not_called()

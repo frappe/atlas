@@ -5,7 +5,7 @@ separate because Scaleway is bare metal with a different auth/seed shape:
 
 - The SSH key is uploaded at provision time (IAM), not pre-registered out of
   band like DO. `ensure_scaleway_provider` registers the control-plane public
-  key with IAM once and caches the returned UUID on `Atlas Settings.ssh_key_id`
+  key with IAM once and caches the returned UUID on `Scaleway Settings.ssh_key_id`
   (the `SshKey.vendor_id` the provider installs). Re-runs reuse it.
 - `discover()` hits the live catalog (the only source of the per-zone
   `offer_id` / `os_id` UUIDs), so the seed runs `Atlas Settings.refresh_catalog`
@@ -99,11 +99,11 @@ def ensure_scaleway_provider() -> str:
 		"Scaleway Settings", "Scaleway Settings", config["secret_key"], "secret_key"
 	)
 
-	# 2. IAM key — register the control-plane key, cache the UUID on Atlas Settings.
+	# 2. IAM key — register the control-plane key, cache the UUID on Scaleway Settings.
 	public_key = _control_plane_public_key()
 	key_id = _ensure_iam_ssh_key(client, config["project_id"], public_key)
 	frappe.db.set_single_value("Atlas Settings", "provider_type", "Scaleway", update_modified=False)
-	frappe.db.set_single_value("Atlas Settings", "ssh_key_id", key_id, update_modified=False)
+	frappe.db.set_single_value("Scaleway Settings", "ssh_key_id", key_id, update_modified=False)
 	frappe.db.set_single_value("Atlas Settings", "ssh_public_key", public_key, update_modified=False)
 	frappe.db.set_single_value(
 		"Atlas Settings", "ssh_private_key_path", get_ssh_private_key_path(), update_modified=False
@@ -119,12 +119,12 @@ def ensure_scaleway_provider() -> str:
 	image_name = f"Scaleway/{config['image']}"
 	if not frappe.db.exists("Provider Size", size_name):
 		raise AssertionError(
-			f"Provider Size {size_name!r} not found after discover — check atlas_scw_size "
+			f"Provider Size {size_name!r} not found after discover — check scaleway.size "
 			f"against the live catalog (name casing matters, e.g. EM-A610R-NVME)."
 		)
 	if not frappe.db.exists("Provider Image", image_name):
 		raise AssertionError(
-			f"Provider Image {image_name!r} not found after discover — check atlas_scw_image."
+			f"Provider Image {image_name!r} not found after discover — check scaleway.image."
 		)
 	frappe.db.set_single_value("Scaleway Settings", "default_size", size_name, update_modified=False)
 	frappe.db.set_single_value("Scaleway Settings", "default_image", image_name, update_modified=False)

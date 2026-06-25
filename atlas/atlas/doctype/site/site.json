@@ -9,6 +9,7 @@
   "tab_overview",
   "subdomain",
   "region",
+  "tenant",
   "column_break_header",
   "status",
   "section_break_backing",
@@ -45,6 +46,16 @@
    "in_list_view": 1,
    "in_standard_filter": 1,
    "label": "Region",
+   "read_only": 1,
+   "set_only_once": 1
+  },
+  {
+   "description": "The Central team this site belongs to. Stamped by the Central-facing create_site API; set once at insert. Operator/e2e sites created directly may leave it empty.",
+   "fieldname": "tenant",
+   "fieldtype": "Link",
+   "in_standard_filter": 1,
+   "label": "Tenant",
+   "options": "Tenant",
    "read_only": 1,
    "set_only_once": 1
   },
@@ -122,7 +133,7 @@
    "label": "Credentials"
   },
   {
-   "description": "The Frappe Administrator password handed to the owner — the shared baked throwaway (the deploy no longer resets it per VM; the owner rotates it after first login). The db root password is baked + shared too. Stored encrypted; shown to the owner in the SPA so they can sign in. Controller-written.",
+   "description": "The Frappe Administrator password handed to the tenant — the shared baked throwaway (the deploy no longer resets it per VM; the tenant rotates it after first login). The db root password is baked + shared too. Stored encrypted; surfaced to Central (event payload + get_site poll) once the site is Running. Controller-written.",
    "fieldname": "admin_password",
    "fieldtype": "Password",
    "label": "Administrator Password",
@@ -148,21 +159,6 @@
    "report": 1,
    "role": "System Manager",
    "share": 1,
-   "submit": 0,
-   "write": 1
-  },
-  {
-   "amend": 0,
-   "cancel": 0,
-   "create": 1,
-   "delete": 1,
-   "export": 0,
-   "if_owner": 1,
-   "import": 0,
-   "read": 1,
-   "report": 0,
-   "role": "Atlas User",
-   "share": 0,
    "submit": 0,
    "write": 1
   }

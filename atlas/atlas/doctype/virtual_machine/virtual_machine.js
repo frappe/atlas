@@ -25,7 +25,7 @@ const DIALOG_ACTIONS_WHEN_STOPPED = [
 ];
 
 // Five tiers — keep in sync with atlas/atlas/sizes.py SIZE_PRESETS (the
-// canonical source) and the SPA's NewMachineDialog.vue. `vcpus` is the guest
+// canonical source). `vcpus` is the guest
 // thread count; `cpu_max_cores` is the cgroup cpu.max bandwidth cap. "Shared Nx"
 // are oversubscribable fractions of a core; "Dedicated 1x" is a full core.
 // test_sizes.py pins these in sync.

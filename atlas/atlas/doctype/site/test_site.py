@@ -2,6 +2,8 @@
 immutability, the provision→deploy→running state machine and its background
 orchestration (Contract B), and terminate. All milliseconds, no host: the host
 parts (real clone + deploy + HTTP 200) are proven in the e2e (spec/14-self-serve.md).
+Sites are operator/Central-owned now (no end-user owner scoping); the Central-facing
+create_site/get_site API has its own test module (test_api_site.py).
 
 The background entrypoint's host steps — clone the VM, wait for SSH, run
 deploy-site.py, wait for HTTP 200 — are mocked here at the module seams; only the
@@ -23,42 +25,13 @@ ROOT_DOMAIN = "blr1.frappe.dev"
 REGION = "blr1"
 SNAPSHOT_NAME = "golden-bench-snap"
 
-USER_A_EMAIL = "atlas-site-user-a@example.com"
-USER_B_EMAIL = "atlas-site-user-b@example.com"
-
-
-def _ensure_atlas_user_role() -> None:
-	if not frappe.db.exists("Role", "Atlas User"):
-		frappe.get_doc({"doctype": "Role", "role_name": "Atlas User", "desk_access": 0}).insert(
-			ignore_permissions=True
-		)
-
-
-def _make_atlas_user(email: str) -> str:
-	if frappe.db.exists("User", email):
-		user = frappe.get_doc("User", email)
-	else:
-		user = frappe.get_doc(
-			{
-				"doctype": "User",
-				"email": email,
-				"first_name": "Atlas",
-				"last_name": "Site",
-				"send_welcome_email": 0,
-				"enabled": 1,
-			}
-		).insert(ignore_permissions=True)
-	for role_row in list(user.get("roles") or []):
-		user.remove(role_row)
-	user.append("roles", {"role": "Atlas User"})
-	user.save(ignore_permissions=True)
-	return user.name
-
 
 def _ensure_root_domain() -> None:
-	# The active DNS / TLS vendor types live on the Settings singles; Root Domain
-	# denormalizes them at insert.
-	frappe.db.set_single_value("Route53 Settings", "domain_provider_type", "Route53")
+	# Region + active DNS / TLS vendor types live on Atlas Settings (the single
+	# source of truth); Site reads region from it and Root Domain denormalizes all
+	# three at insert.
+	frappe.db.set_single_value("Atlas Settings", "region", REGION)
+	frappe.db.set_single_value("Atlas Settings", "dns_provider_type", "Route53")
 	frappe.db.set_single_value("Atlas Settings", "tls_provider_type", "Let's Encrypt")
 	if not frappe.db.exists("Root Domain", ROOT_DOMAIN):
 		frappe.get_doc(
@@ -67,7 +40,7 @@ def _ensure_root_domain() -> None:
 				"domain": ROOT_DOMAIN,
 				"region": REGION,
 				"is_active": 1,
-				"domain_provider_type": "Route53",
+				"dns_provider_type": "Route53",
 				"tls_provider_type": "Let's Encrypt",
 			}
 		).insert(ignore_permissions=True)
@@ -542,57 +515,3 @@ class TestSiteTerminate(IntegrationTestCase):
 			"Terminated",
 			"backing VM terminated",
 		)
-
-
-class TestSitePermissions(IntegrationTestCase):
-	"""Contract C — owner scoping. A user sees only their own Sites."""
-
-	def setUp(self) -> None:
-		_ensure_atlas_user_role()
-		_ensure_root_domain()
-		_ensure_golden_snapshot()
-		for name in frappe.get_all("Site", pluck="name"):
-			frappe.delete_doc("Site", name, force=1, ignore_permissions=True)
-		self.addCleanup(frappe.set_user, "Administrator")
-
-	def _seed_site(self, owner_email: str, subdomain: str):
-		previous = frappe.session.user
-		frappe.set_user(owner_email)
-		try:
-			site = frappe.get_doc({"doctype": "Site", "subdomain": subdomain}).insert()
-		finally:
-			frappe.set_user(previous)
-		return site
-
-	def test_user_reads_own_site_not_others(self) -> None:
-		user_a = _make_atlas_user(USER_A_EMAIL)
-		user_b = _make_atlas_user(USER_B_EMAIL)
-		site_a = self._seed_site(user_a, "ay")
-
-		frappe.set_user(user_a)
-		self.assertTrue(frappe.has_permission("Site", "read", doc=site_a.name))
-		frappe.set_user(user_b)
-		self.assertFalse(
-			frappe.has_permission("Site", "read", doc=site_a.name),
-			"a different Atlas User must not read someone else's Site",
-		)
-
-	def test_user_list_is_owner_scoped(self) -> None:
-		user_a = _make_atlas_user(USER_A_EMAIL)
-		user_b = _make_atlas_user(USER_B_EMAIL)
-		site_a = self._seed_site(user_a, "ay")
-
-		frappe.set_user(user_b)
-		names = {row.name for row in frappe.get_list("Site", limit_page_length=0)}
-		self.assertNotIn(site_a.name, names)
-
-		frappe.set_user(user_a)
-		names = {row.name for row in frappe.get_list("Site", limit_page_length=0)}
-		self.assertIn(site_a.name, names)
-
-	def test_operator_sees_all_sites(self) -> None:
-		user_a = _make_atlas_user(USER_A_EMAIL)
-		site_a = self._seed_site(user_a, "ay")
-		frappe.set_user("Administrator")
-		names = {row.name for row in frappe.get_list("Site", limit_page_length=0)}
-		self.assertIn(site_a.name, names)

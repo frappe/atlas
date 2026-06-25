@@ -34,7 +34,13 @@ Site config keys (set with `bench --site <site> set-config -p <key> <value>`):
 DigitalOcean providers also need:
 
     atlas_do_token                DO personal access token
-    atlas_do_region               e.g. "blr1"
+    atlas_do_region               e.g. "blr1". The DigitalOcean API region — the
+                                  vendor's OWN operating region (DO runs in many),
+                                  written to DigitalOcean Settings.region. Distinct
+                                  from Atlas Settings.region (this Atlas's single
+                                  region, the source of truth), which is seeded from
+                                  atlas_tls_region, falling back to this only as a
+                                  default when atlas_tls_region is unset.
     atlas_do_default_size         vendor-native slug, e.g. "s-2vcpu-4gb-intel"
                                   (Atlas prefixes "DigitalOcean/" internally)
     atlas_do_default_image        vendor-native slug, e.g. "ubuntu-24-04-x64"
@@ -74,8 +80,9 @@ Optional TLS tail (run via `atlas.bootstrap.run_with_proxy`):
 
 `run()` stops at the first VM (compute only). `run_with_proxy()` runs `run()` and
 then, IF the TLS config keys below are all present, seeds the domain + TLS layer
-(Domain Provider, Route53 Settings, TLS Provider, Lets Encrypt Settings, Root
-Domain) and issues the regional wildcard via Let's Encrypt over Route 53 DNS-01 —
+(the active DNS / TLS vendor types on Atlas Settings, Route53 Settings, Lets
+Encrypt Settings, Root Domain) and issues the regional wildcard via Let's Encrypt
+over Route 53 DNS-01 —
 the same chain the desk's **Issue / Renew Certificate** button drives. The cert is
 pushed to every proxy VM in the region (none yet at bootstrap, so the push is a
 no-op until a proxy exists). Requires certbot + certbot-dns-route53 + openssl +
@@ -114,7 +121,6 @@ persist. The flow, in dependency order:
                                     (needs the proxy + reserved IP to exist first,
                                     which is why it runs AFTER step 4, not in
                                     `run_with_proxy`'s pre-proxy order)
-  6. `ensure_outbound_email()`    — the SMTP account the verification mail sends from
 
 It is billable: one droplet + a build VM + a proxy VM + one DO reserved IPv4, all
 left running. It needs the TLS config keys (`atlas_tls_*`), certbot + boto3 on the
@@ -124,8 +130,8 @@ the operator's turn:
     bench --site <site> execute atlas.bootstrap.run_self_serve
 
 The older `run_with_self_serve()` is kept as the *settings-only* tail (wire an
-already-baked snapshot + email, skip the billable bake/proxy) for the case where
-the golden image + proxy already exist; `run_self_serve()` is the from-scratch
+already-baked snapshot, skip the billable bake/proxy) for the case where the
+golden image + proxy already exist; `run_self_serve()` is the from-scratch
 one-shot the wiped-site bootstrap uses.
 
     atlas_default_bench_snapshot     golden bench Virtual Machine Snapshot name. If
@@ -133,11 +139,6 @@ one-shot the wiped-site bootstrap uses.
                                      SKIPS the bake; else it bakes a fresh one. (The
                                      settings-only `run_with_self_serve` adopts the
                                      newest Available golden-bench* if this is unset.)
-    atlas_smtp_host                  outbound SMTP server (omit to skip email setup)
-    atlas_smtp_port                  SMTP port (default 587)
-    atlas_smtp_login                 SMTP username
-    atlas_smtp_password              SMTP password
-    atlas_smtp_from                  From address (default: the SMTP login)
 """
 
 import os
@@ -168,40 +169,15 @@ PROXY_DISK_GB = 4
 # atlas_acme_directory_url to the production URL for a trusted cert.
 LETS_ENCRYPT_STAGING = "https://acme-staging-v02.api.letsencrypt.org/directory"
 
-# Ubuntu cloud images (noble), pinned to a dated release for immutability.
-# The dated path never changes under us; the floating `release/` pointer does.
-# `kernel_sha256` is the digest of the DOWNLOADED packed vmlinuz — sync-image.sh
-# decompresses the zstd payload to a raw vmlinux on the server (the extracted
-# kernel is a derived artifact, not separately pinned). See spec/08-images.md.
-_NOBLE_RELEASE = "https://cloud-images.ubuntu.com/releases/noble/release-20260518"
-_NOBLE_MINIMAL_RELEASE = "https://cloud-images.ubuntu.com/minimal/releases/noble/release-20260521"
-
-DEFAULT_IMAGE = {
-	"image_name": IMAGE_NAME,
-	"title": "Ubuntu 24.04 server cloud image",
-	"kernel_url": f"{_NOBLE_RELEASE}/unpacked/ubuntu-24.04-server-cloudimg-amd64-vmlinuz-generic",
-	"kernel_filename": "vmlinux-noble-server",
-	"kernel_sha256": "3a33b65c88f98a5563c926d5b163ebe09706e5084ba587a19c1b15bd3e7a82d6",
-	"rootfs_url": f"{_NOBLE_RELEASE}/ubuntu-24.04-server-cloudimg-amd64.squashfs",
-	"rootfs_filename": "ubuntu-24.04-server.ext4",
-	"rootfs_sha256": "bb4bc95d539df92c96ad0ed34c017363e4a7a62772c6af1dc3553e06ce710b74",
-	"default_disk_gigabytes": 4,
-}
-
-# The minimal flavor lives under a different upstream tree and ships the same
-# generic kernel as server (identical digest). Seeded as a second image row so
-# operators can pick the smaller rootfs.
-MINIMAL_IMAGE = {
-	"image_name": MINIMAL_IMAGE_NAME,
-	"title": "Ubuntu 24.04 minimal cloud image",
-	"kernel_url": f"{_NOBLE_MINIMAL_RELEASE}/unpacked/ubuntu-24.04-minimal-cloudimg-amd64-vmlinuz-generic",
-	"kernel_filename": "vmlinux-noble-minimal",
-	"kernel_sha256": "3a33b65c88f98a5563c926d5b163ebe09706e5084ba587a19c1b15bd3e7a82d6",
-	"rootfs_url": f"{_NOBLE_MINIMAL_RELEASE}/ubuntu-24.04-minimal-cloudimg-amd64.squashfs",
-	"rootfs_filename": "ubuntu-24.04-minimal.ext4",
-	"rootfs_sha256": "a288f0bd499e1a747f86fda8ec9822dd99a4e3c0721d89ffd9dd57608ff21072",
-	"default_disk_gigabytes": 4,
-}
+# The base-image catalog (URLs, digests, disk sizes) lives on the doctype
+# controller so the desk "Seed default images" action and this bootstrap path
+# share one source of truth. Re-exported here because `atlas.bootstrap.DEFAULT_IMAGE`
+# / `MINIMAL_IMAGE` is the name the e2e config and tests pin against.
+# See virtual_machine_image.py / spec/08-images.md.
+from atlas.atlas.doctype.virtual_machine_image.virtual_machine_image import (
+	DEFAULT_IMAGE,
+	MINIMAL_IMAGE,
+)
 
 
 def run() -> None:
@@ -308,277 +284,73 @@ def run_self_serve(force_bake: bool = False) -> None:
 	issue_certificate(tls_config["domain"])
 	push_certificate_to_proxies(tls_config["domain"])
 
-	# 6. Outbound email so the verification mail sends (skips with a note if unset).
-	ensure_outbound_email()
-
 	_print_self_serve_summary(server_name, proxy_vm_name, tls_config["domain"])
 
 
 def restore_credentials() -> None:
-	"""Re-write the credential fields the unit suite clobbers, from site config.
+	"""Re-seed the Singles the unit suite clobbers, from the explicit E2E fixture.
 
 	The shared dev DB is also the test DB: a unit run leaves fake values in the
 	Singles (`set_atlas_settings`/`set_digitalocean_settings` write `dop_v1_fake`,
 	`atlas-test-ssh-key.pem`, `key-id-123`), so the next *real* provision/build/e2e
 	fails with a bogus token or an unusable key (memory: real-provision-traps #4).
-	This restores the real values from `common_site_config.json` —
-	`atlas_ssh_private_key_path`, optional `atlas_ssh_key_id` / `atlas_ssh_public_key`,
-	and the active provider's secret — without `ensure_provider`'s catalog
-	discover() network call. Which provider secret is restored is driven by
-	`atlas_provider_type` (DigitalOcean → `atlas_do_token`; Scaleway →
-	`atlas_scw_secret_key`; Self-Managed → none). Run it before any host turn:
+
+	This re-applies the explicit E2E config object through the Layer-1 setters —
+	the same contract `setup.run` drives — by delegating to `ensure_e2e_provider`
+	(`setup.run(setup_config())`). It reads the E2E fixture, NOT `frappe.conf`. The
+	DO setter restores the api_token, ssh_key_id, region and the named catalog Links;
+	its discover() is best-effort, so this stays robust offline. Run before any host
+	turn that follows a unit run:
 
 	    bench --site <site> execute atlas.bootstrap.restore_credentials
 
-	Idempotent; safe to re-run. Fails loud (`require_config`) if a required key is
-	missing, since a half-restored credential set is worse than a clean error."""
-	provider_type = require_config("atlas_provider_type")
-	# Store the EXPANDED absolute path. Config often holds `~/.ssh/id_rsa`; the
-	# production reader (get_ssh_key_from_disk) expanduser()s it, but a stored raw
-	# `~` is a trap for any path that reads the field literally and a confusing
-	# "invalid format / file not found" if the tilde survives — expand once here so
-	# the Single always holds a real absolute path that points at an existing key.
-	key_path = os.path.expanduser(require_config("atlas_ssh_private_key_path"))
-	if not os.path.isfile(key_path):
-		frappe.throw(f"atlas_ssh_private_key_path expands to {key_path!r}, which is not a file")
-	frappe.db.set_single_value(
-		"Atlas Settings",
-		"ssh_private_key_path",
-		key_path,
-		update_modified=False,
-	)
-	# ssh_key_id is required for DO (its key handle) but optional for Scaleway (the
-	# provider self-registers the public key with IAM if unset) and unused for
-	# Self-Managed — so only require it for DO, restore it best-effort otherwise.
-	if provider_type == "DigitalOcean":
-		ssh_key_id = require_config("atlas_ssh_key_id")
-	else:
-		ssh_key_id = frappe.conf.get("atlas_ssh_key_id")
-	if ssh_key_id:
-		frappe.db.set_single_value("Atlas Settings", "ssh_key_id", ssh_key_id, update_modified=False)
-	public_key = _resolve_fleet_public_key()
-	if public_key:
-		frappe.db.set_single_value("Atlas Settings", "ssh_public_key", public_key, update_modified=False)
-	if provider_type == "DigitalOcean":
-		frappe.utils.password.set_encrypted_password(
-			"DigitalOcean Settings",
-			"DigitalOcean Settings",
-			require_config("atlas_do_token"),
-			"api_token",
-		)
-	elif provider_type == "Scaleway":
-		frappe.utils.password.set_encrypted_password(
-			"Scaleway Settings",
-			"Scaleway Settings",
-			require_config("atlas_scw_secret_key"),
-			"secret_key",
-		)
-	# nosemgrep: frappe-manual-commit -- bootstrap script: persist restored credentials so later bootstrap steps and enqueued jobs can read them
-	frappe.db.commit()
-	print(f"[bootstrap] restored Atlas/{provider_type} credentials from site config")
+	Idempotent; safe to re-run. Fails loud (`MissingConfig`) if the fixture is absent
+	or missing a required key, since a half-restored credential set is worse than a
+	clean error. The Scaleway e2e has its own seed (`ensure_scaleway_provider`); this
+	restores the DigitalOcean harness's Singles."""
+	from atlas.tests.e2e._droplets import ensure_e2e_provider
+
+	provider_type = ensure_e2e_provider()
+	print(f"[bootstrap] restored Atlas/{provider_type} credentials from the E2E fixture")
 
 
 def ensure_provider() -> str:
+	"""Configure Atlas Settings + the active vendor Single from site config.
+
+	A thin back-compat shim now: builds the `config` dict from the `atlas_*` keys via
+	`setup.from_site_config()` and drives the explicit Layer-1 setters via
+	`setup.run()`. All the provider/region/catalog logic lives in those setters (the
+	contract) — bootstrap only forwards the config-derived input. `region`
+	(Atlas Settings.region, the source of truth) and the vendor's OWN region/zone are
+	set independently inside `run()`; provision_region() (server naming) reads the
+	former, so it is present from this first step."""
+	from atlas import setup
+
+	# Validate the provider type up front (before building the rest of the config) so a
+	# bad atlas_provider_type fails with the historical message, not a downstream
+	# missing-region error.
 	provider_type = require_config("atlas_provider_type")
 	if provider_type not in ("DigitalOcean", "Scaleway", "Self-Managed"):
 		frappe.throw(
 			f"atlas_provider_type must be DigitalOcean, Scaleway or Self-Managed, got {provider_type!r}"
 		)
-
-	# Atlas Settings — active provider_type + SSH triplet.
-	frappe.db.set_single_value("Atlas Settings", "provider_type", provider_type, update_modified=False)
-	print(f"[bootstrap] set Atlas Settings.provider_type = {provider_type!r}")
-	frappe.db.set_single_value(
-		"Atlas Settings",
-		"ssh_private_key_path",
-		require_config("atlas_ssh_private_key_path"),
-		update_modified=False,
+	config = setup.from_site_config()
+	setup.run(config)
+	print(
+		f"[bootstrap] configured Atlas/{provider_type} via setup.run (region={config['provider']['region']!r})"
 	)
-	if provider_type == "DigitalOcean":
-		frappe.db.set_single_value(
-			"Atlas Settings",
-			"ssh_key_id",
-			require_config("atlas_ssh_key_id"),
-			update_modified=False,
-		)
-	public_key = _resolve_fleet_public_key()
-	if public_key:
-		frappe.db.set_single_value("Atlas Settings", "ssh_public_key", public_key, update_modified=False)
-
-	if provider_type == "DigitalOcean":
-		region = require_config("atlas_do_region")
-		size_slug = require_config("atlas_do_default_size")
-		image_slug = require_config("atlas_do_default_image")
-
-		# Seed the catalog rows the Settings will Link to.
-		_ensure_provider_size(provider_type, size_slug)
-		_ensure_provider_image(provider_type, image_slug)
-
-		frappe.db.set_single_value("DigitalOcean Settings", "region", region, update_modified=False)
-		frappe.db.set_single_value(
-			"DigitalOcean Settings",
-			"default_size",
-			f"DigitalOcean/{size_slug}",
-			update_modified=False,
-		)
-		frappe.db.set_single_value(
-			"DigitalOcean Settings",
-			"default_image",
-			f"DigitalOcean/{image_slug}",
-			update_modified=False,
-		)
-		frappe.utils.password.set_encrypted_password(
-			"DigitalOcean Settings",
-			"DigitalOcean Settings",
-			require_config("atlas_do_token"),
-			"api_token",
-		)
-
-		# Seed the wider catalog so the Refresh Catalog button is exercising
-		# real data, not just the slugs the operator named in site config.
-		from atlas.atlas.providers.digitalocean import DigitalOceanProvider
-		from atlas.atlas.provisioning import upsert_catalog
-
-		try:
-			capabilities = DigitalOceanProvider().discover()
-			upsert_catalog(provider_type, capabilities)
-		except Exception as exception:
-			print(f"[bootstrap] WARN: catalog discover() failed: {exception}")
-
-	elif provider_type == "Scaleway":
-		_seed_scaleway_settings()
-
-	# nosemgrep: frappe-manual-commit -- persist provider + seeded catalog before returning
-	frappe.db.commit()
 	return provider_type
 
 
-def _seed_scaleway_settings() -> None:
-	"""Seed `Scaleway Settings` + the catalog for a Scaleway (Elastic Metal)
-	bootstrap, mirroring the e2e `ensure_scaleway_provider` seed.
-
-	Unlike DO — whose `discover()` is best-effort gravy on top of the named
-	slugs — Scaleway's `discover()` is LOAD-BEARING: it is the only source of the
-	per-zone `offer_id` / `os_id` UUIDs that `provision()` reads back out of each
-	catalog row's `provider_metadata` (the create/install calls take UUIDs, not
-	slugs). So we discover BEFORE wiring the defaults, fail loud if it fails, and
-	then verify the named default size/image rows actually exist in the freshly
-	upserted catalog (a typo'd slug or wrong casing — e.g. EM-A610R-NVME vs
-	-NVMe — is an operator mistake worth surfacing now, not at provision time).
-
-	The IAM SSH key is uploaded at provision time, so unlike DO there is no
-	`ssh_key_id` to seed here: the provider registers `Atlas Settings.ssh_public_key`
-	with IAM if `ssh_key_id` is unset (ensure_provider derives the public key from
-	the private key path). An operator who already has a cached IAM key UUID can set
-	`atlas_ssh_key_id` to reuse it."""
-	import frappe.utils.password
-
-	zone = require_config("atlas_scw_zone")
-	project_id = require_config("atlas_scw_project_id")
-	size_slug = require_config("atlas_scw_default_size")
-	image_slug = require_config("atlas_scw_default_image")
-
-	frappe.db.set_single_value("Scaleway Settings", "zone", zone, update_modified=False)
-	frappe.db.set_single_value("Scaleway Settings", "project_id", project_id, update_modified=False)
-	organization_id = frappe.conf.get("atlas_scw_organization_id")
-	if organization_id:
-		frappe.db.set_single_value(
-			"Scaleway Settings", "organization_id", organization_id, update_modified=False
-		)
-	frappe.db.set_single_value(
-		"Scaleway Settings",
-		"billing",
-		frappe.conf.get("atlas_scw_billing") or "hourly",
-		update_modified=False,
-	)
-	frappe.utils.password.set_encrypted_password(
-		"Scaleway Settings", "Scaleway Settings", require_config("atlas_scw_secret_key"), "secret_key"
-	)
-	# default_size/default_image are reqd Links — set them only after discover()
-	# upserts the rows below, so the Link target exists when the Single saves.
-	if frappe.conf.get("atlas_ssh_key_id"):
-		frappe.db.set_single_value(
-			"Atlas Settings", "ssh_key_id", frappe.conf.get("atlas_ssh_key_id"), update_modified=False
-		)
-	# nosemgrep: frappe-manual-commit -- bootstrap script: persist Scaleway Settings before the load-bearing discover() call that needs them
-	frappe.db.commit()
-	# Discover the live per-zone catalog (the offer_id / os_id UUIDs). Load-bearing —
-	# let the exception propagate so a bad key/zone fails the bootstrap loudly here
-	# rather than at the first opaque provision().
-	from atlas.atlas.providers.scaleway import ScalewayProvider
-	from atlas.atlas.provisioning import upsert_catalog
-
-	capabilities = ScalewayProvider().discover()
-	upsert_catalog("Scaleway", capabilities)
-	# nosemgrep: frappe-manual-commit -- bootstrap script: persist discovered catalog rows so the default size/image Link targets exist below
-	frappe.db.commit()
-
-	size_name = f"Scaleway/{size_slug}"
-	image_name = f"Scaleway/{image_slug}"
-	if not frappe.db.exists("Provider Size", size_name):
-		frappe.throw(
-			f"Provider Size {size_name!r} not in the discovered catalog — check atlas_scw_default_size "
-			f"against the live zone offers (casing matters, e.g. EM-A610R-NVME)."
-		)
-	if not frappe.db.exists("Provider Image", image_name):
-		frappe.throw(
-			f"Provider Image {image_name!r} not in the discovered catalog — check atlas_scw_default_image "
-			f"against the live zone OS list (casing matters, e.g. Ubuntu_24.04)."
-		)
-	frappe.db.set_single_value("Scaleway Settings", "default_size", size_name, update_modified=False)
-	frappe.db.set_single_value("Scaleway Settings", "default_image", image_name, update_modified=False)
-	# nosemgrep: frappe-manual-commit -- bootstrap script: persist default size/image so subsequent provision() calls read them off Scaleway Settings
-	frappe.db.commit()
-	print(f"[bootstrap] seeded Scaleway Settings (zone={zone}, size={size_name}, image={image_name})")
-
-
-def _ensure_provider_size(provider_type: str, slug: str) -> None:
-	name = f"{provider_type}/{slug}"
-	if frappe.db.exists("Provider Size", name):
-		return
-	import json
-
-	frappe.get_doc(
-		{
-			"doctype": "Provider Size",
-			"provider_type": provider_type,
-			"slug": slug,
-			"enabled": 1,
-			"provider_metadata": json.dumps({}),
-		}
-	).insert(ignore_permissions=True)
-
-
-def _ensure_provider_image(provider_type: str, slug: str) -> None:
-	name = f"{provider_type}/{slug}"
-	if frappe.db.exists("Provider Image", name):
-		return
-	import json
-
-	frappe.get_doc(
-		{
-			"doctype": "Provider Image",
-			"provider_type": provider_type,
-			"slug": slug,
-			"enabled": 1,
-			"provider_metadata": json.dumps({}),
-		}
-	).insert(ignore_permissions=True)
-
-
 def provision_server(provider_type: str) -> str:
+	from atlas import setup
 	from atlas.atlas.provisioning import region_server_title
 
 	title = region_server_title()
 	settings = frappe.get_single("Atlas Settings")
 	if provider_type == "Self-Managed":
-		server_name = settings.provision_server(
-			title,
-			ipv4_address=require_config("atlas_self_managed_ipv4"),
-			ipv6_address=require_config("atlas_self_managed_ipv6"),
-			ipv6_prefix=require_config("atlas_self_managed_ipv6_prefix"),
-			ipv6_virtual_machine_range=require_config("atlas_self_managed_ipv6_vm_range"),
-		)
+		networking = setup.self_managed_networking(setup.from_site_config())
+		server_name = settings.provision_server(title, **networking)
 	else:
 		# DigitalOcean + Scaleway: the vendor reads its own default size/image off
 		# its Settings Single, so the call needs only the title. (Scaleway's create
@@ -758,43 +530,18 @@ def _read_tls_config() -> dict | None:
 
 def ensure_tls_layer(config: dict) -> None:
 	"""Seed the domain + TLS layer from config, idempotently — the same rows the
-	desk first-run order creates (spec/13-tls.md): Domain Provider, Route53
-	Settings, TLS Provider, Lets Encrypt Settings, Root Domain."""
-	import frappe.utils.password
+	desk first-run order creates (spec/13-tls.md): the active DNS / TLS vendor
+	types on Atlas Settings, Route53 Settings, Lets Encrypt Settings, Root Domain.
 
-	frappe.db.set_single_value(
-		"Route53 Settings", "access_key_id", config["access_key_id"], update_modified=False
-	)
-	frappe.db.set_single_value("Route53 Settings", "region", config["aws_region"], update_modified=False)
-	frappe.utils.password.set_encrypted_password(
-		"Route53 Settings", "Route53 Settings", config["secret_access_key"], "secret_access_key"
-	)
-	frappe.db.set_single_value(
-		"Lets Encrypt Settings", "acme_directory_url", config["acme_directory_url"], update_modified=False
-	)
-	frappe.db.set_single_value(
-		"Lets Encrypt Settings", "account_email", config["account_email"], update_modified=False
-	)
-	frappe.db.set_single_value("Lets Encrypt Settings", "agree_tos", 1, update_modified=False)
+	Delegates to the explicit `setup.setup_tls_layer` setter; `_read_tls_config`'s
+	dict already matches its expected shape (domain / region / access_key_id /
+	secret_access_key / aws_region / account_email / acme_directory_url)."""
+	from atlas import setup
 
-	# The active DNS / TLS vendor types now live on the Settings singles; Root Domain
-	# denormalizes them at insert (its before_insert reads them).
-	frappe.db.set_single_value("Route53 Settings", "domain_provider_type", "Route53", update_modified=False)
-	frappe.db.set_single_value("Atlas Settings", "tls_provider_type", "Let's Encrypt", update_modified=False)
-	if not frappe.db.exists("Root Domain", config["domain"]):
-		frappe.get_doc(
-			{
-				"doctype": "Root Domain",
-				"domain": config["domain"],
-				"region": config["region"],
-				"is_active": 1,
-			}
-		).insert(ignore_permissions=True)
-		print(f"[bootstrap] created Root Domain {config['domain']!r} (region {config['region']!r})")
-	else:
-		print(f"[bootstrap] reusing Root Domain {config['domain']!r}")
+	setup.setup_tls_layer(config)
 	# nosemgrep: frappe-manual-commit -- persist TLS/Domain rows before the cert issue step
 	frappe.db.commit()
+	print(f"[bootstrap] seeded TLS layer + Root Domain {config['domain']!r} (region {config['region']!r})")
 
 
 def issue_certificate(domain: str) -> str:
@@ -1103,43 +850,39 @@ def _print_self_serve_summary(server_name: str, proxy_vm_name: str, domain: str)
 	):
 		print(f"  {label:<16} {value}")
 	print("")
-	print(f"  /signup now provisions sites at <sub>.{domain} (v4 + v6).")
+	print(f"  Central can now create sites at <sub>.{domain} (v4 + v6).")
 	print("=" * 64)
 
 
 def run_with_self_serve() -> None:
 	"""`run_with_proxy()` plus the self-serve tail: wire the golden bench snapshot
-	and outbound email so a fresh site can take a public `/signup`.
+	so Central can create a site (`atlas.atlas.api.site.create_site`).
 
 	The compute + proxy + TLS bootstrap (`run_with_proxy`) always happens first —
 	it seeds the Root Domain that `Site.before_insert` resolves the region + FQDN
 	suffix from (spec/14, Contract A), so self-serve has no separate domain step.
-	Then two settings the signup flow needs:
+	Then the one setting site creation needs:
 
 	  - `Atlas Settings.default_bench_snapshot` — the golden image a Site's backing
 	    VM clones from (spec/08-images.md). Wired from `atlas_default_bench_snapshot` if set,
 	    else from the most recent Available `golden-bench*` snapshot if one exists.
-	  - the outbound Email Account — so the verification email actually sends
-	    (`request_site` only queues it; spec/14 calls outbound email an operator
-	    prerequisite). Configured from the `atlas_smtp_*` keys.
 
-	Each step skips with a printed note when its inputs are absent, so this is a
-	safe drop-in for `run_with_proxy` — mirroring how the TLS tail degrades.
+	It skips with a printed note when its input is absent, so this is a safe
+	drop-in for `run_with_proxy` — mirroring how the TLS tail degrades.
 
 	What this does NOT do (deliberately — both are billable host runs): bake the
 	golden bench snapshot, and provision the edge proxy VM. A fresh dev brings the
-	signup flow up in three steps:
+	site-creation flow up in three steps:
 	  1. Bake the golden image once (leaves an Available golden-bench snapshot):
 	       bench --site <site> execute atlas.tests.e2e.use_cases.bench_image.run_smoke
-	  2. Run this (adopts that snapshot, seeds TLS + email):
+	  2. Run this (adopts that snapshot, seeds TLS):
 	       bench --site <site> execute atlas.bootstrap.run_with_self_serve
 	  3. Stand up a proxy VM in the region (so subdomains route + get TLS) — the
 	     proxy_vm use case, or the desk flow in spec/12-proxy.md.
-	Then `/signup` works end to end. A site VM needs ~2 GB RAM, so size the host
+	Then `create_site` works end to end. A site VM needs ~2 GB RAM, so size the host
 	for the number of concurrent sites you expect."""
 	run_with_proxy()
 	ensure_default_bench_snapshot()
-	ensure_outbound_email()
 
 
 def ensure_default_bench_snapshot() -> None:
@@ -1183,51 +926,6 @@ def ensure_default_bench_snapshot() -> None:
 	# nosemgrep: frappe-manual-commit -- bootstrap script: persist the adopted default_bench_snapshot setting so self-serve clones find it
 	frappe.db.commit()
 	print(f"[bootstrap] default_bench_snapshot = {snapshot} (adopted newest Available golden-bench)")
-
-
-def ensure_outbound_email() -> None:
-	"""Configure the default outbound Email Account from the `atlas_smtp_*` keys so
-	the signup verification email sends (request_site only queues it). Skips with a
-	note if the keys are absent — like the TLS tail, bootstrap stays runnable on a
-	site with no SMTP yet (the queue entry is then a harmless no-op)."""
-	host = frappe.conf.get("atlas_smtp_host")
-	if not host:
-		print(
-			"[bootstrap] no atlas_smtp_host — skipping outbound email setup. "
-			"Verification emails will queue but not send until an Email Account is configured."
-		)
-		return
-	login = require_config("atlas_smtp_login")
-	password = require_config("atlas_smtp_password")
-	from_address = frappe.conf.get("atlas_smtp_from") or login
-	port = int(frappe.conf.get("atlas_smtp_port", 587))
-
-	name = "Atlas Outbound"
-	if frappe.db.exists("Email Account", name):
-		account = frappe.get_doc("Email Account", name)
-	else:
-		account = frappe.new_doc("Email Account")
-		account.email_account_name = name
-	account.update(
-		{
-			"email_id": from_address,
-			"smtp_server": host,
-			"smtp_port": port,
-			# Frappe only reads login_id when login_id_is_different is set; otherwise
-			# it logs in as email_id. Flag it only when the SMTP user differs from From.
-			"login_id_is_different": 1 if login != from_address else 0,
-			"login_id": login,
-			"password": password,
-			"use_tls": 1,
-			"enable_outgoing": 1,
-			"default_outgoing": 1,
-			"awaiting_password": 0,
-		}
-	)
-	account.save(ignore_permissions=True)
-	# nosemgrep: frappe-manual-commit -- bootstrap script: persist the outbound Email Account so verification emails can be sent
-	frappe.db.commit()
-	print(f"[bootstrap] outbound Email Account {name!r} configured ({from_address} via {host}:{port})")
 
 
 def require_config(key: str) -> str:

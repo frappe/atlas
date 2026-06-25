@@ -27,6 +27,13 @@ add_to_apps_screen = [
 app_include_css = "/assets/atlas/css/atlas_desk.css"
 # app_include_js = "/assets/atlas/js/atlas.js"
 
+# Frappe Setup Wizard — the human front-end of the explicit setup contract
+# (atlas/setup.py). `*_requires` ships the slide definitions; `*_stages` maps the
+# slide answers onto the Layer-1 setters; `*_complete` runs after all stages commit.
+setup_wizard_requires = "/assets/atlas/js/setup_wizard.js"
+setup_wizard_stages = "atlas.setup.get_setup_stages"
+setup_wizard_complete = "atlas.setup.on_complete"
+
 # include js, css files in header of web template
 # web_include_css = "/assets/atlas/css/atlas.css"
 # web_include_js = "/assets/atlas/js/atlas.js"
@@ -53,6 +60,8 @@ doctype_js = {
 	"Virtual Machine Image": "public/js/atlas_form_overrides.js",
 	"Virtual Machine Snapshot": "public/js/atlas_form_overrides.js",
 	"Reserved IP": "public/js/atlas_form_overrides.js",
+	"VPN Tunnel": "public/js/atlas_form_overrides.js",
+	"Firewall": "public/js/atlas_form_overrides.js",
 	"Task": "public/js/atlas_form_overrides.js",
 	"Route53 Settings": "public/js/atlas_form_overrides.js",
 	"Lets Encrypt Settings": "public/js/atlas_form_overrides.js",
@@ -70,18 +79,11 @@ doctype_js = {
 # here, so the residual one-click launcher cost is acceptable.
 # doctype_list_js = {"doctype" : "public/js/doctype_list.js"}
 
-# The user-facing SPA (frappe-ui) is served at /dashboard. The Vue app owns
-# every sub-path under it; the host page is atlas/www/dashboard.html, built
-# from atlas/frontend. Operators use Desk (/app/atlas); users use this.
-# See spec/11-user-ui.md.
-website_route_rules = [
-	{"from_route": "/dashboard/<path:app_path>", "to_route": "dashboard"},
-	# The verified-signup landing page reads better at /site-status, but a www
-	# page with a controller must be named with an importable module name
-	# (atlas/www/site_status.py — a hyphen there can't be imported, so get_context
-	# never runs). Serve the pretty hyphen URL by mapping it to the underscore page.
-	{"from_route": "/site-status", "to_route": "site_status"},
-]
+# The user-facing SPA (formerly served at /dashboard) and the self-serve signup
+# on-ramp (/signup → /verify → /site-status) have been retired — Central is now
+# the customer-facing front door (spec/16-central.md), driving site creation via
+# `atlas.atlas.api.site.create_site`. Operators use Desk (/app/atlas); there is no
+# guest web surface. See spec/14-self-serve.md.
 # doctype_tree_js = {"doctype" : "public/js/doctype_tree.js"}
 # doctype_calendar_js = {"doctype" : "public/js/doctype_calendar.js"}
 
@@ -118,14 +120,6 @@ website_route_rules = [
 # 	"methods": "atlas.utils.jinja_methods",
 # 	"filters": "atlas.utils.jinja_filters"
 # }
-
-# Fixtures
-# --------
-# The Atlas User role (the SPA's user audience). Scoped to just this role so a
-# migrate doesn't sweep every Role on the site. See spec/11-user-ui.md.
-fixtures = [
-	{"dt": "Role", "filters": [["name", "=", "Atlas User"]]},
-]
 
 # Installation
 # ------------
@@ -173,23 +167,11 @@ after_migrate = "atlas.install.after_migrate"
 
 # Permissions
 # -----------
-# Row-level access for the Atlas User audience (the dashboard SPA). Operators
-# (System Manager) are unrestricted; users see only their own machines /
-# snapshots / SSH keys, and — for the inline Activity panel — only the Tasks of
-# a machine they own. See atlas/atlas/permissions.py and spec/11-user-ui.md.
-
-permission_query_conditions = {
-	"Virtual Machine": "atlas.atlas.permissions.owner_only",
-	"Virtual Machine Snapshot": "atlas.atlas.permissions.owner_only",
-	"SSH Key": "atlas.atlas.permissions.owner_only",
-	"Site": "atlas.atlas.permissions.owner_only",
-	"Site Request": "atlas.atlas.permissions.owner_only",
-	"Task": "atlas.atlas.permissions.task_by_owned_vm",
-}
-
-has_permission = {
-	"Task": "atlas.atlas.permissions.task_has_permission",
-}
+# Atlas is operator/Central-facing only (System Manager). End-user identity and
+# team membership live in Central (spec/16-central.md), which talks to Atlas as
+# the operator via token auth — so there is no end-user row-level scoping here.
+# (The owner-scoped `Atlas User` audience and its permission helpers were removed
+# when self-serve signup moved to Central; see spec/14-self-serve.md.)
 
 # Document Events
 # ---------------
@@ -203,6 +185,10 @@ doc_events = {
 		"after_insert": "atlas.atlas.central_report.on_vm_after_insert",
 		"on_update": "atlas.atlas.central_report.on_vm_update",
 		"on_trash": "atlas.atlas.central_report.on_vm_trash",
+	},
+	"Site": {
+		"after_insert": "atlas.atlas.central_report.on_site_after_insert",
+		"on_update": "atlas.atlas.central_report.on_site_update",
 	},
 	"Virtual Machine Snapshot": {
 		"on_update": "atlas.atlas.central_report.on_snapshot_update",

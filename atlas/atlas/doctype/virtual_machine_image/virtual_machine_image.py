@@ -2,6 +2,43 @@ import frappe
 from frappe import _
 from frappe.model.document import Document
 
+# Canonical base-image catalog. These are the rows `atlas.bootstrap.ensure_image`
+# seeds on a fresh site; they live here (not in bootstrap) so the desk "Seed
+# default images" list action and the bootstrap path share ONE source of truth
+# and can't drift. URLs/digests are pinned dated Ubuntu cloud images — see
+# bootstrap.py's release-pin comment and spec/08-images.md.
+_NOBLE_RELEASE = "https://cloud-images.ubuntu.com/releases/noble/release-20260518"
+_NOBLE_MINIMAL_RELEASE = "https://cloud-images.ubuntu.com/minimal/releases/noble/release-20260521"
+
+DEFAULT_IMAGE = {
+	"image_name": "ubuntu-24.04",
+	"title": "Ubuntu 24.04 server cloud image",
+	"kernel_url": f"{_NOBLE_RELEASE}/unpacked/ubuntu-24.04-server-cloudimg-amd64-vmlinuz-generic",
+	"kernel_filename": "vmlinux-noble-server",
+	"kernel_sha256": "3a33b65c88f98a5563c926d5b163ebe09706e5084ba587a19c1b15bd3e7a82d6",
+	"rootfs_url": f"{_NOBLE_RELEASE}/ubuntu-24.04-server-cloudimg-amd64.squashfs",
+	"rootfs_filename": "ubuntu-24.04-server.ext4",
+	"rootfs_sha256": "bb4bc95d539df92c96ad0ed34c017363e4a7a62772c6af1dc3553e06ce710b74",
+	"default_disk_gigabytes": 4,
+}
+
+# The minimal flavor lives under a different upstream tree and ships the same
+# generic kernel as server (identical digest). Seeded as a second image row so
+# operators can pick the smaller rootfs.
+MINIMAL_IMAGE = {
+	"image_name": "ubuntu-24.04-minimal",
+	"title": "Ubuntu 24.04 minimal cloud image",
+	"kernel_url": f"{_NOBLE_MINIMAL_RELEASE}/unpacked/ubuntu-24.04-minimal-cloudimg-amd64-vmlinuz-generic",
+	"kernel_filename": "vmlinux-noble-minimal",
+	"kernel_sha256": "3a33b65c88f98a5563c926d5b163ebe09706e5084ba587a19c1b15bd3e7a82d6",
+	"rootfs_url": f"{_NOBLE_MINIMAL_RELEASE}/ubuntu-24.04-minimal-cloudimg-amd64.squashfs",
+	"rootfs_filename": "ubuntu-24.04-minimal.ext4",
+	"rootfs_sha256": "a288f0bd499e1a747f86fda8ec9822dd99a4e3c0721d89ffd9dd57608ff21072",
+	"default_disk_gigabytes": 4,
+}
+
+SEEDABLE_IMAGES = (DEFAULT_IMAGE, MINIMAL_IMAGE)
+
 IMMUTABLE_AFTER_INSERT = (
 	"image_name",
 	"title",
@@ -18,6 +55,28 @@ IMMUTABLE_AFTER_INSERT = (
 
 
 class VirtualMachineImage(Document):
+	# begin: auto-generated types
+	# This code is auto-generated. Do not modify anything in this block.
+
+	from typing import TYPE_CHECKING
+
+	if TYPE_CHECKING:
+		from frappe.types import DF
+
+		build_mode: DF.Literal["", "site", "admin"]
+		default_disk_gigabytes: DF.Int
+		image_name: DF.Data
+		is_active: DF.Check
+		kernel_filename: DF.Data
+		kernel_sha256: DF.Data | None
+		kernel_url: DF.Data | None
+		rootfs_filename: DF.Data
+		rootfs_sha256: DF.Data | None
+		rootfs_url: DF.Data | None
+		tenant: DF.Link | None
+		title: DF.Data | None
+	# end: auto-generated types
+
 	# The four fields that describe a from-URL image's download. They used to be
 	# `reqd` in the JSON; now that a local (promoted-from-snapshot) image legitimately
 	# leaves them ALL empty, `reqd` is gone and validate() enforces the coherent
@@ -191,3 +250,27 @@ class VirtualMachineImage(Document):
 			task_name=task.name,
 		)
 		return task.name
+
+
+@frappe.whitelist()
+def seed_default_images() -> dict[str, list[str]]:
+	"""Insert the canonical base-image rows (`SEEDABLE_IMAGES`) that bootstrap
+	seeds, skipping any that already exist. This is the desk equivalent of
+	`atlas.bootstrap.ensure_image` — the list-view "Seed default images" action
+	calls it so an operator never hand-types kernel/rootfs URLs and digests.
+
+	Idempotent: returns the rows it created and the ones it left untouched.
+	`after_insert` on each fresh `is_active` row fans out a sync to every Active
+	server, same as the bootstrap path.
+	"""
+	frappe.only_for("System Manager")
+	created: list[str] = []
+	skipped: list[str] = []
+	for image in SEEDABLE_IMAGES:
+		if frappe.db.exists("Virtual Machine Image", image["image_name"]):
+			skipped.append(image["image_name"])
+			continue
+		doc = frappe.get_doc({"doctype": "Virtual Machine Image", **image, "is_active": 1})
+		doc.insert()
+		created.append(doc.name)
+	return {"created": created, "skipped": skipped}

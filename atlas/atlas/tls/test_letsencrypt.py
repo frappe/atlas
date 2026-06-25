@@ -8,7 +8,6 @@ from __future__ import annotations
 from types import SimpleNamespace
 from unittest.mock import patch
 
-import frappe
 from frappe.tests import IntegrationTestCase
 
 from atlas.atlas.dns.base import AuthResult as DnsAuthResult
@@ -32,18 +31,15 @@ class _StubDns(DnsProvider):
 		return []
 
 
-def _provider(
-	directory="https://acme-staging-v02.api.letsencrypt.org/directory", email="ops@example.com", tos=True
-):
-	settings = SimpleNamespace(acme_directory_url=directory, account_email=email, agree_tos=tos)
+def _provider(directory="https://acme-staging-v02.api.letsencrypt.org/directory", email="ops@example.com"):
+	settings = SimpleNamespace(acme_directory_url=directory, account_email=email)
 	with patch.object(letsencrypt.frappe, "get_single", return_value=settings):
 		return letsencrypt.LetsEncryptProvider()
 
 
 class TestLetsEncryptProvider(IntegrationTestCase):
-	def test_authenticate_requires_tos_and_email(self) -> None:
+	def test_authenticate_requires_email(self) -> None:
 		self.assertTrue(_provider().authenticate().ok)
-		self.assertFalse(_provider(tos=False).authenticate().ok)
 		self.assertFalse(_provider(email="").authenticate().ok)
 
 	def test_issue_passes_certbot_args_and_credential_env(self) -> None:
@@ -72,8 +68,3 @@ class TestLetsEncryptProvider(IntegrationTestCase):
 		self.assertEqual(issued.fullchain_path, "/root/.atlas/certs/blr1.frappe.dev/fullchain.pem")
 		self.assertEqual(issued.privkey_path, "/root/.atlas/certs/blr1.frappe.dev/privkey.pem")
 		self.assertEqual(issued.not_after, "2026-09-06 00:00:00")
-
-	def test_issue_refuses_without_tos(self) -> None:
-		provider = _provider(tos=False)
-		with self.assertRaises(frappe.ValidationError):
-			provider.issue("blr1.frappe.dev", _StubDns())

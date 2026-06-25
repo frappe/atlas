@@ -658,11 +658,10 @@ def _check_tls_buttons() -> None:
 		"Route53 Settings", "Route53 Settings", "atlas-e2e-bogus-secret", "secret_access_key"
 	)
 	frappe.db.set_single_value("Route53 Settings", "access_key_id", "AKIAE2EBOGUS", update_modified=False)
-	frappe.db.set_single_value("Route53 Settings", "domain_provider_type", "Route53", update_modified=False)
+	frappe.db.set_single_value("Atlas Settings", "dns_provider_type", "Route53", update_modified=False)
 	frappe.db.set_single_value(
 		"Lets Encrypt Settings", "account_email", "e2e@frappe.dev", update_modified=False
 	)
-	frappe.db.set_single_value("Lets Encrypt Settings", "agree_tos", 1, update_modified=False)
 	frappe.db.set_single_value("Atlas Settings", "tls_provider_type", "Let's Encrypt", update_modified=False)
 	frappe.db.commit()
 
@@ -671,7 +670,7 @@ def _check_tls_buttons() -> None:
 			"doctype": "Root Domain",
 			"domain": domain,
 			"region": region,
-			"domain_provider_type": "Route53",
+			"dns_provider_type": "Route53",
 			"tls_provider_type": "Let's Encrypt",
 		}
 	).insert(ignore_permissions=True)

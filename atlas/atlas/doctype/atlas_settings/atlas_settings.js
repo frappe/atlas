@@ -12,8 +12,56 @@ frappe.ui.form.on("Atlas Settings", {
 		frappe.atlas.add_action(frm, "Authenticate", () => run_authenticate(frm));
 		frappe.atlas.add_action(frm, "Refresh Catalog", () => run_refresh_catalog(frm));
 		frappe.atlas.add_action(frm, "Discover Servers", () => open_discover_servers_dialog(frm));
+		frappe.atlas.add_action(frm, "Bake Golden Image", () => confirm_bake(frm));
+		frappe.atlas.add_action(frm, "Ensure Proxy", () => confirm_ensure_proxy(frm));
 	},
 });
+
+// The desk equivalents of bootstrap's `bake_golden_image` / `ensure_proxy` steps:
+// each acts on the newest Active Server and is billable + multi-minute, so the
+// controller enqueues a `long` background job — these buttons only kick it off.
+
+function confirm_bake(frm) {
+	frappe.atlas.confirm_cost({
+		title: __("Bake the golden bench image?"),
+		body_html: `<p>${__(
+			"Provisions a build VM, builds bench inside it, snapshots it, and wires it as " +
+				"the default_bench_snapshot self-serve site VMs clone from. Billable + slow " +
+				"(several minutes). Reuses an Available snapshot if one is already configured."
+		)}</p>`,
+		proceed_label: __("Bake"),
+		proceed() {
+			frm.call("bake_golden_image").then(({ message: server_name }) => {
+				frappe.show_alert({
+					message: __("Baking golden image on {0}; watch the Task list.", [server_name]),
+					indicator: "blue",
+				});
+			});
+		},
+	});
+}
+
+function confirm_ensure_proxy(frm) {
+	frappe.atlas.confirm_cost({
+		title: __("Stand up the proxy VM?"),
+		body_html: `<p>${__(
+			"Provisions a proxy VM, builds the nginx+Lua stack inside it, and attaches a " +
+				"reserved IPv4 — the public front door subdomains route through. Billable " +
+				"(one VM + one reserved IPv4). Reuses a Running proxy in the region if present."
+		)}</p>`,
+		proceed_label: __("Stand up proxy"),
+		proceed() {
+			frm.call("ensure_proxy").then(({ message: server_name }) => {
+				frappe.show_alert({
+					message: __("Standing up the proxy on {0}; watch the Task list.", [
+						server_name,
+					]),
+					indicator: "blue",
+				});
+			});
+		},
+	});
+}
 
 function run_authenticate(frm) {
 	frappe.show_alert({ message: __("Authenticating…"), indicator: "blue" });

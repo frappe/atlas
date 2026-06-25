@@ -11,10 +11,9 @@ VM in the domain's region.
 The shape mirrors the compute Provider abstraction
 ([01-architecture.md](./01-architecture.md)): two small registries (DNS, TLS),
 each an ABC with one implementation per vendor type, resolved by **type** so
-callers never branch on the vendor. The active types live on Settings — the DNS
-vendor on `Route53 Settings.domain_provider_type`, the TLS issuer on
-`Atlas Settings.tls_provider_type` — with no `Domain Provider` / `TLS Provider`
-DocTypes.
+callers never branch on the vendor. The active types both live on `Atlas
+Settings` — the DNS vendor on `dns_provider_type`, the TLS issuer on
+`tls_provider_type` — with no `Domain Provider` / `TLS Provider` DocTypes.
 
 ## The flow
 
@@ -50,7 +49,7 @@ Two registries under `atlas/atlas/`, each modeled on `atlas/atlas/providers/`:
   `upsert_wildcard(domain, targets)` (publish the public `*.<domain>` A/AAAA
   records that point the regional wildcard at the proxy fleet — A → the proxies'
   reserved IPv4s, AAAA → their `/128`s, round-robin). `for_dns_provider_type(type)`
-  resolves the active `Route53 Settings.domain_provider_type` to an instance.
+  resolves the active `Atlas Settings.dns_provider_type` to an instance.
   `Route53DnsProvider` is the only implementation; Cloudflare is a reserved
   Select option.
 
@@ -123,11 +122,12 @@ failure and moves on, exactly like `proxy.reconcile_region`.
 
 Layered on top of the proxy first-run ([12-proxy.md](./12-proxy.md)):
 
-1. **Route53 Settings** — `domain_provider_type = Route53` + the IAM access key
-   and secret with `route53:*` on the zone.
-2. **Atlas Settings** — `tls_provider_type = Let's Encrypt` (the active issuer).
-3. **Lets Encrypt Settings** — ACME directory (staging while testing), account
-   email, agree-to-ToS.
+1. **Route53 Settings** — the IAM access key and secret with `route53:*` on the
+   zone.
+2. **Atlas Settings** — `dns_provider_type = Route53` (the active DNS vendor) +
+   `tls_provider_type = Let's Encrypt` (the active issuer).
+3. **Lets Encrypt Settings** — ACME directory (staging while testing) + account
+   email. (ToS agreement is implicit: certbot is always run with `--agree-tos`.)
 4. **Root Domain** — one row per region: `domain = <region>.frappe.dev`,
    `region`. The DNS + TLS vendor types are denormalized onto the row from the
    active vendors at insert. Click **Issue / Renew Certificate**.
@@ -161,8 +161,8 @@ The split follows the project's host-facts-vs-unit-logic rule
   real producer chain — Let's Encrypt **staging** → DNS-01 → certbot →
   `_push_to_proxies` → off-droplet HTTPS — on top of the proxy infra. It needs a
   live Route 53 zone and the controller-host deps, and skips cleanly
-  (`MissingConfig`, before any billable provision) on a site without the
-  `atlas_tls_*` config keys. `proxy_vm` uses a self-signed stand-in cert, not this
+  (`MissingConfig`, before any billable provision) when the e2e fixture has no
+  `tls` block (`$ATLAS_E2E_CONFIG`, see the README). `proxy_vm` uses a self-signed stand-in cert, not this
   chain. The new desk buttons (Issue/Renew, Push to Proxies, Test Connection on
   Route53 Settings / Lets Encrypt Settings) are exercised through the HTTP layer
   in `desk_buttons`.

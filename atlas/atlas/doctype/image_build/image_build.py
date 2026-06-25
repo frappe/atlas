@@ -37,6 +37,38 @@ IMMUTABLE_AFTER_INSERT = (
 
 
 class ImageBuild(Document):
+	# begin: auto-generated types
+	# This code is auto-generated. Do not modify anything in this block.
+
+	from typing import TYPE_CHECKING
+
+	if TYPE_CHECKING:
+		from frappe.types import DF
+
+		auto_register: DF.Check
+		base_image: DF.Link | None
+		build_inputs: DF.Code | None
+		build_task: DF.Link | None
+		build_virtual_machine: DF.Link | None
+		error: DF.SmallText | None
+		recipe: DF.Literal[
+			"bench-v16",
+			"bench-v15",
+			"bench-nightly",
+			"bench-v16-admin",
+			"bench-v15-admin",
+			"bench-nightly-admin",
+			"proxy",
+		]
+		region: DF.Data | None
+		server: DF.Link
+		snapshot: DF.Link | None
+		status: DF.Literal["Draft", "Provisioning", "Building", "Snapshotting", "Available", "Failed"]
+		terminate_build_vm: DF.Check
+		title: DF.Data | None
+		warm: DF.Check
+	# end: auto-generated types
+
 	def before_insert(self) -> None:
 		"""Resolve the recipe and fill what the operator didn't pick.
 

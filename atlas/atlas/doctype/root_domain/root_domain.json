@@ -12,7 +12,7 @@
   "column_break_header",
   "is_active",
   "section_break_providers",
-  "domain_provider_type",
+  "dns_provider_type",
   "tls_provider_type"
  ],
  "fields": [
@@ -32,9 +32,9 @@
    "in_list_view": 1,
    "in_standard_filter": 1,
    "label": "Region",
-   "reqd": 1,
+   "read_only": 1,
    "set_only_once": 1,
-   "description": "The proxy fleet this domain fronts. Join key to Virtual Machine.region (is_proxy=1)."
+   "description": "The proxy fleet this domain fronts. Join key to Virtual Machine.region (is_proxy=1). Denormalized from Atlas Settings.region at insert (the single source of truth) — the operator does not type it; switching the instance region never re-points an existing domain's region."
   },
   {
    "fieldname": "column_break_header",
@@ -54,12 +54,12 @@
    "label": "Providers"
   },
   {
-   "fieldname": "domain_provider_type",
+   "fieldname": "dns_provider_type",
    "fieldtype": "Select",
-   "label": "Domain Provider Type",
+   "label": "DNS Provider Type",
    "options": "\nRoute53\nCloudflare",
    "read_only": 1,
-   "description": "DNS vendor that owns the zone (DNS-01 challenge). Denormalized from Route53 Settings.domain_provider_type at insert; the DNS registry keys off it."
+   "description": "DNS vendor that owns the zone (DNS-01 challenge). Denormalized from Atlas Settings.dns_provider_type at insert; the DNS registry keys off it."
   },
   {
    "fieldname": "tls_provider_type",

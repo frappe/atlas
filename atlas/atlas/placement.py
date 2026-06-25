@@ -61,9 +61,9 @@ def default_server(required_vcpus: float) -> str:
 	`effective_vcpus is None` and are treated as having unlimited room: the
 	operator vouches for them by marking them Active. Raises when nothing fits.
 
-	Runs with ignore_permissions: this is system placement, not user-facing
-	data access. The Atlas User who triggers it cannot read Server at all (by
-	design) — but the system still has to choose one for them."""
+	Runs with ignore_permissions: this is system placement, not desk RBAC —
+	Central (the operator) triggers it without needing Server read access; the
+	system still has to choose one."""
 	from atlas.atlas.api.server_capacity import capacity_for_server
 
 	servers = frappe.get_all(
@@ -138,6 +138,22 @@ def warm_bench_snapshot_for_server(server: str) -> str | None:
 		pluck="name",
 	)
 	return rows[0] if rows else None
+
+
+def atlas_region() -> str:
+	"""This Atlas instance's single region — the one source of truth.
+
+	Read off `Atlas Settings.region`. The same string is the proxy-fleet join key
+	(Subdomain / Site / Port Mapping / proxy `Virtual Machine.region`), the
+	separator that names this bench's servers in a shared cloud account, the region
+	`Root Domain` denormalizes at insert, and the region announced to Central at
+	Register. Atlas is single-region, so there is exactly one value. Fail loud at
+	the boundary (Taste 17) when it is unset — every region-dependent path needs it,
+	and a blank would surface far later as a cryptic mismatch."""
+	region = frappe.db.get_single_value("Atlas Settings", "region")
+	if not region:
+		frappe.throw(_("Set Atlas Settings.region (this Atlas's region) — contact your operator."))
+	return region
 
 
 def active_root_domain() -> "frappe.model.document.Document":

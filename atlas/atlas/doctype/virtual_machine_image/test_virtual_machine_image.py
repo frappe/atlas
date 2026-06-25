@@ -176,6 +176,29 @@ class TestShippedImageConstants(IntegrationTestCase):
 		).insert(ignore_permissions=True)
 		self.assertEqual(image.name, DEFAULT_IMAGE["image_name"])
 
+	def test_seed_default_images_idempotent(self) -> None:
+		"""The desk `seed_default_images` action inserts the canonical rows once
+		and skips them on a second call — the same idempotency `ensure_image` has."""
+		from atlas.atlas.doctype.virtual_machine_image.virtual_machine_image import (
+			SEEDABLE_IMAGES,
+			seed_default_images,
+		)
+
+		names = [image["image_name"] for image in SEEDABLE_IMAGES]
+		for name in names:
+			frappe.db.delete("Virtual Machine Image", {"image_name": name})
+
+		first = seed_default_images()
+		self.assertCountEqual(first["created"], names)
+		self.assertEqual(first["skipped"], [])
+		for name in names:
+			self.assertTrue(frappe.db.exists("Virtual Machine Image", name))
+
+		# Second call is a no-op: everything already present.
+		second = seed_default_images()
+		self.assertEqual(second["created"], [])
+		self.assertCountEqual(second["skipped"], names)
+
 
 class TestLocalImage(IntegrationTestCase):
 	"""A local image — promoted from a snapshot, no rootfs URL — is non-syncable:

@@ -279,6 +279,89 @@ class TestAtlasSettingsProvisionServerSelfManaged(IntegrationTestCase):
 		self.assertFalse(frappe.db.exists("Server", {"title": title}))
 
 
+class TestAtlasSettingsBakeGoldenImage(IntegrationTestCase):
+	"""The desk Bake Golden Image button — resolves the newest Active Server and
+	enqueues bootstrap's `bake_golden_image` as a long job (the bake blocks for
+	minutes; it can't run in the web worker)."""
+
+	def setUp(self) -> None:
+		self.settings = frappe.get_single("Atlas Settings")
+
+	def test_bake_resolves_newest_active_and_enqueues(self) -> None:
+		server = make_server(title="bake-target", status="Active", provider_type="DigitalOcean")
+		with patch("atlas.atlas.doctype.atlas_settings.atlas_settings.frappe.enqueue") as enqueue:
+			returned = self.settings.bake_golden_image()
+
+		self.assertEqual(returned, server.name)
+		enqueue.assert_called_once()
+		args, kwargs = enqueue.call_args
+		self.assertEqual(args[0], "atlas.bootstrap.bake_golden_image")
+		self.assertEqual(kwargs["queue"], "long")
+		self.assertEqual(kwargs["server_name"], server.name)
+		self.assertFalse(kwargs["force"])
+		frappe.db.delete("Server", {"title": "bake-target"})
+
+	def test_bake_force_string_is_coerced(self) -> None:
+		# The desk call posts booleans as strings; force must reach the job as a bool.
+		make_server(title="bake-force", status="Active", provider_type="DigitalOcean")
+		with patch("atlas.atlas.doctype.atlas_settings.atlas_settings.frappe.enqueue") as enqueue:
+			self.settings.bake_golden_image(force="true")
+		self.assertTrue(enqueue.call_args.kwargs["force"])
+		frappe.db.delete("Server", {"title": "bake-force"})
+
+	def test_bake_throws_without_active_server(self) -> None:
+		with patch(
+			"atlas.atlas.doctype.atlas_settings.atlas_settings.frappe.get_all",
+			return_value=[],
+		):
+			with self.assertRaises(frappe.ValidationError) as raised:
+				self.settings.bake_golden_image()
+		self.assertIn("Active Server", str(raised.exception))
+
+
+class TestAtlasSettingsEnsureProxy(IntegrationTestCase):
+	"""The desk Ensure Proxy button — reads region+domain off the active Root Domain
+	and enqueues bootstrap's `ensure_proxy` (provision VM → build stack → reserved
+	IPv4) as a long job."""
+
+	def setUp(self) -> None:
+		self.settings = frappe.get_single("Atlas Settings")
+
+	def _make_root_domain(self, domain: str, region: str):
+		if frappe.db.exists("Root Domain", domain):
+			frappe.delete_doc("Root Domain", domain, force=True, ignore_permissions=True)
+		return frappe.get_doc({"doctype": "Root Domain", "domain": domain, "region": region}).insert(
+			ignore_permissions=True
+		)
+
+	def test_ensure_proxy_resolves_inputs_and_enqueues(self) -> None:
+		server = make_server(title="proxy-target", status="Active", provider_type="DigitalOcean")
+		self._make_root_domain("proxytest.frappe.dev", "blr1")
+		with patch("atlas.atlas.doctype.atlas_settings.atlas_settings.frappe.enqueue") as enqueue:
+			returned = self.settings.ensure_proxy()
+
+		self.assertEqual(returned, server.name)
+		enqueue.assert_called_once()
+		args, kwargs = enqueue.call_args
+		self.assertEqual(args[0], "atlas.bootstrap.ensure_proxy")
+		self.assertEqual(kwargs["queue"], "long")
+		self.assertEqual(kwargs["server_name"], server.name)
+		self.assertEqual(kwargs["domain"], "proxytest.frappe.dev")
+		self.assertEqual(kwargs["region"], "blr1")
+		frappe.db.delete("Server", {"title": "proxy-target"})
+		frappe.delete_doc("Root Domain", "proxytest.frappe.dev", force=True, ignore_permissions=True)
+
+	def test_ensure_proxy_throws_without_root_domain(self) -> None:
+		make_server(title="proxy-no-domain", status="Active", provider_type="DigitalOcean")
+		with patch(
+			"atlas.atlas.doctype.atlas_settings.atlas_settings._proxy_region_and_domain",
+			side_effect=frappe.ValidationError("No Root Domain."),
+		):
+			with self.assertRaises(frappe.ValidationError):
+				self.settings.ensure_proxy()
+		frappe.db.delete("Server", {"title": "proxy-no-domain"})
+
+
 class TestAtlasSettingsDiscoverServers(IntegrationTestCase):
 	def setUp(self) -> None:
 		make_provider(name="settings-discover-prov")

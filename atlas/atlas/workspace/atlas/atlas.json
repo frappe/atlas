@@ -105,7 +105,7 @@
    "hidden": 0,
    "is_query_report": 0,
    "label": "Networking & TLS",
-   "link_count": 7,
+   "link_count": 9,
    "onboard": 0,
    "type": "Card Break"
   },
@@ -182,6 +182,26 @@
   {
    "hidden": 0,
    "is_query_report": 0,
+   "label": "VPN Tunnel",
+   "link_count": 0,
+   "link_to": "VPN Tunnel",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "Firewall",
+   "link_count": 0,
+   "link_to": "Firewall",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
    "label": "Sites",
    "link_count": 3,
    "onboard": 0,
@@ -193,16 +213,6 @@
    "label": "Site",
    "link_count": 0,
    "link_to": "Site",
-   "link_type": "DocType",
-   "onboard": 0,
-   "type": "Link"
-  },
-  {
-   "hidden": 0,
-   "is_query_report": 0,
-   "label": "Site Request",
-   "link_count": 0,
-   "link_to": "Site Request",
    "link_type": "DocType",
    "onboard": 0,
    "type": "Link"

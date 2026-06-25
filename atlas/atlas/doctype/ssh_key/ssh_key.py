@@ -1,16 +1,14 @@
-"""SSH Key — a public key a dashboard user registers once and chooses when
-creating a Virtual Machine.
+"""SSH Key — a public key registered once and chosen when creating a Virtual
+Machine.
 
-A per-user owned DocType (Frappe's built-in `owner`, scoped by the `if_owner`
-permission row and `permissions.owner_only`), mirroring Virtual Machine. It is
-pure data: no Tasks, no lifecycle methods. The dashboard SPA reads the user's
-keys and, on machine create, copies the chosen key's `public_key` body into the
-VM's immutable `ssh_public_key` field — so this DocType adds nothing to the
-provisioning path.
+An operator/Central-facing DocType (System Manager), mirroring Virtual Machine. It
+is pure data: no Tasks, no lifecycle methods. On machine create the chosen key's
+`public_key` body is copied into the VM's immutable `ssh_public_key` field — so
+this DocType adds nothing to the provisioning path.
 
 `fingerprint` is derived from `public_key` on save (the standard
-`SHA256:<base64nopad>` form `ssh-keygen -lf` prints) so the SPA can show a
-recognizable key identity without echoing the whole blob.
+`SHA256:<base64nopad>` form `ssh-keygen -lf` prints) so a key has a recognizable
+identity without echoing the whole blob.
 """
 
 import base64
@@ -38,6 +36,19 @@ KNOWN_KEY_TYPES = (
 
 
 class SSHKey(Document):
+	# begin: auto-generated types
+	# This code is auto-generated. Do not modify anything in this block.
+
+	from typing import TYPE_CHECKING
+
+	if TYPE_CHECKING:
+		from frappe.types import DF
+
+		fingerprint: DF.Data | None
+		key_name: DF.Data
+		public_key: DF.LongText
+	# end: auto-generated types
+
 	def validate(self) -> None:
 		self.public_key = (self.public_key or "").strip()
 		self.fingerprint = fingerprint(self.public_key)

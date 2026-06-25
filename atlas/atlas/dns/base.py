@@ -45,7 +45,7 @@ class DnsProvider(ABC):
 	@abstractmethod
 	def authenticate(self) -> AuthResult:
 		"""Verify the credentials can reach the zone (Route 53: GetHostedZone).
-		Backs the Domain Provider's **Test Connection** button."""
+		Backs Route53 Settings' **Test Connection** button."""
 		...
 
 	@abstractmethod

@@ -32,20 +32,15 @@ class LetsEncryptProvider(TlsProvider):
 		settings = frappe.get_single("Lets Encrypt Settings")
 		self.acme_directory_url = settings.acme_directory_url or LETS_ENCRYPT_PRODUCTION
 		self.account_email = settings.account_email
-		self.agree_tos = bool(settings.agree_tos)
 
 	def authenticate(self) -> AuthResult:
 		if not self.account_email:
 			return AuthResult(ok=False, error="Lets Encrypt Settings has no account_email")
-		if not self.agree_tos:
-			return AuthResult(
-				ok=False, error="Lets Encrypt Settings: agree_tos must be checked before issuing"
-			)
 		return AuthResult(ok=True, account_label=self.account_email)
 
 	def issue(self, domain: str, dns_provider: DnsProvider) -> IssuedCert:
-		if not self.agree_tos:
-			frappe.throw(_("Lets Encrypt Settings: agree_tos must be checked before issuing"))
+		# certbot is invoked with --agree-tos (scripts/lib/atlas/certs.py): registering
+		# the ACME account agrees to the ToS, so there is no separate gate to check.
 		if not self.account_email:
 			frappe.throw(_("Lets Encrypt Settings: account_email is required"))
 

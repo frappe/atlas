@@ -25,6 +25,31 @@ IMMUTABLE_AFTER_INSERT = (
 
 
 class Server(Document):
+	# begin: auto-generated types
+	# This code is auto-generated. Do not modify anything in this block.
+
+	from typing import TYPE_CHECKING
+
+	if TYPE_CHECKING:
+		from frappe.types import DF
+
+		architecture: DF.Data | None
+		firecracker_version: DF.Data | None
+		image: DF.Link | None
+		ipv4_address: DF.Data | None
+		ipv6_address: DF.Data | None
+		ipv6_prefix: DF.Data | None
+		ipv6_virtual_machine_range: DF.Data | None
+		jailer_version: DF.Data | None
+		kernel_version: DF.Data | None
+		provider_metadata: DF.Code | None
+		provider_resource_id: DF.Data | None
+		provider_type: DF.Literal["", "DigitalOcean", "Scaleway", "Self-Managed", "Fake"]
+		size: DF.Link | None
+		status: DF.Literal["Pending", "Bootstrapping", "Active", "Draining", "Broken", "Archived"]
+		title: DF.Data
+	# end: auto-generated types
+
 	BOOTSTRAP_ALLOWED_STATUS: ClassVar[set[str]] = {"Pending", "Bootstrapping", "Active", "Broken"}
 	# Durable uploads beyond the atlas package (which _bootstrap_uploads()
 	# computes from disk). The systemd-invoked hooks are .py now (positional

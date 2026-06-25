@@ -1,31 +1,35 @@
 # Self-serve sites
 
-Turns *signup → live Frappe site* into a few-seconds, self-serve flow: a user
-picks a subdomain, and Atlas clones a golden bench VM, deploys a site into it,
-and puts it behind the regional proxy at `acme.blr1.frappe.dev`. The proxy
-([12-proxy.md](./12-proxy.md)) and TLS ([13-tls.md](./13-tls.md)) halves already
-exist; this chapter is the **site layer** that drives them.
+Turns *create_site → live Frappe site* into a few-seconds flow: Central requests
+a site for a tenant (a subdomain label), and Atlas clones a golden bench VM,
+deploys a site into it, and puts it behind the regional proxy at
+`acme.blr1.frappe.dev`. The proxy ([12-proxy.md](./12-proxy.md)) and TLS
+([13-tls.md](./13-tls.md)) halves already exist; this chapter is the **site
+layer** that drives them.
 
-> **Status (Central pivot).** This self-serve signup flow is **Atlas-local and
-> transitional**. Under the Central pivot ([16-central.md](./16-central.md)),
-> customer signup, identity, and team membership move to Central; Central then
-> drives site/VM creation in a region by calling Atlas's whitelisted methods as
-> a service user, passing the `Tenant`. The flow below (the `/signup`/`/verify`
-> on-ramp, local `Atlas User` creation) stays for this iteration and will be
-> retired as Central takes over the front door.
+> **Central drives the front door.** Customer signup, identity, and team
+> membership live in **Central** ([16-central.md](./16-central.md)). Atlas owns no
+> end-users: there is no `/signup` page, no email verification, no `User` rows, no
+> `Atlas User` role. Central authenticates the tenant and calls Atlas's whitelisted
+> `atlas.atlas.api.site.create_site` as the operator (token auth), passing the
+> `central_reference` (the Central team) + the subdomain. Atlas get-or-creates the
+> `Tenant`, inserts the `Site` stamped with it, and reports progress back to
+> Central — pushed as `site.*` events (see [16-central.md](./16-central.md) § Event
+> reporting) and pollable via `atlas.atlas.api.site.get_site`. The earlier
+> `/signup`→`/verify`→`Atlas User` on-ramp was removed when this landed.
 
 This chapter is the durable spec — the whole self-serve layer is built and
 **host-proven**: the `Site` layer, the in-guest deploy script + HTTP readiness
-probe, and the signup/verification surface are built and unit-green; the
-golden-image bake (`build.sh`) and the end-to-end flow are host-proven — a golden
-snapshot baked from scratch, and a real signup → verify → cloned golden site →
-deploy → live HTTPS through the proxy on IPv4 + IPv6. The per-VM deploy **renames**
-the baked `site.local` dir to the FQDN and regenerates the bench's nginx vhost
-(`bench setup nginx`: `server_name <fqdn>` + a v6 listener) and reloads — no admin
-reset (the owner is handed the shared baked password and rotates it), no `setup
-production`, no `bench restart`. The production gunicorn is multitenant (no
-`--site`), so it resolves the renamed `<fqdn>` from the request `Host` header per
-request and the rename + reload serve it live.
+probe, and the Central-facing `create_site`/`get_site` surface are built and
+unit-green; the golden-image bake (`build.sh`) and the end-to-end flow are
+host-proven — a golden snapshot baked from scratch, and a real `create_site` →
+cloned golden site → deploy → live HTTPS through the proxy on IPv4 + IPv6. The per-VM deploy **renames**
+the baked `site.local` to the FQDN via `bench rename-site`, which regenerates the
+bench's nginx vhost (`server_name <fqdn>` + a v6 listener) and reloads — no admin
+reset (the owner is handed the shared baked password and rotates it), no `bench
+restart`. The production gunicorn is multitenant (no `--site`), so it resolves the
+renamed `<fqdn>` from the request `Host` header per request and the rename serves it
+live.
 
 ## The one routing string (Contract A)
 
@@ -82,85 +86,63 @@ separated by the whole deploy run.
   502 are "not
   ready yet", swallowed) and raises `frappe.ValidationError` on timeout.
 
-## Ownership / verification ordering (Contract C)
+## Ownership / tenancy (Contract C)
 
 ```
-signup form → email verification → THEN Site row insert → verified user is `owner`
+Central (owns the tenant) → create_site(central_reference, subdomain) → Tenant + Site (Pending)
 ```
 
-- **Email verification precedes the insert.** No droplet/site (billable) work
-  happens for an unverified email — verification is the gate, so a typo'd or
-  hostile address never triggers compute.
-- The verified user is Frappe's built-in **`owner`** on the `Site` row — the same
-  ownership model VMs/snapshots/SSH-keys use, scoped by
-  `permission_query_conditions` → `atlas.atlas.permissions.owner_only` (`Site` ∈
-  `_OWNED_DOCTYPES`). A user sees only their own Sites.
+- **Central is the gate.** Atlas exposes no guest write — `create_site` is
+  operator-authorized (the Central service token). Central decides who may request
+  a site (it owns identity, billing, and team membership); Atlas just provisions
+  what Central asks for. There is no email-verification step in Atlas because there
+  is no unauthenticated caller to gate.
+- The `Site` row carries a **`tenant`** link (→ [Tenant](./16-central.md), keyed on
+  `central_reference`) for attribution — the same tenancy model VMs use
+  ([16-central.md](./16-central.md)). Atlas no longer has end-user `owner` scoping
+  or an `Atlas User` role; the fleet is operator/Central-facing (System Manager).
 
-## The signup → verify → fulfil surface *(built)*
-
-The public on-ramp inverts the order: the holding row first, the `Site` only
-after the email is proven.
+## The create_site → live surface *(built)*
 
 ```
-1. /signup form (guest)        → email + subdomain
-2. request_site (guest API)    → Site Request (Pending, token)  + verification email
-3. user clicks /verify?token=… → SiteRequest.verify()
-4.   get-or-create User (Website User + Atlas User role)
-5.   insert Site AS that user  → owner = user (Contract C)
-6.   mark request Fulfilled, log the user in, redirect to /site-status?site=<fqdn>
-7. Site.after_insert (above)   → provision → deploy → 200 → Running
-8. /site-status                → live provisioning step view, then URL + admin password
+1. create_site(central_reference, subdomain, email?)   (operator API, Central token)
+2.   ensure_tenant(central_reference, email)           → get-or-create Tenant
+3.   insert Site (Pending), stamped with the tenant     → returns the mirror row
+4. Site.after_insert → auto_provision (worker)          → provision → deploy → 200 → Running
+5. site.* events to Central / get_site poll             → status, then URL + admin password
 ```
 
-- **`Site Request`** ([02-doctypes.md → Site Request](./02-doctypes.md#site-request))
-  is the pre-verification holding row: email + subdomain + a `token`, status
-  `Pending → Verified → Fulfilled` / `Expired`. It enforces the **same Contract-A
-  label rules** as `Site` (shared `atlas.atlas.subdomain_label` — one source of
-  truth for the label shape + reserved denylist), so a request can't reserve a
-  name `Site` would reject. The token is valid 24h from creation.
-- **`atlas.atlas.api.signup.request_site`** is the one guest-writable endpoint:
-  it validates (email + the shared label rules), rejects a label already taken by
-  a live `Site` (best-effort early feedback), caps outstanding `Pending` requests
-  per email (3) and is IP/email rate-limited (5/hour), inserts the request
-  (`ignore_permissions`), and queues the verification email
-  (`templates/emails/site_verification.html`). Outbound email is an **operator
-  prerequisite** (like the TLS controller-host deps) — with no email account
-  configured the send is a no-op queue entry.
-- **`atlas/www/verify.py`** (`/verify?token=…`, guest) looks the request up by
-  token and calls `SiteRequest.verify()` — fulfilment is idempotent even under
-  concurrency: `verify()` locks the request row `FOR UPDATE` and re-reads its
-  status, so a link fetched twice at once (mail-scanner prefetch + the user's
-  click) serializes — the second fetch sees `Fulfilled` and returns the same Site,
-  never provisioning twice or double-inserting the `User` (which would race two
-  `create_contact` jobs on `tabContact`). Throws a
-  clean message on an expired token or a label taken since the request. On success
-  it logs the user in (`login_manager.login_as`, the same path as Frappe's
-  one-time login key) and redirects to `/site-status?site=<fqdn>` (the live
-  provisioning view below — NOT the SPA machines list).
-- **`atlas/www/site-status` page** (`/site-status?site=<fqdn>`, owner-gated) is the
-  page the verified user lands on: a **live checklist of the six `auto_provision`
-  steps** (clone → boot → deploy → respond → route → live), each shown done /
-  running / pending / failed. The step view is derived from `Site.status` by the
-  single source of truth `atlas.atlas.site_status.steps_for`, shared by the page's
-  first render and the realtime payload. Updates are **pushed over realtime**
-  (`Site.auto_provision` calls `frappe.publish_realtime("site_provisioning", …,
-  user=owner)` on every transition) with a **slow polling fallback** (the
-  whitelisted `site_status.progress`) so the view self-heals if a socket event is
-  missed or the socket never connects. Once `Running`, it reveals the live URL +
-  the one-time Administrator password (the admin handoff below). Owner-gated like
-  every owned doctype: a non-owner or guest gets one neutral "not found or not
-  yours" message — never another user's site or password.
-- **Account model.** Fulfilment creates (or reuses) a real `User` — account-light:
-  one verified account, one Site per signup, more Sites later through the SPA. The
-  `Atlas User` role is **`desk_access = 0`** (the role fixture): a fulfilled user
-  is a **Website User**, kept off Desk. (If the role ever drifts to desk access,
-  Frappe would promote the user to System User — the fixture value is load-bearing.)
+- **`atlas.atlas.api.site.create_site(central_reference, subdomain, email=None,
+  region=None)`** is the write endpoint. It `ensure_tenant`s the Central team
+  (`email` seeds a new Tenant; an existing one is reused), inserts the `Site` with
+  the tenant stamped, and returns the **mirror row** Central reflects (`name`,
+  `central_reference`, `subdomain`, `region`, `status`, `fqdn`). The `Site`
+  controller enforces the **same Contract-A label rules** (shared
+  `atlas.atlas.subdomain_label` — one source of truth for the label shape +
+  reserved denylist) and the authoritative FQDN uniqueness, throwing a clean
+  "already taken" Central surfaces. `region` defaults to the active region (Central
+  never has to pick it). Runs `ignore_permissions` — operator orchestration, not
+  desk RBAC.
+- **`atlas.atlas.api.site.get_site(name)`** is the read/poll half: the same mirror
+  row, plus — once `status == Running` — the live `url` and the
+  `admin_password` (the tenant handoff). Before Running those two are `None` (no
+  handoff to give yet). Central polls this as a self-heal fallback to the pushed
+  events.
+- **Event reporting.** The `Site` doc_events
+  (`atlas.atlas.central_report.on_site_after_insert` / `on_site_update`) push
+  `site.created` on insert and `site.status_changed` on every status transition to
+  Central, gated on `Central Settings.enabled` (a site without Central configured
+  pays nothing). The `site.status_changed` for `Running` carries the admin handoff
+  (`url` + `admin_password`); earlier transitions carry neither. Delivery is
+  fire-and-forget (the documented v1 tradeoff); the `get_site` poll is the
+  self-heal. See [16-central.md](./16-central.md) § Event reporting.
 
-**Admin handoff.** After the Site reaches `Running`, the per-site
-Administrator password stored encrypted on `Site.admin_password` is revealed on
-the `/site-status` page the user is already watching (the reveal is
-`site.get_password("admin_password")`, gated on `status == Running`). There is no
-magic-login link; the handoff is that password + the live URL.
+**Admin handoff.** After the Site reaches `Running`, the per-site Administrator
+password stored encrypted on `Site.admin_password` is surfaced to Central — both in
+the `site.status_changed` Running event payload and via `get_site`
+(`site.get_password("admin_password")`, gated on `status == Running`). There is no
+magic-login link and no Atlas-hosted status page; the handoff is that password +
+the live URL, delivered to Central.
 
 ## The `Site` DocType *(built — this phase)*
 
@@ -169,7 +151,8 @@ Fields, validation, permissions, and the full field table are in
 
 1. **`before_insert`** validates the label (single dotless DNS label, not
    reserved), resolves `region` from the active `Root Domain`, sets
-   `status = Pending`. `owner` is stamped by Frappe from the session user.
+   `status = Pending`. The owning `tenant` is set by `create_site` from the
+   Central team; Atlas stamps no end-user `owner`.
 2. **`autoname`** builds the FQDN key (Contract A).
 3. **`after_insert`** enqueues `auto_provision` (`queue="long"` — it SSHes).
 4. **`auto_provision(site_name)`** — the background orchestration:
@@ -178,7 +161,7 @@ Fields, validation, permissions, and the full field table are in
    | ---- | ------ | -------- |
    | 1 | Clone the backing VM from `Atlas Settings.default_bench_snapshot` (`Virtual Machine Snapshot.clone_to_new_vm` — carries the baked bench + grown disk). `status → Provisioning`. | this layer |
    | 2 | `wait_for_ssh` — the cloned VM booted. | existing |
-   | 3 | Run `deploy-site.py` in the guest: rename the baked `site.local` dir to the FQDN + `bench setup nginx` (regenerate the vhost as `server_name <fqdn>` + a v6 listener) + reload — no admin reset, no restart (cold clones also `setup production` first to bring the stack up; a warm clone is already serving — see the in-guest deploy below). The owner is handed the shared baked admin password → stored encrypted on the Site. `status → Deploying`. | deploy seam |
+   | 3 | Run `deploy-site.py` in the guest: rename the baked `site.local` to the FQDN via `bench rename-site` (regenerates the vhost as `server_name <fqdn>` + a v6 listener + reloads + re-runs production setup, a fast no-op) — no admin reset, no restart (cold clones also `bench start` first to bring the stack up; a warm clone is already serving — see the in-guest deploy below). The tenant is handed the shared baked admin password → stored encrypted on the Site. `status → Deploying`. | deploy seam |
    | 4 | `wait_for_http` — block on the guest's HTTP 200 (Contract B). | deploy seam |
    | 5 | Create the `Subdomain` row (this is what makes the proxy route it — its own `after_insert` reconciles the regional fleet). | this layer |
    | 6 | `status → Running`. | this layer |
@@ -229,7 +212,7 @@ the cold golden's row (above), but when that server carries an `Available`
 because a memory snapshot only restores on the host it was captured on), the
 clone **resumes** the pre-warmed golden instead of booting it
 ([05-virtual-machine-lifecycle.md → Warm snapshot fan-out](./05-virtual-machine-lifecycle.md#warm-snapshot-fan-out-one-golden-n-restored-clones)):
-the signup's backing VM is serving the baked `site.local` within low seconds of
+the site's backing VM is serving the baked `site.local` within low seconds of
 provision, and only the per-VM rename + nginx-vhost regenerate remains. Warm is
 **strictly an accelerator** with two independent degrade-to-cold layers: no warm row
 on the
@@ -258,34 +241,27 @@ with the fleet key), recording the op as a `deploy-site` Task row.
      bench means the VM was cloned from the wrong snapshot, so it fails loud
      (unrecoverable, not retryable).
   2. **Cold clone only: production bring-up.** A freshly image-provisioned VM whose
-     bench was never brought up runs **`bench setup production`** first —
-     regenerates + installs + reloads the bench's own nginx + supervisor config and
-     brings the stack up. A **warm clone** (resumed from a memory snapshot —
-     `--warm-vm-uuid` set) is already serving (`warm.sh` froze the stack up against
-     `site.local`), so it skips this entirely.
-  3. **Renames the baked site to the FQDN** — `os.rename(sites/site.local →
-     sites/<fqdn>)`, atomic and sub-millisecond (Contract A: the on-disk name now
-     equals the proxy `Host` and the `Site` key). The production gunicorn is
-     **multitenant** (`frappe.app:application`, no `--site`), so it resolves the
-     site from the request `Host` per request — the moment `sites/<fqdn>` exists and
-     the vhost says `server_name <fqdn>`, the running workers serve it with **no
-     restart**. Fails loud if neither the baked dir nor an already-renamed `<fqdn>`
-     dir exists (a site-less snapshot). The setup-wizard gate is cleared at bake
-     time; the db root password is baked + shared (08-images.md).
-  4. **Regenerates the nginx vhost** — `bench setup nginx` (NOT `setup production`):
-     pure bench-cli config-gen — it scans `sites/`, finds the renamed `<fqdn>` dir,
-     emits a vhost with `server_name <fqdn>` (matching the proxy's forwarded `Host`
-     — the old no-rename model needed a `default_server` catch-all precisely because
-     the on-disk name didn't match; the rename removes that need) and a
-     `root .../sites/<fqdn>/public` files block, then `nginx -t`s and `systemctl
-     reload`s. No Frappe boot, no process restart — sub-second. bench-cli only
-     *writes* current sites' confs (never deletes stale ones), so the deploy removes
-     the baked `site.local.conf` first. bench-cli's vhosts bind v4-only, but the edge
-     proxy reaches the site over the VM's public **/128 (IPv6)** — the only inbound
-     path (vm-inbound-ipv6-only) — so the deploy then adds `listen [::]:80;` beside
-     `listen 80;` and reloads once more. No `default_server` (the `server_name
-     <fqdn>` match is real now).
-  - **No `set-admin-password`.** The owner is handed the shared baked Administrator
+     bench was never brought up runs an idempotent **`bench start`** first — brings
+     the stack up via its lingering `systemctl --user` units. A **warm clone**
+     (resumed from a memory snapshot — `--warm-vm-uuid` set) is already serving
+     (`warm.sh` froze the stack up against `site.local`), so it skips this entirely.
+  3. **Renames the baked site to the FQDN** — `bench rename-site site.local <fqdn>`,
+     one bench-cli command (Contract A: the on-disk name now equals the proxy `Host`
+     and the `Site` key). It moves `sites/site.local` → `sites/<fqdn>`, rewrites
+     `bench.toml`, removes the stale `site.local.conf`, regenerates the vhost with
+     `server_name <fqdn>` (on `listen 80;` + `listen [::]:80;`, both emitted by
+     bench-cli — the edge proxy reaches the site over the VM's public **/128 (IPv6)**,
+     the only inbound path, vm-inbound-ipv6-only), reloads nginx, and re-runs
+     production setup for the new domain (idempotent — a fast no-op on a
+     production-baked clone). No `default_server` catch-all (the old no-rename model
+     needed one precisely because the on-disk name didn't match; the rename removes
+     that need). The production gunicorn is **multitenant** (`frappe.app:application`,
+     no `--site`), so it resolves the site from the request `Host` per request — the
+     moment `sites/<fqdn>` exists and the vhost says `server_name <fqdn>`, the running
+     workers serve it with **no restart**. Fails loud if neither the baked dir nor an
+     already-renamed `<fqdn>` dir exists (a site-less snapshot). The setup-wizard gate
+     is cleared at bake time; the db root password is baked + shared (08-images.md).
+  - **No `set-admin-password`.** The tenant is handed the shared baked Administrator
     password (rotated after first login); resetting it per VM cost a full
     CPU-throttled `bench frappe` boot (~28s under the 0.25-core cap) that dominated
     the deploy. Dropping it is the main latency win.
@@ -307,22 +283,23 @@ plaintext `:80` over public v6 (the accepted limitation under
 wizard and `setup production` *remove* the manual TLS/certbot steps a stand-alone
 bench would need.
 
-**Admin-password handoff.** The owner is handed the **shared baked** Administrator
+**Admin-password handoff.** The tenant is handed the **shared baked** Administrator
 password (`Site.BAKED_ADMIN_PASSWORD`, in lockstep with build.sh's
 `BAKED_ADMIN_PASSWORD`) — the deploy no longer resets it per VM. It is stored
 encrypted in `Site.admin_password` (`Password` field) by the orchestration *before*
-the readiness wait so it survives a later http-gate timeout, and shown to the owner
-in the SPA so they can sign in (and rotate it). The db root password is never
-surfaced (single-tenant, localhost-only). Rotating the per-site password lazily
-(first login / a background job) is deferred — the signup path does zero password
-work, which is what removed the ~28s `bench frappe` boot.
+the readiness wait so it survives a later http-gate timeout, and surfaced to Central
+(the `site.status_changed` Running event + `get_site` poll) so the tenant can sign in
+(and rotate it). The db root password is never surfaced (single-tenant,
+localhost-only). Rotating the per-site password lazily (first login / a background
+job) is deferred — the create_site path does zero password work, which is what
+removed the ~28s `bench frappe` boot.
 
 ## The Subdomain it creates
 
 `auto_provision` step 5 inserts a [Subdomain](./02-doctypes.md#subdomain) whose
 `subdomain` / `region` / `virtual_machine` flow straight from the Site — no
 transformation (Contract A). The Subdomain is the proxy *map* row; the Site is
-the user-owned aggregate. The Site stores the created Subdomain's name in
+the tenant-owned aggregate. The Site stores the created Subdomain's name in
 `subdomain_doc` so `terminate()` can drop it.
 
 ## Testing
@@ -331,23 +308,22 @@ the user-owned aggregate. The Site stores the created Subdomain's name in
   - *Site layer* — the routing-string validation (label/reserved/unique),
     immutability, the `auto_provision` state machine and its fail-loud path (host
     steps mocked at the module seams, incl. storing the baked admin password), the
-    `_create_subdomain` identity carry-through, `terminate`, and the owner-scoping
-    permission contract. See `atlas/atlas/doctype/site/test_site.py`.
+    `_create_subdomain` identity carry-through, and `terminate`. See
+    `atlas/atlas/doctype/site/test_site.py`.
+  - *Central API* — `create_site` get-or-creates the Tenant, stamps it on the
+    Site, returns the mirror row, defaults the region, and gates the label;
+    `get_site` hides the admin handoff until Running. See
+    `atlas/tests/test_api_site.py`. The `site.*` event reporting (created /
+    status_changed, the Running handoff payload) is in `atlas/tests/test_central.py`.
   - *Deploy layer* — `wait_for_http`'s poll/timeout loop and 200-only
     predicate (the single probe mocked); the `deploy_site` upload + run +
     Task-record + fail-loud path (SSH transport mocked, no admin password); and the
     in-guest script's typed I/O (kebab-flag parsing, the one `ATLAS_RESULT` line,
     the rename + its idempotency/fail-loud, the v6-listener edit, the warm/cold
     branch). See `atlas/atlas/test_deploy_site.py`.
-  - *Status page* — `site_status.steps_for` maps each `Site.status` to
-    the six-step checklist (Pending nothing-done, Provisioning both provision
-    steps running, Deploying provision-done/deploy-running, Running all done,
-    Failed deploy-phase failed, unknown status degrades without throwing). See
-    `atlas/atlas/test_site_status.py`. The realtime push + owner-gating ride on the
-    `auto_provision` and permission contracts already covered in the Site layer.
-- **Host facts (e2e — `self_serve_site.py`):** the real signup → verify →
-  fulfil → golden-image clone + `deploy-site.py` (rename `site.local` → the FQDN +
-  `bench setup nginx`, served for the FQDN `Host` on `:80`) → HTTP-200 readiness →
+- **Host facts (e2e — `self_serve_site.py`):** the real `create_site` →
+  golden-image clone + `deploy-site.py` (`bench rename-site` `site.local`
+  → the FQDN, served for the FQDN `Host` on `:80`) → HTTP-200 readiness →
   Subdomain → an off-droplet `curl https://acme.<region domain>` over **both IPv4
   and IPv6** — proven on a real droplet, not in unit tests. It is the superset use
   case:
@@ -355,8 +331,8 @@ the user-owned aggregate. The Site stores the created Subdomain's name in
   LE-staging producer chain, and `bench_image`'s golden-snapshot bake (resolved
   from `Atlas Settings.default_bench_snapshot`, baked inline if absent). The
   `auto_provision` chain runs on the **background worker** (the same worker the
-  VM-provisioning e2e relies on). It also asserts the **Contract-C negative** on
-  the real path: an unverified `Site Request` provisions no `Site` and no VM. Like
-  `tls_issuance` it owns its run (not in `run_all_smoke`) and skips cleanly
-  (`MissingConfig`) on a site without the `atlas_tls_*` keys, before anything
-  billable. Split per the README "Host facts vs unit-covered logic" rule.
+  VM-provisioning e2e relies on). It asserts the mirror row Central reflects and the
+  Tenant stamp on the path. Like `tls_issuance` it owns its run (not in
+  `run_all_smoke`) and skips cleanly (`MissingConfig`) when the e2e fixture has
+  no `tls` block (`$ATLAS_E2E_CONFIG`, see the README), before anything billable. Split per the README "Host facts vs
+  unit-covered logic" rule.

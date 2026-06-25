@@ -4,6 +4,20 @@ from frappe.model.document import Document
 
 
 class ProviderImage(Document):
+	# begin: auto-generated types
+	# This code is auto-generated. Do not modify anything in this block.
+
+	from typing import TYPE_CHECKING
+
+	if TYPE_CHECKING:
+		from frappe.types import DF
+
+		enabled: DF.Check
+		provider_metadata: DF.Code | None
+		provider_type: DF.Literal["DigitalOcean", "Scaleway", "Self-Managed", "Fake"]
+		slug: DF.Data
+	# end: auto-generated types
+
 	def autoname(self) -> None:
 		if not self.provider_type or not self.slug:
 			frappe.throw(_("Provider Image requires provider_type and slug"))

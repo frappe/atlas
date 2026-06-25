@@ -18,12 +18,11 @@ Read permission for `System Manager`.
 13. [Port Mapping](#port-mapping) — a raw-TCP forwarding entry: a proxy-side port pointing at a tenant VM's service port.
 14. [SSH Key](#ssh-key) — a user's public key, chosen when creating a VM.
 15. [Task](#task)
-16. [Route53 Settings](#route53-settings) — AWS Route 53 API config + the active `domain_provider_type` (Single).
+16. [Route53 Settings](#route53-settings) — AWS Route 53 API config (Single). The active DNS vendor lives on `Atlas Settings.dns_provider_type`.
 17. [Lets Encrypt Settings](#lets-encrypt-settings) — ACME account config (Single); the active TLS issuer is `Atlas Settings.tls_provider_type`.
 18. [Root Domain](#root-domain) — one wildcard zone == one region.
 19. [TLS Certificate](#tls-certificate) — the issued regional wildcard cert.
-20. [Site](#site) — a user's self-serve Frappe site at `<subdomain>.<region domain>`. See [14-self-serve.md](./14-self-serve.md).
-21. [Site Request](#site-request) — the pre-verification signup holding row (email + subdomain + token); fulfils into a `Site` only after the email is verified (Contract C). See [14-self-serve.md](./14-self-serve.md).
+20. [Site](#site) — a tenant's self-serve Frappe site at `<subdomain>.<region domain>`, created by Central via `create_site`. See [14-self-serve.md](./14-self-serve.md).
 
 The **Provider abstraction** is a single ABC in
 `atlas/atlas/providers/base.py` with one implementation per `provider_type`,
@@ -39,9 +38,9 @@ implementation plan.
 
 The **TLS & Domain layer** ([13-tls.md](./13-tls.md)) — the producer for the
 proxy's `push_cert` — mirrors that shape with two more registries keyed by type:
-`atlas/atlas/dns/` (a `DnsProvider` ABC per `domain_provider_type`, the active
-one on `Route53 Settings`) and `atlas/atlas/tls/` (a `TlsProvider` ABC per
-`tls_provider_type`, the active one on `Atlas Settings`). Same rule: controllers
+`atlas/atlas/dns/` (a `DnsProvider` ABC per `dns_provider_type`, the active
+one on `Atlas Settings`) and `atlas/atlas/tls/` (a `TlsProvider` ABC per
+`tls_provider_type`, also on `Atlas Settings`). Same rule: controllers
 resolve an implementation by type and never branch on the vendor.
 
 Each DocType is specified by three sections: **Fields** (the schema), **Form
@@ -63,7 +62,9 @@ Notation in the Form layout sections:
 
 A Single DocType. Holds Atlas-wide configuration that is not vendor-specific:
 which `provider_type` is currently active, which `tls_provider_type` issues
-certs, and the operator's SSH key (fingerprint, public-key body, on-disk path).
+certs, and the operator's SSH key (public-key body + on-disk private-key path).
+The *vendor's* handle for that key (`ssh_key_id`) is vendor-specific and lives on
+the per-vendor Settings instead (see DigitalOcean / Scaleway Settings below).
 Every `get_provider()` call in the codebase reads `Atlas Settings.provider_type`
 and resolves the implementation via `for_provider_type` — this is the
 indirection layer; there is no `Provider` row to load.
@@ -72,22 +73,28 @@ indirection layer; there is no `Provider` row to load.
 
 | Field                  | Type             | Reqd | Notes                                                              |
 | ---------------------- | ---------------- | ---- | ------------------------------------------------------------------ |
+| `region`               | Data             | Y    | This Atlas instance's single region (e.g. `blr1`, `nyc3`) — the **one source of truth** for region. It is the proxy-fleet join key shared by `Subdomain` / `Site` / `Port Mapping` / proxy `Virtual Machine.region`, the label that separates this bench's servers in a shared cloud account (`provisioning.provision_region`), the value `Root Domain` denormalizes at insert, and the region announced to Central at Register. Read everywhere through `placement.atlas_region()`, which fails loud when unset. Set by the setup contract (`setup.run` / the Setup Wizard) from the explicit `region` input; the `from_site_config` adapter / `bootstrap.py` derive it from `atlas_tls_region` (else the active vendor's region key). Atlas is single-region, so there is exactly one value. |
 | `provider_type`        | Select           | Y    | The currently-active vendor: `DigitalOcean` / `Scaleway` / `Self-Managed` (`Fake` is also an option in `developer_mode` / test builds). `atlas.get_provider()` reads this and calls `for_provider_type` against the registry directly. Guarded in `validate()` (see below). |
 | `tls_provider_type`    | Select           |      | The active certificate issuer: `Let's Encrypt` / `ZeroSSL` / `Self-Managed`. Drives the TLS registry (`tls.for_tls_provider_type`); denormalized onto `Root Domain` / `TLS Certificate` at insert. See [13-tls.md](./13-tls.md). |
+| `dns_provider_type`    | Select           |      | The active DNS vendor (DNS-01 challenge): `Route53` / `Cloudflare`. Keys the DNS registry (`dns.for_dns_provider_type`); denormalized onto `Root Domain` at insert. Pairs with `Route53 Settings` for the credentials. Only Route53 implemented; Cloudflare reserved. See [13-tls.md](./13-tls.md). |
 | `fail_scripts`         | Small Text       |      | Developer-mode fault injection, shown only when `provider_type=Fake`. Comma/newline-separated script names whose Tasks the Fake provider makes FAIL; `*` fails every script. Read by `fake_tasks._configured_failure` (replaces the old per-`Provider`-row field). |
 | `default_user_image`   | Link → Virtual Machine Image | | Base image a dashboard user's new machine provisions from when they don't pick one. Disambiguates placement when several images are active. See [11-user-ui.md](./11-user-ui.md). |
 | `default_bench_snapshot` | Link → Virtual Machine Snapshot | | The golden bench snapshot a self-serve `Site`'s backing VM is cloned from (the baked bench + MariaDB + Redis, [08-images.md § golden bench image](./08-images.md)). `Site.before_insert` placement resolves it; provisioning clones via `Virtual Machine Snapshot.clone_to_new_vm`. Must be set + `Available` before any Site is created. See [14-self-serve.md](./14-self-serve.md). |
 | `overprovision_factor` | Float            |      | Fleet-wide vCPU oversubscription multiplier (default `1`). A host's *effective* vCPU budget — what `default_server` placement and the desk capacity helper check against — is its physical vCPU total times this factor. `1` means no oversubscription. Safe to raise because a VM's `vcpus` is a `cpu.max` *bandwidth* cap, not a pinned core. A host whose size has no known vCPU total (uncatalogued slug or self-managed) is unaffected — it always counts as having room. See [server_capacity.py](../atlas/atlas/api/server_capacity.py) and `placement.py`. |
 | `tcp_port_pool`        | Data             |      | Inclusive `LOW-HIGH` range (default `10000-19999`) of proxy-side ports the TCP forwarder allocates to `Port Mapping`s; must match the proxy nginx `listen` range. See [17-tcp-proxy.md](./17-tcp-proxy.md). |
-| `ssh_key_id`           | Data             |      | Vendor's handle for the uploaded SSH key, when the vendor needs one (DigitalOcean). Passed through to the provider as `SshKey.vendor_id`; format is vendor-specific (DO accepts the key's numeric id or its SHA-256 fingerprint). |
 | `ssh_public_key`       | Long Text        |      | OpenSSH public key body. Crosses the provider interface for vendors that upload at provision time. Not required for DO. |
 | `ssh_private_key_path` | Data             | Y    | Absolute path on the Atlas host where the matching private key lives. Atlas reads the PEM at SSH-connect time via `secrets.get_ssh_key_from_disk(path)`. `0600`, owned by the Frappe user. |
 
-Why these live on one Single instead of per-vendor rows: the SSH key, the
-active `provider_type`, the active `tls_provider_type`, and any other
-cross-vendor switch are properties of the Atlas instance, not of a vendor.
-Routing reads through a single helper also lets the storage backend swap to an
-external secret store later without touching callers.
+Why these live on one Single instead of per-vendor rows: the SSH *keypair* (the
+public-key body and the on-disk private key), the active `provider_type`, the
+active `tls_provider_type`, and any other cross-vendor switch are properties of
+the Atlas instance, not of a vendor. The vendor's *handle* for that key
+(`ssh_key_id` — DO's key id / fingerprint, Scaleway's IAM id) is the exception:
+it is meaningless outside its vendor, so it lives on the per-vendor Settings.
+`get_ssh_key()` assembles the two — the cross-vendor public key from this Single,
+the `vendor_id` from the active vendor's Single — so callers still see one
+`SshKey`. Routing reads through a single helper also lets the storage backend
+swap to an external secret store later without touching callers.
 
 ### Form layout
 
@@ -95,6 +102,7 @@ external secret store later without touching callers.
 ── Active provider ──
 provider_type
 | tls_provider_type
+  dns_provider_type
   fail_scripts
 ── User dashboard ──
 default_user_image
@@ -104,7 +112,6 @@ overprovision_factor
 ── TCP proxy ──
 tcp_port_pool
 ── SSH key ──
-ssh_key_id
 ssh_public_key
 | ssh_private_key_path
 ```
@@ -181,6 +188,7 @@ A Single DocType. Only fields that DigitalOcean's API needs.
 | --------------- | --------------------- | ---- | ------------------------------------------------------------------ |
 | `api_token`     | Password              | Y    | `set_only_once`. DigitalOcean personal access token. Rotate by clearing the field via `db.set_value`, then re-saving. |
 | `region`        | Data                  | Y    | DO is multi-region; Atlas is single-region. Pick one (`blr1`, `nyc3`, …). `provision_server` throws if the dialog overrides this. |
+| `ssh_key_id`    | Data                  |      | DO's handle for the uploaded SSH key, installed on each new droplet. Accepts the key's numeric id or its SHA-256 fingerprint. Passed through to the provider as `SshKey.vendor_id`; `get_ssh_key()` reads it from here when DO is active. Vendor-specific — meaningless to other providers. |
 | `default_size`  | Link → Provider Size  | Y    | Filtered to `provider_type=DigitalOcean, enabled=1`. Default selection in the Provision dialog. |
 | `default_image` | Link → Provider Image | Y    | Same filter as `default_size`.                                     |
 
@@ -189,6 +197,7 @@ A Single DocType. Only fields that DigitalOcean's API needs.
 ```
 api_token
 region
+ssh_key_id
 ── Defaults for new servers ──
 default_size
 | default_image
@@ -221,6 +230,7 @@ Mirrors `DigitalOcean Settings` — same shape, vendor-specific fields.
 | `organization_id` | Data                  |      | Optional. Filters `GET /account/v3/projects` and labels the authenticate result. |
 | `zone`            | Data                  | Y    | Scaleway is multi-zone; Atlas is single-region per vendor. One Elastic Metal zone (`fr-par-1`, `fr-par-2`, `nl-ams-1`, `nl-ams-2`, `pl-waw-2`, `pl-waw-3` — **not** `pl-waw-1`). |
 | `billing`         | Select                |      | `hourly` (default) / `monthly`. Hourly has no upfront fee; monthly is cheaper to run but charges a one-time, non-refundable commitment fee. Hourly and monthly are **distinct offer ids**, so `discover()` filters offers to this mode. |
+| `ssh_key_id`      | Data                  |      | Scaleway's IAM SSH key id, installed on each new Elastic Metal server. Left blank, the provider registers `Atlas Settings.ssh_public_key` with IAM at provision time; an operator with a cached IAM id can set it here to reuse the key. Read as `SshKey.vendor_id` by `get_ssh_key()` when Scaleway is active. Vendor-specific. |
 | `default_size`    | Link → Provider Size  | Y    | Filtered to `provider_type=Scaleway, enabled=1`. |
 | `default_image`   | Link → Provider Image | Y    | Same filter as `default_size`. |
 
@@ -232,6 +242,7 @@ project_id
 organization_id
 zone
 billing
+ssh_key_id
 ── Defaults for new servers ──
 default_size
 | default_image
@@ -338,10 +349,15 @@ operator-facing label lives in `title` (e.g. `server-blr1-01`).
 | `jailer_version`               | Data                  |      | Y         |         | Set by bootstrap. Allowed to change on re-bootstrap. |
 | `kernel_version`               | Data                  |      | Y         |         | Set by bootstrap. Allowed to change on re-bootstrap. |
 
-Atlas is single-region: there is no `Server.region` column. A vendor
-that operates in multiple regions stores its operating region on its
-own Settings Single (e.g. `DigitalOcean Settings.region`), and one
-Atlas instance pins one region per vendor.
+Atlas is single-region: there is no `Server.region` column. The
+instance's region is `Atlas Settings.region` (the single source of
+truth, read through `placement.atlas_region()`). That is distinct from a
+vendor's *operating* region — a vendor that operates in multiple regions
+stores the API region it provisions into on its own Settings Single
+(e.g. `DigitalOcean Settings.region`, `Scaleway Settings.zone`), and one
+Atlas instance pins one region per vendor. The two normally hold the same
+string; `Atlas Settings.region` answers "which proxy fleet / wildcard
+zone", the vendor key answers "which datacenter the API creates the box in".
 
 Immutability is enforced by `Server._validate_immutability()` (lock
 once a value is written; allow `None → value` so `finish_provisioning`
@@ -508,7 +524,8 @@ methods (Provision/Start/Stop/Restart/Terminate); see
 `ssh_public_key` is the key injected into the *guest's*
 `/root/.ssh/authorized_keys` — it is how the operator SSHes into the
 VM, not into the host. The host key lives on `Atlas Settings`
-(`ssh_key_id`, `ssh_public_key`, `ssh_private_key_path`).
+(`ssh_public_key`, `ssh_private_key_path`); the vendor's handle for it
+(`ssh_key_id`) lives on the active vendor's Settings.
 
 ### Auto-provision contract
 
@@ -1098,7 +1115,7 @@ provisioning path; it is a user-facing convenience over the existing field.
 | `name`        | (autoname `hash`) | Y | Y     |           | Primary key. 10-char random hex.                                 |
 | `key_name`    | Data      | Y    |           | `title_field`. User-chosen label (e.g. `laptop`).                |
 | `public_key`  | Long Text | Y    |           | `set_only_once`. OpenSSH public-key body. `validate()` strips it and rejects anything whose first token isn't a known key type (`ssh-ed25519`, `ssh-rsa`, `ecdsa-*`, `sk-*`). |
-| `fingerprint` | Data      |      | Y         | Derived in `validate()` from `public_key` — the standard `SHA256:<base64nopad>` form `ssh-keygen -lf` prints. Shown so the SPA can render a recognizable key identity without echoing the whole blob. |
+| `fingerprint` | Data      |      | Y         | Derived in `validate()` from `public_key` — the standard `SHA256:<base64nopad>` form `ssh-keygen -lf` prints. A recognizable key identity without echoing the whole blob. |
 
 ### Form layout
 
@@ -1117,15 +1134,13 @@ public_key
 
 ### Permissions
 
-System Manager: all rows, all perms. `Atlas User`: `if_owner`
-read/write/create/delete — their own keys only. Scoped by
-`permission_query_conditions` (`permissions.owner_only`, wired in `hooks.py`),
-the same mechanism as Virtual Machine.
+System Manager only (operator/Central-facing). No end-user role or row-level
+scoping.
 
 ### Buttons
 
-None. The form is data-entry only; the SPA's SSH Keys page (and the New Machine
-dialog's inline add) drive creation and deletion through the standard endpoints.
+None. The form is data-entry only; the key body is copied into a VM's immutable
+`ssh_public_key` at provision.
 
 ---
 
@@ -1138,16 +1153,15 @@ once at creation, then stamps the optional, set-only-once `tenant` link on the
 resources it provisions (`Virtual Machine`, `Virtual Machine Image`,
 `Virtual Machine Snapshot`).
 
-This is operator/Central-facing only (System Manager permission, no `Atlas User`
-row, no SPA nav item). It is pure data plus list helpers — no Tasks, no
-lifecycle.
+This is operator/Central-facing only (System Manager permission). It is pure data
+plus list helpers — no Tasks, no lifecycle.
 
-> **Scope note.** The existing owner-based scoping (see
-> [11-user-ui.md](./11-user-ui.md)) is **unchanged** for now: `Atlas User`
-> access to VMs/Snapshots/Keys/Sites is still `if_owner` on Frappe's built-in
-> `owner`. Central-driven tenancy that supersedes that boundary (and retires the
-> user-facing SPA) is a follow-on. The `tenant` link is additive: it groups
-> resources under a tenant without changing any permission today.
+> **Tenancy is the attribution model.** Atlas no longer has end-user `owner`
+> scoping or an `Atlas User` role (that boundary was removed when self-serve
+> signup moved to Central, [11-user-ui.md](./11-user-ui.md)). The `tenant` link on
+> a `Virtual Machine` / `Site` (and `Virtual Machine Image` / `Snapshot`) is how a
+> resource is tied back to a Central team — set once at provision by the Central
+> API (`create_vm` / `create_site`).
 
 ### Fields
 
@@ -1196,8 +1210,7 @@ central_reference
 
 ### Permissions
 
-System Manager only (all perms). No `Atlas User` row — Tenant is reached by
-Central/operator, never by an end-user in the SPA.
+System Manager only (all perms). Tenant is reached by Central/operator only.
 
 ### Buttons
 
@@ -1292,17 +1305,18 @@ Tasks aren't a black box.
 
 ## Route53 Settings
 
-A Single. AWS Route 53 credentials plus the active DNS vendor type, the twin of
+A Single. AWS Route 53 credentials, the twin of
 [DigitalOcean Settings](#digitalocean-settings). Read by `Route53DnsProvider`;
-the secret comes out via `atlas.atlas.secrets.get_secret`. There is no separate
-`Domain Provider` DocType — the active DNS vendor is the `domain_provider_type`
-field below, and the DNS registry keys off it (`dns.for_dns_provider_type`).
+the secret comes out via `atlas.atlas.secrets.get_secret`. The *active* DNS vendor
+is not stored here — it lives on `Atlas Settings.dns_provider_type` (the DNS
+registry keys off it, `dns.for_dns_provider_type`), since it is an
+Atlas-instance switch, not a Route 53 credential. There is no separate
+`Domain Provider` DocType.
 
 ### Fields
 
 | Field                  | Type     | Reqd | Notes                                                          |
 | ---------------------- | -------- | ---- | -------------------------------------------------------------- |
-| `domain_provider_type` | Select   | Y    | The active DNS vendor: `Route53` / `Cloudflare`. Keys the DNS registry (`dns.for_dns_provider_type`); denormalized onto `Root Domain` at insert. Only Route53 implemented; Cloudflare reserved. |
 | `access_key_id`        | Data     | Y    | AWS IAM access key id with `route53:*` on the zone. `set_only_once`. |
 | `secret_access_key`    | Password | Y    | AWS IAM secret. Rotate by clearing via `db.set_value`, then re-saving. |
 | `region`               | Data     |      | AWS API region for signing (default `us-east-1`; Route 53 is global). |
@@ -1313,7 +1327,6 @@ name at issue time.
 ### Form layout
 
 ```
-domain_provider_type
 ── AWS credentials ──
 access_key_id
 secret_access_key
@@ -1322,7 +1335,7 @@ region
 
 ### Buttons
 
-- **Test Connection** — `dns.for_dns_provider_type(domain_provider_type).authenticate()`
+- **Test Connection** — `dns.for_dns_provider_type(Atlas Settings.dns_provider_type).authenticate()`
   (Route 53 lists hosted zones). Result surfaces via a toast; no auto-painted
   indicator.
 
@@ -1345,14 +1358,17 @@ keeps the apostrophe (`Let's Encrypt`) since that is data, not a module.
 | ------------------- | ---- | ---- | ------- | ------------------------------------------------------ |
 | `acme_directory_url`| Data | Y    | LE production directory | Use the staging URL while testing. |
 | `account_email`     | Data | Y    |         | ACME registration / expiry-notice email. `set_only_once`. |
-| `agree_tos`         | Check|      | 0       | Required before any certificate can be issued. |
+
+There is no agree-to-ToS field: certbot is always invoked with `--agree-tos`
+([scripts/lib/atlas/certs.py](../scripts/lib/atlas/certs.py)), so registering the
+ACME account agrees to the terms — a separate checkbox could only ever hold one
+valid value.
 
 ### Form layout
 
 ```
 acme_directory_url
 account_email
-agree_tos
 ```
 
 ### Buttons
@@ -1375,9 +1391,9 @@ wildcard cert `*.blr1.frappe.dev` that fronts the proxy fleet in `region`.
 | ----------------- | --------------------- | ---- | ------------------------------------------------------------------ |
 | `name`            | = `domain` (autoname `field:domain`) | Y | Primary key is the domain itself. |
 | `domain`          | Data                  | Y    | The wildcard zone, e.g. `blr1.frappe.dev`. `unique`, `set_only_once`. The cert is `*.<domain>`. |
-| `region`          | Data                  | Y    | The proxy fleet this domain fronts. Join key to `Virtual Machine.region`. `set_only_once`. |
+| `region`          | Data                  |      | The proxy fleet this domain fronts. Join key to `Virtual Machine.region`. Read-only; denormalized from `Atlas Settings.region` (the single source of truth) at insert — the operator does not type it. `set_only_once`. |
 | `is_active`       | Check                 |      | Default 1. |
-| `domain_provider_type` | Select           |      | The DNS vendor that owns the zone (DNS-01). Read-only; denormalized from `Route53 Settings.domain_provider_type` at insert. |
+| `dns_provider_type`    | Select           |      | The DNS vendor that owns the zone (DNS-01). Read-only; denormalized from `Atlas Settings.dns_provider_type` at insert. |
 | `tls_provider_type`    | Select           |      | The issuer that produces the cert. Read-only; denormalized from `Atlas Settings.tls_provider_type` at insert. |
 
 `domain` and `region` lock after insert. `common_name` (`*.<domain>`) is a derived
@@ -1398,7 +1414,7 @@ domain
 region
 | is_active
 ── Providers ──
-domain_provider_type
+dns_provider_type
 tls_provider_type
 ```
 
@@ -1478,14 +1494,15 @@ proxy map it creates once serving) and **not** the
 | --------------- | ---------------------- | ---- | --------- | ----------------------------------------------------------- |
 | `name`          | the FQDN               | Y    | Y         | Primary key, built in `autoname()` as `<subdomain>.<region domain>` — the one routing string (Contract A): proxy Host header == this key. The routing identity, never written on disk (the baked site stays `site.local`). Never transformed. |
 | `subdomain`     | Data                   | Y    |           | The bare DNS label the user chose (`acme`). `set_only_once`. A single label, no dots, lowercase `[a-z0-9-]`, ≤63 chars, no leading/trailing hyphen; not in the reserved denylist. |
-| `region`        | Data                   |      | Y         | `set_only_once`. Resolved from the single active `Root Domain` at insert (the user never picks it). |
+| `region`        | Data                   |      | Y         | `set_only_once`. Resolved from `Atlas Settings.region` (the single source of truth, via `placement.atlas_region()`) at insert; Central never picks it. The FQDN suffix is read from the active `Root Domain` — its `region` is denormalized from the same value, so the two stay consistent. |
+| `tenant`        | Link → Tenant          |      | Y         | `set_only_once`. The Central team this site belongs to, stamped by `create_site` (the attribution key; [16-central.md](./16-central.md)). Operator/e2e sites created directly may leave it empty. |
 | `status`        | Select                 |      | Y         | `Pending` → `Provisioning` → `Deploying` → `Running` / `Failed` / `Terminated`. Controller-written. `Running` is reached **only** on an observed HTTP 200 from the guest `:80` (Contract B), not when the backing VM boots. |
 | `virtual_machine` | Link → Virtual Machine |    | Y         | `set_only_once`. The backing VM, cloned from the golden bench snapshot by the background job (the user never picks it). |
 | `subdomain_doc` | Link → Subdomain       |      | Y         | The proxy-map row the site created once it began serving. Deleting it (or the Site) takes the site off the front door. |
-| `admin_password` | Password              |      | Y         | The Frappe Administrator password handed to the owner — the **shared baked throwaway** (`Site.BAKED_ADMIN_PASSWORD`, in lockstep with build.sh; the deploy no longer resets it per VM, and the owner rotates it after first login). The db root password is baked + shared too. Stored encrypted; shown to the owner in the SPA so they can sign in. Controller-written. |
+| `admin_password` | Password              |      | Y         | The Frappe Administrator password handed to the tenant — the **shared baked throwaway** (`Site.BAKED_ADMIN_PASSWORD`, in lockstep with build.sh; the deploy no longer resets it per VM, and the tenant rotates it after first login). The db root password is baked + shared too. Stored encrypted; surfaced to Central (the `site.status_changed` Running event + `get_site` poll) so the tenant can sign in. Controller-written. |
 
-`owner` (Frappe built-in) is the verified user (Contract C) — the ownership key,
-scoped by `permission_query_conditions` (`atlas.atlas.permissions.owner_only`).
+The `tenant` link is the attribution key (Central, [16-central.md](./16-central.md));
+Atlas stamps no end-user `owner` scoping.
 
 ### Validation
 
@@ -1494,15 +1511,15 @@ scoped by `permission_query_conditions` (`atlas.atlas.permissions.owner_only`).
 - **Reserved denylist** — `www admin api proxy app dashboard mail ns root`
   (module-level `RESERVED_SUBDOMAINS`). Anything else already taken is caught by
   the FQDN-key uniqueness check, which throws a clean *"subdomain taken"* (the
-  signup race, [14-self-serve.md](./14-self-serve.md)).
+  create_site race, [14-self-serve.md](./14-self-serve.md)).
 - **Immutability** — `subdomain`, `region`, `virtual_machine` are frozen after
   insert (`IMMUTABLE_AFTER_INSERT`, guarded in `validate()`).
 
 ### Controller methods & lifecycle
 
 - `before_insert()` — validate the label, resolve the region from the active
-  `Root Domain`, set `status = Pending`. (`owner` is stamped by Frappe from the
-  session user; never set here.)
+  `Root Domain`, set `status = Pending`. (The owning `tenant` is set by
+  `create_site`; Atlas stamps no end-user `owner`.)
 - `autoname()` — build the FQDN key from `subdomain` + the region domain.
 - `after_insert()` — enqueue `auto_provision` (`queue="long"`, it SSHes).
 - `auto_provision(site_name)` *(module function)* — the background entrypoint:
@@ -1516,71 +1533,13 @@ scoped by `permission_query_conditions` (`atlas.atlas.permissions.owner_only`).
 
 ### Permissions
 
-`Atlas User` with `if_owner` for CRUD; `System Manager` full. List scoping via
-`owner_only` (`Site` ∈ `_OWNED_DOCTYPES`).
+`System Manager` only (operator/Central-facing; Central calls `create_site` with
+the operator token). No end-user role or row-level scoping.
 
 ### List view
 
 - Columns: `subdomain`, `region`, `status`.
 - Standard filters: `region`, `status`.
-
-## Site Request
-
-The pre-verification holding row for self-serve signup (Contract C, [14-self-serve.md](./14-self-serve.md)). A
-guest submits an email + subdomain; we hold the intent here (status `Pending`,
-with a verification token) and email a link. **Only when that link is clicked**
-do we create the [User](#) and insert the [Site](#site) — no droplet/site
-(billable) work happens for an unverified email. A `Site Request` is **not** a
-`Site`: it carries the intent + the verification state, no VM and no routing.
-Full flow in [14-self-serve.md](./14-self-serve.md).
-
-### Fields
-
-| Field         | Type     | Reqd | Read-only | Notes                                                       |
-| ------------- | -------- | ---- | --------- | ----------------------------------------------------------- |
-| `name`        | hash     | Y    | Y         | Random (`autoname: hash`). The token, not the name, is the verification secret in the URL — so the secret can expire without renaming the row. |
-| `email`       | Data (Email) | Y |          | The unverified address that submitted the form; becomes the `Site`'s `owner` on fulfilment (Contract C). `set_only_once`. Not a Link to User — no User exists until verification. |
-| `subdomain`   | Data     | Y    |           | The bare DNS label the user wants. Validated with the **same Contract-A rules as `Site`** (shared `atlas.atlas.subdomain_label`) so a request can't reserve a name `Site` would reject. `set_only_once`. |
-| `region`      | Data     |      | Y         | Resolved from the single active `Root Domain` at request time (the user never picks it). `set_only_once`. |
-| `status`      | Select   |      | Y         | `Pending` → `Verified` → `Fulfilled`; `Expired` once the token TTL lapses. Controller-written. |
-| `token`       | Data     |      | Y         | The verification secret (`frappe.generate_hash(length=32)`). The emailed link carries it; the verify route looks the request up by it. Never shown in list views. |
-| `verified_at` | Datetime |      | Y         | When the user actually clicked the link (status → Verified). The expiry clock is the row's built-in `creation` + TTL, **not** this. |
-| `site`        | Link → Site |   | Y         | The `Site` produced on fulfilment. Set once. |
-
-`owner` (Frappe built-in) starts as `Guest` (the form is guest-writable) and is
-re-stamped to the verified user at fulfilment (`db_set` — `owner` is a constant
-field), so the `owner_only` scoping shows a user only their own request.
-
-### Validation
-
-- **Label** — the shared Contract-A rule (single dotless DNS label, not reserved),
-  identical to `Site`. The authoritative uniqueness is still `Site`'s FQDN key at
-  fulfilment; the signup API additionally rejects a label already taken by a live
-  `Site` at request time (best-effort early feedback).
-
-### Controller methods & lifecycle
-
-- `before_insert()` — validate + normalize the label, resolve `region`, mint the
-  `token`, set `status = Pending`.
-- `is_expired()` — `creation + TOKEN_TTL_HOURS` (24h) is past. Both sides coerced
-  to datetime (the str-vs-datetime date trap).
-- `verify()` — fulfilment (Contract C step 5-6), all server-side: get-or-create
-  the `User` (Website User + `Atlas User` role, `send_welcome_email = 0`), insert
-  the `Site` **as that user** so Frappe stamps `owner = user`, mark `Fulfilled`,
-  link `site`, re-own the request to the user. Idempotent: a second call returns
-  the existing `Site`. Throws (clean message) on an expired token or a label
-  taken since the request.
-
-### Permissions
-
-`System Manager` full; `Atlas User` `if_owner` read only (no create/write — the
-guest API creates it, fulfilment re-owns it). List scoping via `owner_only`
-(`Site Request` ∈ `_OWNED_DOCTYPES`).
-
-### List view
-
-- Columns: `email`, `subdomain`, `status`.
-- Standard filters: `status`.
 
 ## Image Build
 
@@ -1630,8 +1589,7 @@ insert — re-baking with different inputs is a new row, guarded in `validate()`
 
 ### Permissions
 
-`System Manager` full; **not** in `_OWNED_DOCTYPES` — invisible and access-denied
-to the SPA `Atlas User`, like `Server` / `Task`.
+`System Manager` only (operator/Central-facing), like `Server` / `Task`.
 
 ### List view
 

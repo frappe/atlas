@@ -44,7 +44,7 @@ import frappe
 from frappe.rate_limiter import rate_limit
 
 from atlas.atlas.doctype.subdomain_denylist.subdomain_denylist import is_denylisted
-from atlas.atlas.placement import active_root_domain
+from atlas.atlas.placement import active_root_domain, atlas_region
 from atlas.atlas.subdomain_label import (
 	RESERVED_SUBDOMAINS,
 	is_taken,
@@ -96,8 +96,7 @@ def register(label: str) -> dict:
 	`virtual_machine` is the source-resolved VM, never a param. Audited on every path."""
 	label = normalize(label)
 	vm = _resolve_caller_vm("register", label)  # throws (audited unresolved) on a bad source
-	root = active_root_domain()
-	region, suffix = root.region, root.domain
+	region, suffix = atlas_region(), active_root_domain().domain
 
 	invalid = _label_invalid_reason(label)
 	if invalid is not None:
@@ -312,8 +311,9 @@ def _resolve_caller_vm(endpoint: str, label: str):
 	frappe.throw(f"No bench VM resolves from the request source address {source_ip!r}")
 
 
-# Region (Component E) is controller-resolved the same way `Site` does — from the
-# single active Root Domain (`active_root_domain().region`), read inline in `register`.
+# Region (Component E) is controller-resolved the same way `Site` does — from
+# `Atlas Settings.region` (`placement.atlas_region`, the single source of truth),
+# read inline in `register`.
 # A site VM does NOT carry a `region` field (that's `depends_on: is_proxy`); we never
 # make a VM-carried region a source of truth (it would drift and misroute) nor parse
 # it from a guest FQDN. Single-region today; multi-region ties the VM to its region at

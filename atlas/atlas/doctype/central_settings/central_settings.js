@@ -2,7 +2,7 @@
 // plane (spec/16-central.md). Actions ▾ carries Test Connection / Fetch Sizes /
 // Fetch Images. Results surface as toasts, matching the other Atlas Settings
 // singles (no auto-painted credential chip). Registration is Central-initiated
-// now (spec/19-tunnel.md) — there is no Register button here.
+// now (spec/21-tunnel.md) — there is no Register button here.
 
 frappe.ui.form.on("Central Settings", {
 	refresh(frm) {
@@ -43,6 +43,6 @@ function run(frm, method, ok_message) {
 			message: error ? __("Failed: {0}", [error]) : text,
 			indicator: error ? "red" : "green",
 		});
-		frm.reload_doc(); // pick up atlas_id / last_sync written server-side
+		frm.reload_doc(); // pick up atlas_id / status written server-side
 	});
 }

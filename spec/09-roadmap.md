@@ -301,13 +301,12 @@ never touches real DO/Scaleway rows.
   1. **Bake `bench setup production` into the golden image** so a clone already
      serves on `:80`; the per-signup deploy drops from `rename + full setup
      production` (the rank-1 cost — supervisord + nginx regen, "takes minutes")
-     to a light rename + `bench setup nginx`. The IPv6-listener fix (`listen
+     to a light `bench rename-site`. The IPv6-listener fix (`listen
      [::]:80;`) moves to bake time too. (**RESOLVED, then REVISED.** First take:
      "don't rename at all" — keep `site.local`, mark the vhost `default_server`,
      serve any `Host` via `default_site`. Revised: the per-signup deploy now
-     **renames** `site.local` → `<fqdn>` and runs `bench setup nginx` to regenerate
-     the vhost as `server_name <fqdn>` + a v6 listener + reload — NO `setup
-     production`, NO restart. The heavier change that came with it: drop the per-VM
+     **renames** `site.local` → `<fqdn>` via `bench rename-site`, which regenerates
+     the vhost as `server_name <fqdn>` + a v6 listener + reload — NO restart. The heavier change that came with it: drop the per-VM
      `set-admin-password` entirely (it cost a ~28s CPU-throttled `bench frappe`
      boot — the real rank-1 deploy cost, not nginx); the owner is handed the shared
      baked password and rotates it. See [14-self-serve.md](./14-self-serve.md)

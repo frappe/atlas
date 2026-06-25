@@ -9,8 +9,8 @@ Two seams, both pure-once-mocked:
   path is asserted by mocking the SSH transport (`run_ssh`/`run_scp`) and the VM
   lookup; no real guest.
 
-The host fact — a real rename + `bench setup nginx` actually serving the FQDN on
-:80 — is proven in the e2e (spec/14-self-serve.md), not here."""
+The host fact — a real `bench rename-site` actually serving the FQDN on :80 — is
+proven in the e2e (spec/14-self-serve.md), not here."""
 
 from __future__ import annotations
 
@@ -311,33 +311,39 @@ class TestGuestScriptTypedIO(IntegrationTestCase):
 		self.assertIn('BAKED_SITE="site.local"', build_sh.read_text())
 
 	def test_rename_moves_baked_site_to_fqdn(self) -> None:
-		"""The per-VM on-disk identity: sites/site.local -> sites/<fqdn>. Returns True
-		(it renamed). Point SITES_DIR at a temp tree carrying the baked dir."""
+		"""The per-VM on-disk identity: `bench rename-site site.local <fqdn>`. Returns
+		True (it renamed) and drives the rename through bench-cli, not a raw os.rename.
+		Point SITES_DIR at a temp tree carrying the baked dir."""
 		import os
 		import tempfile
 
 		with tempfile.TemporaryDirectory() as tmp:
 			sites = os.path.join(tmp, "sites")
 			os.makedirs(os.path.join(sites, self.guest.BAKED_SITE))
-			with patch.object(self.guest, "SITES_DIR", sites):
+			with (
+				patch.object(self.guest, "SITES_DIR", sites),
+				patch.object(self.guest, "_bench") as m_bench,
+			):
 				renamed = self.guest._rename_site_to_fqdn("acme.blr1.frappe.dev")
 			self.assertTrue(renamed)
-			self.assertFalse(os.path.isdir(os.path.join(sites, self.guest.BAKED_SITE)))
-			self.assertTrue(os.path.isdir(os.path.join(sites, "acme.blr1.frappe.dev")))
+			m_bench.assert_called_once_with("rename-site", self.guest.BAKED_SITE, "acme.blr1.frappe.dev")
 
 	def test_rename_is_idempotent_when_already_renamed(self) -> None:
 		"""A re-run finds sites/<fqdn> already present (baked dir gone) — returns False
-		and does not raise (spec taste #14: retry = re-run)."""
+		and does not raise or re-invoke bench-cli (spec taste #14: retry = re-run)."""
 		import os
 		import tempfile
 
 		with tempfile.TemporaryDirectory() as tmp:
 			sites = os.path.join(tmp, "sites")
 			os.makedirs(os.path.join(sites, "acme.blr1.frappe.dev"))  # already renamed
-			with patch.object(self.guest, "SITES_DIR", sites):
+			with (
+				patch.object(self.guest, "SITES_DIR", sites),
+				patch.object(self.guest, "_bench") as m_bench,
+			):
 				renamed = self.guest._rename_site_to_fqdn("acme.blr1.frappe.dev")
 			self.assertFalse(renamed)
-			self.assertTrue(os.path.isdir(os.path.join(sites, "acme.blr1.frappe.dev")))
+			m_bench.assert_not_called()
 
 	def test_rename_fails_loud_when_site_absent(self) -> None:
 		"""Cloned from a site-less (old) golden snapshot → neither sites/site.local nor
@@ -353,17 +359,18 @@ class TestGuestScriptTypedIO(IntegrationTestCase):
 					self.guest._rename_site_to_fqdn("acme.blr1.frappe.dev")
 		self.assertIn("site-less snapshot", str(raised.exception))
 
-	def test_warm_main_renames_and_skips_setup_production(self) -> None:
+	def test_warm_main_renames_and_skips_bench_start(self) -> None:
 		"""The warm fast-path contract: a warm clone wakes already serving, so `main`
-		gates on the freshen, renames the site, regenerates the vhost — NO setup
-		production, NO restart. That absence is the whole latency win."""
+		gates on the freshen and renames the site (`bench rename-site` does nginx +
+		production setup itself) — NO `bench start`, NO restart. That absence is the
+		latency win. The rename is mocked here, so the deploy path makes no direct
+		`_bench` call of its own."""
 		guest = self.guest
 		with (
 			patch.object(guest, "_preflight"),
 			patch.object(guest, "_await_freshen") as m_freshen,
 			patch.object(guest, "_bench") as m_bench,
 			patch.object(guest, "_rename_site_to_fqdn", return_value=True) as m_rename,
-			patch.object(guest, "_setup_nginx_for_fqdn") as m_nginx,
 			patch.object(guest, "_serving", return_value=True),
 			patch.object(
 				guest.DeploySiteInputs,
@@ -374,23 +381,20 @@ class TestGuestScriptTypedIO(IntegrationTestCase):
 			guest.main()
 		m_freshen.assert_called_once()
 		m_rename.assert_called_once_with("acme.blr1.frappe.dev")
-		m_nginx.assert_called_once_with("acme.blr1.frappe.dev")
-		# Warm wakes already serving — no `bench start` and no `setup production`
-		# (the only _bench calls the deploy path could make; `setup nginx` is mocked
-		# out via _setup_nginx_for_fqdn).
+		# Warm wakes already serving — no `bench start`. The rename (which carries the
+		# nginx + production-setup work) is mocked, so no direct `_bench` call remains.
 		m_bench.assert_not_called()
 
 	def test_cold_main_runs_bench_start_then_renames(self) -> None:
 		"""The cold path (a snapshot-booted clone) idempotently re-asserts `bench
-		start` first, then the same rename + vhost regenerate, and does NOT gate on
-		the warm-only freshen."""
+		start` first, then the same rename, and does NOT gate on the warm-only
+		freshen."""
 		guest = self.guest
 		with (
 			patch.object(guest, "_preflight"),
 			patch.object(guest, "_await_freshen") as m_freshen,
 			patch.object(guest, "_bench") as m_bench,
 			patch.object(guest, "_rename_site_to_fqdn", return_value=True) as m_rename,
-			patch.object(guest, "_setup_nginx_for_fqdn") as m_nginx,
 			patch.object(guest, "_serving", return_value=True),
 			patch.object(
 				guest.DeploySiteInputs,
@@ -401,12 +405,11 @@ class TestGuestScriptTypedIO(IntegrationTestCase):
 			guest.main()
 		m_bench.assert_called_once_with("start")
 		m_rename.assert_called_once_with("acme.blr1.frappe.dev")
-		m_nginx.assert_called_once_with("acme.blr1.frappe.dev")
 		m_freshen.assert_not_called()
 
 	def test_admin_main_sets_admin_domain_no_rename(self) -> None:
 		"""Admin mode: no site rename — instead `[admin].domain` is set to the FQDN +
-		`bench setup nginx`, mapping the FQDN to the admin app's vhost."""
+		`bench setup production`, mapping the FQDN to the admin app's vhost."""
 		guest = self.guest
 		with (
 			patch.object(guest, "_preflight"),
@@ -426,31 +429,9 @@ class TestGuestScriptTypedIO(IntegrationTestCase):
 		m_admin.assert_called_once_with("acme.blr1.frappe.dev")
 		m_rename.assert_not_called()
 
-	def test_setup_nginx_removes_stale_conf_and_regenerates(self) -> None:
-		"""`bench setup nginx` only writes current sites' confs, never deletes stale
-		ones — so the baked `site.local.conf` must be removed before regenerating, or
-		its `server_name site.local` block lingers beside the new `<fqdn>` one. The
-		regenerate is driven through `bench setup nginx` (bench-cli emits the v6
-		listener itself, so there is no separate v6 edit)."""
-		import os
-		import tempfile
-
-		with tempfile.TemporaryDirectory() as tmp:
-			nginx_sites = os.path.join(tmp, "sites")
-			os.mkdir(nginx_sites)
-			stale = os.path.join(nginx_sites, f"{self.guest.BAKED_SITE}.conf")
-			open(stale, "w").close()
-			with (
-				patch.object(self.guest, "NGINX_SITES_DIR", nginx_sites),
-				patch.object(self.guest, "_bench") as m_bench,
-			):
-				self.guest._setup_nginx_for_fqdn("acme.blr1.frappe.dev")
-			self.assertFalse(os.path.exists(stale))  # stale baked conf removed
-			m_bench.assert_called_once_with("setup", "nginx")
-
 	def test_set_admin_domain_rewrites_toml_and_regenerates(self) -> None:
 		"""Admin mode points the admin vhost at the FQDN by rewriting `domain = ""`
-		in the committed bench.toml in place, then `bench setup nginx`."""
+		in the committed bench.toml in place, then `bench setup production`."""
 		import os
 		import tempfile
 
@@ -464,4 +445,4 @@ class TestGuestScriptTypedIO(IntegrationTestCase):
 			):
 				self.guest._set_admin_domain("acme.blr1.frappe.dev")
 			self.assertIn('domain = "acme.blr1.frappe.dev"', open(toml).read())
-			m_bench.assert_called_once_with("setup", "nginx")
+			m_bench.assert_called_once_with("setup", "production")

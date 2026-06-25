@@ -1,0 +1,143 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "hash",
+ "creation": "2026-06-24 00:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 0,
+ "engine": "InnoDB",
+ "field_order": [
+  "tab_overview",
+  "label",
+  "virtual_machine",
+  "server",
+  "tenant",
+  "column_break_header",
+  "enabled",
+  "status",
+  "section_break_rules",
+  "rules"
+ ],
+ "fields": [
+  {
+   "fieldname": "tab_overview",
+   "fieldtype": "Tab Break",
+   "label": "Overview"
+  },
+  {
+   "description": "Optional user-facing name for this firewall.",
+   "fieldname": "label",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Label"
+  },
+  {
+   "description": "The VM whose PUBLIC inbound this firewall restricts. The VPN tunnel always bypasses it (full access). One firewall per VM.",
+   "fieldname": "virtual_machine",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Virtual Machine",
+   "options": "Virtual Machine",
+   "reqd": 1,
+   "unique": 1
+  },
+  {
+   "description": "The host the VM runs on; the nft rules are applied here. Denormalized from the VM.",
+   "fieldname": "server",
+   "fieldtype": "Link",
+   "in_standard_filter": 1,
+   "label": "Server",
+   "options": "Server",
+   "read_only": 1
+  },
+  {
+   "fieldname": "tenant",
+   "fieldtype": "Link",
+   "label": "Tenant",
+   "options": "Tenant",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_header",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "1",
+   "description": "When off, the firewall is cleared on the host and the VM reverts to fully public (the rules are kept for re-enabling).",
+   "fieldname": "enabled",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Enabled"
+  },
+  {
+   "default": "Disabled",
+   "description": "Whether the rules are currently enforced on the host.",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Status",
+   "options": "Active\nDisabled",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_break_rules",
+   "fieldtype": "Section Break",
+   "label": "Allowed Public Ports"
+  },
+  {
+   "description": "Ports reachable from the public internet. Anything not listed is dropped for public traffic. Empty means deny all public (VPN-only). The VPN tunnel is never affected.",
+   "fieldname": "rules",
+   "fieldtype": "Table",
+   "label": "Rules",
+   "options": "Firewall Rule"
+  }
+ ],
+ "links": [],
+ "modified": "2026-06-24 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Atlas",
+ "name": "Firewall",
+ "naming_rule": "Random",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "amend": 0,
+   "cancel": 0,
+   "create": 1,
+   "delete": 1,
+   "export": 1,
+   "import": 0,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "submit": 0,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "if_owner": 1,
+   "read": 1,
+   "role": "Atlas User",
+   "write": 1
+  }
+ ],
+ "search_fields": "virtual_machine,server,status",
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [
+  {
+   "title": "Active",
+   "color": "Green"
+  },
+  {
+   "title": "Disabled",
+   "color": "Gray"
+  }
+ ],
+ "title_field": "label",
+ "track_changes": 1
+}

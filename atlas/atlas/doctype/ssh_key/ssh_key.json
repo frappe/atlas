@@ -70,21 +70,6 @@
    "share": 1,
    "submit": 0,
    "write": 1
-  },
-  {
-   "amend": 0,
-   "cancel": 0,
-   "create": 1,
-   "delete": 1,
-   "export": 0,
-   "if_owner": 1,
-   "import": 0,
-   "read": 1,
-   "report": 0,
-   "role": "Atlas User",
-   "share": 0,
-   "submit": 0,
-   "write": 1
   }
  ],
  "search_fields": "key_name,fingerprint",

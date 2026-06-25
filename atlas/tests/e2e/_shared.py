@@ -24,6 +24,8 @@ from atlas.tests.e2e._config import (
 	get_ssh_key_id,
 	get_ssh_private_key_path,
 	get_tls_config,
+	get_tls_domain,
+	setup_config,
 )
 from atlas.tests.e2e._droplets import (
 	cleanup_droplet,
@@ -70,9 +72,11 @@ __all__ = [
 	"get_ssh_key_id",
 	"get_ssh_private_key_path",
 	"get_tls_config",
+	"get_tls_domain",
 	"mark_orphan_tasks_failure",
 	"phase",
 	"server_is_reachable",
+	"setup_config",
 	"sweep_old_droplets",
 	"teardown_all",
 	"wait_for_task",

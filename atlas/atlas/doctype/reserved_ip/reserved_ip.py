@@ -13,6 +13,21 @@ IMMUTABLE_AFTER_INSERT = (
 
 
 class ReservedIP(Document):
+	# begin: auto-generated types
+	# This code is auto-generated. Do not modify anything in this block.
+
+	from typing import TYPE_CHECKING
+
+	if TYPE_CHECKING:
+		from frappe.types import DF
+
+		ip_address: DF.Data
+		provider_resource_id: DF.Data | None
+		server: DF.Link
+		status: DF.Literal["Allocated", "Attached"]
+		virtual_machine: DF.Link | None
+	# end: auto-generated types
+
 	def validate(self) -> None:
 		self._validate_immutability()
 		self._sync_status()

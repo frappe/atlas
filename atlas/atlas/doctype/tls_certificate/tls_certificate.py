@@ -29,6 +29,24 @@ RENEWAL_WINDOW_DAYS = 30
 
 
 class TLSCertificate(Document):
+	# begin: auto-generated types
+	# This code is auto-generated. Do not modify anything in this block.
+
+	from typing import TYPE_CHECKING
+
+	if TYPE_CHECKING:
+		from frappe.types import DF
+
+		common_name: DF.Data | None
+		expires_on: DF.Datetime | None
+		fullchain_path: DF.Data | None
+		issued_on: DF.Datetime | None
+		privkey_path: DF.Data | None
+		root_domain: DF.Link
+		status: DF.Literal["Pending", "Active", "Expiring", "Failed"]
+		tls_provider_type: DF.Literal["", "Let's Encrypt", "ZeroSSL", "Self-Managed"]
+	# end: auto-generated types
+
 	def before_insert(self) -> None:
 		self._derive_common_name()
 		self._denormalize_provider()
@@ -65,7 +83,7 @@ class TLSCertificate(Document):
 		domain_row = frappe.get_doc("Root Domain", self.root_domain)
 		try:
 			tls_provider = tls.for_tls_provider_type(domain_row.tls_provider_type)
-			dns_provider = dns.for_dns_provider_type(domain_row.domain_provider_type)
+			dns_provider = dns.for_dns_provider_type(domain_row.dns_provider_type)
 			issued = tls_provider.issue(domain_row.domain, dns_provider)
 		except Exception:
 			self._set_status("Failed")
@@ -133,7 +151,7 @@ class TLSCertificate(Document):
 			)
 			return
 		try:
-			dns_provider = dns.for_dns_provider_type(domain_row.domain_provider_type)
+			dns_provider = dns.for_dns_provider_type(domain_row.dns_provider_type)
 			records = dns_provider.upsert_wildcard(
 				domain_row.domain, dns.WildcardTargets(ipv4=ipv4, ipv6=ipv6)
 			)

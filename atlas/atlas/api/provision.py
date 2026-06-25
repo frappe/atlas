@@ -18,25 +18,8 @@ from __future__ import annotations
 
 import frappe
 
+from atlas.atlas.doctype.tenant.tenant import ensure_tenant
 from atlas.bootstrap import load_vm_ssh_public_key
-
-
-def _ensure_tenant(central_reference: str, email: str | None) -> str:
-	"""Get-or-create the Tenant for a Central team. `email`/`central_reference`
-	are immutable after insert, so an existing tenant is reused as-is."""
-	name = frappe.db.get_value("Tenant", {"central_reference": central_reference})
-	if name:
-		return name
-	if not email:
-		frappe.throw("email is required to create a tenant.")
-	tenant = frappe.get_doc(
-		{
-			"doctype": "Tenant",
-			"central_reference": central_reference,
-			"email": email,
-		}
-	).insert(ignore_permissions=True)
-	return tenant.name
 
 
 @frappe.whitelist()
@@ -61,7 +44,7 @@ def create_vm(
 	if not central_reference:
 		frappe.throw("central_reference is required.")
 
-	tenant = _ensure_tenant(central_reference, email)
+	tenant = ensure_tenant(central_reference, email)
 
 	vm = frappe.get_doc(
 		{

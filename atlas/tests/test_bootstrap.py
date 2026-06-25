@@ -12,6 +12,8 @@ We mock `discover()` (the only network call) so the test is hermetic, exactly as
 
 from __future__ import annotations
 
+import os
+import tempfile
 from unittest.mock import patch
 
 import frappe
@@ -19,6 +21,15 @@ from frappe.tests import IntegrationTestCase
 
 from atlas import bootstrap
 from atlas.atlas.providers.base import Capabilities, ImageInfo, SizeInfo
+
+# A REAL readable key file. `Atlas Settings.setup` (the contract ensure_provider now
+# drives) does an isfile() check on the key path — matching restore_credentials — so a
+# character device like /dev/null no longer passes; spill a regular tempfile instead.
+_KEY_PATH = os.path.join(tempfile.gettempdir(), "atlas-bootstrap-test-key.pem")
+if not os.path.isfile(_KEY_PATH):
+	with open(_KEY_PATH, "w") as _handle:
+		_handle.write("-----BEGIN OPENSSH PRIVATE KEY-----\nfake\n-----END OPENSSH PRIVATE KEY-----\n")
+	os.chmod(_KEY_PATH, 0o600)
 
 # A canned two-row catalog the mocked discover() returns — the slugs the config
 # below names as defaults plus one extra, so we also prove the wider catalog is
@@ -35,7 +46,7 @@ CAPABILITIES = Capabilities(
 
 SCALEWAY_CONFIG = {
 	"atlas_provider_type": "Scaleway",
-	"atlas_ssh_private_key_path": "/dev/null",  # exists + readable; only the field is set here
+	"atlas_ssh_private_key_path": _KEY_PATH,  # a real readable file (setup isfile-checks it)
 	"atlas_scw_secret_key": "scw-secret-key",
 	"atlas_scw_project_id": "proj-uuid",
 	"atlas_scw_zone": "fr-par-2",
@@ -142,6 +153,9 @@ class TestEnsureProviderValidation(IntegrationTestCase):
 
 _TOUCHED_SINGLES = (
 	("Atlas Settings", "provider_type"),
+	("Atlas Settings", "region"),
+	("Atlas Settings", "ssh_private_key_path"),
+	("Atlas Settings", "ssh_public_key"),
 	("Scaleway Settings", "zone"),
 	("Scaleway Settings", "project_id"),
 	("Scaleway Settings", "organization_id"),

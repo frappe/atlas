@@ -6,10 +6,10 @@ end-users and talks to Atlas as the operator). Central sets the immutable
 set-only-once `tenant` link on the resources it provisions (Virtual Machine,
 Virtual Machine Image, Virtual Machine Snapshot).
 
-This is operator/Central-facing only (System Manager permission, no `Atlas User`
-row, no SPA nav item). It is pure data plus list helpers — no Tasks, no
-lifecycle. The existing owner-based scoping (spec 11) is unchanged for now;
-Central-driven tenancy that supersedes it is a follow-on.
+This is operator/Central-facing only (System Manager permission). It is pure data
+plus list helpers — no Tasks, no lifecycle. Atlas no longer owns end-users or
+end-user row-level scoping; tenancy attribution (the `tenant` link on a Virtual
+Machine / Site) is how resources are tied back to a Central team.
 """
 
 import uuid
@@ -26,7 +26,48 @@ IMMUTABLE_AFTER_INSERT = (
 )
 
 
+def ensure_tenant(central_reference: str, email: str | None) -> str:
+	"""Get-or-create the Tenant for a Central team and return its name.
+
+	`email`/`central_reference` are immutable after insert, so an existing tenant
+	is reused as-is (the `email` is only consulted on first creation). Shared by
+	the Central-facing provisioning APIs (Virtual Machine, Site) so there is one
+	get-or-create path. Runs `ignore_permissions` — this is operator orchestration
+	authorized by the Central token, not desk RBAC."""
+	if not central_reference:
+		frappe.throw("central_reference is required.")
+	name = frappe.db.get_value("Tenant", {"central_reference": central_reference})
+	if name:
+		return name
+	if not email:
+		frappe.throw("email is required to create a tenant.")
+	return (
+		frappe.get_doc(
+			{
+				"doctype": "Tenant",
+				"central_reference": central_reference,
+				"email": email,
+			}
+		)
+		.insert(ignore_permissions=True)
+		.name
+	)
+
+
 class Tenant(Document):
+	# begin: auto-generated types
+	# This code is auto-generated. Do not modify anything in this block.
+
+	from typing import TYPE_CHECKING
+
+	if TYPE_CHECKING:
+		from frappe.types import DF
+
+		central_reference: DF.Data
+		email: DF.Data
+		title: DF.Data | None
+	# end: auto-generated types
+
 	def autoname(self) -> None:
 		self.name = str(uuid.uuid4())
 

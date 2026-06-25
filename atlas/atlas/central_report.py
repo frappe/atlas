@@ -1,8 +1,11 @@
-"""Report VM lifecycle events to Central (spec/16-central.md § Event reporting).
+"""Report resource lifecycle events to Central (spec/16-central.md § Event reporting).
 
 Wired via doc_events in hooks.py — no controller edits. A status transition on a
-Virtual Machine / Virtual Machine Snapshot / Server, and a VM after_insert,
-enqueue a background `deliver` job that POSTs to Central.
+Virtual Machine / Site / Virtual Machine Snapshot / Server, and a VM / Site
+after_insert, enqueue a background `deliver` job that POSTs to Central. Sites are
+the Central-driven self-serve surface (spec/14-self-serve.md): Central calls
+`create_site`, then learns the site reached Running (with its admin handoff) from
+the `site.status_changed` event here or by polling `get_site`.
 
 Everything is gated on Central Settings.enabled, so a site without Central
 configured pays nothing. Delivery is fire-and-forget: a failure is logged and
@@ -47,6 +50,16 @@ def on_vm_trash(doc, method=None):
 		_emit("vm.deleted", _vm_payload(doc))
 
 
+def on_site_after_insert(doc, method=None):
+	if _enabled():
+		_emit("site.created", _site_payload(doc))
+
+
+def on_site_update(doc, method=None):
+	if _enabled() and _status_changed(doc):
+		_emit("site.status_changed", _site_payload(doc))
+
+
 def on_snapshot_update(doc, method=None):
 	if _enabled() and _status_changed(doc) and doc.status == "Available":
 		_emit("snapshot.completed", _snapshot_payload(doc))
@@ -80,7 +93,7 @@ def deliver(event_type: str, payload: dict) -> None:
 	if not settings.atlas_id:
 		# Enabled but not yet registered: without an atlas_id Central can't route
 		# the event, so skip rather than POST an unroutable None. Register first.
-		settings.db_set("last_event_status", "skipped: register with Central first", commit=True)
+		settings.db_set("status", "skipped: register with Central first", commit=True)
 		return
 	try:
 		settings.client().post_event(
@@ -91,10 +104,10 @@ def deliver(event_type: str, payload: dict) -> None:
 				"occurred_at": frappe.utils.now(),
 			}
 		)
-		settings.db_set("last_event_status", f"ok: {event_type}", commit=True)
+		settings.db_set("status", f"ok: {event_type}", commit=True)
 	except CentralError as exception:
 		frappe.log_error(f"Central event {event_type} failed: {exception}", "Central event")
-		settings.db_set("last_event_status", f"error: {exception}"[:140], commit=True)
+		settings.db_set("status", f"error: {exception}"[:140], commit=True)
 
 
 # --- payloads --------------------------------------------------------------
@@ -118,6 +131,26 @@ def _vm_payload(doc) -> dict:
 		"disk_gigabytes": doc.get("disk_gigabytes"),
 		"ipv6_address": doc.get("ipv6_address"),
 		"public_ipv4": doc.get("public_ipv4"),
+	}
+
+
+def _site_payload(doc) -> dict:
+	# The owning Central team, so the control plane can attribute this site to a
+	# tenant. Resolved from the Site's Tenant link; None for operator/e2e sites.
+	central_reference = frappe.db.get_value("Tenant", doc.tenant, "central_reference") if doc.tenant else None
+	# The admin password + live URL are the tenant handoff — only meaningful once
+	# the site is serving (Running), and the field is stamped before the readiness
+	# wait. Before that there is nothing to hand off.
+	running = doc.status == "Running"
+	return {
+		"name": doc.name,
+		"central_reference": central_reference,
+		"subdomain": doc.get("subdomain"),
+		"region": doc.get("region"),
+		"status": doc.status,
+		"fqdn": doc.name,
+		"url": f"https://{doc.name}" if running else None,
+		"admin_password": doc.get_password("admin_password") if running else None,
 	}
 
 

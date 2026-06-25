@@ -124,7 +124,7 @@ deregister(label) -> {"status": "ok"}
 
 **`register(label)`** — the authoritative insert, run **before** `bench new-site`. It
 reserves the name: this is the real block-at-create gate, not `check_label`. It runs
-the **same** Contract-A rules `Site`/`Site Request` enforce, in the same order, before
+the **same** Contract-A rules `Site` enforces, in the same order, before
 writing: `validate_label` (shape) → `validate_reserved` + the brand denylist
 (Component H) → the fleet-wide availability (`is_taken` + an existing `Subdomain`) →
 the per-VM cap (Component G). On a pass, insert `Subdomain(subdomain=label,

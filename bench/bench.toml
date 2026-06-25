@@ -24,7 +24,7 @@ name = "atlas"
 python = "3.14"
 http_port = 8000
 socketio_port = 9000
-socketio_backend = "python"
+socketio_backend = "node"
 
 [[apps]]
 name = "frappe"
@@ -93,15 +93,17 @@ webroot_path = "/var/www/letsencrypt"
 # socket-activated gunicorn on 127.0.0.1:(port+1). When [admin].domain is set,
 # `bench setup nginx` emits an `_admin.conf` vhost (`server_name <domain>`)
 # proxying to it — that is how MODE 1 ("domain maps to the admin URL") works.
-# build.sh leaves `domain` UNSET at bake time; deploy-site.py sets it per clone
-# in admin mode. The password is a shared baked throwaway, rotated after first
-# login.
+# build.sh bakes a placeholder `domain` (current bench-cli rejects an empty
+# `admin.domain` during production setup); deploy-site.py rewrites it to the FQDN
+# per clone in admin mode. The placeholder is never served — in site mode the FQDN
+# maps to the baked site, not the admin app. The password is a shared baked
+# throwaway, rotated after first login.
 [admin]
 port = 8002
 timeout = 180
 enabled = true
 password = "admin-password"
-domain = ""
+domain = "admin.localhost"
 
 # ZFS volume: bench code + MariaDB datadir on ZFS datasets, on a preallocated
 # file vdev (the build VM is a single disk with no spare block device). `bench
@@ -117,16 +119,17 @@ domain = ""
 pool = "bench-pool"
 backing = "image"
 
+# Keep our PINNED size (15G). bench-cli auto-sizes the image from the host's free
+# disk when it generates a bench.toml (the manual-session droplet had lots of free
+# space, so it chose 55G) — but our build VM disk budget is fixed, so we pin 15G
+# and do NOT adopt the session's auto-chosen value.
 [volume.image]
 size = "15G"
 path = "/var/lib/bench-zfs/bench-pool.img"
 
-[volume.benches]
+# Single dataset (current bench-cli schema) — replaces the old split
+# [volume.benches] / [volume.mariadb] tables. bench code + MariaDB datadir live on
+# datasets under this one reservation/quota.
+[volume.dataset]
 reservation = "1G"
 quota = "9G"
-data_dir = "/home/bench"
-
-[volume.mariadb]
-reservation = "1G"
-quota = "6G"
-data_dir = "/var/lib/mysql"

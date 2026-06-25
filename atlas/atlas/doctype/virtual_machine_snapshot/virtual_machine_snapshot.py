@@ -16,6 +16,35 @@ _IMAGE_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9.-]*$")
 
 
 class VirtualMachineSnapshot(Document):
+	# begin: auto-generated types
+	# This code is auto-generated. Do not modify anything in this block.
+
+	from typing import TYPE_CHECKING
+
+	if TYPE_CHECKING:
+		from frappe.types import DF
+
+		build_mode: DF.Literal["", "site", "admin"]
+		data_disk_format_and_mount: DF.Check
+		data_disk_gigabytes: DF.Int
+		data_disk_mount_point: DF.Data | None
+		data_rootfs_path: DF.Data | None
+		disk_gigabytes: DF.Int
+		host_signature: DF.SmallText | None
+		kind: DF.Literal["Cold", "Warm"]
+		memory_directory: DF.Data | None
+		memory_megabytes: DF.Int
+		rootfs_path: DF.Data | None
+		server: DF.Link | None
+		source_image: DF.Link | None
+		status: DF.Literal["Pending", "Available", "Failed"]
+		tap_device: DF.Data | None
+		tenant: DF.Link | None
+		title: DF.Data
+		vcpus: DF.Int
+		virtual_machine: DF.Link
+	# end: auto-generated types
+
 	@frappe.whitelist()
 	def clone_to_new_vm(
 		self,

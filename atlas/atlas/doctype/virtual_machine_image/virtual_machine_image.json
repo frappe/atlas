@@ -79,7 +79,7 @@
    "set_only_once": 1
   },
   {
-   "description": "Bench bake mode this image carries (set on a promoted bench golden). A VM created from this image inherits it as its build_mode, so its first-boot deploy maps the FQDN to the baked site (site) or the bench-cli admin console (admin). Empty for an ordinary base image — treated as site everywhere it is read.",
+   "description": "Bench bake mode this image carries (set on a promoted bench golden). A VM created from this image inherits it as its build_mode, so its first-boot deploy maps the FQDN to the baked site (site) or the bench-cli admin console (admin). Empty for an ordinary base image \u2014 treated as site everywhere it is read.",
    "fieldname": "build_mode",
    "fieldtype": "Select",
    "in_standard_filter": 1,
@@ -175,20 +175,6 @@
    "share": 1,
    "submit": 0,
    "write": 1
-  },
-  {
-   "amend": 0,
-   "cancel": 0,
-   "create": 0,
-   "delete": 0,
-   "export": 0,
-   "import": 0,
-   "read": 1,
-   "report": 0,
-   "role": "Atlas User",
-   "share": 0,
-   "submit": 0,
-   "write": 0
   }
  ],
  "sort_field": "creation",

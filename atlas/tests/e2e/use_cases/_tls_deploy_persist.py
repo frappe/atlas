@@ -22,7 +22,7 @@ Teardown when done (releases the billable reserved IP, terminates both VMs):
 import frappe
 
 from atlas.atlas import proxy
-from atlas.tests.e2e._config import get_tls_config
+from atlas.tests.e2e._config import get_tls_config, get_tls_domain
 from atlas.tests.e2e._droplets import ensure_bootstrapped_server
 from atlas.tests.e2e._image import ensure_image_on_server
 from atlas.tests.e2e.use_cases.tls_issuance import (
@@ -186,7 +186,7 @@ def teardown(proxy_vm: str, site_vm: str) -> None:
 	reserved = frappe.db.get_value("Reserved IP", {"virtual_machine": proxy_vm}, "name")
 	_teardown(reserved, proxy_vm, site_vm)
 
-	domain = frappe.conf.get("atlas_tls_domain")
+	domain = get_tls_domain()
 	for cert in frappe.get_all("TLS Certificate", filters={"root_domain": domain}, pluck="name"):
 		frappe.delete_doc("TLS Certificate", cert, force=1, ignore_permissions=True)
 	if frappe.db.exists("Root Domain", domain):

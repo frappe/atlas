@@ -1,4 +1,4 @@
-"""Host management-plane firewall for an Atlas host (nftables, spec/19-tunnel.md).
+"""Host management-plane firewall for an Atlas host (nftables, spec/21-tunnel.md).
 
 Default-deny inbound on the **public interface** except the WireGuard UDP port (the
 one thing that lets the Central hub dial in), loopback, established/related, ICMP, and

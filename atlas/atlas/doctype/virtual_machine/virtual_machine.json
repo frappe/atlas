@@ -140,7 +140,7 @@
    "reqd": 1
   },
   {
-   "description": "The VM's guaranteed CPU bandwidth in whole-core units. Fractional for sub-1 sizes (e.g. 0.0625 = 1/16 of a core). Defaults to vcpus (set in the controller's before_validate — a JSON default here would mask that and pin every whole-core VM to 1). In Hard cap mode this is also the hard ceiling (cgroup cpu.max); in Relaxed mode it sets the cpu.weight floor and the VM may burst above it.",
+   "description": "The VM's guaranteed CPU bandwidth in whole-core units. Fractional for sub-1 sizes (e.g. 0.0625 = 1/16 of a core). Defaults to vcpus (set in the controller's before_validate \u2014 a JSON default here would mask that and pin every whole-core VM to 1). In Hard cap mode this is also the hard ceiling (cgroup cpu.max); in Relaxed mode it sets the cpu.weight floor and the VM may burst above it.",
    "fieldname": "cpu_max_cores",
    "fieldtype": "Float",
    "label": "CPU bandwidth (cores)",
@@ -149,7 +149,7 @@
   },
   {
    "default": "Relaxed",
-   "description": "How cpu_max_cores is enforced. Relaxed (default): cpu_max_cores becomes a guaranteed share via cpu.weight (the floor under contention) and cpu.max is loosened to vcpus whole cores, so the VM bursts into spare host CPU when the host is idle. Hard cap: cpu_max_cores is a hard cgroup cpu.max ceiling — the VM never exceeds its share, even on an idle host.",
+   "description": "How cpu_max_cores is enforced. Relaxed (default): cpu_max_cores becomes a guaranteed share via cpu.weight (the floor under contention) and cpu.max is loosened to vcpus whole cores, so the VM bursts into spare host CPU when the host is idle. Hard cap: cpu_max_cores is a hard cgroup cpu.max ceiling \u2014 the VM never exceeds its share, even on an idle host.",
    "fieldname": "cpu_mode",
    "fieldtype": "Select",
    "label": "CPU mode",
@@ -233,7 +233,7 @@
    "set_only_once": 1
   },
   {
-   "description": "Internal: the bench bake mode (site or admin) of the snapshot this VM clones from. Threaded snapshot → clone → first-boot deploy so the FQDN maps to the baked site (site) or the admin console (admin). Empty for an ordinary image-backed VM, treated as site.",
+   "description": "Internal: the bench bake mode (site or admin) of the snapshot this VM clones from. Threaded snapshot \u2192 clone \u2192 first-boot deploy so the FQDN maps to the baked site (site) or the admin console (admin). Empty for an ordinary image-backed VM, treated as site.",
    "fieldname": "build_mode",
    "fieldtype": "Select",
    "hidden": 1,
@@ -284,7 +284,7 @@
   },
   {
    "default": "0",
-   "description": "Opt in: capture the VM's full memory state on stop() so the next Start resumes it in milliseconds instead of cold-booting. Restart then power-cycles back to the saved state rather than rebooting the guest. Off by default — the plain stop and cold boot remain the default path.",
+   "description": "Opt in: capture the VM's full memory state on stop() so the next Start resumes it in milliseconds instead of cold-booting. Restart then power-cycles back to the saved state rather than rebooting the guest. Off by default \u2014 the plain stop and cold boot remain the default path.",
    "fieldname": "memory_snapshot_on_stop",
    "fieldtype": "Check",
    "label": "Memory Snapshot on Stop"
@@ -400,21 +400,6 @@
    "report": 1,
    "role": "System Manager",
    "share": 1,
-   "submit": 0,
-   "write": 1
-  },
-  {
-   "amend": 0,
-   "cancel": 0,
-   "create": 1,
-   "delete": 1,
-   "export": 0,
-   "if_owner": 1,
-   "import": 0,
-   "read": 1,
-   "report": 0,
-   "role": "Atlas User",
-   "share": 0,
    "submit": 0,
    "write": 1
   }

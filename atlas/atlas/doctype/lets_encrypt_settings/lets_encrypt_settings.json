@@ -6,8 +6,7 @@
  "engine": "InnoDB",
  "field_order": [
   "acme_directory_url",
-  "account_email",
-  "agree_tos"
+  "account_email"
  ],
  "fields": [
   {
@@ -23,15 +22,7 @@
    "fieldtype": "Data",
    "label": "Account Email",
    "reqd": 1,
-   "set_only_once": 1,
    "description": "ACME account registration and expiry-notice email."
-  },
-  {
-   "default": "0",
-   "fieldname": "agree_tos",
-   "fieldtype": "Check",
-   "label": "Agree to Terms of Service",
-   "description": "Required before any certificate can be issued."
   }
  ],
  "issingle": 1,

@@ -59,6 +59,29 @@ RETRYABLE_SERVER_SCRIPTS = frozenset({"bootstrap-server.py", "reboot-server.sh",
 
 
 class Task(Document):
+	# begin: auto-generated types
+	# This code is auto-generated. Do not modify anything in this block.
+
+	from typing import TYPE_CHECKING
+
+	if TYPE_CHECKING:
+		from frappe.types import DF
+
+		duration_milliseconds: DF.Int
+		ended: DF.Datetime | None
+		exit_code: DF.Int
+		script: DF.Data
+		server: DF.Link | None
+		started: DF.Datetime | None
+		status: DF.Literal["Pending", "Running", "Success", "Failure"]
+		stderr: DF.Code | None
+		stdout: DF.Code | None
+		subject: DF.Data | None
+		triggered_by: DF.Link
+		variables: DF.LongText
+		virtual_machine: DF.Link | None
+	# end: auto-generated types
+
 	@property
 	def variables_dict(self) -> dict:
 		return json.loads(self.variables or "{}")

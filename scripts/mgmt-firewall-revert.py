@@ -2,7 +2,7 @@
 # Restore open public access: cancel the armed auto-revert, delete the inet
 # atlas_mgmt table, and remove the persisted ruleset + disable the boot unit so a
 # reboot does not re-lock. This is both the rollback path and what the armed timer's
-# effect mirrors (spec/19-tunnel.md). Runs on the Atlas host via
+# effect mirrors (spec/21-tunnel.md). Runs on the Atlas host via
 # atlas.atlas.local_task.run_local_task; nft / systemctl / rm are sudoers-pinned.
 
 import os

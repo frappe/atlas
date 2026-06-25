@@ -1,6 +1,6 @@
 """WireGuard spoke plumbing for an Atlas host — the host-side of the Central tunnel.
 
-The spoke mirror of Central's `lib/central/wireguard.py` (spec/19-tunnel.md): one
+The spoke mirror of Central's `lib/central/wireguard.py` (spec/21-tunnel.md): one
 `wg0` with exactly one peer — the Central hub. The Atlas host keeps a stable public
 IP and its `wg` listens on a public UDP port (the one thing its public firewall lets
 in, see `firewall.py`); the hub dials it, and the spoke is configured with the hub as

@@ -3,8 +3,8 @@
 Vendors register their `DnsProvider` subclass via `@register`. Callers ask for an
 instance via `for_dns_provider_type(provider_type)`, which maps the type to its
 registered implementation class. There is no `Domain Provider` DocType row to
-load: the active DNS vendor is `Route53 Settings.domain_provider_type`, and a
-`Root Domain` carries its own `domain_provider_type`.
+load: the active DNS vendor is `Atlas Settings.dns_provider_type`, and a
+`Root Domain` carries its own denormalized `dns_provider_type`.
 """
 
 from __future__ import annotations

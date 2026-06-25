@@ -374,7 +374,14 @@ class TestCLIWrapper(_ClientTestCase):
 		self.addCleanup(lambda: __import__("shutil").rmtree(empty, ignore_errors=True))
 		self.client.BENCH_SITES_DIRECTORY = str(empty)
 		self.server.responses = {
-			"list": (200, {"message": {"domains": [{"label": "stray", "fqdn": "stray.blr1.frappe.dev", "active": True}]}}),
+			"list": (
+				200,
+				{
+					"message": {
+						"domains": [{"label": "stray", "fqdn": "stray.blr1.frappe.dev", "active": True}]
+					}
+				},
+			),
 			"deregister": (200, {"message": {"status": "ok"}}),
 		}
 		self._set_config(self.base)
@@ -393,7 +400,10 @@ class TestCLIWrapper(_ClientTestCase):
 		(sites / "keep.blr1.frappe.dev").mkdir()
 		self.client.BENCH_SITES_DIRECTORY = str(sites)
 		self.server.responses = {
-			"list": (200, {"message": {"domains": [{"label": "keep", "fqdn": "keep.blr1.frappe.dev", "active": True}]}}),
+			"list": (
+				200,
+				{"message": {"domains": [{"label": "keep", "fqdn": "keep.blr1.frappe.dev", "active": True}]}},
+			),
 			"deregister": (200, {"message": {"status": "ok"}}),
 		}
 		self._set_config(self.base)

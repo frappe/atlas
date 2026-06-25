@@ -75,11 +75,16 @@ def set_atlas_settings(
 	ssh_private_key_path: str | None = None,
 	ssh_public_key: str | None = None,
 ) -> None:
-	"""Write Atlas Settings Single via set_single_value (bypasses reqd)."""
+	"""Write Atlas Settings Single via set_single_value (bypasses reqd). The
+	vendor-specific `ssh_key_id` handle lands on the active vendor's Single, not
+	Atlas Settings — mirroring get_ssh_key()."""
 	provider_type = provider.provider_type if isinstance(provider, _ProviderStub) else provider
 	frappe.db.set_single_value("Atlas Settings", "provider_type", provider_type, update_modified=False)
-	if ssh_key_id is not None:
-		frappe.db.set_single_value("Atlas Settings", "ssh_key_id", ssh_key_id, update_modified=False)
+	vendor_single = {"DigitalOcean": "DigitalOcean Settings", "Scaleway": "Scaleway Settings"}.get(
+		provider_type
+	)
+	if ssh_key_id is not None and vendor_single:
+		frappe.db.set_single_value(vendor_single, "ssh_key_id", ssh_key_id, update_modified=False)
 	if ssh_public_key is not None:
 		frappe.db.set_single_value("Atlas Settings", "ssh_public_key", ssh_public_key, update_modified=False)
 	frappe.db.set_single_value(

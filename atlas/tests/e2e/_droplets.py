@@ -16,7 +16,6 @@ from atlas.tests.e2e._config import (
 	get_region,
 	get_size,
 	get_ssh_key_id,
-	get_ssh_private_key_path,
 )
 
 
@@ -178,60 +177,20 @@ def ensure_bootstrapped_server(
 
 
 def ensure_e2e_provider() -> str:
-	"""Seed Atlas Settings.provider_type + DigitalOcean Settings + Provider Size /
-	Provider Image rows from site config. Returns the active provider_type.
-	Idempotent."""
-	import frappe.utils.password
+	"""Seed Atlas Settings + DigitalOcean Settings + the Provider Size / Image rows
+	from the E2E fixture, via the explicit Layer-1 setters. Returns the active
+	provider_type. Idempotent.
 
-	from atlas.tests.fixtures import seed_catalogs
+	This is the test-side `bootstrap.ensure_provider`: it drives `setup.run` with
+	the fixture-derived config (`_config.setup_config()`) instead of hand-writing
+	each field, so the harness exercises the same contract as production. The DO
+	setter seeds the named Provider Size / Image Links and best-effort discover()s
+	the wider catalog."""
+	from atlas import setup
+	from atlas.tests.e2e._config import setup_config
 
-	seed_catalogs()
-	provider_type = "DigitalOcean"
-
-	frappe.db.set_single_value("Atlas Settings", "provider_type", provider_type, update_modified=False)
-	frappe.db.set_single_value("Atlas Settings", "ssh_key_id", get_ssh_key_id(), update_modified=False)
-	frappe.db.set_single_value(
-		"Atlas Settings",
-		"ssh_private_key_path",
-		get_ssh_private_key_path(),
-		update_modified=False,
-	)
-
-	# DigitalOcean Settings
-	size_name = f"DigitalOcean/{get_size()}"
-	image_name = f"DigitalOcean/{get_image()}"
-	# Make sure the rows exist (seed_catalogs above seeds the known list,
-	# but the operator could be pointing at a custom slug via site config).
-	_ensure_catalog_row("Provider Size", size_name, "DigitalOcean", get_size())
-	_ensure_catalog_row("Provider Image", image_name, "DigitalOcean", get_image())
-
-	frappe.db.set_single_value("DigitalOcean Settings", "region", get_region(), update_modified=False)
-	frappe.db.set_single_value("DigitalOcean Settings", "default_size", size_name, update_modified=False)
-	frappe.db.set_single_value("DigitalOcean Settings", "default_image", image_name, update_modified=False)
-	token = frappe.conf.get("atlas_do_token")
-	if token:
-		frappe.utils.password.set_encrypted_password(
-			"DigitalOcean Settings", "DigitalOcean Settings", token, "api_token"
-		)
-
-	frappe.db.commit()
-	return provider_type
-
-
-def _ensure_catalog_row(doctype: str, name: str, provider_type: str, slug: str) -> None:
-	if frappe.db.exists(doctype, name):
-		return
-	import json
-
-	frappe.get_doc(
-		{
-			"doctype": doctype,
-			"provider_type": provider_type,
-			"slug": slug,
-			"enabled": 1,
-			"provider_metadata": json.dumps({}),
-		}
-	).insert(ignore_permissions=True)
+	setup.run(setup_config())
+	return "DigitalOcean"
 
 
 @contextmanager

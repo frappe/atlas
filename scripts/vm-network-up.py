@@ -28,6 +28,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from atlas._run import run, run_ok
+from atlas.firewall import apply_persisted_firewall
 from atlas.network_env import default_route_device, read_network_env
 from atlas.paths import VirtualMachinePaths
 from atlas.reserved_ip_nat import (
@@ -35,6 +36,7 @@ from atlas.reserved_ip_nat import (
 	apply_routed_reserved_ip_nat,
 	discover_reserved_ip_anchor,
 )
+from atlas.wireguard import apply_persisted_tunnels
 
 
 def main() -> None:
@@ -361,6 +363,18 @@ def main() -> None:
 			apply_reserved_ip_nat(anchor, ipv4_guest_address, host_veth)
 		else:
 			apply_routed_reserved_ip_nat(reserved_ipv4, ipv4_guest_address, host_veth)
+
+	# 9. Re-apply any persisted WireGuard tunnels (spec/19-vpn-broker.md). Each
+	#    terminates in this (host root) netns and routes to the VM's /128 via the
+	#    host veth, so it comes up functional only now that route exists. A VM with
+	#    no tunnels has no tunnels/ dir — a no-op.
+	apply_persisted_tunnels(VirtualMachinePaths(uuid).tunnels_directory)
+
+	# 10. Re-apply this VM's public-ingress firewall (spec/20-firewall.md), if one is
+	#     attached. Done last, after the VM's /128 route exists, so the public_filter
+	#     drop and the broad forward accept are both in place. No firewall.env (no
+	#     firewall attached) is a no-op — the VM stays fully public.
+	apply_persisted_firewall(VirtualMachinePaths(uuid).firewall_env)
 
 
 if __name__ == "__main__":

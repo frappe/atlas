@@ -29,10 +29,12 @@ keep it the source of truth.
   **pre-checks capability, billing, and quota** before it asks Atlas to act.
   Atlas stays policy-unaware — it attributes each resource to a `Tenant`
   ([02-doctypes.md § Tenant](./02-doctypes.md#tenant)) for grouping and enforces
-  only **physical capacity**. Two Atlas-local roles remain: the operator
-  (System Manager) and the legacy **Atlas User** who owns the machines they
-  create in the dashboard SPA (see [11-user-ui.md](./11-user-ui.md)); the SPA is
-  transitional and will be retired once Central fronts the user experience.
+  only **physical capacity**. Atlas is **operator/Central-facing only** (System
+  Manager): there is no end-user role or owner-scoping, and no in-app end-user
+  UI. The frappe-ui dashboard SPA and the self-serve signup on-ramp (and their
+  `Atlas User` role) were retired now that Central fronts the user experience and
+  drives site/VM creation via `create_site` / `create_vm`
+  (see [11-user-ui.md](./11-user-ui.md), [14-self-serve.md](./14-self-serve.md)).
 - No CLI. We will build one later on top of the same Frappe APIs.
 - No private networking between VMs, no overlay. No inbound IPv4 to the
   guest and no per-VM public IPv4 (outbound v4 is via host NAT44).
@@ -55,41 +57,37 @@ keep it the source of truth.
   and are never operator-facing artifacts or transportable between hosts.
   (Disk snapshots — instant copy-on-write LVM thin snapshots of the VM's
   disk — are supported; same doc.)
-- No autoscaling or scheduling. The operator picks the server in Desk; a user
-  creating a machine in the SPA gets the first Active server with room (a
+- No autoscaling or scheduling. The operator picks the server in Desk; an
+  owner-scoped user creating a machine gets the first Active server with room (a
   default, not a scheduler — see [11-user-ui.md](./11-user-ui.md)). "Room" is
   oversubscribable: a host's effective vCPU budget is its physical total times
   `Atlas Settings.overprovision_factor` (default 1), and a host whose size we
   can't price counts as unlimited.
 - No metrics or alerting. `journalctl` is enough.
-- Two UIs, two audiences. **Operators** use Desk (`/app/atlas`) — the whole
-  fleet, providers, servers, image sync, ad-hoc tasks. **Users** use a small
-  frappe-ui SPA at `/dashboard` that exposes only their own Virtual Machines,
-  Images (read-only, shared), and Snapshots; Server, Task, and the Settings
-  Singles are invisible and access-denied to them. The SPA defines no new server-side
-  logic or API — it drives the existing whitelisted methods through standard
-  Frappe endpoints. See [11-user-ui.md](./11-user-ui.md). (Earlier iterations
-  said "no web UI of our own; Desk is the UI" — that held for the operator-only
-  PoC; the user SPA is the deliberate, scoped reversal documented in 11.)
+- One in-app UI, one audience. **Operators** use Desk (`/app/atlas`) — the whole
+  fleet, providers, servers, image sync, ad-hoc tasks. There is no end-user
+  audience in Atlas: the frappe-ui `/dashboard` SPA and the self-serve signup
+  on-ramp (and the `Atlas User` role + owner-scoping they relied on) were
+  **retired** now that Central is the front door. See
+  [11-user-ui.md](./11-user-ui.md).
 - **Central is the front door.** Above Atlas sits **Central**
   ([16-central.md](./16-central.md)) — the global control plane that owns
   identity, teams, and billing and is the face of all customer actions. Central
   drives a regional Atlas by **logging in as a single service user and calling
-  the same whitelisted methods** the SPA does, passing the target `Tenant` in
-  the request payload. Atlas exposes no separate command API; Central is just an
-  authenticated client of the existing Frappe endpoints. The operator Desk and
-  the user SPA continue to work; the SPA is on a path to retirement as Central's
-  own console takes over the user surface.
+  whitelisted methods**: the lifecycle methods, plus the dedicated
+  `create_vm` / `create_site` endpoints that get-or-create the `Tenant` and insert
+  the resource. Atlas exposes no separate command API; Central is just an
+  authenticated client of the existing Frappe endpoints. The operator Desk
+  continues to work; Central's console is the customer-facing surface.
 
 ## Operating principles
 
-1. **Desk is the operator UI; the SPA is the user UI.** Every *operator*
-   operation is a DocType, a button on a DocType, or a server method on a
-   DocType, rendered in Desk — no custom operator pages. *Users* get a
-   separate frappe-ui SPA at `/dashboard` ([11-user-ui.md](./11-user-ui.md))
-   that is a thin client over those same DocTypes and whitelisted methods: it
-   adds no server-side logic and no API of its own, and it is scoped by
-   permissions to the user's own resources.
+1. **Desk is the operator UI.** Every *operator* operation is a DocType, a
+   button on a DocType, or a server method on a DocType, rendered in Desk — no
+   custom operator pages. There is no end-user UI in Atlas: Central is the
+   customer-facing front door ([11-user-ui.md](./11-user-ui.md),
+   [16-central.md](./16-central.md)), driving creation via `create_vm` /
+   `create_site` and reading state back via events / polls.
 2. **The Frappe site is the source of truth.** A server is a cache; we can
    rebuild its on-disk state from the Frappe database. We do not scrape state
    back from the server.
@@ -99,8 +97,8 @@ keep it the source of truth.
    line out); a couple of trivial shell scripts (e.g. `reboot-server.sh`)
    remain. See [04-tasks.md](./04-tasks.md).
 4. **One virtual machine per server slot.** The operator picks the server
-   when provisioning in Desk. No scheduler. A *user* creating a machine in the
-   SPA does not pick a server — the controller fills the first Active server
+   when provisioning in Desk. No scheduler. An owner-scoped *user* creating a
+   machine does not pick a server — the controller fills the first Active server
    with room and the default image ([11-user-ui.md](./11-user-ui.md),
    `placement.py`); the operator still owns which servers are Active. That is a
    default, not a scheduler.
@@ -128,7 +126,7 @@ keep it the source of truth.
 8. [Images](./08-images.md)
 9. [Roadmap and deferred decisions](./09-roadmap.md)
 10. [Desk UI (operator)](./10-desk-ui.md)
-11. [User UI — the dashboard SPA](./11-user-ui.md)
+11. [User UI — the owner-scoped end-user boundary](./11-user-ui.md)
 12. [The reverse proxy](./12-proxy.md)
 13. [TLS & domain layer](./13-tls.md)
 14. [Self-serve sites](./14-self-serve.md)
@@ -136,21 +134,46 @@ keep it the source of truth.
 16. [Central — the global control plane](./16-central.md)
 17. [The TCP proxy](./17-tcp-proxy.md)
 18. [Self-service subdomain routing (bench-admin sites)](./18-bench-self-routing.md)
-19. [The Central-managed tunnel (management-plane lockdown)](./19-tunnel.md)
+19. [The VPN broker (WireGuard tunnels)](./19-vpn-broker.md)
+20. [The per-VM public firewall](./20-firewall.md)
+21. [The Central-managed tunnel (management-plane lockdown)](./21-tunnel.md)
 
 ## First run on a fresh site
 
-The operator-visible setup order on the desk is:
+Configuration is the **explicit setup contract** in
+[`atlas/setup.py`](../atlas/setup.py): one typed entry point that writes every
+value Atlas needs (the Settings Singles, the `Root Domain`) and **never reads
+`frappe.conf` at runtime**. It has three front-ends, all driving the same
+Layer-1 `setup()` setters:
 
-1. **Atlas Settings** — the active `provider_type` (the vendor this
-   instance provisions through), the active `tls_provider_type`, and the
-   SSH key (fingerprint, public key, on-disk path).
-2. **Per-vendor Settings** (e.g. `DigitalOcean Settings`) — API token,
-   region, default size + image. Skip for `Self-Managed`.
-3. **Server** — provisioned by clicking **Provision Server** on
+- The **Frappe Setup Wizard** — the operator-facing first-run path. On a fresh
+  site the wizard collects the provider type, SSH key, region, vendor
+  credentials, and the optional TLS block, then `setup.get_setup_stages`
+  applies them (`atlas/public/js/setup_wizard.js` + the `setup_wizard_*` hooks).
+  A **Test Connection** button (`setup.wizard_discover`) probes the vendor with
+  the just-typed credentials and turns the slug boxes into pick-lists before
+  anything is saved.
+- `setup.run(config)` — the scripted path: a plain `{provider, tls?}` dict, one
+  JSON document per environment. CI / E2E / fast-deploy call this.
+- `setup.from_site_config()` — the **back-compat adapter** that reads the legacy
+  `atlas_*` site-config keys one place and builds the `config` dict. Existing
+  benches keep their keys; the `seed_settings_from_site_config` patch reads them
+  once at `bench migrate` and seeds the Singles, after which they are no longer
+  read. New benches use the wizard or `setup.run` — they do **not** set
+  `atlas_*` keys.
+
+`setup.run` only **configures**; it never provisions, bakes, or issues (a
+re-runnable config step must not strand billable infra). After config, the
+operator-visible build order on the desk is:
+
+1. **Atlas Settings / per-vendor Settings** — already populated by the wizard
+   (or `setup.run`): active `provider_type`, the SSH key, region, and the
+   vendor's API token / `ssh_key_id` / default size + image (skip the vendor
+   Single for `Self-Managed`).
+2. **Server** — provisioned by clicking **Provision Server** on
    **Atlas Settings**.
-4. **Virtual Machine Image** — the kernel + rootfs pair to install.
-5. **Virtual Machine** — created against a Server and an Image, then
+3. **Virtual Machine Image** — the kernel + rootfs pair to install.
+4. **Virtual Machine** — created against a Server and an Image, then
    **Provision**ed.
 
 To skip the clicking and stand up server → image → VM in one
@@ -160,21 +183,22 @@ shot, run [`atlas/bootstrap.py`](../atlas/bootstrap.py):
 bench --site <site> execute atlas.bootstrap.run
 ```
 
-It reads everything from site config (`atlas_provider_type`,
-`atlas_do_token`, `atlas_ssh_key_id`, …), populates Atlas Settings
-and the matching per-vendor Single, seeds the `Provider Size` /
-`Provider Image` catalogs, and uses only the same whitelisted methods
-the desk buttons call. Requires a `bench worker` running because
-`provision_server` and `sync_to_server` both enqueue background jobs.
-The file's docstring lists every config key.
+`bootstrap.run` is the scripted config-plus-provisioning path: it calls
+`setup.from_site_config()` → `setup.run()` to configure (reading the `atlas_*`
+keys), then layers the provisioning on top — provisions a Server, seeds the
+`Provider Size` / `Provider Image` catalogs, registers + syncs the base image,
+and provisions one VM, using only the whitelisted methods the desk buttons
+call. Requires a `bench worker` running because `provision_server` and
+`sync_to_server` both enqueue background jobs. The file's docstring lists every
+`atlas_*` config key.
 
 To put a site behind a real cert, layer the proxy ([12-proxy.md](./12-proxy.md))
 and TLS ([13-tls.md](./13-tls.md)) setup on top:
 
-6. **Route53 Settings** — the DNS account (DNS-01); pick the
-   `domain_provider_type` (`Route53`).
+6. **Route53 Settings** — the DNS account (DNS-01); pick the active DNS vendor
+   on `Atlas Settings.dns_provider_type` (`Route53`).
 7. **Lets Encrypt Settings** — the ACME account (directory URL, account
-   email, agree-to-ToS); the active issuer is `Atlas Settings.tls_provider_type`.
+   email); the active issuer is `Atlas Settings.tls_provider_type`.
 8. **Root Domain** — one row per region (`<region>.frappe.dev`, `region`);
    click **Issue / Renew Certificate** to issue the regional wildcard and push
    it onto every proxy VM in the region. The domain/TLS vendor types are
@@ -189,8 +213,8 @@ bench --site <site> execute atlas.bootstrap.run_with_proxy
 
 `run_with_proxy` is `run` plus the TLS tail: it does the compute bootstrap, then
 — only if the `atlas_tls_domain` + Route 53 + ACME config keys are present —
-writes the domain/TLS vendor types (`Atlas Settings.tls_provider_type`,
-`Route53 Settings.domain_provider_type`), the two per-vendor Settings, and the
+writes the DNS/TLS vendor types (`Atlas Settings.dns_provider_type`,
+`Atlas Settings.tls_provider_type`), the two per-vendor Settings, and the
 `Root Domain` row, then issues the regional wildcard (defaulting to
 Let's Encrypt **staging** so an unattended run never burns production quota; set
 `atlas_acme_directory_url` for a trusted cert). Absent those keys it skips the
@@ -221,6 +245,7 @@ operator-facing features add to this list; new tests follow it.
 | Manage a VM's disk and size    | `Virtual Machine` → **Snapshot / Rebuild / Resize**; `Virtual Machine Snapshot` → **Restore to VM / Clone to new VM / Delete** | [05-virtual-machine-lifecycle.md](./05-virtual-machine-lifecycle.md) |
 | Promote a snapshot to an image | `Virtual Machine Snapshot` → **Promote to image** (or `Image Build` → **Promote to image**): same-server base image new VMs pick via the `image` field | [08-images.md](./08-images.md#two-origins-for-a-base-image-a-url-or-a-snapshot-promote) |
 | Attach a public IPv4 to a VM   | `Reserved IP` → **Attach / Detach** (the inbound-v4 primitive: DNAT in, SNAT out) | [06-networking.md](./06-networking.md#ipv4-ingress-reserved-ip) |
+| Broker a VPN tunnel to a VM    | (user/Central-driven) `request_tunnel` / `revoke` provisions a host-terminated WireGuard tunnel scoped to the owner's one VM | [19-vpn-broker.md](./19-vpn-broker.md) |
 | Issue a TLS cert for a region  | `Root Domain` → **Issue / Renew Certificate**; `TLS Certificate` → **Issue/Renew / Push to Proxies**; `Route53 Settings` / `Lets Encrypt Settings` → **Test Connection** | [13-tls.md](./13-tls.md) |
 | Route guest-created bench sites | (guest-driven, no operator action) the in-guest `atlas-route register`/`deregister`/`list` POSTs reserve/remove a `Subdomain` the controller arbitrates (uniqueness, brand denylist, per-VM cap, own-VM scoping by source `/128`); every call audited; `terminate()` is the only controller-side teardown | [18-bench-self-routing.md](./18-bench-self-routing.md) |
 | Run an ad-hoc task / reboot    | `Server` → **Run Task / Reboot**                        | [04-tasks.md](./04-tasks.md) |
@@ -384,7 +409,7 @@ certbot-dns-route53, openssl, boto3) and fails its preflight with a clear
 message if they are absent.
 
 The **self-serve site** use case (`self_serve_site.run_smoke`) is the
-superset of all of the above: it drives the real signup → email-verify →
+superset of all of the above: it drives the real `create_site` →
 golden-image site VM → deploy → HTTP 200 → subdomain → off-droplet HTTPS
 flow on **both IPv4 and IPv6**. It reuses `proxy_vm`'s proxy + reserved-IP
 helpers, `tls_issuance`'s real LE-staging producer chain, and `bench_image`'s
@@ -392,8 +417,8 @@ golden-snapshot bake, so it has the same preconditions (the `atlas_tls_*`
 config keys + controller-host deps) and skips cleanly on a bare site. It
 needs a golden bench snapshot: it uses `Atlas Settings.default_bench_snapshot`
 if set + Available, else bakes one inline before any billable site provision.
-It also asserts the **Contract-C negative** on the real path — an unverified
-`Site Request` provisions no Site and no VM. Like `tls_issuance`, it is
+It also asserts the mirror row Central reflects and the `Tenant` stamp on the
+real path. Like `tls_issuance`, it is
 invoked directly (not folded into `run_all_smoke`); its `auto_provision`
 chain is driven by the **background worker** (the same worker the VM
 provisioning e2e relies on), so the worker must be up. It also rides the
@@ -426,3 +451,14 @@ by hand (the DO account also hosts production).
 `_shared.py` re-export shim) under [`atlas/tests/e2e/`](../atlas/tests/e2e)
 are the substrate. Add helpers there when at least two use cases would
 benefit; single-use helpers stay private to their module.
+
+Every e2e input — DO/Scaleway credentials, the SSH key, the TLS account, the
+test region/size/image — comes from **one explicit JSON fixture**, not
+`frappe.conf`. Its path is `$ATLAS_E2E_CONFIG` (default
+`~/.cache/atlas-e2e/config.json`); fill it once per dev box. This is the
+test-side mirror of `setup.run(config)`: the harness drives the same explicit
+contract instead of reading site config, and `bootstrap.restore_credentials`
+re-applies this fixture through the same Layer-1 setters. A missing file or
+absent required key raises `MissingConfig` naming what to add, so a fixture
+without a `tls` / `scaleway` block skips that e2e cleanly. The fixture shape is
+documented in [`_config.py`](../atlas/tests/e2e/_config.py).

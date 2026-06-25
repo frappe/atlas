@@ -16,15 +16,42 @@ IMMUTABLE_AFTER_INSERT = ("domain", "region")
 
 
 class RootDomain(Document):
+	# begin: auto-generated types
+	# This code is auto-generated. Do not modify anything in this block.
+
+	from typing import TYPE_CHECKING
+
+	if TYPE_CHECKING:
+		from frappe.types import DF
+
+		dns_provider_type: DF.Literal["", "Route53", "Cloudflare"]
+		domain: DF.Data
+		is_active: DF.Check
+		region: DF.Data | None
+		tls_provider_type: DF.Literal["", "Let's Encrypt", "ZeroSSL", "Self-Managed"]
+	# end: auto-generated types
+
 	def before_insert(self) -> None:
+		self._denormalize_region()
 		self._denormalize_provider_types()
+
+	def _denormalize_region(self) -> None:
+		"""Freeze this Atlas's region (`Atlas Settings.region`, the single source of
+		truth) onto the row, so a later instance-region change never re-points an
+		existing domain's proxy-fleet join key. The operator does not type it; an
+		explicit value (a migration backfill, or a test) is honoured. Mirrors
+		`_denormalize_provider_types`."""
+		if not self.region:
+			from atlas.atlas.placement import atlas_region
+
+			self.region = atlas_region()
 
 	def _denormalize_provider_types(self) -> None:
 		"""Freeze the active DNS / TLS vendor types onto the row, so a later vendor
 		switch on the Settings singles never re-points an existing region's issuance.
 		Mirrors `Server.provider_type`."""
-		if not self.domain_provider_type:
-			self.domain_provider_type = frappe.db.get_single_value("Route53 Settings", "domain_provider_type")
+		if not self.dns_provider_type:
+			self.dns_provider_type = frappe.db.get_single_value("Atlas Settings", "dns_provider_type")
 		if not self.tls_provider_type:
 			self.tls_provider_type = frappe.db.get_single_value("Atlas Settings", "tls_provider_type")
 
@@ -39,8 +66,8 @@ class RootDomain(Document):
 		blank means they were never configured."""
 		from frappe import _
 
-		if not self.domain_provider_type:
-			frappe.throw(_("Set Route53 Settings.domain_provider_type before creating a Root Domain"))
+		if not self.dns_provider_type:
+			frappe.throw(_("Set Atlas Settings.dns_provider_type before creating a Root Domain"))
 		if not self.tls_provider_type:
 			frappe.throw(_("Set Atlas Settings.tls_provider_type before creating a Root Domain"))
 

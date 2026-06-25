@@ -20,6 +20,23 @@ DEFAULT_PORT_POOL = "10000-19999"
 
 
 class PortMapping(Document):
+	# begin: auto-generated types
+	# This code is auto-generated. Do not modify anything in this block.
+
+	from typing import TYPE_CHECKING
+
+	if TYPE_CHECKING:
+		from frappe.types import DF
+
+		active: DF.Check
+		address: DF.Data
+		protocol: DF.Literal["tcp", "ssh", "mariadb"]
+		public_port: DF.Int
+		region: DF.Data
+		target_port: DF.Int
+		virtual_machine: DF.Link
+	# end: auto-generated types
+
 	def before_insert(self) -> None:
 		"""Allocate the public port: the lowest port in the region's pool not
 		already held by an active OR inactive mapping in the region. Runs before

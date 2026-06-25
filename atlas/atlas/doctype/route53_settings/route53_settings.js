@@ -1,5 +1,6 @@
-// Route53 Settings — Single. Holds the active DNS vendor type + credentials,
-// and the Test Connection button the deleted Domain Provider form used to own.
+// Route53 Settings — Single. Holds the Route 53 credentials, and the Test
+// Connection button the deleted Domain Provider form used to own. The active DNS
+// vendor type lives on Atlas Settings (dns_provider_type).
 
 frappe.ui.form.on("Route53 Settings", {
 	refresh(frm) {
@@ -11,7 +12,7 @@ function run_test_connection(frm) {
 	frappe.show_alert({ message: __("Testing connection…"), indicator: "blue" });
 	frm.call("test_connection").then(({ message }) => {
 		if (message.ok) {
-			const label = message.account_label || frm.doc.domain_provider_type;
+			const label = message.account_label || "Route 53";
 			frappe.show_alert({ message: __("OK: {0}", [label]), indicator: "green" });
 		} else {
 			frappe.show_alert({
