@@ -28,6 +28,39 @@ def _expected_fingerprint(public_key: str) -> str:
 	return f"SHA256:{digest}"
 
 
+# Shared test-user helpers. The end-user `Atlas User` role + owner-scoping were
+# retired from the app (Central is the front door), but the firewall + VPN-broker
+# tests still need a non-operator (non-System-Manager) user that *owns* a VM to
+# exercise owner-scoped access — so these recreate that role as a test fixture.
+def _ensure_atlas_user_role() -> None:
+	if not frappe.db.exists("Role", "Atlas User"):
+		frappe.get_doc({"doctype": "Role", "role_name": "Atlas User", "desk_access": 0}).insert(
+			ignore_permissions=True
+		)
+
+
+def _make_user(email: str, *, role: str | None) -> str:
+	if frappe.db.exists("User", email):
+		user = frappe.get_doc("User", email)
+	else:
+		user = frappe.get_doc(
+			{
+				"doctype": "User",
+				"email": email,
+				"first_name": "SSH",
+				"last_name": "Key",
+				"send_welcome_email": 0,
+				"enabled": 1,
+			}
+		).insert(ignore_permissions=True)
+	for role_row in list(user.get("roles") or []):
+		user.remove(role_row)
+	if role:
+		user.append("roles", {"role": role})
+	user.save(ignore_permissions=True)
+	return user.name
+
+
 class TestSSHKeyValidation(IntegrationTestCase):
 	def test_pure_fingerprint_helper(self) -> None:
 		self.assertEqual(fingerprint(VALID_KEY), _expected_fingerprint(VALID_KEY))
