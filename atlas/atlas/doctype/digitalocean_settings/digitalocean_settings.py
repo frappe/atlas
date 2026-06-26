@@ -1,7 +1,6 @@
 import dataclasses
 
 import frappe
-import frappe.utils.password
 from frappe.model.document import Document
 
 from atlas.atlas.setup_catalog import ensure_provider_image, ensure_provider_size
@@ -46,23 +45,20 @@ class DigitalOceanSettings(Document):
 		by querying the DO account for a matching public key and uploading one if absent,
 		then caching the id here for subsequent provisions.
 
-		Writes via `set_single_value` / `set_encrypted_password` (NOT `doc.save()`) so
-		it stays re-runnable."""
+		Writes through `doc.save()` so every field — the `api_token` Password included —
+		goes through the normal ORM path: `_save_passwords` encrypts the token into
+		`__Auth` AND stamps the field placeholder, so the desk form shows it as set.
+		Idempotent: re-running just overwrites the Single."""
 		ensure_provider_size("DigitalOcean", default_size)
 		ensure_provider_image("DigitalOcean", default_image)
 
-		frappe.db.set_single_value("DigitalOcean Settings", "region", region, update_modified=False)
-		frappe.db.set_single_value(
-			"DigitalOcean Settings", "default_size", f"DigitalOcean/{default_size}", update_modified=False
-		)
-		frappe.db.set_single_value(
-			"DigitalOcean Settings", "default_image", f"DigitalOcean/{default_image}", update_modified=False
-		)
+		self.region = region
+		self.default_size = f"DigitalOcean/{default_size}"
+		self.default_image = f"DigitalOcean/{default_image}"
 		if ssh_key_id:
-			frappe.db.set_single_value("DigitalOcean Settings", "ssh_key_id", ssh_key_id, update_modified=False)
-		frappe.utils.password.set_encrypted_password(
-			"DigitalOcean Settings", "DigitalOcean Settings", api_token, "api_token"
-		)
+			self.ssh_key_id = ssh_key_id
+		self.api_token = api_token
+		self.save(ignore_permissions=True)
 
 		# Seed the wider catalog so the Refresh Catalog button starts from real data,
 		# not just the named slugs. Best-effort — same as bootstrap (DO's discover is

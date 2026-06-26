@@ -1,7 +1,6 @@
 import dataclasses
 
 import frappe
-import frappe.utils.password
 from frappe import _
 from frappe.model.document import Document
 
@@ -54,22 +53,31 @@ class ScalewaySettings(Document):
 		The IAM SSH key is uploaded at provision time, so `ssh_key_id` is optional: the
 		provider registers `Atlas Settings.ssh_public_key` with IAM if it is unset.
 
-		Writes via `set_single_value` / `set_encrypted_password` (NOT `doc.save()`)."""
+		Writes through `doc.save()` so the `secret_key` Password goes through the normal
+		ORM path (`_save_passwords` encrypts to `__Auth` AND stamps the field placeholder,
+		so the desk form shows it as set). Two saves bracket the load-bearing discover:
+		the first persists the creds/zone the discover authenticates with; the second sets
+		the default Links once the discovered catalog rows exist. The first save sets
+		`ignore_mandatory` because the `reqd` default Links can't exist until the discover
+		below has run; the second save validates them fully. The second save re-runs
+		`_save_passwords`, but `secret_key` is now the dummy placeholder, so it leaves
+		`__Auth` untouched (the encrypted secret survives)."""
 		from atlas.atlas.providers.scaleway import ScalewayProvider
 		from atlas.atlas.provisioning import upsert_catalog
 
-		frappe.db.set_single_value("Scaleway Settings", "zone", zone, update_modified=False)
-		frappe.db.set_single_value("Scaleway Settings", "project_id", project_id, update_modified=False)
+		self.zone = zone
+		self.project_id = project_id
 		if organization_id:
-			frappe.db.set_single_value(
-				"Scaleway Settings", "organization_id", organization_id, update_modified=False
-			)
-		frappe.db.set_single_value("Scaleway Settings", "billing", billing or "hourly", update_modified=False)
+			self.organization_id = organization_id
+		self.billing = billing or "hourly"
 		if ssh_key_id:
-			frappe.db.set_single_value("Scaleway Settings", "ssh_key_id", ssh_key_id, update_modified=False)
-		frappe.utils.password.set_encrypted_password(
-			"Scaleway Settings", "Scaleway Settings", secret_key, "secret_key"
-		)
+			self.ssh_key_id = ssh_key_id
+		self.secret_key = secret_key
+		# The reqd default Links aren't known until the discover() below — skip mandatory
+		# on this creds-only save; the second save validates them.
+		self.flags.ignore_mandatory = True
+		self.save(ignore_permissions=True)
+		self.flags.ignore_mandatory = False
 		# Persist the creds/zone the discover() below reads before the default Links.
 		# nosemgrep: frappe-manual-commit -- setup setter: discover() authenticates with the secret_key just written; commit so it (and any retry) reads it.
 		frappe.db.commit()
@@ -96,8 +104,9 @@ class ScalewaySettings(Document):
 					"live zone OS list (casing matters, e.g. Ubuntu_24.04)."
 				).format(image_name)
 			)
-		frappe.db.set_single_value("Scaleway Settings", "default_size", size_name, update_modified=False)
-		frappe.db.set_single_value("Scaleway Settings", "default_image", image_name, update_modified=False)
+		self.default_size = size_name
+		self.default_image = image_name
+		self.save(ignore_permissions=True)
 
 	@frappe.whitelist()
 	def test_connection(self) -> dict:
