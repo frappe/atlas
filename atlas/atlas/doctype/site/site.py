@@ -271,6 +271,18 @@ def auto_provision(site_name: str) -> None:
 	site = frappe.get_doc("Site", site_name)
 	if site.status != "Pending":
 		return
+	# Developer-mode short-circuit: a laptop has no Firecracker/KVM host, so the
+	# real clone→boot→deploy→HTTP chain can't complete (the Fake provider's VMs
+	# carry documentation IPs that never serve). In developer_mode we skip straight
+	# to the tenant handoff — stamp the shared baked Administrator password and mark
+	# the site Running — so the Central self-serve flow is testable end-to-end
+	# locally. The same `_set_status` path the real flow uses, so Central's
+	# `site.status_changed` event + `get_site` poll see Running identically. Never
+	# fires in production (developer_mode off).
+	if frappe.conf.developer_mode:
+		site.db_set("admin_password", BAKED_ADMIN_PASSWORD)
+		_set_status(site, "Running")
+		return
 	# Per-stage wall-clock trace, printed to the job log (and the bench `worker`
 	# console) so the whole provision can be followed live and the slow stage
 	# pinpointed — `_stage` logs the prior stage's duration as the next begins.
