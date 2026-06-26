@@ -51,6 +51,33 @@ def create_site(
 
 
 @frappe.whitelist()
+def check_subdomain(subdomain: str, region: str | None = None) -> dict:
+	"""Best-effort availability pre-check for Central's signup form.
+
+	Wraps the shared Contract-A rules (`atlas.atlas.subdomain_label`) so Central
+	can tell a user "taken" / "reserved" / "bad shape" before it calls
+	`create_site` — the authoritative uniqueness still lives in the `Site` FQDN
+	key at insert. Returns the resolved `fqdn`/`domain` so Central renders the real
+	suffix (never guesses `.frappe.cloud`). Operator-authorized (Central token)."""
+	from atlas.atlas import subdomain_label
+	from atlas.atlas.placement import active_root_domain
+
+	domain = active_root_domain().domain
+	label = subdomain_label.normalize(subdomain)
+	try:
+		subdomain_label.validate_label(label)
+		subdomain_label.validate_reserved(label)
+	except frappe.ValidationError as exc:
+		return {"available": False, "reason": str(exc), "fqdn": None, "domain": domain}
+
+	fqdn = f"{label}.{domain}"
+	if subdomain_label.is_taken(label):
+		return {"available": False, "reason": f"{fqdn} is already taken", "fqdn": fqdn, "domain": domain}
+
+	return {"available": True, "reason": None, "fqdn": fqdn, "domain": domain}
+
+
+@frappe.whitelist()
 def get_site(name: str) -> dict:
 	"""Return the current state of a site so Central can poll for progress.
 
