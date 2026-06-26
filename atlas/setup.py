@@ -353,10 +353,14 @@ def _truthy(value: object) -> bool:
 def wizard_discover(provider_type: str, credentials: dict | str | None = None) -> dict:
 	"""Probe the vendor with the credentials the operator JUST TYPED (not yet saved)
 	and return its live catalog, so the wizard can turn free-text slug boxes into
-	pick-lists and show a connection result — BEFORE Complete Setup writes anything.
+	pick-lists and show a connection result.
 
 	Talks to the vendor *client* directly with the ad-hoc creds rather than the
-	Provider (which reads the saved Singles). Returns a plain dict:
+	Provider (which reads the saved Singles). On a SUCCESSFUL probe it also upserts
+	the catalog into Provider Size / Provider Image (via `_persist_catalog`, the same
+	`upsert_catalog` the desk Refresh Catalog button drives) — so the rows exist the
+	moment Test Connection goes green, not only after a later Refresh. The vendor
+	Singles are still untouched until Complete Setup. Returns a plain dict:
 
 	    {"ok": bool, "account_label": str|None, "error": str|None,
 	     "sizes":  [{"value","label"}], "images": [{"value","label"}],
@@ -387,8 +391,24 @@ def wizard_discover(provider_type: str, credentials: dict | str | None = None) -
 	}
 
 
+def _persist_catalog(provider_type: str, sizes, images) -> None:
+	"""Upsert the discovered catalog into Provider Size / Provider Image at Test
+	Connection time, reusing the same `upsert_catalog` the desk Refresh Catalog
+	button drives. Best-effort: a write hiccup must NOT turn a successful probe into
+	a red toast, so swallow + log rather than propagate (this whole path never
+	tracebacks at the operator)."""
+	from atlas.atlas import provisioning
+	from atlas.atlas.providers.base import Capabilities
+
+	try:
+		provisioning.upsert_catalog(provider_type, Capabilities(sizes=tuple(sizes), images=tuple(images)))
+	except Exception:
+		frappe.log_error(title=f"wizard_discover catalog upsert ({provider_type})")
+
+
 def _discover_digitalocean(credentials: dict) -> dict:
 	from atlas.atlas.digitalocean import DigitalOceanClient
+	from atlas.atlas.providers.base import ImageInfo, SizeInfo
 	from atlas.atlas.providers.digitalocean import (
 		DIGITALOCEAN_MONTHLY_COST_USD,
 		KNOWN_DIGITALOCEAN_IMAGES,
@@ -424,6 +444,16 @@ def _discover_digitalocean(credentials: dict) -> dict:
 		result["error"] = str(exception)
 		return result
 	result["ok"] = True
+	# Credentials check out — persist the catalog now (the lists above are static DO
+	# constants, valid regardless of the token; the auth gate just earned the write).
+	_persist_catalog(
+		"DigitalOcean",
+		[
+			SizeInfo(slug=slug, monthly_cost_usd=DIGITALOCEAN_MONTHLY_COST_USD.get(slug))
+			for slug in KNOWN_DIGITALOCEAN_SIZES
+		],
+		[ImageInfo(slug=slug) for slug in KNOWN_DIGITALOCEAN_IMAGES],
+	)
 	rate = (
 		f" · {auth['rate_remaining']}/{auth['rate_limit']} API calls left"
 		if auth.get("rate_remaining") is not None
@@ -461,13 +491,10 @@ def _discover_scaleway(credentials: dict) -> dict:
 			{"value": project["id"], "label": project.get("name") or project["id"]}
 			for project in client.list_projects(organization_id)
 		]
-		result["sizes"] = [
-			_size_label_dict(_size_from_offer(offer))
-			for offer in client.list_offers(subscription_period=billing)
-		]
-		result["images"] = [
-			{"value": img.slug, "label": img.slug} for img in map(_image_from_os, client.list_os())
-		]
+		sizes = [_size_from_offer(offer) for offer in client.list_offers(subscription_period=billing)]
+		images = [_image_from_os(os_image) for os_image in client.list_os()]
+		result["sizes"] = [_size_label_dict(size) for size in sizes]
+		result["images"] = [{"value": img.slug, "label": img.slug} for img in images]
 		if project_id:
 			result["ssh_keys"] = [
 				{"value": key["id"], "label": key.get("name") or key["id"]}
@@ -477,6 +504,8 @@ def _discover_scaleway(credentials: dict) -> dict:
 		result["error"] = str(exception)
 		return result
 	result["ok"] = True
+	# Live catalog verified — persist it (mirrors the desk Refresh Catalog button).
+	_persist_catalog("Scaleway", sizes, images)
 	result["account_label"] = auth.get("account_label") or _("Scaleway")
 	return result
 

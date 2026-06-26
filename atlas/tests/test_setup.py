@@ -327,6 +327,11 @@ class TestWizardDiscover(IntegrationTestCase):
 	for the slide pick-lists. The clients are mocked (no network); we assert the auth
 	gate, the slug→option mapping, and that failures come back as a toast, not a raise."""
 
+	def setUp(self) -> None:
+		# A successful probe now upserts Provider Size / Provider Image rows; clean them
+		# up so the persisted catalog never leaks between tests.
+		self.addCleanup(_cleanup)
+
 	def test_digitalocean_returns_constant_catalog_after_auth(self) -> None:
 		fake_client = MagicMock()
 		fake_client.verify_credentials.return_value = {
@@ -341,6 +346,9 @@ class TestWizardDiscover(IntegrationTestCase):
 		# DO's catalog is hand-maintained constants — sizes/images come back regardless.
 		self.assertIn("s-2vcpu-4gb-intel", [s["value"] for s in result["sizes"]])
 		self.assertIn("ubuntu-24-04-x64", [i["value"] for i in result["images"]])
+		# A green probe also persists the catalog (no later Refresh needed).
+		self.assertTrue(frappe.db.exists("Provider Size", "DigitalOcean/s-2vcpu-4gb-intel"))
+		self.assertTrue(frappe.db.exists("Provider Image", "DigitalOcean/ubuntu-24-04-x64"))
 
 	def test_digitalocean_without_token_is_not_ok(self) -> None:
 		result = setup.wizard_discover("DigitalOcean", {})
@@ -376,6 +384,9 @@ class TestWizardDiscover(IntegrationTestCase):
 		self.assertIn(SCW_SIZE, [s["value"] for s in result["sizes"]])
 		self.assertIn(SCW_IMAGE, [i["value"] for i in result["images"]])
 		self.assertEqual([k["value"] for k in result["ssh_keys"]], ["key-uuid"])
+		# The verified live catalog is persisted to Provider Size / Provider Image.
+		self.assertTrue(frappe.db.exists("Provider Size", f"Scaleway/{SCW_SIZE}"))
+		self.assertTrue(frappe.db.exists("Provider Image", f"Scaleway/{SCW_IMAGE}"))
 
 	def test_scaleway_without_secret_is_not_ok(self) -> None:
 		result = setup.wizard_discover("Scaleway", {"zone": "fr-par-2"})
