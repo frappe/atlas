@@ -309,13 +309,14 @@ def main() -> None:
 
 	# 3B Install SSHPiper + Plugin (version-gated).
 	_install_sshpiper(inputs.sshpiper_version, inputs.architecture)
-	sshpiper_envvars = f"""
-	ATLAS_URL="{inputs.atlas_url}"
-	SSHPIPER_LOOKUP_SERVER="{inputs.sshpiper_lookup_server}"
-	SSHPIPER_API_KEY="{inputs.sshpiper_api_key}"
-	"""
-	install_file(sshpiper_envvars, "/etc/default/sshpiper", mode="0644")
-	run("sudo", "systemctl", "enable", "sshpiper.service", check=False, quiet=True)
+	sshpiper_envvars = (
+		f'ATLAS_URL="{inputs.atlas_url}"\n'
+		f'SSHPIPER_LOOKUP_SERVER="{inputs.sshpiper_lookup_server}"\n'
+		f'SSHPIPER_API_KEY="{inputs.sshpiper_api_key}"\n'
+	)
+	install_file(sshpiper_envvars, "/etc/default/sshpiper", mode="0600")
+	run("sudo", "install", "-m", "0755", "-o", "root", "-g", "root", "/tmp/sshpiper-atlas", "/usr/local/bin/sshpiper-atlas")
+	run("sudo", "systemctl", "enable", "--now", "sshpiper.service", check=False, quiet=True)
 
 	# 4. Kernel/network sysctls: VM-networking essentials + CIS 3.3 hardening.
 	#    The forwarding + proxy_ndp lines are LOAD-BEARING for the routed-tap VM

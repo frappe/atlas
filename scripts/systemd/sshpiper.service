@@ -6,7 +6,7 @@ After=network.target
 Type=simple
 Restart=always
 EnvironmentFile=/etc/default/sshpiper
-ExecStart=/usr/local/bin/sshpiper /usr/local/bin/sshpiperd-atlas
+ExecStart=/usr/local/bin/sshpiperd --port 22 /usr/local/bin/sshpiper-atlas --atlas-url ${ATLAS_URL} --lookup-server ${SSHPIPER_LOOKUP_SERVER} --api-key ${SSHPIPER_API_KEY} --private-key /root/.ssh/id_ed25519 --target-user root
 
 [Install]
 WantedBy=multi-user.target
