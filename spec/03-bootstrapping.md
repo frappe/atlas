@@ -27,6 +27,10 @@ The controller's `variables` dict (UPPER_SNAKE keys) is rendered to
 | ------------------------------------------ | ---------------------------------- |
 | `FIRECRACKER_VERSION` → `--firecracker-version` | Pinned in `atlas/atlas/doctype/server/server.py`, currently `v1.15.1`. |
 | `ARCHITECTURE` → `--architecture`          | `x86_64` for this iteration.       |
+| `SSHPIPER_VERSION` → `--sshpiper-version` | Pinned in `Server.bootstrap()`, currently `v1.5.4`. |
+| `ATLAS_URL` → `--atlas-url` | Base URL of the Atlas site, passed to the SSHPiper plugin. |
+| `SSHPIPER_LOOKUP_SERVER` → `--sshpiper-lookup-server` | This Server row's UUID; scopes the host-side lookup token. |
+| `SSHPIPER_API_KEY` → `--sshpiper-api-key` | Per-server lookup token stored on `Server.sshpiper_api_key` and written to the host env file. |
 
 ### What the script does
 
@@ -52,16 +56,21 @@ In summary, in this order:
    release tarball, so this is one download. Production runs every VM under the
    jailer; a host bootstrapped before the jailer existed picks it up on re-run
    (the gate checks both binaries).
-4. Writes `/etc/sysctl.d/60-atlas.conf` with IPv6 forwarding, proxy NDP, and
+4. Installs SSHPiper and the Atlas SSHPiper plugin, writes
+   `/etc/default/sshpiper` with the Atlas URL, this Server UUID, and the
+   per-server lookup token, and enables `sshpiper.service`. Port 22 is public VM
+   SSH ingress; host SSH moves to 222. See [23-sshpiper.md](./23-sshpiper.md)
+   for the lookup and auth contract.
+5. Writes `/etc/sysctl.d/60-atlas.conf` with IPv6 forwarding, proxy NDP, and
    IPv4 forwarding (`net.ipv4.ip_forward`, for NAT44 egress), **plus the
    CIS 3.3 network-hardening sysctls** — see *Host hardening* below.
-5. Writes the sshd hardening drop-in, the kernel-module blocklist, enables
+6. Writes the sshd hardening drop-in, the kernel-module blocklist, enables
    unattended security updates, and disables KSM/swap — see *Host hardening*.
-6. Creates the `inet atlas` nftables table with a `forward` chain (IPv6
+7. Creates the `inet atlas` nftables table with a `forward` chain (IPv6
    filter) and a `postrouting` chain holding the host-wide IPv4 masquerade
    rule. See [06-networking.md](./06-networking.md).
-7. Creates the `/var/lib/atlas/` directory tree.
-8. Creates the **LVM thin pool** that backs every VM disk: loads `dm_thin_pool`
+8. Creates the `/var/lib/atlas/` directory tree.
+9. Creates the **LVM thin pool** that backs every VM disk: loads `dm_thin_pool`
    (persisted via `/etc/modules-load.d/60-atlas-lvm.conf`), then runs the
    idempotent `atlas_pool_ensure` — a sparse backing file at
    `/var/lib/atlas/pool/atlas-pool.img`, a loop device over it, a PV/VG
@@ -73,7 +82,7 @@ In summary, in this order:
    that imports the durable package (`from atlas.lvm import ThinPool`) and calls
    `ThinPool().ensure()` to re-assert the pool's loop device on boot, ordered
    before the VM units. See [07-filesystem-layout.md](./07-filesystem-layout.md).
-9. Writes `FIRECRACKER_VERSION`, `JAILER_VERSION`, `KERNEL_VERSION`,
+10. Writes `FIRECRACKER_VERSION`, `JAILER_VERSION`, `KERNEL_VERSION`,
    `ARCHITECTURE` to `/var/lib/atlas/bootstrap.json` (the single source of
    truth) and `cat`s it on stdout. `firecracker_version` and `jailer_version`
    are always the same (one tarball) but both are recorded on the `Server` row.
@@ -166,8 +175,10 @@ uploads (see `_BOOTSTRAP_UPLOADS` + `_bootstrap_uploads()` in `server.py`):
 - `scripts/vm-network-down.py` → `/var/lib/atlas/bin/vm-network-down.py`
 - `scripts/vm-disk-up.py` → `/var/lib/atlas/bin/vm-disk-up.py`
 - `scripts/vm-restore.py` → `/var/lib/atlas/bin/vm-restore.py`
+- `scripts/sshpiper/atlas` → `/tmp/sshpiper-atlas`
 - `scripts/systemd/firecracker-vm@.service` → `/etc/systemd/system/firecracker-vm@.service`
 - `scripts/systemd/atlas-pool.service` → `/etc/systemd/system/atlas-pool.service`
+- `scripts/systemd/sshpiper.service` → `/etc/systemd/system/sshpiper.service`
 - every `scripts/lib/atlas/*.py` (test files skipped) → `/var/lib/atlas/bin/atlas/*.py`
 
 The systemd hooks (`vm-network-up.py`, `vm-network-down.py`, `vm-disk-up.py`,
