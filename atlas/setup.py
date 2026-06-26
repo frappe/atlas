@@ -286,7 +286,6 @@ def _stage_provider(args: dict) -> None:
 		ssh_private_key_path=args.get("ssh_private_key_path"),
 		region=args.get("region"),
 		ssh_public_key=args.get("ssh_public_key") or None,
-		default_bench_snapshot=args.get("default_bench_snapshot") or None,
 	)
 	if provider_type == "DigitalOcean":
 		frappe.get_single("DigitalOcean Settings").setup(

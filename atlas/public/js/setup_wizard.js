@@ -331,24 +331,6 @@ function atlas_setup_slides() {
 				},
 			],
 		},
-
-		{
-			name: "atlas_golden_snapshot",
-			title: __("Golden Snapshot"),
-			icon: "fa fa-camera",
-			fields: [
-				{
-					fieldname: "default_bench_snapshot",
-					label: __("Default Bench Snapshot (optional)"),
-					fieldtype: "Link",
-					options: "Virtual Machine Snapshot",
-					get_query: () => ({ filters: { status: "Available" } }),
-					description: __(
-						"The golden bench image self-serve site VMs clone from. Leave blank if you haven't baked one yet."
-					),
-				},
-			],
-		},
 	];
 }
 
