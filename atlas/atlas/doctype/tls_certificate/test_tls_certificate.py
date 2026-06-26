@@ -4,7 +4,7 @@ status machine, common_name derivation, and the renewal window.
 The two external edges are mocked: the TLS provider's `issue()` (so no certbot)
 and `proxy.push_cert` (so no SSH). What's left — the controller's own logic — is
 fully exercised: it resolves the domain's providers, records the result, and fans
-the PEMs out to exactly the proxy VMs in the domain's region.
+the PEMs out to every proxy VM.
 """
 
 from __future__ import annotations
@@ -102,12 +102,11 @@ class TestIssueAndPush(IntegrationTestCase):
 			not_after="Sep  6 00:00:00 2026 GMT",
 		)
 
-	def test_issue_records_result_and_pushes_to_region_proxies(self) -> None:
-		# Two proxies in blr1, one in a different region, one non-proxy in blr1.
-		blr_proxy_a = _new_vm(is_proxy=1, region="blr1").name
-		blr_proxy_b = _new_vm(is_proxy=1, region="blr1").name
-		_new_vm(is_proxy=1, region="nyc3")
-		_new_vm(is_proxy=0, region="blr1")
+	def test_issue_records_result_and_pushes_to_all_proxies(self) -> None:
+		# Two proxies (both push targets), one non-proxy (excluded).
+		proxy_a = _new_vm(is_proxy=1).name
+		proxy_b = _new_vm(is_proxy=1).name
+		_new_vm(is_proxy=0)
 
 		cert = frappe.get_doc({"doctype": "TLS Certificate", "root_domain": "blr1.frappe.dev"}).insert(
 			ignore_permissions=True
@@ -127,9 +126,9 @@ class TestIssueAndPush(IntegrationTestCase):
 		self.assertEqual(str(cert.issued_on), "2026-06-08 00:00:00")
 		self.assertEqual(str(cert.expires_on), "2026-09-06 00:00:00")
 
-		# push_cert called exactly for the two blr1 proxies, with the PEM BYTES.
+		# push_cert called exactly for the two proxies, with the PEM BYTES.
 		pushed_vms = {call.args[0] for call in push.call_args_list}
-		self.assertEqual(pushed_vms, {blr_proxy_a, blr_proxy_b})
+		self.assertEqual(pushed_vms, {proxy_a, proxy_b})
 		for call in push.call_args_list:
 			self.assertEqual(call.args[1], "FULLCHAIN-PEM")
 			self.assertEqual(call.args[2], "PRIVKEY-PEM")
@@ -153,8 +152,8 @@ class TestIssueAndPush(IntegrationTestCase):
 			cert.push_to_proxies()
 
 	def test_one_unreachable_proxy_does_not_block_the_rest(self) -> None:
-		good = _new_vm(is_proxy=1, region="blr1").name
-		bad = _new_vm(is_proxy=1, region="blr1").name
+		good = _new_vm(is_proxy=1).name
+		bad = _new_vm(is_proxy=1).name
 		cert = frappe.get_doc(
 			{
 				"doctype": "TLS Certificate",

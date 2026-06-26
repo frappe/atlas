@@ -173,7 +173,7 @@ VIRTUAL_MACHINES = (
 		"image": "ubuntu-minimal",
 		"preset": "Shared 4x",
 		"end": "Running",
-		"extra": {"is_proxy": 1, "region": "blr1"},
+		"extra": {"is_proxy": 1},
 	},  # gets a Reserved IP attached
 )
 

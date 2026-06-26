@@ -73,7 +73,7 @@ indirection layer; there is no `Provider` row to load.
 
 | Field                  | Type             | Reqd | Notes                                                              |
 | ---------------------- | ---------------- | ---- | ------------------------------------------------------------------ |
-| `region`               | Data             | Y    | This Atlas instance's single region (e.g. `blr1`, `nyc3`) — the **one source of truth** for region. It is the proxy-fleet join key shared by `Subdomain` / `Site` / `Port Mapping` / proxy `Virtual Machine.region`, the label that separates this bench's servers in a shared cloud account (`provisioning.provision_region`), the value `Root Domain` denormalizes at insert, and the region announced to Central at Register. Read everywhere through `placement.atlas_region()`, which fails loud when unset. Set by the setup contract (`setup.run` / the Setup Wizard) from the explicit `region` input; the `from_site_config` adapter / `bootstrap.py` derive it from `atlas_tls_region` (else the active vendor's region key). Atlas is single-region, so there is exactly one value. |
+| `region`               | Data             | Y    | This Atlas instance's single region (e.g. `blr1`, `nyc3`) — the **one source of truth** for region, and the **only** place region is stored. It is the cert-dir scope on every proxy guest, the label that separates this bench's servers in a shared cloud account (`provisioning.provision_region`), the value `Root Domain` denormalizes at insert, and the region announced to Central at Register. `Subdomain` / `Site` / `Port Mapping` / proxy VMs carry **no** denormalized copy — they belong to the one region by definition. Read everywhere through `placement.atlas_region()`, which fails loud when unset. Set by the setup contract (`setup.run` / the Setup Wizard) from the explicit `region` input; the `from_site_config` adapter / `bootstrap.py` derive it from `atlas_tls_region` (else the active vendor's region key). Atlas is single-region, so there is exactly one value. |
 | `provider_type`        | Select           | Y    | The currently-active vendor: `DigitalOcean` / `Scaleway` / `Self-Managed` (`Fake` is also an option in `developer_mode` / test builds). `atlas.get_provider()` reads this and calls `for_provider_type` against the registry directly. Guarded in `validate()` (see below). |
 | `tls_provider_type`    | Select           |      | The active certificate issuer: `Let's Encrypt` / `ZeroSSL` / `Self-Managed`. Drives the TLS registry (`tls.for_tls_provider_type`); denormalized onto `Root Domain` / `TLS Certificate` at insert. See [13-tls.md](./13-tls.md). |
 | `dns_provider_type`    | Select           |      | The active DNS vendor (DNS-01 challenge): `Route53` / `Cloudflare`. Keys the DNS registry (`dns.for_dns_provider_type`); denormalized onto `Root Domain` at insert. Pairs with `Route53 Settings` for the credentials. Only Route53 implemented; Cloudflare reserved. See [13-tls.md](./13-tls.md). |
@@ -508,8 +508,7 @@ deletion.
 | `public_ipv4`      | Data                          |      | Y         |         | The attached public IPv4, denormalized from the `Reserved IP` row whose `virtual_machine` points here. Empty until one is attached. Maintained by `Reserved IP.attach()` / `detach()` (and cleared on terminate); never hand-edited. See [Reserved IP](#reserved-ip) and [06-networking.md](./06-networking.md). |
 | `mac_address`      | Data                          |      | Y         |         | Derived from `name`. Set in `before_validate`.                   |
 | `tap_device`       | Data                          |      | Y         |         | Derived from `name`. Set in `before_validate`.                   |
-| `is_proxy`         | Check                         |      |           | 0       | Marks this VM as a reverse-proxy node. A proxy VM fronts a region's [Subdomain](#subdomain)s and is reconciled by the proxy control plane. It is an *ordinary* operator-owned VM (no infra tier) running the proxy image with an attached `public_ipv4`. See [12-proxy.md](./12-proxy.md). |
-| `region`           | Data                          |      |           |         | The region whose subdomains this proxy serves (`depends_on: is_proxy`). Every proxy VM in a region serves the full set of active subdomains for that region. |
+| `is_proxy`         | Check                         |      |           | 0       | Marks this VM as a reverse-proxy node. A proxy VM fronts the fleet's [Subdomain](#subdomain)s and is reconciled by the proxy control plane. It is an *ordinary* operator-owned VM (no infra tier) running the proxy image with an attached `public_ipv4`. The region it serves is this Atlas's single `Atlas Settings.region` — proxy VMs carry no denormalized `region`. See [12-proxy.md](./12-proxy.md). |
 | `last_started`     | Datetime                      |      | Y         |         |                                                                  |
 | `last_stopped`     | Datetime                      |      | Y         |         |                                                                  |
 
@@ -957,17 +956,19 @@ On the **Server** form (the pool entry points, `Actions ▾`, while `Active`):
 ## Subdomain
 
 One routing entry for the reverse proxy: a `<subdomain>.<region>.frappe.dev`
-name that points at exactly one site VM. The set of **active** Subdomain rows for
-a region is the **desired map** every proxy VM in that region serves — the proxy
-control plane (`atlas/atlas/proxy.py`) reconciles each proxy guest's live
-`lua_shared_dict` to it over SSH. See
-[12-proxy.md](./12-proxy.md) for the proxy and the reconcile loop.
+name that points at exactly one site VM. The set of **active** Subdomain rows is
+the **desired map** every proxy VM serves — the proxy control plane
+(`atlas/atlas/proxy.py`) reconciles each proxy guest's live `lua_shared_dict` to
+it over SSH. See [12-proxy.md](./12-proxy.md) for the proxy and the reconcile
+loop.
 
 Standalone and linked (the `Reserved IP` / `Virtual Machine Snapshot` idiom), not
-a child grid on a proxy doctype: every proxy VM holds the **whole** regional map,
-so a child-of-proxy model would fight that — the map is owned per **region**, not
-per proxy. The row is independently queryable ("which VM does `acme` point at?",
-"what's the map for `blr1`?").
+a child grid on a proxy doctype: every proxy VM holds the **whole** map, so a
+child-of-proxy model would fight that — the map is owned by the fleet, not per
+proxy. The row is independently queryable ("which VM does `acme` point at?").
+Atlas is single-region (`Atlas Settings.region`), so the row carries no
+denormalized `region`: every active subdomain belongs to the one region by
+definition.
 
 ### Fields
 
@@ -975,35 +976,32 @@ per proxy. The row is independently queryable ("which VM does `acme` point at?",
 | ----------------- | ---------------------- | ---- | --------- | ------- | ---------------------------------------------------------------- |
 | `name`            | = `subdomain` (autoname `field:subdomain`) | Y | Y |    | Primary key is the subdomain label itself. |
 | `subdomain`       | Data                   | Y    |           |         | The bare label, `unique` fleet-wide. Reachable at `<subdomain>.<region>.frappe.dev`. The proxy's routing key. `title_field`. Immutable after insert. |
-| `region`          | Data                   | Y    |           |         | Which regional proxy fleet fronts it. Every proxy VM in the region serves all active subdomains for the region. Immutable after insert. |
 | `active`          | Check                  |      |           | 1       | Inactive rows are excluded from the served map (kept for history). Toggle off to take a site off the front door without deleting the row. |
 | `virtual_machine` | Link → Virtual Machine | Y    |           |         | The site VM this subdomain points at. The proxy dials its public IPv6 `:80` (plaintext) over the v6 internet. Immutable after insert. |
 | `address`         | Data                   | Y    | Y         |         | The target VM's public IPv6 `/128`, denormalized so the desired-map query is join-free. Kept in sync with the VM's `ipv6_address` on save. The literal the proxy dials. |
 
-Immutability: `subdomain`, `virtual_machine`, and `region` lock after insert —
-repointing a live subdomain at a different VM is a delete-and-recreate, so the
-proxy map change is explicit, never a silent in-place edit. The one mutable field
-is `active` (toggles the mapping in/out of the served map). `address` is always
-derived from the linked VM, never hand-edited.
+Immutability: `subdomain` and `virtual_machine` lock after insert — repointing a
+live subdomain at a different VM is a delete-and-recreate, so the proxy map change
+is explicit, never a silent in-place edit. The one mutable field is `active`
+(toggles the mapping in/out of the served map). `address` is always derived from
+the linked VM, never hand-edited.
 
 ### Controller methods
 
 - `validate()` — denormalizes `address` from the target VM's `ipv6_address`
   (throws if the VM has none — an unaddressable target can't be a route) and
   enforces the immutability above.
-- `map_for_region(region)` *(module function)* — returns `{subdomain: address}`
-  for every **active** subdomain in the region. This is the full map every proxy
-  VM in the region serves; the reconcile loop serializes it canonically
-  (`json.dumps(sort_keys=True, indent=2)` + newline, byte-identical to the
-  guest's `persist.lua`) and byte-compares it against each proxy guest's live
-  `/map`. See [12-proxy.md](./12-proxy.md).
+- `subdomain_map()` *(module function)* — returns `{subdomain: address}` for every
+  **active** subdomain. This is the full map every proxy VM serves; the reconcile
+  loop serializes it canonically (`json.dumps(sort_keys=True, indent=2)` + newline,
+  byte-identical to the guest's `persist.lua`) and byte-compares it against each
+  proxy guest's live `/map`. See [12-proxy.md](./12-proxy.md).
 
 ### Form layout
 
 ```
 ── Overview ──
 subdomain
-region
 | active
 ── Target ──
 virtual_machine
@@ -1012,8 +1010,8 @@ virtual_machine
 
 ### List view
 
-- Columns: `subdomain`, `region`, `active`, `virtual_machine`, `address`.
-- Standard filters: `region`, `active`, `virtual_machine`.
+- Columns: `subdomain`, `active`, `virtual_machine`, `address`.
+- Standard filters: `active`, `virtual_machine`.
 
 ---
 
@@ -1021,16 +1019,17 @@ virtual_machine
 
 One forwarding entry for the **TCP proxy** ([17-tcp-proxy.md](./17-tcp-proxy.md)):
 a proxy-side port that forwards raw TCP to a tenant VM's service port (SSH `:22`,
-MariaDB `:3306`, anything L4). The set of **active** Port Mapping rows for a
-region is the **desired port map** every proxy VM in that region serves — the TCP
-control plane (`atlas/atlas/tcp_proxy.py`) reconciles each proxy guest's
-stream-side `lua_shared_dict` to it over SSH, exactly as `Subdomain` /
-`atlas/atlas/proxy.py` does for HTTP.
+MariaDB `:3306`, anything L4). The set of **active** Port Mapping rows is the
+**desired port map** every proxy VM serves — the TCP control plane
+(`atlas/atlas/tcp_proxy.py`) reconciles each proxy guest's stream-side
+`lua_shared_dict` to it over SSH, exactly as `Subdomain` / `atlas/atlas/proxy.py`
+does for HTTP.
 
 This is the L4 sibling of [Subdomain](#subdomain) and follows it field-for-field:
 standalone and linked (the `Reserved IP` / `Subdomain` idiom), **not** a child
-grid on a proxy — every proxy VM holds the **whole** regional map, so the map is
-owned per **region**. The one field with no `Subdomain` analogue is `public_port`:
+grid on a proxy — every proxy VM holds the **whole** map, so the map is owned by
+the fleet. Atlas is single-region (`Atlas Settings.region`), so the row carries no
+denormalized `region`. The one field with no `Subdomain` analogue is `public_port`:
 the routing key is a *port number Atlas allocates*, not a label the user picks,
 because raw TCP carries no application-layer routing key (the local port is the
 only thing the proxy can route on — see [17-tcp-proxy.md](./17-tcp-proxy.md)).
@@ -1039,23 +1038,22 @@ only thing the proxy can route on — see [17-tcp-proxy.md](./17-tcp-proxy.md)).
 
 | Field             | Type                   | Reqd | Read-only | Default | Notes                                                            |
 | ----------------- | ---------------------- | ---- | --------- | ------- | ---------------------------------------------------------------- |
-| `name`            | = `<region>-<public_port>` (autoname `format:{region}-{public_port}`) | Y | Y |    | Primary key embeds the region so the same port number is free in every region — `public_port` is unique *per region*, not fleet-wide. |
-| `public_port`     | Int                    | Y    | Y         |         | The proxy-side port the tenant connects to. **Allocated by Atlas** on insert (lowest free in the region's pool); unique per region (via the name); read-only. The routing key. |
-| `region`          | Data                   | Y    |           |         | Which regional proxy fleet fronts it. Every proxy VM in the region serves all active mappings for the region. Immutable after insert. |
+| `name`            | = `<protocol>-<public_port>` (autoname `format:{protocol}-{public_port}`) | Y | Y |    | `public_port` is unique fleet-wide; the protocol prefix keeps the name readable. |
+| `public_port`     | Int                    | Y    | Y         |         | The proxy-side port the tenant connects to. **Allocated by Atlas** on insert (lowest free in the pool); `unique` fleet-wide; read-only. The routing key. |
 | `active`          | Check                  |      |           | 1       | Inactive rows are excluded from the served map (kept for history, and the row still owns its port so toggling back on never collides). |
 | `virtual_machine` | Link → Virtual Machine | Y    |           |         | The tenant VM this port forwards to. The proxy dials its public IPv6 `:target_port` over the v6 internet. Immutable after insert. |
 | `address`         | Data                   | Y    | Y         |         | The target VM's public IPv6 `/128`, denormalized so the desired-map query is join-free. Kept in sync with the VM's `ipv6_address` on save. |
 | `target_port`     | Int                    | Y    |           |         | The service port **inside the guest** (22 SSH, 3306 MariaDB). Immutable after insert. |
 | `protocol`        | Select (`tcp`/`ssh`/`mariadb`) |  |       | `tcp`   | A label only — the forwarder is protocol-agnostic L4. For the operator and the future dashboard. |
 
-The desired map for a region is `port_map_for_region(region)` =
-`{ "<public_port>": "[<address>]:<target_port>" }` for every **active** mapping in
-the region. The value is a ready-to-dial bracketed-v6 `host:port` literal so the
-guest does no formatting.
+The desired map is `port_map()` =
+`{ "<public_port>": "[<address>]:<target_port>" }` for every **active** mapping.
+The value is a ready-to-dial bracketed-v6 `host:port` literal so the guest does no
+formatting.
 
-Immutability: `region`, `virtual_machine`, and `target_port` lock after insert
-(`public_port` is read-only and allocated). The one mutable field is `active`.
-`address` is always derived from the linked VM, never hand-edited.
+Immutability: `virtual_machine` and `target_port` lock after insert (`public_port`
+is read-only and allocated). The one mutable field is `active`. `address` is always
+derived from the linked VM, never hand-edited.
 
 ### Controller methods
 
@@ -1064,22 +1062,20 @@ Immutability: `region`, `virtual_machine`, and `target_port` lock after insert
   enforces the immutability above.
 - `before_insert()` — allocates `public_port`: the lowest port in
   `Atlas Settings.tcp_port_pool` (default `10000-19999`) not already held by an
-  active *or inactive* mapping in the region, under a region row-lock. Pool
-  exhaustion is a typed throw, never a silent wrap.
-- `port_map_for_region(region)` *(module function)* — returns
-  `{public_port: "[address]:target_port"}` for every **active** mapping in the
-  region. This is the full map every proxy VM in the region serves; the reconcile
-  loop serializes it canonically (the same `json.dumps(sort_keys=True, indent=2)`
-  + newline as `Subdomain`, byte-identical to the guest's `stream-persist.lua`)
-  and byte-compares it against each proxy guest's live map. See
-  [17-tcp-proxy.md](./17-tcp-proxy.md).
+  active *or inactive* mapping, under a row-lock. Pool exhaustion is a typed throw,
+  never a silent wrap.
+- `port_map()` *(module function)* — returns
+  `{public_port: "[address]:target_port"}` for every **active** mapping. This is
+  the full map every proxy VM serves; the reconcile loop serializes it canonically
+  (the same `json.dumps(sort_keys=True, indent=2)` + newline as `Subdomain`,
+  byte-identical to the guest's `stream-persist.lua`) and byte-compares it against
+  each proxy guest's live map. See [17-tcp-proxy.md](./17-tcp-proxy.md).
 
 ### Form layout
 
 ```
 ── Overview ──
 public_port
-region
 | active
 protocol
 ── Target ──
@@ -1090,8 +1086,8 @@ target_port
 
 ### List view
 
-- Columns: `public_port`, `region`, `active`, `virtual_machine`, `target_port`, `protocol`.
-- Standard filters: `region`, `active`, `virtual_machine`, `protocol`.
+- Columns: `public_port`, `active`, `virtual_machine`, `target_port`, `protocol`.
+- Standard filters: `active`, `virtual_machine`, `protocol`.
 
 ---
 
@@ -1392,8 +1388,9 @@ account_email
 ## Root Domain
 
 One wildcard zone == one region. A row `blr1.frappe.dev` owns the regional
-wildcard cert `*.blr1.frappe.dev` that fronts the proxy fleet in `region`.
-`region` is the join key to `Virtual Machine.region` (`is_proxy=1`). See
+wildcard cert `*.blr1.frappe.dev` that fronts the proxy fleet. `region` is frozen
+on the row at insert (denormalized from `Atlas Settings.region`) so a later
+Settings change can't re-point an already-issued domain. See
 [13-tls.md](./13-tls.md).
 
 ### Fields
@@ -1402,7 +1399,7 @@ wildcard cert `*.blr1.frappe.dev` that fronts the proxy fleet in `region`.
 | ----------------- | --------------------- | ---- | ------------------------------------------------------------------ |
 | `name`            | = `domain` (autoname `field:domain`) | Y | Primary key is the domain itself. |
 | `domain`          | Data                  | Y    | The wildcard zone, e.g. `blr1.frappe.dev`. `unique`, `set_only_once`. The cert is `*.<domain>`. |
-| `region`          | Data                  |      | The proxy fleet this domain fronts. Join key to `Virtual Machine.region`. Read-only; denormalized from `Atlas Settings.region` (the single source of truth) at insert — the operator does not type it. `set_only_once`. |
+| `region`          | Data                  |      | The region this domain's wildcard fronts. Read-only; denormalized from `Atlas Settings.region` (the single source of truth) at insert — the operator does not type it. Frozen so a later Settings change can't re-point an issued domain. `set_only_once`. |
 | `is_active`       | Check                 |      | Default 1. |
 | `dns_provider_type`    | Select           |      | The DNS vendor that owns the zone (DNS-01). Read-only; denormalized from `Atlas Settings.dns_provider_type` at insert. |
 | `tls_provider_type`    | Select           |      | The issuer that produces the cert. Read-only; denormalized from `Atlas Settings.tls_provider_type` at insert. |
@@ -1503,9 +1500,8 @@ proxy map it creates once serving) and **not** the
 
 | Field           | Type                   | Reqd | Read-only | Notes                                                       |
 | --------------- | ---------------------- | ---- | --------- | ----------------------------------------------------------- |
-| `name`          | the FQDN               | Y    | Y         | Primary key, built in `autoname()` as `<subdomain>.<region domain>` — the one routing string (Contract A): proxy Host header == this key. The routing identity, never written on disk (the baked site stays `site.local`). Never transformed. |
+| `name`          | the FQDN               | Y    | Y         | Primary key, built in `autoname()` as `<subdomain>.<region domain>` — the one routing string (Contract A): proxy Host header == this key. The `<region domain>` suffix is read from the active `Root Domain`; the Site stores no `region` of its own (Atlas is single-region). The routing identity, never written on disk (the baked site stays `site.local`). Never transformed. |
 | `subdomain`     | Data                   | Y    |           | The bare DNS label the user chose (`acme`). `set_only_once`. A single label, no dots, lowercase `[a-z0-9-]`, ≤63 chars, no leading/trailing hyphen; not in the reserved denylist. |
-| `region`        | Data                   |      | Y         | `set_only_once`. Resolved from `Atlas Settings.region` (the single source of truth, via `placement.atlas_region()`) at insert; Central never picks it. The FQDN suffix is read from the active `Root Domain` — its `region` is denormalized from the same value, so the two stay consistent. |
 | `tenant`        | Link → Tenant          |      | Y         | `set_only_once`. The Central team this site belongs to, stamped by `create_site` (the attribution key; [16-central.md](./16-central.md)). Operator/e2e sites created directly may leave it empty. |
 | `status`        | Select                 |      | Y         | `Pending` → `Provisioning` → `Deploying` → `Running` / `Failed` / `Terminated`. Controller-written. `Running` is reached **only** on an observed HTTP 200 from the guest `:80` (Contract B), not when the backing VM boots. |
 | `virtual_machine` | Link → Virtual Machine |    | Y         | `set_only_once`. The backing VM, cloned from the golden bench snapshot by the background job (the user never picks it). |
@@ -1523,14 +1519,13 @@ Atlas stamps no end-user `owner` scoping.
   (module-level `RESERVED_SUBDOMAINS`). Anything else already taken is caught by
   the FQDN-key uniqueness check, which throws a clean *"subdomain taken"* (the
   create_site race, [14-self-serve.md](./14-self-serve.md)).
-- **Immutability** — `subdomain`, `region`, `virtual_machine` are frozen after
-  insert (`IMMUTABLE_AFTER_INSERT`, guarded in `validate()`).
+- **Immutability** — `subdomain`, `virtual_machine` are frozen after insert
+  (`IMMUTABLE_AFTER_INSERT`, guarded in `validate()`).
 
 ### Controller methods & lifecycle
 
-- `before_insert()` — validate the label, resolve the region from the active
-  `Root Domain`, set `status = Pending`. (The owning `tenant` is set by
-  `create_site`; Atlas stamps no end-user `owner`.)
+- `before_insert()` — validate the label, set `status = Pending`. (The owning
+  `tenant` is set by `create_site`; Atlas stamps no end-user `owner`.)
 - `autoname()` — build the FQDN key from `subdomain` + the region domain.
 - `after_insert()` — enqueue `auto_provision` (`queue="long"`, it SSHes).
 - `auto_provision(site_name)` *(module function)* — the background entrypoint:
@@ -1549,8 +1544,8 @@ the operator token). No end-user role or row-level scoping.
 
 ### List view
 
-- Columns: `subdomain`, `region`, `status`.
-- Standard filters: `region`, `status`.
+- Columns: `subdomain`, `status`.
+- Standard filters: `status`.
 
 ## Image Build
 
@@ -1569,8 +1564,7 @@ is the durable output; the build VM is scratch.
 | `name` | series | Y | Y | `IMG-BUILD-#####` (`autoname: Expression`). A recipe is re-baked many times, so the name isn't the recipe. |
 | `recipe` | Select | Y |  | `bench-v16` / `bench-v15` / `bench-nightly` / `proxy` — the [recipe registry](../atlas/atlas/image_recipes.py) key (kept in lockstep with `recipe_names()`). The back-compat `bench` alias (→ `bench-v16`) is not an option. `set_only_once`. |
 | `title` | Data |  | Y | Denormalized from the recipe (e.g. "Golden bench image") for the list view. |
-| `server` | Link → Server | Y |  | The Active server the scratch build VM is provisioned on (no scheduler — principle #4). For a proxy recipe this also fixes the region. `set_only_once`. |
-| `region` | Data |  |  | Proxy recipes only; required when the recipe `is_proxy`. Drives the finalize hook + the produced VM's `region`. `set_only_once`. |
+| `server` | Link → Server | Y |  | The Active server the scratch build VM is provisioned on (no scheduler — principle #4). `set_only_once`. |
 | `base_image` | Link → Virtual Machine Image |  |  | The stock Ubuntu base the build VM boots. Defaults from `placement.default_image()`. `set_only_once`. |
 | `status` | Select |  | Y | `Draft` → `Provisioning` → `Building` → `Snapshotting` → `Available` / `Failed`. The single source of truth for the live checklist. Controller-written. |
 | `build_virtual_machine` | Link → Virtual Machine |  | Y | The scratch VM this build provisioned + baked. |
@@ -1582,13 +1576,14 @@ is the durable output; the build VM is scratch.
 | `terminate_build_vm` | Check |  |  | Default off. If set, terminate the scratch build VM after a successful snapshot. Off leaves it Stopped for re-bake / inspection (the snapshot is durable and outlives it — [14-self-serve.md](./14-self-serve.md)). |
 | `error` | Small Text |  | Y | The stderr tail on `Failed` (full log in the Build Task). |
 
-The identity tuple (`recipe`, `server`, `region`, `base_image`) is immutable after
-insert — re-baking with different inputs is a new row, guarded in `validate()`.
+The identity tuple (`recipe`, `server`, `base_image`) is immutable after insert —
+re-baking with different inputs is a new row, guarded in `validate()`.
 
 ### Controller methods & lifecycle
 
 - `before_insert()` — resolve the recipe, copy `title`, default `base_image`,
-  require a `region` for an `is_proxy` recipe, set `status = Draft`.
+  set `status = Draft`. A proxy recipe needs no region input — the region it serves
+  is read from `Atlas Settings.region` at finalize time.
 - `after_insert()` — enqueue `run` on `queue="long"` (it SSHes + waits ~10–20 min).
 - `run(image_build_name)` — the bake orchestration (provision → build → stop +
   snapshot → register → optional terminate), committing + pushing
@@ -1605,7 +1600,7 @@ insert — re-baking with different inputs is a new row, guarded in `validate()`
 ### List view
 
 - Columns: `recipe`, `status`, `snapshot`.
-- Standard filters: `recipe`, `status`, `region`, `server`.
+- Standard filters: `recipe`, `status`, `server`.
 
 ### Buttons
 

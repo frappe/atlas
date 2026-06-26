@@ -5,7 +5,7 @@ from frappe.tests import IntegrationTestCase
 
 from atlas.atlas.doctype.port_mapping.port_mapping import (
 	allocate_port,
-	port_map_for_region,
+	port_map,
 	port_pool,
 )
 from atlas.atlas.doctype.virtual_machine.test_virtual_machine import (
@@ -22,11 +22,10 @@ def _purge() -> None:
 		frappe.delete_doc("Virtual Machine", name, force=1, ignore_permissions=True)
 
 
-def _make_mapping(vm: str, region: str = "blr1", target_port: int = 22, **overrides):
+def _make_mapping(vm: str, target_port: int = 22, **overrides):
 	doc = {
 		"doctype": "Port Mapping",
 		"virtual_machine": vm,
-		"region": region,
 		"target_port": target_port,
 	}
 	doc.update(overrides)
@@ -88,26 +87,25 @@ class TestPortMapping(IntegrationTestCase):
 		for _ in range(3):
 			_make_mapping(_new_vm().name)
 		with self.assertRaises(frappe.ValidationError) as ctx:
-			allocate_port("blr1")
+			allocate_port()
 		message = str(ctx.exception)
 		self.assertIn("tcp_port_pool", message)
 		self.assertIn("10000-10002", message)
 
-	def test_pool_is_per_region(self) -> None:
-		# The same port number is independently allocatable in another region.
+	def test_pool_is_fleet_wide(self) -> None:
+		# Ports are unique fleet-wide; the name embeds the protocol + port.
 		a, b = _new_vm(), _new_vm()
-		blr = _make_mapping(a.name, region="blr1")
-		sgp = _make_mapping(b.name, region="sgp1")
-		self.assertEqual(blr.public_port, 10000)
-		self.assertEqual(sgp.public_port, 10000)  # not fleet-wide unique
-		# And the names embed the region, so they don't collide on the PK.
-		self.assertEqual(blr.name, "blr1-10000")
-		self.assertEqual(sgp.name, "sgp1-10000")
+		first = _make_mapping(a.name)
+		second = _make_mapping(b.name)
+		self.assertEqual(first.public_port, 10000)
+		self.assertEqual(second.public_port, 10001)  # fleet-wide unique
+		self.assertEqual(first.name, "tcp-10000")
+		self.assertEqual(second.name, "tcp-10001")
 
 	def test_allocate_port_helper_respects_taken(self) -> None:
 		vm = _new_vm()
 		_make_mapping(vm.name)  # takes 10000
-		self.assertEqual(allocate_port("blr1"), 10001)
+		self.assertEqual(allocate_port(), 10001)
 
 	# --- pool parsing ------------------------------------------------------
 
@@ -139,7 +137,7 @@ class TestPortMapping(IntegrationTestCase):
 		with self.assertRaises(frappe.ValidationError):
 			_make_mapping(vm.name)
 
-	def test_target_and_region_are_immutable(self) -> None:
+	def test_target_vm_is_immutable(self) -> None:
 		vm, other = _new_vm(), _new_vm()
 		mapping = _make_mapping(vm.name)
 		mapping.virtual_machine = other.name
@@ -162,78 +160,69 @@ class TestPortMapping(IntegrationTestCase):
 
 	# --- the desired map ---------------------------------------------------
 
-	def test_port_map_for_region_builds_dialable_literals(self) -> None:
+	def test_port_map_builds_dialable_literals(self) -> None:
 		vm = _new_vm()
 		mapping = _make_mapping(vm.name, target_port=3306)
-		port_map = port_map_for_region("blr1")
+		mapped = port_map()
 		# Value is a ready-to-dial bracketed-v6 host:port literal; key is the port
 		# as a STRING (JSON object key, byte-identical to the guest's serializer).
 		self.assertEqual(
-			port_map,
+			mapped,
 			{str(mapping.public_port): f"[{vm.ipv6_address}]:3306"},
 		)
 
-	def test_port_map_for_region_returns_active_only(self) -> None:
+	def test_port_map_returns_active_only(self) -> None:
 		a, b = _new_vm(), _new_vm()
 		active = _make_mapping(a.name)
 		_make_mapping(b.name, active=0)
-		port_map = port_map_for_region("blr1")
-		self.assertEqual(set(port_map), {str(active.public_port)})
+		mapped = port_map()
+		self.assertEqual(set(mapped), {str(active.public_port)})
 
-	def test_port_map_for_region_scopes_to_region(self) -> None:
-		a, b = _new_vm(), _new_vm()
-		_make_mapping(a.name, region="blr1")
-		_make_mapping(b.name, region="sgp1")
-		self.assertEqual(len(port_map_for_region("blr1")), 1)
-		self.assertEqual(len(port_map_for_region("sgp1")), 1)
-
-	def test_empty_region_is_empty_map(self) -> None:
-		self.assertEqual(port_map_for_region("nowhere"), {})
+	def test_empty_when_no_active_mappings(self) -> None:
+		self.assertEqual(port_map(), {})
 
 	# --- reconcile enqueue -------------------------------------------------
 
-	def test_insert_enqueues_region_reconcile(self) -> None:
+	def test_insert_enqueues_reconcile(self) -> None:
 		vm = _new_vm()
 		with patch("frappe.enqueue") as enqueue:
-			_make_mapping(vm.name, region="blr1")
+			_make_mapping(vm.name)
 		enqueue.assert_called_once()
 		self.assertEqual(
 			enqueue.call_args.args[0],
-			"atlas.atlas.doctype.port_mapping.port_mapping.tcp_reconcile_region",
+			"atlas.atlas.doctype.port_mapping.port_mapping.tcp_reconcile",
 		)
 		kwargs = enqueue.call_args.kwargs
-		self.assertEqual(kwargs["region"], "blr1")
-		# Region-deduplicated + after-commit, exactly like Subdomain.
+		# Deduplicated + after-commit, exactly like Subdomain.
 		self.assertTrue(kwargs["deduplicate"])
-		self.assertEqual(kwargs["job_id"], "tcp_reconcile_region::blr1")
+		self.assertEqual(kwargs["job_id"], "tcp_reconcile_ports")
 		self.assertTrue(kwargs["enqueue_after_commit"])
 
 	def test_active_toggle_enqueues_reconcile(self) -> None:
 		vm = _new_vm()
-		mapping = _make_mapping(vm.name, region="blr1")
+		mapping = _make_mapping(vm.name)
 		with patch("frappe.enqueue") as enqueue:
 			mapping.active = 0
 			mapping.save(ignore_permissions=True)
 		enqueue.assert_called_once()
-		self.assertEqual(enqueue.call_args.kwargs["region"], "blr1")
+		self.assertEqual(enqueue.call_args.kwargs["job_id"], "tcp_reconcile_ports")
 
 	def test_save_without_active_change_does_not_reconcile(self) -> None:
 		vm = _new_vm()
-		mapping = _make_mapping(vm.name, region="blr1")
+		mapping = _make_mapping(vm.name)
 		with patch("frappe.enqueue") as enqueue:
 			mapping.save(ignore_permissions=True)
 		enqueue.assert_not_called()
 
 	def test_delete_enqueues_reconcile(self) -> None:
 		vm = _new_vm()
-		mapping = _make_mapping(vm.name, region="blr1")
+		mapping = _make_mapping(vm.name)
 		with patch("frappe.enqueue") as enqueue:
 			frappe.delete_doc("Port Mapping", mapping.name, ignore_permissions=True)
 		reconciles = [
 			call
 			for call in enqueue.call_args_list
-			if call.args
-			and call.args[0] == "atlas.atlas.doctype.port_mapping.port_mapping.tcp_reconcile_region"
+			if call.args and call.args[0] == "atlas.atlas.doctype.port_mapping.port_mapping.tcp_reconcile"
 		]
 		self.assertEqual(len(reconciles), 1)
-		self.assertEqual(reconciles[0].kwargs["region"], "blr1")
+		self.assertEqual(reconciles[0].kwargs["job_id"], "tcp_reconcile_ports")

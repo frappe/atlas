@@ -10,6 +10,7 @@ from atlas.atlas.doctype.virtual_machine.test_virtual_machine import (
 	_ensure_test_server,
 	_new_vm,
 )
+from atlas.atlas.placement import atlas_region
 
 
 def _purge() -> None:
@@ -22,20 +23,19 @@ def _purge() -> None:
 		frappe.delete_doc("Virtual Machine", name, force=1, ignore_permissions=True)
 
 
-def _make_mapping(vm: str, region: str, target_port: int = 22, **overrides):
+def _make_mapping(vm: str, target_port: int = 22, **overrides):
 	doc = {
 		"doctype": "Port Mapping",
 		"virtual_machine": vm,
-		"region": region,
 		"target_port": target_port,
 	}
 	doc.update(overrides)
 	return frappe.get_doc(doc).insert(ignore_permissions=True)
 
 
-def _proxy_vm(region: str = "blr1"):
-	"""A VM marked as a proxy in `region` — the reconcile target."""
-	return _new_vm(is_proxy=1, region=region)
+def _proxy_vm():
+	"""A VM marked as a proxy — the reconcile target. The fleet is global now."""
+	return _new_vm(is_proxy=1)
 
 
 @contextlib.contextmanager
@@ -70,7 +70,7 @@ class TestReconcile(IntegrationTestCase):
 	def test_no_drift_skips_sync(self) -> None:
 		proxy_vm = _proxy_vm()
 		site_vm = _new_vm()
-		mapping = _make_mapping(site_vm.name, "blr1")
+		mapping = _make_mapping(site_vm.name)
 		desired = self._desired(mapping)
 		# The guest's live map already equals desired → no SYNC.
 		with _mock_ssh([(desired, "", 0)]) as run_ssh:
@@ -81,7 +81,7 @@ class TestReconcile(IntegrationTestCase):
 	def test_drift_triggers_bulk_sync_with_canonical_body(self) -> None:
 		proxy_vm = _proxy_vm()
 		site_vm = _new_vm()
-		mapping = _make_mapping(site_vm.name, "blr1")
+		mapping = _make_mapping(site_vm.name)
 		desired = self._desired(mapping)
 		# Live map is empty (fresh proxy) → drifted → SYNC.
 		with _mock_ssh([("{}\n", "", 0), ("ok\n", "", 0)]) as run_ssh:
@@ -98,7 +98,7 @@ class TestReconcile(IntegrationTestCase):
 	def test_get_command_uses_stream_admin(self) -> None:
 		proxy_vm = _proxy_vm()
 		site_vm = _new_vm()
-		_make_mapping(site_vm.name, "blr1")
+		_make_mapping(site_vm.name)
 		with _mock_ssh([("{}\n", "", 0), ("ok\n", "", 0)]) as run_ssh:
 			tcp_proxy.reconcile_proxy(proxy_vm.name)
 		get_command = run_ssh.call_args_list[0].args[2]
@@ -108,7 +108,7 @@ class TestReconcile(IntegrationTestCase):
 	def test_drift_records_a_task_row(self) -> None:
 		proxy_vm = _proxy_vm()
 		site_vm = _new_vm()
-		_make_mapping(site_vm.name, "blr1")
+		_make_mapping(site_vm.name)
 		with _mock_ssh([("{}\n", "", 0), ("ok\n", "", 0)]):
 			tcp_proxy.reconcile_proxy(proxy_vm.name)
 		tasks = frappe.get_all(
@@ -121,7 +121,7 @@ class TestReconcile(IntegrationTestCase):
 	def test_sync_nonzero_exit_raises_and_records_failure(self) -> None:
 		proxy_vm = _proxy_vm()
 		site_vm = _new_vm()
-		_make_mapping(site_vm.name, "blr1")
+		_make_mapping(site_vm.name)
 		with _mock_ssh([("{}\n", "", 0), ("", "boom", 1)]):
 			with self.assertRaises(frappe.ValidationError):
 				tcp_proxy.reconcile_proxy(proxy_vm.name)
@@ -137,26 +137,27 @@ class TestReconcile(IntegrationTestCase):
 		# still a failed sync — record + raise loudly, never treat as success.
 		proxy_vm = _proxy_vm()
 		site_vm = _new_vm()
-		_make_mapping(site_vm.name, "blr1")
+		_make_mapping(site_vm.name)
 		with _mock_ssh([("{}\n", "", 0), ("error: incomplete body\n", "", 0)]):
 			with self.assertRaises(frappe.ValidationError):
 				tcp_proxy.reconcile_proxy(proxy_vm.name)
 
-	def test_reconcile_region_targets_every_proxy_vm(self) -> None:
-		proxy_a = _proxy_vm("blr1")
-		proxy_b = _proxy_vm("blr1")
-		_proxy_vm("sgp1")  # other region — must be untouched
+	def test_reconcile_proxies_targets_every_proxy_vm(self) -> None:
+		# One global fleet: reconcile_proxies syncs every proxy VM, no region scoping.
+		proxy_a = _proxy_vm()
+		proxy_b = _proxy_vm()
+		proxy_c = _proxy_vm()
 		site_vm = _new_vm()
-		_make_mapping(site_vm.name, "blr1")
-		with _mock_ssh([("{}\n", "", 0), ("ok\n", "", 0)] * 2):
-			synced = tcp_proxy.reconcile_region("blr1")
-		self.assertEqual(set(synced), {proxy_a.name, proxy_b.name})
+		_make_mapping(site_vm.name)
+		with _mock_ssh([("{}\n", "", 0), ("ok\n", "", 0)] * 3):
+			synced = tcp_proxy.reconcile_proxies()
+		self.assertEqual(set(synced), {proxy_a.name, proxy_b.name, proxy_c.name})
 
-	def test_reconcile_region_isolates_one_unreachable_proxy(self) -> None:
-		proxy_a = _proxy_vm("blr1")
-		proxy_b = _proxy_vm("blr1")
+	def test_reconcile_proxies_isolates_one_unreachable_proxy(self) -> None:
+		proxy_a = _proxy_vm()
+		proxy_b = _proxy_vm()
 		site_vm = _new_vm()
-		_make_mapping(site_vm.name, "blr1")
+		_make_mapping(site_vm.name)
 
 		def ssh_side_effect(connection, key_path, command, timeout_seconds, stdin=None):
 			if connection.host == "DEAD":
@@ -177,13 +178,8 @@ class TestReconcile(IntegrationTestCase):
 			patch.object(tcp_proxy, "ssh_key_file", return_value=key_cm),
 			patch.object(tcp_proxy, "connection_for_guest", side_effect=conn_for),
 		):
-			synced = tcp_proxy.reconcile_region("blr1")
+			synced = tcp_proxy.reconcile_proxies()
 		self.assertEqual(synced, [proxy_b.name])
-
-	def test_reconcile_proxy_without_region_throws(self) -> None:
-		plain_vm = _new_vm()  # no region
-		with self.assertRaises(frappe.ValidationError):
-			tcp_proxy.reconcile_proxy(plain_vm.name)
 
 	def test_get_uses_60s_and_sync_uses_120s_timeout(self) -> None:
 		# tcp_proxy deliberately reads with a fast 60s GET and writes with a slower
@@ -192,7 +188,7 @@ class TestReconcile(IntegrationTestCase):
 		# proxy.py uses for the http reconcile.
 		proxy_vm = _proxy_vm()
 		site_vm = _new_vm()
-		_make_mapping(site_vm.name, "blr1")
+		_make_mapping(site_vm.name)
 		with _mock_ssh([("{}\n", "", 0), ("ok\n", "", 0)]) as run_ssh:
 			tcp_proxy.reconcile_proxy(proxy_vm.name)
 		get_kwargs = run_ssh.call_args_list[0].kwargs
@@ -200,23 +196,24 @@ class TestReconcile(IntegrationTestCase):
 		self.assertEqual(get_kwargs["timeout_seconds"], 60)
 		self.assertEqual(sync_kwargs["timeout_seconds"], 120)
 
-	def test_reconcile_region_with_no_proxies_returns_empty_and_makes_no_ssh(self) -> None:
-		# A region with zero proxy VMs is not an error: reconcile_region returns []
+	def test_reconcile_proxies_with_no_proxies_returns_empty_and_makes_no_ssh(self) -> None:
+		# An empty proxy fleet is not an error: reconcile_proxies returns []
 		# and opens no SSH connection (tolerates an empty fleet, same as the http
-		# reconcile — a region whose proxies aren't built yet must not throw).
+		# reconcile — proxies that aren't built yet must not throw).
 		site_vm = _new_vm()
-		_make_mapping(site_vm.name, "blr1")  # a mapping exists, but no proxy serves it
+		_make_mapping(site_vm.name)  # a mapping exists, but no proxy serves it
 		with _mock_ssh([]) as run_ssh:
-			synced = tcp_proxy.reconcile_region("blr1")
+			synced = tcp_proxy.reconcile_proxies()
 		self.assertEqual(synced, [])
 		run_ssh.assert_not_called()
 
 	def test_drift_records_region_in_task_variables(self) -> None:
 		# The recorded Task carries the region in its variables (the audit row's
-		# payload), so an operator reading the Task knows which regional map it pushed.
-		proxy_vm = _proxy_vm("sgp1")
+		# payload). The region is this Atlas's single region (atlas_region()), no
+		# longer denormalized on the VM/mapping.
+		proxy_vm = _proxy_vm()
 		site_vm = _new_vm()
-		_make_mapping(site_vm.name, "sgp1")
+		_make_mapping(site_vm.name)
 		with _mock_ssh([("{}\n", "", 0), ("ok\n", "", 0)]):
 			tcp_proxy.reconcile_proxy(proxy_vm.name)
 		task = frappe.get_all(
@@ -224,4 +221,4 @@ class TestReconcile(IntegrationTestCase):
 			filters={"virtual_machine": proxy_vm.name, "script": "tcp-proxy-sync"},
 			fields=["variables"],
 		)[0]
-		self.assertIn("sgp1", task["variables"])
+		self.assertIn(atlas_region(), task["variables"])

@@ -18,7 +18,6 @@ from frappe.model.document import Document
 
 from atlas.atlas.placement import (
 	active_root_domain,
-	atlas_region,
 	default_bench_snapshot,
 	warm_bench_snapshot_for_server,
 )
@@ -52,12 +51,11 @@ SITE_VM_SIZE = SIZE_PRESETS["Shared 4x"]
 # the owner a password that does not authenticate.
 BAKED_ADMIN_PASSWORD = "atlas-baked"
 
-# The routing key (subdomain + region) and the backing VM are the identity; once
-# written they are fixed. Repointing a live Site at a different VM or region is a
-# delete-and-recreate, not an in-place edit — same shape as Subdomain.
+# The routing key (subdomain) and the backing VM are the identity; once written
+# they are fixed. Repointing a live Site at a different VM is a delete-and-recreate,
+# not an in-place edit — same shape as Subdomain.
 IMMUTABLE_AFTER_INSERT = (
 	"subdomain",
-	"region",
 	"virtual_machine",
 )
 
@@ -79,7 +77,6 @@ class Site(Document):
 		admin_password: DF.Password | None
 		deploying_started: DF.Datetime | None
 		provisioning_started: DF.Datetime | None
-		region: DF.Data | None
 		running_started: DF.Datetime | None
 		status: DF.Literal["Pending", "Provisioning", "Deploying", "Running", "Failed", "Terminated"]
 		subdomain: DF.Data
@@ -93,14 +90,12 @@ class Site(Document):
 		Validate the label *here* — before autoname() resolves the domain and
 		builds the FQDN — so a bad label fails with a clear "single label"/
 		"reserved" message rather than a downstream domain-resolution error.
-		Then resolve the active region (Central never picks it) and start
-		Pending. The backing VM is created in the background job (after_insert),
-		not here — provisioning SSHes and must not block the insert. The owning
-		`tenant` (set by the Central-facing create_site API) carries attribution;
-		Atlas no longer owns end-users."""
+		Then start Pending. The backing VM is created in the background job
+		(after_insert), not here — provisioning SSHes and must not block the insert.
+		The owning `tenant` (set by the Central-facing create_site API) carries
+		attribution; Atlas no longer owns end-users."""
 		self._validate_label()
 		self._validate_reserved()
-		self._apply_region_default()
 		if not self.status:
 			self.status = "Pending"
 
@@ -150,15 +145,6 @@ class Site(Document):
 				frappe.throw(f"{field} is immutable after insert")
 
 	# ----- routing identity (Contract A) ---------------------------------
-
-	def _apply_region_default(self) -> None:
-		"""Resolve the region from `Atlas Settings.region` (the single source of
-		truth; the user never picks it). No-op when already set (a retry, or an
-		operator who supplied it). The domain suffix is read from the active Root
-		Domain in _set_name_from_routing — that row's region is denormalized from the
-		same Atlas Settings.region, so the two stay consistent."""
-		if not self.region:
-			self.region = atlas_region()
 
 	def _set_name_from_routing(self) -> None:
 		"""Build the one routing string: `<subdomain>.<region domain>`, the FQDN
@@ -482,14 +468,12 @@ def _wait_for_http(site, vm_name: str) -> None:
 def _create_subdomain(site, vm_name: str) -> str:
 	"""Create the proxy-map Subdomain row that puts the site on the front door.
 
-	The Subdomain's own after_insert reconciles the regional proxy fleet. The
-	subdomain label, region, and target VM all flow straight from the Site — no
-	transformation (Contract A)."""
+	The Subdomain's own after_insert reconciles the proxy fleet. The subdomain label
+	and target VM both flow straight from the Site — no transformation (Contract A)."""
 	subdomain = frappe.get_doc(
 		{
 			"doctype": "Subdomain",
 			"subdomain": site.subdomain,
-			"region": site.region,
 			"virtual_machine": vm_name,
 			"active": 1,
 		}

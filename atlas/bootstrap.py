@@ -116,7 +116,7 @@ persist. The flow, in dependency order:
                                     `Atlas Settings.default_bench_snapshot` (the
                                     image self-serve site VMs clone from)
   3. `ensure_tls_layer(config)`   — seed Domain/TLS providers + Root Domain (the
-                                    row `Site.before_insert` reads region+FQDN from)
+                                    row `Site` autoname reads the FQDN suffix from)
   4. `ensure_proxy(server, …)`    — proxy VM → `build_proxy` → reserved IPv4
   5. issue + push the wildcard    — `issue_certificate` then `push_to_proxies`
                                     (needs the proxy + reserved IP to exist first,
@@ -161,7 +161,8 @@ GOLDEN_MEMORY_MB = 2048
 GOLDEN_SNAPSHOT_TITLE = "golden-bench"
 
 # Proxy VM sizing. The proxy runs nginx+Lua only (no site DB), so it is small; it
-# carries `is_proxy=1` + `region` so build_proxy and the cert push find it.
+# carries `is_proxy=1` so build_proxy and the cert push find it (the region it
+# serves is this Atlas's single `Atlas Settings.region`).
 PROXY_MEMORY_MB = 1024
 PROXY_DISK_GB = 4
 
@@ -651,15 +652,16 @@ def ensure_proxy(server_name: str, region: str, domain: str) -> str:
 	and attach a reserved IPv4 — the public front door subdomains route through.
 	Returns the proxy VM name.
 
-	Idempotent-ish: if a Running `is_proxy` VM already exists on this server in this
-	region, reuse it (re-build + re-ensure a reserved IP) rather than provisioning a
-	second. The cert push is a SEPARATE step (`push_certificate_to_proxies`) the
-	caller runs after issuing, because the cert must exist first."""
+	Idempotent-ish: if a Running `is_proxy` VM already exists on this server, reuse
+	it (re-build + re-ensure a reserved IP) rather than provisioning a second. The
+	cert push is a SEPARATE step (`push_certificate_to_proxies`) the caller runs
+	after issuing, because the cert must exist first. `region` is used only to label
+	the VM title; the proxy serves this Atlas's single `Atlas Settings.region`."""
 	from atlas.atlas import proxy
 
 	existing = frappe.get_all(
 		"Virtual Machine",
-		filters={"server": server_name, "is_proxy": 1, "region": region, "status": "Running"},
+		filters={"server": server_name, "is_proxy": 1, "status": "Running"},
 		pluck="name",
 		limit=1,
 	)
@@ -676,7 +678,6 @@ def ensure_proxy(server_name: str, region: str, domain: str) -> str:
 			disk_gigabytes=PROXY_DISK_GB,
 			vcpus=1,
 			is_proxy=True,
-			region=region,
 		)
 		proxy_vm_name = vm.name
 		print(
@@ -727,7 +728,6 @@ def _provision_durable_vm(
 	disk_gigabytes: int,
 	vcpus: int = 1,
 	is_proxy: bool = False,
-	region: str | None = None,
 ) -> "frappe.model.document.Document":
 	"""Insert a Virtual Machine with the FLEET key (Atlas Settings.ssh_public_key) so
 	the control plane (`connection_for_guest`) can SSH in, commit so the
@@ -757,7 +757,6 @@ def _provision_durable_vm(
 	}
 	if is_proxy:
 		fields["is_proxy"] = 1
-		fields["region"] = region
 	vm = frappe.get_doc(fields).insert(ignore_permissions=True)
 	# nosemgrep: frappe-manual-commit -- bootstrap script: persist the VM row so the after_insert boot job sees it cross-transaction
 	frappe.db.commit()

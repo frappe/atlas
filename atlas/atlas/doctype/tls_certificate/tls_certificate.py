@@ -112,41 +112,38 @@ class TLSCertificate(Document):
 		return self._push_to_proxies()
 
 	def _push_to_proxies(self) -> list[str]:
-		"""Read the PEMs off disk and call `proxy.push_cert` for every proxy VM in
-		the domain's region. Returns the names of the proxy VMs pushed to. A proxy
-		that can't be reached is logged and skipped — one wedged guest never wedges
-		the fan-out (mirrors `proxy.reconcile_region`)."""
+		"""Read the PEMs off disk and call `proxy.push_cert` for every proxy VM.
+		Returns the names of the proxy VMs pushed to. A proxy that can't be reached is
+		logged and skipped — one wedged guest never wedges the fan-out (mirrors
+		`proxy.reconcile_proxies`)."""
 		if not self.fullchain_path or not self.privkey_path:
 			frappe.throw(_("TLS Certificate has no PEM paths; issue it first"))
 		fullchain = _read_pem(self.fullchain_path)
 		privkey = _read_pem(self.privkey_path)
-		region = frappe.db.get_value("Root Domain", self.root_domain, "region")
-		if not region:
-			frappe.throw(f"Root Domain {self.root_domain} has no region")
 
 		pushed: list[str] = []
-		for vm_name in proxy._proxy_vms_in_region(region):
+		for vm_name in proxy._proxy_vms():
 			try:
 				proxy.push_cert(vm_name, fullchain, privkey)
 				pushed.append(vm_name)
 			except Exception as exception:
 				frappe.log_error(f"Cert push failed for {vm_name}: {exception}", "TLS Certificate push")
 
-		# Point the regional wildcard at the proxy fleet. The cert proves identity;
-		# this record makes `<sub>.<domain>` actually resolve to the proxies (A →
-		# their reserved IPv4, AAAA → their /128). Reconciled here so a fleet change
+		# Point the wildcard at the proxy fleet. The cert proves identity; this
+		# record makes `<sub>.<domain>` actually resolve to the proxies (A → their
+		# reserved IPv4, AAAA → their /128). Reconciled here so a fleet change
 		# (rebuild, reserved-IP reattach) is reflected on the next push, mirroring
 		# the cert fan-out. A DNS failure is logged, not raised: the cert is already
 		# on the proxies, and a stale wildcard shouldn't undo a successful push.
-		self._publish_wildcard(region)
+		self._publish_wildcard()
 		return pushed
 
-	def _publish_wildcard(self, region: str) -> None:
+	def _publish_wildcard(self) -> None:
 		domain_row = frappe.get_doc("Root Domain", self.root_domain)
-		ipv4, ipv6 = proxy.wildcard_targets_for_region(region)
+		ipv4, ipv6 = proxy.wildcard_targets()
 		if not ipv4 and not ipv6:
 			frappe.log_error(
-				f"No proxy addresses in region {region!r}; wildcard for {domain_row.domain} not published",
+				f"No proxy addresses; wildcard for {domain_row.domain} not published",
 				"TLS Certificate DNS",
 			)
 			return

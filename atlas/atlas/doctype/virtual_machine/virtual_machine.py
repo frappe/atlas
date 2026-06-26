@@ -72,7 +72,6 @@ class VirtualMachine(Document):
 		memory_megabytes: DF.Int
 		memory_snapshot_on_stop: DF.Check
 		public_ipv4: DF.Data | None
-		region: DF.Data | None
 		server: DF.Link
 		size_preset: DF.Literal["Custom", "Shared 1x", "Shared 2x", "Shared 4x", "Shared 8x", "Dedicated 1x"]
 		ssh_public_key: DF.LongText

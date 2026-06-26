@@ -26,7 +26,6 @@ def create_site(
 	team: str,
 	subdomain: str,
 	email: str | None = None,
-	region: str | None = None,
 ) -> dict:
 	"""Provision a self-serve site for a Central team and return its mirror row.
 
@@ -34,8 +33,8 @@ def create_site(
 	team owner). The `subdomain` is the single DNS label the site is
 	fronted at (`<subdomain>.<region domain>`); the Site controller enforces the
 	Contract-A label rules and the authoritative FQDN uniqueness, throwing a clean
-	"already taken" the caller can surface. `region` is optional — it defaults to
-	the active region (Atlas Settings.region); Central never has to pick it.
+	"already taken" the caller can surface. The region is this Atlas instance's own
+	(Atlas Settings.region); Central picks the instance, never the region.
 
 	Runs with `ignore_permissions`: operator orchestration authorized by the
 	Central token, not desk RBAC. Returns immediately with status `Pending`; the
@@ -44,10 +43,9 @@ def create_site(
 	"""
 	tenant = ensure_tenant(team, email)
 
-	doc = {"doctype": "Site", "subdomain": subdomain, "tenant": tenant}
-	if region:
-		doc["region"] = region
-	site = frappe.get_doc(doc).insert(ignore_permissions=True)
+	site = frappe.get_doc({"doctype": "Site", "subdomain": subdomain, "tenant": tenant}).insert(
+		ignore_permissions=True
+	)
 
 	return _mirror(site)
 
@@ -75,7 +73,6 @@ def _mirror(site) -> dict:
 		"name": site.name,
 		"team": site.tenant or None,
 		"subdomain": site.subdomain,
-		"region": site.region,
 		"status": site.status,
 		"fqdn": site.name,
 		"url": f"https://{site.name}" if running else None,

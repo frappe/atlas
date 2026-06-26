@@ -8,7 +8,6 @@
  "field_order": [
   "tab_overview",
   "subdomain",
-  "region",
   "tenant",
   "column_break_header",
   "status",
@@ -37,16 +36,6 @@
    "in_list_view": 1,
    "label": "Subdomain",
    "reqd": 1,
-   "set_only_once": 1
-  },
-  {
-   "description": "The regional wildcard zone + proxy fleet this site is fronted by, resolved from the active Root Domain at insert (the user never picks it). Immutable.",
-   "fieldname": "region",
-   "fieldtype": "Data",
-   "in_list_view": 1,
-   "in_standard_filter": 1,
-   "label": "Region",
-   "read_only": 1,
    "set_only_once": 1
   },
   {
@@ -163,7 +152,7 @@
    "write": 1
   }
  ],
- "search_fields": "subdomain,region,status",
+ "search_fields": "subdomain,status",
  "sort_field": "creation",
  "sort_order": "DESC",
  "states": [

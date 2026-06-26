@@ -31,7 +31,6 @@ from atlas.atlas.ssh import run_task
 IMMUTABLE_AFTER_INSERT = (
 	"recipe",
 	"server",
-	"region",
 	"base_image",
 )
 
@@ -60,7 +59,6 @@ class ImageBuild(Document):
 			"bench-nightly-admin",
 			"proxy",
 		]
-		region: DF.Data | None
 		server: DF.Link
 		snapshot: DF.Link | None
 		status: DF.Literal["Draft", "Provisioning", "Building", "Snapshotting", "Available", "Failed"]
@@ -73,16 +71,13 @@ class ImageBuild(Document):
 		"""Resolve the recipe and fill what the operator didn't pick.
 
 		Copy the recipe's human title for the list view, default the base image
-		from Atlas Settings, require a region for a proxy recipe (and default the
-		auto-register check for a recipe that supports it), and start Draft. The
-		build VM is created in the background job (after_insert), not here —
-		provisioning SSHes and must not block the insert."""
+		from Atlas Settings, and start Draft. The build VM is created in the
+		background job (after_insert), not here — provisioning SSHes and must not
+		block the insert."""
 		recipe = get_recipe(self.recipe)
 		self.title = recipe.title
 		if not self.base_image:
 			self.base_image = default_image()
-		if recipe.is_proxy and not self.region:
-			frappe.throw(f"A region is required to build the {recipe.title}")
 		if self.warm and not recipe.warm_entrypoint:
 			frappe.throw(f"The {recipe.title} recipe has no warm entrypoint; it can only bake cold")
 		if not self.status:
@@ -265,9 +260,10 @@ def _provision_build_vm(build, recipe) -> str:
 
 	Its own after_insert auto-provisions it (boots it) in a separate job — we wait
 	on that in _wait_for_vm_running after committing. A proxy build's VM carries
-	is_proxy + region so its build (and the recipe's finalize) can read them; a
-	bench build's VM is a plain VM. The fleet SSH key is baked into every VM the
-	standard way, so build_proxy/build_bench reach the guest with it."""
+	is_proxy so its build (and the recipe's finalize) takes the proxy path; the
+	region it serves is read from Atlas Settings at finalize time. A bench build's
+	VM is a plain VM. The fleet SSH key is baked into every VM the standard way, so
+	build_proxy/build_bench reach the guest with it."""
 	ssh_public_key = frappe.db.get_single_value("Atlas Settings", "ssh_public_key")
 	vm = frappe.get_doc(
 		{
@@ -280,7 +276,6 @@ def _provision_build_vm(build, recipe) -> str:
 			"disk_gigabytes": recipe.disk_gigabytes,
 			"ssh_public_key": ssh_public_key,
 			"is_proxy": 1 if recipe.is_proxy else 0,
-			"region": build.region if recipe.is_proxy else None,
 			# Stamp the bake mode (bench recipes only; empty for proxy). It rides the
 			# build VM → its snapshot → a clone, so a customer VM's first boot maps its
 			# FQDN to the baked site (site) or the admin console (admin) — spec/08.

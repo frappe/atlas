@@ -21,7 +21,8 @@ import shlex
 import frappe
 
 from atlas.atlas._ssh.transport import run_ssh, ssh_key_file
-from atlas.atlas.doctype.subdomain.subdomain import map_for_region
+from atlas.atlas.doctype.subdomain.subdomain import subdomain_map
+from atlas.atlas.placement import atlas_region
 from atlas.atlas.ssh import connection_for_guest
 
 # Paths mirror the stock Ubuntu `nginx` package (config /etc/nginx, state
@@ -46,16 +47,16 @@ def canonical_json(site_map: dict[str, str]) -> str:
 	return json.dumps(site_map, sort_keys=True, indent=2) + "\n"
 
 
-def reconcile_region(region: str) -> list[str]:
-	"""Reconcile every proxy VM in `region` to the region's desired map. Returns
-	the names of the proxy VMs that were synced (drifted). Each proxy holds the
-	WHOLE regional map (design §1 non-goals), so they all get the same body.
+def reconcile_proxies() -> list[str]:
+	"""Reconcile every proxy VM to the desired map. Returns the names of the proxy
+	VMs that were synced (drifted). Each proxy holds the WHOLE map (design §1
+	non-goals), so they all get the same body.
 
 	A proxy that can't be reached is recorded as a failed Task and skipped — the
 	other proxies still serve, so one wedged guest never wedges the loop (§7.3)."""
-	desired_json = canonical_json(map_for_region(region))
+	desired_json = canonical_json(subdomain_map())
 	synced = []
-	for vm_name in _proxy_vms_in_region(region):
+	for vm_name in _proxy_vms():
 		try:
 			if _reconcile_proxy(vm_name, desired_json):
 				synced.append(vm_name)
@@ -67,12 +68,9 @@ def reconcile_region(region: str) -> list[str]:
 
 
 def reconcile_proxy(virtual_machine: str) -> bool:
-	"""Reconcile a single proxy VM to its region's desired map. Returns True iff a
-	sync was needed (the live map had drifted). The region is read off the VM."""
-	region = frappe.db.get_value("Virtual Machine", virtual_machine, "region")
-	if not region:
-		frappe.throw(f"Virtual Machine {virtual_machine} has no region; not a proxy")
-	desired_json = canonical_json(map_for_region(region))
+	"""Reconcile a single proxy VM to the desired map. Returns True iff a sync was
+	needed (the live map had drifted)."""
+	desired_json = canonical_json(subdomain_map())
 	return _reconcile_proxy(virtual_machine, desired_json)
 
 
@@ -97,7 +95,7 @@ def _reconcile_proxy(virtual_machine: str, desired_json: str) -> bool:
 			timeout_seconds=120,
 			stdin=desired_json,
 		)
-	_record_guest_task(virtual_machine, "proxy-sync", {"region": vm.region}, stdout, stderr, code)
+	_record_guest_task(virtual_machine, "proxy-sync", {"region": atlas_region()}, stdout, stderr, code)
 	if code != 0:
 		frappe.throw(f"Proxy sync to {virtual_machine} failed (exit {code}): {stderr[-500:]}")
 	return True
@@ -110,11 +108,14 @@ def push_cert(virtual_machine: str, fullchain: str, privkey: str) -> None:
 	same guest-SSH path as the map sync, then reloads (a reload is fine here —
 	cert changes are rare, unlike map changes; design §7.3). The cert is pushed,
 	never baked into the image, so one proxy image serves any region and a renewed
-	cert is a re-push, not a rebuild (§5.3)."""
+	cert is a re-push, not a rebuild (§5.3).
+
+	The cert dir is still scoped under this instance's `Atlas Settings.region`, so a
+	later customer-domain feature can serve more than one cert per proxy without an
+	image roll — and the on-guest layout is byte-identical to what the proxies were
+	baked/pushed with, so removing the per-VM region field needs no cert move."""
+	region = atlas_region()
 	vm = frappe.get_doc("Virtual Machine", virtual_machine)
-	region = vm.region
-	if not region:
-		frappe.throw(f"Virtual Machine {virtual_machine} has no region; not a proxy")
 	connection = connection_for_guest(vm)
 	cert_dir = f"{CERT_DIRECTORY}/{region}"
 	with ssh_key_file(connection.ssh_private_key) as key_path:
@@ -162,8 +163,6 @@ def build_proxy(virtual_machine: str) -> None:
 	vm = frappe.get_doc("Virtual Machine", virtual_machine)
 	if not vm.is_proxy:
 		frappe.throw(f"Virtual Machine {virtual_machine} is not a proxy (is_proxy unset)")
-	if not vm.region:
-		frappe.throw(f"Virtual Machine {virtual_machine} has no region; not a proxy")
 	# stream=True (spec/22 sample): surface the proxy-build Task as Running and tail
 	# its in-guest nginx+luajit compile live, instead of writing the row only on
 	# completion. The 10-20 min build is exactly the case the streamed view is for.
@@ -222,24 +221,24 @@ def _curl_command(method: str, path: str, data_stdin: bool = False) -> str:
 	return " ".join(shlex.quote(p) for p in parts)
 
 
-def _proxy_vms_in_region(region: str) -> list[str]:
-	"""Every VM marked is_proxy in the region. These are the reconcile targets;
-	each gets the full regional map."""
+def _proxy_vms() -> list[str]:
+	"""Every VM marked is_proxy. These are the reconcile targets; each gets the full
+	map."""
 	return frappe.get_all(
 		"Virtual Machine",
-		filters={"is_proxy": 1, "region": region},
+		filters={"is_proxy": 1},
 		pluck="name",
 	)
 
 
-def wildcard_targets_for_region(region: str) -> tuple[list[str], list[str]]:
+def wildcard_targets() -> tuple[list[str], list[str]]:
 	"""The proxy fleet's public addresses the regional wildcard should resolve to:
 	(ipv4, ipv6). AAAA = each proxy VM's `/128`; A = the Reserved IP attached to
 	each proxy (a proxy without an attached reserved IP contributes no v4). Both are
 	round-robin sets (spec/12-proxy.md: "DNS round-robin over their v4 + v6")."""
 	ipv4: list[str] = []
 	ipv6: list[str] = []
-	for vm_name in _proxy_vms_in_region(region):
+	for vm_name in _proxy_vms():
 		vm_ipv6 = frappe.db.get_value("Virtual Machine", vm_name, "ipv6_address")
 		if vm_ipv6:
 			ipv6.append(vm_ipv6)

@@ -291,7 +291,6 @@ class TestCentralReportSite(IntegrationTestCase):
 			name="acme.blr1.frappe.dev",
 			status=status,
 			subdomain="acme",
-			region="blr1",
 			tenant=tenant,
 			doctype="Site",
 		)

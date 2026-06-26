@@ -47,7 +47,6 @@
   "section_break_proxy",
   "is_proxy",
   "column_break_proxy",
-  "region",
   "section_break_activity",
   "last_started",
   "column_break_activity",
@@ -341,14 +340,6 @@
   {
    "fieldname": "column_break_proxy",
    "fieldtype": "Column Break"
-  },
-  {
-   "depends_on": "is_proxy",
-   "description": "The region whose subdomains this proxy serves. Every proxy VM in a region serves the full set of active subdomains for that region.",
-   "fieldname": "region",
-   "fieldtype": "Data",
-   "in_standard_filter": 1,
-   "label": "Region"
   },
   {
    "collapsible": 1,

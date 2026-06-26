@@ -54,14 +54,9 @@ class TestImageBuildInsert(IntegrationTestCase):
 		# Base image defaulted from Atlas Settings / the active image.
 		self.assertTrue(build.base_image)
 
-	def test_proxy_recipe_requires_region(self) -> None:
-		with self.assertRaises(frappe.ValidationError):
-			_new_build("proxy")  # no region
-
-	def test_proxy_recipe_with_region_inserts(self) -> None:
-		build = _new_build("proxy", region="blr1")
+	def test_proxy_recipe_inserts(self) -> None:
+		build = _new_build("proxy")
 		self.assertEqual(build.title, "Reverse proxy image")
-		self.assertEqual(build.region, "blr1")
 
 	def test_after_insert_enqueues_run(self) -> None:
 		with patch.object(image_build_module.frappe, "enqueue") as enqueue:
@@ -148,7 +143,7 @@ class TestImageBuildRun(IntegrationTestCase):
 	def test_proxy_build_never_registers(self) -> None:
 		# The proxy recipe has no registers_as, so register is skipped even if the
 		# (harmless, defaulted-on) auto_register check is set.
-		build = _new_build("proxy", region="blr1", auto_register=1)
+		build = _new_build("proxy", auto_register=1)
 		_, _, _, _, _, m_register, _ = self._run_with_mocks(build)
 		m_register.assert_not_called()
 
@@ -161,7 +156,7 @@ class TestImageBuildRun(IntegrationTestCase):
 
 	def test_proxy_build_skips_sanity_gate(self) -> None:
 		# The proxy bakes no Frappe site, so the Frappe serve+login gate doesn't apply.
-		build = _new_build("proxy", region="blr1")
+		build = _new_build("proxy")
 		_, _, _, m_sanity, _, _, _ = self._run_with_mocks(build)
 		m_sanity.assert_not_called()
 
@@ -235,7 +230,7 @@ class TestImageBuildRun(IntegrationTestCase):
 		from atlas.atlas.image_recipes import get_recipe
 
 		frappe.db.set_single_value("Atlas Settings", "ssh_public_key", "ssh-ed25519 AAAA test")
-		build = _new_build("proxy", region="blr1")
+		build = _new_build("proxy")
 		with patch.object(image_build_module.frappe, "enqueue"):
 			vm_name = image_build_module._provision_build_vm(build, get_recipe("proxy"))
 		self.assertFalse(frappe.db.get_value("Virtual Machine", vm_name, "build_mode"))
@@ -393,7 +388,7 @@ class TestImageBuildPromote(IntegrationTestCase):
 		# A recipe with no series name (proxy) keeps the old <recipe>-<build> default.
 		from unittest.mock import MagicMock
 
-		build = _new_build("proxy", region="blr1")
+		build = _new_build("proxy")
 		build.db_set("status", "Available")
 		build.db_set("snapshot", "snap-xyz")
 		build.reload()

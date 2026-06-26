@@ -64,7 +64,7 @@ from atlas.tests.e2e._shared import (
 # `<region>.frappe.dev`. This module issues for an arbitrary `config["domain"]`
 # (e.g. `atlas1.x.frappe.dev`), so it CANNOT reuse that probe — it builds the
 # hostname from the cert's real domain (`_assert_inbound_https_routes_to_domain`
-# below). The map key is still the bare subdomain label (`map_for_region` keys on
+# below). The map key is still the bare subdomain label (`subdomain_map` keys on
 # `subdomain`), so the served cert `*.<domain>` matches SNI `<sub>.<domain>`.
 from atlas.tests.e2e.use_cases.proxy_vm import (
 	_TEST_SUBDOMAIN,
@@ -188,7 +188,7 @@ def _seed_tls_doctypes(config: dict) -> None:
 	# — mirrors the operator first-run order. Without this the Root Domain below is
 	# forced to config["region"] while the Site keeps a stale Atlas Settings.region,
 	# so the Subdomain lands in a different region than the proxy VM and the proxy's
-	# live map comes back empty (map_for_region finds no active row for the proxy's
+	# live map comes back empty (subdomain_map finds no active row for the proxy's
 	# region).
 	frappe.db.set_single_value("Atlas Settings", "region", config["region"], update_modified=False)
 	frappe.db.set_single_value(

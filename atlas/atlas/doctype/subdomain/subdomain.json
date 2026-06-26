@@ -9,7 +9,6 @@
  "field_order": [
   "tab_overview",
   "subdomain",
-  "region",
   "column_break_header",
   "active",
   "section_break_target",
@@ -32,15 +31,6 @@
    "label": "Subdomain",
    "reqd": 1,
    "unique": 1
-  },
-  {
-   "description": "Which regional proxy fleet fronts this subdomain. Every proxy VM in the region gets the full set of active subdomains for the region.",
-   "fieldname": "region",
-   "fieldtype": "Data",
-   "in_list_view": 1,
-   "in_standard_filter": 1,
-   "label": "Region",
-   "reqd": 1
   },
   {
    "fieldname": "column_break_header",
@@ -107,7 +97,7 @@
    "write": 1
   }
  ],
- "search_fields": "subdomain,region,virtual_machine",
+ "search_fields": "subdomain,virtual_machine",
  "sort_field": "creation",
  "sort_order": "DESC",
  "states": [],

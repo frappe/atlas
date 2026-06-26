@@ -112,17 +112,17 @@ Central (owns the tenant) → create_site(team, subdomain) → Tenant + Site (Pe
 5. site.* events to Central / get_site poll             → status, then URL + admin password
 ```
 
-- **`atlas.atlas.api.site.create_site(team, subdomain, email=None,
-  region=None)`** is the write endpoint. It `ensure_tenant`s the Central team
+- **`atlas.atlas.api.site.create_site(team, subdomain, email=None)`** is the
+  write endpoint. It `ensure_tenant`s the Central team
   (`email` seeds a new Tenant; an existing one is reused), inserts the `Site` with
   the tenant stamped, and returns the **mirror row** Central reflects (`name`,
-  `team`, `subdomain`, `region`, `status`, `fqdn`). The `Site`
+  `team`, `subdomain`, `status`, `fqdn`). The `Site`
   controller enforces the **same Contract-A label rules** (shared
   `atlas.atlas.subdomain_label` — one source of truth for the label shape +
   reserved denylist) and the authoritative FQDN uniqueness, throwing a clean
-  "already taken" Central surfaces. `region` defaults to the active region (Central
-  never has to pick it). Runs `ignore_permissions` — operator orchestration, not
-  desk RBAC.
+  "already taken" Central surfaces. Atlas is single-region, so Central never
+  picks a region — the FQDN suffix comes from the active `Root Domain`. Runs
+  `ignore_permissions` — operator orchestration, not desk RBAC.
 - **`atlas.atlas.api.site.get_site(name)`** is the read/poll half: the same mirror
   row, plus — once `status == Running` — the live `url` and the
   `admin_password` (the tenant handoff). Before Running those two are `None` (no
@@ -150,8 +150,9 @@ Fields, validation, permissions, and the full field table are in
 [02-doctypes.md → Site](./02-doctypes.md#site). The lifecycle:
 
 1. **`before_insert`** validates the label (single dotless DNS label, not
-   reserved), resolves `region` from the active `Root Domain`, sets
-   `status = Pending`. The owning `tenant` is set by `create_site` from the
+   reserved) and sets `status = Pending`. The `Site` carries no `region` field
+   (Atlas is single-region); the FQDN suffix comes from the active `Root Domain`
+   at `autoname`. The owning `tenant` is set by `create_site` from the
    Central team; Atlas stamps no end-user `owner`.
 2. **`autoname`** builds the FQDN key (Contract A).
 3. **`after_insert`** enqueues `auto_provision` (`queue="long"` — it SSHes).
@@ -297,8 +298,9 @@ removed the ~28s `bench frappe` boot.
 ## The Subdomain it creates
 
 `auto_provision` step 5 inserts a [Subdomain](./02-doctypes.md#subdomain) whose
-`subdomain` / `region` / `virtual_machine` flow straight from the Site — no
-transformation (Contract A). The Subdomain is the proxy *map* row; the Site is
+`subdomain` / `virtual_machine` flow straight from the Site — no
+transformation (Contract A). Neither row carries a `region` field (Atlas is
+single-region). The Subdomain is the proxy *map* row; the Site is
 the tenant-owned aggregate. The Site stores the created Subdomain's name in
 `subdomain_doc` so `terminate()` can drop it.
 
@@ -311,7 +313,7 @@ the tenant-owned aggregate. The Site stores the created Subdomain's name in
     `_create_subdomain` identity carry-through, and `terminate`. See
     `atlas/atlas/doctype/site/test_site.py`.
   - *Central API* — `create_site` get-or-creates the Tenant, stamps it on the
-    Site, returns the mirror row, defaults the region, and gates the label;
+    Site, returns the mirror row, and gates the label;
     `get_site` hides the admin handoff until Running. See
     `atlas/tests/test_api_site.py`. The `site.*` event reporting (created /
     status_changed, the Running handoff payload) is in `atlas/tests/test_central.py`.

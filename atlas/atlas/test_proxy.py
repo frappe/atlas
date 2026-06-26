@@ -23,15 +23,15 @@ def _purge() -> None:
 		frappe.delete_doc("Virtual Machine", name, force=1, ignore_permissions=True)
 
 
-def _make_subdomain(subdomain: str, vm: str, region: str, **overrides):
-	doc = {"doctype": "Subdomain", "subdomain": subdomain, "virtual_machine": vm, "region": region}
+def _make_subdomain(subdomain: str, vm: str, **overrides):
+	doc = {"doctype": "Subdomain", "subdomain": subdomain, "virtual_machine": vm}
 	doc.update(overrides)
 	return frappe.get_doc(doc).insert(ignore_permissions=True)
 
 
-def _proxy_vm(region: str = "blr1"):
-	"""A VM marked as a proxy in `region` — the reconcile target."""
-	return _new_vm(is_proxy=1, region=region)
+def _proxy_vm():
+	"""A VM marked as a proxy — the reconcile target."""
+	return _new_vm(is_proxy=1)
 
 
 @contextlib.contextmanager
@@ -71,7 +71,7 @@ class TestReconcile(IntegrationTestCase):
 	def test_no_drift_skips_sync(self) -> None:
 		proxy_vm = _proxy_vm()
 		site_vm = _new_vm()
-		_make_subdomain("acme", site_vm.name, "blr1")
+		_make_subdomain("acme", site_vm.name)
 		desired = proxy.canonical_json({"acme": site_vm.ipv6_address})
 		# The guest's live /map already equals desired → no POST.
 		with _mock_ssh([(desired, "", 0)]) as run_ssh:
@@ -82,7 +82,7 @@ class TestReconcile(IntegrationTestCase):
 	def test_drift_triggers_bulk_sync_with_canonical_body(self) -> None:
 		proxy_vm = _proxy_vm()
 		site_vm = _new_vm()
-		_make_subdomain("acme", site_vm.name, "blr1")
+		_make_subdomain("acme", site_vm.name)
 		desired = proxy.canonical_json({"acme": site_vm.ipv6_address})
 		# Live map is empty (fresh proxy) → drifted → POST /sync.
 		with _mock_ssh([("{}\n", "", 0), ('{"synced":true}', "", 0)]) as run_ssh:
@@ -99,7 +99,7 @@ class TestReconcile(IntegrationTestCase):
 	def test_drift_records_a_task_row(self) -> None:
 		proxy_vm = _proxy_vm()
 		site_vm = _new_vm()
-		_make_subdomain("acme", site_vm.name, "blr1")
+		_make_subdomain("acme", site_vm.name)
 		with _mock_ssh([("{}\n", "", 0), ("ok", "", 0)]):
 			proxy.reconcile_proxy(proxy_vm.name)
 		tasks = frappe.get_all(
@@ -110,7 +110,7 @@ class TestReconcile(IntegrationTestCase):
 	def test_sync_failure_raises_and_records_failure(self) -> None:
 		proxy_vm = _proxy_vm()
 		site_vm = _new_vm()
-		_make_subdomain("acme", site_vm.name, "blr1")
+		_make_subdomain("acme", site_vm.name)
 		with _mock_ssh([("{}\n", "", 0), ("", "boom", 1)]):
 			with self.assertRaises(frappe.ValidationError):
 				proxy.reconcile_proxy(proxy_vm.name)
@@ -119,22 +119,22 @@ class TestReconcile(IntegrationTestCase):
 		)
 		self.assertEqual(status, ["Failure"])
 
-	def test_reconcile_region_targets_every_proxy_vm(self) -> None:
-		proxy_a = _proxy_vm("blr1")
-		proxy_b = _proxy_vm("blr1")
-		_proxy_vm("sgp1")  # other region — must be untouched
+	def test_reconcile_proxies_targets_every_proxy_vm(self) -> None:
+		# The fleet is global now: every is_proxy VM is a reconcile target.
+		proxy_a = _proxy_vm()
+		proxy_b = _proxy_vm()
 		site_vm = _new_vm()
-		_make_subdomain("acme", site_vm.name, "blr1")
-		# Both blr1 proxies are empty → both drift → both synced.
+		_make_subdomain("acme", site_vm.name)
+		# Both proxies are empty → both drift → both synced.
 		with _mock_ssh([("{}\n", "", 0), ("ok", "", 0)] * 2):
-			synced = proxy.reconcile_region("blr1")
+			synced = proxy.reconcile_proxies()
 		self.assertEqual(set(synced), {proxy_a.name, proxy_b.name})
 
-	def test_reconcile_region_isolates_one_unreachable_proxy(self) -> None:
-		proxy_a = _proxy_vm("blr1")
-		proxy_b = _proxy_vm("blr1")
+	def test_reconcile_isolates_one_unreachable_proxy(self) -> None:
+		proxy_a = _proxy_vm()
+		proxy_b = _proxy_vm()
 		site_vm = _new_vm()
-		_make_subdomain("acme", site_vm.name, "blr1")
+		_make_subdomain("acme", site_vm.name)
 		# First proxy's GET raises (guest wedged); the loop must still reach the
 		# second and sync it. Order isn't guaranteed, so make BOTH paths viable:
 		# one raises on GET, one syncs cleanly.
@@ -160,7 +160,7 @@ class TestReconcile(IntegrationTestCase):
 			patch.object(proxy, "ssh_key_file", return_value=key_cm),
 			patch.object(proxy, "connection_for_guest", side_effect=conn_for),
 		):
-			synced = proxy.reconcile_region("blr1")
+			synced = proxy.reconcile_proxies()
 		# The dead one is skipped; the healthy one still synced.
 		self.assertEqual(synced, [proxy_b.name])
 		_ = desired
@@ -168,8 +168,8 @@ class TestReconcile(IntegrationTestCase):
 
 def _reserved_ip(ip_address: str, server: str, vm: str | None = None):
 	"""A Reserved IP row attached (in the DB) to `vm`, bypassing the vendor assign
-	+ host NAT Task that real `attach()` runs — wildcard_targets_for_region only
-	reads the row's ip_address/virtual_machine."""
+	+ host NAT Task that real `attach()` runs — wildcard_targets only reads the
+	row's ip_address/virtual_machine."""
 	doc = frappe.get_doc(
 		{
 			"doctype": "Reserved IP",
@@ -183,14 +183,14 @@ def _reserved_ip(ip_address: str, server: str, vm: str | None = None):
 
 
 class TestWildcardTargets(IntegrationTestCase):
-	# A region unique to this test class, so the query never picks up proxies or
-	# Reserved IPs from a live deploy sharing this DB (and we never delete theirs).
-	REGION = "wildcardtest"
-
+	# The proxy fleet is global now (no per-region scoping), so wildcard_targets()
+	# sees every is_proxy VM. Purge the whole fleet — and any Reserved IPs attached
+	# to those VMs — so each test starts from an empty fleet and asserts against the
+	# proxies it creates.
 	def setUp(self) -> None:
-		for name in frappe.get_all("Subdomain", filters={"region": self.REGION}, pluck="name"):
+		for name in frappe.get_all("Subdomain", pluck="name"):
 			frappe.delete_doc("Subdomain", name, force=1, ignore_permissions=True)
-		for vm in frappe.get_all("Virtual Machine", filters={"region": self.REGION}, pluck="name"):
+		for vm in frappe.get_all("Virtual Machine", pluck="name"):
 			for rip in frappe.get_all("Reserved IP", filters={"virtual_machine": vm}, pluck="name"):
 				# on_trash refuses to delete an ATTACHED Reserved IP; clear the link
 				# directly (no vendor detach needed — these are DB-only test rows).
@@ -200,34 +200,30 @@ class TestWildcardTargets(IntegrationTestCase):
 
 	def test_gathers_aaaa_from_proxy_v6_and_a_from_attached_reserved_ip(self) -> None:
 		server = _ensure_test_server()
-		proxy_a = _proxy_vm(self.REGION)
+		proxy_a = _proxy_vm()
 		proxy_a.db_set("ipv6_address", "2400:6180::a")
 		_reserved_ip("198.51.100.10", server, proxy_a.name)
-		# A proxy in another region must not leak in.
-		other = _proxy_vm("sgp1")
-		other.db_set("ipv6_address", "2400:6180::ff")
-		_reserved_ip("203.0.113.99", server, other.name)
 
-		ipv4, ipv6 = proxy.wildcard_targets_for_region(self.REGION)
+		ipv4, ipv6 = proxy.wildcard_targets()
 		self.assertEqual(ipv4, ["198.51.100.10"])
 		self.assertEqual(ipv6, ["2400:6180::a"])
 
 	def test_proxy_without_reserved_ip_contributes_only_aaaa(self) -> None:
-		proxy_a = _proxy_vm(self.REGION)
+		proxy_a = _proxy_vm()
 		proxy_a.db_set("ipv6_address", "2400:6180::a")  # no Reserved IP attached
-		ipv4, ipv6 = proxy.wildcard_targets_for_region(self.REGION)
+		ipv4, ipv6 = proxy.wildcard_targets()
 		self.assertEqual(ipv4, [])
 		self.assertEqual(ipv6, ["2400:6180::a"])
 
 	def test_multiple_proxies_round_robin(self) -> None:
 		server = _ensure_test_server()
-		a = _proxy_vm(self.REGION)
+		a = _proxy_vm()
 		a.db_set("ipv6_address", "2400:6180::a")
 		_reserved_ip("198.51.100.10", server, a.name)
-		b = _proxy_vm(self.REGION)
+		b = _proxy_vm()
 		b.db_set("ipv6_address", "2400:6180::b")
 		_reserved_ip("198.51.100.11", server, b.name)
-		ipv4, ipv6 = proxy.wildcard_targets_for_region(self.REGION)
+		ipv4, ipv6 = proxy.wildcard_targets()
 		self.assertEqual(sorted(ipv4), ["198.51.100.10", "198.51.100.11"])
 		self.assertEqual(sorted(ipv6), ["2400:6180::a", "2400:6180::b"])
 
@@ -237,9 +233,12 @@ class TestPushCert(IntegrationTestCase):
 		_ensure_test_server()
 		_ensure_test_image()
 		_purge()
+		# push_cert scopes the cert dir under atlas_region() (Atlas Settings.region),
+		# not a per-VM region field. Pin it to "blr1" so the path assertions below hold.
+		frappe.db.set_single_value("Atlas Settings", "region", "blr1")
 
 	def test_push_cert_writes_both_pems_and_reloads(self) -> None:
-		proxy_vm = _proxy_vm("blr1")
+		proxy_vm = _proxy_vm()
 		# 3 SSH calls: write fullchain, write privkey, reload.
 		with _mock_ssh([("", "", 0), ("", "", 0), ("", "", 0)]) as run_ssh:
 			proxy.push_cert(proxy_vm.name, fullchain="FULL", privkey="PRIV")
@@ -262,7 +261,7 @@ class TestPushCert(IntegrationTestCase):
 		self.assertIn("reload", commands[2])
 
 	def test_push_cert_records_task(self) -> None:
-		proxy_vm = _proxy_vm("blr1")
+		proxy_vm = _proxy_vm()
 		with _mock_ssh([("", "", 0), ("", "", 0), ("", "", 0)]):
 			proxy.push_cert(proxy_vm.name, fullchain="FULL", privkey="PRIV")
 		status = frappe.get_all(
@@ -271,7 +270,7 @@ class TestPushCert(IntegrationTestCase):
 		self.assertEqual(status, ["Success"])
 
 	def test_push_cert_raises_on_reload_failure(self) -> None:
-		proxy_vm = _proxy_vm("blr1")
+		proxy_vm = _proxy_vm()
 		with _mock_ssh([("", "", 0), ("", "", 0), ("", "nginx: bad config", 1)]):
 			with self.assertRaises(frappe.ValidationError):
 				proxy.push_cert(proxy_vm.name, fullchain="FULL", privkey="PRIV")
@@ -281,7 +280,7 @@ class TestBuildProxy(IntegrationTestCase):
 	"""build_proxy is now a thin wrapper over image_builder.run_build (handed the
 	`proxy` recipe). The upload/build/finalize logic lives in image_builder +
 	image_recipes; this suite covers what build_proxy itself still owns — the
-	is_proxy/region guards — and re-asserts the end-to-end build through the seam.
+	is_proxy guard — and re-asserts the end-to-end build through the seam.
 	The recipe's tree enumeration + the finalize command are unit-covered in
 	test_image_builder.py."""
 
@@ -294,10 +293,3 @@ class TestBuildProxy(IntegrationTestCase):
 		plain_vm = _new_vm()  # is_proxy unset
 		with self.assertRaises(frappe.ValidationError):
 			proxy.build_proxy(plain_vm.name)
-
-	def test_proxy_vm_without_region_is_rejected(self) -> None:
-		# A VM marked is_proxy but with no region can't be built (the finalize needs
-		# the region); the guard fails loud before any SSH.
-		vm = _new_vm(is_proxy=1)
-		with self.assertRaises(frappe.ValidationError):
-			proxy.build_proxy(vm.name)

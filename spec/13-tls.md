@@ -6,7 +6,7 @@ The reverse proxy ([12-proxy.md](./12-proxy.md)) terminates TLS for
 **consumer with no producer** — nothing in Atlas issued the PEMs it expects. This
 layer is the producer: it tracks root domains, issues their regional wildcard cert
 via Let's Encrypt over a DNS-01 challenge, and pushes the result onto every proxy
-VM in the domain's region.
+VM in the fleet.
 
 The shape mirrors the compute Provider abstraction
 ([01-architecture.md](./01-architecture.md)): two small registries (DNS, TLS),
@@ -24,7 +24,7 @@ Root Domain ──Issue / Renew Certificate──▶ TLS Certificate.issue()
                           ▼
                        PEMs on the controller's disk (fullchain_path, privkey_path)
                           │
-                          ▼  _push_to_proxies(): for vm in proxies(region)
+                          ▼  _push_to_proxies(): for vm in proxy._proxy_vms()
                        atlas.atlas.proxy.push_cert(vm, fullchain, privkey)   ← EXISTING
                           │     ▼
                           │  nginx reload on each proxy guest
@@ -34,10 +34,11 @@ Root Domain ──Issue / Renew Certificate──▶ TLS Certificate.issue()
                        *.<domain> A → proxy reserved IPv4s, AAAA → proxy /128s
 ```
 
-One `Root Domain` row == one region == one wildcard. `Root Domain.region` is the
-join key to the proxy fleet (`Virtual Machine.is_proxy=1, region=<region>` — the
-same query `proxy._proxy_vms_in_region` already uses), so issuance never needs to
-know which VMs are proxies; it asks the region.
+One `Root Domain` row == one region == one wildcard. `Root Domain.region` freezes
+the region (the wildcard domain suffix) at insert. Atlas is single-region, so the
+proxy fleet is the whole set of `Virtual Machine.is_proxy=1` rows (`proxy._proxy_vms`)
+— issuance never needs to know which VMs are proxies, and there is no per-region
+filter to apply.
 
 ## Abstractions
 
@@ -116,7 +117,7 @@ the DB, mirroring `Atlas Settings.ssh_private_key_path`.
   renewal that isn't due yet is a cheap no-op.
 
 A push to one wedged proxy never blocks the others: `_push_to_proxies` logs the
-failure and moves on, exactly like `proxy.reconcile_region`.
+failure and moves on, exactly like `proxy.reconcile_proxies`.
 
 ## First-run order
 
@@ -132,7 +133,7 @@ Layered on top of the proxy first-run ([12-proxy.md](./12-proxy.md)):
    `region`. The DNS + TLS vendor types are denormalized onto the row from the
    active vendors at insert. Click **Issue / Renew Certificate**.
 
-After issuance the regional wildcard is on every proxy VM in the region and nginx
+After issuance the regional wildcard is on every proxy VM in the fleet and nginx
 has reloaded; the proxy now serves `https://*.<region>.frappe.dev` with a real
 cert.
 
@@ -154,8 +155,8 @@ The split follows the project's host-facts-vs-unit-logic rule
   `certbot_authenticator()` and the `LetsEncryptProvider` certbot argv compose
   correctly against a mocked local runner (**no real certbot**); `Root Domain`
   autoname/immutability and `*.<domain>` derivation; the `TLS Certificate` status
-  machine, `renew_expiring` window, and `_push_to_proxies` fan-out to the right
-  region's proxy VMs (mock `push_cert`); `scripts/lib/atlas/certs.py` argv +
+  machine, `renew_expiring` window, and `_push_to_proxies` fan-out to the proxy
+  fleet (mock `push_cert`); `scripts/lib/atlas/certs.py` argv +
   `ATLAS_RESULT` parse. Run: `bench --site atlas.tests.local run-tests --app atlas`.
 - **E2E (host fact, real ACME):** `tls_issuance` is the only e2e that drives the
   real producer chain — Let's Encrypt **staging** → DNS-01 → certbot →

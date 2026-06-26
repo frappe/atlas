@@ -80,11 +80,6 @@ class TestCreateSite(IntegrationTestCase):
 		self.assertEqual(t1, t2)
 		self.assertEqual(frappe.db.count("Tenant", {"name": TEAM}), 1)
 
-	def test_region_defaults_to_active(self) -> None:
-		result = site_api.create_site(team=TEAM, subdomain="acme", email=TENANT_EMAIL)
-		self.assertEqual(result["region"], REGION)
-		self.assertEqual(frappe.db.get_value("Site", result["name"], "region"), REGION)
-
 	def test_new_tenant_without_email_throws(self) -> None:
 		with self.assertRaises(frappe.ValidationError) as raised:
 			site_api.create_site(team=TEAM, subdomain="acme")

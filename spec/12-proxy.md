@@ -9,7 +9,7 @@ source of truth and reconciles each proxy's live map over SSH.
 ## The shape
 
 - **The proxy is an ordinary Atlas Virtual Machine** — operator-owned, marked
-  `is_proxy` with a `region` ([02-doctypes.md](./02-doctypes.md#virtual-machine)).
+  `is_proxy` ([02-doctypes.md](./02-doctypes.md#virtual-machine)).
   No infrastructure-VM tier: it is invisible to the user SPA by ownership, and
   inherits the standard Firecracker jail + per-VM netns + cgroup caps as its
   sandbox. It runs the self-built nginx + Lua stack ([`proxy/`](../proxy)) and
@@ -21,7 +21,7 @@ source of truth and reconciles each proxy's live map over SSH.
   UUID.
 - **2–3 proxy VMs per region** behind the one regional wildcard (DNS
   round-robin over their v4 + v6), for resiliency and zero-downtime rolling
-  updates. Each proxy is independent and holds the **whole** regional map.
+  updates. Each proxy is independent and holds the **whole** map.
 - **The live map** is a `lua_shared_dict` inside each proxy guest (the in-process
   source of truth), dumped to a sorted, pretty-printed `map.json` read only at
   start. A map change is an atomic dict write — **zero reload**.
@@ -30,13 +30,13 @@ source of truth and reconciles each proxy's live map over SSH.
 
 One [`Subdomain`](./02-doctypes.md#subdomain) row per routing entry: `subdomain`
 (unique) → `virtual_machine` (the site VM) → `address` (the VM's `/128`,
-denormalized) → `region` + `active`. Standalone and linked (the Reserved IP
-idiom), **not** a child grid on a proxy — every proxy holds the whole regional
-map, so ownership is per region.
+denormalized) → `active`. Standalone and linked (the Reserved IP
+idiom), **not** a child grid on a proxy — every proxy holds the whole map.
+Atlas is single-region, so there is no region field on the row; every active
+subdomain belongs to the one region by definition.
 
-The desired map for a region is `map_for_region(region)` = `{subdomain: address}`
-for every active subdomain in the region. Every proxy VM in the region serves
-that same full map.
+The desired map is `subdomain_map()` = `{subdomain: address}`
+for every active subdomain. Every proxy VM serves that same full map.
 
 ## Control plane: Atlas → guest
 
@@ -53,23 +53,28 @@ and the socket's file permissions are the gate.
   2-space indent, one key per line, trailing newline. **Byte-identical** to the
   guest's `persist.lua` output, so the reconcile "in sync?" check is a plain
   string compare, not a semantic diff.
-- **`reconcile_proxy(vm)` / `reconcile_region(region)`** — for each proxy VM,
-  read its live `/map` over the admin socket, byte-compare against the canonical
+- **`reconcile_proxy(vm)` / `reconcile_proxies()`** — for each proxy VM
+  (enumerated by `_proxy_vms()`), read its live `/map` over the admin socket,
+  byte-compare against the canonical
   desired map, and bulk-declarative `POST /sync` the full map (streamed to the
   guest `curl --data-binary @-` over SSH stdin) on drift. Idempotent,
   self-healing, **rebuild-safe** (a fresh proxy's empty dict refills on the next
   reconcile). A proxy that can't be reached is recorded as a failed Task and
   **skipped** — one wedged guest never wedges the loop; the others still serve.
 - **`push_cert(vm, fullchain, privkey)`** — drop the regional wildcard
-  cert/key into the guest's per-region cert dir (private key via `tee` from
+  cert/key into the guest's per-region cert dir (`{CERT_DIRECTORY}/{region}`,
+  the region from `Atlas Settings.region` via `atlas_region()`, not a VM field;
+  private key via `tee` from
   stdin, never in an argv) and reload nginx. Cert pushes are rare, so a reload is
   fine here (unlike map changes). The cert is pushed, never baked into the image,
   so one proxy image serves any region and a renewal is a re-push, not a rebuild.
+  The per-region cert-dir layout is kept deliberately so a future customer-domain
+  feature can serve more than one cert per proxy.
 
 - **`build_proxy(vm)`** — turn a freshly-provisioned Ubuntu guest into a proxy:
   upload the committed [`proxy/`](../proxy) tree over the same guest-SSH path and
   run [`proxy/build.sh`](../proxy/build.sh) **inside** the guest (compiling nginx +
-  Lua from pinned sources), then write the VM's `region` and start the unit. This
+  Lua from pinned sources), then start the unit. This
   is the controller side of "build inside the guest" (*Build & roll = VM
   lifecycle* below) and the same
   byte-identical stack the compose release gate exercises (the gate's Dockerfile

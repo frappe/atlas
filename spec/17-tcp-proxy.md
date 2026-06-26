@@ -45,7 +45,7 @@ bumping the nginx version.
   more dynamic module on the stock apt binary). A proxy VM serves HTTP on
   `:443`/`:80` **and** TCP on its pre-opened port range, from one process. The
   proxy is still an ordinary operator-owned `Virtual Machine` marked `is_proxy`
-  with a `region` ([12-proxy.md](./12-proxy.md)).
+  ([12-proxy.md](./12-proxy.md)).
 - **Ingress is the proxy's reserved IPv4.** A tenant with no v4 reaches the
   proxy's attached `public_ipv4` (the inbound-v4 primitive,
   [06-networking.md](./06-networking.md#ipv4-ingress-reserved-ip)) — the same
@@ -53,7 +53,7 @@ bumping the nginx version.
   The v6 listener is the proxy's `/128` for tenants who *do* have v6 but still
   want the proxy to multiplex (rare; v4 is the point).
 - **The shared port pool is the scarce resource.** Each proxy holds the whole
-  region's port→backend map and listens on the whole pool. `listen 10000-19999;`
+  port→backend map and listens on the whole pool. `listen 10000-19999;`
   is **one listen socket per port** under the hood (nginx 1.15.10+ port-range
   syntax is sugar for 10000 sockets, 10000 fds per worker), so the pool size is a
   real resource decision, not free — every port in the range is `bind()`+`listen()`'d
@@ -79,29 +79,29 @@ bumping the nginx version.
 
 One [`Port Mapping`](./02-doctypes.md#port-mapping) row per exposed port,
 standalone and linked exactly the way [`Subdomain`](./02-doctypes.md#subdomain)
-is — **not** a child grid on a proxy, because every proxy holds the whole
-regional map.
+is — **not** a child grid on a proxy, because every proxy holds the whole map.
+Atlas is single-region, so there is no region field on the row; every active
+mapping belongs to the one region by definition.
 
 | Field | Meaning |
 | --- | --- |
-| `public_port` | The proxy-side port the tenant connects to. **Allocated by Atlas** on insert (first free in the region's pool), unique per region, read-only. The routing key. The row's name is `<region>-<public_port>` (`autoname format:{region}-{public_port}`) so the same port number is free in every region — the region in the name *is* the per-region uniqueness guarantee. |
-| `region` | Which proxy fleet fronts it. Immutable. |
+| `public_port` | The proxy-side port the tenant connects to. **Allocated by Atlas** on insert (first free in the pool), unique fleet-wide, read-only. The routing key. The row's name is `<protocol>-<public_port>` (`autoname format:{protocol}-{public_port}`). |
 | `virtual_machine` | The tenant VM this port forwards to. Immutable. |
 | `address` | The VM's public IPv6 `/128`, **denormalized** on save (copied from the VM's `ipv6_address`), so the desired map is one query with no join — the same trick `Subdomain.address` uses. The proxy dials a literal; it never resolves a VM. |
 | `target_port` | The service port **inside the guest** (22 for SSH, 3306 for MariaDB). Immutable. |
 | `protocol` | A label only (`ssh` / `mariadb` / `tcp`) for the operator and the future dashboard — the forwarder is protocol-agnostic L4. |
 | `active` | Inactive rows are excluded from the served map (history kept), same as `Subdomain.active`. |
 
-The desired map for a region is `port_map_for_region(region)` =
-`{ "<public_port>": "[<address>]:<target_port>" }` for every active mapping in
-the region. The value is a ready-to-dial `host:port` string (bracketed v6
-literal) so the guest does no formatting. Every proxy VM in the region serves
-that same full map.
+The desired map is `port_map()` =
+`{ "<public_port>": "[<address>]:<target_port>" }` for every active mapping.
+The value is a ready-to-dial `host:port` string (bracketed v6
+literal) so the guest does no formatting. Every proxy VM serves that same full
+map.
 
 `public_port` allocation is the one piece with no `Subdomain` analogue: on
 insert, the controller picks the lowest port in `Atlas Settings.tcp_port_pool`
-(default `10000-19999`) not already taken by an active *or inactive* mapping in
-the region (an inactive row still owns its port — toggling it back on must not
+(default `10000-19999`) not already taken by an active *or inactive* mapping
+(an inactive row still owns its port — toggling it back on must not
 collide), under the same row-lock idiom the rest of Atlas uses. Pool exhaustion
 is a typed throw, not a silent wrap.
 
@@ -136,8 +136,9 @@ DUMP\n                      -> force an immediate persist
   indent=2) + "\n"` helper, reused verbatim from `proxy.py`, byte-identical to
   the guest's `stream-persist.lua` output, so the "in sync?" check is a string
   compare.
-- **`reconcile_proxy(vm)` / `reconcile_region(region)`** — for each proxy VM in
-  the region, read the live map (`GET\n` over the stream-admin socket via
+- **`reconcile_proxy(vm)` / `reconcile_proxies()`** — for each proxy VM
+  (enumerated by reusing `proxy._proxy_vms()`), read the live map (`GET\n` over
+  the stream-admin socket via
   SSH-to-guest), byte-compare against the canonical desired map, and `SYNC\n…` the
   full map on drift. Idempotent, self-healing, rebuild-safe; one unreachable
   proxy is a failed Task and skipped, never wedging the loop — same guarantees as
@@ -156,10 +157,12 @@ Each guest op is recorded as a `Task` (`script` = `tcp-proxy-sync`, with the
 proxy VM), the same audit-row shape as `proxy-sync`.
 
 `Port Mapping`'s lifecycle hooks mirror `Subdomain`'s exactly: `after_insert`,
-`active`-toggle `on_update`, and `on_trash` each enqueue a **region-deduplicated**
-`tcp_reconcile_region` job (one reconcile per region no matter how many mappings
-changed — the same `deduplicate=True` + region-keyed `job_id` that stopped the
-4000-redundant-reconcile pileup for subdomains).
+`active`-toggle `on_update`, and `on_trash` each enqueue a **deduplicated**
+`port_mapping.tcp_reconcile` job (one reconcile no matter how many mappings
+changed — the same `deduplicate=True` + a constant `job_id`
+(`tcp_reconcile_ports`) that stopped the
+4000-redundant-reconcile pileup for subdomains, whose own constant is
+`auto_reconcile_subdomains` enqueuing `subdomain.auto_reconcile`).
 
 ## The request path in the guest
 
@@ -288,7 +291,7 @@ bytes round-trip, then remap and assert no reload.
 5. **Reuse the HTTP proxy's machinery wholesale.** Same VM, same nginx process,
    same build, same controller reconcile shape, same Task audit rows, same
    DocType idioms (standalone+linked, denormalized address, immutable key,
-   region-deduplicated reconcile). The TCP proxy adds a port pool and a second
+   deduplicated reconcile). The TCP proxy adds a port pool and a second
    dict; it invents no new infrastructure.
 
 ## Accepted limitations
@@ -299,12 +302,12 @@ bytes round-trip, then remap and assert no reload.
   the south-side per-VM firewall ([09-roadmap.md](./09-roadmap.md)) scopes it.
   For a database port this is a sharper exposure than `:80` — the south-side
   firewall is the matching release gate before TCP exposure ships to tenants.
-- **Bounded port pool per region.** `10000-19999` = 10000 concurrent mappings per
-  region. Sized for the iteration; growing it is a snapshot roll. The next block,
+- **Bounded port pool.** `10000-19999` = 10000 concurrent mappings fleet-wide.
+  Sized for the iteration; growing it is a snapshot roll. The next block,
   `20000-60000`, is reserved as the documented growth path (≈50000 more ports,
   clear of the registered-service ports below `10000`) — it is **not** pre-opened,
   to keep startup, reload, and per-worker socket memory proportional to the pool
-  actually in use. The fleet only grows into it if a region's `10000-19999` pool
+  actually in use. The fleet only grows into it if the `10000-19999` pool
   approaches exhaustion, and the grow is the same deliberate snapshot roll as any
   stack change.
 - **No graceful-reload guarantee across a pool grow for *open* sessions.** nginx

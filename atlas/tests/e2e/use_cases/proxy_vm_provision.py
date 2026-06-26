@@ -83,8 +83,8 @@ def wire_existing(proxy_vm: str, site_vm: str) -> dict:
 	assert site_doc.status == "Running", f"site VM {site_vm} is {site_doc.status}, not Running"
 	assert proxy_doc.is_proxy, f"VM {proxy_vm} is not marked is_proxy"
 	assert proxy_doc.server == site_doc.server, "proxy and site VMs must be on the same server"
-	region = proxy_doc.region
-	assert region, f"proxy VM {proxy_vm} has no region"
+	# VM no longer carries a region field; the region is the Atlas single region.
+	region = get_region()
 	server = frappe.get_doc("Server", proxy_doc.server)
 	print(f"[provision] reusing existing VMs proxy={proxy_vm} site={site_vm} on server {server.name}")
 	return _wire_vms(server, region, proxy_doc, site_doc)
@@ -146,7 +146,8 @@ def finish_inbound(proxy_vm: str, site_vm: str) -> dict:
 	rebuilding nginx and re-inserting the (now-existing) Subdomain."""
 	proxy_doc = frappe.get_doc("Virtual Machine", proxy_vm)
 	site_doc = frappe.get_doc("Virtual Machine", site_vm)
-	region = proxy_doc.region
+	# VM no longer carries a region field; the region is the Atlas single region.
+	region = get_region()
 	server = frappe.get_doc("Server", proxy_doc.server)
 	marker = f"marker-{site_doc.name[:8]}"
 	# The site server + subdomain + map are already in place from the core wiring;

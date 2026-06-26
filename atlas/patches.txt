@@ -8,6 +8,7 @@ atlas.patches.v1_0.migrate_ssh_key_to_disk
 atlas.patches.v1_0.migrate_to_provider_abstraction
 atlas.patches.v1_0.collapse_providers_to_settings
 atlas.patches.v1_0.rename_root_domain_dns_provider_type
+atlas.patches.v1_0.drop_denormalized_region
 
 [post_model_sync]
 # Patches added in this section will be executed after doctypes are migrated

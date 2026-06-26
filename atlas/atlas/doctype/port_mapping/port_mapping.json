@@ -1,7 +1,7 @@
 {
  "actions": [],
  "allow_rename": 0,
- "autoname": "format:{region}-{public_port}",
+ "autoname": "format:{protocol}-{public_port}",
  "creation": "2026-06-19 00:00:00.000000",
  "doctype": "DocType",
  "editable_grid": 0,
@@ -9,7 +9,6 @@
  "field_order": [
   "tab_overview",
   "public_port",
-  "region",
   "column_break_header",
   "active",
   "protocol",
@@ -26,23 +25,15 @@
    "label": "Overview"
   },
   {
-   "description": "The proxy-side port the tenant connects to, on the proxy fleet's reserved IPv4. Allocated by Atlas on insert (lowest free in the region's pool); unique per region; read-only. This is the routing key the proxy stores in its live port map.",
+   "description": "The proxy-side port the tenant connects to, on the proxy fleet's reserved IPv4. Allocated by Atlas on insert (lowest free in the pool); unique; read-only. This is the routing key the proxy stores in its live port map.",
    "fieldname": "public_port",
    "fieldtype": "Int",
    "in_global_search": 1,
    "in_list_view": 1,
    "label": "Public Port",
    "read_only": 1,
-   "reqd": 1
-  },
-  {
-   "description": "Which regional proxy fleet fronts this mapping. Every proxy VM in the region gets the full set of active mappings for the region.",
-   "fieldname": "region",
-   "fieldtype": "Data",
-   "in_list_view": 1,
-   "in_standard_filter": 1,
-   "label": "Region",
-   "reqd": 1
+   "reqd": 1,
+   "unique": 1
   },
   {
    "fieldname": "column_break_header",
@@ -127,7 +118,7 @@
    "write": 1
   }
  ],
- "search_fields": "public_port,region,virtual_machine",
+ "search_fields": "public_port,virtual_machine",
  "sort_field": "creation",
  "sort_order": "DESC",
  "states": [],

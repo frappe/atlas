@@ -128,7 +128,7 @@ the **same** Contract-A rules `Site` enforces, in the same order, before
 writing: `validate_label` (shape) → `validate_reserved` + the brand denylist
 (Component H) → the fleet-wide availability (`is_taken` + an existing `Subdomain`) →
 the per-VM cap (Component G). On a pass, insert `Subdomain(subdomain=label,
-virtual_machine=<resolved vm>, region, active=1)`; the row's `after_insert` reconciles
+virtual_machine=<resolved vm>, active=1)`; the row's `after_insert` reconciles
 the proxy fleet (no extra push). A `DuplicateEntryError` (two benches racing the same
 label) maps to `taken` — the DB unique key is the **atomic arbiter**, and reserving
 *first* is what makes the subsequent create un-blockable: the name is already claimed
@@ -435,16 +435,16 @@ surface** — the result/exception classes above, not stringly-typed status code
 
 ## Component E — region (controller-resolved, not VM-asserted)
 
-The VM `region` field is `depends_on: is_proxy` today; ordinary site VMs don't carry
-one, and we **don't** make a VM-carried region a new source of truth (it would drift
-and misroute). Region is resolved **controller-side**:
+No VM — site or proxy — carries a `region` field; Atlas is single-region and the
+one stored region is `Atlas Settings.region`. We **don't** make a VM-carried region
+a source of truth (it would drift and misroute). Region is resolved
+**controller-side**:
 
-- `register`/`deregister`/`check_label`/`list` derive the source-resolved VM's region
-  the same way [`Site`](../atlas/atlas/doctype/site/site.py) does — from the single
-  active [Root Domain](./02-doctypes.md#root-domain) (`active_root_domain().region`,
-  [`placement.py`](../atlas/atlas/placement.py)). Single-region today; when
-  multi-region lands, the VM is tied to its region at provision and the resolver reads
-  that — but resolution stays controller-side, never parsed from a guest FQDN.
+- `register`/`deregister`/`check_label`/`list` build the FQDN from the single active
+  [Root Domain](./02-doctypes.md#root-domain)'s domain suffix
+  (`active_root_domain().domain`, [`placement.py`](../atlas/atlas/placement.py)) the
+  same way [`Site`](../atlas/atlas/doctype/site/site.py) does. Single-region today;
+  resolution stays controller-side, never parsed from a guest FQDN.
 - `check_label` returns the region **domain** so the guest can name its site
   correctly; `list` returns each row's **FQDN** built from it; the guest never
   *claims* a region.

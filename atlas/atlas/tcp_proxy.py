@@ -30,8 +30,9 @@ import shlex
 import frappe
 
 from atlas.atlas._ssh.transport import run_ssh, ssh_key_file
-from atlas.atlas.doctype.port_mapping.port_mapping import port_map_for_region
-from atlas.atlas.proxy import _record_guest_task, canonical_json
+from atlas.atlas.doctype.port_mapping.port_mapping import port_map
+from atlas.atlas.placement import atlas_region
+from atlas.atlas.proxy import _proxy_vms, _record_guest_task, canonical_json
 from atlas.atlas.ssh import connection_for_guest
 
 # The stream{}-side admin client build.sh installs on PATH (spec/17-tcp-proxy.md);
@@ -40,17 +41,17 @@ from atlas.atlas.ssh import connection_for_guest
 STREAM_ADMIN = "stream-admin"
 
 
-def reconcile_region(region: str) -> list[str]:
-	"""Reconcile every proxy VM in `region` to the region's desired port map.
-	Returns the names of the proxy VMs that were synced (drifted). Each proxy holds
-	the WHOLE regional map, so they all get the same body.
+def reconcile_proxies() -> list[str]:
+	"""Reconcile every proxy VM to the desired port map. Returns the names of the
+	proxy VMs that were synced (drifted). Each proxy holds the WHOLE map, so they
+	all get the same body.
 
 	A proxy that can't be reached is recorded as a failed Task and skipped — the
 	other proxies still serve, so one wedged guest never wedges the loop. Identical
-	guarantees and shape as proxy.reconcile_region."""
-	desired_json = canonical_json(port_map_for_region(region))
+	guarantees and shape as proxy.reconcile_proxies."""
+	desired_json = canonical_json(port_map())
 	synced = []
-	for vm_name in _proxy_vms_in_region(region):
+	for vm_name in _proxy_vms():
 		try:
 			if _reconcile_proxy(vm_name, desired_json):
 				synced.append(vm_name)
@@ -60,13 +61,9 @@ def reconcile_region(region: str) -> list[str]:
 
 
 def reconcile_proxy(virtual_machine: str) -> bool:
-	"""Reconcile a single proxy VM to its region's desired port map. Returns True
-	iff a sync was needed (the live map had drifted). The region is read off the
-	VM."""
-	region = frappe.db.get_value("Virtual Machine", virtual_machine, "region")
-	if not region:
-		frappe.throw(f"Virtual Machine {virtual_machine} has no region; not a proxy")
-	desired_json = canonical_json(port_map_for_region(region))
+	"""Reconcile a single proxy VM to the desired port map. Returns True iff a sync
+	was needed (the live map had drifted)."""
+	desired_json = canonical_json(port_map())
 	return _reconcile_proxy(virtual_machine, desired_json)
 
 
@@ -92,7 +89,7 @@ def _reconcile_proxy(virtual_machine: str, desired_json: str) -> bool:
 			timeout_seconds=120,
 			stdin=desired_json,
 		)
-	_record_guest_task(virtual_machine, "tcp-proxy-sync", {"region": vm.region}, stdout, stderr, code)
+	_record_guest_task(virtual_machine, "tcp-proxy-sync", {"region": atlas_region()}, stdout, stderr, code)
 	if code != 0:
 		frappe.throw(f"TCP proxy sync to {virtual_machine} failed (exit {code}): {stderr[-500:]}")
 	# The client prints "ok\n" on a successful SYNC and "error...\n" otherwise; a
@@ -108,14 +105,3 @@ def _stream_admin_command(verb: str) -> str:
 	command itself carries no body — exactly as the http side streams the body to
 	`curl --data-binary @-` over stdin."""
 	return f"{shlex.quote(STREAM_ADMIN)} {shlex.quote(verb)}"
-
-
-def _proxy_vms_in_region(region: str) -> list[str]:
-	"""Every VM marked is_proxy in the region. These are the reconcile targets;
-	each gets the full regional port map. (Same query proxy.py uses — the TCP
-	forwarder runs on the same proxy VMs.)"""
-	return frappe.get_all(
-		"Virtual Machine",
-		filters={"is_proxy": 1, "region": region},
-		pluck="name",
-	)

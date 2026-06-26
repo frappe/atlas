@@ -44,7 +44,7 @@ import frappe
 from frappe.rate_limiter import rate_limit
 
 from atlas.atlas.doctype.subdomain_denylist.subdomain_denylist import is_denylisted
-from atlas.atlas.placement import active_root_domain, atlas_region
+from atlas.atlas.placement import active_root_domain
 from atlas.atlas.subdomain_label import (
 	RESERVED_SUBDOMAINS,
 	is_taken,
@@ -78,7 +78,7 @@ def register(label: str) -> dict:
 	Resolves the calling VM from the request source `/128` (*Caller resolution*), runs
 	the SAME Contract-A rules `Site`/`Site Request` enforce, in order — `validate_label`
 	(shape) → reserved + brand denylist → fleet-wide availability → the per-VM cap —
-	then inserts `Subdomain(subdomain=label, virtual_machine=<resolved vm>, region,
+	then inserts `Subdomain(subdomain=label, virtual_machine=<resolved vm>,
 	active=1)` whose `after_insert` reconciles the proxy fleet (no extra push):
 
 	    {"status": "ok" | "taken" | "reserved" | "at_limit" | "invalid"}
@@ -96,7 +96,7 @@ def register(label: str) -> dict:
 	`virtual_machine` is the source-resolved VM, never a param. Audited on every path."""
 	label = normalize(label)
 	vm = _resolve_caller_vm("register", label)  # throws (audited unresolved) on a bad source
-	region, suffix = atlas_region(), active_root_domain().domain
+	suffix = active_root_domain().domain
 
 	invalid = _label_invalid_reason(label)
 	if invalid is not None:
@@ -128,7 +128,6 @@ def register(label: str) -> dict:
 			{
 				"doctype": "Subdomain",
 				"subdomain": label,
-				"region": region,
 				"virtual_machine": vm.name,
 				"active": 1,
 			}
@@ -311,13 +310,12 @@ def _resolve_caller_vm(endpoint: str, label: str):
 	frappe.throw(f"No bench VM resolves from the request source address {source_ip!r}")
 
 
-# Region (Component E) is controller-resolved the same way `Site` does — from
-# `Atlas Settings.region` (`placement.atlas_region`, the single source of truth),
-# read inline in `register`.
-# A site VM does NOT carry a `region` field (that's `depends_on: is_proxy`); we never
-# make a VM-carried region a source of truth (it would drift and misroute) nor parse
-# it from a guest FQDN. Single-region today; multi-region ties the VM to its region at
-# provision and the resolver reads that — but resolution stays controller-side.
+# Region (Component E) is the instance's single `Atlas Settings.region`
+# (`placement.atlas_region`, the single source of truth). No VM — site or proxy —
+# carries a denormalized `region` field: a VM-carried region could drift and
+# misroute, so we never make one a source of truth nor parse it from a guest FQDN.
+# Single-region today; the region-domain suffix is read controller-side from the
+# active Root Domain in `register`.
 
 
 # ---------------------------------------------------------------------------

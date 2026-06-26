@@ -143,13 +143,14 @@ def warm_bench_snapshot_for_server(server: str) -> str | None:
 def atlas_region() -> str:
 	"""This Atlas instance's single region — the one source of truth.
 
-	Read off `Atlas Settings.region`. The same string is the proxy-fleet join key
-	(Subdomain / Site / Port Mapping / proxy `Virtual Machine.region`), the
-	separator that names this bench's servers in a shared cloud account, the region
-	`Root Domain` denormalizes at insert, and the region announced to Central at
-	Register. Atlas is single-region, so there is exactly one value. Fail loud at
-	the boundary (Taste 17) when it is unset — every region-dependent path needs it,
-	and a blank would surface far later as a cryptic mismatch."""
+	Read off `Atlas Settings.region`. The same string is the cert-dir scope on every
+	proxy guest, the separator that names this bench's servers in a shared cloud
+	account, the region `Root Domain` denormalizes at insert, and the region
+	announced to Central at Register. Atlas is single-region, so there is exactly one
+	value — Subdomain/Site/Port Mapping/proxy VMs no longer carry a denormalized copy;
+	they belong to the one region by definition. Fail loud at the boundary (Taste 17)
+	when it is unset — every region-dependent path needs it, and a blank would surface
+	far later as a cryptic mismatch."""
 	region = frappe.db.get_single_value("Atlas Settings", "region")
 	if not region:
 		frappe.throw(_("Set Atlas Settings.region (this Atlas's region) — contact your operator."))

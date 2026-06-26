@@ -28,8 +28,8 @@ SNAPSHOT_NAME = "golden-bench-snap"
 
 def _ensure_root_domain() -> None:
 	# Region + active DNS / TLS vendor types live on Atlas Settings (the single
-	# source of truth); Site reads region from it and Root Domain denormalizes all
-	# three at insert.
+	# source of truth); Root Domain denormalizes all three at insert (the FQDN
+	# suffix still comes from the active Root Domain).
 	frappe.db.set_single_value("Atlas Settings", "region", REGION)
 	frappe.db.set_single_value("Atlas Settings", "dns_provider_type", "Route53")
 	frappe.db.set_single_value("Atlas Settings", "tls_provider_type", "Let's Encrypt")
@@ -119,10 +119,6 @@ class TestSiteRoutingContract(IntegrationTestCase):
 		site = _new_site("acme")
 		self.assertEqual(site.name, "acme.blr1.frappe.dev")
 
-	def test_region_resolved_from_active_root_domain(self) -> None:
-		site = _new_site("acme")
-		self.assertEqual(site.region, REGION)
-
 	def test_starts_pending(self) -> None:
 		site = _new_site("acme")
 		self.assertEqual(site.status, "Pending")
@@ -180,13 +176,6 @@ class TestSiteImmutability(IntegrationTestCase):
 		_ensure_golden_snapshot()
 		for name in frappe.get_all("Site", pluck="name"):
 			frappe.delete_doc("Site", name, force=1, ignore_permissions=True)
-
-	def test_region_immutable(self) -> None:
-		site = _new_site("acme")
-		site.region = "nyc3"
-		with self.assertRaises(frappe.ValidationError) as raised:
-			site.save(ignore_permissions=True)
-		self.assertIn("region is immutable", str(raised.exception))
 
 	def test_virtual_machine_immutable(self) -> None:
 		from atlas.tests.fixtures import make_image, make_virtual_machine
@@ -358,7 +347,6 @@ class TestSiteOrchestration(IntegrationTestCase):
 		self.assertEqual(site.status, "Running")
 		subdomain = frappe.get_doc("Subdomain", site.subdomain_doc)
 		self.assertEqual(subdomain.subdomain, "acme")
-		self.assertEqual(subdomain.region, REGION)
 		self.assertEqual(subdomain.virtual_machine, vm.name)
 
 
@@ -497,7 +485,6 @@ class TestSiteTerminate(IntegrationTestCase):
 			{
 				"doctype": "Subdomain",
 				"subdomain": "acme",
-				"region": REGION,
 				"virtual_machine": vm.name,
 				"active": 1,
 			}

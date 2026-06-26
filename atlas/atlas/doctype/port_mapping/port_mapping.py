@@ -1,5 +1,4 @@
 import frappe
-from frappe import _
 from frappe.model.document import Document
 
 # The routing key is the allocated port (read-only) and the target VM + service
@@ -8,13 +7,12 @@ from frappe.model.document import Document
 # (the same discipline as Subdomain). `public_port` is allocated by Atlas, so it
 # is read-only rather than listed here.
 IMMUTABLE_AFTER_INSERT = (
-	"region",
 	"virtual_machine",
 	"target_port",
 )
 
-# The Atlas Settings field holding the per-region TCP port pool, and its default
-# (matches the proxy's pre-opened `listen 10000-19999;` range, spec/17-tcp-proxy.md).
+# The Atlas Settings field holding the TCP port pool, and its default (matches the
+# proxy's pre-opened `listen 10000-19999;` range, spec/17-tcp-proxy.md).
 PORT_POOL_FIELD = "tcp_port_pool"
 DEFAULT_PORT_POOL = "10000-19999"
 
@@ -32,16 +30,15 @@ class PortMapping(Document):
 		address: DF.Data
 		protocol: DF.Literal["tcp", "ssh", "mariadb"]
 		public_port: DF.Int
-		region: DF.Data
 		target_port: DF.Int
 		virtual_machine: DF.Link
 	# end: auto-generated types
 
 	def before_insert(self) -> None:
-		"""Allocate the public port: the lowest port in the region's pool not
-		already held by an active OR inactive mapping in the region. Runs before
-		set_new_name so the `{region}-{public_port}` autoname picks it up."""
-		self.public_port = allocate_port(self.region)
+		"""Allocate the public port: the lowest port in the pool not already held by
+		an active OR inactive mapping. Runs before set_new_name so the
+		`{protocol}-{public_port}` autoname picks it up."""
+		self.public_port = allocate_port()
 
 	def validate(self) -> None:
 		self._validate_immutability()
@@ -54,7 +51,7 @@ class PortMapping(Document):
 		self._enqueue_reconcile()
 
 	def on_update(self) -> None:
-		"""`public_port`, `region`, `virtual_machine`, and `target_port` are all
+		"""`public_port`, `virtual_machine`, and `target_port` are all
 		read-only/immutable, so `active` is the only mutable field that changes the
 		served map. Reconcile only when it actually flipped."""
 		original = self.get_doc_before_save()
@@ -67,28 +64,27 @@ class PortMapping(Document):
 		self._enqueue_reconcile()
 
 	def _enqueue_reconcile(self) -> None:
-		"""Background-reconcile this mapping's region. Region-deduplicated and
-		after-commit, byte-for-byte the same idiom as Subdomain._enqueue_reconcile
-		(a reconcile reads the WHOLE region's desired map, so it is the same job no
-		matter which mapping triggered it — N changes need one reconcile, not N;
-		without dedup a burst floods `long` and a wedged proxy makes each take its
-		full SSH timeout). queue=long because the job SSHes into every proxy in the
-		region; tcp_reconcile_region tolerates an empty fleet and isolates per-proxy
-		failures, so a missing or wedged proxy never fails the operator's save."""
+		"""Background-reconcile the proxy fleet. Deduplicated and after-commit,
+		byte-for-byte the same idiom as Subdomain._enqueue_reconcile (a reconcile
+		reads the WHOLE desired map, so it is the same job no matter which mapping
+		triggered it — N changes need one reconcile, not N; without dedup a burst
+		floods `long` and a wedged proxy makes each take its full SSH timeout).
+		queue=long because the job SSHes into every proxy; tcp_reconcile tolerates an
+		empty fleet and isolates per-proxy failures, so a missing or wedged proxy
+		never fails the operator's save."""
 		frappe.enqueue(
-			"atlas.atlas.doctype.port_mapping.port_mapping.tcp_reconcile_region",
+			"atlas.atlas.doctype.port_mapping.port_mapping.tcp_reconcile",
 			queue="long",
 			timeout=300,
-			job_id=f"tcp_reconcile_region::{self.region}",
+			job_id="tcp_reconcile_ports",
 			deduplicate=True,
 			enqueue_after_commit=True,
-			region=self.region,
 		)
 
 	def _validate_immutability(self) -> None:
-		"""Lock the region, target VM, and service port once written. `public_port`
-		is read-only (allocated), and `active` toggles the mapping in/out of the
-		served map."""
+		"""Lock the target VM and service port once written. `public_port` is
+		read-only (allocated), and `active` toggles the mapping in/out of the served
+		map."""
 		if self.is_new():
 			return
 		original = self.get_doc_before_save()
@@ -100,7 +96,7 @@ class PortMapping(Document):
 
 	def _denormalize_address(self) -> None:
 		"""Copy the target VM's public IPv6 onto `address`, so the desired-map query
-		(port_map_for_region) is a single SELECT with no join. The proxy dials this
+		(port_map) is a single SELECT with no join. The proxy dials this
 		literal; it never resolves a VM. A VM with no ipv6 yet is a hard error — an
 		unaddressable target can't be a forwarding destination (mirrors Subdomain)."""
 		address = frappe.db.get_value("Virtual Machine", self.virtual_machine, "ipv6_address")
@@ -112,7 +108,7 @@ class PortMapping(Document):
 
 
 def port_pool() -> tuple[int, int]:
-	"""The region's TCP port pool as an inclusive (low, high) range, read from
+	"""The TCP port pool as an inclusive (low, high) range, read from
 	Atlas Settings.tcp_port_pool (default 10000-19999). The pool must match the
 	proxy's pre-opened `listen` range; growing it is a deliberate snapshot roll
 	(spec/17-tcp-proxy.md)."""
@@ -127,65 +123,59 @@ def port_pool() -> tuple[int, int]:
 	return low, high
 
 
-def allocate_port(region: str) -> int:
-	"""The lowest port in the region's pool not already held by ANY mapping in the
-	region — active or inactive. An inactive row still owns its port (toggling it
-	back on must not collide), so both count as taken. Pool exhaustion is a typed
-	throw, never a silent wrap.
+def allocate_port() -> int:
+	"""The lowest port in the pool not already held by ANY mapping — active or
+	inactive. An inactive row still owns its port (toggling it back on must not
+	collide), so both count as taken. Pool exhaustion is a typed throw, never a
+	silent wrap.
 
 	Serialized under a row lock the same way the rest of Atlas allocates a scarce
-	resource (allocate_ipv6 locks the Server): we SELECT the region's existing
-	mappings FOR UPDATE so concurrent allocators in the same region queue behind
-	each other. The `{region}-{public_port}` unique name is the final backstop for
-	the first-row-in-an-empty-region race (one insert wins, the other retries)."""
-	if not region:
-		frappe.throw(_("Port Mapping needs a region before a port can be allocated"))
+	resource (allocate_ipv6 locks the Server): we SELECT the existing mappings FOR
+	UPDATE so concurrent allocators queue behind each other. The
+	`{protocol}-{public_port}` unique name is the final backstop for the
+	first-row-in-an-empty-pool race (one insert wins, the other retries)."""
 	low, high = port_pool()
-	# FOR UPDATE on the region's rows serializes concurrent allocations; the lock
-	# is released at transaction end. Reading the ports under the lock means a
-	# second allocator sees this one's committed row before it picks.
+	# FOR UPDATE serializes concurrent allocations; the lock is released at
+	# transaction end. Reading the ports under the lock means a second allocator
+	# sees this one's committed row before it picks.
 	taken = {
 		row["public_port"]
-		for row in frappe.qb.from_("Port Mapping")
-		.where(frappe.qb.Field("region") == region)
-		.for_update()
-		.select("public_port")
-		.run(as_dict=True)
+		for row in frappe.qb.from_("Port Mapping").for_update().select("public_port").run(as_dict=True)
 		if row["public_port"] is not None
 	}
 	for port in range(low, high + 1):
 		if port not in taken:
 			return port
 	frappe.throw(
-		f"TCP port pool exhausted for region {region}: all {high - low + 1} ports "
+		f"TCP port pool exhausted: all {high - low + 1} ports "
 		f"({low}-{high}) are allocated. Grow Atlas Settings.{PORT_POOL_FIELD} "
 		"(a deliberate proxy snapshot roll, spec/17-tcp-proxy.md)."
 	)
 
 
-def port_map_for_region(region: str) -> dict[str, str]:
-	"""The desired port→backend map for a region: every ACTIVE mapping in the
-	region, as `{"<public_port>": "[<address>]:<target_port>"}`. The value is a
-	ready-to-dial bracketed-v6 host:port literal so the guest does no formatting.
+def port_map() -> dict[str, str]:
+	"""The desired port→backend map: every ACTIVE mapping, as
+	`{"<public_port>": "[<address>]:<target_port>"}`. The value is a ready-to-dial
+	bracketed-v6 host:port literal so the guest does no formatting.
 
-	This is the full map every proxy VM in the region serves (spec/17-tcp-proxy.md
-	"each proxy holds the whole regional map"). The TCP reconcile
-	(atlas.atlas.tcp_proxy) compares this, serialized canonically, against each
-	proxy guest's live map and bulk-`SYNC`s on drift."""
+	This is the full map every proxy VM serves (spec/17-tcp-proxy.md "each proxy
+	holds the whole map"). The TCP reconcile (atlas.atlas.tcp_proxy) compares this,
+	serialized canonically, against each proxy guest's live map and bulk-`SYNC`s on
+	drift."""
 	rows = frappe.get_all(
 		"Port Mapping",
-		filters={"region": region, "active": 1},
+		filters={"active": 1},
 		fields=["public_port", "address", "target_port"],
 	)
 	return {str(row["public_port"]): f"[{row['address']}]:{row['target_port']}" for row in rows}
 
 
-def tcp_reconcile_region(region: str) -> None:
+def tcp_reconcile() -> None:
 	"""Background-job entrypoint. Enqueued by Port Mapping's insert/active-toggle/
 	delete hooks so a mapping change reaches the proxy fleet without the operator
-	running a reconcile. Thin wrapper over atlas.atlas.tcp_proxy.reconcile_region —
-	kept here (not a direct enqueue of tcp_proxy.reconcile_region) so the Port
+	running a reconcile. Thin wrapper over atlas.atlas.tcp_proxy.reconcile_proxies —
+	kept here (not a direct enqueue of tcp_proxy.reconcile_proxies) so the Port
 	Mapping module owns its own background verb and the import stays lazy."""
-	from atlas.atlas.tcp_proxy import reconcile_region
+	from atlas.atlas.tcp_proxy import reconcile_proxies
 
-	reconcile_region(region)
+	reconcile_proxies()

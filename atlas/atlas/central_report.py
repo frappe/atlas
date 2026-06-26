@@ -216,7 +216,6 @@ def _site_payload(doc) -> dict:
 		"name": doc.name,
 		"team": doc.tenant or None,
 		"subdomain": doc.get("subdomain"),
-		"region": doc.get("region"),
 		"status": doc.status,
 		"fqdn": doc.name,
 		"url": f"https://{doc.name}" if running else None,

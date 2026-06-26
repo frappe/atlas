@@ -96,7 +96,8 @@ version.
 The recipe **subsumes the per-module constants** that used to live in the build
 verbs and the e2e modules (`GOLDEN_DISK_GB`, `GOLDEN_MEMORY_MB`,
 `REMOTE_*_DIRECTORY`, the `test/` exclude, the proxy finalize block). `finalize`
-is a callback because the proxy's post-build step (write `REGION_FILE`,
+is a callback because the proxy's post-build step (write `REGION_FILE` with
+`placement.atlas_region()` — the single `Atlas Settings.region` —
 `systemctl restart nginx.service`, [`_finalize_proxy`](../atlas/atlas/image_recipes.py))
 is genuinely code; the bench recipes have `finalize = None`. `registers_as` lets a
 successful **v16** bake auto-set `Atlas Settings.default_bench_snapshot` (the field
@@ -169,10 +170,10 @@ two build verbs collapse into. It:
    #17); the operator retries by clicking.
 
 `bench_image.build_bench` and `proxy.build_proxy` are now thin wrappers over
-`run_build` (proxy keeps its `is_proxy`/`region` guards). Their public signatures
+`run_build` (proxy keeps its `is_proxy` guard). Their public signatures
 are unchanged, so `bootstrap.py`, the e2e modules, and any caller keep working.
 `proxy.py` keeps `reconcile_*`, `push_cert`, `canonical_json`,
-`wildcard_targets_for_region`, and `_record_guest_task` (now returning the Task
+`wildcard_targets`, and `_record_guest_task` (now returning the Task
 name) — only the upload/build half of `build_proxy` moved.
 
 ## The `Image Build` DocType
@@ -185,16 +186,16 @@ operation, not a per-user one.
 
 Fields and the full table are in
 [02-doctypes.md → Image Build](./02-doctypes.md#image-build). The identity tuple
-(`recipe`, `server`, `region`, `base_image`) is `set_only_once` and guarded in
+(`recipe`, `server`, `base_image`) is `set_only_once` and guarded in
 `validate()` — re-baking with a different recipe/server/base is a new row, not an
 in-place edit (the same shape as `Site` / `Virtual Machine`).
 
 ### Lifecycle
 
 1. **`before_insert`** resolves the recipe, copies its `title`, defaults
-   `base_image` from `placement.default_image()`, requires a `region` for an
-   `is_proxy` recipe, and starts `Draft`. The build VM is created in the
-   background job, not here — provisioning SSHes and must not block the insert.
+   `base_image` from `placement.default_image()`, and starts `Draft`. The build
+   VM is created in the background job, not here — provisioning SSHes and must
+   not block the insert.
 2. **`after_insert`** enqueues `run` on `queue="long"` (it SSHes and waits
    ~10–20 min — the same queue `Site.auto_provision` and image-sync use). No-op if
    not `Draft`.
@@ -203,7 +204,7 @@ in-place edit (the same shape as `Site` / `Virtual Machine`).
 
    | Step | Action | Status |
    | ---- | ------ | ------ |
-   | 1 | Provision a scratch build VM at the recipe's size on `server` from `base_image` (an `is_proxy` recipe stamps `is_proxy` + `region`). **Commit**, then wait for its own after_insert provision job to reach Running. | `Provisioning` |
+   | 1 | Provision a scratch build VM at the recipe's size on `server` from `base_image` (an `is_proxy` recipe stamps `is_proxy`). **Commit**, then wait for its own after_insert provision job to reach Running. | `Provisioning` |
    | 2 | `run_build(vm, recipe)` — upload the tree + run `build.sh` in the guest (+ finalize). Links the `build_task`. | `Building` |
    | 2a | **Sanity gate** (bench recipes only): `bench_image.sanity_check(vm)` SSHes the still-running build VM and proves it actually *works* — site: serves + the baked password logs in; admin: the admin console renders — before it is allowed to become a snapshot. See *The post-build sanity gate* below. A miss raises → the build fails here, never snapshots. | (still `Building`) |
    | 3 | Cold (default): stop the build VM and `snapshot(title=recipe.snapshot_title)`. **Warm** (`warm` checked): run the warm finalize instead — see below. Link it into `snapshot`. | `Snapshotting` → `Available` |
@@ -382,10 +383,12 @@ A few choices that aren't obvious from the field list:
   callback, so a data row could only mirror it — the same call `sizes.py
   SIZE_PRESETS` and the `bootstrap.py` image constants already make. A third image
   type is a recipe entry plus a committed tree, no new module.
-- **Region is asked, not derived.** A proxy build takes its `region` from the
-  dialog (required for an `is_proxy` recipe) rather than reading it off the server.
-  Simpler than threading server→region, and it lets a build target a region label
-  directly.
+- **The proxy serves the one Atlas region.** A proxy build no longer takes a
+  `region` input and the build VM is no longer stamped with one — Atlas is
+  single-region, so the region the proxy serves is read once from
+  `Atlas Settings.region` (`placement.atlas_region()`) at finalize, when
+  `_finalize_proxy` writes it into the guest `REGION_FILE`. Nothing threads a
+  region through the recipe, the dialog, or the build VM.
 - **Distinct Task script names.** The audit Task keeps the per-recipe name
   (`bench-build` / `proxy-build`, via `recipe.task_script`) rather than one generic
   `image-build`, so the operator's Task list stays readable.
@@ -405,7 +408,7 @@ A few choices that aren't obvious from the field list:
     path (SSH plumbing mocked), the `on_task` callback firing before the throw,
     fail-loud, and the proxy finalize running after the build. See
     [`atlas/atlas/test_image_builder.py`](../atlas/atlas/test_image_builder.py).
-  - *Controller* — `before_insert` defaults + the region requirement,
+  - *Controller* — `before_insert` defaults,
     immutability, the `run()` state machine (status transitions, artifact
     linking, auto-register on/off, terminate on/off, fail-loud, the
     not-`Draft` no-op, the **sanity gate** running for bench / skipped for proxy /
@@ -413,7 +416,7 @@ A few choices that aren't obvious from the field list:
     module seams. See
     [`atlas/atlas/doctype/image_build/test_image_build.py`](../atlas/atlas/doctype/image_build/test_image_build.py).
   - The two build verbs keep their own thin coverage of what they still own —
-    `build_proxy`'s `is_proxy`/`region` guards
+    `build_proxy`'s `is_proxy` guard
     ([`test_proxy.py`](../atlas/atlas/test_proxy.py)) and `build_bench`'s
     delegation, plus the **sanity-gate** verdict logic (serve/login/wrong-password
     cases, the site-vs-admin command shape, and the unreachable-guest throw) with

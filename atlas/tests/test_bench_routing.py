@@ -80,13 +80,12 @@ def _running_vm(**overrides):
 	return vm
 
 
-def _make_subdomain(label: str, vm: str, *, region: str = REGION, active: int = 1):
+def _make_subdomain(label: str, vm: str, *, active: int = 1):
 	return frappe.get_doc(
 		{
 			"doctype": "Subdomain",
 			"subdomain": label,
 			"virtual_machine": vm,
-			"region": region,
 			"active": active,
 		}
 	).insert(ignore_permissions=True)
@@ -226,7 +225,6 @@ class TestRegister(_RoutingTestCase):
 		self.assertEqual(result["suffix"], ROOT_DOMAIN)
 		row = frappe.get_doc("Subdomain", "acme")
 		self.assertEqual(row.virtual_machine, vm.name)
-		self.assertEqual(row.region, REGION)
 		self.assertTrue(row.active)
 
 	def test_taken_on_label_owned_by_another_vm(self) -> None:
@@ -323,10 +321,9 @@ class TestRegister(_RoutingTestCase):
 		reconciles = [
 			c
 			for c in enqueue.call_args_list
-			if c.args and c.args[0] == "atlas.atlas.doctype.subdomain.subdomain.auto_reconcile_region"
+			if c.args and c.args[0] == "atlas.atlas.doctype.subdomain.subdomain.auto_reconcile"
 		]
 		self.assertEqual(len(reconciles), 1)
-		self.assertEqual(reconciles[0].kwargs["region"], REGION)
 
 
 # ---------------------------------------------------------------------------
@@ -366,7 +363,7 @@ class TestDeregister(_RoutingTestCase):
 		reconciles = [
 			c
 			for c in enqueue.call_args_list
-			if c.args and c.args[0] == "atlas.atlas.doctype.subdomain.subdomain.auto_reconcile_region"
+			if c.args and c.args[0] == "atlas.atlas.doctype.subdomain.subdomain.auto_reconcile"
 		]
 		self.assertEqual(len(reconciles), 1)
 

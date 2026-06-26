@@ -109,6 +109,8 @@ def run_smoke(reuse: bool = True, keep: bool = True) -> None:
 
 
 def _provision_proxy_vm(server_name: str, image: str, region: str) -> "frappe.model.document.Document":
+	# `region` is accepted for signature stability (callers pass the Atlas single
+	# region positionally); the VM no longer carries a region field.
 	# The proxy guest is reached two ways: host-side probes carry the EPHEMERAL key
 	# (the vantage probe SSHes host->proxy), while the control plane
 	# (proxy.build_proxy / reconcile_proxy / push_cert) reaches it via
@@ -123,7 +125,6 @@ def _provision_proxy_vm(server_name: str, image: str, region: str) -> "frappe.mo
 			"server": server_name,
 			"image": image,
 			"is_proxy": 1,
-			"region": region,
 			"vcpus": 1,
 			"memory_megabytes": 1024,
 			"disk_gigabytes": 4,
@@ -171,12 +172,14 @@ def _start_site_server(server_name: str, site_vm, marker: str) -> None:
 
 
 def _make_subdomain(subdomain: str, vm_name: str, region: str) -> None:
+	# `region` is accepted for signature stability (callers pass it positionally),
+	# but Subdomain no longer carries a region field — the proxy's live map keys on
+	# the bare subdomain label and the region is the Atlas single region.
 	frappe.get_doc(
 		{
 			"doctype": "Subdomain",
 			"subdomain": subdomain,
 			"virtual_machine": vm_name,
-			"region": region,
 		}
 	).insert(ignore_permissions=True)
 	frappe.db.commit()

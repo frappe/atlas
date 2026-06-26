@@ -38,7 +38,8 @@ class ImageRecipe:
 	a post-build guest step (the proxy writes its region + restarts its unit).
 	`registers_as`, if set, names the Atlas Settings field a successful build
 	wires the snapshot into. `is_proxy` marks the produced VMs as proxies (so the
-	build is region-scoped and the build VM carries `is_proxy`/`region`)."""
+	build runs the proxy finalize and the build VM carries `is_proxy`). The region
+	the proxy serves is read from `Atlas Settings.region` at finalize time."""
 
 	name: str
 	title: str
@@ -121,9 +122,10 @@ def _finalize_proxy(virtual_machine, connection, key_path) -> tuple[str, str, in
 	# Local import: proxy.py imports image_builder (for build_proxy → run_build),
 	# which imports this module — so importing proxy at module scope would cycle.
 	# REGION_FILE is a plain constant; pull it in only when the finalize runs.
+	from atlas.atlas.placement import atlas_region
 	from atlas.atlas.proxy import REGION_FILE
 
-	region = virtual_machine.region
+	region = atlas_region()
 	command = (
 		f"printf '%s\\n' {shlex.quote(region)} > {shlex.quote(REGION_FILE)} && "
 		"systemctl restart nginx.service"
