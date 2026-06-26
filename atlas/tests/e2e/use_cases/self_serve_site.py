@@ -6,7 +6,7 @@ the other tracks built — the golden bench snapshot, the `Site` doctype, the
 `deploy-site.py` + readiness gate, the Central-facing `create_site` on-ramp — PLUS
 the already proven proxy + TLS layers, and drives the whole flow on a real droplet:
 
-    create_site(central_reference, subdomain)  →  Tenant + Site (Pending)
+    create_site(team, subdomain)  →  Tenant + Site (Pending)
         ↓ Site.after_insert → auto_provision (worker)
     clone golden snapshot → boot → deploy-site.py → HTTP 200       (01/03, Contract B)
         ↓
@@ -70,7 +70,7 @@ _TEST_SUBDOMAIN = "acme"
 # Tenant keyed on it; the throwaway email seeds the Tenant on first use. Both are
 # dropped in teardown (the Tenant row persists past the transaction; the e2e is
 # non-transactional).
-_TEST_CENTRAL_REFERENCE = "self-serve-e2e-team"
+_TEST_TEAM = "self-serve-e2e-team"
 _TEST_EMAIL = "self-serve-e2e@example.com"
 
 
@@ -119,7 +119,7 @@ def run_smoke(reuse: bool = True, keep: bool = True) -> None:
 			#    which the worker runs on the real droplet: clone golden snapshot →
 			#    boot → deploy → 200 → Subdomain → Running. This is the whole chain
 			#    under test.
-			fqdn = _create_site(_TEST_CENTRAL_REFERENCE, _TEST_SUBDOMAIN, _TEST_EMAIL)
+			fqdn = _create_site(_TEST_TEAM, _TEST_SUBDOMAIN, _TEST_EMAIL)
 			site_vm_name = _wait_for_site_running(fqdn)
 			_assert_admin_password_set(fqdn)
 
@@ -151,7 +151,7 @@ def run_smoke(reuse: bool = True, keep: bool = True) -> None:
 			#    proxy actually SERVES the guest-reserved site and STOPS on deregister.
 			_assert_bench_self_routing(server.name, site_vm_name, proxy_vm, region, domain)
 		finally:
-			_teardown(reserved, proxy_vm.name, _TEST_SUBDOMAIN, domain, _TEST_CENTRAL_REFERENCE)
+			_teardown(reserved, proxy_vm.name, _TEST_SUBDOMAIN, domain, _TEST_TEAM)
 			tls_issuance._cleanup_tls_doctypes(config)
 			_restore_root_domains(quieted)
 
@@ -384,21 +384,21 @@ def _restore_root_domains(quieted: list[str]) -> None:
 # --- Central create_site on-ramp -----------------------------------------
 
 
-def _create_site(central_reference: str, subdomain: str, email: str) -> str:
+def _create_site(team: str, subdomain: str, email: str) -> str:
 	"""Drive the real Central-facing endpoint and return the created Site's FQDN.
 
-	`create_site` get-or-creates the Tenant (keyed on `central_reference`, `email`
-	seeds it on first use) and inserts the Site (Pending); the Site's after_insert
-	enqueues auto_provision on the worker — the whole clone→deploy→route chain under
-	test. Asserts the returned mirror is shaped the way Central reflects it."""
+	`create_site` get-or-creates the Tenant (keyed on `team`, `email` seeds it on
+	first use) and inserts the Site (Pending); the Site's after_insert enqueues
+	auto_provision on the worker — the whole clone→deploy→route chain under test.
+	Asserts the returned mirror is shaped the way Central reflects it."""
 	from atlas.atlas.api.site import create_site
 
-	result = create_site(central_reference=central_reference, subdomain=subdomain, email=email)
+	result = create_site(team=team, subdomain=subdomain, email=email)
 	frappe.db.commit()
 	fqdn = result["name"]
 	assert frappe.db.exists("Site", fqdn), f"create_site did not insert a Site: {result}"
 	assert result["status"] == "Pending", f"new site should start Pending: {result}"
-	assert result["central_reference"] == central_reference, f"mirror missing central_reference: {result}"
+	assert result["team"] == team, f"mirror missing team: {result}"
 	tenant = frappe.db.get_value("Site", fqdn, "tenant")
 	assert tenant, f"Site {fqdn} not stamped with a Tenant"
 	print(f"[e2e] create_site -> Site {fqdn} (Pending) for tenant {tenant}; auto_provision enqueued")
@@ -529,7 +529,7 @@ def _teardown(
 	proxy_vm_name: str,
 	subdomain: str,
 	domain: str,
-	central_reference: str,
+	team: str,
 ) -> None:
 	"""Billable-aware teardown, every step guarded so one failure doesn't strand the
 	rest (terminate the site VM, delete the Subdomain, release the reserved IP,
@@ -553,7 +553,8 @@ def _teardown(
 
 	# 2. The Tenant create_site get-or-created (a non-transactional row that
 	#    outlives the run). The Site that linked it is gone from step 1.
-	tenant = frappe.db.get_value("Tenant", {"central_reference": central_reference})
+	# The Tenant `name` *is* the Central `Team.name`.
+	tenant = team if frappe.db.exists("Tenant", team) else None
 	if tenant:
 		try:
 			frappe.delete_doc("Tenant", tenant, force=1, ignore_permissions=True)

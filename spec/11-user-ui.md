@@ -35,7 +35,7 @@ Atlas is now **operator/Central-facing only** (System Manager). Tenancy
 attribution rides a `tenant` link (→ [Tenant](./16-central.md)) on the resources
 Central provisions, not an end-user `owner`:
 
-- **Sites** — Central calls `atlas.atlas.api.site.create_site(central_reference,
+- **Sites** — Central calls `atlas.atlas.api.site.create_site(team,
   subdomain, …)`; Atlas get-or-creates the Tenant, inserts the Site, and reports
   progress back via `site.*` events + the `get_site` poll. See
   [14-self-serve.md](./14-self-serve.md).

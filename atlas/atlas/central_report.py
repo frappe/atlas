@@ -117,11 +117,11 @@ def deliver(event_type: str, payload: dict) -> None:
 
 def _vm_payload(doc) -> dict:
 	# The owning Central team, so the control plane can attribute this VM to a
-	# tenant. Resolved from the VM's Tenant link; None for operator-owned VMs.
-	central_reference = frappe.db.get_value("Tenant", doc.tenant, "central_reference") if doc.tenant else None
+	# tenant. The Tenant `name` *is* the Central `Team.name`, so the VM's `tenant`
+	# link is the owning team directly; None for operator-owned VMs.
 	return {
 		"name": doc.name,
-		"central_reference": central_reference,
+		"team": doc.tenant or None,
 		"title": doc.title,
 		"status": doc.status,
 		"server": doc.server,
@@ -136,15 +136,15 @@ def _vm_payload(doc) -> dict:
 
 def _site_payload(doc) -> dict:
 	# The owning Central team, so the control plane can attribute this site to a
-	# tenant. Resolved from the Site's Tenant link; None for operator/e2e sites.
-	central_reference = frappe.db.get_value("Tenant", doc.tenant, "central_reference") if doc.tenant else None
+	# tenant. The Tenant `name` *is* the Central `Team.name`, so the Site's `tenant`
+	# link is the owning team directly; None for operator/e2e sites.
 	# The admin password + live URL are the tenant handoff — only meaningful once
 	# the site is serving (Running), and the field is stamped before the readiness
 	# wait. Before that there is nothing to hand off.
 	running = doc.status == "Running"
 	return {
 		"name": doc.name,
-		"central_reference": central_reference,
+		"team": doc.tenant or None,
 		"subdomain": doc.get("subdomain"),
 		"region": doc.get("region"),
 		"status": doc.status,

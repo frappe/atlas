@@ -9,9 +9,9 @@ insert's `after_insert` enqueues the provision job, so the VM provisions itself
 through the configured provider (the `fake` provider in dev).
 
 This is the write half of the Central↔Atlas tenancy contract whose read half is
-the Tenant DocType (resources stamped with `central_reference`). It returns the
-VM in the exact shape Central's Asset mirror upserts, so Central can reflect the
-new server immediately without waiting for a reconcile.
+the Tenant DocType (resources stamped with the owning `team`). It returns the VM
+in the exact shape Central's Asset mirror upserts, so Central can reflect the new
+server immediately without waiting for a reconcile.
 """
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ from atlas.bootstrap import load_vm_ssh_public_key
 
 @frappe.whitelist()
 def create_vm(
-	central_reference: str,
+	team: str,
 	title: str,
 	vcpus: int,
 	memory_megabytes: int,
@@ -35,16 +35,16 @@ def create_vm(
 ) -> dict:
 	"""Provision a VM for a Central team and return its mirror row.
 
-	`central_reference` is the Central team; `email` seeds the Tenant on first
-	use (the team owner). Resources come from the size Central picked. Placement,
-	image, ipv6, cpu/mac defaults and auto-provisioning are all handled by the
-	Virtual Machine controller — we only insert. Runs with `ignore_permissions`:
-	this is operator orchestration authorized by the Central token, not desk RBAC.
+	`team` is the Central `Team.name`; `email` seeds the Tenant on first use (the
+	team owner). Resources come from the size Central picked. Placement, image,
+	ipv6, cpu/mac defaults and auto-provisioning are all handled by the Virtual
+	Machine controller — we only insert. Runs with `ignore_permissions`: this is
+	operator orchestration authorized by the Central token, not desk RBAC.
 	"""
-	if not central_reference:
-		frappe.throw("central_reference is required.")
+	if not team:
+		frappe.throw("team is required.")
 
-	tenant = ensure_tenant(central_reference, email)
+	tenant = ensure_tenant(team, email)
 
 	vm = frappe.get_doc(
 		{
@@ -65,7 +65,7 @@ def create_vm(
 	# Shape matches central.atlas._mirror_vm so Central can upsert verbatim.
 	return {
 		"name": vm.name,
-		"central_reference": central_reference,
+		"team": team,
 		"status": vm.status,
 		"title": vm.title,
 		"vcpus": vm.vcpus,

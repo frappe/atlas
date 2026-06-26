@@ -68,13 +68,14 @@ ordinary authenticated Frappe client:
   `restart` / `pause` / `resume` / `snapshot` / `rebuild` / `resize` /
   `terminate`, `run_doc_method` — the same surface Desk drives. **Creation** has
   two dedicated operator endpoints that get-or-create the `Tenant` and insert the
-  resource in one call: `atlas.atlas.api.provision.create_vm(central_reference,
-  …)` and `atlas.atlas.api.site.create_site(central_reference, subdomain, …)`
+  resource in one call: `atlas.atlas.api.provision.create_vm(team, …)` and
+  `atlas.atlas.api.site.create_site(team, subdomain, …)`
   (the self-serve site, [14-self-serve.md](./14-self-serve.md)). Both return the
   mirror row Central reflects. Atlas adds no other inbound command endpoint.
 - **Tenant is the attribution key.** The create endpoints get-or-create the
-  `Tenant` ([02-doctypes.md § Tenant](./02-doctypes.md#tenant)) from
-  `central_reference` and stamp it `set_only_once` on the resource. Atlas has **no
+  `Tenant` ([02-doctypes.md § Tenant](./02-doctypes.md#tenant)) — named by the
+  Central `Team.name` passed as `team` — and stamp it `set_only_once` on the
+  resource. Atlas has **no
   end-user `owner` scoping** — the `tenant` link is how a resource is tied back to
   a Central team ([11-user-ui.md](./11-user-ui.md)).
 - **Authorization split.** Central **pre-checks** capability, billing, and
@@ -133,12 +134,24 @@ they are not operator buttons.
 Reporting is wired with `doc_events` in `hooks.py` (no controller edits) →
 `atlas/atlas/central_report.py`. A status transition on a `Virtual Machine`,
 `Site`, `Virtual Machine Snapshot`, or `Server`, and a VM / `Site` `after_insert`,
-enqueue a background `deliver` job (`enqueue_after_commit=True`, so a rolled-back
-transaction is never reported). The job POSTs to Central and records the outcome
-in `Central Settings.status`. Everything is gated on
-`Central Settings.enabled`, so a site without Central configured pays nothing,
-and a delivery failure is logged to the Error Log — it never blocks the
-operation.
+write a `Central Event Log` row and enqueue a background `deliver` job
+(`enqueue_after_commit=True`, so a rolled-back transaction is never *delivered*).
+The job POSTs to Central and stamps the log row plus the `Central Settings.status`
+breadcrumb. Everything is gated on `Central Settings.enabled`, so a site without
+Central configured pays nothing, and a delivery failure is logged to the Error Log
+— it never blocks the operation.
+
+**`Central Event Log` (audit trail).** Every emit is recorded as a row before
+delivery is attempted (`event_type`, `payload`, `status` ∈
+`pending`/`ok`/`error`/`skipped`, `attempts`, `last_error`, `http_status`,
+`occurred_at`, and a `reference_doctype`/`reference_name` snapshot of the source).
+The DocType is **MyISAM** (`engine`), like `Bench Routing Audit`: the INSERT is
+non-transactional, so the row **survives a rollback** of the business change that
+triggered it — you can always see what Atlas *tried* to emit, even for a reverted
+save. `deliver` only runs on commit, so a rolled-back emit leaves its row at
+`pending` and is never POSTed (log the attempt, skip the delivery).
+`Central Settings.status` stays the at-a-glance breadcrumb; the log is the
+queryable history.
 
 The event types: `vm.created` / `vm.status_changed` / `vm.deleted`,
 `site.created` / `site.status_changed`, `snapshot.completed`, and
@@ -149,10 +162,13 @@ tenant handoff in its payload — the live `url` and the baked `admin_password`
 poll equivalent of the site events, returning the same shape for Central to
 self-heal a missed delivery.
 
-**Deferred (durable delivery).** v1 is fire-and-forget: an event is lost if
-Central is down when its job runs. The planned upgrade is a `Central Event`
-outbox DocType (`event_type`, `payload`, `status`, `attempts`, `last_error`)
-drained by a minutely `scheduler_events` job for at-least-once delivery.
+**Deferred (durable delivery).** Delivery is still fire-and-forget: an event is
+lost (its `Central Event Log` row stays `pending`/`error`) if Central is down when
+its job runs — the log records the miss but does not retry it. The planned upgrade
+turns the log into a true outbox: a minutely `scheduler_events` job drains
+`pending`/`error` rows (bumping `attempts`/`last_error`) for at-least-once
+delivery. The `pending` state is deliberately ambiguous today — job-not-yet-run
+vs. rolled-back-emit — which a drainer would disambiguate by age.
 
 ## The wire contract
 
@@ -179,7 +195,7 @@ The route names and payloads are the single external dependency; the whole
 contract is absorbed in `atlas/atlas/central.py` (`CentralClient`), so a change
 on Central's side is a one-file edit here.
 
-Every VM and Site event payload carries `central_reference` — the owning team,
+Every VM and Site event payload carries `team` — the owning Central `Team.name`,
 resolved from the resource's `Tenant` (None for operator/e2e resources) — so
 Central can attribute the event to a tenant without a reverse lookup.
 
@@ -190,8 +206,8 @@ list periodically to correct drift. Atlas exposes one operator-only read for thi
 
 | Central call | Atlas method | Returns |
 | --- | --- | --- |
-| reconcile mirror | `atlas.atlas.api.inventory.tenant_vms(central_reference?)` | `[ { name, central_reference, status, gateway_url } ]` |
+| reconcile mirror | `atlas.atlas.api.inventory.tenant_vms(team?)` | `[ { name, team, status, gateway_url } ]` |
 
-It returns every tenant-tagged VM (optionally scoped to one `central_reference`);
+It returns every tenant-tagged VM (optionally scoped to one `team`);
 untenanted operator VMs are never returned. This is the only Central→Atlas read;
 all Central→Atlas *writes* reuse the existing whitelisted VM controller methods.

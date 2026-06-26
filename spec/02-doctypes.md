@@ -1148,10 +1148,14 @@ None. The form is data-entry only; the key body is copied into a VM's immutable
 
 The unit of ownership/grouping for Atlas resources. A tenant is created and
 managed by **Central** — the external system that owns end-users and talks to
-Atlas as the operator. Central sets the immutable `email` and `central_reference`
-once at creation, then stamps the optional, set-only-once `tenant` link on the
-resources it provisions (`Virtual Machine`, `Virtual Machine Image`,
-`Virtual Machine Snapshot`).
+Atlas as the operator. The tenant's `name` **is** the Central `Team.name`:
+Central passes that id as `team` on every provisioning call, and the Tenant is
+named by it. There is no translation table — the primary key carries the mapping,
+so the `tenant` link stamped on a resource already *is* the Central team. Central
+also sets
+the immutable `email` once at creation, then stamps the optional, set-only-once
+`tenant` link on the resources it provisions (`Virtual Machine`, `Virtual
+Machine Image`, `Virtual Machine Snapshot`).
 
 This is operator/Central-facing only (System Manager permission). It is pure data
 plus list helpers — no Tasks, no lifecycle.
@@ -1165,17 +1169,20 @@ plus list helpers — no Tasks, no lifecycle.
 
 ### Fields
 
-| Field               | Type              | Reqd | Read-only | Notes                                                                              |
-| ------------------- | ----------------- | ---- | --------- | ---------------------------------------------------------------------------------- |
-| `name`              | (autoname `hash`) | Y    | Y         | Primary key. UUID (`str(uuid.uuid4())`), like Virtual Machine / Snapshot / Server. |
-| `title`             | Data              |      |           | `title_field`. Human label for lists. `before_insert` defaults it to `email` (or `central_reference`) when Central omits it, so Desk lists show a readable name rather than the UUID `name`. Still editable. |
-| `email`             | Data (`Email`)    | Y    |           | `set_only_once`, `unique`. Central sets once. Lowercased in `validate()`.          |
-| `central_reference` | Data              | Y    |           | `set_only_once`, `unique`. The Central-side resource id this tenant maps to.       |
+| Field    | Type                  | Reqd | Read-only | Notes                                                                              |
+| -------- | --------------------- | ---- | --------- | ---------------------------------------------------------------------------------- |
+| `name`   | (autoname, set by user) | Y    | Y       | Primary key — **is** the Central `Team.name`. `autoname()` sets it from the `team` create kwarg (not a stored field); throws if absent. Reusing a team get-or-creates the same row; a fresh collision is a DB duplicate-key error. |
+| `title`  | Data                  |      |           | `title_field`. Human label for lists. `before_insert` defaults it to `email` (or the `name` / team) when Central omits it, so Desk lists show a readable name. Still editable. |
+| `email`  | Data (`Email`)        | Y    |           | `set_only_once`, `unique`. Central sets once. Lowercased in `validate()`.          |
 
-Immutability of `email` / `central_reference` is enforced both by the JSON
+The Central `Team.name` is supplied as the `team` kwarg on create (`ensure_tenant`
+/ the provisioning APIs) and becomes the row's `name` — it is not persisted as a
+separate column. Immutability of `email` is enforced both by the JSON
 `set_only_once` and by a controller `IMMUTABLE_AFTER_INSERT` guard — the same
 belt-and-suspenders pattern as `Virtual Machine` and `Virtual Machine Image`.
-Uniqueness is a DB unique index from the JSON `unique` flag.
+`name` is immutable by virtue of being the primary key. Uniqueness of `email` is
+a DB unique index from the JSON `unique` flag; the team is unique because it is
+the primary key.
 
 ### The `tenant` link on resources
 
@@ -1187,8 +1194,10 @@ the framework's `set_only_once` alone — it has no immutability tuple).
 
 ### Controller methods
 
-- `before_insert()` — defaults `title` to `email` (or `central_reference`) when
-  Central omits it, so a tenant never shows up in Desk lists as a bare UUID.
+- `autoname()` — sets `name` from the `team` create kwarg, so the tenant's
+  primary key *is* its Central `Team.name`; throws if absent.
+- `before_insert()` — defaults `title` to `email` (or the `name` / team) when
+  Central omits it, so a tenant never shows up in Desk lists as a bare team id.
 - `virtual_machines()` / `images()` / `snapshots()` (whitelisted) — the rows of
   each resource type stamped with this tenant, newest first.
 - `resources()` (whitelisted) — all three in one round-trip as
@@ -1201,12 +1210,14 @@ the framework's `set_only_once` alone — it has no immutability tuple).
 ── Overview ──
 title
 email
-central_reference
 ```
+
+The `name` (the Central reference) shows as the document id; there is no separate
+field for it.
 
 ### List view
 
-- Columns: `title`, `email`, `central_reference`.
+- Columns: `title`, `email`.
 
 ### Permissions
 

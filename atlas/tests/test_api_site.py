@@ -20,7 +20,7 @@ from atlas.atlas.api import site as site_api
 ROOT_DOMAIN = "blr1.frappe.dev"
 REGION = "blr1"
 
-CENTRAL_REFERENCE = "team-acme"
+TEAM = "team-acme"
 TENANT_EMAIL = "owner@acme.example.com"
 
 
@@ -48,8 +48,8 @@ def _ensure_root_domain() -> None:
 def _clear() -> None:
 	for name in frappe.get_all("Site", pluck="name"):
 		frappe.delete_doc("Site", name, force=1, ignore_permissions=True)
-	for name in frappe.get_all("Tenant", filters={"central_reference": CENTRAL_REFERENCE}, pluck="name"):
-		frappe.delete_doc("Tenant", name, force=1, ignore_permissions=True)
+	if frappe.db.exists("Tenant", TEAM):
+		frappe.delete_doc("Tenant", TEAM, force=1, ignore_permissions=True)
 
 
 class TestCreateSite(IntegrationTestCase):
@@ -59,57 +59,51 @@ class TestCreateSite(IntegrationTestCase):
 		self.addCleanup(frappe.set_user, "Administrator")
 
 	def test_creates_tenant_and_site(self) -> None:
-		result = site_api.create_site(
-			central_reference=CENTRAL_REFERENCE, subdomain="acme", email=TENANT_EMAIL
-		)
+		result = site_api.create_site(team=TEAM, subdomain="acme", email=TENANT_EMAIL)
 		self.assertEqual(result["name"], "acme.blr1.frappe.dev")
 		self.assertEqual(result["fqdn"], "acme.blr1.frappe.dev")
 		self.assertEqual(result["status"], "Pending")
-		self.assertEqual(result["central_reference"], CENTRAL_REFERENCE)
+		self.assertEqual(result["team"], TEAM)
 		# The Site is stamped with the get-or-created Tenant.
 		tenant = frappe.db.get_value("Site", result["name"], "tenant")
-		self.assertTrue(tenant)
-		self.assertEqual(frappe.db.get_value("Tenant", tenant, "central_reference"), CENTRAL_REFERENCE)
+		# The Tenant `name` *is* the Central `Team.name`.
+		self.assertEqual(tenant, TEAM)
 		self.assertEqual(frappe.db.get_value("Tenant", tenant, "email"), TENANT_EMAIL)
 
 	def test_reuses_existing_tenant(self) -> None:
 		"""A second site for the same Central team reuses the one Tenant (no email
 		needed the second time — it is immutable after first creation)."""
-		first = site_api.create_site(
-			central_reference=CENTRAL_REFERENCE, subdomain="acme", email=TENANT_EMAIL
-		)
-		second = site_api.create_site(central_reference=CENTRAL_REFERENCE, subdomain="acme2")
+		first = site_api.create_site(team=TEAM, subdomain="acme", email=TENANT_EMAIL)
+		second = site_api.create_site(team=TEAM, subdomain="acme2")
 		t1 = frappe.db.get_value("Site", first["name"], "tenant")
 		t2 = frappe.db.get_value("Site", second["name"], "tenant")
 		self.assertEqual(t1, t2)
-		self.assertEqual(frappe.db.count("Tenant", {"central_reference": CENTRAL_REFERENCE}), 1)
+		self.assertEqual(frappe.db.count("Tenant", {"name": TEAM}), 1)
 
 	def test_region_defaults_to_active(self) -> None:
-		result = site_api.create_site(
-			central_reference=CENTRAL_REFERENCE, subdomain="acme", email=TENANT_EMAIL
-		)
+		result = site_api.create_site(team=TEAM, subdomain="acme", email=TENANT_EMAIL)
 		self.assertEqual(result["region"], REGION)
 		self.assertEqual(frappe.db.get_value("Site", result["name"], "region"), REGION)
 
 	def test_new_tenant_without_email_throws(self) -> None:
 		with self.assertRaises(frappe.ValidationError) as raised:
-			site_api.create_site(central_reference=CENTRAL_REFERENCE, subdomain="acme")
+			site_api.create_site(team=TEAM, subdomain="acme")
 		self.assertIn("email is required", str(raised.exception))
 
-	def test_missing_central_reference_throws(self) -> None:
+	def test_missing_team_throws(self) -> None:
 		with self.assertRaises(frappe.ValidationError) as raised:
-			site_api.create_site(central_reference="", subdomain="acme", email=TENANT_EMAIL)
-		self.assertIn("central_reference is required", str(raised.exception))
+			site_api.create_site(team="", subdomain="acme", email=TENANT_EMAIL)
+		self.assertIn("team is required", str(raised.exception))
 
 	def test_reserved_label_throws(self) -> None:
 		with self.assertRaises(frappe.ValidationError) as raised:
-			site_api.create_site(central_reference=CENTRAL_REFERENCE, subdomain="www", email=TENANT_EMAIL)
+			site_api.create_site(team=TEAM, subdomain="www", email=TENANT_EMAIL)
 		self.assertIn("reserved", str(raised.exception))
 
 	def test_duplicate_subdomain_throws_clean_taken(self) -> None:
-		site_api.create_site(central_reference=CENTRAL_REFERENCE, subdomain="acme", email=TENANT_EMAIL)
+		site_api.create_site(team=TEAM, subdomain="acme", email=TENANT_EMAIL)
 		with self.assertRaises(frappe.ValidationError) as raised:
-			site_api.create_site(central_reference=CENTRAL_REFERENCE, subdomain="acme")
+			site_api.create_site(team=TEAM, subdomain="acme")
 		self.assertIn("already taken", str(raised.exception))
 
 
@@ -122,21 +116,17 @@ class TestGetSite(IntegrationTestCase):
 	def test_pending_site_hides_handoff(self) -> None:
 		"""Before Running there is no admin handoff to surface — url + admin_password
 		are None, status reflects the live row."""
-		created = site_api.create_site(
-			central_reference=CENTRAL_REFERENCE, subdomain="acme", email=TENANT_EMAIL
-		)
+		created = site_api.create_site(team=TEAM, subdomain="acme", email=TENANT_EMAIL)
 		got = site_api.get_site(created["name"])
 		self.assertEqual(got["status"], "Pending")
 		self.assertIsNone(got["url"])
 		self.assertIsNone(got["admin_password"])
-		self.assertEqual(got["central_reference"], CENTRAL_REFERENCE)
+		self.assertEqual(got["team"], TEAM)
 
 	def test_running_site_reveals_handoff(self) -> None:
 		"""Once Running, get_site surfaces the live URL + the stored admin password —
 		the tenant handoff Central polls for."""
-		created = site_api.create_site(
-			central_reference=CENTRAL_REFERENCE, subdomain="acme", email=TENANT_EMAIL
-		)
+		created = site_api.create_site(team=TEAM, subdomain="acme", email=TENANT_EMAIL)
 		site = frappe.get_doc("Site", created["name"])
 		site.db_set("admin_password", "atlas-baked")
 		site.db_set("status", "Running")

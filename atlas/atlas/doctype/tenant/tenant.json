@@ -1,7 +1,6 @@
 {
  "actions": [],
  "allow_rename": 0,
- "autoname": "hash",
  "creation": "2026-06-18 00:00:00.000000",
  "doctype": "DocType",
  "editable_grid": 0,
@@ -9,8 +8,7 @@
  "field_order": [
   "tab_overview",
   "title",
-  "email",
-  "central_reference"
+  "email"
  ],
  "fields": [
   {
@@ -36,16 +34,6 @@
    "reqd": 1,
    "set_only_once": 1,
    "unique": 1
-  },
-  {
-   "description": "The Central-side resource id this tenant maps to. Set once at creation; immutable afterward.",
-   "fieldname": "central_reference",
-   "fieldtype": "Data",
-   "in_list_view": 1,
-   "label": "Central Reference",
-   "reqd": 1,
-   "set_only_once": 1,
-   "unique": 1
   }
  ],
  "links": [],
@@ -53,7 +41,7 @@
  "modified_by": "Administrator",
  "module": "Atlas",
  "name": "Tenant",
- "naming_rule": "Random",
+ "naming_rule": "Set by user",
  "owner": "Administrator",
  "permissions": [
   {
@@ -71,7 +59,7 @@
    "write": 1
   }
  ],
- "search_fields": "email,central_reference",
+ "search_fields": "email",
  "sort_field": "creation",
  "sort_order": "DESC",
  "title_field": "title",

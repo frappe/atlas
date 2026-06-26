@@ -12,7 +12,7 @@ layer** that drives them.
 > end-users: there is no `/signup` page, no email verification, no `User` rows, no
 > `Atlas User` role. Central authenticates the tenant and calls Atlas's whitelisted
 > `atlas.atlas.api.site.create_site` as the operator (token auth), passing the
-> `central_reference` (the Central team) + the subdomain. Atlas get-or-creates the
+> `team` (the Central `Team.name`) + the subdomain. Atlas get-or-creates the
 > `Tenant`, inserts the `Site` stamped with it, and reports progress back to
 > Central — pushed as `site.*` events (see [16-central.md](./16-central.md) § Event
 > reporting) and pollable via `atlas.atlas.api.site.get_site`. The earlier
@@ -89,7 +89,7 @@ separated by the whole deploy run.
 ## Ownership / tenancy (Contract C)
 
 ```
-Central (owns the tenant) → create_site(central_reference, subdomain) → Tenant + Site (Pending)
+Central (owns the tenant) → create_site(team, subdomain) → Tenant + Site (Pending)
 ```
 
 - **Central is the gate.** Atlas exposes no guest write — `create_site` is
@@ -98,25 +98,25 @@ Central (owns the tenant) → create_site(central_reference, subdomain) → Tena
   what Central asks for. There is no email-verification step in Atlas because there
   is no unauthenticated caller to gate.
 - The `Site` row carries a **`tenant`** link (→ [Tenant](./16-central.md), keyed on
-  `central_reference`) for attribution — the same tenancy model VMs use
+  the Central `Team.name`) for attribution — the same tenancy model VMs use
   ([16-central.md](./16-central.md)). Atlas no longer has end-user `owner` scoping
   or an `Atlas User` role; the fleet is operator/Central-facing (System Manager).
 
 ## The create_site → live surface *(built)*
 
 ```
-1. create_site(central_reference, subdomain, email?)   (operator API, Central token)
-2.   ensure_tenant(central_reference, email)           → get-or-create Tenant
+1. create_site(team, subdomain, email?)               (operator API, Central token)
+2.   ensure_tenant(team, email)                        → get-or-create Tenant
 3.   insert Site (Pending), stamped with the tenant     → returns the mirror row
 4. Site.after_insert → auto_provision (worker)          → provision → deploy → 200 → Running
 5. site.* events to Central / get_site poll             → status, then URL + admin password
 ```
 
-- **`atlas.atlas.api.site.create_site(central_reference, subdomain, email=None,
+- **`atlas.atlas.api.site.create_site(team, subdomain, email=None,
   region=None)`** is the write endpoint. It `ensure_tenant`s the Central team
   (`email` seeds a new Tenant; an existing one is reused), inserts the `Site` with
   the tenant stamped, and returns the **mirror row** Central reflects (`name`,
-  `central_reference`, `subdomain`, `region`, `status`, `fqdn`). The `Site`
+  `team`, `subdomain`, `region`, `status`, `fqdn`). The `Site`
   controller enforces the **same Contract-A label rules** (shared
   `atlas.atlas.subdomain_label` — one source of truth for the label shape +
   reserved denylist) and the authoritative FQDN uniqueness, throwing a clean

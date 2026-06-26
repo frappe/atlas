@@ -23,15 +23,15 @@ from atlas.atlas.doctype.tenant.tenant import ensure_tenant
 
 @frappe.whitelist()
 def create_site(
-	central_reference: str,
+	team: str,
 	subdomain: str,
 	email: str | None = None,
 	region: str | None = None,
 ) -> dict:
 	"""Provision a self-serve site for a Central team and return its mirror row.
 
-	`central_reference` is the Central team; `email` seeds the Tenant on first
-	use (the team owner). The `subdomain` is the single DNS label the site is
+	`team` is the Central `Team.name`; `email` seeds the Tenant on first use (the
+	team owner). The `subdomain` is the single DNS label the site is
 	fronted at (`<subdomain>.<region domain>`); the Site controller enforces the
 	Contract-A label rules and the authoritative FQDN uniqueness, throwing a clean
 	"already taken" the caller can surface. `region` is optional — it defaults to
@@ -42,7 +42,7 @@ def create_site(
 	clone→deploy→route work runs in the background (`Site.auto_provision`) and is
 	reported to Central via `site.*` events / `get_site` polling.
 	"""
-	tenant = ensure_tenant(central_reference, email)
+	tenant = ensure_tenant(team, email)
 
 	doc = {"doctype": "Site", "subdomain": subdomain, "tenant": tenant}
 	if region:
@@ -69,12 +69,11 @@ def _mirror(site) -> dict:
 	surfaced once the site is serving — before that there is nothing to hand
 	off, and the field may not yet be stamped."""
 	running = site.status == "Running"
-	central_reference = (
-		frappe.db.get_value("Tenant", site.tenant, "central_reference") if site.tenant else None
-	)
+	# The Tenant `name` *is* the Central `Team.name`, so the Site's `tenant` link is
+	# the owning team directly; None for operator/e2e sites.
 	return {
 		"name": site.name,
-		"central_reference": central_reference,
+		"team": site.tenant or None,
 		"subdomain": site.subdomain,
 		"region": site.region,
 		"status": site.status,

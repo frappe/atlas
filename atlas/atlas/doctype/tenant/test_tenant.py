@@ -1,12 +1,13 @@
-"""Tenant DocType: UUID naming, immutable identity, uniqueness, and the
+"""Tenant DocType: team-name naming, immutable identity, uniqueness, and the
 resource-listing helpers.
 
-Tenant is Central-facing: Central creates it with an immutable `email` +
-`central_reference`, then stamps the set-only-once `tenant` link on the
-resources it provisions. These tests pin:
+Tenant is Central-facing: Central creates it named by its `Team.name` (passed as
+`team`) with an immutable `email`, then stamps the set-only-once `tenant` link on
+the resources it provisions. These tests pin:
 
-1. `autoname()` assigns a UUID `name`.
-2. `email` / `central_reference` are immutable after insert and unique.
+1. `autoname()` names the tenant by its `team`.
+2. `email` is immutable after insert and unique; the `team` (the primary key)
+   cannot collide.
 3. `virtual_machines()` / `images()` / `snapshots()` return only this tenant's
    rows; `resources()` returns the combined dict.
 4. A resource's `tenant` link is set-only-once (changing it after insert throws).
@@ -18,12 +19,12 @@ from frappe.tests import IntegrationTestCase
 from atlas.tests.fixtures import make_image, make_provider, make_server, make_virtual_machine
 
 
-def _make_tenant(email: str, central_reference: str, **overrides) -> "frappe.model.document.Document":
+def _make_tenant(email: str, team: str, **overrides) -> "frappe.model.document.Document":
 	doc = {
 		"doctype": "Tenant",
 		"title": "Test Tenant",
 		"email": email,
-		"central_reference": central_reference,
+		"team": team,
 	}
 	doc.update(overrides)
 	return frappe.get_doc(doc).insert(ignore_permissions=True)
@@ -51,10 +52,15 @@ class TestTenant(IntegrationTestCase):
 		for name in frappe.get_all("Tenant", pluck="name"):
 			frappe.delete_doc("Tenant", name, force=1, ignore_permissions=True)
 
-	def test_autoname_assigns_uuid(self) -> None:
+	def test_autoname_uses_team(self) -> None:
 		tenant = _make_tenant("a@example.com", "cust_a")
-		self.assertEqual(len(tenant.name), 36)
-		self.assertEqual(tenant.name.count("-"), 4)
+		self.assertEqual(tenant.name, "cust_a")
+
+	def test_missing_team_throws(self) -> None:
+		with self.assertRaises(frappe.ValidationError):
+			frappe.get_doc({"doctype": "Tenant", "email": "noref@example.com"}).insert(
+				ignore_permissions=True
+			)
 
 	def test_email_lowercased_on_validate(self) -> None:
 		tenant = _make_tenant("MixedCase@Example.com", "cust_case")
@@ -66,20 +72,16 @@ class TestTenant(IntegrationTestCase):
 		with self.assertRaises(frappe.ValidationError):
 			tenant.save(ignore_permissions=True)
 
-	def test_central_reference_immutable_after_insert(self) -> None:
-		tenant = _make_tenant("ref@example.com", "cust_ref")
-		tenant.central_reference = "cust_other"
-		with self.assertRaises(frappe.ValidationError):
-			tenant.save(ignore_permissions=True)
-
 	def test_email_unique(self) -> None:
 		_make_tenant("dup@example.com", "cust_dup_1")
 		with self.assertRaises(frappe.exceptions.UniqueValidationError):
 			_make_tenant("dup@example.com", "cust_dup_2")
 
-	def test_central_reference_unique(self) -> None:
+	def test_team_collision_rejected(self) -> None:
+		# The team is the primary key, so a second tenant with the same team collides
+		# on `name` (no separate unique field needed).
 		_make_tenant("u1@example.com", "cust_same")
-		with self.assertRaises(frappe.exceptions.UniqueValidationError):
+		with self.assertRaises(frappe.exceptions.DuplicateEntryError):
 			_make_tenant("u2@example.com", "cust_same")
 
 	def test_helpers_scope_to_this_tenant(self) -> None:
