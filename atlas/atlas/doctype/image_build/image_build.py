@@ -351,7 +351,7 @@ def _warm_snapshot(build, recipe, vm_name: str) -> str:
 	memory_directory = f"/var/lib/atlas/snapshots/{snapshot.name}"
 	task = run_task(
 		server=vm.server,
-		script="warm-snapshot-vm.py",
+		script="warm-snapshot-vm",
 		variables={
 			"VIRTUAL_MACHINE_NAME": vm.name,
 			"ATLAS_FC_UID": str(derive_uid(vm.name)),

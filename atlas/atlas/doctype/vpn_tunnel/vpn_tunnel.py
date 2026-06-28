@@ -94,7 +94,7 @@ class VPNTunnel(Document):
 		host_cidr = tunnel_overlay_link(self.slot_index)[0]
 		task = run_task(
 			server=self.server,
-			script="vm-tunnel.py",
+			script="vm-tunnel",
 			variables={
 				"TUNNEL_NAME": self.name,
 				"VIRTUAL_MACHINE_NAME": self.virtual_machine,
@@ -138,7 +138,7 @@ class VPNTunnel(Document):
 			frappe.throw(_("Tunnel is already revoked"))
 		task = run_task(
 			server=self.server,
-			script="vm-tunnel.py",
+			script="vm-tunnel",
 			variables={
 				"TUNNEL_NAME": self.name,
 				"VIRTUAL_MACHINE_NAME": self.virtual_machine,

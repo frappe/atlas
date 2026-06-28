@@ -8,15 +8,17 @@
 # layout here (package root scripts/lib/atlas) mirrors the durable host layout
 # (/var/lib/atlas/bin/atlas).
 #
-# `requires-python` is the floor the code must parse on (the py3.12 except-tuple
-# trap); CI runs `compileall` on 3.12. `dependencies` is empty today — the code
-# happens to be stdlib-only — but that is no longer a guarded invariant: a real
-# dependency is fine, uv resolves it at install.
+# `requires-python` is the floor the code runs on: 3.14, the version of the
+# uv-managed Atlas venv every host Python verb runs under (`atlas <verb>`).
+# Nothing host-side runs on stock Ubuntu python anymore, so the old 3.12
+# except-tuple floor is gone; CI runs `compileall` on 3.14. `dependencies` is
+# empty today — the code happens to be stdlib-only — but that is no longer a
+# guarded invariant: a real dependency is fine, uv resolves it at install.
 [project]
 name = "atlas-scripts"
 version = "0.0.0"
 description = "Atlas host-side provisioning scripts and the `atlas` host CLI"
-requires-python = ">=3.12"
+requires-python = ">=3.14"
 dependencies = []
 
 [project.scripts]

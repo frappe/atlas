@@ -54,7 +54,7 @@ class LetsEncryptProvider(TlsProvider):
 			"DNS_AUTHENTICATOR": dns_provider.certbot_authenticator(),
 		}
 		task = run_local_task(
-			script="issue-cert.py",
+			script="issue-cert",
 			variables=variables,
 			env=dns_provider.credential_env(),
 			timeout_seconds=600,

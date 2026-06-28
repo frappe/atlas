@@ -67,7 +67,7 @@ class TestVirtualMachine(IntegrationTestCase):
 		self.assertIsNotNone(vm.last_started)
 		# One Task per VM creation: provision-vm.py's step 0 is the image probe.
 		mocked.assert_called_once()
-		self.assertEqual(mocked.call_args.kwargs["script"], "provision-vm.py")
+		self.assertEqual(mocked.call_args.kwargs["script"], "provision-vm")
 
 	def test_provision_variables_carry_jail_parameters(self) -> None:
 		from atlas.atlas.networking import (
@@ -340,7 +340,7 @@ class TestVirtualMachine(IntegrationTestCase):
 		with patch.object(module, "run_task", return_value=task) as mocked:
 			snapshot_name = vm.snapshot("nightly")
 
-		self.assertEqual(mocked.call_args.kwargs["script"], "snapshot-vm.py")
+		self.assertEqual(mocked.call_args.kwargs["script"], "snapshot-vm")
 		snapshot = frappe.get_doc("Virtual Machine Snapshot", snapshot_name)
 		self.assertEqual(snapshot.status, "Available")
 		self.assertEqual(snapshot.virtual_machine, vm.name)
@@ -376,7 +376,7 @@ class TestVirtualMachine(IntegrationTestCase):
 		task = fake_task(name="task-live-snap", stdout='ATLAS_RESULT={"size_bytes": 4294967296}')
 		with patch.object(module, "run_task", return_value=task) as mocked:
 			snapshot_name = vm.snapshot("live one", live=True)
-		self.assertEqual(mocked.call_args.kwargs["script"], "snapshot-vm.py")
+		self.assertEqual(mocked.call_args.kwargs["script"], "snapshot-vm")
 		snapshot = frappe.get_doc("Virtual Machine Snapshot", snapshot_name)
 		self.assertEqual(snapshot.status, "Available")
 
@@ -402,7 +402,7 @@ class TestVirtualMachine(IntegrationTestCase):
 		vm.reload()
 		with patch.object(module, "run_task", return_value=fake_task(name="task-regen")) as mocked:
 			vm.regenerate_host_keys()
-		self.assertEqual(mocked.call_args.kwargs["script"], "regenerate-host-keys-vm.py")
+		self.assertEqual(mocked.call_args.kwargs["script"], "regenerate-host-keys-vm")
 		self.assertEqual(mocked.call_args.kwargs["variables"]["VIRTUAL_MACHINE_NAME"], vm.name)
 
 	def test_regenerate_host_keys_rejects_when_not_stopped(self) -> None:
@@ -458,7 +458,7 @@ class TestVirtualMachine(IntegrationTestCase):
 			vm.terminate()
 		self.assertFalse(frappe.db.exists("Virtual Machine Snapshot", snapshot_name))
 		# The snapshot LV was removed via the per-snapshot delete script.
-		self.assertEqual(mocked_snapshot.call_args.kwargs["script"], "delete-snapshot-vm.py")
+		self.assertEqual(mocked_snapshot.call_args.kwargs["script"], "delete-snapshot-vm")
 
 	def test_terminate_preserves_the_golden_bench_snapshot(self) -> None:
 		# The golden snapshot is the durable artifact self-serve sites clone from;
@@ -513,7 +513,7 @@ class TestVirtualMachine(IntegrationTestCase):
 			vm.stop()
 		vm.reload()
 		self.assertEqual(vm.status, "Stopped")
-		self.assertEqual(mocked.call_args.kwargs["script"], "stop-vm.py")
+		self.assertEqual(mocked.call_args.kwargs["script"], "stop-vm")
 		self.assertFalse(vm.has_memory_snapshot)
 
 	def test_stop_captures_memory_snapshot_when_opted_in(self) -> None:
@@ -532,7 +532,7 @@ class TestVirtualMachine(IntegrationTestCase):
 		vm.reload()
 		self.assertEqual(vm.status, "Stopped")
 		self.assertTrue(vm.has_memory_snapshot)
-		self.assertEqual(mocked.call_args.kwargs["script"], "snapshot-stop-vm.py")
+		self.assertEqual(mocked.call_args.kwargs["script"], "snapshot-stop-vm")
 		# The jailed Firecracker writes the snapshot, so the script needs the
 		# per-VM uid to hand it the directory.
 		self.assertEqual(mocked.call_args.kwargs["variables"]["ATLAS_FC_UID"], str(derive_uid(vm.name)))
@@ -569,7 +569,7 @@ class TestVirtualMachine(IntegrationTestCase):
 		with patch.object(module, "run_task", return_value=task) as mocked:
 			vm.stop(memory_snapshot=True)
 		vm.reload()
-		self.assertEqual(mocked.call_args.kwargs["script"], "snapshot-stop-vm.py")
+		self.assertEqual(mocked.call_args.kwargs["script"], "snapshot-stop-vm")
 		self.assertTrue(vm.has_memory_snapshot)
 
 	def test_start_consumes_the_memory_snapshot(self) -> None:
@@ -599,8 +599,8 @@ class TestVirtualMachine(IntegrationTestCase):
 		start_task = fake_task(name="task-start")
 		with patch.object(module, "run_task", side_effect=[stop_task, start_task]) as mocked:
 			vm.restart(cold=True)
-		self.assertEqual(mocked.call_args_list[0].kwargs["script"], "stop-vm.py")
-		self.assertEqual(mocked.call_args_list[1].kwargs["script"], "start-vm.py")
+		self.assertEqual(mocked.call_args_list[0].kwargs["script"], "stop-vm")
+		self.assertEqual(mocked.call_args_list[1].kwargs["script"], "start-vm")
 
 	def test_restart_power_cycles_via_memory_snapshot(self) -> None:
 		# An opted-in VM's restart is a state-preserving power cycle.
@@ -616,8 +616,8 @@ class TestVirtualMachine(IntegrationTestCase):
 		start_task = fake_task(name="task-start")
 		with patch.object(module, "run_task", side_effect=[stop_task, start_task]) as mocked:
 			vm.restart()
-		self.assertEqual(mocked.call_args_list[0].kwargs["script"], "snapshot-stop-vm.py")
-		self.assertEqual(mocked.call_args_list[1].kwargs["script"], "start-vm.py")
+		self.assertEqual(mocked.call_args_list[0].kwargs["script"], "snapshot-stop-vm")
+		self.assertEqual(mocked.call_args_list[1].kwargs["script"], "start-vm")
 
 	def test_resize_invalidates_the_memory_snapshot(self) -> None:
 		# resize-vm.py drops the on-host snapshot (vmstate no longer matches the

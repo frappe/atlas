@@ -330,7 +330,7 @@ class VirtualMachineSnapshot(Document):
 		# it, so promote is all-or-nothing — never a half-state.
 		task = run_task(
 			server=self.server,
-			script="promote-snapshot-image.py",
+			script="promote-snapshot-image",
 			variables={
 				"SNAPSHOT_ROOTFS_PATH": self.rootfs_path,
 				"IMAGE_NAME": image_name,
@@ -370,7 +370,7 @@ class VirtualMachineSnapshot(Document):
 		# never breaks a clone already provisioned from it.
 		run_task(
 			server=self.server,
-			script="delete-snapshot-vm.py",
+			script="delete-snapshot-vm",
 			variables={
 				"SNAPSHOT_ROOTFS_PATH": self.rootfs_path,
 				"DATA_SNAPSHOT_ROOTFS_PATH": self.data_rootfs_path or "",

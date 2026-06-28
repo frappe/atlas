@@ -58,7 +58,7 @@ class TestLetsEncryptProvider(IntegrationTestCase):
 
 		# The DNS authenticator name reaches the script as a plain value.
 		_, kwargs = run.call_args
-		self.assertEqual(kwargs["script"], "issue-cert.py")
+		self.assertEqual(kwargs["script"], "issue-cert")
 		self.assertEqual(kwargs["variables"]["DOMAIN"], "blr1.frappe.dev")
 		self.assertEqual(kwargs["variables"]["DNS_AUTHENTICATOR"], "route53")
 		# AWS creds travel through env, never argv.

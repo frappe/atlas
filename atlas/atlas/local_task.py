@@ -103,9 +103,12 @@ def _run_local_script(
 
 	script_path = scripts_catalog.resolve(script)
 	flags = _variables_to_flags(variables)
-	# Same argv shape as the SSH runner's _remote_command, minus the remote staging:
-	# the script and its `scripts/lib/atlas` package are already on the controller's
-	# disk, so we invoke them in place.
+	# `script` is a VERB (`issue-cert`); resolve() maps it to the file. Controller
+	# Tasks invoke `[sys.executable, <file>, …]` by path, not the host's `atlas`
+	# console script — the controller runs from the repo tree and these
+	# controller-only verbs never had a console entry. The script and its
+	# `scripts/lib/atlas` package are already on the controller's disk, so we invoke
+	# them in place.
 	argv = [sys.executable, str(script_path), *shlex.split(flags)]
 	subprocess_env = {**os.environ, **env}
 	result = subprocess.run(

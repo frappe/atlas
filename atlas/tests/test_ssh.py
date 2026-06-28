@@ -28,7 +28,7 @@ def _fake_completed(args, **kwargs) -> subprocess.CompletedProcess:
 class TestRunTask(IntegrationTestCase):
 	def setUp(self) -> None:
 		# Make sure a real script exists for the run_task path.
-		self.script_name = "phase1-probe.sh"
+		self.script_name = "phase1-probe"
 
 	def test_run_task_success(self) -> None:
 		with patch("atlas.atlas._ssh.transport.subprocess.run", side_effect=_fake_completed):

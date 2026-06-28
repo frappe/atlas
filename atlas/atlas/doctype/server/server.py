@@ -34,6 +34,7 @@ class Server(Document):
 		from frappe.types import DF
 
 		architecture: DF.Data | None
+		cli_ready: DF.Check
 		firecracker_version: DF.Data | None
 		image: DF.Link | None
 		ipv4_address: DF.Data | None
@@ -163,7 +164,7 @@ class Server(Document):
 
 		task = run_task(
 			server=self.name,
-			script="bootstrap-server.py",
+			script="bootstrap-server",
 			variables={
 				"FIRECRACKER_VERSION": "v1.16.0",
 				"ARCHITECTURE": "x86_64",
@@ -196,7 +197,7 @@ class Server(Document):
 	def reboot(self) -> str:
 		"""Run reboot-server.sh as a Task. SSH drops mid-Task — Task ends in
 		Failure; the operator confirms reboot by waiting and reconnecting."""
-		return self.run_task_dialog(script="reboot-server.sh", variables={})
+		return self.run_task_dialog(script="reboot-server", variables={})
 
 	@frappe.whitelist()
 	def run_task_dialog(self, script: str, variables: dict | str | None = None) -> str:
@@ -264,12 +265,16 @@ class Server(Document):
 				continue
 			uploads.append((str(entry), f"/var/lib/atlas/bin/atlas/{entry.name}"))
 		# The durable Task entry scripts: every host SSH Task (provision-vm.py,
-		# start/stop/snapshot-stop, …). Shipping them here lets the runner invoke
-		# each in place instead of scp'ing it per Task — the scp was the dominant
-		# latency of an otherwise-instant start/stop. Computed from disk
-		# (scripts_catalog) so a new Task script ships with no edit here.
-		for script in scripts_catalog.host_task_scripts():
-			uploads.append((str(directory / script), f"/var/lib/atlas/bin/{script}"))
+		# start/stop/snapshot-stop, …). `host_task_scripts()` yields VERBS; the FILE
+		# (verb→file_for, e.g. provision-vm.py) is what ships — the file keeps its
+		# suffix on the host disk, where `uv pip install` registers the console
+		# entry and the runner reaches it as `atlas <verb>`. Shipping them here lets
+		# the runner invoke each in place instead of scp'ing it per Task — the scp
+		# was the dominant latency of an otherwise-instant start/stop. Computed from
+		# disk (scripts_catalog) so a new Task script ships with no edit here.
+		for verb in scripts_catalog.host_task_scripts():
+			file_name = scripts_catalog.file_for(verb)
+			uploads.append((str(directory / file_name), f"/var/lib/atlas/bin/{file_name}"))
 		return uploads
 
 	def _unit_uploads(self) -> list[tuple[str, str]]:
@@ -301,6 +306,13 @@ class Server(Document):
 		self.jailer_version = parsed["jailer_version"]
 		self.kernel_version = parsed["kernel_version"]
 		self.architecture = parsed["architecture"]
+		# Reaching here means the bootstrap Task succeeded — and run_task raises on
+		# any failure, so bootstrap-server.py's deep sanity gate (which runs
+		# `atlas --help` to prove the console script dispatches) passed. Persist
+		# CLI-readiness once, here, instead of paying a per-Task `test -e` round
+		# trip: a legacy/unbootstrapped host has cli_ready=0 and the operator sees
+		# the re-bootstrap signal. Fail-fast moved from per-Task to once-at-bootstrap.
+		self.cli_ready = 1
 
 
 def sync_scripts_to_all() -> dict[str, int]:

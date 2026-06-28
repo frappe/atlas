@@ -54,7 +54,7 @@ class TestFirewall(IntegrationTestCase):
 		with patch.object(module, "run_task", return_value=fake_task(name="fw")) as run_task:
 			firewall.sync()
 			(_, kwargs) = run_task.call_args
-		self.assertEqual(kwargs["script"], "firewall-apply.py")
+		self.assertEqual(kwargs["script"], "firewall-apply")
 		self.assertEqual(kwargs["variables"]["ACTION"], "apply")
 		self.assertEqual(kwargs["variables"]["VIRTUAL_MACHINE_NAME"], vm.name)
 		self.assertEqual(kwargs["variables"]["RULE"], ["tcp/443", "udp/1194"])

@@ -11,21 +11,28 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # The host-side scripts (scripts/) run under the Atlas venv (CPython 3.14) on a
-  # bootstrapped host, but bootstrap-server.py itself runs on the host's stock
-  # python3 — it is what CREATES the venv (the carve-out) — so the scripts must
-  # still PARSE on the lowest Python a managed host ships (Ubuntu 24 = py3.12).
-  # py3.14 re-legalises `except A, B:` (PEP 758), a SyntaxError on 3.12; this gate
-  # catches that floor trap before it reaches a fresh host. It needs no bench: the
-  # lib unit-tests run standalone by design.
+  # The host-side scripts (scripts/) run under the Atlas venv (a uv-managed
+  # CPython 3.14) on a bootstrapped host: every Python verb runs as `atlas <verb>`
+  # under that venv, so the honest floor is 3.14 — nothing host-side runs on stock
+  # Ubuntu python. THE ONE EXCEPTION is the carve-out: bootstrap-server.py is what
+  # CREATES the venv, so it runs on the host's stock python3 (Ubuntu 24 = py3.12)
+  # until install.sh lands. py3.14 re-legalises `except A, B:` (PEP 758), a
+  # SyntaxError on 3.12; a NARROW compileall keeps that ONE script parseable on the
+  # lowest managed-host python. The rest runs on 3.14. No bench: the lib unit-tests
+  # run standalone by design.
   host-scripts:
     runs-on: ubuntu-latest
-    name: Host scripts (py3.12 floor)
+    name: Host scripts (py3.14 floor)
     steps:
       - uses: actions/checkout@v6
       - uses: astral-sh/setup-uv@v5
-      - name: Parse on the floor (py3.12)
-        run: uv run --python 3.12 --no-project python -m compileall -q scripts/
+      - name: Parse on the floor (py3.14)
+        run: uv run --python 3.14 --no-project python -m compileall -q scripts/
+      - name: Carve-out parses on stock host python (py3.12)
+        # bootstrap-server.py runs on the host's stock python3 (it creates the venv
+        # the rest uses). Keep it parseable on the lowest managed-host python so a
+        # PEP-758 `except A, B:` can't slip onto a fresh host. Drops with install.sh.
+        run: uv run --python 3.12 --no-project python -m compileall -q scripts/bootstrap-server.py
       - name: Lib + CLI unit tests (stdlib, no bench) with coverage
         working-directory: scripts/lib
         # coverage is pulled ephemerally by uv (--with); it is NOT a project
@@ -33,12 +40,12 @@ jobs:
         # unittest` is a drop-in for `python -m unittest`. We emit both an XML
         # (machine-readable) and a self-contained HTML report to browse locally.
         run: |
-          uv run --python 3.12 --no-project --with coverage \
+          uv run --python 3.14 --no-project --with coverage \
             coverage run --source=atlas --omit="atlas/test_*.py" \
             -m unittest discover -s atlas -p "test_*.py"
-          uv run --python 3.12 --no-project --with coverage coverage report
-          uv run --python 3.12 --no-project --with coverage coverage xml -o coverage.xml
-          uv run --python 3.12 --no-project --with coverage coverage html -d htmlcov
+          uv run --python 3.14 --no-project --with coverage coverage report
+          uv run --python 3.14 --no-project --with coverage coverage xml -o coverage.xml
+          uv run --python 3.14 --no-project --with coverage coverage html -d htmlcov
 
       - name: Upload host-scripts coverage
         if: always()

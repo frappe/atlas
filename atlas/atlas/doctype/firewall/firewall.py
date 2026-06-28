@@ -80,7 +80,7 @@ class Firewall(Document):
 		the nft public_filter block."""
 		return run_task(
 			server=self.server,
-			script="firewall-apply.py",
+			script="firewall-apply",
 			variables={
 				"VIRTUAL_MACHINE_NAME": self.virtual_machine,
 				"ACTION": "apply",
@@ -97,7 +97,7 @@ class Firewall(Document):
 			return ""
 		return run_task(
 			server=self.server,
-			script="firewall-apply.py",
+			script="firewall-apply",
 			variables={
 				"VIRTUAL_MACHINE_NAME": self.virtual_machine,
 				"ACTION": "clear",

@@ -21,15 +21,16 @@ Tuples are (local_relative_to_repo_root, remote_absolute).
 # guest atlas-network.service into the ext4 it builds, so it needs that file
 # staged into the /tmp/atlas staging dir for that one Task.
 SCRIPT_SIDECARS: dict[str, list[tuple[str, str]]] = {
-	"sync-image.py": [
+	"sync-image": [
 		("scripts/guest/atlas-network.service", "/tmp/atlas/atlas-network.service"),
 	],
 }
 
 
 def files_to_upload(script: str) -> list[tuple[str, str]]:
-	"""Sidecar files to stage before `script` runs. The shared `atlas` package is
-	NOT staged — it lives durably at /var/lib/atlas/bin from bootstrap and is
-	reached via PYTHONPATH (see module docstring). Only per-script sidecars (and
-	only for the few scripts that declare them) are uploaded."""
+	"""Sidecar files to stage before the verb `script` runs. The shared `atlas`
+	package is NOT staged — it lives durably at /var/lib/atlas/bin from bootstrap
+	and is reached as the pip-installed `atlas` console script (see module
+	docstring). Only per-verb sidecars (and only for the few verbs that declare
+	them) are uploaded."""
 	return SCRIPT_SIDECARS.get(script, [])

@@ -4,8 +4,11 @@ These are not behaviour tests — they pin the manifest invariants that keep the
 host install working (see spec/03-bootstrapping.md):
 
   - the floor contract is declared: requires-python pins the lowest version the
-    code must parse on (the py3.12 except-tuple trap). CI runs `compileall` on
-    that floor; this test only asserts the contract exists and is the floor.
+    code runs on. With the uv-managed venv (a pinned CPython 3.14) every host
+    Python verb runs as `atlas <verb>` under that venv — nothing host-side runs on
+    stock Ubuntu python anymore — so the honest floor is 3.14, not the old 3.12
+    except-tuple boundary. CI runs `compileall` on that floor; this test only
+    asserts the contract exists and is the floor.
   - the dev manifest (scripts/pyproject.toml) and the host manifest
     (scripts/host-pyproject.toml, `uv pip install`ed on a host) stay in lockstep:
     same name, console entry, and floor. They differ ONLY in the wheel package
@@ -20,7 +23,7 @@ Run with bare `python3 -m unittest atlas.test_packaging` from scripts/lib.
 
 import os
 
-# tomllib is stdlib since 3.11; the floor is 3.12, so this import is always safe.
+# tomllib is stdlib since 3.11; the floor is 3.14, so this import is always safe.
 import tomllib
 import unittest
 
@@ -39,10 +42,11 @@ class TestPackagingInvariants(unittest.TestCase):
 		self.meta = _load(_PYPROJECT)
 
 	def test_requires_python_floor_declared(self):
-		# The floor must be >=3.12 (the except-tuple boundary). Pin the exact
-		# string so a silent bump to e.g. >=3.14 — which would re-hide the trap —
-		# trips this test and forces a deliberate decision.
-		self.assertEqual(self.meta["project"]["requires-python"], ">=3.12")
+		# The floor is >=3.14 — the version of the uv-managed Atlas venv that every
+		# host Python verb runs under. Pin the exact string so a silent change trips
+		# this test and forces a deliberate decision (editing this assertion IS that
+		# decision).
+		self.assertEqual(self.meta["project"]["requires-python"], ">=3.14")
 
 	def test_console_entry_points_at_the_cli(self):
 		self.assertEqual(self.meta["project"]["scripts"]["atlas"], "atlas._cli:main")

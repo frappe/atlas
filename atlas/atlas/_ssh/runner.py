@@ -22,24 +22,21 @@ from atlas.atlas.providers.fake_tasks import is_fake_server
 if TYPE_CHECKING:
 	from atlas.atlas.doctype.task.task import Task
 
-# Where `Server.bootstrap()` durably places the shared `atlas` package
-# (`…/bin/atlas/*.py`). Python tasks reach it via PYTHONPATH instead of a per-Task
-# re-upload — see `_remote_command` and script_uploads.py. The dir on the path is
-# the package's PARENT so `import atlas` resolves the `atlas/` directory under it.
+# Where `Server.bootstrap()` durably places the host scripts: the importable
+# `atlas` package (`…/bin/atlas/*.py`), the typed entry scripts (`…/bin/start-vm.py`),
+# and the systemd hooks. bootstrap-server.py `uv pip install`s this dir into the
+# Atlas venv, materialising the `atlas` console script that every Python verb is
+# now invoked through (see `_remote_command`). The dir is also where the bootstrap
+# carve-out and the shell verbs find their files by path.
 DURABLE_PACKAGE_DIRECTORY = "/var/lib/atlas/bin"
 
-# The host's Atlas interpreter: a uv-managed virtualenv on CPython 3.14, created
-# once by bootstrap-server.py's ensure_atlas_env(). Every Python Task runs under
-# THIS, not the host's `/usr/bin/python3`, so the controller and its hosts run the
-# same CPython no matter what Ubuntu shipped. See spec/03-bootstrapping.md.
-#
-# THE BOOTSTRAP CARVE-OUT: `bootstrap-server.py` is what CREATES this venv, so on
-# a fresh host it does not exist yet — that one script must run on the host's
-# `/usr/bin/python3`. Every OTHER .py Task uses the venv python. (The controller's
-# runner keeps its own copy of this literal — the host trees don't share imports;
-# the host-side mirror is `atlas.paths.ATLAS_PYTHON`.)
-ATLAS_PYTHON = "/var/lib/atlas/venv/bin/python"
-BOOTSTRAP_SCRIPT = "bootstrap-server.py"
+# THE BOOTSTRAP CARVE-OUT: `bootstrap-server.py` is what CREATES the Atlas venv
+# (a uv-managed CPython 3.14 at /var/lib/atlas/venv) and `uv pip install`s the
+# `atlas` console script into it. So on a fresh host neither the venv nor the
+# console script exists yet — that one verb must run on the host's `/usr/bin/python3`
+# by path. Every OTHER Python verb runs as `atlas <verb>`, the pip-installed
+# console entry on PATH (/usr/local/bin/atlas). See spec/03-bootstrapping.md.
+BOOTSTRAP_SCRIPT = "bootstrap-server"
 
 # Where the pre-cutover runner staged the package per Task. The entry points'
 # `sys.path.insert(0, <staging>/lib)` shim puts this AHEAD of PYTHONPATH, so a
@@ -234,36 +231,44 @@ def _run_remote_script(
 
 	_ensure_known_hosts_directory()
 
+	# `script` is a VERB (`provision-vm`, `reboot-server`), not a filename — the
+	# catalog is the single authority on its nature (python vs shell) and its file.
 	uploads = files_to_upload(script)
+	verb_kind = scripts_catalog.kind(script)
 	durable_remote = scripts_catalog.durable_remote_path(script)
 
 	with ssh_key_file(connection.ssh_private_key) as key_path:
-		# Fail-loud, not fallback: a non-bootstrap .py Task runs under the Atlas
-		# venv python (_remote_command). If the venv is absent the host's bootstrap
-		# never finished (or half-failed); refuse rather than silently degrade to the
-		# host python3 — the venv is the whole point of running a controlled CPython.
-		# ONE cheap test -e over the same ControlMaster socket, before any staging.
-		# bootstrap-server.py is exempt by the carve-out (it CREATES the venv); .sh
-		# tasks don't use it.
-		if script.endswith(".py") and script != BOOTSTRAP_SCRIPT:
-			_require_atlas_env(connection, key_path)
+		# Python-verb fast path: run the pip-installed `atlas <verb>` console entry
+		# on PATH — no scp, no interpreter path, no PYTHONPATH (the durable
+		# `uv pip install` put the package and the entry on PATH at bootstrap). This
+		# is the bulk of Tasks (every VM lifecycle op). The bootstrap carve-out is
+		# the lone exception (it CREATES the venv, so it runs on host python3 by
+		# path) and falls through to the durable-path branch below.
+		#
+		# A stale/legacy host with no `atlas` on PATH surfaces this as the Task's own
+		# `atlas: command not found` — the fail-fast moved from a per-Task `test -e`
+		# round trip to once-at-bootstrap (Server.cli_ready, the deep sanity gate).
+		# Sidecars (sync-image bakes atlas-network.service) are still staged first.
+		if verb_kind == "python" and script != BOOTSTRAP_SCRIPT:
+			if uploads:
+				_stage_sidecars(connection, key_path, uploads)
+			command = _remote_command(script, None, variables)
+			return run_ssh(connection, key_path, command, timeout_seconds=timeout_seconds)
 
-		# Fast path: the script is shipped durably at /var/lib/atlas/bin (by
-		# bootstrap/sync_scripts, like the atlas package and the systemd hooks) and
-		# needs no per-Task sidecar, so invoke it in place — one round trip, no
-		# mkdir+scp. This is the bulk of Tasks (every VM lifecycle op); the scp it
-		# skips was the dominant latency of an otherwise sub-second start/stop. A
-		# host bootstrapped before the durable-scripts cutover lacks the copy and
+		# Durable-file fast path: the bootstrap carve-out (python3 by path) and the
+		# shell verbs (reboot-server, `bash -x` by path) are shipped durably at
+		# /var/lib/atlas/bin and invoked in place — one round trip, no mkdir+scp.
+		# A host bootstrapped before the durable-scripts cutover lacks the copy and
 		# must be re-bootstrapped / sync_scripts'd — the same refresh contract the
 		# durable atlas package already follows.
 		if durable_remote and not uploads:
 			# Guard so a host that predates the durable-scripts cutover (no
-			# /var/lib/atlas/bin/<script> yet) degrades to the staging path below
-			# for this one Task instead of failing: `test -f` short-circuits to the
-			# marker before the interpreter ever opens the file, so nothing ran and
-			# a staged re-run is safe. The marker can only come from this guard (the
-			# echo is gated behind the `||`), so it is an unambiguous fall-back
-			# signal. A re-bootstrap / sync_scripts makes the fast path stick.
+			# /var/lib/atlas/bin/<file> yet) degrades to the staging path below for
+			# this one Task instead of failing: `test -f` short-circuits to the
+			# marker before the file is ever opened, so nothing ran and a staged
+			# re-run is safe. The marker can only come from this guard (the echo is
+			# gated behind the `||`), so it is an unambiguous fall-back signal. A
+			# re-bootstrap / sync_scripts makes the fast path stick.
 			inner = _remote_command(script, durable_remote, variables)
 			guarded = (
 				f"test -f {shlex.quote(durable_remote)} "
@@ -280,17 +285,16 @@ def _run_remote_script(
 			)
 			# fall through to the staging path
 
-		# Staging path: e2e probe scripts (resolved from the test directory, never
-		# shipped durably), the few scripts with per-Task sidecars (sync-image), and
-		# a durable script whose host copy is missing (the fall-through just above).
-		# Create the staging dir and every remote parent directory the uploads need
-		# in one round trip. The purge first: hosts bootstrapped before the
-		# durable-package cutover still carry a per-Task staged copy of the lib at
-		# <staging>/lib, and the entry points' `sys.path.insert(0, <staging>/lib)`
-		# shim puts it AHEAD of PYTHONPATH — so a stale copy there shadows every
-		# durable-package update (e.g. an old paths.py without the new attributes).
-		# Removing it makes the shim the no-op the durable contract assumes.
+		# Staging path: e2e probe scripts (shell verbs resolved from the test
+		# directory, never shipped durably) and a durable shell verb whose host copy
+		# is missing (the fall-through just above). Create the staging dir and every
+		# remote parent directory the uploads need in one round trip. The purge
+		# first: hosts bootstrapped before the durable-package cutover still carry a
+		# per-Task staged copy of the lib at <staging>/lib, and a stale copy there
+		# would shadow every durable-package update; removing it keeps the durable
+		# package authoritative.
 		script_path = scripts_catalog.resolve(script)
+		file_name = scripts_catalog.file_for(script)
 		remote_dirs = {REMOTE_STAGING_DIRECTORY}
 		remote_dirs.update(os.path.dirname(remote) for _, remote in uploads)
 		mkdir = (
@@ -304,59 +308,61 @@ def _run_remote_script(
 			local_path = (scripts_catalog.scripts_directory() / ".." / local).resolve()
 			run_scp(connection, key_path, str(local_path), remote, timeout_seconds=300)
 
-		remote_script_path = f"{REMOTE_STAGING_DIRECTORY}/{script}"
+		remote_script_path = f"{REMOTE_STAGING_DIRECTORY}/{file_name}"
 		run_scp(connection, key_path, str(script_path), remote_script_path, timeout_seconds=300)
 
 		command = _remote_command(script, remote_script_path, variables)
 		return run_ssh(connection, key_path, command, timeout_seconds=timeout_seconds)
 
 
-def _require_atlas_env(connection: Connection, key_path: str) -> None:
-	"""Fail loud if the host has no Atlas venv python.
+def _stage_sidecars(connection: Connection, key_path: str, uploads: list[tuple[str, str]]) -> None:
+	"""Create the staging dir + the sidecars' parent dirs, then scp each sidecar to
+	its fixed remote path. Used by the python-verb fast path: the verb itself runs
+	as `atlas <verb>`, but a few verbs (sync-image) read an extra file baked at a
+	known location. Sidecars are scarce, so this is at most a couple of scps."""
+	remote_dirs = {REMOTE_STAGING_DIRECTORY}
+	remote_dirs.update(os.path.dirname(remote) for _, remote in uploads)
+	mkdir = "mkdir -p " + " ".join(shlex.quote(d) for d in sorted(remote_dirs) if d)
+	run_ssh(connection, key_path, mkdir, timeout_seconds=60)
+	from atlas.atlas import scripts_catalog
 
-	A single `test -e /var/lib/atlas/venv/bin/python` over the existing connection.
-	The venv is created by bootstrap-server.py's ensure_atlas_env() behind a sanity
-	gate, so its presence is the proof the interpreter the Task is about to run
-	under actually exists. Absent → re-bootstrap, don't degrade.
-	"""
-	guard = f"test -e {shlex.quote(ATLAS_PYTHON)}"
-	_stdout, _stderr, exit_code = run_ssh(connection, key_path, guard, timeout_seconds=30)
-	if exit_code != 0:
-		frappe.throw(f"host has no Atlas venv ({ATLAS_PYTHON} missing) — re-bootstrap the server")
+	for local, remote in uploads:
+		local_path = (scripts_catalog.scripts_directory() / ".." / local).resolve()
+		run_scp(connection, key_path, str(local_path), remote, timeout_seconds=300)
 
 
-def _remote_command(script: str, remote_script_path: str, variables: dict) -> str:
-	"""Build the remote invocation for a staged script.
+def _remote_command(script: str, remote_script_path: str | None, variables: dict) -> str:
+	"""Build the remote invocation for a verb.
 
-	Python tasks (`.py`) run as `python3 <script> --flag value …`: the variables
-	dict maps to CLI flags (UPPER_SNAKE → --kebab-case), the typed-input contract
-	the entry points parse with TaskInputs.from_args(). A list value becomes a
-	repeated flag (`--cgroup-arg a --cgroup-arg b`). Shell tasks (`.sh`) keep the
-	legacy `env VAR=val bash -x <script>` form. Both coexist so the migration can
-	proceed script by script.
+	Three shapes, chosen by the catalog's `kind(verb)` (never a suffix-sniff):
 
-	The Python form is strictly better for the operator: a Task row now yields a
-	runnable, `--help`-able command line, not an `env …` blob.
+	  - Python verb (the bulk): `atlas <verb> --flag value …`. The pip-installed
+	    console script on PATH dispatches to the typed entry point, which parses the
+	    flags via TaskInputs.from_args(). `remote_script_path` is None — there is no
+	    file path; the install IS the entry. The variables dict maps to CLI flags
+	    (UPPER_SNAKE → --kebab-case); a list value becomes a repeated flag.
 
-	Python tasks `import atlas` from the DURABLE package bootstrap placed at
-	`/var/lib/atlas/bin/atlas/`, reached via `PYTHONPATH` here — the package is no
-	longer re-staged per Task (see script_uploads.py). The entry point's own
-	`sys.path.insert(0, <staging>/lib)` shim sits AHEAD of PYTHONPATH, which is
-	harmless only because `_run_remote_script` purges <staging>/lib before every
-	Task — a legacy host's leftover staged copy would otherwise shadow the
-	durable package with stale modules.
-	"""
-	quoted_path = shlex.quote(remote_script_path)
-	if script.endswith(".py"):
+	  - The bootstrap carve-out (`bootstrap-server`): it CREATES the venv + console
+	    script, so it cannot run through them — `python3 <durable_file> --flags` on
+	    the host's stock python3, by path.
+
+	  - Shell verb (`reboot-server`, e2e probes): `env VAR=val bash -x <file>`.
+
+	The python form yields a runnable, `--help`-able command line in the Task row,
+	not an `env …` blob."""
+	from atlas.atlas import scripts_catalog
+
+	if script == BOOTSTRAP_SCRIPT:
+		# Carve-out: host python3 by path; PYTHONPATH so it can import the durable
+		# `atlas` package before the venv it is about to create exists.
 		args = _variables_to_flags(variables)
-		# THE BOOTSTRAP CARVE-OUT: bootstrap-server.py creates the Atlas venv, so it
-		# cannot require it — it runs on the host's python3. Every other .py Task
-		# runs under the venv python. No silent fallback to the host python3:
-		# _run_remote_script's test -e guard fails loud if the venv is absent.
-		interpreter = "python3" if script == BOOTSTRAP_SCRIPT else ATLAS_PYTHON
-		return f"PYTHONPATH={DURABLE_PACKAGE_DIRECTORY} {interpreter} {quoted_path} {args}".strip()
+		quoted_path = shlex.quote(remote_script_path)
+		return f"PYTHONPATH={DURABLE_PACKAGE_DIRECTORY} python3 {quoted_path} {args}".strip()
+	if scripts_catalog.kind(script) == "python":
+		args = _variables_to_flags(variables)
+		return f"atlas {shlex.quote(script)} {args}".strip()
 	env_prefix = " ".join(f"{key}={shlex.quote(str(value))}" for key, value in variables.items())
-	return f"env {env_prefix} bash -x {quoted_path}".strip()
+	return f"env {env_prefix} bash -x {shlex.quote(remote_script_path)}".strip()
 
 
 def _variables_to_flags(variables: dict) -> str:

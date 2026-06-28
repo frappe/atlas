@@ -28,13 +28,13 @@ class TestRunTaskArgumentGuard(IntegrationTestCase):
 			run_task(
 				server="some-server",
 				connection=CONNECTION,
-				script="phase1-probe.sh",
+				script="phase1-probe",
 				variables={},
 			)
 
 	def test_rejects_neither_server_nor_connection(self) -> None:
 		with self.assertRaises(frappe.ValidationError):
-			run_task(script="phase1-probe.sh", variables={})
+			run_task(script="phase1-probe", variables={})
 
 
 class TestRunTaskWithServer(IntegrationTestCase):
@@ -54,7 +54,7 @@ class TestRunTaskWithServer(IntegrationTestCase):
 		):
 			task = run_task(
 				server=self.server.name,
-				script="phase1-probe.sh",
+				script="phase1-probe",
 				variables={"NAME": "hi"},
 			)
 		self.assertEqual(task.status, "Success")
@@ -76,7 +76,7 @@ class TestExecuteTask(IntegrationTestCase):
 			{
 				"doctype": "Task",
 				"server": self.server.name,
-				"script": "phase1-probe.sh",
+				"script": "phase1-probe",
 				"variables": json.dumps({"NAME": "hi"}),
 				"status": "Pending",
 				"triggered_by": "Administrator",
@@ -99,7 +99,7 @@ class TestExecuteTask(IntegrationTestCase):
 			{
 				"doctype": "Task",
 				"server": None,
-				"script": "phase1-probe.sh",
+				"script": "phase1-probe",
 				"variables": json.dumps({}),
 				"status": "Pending",
 				"triggered_by": "Administrator",
@@ -156,13 +156,13 @@ class TestExceptionWrapping(IntegrationTestCase):
 			with self.assertRaises(frappe.ValidationError) as raised:
 				run_task(
 					connection=CONNECTION,
-					script="phase1-probe.sh",
+					script="phase1-probe",
 					variables={},
 				)
 		self.assertIn("boom", str(raised.exception))
 		task = frappe.get_last_doc(
 			"Task",
-			filters={"script": "phase1-probe.sh", "status": "Failure"},
+			filters={"script": "phase1-probe", "status": "Failure"},
 		)
 		self.assertEqual(task.status, "Failure")
 		self.assertIn("boom", task.stderr)
@@ -176,58 +176,58 @@ class TestExceptionWrapping(IntegrationTestCase):
 			with self.assertRaises(frappe.ValidationError) as raised:
 				run_task(
 					connection=CONNECTION,
-					script="phase1-probe.sh",
+					script="phase1-probe",
 					variables={},
 				)
 		self.assertIs(raised.exception, inner)
 
 
 class TestSidecarUploads(IntegrationTestCase):
-	def test_sync_image_uploads_sidecars_before_script(self) -> None:
+	def test_sync_image_uploads_sidecars_then_runs_atlas_verb(self) -> None:
+		# sync-image is a python verb WITH a sidecar (it bakes atlas-network.service
+		# into the image). The sidecar is scp'd to its fixed path; the verb itself
+		# runs as `atlas sync-image` — its own file is NOT scp'd (the console script
+		# is the entry).
 		scp_destinations: list[str] = []
+		ssh_commands: list[str] = []
 
 		def capture(args, **kwargs):
 			if args[0] == "scp":
 				# scp args: ["scp", "-i", key, ...SSH_OPTIONS, local, user@host:remote]
 				scp_destinations.append(args[-1])
+			elif args[0] == "ssh":
+				ssh_commands.append(args[-1])
 			return _ok(args, **kwargs)
 
 		with patch("atlas.atlas._ssh.transport.subprocess.run", side_effect=capture):
 			run_task(
 				connection=CONNECTION,
-				script="sync-image.py",
+				script="sync-image",
 				variables={"IMAGE_NAME": "test-image"},
 			)
 
-		# The sidecar atlas-network.service is uploaded; the script itself follows.
+		# The sidecar atlas-network.service is uploaded.
 		self.assertTrue(
 			any("atlas-network.service" in destination for destination in scp_destinations),
 			f"sidecar not in {scp_destinations}",
 		)
-		# Script always last, after the per-script sidecar (the atlas package is no
-		# longer staged per Task — it lives durably at /var/lib/atlas/bin).
-		script_index = next(
-			index
-			for index, destination in enumerate(scp_destinations)
-			if destination.endswith("sync-image.py")
-		)
-		sidecar_index = next(
-			index
-			for index, destination in enumerate(scp_destinations)
-			if "atlas-network.service" in destination
-		)
-		self.assertLess(sidecar_index, script_index)
+		# The verb's own file is never scp'd — only the sidecar is.
+		self.assertFalse(any(destination.endswith("sync-image.py") for destination in scp_destinations))
+		# The verb runs through the console script.
+		self.assertTrue(any(command.strip().startswith("atlas sync-image") for command in ssh_commands))
+
+
+class TestStagingPath(IntegrationTestCase):
+	"""The staging path survives for shell verbs that aren't shipped durably — the
+	e2e probes resolved from the test directory."""
 
 	def test_staging_purges_the_legacy_staged_package(self) -> None:
 		# Hosts bootstrapped before the durable-package cutover still carry a
-		# per-Task staged lib at /tmp/atlas/lib; the entry points' sys.path
-		# shim puts it AHEAD of PYTHONPATH, so a stale copy there shadows every
-		# durable-package update (the bug: provision-vm.py failing with
-		# "'VirtualMachinePaths' object has no attribute ..." after a
-		# bootstrap had already refreshed /var/lib/atlas/bin). The staging
-		# preamble must remove it before every staged Task. Use an e2e probe
-		# (resolved from the test dir, never shipped durably) so the staging
-		# path runs — durable production scripts now skip it entirely.
+		# per-Task staged lib at /tmp/atlas/lib; a stale copy there would shadow
+		# the durable package. The staging preamble must remove it before every
+		# staged Task. Use a shell e2e probe (resolved from the test dir, never
+		# shipped durably) so the staging path runs — durable production verbs run
+		# as `atlas <verb>` and skip it entirely.
 		ssh_commands: list[str] = []
 
 		def capture(args, **kwargs):
@@ -238,7 +238,7 @@ class TestSidecarUploads(IntegrationTestCase):
 		with patch("atlas.atlas._ssh.transport.subprocess.run", side_effect=capture):
 			run_task(
 				connection=CONNECTION,
-				script="phase1-probe.sh",
+				script="phase1-probe",
 				variables={"NAME": "x"},
 			)
 
@@ -246,13 +246,15 @@ class TestSidecarUploads(IntegrationTestCase):
 		self.assertIn(f"rm -rf {runner.STALE_STAGED_PACKAGE_DIRECTORY}", staging)
 		# The purge must come before the mkdir that re-creates the staging dir.
 		self.assertLess(staging.index("rm -rf"), staging.index("mkdir -p"))
+		# A shell probe is scp'd as its file (keeps .sh) and run with bash -x.
+		self.assertTrue(ssh_commands[-1].strip().startswith("env ") or "bash -x" in ssh_commands[-1])
 
 
 class TestDurableScriptInvocation(IntegrationTestCase):
-	"""A durably-shipped Task script (provision/start/stop/…) is invoked in place
-	at /var/lib/atlas/bin — no per-Task mkdir+scp, just one run."""
+	"""A durably-installed Python verb (provision/start/stop/…) runs as
+	`atlas <verb>` — no per-Task mkdir+scp, no interpreter path, just one run."""
 
-	def test_durable_script_skips_staging_and_scp(self) -> None:
+	def test_python_verb_runs_as_atlas_console_script(self) -> None:
 		ssh_commands: list[str] = []
 		scp_count = 0
 
@@ -267,84 +269,49 @@ class TestDurableScriptInvocation(IntegrationTestCase):
 		with patch("atlas.atlas._ssh.transport.subprocess.run", side_effect=capture):
 			run_task(
 				connection=CONNECTION,
-				script="start-vm.py",
+				script="start-vm",
 				variables={"VIRTUAL_MACHINE_NAME": "uuid-1"},
 			)
 
-		# No script transfer and no staging mkdir — the whole staging round trip
-		# is gone. Two ssh calls remain: the Atlas-venv guard (a cheap
-		# `test -e /var/lib/atlas/venv/bin/python`) then the durable copy run in
-		# place. The guard is the dominant-latency-free preflight; the scp+mkdir
-		# round trip is what mattered and it is still absent.
+		# No script transfer, no staging mkdir, no per-Task venv guard. A single ssh
+		# call: `atlas start-vm --flags`. The scp+mkdir round trip is gone and the
+		# fail-fast moved to once-at-bootstrap (Server.cli_ready).
 		self.assertEqual(scp_count, 0)
 		self.assertFalse(any("mkdir -p" in command for command in ssh_commands))
-		self.assertEqual(len(ssh_commands), 2)
-		self.assertIn(f"test -e {runner.ATLAS_PYTHON}", ssh_commands[0])
-		self.assertIn("/var/lib/atlas/bin/start-vm.py", ssh_commands[-1])
-		# The durable invocation runs under the Atlas venv python, not host python3.
-		self.assertIn(runner.ATLAS_PYTHON, ssh_commands[-1])
-
-	def test_durable_missing_falls_back_to_staging(self) -> None:
-		# A host that predates the durable-scripts cutover lacks
-		# /var/lib/atlas/bin/start-vm.py. The guard short-circuits to the marker
-		# (nothing ran), and the runner must stage + run the script instead of
-		# failing — so the Task still succeeds and an scp happens. Zero-downtime
-		# deploy: the fast path needs no flag-day re-bootstrap of every host.
-		calls: list = []
-
-		def capture(args, **kwargs):
-			calls.append(args)
-			if args[0] == "ssh" and runner.DURABLE_MISSING_MARKER in args[-1]:
-				return subprocess.CompletedProcess(
-					args, 127, stdout=runner.DURABLE_MISSING_MARKER + "\n", stderr=""
-				)
-			return _ok(args, **kwargs)
-
-		with patch("atlas.atlas._ssh.transport.subprocess.run", side_effect=capture):
-			task = run_task(
-				connection=CONNECTION,
-				script="start-vm.py",
-				variables={"VIRTUAL_MACHINE_NAME": "uuid-1"},
-			)
-
-		self.assertEqual(task.status, "Success")
-		# Fell back to staging: the script was scp'd and a staging mkdir ran.
-		self.assertTrue(any(args[0] == "scp" for args in calls))
-		self.assertTrue(any(args[0] == "ssh" and "mkdir -p" in args[-1] for args in calls))
-		# The final invocation runs the staged copy, not the (absent) durable one.
-		last_ssh = [args for args in calls if args[0] == "ssh"][-1]
-		self.assertIn("/tmp/atlas/start-vm.py", last_ssh[-1])
+		self.assertEqual(len(ssh_commands), 1)
+		self.assertTrue(ssh_commands[-1].strip().startswith("atlas start-vm "))
+		self.assertIn("--virtual-machine-name uuid-1", ssh_commands[-1])
+		# Not the old interpreter+path form.
+		self.assertNotIn("/var/lib/atlas/bin/start-vm.py", ssh_commands[-1])
+		self.assertNotIn("python3", ssh_commands[-1])
 
 
 class TestRemoteCommand(IntegrationTestCase):
-	"""The .py vs .sh dispatch in runner._remote_command — the heart of the
-	migration. A .py task runs as `python3 <script> --flag value`; a .sh task
-	keeps the legacy `env VAR=val bash -x <script>` form."""
+	"""The verb-kind dispatch in runner._remote_command — the heart of the cutover.
+	A python verb runs as `atlas <verb> --flag value`; the bootstrap carve-out runs
+	on host python3 by path; a shell verb keeps `env VAR=val bash -x <file>`."""
 
-	def test_python_task_builds_flag_command(self) -> None:
+	def test_python_verb_builds_atlas_console_command(self) -> None:
 		command = runner._remote_command(
-			"snapshot-vm.py",
-			"/tmp/atlas/snapshot-vm.py",
+			"snapshot-vm",
+			None,
 			{"VIRTUAL_MACHINE_NAME": "uuid-1", "SNAPSHOT_ROOTFS_PATH": "/dev/atlas/x"},
 		)
-		# PYTHONPATH points `import atlas` at the durable bootstrap package; the
-		# package is no longer re-staged per Task (see script_uploads.py). The
-		# interpreter is the Atlas venv python, not host python3.
-		self.assertTrue(
-			command.startswith(
-				f"PYTHONPATH={runner.DURABLE_PACKAGE_DIRECTORY} {runner.ATLAS_PYTHON} /tmp/atlas/snapshot-vm.py "
-			)
-		)
+		# The pip-installed console script on PATH, no interpreter path, no PYTHONPATH.
+		self.assertTrue(command.startswith("atlas snapshot-vm "))
 		self.assertIn("--virtual-machine-name uuid-1", command)
 		self.assertIn("--snapshot-rootfs-path /dev/atlas/x", command)
 		self.assertNotIn("bash -x", command)
+		self.assertNotIn("python3", command)
+		self.assertNotIn("PYTHONPATH", command)
 
 	def test_bootstrap_is_carved_out_to_host_python3(self) -> None:
-		# THE BOOTSTRAP CARVE-OUT: bootstrap-server.py CREATES the Atlas venv, so it
-		# cannot require it — it must run on the host's /usr/bin/python3. An
-		# unconditional swap would brick every fresh host (chicken-and-egg).
+		# THE BOOTSTRAP CARVE-OUT: bootstrap-server CREATES the Atlas venv + the
+		# `atlas` console script, so it cannot run through them — it must run on the
+		# host's /usr/bin/python3 by path. An unconditional swap would brick every
+		# fresh host (chicken-and-egg).
 		command = runner._remote_command(
-			"bootstrap-server.py",
+			"bootstrap-server",
 			"/var/lib/atlas/bin/bootstrap-server.py",
 			{"FIRECRACKER_VERSION": "v1.16.0", "ARCHITECTURE": "x86_64"},
 		)
@@ -353,92 +320,41 @@ class TestRemoteCommand(IntegrationTestCase):
 				f"PYTHONPATH={runner.DURABLE_PACKAGE_DIRECTORY} python3 /var/lib/atlas/bin/bootstrap-server.py "
 			)
 		)
-		# Specifically NOT the venv path — that is the whole point of the carve-out.
-		self.assertNotIn(runner.ATLAS_PYTHON, command)
+		# Specifically NOT the console script — that is the whole point of the carve-out.
+		self.assertNotIn("atlas bootstrap-server", command)
 
-	def test_non_bootstrap_python_uses_atlas_venv(self) -> None:
-		# Every OTHER .py Task runs under the Atlas venv python, never host python3.
-		command = runner._remote_command(
-			"start-vm.py", "/var/lib/atlas/bin/start-vm.py", {"VIRTUAL_MACHINE_NAME": "u"}
-		)
-		self.assertIn(f" {runner.ATLAS_PYTHON} ", f" {command} ")
+	def test_non_bootstrap_python_never_uses_an_interpreter_path(self) -> None:
+		# Every OTHER python verb runs as `atlas <verb>`, never an interpreter+path.
+		command = runner._remote_command("start-vm", None, {"VIRTUAL_MACHINE_NAME": "u"})
+		self.assertTrue(command.startswith("atlas start-vm "))
 		self.assertNotIn(" python3 ", f" {command} ")
 
-	def test_python_task_repeats_list_flags(self) -> None:
+	def test_python_verb_repeats_list_flags(self) -> None:
 		# A list value becomes a repeated flag; a value with an internal space
 		# stays one shell-quoted token (the cpu.max "<quota> <period>" case).
 		command = runner._remote_command(
-			"provision-vm.py",
-			"/tmp/atlas/provision-vm.py",
+			"provision-vm",
+			None,
 			{"CGROUP_ARG": ["memory.max=1", "cpu.max=200000 100000"]},
 		)
 		self.assertIn("--cgroup-arg memory.max=1", command)
 		self.assertIn("--cgroup-arg 'cpu.max=200000 100000'", command)
 
-	def test_python_task_drops_empty_optional(self) -> None:
+	def test_python_verb_drops_empty_optional(self) -> None:
 		command = runner._remote_command(
-			"provision-vm.py",
-			"/tmp/atlas/provision-vm.py",
+			"provision-vm",
+			None,
 			{"VIRTUAL_MACHINE_NAME": "uuid-1", "SNAPSHOT_ROOTFS_PATH": ""},
 		)
 		self.assertIn("--virtual-machine-name uuid-1", command)
 		self.assertNotIn("snapshot-rootfs-path", command)
 
-	def test_shell_task_keeps_bash_env_form(self) -> None:
+	def test_shell_verb_keeps_bash_env_form(self) -> None:
 		command = runner._remote_command(
-			"reboot-server.sh",
+			"reboot-server",
 			"/tmp/atlas/reboot-server.sh",
 			{},
 		)
 		self.assertIn("bash -x /tmp/atlas/reboot-server.sh", command)
 		self.assertNotIn("python3", command)
-
-
-class TestAtlasEnvGuard(IntegrationTestCase):
-	"""The fail-loud preflight: a non-bootstrap .py Task refuses to run on a host
-	that lacks the Atlas venv python rather than silently degrading to host
-	python3 (the venv is the point of running a controlled CPython)."""
-
-	def test_present_venv_passes_and_probes_venv_path(self) -> None:
-		with patch.object(runner, "run_ssh", return_value=("", "", 0)) as run_ssh:
-			runner._require_atlas_env(CONNECTION, "/tmp/key")
-		sent = run_ssh.call_args.args[2]
-		self.assertIn("test -e", sent)
-		self.assertIn(runner.ATLAS_PYTHON, sent)
-
-	def test_missing_venv_throws_with_rebootstrap_hint(self) -> None:
-		with patch.object(runner, "run_ssh", return_value=("", "", 1)):
-			with self.assertRaises(frappe.ValidationError) as cm:
-				runner._require_atlas_env(CONNECTION, "/tmp/key")
-		self.assertIn("re-bootstrap", str(cm.exception))
-
-	def _guard_calls_for(self, script: str) -> list[str]:
-		"""Run a Task end-to-end with the guard recorded, the fast path forced, and
-		the actual remote exec stubbed; return which scripts triggered the guard."""
-		triggered: list[str] = []
-
-		with (
-			patch.object(runner, "_require_atlas_env", side_effect=lambda *_: triggered.append(script)),
-			patch(
-				"atlas.atlas.scripts_catalog.durable_remote_path", return_value=f"/var/lib/atlas/bin/{script}"
-			),
-			patch("atlas.atlas.script_uploads.files_to_upload", return_value=[]),
-			patch.object(runner, "run_ssh", return_value=("", "", 0)),
-			patch.object(runner, "ssh_key_file"),
-			patch.object(runner, "_ensure_known_hosts_directory"),
-		):
-			runner._run_remote_script(CONNECTION, script, {}, 60)
-		return triggered
-
-	def test_guard_fires_for_a_normal_python_task(self) -> None:
-		self.assertEqual(self._guard_calls_for("start-vm.py"), ["start-vm.py"])
-
-	def test_guard_skipped_for_bootstrap_carveout(self) -> None:
-		self.assertEqual(self._guard_calls_for("bootstrap-server.py"), [])
-
-	def test_guard_skipped_for_shell_task(self) -> None:
-		# .sh tasks don't use the venv python, so they are never guarded — the
-		# durable .sh fast path runs without the preflight. (reboot-server.sh is a
-		# durable shell Task; force the durable fast path and assert the guard never
-		# ran.)
-		self.assertEqual(self._guard_calls_for("reboot-server.sh"), [])
+		self.assertNotIn("atlas reboot-server", command)

@@ -90,7 +90,7 @@ class TestReservedIP(IntegrationTestCase):
 			rip.attach(vm.name)
 			provider.assign_reserved_ip.assert_called_once_with("do-reserved-1", "droplet-attach")
 			(_, kwargs) = run_task.call_args
-		self.assertEqual(kwargs["script"], "vm-reserved-ip.py")
+		self.assertEqual(kwargs["script"], "vm-reserved-ip")
 		self.assertEqual(kwargs["variables"]["ACTION"], "attach")
 		self.assertEqual(kwargs["variables"]["RESERVED_IPV4"], "203.0.113.20")
 		self.assertEqual(kwargs["variables"]["VIRTUAL_MACHINE_NAME"], vm.name)
@@ -167,7 +167,7 @@ class TestReservedIP(IntegrationTestCase):
 			rip.detach()
 			provider.unassign_reserved_ip.assert_called_once_with("do-reserved-1")
 			(_, kwargs) = run_task.call_args
-		self.assertEqual(kwargs["script"], "vm-reserved-ip.py")
+		self.assertEqual(kwargs["script"], "vm-reserved-ip")
 		self.assertEqual(kwargs["variables"]["ACTION"], "detach")
 
 	def test_detach_rejects_unattached(self) -> None:

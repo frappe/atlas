@@ -15,9 +15,13 @@ Task = (server, script, variables) executed over SSH, with captured output
 Concretely, a Task is a row in `Task` with:
 
 - `server`, `virtual_machine` (optional)
-- `script`: the file name under `atlas/scripts/`, e.g. `provision-vm.py`
+- `script`: the **verb** — the name of a script under `scripts/` with its
+  extension dropped, e.g. `provision-vm` (the file on disk is `provision-vm.py`).
+  Executed on the host as `atlas provision-vm …`. The on-disk file keeps its
+  `.py`/`.sh` suffix; only the Task identifier drops it. `scripts_catalog` is the
+  authority that maps a verb to its file (`file_for`) and its nature (`kind`).
 - `variables`: a JSON object passed to the script — as `--kebab-case` CLI
-  flags for a `.py` task, or env vars for a `.sh` task
+  flags for a Python verb, or env vars for a shell verb
 - `started`, `ended`, `duration_milliseconds`
 - `exit_code`, `stdout`, `stderr`
 - `status`: one of `Pending`, `Running`, `Success`, `Failure`
@@ -115,29 +119,31 @@ def wait_for_ssh(connection, timeout_seconds: int = 300) -> None:
     Tasks to different servers on distinct sockets. This is a dominant latency
     win for a remote provision — each avoided handshake is ~1.5s+ over a real
     droplet.
-- Variables: how they reach the script depends on the script's language
-  (see [§ Tasks are Python](#tasks-are-python-the-zx-slice-we-built)):
-  - **`.py` task** —
-    `ssh ... PYTHONPATH=/var/lib/atlas/bin /var/lib/atlas/venv/bin/python /var/lib/atlas/bin/script.py --kebab-flag val …`.
-    The `variables` dict keys (`UPPER_SNAKE`) become `--kebab-case` CLI flags;
-    a list value becomes a repeated flag. Quoted with `shlex.quote()`. The
-    `PYTHONPATH` points `import atlas` at the durable package, and the script
-    itself is durable too, so the common case runs it **in place** (next section).
-    A *staged* script — a sidecar or an e2e probe — runs from `/tmp/atlas/script.py`.
-    The interpreter is `/var/lib/atlas/venv/bin/python`, the **Atlas venv python**
-    (`ATLAS_PYTHON`), not the host's `/usr/bin/python3` — see
-    [03-bootstrapping.md § The Atlas interpreter and CLI](./03-bootstrapping.md).
-    Two carve-outs: `bootstrap-server.py` runs on the host's `python3` (it is
-    what *creates* the venv — an unconditional swap would brick a fresh host),
-    and before any *other* `.py` Task runs, `_run_remote_script` makes one cheap
-    `test -e /var/lib/atlas/venv/bin/python` over the connection — absent → it
-    **throws** (`re-bootstrap the server`) rather than silently degrading to the
-    host `python3`.
-  - **`.sh` task** — `ssh ... env VAR=val VAR2=val2 bash -x /var/lib/atlas/bin/script.sh`.
-    The legacy form, kept for the few remaining shell tasks (`reboot-server.sh`).
-    Shell tasks don't use the Atlas venv python and are not guarded.
-  Both are built in `_ssh/runner.py::_remote_command()`, dispatched on the
-  `.py`/`.sh` suffix.
+- Variables: how they reach the script depends on the verb's nature
+  (`scripts_catalog.kind(verb)` — never a suffix-sniff; see
+  [§ Tasks are Python](#tasks-are-python-the-zx-slice-we-built)):
+  - **Python verb** — `ssh ... atlas <verb> --kebab-flag val …`. The
+    pip-installed `atlas` console script on `PATH` (`/usr/local/bin/atlas`)
+    dispatches to the typed entry point; no interpreter path, no `PYTHONPATH` —
+    the durable `uv pip install` put both the package and the console entry into
+    the Atlas venv at bootstrap (see
+    [03-bootstrapping.md § The Atlas interpreter and CLI](./03-bootstrapping.md)).
+    The `variables` dict keys (`UPPER_SNAKE`) become `--kebab-case` CLI flags; a
+    list value becomes a repeated flag. Quoted with `shlex.quote()`. This is the
+    bulk of Tasks and needs no per-Task scp (next section). A stale/legacy host
+    with no `atlas` on `PATH` surfaces this as the Task's own
+    `atlas: command not found` — the fail-fast moved from a per-Task `test -e`
+    round trip to **once-at-bootstrap** (`Server.cli_ready`, set when the
+    bootstrap sanity gate proved `atlas --help` dispatches).
+    One carve-out: `bootstrap-server` runs as `python3 /var/lib/atlas/bin/bootstrap-server.py`
+    on the host's stock `python3` — it is what *creates* the venv + the console
+    script, so it cannot run through them (an unconditional swap would brick a
+    fresh host).
+  - **Shell verb** — `ssh ... env VAR=val VAR2=val2 bash -x /var/lib/atlas/bin/reboot-server.sh`.
+    The legacy form, kept for the few remaining shell verbs (`reboot-server`) and
+    the e2e probes. Shell verbs run their file by path.
+  All three shapes are built in `_ssh/runner.py::_remote_command()`, dispatched on
+  `scripts_catalog.kind(verb)` and the bootstrap carve-out — not a filename suffix.
 
 ### Timeouts
 
@@ -195,8 +201,10 @@ idempotent, exits non-zero on failure, replayable — but the implementation
 language is Python 3 (already on every Ubuntu 24.04 host; no new dependency).
 
 `reboot-server.sh` is the lone holdover (two lines); everything else under
-[`scripts/`](../scripts/) is `<name>.py`. The runner runs `.py` and `.sh`
-side by side, so the boundary is a suffix check, not a flag day.
+[`scripts/`](../scripts/) is `<name>.py`. The runner runs Python and shell verbs
+side by side — `scripts_catalog.kind(verb)` is the authority on which is which
+(it reads the on-disk file's extension), so the catalog, not a `Task.script`
+suffix-sniff, draws the boundary.
 
 ### Why Python, not "harden the shell"
 
@@ -250,8 +258,9 @@ def main() -> None:
   kills the shell's `mapfile`/word-splitting workaround: a value with an
   internal space stays one argv token. **This is the shape the `atlas` host CLI
   mounts directly** — each task is already a subcommand
-  ([`_cli.py`](../scripts/lib/atlas/_cli.py)); Phase 1 exposes the script stems
-  verbatim (`atlas stop-vm …`), installed at bootstrap (see
+  ([`_cli.py`](../scripts/lib/atlas/_cli.py)). The CLI is no longer just a debug
+  face: the runner *executes every Python verb through it* (`atlas stop-vm …`),
+  installed at bootstrap via `uv pip install` (see
   [03-bootstrapping.md § The `atlas` host CLI](./03-bootstrapping.md)).
 - **Typed output**, not stdout scraping. A task that returns data emits one
   `ATLAS_RESULT=<json>` line via `TaskResult.emit()`; the controller decodes
@@ -279,33 +288,37 @@ imports it from **one durable copy** on the host:
   and `atlas-pool.service` can `import atlas` after a reboot. The file list is
   computed from disk (`test_*.py` skipped), so a new lib module ships with no
   map edit.
-- **Tasks reach it via `PYTHONPATH`**: `_remote_command` prefixes every `.py`
-  task with `PYTHONPATH=/var/lib/atlas/bin`, so `import atlas` resolves the
-  durable copy. The package is **not** re-staged per Task — only per-script
-  sidecars (sync-image's guest `atlas-network.service`, in `SCRIPT_SIDECARS`)
-  are uploaded. This removes ~9 scp round-trips from every Task; combined with
-  SSH multiplexing it takes a remote provision from ~20s+ toward a few seconds.
+- **Tasks reach it as the pip-installed `atlas` console script**:
+  `bootstrap-server.py`'s `ensure_atlas_env()` runs `uv pip install
+  /var/lib/atlas/bin` into the Atlas venv, registering the `atlas` entry point
+  (and resolving the package's imports against that same durable tree). A Python
+  verb then runs as `atlas <verb>` — no `PYTHONPATH`, no per-Task scp of the
+  package. Only per-verb sidecars (sync-image's guest `atlas-network.service`, in
+  `SCRIPT_SIDECARS`) are uploaded. This removes ~9 scp round-trips from every Task;
+  combined with SSH multiplexing it takes a remote provision from ~20s+ toward a
+  few seconds.
 
-  **Staleness trade-off (deliberate):** because the package is no longer
-  shipped per Task, a controller-side change to a lib module reaches a host
-  only on the next `bootstrap` — bootstrap is the single refresh point. This is
-  the same contract the systemd hooks already follow (they too run the durable
-  copy). Re-run `bootstrap` (idempotent) after changing anything under
-  `scripts/lib/atlas/`. The entry-point scripts keep their old
-  `sys.path.insert(<staging>/lib)` shim; it is now a harmless no-op (that dir is
-  unpopulated) and `PYTHONPATH` wins because it sits ahead of it on `sys.path`.
+  **Staleness trade-off (deliberate):** because the package is shipped + installed
+  only at bootstrap, a controller-side change to a lib module reaches a host only
+  on the next `bootstrap` — bootstrap is the single refresh point. This is the
+  same contract the systemd hooks already follow (they too run the durable copy).
+  Re-run `bootstrap` (idempotent) after changing anything under
+  `scripts/lib/atlas/`. (The carve-out `bootstrap-server.py` still imports the
+  package via `PYTHONPATH=/var/lib/atlas/bin`, because it runs on stock `python3`
+  before the venv it installs into exists.)
 
 - **The entry scripts are durable too.** Bootstrap / `sync_scripts` ship every
-  host Task entry script (`scripts_catalog.host_task_scripts()` — provision-vm.py,
-  start/stop/snapshot-stop, …) to `/var/lib/atlas/bin/` beside the package, and
-  `_run_remote_script` invokes the durable copy **in place** when the script
-  needs no sidecar: no per-Task `mkdir`+`scp`, just the one run. The scp was the
-  dominant latency of an otherwise sub-second op — dropping it took a live stop
-  from ~2.2s to ~0.6s, start ~2.8s→~1.1s, and provision ~5.7s→~3.0s on a real
-  droplet. Same staleness contract as the package (re-bootstrap / `sync_scripts`
-  to refresh). Two kinds of script keep the staging path and its stale-lib
-  purge: **e2e probes** (resolved from the test-only directory, never shipped
-  durably) and **sidecar scripts** (`sync-image.py`).
+  host Task entry FILE (`scripts_catalog.host_task_scripts()` yields verbs;
+  `file_for` maps each to its file — provision-vm.py, start/stop/snapshot-stop,
+  …) to `/var/lib/atlas/bin/` beside the package, where `uv pip install` registers
+  the console script and the runner reaches each as `atlas <verb>` **in place**:
+  no per-Task `mkdir`+`scp`, just the one run. The scp was the dominant latency of
+  an otherwise sub-second op — dropping it took a live stop from ~2.2s to ~0.6s,
+  start ~2.8s→~1.1s, and provision ~5.7s→~3.0s on a real droplet. Same staleness
+  contract as the package (re-bootstrap / `sync_scripts` to refresh). The staging
+  path and its stale-lib purge survive only for **shell verbs not shipped durably**
+  — the **e2e probes** (resolved from the test-only directory) — and any **sidecar
+  files** (`sync-image`'s guest unit) staged before a python verb runs.
 
 ### Systemd hooks are Python too, but not Tasks
 

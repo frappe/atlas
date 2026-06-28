@@ -50,7 +50,7 @@ class TestVirtualMachineSnapshot(IntegrationTestCase):
 		with patch.object(module, "run_task", return_value=fake_task()) as mocked:
 			frappe.delete_doc("Virtual Machine Snapshot", snapshot.name, ignore_permissions=True)
 		mocked.assert_called_once()
-		self.assertEqual(mocked.call_args.kwargs["script"], "delete-snapshot-vm.py")
+		self.assertEqual(mocked.call_args.kwargs["script"], "delete-snapshot-vm")
 		self.assertEqual(mocked.call_args.kwargs["variables"]["SNAPSHOT_ROOTFS_PATH"], snapshot.rootfs_path)
 
 	def test_on_trash_runs_delete_script_for_terminated_vm(self) -> None:
@@ -66,7 +66,7 @@ class TestVirtualMachineSnapshot(IntegrationTestCase):
 		with patch.object(module, "run_task", return_value=fake_task()) as mocked:
 			frappe.delete_doc("Virtual Machine Snapshot", snapshot.name, ignore_permissions=True)
 		mocked.assert_called_once()
-		self.assertEqual(mocked.call_args.kwargs["script"], "delete-snapshot-vm.py")
+		self.assertEqual(mocked.call_args.kwargs["script"], "delete-snapshot-vm")
 
 	def test_clone_to_new_vm_creates_fresh_identity(self) -> None:
 		from atlas.atlas.doctype.virtual_machine import virtual_machine as vm_module
@@ -243,7 +243,7 @@ class TestVirtualMachineSnapshot(IntegrationTestCase):
 
 		# The Task ran promote-snapshot-image.py on the snapshot's server with the
 		# snapshot's LV path as the dd source.
-		self.assertEqual(mocked.call_args.kwargs["script"], "promote-snapshot-image.py")
+		self.assertEqual(mocked.call_args.kwargs["script"], "promote-snapshot-image")
 		self.assertEqual(mocked.call_args.kwargs["server"], snapshot.server)
 		variables = mocked.call_args.kwargs["variables"]
 		self.assertEqual(variables["SNAPSHOT_ROOTFS_PATH"], snapshot.rootfs_path)

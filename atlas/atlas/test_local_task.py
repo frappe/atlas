@@ -25,7 +25,7 @@ class TestRunLocalTask(IntegrationTestCase):
 			patch.object(local_task.subprocess, "run", return_value=self._fake_completed(stdout=out)) as run,
 		):
 			task = local_task.run_local_task(
-				script="issue-cert.py",
+				script="issue-cert",
 				variables={"DOMAIN": "blr1.frappe.dev", "DNS_AUTHENTICATOR": "route53"},
 				env={"AWS_ACCESS_KEY_ID": "AKIA", "AWS_SECRET_ACCESS_KEY": "shh"},
 			)
@@ -53,12 +53,12 @@ class TestRunLocalTask(IntegrationTestCase):
 			),
 		):
 			with self.assertRaises(frappe.ValidationError):
-				local_task.run_local_task(script="issue-cert.py", variables={"DOMAIN": "x"})
+				local_task.run_local_task(script="issue-cert", variables={"DOMAIN": "x"})
 
 		# The Task row was still recorded, as Failure.
 		last = frappe.get_all(
 			"Task",
-			filters={"script": "issue-cert.py"},
+			filters={"script": "issue-cert"},
 			fields=["status", "stderr"],
 			order_by="creation desc",
 			limit=1,

@@ -61,11 +61,13 @@ class TestServerBootstrap(IntegrationTestCase):
 		from atlas.atlas import scripts_catalog
 
 		destinations = {dest for _src, dest in self.server._script_uploads()}
-		for script in ("provision-vm.py", "start-vm.py", "stop-vm.py", "snapshot-stop-vm.py"):
-			self.assertIn(f"/var/lib/atlas/bin/{script}", destinations)
+		# host_task_scripts() yields VERBS; the FILE (verb→file_for, keeping its
+		# .py/.sh suffix on the host disk) is what ships.
+		for file_name in ("provision-vm.py", "start-vm.py", "stop-vm.py", "snapshot-stop-vm.py"):
+			self.assertIn(f"/var/lib/atlas/bin/{file_name}", destinations)
 		# The durable set covers every host SSH Task entry point.
-		for script in scripts_catalog.host_task_scripts():
-			self.assertIn(f"/var/lib/atlas/bin/{script}", destinations)
+		for verb in scripts_catalog.host_task_scripts():
+			self.assertIn(f"/var/lib/atlas/bin/{scripts_catalog.file_for(verb)}", destinations)
 
 	def test_bootstrap_ships_the_host_pip_manifest(self) -> None:
 		# bootstrap-server.py's ensure_atlas_env() runs `uv pip install
@@ -102,6 +104,9 @@ class TestServerBootstrap(IntegrationTestCase):
 		self.assertEqual(self.server.jailer_version, "1.16.0")
 		self.assertEqual(self.server.kernel_version, "6.8.0-31-generic")
 		self.assertEqual(self.server.architecture, "x86_64")
+		# A succeeded bootstrap proves the deep sanity gate (atlas --help) passed,
+		# so CLI-readiness is persisted once here — no per-Task venv guard.
+		self.assertEqual(self.server.cli_ready, 1)
 
 	def test_bootstrap_rejects_from_disallowed_status(self) -> None:
 		# `Terminated` is not in BOOTSTRAP_ALLOWED_STATUS. Set in-memory only
@@ -125,7 +130,7 @@ class TestServerBootstrap(IntegrationTestCase):
 			self.assertIn("intro", entry)
 			self.assertIsInstance(entry["fields"], list)
 		# Lifecycle scripts must not leak into the desk picker.
-		hidden = {"provision-vm.py", "start-vm.py", "stop-vm.py", "terminate-vm.py", "restart-vm.py"}
+		hidden = {"provision-vm", "start-vm", "stop-vm", "terminate-vm", "restart-vm"}
 		self.assertFalse(hidden & {entry["name"] for entry in entries})
 
 
@@ -225,7 +230,7 @@ class TestServerSyncImage(IntegrationTestCase):
 		with patch("frappe.enqueue"):
 			task_name = server.sync_image(image.name)
 		task = frappe.get_doc("Task", task_name)
-		self.assertEqual(task.script, "sync-image.py")
+		self.assertEqual(task.script, "sync-image")
 		self.assertEqual(task.server, server.name)
 
 

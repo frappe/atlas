@@ -125,7 +125,7 @@ class ReservedIP(Document):
 		failure so the caller's invariant commit is gated on the host change."""
 		run_task(
 			server=self.server,
-			script="vm-reserved-ip.py",
+			script="vm-reserved-ip",
 			variables={
 				"VIRTUAL_MACHINE_NAME": vm.name,
 				"RESERVED_IPV4": self.ip_address,

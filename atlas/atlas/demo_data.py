@@ -332,7 +332,7 @@ def _walk_to_state(vm, end: str) -> None:
 
 def _provision_failing(vm) -> None:
 	"""Leave the VM Failed by injecting a provision-vm.py failure once."""
-	frappe.flags.fake_fail = {"script": "provision-vm.py", "reason": "demo: injected provision failure"}
+	frappe.flags.fake_fail = {"script": "provision-vm", "reason": "demo: injected provision failure"}
 	try:
 		vm.provision()
 	except frappe.ValidationError:
@@ -416,12 +416,12 @@ def backdate_tasks(servers: dict[str, str], machines: dict[str, str]) -> None:
 	lived-in. Real lifecycle Tasks already exist from the walk above; these add a
 	spread of older Success/Failure/Running rows with varied scripts."""
 	rows = [
-		("web-01", "sync-image.py", "Success", 240),
-		("web-01", "snapshot-vm.py", "Success", 180),
-		("api-01", "resize-vm.py", "Success", 90),
-		("db-01", "snapshot-vm.py", "Failure", 60),
-		("failed-01", "provision-vm.py", "Failure", 30),
-		("web-02", "stop-vm.py", "Running", 1),
+		("web-01", "sync-image", "Success", 240),
+		("web-01", "snapshot-vm", "Success", 180),
+		("api-01", "resize-vm", "Success", 90),
+		("db-01", "snapshot-vm", "Failure", 60),
+		("failed-01", "provision-vm", "Failure", 30),
+		("web-02", "stop-vm", "Running", 1),
 	]
 	for vm_key, script, status, minutes_ago in rows:
 		vm_name = machines.get(vm_key)

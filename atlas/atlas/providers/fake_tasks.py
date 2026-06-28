@@ -212,8 +212,8 @@ def _fake_disk_bytes(variables: dict) -> int:
 
 
 _RESULT_BUILDERS = {
-	"bootstrap-server.py": _bootstrap_result,
-	"snapshot-vm.py": _snapshot_result,
-	"snapshot-stop-vm.py": _snapshot_stop_result,
-	"warm-snapshot-vm.py": _warm_snapshot_result,
+	"bootstrap-server": _bootstrap_result,
+	"snapshot-vm": _snapshot_result,
+	"snapshot-stop-vm": _snapshot_stop_result,
+	"warm-snapshot-vm": _warm_snapshot_result,
 }

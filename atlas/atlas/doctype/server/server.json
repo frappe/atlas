@@ -29,6 +29,7 @@
   "firecracker_version",
   "jailer_version",
   "kernel_version",
+  "cli_ready",
   "section_break_metadata",
   "provider_metadata"
  ],
@@ -168,6 +169,14 @@
    "fieldname": "kernel_version",
    "fieldtype": "Data",
    "label": "Kernel Version",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "description": "Set when bootstrap's sanity gate proved `atlas --help` dispatches. A 0 means the host was never bootstrapped (or predates the console-script cutover) — re-bootstrap it.",
+   "fieldname": "cli_ready",
+   "fieldtype": "Check",
+   "label": "CLI Ready",
    "read_only": 1
   },
   {

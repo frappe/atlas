@@ -74,7 +74,7 @@ class TestVPNTunnel(IntegrationTestCase):
 		with patch.object(module, "run_task", return_value=_up_task()) as run_task:
 			tunnel.bring_up()
 			(_, kwargs) = run_task.call_args
-		self.assertEqual(kwargs["script"], "vm-tunnel.py")
+		self.assertEqual(kwargs["script"], "vm-tunnel")
 		variables = kwargs["variables"]
 		self.assertEqual(variables["ACTION"], "up")
 		self.assertEqual(variables["TUNNEL_NAME"], tunnel.name)
@@ -93,7 +93,7 @@ class TestVPNTunnel(IntegrationTestCase):
 		with patch.object(module, "run_task", return_value=fake_task(name="t-down")) as run_task:
 			tunnel.revoke()
 			(_, kwargs) = run_task.call_args
-		self.assertEqual(kwargs["script"], "vm-tunnel.py")
+		self.assertEqual(kwargs["script"], "vm-tunnel")
 		self.assertEqual(kwargs["variables"]["ACTION"], "down")
 		self.assertEqual(kwargs["variables"]["INTERFACE"], tunnel.interface_name)
 		tunnel.reload()

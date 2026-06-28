@@ -31,7 +31,7 @@ class TestRunTaskDialog(IntegrationTestCase):
 
 	def test_rejects_unknown_script(self) -> None:
 		with self.assertRaises(frappe.ValidationError):
-			self.server.run_task_dialog(script="rm-rf-everything.sh", variables={})
+			self.server.run_task_dialog(script="rm-rf-everything", variables={})
 
 	def test_calls_run_task(self) -> None:
 		from atlas.atlas.doctype.server import server as server_module
@@ -40,7 +40,7 @@ class TestRunTaskDialog(IntegrationTestCase):
 
 		with patch.object(server_module, "run_task", return_value=task) as run:
 			result = self.server.run_task_dialog(
-				script="bootstrap-server.py",
+				script="bootstrap-server",
 				variables={"FOO": "bar"},
 			)
 
@@ -48,7 +48,7 @@ class TestRunTaskDialog(IntegrationTestCase):
 		run.assert_called_once()
 		kwargs = run.call_args.kwargs
 		self.assertEqual(kwargs["server"], self.server.name)
-		self.assertEqual(kwargs["script"], "bootstrap-server.py")
+		self.assertEqual(kwargs["script"], "bootstrap-server")
 		self.assertEqual(kwargs["variables"], {"FOO": "bar"})
 
 	def test_parses_string_variables_as_json(self) -> None:
@@ -58,7 +58,7 @@ class TestRunTaskDialog(IntegrationTestCase):
 
 		with patch.object(server_module, "run_task", return_value=task) as run:
 			self.server.run_task_dialog(
-				script="bootstrap-server.py",
+				script="bootstrap-server",
 				variables=json.dumps({"A": "1", "B": "2"}),
 			)
 
@@ -70,14 +70,14 @@ class TestRunTaskDialog(IntegrationTestCase):
 		task = fake_task(name="task-runtask-3")
 
 		with patch.object(server_module, "run_task", return_value=task) as run:
-			self.server.run_task_dialog(script="bootstrap-server.py", variables=None)
+			self.server.run_task_dialog(script="bootstrap-server", variables=None)
 
 		self.assertEqual(run.call_args.kwargs["variables"], {})
 
 	def test_rejects_non_dict_after_json_parse(self) -> None:
 		with self.assertRaises(frappe.ValidationError) as raised:
 			self.server.run_task_dialog(
-				script="bootstrap-server.py",
+				script="bootstrap-server",
 				variables=json.dumps([1, 2, 3]),
 			)
 		self.assertIn("JSON object", str(raised.exception))
@@ -91,24 +91,26 @@ class TestRunTaskDialog(IntegrationTestCase):
 			result = self.server.reboot()
 
 		self.assertEqual(result, "task-reboot-1")
-		self.assertEqual(run.call_args.kwargs["script"], "reboot-server.sh")
+		self.assertEqual(run.call_args.kwargs["script"], "reboot-server")
 		self.assertEqual(run.call_args.kwargs["variables"], {})
 
 
 class TestScriptsCatalog(IntegrationTestCase):
-	def test_allowed_scripts_lists_real_files(self) -> None:
+	def test_allowed_scripts_lists_real_verbs(self) -> None:
 		scripts = scripts_catalog.allowed_scripts()
-		self.assertIn("bootstrap-server.py", scripts)
-		self.assertIn("reboot-server.sh", scripts)
-		self.assertIn("provision-vm.py", scripts)
+		# allowed_scripts() now speaks VERBS (suffix-less); the on-disk files keep
+		# their .py/.sh extension.
+		self.assertIn("bootstrap-server", scripts)
+		self.assertIn("reboot-server", scripts)
+		self.assertIn("provision-vm", scripts)
 
-	def test_allowed_scripts_excludes_subdirectories(self) -> None:
+	def test_allowed_scripts_are_suffixless_verbs(self) -> None:
 		scripts = scripts_catalog.allowed_scripts()
 		# nothing under scripts/guest/, scripts/systemd/ or scripts/lib/ leaks in
-		# (lib/ holds the importable atlas package, not Task entry points). Tasks
-		# are .py (the ported CLI tasks) or .sh (reboot-server.sh stays shell).
+		# (lib/ holds the importable atlas package, not Task entry points), and the
+		# returned values are verbs, never filenames.
 		for entry in scripts:
-			self.assertTrue(entry.endswith((".py", ".sh")), entry)
+			self.assertFalse(entry.endswith((".py", ".sh")), entry)
 			self.assertNotIn("/", entry)
 		# the systemd hooks live in scripts/ but are excluded as non-Tasks
 		for hook in scripts_catalog.SYSTEMD_HOOKS:

@@ -113,24 +113,34 @@ Bootstrap installs it, then:
   already placed at `/var/lib/atlas/bin` (which carries a `pyproject.toml` for
   exactly this — see *Files that must already be on the server* below).
 
-The units and the runner invoke `/var/lib/atlas/venv/bin/python` (the runner's
-`ATLAS_PYTHON`, the host-side `atlas.paths.ATLAS_PYTHON`). Re-running bootstrap
-re-converges the venv (idempotent, `uv pip install --reinstall`), so a code edit
-reaches the host on the next `bootstrap` — the same single refresh point the
-durable scripts already use.
+The boot hooks invoke `/var/lib/atlas/venv/bin/python` (the host-side
+`atlas.paths.ATLAS_PYTHON`); the runner invokes each Python verb as the
+pip-installed `atlas <verb>` console script (same venv interpreter, reached by
+name on `PATH`). Re-running bootstrap re-converges the venv (idempotent, `uv pip
+install --reinstall`), so a code edit reaches the host on the next `bootstrap` —
+the same single refresh point the durable scripts already use.
 
-- **The bootstrap carve-out:** `bootstrap-server.py` is what *creates* the venv,
-  so on a fresh host the venv does not exist yet — that one script runs on the
-  host's `/usr/bin/python3` (the runner exempts it; see
+- **The bootstrap carve-out:** `bootstrap-server.py` is what *creates* the venv +
+  the console script, so on a fresh host neither exists yet — that one script runs
+  on the host's `/usr/bin/python3` by path (the runner exempts it; see
   [04-tasks.md](./04-tasks.md)), and so must stay parseable on the host's stock
-  Python (the py3.12 floor; CI's compileall gate guards it). Every *other* `.py`
-  Task and every boot hook uses the venv python.
+  Python (Ubuntu 24.04 = py3.12; a narrow CI compileall gate guards *that one
+  file*). Every *other* Python verb runs as `atlas <verb>` under the venv, and
+  every boot hook uses the venv python — so the floor everywhere else is 3.14.
 - **Deep sanity gate (the safety):** before the units are swapped, bootstrap
   proves the venv python actually runs what the units will run — not just
   `import atlas`, but the `from atlas.lvm import ThinPool` that
   `atlas-pool.service` does, a `py_compile` of all four boot hooks, and that the
-  `atlas` console script dispatches. A broken venv fails the bootstrap *here*, so
-  a unit never points at a missing or broken `/var/lib/atlas/venv`.
+  `atlas` console script dispatches (`atlas --help`). A broken venv fails the
+  bootstrap *here*, so a unit never points at a missing or broken
+  `/var/lib/atlas/venv`.
+- **CLI-readiness is persisted once, here.** A succeeded bootstrap (the gate
+  passed) sets `Server.cli_ready = 1`. This replaces the old per-Task
+  `test -e /var/lib/atlas/venv/bin/python` round trip the runner used to make
+  before every Python Task: the fail-fast moved from once-per-Task to
+  once-at-bootstrap. A legacy/unbootstrapped host has `cli_ready = 0` — the
+  operator-facing "re-bootstrap this server" signal — and a stale host with no
+  `atlas` on `PATH` simply fails its Task with `atlas: command not found`.
 - **`python_version` is derived state, not a Server field.**
   `/var/lib/atlas/venv/bin/python --version` on the host and the script's
   `PY_VERSION` constant are both live truth; persisting a copy on the `Server`
@@ -149,10 +159,11 @@ script in the venv (the package's `pyproject.toml` declares
 `atlas = "atlas._cli:main"` under `[project.scripts]` — the conventional way to
 ship a Python CLI). Bootstrap symlinks it onto `PATH` at `/usr/local/bin/atlas`,
 so an operator on a host has one front door: `atlas stop-vm
---virtual-machine-name <uuid>`, `atlas --help` lists every command. It is the
-break-glass / debug face — the controller still drives the normal path over SSH —
-and it is the same typed entry points the runner already invokes, exposed by name.
-(See [04-tasks.md § Tasks are Python](./04-tasks.md) and
+--virtual-machine-name <uuid>`, `atlas --help` lists every command. It is **both**
+the break-glass / debug face for an operator AND the runner's execution entry —
+the controller drives the normal path over SSH as `atlas <verb> --flags`, the
+exact same typed entry points, exposed by name. (See
+[04-tasks.md § Tasks are Python](./04-tasks.md) and
 [`scripts/lib/atlas/_cli.py`](../scripts/lib/atlas/_cli.py).)
 
 The dispatcher discovers its commands from the durable entry scripts at
@@ -162,10 +173,12 @@ excluded by construction (positional-uuid, no typed inputs — not hand-runnable
 The CLI's grammar is delivered in **two phases, deliberately isolated** so a
 grammar change can never be confused with an install/packaging regression:
 
-- **Phase 1 (this) — install the scripts *as-is*.** The verbs are exactly the
-  script stems: `atlas stop-vm`, `atlas resize-vm`, `atlas snapshot-vm`. No
-  grammar change, no new flags — `atlas <stem> <flags>` parses to the identical
-  typed inputs as running the bare script, so the CLI adds zero logic.
+- **Phase 1 (this) — install the scripts *as-is*, and execute through them.** The
+  verbs are exactly the script stems: `atlas stop-vm`, `atlas resize-vm`,
+  `atlas snapshot-vm`. No grammar change, no new flags — `atlas <stem> <flags>`
+  parses to the identical typed inputs as running the bare script, so the CLI
+  adds zero logic. The runner now invokes every Python verb this way (it no longer
+  shells `python3 <path>`), and `Task.script` stores the bare verb.
 - **Phase 2 (later, explicit) — a natural grammar.** `atlas vm stop`,
   `atlas vm resize`, etc. — a verb/noun shape layered over the same dispatch.
   Done as its own change once Phase 1 is proven; **not** in scope here.

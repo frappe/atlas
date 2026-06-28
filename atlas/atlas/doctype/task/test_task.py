@@ -9,7 +9,7 @@ class TestTask(IntegrationTestCase):
 		defaults = {
 			"doctype": "Task",
 			"server": None,
-			"script": "noop.sh",
+			"script": "noop",
 			"variables": json.dumps({"FOO": "bar"}),
 			"status": "Pending",
 			"triggered_by": "Administrator",
@@ -18,9 +18,9 @@ class TestTask(IntegrationTestCase):
 		return frappe.get_doc(defaults).insert(ignore_permissions=True)
 
 	def test_task_insert_defaults(self) -> None:
-		task = self._make(server=None, script="echo.sh")
+		task = self._make(server=None, script="echo")
 		self.assertEqual(task.status, "Pending")
-		self.assertEqual(task.script, "echo.sh")
+		self.assertEqual(task.script, "echo")
 		self.assertIsNone(task.exit_code)
 
 	def test_task_variables_must_be_json(self) -> None:
@@ -28,7 +28,7 @@ class TestTask(IntegrationTestCase):
 			frappe.get_doc(
 				{
 					"doctype": "Task",
-					"script": "noop.sh",
+					"script": "noop",
 					"variables": "{not json",
 					"status": "Pending",
 					"triggered_by": "Administrator",
@@ -37,7 +37,7 @@ class TestTask(IntegrationTestCase):
 
 	def test_task_immutable_after_insert(self) -> None:
 		task = self._make()
-		task.script = "different.sh"
+		task.script = "different"
 		with self.assertRaises(frappe.ValidationError):
 			task.save(ignore_permissions=True)
 
@@ -50,7 +50,7 @@ class TestTask(IntegrationTestCase):
 		task = frappe.get_doc(
 			{
 				"doctype": "Task",
-				"script": "noop.sh",
+				"script": "noop",
 				"variables": "",
 				"status": "Pending",
 				"triggered_by": "Administrator",
@@ -62,7 +62,7 @@ class TestTask(IntegrationTestCase):
 		task = frappe.get_doc(
 			{
 				"doctype": "Task",
-				"script": "noop.sh",
+				"script": "noop",
 				"variables": "{}",
 				"status": "Pending",
 				"triggered_by": "Administrator",
@@ -75,7 +75,7 @@ class TestTask(IntegrationTestCase):
 		task = frappe.get_doc(
 			{
 				"doctype": "Task",
-				"script": "noop.sh",
+				"script": "noop",
 				"variables": "{}",
 				"status": "Pending",
 				"triggered_by": "Administrator",
@@ -89,7 +89,7 @@ class TestTask(IntegrationTestCase):
 			frappe.get_doc(
 				{
 					"doctype": "Task",
-					"script": "noop.sh",
+					"script": "noop",
 					"variables": "",
 					"status": "Pending",
 					"triggered_by": "Administrator",
@@ -101,7 +101,7 @@ class TestTask(IntegrationTestCase):
 		# Defensive branch: a non-new doc whose `_doc_before_save` was cleared
 		# should pass immutability validation without comparing fields.
 		task = self._make()
-		task.script = "different.sh"
+		task.script = "different"
 		task._doc_before_save = None
 		# `_validate_immutability` should early-return rather than throw.
 		task._validate_immutability()
@@ -111,7 +111,7 @@ class TestTask(IntegrationTestCase):
 			frappe.get_doc(
 				{
 					"doctype": "Task",
-					"script": "noop.sh",
+					"script": "noop",
 					"variables": "[1, 2, 3]",
 					"status": "Pending",
 					"triggered_by": "Administrator",
@@ -123,20 +123,21 @@ class TestTask(IntegrationTestCase):
 		from atlas.tests.fixtures import make_server
 
 		server = make_server(title="task-test-server-subject")
-		task = self._make(script="bootstrap-server.py", server=server.name)
+		task = self._make(script="bootstrap-server", server=server.name)
 		# Subject is just the verb-noun label now — target identity lives on
 		# the Server column, not in the subject.
 		self.assertEqual(task.subject, "Bootstrap Server")
 
-	def test_subject_set_for_unknown_script_falls_back_to_filename(self) -> None:
+	def test_subject_set_for_unknown_script_falls_back_to_verb(self) -> None:
 		from atlas.tests.fixtures import make_server
 
 		server = make_server(title="task-test-server-subject-unknown")
-		task = self._make(script="noop.sh", server=server.name)
-		self.assertEqual(task.subject, "noop.sh")
+		task = self._make(script="noop", server=server.name)
+		# A verb with no SCRIPT_LABELS entry falls back to the raw verb string.
+		self.assertEqual(task.subject, "noop")
 
 	def test_subject_without_server_or_vm(self) -> None:
-		task = self._make(script="bootstrap-server.py", server=None)
+		task = self._make(script="bootstrap-server", server=None)
 		self.assertEqual(task.subject, "Bootstrap Server")
 
 	def test_states_array_paints_status_pills(self) -> None:
@@ -155,13 +156,13 @@ class TestTask(IntegrationTestCase):
 		)
 
 	def test_retry_rejects_non_failure(self) -> None:
-		task = self._make(script="bootstrap-server.py", server=None, status="Pending")
+		task = self._make(script="bootstrap-server", server=None, status="Pending")
 		with self.assertRaises(frappe.ValidationError) as raised:
 			task.retry()
 		self.assertIn("failed", str(raised.exception).lower())
 
 	def test_retry_rejects_non_retriable_script(self) -> None:
-		task = self._make(script="noop.sh", server=None)
+		task = self._make(script="noop", server=None)
 		# Drive into Failure without going through the runner.
 		frappe.db.set_value("Task", task.name, "status", "Failure")
 		task.reload()

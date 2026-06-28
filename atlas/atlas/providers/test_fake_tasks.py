@@ -61,7 +61,7 @@ class TestRunFakeTask(_FakeServerCase):
 		with patch("atlas.atlas._ssh.transport.subprocess.run") as subprocess_run:
 			task = run_task(
 				server=self.server.name,
-				script="start-vm.py",
+				script="start-vm",
 				variables={"VIRTUAL_MACHINE_NAME": "x"},
 			)
 		self.assertEqual(task.status, "Success")
@@ -69,15 +69,15 @@ class TestRunFakeTask(_FakeServerCase):
 		subprocess_run.assert_not_called()
 
 	def test_run_fake_task_marks_success(self) -> None:
-		task = run_fake_task(self.server.name, "stop-vm.py", {"VIRTUAL_MACHINE_NAME": "x"}, None)
+		task = run_fake_task(self.server.name, "stop-vm", {"VIRTUAL_MACHINE_NAME": "x"}, None)
 		self.assertEqual(task.status, "Success")
 		self.assertEqual(task.server, self.server.name)
-		self.assertEqual(task.script, "stop-vm.py")
+		self.assertEqual(task.script, "stop-vm")
 
 	def test_records_virtual_machine_link(self) -> None:
 		with patch("frappe.enqueue"):
 			vm = fixtures.make_virtual_machine(self.server, self.image, title="fake-link-vm")
-		task = run_fake_task(self.server.name, "stop-vm.py", {}, vm.name)
+		task = run_fake_task(self.server.name, "stop-vm", {}, vm.name)
 		self.assertEqual(task.virtual_machine, vm.name)
 
 
@@ -85,42 +85,42 @@ class TestFakeResultSynthesis(IntegrationTestCase):
 	"""The four scripts whose controllers parse a result must get a valid one."""
 
 	def test_bootstrap_result_round_trips(self) -> None:
-		result = parse_result(_fake_stdout("bootstrap-server.py", {}))
+		result = parse_result(_fake_stdout("bootstrap-server", {}))
 		self.assertEqual(result["architecture"], "x86_64")
 		self.assertIn("firecracker_version", result)
 		self.assertIn("kernel_version", result)
 
 	def test_snapshot_result_round_trips(self) -> None:
-		result = parse_result(_fake_stdout("snapshot-vm.py", {"DISK_GB": "8"}))
+		result = parse_result(_fake_stdout("snapshot-vm", {"DISK_GB": "8"}))
 		self.assertEqual(result["size_bytes"], 8 * 1024 * 1024 * 1024)
 		self.assertEqual(result["data_size_bytes"], 0)
 
 	def test_snapshot_result_reports_data_disk_when_present(self) -> None:
 		result = parse_result(
-			_fake_stdout("snapshot-vm.py", {"DISK_GB": "8", "DATA_SNAPSHOT_ROOTFS_PATH": "/dev/x"})
+			_fake_stdout("snapshot-vm", {"DISK_GB": "8", "DATA_SNAPSHOT_ROOTFS_PATH": "/dev/x"})
 		)
 		self.assertGreater(result["data_size_bytes"], 0)
 
 	def test_snapshot_stop_result_round_trips(self) -> None:
-		result = parse_result(_fake_stdout("snapshot-stop-vm.py", {}))
+		result = parse_result(_fake_stdout("snapshot-stop-vm", {}))
 		self.assertTrue(result["memory_snapshot"])
 
 	def test_warm_snapshot_result_round_trips(self) -> None:
-		result = parse_result(_fake_stdout("warm-snapshot-vm.py", {"DISK_GB": "4"}))
+		result = parse_result(_fake_stdout("warm-snapshot-vm", {"DISK_GB": "4"}))
 		self.assertIn("memory_bytes", result)
 		# host_signature is itself a JSON string the controller stores verbatim.
 		self.assertIn("firecracker", result["host_signature"])
 
 	def test_unparsed_script_emits_plain_ok(self) -> None:
-		self.assertEqual(_fake_stdout("start-vm.py", {}), "ok\n")
+		self.assertEqual(_fake_stdout("start-vm", {}), "ok\n")
 
 
 class TestFaultInjection(_FakeServerCase):
 	def test_flag_failure_raises_and_marks_failure(self) -> None:
-		frappe.flags.fake_fail = {"script": "provision-vm.py", "reason": "boom"}
+		frappe.flags.fake_fail = {"script": "provision-vm", "reason": "boom"}
 		try:
 			with self.assertRaises(frappe.ValidationError):
-				run_task(server=self.server.name, script="provision-vm.py", variables={})
+				run_task(server=self.server.name, script="provision-vm", variables={})
 		finally:
 			frappe.flags.fake_fail = None
 		# The Task row is left as Failure (the outcome contract).
@@ -128,9 +128,9 @@ class TestFaultInjection(_FakeServerCase):
 		self.assertEqual(task.status, "Failure")
 
 	def test_flag_failure_only_matches_named_script(self) -> None:
-		frappe.flags.fake_fail = {"script": "provision-vm.py"}
+		frappe.flags.fake_fail = {"script": "provision-vm"}
 		try:
-			task = run_task(server=self.server.name, script="start-vm.py", variables={})
+			task = run_task(server=self.server.name, script="start-vm", variables={})
 		finally:
 			frappe.flags.fake_fail = None
 		self.assertEqual(task.status, "Success")
@@ -139,21 +139,23 @@ class TestFaultInjection(_FakeServerCase):
 		frappe.flags.fake_fail = "*"
 		try:
 			with self.assertRaises(frappe.ValidationError):
-				run_task(server=self.server.name, script="anything.py", variables={})
+				run_task(server=self.server.name, script="anything", variables={})
 		finally:
 			frappe.flags.fake_fail = None
 
 	def test_configured_fail_scripts_on_settings(self) -> None:
-		frappe.db.set_single_value("Atlas Settings", "fail_scripts", "snapshot-vm.py")
+		frappe.db.set_single_value("Atlas Settings", "fail_scripts", "snapshot-vm")
 		with self.assertRaises(frappe.ValidationError):
-			run_task(server=self.server.name, script="snapshot-vm.py", variables={"DISK_GB": "4"})
+			run_task(server=self.server.name, script="snapshot-vm", variables={"DISK_GB": "4"})
 		# A different script on the same server still succeeds.
-		task = run_task(server=self.server.name, script="start-vm.py", variables={})
+		task = run_task(server=self.server.name, script="start-vm", variables={})
 		self.assertEqual(task.status, "Success")
 		frappe.db.set_single_value("Atlas Settings", "fail_scripts", "")
 
 	def test_parse_script_list_handles_commas_and_newlines(self) -> None:
-		self.assertEqual(_parse_script_list("a.py, b.py\nc.py"), {"a.py", "b.py", "c.py"})
+		self.assertEqual(
+			_parse_script_list("start-vm, stop-vm\nresize-vm"), {"start-vm", "stop-vm", "resize-vm"}
+		)
 		self.assertEqual(_parse_script_list(None), set())
 		self.assertEqual(_parse_script_list(""), set())
 

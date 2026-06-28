@@ -83,7 +83,7 @@ class IntegrationTestCentralLink(IntegrationTestCase):
 		)
 		# tunnel-up THEN firewall-apply (the lockdown only after wg0 is up).
 		scripts = [call.kwargs["script"] for call in run_local_task.call_args_list]
-		self.assertEqual(scripts, ["tunnel-up.py", "mgmt-firewall-apply.py"])
+		self.assertEqual(scripts, ["tunnel-up", "mgmt-firewall-apply"])
 		# firewall-apply runs with the auto-revert armed (no flags = defaults).
 		self.assertEqual(run_local_task.call_args_list[1].kwargs["variables"], {})
 
@@ -160,7 +160,7 @@ class IntegrationTestCentralLink(IntegrationTestCase):
 		out = central_link.confirm_tunnel()
 
 		self.assertEqual(out, {"tunnel_status": "Active"})
-		self.assertEqual(run_local_task.call_args.kwargs["script"], "mgmt-firewall-confirm.py")
+		self.assertEqual(run_local_task.call_args.kwargs["script"], "mgmt-firewall-confirm")
 		self.assertEqual(frappe.db.get_single_value("Central Settings", "tunnel_status"), "Active")
 
 	# ----- deprovision_tunnel ----------------------------------------------
@@ -178,7 +178,7 @@ class IntegrationTestCentralLink(IntegrationTestCase):
 		self.assertEqual(out, {"tunnel_status": "Inactive"})
 		# firewall reverted BEFORE the tunnel drops, so a remote caller stays reachable.
 		scripts = [call.kwargs["script"] for call in run_local_task.call_args_list]
-		self.assertEqual(scripts, ["mgmt-firewall-revert.py", "tunnel-down.py"])
+		self.assertEqual(scripts, ["mgmt-firewall-revert", "tunnel-down"])
 
 		settings = frappe.get_single("Central Settings")
 		self.assertEqual(settings.tunnel_status, "Inactive")
