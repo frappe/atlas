@@ -160,7 +160,7 @@ class Server(Document):
 			server=self.name,
 			script="bootstrap-server.py",
 			variables={
-				"FIRECRACKER_VERSION": "v1.15.1",
+				"FIRECRACKER_VERSION": "v1.16.0",
 				"ARCHITECTURE": "x86_64",
 			},
 		)

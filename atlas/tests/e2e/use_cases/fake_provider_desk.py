@@ -186,7 +186,7 @@ def _check_server_buttons(server) -> None:
 		server.name,
 		"run_task_dialog",
 		script="bootstrap-server.py",
-		variables=json.dumps({"FIRECRACKER_VERSION": "v1.15.1", "ARCHITECTURE": "x86_64"}),
+		variables=json.dumps({"FIRECRACKER_VERSION": "v1.16.0", "ARCHITECTURE": "x86_64"}),
 	)
 	assert frappe.get_doc("Task", task_name).status == "Success"
 

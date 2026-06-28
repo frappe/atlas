@@ -264,7 +264,7 @@ def _check_server_buttons(server) -> None:
 		script="bootstrap-server.py",
 		variables=json.dumps(
 			{
-				"FIRECRACKER_VERSION": "v1.15.1",
+				"FIRECRACKER_VERSION": "v1.16.0",
 				"ARCHITECTURE": "x86_64",
 			}
 		),

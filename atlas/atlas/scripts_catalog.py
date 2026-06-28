@@ -38,7 +38,7 @@ SCRIPT_FORMS: dict[str, dict] = {
 				"fieldname": "FIRECRACKER_VERSION",
 				"label": "Firecracker Version",
 				"fieldtype": "Data",
-				"default": "v1.15.1",
+				"default": "v1.16.0",
 				"reqd": 1,
 			},
 			{

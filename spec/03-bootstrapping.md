@@ -25,7 +25,7 @@ The controller's `variables` dict (UPPER_SNAKE keys) is rendered to
 
 | Variable / flag                            | Notes                              |
 | ------------------------------------------ | ---------------------------------- |
-| `FIRECRACKER_VERSION` → `--firecracker-version` | Pinned in `atlas/atlas/doctype/server/server.py`, currently `v1.15.1`. |
+| `FIRECRACKER_VERSION` → `--firecracker-version` | Pinned in `atlas/atlas/doctype/server/server.py`, currently `v1.16.0`. Inventory of all pins: [spec/23-supply-chain.md](23-supply-chain.md). |
 | `ARCHITECTURE` → `--architecture`          | `x86_64` for this iteration.       |
 
 ### What the script does
@@ -385,10 +385,14 @@ mode and there will not be one.
 
 ### Pinned versions
 
-`FIRECRACKER_VERSION = v1.15.1`. To bump, edit the constant in
+`FIRECRACKER_VERSION = v1.16.0`. To bump, edit the constant in
 `atlas/atlas/doctype/server/server.py` and re-run `Bootstrap` on every
 server. The script is idempotent so re-running is the only thing the
-operator does.
+operator does. **Warm snapshots are tied to the Firecracker version** —
+`host_signature()` folds it into the snapshot-restore compatibility check,
+so bumping invalidates every golden warm snapshot baked under the old
+version; re-bake them. The full inventory of every pinned binary, image,
+and package lives in [spec/23-supply-chain.md](23-supply-chain.md).
 
 `ARCHITECTURE = x86_64`. `aarch64` is on the roadmap.
 

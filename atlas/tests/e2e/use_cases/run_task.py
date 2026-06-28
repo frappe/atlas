@@ -70,7 +70,7 @@ def _check_run_task_dialog_happy(server) -> None:
 	task_name = server.run_task_dialog(
 		script="bootstrap-server.py",
 		variables={
-			"FIRECRACKER_VERSION": "v1.15.1",
+			"FIRECRACKER_VERSION": "v1.16.0",
 			"ARCHITECTURE": "x86_64",
 		},
 	)
