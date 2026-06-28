@@ -138,6 +138,7 @@ keep it the source of truth.
 20. [The per-VM public firewall](./20-firewall.md)
 21. [The Central-managed tunnel (management-plane lockdown)](./21-tunnel.md)
 22. [Observability — making long-running tasks legible](./22-observability.md)
+23. [Supply chain — the external artefacts Atlas pulls](./23-supply-chain.md)
 
 ## First run on a fresh site
 
