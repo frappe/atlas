@@ -115,6 +115,30 @@
   {
    "child": 1,
    "collapsible": 1,
+   "icon": "shield",
+   "indent": 0,
+   "keep_closed": 0,
+   "label": "Firewall",
+   "link_to": "Firewall",
+   "link_type": "DocType",
+   "show_arrow": 0,
+   "type": "Link"
+  },
+  {
+   "child": 1,
+   "collapsible": 1,
+   "icon": "git-merge",
+   "indent": 0,
+   "keep_closed": 0,
+   "label": "VPN Tunnel",
+   "link_to": "VPN Tunnel",
+   "link_type": "DocType",
+   "show_arrow": 0,
+   "type": "Link"
+  },
+  {
+   "child": 1,
+   "collapsible": 1,
    "icon": "list-checks",
    "indent": 0,
    "keep_closed": 0,
@@ -185,6 +209,18 @@
   {
    "child": 1,
    "collapsible": 1,
+   "icon": "share-2",
+   "indent": 0,
+   "keep_closed": 0,
+   "label": "Port Mapping",
+   "link_to": "Port Mapping",
+   "link_type": "DocType",
+   "show_arrow": 0,
+   "type": "Link"
+  },
+  {
+   "child": 1,
+   "collapsible": 1,
    "icon": "shield",
    "indent": 0,
    "keep_closed": 0,
@@ -237,6 +273,18 @@
    "keep_closed": 0,
    "label": "Tenant",
    "link_to": "Tenant",
+   "link_type": "DocType",
+   "show_arrow": 0,
+   "type": "Link"
+  },
+  {
+   "child": 1,
+   "collapsible": 1,
+   "icon": "list-checks",
+   "indent": 0,
+   "keep_closed": 0,
+   "label": "Central Event Log",
+   "link_to": "Central Event Log",
    "link_type": "DocType",
    "show_arrow": 0,
    "type": "Link"
