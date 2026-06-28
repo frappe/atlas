@@ -106,6 +106,8 @@ The hardening is **not** a separate operation, button, or Task: it is part of
 | Module blocklist | `/etc/modprobe.d/60-atlas-blocklist.conf`: unused filesystem modules (`cramfs`, `freevxfs`, `hfs`, `hfsplus`, `jffs2`, `udf`, `usb-storage`) and unused network protocols (`dccp`, `tipc`, `rds`, `sctp`). It must **never** list a load-bearing module — `tun`/`tap` (VM taps), `kvm`/`kvm_intel`/`kvm_amd` (Firecracker), `vhost`/`vhost_net` (virtio), `nf_tables`/`nft_*` (firewall), `dm_mod`/`dm_thin_pool` (the thin-pool VM-disk backend); CIS only blocklists *unused* modules, so none of these appear, but the e2e probe asserts it. | CIS 1.1.1, 3.2 |
 | Security updates | install `unattended-upgrades`, scoped to the **security** pocket only, **no** automatic reboot (a reboot would kill running VMs) | CIS 1.2.2.1 |
 | KSM / swap off | disable Kernel Samepage Merging (cross-VM memory side channel) and swap (guest RAM remanence on disk) | Firecracker prod-host |
+| Guest IMDS-drop | one host-wide nft rule (`inet atlas forward: ip daddr 169.254.169.254 drop`) so a guest cannot reach the host's cloud metadata endpoint (the droplet's own userdata / vendor credentials). Firecracker does no egress filtering, so the host must. The guest's own MMDS lives at the same address but is served on the tap inside the netns and never crosses this chain. See [06-networking.md](./06-networking.md). | Firecracker prod-host |
+| FC log rotation | `/etc/logrotate.d/60-atlas-firecracker` bounds the per-VM `firecracker.log` (a guest can influence log volume; the systemd unit `append:`s it unbounded). `copytruncate` because systemd holds the file open with no reopen signal. | Firecracker prod-host |
 
 #### Deliberate deviations
 
@@ -137,6 +139,21 @@ an unprivileged `atlas` user, the Firecracker **jailer**, and the Firecracker
 [roadmap](./09-roadmap.md), along with `/tmp` `/dev/shm` mount hardening,
 `auditd`, and surfacing "reboot pending" after an unattended security update.
 
+#### Guest serial console disabled
+
+The other half of the Firecracker doc's "8250 Serial Device" / "Log files"
+guidance is a per-VM concern, applied where the VM config is built
+([`provision-vm.py`](../scripts/provision-vm.py)) rather than here: every VM
+boots with `8250.nr_uarts=0` and **without** `console=ttyS0`. The 8250 serial
+device is tied to Firecracker's stdout, and a guest with serial access can drive
+unbounded host log/storage growth. Disabling it at boot (plus the host-side **FC
+log rotation** in the table above) bounds both ends. The guest can technically
+re-enable the device after boot, so the bounded-storage half is the load-bearing
+mitigation. **Consequence:** `firecracker.log` no longer carries guest
+kernel/console output — debug a misbehaving guest from inside it over SSH, not
+from the host log (see the troubleshooting note in
+[06-networking.md](./06-networking.md)).
+
 #### What we deliberately skip (and won't re-litigate)
 
 The selection axis is *does this protect a Firecracker host without breaking it,
@@ -145,11 +162,14 @@ So we **do not** run the full `usg`/CIS profile (it sets the three deviations
 wrong and drags in a long tail of PAM/password-policy, AIDE, auditd, and banner
 controls that are pure box-ticking on a headless, key-only-root, machine-driven
 host); `usg` is at most an audit *reporter*, never the apply mechanism. We also
-skip the Firecracker doc's hardware/boot-cmdline items — `nosmt` (halves a
-2-vCPU droplet; a multi-tenant-with-hostile-neighbors concern), ECC/TRR memory
-and early microcode (provider procurement), and cgroup/`quiet loglevel` GRUB
-tuning (don't fit an idempotent re-runnable bootstrap). These are provider- or
-tenancy-level concerns that sit above Atlas; revisit only with a concrete need.
+skip the Firecracker doc's **host hardware/boot-cmdline** items — `nosmt`
+(halves a 2-vCPU droplet; a multi-tenant-with-hostile-neighbors concern),
+ECC/TRR memory and early microcode (provider procurement), and cgroup/`quiet
+loglevel` GRUB tuning (don't fit an idempotent re-runnable bootstrap). These are
+provider- or tenancy-level concerns that sit above Atlas; revisit only with a
+concrete need. (The guest-side serial/log items from the same doc *are* applied
+— see just above — because they are VM-config and host-storage, not host-cmdline
+tuning.)
 
 ### Files that must already be on the server
 

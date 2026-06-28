@@ -339,22 +339,37 @@ already knows where to send those packets and proxy-NDP is a no-op.
 a routed prefix and keeps the script identical across providers.
 
 We also create one nftables table (`inet atlas`) with two chains: a `forward`
-chain (filter, for the per-VM IPv6 rules) and a `postrouting` chain (nat) that
-holds **one host-wide masquerade rule** for IPv4 egress:
+chain (filter, for the per-VM IPv6 rules **and the host-wide IMDS-drop**) and a
+`postrouting` chain (nat) that holds **one host-wide masquerade rule** for IPv4
+egress:
 
 ```
+inet atlas forward:      ip daddr 169.254.169.254 drop
 inet atlas postrouting:  ip saddr 100.64.0.0/16 oifname <uplink> masquerade
 ```
 
-The source match is the whole `100.64.0.0/16` supernet, so a single rule
-covers every VM — there is no per-VM NAT rule and nothing to remove when a VM
-is terminated. The table is **not** persisted to `/etc/nftables.conf`; instead
+The masquerade source match is the whole `100.64.0.0/16` supernet, so a single
+rule covers every VM — there is no per-VM NAT rule and nothing to remove when a
+VM is terminated.
+
+The **IMDS-drop** rule blocks every guest from reaching the host's cloud
+metadata endpoint (`169.254.169.254`), which on DigitalOcean serves the
+droplet's own userdata and vendor credentials — Firecracker forwards guest
+packets straight to the tap and does no filtering, so the host must
+(Firecracker's [prod-host-setup.md](../../references/firecracker/docs/prod-host-setup.md)
+"Filtering Guest Egress Network Traffic"). It is a single host-wide rule (the
+destination is fixed) placed in the `forward` chain ahead of any per-VM accept,
+so it always wins. The guest's **own** metadata service (MMDS) is served by
+Firecracker at the same `169.254.169.254` *on the tap, inside the per-VM netns*
+— it never crosses this host forward chain, so the drop does not affect it.
+
+The table is **not** persisted to `/etc/nftables.conf`; instead
 [`vm-network-up.py`](../scripts/vm-network-up.py) recreates the table, both
-chains, and the masquerade rule idempotently at each unit-start, and
-re-applies the IPv6 forwarding / proxy-ndp / `ip_forward` sysctls defensively.
-This keeps each VM unit self-sufficient on cold boot — after a host reboot, the
-first VM unit to start brings the whole scaffold back. Per-VM IPv6 forward
-rules are added by the same script.
+chains, the IMDS-drop, and the masquerade rule idempotently at each unit-start,
+and re-applies the IPv6 forwarding / proxy-ndp / `ip_forward` sysctls
+defensively. This keeps each VM unit self-sufficient on cold boot — after a host
+reboot, the first VM unit to start brings the whole scaffold back. Per-VM IPv6
+forward rules are added by the same script.
 
 ## Host public-interface firewall (management plane)
 
@@ -493,7 +508,7 @@ End-to-end check from any IPv6-capable client: `ping6
 | Proxy entry present, still silent       | No host route into the namespace                              | On the host: `ip -6 route` should show `<VM_IPV6>/128 via fe80::3 dev <HOST_VETH>`. Inside the namespace (`ip netns exec <ns> ip -6 route`) the same `/128` should point at the tap, and `default via fe80::2`. |
 | Route present, VM unreachable, guest can't resolve its gateway | Tap created without `vnet_hdr`, or the namespace isn't forwarding | The tap is inside the namespace now: `ip netns exec <ns> ip -d link show <tap>` should list `tun … vnet_hdr on`. Also `ip netns exec <ns> sysctl net.ipv6.conf.all.forwarding` must be `1` (the namespace forwards veth↔tap). |
 | Tap looks right, ping still drops       | nftables forward rules missing                                | On the host: `nft list table inet atlas` should show one ingress + one egress rule per live VM, matching `<HOST_VETH>` (not the tap). |
-| Everything on the host looks right      | Guest didn't apply its address                                | In the guest console (firecracker log): look for `atlas-network.service` failures, or `ip -6 addr show eth0` showing no `<VM_IPV6>/128`. |
+| Everything on the host looks right      | Guest didn't apply its address                                | SSH into the guest (`ip -6 addr show eth0` should show `<VM_IPV6>/128`; `journalctl -u atlas-network.service` for failures). The guest **serial console is disabled** (`8250.nr_uarts=0`, see below) so `firecracker.log` no longer carries guest kernel/console output — debug from inside the guest, not the host log. |
 | IPv6 works, but IPv4 destinations time out (`curl -4 1.1.1.1` hangs) | NAT44 egress broken | On the host: `nft list chain inet atlas postrouting` should show the `100.64.0.0/16 … masquerade` rule, and `sysctl net.ipv4.ip_forward` should be `1`. In the guest: `ip -4 addr show eth0` should show a `100.64.x.x/30` and `ip -4 route show default` a route via the host side. |
 | Guest reaches the host but not the IPv6 internet (`curl -6 2606:4700:4700::1111` hangs) | IPv6 egress broken | On the host: `sysctl net.ipv6.conf.all.forwarding` should be `1` and the per-VM forward rules present (`nft list table inet atlas`). In the guest: `ip -6 route show default` should be `via fe80::1 dev eth0`. |
 | `ping`/`curl` to literal IPs work, but `apt update` / any hostname fails | DNS broken: systemd-resolved hijacked `/etc/resolv.conf` | In the guest: `dig @2606:4700:4700::1111 deb.debian.org` succeeds but `getent hosts deb.debian.org` fails. `ls -l /etc/resolv.conf` is a symlink to `…/stub-resolv.conf` and `cat` shows `nameserver 127.0.0.53` instead of the Cloudflare v6 line. Fix on a live guest: `systemctl disable --now systemd-resolved; rm -f /etc/resolv.conf; echo "nameserver 2606:4700:4700::1111" > /etc/resolv.conf`. Permanent fix is in the image (`sync-image.py` masks resolved + de-symlinks resolv.conf). |
