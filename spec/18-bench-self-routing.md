@@ -19,15 +19,25 @@ create time.
 
 > **Code is on the spec.** This chapter describes the **push-only** model, and
 > [`bench_routing.py`](../atlas/atlas/bench_routing.py) +
-> [`atlas-route-client.py`](../bench/atlas-route-client.py) implement exactly it:
-> the four whitelisted endpoints (`register` / `deregister` / `check_label` /
-> `list`), caller resolution by source `/128`, the per-VM cap, the `Subdomain
-> Denylist` + `Bench Routing Audit` DocTypes, and the typed guest client — with **no
-> pull, no scheduler entry, and no sweeper**. The old push-triggers-pull hybrid
-> (`reconcile_bench_sites`, `route_hint`, `_list_guest_sites`, the hourly scheduler
-> entry) was deleted in the convergence. Unit-green on `atlas.tests.local`
-> (test_bench_routing, test_bench_routing_guest); the IPv6-origin host facts are
-> proven by the self-serve e2e and the `bench_self_routing` manual verifier.
+> [`bench-domain-provider.py`](../bench/bench-domain-provider.py) implement exactly it:
+> the whitelisted controller endpoints (`register` / `deregister` / `check_label` /
+> `list` + the host-level `wildcard_domains` / `proxy_servers`), caller resolution by
+> source `/128`, the per-VM cap, the `Subdomain Denylist` + `Bench Routing Audit`
+> DocTypes, and the guest binary — with **no pull, no scheduler entry, and no sweeper**.
+> The old push-triggers-pull hybrid (`reconcile_bench_sites`, `route_hint`,
+> `_list_guest_sites`, the hourly scheduler entry) was deleted in the convergence.
+>
+> **The guest binary is now `bench-domain-provider`** (Component D), the
+> language-agnostic plug-in [pilot](../../references/pilot) (formerly bench-cli)
+> discovers on `PATH` and drives by exit-code + stdout JSON — the boundary is process
+> I/O, not pilot importing a typed Python surface. It replaced `atlas-route`: the verb
+> set changed (`register`/`deregister` take a full FQDN; `check-label`/`list` are gone;
+> `generate-dns-records`/`wildcard-domains`/`proxy-servers` are new) and `register` is
+> now **fail-closed**. The controller engine is **unchanged** — the binary peels the
+> region wildcard suffix off the FQDN to the bare `label` the controller already
+> arbitrates. Unit-green on `atlas.tests.local` (test_bench_routing,
+> test_bench_routing_guest); the IPv6-origin host facts are proven by the self-serve
+> e2e and the `bench_self_routing` manual verifier.
 
 ## The shape (one-way push: the guest tells, Atlas writes)
 
@@ -335,103 +345,106 @@ raw leftmost-XFF). The edge is the trust root of the whole feature.
   root of caller resolution, and because resolution now gates a write, a failure is a
   hijack, not a nuisance.
 
-## Component D — the bench-cli hook (guest side, thin, strictly typed)
+## Component D — the `bench-domain-provider` plug-in (guest side, process I/O)
 
-A small stdlib-only client committed in the `bench/` tree as
-[`bench/atlas-route-client.py`](../bench/atlas-route-client.py), installed into the
-golden by [`bench/build.sh`](../bench/build.sh) at `/usr/local/bin/atlas-route` (so
-it is present on every clone). It reads only the Atlas base URL from
-`/etc/atlas-routing.env` (see *Identity*) and POSTs the whitelisted endpoints with
-**no VM-identifying argument** — the controller resolves the calling VM from the
-source address. It is wired at the two choke points **both** the admin UI and the CLI
-flow through — bench-cli's `new_site` and `drop_site` — so a site created either way
-is covered (hooking the admin Flask callbacks alone would miss CLI-created sites).
+A small stdlib-only binary committed in the `bench/` tree as
+[`bench/bench-domain-provider.py`](../bench/bench-domain-provider.py), installed into
+the golden by [`bench/build.sh`](../bench/build.sh) at
+`/usr/local/bin/bench-domain-provider` (so it is present on every clone). It is the
+**`bench-domain-provider` plug-in** [pilot](../../references/pilot) (formerly bench-cli)
+looks up on `PATH` and drives by **exit code + stdout JSON** — the contract is process
+I/O, documented at [pilot's `docs/domain-provider.md`](../../references/pilot/bench-cli/docs/domain-provider.md)
+and [`pilot/core/domain_controller.py`](../../references/pilot/bench-cli/pilot/core/domain_controller.py).
+It reads only the Atlas base URL from `/etc/atlas-routing.env` (see *Identity*) and POSTs
+the whitelisted endpoints with **no VM-identifying argument** — the controller resolves
+the calling VM from the source address. pilot wires it at the choke points **both** the
+admin UI and the CLI flow through (`new_site`, `drop_site`, the Add/Remove-Domain admin
+path), so a site created either way is covered.
+
+> **This replaced `atlas-route`.** The old binary exposed a **typed Python surface**
+> (`Registered`/`Declined`/…) pilot *imported*. That coupling is gone: pilot now reads
+> exit code + stdout only, and the verb set changed. We kept the controller engine
+> exactly as it was — the binary does all the adapting.
+
+### What changed from `atlas-route`
+
+- **Verbs.** `register`/`deregister` stay but now take a **full FQDN**, not a bare
+  label. `check-label` and `list` are **gone** (pilot never calls them).
+  `generate-dns-records`, `wildcard-domains`, `proxy-servers` are **new**.
+- **Argument is the full FQDN.** pilot calls `register("app.<region>.frappe.dev")`. The
+  binary **peels the region wildcard suffix** off the FQDN to the bare `label`
+  (`app`) before POSTing — so the controller still receives exactly the label it
+  arbitrates today (**no controller change**). The suffix it strips is the
+  `wildcard-domains` answer (below), the same thing pilot's `matches_wildcard` gates
+  on; a name that isn't under the wildcard peels to nothing and is **declined**.
+- **Output is exit code + stdout JSON**, not a typed surface. The convention this binary
+  follows (pilot only checks zero vs non-zero): `0` ok / fail-soft no-op; `1`
+  transport/config failure; `2` declined (taken/reserved/at_limit/invalid, or a name not
+  under the wildcard); `64` usage error. A declined `register` writes the operator
+  message to stderr (pilot surfaces it).
+- **`register` is now FAIL-CLOSED.** `atlas-route` returned `0` on a transport error
+  (fail-open: "don't block a local create"). The new `register` returns `1` on an
+  unreachable controller, so pilot **aborts** the create — if the route wasn't
+  provisioned, the site shouldn't exist. Our reservation is the authoritative gate, so
+  fail-closed is the more correct posture anyway. (`deregister` stays best-effort exit 0;
+  the query verbs stay fail-soft.)
 
 ### The POST must go over IPv6 (the origin is the validation)
 
 Caller resolution matches the request's **source `/128`** against
-`Virtual Machine.ipv6_address` — so the client **must** reach the controller over
-**IPv6**, or the controller has no VM-identifying address to resolve. Two reasons
-this is a hard requirement, not a preference:
+`Virtual Machine.ipv6_address` — so the binary **must** reach the controller over
+**IPv6**, or the controller has no VM-identifying address to resolve. The whole security
+model is "the VM is the box its v6 packets come from"; a POST over IPv4 arrives NAT'd with
+no per-VM `/128` to key on. The binary pins the connection to an `AF_INET6`-only connector
+(resolve the base-URL host to its `AAAA`, connect over v6; fail loudly if there is no v6
+route rather than silently falling back to v4) — "no v6 route" is a transport error
+(register → fail-closed; the query verbs → fail-soft), never a v4 retry.
 
-- **Origin validation depends on it.** The whole security model is "the VM is the
-  box its v6 packets come from." A POST over IPv4 arrives NAT'd (the host's shared
-  v4, or a proxy's) — there is no per-VM v4 `/128` to key on, so the controller
-  cannot tell which VM called. The client forces the connection to the v6 address
-  family (resolve the base-URL host to its `AAAA`, connect over v6; fail loudly if
-  the controller has no v6 address rather than silently falling back to v4).
-- **Dev reachability.** In developer mode the controller's IPv4 may not be routable
-  from inside the guest at all (the v6 path is the one that works), so v4 isn't even
-  a degraded fallback — it's a dead connection.
+### The verbs
 
-The client therefore pins the request to IPv6 (an `AF_INET6`-only connector) and
-treats "no v6 route to the controller" as a transport error on the same fail-open /
-best-effort rules below — never as a v4 retry.
+- **`register <domain>`** — **before** `bench new-site`. Peels the wildcard suffix to the
+  label and POSTs `register(label)`. **Exit 0** = route reserved (the row appears on
+  register, not after create — the authoritative reservation that makes the create
+  un-blockable). **Exit 2** = declined (`taken`/`reserved`/`at_limit`/`invalid`, **or a
+  non-wildcard / multi-label name** Phase 1 doesn't route) — pilot stops, so no orphan.
+  **Exit 1** = transport failure → pilot aborts (**fail-closed**). NotConfigured → exit 0
+  (not an Atlas bench; pilot proceeds with its built-in behaviour). Idempotent on the
+  caller's own label, so a retry after a transient failure is safe.
+- **`deregister <domain>`** — after `bench drop-site`, **and as the rollback when
+  `bench new-site` fails**. Peels the label and POSTs `deregister(label)`, **always exit
+  0** (a non-zero would throw on an otherwise-successful drop). A lost `deregister` leaves
+  a stale (404-serving) route until the VM is terminated (the accepted residual). Since
+  the new contract has **no `list` verb**, guest-side stray clearing has no equivalent —
+  pilot drives `deregister` itself on drop, and total teardown is still `terminate()`
+  (Component F); the residual just widens slightly (noted in *The shape*).
+- **`generate-dns-records <site> <domain>`** — pre-flight, **read-only**: report the DNS
+  records the user adds at *their* provider so the name points here. A **wildcard
+  subdomain we already route needs none**, so it prints `{}` and exits 0. (The
+  custom-domain record recipe — CNAME→site, A+AAAA→proxy, CAA→LE — is the Phase-2 custom
+  domain feature.) Fail-open per the doc (the real gate is `register`).
+- **`wildcard-domains`** — host-level: prints the wildcard pattern(s) sites here may be
+  named under, `["*.<active region domain>"]` (controller endpoint `wildcard_domains()`).
+  Fail-soft (blank + exit 0). pilot constrains site names to these and suggests subdomains.
+- **`proxy-servers`** — host-level: prints the regional edge proxies' public IPs that front
+  this bench (controller endpoint `proxy_servers()`). Fail-soft. When non-empty, pilot
+  locks its nginx down to exactly these (`allow … ; deny all;`), trusts their
+  `X-Forwarded-For`, and forwards it upstream untouched — see *Trust root* below.
 
-### Strictly-typed results and errors (so bench consumes them cleanly)
-
-The client exposes a **typed** Python surface, not bare dicts/exit codes, so the
-bench-cli wiring matches on classes the type checker knows. Every call returns one of
-a small closed set of result types, and every failure is a typed exception:
-
-```
-# Results (one per logical outcome — bench matches on the type, not a string):
-@dataclass(frozen=True) class Available:    suffix: str               # check_label ok
-@dataclass(frozen=True) class Registered:   label: str; fqdn: str     # register ok
-@dataclass(frozen=True) class Deregistered: label: str                # deregister ok
-@dataclass(frozen=True) class Listing:       domains: list[Route]      # list ok
-@dataclass(frozen=True) class Route:        label: str; fqdn: str; active: bool
-
-# A declined write/check is a typed value too (NOT an exception — it's an expected
-# business outcome the caller branches on):
-@dataclass(frozen=True) class Declined:
-    reason: Reason            # enum: TAKEN | RESERVED | AT_LIMIT | INVALID
-    message: str              # the operator-facing text, verbatim from the controller
-
-# Failures are typed exceptions (the caller decides fatal vs best-effort):
-class RoutingError(Exception): ...                 # base
-class NotConfigured(RoutingError): ...             # /etc/atlas-routing.env absent — no-op signal
-class TransportError(RoutingError): ...            # unreachable / no v6 route / timeout / bad JSON
-```
-
-`Reason` is a closed enum mirroring the controller's status strings exactly
-(`taken`/`reserved`/`at_limit`/`invalid`), so a new status can't slip through as an
-untyped string — an unknown status from the wire is a `TransportError`, not a silent
-pass. `bench` imports these types and branches on `isinstance` (or pattern-matches),
-so the consumer never parses a status string or an exit code by hand.
-
-### Subcommands (register reserves FIRST; deregister is also the rollback)
-
-- `atlas-route register <label>` — **before** `bench new-site` runs. POSTs
-  `register(label)` and returns `Registered` on success or `Declined` on
-  `taken`/`reserved`/`at_limit`/`invalid`. On `Declined` the bench-cli command
-  **stops** — the local site is never created, so there is **no orphan**
-  (block-at-create by ordering). This is the authoritative reservation; reserving
-  before the create is what makes the create un-blockable. Idempotent on the caller's
-  own label, so a retry after a transient `TransportError` is safe.
-- `atlas-route deregister <label>` — fired on **two** paths: after `bench drop-site`,
-  **and as the rollback when `bench new-site` fails** after a successful `register`.
-  POSTs `deregister(label)`, best-effort, returns `Deregistered`. A lost `deregister`
-  on the drop path leaves a stale (404-serving) route until the owner clears it via
-  `list` (below) or the VM is terminated (the accepted residual, *The shape*).
-- `atlas-route check-label <label>` — **optional**, before `register`, for early UX
-  feedback only. Returns `Available` or `Declined`. It is *not* the gate (`register`
-  is); a `Declined` here just spares the user a doomed `register`. A name that isn't
-  `<label>.<region domain>` (the suffix the result carries) is the user's choice to
-  run local-only and is simply never registered; the wrapper skips it.
-- `atlas-route list` — **on demand** (a maintenance subcommand, not in the create/drop
-  hot path). POSTs `list()`, returns `Listing`, compares the returned `Route` labels
-  against the bench's on-disk `sites/` directory, and for every routed label with **no
-  matching on-disk site** (a stray) prints it and issues a `deregister(label)`. The
-  owner's self-service reconcile — entirely guest-initiated, per-stray, never a bulk
-  converge.
-
-The client **raises `NotConfigured` → no-ops cleanly** (routing skipped) when
+The binary **no-ops cleanly** (`register` exits 0, the query verbs print blank) when
 `/etc/atlas-routing.env` is absent — so an ordinary (non-Atlas) bench is unaffected.
-The bench-cli `new_site`/`drop_site` integration is a thin call into `atlas-route`,
-gated on the binary being present; that wiring lives in the bench-cli repo (the moving
-dependency `build.sh` pins), and the contract it depends on is this client's **typed
-surface** — the result/exception classes above, not stringly-typed status codes.
+
+### Trust root — `proxy-servers` closes the gap caller resolution flagged
+
+Caller resolution by source `/128` is only sound if the bench reads the **real** client
+IP from a **trusted edge** that overwrites `X-Forwarded-For` (the hard prerequisite,
+*Caller resolution*). Until now that edge enforcement was **unbuilt** — the bench nginx
+trusted leftmost-XFF with nothing pinning which edge it should trust. **`proxy-servers`
+closes it**: pilot asks the provider which IPs front the bench, then locks nginx to
+exactly those (`allow … ; deny all;` + `set_real_ip_from` + forward XFF untouched). The
+bench now learns its trusted edge from the controller, so the forged-XFF hole the spec
+flagged is closeable in the field. (The doctype-side controller endpoints `check_label`
+and `list` still exist and are useful for our own e2e; the guest binary simply no longer
+exposes them.)
 
 ## Component E — region (controller-resolved, not VM-asserted)
 
@@ -540,7 +553,9 @@ from there — often straight from a hijack-attempt row in the audit log (*Compo
 
 ## Component I — the request audit log (MyISAM)
 
-Every call to the four endpoints (`check_label`, `register`, `deregister`, `list`)
+Every call to every endpoint — the four per-site (`check_label`, `register`,
+`deregister`, `list`) **and** the two host-level queries (`wildcard_domains`,
+`proxy_servers`, which carry no VM and audit with a blank `vm` + the asking source) —
 writes one row to a new append-only DocType, **`Bench Routing Audit`**, with
 `"engine": "MyISAM"`. It is the forensic backbone of the trust-root story: when the
 edge / host anti-spoof is the load-bearing risk (*Caller resolution*), this log is
@@ -575,8 +590,9 @@ is recorded.
 
 ```
 Bench Routing Audit  (engine: MyISAM, append-only, sole writer = _audit())
-  endpoint     Data   check_label | register | deregister | list
-  label        Data   the label argument; BLANK for list()
+  endpoint     Data   check_label | register | deregister | list |
+                      wildcard_domains | proxy_servers
+  label        Data   the label argument; BLANK for list() and the host queries
   status       Data   ok | taken | reserved | at_limit | invalid | unresolved
                       (the SAME values an endpoint returns/throws — no synthetic codes;
                        "unresolved" = caller resolution found no VM, i.e. a spoof attempt)
@@ -703,6 +719,23 @@ unauthenticated plain HTTP any tenant SSRF can read).
 - Multi-region cross-region suffix hardening (single-region today; the
   reconstruct-and-compare rule is specified now so it's correct when a second region
   lands).
+- **Custom (non-wildcard) external domains — Phase 2.** `bench-domain-provider register`
+  today **declines** any name not under the regional wildcard (exit 2), and
+  `generate-dns-records` prints `{}` for a wildcard subdomain. Routing an arbitrary
+  external domain (`shop.acme.com`) end-to-end is a separate, larger feature gated on the
+  explicitly-deferred `ssl_certificate_by_lua` proxy SNI hook ([spec/09](./09-roadmap.md)):
+  it needs per-domain TLS (the per-subdomain custom-domain cert spec/09 left "in place but
+  unbuilt"), full-FQDN routing in the proxy (`router.lua` strips the region suffix today),
+  a new Custom/Site Domain doctype (the dot ban + cap are correct for wildcard labels), an
+  ownership-verification gate before issuance, and the real CNAME/A+AAAA/CAA record recipe
+  behind `generate-dns-records`. The contract for it already exists in pilot's verbs —
+  only the routing/TLS layer is unbuilt.
+- **Per-token whole-domain routing — a future billable tier.** Beyond the `*-{token}`
+  suffix-match (one name → one VM, [vm-url-tokens](../llm/references/vm-url-tokens.md)),
+  routing an **entire domain** `*.{token}.{region}.{domain}` to a single VM needs **one
+  wildcard TLS cert per token** — a per-token issuance cost, so it is a **paid service**,
+  not the default. It composes with the Phase-2 SNI hook (the per-token wildcard cert is
+  one more entry in the per-domain cert map). Documented, not built.
 
 ## Testing
 

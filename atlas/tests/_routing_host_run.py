@@ -6,7 +6,9 @@ is gated on TLS config (Route53/ACME) the tests site lacks. `bench_self_routing.
 is the lighter harness (no TLS, no reserved IP) but assumes two running VMs already
 exist. This module BUILDS those two VMs (a bench VM cloned from the golden + a proxy
 VM), wires the laptop-controller reachability (host_name + per-VM /etc/hosts), then
-the operator runs `atlas.tests.e2e.use_cases.bench_self_routing.run` against them.
+the operator runs `atlas.tests.e2e.use_cases.bench_self_routing.run` against them. The
+guest binary is the Phase-1 `bench-domain-provider` (the pilot plug-in, formerly
+`atlas-route`) installed at `/usr/local/bin/bench-domain-provider`.
 
 Provisions INLINE (no worker is running on the laptop; the after_insert enqueue is a
 no-op). Idempotent-ish: `setup` reuses an Active server and the configured golden.
@@ -132,62 +134,63 @@ def _inject_hosts(vm_name: str, controller_host: str, laptop_v6: str) -> None:
 
 
 def _routing_client_source() -> str:
-	"""The repo's current push-only atlas-route client (bench/atlas-route-client.py),
+	"""The repo's current `bench-domain-provider` binary (bench/bench-domain-provider.py),
 	read from the app source tree this site runs (apps/atlas -> the worktree)."""
 	import atlas
 
 	app_dir = os.path.dirname(os.path.dirname(os.path.abspath(atlas.__file__)))
-	path = os.path.join(app_dir, "bench", "atlas-route-client.py")
+	path = os.path.join(app_dir, "bench", "bench-domain-provider.py")
 	with open(path) as handle:
 		return handle.read()
 
 
 def _install_routing_client(vm_name: str) -> None:
-	"""Push the repo's CURRENT push-only atlas-route client onto the guest at
-	/usr/local/bin/atlas-route.
+	"""Push the repo's CURRENT `bench-domain-provider` binary onto the guest at
+	/usr/local/bin/bench-domain-provider.
 
-	The golden snapshot was baked with an OLDER bench/ tree, so its baked client is the
-	pull-hybrid version (only `check-label`/`hint`). Re-baking the golden is the durable
-	fix; for THIS proof we install the exact repo client in place so the run exercises
-	the real spec/18 push-only code (register/deregister/list) on a real guest over v6."""
+	The golden snapshot was baked with an OLDER bench/ tree, so its baked binary may be
+	the old `atlas-route` client (or a stale provider). Re-baking the golden is the durable
+	fix; for THIS proof we install the exact repo binary in place so the run exercises the
+	real Phase-1 contract (register/deregister/wildcard-domains/proxy-servers) on a real
+	guest over v6."""
 	source = _routing_client_source()
 	# Ship via base64 to dodge any quoting/heredoc hazards over SSH.
 	import base64
 
 	b64 = base64.b64encode(source.encode()).decode()
 	cmd = (
-		f"printf '%s' '{b64}' | base64 -d | install -m 0755 /dev/stdin /usr/local/bin/atlas-route "
-		f"|| (printf '%s' '{b64}' | base64 -d > /tmp/atlas-route && install -m 0755 /tmp/atlas-route /usr/local/bin/atlas-route); "
-		f"head -1 /usr/local/bin/atlas-route; wc -l < /usr/local/bin/atlas-route"
+		f"printf '%s' '{b64}' | base64 -d | install -m 0755 /dev/stdin /usr/local/bin/bench-domain-provider "
+		f"|| (printf '%s' '{b64}' | base64 -d > /tmp/bench-domain-provider && install -m 0755 /tmp/bench-domain-provider /usr/local/bin/bench-domain-provider); "
+		f"head -1 /usr/local/bin/bench-domain-provider; wc -l < /usr/local/bin/bench-domain-provider"
 	)
 	stdout, stderr, code = _guest_raw(vm_name, cmd)
-	assert code == 0, f"installing atlas-route on {vm_name} failed: {stderr[-300:]}"
-	print(f"[host-run] {vm_name}: installed repo atlas-route client ({stdout.strip()} lines)")
+	assert code == 0, f"installing bench-domain-provider on {vm_name} failed: {stderr[-300:]}"
+	print(f"[host-run] {vm_name}: installed repo bench-domain-provider ({stdout.strip()} lines)")
 
 
 def _verify_bench_routing_client(vm_name: str) -> None:
-	"""The bench VM must carry the NEW push-only atlas-route client (register/deregister/
-	list) + a routing env that points at THIS controller (cold injection). The golden's
-	baked client may be the old pull-hybrid one, so we (re)install the repo client first."""
+	"""The bench VM must carry the Phase-1 `bench-domain-provider` binary (register/
+	deregister/wildcard-domains/proxy-servers) + a routing env that points at THIS
+	controller (cold injection). The golden's baked binary may be older, so we (re)install
+	the repo binary first."""
 	_install_routing_client(vm_name)
-	# Confirm the new subcommands are present (the old client's usage names only
-	# check-label/hint; the new one register/deregister/check-label/list).
-	usage, _stderr, _code = _guest_raw(vm_name, "atlas-route 2>&1 | head -3 || true")
-	assert "register" in usage, (
-		f"{vm_name} atlas-route is not the push-only client (usage: {usage.strip()!r})"
+	# Confirm the new verbs are present (the usage line lists them).
+	usage, _stderr, _code = _guest_raw(vm_name, "bench-domain-provider 2>&1 | head -3 || true")
+	assert "register" in usage and "proxy-servers" in usage, (
+		f"{vm_name} bench-domain-provider is not the Phase-1 binary (usage: {usage.strip()!r})"
 	)
 	stdout, stderr, _code = _guest_raw(
 		vm_name,
-		"test -x /usr/local/bin/atlas-route && echo HAVE_CLIENT; cat /etc/atlas-routing.env 2>/dev/null || echo NO_ENV",
+		"test -x /usr/local/bin/bench-domain-provider && echo HAVE_CLIENT; cat /etc/atlas-routing.env 2>/dev/null || echo NO_ENV",
 	)
 	assert "HAVE_CLIENT" in stdout, (
-		f"{vm_name} has NO /usr/local/bin/atlas-route — the golden predates build.sh:172; "
+		f"{vm_name} has NO /usr/local/bin/bench-domain-provider — the golden predates build.sh:5b; "
 		f"re-bake the golden. (stderr: {stderr[-200:]})"
 	)
 	assert "ATLAS_BASE_URL=" in stdout, (
 		f"{vm_name} /etc/atlas-routing.env missing ATLAS_BASE_URL (cold routing inject did not run): {stdout!r}"
 	)
-	print(f"[host-run] {vm_name}: atlas-route client + routing env present\n    {stdout.strip()}")
+	print(f"[host-run] {vm_name}: bench-domain-provider + routing env present\n    {stdout.strip()}")
 
 
 def setup() -> None:

@@ -707,3 +707,57 @@ class TestTeardown(_RoutingTestCase):
 			"_list_guest_sites",
 		):
 			self.assertFalse(hasattr(bench_routing, gone), f"{gone} should be gone (push-only)")
+
+
+# ---------------------------------------------------------------------------
+# Component J — host-level queries (wildcard-domains / proxy-servers)
+# ---------------------------------------------------------------------------
+
+
+class TestWildcardDomains(_RoutingTestCase):
+	def test_returns_the_active_region_wildcard(self) -> None:
+		# Host-level: no VM in scope, so no caller resolution (no request_ip needed).
+		result = bench_routing.wildcard_domains.__wrapped__()
+		self.assertEqual(result, {"domains": [f"*.{ROOT_DOMAIN}"]})
+
+	def test_is_audited_with_blank_vm(self) -> None:
+		bench_routing.wildcard_domains.__wrapped__()
+		audit = frappe.get_all(
+			"Bench Routing Audit",
+			filters={"endpoint": "wildcard_domains", "status": "ok"},
+			fields=["vm", "label"],
+			order_by="creation desc",
+			limit=1,
+		)
+		self.assertTrue(audit, "wildcard_domains did not audit")
+		self.assertEqual(audit[0]["vm"], "")
+		self.assertEqual(audit[0]["label"], "")
+
+
+class TestProxyServers(_RoutingTestCase):
+	def test_returns_proxy_fleet_ipv6_and_excludes_non_proxies(self) -> None:
+		# A proxy VM contributes its /128 (AAAA path); a plain bench VM does not. The v4
+		# (Reserved IP) path is exercised in e2e where a reserved IP is actually attached.
+		proxy_vm = _running_vm()
+		proxy_vm.db_set("is_proxy", 1)
+		bench_vm = _running_vm()  # non-proxy, must NOT appear
+
+		result = bench_routing.proxy_servers.__wrapped__()
+		self.assertIn(proxy_vm.ipv6_address, result["ips"])
+		self.assertNotIn(bench_vm.ipv6_address, result["ips"])
+
+	def test_empty_fleet_returns_no_ips(self) -> None:
+		# No is_proxy VM in the fleet → blank list (pilot keeps nginx open/direct).
+		self.assertEqual(bench_routing.proxy_servers.__wrapped__(), {"ips": []})
+
+	def test_is_audited_with_blank_vm(self) -> None:
+		bench_routing.proxy_servers.__wrapped__()
+		audit = frappe.get_all(
+			"Bench Routing Audit",
+			filters={"endpoint": "proxy_servers", "status": "ok"},
+			fields=["vm"],
+			order_by="creation desc",
+			limit=1,
+		)
+		self.assertTrue(audit, "proxy_servers did not audit")
+		self.assertEqual(audit[0]["vm"], "")

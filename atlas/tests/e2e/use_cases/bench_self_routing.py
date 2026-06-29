@@ -2,14 +2,22 @@
 existing bench VM.
 
 Runs the host-bound checks the spec requires — all driven by the REAL in-guest
-`atlas-route` client over IPv6, the only run that can prove the trust root (the
-controller resolves the calling VM from the request's v6 source /128, no parameter):
+`bench-domain-provider` binary (the Phase-1 pilot plug-in, formerly `atlas-route`) over
+IPv6, the only run that can prove the trust root (the controller resolves the calling VM
+from the request's v6 source /128, no parameter):
 
   1. register reserves a name BEFORE new-site + the proxy serves it
   2. create-failure rollback (register, force new-site fail, deregister) leaves no stray
   3. drop + deregister drops the route from the proxy live map
-  4. list from inside the guest clears a manufactured stray (per-stray deregister)
+  4. the host-level queries answer correctly (wildcard-domains = the region wildcard;
+     proxy-servers includes this proxy's public IP) — the new Phase-1 verbs
   5. a direct VirtualMachine.terminate leaves no Subdomain (Component F, total)
+
+NOTE on the verb contract (the move off `atlas-route`): the binary takes the FULL FQDN
+(`<label>.<region domain>`), peels the region wildcard suffix to the bare label, and POSTs
+the controller; `register` is now FAIL-CLOSED (a transport error → non-zero → pilot aborts
+the create) and the old `check-label`/`list` verbs are gone (pilot drives deregister
+itself on drop, so guest-side stray clearing has no equivalent).
 
 against a REAL running bench VM and a REAL running proxy VM. Requires no TLS, no
 reserved IP, no golden snapshot bake; just the two VMs and a working proxy.
@@ -29,8 +37,8 @@ The bench VM must be:
   - Running, non-proxy, with a public ipv6_address
   - Have bench-cli installed with a bench named 'atlas' under
     /home/frappe/bench-cli/benches/atlas
-  - Have /usr/local/bin/atlas-route installed (build.sh) and /etc/atlas-routing.env
-    pointing at this controller (cold inject / warm freshen)
+  - Have /usr/local/bin/bench-domain-provider installed (build.sh) and
+    /etc/atlas-routing.env pointing at this controller (cold inject / warm freshen)
 
 The proxy VM must be:
   - Running, with the Atlas proxy (nginx+Lua) already built
@@ -52,7 +60,7 @@ from atlas.atlas.ssh import connection_for_guest
 # The label used for the guest-reserved test site. Short and clearly synthetic so a
 # leaked row is obvious, distinct from the acme/shop labels other e2e use cases use.
 _LABEL = "ws-e2e-test"
-# A label reserved but never built (the manufactured stray for check 4).
+# A label kept only for defensive cleanup of rows older runs may have stranded.
 _STRAY = "stray-e2e-test"
 # A label reserved then force-failed (the create-failure rollback for check 2).
 _ROLLBACK = "fail-e2e-test"
@@ -84,9 +92,9 @@ def run(bench_vm: str, proxy_vm: str, terminate: bool = True) -> None:
 		_check_register_reserves_and_serves(bench_vm, proxy_vm, domain, fqdn, _LABEL, site_v6)
 		_check_create_failure_rollback(bench_vm, domain)
 		_check_drop_deregister_deconverges(bench_vm, proxy_vm, domain, fqdn, _LABEL, site_v6)
-		_check_list_clears_a_stray(bench_vm)
+		_check_host_queries(bench_vm, proxy_vm, domain)
 		if terminate:
-			_check_terminate_cleanup(bench_vm)
+			_check_terminate_cleanup(bench_vm, fqdn)
 		else:
 			print("\n[5] terminate cleanup SKIPPED (terminate=False)")
 	finally:
@@ -107,13 +115,14 @@ def run(bench_vm: str, proxy_vm: str, terminate: bool = True) -> None:
 def _check_register_reserves_and_serves(
 	bench_vm: str, proxy_vm: str, domain: str, fqdn: str, label: str, site_v6: str
 ) -> None:
-	"""`atlas-route register` from inside the guest reserves the name (the row appears
-	on register, not after create), resolves THIS VM by its v6 source /128, then the
-	create + proxy reconcile serves it end to end."""
-	print(f"\n[1] register reserves + serves: atlas-route register {label} inside the guest ...")
+	"""`bench-domain-provider register <fqdn>` from inside the guest reserves the name (the
+	row appears on register, not after create) — peeling the wildcard suffix to the bare
+	label — resolves THIS VM by its v6 source /128, then the create + proxy reconcile serves
+	it end to end."""
+	print(f"\n[1] register reserves + serves: bench-domain-provider register {fqdn} inside the guest ...")
 
 	assert not frappe.db.exists("Subdomain", label), f"a stale Subdomain '{label}' exists before register"
-	_guest(bench_vm, f"atlas-route register {label}")
+	_guest(bench_vm, f"bench-domain-provider register {fqdn}")
 	row = frappe.get_doc("Subdomain", label)
 	assert row.virtual_machine == bench_vm and row.active, (
 		f"register did not reserve {label} for this VM (vm={row.virtual_machine}, active={row.active})"
@@ -155,9 +164,10 @@ def _check_register_reserves_and_serves(
 def _check_create_failure_rollback(bench_vm: str, domain: str) -> None:
 	"""register a label, force `bench new-site` to FAIL, then deregister (the rollback)
 	— assert no stale Subdomain survives (orphan-free, register-first)."""
-	print(f"\n[2] create-failure rollback: register {_ROLLBACK}, force new-site fail, deregister ...")
+	rollback_fqdn = f"{_ROLLBACK}.{domain}"
+	print(f"\n[2] create-failure rollback: register {rollback_fqdn}, force new-site fail, deregister ...")
 
-	_guest(bench_vm, f"atlas-route register {_ROLLBACK}")
+	_guest(bench_vm, f"bench-domain-provider register {rollback_fqdn}")
 	assert frappe.db.exists("Subdomain", _ROLLBACK), "register did not reserve the rollback label"
 	# A bogus app name makes new-site fail AFTER the reservation.
 	_stdout, _stderr, code = _guest_raw(
@@ -169,7 +179,7 @@ def _check_create_failure_rollback(bench_vm: str, domain: str) -> None:
 		timeout=300,
 	)
 	assert code != 0, "the forced new-site failure unexpectedly succeeded"
-	_guest(bench_vm, f"atlas-route deregister {_ROLLBACK}")
+	_guest(bench_vm, f"bench-domain-provider deregister {rollback_fqdn}")
 	assert not frappe.db.exists("Subdomain", _ROLLBACK), "the create-failure rollback left a stale Subdomain"
 	print("[2] PASS — register-then-fail-then-deregister left no stale route")
 
@@ -184,7 +194,7 @@ def _check_drop_deregister_deconverges(
 ) -> None:
 	"""Drop the site from inside the guest, deregister, assert the route DROPS from the
 	proxy's live map (deregister's on_trash deconverges)."""
-	print(f"\n[3] drop + deregister: drop-site {fqdn} then atlas-route deregister {label} ...")
+	print(f"\n[3] drop + deregister: drop-site {fqdn} then bench-domain-provider deregister {fqdn} ...")
 
 	_guest(
 		bench_vm,
@@ -194,7 +204,7 @@ def _check_drop_deregister_deconverges(
 		),
 		timeout=300,
 	)
-	_guest(bench_vm, f"atlas-route deregister {label}")
+	_guest(bench_vm, f"bench-domain-provider deregister {fqdn}")
 	assert not frappe.db.exists("Subdomain", label), "deregister did not delete the route"
 
 	proxy.reconcile_proxy(proxy_vm)
@@ -204,20 +214,28 @@ def _check_drop_deregister_deconverges(
 
 
 # ---------------------------------------------------------------------------
-# Check 4: list clears a manufactured stray
+# Check 4: the host-level queries answer correctly (the new Phase-1 verbs)
 # ---------------------------------------------------------------------------
 
 
-def _check_list_clears_a_stray(bench_vm: str) -> None:
-	"""register a label the guest never builds a site for (a stray), then `atlas-route
-	list` — the client diffs routes against on-disk sites/ and per-stray deregisters."""
-	print(f"\n[4] list clears a stray: register {_STRAY} (no on-disk site), atlas-route list ...")
+def _check_host_queries(bench_vm: str, proxy_vm: str, domain: str) -> None:
+	"""`bench-domain-provider wildcard-domains` returns the region wildcard pilot
+	constrains site names to, and `proxy-servers` returns this proxy's public IP — the
+	edge pilot locks its nginx down to (closing the spec/18 trust-root gap). Both are
+	host-level (no VM-identifying arg) and exit 0 with a JSON list on stdout.
 
-	_guest(bench_vm, f"atlas-route register {_STRAY}")
-	assert frappe.db.exists("Subdomain", _STRAY), "register did not reserve the stray label"
-	_guest(bench_vm, "atlas-route list")
-	assert not frappe.db.exists("Subdomain", _STRAY), f"list did not clear the stray {_STRAY}"
-	print("[4] PASS — list found the stray (no on-disk site) and deregistered it")
+	(This replaces the retired `list`/stray-clear check: the new contract has no `list`
+	verb — pilot drives `deregister` itself on drop, so guest-side stray clearing has no
+	equivalent.)"""
+	print("\n[4] host-level queries: wildcard-domains + proxy-servers ...")
+
+	wildcards = json.loads(_guest(bench_vm, "bench-domain-provider wildcard-domains").strip())
+	assert wildcards == [f"*.{domain}"], f"wildcard-domains returned {wildcards!r}, expected ['*.{domain}']"
+
+	ips = json.loads(_guest(bench_vm, "bench-domain-provider proxy-servers").strip())
+	proxy_v6 = frappe.db.get_value("Virtual Machine", proxy_vm, "ipv6_address")
+	assert proxy_v6 in ips, f"proxy-servers {ips!r} does not include this proxy's v6 {proxy_v6!r}"
+	print(f"[4] PASS — wildcard-domains={wildcards} proxy-servers includes {proxy_v6}")
 
 
 # ---------------------------------------------------------------------------
@@ -225,7 +243,7 @@ def _check_list_clears_a_stray(bench_vm: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _check_terminate_cleanup(bench_vm: str) -> None:
+def _check_terminate_cleanup(bench_vm: str, fqdn: str) -> None:
 	"""Re-register a route, terminate the VM, assert no stale Subdomain rows remain.
 
 	NOTE: this terminates the bench VM. Run only when decommissioning it after
@@ -233,7 +251,7 @@ def _check_terminate_cleanup(bench_vm: str) -> None:
 	print("\n[5] terminate cleanup (VirtualMachine.terminate) ...")
 	print(f"[5] WARNING: this will terminate {bench_vm}")
 
-	_guest(bench_vm, f"atlas-route register {_LABEL}")
+	_guest(bench_vm, f"bench-domain-provider register {fqdn}")
 	assert frappe.db.count("Subdomain", {"virtual_machine": bench_vm}) > 0, (
 		"expected the VM to own a Subdomain before terminate"
 	)
@@ -260,11 +278,11 @@ def _preflight(bench_vm: str, proxy_vm: str) -> None:
 	assert pvm.status == "Running", f"proxy VM {proxy_vm} is not Running (status={pvm.status})"
 	assert pvm.is_proxy, f"{proxy_vm} is not a proxy VM"
 
-	# The guest must carry the routing client + config, or every check is a no-op.
+	# The guest must carry the provider binary + config, or every check is a no-op.
 	stdout, _stderr, code = _guest_raw(
-		bench_vm, "test -x /usr/local/bin/atlas-route && cat /etc/atlas-routing.env"
+		bench_vm, "test -x /usr/local/bin/bench-domain-provider && cat /etc/atlas-routing.env"
 	)
-	assert code == 0, f"{bench_vm} is missing /usr/local/bin/atlas-route or /etc/atlas-routing.env"
+	assert code == 0, f"{bench_vm} is missing /usr/local/bin/bench-domain-provider or /etc/atlas-routing.env"
 	assert "ATLAS_BASE_URL=" in stdout, f"{bench_vm} /etc/atlas-routing.env has no ATLAS_BASE_URL: {stdout!r}"
 
 

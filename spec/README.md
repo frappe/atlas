@@ -256,7 +256,7 @@ operator-facing features add to this list; new tests follow it.
 | Attach a public IPv4 to a VM   | `Reserved IP` → **Attach / Detach** (the inbound-v4 primitive: DNAT in, SNAT out) | [06-networking.md](./06-networking.md#ipv4-ingress-reserved-ip) |
 | Broker a VPN tunnel to a VM    | (user/Central-driven) `request_tunnel` / `revoke` provisions a host-terminated WireGuard tunnel scoped to the owner's one VM | [19-vpn-broker.md](./19-vpn-broker.md) |
 | Issue a TLS cert for a region  | `Root Domain` → **Issue / Renew Certificate**; `TLS Certificate` → **Issue/Renew / Push to Proxies**; `Route53 Settings` / `Lets Encrypt Settings` → **Test Connection** | [13-tls.md](./13-tls.md) |
-| Route guest-created bench sites | (guest-driven, no operator action) the in-guest `atlas-route register`/`deregister`/`list` POSTs reserve/remove a `Subdomain` the controller arbitrates (uniqueness, brand denylist, per-VM cap, own-VM scoping by source `/128`); every call audited; `terminate()` is the only controller-side teardown | [18-bench-self-routing.md](./18-bench-self-routing.md) |
+| Route guest-created bench sites | (guest-driven, no operator action) the in-guest `bench-domain-provider register`/`deregister` POSTs reserve/remove a `Subdomain` the controller arbitrates (uniqueness, brand denylist, per-VM cap, own-VM scoping by source `/128`); the `wildcard-domains`/`proxy-servers` queries answer pilot's host-level questions; every call audited; `terminate()` is the only controller-side teardown | [18-bench-self-routing.md](./18-bench-self-routing.md) |
 | Run an ad-hoc task / reboot    | `Server` → **Run Task / Reboot**                        | [04-tasks.md](./04-tasks.md) |
 | Click any button on the desk   | every form button driven through `run_doc_method`       | (this section, *Desk-button coverage*) |
 | Talk to DigitalOcean           | (internal) verify the DO HTTP client                    | [01-architecture.md](./01-architecture.md) |
@@ -432,11 +432,11 @@ invoked directly (not folded into `run_all_smoke`); its `auto_provision`
 chain is driven by the **background worker** (the same worker the VM
 provisioning e2e relies on), so the worker must be up. It also rides the
 **bench self-routing** host fact (spec/18, one-way push): on the same running site
-VM (a bench VM), the real in-guest `atlas-route` client *register*s a name over IPv6
-(the controller resolves the VM from its v6 source `/128`), the proxy serves it, a
-forced-create-failure rollback leaves no stray, drop+deregister stops it, `list`
-clears a manufactured stray, and a direct VM terminate leaves no stale `Subdomain` —
-none of which Atlas was asked to do.
+VM (a bench VM), the real in-guest `bench-domain-provider` binary *register*s a name over
+IPv6 (the controller resolves the VM from its v6 source `/128`), the proxy serves it, a
+forced-create-failure rollback leaves no stray, drop+deregister stops it, the host-level
+`wildcard-domains`/`proxy-servers` queries answer, and a direct VM terminate leaves no
+stale `Subdomain` — none of which Atlas was asked to do.
 
 The **warm restore** use case (`warm_restore.run_smoke`) covers the warm
 snapshot fan-out ([05](./05-virtual-machine-lifecycle.md), [15](./15-image-builder.md)):

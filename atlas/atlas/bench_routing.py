@@ -265,6 +265,61 @@ def list() -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Component J — host-level queries (wildcard-domains / proxy-servers)
+# ---------------------------------------------------------------------------
+#
+# Two read-only endpoints the `bench-domain-provider` guest binary calls to
+# answer pilot's host-level questions (NOT per-site, no VM in scope, so no caller
+# resolution): which wildcard patterns this host may name sites under, and which
+# edge proxies front it. Both resolve everything controller-side from the single
+# active Root Domain + the `is_proxy` fleet — the guest learns the region wildcard
+# and the proxy IPs without carrying or claiming either (Component E). Audited like
+# every other endpoint (Component I); a blank `vm` (there is no per-call VM) and the
+# source `/128` still record who asked.
+
+
+@frappe.whitelist(allow_guest=True)
+@rate_limit(limit=60, seconds=60)
+def wildcard_domains() -> dict:
+	"""The wildcard pattern(s) sites on this host may be named under (Component J).
+
+	    {"domains": ["*.<active region domain>"]}
+
+	pilot constrains new-site names to these and suggests subdomains in its UI
+	(`matches_wildcard`: a name must END with the suffix and have a label before it).
+	Single-region today → exactly one pattern, `*.<active_root_domain().domain>`,
+	formatted controller-side (the suffix isn't stored in `/etc/atlas-routing.env`).
+	The whole-domain `*.<token>.<region>.<domain>` per-token tier (a billable future,
+	vm-url-tokens §) is NOT emitted here. Read-only, audited; no VM in scope, so the
+	audit row carries a blank vm + the asking source `/128`."""
+	region_domain = active_root_domain().domain
+	_audit("wildcard_domains", "", "ok", business_reject=False, vm="")
+	return {"domains": [f"*.{region_domain}"]}
+
+
+@frappe.whitelist(allow_guest=True)
+@rate_limit(limit=60, seconds=60)
+def proxy_servers() -> dict:
+	"""The regional edge proxies' public IPs that front this host (Component J).
+
+	    {"ips": [<v4 reserved IPs>, ..., <v6 /128s>, ...]}
+
+	When pilot gets a non-empty list it locks the bench nginx down to exactly these
+	(`allow … ; deny all;`), trusts their `X-Forwarded-For`, and forwards it upstream
+	untouched — which **closes the trust-root gap** spec/18 flagged as unbuilt: today
+	caller resolution trusts a leftmost-XFF no edge enforces; `proxy-servers` is how the
+	bench learns which edge to trust. The fleet is every `is_proxy=1` VM; the addresses
+	are the same `wildcard_targets()` the regional wildcard DNS resolves to (A = each
+	proxy's attached Reserved IP, AAAA = each proxy's `/128`). Read-only, audited; no VM
+	in scope, so the audit row carries a blank vm + the asking source `/128`."""
+	from atlas.atlas.proxy import wildcard_targets
+
+	ipv4, ipv6 = wildcard_targets()
+	_audit("proxy_servers", "", "ok", business_reject=False, vm="")
+	return {"ips": [*ipv4, *ipv6]}
+
+
+# ---------------------------------------------------------------------------
 # Caller resolution (the VM is the source address, never a parameter)
 # ---------------------------------------------------------------------------
 
