@@ -31,7 +31,8 @@
 #                               --cgroup-arg memory.max=… --cgroup-arg "cpu.max=Q P".
 #                               The launcher prefixes each with --cgroup (see NOTE).
 #   resource_arg (repeatable) - one resource-limit VALUE per flag; the launcher
-#                               prefixes each with --resource-limit.
+#                               prefixes each with --resource-limit. Optional —
+#                               omit on a hand run to default to no-file=1024.
 #   snapshot_rootfs_path  - optional; a snapshot's /dev/atlas/<name> device path
 #                           (clone path); empty for a base-image provision
 
@@ -41,7 +42,14 @@ import os
 import shlex
 import sys
 import typing
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+
+# Jailer `--resource-limit` fallback when --resource-arg is omitted (break-glass
+# hand run). The controller passes the VM's full resource triple via
+# atlas.networking.resource_limit_args(), but that is effectively the constant
+# `no-file=1024` today, so an operator needn't type it. Kept here as a VALUE (the
+# launcher prefixes --resource-limit); 1024 mirrors networking.MAX_OPEN_FILES.
+DEFAULT_RESOURCE_ARGS = ["no-file=1024"]
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib"))
 
@@ -65,17 +73,33 @@ class ProvisionInputs(TaskInputs):
 	vcpus: int
 	memory_mb: int
 	disk_gb: int  # final rootfs size for this VM
-	mac_address: str
-	tap_device: str
-	virtual_machine_ipv6: str  # the VM's address inside the server's /124
-	ipv4_host_cidr: str  # host side of the per-VM NAT44 /30
-	ipv4_guest_cidr: str  # guest side of the same /30
-	ipv4_gateway: str  # host side address (no mask), the guest's v4 gateway
 	ssh_public_key: str  # injected into the rootfs
-	atlas_fc_uid: int  # per-VM uid the jailer drops Firecracker to (gid == uid)
-	atlas_netns: str  # per-VM network namespace name
-	host_veth: str  # host-side veth interface name
-	namespace_veth: str  # namespace-side veth interface name
+	# --- DERIVED flags. Every field below is a controller-allocated value, NOT
+	# defaultable: a wrong value mis-wires the jail/network. They stay REQUIRED; the
+	# break-glass ergonomic is the `help=` recipe naming the atlas.networking function
+	# that computes each, so an operator can reproduce them by hand. (See spec/06.)
+	mac_address: str = field(metadata={"help": "derived: atlas.networking.derive_mac(uuid)"})
+	tap_device: str = field(metadata={"help": "derived: atlas.networking.derive_tap(uuid)"})
+	virtual_machine_ipv6: str = field(
+		metadata={"help": "controller-allocated: atlas.networking.allocate_ipv6(server) (DB row-lock scan)"}
+	)
+	ipv4_host_cidr: str = field(
+		metadata={"help": "derived: atlas.networking.derive_ipv4_link(ipv6)[0] (host side of the NAT44 /30)"}
+	)
+	ipv4_guest_cidr: str = field(
+		metadata={"help": "derived: atlas.networking.derive_ipv4_link(ipv6)[1] (guest side of the /30)"}
+	)
+	ipv4_gateway: str = field(
+		metadata={"help": "derived: host side of ipv4_host_cidr without the mask (the guest's v4 gateway)"}
+	)
+	atlas_fc_uid: int = field(metadata={"help": "derived: atlas.networking.derive_uid(uuid) (gid == uid)"})
+	atlas_netns: str = field(metadata={"help": "derived: atlas.networking.derive_netns(uuid)"})
+	host_veth: str = field(
+		metadata={"help": "derived: atlas.networking.derive_veth_pair(uuid)[0] (host-side veth)"}
+	)
+	namespace_veth: str = field(
+		metadata={"help": "derived: atlas.networking.derive_veth_pair(uuid)[1] (namespace-side veth)"}
+	)
 	# Jailer cgroup/resource limits as REPEATABLE VALUE flags: --cgroup-arg
 	# memory.max=… --cgroup-arg "cpu.max=100000 100000". Each flag carries the
 	# VALUE only; _jailer_launch prefixes each with --cgroup / --resource-limit.
@@ -86,8 +110,26 @@ class ProvisionInputs(TaskInputs):
 	# constant the launcher owns anyway. This still kills the shell's mapfile
 	# hack — a value with an internal space (cpu.max's "<quota> <period>") is one
 	# argv token, no word-splitting. TaskInputs renders a list field as append.
-	cgroup_arg: list  # cgroup VALUES; launcher emits `--cgroup <value>` per item
-	resource_arg: list  # resource-limit VALUES; launcher emits `--resource-limit <value>`
+	#
+	# cgroup_arg stays REQUIRED: it encodes the VM's real memory/cpu limits; an empty
+	# cgroup set would silently un-bound the VM, so failing loud is correct.
+	cgroup_arg: list = field(
+		metadata={
+			"help": "REQUIRED cgroup VALUES (launcher emits `--cgroup <value>`); "
+			"derived: atlas.networking.cgroup_args(memory_mb, cpu_max_cores, cpu_mode)"
+		}
+	)
+	# resource_arg DEFAULTS to [] → DEFAULT_RESOURCE_ARGS at use, so a hand run can
+	# omit it (it is effectively the constant no-file=1024). The controller still
+	# passes the full set from atlas.networking.resource_limit_args(); the default is
+	# additive and never alters that path.
+	resource_arg: list = field(
+		default_factory=list,
+		metadata={
+			"help": "resource-limit VALUES (launcher emits `--resource-limit <value>`); "
+			f"omit to default to {DEFAULT_RESOURCE_ARGS}"
+		},
+	)
 	# One optional source override: a snapshot rootfs path (clone path). Empty
 	# means provision from the base image. Mirrors the shell's "${VAR:-}".
 	snapshot_rootfs_path: str = ""  # a snapshot's /dev/atlas/<name> device path
@@ -516,7 +558,10 @@ def _jailer_launch(inputs: "ProvisionInputs", paths: VirtualMachinePaths) -> str
 	# owned here instead of carried in the input.
 	for value in inputs.cgroup_arg:
 		jailer_lines.append(f"    --cgroup {shlex.quote(value)} \\")
-	for value in inputs.resource_arg:
+	# resource_arg defaults to [] (an operator omitting the flag on a hand run); fall
+	# back to the constant no-file limit so the jail is still descriptor-bounded. The
+	# controller always passes a non-empty set, so its path is unaffected.
+	for value in inputs.resource_arg or DEFAULT_RESOURCE_ARGS:
 		jailer_lines.append(f"    --resource-limit {shlex.quote(value)} \\")
 	jailer_lines += [
 		f"    --chroot-base-dir {paths.jail_chroot_base} \\",

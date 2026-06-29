@@ -12,7 +12,7 @@
 import os
 import sys
 import typing
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib"))
 
@@ -21,10 +21,23 @@ from atlas._task import TaskInputs
 from atlas.lvm import ThinPool
 from atlas.paths import image_directory
 
+# Where the controller stages the guest atlas-network.service sidecar before a
+# sync-image Task (SCRIPT_SIDECARS in script_uploads.py). This is ALWAYS the path
+# for a controller-driven sync, so SyncImageInputs.guest_network_unit defaults to
+# it — an operator hand-running the verb needn't pass --guest-network-unit (they
+# either point it at a real file or rely on this staged path being populated).
+STAGED_GUEST_NETWORK_UNIT = "/tmp/atlas/atlas-network.service"
+
 
 @dataclass(frozen=True)
 class SyncImageInputs(TaskInputs):
-	"""Download + normalize a kernel/rootfs pair into an Atlas base image."""
+	"""Download + normalize a kernel/rootfs pair into an Atlas base image.
+
+	Every required flag is flat image data (urls, filenames, sha256, disk-gb) an
+	operator reads off the image's spec — there are no controller-only required
+	flags, so this verb is operator-typable for break-glass. The verb stages the
+	guest `atlas-network.service` as a sidecar; --guest-network-unit defaults to that
+	staged path and only needs overriding for a hand run pointing at a real file."""
 
 	command: typing.ClassVar[str] = "sync-image"
 	image_name: str  # directory name under /var/lib/atlas/images
@@ -35,7 +48,17 @@ class SyncImageInputs(TaskInputs):
 	rootfs_filename: str  # destination ext4 filename, e.g. ubuntu-24.04.ext4
 	rootfs_sha256: str  # hex digest of the *source squashfs*, not the ext4
 	default_disk_gb: int  # size of the pristine ext4
-	guest_network_unit: str  # server path to the guest atlas-network.service
+	# Server path to the guest atlas-network.service. Defaults to the controller's
+	# staged sidecar path so a hand run can omit it; pass a real file to override.
+	guest_network_unit: str = field(
+		default=STAGED_GUEST_NETWORK_UNIT,
+		metadata={
+			"help": (
+				"server path to the guest atlas-network.service to bake into the image; "
+				f"defaults to the controller's staged sidecar at {STAGED_GUEST_NETWORK_UNIT}"
+			)
+		},
+	)
 
 
 # Minimal /etc/hosts. Per-VM hostname mapping (the 127.0.1.1 line) is added at
