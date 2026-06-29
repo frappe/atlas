@@ -285,11 +285,39 @@ class TestDurableScriptInvocation(IntegrationTestCase):
 		self.assertNotIn("/var/lib/atlas/bin/start-vm.py", ssh_commands[-1])
 		self.assertNotIn("python3", ssh_commands[-1])
 
+	def test_bootstrap_server_takes_the_atlas_fast_path(self) -> None:
+		# The former carve-out: bootstrap-server now runs as `atlas bootstrap-server`
+		# (install.sh created the venv first), so it takes the same scp-free fast path
+		# as every other python verb — no per-Task transfer, no python3-by-path.
+		ssh_commands: list[str] = []
+		scp_count = 0
+
+		def capture(args, **kwargs):
+			nonlocal scp_count
+			if args[0] == "ssh":
+				ssh_commands.append(args[-1])
+			elif args[0] == "scp":
+				scp_count += 1
+			return _ok(args, **kwargs)
+
+		with patch("atlas.atlas._ssh.transport.subprocess.run", side_effect=capture):
+			run_task(
+				connection=CONNECTION,
+				script="bootstrap-server",
+				variables={"FIRECRACKER_VERSION": "v1.16.0", "ARCHITECTURE": "x86_64"},
+			)
+
+		self.assertEqual(scp_count, 0)
+		self.assertEqual(len(ssh_commands), 1)
+		self.assertTrue(ssh_commands[-1].strip().startswith("atlas bootstrap-server "))
+		self.assertNotIn("python3", ssh_commands[-1])
+		self.assertNotIn("PYTHONPATH", ssh_commands[-1])
+
 
 class TestRemoteCommand(IntegrationTestCase):
 	"""The verb-kind dispatch in runner._remote_command — the heart of the cutover.
-	A python verb runs as `atlas <verb> --flag value`; the bootstrap carve-out runs
-	on host python3 by path; a shell verb keeps `env VAR=val bash -x <file>`."""
+	A python verb (incl. bootstrap-server) runs as `atlas <verb> --flag value`; a
+	shell verb keeps `env VAR=val bash -x <file>`."""
 
 	def test_python_verb_builds_atlas_console_command(self) -> None:
 		command = runner._remote_command(
@@ -305,23 +333,21 @@ class TestRemoteCommand(IntegrationTestCase):
 		self.assertNotIn("python3", command)
 		self.assertNotIn("PYTHONPATH", command)
 
-	def test_bootstrap_is_carved_out_to_host_python3(self) -> None:
-		# THE BOOTSTRAP CARVE-OUT: bootstrap-server CREATES the Atlas venv + the
-		# `atlas` console script, so it cannot run through them — it must run on the
-		# host's /usr/bin/python3 by path. An unconditional swap would brick every
-		# fresh host (chicken-and-egg).
+	def test_bootstrap_runs_as_the_atlas_console_verb(self) -> None:
+		# NO CARVE-OUT: install.sh creates the Atlas venv + `atlas` console script
+		# over SSH BEFORE the bootstrap Task, so bootstrap-server runs as a normal
+		# `atlas bootstrap-server` verb on the venv — not host python3 by path.
 		command = runner._remote_command(
 			"bootstrap-server",
-			"/var/lib/atlas/bin/bootstrap-server.py",
+			None,
 			{"FIRECRACKER_VERSION": "v1.16.0", "ARCHITECTURE": "x86_64"},
 		)
-		self.assertTrue(
-			command.startswith(
-				f"PYTHONPATH={runner.DURABLE_PACKAGE_DIRECTORY} python3 /var/lib/atlas/bin/bootstrap-server.py "
-			)
-		)
-		# Specifically NOT the console script — that is the whole point of the carve-out.
-		self.assertNotIn("atlas bootstrap-server", command)
+		self.assertTrue(command.startswith("atlas bootstrap-server "))
+		self.assertIn("--firecracker-version v1.16.0", command)
+		self.assertIn("--architecture x86_64", command)
+		# Specifically NOT the old carve-out shape.
+		self.assertNotIn("python3", command)
+		self.assertNotIn("PYTHONPATH", command)
 
 	def test_non_bootstrap_python_never_uses_an_interpreter_path(self) -> None:
 		# Every OTHER python verb runs as `atlas <verb>`, never an interpreter+path.

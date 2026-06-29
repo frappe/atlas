@@ -14,12 +14,11 @@ jobs:
   # The host-side scripts (scripts/) run under the Atlas venv (a uv-managed
   # CPython 3.14) on a bootstrapped host: every Python verb runs as `atlas <verb>`
   # under that venv, so the honest floor is 3.14 — nothing host-side runs on stock
-  # Ubuntu python. THE ONE EXCEPTION is the carve-out: bootstrap-server.py is what
-  # CREATES the venv, so it runs on the host's stock python3 (Ubuntu 24 = py3.12)
-  # until install.sh lands. py3.14 re-legalises `except A, B:` (PEP 758), a
-  # SyntaxError on 3.12; a NARROW compileall keeps that ONE script parseable on the
-  # lowest managed-host python. The rest runs on 3.14. No bench: the lib unit-tests
-  # run standalone by design.
+  # Ubuntu python. scripts/install.sh (POSIX sh) creates that venv over SSH BEFORE
+  # the bootstrap Task, so bootstrap-server runs as `atlas bootstrap-server` on the
+  # venv like every other verb — there is no carve-out and no script that must stay
+  # parseable on Ubuntu's stock 3.12. The 3.14 compileall over scripts/ is the floor
+  # gate. No bench: the lib unit-tests run standalone by design.
   host-scripts:
     runs-on: ubuntu-latest
     name: Host scripts (py3.14 floor)
@@ -28,11 +27,6 @@ jobs:
       - uses: astral-sh/setup-uv@v5
       - name: Parse on the floor (py3.14)
         run: uv run --python 3.14 --no-project python -m compileall -q scripts/
-      - name: Carve-out parses on stock host python (py3.12)
-        # bootstrap-server.py runs on the host's stock python3 (it creates the venv
-        # the rest uses). Keep it parseable on the lowest managed-host python so a
-        # PEP-758 `except A, B:` can't slip onto a fresh host. Drops with install.sh.
-        run: uv run --python 3.12 --no-project python -m compileall -q scripts/bootstrap-server.py
       - name: Lib + CLI unit tests (stdlib, no bench) with coverage
         working-directory: scripts/lib
         # coverage is pulled ephemerally by uv (--with); it is NOT a project

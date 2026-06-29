@@ -135,15 +135,15 @@ def wait_for_ssh(connection, timeout_seconds: int = 300) -> None:
     `atlas: command not found` — the fail-fast moved from a per-Task `test -e`
     round trip to **once-at-bootstrap** (`Server.cli_ready`, set when the
     bootstrap sanity gate proved `atlas --help` dispatches).
-    One carve-out: `bootstrap-server` runs as `python3 /var/lib/atlas/bin/bootstrap-server.py`
-    on the host's stock `python3` — it is what *creates* the venv + the console
-    script, so it cannot run through them (an unconditional swap would brick a
-    fresh host).
+    `bootstrap-server` is an ordinary Python verb here too: [`scripts/install.sh`](../scripts/install.sh)
+    creates the venv + console script over SSH *before* the bootstrap Task (see
+    [03-bootstrapping.md](./03-bootstrapping.md)), so by the time it runs the
+    interpreter already exists — no carve-out, no stock-`python3` branch.
   - **Shell verb** — `ssh ... env VAR=val VAR2=val2 bash -x /var/lib/atlas/bin/reboot-server.sh`.
     The legacy form, kept for the few remaining shell verbs (`reboot-server`) and
     the e2e probes. Shell verbs run their file by path.
-  All three shapes are built in `_ssh/runner.py::_remote_command()`, dispatched on
-  `scripts_catalog.kind(verb)` and the bootstrap carve-out — not a filename suffix.
+  Both shapes are built in `_ssh/runner.py::_remote_command()`, dispatched on
+  `scripts_catalog.kind(verb)` — not a filename suffix.
 
 ### Timeouts
 
@@ -289,7 +289,8 @@ imports it from **one durable copy** on the host:
   computed from disk (`test_*.py` skipped), so a new lib module ships with no
   map edit.
 - **Tasks reach it as the pip-installed `atlas` console script**:
-  `bootstrap-server.py`'s `ensure_atlas_env()` runs `uv pip install
+  [`scripts/install.sh`](../scripts/install.sh) — run over SSH by
+  `Server.bootstrap()` right after the upload — runs `uv pip install
   /var/lib/atlas/bin` into the Atlas venv, registering the `atlas` entry point
   (and resolving the package's imports against that same durable tree). A Python
   verb then runs as `atlas <verb>` — no `PYTHONPATH`, no per-Task scp of the
@@ -303,9 +304,9 @@ imports it from **one durable copy** on the host:
   on the next `bootstrap` — bootstrap is the single refresh point. This is the
   same contract the systemd hooks already follow (they too run the durable copy).
   Re-run `bootstrap` (idempotent) after changing anything under
-  `scripts/lib/atlas/`. (The carve-out `bootstrap-server.py` still imports the
-  package via `PYTHONPATH=/var/lib/atlas/bin`, because it runs on stock `python3`
-  before the venv it installs into exists.)
+  `scripts/lib/atlas/`. With install.sh creating the venv before the bootstrap
+  Task, there is no carve-out: `bootstrap-server` runs as `atlas bootstrap-server`
+  on the venv python like every other verb.
 
 - **The entry scripts are durable too.** Bootstrap / `sync_scripts` ship every
   host Task entry FILE (`scripts_catalog.host_task_scripts()` yields verbs;

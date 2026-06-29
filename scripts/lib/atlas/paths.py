@@ -26,7 +26,7 @@ BIN_DIRECTORY = f"{ATLAS_ROOT}/bin"
 SNAPSHOTS_DIRECTORY = f"{ATLAS_ROOT}/snapshots"
 
 # The host's Atlas interpreter: a uv-managed virtualenv on a uv-controlled
-# CPython 3.14, created once by bootstrap-server.py's ensure_atlas_env(). The
+# CPython 3.14, created once by scripts/install.sh (run over SSH at bootstrap). The
 # systemd units and every Python Task run this venv's python, not the host's
 # /usr/bin/python3, so the controller and its hosts run the same CPython no
 # matter what Ubuntu shipped. ATLAS_VENV is the venv root; ATLAS_PYTHON is its

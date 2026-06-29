@@ -2,7 +2,7 @@
 `setup()` setters on each Settings Single.
 
 The contract is pure logic — no host, no network except the providers' `discover()`,
-which we mock (the only network call, exactly as `test_bootstrap.py` does). We assert
+which we mock (the only network call). We assert
 the Singles / catalog / Root Domain a `setup.run(config)` writes match what
 `bootstrap.run` wrote before this change, per provider x TLS on/off.
 

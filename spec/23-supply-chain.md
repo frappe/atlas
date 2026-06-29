@@ -32,8 +32,8 @@ Installed by [`scripts/bootstrap-server.py`](../scripts/bootstrap-server.py) and
 | Artefact | Version | Source | Pinned in | Checksum? |
 | --- | --- | --- | --- | --- |
 | `firecracker` + `jailer` binaries (one tarball) | `v1.16.0` | `github.com/firecracker-microvm/firecracker/releases` | `atlas/atlas/doctype/server/server.py` (the bootstrap call); default in `atlas/atlas/scripts_catalog.py` | **No** — trusts the GitHub release URL |
-| `uv` (creates the Atlas venv) | `0.9.30` | `astral.sh/uv/<version>/install.sh` | `UV_VERSION` in `scripts/bootstrap-server.py` | No — version is in the URL |
-| CPython (the Atlas venv interpreter) | `3.14.3` | fetched by `uv` (python-build-standalone) | `PY_VERSION` in `scripts/bootstrap-server.py` | `uv` verifies its own download |
+| `uv` (creates the Atlas venv) | `0.9.30` | `astral.sh/uv/<version>/install.sh` | `UV_VERSION` in `scripts/install.sh` | No — version is in the URL |
+| CPython (the Atlas venv interpreter) | `3.14.3` | fetched by `uv` (python-build-standalone) | `PY_VERSION` in `scripts/install.sh` | `uv` verifies its own download |
 | Guest kernel (`vmlinux`, from a packed `vmlinuz`) | Ubuntu Noble build | `cloud-images.ubuntu.com` | the `Virtual Machine Image` row's `kernel_url` / `kernel_sha256` (e2e default in `atlas/tests/e2e/_config.py`) | **Yes** — `kernel_sha256` of the packed artefact |
 | Guest rootfs (`.squashfs` → ext4) | Ubuntu Noble build | `cloud-images.ubuntu.com` | the `Virtual Machine Image` row's `rootfs_url` / `rootfs_sha256` | **Yes** — `rootfs_sha256` of the source squashfs |
 | apt packages | distro versions (Ubuntu 24.04 repos) | Ubuntu archive | `PACKAGES` in `scripts/bootstrap-server.py` | apt signature chain |

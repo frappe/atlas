@@ -73,14 +73,15 @@ In summary, in this order:
    that imports the durable package (`from atlas.lvm import ThinPool`) and calls
    `ThinPool().ensure()` to re-assert the pool's loop device on boot, ordered
    before the VM units. See [07-filesystem-layout.md](./07-filesystem-layout.md).
-9. **Creates the Atlas virtualenv** — installs `uv`, creates a uv-managed
-   virtualenv on CPython 3.14 at `/var/lib/atlas/venv`, and `uv pip install`s the
-   `atlas` package into it, so every other Task and every VM-boot hook runs under
-   *that* interpreter, not the host's `python3`. The install also generates the
-   `atlas` console script (symlinked onto `PATH`). See *The Atlas interpreter and
-   CLI* below. This runs — and its sanity gate proves the venv python resolves —
-   **before** the `daemon-reload` that lets systemd pick up the venv-interpreter
-   units.
+9. **Reads the Atlas virtualenv's python version** for the bootstrap log. The
+   venv itself is *already created* by [`scripts/install.sh`](../scripts/install.sh),
+   which the controller runs over SSH **before** this Task (right after the upload);
+   it installs `uv`, creates a uv-managed virtualenv on CPython 3.14 at
+   `/var/lib/atlas/venv`, `uv pip install`s the `atlas` package into it, generates
+   the `atlas` console script (symlinked onto `PATH`), and runs the deep sanity
+   gate. So by the time `bootstrap-server` runs — itself as `atlas bootstrap-server`
+   on that venv — the interpreter every other Task and every VM-boot hook uses is
+   already proven. See *The Atlas interpreter and CLI* below.
 10. Writes `FIRECRACKER_VERSION`, `JAILER_VERSION`, `KERNEL_VERSION`,
    `ARCHITECTURE`, and `PYTHON_VERSION` to `/var/lib/atlas/bootstrap.json` (the
    single source of truth) and `cat`s it on stdout. `firecracker_version` and
@@ -103,37 +104,47 @@ virtualenv with the package `uv pip install`ed into it — so the controller and
 its hosts run the same CPython no matter what Ubuntu shipped. The same install
 produces the `atlas` console command for an operator.
 
-**The interpreter — a uv-managed venv.** `uv` is an ordinary host tool here.
-Bootstrap installs it, then:
+**The interpreter — a uv-managed venv, created by `install.sh`.** `uv` is an
+ordinary host tool here. The venv is created by
+[`scripts/install.sh`](../scripts/install.sh) — a small POSIX-sh script the
+controller runs over SSH as the **first step of `Server.bootstrap()`, right after
+the upload** and *before* the bootstrap Task. It:
 
+- installs the pinned `uv` to `/var/lib/atlas/uv` (the one network fetch),
 - creates a virtualenv on a uv-controlled CPython 3.14 at `/var/lib/atlas/venv`
   (`uv venv --python 3.14`; uv fetches the interpreter if absent, kept under the
   single `/var/lib/atlas/uv` tree), and
 - `uv pip install`s the `atlas` package into it from the durable tree the caller
   already placed at `/var/lib/atlas/bin` (which carries a `pyproject.toml` for
-  exactly this — see *Files that must already be on the server* below).
+  exactly this — see *Files that must already be on the server* below),
+- symlinks the generated `atlas` console script onto `PATH` at `/usr/local/bin`.
+
+`install.sh` is the **single source of truth for `UV_VERSION` / `PY_VERSION`**
+(they moved out of `bootstrap-server.py`). It is **not** a code-transport
+mechanism — the package is already on the host; install.sh only creates the
+interpreter. It is idempotent (`uv pip install --reinstall`), so a code edit
+reaches the host on the next `bootstrap` — the same single refresh point the
+durable scripts already use.
 
 The boot hooks invoke `/var/lib/atlas/venv/bin/python` (the host-side
 `atlas.paths.ATLAS_PYTHON`); the runner invokes each Python verb as the
 pip-installed `atlas <verb>` console script (same venv interpreter, reached by
-name on `PATH`). Re-running bootstrap re-converges the venv (idempotent, `uv pip
-install --reinstall`), so a code edit reaches the host on the next `bootstrap` —
-the same single refresh point the durable scripts already use.
+name on `PATH`).
 
-- **The bootstrap carve-out:** `bootstrap-server.py` is what *creates* the venv +
-  the console script, so on a fresh host neither exists yet — that one script runs
-  on the host's `/usr/bin/python3` by path (the runner exempts it; see
-  [04-tasks.md](./04-tasks.md)), and so must stay parseable on the host's stock
-  Python (Ubuntu 24.04 = py3.12; a narrow CI compileall gate guards *that one
-  file*). Every *other* Python verb runs as `atlas <verb>` under the venv, and
-  every boot hook uses the venv python — so the floor everywhere else is 3.14.
-- **Deep sanity gate (the safety):** before the units are swapped, bootstrap
-  proves the venv python actually runs what the units will run — not just
-  `import atlas`, but the `from atlas.lvm import ThinPool` that
-  `atlas-pool.service` does, a `py_compile` of all four boot hooks, and that the
-  `atlas` console script dispatches (`atlas --help`). A broken venv fails the
-  bootstrap *here*, so a unit never points at a missing or broken
-  `/var/lib/atlas/venv`.
+- **No carve-out.** Because install.sh creates the venv + console script *before*
+  the bootstrap Task, `bootstrap-server` is an ordinary Python verb — it runs as
+  `atlas bootstrap-server` on the venv python like every other verb. There is no
+  stock-`python3` branch in the runner and no narrow CI gate keeping one script
+  parseable on Ubuntu's 3.12: nothing host-side touches the stock interpreter, so
+  the floor is 3.14 everywhere.
+- **Deep sanity gate (the safety):** before it returns, install.sh proves the venv
+  python actually runs what the units will run — not just `import atlas`, but the
+  `from atlas.lvm import ThinPool` that `atlas-pool.service` does, a `py_compile`
+  of all four boot hooks, and that the `atlas` console script dispatches
+  (`atlas --help`). A broken venv fails the install *here* — before the bootstrap
+  Task runs and before the units are pointed at it, so a unit never points at a
+  missing or broken `/var/lib/atlas/venv`. (For a **Fake** server there is no host,
+  so the install.sh SSH step is skipped exactly as the upload is.)
 - **CLI-readiness is persisted once, here.** A succeeded bootstrap (the gate
   passed) sets `Server.cli_ready = 1`. This replaces the old per-Task
   `test -e /var/lib/atlas/venv/bin/python` round trip the runner used to make
@@ -142,7 +153,7 @@ the same single refresh point the durable scripts already use.
   operator-facing "re-bootstrap this server" signal — and a stale host with no
   `atlas` on `PATH` simply fails its Task with `atlas: command not found`.
 - **`python_version` is derived state, not a Server field.**
-  `/var/lib/atlas/venv/bin/python --version` on the host and the script's
+  `/var/lib/atlas/venv/bin/python --version` on the host and install.sh's
   `PY_VERSION` constant are both live truth; persisting a copy on the `Server`
   row would only drift. It rides the bootstrap log for visibility and nothing
   reads it back.
@@ -291,6 +302,9 @@ per-Task sidecar mechanism. Before running `bootstrap-server.py`, the caller
 uploads (see `_BOOTSTRAP_UPLOADS` + `_bootstrap_uploads()` in `server.py`):
 
 - `scripts/host-pyproject.toml` → `/var/lib/atlas/bin/pyproject.toml`
+- `scripts/install.sh` → `/var/lib/atlas/bin/install.sh` (the controller pipes
+  this over SSH right after the upload to create the venv — shipped durably so the
+  controller has a local copy and no public URL is needed)
 - `scripts/vm-network-up.py` → `/var/lib/atlas/bin/vm-network-up.py`
 - `scripts/vm-network-down.py` → `/var/lib/atlas/bin/vm-network-down.py`
 - `scripts/vm-disk-up.py` → `/var/lib/atlas/bin/vm-disk-up.py`
@@ -315,21 +329,24 @@ The `Server.bootstrap()` Python method orchestrates this:
 
 ```
 1. open ssh connection (via `connection_for_server`)
-2. upload_files: the durable hooks, both systemd units, and the atlas package
-   (mkdir of parent directories happens inside upload_files)
-3. run_task(server=..., script="bootstrap-server.py",
+2. upload_files: the durable hooks, both systemd units, the atlas package, and
+   install.sh (mkdir of parent directories happens inside upload_files)
+3. run install.sh over SSH (`bash /var/lib/atlas/bin/install.sh`) — creates the
+   uv venv + `atlas` console script and runs the deep sanity gate. This must run
+   BEFORE the bootstrap Task (which now runs as `atlas bootstrap-server` on the
+   venv). Skipped for a Fake server, exactly as the upload is.
+4. run_task(server=..., script="bootstrap-server",
             variables={"FIRECRACKER_VERSION": ..., "ARCHITECTURE": ...})
-   — scp of bootstrap-server.py (+ its staged atlas package under /tmp/atlas)
-   and the ssh exec happen inside run_task.
-4. parse the ATLAS_RESULT= line from stdout into Server fields
+   — the ssh exec (`atlas bootstrap-server --flags`) happens inside run_task.
+5. parse the ATLAS_RESULT= line from stdout into Server fields
    (firecracker_version, jailer_version, kernel_version, architecture); the
    line also carries python_version, which is read for the bootstrap log but
    deliberately NOT written to a Server field (derived state). The same JSON is
    also persisted on the host at /var/lib/atlas/bootstrap.json.
-5. save the Server row.
+6. save the Server row.
 ```
 
-This is one Task: `bootstrap-server.py`. The pre-copy step is not a Task,
+This is one Task: `bootstrap-server`. The pre-copy + install.sh steps are not a Task,
 it's plumbing, and its commands are not interesting individually. They do
 appear on stderr of the task because Python tasks echo each command (the
 `set -x` equivalent the `atlas._run.run` wrapper prints).

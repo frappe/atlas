@@ -1,8 +1,9 @@
 """One-off live verification of the verb / console-script cutover.
 
-Provisions a FRESH droplet, bootstraps it (the carve-out runs bootstrap-server.py
-on the host's python3 and creates the Atlas venv + `atlas` console script), then
-proves on the real host that:
+Provisions a FRESH droplet, bootstraps it (the controller SSHes scripts/install.sh
+after the upload, which creates the Atlas venv + `atlas` console script; the
+bootstrap Task then runs as `atlas bootstrap-server` on that venv — no carve-out),
+then proves on the real host that:
 
   1. Server.cli_ready == 1 after a successful bootstrap.
   2. The bootstrap Task is recorded with the VERB `bootstrap-server` (not
@@ -10,8 +11,9 @@ proves on the real host that:
   3. The `atlas` console script is on PATH and dispatches verbs
      (`atlas --help`, `atlas start-vm --help`) — the exact entry the runner uses.
   4. The console script's interpreter is the Atlas venv python (uv pip install),
-     while bootstrap-server.py itself ran on the host's stock python3 (the
-     carve-out) — both interpreters exist and are distinct.
+     and bootstrap-server ITSELF ran under that venv python — NOT the host's
+     /usr/bin/python3. (This INVERTS the pre-install.sh check: there is no longer a
+     carve-out running bootstrap on stock python3.)
 
 Run:  bench --site e2e.local execute atlas.tests.e2e._verify_verbs.run
 Tears the droplet down at the end unless keep=True.
@@ -106,14 +108,34 @@ def _run(keep: bool, start: float) -> None:
 		assert "--virtual-machine-name" in out, f"start-vm flags missing:\n{out}"
 		print("[verify] OK (3b) `atlas start-vm --help` dispatches to the typed entry")
 
-		# (4) console script runs on the venv python (carve-out: bootstrap ran on
-		# host python3, which it must, to create that venv).
-		out, _e, code = _ssh(server, "/var/lib/atlas/venv/bin/python --version && /usr/bin/python3 --version")
-		assert code == 0, f"interpreter probe failed: {out}"
-		print(f"[verify] OK (4a) venv + host python both present:\n{out.strip()}")
+		# (4) console script runs on the venv python — and so does bootstrap-server
+		# itself (NO carve-out: install.sh created the venv before the bootstrap Task,
+		# so bootstrap ran as `atlas bootstrap-server` on the venv, not host python3).
+		out, _e, code = _ssh(server, "/var/lib/atlas/venv/bin/python --version")
+		assert code == 0, f"venv python probe failed: {out}"
+		venv_version = out.strip()
+		print(f"[verify] OK (4a) venv python present: {venv_version}")
 		out, _e, code = _ssh(server, "head -1 $(which atlas)")
 		assert "/var/lib/atlas/venv" in out, f"atlas shebang not the venv:\n{out}"
 		print(f"[verify] OK (4b) `atlas` shebang is the venv python: {out.strip()}")
+		# (4c) THE INVERSION: bootstrap ran under the venv python, not stock python3.
+		# The bootstrap Task emitted python_version read live from /var/lib/atlas/venv/
+		# bin/python; the on-host bootstrap.json carries the same value. Assert it is
+		# the venv interpreter's version — proof the carve-out is gone.
+		task = frappe.get_doc("Task", bootstrap_tasks[0]["name"])
+		assert "ATLAS_RESULT=" in (task.stdout or ""), "bootstrap Task has no ATLAS_RESULT line"
+		from atlas.atlas.task_results import parse_result
+
+		python_version = parse_result(task.stdout)["python_version"]
+		assert python_version in venv_version or venv_version in python_version, (
+			f"bootstrap python_version {python_version!r} != venv python {venv_version!r}; "
+			"bootstrap did not run under the venv interpreter"
+		)
+		out, _e, _code = _ssh(server, "cat /var/lib/atlas/bootstrap.json")
+		assert "3.14" in out and python_version.split()[-1] in out, (
+			f"bootstrap.json python_version off:\n{out}"
+		)
+		print(f"[verify] OK (4c) bootstrap-server ran under the venv python ({python_version}), no carve-out")
 
 		# (5) END-TO-END python lifecycle verbs as real Tasks. Sync an image, then
 		# drive a VM through provision() + stop() + start() — each calls

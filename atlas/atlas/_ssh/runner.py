@@ -22,22 +22,6 @@ from atlas.atlas.providers.fake_tasks import is_fake_server
 if TYPE_CHECKING:
 	from atlas.atlas.doctype.task.task import Task
 
-# Where `Server.bootstrap()` durably places the host scripts: the importable
-# `atlas` package (`…/bin/atlas/*.py`), the typed entry scripts (`…/bin/start-vm.py`),
-# and the systemd hooks. bootstrap-server.py `uv pip install`s this dir into the
-# Atlas venv, materialising the `atlas` console script that every Python verb is
-# now invoked through (see `_remote_command`). The dir is also where the bootstrap
-# carve-out and the shell verbs find their files by path.
-DURABLE_PACKAGE_DIRECTORY = "/var/lib/atlas/bin"
-
-# THE BOOTSTRAP CARVE-OUT: `bootstrap-server.py` is what CREATES the Atlas venv
-# (a uv-managed CPython 3.14 at /var/lib/atlas/venv) and `uv pip install`s the
-# `atlas` console script into it. So on a fresh host neither the venv nor the
-# console script exists yet — that one verb must run on the host's `/usr/bin/python3`
-# by path. Every OTHER Python verb runs as `atlas <verb>`, the pip-installed
-# console entry on PATH (/usr/local/bin/atlas). See spec/03-bootstrapping.md.
-BOOTSTRAP_SCRIPT = "bootstrap-server"
-
 # Where the pre-cutover runner staged the package per Task. The entry points'
 # `sys.path.insert(0, <staging>/lib)` shim puts this AHEAD of PYTHONPATH, so a
 # leftover copy on a legacy host shadows the durable package with stale modules.
@@ -239,28 +223,29 @@ def _run_remote_script(
 
 	with ssh_key_file(connection.ssh_private_key) as key_path:
 		# Python-verb fast path: run the pip-installed `atlas <verb>` console entry
-		# on PATH — no scp, no interpreter path, no PYTHONPATH (the durable
+		# on PATH — no scp, no interpreter path, no PYTHONPATH (install.sh's
 		# `uv pip install` put the package and the entry on PATH at bootstrap). This
-		# is the bulk of Tasks (every VM lifecycle op). The bootstrap carve-out is
-		# the lone exception (it CREATES the venv, so it runs on host python3 by
-		# path) and falls through to the durable-path branch below.
+		# is the bulk of Tasks (every VM lifecycle op), and `bootstrap-server` itself:
+		# install.sh creates the venv + console script over SSH BEFORE the bootstrap
+		# Task, so by the time it runs `atlas bootstrap-server` dispatches like any
+		# other verb — there is no carve-out.
 		#
 		# A stale/legacy host with no `atlas` on PATH surfaces this as the Task's own
 		# `atlas: command not found` — the fail-fast moved from a per-Task `test -e`
 		# round trip to once-at-bootstrap (Server.cli_ready, the deep sanity gate).
 		# Sidecars (sync-image bakes atlas-network.service) are still staged first.
-		if verb_kind == "python" and script != BOOTSTRAP_SCRIPT:
+		if verb_kind == "python":
 			if uploads:
 				_stage_sidecars(connection, key_path, uploads)
 			command = _remote_command(script, None, variables)
 			return run_ssh(connection, key_path, command, timeout_seconds=timeout_seconds)
 
-		# Durable-file fast path: the bootstrap carve-out (python3 by path) and the
-		# shell verbs (reboot-server, `bash -x` by path) are shipped durably at
-		# /var/lib/atlas/bin and invoked in place — one round trip, no mkdir+scp.
-		# A host bootstrapped before the durable-scripts cutover lacks the copy and
-		# must be re-bootstrapped / sync_scripts'd — the same refresh contract the
-		# durable atlas package already follows.
+		# Durable-file fast path: the durable shell verbs (reboot-server, `bash -x`
+		# by path) are shipped durably at /var/lib/atlas/bin and invoked in place —
+		# one round trip, no mkdir+scp. (Python verbs, incl. bootstrap-server, took
+		# the `atlas <verb>` fast path above.) A host bootstrapped before the
+		# durable-scripts cutover lacks the copy and must be re-bootstrapped /
+		# sync_scripts'd — the same refresh contract the durable atlas package follows.
 		if durable_remote and not uploads:
 			# Guard so a host that predates the durable-scripts cutover (no
 			# /var/lib/atlas/bin/<file> yet) degrades to the staging path below for
@@ -334,17 +319,15 @@ def _stage_sidecars(connection: Connection, key_path: str, uploads: list[tuple[s
 def _remote_command(script: str, remote_script_path: str | None, variables: dict) -> str:
 	"""Build the remote invocation for a verb.
 
-	Three shapes, chosen by the catalog's `kind(verb)` (never a suffix-sniff):
+	Two shapes, chosen by the catalog's `kind(verb)` (never a suffix-sniff):
 
-	  - Python verb (the bulk): `atlas <verb> --flag value …`. The pip-installed
-	    console script on PATH dispatches to the typed entry point, which parses the
-	    flags via TaskInputs.from_args(). `remote_script_path` is None — there is no
-	    file path; the install IS the entry. The variables dict maps to CLI flags
-	    (UPPER_SNAKE → --kebab-case); a list value becomes a repeated flag.
-
-	  - The bootstrap carve-out (`bootstrap-server`): it CREATES the venv + console
-	    script, so it cannot run through them — `python3 <durable_file> --flags` on
-	    the host's stock python3, by path.
+	  - Python verb (the bulk, incl. `bootstrap-server`): `atlas <verb> --flag value …`.
+	    The pip-installed console script on PATH dispatches to the typed entry point,
+	    which parses the flags via TaskInputs.from_args(). `remote_script_path` is
+	    None — there is no file path; the install IS the entry. The variables dict
+	    maps to CLI flags (UPPER_SNAKE → --kebab-case); a list value becomes a
+	    repeated flag. `bootstrap-server` is no longer a carve-out: install.sh creates
+	    the venv + console script over SSH before the bootstrap Task.
 
 	  - Shell verb (`reboot-server`, e2e probes): `env VAR=val bash -x <file>`.
 
@@ -352,12 +335,6 @@ def _remote_command(script: str, remote_script_path: str | None, variables: dict
 	not an `env …` blob."""
 	from atlas.atlas import scripts_catalog
 
-	if script == BOOTSTRAP_SCRIPT:
-		# Carve-out: host python3 by path; PYTHONPATH so it can import the durable
-		# `atlas` package before the venv it is about to create exists.
-		args = _variables_to_flags(variables)
-		quoted_path = shlex.quote(remote_script_path)
-		return f"PYTHONPATH={DURABLE_PACKAGE_DIRECTORY} python3 {quoted_path} {args}".strip()
 	if scripts_catalog.kind(script) == "python":
 		args = _variables_to_flags(variables)
 		return f"atlas {shlex.quote(script)} {args}".strip()

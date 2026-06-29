@@ -202,9 +202,8 @@ def kind(verb: str) -> str:
 # and the systemd hooks already live. Python verbs are then invoked as
 # `atlas <verb>` (the pip-installed console script); shell verbs run in place by
 # path. Either way no per-Task scp (the dominant latency of a start/stop/snapshot
-# Task). The dir equals runner.DURABLE_PACKAGE_DIRECTORY; the literal is repeated
-# here so server.py and the runner agree on one location without importing each
-# other.
+# Task). The literal is repeated here (and in server.py / install.sh) so each tree
+# agrees on one location without importing the others.
 DURABLE_SCRIPT_DIRECTORY = "/var/lib/atlas/bin"
 
 

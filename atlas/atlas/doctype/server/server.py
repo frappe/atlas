@@ -8,7 +8,7 @@ from frappe.model.document import Document
 
 from atlas.atlas import scripts_catalog
 from atlas.atlas.providers.fake_tasks import is_fake_server
-from atlas.atlas.ssh import connection_for_server, run_task, upload_files
+from atlas.atlas.ssh import connection_for_server, run_ssh, run_task, ssh_key_file, upload_files
 from atlas.atlas.task_results import parse_result
 
 IMMUTABLE_AFTER_INSERT = (
@@ -63,6 +63,11 @@ class Server(Document):
 		# that root. host-pyproject.toml's wheel package root is `atlas` (the flat
 		# durable layout), distinct from the dev scripts/pyproject.toml.
 		("host-pyproject.toml", "/var/lib/atlas/bin/pyproject.toml"),
+		# install.sh creates the uv venv + `atlas` console script over SSH right
+		# after this upload, BEFORE the bootstrap Task (which then runs as a normal
+		# `atlas bootstrap-server` verb). Shipped durably so the controller has a
+		# local copy to pipe over SSH — no public URL needed.
+		("install.sh", "/var/lib/atlas/bin/install.sh"),
 		("vm-network-up.py", "/var/lib/atlas/bin/vm-network-up.py"),
 		("vm-network-down.py", "/var/lib/atlas/bin/vm-network-down.py"),
 		# vm-disk-up.py re-activates the VM's thin-snapshot disk LV and refreshes
@@ -152,15 +157,24 @@ class Server(Document):
 
 	@frappe.whitelist()
 	def bootstrap(self) -> str:
-		"""Upload helpers + unit, run bootstrap-server.py. Returns Task name."""
+		"""Upload helpers + units, create the Atlas venv (install.sh), then run the
+		bootstrap-server verb. Returns Task name.
+
+		Ordering is load-bearing: install.sh's `uv pip install` needs the uploaded
+		/var/lib/atlas/bin, and the bootstrap Task now runs as `atlas bootstrap-server`
+		on the venv install.sh creates — so it's upload → install.sh → bootstrap Task.
+		"""
 		if self.status not in self.BOOTSTRAP_ALLOWED_STATUS:
 			frappe.throw(f"Cannot bootstrap from status {self.status}")
 
-		# A Fake server has no host to scp the durable package onto; the
-		# bootstrap-server.py Task below is faked too and still records the host
-		# versions, so the row ends up Active exactly as a real bootstrap leaves it.
+		# A Fake server has no host to scp the durable package onto or SSH install.sh
+		# into; the bootstrap-server Task below is faked too and still records the
+		# host versions, so the row ends up Active exactly as a real bootstrap leaves
+		# it. Skip both the upload AND install.sh for it, in lockstep.
 		if not is_fake_server(self.name):
-			upload_files(connection_for_server(self), self._bootstrap_uploads())
+			connection = connection_for_server(self)
+			upload_files(connection, self._bootstrap_uploads())
+			self._run_install_sh(connection)
 
 		task = run_task(
 			server=self.name,
@@ -173,6 +187,21 @@ class Server(Document):
 		self._absorb_bootstrap_output(task.stdout)
 		self.save(ignore_permissions=True)
 		return task.name
+
+	def _run_install_sh(self, connection) -> None:
+		"""Run scripts/install.sh on the host over SSH, AFTER the upload — it creates
+		the uv venv + `atlas` console script and runs the deep sanity gate. This is
+		what removes the bootstrap carve-out: once it returns, `bootstrap-server` runs
+		as a normal `atlas <verb>` on the venv. Not recorded as a Task (it's bootstrap
+		plumbing, like upload_files); raises on a non-zero exit so a broken venv fails
+		the bootstrap HERE, before the bootstrap Task or any unit points at it."""
+		command = "bash /var/lib/atlas/bin/install.sh"
+		with ssh_key_file(connection.ssh_private_key) as key_path:
+			stdout, stderr, exit_code = run_ssh(connection, key_path, command, timeout_seconds=600)
+		if exit_code != 0:
+			frappe.throw(
+				f"install.sh failed on {self.name} (exit {exit_code}): {stderr[-500:] or stdout[-500:]}"
+			)
 
 	@frappe.whitelist()
 	def sync_scripts(self) -> int:
