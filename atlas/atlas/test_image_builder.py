@@ -218,6 +218,10 @@ class TestRunBuild(IntegrationTestCase):
 		_ensure_test_server()
 		_ensure_test_image()
 		_purge()
+		# The proxy finalize recipe reads Atlas Settings.region (no per-VM region
+		# field anymore) to write the region + name the cert dir. Pin it so the
+		# finalize command carries "blr1" and atlas_region() doesn't throw.
+		frappe.db.set_single_value("Atlas Settings", "region", "blr1")
 
 	def test_uploads_tree_then_runs_detached_and_records_task(self) -> None:
 		vm = _new_vm()

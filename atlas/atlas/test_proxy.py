@@ -67,6 +67,10 @@ class TestReconcile(IntegrationTestCase):
 		_ensure_test_server()
 		_ensure_test_image()
 		_purge()
+		# reconcile records the proxy-sync Task with {"region": atlas_region()},
+		# which reads Atlas Settings.region (no per-VM region field anymore). Pin
+		# it so atlas_region() doesn't throw "Set Atlas Settings.region".
+		frappe.db.set_single_value("Atlas Settings", "region", "blr1")
 
 	def test_no_drift_skips_sync(self) -> None:
 		proxy_vm = _proxy_vm()

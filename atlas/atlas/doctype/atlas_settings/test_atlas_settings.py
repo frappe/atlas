@@ -326,6 +326,10 @@ class TestAtlasSettingsEnsureProxy(IntegrationTestCase):
 
 	def setUp(self) -> None:
 		self.settings = frappe.get_single("Atlas Settings")
+		# Root Domain.validate requires the DNS/TLS provider types, now denormalized
+		# from Atlas Settings; pin both so _make_root_domain inserts.
+		frappe.db.set_single_value("Atlas Settings", "dns_provider_type", "Route53")
+		frappe.db.set_single_value("Atlas Settings", "tls_provider_type", "Let's Encrypt")
 
 	def _make_root_domain(self, domain: str, region: str):
 		if frappe.db.exists("Root Domain", domain):
