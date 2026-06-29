@@ -139,16 +139,28 @@ apt-get install -y --no-install-recommends \
 mkdir -p "$BUILD_DIR"
 cd "$BUILD_DIR"
 
-# fetch <url> <output> — download once, reuse on re-run.
+# fetch <url> <output> — download once, reuse on re-run. Retries a few times so a
+# transient GitHub/codeload blip on a fresh droplet (a single 400/redirect hiccup,
+# the same flaky egress that makes apt time out on first boot) doesn't abort the
+# whole multi-minute bake under `set -e`. Still fails loud once the retries run out.
 fetch() {
-	local url="$1" out="$2"
+	local url="$1" out="$2" attempt
 	if [ -f "$out" ]; then
 		echo "  reuse $out"
 		return
 	fi
 	echo "  fetch $url"
-	curl -fsSL --output "$out.part" "$url"
-	mv "$out.part" "$out"
+	for attempt in 1 2 3 4 5; do
+		if curl -fsSL --retry 3 --retry-all-errors --output "$out.part" "$url"; then
+			mv "$out.part" "$out"
+			return
+		fi
+		echo "  fetch attempt $attempt failed, retrying in $((attempt * 3))s ..." >&2
+		rm -f "$out.part"
+		sleep "$((attempt * 3))"
+	done
+	echo "FATAL: could not fetch $url after 5 attempts" >&2
+	exit 1
 }
 
 # --- 2. OpenResty luajit2. The Lua module REQUIRES this fork, not upstream
