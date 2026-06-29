@@ -114,8 +114,22 @@ if verb == "SYNC" or verb == "SYNC-SNI" then
 	local accumulated_bytes = 0
 	local desired
 	while true do
-		local line, line_err = sock:receive()
+		-- On EOF (the client half-closes after the body, as the stream-admin client
+		-- does) a line-mode `receive()` returns `nil, "closed", <partial>` — the bytes
+		-- since the last newline are in the THIRD value, NOT the first. The controller
+		-- serializes its canonical body with NO trailing newline, so the closing "}"
+		-- (or the whole single-line "{}") arrives only as that partial: fold it in
+		-- before judging the body, or every SYNC dies "incomplete body".
+		local line, line_err, partial = sock:receive()
 		if not line then
+			if partial and #partial > 0 then
+				accumulated[#accumulated + 1] = partial
+				local whole = cjson.decode(table.concat(accumulated, "\n"))
+				if type(whole) == "table" then
+					desired = whole
+					break
+				end
+			end
 			-- Client closed (or timed out) before we got a whole object. cjson on the
 			-- bytes we DID get tells a finite non-object body (a bare scalar like "42"
 			-- or "not json") apart from a genuinely truncated object ("{"): the former

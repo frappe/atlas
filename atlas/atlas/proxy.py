@@ -169,6 +169,17 @@ def _sync_map(
 	_record_guest_task(virtual_machine, task_script, {"region": atlas_region()}, stdout, stderr, code)
 	if code != 0:
 		frappe.throw(f"{task_script} to {virtual_machine} failed (exit {code}): {stderr[-500:]}")
+	# A non-zero exit alone is not enough for the SNI map: the stream-admin client
+	# ALWAYS exits 0 and reports a line-protocol error (e.g. "error: incomplete
+	# body") in stdout, so a sync that the proxy REJECTED would otherwise be treated
+	# as success and leave the live map stale — the exact failure that hid a broken
+	# SYNC-SNI. The http maps are already guarded (curl --fail-with-body turns an
+	# admin error into a non-zero exit, caught above), but they reply success JSON,
+	# not "ok". So: reject only an explicit error reply, which the stream `error: …`
+	# token and the http `{"error": …}` body both carry, and let either success
+	# shape ("ok" / `{"synced": true}`) through.
+	if stdout.lstrip().startswith("error") or '"error"' in stdout:
+		frappe.throw(f"{task_script} to {virtual_machine} was rejected: {stdout.strip()[:500]}")
 	return True
 
 
