@@ -25,8 +25,27 @@
 
 local cjson = require("cjson.safe")
 local persist = require("stream_persist")
+local sni_persist = require("sni_persist")
 
 local ports = ngx.shared.ports
+local domains = ngx.shared.domains
+
+-- The verb namespace forks two maps over the ONE stream-admin socket: the bare
+-- verbs (GET/SYNC/DUMP/STAT) drive the `ports` TCP map (spec/17-tcp-proxy.md); the
+-- `-SNI` verbs drive the `domains` custom-domain :443 SNI map (spec/12 § The stream
+-- front-door, spec/18 Phase 2). Both maps are stream-side (ssl_preread is a stream
+-- module), so they share this socket rather than opening a third. A target binds the
+-- dict + its persist module so the GET/DUMP/STAT/SYNC bodies below are written once.
+local TARGETS = {
+	GET = { dict = ports, persist = persist },
+	DUMP = { dict = ports, persist = persist },
+	STAT = { dict = ports, persist = persist },
+	SYNC = { dict = ports, persist = persist },
+	["GET-SNI"] = { dict = domains, persist = sni_persist },
+	["DUMP-SNI"] = { dict = domains, persist = sni_persist },
+	["STAT-SNI"] = { dict = domains, persist = sni_persist },
+	["SYNC-SNI"] = { dict = domains, persist = sni_persist },
+}
 
 -- The largest SYNC body we will accumulate before giving up. The whole regional
 -- map is well under this (10000 ports x ~40 bytes ~= 400 KiB); a body that blows
@@ -51,32 +70,40 @@ if not verb then
 	return ngx.exit(ngx.ERROR)
 end
 
-if verb == "GET" then
-	-- The whole `ports` dict as canonical sorted pretty JSON (for the byte-diff).
-	ngx.print(persist.serialize())
+local target = TARGETS[verb]
+if not target then
+	ngx.print("error: unknown verb\n")
+	return
+end
+local dict = target.dict
+local store = target.persist
+
+if verb == "GET" or verb == "GET-SNI" then
+	-- The whole selected dict as canonical sorted pretty JSON (for the byte-diff).
+	ngx.print(store.serialize())
 	return
 end
 
-if verb == "DUMP" then
-	local ok = persist.dump()
+if verb == "DUMP" or verb == "DUMP-SNI" then
+	local ok = store.dump()
 	ngx.print(ok and "ok\n" or "error\n")
 	return
 end
 
-if verb == "STAT" then
+if verb == "STAT" or verb == "STAT-SNI" then
 	-- entry count + last-dump epoch, the line-protocol twin of the http admin's
 	-- GET /healthz. last_dump is null until a dump has landed (a fresh boot that has
-	-- only load()ed). Lets the operator/controller ask a TCP proxy "how many ports
-	-- do you hold, and when did you last persist?" — symmetric to the http side.
-	local keys = ports:get_keys(0)
+	-- only load()ed). Lets the operator/controller ask a proxy "how many entries do
+	-- you hold, and when did you last persist?" — symmetric to the http side.
+	local keys = dict:get_keys(0)
 	-- A nil last_dump would be DROPPED from the Lua table (and the key would vanish
 	-- from the JSON); emit cjson.null so the field is always present as JSON `null`
 	-- until a dump lands — symmetric to the http /healthz shape.
-	ngx.print(cjson.encode({ entries = #keys, last_dump = persist.last_dump() or cjson.null }), "\n")
+	ngx.print(cjson.encode({ entries = #keys, last_dump = store.last_dump() or cjson.null }), "\n")
 	return
 end
 
-if verb == "SYNC" then
+if verb == "SYNC" or verb == "SYNC-SNI" then
 	-- The body is the canonical JSON object on the lines AFTER the verb. The
 	-- serializer always ends the object with a "}" line (or is the single line
 	-- "{}"), so read lines and stop as soon as the accumulated text decodes as a
@@ -134,24 +161,22 @@ if verb == "SYNC" then
 		end
 	end
 
-	-- Bulk declarative replace: make the dict match `desired` exactly (added AND
-	-- removed). Upsert desired, then delete keys not in it — never a window where
-	-- the dict is empty under a concurrent preread read (the same shape as
-	-- admin.lua's /sync). Idempotent, self-healing, rebuild-safe.
-	local existing = ports:get_keys(0)
+	-- Bulk declarative replace: make the selected dict match `desired` exactly (added
+	-- AND removed). Upsert desired, then delete keys not in it — never a window where
+	-- the dict is empty under a concurrent preread read (the same shape as admin.lua's
+	-- /sync). Idempotent, self-healing, rebuild-safe.
+	local existing = dict:get_keys(0)
 	local keep = {}
-	for port, backend in pairs(desired) do
-		ports:set(port, backend)
-		keep[port] = true
+	for key, backend in pairs(desired) do
+		dict:set(key, backend)
+		keep[key] = true
 	end
 	for i = 1, #existing do
 		if not keep[existing[i]] then
-			ports:delete(existing[i])
+			dict:delete(existing[i])
 		end
 	end
-	persist.schedule_dump()
+	store.schedule_dump()
 	ngx.print("ok\n")
 	return
 end
-
-ngx.print("error: unknown verb\n")
