@@ -91,7 +91,21 @@ def _make_subdomain(label: str, vm: str, *, active: int = 1):
 	).insert(ignore_permissions=True)
 
 
+def _make_custom_domain(domain: str, vm: str, *, status: str = "Active", active: int = 1):
+	return frappe.get_doc(
+		{
+			"doctype": "Custom Domain",
+			"domain": domain,
+			"virtual_machine": vm,
+			"status": status,
+			"active": active,
+		}
+	).insert(ignore_permissions=True)
+
+
 def _purge() -> None:
+	for name in frappe.get_all("Custom Domain", pluck="name"):
+		frappe.delete_doc("Custom Domain", name, force=1, ignore_permissions=True)
 	for name in frappe.get_all("Subdomain", pluck="name"):
 		frappe.delete_doc("Subdomain", name, force=1, ignore_permissions=True)
 	for name in frappe.get_all("Virtual Machine", pluck="name"):
@@ -671,6 +685,21 @@ class TestTeardown(_RoutingTestCase):
 			vm.terminate()
 		self.assertEqual(frappe.db.count("Subdomain", {"virtual_machine": vm.name}), 0)
 
+	def test_terminate_deletes_every_custom_domain_for_the_vm(self) -> None:
+		# Component F.1 (spec/18 Phase 2): terminating a VM drops its Custom Domains too, so
+		# a custom-domain route never outlives its VM's /128.
+		from atlas.atlas.doctype.virtual_machine import virtual_machine as module
+
+		vm = _running_vm()
+		_make_custom_domain("shop.acme.com", vm.name)
+		_make_custom_domain("blog.acme.com", vm.name, status="Active")
+		self.assertEqual(frappe.db.count("Custom Domain", {"virtual_machine": vm.name}), 2)
+		vm.db_set("status", "Stopped")
+		vm.reload()
+		with patch.object(module, "run_task", return_value=fake_task(name="task-term")):
+			vm.terminate()
+		self.assertEqual(frappe.db.count("Custom Domain", {"virtual_machine": vm.name}), 0)
+
 	def test_no_sweeper_in_the_scheduler(self) -> None:
 		# Push-only has NO scheduled teardown: assert the scheduler carries no bench-
 		# routing reconcile/sweep entry (the entry was removed when the model went
@@ -841,3 +870,100 @@ class TestDnsRecords(_RoutingTestCase):
 				domain="shop.acme.com",
 				site=self._site_fqdn("acme"),
 			)
+
+
+# ---------------------------------------------------------------------------
+# Component L — register/deregister custom domain
+# ---------------------------------------------------------------------------
+
+
+class TestRegisterCustomDomain(_RoutingTestCase):
+	def test_register_resolves_vm_and_inserts_active(self) -> None:
+		vm = _running_vm()
+		result = self._as(vm.ipv6_address, bench_routing.register_custom_domain, domain="shop.acme.com")
+		self.assertEqual(result["status"], "ok")
+		row = frappe.get_doc("Custom Domain", "shop.acme.com")
+		self.assertEqual(row.virtual_machine, vm.name)
+		# Inserted ACTIVE — a registered domain is in the :443 SNI map immediately (no gate).
+		self.assertEqual(row.status, "Active")
+		self.assertTrue(row.active)
+
+	def test_register_normalizes_the_domain(self) -> None:
+		vm = _running_vm()
+		self._as(vm.ipv6_address, bench_routing.register_custom_domain, domain="  Shop.ACME.com.  ")
+		self.assertTrue(frappe.db.exists("Custom Domain", "shop.acme.com"))
+
+	def test_register_own_row_is_idempotent_ok(self) -> None:
+		vm = _running_vm()
+		self._as(vm.ipv6_address, bench_routing.register_custom_domain, domain="shop.acme.com")
+		result = self._as(vm.ipv6_address, bench_routing.register_custom_domain, domain="shop.acme.com")
+		self.assertEqual(result["status"], "ok")
+		self.assertEqual(frappe.db.count("Custom Domain", {"domain": "shop.acme.com"}), 1)
+
+	def test_register_taken_by_another_vm(self) -> None:
+		owner = _running_vm()
+		self._as(owner.ipv6_address, bench_routing.register_custom_domain, domain="shop.acme.com")
+		other = _running_vm()
+		result = self._as(other.ipv6_address, bench_routing.register_custom_domain, domain="shop.acme.com")
+		self.assertEqual(result["status"], "taken")
+		# Still owned by the first VM.
+		self.assertEqual(frappe.get_doc("Custom Domain", "shop.acme.com").virtual_machine, owner.name)
+
+	def test_register_invalid_bare_label(self) -> None:
+		vm = _running_vm()
+		result = self._as(vm.ipv6_address, bench_routing.register_custom_domain, domain="shop")
+		self.assertEqual(result["status"], "invalid")
+		self.assertIn("full domain name", result["reason"])
+		self.assertEqual(frappe.db.count("Custom Domain"), 0)
+
+	def test_register_invalid_under_regional_wildcard(self) -> None:
+		# A name under *.<region> belongs in the register(label) path — rejected here.
+		vm = _running_vm()
+		result = self._as(vm.ipv6_address, bench_routing.register_custom_domain, domain=f"app.{ROOT_DOMAIN}")
+		self.assertEqual(result["status"], "invalid")
+		self.assertEqual(frappe.db.count("Custom Domain"), 0)
+
+	def test_register_records_site_provenance_from_caller_subdomain(self) -> None:
+		# The row's `site` records the caller's own regional FQDN (its first Subdomain).
+		vm = _running_vm()
+		_make_subdomain("app", vm.name)
+		self._as(vm.ipv6_address, bench_routing.register_custom_domain, domain="shop.acme.com")
+		self.assertEqual(frappe.get_doc("Custom Domain", "shop.acme.com").site, f"app.{ROOT_DOMAIN}")
+
+	def test_register_unresolved_source_is_rejected(self) -> None:
+		with self.assertRaises(frappe.ValidationError):
+			self._as("2001:db8:dead::ffff", bench_routing.register_custom_domain, domain="shop.acme.com")
+		self.assertEqual(frappe.db.count("Custom Domain"), 0)
+
+	def test_register_is_audited(self) -> None:
+		vm = _running_vm()
+		self._as(vm.ipv6_address, bench_routing.register_custom_domain, domain="shop.acme.com")
+		rows = frappe.get_all(
+			"Bench Routing Audit",
+			filters={"endpoint": "register_custom_domain", "status": "ok"},
+			pluck="label",
+		)
+		self.assertIn("shop.acme.com", rows)
+
+
+class TestDeregisterCustomDomain(_RoutingTestCase):
+	def test_deregister_deletes_own_row(self) -> None:
+		vm = _running_vm()
+		_make_custom_domain("shop.acme.com", vm.name)
+		result = self._as(vm.ipv6_address, bench_routing.deregister_custom_domain, domain="shop.acme.com")
+		self.assertEqual(result["status"], "ok")
+		self.assertFalse(frappe.db.exists("Custom Domain", "shop.acme.com"))
+
+	def test_deregister_another_vms_row_is_a_noop(self) -> None:
+		owner = _running_vm()
+		_make_custom_domain("shop.acme.com", owner.name)
+		other = _running_vm()
+		result = self._as(other.ipv6_address, bench_routing.deregister_custom_domain, domain="shop.acme.com")
+		self.assertEqual(result["status"], "ok")
+		# Still present — scoped to the caller's OWN VM.
+		self.assertTrue(frappe.db.exists("Custom Domain", "shop.acme.com"))
+
+	def test_deregister_absent_row_is_idempotent_ok(self) -> None:
+		vm = _running_vm()
+		result = self._as(vm.ipv6_address, bench_routing.deregister_custom_domain, domain="nope.acme.com")
+		self.assertEqual(result["status"], "ok")

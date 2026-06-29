@@ -22,6 +22,10 @@ import frappe
 
 from atlas.atlas._ssh._quote import substitute
 from atlas.atlas._ssh.transport import run_ssh, ssh_key_file
+from atlas.atlas.doctype.custom_domain.custom_domain import (
+	custom_domain_acme_map,
+	custom_domain_sni_map,
+)
 from atlas.atlas.doctype.subdomain.subdomain import subdomain_map
 from atlas.atlas.placement import atlas_region
 from atlas.atlas.ssh import connection_for_guest
@@ -30,6 +34,10 @@ from atlas.atlas.ssh import connection_for_guest
 # /var/lib/nginx, socket /run/nginx, binary /usr/sbin/nginx) so the guest looks
 # like a default nginx box to anyone debugging it.
 ADMIN_SOCKET = "/run/nginx/admin.sock"
+# The stream-admin line-protocol client build.sh installs on the proxy guest's PATH
+# (proxy/guest/stream-admin). It drives the stream-side maps over the same SSH-to-guest
+# path the http admin's curl uses: GET-SNI / SYNC-SNI for the custom-domain :443 SNI map.
+STREAM_ADMIN_BIN = "stream-admin"
 CERT_DIRECTORY = "/var/lib/nginx/certs"
 # The guest file build.sh leaves empty and the proxy recipe's finalize step writes
 # the real region into (image_recipes._finalize_proxy); init_by_lua reads it.
@@ -49,17 +57,20 @@ def canonical_json(site_map: dict[str, str]) -> str:
 
 
 def reconcile_proxies() -> list[str]:
-	"""Reconcile every proxy VM to the desired map. Returns the names of the proxy
-	VMs that were synced (drifted). Each proxy holds the WHOLE map (design §1
-	non-goals), so they all get the same body.
+	"""Reconcile every proxy VM to the desired maps. Returns the names of the proxy
+	VMs that were synced (any of the three maps drifted). Each proxy holds the WHOLE
+	map (design §1 non-goals), so they all get the same bodies.
 
-	A proxy that can't be reached is recorded as a failed Task and skipped — the
-	other proxies still serve, so one wedged guest never wedges the loop (§7.3)."""
-	desired_json = canonical_json(subdomain_map())
+	Three maps are reconciled in one pass per proxy: the wildcard subdomain map (http
+	`/sync`), the custom-domain :443 SNI map (stream-admin `SYNC-SNI`), and the
+	custom-domain :80 ACME map (http `/acme/sync`) — see _reconcile_proxy. A proxy
+	that can't be reached is recorded as a failed Task and skipped — the other proxies
+	still serve, so one wedged guest never wedges the loop (§7.3)."""
+	desired = _desired_maps()
 	synced = []
 	for vm_name in _proxy_vms():
 		try:
-			if _reconcile_proxy(vm_name, desired_json):
+			if _reconcile_proxy(vm_name, desired):
 				synced.append(vm_name)
 		except Exception as exception:
 			# Record the failure on the Task row (done inside _reconcile_proxy's
@@ -69,36 +80,95 @@ def reconcile_proxies() -> list[str]:
 
 
 def reconcile_proxy(virtual_machine: str) -> bool:
-	"""Reconcile a single proxy VM to the desired map. Returns True iff a sync was
-	needed (the live map had drifted)."""
-	desired_json = canonical_json(subdomain_map())
-	return _reconcile_proxy(virtual_machine, desired_json)
+	"""Reconcile a single proxy VM to the desired maps. Returns True iff a sync was
+	needed (any of the three maps had drifted)."""
+	return _reconcile_proxy(virtual_machine, _desired_maps())
 
 
-def _reconcile_proxy(virtual_machine: str, desired_json: str) -> bool:
+def _desired_maps() -> dict[str, str]:
+	"""The three canonical map bodies a proxy must serve, built once per reconcile run
+	(they are the same for every proxy in the fleet):
+
+	    {"sites": <wildcard subdomain map>,   # http `sites` dict
+	     "sni":   <custom-domain :443 SNI map>, # stream `domains` dict (all active)
+	     "acme":  <custom-domain :80 ACME map>}  # http `acme_domains` dict (all active)
+
+	Each is serialized the SAME canonical way the matching guest persist module emits,
+	so each "in sync?" check is a plain byte compare."""
+	return {
+		"sites": canonical_json(subdomain_map()),
+		"sni": canonical_json(custom_domain_sni_map()),
+		"acme": canonical_json(custom_domain_acme_map()),
+	}
+
+
+def _reconcile_proxy(virtual_machine: str, desired: dict[str, str]) -> bool:
+	"""Reconcile all three maps on one proxy in a single SSH session reuse (one key
+	file). Each map is read-then-synced independently (read live, byte-compare, sync on
+	drift), so an unchanged map costs one read and no write. Returns True iff any map
+	drifted and was synced."""
 	vm = frappe.get_doc("Virtual Machine", virtual_machine)
 	connection = connection_for_guest(vm)
+	drifted = False
 	with ssh_key_file(connection.ssh_private_key) as key_path:
-		# 1. Read the live map. The admin API serves the SAME canonical bytes, so
-		#    the compare below is exact.
-		live_json, _stderr, _code = run_ssh(
-			connection, key_path, _curl_command("GET", "/map"), timeout_seconds=60
-		)
-		if live_json == desired_json:
-			return False
-		# 2. Drift: bulk declarative /sync the full desired map (idempotent,
-		#    self-healing, rebuild-safe — design §7.2). Stream the body to the
-		#    guest curl's stdin (--data-binary @-), no file staged on the guest.
-		stdout, stderr, code = run_ssh(
+		# 1. The wildcard subdomain map (http admin `sites`).
+		drifted |= _sync_map(
+			virtual_machine,
 			connection,
 			key_path,
-			_curl_command("POST", "/sync", data_stdin=True),
-			timeout_seconds=120,
-			stdin=desired_json,
+			"proxy-sync",
+			read=_curl_command("GET", "/map"),
+			write=_curl_command("POST", "/sync", data_stdin=True),
+			desired_json=desired["sites"],
 		)
-	_record_guest_task(virtual_machine, "proxy-sync", {"region": atlas_region()}, stdout, stderr, code)
+		# 2. The custom-domain :443 SNI map (stream-admin line protocol). Stream-side
+		#    because ssl_preread is a stream module; driven by the stream-admin client
+		#    over the same SSH path, the L4 analogue of the http admin's curl.
+		drifted |= _sync_map(
+			virtual_machine,
+			connection,
+			key_path,
+			"proxy-sync-sni",
+			read=f"{STREAM_ADMIN_BIN} GET-SNI",
+			write=f"{STREAM_ADMIN_BIN} SYNC-SNI",
+			desired_json=desired["sni"],
+		)
+		# 3. The custom-domain :80 ACME map (http admin `acme_domains`).
+		drifted |= _sync_map(
+			virtual_machine,
+			connection,
+			key_path,
+			"proxy-sync-acme",
+			read=_curl_command("GET", "/acme"),
+			write=_curl_command("POST", "/acme/sync", data_stdin=True),
+			desired_json=desired["acme"],
+		)
+	return drifted
+
+
+def _sync_map(
+	virtual_machine: str,
+	connection,
+	key_path,
+	task_script: str,
+	*,
+	read: str,
+	write: str,
+	desired_json: str,
+) -> bool:
+	"""Read a proxy guest's live map, byte-compare against the desired canonical body,
+	and bulk-sync on drift. Returns True iff a sync was needed. The read/write commands
+	are guest-side invocations (curl --unix-socket for http maps, the stream-admin client
+	for the SNI map) — both serve/accept the SAME canonical bytes, so the compare is exact.
+	A drift sync is recorded as a Task row (task_script names which map). Idempotent,
+	self-healing, rebuild-safe (design §7.2)."""
+	live_json, _stderr, _code = run_ssh(connection, key_path, read, timeout_seconds=60)
+	if live_json == desired_json:
+		return False
+	stdout, stderr, code = run_ssh(connection, key_path, write, timeout_seconds=120, stdin=desired_json)
+	_record_guest_task(virtual_machine, task_script, {"region": atlas_region()}, stdout, stderr, code)
 	if code != 0:
-		frappe.throw(f"Proxy sync to {virtual_machine} failed (exit {code}): {stderr[-500:]}")
+		frappe.throw(f"{task_script} to {virtual_machine} failed (exit {code}): {stderr[-500:]}")
 	return True
 
 

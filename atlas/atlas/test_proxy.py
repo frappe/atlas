@@ -17,6 +17,8 @@ def _purge() -> None:
 	# assertion filters by the per-test VM name (a fresh UUID), so stale Tasks
 	# can never match — and deleting them takes a FOR UPDATE NOWAIT lock that
 	# flakes under the full-suite's transaction contention.
+	for name in frappe.get_all("Custom Domain", pluck="name"):
+		frappe.delete_doc("Custom Domain", name, force=1, ignore_permissions=True)
 	for name in frappe.get_all("Subdomain", pluck="name"):
 		frappe.delete_doc("Subdomain", name, force=1, ignore_permissions=True)
 	for name in frappe.get_all("Virtual Machine", pluck="name"):
@@ -27,6 +29,20 @@ def _make_subdomain(subdomain: str, vm: str, **overrides):
 	doc = {"doctype": "Subdomain", "subdomain": subdomain, "virtual_machine": vm}
 	doc.update(overrides)
 	return frappe.get_doc(doc).insert(ignore_permissions=True)
+
+
+def _make_custom_domain(domain: str, vm: str, *, status: str = "Active", **overrides):
+	doc = {"doctype": "Custom Domain", "domain": domain, "virtual_machine": vm, "status": status}
+	doc.update(overrides)
+	return frappe.get_doc(doc).insert(ignore_permissions=True)
+
+
+# Each proxy reconcile now reads THREE maps in order — the wildcard subdomain `sites`
+# map (http /map), the custom-domain :443 SNI map (stream-admin GET-SNI), and the
+# custom-domain :80 ACME map (http /acme) — and syncs each only on drift. A test with
+# no custom domains leaves the SNI + ACME maps empty (`{}\n`), so those two reads find
+# no drift and add no write. EMPTY_MAP is the canonical empty body both serve.
+EMPTY_MAP = "{}\n"
 
 
 def _proxy_vm():
@@ -77,34 +93,75 @@ class TestReconcile(IntegrationTestCase):
 		site_vm = _new_vm()
 		_make_subdomain("acme", site_vm.name)
 		desired = proxy.canonical_json({"acme": site_vm.ipv6_address})
-		# The guest's live /map already equals desired → no POST.
-		with _mock_ssh([(desired, "", 0)]) as run_ssh:
+		# All three live maps already equal desired (sites=desired, sni+acme empty) → no
+		# POST. Three reads (GET /map, GET-SNI, GET /acme), zero writes.
+		with _mock_ssh([(desired, "", 0), (EMPTY_MAP, "", 0), (EMPTY_MAP, "", 0)]) as run_ssh:
 			synced = proxy.reconcile_proxy(proxy_vm.name)
 		self.assertFalse(synced)
-		self.assertEqual(run_ssh.call_count, 1)  # GET /map only
+		self.assertEqual(run_ssh.call_count, 3)  # the three GETs only
 
 	def test_drift_triggers_bulk_sync_with_canonical_body(self) -> None:
 		proxy_vm = _proxy_vm()
 		site_vm = _new_vm()
 		_make_subdomain("acme", site_vm.name)
 		desired = proxy.canonical_json({"acme": site_vm.ipv6_address})
-		# Live map is empty (fresh proxy) → drifted → POST /sync.
-		with _mock_ssh([("{}\n", "", 0), ('{"synced":true}', "", 0)]) as run_ssh:
+		# The sites map drifts (live empty) → POST /sync; sni + acme are empty + in sync.
+		# Reads: GET /map(empty), then /sync; GET-SNI(empty); GET /acme(empty).
+		with _mock_ssh(
+			[("{}\n", "", 0), ('{"synced":true}', "", 0), (EMPTY_MAP, "", 0), (EMPTY_MAP, "", 0)]
+		) as run_ssh:
 			synced = proxy.reconcile_proxy(proxy_vm.name)
 		self.assertTrue(synced)
-		self.assertEqual(run_ssh.call_count, 2)
-		# The second call is the /sync; its stdin body is the canonical desired map.
+		self.assertEqual(run_ssh.call_count, 4)
+		# The second call is the sites /sync; its stdin body is the canonical desired map.
 		_, sync_kwargs = run_ssh.call_args_list[1]
 		self.assertEqual(sync_kwargs["stdin"], desired)
 		sync_command = run_ssh.call_args_list[1].args[2]
 		self.assertIn("/sync", sync_command)
 		self.assertIn("--data-binary", sync_command)
 
+	def test_sni_map_drift_syncs_via_stream_admin(self) -> None:
+		# An active custom domain populates the :443 SNI map (and the :80 ACME map); the live
+		# SNI map is empty → SYNC-SNI over the stream-admin line protocol with the canonical body.
+		proxy_vm = _proxy_vm()
+		site_vm = _new_vm()
+		_make_custom_domain("shop.acme.com", site_vm.name, status="Active")
+		sni_desired = proxy.canonical_json({"shop.acme.com": f"[{site_vm.ipv6_address}]:443"})
+		acme_desired = proxy.canonical_json({"shop.acme.com": f"[{site_vm.ipv6_address}]"})
+		# sites empty+in-sync; SNI drifts (empty live) → SYNC-SNI; ACME drifts → /acme/sync.
+		with _mock_ssh(
+			[(EMPTY_MAP, "", 0), (EMPTY_MAP, "", 0), ("ok\n", "", 0), (EMPTY_MAP, "", 0), ("{}", "", 0)]
+		) as run_ssh:
+			synced = proxy.reconcile_proxy(proxy_vm.name)
+		self.assertTrue(synced)
+		# The SNI sync command is the stream-admin SYNC-SNI verb with the canonical SNI body.
+		sni_calls = [c for c in run_ssh.call_args_list if "SYNC-SNI" in c.args[2]]
+		self.assertEqual(len(sni_calls), 1)
+		self.assertEqual(sni_calls[0].kwargs["stdin"], sni_desired)
+		# The ACME sync carries the bare-bracketed-v6 body to /acme/sync.
+		acme_calls = [c for c in run_ssh.call_args_list if "/acme/sync" in c.args[2]]
+		self.assertEqual(len(acme_calls), 1)
+		self.assertEqual(acme_calls[0].kwargs["stdin"], acme_desired)
+
+	def test_inactive_custom_domain_in_neither_map(self) -> None:
+		# An INACTIVE custom domain (active=0) is in neither map — all three desired maps are
+		# empty, the live maps are empty, so nothing drifts: no SNI sync and no ACME sync fire.
+		# (There is no readiness gate: an active row is always in both maps; `active` is the
+		# only switch.)
+		proxy_vm = _proxy_vm()
+		site_vm = _new_vm()
+		_make_custom_domain("shop.acme.com", site_vm.name, active=0)
+		with _mock_ssh([(EMPTY_MAP, "", 0), (EMPTY_MAP, "", 0), (EMPTY_MAP, "", 0)]) as run_ssh:
+			synced = proxy.reconcile_proxy(proxy_vm.name)
+		self.assertFalse(synced)
+		self.assertEqual([c for c in run_ssh.call_args_list if "SYNC-SNI" in c.args[2]], [])
+		self.assertEqual([c for c in run_ssh.call_args_list if "/acme/sync" in c.args[2]], [])
+
 	def test_drift_records_a_task_row(self) -> None:
 		proxy_vm = _proxy_vm()
 		site_vm = _new_vm()
 		_make_subdomain("acme", site_vm.name)
-		with _mock_ssh([("{}\n", "", 0), ("ok", "", 0)]):
+		with _mock_ssh([("{}\n", "", 0), ("ok", "", 0), (EMPTY_MAP, "", 0), (EMPTY_MAP, "", 0)]):
 			proxy.reconcile_proxy(proxy_vm.name)
 		tasks = frappe.get_all(
 			"Task", filters={"virtual_machine": proxy_vm.name, "script": "proxy-sync"}, pluck="status"
@@ -129,8 +186,8 @@ class TestReconcile(IntegrationTestCase):
 		proxy_b = _proxy_vm()
 		site_vm = _new_vm()
 		_make_subdomain("acme", site_vm.name)
-		# Both proxies are empty → both drift → both synced.
-		with _mock_ssh([("{}\n", "", 0), ("ok", "", 0)] * 2):
+		# Each proxy: sites drifts (empty→sync), sni+acme empty (in sync). 4 calls each.
+		with _mock_ssh([("{}\n", "", 0), ("ok", "", 0), (EMPTY_MAP, "", 0), (EMPTY_MAP, "", 0)] * 2):
 			synced = proxy.reconcile_proxies()
 		self.assertEqual(set(synced), {proxy_a.name, proxy_b.name})
 
@@ -148,7 +205,9 @@ class TestReconcile(IntegrationTestCase):
 			# Identify the proxy by the mocked connection's host marker.
 			if connection.host == "DEAD":
 				raise RuntimeError("guest unreachable")
-			if "GET" in command or "/map" in command:
+			# Any read (GET /map, GET-SNI, GET /acme) returns an empty live map → drift;
+			# any write (/sync, SYNC-SNI, /acme/sync) succeeds.
+			if "GET" in command:
 				return ("{}\n", "", 0)
 			return ("ok", "", 0)
 

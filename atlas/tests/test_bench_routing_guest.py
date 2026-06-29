@@ -239,13 +239,31 @@ class TestRegister(_ProviderTestCase):
 		rc = self.provider.main(["bench-domain-provider", "register", f"acme.{_REGION_DOMAIN}"])
 		self.assertEqual(rc, 2)
 
-	def test_non_wildcard_domain_declines_without_a_register_post(self) -> None:
-		# A custom external domain is NOT a Phase-1 wildcard subdomain → decline (exit 2),
-		# and we never POST register for it.
+	def test_custom_domain_posts_register_custom_domain(self) -> None:
+		# A custom external domain (does NOT peel to a wildcard label) now ROUTES via
+		# register_custom_domain (spec/18 Phase 2 SNI passthrough) — it no longer declines.
+		self._set_responses(register_custom_domain=(200, {"message": {"status": "ok"}}))
+		self._set_config(self.base)
+		rc = self.provider.main(["bench-domain-provider", "register", "shop.acme.com"])
+		self.assertEqual(rc, 0)
+		# It POSTed register_custom_domain with the WHOLE host, NOT register(label).
+		self.assertEqual(self._register_calls(), [])
+		custom = [c for c in self.server.calls if c[0].endswith("bench_routing.register_custom_domain")]
+		self.assertEqual(len(custom), 1)
+		self.assertIn("domain=shop.acme.com", custom[0][1])
+
+	def test_custom_domain_taken_exits_two(self) -> None:
+		# A custom domain already claimed in the fleet → declined (exit 2), aborting create.
+		self._set_responses(register_custom_domain=(200, {"message": {"status": "taken"}}))
 		self._set_config(self.base)
 		rc = self.provider.main(["bench-domain-provider", "register", "shop.acme.com"])
 		self.assertEqual(rc, 2)
-		self.assertEqual(self._register_calls(), [])
+
+	def test_custom_domain_register_transport_failure_fails_closed(self) -> None:
+		# Same fail-closed contract as the wildcard path: an unreachable controller aborts.
+		self._set_config("http://[::1]:1")
+		rc = self.provider.main(["bench-domain-provider", "register", "shop.acme.com"])
+		self.assertEqual(rc, 1)
 
 	def test_multi_label_under_wildcard_declines_as_invalid(self) -> None:
 		# `a.b.<region>` peels to `a.b`, which the controller rejects as invalid → exit 2.
@@ -296,11 +314,23 @@ class TestDeregister(_ProviderTestCase):
 		rc = self.provider.main(["bench-domain-provider", "deregister", f"acme.{_REGION_DOMAIN}"])
 		self.assertEqual(rc, 0)
 
-	def test_deregister_non_wildcard_domain_exits_zero_without_post(self) -> None:
+	def test_deregister_custom_domain_posts_deregister_custom_domain(self) -> None:
+		# A custom domain now tears down via deregister_custom_domain (spec/18 Phase 2),
+		# not a no-op. Still always exit 0 (best-effort).
+		self._set_responses(deregister_custom_domain=(200, {"message": {"status": "ok"}}))
 		self._set_config(self.base)
 		rc = self.provider.main(["bench-domain-provider", "deregister", "shop.acme.com"])
 		self.assertEqual(rc, 0)
-		self.assertEqual(self._deregister_calls(), [])
+		self.assertEqual(self._deregister_calls(), [])  # not the wildcard endpoint
+		custom = [c for c in self.server.calls if c[0].endswith("bench_routing.deregister_custom_domain")]
+		self.assertEqual(len(custom), 1)
+		self.assertIn("domain=shop.acme.com", custom[0][1])
+
+	def test_deregister_custom_domain_unreachable_still_exits_zero(self) -> None:
+		# best-effort: a non-zero would throw on an otherwise-successful drop.
+		self._set_config("http://[::1]:1")
+		rc = self.provider.main(["bench-domain-provider", "deregister", "shop.acme.com"])
+		self.assertEqual(rc, 0)
 
 
 class TestGenerateDnsRecords(_ProviderTestCase):
@@ -491,7 +521,12 @@ class TestBuildInstallsProvider(unittest.TestCase):
 	def test_provider_is_stdlib_only(self) -> None:
 		source = _PROVIDER.read_text()
 		self.assertNotIn("import frappe", source)
-		self.assertNotIn("from atlas", source)
+		# No Atlas-package import (an `from atlas ... import` statement at a line start);
+		# matched line-anchored so prose like "reversal of atlas-route's" doesn't trip it.
+		import re
+
+		self.assertIsNone(re.search(r"(?m)^\s*from atlas\b.*\bimport\b", source))
+		self.assertIsNone(re.search(r"(?m)^\s*import atlas\b", source))
 
 
 if __name__ == "__main__":

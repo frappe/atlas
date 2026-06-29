@@ -732,6 +732,7 @@ class VirtualMachine(Document):
 		self._detach_reserved_ip()
 		self._revoke_tunnels()
 		self._delete_subdomains()
+		self._delete_custom_domains()
 		self._delete_snapshots()
 		return task.name
 
@@ -774,6 +775,17 @@ class VirtualMachine(Document):
 		outlives its VM's address, so the case a sweeper would catch is closed here."""
 		for name in frappe.get_all("Subdomain", filters={"virtual_machine": self.name}, pluck="name"):
 			frappe.delete_doc("Subdomain", name, ignore_permissions=True)
+
+	def _delete_custom_domains(self) -> None:
+		"""Drop every Custom Domain that routes to this VM, so terminating it stops routing
+		(each row's on_trash deconverges the regional proxy fleet's custom-domain map). The
+		full-FQDN sibling of `_delete_subdomains` (spec/18 Phase 2): a custom domain is the
+		LINKER (its `virtual_machine` points AT this VM), so deletion is unobstructed by the
+		link-integrity guard. Idempotent: a VM with no Custom Domains is a no-op. Like the
+		Subdomain teardown, this is part of the SAME teardown that releases the VM's /128, so
+		a custom-domain route never outlives its VM's address (Component F)."""
+		for name in frappe.get_all("Custom Domain", filters={"virtual_machine": self.name}, pluck="name"):
+			frappe.delete_doc("Custom Domain", name, ignore_permissions=True)
 
 	def _delete_snapshots(self) -> None:
 		"""Drop this VM's snapshot rows after terminate. Each row's on_trash
