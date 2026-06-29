@@ -259,12 +259,22 @@ install -m 0644 "$SRC_DIR/conf/nginx.conf"  "$CONF_DIR/nginx.conf"
 install -m 0644 "$SRC_DIR/lua/router.lua"   "$LUA_DIR/router.lua"
 install -m 0644 "$SRC_DIR/lua/admin.lua"    "$LUA_DIR/admin.lua"
 install -m 0644 "$SRC_DIR/lua/persist.lua"  "$LUA_DIR/persist.lua"
+# The custom-domain :80 ACME map (spec/12 § The stream front-door, spec/18 Phase 2):
+# the http{}-side Host fork for a custom domain's HTTP-01 challenge + its persist.
+install -m 0644 "$SRC_DIR/lua/acme_router.lua"  "$LUA_DIR/acme_router.lua"
+install -m 0644 "$SRC_DIR/lua/acme_persist.lua" "$LUA_DIR/acme_persist.lua"
 # The stream{}-side trio (spec/17-tcp-proxy.md): the L4 forwarder's router,
 # line-protocol admin, and persist. Separate files because stream{} Lua runs in a
 # separate subsystem (own lua_shared_dict address space) from the http{} trio.
 install -m 0644 "$SRC_DIR/lua/stream_router.lua"  "$LUA_DIR/stream_router.lua"
 install -m 0644 "$SRC_DIR/lua/stream_admin.lua"   "$LUA_DIR/stream_admin.lua"
 install -m 0644 "$SRC_DIR/lua/stream_persist.lua" "$LUA_DIR/stream_persist.lua"
+# The custom-domain :443 SNI front-door (spec/12 § The stream front-door, spec/18
+# Phase 2): the SNI fork router, the strip-path passthrough router, and the `domains`
+# map persist. Stream-side because ssl_preread is a stream module.
+install -m 0644 "$SRC_DIR/lua/sni_router.lua"      "$LUA_DIR/sni_router.lua"
+install -m 0644 "$SRC_DIR/lua/sni_passthrough.lua" "$LUA_DIR/sni_passthrough.lua"
+install -m 0644 "$SRC_DIR/lua/sni_persist.lua"     "$LUA_DIR/sni_persist.lua"
 install -m 0644 "$SRC_DIR/html/not_found.html" "$HTML_DIR/not_found.html"
 # The nginx.org package drops conf.d/default.conf, included by ITS nginx.conf. Our
 # nginx.conf does NOT include conf.d (see the note there), so it never loads — we

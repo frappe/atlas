@@ -36,6 +36,7 @@ services:
       - vm-a
       - vm-b
       - vm-bad
+      - tls-vm
       - tcp-a
       - tcp-b
       - tcp-silent
@@ -82,6 +83,21 @@ services:
     networks:
       sixnet:
         ipv6_address: fd00:a71a:5::b
+
+  # A CUSTOM-DOMAIN site VM that terminates its OWN TLS on :443 (spec/12 § The stream
+  # front-door, spec/18 Phase 2). The proxy's SNI front-door passes the raw TLS stream
+  # through to here; this VM presents its own self-signed cert (CN=tls-vm.custom.example),
+  # proving the proxy never decrypted. Also serves :80 for the custom-domain ACME fork.
+  tls-vm:
+    build:
+      context: .
+      dockerfile: tls_upstream.Dockerfile
+    environment:
+      UPSTREAM_NAME: tls-vm
+      CUSTOM_DOMAIN: tls-vm.custom.example
+    networks:
+      sixnet:
+        ipv6_address: fd00:a71a:5::7a
 
   # A deliberately-broken upstream (raw-socket, non-HTTP / truncated replies) for
   # the robustness tests — the proxy must 502/close-clean, never crash or pass

@@ -16,8 +16,13 @@
 #   stream-admin DUMP           -> forces a persist, prints "ok"
 #   stream-admin SYNC           -> reads the JSON body from stdin, replaces the map
 #
-# Connects to /run/nginx/stream-admin.sock, sends "<VERB>\n" (+ the body for
-# SYNC), reads the whole reply until the server closes, prints it.
+# The same socket also drives the custom-domain :443 SNI map (spec/12 § The stream
+# front-door, spec/18 Phase 2) via the parallel -SNI verbs, since both maps are
+# stream-side (ssl_preread is a stream module) and share this one admin server:
+#   stream-admin GET-SNI / STAT-SNI / DUMP-SNI / SYNC-SNI  -> same shapes, `domains` map
+#
+# Connects to /run/nginx/stream-admin.sock, sends "<VERB>\n" (+ the body for a
+# SYNC/SYNC-SNI), reads the whole reply until the server closes, prints it.
 
 import socket
 import sys
@@ -27,12 +32,12 @@ SOCKET_PATH = "/run/nginx/stream-admin.sock"
 
 def main() -> int:
 	if len(sys.argv) < 2:
-		sys.stderr.write("usage: stream-admin GET|STAT|SYNC|DUMP\n")
+		sys.stderr.write("usage: stream-admin GET|STAT|SYNC|DUMP[-SNI]\n")
 		return 2
 	verb = sys.argv[1].upper()
 
 	request = verb.encode() + b"\n"
-	if verb == "SYNC":
+	if verb in ("SYNC", "SYNC-SNI"):
 		# The canonical JSON body arrives on stdin (mirrors curl --data-binary @-).
 		request += sys.stdin.buffer.read()
 
