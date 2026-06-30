@@ -56,11 +56,14 @@ if sni == "" then
 end
 
 -- A name under the regional wildcard terminates AT the proxy (the L7 path). The
--- suffix predicate is the one router.lua uses; atlas_region is loaded once at init
--- from /var/lib/nginx/region (nginx.conf stream init_by_lua), the same file the
--- http subsystem reads.
-if atlas_region and atlas_region ~= "" then
-	local suffix = "." .. atlas_region .. ".frappe.dev"
+-- suffix predicate is the one router.lua uses; atlas_root_domain is the FULL
+-- regional wildcard zone (e.g. "blr1.frappe.dev" or "aditya-blr3.x.frappe.dev"),
+-- loaded once at init from /var/lib/nginx/region (nginx.conf stream init_by_lua),
+-- the same file the http subsystem reads. We strip that exact zone — NOT
+-- region .. ".frappe.dev", which assumed the region sat one label under
+-- frappe.dev and broke under a deeper platform zone like x.frappe.dev.
+if atlas_root_domain and atlas_root_domain ~= "" then
+	local suffix = "." .. atlas_root_domain
 	if sni:sub(-#suffix) == suffix then
 		ngx.var.sni_upstream = WILDCARD_TERMINATOR
 		return

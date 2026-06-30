@@ -24,7 +24,16 @@ ADMIN_SOCK = "/run/nginx/admin.sock"  # inside the proxy container
 
 HTTPS = "127.0.0.1:8443"
 HTTP = "127.0.0.1:8080"
+# REGION is the bare region id (scopes the cert dir, certs/<region>/). ZONE is the
+# FULL wildcard zone the proxy strips from each Host/SNI — what the region file
+# holds (Dockerfile writes ZONE, _finalize_proxy writes active_root_domain().domain).
+# ZONE is deliberately DEEPER than "<region>.frappe.dev" (an extra `.x` label) so the
+# suffix predicate is exercised against a real platform zone like x.frappe.dev — the
+# shape that broke when the lua reconstructed the zone as region .. ".frappe.dev"
+# (every wildcard SNI missed → "no host in upstream"). A flat REGION + ".frappe.dev"
+# would have hidden that bug, since the two coincide one label under frappe.dev.
 REGION = "test"
+ZONE = "test.x.frappe.dev"
 VM_A = "fd00:a71a:5::a"
 VM_B = "fd00:a71a:5::b"
 
@@ -62,9 +71,9 @@ def fetch(
 	http2: bool = False,
 	extra: list[str] | None = None,
 ) -> tuple[int, str, str]:
-	"""curl the proxy with Host/SNI forced to <subdomain>.test.local.
+	"""curl the proxy with Host/SNI forced to <subdomain>.<ZONE>.
 	Returns (status, body, headers)."""
-	host = f"{subdomain}.{REGION}.frappe.dev"
+	host = f"{subdomain}.{ZONE}"
 	target = HTTPS if scheme == "https" else HTTP
 	ip, _, port = target.partition(":")
 	# Dump headers to a temp file (-D) so stdout is the body alone; the status
@@ -113,7 +122,7 @@ def test_routing_preserves_host():
 	status, body, _ = fetch("acme")
 	assert status == 200
 	assert "upstream=vm-a" in body
-	assert "host=acme.test.frappe.dev" in body  # Host preserved end-to-end
+	assert "host=acme.test.x.frappe.dev" in body  # Host preserved end-to-end
 
 
 def test_multi_subdomain_one_vm():
@@ -278,7 +287,7 @@ def test_restart_reloads_from_mapjson():
 def test_http_redirects_to_https():
 	status, _, headers = fetch("acme", scheme="http")
 	assert status == 308
-	assert "location: https://acme.test.frappe.dev" in headers.lower()
+	assert "location: https://acme.test.x.frappe.dev" in headers.lower()
 
 
 # --- HTTP/2 ----------------------------------------------------------------
@@ -348,7 +357,7 @@ def test_tls11_refused():
 	# nginx.conf pins ssl_protocols TLSv1.2 TLSv1.3. Forcing a 1.1-max handshake
 	# must be refused (curl can't negotiate → exits non-zero, status "000"). We
 	# cap at 1.1 with --tls-max so curl doesn't fall back up to an allowed version.
-	host = f"acme.{REGION}.frappe.dev"
+	host = f"acme.{ZONE}"
 	cmd = [
 		"curl",
 		"-sk",
@@ -429,7 +438,7 @@ def test_host_case_insensitive_routes():
 	assert status == 200
 	assert "upstream=vm-a" in body
 	# Observation (not the assertion's point): the forwarded host is lowercase.
-	assert "host=acme.test.frappe.dev" in body
+	assert "host=acme.test.x.frappe.dev" in body
 
 
 def test_sni_host_mismatch_routes_by_host():
@@ -438,8 +447,8 @@ def test_sni_host_mismatch_routes_by_host():
 	# an explicit Host while --resolve sets SNI to acme.)
 	admin("PUT", "/map/acme", VM_A)
 	admin("PUT", "/map/widgets", VM_B)
-	host_sni = f"acme.{REGION}.frappe.dev"  # SNI / cert match
-	host_hdr = f"widgets.{REGION}.frappe.dev"  # routing key
+	host_sni = f"acme.{ZONE}"  # SNI / cert match
+	host_hdr = f"widgets.{ZONE}"  # routing key
 	cmd = [
 		"curl",
 		"-sk",
@@ -544,7 +553,7 @@ def test_acme_challenge_served_not_redirected():
 	token_dir = "/var/lib/nginx/acme/.well-known/acme-challenge"
 	exec_proxy_text("mkdir", "-p", token_dir)
 	exec_proxy_text("sh", "-c", f"printf 'TOKEN-OK' > {token_dir}/probe")
-	host = f"acme.{REGION}.frappe.dev"
+	host = f"acme.{ZONE}"
 	cmd = [
 		"curl",
 		"-s",
@@ -566,7 +575,7 @@ def test_default_server_handles_bare_ip_host():
 	# A request whose Host is a bare IP (no derivable subdomain under the region)
 	# hits the default_server and gets the branded 404 — never a 500/000.
 	admin("PUT", "/map/acme", VM_A)  # seed something routable
-	for host in ("127.0.0.1", f"{REGION}.frappe.dev"):
+	for host in ("127.0.0.1", ZONE):
 		cmd = [
 			"curl",
 			"-sk",
@@ -708,9 +717,9 @@ def test_weird_host_headers_degrade():
 	# (Sending the weird value via --resolve instead would make curl reject the
 	# resolve entry before the proxy ever sees it — a curl artifact, not behavior.)
 	admin("PUT", "/map/acme", VM_A)
-	sni = f"acme.{REGION}.frappe.dev"
+	sni = f"acme.{ZONE}"
 	expect = {
-		f".{REGION}.frappe.dev": ("404",),  # empty subdomain → branded 404
+		f".{ZONE}": ("404",),  # empty subdomain → branded 404
 		"192.0.2.7": ("404",),  # no region suffix → branded 404
 		"fd00:a71a:5::1": ("400",),  # invalid Host → nginx 400 (pre-Lua)
 	}
@@ -976,7 +985,7 @@ VM_BAD = "fd00:a71a:5::bad"
 def fetch_rc(subdomain: str, path: str = "/", extra: list[str] | None = None) -> int:
 	"""Like fetch() but returns curl's exit code — for asserting a transport
 	failure (e.g. an upstream that closes mid-body) rather than a status."""
-	host = f"{subdomain}.{REGION}.frappe.dev"
+	host = f"{subdomain}.{ZONE}"
 	cmd = [
 		"curl",
 		"-sk",

@@ -5,8 +5,9 @@
 -- there is no redirect cycle): on a hit it sets ngx.var.vm_upstream and returns
 -- (the location's proxy_pass $vm_upstream takes over); on a miss it serves the
 -- branded page with status 404 (unknown subdomain) or 503 (tombstoned). The
--- region (the ".<region>.frappe.dev" suffix) is loaded once at init into the
--- global atlas_region (see nginx.conf).
+-- regional wildcard zone (the full suffix to strip, e.g. "blr1.frappe.dev" or
+-- "aditya-blr3.x.frappe.dev") is loaded once at init into the global
+-- atlas_root_domain (see nginx.conf).
 --
 -- We render the branded page FROM LUA rather than via error_page. (error_page
 -- CAN intercept a Lua-phase ngx.exit(<4xx/5xx>) issued before output — a stock
@@ -39,13 +40,17 @@ end
 local host = ngx.var.host or ""
 host = host:lower():gsub(":%d+$", "")
 
--- Strip the ".<region>.frappe.dev" suffix to get the bare subdomain. If the
--- region is configured we match it exactly; otherwise fall back to the first
--- label (everything before the first dot) so a misconfigured region still
--- routes by the leftmost label rather than 500ing.
+-- Strip the regional wildcard zone suffix to get the bare subdomain.
+-- atlas_root_domain is the FULL zone (e.g. "blr1.frappe.dev" or
+-- "aditya-blr3.x.frappe.dev"); we strip ".<zone>" exactly, NOT
+-- region .. ".frappe.dev" (which assumed the region sat one label under
+-- frappe.dev and broke under a deeper platform zone like x.frappe.dev). If the
+-- zone is configured we match it exactly; otherwise fall back to the first label
+-- (everything before the first dot) so a misconfigured proxy still routes by the
+-- leftmost label rather than 500ing.
 local subdomain
-if atlas_region and atlas_region ~= "" then
-    local suffix = "." .. atlas_region .. ".frappe.dev"
+if atlas_root_domain and atlas_root_domain ~= "" then
+    local suffix = "." .. atlas_root_domain
     if host:sub(-#suffix) == suffix then
         subdomain = host:sub(1, #host - #suffix)
     end
