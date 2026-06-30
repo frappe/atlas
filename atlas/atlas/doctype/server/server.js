@@ -22,6 +22,7 @@ function add_buttons(frm) {
 		frappe.atlas.add_success(frm, "Re-bootstrap", () => confirm_bootstrap(frm));
 	}
 	if (status === "Active") {
+		frappe.atlas.add_action(frm, "Run Command", () => run_command(frm));
 		frappe.atlas.add_action(frm, "Sync Image", () => open_sync_image_dialog(frm));
 		frappe.atlas.add_action(frm, "Bake Image", () => open_bake_image_dialog(frm));
 		frappe.atlas.add_action(frm, "Sync Scripts", () => sync_scripts(frm));
@@ -32,6 +33,16 @@ function add_buttons(frm) {
 	}
 	frappe.atlas.add_action(frm, "Archive", () => confirm_archive(frm));
 	frappe.atlas.add_danger(frm, "Reboot", () => confirm_reboot(frm));
+}
+
+// Stash this server as the SSH Console's one target and route there — a
+// pre-targeted entry into the fleet-wide console, not a second execution path.
+function run_command(frm) {
+	window.localStorage.setItem(
+		"ssh_console_prefill",
+		JSON.stringify({ targets: [{ target_doctype: "Server", target_name: frm.doc.name }] })
+	);
+	frappe.set_route("Form", "SSH Console");
 }
 
 function confirm_allocate_reserved_ip(frm) {

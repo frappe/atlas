@@ -118,6 +118,12 @@ function add_lifecycle_buttons(frm) {
 			})
 		);
 	}
+	// Run Command: reach this guest over its public IPv6 /128. Only painted when
+	// the VM is Running with a known address — the "don't paint a button you'll
+	// refuse" rule the disk actions follow.
+	if (status === "Running" && frm.doc.ipv6_address) {
+		frappe.atlas.add_action(frm, "Run Command", () => run_command(frm));
+	}
 	if (frm.doc.is_proxy && status !== "Terminated") {
 		// Read-only: pull the proxy's three live maps (sites / sni / acme) straight
 		// off its admin sockets and show them against the desired maps, flagging
@@ -125,6 +131,18 @@ function add_lifecycle_buttons(frm) {
 		frappe.atlas.add_action(frm, "Live proxy maps", () => show_proxy_maps(frm));
 	}
 	frappe.atlas.add_danger(frm, "Terminate", () => confirm_terminate(frm));
+}
+
+// Stash this guest as the SSH Console's one target and route there — a
+// pre-targeted entry into the fleet-wide console, not a second execution path.
+function run_command(frm) {
+	window.localStorage.setItem(
+		"ssh_console_prefill",
+		JSON.stringify({
+			targets: [{ target_doctype: "Virtual Machine", target_name: frm.doc.name }],
+		})
+	);
+	frappe.set_route("Form", "SSH Console");
 }
 
 // The three maps a proxy serves, in the order they matter for debugging a route.

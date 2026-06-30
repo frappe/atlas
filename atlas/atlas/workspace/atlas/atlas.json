@@ -307,7 +307,7 @@
    "hidden": 0,
    "is_query_report": 0,
    "label": "Activity",
-   "link_count": 1,
+   "link_count": 3,
    "onboard": 0,
    "type": "Card Break"
   },
@@ -317,6 +317,26 @@
    "label": "Task",
    "link_count": 0,
    "link_to": "Task",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "SSH Console",
+   "link_count": 0,
+   "link_to": "SSH Console",
+   "link_type": "DocType",
+   "onboard": 0,
+   "type": "Link"
+  },
+  {
+   "hidden": 0,
+   "is_query_report": 0,
+   "label": "SSH Command Log",
+   "link_count": 0,
+   "link_to": "SSH Command Log",
    "link_type": "DocType",
    "onboard": 0,
    "type": "Link"
