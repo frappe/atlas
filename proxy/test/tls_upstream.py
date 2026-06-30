@@ -133,13 +133,14 @@ class _TLSV6Server(_V6Server):
 
 	def get_request(self):
 		sock, addr = super().get_request()
+		# The handshake — and thus the servername callback — runs INSIDE wrap_socket
+		# (server_side). The callback already keyed the SNI by the SSL socket's fileno,
+		# which is the SAME fileno the wrapped socket (and the handler) sees, so there is
+		# nothing to re-key here: the handler pops it directly. (A previous version
+		# re-keyed from the raw sock.fileno(), but that key is never written — the
+		# callback's ssl_sock.fileno() already equals tls_sock.fileno() — so the lookup
+		# missed and the echoed sni= was always empty.)
 		tls_sock = self.ssl_context.wrap_socket(sock, server_side=True)
-		# The servername callback (set on the context) stored the SNI keyed by the raw
-		# socket's fileno before the wrap; re-key it onto the wrapped socket's fileno so
-		# the handler (which sees the wrapped socket) can find it.
-		with _sni_lock:
-			sni = _sni_by_fileno.pop(sock.fileno(), "")
-			_sni_by_fileno[tls_sock.fileno()] = sni
 		return tls_sock, addr
 
 
@@ -149,8 +150,9 @@ def _run_tls() -> None:
 	context.load_cert_chain(cert, key)
 
 	def _sni_cb(ssl_sock, server_name, ctx):
-		# Fires DURING the handshake (before wrap_socket returns). Key the SNI by the raw
-		# socket's fileno; get_request re-keys it onto the wrapped socket.
+		# Fires DURING the handshake (inside wrap_socket). Key the SNI by the SSL socket's
+		# fileno — the SAME fileno the wrapped socket and the handler see — so the handler
+		# pops it directly.
 		with _sni_lock:
 			_sni_by_fileno[ssl_sock.fileno()] = server_name or ""
 

@@ -24,7 +24,12 @@ import time
 import pytest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-REGION = "test"
+# The FULL wildcard zone the proxy strips from an SNI/Host — what the Dockerfile
+# writes to /var/lib/nginx/region (active_root_domain().domain), the SAME constant
+# test_proxy.py uses. Deliberately DEEPER than "<region>.frappe.dev" (the extra `.x`
+# label) so the gate exercises the real platform-zone shape; a wildcard SNI must
+# match this exact suffix for sni_router.lua's wildcard fork to terminate it.
+ZONE = "test.x.frappe.dev"
 
 # Host-published ports (docker-compose.yml): 8443->container :443 (the SNI front-door),
 # 8080->container :80 (the ACME fork).
@@ -38,7 +43,7 @@ SNI_BACKEND = f"[{TLS_VM_V6}]:443"  # the :443 SNI map value
 ACME_BACKEND = f"[{TLS_VM_V6}]"  # the :80 ACME map value (bare bracketed; :80 appended)
 
 # A wildcard subdomain for the unregressed-L7 + ACME-guard checks.
-WILDCARD_HOST = f"acme.{REGION}.frappe.dev"
+WILDCARD_HOST = f"acme.{ZONE}"
 
 
 def _exec(*cmd: str, stdin: str | None = None) -> subprocess.CompletedProcess:
@@ -170,6 +175,8 @@ def test_wildcard_sni_still_terminates_at_the_proxy():
 	# empty sites map it 404s (branded), which proves it terminated AT the proxy (a passthrough
 	# would have failed the handshake — the proxy holds the cert the wildcard SNI matches).
 	stream_admin("SYNC-SNI", "{}")
+	acme_admin("POST", "/sync", "{}")  # empty the HTTP sites map too — else a leftover
+	# mapping for this subdomain (from another test sharing the container) 200s instead.
 	res = _curl(FRONT_443, WILDCARD_HOST)
 	# It reached the L7 terminator (a real HTTP status from nginx), not an L4 drop.
 	assert "@@STATUS@@" in res.stdout, res.stdout + res.stderr
@@ -201,6 +208,9 @@ def test_custom_acme_challenge_reaches_the_vm():
 		capture_output=True,
 		text=True,
 	)
+	# Fail loud if the seed didn't land (e.g. the backend image lacks curl) — otherwise
+	# the fetch below 404s for the wrong reason and the assertion misleads.
+	assert _seed.returncode == 0 and "seeded" in _seed.stdout, (_seed.stdout, _seed.stderr)
 	# Fetch the challenge through the proxy's :80, Host = the custom domain.
 	res = subprocess.run(
 		[

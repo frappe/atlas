@@ -294,7 +294,7 @@ def test_upstream_not_pooled_today():
 	# deliberately.
 	_ensure_mapped("pool")
 	before = _upstream_conns()
-	host = f"pool.{REGION}.frappe.dev"
+	host = f"pool.{ZONE}"
 	# One curl, N requests on ONE client keepalive connection (so any pooling is the
 	# proxy's, not the client's).
 	urls = [f"https://{host}:{HTTPS_PORT}/"] * 10
@@ -360,6 +360,13 @@ def test_privkey_stays_root_only_after_user_switch():
 # --- helpers (mirror test_proxy.py's transport) ----------------------------
 
 REGION = "test"
+# The FULL wildcard zone the proxy strips (what the Dockerfile writes to
+# /var/lib/nginx/region), the SAME constant test_proxy.py uses. Deliberately DEEPER
+# than "<region>.frappe.dev" (the extra `.x` label) — and a host MUST be under this
+# exact zone for the now-live :443 SNI front-door (which checks the SNI suffix) to
+# route it to the terminator on 8443. Building hosts as "<sub>.<region>.frappe.dev"
+# (no `.x`) makes the front-door drop them.
+ZONE = "test.x.frappe.dev"
 VM_A = "fd00:a71a:5::a"
 HTTPS_PORT = "8443"
 BUILD_SH = os.path.join(HERE, "..", "build.sh")
@@ -400,7 +407,7 @@ def _ensure_mapped(subdomain: str) -> None:
 
 def _fetch_headers(subdomain: str) -> tuple[int, str]:
 	"""curl the proxy from the host (forced Host/SNI). Returns (status, headers)."""
-	host = f"{subdomain}.{REGION}.frappe.dev"
+	host = f"{subdomain}.{ZONE}"
 	marker = "\n@@STATUS@@"
 	cmd = [
 		"curl",
