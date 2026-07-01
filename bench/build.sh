@@ -85,6 +85,17 @@ esac
 SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 export DEBIAN_FRONTEND=noninteractive
 
+# Fix /var/cache/man ownership so the man-db trigger stops flooding apt with
+# `chmod/remove … Operation not permitted` / `Permission denied` on every
+# locale's CACHEDIR.TAG (harmless, but noisy enough to push apt past our task
+# timeout — "Error: Timeout was reached"). Ubuntu installs `mandb` SETUID `man`,
+# so the dpkg trigger runs it as the `man` user; systemd-tmpfiles ships
+# `d /var/cache/man 0755 man man` to make that cache man-owned. But the base
+# rootfs is populated without tmpfiles ever running, so the whole tree stays
+# root:root and the de-privileged mandb can't rewrite it. Restore the ownership
+# tmpfiles.d already declares (verified on the ubuntu-24.04 image: 52 errors → 0).
+chown -R man:man /var/cache/man
+
 # Run a command as the bench user through a LOGIN shell, so the uv/Node env
 # install.sh set up is in place — exactly how an interactive operator following
 # bench-setup.md reaches `bench`. We prepend bench-cli to PATH explicitly rather
