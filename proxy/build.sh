@@ -387,7 +387,12 @@ install -m 0644 "$SRC_DIR/lua/stream_persist.lua" "$LUA_DIR/stream_persist.lua"
 install -m 0644 "$SRC_DIR/lua/sni_router.lua"      "$LUA_DIR/sni_router.lua"
 install -m 0644 "$SRC_DIR/lua/sni_passthrough.lua" "$LUA_DIR/sni_passthrough.lua"
 install -m 0644 "$SRC_DIR/lua/sni_persist.lua"     "$LUA_DIR/sni_persist.lua"
+# unconfigured.lua: the dummy-cert terminator that serves the branded "Domain not
+# configured" page for a custom domain pointed here but not yet routed (the :8446
+# fork sni_router.lua takes on a named miss instead of dropping at L4).
+install -m 0644 "$SRC_DIR/lua/unconfigured.lua"    "$LUA_DIR/unconfigured.lua"
 install -m 0644 "$SRC_DIR/html/not_found.html" "$HTML_DIR/not_found.html"
+install -m 0644 "$SRC_DIR/html/domain_unconfigured.html" "$HTML_DIR/domain_unconfigured.html"
 # The nginx.org package drops conf.d/default.conf, included by ITS nginx.conf. Our
 # nginx.conf does NOT include conf.d (see the note there), so it never loads — we
 # leave the dpkg-owned conffile in place rather than hand-deleting it and desyncing
@@ -437,13 +442,28 @@ install -d -o root -g nginx -m 0750 "$STATE_DIR/acme"
 # `nginx` does NOT require the key to be group-readable. Leaving it root-only keeps
 # the wildcard private key off every lower-priv principal on the box (CIS 4.1.3).
 install -d -m 0750 "$STATE_DIR/certs/_placeholder"
-if [ ! -f "$STATE_DIR/certs/_placeholder/fullchain.pem" ]; then
-	openssl req -x509 -newkey rsa:2048 -nodes -days 3650 \
-		-keyout "$STATE_DIR/certs/_placeholder/privkey.pem" \
-		-out "$STATE_DIR/certs/_placeholder/fullchain.pem" \
-		-subj "/CN=nginx-placeholder"
-	chmod 0640 "$STATE_DIR/certs/_placeholder/privkey.pem"
-fi
+# Regenerate every bake (no `[ ! -f ]` guard): the cert is a self-signed throwaway
+# the :8446 unconfigured-domain terminator presents, so a fresh one each re-bake
+# costs nothing and — unlike a guard — lets the Subject copy below actually take
+# effect instead of being pinned to whatever the first bake happened to write. NOT
+# the wildcard key (that's push_cert's, untouched).
+#
+# The Subject is the message. A browser never trusts this cert, so the visitor lands
+# on the "your connection is not private" interstitial and can open "view certificate"
+# — the ONLY channel a self-signed cert has to a human, since the interstitial itself
+# renders the typed hostname, not our fields. So every readable DN field is a line of
+# copy the details pane shows verbatim (and, self-signed ⇒ issuer==subject, "Issued By"
+# mirrors it): CN is the headline, O says who we are, OU is the next step + URL. Keep
+# it plain ASCII ≤64 chars/field (RFC 5280 DN bound; PrintableString/UTF8String — no
+# emoji, some cert UIs mangle them). The old CN was "atlas-unconfigured", which read
+# like a bug; this reads like an answer. KEEP THIS -subj byte-identical to
+# atlas.proxy.PLACEHOLDER_CERT_SUBJECT, which regenerate_placeholder_cert runs to push a
+# copy change to a live proxy without a full re-bake — the two must write the same cert.
+openssl req -x509 -newkey rsa:2048 -nodes -days 3650 \
+	-keyout "$STATE_DIR/certs/_placeholder/privkey.pem" \
+	-out "$STATE_DIR/certs/_placeholder/fullchain.pem" \
+	-subj "/CN=This domain is not connected to a site yet/O=Frappe Cloud/OU=Connect it in your dashboard: frappe.dev\/domains"
+chmod 0640 "$STATE_DIR/certs/_placeholder/privkey.pem"
 # Point the flat path nginx reads at the placeholder region (repointed by
 # build_proxy once the real region is known). -n so we replace the symlink
 # itself, not follow it into the target dir on a re-run.

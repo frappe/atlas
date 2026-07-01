@@ -601,33 +601,44 @@ def test_default_server_handles_bare_ip_host():
 		assert terminator(host)[0] == "404", f"bare-IP host {host!r} did not get branded 404"
 
 
-def test_front_door_drops_unroutable_sni():
+def test_front_door_forks_unroutable_sni():
 	# The public :443 SNI front-door (sni_router.lua) routes raw TLS by the ClientHello
-	# SNI: a name under the wildcard zone → the terminator (8443), a known custom domain
-	# → the strip-path (8445), anything else → DROP at L4 (ngx.exit(ngx.ERROR)). So an
-	# SNI that is neither — a foreign domain, a bare IP with no SNI, or the bare zone with
-	# no subdomain label — gets no handshake at all: curl fails (non-zero rc / 000), not a
-	# branded 404. The 404 is the terminator's answer for a name that DID reach it
-	# (test_default_server_handles_bare_ip_host, via --haproxy-protocol); this is the
-	# layer below — junk never gets past the front-door to be 404'd.
+	# SNI: a name under the wildcard zone → the wildcard terminator (8443), a known custom
+	# domain → the strip-path (8445). The two miss cases SPLIT:
+	#   - a NAMED miss (a foreign domain, or the bare zone with no subdomain label) → the
+	#     dummy-cert terminator (8446), which serves the branded "Domain not configured"
+	#     page with status 404 over the self-signed placeholder cert (-k past the warning);
+	#   - an SNI-LESS connection (a bare IP — curl sends no SNI for an IP literal) → DROP at
+	#     L4 (ngx.exit(ngx.ERROR)), no handshake, curl fails (non-zero rc / 000).
 	admin("PUT", "/map/acme", VM_A)  # a populated map must not matter
-	for host in ("acme.wrongregion.example.com", "127.0.0.1", ZONE):
-		cmd = [
-			"curl",
-			"-sk",
-			"-o",
-			"/dev/null",
-			"-w",
-			"%{http_code}",
-			"--resolve",
-			f"{host}:{HTTPS.rpartition(':')[2]}:127.0.0.1",
-			f"https://{host}:{HTTPS.rpartition(':')[2]}/",
-		]
-		res = subprocess.run(cmd, capture_output=True, text=True)
-		status = res.stdout.strip()
-		# L4 drop: no TLS handshake completes → curl exits non-zero and reports 000.
-		assert res.returncode != 0, f"{host!r} unexpectedly completed (rc=0, status={status})"
-		assert status in ("000", ""), f"{host!r} got HTTP {status}, expected an L4 drop"
+
+	def front(host: str) -> subprocess.CompletedProcess:
+		return subprocess.run(
+			[
+				"curl",
+				"-sk",
+				"-o",
+				"/dev/null",
+				"-w",
+				"%{http_code}",
+				"--resolve",
+				f"{host}:{HTTPS.rpartition(':')[2]}:127.0.0.1",
+				f"https://{host}:{HTTPS.rpartition(':')[2]}/",
+			],
+			capture_output=True,
+			text=True,
+		)
+
+	# Named misses now terminate on the dummy cert and serve the branded page (404).
+	for host in ("acme.wrongregion.example.com", ZONE):
+		res = front(host)
+		assert res.returncode == 0, f"{host!r} did not complete (rc={res.returncode})"
+		assert res.stdout.strip() == "404", f"{host!r} got HTTP {res.stdout.strip()}, expected branded 404"
+
+	# A bare-IP client sends no SNI → still an L4 drop, no handshake.
+	res = front("127.0.0.1")
+	assert res.returncode != 0, f"bare IP unexpectedly completed (rc=0, status={res.stdout.strip()})"
+	assert res.stdout.strip() in ("000", ""), f"bare IP got HTTP {res.stdout.strip()}, expected an L4 drop"
 
 
 # --- admin route/method dispatch -------------------------------------------
