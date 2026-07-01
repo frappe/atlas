@@ -75,3 +75,61 @@ def create_vm(
 		"public_ipv4": vm.public_ipv4,
 		"gateway_url": None,
 	}
+
+
+@frappe.whitelist()
+def capacity() -> dict:
+	"""What can this region provision right now? — Central's pre-create check.
+
+	Central speaks in resources (CPU / RAM / disk), not Atlas size presets, and
+	never sees hosts — placement is Atlas's concern. So this answers two things in
+	resource terms:
+
+	- `available`: can *some* Active host seat a minimal VM? Central shows
+	  "Capacity not available" when False. Checked via `largest_vm` returning a
+	  shape at all — an Active host exists with room.
+	- `largest_vm`: the biggest single VM shape placeable right now —
+	  `{vcpus, memory_megabytes, disk_gigabytes}` — the free headroom on the best
+	  host (a VM lands on one host, so this is a real co-schedulable shape, not a
+	  fleet sum). `null` when no Active host exists.
+
+	`unmeasured` is True when the winning host has an axis the on-host agent hasn't
+	reported yet: `largest_vm` then contains large sentinel values, not
+	measurements, and Central should treat the shape as "effectively unlimited /
+	size unknown" rather than a fact. It goes False once the agent stamps totals.
+
+	`available` reuses placement's real gate (`default_server`) for the smallest
+	provisionable VM, so the pre-check and the create-time gate can never disagree
+	on logic, only on timing.
+
+	Advisory: the authoritative gate is placement's NoCapacityError at create time
+	(capacity can change between this call and the create). Runs with the Central
+	token, like create_vm — operator orchestration, not desk RBAC.
+	"""
+	from atlas.atlas.placement import NoCapacityError, default_server
+	from atlas.atlas.placement import largest_vm as _largest_vm
+	from atlas.atlas.sizes import SIZE_PRESETS
+
+	# Floor of "can we provision anything?" — the smallest preset must fit some
+	# host under the same predicate the create path uses.
+	smallest = next(iter(SIZE_PRESETS.values()))
+	try:
+		default_server(
+			float(smallest["cpu_max_cores"]),
+			float(smallest["memory_megabytes"]),
+			float(smallest["disk_gigabytes"]),
+		)
+		available = True
+	except NoCapacityError:
+		available = False
+
+	shape = _largest_vm()
+	if shape is None:
+		return {"available": False, "unmeasured": False, "largest_vm": None}
+
+	unmeasured = shape.pop("unmeasured")
+	return {
+		"available": available,
+		"unmeasured": unmeasured,
+		"largest_vm": shape,
+	}

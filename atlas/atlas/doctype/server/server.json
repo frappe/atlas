@@ -30,6 +30,13 @@
   "jailer_version",
   "kernel_version",
   "cli_ready",
+  "section_break_capacity",
+  "vcpus_total",
+  "memory_megabytes_total",
+  "column_break_capacity",
+  "pool_disk_gigabytes_total",
+  "pool_data_percent",
+  "capacity_reported_at",
   "section_break_metadata",
   "provider_metadata"
  ],
@@ -177,6 +184,51 @@
    "fieldname": "cli_ready",
    "fieldtype": "Check",
    "label": "CLI Ready",
+   "read_only": 1
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "section_break_capacity",
+   "fieldtype": "Section Break",
+   "label": "Capacity"
+  },
+  {
+   "description": "Physical vCPU count reported by the on-host agent (nproc). 0/unset means uncatalogued — the host reports unlimited capacity and placement vouches for it by its Active status.",
+   "fieldname": "vcpus_total",
+   "fieldtype": "Int",
+   "label": "vCPUs Total",
+   "read_only": 1
+  },
+  {
+   "description": "Physical host RAM in MB, reported by the agent (/proc/meminfo MemTotal). Hard fit — no oversubscription.",
+   "fieldname": "memory_megabytes_total",
+   "fieldtype": "Int",
+   "label": "Memory Total (MB)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_capacity",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Thin-pool size in GB the VMs draw from (agent vgs/lvs), not raw root disk. Hard fit — no oversubscription.",
+   "fieldname": "pool_disk_gigabytes_total",
+   "fieldtype": "Int",
+   "label": "Pool Disk Total (GB)",
+   "read_only": 1
+  },
+  {
+   "description": "Live thin-pool fullness (agent lvs -o data_percent). Advisory alert/block signal, not the placement predicate.",
+   "fieldname": "pool_data_percent",
+   "fieldtype": "Float",
+   "label": "Pool Data Percent",
+   "read_only": 1
+  },
+  {
+   "description": "When the agent last stamped the totals above. A host silent past a staleness threshold reports as uncatalogued (unlimited) rather than trusting stale totals.",
+   "fieldname": "capacity_reported_at",
+   "fieldtype": "Datetime",
+   "label": "Capacity Reported At",
    "read_only": 1
   },
   {

@@ -48,18 +48,32 @@ def default_image() -> str:
 	return active[0]
 
 
-def default_server(required_vcpus: float) -> str:
-	"""The first Active server with room for `required_vcpus`.
+def _fits(axis: dict, need: float) -> bool:
+	"""Does `need` more of this resource fit on this axis?
 
-	`required_vcpus` is a CPU *bandwidth* cost (cpu_max_cores units), matching
-	how `capacity_for_server` sums usage — a 1/16-vCPU machine needs 0.0625, not
-	a whole vCPU. Capacity is the same accounting the desk capacity helper uses
-	(atlas/api/server_capacity.py): a server's *effective* vCPU budget (physical
-	total times `Atlas Settings.overprovision_factor`) minus the bandwidth of its
-	non-Terminated VMs. Servers whose size has no known vCPU total — a size we
-	haven't catalogued, or a self-managed host with no slug — report
-	`effective_vcpus is None` and are treated as having unlimited room: the
-	operator vouches for them by marking them Active. Raises when nothing fits.
+	`effective is None` means the host is uncatalogued on this axis → unlimited
+	room (the operator vouched for it by marking it Active), so anything fits.
+	Otherwise the axis fits when used + need stays within the effective budget."""
+	return axis["effective"] is None or axis["used"] + need <= axis["effective"]
+
+
+def default_server(
+	required_vcpus: float,
+	required_memory_mb: float,
+	required_disk_gb: float,
+) -> str:
+	"""The first Active server with room on all three axes: CPU, RAM, pool disk.
+
+	`required_vcpus` is a CPU *bandwidth* cost (cpu_max_cores units), matching how
+	`capacity_for_server` sums usage — a 1/16-vCPU machine needs 0.0625, not a
+	whole vCPU. `required_memory_mb` and `required_disk_gb` are the VM's memory
+	and reserved disk (root + data). Capacity is the same accounting the desk
+	capacity helper uses (atlas/api/server_capacity.py): each axis's *effective*
+	budget minus what its non-Terminated VMs already spend, and a VM is placed
+	only where it fits on *every* axis. An axis with no known total — the agent
+	hasn't reported it, or (for CPU) the size isn't catalogued — reports
+	`effective is None` and is unlimited on that axis: the operator vouches for
+	the host by marking it Active. Raises when nothing fits on all three.
 
 	Runs with ignore_permissions: this is system placement, not desk RBAC —
 	Central (the operator) triggers it without needing Server read access; the
@@ -77,10 +91,82 @@ def default_server(required_vcpus: float) -> str:
 		frappe.throw(_("No capacity available — contact your operator."), NoCapacityError)
 	for server in servers:
 		capacity = capacity_for_server(server)
-		budget = capacity["effective_vcpus"]
-		if budget is None or capacity["used_vcpus"] + required_vcpus <= budget:
+		if (
+			_fits(capacity["cpu"], required_vcpus)
+			and _fits(capacity["memory"], required_memory_mb)
+			and _fits(capacity["disk"], required_disk_gb)
+		):
 			return server
 	frappe.throw(_("No capacity available — contact your operator."), NoCapacityError)
+
+
+# Sentinel free-headroom for an axis whose host total is unmeasured (agent hasn't
+# reported it). "Unlimited" is real to placement but useless as a number to
+# Central, so we hand back an obviously-fake large value and flag the whole shape
+# `unmeasured` — Central treats it as "effectively unlimited", never as a fact.
+_UNMEASURED_VCPUS = 1024
+_UNMEASURED_MEMORY_MB = 1024 * 1024  # 1 TiB
+_UNMEASURED_DISK_GB = 1024 * 1024  # 1 PiB
+
+
+def _axis_free(axis: dict, sentinel: float) -> tuple[float, bool]:
+	"""Free headroom on one axis, and whether it's measured.
+
+	Measured axis → `effective - used` (clamped at 0). Uncatalogued axis
+	(`effective is None`) → the sentinel, flagged unmeasured."""
+	if axis["effective"] is None:
+		return sentinel, False
+	return max(0.0, axis["effective"] - axis["used"]), True
+
+
+def largest_vm() -> dict | None:
+	"""The largest single VM shape provisionable right now, or None if nothing fits.
+
+	"Largest" is the free headroom (`effective - used` per axis) on the single
+	*best* Active host — best = the most total free resources. That triple is a
+	genuinely co-schedulable shape: all three axes are simultaneously free on that
+	one host, so any VM whose cpu/memory/disk are each within it fits there (a VM
+	can't span hosts, so a fleet sum would be a lie). An axis the agent hasn't
+	measured contributes a large sentinel and marks the shape `unmeasured`.
+
+	Returns `{vcpus, memory_megabytes, disk_gigabytes, unmeasured}` for the winner,
+	or None when there is no Active host at all. Central asks this in resources; it
+	never sees hosts."""
+	from atlas.atlas.api.server_capacity import capacity_for_server
+
+	servers = frappe.get_all(
+		"Server",
+		filters={"status": "Active"},
+		pluck="name",
+		order_by="creation asc",
+		ignore_permissions=True,
+	)
+	if not servers:
+		return None
+
+	best = None
+	for server in servers:
+		c = capacity_for_server(server)
+		free_cpu, m_cpu = _axis_free(c["cpu"], _UNMEASURED_VCPUS)
+		free_mem, m_mem = _axis_free(c["memory"], _UNMEASURED_MEMORY_MB)
+		free_disk, m_disk = _axis_free(c["disk"], _UNMEASURED_DISK_GB)
+		measured = m_cpu and m_mem and m_disk
+		# Rank measured hosts ahead of unmeasured ones: a real free-headroom shape
+		# beats a sentinel one, so a fully-reported host always defines largest_vm
+		# when one exists — an unmeasured host only wins when NO measured host can.
+		# (Without this, the astronomical sentinels would dwarf any real host's
+		# score and hide it behind a fake shape.) Within a class, most total free
+		# resources wins; memory dominates the raw MB sum, fine as a tiebreak.
+		score = (1 if measured else 0, free_cpu + free_mem + free_disk)
+		shape = {
+			"vcpus": int(free_cpu),
+			"memory_megabytes": int(free_mem),
+			"disk_gigabytes": int(free_disk),
+			"unmeasured": not measured,
+		}
+		if best is None or score > best[0]:
+			best = (score, shape)
+	return best[1]
 
 
 def apply_user_defaults(virtual_machine) -> None:
@@ -96,8 +182,14 @@ def apply_user_defaults(virtual_machine) -> None:
 		# Bandwidth cost, matching capacity_for_server's used sum. before_validate
 		# defaults cpu_max_cores to vcpus, but apply_user_defaults runs in
 		# before_insert (before before_validate), so fall back to vcpus here too.
-		required = float(virtual_machine.cpu_max_cores or virtual_machine.vcpus or 1)
-		virtual_machine.server = default_server(required)
+		required_vcpus = float(virtual_machine.cpu_max_cores or virtual_machine.vcpus or 1)
+		# Memory and reserved disk (root + data), matching capacity_for_server's
+		# per-axis used sums — the VM must fit on all three axes.
+		required_memory = float(virtual_machine.memory_megabytes or 0)
+		required_disk = float(
+			(virtual_machine.disk_gigabytes or 0) + (virtual_machine.data_disk_gigabytes or 0)
+		)
+		virtual_machine.server = default_server(required_vcpus, required_memory, required_disk)
 
 
 def default_bench_snapshot() -> str:

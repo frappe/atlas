@@ -58,6 +58,16 @@ class TestPlacement(IntegrationTestCase):
 			frappe.db.set_value("Virtual Machine Image", name, "is_active", 0)
 		for name in frappe.get_all("Server", filters={"status": "Active"}, pluck="name"):
 			frappe.db.set_value("Server", name, "status", "Draining")
+		# Servers are reused by title across tests; a memory/disk total stamped by
+		# one boundary test would leak into the CPU-only tests and refuse a VM on
+		# an axis they don't mean to exercise. Clear every agent-reported total so
+		# each test starts with only its own axes catalogued.
+		for name in frappe.get_all("Server", pluck="name"):
+			frappe.db.set_value(
+				"Server",
+				name,
+				{"vcpus_total": 0, "memory_megabytes_total": 0, "pool_disk_gigabytes_total": 0},
+			)
 
 	def _new_machine(self, **overrides):
 		"""Insert a VM the way the Central API does — no server, no image, and
@@ -163,6 +173,47 @@ class TestPlacement(IntegrationTestCase):
 		server = self._full_4vcpu_server()
 		vm = self._new_machine()
 		self.assertEqual(vm.server, server.name, "16x factor leaves room")
+
+	def test_memory_full_refuses_even_with_cpu_and_disk_room(self) -> None:
+		# A host with plenty of CPU (4 vCPU) but only 512 MB of RAM reported,
+		# already spent by one VM, refuses a second VM on the memory axis alone.
+		server = make_server(
+			self.provider,
+			title="atlas-placement-server",
+			size="DigitalOcean/s-4vcpu-8gb",
+			ipv6_address="2001:db8:1::1",
+			ipv6_prefix="2001:db8:1::/64",
+			ipv6_virtual_machine_range="2001:db8:1::/124",
+		)
+		image = make_image("atlas-placement-image")
+		frappe.db.set_value("Virtual Machine Image", image.name, "is_active", 1)
+		frappe.db.set_value("Server", server.name, "status", "Active")
+		# Only RAM is catalogued+tight; CPU (slug) and disk (unset) have room.
+		frappe.db.set_value("Server", server.name, "memory_megabytes_total", 512)
+		frappe.set_user(_acting_user())
+		self._new_machine(vcpus=1, memory_megabytes=512, disk_gigabytes=4)
+		with self.assertRaises(NoCapacityError):
+			self._new_machine(vcpus=1, memory_megabytes=512, disk_gigabytes=4)
+
+	def test_disk_full_refuses_even_with_cpu_and_memory_room(self) -> None:
+		# Same shape on the disk axis: pool disk total of 10 GB, spent by one VM,
+		# refuses a second even though CPU and RAM have room.
+		server = make_server(
+			self.provider,
+			title="atlas-placement-server",
+			size="DigitalOcean/s-4vcpu-8gb",
+			ipv6_address="2001:db8:1::1",
+			ipv6_prefix="2001:db8:1::/64",
+			ipv6_virtual_machine_range="2001:db8:1::/124",
+		)
+		image = make_image("atlas-placement-image")
+		frappe.db.set_value("Virtual Machine Image", image.name, "is_active", 1)
+		frappe.db.set_value("Server", server.name, "status", "Active")
+		frappe.db.set_value("Server", server.name, "pool_disk_gigabytes_total", 10)
+		frappe.set_user(_acting_user())
+		self._new_machine(vcpus=1, memory_megabytes=512, disk_gigabytes=10)
+		with self.assertRaises(NoCapacityError):
+			self._new_machine(vcpus=1, memory_megabytes=512, disk_gigabytes=10)
 
 	def test_ambiguous_image_throws(self) -> None:
 		server = make_server(
