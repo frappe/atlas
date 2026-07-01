@@ -11,7 +11,9 @@ each carry a `_make_provider` reimplementation.
 import json
 import pathlib
 import tempfile
+from contextlib import contextmanager
 from typing import Any
+from unittest.mock import patch
 
 import frappe
 import frappe.utils.password
@@ -23,6 +25,23 @@ _FAKE_KEY_PEM = "-----BEGIN OPENSSH PRIVATE KEY-----\nfake\n-----END OPENSSH PRI
 
 DEFAULT_DIGITALOCEAN_SIZE = "DigitalOcean/s-2vcpu-4gb-intel"
 DEFAULT_DIGITALOCEAN_IMAGE = "DigitalOcean/ubuntu-24-04-x64"
+
+
+@contextmanager
+def no_commit_enqueue():
+	"""Patch frappe.enqueue AND frappe.db.commit for the duration of a call
+	into a commit-before-enqueue code path (e.g. VirtualMachineImage.sync_to_server).
+
+	That pattern commits before enqueuing so the background worker's separate
+	connection can see the row — a real production need, but inside a test it
+	flushes past IntegrationTestCase's rollback and leaks Server/Task rows
+	permanently (they then compound: next run's Server.after_insert fan-out
+	iterates over every previously-leaked Active server too). Patching only
+	frappe.enqueue leaves the commit live; both must be patched together.
+
+	Yields the enqueue Mock so callers can still assert on it."""
+	with patch("frappe.db.commit"), patch("frappe.enqueue") as enqueue:
+		yield enqueue
 
 
 def _ensure_fake_ssh_key_path() -> str:
