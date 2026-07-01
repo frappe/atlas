@@ -53,8 +53,15 @@ def on_vm_after_insert(doc, method=None):
 
 
 def on_vm_update(doc, method=None):
-	if _enabled() and _status_changed(doc):
+	if not _enabled():
+		return
+	if _status_changed(doc):
 		_emit("vm.status_changed", _vm_payload(doc), doc)
+	elif doc.flags.get("resizing"):
+		# A resize rewrites the machine's shape (vcpus/memory/disk) but leaves the VM
+		# Stopped, so no status_changed fires — emit an explicit resized event so
+		# Central's mirror picks up the new shape instead of silently drifting.
+		_emit("vm.resized", _vm_payload(doc), doc)
 
 
 def on_vm_trash(doc, method=None):

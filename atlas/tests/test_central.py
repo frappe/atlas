@@ -88,11 +88,12 @@ def _patched_emit():
 class TestCentralReport(IntegrationTestCase):
 	_patched_emit = staticmethod(_patched_emit)
 
-	def _vm(self, status="Running", before_status="Pending"):
+	def _vm(self, status="Running", before_status="Pending", resizing=False):
 		doc = SimpleNamespace(
 			name="vm-1", title="vm-1", status=status, server="srv-1", doctype="Virtual Machine", tenant=None
 		)
 		doc.get = lambda key, default=None: getattr(doc, key, default)
+		doc.flags = frappe._dict(resizing=resizing)
 		doc.get_doc_before_save = lambda: (
 			SimpleNamespace(status=before_status) if before_status is not None else None
 		)
@@ -144,6 +145,24 @@ class TestCentralReport(IntegrationTestCase):
 		):
 			central_report.on_vm_update(self._vm(status="Running", before_status="Running"))
 		enqueue.assert_not_called()
+
+	def test_resize_emits_resized_without_status_change(self) -> None:
+		# A resize keeps the VM Stopped (no status flip), so the flags.resizing
+		# breadcrumb is what makes us emit vm.resized carrying the new shape.
+		with self._patched_emit() as enqueue:
+			central_report.on_vm_update(self._vm(status="Stopped", before_status="Stopped", resizing=True))
+		enqueue.assert_called_once()
+		kwargs = enqueue.call_args.kwargs
+		self.assertEqual(kwargs["event_type"], "vm.resized")
+		self.assertEqual(kwargs["payload"]["name"], "vm-1")
+
+	def test_status_change_wins_over_resizing(self) -> None:
+		# A resize that also flips status reports the status change (the mirror upsert
+		# is identical either way); we never double-emit.
+		with self._patched_emit() as enqueue:
+			central_report.on_vm_update(self._vm(status="Stopped", before_status="Running", resizing=True))
+		enqueue.assert_called_once()
+		self.assertEqual(enqueue.call_args.kwargs["event_type"], "vm.status_changed")
 
 	def test_after_insert_emits_created(self) -> None:
 		with self._patched_emit() as enqueue:
