@@ -96,9 +96,16 @@ def run(image: str = IMAGE, server: str = "", teardown: bool = False) -> None:
 			_dump_units(conn, key, guest)
 			_dump_processes(conn, key, guest)
 			_dump_cpu(conn, key, guest)
+			_dump_boot_bound(conn, key, guest)
+			_dump_pressure(conn, key, guest)
 			_dump_memory(conn, key, guest)
+			_dump_cgroup_memory(conn, key, guest)
+			_dump_mariadb(conn, key, guest)
+			_dump_modules(conn, key, guest)
 			_dump_disk(conn, key, guest)
+			_dump_net_ssh(conn, key, guest)
 			_dump_packages(conn, key, guest)
+			_dump_package_classes(conn, key, guest)
 			_dump_host_overhead(conn, key, vm_name, guest)
 	except Exception:
 		traceback.print_exc()
@@ -275,6 +282,13 @@ else
 fi
 echo '--- root fs used bytes (du of / one level) ---'
 du -xhd1 / 2>/dev/null | sort -rh | head -15
+echo '--- /var breakdown (the usual rootfs hog: apt cache, logs, mysql, journal) ---'
+du -xhd2 /var 2>/dev/null | sort -rh | head -20
+echo '--- biggest single dirs anywhere on rootfs (top 15) ---'
+du -xhd3 / 2>/dev/null | sort -rh | head -15
+echo '--- apt archive + journal + log sizes (reclaimable) ---'
+du -sh /var/cache/apt/archives /var/log /var/lib/apt/lists 2>/dev/null
+journalctl --disk-usage 2>/dev/null
 """
 	print(_guest(conn, key, guest, payload))
 
@@ -288,6 +302,183 @@ echo '--- top 20 by installed-size (KB) ---'
 dpkg-query -f '${Installed-Size}\t${binary:Package}\n' -W 2>/dev/null | sort -rn | head -20
 echo '--- FULL package list (name version) ---'
 dpkg-query -f '${binary:Package}\t${Version}\n' -W 2>/dev/null | sort
+"""
+	print(_guest(conn, key, guest, payload))
+
+
+def _dump_boot_bound(conn, key, guest):
+	_section("Boot bound — was boot CPU-bound, IO-bound, or throttled? (iowait vs busy)")
+	# The single most useful "what's the blocker" number: split the boot's cumulative
+	# jiffies into user+system (compute) vs iowait (disk/blk stall). A boot that is
+	# mostly iowait is disk-bound; mostly system is compute-bound; steal>0 means the
+	# host is throttling this vCPU. cpu.max on the guest's own root cgroup shows the
+	# cgroup cap (the throttle we deliberately apply on tiny bare-boot VMs).
+	payload = r"""
+awk '/^cpu /{u=$2;n=$3;s=$4;io=$6;irq=$7;sirq=$8;st=$9; tot=u+n+s+io+irq+sirq+st;
+  if(tot==0)tot=1;
+  printf "compute(user+sys+nice)=%d (%.1f%%)  iowait=%d (%.1f%%)  irq+softirq=%d  steal=%d (%.1f%%)\n",
+    u+n+s,100*(u+n+s)/tot, io,100*io/tot, irq+sirq, st,100*st/tot}' /proc/stat
+echo '--- steal (host throttling this vCPU): nonzero => host oversubscribed/capped ---'
+grep -E '^cpu[0-9]' /proc/stat | awk '{print $1" steal="$9}'
+echo '--- guest root cgroup cpu cap (cpu.max: "<quota> <period>", max=uncapped) ---'
+cat /sys/fs/cgroup/cpu.max 2>/dev/null || echo '(no cgroup2 cpu.max)'
+echo '--- per-slice cpu.stat (throttled time if capped) ---'
+for s in system.slice user.slice init.scope; do
+  f=/sys/fs/cgroup/$s/cpu.stat
+  [ -r "$f" ] && { echo "== $s =="; grep -E 'nr_throttled|throttled_usec|usage_usec' $f; }
+done
+echo '--- pressure-derived: was anything STALLED waiting on IO during boot? ---'
+cat /proc/pressure/io 2>/dev/null
+"""
+	print(_guest(conn, key, guest, payload))
+
+
+def _dump_pressure(conn, key, guest):
+	_section("PSI pressure — CPU / IO / MEMORY stall (the definitive 'what are we bound on')")
+	# /proc/pressure is the kernel's own verdict on resource contention. `some avg`
+	# = share of time at least one task stalled on that resource; `full` = everyone
+	# stalled. High io.some at idle => disk-bound; high cpu.some => CPU-bound; any
+	# memory.full => memory-bound (reclaim thrash). This directly answers the
+	# "CPU/Memory/Disk-IO/Network bound?" question with a kernel-authoritative number.
+	payload = r"""
+for r in cpu io memory; do
+  echo "== /proc/pressure/$r =="
+  cat /proc/pressure/$r 2>/dev/null || echo '(PSI not available)'
+done
+echo '--- per-slice memory.pressure (which cgroup is starved) ---'
+for s in system.slice user.slice; do
+  f=/sys/fs/cgroup/$s/memory.pressure
+  [ -r "$f" ] && { echo "== $s =="; cat $f; }
+done
+"""
+	print(_guest(conn, key, guest, payload))
+
+
+def _dump_cgroup_memory(conn, key, guest):
+	_section("Memory by cgroup slice/scope (where the RAM actually lives, by purpose)")
+	# current.memory per systemd slice/scope answers "how is memory distributed by
+	# group/purpose" far better than per-proc PSS: MariaDB, redis, nginx, gunicorn
+	# each live in their own user@ scope. Walk cgroup2 memory.current and label.
+	payload = r"""
+root=/sys/fs/cgroup
+printf '%-52s %10s\n' CGROUP MEM_MB
+find $root -name memory.current 2>/dev/null | while read f; do
+  d=$(dirname $f); cur=$(cat $f 2>/dev/null)
+  [ "${cur:-0}" -gt 5242880 ] || continue    # skip <5MB noise
+  name=${d#$root/}; [ -z "$name" ] && name='(root)'
+  printf '%-52s %10.1f\n' "$name" "$(awk -v c=$cur 'BEGIN{print c/1048576}')"
+done | sort -k2 -rn | head -25
+echo '--- anon vs file vs kernel split (root memory.stat) ---'
+grep -E '^anon |^file |^kernel |^slab |^sock |^kernel_stack |^pagetables ' $root/memory.stat 2>/dev/null
+"""
+	print(_guest(conn, key, guest, payload))
+
+
+def _dump_mariadb(conn, key, guest):
+	_section("MariaDB memory — buffer pool, engine footprint (the biggest single consumer)")
+	# MariaDB is the boot critical-chain gate AND the largest RSS. Pull the configured
+	# innodb_buffer_pool_size (what we'd shrink to lower the memory floor), the actual
+	# RSS of the mariadbd process, and the effective my.cnf so the floor sweep knows
+	# its starting point. Socket path is bench-cli's dedicated `atlas` instance.
+	payload = r"""
+sock=$(ls /var/run/mysqld/*.sock /run/mysqld/*.sock 2>/dev/null | head -1)
+echo "socket=$sock"
+# Try to read runtime InnoDB vars via the unix socket as the bench sql user, else via config.
+mysql_cmd() { mysql --socket="$sock" -N -B 2>/dev/null -e "$1"; }
+echo '--- runtime InnoDB memory vars (if reachable) ---'
+mysql_cmd "SELECT @@innodb_buffer_pool_size/1048576 AS buf_pool_mb, @@innodb_buffer_pool_instances AS instances, @@innodb_log_file_size/1048576 AS log_mb, @@max_connections AS maxconn, @@key_buffer_size/1048576 AS key_buf_mb;" || echo '(socket auth unavailable — reading config instead)'
+echo '--- configured innodb/buffer settings in my.cnf tree ---'
+grep -rniE 'innodb_buffer_pool_size|innodb_buffer_pool_instances|innodb_log_file_size|innodb_log_buffer|key_buffer_size|max_connections|performance_schema|table_open_cache|tmp_table_size' /etc/mysql /etc/my.cnf* 2>/dev/null | grep -vE '^\s*#' | head -30
+echo '--- mariadbd process RSS ---'
+ps -eo pid,rss,comm 2>/dev/null | awk '/maria|mysqld/{printf "pid=%s rss=%.0fMB comm=%s\n",$1,$2/1024,$3}'
+echo '--- mariadbd cgroup memory.current ---'
+mp=$(pgrep -x mariadbd || pgrep -x mysqld); [ -n "$mp" ] && {
+  cg=$(awk -F: '/^0::/{print $3}' /proc/$mp/cgroup)
+  cur=/sys/fs/cgroup$cg/memory.current
+  [ -r "$cur" ] && printf 'mariadb scope memory.current=%.0fMB\n' "$(awk -v c=$(cat $cur) 'BEGIN{print c/1048576}')"
+}
+"""
+	print(_guest(conn, key, guest, payload))
+
+
+def _dump_modules(conn, key, guest):
+	_section("Kernel modules — what's loaded, sizes, and what we could strip")
+	# Answers "is boot/net/memory cost coming from modules; can we disable them; what
+	# modules are we running". lsmod with sizes, sorted; flag the ones we know are
+	# load-bearing (virtio_*, zfs, spl) vs candidates. Also kernel image size + the
+	# builtin-vs-modular split (only modular ones can be stripped without a rebuild).
+	payload = r"""
+echo '--- loaded modules (size KB, refcount), largest first ---'
+lsmod | tail -n +2 | awk '{printf "%-24s %10.1fKB refs=%s deps=%s\n",$1,$2/1024,$3,$4}' | sort -k2 -rn
+echo -n 'module count: '; lsmod | tail -n +2 | wc -l
+echo -n 'total module memory: '; lsmod | tail -n +2 | awk '{s+=$2} END{printf "%.1fMB\n",s/1048576}'
+echo '--- ZFS/SPL footprint (largest by design) ---'
+lsmod | awk '/^zfs|^spl|^zlua|^zzstd|^zcommon|^znvpair|^zavl|^zunicode|^icp/{s+=$2; print $1" "$2/1024"KB"} END{printf "zfs-family total: %.1fMB\n",s/1048576}'
+echo '--- kernel image + modules-on-disk size ---'
+ls -la /boot/vmlinuz* 2>/dev/null | awk '{print $5" "$9}'
+du -sh /lib/modules/$(uname -r) 2>/dev/null
+echo '--- modules-load.d pins (what we force-load at boot) ---'
+cat /etc/modules-load.d/*.conf 2>/dev/null | grep -vE '^\s*#|^\s*$'
+echo '--- kernel version / cmdline ---'
+uname -r; cat /proc/cmdline
+"""
+	print(_guest(conn, key, guest, payload))
+
+
+def _dump_net_ssh(conn, key, guest):
+	_section("Network + SSH readiness — what gates first-connect (why SSH/ping 'slow')")
+	# The "slow SSH/network" question: SSH readiness is gated by (a) the network being
+	# up (link + v6 addr + route) and (b) the ssh LISTENER being available. CAVEAT:
+	# Ubuntu ships ssh SOCKET-ACTIVATED — ssh.socket binds :22 early (watch its
+	# ActiveEnterTimestamp, ~1s), and ssh.service (the sshd process) only spawns on
+	# the FIRST connection. So sshd's "Server listening" journal line is when the
+	# host first CONNECTED, not when SSH became reachable — do NOT read it as a delay.
+	# The true "SSH reachable" moment is max(network-online, ssh.socket active). A
+	# bench VM adds no net units over base — if first-connect is later on bench, it's
+	# boot-time CPU contention (baking workers/MariaDB), not networking.
+	payload = r"""
+echo '--- when did network-online / ssh.socket / ssh.service become active (monotonic) ---'
+echo '    (ssh.socket = TRUE reachable moment; ssh.service = first-connect, NOT a delay)'
+for u in systemd-networkd.service systemd-networkd-wait-online.service network-online.target ssh.socket ssh.service sshd.service; do
+  t=$(systemctl show -p ActiveEnterTimestampMonotonic --value $u 2>/dev/null)
+  [ -n "$t" ] && [ "$t" != "0" ] && printf '%-40s +%.2fs\n' "$u" "$(awk -v t=$t 'BEGIN{print t/1e6}')"
+done
+echo '--- sshd first-listen from journal (= first CONNECT under socket activation) ---'
+journalctl -u ssh -u sshd --no-pager -o short-monotonic 2>/dev/null | grep -iE 'listening|server listening|Server listening' | head -3
+echo '--- link + addr + route (is v6 up, any DAD/tentative delay) ---'
+ip -6 addr show scope global 2>/dev/null | grep -E 'inet6|tentative|dadfailed'
+ip -6 route show default 2>/dev/null
+echo '--- net device counters (drops/errors would explain slow) ---'
+ip -s link show 2>/dev/null | grep -A2 -E '^[0-9]+: (eth|ens|enp)' | head -12
+echo '--- sshd config knobs that slow first connect (DNS, GSSAPI) ---'
+grep -iE '^UseDNS|^GSSAPIAuthentication|^UsePAM' /etc/ssh/sshd_config /etc/ssh/sshd_config.d/*.conf 2>/dev/null
+"""
+	print(_guest(conn, key, guest, payload))
+
+
+def _dump_package_classes(conn, key, guest):
+	_section("Package classification — manual vs auto, priority, recommends (the cruft map)")
+	# Answers "extra/missing packages: needed, recommended, maybe, useless; can we
+	# strip more". apt-mark manual = explicitly requested (our + bench's real deps);
+	# auto = pulled as deps (safe to autoremove if nothing needs them). Priority
+	# required/important = distro-essential (keep); standard/optional pulled by
+	# install-recommends are the strip candidates. autoremove --dry-run names the
+	# provably-dead ones. Cross-check what's installed purely as a Recommends.
+	payload = r"""
+echo -n 'total installed: '; dpkg-query -f '.\n' -W 2>/dev/null | wc -l
+echo -n 'manually installed (apt-mark manual): '; apt-mark showmanual 2>/dev/null | wc -l
+echo -n 'auto (dependency) installed: '; apt-mark showauto 2>/dev/null | wc -l
+echo '--- by Priority (required/important = distro-essential; optional = strip candidates) ---'
+dpkg-query -f '${Priority}\n' -W 2>/dev/null | sort | uniq -c | sort -rn
+echo '--- MANUALLY installed packages (our + bench real deps — the intentional set) ---'
+apt-mark showmanual 2>/dev/null | sort
+echo '--- provably removable RIGHT NOW (apt autoremove --dry-run) ---'
+DEBIAN_FRONTEND=noninteractive apt-get -s autoremove 2>/dev/null | grep -E '^Remv|packages will be REMOVED|to remove' | head -40
+echo '--- top 25 optional-priority packages by size (recommend-pulled cruft candidates) ---'
+while read sz pkg; do
+  pri=$(dpkg-query -f '${Priority}' -W "$pkg" 2>/dev/null)
+  [ "$pri" = optional ] || [ "$pri" = extra ] && printf '%8s KB  %-30s %s\n' "$sz" "$pkg" "$pri"
+done < <(dpkg-query -f '${Installed-Size}\t${binary:Package}\n' -W 2>/dev/null | sort -rn | head -60) | head -25
 """
 	print(_guest(conn, key, guest, payload))
 
