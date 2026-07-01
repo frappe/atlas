@@ -337,11 +337,17 @@ service. Atlas never touches MariaDB auth — bench-cli secures it.
 **ZFS.** `bench init` creates the pool + dataset from `[volume]` in `bench.toml`
 (a preallocated **file vdev**, since the build VM is single-disk) and mounts it,
 so BOTH the bench code and the MariaDB data live on ZFS. At the pinned bench-cli the mere presence of a `[volume]` table enables ZFS.
-The Firecracker `vmlinux` ships no ZFS module, so the **one** ZFS thing `build.sh`
-does itself is install Ubuntu's prebuilt `zfs.ko` from `linux-modules-extra-$(uname -r)`
-(matched to the byte-pinned noble kernel, so no DKMS compile or `linux-headers`)
-and `modprobe zfs`; the module travels in the snapshot. (Cold-boot ZFS
-auto-import/mount-ordering is not yet wired — to be verified on a host.)
+The Firecracker `vmlinux` ships no ZFS module and the cloud squashfs has an empty
+`/lib/modules`, so Ubuntu's prebuilt `zfs.ko` (+ its `spl.ko` dep) is baked into the
+guest rootfs at **sync time** — `scripts/sync-image.py` `_install_guest_modules` copies
+both from the manifest-pinned `linux-modules-<kver>` (the same package/pass that bakes
+`virtio_rng`; no DKMS compile or `linux-headers`) and pins `zfs` in `modules-load.d`, so
+the module travels in the snapshot and loads on the cold boot that first mounts the pool.
+Deriving `kver` from the manifest (not `uname -r`) keeps the module matched to the kernel
+the guest actually boots, independent of the build VM. The **one** ZFS thing `build.sh`
+does itself is install the `zfsutils-linux` userspace (`zpool`/`zfs`) that bench-cli's
+VolumeManager needs. (Cold-boot ZFS auto-import/mount-ordering is not yet wired — to be
+verified on a host.)
 
 The golden image is a **`Virtual Machine Snapshot`, not a from-URL
 `Virtual Machine Image`** — it is built *inside* a VM and snapshotted, the same
@@ -351,7 +357,8 @@ build-in-guest pattern the proxy uses ([12-proxy.md](./12-proxy.md)):
 2. `atlas.atlas.bench_image.build_bench(<vm>)` uploads the committed
    [`bench/`](../bench/) tree and runs `bench/build.sh` over guest-SSH — the
    sibling of `proxy.build_proxy`. `build.sh` fixes setuid bits, installs the
-   prebuilt ZFS module, runs bench-cli's `install.sh` (at a pinned commit) as root — which
+   `zfsutils-linux` userspace (the `zfs.ko` module is baked at sync time), runs
+   bench-cli's `install.sh` (at a pinned commit) as root — which
    creates the `frappe` user + sudoers — then again as `frappe` to install bench-cli,
    drops the committed [`bench/bench.toml`](../bench/bench.toml), and runs
    `bench init` + `bench start` as `frappe`. `bench init` is the heavy,

@@ -114,20 +114,15 @@ as_frappe() {
 chmod u+s /usr/bin/sudo /usr/bin/passwd /usr/bin/su /bin/su \
 	/usr/bin/chsh /usr/bin/newgrp /usr/bin/mount /bin/mount
 
-# --- 2. Install the ZFS kernel module (bench-setup.md §2). The Firecracker
-# vmlinux ships NO builtin ZFS and NO /lib/modules, so `zfsutils-linux`
-# (userspace) alone leaves `modprobe zfs` FATAL — which would abort init's ZFS
-# volume step ([volume].enabled = true). Ubuntu ships a PREBUILT zfs.ko in
-# `linux-modules-extra-$(uname -r)`, matched to the exact kernel the noble
-# vmlinux blob boots — so we install that instead of DKMS-compiling zfs.ko every
-# bake (DKMS pulls a full toolchain + linux-headers and burns minutes of CPU).
-# The kernel is byte-pinned by the dated cloud-image release, so its vermagic
-# never drifts out from under the prebuilt module. This is the ONE ZFS thing
-# build.sh does — bench-cli's VolumeManager handles the pool/datasets itself. ---
+# --- 2. Install the ZFS USERSPACE (bench-setup.md §2). The zfs.ko KERNEL module is
+# baked into the guest rootfs at sync time (scripts/sync-image.py _install_guest_modules
+# copies the PREBUILT zfs.ko + spl.ko from the manifest-pinned linux-modules-<kver>
+# and pins them in modules-load.d), so build.sh no longer touches the module — that
+# derives kver from the manifest, immune to the `uname -r` of this build VM. Here we
+# install only `zfsutils-linux` (zpool/zfs binaries), which bench-cli's VolumeManager
+# needs to build the pool/datasets. This is the ONE ZFS thing build.sh does. ---
 apt-get update
-apt-get install -y --no-install-recommends \
-	zfsutils-linux "linux-modules-extra-$(uname -r)"
-modprobe zfs
+apt-get install -y --no-install-recommends zfsutils-linux
 
 # --- 3. Install bench-cli — install.sh creates the bench user too (bench-setup.md
 # §3+§4). install.sh has two paths (bench-cli @ 03a4272 install.sh): run AS ROOT it
