@@ -57,6 +57,19 @@ def _fits(axis: dict, need: float) -> bool:
 	return axis["effective"] is None or axis["used"] + need <= axis["effective"]
 
 
+def _lock_host(server: str) -> None:
+	"""Row-lock the host until the enclosing request commits, serialising placement onto it.
+
+	Capacity is *checked* (read the host's usage) and *consumed* (insert/resize the VM) as
+	two steps; without a lock between them, two concurrent callers both read the same free
+	room and both place on it (a check-then-act / TOCTOU race → an over-committed host that
+	fails at boot instead of a clean rejection). Every placement path — create
+	(`default_server`) and resize (`ensure_resize_capacity`) — takes this same `Server`-row
+	lock first, so the second caller blocks here, then re-reads usage and sees the first's
+	machine. Keyed by host, so placements onto *different* hosts still run in parallel."""
+	frappe.db.get_value("Server", server, "name", for_update=True)
+
+
 def default_server(
 	required_vcpus: float,
 	required_memory_mb: float,
@@ -77,26 +90,40 @@ def default_server(
 
 	Runs with ignore_permissions: this is system placement, not desk RBAC —
 	Central (the operator) triggers it without needing Server read access; the
-	system still has to choose one."""
+	system still has to choose one.
+
+	Concurrency-safe: candidates are scanned cheaply first, then the chosen host is
+	row-locked (`_lock_host`) and its usage re-read *under the lock* before we commit to
+	it — so two simultaneous creates can't both read the same free room and double-book a
+	host. The loser blocks on the lock, re-reads, sees the winner's VM, and moves on (or
+	raises). The lock is held to the request commit, which for a create is fast (the VM
+	insert enqueues provisioning; no slow host work runs inline)."""
 	from atlas.atlas.api.server_capacity import capacity_for_server
 
 	servers = frappe.get_all(
 		"Server",
 		filters={"status": "Active"},
 		pluck="name",
-		order_by="creation asc",
+		order_by="creation asc",  # consistent lock order → no deadlock between placers
 		ignore_permissions=True,
 	)
 	if not servers:
 		frappe.throw(_("No capacity available — contact your operator."), NoCapacityError)
-	for server in servers:
-		capacity = capacity_for_server(server)
-		if (
+
+	def fits(capacity: dict) -> bool:
+		return (
 			_fits(capacity["cpu"], required_vcpus)
 			and _fits(capacity["memory"], required_memory_mb)
 			and _fits(capacity["disk"], required_disk_gb)
-		):
+		)
+
+	for server in servers:
+		if not fits(capacity_for_server(server)):
+			continue  # cheap unlocked skip; the winner is re-checked under the lock below
+		_lock_host(server)
+		if fits(capacity_for_server(server)):  # authoritative re-read while holding the lock
 			return server
+		# A concurrent create won this host between the skip-check and the lock — try the next.
 	frappe.throw(_("No capacity available — contact your operator."), NoCapacityError)
 
 
@@ -219,6 +246,54 @@ def resize_headroom(vm: str) -> dict | None:
 		"disk_gigabytes": int(disk),
 		"unmeasured": not measured,
 	}
+
+
+def _resize_fits(axis: dict, own: float, need: float) -> bool:
+	"""Does a resized `need` fit on this axis, given the VM's own `own` footprint is freed
+	first? The write-side predicate of `resize_headroom`'s ceiling (`effective - used +
+	own`): an uncatalogued axis (`effective is None`) is unlimited → always fits, and the
+	VM can always keep its current size or shrink (`need <= own <= ceiling`)."""
+	ceiling, _ = _axis_ceiling(axis, own, float("inf"))
+	return need <= ceiling
+
+
+def ensure_resize_capacity(
+	virtual_machine,
+	*,
+	new_cpu_cores: float,
+	new_memory_mb: float,
+	new_disk_gb: float,
+) -> None:
+	"""Authoritative capacity gate for an in-place resize — the write-side twin of
+	`resize_headroom`, and the only capacity check on the resize path.
+
+	Locks the VM's host and checks the new shape fits with the VM's OWN current footprint
+	freed (a resize releases it before re-reserving), so a downsize or a same-size no-op
+	always passes and a grow is capped to the host's real free room. Without this, resize
+	has no gate at all: an oversized grow over-commits the host and fails at boot instead
+	of failing fast here. The lock is the same `Server`-row lock create takes, so a resize
+	and a create can't both consume the same free room. Raises NoCapacityError otherwise.
+
+	No-op when the VM has no host yet (nothing placed to resize), mirroring
+	`resize_headroom` returning None."""
+	from atlas.atlas.api.server_capacity import capacity_for_server
+
+	if not virtual_machine.server:
+		return
+	_lock_host(virtual_machine.server)
+	c = capacity_for_server(virtual_machine.server)
+	own_cpu = float(virtual_machine.cpu_max_cores or virtual_machine.vcpus or 0)
+	own_mem = float(virtual_machine.memory_megabytes or 0)
+	own_disk = float((virtual_machine.disk_gigabytes or 0) + (virtual_machine.data_disk_gigabytes or 0))
+	if not (
+		_resize_fits(c["cpu"], own_cpu, float(new_cpu_cores or 0))
+		and _resize_fits(c["memory"], own_mem, float(new_memory_mb or 0))
+		and _resize_fits(c["disk"], own_disk, float(new_disk_gb or 0))
+	):
+		frappe.throw(
+			_("Not enough capacity on this host to resize to that size — contact your operator."),
+			NoCapacityError,
+		)
 
 
 def apply_user_defaults(virtual_machine) -> None:

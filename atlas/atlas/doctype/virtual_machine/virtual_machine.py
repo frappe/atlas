@@ -643,6 +643,19 @@ class VirtualMachine(Document):
 				frappe.throw(
 					f"Data disk can only grow: {self.data_disk_gigabytes} GB → {new_data_disk} GB is a shrink"
 				)
+		# Authoritative capacity gate: reshape only into room the host actually has, under
+		# a per-host lock so a concurrent create/resize can't double-book it. This is the
+		# only capacity check on the resize path — without it an oversized grow over-commits
+		# the host and fails at boot instead of failing fast here.
+		from atlas.atlas.placement import ensure_resize_capacity
+
+		ensure_resize_capacity(
+			self,
+			new_cpu_cores=new_cpu_max,
+			new_memory_mb=new_memory,
+			new_disk_gb=new_disk + new_data_disk,
+		)
+
 		# Run the on-host resize first; run_task raises on failure, so we only
 		# persist the new values once the config and disk actually changed.
 		# Saving before the Task would let a failed resize-vm.py leave the doc
