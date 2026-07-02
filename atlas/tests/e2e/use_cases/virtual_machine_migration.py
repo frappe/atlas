@@ -39,13 +39,19 @@ import time
 
 import frappe
 
-from atlas.atlas import migration as migration_module
 from atlas.atlas.ssh import connection_for_server, run_ssh, ssh_key_file
 from atlas.tests.e2e._droplets import ensure_two_active_servers
 from atlas.tests.e2e._image import ensure_image_on_server
 from atlas.tests.e2e._shared import ephemeral_public_key
 
-POLL_TIMEOUT = 600  # hydration of a small disk over local NBD is quick, but be generous
+POLL_TIMEOUT = 900  # the worker self-drives the phases; be generous when it also has a
+# fresh VM's auto-provision queued ahead of the migration (observed ~12 min end-to-end)
+
+# Boot-then-hydrate (spec/24 §0) target: on a tiny-disk e2e the guest's downtime
+# (source stop → target boot) should be single-digit seconds — the copy now overlaps
+# uptime. Generous ceiling so a slow CI box doesn't flake, but far under the ~44s the
+# cold-copy-then-boot order took (plan §1). Regression tripwire, not a benchmark.
+DOWNTIME_THRESHOLD_SECONDS = 20
 
 
 def host_shell(server_name: str, command: str, timeout: int = 40) -> str:
@@ -113,6 +119,10 @@ def run_smoke(reuse: bool = True, keep: bool = True) -> None:
 
 		# Fact 5: source copy torn down.
 		assert _source_clean(source.name, vm.name), "source copy not fully cleaned up"
+
+		# Fact 6 (boot-then-hydrate, spec/24 §0): downtime closed at boot, not after
+		# the copy — measured off the migration's own stop→boot Task timestamps.
+		_assert_downtime(vm.name, "vm-migration")
 
 		print(
 			f"[e2e] vm-migration OK: {vm.name} moved {source.name} -> {target.name}, "
@@ -209,6 +219,10 @@ def run_keep_address_smoke(reuse: bool = True, keep: bool = True) -> None:
 		)
 		assert _source_clean(source.name, vm.name), "source disk copy not cleaned up"
 
+		# Boot-then-hydrate (spec/24 §0): downtime closed at boot (forward armed BEFORE
+		# boot on the keep-address path), measured off the stop→boot Task timestamps.
+		_assert_downtime(vm.name, "vm-migration-keep")
+
 		print(
 			f"[e2e] vm-migration-keep OK: {vm.name} moved {source.name} -> {target.name}, "
 			f"kept /128 {kept_ipv6}, forwarded via {device}, host key preserved"
@@ -243,17 +257,24 @@ def _tunnel_up(host: str, device: str) -> bool:
 
 
 def _drive_to_terminal(migration_name: str) -> str:
-	"""Advance the migration one phase per loop until Done/Failed — the same thing
-	the scheduler does every 2 min, driven synchronously so the test is deterministic.
-	Hydrating re-enters until 100%."""
+	"""POLL the migration to Done/Failed, letting the PRODUCTION self-drive
+	(`start_migration`, enqueued by migrate() on insert and run by the worker) advance
+	it — the test only observes. This is the faithful path: the worker walks the phases
+	back-to-back (inline, no inter-phase delay) and self-paces the Hydrating copy, so
+	the downtime measured off the stop→boot Task timestamps is exactly production's.
+
+	It also avoids a DOUBLE-DRIVER race: if the test ALSO called advance_migration
+	while the worker's start_migration ran the same row, both would load the VM doc and
+	race its save() at cutover/stop (TimestampMismatchError → the row wrongly marked
+	Failed). One driver, the real one; the test watches. Requires the worker up (the
+	same precondition every migration/auto-provision e2e already has)."""
 	deadline = time.monotonic() + POLL_TIMEOUT
 	while time.monotonic() < deadline:
-		doc = frappe.get_doc("Virtual Machine Migration", migration_name)
-		if doc.status in ("Done", "Failed"):
-			return doc.status
-		migration_module.advance_migration(doc)
-		frappe.db.commit()
-		time.sleep(1)
+		status = frappe.db.get_value("Virtual Machine Migration", migration_name, "status")
+		if status in ("Done", "Failed"):
+			return status
+		time.sleep(2)
+		frappe.db.commit()  # end the read txn so each poll sees the worker's latest commit
 	return frappe.db.get_value("Virtual Machine Migration", migration_name, "status")
 
 
@@ -270,6 +291,46 @@ def _wait_for_boot(vm_name: str, host: str, v6: str, timeout: int = 180) -> None
 def _guest_host_key(host: str, v6: str) -> str:
 	out = host_shell(host, f"ssh-keyscan -T 10 -t ed25519 {v6} 2>/dev/null | awk '{{print $3}}' | head -1")
 	return out.strip()
+
+
+def _measure_downtime(vm_name: str) -> float | None:
+	"""Guest downtime in seconds from the migration's OWN Task timestamps (same method
+	as the plan §1 baseline): the migration cold-stop (stop-vm creation) → the target
+	boot (provision-vm completion). Boot-then-hydrate closes the window at boot, so
+	the multi-minute hydration is off this measurement. Returns None if either Task is
+	missing (e.g. a resumed migration that skipped the stop)."""
+	stop = frappe.get_all(
+		"Task",
+		filters={"virtual_machine": vm_name, "script": "stop-vm"},
+		fields=["creation"],
+		order_by="creation desc",
+		limit=1,
+	)
+	boot = frappe.get_all(
+		"Task",
+		filters={"virtual_machine": vm_name, "script": "provision-vm"},
+		fields=["modified"],
+		order_by="creation desc",
+		limit=1,
+	)
+	if not stop or not boot:
+		return None
+	return frappe.utils.time_diff_in_seconds(boot[0].modified, stop[0].creation)
+
+
+def _assert_downtime(vm_name: str, label: str) -> None:
+	"""Assert the measured guest downtime is under the boot-then-hydrate threshold and
+	print it (the plan wants the number surfaced). Skips the assert (but still prints)
+	if the Task timestamps aren't both present."""
+	downtime = _measure_downtime(vm_name)
+	if downtime is None:
+		print(f"[e2e] {label} downtime: unmeasured (stop/boot Task missing)")
+		return
+	print(f"[e2e] {label} downtime: {downtime:.1f}s (threshold {DOWNTIME_THRESHOLD_SECONDS}s)")
+	assert downtime < DOWNTIME_THRESHOLD_SECONDS, (
+		f"{label} downtime {downtime:.1f}s exceeded {DOWNTIME_THRESHOLD_SECONDS}s — "
+		"boot-then-hydrate should close the window at boot, not after hydration (spec/24 §0)"
+	)
 
 
 def _source_clean(source: str, vm_name: str) -> bool:
