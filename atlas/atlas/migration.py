@@ -35,7 +35,13 @@ import ipaddress
 
 import frappe
 
-from atlas.atlas.networking import allocate_ipv6, derive_ipv4_link
+from atlas.atlas.networking import (
+	allocate_ipv6,
+	derive_ipv4_link,
+	derive_vm_tunnel,
+	derive_vm_tunnel_port,
+	derive_vm_tunnel_table,
+)
 from atlas.atlas.ssh import run_task
 from atlas.atlas.task_results import parse_result
 
@@ -149,7 +155,12 @@ def preflight_checks(vm, target_server: str, release_reserved_ip: bool) -> None:
 	# IPv6 capacity on the target: allocate_ipv6 raises if the range is full. We
 	# probe it here (read-only intent) so the operator learns at click time, not
 	# three phases deep. The authoritative allocation is in InjectingIdentity.
-	_assert_ipv6_capacity(target_server)
+	# SKIPPED on the keep-address path — the VM keeps its /128 (the source forwards
+	# it), so no address is allocated on the target and its range fullness is
+	# irrelevant. The gate mirrors before_insert's _decide_address_scheme so the
+	# operator learns the scheme's implications at click time.
+	if not _will_keep_address(vm.server, target_server):
+		_assert_ipv6_capacity(target_server)
 
 	if vm.public_ipv4 and not release_reserved_ip:
 		frappe.throw(
@@ -157,6 +168,24 @@ def preflight_checks(vm, target_server: str, release_reserved_ip: bool) -> None:
 			"Stage-1 migration cannot move it; pass release_reserved_ip=True to acknowledge "
 			"inbound v4 will be released, then re-attach a target-server Reserved IP afterward."
 		)
+
+
+def _will_keep_address(source_server: str, target_server: str) -> bool:
+	"""Whether a migration between these two servers keeps the VM's /128 (spec/19
+	§2.8). True iff BOTH hosts' provider can forward a /128 from the source
+	(vm_range_is_forwardable). The single source of truth for the address scheme,
+	shared by pre-flight (to skip the target-capacity check) and the Migration row's
+	before_insert (to set keep_address/forward_address)."""
+	from atlas.atlas.providers import for_provider_type
+
+	provider_type = frappe.db.get_value("Server", source_server, "provider_type")
+	provider = for_provider_type(provider_type)
+	source_resource = frappe.db.get_value("Server", source_server, "provider_resource_id")
+	target_resource = frappe.db.get_value("Server", target_server, "provider_resource_id")
+	return bool(
+		provider.vm_range_is_forwardable(source_resource)
+		and provider.vm_range_is_forwardable(target_resource)
+	)
 
 
 def _assert_ipv6_capacity(server: str) -> None:
@@ -242,22 +271,66 @@ def _phase_target_preparing(doc) -> bool:
 		},
 		timeout_seconds=600,
 	)
+	if doc.keep_address:
+		_bring_up_forward_tunnel(doc)
 	return True
 
 
-def _phase_injecting_identity(doc) -> bool:
-	"""Allocate the NEW /128 on the target and record it on the row. This is
-	CONTROLLER-side only in stage 1: the disk is still hydrating (reads through NBD),
-	so the actual identity inject + unit launch is deferred to CutoverStarting, where
-	provision-vm runs against the collapsed disk with preserve_host_keys=1. Resume
-	key: ipv6_address_new already set on the row.
+def _bring_up_forward_tunnel(doc) -> None:
+	"""keep-address only: create the per-VM forward tunnel on BOTH hosts (spec/19
+	§2.9.1). Source first (the TCP listener), then target (the connector). The
+	device name/port are pure functions of the UUID, so both ends agree with no
+	shared state. Record the device name on the row (teardown/re-entry handle) and
+	move tunnel_status to Armed — the routes that make traffic flow come at cutover.
+	Idempotent: migration-forward-up no-ops on an already-live socat."""
+	tunnel_device = derive_vm_tunnel(doc.virtual_machine)
+	tunnel_port = derive_vm_tunnel_port(doc.virtual_machine)
+	_run_phase_task(
+		doc,
+		server=doc.source_server,
+		script="migration-forward-up",
+		variables={
+			"VIRTUAL_MACHINE_NAME": doc.virtual_machine,
+			"ROLE": "source",
+			"TUNNEL_DEVICE": tunnel_device,
+			"TUNNEL_PORT": str(tunnel_port),
+		},
+		timeout_seconds=60,
+	)
+	_run_phase_task(
+		doc,
+		server=doc.target_server,
+		script="migration-forward-up",
+		variables={
+			"VIRTUAL_MACHINE_NAME": doc.virtual_machine,
+			"ROLE": "target",
+			"TUNNEL_DEVICE": tunnel_device,
+			"TUNNEL_PORT": str(tunnel_port),
+			"SOURCE_HOST": _server_ipv4(doc.source_server),
+		},
+		timeout_seconds=60,
+	)
+	doc.db_set({"tunnel_device": tunnel_device, "tunnel_status": "Armed"})
 
-	allocate_ipv6 holds the target Server row for_update — atomic, so two parallel
-	migrations can't grab the same address. Persist before advancing so a crash
-	re-uses the same address on re-entry (throws if the range filled since pre-flight)."""
+
+def _phase_injecting_identity(doc) -> bool:
+	"""Decide the address the VM will boot with on the target and record it on the
+	row. The actual identity inject + unit launch is deferred to CutoverStarting,
+	where provision-vm runs against the collapsed disk with preserve_host_keys=1.
+	Resume key: ipv6_address_new already set on the row.
+
+	- change-address: allocate a NEW /128 from the target's range. allocate_ipv6
+	  holds the target Server row for_update — atomic, so two parallel migrations
+	  can't grab the same address. Persist before advancing so a crash re-uses the
+	  same address on re-entry (throws if the range filled since pre-flight).
+	- keep-address: NEAR-NO-OP for networking (spec/19 §2.9.4). The /128 is
+	  unchanged — the source keeps holding the /64 and forwards it — so there is NO
+	  allocate and NO env rewrite; the VM boots on the SAME address. We record the
+	  unchanged address as ipv6_address_new so the shared cutover path (which
+	  provisions against ipv6_address_new) launches it on the right /128."""
 	if not doc.ipv6_address_new:
-		new_ipv6 = allocate_ipv6(doc.target_server)
-		doc.db_set("ipv6_address_new", new_ipv6)
+		address = doc.ipv6_address_old if doc.keep_address else allocate_ipv6(doc.target_server)
+		doc.db_set("ipv6_address_new", address)
 	return True
 
 
@@ -336,15 +409,60 @@ def _phase_cutover_starting(doc) -> bool:
 		variables=variables,
 		timeout_seconds=120,
 	)
+	if doc.keep_address:
+		_install_forward_routes(doc)
 	return True
 
 
+def _install_forward_routes(doc) -> None:
+	"""keep-address only: now that the target VM is up on the SAME /128, wire the
+	traffic path (spec/19 §2.2-2.3, §2.9.2-2.9.3). Target return-route FIRST (so the
+	guest's replies have somewhere to go the instant inbound starts arriving), then
+	the source forward (which points the /128 delivery at the tunnel and — on a
+	proxy-NDP provider — re-asserts the NDP entry the source unit's stop removed).
+	Idempotent: both scripts re-assert with `replace`/duplicate-guarded adds. Moves
+	tunnel_status to Forwarding — the path is now live and stays up permanently."""
+	tunnel_device = doc.tunnel_device or derive_vm_tunnel(doc.virtual_machine)
+	_run_phase_task(
+		doc,
+		server=doc.target_server,
+		script="migration-target-receive",
+		variables={
+			"VIRTUAL_MACHINE_NAME": doc.virtual_machine,
+			"VIRTUAL_MACHINE_IPV6": doc.ipv6_address_old,
+			"TUNNEL_DEVICE": tunnel_device,
+			"ROUTE_TABLE": str(derive_vm_tunnel_table(doc.virtual_machine)),
+		},
+		timeout_seconds=60,
+	)
+	_run_phase_task(
+		doc,
+		server=doc.source_server,
+		script="migration-source-forward",
+		variables={
+			"VIRTUAL_MACHINE_NAME": doc.virtual_machine,
+			"VIRTUAL_MACHINE_IPV6": doc.ipv6_address_old,
+			"TUNNEL_DEVICE": tunnel_device,
+			"REASSERT_PROXY_NDP": "1" if doc.forward_address else "0",
+		},
+		timeout_seconds=60,
+	)
+	doc.db_set({"tunnel_status": "Forwarding", "forward_active": 1})
+
+
 def _phase_repointing(doc) -> bool:
-	"""The point of no return — all Frappe-side. Commit the VM row to the target +
-	new address, then re-point and reconcile every Subdomain. Idempotent: a second run
-	sets the same values and reconciles the same (already-converged) map."""
+	"""The point of no return — all Frappe-side. Commit the VM row to the target
+	(and, change-address only, the new address), then re-point every Subdomain.
+	Idempotent: a second run sets the same values and reconciles the same
+	(already-converged) map.
+
+	keep-address (spec/19 §2.9.4): the /128 never changed, so the Subdomain rows are
+	already correct and the proxy already dials the right address — the SUBDOMAIN
+	RE-POINT AND RECONCILE ARE SKIPPED ENTIRELY. `server` still flips (the VM really
+	is on the target now); the address is copied verbatim."""
 	_finalize_cutover(doc)
-	_repoint_routes(doc)
+	if not doc.keep_address:
+		_repoint_routes(doc)
 	_handle_reserved_ip(doc)
 	return True
 
@@ -352,7 +470,15 @@ def _phase_repointing(doc) -> bool:
 def _phase_cleanup(doc) -> bool:
 	"""Source: kill NBD, lvremove the -migrate snapshots, tear down the stale source
 	copy (old dir/LVs/netns). If it fails, the row stays at Cleanup with the error —
-	there is no orphaned-LV reconciler, so the row IS the backstop."""
+	there is no orphaned-LV reconciler, so the row IS the backstop.
+
+	keep-address (spec/19 §2.9.4): the SAME source teardown runs (the stale disk copy
+	is gone either way), BUT the forward tunnel + source-forward route/nft + (DO)
+	proxy-NDP + target return-rule are LEFT IN PLACE — they carry the VM's live
+	traffic permanently. cleanup-source only removes the migration's transient
+	snapshot/NBD state, not the tunnel, so nothing extra is needed to keep the
+	forward up; we just record it on the VM so the cross-host dependency is visible
+	and the operator can collapse it later (§2.9.5)."""
 	_run_phase_task(
 		doc,
 		server=doc.source_server,
@@ -364,7 +490,27 @@ def _phase_cleanup(doc) -> bool:
 		},
 		timeout_seconds=120,
 	)
+	if doc.keep_address:
+		_record_forward_on_vm(doc)
 	return True
+
+
+def _record_forward_on_vm(doc) -> None:
+	"""keep-address only: mark the migrated VM as having its traffic forwarded from
+	the source host (spec/19 §2.9.5). Drives the VM-form dashboard indicator and
+	gates the Collapse-forward action. Idempotent: re-recording the same source is a
+	no-op. `since` is stamped only on the first record so a re-entry doesn't reset
+	the clock. Uses db_set (bypasses the VM's immutability gate cleanly — these are
+	read-only observability fields, not resource fields)."""
+	if _vm_field(doc, "traffic_forwarded_from") == doc.source_server:
+		return
+	vm = frappe.get_doc("Virtual Machine", doc.virtual_machine)
+	vm.db_set(
+		{
+			"traffic_forwarded_from": doc.source_server,
+			"traffic_forwarded_since": frappe.utils.now_datetime(),
+		}
+	)
 
 
 PHASES = {
@@ -432,6 +578,116 @@ def _handle_reserved_ip(doc) -> None:
 		return
 	for name in frappe.get_all("Reserved IP", filters={"virtual_machine": doc.virtual_machine}, pluck="name"):
 		frappe.get_doc("Reserved IP", name).detach()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Collapse-forward: the operator-initiated teardown of a keep-address forward.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def collapse_forward(vm) -> None:
+	"""Tear down a VM's keep-address forward and fall it back to change-address
+	(spec/19 §2.9.5). The forward is permanent by default; this is the ONLY point at
+	which a kept address can still change, and it is entirely operator-initiated
+	(via the VM-form Collapse-forward button). Steps, in order:
+
+	  1. Tear the tunnel down on BOTH hosts — the target's return-rule + table, then
+	     the source's route/nft/(DO)proxy-NDP, then the tunnel device + socat.
+	  2. Allocate a NEW /128 from the CURRENT (post-migration) server's range and
+	     re-provision the VM in place to inject it, preserving host keys — the same
+	     shape a change-address cutover uses, but the disk is already local so
+	     provision-vm just rewrites network.env + relaunches the unit on the new /128.
+	  3. Re-point every Subdomain to the new /128 and reconcile the proxy fleet.
+	  4. Clear the VM's forward markers.
+
+	Idempotent enough to retry: a re-invoked collapse re-runs best-effort teardown
+	(the down scripts tolerate missing state), and step 2's allocate is skipped once
+	the VM already sits on a fresh in-range /128. The source host is the VM's
+	traffic_forwarded_from; the current host is vm.server."""
+	source_server = vm.traffic_forwarded_from
+	if not source_server:
+		frappe.throw(f"Virtual Machine {vm.name} has no active forward to collapse")
+
+	tunnel_device = derive_vm_tunnel(vm.name)
+	tunnel_port = derive_vm_tunnel_port(vm.name)
+	route_table = derive_vm_tunnel_table(vm.name)
+	forward_address = frappe.db.get_value("Server", source_server, "provider_type") == "DigitalOcean"
+	old_ipv6 = vm.ipv6_address
+
+	# 1a. Target end (the VM's current host): remove the return-route policy.
+	run_task(
+		server=vm.server,
+		script="migration-forward-down",
+		variables={
+			"VIRTUAL_MACHINE_NAME": vm.name,
+			"VIRTUAL_MACHINE_IPV6": old_ipv6,
+			"ROLE": "target",
+			"TUNNEL_DEVICE": tunnel_device,
+			"TUNNEL_PORT": str(tunnel_port),
+			"ROUTE_TABLE": str(route_table),
+		},
+		virtual_machine=vm.name,
+		timeout_seconds=60,
+	)
+	# 1b. Source end: remove the /128 route, nft rules, and (DO) proxy-NDP entry.
+	run_task(
+		server=source_server,
+		script="migration-forward-down",
+		variables={
+			"VIRTUAL_MACHINE_NAME": vm.name,
+			"VIRTUAL_MACHINE_IPV6": old_ipv6,
+			"ROLE": "source",
+			"TUNNEL_DEVICE": tunnel_device,
+			"TUNNEL_PORT": str(tunnel_port),
+			"DEASSERT_PROXY_NDP": "1" if forward_address else "0",
+		},
+		virtual_machine=vm.name,
+		timeout_seconds=60,
+	)
+
+	# 2. Allocate a fresh /128 on the current host and re-inject it in place. Skip
+	#    the allocate if a prior collapse attempt already moved the VM off old_ipv6.
+	new_ipv6 = vm.ipv6_address
+	if new_ipv6 == old_ipv6:
+		new_ipv6 = allocate_ipv6(vm.server)
+	variables = vm._provision_variables()
+	host_cidr, guest_cidr = derive_ipv4_link(new_ipv6)
+	variables.update(
+		{
+			"VIRTUAL_MACHINE_IPV6": new_ipv6,
+			"IPV4_HOST_CIDR": host_cidr,
+			"IPV4_GUEST_CIDR": guest_cidr,
+			"IPV4_GATEWAY": str(ipaddress.ip_interface(host_cidr).ip),
+			"PRESERVE_HOST_KEYS": "1",
+		}
+	)
+	run_task(
+		server=vm.server,
+		script="provision-vm",
+		variables=variables,
+		virtual_machine=vm.name,
+		timeout_seconds=120,
+	)
+
+	# 3. Commit the new address on the VM row, clear the forward markers, then
+	#    re-point the Subdomains at it (the change-address path — now the address
+	#    really did change). db_set the address under flags so validate() is happy.
+	vm.flags.migrating = True
+	vm.ipv6_address = new_ipv6
+	vm.traffic_forwarded_from = None
+	vm.traffic_forwarded_since = None
+	vm.save(ignore_permissions=True)
+	_repoint_routes(_ForwardCollapse(vm.name, new_ipv6))
+
+
+class _ForwardCollapse:
+	"""A tiny duck-typed stand-in so collapse_forward can reuse _repoint_routes
+	(which reads .virtual_machine and .ipv6_address_new off a migration row). The
+	collapse is not a migration row, but the re-point logic is identical."""
+
+	def __init__(self, virtual_machine: str, ipv6_address_new: str) -> None:
+		self.virtual_machine = virtual_machine
+		self.ipv6_address_new = ipv6_address_new
 
 
 # ─────────────────────────────────────────────────────────────────────────────
