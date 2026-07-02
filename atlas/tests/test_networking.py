@@ -14,6 +14,7 @@ from atlas.atlas.networking import (
 	TUNNEL_PORT_BASE,
 	UID_BASE,
 	UID_SPAN,
+	address_is_free_on_server,
 	allocate_ipv6,
 	carve_virtual_machine_range,
 	cgroup_args,
@@ -144,6 +145,62 @@ class TestNetworking(IntegrationTestCase):
 		_insert_vm(server, "2001:db8::2", status="Terminated")
 		_insert_vm(server, "2001:db8::3", status="Running")
 		self.assertEqual(allocate_ipv6(server), "2001:db8::2")
+
+	# ----- address_is_free_on_server: the keep-address migration collision gate -----
+
+	def test_address_free_when_unclaimed(self) -> None:
+		server = _provider_and_server("free-server-1")
+		for name in frappe.get_all("Virtual Machine", filters={"server": server}, pluck="name"):
+			frappe.delete_doc("Virtual Machine", name, ignore_permissions=True, force=True)
+		self.assertTrue(address_is_free_on_server(server, "2001:db8::2"))
+
+	def test_address_not_free_when_live_vm_holds_it(self) -> None:
+		"""The bug this guards: a keep-address migration carries a VM's /128 onto a
+		target that already hosts a live VM on that same /128 — two VMs, one host, one
+		address. address_is_free_on_server must report the collision (False)."""
+		server = _provider_and_server("free-server-2")
+		for name in frappe.get_all("Virtual Machine", filters={"server": server}, pluck="name"):
+			frappe.delete_doc("Virtual Machine", name, ignore_permissions=True, force=True)
+		_insert_vm(server, "2001:db8::2", status="Running")
+		self.assertFalse(address_is_free_on_server(server, "2001:db8::2"))
+
+	def test_address_free_when_only_terminated_holder(self) -> None:
+		"""A Terminated VM has released the /128 — the address is free again."""
+		server = _provider_and_server("free-server-3")
+		for name in frappe.get_all("Virtual Machine", filters={"server": server}, pluck="name"):
+			frappe.delete_doc("Virtual Machine", name, ignore_permissions=True, force=True)
+		_insert_vm(server, "2001:db8::2", status="Terminated")
+		self.assertTrue(address_is_free_on_server(server, "2001:db8::2"))
+
+	def test_address_free_ignores_the_migrating_vm_itself(self) -> None:
+		"""A resume/re-entry may have denormalized the migrating VM onto the target
+		already; its own row must not count as a collision with itself."""
+		server = _provider_and_server("free-server-4")
+		for name in frappe.get_all("Virtual Machine", filters={"server": server}, pluck="name"):
+			frappe.delete_doc("Virtual Machine", name, ignore_permissions=True, force=True)
+		vm = _insert_vm(server, "2001:db8::2", status="Running")
+		self.assertFalse(address_is_free_on_server(server, "2001:db8::2"))
+		self.assertTrue(address_is_free_on_server(server, "2001:db8::2", ignore_vm=vm))
+
+	def test_address_collision_normalizes_ipv6_forms(self) -> None:
+		"""`::2` and its expanded form denote the same address — a stored VM in either
+		form must still be seen as occupying the /128 (no string-equality escape)."""
+		server = _provider_and_server("free-server-5")
+		for name in frappe.get_all("Virtual Machine", filters={"server": server}, pluck="name"):
+			frappe.delete_doc("Virtual Machine", name, ignore_permissions=True, force=True)
+		_insert_vm(server, "2001:0db8:0000:0000:0000:0000:0000:0002", status="Running")
+		self.assertFalse(address_is_free_on_server(server, "2001:db8::2"))
+
+	def test_address_collision_is_per_server(self) -> None:
+		"""A live VM on a DIFFERENT server does not block the address here — the
+		conflict is per-host (one host, one route for the /128)."""
+		server_a = _provider_and_server("free-server-6a")
+		server_b = _provider_and_server("free-server-6b")
+		for srv in (server_a, server_b):
+			for name in frappe.get_all("Virtual Machine", filters={"server": srv}, pluck="name"):
+				frappe.delete_doc("Virtual Machine", name, ignore_permissions=True, force=True)
+		_insert_vm(server_b, "2001:db8::2", status="Running")
+		self.assertTrue(address_is_free_on_server(server_a, "2001:db8::2"))
 
 	# ----- jailer isolation derivations (pure functions of the UUID) -----
 

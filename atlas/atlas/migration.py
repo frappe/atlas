@@ -45,6 +45,7 @@ import ipaddress
 import frappe
 
 from atlas.atlas.networking import (
+	address_is_free_on_server,
 	allocate_ipv6,
 	derive_ipv4_link,
 	derive_vm_tunnel,
@@ -220,14 +221,19 @@ def preflight_checks(vm, target_server: str, release_reserved_ip: bool) -> None:
 	# Region is same-by-construction: one region per Atlas instance (spec/24 §1),
 	# and Subdomain has no region field. Nothing to compare.
 
-	# IPv6 capacity on the target: allocate_ipv6 raises if the range is full. We
-	# probe it here (read-only intent) so the operator learns at click time, not
-	# three phases deep. The authoritative allocation is in InjectingIdentity.
-	# SKIPPED on the keep-address path — the VM keeps its /128 (the source forwards
-	# it), so no address is allocated on the target and its range fullness is
-	# irrelevant. The gate mirrors before_insert's _decide_address_scheme so the
-	# operator learns the scheme's implications at click time.
-	if not _will_keep_address(vm.server, target_server):
+	# IPv6 on the target. Two schemes, two different gates (both probed here, read-only
+	# intent, so the operator learns at click time rather than three phases deep):
+	#   - change-address: allocate_ipv6 raises if the range is full. Authoritative
+	#     allocation is in InjectingIdentity.
+	#   - keep-address: no address is allocated (the VM keeps its /128, the source
+	#     forwards it), so range fullness is irrelevant — BUT the kept /128 must not
+	#     already be live on a DIFFERENT VM on the target, or the two collide on one
+	#     host (a single `<vmv6>/128 dev <veth>` route can point at only one; the
+	#     other VM silently steals the traffic — observed in the field). Authoritative
+	#     re-check is in InjectingIdentity.
+	if _will_keep_address(vm.server, target_server):
+		_assert_kept_address_free(vm, target_server)
+	else:
 		_assert_ipv6_capacity(target_server)
 
 	if vm.public_ipv4 and not release_reserved_ip:
@@ -278,6 +284,20 @@ def _assert_ipv6_capacity(server: str) -> None:
 		if str(candidate) not in used:
 			return
 	frappe.throw(f"Target server {server} has no free IPv6 address in its range")
+
+
+def _assert_kept_address_free(vm, target_server: str) -> None:
+	"""keep-address gate: the VM's /128 must not already be live on a different VM on
+	the target. Excludes the migrating VM's own row (a resume may have denormalized it
+	onto the target already). The target's own native VMs allocate from ::2 up, so a
+	source-::2 VM kept onto a target that already has a ::2 VM is a guaranteed
+	collision — this is the check that stops it before the disks move."""
+	if not address_is_free_on_server(target_server, vm.ipv6_address, ignore_vm=vm.name):
+		frappe.throw(
+			f"Cannot keep address {vm.ipv6_address}: target server {target_server} already "
+			f"hosts a live VM on that /128. Two VMs cannot share a /128 on one host. "
+			f"Terminate the conflicting VM or migrate to a different target."
+		)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -543,7 +563,20 @@ def _phase_injecting_identity(doc) -> bool:
 	  unchanged address as ipv6_address_new so the shared cutover path (which
 	  provisions against ipv6_address_new) launches it on the right /128."""
 	if not doc.ipv6_address_new:
-		address = doc.ipv6_address_old if doc.keep_address else allocate_ipv6(doc.target_server)
+		if doc.keep_address:
+			# Authoritative keep-address collision re-check (pre-flight probed it at
+			# click time; re-assert here in case a VM claimed the /128 on the target
+			# in between). No allocate — the address is carried unchanged.
+			if not address_is_free_on_server(
+				doc.target_server, doc.ipv6_address_old, ignore_vm=doc.virtual_machine
+			):
+				frappe.throw(
+					f"Cannot keep address {doc.ipv6_address_old}: target server "
+					f"{doc.target_server} already hosts a live VM on that /128."
+				)
+			address = doc.ipv6_address_old
+		else:
+			address = allocate_ipv6(doc.target_server)
 		doc.db_set("ipv6_address_new", address)
 	return True
 

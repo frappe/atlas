@@ -160,6 +160,27 @@ def allocate_ipv6(server_name: str) -> str:
 	raise frappe.ValidationError("No IPv6 capacity on server")
 
 
+def address_is_free_on_server(server_name: str, address: str, ignore_vm: str | None = None) -> bool:
+	"""Whether `address` is unclaimed by a live (non-Terminated) VM on `server_name`.
+
+	The collision gate for the keep-address migration path: unlike change-address,
+	which calls allocate_ipv6 (guaranteed-free by construction), keep-address carries
+	the VM's existing /128 onto the target UNCHANGED — so it must independently verify
+	the target isn't already hosting a different VM on that same /128 (two VMs sharing
+	a /128 on one host is unrecoverable-by-routing; the host's single `<vmv6>/128 dev
+	<veth>` route can only point at one veth). `ignore_vm` excludes the migrating VM's
+	OWN row, which on a resume/re-entry may already be denormalized onto the target.
+	Normalizes both sides through IPv6Address so `::2` and `0:0:…:2` compare equal."""
+	wanted = str(ipaddress.IPv6Address(address))
+	filters = {"server": server_name, "status": ["!=", "Terminated"]}
+	if ignore_vm:
+		filters["name"] = ["!=", ignore_vm]
+	for held in frappe.get_all("Virtual Machine", filters=filters, pluck="ipv6_address"):
+		if held and str(ipaddress.IPv6Address(held)) == wanted:
+			return False
+	return True
+
+
 def derive_uid(virtual_machine_name: str) -> int:
 	"""Per-VM POSIX uid the jailer runs Firecracker as.
 

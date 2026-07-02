@@ -431,6 +431,27 @@ class TestMigrationPreflight(IntegrationTestCase):
 		with self.assertRaisesRegex(frappe.ValidationError, "in-flight migration"):
 			migration_module.preflight_checks(vm, self.target, False)
 
+	def test_preflight_keep_address_rejects_collision_on_target(self) -> None:
+		"""The bug: a keep-address migration carries the VM's /128 onto a target that
+		already hosts a live VM on that same /128. Pre-flight must reject it — two VMs
+		cannot share a /128 on one host (the field outage: the target's own ::2 VM
+		silently stole the migrated VM's traffic). Both fixture servers are
+		DigitalOcean → vm_range_is_forwardable True → keep-address branch."""
+		vm = self._vm()
+		# Plant a live VM on the TARGET holding the address the migrating VM would keep.
+		conflict = make_virtual_machine(self.target, self.image, status="Running")
+		frappe.db.set_value("Virtual Machine", conflict.name, "ipv6_address", vm.ipv6_address)
+		with self.assertRaisesRegex(frappe.ValidationError, "already hosts a live VM"):
+			migration_module.preflight_checks(vm, self.target, False)
+
+	def test_preflight_keep_address_allows_when_target_free(self) -> None:
+		"""The kept /128 is free on the target (only a Terminated holder) → no raise."""
+		vm = self._vm()
+		freed = make_virtual_machine(self.target, self.image, status="Terminated")
+		frappe.db.set_value("Virtual Machine", freed.name, "ipv6_address", vm.ipv6_address)
+		# Must not raise.
+		migration_module.preflight_checks(vm, self.target, False)
+
 
 class TestMigrationGateAndGuard(IntegrationTestCase):
 	def setUp(self) -> None:
