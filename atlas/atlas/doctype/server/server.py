@@ -1,5 +1,6 @@
 import json
 import uuid
+from contextlib import contextmanager
 from typing import ClassVar
 
 import frappe
@@ -351,9 +352,62 @@ def sync_scripts_to_all() -> dict[str, int]:
 	`bench --site <site> execute atlas.sync_scripts_to_all` (or `atlas.sync_scripts_to_all()`
 	in a console) to refresh every live host. Active-only because a Pending/Broken
 	server has no working SSH endpoint. Returns {server_name: files_uploaded}.
-	"""
-	results: dict[str, int] = {}
-	for name in frappe.get_all("Server", filters={"status": "Active"}, pluck="name"):
+
+	Hosts are synced CONCURRENTLY: each host's cost is now dominated by its cold SSH
+	handshake (a few seconds to a remote region), and those handshakes are
+	independent I/O — a serial sweep pays them back-to-back (N x handshake), a
+	parallel one overlaps them (~1 x handshake).
+
+	All Frappe/DB work (the doc load, the connection, the upload list) is resolved
+	HERE on the main thread first; the pool threads only do the pure-SSH push. That
+	push still reaches Frappe for cosmetics (`frappe.utils.nowtime()` in the upload
+	log line reads `frappe.local`, which is thread-local and empty in a fresh
+	worker), so each worker binds its own Frappe context to the SAME site for the
+	duration of its upload via `frappe_thread_context`."""
+	names = frappe.get_all("Server", filters={"status": "Active"}, pluck="name")
+
+	# Resolve everything that touches the DB on the main thread: the doc, its SSH
+	# connection, and the file list. The thread only does the SSH upload.
+	jobs = []
+	for name in names:
 		server = frappe.get_doc("Server", name)
-		results[name] = server.sync_scripts()
-	return results
+		if not server.ipv4_address:
+			frappe.throw(f"Server {name} has no ipv4_address; cannot sync scripts")
+		jobs.append((name, connection_for_server(server), server._script_uploads()))
+
+	if not jobs:
+		return {}
+
+	site = frappe.local.site
+
+	def _push(job) -> tuple[str, int]:
+		name, connection, uploads = job
+		with frappe_thread_context(site):
+			print(f"Syncing durable scripts to {name} ({connection.host})")
+			upload_files(connection, uploads)
+			print(f"Done syncing durable scripts to {name} ({connection.host})")
+		return name, len(uploads)
+
+	from concurrent.futures import ThreadPoolExecutor
+
+	with ThreadPoolExecutor(max_workers=len(jobs)) as pool:
+		return dict(pool.map(_push, jobs))
+
+
+@contextmanager
+def frappe_thread_context(site: str):
+	"""Bind a Frappe context to `site` for the current thread, then tear it down.
+
+	`frappe.local` is thread-local, so a worker thread spawned off the request/CLI
+	main thread starts with no site bound — any `frappe.*` that reads `local` (e.g.
+	`frappe.utils.nowtime()` reaching for the site timezone) raises `AttributeError:
+	conf`. Init + connect gives the worker its own bound context and DB connection
+	(NOT shared with the main thread's, which would be unsafe); `destroy()` closes
+	it so the thread leaves nothing behind. Read-mostly here — the upload does no
+	writes — but each worker owning its connection keeps it correct if that changes."""
+	frappe.init(site=site)
+	frappe.connect()
+	try:
+		yield
+	finally:
+		frappe.destroy()
