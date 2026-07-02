@@ -43,6 +43,14 @@ RESIZE_MUTABLE = (
 	"data_disk_gigabytes",
 )
 
+# The one field a migration cutover is allowed to repoint, and nothing else may.
+# `server` is otherwise immutable (identity + the key the rootfs was built with);
+# migration is the single sanctioned path that moves a VM between hosts, gated by
+# `flags.migrating` in validate() exactly as resize() gates RESIZE_MUTABLE.
+# `ipv6_address` is not in IMMUTABLE_AFTER_INSERT, so it needs no gate — the
+# change-address cutover rewrites it on an ordinary save. (spec/19 §1)
+MIGRATE_MUTABLE = ("server",)
+
 
 class VirtualMachine(Document):
 	# begin: auto-generated types
@@ -189,6 +197,10 @@ class VirtualMachine(Document):
 		if not self.flags.resizing:
 			# Outside resize(), the resource fields are frozen too.
 			guarded = guarded + RESIZE_MUTABLE
+		if self.flags.migrating:
+			# The cutover commits `server` (the host move already happened on-host);
+			# let exactly that through. Everything else stays frozen.
+			guarded = tuple(f for f in guarded if f not in MIGRATE_MUTABLE)
 		for field in guarded:
 			if getattr(self, field) != getattr(original, field):
 				frappe.throw(f"{field} is immutable after insert")
@@ -210,6 +222,55 @@ class VirtualMachine(Document):
 		return task.name
 
 	@frappe.whitelist()
+	def migrate(self, target_server: str, release_reserved_ip: bool = False) -> str:
+		"""Begin migrating this VM's disk to `target_server`, keeping its identity
+		(UUID and everything derived from it). Returns the Virtual Machine Migration
+		row name; the scheduled `reconcile_migrations` callback advances it phase by
+		phase, idempotently and resumably (spec/19).
+
+		Cold migration: the VM is stopped during cutover. On the change-address path
+		(stage 1) it gets a NEW public IPv6 on the target and the proxy/Subdomain
+		layer is re-pointed. Pre-flight (the cheap synchronous half) runs here; the
+		on-host checks that need SSH run in the first phase."""
+		from atlas.atlas.migration import preflight_checks  # local import: avoids a cycle
+
+		# frm.call / REST send a stringy bool.
+		release_reserved_ip = release_reserved_ip in (True, 1, "1", "true", "True", "yes")
+
+		preflight_checks(self, target_server, release_reserved_ip)
+
+		migration = frappe.get_doc(
+			{
+				"doctype": "Virtual Machine Migration",
+				"virtual_machine": self.name,
+				"source_server": self.server,
+				"target_server": target_server,
+				"release_reserved_ip": 1 if release_reserved_ip else 0,
+				"status": "Pending",
+			}
+		).insert(ignore_permissions=True)
+		return migration.name
+
+	def _guard_no_active_migration(self) -> None:
+		"""Throw if a non-terminal migration exists for this VM. The migration phase
+		machine owns every host operation while it runs; a concurrent lifecycle action
+		would race it against the wrong (stale) server. The migration's own internal
+		saves set `flags.migrating`, which exempts them from this guard."""
+		if self.flags.migrating:
+			return
+		from atlas.atlas.doctype.virtual_machine_migration.virtual_machine_migration import (
+			active_migration_for,
+		)
+
+		migration = active_migration_for(self.name)
+		if migration:
+			frappe.throw(
+				_(
+					"Virtual Machine {0} has an in-flight migration ({1}); wait for it to finish or fail"
+				).format(self.name, migration)
+			)
+
+	@frappe.whitelist()
 	def start(self) -> str:
 		"""Start a Stopped VM. When the last stop captured a memory snapshot
 		(has_memory_snapshot), the host resumes the guest from it in milliseconds
@@ -219,6 +280,7 @@ class VirtualMachine(Document):
 		clears here unconditionally."""
 		if self.status != "Stopped":
 			frappe.throw(f"Cannot start from {self.status}")
+		self._guard_no_active_migration()
 		task = run_task(
 			server=self.server,
 			script="start-vm",
@@ -245,6 +307,7 @@ class VirtualMachine(Document):
 		# `systemctl stop` is the correct full shutdown from either state.
 		if self.status not in ("Running", "Paused"):
 			frappe.throw(f"Cannot stop from {self.status}")
+		self._guard_no_active_migration()
 		if self.stop_protection:
 			frappe.throw(_("Disable stop protection before stopping this VM"))
 		if memory_snapshot is None:
@@ -305,6 +368,7 @@ class VirtualMachine(Document):
 		resume()."""
 		if self.status != "Running":
 			frappe.throw(f"Cannot pause from {self.status}")
+		self._guard_no_active_migration()
 		task = run_task(
 			server=self.server,
 			script="pause-vm",
@@ -321,6 +385,7 @@ class VirtualMachine(Document):
 		"""Unfreeze a Paused VM's vCPUs via the API socket."""
 		if self.status != "Paused":
 			frappe.throw(f"Cannot resume from {self.status}")
+		self._guard_no_active_migration()
 		task = run_task(
 			server=self.server,
 			script="resume-vm",
@@ -370,6 +435,7 @@ class VirtualMachine(Document):
 				f"Stop the VM before snapshotting (status is {self.status}), "
 				f"or pass live=True for a crash-consistent live snapshot"
 			)
+		self._guard_no_active_migration()
 		title = (title or "").strip() or self._default_snapshot_title()
 		# A snapshot captures BOTH disks: the data disk is a first-class peer of
 		# root. We record its size + mount config on the row so a clone/restore can
@@ -469,6 +535,7 @@ class VirtualMachine(Document):
 				f"A warm snapshot needs a Running or Paused VM (status is {self.status}); "
 				f"for a Stopped VM take a plain snapshot"
 			)
+		self._guard_no_active_migration()
 		title = (title or "").strip() or self._default_snapshot_title()
 		snapshot = frappe.get_doc(
 			{
@@ -531,6 +598,7 @@ class VirtualMachine(Document):
 		the operator starts it when ready."""
 		if self.status != "Stopped":
 			frappe.throw(f"Stop the VM before rebuilding (status is {self.status})")
+		self._guard_no_active_migration()
 		variables = self._rebuild_variables(source_type, source)
 		task = run_task(
 			server=self.server,
@@ -622,6 +690,7 @@ class VirtualMachine(Document):
 		fractional one) stands. cpu_mode is left untouched unless passed."""
 		if self.status != "Stopped":
 			frappe.throw(f"Stop the VM before resizing (status is {self.status})")
+		self._guard_no_active_migration()
 		new_vcpus = int(vcpus) if vcpus else self.vcpus
 		new_memory = int(memory_megabytes) if memory_megabytes else self.memory_megabytes
 		new_disk = int(disk_gigabytes) if disk_gigabytes else self.disk_gigabytes
@@ -702,6 +771,7 @@ class VirtualMachine(Document):
 		clients must refresh known_hosts — that is the intended effect."""
 		if self.status != "Stopped":
 			frappe.throw(f"Stop the VM before regenerating host keys (status is {self.status})")
+		self._guard_no_active_migration()
 		task = run_task(
 			server=self.server,
 			script="regenerate-host-keys-vm",
@@ -731,6 +801,7 @@ class VirtualMachine(Document):
 			frappe.throw(_("VM is already terminated"))
 		if self.termination_protection:
 			frappe.throw(_("Disable termination protection before terminating this VM"))
+		self._guard_no_active_migration()
 		task = run_task(
 			server=self.server,
 			script="terminate-vm",

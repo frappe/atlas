@@ -75,8 +75,7 @@
    "in_standard_filter": 1,
    "label": "Server",
    "options": "Server",
-   "reqd": 1,
-   "set_only_once": 1
+   "reqd": 1
   },
   {
    "fieldname": "image",
