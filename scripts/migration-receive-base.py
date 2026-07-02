@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-# Target side of a VM migration (spec/19), LOCAL-BASE-IMAGE receive: pull a local
+# Target side of a VM migration (spec/24), LOCAL-BASE-IMAGE receive: pull a local
 # (snapshot-promoted, un-syncable) base image from the source over NBD so this host
 # gains the base rootfs LV + image directory it needs to migrate — and boot — a VM
 # on that image. Pairs with migration-export-base.py on the source.
 #
-# WHY dm-clone (not a plain dd): the base copy is multi-GB, and spec/19 requires the
+# WHY dm-clone (not a plain dd): the base copy is multi-GB, and spec/24 requires the
 # migration's progress to be observable at all points. dm-clone exposes a hydrated/
 # total region count via `dmsetup status`, so migration-poll-hydration's existing
 # percent parse works unchanged — the controller polls it per tick and shows a bar.
@@ -103,9 +103,9 @@ def _prepare(inputs: "ReceiveBaseInputs", pool: "ThinPool", key: str) -> None:
 	# Migration-dep pre-flight, same as clone-target.
 	for module in ("nbd", "dm_clone"):
 		if not run_ok("sudo modprobe {}", module):
-			sys.exit(f"kernel module {module!r} unavailable; re-bootstrap before migrating (spec/19)")
+			sys.exit(f"kernel module {module!r} unavailable; re-bootstrap before migrating (spec/24)")
 	if not run_ok("which nbd-client"):
-		sys.exit("nbd-client not installed on the target; re-bootstrap (spec/19)")
+		sys.exit("nbd-client not installed on the target; re-bootstrap (spec/24)")
 
 	if pool.usage.data_percent >= 80.0:
 		sys.exit("target thin pool above 80%; free space before hydrating a base image onto it")

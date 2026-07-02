@@ -166,7 +166,7 @@ PACKAGES = [
 	"squashfs-tools",
 	"thin-provisioning-tools",
 	"wireguard-tools",
-	# VM migration (spec/19): qemu-utils ships qemu-nbd (the source NBD export),
+	# VM migration (spec/24): qemu-utils ships qemu-nbd (the source NBD export),
 	# nbd-client connects it on the target. socat bridges the SSH-forwarded TCP
 	# stream to a tun device for the keep-address §2.1 tunnel. The `nbd` +
 	# `dm_clone` kernel modules come from linux-modules-extra, installed
@@ -468,7 +468,7 @@ def main() -> None:
 	ThinPool().ensure()
 	run("sudo systemctl enable atlas-pool.service", check=False, quiet=True)
 
-	# 11b. VM migration kernel modules (spec/19). The cold-migration disk move runs
+	# 11b. VM migration kernel modules (spec/24). The cold-migration disk move runs
 	#      over NBD into a device-mapper `clone` target, so the target host needs
 	#      `nbd` and `dm_clone`. They live in linux-modules-extra (not the cloud
 	#      kernel's base set), so install the package matching the RUNNING kernel

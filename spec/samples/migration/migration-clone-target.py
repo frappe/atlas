@@ -31,7 +31,7 @@ from atlas.lvm import ThinPool
 from atlas.paths import VirtualMachinePaths, image_directory
 from atlas.rootfs import Identity, inject_identity
 
-REGION_SECTORS = 32768  # 16 MiB dm-clone region (see spec/19); tunable.
+REGION_SECTORS = 32768  # 16 MiB dm-clone region (see spec/24); tunable.
 CLONE_META = "atlas-clonemeta-{uuid}"
 CLONE_DEV = "atlas-vm-{uuid}-clone"
 
@@ -79,10 +79,10 @@ def _prepare(inputs: "CloneInputs") -> None:
 		if not run_ok("sudo", "modprobe", module):
 			sys.exit(
 				f"kernel module {module!r} unavailable on this host; install linux-modules-extra "
-				f"and re-bootstrap before migrating (spec/19)"
+				f"and re-bootstrap before migrating (spec/24)"
 			)
 	if not run_ok("which", "qemu-nbd"):
-		sys.exit("qemu-nbd not installed on the target; install it and re-bootstrap (spec/19)")
+		sys.exit("qemu-nbd not installed on the target; install it and re-bootstrap (spec/24)")
 
 	# 1. Image present (kernel + CoW origin come from it), same probe as
 	#    provision-vm.py step 0. Fail loud → operator runs Sync to Server first.

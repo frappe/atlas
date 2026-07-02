@@ -1,7 +1,7 @@
 # VM migration — resolved questions
 
 The design pass left six genuinely-open questions for the operator. **All six
-are now resolved in the spec** ([spec/19](../../19-vm-migration.md)); this file
+are now resolved in the spec** ([spec/24](../../24-vm-migration.md)); this file
 records each one, the decision, and where the spec makes it authoritative. It
 supersedes the earlier `OPEN-QUESTIONS.md` (nothing here is still open).
 
@@ -25,7 +25,7 @@ on target, so the IP and any DNS A record are unchanged.
 `release_reserved_ip=True` is now an explicit **drop-it** override (free the
 address instead of moving it); the default is **preserve**, not drop.
 
-→ [spec/19 §6](../../19-vm-migration.md#6-reserved-ip-public-ipv4), [02 § Reserved IP](../../02-doctypes.md#reserved-ip)
+→ [spec/24 §6](../../24-vm-migration.md#6-reserved-ip-public-ipv4), [02 § Reserved IP](../../02-doctypes.md#reserved-ip)
 *(Sample still shows detach-and-drop — the pre-relaxation shape.)*
 
 ---
@@ -38,7 +38,7 @@ but the source NBD export + snapshot are **held alive until hydration hits
 availability *and* a clean rollback window — the source VM stays intact and
 re-startable through `CutoverStarting`.
 
-→ [spec/19 §5 — Hydration / Collapse+cutover / Cleanup](../../19-vm-migration.md#5-storage-nbd-export--dm-clone-hydration)
+→ [spec/24 §5 — Hydration / Collapse+cutover / Cleanup](../../24-vm-migration.md#5-storage-nbd-export--dm-clone-hydration)
 
 ---
 
@@ -62,7 +62,7 @@ network-env re-injection), and the **proxy/Subdomain re-point + `reconcile_regio
 are eliminated** on the keep-address paths — they survive only on the
 change-address fallback.
 
-→ [spec/19 §2](../../19-vm-migration.md#2-the-ipv6-128-cross-host-routing-scaleway-keep-address-path) (Scaleway), [§2.9](../../19-vm-migration.md#29-permanent-per-vm-forwarding-digitalocean-keep-address-path) (DigitalOcean), [§2.8](../../19-vm-migration.md#28-self-managed-fallback--portability-detection) (Self-Managed / detection)
+→ [spec/24 §2](../../24-vm-migration.md#2-the-ipv6-128-cross-host-routing-scaleway-keep-address-path) (Scaleway), [§2.9](../../24-vm-migration.md#29-permanent-per-vm-forwarding-digitalocean-keep-address-path) (DigitalOcean), [§2.8](../../24-vm-migration.md#28-self-managed-fallback--portability-detection) (Self-Managed / detection)
 *(Sample shows the change-address path, now the DO/Self-Managed fallback only.)*
 
 ---
@@ -75,7 +75,7 @@ The Migration form shows the phase pill, hydration %, `tunnel_status`, and a
 **Retry** on `Failed`. Per-phase manual buttons are debug-only; the lifecycle
 guard blocks concurrent lifecycle actions mid-migration.
 
-→ [spec/19 §8](../../19-vm-migration.md#8-operator-ux-resolved-one-button--scheduler)
+→ [spec/24 §8](../../24-vm-migration.md#8-operator-ux-resolved-one-button--scheduler)
 
 ---
 
@@ -86,7 +86,7 @@ The data disk migrates as a **second dm-clone over a second NBD export** (root =
 + hydration-poll machinery, and the data disk is available immediately too. The
 blocking-`dd` alternative was rejected.
 
-→ [spec/19 §5 — Data disk](../../19-vm-migration.md#5-storage-nbd-export--dm-clone-hydration)
+→ [spec/24 §5 — Data disk](../../24-vm-migration.md#5-storage-nbd-export--dm-clone-hydration)
 
 ---
 
@@ -99,7 +99,7 @@ satisfied trivially; the VM's `region` field is copied from the source verbatim.
 No `Server.region` field or mapping is required. (The region fields are slated
 for removal once the single-region invariant is made structural.)
 
-→ [spec/19 §1 — Region note](../../19-vm-migration.md#why-this-shape)
+→ [spec/24 §1 — Region note](../../24-vm-migration.md#why-this-shape)
 
 ---
 
@@ -113,4 +113,4 @@ so every Active host can be a migration source or target with no re-bootstrap:
 persists the modules via `/etc/modules-load.d/60-atlas-migration.conf`. The
 target clone-script still re-asserts them defensively in its pre-flight.
 
-→ [spec/19 § New dependencies](../../19-vm-migration.md#new-dependencies), [README § principle 5](../../README.md), [03-bootstrapping.md](../../03-bootstrapping.md)
+→ [spec/24 § New dependencies](../../24-vm-migration.md#new-dependencies), [README § principle 5](../../README.md), [03-bootstrapping.md](../../03-bootstrapping.md)

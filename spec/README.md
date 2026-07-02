@@ -109,7 +109,7 @@ keep it the source of truth.
    [03-bootstrapping.md § The Atlas interpreter and CLI](./03-bootstrapping.md)),
    plus `firecracker`, `systemd`, `iproute2`, `nftables`, `curl`, `jq`,
    `e2fsprogs`, `squashfs-tools`, `lvm2`, `thin-provisioning-tools`, and —
-   for VM migration ([19-vm-migration.md](./19-vm-migration.md)) — `qemu-utils`
+   for VM migration ([24-vm-migration.md](./24-vm-migration.md)) — `qemu-utils`
    (the `qemu-nbd` disk export), `nbd-client`, `socat` (the §2.1 tunnel), and
    the `nbd` + `dm_clone` kernel modules from `linux-modules-extra-$(uname -r)`.
    The package is stdlib-only today, but installing it the standard way means a
@@ -147,6 +147,7 @@ keep it the source of truth.
 21. [The Central-managed tunnel (management-plane lockdown)](./21-tunnel.md)
 22. [Observability — making long-running tasks legible](./22-observability.md)
 23. [Supply chain — the external artefacts Atlas pulls](./23-supply-chain.md)
+24. [VM migration between hosts](./24-vm-migration.md)
 
 ## First run on a fresh site
 

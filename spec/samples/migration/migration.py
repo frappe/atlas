@@ -1,6 +1,6 @@
 """VM migration orchestration — the resumable phase machine and its callback.
 
-SAMPLE / ILLUSTRATIVE. See spec/19-vm-migration.md. Lives at
+SAMPLE / ILLUSTRATIVE. See spec/24-vm-migration.md. Lives at
 atlas/atlas/migration.py when built. Wired in hooks.py:
 
     scheduler_events = {
@@ -135,7 +135,7 @@ def preflight_checks(vm, target_server: str, release_reserved_ip: bool) -> None:
 		frappe.throw("Cross-provider migration is out of scope (source and target must share a provider)")
 	# Same region: a Subdomain's `region` is immutable and a Reserved IP is bound to
 	# its source server, so the routes/IP can only follow a SAME-region move
-	# (spec/19). NOTE: `region` is a field on Virtual Machine (set at provision from
+	# (spec/24). NOTE: `region` is a field on Virtual Machine (set at provision from
 	# the active Root Domain — placement.active_root_domain), NOT on Server, so there
 	# is no direct `target_server.region` to compare against. v1 resolves this by
 	# requiring the operator-supplied target to share the VM's region; the authoritative

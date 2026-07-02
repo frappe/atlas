@@ -1,7 +1,7 @@
 # VM migration — sample implementation
 
 Illustrative, **not committed app code**. These files show *how* the design in
-[spec/19-vm-migration.md](../../19-vm-migration.md) would be built, in the exact
+[spec/24-vm-migration.md](../../24-vm-migration.md) would be built, in the exact
 idioms of the real codebase (typed `--kebab-case` Task scripts with an
 `ATLAS_RESULT=` line, the `ThinPool`/`Identity` libraries, the `flags.<x>` gate
 pattern, the scheduler-driven resumable loop). They are written to be *read*, not
@@ -41,7 +41,7 @@ to the new `/128`.
 
 ## What is NOT in these sample files yet (the spec is ahead of the sample)
 
-The open questions are **resolved** — see [spec/19](../../19-vm-migration.md).
+The open questions are **resolved** — see [spec/24](../../24-vm-migration.md).
 These sample files predate two of those resolutions and show the *older* shape;
 build from the spec, not the sample, where they differ:
 

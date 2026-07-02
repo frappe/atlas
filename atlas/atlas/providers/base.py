@@ -201,7 +201,7 @@ class Provider(ABC):
 	def vm_range_is_forwardable(self, provider_resource_id: str) -> bool:
 		"""True iff a VM keeping its /128 across a migration can have its inbound
 		traffic permanently forwarded from the source host to wherever it now lives
-		(spec/19-vm-migration.md §2.8). This is the keep-address gate: the source
+		(spec/24-vm-migration.md §2.8). This is the keep-address gate: the source
 		host keeps holding the /64 the /128 is carved from — so it keeps receiving
 		the address and tunnels it to the target — and nothing ever reclaims or
 		moves the /64. Default False (Self-Managed, Fake) → those providers fall

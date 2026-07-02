@@ -155,7 +155,7 @@ class ProvisionInputs(TaskInputs):
 	data_disk_format: int = 1
 	data_disk_mount_at: str = ""
 	data_snapshot_rootfs_path: str = ""
-	# Migration cutover (spec/19): the disk LV already exists (hydrated from the
+	# Migration cutover (spec/24): the disk LV already exists (hydrated from the
 	# source over NBD) and already carries the VM's SSH host identity, which must
 	# survive the move (clients' known_hosts). With this set, the identity inject
 	# PRESERVES the existing host keys instead of regenerating them — the same

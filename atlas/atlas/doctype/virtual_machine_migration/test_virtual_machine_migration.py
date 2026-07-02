@@ -1,4 +1,4 @@
-"""Unit coverage for VM migration (spec/19): the pure parse, the phase machine,
+"""Unit coverage for VM migration (spec/24): the pure parse, the phase machine,
 the pre-flight throws, the immutability/retry contract, the flags.migrating gate,
 and the lifecycle guard. Host facts (real NBD/dm-clone move) live in the e2e
 use-case module; everything here runs in milliseconds with no host."""
@@ -110,7 +110,7 @@ class TestTargetDiskSizing(IntegrationTestCase):
 	"""The target disk must be sized off the SOURCE's actual bytes, never the VM
 	doc's declared disk_gigabytes — a grown disk (physically larger than the doc)
 	would otherwise be truncated during hydration, killing the fs superblock
-	(spec/19 §5, found on a real f1→f2 migration 2026-07-02)."""
+	(spec/24 §5, found on a real f1→f2 migration 2026-07-02)."""
 
 	def setUp(self) -> None:
 		self.source = _source_server()
@@ -319,7 +319,7 @@ class TestMigrationRow(IntegrationTestCase):
 
 class TestAddressSchemeDerivation(IntegrationTestCase):
 	"""The keep_address / forward_address derivation from the provider capability
-	(spec/19 §2.8), independent of any live provider construction — the capability
+	(spec/24 §2.8), independent of any live provider construction — the capability
 	is mocked so the test pins the branching, not a vendor's real answer."""
 
 	def setUp(self) -> None:
@@ -545,7 +545,7 @@ class TestMigrationPhaseMachine(IntegrationTestCase):
 	def test_keep_address_phases_keep_the_128(self) -> None:
 		"""The keep-address path: same phase ORDER, but the VM keeps its /128, no
 		Subdomain re-point happens, and the VM is recorded as forwarded from the
-		source (spec/19 §2.9)."""
+		source (spec/24 §2.9)."""
 		vm = self._vm()
 		original_ipv6 = vm.ipv6_address
 		row = self._row(vm, keep_address=1)
@@ -649,7 +649,7 @@ class TestMigrationPhaseMachine(IntegrationTestCase):
 
 
 class TestLocalBaseImageShip(IntegrationTestCase):
-	"""spec/19 §5.1: a VM on a LOCAL (snapshot-promoted, un-syncable) base image
+	"""spec/24 §5.1: a VM on a LOCAL (snapshot-promoted, un-syncable) base image
 	must ship that base to the target during TargetPreparing. Drives the phase
 	machine with run_task mocked, proving the base-ship sub-phase runs the right
 	host scripts, re-enters TargetPreparing until the base is 100% hydrated, records
@@ -761,7 +761,7 @@ class TestLocalBaseImageShip(IntegrationTestCase):
 		)
 
 	def test_progress_detail_is_stamped_before_each_phase(self) -> None:
-		# spec/19: progress must be visible at all points — advance_migration stamps a
+		# spec/24: progress must be visible at all points — advance_migration stamps a
 		# live progress_detail line naming the host BEFORE the (possibly slow) phase
 		# task runs, and the disk hydration writes a finer line + percent per tick.
 		row, _vm = self._row()
@@ -836,7 +836,7 @@ class TestLocalBaseImageShip(IntegrationTestCase):
 
 
 class TestCollapseForward(IntegrationTestCase):
-	"""The operator-initiated Collapse-forward (spec/19 §2.9.5): tear the tunnel
+	"""The operator-initiated Collapse-forward (spec/24 §2.9.5): tear the tunnel
 	down on both hosts and fall the VM back to a fresh /128 (change-address)."""
 
 	def setUp(self) -> None:

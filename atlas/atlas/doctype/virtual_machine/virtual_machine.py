@@ -48,7 +48,7 @@ RESIZE_MUTABLE = (
 # migration is the single sanctioned path that moves a VM between hosts, gated by
 # `flags.migrating` in validate() exactly as resize() gates RESIZE_MUTABLE.
 # `ipv6_address` is not in IMMUTABLE_AFTER_INSERT, so it needs no gate — the
-# change-address cutover rewrites it on an ordinary save. (spec/19 §1)
+# change-address cutover rewrites it on an ordinary save. (spec/24 §1)
 MIGRATE_MUTABLE = ("server",)
 
 
@@ -228,7 +228,7 @@ class VirtualMachine(Document):
 		"""Begin migrating this VM's disk to `target_server`, keeping its identity
 		(UUID and everything derived from it). Returns the Virtual Machine Migration
 		row name; the scheduled `reconcile_migrations` callback advances it phase by
-		phase, idempotently and resumably (spec/19).
+		phase, idempotently and resumably (spec/24).
 
 		Cold migration: the VM is stopped during cutover. On the change-address path
 		(stage 1) it gets a NEW public IPv6 on the target and the proxy/Subdomain
@@ -256,7 +256,7 @@ class VirtualMachine(Document):
 	@frappe.whitelist()
 	def collapse_forward(self) -> None:
 		"""Tear down this VM's keep-address forward and fall back to change-address
-		(spec/19 §2.9.5). Only meaningful for a VM whose traffic is still forwarded
+		(spec/24 §2.9.5). Only meaningful for a VM whose traffic is still forwarded
 		from another host (set after a keep-address migration); the source host keeps
 		egressing the VM's /128 until this runs. The VM gets a NEW /128 on its
 		current host, the Subdomains re-point, and the cross-host tunnel is removed.

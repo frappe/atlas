@@ -2,7 +2,7 @@
 
 SAMPLE / ILLUSTRATIVE — shown as standalone snippets so the diff is legible, not
 as a full file. Each block notes where it slots into the real controller.
-See spec/19-vm-migration.md.
+See spec/24-vm-migration.md.
 """
 
 import frappe
@@ -57,7 +57,7 @@ def migrate(self, target_server: str, release_reserved_ip: bool = False) -> str:
 	"""Begin migrating this VM's disk to `target_server`, keeping its identity.
 
 	Cold migration: the VM is stopped during cutover and gets a NEW public IPv6 on
-	the target (the /128 is per-server and not portable — see spec/06, spec/19).
+	the target (the /128 is per-server and not portable — see spec/06, spec/24).
 	Returns the Virtual Machine Migration row name; the scheduled
 	`reconcile_migrations` callback advances it phase by phase, idempotently and
 	resumably.

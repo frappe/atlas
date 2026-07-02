@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Target side of a VM migration (spec/19), CUTOVER-COLLAPSE step: collapse the
+# Target side of a VM migration (spec/24), CUTOVER-COLLAPSE step: collapse the
 # fully-hydrated dm-clone device(s) down to the plain local thin LV and disconnect
 # the nbd client(s). After this the disk is pure-local (no read-through to the
 # source), and the controller launches the VM by re-running provision-vm against

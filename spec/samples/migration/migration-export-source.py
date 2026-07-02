@@ -2,7 +2,7 @@
 # Source side of a VM migration: thin-snapshot the Stopped VM's disk(s) and export
 # them read-only over NBD, bound to localhost. The target reaches this export
 # through an SSH LocalForward tunnel it opens (so there is no public NBD port and
-# no firewall hole; spec/06 gives hosts no private fabric, spec/19).
+# no firewall hole; spec/06 gives hosts no private fabric, spec/24).
 #
 # SAMPLE / ILLUSTRATIVE — mirrors the typed-Task contract and the lvm.ThinPool API
 # of scripts/provision-vm.py and scripts/snapshot-vm.py. Idempotent: re-running

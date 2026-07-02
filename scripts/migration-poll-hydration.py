@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Drive + observe dm-clone hydration for a migrating VM (spec/19). Called once per
+# Drive + observe dm-clone hydration for a migrating VM (spec/24). Called once per
 # scheduler tick by the Hydrating phase: it enables hydration on first call
 # (idempotent) and reports the current percent. The CONTROLLER decides when to
 # advance — keeping the multi-minute copy off the worker as cheap read-only probes.
@@ -27,7 +27,7 @@ CLONE_DEV = "atlas-vm-{key}-clone"
 class HydrationInputs(TaskInputs):
 	"""Enable + poll dm-clone hydration. Default: a migrating VM's disk(s) (root +
 	optional data). With `clone_device` set, poll exactly that one dm device instead
-	— used by the local-base-image ship (spec/19), whose clone is keyed by image
+	— used by the local-base-image ship (spec/24), whose clone is keyed by image
 	name (atlas-base-<image>-clone), not a VM uuid."""
 
 	command: typing.ClassVar[str] = "migration-poll-hydration"

@@ -5,7 +5,7 @@ Operator clicks **Migrate** on a VM form (target picker); the scheduled
 COLD migration — the guest is stopped during cutover and (stage 1, change-address)
 gets a NEW public IPv6 on the target; the UUID and everything derived from it
 (MAC/tap/netns/uid) re-materialize identically, and the SSH host keys are PRESERVED
-so the VM's SSH identity survives the move. See spec/19-vm-migration.md.
+so the VM's SSH identity survives the move. See spec/24-vm-migration.md.
 
 This is a **dedicated-two-droplet** host fact — it needs a source AND a target
 Server, both Active and same-provider — so it owns its own droplets and is invoked
@@ -23,7 +23,7 @@ What it proves — the host facts only a real cross-host move can:
 Two scenarios, one per address scheme (each owns the two-droplet harness):
   - `run_smoke` — CHANGE-address (the Self-Managed fallback / non-forwardable path):
     the VM gets a NEW /128 on the target and the proxy re-points. Facts 1-5 above.
-  - `run_keep_address_smoke` — KEEP-address (spec/19 §2.9, stage 3): the VM keeps
+  - `run_keep_address_smoke` — KEEP-address (spec/24 §2.9, stage 3): the VM keeps
     its /128; the source host keeps holding the /64 and forwards the address to the
     target over a per-VM tunnel, with the guest's replies policy-routed back up it.
     Then Collapse-forward moves it to a new /128 and tears the tunnel down.
@@ -125,7 +125,7 @@ def run_smoke(reuse: bool = True, keep: bool = True) -> None:
 
 
 def run_keep_address_smoke(reuse: bool = True, keep: bool = True) -> None:
-	"""The KEEP-ADDRESS host-fact path (spec/19 §2.9, stage 3): migrate a fresh VM
+	"""The KEEP-ADDRESS host-fact path (spec/24 §2.9, stage 3): migrate a fresh VM
 	source→target keeping its /128, then prove the facts only a real cross-host
 	forward can:
 

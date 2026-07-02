@@ -866,7 +866,7 @@ allocate/attach/detach/release lifecycle and is independently queryable
 | ---------------------- | --------------------- | ---- | --------- | --------- | ---------------------------------------------------------------- |
 | `name`                 | UUID (autoname `hash`) | Y   | Y         |           | Primary key. |
 | `ip_address`           | Data                  | Y    | Y         |           | The public IPv4. `unique`. `title_field`. Locked once written. |
-| `server`               | Link → Server         |      | Y         |           | The host this IP is currently bound to. The IP belongs to the Server even with no VM attached. **Not immutable** — the vendor can reassign the IP to another droplet, so `reassign()` repoints this field (migration uses it — [19](./19-vm-migration.md)). Empty when the IP rests allocated-on-the-vendor with no Server (a valid resting/handoff state). |
+| `server`               | Link → Server         |      | Y         |           | The host this IP is currently bound to. The IP belongs to the Server even with no VM attached. **Not immutable** — the vendor can reassign the IP to another droplet, so `reassign()` repoints this field (migration uses it — [24](./24-vm-migration.md)). Empty when the IP rests allocated-on-the-vendor with no Server (a valid resting/handoff state). |
 | `status`               | Select                | Y    | Y         | Allocated | `Allocated` (on the Server, no VM) or `Attached` (bound to a VM). Derived in `validate()` from `virtual_machine` — never set by hand. |
 | `virtual_machine`      | Link → Virtual Machine |     | Y         |           | The attached VM, or empty when unattached. Only a VM on the **same Server** may be attached. Maintained by `attach()` / `detach()`. |
 | `provider_resource_id` | Data                  |      | Y         |           | Vendor's handle for the reserved IP (DigitalOcean reserved-IP id). Empty for Self-Managed. Locked once written. |
@@ -921,7 +921,7 @@ invariant together (in failure-safe order).
   Server's pool it sits in) does. Same-provider only. Idempotent (a no-op if
   already there). Self-Managed has no vendor bind, so it only repoints the row
   (the operator re-routes the address). This is the path that lets a customer's
-  inbound v4 **survive a VM migration** ([19](./19-vm-migration.md)): detach,
+  inbound v4 **survive a VM migration** ([24](./24-vm-migration.md)): detach,
   `reassign` to the target droplet, repoint, re-attach to the migrated VM.
 - `release()` — destroy the vendor reserved IP and delete this row, returning
   the address to the vendor pool. Refuses while the IP is attached. **Explicit,

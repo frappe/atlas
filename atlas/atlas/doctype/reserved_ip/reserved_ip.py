@@ -6,7 +6,7 @@ from atlas.atlas.ssh import run_task
 
 # A Reserved IP is bound to its address and vendor handle for life; those lock
 # once written. `server` is NOT immutable: the vendor can reassign the IP to a
-# different droplet (migration repoints it — spec/19), and the IP can rest
+# different droplet (migration repoints it — spec/24), and the IP can rest
 # allocated-on-the-vendor with no Server at all. The same-Server attach invariant
 # is enforced in attach(), not by freezing the field.
 IMMUTABLE_AFTER_INSERT = (
@@ -145,7 +145,7 @@ class ReservedIP(Document):
 		only which droplet it is bound to (and so which Server's pool it sits in) does.
 
 		This is the path that lets a customer's inbound v4 survive a VM migration
-		(spec/19): the migration detaches the IP, reassigns it to the target droplet,
+		(spec/24): the migration detaches the IP, reassigns it to the target droplet,
 		repoints `server`, then re-attaches it to the migrated VM on the target. The IP
 		must be detached first — a bound IP is reassigned through detach()/attach(), not
 		here, so the host 1:1-NAT is never left pointing at the wrong droplet.

@@ -194,7 +194,7 @@ class DigitalOceanProvider(Provider):
 		"""DigitalOcean keep-address is always available: DO's edge finds the right
 		droplet by proxy-NDP on the uplink, so the source droplet can keep answering
 		NDP for the VM's /128 forever and tunnel the matched traffic to the target
-		(spec/19 §2.9). This is a property of DO's delivery mechanism, true for every
+		(spec/24 §2.9). This is a property of DO's delivery mechanism, true for every
 		droplet — not a per-box fact that can fail."""
 		return True
 

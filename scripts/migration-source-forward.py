@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Source side of a keep-address migration's cutover (spec/19 §2.2, §2.9.2): point
+# Source side of a keep-address migration's cutover (spec/24 §2.2, §2.9.2): point
 # the VM's /128 delivery at the forward tunnel instead of its now-torn-down veth.
 #
 # By the time this runs, the source VM's unit is disabled and its ExecStopPost
@@ -18,7 +18,7 @@
 # skipped — the routed /64 already delivers the /128 to this host.
 #
 # This is the point the forward becomes live and PERMANENT: nothing tears it down
-# automatically (spec/19 §2.9.4). The operator collapses it by hand later
+# automatically (spec/24 §2.9.4). The operator collapses it by hand later
 # (migration-forward-down.py via the Collapse-forward action).
 #
 # Idempotent: `ip route replace` and duplicate-guarded nft adds re-assert cleanly.

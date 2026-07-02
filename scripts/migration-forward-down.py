@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Tear down one end of a VM migration's keep-address forward tunnel (spec/19
+# Tear down one end of a VM migration's keep-address forward tunnel (spec/24
 # §2.9.5, the Collapse-forward action). The inverse of migration-forward-up plus
 # migration-source-forward (source) / migration-target-receive (target).
 #

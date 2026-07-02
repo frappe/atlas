@@ -52,7 +52,7 @@ MAX_OPEN_FILES = 1024
 # uplink and is never visible on the wire — it only needs to be unique per host.
 IPV4_EGRESS_SUPERNET = "100.64.0.0/16"
 
-# Migration tunnel (spec/19-vm-migration.md §2.9, keep-address path). When a VM
+# Migration tunnel (spec/24-vm-migration.md §2.9, keep-address path). When a VM
 # migrates keeping its /128, the source host keeps holding the /64 that /128 is
 # carved from, so it keeps receiving the VM's inbound traffic and forwards it to
 # the target over a per-VM point-to-point tunnel; the target policy-routes the
@@ -322,7 +322,7 @@ def derive_ipv4_link(ipv6_address: str) -> tuple[str, str]:
 
 def derive_vm_tunnel(virtual_machine_name: str) -> str:
 	"""mig6-<first 8 hex of the VM's UUID>. Length 13, IFNAMSIZ-safe (`mig6-` (5)
-	+ 8 = 13). The migration tunnel's `tun` device name (spec/19 §2.9.1), keyed to
+	+ 8 = 13). The migration tunnel's `tun` device name (spec/24 §2.9.1), keyed to
 	the VM — one device per migrated VM, brought up at cutover and left up while
 	the /128 is forwarded. Both hosts derive it identically, so teardown and
 	lost-task re-entry need only the UUID, not stored state. Distinct from the

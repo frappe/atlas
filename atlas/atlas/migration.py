@@ -1,6 +1,6 @@
 """VM migration orchestration — the resumable phase machine and its callback.
 
-See spec/19-vm-migration.md. This is the CONTROLLER-side driver; the host work
+See spec/24-vm-migration.md. This is the CONTROLLER-side driver; the host work
 runs in the `migration-*` Task scripts (scripts/). Wired in hooks.py:
 
     scheduler_events = {"cron": {"*/2 * * * *": ["atlas.atlas.migration.reconcile_migrations"]}}
@@ -21,7 +21,7 @@ range-move §2, DigitalOcean permanent-forward §2.9) are later stages.
 
 **Transport (this build): plain TCP.** The source binds `qemu-nbd` to its public
 IPv4 and the target's `nbd-client` dials it directly — no SSH tunnel yet (the
-host-to-host credential is a deferred stage-3 prerequisite, spec/19 §2.1). This
+host-to-host credential is a deferred stage-3 prerequisite, spec/24 §2.1). This
 data path is unencrypted; it is a deliberate get-it-working-first shortcut.
 
 Every phase obeys two rules:
@@ -198,7 +198,7 @@ def preflight_checks(vm, target_server: str, release_reserved_ip: bool) -> None:
 			"Cross-provider migration is out of scope (source and target must share a provider): "
 			f"{source_provider} != {target.provider_type}"
 		)
-	# Region is same-by-construction: one region per Atlas instance (spec/19 §1),
+	# Region is same-by-construction: one region per Atlas instance (spec/24 §1),
 	# and Subdomain has no region field. Nothing to compare.
 
 	# IPv6 capacity on the target: allocate_ipv6 raises if the range is full. We
@@ -220,7 +220,7 @@ def preflight_checks(vm, target_server: str, release_reserved_ip: bool) -> None:
 
 
 def _will_keep_address(source_server: str, target_server: str) -> bool:
-	"""Whether a migration between these two servers keeps the VM's /128 (spec/19
+	"""Whether a migration between these two servers keeps the VM's /128 (spec/24
 	§2.8). True iff BOTH hosts' provider can forward a /128 from the source
 	(vm_range_is_forwardable). The single source of truth for the address scheme,
 	shared by pre-flight (to skip the target-capacity check) and the Migration row's
@@ -318,7 +318,7 @@ def _phase_target_preparing(doc) -> bool:
 	nbd client to the source over plain TCP, build the dm-clone device. Resume key:
 	the script skips any step whose artifact already exists.
 
-	FIRST, if the VM's base image is LOCAL (snapshot-promoted, un-syncable — spec/19
+	FIRST, if the VM's base image is LOCAL (snapshot-promoted, un-syncable — spec/24
 	§5.1), ship it from the source to the target over NBD. That ship is a multi-GB,
 	multi-tick copy, so this phase re-enters (returns False) until the base is fully
 	received. A syncable/already-present base is a one-tick no-op."""
@@ -365,7 +365,7 @@ def _rebuild_clone_stack(doc) -> None:
 	"""Re-establish a dm-clone whose source nbd client died mid-hydration. The prepare
 	step detects the wedged stack (dead client under a live clone), removes the clone
 	to free the nbd device, re-dials the client, and rebuilds the clone — the only way
-	to recover, since the clone otherwise pins the dead device open (spec/19)."""
+	to recover, since the clone otherwise pins the dead device open (spec/24)."""
 	_run_clone_prepare(doc)
 
 
@@ -378,7 +378,7 @@ def _ensure_base_on_target(doc) -> bool:
 	the target (or fails pre-flight early), and clone-target's own pre-flight will
 	confirm presence. So for a non-local image this is a cheap DB-only no-op.
 
-	Mechanism (spec/19 §5.1), mirroring the VM-disk ship exactly:
+	Mechanism (spec/24 §5.1), mirroring the VM-disk ship exactly:
 	  1. Source exports the read-only base LV + a tar of the image dir over NBD
 	     (migration-export-base) — on the disk export's port +2 / +3.
 	  2. Target hydrates a local base LV via dm-clone + extracts the image dir
@@ -472,7 +472,7 @@ def _ensure_base_on_target(doc) -> bool:
 
 
 def _bring_up_forward_tunnel(doc) -> None:
-	"""keep-address only: create the per-VM forward tunnel on BOTH hosts (spec/19
+	"""keep-address only: create the per-VM forward tunnel on BOTH hosts (spec/24
 	§2.9.1). Source first (the TCP listener), then target (the connector). The
 	device name/port are pure functions of the UUID, so both ends agree with no
 	shared state. Record the device name on the row (teardown/re-entry handle) and
@@ -518,7 +518,7 @@ def _phase_injecting_identity(doc) -> bool:
 	  holds the target Server row for_update — atomic, so two parallel migrations
 	  can't grab the same address. Persist before advancing so a crash re-uses the
 	  same address on re-entry (throws if the range filled since pre-flight).
-	- keep-address: NEAR-NO-OP for networking (spec/19 §2.9.4). The /128 is
+	- keep-address: NEAR-NO-OP for networking (spec/24 §2.9.4). The /128 is
 	  unchanged — the source keeps holding the /64 and forwards it — so there is NO
 	  allocate and NO env rewrite; the VM boots on the SAME address. We record the
 	  unchanged address as ipv6_address_new so the shared cutover path (which
@@ -641,7 +641,7 @@ def _phase_cutover_starting(doc) -> bool:
 
 def _install_forward_routes(doc) -> None:
 	"""keep-address only: now that the target VM is up on the SAME /128, wire the
-	traffic path (spec/19 §2.2-2.3, §2.9.2-2.9.3). Target return-route FIRST (so the
+	traffic path (spec/24 §2.2-2.3, §2.9.2-2.9.3). Target return-route FIRST (so the
 	guest's replies have somewhere to go the instant inbound starts arriving), then
 	the source forward (which points the /128 delivery at the tunnel and — on a
 	proxy-NDP provider — re-asserts the NDP entry the source unit's stop removed).
@@ -681,7 +681,7 @@ def _phase_repointing(doc) -> bool:
 	Idempotent: a second run sets the same values and reconciles the same
 	(already-converged) map.
 
-	keep-address (spec/19 §2.9.4): the /128 never changed, so the Subdomain rows are
+	keep-address (spec/24 §2.9.4): the /128 never changed, so the Subdomain rows are
 	already correct and the proxy already dials the right address — the SUBDOMAIN
 	RE-POINT AND RECONCILE ARE SKIPPED ENTIRELY. `server` still flips (the VM really
 	is on the target now); the address is copied verbatim."""
@@ -697,7 +697,7 @@ def _phase_cleanup(doc) -> bool:
 	copy (old dir/LVs/netns). If it fails, the row stays at Cleanup with the error —
 	there is no orphaned-LV reconciler, so the row IS the backstop.
 
-	keep-address (spec/19 §2.9.4): the SAME source teardown runs (the stale disk copy
+	keep-address (spec/24 §2.9.4): the SAME source teardown runs (the stale disk copy
 	is gone either way), BUT the forward tunnel + source-forward route/nft + (DO)
 	proxy-NDP + target return-rule are LEFT IN PLACE — they carry the VM's live
 	traffic permanently. cleanup-source only removes the migration's transient
@@ -722,7 +722,7 @@ def _phase_cleanup(doc) -> bool:
 
 def _record_forward_on_vm(doc) -> None:
 	"""keep-address only: mark the migrated VM as having its traffic forwarded from
-	the source host (spec/19 §2.9.5). Drives the VM-form dashboard indicator and
+	the source host (spec/24 §2.9.5). Drives the VM-form dashboard indicator and
 	gates the Collapse-forward action. Idempotent: re-recording the same source is a
 	no-op. `since` is stamped only on the first record so a re-entry doesn't reset
 	the clock. Uses db_set (bypasses the VM's immutability gate cleanly — these are
@@ -812,7 +812,7 @@ def _handle_reserved_ip(doc) -> None:
 
 def collapse_forward(vm) -> None:
 	"""Tear down a VM's keep-address forward and fall it back to change-address
-	(spec/19 §2.9.5). The forward is permanent by default; this is the ONLY point at
+	(spec/24 §2.9.5). The forward is permanent by default; this is the ONLY point at
 	which a kept address can still change, and it is entirely operator-initiated
 	(via the VM-form Collapse-forward button). Steps, in order:
 
@@ -985,7 +985,7 @@ def _vm_field(doc, field: str):
 def _image_is_local(image_name: str) -> bool:
 	"""True if the VM's base image was promoted from a snapshot (`is_local`) and so
 	has no rootfs URL to sync — it lives only on the host it was promoted on, and a
-	migration must SHIP it to the target (spec/19 §5.1) rather than assume sync.
+	migration must SHIP it to the target (spec/24 §5.1) rather than assume sync.
 
 	`is_local` is a computed property on Virtual Machine Image (no rootfs URL), not a
 	stored column, so we replicate its one-line definition off the DB field to avoid

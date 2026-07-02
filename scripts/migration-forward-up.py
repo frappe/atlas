@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Bring up one end of a VM migration's keep-address forward tunnel (spec/19 §2.9).
+# Bring up one end of a VM migration's keep-address forward tunnel (spec/24 §2.9).
 #
 # When a VM migrates keeping its /128, the source host keeps holding the /64 the
 # /128 is carved from — so it keeps receiving the VM's inbound traffic — and it
@@ -12,7 +12,7 @@
 # The tunnel is a `tun` device (one L3 family — the inner IPv6 /128) whose frames
 # socat bridges to a plain TCP stream between the two hosts. STAGE transport is
 # UNENCRYPTED plain TCP, matching the stage-1 NBD path (a secure host-to-host
-# carrier is a deferred follow-up, spec/19 §2.1). The device name and TCP port
+# carrier is a deferred follow-up, spec/24 §2.1). The device name and TCP port
 # are pure functions of the VM UUID, so both hosts derive them identically and a
 # lost-task re-entry needs no stored state.
 #
@@ -42,7 +42,7 @@ from atlas._task import TaskInputs, TaskResult
 
 # The tunnel carries exactly one inner family (the VM's IPv6 /128). Pin the MTU
 # to the IPv6 minimum so the socat/TCP encapsulation never triggers in-tunnel
-# PMTU surprises under live load (spec/19 §2.1). The two ends address the tunnel
+# PMTU surprises under live load (spec/24 §2.1). The two ends address the tunnel
 # with a link-local /64 (fe80::a source / fe80::b target) purely so the device is
 # "up with an address"; the guest's /128 is routed over it, not assigned on it.
 TUNNEL_MTU = 1280

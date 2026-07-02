@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-# Source side of a VM migration (spec/19), CLEANUP phase: after the target VM is
+# Source side of a VM migration (spec/24), CLEANUP phase: after the target VM is
 # confirmed Running and the routes are re-pointed, tear the source copy down. This
 # runs LAST and only after cutover, so it is safe to destroy the source state:
 #   1. Kill the qemu-nbd export(s): root on nbd_port, data on nbd_port+1, and — on
-#      the local-image path (spec/19 §5.1) — the base LV export on nbd_port+2 and
+#      the local-image path (spec/24 §5.1) — the base LV export on nbd_port+2 and
 #      the image-dir tar export on nbd_port+3 (plus the staged tar file). The base
 #      LV itself is the source's own immutable image and is NEVER removed.
 #   2. lvremove the transient -migrate thin snapshots.

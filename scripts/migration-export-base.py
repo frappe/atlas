@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Source side of a VM migration (spec/19), LOCAL-BASE-IMAGE ship: export the VM's
+# Source side of a VM migration (spec/24), LOCAL-BASE-IMAGE ship: export the VM's
 # read-only base image LV over NBD so the target can hydrate a copy of it.
 #
 # WHY THIS EXISTS: a base image that was promoted from a snapshot (`is_local`) has
@@ -7,7 +7,7 @@
 # the host it was promoted on (spec/08-images.md). A VM on such an image could not
 # migrate: `migration-clone-target` pre-flight fails with "base image LV not on
 # target". This ships the local base the same way the disk itself is shipped — an
-# NBD export the target flattens into a fresh local LV (spec/19 §5) — so the target
+# NBD export the target flattens into a fresh local LV (spec/24 §5) — so the target
 # gains the base LV + kernel it needs at cutover.
 #
 # The base LV is READ-ONLY and immutable, so — unlike the VM disk — we export it

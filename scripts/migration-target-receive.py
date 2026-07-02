@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-# Target side of a keep-address migration's cutover (spec/19 §2.3, §2.9.3): the
+# Target side of a keep-address migration's cutover (spec/24 §2.3, §2.9.3): the
 # return-route policy that forces the guest's replies back UP the tunnel.
 #
 # The target runs its normal vm-network-up.py at unit start (same netns/veth/tap,
 # the same `<vmv6>/128 via fe80::3 dev <host_veth>` route). Inbound therefore
 # already flows source -> tunnel -> target veth -> guest once the source-forward
 # is installed. The problem is EGRESS: the target sourcing the VM's /128 (which
-# belongs to the SOURCE's /64) is dropped at the switch (spec/19 §2.0, verified on
+# belongs to the SOURCE's /64) is dropped at the switch (spec/24 §2.0, verified on
 # Scaleway). So the guest's replies must go back up the tunnel and egress at the
 # source, which legitimately owns the /64.
 #

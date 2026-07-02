@@ -1,6 +1,6 @@
 """Virtual Machine Migration — the resumable phase row for a host-to-host move.
 
-SAMPLE / ILLUSTRATIVE. See spec/19-vm-migration.md. This is the controller for
+SAMPLE / ILLUSTRATIVE. See spec/24-vm-migration.md. This is the controller for
 the doctype defined in virtual_machine_migration.json; the phase machine that
 ADVANCES a row lives in migration.py (the scheduler callback).
 

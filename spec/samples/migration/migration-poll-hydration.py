@@ -3,7 +3,7 @@
 # tick by the Hydrating phase: it enables hydration on first call (idempotent —
 # enabling an already-hydrating device is a no-op) and reports the current percent.
 # The CONTROLLER, not this script, decides when to advance — keeping the
-# multi-minute copy off the worker as a series of cheap read-only probes (spec/19).
+# multi-minute copy off the worker as a series of cheap read-only probes (spec/24).
 #
 # SAMPLE / ILLUSTRATIVE. Emits ATLAS_RESULT={"hydration_percent": N}.
 #

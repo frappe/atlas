@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-# Source side of a VM migration (spec/19): thin-snapshot the Stopped VM's disk(s)
+# Source side of a VM migration (spec/24): thin-snapshot the Stopped VM's disk(s)
 # and export them read-only over NBD.
 #
 # STAGE 1 transport: plain TCP. qemu-nbd binds the source's PUBLIC IPv4 and the
 # target's nbd-client dials it directly — no SSH tunnel yet (the host-to-host
-# credential is a deferred stage-3 prerequisite, spec/19 §2.1). This data path is
+# credential is a deferred stage-3 prerequisite, spec/24 §2.1). This data path is
 # UNENCRYPTED; it is a deliberate get-it-working-first shortcut.
 #
 # Idempotent: re-running re-uses an existing snapshot and an already-serving NBD

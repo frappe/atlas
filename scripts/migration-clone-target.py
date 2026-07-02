@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Target side of a VM migration (spec/19), PREPARE phase: pre-flight the migration
+# Target side of a VM migration (spec/24), PREPARE phase: pre-flight the migration
 # deps, create fresh local thin LV(s), connect an nbd client to the source's NBD
 # export over plain TCP (stage 1 — no SSH tunnel yet, §2.1), and build the dm-clone
 # device(s). The target VM's disk then reads-through to the source over NBD while
@@ -40,7 +40,7 @@ from atlas._task import TaskInputs
 from atlas.lvm import ThinPool
 from atlas.paths import image_directory
 
-REGION_SECTORS = 32768  # 16 MiB dm-clone region (spec/19); tunable.
+REGION_SECTORS = 32768  # 16 MiB dm-clone region (spec/24); tunable.
 CLONE_META = "atlas-clonemeta-{key}"
 CLONE_DEV = "atlas-vm-{key}-clone"
 
@@ -74,10 +74,10 @@ def main() -> None:
 		if not run_ok("sudo modprobe {}", module):
 			sys.exit(
 				f"kernel module {module!r} unavailable; install linux-modules-extra "
-				f"and re-bootstrap before migrating (spec/19)"
+				f"and re-bootstrap before migrating (spec/24)"
 			)
 	if not run_ok("which nbd-client"):
-		sys.exit("nbd-client not installed on the target; re-bootstrap (spec/19)")
+		sys.exit("nbd-client not installed on the target; re-bootstrap (spec/24)")
 
 	# 1. Image present (the kernel comes from it at cutover), same probe as
 	#    provision-vm.py step 0.

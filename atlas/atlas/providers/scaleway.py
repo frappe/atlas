@@ -240,7 +240,7 @@ class ScalewayProvider(Provider):
 	def vm_range_is_forwardable(self, provider_resource_id: str) -> bool:
 		"""Scaleway keep-address is always available: the VM's /64 is a routed
 		flexible IP that stays on the source host, so the source keeps receiving
-		the /128 and forwards it to the target (spec/19 §2.9 generalized to
+		the /128 and forwards it to the target (spec/24 §2.9 generalized to
 		Scaleway — we never move the /64, only forward the individual /128). No
 		per-box probe needed."""
 		return True

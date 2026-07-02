@@ -1,6 +1,6 @@
 """Virtual Machine Migration — the resumable phase row for a host-to-host move.
 
-See spec/19-vm-migration.md. This is the controller for the doctype defined in
+See spec/24-vm-migration.md. This is the controller for the doctype defined in
 virtual_machine_migration.json; the phase machine that ADVANCES a row lives in
 atlas/atlas/migration.py (the scheduler callback).
 
@@ -89,7 +89,7 @@ class VirtualMachineMigration(Document):
 			self.started_at = frappe.utils.now_datetime()
 
 	def _decide_address_scheme(self) -> None:
-		"""Set keep_address / forward_address from the provider's capability (spec/19
+		"""Set keep_address / forward_address from the provider's capability (spec/24
 		§2.8). keep_address is 1 iff BOTH hosts' provider can forward a VM's /128
 		from the source to wherever it lives (vm_range_is_forwardable). When set, the
 		VM keeps its /128 (the source host keeps holding the /64 and tunnels the
