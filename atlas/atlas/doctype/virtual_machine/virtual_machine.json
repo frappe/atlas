@@ -44,6 +44,8 @@
   "column_break_networking",
   "mac_address",
   "tap_device",
+  "traffic_forwarded_from",
+  "traffic_forwarded_since",
   "section_break_proxy",
   "is_proxy",
   "column_break_proxy",
@@ -321,6 +323,21 @@
    "fieldname": "tap_device",
    "fieldtype": "Data",
    "label": "TAP Device",
+   "read_only": 1
+  },
+  {
+   "description": "Set after a keep-address migration: the source Server whose host still receives this VM's /128 and forwards it here over a per-VM tunnel (spec/19 §2.9). While set, the VM depends on that host being up; the operator can collapse the forward (falling back to a new address) from the VM form. Empty for a VM that has never been migrated keep-address, or after the forward is collapsed.",
+   "fieldname": "traffic_forwarded_from",
+   "fieldtype": "Link",
+   "label": "Traffic Forwarded From",
+   "options": "Server",
+   "read_only": 1
+  },
+  {
+   "description": "When the keep-address forward from traffic_forwarded_from was established.",
+   "fieldname": "traffic_forwarded_since",
+   "fieldtype": "Datetime",
+   "label": "Traffic Forwarded Since",
    "read_only": 1
   },
   {

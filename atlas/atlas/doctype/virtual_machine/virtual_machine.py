@@ -89,6 +89,8 @@ class VirtualMachine(Document):
 		tenant: DF.Link | None
 		termination_protection: DF.Check
 		title: DF.Data
+		traffic_forwarded_from: DF.Link | None
+		traffic_forwarded_since: DF.Datetime | None
 		vcpus: DF.Int
 		warm_snapshot: DF.Link | None
 	# end: auto-generated types
