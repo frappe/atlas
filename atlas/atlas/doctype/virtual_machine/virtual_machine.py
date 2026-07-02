@@ -330,14 +330,19 @@ class VirtualMachine(Document):
 		return task.name
 
 	@frappe.whitelist()
-	def stop(self, memory_snapshot: bool | None = None) -> str:
+	def stop(self, memory_snapshot: bool | None = None, stop_timeout_seconds: int = 0) -> str:
 		"""Stop a Running/Paused VM. The default is the plain unit stop. With
 		`memory_snapshot` (default: the VM's memory_snapshot_on_stop flag, off
 		unless the operator opted in), the stop Task first captures the guest's
 		full memory state so the next Start resumes it in milliseconds; on any
 		snapshot failure the Task falls back to the plain stop on its own — the
 		VM always ends up Stopped, only the next Start's speed differs.
-		has_memory_snapshot records which way it went."""
+		has_memory_snapshot records which way it went.
+
+		`stop_timeout_seconds` (>0) bounds the graceful drain via a runtime
+		TimeoutStopSec override (ExecStopPost still fires) — the migration fast-stop
+		path passes it, since a cold migration discards the guest's RAM anyway
+		(spec/24 §0.5.2). It only applies to the plain (non-snapshot) stop."""
 		# A Paused VM's unit is still active (vCPUs frozen, not shut down), so
 		# `systemctl stop` is the correct full shutdown from either state.
 		if self.status not in ("Running", "Paused"):
@@ -365,10 +370,13 @@ class VirtualMachine(Document):
 			)
 			snapshotted = bool(parse_result(task.stdout)["memory_snapshot"])
 		else:
+			variables = {"VIRTUAL_MACHINE_NAME": self.name}
+			if stop_timeout_seconds > 0:
+				variables["STOP_TIMEOUT_SECONDS"] = str(stop_timeout_seconds)
 			task = run_task(
 				server=self.server,
 				script="stop-vm",
-				variables={"VIRTUAL_MACHINE_NAME": self.name},
+				variables=variables,
 				virtual_machine=self.name,
 				timeout_seconds=30,
 			)

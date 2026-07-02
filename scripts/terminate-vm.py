@@ -60,6 +60,15 @@ def main() -> None:
 	# separate object removed next.
 	run("sudo rm -rf {}", paths.directory)
 
+	# Boot-then-hydrate leftover (spec/24 §0): a migrated VM ran on a dm-clone that,
+	# after collapse, lingers as a linear map onto the plain LV and holds that LV
+	# BUSY — the lvremove below would fail "used by another device". The unit is now
+	# stopped (fd released), so remove the clone(s) first. No-op for an ordinary VM.
+	for suffix in ("", "-data"):
+		clone = f"atlas-vm-{inputs.virtual_machine_name}{suffix}-clone"
+		if run_ok("sudo dmsetup info {}", clone):
+			run("sudo dmsetup remove {}", clone, check=False)
+
 	# Remove the VM's disk LV. LogicalVolume.remove is idempotent (no-op if gone)
 	# and guarded: it refuses to remove the thin pool or a base image LV, so a bug
 	# that passed a wrong name here can never destroy shared state. The VM's own
