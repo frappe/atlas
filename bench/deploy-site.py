@@ -106,6 +106,8 @@ class DeploySiteInputs:
 	site_name: str
 	warm_vm_uuid: str = ""
 	mode: str = "site"
+	central_endpoint: str = ""
+	central_auth_token: str = ""
 
 	@classmethod
 	def from_args(cls, argv: list[str] | None = None) -> "DeploySiteInputs":
@@ -122,8 +124,20 @@ class DeploySiteInputs:
 			default="site",
 			help="site: map the FQDN to the baked site (rename). admin: map it to the admin app",
 		)
+		parser.add_argument(
+			"--central-endpoint", default="", help="Central API base URL the pilot calls back on"
+		)
+		parser.add_argument(
+			"--central-auth-token", default="", help="Opaque token the pilot presents to Central"
+		)
 		ns = parser.parse_args(argv)
-		return cls(site_name=ns.site_name, warm_vm_uuid=ns.warm_vm_uuid, mode=ns.mode)
+		return cls(
+			site_name=ns.site_name,
+			warm_vm_uuid=ns.warm_vm_uuid,
+			mode=ns.mode,
+			central_endpoint=ns.central_endpoint,
+			central_auth_token=ns.central_auth_token,
+		)
 
 
 @dataclass(frozen=True)
@@ -501,6 +515,16 @@ def main() -> None:
 		log("minting tenant login URL (bench browse) …")
 		login_url = _mint_login_url(inputs.site_name)
 		log("login URL minted")
+
+	# Central handoff: persist the pilot's callback endpoint + token into the bench's
+	# bench.toml (Pilot owns that file, so we go through its command rather than writing
+	# TOML here), so pilot→Central calls can authenticate with X-Pilot-Token.
+	if inputs.central_endpoint and inputs.central_auth_token:
+		log("writing Central config to bench.toml (bench set-central-config) …")
+		_bench(
+			"set-central-config", "--endpoint", inputs.central_endpoint, "--token", inputs.central_auth_token
+		)
+		log("Central config written")
 
 	log("local serving probe (v6 + v4) …")
 	serving = _serving(inputs.site_name, inputs.mode)

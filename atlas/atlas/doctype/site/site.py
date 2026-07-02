@@ -113,6 +113,11 @@ class Site(Document):
 			timeout=1800,
 			enqueue_after_commit=True,
 			site_name=self.name,
+			# The pilot credential is bench-level; it rides the job (never the Site row) to
+			# the backing VM + the bench's bench.toml. Flags are set by create_site.
+			pilot_credential_id=self.flags.get("pilot_credential_id"),
+			central_endpoint=self.flags.get("central_endpoint"),
+			central_auth_token=self.flags.get("central_auth_token"),
 		)
 
 	# ----- validation -----------------------------------------------------
@@ -241,7 +246,12 @@ class _ProvisionClock:
 		self._emit(f"FAILED after {self._now() - self._t0:.1f}s total")
 
 
-def auto_provision(site_name: str) -> None:
+def auto_provision(
+	site_name: str,
+	pilot_credential_id: str | None = None,
+	central_endpoint: str | None = None,
+	central_auth_token: str | None = None,
+) -> None:
 	"""Background-job entrypoint (enqueued by after_insert). Drives the whole
 	create_site→live-site flow for one Site:
 
@@ -280,6 +290,10 @@ def auto_provision(site_name: str) -> None:
 		clock.stage("clone backing VM")
 		vm_name = _provision_backing_vm(site)
 		site.db_set("virtual_machine", vm_name)
+		# The pilot credential is the bench's: stamp its id on the backing VM so vm.* events
+		# echo it to Central (central_report), which links/revokes the credential by it.
+		if pilot_credential_id:
+			frappe.db.set_value("Virtual Machine", vm_name, "pilot_credential_id", pilot_credential_id)
 		# COMMIT before waiting. The clone's own after_insert enqueued its
 		# provision (boot) job; that job is a SEPARATE transaction and cannot run
 		# until this one commits. If we held the transaction open and blocked here,
@@ -292,7 +306,7 @@ def auto_provision(site_name: str) -> None:
 		_wait_for_vm_running(vm_name)
 		_set_status(site, "Deploying")
 		clock.stage("deploy site in guest (wait_for_ssh + run deploy-site.py)")
-		result = _deploy_site(site, vm_name)
+		result = _deploy_site(site, vm_name, central_endpoint, central_auth_token)
 		# The tenant handoff is the one-click login URL `deploy-site.py` minted
 		# (`bench browse --sid`, a real 24h session) — NOT a password; the baked
 		# Administrator password is a long random secret generated at bake time and
@@ -434,7 +448,9 @@ def _wait_for_vm_running(
 	frappe.throw(f"Backing VM {vm_name} did not reach Running within {timeout_seconds}s")
 
 
-def _deploy_site(site, vm_name: str) -> dict:
+def _deploy_site(
+	site, vm_name: str, central_endpoint: str | None = None, central_auth_token: str | None = None
+) -> dict:
 	"""Run deploy-site.py in the guest: rename the baked `site.local` dir to the FQDN
 	(Contract A), regenerate the bench's nginx vhost (`server_name <fqdn>` + a v6
 	listener) and reload — no `set-admin-password`, no `setup production`, no restart
@@ -455,7 +471,7 @@ def _deploy_site(site, vm_name: str) -> dict:
 	vm = frappe.get_doc("Virtual Machine", vm_name)
 	if is_fake_server(vm.server):
 		return {"site": site.name, "serving": True, "login_url": f"https://{site.name}/app?sid=fake-sid"}
-	return deploy_site(vm_name, site.name) or {}
+	return deploy_site(vm_name, site.name, central_endpoint, central_auth_token) or {}
 
 
 def _wait_for_http(site, vm_name: str) -> None:

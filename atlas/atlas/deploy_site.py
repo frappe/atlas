@@ -91,7 +91,12 @@ def _deploy_script_path() -> Path:
 	return Path(frappe.get_app_path("atlas", "..")).resolve() / "bench" / DEPLOY_SCRIPT_NAME
 
 
-def deploy_site(virtual_machine: str, site_name: str) -> dict | None:
+def deploy_site(
+	virtual_machine: str,
+	site_name: str,
+	central_endpoint: str | None = None,
+	central_auth_token: str | None = None,
+) -> dict | None:
 	"""Deploy one Frappe site into the (already booted) golden bench VM.
 
 	Uploads `bench/deploy-site.py` to the guest and runs it as root over guest-SSH
@@ -168,6 +173,14 @@ def deploy_site(virtual_machine: str, site_name: str) -> dict | None:
 		# --warm-vm-uuid.
 		if vm.warm_snapshot:
 			command += substitute(" --warm-vm-uuid {}", (vm.name,))
+		# Central handoff: the pilot's bench-level callback endpoint + token, threaded from
+		# create_site (never stored on the Site). deploy-site.py writes them into the
+		# bench's bench.toml so pilot→Central calls authenticate.
+		if central_endpoint and central_auth_token:
+			command += substitute(
+				" --central-endpoint {} --central-auth-token {}",
+				(central_endpoint, central_auth_token),
+			)
 		_trace(
 			f"running deploy-site.py in guest ({'warm' if vm.warm_snapshot else 'cold'}, mode={build_mode}) …"
 		)

@@ -99,6 +99,14 @@ class TestCentralReport(IntegrationTestCase):
 		)
 		return doc
 
+	def test_vm_payload_echoes_pilot_credential_id(self) -> None:
+		vm = self._vm()
+		vm.pilot_credential_id = "pcred-abc"
+		self.assertEqual(central_report._vm_payload(vm)["pilot_credential_id"], "pcred-abc")
+
+	def test_vm_payload_pilot_credential_id_none_when_unset(self) -> None:
+		self.assertIsNone(central_report._vm_payload(self._vm())["pilot_credential_id"])
+
 	def test_disabled_emits_nothing(self) -> None:
 		with (
 			patch.object(central_report, "_enabled", return_value=False),

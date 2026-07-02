@@ -420,7 +420,8 @@ class TestSiteFakeProvisionStages(IntegrationTestCase):
 
 		with patch.object(deploy_module, "deploy_site") as m_deploy:
 			site_module._deploy_site(self.site, self.real_vm.name)
-		m_deploy.assert_called_once_with(self.real_vm.name, self.site.name)
+		# The two trailing args are the bench-level Central endpoint + token, threaded from
+		m_deploy.assert_called_once_with(self.real_vm.name, self.site.name, None, None)
 
 	def test_wait_for_http_calls_through_on_real_vm(self) -> None:
 		from atlas.atlas import deploy_site as deploy_module

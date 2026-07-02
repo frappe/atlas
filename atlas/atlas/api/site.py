@@ -26,6 +26,9 @@ def create_site(
 	team: str,
 	subdomain: str,
 	email: str | None = None,
+	pilot_credential_id: str | None = None,
+	central_endpoint: str | None = None,
+	central_auth_token: str | None = None,
 ) -> dict:
 	"""Provision a self-serve site for a Central team and return its mirror row.
 
@@ -43,9 +46,17 @@ def create_site(
 	"""
 	tenant = ensure_tenant(team, email)
 
-	site = frappe.get_doc({"doctype": "Site", "subdomain": subdomain, "tenant": tenant}).insert(
-		ignore_permissions=True
-	)
+	# The pilot credential is a BENCH credential — it never lives on the Site. Central
+	# mints it and hands us the id + the endpoint/token the pilot calls back with; we
+	# ride them through the provision job (flags → auto_provision kwargs) to their real
+	# homes: pilot_credential_id on the backing VM (echoed to Central on vm.* events) and
+	# the endpoint/token in the bench's bench.toml (written at deploy). Nothing is
+	# persisted on the Site, and the token never appears in _mirror.
+	site = frappe.get_doc({"doctype": "Site", "subdomain": subdomain, "tenant": tenant})
+	site.flags.pilot_credential_id = pilot_credential_id
+	site.flags.central_endpoint = central_endpoint
+	site.flags.central_auth_token = central_auth_token
+	site.insert(ignore_permissions=True)
 
 	return _mirror(site)
 

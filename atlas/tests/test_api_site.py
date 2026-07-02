@@ -12,6 +12,8 @@ clone→deploy→route chain is proven in the self_serve_site e2e.
 
 from __future__ import annotations
 
+from unittest.mock import patch
+
 import frappe
 from frappe.tests import IntegrationTestCase
 
@@ -100,6 +102,27 @@ class TestCreateSite(IntegrationTestCase):
 		with self.assertRaises(frappe.ValidationError) as raised:
 			site_api.create_site(team=TEAM, subdomain="acme")
 		self.assertIn("already taken", str(raised.exception))
+
+	def test_bench_credential_rides_the_provision_job_not_the_site(self) -> None:
+		"""The pilot credential is bench-level: create_site threads it into the provision
+		job (→ VM + bench.toml), never onto the Site row, and never into _mirror."""
+		with patch("frappe.enqueue") as enqueue:
+			result = site_api.create_site(
+				team=TEAM,
+				subdomain="acme",
+				email=TENANT_EMAIL,
+				pilot_credential_id="pcred-abc",
+				central_endpoint="https://central.test",
+				central_auth_token="s3cret-token",
+			)
+		job = next(c.kwargs for c in enqueue.call_args_list if c.args and "auto_provision" in c.args[0])
+		self.assertEqual(job["pilot_credential_id"], "pcred-abc")
+		self.assertEqual(job["central_endpoint"], "https://central.test")
+		self.assertEqual(job["central_auth_token"], "s3cret-token")
+		# Nothing central-flavoured is persisted on the Site, and the token never leaks
+		# into the mirror Central reflects.
+		self.assertNotIn("central_auth_token", result)
+		self.assertFalse(frappe.get_meta("Site").get_field("central_auth_token"))
 
 
 class TestGetSite(IntegrationTestCase):
