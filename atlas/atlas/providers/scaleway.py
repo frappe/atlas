@@ -237,6 +237,14 @@ class ScalewayProvider(Provider):
 		if code != 0:
 			raise ProviderError(f"Scaleway first-contact root-enable failed (exit {code}): {stderr[-300:]}")
 
+	def vm_range_is_forwardable(self, provider_resource_id: str) -> bool:
+		"""Scaleway keep-address is always available: the VM's /64 is a routed
+		flexible IP that stays on the source host, so the source keeps receiving
+		the /128 and forwards it to the target (spec/19 §2.9 generalized to
+		Scaleway — we never move the /64, only forward the individual /128). No
+		per-box probe needed."""
+		return True
+
 	# --- Reserved IPs (Flexible IP) --------------------------------------
 	# Scaleway keys a flexible IP by its own UUID (unlike DO, where the address
 	# IS the handle). So `provider_resource_id` is the FIP id, not the address;
