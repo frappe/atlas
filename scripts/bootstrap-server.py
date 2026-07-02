@@ -479,17 +479,9 @@ def main() -> None:
 	#      never shadows dm_clone/nbd. `dm_clone` (CONFIG_DM_CLONE) merged in 6.4;
 	#      Ubuntu 24.04 ships 6.8, so the module is present once the extra package
 	#      is installed.
-	run(
-		"sudo",
-		"apt-get",
-		"-o",
-		"DPkg::Lock::Timeout=300",
-		"install",
-		"-y",
-		f"linux-modules-extra-{_uname('-r')}",
-	)
-	run("sudo", "modprobe", "nbd")
-	run("sudo", "modprobe", "dm_clone")
+	run("sudo apt-get -o DPkg::Lock::Timeout=300 install -y {}", f"linux-modules-extra-{_uname('-r')}")
+	run("sudo modprobe {}", "nbd")
+	run("sudo modprobe {}", "dm_clone")
 	install_file("nbd\ndm_clone\n", "/etc/modules-load.d/60-atlas-migration.conf", mode="0644")
 
 	# 12. Record state for Atlas to pick up. Single JSON file is the canonical
