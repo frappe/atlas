@@ -143,11 +143,7 @@ class LogicalVolume:
 		"""Expose this LV's block device inside a jailer chroot at jail_node,
 		owned by uid (gid == uid), mode 0660. On rebuild the dev_t can change, so
 		always remove and re-create (idempotent). Device access is pure DAC."""
-		number = self.device_number
-		run("sudo rm -f {}", jail_node)
-		run("sudo mknod {} b {} {}", jail_node, number.major, number.minor)
-		run("sudo chown {} {}", f"{uid}:{uid}", jail_node)
-		run("sudo chmod 0660 {}", jail_node)
+		expose_device_in_jail(self.device_path, jail_node, uid)
 
 	def remove(self) -> None:
 		"""Remove this LV. No-op if already gone. Refuses protected LVs so
@@ -177,6 +173,20 @@ class LogicalVolume:
 			return stat.S_ISBLK(os.stat(self.device_path).st_mode)
 		except (FileNotFoundError, PermissionError):
 			return False
+
+
+def expose_device_in_jail(device_path: str, jail_node: str, uid: int) -> None:
+	"""Expose any block device at `device_path` inside a jailer chroot at jail_node,
+	owned by uid (gid == uid), mode 0660. The device may be an LVM LV OR a
+	device-mapper node (e.g. /dev/mapper/atlas-vm-<uuid>-clone during a
+	boot-then-hydrate migration, spec/24 §0) — the mknod machinery is identical, it
+	only needs the device's (major, minor). Always remove-and-recreate (idempotent;
+	the dev_t can change across a rebuild). Device access is pure DAC."""
+	number = DeviceNumber.from_lsblk(run("lsblk -ndo MAJ:MIN {}", device_path))
+	run("sudo rm -f {}", jail_node)
+	run("sudo mknod {} b {} {}", jail_node, number.major, number.minor)
+	run("sudo chown {} {}", f"{uid}:{uid}", jail_node)
+	run("sudo chmod 0660 {}", jail_node)
 
 
 # Minimum size (bytes) for a disk to qualify as pool backing. Filters out a
