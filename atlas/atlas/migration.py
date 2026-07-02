@@ -297,7 +297,19 @@ def _phase_exporting_snapshot(doc) -> bool:
 		timeout_seconds=300,
 	)
 	result = parse_result(task.stdout)
-	doc.db_set({"nbd_port": result["nbd_port"], "nbd_pid": result["nbd_pid"]})
+	# Record the source disks' ACTUAL byte sizes. The target disk must be created at
+	# least this large — a VM disk that was lvextended past its doc `disk_gigabytes`
+	# (e.g. a disk born as a CoW of a larger base image) is physically bigger than
+	# the doc says, and sizing the target off the doc would truncate the filesystem
+	# during hydration (dead superblock at cutover). See _target_disk_gb.
+	doc.db_set(
+		{
+			"nbd_port": result["nbd_port"],
+			"nbd_pid": result["nbd_pid"],
+			"root_disk_bytes": int(result["root_size_bytes"]),
+			"data_disk_bytes": int(result.get("data_size_bytes", 0)),
+		}
+	)
 	return True
 
 
@@ -312,8 +324,11 @@ def _phase_target_preparing(doc) -> bool:
 		variables={
 			"VIRTUAL_MACHINE_NAME": doc.virtual_machine,
 			"IMAGE_NAME": _vm_field(doc, "image"),
-			"DISK_GB": str(_vm_field(doc, "disk_gigabytes")),
-			"DATA_DISK_GB": str(_vm_field(doc, "data_disk_gigabytes") or 0),
+			# Size the target disk off the SOURCE's actual bytes, not the VM doc — a
+			# grown disk is physically larger than disk_gigabytes, and under-sizing
+			# truncates the filesystem during hydration (dead superblock at cutover).
+			"DISK_GB": str(_target_disk_gb(doc, "disk_gigabytes", doc.root_disk_bytes)),
+			"DATA_DISK_GB": str(_target_disk_gb(doc, "data_disk_gigabytes", doc.data_disk_bytes)),
 			"SOURCE_HOST": _server_ipv4(doc.source_server),
 			"NBD_PORT": str(doc.nbd_port),
 			"PHASE": "prepare",
@@ -810,6 +825,26 @@ def _fail(name: str, message: str) -> None:
 
 def _vm_field(doc, field: str):
 	return frappe.db.get_value("Virtual Machine", doc.virtual_machine, field)
+
+
+def _bytes_to_gib_ceil(size_bytes: int) -> int:
+	"""Round a byte size UP to whole GiB — the target base LV must be at least the
+	source's size (a smaller thin LV would truncate the copy)."""
+	gib = 1024**3
+	return (size_bytes + gib - 1) // gib
+
+
+def _target_disk_gb(doc, doc_field: str, source_bytes) -> int:
+	"""The size (whole GiB) to create a migrated disk at on the target: the MAX of
+	the VM doc's declared size and the source disk's ACTUAL bytes. A disk that was
+	lvextended past its doc size (or born as a CoW of a larger base image) is
+	physically bigger than `disk_gigabytes`; hydrating its full block count into a
+	doc-sized (smaller) LV truncates the filesystem and leaves an unreadable
+	superblock at cutover. Never under-size; growing to match is safe. Returns 0 for
+	an absent data disk (source_bytes 0 and doc field 0)."""
+	declared = int(_vm_field(doc, doc_field) or 0)
+	from_source = _bytes_to_gib_ceil(int(source_bytes or 0))
+	return max(declared, from_source)
 
 
 def _server_ipv4(server: str) -> str:

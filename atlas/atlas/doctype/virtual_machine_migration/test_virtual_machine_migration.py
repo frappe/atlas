@@ -77,6 +77,61 @@ class TestMigrationPure(IntegrationTestCase):
 		with self.assertRaises(ValueError):
 			parse("garbage line")
 
+	def test_bytes_to_gib_ceil_rounds_up(self) -> None:
+		# The target base LV must be >= the source's byte size; a partial GiB rounds up.
+		gib = 1024**3
+		self.assertEqual(migration_module._bytes_to_gib_ceil(0), 0)
+		self.assertEqual(migration_module._bytes_to_gib_ceil(1), 1)
+		self.assertEqual(migration_module._bytes_to_gib_ceil(gib), 1)
+		self.assertEqual(migration_module._bytes_to_gib_ceil(gib + 1), 2)
+		self.assertEqual(migration_module._bytes_to_gib_ceil(5 * gib), 5)
+
+
+class TestTargetDiskSizing(IntegrationTestCase):
+	"""The target disk must be sized off the SOURCE's actual bytes, never the VM
+	doc's declared disk_gigabytes — a grown disk (physically larger than the doc)
+	would otherwise be truncated during hydration, killing the fs superblock
+	(spec/19 §5, found on a real f1→f2 migration 2026-07-02)."""
+
+	def setUp(self) -> None:
+		self.source = _source_server()
+		self.target = _target_server()
+		self.image = make_image("mig-size-image").name
+		for name in frappe.get_all("Virtual Machine", pluck="name"):
+			frappe.delete_doc("Virtual Machine", name, force=1, ignore_permissions=True)
+
+	def _doc_with(self, disk_gigabytes: int, data_disk_gigabytes: int = 0):
+		vm = make_virtual_machine(
+			self.source,
+			self.image,
+			disk_gigabytes=disk_gigabytes,
+			data_disk_gigabytes=data_disk_gigabytes,
+			status="Stopped",
+		)
+		return frappe.get_doc(
+			{
+				"doctype": "Virtual Machine Migration",
+				"virtual_machine": vm.name,
+				"target_server": self.target,
+			}
+		).insert(ignore_permissions=True)
+
+	def test_grown_source_disk_uses_source_bytes(self) -> None:
+		# Doc says 20 GiB, but the source disk is physically 28 GiB → target must be 28.
+		row = self._doc_with(disk_gigabytes=20)
+		gib = 1024**3
+		self.assertEqual(migration_module._target_disk_gb(row, "disk_gigabytes", 28 * gib), 28)
+
+	def test_doc_size_wins_when_larger_than_source(self) -> None:
+		# A never-grown disk: source bytes ~= doc size; the doc size is authoritative.
+		row = self._doc_with(disk_gigabytes=40)
+		gib = 1024**3
+		self.assertEqual(migration_module._target_disk_gb(row, "disk_gigabytes", 20 * gib), 40)
+
+	def test_absent_data_disk_is_zero(self) -> None:
+		row = self._doc_with(disk_gigabytes=20, data_disk_gigabytes=0)
+		self.assertEqual(migration_module._target_disk_gb(row, "data_disk_gigabytes", 0), 0)
+
 
 def _parse_hydration():
 	"""Load parse_hydration_percent from the on-disk script (its filename has dashes,

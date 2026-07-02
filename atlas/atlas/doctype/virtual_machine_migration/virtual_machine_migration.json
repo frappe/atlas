@@ -28,6 +28,8 @@
     "section_break_transfer",
     "nbd_port",
     "nbd_pid",
+    "root_disk_bytes",
+    "data_disk_bytes",
     "column_break_transfer",
     "hydration_percent",
     "hydration_last_polled",
@@ -195,6 +197,20 @@
       "fieldname": "nbd_pid",
       "fieldtype": "Int",
       "label": "NBD PID",
+      "read_only": 1
+    },
+    {
+      "description": "The source root disk's ACTUAL byte size (blockdev), recorded at export. The target disk is created at least this large so a grown disk isn't truncated during hydration (spec/19 §5). Long Int — a disk byte count overflows a 32-bit Int.",
+      "fieldname": "root_disk_bytes",
+      "fieldtype": "Long Int",
+      "label": "Root Disk Bytes",
+      "read_only": 1
+    },
+    {
+      "description": "The source data disk's actual byte size (0 if none). Sizes the target data disk like root_disk_bytes.",
+      "fieldname": "data_disk_bytes",
+      "fieldtype": "Long Int",
+      "label": "Data Disk Bytes",
       "read_only": 1
     },
     {
