@@ -133,11 +133,21 @@ def derive_tap(virtual_machine_name: str) -> str:
 
 
 def allocate_ipv6(server_name: str) -> str:
-	"""Lowest unused address in the server's /124.
+	"""Lowest unused address in the server's VM range.
 
 	Skips ::0 (subnet id) and ::1 (host). A VM in status Terminated has
 	released its address back into the pool — only live (non-Terminated)
 	VMs count as occupying an address.
+
+	"Used" is scoped to the RANGE, not the server: a keep-address migration
+	carries a VM's /128 onto a different host UNCHANGED (spec/24), so a live VM
+	sitting on server B can still own an address that falls inside server A's
+	range (its birth range). Filtering only by `server == server_name` would miss
+	that VM and hand its address to a new provision here — the exact double-alloc
+	that made two VMs share `…:b3::3` across two hosts. So we consider every live
+	VM whose address is inside THIS range, regardless of which server it now runs
+	on. (Two hosts must not share a range for this to be sufficient; each
+	Scaleway host gets its own /64, so a range uniquely identifies its birth host.)
 	"""
 	server = frappe.get_doc("Server", server_name, for_update=True)
 	network = ipaddress.IPv6Network(server.ipv6_virtual_machine_range)
@@ -145,10 +155,10 @@ def allocate_ipv6(server_name: str) -> str:
 		str(ipaddress.IPv6Address(address))
 		for address in frappe.get_all(
 			"Virtual Machine",
-			filters={"server": server_name, "status": ["!=", "Terminated"]},
+			filters={"status": ["!=", "Terminated"]},
 			pluck="ipv6_address",
 		)
-		if address
+		if address and ipaddress.IPv6Address(address) in network
 	}
 	for index, candidate in enumerate(network.hosts()):
 		# IPv6Network.hosts() already excludes ::0 (subnet anycast); we additionally

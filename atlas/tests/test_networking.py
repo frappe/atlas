@@ -31,17 +31,35 @@ from atlas.atlas.networking import (
 )
 from atlas.tests.fixtures import make_image, make_provider, make_server
 
+# Each test server gets a DISTINCT /124 range, mirroring production: every
+# Scaleway host owns its own /64 (spec/24), so no two servers share a VM range.
+# allocate_ipv6 now scopes "used" to the RANGE (a keep-address migration can park
+# a live VM's /128 in its birth range while it runs on another host), which is
+# correct only under that no-overlap invariant — so the fixtures must honour it.
+# `prefix_for(title)` gives each title a stable, unique /124 under 2001:db8:0:N::;
+# a test's `::2` becomes `<prefix>2`.
+_RANGE_INDEX: dict[str, int] = {}
+
+
+def prefix_for(title: str) -> str:
+	"""Stable, collision-free `2001:db8:0:<n>:` prefix for a server title. Append a
+	host nibble (`2`..`f`) to address a VM in that server's /124."""
+	index = _RANGE_INDEX.setdefault(title, len(_RANGE_INDEX) + 1)
+	return f"2001:db8:0:{index:x}::"
+
 
 def _provider_and_server(title: str) -> str:
-	"""Ensure a Server row with the given `title` exists and return its UUID `name`."""
+	"""Ensure a Server row with the given `title` exists and return its UUID `name`.
+	Each distinct title gets its own /124 VM range (see `prefix_for`)."""
 	provider = make_provider("test-prov-networking")
+	prefix = prefix_for(title)
 	server = make_server(
 		provider,
 		title,
 		ipv4_address="10.0.0.1",
-		ipv6_address="2001:db8::1",
+		ipv6_address=f"{prefix}1",
 		ipv6_prefix="2001:db8::/64",
-		ipv6_virtual_machine_range="2001:db8::/124",
+		ipv6_virtual_machine_range=f"{prefix}/124",
 		status="Active",
 	)
 	return server.name
@@ -111,40 +129,62 @@ class TestNetworking(IntegrationTestCase):
 
 	def test_allocate_ipv6_starts_at_2(self) -> None:
 		server = _provider_and_server("alloc-server-1")
+		prefix = prefix_for("alloc-server-1")
 		# Clean any existing VMs on this test server.
 		for name in frappe.get_all("Virtual Machine", filters={"server": server}, pluck="name"):
 			frappe.delete_doc("Virtual Machine", name, ignore_permissions=True, force=True)
-		self.assertEqual(allocate_ipv6(server), "2001:db8::2")
+		self.assertEqual(allocate_ipv6(server), f"{prefix}2")
 
 	def test_allocate_ipv6_skips_used(self) -> None:
 		server = _provider_and_server("alloc-server-2")
+		prefix = prefix_for("alloc-server-2")
 		for name in frappe.get_all("Virtual Machine", filters={"server": server}, pluck="name"):
 			frappe.delete_doc("Virtual Machine", name, ignore_permissions=True, force=True)
-		_insert_vm(server, "2001:db8::2")
-		_insert_vm(server, "2001:db8::3")
-		self.assertEqual(allocate_ipv6(server), "2001:db8::4")
+		_insert_vm(server, f"{prefix}2")
+		_insert_vm(server, f"{prefix}3")
+		self.assertEqual(allocate_ipv6(server), f"{prefix}4")
 
 	def test_allocate_ipv6_raises_when_full(self) -> None:
 		server = _provider_and_server("alloc-server-3")
+		prefix = prefix_for("alloc-server-3")
 		for name in frappe.get_all("Virtual Machine", filters={"server": server}, pluck="name"):
 			frappe.delete_doc("Virtual Machine", name, ignore_permissions=True, force=True)
 		# /124 has 16 addresses (::0..::f); skip ::0 (subnet) and ::1 (host), so 14
 		# usable. Fill them all.
 		for octet in range(2, 16):
-			_insert_vm(server, f"2001:db8::{octet:x}")
+			_insert_vm(server, f"{prefix}{octet:x}")
 		with self.assertRaises(frappe.ValidationError):
 			allocate_ipv6(server)
 
 	def test_allocate_ipv6_reuses_terminated_addresses(self) -> None:
 		"""Terminated VMs release their address back into the pool."""
 		server = _provider_and_server("alloc-server-4")
+		prefix = prefix_for("alloc-server-4")
 		for name in frappe.get_all("Virtual Machine", filters={"server": server}, pluck="name"):
 			frappe.delete_doc("Virtual Machine", name, ignore_permissions=True, force=True)
 		# ::2 held by a Terminated VM, ::3 still live. The next allocation should
 		# pick ::2 (lowest unused, ignoring Terminated holders).
-		_insert_vm(server, "2001:db8::2", status="Terminated")
-		_insert_vm(server, "2001:db8::3", status="Running")
-		self.assertEqual(allocate_ipv6(server), "2001:db8::2")
+		_insert_vm(server, f"{prefix}2", status="Terminated")
+		_insert_vm(server, f"{prefix}3", status="Running")
+		self.assertEqual(allocate_ipv6(server), f"{prefix}2")
+
+	def test_allocate_ipv6_excludes_migrated_away_holder(self) -> None:
+		"""The cross-host double-alloc bug: a keep-address migration parks a live VM's
+		/128 in server A's range while the VM now RUNS on server B. Allocating on A
+		must still treat that address as used — even though no VM has `server == A` —
+		or the new provision collides with the migrated VM (two VMs, one /128)."""
+		server_a = _provider_and_server("alloc-server-5a")
+		server_b = _provider_and_server("alloc-server-5b")
+		prefix_a = prefix_for("alloc-server-5a")
+		for owner in (server_a, server_b):
+			for name in frappe.get_all("Virtual Machine", filters={"server": owner}, pluck="name"):
+				frappe.delete_doc("Virtual Machine", name, ignore_permissions=True, force=True)
+		# A VM born in A's range (…::2) that has since migrated onto server B but
+		# KEPT its address. It sits on server B, yet still owns A's ::2.
+		migrated = _insert_vm(server_b, f"{prefix_a}2", status="Running")
+		frappe.db.set_value("Virtual Machine", migrated, "server", server_b)
+		# Allocating on A must skip ::2 (owned across the host boundary) and hand ::3.
+		self.assertEqual(allocate_ipv6(server_a), f"{prefix_a}3")
 
 	# ----- address_is_free_on_server: the keep-address migration collision gate -----
 
