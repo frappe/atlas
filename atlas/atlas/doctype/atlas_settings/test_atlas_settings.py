@@ -22,6 +22,7 @@ from atlas.atlas.providers.base import (
 	DiscoveredServer,
 	ImageInfo,
 	ProvisionResult,
+	ReservedIp,
 	SizeInfo,
 )
 from atlas.tests.fixtures import (
@@ -446,3 +447,88 @@ class TestAtlasSettingsDiscoverServers(IntegrationTestCase):
 		self.assertEqual(imported.status, "Pending")
 		frappe.db.delete("Server", {"title": "import-modeled"})
 		frappe.db.delete("Server", {"provider_resource_id": "srv-new"})
+
+	def _reserved_server(self, title: str, droplet_id: str) -> str:
+		"""A DigitalOcean Server keyed to a vendor droplet id, so a discovered
+		reserved IP's droplet_resource_id maps back to it."""
+		return (
+			frappe.get_doc(
+				{
+					"doctype": "Server",
+					"title": title,
+					"provider_type": "DigitalOcean",
+					"provider_resource_id": droplet_id,
+					"status": "Pending",
+				}
+			)
+			.insert(ignore_permissions=True)
+			.name
+		)
+
+	def test_discover_reserved_ips_maps_server_and_flags_modeled(self) -> None:
+		server = self._reserved_server("rip-disc-srv", "droplet-disc-1")
+		# One already-modeled IP on that server; discover must flag it imported.
+		frappe.get_doc(
+			{
+				"doctype": "Reserved IP",
+				"ip_address": "51.159.10.1",
+				"server": server,
+				"provider_resource_id": "51.159.10.1",
+			}
+		).insert(ignore_permissions=True)
+
+		fake_impl = MagicMock()
+		fake_impl.list_reserved_ips.return_value = (
+			ReservedIp("51.159.10.1", "51.159.10.1", droplet_resource_id="droplet-disc-1"),  # known
+			ReservedIp("51.159.10.2", "51.159.10.2", droplet_resource_id="droplet-disc-1"),  # new, maps
+			ReservedIp("51.159.10.3", "51.159.10.3", droplet_resource_id=None),  # floating
+		)
+		with patch(
+			"atlas.atlas.provisioning.providers.for_provider_type",
+			return_value=fake_impl,
+		):
+			out = self.settings.discover_reserved_ips()
+
+		by_ip = {row["ip_address"]: row for row in out}
+		self.assertTrue(by_ip["51.159.10.1"]["imported"])
+		self.assertEqual(by_ip["51.159.10.2"]["server"], server)
+		self.assertFalse(by_ip["51.159.10.2"]["imported"])
+		self.assertIsNone(by_ip["51.159.10.3"]["server"])  # floating maps to no Server
+		frappe.db.delete("Reserved IP", {"ip_address": "51.159.10.1"})
+		frappe.db.delete("Server", {"name": server})
+
+	def test_import_reserved_ips_maps_server_and_imports_floating_unset(self) -> None:
+		server = self._reserved_server("rip-imp-srv", "droplet-imp-1")
+		frappe.get_doc(
+			{
+				"doctype": "Reserved IP",
+				"ip_address": "51.159.20.1",
+				"server": server,
+				"provider_resource_id": "51.159.20.1",
+			}
+		).insert(ignore_permissions=True)
+
+		fake_impl = MagicMock()
+		fake_impl.list_reserved_ips.return_value = (
+			ReservedIp("51.159.20.1", "51.159.20.1", droplet_resource_id="droplet-imp-1"),  # modeled
+			ReservedIp("51.159.20.2", "51.159.20.2", droplet_resource_id="droplet-imp-1"),  # maps
+			ReservedIp("51.159.20.3", "51.159.20.3", droplet_resource_id=None),  # floating
+		)
+		with patch(
+			"atlas.atlas.provisioning.providers.for_provider_type",
+			return_value=fake_impl,
+		):
+			result = self.settings.import_reserved_ips(
+				json.dumps(["51.159.20.1", "51.159.20.2", "51.159.20.3"])
+			)
+
+		self.assertEqual(result["skipped"], ["51.159.20.1"])
+		self.assertEqual(len(result["imported"]), 2)
+		mapped = frappe.get_doc("Reserved IP", {"ip_address": "51.159.20.2"})
+		self.assertEqual(mapped.server, server)
+		self.assertEqual(mapped.status, "Allocated")
+		floating = frappe.get_doc("Reserved IP", {"ip_address": "51.159.20.3"})
+		self.assertFalse(floating.server)  # floating imports unattached
+		for ip in ("51.159.20.1", "51.159.20.2", "51.159.20.3"):
+			frappe.db.delete("Reserved IP", {"ip_address": ip})
+		frappe.db.delete("Server", {"name": server})
