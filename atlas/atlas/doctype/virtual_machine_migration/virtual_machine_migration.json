@@ -8,6 +8,8 @@
   "field_order": [
     "virtual_machine",
     "status",
+    "progress_detail",
+    "progress_percent",
     "column_break_header",
     "source_server",
     "target_server",
@@ -55,6 +57,22 @@
       "in_standard_filter": 1,
       "label": "Status",
       "options": "Pending\nExportingSnapshot\nTargetPreparing\nInjectingIdentity\nHydrating\nCutoverStarting\nRepointing\nCleanup\nDone\nFailed",
+      "read_only": 1
+    },
+    {
+      "description": "Live, always-current line describing exactly what the migration is doing right now (which host, which step). Stamped by advance_migration BEFORE each phase runs, and refined by long sub-steps as they progress.",
+      "fieldname": "progress_detail",
+      "fieldtype": "Small Text",
+      "in_list_view": 1,
+      "label": "Progress",
+      "read_only": 1
+    },
+    {
+      "default": "-1",
+      "description": "Percent complete of the current long-running copy (base-image ship or disk hydration); -1 when the current phase is not a measurable copy.",
+      "fieldname": "progress_percent",
+      "fieldtype": "Int",
+      "label": "Progress %",
       "read_only": 1
     },
     {

@@ -61,17 +61,35 @@ function render_progress(frm) {
 		return;
 	}
 
-	// In-flight: show which phase, and the hydration % while copying.
+	// In-flight: lead with the always-current progress_detail line (finer than the
+	// phase name — it says which host and step), then the step counter, a percent
+	// bar for any measurable copy (base-image ship or disk hydration), and the
+	// tunnel state on the keep-address path.
 	const index = PHASES.indexOf(status);
 	const step = index >= 0 ? `${index + 1}/${PHASES.length}` : "";
-	let message = __("In progress — phase <b>{0}</b> {1}", [status, step]);
-	if (status === "Hydrating" && frm.doc.hydration_percent != null) {
-		message += __(" — hydrating {0}%", [frm.doc.hydration_percent]);
+	const detail = frm.doc.progress_detail || __("phase {0}", [status]);
+	let message = __("Step {0} — {1}", [step, detail]);
+	const percent = frm.doc.progress_percent;
+	if (percent != null && percent >= 0) {
+		message += render_bar(percent);
 	}
 	if (frm.doc.keep_address && frm.doc.tunnel_status) {
 		message += __(" — tunnel {0}", [frm.doc.tunnel_status]);
 	}
 	frm.set_intro(message, "blue");
+}
+
+// A tiny inline progress bar (no dependency on frappe's ProgressBar widget, which
+// lives on the dashboard, not the intro). Percent is already clamped 0–100 on the
+// server; render defensively anyway.
+function render_bar(percent) {
+	const p = Math.max(0, Math.min(100, percent));
+	return (
+		` <span style="display:inline-block;vertical-align:middle;width:120px;height:8px;` +
+		`background:var(--gray-200);border-radius:4px;overflow:hidden;margin-left:6px;">` +
+		`<span style="display:block;height:100%;width:${p}%;background:var(--blue-500);"></span>` +
+		`</span> ${p}%`
+	);
 }
 
 function add_retry_button(frm) {

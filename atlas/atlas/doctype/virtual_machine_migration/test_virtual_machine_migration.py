@@ -164,6 +164,84 @@ class TestMigrationRow(IntegrationTestCase):
 		self.assertEqual(row.status, "Hydrating")
 		self.assertIsNone(row.error_message)
 
+	def _change_address_row(self, vm):
+		"""A migration row pinned to the change-address branch (a new /128 on the
+		target), so a drive test walks the full phase order without a provider probe."""
+		doc = frappe.get_doc(
+			{
+				"doctype": "Virtual Machine Migration",
+				"virtual_machine": vm.name,
+				"target_server": self.target,
+			}
+		)
+		doc.keep_address = 0
+		doc.forward_address = 0
+		doc.flags.keep_address_forced = True
+		return doc.insert(ignore_permissions=True)
+
+	def test_advance_migration_reports_more_work(self) -> None:
+		"""advance_migration returns True while there's a further non-terminal phase to
+		run immediately, and False once a phase HOLDS (Hydrating polling) or reaches a
+		terminal phase — the signal start_migration uses to chain the next phase."""
+		vm = self._vm(status="Stopped")
+		row = self._change_address_row(vm)
+
+		def _fake_run_task(*, script, variables, server, virtual_machine, timeout_seconds):
+			if script == "migration-export-source":
+				return fake_task(
+					stdout='ATLAS_RESULT={"nbd_port": 10001, "nbd_pid": 4242, '
+					'"root_size_bytes": 1, "data_size_bytes": 0}'
+				)
+			if script == "migration-poll-hydration":
+				return fake_task(stdout='ATLAS_RESULT={"hydration_percent": 20}')  # holds
+			return fake_task(stdout="ok")
+
+		with patch.object(migration_module, "run_task", side_effect=_fake_run_task):
+			# Pending → ExportingSnapshot → … each report "more work".
+			for _ in range(4):
+				row.reload()
+				self.assertTrue(migration_module.advance_migration(row))
+			row.reload()
+			self.assertEqual(row.status, "Hydrating")
+			# Hydrating at 20% holds — no further phase to run now.
+			self.assertFalse(migration_module.advance_migration(row))
+
+	def test_start_migration_chains_next_phase_but_stops_on_hold(self) -> None:
+		"""start_migration re-enqueues itself after a phase that advances (so phases run
+		back-to-back), and does NOT re-enqueue once a phase holds — from there the cron
+		re-drives Hydrating."""
+		vm = self._vm(status="Stopped")
+		row = self._change_address_row(vm)
+
+		def _fake_run_task(*, script, variables, server, virtual_machine, timeout_seconds):
+			if script == "migration-export-source":
+				return fake_task(
+					stdout='ATLAS_RESULT={"nbd_port": 10001, "nbd_pid": 4242, '
+					'"root_size_bytes": 1, "data_size_bytes": 0}'
+				)
+			if script == "migration-poll-hydration":
+				return fake_task(stdout='ATLAS_RESULT={"hydration_percent": 20}')  # holds
+			return fake_task(stdout="ok")
+
+		with (
+			patch.object(migration_module, "run_task", side_effect=_fake_run_task),
+			patch.object(migration_module.frappe, "enqueue") as enqueue,
+		):
+			# A phase that advances re-enqueues the next.
+			migration_module.start_migration(row.name)
+			self.assertEqual(enqueue.call_count, 1)
+			self.assertEqual(enqueue.call_args.kwargs["name"], row.name)
+
+			# Drive to Hydrating, then the holding poll must NOT re-enqueue.
+			row.reload()
+			while row.status != "Hydrating":
+				enqueue.reset_mock()
+				migration_module.start_migration(row.name)
+				row.reload()
+			enqueue.reset_mock()
+			migration_module.start_migration(row.name)  # Hydrating at 20% holds
+			self.assertEqual(enqueue.call_count, 0)
+
 
 class TestAddressSchemeDerivation(IntegrationTestCase):
 	"""The keep_address / forward_address derivation from the provider capability

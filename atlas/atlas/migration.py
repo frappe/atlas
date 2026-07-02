@@ -6,10 +6,13 @@ runs in the `migration-*` Task scripts (scripts/). Wired in hooks.py:
     scheduler_events = {"cron": {"*/2 * * * *": ["atlas.atlas.migration.reconcile_migrations"]}}
 
 The design point: a migration is a sequence of idempotent host phases, each
-recorded as the Migration row's `status`. The scheduler re-enters the recorded
-phase every tick — so a dropped RQ job, a provider rate-limit, an SSH blip, or a
-worker crash never strands a migration. It resumes from the DB, never from
-in-memory state.
+recorded as the Migration row's `status`. Two things drive it: `start_migration`
+(enqueued by VirtualMachine.migrate on insert) runs the phases back-to-back, each
+completed phase chaining the next so there is no wait between them; the
+`reconcile_migrations` cron re-drives the one holding phase (Hydrating) and is the
+safety net — a dropped RQ job, a provider rate-limit, an SSH blip, or a worker
+crash never strands a migration, because the cron re-enters the recorded phase and
+every phase resumes from the DB, never from in-memory state.
 
 **Stage 1 (this build): change-address only.** The VM keeps its UUID (and every
 host-local value derived from it) but gets a NEW public IPv6 on the target, and
@@ -84,19 +87,57 @@ def reconcile_migrations() -> None:
 		pluck="name",
 	)
 	for name in names:
-		try:
-			advance_migration(frappe.get_doc("Virtual Machine Migration", name))
-			# nosemgrep: frappe-manual-commit -- scheduler: persist each migration's
-			# progress independently so one row's later failure can't roll back another's
-			frappe.db.commit()
-		except Exception as exception:
-			frappe.db.rollback()
-			_fail(name, str(exception))
-			frappe.logger("atlas").error(f"migration {name} failed: {exception}")
+		_reconcile_one(name)
 
 
-def advance_migration(doc) -> None:
-	"""Run the phase recorded on the row, then advance the status on success.
+def start_migration(name: str) -> None:
+	"""Background entrypoint: advance a migration one phase, then — if that phase
+	completed and there is more to do immediately — enqueue itself again to run the
+	NEXT phase right away. This is the "run actions one after another as soon as they
+	can" driver: VirtualMachine.migrate enqueues the first call on insert, and each
+	completed phase chains the next, so a migration walks Pending → … → Hydrating
+	back-to-back with no wait for a cron tick between phases.
+
+	It stops re-enqueuing when a phase HOLDS (Hydrating, which polls a multi-minute
+	copy) or the migration reaches a terminal phase — from there the
+	`reconcile_migrations` cron re-drives Hydrating each tick and remains the sole
+	safety net if any of these jobs is dropped. Re-entrant and idempotent like the
+	cron: it reloads and advances whatever phase the row records."""
+	if not frappe.db.exists("Virtual Machine Migration", name):
+		return
+	if _reconcile_one(name):
+		frappe.enqueue(
+			"atlas.atlas.migration.start_migration",
+			queue="long",
+			timeout=300,
+			name=name,
+		)
+
+
+def _reconcile_one(name: str) -> bool:
+	"""Advance one migration a single phase, committing its progress on success and
+	marking it Failed on error — in isolation, so one wedged row never blocks or
+	rolls back another. Shared by the cron and the on-insert kick. Returns True iff
+	the row advanced to a further non-terminal phase (more work to run immediately)."""
+	try:
+		advanced = advance_migration(frappe.get_doc("Virtual Machine Migration", name))
+		# nosemgrep: frappe-manual-commit -- persist each migration's progress
+		# independently so one row's later failure can't roll back another's
+		frappe.db.commit()
+		return advanced
+	except Exception as exception:
+		frappe.db.rollback()
+		_fail(name, str(exception))
+		frappe.logger("atlas").error(f"migration {name} failed: {exception}")
+		return False
+
+
+def advance_migration(doc) -> bool:
+	"""Run the phase recorded on the row, then advance the status on success. Returns
+	True iff the row advanced to a further NON-terminal phase — i.e. there is more
+	work to run immediately (the caller should drive the next phase now rather than
+	wait for a tick). Returns False when the phase held (Hydrating polling) or reached
+	a terminal phase (Done).
 
 	Resumability: we ALWAYS re-derive what to do from `doc.status`, never from a
 	cursor carried in. A phase returns True (advance) or False (re-enter next tick —
@@ -104,15 +145,23 @@ def advance_migration(doc) -> None:
 	its resume key, so a re-entry after a crash is a cheap no-op up to where it got."""
 	phase = doc.status
 	if phase not in PHASE_ORDER or phase == "Done":
-		return
+		return False
+	# Stamp the live progress line BEFORE running the phase, so the form shows what
+	# the migration is doing the moment work starts — not only after the (possibly
+	# multi-minute) host task returns. Phases that poll (Hydrating) and long
+	# sub-steps (base-image ship) refine this line + progress_percent as they run.
+	_progress(doc, _phase_label(doc, phase), percent=-1)
 	handler = PHASES[phase]
 	completed = handler(doc)
-	if completed:
-		nxt = PHASE_ORDER[PHASE_ORDER.index(phase) + 1]
-		updates = {"status": nxt}
-		if nxt == "Done":
-			updates["completed_at"] = frappe.utils.now_datetime()
-		doc.db_set(updates)
+	if not completed:
+		return False
+	nxt = PHASE_ORDER[PHASE_ORDER.index(phase) + 1]
+	updates = {"status": nxt, "progress_percent": -1}
+	if nxt == "Done":
+		updates["completed_at"] = frappe.utils.now_datetime()
+		updates["progress_detail"] = "Migration complete."
+	doc.db_set(updates)
+	return nxt != "Done"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -350,6 +399,12 @@ def _phase_hydrating(doc) -> bool:
 	percent = int(result["hydration_percent"])
 	stalled = percent == (doc.hydration_percent or 0)
 	doc.db_set({"hydration_percent": percent, "hydration_last_polled": frappe.utils.now_datetime()})
+	_progress(
+		doc,
+		f"Copying disk blocks from {_server_title(doc.source_server)} to "
+		f"{_server_title(doc.target_server)} — {percent}% hydrated.",
+		percent=percent,
+	)
 	if percent >= 100:
 		return True
 	if stalled:
@@ -759,6 +814,38 @@ def _vm_field(doc, field: str):
 
 def _server_ipv4(server: str) -> str:
 	return frappe.db.get_value("Server", server, "ipv4_address")
+
+
+def _server_title(server: str) -> str:
+	"""A human-readable host name for the progress line (the Server's title, e.g.
+	`f1-aditya-blr3`), falling back to the row name if a title isn't set."""
+	return frappe.db.get_value("Server", server, "title") or server
+
+
+# Human-readable, present-tense line per phase, naming the host the work runs on —
+# stamped BEFORE the phase runs so the form is never blank about what's happening.
+# Long phases (Hydrating, and the base-image ship inside TargetPreparing) overwrite
+# this with a finer-grained line + a percent as they progress.
+def _phase_label(doc, phase: str) -> str:
+	source, target = _server_title(doc.source_server), _server_title(doc.target_server)
+	return {
+		"Pending": f"Stopping the VM on {source} for a cold, snapshot-free move.",
+		"ExportingSnapshot": f"Snapshotting the disk and starting the NBD export on {source}.",
+		"TargetPreparing": f"Preparing the disk clone on {target}.",
+		"InjectingIdentity": f"Reserving the VM's address on {target}.",
+		"Hydrating": f"Copying disk blocks from {source} to {target}.",
+		"CutoverStarting": f"Cutting over to {target} (collapse clone, relaunch the VM).",
+		"Repointing": "Re-pointing routing to the migrated VM.",
+		"Cleanup": f"Tearing down migration scaffolding on {source}.",
+	}.get(phase, phase)
+
+
+def _progress(doc, detail: str, *, percent: int = -1) -> None:
+	"""Write the always-current progress line (and, for a measurable copy, its
+	percent) straight to the row via db_set so it is visible immediately — every
+	tick, mid-phase, even while a long host task is still running. `percent=-1`
+	means "not a measurable copy" and the form hides the bar."""
+	doc.db_set({"progress_detail": detail, "progress_percent": percent})
 
 
 def nbd_port(virtual_machine: str) -> int:
