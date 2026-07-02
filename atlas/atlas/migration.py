@@ -9,9 +9,12 @@ The design point: a migration is a sequence of idempotent host phases, each
 recorded as the Migration row's `status`. `start_migration` (enqueued by
 VirtualMachine.migrate on insert) is the migration's OWN driver: it runs one step
 — a phase, or a single Hydrating poll — then re-enqueues itself to run the next,
-looping until the row is terminal. So a migration walks Pending → … →
-Hydrating(poll→…→100%) → … → Done entirely on its own, self-pacing the long copy
-on the inline SSH poll's round-trip, with no wait for a cron tick between steps.
+looping until the row is terminal. So a migration walks Pending → … → CutoverStarting
+(guest boots on the clone, DOWNTIME ENDS) → Hydrating(poll→…→100%, guest SERVING) →
+CollapseClone → … → Done entirely on its own, self-pacing the long copy on the inline
+SSH poll's round-trip, with no wait for a cron tick between steps. Boot-then-hydrate
+(spec/24 §0) moved Hydrating AFTER CutoverStarting, so the copy overlaps uptime and is
+off the downtime clock.
 
 The `reconcile_migrations` cron is the SAFETY NET, not the driver — a dropped RQ
 job, a provider rate-limit, an SSH blip, or a worker crash never strands a
@@ -57,13 +60,19 @@ from atlas.atlas.task_results import parse_result
 
 # Phase order. The scheduler advances a row from one to the next; each name is
 # also a key in PHASES below. Done/Failed are terminal (handled by the row).
+# Boot-then-hydrate order (spec/24 §0): the target boots on the dm-clone read-through
+# in CutoverStarting, hydration runs while the guest SERVES, and CollapseClone
+# transparently swaps the clone for a linear map once every block is local. The guest's
+# downtime is now stop → export → prepare → inject → (keep-address: target-receive →
+# source-forward) → boot — everything after boot is off the downtime clock.
 PHASE_ORDER = (
 	"Pending",
 	"ExportingSnapshot",
 	"TargetPreparing",
 	"InjectingIdentity",
-	"Hydrating",
 	"CutoverStarting",
+	"Hydrating",
+	"CollapseClone",
 	"Repointing",
 	"Cleanup",
 	"Done",
@@ -73,8 +82,23 @@ PHASE_ORDER = (
 # as lost and the phase is re-entered.
 LOST_TASK_TIMEOUT_FACTOR = 2
 
+
+def clone_device_path(virtual_machine: str) -> str:
+	"""The dm-clone read-through device for a migrated VM's root disk (spec/24 §0).
+	Boot-then-hydrate boots the guest on this device; CollapseClone reloads its table
+	to a linear map onto the plain LV. Named identically on the host
+	(migration-clone-target's CLONE_DEV), a pure function of the UUID."""
+	return f"/dev/mapper/atlas-vm-{virtual_machine}-clone"
+
+
 # How many consecutive no-progress hydration polls before we give up.
 HYDRATION_STALL_TICKS = 30
+
+# Fast-stop grace period for the migration cold-stop (spec/24 §0.5.2). A migration
+# discards the guest's RAM, so a long graceful-shutdown drain is wasted downtime; a
+# few seconds is plenty for a clean guest halt, and ExecStopPost still fires on the
+# escalation to SIGKILL so networking teardown is never skipped.
+MIGRATION_STOP_TIMEOUT_SECONDS = 3
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -313,8 +337,11 @@ def _phase_pending(doc) -> bool:
 	if vm.status in ("Running", "Paused"):
 		# Plain stop (never snapshot-stop). flags.migrating exempts this internal
 		# save from the lifecycle guard and (harmlessly) from the immutability gate.
+		# Fast-stop: a cold migration discards RAM, so bound the graceful drain to a
+		# few seconds (spec/24 §0.5.2) — ExecStopPost (netns/veth/proxy-NDP teardown)
+		# still fires, only the shutdown-grace wait is trimmed off the downtime clock.
 		vm.flags.migrating = True
-		vm.stop(memory_snapshot=False)
+		vm.stop(memory_snapshot=False, stop_timeout_seconds=MIGRATION_STOP_TIMEOUT_SECONDS)
 	if vm.has_memory_snapshot:
 		vm.db_set("has_memory_snapshot", 0)
 	return vm.status == "Stopped"
@@ -548,20 +575,27 @@ def _bring_up_forward_tunnel(doc) -> None:
 
 
 def _phase_injecting_identity(doc) -> bool:
-	"""Decide the address the VM will boot with on the target and record it on the
-	row. The actual identity inject + unit launch is deferred to CutoverStarting,
-	where provision-vm runs against the collapsed disk with preserve_host_keys=1.
-	Resume key: ipv6_address_new already set on the row.
+	"""Decide the address the VM will boot with on the target, record it, and inject
+	the VM's identity THROUGH the dm-clone device — before the guest boots on it in
+	CutoverStarting (spec/24 §0). Two steps, each with its own resume key:
 
-	- change-address: allocate a NEW /128 from the target's range. allocate_ipv6
-	  holds the target Server row for_update — atomic, so two parallel migrations
-	  can't grab the same address. Persist before advancing so a crash re-uses the
-	  same address on re-entry (throws if the range filled since pre-flight).
-	- keep-address: NEAR-NO-OP for networking (spec/24 §2.9.4). The /128 is
-	  unchanged — the source keeps holding the /64 and forwards it — so there is NO
-	  allocate and NO env rewrite; the VM boots on the SAME address. We record the
-	  unchanged address as ipv6_address_new so the shared cutover path (which
-	  provisions against ipv6_address_new) launches it on the right /128."""
+	1. Address (resume key: ipv6_address_new set):
+	   - change-address: allocate a NEW /128 from the target's range. allocate_ipv6
+	     holds the target Server row for_update — atomic, so two parallel migrations
+	     can't grab the same address. Persist before advancing so a crash re-uses the
+	     same address on re-entry (throws if the range filled since pre-flight).
+	   - keep-address: NEAR-NO-OP for networking (spec/24 §2.9.4). The /128 is
+	     unchanged — the source keeps holding the /64 and forwards it — so there is NO
+	     allocate; the VM boots on the SAME address. Record the unchanged address as
+	     ipv6_address_new so the shared boot path launches it on the right /128.
+
+	2. Identity inject THROUGH the clone (resume key: identity_injected flag). The
+	   plain atlas-vm-<uuid> LV mounts BUSY under the live clone (host-verified
+	   2026-07-02, spec/24 §0.4), so we mount the CLONE device; writes land on the
+	   dest and count toward hydration. Host keys are PRESERVED (the disk moved
+	   wholesale; its SSH identity must survive the move). This moved earlier from
+	   cutover so the guest can boot the instant target-receive/source-forward arm —
+	   provision-vm at boot then does NOT re-inject (boot-on-clone)."""
 	if not doc.ipv6_address_new:
 		if doc.keep_address:
 			# Authoritative keep-address collision re-check (pre-flight probed it at
@@ -578,6 +612,32 @@ def _phase_injecting_identity(doc) -> bool:
 		else:
 			address = allocate_ipv6(doc.target_server)
 		doc.db_set("ipv6_address_new", address)
+
+	if not doc.identity_injected:
+		# Pull the identity fields off the SAME _provision_variables() the cutover
+		# boot uses, then re-target the address to ipv6_address_new (the doc still
+		# points at the source /128 until Repointing) — so a change-address inject
+		# writes the NEW /128's network.env, and keep-address writes the unchanged one.
+		vm = frappe.get_doc("Virtual Machine", doc.virtual_machine)
+		provision = vm._provision_variables()
+		host_cidr, guest_cidr = derive_ipv4_link(doc.ipv6_address_new)
+		_run_phase_task(
+			doc,
+			server=doc.target_server,
+			script="migration-inject-identity",
+			variables={
+				"VIRTUAL_MACHINE_NAME": doc.virtual_machine,
+				"CLONE_DEVICE": clone_device_path(doc.virtual_machine),
+				"VIRTUAL_MACHINE_IPV6": doc.ipv6_address_new,
+				"IPV4_GUEST_CIDR": guest_cidr,
+				"IPV4_GATEWAY": str(ipaddress.ip_interface(host_cidr).ip),
+				"SSH_PUBLIC_KEY": provision["SSH_PUBLIC_KEY"],
+				"DATA_DISK_MOUNT_AT": provision.get("DATA_DISK_MOUNT_AT", ""),
+				"ROUTING_BASE_URL": provision.get("ROUTING_BASE_URL", ""),
+			},
+			timeout_seconds=120,
+		)
+		doc.db_set("identity_injected", 1)
 	return True
 
 
@@ -637,36 +697,33 @@ def _phase_hydrating(doc) -> bool:
 
 
 def _phase_cutover_starting(doc) -> bool:
-	"""The cutover, in two host steps against the target:
+	"""Boot-then-hydrate cutover (spec/24 §0) — this is where DOWNTIME ENDS. The
+	guest boots on the dm-clone read-through and starts serving; hydration then runs
+	off the clock (the next phase) while the guest is up. NO collapse here — the clone
+	is collapsed only after hydration reaches 100% (CollapseClone).
 
-	1. `migration-cutover-target` collapses the now-100%-hydrated dm-clone(s) to the
-	   plain `atlas-vm-<uuid>` thin LV (idempotent: no-op if already collapsed), and
-	   disconnects the nbd client. The disk is now pure-local.
-	2. `provision-vm` (the proven launch path) runs against that existing disk — its
-	   `snapshot_into`/`prepare_lv` no-ops since the LV exists, so it reuses the
-	   hydrated bytes, injects the NEW identity with `preserve_host_keys=1` (SSH host
-	   keys survive the move), builds the jail + launcher, and starts the unit. The
-	   VM boots on the target's NEW /128.
+	Order matters for keep-address (spec/24 §2.3): the forward path must be armed
+	BEFORE the guest can serve, or the guest is up but black-holed. So:
 
-	Resume key: both steps are idempotent, so a re-entry re-collapses (no-op) and
-	re-provisions (reuses disk, re-launches unit) cleanly."""
-	_run_phase_task(
-		doc,
-		server=doc.target_server,
-		script="migration-cutover-target",
-		variables={
-			"VIRTUAL_MACHINE_NAME": doc.virtual_machine,
-			"DATA_DISK_GB": str(_vm_field(doc, "data_disk_gigabytes") or 0),
-			# Same per-VM nbd block clone-target used, so cutover disconnects the RIGHT
-			# devices (root = base+0, data = base+1) — never another migration's.
-			"NBD_BASE_SLOT": str(nbd_base_slot(doc.virtual_machine)),
-		},
-		timeout_seconds=120,
-	)
-	# Launch on the target with the NEW address, reusing the hydrated disk. We build
-	# the full provision variable set from the VM doc, then override the address
-	# fields (the doc still points at the source /128 until Repointing) and set
-	# preserve_host_keys so the moved SSH identity survives.
+	1. keep-address only: `migration-target-receive` (return route) then
+	   `migration-source-forward` (point the /128 at the tunnel + re-assert proxy-NDP).
+	   Armed before boot so the first inbound packet is deliverable the instant the
+	   guest is up.
+	2. `provision-vm` with CLONE_ROOTFS_DEVICE set: boots the guest on
+	   /dev/mapper/atlas-vm-<uuid>-clone. It does NOT re-inject (done in
+	   InjectingIdentity through the clone), does NOT re-create the disk (the clone's
+	   dest LV exists and is hydrating), and exposes the CLONE device as the jail
+	   rootfs node. `--no-block` returns once the start is queued.
+	3. Mark the VM Running + flip `server` to the target: the row now reflects
+	   "live on target", stopping the downtime clock. (change-address Subdomain
+	   re-point + reserved-IP handling stay in Repointing, off the clock.)
+
+	Resume key: every step is idempotent — the forward scripts re-assert, provision-vm
+	re-exposes the same node + re-launches, and _finalize_cutover no-ops once the row
+	already points at the target."""
+	if doc.keep_address:
+		_install_forward_routes(doc)
+
 	vm = frappe.get_doc("Virtual Machine", doc.virtual_machine)
 	variables = vm._provision_variables()
 	host_cidr, guest_cidr = derive_ipv4_link(doc.ipv6_address_new)
@@ -676,7 +733,12 @@ def _phase_cutover_starting(doc) -> bool:
 			"IPV4_HOST_CIDR": host_cidr,
 			"IPV4_GUEST_CIDR": guest_cidr,
 			"IPV4_GATEWAY": str(ipaddress.ip_interface(host_cidr).ip),
+			# preserve_host_keys is moot on the boot-on-clone path (provision-vm skips
+			# inject entirely — identity was injected through the clone earlier), but
+			# pass it for symmetry / the safety of any future inject-at-boot path.
 			"PRESERVE_HOST_KEYS": "1",
+			# THE boot-then-hydrate switch: boot on the clone read-through device.
+			"CLONE_ROOTFS_DEVICE": clone_device_path(doc.virtual_machine),
 		}
 	)
 	_run_phase_task(
@@ -686,8 +748,35 @@ def _phase_cutover_starting(doc) -> bool:
 		variables=variables,
 		timeout_seconds=120,
 	)
-	if doc.keep_address:
-		_install_forward_routes(doc)
+	# The guest is now live on the target. Commit the row so status/server reflect it
+	# and the downtime window closes here, not after the multi-minute copy.
+	_finalize_cutover(doc)
+	return True
+
+
+def _phase_collapse_clone(doc) -> bool:
+	"""Collapse the now-100%-hydrated dm-clone(s) TRANSPARENTLY while the guest is live
+	(spec/24 §0.4). `migration-cutover-target` suspends the clone, reloads its table
+	from `clone` to a `linear` map onto the plain dest LV, and resumes — the dm device
+	keeps the SAME major:minor, so Firecracker's open rootfs fd survives (host-verified
+	on real f1 thin LVs, 2026-07-02: `dmsetup remove` on an open fd fails "Device or
+	resource busy"; reload-to-linear does not). The source nbd client is disconnected.
+
+	Resume key: the script no-ops on a clone that already carries a linear table (a
+	re-entry after collapse) or is already gone."""
+	_run_phase_task(
+		doc,
+		server=doc.target_server,
+		script="migration-cutover-target",
+		variables={
+			"VIRTUAL_MACHINE_NAME": doc.virtual_machine,
+			"DATA_DISK_GB": str(_vm_field(doc, "data_disk_gigabytes") or 0),
+			# Same per-VM nbd block clone-target used, so collapse disconnects the RIGHT
+			# devices (root = base+0, data = base+1) — never another migration's.
+			"NBD_BASE_SLOT": str(nbd_base_slot(doc.virtual_machine)),
+		},
+		timeout_seconds=120,
+	)
 	return True
 
 
@@ -850,8 +939,9 @@ PHASES = {
 	"ExportingSnapshot": _phase_exporting_snapshot,
 	"TargetPreparing": _phase_target_preparing,
 	"InjectingIdentity": _phase_injecting_identity,
-	"Hydrating": _phase_hydrating,
 	"CutoverStarting": _phase_cutover_starting,
+	"Hydrating": _phase_hydrating,
+	"CollapseClone": _phase_collapse_clone,
 	"Repointing": _phase_repointing,
 	"Cleanup": _phase_cleanup,
 }
@@ -979,8 +1069,9 @@ def collapse_forward(vm) -> None:
 		timeout_seconds=60,
 	)
 
-	# 2. Allocate a fresh /128 on the current host and re-inject it in place. Skip
-	#    the allocate if a prior collapse attempt already moved the VM off old_ipv6.
+	# 2. Allocate a fresh /128 on the current host and re-provision the VM onto it.
+	#    Skip the allocate if a prior collapse attempt already moved the VM off
+	#    old_ipv6.
 	new_ipv6 = vm.ipv6_address
 	if new_ipv6 == old_ipv6:
 		new_ipv6 = allocate_ipv6(vm.server)
@@ -995,6 +1086,18 @@ def collapse_forward(vm) -> None:
 			"PRESERVE_HOST_KEYS": "1",
 		}
 	)
+	# STOP the VM first, for two reasons: (a) collapse runs on a LIVE VM, and
+	# provision-vm's `systemctl start` is a no-op on an already-running unit — the
+	# guest would never reboot onto the new /128 (its host veth route + guest eth0 are
+	# re-laid only at unit (re)start). (b) A boot-then-hydrate migration left the disk
+	# behind a collapsed-linear dm-clone that holds the plain LV BUSY; stop-vm CONVERGES
+	# that clone (removes it once the guest's fd is released), so the plain LV is then
+	# directly mountable and provision-vm's ordinary inject+launch just works. This is a
+	# brief operator-initiated blip, not a latency-critical cutover.
+	vm.reload()
+	if vm.status == "Running":
+		vm.flags.migrating = True
+		vm.stop(memory_snapshot=False)
 	run_task(
 		server=vm.server,
 		script="provision-vm",
@@ -1005,12 +1108,20 @@ def collapse_forward(vm) -> None:
 
 	# 3. Commit the new address on the VM row, clear the forward markers, then
 	#    re-point the Subdomains at it (the change-address path — now the address
-	#    really did change). db_set the address under flags so validate() is happy.
-	vm.flags.migrating = True
-	vm.ipv6_address = new_ipv6
-	vm.traffic_forwarded_from = None
-	vm.traffic_forwarded_since = None
-	vm.save(ignore_permissions=True)
+	#    really did change). db_set (not save): it bypasses the optimistic-lock
+	#    timestamp check — the long-running host tasks above leave a stale in-memory
+	#    doc, and a trailing migration self-drive tick may have touched the row in the
+	#    meantime (a save() would raise TimestampMismatchError) — and it skips the
+	#    validate() immutability gate on ipv6_address cleanly (these are the sanctioned
+	#    post-cutover writes, like _finalize_cutover's).
+	vm.db_set(
+		{
+			"ipv6_address": new_ipv6,
+			"status": "Running",
+			"traffic_forwarded_from": None,
+			"traffic_forwarded_since": None,
+		}
+	)
 	_repoint_routes(_ForwardCollapse(vm.name, new_ipv6))
 
 
@@ -1143,9 +1254,10 @@ def _phase_label(doc, phase: str) -> str:
 		"Pending": f"Stopping the VM on {source} for a cold, snapshot-free move.",
 		"ExportingSnapshot": f"Snapshotting the disk and starting the NBD export on {source}.",
 		"TargetPreparing": f"Preparing the disk clone on {target}.",
-		"InjectingIdentity": f"Reserving the VM's address on {target}.",
-		"Hydrating": f"Copying disk blocks from {source} to {target}.",
-		"CutoverStarting": f"Cutting over to {target} (collapse clone, relaunch the VM).",
+		"InjectingIdentity": f"Reserving the VM's address and injecting identity on {target}.",
+		"CutoverStarting": f"Cutting over: booting the VM on {target} (reading through the clone).",
+		"Hydrating": f"Copying disk blocks from {source} to {target} (VM serving).",
+		"CollapseClone": f"Collapsing the disk clone to local storage on {target}.",
 		"Repointing": "Re-pointing routing to the migrated VM.",
 		"Cleanup": f"Tearing down migration scaffolding on {source}.",
 	}.get(phase, phase)

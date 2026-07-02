@@ -96,6 +96,29 @@ class TestMigrationPure(IntegrationTestCase):
 		block_b = set(range(sb, sb + migration_module.NBD_SLOTS_PER_MIGRATION))
 		self.assertEqual(block_a & block_b, set())
 
+	def test_boot_then_hydrate_phase_order(self) -> None:
+		"""Boot-then-hydrate (spec/24 §0): the guest must boot on the clone BEFORE
+		hydration, and CollapseClone must follow it — so CutoverStarting precedes
+		Hydrating precedes CollapseClone. Guards the reorder against a regression that
+		would re-couple downtime to the copy."""
+		order = migration_module.PHASE_ORDER
+		self.assertLess(order.index("InjectingIdentity"), order.index("CutoverStarting"))
+		self.assertLess(order.index("CutoverStarting"), order.index("Hydrating"))
+		self.assertLess(order.index("Hydrating"), order.index("CollapseClone"))
+		self.assertLess(order.index("CollapseClone"), order.index("Repointing"))
+		# Every phase name has a handler and vice-versa.
+		self.assertEqual(
+			set(migration_module.PHASES),
+			set(order) - {"Done"},
+		)
+
+	def test_clone_device_path_is_uuid_keyed(self) -> None:
+		uuid = "5d0943c8-4e43-48ad-b652-3f181e22fc4d"
+		self.assertEqual(
+			migration_module.clone_device_path(uuid),
+			f"/dev/mapper/atlas-vm-{uuid}-clone",
+		)
+
 	def test_bytes_to_gib_ceil_rounds_up(self) -> None:
 		# The target base LV must be >= the source's byte size; a partial GiB rounds up.
 		gib = 1024**3
@@ -270,13 +293,18 @@ class TestMigrationRow(IntegrationTestCase):
 				return fake_task(stdout='ATLAS_RESULT={"hydration_percent": 20}')  # holds
 			return fake_task(stdout="ok")
 
-		with patch.object(migration_module, "run_task", side_effect=_fake_run_task):
-			# Pending → ExportingSnapshot → … each report "more work".
-			for _ in range(4):
-				row.reload()
-				self.assertTrue(migration_module.advance_migration(row))
+		from atlas.atlas import proxy as proxy_module
+
+		with (
+			patch.object(migration_module, "run_task", side_effect=_fake_run_task),
+			patch.object(proxy_module, "reconcile_proxies", return_value=[]),
+		):
+			# Pending → … → CutoverStarting each report "more work" (advance to a further
+			# non-terminal phase), up to and including the boot that reaches Hydrating.
 			row.reload()
-			self.assertEqual(row.status, "Hydrating")
+			while row.status != "Hydrating":
+				self.assertTrue(migration_module.advance_migration(row))
+				row.reload()
 			# Hydrating at 20% holds — no further phase to run now.
 			self.assertFalse(migration_module.advance_migration(row))
 
@@ -543,12 +571,15 @@ class TestMigrationPhaseMachine(IntegrationTestCase):
 				return fake_task(stdout='ATLAS_RESULT={"hydration_percent": 100}')
 			return fake_task(stdout="ok")
 
+		# Boot-then-hydrate order (spec/24 §0): CutoverStarting (boot on the clone)
+		# now precedes Hydrating (copy while serving), and CollapseClone follows it.
 		expected = [
 			"ExportingSnapshot",
 			"TargetPreparing",
 			"InjectingIdentity",
-			"Hydrating",
 			"CutoverStarting",
+			"Hydrating",
+			"CollapseClone",
 			"Repointing",
 			"Cleanup",
 			"Done",
@@ -598,7 +629,7 @@ class TestMigrationPhaseMachine(IntegrationTestCase):
 			patch.object(migration_module, "run_task", side_effect=_fake_run_task),
 			patch.object(proxy_module, "reconcile_proxies", return_value=[]) as reconcile,
 		):
-			for _ in range(8):
+			for _ in range(9):
 				row.reload()
 				migration_module.advance_migration(row)
 			row.reload()
@@ -654,7 +685,7 @@ class TestMigrationPhaseMachine(IntegrationTestCase):
 			patch.object(migration_module, "run_task", side_effect=_fake_run_task),
 			patch.object(proxy_module, "reconcile_proxies", return_value=[]),
 		):
-			for _ in range(8):
+			for _ in range(9):
 				row.reload()
 				migration_module.advance_migration(row)
 
@@ -686,13 +717,18 @@ class TestMigrationPhaseMachine(IntegrationTestCase):
 				)
 			return fake_task(stdout="ok")
 
-		with patch.object(migration_module, "run_task", side_effect=_fake_run_task):
-			# Drive to Hydrating (Pending → ExportingSnapshot → TargetPreparing →
-			# InjectingIdentity → Hydrating).
-			for _ in range(4):
-				row.reload()
-				migration_module.advance_migration(row)
+		from atlas.atlas import proxy as proxy_module
+
+		with (
+			patch.object(migration_module, "run_task", side_effect=_fake_run_task),
+			patch.object(proxy_module, "reconcile_proxies", return_value=[]),
+		):
+			# Drive to Hydrating (boot-then-hydrate: Pending → ExportingSnapshot →
+			# TargetPreparing → InjectingIdentity → CutoverStarting → Hydrating).
 			row.reload()
+			while row.status != "Hydrating":
+				migration_module.advance_migration(row)
+				row.reload()
 			self.assertEqual(row.status, "Hydrating")
 			# Pretend hydration got partway before the client died.
 			row.db_set({"hydration_percent": 58, "hydration_stall_ticks": 3})
@@ -891,7 +927,7 @@ class TestLocalBaseImageShip(IntegrationTestCase):
 			patch.object(migration_module, "run_task", side_effect=_fake_run_task),
 			patch.object(proxy_module, "reconcile_proxies", return_value=[]),
 		):
-			for _ in range(8):
+			for _ in range(9):
 				row.reload()
 				migration_module.advance_migration(row)
 			row.reload()
@@ -938,6 +974,10 @@ class TestCollapseForward(IntegrationTestCase):
 
 		with (
 			patch.object(migration_module, "run_task", side_effect=_fake_run_task),
+			# collapse_forward now stops the live VM first (so the disk converges off
+			# any dm-clone before the re-provision); vm.stop() runs a host Task through
+			# the VM module's run_task, so mock that too.
+			patch.object(vm_module, "run_task", side_effect=_fake_run_task),
 			patch.object(proxy_module, "reconcile_proxies", return_value=[]),
 		):
 			vm.collapse_forward()

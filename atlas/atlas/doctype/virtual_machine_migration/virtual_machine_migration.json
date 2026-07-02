@@ -16,6 +16,7 @@
     "section_break_addressing",
     "ipv6_address_old",
     "ipv6_address_new",
+    "identity_injected",
     "column_break_addressing",
     "release_reserved_ip",
     "keep_address",
@@ -60,7 +61,7 @@
       "in_list_view": 1,
       "in_standard_filter": 1,
       "label": "Status",
-      "options": "Pending\nExportingSnapshot\nTargetPreparing\nInjectingIdentity\nHydrating\nCutoverStarting\nRepointing\nCleanup\nDone\nFailed",
+      "options": "Pending\nExportingSnapshot\nTargetPreparing\nInjectingIdentity\nCutoverStarting\nHydrating\nCollapseClone\nRepointing\nCleanup\nDone\nFailed",
       "read_only": 1
     },
     {
@@ -118,6 +119,14 @@
       "fieldname": "ipv6_address_new",
       "fieldtype": "Data",
       "label": "IPv6 Address (new)",
+      "read_only": 1
+    },
+    {
+      "default": "0",
+      "description": "Boot-then-hydrate (spec/24 §0): 1 once the VM's identity has been injected THROUGH the dm-clone device in InjectingIdentity (before boot). provision-vm at cutover then skips re-inject. Resume key for the inject step.",
+      "fieldname": "identity_injected",
+      "fieldtype": "Check",
+      "label": "Identity Injected",
       "read_only": 1
     },
     {
