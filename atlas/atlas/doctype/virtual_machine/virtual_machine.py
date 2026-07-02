@@ -227,8 +227,9 @@ class VirtualMachine(Document):
 	def migrate(self, target_server: str, release_reserved_ip: bool = False) -> str:
 		"""Begin migrating this VM's disk to `target_server`, keeping its identity
 		(UUID and everything derived from it). Returns the Virtual Machine Migration
-		row name; the scheduled `reconcile_migrations` callback advances it phase by
-		phase, idempotently and resumably (spec/24).
+		row name; `start_migration` (enqueued below) then drives it phase by phase
+		back-to-back, with the `reconcile_migrations` cron as the idempotent, resumable
+		safety net (spec/24).
 
 		Cold migration: the VM is stopped during cutover. On the change-address path
 		(stage 1) it gets a NEW public IPv6 on the target and the proxy/Subdomain
@@ -251,6 +252,20 @@ class VirtualMachine(Document):
 				"status": "Pending",
 			}
 		).insert(ignore_permissions=True)
+		# Drive the migration now instead of waiting for the reconcile_migrations
+		# cron: start_migration runs the first phase and chains each subsequent step
+		# (including each Hydrating poll) as soon as it completes, so the migration
+		# walks its phases back-to-back and self-paces the long copy to 100% on its
+		# own. enqueue_after_commit so the worker only starts once this insert has
+		# committed (else start_migration can't load the row). The cron is the safety
+		# net that re-drives the row if a self-drive job is ever dropped.
+		frappe.enqueue(
+			"atlas.atlas.migration.start_migration",
+			queue="long",
+			timeout=300,
+			enqueue_after_commit=True,
+			name=migration.name,
+		)
 		return migration.name
 
 	@frappe.whitelist()

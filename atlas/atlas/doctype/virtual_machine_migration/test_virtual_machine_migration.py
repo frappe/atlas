@@ -280,10 +280,11 @@ class TestMigrationRow(IntegrationTestCase):
 			# Hydrating at 20% holds — no further phase to run now.
 			self.assertFalse(migration_module.advance_migration(row))
 
-	def test_start_migration_chains_next_phase_but_stops_on_hold(self) -> None:
-		"""start_migration re-enqueues itself after a phase that advances (so phases run
-		back-to-back), and does NOT re-enqueue once a phase holds — from there the cron
-		re-drives Hydrating."""
+	def test_start_migration_self_drives_until_terminal(self) -> None:
+		"""start_migration re-enqueues itself after EVERY non-terminal step — a phase
+		that advances AND a Hydrating poll that merely holds — so the migration drives
+		itself to completion without depending on the reconcile_migrations cron. It stops
+		re-enqueuing only once the row is terminal (Done/Failed)."""
 		vm = self._vm(status="Stopped")
 		row = self._change_address_row(vm)
 
@@ -306,15 +307,22 @@ class TestMigrationRow(IntegrationTestCase):
 			self.assertEqual(enqueue.call_count, 1)
 			self.assertEqual(enqueue.call_args.kwargs["name"], row.name)
 
-			# Drive to Hydrating, then the holding poll must NOT re-enqueue.
+			# Drive to Hydrating; every step (including the very last advance INTO
+			# Hydrating) re-enqueues, since none of them is terminal.
 			row.reload()
 			while row.status != "Hydrating":
 				enqueue.reset_mock()
 				migration_module.start_migration(row.name)
+				self.assertEqual(enqueue.call_count, 1)
 				row.reload()
+
+			# The holding Hydrating poll STILL re-enqueues — this is the self-drive loop
+			# that carries the copy to 100% without the cron. (Was: asserted NO enqueue.)
 			enqueue.reset_mock()
 			migration_module.start_migration(row.name)  # Hydrating at 20% holds
-			self.assertEqual(enqueue.call_count, 0)
+			self.assertEqual(enqueue.call_count, 1)
+			self.assertEqual(enqueue.call_args.kwargs["name"], row.name)
+			self.assertEqual(row.reload().status, "Hydrating")
 
 
 class TestAddressSchemeDerivation(IntegrationTestCase):

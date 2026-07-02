@@ -6,13 +6,19 @@ runs in the `migration-*` Task scripts (scripts/). Wired in hooks.py:
     scheduler_events = {"cron": {"*/2 * * * *": ["atlas.atlas.migration.reconcile_migrations"]}}
 
 The design point: a migration is a sequence of idempotent host phases, each
-recorded as the Migration row's `status`. Two things drive it: `start_migration`
-(enqueued by VirtualMachine.migrate on insert) runs the phases back-to-back, each
-completed phase chaining the next so there is no wait between them; the
-`reconcile_migrations` cron re-drives the one holding phase (Hydrating) and is the
-safety net — a dropped RQ job, a provider rate-limit, an SSH blip, or a worker
-crash never strands a migration, because the cron re-enters the recorded phase and
-every phase resumes from the DB, never from in-memory state.
+recorded as the Migration row's `status`. `start_migration` (enqueued by
+VirtualMachine.migrate on insert) is the migration's OWN driver: it runs one step
+— a phase, or a single Hydrating poll — then re-enqueues itself to run the next,
+looping until the row is terminal. So a migration walks Pending → … →
+Hydrating(poll→…→100%) → … → Done entirely on its own, self-pacing the long copy
+on the inline SSH poll's round-trip, with no wait for a cron tick between steps.
+
+The `reconcile_migrations` cron is the SAFETY NET, not the driver — a dropped RQ
+job, a provider rate-limit, an SSH blip, or a worker crash never strands a
+migration, because the cron re-enters the recorded phase (idempotent) and every
+phase resumes from the DB, never from in-memory state. (Historically the cron WAS
+the Hydrating driver; the self-drive loop replaced that so a bench with the
+scheduler off still finishes a migration.)
 
 **Stage 1 (this build): change-address only.** The VM keeps its UUID (and every
 host-local value derived from it) but gets a NEW public IPv6 on the target, and
@@ -91,21 +97,34 @@ def reconcile_migrations() -> None:
 
 
 def start_migration(name: str) -> None:
-	"""Background entrypoint: advance a migration one phase, then — if that phase
-	completed and there is more to do immediately — enqueue itself again to run the
-	NEXT phase right away. This is the "run actions one after another as soon as they
-	can" driver: VirtualMachine.migrate enqueues the first call on insert, and each
-	completed phase chains the next, so a migration walks Pending → … → Hydrating
-	back-to-back with no wait for a cron tick between phases.
+	"""Background entrypoint and the migration's OWN driver: advance a migration one
+	phase (or run one Hydrating poll), then re-enqueue itself to do the next step —
+	until the row reaches a terminal phase (Done/Failed). This is the "run actions one
+	after another, and keep polling the long copy, as soon as they can" driver:
+	VirtualMachine.migrate enqueues the first call on insert, and every step chains the
+	next, so a migration walks Pending → … → Hydrating(poll→poll→…→100%) → … → Done
+	entirely on its own, with no wait for a cron tick between steps.
 
-	It stops re-enqueuing when a phase HOLDS (Hydrating, which polls a multi-minute
-	copy) or the migration reaches a terminal phase — from there the
-	`reconcile_migrations` cron re-drives Hydrating each tick and remains the sole
-	safety net if any of these jobs is dropped. Re-entrant and idempotent like the
-	cron: it reloads and advances whatever phase the row records."""
+	Crucially it re-enqueues even while Hydrating HOLDS (the multi-minute copy that
+	polls each tick): the poll is inline SSH (~1-2s per iteration), so the self-drive
+	loop is naturally paced by that round-trip — no artificial delay needed — and the
+	migration hydrates to 100% by itself instead of depending on the scheduler. The
+	`reconcile_migrations` cron is now a pure SAFETY NET: it re-drives any non-terminal
+	row whose self-drive job was dropped (a worker crash, an OOM kill). It stops only
+	at a terminal phase. Re-entrant and idempotent like the cron: it reloads and
+	advances whatever phase the row records.
+
+	One `long`-queue worker slot is held for the migration's duration (the pool ships 3
+	workers); this is the same tradeoff Site/VM auto_provision makes — the job that owns
+	the work stays resident until it's done."""
 	if not frappe.db.exists("Virtual Machine Migration", name):
 		return
-	if _reconcile_one(name):
+	_reconcile_one(name)
+	# Keep driving until the row is terminal — advanced phases AND a holding Hydrating
+	# poll both re-enqueue, so the migration finishes on its own. _reconcile_one already
+	# committed the new status (or marked the row Failed); re-read it to decide.
+	status = frappe.db.get_value("Virtual Machine Migration", name, "status")
+	if status not in ("Done", "Failed"):
 		frappe.enqueue(
 			"atlas.atlas.migration.start_migration",
 			queue="long",
