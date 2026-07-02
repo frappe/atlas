@@ -169,6 +169,58 @@ def largest_vm() -> dict | None:
 	return best[1]
 
 
+def _axis_ceiling(axis: dict, own: float, sentinel: float) -> tuple[float, bool]:
+	"""The most of one axis a VM already on this host can occupy after a resize, and
+	whether the axis is measured.
+
+	A resize reshapes the VM in place, freeing its OWN current usage before re-reserving
+	the new size — so the ceiling is the host's free room with that footprint added back:
+	`effective - (used - own)`, i.e. `effective - used + own` (clamped at 0). Uncatalogued
+	axis (`effective is None`) → the sentinel, flagged unmeasured."""
+	if axis["effective"] is None:
+		return sentinel, False
+	return max(0.0, axis["effective"] - axis["used"] + own), True
+
+
+def resize_headroom(vm: str) -> dict | None:
+	"""The largest shape `vm` can resize to on the host it already occupies, or None when
+	the VM (or its host) is unknown.
+
+	Unlike `largest_vm` — the best *other* host's free headroom for a NEW machine — a
+	resize stays on the VM's current host, so the ceiling is THAT host's free room with
+	the VM's own footprint added back (`_axis_ceiling`). This guarantees the VM can always
+	keep its size or shrink, and grow into whatever else the host has spare — so Central
+	can offer only resize targets that will actually fit, instead of letting an oversized
+	resize fail on the host. Returns `{vcpus, memory_megabytes, disk_gigabytes,
+	unmeasured}`, matching `largest_vm`'s shape; an unreported axis contributes a sentinel
+	and marks the shape `unmeasured`."""
+	from atlas.atlas.api.server_capacity import capacity_for_server
+
+	row = frappe.db.get_value(
+		"Virtual Machine",
+		vm,
+		["server", "vcpus", "cpu_max_cores", "memory_megabytes", "disk_gigabytes", "data_disk_gigabytes"],
+		as_dict=True,
+	)
+	if not row or not row.server:
+		return None
+
+	c = capacity_for_server(row.server)
+	own_cpu = float(row.cpu_max_cores or row.vcpus or 0)
+	own_mem = float(row.memory_megabytes or 0)
+	own_disk = float((row.disk_gigabytes or 0) + (row.data_disk_gigabytes or 0))
+	cpu, m_cpu = _axis_ceiling(c["cpu"], own_cpu, _UNMEASURED_VCPUS)
+	mem, m_mem = _axis_ceiling(c["memory"], own_mem, _UNMEASURED_MEMORY_MB)
+	disk, m_disk = _axis_ceiling(c["disk"], own_disk, _UNMEASURED_DISK_GB)
+	measured = m_cpu and m_mem and m_disk
+	return {
+		"vcpus": int(cpu),
+		"memory_megabytes": int(mem),
+		"disk_gigabytes": int(disk),
+		"unmeasured": not measured,
+	}
+
+
 def apply_user_defaults(virtual_machine) -> None:
 	"""Fill `server` and `image` on a VM that a user created without them.
 
