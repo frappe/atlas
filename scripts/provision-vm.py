@@ -155,6 +155,12 @@ class ProvisionInputs(TaskInputs):
 	data_disk_format: int = 1
 	data_disk_mount_at: str = ""
 	data_snapshot_rootfs_path: str = ""
+	# Migration cutover (spec/19): the disk LV already exists (hydrated from the
+	# source over NBD) and already carries the VM's SSH host identity, which must
+	# survive the move (clients' known_hosts). With this set, the identity inject
+	# PRESERVES the existing host keys instead of regenerating them — the same
+	# rebuild/restore contract. 0 (birth: fresh keys) for every ordinary provision.
+	preserve_host_keys: int = 0
 	# Optional warm-restore source: the durable directory holding a warm golden
 	# snapshot's vmstate.bin/mem.bin/host-signature.json (paired with
 	# snapshot_rootfs_path, which must be that golden's disk snapshot). When set,
@@ -272,8 +278,10 @@ def main() -> None:
 			# Birth of the VM: establish a fresh SSH host identity. The base image
 			# ships SHARED baked host keys, and a clone seeds from another VM's
 			# rootfs — both must be replaced so every VM is unique. (Rebuild/restore,
-			# by contrast, preserve the disk's keys.)
-			regenerate_host_keys=True,
+			# by contrast, preserve the disk's keys.) A migration cutover
+			# (preserve_host_keys) also preserves them: the disk moved wholesale, so
+			# its SSH identity must not change across hosts.
+			regenerate_host_keys=not inputs.preserve_host_keys,
 		)
 
 	# 3. Kernel inside the jail. Hard-link (not copy) the immutable image kernel
