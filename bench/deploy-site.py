@@ -15,8 +15,12 @@
 # `get_site_name(request.host)`), with nothing cached at boot. The proxy forwards
 # `Host: <fqdn>`, so once `sites/<fqdn>` exists on disk and the bench's nginx vhost
 # carries `server_name <fqdn>`, the running gunicorn serves it with NO restart.
-# The deploy is `bench new-site`-free (baked) and `set-admin-password`-free (the
-# baked throwaway is rotated out of band).
+# The deploy is `bench new-site`-free (baked) and `set-admin-password`-free — the
+# baked Administrator password is a long random secret generated at bake time and
+# never surfaced. Instead, site mode mints a one-click session URL with
+# `bench browse --user Administrator` (a real 24h session, no password). The result
+# carries `login_url` — the only way in besides a password the tenant sets
+# themselves later.
 #
 # The rename is one bench-cli command: `bench rename-site <old> <new>`
 # (bench-setup-manual.md) moves the site dir, updates the site config, regenerates
@@ -47,6 +51,7 @@ import os
 import shlex
 import subprocess
 import sys
+import time
 from dataclasses import dataclass
 
 RESULT_MARKER = "ATLAS_RESULT="
@@ -121,13 +126,21 @@ class DeploySiteInputs:
 @dataclass(frozen=True)
 class DeploySiteResult:
 	"""What the deploy records on the Task row for the operator's audit trail. `site`
-	is the FQDN the deploy served; `serving` is the in-guest local probe's verdict."""
+	is the FQDN the deploy served; `serving` is the in-guest local probe's verdict;
+	`login_url` is the one-click handoff URL, replacing a shared password: site mode
+	mints it with `bench browse` (a real 24h session, built into
+	`https://<fqdn>/app?sid=<sid>` — Contract A: the FQDN is the one routing string,
+	HTTPS terminates at the edge proxy, never in-guest)."""
 
 	site: str
 	serving: bool
+	login_url: str = ""
 
 	def emit(self) -> None:
-		print(RESULT_MARKER + json.dumps({"site": self.site, "serving": self.serving}))
+		payload = {"site": self.site, "serving": self.serving}
+		if self.login_url:
+			payload["login_url"] = self.login_url
+		print(RESULT_MARKER + json.dumps(payload))
 
 
 def _run(args: list[str], *, capture: bool = False) -> str:
@@ -136,13 +149,24 @@ def _run(args: list[str], *, capture: bool = False) -> str:
 	loud: a non-zero exit aborts the deploy (the controller marks the Site Failed)."""
 	env = dict(os.environ)
 	env["DEBIAN_FRONTEND"] = "noninteractive"
-	result = subprocess.run(
-		args,
-		env=env,
-		text=True,
-		capture_output=capture,
-		check=True,
-	)
+	try:
+		result = subprocess.run(
+			args,
+			env=env,
+			text=True,
+			capture_output=capture,
+			check=True,
+		)
+	except subprocess.CalledProcessError as e:
+		# When we capture output, the failing command's own stdout/stderr is on the
+		# exception, not the Task log — surface it before re-raising so the real
+		# error (e.g. why `bench browse` exited non-zero) isn't swallowed.
+		if capture:
+			if e.stdout:
+				print(e.stdout, end="")
+			if e.stderr:
+				print(e.stderr, end="", file=sys.stderr)
+		raise
 	return result.stdout if capture else ""
 
 
@@ -183,6 +207,32 @@ def _await_freshen(warm_vm_uuid: str, timeout_seconds: int = 60) -> None:
 		f"warm freshen did not complete for {warm_vm_uuid} within {timeout_seconds}s; "
 		"this clone still carries the golden's identity"
 	)
+
+
+def _await_db_ready(timeout_seconds: int = 60) -> None:
+	"""Gate the deploy on the baked bench's MariaDB instance actually accepting
+	connections before any DB-touching step (rename-site / browse / setup).
+
+	The instance is a system `mariadb@<bench>.service` (Type=notify, so `active`
+	means it has opened its socket). It is ordered only `After=network.target`
+	with NO ordering against sshd — so on a snapshot-booted clone sshd can (and
+	does) win the race and answer while MariaDB is still in its ~15s startup.
+	The controller then connects and runs the deploy before the socket exists;
+	`rename-site` survives (its production-setup brings the DB up / retries), but
+	`bench browse` connects with a bare `frappe.connect()` and no retry, so it
+	dies with `(2002) Can't connect ... mysqld-<bench>.sock`. Waiting for the
+	unit to report active closes that window. Fail loud on timeout — a deploy
+	onto a bench whose DB never came up cannot mint a session."""
+	unit = f"mariadb@{BENCH_NAME}.service"
+	deadline = time.monotonic() + timeout_seconds
+	while time.monotonic() < deadline:
+		probe = subprocess.run(
+			["systemctl", "is-active", "--quiet", unit],
+		)
+		if probe.returncode == 0:
+			return
+		time.sleep(0.5)
+	sys.exit(f"{unit} did not become active within {timeout_seconds}s; the bench DB is not up")
 
 
 def _preflight() -> None:
@@ -226,6 +276,43 @@ def _rename_site_to_fqdn(fqdn: str) -> bool:
 		)
 	_bench("rename-site", BAKED_SITE, fqdn)
 	return True
+
+
+def _mint_login_url(fqdn: str) -> str:
+	"""Site mode only: mint a real 24h Administrator session and return the
+	one-click login URL — the tenant handoff, replacing a shared password.
+
+	`bench browse --user Administrator` (stock Frappe) logs in as Administrator
+	(the one user `browse` allows without developer_mode) and prints
+	`Login URL: <url>?sid=<sid>` before its trailing `click.launch(url)`. There is
+	no `--sid` flag (verified against this bench's checked-out
+	frappe/commands/site.py — `browse` only takes `--user`/`--session-end`/
+	`--user-for-audit`), so the sid is pulled out of the printed URL instead.
+	`click.launch` is harmless here: on Linux it Popens `xdg-open` without
+	waiting, so it returns immediately even when nothing is installed to handle
+	it — it does not block or hang this headless guest. `--session-end` pins the
+	session to a fixed 24h from now, ISO8601 UTC, matching Pilot's post-exchange
+	admin cookie TTL. No `set-admin-password` anywhere on this path — the baked
+	password (randomized at bake time) is never touched."""
+	import datetime
+	import re
+
+	session_end = (datetime.datetime.now(datetime.UTC) + datetime.timedelta(hours=24)).isoformat()
+	output = _bench(
+		"frappe",
+		"--site",
+		fqdn,
+		"browse",
+		"--user",
+		"Administrator",
+		"--session-end",
+		session_end,
+		capture=True,
+	)
+	match = re.search(r"sid=(\S+)", output)
+	if not match:
+		sys.exit(f"bench browse did not print a Login URL with a sid: {output!r}")
+	return f"https://{fqdn}/app?sid={match.group(1)}"
 
 
 def _set_admin_domain(fqdn: str) -> None:
@@ -367,9 +454,17 @@ def main() -> None:
 		_bench("start")
 		log("cold bring-up done")
 
+	# The DB instance races sshd on a snapshot-booted clone (see _await_db_ready):
+	# gate here, once the stack is up, so neither rename-site nor the session mint
+	# connects before MariaDB has opened its socket.
+	log("waiting for the bench DB to accept connections …")
+	_await_db_ready()
+	log("bench DB ready")
+
 	# The per-VM front door: map the FQDN to the baked site (rename) or the admin
 	# app (set [admin].domain), then regenerate the nginx vhost + reload — no
 	# gunicorn/supervisor restart. bench-cli emits the v6 listener itself.
+	login_url = ""
 	if inputs.mode == "admin":
 		log("admin mode: pointing [admin].domain at the FQDN + setup production …")
 		_set_admin_domain(inputs.site_name)
@@ -382,11 +477,14 @@ def main() -> None:
 		log("renaming baked site to the FQDN (bench rename-site) …")
 		renamed = _rename_site_to_fqdn(inputs.site_name)
 		log(f"rename {'done' if renamed else 'already in place'}")
+		log("minting tenant login URL (bench browse) …")
+		login_url = _mint_login_url(inputs.site_name)
+		log("login URL minted")
 
 	log("local serving probe (v6 + v4) …")
 	serving = _serving(inputs.site_name, inputs.mode)
 	log(f"deploy complete (serving={serving})")
-	result = DeploySiteResult(site=inputs.site_name, serving=serving)
+	result = DeploySiteResult(site=inputs.site_name, serving=serving, login_url=login_url)
 	result.emit()
 
 

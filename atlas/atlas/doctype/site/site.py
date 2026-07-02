@@ -42,15 +42,6 @@ from atlas.atlas.subdomain_label import (
 # and proven on.
 SITE_VM_SIZE = SIZE_PRESETS["Shared 4x"]
 
-# The Administrator password the golden image bakes into the site — a SHARED
-# throwaway, the same on every clone. The deploy path no longer resets it per VM
-# (that reset cost a ~28s CPU-throttled `bench frappe` boot that dominated the
-# deploy); instead the tenant is handed this and rotates it after first login.
-# MUST stay in lockstep with bench/build.sh BAKED_ADMIN_PASSWORD ("$BENCH_NAME
-# -baked", bench name "atlas") and warm.sh's pre-warm login — a drift would hand
-# the owner a password that does not authenticate.
-BAKED_ADMIN_PASSWORD = "atlas-baked"
-
 # The routing key (subdomain) and the backing VM are the identity; once written
 # they are fixed. Repointing a live Site at a different VM is a delete-and-recreate,
 # not an in-place edit — same shape as Subdomain.
@@ -74,8 +65,8 @@ class Site(Document):
 	if TYPE_CHECKING:
 		from frappe.types import DF
 
-		admin_password: DF.Password | None
 		deploying_started: DF.Datetime | None
+		login_url: DF.SmallText | None
 		provisioning_started: DF.Datetime | None
 		running_started: DF.Datetime | None
 		status: DF.Literal["Pending", "Provisioning", "Deploying", "Running", "Failed", "Terminated"]
@@ -301,16 +292,15 @@ def auto_provision(site_name: str) -> None:
 		_wait_for_vm_running(vm_name)
 		_set_status(site, "Deploying")
 		clock.stage("deploy site in guest (wait_for_ssh + run deploy-site.py)")
-		_deploy_site(site, vm_name)
-		# The Administrator password handed to the tenant is the SHARED baked
-		# throwaway (BAKED_ADMIN_PASSWORD) — the deploy no longer resets it per VM
-		# (that cost a full CPU-throttled `bench frappe` boot, ~28s under the
-		# 0.25-core cap, which dominated the deploy). The tenant rotates it after
-		# first login. Stored encrypted on the Site BEFORE the readiness wait so the
-		# handoff (the site.status_changed event + get_site poll) survives even if
-		# the http gate later times out. db_set on a Password field round-trips
-		# through Frappe's field encryption.
-		site.db_set("admin_password", BAKED_ADMIN_PASSWORD)
+		result = _deploy_site(site, vm_name)
+		# The tenant handoff is the one-click login URL `deploy-site.py` minted
+		# (`bench browse --sid`, a real 24h session) — NOT a password; the baked
+		# Administrator password is a long random secret generated at bake time and
+		# never surfaced. Stored BEFORE the readiness wait so the handoff (the
+		# site.status_changed event + get_site poll) survives even if the http gate
+		# later times out. A Fake-backed VM's `_deploy_site` short-circuits with a
+		# synthesized result so this stays stamped in tests/e2e too.
+		site.db_set("login_url", (result or {}).get("login_url", ""))
 		clock.stage("wait for HTTP 200 from guest :80 (Contract B)")
 		_wait_for_http(site, vm_name)
 		clock.stage("create Subdomain (proxy route)")
@@ -444,25 +434,28 @@ def _wait_for_vm_running(
 	frappe.throw(f"Backing VM {vm_name} did not reach Running within {timeout_seconds}s")
 
 
-def _deploy_site(site, vm_name: str) -> None:
+def _deploy_site(site, vm_name: str) -> dict:
 	"""Run deploy-site.py in the guest: rename the baked `site.local` dir to the FQDN
 	(Contract A), regenerate the bench's nginx vhost (`server_name <fqdn>` + a v6
 	listener) and reload — no `set-admin-password`, no `setup production`, no restart
 	(the multitenant gunicorn resolves the site by Host header per request, so the
-	rename + reload serve it live). Confirms it answers on :80 before returning.
+	rename + reload serve it live). Confirms it answers on :80, then mints the
+	tenant's one-click login URL, before returning.
 
 	Seam for the in-guest deploy script + its guest-SSH driver. A Fake-backed VM
 	carries a documentation IP that never answers SSH, so the deploy is a no-op
 	there — the same `is_fake_server` gate `run_task` uses (atlas.atlas._ssh.runner).
 	The baked site already serves on the (synthetic) guest in the fiction the Fake
-	provider maintains, so there is nothing to rename."""
+	provider maintains, so there is nothing to rename; a placeholder `login_url` is
+	synthesized instead so the mirror shape stays stable for e2e/desk tests that
+	run against a Fake server."""
 	from atlas.atlas.deploy_site import deploy_site
 	from atlas.atlas.providers.fake_tasks import is_fake_server
 
 	vm = frappe.get_doc("Virtual Machine", vm_name)
 	if is_fake_server(vm.server):
-		return
-	deploy_site(vm_name, site.name)
+		return {"site": site.name, "serving": True, "login_url": f"https://{site.name}/app?sid=fake-sid"}
+	return deploy_site(vm_name, site.name) or {}
 
 
 def _wait_for_http(site, vm_name: str) -> None:

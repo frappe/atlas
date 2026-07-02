@@ -30,6 +30,7 @@ Two functions, two execution sites (spec/14-self-serve.md "What runs where"):
 """
 
 import http.client
+import json
 import time
 from pathlib import Path
 
@@ -90,7 +91,7 @@ def _deploy_script_path() -> Path:
 	return Path(frappe.get_app_path("atlas", "..")).resolve() / "bench" / DEPLOY_SCRIPT_NAME
 
 
-def deploy_site(virtual_machine: str, site_name: str) -> None:
+def deploy_site(virtual_machine: str, site_name: str) -> dict | None:
 	"""Deploy one Frappe site into the (already booted) golden bench VM.
 
 	Uploads `bench/deploy-site.py` to the guest and runs it as root over guest-SSH
@@ -100,13 +101,18 @@ def deploy_site(virtual_machine: str, site_name: str) -> None:
 	v6 listener) and reloads, then confirms the bench serves on :80 (the port the
 	edge proxy's south hop dials). The production gunicorn is multitenant (no
 	`--site`), so it resolves the site from the request Host header per request — the
-	rename + reload take effect with NO restart. The owner is handed the SHARED baked
-	Administrator password (rotated after first login), so the deploy does NO
-	`set-admin-password` — dropping that ~28s CPU-throttled `bench frappe` boot is the
-	main latency win. A cold clone additionally runs `setup production` first.
+	rename + reload take effect with NO restart. The baked Administrator password is
+	a long random secret generated at bake time and never surfaced — the tenant is
+	instead handed the `login_url` this returns (a one-click session), so the deploy
+	does NO `set-admin-password` — dropping that ~28s CPU-throttled `bench frappe`
+	boot is the main latency win. A cold clone additionally runs `setup production`
+	first.
 
 	Recorded as a `deploy-site` Task row for the operator's audit trail, like every
-	guest op. Fails loud (raises) on a non-zero exit so the Site is marked Failed."""
+	guest op. Fails loud (raises) on a non-zero exit so the Site is marked Failed.
+	Returns the parsed `ATLAS_RESULT` dict (mirrors the guest's `DeploySiteResult`
+	shape: `site`, `serving`, `login_url`) — `None` if the guest's stdout carried no
+	result line (defensive; every real run emits exactly one)."""
 	import time
 
 	def _trace(message: str, since: float | None = None) -> None:
@@ -171,6 +177,18 @@ def deploy_site(virtual_machine: str, site_name: str) -> None:
 	_record_guest_task(virtual_machine, "deploy-site", {"site": site_name}, stdout, stderr, code)
 	if code != 0:
 		frappe.throw(f"Deploy of {site_name} on {virtual_machine} failed (exit {code}): {stderr[-500:]}")
+	return _parse_result(stdout)
+
+
+def _parse_result(stdout: str) -> dict | None:
+	"""Parse the guest script's one `ATLAS_RESULT={json}` line — the last such line
+	on stdout, mirroring the guest's `DeploySiteResult.emit()` shape (`site`,
+	`serving`, and — site mode — `login_url`). `None` if absent (defensive; every
+	real run emits exactly one)."""
+	for line in reversed(stdout.splitlines()):
+		if line.startswith(RESULT_MARKER):
+			return json.loads(line[len(RESULT_MARKER) :])
+	return None
 
 
 def wait_for_http(

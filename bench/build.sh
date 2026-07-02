@@ -68,10 +68,12 @@ BENCH_DIR="$BENCH_CLI_DIR/benches/$BENCH_NAME"
 # FQDN at deploy time (a directory move, not a `bench new-site`). Kept in lockstep
 # with bench/deploy-site.py's BAKED_SITE and warm.sh's BAKED_SITE.
 BAKED_SITE="site.local"
-# The baked Administrator password — a SHARED throwaway, the SAME on every clone;
-# the owner is handed it and rotates it after first login. Kept in lockstep with
-# warm.sh and the controller's Site.BAKED_ADMIN_PASSWORD.
-BAKED_ADMIN_PASSWORD="$BENCH_NAME-baked"
+# The baked Administrator password — a long random secret, generated ONCE here at
+# bake time and never printed or exported off the golden. Every warm clone
+# inherits the same unknown password; the tenant never needs it (they land via
+# deploy-site.py's minted `sid`, see bench/deploy-site.py). Kept out of the build
+# log: `new-site` receives it as an argv value, not echoed anywhere below.
+BAKED_ADMIN_PASSWORD="$(openssl rand -hex 32)"
 
 MODE="${1:-site}"
 case "$MODE" in

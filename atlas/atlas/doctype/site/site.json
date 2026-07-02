@@ -20,7 +20,7 @@
   "deploying_started",
   "running_started",
   "section_break_credentials",
-  "admin_password"
+  "login_url"
  ],
  "fields": [
   {
@@ -119,18 +119,18 @@
   {
    "fieldname": "section_break_credentials",
    "fieldtype": "Section Break",
-   "label": "Credentials"
+   "label": "Handoff"
   },
   {
-   "description": "The Frappe Administrator password handed to the tenant — the shared baked throwaway (the deploy no longer resets it per VM; the tenant rotates it after first login). The db root password is baked + shared too. Stored encrypted; surfaced to Central (event payload + get_site poll) once the site is Running. Controller-written.",
-   "fieldname": "admin_password",
-   "fieldtype": "Password",
-   "label": "Administrator Password",
+   "description": "The one-click Administrator session URL handed to the tenant instead of a password — minted by deploy-site.py (`bench browse --sid`, a real 24h session) and stamped before the readiness wait. The baked Administrator password is a long random secret generated at bake time and never surfaced. Surfaced to Central (event payload + get_site poll) once the site is Running. Controller-written.",
+   "fieldname": "login_url",
+   "fieldtype": "Small Text",
+   "label": "Login URL",
    "read_only": 1
   }
  ],
  "links": [],
- "modified": "2026-06-09 00:00:00.000000",
+ "modified": "2026-07-01 00:00:00.000000",
  "modified_by": "Administrator",
  "module": "Atlas",
  "name": "Site",

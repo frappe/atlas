@@ -90,9 +90,9 @@ def get_site(name: str) -> dict:
 
 def _mirror(site) -> dict:
 	"""The shape Central reflects: identity + lifecycle + (once Running) the
-	tenant handoff (admin password + live URL). The admin password is only
-	surfaced once the site is serving — before that there is nothing to hand
-	off, and the field may not yet be stamped."""
+	tenant handoff (a one-click login URL + live site URL). The login URL is only
+	surfaced once the site is serving — before that there is nothing to hand off,
+	and the field may not yet be stamped."""
 	running = site.status == "Running"
 	# The Tenant `name` *is* the Central `Team.name`, so the Site's `tenant` link is
 	# the owning team directly; None for operator/e2e sites.
@@ -103,5 +103,5 @@ def _mirror(site) -> dict:
 		"status": site.status,
 		"fqdn": site.name,
 		"url": f"https://{site.name}" if running else None,
-		"admin_password": site.get_password("admin_password") if running else None,
+		"login_url": site.get("login_url") if running else None,
 	}

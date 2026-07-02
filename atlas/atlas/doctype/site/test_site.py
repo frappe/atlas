@@ -217,7 +217,15 @@ class TestSiteOrchestration(IntegrationTestCase):
 		with (
 			patch.object(site_module, "_provision_backing_vm", return_value=vm_name) as m_prov,
 			patch.object(site_module, "_wait_for_vm_running") as m_wait,
-			patch.object(site_module, "_deploy_site") as m_deploy,
+			patch.object(
+				site_module,
+				"_deploy_site",
+				return_value={
+					"site": site_name,
+					"serving": True,
+					"login_url": f"https://{site_name}/app?sid=tok",
+				},
+			) as m_deploy,
 			patch.object(site_module, "_wait_for_http") as m_http,
 			patch.object(site_module, "_create_subdomain", return_value="sub-1") as m_sub,
 			patch.object(site_module.frappe.db, "commit"),
@@ -238,10 +246,10 @@ class TestSiteOrchestration(IntegrationTestCase):
 		self.assertEqual(site.status, "Running")
 		self.assertEqual(site.virtual_machine, "cloned-vm")
 		self.assertEqual(site.subdomain_doc, "sub-1")
-		# The owner is handed the SHARED baked Administrator password (rotated after
-		# first login) — stored (encrypted) on the row by the controller, NOT a value
-		# the deploy returns (the per-VM reset is gone). It is the build.sh constant.
-		self.assertEqual(site.get_password("admin_password"), site_module.BAKED_ADMIN_PASSWORD)
+		# The owner is handed the one-click login URL the deploy minted (`bench
+		# browse --sid`) — NOT a password. Stored on the row by the controller from
+		# the deploy's parsed result.
+		self.assertEqual(site.login_url, f"https://{site.name}/app?sid=tok")
 		# The whole chain fired, in order.
 		mocks["prov"].assert_called_once()
 		mocks["wait"].assert_called_once_with("cloned-vm")
@@ -290,7 +298,11 @@ class TestSiteOrchestration(IntegrationTestCase):
 			patch.object(
 				site_module, "_wait_for_vm_running", side_effect=lambda *a, **k: order.append("wait")
 			),
-			patch.object(site_module, "_deploy_site", return_value="pw"),
+			patch.object(
+				site_module,
+				"_deploy_site",
+				return_value={"login_url": "https://acme.blr1.frappe.dev/app?sid=tok"},
+			),
 			patch.object(site_module, "_wait_for_http"),
 			patch.object(site_module, "_create_subdomain", return_value="sub-1"),
 			patch.object(site_module.frappe.db, "commit", side_effect=lambda: order.append("commit")),
@@ -338,7 +350,11 @@ class TestSiteOrchestration(IntegrationTestCase):
 		with (
 			patch.object(site_module, "_provision_backing_vm", return_value=vm.name),
 			patch.object(site_module, "_wait_for_vm_running"),
-			patch.object(site_module, "_deploy_site"),
+			patch.object(
+				site_module,
+				"_deploy_site",
+				return_value={"login_url": f"https://{site.name}/app?sid=tok"},
+			),
 			patch.object(site_module, "_wait_for_http"),
 			patch.object(site_module.frappe.db, "commit"),
 		):
@@ -386,8 +402,11 @@ class TestSiteFakeProvisionStages(IntegrationTestCase):
 		from atlas.atlas import deploy_site as deploy_module
 
 		with patch.object(deploy_module, "deploy_site") as m_deploy:
-			site_module._deploy_site(self.site, self.fake_vm.name)
+			result = site_module._deploy_site(self.site, self.fake_vm.name)
 		m_deploy.assert_not_called()
+		# A synthesized placeholder login_url keeps the mirror shape stable for
+		# e2e/desk tests that run against a Fake server.
+		self.assertTrue(result["login_url"])
 
 	def test_wait_for_http_noops_on_fake_vm(self) -> None:
 		from atlas.atlas import deploy_site as deploy_module

@@ -122,7 +122,7 @@ def run_smoke(reuse: bool = True, keep: bool = True) -> None:
 			#    under test.
 			fqdn = _create_site(_TEST_TEAM, _TEST_SUBDOMAIN, _TEST_EMAIL)
 			site_vm_name = _wait_for_site_running(fqdn)
-			_assert_admin_password_set(fqdn)
+			_assert_login_url_set(fqdn)
 
 			# 4. The proxy routes the new subdomain. auto_provision already created the
 			#    Subdomain; reconcile the proxy to it and read the live map back.
@@ -498,16 +498,22 @@ def _dump_site_tasks(fqdn: str) -> None:
 		print(f"[e2e]   task {task.name} script={task.script} status={task.status} ({task.creation})")
 
 
-def _assert_admin_password_set(fqdn: str) -> None:
-	"""The Administrator password handed to the tenant — the SHARED baked throwaway
-	(the rename model dropped the per-VM reset; the tenant rotates it after first
-	login) — is stored encrypted on the Site and surfaced to Central (the
-	site.status_changed event + get_site poll). Assert it is non-empty. We don't log
-	in here: LE staging is untrusted (curl -k) and a real Desk login adds nothing
-	this proves over the 200 + password presence."""
-	password = frappe.get_doc("Site", fqdn).get_password("admin_password")
-	assert password, f"Site {fqdn} has no admin_password stored after Running"
-	print(f"[e2e] admin password stored on {fqdn} ({len(password)} chars) OK")
+def _assert_login_url_set(fqdn: str) -> None:
+	"""The tenant handoff is a one-click login URL, NOT a password — `deploy-site.py`
+	mints it via `bench browse --user Administrator --sid` (a real 24h session) and
+	the Site controller stores it before the readiness wait, surfaced to Central
+	(the site.status_changed event + get_site poll). Assert it carries the FQDN and
+	a `sid` — proof the guest's `bench browse` call actually ran and returned a
+	real token, not just that SOME string got stored. We don't follow the URL here:
+	LE staging is untrusted (curl -k) and a real Desk login adds nothing this proves
+	over the 200 + a well-formed minted URL."""
+	login_url = frappe.get_doc("Site", fqdn).get("login_url")
+	assert login_url, f"Site {fqdn} has no login_url stored after Running"
+	assert login_url.startswith(f"https://{fqdn}/app?sid="), (
+		f"login_url has an unexpected shape: {login_url!r}"
+	)
+	assert login_url.rsplit("sid=", 1)[-1], f"login_url has an empty sid: {login_url!r}"
+	print(f"[e2e] login URL stored on {fqdn} OK")
 
 
 # --- off-droplet HTTPS (v4 + v6) -----------------------------------------

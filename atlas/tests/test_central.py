@@ -216,7 +216,7 @@ class TestCentralReport(IntegrationTestCase):
 
 class TestCentralReportSite(IntegrationTestCase):
 	"""Site lifecycle events: created on insert, status_changed on a status flip,
-	with the admin handoff (url + admin_password) only carried once Running."""
+	with the admin handoff (url + login_url) only carried once Running."""
 
 	def _site(self, status="Pending", before_status=None, tenant=None):
 		doc = SimpleNamespace(
@@ -225,9 +225,9 @@ class TestCentralReportSite(IntegrationTestCase):
 			subdomain="acme",
 			tenant=tenant,
 			doctype="Site",
+			login_url="https://acme.blr1.frappe.dev/app?sid=abc123",
 		)
 		doc.get = lambda key, default=None: getattr(doc, key, default)
-		doc.get_password = lambda field: "atlas-baked"
 		doc.get_doc_before_save = lambda: (
 			SimpleNamespace(status=before_status) if before_status is not None else None
 		)
@@ -248,14 +248,14 @@ class TestCentralReportSite(IntegrationTestCase):
 		self.assertEqual(enqueue.call_args.kwargs["event_type"], "site.status_changed")
 		self.assertEqual(payload["status"], "Provisioning")
 		self.assertIsNone(payload["url"])
-		self.assertIsNone(payload["admin_password"])
+		self.assertIsNone(payload["login_url"])
 
 	def test_running_event_carries_handoff(self) -> None:
 		with _patched_emit() as enqueue:
 			central_report.on_site_update(self._site(status="Running", before_status="Deploying"))
 		payload = enqueue.call_args.kwargs["payload"]
 		self.assertEqual(payload["url"], "https://acme.blr1.frappe.dev")
-		self.assertEqual(payload["admin_password"], "atlas-baked")
+		self.assertEqual(payload["login_url"], "https://acme.blr1.frappe.dev/app?sid=abc123")
 
 	def test_no_status_change_skips(self) -> None:
 		with (

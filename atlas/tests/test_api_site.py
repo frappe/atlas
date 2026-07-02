@@ -109,23 +109,24 @@ class TestGetSite(IntegrationTestCase):
 		self.addCleanup(frappe.set_user, "Administrator")
 
 	def test_pending_site_hides_handoff(self) -> None:
-		"""Before Running there is no admin handoff to surface — url + admin_password
+		"""Before Running there is no admin handoff to surface — url + login_url
 		are None, status reflects the live row."""
 		created = site_api.create_site(team=TEAM, subdomain="acme", email=TENANT_EMAIL)
 		got = site_api.get_site(created["name"])
 		self.assertEqual(got["status"], "Pending")
 		self.assertIsNone(got["url"])
-		self.assertIsNone(got["admin_password"])
+		self.assertIsNone(got["login_url"])
 		self.assertEqual(got["team"], TEAM)
 
 	def test_running_site_reveals_handoff(self) -> None:
-		"""Once Running, get_site surfaces the live URL + the stored admin password —
+		"""Once Running, get_site surfaces the live URL + the stored login URL —
 		the tenant handoff Central polls for."""
 		created = site_api.create_site(team=TEAM, subdomain="acme", email=TENANT_EMAIL)
 		site = frappe.get_doc("Site", created["name"])
-		site.db_set("admin_password", "atlas-baked")
+		login_url = f"https://{created['name']}/app?sid=abc123"
+		site.db_set("login_url", login_url)
 		site.db_set("status", "Running")
 		got = site_api.get_site(created["name"])
 		self.assertEqual(got["status"], "Running")
 		self.assertEqual(got["url"], f"https://{created['name']}")
-		self.assertEqual(got["admin_password"], "atlas-baked")
+		self.assertEqual(got["login_url"], login_url)

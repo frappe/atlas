@@ -208,8 +208,8 @@ def _site_payload(doc) -> dict:
 	# The owning Central team, so the control plane can attribute this site to a
 	# tenant. The Tenant `name` *is* the Central `Team.name`, so the Site's `tenant`
 	# link is the owning team directly; None for operator/e2e sites.
-	# The admin password + live URL are the tenant handoff — only meaningful once
-	# the site is serving (Running), and the field is stamped before the readiness
+	# The login URL + live URL are the tenant handoff — only meaningful once the
+	# site is serving (Running), and the field is stamped before the readiness
 	# wait. Before that there is nothing to hand off.
 	running = doc.status == "Running"
 	return {
@@ -219,7 +219,7 @@ def _site_payload(doc) -> dict:
 		"status": doc.status,
 		"fqdn": doc.name,
 		"url": f"https://{doc.name}" if running else None,
-		"admin_password": doc.get_password("admin_password") if running else None,
+		"login_url": doc.get("login_url") if running else None,
 	}
 
 
