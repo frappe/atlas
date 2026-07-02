@@ -55,7 +55,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib
 
 from atlas._run import install_directory, install_file, run, run_ok
 from atlas._task import TaskInputs
-from atlas.lvm import ThinPool
+from atlas.lvm import ThinPool, expose_device_in_jail
 from atlas.paths import VirtualMachinePaths, image_directory
 from atlas.rootfs import Identity, inject_identity, prepare_data_lv, prepare_lv
 
@@ -161,6 +161,20 @@ class ProvisionInputs(TaskInputs):
 	# PRESERVES the existing host keys instead of regenerating them — the same
 	# rebuild/restore contract. 0 (birth: fresh keys) for every ordinary provision.
 	preserve_host_keys: int = 0
+	# Boot-then-hydrate migration (spec/24 §0): boot the guest on the dm-clone
+	# read-through device (/dev/mapper/atlas-vm-<uuid>-clone) BEFORE hydration, so
+	# the guest serves while blocks copy in the background. When set:
+	#   - the disk LV is NOT (re)created — the clone's dest LV already exists and is
+	#     being hydrated; snapshot_into/prepare_lv would race the live read-through.
+	#   - identity is NOT injected here — it was already injected THROUGH the clone in
+	#     the InjectingIdentity phase (mounting the plain LV would fault; the clone is
+	#     the only mountable view, spec/24 §0.4).
+	#   - the JAIL ROOTFS NODE is mknod'd at the CLONE device, not the plain LV, so
+	#     Firecracker reads through the clone. At CollapseClone the clone table is
+	#     reloaded to a linear map onto the same dest LV, keeping this fd valid.
+	# Empty for every ordinary provision and for a change-address / cold cutover
+	# (which collapse first, then provision against the plain LV as before).
+	clone_rootfs_device: str = ""  # /dev/mapper/atlas-vm-<uuid>-clone
 	# Optional warm-restore source: the durable directory holding a warm golden
 	# snapshot's vmstate.bin/mem.bin/host-signature.json (paired with
 	# snapshot_rootfs_path, which must be that golden's disk snapshot). When set,
@@ -228,14 +242,33 @@ def main() -> None:
 	#    corrupt the resumed guest. Bare snapshot_into only; the warm pair is
 	#    staged only when this run created the disk (or the previous staging was
 	#    never consumed) — RAM must never be restored over a disk that diverged.
-	origin = _resolve_origin(inputs, pool)
+	# Boot-on-clone only if the clone device is BOTH requested AND actually present on
+	# the host. A collapse-forward retry (or any re-provision) may pass the clone path
+	# after the disk already converged to the plain LV (clone removed at stop); fall
+	# back to an ordinary plain-LV provision then, rather than fail on a missing clone.
+	boot_on_clone = bool(inputs.clone_rootfs_device) and run_ok(
+		"sudo dmsetup info {}", os.path.basename(inputs.clone_rootfs_device)
+	)
 	disk = pool.vm_disk(inputs.virtual_machine_name)
-	if warm:
-		stage_warm = (not disk.exists) or marker_was_pending
-		origin.snapshot_into(disk)
-	else:
+	if boot_on_clone:
+		# Boot-then-hydrate migration (spec/24 §0): the disk is the dm-clone's dest
+		# LV, already created by clone-target and hydrating live. Do NOT snapshot/grow
+		# it — that would race the read-through and corrupt the copy. The clone device
+		# is exposed as the jail rootfs node in step 4b.
 		stage_warm = False
-		prepare_lv(origin, disk, inputs.disk_gb)
+		if not disk.exists:
+			sys.exit(
+				f"boot-on-clone requested but dest LV {disk.name} does not exist; "
+				"run migration-clone-target first (spec/24 §0)"
+			)
+	else:
+		origin = _resolve_origin(inputs, pool)
+		if warm:
+			stage_warm = (not disk.exists) or marker_was_pending
+			origin.snapshot_into(disk)
+		else:
+			stage_warm = False
+			prepare_lv(origin, disk, inputs.disk_gb)
 
 	# 1b. Optional data disk (the guest's /dev/vdb), the root disk's peer. A blank
 	#     thin volume normally, or a CoW snapshot of a data-disk snapshot LV when
@@ -245,12 +278,24 @@ def main() -> None:
 	data_disk = None
 	if inputs.data_disk_gb > 0:
 		data_disk = pool.data_disk(inputs.virtual_machine_name)
-		data_origin = (
-			pool.from_device(inputs.data_snapshot_rootfs_path) if inputs.data_snapshot_rootfs_path else None
-		)
-		prepare_data_lv(
-			pool, data_disk, inputs.data_disk_gb, bool(inputs.data_disk_format), origin=data_origin
-		)
+		if boot_on_clone:
+			# The data disk is its own dm-clone (atlas-vm-<uuid>-data-clone) hydrating
+			# live, exactly like root. Its dest LV already exists; do NOT prepare it
+			# (that would race the read-through). Exposed as the data clone node in 4c.
+			if not data_disk.exists:
+				sys.exit(
+					f"boot-on-clone requested but data dest LV {data_disk.name} does not exist; "
+					"run migration-clone-target first (spec/24 §0)"
+				)
+		else:
+			data_origin = (
+				pool.from_device(inputs.data_snapshot_rootfs_path)
+				if inputs.data_snapshot_rootfs_path
+				else None
+			)
+			prepare_data_lv(
+				pool, data_disk, inputs.data_disk_gb, bool(inputs.data_disk_format), origin=data_origin
+			)
 
 	# 2. Inject this VM's identity (SSH key, network env, hostname, host
 	#    keys, machine-id, data-disk fstab) into the disk. Mounts the LV device
@@ -263,7 +308,12 @@ def main() -> None:
 	#    in-guest freshen unit baked into the golden adopts it after resume (and
 	#    on the cold-boot fallback, where the launcher preloads MMDS from the
 	#    same file).
-	if not warm:
+	#
+	#    Boot-on-clone (spec/24 §0): SKIPPED here — identity was already injected
+	#    THROUGH the clone device in the InjectingIdentity phase (mounting the plain
+	#    LV would fault: it is held busy under the clone). Re-mounting now would also
+	#    race the live read-through.
+	if not warm and not boot_on_clone:
 		inject_identity(
 			disk.device_path,
 			Identity(
@@ -301,14 +351,31 @@ def main() -> None:
 	#     node is owned by the per-VM uid (chmod 0660); device access is pure
 	#     DAC. The jailer never deletes existing nodes, so it survives every
 	#     (re)start.
-	disk.expose_in_jail(paths.rootfs_node, uid)
+	#
+	#     Boot-on-clone (spec/24 §0): point the jail node at the CLONE device, not
+	#     the plain LV, so Firecracker reads through the clone (hydration serves
+	#     un-copied blocks from the source over NBD). At CollapseClone the clone's
+	#     table is reloaded to a linear map onto this same dest LV, keeping the SAME
+	#     dm major:minor, so this node + Firecracker's open fd stay valid.
+	if boot_on_clone:
+		expose_device_in_jail(inputs.clone_rootfs_device, paths.rootfs_node, uid)
+	else:
+		disk.expose_in_jail(paths.rootfs_node, uid)
 
 	# 4c. Expose the data disk inside the jail as a block node at data.ext4 — the
 	#     guest's second drive (/dev/vdb). Same mknod/chown mechanism as the rootfs
 	#     node; firecracker.json's `data` drive (path_on_host: "data.ext4") resolves
 	#     to it post-chroot. Only when the VM has a data disk.
+	#
+	#     Boot-on-clone (spec/24 §0): expose the DATA clone device (its own dm-clone,
+	#     the root clone's name with `-clone` → `-data-clone`) so /dev/vdb reads
+	#     through until its own hydration completes, mirroring the root disk.
 	if data_disk is not None:
-		data_disk.expose_in_jail(paths.data_node, uid)
+		if boot_on_clone:
+			data_clone_device = inputs.clone_rootfs_device.replace("-clone", "-data-clone")
+			expose_device_in_jail(data_clone_device, paths.data_node, uid)
+		else:
+			data_disk.expose_in_jail(paths.data_node, uid)
 
 	# 4d. Warm clone: stage this VM's identity as the MMDS payload. The guest
 	#     can't learn its identity from the disk (step 2 was skipped), so the
