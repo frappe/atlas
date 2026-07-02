@@ -133,3 +133,31 @@ def capacity() -> dict:
 		"unmeasured": unmeasured,
 		"largest_vm": shape,
 	}
+
+
+@frappe.whitelist()
+def resize_capacity(vm: str) -> dict:
+	"""The largest shape `vm` can resize to on its current host — Central's pre-resize
+	check, the in-place twin of `capacity()`.
+
+	A resize reshapes the VM on the host it already occupies, so — unlike `capacity()`,
+	which sizes a NEW machine against the best host's free headroom — the ceiling is
+	THIS host's free room with the VM's own current footprint added back (a resize frees
+	it before re-reserving). The VM can therefore always keep its size or shrink; Central
+	offers only resize targets that will fit, so an oversized resize never fails on the
+	host.
+
+	Returns `{available, unmeasured, largest_vm}` in the same shape as `capacity()`:
+	`largest_vm` is `{vcpus, memory_megabytes, disk_gigabytes}`, null (and `available`
+	False) only when the VM or its host is unknown. `unmeasured` flags a host with an
+	unreported axis (sentinel numbers — treat the ceiling as "size unknown"). Advisory:
+	the resize path on the host is the authoritative gate. Runs with the Central token,
+	like `capacity()` / `create_vm`."""
+	from atlas.atlas.placement import resize_headroom
+
+	shape = resize_headroom(vm)
+	if shape is None:
+		return {"available": False, "unmeasured": False, "largest_vm": None}
+
+	unmeasured = shape.pop("unmeasured")
+	return {"available": True, "unmeasured": unmeasured, "largest_vm": shape}
