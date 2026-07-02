@@ -21,19 +21,19 @@ per signup.
 import frappe
 
 from atlas.atlas._ssh.transport import run_ssh, ssh_key_file
-
-# BAKED_ADMIN_PASSWORD is defined once, on Site; import it rather than re-spell the
-# baked credential the sanity check authenticates against (kept in lockstep with
-# build.sh's BAKED_ADMIN_PASSWORD and bench/deploy-site.py's BAKED_SITE).
-from atlas.atlas.doctype.site.site import BAKED_ADMIN_PASSWORD
 from atlas.atlas.image_builder import run_build
 from atlas.atlas.image_recipes import get_recipe
 from atlas.atlas.ssh import connection_for_guest
 
 SANITY_SITE = "site.local"
+# Where build.sh installed bench-cli (mirrors bench/deploy-site.py BENCH_CLI_DIR /
+# BENCH_NAME) — the site sanity probe invokes `bench browse` through it. ~/pilot
+# since the frappe/bench-cli → frappe/pilot rename (install.sh fc89e51+ clones there).
+SANITY_BENCH_CLI_DIR = "/home/frappe/pilot"
+SANITY_BENCH_NAME = "atlas"
 # The baked bench.toml on the build VM (mirrors bench/deploy-site.py BENCH_TOML). The
 # admin sanity probe reads `[admin].port` from it to reach the internal admin gunicorn.
-SANITY_BENCH_TOML = "/home/frappe/bench-cli/benches/atlas/bench.toml"
+SANITY_BENCH_TOML = "/home/frappe/pilot/benches/atlas/bench.toml"
 
 
 def build_bench(virtual_machine: str) -> None:
@@ -55,11 +55,17 @@ def build_bench(virtual_machine: str) -> None:
 #  `site.local`; the FQDN rename happens only at deploy), the same contract build.sh's
 #  own in-bake ping gate uses:
 #   * SERVE   — `/api/method/ping` answers 200 + "pong". Production stack up + serving.
-#   * LOGIN   — the BAKED Administrator password authenticates: 200 + "Logged In" + a
-#               `sid` cookie. Catches a site that serves but whose baked password is
-#               wrong/empty — the gap the unauthenticated ping gate misses.
-#   * NEGCTL  — a WRONG password is rejected (401). Without it a login endpoint that
-#               200s on anything passes LOGIN falsely; proves auth is real.
+#   * LOGIN   — `bench browse --user Administrator` (as the frappe user) mints a real
+#               session (sid parsed from its printed Login URL — no `--sid` flag exists),
+#               then that `sid` cookie authenticates a follow-up request:
+#               200 + a `full_name` in the bootinfo. Catches a site that serves but
+#               whose login path is broken — the gap the unauthenticated ping gate
+#               misses. The baked Administrator password is a random bake-time secret
+#               (build.sh) and is never known to this probe — proving auth works no
+#               longer means knowing it.
+#   * NEGCTL  — a GARBAGE sid is rejected (still counted as a guest, no `full_name`).
+#               Without it a bootinfo endpoint that 200s on anything passes LOGIN
+#               falsely; proves the session check is real.
 #
 #  ADMIN — the admin console is the bench-cli admin Flask app on the INTERNAL admin
 #  gunicorn at `127.0.0.1:(<[admin].port>+1)`. At bake time `[admin].domain` is UNSET
@@ -68,8 +74,10 @@ def build_bench(virtual_machine: str) -> None:
 #  Host header needed; the admin app answers any), reading `[admin].port` from the
 #  guest bench.toml:
 #   * SERVE   — `/api/status` on the admin gunicorn answers 200. Admin stack serving.
-#   * ADMINUI — GET `/` on the admin gunicorn returns 200 AND the HTML carries the
-#               `Bench Admin` console marker. /api/status can be 200 while the console
+#   * ADMINUI — GET `/` on the admin gunicorn returns 200 AND the served HTML shell
+#               carries the `<title>Pilot</title>` marker (the admin console's own
+#               index.html since the bench-cli → pilot rename). /api/status can be 200
+#               while the console
 #               page is blank/broken (bad asset build, 500 template) — this asserts the
 #               admin URL actually RENDERS, which is what a customer hits after deploy.
 _SANITY_SITE_BLOCK = r"""
@@ -80,22 +88,21 @@ serve_code=$(curl -s -m 20 -o /tmp/atlas_sane_serve.out -w '%{{http_code}}' -H "
 echo "http_code=$serve_code"
 echo "body=$(head -c 200 /tmp/atlas_sane_serve.out)"
 echo '=== LOGIN ==='
-login_code=$(curl -s -m 20 -c /tmp/atlas_sane_cj.txt -o /tmp/atlas_sane_login.out -w '%{{http_code}}' \
-  -H "$H" --data-urlencode 'usr=Administrator' --data-urlencode 'pwd={password}' \
-  "http://127.0.0.1/api/method/login")
+browse_out=$(sudo -u frappe bash -lc "export PATH='{bench_cli_dir}':\$PATH; export XDG_RUNTIME_DIR=/run/user/\$(id -u); cd '{bench_cli_dir}'; '{bench_cli_dir}/bench' -b {bench_name} --site {site} browse --user Administrator")
+sid=$(grep -oP 'sid=\K\S+' <<<"$browse_out")
+login_code=$(curl -s -m 20 -o /tmp/atlas_sane_login.out -w '%{{http_code}}' -H "$H" -b "sid=$sid" "http://127.0.0.1/api/method/frappe.auth.get_logged_user")
 echo "http_code=$login_code"
 echo "body=$(head -c 200 /tmp/atlas_sane_login.out)"
-echo "sid_cookie=$(grep -c -w sid /tmp/atlas_sane_cj.txt)"
+echo "user=$(grep -c -w Administrator /tmp/atlas_sane_login.out)"
 echo '=== NEGCTL ==='
-bad_code=$(curl -s -m 20 -o /tmp/atlas_sane_bad.out -w '%{{http_code}}' \
-  -H "$H" --data-urlencode 'usr=Administrator' --data-urlencode 'pwd=atlas-sanity-wrong-xxxxx' \
-  "http://127.0.0.1/api/method/login")
+bad_code=$(curl -s -m 20 -o /tmp/atlas_sane_bad.out -w '%{{http_code}}' -H "$H" -b 'sid=atlas-sanity-garbage-sid-xxxxx' "http://127.0.0.1/api/method/frappe.auth.get_logged_user")
 echo "http_code=$bad_code"
+echo "user=$(grep -c -w Administrator /tmp/atlas_sane_bad.out)"
 """
 
 # Reads [admin].port from the guest bench.toml SECTION-AWARELY (awk: the first `port`
 # key after the `[admin]` header, stopping at the next section), probes the admin
-# gunicorn at port+1. `{bench_toml}` is the path; no `{password}` here. The `%{{ }}`
+# gunicorn at port+1. `{bench_toml}` is the only substitution. The `%{{ }}`
 # escapes survive the single .format() in sanity_check (collapse to `%{ }`).
 _SANITY_ADMIN_BLOCK = r"""
 set +e
@@ -110,36 +117,39 @@ echo "body=$(head -c 200 /tmp/atlas_sane_serve.out)"
 echo '=== ADMINUI ==='
 adminui_code=$(curl -s -m 20 -o /tmp/atlas_sane_adminui.out -w '%{{http_code}}' "http://127.0.0.1:$internal/")
 echo "http_code=$adminui_code"
-echo "marker=$(grep -c -i 'Bench Admin' /tmp/atlas_sane_adminui.out)"
+echo "marker=$(grep -c -i '<title>Pilot</title>' /tmp/atlas_sane_adminui.out)"
 """
 
 
 def sanity_check(virtual_machine: str, timeout_seconds: int = 120) -> dict:
 	"""Post-build, pre-snapshot gate: prove the freshly-baked build VM actually
-	SERVES and (site mode) that the BAKED Administrator password logs in, before
-	the build is allowed to become a snapshot.
+	SERVES and (site mode) that `bench browse` mints a session that really logs in,
+	before the build is allowed to become a snapshot.
 
 	build.sh's own in-bake gate only curls the unauthenticated `/api/method/ping`,
-	so a build whose site serves but whose admin password is wrong/empty still
-	snapshots clean — and the break surfaces only when a customer can't log in. This
-	closes that gap at the source: run it from `Image Build.run` right after
-	`run_build` returns (the production stack is up, the VM still Running), and a
-	miss raises → the build is marked Failed and never snapshots.
+	so a build whose site serves but whose login path is broken still snapshots
+	clean — and the break surfaces only when a customer can't log in. This closes
+	that gap at the source: run it from `Image Build.run` right after `run_build`
+	returns (the production stack is up, the VM still Running), and a miss raises →
+	the build is marked Failed and never snapshots.
 
-	Mode-specific: site mode probes `:80` (Host: site.local) for serve + the baked-
-	password login + a wrong-password rejection; admin mode probes the INTERNAL admin
-	gunicorn (`[admin].port`+1, read from the guest bench.toml — at bake time no `:80`
-	admin vhost exists yet, that is wired per clone at deploy) for serve (`/api/status`)
-	AND that GET `/` renders the `Bench Admin` console page (not a blank/500 shell).
-	Returns the parsed result dict on success; raises frappe.ValidationError on any
-	failed assertion or a non-zero SSH exit."""
+	Mode-specific: site mode probes `:80` (Host: site.local) for serve + a
+	`bench browse`-minted session + a garbage-session rejection; admin mode probes
+	the INTERNAL admin gunicorn (`[admin].port`+1, read from the guest bench.toml —
+	at bake time no `:80` admin vhost exists yet, that is wired per clone at deploy)
+	for serve (`/api/status`) AND that GET `/` renders the admin console page
+	(`<title>Pilot</title>` marker, not a blank/500 shell). Returns the parsed
+	result dict on success; raises
+	frappe.ValidationError on any failed assertion or a non-zero SSH exit."""
 	vm = frappe.get_doc("Virtual Machine", virtual_machine)
 	mode = vm.build_mode or "site"
 
 	# Build the in-guest probe for the mode. `.format()` runs once (collapsing each
-	# block's `%{{http_code}}` → `%{http_code}` and resolving its arg).
+	# block's `%{{http_code}}` → `%{http_code}` and resolving its args).
 	if mode == "site":
-		remote = _SANITY_SITE_BLOCK.format(site=SANITY_SITE, password=BAKED_ADMIN_PASSWORD)
+		remote = _SANITY_SITE_BLOCK.format(
+			site=SANITY_SITE, bench_cli_dir=SANITY_BENCH_CLI_DIR, bench_name=SANITY_BENCH_NAME
+		)
 	else:
 		remote = _SANITY_ADMIN_BLOCK.format(bench_toml=SANITY_BENCH_TOML)
 
@@ -181,8 +191,9 @@ def _parse_sanity(out: str, mode: str) -> dict:
 			{
 				"login_http": grab("=== LOGIN", "http_code"),
 				"login_body": grab("=== LOGIN", "body"),
-				"login_sid": grab("=== LOGIN", "sid_cookie"),
+				"login_user": grab("=== LOGIN", "user"),
 				"negctl_http": grab("=== NEGCTL", "http_code"),
+				"negctl_user": grab("=== NEGCTL", "user"),
 			}
 		)
 	else:
@@ -197,8 +208,8 @@ def _parse_sanity(out: str, mode: str) -> dict:
 
 def _sanity_failures(parsed: dict, mode: str) -> list:
 	"""Turn the parsed probe result into a list of human-readable failures (empty =
-	pass). Site mode demands serve + authenticated login + wrong-password rejection;
-	admin mode demands serve only."""
+	pass). Site mode demands serve + an authenticated `bench browse` session +
+	rejection of a garbage session; admin mode demands serve only."""
 	failures = []
 	# Serving: 200, and for site mode the body must actually be the pong (a 200 from
 	# a wrong vhost / default server wouldn't carry it).
@@ -209,34 +220,31 @@ def _sanity_failures(parsed: dict, mode: str) -> list:
 
 	if mode != "site":
 		# Admin console must RENDER, not merely health-check: GET / returns 200 and the
-		# HTML carries the `Bench Admin` marker. `/api/status` can be 200 while the
-		# console page is blank/broken (bad asset build, 500 template) — this catches it.
+		# served HTML shell carries the `<title>Pilot</title>` marker. `/api/status` can
+		# be 200 while the console page is blank/broken (bad asset build, 500 template).
 		if parsed["adminui_http"] != "200":
 			failures.append(
 				f"admin console does not render (GET / HTTP {parsed['adminui_http'] or 'no-response'})"
 			)
 		elif parsed["adminui_marker"] in ("", "0"):
 			failures.append(
-				"admin console served 200 but the page is not the Bench Admin console (no marker)"
+				"admin console served 200 but the page is not the Pilot admin console (no marker)"
 			)
 		return failures
 
-	# Login: 200 + "Logged In" + a session cookie. All three, or the baked password
-	# is wrong/empty (or the endpoint 200s without authenticating).
-	logged_in = (
-		parsed["login_http"] == "200"
-		and "logged in" in parsed["login_body"].lower()
-		and parsed["login_sid"] not in ("", "0")
-	)
+	# Login: `bench browse` minted a session (sid parsed from its printed Login
+	# URL — there is no `--sid` flag) that authenticates a follow-up
+	# request as Administrator — 200 + the session resolves to Administrator, not
+	# Guest. Proves the browse/login path works without the probe ever knowing the
+	# (random, bake-time) Administrator password.
+	logged_in = parsed["login_http"] == "200" and parsed["login_user"] not in ("", "0")
 	if not logged_in:
 		failures.append(
-			f"baked Administrator password did not log in "
-			f"(HTTP {parsed['login_http']}, sid={parsed['login_sid']}, body: {parsed['login_body'][:80]!r})"
+			f"bench browse session did not authenticate "
+			f"(HTTP {parsed['login_http']}, body: {parsed['login_body'][:80]!r})"
 		)
-	# Negative control: a wrong password MUST be rejected. If it isn't, the login
-	# 200 above is meaningless (any password would pass).
-	if parsed["negctl_http"] not in ("401", "403", "417"):
-		failures.append(
-			f"wrong password was NOT rejected (HTTP {parsed['negctl_http']}) — login check is not trustworthy"
-		)
+	# Negative control: a garbage sid MUST resolve to Guest, not Administrator. If it
+	# doesn't, the login pass above is meaningless (any session would pass).
+	if parsed["negctl_user"] not in ("", "0"):
+		failures.append("a garbage session was NOT rejected — login check is not trustworthy")
 	return failures
