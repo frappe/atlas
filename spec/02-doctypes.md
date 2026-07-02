@@ -866,15 +866,19 @@ allocate/attach/detach/release lifecycle and is independently queryable
 | ---------------------- | --------------------- | ---- | --------- | --------- | ---------------------------------------------------------------- |
 | `name`                 | UUID (autoname `hash`) | Y   | Y         |           | Primary key. |
 | `ip_address`           | Data                  | Y    | Y         |           | The public IPv4. `unique`. `title_field`. Locked once written. |
-| `server`               | Link → Server         | Y    | Y         |           | The host this IP is allocated to. The IP belongs to the Server even with no VM attached. Locked once written. |
+| `server`               | Link → Server         |      | Y         |           | The host this IP is currently bound to. The IP belongs to the Server even with no VM attached. **Not immutable** — the vendor can reassign the IP to another droplet, so `reassign()` repoints this field (migration uses it — [19](./19-vm-migration.md)). Empty when the IP rests allocated-on-the-vendor with no Server (a valid resting/handoff state). |
 | `status`               | Select                | Y    | Y         | Allocated | `Allocated` (on the Server, no VM) or `Attached` (bound to a VM). Derived in `validate()` from `virtual_machine` — never set by hand. |
 | `virtual_machine`      | Link → Virtual Machine |     | Y         |           | The attached VM, or empty when unattached. Only a VM on the **same Server** may be attached. Maintained by `attach()` / `detach()`. |
 | `provider_resource_id` | Data                  |      | Y         |           | Vendor's handle for the reserved IP (DigitalOcean reserved-IP id). Empty for Self-Managed. Locked once written. |
 
-Immutability follows the `Server` idiom: `ip_address`, `server`, and
-`provider_resource_id` lock once they carry a value (`None → value` allowed for
-initial population). `status` is always derived from `virtual_machine`, so it is
-never an independent input.
+Immutability follows the `Server` idiom: `ip_address` and `provider_resource_id`
+lock once they carry a value (`None → value` allowed for initial population) — a
+Reserved IP is bound to its address and vendor handle for life. `server` is
+**deliberately not** in that set: the vendor can move the IP to a different
+droplet, so the row's `server` is a mutable pointer that follows it
+(`reassign()`), and an IP may rest with **no Server** (allocated-on-the-vendor).
+`status` is always derived from `virtual_machine`, so it is never an independent
+input.
 
 ### Controller methods
 
@@ -911,6 +915,14 @@ invariant together (in failure-safe order).
   removed the host networking and `rm -rf`'d the env). Guards a missing VM row.
   Called automatically by `Virtual Machine.terminate()` so a terminated VM
   returns its address to the pool.
+- `reassign(target_server)` — move this **detached** IP from its current Server
+  to `target_server` at the vendor and repoint `server`. The address and vendor
+  handle never change; only which droplet the IP is bound to (and so which
+  Server's pool it sits in) does. Same-provider only. Idempotent (a no-op if
+  already there). Self-Managed has no vendor bind, so it only repoints the row
+  (the operator re-routes the address). This is the path that lets a customer's
+  inbound v4 **survive a VM migration** ([19](./19-vm-migration.md)): detach,
+  `reassign` to the target droplet, repoint, re-attach to the migrated VM.
 - `release()` — destroy the vendor reserved IP and delete this row, returning
   the address to the vendor pool. Refuses while the IP is attached. **Explicit,
   like `Server.archive()`** — destroying the vendor resource is never a side

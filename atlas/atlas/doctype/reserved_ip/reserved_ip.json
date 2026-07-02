@@ -33,15 +33,14 @@
    "unique": 1
   },
   {
-   "description": "The host this reserved IP is allocated to. The IP belongs to the Server even when no VM is attached.",
+   "description": "The host this reserved IP is currently bound to. The IP belongs to the Server even when no VM is attached. Empty when the IP rests allocated-on-the-vendor with no Server (e.g. mid-migration handoff); reassign() repoints it. Not immutable — the vendor can move the IP between droplets.",
    "fieldname": "server",
    "fieldtype": "Link",
    "in_list_view": 1,
    "in_standard_filter": 1,
    "label": "Server",
    "options": "Server",
-   "read_only": 1,
-   "reqd": 1
+   "read_only": 1
   },
   {
    "fieldname": "column_break_header",
