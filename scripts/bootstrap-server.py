@@ -370,8 +370,9 @@ def main() -> None:
 	#    deviation, see spec/03-bootstrapping.md "Host hardening").
 	install_file(SSHD_CONF, "/etc/ssh/sshd_config.d/60-atlas.conf", mode="0644")
 	# Validate BEFORE reload so a bad drop-in can never brick SSH (fail loud).
-	run("sudo sshd -t")
-	run("sudo systemctl reload ssh")
+	run("sudo", "sshd", "-t")
+	# restart, dont reload. only way port change is done
+	run("sudo", "systemctl", "restart", "ssh")
 
 	# 6. Kernel-module blocklist (CIS 1.1.1 filesystems + 3.2 network protocols).
 	#    `install <m> /bin/false` defeats modprobe; `blacklist` covers autoload.
