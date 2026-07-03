@@ -72,6 +72,16 @@ def _provider_type_of(doctype: str, name: str | None) -> str | None:
 	return frappe.db.get_value(doctype, name, "provider_type")
 
 
+def _active_provider_name() -> str | None:
+	legacy_provider = frappe.db.get_value(
+		"Singles", {"doctype": "Atlas Settings", "field": "provider"}, "value", order_by=None
+	)
+	if legacy_provider:
+		return legacy_provider
+	active_rows = frappe.get_all("Provider", filters={"is_active": 1}, pluck="name")
+	return active_rows[0] if len(active_rows) == 1 else None
+
+
 def _read_legacy_state() -> dict:
 	"""Read the active types + every row's FK while the legacy columns still exist.
 
@@ -79,7 +89,7 @@ def _read_legacy_state() -> dict:
 	orphaned Server FK, more than one active vendor row, an active-provider pointer
 	that disagrees with `is_active`) rather than silently corrupting the new shape —
 	an operator must fix the data, then re-run."""
-	active_provider = frappe.db.get_single_value("Atlas Settings", "provider")
+	active_provider = _active_provider_name()
 	_assert_active_provider_consistent(active_provider)
 	fail_scripts = None
 	if active_provider and frappe.db.exists("Provider", active_provider):
@@ -103,7 +113,7 @@ def _read_legacy_state() -> dict:
 	if frappe.db.exists("DocType", "Root Domain") and frappe.db.has_column("Root Domain", "domain_provider"):
 		for row in frappe.get_all("Root Domain", fields=["name", "domain_provider", "tls_provider"]):
 			root_domains[row.name] = {
-				"domain_provider_type": _provider_type_of("Domain Provider", row.domain_provider),
+				"dns_provider_type": _provider_type_of("Domain Provider", row.domain_provider),
 				"tls_provider_type": _provider_type_of("TLS Provider", row.tls_provider),
 			}
 	certs = {}
@@ -188,7 +198,7 @@ def _write_settings_types(state: dict) -> None:
 		)
 	if state["domain_type"]:
 		frappe.db.set_single_value(
-			"Route53 Settings", "domain_provider_type", state["domain_type"], update_modified=False
+			"Atlas Settings", "dns_provider_type", state["domain_type"], update_modified=False
 		)
 
 
