@@ -52,6 +52,15 @@ Per host, per axis (`cpu` / `memory` / `disk`): `{total, effective, used}`.
   memory `total − host_memory_reserve_megabytes` (clamped ≥ 0); disk `total`.
 - `used` — the sum over non-Terminated VMs: CPU by `cpu_max_cores` (bandwidth, not
   thread count), memory by `memory_megabytes`, disk by `disk_gigabytes + data_disk`.
+  This counts a host's **resident** VMs *plus* the VMs **migrating into** it — a VM
+  with a non-terminal `Virtual Machine Migration` whose `target_server` is this host
+  (spec/24). The target hydrates that VM's disk and boots it before cutover repoints
+  `vm.server`, so it is already spending the target's budget; the source keeps counting
+  it too (the guest runs there until cutover). A migrating VM is deliberately charged to
+  **both** hosts for its brief life — the safe direction for a capacity gate, and what
+  keeps arrival-time consolidation (below) from double-booking a host mid-move.
+  `incoming_migration_count` surfaces the incoming set so the operator can see why a host
+  reads fuller than its resident VM list.
 
 **Memory floor.** `Atlas Settings.host_memory_reserve_megabytes` (default 1024) is
 carved off the memory budget: guest RAM must never pack to 100% of MemTotal — the
@@ -148,6 +157,37 @@ for each measured axis with delta > 0:  used + delta ≤ effective  else raise
 for the dashboard, but a distinct type) is the signal that the VM must **migrate to
 grow**. A shrink needs no room; an unmeasured axis is unlimited.
 
+## Consolidation on arrival (`placement.py::consolidate`)
+
+When `default_server` finds **no** host that fits an arrival, the free units may just be
+**scattered** — each host has a little room, none has enough in one place (a VM can't
+span hosts). Rather than fail, placement may **migrate a few small VMs** off one host
+onto the others' scattered room, defragmenting a single contiguous slot for the arrival.
+This is the automatic, on-arrival slice of Case 3 below (draining/repacking stays
+operator-driven). It is bounded and conservative:
+
+- **`plan_consolidation(needs)`** (pure) greedily picks, per candidate `recipient`
+  host, its **smallest movable VMs** (smallest RAM first — RAM binds on the ladder) and
+  a same-provider **target** for each (the operator's strategy scores the target), until
+  the recipient fits `needs` or the move cap is hit; the cheapest plan across recipients
+  wins (fewest moves, then least disk to hydrate). It only proposes moves
+  `migration.preflight_checks` will accept: Running/Stopped/Paused VMs with **no attached
+  public IPv4** (moving one silently releases a Reserved IP) and **no in-flight
+  migration**, onto a **same-provider** Active target.
+- **Bounds.** `Atlas Settings.max_consolidation_migrations` (default 3) is the "a few";
+  a plan needing more on every host is rejected. `placement_consolidation_enabled`
+  (default on) is the kill-switch — off → the region fails loud with `NoCapacityError`.
+- **Async, so retry not block.** Migrations are asynchronous (spec/24); placement does
+  **not** seat the arrival on the freed host in the same breath — the small VMs still run
+  there until cutover. `default_server` **enqueues** the consolidation (its own
+  transaction — migrate() persists its Migration row on commit) and raises
+  **`ConsolidationInProgressError`** (a `NoCapacityError` subclass: Central's existing
+  "region full → retry" fires unchanged, but the distinct type says *room is coming*).
+  Once the moves cut over, a retry lands. It is **idempotent**: the incoming-migration
+  accounting keeps the freed host reading full mid-move, and `_consolidation_in_flight`
+  makes a retry that sees a host already draining toward `needs` **wait** instead of
+  launching more migrations — so a burst of Central retries can't stampede.
+
 ## Validating strategy choice: the simulator
 
 `atlas/atlas/packing_sim.py` is an event-driven simulator that places arrivals with
@@ -178,18 +218,23 @@ lifetimes are bimodal/heavy-tailed, not exponential — swap the sampler in
 
 ## Explicitly out of scope — future migration work
 
-Placement never moves a running VM. Two future cases (design only; build nothing
-now):
+Placement moves running VMs only in the bounded on-arrival case above
+(**Consolidation on arrival**). It never moves one for a resize, and never runs an
+unbounded fleet-wide repack. One future case (design only; build nothing now), plus
+the broader form of Case 3:
 
 - **Case 2 — resize needs migration.** `NoResizeCapacityError` is the trigger. Pick a
   target via the same scorer with the *new* size, run the spec/19 cold migration,
   then resize on the target — one orchestration carrying a `pending_resize` payload.
   The arrival reserve is what keeps this rare.
-- **Case 3 — repack for better packing.** With a proportional catalog, repacking only
-  improves *feasibility* by (a) draining a host or (b) defragmenting scattered free
-  units so a 16-unit Dedicated fits. Future shape: an advisory rebalance report
-  proposing the top-k migrations with benefit (max-relative-fill reduction / units
-  defragmented) vs cost (∝ disk GB to hydrate). Operator-approved, never automatic.
+- **Case 3 — repack for better packing.** The narrow, reactive slice — defragment
+  *on arrival* to seat one blocked VM — now ships (see **Consolidation on arrival**);
+  it is bounded to `max_consolidation_migrations` small, safe moves and only fires
+  when a create finds no host. The broader form stays out of scope: a *proactive*,
+  fleet-wide rebalance that drains hosts or defragments ahead of demand. Future shape
+  for that: an advisory rebalance report proposing the top-k migrations with benefit
+  (max-relative-fill reduction / units defragmented) vs cost (∝ disk GB to hydrate).
+  Operator-approved, never automatic.
 
 ## Deferred dials (not built)
 
