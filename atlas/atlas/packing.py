@@ -7,7 +7,7 @@ means that axis is uncatalogued → unlimited (the operator vouched for the host
 Activating it).
 
 The three packed axes are `cpu` (`cpu_max_cores` — the guaranteed share, which is
-the packing dimension), `memory` (MB) and `disk` (GB). See `spec/24-placement.md`
+the packing dimension), `memory` (MB) and `disk` (GB). See `spec/28-placement.md`
 for why the proportional size ladder makes packing one-dimensional, and why on
 *homogeneous* hosts every strategy yields identical utilisation — the strategies
 diverge only on heterogeneous fleets and on drainability/defragmentation, which the
@@ -100,7 +100,7 @@ def rank_key(
 	`tie_breaker` (the host's creation index) for determinism. On a proportional
 	catalog with homogeneous hosts every strategy's score ties, so the tie-breaker
 	decides and utilisation is identical — the strategies only diverge on
-	heterogeneous fleets (spec/24)."""
+	heterogeneous fleets (spec/28)."""
 	fits, unmeasured, fill, alignment = _evaluate(budgets, used, needs, reserve)
 	if not fits:
 		return None

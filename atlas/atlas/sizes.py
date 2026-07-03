@@ -70,7 +70,7 @@ SIZE_PRESETS: dict[str, dict[str, float | int]] = {
 # truth. Because every preset is a whole-number multiple of this (test_sizes pins
 # it), a host holds `floor(min over axes of effective/unit)` share units and any mix
 # of preset VMs whose unit-sum fits, fits — packing is one-dimensional with zero
-# intra-host fragmentation (spec/24). Reporting sugar only: feasibility and scoring
+# intra-host fragmentation (spec/28). Reporting sugar only: feasibility and scoring
 # stay generic three-axis so Custom (operator-typed) shapes keep working.
 SHARE_UNIT: dict[str, float | int] = {
 	"cpu_max_cores": SIZE_PRESETS["Shared 1x"]["cpu_max_cores"],

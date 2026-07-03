@@ -5,7 +5,7 @@ runs — they state name, size, and SSH key, and the controller fills `server`
 and `image` here. The operator still owns the fleet: which Servers are Active
 and which Image is the default are operator decisions. This is placement, not
 scheduling — load-aware spread across Active servers (the emptiest by relative
-fill wins; see spec/24-placement.md), not queues or reactive rebalancing.
+fill wins; see spec/28-placement.md), not queues or reactive rebalancing.
 
 Operators creating a VM in Desk supply `server`/`image` explicitly, so this
 never runs for them.
@@ -247,7 +247,7 @@ class NoResizeCapacityError(NoCapacityError):
 	Subclasses `NoCapacityError` so Central's existing "region full → retry / queue /
 	alert the operator" handling still fires unchanged (same HTTP status, same
 	message shape). The distinct type carries the extra signal that the remedy is
-	specific: migrate this VM to a host that fits the new size (spec/24 case 2 —
+	specific: migrate this VM to a host that fits the new size (spec/28 case 2 —
 	future work), not just retry the same placement."""
 
 
@@ -305,7 +305,7 @@ def _strategy() -> str:
 
 	Falls back to `packing.DEFAULT_STRATEGY` when unset or unknown, so an operator can
 	switch the scorer (Spread / Best Fit / Tetris / First Fit) without touching code.
-	spec/24 and the offline simulator (`packing_sim.py`) explain the trade-off each
+	spec/28 and the offline simulator (`packing_sim.py`) explain the trade-off each
 	strategy makes; on the proportional ladder + homogeneous hosts they coincide."""
 	from atlas.atlas import packing
 

@@ -247,7 +247,7 @@ class TestPlacement(IntegrationTestCase):
 		with self.assertRaises(NoCapacityError):
 			self._new_machine(vcpus=1, memory_megabytes=512, disk_gigabytes=10)
 
-	# --- relative-fill spread scorer (spec/24) -----------------------------
+	# --- relative-fill spread scorer (spec/28) -----------------------------
 
 	def test_spread_alternates_across_equal_hosts(self) -> None:
 		# Two equal measured hosts: consecutive VMs alternate — the emptier by

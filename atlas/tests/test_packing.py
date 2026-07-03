@@ -3,7 +3,7 @@
 No Frappe, no host — `packing`, `packing_metrics`, and `packing_sim` are plain
 Python (the only Atlas import underneath is `sizes`, itself pure). Runs under the
 Frappe test runner like everything else, but needs nothing from it. These pin the
-strategy semantics (spec/24), the metric math, and that the simulator is
+strategy semantics (spec/28), the metric math, and that the simulator is
 deterministic and behaves sanely across arrivals, drops, resizes, and the edges.
 """
 
@@ -195,7 +195,7 @@ class TestSimulator(unittest.TestCase):
 		# tracks Spread's and is a fraction of Best Fit's — it is a low-migration
 		# middle ground, NOT a migration reducer. Its statistically-significant win is
 		# Dedicated acceptance (blocked-largest); that is a many-seed effect measured
-		# with compare_seeds and documented in spec/24, not a single-seed unit assert.
+		# with compare_seeds and documented in spec/28, not a single-seed unit assert.
 		# Moderate load (not saturated) — that's where Best Fit's migration blow-up
 		# is largest and the middle-ground property is clearest.
 		results = packing_sim.compare(

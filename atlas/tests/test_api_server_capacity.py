@@ -130,10 +130,10 @@ class TestServerCapacity(IntegrationTestCase):
 		result = server_capacity.capacity_for_server(self.server.name)
 		self.assertEqual(result["memory"]["effective"], 0)
 
-	# --- Share units + stranded (spec/24) ---------------------------------
+	# --- Share units + stranded (spec/28) ---------------------------------
 
 	def test_share_units_and_stranded_worked_example(self) -> None:
-		# The spec/24 worked example: an 8-core / 16 GB / 320 GB host at factor 1 with
+		# The spec/28 worked example: an 8-core / 16 GB / 320 GB host at factor 1 with
 		# a 1 GB memory reserve holds 30 share units (RAM binds), and the unused CPU
 		# and disk the RAM axis can't sell are stranded.
 		frappe.db.set_single_value("Atlas Settings", "host_memory_reserve_megabytes", 1024)

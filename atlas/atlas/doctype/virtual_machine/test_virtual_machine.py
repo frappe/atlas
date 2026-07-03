@@ -843,7 +843,7 @@ class TestVirtualMachine(IntegrationTestCase):
 		self.assertIn("no data disk", str(raised.exception))
 		mocked.assert_not_called()
 
-	# --- resize capacity gate (spec/24) ------------------------------------
+	# --- resize capacity gate (spec/28) ------------------------------------
 
 	def test_resize_within_capacity_passes(self) -> None:
 		from atlas.atlas.doctype.virtual_machine import virtual_machine as module

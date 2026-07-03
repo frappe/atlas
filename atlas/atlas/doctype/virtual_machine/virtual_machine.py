@@ -834,7 +834,7 @@ class VirtualMachine(Document):
 				frappe.throw(
 					f"Data disk can only grow: {self.data_disk_gigabytes} GB → {new_data_disk} GB is a shrink"
 				)
-		# Capacity gate (spec/24): a resize must not silently oversubscribe the host.
+		# Capacity gate (spec/28): a resize must not silently oversubscribe the host.
 		# Charge only the positive per-axis deltas against the host's FULL effective
 		# budget — the arrival headroom reserve is the resize's to spend. Raises
 		# NoResizeCapacityError (a NoCapacityError subclass) when the delta doesn't

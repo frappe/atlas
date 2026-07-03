@@ -183,7 +183,7 @@ def _share_units(cpu_axis: dict, memory_axis: dict, disk_axis: dict) -> dict | N
 	"""The share-unit view of a host: sellable Shared-1x slots and per-axis stranding.
 
 	One share unit is `sizes.SHARE_UNIT` (a Shared 1x). Because every preset is an
-	exact whole-number multiple of it (spec/24), a host holds
+	exact whole-number multiple of it (spec/28), a host holds
 	`floor(min over measured axes of effective/unit)` units, and any mix of preset
 	VMs whose unit-sum ≤ that fits — packing is one-dimensional. `used` is the max
 	over measured axes of `ceil(used/unit)` (the binding axis, rounded up so a

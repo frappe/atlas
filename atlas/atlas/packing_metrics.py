@@ -2,7 +2,7 @@
 
 Computed from a snapshot of per-host budgets + usage (the same per-axis numbers
 `capacity_for_server` produces, and what `packing_sim` tracks). These are the
-numbers `spec/24-placement.md` says to watch: committed utilisation, the
+numbers `spec/28-placement.md` says to watch: committed utilisation, the
 cell-compaction ratio, stranded capacity / axis imbalance, and sellable share-unit
 slots. The simulator uses them to score a run; they also work standalone against any
 list of objects exposing `.budget` (dict over `AXES`), `.used` (dict) and
@@ -39,7 +39,7 @@ def committed_utilization(hosts) -> dict:
 
 
 def share_units(host) -> dict:
-	"""Sellable Shared-1x slots on one host: `{total, used, free}` (see spec/24)."""
+	"""Sellable Shared-1x slots on one host: `{total, used, free}` (see spec/28)."""
 	total = min(int(host.budget[axis] // UNIT_COST[axis]) for axis in AXES)
 	used = max((math.ceil(host.used[axis] / UNIT_COST[axis]) for axis in AXES), default=0)
 	return {"total": total, "used": used, "free": total - used}
@@ -60,7 +60,7 @@ def imbalance(host) -> float:
 
 
 def compaction_ratio(hosts) -> float:
-	"""`lower_bound_host_count / hosts_in_use` (spec/24 §6).
+	"""`lower_bound_host_count / hosts_in_use` (spec/28 §6).
 
 	The lower bound is the fewest hosts (largest-first) whose cumulative budget covers
 	the committed totals, taken as the max over axes — the theoretical floor a perfect

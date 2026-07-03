@@ -63,8 +63,8 @@ class TestSizes(IntegrationTestCase):
 		# THE load-bearing property: every preset is the SAME integer multiple of the
 		# share unit on all three axes. This is what makes packing one-dimensional and
 		# even-spread free (the placement scorer's relative-fill spread relies on it —
-		# spec/24). Break it deliberately (a non-proportional plan) and you must
-		# revisit spec/24 and the scorer, not just this test.
+		# spec/28). Break it deliberately (a non-proportional plan) and you must
+		# revisit spec/28 and the scorer, not just this test.
 		unit = sizes.SHARE_UNIT
 		for label, preset in sizes.SIZE_PRESETS.items():
 			cpu_units = preset["cpu_max_cores"] / unit["cpu_max_cores"]
@@ -74,14 +74,14 @@ class TestSizes(IntegrationTestCase):
 				cpu_units,
 				int(cpu_units),
 				f"{label}: cpu is not a whole number of share units — packing is no "
-				f"longer one-dimensional; revisit spec/24 and the placement scorer",
+				f"longer one-dimensional; revisit spec/28 and the placement scorer",
 			)
 			self.assertEqual(
 				(cpu_units, memory_units, disk_units),
 				(int(cpu_units), int(cpu_units), int(cpu_units)),
 				f"{label}: axes are not the same multiple of the share unit "
 				f"({cpu_units}, {memory_units}, {disk_units}) — the scorer's "
-				f"even-spread-is-free property assumes proportional presets; revisit spec/24",
+				f"even-spread-is-free property assumes proportional presets; revisit spec/28",
 			)
 
 	def test_options_string_starts_with_custom(self) -> None:

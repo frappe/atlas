@@ -9,7 +9,7 @@ Each arrival is placed with the SAME scorer production uses
 It simulates the two events not yet wired into the app — VM drops and in-place
 resizes / forced migrations — because they are cheap to model and are exactly what
 distinguishes the strategies (on the proportional ladder with uniform hosts every
-strategy ties; they diverge on heterogeneous fleets and on drainability, spec/24).
+strategy ties; they diverge on heterogeneous fleets and on drainability, spec/28).
 The workload is generated ONCE and replayed under each strategy, so the comparison
 is fair (same arrivals, lifetimes, upgrades) and reproducible from the seed.
 
@@ -36,7 +36,7 @@ _LARGEST_PLAN = _PLANS[-1]
 
 # A realistic default cloud host shape as an EFFECTIVE per-axis budget:
 # (cpu_max_cores, memory_mb, disk_gb). 8 cores / 16 GB / 320 GB — RAM binds first
-# (2 GB per core), the shape spec/24 calls out as the common cloud case.
+# (2 GB per core), the shape spec/28 calls out as the common cloud case.
 DEFAULT_HOST_SHAPE = (8.0, 16384.0, 320.0)
 
 # Skewed toward the small shared tiers, one long tail of Dedicated — the churny mix
@@ -293,7 +293,7 @@ class _Simulation:
 			vm.plan, vm.demand = target, new
 			self.stats.in_place_upgrades += 1
 			return
-		# No room to grow in place → the resize needs a migration (spec/24 case 2).
+		# No room to grow in place → the resize needs a migration (spec/28 case 2).
 		source = vm.host
 		source.remove(vm.demand)
 		target_host = self._place(new, exclude=source)
