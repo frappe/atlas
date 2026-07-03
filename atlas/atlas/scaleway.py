@@ -121,16 +121,6 @@ class ScalewayClient:
 		"""List installable OS images in the configured zone."""
 		return self._request("GET", f"{self._bm()}/os?page_size=100").get("os", [])
 
-	def get_default_partitioning_schema(self, offer_id: str, os_id: str) -> dict:
-		"""The vendor's default `partitioning_schema` for an offer+OS pair, returned
-		as the bare `{disks, raids, filesystems, zfs}` object the `install` sub-object
-		takes. This is the authoritative source for the box's real device names (which
-		vary by hardware), so Atlas fetches it and mutates it rather than guessing the
-		layout (see `_build_raid_partitioning_schema`). Available on offers/OSs that
-		support custom partitioning; raises ScalewayError otherwise."""
-		path = f"{self._bm()}/partitioning-schemas/default?offer_id={offer_id}&os_id={os_id}"
-		return self._request("GET", path)
-
 	def create_server(
 		self,
 		*,
@@ -142,11 +132,12 @@ class ScalewayClient:
 		user_data: str | None = None,
 	) -> dict:
 		"""Create a server (async). Returns immediately with status='delivering';
-		`install` (os_id/hostname/ssh_key_ids[/user/.../partitioning_schema]) is
+		`install` (os_id/hostname/ssh_key_ids[/user/...]) is
 		the inline one-call deploy. `user_data`, `option_ids`, `protected` are
 		TOP-LEVEL, not inside `install`."""
 		body: dict = {
 			"name": name,
+			"description": f"Atlas server {name}",
 			"offer_id": offer_id,
 			"project_id": project_id,
 			"tags": tags,
@@ -154,7 +145,7 @@ class ScalewayClient:
 		if install is not None:
 			body["install"] = install
 		if user_data is not None:
-			body["user_data"] = user_data
+			body["user_data"] = {"value": user_data}
 		return self._request("POST", f"{self._bm()}/servers", json=body)
 
 	def get_server(self, server_id: str) -> dict:
