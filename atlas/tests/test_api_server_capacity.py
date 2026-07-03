@@ -229,6 +229,77 @@ class TestServerCapacity(IntegrationTestCase):
 		self.assertGreaterEqual(cluster["share_units"]["used"], 1)
 		self.assertIn("cpu", cluster["stranded"])
 
+	# --- migration-aware accounting: an incoming migration charges the target -------
+
+	def test_incoming_migration_counts_against_target(self) -> None:
+		# A VM migrating from the source host into a target is already spending the
+		# target's budget (its disk hydrates and it boots there) before cutover
+		# repoints `vm.server`. capacity_for_server must charge the target so placement
+		# doesn't double-book a host that is receiving migrations.
+		target = make_server(
+			self.provider,
+			"capacity-migration-target",
+			ipv6_address="2001:db8:11::1",
+			ipv6_prefix="2001:db8:11::/64",
+			ipv6_virtual_machine_range="2001:db8:11::/124",
+			status="Active",
+		)
+		target.db_set("memory_megabytes_total", 4096)
+		target.db_set("pool_disk_gigabytes_total", 100)
+		vm = make_virtual_machine(self.server, self.image, memory_megabytes=1024, disk_gigabytes=8)
+		migration = frappe.get_doc(
+			{
+				"doctype": "Virtual Machine Migration",
+				"virtual_machine": vm.name,
+				"source_server": self.server.name,
+				"target_server": target.name,
+				"status": "Hydrating",
+			}
+		)
+		migration.flags.keep_address_forced = True  # skip the provider address probe
+		migration.insert(ignore_permissions=True)
+
+		target_cap = server_capacity.capacity_for_server(target.name)
+		self.assertEqual(target_cap["memory"]["used"], 1024, "incoming migration charges target RAM")
+		self.assertEqual(target_cap["disk"]["used"], 8, "and target disk")
+		self.assertEqual(target_cap["incoming_migration_count"], 1)
+		self.assertEqual(target_cap["virtual_machine_count"], 0, "not resident on the target yet")
+
+		# The source still counts it — the guest runs there until cutover, so a
+		# migrating VM is deliberately charged to BOTH hosts for its brief life.
+		source_cap = server_capacity.capacity_for_server(self.server.name)
+		self.assertEqual(source_cap["memory"]["used"], 1024)
+		self.assertEqual(source_cap["virtual_machine_count"], 1)
+
+	def test_terminal_migration_does_not_count(self) -> None:
+		# A Done migration is history — its VM has already cut over (or the move
+		# failed); it must not keep charging the target.
+		target = make_server(
+			self.provider,
+			"capacity-migration-target",
+			ipv6_address="2001:db8:11::1",
+			ipv6_prefix="2001:db8:11::/64",
+			ipv6_virtual_machine_range="2001:db8:11::/124",
+			status="Active",
+		)
+		target.db_set("memory_megabytes_total", 4096)
+		vm = make_virtual_machine(self.server, self.image, memory_megabytes=1024)
+		migration = frappe.get_doc(
+			{
+				"doctype": "Virtual Machine Migration",
+				"virtual_machine": vm.name,
+				"source_server": self.server.name,
+				"target_server": target.name,
+				"status": "Done",
+			}
+		)
+		migration.flags.keep_address_forced = True
+		migration.insert(ignore_permissions=True)
+
+		target_cap = server_capacity.capacity_for_server(target.name)
+		self.assertEqual(target_cap["memory"]["used"], 0, "a terminal migration charges nothing")
+		self.assertEqual(target_cap["incoming_migration_count"], 0)
+
 
 class TestFakeServerAlwaysMeasured(IntegrationTestCase):
 	"""A Fake host has no agent, but dev capacity math must always be *measured*:

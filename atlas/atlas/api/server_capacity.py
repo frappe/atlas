@@ -69,6 +69,43 @@ def host_memory_reserve_megabytes() -> int:
 	return int(value) if value is not None else 1024
 
 
+# The per-VM columns every capacity sum charges against a host, on all three axes.
+_VM_COST_FIELDS = (
+	"vcpus",
+	"cpu_max_cores",
+	"memory_megabytes",
+	"disk_gigabytes",
+	"data_disk_gigabytes",
+)
+
+
+def _incoming_migration_vms(server: str) -> list:
+	"""Cost rows for the VMs migrating INTO `server` but not yet cut over.
+
+	A non-terminal `Virtual Machine Migration` with `target_server == server` means
+	the target is already hydrating that VM's disk and will boot it; its `vm.server`
+	still names the source until Repointing, so `capacity_for_server`'s resident query
+	misses it. Return the same `_VM_COST_FIELDS` shape so it sums alongside the
+	resident VMs. Skips any whose `server` is already this host (defensive against a
+	just-repointed row) so a VM is never counted twice on the same host."""
+	from atlas.atlas.doctype.virtual_machine_migration.virtual_machine_migration import (
+		TERMINAL_STATUSES,
+	)
+
+	names = frappe.get_all(
+		"Virtual Machine Migration",
+		filters={"target_server": server, "status": ["not in", TERMINAL_STATUSES]},
+		pluck="virtual_machine",
+	)
+	if not names:
+		return []
+	return frappe.get_all(
+		"Virtual Machine",
+		filters={"name": ["in", names], "server": ["!=", server], "status": ["!=", "Terminated"]},
+		fields=list(_VM_COST_FIELDS),
+	)
+
+
 def _axis(total: float | None, effective: float | None, used: float) -> dict:
 	"""A per-resource capacity block.
 
@@ -131,17 +168,21 @@ def capacity_for_server(server: str) -> dict:
 	memory_total = int(s["memory_megabytes_total"]) if s.get("memory_megabytes_total") else None
 	disk_total = int(s["pool_disk_gigabytes_total"]) if s.get("pool_disk_gigabytes_total") else None
 
-	vms = frappe.get_all(
+	resident = frappe.get_all(
 		"Virtual Machine",
 		filters={"server": server, "status": ["!=", "Terminated"]},
-		fields=[
-			"vcpus",
-			"cpu_max_cores",
-			"memory_megabytes",
-			"disk_gigabytes",
-			"data_disk_gigabytes",
-		],
+		fields=list(_VM_COST_FIELDS),
 	)
+	# A VM migrating INTO this host is already spending its budget here: the target
+	# hydrates the disk and boots the guest before cutover repoints `vm.server`
+	# (spec/24). Until then `vm.server` still names the source, so the resident query
+	# misses it — count it against the target too, or placement would double-book a
+	# host that is receiving migrations (including the consolidation moves placement
+	# itself starts, spec/25). The source keeps counting it (it still runs there until
+	# cutover): a migrating VM is deliberately charged to BOTH hosts for its brief
+	# life, the safe direction for a capacity gate.
+	incoming = _incoming_migration_vms(server)
+	vms = resident + incoming
 	factor = overprovision_factor()
 	# Memory: hard fit, but never packable to the full physical total — the host OS
 	# + per-VM VMM overhead live in the same RAM, so effective = total − reserve
@@ -175,7 +216,11 @@ def capacity_for_server(server: str) -> dict:
 		"share_units": share["share_units"] if share else None,
 		"stranded": share["stranded"] if share else None,
 		"pool_data_percent": s.get("pool_data_percent"),  # advisory alert signal
-		"virtual_machine_count": len(vms),
+		"virtual_machine_count": len(resident),
+		# VMs migrating in but not yet cut over — counted in `used` above, surfaced
+		# separately so the operator can see why a host reads fuller than its resident
+		# VM list.
+		"incoming_migration_count": len(incoming),
 	}
 
 
