@@ -46,6 +46,11 @@ class TestPlacement(IntegrationTestCase):
 		# No oversubscription unless a test opts in; keeps capacity assertions
 		# independent of suite order.
 		frappe.db.set_single_value("Atlas Settings", "overprovision_factor", 1)
+		# Isolate from the new capacity defaults: no memory floor and no arrival
+		# reserve unless a test opts in (both default > 0 on a real site, but the
+		# feasibility-boundary tests below stamp small totals and mean the raw budget).
+		frappe.db.set_single_value("Atlas Settings", "host_memory_reserve_megabytes", 0)
+		frappe.db.set_single_value("Atlas Settings", "placement_headroom_percent", 0)
 		# Wipe VMs left by other tests: servers are shared by title, so a stray
 		# VM on the reused server would count against its vCPU budget and skew
 		# the capacity-boundary tests below.
@@ -66,8 +71,35 @@ class TestPlacement(IntegrationTestCase):
 			frappe.db.set_value(
 				"Server",
 				name,
-				{"vcpus_total": 0, "memory_megabytes_total": 0, "pool_disk_gigabytes_total": 0},
+				{
+					"vcpus_total": 0,
+					"memory_megabytes_total": 0,
+					"pool_disk_gigabytes_total": 0,
+					"placement_headroom_percent": 0,
+				},
 			)
+
+	def _measured_server(self, title, host_octet, **totals):
+		"""An Active server with a distinct /64, catalogued only on the axes in
+		`totals` (the rest stay uncatalogued → unlimited). Distinct titles + IPv6
+		ranges let a test stand up several placement candidates at once."""
+		server = make_server(
+			self.provider,
+			title=title,
+			size="DigitalOcean/s-4vcpu-8gb",
+			ipv6_address=f"2001:db8:{host_octet}::1",
+			ipv6_prefix=f"2001:db8:{host_octet}::/64",
+			ipv6_virtual_machine_range=f"2001:db8:{host_octet}::/120",
+		)
+		image = make_image("atlas-placement-image")
+		frappe.db.set_value("Virtual Machine Image", image.name, "is_active", 1)
+		frappe.db.set_value("Server", server.name, "status", "Active")
+		frappe.db.set_value(
+			"Server",
+			server.name,
+			{"vcpus_total": 0, "memory_megabytes_total": 0, "pool_disk_gigabytes_total": 0, **totals},
+		)
+		return server
 
 	def _new_machine(self, **overrides):
 		"""Insert a VM the way the Central API does — no server, no image, and
@@ -214,6 +246,82 @@ class TestPlacement(IntegrationTestCase):
 		self._new_machine(vcpus=1, memory_megabytes=512, disk_gigabytes=10)
 		with self.assertRaises(NoCapacityError):
 			self._new_machine(vcpus=1, memory_megabytes=512, disk_gigabytes=10)
+
+	# --- relative-fill spread scorer (spec/24) -----------------------------
+
+	def test_spread_alternates_across_equal_hosts(self) -> None:
+		# Two equal measured hosts: consecutive VMs alternate — the emptier by
+		# relative fill wins, so the second lands on the host the first didn't.
+		host_a = self._measured_server("atlas-placement-a", 21, memory_megabytes_total=4096)
+		self._measured_server("atlas-placement-b", 22, memory_megabytes_total=4096)
+		frappe.set_user(_acting_user())
+		first = self._new_machine(memory_megabytes=512)
+		second = self._new_machine(memory_megabytes=512)
+		self.assertNotEqual(first.server, second.server, "equal hosts alternate")
+		self.assertEqual(first.server, host_a.name, "the creation-first host seats the first VM")
+
+	def test_relative_fill_big_host_absorbs_more(self) -> None:
+		# A host with twice the RAM takes twice the VMs — placement equalizes
+		# *relative* fill, not absolute count. Only RAM is catalogued so it is the
+		# sole binding axis; the big host is created first so ties resolve to it.
+		big = self._measured_server("atlas-placement-big", 23, memory_megabytes_total=4096)
+		small = self._measured_server("atlas-placement-small", 24, memory_megabytes_total=2048)
+		frappe.set_user(_acting_user())
+		for _ in range(3):
+			self._new_machine(memory_megabytes=512)
+		big_count = frappe.db.count("Virtual Machine", {"server": big.name})
+		small_count = frappe.db.count("Virtual Machine", {"server": small.name})
+		self.assertEqual((big_count, small_count), (2, 1), "2x RAM absorbs 2x the VMs")
+
+	def test_fleet_reserve_blocks_new_vm_that_raw_budget_admits(self) -> None:
+		# Raw effective (1024 MB) would admit a 768 MB VM, but a 50% arrival reserve
+		# leaves only 512 MB for new placements → refused. With no reserve it fits.
+		self._measured_server("atlas-placement-a", 21, memory_megabytes_total=1024)
+		frappe.set_user(_acting_user())
+		frappe.db.set_single_value("Atlas Settings", "placement_headroom_percent", 50)
+		with self.assertRaises(NoCapacityError):
+			self._new_machine(memory_megabytes=768)
+		frappe.db.set_single_value("Atlas Settings", "placement_headroom_percent", 0)
+		vm = self._new_machine(memory_megabytes=768)
+		self.assertTrue(vm.server, "no reserve → the raw budget admits it")
+
+	def test_per_server_override_beats_fleet_default(self) -> None:
+		# Fleet default is 0 (pack full), but a per-server 90% reserve leaves only
+		# ~102 MB for new placements on that host → a 512 MB VM is refused there.
+		host = self._measured_server("atlas-placement-a", 21, memory_megabytes_total=1024)
+		frappe.db.set_value("Server", host.name, "placement_headroom_percent", 90)
+		frappe.set_user(_acting_user())
+		with self.assertRaises(NoCapacityError):
+			self._new_machine(memory_megabytes=512)
+		# Drop the per-server override → it inherits the fleet 0 and admits.
+		frappe.db.set_value("Server", host.name, "placement_headroom_percent", 0)
+		vm = self._new_machine(memory_megabytes=512)
+		self.assertEqual(vm.server, host.name)
+
+	def test_measured_host_ranks_ahead_of_unmeasured(self) -> None:
+		# A fully-measured host and an all-sentinel one both fit; the measured host
+		# wins (fewer unmeasured axes) so placement prefers a host it can reason about.
+		measured = self._measured_server(
+			"atlas-placement-measured",
+			21,
+			vcpus_total=4,
+			memory_megabytes_total=8192,
+			pool_disk_gigabytes_total=160,
+		)
+		unmeasured = self._measured_server("atlas-placement-unmeasured", 22)
+		# Unknown slug → no CPU fallback either, so every axis is uncatalogued.
+		frappe.db.set_value("Server", unmeasured.name, "size", "s-unknown-slug")
+		frappe.set_user(_acting_user())
+		vm = self._new_machine(memory_megabytes=512)
+		self.assertEqual(vm.server, measured.name, "measured host outranks the sentinel one")
+
+	def test_tie_break_is_deterministic_by_creation(self) -> None:
+		# Two identical empty measured hosts → the creation-first one wins, every time.
+		first = self._measured_server("atlas-placement-a", 21, memory_megabytes_total=4096)
+		self._measured_server("atlas-placement-b", 22, memory_megabytes_total=4096)
+		frappe.set_user(_acting_user())
+		vm = self._new_machine(memory_megabytes=512)
+		self.assertEqual(vm.server, first.name)
 
 	def test_ambiguous_image_throws(self) -> None:
 		server = make_server(

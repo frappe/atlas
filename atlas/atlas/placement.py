@@ -4,7 +4,8 @@ A dashboard user (see spec/11-user-ui.md) never picks where their machine
 runs — they state name, size, and SSH key, and the controller fills `server`
 and `image` here. The operator still owns the fleet: which Servers are Active
 and which Image is the default are operator decisions. This is placement, not
-scheduling — first Active server with room, no balancing.
+scheduling — load-aware spread across Active servers (the emptiest by relative
+fill wins; see spec/24-placement.md), not queues or reactive rebalancing.
 
 Operators creating a VM in Desk supply `server`/`image` explicitly, so this
 never runs for them.
@@ -240,13 +241,76 @@ def default_server_for_image(
 	)
 
 
-def _fits(axis: dict, need: float) -> bool:
-	"""Does `need` more of this resource fit on this axis?
+class NoResizeCapacityError(NoCapacityError):
+	"""A resize cannot grow the VM in place — its host lacks room for the delta.
 
-	`effective is None` means the host is uncatalogued on this axis → unlimited
-	room (the operator vouched for it by marking it Active), so anything fits.
-	Otherwise the axis fits when used + need stays within the effective budget."""
-	return axis["effective"] is None or axis["used"] + need <= axis["effective"]
+	Subclasses `NoCapacityError` so Central's existing "region full → retry / queue /
+	alert the operator" handling still fires unchanged (same HTTP status, same
+	message shape). The distinct type carries the extra signal that the remedy is
+	specific: migrate this VM to a host that fits the new size (spec/24 case 2 —
+	future work), not just retry the same placement."""
+
+
+def check_resize_capacity(
+	server: str,
+	delta_cpu: float,
+	delta_memory_mb: float,
+	delta_disk_gb: float,
+) -> None:
+	"""Raise `NoResizeCapacityError` if growing a VM on `server` by these per-axis
+	deltas would exceed the host's FULL effective budget.
+
+	Called from `VirtualMachine.resize` before the on-host resize runs.
+	`capacity_for_server`'s `used` already counts this VM at its current size (it
+	sums every non-Terminated VM), so the check is `used + delta ≤ effective` per
+	axis, for the positive deltas only — a shrink needs no room, and an unmeasured
+	axis (`effective is None`) is unlimited. Deliberately checks `effective`, NOT the
+	placement budget: the arrival headroom reserve exists precisely so a resize can
+	consume it."""
+	from atlas.atlas.api.server_capacity import capacity_for_server
+
+	capacity = capacity_for_server(server)
+	deltas = {"cpu": delta_cpu, "memory": delta_memory_mb, "disk": delta_disk_gb}
+	for axis_key, delta in deltas.items():
+		if delta <= 0:
+			continue
+		axis = capacity[axis_key]
+		if axis["effective"] is not None and axis["used"] + delta > axis["effective"]:
+			frappe.throw(
+				_("No room to grow on this host — the VM must migrate to resize."),
+				NoResizeCapacityError,
+			)
+
+
+def _placement_reserve_fraction(server: str) -> float:
+	"""The arrival fill ceiling for placing a NEW VM on `server`, as a fraction in
+	[0, 1).
+
+	A per-server `placement_headroom_percent` > 0 wins; otherwise the fleet
+	`Atlas Settings.placement_headroom_percent`. Frappe writes 0 for an untouched
+	Percent field, so a per-server 0 means "inherit the fleet default", not
+	"explicitly no reserve" — an accepted trade-off documented on the field. The
+	reserve keeps free room on each host for a later in-place resize; resize itself
+	ignores it (spending it is exactly what the reserve is for — see step 4)."""
+	per_server = frappe.db.get_value("Server", server, "placement_headroom_percent")
+	if per_server and per_server > 0:
+		percent = per_server
+	else:
+		percent = frappe.db.get_single_value("Atlas Settings", "placement_headroom_percent") or 0
+	return float(percent) / 100.0
+
+
+def _strategy() -> str:
+	"""The fleet placement strategy from Atlas Settings (`packing.STRATEGIES`).
+
+	Falls back to `packing.DEFAULT_STRATEGY` when unset or unknown, so an operator can
+	switch the scorer (Spread / Best Fit / Tetris / First Fit) without touching code.
+	spec/24 and the offline simulator (`packing_sim.py`) explain the trade-off each
+	strategy makes; on the proportional ladder + homogeneous hosts they coincide."""
+	from atlas.atlas import packing
+
+	value = frappe.db.get_single_value("Atlas Settings", "placement_strategy")
+	return value if value in packing.STRATEGIES else packing.DEFAULT_STRATEGY
 
 
 def default_server(
@@ -255,27 +319,34 @@ def default_server(
 	required_disk_gb: float,
 	candidate_servers: set[str] | None = None,
 ) -> str:
-	"""The first Active server with room on all three axes: CPU, RAM, pool disk.
+	"""The Active server a new VM should land on, per the fleet placement strategy.
 
-	`required_vcpus` is a CPU *bandwidth* cost (cpu_max_cores units), matching how
-	`capacity_for_server` sums usage — a 1/16-vCPU machine needs 0.0625, not a
-	whole vCPU. `required_memory_mb` and `required_disk_gb` are the VM's memory
-	and reserved disk (root + data). Capacity is the same accounting the desk
-	capacity helper uses (atlas/api/server_capacity.py): each axis's *effective*
-	budget minus what its non-Terminated VMs already spend, and a VM is placed
-	only where it fits on *every* axis. An axis with no known total — the agent
-	hasn't reported it, or (for CPU) the size isn't catalogued — reports
-	`effective is None` and is unlimited on that axis: the operator vouches for
-	the host by marking it Active. Raises when nothing fits on all three.
+	`required_vcpus` is a CPU *bandwidth* cost (cpu_max_cores units) — a 1/16-vCPU
+	machine needs 0.0625, not a whole vCPU — matching how `capacity_for_server` sums
+	usage. `required_memory_mb` and `required_disk_gb` are the VM's memory and
+	reserved disk (root + data). For each Active host, capacity is the same
+	three-axis accounting the desk helper uses (atlas/api/server_capacity.py): each
+	axis's *effective* budget minus what its non-Terminated VMs already spend. An
+	axis with no known total reports `effective is None` and is unlimited there — the
+	operator vouches for the host by marking it Active.
+
+	The winner is the feasible host that scores best under the operator's chosen
+	strategy (`packing.rank_key` — default Spread: the emptiest by relative fill, so
+	VMs spread to equal *relative* fill across heterogeneous hosts). Placement leaves
+	an arrival headroom reserve free on each host (`_placement_reserve_fraction`) so
+	later in-place resizes have room; resize spends it. Fully-measured hosts rank
+	ahead of partially/unmeasured ones, then `creation asc` breaks ties for
+	determinism. Raises `NoCapacityError` when nothing fits — Central reads that as
+	"region full for that size".
 
 	`candidate_servers`, when given, restricts the pool to that set (still ordered
 	by creation, still Active) — `default_server_for_image` passes the servers that
 	hold the image so placement never picks a host missing its bytes. None means the
 	whole Active fleet, the original behaviour.
 
-	Runs with ignore_permissions: this is system placement, not desk RBAC —
-	Central (the operator) triggers it without needing Server read access; the
-	system still has to choose one."""
+	Runs with ignore_permissions: this is system placement, not desk RBAC — Central
+	triggers it without needing Server read access; the system still has to choose."""
+	from atlas.atlas import packing
 	from atlas.atlas.api.server_capacity import capacity_for_server
 
 	servers = frappe.get_all(
@@ -289,15 +360,25 @@ def default_server(
 		servers = [server for server in servers if server in candidate_servers]
 	if not servers:
 		frappe.throw(_("No capacity available — contact your operator."), NoCapacityError)
-	for server in servers:
+	strategy = _strategy()
+	needs = {"cpu": required_vcpus, "memory": required_memory_mb, "disk": required_disk_gb}
+	# The rank key is (unmeasured axes, strategy score, creation index); min wins. The
+	# enumerate index preserves the `creation asc` tie-break without re-reading dates.
+	best: tuple[tuple, str] | None = None
+	for creation_index, server in enumerate(servers):
 		capacity = capacity_for_server(server)
-		if (
-			_fits(capacity["cpu"], required_vcpus)
-			and _fits(capacity["memory"], required_memory_mb)
-			and _fits(capacity["disk"], required_disk_gb)
-		):
-			return server
-	frappe.throw(_("No capacity available — contact your operator."), NoCapacityError)
+		budgets = {axis: capacity[axis]["effective"] for axis in packing.AXES}
+		used = {axis: capacity[axis]["used"] for axis in packing.AXES}
+		key = packing.rank_key(
+			strategy, budgets, used, needs, _placement_reserve_fraction(server), creation_index
+		)
+		if key is None:
+			continue
+		if best is None or key < best[0]:
+			best = (key, server)
+	if best is None:
+		frappe.throw(_("No capacity available — contact your operator."), NoCapacityError)
+	return best[1]
 
 
 # Sentinel free-headroom for an axis whose host total is unmeasured (agent hasn't
