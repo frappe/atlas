@@ -17,13 +17,13 @@ func main() {
 				EnvVars: []string{"ATLAS_URL"},
 			},
 			&cli.StringFlag{
-				Name:    "lookup-server",
-				Usage:   "Atlas Server name this plugin token is scoped to",
-				EnvVars: []string{"SSHPIPER_LOOKUP_SERVER"},
+				Name:    "gateway",
+				Usage:   "Atlas Virtual Machine name this gateway token is scoped to",
+				EnvVars: []string{"SSHPIPER_GATEWAY"},
 			},
 			&cli.StringFlag{
 				Name:    "api-key",
-				Usage:   "per-server Atlas lookup token",
+				Usage:   "per-gateway Atlas lookup token",
 				EnvVars: []string{"SSHPIPER_API_KEY"},
 			},
 			&cli.StringFlag{
@@ -42,7 +42,7 @@ func main() {
 		CreateConfig: func(c *cli.Context) (*libplugin.SshPiperPluginConfig, error) {
 			factory := atlasFactory{
 				atlasURL:       c.String("atlas-url"),
-				lookupServer:   c.String("lookup-server"),
+				gateway:        c.String("gateway"),
 				apiKey:         c.String("api-key"),
 				privateKeyPath: c.String("private-key"),
 				targetUser:     c.String("target-user"),

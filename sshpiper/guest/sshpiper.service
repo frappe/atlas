@@ -1,0 +1,19 @@
+[Unit]
+Description=Atlas SSHPiper ingress gateway
+After=network-online.target ssh.service
+Wants=network-online.target
+ConditionPathExists=/etc/atlas/sshpiper.env
+ConditionPathExists=/etc/atlas/server_id_ed25519
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/atlas/sshpiper.env
+ExecStart=/usr/local/bin/sshpiperd --port 22 /usr/local/bin/sshpiper-atlas --atlas-url ${ATLAS_URL} --gateway ${SSHPIPER_GATEWAY} --api-key ${SSHPIPER_API_KEY} --private-key /etc/atlas/server_id_ed25519 --target-user root
+Restart=always
+RestartSec=2
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target

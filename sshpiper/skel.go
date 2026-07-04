@@ -5,9 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
-	"net"
 	"os"
 	"strings"
 	"time"
@@ -18,7 +18,7 @@ import (
 
 type atlasFactory struct {
 	atlasURL       string
-	lookupServer   string
+	gateway        string
 	apiKey         string
 	privateKeyPath string
 	targetUser     string
@@ -123,8 +123,8 @@ func (f *atlasFactory) validate() error {
 	if strings.TrimSpace(f.atlasURL) == "" {
 		return fmt.Errorf("ATLAS_URL is required")
 	}
-	if strings.TrimSpace(f.lookupServer) == "" {
-		return fmt.Errorf("SSHPIPER_LOOKUP_SERVER is required")
+	if strings.TrimSpace(f.gateway) == "" {
+		return fmt.Errorf("SSHPIPER_GATEWAY is required")
 	}
 	if strings.TrimSpace(f.apiKey) == "" {
 		return fmt.Errorf("SSHPIPER_API_KEY is required")
@@ -140,16 +140,16 @@ func (f *atlasFactory) validate() error {
 
 func (f *atlasFactory) lookup(vmName string) (atlasLookupMessage, error) {
 	baseURL := strings.TrimRight(f.atlasURL, "/")
-	endpoint := baseURL + "/api/method/atlas.atlas.doctype.server.server.lookup_virtual_machine_ssh"
+	endpoint := baseURL + "/api/method/atlas.atlas.sshpiper.lookup_virtual_machine_ssh"
 	values := url.Values{}
-	values.Set("server", f.lookupServer)
+	values.Set("gateway", f.gateway)
 	values.Set("vm_name", vmName)
 
 	request, err := http.NewRequest(http.MethodGet, endpoint+"?"+values.Encode(), nil)
 	if err != nil {
 		return atlasLookupMessage{}, err
 	}
-	request.Header.Set("X-Atlas-Server-Token", f.apiKey)
+	request.Header.Set("X-Atlas-SSHPiper-Token", f.apiKey)
 
 	client := &http.Client{Timeout: 10 * time.Second}
 	response, err := client.Do(request)
