@@ -4,31 +4,63 @@
 @tailwind components;
 @tailwind utilities;
 
-/* The dashboard is a read-only ls/cat. It leans on frappe-ui's neutral tokens
-   (--ink-gray-N for text, --surface-* for backgrounds, --outline-gray-1 for the
-   rare divider) and nothing else — no colour, one font, two weights. */
-/* The page surface. frappe-ui emits the --surface-white / --ink-gray-N vars but
-   its `bg-surface-white` utility doesn't generate reliably in the published
-   build, so we set the background here and let the vars carry the light/dark
-   flip. Text colour still comes from the (working) text-ink-* utilities. */
-:root {
-  color-scheme: light;
-  --page-bg: rgb(255 255 255);
+/* The dashboard is a read-only ls/cat. Colour comes entirely from frappe-ui's
+   neutral semantic tokens (--ink-gray-N, --surface-*, --outline-gray-*), applied
+   through the semantic Tailwind utilities (text-ink-gray-N, bg-surface-*,
+   border-outline-*), which flip on [data-theme]. No hand-rolled colour, one sans
+   font (Inter, from the frappe-ui preset), one mono (SF Mono, below). Every
+   component styles itself with Tailwind utilities — there is no token/chrome CSS
+   layer anymore. */
+
+/* ── Fonts. The SF Mono subset is the only font we ship ourselves; Inter comes
+      from the frappe-ui preset. Shipped as subset woff2; Vite fingerprints and
+      copies them into dist/. Referenced by `font-mono` (see tailwind.config.js).
+      The two Inter faces are kept for the legacy body fallback below. ── */
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("./fonts/Inter-400.woff2") format("woff2");
 }
-:root[data-theme='dark'] {
-  color-scheme: dark;
-  --page-bg: rgb(20 20 23); /* frappe-ui dark gray-900 */
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("./fonts/Inter-500.woff2") format("woff2");
+}
+@font-face {
+  font-family: "SFMono";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("./fonts/SFMono-400.woff2") format("woff2");
 }
 
+/* The page surface. frappe-ui emits --surface-base (white in light, near-black
+   in dark) and flips it on [data-theme]; body reads it so there's no flash. */
 body {
-  font-family: 'InterVar', ui-sans-serif, system-ui, sans-serif;
-  background-color: var(--page-bg);
+  background-color: var(--surface-base);
   -webkit-font-smoothing: antialiased;
 }
 
-/* Tabular figures line up UUIDs, addresses and sizes in the tables. */
-.mono {
-  font-variant-numeric: tabular-nums;
-  font-feature-settings: 'tnum';
-  font-family: ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, monospace;
+/* ── Vertical rhythm. frappe-ui's text-size utilities bake a tight line-height
+   (~1.15) into each size, tuned for dense product UI. This dashboard is a
+   read-only ls/cat that reads best airier — the original design ran ~1.5 on
+   every line, and that relaxed rhythm is most of what "spaced out" means here.
+   Restore (and push a touch past) it as one deliberate override on the text
+   sizes the app uses, plus the mono brand line so the header band keeps its
+   height. The `#app` prefix beats the utility's single-class specificity;
+   `:where()` keeps the selector itself at zero specificity so a component that
+   needs it tighter can opt out with an important line-height utility
+   (`!leading-…`). */
+#app :where(.text-2xs, .text-xs, .text-sm, .text-base, .text-lg) {
+  line-height: 1.65;
+}
+/* The 3px meter track (Meter.vue) must keep line-height:1 so the relaxed value
+   can't inflate the bar or shift its absolutely-positioned fills. */
+#app .h-\[3px\],
+#app .h-\[3px\] * {
+  line-height: 1;
 }

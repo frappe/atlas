@@ -1,5 +1,5 @@
 [
-  { "id": "mock", "label": "Mock (contract)", "file": "state.json" },
-  { "id": "scale", "label": "Mock · scale (1000 VMs)", "file": "state-scale.json" },
-  { "id": "scaleway-f2", "label": "scaleway · f2 (real)", "file": "state-scaleway-real.json" }
+  { "id": "ordinary", "label": "Ordinary", "file": "state-ordinary.json" },
+  { "id": "scale", "label": "Scale", "file": "state-scale.json" },
+  { "id": "real", "label": "Real Host", "file": "state-real.json" }
 ]
