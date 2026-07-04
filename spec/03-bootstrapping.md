@@ -27,10 +27,6 @@ The controller's `variables` dict (UPPER_SNAKE keys) is rendered to
 | ------------------------------------------ | ---------------------------------- |
 | `FIRECRACKER_VERSION` → `--firecracker-version` | Pinned in `atlas/atlas/doctype/server/server.py`, currently `v1.16.0`. Inventory of all pins: [spec/23-supply-chain.md](23-supply-chain.md). |
 | `ARCHITECTURE` → `--architecture`          | `x86_64` for this iteration.       |
-| `SSHPIPER_VERSION` → `--sshpiper-version` | Pinned in `Server.bootstrap()`, currently `v1.5.4`. |
-| `ATLAS_URL` → `--atlas-url` | Base URL of the Atlas site, passed to the SSHPiper plugin. |
-| `SSHPIPER_LOOKUP_SERVER` → `--sshpiper-lookup-server` | This Server row's UUID; scopes the host-side lookup token. |
-| `SSHPIPER_API_KEY` → `--sshpiper-api-key` | Per-server lookup token stored on `Server.sshpiper_api_key` and written to the host env file. |
 
 ### What the script does
 
@@ -56,11 +52,9 @@ In summary, in this order:
    release tarball, so this is one download. Production runs every VM under the
    jailer; a host bootstrapped before the jailer existed picks it up on re-run
    (the gate checks both binaries).
-4. Installs SSHPiper and the Atlas SSHPiper plugin, writes
-   `/etc/default/sshpiper` with the Atlas URL, this Server UUID, and the
-   per-server lookup token, and enables `sshpiper.service`. Port 22 is public VM
-   SSH ingress; host SSH moves to 222. See [23-sshpiper.md](./23-sshpiper.md)
-   for the lookup and auth contract.
+4. Ensures `/root/.ssh/id_ed25519{,.pub}` exists. `provision-vm.py` appends
+   this host key to guest `authorized_keys` for host-to-guest maintenance and
+   for the dedicated SSHPiper gateway assigned to this Server.
 5. Writes `/etc/sysctl.d/60-atlas.conf` with IPv6 forwarding, proxy NDP, and
    IPv4 forwarding (`net.ipv4.ip_forward`, for NAT44 egress), **plus the
    CIS 3.3 network-hardening sysctls** — see *Host hardening* below.
@@ -318,10 +312,8 @@ uploads (see `_BOOTSTRAP_UPLOADS` + `_bootstrap_uploads()` in `server.py`):
 - `scripts/vm-network-down.py` → `/var/lib/atlas/bin/vm-network-down.py`
 - `scripts/vm-disk-up.py` → `/var/lib/atlas/bin/vm-disk-up.py`
 - `scripts/vm-restore.py` → `/var/lib/atlas/bin/vm-restore.py`
-- `scripts/sshpiper/atlas` → `/tmp/sshpiper-atlas`
 - `scripts/systemd/firecracker-vm@.service` → `/etc/systemd/system/firecracker-vm@.service`
 - `scripts/systemd/atlas-pool.service` → `/etc/systemd/system/atlas-pool.service`
-- `scripts/systemd/sshpiper.service` → `/etc/systemd/system/sshpiper.service`
 - every `scripts/lib/atlas/*.py` (test files skipped) → `/var/lib/atlas/bin/atlas/*.py`
 
 The `pyproject.toml` makes `/var/lib/atlas/bin` a pip-installable project: it is

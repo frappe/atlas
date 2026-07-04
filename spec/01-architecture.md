@@ -60,12 +60,12 @@ the result of one SSH invocation that runs one shell script. The script comes
 from this repository, under [`atlas/scripts/`](../scripts/). The Frappe code
 uploads the script, runs it, and records the result.
 
-There is one host-side public ingress daemon: **SSHPiper**. Bootstrap moves the
-host's own `sshd` to port 222 for Atlas Tasks, then gives public port 22 to
-SSHPiper. An end user connects as `ssh <vm-title>@<server>`; the plugin asks
-Atlas for the matching VM on that Server, checks the presented public key
-against `Virtual Machine.ssh_public_key`, and proxies upstream to the guest IPv6
-as root using the host key. See [23-sshpiper.md](./23-sshpiper.md).
+Public VM SSH enters through dedicated, operator-owned **SSHPiper VMs**, not a
+host daemon. Each gateway has its own Reserved IPv4: an end user connects as
+`ssh <vm-title>@<gateway>`, the plugin asks Atlas for the uniquely titled running
+VM on the gateway's compute Server, checks `Virtual Machine.ssh_public_key`,
+and proxies to the guest IPv6 as root using that compute Server's key. Gateway port 22 is ingress and its management
+`sshd` is on 222. See [23-sshpiper.md](./23-sshpiper.md).
 
 ### Desk navigation
 
