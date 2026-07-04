@@ -1,12 +1,10 @@
 import json
-import hmac
 import uuid
 from typing import ClassVar
 
 import frappe
 from frappe import _
 from frappe.model.document import Document
-from frappe.utils.password import get_decrypted_password, set_encrypted_password
 
 from atlas.atlas import scripts_catalog
 from atlas.atlas.providers.fake_tasks import is_fake_server
@@ -79,10 +77,8 @@ class Server(Document):
 		# vm-restore.py resumes a pending memory snapshot at every unit start —
 		# the ExecStartPost counterpart of the two ExecStartPre hooks above.
 		("vm-restore.py", "/var/lib/atlas/bin/vm-restore.py"),
-		("sshpiper/atlas", "/tmp/sshpiper-atlas"),
 		("systemd/firecracker-vm@.service", "/etc/systemd/system/firecracker-vm@.service"),
 		("systemd/atlas-pool.service", "/etc/systemd/system/atlas-pool.service"),
-		("systemd/sshpiper.service", "/etc/systemd/system/sshpiper.service"),
 	]
 
 	def autoname(self) -> None:
@@ -184,12 +180,8 @@ class Server(Document):
 			server=self.name,
 			script="bootstrap-server",
 			variables={
-				"SSHPIPER_VERSION": "v1.5.4",
 				"FIRECRACKER_VERSION": "v1.16.0",
 				"ARCHITECTURE": "x86_64",
-				"ATLAS_URL": frappe.utils.get_url(),
-				"SSHPIPER_LOOKUP_SERVER": self.name,
-				"SSHPIPER_API_KEY": self._ensure_sshpiper_api_key(),
 			},
 		)
 		self._absorb_bootstrap_output(task.stdout)
@@ -350,73 +342,6 @@ class Server(Document):
 		# trip: a legacy/unbootstrapped host has cli_ready=0 and the operator sees
 		# the re-bootstrap signal. Fail-fast moved from per-Task to once-at-bootstrap.
 		self.cli_ready = 1
-
-	def _ensure_sshpiper_api_key(self) -> str:
-		key = get_decrypted_password("Server", self.name, "sshpiper_api_key", raise_exception=False)
-		if key:
-			return key
-		key = frappe.generate_hash(length=48)
-		set_encrypted_password("Server", self.name, key, "sshpiper_api_key")
-		return key
-
-
-@frappe.whitelist(allow_guest=True)
-def lookup_virtual_machine_ssh(server: str, vm_name: str, api_key: str | None = None) -> dict:
-	"""Return sshpiper target data for a VM on one Server.
-
-	The token is scoped to exactly one Server row. Even though the method is
-	guest-callable for host-side services, a valid per-server token is required,
-	and the VM must belong to that same Server.
-	"""
-	if not server:
-		frappe.throw("server is required")
-	if not vm_name:
-		frappe.throw("vm_name is required")
-	api_key = _request_api_key(api_key)
-	if not api_key:
-		frappe.throw("api_key is required")
-
-	expected = get_decrypted_password("Server", server, "sshpiper_api_key", raise_exception=False)
-	if not expected or not hmac.compare_digest(str(api_key), str(expected)):
-		frappe.throw("Not permitted", frappe.PermissionError)
-
-	vm = frappe.db.get_value(
-		"Virtual Machine",
-		{"server": server, "title": vm_name},
-		["name", "title", "server", "ipv6_address", "ssh_public_key"],
-		as_dict=True,
-	)
-	if not vm:
-		frappe.throw("Not permitted", frappe.PermissionError)
-	if vm.server != server:
-		frappe.throw("Not permitted", frappe.PermissionError)
-	if not vm.ipv6_address:
-		frappe.throw(f"Virtual Machine {vm_name} has no ipv6_address")
-
-	return {
-		"virtual_machine": vm.name,
-		"title": vm.title,
-		"server": server,
-		"ipv6_address": vm.ipv6_address,
-		"host": vm.ipv6_address,
-		"public_keys": _public_key_lines(vm.ssh_public_key),
-	}
-
-
-def _request_api_key(api_key: str | None = None) -> str:
-	if api_key:
-		return api_key
-	header = frappe.get_request_header("X-Atlas-Server-Token") or ""
-	if header:
-		return header.strip()
-	authorization = frappe.get_request_header("Authorization") or ""
-	if authorization.lower().startswith("bearer "):
-		return authorization[7:].strip()
-	return ""
-
-
-def _public_key_lines(value: str | None) -> list[str]:
-	return [line for line in (line.strip() for line in (value or "").splitlines()) if line and not line.startswith("#")]
 
 
 def sync_scripts_to_all() -> dict[str, int]:

@@ -49,13 +49,6 @@ SCRIPT_FORMS: dict[str, dict] = {
 				"reqd": 1,
 			},
 			{
-				"fieldname": "SSHPIPER_VERSION",
-				"label": "SSHPiper Version",
-				"fieldtype": "Data",
-				"default": "v1.5.4",
-				"reqd": 1,
-			},
-			{
 				"fieldname": "ARCHITECTURE",
 				"label": "Architecture",
 				"fieldtype": "Select",

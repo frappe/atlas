@@ -110,20 +110,14 @@ def execute_task(task_name: str) -> None:
 
 
 def connection_for_server(server) -> Connection:
-	"""Build the SSH Connection from a Server doc.
-
-	Fresh cloud images answer on :22 until bootstrap-server.py installs
-	Atlas' sshd drop-in and reloads sshd onto :222. After bootstrap, host
-	maintenance traffic uses :222 so public :22 can belong to sshpiperd/VMs.
-	"""
+	"""Build the SSH Connection from a Server doc."""
 	import atlas
 	from atlas.atlas.secrets import get_ssh_key_from_disk
 
 	if not server.ipv4_address:
 		frappe.throw(f"Server {server.name} has no ipv4_address; cannot SSH")
 	path = atlas.get_ssh_private_key_path()
-	port = 22 if getattr(server, "status", None) == "Bootstrapping" and not getattr(server, "firecracker_version", None) else 222
-	return Connection(host=server.ipv4_address, ssh_private_key=get_ssh_key_from_disk(path), port=port)
+	return Connection(host=server.ipv4_address, ssh_private_key=get_ssh_key_from_disk(path), port=22)
 
 
 def connection_for_guest(virtual_machine) -> Connection:
