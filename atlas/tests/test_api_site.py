@@ -139,17 +139,23 @@ class TestGetSite(IntegrationTestCase):
 		self.assertEqual(got["status"], "Pending")
 		self.assertIsNone(got["url"])
 		self.assertIsNone(got["login_url"])
+		self.assertIsNone(got["login_url_expires_at"])
 		self.assertEqual(got["team"], TEAM)
 
 	def test_running_site_reveals_handoff(self) -> None:
-		"""Once Running, get_site surfaces the live URL + the stored login URL —
-		the tenant handoff Central polls for."""
+		"""Once Running, get_site surfaces the live URL + the stored login URL +
+		its expiry — the tenant handoff Central polls for."""
 		created = site_api.create_site(team=TEAM, subdomain="acme", email=TENANT_EMAIL)
 		site = frappe.get_doc("Site", created["name"])
 		login_url = f"https://{created['name']}/app?sid=abc123"
+		expires_at = "2026-07-02 12:00:00"
 		site.db_set("login_url", login_url)
+		site.db_set("login_url_expires_at", expires_at)
 		site.db_set("status", "Running")
 		got = site_api.get_site(created["name"])
 		self.assertEqual(got["status"], "Running")
 		self.assertEqual(got["url"], f"https://{created['name']}")
 		self.assertEqual(got["login_url"], login_url)
+		self.assertEqual(
+			frappe.utils.get_datetime(got["login_url_expires_at"]), frappe.utils.get_datetime(expires_at)
+		)

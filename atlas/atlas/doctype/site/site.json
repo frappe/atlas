@@ -20,7 +20,8 @@
   "deploying_started",
   "running_started",
   "section_break_credentials",
-  "login_url"
+  "login_url",
+  "login_url_expires_at"
  ],
  "fields": [
   {
@@ -126,6 +127,14 @@
    "fieldname": "login_url",
    "fieldtype": "Small Text",
    "label": "Login URL",
+   "read_only": 1
+  },
+  {
+   "description": "When login_url stops working (mint time + the `bench browse --sid` session's 24h TTL). Central compares against this to decide 'use it' vs 'regenerate'. Stamped alongside login_url before the readiness wait; empty until the site is Running.",
+   "fieldname": "login_url_expires_at",
+   "fieldtype": "Datetime",
+   "label": "Login URL Expires At",
+   "no_copy": 1,
    "read_only": 1
   }
  ],

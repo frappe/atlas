@@ -250,6 +250,10 @@ class TestSiteOrchestration(IntegrationTestCase):
 		# browse --sid`) — NOT a password. Stored on the row by the controller from
 		# the deploy's parsed result.
 		self.assertEqual(site.login_url, f"https://{site.name}/app?sid=tok")
+		# The login URL is a real 24h `bench browse --sid` session, so the controller
+		# stamps when it stops working — Central regenerates a fresh one for a late
+		# click. Stamped iff the URL is (both written in the same step).
+		self.assertTrue(site.login_url_expires_at)
 		# The whole chain fired, in order.
 		mocks["prov"].assert_called_once()
 		mocks["wait"].assert_called_once_with("cloned-vm")
@@ -264,6 +268,35 @@ class TestSiteOrchestration(IntegrationTestCase):
 		stamps = [site.provisioning_started, site.deploying_started, site.running_started]
 		self.assertTrue(all(stamps), f"a phase entry left no timestamp: {stamps}")
 		self.assertEqual(stamps, sorted(stamps))
+
+	def test_regenerate_login_url_remints_and_restamps(self) -> None:
+		# A Running site whose stored login URL Central asks to refresh: re-mint in the
+		# guest (mocked seam), re-stamp login_url + a fresh expiry, and return the mirror.
+		site = _new_site("acme")
+		self._run_with_mocks(site.name)
+		site.reload()
+		old_expiry = site.login_url_expires_at
+		fresh = f"https://{site.name}/app?sid=fresh"
+		with (
+			patch.object(site_module, "_regenerate_login", return_value={"login_url": fresh}) as m_regen,
+			patch.object(site_module.frappe.db, "commit"),
+		):
+			mirror = site.regenerate_login_url()
+		m_regen.assert_called_once_with(site, site.virtual_machine)
+		site.reload()
+		self.assertEqual(site.login_url, fresh)
+		self.assertTrue(site.login_url_expires_at)
+		self.assertGreaterEqual(site.login_url_expires_at, old_expiry)
+		# The returned mirror is what Central re-reads — it carries the fresh URL.
+		self.assertEqual(mirror["login_url"], fresh)
+		self.assertEqual(mirror["url"], f"https://{site.name}")
+
+	def test_regenerate_login_url_refused_before_running(self) -> None:
+		# Nothing to sign into before the site serves — the guard fails loud.
+		site = _new_site("acme")
+		self.assertEqual(site.status, "Pending")
+		with self.assertRaises(frappe.ValidationError):
+			site.regenerate_login_url()
 
 	def test_deploy_failure_marks_failed_and_raises(self) -> None:
 		site = _new_site("acme")

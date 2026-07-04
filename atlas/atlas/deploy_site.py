@@ -193,6 +193,42 @@ def deploy_site(
 	return _parse_result(stdout)
 
 
+def regenerate_login(virtual_machine: str, site_name: str) -> dict | None:
+	"""Re-mint the one-click login URL for an already-deployed FQDN and return the
+	parsed result. The refresh Central asks for when a tenant clicks after the current
+	URL's short-lived token expired (the admin JWT lasts 5 minutes, the site session
+	24h) — so the URL is minted fresh on demand, never handed out stale.
+
+	Same guest-SSH path as `deploy_site`, but runs the guest script with
+	`--regenerate-login`: the site is already renamed / the admin domain already set,
+	so the guest skips every front-door step and only signs a new session (see
+	deploy-site.py `_regenerate_login`). Recorded as its own `regenerate-login` Task
+	row for the audit trail; fails loud on a non-zero exit. Returns the parsed
+	`ATLAS_RESULT` dict (`site`, `serving`, `login_url`) — `None` if the guest emitted
+	no result line (defensive; every real run emits exactly one). The `--mode` follows
+	the clone's `build_mode` (admin → `generate-admin-session`, else `browse`), exactly
+	as the original deploy chose it."""
+	vm = frappe.get_doc("Virtual Machine", virtual_machine)
+	connection = connection_for_guest(vm)
+	local_script = str(_deploy_script_path())
+	remote_script = f"{REMOTE_DEPLOY_DIRECTORY}/{DEPLOY_SCRIPT_NAME}"
+
+	wait_for_ssh(connection, timeout_seconds=300)
+	with ssh_key_file(connection.ssh_private_key) as key_path:
+		run_ssh(connection, key_path, "mkdir -p {}", _remote_parent(remote_script), timeout_seconds=60)
+		run_scp(connection, key_path, local_script, remote_script, timeout_seconds=300)
+		command = substitute("python3 {} --site-name {} --regenerate-login", (remote_script, site_name))
+		if (vm.build_mode or "site") == "admin":
+			command += " --mode admin"
+		stdout, stderr, code = run_ssh(connection, key_path, command, timeout_seconds=600)
+	_record_guest_task(virtual_machine, "regenerate-login", {"site": site_name}, stdout, stderr, code)
+	if code != 0:
+		frappe.throw(
+			f"Regenerate login for {site_name} on {virtual_machine} failed (exit {code}): {stderr[-500:]}"
+		)
+	return _parse_result(stdout)
+
+
 def _parse_result(stdout: str) -> dict | None:
 	"""Parse the guest script's one `ATLAS_RESULT={json}` line — the last such line
 	on stdout, mirroring the guest's `DeploySiteResult.emit()` shape (`site`,

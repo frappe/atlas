@@ -42,6 +42,13 @@ from atlas.atlas.subdomain_label import (
 # and proven on.
 SITE_VM_SIZE = SIZE_PRESETS["Shared 4x"]
 
+# How long the handed-off login_url stays good: `deploy-site.py` mints it via
+# `bench browse --sid`, a real 24h Administrator session, so the URL stops working
+# 24h after mint. Atlas stamps `login_url_expires_at` = mint time + this so Central
+# can compare against the expiry and regenerate a fresh one for a late click —
+# same contract as Virtual Machine's LOGIN_URL_TTL_MINUTES["site"].
+LOGIN_URL_TTL_MINUTES = 24 * 60
+
 # The routing key (subdomain) and the backing VM are the identity; once written
 # they are fixed. Repointing a live Site at a different VM is a delete-and-recreate,
 # not an in-place edit — same shape as Subdomain.
@@ -67,6 +74,7 @@ class Site(Document):
 
 		deploying_started: DF.Datetime | None
 		login_url: DF.SmallText | None
+		login_url_expires_at: DF.Datetime | None
 		provisioning_started: DF.Datetime | None
 		running_started: DF.Datetime | None
 		status: DF.Literal["Pending", "Provisioning", "Deploying", "Running", "Failed", "Terminated"]
@@ -199,6 +207,34 @@ class Site(Document):
 		if vm.status != "Terminated":
 			vm.terminate()
 
+	@frappe.whitelist()
+	def regenerate_login_url(self) -> dict:
+		"""Re-mint the one-click login URL for a serving site and return the fresh
+		handoff. Central calls this (operator token) when a tenant clicks their login
+		link after the current URL's 24h `bench browse` session has expired — the URL
+		is short-lived by design, so it is re-signed on demand rather than kept alive.
+
+		Only a Running site can be regenerated (before that there is no served site to
+		sign into, and the field may be unstamped). Re-mint in the guest via the deploy
+		seam, stamp `login_url` + `login_url_expires_at` = now + the session TTL (same as
+		the original deploy), COMMIT so the `get_site` poll sees it, and return the
+		mirror shape Central re-reads. A Fake-backed VM never answers SSH, so its login
+		URL is synthesized here exactly as the deploy synthesizes it — desk/e2e stay
+		green without a host."""
+		if self.status != "Running":
+			frappe.throw(_("Only a running site's login URL can be regenerated"))
+		result = _regenerate_login(self, self.virtual_machine)
+		self.db_set("login_url", (result or {}).get("login_url", ""))
+		self.db_set(
+			"login_url_expires_at",
+			frappe.utils.add_to_date(frappe.utils.now_datetime(), minutes=LOGIN_URL_TTL_MINUTES),
+		)
+		# nosemgrep: frappe-manual-commit -- persist the fresh URL so Central's get_site poll sees it cross-transaction (the mint has no status change, so no event fires)
+		frappe.db.commit()
+		from atlas.atlas.api.site import _mirror
+
+		return _mirror(self)
+
 
 class _ProvisionClock:
 	"""Live, per-stage wall-clock trace for `auto_provision`, printed to stdout
@@ -312,9 +348,15 @@ def auto_provision(
 		# Administrator password is a long random secret generated at bake time and
 		# never surfaced. Stored BEFORE the readiness wait so the handoff (the
 		# site.status_changed event + get_site poll) survives even if the http gate
-		# later times out. A Fake-backed VM's `_deploy_site` short-circuits with a
+		# later times out. Stamp `login_url_expires_at` = now + the session's 24h TTL
+		# alongside, so Central regenerates a fresh URL for a late click (mirrors
+		# Virtual Machine). A Fake-backed VM's `_deploy_site` short-circuits with a
 		# synthesized result so this stays stamped in tests/e2e too.
 		site.db_set("login_url", (result or {}).get("login_url", ""))
+		site.db_set(
+			"login_url_expires_at",
+			frappe.utils.add_to_date(frappe.utils.now_datetime(), minutes=LOGIN_URL_TTL_MINUTES),
+		)
 		clock.stage("wait for HTTP 200 from guest :80 (Contract B)")
 		_wait_for_http(site, vm_name)
 		clock.stage("create Subdomain (proxy route)")
@@ -472,6 +514,24 @@ def _deploy_site(
 	if is_fake_server(vm.server):
 		return {"site": site.name, "serving": True, "login_url": f"https://{site.name}/app?sid=fake-sid"}
 	return deploy_site(vm_name, site.name, central_endpoint, central_auth_token) or {}
+
+
+def _regenerate_login(site, vm_name: str) -> dict:
+	"""Re-mint the site's one-click login URL in the guest and return the result.
+
+	Seam for the regenerate driver + its Fake short-circuit — the sibling of
+	`_deploy_site`, sharing its `is_fake_server` gate. On a real VM it runs
+	deploy-site.py with `--regenerate-login` (re-sign only, no rename/setup). A
+	Fake-backed VM's documentation /128 never answers SSH, so the same placeholder
+	`login_url` is synthesized instead, keeping the mirror shape stable for the
+	desk/e2e tests that run against a Fake server."""
+	from atlas.atlas.deploy_site import regenerate_login
+	from atlas.atlas.providers.fake_tasks import is_fake_server
+
+	vm = frappe.get_doc("Virtual Machine", vm_name)
+	if is_fake_server(vm.server):
+		return {"site": site.name, "serving": True, "login_url": f"https://{site.name}/app?sid=fake-sid"}
+	return regenerate_login(vm_name, site.name) or {}
 
 
 def _wait_for_http(site, vm_name: str) -> None:

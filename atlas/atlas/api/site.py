@@ -93,17 +93,17 @@ def get_site(name: str) -> dict:
 	"""Return the current state of a site so Central can poll for progress.
 
 	The poll fallback to the pushed `site.*` events: Central can call this to
-	learn a site reached `Running` (and read the admin password + live URL) even
-	if an event delivery was missed. Operator-authorized (Central token); no
-	owner gating (Atlas no longer owns end-users)."""
+	learn a site reached `Running` (and read the one-click login URL + its expiry +
+	live URL) even if an event delivery was missed. Operator-authorized (Central
+	token); no owner gating (Atlas no longer owns end-users)."""
 	return _mirror(frappe.get_doc("Site", name))
 
 
 def _mirror(site) -> dict:
 	"""The shape Central reflects: identity + lifecycle + (once Running) the
-	tenant handoff (a one-click login URL + live site URL). The login URL is only
-	surfaced once the site is serving — before that there is nothing to hand off,
-	and the field may not yet be stamped."""
+	tenant handoff (a one-click login URL + when it expires + live site URL). The
+	login URL is only surfaced once the site is serving — before that there is
+	nothing to hand off, and the field may not yet be stamped."""
 	running = site.status == "Running"
 	# The Tenant `name` *is* the Central `Team.name`, so the Site's `tenant` link is
 	# the owning team directly; None for operator/e2e sites.
@@ -115,4 +115,5 @@ def _mirror(site) -> dict:
 		"fqdn": site.name,
 		"url": f"https://{site.name}" if running else None,
 		"login_url": site.get("login_url") if running else None,
+		"login_url_expires_at": site.get("login_url_expires_at") if running else None,
 	}

@@ -108,6 +108,7 @@ class DeploySiteInputs:
 	mode: str = "site"
 	central_endpoint: str = ""
 	central_auth_token: str = ""
+	regenerate_login: bool = False
 
 	@classmethod
 	def from_args(cls, argv: list[str] | None = None) -> "DeploySiteInputs":
@@ -130,6 +131,16 @@ class DeploySiteInputs:
 		parser.add_argument(
 			"--central-auth-token", default="", help="Opaque token the pilot presents to Central"
 		)
+		parser.add_argument(
+			"--regenerate-login",
+			action="store_true",
+			help=(
+				"Re-mint the one-click login URL ONLY — the site is already deployed "
+				"(renamed / admin domain set), so skip the rename + production setup + "
+				"Central config and just print a fresh ATLAS_RESULT with a new login_url. "
+				"Drives the short-lived-token refresh Central asks for on a late click."
+			),
+		)
 		ns = parser.parse_args(argv)
 		return cls(
 			site_name=ns.site_name,
@@ -137,6 +148,7 @@ class DeploySiteInputs:
 			mode=ns.mode,
 			central_endpoint=ns.central_endpoint,
 			central_auth_token=ns.central_auth_token,
+			regenerate_login=ns.regenerate_login,
 		)
 
 
@@ -442,6 +454,36 @@ def _stage_logger():
 	return log
 
 
+def _regenerate_login(inputs: "DeploySiteInputs", log) -> None:
+	"""Re-mint the one-click login URL for an ALREADY-deployed site and emit it —
+	nothing else. The refresh Central drives when a tenant clicks after the current
+	URL's short-lived token has expired (the admin JWT is 5 minutes, the site session
+	24h). The FQDN is already on disk (site mode renamed it; admin mode set
+	`[admin].domain`) and the stack is already serving, so this skips the whole
+	front-door path (`_preflight`, warm freshen, `bench start`, rename / setup
+	production, the Central-config write) and only touches the DB to sign a fresh
+	session.
+
+	We still gate on the bench DB accepting connections — the mint (`bench browse` in
+	site mode, `bench generate-admin-session` in admin mode) opens a `frappe.connect()`,
+	and a regenerate can land on a VM that was just resumed from a memory snapshot with
+	MariaDB still racing sshd. Emits the same `ATLAS_RESULT` shape as a full deploy
+	(`serving` reflects the local probe) so the controller stamps it identically."""
+	log(f"regenerate login (fqdn={inputs.site_name}, mode={inputs.mode})")
+	log("waiting for the bench DB to accept connections …")
+	_await_db_ready()
+	log("bench DB ready")
+	if inputs.mode == "admin":
+		log("minting admin login URL (bench generate-admin-session --full-path) …")
+		login_url = _mint_admin_login_url()
+	else:
+		log("minting tenant login URL (bench browse) …")
+		login_url = _mint_login_url(inputs.site_name)
+	log("login URL minted")
+	serving = _serving(inputs.site_name, inputs.mode)
+	DeploySiteResult(site=inputs.site_name, serving=serving, login_url=login_url).emit()
+
+
 def main() -> None:
 	"""Deploy one FQDN into a golden bench VM — site mode (RENAME) or admin mode.
 
@@ -463,9 +505,15 @@ def main() -> None:
 	of band). Every bench command runs as the `frappe` user (the bake user).
 
 	A warm clone (resumed from a memory snapshot) is already serving; a cold clone
-	(snapshot-booted) idempotently re-asserts `bench start` first."""
+	(snapshot-booted) idempotently re-asserts `bench start` first.
+
+	`--regenerate-login` is the exception: the site is already deployed, so it skips
+	every front-door step and only re-mints the login URL (see `_regenerate_login`)."""
 	inputs = DeploySiteInputs.from_args()
 	log = _stage_logger()
+	if inputs.regenerate_login:
+		_regenerate_login(inputs, log)
+		return
 	log(
 		f"deploy start (fqdn={inputs.site_name}, baked={BAKED_SITE}, "
 		f"{'warm' if inputs.warm_vm_uuid else 'cold'})"
