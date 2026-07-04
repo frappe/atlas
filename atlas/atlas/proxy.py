@@ -406,11 +406,14 @@ def _curl_command(method: str, path: str, data_stdin: bool = False) -> str:
 
 
 def _proxy_vms() -> list[str]:
-	"""Every VM marked is_proxy. These are the reconcile targets; each gets the full
-	map."""
+	"""Every LIVE VM marked is_proxy. These are the reconcile targets; each gets the
+	full map, and each contributes its address to the regional wildcard. A Terminated
+	proxy is excluded: its guest is gone and its `/128` no longer answers, so leaving it
+	in the fleet would keep publishing a dead address in the wildcard AAAA set (half the
+	round-robin blackholes) and keep trying to reconcile a VM that doesn't exist."""
 	return frappe.get_all(
 		"Virtual Machine",
-		filters={"is_proxy": 1},
+		filters={"is_proxy": 1, "status": ["!=", "Terminated"]},
 		pluck="name",
 	)
 

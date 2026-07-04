@@ -334,6 +334,18 @@ class TestWildcardTargets(IntegrationTestCase):
 		self.assertEqual(sorted(ipv4), ["198.51.100.10", "198.51.100.11"])
 		self.assertEqual(sorted(ipv6), ["2400:6180::a", "2400:6180::b"])
 
+	def test_terminated_proxy_is_excluded(self) -> None:
+		# A terminated proxy's guest is gone and its /128 no longer answers, so its
+		# address must drop out of the wildcard — else half the round-robin blackholes.
+		live = _proxy_vm()
+		live.db_set("ipv6_address", "2400:6180::a")
+		dead = _proxy_vm()
+		dead.db_set("ipv6_address", "2400:6180::b")
+		dead.db_set("status", "Terminated")
+		ipv4, ipv6 = proxy.wildcard_targets()
+		self.assertEqual(ipv4, [])
+		self.assertEqual(ipv6, ["2400:6180::a"])
+
 
 class TestPushCert(IntegrationTestCase):
 	def setUp(self) -> None:

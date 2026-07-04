@@ -29,6 +29,24 @@ def _new_vm(**overrides) -> "frappe.model.document.Document":
 	return make_virtual_machine(_ensure_test_server(), _ensure_test_image(), **overrides)
 
 
+def _ensure_active_root_domain(domain: str = "blr1.frappe.dev") -> str:
+	"""A single active Root Domain so `active_root_domain()` resolves. Provider types
+	and region are set explicitly so the row inserts without depending on Settings."""
+	if frappe.db.exists("Root Domain", domain):
+		return domain
+	frappe.get_doc(
+		{
+			"doctype": "Root Domain",
+			"domain": domain,
+			"region": "blr1",
+			"is_active": 1,
+			"dns_provider_type": "Route53",
+			"tls_provider_type": "Let's Encrypt",
+		}
+	).insert(ignore_permissions=True)
+	return domain
+
+
 class TestVirtualMachine(IntegrationTestCase):
 	def setUp(self) -> None:
 		_ensure_test_server()
@@ -480,6 +498,33 @@ class TestVirtualMachine(IntegrationTestCase):
 			vm.terminate()
 		# The referenced golden survives the build VM's termination.
 		self.assertTrue(frappe.db.exists("Virtual Machine Snapshot", snapshot_name))
+
+	def test_terminate_deprovisions_a_proxy(self) -> None:
+		# A terminated proxy must drop out of the fleet: `is_proxy` clears and the
+		# wildcard is re-published so the dead /128 stops answering in the round-robin.
+		from atlas.atlas.doctype.tls_certificate import tls_certificate as cert_module
+		from atlas.atlas.doctype.virtual_machine import virtual_machine as module
+
+		domain = _ensure_active_root_domain()
+		cert = frappe.get_doc(
+			{"doctype": "TLS Certificate", "root_domain": domain, "status": "Active"}
+		).insert(ignore_permissions=True)
+
+		vm = _new_vm(is_proxy=1)
+		vm.db_set("status", "Stopped")
+		vm.reload()
+
+		with (
+			patch.object(module, "run_task", return_value=fake_task(name="task-term")),
+			# Spy the re-publish so no real Route53 call fires; assert it targets the
+			# region's Active cert.
+			patch.object(cert_module.TLSCertificate, "_publish_wildcard") as publish,
+		):
+			vm.terminate()
+
+		self.assertFalse(frappe.db.get_value("Virtual Machine", vm.name, "is_proxy"))
+		publish.assert_called_once()
+		self.assertTrue(frappe.db.exists("TLS Certificate", cert.name))
 
 	def test_parse_size_bytes(self) -> None:
 		from atlas.atlas.task_results import parse_result
