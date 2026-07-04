@@ -204,3 +204,14 @@ session, Central re-mints it on **Open** (`get_bench_link`) when the stored URL 
 expired, via the whitelisted `Pilot.regenerate_login_url()` method (which returns the
 same VM-shaped payload). This is the only Central→Atlas read; all Central→Atlas
 *writes* reuse the existing whitelisted controller methods.
+
+**A self-serve site's Asset resolves the pilot console.** A `create_site` VM is backed
+by **both** a `Site` (the customer's Frappe site) and an attached `Pilot` (a bench admin
+console at `<subdomain>-pilot.<region>` on the same VM — see
+[14-self-serve.md § The attached Pilot admin console](./14-self-serve.md)). The VM→front-door
+resolver (`front_door_for_vm`) prefers the Pilot, so the **Asset's `gateway_url` / `login_url`
+point at the console** (a 5-min admin JWT), while the customer's site handoff (its 24h
+`bench browse` URL + live `url`) is surfaced separately through `get_site` /
+`site.*` events. **Open** on a self-serve Asset therefore re-mints via the Pilot exactly
+as a bench Asset does. (A Site-backed VM with no Pilot yet — mid-provision, or a directly
+created Site — still resolves the Site's handoff as a fallback.)

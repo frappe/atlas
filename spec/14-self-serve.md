@@ -173,13 +173,15 @@ Fields, validation, permissions, and the full field table are in
    | 3 | Run `deploy-site.py` in the guest: rename the baked `site.local` to the FQDN via `bench rename-site` (regenerates the vhost as `server_name <fqdn>` + a v6 listener + reloads + re-runs production setup, a fast no-op) — no admin reset, no restart (cold clones also `bench start` first to bring the stack up; a warm clone is already serving — see the in-guest deploy below). The guest then mints a one-click `login_url` (`bench browse --user Administrator --session-end`, a real 24h session) → stamped with `login_url_expires_at` on the Site. `status → Deploying`. | deploy seam |
    | 4 | `wait_for_http` — block on the guest's HTTP 200 (Contract B). | deploy seam |
    | 5 | Create the `Subdomain` row (this is what makes the proxy route it — its own `after_insert` reconciles the regional fleet). | this layer |
+   | 5b | Stand up the **attached Pilot** admin console on the SAME VM (`_provision_pilot`): create a `Pilot` at `<subdomain>-pilot.<region>` bound to this VM, run its admin-mode deploy, create its Subdomain, mark it Running, link it on `Site.pilot`. This is the front door Central's Asset "Open" resolves. See § The attached Pilot admin console. | this layer |
    | 6 | `status → Running`. | this layer |
 
    Any failure flips `status = Failed` and re-raises (fail loud, the job log
    carries the traceback). No-op if the Site has moved past `Pending`.
 
-5. **`terminate()`** deletes the `Subdomain` (proxy stops routing on the next
-   reconcile), terminates the backing VM, sets `Terminated`. Clears
+5. **`terminate()`** deletes the site's `Subdomain` (proxy stops routing on the next
+   reconcile), terminates the **attached Pilot** (which drops only its own Subdomain +
+   row — the VM is the Site's), terminates the backing VM, sets `Terminated`. Clears
    `subdomain_doc` before deleting the linked Subdomain (the link-integrity guard
    queries the DB, so the null is persisted first).
 
@@ -317,6 +319,57 @@ rotates it later themselves; the db root password is never surfaced either
 --regenerate-login`, which skips the rename/setup and only re-signs). The
 create_site path does no password work, which is what removed the ~28s `bench frappe`
 boot.
+
+## The attached Pilot admin console *(built — this phase)*
+
+A `create_site` stands up **two** front doors on the **one** backing VM:
+
+```
+acme.blr1.frappe.dev         → the customer's Frappe site   (Site, `bench browse` 24h session)
+acme-pilot.blr1.frappe.dev   → the bench admin console      (Pilot, `generate-admin-session` 5-min JWT)
+```
+
+The `Site` is the tenant's Frappe site (surfaced to Central via `get_site`). The
+**`Pilot`** is the bench admin console on the **same bench**, and it is the front door
+**Central's Asset "Open" resolves** — `front_door_for_vm` prefers a Pilot over a Site
+(`_FRONT_DOOR_DOCTYPES = ("Pilot", "Site")`), so once both back the VM the Asset's
+`gateway_url` / `login_url` point at the console, not the customer site. Before this,
+`create_site` created no Pilot and the Asset resolved the Site, so "Open" landed on the
+customer site with a 24h `bench browse` URL — the modeling gap this closes.
+
+**One VM, one owner.** The `Site` owns the backing VM (it clones the golden and
+terminates it). The Pilot is created in **attached mode** (`Pilot.attached = 1`, set from
+`Site.auto_provision` via `pilot.flags.attach_vm = <vm>`): it **binds** the Site's VM
+instead of creating one, and its `terminate()` **skips** VM teardown (the Site owns the
+VM's lifecycle). So there is no double-provision and no double-terminate. A stand-alone
+Pilot (the `create_vm` bench product) is unchanged — it still owns its own VM.
+
+**The console label.** `subdomain_label.pilot_subdomain_for(<label>)` derives the pilot
+subdomain: `acme` → `acme-pilot`, or `acme-pilot-<rand>` if `acme-pilot` already backs a
+Pilot. It stays a valid Contract-A label (≤ 63 chars, `[a-z0-9-]`).
+
+**Two vhosts, one bench.** The admin app + its deps are baked into **every** golden
+(site and admin — see [08-images.md](./08-images.md), `build.sh`); a site-mode golden
+simply doesn't wire the admin vhost. So on the same booted VM the Pilot runs the
+**admin-mode** deploy (`deploy-site.py --mode admin` against the pilot FQDN:
+`[admin].domain = <pilot-fqdn>` + `bench setup production`), producing a second nginx
+vhost alongside the renamed site vhost. `deploy_site(...)` / `regenerate_login(...)` take
+an explicit `mode` that overrides the VM's `build_mode` (which stays `site`) so the same
+VM serves the site at one FQDN and the console at another. Two `Subdomain` rows (one per
+FQDN) both target the VM's public `/128`.
+
+> **Host fact to prove (e2e follow-up).** That the admin `bench setup production` on a
+> site-mode golden yields a working admin vhost **without disturbing** the renamed site
+> vhost — both served on `:80` over the VM's `/128` — is a host fact. The
+> `self_serve_site` e2e should add an assertion that `acme-pilot.<region>` answers the
+> admin health path (`/api/status`) while `acme.<region>` still answers the site path.
+
+**`auto_provision` gains a stage.** After the site reaches serving (its Subdomain is
+created) and **before** the Site is marked `Running`, `_provision_pilot(site, vm)` creates
+the attached Pilot, runs its admin deploy, creates the pilot's Subdomain, marks the Pilot
+`Running`, and links it on `Site.pilot`. A console-wiring failure fails the whole site
+loud (consistent with the rest of `auto_provision`). `Site.terminate()` cascades to the
+Pilot (attached → drops only its Subdomain + row) before terminating the VM.
 
 ## The Subdomain it creates
 
