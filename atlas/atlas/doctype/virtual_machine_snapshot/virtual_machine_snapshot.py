@@ -54,6 +54,7 @@ class VirtualMachineSnapshot(Document):
 		cpu_max_cores: float | None = None,
 		memory_megabytes: int | None = None,
 		disk_gigabytes: int | None = None,
+		tenant: str | None = None,
 	) -> str:
 		"""Create a NEW Virtual Machine whose disk is seeded from this snapshot.
 
@@ -76,7 +77,7 @@ class VirtualMachineSnapshot(Document):
 			frappe.throw(f"Snapshot is not Available (status is {self.status})")
 		if self.kind == "Warm":
 			return self._clone_warm(
-				title, ssh_public_key, vcpus, cpu_max_cores, memory_megabytes, disk_gigabytes
+				title, ssh_public_key, vcpus, cpu_max_cores, memory_megabytes, disk_gigabytes, tenant
 			)
 		disk = int(disk_gigabytes) if disk_gigabytes else self.disk_gigabytes
 		if disk < self.disk_gigabytes:
@@ -116,6 +117,9 @@ class VirtualMachineSnapshot(Document):
 				# deploy reads it (site → rename the baked site to the FQDN; admin →
 				# map the FQDN to the admin console). Empty for a plain snapshot.
 				"build_mode": self.build_mode or None,
+				# The owning tenant (set by the Site/Pilot aggregate for a tenant-owned
+				# clone) carries attribution onto the VM. Empty for an operator clone.
+				"tenant": tenant or None,
 			}
 		).insert(ignore_permissions=True)
 		return clone.name
@@ -128,6 +132,7 @@ class VirtualMachineSnapshot(Document):
 		cpu_max_cores: float | None,
 		memory_megabytes: int | None,
 		disk_gigabytes: int | None,
+		tenant: str | None = None,
 	) -> str:
 		"""Clone that RESUMES this warm golden instead of booting it.
 
@@ -168,6 +173,8 @@ class VirtualMachineSnapshot(Document):
 				# Carry the bench bake mode onto the warm clone (a warm v16 golden is
 				# site mode), so its first-boot deploy maps the FQDN correctly.
 				"build_mode": self.build_mode or None,
+				# The owning tenant carries attribution onto the VM (see clone_to_new_vm).
+				"tenant": tenant or None,
 			}
 		).insert(ignore_permissions=True)
 		return clone.name

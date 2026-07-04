@@ -560,6 +560,19 @@ class TestSiteWarmFirstProvision(IntegrationTestCase):
 		self.assertNotIn("vcpus", kw)
 		self.assertNotIn("memory_megabytes", kw)
 
+	def test_clone_title_is_the_bare_subdomain_label_not_the_fqdn(self) -> None:
+		"""The clone's `title` MUST be the bare subdomain label (`acme`), NOT the
+		Site's FQDN name (`acme.blr1.frappe.dev`) — a VM title is a plain descriptive
+		handle, and the bare label keeps it a clean single token (matching the
+		subdomain the Site is fronted at). The warm path passes `title` from the same
+		`site.subdomain` expression, so the cold path guards both."""
+		site = _new_site("acme")
+		self.assertEqual(site.name, "acme.blr1.frappe.dev")
+		ctx, recorded = self._record_clone("cold-clone")
+		with ctx:
+			site_module._provision_backing_vm(site)
+		self.assertEqual(recorded[0]["kwargs"]["title"], "acme")
+
 
 class TestSiteTerminate(IntegrationTestCase):
 	def setUp(self) -> None:

@@ -437,16 +437,18 @@ def _provision_backing_vm(site) -> str:
 		snapshot = frappe.get_doc("Virtual Machine Snapshot", warm_name)
 	if snapshot.kind == "Warm":
 		return snapshot.clone_to_new_vm(
-			title=site.name,
+			title=site.subdomain,
 			ssh_public_key=ssh_public_key,
 			cpu_max_cores=size["cpu_max_cores"],
+			tenant=site.tenant,
 		)
 	return snapshot.clone_to_new_vm(
-		title=site.name,
+		title=site.subdomain,
 		ssh_public_key=ssh_public_key,
 		vcpus=size["vcpus"],
 		cpu_max_cores=size["cpu_max_cores"],
 		memory_megabytes=size["memory_megabytes"],
+		tenant=site.tenant,
 		# Disk is not passed: the golden's rootfs is already grown to its own
 		# disk_gigabytes and the clone can't shrink below it. The snapshot's size
 		# is the floor; the entry tier's nominal disk would only ever be smaller.
