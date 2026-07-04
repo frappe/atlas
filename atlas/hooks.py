@@ -235,6 +235,7 @@ scheduler_events = {
 		],
 		"*/2 * * * *": [
 			"atlas.atlas.migration.reconcile_migrations",
+			"atlas.atlas.export.reconcile_image_exports",
 		],
 	},
 }

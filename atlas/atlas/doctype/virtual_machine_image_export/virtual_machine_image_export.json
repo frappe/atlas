@@ -1,0 +1,196 @@
+{
+  "actions": [],
+  "allow_rename": 0,
+  "autoname": "hash",
+  "creation": "2026-07-05 00:00:00.000000",
+  "doctype": "DocType",
+  "engine": "InnoDB",
+  "field_order": [
+    "image",
+    "status",
+    "progress_detail",
+    "progress_percent",
+    "column_break_header",
+    "source_server",
+    "target_server",
+    "section_break_transfer",
+    "nbd_port",
+    "nbd_pid",
+    "base_size_bytes",
+    "column_break_transfer",
+    "hydration_percent",
+    "hydration_last_polled",
+    "hydration_stall_ticks",
+    "section_break_audit",
+    "error_message",
+    "error_at_status",
+    "started_at",
+    "completed_at"
+  ],
+  "fields": [
+    {
+      "description": "The base image to ship. Its rootfs is the read-only atlas-image-<name> LV on the source server.",
+      "fieldname": "image",
+      "fieldtype": "Link",
+      "in_list_view": 1,
+      "in_standard_filter": 1,
+      "label": "Image",
+      "options": "Virtual Machine Image",
+      "reqd": 1,
+      "set_only_once": 1
+    },
+    {
+      "default": "Pending",
+      "fieldname": "status",
+      "fieldtype": "Select",
+      "in_list_view": 1,
+      "in_standard_filter": 1,
+      "label": "Status",
+      "options": "Pending\nExporting\nHydrating\nFinalizing\nRegistering\nCleanup\nDone\nFailed",
+      "read_only": 1
+    },
+    {
+      "description": "Live, always-current line describing exactly what the export is doing right now (which host, which step). Stamped by advance_export BEFORE each phase runs, and refined by the long copy as it progresses.",
+      "fieldname": "progress_detail",
+      "fieldtype": "Small Text",
+      "in_list_view": 1,
+      "label": "Progress",
+      "read_only": 1
+    },
+    {
+      "default": "-1",
+      "description": "Percent complete of the base-image copy; -1 when the current phase is not a measurable copy.",
+      "fieldname": "progress_percent",
+      "fieldtype": "Int",
+      "label": "Progress %",
+      "read_only": 1
+    },
+    {
+      "fieldname": "column_break_header",
+      "fieldtype": "Column Break"
+    },
+    {
+      "description": "The server the image is copied FROM. Denormalized at insert from where the image's base LV lives; a local image lives on exactly one server. Immutable.",
+      "fieldname": "source_server",
+      "fieldtype": "Link",
+      "label": "Source Server",
+      "options": "Server",
+      "read_only": 1,
+      "set_only_once": 1
+    },
+    {
+      "description": "The server the image is copied TO. Operator-chosen. After a Done export the target gains an identical local base image row it can provision from.",
+      "fieldname": "target_server",
+      "fieldtype": "Link",
+      "in_list_view": 1,
+      "label": "Target Server",
+      "options": "Server",
+      "reqd": 1,
+      "set_only_once": 1
+    },
+    {
+      "fieldname": "section_break_transfer",
+      "fieldtype": "Section Break",
+      "label": "Transfer"
+    },
+    {
+      "description": "TCP port the source NBD server binds for the base LV; the image-directory tar rides on nbd_port + 1. Derived from the image name so concurrent exports of different images never collide.",
+      "fieldname": "nbd_port",
+      "fieldtype": "Int",
+      "label": "NBD Port",
+      "read_only": 1
+    },
+    {
+      "fieldname": "nbd_pid",
+      "fieldtype": "Int",
+      "label": "NBD PID",
+      "read_only": 1
+    },
+    {
+      "description": "The source base LV's actual byte size, recorded at export. The target LV is created at least this large. Long Int — a disk byte count overflows a 32-bit Int.",
+      "fieldname": "base_size_bytes",
+      "fieldtype": "Long Int",
+      "label": "Base Size Bytes",
+      "read_only": 1
+    },
+    {
+      "fieldname": "column_break_transfer",
+      "fieldtype": "Column Break"
+    },
+    {
+      "fieldname": "hydration_percent",
+      "fieldtype": "Int",
+      "label": "Hydration %",
+      "read_only": 1
+    },
+    {
+      "fieldname": "hydration_last_polled",
+      "fieldtype": "Datetime",
+      "label": "Hydration Last Polled",
+      "read_only": 1
+    },
+    {
+      "default": "0",
+      "description": "Consecutive no-progress hydration polls; the phase fails past a threshold.",
+      "fieldname": "hydration_stall_ticks",
+      "fieldtype": "Int",
+      "label": "Hydration Stall Ticks",
+      "read_only": 1
+    },
+    {
+      "fieldname": "section_break_audit",
+      "fieldtype": "Section Break",
+      "label": "Audit"
+    },
+    {
+      "fieldname": "error_message",
+      "fieldtype": "Long Text",
+      "label": "Error Message",
+      "read_only": 1
+    },
+    {
+      "description": "The phase the export was in when it failed; retry() resumes here.",
+      "fieldname": "error_at_status",
+      "fieldtype": "Data",
+      "label": "Error At Status",
+      "read_only": 1
+    },
+    {
+      "fieldname": "started_at",
+      "fieldtype": "Datetime",
+      "label": "Started At",
+      "read_only": 1
+    },
+    {
+      "fieldname": "completed_at",
+      "fieldtype": "Datetime",
+      "label": "Completed At",
+      "read_only": 1
+    }
+  ],
+  "index_web_pages_for_search": 1,
+  "links": [],
+  "modified": "2026-07-05 00:00:00.000000",
+  "module": "Atlas",
+  "name": "Virtual Machine Image Export",
+  "owner": "Administrator",
+  "permissions": [
+    {
+      "create": 1,
+      "delete": 1,
+      "email": 1,
+      "export": 1,
+      "print": 1,
+      "read": 1,
+      "report": 1,
+      "role": "System Manager",
+      "share": 1,
+      "write": 1
+    }
+  ],
+  "sort_field": "modified",
+  "sort_order": "DESC",
+  "states": [],
+  "title_field": "image",
+  "track_changes": 1
+}
