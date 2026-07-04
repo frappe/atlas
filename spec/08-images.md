@@ -385,18 +385,20 @@ existing snapshot machinery for the rollable artifact. The bake is driven by the
 shared across every VM from this image — correct because each VM is
 single-tenant and MariaDB binds localhost only (the south hop reaches Frappe's
 `:80`, never `3306`). The Frappe Administrator password is **also baked + shared** —
-a throwaway the owner is handed and rotates after first login. The signup path no
-longer resets it per VM: that reset cost a full CPU-throttled `bench frappe` boot
-(~28s under the 0.25-core cap) that dominated the deploy, and dropping it is the
-main latency win (14-self-serve.md). Lazy per-site rotation (first login / a job)
-is deferred.
+a randomized bake-time throwaway that is **never surfaced**: the owner signs in via
+the one-click `login_url` the deploy mints (a real Administrator session — see
+[14-self-serve.md](./14-self-serve.md)) and can rotate the password later themselves.
+The signup path no longer resets it per VM: that reset cost a full CPU-throttled
+`bench frappe` boot (~28s under the 0.25-core cap) that dominated the deploy, and
+dropping it is the main latency win (14-self-serve.md).
 
 **Why bake the site, not `bench new-site` per signup.** The slow part of standing
 up a Frappe site — `bench new-site`'s schema-create + frappe-install, plus
 `install-app erpnext` — is per-site-invariant, so it is paid **once** here at bake
 time. A signup's `deploy-site.py` then does only the per-VM work — rename the baked
 site to the FQDN via `bench rename-site` — never that multi-minute path, and never a
-`set-admin-password` (the owner is handed the shared baked password and rotates it);
+`set-admin-password` (the owner signs in via the one-click `login_url` the deploy
+mints, and may rotate the baked password later themselves);
 see [14-self-serve.md](./14-self-serve.md).
 
 **Per-VM identity is the rename (Contract A, site mode).** The bake leaves the

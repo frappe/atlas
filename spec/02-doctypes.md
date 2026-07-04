@@ -507,7 +507,7 @@ deletion.
 | `clone_source_rootfs` | Data                       |      | Y         |         | Internal, hidden. On-host snapshot rootfs to seed this VM's disk from (clone). Empty for a normal image-backed VM. `set_only_once`, `no_copy`. |
 | `clone_source_data_rootfs` | Data                  |      | Y         |         | Internal, hidden. On-host data-disk snapshot to seed this VM's data disk from (clone). Empty for a normal VM. `set_only_once`, `no_copy`. |
 | `warm_snapshot`    | Link → Virtual Machine Snapshot |    | Y         |         | Internal, hidden. The `Warm` snapshot this VM restores from (provision stages the memory pair + MMDS identity; see [05 § Warm snapshot fan-out](./05-virtual-machine-lifecycle.md#warm-snapshot-fan-out-one-golden-n-restored-clones)). Empty for every ordinary VM. `set_only_once`, `no_copy`. |
-| `build_mode`       | Select (`site`/`admin`)       |      | Y         |         | Internal, hidden. The bench bake mode this VM should deploy in — carried build VM → snapshot → clone, OR inherited from the base image when the VM is created from a promoted bench golden (`set_build_mode_default`) — so first-boot `deploy_site` maps the FQDN to the baked site (`site`) or the admin console (`admin`). Empty for an ordinary image-backed VM (treated as `site`). `set_only_once`, `no_copy`. See [08-images.md § golden bench image](./08-images.md#the-golden-bench-image-self-serve). |
+| `build_mode`       | Select (`site`/`admin`)       |      | Y         |         | Internal, hidden. The bench bake mode this VM should deploy in — carried build VM → snapshot → clone, OR inherited from the base image when the VM is created from a promoted bench golden (`set_build_mode_default`) — so first-boot `deploy_site` maps the FQDN to the baked site (`site`) or the admin console (`admin`). Empty for an ordinary image-backed VM (treated as `site`). `set_only_once`, `no_copy`. See [08-images.md § golden bench image](./08-images.md#the-golden-bench-image-self-serve). The bench *front door* (subdomain, login URL) lives on the [Pilot](#pilot) that owns a bench VM, not on the VM itself. |
 | `ipv6_address`     | Data                          |      | Y         |         | From the server's /124. Set in `before_insert`.                  |
 | `public_ipv4`      | Data                          |      | Y         |         | The attached public IPv4, denormalized from the `Reserved IP` row whose `virtual_machine` points here. Empty until one is attached. Maintained by `Reserved IP.attach()` / `detach()` (and cleared on terminate); never hand-edited. See [Reserved IP](#reserved-ip) and [06-networking.md](./06-networking.md). |
 | `mac_address`      | Data                          |      | Y         |         | Derived from `name`. Set in `before_validate`.                   |
@@ -1522,7 +1522,8 @@ proxy map it creates once serving) and **not** the
 | `status`        | Select                 |      | Y         | `Pending` → `Provisioning` → `Deploying` → `Running` / `Failed` / `Terminated`. Controller-written. `Running` is reached **only** on an observed HTTP 200 from the guest `:80` (Contract B), not when the backing VM boots. |
 | `virtual_machine` | Link → Virtual Machine |    | Y         | `set_only_once`. The backing VM, cloned from the golden bench snapshot by the background job (the user never picks it). |
 | `subdomain_doc` | Link → Subdomain       |      | Y         | The proxy-map row the site created once it began serving. Deleting it (or the Site) takes the site off the front door. |
-| `admin_password` | Password              |      | Y         | The Frappe Administrator password handed to the tenant — the **shared baked throwaway** (`Site.BAKED_ADMIN_PASSWORD`, in lockstep with build.sh; the deploy no longer resets it per VM, and the tenant rotates it after first login). The db root password is baked + shared too. Stored encrypted; surfaced to Central (the `site.status_changed` Running event + `get_site` poll) so the tenant can sign in. Controller-written. |
+| `login_url` | Small Text            |      | Y         | The one-click Administrator session URL handed to the tenant instead of a password — minted by `deploy-site.py` (`bench browse --user Administrator --session-end`, a real 24h session) and stamped before the readiness wait. `no_copy`. The baked Administrator password is a long random secret generated at bake time and never surfaced (the tenant may rotate it later themselves). Surfaced to Central (the `site.status_changed` Running event + `get_site` poll) once the site is Running; before then it is empty (no handoff yet). Regenerated on demand via `regenerate_login_url()` when expired. Controller-written. |
+| `login_url_expires_at` | Datetime         |      | Y         | When `login_url` stops working — mint time + the session's 24h TTL (1440 min). `no_copy`. Stamped alongside `login_url` before the readiness wait; empty until the site is Running. Central compares against it to decide "use it" vs "regenerate". Controller-written. |
 
 The `tenant` link is the attribution key (Central, [16-central.md](./16-central.md));
 Atlas stamps no end-user `owner` scoping.
@@ -1562,6 +1563,59 @@ the operator token). No end-user role or row-level scoping.
 
 - Columns: `subdomain`, `status`.
 - Standard filters: `status`.
+
+## Pilot
+
+The bench analogue of [Site](#site): a tenant-owned bench environment fronted at a
+subdomain, backed by a [Virtual Machine](#virtual-machine) it creates from a bench
+image. A `Pilot` exists so the *bench provision* (boot a bench image, deploy
+in-guest, mint the one-click login URL) lives OFF the Virtual Machine — the VM stays
+a pure microVM lifecycle. The Pilot owns its VM (creates it in `after_insert`, tears
+it down on `terminate`) and holds the bench front door (subdomain, login URL);
+plain VM facts (ipv6, sizing) are read *through* the `virtual_machine` link, never
+copied onto the Pilot row.
+
+Like a Site, a Pilot is **not** the [Subdomain](#subdomain) (the proxy map) — it
+**creates** one once its backing VM has booted and deployed, so the proxy routes
+`<subdomain>.<region domain>` → the backing VM's public /128. That row is linked back
+as `subdomain_doc` and deleted on `terminate`, exactly as a Site does.
+
+Central still talks to Atlas in **VM terms**: it calls `create_vm`
+([16-central.md](./16-central.md)), which creates a Pilot under the hood, and
+mirrors a VM-shaped row. The bench fields (`gateway_url`, `login_url`, its expiry)
+are read back through the Pilot; a Pilot reports lifecycle changes AS its backing VM
+(a `vm.status_changed` event carrying the login handoff — see `on_pilot_update`).
+
+### Fields
+
+| Field           | Type                   | Reqd | Read-only | Notes                                                       |
+| --------------- | ---------------------- | ---- | --------- | ----------------------------------------------------------- |
+| `name`          | the FQDN               | Y    | Y         | Primary key, built in `autoname()` as `<subdomain>.<region domain>` (Contract A), the same routing string a Site derives. |
+| `subdomain`     | Data                   | Y    |           | The bare DNS label Central chose (`acme`). `set_only_once`. Same Contract-A rules as a Site's subdomain (single label, no dots, lowercase, ≤63 chars, reserved denylist). |
+| `tenant`        | Link → Tenant          |      | Y         | `set_only_once`. The Central team this pilot belongs to, stamped by `create_vm`. |
+| `status`        | Select                 |      | Y         | `Pending` → `Running` / `Failed` / `Terminated`. Controller-written. `Running` is reached only after the backing VM boots and the in-guest deploy mints the login URL. |
+| `build_mode`    | Data                   |      | Y         | `set_only_once`. The bench front door mode inherited from the backing VM's image (`admin` / `site`); drives the login-URL mint mode + TTL. |
+| `virtual_machine` | Link → Virtual Machine |    | Y         | `set_only_once`. The VM this pilot boots and deploys into, created in `after_insert`. |
+| `subdomain_doc` | Link → Subdomain       |      | Y         | The proxy-map row the pilot created once its backing VM booted and deployed. Deleting it (or the Pilot) takes the pilot off the front door. Same routing entry a Site creates. |
+| `login_url`     | Small Text             |      | Y         | The one-click sign-in URL minted after boot (`bench generate-admin-session` in admin mode, `bench browse` in site mode). Short-lived — see `login_url_expires_at`; regenerated on demand via `regenerate_login_url()`. `no_copy`. Surfaced to Central once the pilot is Running. Controller-written. |
+| `login_url_expires_at` | Datetime        |      | Y         | When `login_url` stops working — mint time + the mode's TTL (5 min for admin's single-use JWT, 24h for a site session). `no_copy`. Central compares against it to decide "use it" vs "regenerate". |
+
+`gateway_url` (`https://<subdomain>.<region domain>`) is a **derived property**, not
+a stored field — the URL Central deep-links the pilot at, mirroring a Site's `url`.
+
+### Lifecycle
+
+`before_insert` validates the label; `after_insert` creates the backing VM
+synchronously (so `create_vm` can return its identity) and enqueues the background
+job, which waits for the VM to boot (its own auto-provision), runs the in-guest
+deploy to mint the login URL, creates the `Subdomain` (proxy route), then marks the
+pilot `Running`. `terminate` deletes the `Subdomain` (proxy stops routing) and tears
+down the backing VM. Full flow in [14-self-serve.md](./14-self-serve.md).
+
+### Permissions
+
+`System Manager` only (operator/Central-facing). No end-user role or row-level
+scoping.
 
 ## Image Build
 

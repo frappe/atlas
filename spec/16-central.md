@@ -143,8 +143,8 @@ queryable history.
 The event types: `vm.created` / `vm.status_changed` / `vm.deleted`,
 `site.created` / `site.status_changed`, `snapshot.completed`, and
 `server.status_changed`. The **`site.status_changed` for `Running`** carries the
-tenant handoff in its payload — the live `url` and the baked `admin_password`
-([14-self-serve.md](./14-self-serve.md)); earlier site transitions carry neither
+tenant handoff in its payload — the live `url`, the one-click `login_url` and its
+`login_url_expires_at` ([14-self-serve.md](./14-self-serve.md)); earlier site transitions carry neither
 (there is no handoff to give yet). `atlas.atlas.api.site.get_site(name)` is the
 poll equivalent of the site events, returning the same shape for Central to
 self-heal a missed delivery.
@@ -191,8 +191,16 @@ list periodically to correct drift. Atlas exposes one operator-only read for thi
 
 | Central call | Atlas method | Returns |
 | --- | --- | --- |
-| reconcile mirror | `atlas.atlas.api.inventory.tenant_vms(team?)` | `[ { name, team, status, gateway_url } ]` |
+| reconcile mirror | `atlas.atlas.api.inventory.tenant_vms(team?)` | `[ { name, team, status, gateway_url, login_url, login_url_expires_at } ]` |
 
 It returns every tenant-tagged VM (optionally scoped to one `team`);
-untenanted operator VMs are never returned. This is the only Central→Atlas read;
-all Central→Atlas *writes* reuse the existing whitelisted VM controller methods.
+untenanted operator VMs are never returned. The wire shape stays **VM-shaped**, but
+a bench VM's front door lives on the [Pilot](./02-doctypes.md#pilot) that owns it:
+the handoff (`gateway_url` — the derived `https://<subdomain>.<region domain>` — plus
+`login_url` and `login_url_expires_at`) is read *through* that Pilot, and is present
+once the Pilot is `Running`; before then, and for an ordinary (non-bench) VM with no
+Pilot, those are `None`. Because a bench `login_url` is a 5-minute single-use admin
+session, Central re-mints it on **Open** (`get_bench_link`) when the stored URL has
+expired, via the whitelisted `Pilot.regenerate_login_url()` method (which returns the
+same VM-shaped payload). This is the only Central→Atlas read; all Central→Atlas
+*writes* reuse the existing whitelisted controller methods.
