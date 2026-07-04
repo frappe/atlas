@@ -73,7 +73,7 @@ class ProvisionInputs(TaskInputs):
 	vcpus: int
 	memory_mb: int
 	disk_gb: int  # final rootfs size for this VM
-	ssh_public_key: str  # injected into the rootfs
+	ssh_public_key: str  # tenant/operator keys injected into the rootfs
 	# --- DERIVED flags. Every field below is a controller-allocated value, NOT
 	# defaultable: a wrong value mis-wires the jail/network. They stay REQUIRED; the
 	# break-glass ergonomic is the `help=` recipe naming the atlas.networking function
@@ -167,9 +167,13 @@ class ProvisionInputs(TaskInputs):
 
 def main() -> None:
 	inputs = ProvisionInputs.from_args()
-	server_key = open("/root/.ssh/id_ed25519.pub")
-	ssh_public_key = inputs.ssh_public_key+"\n# DO NOT REMOVE BELOW LINE, IT IS REQUIRED FOR IPv4 ACCESS\n"+server_key.read()
-	server_key.close()
+	with open("/root/.ssh/id_ed25519.pub") as server_key_file:
+		server_public_key = server_key_file.read().strip()
+	ssh_public_key = "\n".join(
+		part.strip()
+		for part in (inputs.ssh_public_key, server_public_key)
+		if part.strip()
+	)
 	pool = ThinPool()
 	paths = VirtualMachinePaths(inputs.virtual_machine_name)
 	image = image_directory(inputs.image_name)

@@ -40,7 +40,7 @@ class RebuildInputs(TaskInputs):
 	virtual_machine_ipv6: str  # injected into the rootfs network env
 	ipv4_guest_cidr: str  # guest side of the NAT44 /30, injected into the env
 	ipv4_gateway: str  # host side of the /30 (no mask), the guest's v4 gw
-	ssh_public_key: str  # injected into authorized_keys
+	ssh_public_key: str  # tenant/operator keys injected into authorized_keys
 	atlas_fc_uid: int  # per-VM uid; the rebuilt rootfs is chowned back to it
 	# Host side of the NAT44 /30. Rebuild does NOT touch network.env (the unit's
 	# host-side networking is unchanged), so this is not consumed here — but the
@@ -101,12 +101,19 @@ def main() -> None:
 	# atlas-vm-<uuid> is neither, so this is allowed.
 	disk.remove()
 	prepare_lv(origin, disk, inputs.disk_gb)
+	with open("/root/.ssh/id_ed25519.pub") as server_key_file:
+		server_public_key = server_key_file.read().strip()
+	authorized_keys = "\n".join(
+		key.strip()
+		for key in (inputs.ssh_public_key, server_public_key)
+		if key.strip()
+	)
 	inject_identity(
 		disk.device_path,
 		Identity(
 			uuid=inputs.virtual_machine_name,
 			ipv6_address=inputs.virtual_machine_ipv6,
-			ssh_public_key=inputs.ssh_public_key,
+			ssh_public_key=authorized_keys,
 			ipv4_guest_cidr=inputs.ipv4_guest_cidr,
 			ipv4_gateway=inputs.ipv4_gateway,
 			# Re-establish the data-disk fstab line in the fresh rootfs (empty when
