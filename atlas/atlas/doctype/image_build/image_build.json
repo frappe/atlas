@@ -33,13 +33,13 @@
    "label": "Overview"
   },
   {
-   "description": "Which image to bake. The recipe names the committed source tree, the build entrypoint, the build-VM sizing, and (bench variants) the Frappe/ERPNext/Python version pins (atlas.atlas.image_recipes). bench-v16 is the current site line; bench-v15/-nightly are the other site versions; the -admin variants bake the bench-cli admin console (no site); proxy is the reverse-proxy image. Keep in lockstep with image_recipes.recipe_names().",
+   "description": "Which image to bake. The recipe names the committed source tree, the build entrypoint, the build-VM sizing, and (bench variants) the Frappe/ERPNext/Python version pins (atlas.atlas.image_recipes). bench-v16 is the current site line; bench-v15/-nightly are the other site versions; the -admin variants bake the bench-cli admin console (no site); proxy is the reverse-proxy image; sshpiper is the dedicated SSH ingress image. Keep in lockstep with image_recipes.recipe_names().",
    "fieldname": "recipe",
    "fieldtype": "Select",
    "in_list_view": 1,
    "in_standard_filter": 1,
    "label": "Recipe",
-   "options": "bench-v16\nbench-v15\nbench-nightly\nbench-v16-admin\nbench-v15-admin\nbench-nightly-admin\nproxy",
+   "options": "bench-v16\nbench-v15\nbench-nightly\nbench-v16-admin\nbench-v15-admin\nbench-nightly-admin\nproxy\nsshpiper",
    "reqd": 1,
    "set_only_once": 1
   },
@@ -67,7 +67,7 @@
   },
   {
    "default": "Draft",
-   "description": "Draft → Provisioning → Building → Snapshotting → Available / Failed.",
+   "description": "Draft \u2192 Provisioning \u2192 Building \u2192 Snapshotting \u2192 Available / Failed.",
    "fieldname": "status",
    "fieldtype": "Select",
    "in_list_view": 1,
@@ -92,7 +92,7 @@
   },
   {
    "default": "1",
-   "description": "If set and the recipe supports it, wire the produced snapshot into Atlas Settings on success (bench → default_bench_snapshot). Ignored by recipes with nothing to register (proxy).",
+   "description": "If set and the recipe supports it, wire the produced snapshot into Atlas Settings on success (bench \u2192 default_bench_snapshot). Ignored by recipes with nothing to register (proxy/sshpiper).",
    "fieldname": "auto_register",
    "fieldtype": "Check",
    "label": "Auto-register snapshot"
@@ -126,7 +126,7 @@
    "read_only": 1
   },
   {
-   "description": "The output: the snapshot site/proxy VMs clone from.",
+   "description": "The output snapshot infrastructure or site VMs clone from.",
    "fieldname": "snapshot",
    "fieldtype": "Link",
    "in_list_view": 1,
@@ -147,7 +147,7 @@
    "read_only": 1
   },
   {
-   "description": "The resolved input commits (frappe / erpnext / bench-cli SHAs) the bake actually built from, harvested from the build Task. Matters most for the nightly variant, whose develop branches float — this pins what a given nightly image really is.",
+   "description": "The resolved input commits (frappe / erpnext / bench-cli SHAs) the bake actually built from, harvested from the build Task. Matters most for the nightly variant, whose develop branches float \u2014 this pins what a given nightly image really is.",
    "fieldname": "build_inputs",
    "fieldtype": "Code",
    "label": "Build Inputs",
@@ -163,7 +163,7 @@
   }
  ],
  "links": [],
- "modified": "2026-06-11 00:00:00.000000",
+ "modified": "2026-07-04 18:58:30.812829",
  "modified_by": "Administrator",
  "module": "Atlas",
  "name": "Image Build",

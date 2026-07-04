@@ -86,8 +86,20 @@ class VirtualMachine(Document):
 
 	@property
 	def ssh_command(self) -> str:
-		server_addr = frappe.db.get_value("Server", self.server, "ipv4_address")
-		return f"ssh {self.title}@{server_addr}"
+		if self.is_sshpiper:
+			return f"ssh -p 222 root@{self.ipv6_address}" if self.ipv6_address else ""
+		gateway_ipv4 = frappe.db.get_value(
+			"Virtual Machine",
+			{
+				"server": self.server,
+				"is_sshpiper": 1,
+				"sshpiper_configured": 1,
+				"status": "Running",
+				"public_ipv4": ["is", "set"],
+			},
+			"public_ipv4",
+		)
+		return f"ssh {self.title}@{gateway_ipv4}" if gateway_ipv4 else ""
 
 	@ssh_command.setter
 	def ssh_command(self, _value: object) -> None:
@@ -190,6 +202,13 @@ class VirtualMachine(Document):
 		for field in guarded:
 			if getattr(self, field) != getattr(original, field):
 				frappe.throw(f"{field} is immutable after insert")
+
+	@frappe.whitelist()
+	def configure_sshpiper(self) -> str:
+		"""Inject this ingress VM's gateway credentials and start SSHPiper."""
+		from atlas.atlas.sshpiper import configure_gateway
+
+		return configure_gateway(self.name)
 
 	@frappe.whitelist()
 	def provision(self) -> str:

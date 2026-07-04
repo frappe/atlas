@@ -58,6 +58,7 @@ class ImageBuild(Document):
 			"bench-v15-admin",
 			"bench-nightly-admin",
 			"proxy",
+			"sshpiper",
 		]
 		server: DF.Link
 		snapshot: DF.Link | None
@@ -206,7 +207,7 @@ def run(image_build_name: str) -> None:
 		# would otherwise snapshot clean and break a customer at first login. A miss
 		# raises → the except below marks the build Failed, no snapshot. Proxy builds
 		# bake no Frappe site, so they keep their own in-build health check.
-		if not recipe.is_proxy:
+		if not (recipe.is_proxy or recipe.is_sshpiper):
 			bench_image.sanity_check(vm_name)
 		_set_status(build, "Snapshotting")
 		if build.warm:
@@ -273,6 +274,7 @@ def _provision_build_vm(build, recipe) -> str:
 			"disk_gigabytes": recipe.disk_gigabytes,
 			"ssh_public_key": ssh_public_key,
 			"is_proxy": 1 if recipe.is_proxy else 0,
+			"is_sshpiper": 1 if recipe.is_sshpiper else 0,
 			# Stamp the bake mode (bench recipes only; empty for proxy). It rides the
 			# build VM → its snapshot → a clone, so a customer VM's first boot maps its
 			# FQDN to the baked site (site) or the admin console (admin) — spec/08.

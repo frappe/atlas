@@ -9,7 +9,7 @@ from frappe.tests import IntegrationTestCase
 
 from atlas.atlas._ssh import runner
 from atlas.atlas._ssh.transport import Connection
-from atlas.atlas.ssh import connection_for_server, execute_task, run_task
+from atlas.atlas.ssh import connection_for_guest, connection_for_server, execute_task, run_task
 from atlas.tests.fixtures import make_provider, make_server
 
 CONNECTION = Connection(
@@ -145,6 +145,26 @@ class TestConnectionForServer(IntegrationTestCase):
 			frappe.db.set_single_value(
 				"Atlas Settings", "ssh_private_key_path", previous, update_modified=False
 			)
+
+
+class TestConnectionForGuest(IntegrationTestCase):
+	def test_regular_guest_uses_port_22(self) -> None:
+		vm = frappe._dict(name="vm", ipv6_address="2001:db8::1", sshpiper_configured=0)
+		with (
+			patch("atlas.get_ssh_private_key_path", return_value="/tmp/key"),
+			patch("atlas.atlas.secrets.get_ssh_key_from_disk", return_value="KEY"),
+		):
+			connection = connection_for_guest(vm)
+		self.assertEqual(connection.port, 22)
+
+	def test_configured_sshpiper_guest_uses_port_222(self) -> None:
+		vm = frappe._dict(name="gateway", ipv6_address="2001:db8::2", sshpiper_configured=1)
+		with (
+			patch("atlas.get_ssh_private_key_path", return_value="/tmp/key"),
+			patch("atlas.atlas.secrets.get_ssh_key_from_disk", return_value="KEY"),
+		):
+			connection = connection_for_guest(vm)
+		self.assertEqual(connection.port, 222)
 
 
 class TestExceptionWrapping(IntegrationTestCase):

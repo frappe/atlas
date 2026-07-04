@@ -56,7 +56,11 @@ def tree_uploads(recipe: ImageRecipe) -> list[tuple[Path, str]]:
 		if not entry.is_file():
 			continue
 		relative = entry.relative_to(source)
-		if relative.parts[0] in recipe.exclude or "__pycache__" in relative.parts:
+		if (
+			relative.parts[0] in recipe.exclude
+			or "__pycache__" in relative.parts
+			or ".git" in relative.parts
+		):
 			continue
 		uploads.append((entry, f"{recipe.remote_directory}/{relative.as_posix()}"))
 	return uploads

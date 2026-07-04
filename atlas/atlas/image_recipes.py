@@ -55,6 +55,7 @@ class ImageRecipe:
 	finalize: Callable | None = None
 	registers_as: str | None = None
 	is_proxy: bool = False
+	is_sshpiper: bool = False
 	# The in-guest script (inside source_directory, like build_entrypoint) that
 	# arms a WARM bake: bring the production stack up, pre-warm it with real
 	# HTTP, and install the identity freshen unit — run right before the paused
@@ -104,6 +105,16 @@ class ImageRecipe:
 		that leaves `build_mode` empty (proxy) is treated as site — the harmless
 		default (the proxy never threads a mode; only bench recipes do)."""
 		return self.build_mode or "site"
+
+
+def _finalize_sshpiper(virtual_machine, connection, key_path) -> tuple[str, str, int]:
+	"""Move the baked gateway's management sshd to 222 after build polling ends."""
+	return run_ssh(
+		connection,
+		key_path,
+		"sshd -t && systemctl restart ssh.service",
+		timeout_seconds=60,
+	)
 
 
 def _finalize_proxy(virtual_machine, connection, key_path) -> tuple[str, str, int]:
@@ -296,6 +307,21 @@ RECIPES: dict[str, "ImageRecipe"] = {
 		exclude=("test",),
 		finalize=_finalize_proxy,
 		is_proxy=True,
+	),
+	"sshpiper": ImageRecipe(
+		name="sshpiper",
+		title="SSHPiper ingress image",
+		source_directory="sshpiper",
+		build_entrypoint="build.sh",
+		remote_directory="/tmp/sshpiper-build",
+		disk_gigabytes=10,
+		memory_megabytes=512,
+		vcpus=1,
+		snapshot_title="sshpiper-image",
+		task_script="sshpiper-build",
+		exclude=("test",),
+		finalize=_finalize_sshpiper,
+		is_sshpiper=True,
 	),
 }
 

@@ -142,7 +142,12 @@ def connection_for_guest(virtual_machine) -> Connection:
 	if not virtual_machine.ipv6_address:
 		frappe.throw(f"Virtual Machine {virtual_machine.name} has no ipv6_address; cannot SSH to the guest")
 	path = atlas.get_ssh_private_key_path()
-	return Connection(host=virtual_machine.ipv6_address, ssh_private_key=get_ssh_key_from_disk(path))
+	port = 222 if getattr(virtual_machine, "sshpiper_configured", False) else 22
+	return Connection(
+		host=virtual_machine.ipv6_address,
+		ssh_private_key=get_ssh_key_from_disk(path),
+		port=port,
+	)
 
 
 def _execute_into(

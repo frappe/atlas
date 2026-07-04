@@ -58,6 +58,10 @@ class TestImageBuildInsert(IntegrationTestCase):
 		build = _new_build("proxy")
 		self.assertEqual(build.title, "Reverse proxy image")
 
+	def test_sshpiper_recipe_inserts(self) -> None:
+		build = _new_build("sshpiper")
+		self.assertEqual(build.title, "SSHPiper ingress image")
+
 	def test_after_insert_enqueues_run(self) -> None:
 		with patch.object(image_build_module.frappe, "enqueue") as enqueue:
 			frappe.get_doc(
@@ -234,6 +238,17 @@ class TestImageBuildRun(IntegrationTestCase):
 		with patch.object(image_build_module.frappe, "enqueue"):
 			vm_name = image_build_module._provision_build_vm(build, get_recipe("proxy"))
 		self.assertFalse(frappe.db.get_value("Virtual Machine", vm_name, "build_mode"))
+
+	def test_provision_build_vm_sshpiper_has_gateway_role(self) -> None:
+		from atlas.atlas.image_recipes import get_recipe
+
+		frappe.db.set_single_value("Atlas Settings", "ssh_public_key", "ssh-ed25519 AAAA test")
+		build = _new_build("sshpiper")
+		with patch.object(image_build_module.frappe, "enqueue"):
+			vm_name = image_build_module._provision_build_vm(build, get_recipe("sshpiper"))
+		vm = frappe.get_doc("Virtual Machine", vm_name)
+		self.assertTrue(vm.is_sshpiper)
+		self.assertFalse(vm.is_proxy)
 
 	def test_records_build_inputs_from_task_stdout(self) -> None:
 		# _record_build_inputs harvests the ATLAS_BUILD_*= lines build.sh stamped into
