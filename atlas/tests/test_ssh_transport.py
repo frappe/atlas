@@ -51,7 +51,7 @@ class TestWaitForSsh(IntegrationTestCase):
 			with patch("atlas.atlas._ssh.transport.run_ssh", return_value=("", "", 0)):
 				with patch("atlas.atlas._ssh.transport.time.sleep"):
 					wait_for_ssh(CONNECTION, timeout_seconds=10)
-		forget.assert_called_once_with(CONNECTION)
+		forget.assert_called_once_with(CONNECTION.host)
 
 	def test_times_out_when_never_ready(self) -> None:
 		with patch(
@@ -364,21 +364,6 @@ class TestRunSsh(IntegrationTestCase):
 		self.assertEqual(args[override - 1], "-o")
 		self.assertEqual(args[-1], "true")
 
-	def test_non_default_port_uses_ssh_lowercase_p(self) -> None:
-		connection = Connection(host=CONNECTION.host, ssh_private_key=CONNECTION.ssh_private_key, port=222)
-		captured = {}
-
-		def capture(args, **kwargs):
-			captured["args"] = list(args)
-			return _ok(args, **kwargs)
-
-		with patch("atlas.atlas._ssh.transport.subprocess.run", side_effect=capture):
-			run_ssh(connection, "/tmp/key", "true", timeout_seconds=30)
-
-		args = captured["args"]
-		self.assertEqual(args[args.index("-p") + 1], "222")
-		self.assertEqual(args[-2], "root@10.0.0.1")
-
 	def test_no_extra_options_leaves_argv_at_defaults(self) -> None:
 		captured = {}
 
@@ -403,21 +388,6 @@ class TestRunScp(IntegrationTestCase):
 			with self.assertRaises(frappe.ValidationError) as raised:
 				run_scp(CONNECTION, "/tmp/key", "/local/a", "/remote/a", timeout_seconds=30)
 		self.assertIn("permission denied", str(raised.exception))
-
-	def test_non_default_port_uses_scp_uppercase_p(self) -> None:
-		connection = Connection(host=CONNECTION.host, ssh_private_key=CONNECTION.ssh_private_key, port=222)
-		captured = {}
-
-		def capture(args, **kwargs):
-			captured["args"] = list(args)
-			return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
-
-		with patch("atlas.atlas._ssh.transport.subprocess.run", side_effect=capture):
-			run_scp(connection, "/tmp/key", "/local/a", "/remote/a", timeout_seconds=30)
-
-		args = captured["args"]
-		self.assertEqual(args[args.index("-P") + 1], "222")
-		self.assertEqual(args[-1], "root@10.0.0.1:/remote/a")
 
 	def test_ipv4_destination_is_unbracketed(self) -> None:
 		captured = {}
@@ -530,22 +500,6 @@ class TestForgetHost(IntegrationTestCase):
 				with patch("atlas.atlas._ssh.transport.subprocess.run", side_effect=capture):
 					forget_host("[2400:6180:100:d0:0:1:517f:8002]")
 			self.assertEqual(captured["args"][2], "2400:6180:100:d0:0:1:517f:8002")
-
-	def test_non_default_port_removes_bracketed_known_hosts_entry(self) -> None:
-		with tempfile.TemporaryDirectory() as temp_directory:
-			fake_path = Path(temp_directory) / "known_hosts"
-			fake_path.write_text("")
-			captured: dict = {}
-
-			def capture(args, **kwargs):
-				captured["args"] = list(args)
-				return _ok(args, **kwargs)
-
-			connection = Connection(host="10.0.0.1", ssh_private_key=CONNECTION.ssh_private_key, port=222)
-			with patch("atlas.atlas._ssh.transport.KNOWN_HOSTS_PATH", fake_path):
-				with patch("atlas.atlas._ssh.transport.subprocess.run", side_effect=capture):
-					forget_host(connection)
-		self.assertEqual(captured["args"][2], "[10.0.0.1]:222")
 
 	def test_swallows_missing_ssh_keygen(self) -> None:
 		with tempfile.TemporaryDirectory() as temp_directory:

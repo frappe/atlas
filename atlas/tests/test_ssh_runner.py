@@ -124,45 +124,6 @@ class TestConnectionForServer(IntegrationTestCase):
 			connection_for_server(server)
 		self.assertIn("no ipv4_address", str(raised.exception))
 
-	def test_server_connections_use_host_ssh_port(self) -> None:
-		provider = make_provider("port-provider")
-		server = make_server(
-			provider=provider,
-			title="port-server",
-			ipv4_address="10.0.0.42",
-			provider_resource_id="889",
-		)
-		previous = frappe.db.get_single_value("Atlas Settings", "ssh_private_key_path")
-		try:
-			frappe.db.set_single_value("Atlas Settings", "ssh_private_key_path", "/tmp/atlas-test-key", update_modified=False)
-			with patch("atlas.atlas.secrets.get_ssh_key_from_disk", return_value="KEY"):
-				connection = connection_for_server(server)
-		finally:
-			frappe.db.set_single_value("Atlas Settings", "ssh_private_key_path", previous, update_modified=False)
-
-		self.assertEqual(connection.host, "10.0.0.42")
-		self.assertEqual(connection.port, 222)
-
-	def test_pre_bootstrap_server_connections_use_initial_cloud_ssh_port(self) -> None:
-		provider = make_provider("pre-bootstrap-port-provider")
-		server = make_server(
-			provider=provider,
-			title="pre-bootstrap-port-server",
-			ipv4_address="10.0.0.43",
-			provider_resource_id="890",
-			status="Bootstrapping",
-		)
-		previous = frappe.db.get_single_value("Atlas Settings", "ssh_private_key_path")
-		try:
-			frappe.db.set_single_value("Atlas Settings", "ssh_private_key_path", "/tmp/atlas-test-key", update_modified=False)
-			with patch("atlas.atlas.secrets.get_ssh_key_from_disk", return_value="KEY"):
-				connection = connection_for_server(server)
-		finally:
-			frappe.db.set_single_value("Atlas Settings", "ssh_private_key_path", previous, update_modified=False)
-
-		self.assertEqual(connection.host, "10.0.0.43")
-		self.assertEqual(connection.port, 22)
-
 	def test_raises_when_atlas_settings_has_no_ssh_private_key_path(self) -> None:
 		# connection_for_server now reads ssh_private_key_path from Atlas
 		# Settings (not from Server Provider). Clear the field temporarily
