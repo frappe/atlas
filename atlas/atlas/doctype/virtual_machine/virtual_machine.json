@@ -250,8 +250,7 @@
    "fieldname": "ssh_public_key",
    "fieldtype": "Long Text",
    "label": "SSH Public Key",
-   "reqd": 1,
-   "set_only_once": 1
+   "reqd": 1
   },
   {
    "fieldname": "ssh_command",
@@ -370,7 +369,7 @@
   }
  ],
  "links": [],
- "modified": "2026-06-24 18:47:31.697372",
+ "modified": "2026-07-04 20:05:01.494815",
  "modified_by": "Administrator",
  "module": "Atlas",
  "name": "Virtual Machine",
