@@ -62,8 +62,8 @@ def configure_gateway(virtual_machine: str) -> str:
 	)
 	env = (
 		f'ATLAS_URL="{get_url().rstrip("/")}"\n'
-		+ f'SSHPIPER_GATEWAY="{vm.name}"\\n'
-		+ f'SSHPIPER_API_KEY="{token}"\\n'
+		+ f'SSHPIPER_GATEWAY="{vm.name}"\n'
+		+ f'SSHPIPER_API_KEY="{token}"\n'
 	)
 	with ssh_key_file(connection.ssh_private_key) as key_path:
 		_write_guest_file(connection, key_path, _KEY_FILE, private_key, "0600", make_dir="/etc/atlas")
