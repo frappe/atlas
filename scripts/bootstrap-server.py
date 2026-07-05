@@ -273,20 +273,20 @@ def _install_firecracker(version: str, architecture: str) -> None:
 
 def _ensure_server_ssh_key() -> None:
 	"""Keep the host-to-guest key pair required by provision-vm.py."""
-	run("sudo", "install", "-d", "-m", "0700", "-o", "root", "-g", "root", "/root/.ssh")
+	run("sudo install -d -m 0700 -o root -g root /root/.ssh")
 	run(
-		"sudo",
-		"sh",
-		"-c",
-		"if [ ! -f /root/.ssh/id_ed25519 ]; then "
-		"ssh-keygen -q -t ed25519 -f /root/.ssh/id_ed25519 -N ''; "
-		"elif [ ! -f /root/.ssh/id_ed25519.pub ]; then "
-		"ssh-keygen -y -f /root/.ssh/id_ed25519 > /root/.ssh/id_ed25519.pub; "
-		"fi; "
-		"chmod 0600 /root/.ssh/id_ed25519; "
-		"chmod 0644 /root/.ssh/id_ed25519.pub",
-	)
+		"sudo sh -c {}",
+		"""
+		if [ ! -f /root/.ssh/id_ed25519 ]; then
+			ssh-keygen -q -t ed25519 -f /root/.ssh/id_ed25519 -N ''
+		elif [ ! -f /root/.ssh/id_ed25519.pub ]; then
+			ssh-keygen -y -f /root/.ssh/id_ed25519 > /root/.ssh/id_ed25519.pub
+		fi
 
+		chmod 0600 /root/.ssh/id_ed25519
+		chmod 0644 /root/.ssh/id_ed25519.pub
+		""",
+	)
 
 def main() -> None:
 	inputs = BootstrapInputs.from_args()
@@ -347,9 +347,8 @@ def main() -> None:
 	#    deviation, see spec/03-bootstrapping.md "Host hardening").
 	install_file(SSHD_CONF, "/etc/ssh/sshd_config.d/60-atlas.conf", mode="0644")
 	# Validate BEFORE reload so a bad drop-in can never brick SSH (fail loud).
-	run("sudo", "sshd", "-t")
-	# restart, dont reload. only way port change is done
-	run("sudo", "systemctl", "restart", "ssh")
+	run("sudo sshd -t")
+	run("sudo systemctl reload ssh")
 
 	# 6. Kernel-module blocklist (CIS 1.1.1 filesystems + 3.2 network protocols).
 	#    `install <m> /bin/false` defeats modprobe; `blacklist` covers autoload.
