@@ -13,7 +13,7 @@
 				<button
 					v-for="r in resources"
 					:key="r.key"
-					class="bg-transparent border-0 p-0 font-mono text-xs uppercase tracking-wider cursor-pointer hover:text-ink-gray-9 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink-gray-9 focus-visible:rounded-sm"
+					class="bg-transparent border-0 p-0 font-mono text-xs uppercase tracking-wider cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink-gray-9 focus-visible:rounded-sm"
 					:class="active === r.key ? 'text-ink-gray-9' : 'text-ink-gray-5'"
 					@click="active = r.key"
 				>
@@ -66,7 +66,7 @@ const dist = computed(() => sizeDistribution(props.state, active.value));
 const totalLabel = computed(() => {
 	const t = dist.value.buckets.reduce((n, b) => n + b.weight, 0);
 	const rounded = t >= 100 ? Math.round(t) : Math.round(t * 10) / 10;
-	return `${dist.value.total} machines · ${rounded.toLocaleString()} ${dist.value.unit}`;
+	return `${rounded.toLocaleString()} ${dist.value.unit}`;
 });
 
 // Fill length as a % of the fullest range's weight — so the heaviest range fills

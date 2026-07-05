@@ -33,7 +33,10 @@ media.addEventListener("change", apply);
 
 apply();
 
-// Cycle system → light → dark → system, for the header button.
+// Flip light ↔ dark, for the header button. The FIRST click resolves the current
+// on-screen theme (which may be 'system') to a concrete light/dark and toggles
+// from there, so there's no dead press. 'system' remains the seeded default and
+// the persisted value until the user first touches the toggle.
 export function cycleMode() {
-	mode.value = { system: "light", light: "dark", dark: "system" }[mode.value];
+	mode.value = resolved(mode.value) === "dark" ? "light" : "dark";
 }

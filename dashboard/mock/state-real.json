@@ -1,12 +1,13 @@
 {
   "host": {
     "hostname": "f2-aditya-blr3",
-    "collected_at": "2026-07-04T15:01:22Z",
+    "collected_at": "2026-07-05T11:24:27Z",
     "firecracker_version": "v1.16.0",
     "jailer_version": "v1.16.0",
     "kernel_version": "6.8.0-88-generic",
     "linux": "Ubuntu 24.04.3 LTS",
     "architecture": "x86_64",
+    "cpu_model": "AMD EPYC 4245P 6-Core Processor",
     "python_version": "Python 3.14.3",
     "uplink": "enp3s0f0np0",
     "cpu_total": 12,
@@ -31,9 +32,10 @@
     "vg": "atlas",
     "pool": "pool0",
     "backing": "device",
-    "size": "<886.24g",
-    "data_percent": 14.02,
-    "metadata_percent": 5.9
+    "backing_device": "/dev/md2",
+    "size": "886.24g",
+    "data_percent": 14.36,
+    "metadata_percent": 6.35
   },
   "virtual_machines": [
     {
@@ -55,15 +57,19 @@
       "mem_mib": 2048,
       "cgroup_cpu_max": "200000 100000",
       "cgroup_memory_max": "2415919104",
-      "mem_used_mib": 611,
+      "cpu_cap_cores": 2,
+      "mem_cap_mib": 2304,
+      "mem_used_mib": 540,
       "cpu_pct": null,
       "disk_lv": "atlas-vm-0cc727b2-0b16-409e-9cf8-ba647848a315",
       "disk_origin": "atlas-snap-mjmdd1p7fb",
-      "disk_data_percent": 23.41,
+      "disk_data_percent": 23.5,
+      "disk_size_bytes": 30064771072,
+      "disk_used_bytes": 7065221201,
       "has_data_disk": false,
       "has_snapshot": true,
       "migrating": false,
-      "log_size": "12.5k"
+      "log_size": "0"
     },
     {
       "uuid": "16d2278c-0fc0-47d2-ab63-65f8ffc7bd29",
@@ -84,15 +90,52 @@
       "mem_mib": 2048,
       "cgroup_cpu_max": "200000 100000",
       "cgroup_memory_max": "2415919104",
-      "mem_used_mib": 607,
+      "cpu_cap_cores": 2,
+      "mem_cap_mib": 2304,
+      "mem_used_mib": 530,
       "cpu_pct": null,
       "disk_lv": "atlas-vm-16d2278c-0fc0-47d2-ab63-65f8ffc7bd29",
       "disk_origin": "atlas-snap-mjmdd1p7fb",
-      "disk_data_percent": 23.41,
+      "disk_data_percent": 23.5,
+      "disk_size_bytes": 30064771072,
+      "disk_used_bytes": 7065221201,
       "has_data_disk": false,
       "has_snapshot": true,
       "migrating": false,
-      "log_size": "12.5k"
+      "log_size": "0"
+    },
+    {
+      "uuid": "185340ec-38da-4dd0-b59d-b97cab8df68f",
+      "state": "Running",
+      "ipv6": "2001:bc8:1203:15::2c",
+      "ipv4_guest": "100.64.0.178",
+      "ipv4_host": "100.64.0.177",
+      "reserved_ipv4": null,
+      "mac": "06:00:18:53:40:ec",
+      "tap_device": "atlas-185340ec3",
+      "host_veth": "atlas-h185340e",
+      "namespace_veth": "atlas-n185340e",
+      "netns": "atlas-185340ec38da",
+      "fc_uid": 234176,
+      "private_ipv6": null,
+      "image": null,
+      "vcpus": 1,
+      "mem_mib": 2048,
+      "cgroup_cpu_max": "100000 100000",
+      "cgroup_memory_max": "2415919104",
+      "cpu_cap_cores": 1,
+      "mem_cap_mib": 2304,
+      "mem_used_mib": 2046,
+      "cpu_pct": null,
+      "disk_lv": "atlas-vm-185340ec-38da-4dd0-b59d-b97cab8df68f",
+      "disk_origin": "atlas-image-bench-nightly-admin-develop",
+      "disk_data_percent": 100,
+      "disk_size_bytes": 30064771072,
+      "disk_used_bytes": 30064771072,
+      "has_data_disk": false,
+      "has_snapshot": false,
+      "migrating": false,
+      "log_size": "9.6k"
     },
     {
       "uuid": "1a597770-dc20-4967-a63d-dc22d66af690",
@@ -113,15 +156,19 @@
       "mem_mib": 2048,
       "cgroup_cpu_max": null,
       "cgroup_memory_max": null,
+      "cpu_cap_cores": null,
+      "mem_cap_mib": null,
       "mem_used_mib": null,
       "cpu_pct": null,
       "disk_lv": "atlas-vm-1a597770-dc20-4967-a63d-dc22d66af690",
       "disk_origin": "atlas-image-ubuntu-24.04-minimal",
       "disk_data_percent": 21.17,
+      "disk_size_bytes": 30064771072,
+      "disk_used_bytes": 6364712035,
       "has_data_disk": false,
       "has_snapshot": false,
       "migrating": false,
-      "log_size": "10.7k"
+      "log_size": "0"
     },
     {
       "uuid": "1ad6f74b-c8d3-46ab-bee4-b53ce3fb87e5",
@@ -142,15 +189,19 @@
       "mem_mib": 2048,
       "cgroup_cpu_max": "100000 100000",
       "cgroup_memory_max": "2415919104",
-      "mem_used_mib": 1265,
+      "cpu_cap_cores": 1,
+      "mem_cap_mib": 2304,
+      "mem_used_mib": 908,
       "cpu_pct": null,
       "disk_lv": "atlas-vm-1ad6f74b-c8d3-46ab-bee4-b53ce3fb87e5",
       "disk_origin": "atlas-image-bench-nightly-admin-develop",
       "disk_data_percent": 100,
+      "disk_size_bytes": 30064771072,
+      "disk_used_bytes": 30064771072,
       "has_data_disk": false,
       "has_snapshot": false,
       "migrating": false,
-      "log_size": "9.6k"
+      "log_size": "0"
     },
     {
       "uuid": "210cd64a-3912-4d61-9e14-25970ea247a5",
@@ -171,15 +222,19 @@
       "mem_mib": 2048,
       "cgroup_cpu_max": "100000 100000",
       "cgroup_memory_max": "2415919104",
-      "mem_used_mib": 848,
+      "cpu_cap_cores": 1,
+      "mem_cap_mib": 2304,
+      "mem_used_mib": 803,
       "cpu_pct": null,
       "disk_lv": "atlas-vm-210cd64a-3912-4d61-9e14-25970ea247a5",
       "disk_origin": "atlas-image-golden-bench-nightly-admin-develop",
       "disk_data_percent": 100,
+      "disk_size_bytes": 30064771072,
+      "disk_used_bytes": 30064771072,
       "has_data_disk": false,
       "has_snapshot": false,
       "migrating": false,
-      "log_size": "9.6k"
+      "log_size": "0"
     },
     {
       "uuid": "262cfee0-0afa-4571-9812-36e4bba8e510",
@@ -200,15 +255,19 @@
       "mem_mib": 2048,
       "cgroup_cpu_max": "200000 100000",
       "cgroup_memory_max": "2415919104",
-      "mem_used_mib": 1607,
+      "cpu_cap_cores": 2,
+      "mem_cap_mib": 2304,
+      "mem_used_mib": 742,
       "cpu_pct": null,
       "disk_lv": "atlas-vm-262cfee0-0afa-4571-9812-36e4bba8e510",
       "disk_origin": "atlas-image-ubuntu-24.04-minimal",
       "disk_data_percent": 15.63,
+      "disk_size_bytes": 30064771072,
+      "disk_used_bytes": 4699123718,
       "has_data_disk": false,
       "has_snapshot": false,
       "migrating": false,
-      "log_size": "9.8k"
+      "log_size": "0"
     },
     {
       "uuid": "3c5f22c8-214b-4143-8b75-bd1c41db00a1",
@@ -229,15 +288,19 @@
       "mem_mib": 2048,
       "cgroup_cpu_max": "200000 100000",
       "cgroup_memory_max": "2415919104",
-      "mem_used_mib": 647,
+      "cpu_cap_cores": 2,
+      "mem_cap_mib": 2304,
+      "mem_used_mib": 540,
       "cpu_pct": null,
       "disk_lv": "atlas-vm-3c5f22c8-214b-4143-8b75-bd1c41db00a1",
       "disk_origin": null,
-      "disk_data_percent": 23.36,
+      "disk_data_percent": 23.46,
+      "disk_size_bytes": 30064771072,
+      "disk_used_bytes": 7053195293,
       "has_data_disk": false,
       "has_snapshot": true,
       "migrating": false,
-      "log_size": "12.5k"
+      "log_size": "0"
     },
     {
       "uuid": "460909a3-ac8a-4120-8081-ab3d0e8fbd66",
@@ -258,11 +321,48 @@
       "mem_mib": 2048,
       "cgroup_cpu_max": "100000 100000",
       "cgroup_memory_max": "2415919104",
-      "mem_used_mib": 842,
+      "cpu_cap_cores": 1,
+      "mem_cap_mib": 2304,
+      "mem_used_mib": 798,
       "cpu_pct": null,
       "disk_lv": "atlas-vm-460909a3-ac8a-4120-8081-ab3d0e8fbd66",
       "disk_origin": "atlas-image-golden-bench-nightly-admin-develop",
       "disk_data_percent": 100,
+      "disk_size_bytes": 30064771072,
+      "disk_used_bytes": 30064771072,
+      "has_data_disk": false,
+      "has_snapshot": false,
+      "migrating": false,
+      "log_size": "0"
+    },
+    {
+      "uuid": "4d95e65e-6fe9-4d38-a5b0-c2c61b1572b5",
+      "state": "Running",
+      "ipv6": "2001:bc8:1203:15::23",
+      "ipv4_guest": "100.64.0.142",
+      "ipv4_host": "100.64.0.141",
+      "reserved_ipv4": null,
+      "mac": "06:00:4d:95:e6:5e",
+      "tap_device": "atlas-4d95e65e6",
+      "host_veth": "atlas-h4d95e65",
+      "namespace_veth": "atlas-n4d95e65",
+      "netns": "atlas-4d95e65e6fe9",
+      "fc_uid": 244646,
+      "private_ipv6": null,
+      "image": null,
+      "vcpus": 1,
+      "mem_mib": 2048,
+      "cgroup_cpu_max": "100000 100000",
+      "cgroup_memory_max": "2415919104",
+      "cpu_cap_cores": 1,
+      "mem_cap_mib": 2304,
+      "mem_used_mib": 907,
+      "cpu_pct": null,
+      "disk_lv": "atlas-vm-4d95e65e-6fe9-4d38-a5b0-c2c61b1572b5",
+      "disk_origin": "atlas-image-bench-nightly-admin-develop",
+      "disk_data_percent": 100,
+      "disk_size_bytes": 30064771072,
+      "disk_used_bytes": 30064771072,
       "has_data_disk": false,
       "has_snapshot": false,
       "migrating": false,
@@ -287,15 +387,19 @@
       "mem_mib": 2048,
       "cgroup_cpu_max": null,
       "cgroup_memory_max": null,
+      "cpu_cap_cores": null,
+      "mem_cap_mib": null,
       "mem_used_mib": null,
       "cpu_pct": null,
       "disk_lv": "atlas-vm-508cc4ab-250e-4641-bd99-8e639802f0a2",
       "disk_origin": "atlas-image-ubuntu-24.04-minimal",
       "disk_data_percent": 21.54,
+      "disk_size_bytes": 30064771072,
+      "disk_used_bytes": 6475951688,
       "has_data_disk": false,
       "has_snapshot": false,
       "migrating": false,
-      "log_size": "10.8k"
+      "log_size": "0"
     },
     {
       "uuid": "5802336d-84b2-4938-866f-abd3fc759623",
@@ -316,11 +420,15 @@
       "mem_mib": 2048,
       "cgroup_cpu_max": null,
       "cgroup_memory_max": null,
+      "cpu_cap_cores": null,
+      "mem_cap_mib": null,
       "mem_used_mib": null,
       "cpu_pct": null,
       "disk_lv": "atlas-vm-5802336d-84b2-4938-866f-abd3fc759623",
       "disk_origin": "atlas-image-ubuntu-24.04-minimal",
       "disk_data_percent": 20.95,
+      "disk_size_bytes": 30064771072,
+      "disk_used_bytes": 6298569539,
       "has_data_disk": false,
       "has_snapshot": false,
       "migrating": false,
@@ -345,15 +453,52 @@
       "mem_mib": 2048,
       "cgroup_cpu_max": "100000 100000",
       "cgroup_memory_max": "2415919104",
-      "mem_used_mib": 1943,
+      "cpu_cap_cores": 1,
+      "mem_cap_mib": 2304,
+      "mem_used_mib": 1319,
       "cpu_pct": null,
       "disk_lv": "atlas-vm-5cc5d7f9-2041-40c1-b74e-7be754184c3e",
       "disk_origin": "atlas-image-bench-nightly-admin-develop",
       "disk_data_percent": 100,
+      "disk_size_bytes": 30064771072,
+      "disk_used_bytes": 30064771072,
       "has_data_disk": false,
       "has_snapshot": false,
       "migrating": false,
-      "log_size": "20.5k"
+      "log_size": "0"
+    },
+    {
+      "uuid": "5ce08f7d-529d-4fb6-acb5-f61dc93d6ce3",
+      "state": "Running",
+      "ipv6": "2001:bc8:1203:15::2b",
+      "ipv4_guest": "100.64.0.174",
+      "ipv4_host": "100.64.0.173",
+      "reserved_ipv4": null,
+      "mac": "06:00:5c:e0:8f:7d",
+      "tap_device": "atlas-5ce08f7d5",
+      "host_veth": "atlas-h5ce08f7",
+      "namespace_veth": "atlas-n5ce08f7",
+      "netns": "atlas-5ce08f7d529d",
+      "fc_uid": 226799,
+      "private_ipv6": null,
+      "image": null,
+      "vcpus": 1,
+      "mem_mib": 2048,
+      "cgroup_cpu_max": "100000 100000",
+      "cgroup_memory_max": "2415919104",
+      "cpu_cap_cores": 1,
+      "mem_cap_mib": 2304,
+      "mem_used_mib": 746,
+      "cpu_pct": null,
+      "disk_lv": "atlas-vm-5ce08f7d-529d-4fb6-acb5-f61dc93d6ce3",
+      "disk_origin": "atlas-image-bench-nightly-admin-develop",
+      "disk_data_percent": 100,
+      "disk_size_bytes": 30064771072,
+      "disk_used_bytes": 30064771072,
+      "has_data_disk": false,
+      "has_snapshot": false,
+      "migrating": false,
+      "log_size": "9.6k"
     },
     {
       "uuid": "62c1c723-ddec-41e7-9b7f-9cde51bda2b5",
@@ -374,15 +519,19 @@
       "mem_mib": 2048,
       "cgroup_cpu_max": "200000 100000",
       "cgroup_memory_max": "2415919104",
-      "mem_used_mib": 2120,
+      "cpu_cap_cores": 2,
+      "mem_cap_mib": 2304,
+      "mem_used_mib": 608,
       "cpu_pct": null,
       "disk_lv": "atlas-vm-62c1c723-ddec-41e7-9b7f-9cde51bda2b5",
       "disk_origin": "atlas-snap-mjmdd1p7fb",
-      "disk_data_percent": 23.42,
+      "disk_data_percent": 23.5,
+      "disk_size_bytes": 30064771072,
+      "disk_used_bytes": 7065221201,
       "has_data_disk": false,
       "has_snapshot": true,
       "migrating": false,
-      "log_size": "12.5k"
+      "log_size": "0"
     },
     {
       "uuid": "6678b4e2-4467-44c5-a955-4e07d44836e6",
@@ -403,15 +552,19 @@
       "mem_mib": 2048,
       "cgroup_cpu_max": null,
       "cgroup_memory_max": null,
+      "cpu_cap_cores": null,
+      "mem_cap_mib": null,
       "mem_used_mib": null,
       "cpu_pct": null,
       "disk_lv": "atlas-vm-6678b4e2-4467-44c5-a955-4e07d44836e6",
       "disk_origin": "atlas-image-ubuntu-24.04-minimal",
       "disk_data_percent": 23.3,
+      "disk_size_bytes": 30064771072,
+      "disk_used_bytes": 7005091659,
       "has_data_disk": false,
       "has_snapshot": false,
       "migrating": false,
-      "log_size": "13.5k"
+      "log_size": "0"
     },
     {
       "uuid": "67c0b618-aba0-4b9d-94e2-047cd6715c58",
@@ -432,11 +585,15 @@
       "mem_mib": 2048,
       "cgroup_cpu_max": null,
       "cgroup_memory_max": null,
+      "cpu_cap_cores": null,
+      "mem_cap_mib": null,
       "mem_used_mib": null,
       "cpu_pct": null,
       "disk_lv": "atlas-vm-67c0b618-aba0-4b9d-94e2-047cd6715c58",
       "disk_origin": "atlas-image-ubuntu-24.04-minimal",
       "disk_data_percent": 23.2,
+      "disk_size_bytes": 30064771072,
+      "disk_used_bytes": 6975026888,
       "has_data_disk": false,
       "has_snapshot": false,
       "migrating": false,
@@ -461,11 +618,15 @@
       "mem_mib": 512,
       "cgroup_cpu_max": "100000 100000",
       "cgroup_memory_max": "805306368",
+      "cpu_cap_cores": 1,
+      "mem_cap_mib": 768,
       "mem_used_mib": 157,
       "cpu_pct": null,
       "disk_lv": "atlas-vm-6a6fa05f-db3e-48a6-8a6a-4201a07fe406",
       "disk_origin": null,
       "disk_data_percent": 100,
+      "disk_size_bytes": 10737418240,
+      "disk_used_bytes": 10737418240,
       "has_data_disk": false,
       "has_snapshot": false,
       "migrating": false,
@@ -490,15 +651,19 @@
       "mem_mib": 2048,
       "cgroup_cpu_max": null,
       "cgroup_memory_max": null,
+      "cpu_cap_cores": null,
+      "mem_cap_mib": null,
       "mem_used_mib": null,
       "cpu_pct": null,
       "disk_lv": "atlas-vm-6d409584-33ff-43e5-baf3-de4ea463edcd",
       "disk_origin": "atlas-image-ubuntu-24.04-minimal",
       "disk_data_percent": 22.73,
+      "disk_size_bytes": 30064771072,
+      "disk_used_bytes": 6833722464,
       "has_data_disk": false,
       "has_snapshot": false,
       "migrating": false,
-      "log_size": "13.4k"
+      "log_size": "0"
     },
     {
       "uuid": "6f7c6c74-d708-4f19-b7df-e75f080f4947",
@@ -519,15 +684,52 @@
       "mem_mib": 2048,
       "cgroup_cpu_max": "200000 100000",
       "cgroup_memory_max": "2415919104",
-      "mem_used_mib": 2303,
+      "cpu_cap_cores": 2,
+      "mem_cap_mib": 2304,
+      "mem_used_mib": 798,
       "cpu_pct": null,
       "disk_lv": "atlas-vm-6f7c6c74-d708-4f19-b7df-e75f080f4947",
       "disk_origin": null,
-      "disk_data_percent": 23.61,
+      "disk_data_percent": 23.78,
+      "disk_size_bytes": 30064771072,
+      "disk_used_bytes": 7149402560,
       "has_data_disk": false,
       "has_snapshot": true,
       "migrating": false,
       "log_size": "0"
+    },
+    {
+      "uuid": "7c15bb96-28ee-4554-b9a3-42cb2e80412e",
+      "state": "Running",
+      "ipv6": "2001:bc8:1203:15::28",
+      "ipv4_guest": "100.64.0.162",
+      "ipv4_host": "100.64.0.161",
+      "reserved_ipv4": null,
+      "mac": "06:00:7c:15:bb:96",
+      "tap_device": "atlas-7c15bb962",
+      "host_veth": "atlas-h7c15bb9",
+      "namespace_veth": "atlas-n7c15bb9",
+      "netns": "atlas-7c15bb9628ee",
+      "fc_uid": 232027,
+      "private_ipv6": null,
+      "image": null,
+      "vcpus": 1,
+      "mem_mib": 2048,
+      "cgroup_cpu_max": "100000 100000",
+      "cgroup_memory_max": "2415919104",
+      "cpu_cap_cores": 1,
+      "mem_cap_mib": 2304,
+      "mem_used_mib": 751,
+      "cpu_pct": null,
+      "disk_lv": "atlas-vm-7c15bb96-28ee-4554-b9a3-42cb2e80412e",
+      "disk_origin": "atlas-image-bench-nightly-admin-develop",
+      "disk_data_percent": 100,
+      "disk_size_bytes": 30064771072,
+      "disk_used_bytes": 30064771072,
+      "has_data_disk": false,
+      "has_snapshot": false,
+      "migrating": false,
+      "log_size": "9.6k"
     },
     {
       "uuid": "8193685d-3557-4109-bf6d-c587d5c20308",
@@ -548,11 +750,48 @@
       "mem_mib": 2048,
       "cgroup_cpu_max": "200000 100000",
       "cgroup_memory_max": "2415919104",
-      "mem_used_mib": 647,
+      "cpu_cap_cores": 2,
+      "mem_cap_mib": 2304,
+      "mem_used_mib": 542,
       "cpu_pct": null,
       "disk_lv": "atlas-vm-8193685d-3557-4109-bf6d-c587d5c20308",
       "disk_origin": "atlas-snap-mjmdd1p7fb",
-      "disk_data_percent": 23.42,
+      "disk_data_percent": 23.5,
+      "disk_size_bytes": 30064771072,
+      "disk_used_bytes": 7065221201,
+      "has_data_disk": false,
+      "has_snapshot": true,
+      "migrating": false,
+      "log_size": "0"
+    },
+    {
+      "uuid": "8c6d455d-b0f6-4c1c-9f15-9eae5bcf6d9f",
+      "state": "Running",
+      "ipv6": "2001:bc8:1203:15::26",
+      "ipv4_guest": "100.64.0.154",
+      "ipv4_host": "100.64.0.153",
+      "reserved_ipv4": null,
+      "mac": "06:00:8c:6d:45:5d",
+      "tap_device": "atlas-6678b4e24",
+      "host_veth": "atlas-h8c6d455",
+      "namespace_veth": "atlas-n8c6d455",
+      "netns": "atlas-8c6d455db0f6",
+      "fc_uid": 223013,
+      "private_ipv6": null,
+      "image": null,
+      "vcpus": 2,
+      "mem_mib": 2048,
+      "cgroup_cpu_max": "200000 100000",
+      "cgroup_memory_max": "2415919104",
+      "cpu_cap_cores": 2,
+      "mem_cap_mib": 2304,
+      "mem_used_mib": 569,
+      "cpu_pct": null,
+      "disk_lv": "atlas-vm-8c6d455d-b0f6-4c1c-9f15-9eae5bcf6d9f",
+      "disk_origin": "atlas-snap-mjmdd1p7fb",
+      "disk_data_percent": 23.37,
+      "disk_size_bytes": 30064771072,
+      "disk_used_bytes": 7026136999,
       "has_data_disk": false,
       "has_snapshot": true,
       "migrating": false,
@@ -577,15 +816,85 @@
       "mem_mib": 2048,
       "cgroup_cpu_max": "200000 100000",
       "cgroup_memory_max": "2415919104",
-      "mem_used_mib": 2303,
+      "cpu_cap_cores": 2,
+      "mem_cap_mib": 2304,
+      "mem_used_mib": 740,
       "cpu_pct": null,
       "disk_lv": "atlas-vm-8f7c3e8b-792c-42ca-8128-83972ef73c66",
       "disk_origin": "atlas-snap-ejdqckjqe0",
-      "disk_data_percent": 22.89,
+      "disk_data_percent": 23,
+      "disk_size_bytes": 30064771072,
+      "disk_used_bytes": 6914897346,
       "has_data_disk": false,
       "has_snapshot": true,
       "migrating": false,
-      "log_size": "12.5k"
+      "log_size": "0"
+    },
+    {
+      "uuid": "8fb1e5ed-c61f-4c25-bfab-d262e328a0a3",
+      "state": "Running",
+      "ipv6": "2001:bc8:1203:15::29",
+      "ipv4_guest": "100.64.0.166",
+      "ipv4_host": "100.64.0.165",
+      "reserved_ipv4": null,
+      "mac": "06:00:8f:b1:e5:ed",
+      "tap_device": "atlas-8fb1e5edc",
+      "host_veth": "atlas-h8fb1e5e",
+      "namespace_veth": "atlas-n8fb1e5e",
+      "netns": "atlas-8fb1e5edc61f",
+      "fc_uid": 257189,
+      "private_ipv6": null,
+      "image": null,
+      "vcpus": 1,
+      "mem_mib": 2048,
+      "cgroup_cpu_max": "100000 100000",
+      "cgroup_memory_max": "2415919104",
+      "cpu_cap_cores": 1,
+      "mem_cap_mib": 2304,
+      "mem_used_mib": 755,
+      "cpu_pct": null,
+      "disk_lv": "atlas-vm-8fb1e5ed-c61f-4c25-bfab-d262e328a0a3",
+      "disk_origin": "atlas-image-bench-nightly-admin-develop",
+      "disk_data_percent": 100,
+      "disk_size_bytes": 30064771072,
+      "disk_used_bytes": 30064771072,
+      "has_data_disk": false,
+      "has_snapshot": false,
+      "migrating": false,
+      "log_size": "9.6k"
+    },
+    {
+      "uuid": "90e19aea-666e-4392-8a1e-934a8697b106",
+      "state": "Running",
+      "ipv6": "2001:bc8:1203:15::2f",
+      "ipv4_guest": "100.64.0.190",
+      "ipv4_host": "100.64.0.189",
+      "reserved_ipv4": null,
+      "mac": "06:00:90:e1:9a:ea",
+      "tap_device": "atlas-90e19aea6",
+      "host_veth": "atlas-h90e19ae",
+      "namespace_veth": "atlas-n90e19ae",
+      "netns": "atlas-90e19aea666e",
+      "fc_uid": 214938,
+      "private_ipv6": null,
+      "image": null,
+      "vcpus": 1,
+      "mem_mib": 512,
+      "cgroup_cpu_max": "100000 100000",
+      "cgroup_memory_max": "805306368",
+      "cpu_cap_cores": 1,
+      "mem_cap_mib": 768,
+      "mem_used_mib": 514,
+      "cpu_pct": null,
+      "disk_lv": "atlas-vm-90e19aea-666e-4392-8a1e-934a8697b106",
+      "disk_origin": "atlas-image-bench-nightly-admin-develop",
+      "disk_data_percent": 100,
+      "disk_size_bytes": 30064771072,
+      "disk_used_bytes": 30064771072,
+      "has_data_disk": false,
+      "has_snapshot": false,
+      "migrating": false,
+      "log_size": "9.6k"
     },
     {
       "uuid": "98207e43-7638-4e7b-b92f-2912eda3a73f",
@@ -606,11 +915,15 @@
       "mem_mib": 1024,
       "cgroup_cpu_max": "100000 100000",
       "cgroup_memory_max": "1342177280",
-      "mem_used_mib": 1132,
+      "cpu_cap_cores": 1,
+      "mem_cap_mib": 1280,
+      "mem_used_mib": 1031,
       "cpu_pct": null,
       "disk_lv": "atlas-vm-98207e43-7638-4e7b-b92f-2912eda3a73f",
       "disk_origin": "atlas-image-ubuntu-24.04",
       "disk_data_percent": 100,
+      "disk_size_bytes": 4294967296,
+      "disk_used_bytes": 4294967296,
       "has_data_disk": false,
       "has_snapshot": false,
       "migrating": false,
@@ -635,11 +948,15 @@
       "mem_mib": 1024,
       "cgroup_cpu_max": "100000 100000",
       "cgroup_memory_max": "1342177280",
-      "mem_used_mib": 481,
+      "cpu_cap_cores": 1,
+      "mem_cap_mib": 1280,
+      "mem_used_mib": 400,
       "cpu_pct": null,
       "disk_lv": "atlas-vm-9ae90d69-b0e8-4400-9c5d-edd8600c06ea",
       "disk_origin": null,
       "disk_data_percent": 100,
+      "disk_size_bytes": 4294967296,
+      "disk_used_bytes": 4294967296,
       "has_data_disk": false,
       "has_snapshot": false,
       "migrating": false,
@@ -664,15 +981,52 @@
       "mem_mib": 2048,
       "cgroup_cpu_max": "200000 100000",
       "cgroup_memory_max": "2415919104",
-      "mem_used_mib": 365,
+      "cpu_cap_cores": 2,
+      "mem_cap_mib": 2304,
+      "mem_used_mib": 268,
       "cpu_pct": null,
       "disk_lv": "atlas-vm-9df3f226-334c-43a2-b328-b50ea02d27d4",
       "disk_origin": "atlas-image-ubuntu-24.04-minimal",
       "disk_data_percent": 15.63,
+      "disk_size_bytes": 30064771072,
+      "disk_used_bytes": 4699123718,
       "has_data_disk": false,
       "has_snapshot": false,
       "migrating": false,
-      "log_size": "9.8k"
+      "log_size": "0"
+    },
+    {
+      "uuid": "a2974b55-7f08-436d-891a-19298ecdab45",
+      "state": "Running",
+      "ipv6": "2001:bc8:1203:15::2e",
+      "ipv4_guest": "100.64.0.186",
+      "ipv4_host": "100.64.0.185",
+      "reserved_ipv4": null,
+      "mac": "06:00:a2:97:4b:55",
+      "tap_device": "atlas-a2974b557",
+      "host_veth": "atlas-ha2974b5",
+      "namespace_veth": "atlas-na2974b5",
+      "netns": "atlas-a2974b557f08",
+      "fc_uid": 235563,
+      "private_ipv6": null,
+      "image": null,
+      "vcpus": 1,
+      "mem_mib": 2048,
+      "cgroup_cpu_max": "100000 100000",
+      "cgroup_memory_max": "2415919104",
+      "cpu_cap_cores": 1,
+      "mem_cap_mib": 2304,
+      "mem_used_mib": 1761,
+      "cpu_pct": null,
+      "disk_lv": "atlas-vm-a2974b55-7f08-436d-891a-19298ecdab45",
+      "disk_origin": "atlas-image-bench-nightly-admin-develop",
+      "disk_data_percent": 100,
+      "disk_size_bytes": 30064771072,
+      "disk_used_bytes": 30064771072,
+      "has_data_disk": false,
+      "has_snapshot": false,
+      "migrating": false,
+      "log_size": "9.6k"
     },
     {
       "uuid": "a2a65236-c2de-4907-b216-dc0b2393b2ab",
@@ -693,15 +1047,85 @@
       "mem_mib": 2048,
       "cgroup_cpu_max": "200000 100000",
       "cgroup_memory_max": "2415919104",
-      "mem_used_mib": 612,
+      "cpu_cap_cores": 2,
+      "mem_cap_mib": 2304,
+      "mem_used_mib": 532,
       "cpu_pct": null,
       "disk_lv": "atlas-vm-a2a65236-c2de-4907-b216-dc0b2393b2ab",
       "disk_origin": "atlas-snap-mjmdd1p7fb",
-      "disk_data_percent": 23.41,
+      "disk_data_percent": 23.5,
+      "disk_size_bytes": 30064771072,
+      "disk_used_bytes": 7065221201,
+      "has_data_disk": false,
+      "has_snapshot": true,
+      "migrating": false,
+      "log_size": "0"
+    },
+    {
+      "uuid": "a4342e47-34c9-4308-bd1a-bede64dc8694",
+      "state": "Running",
+      "ipv6": "2001:bc8:1203:15::24",
+      "ipv4_guest": "100.64.0.146",
+      "ipv4_host": "100.64.0.145",
+      "reserved_ipv4": null,
+      "mac": "06:00:a4:34:2e:47",
+      "tap_device": "atlas-6678b4e24",
+      "host_veth": "atlas-ha4342e4",
+      "namespace_veth": "atlas-na4342e4",
+      "netns": "atlas-a4342e4734c9",
+      "fc_uid": 221262,
+      "private_ipv6": null,
+      "image": null,
+      "vcpus": 2,
+      "mem_mib": 2048,
+      "cgroup_cpu_max": "200000 100000",
+      "cgroup_memory_max": "2415919104",
+      "cpu_cap_cores": 2,
+      "mem_cap_mib": 2304,
+      "mem_used_mib": 632,
+      "cpu_pct": null,
+      "disk_lv": "atlas-vm-a4342e47-34c9-4308-bd1a-bede64dc8694",
+      "disk_origin": "atlas-snap-mjmdd1p7fb",
+      "disk_data_percent": 23.46,
+      "disk_size_bytes": 30064771072,
+      "disk_used_bytes": 7053195293,
       "has_data_disk": false,
       "has_snapshot": true,
       "migrating": false,
       "log_size": "12.5k"
+    },
+    {
+      "uuid": "aa7734ee-864d-4327-984a-e43680cb61b8",
+      "state": "Running",
+      "ipv6": "2001:bc8:1203:15::30",
+      "ipv4_guest": "100.64.0.194",
+      "ipv4_host": "100.64.0.193",
+      "reserved_ipv4": null,
+      "mac": "06:00:aa:77:34:ee",
+      "tap_device": "atlas-aa7734ee8",
+      "host_veth": "atlas-haa7734e",
+      "namespace_veth": "atlas-naa7734e",
+      "netns": "atlas-aa7734ee864d",
+      "fc_uid": 211636,
+      "private_ipv6": null,
+      "image": null,
+      "vcpus": 1,
+      "mem_mib": 2048,
+      "cgroup_cpu_max": "100000 100000",
+      "cgroup_memory_max": "2415919104",
+      "cpu_cap_cores": 1,
+      "mem_cap_mib": 2304,
+      "mem_used_mib": 875,
+      "cpu_pct": null,
+      "disk_lv": "atlas-vm-aa7734ee-864d-4327-984a-e43680cb61b8",
+      "disk_origin": "atlas-image-bench-nightly-admin-develop",
+      "disk_data_percent": 100,
+      "disk_size_bytes": 30064771072,
+      "disk_used_bytes": 30064771072,
+      "has_data_disk": false,
+      "has_snapshot": false,
+      "migrating": false,
+      "log_size": "11.5k"
     },
     {
       "uuid": "ab6afd48-49d8-40df-850a-077a170b1ae1",
@@ -722,11 +1146,48 @@
       "mem_mib": 2048,
       "cgroup_cpu_max": "100000 100000",
       "cgroup_memory_max": "2415919104",
-      "mem_used_mib": 1237,
+      "cpu_cap_cores": 1,
+      "mem_cap_mib": 2304,
+      "mem_used_mib": 896,
       "cpu_pct": null,
       "disk_lv": "atlas-vm-ab6afd48-49d8-40df-850a-077a170b1ae1",
       "disk_origin": "atlas-image-bench-nightly-admin-develop",
       "disk_data_percent": 100,
+      "disk_size_bytes": 30064771072,
+      "disk_used_bytes": 30064771072,
+      "has_data_disk": false,
+      "has_snapshot": false,
+      "migrating": false,
+      "log_size": "0"
+    },
+    {
+      "uuid": "ae8d52b4-522e-4586-b7c7-c4c129d4b17b",
+      "state": "Running",
+      "ipv6": "2001:bc8:1203:15::27",
+      "ipv4_guest": "100.64.0.158",
+      "ipv4_host": "100.64.0.157",
+      "reserved_ipv4": null,
+      "mac": "06:00:ae:8d:52:b4",
+      "tap_device": "atlas-ae8d52b45",
+      "host_veth": "atlas-hae8d52b",
+      "namespace_veth": "atlas-nae8d52b",
+      "netns": "atlas-ae8d52b4522e",
+      "fc_uid": 239442,
+      "private_ipv6": null,
+      "image": null,
+      "vcpus": 1,
+      "mem_mib": 2048,
+      "cgroup_cpu_max": "100000 100000",
+      "cgroup_memory_max": "2415919104",
+      "cpu_cap_cores": 1,
+      "mem_cap_mib": 2304,
+      "mem_used_mib": 887,
+      "cpu_pct": null,
+      "disk_lv": "atlas-vm-ae8d52b4-522e-4586-b7c7-c4c129d4b17b",
+      "disk_origin": "atlas-image-bench-nightly-admin-develop",
+      "disk_data_percent": 100,
+      "disk_size_bytes": 30064771072,
+      "disk_used_bytes": 30064771072,
       "has_data_disk": false,
       "has_snapshot": false,
       "migrating": false,
@@ -751,15 +1212,19 @@
       "mem_mib": 2048,
       "cgroup_cpu_max": "100000 100000",
       "cgroup_memory_max": "2415919104",
-      "mem_used_mib": 1297,
+      "cpu_cap_cores": 1,
+      "mem_cap_mib": 2304,
+      "mem_used_mib": 919,
       "cpu_pct": null,
       "disk_lv": "atlas-vm-b30f6d9f-081b-49a7-bdef-02b548fbe610",
       "disk_origin": "atlas-image-bench-nightly-admin-develop",
       "disk_data_percent": 100,
+      "disk_size_bytes": 30064771072,
+      "disk_used_bytes": 30064771072,
       "has_data_disk": false,
       "has_snapshot": false,
       "migrating": false,
-      "log_size": "9.6k"
+      "log_size": "0"
     },
     {
       "uuid": "b46bd299-4f1c-47a6-b9ed-4bdffa3ee15e",
@@ -780,15 +1245,19 @@
       "mem_mib": 2048,
       "cgroup_cpu_max": "100000 100000",
       "cgroup_memory_max": "2415919104",
-      "mem_used_mib": 875,
+      "cpu_cap_cores": 1,
+      "mem_cap_mib": 2304,
+      "mem_used_mib": 804,
       "cpu_pct": null,
       "disk_lv": "atlas-vm-b46bd299-4f1c-47a6-b9ed-4bdffa3ee15e",
       "disk_origin": "atlas-image-golden-bench-nightly-admin-develop",
       "disk_data_percent": 100,
+      "disk_size_bytes": 30064771072,
+      "disk_used_bytes": 30064771072,
       "has_data_disk": false,
       "has_snapshot": false,
       "migrating": false,
-      "log_size": "9.6k"
+      "log_size": "0"
     },
     {
       "uuid": "cb1e7cd1-6f65-4ae7-b868-e71c8582a54d",
@@ -809,15 +1278,19 @@
       "mem_mib": 2048,
       "cgroup_cpu_max": "100000 100000",
       "cgroup_memory_max": "2415919104",
-      "mem_used_mib": 847,
+      "cpu_cap_cores": 1,
+      "mem_cap_mib": 2304,
+      "mem_used_mib": 804,
       "cpu_pct": null,
       "disk_lv": "atlas-vm-cb1e7cd1-6f65-4ae7-b868-e71c8582a54d",
       "disk_origin": "atlas-image-golden-bench-nightly-admin-develop",
       "disk_data_percent": 100,
+      "disk_size_bytes": 30064771072,
+      "disk_used_bytes": 30064771072,
       "has_data_disk": false,
       "has_snapshot": false,
       "migrating": false,
-      "log_size": "9.6k"
+      "log_size": "0"
     },
     {
       "uuid": "d13205e4-5847-413d-aaaf-2f5eb4893e18",
@@ -838,15 +1311,19 @@
       "mem_mib": 2048,
       "cgroup_cpu_max": "200000 100000",
       "cgroup_memory_max": "2415919104",
-      "mem_used_mib": 237,
+      "cpu_cap_cores": 2,
+      "mem_cap_mib": 2304,
+      "mem_used_mib": 226,
       "cpu_pct": null,
       "disk_lv": "atlas-vm-d13205e4-5847-413d-aaaf-2f5eb4893e18",
       "disk_origin": "atlas-image-ubuntu-24.04-minimal",
       "disk_data_percent": 15.63,
+      "disk_size_bytes": 30064771072,
+      "disk_used_bytes": 4699123718,
       "has_data_disk": false,
       "has_snapshot": false,
       "migrating": false,
-      "log_size": "9.8k"
+      "log_size": "0"
     },
     {
       "uuid": "d205b18b-7e6c-408b-8d66-c7642de5db34",
@@ -867,15 +1344,19 @@
       "mem_mib": 2048,
       "cgroup_cpu_max": "100000 100000",
       "cgroup_memory_max": "2415919104",
-      "mem_used_mib": 1269,
+      "cpu_cap_cores": 1,
+      "mem_cap_mib": 2304,
+      "mem_used_mib": 902,
       "cpu_pct": null,
       "disk_lv": "atlas-vm-d205b18b-7e6c-408b-8d66-c7642de5db34",
       "disk_origin": "atlas-image-bench-nightly-admin-develop",
       "disk_data_percent": 100,
+      "disk_size_bytes": 30064771072,
+      "disk_used_bytes": 30064771072,
       "has_data_disk": false,
       "has_snapshot": false,
       "migrating": false,
-      "log_size": "9.6k"
+      "log_size": "0"
     },
     {
       "uuid": "d6738b4e-83de-4a32-bbbc-f756911fb75b",
@@ -896,15 +1377,19 @@
       "mem_mib": 2048,
       "cgroup_cpu_max": "200000 100000",
       "cgroup_memory_max": "2415919104",
-      "mem_used_mib": 580,
+      "cpu_cap_cores": 2,
+      "mem_cap_mib": 2304,
+      "mem_used_mib": 480,
       "cpu_pct": null,
       "disk_lv": "atlas-vm-d6738b4e-83de-4a32-bbbc-f756911fb75b",
       "disk_origin": "atlas-snap-mjmdd1p7fb",
-      "disk_data_percent": 23.41,
+      "disk_data_percent": 23.5,
+      "disk_size_bytes": 30064771072,
+      "disk_used_bytes": 7065221201,
       "has_data_disk": false,
       "has_snapshot": true,
       "migrating": false,
-      "log_size": "12.5k"
+      "log_size": "0"
     },
     {
       "uuid": "e0e6a111-6761-49fe-92ca-e74b32503204",
@@ -925,15 +1410,85 @@
       "mem_mib": 2048,
       "cgroup_cpu_max": "200000 100000",
       "cgroup_memory_max": "2415919104",
-      "mem_used_mib": 632,
+      "cpu_cap_cores": 2,
+      "mem_cap_mib": 2304,
+      "mem_used_mib": 501,
       "cpu_pct": null,
       "disk_lv": "atlas-vm-e0e6a111-6761-49fe-92ca-e74b32503204",
       "disk_origin": null,
-      "disk_data_percent": 23.43,
+      "disk_data_percent": 23.5,
+      "disk_size_bytes": 30064771072,
+      "disk_used_bytes": 7065221201,
       "has_data_disk": false,
       "has_snapshot": true,
       "migrating": false,
       "log_size": "0"
+    },
+    {
+      "uuid": "e4223ff7-f0ea-4460-b55d-858e57de5ea5",
+      "state": "Running",
+      "ipv6": "2001:bc8:1203:15::2a",
+      "ipv4_guest": "100.64.0.170",
+      "ipv4_host": "100.64.0.169",
+      "reserved_ipv4": null,
+      "mac": "06:00:e4:22:3f:f7",
+      "tap_device": "atlas-e4223ff7f",
+      "host_veth": "atlas-he4223ff",
+      "namespace_veth": "atlas-ne4223ff",
+      "netns": "atlas-e4223ff7f0ea",
+      "fc_uid": 210975,
+      "private_ipv6": null,
+      "image": null,
+      "vcpus": 1,
+      "mem_mib": 2048,
+      "cgroup_cpu_max": "100000 100000",
+      "cgroup_memory_max": "2415919104",
+      "cpu_cap_cores": 1,
+      "mem_cap_mib": 2304,
+      "mem_used_mib": 757,
+      "cpu_pct": null,
+      "disk_lv": "atlas-vm-e4223ff7-f0ea-4460-b55d-858e57de5ea5",
+      "disk_origin": "atlas-image-bench-nightly-admin-develop",
+      "disk_data_percent": 100,
+      "disk_size_bytes": 30064771072,
+      "disk_used_bytes": 30064771072,
+      "has_data_disk": false,
+      "has_snapshot": false,
+      "migrating": false,
+      "log_size": "9.6k"
+    },
+    {
+      "uuid": "f115b845-b465-4966-bd03-ccdab35b71e3",
+      "state": "Running",
+      "ipv6": "2001:bc8:1203:15::25",
+      "ipv4_guest": "100.64.0.150",
+      "ipv4_host": "100.64.0.149",
+      "reserved_ipv4": null,
+      "mac": "06:00:f1:15:b8:45",
+      "tap_device": "atlas-6678b4e24",
+      "host_veth": "atlas-hf115b84",
+      "namespace_veth": "atlas-nf115b84",
+      "netns": "atlas-f115b845b465",
+      "fc_uid": 219736,
+      "private_ipv6": null,
+      "image": null,
+      "vcpus": 2,
+      "mem_mib": 2048,
+      "cgroup_cpu_max": "200000 100000",
+      "cgroup_memory_max": "2415919104",
+      "cpu_cap_cores": 2,
+      "mem_cap_mib": 2304,
+      "mem_used_mib": 518,
+      "cpu_pct": null,
+      "disk_lv": "atlas-vm-f115b845-b465-4966-bd03-ccdab35b71e3",
+      "disk_origin": "atlas-snap-mjmdd1p7fb",
+      "disk_data_percent": 23.37,
+      "disk_size_bytes": 30064771072,
+      "disk_used_bytes": 7026136999,
+      "has_data_disk": false,
+      "has_snapshot": true,
+      "migrating": false,
+      "log_size": "12.5k"
     },
     {
       "uuid": "f88d3c0f-c73b-4383-8dfc-2c24dd0e705a",
@@ -954,11 +1509,15 @@
       "mem_mib": 2048,
       "cgroup_cpu_max": "100000 100000",
       "cgroup_memory_max": "2415919104",
-      "mem_used_mib": 1732,
+      "cpu_cap_cores": 1,
+      "mem_cap_mib": 2304,
+      "mem_used_mib": 1620,
       "cpu_pct": null,
       "disk_lv": "atlas-vm-f88d3c0f-c73b-4383-8dfc-2c24dd0e705a",
       "disk_origin": "atlas-image-golden-bench-nightly-admin-develop",
       "disk_data_percent": 100,
+      "disk_size_bytes": 30064771072,
+      "disk_used_bytes": 30064771072,
       "has_data_disk": false,
       "has_snapshot": false,
       "migrating": false,
@@ -971,28 +1530,32 @@
       "kernel": "vmlinux-noble-minimal",
       "rootfs": null,
       "rootfs_size": null,
-      "base_lv": "atlas-image-bench-nightly-admin-develop"
+      "base_lv": "atlas-image-bench-nightly-admin-develop",
+      "base_lv_size": 30064771072
     },
     {
       "name": "golden-bench-nightly-admin-develop",
       "kernel": "vmlinux-noble-minimal",
       "rootfs": null,
       "rootfs_size": null,
-      "base_lv": "atlas-image-golden-bench-nightly-admin-develop"
+      "base_lv": "atlas-image-golden-bench-nightly-admin-develop",
+      "base_lv_size": 30064771072
     },
     {
       "name": "ubuntu-24.04",
       "kernel": "vmlinux-noble-server",
       "rootfs": "ubuntu-24.04-server.ext4",
       "rootfs_size": "4.0g",
-      "base_lv": "atlas-image-ubuntu-24.04"
+      "base_lv": "atlas-image-ubuntu-24.04",
+      "base_lv_size": 4294967296
     },
     {
       "name": "ubuntu-24.04-minimal",
       "kernel": "vmlinux-noble-minimal",
       "rootfs": "ubuntu-24.04-minimal.ext4",
       "rootfs_size": "4.0g",
-      "base_lv": "atlas-image-ubuntu-24.04-minimal"
+      "base_lv": "atlas-image-ubuntu-24.04-minimal",
+      "base_lv_size": 4294967296
     }
   ],
   "snapshots": [
@@ -1016,49 +1579,57 @@
       "uuid": "88c3c9ae-623e-4431-a341-f1312fecd959-migrate",
       "kind": "disk",
       "snapshot_lv": "atlas-snap-88c3c9ae-623e-4431-a341-f1312fecd959-migrate",
-      "origin_lv": "atlas-vm-88c3c9ae-623e-4431-a341-f1312fecd959-migrate"
+      "origin_lv": "atlas-vm-88c3c9ae-623e-4431-a341-f1312fecd959-migrate",
+      "data_percent": 100
     },
     {
       "uuid": "c72f3b41-80c7-4680-9dd8-5dfe82771505-migrate",
       "kind": "disk",
       "snapshot_lv": "atlas-snap-c72f3b41-80c7-4680-9dd8-5dfe82771505-migrate",
-      "origin_lv": "atlas-vm-c72f3b41-80c7-4680-9dd8-5dfe82771505-migrate"
+      "origin_lv": "atlas-vm-c72f3b41-80c7-4680-9dd8-5dfe82771505-migrate",
+      "data_percent": 100
     },
     {
       "uuid": "e36kce7fhk",
       "kind": "disk",
       "snapshot_lv": "atlas-snap-e36kce7fhk",
-      "origin_lv": "atlas-vm-e36kce7fhk"
+      "origin_lv": "atlas-vm-e36kce7fhk",
+      "data_percent": 21.54
     },
     {
       "uuid": "ejdqckjqe0",
       "kind": "disk",
       "snapshot_lv": "atlas-snap-ejdqckjqe0",
-      "origin_lv": "atlas-vm-ejdqckjqe0"
+      "origin_lv": "atlas-vm-ejdqckjqe0",
+      "data_percent": 22.73
     },
     {
       "uuid": "f976460c-eec1-4dcf-af37-49731fa47193-migrate",
       "kind": "disk",
       "snapshot_lv": "atlas-snap-f976460c-eec1-4dcf-af37-49731fa47193-migrate",
-      "origin_lv": "atlas-vm-f976460c-eec1-4dcf-af37-49731fa47193-migrate"
+      "origin_lv": "atlas-vm-f976460c-eec1-4dcf-af37-49731fa47193-migrate",
+      "data_percent": 100
     },
     {
       "uuid": "mjmdd1p7fb",
       "kind": "disk",
       "snapshot_lv": "atlas-snap-mjmdd1p7fb",
-      "origin_lv": "atlas-vm-mjmdd1p7fb"
+      "origin_lv": "atlas-vm-mjmdd1p7fb",
+      "data_percent": 23.3
     },
     {
       "uuid": "ra7lg92jig",
       "kind": "disk",
       "snapshot_lv": "atlas-snap-ra7lg92jig",
-      "origin_lv": "atlas-vm-ra7lg92jig"
+      "origin_lv": "atlas-vm-ra7lg92jig",
+      "data_percent": 21.17
     },
     {
       "uuid": "t725ei1nm6",
       "kind": "disk",
       "snapshot_lv": "atlas-snap-t725ei1nm6",
-      "origin_lv": "atlas-vm-t725ei1nm6"
+      "origin_lv": "atlas-vm-t725ei1nm6",
+      "data_percent": 20.95
     }
   ],
   "volumes": [
@@ -1177,7 +1748,7 @@
       "size_bytes": 30064771072,
       "role": "vm-disk",
       "origin": "atlas-snap-mjmdd1p7fb",
-      "data_percent": 23.41
+      "data_percent": 23.5
     },
     {
       "name": "atlas-vm-16d2278c-0fc0-47d2-ab63-65f8ffc7bd29",
@@ -1186,7 +1757,16 @@
       "size_bytes": 30064771072,
       "role": "vm-disk",
       "origin": "atlas-snap-mjmdd1p7fb",
-      "data_percent": 23.41
+      "data_percent": 23.5
+    },
+    {
+      "name": "atlas-vm-185340ec-38da-4dd0-b59d-b97cab8df68f",
+      "vg": "atlas",
+      "size": "28g",
+      "size_bytes": 30064771072,
+      "role": "vm-disk",
+      "origin": "atlas-image-bench-nightly-admin-develop",
+      "data_percent": 100
     },
     {
       "name": "atlas-vm-1a597770-dc20-4967-a63d-dc22d66af690",
@@ -1240,7 +1820,7 @@
       "size_bytes": 30064771072,
       "role": "vm-disk",
       "origin": null,
-      "data_percent": 23.36
+      "data_percent": 23.46
     },
     {
       "name": "atlas-vm-460909a3-ac8a-4120-8081-ab3d0e8fbd66",
@@ -1249,6 +1829,15 @@
       "size_bytes": 30064771072,
       "role": "vm-disk",
       "origin": "atlas-image-golden-bench-nightly-admin-develop",
+      "data_percent": 100
+    },
+    {
+      "name": "atlas-vm-4d95e65e-6fe9-4d38-a5b0-c2c61b1572b5",
+      "vg": "atlas",
+      "size": "28g",
+      "size_bytes": 30064771072,
+      "role": "vm-disk",
+      "origin": "atlas-image-bench-nightly-admin-develop",
       "data_percent": 100
     },
     {
@@ -1279,13 +1868,22 @@
       "data_percent": 100
     },
     {
+      "name": "atlas-vm-5ce08f7d-529d-4fb6-acb5-f61dc93d6ce3",
+      "vg": "atlas",
+      "size": "28g",
+      "size_bytes": 30064771072,
+      "role": "vm-disk",
+      "origin": "atlas-image-bench-nightly-admin-develop",
+      "data_percent": 100
+    },
+    {
       "name": "atlas-vm-62c1c723-ddec-41e7-9b7f-9cde51bda2b5",
       "vg": "atlas",
       "size": "28g",
       "size_bytes": 30064771072,
       "role": "vm-disk",
       "origin": "atlas-snap-mjmdd1p7fb",
-      "data_percent": 23.42
+      "data_percent": 23.5
     },
     {
       "name": "atlas-vm-6678b4e2-4467-44c5-a955-4e07d44836e6",
@@ -1330,7 +1928,16 @@
       "size_bytes": 30064771072,
       "role": "vm-disk",
       "origin": null,
-      "data_percent": 23.61
+      "data_percent": 23.78
+    },
+    {
+      "name": "atlas-vm-7c15bb96-28ee-4554-b9a3-42cb2e80412e",
+      "vg": "atlas",
+      "size": "28g",
+      "size_bytes": 30064771072,
+      "role": "vm-disk",
+      "origin": "atlas-image-bench-nightly-admin-develop",
+      "data_percent": 100
     },
     {
       "name": "atlas-vm-8193685d-3557-4109-bf6d-c587d5c20308",
@@ -1339,7 +1946,16 @@
       "size_bytes": 30064771072,
       "role": "vm-disk",
       "origin": "atlas-snap-mjmdd1p7fb",
-      "data_percent": 23.42
+      "data_percent": 23.5
+    },
+    {
+      "name": "atlas-vm-8c6d455d-b0f6-4c1c-9f15-9eae5bcf6d9f",
+      "vg": "atlas",
+      "size": "28g",
+      "size_bytes": 30064771072,
+      "role": "vm-disk",
+      "origin": "atlas-snap-mjmdd1p7fb",
+      "data_percent": 23.37
     },
     {
       "name": "atlas-vm-8f7c3e8b-792c-42ca-8128-83972ef73c66",
@@ -1348,7 +1964,25 @@
       "size_bytes": 30064771072,
       "role": "vm-disk",
       "origin": "atlas-snap-ejdqckjqe0",
-      "data_percent": 22.89
+      "data_percent": 23
+    },
+    {
+      "name": "atlas-vm-8fb1e5ed-c61f-4c25-bfab-d262e328a0a3",
+      "vg": "atlas",
+      "size": "28g",
+      "size_bytes": 30064771072,
+      "role": "vm-disk",
+      "origin": "atlas-image-bench-nightly-admin-develop",
+      "data_percent": 100
+    },
+    {
+      "name": "atlas-vm-90e19aea-666e-4392-8a1e-934a8697b106",
+      "vg": "atlas",
+      "size": "28g",
+      "size_bytes": 30064771072,
+      "role": "vm-disk",
+      "origin": "atlas-image-bench-nightly-admin-develop",
+      "data_percent": 100
     },
     {
       "name": "atlas-vm-98207e43-7638-4e7b-b92f-2912eda3a73f",
@@ -1378,16 +2012,52 @@
       "data_percent": 15.63
     },
     {
+      "name": "atlas-vm-a2974b55-7f08-436d-891a-19298ecdab45",
+      "vg": "atlas",
+      "size": "28g",
+      "size_bytes": 30064771072,
+      "role": "vm-disk",
+      "origin": "atlas-image-bench-nightly-admin-develop",
+      "data_percent": 100
+    },
+    {
       "name": "atlas-vm-a2a65236-c2de-4907-b216-dc0b2393b2ab",
       "vg": "atlas",
       "size": "28g",
       "size_bytes": 30064771072,
       "role": "vm-disk",
       "origin": "atlas-snap-mjmdd1p7fb",
-      "data_percent": 23.41
+      "data_percent": 23.5
+    },
+    {
+      "name": "atlas-vm-a4342e47-34c9-4308-bd1a-bede64dc8694",
+      "vg": "atlas",
+      "size": "28g",
+      "size_bytes": 30064771072,
+      "role": "vm-disk",
+      "origin": "atlas-snap-mjmdd1p7fb",
+      "data_percent": 23.46
+    },
+    {
+      "name": "atlas-vm-aa7734ee-864d-4327-984a-e43680cb61b8",
+      "vg": "atlas",
+      "size": "28g",
+      "size_bytes": 30064771072,
+      "role": "vm-disk",
+      "origin": "atlas-image-bench-nightly-admin-develop",
+      "data_percent": 100
     },
     {
       "name": "atlas-vm-ab6afd48-49d8-40df-850a-077a170b1ae1",
+      "vg": "atlas",
+      "size": "28g",
+      "size_bytes": 30064771072,
+      "role": "vm-disk",
+      "origin": "atlas-image-bench-nightly-admin-develop",
+      "data_percent": 100
+    },
+    {
+      "name": "atlas-vm-ae8d52b4-522e-4586-b7c7-c4c129d4b17b",
       "vg": "atlas",
       "size": "28g",
       "size_bytes": 30064771072,
@@ -1447,7 +2117,7 @@
       "size_bytes": 30064771072,
       "role": "vm-disk",
       "origin": "atlas-snap-mjmdd1p7fb",
-      "data_percent": 23.41
+      "data_percent": 23.5
     },
     {
       "name": "atlas-vm-e0e6a111-6761-49fe-92ca-e74b32503204",
@@ -1456,7 +2126,25 @@
       "size_bytes": 30064771072,
       "role": "vm-disk",
       "origin": null,
-      "data_percent": 23.43
+      "data_percent": 23.5
+    },
+    {
+      "name": "atlas-vm-e4223ff7-f0ea-4460-b55d-858e57de5ea5",
+      "vg": "atlas",
+      "size": "28g",
+      "size_bytes": 30064771072,
+      "role": "vm-disk",
+      "origin": "atlas-image-bench-nightly-admin-develop",
+      "data_percent": 100
+    },
+    {
+      "name": "atlas-vm-f115b845-b465-4966-bd03-ccdab35b71e3",
+      "vg": "atlas",
+      "size": "28g",
+      "size_bytes": 30064771072,
+      "role": "vm-disk",
+      "origin": "atlas-snap-mjmdd1p7fb",
+      "data_percent": 23.37
     },
     {
       "name": "atlas-vm-f88d3c0f-c73b-4383-8dfc-2c24dd0e705a",
@@ -1474,7 +2162,7 @@
       "size_bytes": 951591108608,
       "role": "pool",
       "origin": null,
-      "data_percent": 14.02
+      "data_percent": 14.36
     }
   ],
   "storage": {
@@ -1494,7 +2182,7 @@
         "free_bytes": 0,
         "used_bytes": 953738592256,
         "pv_count": 1,
-        "lv_count": 46
+        "lv_count": 59
       }
     ],
     "thin_pools": [
@@ -1503,8 +2191,8 @@
         "vg": "atlas",
         "size_bytes": 951591108608,
         "backing": "device",
-        "data_percent": 14.02,
-        "metadata_percent": 5.9
+        "data_percent": 14.36,
+        "metadata_percent": 6.35
       }
     ],
     "volumes": [
@@ -1623,7 +2311,7 @@
         "size_bytes": 30064771072,
         "role": "vm-disk",
         "origin": "atlas-snap-mjmdd1p7fb",
-        "data_percent": 23.41
+        "data_percent": 23.5
       },
       {
         "name": "atlas-vm-16d2278c-0fc0-47d2-ab63-65f8ffc7bd29",
@@ -1632,7 +2320,16 @@
         "size_bytes": 30064771072,
         "role": "vm-disk",
         "origin": "atlas-snap-mjmdd1p7fb",
-        "data_percent": 23.41
+        "data_percent": 23.5
+      },
+      {
+        "name": "atlas-vm-185340ec-38da-4dd0-b59d-b97cab8df68f",
+        "vg": "atlas",
+        "size": "28g",
+        "size_bytes": 30064771072,
+        "role": "vm-disk",
+        "origin": "atlas-image-bench-nightly-admin-develop",
+        "data_percent": 100
       },
       {
         "name": "atlas-vm-1a597770-dc20-4967-a63d-dc22d66af690",
@@ -1686,7 +2383,7 @@
         "size_bytes": 30064771072,
         "role": "vm-disk",
         "origin": null,
-        "data_percent": 23.36
+        "data_percent": 23.46
       },
       {
         "name": "atlas-vm-460909a3-ac8a-4120-8081-ab3d0e8fbd66",
@@ -1695,6 +2392,15 @@
         "size_bytes": 30064771072,
         "role": "vm-disk",
         "origin": "atlas-image-golden-bench-nightly-admin-develop",
+        "data_percent": 100
+      },
+      {
+        "name": "atlas-vm-4d95e65e-6fe9-4d38-a5b0-c2c61b1572b5",
+        "vg": "atlas",
+        "size": "28g",
+        "size_bytes": 30064771072,
+        "role": "vm-disk",
+        "origin": "atlas-image-bench-nightly-admin-develop",
         "data_percent": 100
       },
       {
@@ -1725,13 +2431,22 @@
         "data_percent": 100
       },
       {
+        "name": "atlas-vm-5ce08f7d-529d-4fb6-acb5-f61dc93d6ce3",
+        "vg": "atlas",
+        "size": "28g",
+        "size_bytes": 30064771072,
+        "role": "vm-disk",
+        "origin": "atlas-image-bench-nightly-admin-develop",
+        "data_percent": 100
+      },
+      {
         "name": "atlas-vm-62c1c723-ddec-41e7-9b7f-9cde51bda2b5",
         "vg": "atlas",
         "size": "28g",
         "size_bytes": 30064771072,
         "role": "vm-disk",
         "origin": "atlas-snap-mjmdd1p7fb",
-        "data_percent": 23.42
+        "data_percent": 23.5
       },
       {
         "name": "atlas-vm-6678b4e2-4467-44c5-a955-4e07d44836e6",
@@ -1776,7 +2491,16 @@
         "size_bytes": 30064771072,
         "role": "vm-disk",
         "origin": null,
-        "data_percent": 23.61
+        "data_percent": 23.78
+      },
+      {
+        "name": "atlas-vm-7c15bb96-28ee-4554-b9a3-42cb2e80412e",
+        "vg": "atlas",
+        "size": "28g",
+        "size_bytes": 30064771072,
+        "role": "vm-disk",
+        "origin": "atlas-image-bench-nightly-admin-develop",
+        "data_percent": 100
       },
       {
         "name": "atlas-vm-8193685d-3557-4109-bf6d-c587d5c20308",
@@ -1785,7 +2509,16 @@
         "size_bytes": 30064771072,
         "role": "vm-disk",
         "origin": "atlas-snap-mjmdd1p7fb",
-        "data_percent": 23.42
+        "data_percent": 23.5
+      },
+      {
+        "name": "atlas-vm-8c6d455d-b0f6-4c1c-9f15-9eae5bcf6d9f",
+        "vg": "atlas",
+        "size": "28g",
+        "size_bytes": 30064771072,
+        "role": "vm-disk",
+        "origin": "atlas-snap-mjmdd1p7fb",
+        "data_percent": 23.37
       },
       {
         "name": "atlas-vm-8f7c3e8b-792c-42ca-8128-83972ef73c66",
@@ -1794,7 +2527,25 @@
         "size_bytes": 30064771072,
         "role": "vm-disk",
         "origin": "atlas-snap-ejdqckjqe0",
-        "data_percent": 22.89
+        "data_percent": 23
+      },
+      {
+        "name": "atlas-vm-8fb1e5ed-c61f-4c25-bfab-d262e328a0a3",
+        "vg": "atlas",
+        "size": "28g",
+        "size_bytes": 30064771072,
+        "role": "vm-disk",
+        "origin": "atlas-image-bench-nightly-admin-develop",
+        "data_percent": 100
+      },
+      {
+        "name": "atlas-vm-90e19aea-666e-4392-8a1e-934a8697b106",
+        "vg": "atlas",
+        "size": "28g",
+        "size_bytes": 30064771072,
+        "role": "vm-disk",
+        "origin": "atlas-image-bench-nightly-admin-develop",
+        "data_percent": 100
       },
       {
         "name": "atlas-vm-98207e43-7638-4e7b-b92f-2912eda3a73f",
@@ -1824,16 +2575,52 @@
         "data_percent": 15.63
       },
       {
+        "name": "atlas-vm-a2974b55-7f08-436d-891a-19298ecdab45",
+        "vg": "atlas",
+        "size": "28g",
+        "size_bytes": 30064771072,
+        "role": "vm-disk",
+        "origin": "atlas-image-bench-nightly-admin-develop",
+        "data_percent": 100
+      },
+      {
         "name": "atlas-vm-a2a65236-c2de-4907-b216-dc0b2393b2ab",
         "vg": "atlas",
         "size": "28g",
         "size_bytes": 30064771072,
         "role": "vm-disk",
         "origin": "atlas-snap-mjmdd1p7fb",
-        "data_percent": 23.41
+        "data_percent": 23.5
+      },
+      {
+        "name": "atlas-vm-a4342e47-34c9-4308-bd1a-bede64dc8694",
+        "vg": "atlas",
+        "size": "28g",
+        "size_bytes": 30064771072,
+        "role": "vm-disk",
+        "origin": "atlas-snap-mjmdd1p7fb",
+        "data_percent": 23.46
+      },
+      {
+        "name": "atlas-vm-aa7734ee-864d-4327-984a-e43680cb61b8",
+        "vg": "atlas",
+        "size": "28g",
+        "size_bytes": 30064771072,
+        "role": "vm-disk",
+        "origin": "atlas-image-bench-nightly-admin-develop",
+        "data_percent": 100
       },
       {
         "name": "atlas-vm-ab6afd48-49d8-40df-850a-077a170b1ae1",
+        "vg": "atlas",
+        "size": "28g",
+        "size_bytes": 30064771072,
+        "role": "vm-disk",
+        "origin": "atlas-image-bench-nightly-admin-develop",
+        "data_percent": 100
+      },
+      {
+        "name": "atlas-vm-ae8d52b4-522e-4586-b7c7-c4c129d4b17b",
         "vg": "atlas",
         "size": "28g",
         "size_bytes": 30064771072,
@@ -1893,7 +2680,7 @@
         "size_bytes": 30064771072,
         "role": "vm-disk",
         "origin": "atlas-snap-mjmdd1p7fb",
-        "data_percent": 23.41
+        "data_percent": 23.5
       },
       {
         "name": "atlas-vm-e0e6a111-6761-49fe-92ca-e74b32503204",
@@ -1902,7 +2689,25 @@
         "size_bytes": 30064771072,
         "role": "vm-disk",
         "origin": null,
-        "data_percent": 23.43
+        "data_percent": 23.5
+      },
+      {
+        "name": "atlas-vm-e4223ff7-f0ea-4460-b55d-858e57de5ea5",
+        "vg": "atlas",
+        "size": "28g",
+        "size_bytes": 30064771072,
+        "role": "vm-disk",
+        "origin": "atlas-image-bench-nightly-admin-develop",
+        "data_percent": 100
+      },
+      {
+        "name": "atlas-vm-f115b845-b465-4966-bd03-ccdab35b71e3",
+        "vg": "atlas",
+        "size": "28g",
+        "size_bytes": 30064771072,
+        "role": "vm-disk",
+        "origin": "atlas-snap-mjmdd1p7fb",
+        "data_percent": 23.37
       },
       {
         "name": "atlas-vm-f88d3c0f-c73b-4383-8dfc-2c24dd0e705a",
@@ -1920,7 +2725,7 @@
         "size_bytes": 951591108608,
         "role": "pool",
         "origin": null,
-        "data_percent": 14.02
+        "data_percent": 14.36
       }
     ]
   },
@@ -2470,6 +3275,246 @@
       "family": "inet6",
       "address": "fe80::2/64",
       "scope": "link"
+    },
+    {
+      "interface": "atlas-h4d95e65",
+      "family": "inet",
+      "address": "169.254.0.1/30",
+      "scope": "global"
+    },
+    {
+      "interface": "atlas-h4d95e65",
+      "family": "inet6",
+      "address": "fe80::48f3:76ff:fe3f:e3f4/64",
+      "scope": "link"
+    },
+    {
+      "interface": "atlas-h4d95e65",
+      "family": "inet6",
+      "address": "fe80::2/64",
+      "scope": "link"
+    },
+    {
+      "interface": "atlas-ha4342e4",
+      "family": "inet",
+      "address": "169.254.0.1/30",
+      "scope": "global"
+    },
+    {
+      "interface": "atlas-ha4342e4",
+      "family": "inet6",
+      "address": "fe80::104d:1ff:fe20:b0b2/64",
+      "scope": "link"
+    },
+    {
+      "interface": "atlas-ha4342e4",
+      "family": "inet6",
+      "address": "fe80::2/64",
+      "scope": "link"
+    },
+    {
+      "interface": "atlas-hf115b84",
+      "family": "inet",
+      "address": "169.254.0.1/30",
+      "scope": "global"
+    },
+    {
+      "interface": "atlas-hf115b84",
+      "family": "inet6",
+      "address": "fe80::2837:95ff:fe7d:634a/64",
+      "scope": "link"
+    },
+    {
+      "interface": "atlas-hf115b84",
+      "family": "inet6",
+      "address": "fe80::2/64",
+      "scope": "link"
+    },
+    {
+      "interface": "atlas-h8c6d455",
+      "family": "inet",
+      "address": "169.254.0.1/30",
+      "scope": "global"
+    },
+    {
+      "interface": "atlas-h8c6d455",
+      "family": "inet6",
+      "address": "fe80::bc22:59ff:fe04:aafe/64",
+      "scope": "link"
+    },
+    {
+      "interface": "atlas-h8c6d455",
+      "family": "inet6",
+      "address": "fe80::2/64",
+      "scope": "link"
+    },
+    {
+      "interface": "atlas-hae8d52b",
+      "family": "inet",
+      "address": "169.254.0.1/30",
+      "scope": "global"
+    },
+    {
+      "interface": "atlas-hae8d52b",
+      "family": "inet6",
+      "address": "fe80::9cf1:97ff:fe86:592f/64",
+      "scope": "link"
+    },
+    {
+      "interface": "atlas-hae8d52b",
+      "family": "inet6",
+      "address": "fe80::2/64",
+      "scope": "link"
+    },
+    {
+      "interface": "atlas-h7c15bb9",
+      "family": "inet",
+      "address": "169.254.0.1/30",
+      "scope": "global"
+    },
+    {
+      "interface": "atlas-h7c15bb9",
+      "family": "inet6",
+      "address": "fe80::8018:71ff:fe3e:8a8/64",
+      "scope": "link"
+    },
+    {
+      "interface": "atlas-h7c15bb9",
+      "family": "inet6",
+      "address": "fe80::2/64",
+      "scope": "link"
+    },
+    {
+      "interface": "atlas-h8fb1e5e",
+      "family": "inet",
+      "address": "169.254.0.1/30",
+      "scope": "global"
+    },
+    {
+      "interface": "atlas-h8fb1e5e",
+      "family": "inet6",
+      "address": "fe80::5c78:6bff:fe60:706a/64",
+      "scope": "link"
+    },
+    {
+      "interface": "atlas-h8fb1e5e",
+      "family": "inet6",
+      "address": "fe80::2/64",
+      "scope": "link"
+    },
+    {
+      "interface": "atlas-he4223ff",
+      "family": "inet",
+      "address": "169.254.0.1/30",
+      "scope": "global"
+    },
+    {
+      "interface": "atlas-he4223ff",
+      "family": "inet6",
+      "address": "fe80::387d:89ff:fe6c:2a54/64",
+      "scope": "link"
+    },
+    {
+      "interface": "atlas-he4223ff",
+      "family": "inet6",
+      "address": "fe80::2/64",
+      "scope": "link"
+    },
+    {
+      "interface": "atlas-h5ce08f7",
+      "family": "inet",
+      "address": "169.254.0.1/30",
+      "scope": "global"
+    },
+    {
+      "interface": "atlas-h5ce08f7",
+      "family": "inet6",
+      "address": "fe80::e404:65ff:fef5:6e3e/64",
+      "scope": "link"
+    },
+    {
+      "interface": "atlas-h5ce08f7",
+      "family": "inet6",
+      "address": "fe80::2/64",
+      "scope": "link"
+    },
+    {
+      "interface": "atlas-h185340e",
+      "family": "inet",
+      "address": "169.254.0.1/30",
+      "scope": "global"
+    },
+    {
+      "interface": "atlas-h185340e",
+      "family": "inet6",
+      "address": "fe80::c0ff:7bff:fe91:fcb1/64",
+      "scope": "link"
+    },
+    {
+      "interface": "atlas-h185340e",
+      "family": "inet6",
+      "address": "fe80::2/64",
+      "scope": "link"
+    },
+    {
+      "interface": "atlas-ha2974b5",
+      "family": "inet",
+      "address": "169.254.0.1/30",
+      "scope": "global"
+    },
+    {
+      "interface": "atlas-ha2974b5",
+      "family": "inet6",
+      "address": "fe80::5462:ff:fe18:6040/64",
+      "scope": "link"
+    },
+    {
+      "interface": "atlas-ha2974b5",
+      "family": "inet6",
+      "address": "fe80::2/64",
+      "scope": "link"
+    },
+    {
+      "interface": "atlas-h90e19ae",
+      "family": "inet",
+      "address": "169.254.0.1/30",
+      "scope": "global"
+    },
+    {
+      "interface": "atlas-h90e19ae",
+      "family": "inet6",
+      "address": "fe80::7843:a9ff:fe25:e506/64",
+      "scope": "link"
+    },
+    {
+      "interface": "atlas-h90e19ae",
+      "family": "inet6",
+      "address": "fe80::2/64",
+      "scope": "link"
+    },
+    {
+      "interface": "wg-mesh",
+      "family": "inet6",
+      "address": "fdaa:0:0:f04c::1/128",
+      "scope": "global"
+    },
+    {
+      "interface": "atlas-haa7734e",
+      "family": "inet",
+      "address": "169.254.0.1/30",
+      "scope": "global"
+    },
+    {
+      "interface": "atlas-haa7734e",
+      "family": "inet6",
+      "address": "fe80::d03e:cfff:fe2f:bf9e/64",
+      "scope": "link"
+    },
+    {
+      "interface": "atlas-haa7734e",
+      "family": "inet6",
+      "address": "fe80::2/64",
+      "scope": "link"
     }
   ],
   "interfaces": [
@@ -2710,6 +3755,104 @@
       "mtu": 1500,
       "state": "UP",
       "kind": "ether"
+    },
+    {
+      "name": "atlas-h4d95e65",
+      "mac": "4a:f3:76:3f:e3:f4",
+      "mtu": 1500,
+      "state": "UP",
+      "kind": "ether"
+    },
+    {
+      "name": "atlas-ha4342e4",
+      "mac": "12:4d:01:20:b0:b2",
+      "mtu": 1500,
+      "state": "UP",
+      "kind": "ether"
+    },
+    {
+      "name": "atlas-hf115b84",
+      "mac": "2a:37:95:7d:63:4a",
+      "mtu": 1500,
+      "state": "UP",
+      "kind": "ether"
+    },
+    {
+      "name": "atlas-h8c6d455",
+      "mac": "be:22:59:04:aa:fe",
+      "mtu": 1500,
+      "state": "UP",
+      "kind": "ether"
+    },
+    {
+      "name": "atlas-hae8d52b",
+      "mac": "9e:f1:97:86:59:2f",
+      "mtu": 1500,
+      "state": "UP",
+      "kind": "ether"
+    },
+    {
+      "name": "atlas-h7c15bb9",
+      "mac": "82:18:71:3e:08:a8",
+      "mtu": 1500,
+      "state": "UP",
+      "kind": "ether"
+    },
+    {
+      "name": "atlas-h8fb1e5e",
+      "mac": "5e:78:6b:60:70:6a",
+      "mtu": 1500,
+      "state": "UP",
+      "kind": "ether"
+    },
+    {
+      "name": "atlas-he4223ff",
+      "mac": "3a:7d:89:6c:2a:54",
+      "mtu": 1500,
+      "state": "UP",
+      "kind": "ether"
+    },
+    {
+      "name": "atlas-h5ce08f7",
+      "mac": "e6:04:65:f5:6e:3e",
+      "mtu": 1500,
+      "state": "UP",
+      "kind": "ether"
+    },
+    {
+      "name": "atlas-h185340e",
+      "mac": "c2:ff:7b:91:fc:b1",
+      "mtu": 1500,
+      "state": "UP",
+      "kind": "ether"
+    },
+    {
+      "name": "atlas-ha2974b5",
+      "mac": "56:62:00:18:60:40",
+      "mtu": 1500,
+      "state": "UP",
+      "kind": "ether"
+    },
+    {
+      "name": "atlas-h90e19ae",
+      "mac": "7a:43:a9:25:e5:06",
+      "mtu": 1500,
+      "state": "UP",
+      "kind": "ether"
+    },
+    {
+      "name": "wg-mesh",
+      "mac": null,
+      "mtu": 1420,
+      "state": "UNKNOWN",
+      "kind": "none"
+    },
+    {
+      "name": "atlas-haa7734e",
+      "mac": "d2:3e:cf:2f:bf:9e",
+      "mtu": 1500,
+      "state": "UP",
+      "kind": "ether"
     }
   ],
   "routes": [
@@ -2918,6 +4061,97 @@
     },
     {
       "family": "inet",
+      "dest": "100.64.0.142",
+      "via": "169.254.0.2",
+      "dev": "atlas-h4d95e65",
+      "table": "main"
+    },
+    {
+      "family": "inet",
+      "dest": "100.64.0.146",
+      "via": "169.254.0.2",
+      "dev": "atlas-ha4342e4",
+      "table": "main"
+    },
+    {
+      "family": "inet",
+      "dest": "100.64.0.150",
+      "via": "169.254.0.2",
+      "dev": "atlas-hf115b84",
+      "table": "main"
+    },
+    {
+      "family": "inet",
+      "dest": "100.64.0.154",
+      "via": "169.254.0.2",
+      "dev": "atlas-h8c6d455",
+      "table": "main"
+    },
+    {
+      "family": "inet",
+      "dest": "100.64.0.158",
+      "via": "169.254.0.2",
+      "dev": "atlas-hae8d52b",
+      "table": "main"
+    },
+    {
+      "family": "inet",
+      "dest": "100.64.0.162",
+      "via": "169.254.0.2",
+      "dev": "atlas-h7c15bb9",
+      "table": "main"
+    },
+    {
+      "family": "inet",
+      "dest": "100.64.0.166",
+      "via": "169.254.0.2",
+      "dev": "atlas-h8fb1e5e",
+      "table": "main"
+    },
+    {
+      "family": "inet",
+      "dest": "100.64.0.170",
+      "via": "169.254.0.2",
+      "dev": "atlas-he4223ff",
+      "table": "main"
+    },
+    {
+      "family": "inet",
+      "dest": "100.64.0.174",
+      "via": "169.254.0.2",
+      "dev": "atlas-h5ce08f7",
+      "table": "main"
+    },
+    {
+      "family": "inet",
+      "dest": "100.64.0.178",
+      "via": "169.254.0.2",
+      "dev": "atlas-h185340e",
+      "table": "main"
+    },
+    {
+      "family": "inet",
+      "dest": "100.64.0.186",
+      "via": "169.254.0.2",
+      "dev": "atlas-ha2974b5",
+      "table": "main"
+    },
+    {
+      "family": "inet",
+      "dest": "100.64.0.190",
+      "via": "169.254.0.2",
+      "dev": "atlas-h90e19ae",
+      "table": "main"
+    },
+    {
+      "family": "inet",
+      "dest": "100.64.0.194",
+      "via": "169.254.0.2",
+      "dev": "atlas-haa7734e",
+      "table": "main"
+    },
+    {
+      "family": "inet",
       "dest": "169.254.0.0/30",
       "via": null,
       "dev": "atlas-h98207e4",
@@ -3096,6 +4330,97 @@
       "dest": "169.254.0.0/30",
       "via": null,
       "dev": "atlas-hab6afd4",
+      "table": "main"
+    },
+    {
+      "family": "inet",
+      "dest": "169.254.0.0/30",
+      "via": null,
+      "dev": "atlas-h4d95e65",
+      "table": "main"
+    },
+    {
+      "family": "inet",
+      "dest": "169.254.0.0/30",
+      "via": null,
+      "dev": "atlas-ha4342e4",
+      "table": "main"
+    },
+    {
+      "family": "inet",
+      "dest": "169.254.0.0/30",
+      "via": null,
+      "dev": "atlas-hf115b84",
+      "table": "main"
+    },
+    {
+      "family": "inet",
+      "dest": "169.254.0.0/30",
+      "via": null,
+      "dev": "atlas-h8c6d455",
+      "table": "main"
+    },
+    {
+      "family": "inet",
+      "dest": "169.254.0.0/30",
+      "via": null,
+      "dev": "atlas-hae8d52b",
+      "table": "main"
+    },
+    {
+      "family": "inet",
+      "dest": "169.254.0.0/30",
+      "via": null,
+      "dev": "atlas-h7c15bb9",
+      "table": "main"
+    },
+    {
+      "family": "inet",
+      "dest": "169.254.0.0/30",
+      "via": null,
+      "dev": "atlas-h8fb1e5e",
+      "table": "main"
+    },
+    {
+      "family": "inet",
+      "dest": "169.254.0.0/30",
+      "via": null,
+      "dev": "atlas-he4223ff",
+      "table": "main"
+    },
+    {
+      "family": "inet",
+      "dest": "169.254.0.0/30",
+      "via": null,
+      "dev": "atlas-h5ce08f7",
+      "table": "main"
+    },
+    {
+      "family": "inet",
+      "dest": "169.254.0.0/30",
+      "via": null,
+      "dev": "atlas-h185340e",
+      "table": "main"
+    },
+    {
+      "family": "inet",
+      "dest": "169.254.0.0/30",
+      "via": null,
+      "dev": "atlas-ha2974b5",
+      "table": "main"
+    },
+    {
+      "family": "inet",
+      "dest": "169.254.0.0/30",
+      "via": null,
+      "dev": "atlas-h90e19ae",
+      "table": "main"
+    },
+    {
+      "family": "inet",
+      "dest": "169.254.0.0/30",
+      "via": null,
+      "dev": "atlas-haa7734e",
       "table": "main"
     },
     {
@@ -3275,6 +4600,97 @@
     },
     {
       "family": "inet6",
+      "dest": "2001:bc8:1203:15::23",
+      "via": "fe80::3",
+      "dev": "atlas-h4d95e65",
+      "table": "main"
+    },
+    {
+      "family": "inet6",
+      "dest": "2001:bc8:1203:15::24",
+      "via": "fe80::3",
+      "dev": "atlas-ha4342e4",
+      "table": "main"
+    },
+    {
+      "family": "inet6",
+      "dest": "2001:bc8:1203:15::25",
+      "via": "fe80::3",
+      "dev": "atlas-hf115b84",
+      "table": "main"
+    },
+    {
+      "family": "inet6",
+      "dest": "2001:bc8:1203:15::26",
+      "via": "fe80::3",
+      "dev": "atlas-h8c6d455",
+      "table": "main"
+    },
+    {
+      "family": "inet6",
+      "dest": "2001:bc8:1203:15::27",
+      "via": "fe80::3",
+      "dev": "atlas-hae8d52b",
+      "table": "main"
+    },
+    {
+      "family": "inet6",
+      "dest": "2001:bc8:1203:15::28",
+      "via": "fe80::3",
+      "dev": "atlas-h7c15bb9",
+      "table": "main"
+    },
+    {
+      "family": "inet6",
+      "dest": "2001:bc8:1203:15::29",
+      "via": "fe80::3",
+      "dev": "atlas-h8fb1e5e",
+      "table": "main"
+    },
+    {
+      "family": "inet6",
+      "dest": "2001:bc8:1203:15::2a",
+      "via": "fe80::3",
+      "dev": "atlas-he4223ff",
+      "table": "main"
+    },
+    {
+      "family": "inet6",
+      "dest": "2001:bc8:1203:15::2b",
+      "via": "fe80::3",
+      "dev": "atlas-h5ce08f7",
+      "table": "main"
+    },
+    {
+      "family": "inet6",
+      "dest": "2001:bc8:1203:15::2c",
+      "via": "fe80::3",
+      "dev": "atlas-h185340e",
+      "table": "main"
+    },
+    {
+      "family": "inet6",
+      "dest": "2001:bc8:1203:15::2e",
+      "via": "fe80::3",
+      "dev": "atlas-ha2974b5",
+      "table": "main"
+    },
+    {
+      "family": "inet6",
+      "dest": "2001:bc8:1203:15::2f",
+      "via": "fe80::3",
+      "dev": "atlas-h90e19ae",
+      "table": "main"
+    },
+    {
+      "family": "inet6",
+      "dest": "2001:bc8:1203:15::30",
+      "via": "fe80::3",
+      "dev": "atlas-haa7734e",
+      "table": "main"
+    },
+    {
+      "family": "inet6",
       "dest": "2001:bc8:1203:b3::2",
       "via": "fe80::3",
       "dev": "atlas-h9ae90d6",
@@ -3285,6 +4701,27 @@
       "dest": "2001:bc8:1203:b3::3",
       "via": "fe80::3",
       "dev": "atlas-h6a6fa05",
+      "table": "main"
+    },
+    {
+      "family": "inet6",
+      "dest": "fdaa:0:0:f04c::1",
+      "via": null,
+      "dev": "wg-mesh",
+      "table": "main"
+    },
+    {
+      "family": "inet6",
+      "dest": "fdaa:6345:ce79:0:6edc:123f:394b:8754",
+      "via": "fe80::3",
+      "dev": "atlas-haa7734e",
+      "table": "main"
+    },
+    {
+      "family": "inet6",
+      "dest": "fdaa::/16",
+      "via": null,
+      "dev": "wg-mesh",
       "table": "main"
     },
     {
@@ -3506,6 +4943,97 @@
     },
     {
       "family": "inet6",
+      "dest": "fe80::/64",
+      "via": null,
+      "dev": "atlas-h4d95e65",
+      "table": "main"
+    },
+    {
+      "family": "inet6",
+      "dest": "fe80::/64",
+      "via": null,
+      "dev": "atlas-ha4342e4",
+      "table": "main"
+    },
+    {
+      "family": "inet6",
+      "dest": "fe80::/64",
+      "via": null,
+      "dev": "atlas-hf115b84",
+      "table": "main"
+    },
+    {
+      "family": "inet6",
+      "dest": "fe80::/64",
+      "via": null,
+      "dev": "atlas-h8c6d455",
+      "table": "main"
+    },
+    {
+      "family": "inet6",
+      "dest": "fe80::/64",
+      "via": null,
+      "dev": "atlas-hae8d52b",
+      "table": "main"
+    },
+    {
+      "family": "inet6",
+      "dest": "fe80::/64",
+      "via": null,
+      "dev": "atlas-h7c15bb9",
+      "table": "main"
+    },
+    {
+      "family": "inet6",
+      "dest": "fe80::/64",
+      "via": null,
+      "dev": "atlas-h8fb1e5e",
+      "table": "main"
+    },
+    {
+      "family": "inet6",
+      "dest": "fe80::/64",
+      "via": null,
+      "dev": "atlas-he4223ff",
+      "table": "main"
+    },
+    {
+      "family": "inet6",
+      "dest": "fe80::/64",
+      "via": null,
+      "dev": "atlas-h5ce08f7",
+      "table": "main"
+    },
+    {
+      "family": "inet6",
+      "dest": "fe80::/64",
+      "via": null,
+      "dev": "atlas-h185340e",
+      "table": "main"
+    },
+    {
+      "family": "inet6",
+      "dest": "fe80::/64",
+      "via": null,
+      "dev": "atlas-ha2974b5",
+      "table": "main"
+    },
+    {
+      "family": "inet6",
+      "dest": "fe80::/64",
+      "via": null,
+      "dev": "atlas-h90e19ae",
+      "table": "main"
+    },
+    {
+      "family": "inet6",
+      "dest": "fe80::/64",
+      "via": null,
+      "dev": "atlas-haa7734e",
+      "table": "main"
+    },
+    {
+      "family": "inet6",
       "dest": "default",
       "via": "fe80::262a:4ff:fec0:ffb7",
       "dev": "enp3s0f0np0",
@@ -3519,6 +5047,10 @@
     },
     {
       "address": "2001:bc8:1203:15::11",
+      "dev": "enp3s0f0np0"
+    },
+    {
+      "address": "2001:bc8:1203:15::23",
       "dev": "enp3s0f0np0"
     },
     {
@@ -3538,6 +5070,10 @@
       "dev": "enp3s0f0np0"
     },
     {
+      "address": "2001:bc8:1203:15::30",
+      "dev": "enp3s0f0np0"
+    },
+    {
       "address": "2001:bc8:1203:15::21",
       "dev": "enp3s0f0np0"
     },
@@ -3550,7 +5086,15 @@
       "dev": "enp3s0f0np0"
     },
     {
+      "address": "2001:bc8:1203:15::26",
+      "dev": "enp3s0f0np0"
+    },
+    {
       "address": "2001:bc8:1203:15::15",
+      "dev": "enp3s0f0np0"
+    },
+    {
+      "address": "2001:bc8:1203:15::27",
       "dev": "enp3s0f0np0"
     },
     {
@@ -3558,7 +5102,15 @@
       "dev": "enp3s0f0np0"
     },
     {
+      "address": "2001:bc8:1203:15::24",
+      "dev": "enp3s0f0np0"
+    },
+    {
       "address": "2001:bc8:1203:15::17",
+      "dev": "enp3s0f0np0"
+    },
+    {
+      "address": "2001:bc8:1203:15::25",
       "dev": "enp3s0f0np0"
     },
     {
@@ -3566,7 +5118,15 @@
       "dev": "enp3s0f0np0"
     },
     {
+      "address": "2001:bc8:1203:15::2a",
+      "dev": "enp3s0f0np0"
+    },
+    {
       "address": "2001:bc8:1203:15::19",
+      "dev": "enp3s0f0np0"
+    },
+    {
+      "address": "2001:bc8:1203:15::2b",
       "dev": "enp3s0f0np0"
     },
     {
@@ -3574,7 +5134,15 @@
       "dev": "enp3s0f0np0"
     },
     {
+      "address": "2001:bc8:1203:15::28",
+      "dev": "enp3s0f0np0"
+    },
+    {
       "address": "2001:bc8:1203:15::a",
+      "dev": "enp3s0f0np0"
+    },
+    {
+      "address": "2001:bc8:1203:15::29",
       "dev": "enp3s0f0np0"
     },
     {
@@ -3586,6 +5154,10 @@
       "dev": "enp3s0f0np0"
     },
     {
+      "address": "2001:bc8:1203:15::2e",
+      "dev": "enp3s0f0np0"
+    },
+    {
       "address": "2001:bc8:1203:15::1d",
       "dev": "enp3s0f0np0"
     },
@@ -3594,11 +5166,19 @@
       "dev": "enp3s0f0np0"
     },
     {
+      "address": "2001:bc8:1203:15::2f",
+      "dev": "enp3s0f0np0"
+    },
+    {
       "address": "2001:bc8:1203:15::1c",
       "dev": "enp3s0f0np0"
     },
     {
       "address": "2001:bc8:1203:15::d",
+      "dev": "enp3s0f0np0"
+    },
+    {
+      "address": "2001:bc8:1203:15::2c",
       "dev": "enp3s0f0np0"
     },
     {
@@ -3623,6 +5203,7 @@
     {
       "address": "51.159.76.127",
       "attached_vm": "98207e43-7638-4e7b-b92f-2912eda3a73f",
+      "guest_ipv4": "100.64.0.14",
       "anchor": null,
       "anchor_gateway": null
     }
@@ -3640,6 +5221,10 @@
           "name": "forward",
           "type": "filter",
           "rules": [
+            "iifname wg-mesh oifname atlas-haa7734e ip6 saddr fdaa:6345:ce79::/48 ip6 daddr fdaa:6345:ce79:0:6edc:123f:394b:8754 accept",
+            "iifname atlas-haa7734e ip6 saddr fdaa:6345:ce79:0:6edc:123f:394b:8754 ip6 daddr fdaa::/48 accept",
+            "iifname atlas-haa7734e ip6 saddr fdaa:6345:ce79:0:6edc:123f:394b:8754 ip6 daddr fdaa:6345:ce79::/48 accept",
+            "iifname atlas-haa7734e ip6 daddr fdaa::/16 ip6 saddr != fdaa:6345:ce79:0:6edc:123f:394b:8754 drop",
             "ip daddr 169.254.169.254 drop",
             "ip6 daddr 2001:bc8:1203:15::3 oifname atlas-h98207e4 accept",
             "ip6 saddr 2001:bc8:1203:15::3 iifname atlas-h98207e4 accept",
@@ -3693,7 +5278,34 @@
             "ip6 daddr 2001:bc8:1203:15::21 oifname atlas-ha2a6523 accept",
             "ip6 saddr 2001:bc8:1203:15::21 iifname atlas-ha2a6523 accept",
             "ip6 daddr 2001:bc8:1203:15::22 oifname atlas-hab6afd4 accept",
-            "ip6 saddr 2001:bc8:1203:15::22 iifname atlas-hab6afd4 accept"
+            "ip6 saddr 2001:bc8:1203:15::22 iifname atlas-hab6afd4 accept",
+            "ip6 daddr 2001:bc8:1203:15::23 oifname atlas-h4d95e65 accept",
+            "ip6 saddr 2001:bc8:1203:15::23 iifname atlas-h4d95e65 accept",
+            "ip6 daddr 2001:bc8:1203:15::24 oifname atlas-ha4342e4 accept",
+            "ip6 saddr 2001:bc8:1203:15::24 iifname atlas-ha4342e4 accept",
+            "ip6 daddr 2001:bc8:1203:15::25 oifname atlas-hf115b84 accept",
+            "ip6 saddr 2001:bc8:1203:15::25 iifname atlas-hf115b84 accept",
+            "ip6 daddr 2001:bc8:1203:15::26 oifname atlas-h8c6d455 accept",
+            "ip6 saddr 2001:bc8:1203:15::26 iifname atlas-h8c6d455 accept",
+            "ip6 daddr 2001:bc8:1203:15::27 oifname atlas-hae8d52b accept",
+            "ip6 saddr 2001:bc8:1203:15::27 iifname atlas-hae8d52b accept",
+            "ip6 daddr 2001:bc8:1203:15::28 oifname atlas-h7c15bb9 accept",
+            "ip6 saddr 2001:bc8:1203:15::28 iifname atlas-h7c15bb9 accept",
+            "ip6 daddr 2001:bc8:1203:15::29 oifname atlas-h8fb1e5e accept",
+            "ip6 saddr 2001:bc8:1203:15::29 iifname atlas-h8fb1e5e accept",
+            "ip6 daddr 2001:bc8:1203:15::2a oifname atlas-he4223ff accept",
+            "ip6 saddr 2001:bc8:1203:15::2a iifname atlas-he4223ff accept",
+            "ip6 daddr 2001:bc8:1203:15::2b oifname atlas-h5ce08f7 accept",
+            "ip6 saddr 2001:bc8:1203:15::2b iifname atlas-h5ce08f7 accept",
+            "ip6 daddr 2001:bc8:1203:15::2c oifname atlas-h185340e accept",
+            "ip6 saddr 2001:bc8:1203:15::2c iifname atlas-h185340e accept",
+            "ip6 daddr 2001:bc8:1203:15::2e oifname atlas-ha2974b5 accept",
+            "ip6 saddr 2001:bc8:1203:15::2e iifname atlas-ha2974b5 accept",
+            "ip6 daddr 2001:bc8:1203:15::2f oifname atlas-h90e19ae accept",
+            "ip6 saddr 2001:bc8:1203:15::2f iifname atlas-h90e19ae accept",
+            "ip6 daddr fdaa::/16 drop",
+            "ip6 daddr 2001:bc8:1203:15::30 oifname atlas-haa7734e accept",
+            "ip6 saddr 2001:bc8:1203:15::30 iifname atlas-haa7734e accept"
           ]
         },
         {
@@ -3720,238 +5332,376 @@
       "load": "loaded",
       "active": "inactive",
       "sub": "dead",
-      "kind": "pool"
+      "kind": "pool",
+      "description": "Atlas LVM thin pool"
     },
     {
       "name": "firecracker-vm@0cc727b2-0b16-409e-9cf8-ba647848a315.service",
       "load": "loaded",
       "active": "active",
       "sub": "running",
-      "kind": "vm"
+      "kind": "vm",
+      "description": "Atlas Firecracker VM 0cc727b2-0b16-409e-9cf8-ba647848a315"
     },
     {
       "name": "firecracker-vm@16d2278c-0fc0-47d2-ab63-65f8ffc7bd29.service",
       "load": "loaded",
       "active": "active",
       "sub": "running",
-      "kind": "vm"
+      "kind": "vm",
+      "description": "Atlas Firecracker VM 16d2278c-0fc0-47d2-ab63-65f8ffc7bd29"
+    },
+    {
+      "name": "firecracker-vm@185340ec-38da-4dd0-b59d-b97cab8df68f.service",
+      "load": "loaded",
+      "active": "active",
+      "sub": "running",
+      "kind": "vm",
+      "description": "Atlas Firecracker VM 185340ec-38da-4dd0-b59d-b97cab8df68f"
     },
     {
       "name": "firecracker-vm@1a597770-dc20-4967-a63d-dc22d66af690.service",
       "load": "loaded",
       "active": "inactive",
       "sub": "dead",
-      "kind": "vm"
+      "kind": "vm",
+      "description": "Atlas Firecracker VM 1a597770-dc20-4967-a63d-dc22d66af690"
     },
     {
       "name": "firecracker-vm@1ad6f74b-c8d3-46ab-bee4-b53ce3fb87e5.service",
       "load": "loaded",
       "active": "active",
       "sub": "running",
-      "kind": "vm"
+      "kind": "vm",
+      "description": "Atlas Firecracker VM 1ad6f74b-c8d3-46ab-bee4-b53ce3fb87e5"
     },
     {
       "name": "firecracker-vm@210cd64a-3912-4d61-9e14-25970ea247a5.service",
       "load": "loaded",
       "active": "active",
       "sub": "running",
-      "kind": "vm"
+      "kind": "vm",
+      "description": "Atlas Firecracker VM 210cd64a-3912-4d61-9e14-25970ea247a5"
     },
     {
       "name": "firecracker-vm@262cfee0-0afa-4571-9812-36e4bba8e510.service",
       "load": "loaded",
       "active": "active",
       "sub": "running",
-      "kind": "vm"
+      "kind": "vm",
+      "description": "Atlas Firecracker VM 262cfee0-0afa-4571-9812-36e4bba8e510"
     },
     {
       "name": "firecracker-vm@3c5f22c8-214b-4143-8b75-bd1c41db00a1.service",
       "load": "loaded",
       "active": "active",
       "sub": "running",
-      "kind": "vm"
+      "kind": "vm",
+      "description": "Atlas Firecracker VM 3c5f22c8-214b-4143-8b75-bd1c41db00a1"
     },
     {
       "name": "firecracker-vm@460909a3-ac8a-4120-8081-ab3d0e8fbd66.service",
       "load": "loaded",
       "active": "active",
       "sub": "running",
-      "kind": "vm"
+      "kind": "vm",
+      "description": "Atlas Firecracker VM 460909a3-ac8a-4120-8081-ab3d0e8fbd66"
+    },
+    {
+      "name": "firecracker-vm@4d95e65e-6fe9-4d38-a5b0-c2c61b1572b5.service",
+      "load": "loaded",
+      "active": "active",
+      "sub": "running",
+      "kind": "vm",
+      "description": "Atlas Firecracker VM 4d95e65e-6fe9-4d38-a5b0-c2c61b1572b5"
     },
     {
       "name": "firecracker-vm@508cc4ab-250e-4641-bd99-8e639802f0a2.service",
       "load": "loaded",
       "active": "inactive",
       "sub": "dead",
-      "kind": "vm"
+      "kind": "vm",
+      "description": "Atlas Firecracker VM 508cc4ab-250e-4641-bd99-8e639802f0a2"
     },
     {
       "name": "firecracker-vm@5802336d-84b2-4938-866f-abd3fc759623.service",
       "load": "loaded",
       "active": "inactive",
       "sub": "dead",
-      "kind": "vm"
+      "kind": "vm",
+      "description": "Atlas Firecracker VM 5802336d-84b2-4938-866f-abd3fc759623"
     },
     {
       "name": "firecracker-vm@5cc5d7f9-2041-40c1-b74e-7be754184c3e.service",
       "load": "loaded",
       "active": "active",
       "sub": "running",
-      "kind": "vm"
+      "kind": "vm",
+      "description": "Atlas Firecracker VM 5cc5d7f9-2041-40c1-b74e-7be754184c3e"
+    },
+    {
+      "name": "firecracker-vm@5ce08f7d-529d-4fb6-acb5-f61dc93d6ce3.service",
+      "load": "loaded",
+      "active": "active",
+      "sub": "running",
+      "kind": "vm",
+      "description": "Atlas Firecracker VM 5ce08f7d-529d-4fb6-acb5-f61dc93d6ce3"
     },
     {
       "name": "firecracker-vm@62c1c723-ddec-41e7-9b7f-9cde51bda2b5.service",
       "load": "loaded",
       "active": "active",
       "sub": "running",
-      "kind": "vm"
+      "kind": "vm",
+      "description": "Atlas Firecracker VM 62c1c723-ddec-41e7-9b7f-9cde51bda2b5"
     },
     {
       "name": "firecracker-vm@6678b4e2-4467-44c5-a955-4e07d44836e6.service",
       "load": "loaded",
       "active": "inactive",
       "sub": "dead",
-      "kind": "vm"
+      "kind": "vm",
+      "description": "Atlas Firecracker VM 6678b4e2-4467-44c5-a955-4e07d44836e6"
     },
     {
       "name": "firecracker-vm@67c0b618-aba0-4b9d-94e2-047cd6715c58.service",
       "load": "loaded",
       "active": "inactive",
       "sub": "dead",
-      "kind": "vm"
+      "kind": "vm",
+      "description": "Atlas Firecracker VM 67c0b618-aba0-4b9d-94e2-047cd6715c58"
     },
     {
       "name": "firecracker-vm@6a6fa05f-db3e-48a6-8a6a-4201a07fe406.service",
       "load": "loaded",
       "active": "active",
       "sub": "running",
-      "kind": "vm"
+      "kind": "vm",
+      "description": "Atlas Firecracker VM 6a6fa05f-db3e-48a6-8a6a-4201a07fe406"
     },
     {
       "name": "firecracker-vm@6d409584-33ff-43e5-baf3-de4ea463edcd.service",
       "load": "loaded",
       "active": "inactive",
       "sub": "dead",
-      "kind": "vm"
+      "kind": "vm",
+      "description": "Atlas Firecracker VM 6d409584-33ff-43e5-baf3-de4ea463edcd"
     },
     {
       "name": "firecracker-vm@6f7c6c74-d708-4f19-b7df-e75f080f4947.service",
       "load": "loaded",
       "active": "active",
       "sub": "running",
-      "kind": "vm"
+      "kind": "vm",
+      "description": "Atlas Firecracker VM 6f7c6c74-d708-4f19-b7df-e75f080f4947"
+    },
+    {
+      "name": "firecracker-vm@7c15bb96-28ee-4554-b9a3-42cb2e80412e.service",
+      "load": "loaded",
+      "active": "active",
+      "sub": "running",
+      "kind": "vm",
+      "description": "Atlas Firecracker VM 7c15bb96-28ee-4554-b9a3-42cb2e80412e"
     },
     {
       "name": "firecracker-vm@8193685d-3557-4109-bf6d-c587d5c20308.service",
       "load": "loaded",
       "active": "active",
       "sub": "running",
-      "kind": "vm"
+      "kind": "vm",
+      "description": "Atlas Firecracker VM 8193685d-3557-4109-bf6d-c587d5c20308"
+    },
+    {
+      "name": "firecracker-vm@8c6d455d-b0f6-4c1c-9f15-9eae5bcf6d9f.service",
+      "load": "loaded",
+      "active": "active",
+      "sub": "running",
+      "kind": "vm",
+      "description": "Atlas Firecracker VM 8c6d455d-b0f6-4c1c-9f15-9eae5bcf6d9f"
     },
     {
       "name": "firecracker-vm@8f7c3e8b-792c-42ca-8128-83972ef73c66.service",
       "load": "loaded",
       "active": "active",
       "sub": "running",
-      "kind": "vm"
+      "kind": "vm",
+      "description": "Atlas Firecracker VM 8f7c3e8b-792c-42ca-8128-83972ef73c66"
+    },
+    {
+      "name": "firecracker-vm@8fb1e5ed-c61f-4c25-bfab-d262e328a0a3.service",
+      "load": "loaded",
+      "active": "active",
+      "sub": "running",
+      "kind": "vm",
+      "description": "Atlas Firecracker VM 8fb1e5ed-c61f-4c25-bfab-d262e328a0a3"
+    },
+    {
+      "name": "firecracker-vm@90e19aea-666e-4392-8a1e-934a8697b106.service",
+      "load": "loaded",
+      "active": "active",
+      "sub": "running",
+      "kind": "vm",
+      "description": "Atlas Firecracker VM 90e19aea-666e-4392-8a1e-934a8697b106"
     },
     {
       "name": "firecracker-vm@98207e43-7638-4e7b-b92f-2912eda3a73f.service",
       "load": "loaded",
       "active": "active",
       "sub": "running",
-      "kind": "vm"
+      "kind": "vm",
+      "description": "Atlas Firecracker VM 98207e43-7638-4e7b-b92f-2912eda3a73f"
     },
     {
       "name": "firecracker-vm@9ae90d69-b0e8-4400-9c5d-edd8600c06ea.service",
       "load": "loaded",
       "active": "active",
       "sub": "running",
-      "kind": "vm"
+      "kind": "vm",
+      "description": "Atlas Firecracker VM 9ae90d69-b0e8-4400-9c5d-edd8600c06ea"
     },
     {
       "name": "firecracker-vm@9df3f226-334c-43a2-b328-b50ea02d27d4.service",
       "load": "loaded",
       "active": "active",
       "sub": "running",
-      "kind": "vm"
+      "kind": "vm",
+      "description": "Atlas Firecracker VM 9df3f226-334c-43a2-b328-b50ea02d27d4"
+    },
+    {
+      "name": "firecracker-vm@a2974b55-7f08-436d-891a-19298ecdab45.service",
+      "load": "loaded",
+      "active": "active",
+      "sub": "running",
+      "kind": "vm",
+      "description": "Atlas Firecracker VM a2974b55-7f08-436d-891a-19298ecdab45"
     },
     {
       "name": "firecracker-vm@a2a65236-c2de-4907-b216-dc0b2393b2ab.service",
       "load": "loaded",
       "active": "active",
       "sub": "running",
-      "kind": "vm"
+      "kind": "vm",
+      "description": "Atlas Firecracker VM a2a65236-c2de-4907-b216-dc0b2393b2ab"
+    },
+    {
+      "name": "firecracker-vm@a4342e47-34c9-4308-bd1a-bede64dc8694.service",
+      "load": "loaded",
+      "active": "active",
+      "sub": "running",
+      "kind": "vm",
+      "description": "Atlas Firecracker VM a4342e47-34c9-4308-bd1a-bede64dc8694"
+    },
+    {
+      "name": "firecracker-vm@aa7734ee-864d-4327-984a-e43680cb61b8.service",
+      "load": "loaded",
+      "active": "active",
+      "sub": "running",
+      "kind": "vm",
+      "description": "Atlas Firecracker VM aa7734ee-864d-4327-984a-e43680cb61b8"
     },
     {
       "name": "firecracker-vm@ab6afd48-49d8-40df-850a-077a170b1ae1.service",
       "load": "loaded",
       "active": "active",
       "sub": "running",
-      "kind": "vm"
+      "kind": "vm",
+      "description": "Atlas Firecracker VM ab6afd48-49d8-40df-850a-077a170b1ae1"
+    },
+    {
+      "name": "firecracker-vm@ae8d52b4-522e-4586-b7c7-c4c129d4b17b.service",
+      "load": "loaded",
+      "active": "active",
+      "sub": "running",
+      "kind": "vm",
+      "description": "Atlas Firecracker VM ae8d52b4-522e-4586-b7c7-c4c129d4b17b"
     },
     {
       "name": "firecracker-vm@atlas-pool.service",
       "load": "loaded",
       "active": "inactive",
       "sub": "dead",
-      "kind": "vm"
+      "kind": "vm",
+      "description": "Atlas Firecracker VM atlas-pool"
     },
     {
       "name": "firecracker-vm@b30f6d9f-081b-49a7-bdef-02b548fbe610.service",
       "load": "loaded",
       "active": "active",
       "sub": "running",
-      "kind": "vm"
+      "kind": "vm",
+      "description": "Atlas Firecracker VM b30f6d9f-081b-49a7-bdef-02b548fbe610"
     },
     {
       "name": "firecracker-vm@b46bd299-4f1c-47a6-b9ed-4bdffa3ee15e.service",
       "load": "loaded",
       "active": "active",
       "sub": "running",
-      "kind": "vm"
+      "kind": "vm",
+      "description": "Atlas Firecracker VM b46bd299-4f1c-47a6-b9ed-4bdffa3ee15e"
     },
     {
       "name": "firecracker-vm@cb1e7cd1-6f65-4ae7-b868-e71c8582a54d.service",
       "load": "loaded",
       "active": "active",
       "sub": "running",
-      "kind": "vm"
+      "kind": "vm",
+      "description": "Atlas Firecracker VM cb1e7cd1-6f65-4ae7-b868-e71c8582a54d"
     },
     {
       "name": "firecracker-vm@d13205e4-5847-413d-aaaf-2f5eb4893e18.service",
       "load": "loaded",
       "active": "active",
       "sub": "running",
-      "kind": "vm"
+      "kind": "vm",
+      "description": "Atlas Firecracker VM d13205e4-5847-413d-aaaf-2f5eb4893e18"
     },
     {
       "name": "firecracker-vm@d205b18b-7e6c-408b-8d66-c7642de5db34.service",
       "load": "loaded",
       "active": "active",
       "sub": "running",
-      "kind": "vm"
+      "kind": "vm",
+      "description": "Atlas Firecracker VM d205b18b-7e6c-408b-8d66-c7642de5db34"
     },
     {
       "name": "firecracker-vm@d6738b4e-83de-4a32-bbbc-f756911fb75b.service",
       "load": "loaded",
       "active": "active",
       "sub": "running",
-      "kind": "vm"
+      "kind": "vm",
+      "description": "Atlas Firecracker VM d6738b4e-83de-4a32-bbbc-f756911fb75b"
     },
     {
       "name": "firecracker-vm@e0e6a111-6761-49fe-92ca-e74b32503204.service",
       "load": "loaded",
       "active": "active",
       "sub": "running",
-      "kind": "vm"
+      "kind": "vm",
+      "description": "Atlas Firecracker VM e0e6a111-6761-49fe-92ca-e74b32503204"
+    },
+    {
+      "name": "firecracker-vm@e4223ff7-f0ea-4460-b55d-858e57de5ea5.service",
+      "load": "loaded",
+      "active": "active",
+      "sub": "running",
+      "kind": "vm",
+      "description": "Atlas Firecracker VM e4223ff7-f0ea-4460-b55d-858e57de5ea5"
+    },
+    {
+      "name": "firecracker-vm@f115b845-b465-4966-bd03-ccdab35b71e3.service",
+      "load": "loaded",
+      "active": "active",
+      "sub": "running",
+      "kind": "vm",
+      "description": "Atlas Firecracker VM f115b845-b465-4966-bd03-ccdab35b71e3"
     },
     {
       "name": "firecracker-vm@f88d3c0f-c73b-4383-8dfc-2c24dd0e705a.service",
       "load": "loaded",
       "active": "active",
       "sub": "running",
-      "kind": "vm"
+      "kind": "vm",
+      "description": "Atlas Firecracker VM f88d3c0f-c73b-4383-8dfc-2c24dd0e705a"
     }
   ],
   "tasks": [],
@@ -4485,6 +6235,110 @@
       "rota": false
     },
     {
+      "name": "atlas-atlas--vm--4d95e65e--6fe9--4d38--a5b0--c2c61b1572b5",
+      "kind": "lvm",
+      "size": "28g",
+      "mount": null,
+      "model": null,
+      "rota": false
+    },
+    {
+      "name": "atlas-atlas--vm--a4342e47--34c9--4308--bd1a--bede64dc8694",
+      "kind": "lvm",
+      "size": "28g",
+      "mount": null,
+      "model": null,
+      "rota": false
+    },
+    {
+      "name": "atlas-atlas--vm--f115b845--b465--4966--bd03--ccdab35b71e3",
+      "kind": "lvm",
+      "size": "28g",
+      "mount": null,
+      "model": null,
+      "rota": false
+    },
+    {
+      "name": "atlas-atlas--vm--8c6d455d--b0f6--4c1c--9f15--9eae5bcf6d9f",
+      "kind": "lvm",
+      "size": "28g",
+      "mount": null,
+      "model": null,
+      "rota": false
+    },
+    {
+      "name": "atlas-atlas--vm--ae8d52b4--522e--4586--b7c7--c4c129d4b17b",
+      "kind": "lvm",
+      "size": "28g",
+      "mount": null,
+      "model": null,
+      "rota": false
+    },
+    {
+      "name": "atlas-atlas--vm--7c15bb96--28ee--4554--b9a3--42cb2e80412e",
+      "kind": "lvm",
+      "size": "28g",
+      "mount": null,
+      "model": null,
+      "rota": false
+    },
+    {
+      "name": "atlas-atlas--vm--8fb1e5ed--c61f--4c25--bfab--d262e328a0a3",
+      "kind": "lvm",
+      "size": "28g",
+      "mount": null,
+      "model": null,
+      "rota": false
+    },
+    {
+      "name": "atlas-atlas--vm--e4223ff7--f0ea--4460--b55d--858e57de5ea5",
+      "kind": "lvm",
+      "size": "28g",
+      "mount": null,
+      "model": null,
+      "rota": false
+    },
+    {
+      "name": "atlas-atlas--vm--5ce08f7d--529d--4fb6--acb5--f61dc93d6ce3",
+      "kind": "lvm",
+      "size": "28g",
+      "mount": null,
+      "model": null,
+      "rota": false
+    },
+    {
+      "name": "atlas-atlas--vm--185340ec--38da--4dd0--b59d--b97cab8df68f",
+      "kind": "lvm",
+      "size": "28g",
+      "mount": null,
+      "model": null,
+      "rota": false
+    },
+    {
+      "name": "atlas-atlas--vm--aa7734ee--864d--4327--984a--e43680cb61b8",
+      "kind": "lvm",
+      "size": "28g",
+      "mount": null,
+      "model": null,
+      "rota": false
+    },
+    {
+      "name": "atlas-atlas--vm--a2974b55--7f08--436d--891a--19298ecdab45",
+      "kind": "lvm",
+      "size": "28g",
+      "mount": null,
+      "model": null,
+      "rota": false
+    },
+    {
+      "name": "atlas-atlas--vm--90e19aea--666e--4392--8a1e--934a8697b106",
+      "kind": "lvm",
+      "size": "28g",
+      "mount": null,
+      "model": null,
+      "rota": false
+    },
+    {
       "name": "atlas-pool0_tdata",
       "kind": "lvm",
       "size": "886g",
@@ -4878,6 +6732,110 @@
     },
     {
       "name": "atlas-atlas--vm--ab6afd48--49d8--40df--850a--077a170b1ae1",
+      "kind": "lvm",
+      "size": "28g",
+      "mount": null,
+      "model": null,
+      "rota": false
+    },
+    {
+      "name": "atlas-atlas--vm--4d95e65e--6fe9--4d38--a5b0--c2c61b1572b5",
+      "kind": "lvm",
+      "size": "28g",
+      "mount": null,
+      "model": null,
+      "rota": false
+    },
+    {
+      "name": "atlas-atlas--vm--a4342e47--34c9--4308--bd1a--bede64dc8694",
+      "kind": "lvm",
+      "size": "28g",
+      "mount": null,
+      "model": null,
+      "rota": false
+    },
+    {
+      "name": "atlas-atlas--vm--f115b845--b465--4966--bd03--ccdab35b71e3",
+      "kind": "lvm",
+      "size": "28g",
+      "mount": null,
+      "model": null,
+      "rota": false
+    },
+    {
+      "name": "atlas-atlas--vm--8c6d455d--b0f6--4c1c--9f15--9eae5bcf6d9f",
+      "kind": "lvm",
+      "size": "28g",
+      "mount": null,
+      "model": null,
+      "rota": false
+    },
+    {
+      "name": "atlas-atlas--vm--ae8d52b4--522e--4586--b7c7--c4c129d4b17b",
+      "kind": "lvm",
+      "size": "28g",
+      "mount": null,
+      "model": null,
+      "rota": false
+    },
+    {
+      "name": "atlas-atlas--vm--7c15bb96--28ee--4554--b9a3--42cb2e80412e",
+      "kind": "lvm",
+      "size": "28g",
+      "mount": null,
+      "model": null,
+      "rota": false
+    },
+    {
+      "name": "atlas-atlas--vm--8fb1e5ed--c61f--4c25--bfab--d262e328a0a3",
+      "kind": "lvm",
+      "size": "28g",
+      "mount": null,
+      "model": null,
+      "rota": false
+    },
+    {
+      "name": "atlas-atlas--vm--e4223ff7--f0ea--4460--b55d--858e57de5ea5",
+      "kind": "lvm",
+      "size": "28g",
+      "mount": null,
+      "model": null,
+      "rota": false
+    },
+    {
+      "name": "atlas-atlas--vm--5ce08f7d--529d--4fb6--acb5--f61dc93d6ce3",
+      "kind": "lvm",
+      "size": "28g",
+      "mount": null,
+      "model": null,
+      "rota": false
+    },
+    {
+      "name": "atlas-atlas--vm--185340ec--38da--4dd0--b59d--b97cab8df68f",
+      "kind": "lvm",
+      "size": "28g",
+      "mount": null,
+      "model": null,
+      "rota": false
+    },
+    {
+      "name": "atlas-atlas--vm--aa7734ee--864d--4327--984a--e43680cb61b8",
+      "kind": "lvm",
+      "size": "28g",
+      "mount": null,
+      "model": null,
+      "rota": false
+    },
+    {
+      "name": "atlas-atlas--vm--a2974b55--7f08--436d--891a--19298ecdab45",
+      "kind": "lvm",
+      "size": "28g",
+      "mount": null,
+      "model": null,
+      "rota": false
+    },
+    {
+      "name": "atlas-atlas--vm--90e19aea--666e--4392--8a1e--934a8697b106",
       "kind": "lvm",
       "size": "28g",
       "mount": null,
@@ -5349,6 +7307,110 @@
       "rota": false
     },
     {
+      "name": "atlas-atlas--vm--4d95e65e--6fe9--4d38--a5b0--c2c61b1572b5",
+      "kind": "lvm",
+      "size": "28g",
+      "mount": null,
+      "model": null,
+      "rota": false
+    },
+    {
+      "name": "atlas-atlas--vm--a4342e47--34c9--4308--bd1a--bede64dc8694",
+      "kind": "lvm",
+      "size": "28g",
+      "mount": null,
+      "model": null,
+      "rota": false
+    },
+    {
+      "name": "atlas-atlas--vm--f115b845--b465--4966--bd03--ccdab35b71e3",
+      "kind": "lvm",
+      "size": "28g",
+      "mount": null,
+      "model": null,
+      "rota": false
+    },
+    {
+      "name": "atlas-atlas--vm--8c6d455d--b0f6--4c1c--9f15--9eae5bcf6d9f",
+      "kind": "lvm",
+      "size": "28g",
+      "mount": null,
+      "model": null,
+      "rota": false
+    },
+    {
+      "name": "atlas-atlas--vm--ae8d52b4--522e--4586--b7c7--c4c129d4b17b",
+      "kind": "lvm",
+      "size": "28g",
+      "mount": null,
+      "model": null,
+      "rota": false
+    },
+    {
+      "name": "atlas-atlas--vm--7c15bb96--28ee--4554--b9a3--42cb2e80412e",
+      "kind": "lvm",
+      "size": "28g",
+      "mount": null,
+      "model": null,
+      "rota": false
+    },
+    {
+      "name": "atlas-atlas--vm--8fb1e5ed--c61f--4c25--bfab--d262e328a0a3",
+      "kind": "lvm",
+      "size": "28g",
+      "mount": null,
+      "model": null,
+      "rota": false
+    },
+    {
+      "name": "atlas-atlas--vm--e4223ff7--f0ea--4460--b55d--858e57de5ea5",
+      "kind": "lvm",
+      "size": "28g",
+      "mount": null,
+      "model": null,
+      "rota": false
+    },
+    {
+      "name": "atlas-atlas--vm--5ce08f7d--529d--4fb6--acb5--f61dc93d6ce3",
+      "kind": "lvm",
+      "size": "28g",
+      "mount": null,
+      "model": null,
+      "rota": false
+    },
+    {
+      "name": "atlas-atlas--vm--185340ec--38da--4dd0--b59d--b97cab8df68f",
+      "kind": "lvm",
+      "size": "28g",
+      "mount": null,
+      "model": null,
+      "rota": false
+    },
+    {
+      "name": "atlas-atlas--vm--aa7734ee--864d--4327--984a--e43680cb61b8",
+      "kind": "lvm",
+      "size": "28g",
+      "mount": null,
+      "model": null,
+      "rota": false
+    },
+    {
+      "name": "atlas-atlas--vm--a2974b55--7f08--436d--891a--19298ecdab45",
+      "kind": "lvm",
+      "size": "28g",
+      "mount": null,
+      "model": null,
+      "rota": false
+    },
+    {
+      "name": "atlas-atlas--vm--90e19aea--666e--4392--8a1e--934a8697b106",
+      "kind": "lvm",
+      "size": "28g",
+      "mount": null,
+      "model": null,
+      "rota": false
+    },
+    {
       "name": "atlas-pool0_tdata",
       "kind": "lvm",
       "size": "886g",
@@ -5749,6 +7811,110 @@
       "rota": false
     },
     {
+      "name": "atlas-atlas--vm--4d95e65e--6fe9--4d38--a5b0--c2c61b1572b5",
+      "kind": "lvm",
+      "size": "28g",
+      "mount": null,
+      "model": null,
+      "rota": false
+    },
+    {
+      "name": "atlas-atlas--vm--a4342e47--34c9--4308--bd1a--bede64dc8694",
+      "kind": "lvm",
+      "size": "28g",
+      "mount": null,
+      "model": null,
+      "rota": false
+    },
+    {
+      "name": "atlas-atlas--vm--f115b845--b465--4966--bd03--ccdab35b71e3",
+      "kind": "lvm",
+      "size": "28g",
+      "mount": null,
+      "model": null,
+      "rota": false
+    },
+    {
+      "name": "atlas-atlas--vm--8c6d455d--b0f6--4c1c--9f15--9eae5bcf6d9f",
+      "kind": "lvm",
+      "size": "28g",
+      "mount": null,
+      "model": null,
+      "rota": false
+    },
+    {
+      "name": "atlas-atlas--vm--ae8d52b4--522e--4586--b7c7--c4c129d4b17b",
+      "kind": "lvm",
+      "size": "28g",
+      "mount": null,
+      "model": null,
+      "rota": false
+    },
+    {
+      "name": "atlas-atlas--vm--7c15bb96--28ee--4554--b9a3--42cb2e80412e",
+      "kind": "lvm",
+      "size": "28g",
+      "mount": null,
+      "model": null,
+      "rota": false
+    },
+    {
+      "name": "atlas-atlas--vm--8fb1e5ed--c61f--4c25--bfab--d262e328a0a3",
+      "kind": "lvm",
+      "size": "28g",
+      "mount": null,
+      "model": null,
+      "rota": false
+    },
+    {
+      "name": "atlas-atlas--vm--e4223ff7--f0ea--4460--b55d--858e57de5ea5",
+      "kind": "lvm",
+      "size": "28g",
+      "mount": null,
+      "model": null,
+      "rota": false
+    },
+    {
+      "name": "atlas-atlas--vm--5ce08f7d--529d--4fb6--acb5--f61dc93d6ce3",
+      "kind": "lvm",
+      "size": "28g",
+      "mount": null,
+      "model": null,
+      "rota": false
+    },
+    {
+      "name": "atlas-atlas--vm--185340ec--38da--4dd0--b59d--b97cab8df68f",
+      "kind": "lvm",
+      "size": "28g",
+      "mount": null,
+      "model": null,
+      "rota": false
+    },
+    {
+      "name": "atlas-atlas--vm--aa7734ee--864d--4327--984a--e43680cb61b8",
+      "kind": "lvm",
+      "size": "28g",
+      "mount": null,
+      "model": null,
+      "rota": false
+    },
+    {
+      "name": "atlas-atlas--vm--a2974b55--7f08--436d--891a--19298ecdab45",
+      "kind": "lvm",
+      "size": "28g",
+      "mount": null,
+      "model": null,
+      "rota": false
+    },
+    {
+      "name": "atlas-atlas--vm--90e19aea--666e--4392--8a1e--934a8697b106",
+      "kind": "lvm",
+      "size": "28g",
+      "mount": null,
+      "model": null,
+      "rota": false
+    },
+    {
       "name": "nbd8",
       "kind": "disk",
       "size": "0",
@@ -5840,7 +8006,7 @@
     {
       "pid": 104273,
       "user": "209790",
-      "rss": "1023m",
+      "rss": "1021m",
       "kind": "firecracker",
       "vm": "98207e43-7638-4e7b-b92f-2912eda3a73f"
     },
@@ -5854,7 +8020,7 @@
     {
       "pid": 107801,
       "user": "246348",
-      "rss": "1g",
+      "rss": "764m",
       "kind": "firecracker",
       "vm": "6f7c6c74-d708-4f19-b7df-e75f080f4947"
     },
@@ -5868,77 +8034,77 @@
     {
       "pid": 110022,
       "user": "239105",
-      "rss": "1g",
+      "rss": "516m",
       "kind": "firecracker",
       "vm": "e0e6a111-6761-49fe-92ca-e74b32503204"
     },
     {
       "pid": 111457,
       "user": "215392",
-      "rss": "157m",
+      "rss": "155m",
       "kind": "firecracker",
       "vm": "6a6fa05f-db3e-48a6-8a6a-4201a07fe406"
     },
     {
       "pid": 120895,
       "user": "229833",
-      "rss": "770m",
+      "rss": "792m",
       "kind": "firecracker",
       "vm": "460909a3-ac8a-4120-8081-ab3d0e8fbd66"
     },
     {
       "pid": 121337,
       "user": "251612",
-      "rss": "774m",
+      "rss": "798m",
       "kind": "firecracker",
       "vm": "cb1e7cd1-6f65-4ae7-b868-e71c8582a54d"
     },
     {
       "pid": 121696,
       "user": "256514",
-      "rss": "1g",
+      "rss": "538m",
       "kind": "firecracker",
       "vm": "3c5f22c8-214b-4143-8b75-bd1c41db00a1"
     },
     {
       "pid": 122208,
       "user": "205974",
-      "rss": "775m",
+      "rss": "796m",
       "kind": "firecracker",
       "vm": "210cd64a-3912-4d61-9e14-25970ea247a5"
     },
     {
       "pid": 122648,
       "user": "204082",
-      "rss": "772m",
+      "rss": "797m",
       "kind": "firecracker",
       "vm": "b46bd299-4f1c-47a6-b9ed-4bdffa3ee15e"
     },
     {
       "pid": 123253,
       "user": "231602",
-      "rss": "266m",
+      "rss": "264m",
       "kind": "firecracker",
       "vm": "9df3f226-334c-43a2-b328-b50ea02d27d4"
     },
     {
       "pid": 125031,
       "user": "229829",
-      "rss": "214m",
+      "rss": "222m",
       "kind": "firecracker",
       "vm": "d13205e4-5847-413d-aaaf-2f5eb4893e18"
     },
     {
       "pid": 126670,
       "user": "224017",
-      "rss": "878m",
+      "rss": "895m",
       "kind": "firecracker",
       "vm": "d205b18b-7e6c-408b-8d66-c7642de5db34"
     },
     {
       "pid": 127074,
       "user": "243454",
-      "rss": "1g",
+      "rss": "703m",
       "kind": "firecracker",
       "vm": "8f7c3e8b-792c-42ca-8128-83972ef73c66"
     },
@@ -5952,393 +8118,484 @@
     {
       "pid": 128520,
       "user": "218967",
-      "rss": "877m",
+      "rss": "896m",
       "kind": "firecracker",
       "vm": "1ad6f74b-c8d3-46ab-bee4-b53ce3fb87e5"
     },
     {
       "pid": 129444,
       "user": "241886",
-      "rss": "737m",
+      "rss": "735m",
       "kind": "firecracker",
       "vm": "262cfee0-0afa-4571-9812-36e4bba8e510"
     },
     {
       "pid": 129854,
       "user": "234893",
-      "rss": "899m",
+      "rss": "906m",
       "kind": "firecracker",
       "vm": "b30f6d9f-081b-49a7-bdef-02b548fbe610"
     },
     {
       "pid": 132154,
       "user": "252135",
-      "rss": "1g",
+      "rss": "567m",
       "kind": "firecracker",
       "vm": "62c1c723-ddec-41e7-9b7f-9cde51bda2b5"
     },
     {
       "pid": 132607,
       "user": "231880",
-      "rss": "1g",
+      "rss": "556m",
       "kind": "firecracker",
       "vm": "8193685d-3557-4109-bf6d-c587d5c20308"
     },
     {
       "pid": 133304,
       "user": "255591",
-      "rss": "1g",
+      "rss": "548m",
       "kind": "firecracker",
       "vm": "16d2278c-0fc0-47d2-ab63-65f8ffc7bd29"
     },
     {
       "pid": 133706,
       "user": "214283",
-      "rss": "1g",
+      "rss": "498m",
       "kind": "firecracker",
       "vm": "d6738b4e-83de-4a32-bbbc-f756911fb75b"
     },
     {
       "pid": 134040,
       "user": "257415",
-      "rss": "1g",
+      "rss": "553m",
       "kind": "firecracker",
       "vm": "0cc727b2-0b16-409e-9cf8-ba647848a315"
     },
     {
       "pid": 134471,
       "user": "239410",
-      "rss": "1g",
+      "rss": "545m",
       "kind": "firecracker",
       "vm": "a2a65236-c2de-4907-b216-dc0b2393b2ab"
     },
     {
       "pid": 134911,
       "user": "214045",
-      "rss": "860m",
+      "rss": "888m",
       "kind": "firecracker",
       "vm": "ab6afd48-49d8-40df-850a-077a170b1ae1"
+    },
+    {
+      "pid": 146226,
+      "user": "244646",
+      "rss": "900m",
+      "kind": "firecracker",
+      "vm": "4d95e65e-6fe9-4d38-a5b0-c2c61b1572b5"
+    },
+    {
+      "pid": 146619,
+      "user": "221262",
+      "rss": "574m",
+      "kind": "firecracker",
+      "vm": "a4342e47-34c9-4308-bd1a-bede64dc8694"
+    },
+    {
+      "pid": 147023,
+      "user": "219736",
+      "rss": "534m",
+      "kind": "firecracker",
+      "vm": "f115b845-b465-4966-bd03-ccdab35b71e3"
+    },
+    {
+      "pid": 147597,
+      "user": "223013",
+      "rss": "579m",
+      "kind": "firecracker",
+      "vm": "8c6d455d-b0f6-4c1c-9f15-9eae5bcf6d9f"
+    },
+    {
+      "pid": 148326,
+      "user": "239442",
+      "rss": "875m",
+      "kind": "firecracker",
+      "vm": "ae8d52b4-522e-4586-b7c7-c4c129d4b17b"
+    },
+    {
+      "pid": 148932,
+      "user": "232027",
+      "rss": "745m",
+      "kind": "firecracker",
+      "vm": "7c15bb96-28ee-4554-b9a3-42cb2e80412e"
+    },
+    {
+      "pid": 149464,
+      "user": "257189",
+      "rss": "749m",
+      "kind": "firecracker",
+      "vm": "8fb1e5ed-c61f-4c25-bfab-d262e328a0a3"
+    },
+    {
+      "pid": 149732,
+      "user": "210975",
+      "rss": "751m",
+      "kind": "firecracker",
+      "vm": "e4223ff7-f0ea-4460-b55d-858e57de5ea5"
+    },
+    {
+      "pid": 150172,
+      "user": "226799",
+      "rss": "740m",
+      "kind": "firecracker",
+      "vm": "5ce08f7d-529d-4fb6-acb5-f61dc93d6ce3"
+    },
+    {
+      "pid": 150926,
+      "user": "234176",
+      "rss": "2g",
+      "kind": "firecracker",
+      "vm": "185340ec-38da-4dd0-b59d-b97cab8df68f"
+    },
+    {
+      "pid": 151686,
+      "user": "235563",
+      "rss": "2g",
+      "kind": "firecracker",
+      "vm": "a2974b55-7f08-436d-891a-19298ecdab45"
+    },
+    {
+      "pid": 152911,
+      "user": "214938",
+      "rss": "510m",
+      "kind": "firecracker",
+      "vm": "90e19aea-666e-4392-8a1e-934a8697b106"
+    },
+    {
+      "pid": 164056,
+      "user": "211636",
+      "rss": "868m",
+      "kind": "firecracker",
+      "vm": "aa7734ee-864d-4327-984a-e43680cb61b8"
     }
   ],
   "metrics": {
-    "collected_at": "2026-07-04T15:01:23Z",
+    "collected_at": "2026-07-05T11:24:28Z",
     "series": {
       "cpu_util_pct": {
         "unit": "%",
         "points": [
-          3.1,
-          3.06,
-          3.03,
-          3.14,
-          3.11,
-          3.12,
-          3.17,
-          3.1,
-          3.11,
-          3.15,
-          3.11,
-          3.09,
-          3.12,
-          3.07,
-          3.11,
-          3.05,
-          3.04,
-          2.98,
-          3.01,
-          2.97,
-          3.03,
-          2.95,
-          3.05,
-          2.98,
-          3,
-          3.01,
-          3.02,
-          2.97,
-          3.04,
-          3.07,
-          3.03,
-          3.07,
-          3.06,
-          3.11,
-          3.14,
-          3.05,
-          3.1,
-          3.14,
-          3.15,
-          3.09,
-          3.11,
-          3.07,
-          3.17,
-          3.16,
-          3.09,
-          3.09,
-          3.07,
-          3.12
+          3.72,
+          3.77,
+          3.76,
+          3.87,
+          3.83,
+          3.84,
+          3.91,
+          3.85,
+          3.89,
+          3.86,
+          3.91,
+          3.86,
+          3.9,
+          3.8,
+          3.82,
+          3.84,
+          3.79,
+          3.7,
+          3.69,
+          3.8,
+          3.71,
+          3.75,
+          3.71,
+          3.69,
+          3.75,
+          3.69,
+          3.76,
+          3.66,
+          3.75,
+          3.82,
+          3.69,
+          3.75,
+          3.84,
+          3.88,
+          3.81,
+          3.91,
+          3.82,
+          3.85,
+          3.79,
+          3.88,
+          3.82,
+          3.93,
+          3.81,
+          3.92,
+          3.89,
+          3.88,
+          3.83,
+          3.81
         ]
       },
       "mem_used_mib": {
         "unit": "MiB",
         "points": [
-          18508.06,
-          18416.27,
-          18928.07,
-          19125.61,
-          18660.13,
-          19237.72,
-          19309.1,
-          18694.83,
-          18882.32,
-          18704.01,
-          19125.65,
-          18634.62,
-          19253.92,
-          19146.65,
-          19088.89,
-          18518.14,
-          18594.19,
-          18716.89,
-          18693.78,
-          18536.91,
-          18447.77,
-          18469.43,
-          18397.56,
-          18243.69,
-          18437.03,
-          18224.4,
-          18537.12,
-          18375.61,
-          18624.24,
-          18112.47,
-          18417.85,
-          18885.98,
-          18604.32,
-          19013.27,
-          19171.07,
-          19148.49,
-          18860.64,
-          18969.07,
-          19197.82,
-          18975.4,
-          18864.19,
-          19203.18,
-          18756.13,
-          19238.27,
-          19231.19,
-          18479.19,
-          19094.49,
-          18824.8
+          30285.65,
+          31021.8,
+          30902.77,
+          31298.36,
+          31451.85,
+          31672.54,
+          31104.17,
+          30726.85,
+          31480.14,
+          30682.56,
+          31247.39,
+          31379.57,
+          31464.95,
+          30495.17,
+          30945.25,
+          31019.33,
+          30613.11,
+          30235.92,
+          30133.98,
+          29728.92,
+          30760.8,
+          30485.27,
+          30330.06,
+          29494.17,
+          30561.04,
+          30672.38,
+          29793.47,
+          30610.33,
+          30781.27,
+          30334.84,
+          29901.56,
+          30172.01,
+          30733.08,
+          31050.12,
+          31042.36,
+          30617.5,
+          31684.03,
+          31170.85,
+          30921.3,
+          30937.85,
+          31422.79,
+          31490.92,
+          31046.01,
+          31074.84,
+          31214.14,
+          30972.31,
+          30442.95,
+          31250.13
         ]
       },
       "disk_io_iops": {
         "unit": "iops",
         "points": [
-          52.2,
-          52.44,
-          53.1,
-          53.07,
-          52.47,
-          53.23,
-          53.07,
-          52.17,
-          53.03,
-          52.6,
-          53.52,
-          52.3,
-          51.61,
-          51.79,
-          52.82,
-          52.17,
-          50.75,
-          52.08,
-          50.8,
-          51.31,
-          50.78,
-          50.69,
-          50.44,
-          51.66,
-          51.12,
-          50.5,
-          51.2,
-          50.05,
-          50.55,
-          50.85,
-          50.72,
-          51.17,
-          52.04,
-          51.18,
-          51.6,
-          52.25,
-          53.37,
-          52.25,
-          53.37,
-          52.84,
-          52.69,
-          52.44,
-          52.03,
-          51.92,
-          53.15,
-          51.41,
-          52.97,
-          51.4
+          286.36,
+          287.81,
+          296.64,
+          298.77,
+          292.5,
+          294.07,
+          295.18,
+          296.64,
+          293.76,
+          290.93,
+          296.46,
+          289.66,
+          297.64,
+          290.18,
+          291.26,
+          289.44,
+          289.85,
+          284.82,
+          286.32,
+          286.94,
+          281.14,
+          281.42,
+          287.73,
+          288.79,
+          285.73,
+          285.41,
+          289.81,
+          285.54,
+          284.16,
+          285.37,
+          288.9,
+          286.79,
+          295.62,
+          296.98,
+          297.42,
+          293.03,
+          292.54,
+          296.9,
+          300.94,
+          297.12,
+          296.05,
+          297.42,
+          300.7,
+          294.29,
+          296.6,
+          292.39,
+          296.36,
+          294.15
         ]
       },
       "net_rx_mbps": {
         "unit": "Mb/s",
         "points": [
+          0.21,
           0.24,
-          0.24,
-          0.2,
-          0.27,
-          0.25,
-          0.27,
-          0.31,
-          0.28,
-          0.28,
-          0.27,
-          0.31,
-          0.22,
-          0.25,
-          0.22,
-          0.27,
-          0.25,
-          0.17,
-          0.24,
-          0.22,
+          0.21,
+          0.23,
           0.22,
           0.19,
-          0.17,
-          0.13,
-          0.17,
-          0.21,
-          0.21,
+          0.28,
+          0.2,
+          0.22,
+          0.26,
+          0.22,
+          0.24,
+          0.19,
+          0.23,
           0.16,
-          0.14,
-          0.14,
+          0.22,
+          0.18,
+          0.16,
+          0.19,
+          0.13,
+          0.18,
+          0.16,
+          0.19,
+          0.12,
+          0.12,
+          0.16,
+          0.13,
+          0.11,
           0.18,
           0.2,
-          0.24,
-          0.25,
+          0.21,
+          0.15,
           0.22,
-          0.25,
+          0.17,
+          0.23,
           0.26,
           0.21,
           0.27,
-          0.25,
-          0.3,
-          0.28,
-          0.29,
-          0.27,
+          0.23,
+          0.23,
+          0.26,
+          0.19,
+          0.26,
           0.22,
-          0.2,
-          0.2,
-          0.2,
-          0.21
+          0.26,
+          0.17,
+          0.18,
+          0.15
         ]
       },
       "net_tx_mbps": {
         "unit": "Mb/s",
         "points": [
-          0.38,
-          0.31,
-          0.35,
+          0.54,
+          0.53,
+          0.54,
+          0.52,
+          0.56,
+          0.51,
+          0.56,
+          0.56,
+          0.57,
+          0.6,
+          0.52,
+          0.56,
+          0.57,
+          0.52,
+          0.51,
+          0.51,
+          0.46,
+          0.46,
+          0.48,
+          0.46,
+          0.51,
           0.41,
-          0.35,
-          0.37,
-          0.4,
-          0.37,
-          0.43,
-          0.38,
-          0.42,
-          0.37,
-          0.37,
-          0.4,
+          0.45,
           0.41,
-          0.32,
-          0.39,
-          0.38,
-          0.32,
-          0.32,
-          0.32,
-          0.26,
-          0.28,
-          0.28,
-          0.34,
-          0.26,
-          0.35,
-          0.31,
-          0.29,
-          0.32,
-          0.33,
-          0.39,
-          0.38,
-          0.4,
-          0.39,
-          0.35,
-          0.4,
-          0.38,
-          0.41,
-          0.43,
-          0.38,
-          0.43,
-          0.42,
-          0.43,
-          0.35,
-          0.42,
-          0.34,
-          0.33
+          0.46,
+          0.48,
+          0.45,
+          0.44,
+          0.47,
+          0.49,
+          0.45,
+          0.48,
+          0.48,
+          0.51,
+          0.54,
+          0.53,
+          0.58,
+          0.55,
+          0.53,
+          0.6,
+          0.59,
+          0.51,
+          0.52,
+          0.58,
+          0.52,
+          0.56,
+          0.48,
+          0.49
         ]
       },
       "pool_used_pct": {
         "unit": "%",
         "points": [
-          13.77,
-          14.16,
-          13.93,
-          14.26,
-          14.34,
-          14.11,
-          14.29,
-          14.16,
-          14.25,
-          14.27,
-          14.42,
-          14.31,
-          13.97,
-          13.99,
-          14.1,
-          13.93,
-          13.77,
-          14.02,
-          13.68,
-          13.62,
-          13.89,
-          13.62,
-          13.64,
-          13.64,
-          13.64,
-          13.62,
-          13.98,
-          13.57,
-          13.81,
-          13.7,
-          13.75,
-          14.25,
-          13.95,
-          14.05,
-          14.19,
-          14.1,
-          14.16,
-          14.35,
+          14.18,
+          14.41,
+          14.72,
           14.37,
-          14.16,
+          14.45,
+          14.58,
+          14.38,
+          14.79,
+          14.57,
+          14.92,
+          14.35,
+          14.56,
+          14.38,
+          14.68,
+          14.23,
+          14.54,
+          14.15,
+          14.45,
+          14.31,
           14.24,
-          14.17,
-          14.29,
           14.21,
-          13.98,
+          14.16,
+          13.9,
+          14.19,
+          13.93,
+          14.08,
+          14.19,
+          14.36,
+          14.35,
+          13.97,
+          14.53,
+          14.45,
+          14.59,
+          14.49,
+          14.59,
           14.29,
-          14.29,
-          14.01
+          14.64,
+          14.4,
+          14.42,
+          14.4,
+          14.61,
+          14.79,
+          14.79,
+          14.69,
+          14.52,
+          14.46,
+          14.63,
+          14.5
         ]
       }
     }

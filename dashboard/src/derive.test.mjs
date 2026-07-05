@@ -35,15 +35,13 @@ import {
   events,
   sizeDistribution,
   vmIngress,
-  vmPrivateMesh,
   vmMigrating,
-  vmTenant,
-  isOperator,
-  tenantSummary,
-  tenantFacets,
   diskOrigin,
   provisioning,
+  provisioningClass,
   perVmProvisioning,
+  diskIsVmRow,
+  inventory,
 } from "./derive.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -388,7 +386,7 @@ function eq(a, b, msg) {
     Math.max(...dist.buckets.map((b) => b.weight)),
     "dist: max is over weight"
   );
-  eq(dist.unit, "GiB", "dist: RAM unit is GiB");
+  eq(dist.unit, "G", "dist: RAM unit is G");
 
   // The resource switch re-bins the same running set by CPU / disk. Counts still
   // sum to the running total; CPU weight is the summed vCPU.
@@ -432,14 +430,6 @@ function eq(a, b, msg) {
     "proxy",
     "facet: proxied VM → proxy ingress"
   );
-  // Private mesh strips the CIDR off the VM's /128.
-  if (reserved.private_ipv6) {
-    eq(
-      vmPrivateMesh(state, reserved),
-      reserved.private_ipv6.split("/")[0],
-      "facet: private mesh /128 stripped"
-    );
-  }
   const migVm = vms.find((v) => v.migrating);
   if (migVm)
     ok(vmMigrating(state, migVm) === true, "facet: migrating VM flagged");
@@ -449,40 +439,11 @@ function eq(a, b, msg) {
       vmMigrating(state, stillVm) === false,
       "facet: non-migrating VM not flagged"
     );
-
-  // Tenancy — the operator VMs are the operator tenant; customers are counted apart.
-  const op = vms.find((v) => v.role === "reverse-proxy");
-  ok(op, "tenant: a reverse-proxy operator VM exists");
-  eq(vmTenant(op), "operator", "tenant: proxy VM is the operator tenant");
-  ok(isOperator(op), "tenant: isOperator true for the proxy VM");
-  ok(
-    !isOperator(reserved) || reserved.tenant === "operator",
-    "tenant: customer VM is not operator"
-  );
-  // diskOrigin of an operator VM reads its role when it has no image origin;
-  // otherwise it's simply a non-empty label (never a fabricated "image …").
-  ok(
-    diskOrigin(op) && diskOrigin(op) !== "—",
-    "tenant: operator VM has a legible disk origin"
-  );
-  const ts = tenantSummary(vms);
-  ok(ts.includes("operator"), "tenant: summary names the operator split");
-  const facets = tenantFacets(vms);
-  eq(facets[0].id, "operator", "tenant: facets put operator first");
-  ok(
-    facets.every((f) => f.count > 0),
-    "tenant: every facet has a count"
-  );
-  eq(
-    facets.reduce((n, f) => n + f.count, 0),
-    vms.length,
-    "tenant: facet counts cover every VM"
-  );
 }
 
 // ── provisioning(state) + perVmProvisioning(vm) — the enriched fields ─────────
-// Generated fixtures carry the provisioning fields; assert the commit/use math
-// as invariants against the fixture's own VMs.
+// The class is inferred from the cgroup cap (no host-recoverable provisioning
+// field); assert the commit/use math as invariants against the fixture's VMs.
 {
   const state = load("state-ordinary.json");
   const vms = state.virtual_machines;
@@ -573,12 +534,12 @@ function eq(a, b, msg) {
   );
   eq(
     p.counts.shared,
-    running.filter((v) => v.provisioning === "shared").length,
+    running.filter((v) => provisioningClass(v) === "shared").length,
     "provisioning: shared count"
   );
   eq(
     p.counts.dedicated,
-    running.filter((v) => v.provisioning === "dedicated").length,
+    running.filter((v) => provisioningClass(v) === "dedicated").length,
     "provisioning: dedicated count"
   );
   ok(
@@ -587,10 +548,14 @@ function eq(a, b, msg) {
   );
 
   // perVmProvisioning — a dedicated VM (exact) vs a shared VM (overprovision).
+  // The shared/dedicated class is inferred from the cgroup cap (no explicit
+  // `provisioning` field on a real host — see CONTRACT § not on the host).
   const ded = perVmProvisioning(
-    vms.find((v) => v.provisioning === "dedicated")
+    vms.find((v) => provisioningClass(v) === "dedicated")
   );
-  const sh = perVmProvisioning(vms.find((v) => v.provisioning === "shared"));
+  const sh = perVmProvisioning(
+    vms.find((v) => provisioningClass(v) === "shared")
+  );
   eq(ded.kind, "dedicated", "perVm: dedicated kind surfaced");
   eq(ded.shared, false, "perVm: dedicated not shared");
   eq(sh.kind, "shared", "perVm: shared kind surfaced");
@@ -693,9 +658,10 @@ function eq(a, b, msg) {
     ok(threw === 0, "real: derived every VM without throwing");
   }
 
-  // provisioning() degrades: no enriched fields → falls back to vcpus/mem_mib for
-  // committed, shared/dedicated counts are 0, disk physical fails the odd "<886.24g"
-  // size to null — all without throwing.
+  // provisioning() degrades: no enriched request fields → falls back to
+  // vcpus/mem_mib for committed; the shared/dedicated CLASS is inferred from the
+  // cgroup cap (Fix #3), so the split is populated, not empty; disk physical
+  // fails the odd "<886.24g" size to null — all without throwing.
   {
     let threw = false;
     let p;
@@ -709,14 +675,28 @@ function eq(a, b, msg) {
       p && p.resources.length === 3,
       "real: provisioning() still returns three resources"
     );
-    eq(p.counts.shared, 0, "real: no shared VMs (no provisioning field)");
-    eq(p.counts.dedicated, 0, "real: no dedicated VMs (no provisioning field)");
+    // Fix #3 — class from the cgroup cap. Every running VM on this host is
+    // hard-capped at its full vcpu allotment (cap == vcpus) → dedicated; the
+    // split is whole, not the old all-zero blank.
+    eq(
+      p.counts.shared + p.counts.dedicated,
+      vms.filter(
+        (v) =>
+          v.state === "Running" && v.cpu_cap_cores != null && v.vcpus != null
+      ).length,
+      "real: shared+dedicated == running VMs with a readable cgroup cap"
+    );
+    ok(
+      p.counts.dedicated > 0,
+      "real: dedicated split populated from cgroup cap (cap==vcpus)"
+    );
     eq(
       p.counts.running,
       vms.filter((v) => v.state === "Running").length,
       "real: running count intact"
     );
-    // perVmProvisioning on a real VM (no fields) → null kind, no throw.
+    // perVmProvisioning on a real VM: kind inferred from the cap, no throw. A
+    // running cap==vcpus VM classifies dedicated; a stopped VM (no cgroup) → null.
     let pvThrew = false;
     let pv;
     try {
@@ -725,7 +705,154 @@ function eq(a, b, msg) {
       pvThrew = true;
     }
     ok(!pvThrew, "real: perVmProvisioning() does not throw");
-    eq(pv.kind, null, "real: perVm kind null (no provisioning field)");
+    const runningCapped = vms.find(
+      (v) => v.state === "Running" && v.cpu_cap_cores != null && v.vcpus != null
+    );
+    eq(
+      perVmProvisioning(runningCapped).kind,
+      runningCapped.cpu_cap_cores >= runningCapped.vcpus - 1e-6
+        ? "dedicated"
+        : "shared",
+      "real: perVm kind inferred from cgroup cap vs vcpus"
+    );
+    const stopped = vms.find((v) => v.cpu_cap_cores == null);
+    if (stopped) {
+      eq(
+        perVmProvisioning(stopped).kind,
+        null,
+        "real: a VM with no cgroup cap classifies null (unknowable)"
+      );
+    }
+
+    // Fix #1 — CPU "used" is UNKNOWN, not zero, when no VM reports cpu_pct. The
+    // dev proxy's single-shot --collect can't diff cgroup samples, so cpu_pct is
+    // null fleet-wide; the Capacity CPU bar must read "— / N vCPU" (usedFrac null,
+    // no false pressure), never a measured-looking "0 / N".
+    const anyCpu = vms.some((v) => v.cpu_pct != null);
+    ok(!anyCpu, "real: no VM reports cpu_pct (single-shot --collect)");
+    const cpuBar = p.resources.find((r) => r.label === "CPU");
+    eq(cpuBar.used, null, "real: CPU used is null (unmeasured, not 0)");
+    eq(
+      cpuBar.usedFrac,
+      null,
+      "real: CPU usedFrac null → empty bar, not 0-wide"
+    );
+    eq(cpuBar.severity, "ok", "real: unmeasured CPU raises no pressure");
+    eq(cpuBar.text.used, "—", "real: CPU used reads '—' (honest unknown)");
+    // Memory IS measured (mem_used_mib from the cgroup), so it stays a number —
+    // the null path is specific to the two-sample CPU metric, not all resources.
+    ok(
+      cpuBar.text.physical != null && cpuBar.text.physical !== "—",
+      "real: CPU physical still known (host cpu_total)"
+    );
+    const memBar = p.resources.find((r) => r.label === "Memory");
+    ok(
+      memBar.used != null,
+      "real: Memory used measured (cgroup memory.current)"
+    );
+  }
+
+  // Fix #2 — "disk filling" does NOT fire for fully-allocated (thick) LVs. A plain
+  // bench/image clone with no snapshot origin reports data_percent=100 with
+  // used==size structurally, forever; that is not filling. Real hosts run a mix,
+  // so the alert must gate on used<size (remaining headroom) — the fixture carries
+  // several thick VMs pinned at 100% that must stay silent.
+  {
+    const thick = vms.filter(
+      (v) =>
+        v.disk_size_bytes != null &&
+        v.disk_used_bytes != null &&
+        v.disk_used_bytes >= v.disk_size_bytes
+    );
+    ok(
+      thick.length > 0,
+      "real: fixture has thick fully-allocated (used==size) VMs"
+    );
+    const { firing } = alerts(state);
+    const diskAlerts = firing.filter((a) => a.key.startsWith("disk:"));
+    ok(
+      thick.every((v) => !firing.some((a) => a.key === `disk:${v.uuid}`)),
+      "real: no thick (used==size) VM fires a disk-filling alert"
+    );
+    // Any disk alert that DOES fire must be a real thin volume with headroom.
+    ok(
+      diskAlerts.every((a) => {
+        const v = vms.find((x) => x.uuid === a.vm);
+        return v && v.disk_used_bytes < v.disk_size_bytes;
+      }),
+      "real: every disk-filling alert is a thin volume with used<size"
+    );
+    // On this steady host, that means no false 'disk filling' group at all.
+    const groups = alertGroups(state);
+    ok(
+      !groups.some((g) => g.key === "disk"),
+      "real: Overview shows no 'disk filling' group from thick LVs"
+    );
+  }
+
+  // inventory() — the census line. Machines running/total match the fleet; the
+  // four stores map to the real array lengths and each carries a rail jump.
+  {
+    const inv = inventory(state);
+    eq(
+      inv.machines.total,
+      vms.length,
+      "real: inventory machines total == fleet size"
+    );
+    eq(
+      inv.machines.running,
+      vms.filter((v) => v.state === "Running").length,
+      "real: inventory running matches Running VMs"
+    );
+    // This host has no migration in flight, so the clause is suppressed (0).
+    eq(
+      inv.machines.migrating,
+      0,
+      "real: inventory migrating 0 (none in flight)"
+    );
+    ok(
+      inv.machines.jump.domain === "machines",
+      "real: machines jump routes to Machines"
+    );
+    const byLabel = Object.fromEntries(
+      inv.stores.map((s) => [s.jump.table, s])
+    );
+    eq(
+      byLabel.volumes.count,
+      (state.volumes || []).length,
+      "real: inventory volumes count == volumes array"
+    );
+    eq(
+      byLabel.snapshots.count,
+      (state.snapshots || []).length,
+      "real: inventory snapshots count == snapshots array"
+    );
+    eq(
+      byLabel.images.count,
+      (state.images || []).length,
+      "real: inventory images count == images array"
+    );
+    eq(
+      byLabel.reserved.count,
+      (state.reserved_ips || []).length,
+      "real: inventory reserved count == reserved_ips array"
+    );
+    // Pluralisation: this host has exactly 1 reserved IP → singular "reserved IP".
+    // Labels are lowercase (the initialism "IP" stays upper).
+    eq(
+      byLabel.reserved.label,
+      "reserved IP",
+      "real: single reserved IP reads singular, lowercase"
+    );
+    ok(
+      byLabel.volumes.label === "volumes",
+      "real: 46 volumes reads plural, lowercase"
+    );
+    // Every store carries a { domain, table } jump.
+    ok(
+      inv.stores.every((s) => s.jump && s.jump.domain && s.jump.table),
+      "real: every store noun carries a rail jump"
+    );
   }
 }
 
@@ -806,6 +933,95 @@ function eq(a, b, msg) {
     groups.reduce((n, g) => n + g.count, 0),
     model.firing.length,
     "alertGroups: group counts still sum to firing count at scale"
+  );
+}
+
+// ── provisioningClass(vm) — the cgroup-cap inference (Fix #3), pure inputs ─────
+// The real fixture only exercises the dedicated + null branches; craft the shared
+// case (cap below allotment) explicitly, and prove the explicit field always wins.
+{
+  eq(
+    provisioningClass({ cpu_cap_cores: 2, vcpus: 2 }),
+    "dedicated",
+    "provisioningClass: cap == vcpus → dedicated"
+  );
+  eq(
+    provisioningClass({ cpu_cap_cores: 0.5, vcpus: 2 }),
+    "shared",
+    "provisioningClass: cap < vcpus → shared (overcommitted)"
+  );
+  eq(
+    provisioningClass({ cpu_cap_cores: 1.9999999, vcpus: 2 }),
+    "dedicated",
+    "provisioningClass: float tolerance (1.9999… of 2 → dedicated)"
+  );
+  eq(
+    provisioningClass({ cpu_cap_cores: null, vcpus: 2 }),
+    null,
+    "provisioningClass: no cap (stopped VM / 'max') → null"
+  );
+  eq(
+    provisioningClass({ vcpus: null, cpu_cap_cores: 1 }),
+    null,
+    "provisioningClass: no vcpus → null"
+  );
+  // An explicit field beats the cap — a shared VM tagged by the controller stays
+  // shared even if its cap happens to equal vcpus.
+  eq(
+    provisioningClass({ provisioning: "shared", cpu_cap_cores: 2, vcpus: 2 }),
+    "shared",
+    "provisioningClass: explicit field wins over the cap inference"
+  );
+}
+
+// ── diskIsVmRow(disk) — the Disks host/VM split (Fix #5), pure inputs ──────────
+// Per-VM LVM/dm volumes fold behind the toggle; host primitives (NVMe, md, nbd,
+// partitions, thin-pool plumbing, base images) always stay visible.
+{
+  ok(
+    diskIsVmRow({ kind: "lvm", name: "atlas-atlas--vm--9ae90d69--b0e8--4400" }),
+    "diskIsVmRow: an atlas VM LV is a VM row"
+  );
+  ok(
+    diskIsVmRow({ kind: "lvm", name: "atlas-atlas--snap--t725ei1nm6" }),
+    "diskIsVmRow: a snapshot LV is a VM row"
+  );
+  ok(
+    diskIsVmRow({ kind: "dm", name: "atlas-vm-6a6fa05f-db3e-clone" }),
+    "diskIsVmRow: a dm VM clone is a VM row"
+  );
+  ok(
+    !diskIsVmRow({ kind: "disk", name: "nvme0n1" }),
+    "diskIsVmRow: a physical NVMe is NOT a VM row"
+  );
+  ok(
+    !diskIsVmRow({ kind: "raid1", name: "md2" }),
+    "diskIsVmRow: a RAID member is NOT a VM row"
+  );
+  ok(
+    !diskIsVmRow({ kind: "disk", name: "nbd0" }),
+    "diskIsVmRow: an nbd placeholder is NOT a VM row"
+  );
+  ok(
+    !diskIsVmRow({ kind: "lvm", name: "atlas-pool0_tmeta" }),
+    "diskIsVmRow: thin-pool plumbing is host storage, not a VM row"
+  );
+  ok(
+    !diskIsVmRow({ kind: "lvm", name: "atlas-atlas--image--ubuntu--24.04" }),
+    "diskIsVmRow: a base image LV is host storage, not a VM row"
+  );
+
+  // On the real fixture the split hides the per-VM bulk and keeps the host disks.
+  const rd = load("state-real.json").disks;
+  const hidden = rd.filter(diskIsVmRow).length;
+  const shown = rd.length - hidden;
+  ok(
+    hidden > shown,
+    "real: diskIsVmRow hides the per-VM bulk (hidden > shown)"
+  );
+  ok(
+    rd.filter((d) => d.name.startsWith("nvme")).every((d) => !diskIsVmRow(d)),
+    "real: every physical NVMe stays visible"
   );
 }
 

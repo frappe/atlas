@@ -3,7 +3,7 @@
 //
 // /api/state is FLAT: virtual_machines is one array, and every network/firewall
 // row a VM owns lives in a *separate* anonymous array (routes, nft rules,
-// neigh_proxy, ip_rules, reserved_ips, units, snapshots). FIELDS.md #1: the page
+// neigh_proxy, ip_rules, reserved_ips, units, snapshots). The flat document
 // "can't join a VM to its own rows." These pure functions do that join, so the
 // VM can become the subject.
 //
@@ -127,20 +127,17 @@ export function deriveVm(state, vm) {
 		reserved,
 		unit,
 		snapshot,
-		// Disk lineage (FIELDS.md #4). Prefer the LV origin when the backend joins
+		// Disk lineage. Prefer the LV origin when the backend joins
 		// it; otherwise fall back to the (usually null) image name.
 		diskOrigin: diskOrigin(vm),
 		dataPercent: vm.disk_data_percent != null ? vm.disk_data_percent : null,
-		// Per-VM size (FIELDS.md #2).
+		// Per-VM size (vcpus/mem from firecracker.json).
 		size: vmSize(vm),
 	};
 }
 
-// "image ubuntu-24.04" / "snap mjmdd1p7fb" / "reverse proxy" / "—". Mirrors
-// App.vue's diskOrigin. Operator VMs (proxy / vpn gateway) carry a plain role
-// label as their origin — show it verbatim, not prefixed "image".
+// "image ubuntu-24.04" / "snap mjmdd1p7fb" / "—". Mirrors App.vue's diskOrigin.
 export function diskOrigin(vm) {
-	if (vm.role) return vm.disk_origin || vm.role.replace(/-/g, " ");
 	if (vm.disk_origin) {
 		// The column is titled "Image", so a base image shows the bare name; a
 		// snapshot origin keeps its "snap " prefix since that's a distinct origin.
@@ -157,50 +154,24 @@ export function vmSize(vm) {
 	return `${vm.vcpus ?? "?"} · ${vm.mem_mib ?? "?"}m`;
 }
 
-// ── Tenancy ─────────────────────────────────────────────────────────────────
-// Every VM belongs to a tenant. The operator's own infrastructure (the reverse
-// proxy, the VPN gateway) is the reserved `operator` tenant; everything else is
-// a customer fleet. `role` names an operator VM's function when present.
-export const OPERATOR_TENANT = "operator";
-export function vmTenant(vm) {
-	return vm.tenant || EMPTY;
-}
-export function isOperator(vm) {
-	return vm.tenant === OPERATOR_TENANT;
-}
-
-// A compact "N tenants · M operator" line for the Machines header. Operator VMs
-// are counted apart so the split (customer fleet vs. our own plumbing) is legible.
-export function tenantSummary(vms) {
-	const customers = new Set();
-	let op = 0;
-	for (const v of vms) {
-		if (v.tenant === OPERATOR_TENANT) op += 1;
-		else if (v.tenant) customers.add(v.tenant);
-	}
-	const parts = [];
-	if (customers.size) parts.push(`${customers.size} tenant${customers.size === 1 ? "" : "s"}`);
-	if (op) parts.push(`${op} operator`);
-	return parts.join(" · ");
-}
-
-// The distinct tenant values present, operator first, for facet chips. Each entry
-// is { id, label, count }.
-export function tenantFacets(vms) {
-	const by = new Map();
-	for (const v of vms) {
-		const t = v.tenant || EMPTY;
-		by.set(t, (by.get(t) || 0) + 1);
-	}
-	const rows = [...by.entries()].map(([id, count]) => ({
-		id,
-		label: id === OPERATOR_TENANT ? "operator" : id,
-		count,
-	}));
-	rows.sort((a, b) =>
-		a.id === OPERATOR_TENANT ? -1 : b.id === OPERATOR_TENANT ? 1 : b.count - a.count
-	);
-	return rows;
+// ── Disk rows ───────────────────────────────────────────────────────────────
+// A disk row belongs to a VM when it's a device-mapper / LVM volume backing a
+// VM's root or a snapshot of one. lsblk dumps EVERY block device — on a busy
+// host that's hundreds of per-VM LVs (`atlas-atlas--vm--<uuid>`, `…--snap--…`,
+// plus dm `atlas-vm-<uuid>-clone`) that swamp the host-primitive disks the
+// operator actually reasons about (the NVMe drives, the RAID md's, partitions,
+// the thin pool's own meta/data). This flags the per-VM rows so the Disks view
+// can fold them behind a toggle, exactly like Units/Processes fold VM units.
+// Base images (`…--image--…`) and pool plumbing stay visible: they're host
+// storage, not one VM's disk.
+export function diskIsVmRow(disk) {
+	const name = disk?.name || "";
+	if (disk?.kind !== "lvm" && disk?.kind !== "dm") return false;
+	if (name.includes("pool")) return false; // thin-pool meta/data = host plumbing
+	if (name.includes("image")) return false; // base images = shared host storage
+	// lsblk's dm names double every dash (LV `atlas-vm-x` → `atlas-atlas--vm--x`),
+	// so match on the un-doubled token: a vm or snap volume.
+	return name.includes("vm") || name.includes("snap");
 }
 
 // ── derivePath(detail) → the directed connectivity legs ─────────────────────
@@ -222,7 +193,7 @@ export function derivePath(detail) {
 
 	if (reservedAddr) {
 		// In v4 — DNAT. DO model hops through the anchor; Scaleway is direct
-		// (anchor null — FIELDS.md #9), so the hop is simply omitted.
+		// (anchor null on Scaleway), so the hop is simply omitted.
 		const inLeg = {
 			dir: "In v4",
 			from: reservedAddr,
@@ -370,14 +341,6 @@ export function vmIngress(state, vm) {
 	return null;
 }
 
-// Private mesh: the VM's private /128 on the host-mesh (idea/private), if any.
-export function vmPrivateMesh(state, vm) {
-	const direct = vm.private_ipv6 ? _stripCidr(vm.private_ipv6) : null;
-	if (direct) return direct;
-	const row = (state.private_mesh || []).find((m) => m.attached_vm === vm.uuid);
-	return row ? _stripCidr(row.address) : null;
-}
-
 // Migrating: is this VM in flight? The row flag is authoritative; fall back to a
 // live migration row whose unit carries the VM's short uuid.
 export function vmMigrating(state, vm) {
@@ -386,10 +349,6 @@ export function vmMigrating(state, vm) {
 	return (state.migrations || []).some(
 		(m) => m.state === "running" && u8 && String(m.unit || "").includes(u8)
 	);
-}
-
-function _stripCidr(v) {
-	return v ? String(v).split("/")[0] : v;
 }
 
 // ── sizeDistribution(state, resource) → the running-VM size histogram ────────
@@ -410,7 +369,7 @@ const SIZE_RESOURCES = {
 	// Edges are in the same unit as `value` returns, so binning is a direct compare.
 	// mem in GiB (mem_mib→GiB up front) keeps every resource's edges in display units.
 	mem: {
-		unit: "GiB",
+		unit: "G",
 		edges: [0, 1, 2, 4, 8, 16, 32],
 		value: (v) => (v.mem_mib || 0) / 1024,
 		weight: (v) => (v.mem_mib || 0) / 1024,
@@ -422,7 +381,7 @@ const SIZE_RESOURCES = {
 		weight: (v) => v.vcpus || 0,
 	},
 	disk: {
-		unit: "GiB",
+		unit: "G",
 		edges: [0, 16, 32, 64, 128, 256, 512],
 		value: (v) => (v.disk_size_bytes || 0) / 1073741824,
 		weight: (v) => (v.disk_size_bytes || 0) / 1073741824,
@@ -480,24 +439,27 @@ function rangeLabel(lo, hi, unit) {
 // render. Best-effort: no metrics key → empty list, and the caller shows the
 // honest "no history yet" note. Each entry: { key, label, unit, points, format }.
 const METRIC_ORDER = [
-	{ key: "cpu_util_pct", label: "CPU utilisation", fmt: (v) => `${Math.round(v)}%` },
-	{ key: "mem_used_mib", label: "Memory used", fmt: (v) => fmtMib(v) },
+	{ key: "cpu_util_pct", label: "CPU utilisation", unit: "%", fmt: (v) => `${Math.round(v)}%` },
+	{ key: "mem_used_mib", label: "Memory used", unit: "MiB", fmt: (v) => fmtMib(v) },
 	{
 		key: "disk_io_iops",
 		label: "Disk IO",
+		unit: "iops",
 		fmt: (v) => `${Math.round(v).toLocaleString("en-US")} iops`,
 	},
+	{ key: "pool_used_pct", label: "Pool used", unit: "%", fmt: (v) => `${v.toFixed(1)}%` },
 	{
 		key: "net_rx_mbps",
 		label: "Network in",
+		unit: "Mb/s",
 		fmt: (v) => `${Math.round(v).toLocaleString("en-US")} Mb/s`,
 	},
 	{
 		key: "net_tx_mbps",
 		label: "Network out",
+		unit: "Mb/s",
 		fmt: (v) => `${Math.round(v).toLocaleString("en-US")} Mb/s`,
 	},
-	{ key: "pool_used_pct", label: "Pool used", fmt: (v) => `${v.toFixed(1)}%` },
 ];
 
 export function metrics(state) {
@@ -509,12 +471,27 @@ export function metrics(state) {
 		out.push({
 			key: m.key,
 			label: m.label,
-			unit: s.unit || "",
+			unit: s.unit || m.unit,
 			points: s.points,
 			format: m.fmt,
 		});
 	}
 	return out;
+}
+
+// The full ordered metric list with EMPTY points — the chart skeleton the
+// Analytics view renders when the host carries no history yet. Same panels, same
+// labels, same layout; the charts just draw their empty frame (an honest "no
+// history" state) instead of a fabricated trend. Keeps the design intact rather
+// than collapsing metrics to prose.
+export function metricSkeleton() {
+	return METRIC_ORDER.map((m) => ({
+		key: m.key,
+		label: m.label,
+		unit: m.unit,
+		points: [],
+		format: m.fmt,
+	}));
 }
 
 export function hasMetrics(state) {
@@ -607,10 +584,14 @@ function poolBar(percent, size) {
 
 // Parse an lvs size string ("686.16g", "2.00t", "80.00g") to GiB. lvs reports
 // GiB/TiB (binary) with a lowercase suffix; unknown shapes → null so the bar
-// degrades to a bare % rather than inventing a number.
+// degrades to a bare % rather than inventing a number. lvs also prefixes a
+// rounded value with "<"/"~" ("<886.24g") — tolerate and drop it.
 function parseLvSize(size) {
 	if (!size) return null;
-	const m = String(size).match(/^([\d.]+)\s*([kmgtp])?i?b?$/i);
+	const m = String(size)
+		.trim()
+		.replace(/^[<~]/, "")
+		.match(/^([\d.]+)\s*([kmgtp])?i?b?$/i);
 	if (!m) return null;
 	const n = parseFloat(m[1]);
 	if (!Number.isFinite(n)) return null;
@@ -627,6 +608,15 @@ export function fmtGiB(bytes) {
 	const g = bytes / GIB;
 	if (g >= 1024) return `${trim(g / 1024)}T`;
 	return `${trim(g)}G`;
+}
+
+// Normalise a raw LVM size string (the vendor emits "4.00g", "28.00g") into the
+// dashboard's one unit family: an uppercase suffix (G/T/M/K) so images, snapshots
+// and every other raw-size column read the same "G" as fmtGiB. Leaves anything
+// unrecognised (already-formatted, empty) untouched.
+export function fmtSize(value) {
+	if (value == null || value === "") return "";
+	return String(value).replace(/([kmgtpe])(ib)?$/i, (m, u) => u.toUpperCase());
 }
 
 // A data-fill percentage → rounded "N%". The single rounding rule so every list
@@ -686,6 +676,31 @@ function sev(fraction) {
 	return "ok";
 }
 
+// ── provisioningClass(vm) → shared | dedicated | null, from real cgroup caps ───
+// The `provisioning` field is a controller fact the host never records (CONTRACT
+// § not on the host). But the CPU class IS derivable from the cgroup the jailer
+// wrote: `cpu.max` = "<quota> <period>", parsed server-side into `cpu_cap_cores`.
+//   · cap == vcpus  → DEDICATED: the VM is hard-capped at its FULL paper allotment
+//                     (quota = vcpus × period), so it can always use everything it
+//                     was promised — no CPU overcommit.
+//   · cap <  vcpus  → SHARED: capped BELOW its allotment, so its vcpus are
+//                     overcommitted against the host and it bursts to the cap under
+//                     contention — the reclaimable-overprovision class.
+//   · cap missing / vcpus unknown (stopped VM: no cgroup; or cpu.max "max") →
+//                     null: not classifiable from the host alone.
+// An explicit `provisioning` field (mock, or a controller feed) always wins — the
+// cgroup inference is the fallback for a real host that carries only caps.
+export function provisioningClass(vm) {
+	if (!vm) return null;
+	if (vm.provisioning === "shared" || vm.provisioning === "dedicated") return vm.provisioning;
+	const cap = vm.cpu_cap_cores;
+	const vcpus = vm.vcpus;
+	if (cap == null || vcpus == null || vcpus <= 0) return null;
+	// A hair of float tolerance: quota/period division can leave 1.9999… for 2.
+	if (cap >= vcpus - 1e-6) return "dedicated";
+	return "shared";
+}
+
 // ── provisioning(state) → the fleet commit/use view (items 14/11) ─────────────
 // The provisioning model (see the handoff §2), made legible in one panel:
 //
@@ -710,16 +725,24 @@ export function provisioning(state) {
 	const running = vms.filter((v) => v.state === "Running");
 	const sum = (vs, fn) => vs.reduce((n, v) => n + (fn(v) || 0), 0);
 
-	const shared = running.filter((v) => v.provisioning === "shared");
-	const dedicated = running.filter((v) => v.provisioning === "dedicated");
+	// Class from the explicit field OR, on a real host, inferred from the cgroup
+	// cap (cap<vcpus ⇒ shared, cap==vcpus ⇒ dedicated). So the split is whole even
+	// when the controller never tagged the VMs.
+	const shared = running.filter((v) => provisioningClass(v) === "shared");
+	const dedicated = running.filter((v) => provisioningClass(v) === "dedicated");
 
 	// CPU — cores. request = cpu_request_cores (fall back to vcpus). used is the
 	// VM's cpu_pct (a fraction of ONE core) × 1; summed it's cores-in-use.
+	// `cpu_pct` needs two cgroup samples (CONTRACT § honest blanks); under the dev
+	// SSH proxy's single-shot --collect it is null on EVERY VM. When nothing
+	// reports a percentage, "used" is UNKNOWN, not zero — pass null so the bar
+	// reads "— / N vCPU" (honest silence) instead of a false, empty "0 / N".
 	const cpuReq = (v) => v.cpu_request_cores ?? v.vcpus ?? 0;
+	const cpuMeasured = running.some((v) => v.cpu_pct != null);
 	const cpuUsed = (v) => (v.cpu_pct != null ? v.cpu_pct / 100 : 0);
 	const cpu = resource("CPU", {
 		committed: sum(running, cpuReq),
-		used: sum(running, cpuUsed),
+		used: cpuMeasured ? sum(running, cpuUsed) : null,
 		physical: host.cpu_total ?? null,
 		unit: "vCPU",
 		sharedCommitted: sum(shared, cpuReq),
@@ -746,7 +769,11 @@ export function provisioning(state) {
 	const poolTotalGib = parseLvSize(pool.size);
 	const poolFrac = pool.data_percent != null ? pool.data_percent / 100 : null;
 	const poolUsedGib = poolTotalGib != null && poolFrac != null ? poolTotalGib * poolFrac : null;
-	const allocGib = sum(vms, (v) => (v.disk_allocated_bytes || 0) / GIB);
+	// Allocated disk: the real collector emits the LV size as `disk_size_bytes`;
+	// the mock carries `disk_allocated_bytes`. Prefer the real field, fall back to
+	// the mock, so the bar is whole on both.
+	const diskAllocGib = (v) => (v.disk_size_bytes ?? v.disk_allocated_bytes ?? 0) / GIB;
+	const allocGib = sum(vms, diskAllocGib);
 	const sumUsedGib = sum(vms, (v) => (v.disk_used_bytes || 0) / GIB);
 	const disk = resource("Disk", {
 		committed: allocGib,
@@ -754,12 +781,12 @@ export function provisioning(state) {
 		physical: poolTotalGib,
 		unit: "G",
 		sharedCommitted: sum(
-			vms.filter((v) => v.provisioning === "shared"),
-			(v) => (v.disk_allocated_bytes || 0) / GIB
+			vms.filter((v) => provisioningClass(v) === "shared"),
+			diskAllocGib
 		),
 		dedicatedCommitted: sum(
-			vms.filter((v) => v.provisioning === "dedicated"),
-			(v) => (v.disk_allocated_bytes || 0) / GIB
+			vms.filter((v) => provisioningClass(v) === "dedicated"),
+			diskAllocGib
 		),
 		fmt: (n) => `${trim(n)}G`,
 	});
@@ -779,6 +806,10 @@ const GIB = 1024 * 1024 * 1024;
 function resource(label, o) {
 	const { committed, used, physical, unit, sharedCommitted, dedicatedCommitted, fmt } = o;
 	const has = physical != null && physical > 0;
+	// `used` is null when the metric is unmeasured (e.g. CPU under the proxy). Keep
+	// the usage fraction and severity null too — an unmeasured resource has no
+	// pressure to report, and the bar renders empty rather than NaN-wide.
+	const measured = has && used != null;
 	return {
 		label,
 		unit,
@@ -789,10 +820,10 @@ function resource(label, o) {
 		dedicatedCommitted,
 		overcommit: has ? committed / physical : null,
 		committedFrac: has ? committed / physical : null,
-		usedFrac: has ? used / physical : null,
+		usedFrac: measured ? used / physical : null,
 		// Severity reads off how full the REAL capacity is (used/physical) — that's
 		// the number that actually hurts, not the paper overcommit.
-		severity: sev(has ? used / physical : null),
+		severity: sev(measured ? used / physical : null),
 		text: {
 			committed: fmt(committed),
 			used: fmt(used),
@@ -815,7 +846,9 @@ function trim(n) {
 // story (a 25% floor that bursts to the cap); dedicated is exact. Used is the
 // live sample. Returns pre-formatted strings so the table stays dumb.
 export function perVmProvisioning(vm) {
-	const kind = vm.provisioning || null;
+	// The class: explicit field if present, else inferred from the cgroup cap so a
+	// real host still shows shared/dedicated in the Prov column (see provisioningClass).
+	const kind = provisioningClass(vm);
 	const shared = kind === "shared";
 	const req = vm.cpu_request_cores ?? vm.vcpus ?? null;
 	const cap = vm.cpu_cap_cores ?? req;
@@ -880,11 +913,20 @@ export function alerts(state) {
 		});
 	}
 
-	// Disk-hot VMs — a VM's own disk ≥85% (the pool grows on write; ≥85% is the
-	// point to watch). ≥95% is critical.
+	// Disk-hot VMs — a THIN VM disk growing toward full (≥85%; ≥95% crit). The
+	// signal is thin-pool `data_percent`, which only means "filling" for a thin
+	// volume that still has room to grow. A fully-allocated (thick) LV — a plain
+	// bench/image clone with no snapshot origin — reports data_percent=100 with
+	// used==size *structurally*, forever; that is not filling. Real hosts run a
+	// mix of both (thick bench images sit permanently at 100%), so gate on
+	// used<size: only a volume with remaining headroom can be "filling". Without
+	// used/size (a sparse capture) fall back to the bare percent.
 	for (const vm of vms) {
 		const pct = vm.disk_data_percent;
 		if (pct == null || pct < 85) continue;
+		const size = vm.disk_size_bytes;
+		const used = vm.disk_used_bytes;
+		if (size != null && used != null && used >= size) continue; // thick/at-rest, not filling
 		out.push({
 			key: `disk:${vm.uuid}`,
 			severity: pct >= 95 ? "crit" : "warn",
@@ -971,6 +1013,47 @@ export function alertGroups(state) {
 	return groups;
 }
 
+// ── inventory(state) → the Overview census line ──────────────────────────────
+// One glanceable line of "what's on this host": the fleet (running / total, plus
+// a migrating tail only when something is in flight) followed by the object
+// stores — volumes, snapshots, images, reserved IPs. Each item carries a `jump`
+// { domain, table } so the noun cross-links to its own rail page, matching how
+// the alert lines jump. HONEST: a zero-migrating fleet drops the clause rather
+// than printing "0 migrating" (same suppression the alerts use). Nouns pluralise
+// by count. Returns { machines: {running, total, migrating, jump}, stores:[...] }.
+export function inventory(state) {
+	const vms = state.virtual_machines || [];
+	const running = vms.filter((v) => v.state === "Running").length;
+	const migrating = vms.filter((v) => vmMigrating(state, v)).length;
+
+	const store = (count, singular, jump) => ({
+		count,
+		label: count === 1 ? singular : `${singular}s`,
+		jump,
+	});
+
+	return {
+		machines: {
+			running,
+			total: vms.length,
+			migrating, // caller shows the clause only when > 0
+			jump: { domain: "machines", table: "machines" },
+		},
+		stores: [
+			store((state.volumes || []).length, "volume", { domain: "storage", table: "volumes" }),
+			store((state.snapshots || []).length, "snapshot", {
+				domain: "images",
+				table: "snapshots",
+			}),
+			store((state.images || []).length, "image", { domain: "images", table: "images" }),
+			store((state.reserved_ips || []).length, "reserved IP", {
+				domain: "network",
+				table: "reserved",
+			}),
+		],
+	};
+}
+
 // A compact count for the header badge: { crit, warn }.
 export function alertCounts(state) {
 	const { firing } = alerts(state);
@@ -1020,9 +1103,12 @@ export function events(state) {
 // `utc` keeps the trailing " UTC" (alerts/footer want it; the events log doesn't).
 export function shortTime(iso, { utc = false } = {}) {
 	if (!iso) return "—";
-	return String(iso)
-		.replace("T", " ")
-		.replace("Z", utc ? " UTC" : "");
+	// Compact: "YYYY-MM-DD HH:MM" — drop seconds and the " UTC" suffix (the footer
+	// already states the collection is UTC), so the When/Time column stays narrow
+	// and the list never needs a horizontal scroll at scale.
+	const s = String(iso).replace("T", " ").replace("Z", "");
+	const m = s.match(/^(\d{4}-\d{2}-\d{2}[ ]\d{2}:\d{2})/);
+	return m ? m[1] : s;
 }
 // The severity glyph: crit = filled, warn = half. Contrast, not colour.
 export function sevTick(sev) {

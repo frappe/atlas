@@ -3,36 +3,55 @@
 	     the neutral ink colour) is set here and inherited; every child styles
 	     itself with Tailwind utilities off the frappe-ui preset. -->
 	<div
-		class="atlas-ui bg-surface-base text-ink-gray-7 font-sans text-base leading-[1.55] tracking-[-0.006em] antialiased"
+		class="atlas-ui bg-surface-base text-ink-gray-8 font-sans text-base leading-[1.55] tracking-[-0.006em] antialiased"
 	>
 		<!-- Narrow content column tuned for a MacBook Air (capped 1080 so line-lengths
 		     stay scannable and the F-pattern holds; fluid below). The whole app is one
 		     viewport-tall column that never scrolls: header + footer are fixed bands,
 		     the body flexes to fill the middle, overflow is handled INSIDE the panel. -->
 		<div
-			class="w-[min(100%-56px,1080px)] mx-auto h-screen pt-10 flex flex-col overflow-hidden"
+			class="w-[min(100%-56px,1080px)] mx-auto h-screen py-10 flex flex-col overflow-hidden"
 		>
-			<!-- ── Header: the host is the subject — hostname ONLY (item 7). The
+			<!-- ── Header: the host is the subject — "<hostname> — Atlas", falling
+			     back to just "Atlas" until the hostname loads. The
 			     running/pool/reserved summary moved to a one-line lede on the Overview
 			     page; it informs once, it doesn't belong in the persistent chrome.
-			     Right cluster is just what's actionable: the alerts summary (crit ·
-			     warn · dead folded in) + the theme toggle. Refresh is implicit — reload
-			     the browser. The cluster is width-locked so it can't shift when the
-			     theme word (light/dark/system) changes length. ── -->
+			     Right cluster is just what's actionable: the theme toggle. Refresh is
+			     implicit — reload the browser. ── -->
 			<header class="flex items-center justify-between gap-6 mb-8 flex-none">
-				<div>
+				<!-- The host build line (OS · kernel · Firecracker · arch) + the
+				     collection timestamp are reference-only, so they hang off the
+				     hostname as a hover popover — styled mono like the rest of the
+				     dashboard's reference reads, rather than the browser's default-font
+				     native title tooltip. It floats to the RIGHT of the hostname, into
+				     the header's empty space, so it never overlaps the body below. -->
+				<!-- The hostname and the (hover-revealed) provenance line share one
+				     `items-baseline` flex row, so the tip's text baseline lands exactly on
+				     the hostname's — box-centering left it ~4px high because the h1 is
+				     text-2xl and the tip text-xs. The tip is a zero-width, overflow-visible
+				     flex item: it aligns on the baseline like a normal sibling but claims
+				     no layout width, so it floats into the header's empty space without
+				     pushing anything or consuming the row. -->
+				<div class="group flex items-baseline">
 					<h1
-						class="m-0 font-mono tabular-nums text-2xl font-medium text-ink-gray-9 tracking-normal"
-						:title="hostProvenance"
+						class="m-0 font-mono tabular-nums text-2xl font-medium text-ink-gray-9 tracking-normal cursor-default"
 					>
-						{{ state?.host?.hostname || "atlas host" }}
+						{{ state?.host?.hostname || "atlas" }}
 					</h1>
+					<div
+						v-if="hostProvenance"
+						class="pointer-events-none w-0 overflow-visible ml-4 whitespace-nowrap font-mono tabular-nums text-xs text-ink-gray-8 opacity-0 transition-opacity duration-150 group-hover:opacity-100"
+					>
+						{{ hostProvenance
+						}}<template v-if="collectedAt"> · {{ collectedAt }}</template>
+					</div>
 				</div>
 				<div class="flex items-center justify-end gap-3.5 whitespace-nowrap">
-					<!-- Alerts live on the Alerts page (and the rail carries the firing
-					     count); the header no longer duplicates crit/warn/dead. Only the
-					     theme toggle remains actionable here. A fixed-width glyph slot
-					     (○/●/◐) so switching modes never shifts the cluster. -->
+					<!-- Theme toggle — a fixed-width glyph slot (○/●) so switching
+					     modes never shifts the cluster. Light/dark only; the initial
+					     mode still follows the OS until the first click. The
+					     alignment-debug guides stay driveable by the ?borders URL param
+					     (see debug.js) but no longer carry a persistent header control. -->
 					<button
 						class="bg-transparent border-0 p-0 cursor-pointer w-4 text-center text-base leading-none text-ink-gray-5 hover:text-ink-gray-8 focus-visible:outline-2 focus-visible:outline-ink-gray-9 focus-visible:outline-offset-2 focus-visible:rounded-sm"
 						:title="`Theme: ${mode} — click to switch`"
@@ -68,21 +87,26 @@
 
 				<!-- panel. Left padding is the rail gutter (no divider). Fallback scroll
 				     for a panel that genuinely can't fit; clip-x contains the inner
-				     .scroll's -12px bleed so no screen ever scrolls sideways. -->
-				<main class="min-w-0 pl-0 sm:pl-7 overflow-y-auto overflow-x-hidden flex flex-col">
-					<!-- Overview — the status/scale layer (landing). Four sub-pages:
+				     .scroll's -12px bleed so no screen ever scrolls sideways. pt-2 mirrors
+				     the rail item's py-2 so the panel header's text baseline lands on the
+				     rail's top item (Overview) — box-align alone left the header 8px high. -->
+				<main
+					class="min-w-0 pl-0 sm:pl-7 pt-2 overflow-y-auto overflow-x-hidden flex flex-col"
+				>
+					<!-- Overview — the status/scale layer (landing). Three sub-pages:
 					     Summary (quota bars + histogram + wants-a-look), Alerts (the
-					     stateful list), Analytics (deep view), Events (the log). -->
+					     stateful list), Analytics (deep view). -->
 					<template v-if="selected.domain === 'overview'">
 						<!-- No count on the Alerts page head: the rail Alerts sub-item
 						     carries the firing number, and the list itself enumerates them.
 						     (item: "alerts count shows up in 3 places".) -->
-						<PanelHead :title="overviewTitle" />
+						<PanelHead v-if="selected.table !== 'summary'" :title="overviewTitle" />
 						<Overview
 							v-if="selected.table === 'summary'"
 							:state="state"
 							@open-vm="openMachine"
 							@open-alerts="select({ domain: 'overview', table: 'alerts' })"
+							@open="select"
 						/>
 						<AlertsList
 							v-else-if="selected.table === 'alerts'"
@@ -92,17 +116,6 @@
 							@open-vm="openMachine"
 						/>
 						<Analytics v-else-if="selected.table === 'analytics'" :state="state" />
-						<!-- Events — one chronological log, folded together. A plain ListView
-						     section like any other: Time and Kind are quiet mono/uppercase
-						     leads (col.class), the Event sentence grows to fill the row. -->
-						<ListView
-							v-else-if="selected.table === 'events'"
-							:columns="eventCols"
-							:rows="eventRows"
-							:row-px="35"
-							:reserve="340"
-							empty-text="No recent events."
-						/>
 					</template>
 
 					<!-- Machines — the volatile subject. VmTable owns its own header
@@ -133,21 +146,7 @@
 						:row-px="31"
 						:reserve="400"
 						@open-vm="openMachine"
-					>
-						<template #strip>
-							<!-- One quiet mono line naming the tables + their chains, so it
-							     reads like every other section's calm summary. -->
-							<p
-								v-if="fwTables.length"
-								class="-mt-1 mb-3.5 flex-none text-2xs text-ink-gray-6 whitespace-normal leading-relaxed font-mono tabular-nums"
-							>
-								<span v-for="(t, i) in fwTables" :key="t.name">
-									<template v-if="i"> · </template>{{ t.family }} {{ t.name
-									}}<span class="text-ink-gray-5"> ({{ t.chainNames }})</span>
-								</span>
-							</p>
-						</template>
-					</ListView>
+					/>
 
 					<!-- Storage → Analytics — the LVM stack (PV → VG → pool) chart. Its
 					     own bespoke branch: a chart, not a table. Volumes (the LVs) is a
@@ -169,27 +168,17 @@
 						:key-col="activeSection.keyCol"
 						:backlink="activeSection.backlink"
 						:vm-filter="activeSection.vmFilter"
+						:spread="activeSection.spread"
 						@open-vm="openMachine"
 					/>
 				</main>
 			</div>
-
-			<!-- Footer: just the collection timestamp — the single provenance fact
-			     worth a persistent band. The host build line (OS · kernel · Firecracker
-			     · arch) is reference-only, so it lives on hover over the hostname rather
-			     than taking a footer row of its own. -->
-			<footer
-				v-if="state"
-				class="flex-none flex items-baseline justify-end py-3.5 text-xs text-ink-gray-6 whitespace-nowrap overflow-hidden"
-			>
-				<span class="font-mono tabular-nums text-ink-gray-6">{{ collectedAt }}</span>
-			</footer>
 		</div>
 	</div>
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from "vue";
+import { ref, computed, onMounted, watch } from "vue";
 import Rail from "./components/Rail.vue";
 import VmTable from "./components/VmTable.vue";
 import ListView from "./components/ListView.vue";
@@ -201,19 +190,32 @@ import AlertsList from "./components/AlertsList.vue";
 import {
 	vmByRule,
 	alerts,
-	events,
 	parseNftRule,
 	uuid8,
 	pct,
-	shortTime,
 	fmtGiB,
+	fmtSize,
+	diskIsVmRow,
 } from "./derive.js";
 import { mode, cycleMode } from "./theme.js";
+// Side-effect import: debug.js reads the ?borders URL param on load and applies
+// the alignment-guide class. Kept driveable by URL; no header control anymore.
+import "./debug.js";
 
+// Light/dark glyph. `system` is the seeded default before the first click; it
+// renders ◐ (following the OS) until the user flips to a concrete light/dark.
 const themeGlyph = computed(() => ({ light: "○", dark: "●", system: "◐" }[mode.value]));
 
 const state = ref(null);
 const error = ref("");
+
+// Tab title tracks the host: "<hostname> - Atlas", or just "Atlas" until data lands.
+watch(
+	() => state.value?.host?.hostname,
+	(hostname) => {
+		document.title = hostname ? `${hostname} - Atlas` : "Atlas";
+	}
+);
 // The page opens on the Overview summary — health first (the scale-layer landing).
 // {domain, table} so the rail can drive one object at a time.
 const selected = ref({ domain: "overview", table: "summary" });
@@ -228,13 +230,10 @@ const nominalLine = computed(() => {
 	const running = vms.value.filter((v) => v.state === "Running").length;
 	return `${running} of ${vms.value.length} running nominally. Nothing wants a look.`;
 });
-const eventRows = computed(() => (state.value ? events(state.value) : []));
-const eventsCount = computed(() => eventRows.value.length);
 const overviewTitle = computed(
 	() =>
-		({ summary: "Overview", alerts: "Alerts", analytics: "Analytics", events: "Events" }[
-			selected.value.table
-		] || "Overview")
+		({ summary: "Overview", alerts: "Alerts", analytics: "Analytics" }[selected.value.table] ||
+		"Overview")
 );
 async function load() {
 	error.value = "";
@@ -285,7 +284,6 @@ const uplink = computed(() => state.value?.host?.uplink || "eth0");
 // Plan A new slices.
 const volumes = computed(() => state.value?.volumes || []);
 const proxyMaps = computed(() => state.value?.proxy_maps || []);
-const privateMesh = computed(() => state.value?.private_mesh || []);
 const migrationsRows = computed(() => state.value?.migrations || []);
 const tasks = computed(() => state.value?.tasks || []);
 const disks = computed(() => state.value?.disks || []);
@@ -309,12 +307,6 @@ const machinesSummary = computed(() => {
 const unitsSummary = computed(() => {
 	const up = units.value.filter((u) => u.active === "active").length;
 	return units.value.length ? `${up} up · ${units.value.length - up} dead` : "";
-});
-const volumesSummary = computed(() => {
-	const n = volumes.value.length;
-	if (!n) return "";
-	const vmDisks = volumes.value.filter((v) => v.role === "vm-disk").length;
-	return `${vmDisks} VM disk${vmDisks === 1 ? "" : "s"}`;
 });
 const nftRuleCount = computed(() =>
 	nftTables.value.reduce((n, t) => n + t.chains.reduce((m, c) => m + c.rules.length, 0), 0)
@@ -364,7 +356,7 @@ const fwRules = computed(() => {
 // is needed here.
 const fwCols = [
 	{ key: "chain", label: "Chain", mono: true },
-	{ key: "verdict", label: "Action" },
+	{ key: "verdict", label: "Action", mono: true },
 	{ key: "match", label: "Match", mono: true, grow: true },
 	{ key: "iface", label: "Interface", mono: true },
 	{ key: "to", label: "To", mono: true },
@@ -397,40 +389,40 @@ const hostProvenance = computed(() => {
 // for tables with a genuinely variable-length column; all-short-token reference
 // tables (IP rules) stay left-packed.
 const imageCols = [
-	{ key: "name", label: "Image", grow: true },
+	{ key: "name", label: "Image", mono: true, grow: true },
 	{ key: "kernel", label: "Kernel", mono: true },
-	{ key: "rootfs_size", label: "Rootfs", mono: true, align: "right" },
-	{ key: "base_lv_size", label: "Base LV", mono: true, align: "right" },
+	{ key: "rootfs_size", label: "Rootfs", mono: true, align: "right", format: fmtSize },
+	{ key: "base_lv_size", label: "Base LV", mono: true, align: "right", format: fmtSize },
 ];
 const snapCols = [
 	{ key: "uuid", label: "UUID", mono: true, format: uuid8 },
-	{ key: "kind", label: "Kind" },
+	{ key: "kind", label: "Kind", mono: true },
 	{ key: "origin_lv", label: "Origin LV", mono: true, grow: true },
-	{ key: "data_percent", label: "Data %", align: "right", format: pct },
+	{ key: "data_percent", label: "Data %", mono: true, align: "right", format: pct },
 ];
 const addrCols = [
 	{ key: "interface", label: "Interface", mono: true },
 	{ key: "family", label: "Family", mono: true },
 	{ key: "address", label: "Address", mono: true, grow: true },
-	{ key: "scope", label: "Scope" },
+	{ key: "scope", label: "Scope", mono: true },
 ];
 const ifaceCols = [
 	{ key: "name", label: "Name", mono: true, grow: true },
-	{ key: "iface_state", label: "State", status: "UP" },
-	{ key: "kind", label: "Kind" },
+	{ key: "iface_state", label: "State", mono: true, status: "UP" },
+	{ key: "kind", label: "Kind", mono: true },
 	{ key: "mac", label: "MAC", mono: true },
 	{ key: "mtu", label: "MTU", mono: true, align: "right" },
+];
+// Reserved keeps its attached-VM value; it renders in the back-link column.
+const ripCols = [
+	{ key: "address", label: "Address", mono: true, grow: true },
+	{ key: "guest_ipv4", label: "Guest v4", mono: true },
 ];
 const routeCols = [
 	{ key: "family", label: "Family", mono: true },
 	{ key: "dest", label: "Destination", mono: true, grow: true },
 	{ key: "via", label: "Via", mono: true },
 	{ key: "dev", label: "Device", mono: true },
-];
-// Reserved keeps its attached-VM value; it renders in the back-link column.
-const ripCols = [
-	{ key: "address", label: "Address", mono: true, grow: true },
-	{ key: "guest_ipv4", label: "Guest v4", mono: true },
 ];
 const ndpCols = [
 	{ key: "address", label: "Address", mono: true, grow: true },
@@ -442,39 +434,28 @@ const ruleCols = [
 	{ key: "table", label: "Table", mono: true },
 ];
 const unitCols = [
-	{ key: "name", label: "Unit", mono: true, grow: true },
+	{ key: "name", label: "Unit", mono: true, grow: true, clip: true },
 	// A unit reads "<active> · <sub>" (e.g. "active · running"), the sub carried
 	// on the row — expressed here as the column's format so it's visible in the
 	// def, not hidden in the primitive.
 	{
 		key: "active",
 		label: "State",
+		mono: true,
 		status: "active",
 		format: (v, row) => (row.sub ? `${v} · ${row.sub}` : v),
 	},
-	{ key: "kind", label: "Kind" },
+	{ key: "kind", label: "Kind", mono: true },
 ];
 const pkgCols = [
-	{ key: "name", label: "Package", grow: true },
+	{ key: "name", label: "Package", mono: true, grow: true },
 	{ key: "version", label: "Version", mono: true },
-];
-// Events — Time and Kind are quiet mono/uppercase leads (col.class); the Event
-// sentence grows. All shaping is on the column def, so the log needs no wrapper.
-const eventCols = [
-	{
-		key: "at",
-		label: "Time",
-		class: "text-2xs text-ink-gray-5 font-mono tabular-nums",
-		format: (v) => shortTime(v),
-	},
-	{ key: "kind", label: "Kind", class: "text-2xs uppercase tracking-wider text-ink-gray-5" },
-	{ key: "text", label: "Event", grow: true, class: "text-ink-gray-7" },
 ];
 // Storage → Volumes — the LVs as a plain section. Name grows; size reads from the
 // _bytes field via fmtGiB, data_percent through the shared rounded percent.
 const volCols = [
 	{ key: "name", label: "Volume", mono: true, grow: true },
-	{ key: "role", label: "Role" },
+	{ key: "role", label: "Role", mono: true },
 	{
 		key: "size",
 		label: "Size",
@@ -510,41 +491,45 @@ const procFilter = {
 	isBroken: () => false,
 	noun: "VM processes",
 };
+const diskFilter = {
+	// Per-VM LVM/dm volumes swamp the host disks at scale (1000 VMs → 1000+ LVs).
+	// Default to host-only; ListView folds the VM rows behind a toggle. No disk
+	// carries a health field, so none are force-shown.
+	isVm: (r) => diskIsVmRow(r),
+	isBroken: () => false,
+	noun: "VM disks",
+};
 // ── Network extensions (Plan A) ──
 const proxyCols = [
-	{ key: "listen", label: "Listen", mono: true },
-	{ key: "protocol", label: "Protocol" },
-	{ key: "backend", label: "Backend", mono: true },
 	{ key: "sni", label: "SNI", mono: true, grow: true },
-];
-const meshCols = [
-	{ key: "address", label: "Private /128", mono: true, grow: true },
-	{ key: "device", label: "Device", mono: true },
+	{ key: "listen", label: "Listen", mono: true },
+	{ key: "protocol", label: "Protocol", mono: true },
+	{ key: "backend", label: "Backend", mono: true },
 ];
 const migCols = [
 	{ key: "unit", label: "Forwarder", mono: true, grow: true },
-	{ key: "state", label: "State" },
+	{ key: "state", label: "State", mono: true },
 	{ key: "peer", label: "Peer", mono: true },
 ];
 // ── System extensions (Plan A) ──
 const taskCols = [
-	{ key: "name", label: "Task", grow: true },
-	{ key: "status", label: "Status" },
+	{ key: "name", label: "Task", mono: true, grow: true },
+	{ key: "status", label: "Status", mono: true },
 	{ key: "started_at", label: "Started", mono: true },
 	{ key: "duration", label: "Duration", mono: true, align: "right" },
 ];
 const diskCols = [
 	{ key: "name", label: "Device", mono: true },
-	{ key: "kind", label: "Kind" },
-	{ key: "size", label: "Size", mono: true, align: "right" },
+	{ key: "kind", label: "Kind", mono: true },
+	{ key: "size", label: "Size", mono: true, align: "right", format: fmtSize },
 	{ key: "mount", label: "Mount", mono: true },
-	{ key: "model", label: "Model", grow: true },
+	{ key: "model", label: "Model", mono: true },
 ];
 const userCols = [
 	{ key: "name", label: "User", mono: true },
 	{ key: "uid", label: "UID", mono: true, align: "right" },
-	{ key: "sudo", label: "Sudo" },
-	{ key: "shell", label: "Shell", mono: true, grow: true },
+	{ key: "sudo", label: "Sudo", mono: true },
+	{ key: "shell", label: "Shell", mono: true },
 ];
 // 19: PID leads LEFT-aligned (it's an identifier, not a magnitude) so the first
 // column hugs the panel edge instead of hugging the right of a narrow column —
@@ -552,9 +537,9 @@ const userCols = [
 // a real magnitude, stays right-aligned with tabular figures.
 const procCols = [
 	{ key: "pid", label: "PID", mono: true },
-	{ key: "kind", label: "Kind", grow: true },
+	{ key: "kind", label: "Kind", mono: true, grow: true },
 	{ key: "user", label: "User", mono: true },
-	{ key: "rss", label: "RSS", mono: true, align: "right" },
+	{ key: "rss", label: "RSS", mono: true, align: "right", format: fmtSize },
 ];
 
 // An interface belongs to a VM when its name/MAC carries a VM token (tap/veth).
@@ -591,6 +576,7 @@ const domains = computed(() => {
 		keyCol: extra.keyCol || null,
 		backlink: extra.backlink || null,
 		vmFilter: extra.vmFilter || null,
+		spread: extra.spread || false,
 	});
 
 	// A marker table — rendered by a bespoke panel branch (Overview, Machines,
@@ -617,12 +603,16 @@ const domains = computed(() => {
 				M("summary", "Summary", vms.value.length),
 				M("alerts", "Alerts", firingCount.value, firingCount.value || null),
 				M("analytics", "Analytics", vms.value.length),
-				M("events", "Events", eventsCount.value),
 			],
 			{ noAlert: true }
 		),
 		D("machines", "Machines", [
 			T("machines", "Machines", [], vms.value, { summary: machinesSummary.value }),
+			// Migration (Plan A) → the in-flight forwarders live with the machines they
+			// move, not under Network. VM row carries the flag; back-link resolves it.
+			T("migrations", "Migrations", migCols, migrationsRows.value, {
+				backlink: (r) => idx.value.any(r.unit),
+			}),
 		]),
 		D("images", "Images", [
 			T("images", "Images", imageCols, images.value),
@@ -637,7 +627,6 @@ const domains = computed(() => {
 		// rendered by its own bespoke branch — a chart, not a table).
 		D("storage", "Storage", [
 			T("volumes", "Volumes", volCols, volumes.value, {
-				summary: volumesSummary.value,
 				// A vm-disk volume links back to its VM (name carries the uuid).
 				backlink: (r) => idx.value.any(r.name),
 			}),
@@ -649,7 +638,6 @@ const domains = computed(() => {
 				backlink: ifaceOwner,
 				vmFilter: ifaceFilter,
 			}),
-			T("routes", "Routes", routeCols, routes.value, { backlink: idx.value.route }),
 			T("reserved", "Reserved IPs", ripCols, reservedIps.value, {
 				keyCol: "address",
 				backlink: idx.value.reserved,
@@ -659,16 +647,11 @@ const domains = computed(() => {
 				keyCol: "listen",
 				backlink: (r) => r.vm || null,
 			}),
-			// VPN / private mesh (Plan A) → "Private mesh" sub-table.
-			T("mesh", "Private mesh", meshCols, privateMesh.value, {
-				keyCol: "address",
-				backlink: (r) => r.attached_vm || null,
-			}),
-			T("ndp", "Proxy NDP", ndpCols, neighProxy.value, { backlink: idx.value.ndp }),
-			T("rules", "IP rules", ruleCols, ipRules.value, { backlink: idx.value.ipRule }),
-			// Migration (Plan A) → "Migrations" sub-table (VM row carries the flag).
-			T("migrations", "Migrations", migCols, migrationsRows.value, {
-				backlink: (r) => idx.value.any(r.unit),
+			// Routes and Proxy NDP — plain reference tables, each on its own rail
+			// line, both keeping their → VM back-link.
+			T("routes", "Routes", routeCols, routes.value, { backlink: idx.value.route }),
+			T("neigh-proxy", "Proxy NDP", ndpCols, neighProxy.value, {
+				backlink: idx.value.ndp,
 			}),
 		]),
 		D("firewall", "Firewall", [
@@ -680,6 +663,8 @@ const domains = computed(() => {
 				count: nftRuleCount.value,
 				summary: nftSummary.value,
 			},
+			// IP routing rules belong beside the firewall ruleset, not under Network.
+			T("rules", "IP rules", ruleCols, ipRules.value, { backlink: idx.value.ipRule }),
 		]),
 		// System (Plan A, renamed) — the host primitives beside Units/Packages:
 		// host-side Tasks, Disks, Users, Processes.
@@ -692,8 +677,8 @@ const domains = computed(() => {
 					vmFilter: unitFilter,
 				}),
 				T("tasks", "Tasks", taskCols, tasks.value),
-				T("disks", "Disks", diskCols, disks.value),
-				T("users", "Users", userCols, usersRows.value, { keyCol: "name" }),
+				T("disks", "Disks", diskCols, disks.value, { spread: true, vmFilter: diskFilter }),
+				T("users", "Users", userCols, usersRows.value, { keyCol: "name", spread: true }),
 				T("processes", "Processes", procCols, processes.value, {
 					backlink: (r) => r.vm || null,
 					vmFilter: procFilter,
@@ -714,7 +699,6 @@ const BESPOKE = new Set([
 	"summary",
 	"alerts",
 	"analytics",
-	"events",
 ]);
 const activeSection = computed(() => {
 	if (selected.value.domain === "overview") return null;

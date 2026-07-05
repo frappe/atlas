@@ -10,7 +10,15 @@
 			{{ count }}<slot name="count" />
 		</span>
 		<span v-if="summary" class="ml-auto text-xs text-ink-gray-6">{{ summary }}</span>
-		<slot name="right" />
+		<!-- The right cluster always pins to the panel's right edge. When there's no
+		     summary to carry the ml-auto push, this wrapper does it. -->
+		<div
+			v-if="$slots.right"
+			class="flex items-baseline gap-3.5"
+			:class="{ 'ml-auto': !summary }"
+		>
+			<slot name="right" />
+		</div>
 	</div>
 </template>
 

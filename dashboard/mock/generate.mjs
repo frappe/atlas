@@ -74,16 +74,6 @@ const GiB = 1024 * 1024 * 1024;
 const MiB = 1024 * 1024;
 
 // ── the VM fleet ─────────────────────────────────────────────────────────────
-const TENANTS = [
-  "acme-01",
-  "acme-01",
-  "globex",
-  "initech",
-  "umbrella",
-  "hooli",
-  "hooli",
-  "stark",
-];
 const SIZES = [
   // [vcpus, mem_mib] — the committed cap. Real fleets are a spread of sizes.
   [1, 1024],
@@ -150,38 +140,34 @@ function buildVms(N) {
       : 0;
     const cpu_pct = running ? Math.round((1 + rnd() * 19) * 10) / 10 : 0;
 
-    // cgroup caps in the raw units the host reads them.
+    // cgroup memory cap in the raw units the host reads it.
     const cgroup_memory_max = String(Math.round(mem_mib * 1.15) * MiB); // fc overhead
-    const cgroup_cpu_max = `${vcpus * 100000} 100000`; // quota period (µs), Hard cap
 
-    // ── overprovision model (#2) — the request→cap story, per VM ─────────────
-    // A `shared` VM reserves a 25% CPU FLOOR and bursts to its cap (vcpus); a
-    // `dedicated` VM pins exact (request == cap). Memory is always a hard cap
-    // (request == cap == mem_mib). Most of the fleet is shared — that's the
-    // whole point of overcommit. Operator VMs are dedicated (infra, no burst).
+    // ── caps in the raw units the host records them (CONTRACT §caps) ──────────
+    // Only the caps are host-recoverable: cpu.max quota/period → cpu_cap_cores,
+    // memory.max → mem_cap_mib. The request/floor/weight and the shared vs
+    // dedicated CLASS are controller facts the host never sees, so the mock may
+    // NOT carry them (CONTRACT: "the mock may not carry a field the real
+    // collector cannot produce"). The UI infers the shared/dedicated split from
+    // the cap alone (derive.js provisioningClass); we vary the cap here so both
+    // arms of that inference are exercised — a dedicated VM pins cap == vcpus, a
+    // shared VM's cap sits below vcpus.
     const dedicated = operator || rnd() < 0.18;
-    const provisioning = dedicated ? "dedicated" : "shared";
-    const cpu_cap_cores = vcpus;
-    const cpu_request_cores = dedicated
+    const cpu_cap_cores = dedicated
       ? vcpus
       : Math.round(vcpus * 0.25 * 100) / 100;
-    const cpu_floor_cores = cpu_request_cores;
-    const cpu_weight_pct = Math.round((cpu_request_cores / vcpus) * 100);
-    const cpu_max_pct = 100;
+    const cgroup_cpu_max = `${Math.round(cpu_cap_cores * 100000)} 100000`;
     const mem_cap_mib = mem_mib;
-    const mem_request_mib = mem_mib; // hard cap, request == cap
-    // Thin disk: the whole cap is allocated; live fill is data_percent of it.
-    const disk_allocated_bytes = 28 * GiB;
+    // Thin disk: size is the LV size; live fill is data_percent of it.
+    const disk_size_bytes = 28 * GiB;
     const disk_used_bytes = running
-      ? Math.round(disk_allocated_bytes * ((8 + rnd() * 80) / 100))
+      ? Math.round(disk_size_bytes * ((8 + rnd() * 80) / 100))
       : 0;
 
     const hex = uuid8(u).slice(0, 2);
     vms.push({
       uuid: u,
       state,
-      tenant: operator ? "operator" : pick(TENANTS),
-      role: isProxy ? "reverse-proxy" : isVpn ? "vpn-gateway" : null,
       ipv6: `${HOST_V6_PREFIX}::${(0x20 + i).toString(16)}`,
       ipv4_guest: cgnat(2 + i * 2),
       ipv4_host: cgnat(1 + i * 2),
@@ -194,19 +180,12 @@ function buildVms(N) {
       fc_uid: 257000 + i,
       private_ipv6: isVpn ? null : `fdaa::${(0x100 + i).toString(16)}`,
       image: null,
-      // Committed size + caps.
+      // Committed size + host-recoverable caps (raw cgroup strings + parsed).
       vcpus,
       mem_mib,
       cgroup_cpu_max,
       cgroup_memory_max,
-      // The overprovision model — request/cap/floor per resource (#2).
-      provisioning,
-      cpu_request_cores,
       cpu_cap_cores,
-      cpu_floor_cores,
-      cpu_weight_pct,
-      cpu_max_pct,
-      mem_request_mib,
       mem_cap_mib,
       // Live actual usage — the honest denominator (#2).
       mem_used_mib,
@@ -215,10 +194,9 @@ function buildVms(N) {
       disk_lv: `atlas-vm-${u}`,
       disk_origin: operator ? "atlas-image-ubuntu-24.04" : pick(IMAGE_ORIGINS),
       disk_data_percent: running
-        ? Math.round((disk_used_bytes / disk_allocated_bytes) * 10000) / 100
+        ? Math.round((disk_used_bytes / disk_size_bytes) * 10000) / 100
         : null,
-      disk_size_bytes: 28 * GiB,
-      disk_allocated_bytes,
+      disk_size_bytes,
       disk_used_bytes,
       has_data_disk: !operator && rnd() < 0.3,
       has_snapshot: rnd() < 0.5,
@@ -395,6 +373,17 @@ function buildSnapshots(VMS) {
   const a = VMS[Math.min(3, VMS.length - 1)];
   const b = VMS[Math.min(9, VMS.length - 1)];
   return [
+    // A warm-golden snapshot (the memory+state pair under snapshots/<uuid>/),
+    // matching the shape server.py reads from host-signature.json + the .bin
+    // sizes. Real hosts carry these; the mock must too so the fixture is faithful.
+    {
+      uuid: "golden-ubuntu-24.04",
+      kind: "warm-golden",
+      vmstate_size: "3.2M",
+      mem_size: "512.0M",
+      captured_firecracker: "1.16.0",
+      captured_kernel: "6.8.0-88-generic",
+    },
     {
       uuid: "e36kce7fhk",
       kind: "disk",
@@ -423,11 +412,12 @@ function buildProxyMaps(VMS) {
     "hooli",
     "stark",
   ];
-  // http `sites`: subdomain → a customer VM's guest /128 on :443.
+  // http `sites`: subdomain → a customer VM's guest /128 on :443. The host
+  // can't recover which tenant a backend belongs to (proxy_maps[].vm is always
+  // null on a real host), so we just pick a running VM by position.
+  const running = VMS.filter((v) => v.state === "Running");
   subdomains.forEach((sub, i) => {
-    const vm =
-      VMS.filter((v) => v.tenant === sub && v.state === "Running")[0] ||
-      VMS[Math.min(i + 2, VMS.length - 1)];
+    const vm = running[Math.min(i + 2, running.length - 1)] || VMS[0];
     rows.push({
       listen: ":443",
       protocol: "https",
@@ -438,14 +428,8 @@ function buildProxyMaps(VMS) {
   });
   // stream SNI: a couple of custom domains passed through by SNI.
   [
-    [
-      "app.acme.com",
-      VMS.find((v) => v.tenant === "acme-01" && v.state === "Running"),
-    ],
-    [
-      "shop.globex.io",
-      VMS.find((v) => v.tenant === "globex" && v.state === "Running"),
-    ],
+    ["app.acme.com", running[0]],
+    ["shop.globex.io", running[1]],
   ].forEach(([domain, vm]) => {
     if (!vm) return;
     rows.push({

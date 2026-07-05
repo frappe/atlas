@@ -9,12 +9,13 @@
 		<template v-if="series.length">
 			<MetricGrid :series="series" :cols="2" class="mb-10" />
 			<section>
-				<PanelHead title="The fleet" summary="running machines, drawn to scale" h3 />
+				<PanelHead title="Fleet" h3 />
 				<Histogram :state="state" />
 			</section>
 		</template>
 
-		<!-- No series → honest note + what the snapshot proves. -->
+		<!-- No series → the empty chart skeleton (honest "no history" frame, design
+		     intact) + note + what the snapshot proves. -->
 		<template v-else>
 			<p class="m-0 mb-8 text-sm text-ink-gray-6 max-w-[60ch] leading-relaxed">
 				No metrics history on this host yet — this dashboard reads a single live snapshot.
@@ -22,8 +23,10 @@
 				snapshot proves.
 			</p>
 
+			<MetricGrid :series="skeleton" :cols="2" class="mb-10" />
+
 			<section class="mb-9">
-				<PanelHead title="The fleet" summary="running machines, drawn to scale" h3 />
+				<PanelHead title="Fleet" h3 />
 				<Histogram :state="state" />
 			</section>
 
@@ -47,13 +50,14 @@ import { computed } from "vue";
 import Histogram from "./Histogram.vue";
 import MetricGrid from "./MetricGrid.vue";
 import PanelHead from "./PanelHead.vue";
-import { metrics } from "../derive.js";
+import { metrics, metricSkeleton } from "../derive.js";
 
 const props = defineProps({
 	state: { type: Object, required: true },
 });
 
 const series = computed(() => metrics(props.state));
+const skeleton = metricSkeleton();
 
 const stateCounts = computed(() => {
 	const vms = props.state.virtual_machines || [];

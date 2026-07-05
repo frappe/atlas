@@ -6,9 +6,21 @@
 	<div class="flex flex-col gap-5 pt-1 pb-1.5">
 		<!-- ── Machine facts — aligned two-column definition grid ── -->
 		<section>
-			<h4 class="text-2xs font-medium tracking-wide uppercase text-ink-gray-5 mt-0 mb-3">
-				Machine
-			</h4>
+			<div class="flex items-baseline gap-3 mt-0 mb-3">
+				<h4 class="text-xs font-medium tracking-wide uppercase text-ink-gray-5 m-0">
+					Machine
+				</h4>
+				<!-- The plumbing (tap / veth / netns / mac / ndp / fc uid) folds behind
+				     this toggle — same "+N / hide" idiom as the list VM-row fold. -->
+				<button
+					v-if="internalCount"
+					class="p-0 border-0 bg-transparent text-xs text-ink-gray-5 cursor-pointer font-mono tabular-nums hover:text-ink-gray-8 focus-visible:outline-2 focus-visible:outline-ink-gray-9 focus-visible:outline-offset-2 focus-visible:rounded-sm"
+					type="button"
+					@click="internals = !internals"
+				>
+					{{ internals ? "hide internals" : `+${internalCount} internals` }}
+				</button>
+			</div>
 			<dl class="grid grid-cols-[repeat(auto-fit,minmax(210px,1fr))] gap-x-11 gap-y-2 m-0">
 				<div
 					v-for="f in facts"
@@ -17,7 +29,8 @@
 				>
 					<dt class="text-xs text-ink-gray-6 whitespace-nowrap">{{ f.k }}</dt>
 					<dd
-						class="m-0 font-mono tabular-nums text-sm break-all min-w-0"
+						class="m-0 font-mono tabular-nums text-sm truncate min-w-0"
+						:title="f.v || ''"
 						:class="[
 							!f.v ? 'text-ink-gray-3' : 'text-ink-gray-8',
 							f.link ? 'cursor-pointer hover:text-ink-gray-9' : '',
@@ -32,14 +45,11 @@
 
 		<!-- ── Connectivity (full width, below the machine facts) ── -->
 		<section>
-			<h4 class="text-2xs font-medium tracking-wide uppercase text-ink-gray-5 mt-0 mb-3">
+			<h4 class="text-xs font-medium tracking-wide uppercase text-ink-gray-5 mt-0 mb-3">
 				Connectivity
 			</h4>
 			<template v-if="path">
 				<PacketPath :legs="path" />
-				<p v-if="filterSentence" class="mt-3 mb-0 text-sm text-ink-gray-6 leading-relaxed">
-					{{ filterSentence }}
-				</p>
 			</template>
 			<p v-else class="m-0 text-sm text-ink-gray-6 max-w-[60ch] leading-relaxed">
 				{{ stoppedSentence }}
@@ -49,9 +59,9 @@
 </template>
 
 <script setup>
-import { computed } from "vue";
+import { computed, ref } from "vue";
 import PacketPath from "./PacketPath.vue";
-import { deriveVm, derivePath, deriveFilterSentence, STOPPED_SENTENCE } from "../derive.js";
+import { deriveVm, derivePath, vmIngress, STOPPED_SENTENCE } from "../derive.js";
 
 const props = defineProps({
 	state: { type: Object, required: true },
@@ -66,15 +76,25 @@ const detail = computed(() => {
 	return d;
 });
 const path = computed(() => derivePath(detail.value));
-const filterSentence = computed(() => deriveFilterSentence(props.state, detail.value));
 const stoppedSentence = STOPPED_SENTENCE;
 
-// The Machine facet — a definition grid. Labels at --ink-4, values --ink-2 mono.
-// The Origin value cross-links out to the Images section (cross-link direction #2).
-const facts = computed(() => {
+// Whether the plumbing facts (tap / veth / netns / mac / ndp / fc uid) are shown.
+// Off by default — they're rarely read at a glance; the ~7 an operator acts on
+// carry the dock. Folded behind a "+N internals" toggle in the section header.
+const internals = ref(false);
+
+// The Machine facet — a definition grid. The Origin value cross-links out to the
+// Images section (cross-link direction #2). Split into PRIMARY (always) and
+// INTERNAL (behind the toggle): primary is what an operator acts on; internal is
+// host-side plumbing surfaced only on demand.
+const primaryFacts = computed(() => {
 	const d = detail.value;
 	const vm = props.vm;
 	const snap = d.snapshot;
+	// Ingress — the VM's public reachability (a reserved v4 or a proxy SNI). Moved
+	// off the Machines scan table (it's a per-VM detail, blank on most rows) into
+	// the dock, where the whole packet path already lives below it.
+	const ing = vmIngress(props.state, vm);
 	return [
 		{ k: "Disk", v: vm.disk_lv },
 		{ k: "Origin", v: d.diskOrigin === "—" ? "" : d.diskOrigin, link: true },
@@ -84,14 +104,30 @@ const facts = computed(() => {
 			v: snap ? `${snap.kind}${snap.snapshot_lv ? " · " + snap.snapshot_lv : ""}` : "",
 		},
 		{ k: "Data disk", v: vm.has_data_disk ? "yes" : "" },
+		{ k: "Guest v4", v: vm.ipv4_guest },
+		{ k: "Ingress", v: ing ? ing.label : "" },
+		{ k: "Unit", v: d.unit ? `${d.unit.active} · ${d.unit.sub}` : "" },
+	].filter((f) => f.v || ["Disk", "Origin", "Unit"].includes(f.k));
+});
+
+const internalFacts = computed(() => {
+	const d = detail.value;
+	const vm = props.vm;
+	return [
 		{ k: "Tap", v: vm.tap_device },
 		{ k: "Host veth", v: vm.host_veth || (vm.uuid ? `veth-${vm.uuid.slice(0, 8)}` : "") },
 		{ k: "Netns", v: vm.netns },
 		{ k: "MAC", v: vm.mac },
-		{ k: "Guest v4", v: vm.ipv4_guest },
-		{ k: "Unit", v: d.unit ? `${d.unit.active} · ${d.unit.sub}` : "" },
 		{ k: "NDP", v: d.ndp ? d.ndp.address : "" },
 		{ k: "FC uid", v: vm.fc_uid != null ? String(vm.fc_uid) : "" },
-	].filter((f) => f.v || ["Disk", "Origin", "Tap", "Netns", "Unit"].includes(f.k));
+	].filter((f) => f.v || ["Tap", "Netns"].includes(f.k));
 });
+
+// How many internal facts the toggle would reveal (for its "+N internals" label).
+const internalCount = computed(() => internalFacts.value.length);
+
+// The facts actually rendered: primary always, internal appended when expanded.
+const facts = computed(() =>
+	internals.value ? [...primaryFacts.value, ...internalFacts.value] : primaryFacts.value
+);
 </script>

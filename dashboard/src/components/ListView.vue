@@ -16,6 +16,12 @@
 	     bespoke header goes through #head; a searchable list passes a `filter`
 	     config (search fields + facet defs) and ListView owns the query, the facet
 	     state, and the filtering — the toolbar comes for free. -->
+	<!-- Every list TOP-ALIGNS: the heading, column headers, rows, and pager start at
+	     the same position on every section (the heading level with the rail's first
+	     line), so switching sections never shifts the layout. The table below gets a
+	     FIXED reserved height (a full page of rows) so the pager lands at the exact
+	     same spot on every view. In fill mode (Machines) the table instead flexes to
+	     fill the panel so the bottom detail dock has room to float over it. -->
 	<div class="mb-10 last:mb-0 flex flex-col min-h-0 flex-1">
 		<!-- Optional header. Most object tables pass a title (rendered through the
 		     shared PanelHead); a searchable list also gets the shared filter toolbar
@@ -49,130 +55,139 @@
 		<!-- A pre-table strip (the Firewall structure line, the Storage stack). -->
 		<slot name="strip" />
 
-		<p v-if="!visibleRows.length" class="m-0 text-sm text-ink-gray-6">{{ emptyText }}</p>
+		<p v-if="!visibleRows.length" class="m-0 py-6 text-sm text-ink-gray-5">{{ emptyText }}</p>
 
+		<!-- The list body. Every list — fill (Machines) or a plain section — gives the
+		     scroll body the SAME fixed reserved height (a full page of rows), so the
+		     pager lands at the exact same spot on every view. Fill mode differs only in
+		     that its OUTER wrapper still flexes to fill the panel: the Machines detail
+		     dock floats absolute over the panel bottom, and needs the panel occupied —
+		     but the pager itself sits right under the rows, not stranded at the bottom. -->
 		<template v-else>
-			<div class="overflow-auto -mx-3 flex-1 min-h-0">
-				<table class="w-full border-collapse text-sm">
-					<thead v-if="!hideHeader">
-						<tr>
-							<th
-								v-for="c in columns"
-								:key="c.key"
-								class="font-normal text-2xs tracking-wider uppercase text-ink-gray-5 pt-0 pr-6 pb-2 pl-3 whitespace-nowrap sticky top-0 bg-surface-base z-[1]"
-								:class="[
-									c.align === 'right' ? 'text-right pr-3' : 'text-left',
-									c.grow ? 'w-full' : '',
-								]"
-							>
-								{{ c.label }}
-							</th>
-							<th
-								v-if="hasBacklinks"
-								class="font-normal text-2xs tracking-wider uppercase text-ink-gray-5 pt-0 pb-2 whitespace-nowrap sticky top-0 bg-surface-base z-[1] text-right w-[1%]"
-							>
-								VM
-							</th>
-							<!-- A trailing spacer soaks up the leftover width of the `w-full`
+			<div :class="fill ? 'flex-1 min-h-0 flex flex-col' : 'flex flex-col'">
+				<div
+					class="overflow-y-auto overflow-x-hidden -mx-3"
+					:style="{ height: bodyMaxPx }"
+				>
+					<table class="w-full border-collapse text-sm">
+						<thead v-if="!hideHeader">
+							<tr>
+								<th
+									v-for="c in columns"
+									:key="c.key"
+									class="font-normal text-xs tracking-wider uppercase text-ink-gray-5 pt-0 pr-4 pb-2 pl-3 whitespace-nowrap sticky top-0 bg-surface-base z-[1]"
+									:class="[
+										c.align === 'right' ? 'text-right pr-3' : 'text-left',
+										c.grow ? 'w-full' : '',
+									]"
+								>
+									{{ c.label }}
+								</th>
+								<th
+									v-if="hasBacklinks"
+									class="font-normal text-xs tracking-wider uppercase text-ink-gray-5 pt-0 pr-3 pb-2 whitespace-nowrap sticky top-0 bg-surface-base z-[1] text-right w-[1%]"
+								>
+									VM
+								</th>
+								<!-- A trailing spacer soaks up the leftover width of the `w-full`
 							     table, so the real columns pack tight to the left and stay
 							     content-sized (each as wide as its value needs — the
 							     variable-width behaviour) instead of the auto layout spreading
 							     the slack across them with mis-reading gaps. A `grow` column,
 							     when present, absorbs the slack instead and the table fills. -->
-							<th
-								v-if="!hasGrow"
-								class="w-full !p-0 border-0 sticky top-0 bg-surface-base z-[1]"
-								aria-hidden="true"
-							></th>
-						</tr>
-					</thead>
-					<tbody>
-						<tr
-							v-for="(row, i) in pageRows"
-							:key="rowKey(row, i)"
-							class="drow group"
-							:class="[
-								clickable
-									? 'cursor-pointer focus-visible:outline-2 focus-visible:outline-ink-gray-9 focus-visible:outline-offset-[-2px]'
-									: '',
-								{ on: isOpen(row) },
-							]"
-							:tabindex="clickable ? 0 : null"
-							:role="clickable ? 'button' : null"
-							:aria-expanded="clickable ? isOpen(row) : null"
-							@click="clickable && $emit('row-click', row)"
-							@keydown.enter.prevent="clickable && $emit('row-click', row)"
-							@keydown.space.prevent="clickable && $emit('row-click', row)"
-						>
-							<td
-								v-for="c in columns"
-								:key="c.key"
-								class="pt-2 pr-4 pb-2 pl-3"
+								<th
+									v-if="!hasGrow && !spread"
+									class="w-full !p-0 border-0 sticky top-0 bg-surface-base z-[1]"
+									aria-hidden="true"
+								></th>
+							</tr>
+						</thead>
+						<tbody>
+							<tr
+								v-for="(row, i) in pageRows"
+								:key="rowKey(row, i)"
+								class="drow group"
 								:class="[
-									cellAlign,
-									cellFlow(c),
-									c.grow ? 'w-full' : '',
-									c.align === 'right' ? 'text-right' : '',
-									c.mono ? 'font-mono tabular-nums' : '',
-									cellInk(row, c),
 									clickable
-										? 'group-hover:bg-surface-gray-2 group-[.on]:bg-surface-gray-3'
+										? 'cursor-pointer focus-visible:outline-2 focus-visible:outline-ink-gray-9 focus-visible:outline-offset-[-2px]'
 										: '',
-									cellEmpty(row, c) ? '!text-ink-gray-3' : '',
+									{ on: isOpen(row) },
 								]"
+								:tabindex="clickable ? 0 : null"
+								:role="clickable ? 'button' : null"
+								:aria-expanded="clickable ? isOpen(row) : null"
+								@click="clickable && $emit('row-click', row)"
+								@keydown.enter.prevent="clickable && $emit('row-click', row)"
+								@keydown.space.prevent="clickable && $emit('row-click', row)"
 							>
-								<!-- A #cell scoped slot lets a consumer render bespoke cell
+								<td
+									v-for="c in columns"
+									:key="c.key"
+									class="pt-2 pr-3 pb-2 pl-3"
+									:class="[
+										cellAlign,
+										cellFlow(c),
+										c.grow ? 'w-full' : '',
+										// A `clip` column truncates instead of forcing width: the cell
+										// shrinks to the table's slack (max-w-0 lets w-full collapse) and
+										// its text ellipsises. For a grow column carrying a long
+										// identifier (a firecracker-vm@… unit name) so the table never
+										// pushes past the panel at scale.
+										c.clip ? 'max-w-0' : '',
+										c.align === 'right' ? 'text-right' : '',
+										c.mono ? 'font-mono tabular-nums' : '',
+										cellInk(row, c),
+										cellEmpty(row, c) ? '!text-ink-gray-3' : '',
+									]"
+								>
+									<!-- A #cell scoped slot lets a consumer render bespoke cell
 								     content (multi-span used/total, two-line alert body) while
 								     keeping this component's columns/pagination. Falls back to the
 								     built-in value rendering (format fn + status ink). -->
-								<slot name="cell" :row="row" :col="c" :dim="dim(row)">
-									<span
-										:class="[
-											c.class,
-											c.status
-												? statusOn(row, c)
-													? 'text-ink-gray-8'
-													: 'text-ink-gray-5'
-												: '',
-										]"
-									>
-										{{ display(row[c.key], c, row) }}
-									</span>
-								</slot>
-							</td>
-							<td
-								v-if="hasBacklinks"
-								class="pt-2 pr-4 pb-2 pl-3 align-baseline whitespace-nowrap text-right w-[1%]"
-								:class="
-									clickable
-										? 'group-hover:bg-surface-gray-2 group-[.on]:bg-surface-gray-3'
-										: ''
-								"
-							>
-								<VmLink :vm="ownerOf(row)" @open-vm="$emit('open-vm', $event)" />
-							</td>
-							<td
-								v-if="!hasGrow"
-								class="w-full !p-0"
-								:class="
-									clickable
-										? 'group-hover:bg-surface-gray-2 group-[.on]:bg-surface-gray-3'
-										: ''
-								"
-								aria-hidden="true"
-							></td>
-						</tr>
-					</tbody>
-				</table>
-			</div>
+									<slot name="cell" :row="row" :col="c" :dim="dim(row)">
+										<span
+											:class="[
+												c.class,
+												c.clip ? 'block truncate' : '',
+												c.status
+													? statusOn(row, c)
+														? 'text-ink-gray-8'
+														: 'text-ink-gray-5'
+													: '',
+											]"
+											:title="c.clip ? String(row[c.key] ?? '') : null"
+										>
+											{{ display(row[c.key], c, row) }}
+										</span>
+									</slot>
+								</td>
+								<td
+									v-if="hasBacklinks"
+									class="pt-2 pr-3 pb-2 pl-3 align-baseline whitespace-nowrap text-right w-[1%]"
+								>
+									<VmLink
+										:vm="ownerOf(row)"
+										@open-vm="$emit('open-vm', $event)"
+									/>
+								</td>
+								<td
+									v-if="!hasGrow && !spread"
+									class="w-full !p-0"
+									aria-hidden="true"
+								></td>
+							</tr>
+						</tbody>
+					</table>
+				</div>
 
-			<Pager
-				v-if="paginate"
-				:total="visibleRows.length"
-				:page="page"
-				:per-page="perPage"
-				@page="setPage"
-			/>
+				<Pager
+					v-if="paginate"
+					:total="visibleRows.length"
+					:page="page"
+					:per-page="perPage"
+					@page="setPage"
+				/>
+			</div>
 		</template>
 
 		<!-- A trailing slot for anything that floats below/over the table
@@ -219,6 +234,12 @@ const props = defineProps({
 	// Pagination sizing — a taller row / a pre-table strip reserves more height.
 	rowPx: { type: Number, default: 34 },
 	reserve: { type: Number, default: 360 },
+	// Fill mode (Machines): the table flexes to fill the panel so the bottom detail
+	// dock can float over it, and the pager docks at the very bottom. Off (every
+	// section list): the {table + pager} block is a fixed height and centered in the
+	// panel, so the list renders roughly mid-screen and the pager lands at a constant
+	// spot across views.
+	fill: { type: Boolean, default: false },
 	// Windowed pagination. Off shows the whole list (the compact Alerts modal,
 	// which scrolls itself).
 	paginate: { type: Boolean, default: true },
@@ -239,7 +260,12 @@ const props = defineProps({
 	// pass "align-top".
 	cellAlign: { type: String, default: "align-baseline" },
 	// Empty-state text.
-	emptyText: { type: String, default: "None." },
+	emptyText: { type: String, default: "Nothing here yet." },
+	// Spread the columns evenly across the full panel width instead of packing them
+	// left against a trailing spacer. For all-short-token tables with no single
+	// variable-length column to `grow` (Disks, Users) — they'd otherwise cram into
+	// the left third and leave the panel half-empty.
+	spread: { type: Boolean, default: false },
 	// ── declarative search + facets (opt-in) ──
 	// Pass a `filter` config and ListView owns the whole thing — the search string,
 	// the active facets, and the filtering itself — so any section gets search with
@@ -344,6 +370,19 @@ watch(
 // Without a grow column the spacer stays and every column packs tight to the
 // left at its own content width.
 const hasGrow = computed(() => props.columns.some((c) => c.grow));
+
+// The reserved height of the scroll body in centered (non-fill) mode: a full page
+// of rows plus the sticky column-header row. A SINGLE row-height constant is used
+// for every section (not the per-view rowPx, which only sizes the page count) —
+// every non-fill list reserves the same block, so the pager lands at the exact
+// same vertical spot on every section, even when the last page is short. The
+// constant is the measured rendered row height (py-2 cell + text line ≈ 37.4px),
+// rounded up so a full page of 10 never clips its last rows.
+const ROW_PX = 38;
+const HEADER_PX = 28;
+const bodyMaxPx = computed(
+	() => `${perPage.value * ROW_PX + (props.hideHeader ? 0 : HEADER_PX)}px`
+);
 
 // ── host-only filtering ──
 // Runs AFTER the search/facet filter, on `filteredRows`, so the fold-behind

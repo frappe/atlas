@@ -1,56 +1,33 @@
 <template>
-	<!-- The signature element: a VM's reachability as its ACTUAL directed shape,
-	     not a flat rule list. Each leg is [dir | flow]. The flow is SF-Mono nodes
-	     joined by →; the "key" node (the public reserved IP) is the darkest ink;
-	     the transform (DNAT/SNAT/masquerade/routed /128) is a small hairline tag. -->
-	<div class="grid gap-2">
+	<!-- A VM's reachability as a plain per-leg definition list: the direction is
+	     the label (aligned to the Machine grid's 82px column above it), the flow is
+	     one mono value — endpoints joined by a quiet → so direction still reads,
+	     with the transform (DNAT / masquerade / routed /128) as a trailing note.
+	     Same facts as the old directed diagram, far fewer elements: no per-node
+	     key-ink, no hairline tag, no flex scaffolding. -->
+	<dl class="grid gap-2 m-0">
 		<div
 			v-for="(leg, i) in legs"
 			:key="i"
-			class="grid grid-cols-[68px_1fr] items-baseline gap-3.5"
+			class="grid grid-cols-[82px_1fr] items-baseline gap-3.5"
 		>
-			<span class="text-xs font-medium text-ink-gray-7 whitespace-nowrap">{{
-				leg.dir
-			}}</span>
-			<span class="flex flex-wrap items-baseline gap-2 min-w-0">
-				<span
-					class="font-mono tabular-nums text-sm break-all"
-					:class="leg.from === keyOf(leg) ? 'text-ink-gray-9' : 'text-ink-gray-8'"
-					>{{ leg.from }}</span
-				>
-				<span class="text-ink-gray-3 text-xs" aria-hidden="true">→</span>
-				<template v-if="leg.hop">
-					<span class="font-mono tabular-nums text-sm break-all text-ink-gray-5">{{
-						leg.hop
-					}}</span>
-					<span class="text-ink-gray-3 text-xs" aria-hidden="true">→</span>
-				</template>
-				<span
-					class="font-mono tabular-nums text-sm break-all"
-					:class="leg.to === keyOf(leg) ? 'text-ink-gray-9' : 'text-ink-gray-8'"
-					>{{ leg.to }}</span
-				>
-				<span
-					class="font-sans text-2xs tracking-tight text-ink-gray-6 whitespace-nowrap"
-					>{{ leg.xf }}</span
-				>
-			</span>
+			<dt class="text-xs text-ink-gray-6 whitespace-nowrap">{{ leg.dir }}</dt>
+			<dd class="m-0 font-mono tabular-nums text-sm text-ink-gray-8 break-all">
+				{{ flow(leg) }}<span v-if="leg.xf" class="text-ink-gray-5"> · {{ leg.xf }}</span>
+			</dd>
 		</div>
-	</div>
+	</dl>
 </template>
 
 <script setup>
 defineProps({
-	// [{ dir, from, hop?, to, xf, key? }]
+	// [{ dir, from, hop?, to, xf }]
 	legs: { type: Array, required: true },
 });
 
-// The key (darkest) node is the public reserved IP. A leg marks it with key:true;
-// it's whichever endpoint is the reserved address — `from` on In v4, `to` on Out v4.
-function keyOf(leg) {
-	if (!leg.key) return null;
-	// The reserved IP is the endpoint that is NOT the guest / an interface name.
-	// In v4: from is reserved. Out v4: to is reserved.
-	return leg.dir === "Out v4" ? leg.to : leg.from;
+// The flow as one string: from → (hop →) to. A plain arrow keeps the direction
+// legible without the per-node ink emphasis the diagram carried.
+function flow(leg) {
+	return [leg.from, leg.hop, leg.to].filter(Boolean).join(" → ");
 }
 </script>

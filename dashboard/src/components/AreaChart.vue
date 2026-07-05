@@ -1,20 +1,24 @@
 <template>
-	<!-- A flat monochrome area chart (the reference metrics look): a faint filled
-	     area under a 1px line, a single mid grid line, no axes, no colour. The
-	     header carries the series name and its current (last) value — the chart is
-	     read at a glance, the number is the fact. Honest: renders only from real
-	     series points; one point draws a dot, not a fabricated trend. -->
+	<!-- A flat monochrome sparkline: a 1px straight-segment trace over a single
+	     mid grid line, no axes, no fill, no colour. The header carries the series
+	     name and its current (last) value — the chart is read at a glance, the
+	     number is the fact. Honest: renders only from real series points; one
+	     point draws a dot, not a fabricated trend, and the polyline is the raw
+	     sampled shape (no smoothing that invents motion the data doesn't have). -->
 	<div class="min-w-0">
 		<div class="flex justify-between items-baseline gap-3 mb-2">
-			<span class="text-ink-gray-7 text-sm min-w-0 truncate">{{ label }}</span>
+			<span class="text-ink-gray-8 text-sm min-w-0 truncate">{{ label }}</span>
 			<!-- When a formatter is given it owns the unit; otherwise append it. -->
 			<span class="font-mono tabular-nums text-ink-gray-6 text-xs whitespace-nowrap"
 				><b class="text-ink-gray-9 font-medium">{{ current }}</b
 				><template v-if="unit && !format"> {{ unit }}</template></span
 			>
 		</div>
+		<!-- The chart box always renders — with a trace when there are ≥2 points, as
+		     an empty frame (just the baseline grid line) when there's no history.
+		     Same footprint either way, so an empty host reads as "no data yet", not
+		     a collapsed layout. No fabricated trend when empty. -->
 		<svg
-			v-if="pts.length > 1"
 			class="w-full h-[clamp(40px,7vh,56px)] block"
 			:viewBox="`0 0 ${W} ${H}`"
 			preserveAspectRatio="none"
@@ -22,10 +26,9 @@
 		>
 			<!-- Paints reference the neutral tokens directly (arbitrary values): the
 			     grey scale lives on the ink/surface/outline utilities as text /
-			     background, but SVG needs stroke/fill — and frappe-ui's preset does
-			     not expose `fill-surface-*` / `stroke-outline-*`. The var() forms
-			     still flip on [data-theme]. Faint hairline grid, a barely-there area
-			     fill (matching the old --hair-2), a 1px mid-ink trace on top. -->
+			     background, but SVG needs stroke — and frappe-ui's preset does not
+			     expose `stroke-outline-*`. The var() forms still flip on [data-theme].
+			     Faint hairline grid + a 1px mid-ink polyline on top. No fill. -->
 			<line
 				class="[stroke:var(--outline-gray-1)] [stroke-width:1] [vector-effect:non-scaling-stroke]"
 				x1="0"
@@ -33,13 +36,23 @@
 				:x2="W"
 				:y2="H / 2"
 			/>
-			<path class="[fill:var(--surface-gray-2)]" :d="areaPath" />
-			<path
-				class="fill-none [stroke:var(--ink-gray-6)] [stroke-width:1] [vector-effect:non-scaling-stroke]"
-				:d="linePath"
+			<polyline
+				v-if="pts.length > 1"
+				class="fill-none [stroke:var(--ink-gray-6)] [stroke-width:1] [vector-effect:non-scaling-stroke] [stroke-linejoin:round] [stroke-linecap:round]"
+				:points="linePoints"
+			/>
+			<!-- One reading so far: a single dot at its value (warming up), not a
+			     fabricated trend. r is in the non-scaling stroke space via a fixed
+			     px radius drawn as a tiny circle. -->
+			<circle
+				v-else-if="dot"
+				class="[fill:var(--ink-gray-6)]"
+				:cx="dot[0]"
+				:cy="dot[1]"
+				r="2"
+				vector-effect="non-scaling-stroke"
 			/>
 		</svg>
-		<p v-else class="m-0 text-sm text-ink-gray-5">No series.</p>
 	</div>
 </template>
 
@@ -66,35 +79,17 @@ const nums = computed(() =>
 // the line off the top/bottom edges.
 const pts = computed(() => (nums.value.length < 2 ? [] : scaleSeries(nums.value, W, H, 3)));
 
-// Smooth the line with a Catmull-Rom → cubic-Bézier spline instead of straight
-// segments, so the series reads as a soft curve (the reference metrics look). The
-// tension is mild (1/6) — enough to round the joints without overshooting into
-// wiggles the data doesn't have.
-const linePath = computed(() => {
-	const p = pts.value;
-	if (p.length < 2) return "";
-	if (p.length === 2) return `M${fmt(p[0])} L${fmt(p[1])}`;
-	let d = `M${fmt(p[0])}`;
-	for (let i = 0; i < p.length - 1; i++) {
-		const p0 = p[i - 1] || p[i];
-		const p1 = p[i];
-		const p2 = p[i + 1];
-		const p3 = p[i + 2] || p2;
-		const c1x = p1[0] + (p2[0] - p0[0]) / 6;
-		const c1y = p1[1] + (p2[1] - p0[1]) / 6;
-		const c2x = p2[0] - (p3[0] - p1[0]) / 6;
-		const c2y = p2[1] - (p3[1] - p1[1]) / 6;
-		d += ` C${c1x.toFixed(1)} ${c1y.toFixed(1)} ${c2x.toFixed(1)} ${c2y.toFixed(1)} ${fmt(
-			p2
-		)}`;
-	}
-	return d;
-});
-const areaPath = computed(() => `${linePath.value} L ${W} ${H} L 0 ${H} Z`);
+// Exactly one point (the first live poll of a rate series, before it has a delta
+// to plot): draw a single dot at its value so the chart reads "one reading so
+// far", distinct from a bare "no data yet" frame — the warming-up state made
+// legible without fabricating a trend. scaleSeries centres a lone point at W/2.
+const dot = computed(() => (nums.value.length === 1 ? scaleSeries(nums.value, W, H, 3)[0] : null));
 
-function fmt(pt) {
-	return `${pt[0].toFixed(1)} ${pt[1].toFixed(1)}`;
-}
+// Straight-segment polyline — the raw sampled shape, no smoothing. A flat
+// "x,y x,y …" points list; the <polyline> joins them with 1px segments.
+const linePoints = computed(() =>
+	pts.value.map((p) => `${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(" ")
+);
 
 const current = computed(() => {
 	const v = nums.value;

@@ -5,6 +5,11 @@ state legible so the operator knows what to do next on the Controller or over
 SSH — it takes **no actions**. Refresh the page to see updates; there is no
 realtime.
 
+The exact shape of the `/api/state` JSON — the one contract the collector, the
+dev proxy, the mock fixtures, and the frontend all bind to — lives in
+**[CONTRACT.md](./CONTRACT.md)**. Read it before adding a field anywhere: the
+mock may not carry a field the real collector cannot produce.
+
 Two parts:
 
 - **Frontend** — a Vite + Vue 3 SPA styled with [frappe-ui]'s design tokens
@@ -126,7 +131,7 @@ npm run build      # -> dist/
 Copy `dist/` and `backend/server.py` onto the host, then:
 
 ```
-python3 backend/server.py            # 0.0.0.0:8080, static from ./dist, root /var/lib/atlas
+python3 backend/server.py            # 0.0.0.0:9797, static from ./dist, root /var/lib/atlas
 ```
 
 Point it elsewhere for local testing against a fixture directory:
@@ -137,6 +142,26 @@ ATLAS_ROOT=./backend/fixture ATLAS_DIST=./dist ATLAS_PORT=8092 python3 backend/s
 
 Environment: `ATLAS_ROOT` (default `/var/lib/atlas`), `ATLAS_DIST` (default
 `./dist` next to the server), `ATLAS_BIND` (default `0.0.0.0`), `ATLAS_PORT`
-(default `8080`).
+(default `9797`).
+
+### On the host: socket-activated systemd unit
+
+`backend/systemd/` carries a `.socket` + `.service` pair so the server doesn't
+have to stay running — systemd holds the listening socket on port **9797** and
+starts the server on the first connection (it adopts the inherited fd via
+`sd_listen_fds`; no port of its own). Install into `/opt/atlas-dashboard`:
+
+```
+sudo mkdir -p /opt/atlas-dashboard
+sudo cp -r backend/server.py dist /opt/atlas-dashboard/
+sudo cp backend/systemd/atlas-dashboard.{socket,service} /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now atlas-dashboard.socket   # enable the SOCKET, not the service
+```
+
+The service is not protected/hardened — the dashboard is read-only and this host
+is not treated as security-sensitive. It runs only while a connection is open;
+stop it any time with `systemctl stop atlas-dashboard.service` (the socket keeps
+listening and will restart it on the next request).
 
 [frappe-ui]: https://ui.frappe.io

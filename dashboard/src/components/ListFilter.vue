@@ -14,44 +14,44 @@
 		<button
 			v-for="f in activeChips"
 			:key="f.key"
-			class="inline-flex items-center gap-1.5 bg-transparent border-0 rounded-none p-0 whitespace-nowrap font-mono tabular-nums text-2xs text-ink-gray-8 cursor-pointer hover:text-ink-gray-9 focus-visible:outline-2 focus-visible:outline-ink-gray-9 focus-visible:outline-offset-2 group/chip"
+			class="inline-flex items-center gap-1.5 bg-transparent border-0 rounded-none p-0 whitespace-nowrap font-mono tabular-nums text-xs text-ink-gray-8 cursor-pointer hover:text-ink-gray-9 focus-visible:outline-2 focus-visible:outline-ink-gray-9 focus-visible:outline-offset-2 group/chip"
 			:title="`Remove ${f.label} filter`"
 			@click="toggleFacet(f.key)"
 		>
 			{{ f.label
-			}}<span class="text-2xs text-ink-gray-5 group-hover/chip:text-ink-gray-9">✕</span>
+			}}<span class="text-xs text-ink-gray-5 group-hover/chip:text-ink-gray-9">✕</span>
 		</button>
 		<button
 			v-if="query.trim()"
-			class="inline-flex items-center gap-1.5 bg-transparent border-0 rounded-none p-0 whitespace-nowrap font-mono tabular-nums text-2xs text-ink-gray-8 cursor-pointer hover:text-ink-gray-9 focus-visible:outline-2 focus-visible:outline-ink-gray-9 focus-visible:outline-offset-2 group/chip"
+			class="inline-flex items-center gap-1.5 bg-transparent border-0 rounded-none p-0 whitespace-nowrap font-mono tabular-nums text-xs text-ink-gray-8 cursor-pointer hover:text-ink-gray-9 focus-visible:outline-2 focus-visible:outline-ink-gray-9 focus-visible:outline-offset-2 group/chip"
 			title="Clear search"
 			@click="$emit('update:query', '')"
 		>
 			“{{ query.trim() }}”<span
-				class="text-2xs text-ink-gray-5 group-hover/chip:text-ink-gray-9"
+				class="text-xs text-ink-gray-5 group-hover/chip:text-ink-gray-9"
 				>✕</span
 			>
 		</button>
 
 		<div class="relative" :class="{ open: menuOpen }">
 			<button
-				class="inline-flex items-center gap-1 bg-transparent border-0 text-xs cursor-pointer px-0.5 py-0.5 focus-visible:outline-2 focus-visible:outline-ink-gray-9 focus-visible:outline-offset-2 focus-visible:rounded-sm"
+				class="inline-flex items-center gap-1 bg-transparent border-0 text-xs font-mono cursor-pointer px-0.5 py-0.5 focus-visible:outline-2 focus-visible:outline-ink-gray-9 focus-visible:outline-offset-2 focus-visible:rounded-sm"
 				:class="menuOpen ? 'text-ink-gray-9' : 'text-ink-gray-6 hover:text-ink-gray-9'"
 				aria-haspopup="true"
 				:aria-expanded="menuOpen"
 				@click="toggleMenu"
 			>
-				Filter
+				filter
 			</button>
 			<div
 				v-if="menuOpen"
-				class="absolute top-[calc(100%+6px)] right-0 z-[15] w-[260px] bg-surface-base border border-outline-gray-1 rounded shadow-md p-2.5"
+				class="absolute top-[calc(100%+6px)] right-0 z-[15] w-[260px] bg-surface-base border border-outline-gray-1 p-2.5"
 				@click.stop
 			>
 				<input
 					ref="searchEl"
 					:value="query"
-					class="w-full box-border bg-transparent border-0 border-b border-outline-gray-1 font-mono tabular-nums text-xs text-ink-gray-8 pt-1 px-0.5 pb-1.5 mb-2 placeholder:text-ink-gray-5 focus:outline-none focus:border-b-ink-gray-9 [&::-webkit-search-cancel-button]:appearance-none [&::-webkit-search-decoration]:appearance-none"
+					class="w-full box-border bg-transparent border-0 border-b border-outline-gray-1 font-mono tabular-nums text-xs text-ink-gray-8 pt-1 px-0.5 pb-1.5 mb-2 placeholder:text-ink-gray-5 shadow-none focus:shadow-none focus:outline-none focus:border-b-ink-gray-9 focus:ring-0 [&::-webkit-search-cancel-button]:appearance-none [&::-webkit-search-decoration]:appearance-none"
 					type="search"
 					:placeholder="placeholder"
 					aria-label="Filter list"
@@ -62,8 +62,8 @@
 					<button
 						v-for="f in facets"
 						:key="f.key"
-						class="flex items-baseline justify-between gap-3 bg-transparent border-0 text-xs cursor-pointer px-1.5 py-1.5 rounded-2 text-left hover:bg-surface-gray-2 hover:text-ink-gray-9"
-						:class="isActive(f.key) ? 'text-ink-gray-9' : 'text-ink-gray-7'"
+						class="flex items-baseline justify-between gap-3 bg-transparent border-0 text-xs font-mono tabular-nums cursor-pointer px-1.5 py-1.5 text-left hover:text-ink-gray-9"
+						:class="isActive(f.key) ? 'text-ink-gray-9' : 'text-ink-gray-8'"
 						@click="toggleFacet(f.key)"
 					>
 						<span
@@ -74,7 +74,7 @@
 							"
 							>{{ f.label }}</span
 						>
-						<span class="text-2xs text-ink-gray-5 tabular-nums font-mono">{{
+						<span class="text-xs text-ink-gray-5 tabular-nums font-mono">{{
 							f.count
 						}}</span>
 					</button>

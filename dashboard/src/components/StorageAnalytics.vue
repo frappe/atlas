@@ -6,7 +6,7 @@
 	     (Storage → Volumes). All sizes read from the `_bytes` fields so units stay
 	     consistent (G, T above 1024G). -->
 	<div class="min-w-0">
-		<PanelHead title="Analytics" :summary="stackNote" h3 />
+		<PanelHead title="Analytics" h3 />
 		<!-- Stack summary: three rows, physical → group → pool, each a labelled
 		     used/total with a thin fill bar. Reads top-to-bottom as the allocation
 		     chain. -->
@@ -16,15 +16,12 @@
 			     grid-template-areas grid, so no scoped CSS is needed. -->
 			<div v-for="s in stack" :key="s.k" class="flex items-center gap-x-5">
 				<div class="flex flex-col gap-px w-[150px] flex-none">
-					<span class="text-xs text-ink-gray-7">{{ s.k }}</span>
-					<span class="text-2xs text-ink-gray-5 font-mono tabular-nums">{{
+					<span class="text-xs text-ink-gray-8">{{ s.k }}</span>
+					<span class="text-xs text-ink-gray-5 font-mono tabular-nums">{{
 						s.name
 					}}</span>
 				</div>
-				<Meter
-					class="flex-1"
-					:segments="[{ frac: s.frac, weight: sevWeight(s.severity) }]"
-				/>
+				<Meter class="flex-1" :segments="[{ frac: s.frac, weight: 6 }]" />
 				<div class="w-[190px] flex-none flex flex-col gap-y-0.5">
 					<UsedTotal
 						class="text-xs text-right font-mono tabular-nums"
@@ -32,7 +29,7 @@
 						:total="fmtGiB(s.total)"
 						:pct="s.frac != null ? pct(s.frac) : null"
 					/>
-					<div class="text-2xs text-ink-gray-5 text-right font-mono tabular-nums">
+					<div class="text-xs text-ink-gray-5 text-right font-mono tabular-nums">
 						{{ s.meta }}
 					</div>
 				</div>
@@ -54,8 +51,10 @@ const props = defineProps({
 
 const model = computed(() => storage(props.state));
 
-// The stack rows, physical → group → pool. Each carries a severity so a filling
-// pool reads a step darker (contrast, not colour). Missing members drop out.
+// The stack rows, physical → group → pool. Every bar reads at ONE contrast
+// weight (the Meter weight is fixed in the template) — the pool no longer darkens
+// as it fills, so the three bars read as one uniform stack. Missing members drop
+// out.
 const stack = computed(() => {
 	const m = model.value;
 	const rows = [];
@@ -67,7 +66,6 @@ const stack = computed(() => {
 			total: m.pv.total,
 			frac: m.pv.frac,
 			meta: "",
-			severity: sev(m.pv.frac),
 		});
 	if (m.vg)
 		rows.push({
@@ -77,7 +75,6 @@ const stack = computed(() => {
 			total: m.vg.total,
 			frac: m.vg.frac,
 			meta: `${m.vg.lvCount} LV · ${m.vg.pvCount} PV`,
-			severity: sev(m.vg.frac),
 		});
 	if (m.pool)
 		rows.push({
@@ -87,27 +84,10 @@ const stack = computed(() => {
 			total: m.pool.total,
 			frac: m.pool.frac,
 			meta: m.pool.metaPercent != null ? `meta ${m.pool.metaPercent}%` : "",
-			severity: sev(m.pool.frac),
 		});
 	return rows;
 });
 
-const stackNote = computed(() => {
-	const p = model.value.pool;
-	return p && p.dataPercent != null ? `pool ${p.dataPercent}% full` : "";
-});
-
-function sev(frac) {
-	if (frac == null) return "ok";
-	if (frac >= 0.9) return "crit";
-	if (frac >= 0.75) return "warn";
-	return "ok";
-}
-// The stack's severity → Meter ink weight (contrast, not colour): a filling pool
-// reads a step darker.
-function sevWeight(severity) {
-	return { crit: 9, warn: 8, ok: 6 }[severity] ?? 6;
-}
 // A fraction (0–1) → whole percent for the used/total read.
 function pct(frac) {
 	return frac == null ? 0 : Math.round(frac * 100);

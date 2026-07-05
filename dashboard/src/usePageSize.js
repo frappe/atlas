@@ -1,15 +1,16 @@
-// A viewport-aware page size. The dashboard never scrolls the page — lists
-// paginate to fit — but a fixed rows-per-page can't fit both a tall monitor and a
-// short laptop. This derives the row count from the live viewport height so the
-// table fills the space it has and no more, on any screen size.
+// The list page size — a fixed 10 rows everywhere (min == max == 10). The
+// dashboard never scrolls the page; a constant page length keeps "N–M of T"
+// reading the same on every section and screen, which the earlier viewport-fit
+// sizing (5 on a laptop, more on a monitor) broke. Kept as a hook (rather than a
+// constant) so callers still pass rowPx/reserve without changes.
 //
-//   const perPage = usePageSize({ rowPx: 33, reserve: 300, min: 6, max: 22 });
+//   const perPage = usePageSize({ rowPx: 33, reserve: 300, min: 10, max: 22 });
 //
 // `rowPx` is the approximate rendered height of one row; `reserve` is the chrome
 // above+below the rows (header, panel heading, column header, pager, footer).
 import { ref, onMounted, onBeforeUnmount } from "vue";
 
-export function usePageSize({ rowPx = 33, reserve = 300, min = 5, max = 25, step = 5 } = {}) {
+export function usePageSize({ rowPx = 33, reserve = 300, min = 10, max = 10, step = 5 } = {}) {
 	const perPage = ref(min);
 
 	function measure() {

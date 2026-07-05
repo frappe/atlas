@@ -25,6 +25,8 @@
 		:rows="vms"
 		:row-px="42"
 		:reserve="320"
+		fill
+		spread
 		:row-key-fn="(vm) => vm.uuid"
 		:open-key="openUuid"
 		:dim-fn="(vm) => vm.state !== 'Running'"
@@ -33,29 +35,19 @@
 		@row-click="(vm) => toggle(vm.uuid)"
 	>
 		<!-- Custom cell rendering — the Machines table's cells are computed
-		     (state word, prov tag, used/total splits, ingress, tenant), not plain
-		     values, so it renders them itself through the shared column grid. The
-		     `dim` flag (a stopped/paused VM) is passed in so the computed cells read
-		     a step lighter, consistently with the shared row dimming. -->
+		     (state word, prov tag, used/total splits), not plain values, so it
+		     renders them itself through the shared column grid. The `dim` flag (a
+		     stopped/paused VM) is passed in so the computed cells read a step
+		     lighter, consistently with the shared row dimming. -->
 		<template #cell="{ row: vm, col, dim }">
 			<template v-if="col.key === 'uuid'">{{ uuid8(vm.uuid) }}</template>
 
-			<span v-else-if="col.key === 'state'">{{ stateWord(vm) }}</span>
-
-			<span v-else-if="col.key === 'prov'">
-				<span
-					v-if="prov(vm).kind"
-					class="text-2xs"
-					:class="
-						dim
-							? 'text-ink-gray-5'
-							: prov(vm).kind === 'dedicated'
-							? 'text-ink-gray-8'
-							: 'text-ink-gray-5'
-					"
-					>{{ prov(vm).kind }}</span
-				>
-			</span>
+			<span v-else-if="col.key === 'state'"
+				>{{ stateWord(vm)
+				}}<span v-if="prov(vm).kind" :class="dim ? 'text-ink-gray-5' : 'text-ink-gray-6'">
+					· {{ prov(vm).kind }}</span
+				></span
+			>
 
 			<UsedTotal
 				v-else-if="col.key === 'cpu'"
@@ -75,77 +67,45 @@
 				v-else-if="col.key === 'origin'"
 				class="text-sm"
 				:class="dim ? 'text-ink-gray-5' : 'text-ink-gray-6'"
+				:title="origin(vm)"
 				>{{ origin(vm) }}</span
 			>
-
-			<template v-else-if="col.key === 'disk'">{{ dataPct(vm) }}</template>
-
-			<span
-				v-else-if="col.key === 'ingress'"
-				:class="{
-					'!text-ink-gray-9': isReserved(vm) && !dim,
-					'!text-ink-gray-3': !ingress(vm),
-				}"
-			>
-				<span v-if="ingress(vm)" :title="ingressTitle(vm)">{{ ingress(vm).label }}</span>
-			</span>
-
-			<span v-else-if="col.key === 'tenant'">
-				<span
-					class="text-2xs whitespace-nowrap"
-					:class="
-						dim
-							? 'text-ink-gray-5'
-							: isOperator(vm)
-							? 'text-ink-gray-8'
-							: 'text-ink-gray-6'
-					"
-					>{{ tenantLabel(vm) }}</span
-				>
-			</span>
 		</template>
 
 		<!-- Detail overlay: the selected VM's joined detail. Floats ON TOP of the
 		     bottom of the panel (absolute) so opening a VM never reflows the table
-		     or the pager. One close control, top-right, aligned to the panel edge. -->
+		     or the pager. One close control, top-right, aligned to the panel edge.
+		     Opens instantly — no slide/fade; a read-only instrument shows, it
+		     doesn't perform. -->
 		<template #after>
-			<transition
-				enter-active-class="transition-[opacity,transform] duration-150 ease-out motion-reduce:transition-none"
-				leave-active-class="transition-[opacity,transform] duration-150 ease-out motion-reduce:transition-none"
-				enter-from-class="opacity-0 translate-y-1.5"
-				leave-to-class="opacity-0 translate-y-1.5"
+			<div
+				v-if="openVmObj"
+				class="absolute -inset-x-3 bottom-0 z-[12] bg-surface-base border-t border-outline-gray-1 flex flex-col min-h-0"
 			>
-				<div
-					v-if="openVmObj"
-					class="absolute inset-x-0 bottom-0 z-[12] bg-surface-base flex flex-col min-h-0"
-				>
-					<div class="flex items-center gap-2.5 pt-3.5 pb-2.5 flex-none">
-						<span class="font-mono tabular-nums text-ink-gray-9 text-xs">{{
-							uuid8(openVmObj.uuid)
-						}}</span>
-						<span
-							class="text-2xs whitespace-nowrap"
-							:class="isOperator(openVmObj) ? 'text-ink-gray-8' : 'text-ink-gray-6'"
-							>{{ tenantLabel(openVmObj) }}</span
-						>
-						<button
-							class="ml-auto inline-flex items-center justify-center w-5 h-5 bg-transparent border-0 text-sm leading-none text-ink-gray-5 cursor-pointer p-0 rounded-sm hover:text-ink-gray-9 hover:bg-surface-gray-2 focus-visible:outline-2 focus-visible:outline-ink-gray-9 focus-visible:outline-offset-2 focus-visible:rounded-sm"
-							aria-label="Close detail"
-							@click="openUuid = null"
-						>
-							✕
-						</button>
-					</div>
-					<div class="pb-4 min-h-0">
-						<VmDetail
-							:state="state"
-							:vm="openVmObj"
-							:uplink="uplink"
-							@open-image="$emit('open-image', openVmObj)"
-						/>
-					</div>
+				<!-- Header row: uuid on the left, close ✕ on the right. Both live in
+					     the SAME row so the title and the ✕ sit the same distance from the
+					     top border and from their respective edges (px-3 = 12px). -->
+				<div class="flex items-center gap-2.5 px-3 pt-3 pb-2.5 flex-none">
+					<span class="font-mono tabular-nums text-ink-gray-9 text-xs">{{
+						uuid8(openVmObj.uuid)
+					}}</span>
+					<button
+						class="ml-auto -my-1 inline-flex items-center justify-center w-6 h-6 bg-transparent border-0 text-sm leading-none text-ink-gray-5 cursor-pointer p-0 rounded-sm hover:text-ink-gray-9 focus-visible:outline-2 focus-visible:outline-ink-gray-9 focus-visible:outline-offset-2 focus-visible:rounded-sm"
+						aria-label="Close detail"
+						@click="openUuid = null"
+					>
+						✕
+					</button>
 				</div>
-			</transition>
+				<div class="px-3 pb-4 min-h-0">
+					<VmDetail
+						:state="state"
+						:vm="openVmObj"
+						:uplink="uplink"
+						@open-image="$emit('open-image', openVmObj)"
+					/>
+				</div>
+			</div>
 		</template>
 	</ListView>
 </template>
@@ -155,14 +115,7 @@ import { ref, computed, watch, nextTick } from "vue";
 import VmDetail from "./VmDetail.vue";
 import ListView from "./ListView.vue";
 import UsedTotal from "./UsedTotal.vue";
-import {
-	diskOrigin,
-	vmIngress,
-	vmTenant,
-	isOperator as isOp,
-	uuid8,
-	perVmProvisioning,
-} from "../derive.js";
+import { diskOrigin, uuid8, perVmProvisioning } from "../derive.js";
 
 const props = defineProps({
 	state: { type: Object, required: true },
@@ -174,17 +127,21 @@ const props = defineProps({
 defineEmits(["open-image"]);
 
 // Column defs for the shared table. Every cell is rendered via the #cell slot;
-// `align`/`mono` still drive the shared cell classes. Image column grows.
+// `align`/`mono` still drive the shared cell classes. Five short-token columns
+// with no single variable-length column to `grow`, so the table `spread`s them
+// evenly across the panel (like Disks/Users) instead of packing them into the
+// left third and stranding the whole right half of the panel empty.
+// Five columns — the facts you scan to tell machines apart. The provisioning kind
+// (warm/cold) folds into State as "running · warm". Three per-VM facts live in the
+// detail dock instead of the scan table: Disk % and Ingress (read after you open a
+// row, not while scanning 45), and Tenant is dropped entirely (the host can't know
+// it — it was an empty column on every real host).
 const cols = [
 	{ key: "uuid", label: "UUID", mono: true },
-	{ key: "state", label: "State" },
-	{ key: "prov", label: "Prov" },
+	{ key: "state", label: "State", mono: true },
 	{ key: "cpu", label: "CPU", mono: true },
 	{ key: "mem", label: "Mem", mono: true },
-	{ key: "origin", label: "Image", grow: true },
-	{ key: "disk", label: "Disk %", mono: true, align: "right" },
-	{ key: "ingress", label: "Ingress", mono: true },
-	{ key: "tenant", label: "Tenant" },
+	{ key: "origin", label: "Image", mono: true },
 ];
 
 // The ListView instance — for the cross-link (reading its filtered rows +
@@ -197,17 +154,7 @@ const table = ref(null);
 // reads "N of M running" until filtered, then "N of M"; it's suppressed once the
 // pager owns the windowed total so the count isn't shown twice.
 const filter = {
-	search: [
-		"uuid",
-		"image",
-		"disk_origin",
-		"ipv6",
-		"ipv4_guest",
-		"reserved_ipv4",
-		"tenant",
-		"state",
-		"role",
-	],
+	search: ["uuid", "image", "disk_origin", "ipv6", "ipv4_guest", "reserved_ipv4", "state"],
 	facets: [
 		{ key: "failed", label: "failed", test: (v) => v.state === "Failed" },
 		{
@@ -221,16 +168,11 @@ const filter = {
 			test: (v) => (v.disk_data_percent ?? v.data_percent ?? 0) >= 85,
 		},
 		{ key: "reserved", label: "reserved", test: (v) => !!v.reserved_ipv4 },
-		{ key: "operator", label: "operator", test: (v) => isOp(v) },
 	],
-	placeholder: "type to match uuid, image, ip, tenant…",
-	countLabel: (shown, total) => {
-		const filtering = shown !== total;
-		const perPage = table.value?.perPage ?? 10;
-		if (filtering) return shown > perPage ? "" : `${shown} of ${total}`;
-		const running = props.vms.filter((v) => v.state === "Running").length;
-		return `${running} of ${total} running`;
-	},
+	placeholder: "type to match uuid, image, ip…",
+	// No item-count in the header at all — the pager carries the windowed total, and
+	// an "N of M" line reads as redundant clutter beside the active facet chips.
+	countLabel: () => "",
 };
 
 // ── Open one VM in the dock ──────────────────────────────────────────────────
@@ -264,22 +206,6 @@ watch(
 // ── Cell helpers ─────────────────────────────────────────────────────────────
 const prov = (vm) => perVmProvisioning(vm);
 const origin = (vm) => diskOrigin(vm);
-const isOperator = (vm) => isOp(vm);
-function tenantLabel(vm) {
-	const t = vmTenant(vm);
-	return t === "operator" ? "operator" : t;
-}
-
-const ingress = (vm) => vmIngress(props.state, vm);
-const isReserved = (vm) => ingress(vm)?.kind === "reserved";
-function ingressTitle(vm) {
-	const i = ingress(vm);
-	return i ? (i.kind === "reserved" ? "reserved public IPv4" : "proxy / TCP map") : "";
-}
-function dataPct(vm) {
-	const v = vm.disk_data_percent ?? vm.data_percent;
-	return v == null ? "" : Math.round(v) + "%";
-}
 
 function stateWord(vm) {
 	return (vm.state || "unknown").toLowerCase();

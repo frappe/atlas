@@ -5,12 +5,13 @@
 	     lists are tens to low-thousands of rows, and a "showing N of M" line is
 	     the required honesty when the view is windowed.
 
-	     Docks at the bottom of the panel's flex column (mt-auto) — consistent
-	     across every list. No top rule: whitespace separates it from the last row,
-	     so it reads as the table's quiet tail, not a bordered band. -->
+	     It sits directly under the reserved table block on every list — the same
+	     fixed 10-row height everywhere lands it at the same spot. No top rule:
+	     whitespace separates it from the last row, so it reads as the table's quiet
+	     tail, not a bordered band. -->
 	<nav
 		v-if="pages > 1"
-		class="flex items-baseline justify-between gap-4 mt-auto pt-3 flex-none"
+		class="flex items-baseline justify-between gap-4 pt-3 flex-none"
 		aria-label="Pagination"
 	>
 		<span class="text-xs text-ink-gray-5 tabular-nums font-mono"
@@ -18,21 +19,21 @@
 		>
 		<span class="inline-flex items-baseline gap-3.5">
 			<button
-				class="bg-transparent border-0 p-0 text-xs text-ink-gray-6 cursor-pointer enabled:hover:text-ink-gray-9 disabled:text-ink-gray-3 disabled:cursor-default focus-visible:outline-2 focus-visible:outline-ink-gray-9 focus-visible:outline-offset-2 focus-visible:rounded-sm"
+				class="bg-transparent border-0 p-0 text-xs font-mono text-ink-gray-6 cursor-pointer disabled:text-ink-gray-3 disabled:cursor-default focus-visible:outline-2 focus-visible:outline-ink-gray-9 focus-visible:outline-offset-2 focus-visible:rounded-sm"
 				:disabled="page <= 1"
 				@click="$emit('page', page - 1)"
 			>
-				Prev
+				prev
 			</button>
 			<span class="text-xs text-ink-gray-6 tabular-nums font-mono"
 				>{{ page }} / {{ pages }}</span
 			>
 			<button
-				class="bg-transparent border-0 p-0 text-xs text-ink-gray-6 cursor-pointer enabled:hover:text-ink-gray-9 disabled:text-ink-gray-3 disabled:cursor-default focus-visible:outline-2 focus-visible:outline-ink-gray-9 focus-visible:outline-offset-2 focus-visible:rounded-sm"
+				class="bg-transparent border-0 p-0 text-xs font-mono text-ink-gray-6 cursor-pointer disabled:text-ink-gray-3 disabled:cursor-default focus-visible:outline-2 focus-visible:outline-ink-gray-9 focus-visible:outline-offset-2 focus-visible:rounded-sm"
 				:disabled="page >= pages"
 				@click="$emit('page', page + 1)"
 			>
-				Next
+				next
 			</button>
 		</span>
 	</nav>

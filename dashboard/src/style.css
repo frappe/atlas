@@ -55,7 +55,7 @@ body {
    `:where()` keeps the selector itself at zero specificity so a component that
    needs it tighter can opt out with an important line-height utility
    (`!leading-…`). */
-#app :where(.text-2xs, .text-xs, .text-sm, .text-base, .text-lg) {
+#app :where(.text-xs, .text-sm, .text-base, .text-lg) {
   line-height: 1.65;
 }
 /* The 3px meter track (Meter.vue) must keep line-height:1 so the relaxed value
@@ -63,4 +63,84 @@ body {
 #app .h-\[3px\],
 #app .h-\[3px\] * {
   line-height: 1;
+}
+
+/* ── Alignment debug (toggled by debug.js via ?borders / the header switch).
+   A thin outline on EVERY element so you can eyeball whether side-by-side
+   items line up. Outlines are used (not borders) because they draw OUTSIDE the
+   box and take no layout space — flipping them on shifts nothing, so the
+   alignment you inspect is the genuine one.
+
+   `outline-offset: 1px` pushes each line just outside its box edge. Two boxes
+   that share a column edge then overlap into a single line when their edges are
+   aligned, and split into two parallel lines (with a visible gap between them)
+   when they're not. That gap is the misalignment, made visible.
+
+   The colour is a translucent magenta so it reads over both light and dark
+   surfaces without being mistaken for a real UI border. */
+html.debug-borders #app * {
+  outline: 1px solid rgba(255, 0, 128, 0.35);
+  outline-offset: 1px;
+}
+/* The root itself + the theme <html>/<body> get the same treatment so the
+   outermost column edges are visible too. */
+html.debug-borders #app {
+  outline: 1px solid rgba(255, 0, 128, 0.55);
+  outline-offset: 1px;
+}
+
+/* ── Extreme mode: full-bleed guides. The box outlines above only show an
+   element's own edges — to check that a box lines up with something across the
+   panel you still have to eyeball the gap. Extreme mode extends ALL FOUR of an
+   element's edges into hairlines that run the FULL width / height of the window,
+   so any two edges on the same column (or row) fall on the same continuous line
+   the instant they're aligned, and are obviously offset when they're not — no
+   eyeballing the gap.
+
+   Only two pseudo-elements exist per element, so each one paints a CROSS (a
+   horizontal + a vertical hairline, via two background gradient layers) blown
+   out to ±100vmax so the lines always reach past the viewport: `::before` is
+   pinned to the top-left corner (top + left edges), `::after` to the
+   bottom-right corner (bottom + right edges). `position: relative` on the host
+   anchors them WITHOUT moving the box — a relatively-positioned box stays in
+   normal flow at the same geometry, so the edges you're inspecting remain
+   honest. pointer-events:none so the overlay never eats clicks; cyan to
+   distinguish the full-bleed guides from the per-box magenta outlines. */
+html.debug-extreme #app * {
+  position: relative;
+}
+html.debug-extreme #app *::before,
+html.debug-extreme #app *::after {
+  content: "";
+  position: absolute;
+  pointer-events: none;
+  z-index: 9999;
+  /* full-window cross: a 1px horizontal band + a 1px vertical band. The bands
+     sit at the pinned corner (top/left below), so the pair draws two of the
+     box's edges. */
+  background:
+    linear-gradient(rgba(0, 200, 255, 0.28), rgba(0, 200, 255, 0.28)) left top / 100% 1px no-repeat,
+    linear-gradient(rgba(0, 200, 255, 0.28), rgba(0, 200, 255, 0.28)) left top / 1px 100% no-repeat;
+}
+/* cross through the box's TOP-LEFT corner → its top edge (horizontal) + left
+   edge (vertical), each run the full window. */
+html.debug-extreme #app *::before {
+  left: -100vmax;
+  right: -100vmax;
+  top: -100vmax;
+  bottom: -100vmax;
+  background-position:
+    left calc(100vmax) top calc(100vmax),
+    left calc(100vmax) top calc(100vmax);
+}
+/* cross through the box's BOTTOM-RIGHT corner → its bottom edge (horizontal) +
+   right edge (vertical). Anchor the bands to the far corner instead. */
+html.debug-extreme #app *::after {
+  left: -100vmax;
+  right: -100vmax;
+  top: -100vmax;
+  bottom: -100vmax;
+  background-position:
+    right calc(100vmax) bottom calc(100vmax),
+    right calc(100vmax) bottom calc(100vmax);
 }
