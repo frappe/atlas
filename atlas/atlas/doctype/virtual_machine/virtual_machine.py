@@ -65,6 +65,7 @@ class VirtualMachine(Document):
 		image: DF.Link
 		ipv6_address: DF.Data | None
 		is_proxy: DF.Check
+		is_sshpiper: DF.Check
 		last_started: DF.Datetime | None
 		last_stopped: DF.Datetime | None
 		mac_address: DF.Data | None
@@ -73,6 +74,8 @@ class VirtualMachine(Document):
 		public_ipv4: DF.Data | None
 		server: DF.Link
 		size_preset: DF.Literal["Custom", "Shared 1x", "Shared 2x", "Shared 4x", "Shared 8x", "Dedicated 1x"]
+		sshpiper_api_key: DF.Password | None
+		sshpiper_configured: DF.Check
 		ssh_public_key: DF.LongText
 		status: DF.Literal["Pending", "Running", "Paused", "Stopped", "Failed", "Terminated"]
 		stop_protection: DF.Check
@@ -130,6 +133,8 @@ class VirtualMachine(Document):
 		enqueue_after_commit so the worker only starts once this insert's
 		transaction has committed — otherwise auto_provision can look up the VM
 		before the row exists ("Virtual Machine ... not found")."""
+		if self.flags.skip_auto_provision:
+			return
 		frappe.enqueue(
 			"atlas.atlas.doctype.virtual_machine.virtual_machine.auto_provision",
 			queue="long",

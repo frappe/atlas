@@ -45,6 +45,10 @@
   "section_break_proxy",
   "is_proxy",
   "column_break_proxy",
+  "section_break_sshpiper",
+  "is_sshpiper",
+  "sshpiper_api_key",
+  "sshpiper_configured",
   "section_break_activity",
   "last_started",
   "column_break_activity",
@@ -339,6 +343,36 @@
   },
   {
    "collapsible": 1,
+   "fieldname": "section_break_sshpiper",
+   "fieldtype": "Section Break",
+   "label": "SSHPiper Gateway"
+  },
+  {
+   "default": "0",
+   "description": "Operator-owned SSH ingress VM for guests on this compute Server. Attach a Reserved IPv4, then run Configure SSHPiper. Public port 22 proxies to tenant VMs; Atlas manages this guest on port 222.",
+   "fieldname": "is_sshpiper",
+   "fieldtype": "Check",
+   "label": "Is SSHPiper Gateway"
+  },
+  {
+   "description": "Per-gateway bearer token used only by this VM when resolving SSH targets on its compute Server.",
+   "fieldname": "sshpiper_api_key",
+   "fieldtype": "Password",
+   "hidden": 1,
+   "label": "SSHPiper API Key",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "description": "Set after Atlas installs this gateway token and compute-Server key, then starts sshpiper.service.",
+   "fieldname": "sshpiper_configured",
+   "fieldtype": "Check",
+   "label": "SSHPiper Configured",
+   "read_only": 1
+  },
+  {
+   "collapsible": 1,
    "fieldname": "section_break_activity",
    "fieldtype": "Section Break",
    "label": "Activity"
@@ -369,7 +403,7 @@
   }
  ],
  "links": [],
- "modified": "2026-07-04 20:05:01.494815",
+ "modified": "2026-07-05 13:09:02.108483",
  "modified_by": "Administrator",
  "module": "Atlas",
  "name": "Virtual Machine",
