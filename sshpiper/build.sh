@@ -7,7 +7,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ARCH="$(uname -m)"
 
 case "$ARCH" in
-  x86_64) GO_ARCH=amd64; RELEASE_ARCH=x86_64 ;;
+  x86_64|amd64) GO_ARCH=amd64; RELEASE_ARCH=x86_64 ;;
   aarch64|arm64) GO_ARCH=arm64; RELEASE_ARCH=aarch64 ;;
   *) echo "unsupported architecture: $ARCH" >&2; exit 1 ;;
 esac
@@ -32,9 +32,15 @@ install -d -m 0700 /etc/atlas
 install -m 0644 "$ROOT/guest/sshpiper.service" /etc/systemd/system/sshpiper.service
 install -d -m 0755 /etc/ssh/sshd_config.d
 install -m 0644 "$ROOT/guest/60-atlas-sshpiper.conf" /etc/ssh/sshd_config.d/60-atlas-sshpiper.conf
+test -s /etc/systemd/system/sshpiper.service
+test -s /etc/ssh/sshd_config.d/60-atlas-sshpiper.conf
+test "$(sshd -T | awk '$1 == "port" { print $2; exit }')" = "222"
 sshd -t
 systemctl daemon-reload
-systemctl disable sshpiper.service >/dev/null 2>&1 || true
+systemctl disable --now ssh.socket ssh.service && systemctl enable --now ssh.service
 /usr/local/bin/sshpiperd --version
 /usr/local/bin/sshpiper-atlas --help >/dev/null
 rm -rf /tmp/go.tgz /tmp/sshpiper.tgz /tmp/sshpiper-release /usr/local/go
+sync
+# sleep 5 so the sync works properly
+sleep 5
