@@ -112,7 +112,11 @@ def _finalize_sshpiper(virtual_machine, connection, key_path) -> tuple[str, str,
 	return run_ssh(
 		connection,
 		key_path,
-		"sshd -t && systemctl restart ssh.service",
+		"sshd -t && "
+		"(systemctl disable --now ssh.socket >/dev/null 2>&1 || true) && "
+		"systemctl mask ssh.socket >/dev/null && "
+		"systemctl enable --now ssh.service >/dev/null && "
+		"ss -ltnH 'sport = :222' | grep -q LISTEN",
 		timeout_seconds=60,
 	)
 
