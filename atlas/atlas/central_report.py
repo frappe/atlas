@@ -17,11 +17,12 @@ Every emit also writes a Central Event Log row — a MyISAM (non-transactional)
 audit trail. Because MyISAM rows are not enrolled in the request transaction,
 the row survives a rollback of the business change that triggered it: you can
 always see what we *tried* to emit, even for a VM/Site save that was later
-reverted. The deliver job is enqueue_after_commit, so a rolled-back emit's job
-never runs — its row stays `pending` and is never POSTed (log the attempt, skip
-the delivery). On commit, deliver() POSTs and stamps the same row ok / error /
-skipped. The single's `status` field stays the at-a-glance breadcrumb; the log
-is the queryable history.
+reverted. On commit the row is marked `queued` and the deliver job is enqueued;
+on rollback it is marked `rolled_back` and never POSTed. The queued row is the
+durable outbox: if RQ misses the immediate job, the scheduler can safely replay
+only committed events. deliver() POSTs and stamps the same row ok / error /
+skipped. The single's `status` field stays the at-a-glance breadcrumb; the log is
+the queryable history.
 """
 
 from __future__ import annotations
@@ -31,6 +32,8 @@ import json
 import frappe
 
 from atlas.atlas.central import CentralError
+
+MAX_PENDING_RETRY_BATCH = 100
 
 
 def _enabled() -> bool:
@@ -133,7 +136,18 @@ def on_server_update(doc, method=None):
 def _emit(event_type: str, payload: dict, doc=None) -> None:
 	# Write the audit row FIRST, then enqueue delivery against it. The row is the
 	# durable record of the attempt; the deliver job (after-commit) only stamps it.
-	log_name = _write_log(event_type, payload, doc)
+	occurred_at = frappe.utils.now()
+	log_name = _write_log(event_type, payload, doc, occurred_at=occurred_at)
+	_mark_log_after_transaction(log_name)
+	_enqueue_delivery_after_commit(log_name, event_type, payload, occurred_at)
+
+
+def _mark_log_after_transaction(log_name: str) -> None:
+	frappe.db.after_commit.add(lambda: _set_log_status(log_name, "queued"))
+	frappe.db.after_rollback.add(lambda: _set_log_status(log_name, "rolled_back"))
+
+
+def _enqueue_delivery_after_commit(log_name: str, event_type: str, payload: dict, occurred_at: str) -> None:
 	frappe.enqueue(
 		"atlas.atlas.central_report.deliver",
 		queue="default",
@@ -142,10 +156,54 @@ def _emit(event_type: str, payload: dict, doc=None) -> None:
 		log_name=log_name,
 		event_type=event_type,
 		payload=payload,
+		occurred_at=occurred_at,
 	)
 
 
-def _write_log(event_type: str, payload: dict, doc=None) -> str:
+def retry_pending(limit: int = 50, include_legacy_pending: bool = False) -> int:
+	"""Drain committed-but-undelivered Central events in creation order.
+
+	The Central Event Log is the durable outbox. A missed RQ job must not strand the
+	mirror forever; retrying queued rows replays the same delivery contract. Legacy
+	pending rows from builds before `queued` existed can be replayed manually, but
+	the scheduler must not touch fresh pending rows because their source transaction
+	may still roll back."""
+	if not _delivery_ready():
+		return 0
+
+	statuses = ["queued"]
+	if include_legacy_pending:
+		statuses.append("pending")
+
+	limit = _retry_limit(limit)
+	rows = frappe.get_all(
+		"Central Event Log",
+		filters={"status": ["in", statuses]},
+		fields=["name", "event_type", "payload", "occurred_at"],
+		order_by="creation asc",
+		limit=limit,
+	)
+	if not rows:
+		return 0
+	for row in rows:
+		deliver(row.name, row.event_type, json.loads(row.payload or "{}"), occurred_at=row.occurred_at)
+	return len(rows)
+
+
+def _delivery_ready() -> bool:
+	settings = frappe.get_single("Central Settings")
+	return bool(settings.enabled and settings.api_key)
+
+
+def _retry_limit(limit: int) -> int:
+	try:
+		value = int(limit)
+	except (TypeError, ValueError):
+		value = 50
+	return max(1, min(value, MAX_PENDING_RETRY_BATCH))
+
+
+def _write_log(event_type: str, payload: dict, doc=None, occurred_at: str | None = None) -> str:
 	"""Insert the Central Event Log row for this emit and return its name.
 
 	The Central Event Log is MyISAM (non-transactional), so this INSERT hits the
@@ -163,7 +221,7 @@ def _write_log(event_type: str, payload: dict, doc=None) -> str:
 				"payload": json.dumps(payload, default=str, indent=2),
 				"status": "pending",
 				"attempts": 0,
-				"occurred_at": frappe.utils.now(),
+				"occurred_at": occurred_at or frappe.utils.now(),
 				"reference_doctype": doc.doctype if doc is not None else None,
 				"reference_name": doc.name if doc is not None else None,
 			}
@@ -173,12 +231,12 @@ def _write_log(event_type: str, payload: dict, doc=None) -> str:
 	)
 
 
-def deliver(log_name: str, event_type: str, payload: dict) -> None:
+def deliver(log_name: str, event_type: str, payload: dict, occurred_at: str | None = None) -> None:
 	"""Background job: POST one event to Central and stamp its Central Event Log
 	row with the outcome. Also updates the single's `status` breadcrumb so the
 	operator sees the last delivery at a glance. Runs only on commit
-	(enqueue_after_commit), so a rolled-back emit's row is never reached here and
-	stays `pending` — logged, never delivered."""
+	(enqueue_after_commit), so a rolled-back emit's row is never reached here and is
+	stamped `rolled_back` — logged, never delivered."""
 	settings = frappe.get_single("Central Settings")
 	if not settings.enabled:
 		return
@@ -194,7 +252,7 @@ def deliver(log_name: str, event_type: str, payload: dict) -> None:
 			{
 				"type": event_type,
 				"payload": payload,
-				"occurred_at": frappe.utils.now(),
+				"occurred_at": _iso(occurred_at) or frappe.utils.now(),
 			}
 		)
 		_stamp(log_name, status="ok", http_status=200)
@@ -203,6 +261,13 @@ def deliver(log_name: str, event_type: str, payload: dict) -> None:
 		frappe.log_error(f"Central event {event_type} failed: {exception}", "Central event")
 		_stamp(log_name, status="error", last_error=str(exception)[:140], http_status=exception.status_code)
 		settings.db_set("status", f"error: {exception}"[:140], commit=True)
+
+
+def _set_log_status(log_name: str, status: str) -> None:
+	try:
+		frappe.db.set_value("Central Event Log", log_name, "status", status, update_modified=False)
+	except Exception:
+		frappe.log_error(f"Central Event Log {log_name} {status} stamp failed", "Central event")
 
 
 def _stamp(

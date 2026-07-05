@@ -230,6 +230,9 @@ scheduler_events = {
 		"atlas.atlas.doctype.tls_certificate.tls_certificate.renew_expiring",
 	],
 	"cron": {
+		"*/1 * * * *": [
+			"atlas.atlas.central_report.retry_pending",
+		],
 		"*/10 * * * *": [
 			"atlas.atlas.providers.worker.reconcile_pending_servers",
 		],

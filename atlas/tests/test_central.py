@@ -81,6 +81,7 @@ def _patched_emit():
 	with (
 		patch.object(central_report, "_enabled", return_value=True),
 		patch.object(central_report, "_write_log", return_value="cel-1"),
+		patch.object(central_report, "_mark_log_after_transaction"),
 		patch.object(central_report.frappe, "enqueue") as enqueue,
 	):
 		yield enqueue
@@ -252,9 +253,79 @@ class TestCentralReport(IntegrationTestCase):
 			patch.object(central_report.frappe, "get_single", return_value=settings),
 			patch.object(central_report, "_stamp") as stamp,
 		):
-			central_report.deliver("cel-1", "vm.created", {"name": "vm-1"})
+			central_report.deliver("cel-1", "vm.created", {"name": "vm-1"}, occurred_at="2026-07-06 00:23:05")
 		settings.client.return_value.post_event.assert_called_once()
+		event = settings.client.return_value.post_event.call_args[0][0]
+		self.assertEqual(event["occurred_at"], "2026-07-06 00:23:05")
 		stamp.assert_called_once_with("cel-1", status="ok", http_status=200)
+
+	def test_retry_pending_replays_queued_events_in_order(self) -> None:
+		rows = [
+			frappe._dict(
+				name="cel-1",
+				event_type="vm.status_changed",
+				payload=json.dumps({"name": "vm-1", "status": "Stopped"}),
+				occurred_at="2026-07-06 00:23:05",
+			),
+			frappe._dict(
+				name="cel-2",
+				event_type="vm.status_changed",
+				payload=json.dumps({"name": "vm-2", "status": "Running"}),
+				occurred_at="2026-07-06 00:24:00",
+			),
+		]
+		with (
+			patch.object(central_report, "_delivery_ready", return_value=True),
+			patch.object(central_report.frappe, "get_all", return_value=rows) as get_all,
+			patch.object(central_report, "deliver") as deliver,
+		):
+			count = central_report.retry_pending(limit=1000)
+		self.assertEqual(count, 2)
+		self.assertEqual(get_all.call_args.kwargs["filters"], {"status": ["in", ["queued"]]})
+		self.assertEqual(get_all.call_args.kwargs["limit"], central_report.MAX_PENDING_RETRY_BATCH)
+		deliver.assert_any_call(
+			"cel-1",
+			"vm.status_changed",
+			{"name": "vm-1", "status": "Stopped"},
+			occurred_at="2026-07-06 00:23:05",
+		)
+		deliver.assert_any_call(
+			"cel-2",
+			"vm.status_changed",
+			{"name": "vm-2", "status": "Running"},
+			occurred_at="2026-07-06 00:24:00",
+		)
+
+	def test_retry_pending_can_replay_legacy_pending_when_explicit(self) -> None:
+		with (
+			patch.object(central_report, "_delivery_ready", return_value=True),
+			patch.object(central_report.frappe, "get_all", return_value=[]) as get_all,
+			patch.object(central_report, "deliver"),
+		):
+			count = central_report.retry_pending(limit=2, include_legacy_pending=True)
+		self.assertEqual(count, 0)
+		self.assertEqual(get_all.call_args.kwargs["filters"], {"status": ["in", ["queued", "pending"]]})
+
+	def test_retry_pending_returns_before_query_when_delivery_not_ready(self) -> None:
+		with (
+			patch.object(central_report, "_delivery_ready", return_value=False),
+			patch.object(central_report.frappe, "get_all") as get_all,
+			patch.object(central_report, "deliver") as deliver,
+		):
+			count = central_report.retry_pending()
+		self.assertEqual(count, 0)
+		get_all.assert_not_called()
+		deliver.assert_not_called()
+
+	def test_retry_pending_returns_before_delivery_when_no_rows(self) -> None:
+		with (
+			patch.object(central_report, "_delivery_ready", return_value=True),
+			patch.object(central_report.frappe, "get_all", return_value=[]),
+			patch.object(central_report, "deliver") as deliver,
+		):
+			count = central_report.retry_pending()
+		self.assertEqual(count, 0)
+		deliver.assert_not_called()
 
 	def test_deliver_skips_when_unregistered(self) -> None:
 		settings = MagicMock()
@@ -284,6 +355,16 @@ class TestCentralReport(IntegrationTestCase):
 		self.assertEqual(row.reference_name, "vm-1")
 		row.delete()
 		frappe.db.commit()
+
+	def test_rollback_marks_event_log_audit_only(self) -> None:
+		name = central_report._write_log("vm.status_changed", {"name": "vm-rb"}, self._vm())
+		central_report._mark_log_after_transaction(name)
+		frappe.db.rollback()
+		try:
+			self.assertEqual(frappe.db.get_value("Central Event Log", name, "status"), "rolled_back")
+		finally:
+			frappe.delete_doc("Central Event Log", name, force=True, ignore_permissions=True)
+			frappe.db.commit()
 
 
 class TestCentralReportSite(IntegrationTestCase):
