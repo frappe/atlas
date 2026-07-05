@@ -20,6 +20,7 @@ from frappe import _
 from frappe.model.document import Document
 
 from atlas.atlas import bench_image
+from atlas.atlas.doctype.virtual_machine.virtual_machine import auto_provision
 from atlas.atlas.image_builder import run_build
 from atlas.atlas.image_recipes import get_recipe
 from atlas.atlas.placement import default_image
@@ -177,11 +178,17 @@ def run(image_build_name: str) -> None:
 		_set_status(build, "Provisioning")
 		vm_name = _provision_build_vm(build, recipe)
 		build.db_set("build_virtual_machine", vm_name)
-		# COMMIT before waiting: the build VM's own after_insert enqueued its boot
-		# job in a SEPARATE transaction that can't run until this one commits. Same
-		# reasoning (and the same hazard) as Site.auto_provision — hold the txn open
-		# and the boot never happens, the wait times out, and the rollback deletes
-		# the VM row, orphaning its boot job.
+		# Commit the scratch row before direct provisioning reloads it by name. This
+		# also makes the VM visible to the host Task and preserves it if provisioning
+		# fails after creating host-side state.
+		frappe.db.commit()
+		# This job already occupies the long queue. Enqueueing VM provisioning onto
+		# that same queue and then waiting deadlocks installations with one long
+		# worker, so scratch VMs suppress their after_insert enqueue and provision
+		# synchronously here after the row is committed.
+		auto_provision(vm_name)
+		# auto_provision saves Running in this job's transaction; publish it before
+		# the polling helper rolls its transaction back to read committed state.
 		frappe.db.commit()
 		_wait_for_vm_running(vm_name)
 		_set_status(build, "Building")
@@ -256,9 +263,9 @@ def _set_status(build, status: str) -> None:
 def _provision_build_vm(build, recipe) -> str:
 	"""Insert a scratch Virtual Machine at the recipe's size and return its name.
 
-	Its own after_insert auto-provisions it (boots it) in a separate job — we wait
-	on that in _wait_for_vm_running after committing. A proxy build's VM carries
-	is_proxy so its build (and the recipe's finalize) takes the proxy path; the
+	Its after_insert enqueue is suppressed because Image Build already occupies the
+	long worker; run() commits the row and provisions it synchronously. A proxy
+	build's VM carries is_proxy so its build (and the recipe's finalize) takes the proxy path; the
 	region it serves is read from Atlas Settings at finalize time. A bench build's
 	VM is a plain VM. The fleet SSH key is baked into every VM the standard way, so
 	build_proxy/build_bench reach the guest with it."""
@@ -280,17 +287,18 @@ def _provision_build_vm(build, recipe) -> str:
 			# FQDN to the baked site (site) or the admin console (admin) — spec/08.
 			"build_mode": recipe.build_mode or None,
 		}
-	).insert(ignore_permissions=True)
+	)
+	vm.flags.skip_auto_provision = True
+	vm.insert(ignore_permissions=True)
 	return vm.name
 
 
 def _wait_for_vm_running(vm_name: str, timeout_seconds: int = 1500, poll_seconds: float = 5.0) -> None:
-	"""Block until the build VM's own after_insert provision job flips it to Running.
+	"""Confirm the directly provisioned build VM reached Running.
 
-	Poll its COMMITTED status with rollback() (the boot job commits in its own txn).
-	Mirrors Site._wait_for_vm_running / the e2e _tasks.wait_for_vm_running — the
-	proven contract for waiting on after_insert auto-provision. Raises on Failed or
-	the deadline (the worker never ran the boot job)."""
+	Poll its COMMITTED status with rollback() so the check reflects durable state.
+	Mirrors Site._wait_for_vm_running / the e2e _tasks.wait_for_vm_running. Raises
+	on Failed or if the durable status does not become Running by the deadline."""
 	deadline = time.monotonic() + timeout_seconds
 	while time.monotonic() < deadline:
 		frappe.db.rollback()

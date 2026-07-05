@@ -98,6 +98,7 @@ class TestImageBuildRun(IntegrationTestCase):
 			_provision_build_vm=patch.object(
 				image_build_module, "_provision_build_vm", return_value="build-vm-1"
 			),
+			auto_provision=patch.object(image_build_module, "auto_provision"),
 			_wait=patch.object(image_build_module, "_wait_for_vm_running"),
 			run_build=patch.object(image_build_module, "run_build"),
 			# The post-build serve+login gate SSHes a real guest; mock it here so the
@@ -110,6 +111,7 @@ class TestImageBuildRun(IntegrationTestCase):
 		)
 		with (
 			defaults["_provision_build_vm"] as m_prov,
+			defaults["auto_provision"] as m_auto_provision,
 			defaults["_wait"] as m_wait,
 			defaults["run_build"] as m_build,
 			defaults["sanity"] as m_sanity,
@@ -119,15 +121,16 @@ class TestImageBuildRun(IntegrationTestCase):
 			defaults["commit"],
 		):
 			image_build_module.run(build.name)
-		return m_prov, m_wait, m_build, m_sanity, m_snap, m_register, m_terminate
+		return m_prov, m_auto_provision, m_wait, m_build, m_sanity, m_snap, m_register, m_terminate
 
 	def test_happy_path_reaches_available_and_links_artifacts(self) -> None:
 		build = _new_build("bench-v16")
-		_, _, m_build, _, _, _, _ = self._run_with_mocks(build)
+		_, m_auto, _, m_build, _, _, _, _ = self._run_with_mocks(build)
 		build.reload()
 		self.assertEqual(build.status, "Available")
 		self.assertEqual(build.build_virtual_machine, "build-vm-1")
 		self.assertEqual(build.snapshot, "snap-1")
+		m_auto.assert_called_once_with("build-vm-1")
 		# The bake drives run_build with stream=True (spec/22) so the build Task is
 		# created Running up front and tails the in-guest log live on this form,
 		# and with an on_task callback that links build_task to that live row.
@@ -136,32 +139,32 @@ class TestImageBuildRun(IntegrationTestCase):
 
 	def test_bench_build_auto_registers_when_checked(self) -> None:
 		build = _new_build("bench-v16", auto_register=1)
-		_, _, _, _, _, m_register, _ = self._run_with_mocks(build)
+		_, _, _, _, _, _, m_register, _ = self._run_with_mocks(build)
 		m_register.assert_called_once()
 
 	def test_bench_build_skips_register_when_unchecked(self) -> None:
 		build = _new_build("bench-v16", auto_register=0)
-		_, _, _, _, _, m_register, _ = self._run_with_mocks(build)
+		_, _, _, _, _, _, m_register, _ = self._run_with_mocks(build)
 		m_register.assert_not_called()
 
 	def test_proxy_build_never_registers(self) -> None:
 		# The proxy recipe has no registers_as, so register is skipped even if the
 		# (harmless, defaulted-on) auto_register check is set.
 		build = _new_build("proxy", auto_register=1)
-		_, _, _, _, _, m_register, _ = self._run_with_mocks(build)
+		_, _, _, _, _, _, m_register, _ = self._run_with_mocks(build)
 		m_register.assert_not_called()
 
 	def test_bench_build_runs_sanity_gate_before_snapshot(self) -> None:
 		# A bench build must clear the serve+login gate on the build VM before it is
 		# allowed to snapshot.
 		build = _new_build("bench-v16")
-		_, _, _, m_sanity, _, _, _ = self._run_with_mocks(build)
+		_, _, _, _, m_sanity, _, _, _ = self._run_with_mocks(build)
 		m_sanity.assert_called_once_with("build-vm-1")
 
 	def test_proxy_build_skips_sanity_gate(self) -> None:
 		# The proxy bakes no Frappe site, so the Frappe serve+login gate doesn't apply.
 		build = _new_build("proxy")
-		_, _, _, m_sanity, _, _, _ = self._run_with_mocks(build)
+		_, _, _, _, m_sanity, _, _, _ = self._run_with_mocks(build)
 		m_sanity.assert_not_called()
 
 	def test_failed_sanity_gate_marks_build_failed_no_snapshot(self) -> None:
@@ -170,6 +173,7 @@ class TestImageBuildRun(IntegrationTestCase):
 		build = _new_build("bench-v16")
 		with (
 			patch.object(image_build_module, "_provision_build_vm", return_value="vm-x"),
+			patch.object(image_build_module, "auto_provision"),
 			patch.object(image_build_module, "_wait_for_vm_running"),
 			patch.object(image_build_module, "run_build"),
 			patch.object(
@@ -189,18 +193,19 @@ class TestImageBuildRun(IntegrationTestCase):
 
 	def test_terminate_build_vm_when_checked(self) -> None:
 		build = _new_build("bench-v16", terminate_build_vm=1)
-		_, _, _, _, _, _, m_terminate = self._run_with_mocks(build)
+		_, _, _, _, _, _, _, m_terminate = self._run_with_mocks(build)
 		m_terminate.assert_called_once_with("build-vm-1")
 
 	def test_keeps_build_vm_by_default(self) -> None:
 		build = _new_build("bench-v16")
-		_, _, _, _, _, _, m_terminate = self._run_with_mocks(build)
+		_, _, _, _, _, _, _, m_terminate = self._run_with_mocks(build)
 		m_terminate.assert_not_called()
 
 	def test_failure_marks_failed_and_records_error_and_reraises(self) -> None:
 		build = _new_build("bench-v16")
 		with (
 			patch.object(image_build_module, "_provision_build_vm", return_value="vm-x"),
+			patch.object(image_build_module, "auto_provision"),
 			patch.object(image_build_module, "_wait_for_vm_running"),
 			patch.object(image_build_module, "run_build", side_effect=RuntimeError("build broke")),
 			patch.object(image_build_module.frappe.db, "commit"),
@@ -244,8 +249,9 @@ class TestImageBuildRun(IntegrationTestCase):
 
 		frappe.db.set_single_value("Atlas Settings", "ssh_public_key", "ssh-ed25519 AAAA test")
 		build = _new_build("sshpiper")
-		with patch.object(image_build_module.frappe, "enqueue"):
+		with patch.object(image_build_module.frappe, "enqueue") as enqueue:
 			vm_name = image_build_module._provision_build_vm(build, get_recipe("sshpiper"))
+		enqueue.assert_not_called()
 		vm = frappe.get_doc("Virtual Machine", vm_name)
 		self.assertTrue(vm.is_sshpiper)
 		self.assertFalse(vm.is_proxy)
