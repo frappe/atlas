@@ -48,6 +48,123 @@ def default_image() -> str:
 	return active[0]
 
 
+def image_home_servers(image: str) -> set[str]:
+	"""The Active servers that actually hold this image's bytes.
+
+	A `Virtual Machine Image` is ONE fleet-wide row, but its bytes are per-server:
+	the row records nothing about where it landed. Presence is reconstructed from the
+	Task/export trail — the same authoritative sources the image form already reads:
+
+	- A **URL image** (`is_local` false) is downloadable; `after_insert` fans out a
+	  `sync-image` Task to every Active server. Its home set is the servers where that
+	  sync SUCCEEDED — the verifiable presence signal, matching
+	  `VirtualMachineImage.sync_status`. (An enqueued-but-unfinished sync doesn't count;
+	  the bytes aren't there yet.)
+	- A **local image** (promoted from a snapshot, no rootfs URL) lives only where it
+	  was promoted plus wherever it was later exported: the promote home
+	  (`_image_home_server`) UNION every successful `Virtual Machine Image Export`'s
+	  `target_server`. This is the presence a `sync-image` could never provide — a local
+	  image is non-syncable.
+
+	Result is intersected with the currently-Active servers: a home that has since been
+	removed/drained can't take a VM, so it isn't a placement candidate. Returns a set
+	(possibly empty — the caller decides whether that's a hard error)."""
+	active = set(
+		frappe.get_all(
+			"Server",
+			filters={"status": "Active"},
+			pluck="name",
+			ignore_permissions=True,
+		)
+	)
+	if not active:
+		return set()
+
+	is_local = not (frappe.db.get_value("Virtual Machine Image", image, "rootfs_url") or "").strip()
+	if is_local:
+		homes = _local_image_home_servers(image)
+	else:
+		homes = _synced_image_home_servers(image)
+	return homes & active
+
+
+def _synced_image_home_servers(image: str) -> set[str]:
+	"""Servers with a successful `sync-image` Task for this URL image. Matches
+	`VirtualMachineImage.sync_status`: the immutable Task history is the presence trail,
+	and the script verb was renamed (`sync-image`) from its legacy filenames, so we
+	accept all three."""
+	rows = frappe.db.sql(
+		"""
+		SELECT DISTINCT server FROM `tabTask`
+		WHERE script IN ('sync-image', 'sync-image.py', 'sync-image.sh')
+		  AND status = 'Success'
+		  AND variables LIKE %(pattern)s
+		""",
+		{"pattern": f'%"IMAGE_NAME": "{image}"%'},
+		pluck="server",
+	)
+	return {row for row in rows if row}
+
+
+def _local_image_home_servers(image: str) -> set[str]:
+	"""Servers holding a local (snapshot-promoted) image: its promote home plus every
+	server a successful export shipped it to. The promote home comes from the same Task
+	trail `Virtual Machine Image Export.before_insert` denormalizes from; the export
+	targets come from the export rows themselves (their `target_server` is the durable
+	record that the bytes landed there)."""
+	from atlas.atlas.doctype.virtual_machine_image_export.virtual_machine_image_export import (
+		_image_home_server,
+	)
+
+	homes: set[str] = set()
+	promote_home = _image_home_server(image)
+	if promote_home:
+		homes.add(promote_home)
+	# A Done export means the base LV + kernel reached target_server and the Registering
+	# phase asserted the row; anything short of Done hasn't finished shipping the bytes.
+	homes.update(
+		frappe.get_all(
+			"Virtual Machine Image Export",
+			filters={"image": image, "status": "Done"},
+			pluck="target_server",
+		)
+	)
+	return {home for home in homes if home}
+
+
+def default_server_for_image(
+	image: str,
+	required_vcpus: float,
+	required_memory_mb: float,
+	required_disk_gb: float,
+) -> str:
+	"""Like `default_server`, but only among servers that HOLD `image`.
+
+	`default_server` picks the first Active host with room on all three axes — but a
+	VM can only boot an image whose bytes are on its host. For a local (per-server)
+	image, "any Active host" is wrong: it would pick a host missing the LV and the
+	provision would fail on the box, not at the boundary. So we restrict the candidate
+	pool to `image_home_servers(image)` and pick the first of those with capacity.
+
+	Raises loudly (Taste 17) when the image is nowhere yet — "export it to a server
+	first" — distinct from `NoCapacityError` (which means the image is present but no
+	host that holds it has room)."""
+	homes = image_home_servers(image)
+	if not homes:
+		frappe.throw(
+			_(
+				"Image {0} is not present on any active server yet — export it to a "
+				"server before provisioning from it."
+			).format(image)
+		)
+	return default_server(
+		required_vcpus,
+		required_memory_mb,
+		required_disk_gb,
+		candidate_servers=homes,
+	)
+
+
 def _fits(axis: dict, need: float) -> bool:
 	"""Does `need` more of this resource fit on this axis?
 
@@ -61,6 +178,7 @@ def default_server(
 	required_vcpus: float,
 	required_memory_mb: float,
 	required_disk_gb: float,
+	candidate_servers: set[str] | None = None,
 ) -> str:
 	"""The first Active server with room on all three axes: CPU, RAM, pool disk.
 
@@ -75,6 +193,11 @@ def default_server(
 	`effective is None` and is unlimited on that axis: the operator vouches for
 	the host by marking it Active. Raises when nothing fits on all three.
 
+	`candidate_servers`, when given, restricts the pool to that set (still ordered
+	by creation, still Active) — `default_server_for_image` passes the servers that
+	hold the image so placement never picks a host missing its bytes. None means the
+	whole Active fleet, the original behaviour.
+
 	Runs with ignore_permissions: this is system placement, not desk RBAC —
 	Central (the operator) triggers it without needing Server read access; the
 	system still has to choose one."""
@@ -87,6 +210,8 @@ def default_server(
 		order_by="creation asc",
 		ignore_permissions=True,
 	)
+	if candidate_servers is not None:
+		servers = [server for server in servers if server in candidate_servers]
 	if not servers:
 		frappe.throw(_("No capacity available — contact your operator."), NoCapacityError)
 	for server in servers:

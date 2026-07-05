@@ -62,9 +62,11 @@ def create_vm(
 		"vcpus": int(vcpus),
 		"memory_megabytes": int(memory_megabytes),
 		"disk_gigabytes": int(disk_gigabytes),
-		# Placement is still a WIP pin: this server has the bench image. The Pilot's
-		# _provision_backing_vm falls back to the default image when none is set.
-		"server": "5d0943c8-4e43-48ad-b652-3f181e22fc4d",
+		# Placement (server + image) is Atlas's concern, not the caller's: the Pilot's
+		# _provision_backing_vm pins the default bench image (Atlas Settings) and picks a
+		# server that HOLDS that image (placement.default_server_for_image). No hard-coded
+		# server pin — a local bench image lives only where it was baked/exported, so the
+		# host is chosen from the image's home set, not a UUID that only exists on one box.
 	}
 	if cpu_max_cores:
 		spec["cpu_max_cores"] = float(cpu_max_cores)
