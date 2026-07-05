@@ -80,6 +80,11 @@ class Server(Document):
 		("vm-restore.py", "/var/lib/atlas/bin/vm-restore.py"),
 		("systemd/firecracker-vm@.service", "/etc/systemd/system/firecracker-vm@.service"),
 		("systemd/atlas-pool.service", "/etc/systemd/system/atlas-pool.service"),
+		# host-mesh.service brings up the wg-mesh private-plane device in the host
+		# root netns at boot (design §3), the host-fabric analog of atlas-pool.service:
+		# bootstrap creates the mesh but is not re-run on boot, so this oneshot
+		# re-asserts the device from /etc/atlas-host-mesh.{env,key} + wg-mesh.conf.
+		("systemd/host-mesh.service", "/etc/systemd/system/host-mesh.service"),
 	]
 
 	def autoname(self) -> None:
@@ -88,6 +93,22 @@ class Server(Document):
 
 	def validate(self) -> None:
 		self._validate_immutability()
+		self._denormalize_mesh_identity()
+
+	def _denormalize_mesh_identity(self) -> None:
+		"""Fill the derived WireGuard host-mesh denorm fields (design §8). Both are pure
+		functions of the Server UUID — recomputed by the controller wherever they are
+		needed (host_mesh.reconcile), so these fields are a legible read-through, not a
+		source of truth. Set once; a re-derive yields the same value, so an existing row
+		is unchanged on save."""
+		if not self.wireguard_public_key:
+			from atlas.atlas.networking import derive_host_wireguard_keypair
+
+			_private_key, self.wireguard_public_key = derive_host_wireguard_keypair(self.name)
+		if not self.mesh_address:
+			from atlas.atlas.networking import derive_host_mesh_address
+
+			self.mesh_address = derive_host_mesh_address(self.name)
 
 	def _validate_immutability(self) -> None:
 		"""Lock fields once they carry a value. Allow None → value transitions

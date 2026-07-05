@@ -130,6 +130,12 @@ function add_lifecycle_buttons(frm) {
 		// drift. The first thing to check when a site 404s / resets at the proxy.
 		frappe.atlas.add_action(frm, "Live proxy maps", () => show_proxy_maps(frm));
 	}
+	if (frm.doc.is_gateway && (status === "Running" || status === "Stopped")) {
+		// Stand up (or re-assert) the gateway's wg0 + the static same_48 guard over
+		// guest-SSH (spec/26). Idempotent — the fix after a reboot/rebuild left the
+		// interface gone. Customer peers are reconciled separately from their own form.
+		frappe.atlas.add_action(frm, "Deploy gateway", () => deploy_gateway(frm));
+	}
 	// Migrate: move this VM's disk to another host, keeping its identity (spec/19).
 	// The pre-flight stops a Running/Paused VM, so we paint it on any live status.
 	if (status === "Running" || status === "Stopped" || status === "Paused") {
@@ -248,6 +254,22 @@ const PROXY_MAP_LABELS = {
 	sni: __("Custom-domain SNI (:443)"),
 	acme: __("Custom-domain ACME (:80)"),
 };
+
+function deploy_gateway(frm) {
+	frm.call({
+		method: "deploy_gateway",
+		doc: frm.doc,
+		freeze: true,
+		freeze_message: __("Standing up the gateway's WireGuard interface + guard…"),
+	}).then(({ message }) => {
+		if (message) {
+			frappe.show_alert({
+				message: __("Gateway wg0 + same_48 guard deployed"),
+				indicator: "green",
+			});
+		}
+	});
+}
 
 function show_proxy_maps(frm) {
 	// Let frm.call own the freeze overlay (freeze + freeze_message) so it clears

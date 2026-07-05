@@ -36,8 +36,12 @@ keep it the source of truth.
   drives site/VM creation via `create_site` / `create_vm`
   (see [11-user-ui.md](./11-user-ui.md), [14-self-serve.md](./14-self-serve.md)).
 - No CLI. We will build one later on top of the same Frappe APIs.
-- No private networking between VMs, no overlay. No inbound IPv4 to the
-  guest and no per-VM public IPv4 (outbound v4 is via host NAT44).
+- No inbound IPv4 to the guest and no per-VM public IPv4 (outbound v4 is via
+  host NAT44). Private networking between VMs is now a **shipped** capability —
+  a WireGuard **host mesh** carries a per-tenant `fdaa::` private plane
+  ([25-private-networking.md](./25-private-networking.md)); Phase 1 (universal
+  private addressing + host-nftables isolation) is wired, later phases (the proxy
+  dialing dark VMs, fully-dark VMs, `.internal` DNS) are deferred there.
 - No SELinux or AppArmor profile yet. Atlas connects to the host as **root**
   over SSH to run Tasks, and the host *is* hardened at bootstrap (CIS sysctls,
   an sshd drop-in, a kernel-module blocklist, unattended security updates,
@@ -142,12 +146,14 @@ keep it the source of truth.
 16. [Central — the global control plane](./16-central.md)
 17. [The TCP proxy](./17-tcp-proxy.md)
 18. [Self-service subdomain routing (bench-admin sites)](./18-bench-self-routing.md)
-19. [The VPN broker (WireGuard tunnels)](./19-vpn-broker.md)
+19. [The customer gateway (WireGuard dial-in)](./19-vpn-broker.md) — *superseded; now a gateway VM on the [mesh](./25-private-networking.md)*
 20. [The per-VM public firewall](./20-firewall.md)
 21. [The Central-managed tunnel (management-plane lockdown)](./21-tunnel.md)
 22. [Observability — making long-running tasks legible](./22-observability.md)
 23. [Supply chain — the external artefacts Atlas pulls](./23-supply-chain.md)
 24. [VM migration between hosts](./24-vm-migration.md)
+25. [Private networking (the WireGuard host mesh)](./25-private-networking.md)
+26. [Docker compatibility (`docker run` against microVMs)](./27-docker-compat.md) — *design / proposal*
 
 ## First run on a fresh site
 
@@ -259,7 +265,7 @@ operator-facing features add to this list; new tests follow it.
 | Manage a VM's disk and size    | `Virtual Machine` → **Snapshot / Rebuild / Resize**; `Virtual Machine Snapshot` → **Restore to VM / Clone to new VM / Delete** | [05-virtual-machine-lifecycle.md](./05-virtual-machine-lifecycle.md) |
 | Promote a snapshot to an image | `Virtual Machine Snapshot` → **Promote to image** (or `Image Build` → **Promote to image**): same-server base image new VMs pick via the `image` field | [08-images.md](./08-images.md#two-origins-for-a-base-image-a-url-or-a-snapshot-promote) |
 | Attach a public IPv4 to a VM   | `Reserved IP` → **Attach / Detach** (the inbound-v4 primitive: DNAT in, SNAT out) | [06-networking.md](./06-networking.md#ipv4-ingress-reserved-ip) |
-| Broker a VPN tunnel to a VM    | (user/Central-driven) `request_tunnel` / `revoke` provisions a host-terminated WireGuard tunnel scoped to the owner's one VM | [19-vpn-broker.md](./19-vpn-broker.md) |
+| Broker a VPN tunnel to a VM    | (user/Central-driven) `request_vpc_access` / `revoke` dials the owner in as a peer on their tenant `/48` via the **customer gateway VM** on the mesh — one shared `wg0`, one client `/128` (supersedes the host-terminated broker) | [25-private-networking.md](./25-private-networking.md#the-customer-gateway--external-dial-in-to-the-mesh), [19-vpn-broker.md](./19-vpn-broker.md) |
 | Issue a TLS cert for a region  | `Root Domain` → **Issue / Renew Certificate**; `TLS Certificate` → **Issue/Renew / Push to Proxies**; `Route53 Settings` / `Lets Encrypt Settings` → **Test Connection** | [13-tls.md](./13-tls.md) |
 | Route guest-created bench sites | (guest-driven, no operator action) the in-guest `bench-domain-provider register`/`deregister` POSTs reserve/remove a `Subdomain` the controller arbitrates (uniqueness, brand denylist, per-VM cap, own-VM scoping by source `/128`); the `wildcard-domains`/`proxy-servers` queries answer pilot's host-level questions; every call audited; `terminate()` is the only controller-side teardown | [18-bench-self-routing.md](./18-bench-self-routing.md) |
 | Run an ad-hoc task / reboot    | `Server` → **Run Task / Reboot**                        | [04-tasks.md](./04-tasks.md) |

@@ -145,6 +145,14 @@ class ProvisionInputs(TaskInputs):
 	# reason _ipv4_link_variables is re-injected on rebuild). Live attach/detach
 	# of a *running* VM goes through vm-reserved-ip.py, not provision.
 	reserved_ipv4: str = ""  # the attached Reserved IP, 1:1-NAT'd to the guest /30
+	# Optional: the VM's private-plane identity on the WireGuard host mesh (§5).
+	# private_address is the derived fdaa:: /128; tenant_prefix is its tenant /48.
+	# Both empty for a VM with no tenant (operator-created) — vm-network-up reads them
+	# with .get() and skips the whole private-plane block when absent, so an ordinary
+	# VM's env is unchanged. Carried on provision + rebuild so a rebuild re-creates the
+	# private routes + isolation rules on first boot, like reserved_ipv4.
+	private_address: str = ""  # derived: atlas.networking.derive_private_address(tenant, uuid)
+	tenant_prefix: str = ""  # derived: atlas.networking.derive_tenant_prefix(tenant)
 	# Optional second writable data disk (the guest's /dev/vdb). 0 = none.
 	# data_disk_format is an int (0/1), not a bool: the Task runner renders a bool
 	# as a truthy string, so "0" would read True — int parses cleanly to 0/1.
@@ -324,6 +332,7 @@ def main() -> None:
 				ipv4_gateway=inputs.ipv4_gateway,
 				data_disk_mount_at=inputs.data_disk_mount_at,
 				routing_base_url=inputs.routing_base_url,
+				private_address=inputs.private_address,
 			),
 			# Birth of the VM: establish a fresh SSH host identity. The base image
 			# ships SHARED baked host keys, and a clone seeds from another VM's
@@ -482,6 +491,7 @@ def _mmds_metadata(inputs: "ProvisionInputs") -> str:
 		ipv4_guest_cidr=inputs.ipv4_guest_cidr,
 		ipv4_gateway=inputs.ipv4_gateway,
 		routing_base_url=inputs.routing_base_url,
+		private_address=inputs.private_address,
 	)
 	return (
 		json.dumps(
@@ -499,6 +509,11 @@ def _mmds_metadata(inputs: "ProvisionInputs") -> str:
 					# warm-path analogue of rootfs._write_routing_identity. Empty for a
 					# VM with no routing config — the guest client then no-ops.
 					"routing_base_url": identity.routing_base_url,
+					# The private-plane /128 (spec/25) — per-clone (derived from the
+					# clone's UUID), so it MUST ride MMDS like the ipv6/ipv4 do. The
+					# freshen unit writes it into /etc/atlas-network.env so the warm
+					# clone joins the mesh on boot. Empty for a VM off the plane.
+					"private_address": identity.private_address,
 				}
 			},
 			indent=1,
@@ -610,6 +625,12 @@ def _network_env(inputs: "ProvisionInputs") -> str:
 	# is unchanged.
 	if inputs.reserved_ipv4:
 		env += f"RESERVED_IPV4={inputs.reserved_ipv4}\n"
+	# The private-plane identity (§5). Written together (vm-network-up gates the
+	# private block on BOTH), only when the VM has a tenant. Absent on a pre-feature
+	# or tenant-less VM, so the private block is a complete no-op there.
+	if inputs.private_address and inputs.tenant_prefix:
+		env += f"PRIVATE_ADDRESS={inputs.private_address}\n"
+		env += f"TENANT_PREFIX={inputs.tenant_prefix}\n"
 	return env
 
 

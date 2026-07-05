@@ -18,6 +18,7 @@ from atlas._run import run
 from atlas.firewall import remove_firewall
 from atlas.network_env import default_route_device, read_network_env_optional
 from atlas.paths import VirtualMachinePaths
+from atlas.private_network import remove_private_network
 from atlas.reserved_ip_nat import remove_reserved_ip_nat
 
 
@@ -40,6 +41,9 @@ def main() -> None:
 	ipv4_guest_cidr = env.get("IPV4_GUEST_CIDR")
 	atlas_netns = env.get("ATLAS_NETNS")
 	reserved_ipv4 = env.get("RESERVED_IPV4")
+	# The VM's private-plane /128 (design §5). Present once the controller writes it;
+	# absent on a pre-feature or dark-less VM, so the private teardown below no-ops.
+	private_address = env.get("PRIVATE_ADDRESS")
 
 	# Drop the inbound-v4 1:1-NAT first, while we still have the guest /30 from
 	# the env (the namespace delete below would otherwise leave the host-table
@@ -65,6 +69,11 @@ def main() -> None:
 	if host_veth:
 		if virtual_machine_ipv6:
 			run("sudo ip -6 route del {} dev {}", f"{virtual_machine_ipv6}/128", host_veth, check=False)
+		if private_address:
+			# The private-plane /128 host route (design §5). Its netns-side sibling (the
+			# route to the tap) goes with the namespace delete below, like the public
+			# /128's does. No proxy-NDP to delete — fdaa:: was never on-link.
+			run("sudo ip -6 route del {} dev {}", f"{private_address}/128", host_veth, check=False)
 		if ipv4_guest_cidr:
 			# ${IPV4_GUEST_CIDR%/*}/32 — strip the original prefix, route the /32.
 			guest_v4 = ipv4_guest_cidr.split("/", 1)[0]
@@ -78,7 +87,7 @@ def main() -> None:
 	if host_veth:
 		run("sudo ip link del {}", host_veth, check=False)
 
-	# Delete the two nft rules by handle. Look them up by VM IPv6.
+	# Delete the two PUBLIC nft rules by handle. Look them up by VM IPv6.
 	if virtual_machine_ipv6:
 		# handles="$(sudo nft -a list chain inet atlas forward 2>/dev/null \
 		#     | awk -v ip="$VIRTUAL_MACHINE_IPV6" '$0 ~ ip {print $NF}')"
@@ -99,6 +108,18 @@ def main() -> None:
 		# swept by terminate's rm -rf; on a plain stop it persists and vm-network-up
 		# re-applies the block on the next start. Best-effort, idempotent.
 		remove_firewall(virtual_machine_ipv6)
+
+	# Delete the PRIVATE-plane isolation rules (design §4/§5). This is the teardown-bug
+	# fix: the public sweep above matches only VIRTUAL_MACHINE_IPV6, and the private
+	# rules are keyed on the PRIVATE /128 + the veth — so a public-only sweep would
+	# NEVER remove them, leaving stale rules pointing at a deleted (and potentially
+	# recycled) veth = a cross-tenant leak. Runs INDEPENDENTLY of virtual_machine_ipv6
+	# because a dark VM (public_networking=0) has NO public /128 at all, so a
+	# public-gated sweep would be a complete no-op for it. The host-wide terminal
+	# `fdaa::/16 drop` mentions neither this /128 nor the veth, so it is left in place
+	# for the next VM (like the masquerade / IMDS scaffold). Best-effort, idempotent.
+	if private_address and host_veth:
+		remove_private_network(private_address, host_veth)
 
 
 if __name__ == "__main__":

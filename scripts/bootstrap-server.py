@@ -398,6 +398,19 @@ def main() -> None:
 	if "ip daddr 169.254.169.254" not in run("sudo nft list chain inet atlas forward"):
 		run("sudo nft add rule inet atlas forward ip daddr 169.254.169.254 drop")
 
+	# 9-priv. Private-plane DEFAULT-DENY (design §4a). A single terminal guard,
+	#     appended LAST, makes the fdaa::/16 private plane default-deny WITHOUT
+	#     flipping the whole forward chain's policy (public / NAT44 / reserved-IP
+	#     traffic stays under `policy accept`). Every per-VM private rule
+	#     vm-network-up.py installs is allow-by-exception, `nft insert`ed (head)
+	#     ABOVE this drop. Without it, the ABSENCE of a per-VM rule (a stale-script,
+	#     pre-feature, or half-migrated VM) would silently forward cross-tenant.
+	#     Appended here at scaffold time; vm-network-up.py re-asserts it after a host
+	#     reboot, exactly like the IMDS + masquerade rules. Idempotent (guarded on the
+	#     rule text; `add` appends so it stays terminal as long as it is present once).
+	if "ip6 daddr fdaa::/16 drop" not in run("sudo nft list chain inet atlas forward"):
+		run("sudo nft add rule inet atlas forward ip6 daddr fdaa::/16 drop")
+
 	# 9a. IPv4 egress: masquerade the per-VM private /30s (carved from
 	#     100.64.0.0/16) out the host's public uplink. One host-wide rule covers
 	#     every VM — the source range is fixed, so no per-VM NAT churn. The guest
@@ -483,6 +496,20 @@ def main() -> None:
 	run("sudo modprobe {}", "nbd")
 	run("sudo modprobe {}", "dm_clone")
 	install_file("nbd\ndm_clone\n", "/etc/modules-load.d/60-atlas-migration.conf", mode="0644")
+
+	# 11c. WireGuard host mesh (private-plane fabric, design §3). The `wireguard`
+	#      kernel module carries the mesh; the hosts run full Ubuntu with /lib/modules
+	#      (not the guest vmlinux), so `modprobe wireguard` works — the guest
+	#      CONFIG_WIREGUARD gate that variant (a) hit is dead here. Load it now and
+	#      persist it for reboots (the 60-atlas-blocklist targets unused fs/net modules
+	#      only and never touches wireguard). wireguard-tools is already in PACKAGES.
+	#      host-mesh.service re-asserts the wg-mesh device on boot (create + key +
+	#      fdaa::/16 route) once the controller has pushed /etc/atlas-host-mesh.env,
+	#      the host-fabric analog of atlas-pool.service. Enabled here; brought up by
+	#      the first reconcile_host_mesh(), not at bootstrap (no peers exist yet).
+	run("sudo modprobe wireguard")
+	install_file("wireguard\n", "/etc/modules-load.d/60-atlas-wireguard.conf", mode="0644")
+	run("sudo systemctl enable host-mesh.service", check=False, quiet=True)
 
 	# 12. Record state for Atlas to pick up. Single JSON file is the canonical
 	#     source of truth. The bytes still land in /var/lib/atlas/bootstrap.json;

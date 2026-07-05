@@ -56,6 +56,10 @@ def mgmt_ruleset(public_interface: str, wg_port: int, public_allow_ports: list[s
 		f"\t\tct state established,related accept\n"
 		f"\t\tct state invalid drop\n"
 		f"\t\tmeta l4proto {{ icmp, icmpv6 }} accept\n"
+		# UDP/wg_port (51820) carries BOTH WireGuard planes into this host: the
+		# Central-managed control tunnel (spec/21) AND the host-mesh private-plane fabric
+		# (wg-mesh, private-networking-host-mesh.md §C4). Both listen on the same fixed
+		# port region-wide, so this one accept covers both — no extra host-mesh rule needed.
 		f"\t\tudp dport {wg_port} accept\n"
 		f"{allow}"
 		f"\t\tdrop\n"
