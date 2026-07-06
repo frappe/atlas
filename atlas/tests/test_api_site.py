@@ -23,7 +23,6 @@ ROOT_DOMAIN = "blr1.frappe.dev"
 REGION = "blr1"
 
 TEAM = "team-acme"
-TENANT_EMAIL = "owner@acme.example.com"
 
 
 def _ensure_root_domain() -> None:
@@ -61,7 +60,7 @@ class TestCreateSite(IntegrationTestCase):
 		self.addCleanup(frappe.set_user, "Administrator")
 
 	def test_creates_tenant_and_site(self) -> None:
-		result = site_api.create_site(team=TEAM, subdomain="acme", email=TENANT_EMAIL)
+		result = site_api.create_site(team=TEAM, subdomain="acme")
 		self.assertEqual(result["name"], "acme.blr1.frappe.dev")
 		self.assertEqual(result["fqdn"], "acme.blr1.frappe.dev")
 		self.assertEqual(result["status"], "Pending")
@@ -70,35 +69,29 @@ class TestCreateSite(IntegrationTestCase):
 		tenant = frappe.db.get_value("Site", result["name"], "tenant")
 		# The Tenant `name` *is* the Central `Team.name`.
 		self.assertEqual(tenant, TEAM)
-		self.assertEqual(frappe.db.get_value("Tenant", tenant, "email"), TENANT_EMAIL)
 
 	def test_reuses_existing_tenant(self) -> None:
-		"""A second site for the same Central team reuses the one Tenant (no email
-		needed the second time — it is immutable after first creation)."""
-		first = site_api.create_site(team=TEAM, subdomain="acme", email=TENANT_EMAIL)
+		"""A second site for the same Central team reuses the one Tenant (keyed on
+		`team`, the Central `Team.name`)."""
+		first = site_api.create_site(team=TEAM, subdomain="acme")
 		second = site_api.create_site(team=TEAM, subdomain="acme2")
 		t1 = frappe.db.get_value("Site", first["name"], "tenant")
 		t2 = frappe.db.get_value("Site", second["name"], "tenant")
 		self.assertEqual(t1, t2)
 		self.assertEqual(frappe.db.count("Tenant", {"name": TEAM}), 1)
 
-	def test_new_tenant_without_email_throws(self) -> None:
-		with self.assertRaises(frappe.ValidationError) as raised:
-			site_api.create_site(team=TEAM, subdomain="acme")
-		self.assertIn("email is required", str(raised.exception))
-
 	def test_missing_team_throws(self) -> None:
 		with self.assertRaises(frappe.ValidationError) as raised:
-			site_api.create_site(team="", subdomain="acme", email=TENANT_EMAIL)
+			site_api.create_site(team="", subdomain="acme")
 		self.assertIn("team is required", str(raised.exception))
 
 	def test_reserved_label_throws(self) -> None:
 		with self.assertRaises(frappe.ValidationError) as raised:
-			site_api.create_site(team=TEAM, subdomain="www", email=TENANT_EMAIL)
+			site_api.create_site(team=TEAM, subdomain="www")
 		self.assertIn("reserved", str(raised.exception))
 
 	def test_duplicate_subdomain_throws_clean_taken(self) -> None:
-		site_api.create_site(team=TEAM, subdomain="acme", email=TENANT_EMAIL)
+		site_api.create_site(team=TEAM, subdomain="acme")
 		with self.assertRaises(frappe.ValidationError) as raised:
 			site_api.create_site(team=TEAM, subdomain="acme")
 		self.assertIn("already taken", str(raised.exception))
@@ -110,7 +103,6 @@ class TestCreateSite(IntegrationTestCase):
 			result = site_api.create_site(
 				team=TEAM,
 				subdomain="acme",
-				email=TENANT_EMAIL,
 				pilot_credential_id="pcred-abc",
 				central_endpoint="https://central.test",
 				central_auth_token="s3cret-token",
@@ -134,7 +126,7 @@ class TestGetSite(IntegrationTestCase):
 	def test_pending_site_hides_handoff(self) -> None:
 		"""Before Running there is no admin handoff to surface — url + login_url
 		are None, status reflects the live row."""
-		created = site_api.create_site(team=TEAM, subdomain="acme", email=TENANT_EMAIL)
+		created = site_api.create_site(team=TEAM, subdomain="acme")
 		got = site_api.get_site(created["name"])
 		self.assertEqual(got["status"], "Pending")
 		self.assertIsNone(got["url"])
@@ -145,7 +137,7 @@ class TestGetSite(IntegrationTestCase):
 	def test_running_site_reveals_handoff(self) -> None:
 		"""Once Running, get_site surfaces the live URL + the stored login URL +
 		its expiry — the tenant handoff Central polls for."""
-		created = site_api.create_site(team=TEAM, subdomain="acme", email=TENANT_EMAIL)
+		created = site_api.create_site(team=TEAM, subdomain="acme")
 		site = frappe.get_doc("Site", created["name"])
 		login_url = f"https://{created['name']}/app?sid=abc123"
 		expires_at = "2026-07-02 12:00:00"

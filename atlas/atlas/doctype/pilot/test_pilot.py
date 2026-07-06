@@ -28,7 +28,6 @@ from atlas.tests import fixtures
 ROOT_DOMAIN = "blr1.frappe.dev"
 REGION = "blr1"
 TEAM = "team-acme"
-TENANT_EMAIL = "owner@acme.example.com"
 
 
 def _ensure_root_domain() -> None:
@@ -91,7 +90,7 @@ class TestPilot(IntegrationTestCase):
 		return {"server": self.server.name, "image": self.admin_image.name}
 
 	def _new_pilot(self, subdomain: str = "acme"):
-		return fixtures.make_pilot(subdomain, vm_spec=self._spec(), tenant=ensure_tenant(TEAM, TENANT_EMAIL))
+		return fixtures.make_pilot(subdomain, vm_spec=self._spec(), tenant=ensure_tenant(TEAM))
 
 	# ----- identity + label gate ----------------------------------------
 
@@ -146,7 +145,7 @@ class TestPilot(IntegrationTestCase):
 		pilot = fixtures.make_pilot(
 			"acme",
 			vm_spec={"image": image},  # image pinned, server left to placement
-			tenant=ensure_tenant(TEAM, TENANT_EMAIL),
+			tenant=ensure_tenant(TEAM),
 		)
 		vm = frappe.get_doc("Virtual Machine", pilot.virtual_machine)
 		self.assertEqual(vm.server, self.server.name, "placed on the server holding the image")
@@ -173,7 +172,7 @@ class TestPilot(IntegrationTestCase):
 			fixtures.make_pilot(
 				"acme",
 				vm_spec={"image": orphan_image.name},
-				tenant=ensure_tenant(TEAM, TENANT_EMAIL),
+				tenant=ensure_tenant(TEAM),
 			)
 		self.assertIn("not present on any active server", str(raised.exception))
 
@@ -334,9 +333,7 @@ class TestPilotAttached(IntegrationTestCase):
 		self.addCleanup(self._commit_patch.stop)
 
 	def _attached_pilot(self, subdomain: str = "acme-pilot"):
-		pilot = frappe.get_doc(
-			{"doctype": "Pilot", "subdomain": subdomain, "tenant": ensure_tenant(TEAM, TENANT_EMAIL)}
-		)
+		pilot = frappe.get_doc({"doctype": "Pilot", "subdomain": subdomain, "tenant": ensure_tenant(TEAM)})
 		pilot.flags.attach_vm = self.vm.name
 		return pilot.insert(ignore_permissions=True)
 

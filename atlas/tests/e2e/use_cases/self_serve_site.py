@@ -68,11 +68,9 @@ from atlas.tests.e2e.use_cases.proxy_vm import _teardown as _teardown_proxy
 # inside the regional wildcard). Stable across runs so a leaked row is obvious.
 _TEST_SUBDOMAIN = "acme"
 # The Central team this site is provisioned for. create_site get-or-creates a
-# Tenant keyed on it; the throwaway email seeds the Tenant on first use. Both are
-# dropped in teardown (the Tenant row persists past the transaction; the e2e is
-# non-transactional).
+# Tenant keyed on it. Dropped in teardown (the Tenant row persists past the
+# transaction; the e2e is non-transactional).
 _TEST_TEAM = "self-serve-e2e-team"
-_TEST_EMAIL = "self-serve-e2e@example.com"
 
 
 def run(reuse: bool = True, keep: bool = True) -> None:
@@ -120,7 +118,7 @@ def run_smoke(reuse: bool = True, keep: bool = True) -> None:
 			#    which the worker runs on the real droplet: clone golden snapshot →
 			#    boot → deploy → 200 → Subdomain → Running. This is the whole chain
 			#    under test.
-			fqdn = _create_site(_TEST_TEAM, _TEST_SUBDOMAIN, _TEST_EMAIL)
+			fqdn = _create_site(_TEST_TEAM, _TEST_SUBDOMAIN)
 			site_vm_name = _wait_for_site_running(fqdn)
 			_assert_login_url_set(fqdn)
 
@@ -422,16 +420,16 @@ def _restore_root_domains(quieted: list[str]) -> None:
 # --- Central create_site on-ramp -----------------------------------------
 
 
-def _create_site(team: str, subdomain: str, email: str) -> str:
+def _create_site(team: str, subdomain: str) -> str:
 	"""Drive the real Central-facing endpoint and return the created Site's FQDN.
 
-	`create_site` get-or-creates the Tenant (keyed on `team`, `email` seeds it on
-	first use) and inserts the Site (Pending); the Site's after_insert enqueues
-	auto_provision on the worker — the whole clone→deploy→route chain under test.
-	Asserts the returned mirror is shaped the way Central reflects it."""
+	`create_site` get-or-creates the Tenant (keyed on `team`) and inserts the Site
+	(Pending); the Site's after_insert enqueues auto_provision on the worker — the
+	whole clone→deploy→route chain under test. Asserts the returned mirror is shaped
+	the way Central reflects it."""
 	from atlas.atlas.api.site import create_site
 
-	result = create_site(team=team, subdomain=subdomain, email=email)
+	result = create_site(team=team, subdomain=subdomain)
 	frappe.db.commit()
 	fqdn = result["name"]
 	assert frappe.db.exists("Site", fqdn), f"create_site did not insert a Site: {result}"

@@ -105,16 +105,16 @@ Central (owns the tenant) → create_site(team, subdomain) → Tenant + Site (Pe
 ## The create_site → live surface *(built)*
 
 ```
-1. create_site(team, subdomain, email?)               (operator API, Central token)
-2.   ensure_tenant(team, email)                        → get-or-create Tenant
+1. create_site(team, subdomain)                        (operator API, Central token)
+2.   ensure_tenant(team)                                → get-or-create Tenant
 3.   insert Site (Pending), stamped with the tenant     → returns the mirror row
 4. Site.after_insert → auto_provision (worker)          → provision → deploy → 200 → Running
 5. site.* events to Central / get_site poll             → status, then URL + login URL
 ```
 
-- **`atlas.atlas.api.site.create_site(team, subdomain, email=None)`** is the
+- **`atlas.atlas.api.site.create_site(team, subdomain)`** is the
   write endpoint. It `ensure_tenant`s the Central team
-  (`email` seeds a new Tenant; an existing one is reused), inserts the `Site` with
+  (get-or-create, keyed on `team`), inserts the `Site` with
   the tenant stamped, and returns the **mirror row** Central reflects (`name`,
   `team`, `subdomain`, `status`, `fqdn`). The `Site`
   controller enforces the **same Contract-A label rules** (shared

@@ -29,7 +29,6 @@ from atlas.tests import fixtures
 ROOT_DOMAIN = "blr1.frappe.dev"
 REGION = "blr1"
 TEAM = "team-acme"
-TENANT_EMAIL = "owner@acme.example.com"
 
 
 def _ensure_root_domain() -> None:
@@ -117,7 +116,6 @@ class TestCreateVM(IntegrationTestCase):
 			vcpus=1,
 			memory_megabytes=512,
 			disk_gigabytes=2,
-			email=TENANT_EMAIL,
 			cpu_max_cores=None,
 		)
 

@@ -36,14 +36,13 @@ def create_vm(
 	vcpus: int,
 	memory_megabytes: int,
 	disk_gigabytes: int,
-	email: str | None = None,
 	cpu_max_cores: float | None = None,
 	frappe_version: str | None = None,
 ) -> dict:
 	"""Provision a bench VM for a Central team and return its (VM-shaped) mirror row.
 
-	`team` is the Central `Team.name`; `email` seeds the Tenant on first use (the
-	team owner). Resources come from the size Central picked. `title` is the single
+	`team` is the Central `Team.name`; it get-or-creates the Tenant that groups this
+	team's resources. Resources come from the size Central picked. `title` is the single
 	DNS label Central chose — it doubles as the pilot's subdomain: Atlas fronts the
 	bench at `<title>.<region domain>` (derived, never stored — the same Contract-A
 	rule `create_site` uses, so region/domain never leave Atlas).
@@ -59,14 +58,15 @@ def create_vm(
 
 	from atlas.atlas.placement import image_for_version, version_from_image
 
-	tenant = ensure_tenant(team, email)
+	tenant = ensure_tenant(team)
 
 	spec = {
 		"vcpus": int(vcpus),
 		"memory_megabytes": int(memory_megabytes),
 		"disk_gigabytes": int(disk_gigabytes),
-		# The Frappe version Central picked selects the bench image; an unknown/unbuilt
-		# version resolves to the default, so it never blocks the create. Server placement
+		# The Frappe version Central picked selects the Pilot's admin-console image
+		# (`bench-<version>-admin`); an unknown/unbuilt version resolves to the default, so
+		# it never blocks the create. Server placement
 		# stays Atlas's concern: the Pilot's _provision_backing_vm picks a server that HOLDS
 		# this image (placement.default_server_for_image) rather than a hard-coded UUID — a
 		# local bench image lives only where it was baked/exported, so the host is chosen

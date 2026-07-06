@@ -38,9 +38,7 @@ TENANT_NAME = "TEAM-90001"  # a Central naming-series id — NOT a UUID, on purp
 
 def _ensure_tenant(name: str = TENANT_NAME) -> str:
 	if not frappe.db.exists("Tenant", name):
-		frappe.get_doc({"doctype": "Tenant", "team": name, "email": f"{name.lower()}@example.test"}).insert(
-			ignore_permissions=True
-		)
+		frappe.get_doc({"doctype": "Tenant", "team": name}).insert(ignore_permissions=True)
 	return name
 
 

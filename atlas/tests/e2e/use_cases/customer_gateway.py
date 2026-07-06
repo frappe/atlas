@@ -316,9 +316,7 @@ def _assert_client_absent_from_mesh(observer_host: str, peer) -> None:
 
 def _ensure_e2e_tenant(name: str) -> str:
 	if not frappe.db.exists("Tenant", name):
-		frappe.get_doc({"doctype": "Tenant", "team": name, "email": f"{name}@e2e.test"}).insert(
-			ignore_permissions=True
-		)
+		frappe.get_doc({"doctype": "Tenant", "team": name}).insert(ignore_permissions=True)
 		frappe.db.commit()
 	return name
 

@@ -563,7 +563,7 @@ class TestFrontDoorResolvesSite(IntegrationTestCase):
 		login_url — the exact shape a completed create_site leaves behind."""
 		from atlas.atlas.doctype.tenant.tenant import ensure_tenant
 
-		tenant = ensure_tenant("fd-team", "fd@example.test")
+		tenant = ensure_tenant("fd-team")
 		server = fixtures.make_server(
 			fixtures.make_provider("fd-site-provider", provider_type="Fake"),
 			"fd-site-server",

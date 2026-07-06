@@ -25,15 +25,14 @@ from atlas.atlas.doctype.tenant.tenant import ensure_tenant
 def create_site(
 	team: str,
 	subdomain: str,
-	email: str | None = None,
 	pilot_credential_id: str | None = None,
 	central_endpoint: str | None = None,
 	central_auth_token: str | None = None,
 ) -> dict:
 	"""Provision a self-serve site for a Central team and return its mirror row.
 
-	`team` is the Central `Team.name`; `email` seeds the Tenant on first use (the
-	team owner). The `subdomain` is the single DNS label the site is
+	`team` is the Central `Team.name`; it get-or-creates the Tenant that groups this
+	team's resources. The `subdomain` is the single DNS label the site is
 	fronted at (`<subdomain>.<region domain>`); the Site controller enforces the
 	Contract-A label rules and the authoritative FQDN uniqueness, throwing a clean
 	"already taken" the caller can surface. The region is this Atlas instance's own
@@ -44,7 +43,7 @@ def create_site(
 	clone→deploy→route work runs in the background (`Site.auto_provision`) and is
 	reported to Central via `site.*` events / `get_site` polling.
 	"""
-	tenant = ensure_tenant(team, email)
+	tenant = ensure_tenant(team)
 
 	# The pilot credential is a BENCH credential — it never lives on the Site. Central
 	# mints it and hands us the id + the endpoint/token the pilot calls back with; we

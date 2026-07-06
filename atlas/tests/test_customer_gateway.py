@@ -33,9 +33,7 @@ VALID_KEY = "xTIBA5rboUvnH4htodjb6e697QjLERt1NAB4mZqp8Dg="
 
 def _ensure_tenant(name: str = TENANT_NAME) -> str:
 	if not frappe.db.exists("Tenant", name):
-		frappe.get_doc({"doctype": "Tenant", "team": name, "email": f"{name.lower()}@example.test"}).insert(
-			ignore_permissions=True
-		)
+		frappe.get_doc({"doctype": "Tenant", "team": name}).insert(ignore_permissions=True)
 	return name
 
 

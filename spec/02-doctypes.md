@@ -1164,10 +1164,12 @@ Atlas as the operator. The tenant's `name` **is** the Central `Team.name`:
 Central passes that id as `team` on every provisioning call, and the Tenant is
 named by it. There is no translation table — the primary key carries the mapping,
 so the `tenant` link stamped on a resource already *is* the Central team. Central
-also sets
-the immutable `email` once at creation, then stamps the optional, set-only-once
-`tenant` link on the resources it provisions (`Virtual Machine`, `Virtual
-Machine Image`, `Virtual Machine Snapshot`).
+stamps the optional, set-only-once `tenant` link on the resources it provisions
+(`Virtual Machine`, `Virtual Machine Image`, `Virtual Machine Snapshot`).
+
+The tenant carries no identity of its own beyond that key. Central performs every
+permission check, so Atlas keeps no contact `email` or end-user scoping — the
+tenant is just the tag that groups a team's resources (its VPC).
 
 This is operator/Central-facing only (System Manager permission). It is pure data
 plus list helpers — no Tasks, no lifecycle.
@@ -1184,17 +1186,12 @@ plus list helpers — no Tasks, no lifecycle.
 | Field    | Type                  | Reqd | Read-only | Notes                                                                              |
 | -------- | --------------------- | ---- | --------- | ---------------------------------------------------------------------------------- |
 | `name`   | (autoname, set by user) | Y    | Y       | Primary key — **is** the Central `Team.name`. `autoname()` sets it from the `team` create kwarg (not a stored field); throws if absent. Reusing a team get-or-creates the same row; a fresh collision is a DB duplicate-key error. |
-| `title`  | Data                  |      |           | `title_field`. Human label for lists. `before_insert` defaults it to `email` (or the `name` / team) when Central omits it, so Desk lists show a readable name. Still editable. |
-| `email`  | Data (`Email`)        | Y    |           | `set_only_once`, `unique`. Central sets once. Lowercased in `validate()`.          |
+| `title`  | Data                  |      |           | `title_field`. Human label for lists. `before_insert` defaults it to the `name` (team id) when Central omits it, so Desk lists show a readable name. Still editable. |
 
 The Central `Team.name` is supplied as the `team` kwarg on create (`ensure_tenant`
 / the provisioning APIs) and becomes the row's `name` — it is not persisted as a
-separate column. Immutability of `email` is enforced both by the JSON
-`set_only_once` and by a controller `IMMUTABLE_AFTER_INSERT` guard — the same
-belt-and-suspenders pattern as `Virtual Machine` and `Virtual Machine Image`.
-`name` is immutable by virtue of being the primary key. Uniqueness of `email` is
-a DB unique index from the JSON `unique` flag; the team is unique because it is
-the primary key.
+separate column. `name` is immutable by virtue of being the primary key, and the
+team is unique because it is the primary key. There are no other identity fields.
 
 ### The `tenant` link on resources
 
@@ -1208,8 +1205,8 @@ the framework's `set_only_once` alone — it has no immutability tuple).
 
 - `autoname()` — sets `name` from the `team` create kwarg, so the tenant's
   primary key *is* its Central `Team.name`; throws if absent.
-- `before_insert()` — defaults `title` to `email` (or the `name` / team) when
-  Central omits it, so a tenant never shows up in Desk lists as a bare team id.
+- `before_insert()` — defaults `title` to the `name` (team id) when Central omits
+  it, so a tenant always has a human label in Desk lists.
 - `virtual_machines()` / `images()` / `snapshots()` (whitelisted) — the rows of
   each resource type stamped with this tenant, newest first.
 - `resources()` (whitelisted) — all three in one round-trip as
@@ -1221,7 +1218,6 @@ the framework's `set_only_once` alone — it has no immutability tuple).
 ```
 ── Overview ──
 title
-email
 ```
 
 The `name` (the Central reference) shows as the document id; there is no separate
@@ -1229,7 +1225,7 @@ field for it.
 
 ### List view
 
-- Columns: `title`, `email`.
+- Columns: `title`.
 
 ### Permissions
 
