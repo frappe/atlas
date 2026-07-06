@@ -7,8 +7,10 @@ from atlas.tests.fixtures import make_image, no_commit_enqueue
 
 
 class TestFrappeVersionImage(IntegrationTestCase):
-	"""The version↔image bridge: Central picks a Frappe version, Atlas resolves it to
-	a `bench-<token>` image and reports the token back so the mirror is ground truth."""
+	"""The version↔image bridge: Central picks a Frappe version, Atlas resolves it to the
+	`bench-<token>-admin` Pilot image and reports the token back so the mirror is ground
+	truth. A Central "server" is a Pilot (admin console), so the version maps to the admin
+	variant — the plain `bench-<token>` image backs a self-serve Site instead (spec/14)."""
 
 	def test_version_from_image_parses_bench_names(self):
 		self.assertEqual(version_from_image("bench-v16"), "v16")
@@ -19,10 +21,12 @@ class TestFrappeVersionImage(IntegrationTestCase):
 		self.assertIsNone(version_from_image("ubuntu-24.04"))
 		self.assertIsNone(version_from_image(None))
 
-	def test_image_for_version_resolves_active_bench_image(self):
+	def test_image_for_version_resolves_active_admin_image(self):
+		# Central's create_vm stands up a Pilot (admin console), so a version resolves to
+		# its `-admin` variant — not the plain `bench-v16` site image.
 		with no_commit_enqueue():
-			make_image("bench-v16", is_active=1)
-		self.assertEqual(image_for_version("v16"), "bench-v16")
+			make_image("bench-v16-admin", is_active=1)
+		self.assertEqual(image_for_version("v16"), "bench-v16-admin")
 
 	def test_image_for_version_falls_back_when_unbuilt(self):
 		# A version with no active image must not block the create — it resolves to the
@@ -33,12 +37,14 @@ class TestFrappeVersionImage(IntegrationTestCase):
 		self.assertEqual(image_for_version("v99-unbuilt"), "only-default")
 		self.assertEqual(image_for_version(None), "only-default")
 
-	def test_available_versions_lists_plain_bench_images_only(self):
+	def test_available_versions_lists_admin_bench_images_only(self):
+		# Central offers Pilots (admin consoles), so its version picker is drawn from the
+		# active `-admin` images — the plain site image and non-bench images are excluded.
 		with no_commit_enqueue():
-			make_image("bench-v15", is_active=1)
 			make_image("bench-v15-admin", is_active=1)
+			make_image("bench-v16", is_active=1)  # plain site variant — not offered
 			make_image("plain-os", is_active=1)
 		versions = available_frappe_versions()
-		self.assertIn("v15", versions)
-		self.assertNotIn("v15-admin", versions)  # -admin variant excluded
+		self.assertIn("v15", versions)  # from bench-v15-admin
+		self.assertNotIn("v16", versions)  # plain bench-v16 (site image) excluded
 		self.assertNotIn("plain-os", versions)  # non-bench image excluded

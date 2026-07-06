@@ -48,19 +48,23 @@ def default_image() -> str:
 	return active[0]
 
 
-# Central offers Frappe versions (v16/v15/nightly) that map 1:1 to the bench base
-# images the Image Build recipes promote — named exactly `bench-<token>`. The
-# `-admin` variants are an operator concern, never offered to end users.
+# Central offers Frappe versions (v16/v15/nightly) that map 1:1 to the bench admin
+# images the Image Build recipes promote — named `bench-<token>-admin`. Those admin
+# images are the Pilot (bench admin console) product `create_vm` provisions: a Central
+# "server" IS a Pilot, so the version it picks resolves to the `-admin` variant, not the
+# plain `bench-<token>` site image (which backs a self-serve Site, spec/14). Both share
+# the same `bench-<token>` version token — that is what Central mirrors.
 BENCH_IMAGE_PREFIX = "bench-"
 ADMIN_IMAGE_SUFFIX = "-admin"
 
 
 def image_for_version(frappe_version: str | None) -> str:
-	"""Resolve a Frappe version token to its active bench image (`bench-<token>`),
-	falling back to the configured default when the token is unset or has no active
-	image — an unknown/unbuilt version never blocks provisioning."""
+	"""Resolve a Frappe version token to its active admin bench image
+	(`bench-<token>-admin`) — the Pilot admin console `create_vm` stands up — falling
+	back to the configured default when the token is unset or has no active admin image,
+	so an unknown/unbuilt version never blocks provisioning."""
 	if frappe_version:
-		image = f"{BENCH_IMAGE_PREFIX}{frappe_version}"
+		image = f"{BENCH_IMAGE_PREFIX}{frappe_version}{ADMIN_IMAGE_SUFFIX}"
 		if frappe.db.exists("Virtual Machine Image", {"name": image, "is_active": 1}):
 			return image
 	return default_image()
