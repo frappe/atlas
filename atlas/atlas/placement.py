@@ -70,6 +70,23 @@ def image_for_version(frappe_version: str | None) -> str:
 	return default_image()
 
 
+def version_image_map() -> dict[str, str]:
+	"""The version→admin-image map Central resolves a picked Frappe version through.
+
+	One entry per active admin bench image (`bench-<token>-admin`): `{token: image}`,
+	e.g. `{"v16": "bench-v16-admin"}`. Same source as `available_frappe_versions` (the
+	tokens Central offers) and `image_for_version` (what each resolves to) — built here
+	so the visible map and the provisioning path can't drift. Operator-visible only; the
+	authoritative resolve stays `image_for_version`."""
+	names = frappe.get_all(
+		"Virtual Machine Image",
+		filters={"is_active": 1, "image_name": ["like", f"{BENCH_IMAGE_PREFIX}%{ADMIN_IMAGE_SUFFIX}"]},
+		pluck="image_name",
+		ignore_permissions=True,
+	)
+	return {version_from_image(name): name for name in names if version_from_image(name)}
+
+
 def version_from_image(image: str | None) -> str | None:
 	"""The Frappe version token a bench image carries (`bench-v16` → `v16`), or None
 	for a non-bench/plain image. Central mirrors this as the VM's provisioned version."""

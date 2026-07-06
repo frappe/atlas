@@ -1,8 +1,10 @@
+import json
+
 import frappe
 from frappe.tests import IntegrationTestCase
 
 from atlas.atlas.api.inventory import available_frappe_versions
-from atlas.atlas.placement import image_for_version, version_from_image
+from atlas.atlas.placement import image_for_version, version_from_image, version_image_map
 from atlas.tests.fixtures import make_image, no_commit_enqueue
 
 
@@ -48,3 +50,29 @@ class TestFrappeVersionImage(IntegrationTestCase):
 		self.assertIn("v15", versions)  # from bench-v15-admin
 		self.assertNotIn("v16", versions)  # plain bench-v16 (site image) excluded
 		self.assertNotIn("plain-os", versions)  # non-bench image excluded
+
+	def test_version_image_map_pairs_each_version_with_its_admin_image(self):
+		# The operator-visible map: same admin-image source as available_frappe_versions,
+		# but carrying what each version resolves to. Every key resolves to its value via
+		# image_for_version, so the visible map can't drift from the provisioning path.
+		# Unique tokens so a sibling test's leftover images can't perturb the assertions.
+		with no_commit_enqueue():
+			make_image("bench-map15-admin", is_active=1)
+			make_image("bench-map16", is_active=1)  # plain site variant — excluded
+			make_image("plain-map-os", is_active=1)  # non-bench — excluded
+		mapping = version_image_map()
+		self.assertEqual(mapping.get("map15"), "bench-map15-admin")
+		self.assertNotIn("map16", mapping)  # plain site variant carries no admin image
+		self.assertNotIn("plain-map-os", mapping)
+		# Keys match the offered versions; each resolves to its mapped image.
+		self.assertEqual(set(mapping), set(available_frappe_versions()))
+		for version, image in mapping.items():
+			self.assertEqual(image_for_version(version), image)
+
+	def test_central_settings_onload_computes_the_map(self):
+		# The form shows the map live on open — read-only, computed by onload, never stored.
+		with no_commit_enqueue():
+			make_image("bench-v16-admin", is_active=1)
+		settings = frappe.get_cached_doc("Central Settings")
+		settings.run_method("onload")
+		self.assertEqual(json.loads(settings.version_image_map).get("v16"), "bench-v16-admin")

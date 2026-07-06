@@ -1,3 +1,5 @@
+import json
+
 import frappe
 from frappe import _
 from frappe.model.document import Document
@@ -25,9 +27,19 @@ class CentralSettings(Document):
 		tunnel_ip: DF.Data | None
 		tunnel_status: DF.Literal["Inactive", "Provisioning", "Active", "Reverting"]
 		url: DF.Data
+		version_image_map: DF.JSON | None
 		wg_listen_port: DF.Int
 		wg_public_key: DF.Data | None
 	# end: auto-generated types
+
+	def onload(self) -> None:
+		"""Compute `version_image_map` for the form on open — the versions Central can
+		offer and the active admin image each resolves to. Live from this region's active
+		admin images, never stored: the field is read-only and this is the only writer, so
+		it always reflects what Central pulls from `available_frappe_versions`."""
+		from atlas.atlas.placement import version_image_map
+
+		self.version_image_map = json.dumps(version_image_map(), indent=2)
 
 	@frappe.whitelist()
 	def test_connection(self) -> dict:

@@ -84,12 +84,6 @@ def available_frappe_versions() -> list[str]:
 	the bench admin console — so its version picker is the versions that have an active
 	*admin* image, not the plain `bench-<token>` site images (those back self-serve
 	Sites, spec/14). Central derives its picker from this so the two never drift."""
-	from atlas.atlas.placement import ADMIN_IMAGE_SUFFIX, BENCH_IMAGE_PREFIX, version_from_image
+	from atlas.atlas.placement import version_image_map
 
-	names = frappe.get_all(
-		"Virtual Machine Image",
-		filters={"is_active": 1, "image_name": ["like", f"{BENCH_IMAGE_PREFIX}%{ADMIN_IMAGE_SUFFIX}"]},
-		pluck="image_name",
-		ignore_permissions=True,
-	)
-	return [version_from_image(name) for name in names]
+	return list(version_image_map())

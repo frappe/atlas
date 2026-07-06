@@ -13,6 +13,8 @@
   "section_break_registration",
   "column_break_registration",
   "status",
+  "section_break_images",
+  "version_image_map",
   "section_break_tunnel",
   "tunnel_ip",
   "tunnel_cidr",
@@ -78,6 +80,19 @@
    "fieldname": "status",
    "fieldtype": "Small Text",
    "label": "Status",
+   "read_only": 1
+  },
+  {
+   "description": "The Frappe versions Central can offer on its new-server form, and the active admin bench image each resolves to. Computed live from this region's active admin images — read-only, mirrors what Central pulls from available_frappe_versions.",
+   "fieldname": "section_break_images",
+   "fieldtype": "Section Break",
+   "label": "Images"
+  },
+  {
+   "description": "version → bench-<version>-admin image, e.g. {\"v16\": \"bench-v16-admin\"}. Computed on load from the active admin images; not stored.",
+   "fieldname": "version_image_map",
+   "fieldtype": "JSON",
+   "label": "Version Image Map",
    "read_only": 1
   },
   {
