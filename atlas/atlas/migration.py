@@ -885,7 +885,29 @@ def _phase_repointing(doc) -> bool:
 	if not doc.keep_address:
 		_repoint_routes(doc)
 	_handle_reserved_ip(doc)
+	_repoint_private_plane(doc)
 	return True
+
+
+def _repoint_private_plane(doc) -> None:
+	"""Move the VM's private /128 from the source host's AllowedIPs to the target's
+	(private-networking-host-mesh.md §7). The private address is HOST-INDEPENDENT — it
+	survives the move byte-for-byte — so only which peer advertises it changes. Unlike
+	the public re-point this runs on BOTH keep-address and change-address migrations: the
+	private plane moves with the VM regardless of what happens to the public /128.
+
+	The cutover MUST be SEQUENCED, not converging (§7): WireGuard requires non-overlapping
+	AllowedIPs across peers, so a converging 2-peer push could momentarily leave the /128
+	in BOTH hosts. `sequenced_migration_cutover` does remove-from-source THEN add-to-target
+	under the migration's lock. No-op for a tenant-less VM (no private /128) or a Fake fleet.
+	Idempotent: a second run recomputes residency from the (already-committed) DB and
+	re-pushes the same end state."""
+	vm_tenant = frappe.db.get_value("Virtual Machine", doc.virtual_machine, "tenant")
+	if not vm_tenant:
+		return
+	from atlas.atlas.host_mesh import sequenced_migration_cutover
+
+	sequenced_migration_cutover(doc.virtual_machine, doc.source_server, doc.target_server)
 
 
 def _phase_cleanup(doc) -> bool:

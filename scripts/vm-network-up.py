@@ -31,6 +31,7 @@ from atlas._run import run, run_ok
 from atlas.firewall import apply_persisted_firewall
 from atlas.network_env import default_route_device, read_network_env
 from atlas.paths import VirtualMachinePaths
+from atlas.private_network import apply_private_network
 from atlas.reserved_ip_nat import (
 	apply_reserved_ip_nat,
 	apply_routed_reserved_ip_nat,
@@ -56,6 +57,13 @@ def main() -> None:
 	# opted into inbound v4 (today, the reverse proxy). Absent for every ordinary
 	# VM, so the 1:1-NAT block below is skipped and nothing changes.
 	reserved_ipv4 = env.get("RESERVED_IPV4")
+
+	# Optional: the VM's private-plane identity on the WireGuard host mesh (design
+	# §5). Present once the controller writes PRIVATE_ADDRESS + TENANT_PREFIX into
+	# network.env (universal private addressing). Absent on a pre-feature VM, so the
+	# private-plane block below is skipped and the VM keeps exactly today's behavior.
+	private_address = env.get("PRIVATE_ADDRESS")
+	tenant_prefix = env.get("TENANT_PREFIX")
 
 	# The guest's private v4 as a bare host address. The host routes a /32 to it
 	# (the v4 analog of the VM's /128 v6 route) — a route prefix must be a network
@@ -215,6 +223,33 @@ def main() -> None:
 		virtual_machine_ipv6,
 		host_veth,
 	)
+
+	# 7a. Private plane (the WireGuard host mesh, design §5). Present only once the
+	#     controller writes PRIVATE_ADDRESS + TENANT_PREFIX into network.env; absent
+	#     on a pre-feature VM, so this whole block is skipped and the VM keeps exactly
+	#     today's public-only behavior. When present:
+	#       - route the VM's private /128 to the tap (inside the netns) so a packet
+	#         decap'd from wg-mesh reaches the guest, and to the host veth (host ns) so
+	#         the host forwards it in — siblings of the public /128 lines in step 4/6.
+	#         There is NO proxy-NDP for fdaa:: — it is never on-link (it is routed out
+	#         wg-mesh by the host-mesh route, not delivered on the uplink).
+	#       - install the per-VM isolation rules + re-assert the terminal default-deny
+	#         (apply_private_network, design §4): anti-spoof, same-tenant egress, infra
+	#         reach-through, cross-host delivery. Idempotent (guarded on canonical nft
+	#         text), so a cold boot / restart is a no-op.
+	if private_address and tenant_prefix:
+		run(
+			"sudo ip netns exec {} ip -6 route replace {} dev {}",
+			atlas_netns,
+			f"{private_address}/128",
+			tap_device,
+		)
+		run(
+			"sudo ip -6 route replace {} via fe80::3 dev {}",
+			f"{private_address}/128",
+			host_veth,
+		)
+		apply_private_network(host_veth, private_address, tenant_prefix)
 
 	# 8. Inbound v4: if a Reserved IP is attached, 1:1-NAT it to the guest's /30,
 	#    rebuilt on every cold boot from the RESERVED_IPV4 flag like the scaffold

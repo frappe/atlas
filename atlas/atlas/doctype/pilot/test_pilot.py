@@ -117,6 +117,66 @@ class TestPilot(IntegrationTestCase):
 		# The pilot mirrors the mode onto its own row for the mint/TTL logic.
 		self.assertEqual(pilot.build_mode, "admin")
 
+	# ----- placement without a pinned server ----------------------------
+
+	def _sync_image_to(self, image: str, server: str) -> None:
+		"""Record a successful `sync-image` Task so the image has a home on `server` —
+		the presence signal placement.image_home_servers reads."""
+		import json
+
+		frappe.get_doc(
+			{
+				"doctype": "Task",
+				"server": server,
+				"script": "sync-image",
+				"variables": json.dumps({"IMAGE_NAME": image}),
+				"status": "Success",
+				"triggered_by": "Administrator",
+			}
+		).insert(ignore_permissions=True)
+
+	def test_provision_without_server_pin_places_on_image_home(self) -> None:
+		"""No server pin (the create_vm path now that the hard-coded UUID is gone): the
+		Pilot picks a server that HOLDS the image, not just any Active host. Sync a
+		dedicated image to the fake server, provision without pinning, assert it landed
+		there. (A uniquely-named image so no other suite's committed sync-image Task —
+		those rows commit — can fake or steal this test's presence trail.)"""
+		image = fixtures.make_image("fake-bench-place-image", build_mode="admin").name
+		self._sync_image_to(image, self.server.name)
+		pilot = fixtures.make_pilot(
+			"acme",
+			vm_spec={"image": image},  # image pinned, server left to placement
+			tenant=ensure_tenant(TEAM, TENANT_EMAIL),
+		)
+		vm = frappe.get_doc("Virtual Machine", pilot.virtual_machine)
+		self.assertEqual(vm.server, self.server.name, "placed on the server holding the image")
+
+	def test_provision_without_server_pin_throws_when_image_nowhere(self) -> None:
+		"""If the pinned image lives on no active server, provisioning fails loudly at the
+		boundary ('export it first') instead of picking a host that lacks the bytes — the
+		failure the old hard-coded UUID pin hid.
+
+		The orphan is a LOCAL image (no rootfs URL): a URL image's `after_insert` fans out
+		a sync Task to every Active server (committed presence), so it is never truly
+		homeless — a local image with no promote/export trail is. That is exactly the
+		spec/08 shape this guard protects: a snapshot-promoted bench image baked on ONE
+		box that hasn't been exported anywhere the placement can reach."""
+		orphan_image = fixtures.make_image(
+			"fake-bench-orphan-local-image",
+			build_mode="admin",
+			rootfs_url="",
+			rootfs_sha256="",
+			kernel_url="",
+			kernel_sha256="",
+		)
+		with self.assertRaises(frappe.ValidationError) as raised:
+			fixtures.make_pilot(
+				"acme",
+				vm_spec={"image": orphan_image.name},
+				tenant=ensure_tenant(TEAM, TENANT_EMAIL),
+			)
+		self.assertIn("not present on any active server", str(raised.exception))
+
 	# ----- orchestration -------------------------------------------------
 
 	def _drive_provision(self, pilot):

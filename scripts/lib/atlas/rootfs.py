@@ -41,6 +41,12 @@ class Identity:
 	# client then raises NotConfigured and no-ops, so an ordinary (non-bench) VM is
 	# unaffected. NON-SECRET, no token (caller resolution is by source address).
 	routing_base_url: str = ""
+	# The VM's private-plane /128 on the WireGuard host mesh (spec/25). When set, the
+	# guest gets it as a SECOND address on eth0 and a route for fdaa::/16 via its existing
+	# fe80::1 gateway — the host's wg-mesh carries it. Empty for a VM with no tenant
+	# (off the private plane), so atlas-network.service skips the two extra ExecStarts and
+	# an ordinary VM's guest config is byte-for-byte unchanged.
+	private_address: str = ""
 
 	@property
 	def hostname(self) -> str:
@@ -175,6 +181,10 @@ def _write_network_env(mount_point: str, identity: Identity) -> None:
 		f"VIRTUAL_MACHINE_IPV6={identity.ipv6_address}\n"
 		f"VIRTUAL_MACHINE_IPV4={identity.ipv4_guest_cidr}\n"
 		f"VIRTUAL_MACHINE_IPV4_GATEWAY={identity.ipv4_gateway}\n"
+		# The private-plane /128 (spec/25). Always written (empty when off the plane) so
+		# atlas-network.service's ${PRIVATE_ADDRESS} test is well-defined; the service
+		# skips the fdaa:: config when it is empty.
+		f"PRIVATE_ADDRESS={identity.private_address}\n"
 	)
 	install_file(content, f"{mount_point}/etc/atlas-network.env", mode="0644")
 

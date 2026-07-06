@@ -3,7 +3,10 @@
 Each VM gets one public **IPv6** address — that is its identity and its only
 inbound path. For **outbound** traffic to IPv4-only destinations, each VM also
 gets a private IPv4 that the host masquerades (NAT44). No inbound IPv4, no
-per-VM public v4. No private network between VMs. No overlay.
+per-VM public v4. VM-to-VM private networking lives on a separate plane — a
+WireGuard **host mesh** carrying a per-tenant `fdaa::` overlay
+([25-private-networking.md](./25-private-networking.md)); this chapter is the
+public plane only.
 
 ## Why IPv6 for identity
 

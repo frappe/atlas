@@ -1,0 +1,32 @@
+[Unit]
+# Brings up the customer GATEWAY VM's single wg0 + the static same_48 eBPF guard
+# (spec/25 Phase 5, spec/26, customer-vpc-vpn.md §9). Runs INSIDE the gateway guest —
+# the gateway is an operator-owned infra guest, the proxy VM's sibling. The guest
+# analog of host-mesh.service's reboot self-sufficiency: it re-asserts the wg0 device,
+# mints/reuses the gateway's own key, attaches the never-per-customer eBPF guard, and
+# adds the host-local input drop, so a rebooted gateway is ready before the controller's
+# next reconcile rather than dropping every customer until then.
+#
+# The customer PEERS are NOT set here — the controller (atlas.customer_gateway) pushes
+# them over guest-SSH via `wg syncconf`. This unit only owns the device + the guard.
+Description=Atlas customer gateway (WireGuard wg0 + same_48 guard)
+After=network-online.target
+Wants=network-online.target
+# The env file (port, MTU) is staged by the controller when the gateway is stood up.
+# Absent it, bring_up_gateway() still uses the defaults, so gate only softly — but the
+# unit is only enabled on a gateway guest, so its mere presence means "be a gateway".
+ConditionPathExists=/etc/atlas-gateway.env
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# Re-assert via the durable atlas package (placed under /var/lib/atlas/bin by the
+# controller stage). bring_up_gateway() is idempotent: create-or-replace at every step,
+# key minted once and reused. Runs under the guest's SYSTEM python3 — the gateway is a
+# GUEST, which has no host Atlas venv; bring_up_gateway needs only stdlib + the staged
+# atlas._run / atlas.network_env (no frappe, no cryptography), so system python3 suffices.
+ExecStart=/usr/bin/python3 -c "import sys; sys.path.insert(0, '/var/lib/atlas/bin'); from atlas.gateway import bring_up_gateway; bring_up_gateway()"
+ExecStop=/usr/bin/python3 -c "import sys; sys.path.insert(0, '/var/lib/atlas/bin'); from atlas.gateway import tear_down_gateway; tear_down_gateway()"
+
+[Install]
+WantedBy=multi-user.target

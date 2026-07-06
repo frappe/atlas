@@ -66,13 +66,34 @@ class TestCreateVM(IntegrationTestCase):
 		for name in frappe.get_all("Virtual Machine Image", filters={"is_active": 1}, pluck="name"):
 			if name != self.admin_image.name:
 				frappe.db.set_value("Virtual Machine Image", name, "is_active", 0)
+		# create_vm no longer pins a hardcoded server — the Pilot places the VM on a
+		# server that HOLDS the default image (placement.default_server_for_image). Give
+		# the image a home on the fake server by recording a successful sync-image Task,
+		# so placement finds a candidate instead of throwing "not present on any server".
+		self._sync_image_to(self.admin_image.name, self.server.name)
 		for name in frappe.get_all("Pilot", pluck="name"):
 			frappe.delete_doc("Pilot", name, force=1, ignore_permissions=True)
 		self.addCleanup(frappe.set_user, "Administrator")
 
+	def _sync_image_to(self, image: str, server: str) -> None:
+		"""Record a successful `sync-image` Task so `image` has a home on `server` — the
+		presence signal placement.image_home_servers reads to pick a placement host."""
+		import json
+
+		frappe.get_doc(
+			{
+				"doctype": "Task",
+				"server": server,
+				"script": "sync-image",
+				"variables": json.dumps({"IMAGE_NAME": image}),
+				"status": "Success",
+				"triggered_by": "Administrator",
+			}
+		).insert(ignore_permissions=True)
+
 	def _make_server(self):
-		"""A Fake-backed Active Server for the VM to land on (placement is WIP-pinned to
-		a hardcoded server in create_vm; the Pilot falls back to the default image)."""
+		"""A Fake-backed Active Server for the VM to land on. create_vm no longer pins a
+		server; placement picks this one because setUp syncs the default image to it."""
 		server = frappe.new_doc("Server")
 		server.update(
 			{
@@ -97,7 +118,6 @@ class TestCreateVM(IntegrationTestCase):
 			memory_megabytes=512,
 			disk_gigabytes=2,
 			email=TENANT_EMAIL,
-			# Pin the server so create_vm's WIP hardcoded id doesn't miss in tests.
 			cpu_max_cores=None,
 		)
 

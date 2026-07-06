@@ -12,6 +12,12 @@ ExecStart=/usr/sbin/ip -6 addr add ${VIRTUAL_MACHINE_IPV6}/128 dev eth0
 ExecStart=/usr/sbin/ip -6 route add default via fe80::1 dev eth0
 ExecStart=/usr/sbin/ip addr add ${VIRTUAL_MACHINE_IPV4} dev eth0
 ExecStart=/usr/sbin/ip route add default via ${VIRTUAL_MACHINE_IPV4_GATEWAY} dev eth0
+# Private plane (spec/25): when the VM is on the WireGuard host mesh, add its fdaa:: /128
+# as a second address on eth0 and route fdaa::/16 via the existing fe80::1 gateway — the
+# host's wg-mesh carries it. Guarded on PRIVATE_ADDRESS (empty for a VM off the plane), so
+# a public-only VM's config is unchanged. One sh -c so the empty-guard is well-defined.
+ExecStart=/bin/sh -c 'test -z "${PRIVATE_ADDRESS}" || ip -6 addr add ${PRIVATE_ADDRESS}/128 dev eth0'
+ExecStart=/bin/sh -c 'test -z "${PRIVATE_ADDRESS}" || ip -6 route add fdaa::/16 via fe80::1 dev eth0'
 ExecStart=/bin/sh -c 'rm -f /etc/resolv.conf; echo "nameserver 2606:4700:4700::1111" > /etc/resolv.conf'
 RemainAfterExit=yes
 

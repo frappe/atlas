@@ -353,7 +353,7 @@ def _provision_backing_vm(pilot) -> str:
 	over the fleet SSH key (Atlas Settings) by the control plane. `build_mode` is
 	inherited from the image by the VM at insert; the pilot mirrors it onto its own
 	row here so its login mint/TTL follows the mode without re-reading the VM."""
-	from atlas.atlas.placement import default_image
+	from atlas.atlas.placement import default_image, default_server_for_image
 
 	fleet_public_key = frappe.db.get_single_value("Atlas Settings", "ssh_public_key")
 	if not fleet_public_key:
@@ -369,16 +369,23 @@ def _provision_backing_vm(pilot) -> str:
 		"disk_gigabytes": spec.get("disk_gigabytes", 2),
 		"ssh_public_key": fleet_public_key,
 	}
-	# server/image are Atlas's placement concern: pass them through when the caller
-	# pinned them (create_vm pins the host that has the bench image), otherwise leave
-	# them unset so the VM controller's apply_user_defaults places the VM and picks the
-	# default image. A pinned-but-missing server is ignored rather than a hard crash.
+	# server/image are Atlas's placement concern. The image is the pinned bench image
+	# (caller override, else the Atlas Settings default). The server must be one that
+	# HOLDS that image: a baked bench image is often local (an LV on the box it was baked
+	# on, plus wherever it was exported), so we pick from the image's home set rather than
+	# the whole fleet — placement.default_server_for_image restricts to those hosts and
+	# throws loudly if the image lives nowhere yet. A caller-pinned server still wins (the
+	# operator vouches the image is there); a pinned-but-missing server is ignored.
+	doc["image"] = spec["image"] if spec.get("image") else default_image()
 	if spec.get("server") and frappe.db.exists("Server", spec["server"]):
 		doc["server"] = spec["server"]
-	if spec.get("image"):
-		doc["image"] = spec["image"]
 	else:
-		doc["image"] = default_image()
+		doc["server"] = default_server_for_image(
+			doc["image"],
+			required_vcpus=float(spec.get("cpu_max_cores") or doc["vcpus"]),
+			required_memory_mb=float(doc["memory_megabytes"]),
+			required_disk_gb=float(doc["disk_gigabytes"]),
+		)
 	vm = frappe.get_doc(doc)
 	if spec.get("cpu_max_cores"):
 		vm.cpu_max_cores = float(spec["cpu_max_cores"])

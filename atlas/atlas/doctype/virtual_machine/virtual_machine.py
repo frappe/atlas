@@ -12,7 +12,9 @@ from atlas.atlas.networking import (
 	derive_ipv4_link,
 	derive_mac,
 	derive_netns,
+	derive_private_address,
 	derive_tap,
+	derive_tenant_prefix,
 	derive_uid,
 	derive_veth_pair,
 	resource_limit_args,
@@ -73,6 +75,7 @@ class VirtualMachine(Document):
 		has_memory_snapshot: DF.Check
 		image: DF.Link
 		ipv6_address: DF.Data | None
+		is_gateway: DF.Check
 		is_proxy: DF.Check
 		last_started: DF.Datetime | None
 		last_stopped: DF.Datetime | None
@@ -145,6 +148,30 @@ class VirtualMachine(Document):
 		self.set_cpu_defaults()
 		self.set_mac_address()
 		self.set_tap_device()
+		self.set_private_address()
+		self.validate_dark_vm_has_identity()
+		self.validate_infra_role()
+
+	def validate_infra_role(self) -> None:
+		"""A VM is at most ONE infra role. The proxy fronts public subdomains; the gateway
+		terminates customer WireGuard peers (spec/26). They carry different images, different
+		reconcile paths (proxy map vs. wg0 peers), and would collide on the one attached
+		reserved IPv4 — so a single VM can't be both."""
+		if self.is_proxy and self.is_gateway:
+			frappe.throw(_("A VM cannot be both a proxy and a customer gateway"))
+
+	def validate_dark_vm_has_identity(self) -> None:
+		"""A dark VM (public_networking=0, §6) has NO public /128, so its ONLY identity is
+		the private fdaa:: address — which requires a tenant (the /48 the address derives
+		from). Reject a tenant-less dark VM at insert: it would have no address at all, and
+		_ipv4_link_variables would have no private address to index its NAT44 /30 off. The
+		design's §6 invariant: public_networking=0 ⟹ private addressing forced on."""
+		if not self.public_networking and not self.tenant:
+			frappe.throw(
+				_(
+					"A dark VM (Public Networking off) needs a Tenant — its only identity is the private address"
+				)
+			)
 
 	def set_cpu_defaults(self) -> None:
 		# cpu_max_cores is the VM's guaranteed CPU bandwidth share; vcpus is the
@@ -179,8 +206,23 @@ class VirtualMachine(Document):
 			self.status = "Pending"
 
 	def set_ipv6_address(self) -> None:
+		# A dark VM (public_networking=0, §6) has NO public /128 — its only identity is
+		# the private fdaa:: address (set in before_validate). Skip allocation so it does
+		# not consume a scarce DO /124 slot. public_networking defaults to 1, so every
+		# ordinary VM allocates exactly as before.
+		if not self.public_networking:
+			return
 		if not self.ipv6_address:
 			self.ipv6_address = allocate_ipv6(self.server)
+
+	def set_private_address(self) -> None:
+		"""Denormalize the VM's private-plane /128 (§8). Derived, not allocated — a pure
+		function of (tenant, VM UUID), so it survives migration byte-for-byte and the
+		field is just a legible read-through (the source of truth is
+		derive_private_address). Empty when the VM has no tenant (operator-created): such
+		a VM has no derivable /48, so it stays off the private plane entirely."""
+		if self.tenant and not self.private_address:
+			self.private_address = derive_private_address(self.tenant, self.name)
 
 	def set_mac_address(self) -> None:
 		if not self.mac_address:
@@ -191,6 +233,9 @@ class VirtualMachine(Document):
 			self.tap_device = derive_tap(self.name)
 
 	def validate(self) -> None:
+		# Role exclusivity holds for every save, not just insert — a later db-flip of
+		# is_gateway on a live proxy (or vice versa) is caught here too.
+		self.validate_infra_role()
 		if self.is_new():
 			return
 		original = self.get_doc_before_save()
@@ -222,7 +267,24 @@ class VirtualMachine(Document):
 		self.status = "Running"
 		self.last_started = frappe.utils.now_datetime()
 		self.save()
+		# The VM's private /128 joins its host's AllowedIPs (design §3, trigger 3): a
+		# provision adds exactly one /128 to one host, changing every OTHER host's mesh
+		# config. Enqueued after commit, so a mesh push failure never rolls back the
+		# provision — the converging reconcile + backstop sweep bring the fabric to match.
+		# No-op for a tenant-less VM (nothing to advertise) and on a Fake/test fleet.
+		self._reconcile_host_mesh()
 		return task.name
+
+	def _reconcile_host_mesh(self) -> None:
+		"""Enqueue a host-mesh reconcile after a lifecycle change that moves this VM's
+		private /128 on/off the mesh (provision, terminate). No-op for a VM with no
+		tenant (it has no private /128 to advertise), so an operator-created VM never
+		touches the mesh."""
+		if not self.tenant:
+			return
+		from atlas.atlas.host_mesh import enqueue_reconcile_host_mesh
+
+		enqueue_reconcile_host_mesh()
 
 	@frappe.whitelist()
 	def migrate(self, target_server: str, release_reserved_ip: bool = False) -> str:
@@ -829,6 +891,17 @@ class VirtualMachine(Document):
 		return task.name
 
 	@frappe.whitelist()
+	def deploy_gateway(self) -> bool:
+		"""Stand up (or re-assert) this gateway VM's wg0 + the static same_48 guard, over
+		guest-SSH (spec/26). Gateway-only: a non-gateway VM has no wg0 to bring up.
+		Idempotent — safe to re-run after a reboot or rebuild."""
+		if not self.is_gateway:
+			frappe.throw(f"{self.name} is not a customer gateway (is_gateway unset)")
+		from atlas.atlas import customer_gateway
+
+		return customer_gateway.deploy_gateway(self.name)
+
+	@frappe.whitelist()
 	def read_proxy_maps(self) -> dict:
 		"""Return this proxy's three live maps (sites / sni / acme) alongside the
 		desired maps and a per-map drift flag — read-only. Proxy-only: a non-proxy VM
@@ -857,10 +930,16 @@ class VirtualMachine(Document):
 		self.save()
 		self._detach_reserved_ip()
 		self._revoke_tunnels()
+		self._revoke_vpc_peers()
 		self._delete_subdomains()
 		self._delete_custom_domains()
 		self._delete_snapshots()
 		self._deprovision_proxy()
+		# The VM's private /128 leaves its host's AllowedIPs (design §3, trigger 3, and
+		# the §8 teardown fix: withdraw the /128 from peers on teardown, not only on
+		# provision). status is now Terminated, so _residents_by_host excludes it and the
+		# reconcile drops it fleet-wide. Enqueued after commit, no-op for a tenant-less VM.
+		self._reconcile_host_mesh()
 		return task.name
 
 	def _deprovision_proxy(self) -> None:
@@ -895,6 +974,24 @@ class VirtualMachine(Document):
 			pluck="name",
 		):
 			frappe.get_doc("VPN Tunnel", name).revoke()
+
+	def _revoke_vpc_peers(self) -> None:
+		"""Revoke every VPN Peer this VM terminates as a gateway (spec/26). A
+		terminated gateway's peers are dead — drop each from the (gone) wg0 and withdraw
+		its /128 from the mesh. revoke_peer skips the wg0 push for a Terminated gateway (the
+		peers are already gone with the VM) and only withdraws the mesh /128. Idempotent:
+		a non-gateway VM has no peers; already-Revoked peers are skipped."""
+		# The customer gateway (spec/26) is a later feature than the VM lifecycle: a site
+		# may not have migrated the `VPN Peer` DocType. Its absence means "no peers"
+		# — never block a terminate on it.
+		if not frappe.db.exists("DocType", "VPN Peer"):
+			return
+		for name in frappe.get_all(
+			"VPN Peer",
+			filters={"gateway": self.name, "status": ["!=", "Revoked"]},
+			pluck="name",
+		):
+			frappe.get_doc("VPN Peer", name).revoke()
 
 	def _detach_reserved_ip(self) -> None:
 		"""Release the VM's attached public IPv4 (if any) back to its Server's
@@ -972,12 +1069,39 @@ class VirtualMachine(Document):
 		stored field. The guest gets a private v4 + default route; the host
 		masquerades it (see scripts/vm-network-up.py, spec/06-networking.md).
 		Shared by provision (clone too) and rebuild, which both re-inject the
-		guest network env."""
-		host_cidr, guest_cidr = derive_ipv4_link(self.ipv6_address)
+		guest network env.
+
+		A dark VM (public_networking=0, §6) has NO public ipv6_address to index the
+		/30 off, so it indexes off its private /128's low bits (per-host unique the
+		same way the public allocator is: the private address is HKDF-derived, so we
+		pass the explicit index). egress_nat44=0 opts a VM out of v4 egress entirely
+		(air-gapped), so no link is emitted and vm-network-up skips the NAT block."""
+		if not self.egress_nat44:
+			return {}
+		if self.ipv6_address:
+			host_cidr, guest_cidr = derive_ipv4_link(self.ipv6_address)
+		else:
+			# Dark VM: index off the private /128's low 14 bits (unique per host).
+			index = int(ipaddress.IPv6Address(self.private_address)) & 0x3FFF
+			host_cidr, guest_cidr = derive_ipv4_link(index=index)
 		return {
 			"IPV4_HOST_CIDR": host_cidr,
 			"IPV4_GUEST_CIDR": guest_cidr,
 			"IPV4_GATEWAY": str(ipaddress.ip_interface(host_cidr).ip),
+		}
+
+	def _private_network_variables(self) -> dict:
+		"""The private-plane identity written into network.env (§5): the VM's derived
+		fdaa:: /128 and its tenant /48. vm-network-up.py gates the whole private block on
+		BOTH being present, so this is empty (and the block a no-op) for a VM with no
+		tenant. Shared by provision + rebuild, which both re-inject the guest network env,
+		so a rebuild re-creates the private routes + isolation rules on first boot."""
+		if not self.tenant:
+			return {}
+		private_address = self.private_address or derive_private_address(self.tenant, self.name)
+		return {
+			"PRIVATE_ADDRESS": private_address,
+			"TENANT_PREFIX": derive_tenant_prefix(self.tenant),
 		}
 
 	def _data_disk_variables(self) -> dict:
@@ -1034,8 +1158,13 @@ class VirtualMachine(Document):
 				)
 			),
 			"RESOURCE_ARG": _cgroup_values(resource_limit_args(self.disk_gigabytes)),
-			# Per-VM NAT44 v4 egress link (host/guest /30 + gateway).
+			# Per-VM NAT44 v4 egress link (host/guest /30 + gateway). Empty when
+			# egress_nat44=0 (an air-gapped VM), leaving the env's v4 block unwritten.
 			**self._ipv4_link_variables(),
+			# The private-plane identity on the WireGuard host mesh (§5): the derived
+			# fdaa:: /128 + tenant /48. Empty for a tenant-less VM, so vm-network-up
+			# skips the whole private block and the VM keeps today's public-only behavior.
+			**self._private_network_variables(),
 			# An attached Reserved IP (if any) so a fresh provision re-creates its
 			# inbound 1:1-NAT on first boot. Empty/None is dropped by the Task
 			# runner's flag rendering, leaving the env clean for ordinary VMs.
