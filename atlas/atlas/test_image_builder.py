@@ -163,13 +163,15 @@ class TestRecipeRegistry(IntegrationTestCase):
 		for name in ("bench-v15", "bench-v16", "bench-nightly"):
 			self.assertEqual(RECIPES[name].promote_image_name, name)
 
-	def test_v16_is_the_only_warm_registering_variant(self) -> None:
-		# v16 doubles as the self-serve site accelerator base (warm + registers); v15
-		# and nightly are cold customer goldens (promote-to-image requires cold).
-		self.assertEqual(RECIPES["bench-v16"].warm_entrypoint, "warm.sh")
+	def test_all_site_variants_are_warm_only_v16_registers(self) -> None:
+		# Every site variant is warm-clonable (warm.sh) so a customer VM off any
+		# version boots from a pre-warmed guest. v16 alone also doubles as the
+		# self-serve golden (registers_as=default_bench_snapshot); v15 + nightly are
+		# warm but never the registered golden. (Admin twins stay cold — see below.)
+		for name in ("bench-v15", "bench-v16", "bench-nightly"):
+			self.assertEqual(RECIPES[name].warm_entrypoint, "warm.sh")
 		self.assertEqual(RECIPES["bench-v16"].registers_as, "default_bench_snapshot")
 		for name in ("bench-v15", "bench-nightly"):
-			self.assertEqual(RECIPES[name].warm_entrypoint, "")
 			self.assertIsNone(RECIPES[name].registers_as)
 
 	def test_build_mode_defaults_to_site(self) -> None:

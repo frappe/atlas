@@ -214,12 +214,14 @@ RECIPES: dict[str, "ImageRecipe"] = {
 	# release; promoted to a base image named exactly `bench-v<NN>` / `bench-nightly`
 	# so customers pick the version through the ordinary VM `image` field (spec/15). ---
 	#
-	# v16 is the current/default line: it keeps the warm entrypoint (it doubles as the
-	# self-serve site accelerator base) and `registers_as=default_bench_snapshot`, so
-	# an auto-registered v16 warm bake stays the self-serve golden — the existing
-	# behaviour, unchanged. v15 + nightly are COLD customer goldens (no warm, no
-	# register): promote-to-image requires cold, and only one warm golden registers
-	# per server.
+	# All three site variants carry the warm entrypoint (`warm.sh`): a customer VM off
+	# any version boots from a pre-warmed guest, not a cold ~17s boot. What sets v16
+	# apart is `registers_as=default_bench_snapshot`: v16 is the current/default line,
+	# so an auto-registered v16 warm bake also becomes the self-serve site golden. v15
+	# + nightly are warm-clonable but never the registered golden (only one registers
+	# per server). Warm is orthogonal to promote-to-image — a warm golden still
+	# promotes to its cold `bench-v<NN>` base image for the ordinary VM `image` field.
+	# The admin twins below stay COLD (no warm entrypoint); see their note.
 	"bench-v16": _bench_variant(
 		"bench-v16",
 		"Bench v16",

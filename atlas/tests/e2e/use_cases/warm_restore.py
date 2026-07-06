@@ -116,9 +116,9 @@ def _resolve_or_bake_warm(server, base_image: str) -> "frappe.model.document.Doc
 		build = frappe.get_doc(
 			{
 				"doctype": "Image Build",
-				# bench-v16 is the warm-capable variant (warm_entrypoint=warm.sh) that
-				# registers_as=default_bench_snapshot — the warm self-serve golden this
-				# e2e asserts below. The `recipe` Select no longer accepts the bare
+				# All site variants are warm (warm_entrypoint=warm.sh); bench-v16 is the
+				# one that also registers_as=default_bench_snapshot — the warm self-serve
+				# golden this e2e asserts below. The `recipe` Select no longer accepts the bare
 				# `bench` alias; this is the resolution target.
 				"recipe": "bench-v16",
 				"server": server.name,
