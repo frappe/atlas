@@ -317,6 +317,7 @@ def _vm_payload(doc) -> dict:
 	# (stable) gateway_url. front_door_for_vm resolves either aggregate — a Site-backed
 	# VM (create_site) is no longer login-less on the Asset (spec/14-self-serve.md).
 	from atlas.atlas.front_door import front_door_for_vm
+	from atlas.atlas.placement import version_from_image
 
 	return _merge_bench_fields(
 		{
@@ -332,6 +333,7 @@ def _vm_payload(doc) -> dict:
 			"disk_gigabytes": doc.get("disk_gigabytes"),
 			"ipv6_address": doc.get("ipv6_address"),
 			"public_ipv4": doc.get("public_ipv4"),
+			"frappe_version": version_from_image(doc.get("image")),
 		},
 		front_door_for_vm(doc.name),
 	)
@@ -344,6 +346,7 @@ def _pilot_vm_payload(pilot) -> dict:
 	# Pilot. This is the event that carries the login handoff (the Pilot flips Running
 	# only after the mint), so its status is the PILOT's — the VM booted earlier.
 	from atlas.atlas.front_door import FrontDoor
+	from atlas.atlas.placement import version_from_image
 
 	vm = frappe.get_doc("Virtual Machine", pilot.virtual_machine)
 	return _merge_bench_fields(
@@ -360,6 +363,7 @@ def _pilot_vm_payload(pilot) -> dict:
 			"disk_gigabytes": vm.get("disk_gigabytes"),
 			"ipv6_address": vm.get("ipv6_address"),
 			"public_ipv4": vm.get("public_ipv4"),
+			"frappe_version": version_from_image(vm.get("image")),
 		},
 		FrontDoor(pilot),
 	)

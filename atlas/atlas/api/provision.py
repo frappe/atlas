@@ -38,6 +38,7 @@ def create_vm(
 	disk_gigabytes: int,
 	email: str | None = None,
 	cpu_max_cores: float | None = None,
+	frappe_version: str | None = None,
 ) -> dict:
 	"""Provision a bench VM for a Central team and return its (VM-shaped) mirror row.
 
@@ -56,17 +57,21 @@ def create_vm(
 	if not team:
 		frappe.throw("team is required.")
 
+	from atlas.atlas.placement import image_for_version, version_from_image
+
 	tenant = ensure_tenant(team, email)
 
 	spec = {
 		"vcpus": int(vcpus),
 		"memory_megabytes": int(memory_megabytes),
 		"disk_gigabytes": int(disk_gigabytes),
-		# Placement (server + image) is Atlas's concern, not the caller's: the Pilot's
-		# _provision_backing_vm pins the default bench image (Atlas Settings) and picks a
-		# server that HOLDS that image (placement.default_server_for_image). No hard-coded
-		# server pin — a local bench image lives only where it was baked/exported, so the
-		# host is chosen from the image's home set, not a UUID that only exists on one box.
+		# The Frappe version Central picked selects the bench image; an unknown/unbuilt
+		# version resolves to the default, so it never blocks the create. Server placement
+		# stays Atlas's concern: the Pilot's _provision_backing_vm picks a server that HOLDS
+		# this image (placement.default_server_for_image) rather than a hard-coded UUID — a
+		# local bench image lives only where it was baked/exported, so the host is chosen
+		# from the image's home set.
+		"image": image_for_version(frappe_version),
 	}
 	if cpu_max_cores:
 		spec["cpu_max_cores"] = float(cpu_max_cores)
@@ -93,6 +98,9 @@ def create_vm(
 		"ipv6_address": vm.ipv6_address,
 		"public_ipv4": vm.public_ipv4,
 		"gateway_url": pilot.gateway_url,
+		# The version actually laid down (from the resolved image), so Central mirrors
+		# ground truth — not merely what it requested.
+		"frappe_version": version_from_image(vm.image),
 	}
 
 

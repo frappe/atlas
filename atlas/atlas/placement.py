@@ -48,6 +48,35 @@ def default_image() -> str:
 	return active[0]
 
 
+# Central offers Frappe versions (v16/v15/nightly) that map 1:1 to the bench base
+# images the Image Build recipes promote — named exactly `bench-<token>`. The
+# `-admin` variants are an operator concern, never offered to end users.
+BENCH_IMAGE_PREFIX = "bench-"
+ADMIN_IMAGE_SUFFIX = "-admin"
+
+
+def image_for_version(frappe_version: str | None) -> str:
+	"""Resolve a Frappe version token to its active bench image (`bench-<token>`),
+	falling back to the configured default when the token is unset or has no active
+	image — an unknown/unbuilt version never blocks provisioning."""
+	if frappe_version:
+		image = f"{BENCH_IMAGE_PREFIX}{frappe_version}"
+		if frappe.db.exists("Virtual Machine Image", {"name": image, "is_active": 1}):
+			return image
+	return default_image()
+
+
+def version_from_image(image: str | None) -> str | None:
+	"""The Frappe version token a bench image carries (`bench-v16` → `v16`), or None
+	for a non-bench/plain image. Central mirrors this as the VM's provisioned version."""
+	if not image or not image.startswith(BENCH_IMAGE_PREFIX):
+		return None
+	token = image[len(BENCH_IMAGE_PREFIX) :]
+	if token.endswith(ADMIN_IMAGE_SUFFIX):
+		token = token[: -len(ADMIN_IMAGE_SUFFIX)]
+	return token or None
+
+
 def image_home_servers(image: str) -> set[str]:
 	"""The Active servers that actually hold this image's bytes.
 

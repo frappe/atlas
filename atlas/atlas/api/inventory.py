@@ -32,6 +32,7 @@ def tenant_vms(team: str | None = None) -> list[dict]:
 			"disk_gigabytes",
 			"ipv6_address",
 			"public_ipv4",
+			"image",
 		],
 	)
 
@@ -47,6 +48,7 @@ def tenant_vms(team: str | None = None) -> list[dict]:
 	# latter only once Running, exactly as the event gates them). The reconcile is the
 	# backstop if a status_changed event is lost, so it must carry them.
 	from atlas.atlas.front_door import front_door_for_vm
+	from atlas.atlas.placement import version_from_image
 
 	rows = []
 	for vm in vms:
@@ -62,9 +64,26 @@ def tenant_vms(team: str | None = None) -> list[dict]:
 				"disk_gigabytes": vm.disk_gigabytes,
 				"ipv6_address": vm.ipv6_address,
 				"public_ipv4": vm.public_ipv4,
+				"frappe_version": version_from_image(vm.image),
 				"gateway_url": front_door.gateway_url if front_door else None,
 				"login_url": front_door.login_url if front_door else None,
 				"login_url_expires_at": front_door.login_url_expires_at if front_door else None,
 			}
 		)
 	return rows
+
+
+@frappe.whitelist()
+def available_frappe_versions() -> list[str]:
+	"""Frappe versions Central can offer on the new-server form: the tokens of the
+	active plain bench images (`bench-<token>`, excluding the `-admin` operator
+	variants). Central derives its picker from this so the two never drift."""
+	from atlas.atlas.placement import ADMIN_IMAGE_SUFFIX, BENCH_IMAGE_PREFIX, version_from_image
+
+	names = frappe.get_all(
+		"Virtual Machine Image",
+		filters={"is_active": 1, "image_name": ["like", f"{BENCH_IMAGE_PREFIX}%"]},
+		pluck="image_name",
+		ignore_permissions=True,
+	)
+	return [version_from_image(name) for name in names if not name.endswith(ADMIN_IMAGE_SUFFIX)]
