@@ -59,7 +59,19 @@ def on_vm_update(doc, method=None):
 	if not _enabled():
 		return
 	if _status_changed(doc):
-		_emit("vm.status_changed", _vm_payload(doc), doc)
+		# A front-door-backed VM (Pilot or Site) reports its status THROUGH the aggregate,
+		# not off its own raw boot. The VM boots to Running the moment the microVM is up —
+		# before deploy-site runs and the login handoff is minted — so this raw flip is
+		# premature: Central would mirror the Asset as usable while it isn't. The
+		# authoritative Running (carrying the login handoff) arrives on the aggregate's own
+		# event: report_pilot_status / report_site_status after the in-guest mint. Suppress
+		# the raw VM status here for those VMs; a plain VM (proxy, operator machine) still
+		# reports its status directly. Terminate/delete still ride the aggregate's own
+		# status event + vm.deleted (on_vm_trash), so no signal is lost.
+		from atlas.atlas.front_door import front_door_for_vm
+
+		if front_door_for_vm(doc.name) is None:
+			_emit("vm.status_changed", _vm_payload(doc), doc)
 	elif doc.flags.get("resizing"):
 		# A resize rewrites the machine's shape (vcpus/memory/disk) but leaves the VM
 		# Stopped, so no status_changed fires — emit an explicit resized event so
@@ -374,7 +386,15 @@ def _merge_bench_fields(payload: dict, front_door) -> dict:
 	is the derived FQDN URL (stable once the aggregate exists); login_url + its expiry
 	are the one-click handoff, meaningful only once it is Running (before that the mint
 	hasn't run — FrontDoor gates them). A None front_door (a plain, non-bench VM) leaves
-	all three None."""
+	all three None.
+
+	The status is taken from the front door too: a bench/site VM boots to Running before
+	deploy-site + the login mint, so the raw VM status would report the Asset usable while
+	it isn't. The aggregate flips Running only after the mint, so its status is the one
+	Central mirrors (this is a no-op for _pilot_vm_payload, which already passed the Pilot's
+	status). A plain VM keeps the VM status the payload already carries."""
+	if front_door is not None:
+		payload["status"] = front_door.status
 	payload["gateway_url"] = front_door.gateway_url if front_door is not None else None
 	payload["login_url"] = front_door.login_url if front_door is not None else None
 	payload["login_url_expires_at"] = (

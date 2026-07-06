@@ -601,6 +601,62 @@ class TestFrontDoorResolvesSite(IntegrationTestCase):
 		self.assertEqual(row["gateway_url"], f"https://{site.name}")
 		self.assertEqual(row["login_url"], self.login_url)
 
+	def _booting_site_backed_vm(self, subdomain: str = "boot"):
+		"""The bug scenario: the backing VM has booted (VM status Running) but its owning
+		Site is still Pending — deploy-site hasn't run and no login is minted yet. This is
+		the window where the raw VM status would report the Asset usable prematurely."""
+		from atlas.atlas.doctype.tenant.tenant import ensure_tenant
+
+		tenant = ensure_tenant("fd-boot-team")
+		server = fixtures.make_server(
+			fixtures.make_provider("fd-boot-provider", provider_type="Fake"),
+			"fd-boot-server",
+			ipv6_address="2001:db8:b::1",
+			ipv6_prefix="2001:db8:b::/64",
+			ipv6_virtual_machine_range="2001:db8:b::/124",
+		)
+		vm = fixtures.make_virtual_machine(
+			server, fixtures.make_image("fd-boot-image"), title=subdomain, tenant=tenant
+		)
+		site = frappe.get_doc(
+			{"doctype": "Site", "subdomain": subdomain, "virtual_machine": vm.name, "tenant": tenant}
+		).insert(ignore_permissions=True)
+		# VM booted to Running; the Site is still Pending (deploy in flight).
+		vm.db_set("status", "Running")
+		return frappe.get_doc("Virtual Machine", vm.name), site
+
+	def test_push_vm_payload_reports_the_front_door_status_not_the_raw_boot(self) -> None:
+		"""The fix: a bench/site VM boots to Running before deploy-site + the login mint, so
+		_vm_payload must report the OWNING aggregate's status (Pending here), not the raw VM
+		Running — otherwise Central mirrors the Asset as usable before it is."""
+		vm, site = self._booting_site_backed_vm("push-boot")
+		self.assertEqual(vm.status, "Running")
+		self.assertEqual(site.status, "Pending")
+		payload = central_report._vm_payload(vm)
+		self.assertEqual(payload["status"], "Pending")
+		self.assertIsNone(payload["login_url"])
+
+	def test_on_vm_update_suppresses_status_changed_for_a_front_door_vm(self) -> None:
+		"""The VM's own boot to Running must NOT push a vm.status_changed for a front-door
+		VM — the authoritative Running (with the login handoff) rides the aggregate's own
+		event after the mint. A plain VM still pushes its status (covered elsewhere)."""
+		vm, _site = self._booting_site_backed_vm("suppress-boot")
+		vm.get_doc_before_save = lambda: SimpleNamespace(status="Pending")
+		with _patched_emit() as enqueue:
+			central_report.on_vm_update(vm)
+		enqueue.assert_not_called()
+
+	def test_pull_tenant_vms_reports_the_front_door_status_not_the_raw_boot(self) -> None:
+		"""The reconcile-pull matches the push: a booted-but-not-deployed VM reports its
+		Site's Pending, not the raw VM Running, so a lost event never reconciles the mirror
+		to a premature usable."""
+		from atlas.atlas.api import inventory
+
+		vm, _site = self._booting_site_backed_vm("pull-boot")
+		row = next((r for r in inventory.tenant_vms() if r["name"] == vm.name), None)
+		self.assertIsNotNone(row, "site-backed VM not returned by tenant_vms")
+		self.assertEqual(row["status"], "Pending")
+
 	def test_asset_prefers_pilot_console_when_one_backs_the_vm(self) -> None:
 		"""A COMPLETED create_site backs its VM with BOTH a Site (customer site) and an
 		attached Pilot (admin console). The Central Asset "Open" resolves the PILOT (a

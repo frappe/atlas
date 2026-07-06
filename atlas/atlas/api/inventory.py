@@ -58,7 +58,11 @@ def tenant_vms(team: str | None = None) -> list[dict]:
 				"name": vm.name,
 				"team": vm.tenant,
 				"title": vm.title,
-				"status": vm.status,
+				# A bench/site VM's status is the aggregate's, not the raw VM's: it boots to
+				# Running before deploy-site + the login mint, so reporting the raw status
+				# would reconcile the Asset to usable while it isn't. The push path gates the
+				# same way (central_report._merge_bench_fields), so pull stays in lockstep.
+				"status": front_door.status if front_door else vm.status,
 				"vcpus": vm.vcpus,
 				"memory_megabytes": vm.memory_megabytes,
 				"disk_gigabytes": vm.disk_gigabytes,
@@ -76,14 +80,16 @@ def tenant_vms(team: str | None = None) -> list[dict]:
 @frappe.whitelist()
 def available_frappe_versions() -> list[str]:
 	"""Frappe versions Central can offer on the new-server form: the tokens of the
-	active plain bench images (`bench-<token>`, excluding the `-admin` operator
-	variants). Central derives its picker from this so the two never drift."""
+	active admin bench images (`bench-<token>-admin`). A Central "server" is a Pilot —
+	the bench admin console — so its version picker is the versions that have an active
+	*admin* image, not the plain `bench-<token>` site images (those back self-serve
+	Sites, spec/14). Central derives its picker from this so the two never drift."""
 	from atlas.atlas.placement import ADMIN_IMAGE_SUFFIX, BENCH_IMAGE_PREFIX, version_from_image
 
 	names = frappe.get_all(
 		"Virtual Machine Image",
-		filters={"is_active": 1, "image_name": ["like", f"{BENCH_IMAGE_PREFIX}%"]},
+		filters={"is_active": 1, "image_name": ["like", f"{BENCH_IMAGE_PREFIX}%{ADMIN_IMAGE_SUFFIX}"]},
 		pluck="image_name",
 		ignore_permissions=True,
 	)
-	return [version_from_image(name) for name in names if not name.endswith(ADMIN_IMAGE_SUFFIX)]
+	return [version_from_image(name) for name in names]

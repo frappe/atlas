@@ -43,6 +43,16 @@ class FrontDoor:
 		return self.doc.status == "Running"
 
 	@property
+	def status(self) -> str:
+		# The authoritative status Central mirrors for a bench/site VM: the aggregate's,
+		# NOT the raw VM's. The VM boots to Running the moment the microVM is up — before
+		# deploy-site runs and the login handoff is minted — so the raw VM status would
+		# report the Asset usable while it isn't. The aggregate flips Running only after
+		# the in-guest mint, so its status gates usability. Both push (_vm_payload) and
+		# pull (tenant_vms) read through here so the mirror never sees the premature boot.
+		return self.doc.status
+
+	@property
 	def gateway_url(self) -> str:
 		# The aggregate's name IS the fqdn (Contract A) for both Pilot and Site, so the
 		# front-door URL is `https://<name>` either way — the same value Pilot.gateway_url
