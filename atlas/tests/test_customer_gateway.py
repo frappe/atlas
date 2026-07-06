@@ -17,6 +17,7 @@ the bench suite in milliseconds. It covers:
 """
 
 import ipaddress
+from unittest.mock import patch
 
 import frappe
 from frappe.tests import IntegrationTestCase
@@ -161,6 +162,33 @@ class TestHostMeshClientFold(_GatewayFixture):
 		peer.db_set("status", "Revoked")
 		residents = _residents_by_host([{"name": self.server.name}])
 		self.assertNotIn(peer.client_address, residents.get(self.server.name, []))
+
+
+class TestAutoEnrollOnInsert(_GatewayFixture):
+	"""A peer saved through the Desk form (a plain insert) must auto-enroll — after_insert
+	enqueues auto_enroll after commit, so the operator never has to click Re-enroll."""
+
+	def test_plain_insert_enqueues_auto_enroll(self) -> None:
+		with patch("frappe.enqueue") as enqueue:
+			peer = self._make_peer()
+		enqueue.assert_called_once()
+		_args, kwargs = enqueue.call_args
+		self.assertEqual(enqueue.call_args[0][0], "atlas.atlas.customer_gateway.auto_enroll")
+		self.assertTrue(kwargs["enqueue_after_commit"])
+		self.assertEqual(kwargs["peer_name"], peer.name)
+
+	def test_request_vpc_access_does_not_double_enqueue(self) -> None:
+		# The API enrolls INLINE and must skip the enqueued job (skip_auto_enroll), else the
+		# peer would be enrolled twice. We stub the host-touching enroll to keep it hostless.
+		with (
+			patch("frappe.enqueue") as enqueue,
+			patch.object(customer_gateway, "reconcile_gateway"),
+			patch.object(customer_gateway, "_reconcile_host_mesh_after_commit"),
+			patch.object(customer_gateway, "client_config_payload", return_value={}),
+		):
+			customer_gateway.request_vpc_access(self.tenant, VALID_KEY, "api-laptop")
+		for call in enqueue.call_args_list:
+			self.assertNotEqual(call[0][0], "atlas.atlas.customer_gateway.auto_enroll")
 
 
 class TestInfraRoleExclusivity(_GatewayFixture):

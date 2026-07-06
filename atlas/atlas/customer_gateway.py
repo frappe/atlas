@@ -272,9 +272,31 @@ def request_vpc_access(tenant: str, client_public_key: str, label: str) -> dict:
 			"client_public_key": client_public_key,
 		}
 	)
+	# Enroll INLINE below (this call must return the ready config), so tell after_insert to
+	# skip its enqueued auto_enroll — otherwise the peer would be enrolled twice.
+	peer.flags.skip_auto_enroll = True
 	peer.insert()
 	enroll_peer(peer)
 	return client_config_payload(peer)
+
+
+def auto_enroll(peer_name: str) -> None:
+	"""Worker entry point for the Desk-created peer path: enroll `peer_name` on its gateway,
+	enqueued after-commit by VPNPeer.after_insert. Best-effort — an enroll that can't reach
+	the gateway leaves the peer Pending (the form's Re-enroll retry path), never crashing the
+	Save. Mirrors virtual_machine.auto_provision."""
+	peer = frappe.get_doc("VPN Peer", peer_name)
+	if peer.status != "Pending":
+		return  # already enrolled (or revoked) — idempotent, e.g. a re-run job
+	try:
+		enroll_peer(peer)
+		frappe.db.commit()
+	except Exception:
+		frappe.db.rollback()
+		frappe.db.set_value("VPN Peer", peer_name, "status", "Pending")
+		frappe.db.commit()
+		frappe.log_error(title=f"VPN Peer {peer_name} auto-enroll failed")
+		raise
 
 
 def enroll_peer(peer) -> None:

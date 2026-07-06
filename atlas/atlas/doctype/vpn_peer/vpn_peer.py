@@ -58,6 +58,28 @@ class VPNPeer(Document):
 		if not self.gateway:
 			self.gateway = resolve_region_gateway()
 
+	def after_insert(self) -> None:
+		"""Auto-enroll on the gateway: enqueue the enroll job so the operator never has to
+		click `Re-enroll` on a freshly-saved Pending peer — the Desk form promises "Atlas
+		enrolls your laptop on the gateway automatically" on Save.
+
+		enqueue_after_commit so the worker only starts once this insert has committed
+		(otherwise auto_enroll looks up the peer before the row exists), mirroring
+		Virtual Machine.after_insert → auto_provision. The peer stays Pending until the job
+		flips it Active; an enroll that can't reach the gateway leaves it Pending, which the
+		form surfaces as the "Enrollment did not complete … Re-enroll" retry path.
+
+		request_vpc_access (the API) enrolls INLINE instead — it must return the ready
+		config in-request — so it sets `flags.skip_auto_enroll` to avoid a redundant job."""
+		if self.flags.get("skip_auto_enroll"):
+			return
+		frappe.enqueue(
+			"atlas.atlas.customer_gateway.auto_enroll",
+			queue="short",
+			enqueue_after_commit=True,
+			peer_name=self.name,
+		)
+
 	def validate(self) -> None:
 		if self.is_new():
 			return
