@@ -356,8 +356,18 @@ def auto_provision(
 		clock.stage(f"wait for VM {vm_name} to boot (Running)")
 		_wait_for_vm_running(vm_name)
 		_set_status(site, "Deploying")
+		# Resolve the attached Pilot's console FQDN up front (deterministic from the
+		# site subdomain, disambiguated on collision) and thread it into BOTH the
+		# site-mode deploy — which writes it into `[admin].domain` so the admin vhost
+		# is emitted in the rename-site pass — and `_provision_pilot`, which reuses the
+		# SAME label so the two agree on the console name. See spec/14-self-serve.md.
+		from atlas.atlas.placement import active_root_domain
+		from atlas.atlas.subdomain_label import pilot_subdomain_for
+
+		pilot_label = pilot_subdomain_for(site.subdomain)
+		admin_domain = f"{pilot_label}.{active_root_domain().domain}"
 		clock.stage("deploy site in guest (wait_for_ssh + run deploy-site.py)")
-		result = _deploy_site(site, vm_name, central_endpoint, central_auth_token)
+		result = _deploy_site(site, vm_name, central_endpoint, central_auth_token, admin_domain)
 		# The tenant handoff is the one-click login URL `deploy-site.py` minted
 		# (`bench browse --sid`, a real 24h session) — NOT a password; the baked
 		# Administrator password is a long random secret generated at bake time and
@@ -385,7 +395,7 @@ def auto_provision(
 		# BEFORE Running so a console-wiring failure fails the whole site loud. See
 		# spec/14-self-serve.md.
 		clock.stage("attach Pilot admin console (proxy route + admin login)")
-		_provision_pilot(site, vm_name)
+		_provision_pilot(site, vm_name, pilot_label)
 		_set_status(site, "Running")
 		clock.done()
 	except Exception:
@@ -526,7 +536,11 @@ def _wait_for_vm_running(
 
 
 def _deploy_site(
-	site, vm_name: str, central_endpoint: str | None = None, central_auth_token: str | None = None
+	site,
+	vm_name: str,
+	central_endpoint: str | None = None,
+	central_auth_token: str | None = None,
+	admin_domain: str | None = None,
 ) -> dict:
 	"""Run deploy-site.py in the guest: rename the baked `site.local` dir to the FQDN
 	(Contract A), regenerate the bench's nginx vhost (`server_name <fqdn>` + a v6
@@ -548,7 +562,9 @@ def _deploy_site(
 	vm = frappe.get_doc("Virtual Machine", vm_name)
 	if is_fake_server(vm.server):
 		return {"site": site.name, "serving": True, "login_url": f"https://{site.name}/app?sid=fake-sid"}
-	return deploy_site(vm_name, site.name, central_endpoint, central_auth_token) or {}
+	return (
+		deploy_site(vm_name, site.name, central_endpoint, central_auth_token, admin_domain=admin_domain) or {}
+	)
 
 
 def _regenerate_login(site, vm_name: str) -> dict:
@@ -608,24 +624,23 @@ def _create_subdomain(site, vm_name: str) -> str:
 	return subdomain.name
 
 
-def _provision_pilot(site, vm_name: str) -> str:
+def _provision_pilot(site, vm_name: str, pilot_label: str) -> str:
 	"""Stand up the attached Pilot admin console on this site's backing VM and link it.
 
-	Creates a `Pilot` at `<subdomain>-pilot.<region>` (disambiguated on collision by
-	`pilot_subdomain_for`), ATTACHED to this site's VM (`flags.attach_vm` → the Pilot
-	binds the VM instead of creating one, and won't tear it down). Its `after_insert`
-	only links the VM; `deploy_attached` then does the admin-mode wiring (a second nginx
-	vhost + admin login mint), creates the Pilot's own Subdomain (a second proxy route →
-	the SAME VM /128), and marks the Pilot Running. The Pilot is linked on the Site so
-	terminate() cascades. Returns the Pilot name.
+	Creates a `Pilot` at `<subdomain>-pilot.<region>` (the label resolved by the caller
+	via `pilot_subdomain_for` and already written into the VM's `[admin].domain` by the
+	site-mode deploy), ATTACHED to this site's VM (`flags.attach_vm` → the Pilot binds
+	the VM instead of creating one, and won't tear it down). Its `after_insert` only
+	links the VM; `deploy_attached` mints the admin login URL, creates the Pilot's own
+	Subdomain (a second proxy route → the SAME VM /128), and marks the Pilot Running —
+	the admin vhost itself was already emitted in the site deploy's rename-site pass. The
+	Pilot is linked on the Site so terminate() cascades. Returns the Pilot name.
 
 	This is the create_site half that makes the Asset's "Open" resolve a bench admin
 	console (front_door_for_vm prefers Pilot) rather than the customer site — the bug
 	this closes (spec/14-self-serve.md)."""
 	from atlas.atlas.doctype.pilot.pilot import deploy_attached
-	from atlas.atlas.subdomain_label import pilot_subdomain_for
 
-	pilot_label = pilot_subdomain_for(site.subdomain)
 	pilot = frappe.get_doc({"doctype": "Pilot", "subdomain": pilot_label, "tenant": site.tenant})
 	pilot.flags.attach_vm = vm_name
 	pilot.insert(ignore_permissions=True)

@@ -551,3 +551,124 @@ class TestGuestScriptTypedIO(IntegrationTestCase):
 				self.guest._set_admin_domain("acme.blr1.frappe.dev")
 			self.assertIn('domain = "acme.blr1.frappe.dev"', open(toml).read())
 			m_bench.assert_called_once_with("setup", "production")
+
+	def test_set_admin_domain_skips_setup_when_run_setup_false(self) -> None:
+		"""`run_setup=False` writes the toml line but does NOT run production setup — the
+		site-mode caller's later `bench rename-site` regenerates nginx in one pass, so a
+		second setup here would be a redundant CPU-throttled no-op."""
+		import os
+		import tempfile
+
+		with tempfile.TemporaryDirectory() as tmp:
+			toml = os.path.join(tmp, "bench.toml")
+			with open(toml, "w") as f:
+				f.write('[admin]\nenabled = true\ndomain = ""\n')
+			with (
+				patch.object(self.guest, "BENCH_TOML", toml),
+				patch.object(self.guest, "_bench") as m_bench,
+			):
+				self.guest._set_admin_domain("acme-pilot.blr1.frappe.dev", run_setup=False)
+			self.assertIn('domain = "acme-pilot.blr1.frappe.dev"', open(toml).read())
+			m_bench.assert_not_called()
+
+	def test_from_args_parses_admin_domain(self) -> None:
+		inputs = self.guest.DeploySiteInputs.from_args(
+			["--site-name", "acme.blr1.frappe.dev", "--admin-domain", "acme-pilot.blr1.frappe.dev"]
+		)
+		self.assertEqual(inputs.admin_domain, "acme-pilot.blr1.frappe.dev")
+		# Defaults empty when the flag is absent (an ordinary deploy that knows no console FQDN).
+		bare = self.guest.DeploySiteInputs.from_args(["--site-name", "acme.blr1.frappe.dev"])
+		self.assertEqual(bare.admin_domain, "")
+
+	def test_site_main_sets_admin_domain_before_rename(self) -> None:
+		"""site mode with --admin-domain: `[admin].domain` is written (run_setup=False)
+		BEFORE the rename, so the rename-site's production setup emits the admin vhost in
+		the same pass — the console is reachable at its real FQDN out of this one deploy,
+		not left at the baked `admin.localhost`."""
+		guest = self.guest
+		calls = []
+		with (
+			patch.object(guest, "_preflight"),
+			patch.object(guest, "_await_db_ready"),
+			patch.object(guest, "_bench"),
+			patch.object(
+				guest, "_set_admin_domain", side_effect=lambda *a, **k: calls.append(("admin", a, k))
+			) as m_admin,
+			patch.object(
+				guest, "_rename_site_to_fqdn", side_effect=lambda *a: calls.append(("rename", a, {})) or True
+			),
+			patch.object(guest, "_mint_login_url", return_value="https://acme.blr1.frappe.dev/app?sid=x"),
+			patch.object(guest, "_serving", return_value=True),
+			patch.object(
+				guest.DeploySiteInputs,
+				"from_args",
+				return_value=guest.DeploySiteInputs(
+					site_name="acme.blr1.frappe.dev",
+					warm_vm_uuid="",
+					admin_domain="acme-pilot.blr1.frappe.dev",
+				),
+			),
+		):
+			guest.main()
+		# The admin domain is the PILOT FQDN, written with run_setup=False, and the write
+		# lands strictly before the rename.
+		m_admin.assert_called_once_with("acme-pilot.blr1.frappe.dev", run_setup=False)
+		self.assertEqual([c[0] for c in calls], ["admin", "rename"])
+
+	def test_site_main_skips_admin_domain_when_not_given(self) -> None:
+		"""No --admin-domain (an ordinary site deploy that knows no console): the admin
+		domain write is skipped entirely — back-compat for every existing site deploy."""
+		guest = self.guest
+		with (
+			patch.object(guest, "_preflight"),
+			patch.object(guest, "_await_db_ready"),
+			patch.object(guest, "_bench"),
+			patch.object(guest, "_set_admin_domain") as m_admin,
+			patch.object(guest, "_rename_site_to_fqdn", return_value=True),
+			patch.object(guest, "_mint_login_url", return_value="https://acme.blr1.frappe.dev/app?sid=x"),
+			patch.object(guest, "_serving", return_value=True),
+			patch.object(
+				guest.DeploySiteInputs,
+				"from_args",
+				return_value=guest.DeploySiteInputs(site_name="acme.blr1.frappe.dev", warm_vm_uuid=""),
+			),
+		):
+			guest.main()
+		m_admin.assert_not_called()
+
+	def test_site_main_writes_central_config_after_admin_domain(self) -> None:
+		"""Ordering invariant: `set-central-config` reads `[admin].domain` out of
+		bench.toml to write site_config.json, so it MUST run after the admin domain is in
+		place — never before, or it captures the `admin.localhost` placeholder."""
+		guest = self.guest
+		order = []
+		with (
+			patch.object(guest, "_preflight"),
+			patch.object(guest, "_await_db_ready"),
+			patch.object(
+				guest, "_set_admin_domain", side_effect=lambda *a, **k: order.append("admin-domain")
+			),
+			patch.object(guest, "_rename_site_to_fqdn", return_value=True),
+			patch.object(guest, "_mint_login_url", return_value="https://acme.blr1.frappe.dev/app?sid=x"),
+			patch.object(guest, "_serving", return_value=True),
+			patch.object(
+				guest,
+				"_bench",
+				side_effect=lambda *a, **k: order.append(a[0])
+				if a and a[0] == "set-central-config"
+				else None,
+			),
+			patch.object(
+				guest.DeploySiteInputs,
+				"from_args",
+				return_value=guest.DeploySiteInputs(
+					site_name="acme.blr1.frappe.dev",
+					warm_vm_uuid="",
+					admin_domain="acme-pilot.blr1.frappe.dev",
+					central_endpoint="https://central.example",
+					central_auth_token="tok",
+				),
+			),
+		):
+			guest.main()
+		self.assertEqual(order, ["admin-domain", "set-central-config"])

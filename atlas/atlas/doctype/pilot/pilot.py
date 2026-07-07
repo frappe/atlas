@@ -311,20 +311,22 @@ def auto_provision(pilot_name: str) -> None:
 def deploy_attached(pilot_name: str) -> None:
 	"""Wire the admin console for an ATTACHED Pilot on its (already-booted) shared VM.
 
-	Called by `Site.auto_provision` AFTER the site is serving: the backing VM is up and
-	the Site has done its own site-mode deploy, so this only does the pilot half —
-	the admin-mode wiring at the pilot FQDN (a second nginx vhost on the same guest),
-	mint the admin login URL, create the pilot's Subdomain (the second proxy route → the
-	SAME VM /128), and mark the Pilot Running. It is the attached twin of `auto_provision`
-	minus the VM-boot wait (the Site owns and already waited on the VM).
+	Called by `Site.auto_provision` AFTER the site is serving: the backing VM is up, and
+	the Site's own site-mode deploy already wrote the pilot FQDN into `[admin].domain`
+	and emitted the admin vhost in its rename-site pass (the admin console FQDN is known
+	up front — `pilot_subdomain_for`). So this only mints the admin login URL, creates
+	the pilot's Subdomain (the second proxy route → the SAME VM /128), and marks the
+	Pilot Running. It is the attached twin of `auto_provision` minus the VM-boot wait
+	(the Site owns and already waited on the VM) and minus the front-door setup (the site
+	deploy already did the admin-mode wiring).
 
-	Fail loud: a pilot whose admin wiring fails is Failed, not a silently console-less
+	Fail loud: a pilot whose login mint fails is Failed, not a silently console-less
 	Running — the Site's job surfaces it (and the Site itself still serves)."""
 	pilot = frappe.get_doc("Pilot", pilot_name)
 	if pilot.status != "Pending":
 		return
 	try:
-		result = _deploy(pilot)
+		result = _regenerate_login(pilot)
 		pilot._stamp_login(result)
 		pilot.db_set("login_url", pilot.login_url)
 		pilot.db_set("login_url_expires_at", pilot.login_url_expires_at)

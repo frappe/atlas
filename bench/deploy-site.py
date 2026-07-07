@@ -106,6 +106,7 @@ class DeploySiteInputs:
 	site_name: str
 	warm_vm_uuid: str = ""
 	mode: str = "site"
+	admin_domain: str = ""
 	central_endpoint: str = ""
 	central_auth_token: str = ""
 	regenerate_login: bool = False
@@ -124,6 +125,16 @@ class DeploySiteInputs:
 			choices=("site", "admin"),
 			default="site",
 			help="site: map the FQDN to the baked site (rename). admin: map it to the admin app",
+		)
+		parser.add_argument(
+			"--admin-domain",
+			default="",
+			help=(
+				"FQDN to write into `[admin].domain` regardless of mode — the admin console's "
+				"host. Site mode: the attached Pilot's FQDN, set BEFORE the rename so rename-site's "
+				"production setup emits the admin vhost in the same pass. Admin mode: normally the "
+				"same as --site-name; when omitted admin mode falls back to --site-name."
+			),
 		)
 		parser.add_argument(
 			"--central-endpoint", default="", help="Central API base URL the pilot calls back on"
@@ -146,6 +157,7 @@ class DeploySiteInputs:
 			site_name=ns.site_name,
 			warm_vm_uuid=ns.warm_vm_uuid,
 			mode=ns.mode,
+			admin_domain=ns.admin_domain,
 			central_endpoint=ns.central_endpoint,
 			central_auth_token=ns.central_auth_token,
 			regenerate_login=ns.regenerate_login,
@@ -359,17 +371,24 @@ def _mint_admin_login_url() -> str:
 	return _bench("generate-admin-session", "--full-path", capture=True).strip()
 
 
-def _set_admin_domain(fqdn: str) -> None:
-	"""Admin mode: point the admin vhost at the FQDN, then run production setup.
+def _set_admin_domain(fqdn: str, *, run_setup: bool = True) -> None:
+	"""Point the admin vhost at the FQDN by rewriting `[admin].domain`, and (unless
+	`run_setup` is False) run production setup so the vhost regenerates.
 
 	With `[admin].domain = <fqdn>` set, `bench setup production` emits an
 	`_admin.conf` vhost (`server_name <fqdn>`, `listen 80;` + `listen [::]:80;`)
 	proxying to the socket-activated admin gunicorn — so the FQDN maps to the admin
 	URL. We rewrite the committed bench.toml's `domain = ""` line in place (a plain
-	text edit — no TOML library in the guest, stdlib-only) then run
-	`bench setup production`. Idempotent: re-running rewrites the same line and
-	production setup is a fast no-op when already done. Fails loud if the admin
-	domain line is absent (a clone from the wrong/old snapshot)."""
+	text edit — no TOML library in the guest, stdlib-only). Idempotent: re-running
+	rewrites the same line and production setup is a fast no-op when already done.
+	Fails loud if the admin domain line is absent (a clone from the wrong/old
+	snapshot).
+
+	`run_setup=False` writes the line WITHOUT running production setup — the caller
+	guarantees a later step regenerates nginx (site mode runs `bench rename-site`,
+	which does production setup itself, so the admin vhost picks up the domain we set
+	here in that same pass). Admin mode leaves the default (`run_setup=True`) so it
+	regenerates the vhost inline."""
 	# nosemgrep: frappe-security-file-traversal -- guest script; reads the fixed BENCH_TOML path, not untrusted web input
 	with open(BENCH_TOML) as f:
 		text = f.read()
@@ -387,7 +406,8 @@ def _set_admin_domain(fqdn: str) -> None:
 	# nosemgrep: frappe-security-file-traversal -- guest script; writes the fixed BENCH_TOML path, not untrusted web input
 	with open(BENCH_TOML, "w") as f:
 		f.write("".join(out_lines))
-	_bench("setup", "production")
+	if run_setup:
+		_bench("setup", "production")
 
 
 # The local readiness path, per bake mode. site mode serves a Frappe site whose
@@ -546,13 +566,24 @@ def main() -> None:
 	# gunicorn/supervisor restart. bench-cli emits the v6 listener itself.
 	login_url = ""
 	if inputs.mode == "admin":
+		# The admin console's FQDN: the explicit --admin-domain when given, else the
+		# site name (a stand-alone admin-mode VM is fronted at its own FQDN). Run
+		# production setup inline so the admin vhost regenerates now.
 		log("admin mode: pointing [admin].domain at the FQDN + setup production …")
-		_set_admin_domain(inputs.site_name)
+		_set_admin_domain(inputs.admin_domain or inputs.site_name)
 		log("admin vhost regenerated + reloaded")
 		log("minting admin login URL (bench generate-admin-session --full-path) …")
 		login_url = _mint_admin_login_url()
 		log("admin login URL minted")
 	else:
+		# Set `[admin].domain` to the attached console's FQDN FIRST (no production
+		# setup — the rename below runs it), so the admin vhost is emitted in the same
+		# rename-site pass as the site vhost. Whenever we know the admin FQDN we wire
+		# it, so the console is reachable at its real host straight out of this deploy
+		# (not left at the baked `admin.localhost` placeholder).
+		if inputs.admin_domain:
+			log(f"pointing [admin].domain at {inputs.admin_domain} (regenerates with the rename) …")
+			_set_admin_domain(inputs.admin_domain, run_setup=False)
 		# `bench rename-site` moves the site, regenerates nginx, AND re-runs
 		# production setup for the new domain in one step — so there is no separate
 		# `bench setup nginx` here anymore. It is fast on a re-run / already-renamed
@@ -567,6 +598,12 @@ def main() -> None:
 	# Central handoff: persist the pilot's callback endpoint + token into the bench's
 	# bench.toml (Pilot owns that file, so we go through its command rather than writing
 	# TOML here), so pilot→Central calls can authenticate with X-Pilot-Token.
+	#
+	# ORDER: this MUST run AFTER `[admin].domain` is set — `set-central-config` reads the
+	# admin domain out of bench.toml to write it into `site_config.json`, so it needs the
+	# real FQDN in place, not the baked `admin.localhost` placeholder. Both the site-mode
+	# admin-domain write above and the admin-mode branch precede this, so the invariant
+	# holds; keep this block last if either is ever reordered.
 	if inputs.central_endpoint and inputs.central_auth_token:
 		log("writing Central config to bench.toml (bench set-central-config) …")
 		_bench(

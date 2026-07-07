@@ -97,6 +97,7 @@ def deploy_site(
 	central_endpoint: str | None = None,
 	central_auth_token: str | None = None,
 	mode: str | None = None,
+	admin_domain: str | None = None,
 ) -> dict | None:
 	"""Deploy one Frappe site into the (already booted) golden bench VM.
 
@@ -171,6 +172,12 @@ def deploy_site(
 		build_mode = mode or vm.build_mode or "site"
 		if build_mode == "admin":
 			command += " --mode admin"
+		# The admin console's FQDN, wired into `[admin].domain` regardless of mode: a
+		# site-mode VM that also serves an attached Pilot console passes the pilot FQDN
+		# here so the admin vhost is emitted in the SAME rename-site pass (no
+		# `admin.localhost` placeholder window). Only appended when the caller knows it.
+		if admin_domain:
+			command += substitute(" --admin-domain {}", (admin_domain,))
 		# A warm-restored clone (resumed from a golden memory snapshot, not
 		# booted): the deploy gates on the in-guest identity freshen having
 		# completed for THIS VM before it renames the site — see deploy-site.py's

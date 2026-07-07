@@ -467,8 +467,10 @@ class TestSiteFakeProvisionStages(IntegrationTestCase):
 
 		with patch.object(deploy_module, "deploy_site") as m_deploy:
 			site_module._deploy_site(self.site, self.real_vm.name)
-		# The two trailing args are the bench-level Central endpoint + token, threaded from
-		m_deploy.assert_called_once_with(self.real_vm.name, self.site.name, None, None)
+		# The two trailing positional args are the bench-level Central endpoint + token,
+		# threaded from create_site; `admin_domain` (the attached Pilot's FQDN) is None here
+		# since this unit test calls `_deploy_site` directly without resolving one.
+		m_deploy.assert_called_once_with(self.real_vm.name, self.site.name, None, None, admin_domain=None)
 
 	def test_wait_for_http_calls_through_on_real_vm(self) -> None:
 		from atlas.atlas import deploy_site as deploy_module
@@ -670,7 +672,7 @@ class TestSitePilotAttachment(IntegrationTestCase):
 		self.addCleanup(lambda: [p.stop() for p in self._commit_patches])
 
 	def test_provision_pilot_attaches_console_to_same_vm(self) -> None:
-		pilot_name = site_module._provision_pilot(self.site, self.fake_vm.name)
+		pilot_name = site_module._provision_pilot(self.site, self.fake_vm.name, "acme-pilot")
 		# Named `<subdomain>-pilot.<region>` and linked back on the Site.
 		self.assertEqual(pilot_name, "acme-pilot.blr1.frappe.dev")
 		self.site.reload()
@@ -694,14 +696,14 @@ class TestSitePilotAttachment(IntegrationTestCase):
 		from atlas.atlas.doctype.pilot import pilot as pilot_module
 
 		with patch.object(pilot_module, "_provision_backing_vm") as m_prov:
-			site_module._provision_pilot(self.site, self.fake_vm.name)
+			site_module._provision_pilot(self.site, self.fake_vm.name, "acme-pilot")
 		m_prov.assert_not_called()
 
 	def test_attached_pilot_terminate_does_not_touch_the_vm(self) -> None:
 		# The attached Pilot's own terminate() must NOT terminate the shared VM (the Site
 		# owns it) — the `.attached` guard makes _terminate_backing_vm a no-op. Terminate
 		# the Pilot alone and assert the VM is untouched (only the Site would terminate it).
-		site_module._provision_pilot(self.site, self.fake_vm.name)
+		site_module._provision_pilot(self.site, self.fake_vm.name, "acme-pilot")
 		pilot = frappe.get_doc("Pilot", self.site.pilot)
 		pilot.terminate()
 		pilot.reload()
@@ -712,7 +714,7 @@ class TestSitePilotAttachment(IntegrationTestCase):
 
 	def test_terminate_cascades_to_pilot_and_vm_once(self) -> None:
 		# Full cascade: Site.terminate → Pilot Terminated + VM Terminated (once each).
-		site_module._provision_pilot(self.site, self.fake_vm.name)
+		site_module._provision_pilot(self.site, self.fake_vm.name, "acme-pilot")
 		self.site.db_set("virtual_machine", self.fake_vm.name)
 		self.site.reload()
 		pilot_name = self.site.pilot
