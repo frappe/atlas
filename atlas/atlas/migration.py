@@ -501,17 +501,33 @@ def _ensure_base_on_target(doc) -> bool:
 
 	# 3. Poll hydration of the base clone device (same script as the VM disk, keyed
 	#    on the base clone name). Re-enter until 100%.
-	percent = int(
-		parse_result(
-			_run_phase_task(
-				doc,
-				server=doc.target_server,
-				script="migration-poll-hydration",
-				variables={"CLONE_DEVICE": f"atlas-base-{image}-clone"},
-				timeout_seconds=60,
-			).stdout
-		)["hydration_percent"]
+	result = parse_result(
+		_run_phase_task(
+			doc,
+			server=doc.target_server,
+			script="migration-poll-hydration",
+			variables={"CLONE_DEVICE": f"atlas-base-{image}-clone"},
+			timeout_seconds=60,
+		).stdout
 	)
+
+	# Self-heal a dead source, exactly as _phase_hydrating does for the VM disk: if the
+	# nbd client backing the base clone has died, the copy is frozen (reads return 0
+	# bytes) and the clone pins the dead device open. Re-running prepare (step 2 above)
+	# now detects the wedged stack, removes the clone, re-dials the client, and rebuilds
+	# — so we just re-enter and let the next tick's prepare do it. WITHOUT this, a
+	# dropped NBD link mid-ship wedges forever (dm-clone spins on dead reads, log spam).
+	if not result.get("source_healthy", True):
+		_progress(
+			doc,
+			f"NBD link to {source_title} dropped mid base-image ship — rebuilding the "
+			f"base clone on {target_title} and resuming.",
+			percent=doc.base_ship_percent or 0,
+		)
+		doc.db_set("base_ship_percent", 0)
+		return False  # re-enter; next tick's prepare rebuilds the wedged stack
+
+	percent = int(result["hydration_percent"])
 	doc.db_set("base_ship_percent", percent)
 	_progress(doc, f"Shipping base image {image} to {target_title} — {percent}% copied.", percent=percent)
 	if percent < 100:

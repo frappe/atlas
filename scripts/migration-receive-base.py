@@ -116,14 +116,22 @@ def _prepare(inputs: "ReceiveBaseInputs", pool: "ThinPool", key: str) -> None:
 	dest = pool.base_image(inputs.image_name)
 	pool.create_thin(dest, inputs.disk_gb)
 
-	# 2. nbd client to the source base export, then the dm-clone read-through. Verify
+	# 2. Repair a wedged stack before (re)building it. A base dm-clone whose source
+	#    nbd client has died freezes hydration (reads return 0 bytes) while pinning the
+	#    nbd device open — it must come down FIRST, only then can the dead client be
+	#    disconnected and re-dialed. A healthy clone is left alone (progress preserved).
+	#    Same self-repair clone-target does for the VM disk; without it a dropped NBD
+	#    link mid-ship wedges forever (dm-clone spins on dead reads, log spam).
+	_drop_clone_if_source_dead(key, inputs.base_nbd_slot)
+
+	# 3. nbd client to the source base export, then the dm-clone read-through. Verify
 	#    the connected size matches the dest base LV so a stale device can't slip in.
 	base_nbd = _ensure_nbd_client(
 		inputs.source_host, inputs.nbd_port, inputs.base_nbd_slot, expected_bytes=dest.size_bytes
 	)
 	_ensure_dm_clone(pool, key, dest, base_nbd)
 
-	# 3. The image directory (kernel + rootfs sentinel), extracted from the meta NBD
+	# 4. The image directory (kernel + rootfs sentinel), extracted from the meta NBD
 	#    export. Small and instant — done here, not gated on hydration.
 	_receive_image_dir(inputs)
 
@@ -179,15 +187,53 @@ def _receive_image_dir(inputs: "ReceiveBaseInputs") -> None:
 
 def _ensure_nbd_client(host: str, port: int, slot: int, expected_bytes: int = 0) -> str:
 	"""Size-verified idempotent connect — mirrors clone-target's: reuse an existing
-	connection only if its size matches the expected export, else reconnect. Guards
-	against a stale/wrong device on this slot (the 'Invalid argument' dm-clone bug)."""
+	connection only if its client is ALIVE and its size matches the expected export,
+	else reconnect. Guards against a stale/wrong device on this slot (the 'Invalid
+	argument' dm-clone bug) AND a dead-owner zombie binding.
+
+	`nbd-client -check` lies — it reports "connected" off the kernel's stale binding
+	even after the client PROCESS has died (dead pid, -check exit 0, every read 0
+	bytes, dm-clone frozen). So liveness is read from /sys/block/nbdN/pid, not -check."""
 	device = f"/dev/nbd{slot}"
-	if run_ok("sudo nbd-client -check {}", device):
+	if _nbd_client_alive(slot):
 		if expected_bytes and _nbd_size_bytes(device) == expected_bytes:
 			return device
+		# Wrong export (or unknown size): drop it and reconnect to the intended one.
+		run("sudo nbd-client -d {}", device, check=False)
+	else:
+		# Dead/stale binding: -d clears the kernel's zombie owner so the reconnect
+		# below can take the slot. Harmless if already clear.
 		run("sudo nbd-client -d {}", device, check=False)
 	run("sudo nbd-client -N {} {} {} {} -persist", "", host, str(port), device)
 	return device
+
+
+def _drop_clone_if_source_dead(key: str, slot: int) -> None:
+	"""Tear down the base dm-clone ONLY when its source nbd client has died — the
+	wedged state that freezes hydration (source reads return 0 bytes). Removing it
+	frees the nbd device so `_ensure_nbd_client` can re-dial and `_ensure_dm_clone`
+	can rebuild. A HEALTHY clone (live client) is left untouched — idempotent, must
+	not discard good hydration progress. A dead client under a live clone can't be
+	fixed any other way: the clone pins the nbd device open, so the client can't be
+	disconnected until the clone comes down. The rebuilt clone re-hydrates from 0 —
+	correctness over speed. Same recovery clone-target does for the VM disk."""
+	name = CLONE_DEV.format(key=key)
+	if not run_ok("sudo dmsetup info {}", name):
+		return  # no clone yet — nothing wedged
+	if _nbd_client_alive(slot):
+		return  # source client alive — healthy, leave it
+	run("sudo dmsetup remove {}", name, check=False)
+
+
+def _nbd_client_alive(slot: int) -> bool:
+	"""Whether /dev/nbd<slot> has a LIVE client process. Reads the owning pid the
+	kernel records in /sys/block/nbd<slot>/pid and checks the process still exists —
+	the reliable signal `nbd-client -check` fails to give (it trusts a stale binding
+	whose process has died)."""
+	pid = run("cat /sys/block/nbd{}/pid", str(slot), check=False).strip()
+	if not pid.isdigit():
+		return False  # no owner recorded → not connected
+	return run_ok("test -d /proc/{}", pid)
 
 
 def _nbd_size_bytes(device: str) -> int:

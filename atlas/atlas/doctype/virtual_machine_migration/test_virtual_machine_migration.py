@@ -863,6 +863,75 @@ class TestLocalBaseImageShip(IntegrationTestCase):
 			scripts_seen.index("migration-clone-target"),
 		)
 
+	def test_base_ship_rebuilds_when_source_client_dies(self) -> None:
+		"""A dead source nbd client mid base-image ship (base poll reports
+		source_healthy=false) is self-healed exactly like the VM-disk Hydrating phase:
+		the base ship does NOT advance, resets base_ship_percent to 0, and re-enters —
+		the next tick's receive-base prepare rebuilds the wedged clone. Without this the
+		base clone spins on dead reads forever (par-1-2 2026-07-07: hydration failed /
+		nbd I/O-error log storm for two days)."""
+		row, _vm = self._row()
+
+		poll_healthy = {"value": False}  # first base poll: source client dead
+		receive_base_calls: list[str] = []
+
+		def _fake_run_task(*, script, variables, server, virtual_machine, timeout_seconds):
+			if script == "migration-export-source":
+				return fake_task(
+					stdout='ATLAS_RESULT={"nbd_port": 10001, "nbd_pid": 4242, '
+					'"root_size_bytes": 1, "data_size_bytes": 0}'
+				)
+			if script == "migration-export-base":
+				return fake_task(
+					stdout='ATLAS_RESULT={"nbd_port": 10003, "nbd_pid": 5252, '
+					'"base_size_bytes": 1, "meta_port": 10004, "meta_pid": 5253, '
+					'"meta_size_bytes": 4096}'
+				)
+			if script == "migration-receive-base":
+				receive_base_calls.append(variables.get("PHASE", ""))
+				return fake_task(stdout="ok")
+			if script == "migration-poll-hydration":
+				# Base clone poll carries CLONE_DEVICE; the VM disk poll doesn't.
+				if variables.get("CLONE_DEVICE"):
+					healthy = "true" if poll_healthy["value"] else "false"
+					pct = 100 if poll_healthy["value"] else 0
+					return fake_task(
+						stdout=f'ATLAS_RESULT={{"hydration_percent": {pct}, "source_healthy": {healthy}}}'
+					)
+				return fake_task(stdout='ATLAS_RESULT={"hydration_percent": 100}')
+			return fake_task(stdout="ok")
+
+		from atlas.atlas import proxy as proxy_module
+
+		with (
+			patch.object(migration_module, "run_task", side_effect=_fake_run_task),
+			patch.object(proxy_module, "reconcile_proxies", return_value=[]),
+		):
+			# Advance to TargetPreparing.
+			for _ in range(2):
+				row.reload()
+				migration_module.advance_migration(row)
+			row.reload()
+			self.assertEqual(row.status, "TargetPreparing")
+
+			# Unhealthy base poll: the ship holds (no advance), resets percent, and did
+			# NOT finalize — the phase stays in TargetPreparing to rebuild next tick.
+			receive_base_calls.clear()
+			migration_module.advance_migration(row)
+			row.reload()
+			self.assertEqual(row.status, "TargetPreparing")  # held, not advanced
+			self.assertEqual(row.base_ship_state, "Shipping")  # not Done
+			self.assertEqual(row.base_ship_percent, 0)  # reset for the rebuilt clone
+			self.assertIn("prepare", receive_base_calls)  # prepare ran (self-repair)
+			self.assertNotIn("finalize", receive_base_calls)  # never collapsed a dead clone
+
+			# Source recovers: the base ship reaches 100%, finalizes, and proceeds.
+			poll_healthy["value"] = True
+			row.reload()
+			migration_module.advance_migration(row)
+			row.reload()
+			self.assertEqual(row.base_ship_state, "Done")
+
 	def test_progress_detail_is_stamped_before_each_phase(self) -> None:
 		# spec/24: progress must be visible at all points — advance_migration stamps a
 		# live progress_detail line naming the host BEFORE the (possibly slow) phase
