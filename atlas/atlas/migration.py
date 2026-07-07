@@ -1209,7 +1209,13 @@ def _detect_lost_task(doc, script: str, timeout_seconds: int) -> None:
 def _fail(name: str, message: str) -> None:
 	"""Mark a migration Failed, recording the phase it failed at so retry() resumes
 	there. Best-effort and self-committing (it runs after a rollback)."""
-	doc = frappe.get_doc("Virtual Machine Migration", name)
+	try:
+		doc = frappe.get_doc("Virtual Machine Migration", name)
+	except frappe.DoesNotExistError:
+		# The row was deleted between the time we fetched the list of non-terminal
+		# migrations and now — nothing to fail. This is not an error (the operator
+		# intentionally removed it), so just return.
+		return
 	doc.db_set({"status": "Failed", "error_message": message[-2000:], "error_at_status": doc.status})
 	# nosemgrep: frappe-manual-commit -- persist the failure so the next tick sees it
 	frappe.db.commit()
