@@ -277,6 +277,10 @@ class TestVirtualMachineLifecycle(IntegrationTestCase):
 		self.assertEqual(variables["VCPUS"], "4")
 		self.assertEqual(variables["MEMORY_MB"], "4096")
 		self.assertEqual(variables["DISK_GB"], "20")
+		# CGROUP_ARG carries the NEW memory.max so resize-vm.py can retrack the
+		# launcher's cgroup cap — a stale cap OOM-kills the guest on the new RAM.
+		# 4096 MB + MEMORY_HEADROOM_MIB (256) = 4352 MiB whole-process ceiling.
+		self.assertIn(f"memory.max={(4096 + 256) * 1024 * 1024}", variables["CGROUP_ARG"])
 		vm.reload()
 		self.assertEqual(vm.vcpus, 4)
 		self.assertEqual(vm.memory_megabytes, 4096)

@@ -785,15 +785,17 @@ class VirtualMachine(Document):
 
 		`cpu_max_cores` is the VM's guaranteed CPU bandwidth share and `cpu_mode`
 		is how it is enforced (hard cgroup cpu.max ceiling vs. cpu.weight floor +
-		burst). resize-vm.py rewrites firecracker.json (vcpu_count/mem) and grows
-		the disk, but does NOT regenerate the per-VM jailer launcher — so a new
-		share, mode, or burst ceiling takes effect on the next re-provision, not on
-		the next Start (the same pre-existing behavior the whole-core cpu.max cap
-		already has). We still persist the new values so the doc stays the source
-		of truth and capacity accounting is correct. When the caller changes vcpus
-		but leaves cpu_max_cores unset, keep the share in step for a whole-core VM
-		(share == old vcpus); otherwise the explicit share (or the unchanged
-		fractional one) stands. cpu_mode is left untouched unless passed."""
+		burst). resize-vm.py rewrites firecracker.json (vcpu_count/mem), grows the
+		disk, AND splices the new cgroup caps (CGROUP_ARG below) into the per-VM
+		jailer launcher — so the new memory.max / cpu.max take effect on the next
+		Start. The launcher rewrite is load-bearing for memory: firecracker.json's
+		guest RAM and the launcher's `memory.max` are independent ceilings, and a
+		stale memory.max caps the guest below its new RAM → CONSTRAINT_MEMCG
+		OOM-kill on first boot (the exact failure this once had before CGROUP_ARG
+		was forwarded). When the caller changes vcpus but leaves cpu_max_cores
+		unset, keep the share in step for a whole-core VM (share == old vcpus);
+		otherwise the explicit share (or the unchanged fractional one) stands.
+		cpu_mode is left untouched unless passed."""
 		if self.status != "Stopped":
 			frappe.throw(f"Stop the VM before resizing (status is {self.status})")
 		self._guard_no_active_migration()
@@ -828,6 +830,13 @@ class VirtualMachine(Document):
 			"VCPUS": str(new_vcpus),
 			"MEMORY_MB": str(new_memory),
 			"DISK_GB": str(new_disk),
+			# The new jailer cgroup caps, derived from the resized memory/cpu exactly
+			# as provision does. resize-vm.py splices these into jailer-launch.sh so
+			# the host cgroup memory.max tracks the new RAM — without it the launcher
+			# pins the pre-resize cap and the guest OOM-kills on the RAM it was given.
+			"CGROUP_ARG": _cgroup_values(
+				cgroup_args(new_cpu_max, new_memory, new_disk, new_cpu_mode, new_vcpus)
+			),
 		}
 		if new_data_disk:
 			variables["DATA_DISK_GB"] = str(new_data_disk)
