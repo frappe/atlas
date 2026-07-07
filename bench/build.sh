@@ -214,6 +214,15 @@ fi
 # a manual activate. ---
 as_frappe "bench -b '$BENCH_NAME' init"
 
+# --- 5a. Install `tzdata` into the bench venv. bench.toml pins python = "3.14", so
+# `bench init` builds the venv on a uv-managed standalone CPython. Unlike a distro
+# python (which reads /usr/share/zoneinfo), the standalone build ships NO zoneinfo
+# database and relies on the pip `tzdata` package. Frappe declares no tzdata dep, so
+# without this any `ZoneInfo(get_system_timezone())` call — e.g. `now_datetime()` in
+# the setup wizard — dies with `ZoneInfoNotFoundError` (notably for legacy aliases
+# like `Asia/Calcutta`). Bake it into the golden venv so every site has it. ---
+as_frappe "cd '$BENCH_DIR' && uv pip install --python env/bin/python tzdata"
+
 # --- 5b. Install the in-guest domain provider (spec/18 Component D). The thin "push"
 # half of one-way self-service subdomain routing, and the `bench-domain-provider`
 # plug-in pilot (formerly bench-cli) discovers on PATH and drives by verb: the new-site
