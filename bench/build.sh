@@ -223,21 +223,6 @@ as_frappe "bench -b '$BENCH_NAME' init"
 # like `Asia/Calcutta`). Bake it into the golden venv so every site has it. ---
 as_frappe "cd '$BENCH_DIR' && uv pip install --python env/bin/python tzdata"
 
-# --- 5b. Install the in-guest domain provider (spec/18 Component D). The thin "push"
-# half of one-way self-service subdomain routing, and the `bench-domain-provider`
-# plug-in pilot (formerly bench-cli) discovers on PATH and drives by verb: the new-site
-# flow runs `bench-domain-provider register <domain>` BEFORE creating the site (the
-# authoritative reservation; pilot aborts on a non-zero exit) and `deregister <domain>`
-# after drop / as the create-failure rollback; `wildcard-domains` / `proxy-servers`
-# answer pilot's host-level queries (name constraint + the edge it locks nginx down to).
-# Stdlib-only, so the stock guest python3 runs it; reads the ONE non-secret file
-# /etc/atlas-routing.env the controller injects (no UUID, no token — caller resolution
-# is by source address). No-ops cleanly (register exits 0, host queries print blank)
-# when no routing config is present, so a non-Atlas bench is unaffected. Installed on
-# EVERY golden (site + admin), since a bench in either mode can spin up routable sites.
-# The binary name + path are the contract pilot looks up — keep them exactly. ---
-install -m 0755 "$SRC_DIR/bench-domain-provider.py" /usr/local/bin/bench-domain-provider
-
 # --- 6. Site mode only: bake a fully-created Frappe + ERPNext site, taking the
 # heaviest per-signup costs (`bench new-site` + `install-app erpnext`) once here.
 # admin mode bakes no site — the clone's domain maps to the admin app instead. ---
@@ -303,6 +288,31 @@ else
 	# is what installs+enables the systemd --user units in current bench-cli.
 	as_frappe "bench -b '$BENCH_NAME' setup production"
 fi
+
+# --- 6b. Install the in-guest domain provider (spec/18 Component D), AFTER the site
+# is baked. The thin "push" half of one-way self-service subdomain routing, and the
+# `bench-domain-provider` plug-in pilot (formerly bench-cli) discovers on PATH and
+# drives by verb: the new-site flow runs `bench-domain-provider register <domain>`
+# BEFORE creating the site (the authoritative reservation; pilot aborts on a non-zero
+# exit) and `deregister <domain>` after drop / as the create-failure rollback;
+# `wildcard-domains` / `proxy-servers` answer pilot's host-level queries (name
+# constraint + the edge it locks nginx down to).
+#
+# It is installed AFTER the bake's own `bench new-site` (not before) on purpose: pilot's
+# new-site gates `register` + the `matches_wildcard` name check on the provider being on
+# PATH (DomainRouteProvider._host_query / _ask_provider `which()` it). The baked site is
+# named `site.local`, which does NOT match a region wildcard `*.<region>.frappe.dev`, so
+# a provider present at bake would make pilot reject it (or spuriously `register` it). By
+# installing here the bake's new-site sees no provider and skips both — the golden still
+# carries the binary, so live clones (which DO get /etc/atlas-routing.env) route normally.
+#
+# Stdlib-only, so the stock guest python3 runs it; reads the ONE non-secret file
+# /etc/atlas-routing.env the controller injects (no UUID, no token — caller resolution
+# is by source address). No-ops cleanly (register exits 0, host queries print blank)
+# when no routing config is present, so a non-Atlas bench is unaffected. Installed on
+# EVERY golden (site + admin), since a bench in either mode can spin up routable sites.
+# The binary name + path are the contract pilot looks up — keep them exactly. ---
+install -m 0755 "$SRC_DIR/bench-domain-provider.py" /usr/local/bin/bench-domain-provider
 
 # --- 7. Stamp the resolved input commits. The Frappe branch (and ERPNext, and
 # bench-cli's main) can be a MOVING target — `develop` for the nightly variant — so
