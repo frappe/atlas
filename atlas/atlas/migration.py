@@ -340,8 +340,14 @@ def _phase_pending(doc) -> bool:
 		# Fast-stop: a cold migration discards RAM, so bound the graceful drain to a
 		# few seconds (spec/24 §0.5.2) — ExecStopPost (netns/veth/proxy-NDP teardown)
 		# still fires, only the shutdown-grace wait is trimmed off the downtime clock.
+		# graceful=False: no point ctrl-alt-del-ing a guest whose RAM (and clean
+		# unmount) we're about to throw away — that only adds the shutdown wait back.
 		vm.flags.migrating = True
-		vm.stop(memory_snapshot=False, stop_timeout_seconds=MIGRATION_STOP_TIMEOUT_SECONDS)
+		vm.stop(
+			memory_snapshot=False,
+			stop_timeout_seconds=MIGRATION_STOP_TIMEOUT_SECONDS,
+			graceful=False,
+		)
 	if vm.has_memory_snapshot:
 		vm.db_set("has_memory_snapshot", 0)
 	return vm.status == "Stopped"

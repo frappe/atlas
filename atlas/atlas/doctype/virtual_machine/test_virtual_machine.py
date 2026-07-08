@@ -593,6 +593,36 @@ class TestVirtualMachine(IntegrationTestCase):
 		self.assertEqual(vm.status, "Stopped")
 		self.assertEqual(mocked.call_args.kwargs["script"], "stop-vm")
 		self.assertFalse(vm.has_memory_snapshot)
+		# Cooperative shutdown by default: the guest gets a ctrl+alt+del (GRACEFUL=1)
+		# so it syncs + unmounts before the unit is killed.
+		self.assertEqual(mocked.call_args.kwargs["variables"]["GRACEFUL"], "1")
+
+	def test_stop_forced_skips_graceful_shutdown(self) -> None:
+		# graceful=False is the forced kill — no ctrl+alt+del, guest RAM discarded.
+		# The migration cold-stop and any caller that throws the RAM away use this.
+		from atlas.atlas.doctype.virtual_machine import virtual_machine as module
+
+		vm = _new_vm()
+		vm.db_set("status", "Running")
+		vm.reload()
+		with patch.object(module, "run_task", return_value=fake_task(name="task-stop")) as mocked:
+			vm.stop(graceful=False)
+		vm.reload()
+		self.assertEqual(vm.status, "Stopped")
+		self.assertEqual(mocked.call_args.kwargs["variables"]["GRACEFUL"], "0")
+
+	def test_stop_forced_normalizes_stringy_flag(self) -> None:
+		# REST/frm.call send a stringy value; "0"/"false" must read as forced, not
+		# truthy-string. (Python bool("0") is True — the normalize guards that.)
+		from atlas.atlas.doctype.virtual_machine import virtual_machine as module
+
+		for value in ("0", "false", "False"):
+			vm = _new_vm()
+			vm.db_set("status", "Running")
+			vm.reload()
+			with patch.object(module, "run_task", return_value=fake_task(name="task-stop")) as mocked:
+				vm.stop(graceful=value)
+			self.assertEqual(mocked.call_args.kwargs["variables"]["GRACEFUL"], "0", value)
 
 	def test_stop_captures_memory_snapshot_when_opted_in(self) -> None:
 		from atlas.atlas.doctype.virtual_machine import virtual_machine as module

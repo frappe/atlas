@@ -393,7 +393,12 @@ class VirtualMachine(Document):
 		return task.name
 
 	@frappe.whitelist()
-	def stop(self, memory_snapshot: bool | None = None, stop_timeout_seconds: int = 0) -> str:
+	def stop(
+		self,
+		memory_snapshot: bool | None = None,
+		stop_timeout_seconds: int = 0,
+		graceful: bool = True,
+	) -> str:
 		"""Stop a Running/Paused VM. The default is the plain unit stop. With
 		`memory_snapshot` (default: the VM's memory_snapshot_on_stop flag, off
 		unless the operator opted in), the stop Task first captures the guest's
@@ -401,6 +406,13 @@ class VirtualMachine(Document):
 		snapshot failure the Task falls back to the plain stop on its own — the
 		VM always ends up Stopped, only the next Start's speed differs.
 		has_memory_snapshot records which way it went.
+
+		`graceful` (default True) sends the guest a ctrl+alt+del first so its kernel
+		syncs filesystems and unmounts before the unit is stopped; `graceful=False`
+		is the forced kill (Firecracker SIGKILLed with the guest never told to halt —
+		dirty guest page cache is lost). Forced is for callers that discard the RAM
+		anyway (migration cold-stop) or capture the disk another way. Only applies to
+		the plain (non-snapshot) stop; the snapshot path pauses+dumps RAM instead.
 
 		`stop_timeout_seconds` (>0) bounds the graceful drain via a runtime
 		TimeoutStopSec override (ExecStopPost still fires) — the migration fast-stop
@@ -433,7 +445,9 @@ class VirtualMachine(Document):
 			)
 			snapshotted = bool(parse_result(task.stdout)["memory_snapshot"])
 		else:
-			variables = {"VIRTUAL_MACHINE_NAME": self.name}
+			# frm.call / REST send a JSON/stringy value; normalize to bool.
+			graceful = graceful in (True, 1, "1", "true", "True", "yes")
+			variables = {"VIRTUAL_MACHINE_NAME": self.name, "GRACEFUL": "1" if graceful else "0"}
 			if stop_timeout_seconds > 0:
 				variables["STOP_TIMEOUT_SECONDS"] = str(stop_timeout_seconds)
 			task = run_task(
