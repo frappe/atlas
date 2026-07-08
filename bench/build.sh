@@ -333,4 +333,15 @@ fi
 apt-get clean
 rm -rf /var/lib/apt/lists/* "$BENCH_HOME/.cache" 2>/dev/null || true
 
+# --- 9. Flush every write to disk before we hand the VM back to be snapshotted.
+# The controller stops the build VM with a plain `systemctl stop` of the firecracker
+# unit — that terminates the guest, it does NOT ACPI-shut-it-down, so the guest never
+# runs its own `sync`. Any file still dirty in the guest page cache at that instant is
+# LOST: ext4 journals the inode + dirent but not the data, so the snapshot captures the
+# file as 0 bytes. bench-domain-provider (installed in §6b, the LAST real write of the
+# bake) hit exactly this — every image baked after the §6b move snapshotted a 0-byte
+# provider, which fails at deploy with `Exec format error`. A single `sync` here makes
+# the whole bake durable before the stop regardless of what wrote last. ---
+sync
+
 echo "Golden bench image baked (mode=$MODE): bench-cli @ ${BENCH_CLI_REF:0:12}, bench '$BENCH_NAME'$([ "$MODE" = site ] && echo " + ERPNext site '$BAKED_SITE'"), production stack running."
