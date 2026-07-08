@@ -165,6 +165,28 @@ class TestRecipeRegistry(IntegrationTestCase):
 		for name in ("bench-v15", "bench-v16", "bench-nightly"):
 			self.assertEqual(RECIPES[name].promote_image_name, name)
 
+	def test_bench_snapshot_title_slugs_to_a_version_mappable_name(self) -> None:
+		# The Virtual Machine Snapshot promote dialog derives its default image name by
+		# slugifying the snapshot title (title.toLowerCase().replace(/[^a-z0-9.-]+/g,'-')
+		# in virtual_machine_snapshot.js). A prose snapshot_title ("Bench nightly admin
+		# (develop)") slugged to `bench-nightly-admin-develop` — a name version_from_image
+		# can't strip back to `nightly`, so a VM off it mirrored a garbage version token.
+		# snapshot_title is the clean series name, so the slug is a no-op that lands on the
+		# same name the Image Build promote path uses AND parses back to the version token.
+		import re
+
+		from atlas.atlas.placement import version_from_image
+
+		def slug(title: str) -> str:
+			return re.sub(r"^-+|-+$", "", re.sub(r"[^a-z0-9.-]+", "-", title.lower()))
+
+		for name, recipe in RECIPES.items():
+			if not name.startswith("bench-"):
+				continue
+			slugged = slug(recipe.snapshot_title)
+			self.assertEqual(slugged, recipe.promote_image_name)
+			self.assertIsNotNone(version_from_image(slugged))
+
 	def test_all_site_variants_are_warm_only_v16_registers(self) -> None:
 		# Every site variant is warm-clonable (warm.sh) so a customer VM off any
 		# version boots from a pre-warmed guest. v16 alone also doubles as the

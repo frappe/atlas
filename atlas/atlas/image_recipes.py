@@ -186,7 +186,15 @@ def _bench_variant(
 	promote target image name (= the series name). Everything else — the committed
 	`bench/` tree, the build-VM sizing, the bench-cli ref, the snapshot/task naming
 	scheme — is shared. `promote_image_name` defaults to the recipe name
-	(`bench-v15` etc.)."""
+	(`bench-v15` etc.).
+
+	`snapshot_title` is the recipe `name` (the `bench-<token>` series), NOT the prose
+	`title`: the snapshot-form promote dialog derives its default image name by
+	slugifying the snapshot title, so a prose title (`Bench nightly admin (develop)`)
+	would slug to `bench-nightly-admin-develop` — a name `version_from_image` can't
+	strip back to the `nightly` version token, so Central mirrors garbage. Feeding the
+	clean series name makes that slug a no-op that lands on the same name the Image
+	Build promote path uses (`promote_image_name`)."""
 	return ImageRecipe(
 		name=name,
 		title=title,
@@ -196,7 +204,7 @@ def _bench_variant(
 		disk_gigabytes=_BENCH_DISK_GB,
 		memory_megabytes=_BENCH_MEMORY_MB,
 		vcpus=2,
-		snapshot_title=title,
+		snapshot_title=name,
 		task_script="bench-build",
 		frappe_branch=frappe_branch,
 		erpnext_branch=erpnext_branch,
