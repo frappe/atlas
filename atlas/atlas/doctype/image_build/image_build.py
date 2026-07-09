@@ -485,13 +485,19 @@ def _warm_snapshot(build, recipe, vm_name: str) -> str:
 
 
 def _run_warm_entrypoint(recipe, vm) -> None:
-	"""Run the recipe's warm entrypoint in the guest (the tree run_build uploaded
-	is still in place — warm.sh runs from beside build.sh), recorded as a Task
-	like every guest op. Passes the build VM's uuid: it becomes the in-guest
-	'identity already adopted' marker the freshen unit compares MMDS against."""
+	"""Run the recipe's warm entrypoint in the guest, recorded as a Task like every
+	guest op. Passes the build VM's uuid: it becomes the in-guest 'identity already
+	adopted' marker the freshen unit compares MMDS against.
+
+	run_build staged the tree once, but it lives under /tmp (tmpfs) and the warm bake
+	reboots the guest before it gets here (the fat-boot resize, then the warm-snapshot
+	boot), which wipes it — so re-stage the tree first. warm.sh reads its siblings
+	(bench.toml et al) from its own directory just like build.sh, so the whole tree
+	goes back, not just warm.sh."""
 	import shlex
 
 	from atlas.atlas._ssh.transport import run_ssh, ssh_key_file
+	from atlas.atlas.image_builder import stage_recipe_tree
 	from atlas.atlas.proxy import _record_guest_task
 	from atlas.atlas.ssh import connection_for_guest
 
@@ -500,6 +506,7 @@ def _run_warm_entrypoint(recipe, vm) -> None:
 		f"bash {shlex.quote(f'{recipe.remote_directory}/{recipe.warm_entrypoint}')} {shlex.quote(vm.name)}"
 	)
 	with ssh_key_file(connection.ssh_private_key) as key_path:
+		stage_recipe_tree(recipe, connection, key_path)
 		stdout, stderr, code = run_ssh(connection, key_path, command, timeout_seconds=900)
 	_record_guest_task(vm.name, "bench-warm", {"recipe": recipe.name}, stdout, stderr, code)
 	if code != 0:

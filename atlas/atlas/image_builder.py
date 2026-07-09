@@ -315,6 +315,18 @@ def run_build(
 		frappe.throw(f"{recipe.title} build on {virtual_machine} failed (exit {code}): {stderr[-500:]}")
 
 
+def stage_recipe_tree(recipe: ImageRecipe, connection, key_path) -> None:
+	"""Re-stage the recipe's committed tree into the guest under `remote_directory`,
+	rendered bench.toml and all. run_build stages it once before the build, but the
+	tree lives under /tmp (tmpfs) — a bake that reboots the guest between build and a
+	later in-guest step (the fat-boot resize, then the warm entrypoint) loses it. The
+	warm path calls this to put warm.sh + its siblings back before invoking them; a
+	fresh stage is idempotent (scp overwrites) and cheap (the tree is small)."""
+	with ExitStack() as stack:
+		uploads = _uploads_with_rendered_toml(recipe, stack)
+		_stage_tree(connection, key_path, uploads)
+
+
 def _uploads_with_rendered_toml(recipe: ImageRecipe, stack: ExitStack) -> list[tuple[Path, str]]:
 	"""The recipe's tree uploads, with the committed bench.toml swapped for a rendered
 	temp file when the recipe pins a version. The temp file is registered with `stack`
