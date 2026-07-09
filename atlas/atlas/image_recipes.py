@@ -190,9 +190,7 @@ _BENCH_BUILD_MEMORY_MB = 6144
 # (not `main`) so the golden is reproducible; a variant can override it if a future
 # Frappe release needs a newer bench-cli. Kept in lockstep with bench/build.sh's
 # BENCH_CLI_REF default (the value a direct `build.sh` run uses with no env override).
-_BENCH_CLI_REF = (
-	"486005a0beb949d1e02c316603f6d318c181620e"  # main @ 2026-07-03 (fixes ?sid= login-url sign-in, PR #159)
-)
+_BENCH_CLI_REF = "77b734022b495d9d6e341745302b6b77ea2f7a5a"  # central-billing-client @ prathameshkurunkar7/pilot (Central billing client)
 
 
 def _bench_variant(

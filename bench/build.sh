@@ -57,7 +57,13 @@ set -euo pipefail
 # bakes any Frappe version (v15 / v16 / nightly). The Frappe branch + Python
 # version are pinned in bench.toml (rendered by the controller before upload).
 # The defaults below keep a direct `build.sh` run (no env) reproducible at v16. ---
-BENCH_CLI_REF="${BENCH_CLI_REF:-486005a0beb949d1e02c316603f6d318c181620e}"  # default: main @ 2026-07-03 (fixes ?sid= login-url sign-in, PR #159)
+# BENCH_CLI_REPO is the GitHub org/repo the CLI is cloned from. Default is the
+# prathameshkurunkar7/pilot fork's central-billing-client branch (the Central
+# billing client); override to frappe/pilot for an upstream bake. install.sh
+# hardcodes the frappe/pilot origin, so §3 below re-points the clone's origin at
+# this repo before checking out BENCH_CLI_REF (a fork SHA is unreachable otherwise).
+BENCH_CLI_REPO="${BENCH_CLI_REPO:-prathameshkurunkar7/pilot}"
+BENCH_CLI_REF="${BENCH_CLI_REF:-77b734022b495d9d6e341745302b6b77ea2f7a5a}"  # default: central-billing-client @ prathameshkurunkar7/pilot
 ERPNEXT_BRANCH="${ERPNEXT_BRANCH:-version-16}"  # default: v16; controller overrides for v15 / develop
 
 BENCH_USER="frappe"
@@ -155,7 +161,7 @@ apt-get install -y --no-install-recommends zfsutils-linux git
 # bench-cli dir yet) — a re-run must NOT re-invoke it, as install.sh `git pull`s to
 # self-update and FATALs on the detached HEAD the pin below leaves ("not currently on
 # a branch"). Re-running just re-fetches + re-pins the ref. ---
-INSTALL_URL="https://raw.githubusercontent.com/frappe/pilot/$BENCH_CLI_REF/install.sh"
+INSTALL_URL="https://raw.githubusercontent.com/$BENCH_CLI_REPO/$BENCH_CLI_REF/install.sh"
 curl -fsSL "$INSTALL_URL" | bash -s -- --user "$BENCH_USER" -y
 
 # Enable lingering for the bench user NOW that it exists. Current bench-cli runs
@@ -170,7 +176,9 @@ loginctl enable-linger "$BENCH_USER"
 if [ ! -d "$BENCH_CLI_DIR/.git" ]; then
 	as_frappe "curl -fsSL '$INSTALL_URL' | bash"
 fi
-as_frappe "git -C '$BENCH_CLI_DIR' fetch --quiet origin && git -C '$BENCH_CLI_DIR' checkout --quiet '$BENCH_CLI_REF'"
+# install.sh clones origin=frappe/pilot; re-point it at BENCH_CLI_REPO so a fork
+# SHA is fetchable (idempotent — set-url is safe on a re-run).
+as_frappe "git -C '$BENCH_CLI_DIR' remote set-url origin 'https://github.com/$BENCH_CLI_REPO' && git -C '$BENCH_CLI_DIR' fetch --quiet origin && git -C '$BENCH_CLI_DIR' checkout --quiet '$BENCH_CLI_REF'"
 
 # --- 4. Create the bench + drop our pinned bench.toml (bench-setup.md §5).
 # `bench new` scaffolds benches/<name>/ non-interactively (name positional, no
