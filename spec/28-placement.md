@@ -224,7 +224,7 @@ unbounded fleet-wide repack. One future case (design only; build nothing now), p
 the broader form of Case 3:
 
 - **Case 2 — resize needs migration.** `NoResizeCapacityError` is the trigger. Pick a
-  target via the same scorer with the *new* size, run the spec/19 cold migration,
+  target via the same scorer with the *new* size, run the spec/24 cold migration,
   then resize on the target — one orchestration carrying a `pending_resize` payload.
   The arrival reserve is what keeps this rare.
 - **Case 3 — repack for better packing.** The narrow, reactive slice — defragment
