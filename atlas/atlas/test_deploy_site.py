@@ -612,7 +612,9 @@ class TestGuestScriptTypedIO(IntegrationTestCase):
 			guest.main()
 		# The admin domain is the PILOT FQDN, written with run_setup=False, and the write
 		# lands strictly before the rename.
-		m_admin.assert_called_once_with("acme-pilot.blr1.frappe.dev", run_setup=False)
+		m_admin.assert_called_once_with(
+			"acme-pilot.blr1.frappe.dev", run_setup=False, update_site="site.local"
+		)
 		self.assertEqual([c[0] for c in calls], ["admin", "rename"])
 
 	def test_site_main_skips_admin_domain_when_not_given(self) -> None:
