@@ -255,7 +255,7 @@ class NoResizeCapacityError(NoCapacityError):
 
 class ConsolidationInProgressError(NoCapacityError):
 	"""No host fits the arrival right now, but placement is freeing one by migrating a
-	few small VMs off a host (spec/25 case 3 — defragmentation on arrival).
+	few small VMs off a host (spec/28 case 3 — defragmentation on arrival).
 
 	Subclasses `NoCapacityError` so Central's existing "region full → retry / queue"
 	handling fires unchanged — the retry is exactly the right response, because once
@@ -391,13 +391,13 @@ def default_server(
 	if best is not None:
 		return best[1]
 	# Nothing fits as-is. Try to free a host by migrating a few small VMs off it
-	# (spec/25 case 3); that raises ConsolidationInProgressError ("retry, room is
+	# (spec/28 case 3); that raises ConsolidationInProgressError ("retry, room is
 	# coming") when a plan exists or is already running, and NoCapacityError only when
 	# the region is genuinely full with nothing movable.
 	_raise_no_capacity(needs)
 
 
-# --- Consolidation: free a host by migrating a few small VMs (spec/25 case 3) ---
+# --- Consolidation: free a host by migrating a few small VMs (spec/28 case 3) ---
 #
 # When no Active host fits an arrival, the free units may just be scattered — each host
 # has a little room, none has enough in one place (a 16-unit Dedicated can't span hosts).

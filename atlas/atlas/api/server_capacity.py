@@ -178,7 +178,7 @@ def capacity_for_server(server: str) -> dict:
 	# (spec/24). Until then `vm.server` still names the source, so the resident query
 	# misses it — count it against the target too, or placement would double-book a
 	# host that is receiving migrations (including the consolidation moves placement
-	# itself starts, spec/25). The source keeps counting it (it still runs there until
+	# itself starts, spec/28). The source keeps counting it (it still runs there until
 	# cutover): a migrating VM is deliberately charged to BOTH hosts for its brief
 	# life, the safe direction for a capacity gate.
 	incoming = _incoming_migration_vms(server)

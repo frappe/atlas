@@ -141,7 +141,7 @@
    "fieldtype": "Check",
    "label": "Consolidate on No-Capacity",
    "default": "1",
-   "description": "When placing a NEW VM finds no host with room, migrate a few small VMs off one host onto others to free a contiguous slot (defragmentation-on-arrival, spec/25 case 3). The migrations run in the background; the create is told to retry (ConsolidationInProgressError) and lands once room appears. Off = fail loud with NoCapacityError instead. Only ever moves small VMs that are safe to move (no attached public IPv4, no in-flight migration, same provider as the target)."
+   "description": "When placing a NEW VM finds no host with room, migrate a few small VMs off one host onto others to free a contiguous slot (defragmentation-on-arrival, spec/28 case 3). The migrations run in the background; the create is told to retry (ConsolidationInProgressError) and lands once room appears. Off = fail loud with NoCapacityError instead. Only ever moves small VMs that are safe to move (no attached public IPv4, no in-flight migration, same provider as the target)."
   },
   {
    "fieldname": "max_consolidation_migrations",

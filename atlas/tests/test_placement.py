@@ -366,7 +366,7 @@ class TestPlacement(IntegrationTestCase):
 		vm = self._new_machine()
 		self.assertEqual(vm.image, image_b.name, "configured default wins over ambiguity")
 
-	# --- consolidation: free a host by migrating a few small VMs (spec/25 case 3) ---
+	# --- consolidation: free a host by migrating a few small VMs (spec/28 case 3) ---
 
 	def _place_vm(self, server, memory, disk=4, status="Stopped", **overrides):
 		"""A VM pinned to `server` at a given size, in a migratable state. Explicit
