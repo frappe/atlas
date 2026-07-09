@@ -371,7 +371,7 @@ def _mint_admin_login_url() -> str:
 	return _bench("generate-admin-session", "--full-path", capture=True).strip()
 
 
-def _set_admin_domain(fqdn: str, *, run_setup: bool = True) -> None:
+def _set_admin_domain(fqdn: str, *, run_setup: bool = True, update_site: str = "") -> None:
 	"""Point the admin vhost at the FQDN by rewriting `[admin].domain`, and (unless
 	`run_setup` is False) run production setup so the vhost regenerates.
 
@@ -388,7 +388,14 @@ def _set_admin_domain(fqdn: str, *, run_setup: bool = True) -> None:
 	guarantees a later step regenerates nginx (site mode runs `bench rename-site`,
 	which does production setup itself, so the admin vhost picks up the domain we set
 	here in that same pass). Admin mode leaves the default (`run_setup=True`) so it
-	regenerates the vhost inline."""
+	regenerates the vhost inline.
+
+	`update_site` (site mode) is the on-disk site dir whose `pilot_endpoint` — the
+	admin URL the site calls Pilot back on — should be re-pointed at this FQDN. It
+	was baked at new-site time as the `admin.localhost` placeholder (the real admin
+	domain wasn't known then), so we rewrite it here now that it is. Passed the baked
+	`site.local` before the rename, so the corrected value rides the rename into the
+	FQDN dir."""
 	# nosemgrep: frappe-security-file-traversal -- guest script; reads the fixed BENCH_TOML path, not untrusted web input
 	with open(BENCH_TOML) as f:
 		text = f.read()
@@ -406,8 +413,55 @@ def _set_admin_domain(fqdn: str, *, run_setup: bool = True) -> None:
 	# nosemgrep: frappe-security-file-traversal -- guest script; writes the fixed BENCH_TOML path, not untrusted web input
 	with open(BENCH_TOML, "w") as f:
 		f.write("".join(out_lines))
+	if update_site:
+		_update_pilot_endpoint(update_site, fqdn)
 	if run_setup:
 		_bench("setup", "production")
+
+
+def _update_pilot_endpoint(site: str, admin_fqdn: str) -> None:
+	"""Re-point a site's `pilot_endpoint` at the real admin FQDN in its
+	`site_config.json`. The key is the admin URL the site calls Pilot back on; it is
+	baked at new-site time (pilot new_site.py), when the admin domain is still the
+	`admin.localhost` placeholder — so left untouched it would keep every deployed
+	site calling `admin.localhost`. HTTPS: the admin console is fronted at its public
+	FQDN by the edge proxy, which terminates TLS. Idempotent (re-runs write the same
+	value). No-op if the config is missing (a clone we can't fix here fails louder
+	downstream)."""
+	config_path = os.path.join(SITES_DIR, site, "site_config.json")
+	if not os.path.exists(config_path):
+		return
+	# nosemgrep: frappe-security-file-traversal -- guest script; reads a fixed site_config.json under the baked bench, not untrusted web input
+	with open(config_path) as f:
+		config = json.load(f)
+	config["pilot_endpoint"] = f"https://{admin_fqdn}"
+	# nosemgrep: frappe-security-file-traversal -- guest script; writes the same fixed site_config.json path
+	with open(config_path, "w") as f:
+		json.dump(config, f, indent=1)
+
+
+def _reissue_pilot_auth_token(fqdn: str) -> None:
+	"""Re-issue the site's `pilot_auth_token` scoped to the FQDN in its
+	`site_config.json`. The token is a JWT with `scope: "site"` and a `site` claim
+	(pilot generate_session.has_scope), baked at new-site time (pilot new_site.py)
+	scoped to the placeholder `site.local` — so after the rename to the FQDN the bench
+	rejects it (`claims["site"] != <fqdn>`) and every site→bench API call 403s. Mint a
+	fresh one for the FQDN with `bench issue-site-token <fqdn> --ttl <365d>` (same TTL
+	as the bake) and write it back. Run AFTER the rename, against the FQDN dir.
+	`issue-site-token` mints purely from the FQDN arg + bench.toml's jwt_secret and does
+	not read the site off disk, so scoping to the FQDN is safe. Idempotent (a re-run
+	just mints another valid token). No-op if the config is missing."""
+	config_path = os.path.join(SITES_DIR, fqdn, "site_config.json")
+	if not os.path.exists(config_path):
+		return
+	token = _bench("issue-site-token", fqdn, "--ttl", str(365 * 24 * 3600), capture=True).strip()
+	# nosemgrep: frappe-security-file-traversal -- guest script; reads a fixed site_config.json under the baked bench, not untrusted web input
+	with open(config_path) as f:
+		config = json.load(f)
+	config["pilot_auth_token"] = token
+	# nosemgrep: frappe-security-file-traversal -- guest script; writes the same fixed site_config.json path
+	with open(config_path, "w") as f:
+		json.dump(config, f, indent=1)
 
 
 # The local readiness path, per bake mode. site mode serves a Frappe site whose
@@ -583,7 +637,10 @@ def main() -> None:
 		# (not left at the baked `admin.localhost` placeholder).
 		if inputs.admin_domain:
 			log(f"pointing [admin].domain at {inputs.admin_domain} (regenerates with the rename) …")
-			_set_admin_domain(inputs.admin_domain, run_setup=False)
+			# update_site=BAKED_SITE also re-points the baked site's `pilot_endpoint`
+			# off the `admin.localhost` placeholder onto the real admin FQDN; the value
+			# rides the rename below into the FQDN dir.
+			_set_admin_domain(inputs.admin_domain, run_setup=False, update_site=BAKED_SITE)
 		# `bench rename-site` moves the site, regenerates nginx, AND re-runs
 		# production setup for the new domain in one step — so there is no separate
 		# `bench setup nginx` here anymore. It is fast on a re-run / already-renamed
@@ -591,6 +648,12 @@ def main() -> None:
 		log("renaming baked site to the FQDN (bench rename-site) …")
 		renamed = _rename_site_to_fqdn(inputs.site_name)
 		log(f"rename {'done' if renamed else 'already in place'}")
+		# The baked `pilot_auth_token` is a JWT scoped to `site.local` — dead after the
+		# rename (the bench checks the `site` claim against the FQDN). Re-issue it for the
+		# FQDN now that the site dir carries that name.
+		log("re-issuing pilot_auth_token scoped to the FQDN …")
+		_reissue_pilot_auth_token(inputs.site_name)
+		log("pilot_auth_token re-issued")
 		log("minting tenant login URL (bench browse) …")
 		login_url = _mint_login_url(inputs.site_name)
 		log("login URL minted")
@@ -598,12 +661,6 @@ def main() -> None:
 	# Central handoff: persist the pilot's callback endpoint + token into the bench's
 	# bench.toml (Pilot owns that file, so we go through its command rather than writing
 	# TOML here), so pilot→Central calls can authenticate with X-Pilot-Token.
-	#
-	# ORDER: this MUST run AFTER `[admin].domain` is set — `set-central-config` reads the
-	# admin domain out of bench.toml to write it into `site_config.json`, so it needs the
-	# real FQDN in place, not the baked `admin.localhost` placeholder. Both the site-mode
-	# admin-domain write above and the admin-mode branch precede this, so the invariant
-	# holds; keep this block last if either is ever reordered.
 	if inputs.central_endpoint and inputs.central_auth_token:
 		log("writing Central config to bench.toml (bench set-central-config) …")
 		_bench(
