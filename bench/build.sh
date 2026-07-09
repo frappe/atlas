@@ -63,7 +63,7 @@ set -euo pipefail
 # hardcodes the frappe/pilot origin, so §3 below re-points the clone's origin at
 # this repo before checking out BENCH_CLI_REF (a fork SHA is unreachable otherwise).
 BENCH_CLI_REPO="${BENCH_CLI_REPO:-prathameshkurunkar7/pilot}"
-BENCH_CLI_REF="${BENCH_CLI_REF:-77b734022b495d9d6e341745302b6b77ea2f7a5a}"  # default: central-billing-client @ prathameshkurunkar7/pilot
+BENCH_CLI_REF="${BENCH_CLI_REF:-c6e5253ef46c23fb1f2f776dc7372c7d39224e42}"  # default: central-billing-client @ prathameshkurunkar7/pilot
 ERPNEXT_BRANCH="${ERPNEXT_BRANCH:-version-16}"  # default: v16; controller overrides for v15 / develop
 
 BENCH_USER="frappe"
