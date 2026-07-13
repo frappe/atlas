@@ -154,6 +154,7 @@ keep it the source of truth.
 24. [VM migration between hosts](./24-vm-migration.md)
 25. [Private networking (the WireGuard host mesh)](./25-private-networking.md)
 26. [Docker compatibility (`docker run` against microVMs)](./27-docker-compat.md) — *design / proposal*
+27. [The core ↔ service boundary and the `satellite` app](./28-core-service-boundary.md) — *how service logic (proxy, gateway, mesh, bench/site) leaves core for a separate app via an explicit VM-lifecycle seam*
 
 ## First run on a fresh site
 
