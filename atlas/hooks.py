@@ -183,9 +183,18 @@ after_migrate = "atlas.install.after_migrate"
 
 doc_events = {
 	"Virtual Machine": {
-		"after_insert": "atlas.atlas.central_report.on_vm_after_insert",
-		"on_update": "atlas.atlas.central_report.on_vm_update",
-		"on_trash": "atlas.atlas.central_report.on_vm_trash",
+		"after_insert": [
+			"atlas.atlas.central_report.on_vm_after_insert",
+			"atlas.atlas.satellite_events.on_vm_after_insert",
+		],
+		"on_update": [
+			"atlas.atlas.central_report.on_vm_update",
+			"atlas.atlas.satellite_events.on_vm_update",
+		],
+		"on_trash": [
+			"atlas.atlas.central_report.on_vm_trash",
+			"atlas.atlas.satellite_events.on_vm_trash",
+		],
 	},
 	"Site": {
 		"after_insert": "atlas.atlas.central_report.on_site_after_insert",

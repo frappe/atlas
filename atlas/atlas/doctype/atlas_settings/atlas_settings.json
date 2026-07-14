@@ -24,7 +24,9 @@
   "ssh_public_key",
   "ssh_private_key_path",
   "section_break_satellite",
-  "satellite_public_keys"
+  "satellite_public_keys",
+  "satellite_webhook_url",
+  "satellite_webhook_secret"
  ],
  "fields": [
   {
@@ -149,6 +151,18 @@
    "fieldtype": "Small Text",
    "label": "Satellite Public Keys",
    "description": "OpenSSH public key(s), one per line, of the Satellite orchestrator(s) that manage this Atlas's VMs. Atlas injects them into every host (at bootstrap) and guest (at provision) authorized_keys so a Satellite can SSH the bare box it is handed (spec/28). Empty on an Atlas with no Satellite."
+  },
+  {
+   "fieldname": "satellite_webhook_url",
+   "fieldtype": "Data",
+   "label": "Satellite Webhook URL",
+   "description": "URL of the Satellite orchestrator's webhook receiver. Atlas POSTs a thin, HMAC-signed lifecycle event here when a VM is registered/updated/deregistered, so the Satellite can sync its mirror and (de)apply services. Best-effort; empty disables webhooks (the Satellite's reconcile sweep is the backstop)."
+  },
+  {
+   "fieldname": "satellite_webhook_secret",
+   "fieldtype": "Password",
+   "label": "Satellite Webhook Secret",
+   "description": "Shared secret Atlas signs each webhook body with (HMAC-SHA256, X-Atlas-Signature header); the Satellite verifies it. Set the same value on the Satellite's Atlas record."
   }
  ],
  "issingle": 1,
