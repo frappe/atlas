@@ -67,6 +67,26 @@ systemctl daemon-reload
 systemctl enable atlas-warm-freshen.service
 systemctl restart atlas-warm-freshen.service
 
+# The freshen unit MUST be installed, enabled and ALIVE at the freeze — it is the
+# one thing that lets a clone adopt its own identity, so a golden captured without
+# it fans out into clones that wake on the golden's address and are unreachable on
+# their own (observed live: a golden whose warm.sh tree was wiped from tmpfs before
+# this ran captured no freshen unit, and every clone was network-dead). The install
+# ran under `set -e`, but assert the end state too so this bake fails LOUD rather
+# than silently freezing a broken golden — the same fail-loud contract as the pre-
+# warm `pong`/`sid` checks below. is-enabled proves the multi-user.target want (so
+# a plain reboot of the clone re-arms it); is-active proves the loop is mid-poll in
+# the RAM the capture is about to freeze.
+if ! systemctl is-enabled --quiet atlas-warm-freshen.service; then
+	echo "warm bake failed: atlas-warm-freshen.service is not enabled after install" >&2
+	exit 1
+fi
+if ! systemctl is-active --quiet atlas-warm-freshen.service; then
+	echo "warm bake failed: atlas-warm-freshen.service is not running after restart:" >&2
+	systemctl status --no-pager atlas-warm-freshen.service >&2 || true
+	exit 1
+fi
+
 # --- 2. Pre-warm. Real requests through the full nginx → gunicorn → MariaDB path
 # against the baked site.local (its vhost is what's frozen; the FQDN rename
 # happens per clone at deploy). The Administrator login + /app GET walks the
