@@ -148,30 +148,6 @@ class TestCreateVM(IntegrationTestCase):
 			self._create("Not.A.Label")
 
 
-class TestRegenerateVMLogin(IntegrationTestCase):
-	"""Central's Open path re-mints an expired bench/site login by VM name. The login
-	URL lives on the front door (Pilot OR Site — the VM is a pure microVM), so the
-	endpoint resolves the VM to its front door, re-mints, and returns the VM-shaped
-	Asset payload — a plain VM with no front door is refused."""
-
-	def test_remints_via_front_door_and_returns_vm_payload(self) -> None:
-		"""A VM backed by a front door (Pilot or Site): re-mint via it, then return the
-		freshly re-read VM-shaped Asset payload (NOT the front door's own return shape —
-		a Site's regenerate returns a site-shaped mirror, so we re-derive the VM shape)."""
-		front_door = MagicMock()
-		vm_payload = {"name": "vm-1", "login_url": "https://acme.blr1.frappe.dev/app?sid=fresh"}
-		with (
-			patch("atlas.atlas.front_door.front_door_for_vm", return_value=front_door) as resolve,
-			patch("atlas.atlas.central_report._vm_payload", return_value=vm_payload),
-			patch.object(provision_api.frappe, "get_doc", return_value=MagicMock(name="vm-1")),
-		):
-			result = provision_api.regenerate_vm_login("vm-1")
-		resolve.assert_called_once_with("vm-1")
-		front_door.regenerate_login_url.assert_called_once_with()
-		self.assertEqual(result, vm_payload)
-
-	def test_vm_without_front_door_is_refused(self) -> None:
-		"""A plain proxy/operator VM has no bench/site login to regenerate."""
-		with patch("atlas.atlas.front_door.front_door_for_vm", return_value=None):
-			with self.assertRaises(frappe.ValidationError):
-				provision_api.regenerate_vm_login("vm-plain")
+# Bench-open no longer re-mints a login via Atlas: Central mints the SID itself (RS256,
+# verified by the bench against the JWKS), so `provision.regenerate_vm_login` was retired.
+# Site-open still re-mints via the Site front door (`regenerate_site_login`), covered elsewhere.

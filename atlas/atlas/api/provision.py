@@ -105,35 +105,6 @@ def create_vm(
 
 
 @frappe.whitelist()
-def regenerate_vm_login(name: str) -> dict:
-	"""Re-mint a bench VM's one-click login URL and return its (VM-shaped) mirror row.
-
-	Central calls this on Open when the Asset's stored URL has expired or never
-	arrived (the admin JWT lasts 5 minutes, so a login is almost always a fresh mint).
-	Central knows the VM only — it mirrors VMs — but the login URL lives on the front
-	door that owns the VM (a `Pilot` for a bench, a `Site` for a self-serve site), not
-	the pure-microVM `Virtual Machine`. So this resolves the VM to its front door,
-	re-mints in the guest via its `regenerate_login_url` (re-stamps + commits), then
-	returns the VM-shaped payload — always the Asset shape Central re-reads, whichever
-	aggregate backs the VM (the Site's own regenerate returns a site-shaped mirror; the
-	Asset caller needs the VM shape keyed by VM id, so we re-derive it here).
-
-	Raises if the VM has no front door (a plain proxy/operator VM has no login to
-	regenerate) — Central only ever calls this for a bench/site Asset.
-	"""
-	from atlas.atlas.central_report import _vm_payload
-	from atlas.atlas.front_door import front_door_for_vm
-
-	front_door = front_door_for_vm(name)
-	if front_door is None:
-		frappe.throw(f"No bench or site front door backs VM {name}.")
-	front_door.regenerate_login_url()
-	# Re-read the VM: its front door just committed the fresh login_url, and _vm_payload
-	# reads the handoff back through that front door — the VM-shaped Asset mirror row.
-	return _vm_payload(frappe.get_doc("Virtual Machine", name))
-
-
-@frappe.whitelist()
 def capacity() -> dict:
 	"""What can this region provision right now? — Central's pre-create check.
 
