@@ -101,24 +101,8 @@ def e2e_scripts_directory() -> Path:
 	return _repo_root() / "atlas" / "tests" / "e2e" / "scripts"
 
 
-def registered_directories() -> list[Path]:
-	"""Extra Task-script directories contributed by service apps (e.g. satellite)
-	through the `atlas_script_directories` hook — the `register_scripts` half of the
-	seam (spec/28 §3B). Each hook entry is an `"<app>:<relative/dir>"` string resolved
-	against that app's module path, so a service app ships its own host/guest Task
-	scripts for Atlas's runner to stage and run without any file living in core. These
-	verbs are NOT in `host_task_scripts()` (only core's `scripts/` is shipped durably
-	to the host), so the runner stages them per Task — exactly the fallback an unshipped
-	e2e probe already uses. Empty on a bare Atlas."""
-	directories: list[Path] = []
-	for entry in frappe.get_hooks("atlas_script_directories"):
-		app, _, relative = entry.partition(":")
-		directories.append(Path(frappe.get_app_path(app, *relative.split("/"))))
-	return directories
-
-
 def _search_paths() -> list[Path]:
-	return [scripts_directory(), e2e_scripts_directory(), *registered_directories()]
+	return [scripts_directory(), e2e_scripts_directory()]
 
 
 # A Task file is a `.py` (typed CLI verb) or `.sh` (the few shell verbs) directly

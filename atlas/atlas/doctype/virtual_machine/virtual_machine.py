@@ -22,7 +22,6 @@ from atlas.atlas.networking import (
 from atlas.atlas.placement import apply_user_defaults
 from atlas.atlas.ssh import run_task
 from atlas.atlas.task_results import parse_result
-from atlas.atlas.vm_services import services_for
 
 # Never change after insert — identity and the key the rootfs was built with.
 IMMUTABLE_AFTER_INSERT = (
@@ -143,16 +142,6 @@ class VirtualMachine(Document):
 			virtual_machine_name=self.name,
 		)
 
-	def on_update(self) -> None:
-		"""Notify each applicable service of a status transition (spec/28 §3A). Fires
-		only when `status` actually changed (the common no-status save is a cheap
-		no-op), and never on insert (no prior status). Empty-safe on a bare Atlas."""
-		previous = self.get_doc_before_save()
-		if previous is None or previous.status == self.status:
-			return
-		for service in services_for(self):
-			service.on_status_change(self, previous.status, self.status)
-
 	def before_validate(self) -> None:
 		if not self.is_new():
 			return
@@ -247,11 +236,6 @@ class VirtualMachine(Document):
 		# Role exclusivity holds for every save, not just insert — a later db-flip of
 		# is_gateway on a live proxy (or vice versa) is caught here too.
 		self.validate_infra_role()
-		# Service-specific insert/save rules and defaults (spec/28 §3A). Empty-safe:
-		# no-op on a bare Atlas, and only applicable services run. Runs before the
-		# is_new() early return so a service can set defaults / reject on insert.
-		for service in services_for(self):
-			service.validate(self)
 		if self.is_new():
 			return
 		original = self.get_doc_before_save()
@@ -289,12 +273,6 @@ class VirtualMachine(Document):
 		# provision — the converging reconcile + backstop sweep bring the fabric to match.
 		# No-op for a tenant-less VM (nothing to advertise) and on a Fake/test fleet.
 		self._reconcile_host_mesh()
-		# Service-specific post-provision side effects (spec/28 §3A): a service (e.g.
-		# the host mesh) reconciles its fabric here, after the provision has committed,
-		# so a failure never rolls back the VM. A service that needs the guest/host
-		# post-commit enqueues its own job, exactly as _reconcile_host_mesh does.
-		for service in services_for(self):
-			service.on_provision(self)
 		return task.name
 
 	def _reconcile_host_mesh(self) -> None:
@@ -980,12 +958,6 @@ class VirtualMachine(Document):
 		self._delete_custom_domains()
 		self._delete_snapshots()
 		self._deprovision_proxy()
-		# Service-specific teardown (spec/28 §3A), ordered between core's generic
-		# teardown (Reserved IP + Snapshots already released above) and the mesh
-		# reconcile that must stay LAST. Empty-safe; only applicable services run;
-		# each teardown is idempotent.
-		for service in services_for(self):
-			service.teardown(self)
 		# The VM's private /128 leaves its host's AllowedIPs (design §3, trigger 3, and
 		# the §8 teardown fix: withdraw the /128 from peers on teardown, not only on
 		# provision). status is now Terminated, so _residents_by_host excludes it and the
@@ -1268,11 +1240,6 @@ class VirtualMachine(Document):
 		variables.update(self._data_disk_variables())
 		if self.clone_source_data_rootfs:
 			variables["DATA_SNAPSHOT_ROOTFS_PATH"] = self.clone_source_data_rootfs
-		# Service-specific provision env (spec/28 §3A): a service injects the Task vars
-		# its guest/host setup script reads (a routing base URL, the private-plane
-		# identity, …). Merged last; empty-safe on a bare Atlas.
-		for service in services_for(self):
-			variables.update(service.provision_variables(self))
 		return variables
 
 
