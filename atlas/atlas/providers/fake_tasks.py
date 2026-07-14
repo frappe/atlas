@@ -221,10 +221,36 @@ def _fake_disk_bytes(variables: dict) -> int:
 	return gigabytes * 1024 * 1024 * 1024
 
 
+def _upload_snapshot_s3_result(variables: dict) -> dict:
+	# Synthesize a manifest for whatever objects the plan asked to upload, so the
+	# controller's parse_result + row update run exactly as on a real host.
+	objects = json.loads(variables.get("OBJECTS_JSON") or "[]")
+	built = []
+	for obj in objects:
+		raw = int(obj.get("disk_gigabytes") or 1) * 1024 * 1024 * 1024
+		built.append(
+			{
+				"name": obj["name"],
+				"object_name": obj["object_name"],
+				"sha256": "0" * 64,
+				"compressed_bytes": raw // 4,
+				"raw_bytes": raw,
+			}
+		)
+	return {"objects": built, "total_compressed_bytes": sum(item["compressed_bytes"] for item in built)}
+
+
+def _restore_snapshot_s3_result(variables: dict) -> dict:
+	objects = json.loads(variables.get("OBJECTS_JSON") or "[]")
+	return {"objects": [obj["name"] for obj in objects]}
+
+
 _RESULT_BUILDERS = {
 	"bootstrap-server": _bootstrap_result,
 	"server-facts": _server_facts_result,
 	"snapshot-vm": _snapshot_result,
 	"snapshot-stop-vm": _snapshot_stop_result,
 	"warm-snapshot-vm": _warm_snapshot_result,
+	"upload-snapshot-s3": _upload_snapshot_s3_result,
+	"restore-snapshot-s3": _restore_snapshot_s3_result,
 }

@@ -1,3 +1,4 @@
+import json
 import re
 
 import frappe
@@ -35,6 +36,11 @@ class VirtualMachineSnapshot(Document):
 		memory_directory: DF.Data | None
 		memory_megabytes: DF.Int
 		rootfs_path: DF.Data | None
+		s3_bucket: DF.Data | None
+		s3_key_prefix: DF.Data | None
+		s3_objects: DF.SmallText | None
+		s3_status: DF.Literal["", "Uploading", "Uploaded", "Restoring", "Failed"]
+		s3_uploaded_at: DF.Datetime | None
 		server: DF.Link | None
 		source_image: DF.Link | None
 		status: DF.Literal["Pending", "Available", "Failed"]
@@ -406,6 +412,180 @@ class VirtualMachineSnapshot(Document):
 		# placement can provision from it.
 		image.db_set("is_active", 1)
 
+	@frappe.whitelist()
+	def upload_to_s3(self) -> None:
+		"""Push this snapshot's artifacts to S3 for off-host durability — the disk
+		LV(s), plus (warm) the frozen memory pair + host signature. The byte movement
+		is minutes of zstd/curl, far too long for a web request (the gunicorn-timeout
+		lesson promote_to_image learned), so this sets Uploading and enqueues a
+		background job that returns immediately. Poll s3_status / the enqueued Task.
+		Idempotent — a re-run overwrites the objects. See spec/29-snapshot-backup.md."""
+		from atlas.atlas import s3
+
+		if self.status != "Available":
+			frappe.throw(f"Snapshot is not Available (status is {self.status})")
+		if not self.server or not frappe.db.exists("Server", self.server):
+			frappe.throw(_("Snapshot has no server to upload from."))
+		if not s3.is_configured():
+			frappe.throw(_("S3 Settings is not configured — set the bucket and credentials first."))
+		if self.s3_status in ("Uploading", "Restoring"):
+			frappe.throw(f"A backup operation is already running (s3_status is {self.s3_status}).")
+		self.db_set("s3_status", "Uploading")
+		frappe.enqueue(
+			"atlas.atlas.doctype.virtual_machine_snapshot.virtual_machine_snapshot.run_upload",
+			queue="long",
+			enqueue_after_commit=True,
+			snapshot_name=self.name,
+		)
+
+	def _run_upload(self) -> None:
+		"""Background half of upload_to_s3: presign a PUT per artifact, run the host
+		Task, and record the manifest. On any host failure set Failed and re-raise
+		(loud at the boundary — the operator retries the button)."""
+		from atlas.atlas import s3
+
+		backup = s3.S3Backup()
+		plan = s3.backup_plan(self)
+		for obj in plan:
+			obj["url"] = backup.presign_put(backup.object_key(self.name, obj["object_name"]))
+		try:
+			task = run_task(
+				server=self.server,
+				script="upload-snapshot-s3",
+				variables={"SNAPSHOT_NAME": self.name, "OBJECTS_JSON": json.dumps(plan)},
+				virtual_machine=self._task_vm(),
+				timeout_seconds=3600,
+			)
+			result = parse_result(task.stdout)
+		except Exception:
+			self.db_set("s3_status", "Failed")
+			# nosemgrep: frappe-manual-commit -- persist Failed before re-raising so the job log and row agree
+			frappe.db.commit()
+			raise
+		self._record_upload(backup, plan, result)
+
+	def _record_upload(self, backup, plan: list[dict], result: dict) -> None:
+		"""Merge the plan (which artifact, where, how big) with the host's measured
+		digests/sizes into the durable manifest, and flip the row Uploaded. The
+		presigned url is deliberately NOT stored — it is a time-limited secret."""
+		measured = {item["name"]: item for item in result["objects"]}
+		manifest = [
+			{
+				"name": obj["name"],
+				"object_name": obj["object_name"],
+				"source": obj["source"],
+				"block": obj["block"],
+				"compress": obj["compress"],
+				"disk_gigabytes": obj["disk_gigabytes"],
+				"sha256": measured.get(obj["name"], {}).get("sha256", ""),
+				"compressed_bytes": measured.get(obj["name"], {}).get("compressed_bytes", 0),
+				"raw_bytes": measured.get(obj["name"], {}).get("raw_bytes", 0),
+			}
+			for obj in plan
+		]
+		self.db_set(
+			{
+				"s3_status": "Uploaded",
+				"s3_bucket": backup.bucket,
+				"s3_key_prefix": backup.prefix_for(self.name),
+				"s3_size_bytes": result["total_compressed_bytes"],
+				"s3_uploaded_at": frappe.utils.now_datetime(),
+				"s3_objects": json.dumps(manifest),
+			}
+		)
+
+	@frappe.whitelist()
+	def restore_from_s3(self) -> None:
+		"""Pull this snapshot's artifacts back from S3 and rehydrate its on-host
+		LV(s) (+ warm memory pair) at the exact names the row already records, then —
+		for a Cold snapshot whose VM is Stopped — roll the VM back in place. A Warm
+		snapshot rehydrates only (consume it with Clone to new VM; warm's value is
+		fan-out, not in-place rollback — the same asymmetry promote_to_image draws).
+		Background job, like upload. See spec/29-snapshot-backup.md."""
+		if self.s3_status != "Uploaded":
+			frappe.throw(f"No S3 backup to restore (s3_status is {self.s3_status or 'empty'}).")
+		if not self.server or not frappe.db.exists("Server", self.server):
+			frappe.throw(_("Snapshot has no server to restore onto."))
+		if self.kind == "Cold":
+			self._guard_cold_rollback_target()
+		self.db_set("s3_status", "Restoring")
+		frappe.enqueue(
+			"atlas.atlas.doctype.virtual_machine_snapshot.virtual_machine_snapshot.run_restore",
+			queue="long",
+			enqueue_after_commit=True,
+			snapshot_name=self.name,
+		)
+
+	def _guard_cold_rollback_target(self) -> None:
+		"""A cold restore rolls the VM back via rebuild(), which needs a Stopped VM.
+		Check up front so a running (or vanished) VM fails BEFORE any multi-GB
+		download rather than after."""
+		if not frappe.db.exists("Virtual Machine", self.virtual_machine):
+			frappe.throw(
+				_(
+					"The snapshot's VM no longer exists; restoring to a new VM on another server is out of scope (spec/29)."
+				)
+			)
+		vm_status = frappe.db.get_value("Virtual Machine", self.virtual_machine, "status")
+		if vm_status != "Stopped":
+			frappe.throw(f"Stop {self.virtual_machine} before restoring (status is {vm_status}).")
+
+	def _run_restore(self) -> str | None:
+		"""Background half of restore_from_s3: presign a GET per manifest object, run
+		the host Task to rehydrate the artifacts, then (cold) roll the VM back.
+		Returns the rollback Task name for a cold snapshot, else None. On host failure
+		set Failed and re-raise."""
+		from atlas.atlas import s3
+
+		backup = s3.S3Backup()
+		manifest = json.loads(self.s3_objects or "[]")
+		if not manifest:
+			frappe.throw(_("No upload manifest to restore from."))
+		plan = []
+		for obj in manifest:
+			item = dict(obj)
+			item["url"] = backup.presign_get(backup.object_key(self.name, obj["object_name"]))
+			plan.append(item)
+		try:
+			task = run_task(
+				server=self.server,
+				script="restore-snapshot-s3",
+				variables={"SNAPSHOT_NAME": self.name, "OBJECTS_JSON": json.dumps(plan)},
+				virtual_machine=self._task_vm(),
+				timeout_seconds=3600,
+			)
+			parse_result(task.stdout)
+		except Exception:
+			self.db_set("s3_status", "Failed")
+			# nosemgrep: frappe-manual-commit -- persist Failed before re-raising so the job log and row agree
+			frappe.db.commit()
+			raise
+		# Rehydrated: the LVs + memory dir the row names exist again. The backup stays
+		# in S3 (Uploaded), so a later re-restore still works.
+		self.db_set("s3_status", "Uploaded")
+		if self.kind == "Cold":
+			return self.restore_to_vm()
+		return None
+
+	def _task_vm(self) -> str | None:
+		"""The VM to stamp on the backup Task as an audit backpointer — dropped if the
+		VM row is already gone (a durable snapshot can outlive its build VM)."""
+		return self.virtual_machine if frappe.db.exists("Virtual Machine", self.virtual_machine) else None
+
+	def _delete_s3_backup(self) -> None:
+		"""Best-effort: drop this snapshot's S3 objects when the row is deleted, so a
+		deleted backup leaves no paid orphan. Never blocks the local delete — an S3
+		error is logged, not raised (a bucket hiccup must not wedge a teardown)."""
+		if self.s3_status != "Uploaded":
+			return
+		try:
+			from atlas.atlas import s3
+
+			if s3.is_configured():
+				s3.S3Backup().delete_prefix(self.name)
+		except Exception:
+			frappe.log_error(f"S3 backup cleanup failed for snapshot {self.name}", "snapshot backup")
+
 	def on_trash(self) -> None:
 		"""Remove the on-host snapshot LV when the row is deleted.
 
@@ -419,6 +599,10 @@ class VirtualMachineSnapshot(Document):
 		removal and MUST be lvremoved here even when terminate() cascades the row
 		deletions of a Terminated VM. (No Terminated short-circuit: that would
 		leak the snapshot LV.)"""
+		# Drop the off-host S3 backup first (independent of the server/LV path below,
+		# which the guards can short-circuit — the S3 objects must be swept even if
+		# the server row is gone). Best-effort: never blocks the local delete.
+		self._delete_s3_backup()
 		if not self.server or not self.rootfs_path:
 			return
 		if not frappe.db.exists("Server", self.server):
@@ -459,3 +643,19 @@ def run_promote(snapshot_name: str, image_name: str) -> None:
 		return  # anchor was cleaned up by a prior failed run; nothing to drive
 	snapshot = frappe.get_doc("Virtual Machine Snapshot", snapshot_name)
 	snapshot._run_promote(image_name)
+
+
+def run_upload(snapshot_name: str) -> None:
+	"""Background-job entrypoint (enqueued by upload_to_s3). No-op if the snapshot
+	was deleted before the job ran."""
+	if not frappe.db.exists("Virtual Machine Snapshot", snapshot_name):
+		return
+	frappe.get_doc("Virtual Machine Snapshot", snapshot_name)._run_upload()
+
+
+def run_restore(snapshot_name: str) -> None:
+	"""Background-job entrypoint (enqueued by restore_from_s3). No-op if the snapshot
+	was deleted before the job ran."""
+	if not frappe.db.exists("Virtual Machine Snapshot", snapshot_name):
+		return
+	frappe.get_doc("Virtual Machine Snapshot", snapshot_name)._run_restore()
