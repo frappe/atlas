@@ -3,8 +3,31 @@ from unittest.mock import patch
 import frappe
 from frappe.tests import IntegrationTestCase
 
+from atlas.atlas.placement import NoResizeCapacityError
 from atlas.tests._mocks import fake_task
 from atlas.tests.fixtures import make_image, make_provider, make_server, make_virtual_machine
+
+
+def _resize_server(**totals) -> str:
+	"""A distinct Active server catalogued with the given capacity totals — the
+	resize-gate tests need a MEASURED host so the gate has an effective budget to
+	check against (the shared vm-test-server is memory/disk-uncatalogued on purpose).
+	Also clears the memory floor so `effective` equals the stamped total exactly."""
+	frappe.db.set_single_value("Atlas Settings", "host_memory_reserve_megabytes", 0)
+	provider = make_provider("vm-resize-provider")
+	server = make_server(
+		provider,
+		"vm-resize-server",
+		ipv4_address="10.0.0.77",
+		ipv6_address="2001:db8:5::1",
+		ipv6_prefix="2001:db8:5::/64",
+		ipv6_virtual_machine_range="2001:db8:5::/120",
+		status="Active",
+	)
+	stamped = {"vcpus_total": 0, "memory_megabytes_total": 0, "pool_disk_gigabytes_total": 0, **totals}
+	for field, value in stamped.items():
+		server.db_set(field, value)
+	return server.name
 
 
 def _ensure_test_server() -> str:
@@ -319,12 +342,16 @@ class TestVirtualMachine(IntegrationTestCase):
 
 		with patch.object(module.frappe, "enqueue") as enqueue:
 			vm = _new_vm()
-		enqueue.assert_called_once()
-		_, kwargs = enqueue.call_args
-		self.assertEqual(
-			kwargs["virtual_machine_name"],
-			vm.name,
-		)
+		# The insert also enqueues central_report.deliver events (vm.created,
+		# vm.status_changed); single out the auto_provision enqueue and assert it
+		# targets this VM, rather than assuming it is the only enqueue.
+		auto_provision_calls = [
+			call
+			for call in enqueue.call_args_list
+			if call.args and call.args[0].endswith(".auto_provision")
+		]
+		self.assertEqual(len(auto_provision_calls), 1)
+		self.assertEqual(auto_provision_calls[0].kwargs["virtual_machine_name"], vm.name)
 
 	def test_auto_provision_is_noop_when_not_pending(self) -> None:
 		from atlas.atlas.doctype.virtual_machine import virtual_machine as module
@@ -815,6 +842,67 @@ class TestVirtualMachine(IntegrationTestCase):
 				vm.resize(data_disk_gigabytes=4)
 		self.assertIn("no data disk", str(raised.exception))
 		mocked.assert_not_called()
+
+	# --- resize capacity gate (spec/28) ------------------------------------
+
+	def test_resize_within_capacity_passes(self) -> None:
+		from atlas.atlas.doctype.virtual_machine import virtual_machine as module
+
+		server = _resize_server(memory_megabytes_total=4096)
+		vm = make_virtual_machine(server, _ensure_test_image(), memory_megabytes=512, disk_gigabytes=4)
+		vm.db_set("status", "Stopped")
+		vm.reload()
+		with patch.object(module, "run_task", return_value=fake_task(name="task-resize")) as mocked:
+			vm.resize(memory_megabytes=1024)
+		vm.reload()
+		self.assertEqual(vm.memory_megabytes, 1024)
+		mocked.assert_called_once()
+
+	def test_resize_over_capacity_raises(self) -> None:
+		from atlas.atlas.doctype.virtual_machine import virtual_machine as module
+
+		# Host holds exactly 1024 MB and the VM already fills it; doubling the RAM
+		# doesn't fit → NoResizeCapacityError, and the on-host resize never runs.
+		server = _resize_server(memory_megabytes_total=1024)
+		vm = make_virtual_machine(server, _ensure_test_image(), memory_megabytes=1024, disk_gigabytes=4)
+		vm.db_set("status", "Stopped")
+		vm.reload()
+		with patch.object(module, "run_task") as mocked:
+			with self.assertRaises(NoResizeCapacityError):
+				vm.resize(memory_megabytes=2048)
+		mocked.assert_not_called()
+
+	def test_resize_charges_only_positive_deltas(self) -> None:
+		from atlas.atlas.doctype.virtual_machine import virtual_machine as module
+
+		# CPU is measured and already full (1 core on a 1-core host), but growing RAM
+		# only charges the RAM delta — the unchanged CPU axis must not block it.
+		server = _resize_server(vcpus_total=1, memory_megabytes_total=4096)
+		vm = make_virtual_machine(
+			server, _ensure_test_image(), vcpus=1, cpu_max_cores=1, memory_megabytes=512, disk_gigabytes=4
+		)
+		vm.db_set("status", "Stopped")
+		vm.reload()
+		with patch.object(module, "run_task", return_value=fake_task(name="task-resize")):
+			vm.resize(memory_megabytes=1024)
+		vm.reload()
+		self.assertEqual(vm.memory_megabytes, 1024, "a full CPU axis doesn't block a RAM-only grow")
+
+	def test_resize_spends_the_placement_reserve(self) -> None:
+		from atlas.atlas.doctype.virtual_machine import virtual_machine as module
+
+		# A 50% arrival reserve would refuse PLACING a new VM past 512 MB, but resize
+		# checks the FULL effective budget (1024) — so it spends into the reserve.
+		server = _resize_server(memory_megabytes_total=1024)
+		frappe.db.set_single_value("Atlas Settings", "placement_headroom_percent", 50)
+		self.addCleanup(frappe.db.set_single_value, "Atlas Settings", "placement_headroom_percent", 0)
+		vm = make_virtual_machine(server, _ensure_test_image(), memory_megabytes=512, disk_gigabytes=4)
+		vm.db_set("status", "Stopped")
+		vm.reload()
+		with patch.object(module, "run_task", return_value=fake_task(name="task-resize")):
+			vm.resize(memory_megabytes=1024)
+		vm.reload()
+		self.assertEqual(vm.memory_megabytes, 1024, "resize spends the headroom placement reserved")
 
 	def test_snapshot_persists_data_disk_fields(self) -> None:
 		from atlas.atlas.doctype.virtual_machine import virtual_machine as module

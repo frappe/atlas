@@ -19,7 +19,7 @@ from atlas.atlas.networking import (
 	derive_veth_pair,
 	resource_limit_args,
 )
-from atlas.atlas.placement import apply_user_defaults
+from atlas.atlas.placement import apply_user_defaults, check_resize_capacity
 from atlas.atlas.ssh import run_task
 from atlas.atlas.task_results import parse_result
 
@@ -834,6 +834,19 @@ class VirtualMachine(Document):
 				frappe.throw(
 					f"Data disk can only grow: {self.data_disk_gigabytes} GB → {new_data_disk} GB is a shrink"
 				)
+		# Capacity gate (spec/28): a resize must not silently oversubscribe the host.
+		# Charge only the positive per-axis deltas against the host's FULL effective
+		# budget — the arrival headroom reserve is the resize's to spend. Raises
+		# NoResizeCapacityError (a NoCapacityError subclass) when the delta doesn't
+		# fit; that is the trigger for a future migrate-to-grow (case 2). CPU cost is
+		# the bandwidth share (cpu_max_cores or vcpus), matching capacity accounting.
+		check_resize_capacity(
+			self.server,
+			delta_cpu=new_cpu_max - float(self.cpu_max_cores or self.vcpus or 0),
+			delta_memory_mb=new_memory - (self.memory_megabytes or 0),
+			delta_disk_gb=(new_disk + new_data_disk)
+			- (self.disk_gigabytes + (self.data_disk_gigabytes or 0)),
+		)
 		# Run the on-host resize first; run_task raises on failure, so we only
 		# persist the new values once the config and disk actually changed.
 		# Saving before the Task would let a failed resize-vm.py leave the doc

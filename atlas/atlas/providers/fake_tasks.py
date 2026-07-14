@@ -202,6 +202,16 @@ def _warm_snapshot_result(variables: dict) -> dict:
 	}
 
 
+def _server_facts_result(_variables: dict) -> dict:
+	# A Fake host measures nothing, so report the DEFAULT fake size's totals — enough
+	# that the Refresh Capacity button doesn't crash `parse_result` in dev. Cosmetic:
+	# a Fake host's real capacity comes from `fake_host_totals` in
+	# `capacity_for_server`, which re-synthesizes and ignores the stamped row.
+	from atlas.atlas.providers.fake import DEFAULT_FAKE_SIZE, fake_host_totals
+
+	return {**fake_host_totals(DEFAULT_FAKE_SIZE), "pool_data_percent": 0.0}
+
+
 def _fake_disk_bytes(variables: dict) -> int:
 	"""A plausible rootfs size: the VM's disk in bytes, defaulting to ~4 GB."""
 	try:
@@ -213,6 +223,7 @@ def _fake_disk_bytes(variables: dict) -> int:
 
 _RESULT_BUILDERS = {
 	"bootstrap-server": _bootstrap_result,
+	"server-facts": _server_facts_result,
 	"snapshot-vm": _snapshot_result,
 	"snapshot-stop-vm": _snapshot_stop_result,
 	"warm-snapshot-vm": _warm_snapshot_result,

@@ -4,8 +4,59 @@ frappe.ui.form.on("Server", {
 			return;
 		}
 		add_buttons(frm);
+		render_capacity(frm);
 	},
 });
+
+// Per-host capacity headline: axis fills plus the share-unit + stranded line the
+// operator compares host shapes by (spec/24). Reads the same capacity_for_server
+// helper placement uses; skips silently on an unmeasured/erroring host.
+function render_capacity(frm) {
+	frappe
+		.call({
+			method: "atlas.atlas.api.server_capacity.capacity_for_server",
+			args: { server: frm.doc.name },
+		})
+		.then(({ message: capacity }) => {
+			if (capacity) {
+				frm.dashboard.set_headline(capacity_headline(capacity));
+			}
+		});
+}
+
+function capacity_headline(capacity) {
+	const fill = (axis) =>
+		axis.effective ? `${Math.round((100 * axis.used) / axis.effective)}%` : "—";
+	let text = `Capacity — CPU ${fill(capacity.cpu)} · RAM ${fill(capacity.memory)} · disk ${fill(
+		capacity.disk
+	)}`;
+	const units = capacity.share_units;
+	if (units) {
+		text += ` · ${units.free} / ${units.total} share units free`;
+		const stranded = format_stranded(capacity.stranded);
+		if (stranded) {
+			text += ` · stranded: ${stranded}`;
+		}
+	}
+	return `<span>${frappe.utils.escape_html(text)}</span>`;
+}
+
+function format_stranded(stranded) {
+	if (!stranded) {
+		return "";
+	}
+	const bits = [];
+	if (stranded.cpu > 0.01) {
+		bits.push(`${stranded.cpu.toFixed(1)} cores`);
+	}
+	if (stranded.memory > 0) {
+		bits.push(`${Math.round(stranded.memory)} MB`);
+	}
+	if (stranded.disk > 0) {
+		bits.push(`${Math.round(stranded.disk)} GB disk`);
+	}
+	return bits.join(", ");
+}
 
 function add_buttons(frm) {
 	const status = frm.doc.status;
@@ -26,6 +77,7 @@ function add_buttons(frm) {
 		frappe.atlas.add_action(frm, "Sync Image", () => open_sync_image_dialog(frm));
 		frappe.atlas.add_action(frm, "Bake Image", () => open_bake_image_dialog(frm));
 		frappe.atlas.add_action(frm, "Sync Scripts", () => sync_scripts(frm));
+		frappe.atlas.add_action(frm, "Refresh Capacity", () => refresh_capacity(frm));
 		frappe.atlas.add_action(frm, "Allocate Reserved IP", () =>
 			confirm_allocate_reserved_ip(frm)
 		);
@@ -109,6 +161,29 @@ function sync_scripts(frm) {
 		frappe.show_alert(
 			{
 				message: __("Synced {0} script file(s) to {1}.", [count, frm.doc.title]),
+				indicator: "green",
+			},
+			6
+		);
+	});
+}
+
+function refresh_capacity(frm) {
+	// Re-measure the host's capacity facts (CPU/RAM/pool size + fullness) and stamp
+	// them, without a full re-bootstrap. Read-only on the host, no vendor side
+	// effects, so no confirm. Reloads the doc so the Capacity section updates.
+	frm.call(
+		"refresh_capacity_facts",
+		{},
+		{
+			freeze: true,
+			freeze_message: __("Measuring host capacity…"),
+		}
+	).then(() => {
+		frm.reload_doc();
+		frappe.show_alert(
+			{
+				message: __("Capacity facts refreshed for {0}.", [frm.doc.title]),
 				indicator: "green",
 			},
 			6

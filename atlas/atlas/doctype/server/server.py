@@ -403,6 +403,16 @@ class Server(Document):
 		self.jailer_version = parsed["jailer_version"]
 		self.kernel_version = parsed["kernel_version"]
 		self.architecture = parsed["architecture"]
+		# The host's capacity totals ride the same BootstrapResult line (see
+		# atlas.hostfacts). `.get()` because a Fake host's synthesized bootstrap
+		# result omits them — its capacity comes from `fake_host_totals` in
+		# `capacity_for_server`, so the row's totals stay unset and it reads as a
+		# measured Fake host regardless. A real bootstrap always carries all three.
+		self._stamp_capacity_facts(
+			parsed.get("vcpus_total"),
+			parsed.get("memory_megabytes_total"),
+			parsed.get("pool_disk_gigabytes_total"),
+		)
 		# Reaching here means the bootstrap Task succeeded — and run_task raises on
 		# any failure, so bootstrap-server.py's deep sanity gate (which runs
 		# `atlas --help` to prove the console script dispatches) passed. Persist
@@ -410,6 +420,46 @@ class Server(Document):
 		# trip: a legacy/unbootstrapped host has cli_ready=0 and the operator sees
 		# the re-bootstrap signal. Fail-fast moved from per-Task to once-at-bootstrap.
 		self.cli_ready = 1
+
+	def _stamp_capacity_facts(
+		self,
+		vcpus_total: int | None,
+		memory_megabytes_total: int | None,
+		pool_disk_gigabytes_total: int | None,
+		pool_data_percent: float | None = None,
+	) -> None:
+		"""Persist the host's measured capacity totals and the stamp time. Shared by
+		bootstrap (three totals; pool fullness starts ~0, so it is left out) and
+		Refresh Capacity (all four). `capacity_reported_at` records when the host was
+		last measured, so a host silent past a staleness threshold can be treated as
+		uncatalogued later rather than trusting stale totals (a future guard)."""
+		self.vcpus_total = vcpus_total
+		self.memory_megabytes_total = memory_megabytes_total
+		self.pool_disk_gigabytes_total = pool_disk_gigabytes_total
+		if pool_data_percent is not None:
+			self.pool_data_percent = pool_data_percent
+		self.capacity_reported_at = frappe.utils.now_datetime()
+
+	@frappe.whitelist()
+	def refresh_capacity_facts(self) -> str:
+		"""Re-measure the host's capacity facts and stamp them — the Refresh Capacity
+		button. For an already-Active host whose shape changed (a resized droplet, a
+		grown pool) or that was bootstrapped before the totals were reported. Runs the
+		read-only `server-facts` Task and persists the four numbers; returns the Task
+		name. Bootstrap already stamps the three totals, so this is the no-re-bootstrap
+		refresh — and the one path that also captures live `pool_data_percent`."""
+		if self.status != "Active":
+			frappe.throw(f"Refresh capacity on an Active host (status is {self.status})")
+		task = run_task(server=self.name, script="server-facts", variables={}, timeout_seconds=120)
+		parsed = parse_result(task.stdout)
+		self._stamp_capacity_facts(
+			parsed["vcpus_total"],
+			parsed["memory_megabytes_total"],
+			parsed["pool_disk_gigabytes_total"],
+			parsed["pool_data_percent"],
+		)
+		self.save(ignore_permissions=True)
+		return task.name
 
 
 def reinstall_atlas_venv_package(connection, server_name: str) -> None:

@@ -17,7 +17,12 @@
   "default_user_image",
   "default_bench_snapshot",
   "section_break_capacity",
+  "placement_strategy",
   "overprovision_factor",
+  "placement_headroom_percent",
+  "host_memory_reserve_megabytes",
+  "placement_consolidation_enabled",
+  "max_consolidation_migrations",
   "section_break_tcp_proxy",
   "tcp_port_pool",
   "section_break_ssh",
@@ -100,12 +105,51 @@
    "label": "Capacity"
   },
   {
+   "fieldname": "placement_strategy",
+   "fieldtype": "Select",
+   "label": "Placement Strategy",
+   "options": "Spread\nBest Fit\nTetris\nFirst Fit\nHybrid",
+   "default": "Spread",
+   "description": "How the controller picks a host for a new VM among those that fit. Spread (default): the emptiest by relative fill — best blast radius + burst/resize headroom, fewest forced resize-migrations. Best Fit: the fullest — keeps hosts drainable and best Dedicated acceptance, but many resize-migrations. Tetris: best shape match (dot-product alignment) — least stranding on mixed hosts. First Fit: creation order — cheapest, most fragmenting. Hybrid: Dedicated-class VMs Best Fit, the rest Spread — a middle ground that improves Dedicated acceptance over Spread at a small migration cost (it does NOT reduce migrations). On the proportional size ladder with uniform hosts Spread/Tetris coincide; compare them offline with atlas.atlas.packing_sim."
+  },
+  {
    "fieldname": "overprovision_factor",
    "fieldtype": "Float",
    "label": "Overprovision Factor",
    "default": "1",
    "non_negative": 1,
    "description": "Fleet-wide vCPU oversubscription multiplier. A host's effective vCPU budget is its physical total times this factor; placement (and the capacity display) check against that budget. 1 = no oversubscription. Servers whose size has no known vCPU total are unaffected — they are always treated as having room."
+  },
+  {
+   "fieldname": "placement_headroom_percent",
+   "fieldtype": "Percent",
+   "label": "Placement Headroom Percent",
+   "default": "0",
+   "non_negative": 1,
+   "description": "Fleet-wide arrival fill ceiling: the fraction of each measured axis that placing a NEW VM must leave free, so a later in-place resize has room to grow without a migration. 0 = pack to 100%. A per-server value > 0 overrides this for that host; resize itself ignores the reserve and spends it (that is what it is for)."
+  },
+  {
+   "fieldname": "host_memory_reserve_megabytes",
+   "fieldtype": "Int",
+   "label": "Host Memory Reserve (MB)",
+   "default": "1024",
+   "non_negative": 1,
+   "description": "Subtracted from each host's memory budget before placement and resize accounting (effective = total − reserve, clamped ≥ 0). Guest RAM must never pack to 100% of MemTotal — the host OS, per-VM Firecracker/jailer overhead, and thin-pool metadata live there too, and packing to MemTotal OOMs the host."
+  },
+  {
+   "fieldname": "placement_consolidation_enabled",
+   "fieldtype": "Check",
+   "label": "Consolidate on No-Capacity",
+   "default": "1",
+   "description": "When placing a NEW VM finds no host with room, migrate a few small VMs off one host onto others to free a contiguous slot (defragmentation-on-arrival, spec/28 case 3). The migrations run in the background; the create is told to retry (ConsolidationInProgressError) and lands once room appears. Off = fail loud with NoCapacityError instead. Only ever moves small VMs that are safe to move (no attached public IPv4, no in-flight migration, same provider as the target)."
+  },
+  {
+   "fieldname": "max_consolidation_migrations",
+   "fieldtype": "Int",
+   "label": "Max Consolidation Migrations",
+   "default": "3",
+   "non_negative": 1,
+   "description": "The most VMs a single consolidation pass may move to free room for one arrival — the \"a few\" in \"migrate a few small VMs\". A plan that would need more moves than this on every host is rejected and the arrival fails with NoCapacityError. Keeps defragmentation bounded so a full fleet can't trigger a migration storm."
   },
   {
    "fieldname": "section_break_tcp_proxy",

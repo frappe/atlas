@@ -23,6 +23,9 @@ class TestProvisionCapacity(IntegrationTestCase):
 	def setUp(self) -> None:
 		_clean_virtual_machines()
 		frappe.db.set_single_value("Atlas Settings", "overprovision_factor", 1)
+		# The free-headroom assertions below stamp exact totals and expect the raw
+		# budget; keep the memory floor off so it doesn't shave the measured axis.
+		frappe.db.set_single_value("Atlas Settings", "host_memory_reserve_megabytes", 0)
 		self.provider = make_provider("provision-capacity-provider")
 		# Neutralize any Active server other suites left so this test's own
 		# server is the only placement candidate.

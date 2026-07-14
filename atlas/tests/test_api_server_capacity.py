@@ -16,6 +16,9 @@ class TestServerCapacity(IntegrationTestCase):
 		# Reset to the no-oversubscription default so other suites can't leak a
 		# factor into these assertions; restore is unnecessary (1 is the default).
 		frappe.db.set_single_value("Atlas Settings", "overprovision_factor", 1)
+		# Default to no memory floor so the raw-total assertions below stay clean;
+		# the reserve tests opt back in explicitly.
+		frappe.db.set_single_value("Atlas Settings", "host_memory_reserve_megabytes", 0)
 		self.provider = make_provider("capacity-test-provider")
 		self.server = make_server(
 			self.provider,
@@ -112,6 +115,68 @@ class TestServerCapacity(IntegrationTestCase):
 		result = server_capacity.capacity_for_server(self.server.name)
 		self.assertEqual(result["disk"]["used"], 35)
 
+	# --- Memory floor (host_memory_reserve_megabytes) ---------------------
+
+	def test_memory_reserve_subtracted_from_effective(self) -> None:
+		# effective = total − reserve; the raw total stays physical for display.
+		frappe.db.set_single_value("Atlas Settings", "host_memory_reserve_megabytes", 1024)
+		result = server_capacity.capacity_for_server(self.server.name)
+		self.assertEqual(result["memory"]["total"], 4096, "raw total unchanged")
+		self.assertEqual(result["memory"]["effective"], 3072, "budget is total − reserve")
+
+	def test_memory_reserve_clamps_at_zero(self) -> None:
+		# A reserve larger than the host's RAM clamps the budget at 0, never negative.
+		frappe.db.set_single_value("Atlas Settings", "host_memory_reserve_megabytes", 8192)
+		result = server_capacity.capacity_for_server(self.server.name)
+		self.assertEqual(result["memory"]["effective"], 0)
+
+	# --- Share units + stranded (spec/28) ---------------------------------
+
+	def test_share_units_and_stranded_worked_example(self) -> None:
+		# The spec/28 worked example: an 8-core / 16 GB / 320 GB host at factor 1 with
+		# a 1 GB memory reserve holds 30 share units (RAM binds), and the unused CPU
+		# and disk the RAM axis can't sell are stranded.
+		frappe.db.set_single_value("Atlas Settings", "host_memory_reserve_megabytes", 1024)
+		self.server.db_set("vcpus_total", 8)
+		self.server.db_set("memory_megabytes_total", 16384)
+		self.server.db_set("pool_disk_gigabytes_total", 320)
+		result = server_capacity.capacity_for_server(self.server.name)
+		self.assertEqual(result["share_units"], {"total": 30, "used": 0, "free": 30})
+		self.assertAlmostEqual(result["stranded"]["cpu"], 6.125)  # 8 − 30×0.0625
+		self.assertEqual(result["stranded"]["memory"], 0)  # RAM is the binding axis
+		self.assertEqual(result["stranded"]["disk"], 20)  # 320 − 30×10
+
+	def test_share_units_used_and_free(self) -> None:
+		# A Dedicated 1x (16 units on every axis) spends 16 of the 30 units.
+		frappe.db.set_single_value("Atlas Settings", "host_memory_reserve_megabytes", 1024)
+		self.server.db_set("vcpus_total", 8)
+		self.server.db_set("memory_megabytes_total", 16384)
+		self.server.db_set("pool_disk_gigabytes_total", 320)
+		make_virtual_machine(
+			self.server, self.image, vcpus=1, cpu_max_cores=1, memory_megabytes=8192, disk_gigabytes=160
+		)
+		result = server_capacity.capacity_for_server(self.server.name)
+		self.assertEqual(result["share_units"], {"total": 30, "used": 16, "free": 14})
+
+	def test_share_units_over_measured_axes_only(self) -> None:
+		# Partial measurement: only RAM is catalogued (unknown slug → no CPU, disk
+		# unset), so units count RAM alone and stranded has only the RAM axis.
+		self.server.db_set("size", "s-unknown-slug")
+		self.server.db_set("memory_megabytes_total", 4096)
+		self.server.db_set("pool_disk_gigabytes_total", 0)
+		result = server_capacity.capacity_for_server(self.server.name)
+		self.assertEqual(result["share_units"]["total"], 8)  # 4096 / 512
+		self.assertEqual(set(result["stranded"]), {"memory"})
+
+	def test_share_units_none_when_fully_uncatalogued(self) -> None:
+		# No axis measured → nothing to count share units against.
+		self.server.db_set("size", "s-unknown-slug")
+		self.server.db_set("memory_megabytes_total", 0)
+		self.server.db_set("pool_disk_gigabytes_total", 0)
+		result = server_capacity.capacity_for_server(self.server.name)
+		self.assertIsNone(result["share_units"])
+		self.assertIsNone(result["stranded"])
+
 	# --- Uncatalogued axes → unlimited ------------------------------------
 
 	def test_unset_memory_disk_totals_are_unlimited(self) -> None:
@@ -155,6 +220,86 @@ class TestServerCapacity(IntegrationTestCase):
 		self.assertGreaterEqual(cluster["disk"]["used"], 10)
 		self.assertIn("uncatalogued", cluster["cpu"])
 
+	def test_cluster_rolls_up_share_units(self) -> None:
+		# The fleet view carries a share-unit roll-up across measured hosts (this
+		# fixture host is fully measured, so it contributes at least one used unit).
+		make_virtual_machine(self.server, self.image, vcpus=1, memory_megabytes=512, disk_gigabytes=10)
+		cluster = server_capacity.cluster_capacity()
+		self.assertIsNotNone(cluster["share_units"])
+		self.assertGreaterEqual(cluster["share_units"]["used"], 1)
+		self.assertIn("cpu", cluster["stranded"])
+
+	# --- migration-aware accounting: an incoming migration charges the target -------
+
+	def test_incoming_migration_counts_against_target(self) -> None:
+		# A VM migrating from the source host into a target is already spending the
+		# target's budget (its disk hydrates and it boots there) before cutover
+		# repoints `vm.server`. capacity_for_server must charge the target so placement
+		# doesn't double-book a host that is receiving migrations.
+		target = make_server(
+			self.provider,
+			"capacity-migration-target",
+			ipv6_address="2001:db8:11::1",
+			ipv6_prefix="2001:db8:11::/64",
+			ipv6_virtual_machine_range="2001:db8:11::/124",
+			status="Active",
+		)
+		target.db_set("memory_megabytes_total", 4096)
+		target.db_set("pool_disk_gigabytes_total", 100)
+		vm = make_virtual_machine(self.server, self.image, memory_megabytes=1024, disk_gigabytes=8)
+		migration = frappe.get_doc(
+			{
+				"doctype": "Virtual Machine Migration",
+				"virtual_machine": vm.name,
+				"source_server": self.server.name,
+				"target_server": target.name,
+				"status": "Hydrating",
+			}
+		)
+		migration.flags.keep_address_forced = True  # skip the provider address probe
+		migration.insert(ignore_permissions=True)
+
+		target_cap = server_capacity.capacity_for_server(target.name)
+		self.assertEqual(target_cap["memory"]["used"], 1024, "incoming migration charges target RAM")
+		self.assertEqual(target_cap["disk"]["used"], 8, "and target disk")
+		self.assertEqual(target_cap["incoming_migration_count"], 1)
+		self.assertEqual(target_cap["virtual_machine_count"], 0, "not resident on the target yet")
+
+		# The source still counts it — the guest runs there until cutover, so a
+		# migrating VM is deliberately charged to BOTH hosts for its brief life.
+		source_cap = server_capacity.capacity_for_server(self.server.name)
+		self.assertEqual(source_cap["memory"]["used"], 1024)
+		self.assertEqual(source_cap["virtual_machine_count"], 1)
+
+	def test_terminal_migration_does_not_count(self) -> None:
+		# A Done migration is history — its VM has already cut over (or the move
+		# failed); it must not keep charging the target.
+		target = make_server(
+			self.provider,
+			"capacity-migration-target",
+			ipv6_address="2001:db8:11::1",
+			ipv6_prefix="2001:db8:11::/64",
+			ipv6_virtual_machine_range="2001:db8:11::/124",
+			status="Active",
+		)
+		target.db_set("memory_megabytes_total", 4096)
+		vm = make_virtual_machine(self.server, self.image, memory_megabytes=1024)
+		migration = frappe.get_doc(
+			{
+				"doctype": "Virtual Machine Migration",
+				"virtual_machine": vm.name,
+				"source_server": self.server.name,
+				"target_server": target.name,
+				"status": "Done",
+			}
+		)
+		migration.flags.keep_address_forced = True
+		migration.insert(ignore_permissions=True)
+
+		target_cap = server_capacity.capacity_for_server(target.name)
+		self.assertEqual(target_cap["memory"]["used"], 0, "a terminal migration charges nothing")
+		self.assertEqual(target_cap["incoming_migration_count"], 0)
+
 
 class TestFakeServerAlwaysMeasured(IntegrationTestCase):
 	"""A Fake host has no agent, but dev capacity math must always be *measured*:
@@ -163,6 +308,7 @@ class TestFakeServerAlwaysMeasured(IntegrationTestCase):
 
 	def setUp(self) -> None:
 		_clean_virtual_machines()
+		frappe.db.set_single_value("Atlas Settings", "host_memory_reserve_megabytes", 0)
 		# Build with the default DO fixture (its catalog is seeded), then flip the
 		# row to a Fake host via db_set — the Fake size slug isn't a seeded Provider
 		# Size, so it can't pass the Link check at insert.

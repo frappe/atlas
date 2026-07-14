@@ -599,3 +599,14 @@ class ThinPool:
 			run("sudo lvs --noheadings -o data_percent {}", ref),
 			run("sudo lvs --noheadings -o metadata_percent {}", ref),
 		)
+
+	@property
+	def size_bytes(self) -> int:
+		"""The thin pool's data capacity in bytes (`lvs -o lv_size` on the pool LV).
+
+		For a loopback-backed pool this is the sparse overcommit ceiling
+		(`ATLAS_POOL_DATA_SIZE`); for a real-device PV it is the physical disk the
+		pool was carved from. This is the disk budget capacity accounting packs the
+		VMs' reserved disk against — not the host's raw root filesystem."""
+		ref = f"{self.volume_group}/{self.pool_name}"
+		return int(run("sudo lvs --noheadings --nosuffix --units b -o lv_size {}", ref).strip())
