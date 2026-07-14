@@ -1,4 +1,5 @@
 import json
+import shlex
 import uuid
 from contextlib import contextmanager
 from typing import ClassVar
@@ -197,6 +198,7 @@ class Server(Document):
 			connection = connection_for_server(self)
 			upload_files(connection, self._bootstrap_uploads())
 			self._run_install_sh(connection)
+			self._authorize_satellite_keys(connection)
 			self._ship_dashboard(connection)
 
 		task = run_task(
@@ -224,6 +226,30 @@ class Server(Document):
 		if exit_code != 0:
 			frappe.throw(
 				f"install.sh failed on {self.name} (exit {exit_code}): {stderr[-500:] or stdout[-500:]}"
+			)
+
+	def _authorize_satellite_keys(self, connection) -> None:
+		"""Append the Satellite orchestrator's public key(s) to the host's root
+		authorized_keys so a Satellite can SSH the HOST for host-plane services (the
+		mesh, the gateway — spec/28). Idempotent: a re-bootstrap never duplicates a line.
+		No-op on an Atlas with no Satellite configured."""
+		from atlas.atlas.atlas_settings import satellite_public_keys
+
+		keys = satellite_public_keys()
+		if not keys:
+			return
+		appends = " && ".join(
+			f"grep -qxF {shlex.quote(key)} $AUTH || echo {shlex.quote(key)} >> $AUTH" for key in keys
+		)
+		command = (
+			"AUTH=/root/.ssh/authorized_keys; mkdir -p /root/.ssh && chmod 700 /root/.ssh "
+			f"&& touch $AUTH && chmod 600 $AUTH && {appends}"
+		)
+		with ssh_key_file(connection.ssh_private_key) as key_path:
+			_stdout, stderr, exit_code = run_ssh(connection, key_path, command, timeout_seconds=60)
+		if exit_code != 0:
+			frappe.throw(
+				f"authorizing Satellite keys on {self.name} failed (exit {exit_code}): {stderr[-300:]}"
 			)
 
 	def _ship_dashboard(self, connection) -> None:

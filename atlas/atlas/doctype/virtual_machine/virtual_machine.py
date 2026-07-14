@@ -745,7 +745,7 @@ class VirtualMachine(Document):
 			"VIRTUAL_MACHINE_NAME": self.name,
 			"DISK_GB": str(self.disk_gigabytes),
 			"VIRTUAL_MACHINE_IPV6": self.ipv6_address,
-			"SSH_PUBLIC_KEY": self.ssh_public_key,
+			"SSH_PUBLIC_KEY": self._guest_authorized_keys(),
 			"ATLAS_FC_UID": str(derive_uid(self.name)),
 			**self._ipv4_link_variables(),
 			# Data-disk config so the rebuilt rootfs regains its fstab mount line.
@@ -1158,6 +1158,17 @@ class VirtualMachine(Document):
 			"DATA_DISK_MOUNT_AT": self.data_disk_mount_point if self.data_disk_format_and_mount else "",
 		}
 
+	def _guest_authorized_keys(self) -> str:
+		"""The guest's root authorized_keys: the VM owner's key plus the Satellite
+		orchestrator key(s) (spec/28), one per line. Atlas hands over a bare Ubuntu box;
+		injecting Satellite's key here is what lets a Satellite SSH in and set up
+		services. The rootfs writes this value verbatim, so each extra line is one more
+		authorized key. No-op (just the owner's key) on an Atlas with no Satellite."""
+		from atlas.atlas.atlas_settings import satellite_public_keys
+
+		keys = [self.ssh_public_key, *satellite_public_keys()]
+		return "\n".join(key.strip() for key in keys if key and key.strip())
+
 	def _provision_variables(self) -> dict:
 		image = frappe.get_doc("Virtual Machine Image", self.image)
 		host_veth, namespace_veth = derive_veth_pair(self.name)
@@ -1172,7 +1183,7 @@ class VirtualMachine(Document):
 			"MAC_ADDRESS": self.mac_address,
 			"TAP_DEVICE": self.tap_device,
 			"VIRTUAL_MACHINE_IPV6": self.ipv6_address,
-			"SSH_PUBLIC_KEY": self.ssh_public_key,
+			"SSH_PUBLIC_KEY": self._guest_authorized_keys(),
 			# Jail isolation parameters. All derived from the VM's own UUID and
 			# resource fields, so the on-host jail is reconstructible from the
 			# row. provision-vm.py bakes these into the per-VM jailer-launch.sh

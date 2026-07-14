@@ -22,7 +22,9 @@
   "tcp_port_pool",
   "section_break_ssh",
   "ssh_public_key",
-  "ssh_private_key_path"
+  "ssh_private_key_path",
+  "section_break_satellite",
+  "satellite_public_keys"
  ],
  "fields": [
   {
@@ -136,6 +138,17 @@
    "label": "SSH Private Key Path",
    "reqd": 1,
    "description": "Absolute path on the Atlas host where the SSH private key lives. 0600 owned by the Frappe user."
+  },
+  {
+   "fieldname": "section_break_satellite",
+   "fieldtype": "Section Break",
+   "label": "Satellite"
+  },
+  {
+   "fieldname": "satellite_public_keys",
+   "fieldtype": "Small Text",
+   "label": "Satellite Public Keys",
+   "description": "OpenSSH public key(s), one per line, of the Satellite orchestrator(s) that manage this Atlas's VMs. Atlas injects them into every host (at bootstrap) and guest (at provision) authorized_keys so a Satellite can SSH the bare box it is handed (spec/28). Empty on an Atlas with no Satellite."
   }
  ],
  "issingle": 1,
