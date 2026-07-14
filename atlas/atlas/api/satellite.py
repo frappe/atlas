@@ -73,5 +73,8 @@ def get_server(name: str) -> dict:
 		"name": server.name,
 		"status": server.status,
 		"ipv4": server.ipv4_address,
+		# The host's public IPv6 is the WireGuard mesh endpoint (base networking, not a
+		# service concept) — the satellite mesh dials peers here. See spec/28 §Phase 1.
+		"ipv6": server.ipv6_address,
 		"modified": str(server.modified),
 	}
