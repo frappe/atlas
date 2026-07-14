@@ -459,6 +459,10 @@ reaching it — `curl --unix-socket` talks to it from the host as before.
 
 ## Snapshot
 
+A snapshot lives in one thin pool on one host — instant and space-thin, but not
+durable (lose the pool and it is gone). To make one survive its host, back it up
+to S3 and restore it later: [29](./29-snapshot-backup.md).
+
 `Virtual Machine.snapshot(title=None, live=False)`. `title` is optional:
 omitted (or blank), it defaults to `<vm title> — <YYYY-MM-DD HH:mm>`, so a
 caller — the SPA's one-click snapshot, or a direct API call — need not invent a

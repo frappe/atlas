@@ -159,6 +159,7 @@ keep it the source of truth.
 25. [Private networking (the WireGuard host mesh)](./25-private-networking.md)
 26. [Docker compatibility (`docker run` against microVMs)](./27-docker-compat.md) — *design / proposal*
 28. [Placement — load-aware host selection for the size ladder](./28-placement.md)
+29. [Snapshot backup to S3](./29-snapshot-backup.md) — *push a point-in-time snapshot off-host to S3 and rehydrate it back (same-VM rollback)*
 
 ## First run on a fresh site
 
@@ -269,6 +270,7 @@ operator-facing features add to this list; new tests follow it.
 | Operate a virtual machine      | `Virtual Machine` → **Start / Stop / Restart / Pause / Resume / Terminate** | [05-virtual-machine-lifecycle.md](./05-virtual-machine-lifecycle.md) |
 | Manage a VM's disk and size    | `Virtual Machine` → **Snapshot / Rebuild / Resize**; `Virtual Machine Snapshot` → **Restore to VM / Clone to new VM / Delete** | [05-virtual-machine-lifecycle.md](./05-virtual-machine-lifecycle.md) |
 | Promote a snapshot to an image | `Virtual Machine Snapshot` → **Promote to image** (or `Image Build` → **Promote to image**): same-server base image new VMs pick via the `image` field | [08-images.md](./08-images.md#two-origins-for-a-base-image-a-url-or-a-snapshot-promote) |
+| Back up a snapshot to S3        | `Virtual Machine Snapshot` → **Upload to S3 / Restore from S3** (off-host durable copy via controller-presigned URLs; restore rehydrates the on-host artifacts and, for a cold snapshot, rolls its own VM back) | [29-snapshot-backup.md](./29-snapshot-backup.md) |
 | Attach a public IPv4 to a VM   | `Reserved IP` → **Attach / Detach** (the inbound-v4 primitive: DNAT in, SNAT out) | [06-networking.md](./06-networking.md#ipv4-ingress-reserved-ip) |
 | Broker a VPN tunnel to a VM    | (user/Central-driven) `request_vpc_access` / `revoke` dials the owner in as a peer on their tenant `/48` via the **customer gateway VM** on the mesh — one shared `wg0`, one client `/128` (supersedes the host-terminated broker) | [25-private-networking.md](./25-private-networking.md#the-customer-gateway--external-dial-in-to-the-mesh), [19-vpn-broker.md](./19-vpn-broker.md) |
 | Issue a TLS cert for a region  | `Root Domain` → **Issue / Renew Certificate**; `TLS Certificate` → **Issue/Renew / Push to Proxies**; `Route53 Settings` / `Lets Encrypt Settings` → **Test Connection** | [13-tls.md](./13-tls.md) |
@@ -467,6 +469,16 @@ reset on the baked `site.local`) on a warm clone, and the cold-boot fallback whe
 the captured host signature is tampered. Heavy (a full bench bake on first run) and so invoked directly, not
 folded into `run_all_smoke`; re-runs reuse the server's Available warm golden.
 It needs the background worker (clone auto-provision).
+
+The **snapshot backup** use case (`snapshot_backup.run_smoke`) covers the S3
+round trip ([29](./29-snapshot-backup.md)): on the shared droplet it provisions a
+Stopped VM, takes a Cold snapshot, uploads it to S3 (`zstd -o` → `sha256sum` →
+`curl -T` a controller-presigned PUT, no host credentials), `lvremove`s the local
+snapshot LV to simulate losing the pool, restores from S3 (recreate the thin LV →
+sha256-verify → `zstd -d --sparse`), rolls the VM back, and asserts it boots off
+the rehydrated disk. It reads an `s3` block from the fixture and skips cleanly
+(MissingConfig) without one; a local MinIO is the zero-cost endpoint. It needs the
+background worker (VM auto-provision).
 
 Every e2e-created droplet is tagged `atlas-e2e`. The harness pre-sweep
 prints droplets older than 30 minutes so the operator can delete them

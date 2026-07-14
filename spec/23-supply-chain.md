@@ -40,9 +40,11 @@ Installed by [`scripts/bootstrap-server.py`](../scripts/bootstrap-server.py) and
 
 The apt set is: `ca-certificates`, `curl`, `e2fsprogs`, `iproute2`, `jq`,
 `lvm2`, `nftables`, `squashfs-tools`, `thin-provisioning-tools`,
-`wireguard-tools` (plus `unattended-upgrades`). These are stock-archive
+`wireguard-tools`, `zstd` (plus `unattended-upgrades`). These are stock-archive
 packages, not version-pinned — we take what 24.04 ships and let
-`unattended-upgrades` roll the security pocket.
+`unattended-upgrades` roll the security pocket. (`zstd` compresses snapshot
+backups to S3 — [29](./29-snapshot-backup.md); `sync-image` already relied on
+`zstd -d` for kernel decompression, so this only makes the dependency explicit.)
 
 **Why the Firecracker binary isn't checksummed.** `sync-image.py` SHA256-pins
 the kernel and rootfs because they are mutable upstream artefacts re-cut per
