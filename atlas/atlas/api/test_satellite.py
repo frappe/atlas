@@ -31,6 +31,10 @@ class TestSatelliteApi(IntegrationTestCase):
 		self.assertEqual(payload["server_ipv4"], "10.0.0.99")  # host SSH target
 		self.assertTrue(payload["guest_ipv6"].startswith("2001:db8:1::"))  # guest SSH target
 		self.assertIn("status", payload)
+		# Provisioner facts a Satellite needs to install a site (image bake mode + warm
+		# boot), not service state.
+		self.assertIn("build_mode", payload)
+		self.assertEqual(payload["warm"], False)
 		# The boundary is service-free: no role leaks through.
 		self.assertNotIn("is_proxy", payload)
 		self.assertNotIn("is_gateway", payload)

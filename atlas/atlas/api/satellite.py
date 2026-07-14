@@ -29,7 +29,13 @@ def _server_ipv4(server: str | None) -> str | None:
 def _vm_payload(vm) -> dict:
 	"""The registration mirror a Satellite keeps for one VM: identity + tenant + the two
 	SSH targets (host IPv4, guest IPv6) + base addressing. Deliberately service-free —
-	Atlas has no service roles to report."""
+	Atlas has no service roles to report.
+
+	`build_mode` (the bake mode of the image, site/admin) and `warm` (was this VM
+	warm-restored) are PROVISIONER facts — an image attribute and a boot fact, not
+	service state (build_mode stays in Atlas by decision 9). A Satellite that installs a
+	site into the guest needs them to pick the deploy mode + gate on the warm identity
+	freshen, so they ride the mirror rather than a Central→Satellite call."""
 	return {
 		"name": vm.name,
 		"status": vm.status,
@@ -38,6 +44,8 @@ def _vm_payload(vm) -> dict:
 		"tenant": vm.tenant,
 		"guest_ipv6": vm.ipv6_address,
 		"private_address": vm.private_address,
+		"build_mode": vm.build_mode or "",
+		"warm": bool(vm.warm_snapshot),
 		"modified": str(vm.modified),
 	}
 
