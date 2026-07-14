@@ -177,6 +177,11 @@ PACKAGES = [
 	"qemu-utils",
 	"nbd-client",
 	"socat",
+	# Snapshot backup to S3 (spec/29): zstd compresses each disk image / memory
+	# file on the way to S3 and decompresses it on restore. Kernel decompression in
+	# sync-image already leaned on `zstd -d`; installing it makes that dependency
+	# explicit rather than relying on it being pre-seeded.
+	"zstd",
 ]
 
 # The host's Atlas interpreter — a uv-managed venv on a controlled CPython — is
