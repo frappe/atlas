@@ -372,9 +372,7 @@ class TestPlacement(IntegrationTestCase):
 		"""A VM pinned to `server` at a given size, in a migratable state. Explicit
 		server + image means apply_user_defaults is a no-op (no placement recursion)."""
 		image = make_image("atlas-placement-image")
-		vm = make_virtual_machine(
-			server, image, memory_megabytes=memory, disk_gigabytes=disk, **overrides
-		)
+		vm = make_virtual_machine(server, image, memory_megabytes=memory, disk_gigabytes=disk, **overrides)
 		vm.db_set("status", status)
 		return vm
 

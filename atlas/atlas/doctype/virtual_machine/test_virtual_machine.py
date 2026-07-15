@@ -346,9 +346,7 @@ class TestVirtualMachine(IntegrationTestCase):
 		# vm.status_changed); single out the auto_provision enqueue and assert it
 		# targets this VM, rather than assuming it is the only enqueue.
 		auto_provision_calls = [
-			call
-			for call in enqueue.call_args_list
-			if call.args and call.args[0].endswith(".auto_provision")
+			call for call in enqueue.call_args_list if call.args and call.args[0].endswith(".auto_provision")
 		]
 		self.assertEqual(len(auto_provision_calls), 1)
 		self.assertEqual(auto_provision_calls[0].kwargs["virtual_machine_name"], vm.name)

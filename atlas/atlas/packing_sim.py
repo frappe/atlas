@@ -117,7 +117,7 @@ class _Host:
 
 
 class _VM:
-	__slots__ = ("plan", "demand", "host", "alive")
+	__slots__ = ("alive", "demand", "host", "plan")
 
 	def __init__(self, plan: str, demand: dict, host: "_Host") -> None:
 		self.plan = plan
@@ -193,9 +193,7 @@ class _Stats:
 				if self.attempts_by_plan[_LARGEST_PLAN]
 				else 0.0
 			),
-			"in_place_upgrade_rate": (
-				self.in_place_upgrades / upgrade_attempts if upgrade_attempts else 1.0
-			),
+			"in_place_upgrade_rate": (self.in_place_upgrades / upgrade_attempts if upgrade_attempts else 1.0),
 			"forced_migrations": self.forced_migrations,
 			"blocked_resizes": self.blocked_resizes,
 			"mean_utilization": {axis: self._util[axis] / duration for axis in packing.AXES},
@@ -368,9 +366,7 @@ def _format_aggregate(aggregate: dict, seeds: int) -> str:
 			)
 		)
 	widths = [max(len(row[col]) for row in rows) for col in range(len(rows[0]))]
-	table = "\n".join(
-		"  ".join(cell.ljust(widths[col]) for col, cell in enumerate(row)) for row in rows
-	)
+	table = "\n".join("  ".join(cell.ljust(widths[col]) for col, cell in enumerate(row)) for row in rows)
 	return f"averaged over {seeds} seeds\n{table}"
 
 
@@ -392,9 +388,7 @@ def _format_table(results: dict) -> str:
 			)
 		)
 	widths = [max(len(row[col]) for row in rows) for col in range(len(rows[0]))]
-	return "\n".join(
-		"  ".join(cell.ljust(widths[col]) for col, cell in enumerate(row)) for row in rows
-	)
+	return "\n".join("  ".join(cell.ljust(widths[col]) for col, cell in enumerate(row)) for row in rows)
 
 
 def _parse_shape(text: str) -> tuple:
@@ -402,22 +396,24 @@ def _parse_shape(text: str) -> tuple:
 	return (cpu, memory, disk)
 
 
-def _build_config(args: argparse.Namespace) -> SimConfig:
-	shapes = tuple(_parse_shape(shape) for shape in args.host_shape) if args.host_shape else (DEFAULT_HOST_SHAPE,)
+def _build_config(ns: argparse.Namespace) -> SimConfig:
+	shapes = tuple(_parse_shape(shape) for shape in ns.host_shape) if ns.host_shape else (DEFAULT_HOST_SHAPE,)
 	return SimConfig(
-		seed=args.seed,
-		duration=args.duration,
-		arrival_rate=args.arrival_rate,
-		host_count=args.host_count,
+		seed=ns.seed,
+		duration=ns.duration,
+		arrival_rate=ns.arrival_rate,
+		host_count=ns.host_count,
 		host_shapes=shapes,
-		mean_lifetime=args.mean_lifetime,
-		upgrade_hazard=args.upgrade_hazard,
-		reserve=args.reserve / 100.0,
+		mean_lifetime=ns.mean_lifetime,
+		upgrade_hazard=ns.upgrade_hazard,
+		reserve=ns.reserve / 100.0,
 	)
 
 
 def main(argv=None) -> None:
-	parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+	parser = argparse.ArgumentParser(
+		description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+	)
 	parser.add_argument("--seed", type=int, default=0)
 	parser.add_argument("--seeds", type=int, default=1, help="average over this many seeds (mean ± sd)")
 	parser.add_argument("--duration", type=float, default=10000.0, help="sim-time units")
@@ -431,7 +427,9 @@ def main(argv=None) -> None:
 		help="host effective budget; repeat for a heterogeneous fleet (cycled)",
 	)
 	parser.add_argument("--mean-lifetime", type=float, default=500.0)
-	parser.add_argument("--upgrade-hazard", type=float, default=0.0, help="resize-up rate per VM per unit time")
+	parser.add_argument(
+		"--upgrade-hazard", type=float, default=0.0, help="resize-up rate per VM per unit time"
+	)
 	parser.add_argument("--reserve", type=float, default=0.0, help="arrival headroom percent")
 	parser.add_argument(
 		"--strategy",
@@ -444,7 +442,9 @@ def main(argv=None) -> None:
 	if args.seeds > 1:
 		print(_format_aggregate(compare_seeds(config, args.seeds, strategies), args.seeds))
 	elif args.strategy:
-		print(_format_table({args.strategy: run(SimConfig(**{**config.__dict__, "strategy": args.strategy}))}))
+		print(
+			_format_table({args.strategy: run(SimConfig(**{**config.__dict__, "strategy": args.strategy}))})
+		)
 	else:
 		print(_format_table(compare(config)))
 

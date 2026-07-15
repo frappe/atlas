@@ -82,7 +82,7 @@ class Host:
 
 
 class VM:
-	__slots__ = ("kind", "demand", "host", "alive", "ladder_i")
+	__slots__ = ("alive", "demand", "host", "kind", "ladder_i")
 
 	def __init__(self, kind, demand, host, ladder_i):
 		self.kind = kind

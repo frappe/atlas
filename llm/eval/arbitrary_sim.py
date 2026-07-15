@@ -76,7 +76,7 @@ class Host:
 
 
 class VM:
-	__slots__ = ("arch", "demand", "host", "alive")
+	__slots__ = ("alive", "arch", "demand", "host")
 
 	def __init__(self, arch, demand, host):
 		self.arch = arch
@@ -189,7 +189,7 @@ def simulate(cfg, workload):
 			vm = payload
 			if not vm.alive:
 				continue
-			base, grow = ARCHETYPES[vm.arch]
+			_base, grow = ARCHETYPES[vm.arch]
 			new = dict(vm.demand)
 			new[grow] = vm.demand[grow] * 1.6
 			delta = {a: new[a] - vm.demand[a] for a in AXES}

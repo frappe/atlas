@@ -48,9 +48,7 @@ def _resolve(strategy: str, needs: dict) -> str:
 	return strategy
 
 
-def _evaluate(
-	budgets: dict, used: dict, needs: dict, reserve: float
-) -> tuple[bool, int, float, float]:
+def _evaluate(budgets: dict, used: dict, needs: dict, reserve: float) -> tuple[bool, int, float, float]:
 	"""Feasibility + shape metrics for placing `needs` on one host.
 
 	`budgets`/`used`/`needs` are dicts over `AXES` (a budget of `None` = that axis is
