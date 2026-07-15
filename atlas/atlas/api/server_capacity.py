@@ -242,9 +242,7 @@ def _share_units(cpu_axis: dict, memory_axis: dict, disk_axis: dict) -> dict | N
 		"memory": (memory_axis, SHARE_UNIT["memory_megabytes"]),
 		"disk": (disk_axis, SHARE_UNIT["disk_gigabytes"]),
 	}
-	measured = {
-		key: (axis, unit) for key, (axis, unit) in priced.items() if axis["effective"] is not None
-	}
+	measured = {key: (axis, unit) for key, (axis, unit) in priced.items() if axis["effective"] is not None}
 	if not measured:
 		return None
 	total = min(int(axis["effective"] // unit) for axis, unit in measured.values())

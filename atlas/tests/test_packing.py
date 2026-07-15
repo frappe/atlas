@@ -35,9 +35,7 @@ class TestStrategyScoring(unittest.TestCase):
 	def test_infeasible_returns_none(self) -> None:
 		# A 512 MB VM can't fit where only 100 MB is free.
 		budgets = {"cpu": 8.0, "memory": 512.0, "disk": 320.0}
-		self.assertIsNone(
-			packing.rank_key(SPREAD, budgets, _used(memory=400.0), _SHARED_1X, 0.0, 0)
-		)
+		self.assertIsNone(packing.rank_key(SPREAD, budgets, _used(memory=400.0), _SHARED_1X, 0.0, 0))
 
 	def test_unmeasured_axis_is_unlimited_and_counted(self) -> None:
 		# A None budget fits anything, but bumps the unmeasured count (first rank
@@ -93,9 +91,7 @@ class TestStrategyScoring(unittest.TestCase):
 		budgets = {"cpu": 8.0, "memory": 1024.0, "disk": 320.0}
 		need = {"cpu": 0.0625, "memory": 768.0, "disk": 10.0}
 		self.assertIsNotNone(packing.rank_key(SPREAD, budgets, _EMPTY, need, 0.0, 0), "raw budget fits")
-		self.assertIsNone(
-			packing.rank_key(SPREAD, budgets, _EMPTY, need, 0.5, 0), "a 50% reserve blocks it"
-		)
+		self.assertIsNone(packing.rank_key(SPREAD, budgets, _EMPTY, need, 0.5, 0), "a 50% reserve blocks it")
 
 
 class TestMetrics(unittest.TestCase):
