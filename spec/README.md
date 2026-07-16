@@ -61,12 +61,16 @@ keep it the source of truth.
   and are never operator-facing artifacts or transportable between hosts.
   (Disk snapshots — instant copy-on-write LVM thin snapshots of the VM's
   disk — are supported; same doc.)
-- No autoscaling or scheduling. The operator picks the server in Desk; an
-  owner-scoped user creating a machine gets the first Active server with room (a
-  default, not a scheduler — see [11-user-ui.md](./11-user-ui.md)). "Room" is
-  oversubscribable: a host's effective vCPU budget is its physical total times
-  `Atlas Settings.overprovision_factor` (default 1), and a host whose size we
-  can't price counts as unlimited.
+- No autoscaling or reactive scheduling — no queues, no rebalancing, no moving a
+  running VM. The operator picks the server in Desk; an owner-scoped user creating a
+  machine gets **load-aware placement** (a default, not a scheduler): the controller
+  picks the Active host that scores best under the operator's chosen strategy
+  (Spread by default — the emptiest by relative fill; also Best Fit / Tetris / First
+  Fit), leaving an arrival headroom reserve for later in-place resizes, and gates a
+  resize on capacity so it can't oversubscribe a host. See
+  [28-placement.md](./28-placement.md) and [11-user-ui.md](./11-user-ui.md). "Room"
+  is oversubscribable on CPU (`Atlas Settings.overprovision_factor`, default 1); RAM
+  and disk are hard fits, and a host whose totals aren't reported counts as unlimited.
 - No metrics or alerting. `journalctl` is enough.
 - One in-app UI, one audience. **Operators** use Desk (`/app/atlas`) — the whole
   fleet, providers, servers, image sync, ad-hoc tasks. There is no end-user
@@ -155,6 +159,8 @@ keep it the source of truth.
 25. [Private networking (the WireGuard host mesh)](./25-private-networking.md)
 26. [Docker compatibility (`docker run` against microVMs)](./27-docker-compat.md) — *design / proposal*
 27. [The core ↔ service boundary and the `satellite` app](./28-core-service-boundary.md) — *how service logic (proxy, gateway, mesh, bench/site) leaves core for a separate app via an explicit VM-lifecycle seam*
+28. [Placement — load-aware host selection for the size ladder](./28-placement.md)
+29. [Snapshot backup to S3](./29-snapshot-backup.md) — *push a point-in-time snapshot off-host to S3 and rehydrate it back (same-VM rollback)*
 
 ## First run on a fresh site
 
@@ -265,10 +271,12 @@ operator-facing features add to this list; new tests follow it.
 | Operate a virtual machine      | `Virtual Machine` → **Start / Stop / Restart / Pause / Resume / Terminate** | [05-virtual-machine-lifecycle.md](./05-virtual-machine-lifecycle.md) |
 | Manage a VM's disk and size    | `Virtual Machine` → **Snapshot / Rebuild / Resize**; `Virtual Machine Snapshot` → **Restore to VM / Clone to new VM / Delete** | [05-virtual-machine-lifecycle.md](./05-virtual-machine-lifecycle.md) |
 | Promote a snapshot to an image | `Virtual Machine Snapshot` → **Promote to image** (or `Image Build` → **Promote to image**): same-server base image new VMs pick via the `image` field | [08-images.md](./08-images.md#two-origins-for-a-base-image-a-url-or-a-snapshot-promote) |
+| Back up a snapshot to S3        | `Virtual Machine Snapshot` → **Upload to S3 / Restore from S3** (off-host durable copy via controller-presigned URLs; restore rehydrates the on-host artifacts and, for a cold snapshot, rolls its own VM back) | [29-snapshot-backup.md](./29-snapshot-backup.md) |
 | Attach a public IPv4 to a VM   | `Reserved IP` → **Attach / Detach** (the inbound-v4 primitive: DNAT in, SNAT out) | [06-networking.md](./06-networking.md#ipv4-ingress-reserved-ip) |
 | Broker a VPN tunnel to a VM    | (user/Central-driven) `request_vpc_access` / `revoke` dials the owner in as a peer on their tenant `/48` via the **customer gateway VM** on the mesh — one shared `wg0`, one client `/128` (supersedes the host-terminated broker) | [25-private-networking.md](./25-private-networking.md#the-customer-gateway--external-dial-in-to-the-mesh), [19-vpn-broker.md](./19-vpn-broker.md) |
 | Issue a TLS cert for a region  | `Root Domain` → **Issue / Renew Certificate**; `TLS Certificate` → **Issue/Renew / Push to Proxies**; `Route53 Settings` / `Lets Encrypt Settings` → **Test Connection** | [13-tls.md](./13-tls.md) |
 | Route guest-created bench sites | (guest-driven, no operator action) the in-guest `bench-domain-provider register`/`deregister` POSTs reserve/remove a `Subdomain` the controller arbitrates (uniqueness, brand denylist, per-VM cap, own-VM scoping by source `/128`); the `wildcard-domains`/`proxy-servers` queries answer pilot's host-level questions; every call audited; `terminate()` is the only controller-side teardown | [18-bench-self-routing.md](./18-bench-self-routing.md) |
+| Refresh a host's capacity      | `Server` → **Refresh Capacity** (re-measure CPU/RAM/pool totals + fullness and stamp them, no re-bootstrap) | [28-placement.md](./28-placement.md) |
 | Run an ad-hoc task / reboot    | `Server` → **Run Task / Reboot**                        | [04-tasks.md](./04-tasks.md) |
 | Run an ad-hoc command on hosts/guests | `SSH Console` → **Execute** (fan one command across Servers and/or Virtual Machines; per-target output streams back; every run recorded as an `SSH Command Log`), or `Server` / `Virtual Machine` → **Run Command** (pre-targets the console at one row) | [04-tasks.md § The SSH Console](./04-tasks.md#the-ssh-console-ad-hoc-commands) |
 | Click any button on the desk   | every form button driven through `run_doc_method`       | (this section, *Desk-button coverage*) |
@@ -462,6 +470,16 @@ reset on the baked `site.local`) on a warm clone, and the cold-boot fallback whe
 the captured host signature is tampered. Heavy (a full bench bake on first run) and so invoked directly, not
 folded into `run_all_smoke`; re-runs reuse the server's Available warm golden.
 It needs the background worker (clone auto-provision).
+
+The **snapshot backup** use case (`snapshot_backup.run_smoke`) covers the S3
+round trip ([29](./29-snapshot-backup.md)): on the shared droplet it provisions a
+Stopped VM, takes a Cold snapshot, uploads it to S3 (`zstd -o` → `sha256sum` →
+`curl -T` a controller-presigned PUT, no host credentials), `lvremove`s the local
+snapshot LV to simulate losing the pool, restores from S3 (recreate the thin LV →
+sha256-verify → `zstd -d --sparse`), rolls the VM back, and asserts it boots off
+the rehydrated disk. It reads an `s3` block from the fixture and skips cleanly
+(MissingConfig) without one; a local MinIO is the zero-cost endpoint. It needs the
+background worker (VM auto-provision).
 
 Every e2e-created droplet is tagged `atlas-e2e`. The harness pre-sweep
 prints droplets older than 30 minutes so the operator can delete them

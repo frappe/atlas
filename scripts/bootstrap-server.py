@@ -21,6 +21,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib
 
 from atlas._run import _substitute, install_directory, install_file, run, run_input, run_ok
 from atlas._task import TaskInputs, TaskResult
+from atlas.hostfacts import host_capacity_facts
 from atlas.lvm import ThinPool
 from atlas.network_env import default_route_device
 from atlas.paths import ATLAS_PYTHON
@@ -176,6 +177,11 @@ PACKAGES = [
 	"qemu-utils",
 	"nbd-client",
 	"socat",
+	# Snapshot backup to S3 (spec/29): zstd compresses each disk image / memory
+	# file on the way to S3 and decompresses it on restore. Kernel decompression in
+	# sync-image already leaned on `zstd -d`; installing it makes that dependency
+	# explicit rather than relying on it being pre-seeded.
+	"zstd",
 ]
 
 # The host's Atlas interpreter — a uv-managed venv on a controlled CPython — is
@@ -208,6 +214,14 @@ class BootstrapResult(TaskResult):
 	# backs it (the venv + install.sh's PY_VERSION constant are live truth), so the
 	# controller reads it for display only, never persists it.
 	python_version: str
+	# The host's capacity totals (see atlas.hostfacts): logical CPU count, physical
+	# RAM in MB, and the thin pool's data capacity in GB. Stamped onto the Server so
+	# placement packs against real numbers instead of the uncatalogued→unlimited
+	# fallback. Pool *fullness* (data_percent) is deliberately NOT here — it is ~0 on
+	# a freshly-created pool and is live/advisory, so the `server-facts` Task owns it.
+	vcpus_total: int
+	memory_megabytes_total: int
+	pool_disk_gigabytes_total: int
 
 
 def _uname(flag: str) -> str:
@@ -515,12 +529,16 @@ def main() -> None:
 	#     source of truth. The bytes still land in /var/lib/atlas/bootstrap.json;
 	#     BootstrapResult.emit() carries the same values on stdout as the typed
 	#     Task result (replacing the trailing `cat bootstrap.json`).
+	facts = host_capacity_facts()
 	result = BootstrapResult(
 		firecracker_version=_binary_version("/usr/local/bin/firecracker"),
 		jailer_version=_binary_version("/usr/local/bin/jailer"),
 		kernel_version=_uname("-r"),
 		architecture=_uname("-m"),
 		python_version=python_version,
+		vcpus_total=facts["vcpus_total"],
+		memory_megabytes_total=facts["memory_megabytes_total"],
+		pool_disk_gigabytes_total=facts["pool_disk_gigabytes_total"],
 	)
 	install_directory("/var/lib/atlas", mode="0755")
 	install_file(_bootstrap_json(result), "/var/lib/atlas/bootstrap.json", mode="0644")

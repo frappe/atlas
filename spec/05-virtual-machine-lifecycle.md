@@ -459,6 +459,10 @@ reaching it — `curl --unix-socket` talks to it from the host as before.
 
 ## Snapshot
 
+A snapshot lives in one thin pool on one host — instant and space-thin, but not
+durable (lose the pool and it is gone). To make one survive its host, back it up
+to S3 and restore it later: [29](./29-snapshot-backup.md).
+
 `Virtual Machine.snapshot(title=None, live=False)`. `title` is optional:
 omitted (or blank), it defaults to `<vm title> — <YYYY-MM-DD HH:mm>`, so a
 caller — the SPA's one-click snapshot, or a direct API call — need not invent a
@@ -650,6 +654,14 @@ size (grows the LV and the ext4 on it in one shot). Disk may only **grow** —
 Unspecified fields keep their current value. The new
 values are persisted on the row through a guarded path (see
 [Why resource fields are frozen outside resize](#why-resource-fields-are-frozen-outside-resize)).
+
+**Capacity gate.** Before it touches the host, resize checks that the host has room
+for the *growth* (the positive per-axis deltas) against the host's full effective
+budget — a resize must not silently oversubscribe RAM or disk on a full host. It
+deliberately spends the arrival headroom reserve placement left free (that is what
+the reserve is for). When the delta doesn't fit it raises `NoResizeCapacityError`
+(a `NoCapacityError` subclass — the signal that the VM must migrate to grow, a
+deferred case). See [28-placement.md](./28-placement.md).
 
 **Data disk.** `resize(data_disk_gigabytes=…)` grows the data disk the same way
 (`lvextend -r`, grow-only). Resize only ever **grows an existing** data disk:

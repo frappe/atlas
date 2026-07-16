@@ -39,6 +39,7 @@
   "pool_disk_gigabytes_total",
   "pool_data_percent",
   "capacity_reported_at",
+  "placement_headroom_percent",
   "section_break_metadata",
   "provider_metadata"
  ],
@@ -246,6 +247,13 @@
    "fieldtype": "Datetime",
    "label": "Capacity Reported At",
    "read_only": 1
+  },
+  {
+   "description": "Per-host arrival fill ceiling. > 0 overrides Atlas Settings.placement_headroom_percent for this host; 0/unset inherits the fleet default. (Frappe writes 0 for an untouched Percent field, so \"explicitly 0 while the fleet default is > 0\" is not expressible per-host — an accepted trade-off.) The reserve applies to placing NEW VMs only; resize spends it.",
+   "fieldname": "placement_headroom_percent",
+   "fieldtype": "Percent",
+   "label": "Placement Headroom Percent",
+   "non_negative": 1
   },
   {
    "collapsible": 1,
