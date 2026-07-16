@@ -38,6 +38,23 @@ class TestSatelliteEvents(IntegrationTestCase):
 			module.on_vm_after_insert(frappe._dict(name="vm-abc"))
 		enqueue.assert_not_called()
 
+	def test_routing_intent_change_emits_updated(self) -> None:
+		# A routing-intent change (Site/Pilot recorded/dropped a subdomain) must emit even
+		# without a status change, so the Satellite re-pulls and reconciles its routes.
+		doc = frappe._dict(name="vm-x", status="Running", routing_subdomains='["mysite"]')
+		doc.get_doc_before_save = lambda: frappe._dict(status="Running", routing_subdomains="")
+		with patch.object(module.frappe, "enqueue") as enqueue:
+			module.on_vm_update(doc)
+		enqueue.assert_called_once()
+		self.assertEqual(enqueue.call_args.kwargs["event"], "vm.updated")
+
+	def test_no_emit_when_nothing_meaningful_changed(self) -> None:
+		doc = frappe._dict(name="vm-x", status="Running", routing_subdomains='["mysite"]')
+		doc.get_doc_before_save = lambda: frappe._dict(status="Running", routing_subdomains='["mysite"]')
+		with patch.object(module.frappe, "enqueue") as enqueue:
+			module.on_vm_update(doc)
+		enqueue.assert_not_called()
+
 	def test_deliver_posts_hmac_signed_body(self) -> None:
 		captured: dict = {}
 

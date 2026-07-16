@@ -32,6 +32,7 @@
   "clone_source_data_rootfs",
   "warm_snapshot",
   "build_mode",
+  "routing_subdomains",
   "section_break_security",
   "ssh_public_key",
   "ssh_command",
@@ -247,6 +248,15 @@
    "options": "\nsite\nadmin",
    "read_only": 1,
    "set_only_once": 1
+  },
+  {
+   "description": "Internal (routing dedup): the Site/Pilot subdomain label(s) this VM should be routed at, as a JSON list. The provisioner records them here instead of creating a Subdomain; the Satellite orchestrator reads them off the read API and reconciles its own Subdomain rows. Empty for a VM with no routed site.",
+   "fieldname": "routing_subdomains",
+   "fieldtype": "Small Text",
+   "hidden": 1,
+   "label": "Routing Subdomains",
+   "no_copy": 1,
+   "read_only": 1
   },
   {
    "collapsible": 1,

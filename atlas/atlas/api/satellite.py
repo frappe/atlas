@@ -46,6 +46,11 @@ def _vm_payload(vm) -> dict:
 		"private_address": vm.private_address,
 		"build_mode": vm.build_mode or "",
 		"warm": bool(vm.warm_snapshot),
+		# The Site/Pilot subdomain label(s) the provisioner recorded as routing intent (the
+		# routing dedup): the Satellite creates its own Subdomain rows from these instead of
+		# Atlas creating them. A routing fact, but the minimal bridge that lets Atlas stop
+		# owning the guest-plane routing while Site/Pilot stay here.
+		"routing_subdomains": frappe.parse_json(vm.routing_subdomains or "[]"),
 		"modified": str(vm.modified),
 	}
 

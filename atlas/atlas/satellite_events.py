@@ -42,11 +42,14 @@ def on_vm_after_insert(doc, method=None) -> None:
 
 
 def on_vm_update(doc, method=None) -> None:
-	# Only meaningful lifecycle transitions — a status change is when the Satellite
-	# needs to re-pull (addresses/host get populated as the VM reaches Running). Other
-	# saves are ignored; the reconcile sweep covers anything missed.
+	# Re-pull on a meaningful transition: a status change (addresses/host get populated as
+	# the VM reaches Running) OR a routing-intent change (the provisioner recorded/dropped a
+	# Site/Pilot subdomain — the Satellite reconciles its routes off it). Other saves are
+	# ignored; the reconcile sweep covers anything missed.
 	previous = doc.get_doc_before_save()
-	if previous is not None and previous.status != doc.status:
+	if previous is not None and (
+		previous.status != doc.status or previous.routing_subdomains != doc.routing_subdomains
+	):
 		_notify("vm.updated", doc.name)
 
 

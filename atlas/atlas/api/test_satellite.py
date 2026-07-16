@@ -35,6 +35,8 @@ class TestSatelliteApi(IntegrationTestCase):
 		# boot), not service state.
 		self.assertIn("build_mode", payload)
 		self.assertEqual(payload["warm"], False)
+		# The routing intent (dedup) — parsed from the JSON field to a list; empty by default.
+		self.assertEqual(payload["routing_subdomains"], [])
 		# The boundary is service-free: no role leaks through.
 		self.assertNotIn("is_proxy", payload)
 		self.assertNotIn("is_gateway", payload)
