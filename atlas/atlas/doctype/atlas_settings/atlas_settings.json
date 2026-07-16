@@ -195,7 +195,7 @@
    "fieldname": "satellite_public_keys",
    "fieldtype": "Small Text",
    "label": "Satellite Public Keys",
-   "description": "OpenSSH public key(s), one per line, of the Satellite orchestrator(s) that manage this Atlas's VMs. Atlas injects them into every host (at bootstrap) and guest (at provision) authorized_keys so a Satellite can SSH the bare box it is handed (spec/28). Empty on an Atlas with no Satellite."
+   "description": "OpenSSH public key(s), one per line, of the Satellite orchestrator(s) that manage this Atlas's VMs. Atlas injects them into every host (at bootstrap) and guest (at provision) authorized_keys so a Satellite can SSH the bare box it is handed (spec/30). Empty on an Atlas with no Satellite."
   },
   {
    "fieldname": "satellite_webhook_url",
@@ -213,7 +213,7 @@
    "fieldname": "satellite_routing_base_url",
    "fieldtype": "Data",
    "label": "Satellite Routing Base URL",
-   "description": "Public base URL of the Satellite orchestrator that serves this Atlas's guest routing API (spec/28). Injected into each guest as ROUTING_BASE_URL so the bench-domain-provider posts register/deregister/dns_records there instead of to Atlas. Empty leaves the guest routing client a clean no-op (routing not yet moved to a Satellite)."
+   "description": "Public base URL of the Satellite orchestrator that serves this Atlas's guest routing API (spec/30). Injected into each guest as ROUTING_BASE_URL so the bench-domain-provider posts register/deregister/dns_records there instead of to Atlas. Empty leaves the guest routing client a clean no-op (routing not yet moved to a Satellite)."
   }
  ],
  "issingle": 1,

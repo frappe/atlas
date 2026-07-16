@@ -16,7 +16,7 @@ def _set_satellite_keys(value: str) -> None:
 
 class TestGuestSatelliteKeyInjection(IntegrationTestCase):
 	"""Atlas hands over a bare box; it injects the Satellite orchestrator's key into the
-	guest so Satellite can SSH in and run services (spec/28)."""
+	guest so Satellite can SSH in and run services (spec/30)."""
 
 	def setUp(self) -> None:
 		_ensure_test_server()

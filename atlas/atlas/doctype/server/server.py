@@ -231,7 +231,7 @@ class Server(Document):
 	def _authorize_satellite_keys(self, connection) -> None:
 		"""Append the Satellite orchestrator's public key(s) to the host's root
 		authorized_keys so a Satellite can SSH the HOST for host-plane services (the
-		mesh, the gateway — spec/28). Idempotent: a re-bootstrap never duplicates a line.
+		mesh, the gateway — spec/30). Idempotent: a re-bootstrap never duplicates a line.
 		No-op on an Atlas with no Satellite configured."""
 		from atlas.atlas.atlas_settings import satellite_public_keys
 

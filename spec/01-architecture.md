@@ -59,7 +59,7 @@ Atlas core owns only the VM fabric — "a VM exists". Service-specific logic
 (reverse-proxy routing, the customer gateway, the WireGuard host mesh, bench/site
 deploy) attaches to the VM lifecycle through an explicit registry and lives, or is
 moving, in a separate app, **`satellite`** — see
-[28-core-service-boundary.md](./28-core-service-boundary.md). Core never imports
+[30-core-service-boundary.md](./30-core-service-boundary.md). Core never imports
 satellite; satellite drives every infra effect back through methods Atlas exposes.
 
 There is no Atlas agent on the server. Everything Atlas does on a server is

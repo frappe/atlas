@@ -1,5 +1,5 @@
 """The Satellite read API — the surface a Satellite orchestrator polls to register and
-sync the VMs an Atlas provisions (spec/28, the provisioner/orchestrator split).
+sync the VMs an Atlas provisions (spec/30, the provisioner/orchestrator split).
 
 Atlas is a *pure provisioner*: it owns "a VM exists" and nothing about services. A
 Satellite is a SEPARATE deployment that manages services itself, over its own SSH to
