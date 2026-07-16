@@ -5,6 +5,8 @@ the guest, snapshot it) are mocked at the module seams; only the pure orchestrat
 (status transitions, artifact linking, auto-register, terminate, immutability,
 fail-loud, rebake) is asserted here. The real bake is the e2e's job (spec/15)."""
 
+from contextlib import contextmanager
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import frappe
@@ -91,6 +93,9 @@ class TestImageBuildRun(IntegrationTestCase):
 	def _run_with_mocks(self, build, **extra):
 		"""Drive run() with every host seam mocked. Returns the mocks for asserting."""
 		defaults = dict(
+			# The preflight capacity guard SSHes the host; mock it so the host-free run()
+			# flow doesn't try to reach the fake build server.
+			_capacity=patch.object(image_build_module, "_assert_host_has_capacity"),
 			_provision_build_vm=patch.object(
 				image_build_module, "_provision_build_vm", return_value="build-vm-1"
 			),
@@ -108,6 +113,7 @@ class TestImageBuildRun(IntegrationTestCase):
 			commit=patch.object(image_build_module.frappe.db, "commit"),
 		)
 		with (
+			defaults["_capacity"],
 			defaults["_provision_build_vm"] as m_prov,
 			defaults["_wait"] as m_wait,
 			defaults["run_build"] as m_build,
@@ -169,6 +175,7 @@ class TestImageBuildRun(IntegrationTestCase):
 		# build loud and never reach the snapshot step.
 		build = _new_build("bench-v16")
 		with (
+			patch.object(image_build_module, "_assert_host_has_capacity"),
 			patch.object(image_build_module, "_provision_build_vm", return_value="vm-x"),
 			patch.object(image_build_module, "_wait_for_vm_running"),
 			patch.object(image_build_module, "run_build"),
@@ -200,6 +207,7 @@ class TestImageBuildRun(IntegrationTestCase):
 	def test_failure_marks_failed_and_records_error_and_reraises(self) -> None:
 		build = _new_build("bench-v16")
 		with (
+			patch.object(image_build_module, "_assert_host_has_capacity"),
 			patch.object(image_build_module, "_provision_build_vm", return_value="vm-x"),
 			patch.object(image_build_module, "_wait_for_vm_running"),
 			patch.object(image_build_module, "run_build", side_effect=RuntimeError("build broke")),
@@ -270,6 +278,37 @@ class TestImageBuildRun(IntegrationTestCase):
 			frappe.db.get_value("Virtual Machine", vm_name, "memory_megabytes"),
 			recipe.memory_megabytes,
 		)
+
+	def _run_capacity_guard(self, mem_available_kb: int, needed_megabytes: int = 6144) -> None:
+		"""Drive _assert_host_has_capacity with the host memory probe stubbed."""
+		server = _ensure_test_server()
+		connection = SimpleNamespace(host="host-1", ssh_private_key="pk")
+
+		@contextmanager
+		def fake_key_file(_key):
+			yield "/tmp/key"
+
+		with (
+			patch("atlas.atlas.ssh.connection_for_server", return_value=connection),
+			patch("atlas.atlas._ssh.transport.ssh_key_file", fake_key_file),
+			patch("atlas.atlas._ssh.transport.run_ssh", return_value=(str(mem_available_kb), "", 0)),
+		):
+			image_build_module._assert_host_has_capacity(server, needed_megabytes)
+
+	def test_capacity_guard_throws_when_host_too_small(self) -> None:
+		# A 4 GB host (~3.9 GB available) can't hold a 6 GB fat build VM — the exact
+		# mismatch that OOM-kills firecracker mid-build. Fail loud BEFORE booting it.
+		with self.assertRaises(frappe.ValidationError):
+			self._run_capacity_guard(3_900_000)
+
+	def test_capacity_guard_passes_when_host_large_enough(self) -> None:
+		# An 8 GB host (~7.4 GB available) fits the 6 GB build VM plus the margin.
+		self._run_capacity_guard(7_400_000)
+
+	def test_capacity_guard_fails_open_on_unreadable_probe(self) -> None:
+		# An empty MemAvailable read (odd host / parse miss) skips the guard rather than
+		# blocking an otherwise-fine bake.
+		self._run_capacity_guard(0)
 
 	def test_resize_shrinks_stopped_vm_and_leaves_it_stopped(self) -> None:
 		# The shrink: stop (if needed) → resize to the restore size → NO reboot. Both

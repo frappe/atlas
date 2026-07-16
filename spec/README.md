@@ -158,8 +158,9 @@ keep it the source of truth.
 24. [VM migration between hosts](./24-vm-migration.md)
 25. [Private networking (the WireGuard host mesh)](./25-private-networking.md)
 26. [Docker compatibility (`docker run` against microVMs)](./27-docker-compat.md) — *design / proposal*
-28. [Placement — load-aware host selection for the size ladder](./28-placement.md)
-29. [Snapshot backup to S3](./29-snapshot-backup.md) — *push a point-in-time snapshot off-host to S3 and rehydrate it back (same-VM rollback)*
+27. [Placement — load-aware host selection for the size ladder](./28-placement.md)
+28. [Snapshot backup to S3](./29-snapshot-backup.md) — *push a point-in-time snapshot off-host to S3 and rehydrate it back (same-VM rollback)*
+29. [The core ↔ service boundary and the `satellite` app](./30-core-service-boundary.md) — *how service logic (proxy, gateway, mesh, bench/site) leaves core for a separate app via an explicit VM-lifecycle seam*
 
 ## First run on a fresh site
 

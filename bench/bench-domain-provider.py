@@ -67,7 +67,11 @@ import urllib.parse
 
 ROUTING_ENV_PATH = "/etc/atlas-routing.env"
 
-_METHOD = "atlas.atlas.bench_routing.{}"
+# Routing moved to the Satellite orchestrator (spec/28): the guest posts to the
+# Satellite's routing API, not Atlas. ROUTING_BASE_URL points at the Satellite; the
+# verbs (register/deregister/dns_records/...) are unchanged, so only the module prefix
+# differs from the old atlas.atlas.bench_routing.{}.
+_METHOD = "satellite.routing.api.{}"
 
 # Exit codes (domain-provider.md): pilot reads only zero vs non-zero, but we follow the
 # documented convention so a human running the binary by hand gets a useful code.

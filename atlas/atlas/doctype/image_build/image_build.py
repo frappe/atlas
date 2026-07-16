@@ -174,6 +174,9 @@ def run(image_build_name: str) -> None:
 	recipe = get_recipe(build.recipe)
 	try:
 		_set_status(build, "Provisioning")
+		# Fail loud NOW if the host can't hold the (possibly fat) build VM — before we
+		# create a VM row and hand it to a host that will OOM-kill it mid-build.
+		_assert_host_has_capacity(build.server, recipe.effective_build_memory_megabytes)
 		vm_name = _provision_build_vm(build, recipe)
 		build.db_set("build_virtual_machine", vm_name)
 		# COMMIT before waiting: the build VM's own after_insert enqueued its boot
@@ -258,6 +261,43 @@ def _set_status(build, status: str) -> None:
 		doctype="Image Build",
 		docname=build.name,
 	)
+
+
+# Host RAM the build VM needs BEYOND its own guest memory: firecracker's VMM
+# footprint plus a safety cushion, so a host that only "just fits" on paper doesn't
+# OOM-kill the guest at its peak build RSS.
+_BUILD_VM_HOST_MARGIN_MB = 512
+
+
+def _assert_host_has_capacity(server_name: str, needed_megabytes: int) -> None:
+	"""Fail loud BEFORE booting the build VM if its host can't hold it.
+
+	A bench bake boots a FAT build VM (recipe.build_memory_megabytes — e.g. 6 GB, for
+	the Node asset build's headroom). If the host has less free memory than that, the
+	host's OOM-killer reaps the firecracker process the moment the guest's RSS grows;
+	systemd then restarts the VM small + empty, wiping /tmp (the detached build.sh and
+	its done-marker), and run_detached polls a marker that can never appear until its
+	1800s timeout — a 30-minute silent hang for a condition ONE SSH call detects. Probe
+	the host's available memory up front and throw an actionable error instead.
+
+	MemAvailable (not MemTotal) so the check accounts for a host that is small OR
+	already busy with other VMs. Fail-open on an unreadable probe: a parse miss skips
+	the guard rather than blocking an otherwise-fine bake."""
+	from atlas.atlas._ssh.transport import run_ssh, ssh_key_file
+	from atlas.atlas.ssh import connection_for_server
+
+	connection = connection_for_server(frappe.get_doc("Server", server_name))
+	with ssh_key_file(connection.ssh_private_key) as key_path:
+		out, _stderr, _code = run_ssh(
+			connection, key_path, "awk '/^MemAvailable:/ {print $2}' /proc/meminfo", timeout_seconds=30
+		)
+	available_megabytes = int(out.strip() or 0) // 1024
+	if available_megabytes and available_megabytes < needed_megabytes + _BUILD_VM_HOST_MARGIN_MB:
+		frappe.throw(
+			f"Host {server_name} has {available_megabytes} MB available but the build VM needs "
+			f"{needed_megabytes} MB (+{_BUILD_VM_HOST_MARGIN_MB} MB firecracker margin). Bake on a "
+			f"larger host — a 6 GB fat build VM needs an ~8 GB host."
+		)
 
 
 def _provision_build_vm(build, recipe) -> str:
