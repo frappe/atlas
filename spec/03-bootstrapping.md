@@ -88,8 +88,6 @@ In summary, in this order:
    gate. So by the time `bootstrap-server` runs — itself as `atlas bootstrap-server`
    on that venv — the interpreter every other Task and every VM-boot hook uses is
    already proven. See *The Atlas interpreter and CLI* below.
-<<<<<<< HEAD
-=======
 10. Installs the **VM-migration kernel modules** (spec/24; the script's
    step 11b): the cold-migration disk move runs over NBD into a device-mapper
    `clone` target, so every host carries `nbd` and `dm_clone`. They live in `linux-modules-extra`, so the
