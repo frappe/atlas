@@ -308,8 +308,8 @@ never touches real DO/Scaleway rows.
      **renames** `site.local` → `<fqdn>` via `bench rename-site`, which regenerates
      the vhost as `server_name <fqdn>` + a v6 listener + reload — NO restart. The heavier change that came with it: drop the per-VM
      `set-admin-password` entirely (it cost a ~28s CPU-throttled `bench frappe`
-     boot — the real rank-1 deploy cost, not nginx); the owner is handed the shared
-     baked password and rotates it. See [14-self-serve.md](./14-self-serve.md)
+     boot — the real rank-1 deploy cost, not nginx); the owner signs in via the
+     one-click `login_url` the deploy mints instead. See [14-self-serve.md](./14-self-serve.md)
      Contract A + the in-guest deploy.)
   2. **Tighten the poll intervals** in `_wait_for_vm_running` and
      `wait_for_http` from 5s → 1s (leave the generous *timeouts* alone — only

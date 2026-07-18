@@ -1,10 +1,8 @@
-from unittest.mock import patch
-
 import frappe
 from frappe.tests import IntegrationTestCase
 
 from atlas.atlas.script_uploads import files_to_upload
-from atlas.tests.fixtures import make_image, make_provider, make_server
+from atlas.tests.fixtures import make_image, make_provider, make_server, no_commit_enqueue
 
 
 def _provider_and_server(title: str, status: str) -> str:
@@ -38,7 +36,7 @@ class TestVirtualMachineImage(IntegrationTestCase):
 
 	def test_sync_to_server_enqueues_task(self) -> None:
 		server_name = _provider_and_server("test-srv-sync", "Active")
-		with patch("frappe.enqueue") as enqueue:
+		with no_commit_enqueue() as enqueue:
 			task_name = self.image.sync_to_server(server_name)
 		enqueue.assert_called_once()
 		task = frappe.get_doc("Task", task_name)
@@ -50,7 +48,7 @@ class TestVirtualMachineImage(IntegrationTestCase):
 		active_name = _provider_and_server("srv-active-1", "Active")
 		_provider_and_server("srv-broken-1", "Broken")
 		_provider_and_server("srv-archived-1", "Archived")
-		with patch("frappe.enqueue") as enqueue:
+		with no_commit_enqueue() as enqueue:
 			tasks = self.image.sync_to_all_servers()
 		# Active servers are: srv-active-1 plus any previous Active servers
 		# from other tests; we filter to the ones we just created.
@@ -74,7 +72,7 @@ class TestVirtualMachineImageAutoSync(IntegrationTestCase):
 
 		# Reset image name to ensure a fresh insert.
 		frappe.db.delete("Virtual Machine Image", {"image_name": "auto-sync-image"})
-		with patch("frappe.enqueue") as enqueue:
+		with no_commit_enqueue() as enqueue:
 			frappe.get_doc(
 				{
 					"doctype": "Virtual Machine Image",
@@ -107,7 +105,7 @@ class TestVirtualMachineImageAutoSync(IntegrationTestCase):
 	def test_after_insert_skips_when_inactive(self) -> None:
 		_provider_and_server("inactive-srv-1", "Active")
 		frappe.db.delete("Virtual Machine Image", {"image_name": "inactive-image"})
-		with patch("frappe.enqueue") as enqueue:
+		with no_commit_enqueue() as enqueue:
 			frappe.get_doc(
 				{
 					"doctype": "Virtual Machine Image",
@@ -231,7 +229,7 @@ class TestLocalImage(IntegrationTestCase):
 
 	def test_after_insert_skips_sync_fanout_for_local(self) -> None:
 		_provider_and_server("local-img-active-srv", "Active")
-		with patch("frappe.enqueue") as enqueue:
+		with no_commit_enqueue() as enqueue:
 			self._local_image("local-image-noinsert").insert(ignore_permissions=True)
 		enqueue.assert_not_called()
 
@@ -270,7 +268,7 @@ class TestLocalImage(IntegrationTestCase):
 		# Regression guard: an ordinary URL-backed image still auto-syncs.
 		_provider_and_server("url-img-active-srv", "Active")
 		frappe.db.delete("Virtual Machine Image", {"image_name": "url-image-fanout"})
-		with patch("frappe.enqueue") as enqueue:
+		with no_commit_enqueue() as enqueue:
 			frappe.get_doc(
 				{
 					"doctype": "Virtual Machine Image",

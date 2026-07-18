@@ -176,6 +176,9 @@ def run(image_build_name: str) -> None:
 	recipe = get_recipe(build.recipe)
 	try:
 		_set_status(build, "Provisioning")
+		# Fail loud NOW if the host can't hold the (possibly fat) build VM — before we
+		# create a VM row and hand it to a host that will OOM-kill it mid-build.
+		_assert_host_has_capacity(build.server, recipe.effective_build_memory_megabytes)
 		vm_name = _provision_build_vm(build, recipe)
 		build.db_set("build_virtual_machine", vm_name)
 		# Commit the scratch row before direct provisioning reloads it by name. This
@@ -216,6 +219,14 @@ def run(image_build_name: str) -> None:
 		# bake no Frappe site, so they keep their own in-build health check.
 		if not (recipe.is_proxy or recipe.is_sshpiper):
 			bench_image.sanity_check(vm_name)
+		# The build VM may have booted FAT (recipe.build_memory_megabytes, so the
+		# Node-asset build had headroom); a clone must restore SMALL. Firecracker
+		# can't resize a live VM, so shrink now (stop → resize). After this the VM's
+		# memory IS recipe.memory_megabytes, so both snapshot paths capture the small
+		# size. The warm path boots the VM back up itself (in _warm_snapshot) at this
+		# small size before its capture; the cold path stays Stopped for its snapshot.
+		# No-op when the recipe didn't fatten.
+		_resize_to_restore_memory(recipe, vm_name)
 		_set_status(build, "Snapshotting")
 		if build.warm:
 			snapshot_name = _warm_snapshot(build, recipe, vm_name)
@@ -260,6 +271,43 @@ def _set_status(build, status: str) -> None:
 	)
 
 
+# Host RAM the build VM needs BEYOND its own guest memory: firecracker's VMM
+# footprint plus a safety cushion, so a host that only "just fits" on paper doesn't
+# OOM-kill the guest at its peak build RSS.
+_BUILD_VM_HOST_MARGIN_MB = 512
+
+
+def _assert_host_has_capacity(server_name: str, needed_megabytes: int) -> None:
+	"""Fail loud BEFORE booting the build VM if its host can't hold it.
+
+	A bench bake boots a FAT build VM (recipe.build_memory_megabytes — e.g. 6 GB, for
+	the Node asset build's headroom). If the host has less free memory than that, the
+	host's OOM-killer reaps the firecracker process the moment the guest's RSS grows;
+	systemd then restarts the VM small + empty, wiping /tmp (the detached build.sh and
+	its done-marker), and run_detached polls a marker that can never appear until its
+	1800s timeout — a 30-minute silent hang for a condition ONE SSH call detects. Probe
+	the host's available memory up front and throw an actionable error instead.
+
+	MemAvailable (not MemTotal) so the check accounts for a host that is small OR
+	already busy with other VMs. Fail-open on an unreadable probe: a parse miss skips
+	the guard rather than blocking an otherwise-fine bake."""
+	from atlas.atlas._ssh.transport import run_ssh, ssh_key_file
+	from atlas.atlas.ssh import connection_for_server
+
+	connection = connection_for_server(frappe.get_doc("Server", server_name))
+	with ssh_key_file(connection.ssh_private_key) as key_path:
+		out, _stderr, _code = run_ssh(
+			connection, key_path, "awk '/^MemAvailable:/ {print $2}' /proc/meminfo", timeout_seconds=30
+		)
+	available_megabytes = int(out.strip() or 0) // 1024
+	if available_megabytes and available_megabytes < needed_megabytes + _BUILD_VM_HOST_MARGIN_MB:
+		frappe.throw(
+			f"Host {server_name} has {available_megabytes} MB available but the build VM needs "
+			f"{needed_megabytes} MB (+{_BUILD_VM_HOST_MARGIN_MB} MB firecracker margin). Bake on a "
+			f"larger host — a 6 GB fat build VM needs an ~8 GB host."
+		)
+
+
 def _provision_build_vm(build, recipe) -> str:
 	"""Insert a scratch Virtual Machine at the recipe's size and return its name.
 
@@ -277,7 +325,10 @@ def _provision_build_vm(build, recipe) -> str:
 			"server": build.server,
 			"image": build.base_image,
 			"vcpus": recipe.vcpus,
-			"memory_megabytes": recipe.memory_megabytes,
+			# Boot at the (possibly fat) BUILD memory; _resize_for_snapshot shrinks it
+			# to recipe.memory_megabytes before the snapshot, so the captured/restore
+			# size stays small. effective_* is recipe.memory_megabytes when unset (proxy).
+			"memory_megabytes": recipe.effective_build_memory_megabytes,
 			"disk_gigabytes": recipe.disk_gigabytes,
 			"ssh_public_key": ssh_public_key,
 			"is_proxy": 1 if recipe.is_proxy else 0,
@@ -311,12 +362,86 @@ def _wait_for_vm_running(vm_name: str, timeout_seconds: int = 1500, poll_seconds
 	frappe.throw(f"Build VM {vm_name} did not reach Running within {timeout_seconds}s")
 
 
+def _wait_for_guest_serving(vm_name: str, timeout_seconds: int = 300, poll_seconds: float = 5.0) -> None:
+	"""Block until the (just-restarted) build guest's production stack is SERVING.
+
+	start-vm returns when the firecracker unit is launched, not when the guest has
+	finished booting and MariaDB/gunicorn/nginx are answering again. The warm arm
+	(`warm.sh`) opens with `bench browse` + real HTTP against that stack, so a
+	still-booting guest fails it. Reuse bench_image.sanity_check as the readiness
+	probe — the same serve+login proof the post-build gate uses — and retry it until
+	it passes or the deadline. Each miss is a not-yet-up guest (SSH refused, ping not
+	200, login not minted yet); the last error is surfaced on timeout."""
+	deadline = time.monotonic() + timeout_seconds
+	last_error = ""
+	while time.monotonic() < deadline:
+		try:
+			bench_image.sanity_check(vm_name)
+			return
+		except Exception as exc:
+			last_error = str(exc)
+			time.sleep(poll_seconds)
+	frappe.throw(
+		f"Build guest {vm_name} did not serve within {timeout_seconds}s after start; "
+		f"last probe error: {last_error[-300:]}"
+	)
+
+
+def _sync_guest_before_stop(vm_name: str) -> None:
+	"""Flush the guest's page cache to its disk before we terminate it.
+
+	The build path stops the VM with a plain `systemctl stop` of the firecracker
+	unit — that KILLS the guest, it does not ACPI-shut-it-down, so the guest never
+	runs its own `sync`. Anything still dirty in the guest page cache at that instant
+	is lost: ext4 journals the inode + dirent but not the data, so the snapshot
+	captures the file as 0 bytes. build.sh's own trailing `sync` covers the normal
+	case, but this is the durable seam — flush again right before the terminate so a
+	late write from anywhere (build.sh, a warm arm, an operator) is captured whole.
+	Best-effort: a guest we cannot reach is about to be stopped anyway."""
+	from atlas.atlas._ssh.transport import run_ssh, ssh_key_file
+	from atlas.atlas.ssh import connection_for_guest
+
+	vm = frappe.get_doc("Virtual Machine", vm_name)
+	if vm.status != "Running":
+		return
+	try:
+		connection = connection_for_guest(vm)
+		with ssh_key_file(connection.ssh_private_key) as key_path:
+			run_ssh(connection, key_path, "sync", timeout_seconds=60)
+	except Exception:
+		frappe.log_error(f"guest sync before snapshot stop failed for {vm_name}")
+
+
+def _resize_to_restore_memory(recipe, vm_name: str) -> None:
+	"""Shrink a fat build VM down to its clone-RESTORE memory before the snapshot.
+
+	The build VM booted at recipe.effective_build_memory_megabytes (fat, so the
+	Node-asset build had headroom); a clone only needs recipe.memory_megabytes to
+	serve, and the snapshot captures whatever the VM's memory is at capture — so we
+	must apply the small size on the VM row + host BEFORE either snapshot path runs.
+
+	Firecracker can't resize a live VM (resize() requires Stopped), so: stop → resize.
+	Leaves the VM Stopped at the small size. The cold path snapshots from Stopped
+	anyway; the WARM path boots it back up itself (_warm_snapshot, now at the small
+	size) before its capture. No-op when the recipe didn't fatten (build == restore
+	memory)."""
+	if recipe.effective_build_memory_megabytes == recipe.memory_megabytes:
+		return
+	vm = frappe.get_doc("Virtual Machine", vm_name)
+	if vm.status != "Stopped":
+		_sync_guest_before_stop(vm_name)
+		vm.stop()
+		vm.reload()
+	vm.resize(memory_megabytes=recipe.memory_megabytes)
+
+
 def _stop_and_snapshot(build, recipe, vm_name: str) -> str:
 	"""Stop the build VM and snapshot it. A Stopped VM gives a clean unmount → a
 	flush-consistent ext4 (Virtual Machine.snapshot's safe default), and the
 	snapshot is the rollable artifact. Returns the snapshot name."""
 	vm = frappe.get_doc("Virtual Machine", vm_name)
 	if vm.status != "Stopped":
+		_sync_guest_before_stop(vm_name)
 		vm.stop()
 		vm.reload()
 	return vm.snapshot(title=recipe.snapshot_title)
@@ -334,8 +459,28 @@ def _warm_snapshot(build, recipe, vm_name: str) -> str:
 	from atlas.atlas.task_results import parse_result
 
 	vm = frappe.get_doc("Virtual Machine", vm_name)
+	# A warm capture freezes the RUNNING guest's live RAM, so the VM must be booted
+	# and serving before we arm and freeze it. The resize step (_resize_to_restore_
+	# memory) leaves the VM Stopped whenever it stopped-to-resize and only reboots on
+	# the fattened path — so a warm bake whose recipe did NOT fatten (build == restore
+	# memory) reaches here Stopped. Boot it ourselves rather than depending on the
+	# resize side effect: the warm path owns getting its own guest warm.
 	if vm.status != "Running":
-		frappe.throw(f"A warm bake needs the build VM Running at capture (status is {vm.status})")
+		# start() is SYNCHRONOUS — it runs the start-vm task inline and returns with
+		# the VM Running + saved. Do NOT poll with _wait_for_vm_running here: that
+		# waiter rolls back on each iteration (it is built for an after_insert boot
+		# committed in a SEPARATE txn), which would wipe start()'s not-yet-committed
+		# save() in THIS job's txn and hang forever seeing the pre-start Stopped row.
+		# Commit the Running write instead so it is durable before we arm + freeze.
+		vm.start()
+		# nosemgrep: frappe-manual-commit -- background job: persist the build VM's Running status before the warm capture arms and freezes it
+		frappe.db.commit()
+		# start-vm returns when the unit is LAUNCHED, not when the guest has booted and
+		# the production stack is serving again — warm.sh's first act is `bench browse`
+		# + real HTTP against that stack, which fails on a still-booting guest. Wait for
+		# the guest to actually SERVE (the sanity probe: ping 200/pong + a real login)
+		# before arming. A warm bake is site mode only, so this is the site probe.
+		_wait_for_guest_serving(vm_name)
 	_run_warm_entrypoint(recipe, vm)
 	snapshot = frappe.get_doc(
 		{
@@ -390,13 +535,19 @@ def _warm_snapshot(build, recipe, vm_name: str) -> str:
 
 
 def _run_warm_entrypoint(recipe, vm) -> None:
-	"""Run the recipe's warm entrypoint in the guest (the tree run_build uploaded
-	is still in place — warm.sh runs from beside build.sh), recorded as a Task
-	like every guest op. Passes the build VM's uuid: it becomes the in-guest
-	'identity already adopted' marker the freshen unit compares MMDS against."""
+	"""Run the recipe's warm entrypoint in the guest, recorded as a Task like every
+	guest op. Passes the build VM's uuid: it becomes the in-guest 'identity already
+	adopted' marker the freshen unit compares MMDS against.
+
+	run_build staged the tree once, but it lives under /tmp (tmpfs) and the warm bake
+	reboots the guest before it gets here (the fat-boot resize, then the warm-snapshot
+	boot), which wipes it — so re-stage the tree first. warm.sh reads its siblings
+	(bench.toml et al) from its own directory just like build.sh, so the whole tree
+	goes back, not just warm.sh."""
 	import shlex
 
 	from atlas.atlas._ssh.transport import run_ssh, ssh_key_file
+	from atlas.atlas.image_builder import stage_recipe_tree
 	from atlas.atlas.proxy import _record_guest_task
 	from atlas.atlas.ssh import connection_for_guest
 
@@ -405,6 +556,7 @@ def _run_warm_entrypoint(recipe, vm) -> None:
 		f"bash {shlex.quote(f'{recipe.remote_directory}/{recipe.warm_entrypoint}')} {shlex.quote(vm.name)}"
 	)
 	with ssh_key_file(connection.ssh_private_key) as key_path:
+		stage_recipe_tree(recipe, connection, key_path)
 		stdout, stderr, code = run_ssh(connection, key_path, command, timeout_seconds=900)
 	_record_guest_task(vm.name, "bench-warm", {"recipe": recipe.name}, stdout, stderr, code)
 	if code != 0:

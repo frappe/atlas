@@ -40,26 +40,40 @@ set -euo pipefail
 # proxy/build.sh follows). The Frappe branch + the production/MariaDB/ZFS shape
 # are pinned in bench.toml.
 #
-# Pinned at 03a4272 (main @ 2026-06-25). This ref carries the three things this
+# Pinned at 1e0332b (main @ 2026-07-03). This ref carries the five things this
 # build/deploy flow now depends on: (1) the two-path install.sh — run as root it
 # creates the bench user + sudoers, run as the user it installs bench-cli (so we no
 # longer hand-roll useradd/sudoers); (2) `bench rename-site` (deploy-site.py renames
 # the baked site through it — ABSENT before commit 0bc54f2, so an older pin breaks
 # the deploy); (3) nginx emits `listen [::]:80` for every site + admin vhost (since
 # dd14ad4), so the Atlas v6-only inbound path is served by bench-cli itself — no
-# v6-listener / default_server surgery here.
+# v6-listener / default_server surgery here; (4) `bench generate-admin-session`
+# (Pilot #117, merged as 35ae14e) — the admin-mode login-URL handoff; (5) `bench
+# set-central-config` (Pilot #150) — the Central endpoint/token handoff deploy-site.py
+# writes into bench.toml. An older pin dies at that step with "No such command".
 #
 # BENCH_CLI_REF / ERPNEXT_BRANCH are ENV OVERRIDES: the controller
 # (atlas.atlas.image_builder) exports them per recipe so one committed build.sh
 # bakes any Frappe version (v15 / v16 / nightly). The Frappe branch + Python
 # version are pinned in bench.toml (rendered by the controller before upload).
 # The defaults below keep a direct `build.sh` run (no env) reproducible at v16. ---
-BENCH_CLI_REF="${BENCH_CLI_REF:-03a4272068f78a402d407c4ae9b071be5e00a14b}"  # default: main @ 2026-06-25 (two-path install.sh + rename-site + IPv6 listeners)
+# BENCH_CLI_REPO is the GitHub org/repo the CLI is cloned from. Default is the
+# prathameshkurunkar7/pilot fork's central-billing-client branch (the Central
+# billing client); override to frappe/pilot for an upstream bake. install.sh
+# hardcodes the frappe/pilot origin, so §3 below re-points the clone's origin at
+# this repo before checking out BENCH_CLI_REF (a fork SHA is unreachable otherwise).
+BENCH_CLI_REPO="${BENCH_CLI_REPO:-prathameshkurunkar7/pilot}"
+BENCH_CLI_REF="${BENCH_CLI_REF:-c6e5253ef46c23fb1f2f776dc7372c7d39224e42}"  # default: central-billing-client @ prathameshkurunkar7/pilot
 ERPNEXT_BRANCH="${ERPNEXT_BRANCH:-version-16}"  # default: v16; controller overrides for v15 / develop
 
 BENCH_USER="frappe"
 BENCH_HOME="/home/$BENCH_USER"
-BENCH_CLI_DIR="$BENCH_HOME/bench-cli"
+# The bench-cli repo was renamed frappe/bench-cli → frappe/pilot on main after
+# PR #117; its install.sh (fc89e51+) now clones to ~/pilot, not ~/bench-cli. The
+# variable keeps its name (bench-cli is still the CLI's colloquial name across the
+# tree), only the on-disk path follows the rename. Kept in lockstep with
+# deploy-site.py's BENCH_CLI_DIR and warm.sh's.
+BENCH_CLI_DIR="$BENCH_HOME/pilot"
 BENCH_NAME="atlas"
 BENCH_DIR="$BENCH_CLI_DIR/benches/$BENCH_NAME"
 
@@ -68,10 +82,12 @@ BENCH_DIR="$BENCH_CLI_DIR/benches/$BENCH_NAME"
 # FQDN at deploy time (a directory move, not a `bench new-site`). Kept in lockstep
 # with bench/deploy-site.py's BAKED_SITE and warm.sh's BAKED_SITE.
 BAKED_SITE="site.local"
-# The baked Administrator password — a SHARED throwaway, the SAME on every clone;
-# the owner is handed it and rotates it after first login. Kept in lockstep with
-# warm.sh and the controller's Site.BAKED_ADMIN_PASSWORD.
-BAKED_ADMIN_PASSWORD="$BENCH_NAME-baked"
+# The baked Administrator password — a long random secret, generated ONCE here at
+# bake time and never printed or exported off the golden. Every warm clone
+# inherits the same unknown password; the tenant never needs it (they land via
+# deploy-site.py's minted `sid`, see bench/deploy-site.py). Kept out of the build
+# log: `new-site` receives it as an argv value, not echoed anywhere below.
+BAKED_ADMIN_PASSWORD="$(openssl rand -hex 32)"
 
 MODE="${1:-site}"
 case "$MODE" in
@@ -88,7 +104,7 @@ export DEBIAN_FRONTEND=noninteractive
 # Run a command as the bench user through a LOGIN shell, so the uv/Node env
 # install.sh set up is in place — exactly how an interactive operator following
 # bench-setup.md reaches `bench`. We prepend bench-cli to PATH explicitly rather
-# than rely on the `export PATH=…/bench-cli` line install.sh appends to ~/.bashrc:
+# than rely on the `export PATH=…/pilot` line install.sh appends to ~/.bashrc:
 # `bash -lc` is NON-interactive, and Ubuntu's stock ~/.bashrc returns at its top
 # (`case $- in *i*) ;; *) return;; esac`) for non-interactive shells, BEFORE that
 # export ever runs — so the login shell would otherwise not see `bench` at all
@@ -114,17 +130,21 @@ as_frappe() {
 chmod u+s /usr/bin/sudo /usr/bin/passwd /usr/bin/su /bin/su \
 	/usr/bin/chsh /usr/bin/newgrp /usr/bin/mount /bin/mount
 
-# --- 2. Install the ZFS kernel module (bench-setup.md §2). The Firecracker
-# vmlinux ships NO builtin ZFS and NO /lib/modules, so `zfsutils-linux`
-# (userspace) alone leaves `modprobe zfs` FATAL — which would abort init's ZFS
-# volume step ([volume].enabled = true). DKMS-build zfs.ko against the running
-# kernel (the matching linux-headers package IS in noble-updates and the vmlinux
-# loads externally-built modules) and load it. This is the ONE ZFS thing build.sh
-# does — bench-cli's VolumeManager handles the pool/datasets itself. ---
+# --- 2. Install the ZFS USERSPACE (bench-setup.md §2). The zfs.ko KERNEL module is
+# baked into the guest rootfs at sync time (scripts/sync-image.py _install_guest_modules
+# copies the PREBUILT zfs.ko + spl.ko from the manifest-pinned linux-modules-<kver>
+# and pins them in modules-load.d), so build.sh no longer touches the module — that
+# derives kver from the manifest, immune to the `uname -r` of this build VM. Here we
+# install only `zfsutils-linux` (zpool/zfs binaries), which bench-cli's VolumeManager
+# needs to build the pool/datasets. This is the ONE ZFS thing build.sh does. ---
 apt-get update
-apt-get install -y --no-install-recommends \
-	dkms zfsutils-linux zfs-dkms "linux-headers-$(uname -r)"
-modprobe zfs
+# `git` is bench-cli's own bootstrap dependency: install.sh (below) clones bench-cli
+# with git, and bench pulls/updates apps over git at runtime. The standard Ubuntu base
+# ships it, but the minimal base drops it to shrink the runtime surface — so install it
+# here rather than assume the base carries it. It lands in the golden bench snapshot
+# (a superset of the base), not the base image. Without it the bake dies at install.sh
+# `Cloning bench-cli` with `git: command not found` (exit 127).
+apt-get install -y --no-install-recommends zfsutils-linux git
 
 # --- 3. Install bench-cli — install.sh creates the bench user too (bench-setup.md
 # §3+§4). install.sh has two paths (bench-cli @ 03a4272 install.sh): run AS ROOT it
@@ -141,7 +161,7 @@ modprobe zfs
 # bench-cli dir yet) — a re-run must NOT re-invoke it, as install.sh `git pull`s to
 # self-update and FATALs on the detached HEAD the pin below leaves ("not currently on
 # a branch"). Re-running just re-fetches + re-pins the ref. ---
-INSTALL_URL="https://raw.githubusercontent.com/frappe/bench-cli/$BENCH_CLI_REF/install.sh"
+INSTALL_URL="https://raw.githubusercontent.com/$BENCH_CLI_REPO/$BENCH_CLI_REF/install.sh"
 curl -fsSL "$INSTALL_URL" | bash -s -- --user "$BENCH_USER" -y
 
 # Enable lingering for the bench user NOW that it exists. Current bench-cli runs
@@ -156,7 +176,9 @@ loginctl enable-linger "$BENCH_USER"
 if [ ! -d "$BENCH_CLI_DIR/.git" ]; then
 	as_frappe "curl -fsSL '$INSTALL_URL' | bash"
 fi
-as_frappe "git -C '$BENCH_CLI_DIR' fetch --quiet origin && git -C '$BENCH_CLI_DIR' checkout --quiet '$BENCH_CLI_REF'"
+# install.sh clones origin=frappe/pilot; re-point it at BENCH_CLI_REPO so a fork
+# SHA is fetchable (idempotent — set-url is safe on a re-run).
+as_frappe "git -C '$BENCH_CLI_DIR' remote set-url origin 'https://github.com/$BENCH_CLI_REPO' && git -C '$BENCH_CLI_DIR' fetch --quiet origin && git -C '$BENCH_CLI_DIR' checkout --quiet '$BENCH_CLI_REF'"
 
 # --- 4. Create the bench + drop our pinned bench.toml (bench-setup.md §5).
 # `bench new` scaffolds benches/<name>/ non-interactively (name positional, no
@@ -167,6 +189,18 @@ if [ ! -f "$BENCH_DIR/bench.toml" ]; then
 	as_frappe "bench new '$BENCH_NAME'"
 fi
 install -m 0644 -o "$BENCH_USER" -g "$BENCH_USER" "$SRC_DIR/bench.toml" "$BENCH_DIR/bench.toml"
+
+# The committed bench.toml carries a placeholder [admin].password (bench-cli
+# refuses to start the admin app with none set). Replace it with a long random
+# secret ONCE, generated here at bake time and never printed — mirrors
+# BAKED_ADMIN_PASSWORD above. Admin mode's `bench generate-admin-session`
+# (Pilot #117) is the tenant handoff (bench/deploy-site.py), so this password is
+# never surfaced either. Idempotent: only replace the known placeholder, so a
+# re-bake does not clobber an already-randomized password from a prior run.
+if grep -q '^password = "admin-password"$' "$BENCH_DIR/bench.toml"; then
+	admin_password="$(openssl rand -hex 32)"
+	sed -i "s/^password = \"admin-password\"\$/password = \"$admin_password\"/" "$BENCH_DIR/bench.toml"
+fi
 
 # --- 5. `bench init` (bench-setup.md §6). The heavy, idempotent step that sets
 # up the per-bench substrate from bench.toml: the ZFS pool + datasets
@@ -188,20 +222,14 @@ install -m 0644 -o "$BENCH_USER" -g "$BENCH_USER" "$SRC_DIR/bench.toml" "$BENCH_
 # a manual activate. ---
 as_frappe "bench -b '$BENCH_NAME' init"
 
-# --- 5b. Install the in-guest domain provider (spec/18 Component D). The thin "push"
-# half of one-way self-service subdomain routing, and the `bench-domain-provider`
-# plug-in pilot (formerly bench-cli) discovers on PATH and drives by verb: the new-site
-# flow runs `bench-domain-provider register <domain>` BEFORE creating the site (the
-# authoritative reservation; pilot aborts on a non-zero exit) and `deregister <domain>`
-# after drop / as the create-failure rollback; `wildcard-domains` / `proxy-servers`
-# answer pilot's host-level queries (name constraint + the edge it locks nginx down to).
-# Stdlib-only, so the stock guest python3 runs it; reads the ONE non-secret file
-# /etc/atlas-routing.env the controller injects (no UUID, no token — caller resolution
-# is by source address). No-ops cleanly (register exits 0, host queries print blank)
-# when no routing config is present, so a non-Atlas bench is unaffected. Installed on
-# EVERY golden (site + admin), since a bench in either mode can spin up routable sites.
-# The binary name + path are the contract pilot looks up — keep them exactly. ---
-install -m 0755 "$SRC_DIR/bench-domain-provider.py" /usr/local/bin/bench-domain-provider
+# --- 5a. Install `tzdata` into the bench venv. bench.toml pins python = "3.14", so
+# `bench init` builds the venv on a uv-managed standalone CPython. Unlike a distro
+# python (which reads /usr/share/zoneinfo), the standalone build ships NO zoneinfo
+# database and relies on the pip `tzdata` package. Frappe declares no tzdata dep, so
+# without this any `ZoneInfo(get_system_timezone())` call — e.g. `now_datetime()` in
+# the setup wizard — dies with `ZoneInfoNotFoundError` (notably for legacy aliases
+# like `Asia/Calcutta`). Bake it into the golden venv so every site has it. ---
+as_frappe "cd '$BENCH_DIR' && uv pip install --python env/bin/python tzdata"
 
 # --- 6. Site mode only: bake a fully-created Frappe + ERPNext site, taking the
 # heaviest per-signup costs (`bench new-site` + `install-app erpnext`) once here.
@@ -269,6 +297,31 @@ else
 	as_frappe "bench -b '$BENCH_NAME' setup production"
 fi
 
+# --- 6b. Install the in-guest domain provider (spec/18 Component D), AFTER the site
+# is baked. The thin "push" half of one-way self-service subdomain routing, and the
+# `bench-domain-provider` plug-in pilot (formerly bench-cli) discovers on PATH and
+# drives by verb: the new-site flow runs `bench-domain-provider register <domain>`
+# BEFORE creating the site (the authoritative reservation; pilot aborts on a non-zero
+# exit) and `deregister <domain>` after drop / as the create-failure rollback;
+# `wildcard-domains` / `proxy-servers` answer pilot's host-level queries (name
+# constraint + the edge it locks nginx down to).
+#
+# It is installed AFTER the bake's own `bench new-site` (not before) on purpose: pilot's
+# new-site gates `register` + the `matches_wildcard` name check on the provider being on
+# PATH (DomainRouteProvider._host_query / _ask_provider `which()` it). The baked site is
+# named `site.local`, which does NOT match a region wildcard `*.<region>.frappe.dev`, so
+# a provider present at bake would make pilot reject it (or spuriously `register` it). By
+# installing here the bake's new-site sees no provider and skips both — the golden still
+# carries the binary, so live clones (which DO get /etc/atlas-routing.env) route normally.
+#
+# Stdlib-only, so the stock guest python3 runs it; reads the ONE non-secret file
+# /etc/atlas-routing.env the controller injects (no UUID, no token — caller resolution
+# is by source address). No-ops cleanly (register exits 0, host queries print blank)
+# when no routing config is present, so a non-Atlas bench is unaffected. Installed on
+# EVERY golden (site + admin), since a bench in either mode can spin up routable sites.
+# The binary name + path are the contract pilot looks up — keep them exactly. ---
+install -m 0755 "$SRC_DIR/bench-domain-provider.py" /usr/local/bin/bench-domain-provider
+
 # --- 7. Stamp the resolved input commits. The Frappe branch (and ERPNext, and
 # bench-cli's main) can be a MOVING target — `develop` for the nightly variant — so
 # we record the exact commit each app was actually built from on `ATLAS_BUILD_*=`
@@ -287,5 +340,16 @@ fi
 # The e2e re-asserts the bake over guest-SSH after the snapshot boots. ---
 apt-get clean
 rm -rf /var/lib/apt/lists/* "$BENCH_HOME/.cache" 2>/dev/null || true
+
+# --- 9. Flush every write to disk before we hand the VM back to be snapshotted.
+# The controller stops the build VM with a plain `systemctl stop` of the firecracker
+# unit — that terminates the guest, it does NOT ACPI-shut-it-down, so the guest never
+# runs its own `sync`. Any file still dirty in the guest page cache at that instant is
+# LOST: ext4 journals the inode + dirent but not the data, so the snapshot captures the
+# file as 0 bytes. bench-domain-provider (installed in §6b, the LAST real write of the
+# bake) hit exactly this — every image baked after the §6b move snapshotted a 0-byte
+# provider, which fails at deploy with `Exec format error`. A single `sync` here makes
+# the whole bake durable before the stop regardless of what wrote last. ---
+sync
 
 echo "Golden bench image baked (mode=$MODE): bench-cli @ ${BENCH_CLI_REF:0:12}, bench '$BENCH_NAME'$([ "$MODE" = site ] && echo " + ERPNext site '$BAKED_SITE'"), production stack running."

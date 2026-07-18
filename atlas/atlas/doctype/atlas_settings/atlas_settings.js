@@ -12,6 +12,9 @@ frappe.ui.form.on("Atlas Settings", {
 		frappe.atlas.add_action(frm, "Authenticate", () => run_authenticate(frm));
 		frappe.atlas.add_action(frm, "Refresh Catalog", () => run_refresh_catalog(frm));
 		frappe.atlas.add_action(frm, "Discover Servers", () => open_discover_servers_dialog(frm));
+		frappe.atlas.add_action(frm, "Discover Reserved IPs", () =>
+			open_discover_reserved_ips_dialog(frm)
+		);
 		frappe.atlas.add_action(frm, "Bake Golden Image", () => confirm_bake(frm));
 		frappe.atlas.add_action(frm, "Ensure Proxy", () => confirm_ensure_proxy(frm));
 
@@ -409,6 +412,136 @@ function run_import_servers(frm, resource_ids) {
 			});
 			// Route to the first imported Server form so the operator can Bootstrap it.
 			frappe.set_route("Form", "Server", imported[0].name);
+		}
+	);
+}
+
+// Discover Reserved IPs — the recovery path after the Reserved IP rows are gone
+// (a server reset dropped them). The vendor still holds the IPs; each one's droplet
+// binding maps it back to a Server (auto-resolved server-side). Mirrors Discover
+// Servers: read-only listing → tick → import.
+function open_discover_reserved_ips_dialog(frm) {
+	frappe.show_alert({ message: __("Discovering reserved IPs…"), indicator: "blue" });
+	frm.call("discover_reserved_ips").then(({ message: ips }) => {
+		if (!ips || !ips.length) {
+			frappe.msgprint({
+				title: __("No reserved IPs found"),
+				message: __("The vendor account holds no reserved IPs in this region/zone."),
+				indicator: "orange",
+			});
+			return;
+		}
+		render_discover_reserved_ips_dialog(frm, ips);
+	});
+}
+
+function render_discover_reserved_ips_dialog(frm, ips) {
+	const dialog = new frappe.ui.Dialog({
+		title: __("Reserved IPs at {0}", [frm.doc.provider_type]),
+		size: "large",
+		fields: [
+			{
+				fieldname: "ips_html",
+				fieldtype: "HTML",
+				options: discover_reserved_ips_table_html(ips),
+			},
+			{
+				fieldname: "caveat",
+				fieldtype: "HTML",
+				options: `<div class="text-muted small" style="margin-top: 8px;">${__(
+					"Each IP is mapped to its Server automatically by its droplet binding. " +
+						"A floating IP (attached to no droplet, or one Atlas doesn't model) " +
+						"imports unattached — reassign it to a Server later."
+				)}</div>`,
+			},
+		],
+		primary_action_label: __("Import selected"),
+		primary_action() {
+			const addrs = checked_reserved_ip_addresses(dialog);
+			if (!addrs.length) {
+				frappe.show_alert({
+					message: __("Tick at least one reserved IP to import."),
+					indicator: "orange",
+				});
+				return;
+			}
+			dialog.hide();
+			run_import_reserved_ips(frm, addrs);
+		},
+	});
+	dialog.show();
+}
+
+function discover_reserved_ips_table_html(ips) {
+	const rows = ips
+		.map((ip) => {
+			const addr = frappe.utils.escape_html(ip.ip_address);
+			const server = ip.server
+				? frappe.utils.escape_html(ip.server)
+				: `<span class="text-muted">${__("floating")}</span>`;
+			// Already-modeled IPs render disabled + badged so a re-run can't
+			// double-insert — the same dedup discipline as Discover Servers.
+			const badge = ip.imported
+				? `<span class="indicator-pill gray">${__("imported")}</span>`
+				: "";
+			const checkbox = `<input type="checkbox" class="atlas-discover-rip" data-ip-address="${addr}" ${
+				ip.imported ? "disabled" : ""
+			}>`;
+			const dim = ip.imported ? ' style="opacity: 0.5;"' : "";
+			return `<tr${dim}>
+				<td style="width: 32px; text-align: center;">${checkbox}</td>
+				<td>${addr}</td>
+				<td>${server}</td>
+				<td>${badge}</td>
+			</tr>`;
+		})
+		.join("");
+	return `<table class="table table-bordered" style="margin-bottom: 0;">
+		<thead>
+			<tr>
+				<th style="width: 32px;"></th>
+				<th>${__("IPv4")}</th>
+				<th>${__("Server")}</th>
+				<th></th>
+			</tr>
+		</thead>
+		<tbody>${rows}</tbody>
+	</table>`;
+}
+
+function checked_reserved_ip_addresses(dialog) {
+	const addrs = [];
+	dialog.$wrapper.find("input.atlas-discover-rip:checked").each(function () {
+		addrs.push($(this).data("ip-address").toString());
+	});
+	return addrs;
+}
+
+function run_import_reserved_ips(frm, ip_addresses) {
+	frappe.show_alert({
+		message: __("Importing {0} reserved IP(s)…", [ip_addresses.length]),
+		indicator: "blue",
+	});
+	// The dialog posts ip_addresses as a JSON string; import_reserved_ips parses it.
+	frm.call("import_reserved_ips", { ip_addresses: JSON.stringify(ip_addresses) }).then(
+		({ message }) => {
+			const imported = (message && message.imported) || [];
+			if (!imported.length) {
+				frappe.show_alert({
+					message: __("Nothing imported (already modeled)."),
+					indicator: "orange",
+				});
+				return;
+			}
+			const summary = imported
+				.map((row) => `${row.ip_address} → ${row.server || __("floating")}`)
+				.join(", ");
+			frappe.msgprint({
+				title: __("Imported {0} reserved IP(s)", [imported.length]),
+				message: frappe.utils.escape_html(summary),
+				indicator: "green",
+			});
+			frappe.set_route("List", "Reserved IP");
 		}
 	);
 }

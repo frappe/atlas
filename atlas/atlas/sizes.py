@@ -65,6 +65,20 @@ SIZE_PRESETS: dict[str, dict[str, float | int]] = {
 }
 
 
+# The share unit every preset is an exact scalar multiple of: Shared 1x's cost on
+# the three packed axes. Derived from the ladder itself so there is ONE source of
+# truth. Because every preset is a whole-number multiple of this (test_sizes pins
+# it), a host holds `floor(min over axes of effective/unit)` share units and any mix
+# of preset VMs whose unit-sum fits, fits — packing is one-dimensional with zero
+# intra-host fragmentation (spec/28). Reporting sugar only: feasibility and scoring
+# stay generic three-axis so Custom (operator-typed) shapes keep working.
+SHARE_UNIT: dict[str, float | int] = {
+	"cpu_max_cores": SIZE_PRESETS["Shared 1x"]["cpu_max_cores"],
+	"memory_megabytes": SIZE_PRESETS["Shared 1x"]["memory_megabytes"],
+	"disk_gigabytes": SIZE_PRESETS["Shared 1x"]["disk_gigabytes"],
+}
+
+
 def size_preset_options() -> str:
 	"""The Virtual Machine.size_preset Select `options` string.
 

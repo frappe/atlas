@@ -55,7 +55,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib
 
 from atlas._run import install_directory, install_file, run, run_ok
 from atlas._task import TaskInputs
-from atlas.lvm import ThinPool
+from atlas.lvm import ThinPool, expose_device_in_jail
 from atlas.paths import VirtualMachinePaths, image_directory
 from atlas.rootfs import Identity, inject_identity, prepare_data_lv, prepare_lv
 
@@ -145,6 +145,14 @@ class ProvisionInputs(TaskInputs):
 	# reason _ipv4_link_variables is re-injected on rebuild). Live attach/detach
 	# of a *running* VM goes through vm-reserved-ip.py, not provision.
 	reserved_ipv4: str = ""  # the attached Reserved IP, 1:1-NAT'd to the guest /30
+	# Optional: the VM's private-plane identity on the WireGuard host mesh (§5).
+	# private_address is the derived fdaa:: /128; tenant_prefix is its tenant /48.
+	# Both empty for a VM with no tenant (operator-created) — vm-network-up reads them
+	# with .get() and skips the whole private-plane block when absent, so an ordinary
+	# VM's env is unchanged. Carried on provision + rebuild so a rebuild re-creates the
+	# private routes + isolation rules on first boot, like reserved_ipv4.
+	private_address: str = ""  # derived: atlas.networking.derive_private_address(tenant, uuid)
+	tenant_prefix: str = ""  # derived: atlas.networking.derive_tenant_prefix(tenant)
 	# Optional second writable data disk (the guest's /dev/vdb). 0 = none.
 	# data_disk_format is an int (0/1), not a bool: the Task runner renders a bool
 	# as a truthy string, so "0" would read True — int parses cleanly to 0/1.
@@ -155,6 +163,26 @@ class ProvisionInputs(TaskInputs):
 	data_disk_format: int = 1
 	data_disk_mount_at: str = ""
 	data_snapshot_rootfs_path: str = ""
+	# Migration cutover (spec/24): the disk LV already exists (hydrated from the
+	# source over NBD) and already carries the VM's SSH host identity, which must
+	# survive the move (clients' known_hosts). With this set, the identity inject
+	# PRESERVES the existing host keys instead of regenerating them — the same
+	# rebuild/restore contract. 0 (birth: fresh keys) for every ordinary provision.
+	preserve_host_keys: int = 0
+	# Boot-then-hydrate migration (spec/24 §0): boot the guest on the dm-clone
+	# read-through device (/dev/mapper/atlas-vm-<uuid>-clone) BEFORE hydration, so
+	# the guest serves while blocks copy in the background. When set:
+	#   - the disk LV is NOT (re)created — the clone's dest LV already exists and is
+	#     being hydrated; snapshot_into/prepare_lv would race the live read-through.
+	#   - identity is NOT injected here — it was already injected THROUGH the clone in
+	#     the InjectingIdentity phase (mounting the plain LV would fault; the clone is
+	#     the only mountable view, spec/24 §0.4).
+	#   - the JAIL ROOTFS NODE is mknod'd at the CLONE device, not the plain LV, so
+	#     Firecracker reads through the clone. At CollapseClone the clone table is
+	#     reloaded to a linear map onto the same dest LV, keeping this fd valid.
+	# Empty for every ordinary provision and for a change-address / cold cutover
+	# (which collapse first, then provision against the plain LV as before).
+	clone_rootfs_device: str = ""  # /dev/mapper/atlas-vm-<uuid>-clone
 	# Optional warm-restore source: the durable directory holding a warm golden
 	# snapshot's vmstate.bin/mem.bin/host-signature.json (paired with
 	# snapshot_rootfs_path, which must be that golden's disk snapshot). When set,
@@ -229,14 +257,33 @@ def main() -> None:
 	#    corrupt the resumed guest. Bare snapshot_into only; the warm pair is
 	#    staged only when this run created the disk (or the previous staging was
 	#    never consumed) — RAM must never be restored over a disk that diverged.
-	origin = _resolve_origin(inputs, pool)
+	# Boot-on-clone only if the clone device is BOTH requested AND actually present on
+	# the host. A collapse-forward retry (or any re-provision) may pass the clone path
+	# after the disk already converged to the plain LV (clone removed at stop); fall
+	# back to an ordinary plain-LV provision then, rather than fail on a missing clone.
+	boot_on_clone = bool(inputs.clone_rootfs_device) and run_ok(
+		"sudo dmsetup info {}", os.path.basename(inputs.clone_rootfs_device)
+	)
 	disk = pool.vm_disk(inputs.virtual_machine_name)
-	if warm:
-		stage_warm = (not disk.exists) or marker_was_pending
-		origin.snapshot_into(disk)
-	else:
+	if boot_on_clone:
+		# Boot-then-hydrate migration (spec/24 §0): the disk is the dm-clone's dest
+		# LV, already created by clone-target and hydrating live. Do NOT snapshot/grow
+		# it — that would race the read-through and corrupt the copy. The clone device
+		# is exposed as the jail rootfs node in step 4b.
 		stage_warm = False
-		prepare_lv(origin, disk, inputs.disk_gb)
+		if not disk.exists:
+			sys.exit(
+				f"boot-on-clone requested but dest LV {disk.name} does not exist; "
+				"run migration-clone-target first (spec/24 §0)"
+			)
+	else:
+		origin = _resolve_origin(inputs, pool)
+		if warm:
+			stage_warm = (not disk.exists) or marker_was_pending
+			origin.snapshot_into(disk)
+		else:
+			stage_warm = False
+			prepare_lv(origin, disk, inputs.disk_gb)
 
 	# 1b. Optional data disk (the guest's /dev/vdb), the root disk's peer. A blank
 	#     thin volume normally, or a CoW snapshot of a data-disk snapshot LV when
@@ -246,12 +293,24 @@ def main() -> None:
 	data_disk = None
 	if inputs.data_disk_gb > 0:
 		data_disk = pool.data_disk(inputs.virtual_machine_name)
-		data_origin = (
-			pool.from_device(inputs.data_snapshot_rootfs_path) if inputs.data_snapshot_rootfs_path else None
-		)
-		prepare_data_lv(
-			pool, data_disk, inputs.data_disk_gb, bool(inputs.data_disk_format), origin=data_origin
-		)
+		if boot_on_clone:
+			# The data disk is its own dm-clone (atlas-vm-<uuid>-data-clone) hydrating
+			# live, exactly like root. Its dest LV already exists; do NOT prepare it
+			# (that would race the read-through). Exposed as the data clone node in 4c.
+			if not data_disk.exists:
+				sys.exit(
+					f"boot-on-clone requested but data dest LV {data_disk.name} does not exist; "
+					"run migration-clone-target first (spec/24 §0)"
+				)
+		else:
+			data_origin = (
+				pool.from_device(inputs.data_snapshot_rootfs_path)
+				if inputs.data_snapshot_rootfs_path
+				else None
+			)
+			prepare_data_lv(
+				pool, data_disk, inputs.data_disk_gb, bool(inputs.data_disk_format), origin=data_origin
+			)
 
 	# 2. Inject this VM's identity (SSH key, network env, hostname, host
 	#    keys, machine-id, data-disk fstab) into the disk. Mounts the LV device
@@ -264,7 +323,12 @@ def main() -> None:
 	#    in-guest freshen unit baked into the golden adopts it after resume (and
 	#    on the cold-boot fallback, where the launcher preloads MMDS from the
 	#    same file).
-	if not warm:
+	#
+	#    Boot-on-clone (spec/24 §0): SKIPPED here — identity was already injected
+	#    THROUGH the clone device in the InjectingIdentity phase (mounting the plain
+	#    LV would fault: it is held busy under the clone). Re-mounting now would also
+	#    race the live read-through.
+	if not warm and not boot_on_clone:
 		inject_identity(
 			disk.device_path,
 			Identity(
@@ -275,12 +339,15 @@ def main() -> None:
 				ipv4_gateway=inputs.ipv4_gateway,
 				data_disk_mount_at=inputs.data_disk_mount_at,
 				routing_base_url=inputs.routing_base_url,
+				private_address=inputs.private_address,
 			),
 			# Birth of the VM: establish a fresh SSH host identity. The base image
 			# ships SHARED baked host keys, and a clone seeds from another VM's
 			# rootfs — both must be replaced so every VM is unique. (Rebuild/restore,
-			# by contrast, preserve the disk's keys.)
-			regenerate_host_keys=True,
+			# by contrast, preserve the disk's keys.) A migration cutover
+			# (preserve_host_keys) also preserves them: the disk moved wholesale, so
+			# its SSH identity must not change across hosts.
+			regenerate_host_keys=not inputs.preserve_host_keys,
 		)
 
 	# 3. Kernel inside the jail. Hard-link (not copy) the immutable image kernel
@@ -300,14 +367,31 @@ def main() -> None:
 	#     node is owned by the per-VM uid (chmod 0660); device access is pure
 	#     DAC. The jailer never deletes existing nodes, so it survives every
 	#     (re)start.
-	disk.expose_in_jail(paths.rootfs_node, uid)
+	#
+	#     Boot-on-clone (spec/24 §0): point the jail node at the CLONE device, not
+	#     the plain LV, so Firecracker reads through the clone (hydration serves
+	#     un-copied blocks from the source over NBD). At CollapseClone the clone's
+	#     table is reloaded to a linear map onto this same dest LV, keeping the SAME
+	#     dm major:minor, so this node + Firecracker's open fd stay valid.
+	if boot_on_clone:
+		expose_device_in_jail(inputs.clone_rootfs_device, paths.rootfs_node, uid)
+	else:
+		disk.expose_in_jail(paths.rootfs_node, uid)
 
 	# 4c. Expose the data disk inside the jail as a block node at data.ext4 — the
 	#     guest's second drive (/dev/vdb). Same mknod/chown mechanism as the rootfs
 	#     node; firecracker.json's `data` drive (path_on_host: "data.ext4") resolves
 	#     to it post-chroot. Only when the VM has a data disk.
+	#
+	#     Boot-on-clone (spec/24 §0): expose the DATA clone device (its own dm-clone,
+	#     the root clone's name with `-clone` → `-data-clone`) so /dev/vdb reads
+	#     through until its own hydration completes, mirroring the root disk.
 	if data_disk is not None:
-		data_disk.expose_in_jail(paths.data_node, uid)
+		if boot_on_clone:
+			data_clone_device = inputs.clone_rootfs_device.replace("-clone", "-data-clone")
+			expose_device_in_jail(data_clone_device, paths.data_node, uid)
+		else:
+			data_disk.expose_in_jail(paths.data_node, uid)
 
 	# 4d. Warm clone: stage this VM's identity as the MMDS payload. The guest
 	#     can't learn its identity from the disk (step 2 was skipped), so the
@@ -414,6 +498,7 @@ def _mmds_metadata(inputs: "ProvisionInputs", ssh_public_key: str) -> str:
 		ipv4_guest_cidr=inputs.ipv4_guest_cidr,
 		ipv4_gateway=inputs.ipv4_gateway,
 		routing_base_url=inputs.routing_base_url,
+		private_address=inputs.private_address,
 	)
 	return (
 		json.dumps(
@@ -431,6 +516,11 @@ def _mmds_metadata(inputs: "ProvisionInputs", ssh_public_key: str) -> str:
 					# warm-path analogue of rootfs._write_routing_identity. Empty for a
 					# VM with no routing config — the guest client then no-ops.
 					"routing_base_url": identity.routing_base_url,
+					# The private-plane /128 (spec/25) — per-clone (derived from the
+					# clone's UUID), so it MUST ride MMDS like the ipv6/ipv4 do. The
+					# freshen unit writes it into /etc/atlas-network.env so the warm
+					# clone joins the mesh on boot. Empty for a VM off the plane.
+					"private_address": identity.private_address,
 				}
 			},
 			indent=1,
@@ -500,6 +590,14 @@ def _firecracker_config(inputs: "ProvisionInputs") -> str:
 			"version": "V1",
 			"network_interfaces": ["eth0"],
 		},
+		# virtio-rng: feed the guest kernel a hardware RNG so it seeds its CSPRNG
+		# from the host's AWS-LC entropy. Ubuntu ships CONFIG_HW_RANDOM_VIRTIO=m, so
+		# the driver isn't in the extracted vmlinux — sync-image.py bakes the
+		# virtio_rng module into the rootfs and pins it in modules-load.d, and only
+		# then does the device bind (/dev/hwrng). No rate_limiter — entropy is cheap
+		# and we want it as fast as the guest asks. Like mmds-config, it must be in
+		# the GOLDEN's boot config so the captured vmstate carries the device.
+		"entropy": {},
 	}
 	# The data disk is a second, non-root drive (the guest's /dev/vdb), resolved
 	# post-chroot to the data.ext4 block node exposed in step 4c. Only when the VM
@@ -534,6 +632,12 @@ def _network_env(inputs: "ProvisionInputs") -> str:
 	# is unchanged.
 	if inputs.reserved_ipv4:
 		env += f"RESERVED_IPV4={inputs.reserved_ipv4}\n"
+	# The private-plane identity (§5). Written together (vm-network-up gates the
+	# private block on BOTH), only when the VM has a tenant. Absent on a pre-feature
+	# or tenant-less VM, so the private block is a complete no-op there.
+	if inputs.private_address and inputs.tenant_prefix:
+		env += f"PRIVATE_ADDRESS={inputs.private_address}\n"
+		env += f"TENANT_PREFIX={inputs.tenant_prefix}\n"
 	return env
 
 

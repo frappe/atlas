@@ -128,7 +128,231 @@ function add_lifecycle_buttons(frm) {
 			})
 		);
 	}
+	// Run Command: reach this guest over its public IPv6 /128. Only painted when
+	// the VM is Running with a known address — the "don't paint a button you'll
+	// refuse" rule the disk actions follow.
+	if (status === "Running" && frm.doc.ipv6_address) {
+		frappe.atlas.add_action(frm, "Run Command", () => run_command(frm));
+	}
+	if (frm.doc.is_proxy && status !== "Terminated") {
+		// Read-only: pull the proxy's three live maps (sites / sni / acme) straight
+		// off its admin sockets and show them against the desired maps, flagging
+		// drift. The first thing to check when a site 404s / resets at the proxy.
+		frappe.atlas.add_action(frm, "Live proxy maps", () => show_proxy_maps(frm));
+	}
+	if (frm.doc.is_gateway && (status === "Running" || status === "Stopped")) {
+		// Stand up (or re-assert) the gateway's wg0 + the static same_48 guard over
+		// guest-SSH (spec/26). Idempotent — the fix after a reboot/rebuild left the
+		// interface gone. Customer peers are reconciled separately from their own form.
+		frappe.atlas.add_action(frm, "Deploy gateway", () => deploy_gateway(frm));
+	}
+	// Migrate: move this VM's disk to another host, keeping its identity (spec/19).
+	// The pre-flight stops a Running/Paused VM, so we paint it on any live status.
+	if (status === "Running" || status === "Stopped" || status === "Paused") {
+		frappe.atlas.add_action(frm, "Migrate", () => open_migrate_dialog(frm));
+	}
+	// Collapse forward: only for a VM whose traffic is still forwarded from another
+	// host after a keep-address migration. Tears the tunnel down and moves the VM
+	// to a fresh /128 on its current host (spec/19 §2.9.5).
+	if (frm.doc.traffic_forwarded_from && status !== "Terminated") {
+		frappe.atlas.add_action(frm, "Collapse forward", () => confirm_collapse_forward(frm));
+	}
 	frappe.atlas.add_danger(frm, "Terminate", () => confirm_terminate(frm));
+}
+
+function open_migrate_dialog(frm) {
+	const who = frm.doc.title || frm.doc.name.slice(0, 8);
+	const dialog = new frappe.ui.Dialog({
+		title: __("Migrate {0}", [who]),
+		fields: [
+			{
+				fieldname: "target_server",
+				label: __("Target Server"),
+				fieldtype: "Link",
+				options: "Server",
+				reqd: 1,
+				get_query: () => ({
+					// Only other Active hosts — the current one can't be the target.
+					filters: { status: "Active", name: ["!=", frm.doc.server] },
+				}),
+				description: __("Another Active host. Must share this VM's provider."),
+			},
+			{
+				fieldname: "release_reserved_ip",
+				label: __("Release attached public IPv4"),
+				fieldtype: "Check",
+				default: 0,
+				depends_on: "eval:false",
+				description: __(
+					"Only relevant if a Reserved IP is attached. Acknowledges the inbound v4 is released across the move (re-attach a target-host Reserved IP afterward)."
+				),
+			},
+			{
+				fieldname: "cost_hint",
+				fieldtype: "HTML",
+				options: `<p class="text-muted small">${__(
+					"Cold migration: the VM is stopped during cutover but keeps its UUID and SSH host keys. On a provider that supports it the VM also keeps its IPv6 address (the source host forwards it); otherwise it gets a new address and the proxy re-points. Runs phase by phase in the background."
+				)}</p>`,
+			},
+		],
+		primary_action_label: __("Migrate"),
+		primary_action(values) {
+			dialog.hide();
+			frm.call("migrate", {
+				target_server: values.target_server,
+				release_reserved_ip: values.release_reserved_ip ? 1 : 0,
+			}).then(({ message: migration_name }) => {
+				if (!migration_name) return;
+				frappe.show_alert(
+					{
+						message: __("Migration {0} started.", [migration_name]),
+						indicator: "blue",
+					},
+					6
+				);
+				frappe.set_route("Form", "Virtual Machine Migration", migration_name);
+			});
+		},
+	});
+	// Reveal the Reserved-IP ack only when one is actually attached.
+	if (frm.doc.public_ipv4) {
+		dialog.fields_dict.release_reserved_ip.df.depends_on = "eval:true";
+		dialog.refresh();
+	}
+	dialog.show();
+}
+
+function confirm_collapse_forward(frm) {
+	const who = frm.doc.title || frm.doc.name.slice(0, 8);
+	frappe.atlas.confirm_cost({
+		title: __("Collapse forward for {0}?", [who]),
+		body_html: `<p>${__(
+			"This VM's traffic is currently forwarded from <b>{0}</b>. Collapsing tears down that cross-host tunnel and gives the VM a <b>new IPv6 address</b> on its current host, re-pointing any attached sites. The address change is the cost of removing the dependency on the source host.",
+			[frappe.utils.escape_html(frm.doc.traffic_forwarded_from)]
+		)}</p>`,
+		proceed_label: __("Collapse forward"),
+		proceed() {
+			frm.call("collapse_forward").then(() => {
+				frappe.show_alert(
+					{
+						message: __("Forward collapsed; VM moved to a new address."),
+						indicator: "green",
+					},
+					6
+				);
+				frm.reload_doc();
+			});
+		},
+	});
+}
+
+// Stash this guest as the SSH Console's one target and route there — a
+// pre-targeted entry into the fleet-wide console, not a second execution path.
+function run_command(frm) {
+	window.localStorage.setItem(
+		"ssh_console_prefill",
+		JSON.stringify({
+			targets: [{ target_doctype: "Virtual Machine", target_name: frm.doc.name }],
+		})
+	);
+	frappe.set_route("Form", "SSH Console");
+}
+
+// The three maps a proxy serves, in the order they matter for debugging a route.
+const PROXY_MAP_LABELS = {
+	sites: __("Wildcard subdomains (sites)"),
+	sni: __("Custom-domain SNI (:443)"),
+	acme: __("Custom-domain ACME (:80)"),
+};
+
+function deploy_gateway(frm) {
+	frm.call({
+		method: "deploy_gateway",
+		doc: frm.doc,
+		freeze: true,
+		freeze_message: __("Standing up the gateway's WireGuard interface + guard…"),
+	}).then(({ message }) => {
+		if (message) {
+			frappe.show_alert({
+				message: __("Gateway wg0 + same_48 guard deployed"),
+				indicator: "green",
+			});
+		}
+	});
+}
+
+function show_proxy_maps(frm) {
+	// Let frm.call own the freeze overlay (freeze + freeze_message) so it clears
+	// itself when the call settles. A manual frappe.dom.freeze() here stacks a
+	// second ref on the same counter that only unfreeze in .finally() would clear —
+	// and the ordering against the call's own unfreeze leaves the overlay stuck on
+	// top of the rendered dialog (the "frozen, then renders wrong" symptom).
+	frm.call({
+		method: "read_proxy_maps",
+		doc: frm.doc,
+		freeze: true,
+		freeze_message: __("Reading live maps from the proxy…"),
+	}).then(({ message }) => {
+		if (message) render_proxy_maps_dialog(frm, message);
+	});
+}
+
+function render_proxy_maps_dialog(frm, maps) {
+	const sections = Object.keys(PROXY_MAP_LABELS).map((key) => {
+		const map = maps[key] || { live: {}, desired: {}, in_sync: true };
+		const badge = map.in_sync
+			? `<span class="indicator-pill green">${__("in sync")}</span>`
+			: `<span class="indicator-pill red">${__("DRIFTED")}</span>`;
+		return `
+			<div style="margin-bottom: 1.5rem;">
+				<h5 style="margin-bottom: .5rem;">${PROXY_MAP_LABELS[key]} ${badge}</h5>
+				${proxy_map_table(map)}
+			</div>`;
+	});
+	const dialog = new frappe.ui.Dialog({
+		title: __("Live proxy maps — {0}", [frm.doc.title || frm.doc.name.slice(0, 8)]),
+		size: "large",
+		fields: [{ fieldtype: "HTML", fieldname: "maps", options: sections.join("") }],
+		primary_action_label: __("Refresh"),
+		primary_action() {
+			dialog.hide();
+			show_proxy_maps(frm);
+		},
+	});
+	dialog.show();
+}
+
+function proxy_map_table(map) {
+	// Union of live + desired keys so a key present in one but not the other is
+	// visible (that IS the drift). A live value that differs from desired is
+	// highlighted, as is a key missing from either side.
+	const keys = Array.from(
+		new Set([...Object.keys(map.live || {}), ...Object.keys(map.desired || {})])
+	).sort();
+	if (!keys.length) {
+		return `<p class="text-muted small">${__("Empty.")}</p>`;
+	}
+	const esc = frappe.utils.escape_html;
+	const rows = keys
+		.map((k) => {
+			const live = map.live?.[k] ?? "";
+			const desired = map.desired?.[k] ?? "";
+			const drift = live !== desired;
+			const style = drift ? ' style="background: var(--red-50);"' : "";
+			return `<tr${style}>
+				<td><code>${esc(k)}</code></td>
+				<td><code>${esc(String(live)) || "—"}</code></td>
+				<td><code>${esc(String(desired)) || "—"}</code></td>
+			</tr>`;
+		})
+		.join("");
+	return `
+		<table class="table table-bordered table-sm small" style="margin-bottom: 0;">
+			<thead><tr>
+				<th>${__("Key")}</th><th>${__("Live (on proxy)")}</th><th>${__("Desired")}</th>
+			</tr></thead>
+			<tbody>${rows}</tbody>
+		</table>`;
 }
 
 function add_terminated_actions(frm) {
@@ -429,6 +653,25 @@ function render_status_intro(frm) {
 	const status = frm.doc.status;
 
 	if (status === "Terminated") {
+		return;
+	}
+
+	// A kept-address migration leaves this VM's traffic forwarded from the source
+	// host indefinitely — surface that cross-host dependency so it isn't invisible.
+	if (frm.doc.traffic_forwarded_from) {
+		const since = frm.doc.traffic_forwarded_since
+			? frappe.datetime.str_to_user(frm.doc.traffic_forwarded_since)
+			: "";
+		frm.set_intro(
+			__(
+				"Traffic is forwarded from <b>{0}</b>{1} — this VM kept its address across a migration and depends on that host. Use <b>Collapse forward</b> to move to a new address and remove the dependency.",
+				[
+					frappe.utils.escape_html(frm.doc.traffic_forwarded_from),
+					since ? __(" since {0}", [since]) : "",
+				]
+			),
+			"orange"
+		);
 		return;
 	}
 

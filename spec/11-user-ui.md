@@ -44,6 +44,8 @@ Central provisions, not an end-user `owner`:
 
 There is no guest-reachable write surface in Atlas anymore. The placement model
 (the operator controls which servers are Active and which images exist; the
-controller fills `server`/`image` in `before_insert` from a vCPU-budget) is
-unchanged — see [05-virtual-machine-lifecycle.md](./05-virtual-machine-lifecycle.md)
-and [placement.py](../atlas/atlas/placement.py).
+controller fills `server`/`image` in `before_insert`) is now **load-aware** — it
+picks the Active host that scores best under the operator's chosen strategy, not
+merely the first with room. See [28-placement.md](./28-placement.md),
+[05-virtual-machine-lifecycle.md](./05-virtual-machine-lifecycle.md), and
+[placement.py](../atlas/atlas/placement.py).

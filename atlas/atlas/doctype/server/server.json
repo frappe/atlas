@@ -23,6 +23,8 @@
   "column_break_networking",
   "ipv6_prefix",
   "ipv6_virtual_machine_range",
+  "wireguard_public_key",
+  "mesh_address",
   "section_break_host_info",
   "architecture",
   "column_break_host_info",
@@ -30,6 +32,14 @@
   "jailer_version",
   "kernel_version",
   "cli_ready",
+  "section_break_capacity",
+  "vcpus_total",
+  "memory_megabytes_total",
+  "column_break_capacity",
+  "pool_disk_gigabytes_total",
+  "pool_data_percent",
+  "capacity_reported_at",
+  "placement_headroom_percent",
   "section_break_metadata",
   "provider_metadata"
  ],
@@ -138,6 +148,20 @@
    "read_only": 1
   },
   {
+   "description": "This host's WireGuard public key on the wg-mesh private-plane fabric, derived (not stored) from the Server UUID. Shown for legibility; the controller recomputes it from atlas.networking.derive_host_wireguard_keypair. The private key is injected at bootstrap and never stored.",
+   "fieldname": "wireguard_public_key",
+   "fieldtype": "Data",
+   "label": "WireGuard Public Key",
+   "read_only": 1
+  },
+  {
+   "description": "This host's own fdaa:0:0:<idx>::1 endpoint on the mesh bus (the infra /48), used for host-to-host transport (migration NBD, snapshot replication, image fan-out) inside the tunnel. Derived from the Server UUID; shown for legibility.",
+   "fieldname": "mesh_address",
+   "fieldtype": "Data",
+   "label": "Mesh Address",
+   "read_only": 1
+  },
+  {
    "collapsible": 1,
    "fieldname": "section_break_host_info",
    "fieldtype": "Section Break",
@@ -178,6 +202,58 @@
    "fieldtype": "Check",
    "label": "CLI Ready",
    "read_only": 1
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "section_break_capacity",
+   "fieldtype": "Section Break",
+   "label": "Capacity"
+  },
+  {
+   "description": "Physical vCPU count reported by the on-host agent (nproc). 0/unset means uncatalogued — the host reports unlimited capacity and placement vouches for it by its Active status.",
+   "fieldname": "vcpus_total",
+   "fieldtype": "Int",
+   "label": "vCPUs Total",
+   "read_only": 1
+  },
+  {
+   "description": "Physical host RAM in MB, reported by the agent (/proc/meminfo MemTotal). Hard fit — no oversubscription.",
+   "fieldname": "memory_megabytes_total",
+   "fieldtype": "Int",
+   "label": "Memory Total (MB)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_capacity",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Thin-pool size in GB the VMs draw from (agent vgs/lvs), not raw root disk. Hard fit — no oversubscription.",
+   "fieldname": "pool_disk_gigabytes_total",
+   "fieldtype": "Int",
+   "label": "Pool Disk Total (GB)",
+   "read_only": 1
+  },
+  {
+   "description": "Live thin-pool fullness (agent lvs -o data_percent). Advisory alert/block signal, not the placement predicate.",
+   "fieldname": "pool_data_percent",
+   "fieldtype": "Float",
+   "label": "Pool Data Percent",
+   "read_only": 1
+  },
+  {
+   "description": "When the agent last stamped the totals above. A host silent past a staleness threshold reports as uncatalogued (unlimited) rather than trusting stale totals.",
+   "fieldname": "capacity_reported_at",
+   "fieldtype": "Datetime",
+   "label": "Capacity Reported At",
+   "read_only": 1
+  },
+  {
+   "description": "Per-host arrival fill ceiling. > 0 overrides Atlas Settings.placement_headroom_percent for this host; 0/unset inherits the fleet default. (Frappe writes 0 for an untouched Percent field, so \"explicitly 0 while the fleet default is > 0\" is not expressible per-host — an accepted trade-off.) The reserve applies to placing NEW VMs only; resize spends it.",
+   "fieldname": "placement_headroom_percent",
+   "fieldtype": "Percent",
+   "label": "Placement Headroom Percent",
+   "non_negative": 1
   },
   {
    "collapsible": 1,

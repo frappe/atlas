@@ -190,6 +190,14 @@ class DigitalOceanProvider(Provider):
 			_discovered_from_droplet(self.provider_type, droplet) for droplet in self.client.list_droplets()
 		)
 
+	def vm_range_is_forwardable(self, provider_resource_id: str) -> bool:
+		"""DigitalOcean keep-address is always available: DO's edge finds the right
+		droplet by proxy-NDP on the uplink, so the source droplet can keep answering
+		NDP for the VM's /128 forever and tunnel the matched traffic to the target
+		(spec/24 §2.9). This is a property of DO's delivery mechanism, true for every
+		droplet — not a per-box fact that can fail."""
+		return True
+
 	# --- Reserved IPs ----------------------------------------------------
 	# On DigitalOcean a reserved IP is keyed by its own address, so the
 	# vendor handle (`provider_resource_id`) IS the IP string. The droplet

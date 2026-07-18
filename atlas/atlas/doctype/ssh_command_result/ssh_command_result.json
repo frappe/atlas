@@ -1,0 +1,88 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "creation": "2026-06-30 00:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 0,
+ "engine": "InnoDB",
+ "field_order": [
+  "target_doctype",
+  "target_name",
+  "status",
+  "exit_code",
+  "duration_milliseconds",
+  "section_break_output",
+  "stdout",
+  "stderr"
+ ],
+ "fields": [
+  {
+   "fieldname": "target_doctype",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Type",
+   "options": "Server\nVirtual Machine",
+   "read_only": 1
+  },
+  {
+   "fieldname": "target_name",
+   "fieldtype": "Dynamic Link",
+   "in_list_view": 1,
+   "label": "Target",
+   "options": "target_doctype",
+   "read_only": 1
+  },
+  {
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Status",
+   "options": "Success\nFailure\nUnreachable",
+   "read_only": 1
+  },
+  {
+   "fieldname": "exit_code",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Exit",
+   "read_only": 1
+  },
+  {
+   "fieldname": "duration_milliseconds",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Duration (ms)",
+   "read_only": 1
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "section_break_output",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "stdout",
+   "fieldtype": "Code",
+   "label": "Stdout",
+   "options": "Text",
+   "read_only": 1
+  },
+  {
+   "fieldname": "stderr",
+   "fieldtype": "Code",
+   "label": "Stderr",
+   "options": "Text",
+   "read_only": 1
+  }
+ ],
+ "istable": 1,
+ "links": [],
+ "modified": "2026-06-30 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Atlas",
+ "name": "SSH Command Result",
+ "owner": "Administrator",
+ "permissions": [],
+ "sort_field": "creation",
+ "sort_order": "ASC",
+ "states": []
+}

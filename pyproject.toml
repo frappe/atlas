@@ -9,6 +9,7 @@ readme = "README.md"
 dynamic = ["version"]
 dependencies = [
     # "frappe~=16.0.0" # Installed and managed by bench.
+    "boto3",
 ]
 
 [build-system]
@@ -58,6 +59,10 @@ ignore = [
     "UP040", # Use type aliases instead of type annotations
 ]
 typing-modules = ["frappe.types.DF"]
+# The placement/capacity docs use typographic − (minus) and × (times) in math
+# expressions (e.g. "total − reserve", "2 GB × cores"); whitelist just those two
+# confusables so RUF001/002/003 don't flag the intentional notation.
+allowed-confusables = ["−", "×"]
 
 [tool.ruff.format]
 quote-style = "double"

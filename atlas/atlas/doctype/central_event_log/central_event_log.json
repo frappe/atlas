@@ -37,18 +37,18 @@
    "read_only": 1
   },
   {
-   "description": "pending = emitted, delivery not (yet) run — also the terminal state when the emitting transaction rolled back (the after-commit deliver job never fired). ok = POSTed. error = Central rejected/unreachable, see Last Error. skipped = enabled but not registered (no atlas_id), so unroutable.",
+   "description": "pending = emitted inside an open transaction. queued = transaction committed and the event is eligible for delivery/retry. rolled_back = audit-only; the source transaction rolled back and must never be POSTed. ok = POSTed. error = Central rejected/unreachable, see Last Error. skipped = enabled but not registered (no atlas_id), so unroutable.",
    "fieldname": "status",
    "fieldtype": "Select",
    "in_list_view": 1,
    "in_standard_filter": 1,
    "label": "Status",
-   "options": "pending\nok\nerror\nskipped",
+   "options": "pending\nqueued\nok\nerror\nskipped\nrolled_back",
    "read_only": 1
   },
   {
    "default": "0",
-   "description": "How many times deliver() POSTed this row. 0 while pending; 1 once delivered (v1 has no retry).",
+   "description": "How many times deliver() POSTed this row. 0 while pending/queued/rolled_back; increments on every delivery attempt.",
    "fieldname": "attempts",
    "fieldtype": "Int",
    "in_list_view": 1,

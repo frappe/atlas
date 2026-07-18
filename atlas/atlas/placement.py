@@ -4,11 +4,14 @@ A dashboard user (see spec/11-user-ui.md) never picks where their machine
 runs — they state name, size, and SSH key, and the controller fills `server`
 and `image` here. The operator still owns the fleet: which Servers are Active
 and which Image is the default are operator decisions. This is placement, not
-scheduling — first Active server with room, no balancing.
+scheduling — load-aware spread across Active servers (the emptiest by relative
+fill wins; see spec/28-placement.md), not queues or reactive rebalancing.
 
 Operators creating a VM in Desk supply `server`/`image` explicitly, so this
 never runs for them.
 """
+
+from typing import NoReturn
 
 import frappe
 from frappe import _
@@ -48,22 +51,728 @@ def default_image() -> str:
 	return active[0]
 
 
-def default_server(required_vcpus: float) -> str:
-	"""The first Active server with room for `required_vcpus`.
+# Central offers Frappe versions (v16/v15/nightly) that map 1:1 to the bench admin
+# images the Image Build recipes promote — named `bench-<token>-admin`. Those admin
+# images are the Pilot (bench admin console) product `create_vm` provisions: a Central
+# "server" IS a Pilot, so the version it picks resolves to the `-admin` variant, not the
+# plain `bench-<token>` site image (which backs a self-serve Site, spec/14). Both share
+# the same `bench-<token>` version token — that is what Central mirrors.
+BENCH_IMAGE_PREFIX = "bench-"
+ADMIN_IMAGE_SUFFIX = "-admin"
 
-	`required_vcpus` is a CPU *bandwidth* cost (cpu_max_cores units), matching
-	how `capacity_for_server` sums usage — a 1/16-vCPU machine needs 0.0625, not
-	a whole vCPU. Capacity is the same accounting the desk capacity helper uses
-	(atlas/api/server_capacity.py): a server's *effective* vCPU budget (physical
-	total times `Atlas Settings.overprovision_factor`) minus the bandwidth of its
-	non-Terminated VMs. Servers whose size has no known vCPU total — a size we
-	haven't catalogued, or a self-managed host with no slug — report
-	`effective_vcpus is None` and are treated as having unlimited room: the
-	operator vouches for them by marking them Active. Raises when nothing fits.
 
-	Runs with ignore_permissions: this is system placement, not desk RBAC —
-	Central (the operator) triggers it without needing Server read access; the
-	system still has to choose one."""
+def image_for_version(frappe_version: str | None) -> str:
+	"""Resolve a Frappe version token to its active admin bench image
+	(`bench-<token>-admin`) — the Pilot admin console `create_vm` stands up — falling
+	back to the configured default when the token is unset or has no active admin image,
+	so an unknown/unbuilt version never blocks provisioning.
+
+	Resolves through `version_image_map` rather than reconstructing the image name: a
+	rebaked image carries a generation suffix (`bench-v16-1-admin`) the version token
+	(`v16`) can't rebuild, so the map — keyed by the same stripped token
+	`version_from_image` produces — is the one source both the visible map and the
+	provisioning path share, and can't drift."""
+	if frappe_version:
+		image = version_image_map().get(frappe_version)
+		if image:
+			return image
+	return default_image()
+
+
+def version_image_map() -> dict[str, str]:
+	"""The version→admin-image map Central resolves a picked Frappe version through.
+
+	One entry per active admin bench image: `{token: image_name}`, e.g.
+	`{"v16": "bench-v16-admin"}`. The key is the clean version token Central offers and
+	looks up (`version_from_image` strips any rebake generation); the value is the exact
+	image name to provision from, whatever it's called (`bench-v16-1-admin`). This IS the
+	shared source `image_for_version` resolves through, so the operator-visible map and
+	the provisioning path can't drift.
+
+	When a version has been rebaked, the old image (`bench-v16-admin`) and the new
+	(`bench-v16-1-admin`) are both active — the old can't be deleted while a snapshot
+	pins it — and both strip to the same `v16` key. Order oldest-first so the newest
+	generation is written last and wins the key: the rebake is the whole point."""
+	names = frappe.get_all(
+		"Virtual Machine Image",
+		filters={"is_active": 1, "image_name": ["like", f"{BENCH_IMAGE_PREFIX}%{ADMIN_IMAGE_SUFFIX}"]},
+		pluck="image_name",
+		order_by="creation asc",
+		ignore_permissions=True,
+	)
+	return {version_from_image(name): name for name in names if version_from_image(name)}
+
+
+def version_from_image(image: str | None) -> str | None:
+	"""The Frappe version token a bench image carries (`bench-v16-admin` → `v16`), or
+	None for a non-bench/plain image. Central mirrors this as the VM's provisioned
+	version, and looks a picked version up by this token.
+
+	A rebaked generation carries a trailing `-<n>` before the mode suffix
+	(`bench-v16-1-admin`) so the fresh image can coexist with the old one (which can't
+	be deleted while snapshots pin it). That generation is invisible to Central — it
+	still offers and resolves the clean `v16` — so the token strips it: the newest
+	active image for a version wins the key in `version_image_map`."""
+	if not image or not image.startswith(BENCH_IMAGE_PREFIX):
+		return None
+	token = image[len(BENCH_IMAGE_PREFIX) :]
+	if token.endswith(ADMIN_IMAGE_SUFFIX):
+		token = token[: -len(ADMIN_IMAGE_SUFFIX)]
+	# Drop a trailing `-<digits>` rebake generation: `v16-1` → `v16`, `nightly-2` →
+	# `nightly`. A bare numeric token (an image literally named `bench-1`) is left as-is.
+	base, sep, gen = token.rpartition("-")
+	if sep and base and gen.isdigit():
+		token = base
+	return token or None
+
+
+def image_home_servers(image: str) -> set[str]:
+	"""The Active servers that actually hold this image's bytes.
+
+	A `Virtual Machine Image` is ONE fleet-wide row, but its bytes are per-server:
+	the row records nothing about where it landed. Presence is reconstructed from the
+	Task/export trail — the same authoritative sources the image form already reads:
+
+	- A **URL image** (`is_local` false) is downloadable; `after_insert` fans out a
+	  `sync-image` Task to every Active server. Its home set is the servers where that
+	  sync SUCCEEDED — the verifiable presence signal, matching
+	  `VirtualMachineImage.sync_status`. (An enqueued-but-unfinished sync doesn't count;
+	  the bytes aren't there yet.)
+	- A **local image** (promoted from a snapshot, no rootfs URL) lives only where it
+	  was promoted plus wherever it was later exported: the promote home
+	  (`_image_home_server`) UNION every successful `Virtual Machine Image Export`'s
+	  `target_server`. This is the presence a `sync-image` could never provide — a local
+	  image is non-syncable.
+
+	Result is intersected with the currently-Active servers: a home that has since been
+	removed/drained can't take a VM, so it isn't a placement candidate. Returns a set
+	(possibly empty — the caller decides whether that's a hard error)."""
+	active = set(
+		frappe.get_all(
+			"Server",
+			filters={"status": "Active"},
+			pluck="name",
+			ignore_permissions=True,
+		)
+	)
+	if not active:
+		return set()
+
+	is_local = not (frappe.db.get_value("Virtual Machine Image", image, "rootfs_url") or "").strip()
+	if is_local:
+		homes = _local_image_home_servers(image)
+	else:
+		homes = _synced_image_home_servers(image)
+	return homes & active
+
+
+def _synced_image_home_servers(image: str) -> set[str]:
+	"""Servers with a successful `sync-image` Task for this URL image. Matches
+	`VirtualMachineImage.sync_status`: the immutable Task history is the presence trail,
+	and the script verb was renamed (`sync-image`) from its legacy filenames, so we
+	accept all three."""
+	rows = frappe.db.sql(
+		"""
+		SELECT DISTINCT server FROM `tabTask`
+		WHERE script IN ('sync-image', 'sync-image.py', 'sync-image.sh')
+		  AND status = 'Success'
+		  AND variables LIKE %(pattern)s
+		""",
+		{"pattern": f'%"IMAGE_NAME": "{image}"%'},
+		pluck="server",
+	)
+	return {row for row in rows if row}
+
+
+def _local_image_home_servers(image: str) -> set[str]:
+	"""Servers holding a local (snapshot-promoted) image: its promote home plus every
+	server a successful export shipped it to. The promote home comes from the same Task
+	trail `Virtual Machine Image Export.before_insert` denormalizes from; the export
+	targets come from the export rows themselves (their `target_server` is the durable
+	record that the bytes landed there)."""
+	from atlas.atlas.doctype.virtual_machine_image_export.virtual_machine_image_export import (
+		_image_home_server,
+	)
+
+	homes: set[str] = set()
+	promote_home = _image_home_server(image)
+	if promote_home:
+		homes.add(promote_home)
+	# A Done export means the base LV + kernel reached target_server and the Registering
+	# phase asserted the row; anything short of Done hasn't finished shipping the bytes.
+	homes.update(
+		frappe.get_all(
+			"Virtual Machine Image Export",
+			filters={"image": image, "status": "Done"},
+			pluck="target_server",
+		)
+	)
+	return {home for home in homes if home}
+
+
+def default_server_for_image(
+	image: str,
+	required_vcpus: float,
+	required_memory_mb: float,
+	required_disk_gb: float,
+) -> str:
+	"""Like `default_server`, but only among servers that HOLD `image`.
+
+	`default_server` picks the first Active host with room on all three axes — but a
+	VM can only boot an image whose bytes are on its host. For a local (per-server)
+	image, "any Active host" is wrong: it would pick a host missing the LV and the
+	provision would fail on the box, not at the boundary. So we restrict the candidate
+	pool to `image_home_servers(image)` and pick the first of those with capacity.
+
+	Raises loudly (Taste 17) when the image is nowhere yet — "export it to a server
+	first" — distinct from `NoCapacityError` (which means the image is present but no
+	host that holds it has room)."""
+	homes = image_home_servers(image)
+	if not homes:
+		frappe.throw(
+			_(
+				"Image {0} is not present on any active server yet — export it to a "
+				"server before provisioning from it."
+			).format(image)
+		)
+	return default_server(
+		required_vcpus,
+		required_memory_mb,
+		required_disk_gb,
+		candidate_servers=homes,
+	)
+
+
+class NoResizeCapacityError(NoCapacityError):
+	"""A resize cannot grow the VM in place — its host lacks room for the delta.
+
+	Subclasses `NoCapacityError` so Central's existing "region full → retry / queue /
+	alert the operator" handling still fires unchanged (same HTTP status, same
+	message shape). The distinct type carries the extra signal that the remedy is
+	specific: migrate this VM to a host that fits the new size (spec/28 case 2 —
+	future work), not just retry the same placement."""
+
+
+class ConsolidationInProgressError(NoCapacityError):
+	"""No host fits the arrival right now, but placement is freeing one by migrating a
+	few small VMs off a host (spec/28 case 3 — defragmentation on arrival).
+
+	Subclasses `NoCapacityError` so Central's existing "region full → retry / queue"
+	handling fires unchanged — the retry is exactly the right response, because once
+	the consolidation migrations cut over a host will fit. The distinct type says the
+	remedy is already in motion (retry soon), not "the region is permanently full"."""
+
+
+def check_resize_capacity(
+	server: str,
+	delta_cpu: float,
+	delta_memory_mb: float,
+	delta_disk_gb: float,
+) -> None:
+	"""Raise `NoResizeCapacityError` if growing a VM on `server` by these per-axis
+	deltas would exceed the host's FULL effective budget.
+
+	Called from `VirtualMachine.resize` before the on-host resize runs.
+	`capacity_for_server`'s `used` already counts this VM at its current size (it
+	sums every non-Terminated VM), so the check is `used + delta ≤ effective` per
+	axis, for the positive deltas only — a shrink needs no room, and an unmeasured
+	axis (`effective is None`) is unlimited. Deliberately checks `effective`, NOT the
+	placement budget: the arrival headroom reserve exists precisely so a resize can
+	consume it."""
+	from atlas.atlas.api.server_capacity import capacity_for_server
+
+	capacity = capacity_for_server(server)
+	deltas = {"cpu": delta_cpu, "memory": delta_memory_mb, "disk": delta_disk_gb}
+	for axis_key, delta in deltas.items():
+		if delta <= 0:
+			continue
+		axis = capacity[axis_key]
+		if axis["effective"] is not None and axis["used"] + delta > axis["effective"]:
+			frappe.throw(
+				_("No room to grow on this host — the VM must migrate to resize."),
+				NoResizeCapacityError,
+			)
+
+
+def _placement_reserve_fraction(server: str) -> float:
+	"""The arrival fill ceiling for placing a NEW VM on `server`, as a fraction in
+	[0, 1).
+
+	A per-server `placement_headroom_percent` > 0 wins; otherwise the fleet
+	`Atlas Settings.placement_headroom_percent`. Frappe writes 0 for an untouched
+	Percent field, so a per-server 0 means "inherit the fleet default", not
+	"explicitly no reserve" — an accepted trade-off documented on the field. The
+	reserve keeps free room on each host for a later in-place resize; resize itself
+	ignores it (spending it is exactly what the reserve is for — see step 4)."""
+	per_server = frappe.db.get_value("Server", server, "placement_headroom_percent")
+	if per_server and per_server > 0:
+		percent = per_server
+	else:
+		percent = frappe.db.get_single_value("Atlas Settings", "placement_headroom_percent") or 0
+	return float(percent) / 100.0
+
+
+def _strategy() -> str:
+	"""The fleet placement strategy from Atlas Settings (`packing.STRATEGIES`).
+
+	Falls back to `packing.DEFAULT_STRATEGY` when unset or unknown, so an operator can
+	switch the scorer (Spread / Best Fit / Tetris / First Fit) without touching code.
+	spec/28 and the offline simulator (`packing_sim.py`) explain the trade-off each
+	strategy makes; on the proportional ladder + homogeneous hosts they coincide."""
+	from atlas.atlas import packing
+
+	value = frappe.db.get_single_value("Atlas Settings", "placement_strategy")
+	return value if value in packing.STRATEGIES else packing.DEFAULT_STRATEGY
+
+
+def default_server(
+	required_vcpus: float,
+	required_memory_mb: float,
+	required_disk_gb: float,
+	candidate_servers: set[str] | None = None,
+) -> str:
+	"""The Active server a new VM should land on, per the fleet placement strategy.
+
+	`required_vcpus` is a CPU *bandwidth* cost (cpu_max_cores units) — a 1/16-vCPU
+	machine needs 0.0625, not a whole vCPU — matching how `capacity_for_server` sums
+	usage. `required_memory_mb` and `required_disk_gb` are the VM's memory and
+	reserved disk (root + data). For each Active host, capacity is the same
+	three-axis accounting the desk helper uses (atlas/api/server_capacity.py): each
+	axis's *effective* budget minus what its non-Terminated VMs already spend. An
+	axis with no known total reports `effective is None` and is unlimited there — the
+	operator vouches for the host by marking it Active.
+
+	The winner is the feasible host that scores best under the operator's chosen
+	strategy (`packing.rank_key` — default Spread: the emptiest by relative fill, so
+	VMs spread to equal *relative* fill across heterogeneous hosts). Placement leaves
+	an arrival headroom reserve free on each host (`_placement_reserve_fraction`) so
+	later in-place resizes have room; resize spends it. Fully-measured hosts rank
+	ahead of partially/unmeasured ones, then `creation asc` breaks ties for
+	determinism. Raises `NoCapacityError` when nothing fits — Central reads that as
+	"region full for that size".
+
+	`candidate_servers`, when given, restricts the pool to that set (still ordered
+	by creation, still Active) — `default_server_for_image` passes the servers that
+	hold the image so placement never picks a host missing its bytes. None means the
+	whole Active fleet, the original behaviour.
+
+	Runs with ignore_permissions: this is system placement, not desk RBAC — Central
+	triggers it without needing Server read access; the system still has to choose."""
+	from atlas.atlas import packing
+	from atlas.atlas.api.server_capacity import capacity_for_server
+
+	servers = frappe.get_all(
+		"Server",
+		filters={"status": "Active"},
+		pluck="name",
+		order_by="creation asc",
+		ignore_permissions=True,
+	)
+	if candidate_servers is not None:
+		servers = [server for server in servers if server in candidate_servers]
+	if not servers:
+		frappe.throw(_("No capacity available — contact your operator."), NoCapacityError)
+	strategy = _strategy()
+	needs = {"cpu": required_vcpus, "memory": required_memory_mb, "disk": required_disk_gb}
+	# The rank key is (unmeasured axes, strategy score, creation index); min wins. The
+	# enumerate index preserves the `creation asc` tie-break without re-reading dates.
+	best: tuple[tuple, str] | None = None
+	for creation_index, server in enumerate(servers):
+		capacity = capacity_for_server(server)
+		budgets = {axis: capacity[axis]["effective"] for axis in packing.AXES}
+		used = {axis: capacity[axis]["used"] for axis in packing.AXES}
+		key = packing.rank_key(
+			strategy, budgets, used, needs, _placement_reserve_fraction(server), creation_index
+		)
+		if key is None:
+			continue
+		if best is None or key < best[0]:
+			best = (key, server)
+	if best is not None:
+		return best[1]
+	# Nothing fits as-is. Try to free a host by migrating a few small VMs off it
+	# (spec/28 case 3); that raises ConsolidationInProgressError ("retry, room is
+	# coming") when a plan exists or is already running, and NoCapacityError only when
+	# the region is genuinely full with nothing movable.
+	_raise_no_capacity(needs)
+
+
+# --- Consolidation: free a host by migrating a few small VMs (spec/28 case 3) ---
+#
+# When no Active host fits an arrival, the free units may just be scattered — each host
+# has a little room, none has enough in one place (a 16-unit Dedicated can't span hosts).
+# Rather than fail, placement may migrate a few SMALL VMs off one host onto the others'
+# scattered room, consolidating a single contiguous slot for the arrival. This is
+# defragmentation-on-arrival: bounded (`max_consolidation_migrations`), opt-out
+# (`placement_consolidation_enabled`), and conservative — it only moves VMs that are
+# safe to move (no attached public IPv4, no in-flight migration, onto a same-provider
+# target, matching migration.preflight_checks).
+#
+# The migrations are asynchronous (spec/24), so placement does NOT place the arrival on
+# the freed host in the same breath — it can't, the small VMs still run there until
+# cutover. It raises ConsolidationInProgressError; Central retries, and once the moves
+# cut over `default_server` finds the room. capacity_for_server counts a migrating VM on
+# BOTH hosts until cutover, so a retry never double-books the freed host mid-move — the
+# whole thing is idempotent.
+
+# VM states migration.preflight_checks accepts as a migration source.
+_MIGRATABLE_STATUSES = ("Running", "Stopped", "Paused")
+
+
+def _consolidation_enabled() -> bool:
+	"""Whether placement may free a host by migrating small VMs
+	(`Atlas Settings.placement_consolidation_enabled`, default on). Off → a full region
+	fails loud with NoCapacityError instead of defragmenting."""
+	value = frappe.db.get_single_value("Atlas Settings", "placement_consolidation_enabled")
+	return bool(value) if value is not None else True
+
+
+def _max_consolidation_migrations() -> int:
+	"""The cap on VMs moved to free room for one arrival — the "a few"
+	(`Atlas Settings.max_consolidation_migrations`, default 3). A plan needing more than
+	this on every host is rejected (→ NoCapacityError), so defragmentation stays
+	bounded and can't become a migration storm."""
+	value = frappe.db.get_single_value("Atlas Settings", "max_consolidation_migrations")
+	return int(value) if value else 3
+
+
+def _raise_no_capacity(needs: dict) -> NoReturn:
+	"""Decide the arrival's fate when no host fits it as-is: consolidate, wait, or fail.
+
+	- consolidation off → NoCapacityError (fail loud).
+	- a drain that will fit `needs` is already in flight → ConsolidationInProgressError
+	  (retry; don't pile on more migrations — this is what makes a burst of retries
+	  idempotent).
+	- a fresh plan exists → enqueue it (its own transaction — migrate() persists its
+	  Migration row on commit, spec/24) and raise ConsolidationInProgressError.
+	- nothing movable frees a host → NoCapacityError (the region is genuinely full)."""
+	if not _consolidation_enabled():
+		frappe.throw(_("No capacity available — contact your operator."), NoCapacityError)
+	if _consolidation_in_flight(needs):
+		frappe.throw(
+			_("Capacity is being freed by migrating small VMs — retry shortly."),
+			ConsolidationInProgressError,
+		)
+	if plan_consolidation(needs):
+		_enqueue_consolidation(needs)
+		frappe.throw(
+			_("Freeing capacity by migrating small VMs — retry shortly."),
+			ConsolidationInProgressError,
+		)
+	frappe.throw(_("No capacity available — contact your operator."), NoCapacityError)
+
+
+def _enqueue_consolidation(needs: dict) -> None:
+	"""Run the consolidation in a background job so it commits in its OWN transaction —
+	migrate() persists its Migration row on commit, which a doomed create's rollback
+	would otherwise drop. Deduplicated by the arrival shape so a burst of Central retries
+	can't launch the same defrag many times over."""
+	frappe.enqueue(
+		"atlas.atlas.placement.consolidate",
+		queue="long",
+		job_id=f"placement-consolidate:{needs['cpu']:g}:{int(needs['memory'])}:{int(needs['disk'])}",
+		deduplicate=True,
+		required_vcpus=needs["cpu"],
+		required_memory_mb=needs["memory"],
+		required_disk_gb=needs["disk"],
+	)
+
+
+def consolidate(required_vcpus, required_memory_mb, required_disk_gb) -> dict:
+	"""Execute one consolidation plan: migrate the chosen small VMs off a host to free
+	room for an arrival of this shape. Enqueued by `default_server` (never whitelisted —
+	it moves VMs, so no REST surface). Re-plans from fresh state (the fleet may have
+	shifted since the create failed), then triggers each move, committing per move so one
+	rejected move doesn't undo the others. Best-effort: a move preflight rejects is logged
+	and skipped."""
+	needs = {
+		"cpu": float(required_vcpus),
+		"memory": float(required_memory_mb),
+		"disk": float(required_disk_gb),
+	}
+	if not _consolidation_enabled():
+		return {"triggered": [], "reason": "disabled"}
+	plan = plan_consolidation(needs)
+	if not plan:
+		return {"triggered": [], "reason": "no-plan"}
+	recipient, moves = plan
+	triggered = []
+	for vm_name, target in moves:
+		try:
+			_start_migration(vm_name, target)
+			frappe.db.commit()
+			triggered.append({"virtual_machine": vm_name, "target": target})
+		except Exception:
+			frappe.db.rollback()
+			frappe.log_error(
+				title="Placement consolidation migrate failed",
+				message=f"Freeing {recipient} for arrival {needs}: {vm_name} → {target}",
+			)
+	return {"recipient": recipient, "triggered": triggered}
+
+
+def _start_migration(vm_name: str, target_server: str) -> str:
+	"""Trigger one VM's migration to `target_server`. A one-line seam so tests can stand
+	in for the heavy, provider-touching migrate() call."""
+	return frappe.get_doc("Virtual Machine", vm_name).migrate(target_server)
+
+
+def plan_consolidation(needs: dict) -> tuple[str, list[tuple[str, str]]] | None:
+	"""A defragmentation plan that frees one host for `needs`, or None.
+
+	Returns `(recipient, [(vm_name, target_server), ...])`: the host the arrival will
+	land on once cleared, and the small VMs to migrate off it (and where). Pure planning
+	— reads the fleet, moves nothing. Greedy and bounded:
+
+	- For each Active host as candidate `recipient`, evict its smallest movable VMs
+	  (smallest RAM first — RAM is the binding axis on the ladder) one at a time, each to
+	  the best same-provider target among the OTHER hosts (the operator's strategy picks
+	  the target), until the recipient fits `needs` or the move cap is hit.
+	- A candidate that reaches a fit within the cap is a valid plan; across candidates the
+	  cheapest wins — fewest moves, then least disk to hydrate.
+
+	Never proposes a move migration.preflight_checks would reject: only Running/Stopped/
+	Paused VMs with no attached public IPv4 and no in-flight migration, onto a
+	same-provider Active target with room. None when no host can be cleared within the
+	cap — the caller then reports the region genuinely full."""
+	if not _consolidation_enabled():
+		return None
+	snapshot = _fleet_snapshot()
+	if len(snapshot) < 2:
+		return None  # need at least one OTHER host to receive the evicted VMs
+	strategy = _strategy()
+	cap = _max_consolidation_migrations()
+	best: tuple[tuple, str, list] | None = None
+	for recipient in snapshot:
+		moves = _plan_for_recipient(recipient, needs, snapshot, strategy, cap)
+		if not moves:
+			continue
+		cost = (len(moves), sum(disk for _vm, _target, disk in moves))
+		if best is None or cost < best[0]:
+			best = (cost, recipient, [(vm, target) for vm, target, _disk in moves])
+	if best is None:
+		return None
+	return best[1], best[2]
+
+
+def _plan_for_recipient(recipient: str, needs: dict, snapshot: dict, strategy: str, cap: int):
+	"""Evict `recipient`'s smallest movable VMs (each to a same-provider target) until it
+	fits `needs`, capped at `cap` moves. Returns the move list `[(vm, target, disk_gb)]`
+	or None if it can't be cleared within the cap. Works on copies of the snapshot's
+	`used` counters so it doesn't disturb the sibling candidates."""
+	from atlas.atlas import packing
+
+	host = snapshot[recipient]
+	recipient_used = dict(host["used"])
+	if _host_fits(host["budgets"], recipient_used, needs, host["reserve"]):
+		return []  # already fits (default_server checked, but harmless to short-circuit)
+	others_used = {name: dict(snapshot[name]["used"]) for name in snapshot if name != recipient}
+	moves: list = []
+	for vm in _movable_vms(recipient):
+		if len(moves) >= cap:
+			break
+		target = _best_target(vm, recipient, snapshot, others_used, strategy)
+		if target is None:
+			continue  # can't rehome this one within the fleet's room; try the next-smallest
+		for axis in packing.AXES:
+			recipient_used[axis] -= vm[axis]
+			others_used[target][axis] += vm[axis]
+		moves.append((vm["name"], target, vm["disk"]))
+		if _host_fits(host["budgets"], recipient_used, needs, host["reserve"]):
+			return moves
+	return None
+
+
+def _best_target(vm: dict, recipient: str, snapshot: dict, others_used: dict, strategy: str) -> str | None:
+	"""The best host to receive an evicted `vm`, scored by the operator's strategy, or
+	None. Same-provider only (migration.preflight_checks rejects cross-provider) and never
+	the recipient we are trying to clear. `others_used` carries the placements already
+	planned in this pass so two evictees don't both claim the same slot."""
+	from atlas.atlas import packing
+
+	vm_needs = {axis: vm[axis] for axis in packing.AXES}
+	source_provider = snapshot[recipient]["provider"]
+	best: tuple[tuple, str] | None = None
+	for name, used in others_used.items():
+		candidate = snapshot[name]
+		if candidate["provider"] != source_provider:
+			continue
+		key = packing.rank_key(
+			strategy, candidate["budgets"], used, vm_needs, candidate["reserve"], candidate["creation_index"]
+		)
+		if key is None:
+			continue
+		if best is None or key < best[0]:
+			best = (key, name)
+	return best[1] if best else None
+
+
+def _host_fits(budgets: dict, used: dict, needs: dict, reserve: float) -> bool:
+	"""Does `needs` fit on a host with these budgets/used, honouring its arrival reserve?
+	Reuses the one feasibility gate every strategy shares (`packing.rank_key` is None iff
+	infeasible), so the planner can never disagree with `default_server` about "fits"."""
+	from atlas.atlas import packing
+
+	return packing.rank_key(packing.FIRST_FIT, budgets, used, needs, reserve, 0) is not None
+
+
+def _fleet_snapshot() -> dict:
+	"""A per-Active-host snapshot the planner mutates in memory: `{server: {budgets, used,
+	reserve, creation_index, provider}}`. `used` already counts VMs migrating in (spec/24
+	accounting), so the planner sees a host receiving migrations as the fuller host it
+	really is."""
+	from atlas.atlas import packing
+	from atlas.atlas.api.server_capacity import capacity_for_server
+
+	names = frappe.get_all(
+		"Server",
+		filters={"status": "Active"},
+		pluck="name",
+		order_by="creation asc",
+		ignore_permissions=True,
+	)
+	snapshot = {}
+	for index, name in enumerate(names):
+		cap = capacity_for_server(name)
+		snapshot[name] = {
+			"budgets": {axis: cap[axis]["effective"] for axis in packing.AXES},
+			"used": {axis: cap[axis]["used"] for axis in packing.AXES},
+			"reserve": _placement_reserve_fraction(name),
+			"creation_index": index,
+			"provider": frappe.db.get_value("Server", name, "provider_type"),
+		}
+	return snapshot
+
+
+def _movable_vms(server: str) -> list:
+	"""`server`'s VMs that are safe to migrate away, smallest first (smallest RAM, then
+	disk, then CPU — RAM is the binding axis on the ladder). Excludes VMs with an attached
+	public IPv4 (moving one silently releases a Reserved IP), VMs already migrating, and
+	non-migratable states — exactly what migration.preflight_checks would reject, so a
+	plan never proposes a move that can't run. Each entry is `{name, cpu, memory, disk}`,
+	the per-axis cost matching capacity_for_server's sums."""
+	from atlas.atlas.doctype.virtual_machine_migration.virtual_machine_migration import (
+		active_migration_for,
+	)
+
+	rows = frappe.get_all(
+		"Virtual Machine",
+		filters={"server": server, "status": ["in", _MIGRATABLE_STATUSES]},
+		fields=[
+			"name",
+			"vcpus",
+			"cpu_max_cores",
+			"memory_megabytes",
+			"disk_gigabytes",
+			"data_disk_gigabytes",
+			"public_ipv4",
+		],
+	)
+	movable = []
+	for r in rows:
+		if r.public_ipv4 or active_migration_for(r.name):
+			continue
+		movable.append(
+			{
+				"name": r.name,
+				"cpu": float(r.cpu_max_cores or r.vcpus or 0),
+				"memory": float(r.memory_megabytes or 0),
+				"disk": float((r.disk_gigabytes or 0) + (r.data_disk_gigabytes or 0)),
+			}
+		)
+	movable.sort(key=lambda v: (v["memory"], v["disk"], v["cpu"]))
+	return movable
+
+
+def _vm_cost(vm_name: str) -> dict:
+	"""One VM's per-axis capacity cost (cpu/memory/disk), matching capacity_for_server."""
+	v = (
+		frappe.db.get_value(
+			"Virtual Machine",
+			vm_name,
+			["vcpus", "cpu_max_cores", "memory_megabytes", "disk_gigabytes", "data_disk_gigabytes"],
+			as_dict=True,
+		)
+		or {}
+	)
+	return {
+		"cpu": float(v.get("cpu_max_cores") or v.get("vcpus") or 0),
+		"memory": float(v.get("memory_megabytes") or 0),
+		"disk": float((v.get("disk_gigabytes") or 0) + (v.get("data_disk_gigabytes") or 0)),
+	}
+
+
+def _consolidation_in_flight(needs: dict) -> bool:
+	"""Whether an in-flight drain will soon fit `needs` on some host — that host's
+	OUTBOUND migrations, once cut over, drop its use below the arrival's need. True → the
+	caller waits (retry) instead of launching more migrations, which is what keeps a burst
+	of Central retries from stacking redundant defrags. capacity_for_server counts a
+	migrating VM on both hosts until cutover, so the source reads full NOW; here we look
+	past that to the post-cutover state."""
+	from collections import defaultdict
+
+	from atlas.atlas import packing
+	from atlas.atlas.doctype.virtual_machine_migration.virtual_machine_migration import (
+		TERMINAL_STATUSES,
+	)
+
+	active = frappe.get_all(
+		"Virtual Machine Migration",
+		filters={"status": ["not in", TERMINAL_STATUSES]},
+		fields=["virtual_machine", "source_server"],
+	)
+	if not active:
+		return False
+	snapshot = _fleet_snapshot()
+	leaving = defaultdict(list)
+	for row in active:
+		leaving[row.source_server].append(row.virtual_machine)
+	for source, vm_names in leaving.items():
+		host = snapshot.get(source)
+		if host is None:
+			continue
+		used = dict(host["used"])
+		for name in vm_names:
+			cost = _vm_cost(name)
+			for axis in packing.AXES:
+				used[axis] -= cost[axis]
+		if _host_fits(host["budgets"], used, needs, host["reserve"]):
+			return True
+	return False
+
+
+# Sentinel free-headroom for an axis whose host total is unmeasured (agent hasn't
+# reported it). "Unlimited" is real to placement but useless as a number to
+# Central, so we hand back an obviously-fake large value and flag the whole shape
+# `unmeasured` — Central treats it as "effectively unlimited", never as a fact.
+_UNMEASURED_VCPUS = 1024
+_UNMEASURED_MEMORY_MB = 1024 * 1024  # 1 TiB
+_UNMEASURED_DISK_GB = 1024 * 1024  # 1 PiB
+
+
+def _axis_free(axis: dict, sentinel: float) -> tuple[float, bool]:
+	"""Free headroom on one axis, and whether it's measured.
+
+	Measured axis → `effective - used` (clamped at 0). Uncatalogued axis
+	(`effective is None`) → the sentinel, flagged unmeasured."""
+	if axis["effective"] is None:
+		return sentinel, False
+	return max(0.0, axis["effective"] - axis["used"]), True
+
+
+def largest_vm() -> dict | None:
+	"""The largest single VM shape provisionable right now, or None if nothing fits.
+
+	"Largest" is the free headroom (`effective - used` per axis) on the single
+	*best* Active host — best = the most total free resources. That triple is a
+	genuinely co-schedulable shape: all three axes are simultaneously free on that
+	one host, so any VM whose cpu/memory/disk are each within it fits there (a VM
+	can't span hosts, so a fleet sum would be a lie). An axis the agent hasn't
+	measured contributes a large sentinel and marks the shape `unmeasured`.
+
+	Returns `{vcpus, memory_megabytes, disk_gigabytes, unmeasured}` for the winner,
+	or None when there is no Active host at all. Central asks this in resources; it
+	never sees hosts."""
 	from atlas.atlas.api.server_capacity import capacity_for_server
 
 	servers = frappe.get_all(
@@ -74,13 +783,83 @@ def default_server(required_vcpus: float) -> str:
 		ignore_permissions=True,
 	)
 	if not servers:
-		frappe.throw(_("No capacity available — contact your operator."), NoCapacityError)
+		return None
+
+	best = None
 	for server in servers:
-		capacity = capacity_for_server(server)
-		budget = capacity["effective_vcpus"]
-		if budget is None or capacity["used_vcpus"] + required_vcpus <= budget:
-			return server
-	frappe.throw(_("No capacity available — contact your operator."), NoCapacityError)
+		c = capacity_for_server(server)
+		free_cpu, m_cpu = _axis_free(c["cpu"], _UNMEASURED_VCPUS)
+		free_mem, m_mem = _axis_free(c["memory"], _UNMEASURED_MEMORY_MB)
+		free_disk, m_disk = _axis_free(c["disk"], _UNMEASURED_DISK_GB)
+		measured = m_cpu and m_mem and m_disk
+		# Rank measured hosts ahead of unmeasured ones: a real free-headroom shape
+		# beats a sentinel one, so a fully-reported host always defines largest_vm
+		# when one exists — an unmeasured host only wins when NO measured host can.
+		# (Without this, the astronomical sentinels would dwarf any real host's
+		# score and hide it behind a fake shape.) Within a class, most total free
+		# resources wins; memory dominates the raw MB sum, fine as a tiebreak.
+		score = (1 if measured else 0, free_cpu + free_mem + free_disk)
+		shape = {
+			"vcpus": int(free_cpu),
+			"memory_megabytes": int(free_mem),
+			"disk_gigabytes": int(free_disk),
+			"unmeasured": not measured,
+		}
+		if best is None or score > best[0]:
+			best = (score, shape)
+	return best[1]
+
+
+def _axis_ceiling(axis: dict, own: float, sentinel: float) -> tuple[float, bool]:
+	"""The most of one axis a VM already on this host can occupy after a resize, and
+	whether the axis is measured.
+
+	A resize reshapes the VM in place, freeing its OWN current usage before re-reserving
+	the new size — so the ceiling is the host's free room with that footprint added back:
+	`effective - (used - own)`, i.e. `effective - used + own` (clamped at 0). Uncatalogued
+	axis (`effective is None`) → the sentinel, flagged unmeasured."""
+	if axis["effective"] is None:
+		return sentinel, False
+	return max(0.0, axis["effective"] - axis["used"] + own), True
+
+
+def resize_headroom(vm: str) -> dict | None:
+	"""The largest shape `vm` can resize to on the host it already occupies, or None when
+	the VM (or its host) is unknown.
+
+	Unlike `largest_vm` — the best *other* host's free headroom for a NEW machine — a
+	resize stays on the VM's current host, so the ceiling is THAT host's free room with
+	the VM's own footprint added back (`_axis_ceiling`). This guarantees the VM can always
+	keep its size or shrink, and grow into whatever else the host has spare — so Central
+	can offer only resize targets that will actually fit, instead of letting an oversized
+	resize fail on the host. Returns `{vcpus, memory_megabytes, disk_gigabytes,
+	unmeasured}`, matching `largest_vm`'s shape; an unreported axis contributes a sentinel
+	and marks the shape `unmeasured`."""
+	from atlas.atlas.api.server_capacity import capacity_for_server
+
+	row = frappe.db.get_value(
+		"Virtual Machine",
+		vm,
+		["server", "vcpus", "cpu_max_cores", "memory_megabytes", "disk_gigabytes", "data_disk_gigabytes"],
+		as_dict=True,
+	)
+	if not row or not row.server:
+		return None
+
+	c = capacity_for_server(row.server)
+	own_cpu = float(row.cpu_max_cores or row.vcpus or 0)
+	own_mem = float(row.memory_megabytes or 0)
+	own_disk = float((row.disk_gigabytes or 0) + (row.data_disk_gigabytes or 0))
+	cpu, m_cpu = _axis_ceiling(c["cpu"], own_cpu, _UNMEASURED_VCPUS)
+	mem, m_mem = _axis_ceiling(c["memory"], own_mem, _UNMEASURED_MEMORY_MB)
+	disk, m_disk = _axis_ceiling(c["disk"], own_disk, _UNMEASURED_DISK_GB)
+	measured = m_cpu and m_mem and m_disk
+	return {
+		"vcpus": int(cpu),
+		"memory_megabytes": int(mem),
+		"disk_gigabytes": int(disk),
+		"unmeasured": not measured,
+	}
 
 
 def apply_user_defaults(virtual_machine) -> None:
@@ -96,8 +875,14 @@ def apply_user_defaults(virtual_machine) -> None:
 		# Bandwidth cost, matching capacity_for_server's used sum. before_validate
 		# defaults cpu_max_cores to vcpus, but apply_user_defaults runs in
 		# before_insert (before before_validate), so fall back to vcpus here too.
-		required = float(virtual_machine.cpu_max_cores or virtual_machine.vcpus or 1)
-		virtual_machine.server = default_server(required)
+		required_vcpus = float(virtual_machine.cpu_max_cores or virtual_machine.vcpus or 1)
+		# Memory and reserved disk (root + data), matching capacity_for_server's
+		# per-axis used sums — the VM must fit on all three axes.
+		required_memory = float(virtual_machine.memory_megabytes or 0)
+		required_disk = float(
+			(virtual_machine.disk_gigabytes or 0) + (virtual_machine.data_disk_gigabytes or 0)
+		)
+		virtual_machine.server = default_server(required_vcpus, required_memory, required_disk)
 
 
 def default_bench_snapshot() -> str:

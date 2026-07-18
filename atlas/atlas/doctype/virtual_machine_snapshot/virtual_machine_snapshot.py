@@ -1,3 +1,4 @@
+import json
 import re
 
 import frappe
@@ -35,6 +36,11 @@ class VirtualMachineSnapshot(Document):
 		memory_directory: DF.Data | None
 		memory_megabytes: DF.Int
 		rootfs_path: DF.Data | None
+		s3_bucket: DF.Data | None
+		s3_key_prefix: DF.Data | None
+		s3_objects: DF.SmallText | None
+		s3_status: DF.Literal["", "Uploading", "Uploaded", "Restoring", "Failed"]
+		s3_uploaded_at: DF.Datetime | None
 		server: DF.Link | None
 		source_image: DF.Link | None
 		status: DF.Literal["Pending", "Available", "Failed"]
@@ -54,6 +60,7 @@ class VirtualMachineSnapshot(Document):
 		cpu_max_cores: float | None = None,
 		memory_megabytes: int | None = None,
 		disk_gigabytes: int | None = None,
+		tenant: str | None = None,
 	) -> str:
 		"""Create a NEW Virtual Machine whose disk is seeded from this snapshot.
 
@@ -76,7 +83,7 @@ class VirtualMachineSnapshot(Document):
 			frappe.throw(f"Snapshot is not Available (status is {self.status})")
 		if self.kind == "Warm":
 			return self._clone_warm(
-				title, ssh_public_key, vcpus, cpu_max_cores, memory_megabytes, disk_gigabytes
+				title, ssh_public_key, vcpus, cpu_max_cores, memory_megabytes, disk_gigabytes, tenant
 			)
 		disk = int(disk_gigabytes) if disk_gigabytes else self.disk_gigabytes
 		if disk < self.disk_gigabytes:
@@ -116,6 +123,9 @@ class VirtualMachineSnapshot(Document):
 				# deploy reads it (site → rename the baked site to the FQDN; admin →
 				# map the FQDN to the admin console). Empty for a plain snapshot.
 				"build_mode": self.build_mode or None,
+				# The owning tenant (set by the Site/Pilot aggregate for a tenant-owned
+				# clone) carries attribution onto the VM. Empty for an operator clone.
+				"tenant": tenant or None,
 			}
 		).insert(ignore_permissions=True)
 		return clone.name
@@ -128,6 +138,7 @@ class VirtualMachineSnapshot(Document):
 		cpu_max_cores: float | None,
 		memory_megabytes: int | None,
 		disk_gigabytes: int | None,
+		tenant: str | None = None,
 	) -> str:
 		"""Clone that RESUMES this warm golden instead of booting it.
 
@@ -168,6 +179,8 @@ class VirtualMachineSnapshot(Document):
 				# Carry the bench bake mode onto the warm clone (a warm v16 golden is
 				# site mode), so its first-boot deploy maps the FQDN correctly.
 				"build_mode": self.build_mode or None,
+				# The owning tenant carries attribution onto the VM (see clone_to_new_vm).
+				"tenant": tenant or None,
 			}
 		).insert(ignore_permissions=True)
 		return clone.name
@@ -248,14 +261,22 @@ class VirtualMachineSnapshot(Document):
 		Rather than lose data quietly, we throw on a data-disk snapshot: promote a
 		data-less snapshot, or clone this one to preserve its data disk.
 
-		**Ordering: the image row is the durable anchor.** We insert the row FIRST,
-		then run the host `dd`. The host import is idempotent, so a host failure
-		(which raises and rolls the row back with it) leaves nothing to clean —
-		never an orphaned read-only `atlas-image-*` LV with no owning row (those are
-		protected, so the lifecycle could never reclaim one). This mirrors
-		`Virtual Machine.snapshot()`'s insert-then-host-work order.
+		**Async: insert INACTIVE, then a background job does the dd + activation.** The
+		host `dd` of a ~28 GB rootfs takes ~35s — too long to hold a web request open
+		(a gunicorn timeout mid-`dd` is what left Tasks stuck Running in production,
+		2026-07-09). So this method inserts the image row `is_active=0`, enqueues
+		`run_promote` (after_commit), and returns immediately; the job runs the `dd` and
+		flips `is_active=1` once the Task confirms the LV exists. Placement ignores
+		inactive images (placement.py), so a promote still mid-flight — or a job that
+		died — can never be provisioned from. On a host failure the job deletes the
+		inactive anchor and re-raises, so promote is all-or-nothing. We do NOT rely on
+		the image insert rolling back with a host failure: `run_task` commits its own
+		Task row mid-flight, so the two are not one transaction (relying on that rollback
+		is what left orphaned `is_active=1` rows).
 
-		Returns the new image's name."""
+		Returns the new image's name. The image is INACTIVE until the background job
+		finishes — poll `is_active` (or the enqueued Task) to know when it is
+		provisionable."""
 		if self.status != "Available":
 			frappe.throw(f"Snapshot is not Available (status is {self.status})")
 		if self.kind == "Warm":
@@ -294,7 +315,20 @@ class VirtualMachineSnapshot(Document):
 			)
 
 		rootfs_filename = f"atlas-image-{image_name}"
-		# Register the local image row FIRST — the durable anchor (see docstring).
+		# Register the local image row as the durable anchor, but INACTIVE
+		# (is_active=0) until the host dd confirms the LV exists. Placement only
+		# considers is_active=1 images (placement.py), so an inactive row is invisible
+		# to provisioning — a promote that dies mid-dd can never leave a provisionable
+		# image whose LV is missing or half-written.
+		#
+		# Ordering matters because run_task is NOT transactional with this insert: it
+		# commits its own Task row (Running, then the outcome) mid-flight, so a host
+		# failure can NOT be relied on to roll the image row back with it (that was the
+		# old assumption, and the source of orphaned is_active=1 rows). We make the
+		# lifecycle explicit instead: insert inactive → dd → activate on success, and
+		# delete the anchor ourselves on any raise. A worker KILL (no raise) still can't
+		# hurt — the row stays inactive, so it is never provisioned from.
+		#
 		# Empty kernel_url/rootfs_url => a URL-less image (validate permits it;
 		# after_insert/sync skip it — its bytes are the promoted LV, already on the
 		# server, not a download). rootfs_filename is the LV name; the on-disk file is
@@ -318,32 +352,239 @@ class VirtualMachineSnapshot(Document):
 				# promote→image path's equivalent (spec/08). Empty for a non-bench image.
 				"build_mode": self.build_mode or None,
 				"tenant": self.tenant,
-				"is_active": 1,
+				"is_active": 0,
 			}
 		).insert(ignore_permissions=True)
 
-		# Then dd the snapshot LV into the read-only atlas-image-<name> LV on the
-		# server, and materialize the image dir (kernel hard-linked from the source
-		# image, rootfs presence sentinel) so a new VM provisions from it exactly like
-		# a synced image. Idempotent on the host (a no-op if the target LV already
-		# exists). A host failure raises here and rolls back the image row above with
-		# it, so promote is all-or-nothing — never a half-state.
-		task = run_task(
-			server=self.server,
-			script="promote-snapshot-image",
-			variables={
-				"SNAPSHOT_ROOTFS_PATH": self.rootfs_path,
-				"IMAGE_NAME": image_name,
-				"DISK_GIGABYTES": str(self.disk_gigabytes),
-				"ROOTFS_FILENAME": rootfs_filename,
-				"SOURCE_IMAGE": self.source_image,
-				"KERNEL_FILENAME": source_kernel_filename,
-			},
-			virtual_machine=self.virtual_machine,
-			timeout_seconds=600,
+		# The host dd of a 28 GB rootfs takes ~35s — too long to hold a web request
+		# open (a gunicorn timeout mid-dd is exactly what left Tasks stuck Running,
+		# 2026-07-09). So the button returns here with the inactive anchor persisted,
+		# and a background job does the dd + activation. enqueue_after_commit so the
+		# worker only starts once this insert has committed (mirrors
+		# Virtual Machine.after_insert → auto_provision). A killed/lost job leaves the
+		# anchor inactive (harmless); the operator's retry re-drives _run_promote,
+		# which is idempotent (the host dd is a no-op if the LV already exists).
+		frappe.enqueue(
+			"atlas.atlas.doctype.virtual_machine_snapshot.virtual_machine_snapshot.run_promote",
+			queue="long",
+			enqueue_after_commit=True,
+			snapshot_name=self.name,
+			image_name=image.name,
 		)
-		parse_result(task.stdout)  # fail loud if the script produced no ATLAS_RESULT line
 		return image.name
+
+	def _run_promote(self, image_name: str) -> None:
+		"""Do the host half of a promote for the already-inserted inactive image row:
+		dd the snapshot LV into atlas-image-<name>, materialize the image dir, then flip
+		the row active. Idempotent — the host dd is a no-op if the LV exists, so a retry
+		re-drives it safely. On any host failure we delete the inactive anchor and
+		re-raise, so a failed promote leaves no ghost row (never a half-state). A killed
+		job (no raise) leaves the row inactive, which placement ignores."""
+		image = frappe.get_doc("Virtual Machine Image", image_name)
+		if image.is_active:
+			return  # already promoted (a raced retry) — nothing to do
+		try:
+			task = run_task(
+				server=self.server,
+				script="promote-snapshot-image",
+				variables={
+					"SNAPSHOT_ROOTFS_PATH": self.rootfs_path,
+					"IMAGE_NAME": image_name,
+					"DISK_GIGABYTES": str(self.disk_gigabytes),
+					"ROOTFS_FILENAME": image.rootfs_filename,
+					"SOURCE_IMAGE": self.source_image,
+					"KERNEL_FILENAME": image.kernel_filename,
+				},
+				virtual_machine=self.virtual_machine,
+				timeout_seconds=600,
+			)
+			parse_result(task.stdout)  # fail loud if the script produced no ATLAS_RESULT line
+		except Exception:
+			# Host dd failed (SSH error, non-zero exit, timeout, or a bad result line).
+			# Drop the inactive anchor so a retry starts clean rather than colliding with
+			# a ghost row, then re-raise so the failure surfaces in the job log.
+			frappe.delete_doc("Virtual Machine Image", image.name, ignore_permissions=True, force=True)
+			# nosemgrep: frappe-manual-commit -- persist the anchor deletion before re-raising so the failed promote leaves no ghost row
+			frappe.db.commit()
+			raise
+
+		# The LV exists and the image dir is materialized — flip the anchor active so
+		# placement can provision from it.
+		image.db_set("is_active", 1)
+
+	@frappe.whitelist()
+	def upload_to_s3(self) -> None:
+		"""Push this snapshot's artifacts to S3 for off-host durability — the disk
+		LV(s), plus (warm) the frozen memory pair + host signature. The byte movement
+		is minutes of zstd/curl, far too long for a web request (the gunicorn-timeout
+		lesson promote_to_image learned), so this sets Uploading and enqueues a
+		background job that returns immediately. Poll s3_status / the enqueued Task.
+		Idempotent — a re-run overwrites the objects. See spec/29-snapshot-backup.md."""
+		from atlas.atlas import s3
+
+		if self.status != "Available":
+			frappe.throw(f"Snapshot is not Available (status is {self.status})")
+		if not self.server or not frappe.db.exists("Server", self.server):
+			frappe.throw(_("Snapshot has no server to upload from."))
+		if not s3.is_configured():
+			frappe.throw(_("S3 Settings is not configured — set the bucket and credentials first."))
+		if self.s3_status in ("Uploading", "Restoring"):
+			frappe.throw(f"A backup operation is already running (s3_status is {self.s3_status}).")
+		self.db_set("s3_status", "Uploading")
+		frappe.enqueue(
+			"atlas.atlas.doctype.virtual_machine_snapshot.virtual_machine_snapshot.run_upload",
+			queue="long",
+			enqueue_after_commit=True,
+			snapshot_name=self.name,
+		)
+
+	def _run_upload(self) -> None:
+		"""Background half of upload_to_s3: presign a PUT per artifact, run the host
+		Task, and record the manifest. On any host failure set Failed and re-raise
+		(loud at the boundary — the operator retries the button)."""
+		from atlas.atlas import s3
+
+		backup = s3.S3Backup()
+		plan = s3.backup_plan(self)
+		for obj in plan:
+			obj["url"] = backup.presign_put(backup.object_key(self.name, obj["object_name"]))
+		try:
+			task = run_task(
+				server=self.server,
+				script="upload-snapshot-s3",
+				variables={"SNAPSHOT_NAME": self.name, "OBJECTS_JSON": json.dumps(plan)},
+				virtual_machine=self._task_vm(),
+				timeout_seconds=3600,
+			)
+			result = parse_result(task.stdout)
+		except Exception:
+			self.db_set("s3_status", "Failed")
+			# nosemgrep: frappe-manual-commit -- persist Failed before re-raising so the job log and row agree
+			frappe.db.commit()
+			raise
+		self._record_upload(backup, plan, result)
+
+	def _record_upload(self, backup, plan: list[dict], result: dict) -> None:
+		"""Merge the plan (which artifact, where, how big) with the host's measured
+		digests/sizes into the durable manifest, and flip the row Uploaded. The
+		presigned url is deliberately NOT stored — it is a time-limited secret."""
+		measured = {item["name"]: item for item in result["objects"]}
+		manifest = [
+			{
+				"name": obj["name"],
+				"object_name": obj["object_name"],
+				"source": obj["source"],
+				"block": obj["block"],
+				"compress": obj["compress"],
+				"disk_gigabytes": obj["disk_gigabytes"],
+				"sha256": measured.get(obj["name"], {}).get("sha256", ""),
+				"compressed_bytes": measured.get(obj["name"], {}).get("compressed_bytes", 0),
+				"raw_bytes": measured.get(obj["name"], {}).get("raw_bytes", 0),
+			}
+			for obj in plan
+		]
+		self.db_set(
+			{
+				"s3_status": "Uploaded",
+				"s3_bucket": backup.bucket,
+				"s3_key_prefix": backup.prefix_for(self.name),
+				"s3_size_bytes": result["total_compressed_bytes"],
+				"s3_uploaded_at": frappe.utils.now_datetime(),
+				"s3_objects": json.dumps(manifest),
+			}
+		)
+
+	@frappe.whitelist()
+	def restore_from_s3(self) -> None:
+		"""Pull this snapshot's artifacts back from S3 and rehydrate its on-host
+		LV(s) (+ warm memory pair) at the exact names the row already records, then —
+		for a Cold snapshot whose VM is Stopped — roll the VM back in place. A Warm
+		snapshot rehydrates only (consume it with Clone to new VM; warm's value is
+		fan-out, not in-place rollback — the same asymmetry promote_to_image draws).
+		Background job, like upload. See spec/29-snapshot-backup.md."""
+		if self.s3_status != "Uploaded":
+			frappe.throw(f"No S3 backup to restore (s3_status is {self.s3_status or 'empty'}).")
+		if not self.server or not frappe.db.exists("Server", self.server):
+			frappe.throw(_("Snapshot has no server to restore onto."))
+		if self.kind == "Cold":
+			self._guard_cold_rollback_target()
+		self.db_set("s3_status", "Restoring")
+		frappe.enqueue(
+			"atlas.atlas.doctype.virtual_machine_snapshot.virtual_machine_snapshot.run_restore",
+			queue="long",
+			enqueue_after_commit=True,
+			snapshot_name=self.name,
+		)
+
+	def _guard_cold_rollback_target(self) -> None:
+		"""A cold restore rolls the VM back via rebuild(), which needs a Stopped VM.
+		Check up front so a running (or vanished) VM fails BEFORE any multi-GB
+		download rather than after."""
+		if not frappe.db.exists("Virtual Machine", self.virtual_machine):
+			frappe.throw(
+				_(
+					"The snapshot's VM no longer exists; restoring to a new VM on another server is out of scope (spec/29)."
+				)
+			)
+		vm_status = frappe.db.get_value("Virtual Machine", self.virtual_machine, "status")
+		if vm_status != "Stopped":
+			frappe.throw(f"Stop {self.virtual_machine} before restoring (status is {vm_status}).")
+
+	def _run_restore(self) -> str | None:
+		"""Background half of restore_from_s3: presign a GET per manifest object, run
+		the host Task to rehydrate the artifacts, then (cold) roll the VM back.
+		Returns the rollback Task name for a cold snapshot, else None. On host failure
+		set Failed and re-raise."""
+		from atlas.atlas import s3
+
+		backup = s3.S3Backup()
+		manifest = json.loads(self.s3_objects or "[]")
+		if not manifest:
+			frappe.throw(_("No upload manifest to restore from."))
+		plan = []
+		for obj in manifest:
+			item = dict(obj)
+			item["url"] = backup.presign_get(backup.object_key(self.name, obj["object_name"]))
+			plan.append(item)
+		try:
+			task = run_task(
+				server=self.server,
+				script="restore-snapshot-s3",
+				variables={"SNAPSHOT_NAME": self.name, "OBJECTS_JSON": json.dumps(plan)},
+				virtual_machine=self._task_vm(),
+				timeout_seconds=3600,
+			)
+			parse_result(task.stdout)
+		except Exception:
+			self.db_set("s3_status", "Failed")
+			# nosemgrep: frappe-manual-commit -- persist Failed before re-raising so the job log and row agree
+			frappe.db.commit()
+			raise
+		# Rehydrated: the LVs + memory dir the row names exist again. The backup stays
+		# in S3 (Uploaded), so a later re-restore still works.
+		self.db_set("s3_status", "Uploaded")
+		if self.kind == "Cold":
+			return self.restore_to_vm()
+		return None
+
+	def _task_vm(self) -> str | None:
+		"""The VM to stamp on the backup Task as an audit backpointer — dropped if the
+		VM row is already gone (a durable snapshot can outlive its build VM)."""
+		return self.virtual_machine if frappe.db.exists("Virtual Machine", self.virtual_machine) else None
+
+	def _delete_s3_backup(self) -> None:
+		"""Best-effort: drop this snapshot's S3 objects when the row is deleted, so a
+		deleted backup leaves no paid orphan. Never blocks the local delete — an S3
+		error is logged, not raised (a bucket hiccup must not wedge a teardown)."""
+		if self.s3_status != "Uploaded":
+			return
+		try:
+			from atlas.atlas import s3
+
+			if s3.is_configured():
+				s3.S3Backup().delete_prefix(self.name)
+		except Exception:
+			frappe.log_error(f"S3 backup cleanup failed for snapshot {self.name}", "snapshot backup")
 
 	def on_trash(self) -> None:
 		"""Remove the on-host snapshot LV when the row is deleted.
@@ -358,10 +599,21 @@ class VirtualMachineSnapshot(Document):
 		removal and MUST be lvremoved here even when terminate() cascades the row
 		deletions of a Terminated VM. (No Terminated short-circuit: that would
 		leak the snapshot LV.)"""
+		# Drop the off-host S3 backup first (independent of the server/LV path below,
+		# which the guards can short-circuit — the S3 objects must be swept even if
+		# the server row is gone). Best-effort: never blocks the local delete.
+		self._delete_s3_backup()
 		if not self.server or not self.rootfs_path:
 			return
 		if not frappe.db.exists("Server", self.server):
 			return
+		# The VM link is an audit backpointer on the teardown Task, not something the
+		# LV removal needs. An orphaned snapshot (its VM already deleted, e.g. by a
+		# host reset) must still tear its LV down, so drop a dangling link rather than
+		# let Task's link validation throw on a VM that no longer exists.
+		virtual_machine = self.virtual_machine
+		if virtual_machine and not frappe.db.exists("Virtual Machine", virtual_machine):
+			virtual_machine = None
 		# Remove both halves of the snapshot: the root snap LV and (when the VM had
 		# a data disk) the data snap LV. The empty data path is dropped by the Task
 		# runner, so a data-less snapshot's teardown is unchanged. A warm row also
@@ -376,6 +628,34 @@ class VirtualMachineSnapshot(Document):
 				"DATA_SNAPSHOT_ROOTFS_PATH": self.data_rootfs_path or "",
 				"MEMORY_DIRECTORY": self.memory_directory or "",
 			},
-			virtual_machine=self.virtual_machine,
+			virtual_machine=virtual_machine,
 			timeout_seconds=60,
 		)
+
+
+def run_promote(snapshot_name: str, image_name: str) -> None:
+	"""Background-job entrypoint (enqueued by promote_to_image). Runs the host dd +
+	activation for an already-inserted inactive image row. No-op if the snapshot is
+	gone (operator deleted it) or the image already active (a raced retry)."""
+	if not frappe.db.exists("Virtual Machine Snapshot", snapshot_name):
+		return
+	if not frappe.db.exists("Virtual Machine Image", image_name):
+		return  # anchor was cleaned up by a prior failed run; nothing to drive
+	snapshot = frappe.get_doc("Virtual Machine Snapshot", snapshot_name)
+	snapshot._run_promote(image_name)
+
+
+def run_upload(snapshot_name: str) -> None:
+	"""Background-job entrypoint (enqueued by upload_to_s3). No-op if the snapshot
+	was deleted before the job ran."""
+	if not frappe.db.exists("Virtual Machine Snapshot", snapshot_name):
+		return
+	frappe.get_doc("Virtual Machine Snapshot", snapshot_name)._run_upload()
+
+
+def run_restore(snapshot_name: str) -> None:
+	"""Background-job entrypoint (enqueued by restore_from_s3). No-op if the snapshot
+	was deleted before the job ran."""
+	if not frappe.db.exists("Virtual Machine Snapshot", snapshot_name):
+		return
+	frappe.get_doc("Virtual Machine Snapshot", snapshot_name)._run_restore()

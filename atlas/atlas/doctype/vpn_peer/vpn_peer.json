@@ -1,0 +1,167 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "hash",
+ "creation": "2026-07-05 00:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 0,
+ "engine": "InnoDB",
+ "field_order": [
+  "tab_overview",
+  "label",
+  "tenant",
+  "gateway",
+  "column_break_header",
+  "status",
+  "section_break_wireguard",
+  "client_public_key",
+  "server_public_key",
+  "column_break_wireguard",
+  "client_address",
+  "allowed_ips",
+  "endpoint"
+ ],
+ "fields": [
+  {
+   "fieldname": "tab_overview",
+   "fieldtype": "Tab Break",
+   "label": "Overview"
+  },
+  {
+   "description": "Customer-facing name for the device this peer is for (e.g. alice-laptop, ci-runner).",
+   "fieldname": "label",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Label",
+   "reqd": 1
+  },
+  {
+   "description": "The tenant whose /48 this peer joins. The client lands inside this tenant's VPC and reaches every VM in it. Immutable after insert — the scope.",
+   "fieldname": "tenant",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Tenant",
+   "options": "Tenant",
+   "reqd": 1
+  },
+  {
+   "description": "The region gateway VM that terminates this peer (denormalized; resolved automatically on insert). Every customer of the region shares this one gateway's single wg0.",
+   "fieldname": "gateway",
+   "fieldtype": "Link",
+   "in_standard_filter": 1,
+   "label": "Gateway",
+   "options": "Virtual Machine",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_header",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "Pending",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Status",
+   "options": "Pending\nActive\nRevoked",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "section_break_wireguard",
+   "fieldtype": "Section Break",
+   "label": "WireGuard"
+  },
+  {
+   "description": "The customer's WireGuard public key. The customer keeps its private key; Atlas never sees it. Immutable after insert.",
+   "fieldname": "client_public_key",
+   "fieldtype": "Data",
+   "label": "Client Public Key",
+   "reqd": 1
+  },
+  {
+   "description": "The gateway's wg0 public key, read from the gateway at enroll time. One key per gateway, shared by every peer — denormalized here so the config dialog can render without re-SSHing.",
+   "fieldname": "server_public_key",
+   "fieldtype": "Data",
+   "label": "Gateway Public Key",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_wireguard",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "The client's /128 inside the tenant /48 (4th hextet 0x0001), derived from (tenant, peer). The address the laptop carries on its WireGuard interface. Source of truth is atlas.networking.derive_client_address.",
+   "fieldname": "client_address",
+   "fieldtype": "Data",
+   "label": "Client Address",
+   "read_only": 1
+  },
+  {
+   "description": "The customer-side AllowedIPs: the whole tenant /48 (route the whole VPC out the tunnel). Advisory — the customer may edit it without weakening isolation.",
+   "fieldname": "allowed_ips",
+   "fieldtype": "Data",
+   "label": "Allowed IPs",
+   "read_only": 1
+  },
+  {
+   "description": "What the customer dials: the gateway's fixed reserved public IPv4 and the shared WireGuard port.",
+   "fieldname": "endpoint",
+   "fieldtype": "Data",
+   "label": "Endpoint",
+   "read_only": 1
+  }
+ ],
+ "links": [],
+ "modified": "2026-07-05 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Atlas",
+ "name": "VPN Peer",
+ "naming_rule": "Random",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "amend": 0,
+   "cancel": 0,
+   "create": 1,
+   "delete": 1,
+   "export": 1,
+   "import": 0,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "submit": 0,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "if_owner": 1,
+   "read": 1,
+   "role": "Atlas User",
+   "write": 1
+  }
+ ],
+ "search_fields": "tenant,gateway,status",
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [
+  {
+   "title": "Pending",
+   "color": "Gray"
+  },
+  {
+   "title": "Active",
+   "color": "Green"
+  },
+  {
+   "title": "Revoked",
+   "color": "Red"
+  }
+ ],
+ "title_field": "label",
+ "track_changes": 1
+}

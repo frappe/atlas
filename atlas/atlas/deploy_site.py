@@ -30,6 +30,7 @@ Two functions, two execution sites (spec/14-self-serve.md "What runs where"):
 """
 
 import http.client
+import json
 import time
 from pathlib import Path
 
@@ -90,7 +91,14 @@ def _deploy_script_path() -> Path:
 	return Path(frappe.get_app_path("atlas", "..")).resolve() / "bench" / DEPLOY_SCRIPT_NAME
 
 
-def deploy_site(virtual_machine: str, site_name: str) -> None:
+def deploy_site(
+	virtual_machine: str,
+	site_name: str,
+	central_endpoint: str | None = None,
+	central_auth_token: str | None = None,
+	mode: str | None = None,
+	admin_domain: str | None = None,
+) -> dict | None:
 	"""Deploy one Frappe site into the (already booted) golden bench VM.
 
 	Uploads `bench/deploy-site.py` to the guest and runs it as root over guest-SSH
@@ -100,13 +108,18 @@ def deploy_site(virtual_machine: str, site_name: str) -> None:
 	v6 listener) and reloads, then confirms the bench serves on :80 (the port the
 	edge proxy's south hop dials). The production gunicorn is multitenant (no
 	`--site`), so it resolves the site from the request Host header per request — the
-	rename + reload take effect with NO restart. The owner is handed the SHARED baked
-	Administrator password (rotated after first login), so the deploy does NO
-	`set-admin-password` — dropping that ~28s CPU-throttled `bench frappe` boot is the
-	main latency win. A cold clone additionally runs `setup production` first.
+	rename + reload take effect with NO restart. The baked Administrator password is
+	a long random secret generated at bake time and never surfaced — the tenant is
+	instead handed the `login_url` this returns (a one-click session), so the deploy
+	does NO `set-admin-password` — dropping that ~28s CPU-throttled `bench frappe`
+	boot is the main latency win. A cold clone additionally runs `setup production`
+	first.
 
 	Recorded as a `deploy-site` Task row for the operator's audit trail, like every
-	guest op. Fails loud (raises) on a non-zero exit so the Site is marked Failed."""
+	guest op. Fails loud (raises) on a non-zero exit so the Site is marked Failed.
+	Returns the parsed `ATLAS_RESULT` dict (mirrors the guest's `DeploySiteResult`
+	shape: `site`, `serving`, `login_url`) — `None` if the guest's stdout carried no
+	result line (defensive; every real run emits exactly one)."""
 	import time
 
 	def _trace(message: str, since: float | None = None) -> None:
@@ -147,21 +160,38 @@ def deploy_site(virtual_machine: str, site_name: str) -> None:
 		# venv). Warm: `bench rename-site` (rename + nginx + production setup) + probe.
 		# Cold: also an idempotent `bench start` first.
 		command = substitute("python3 {} --site-name {}", (remote_script, site_name))
-		# The bake MODE is carried on the cloned VM (build_mode, set by
-		# clone_to_new_vm from the golden snapshot). site → rename the baked
-		# `site.local` to the FQDN; admin → set `[admin].domain = <fqdn>`. Empty
-		# (an ordinary clone, or a pre-build_mode golden) defaults to site, so the
-		# `--mode` flag is only passed when it is explicitly admin — keeping the
-		# command identical to before for every existing site-mode deploy.
-		build_mode = vm.build_mode or "site"
+		# The deploy MODE. Normally the bake mode carried on the cloned VM (build_mode,
+		# set by clone_to_new_vm from the golden snapshot): site → rename the baked
+		# `site.local` to the FQDN; admin → set `[admin].domain = <fqdn>`. An EXPLICIT
+		# `mode` overrides it — the one caller is a self-serve Site's attached Pilot,
+		# which wires the admin CONSOLE at the pilot FQDN on a VM whose build_mode is
+		# `site` (it also serves the customer site at a different FQDN); see
+		# spec/14-self-serve.md. Empty (an ordinary clone, or a pre-build_mode golden)
+		# defaults to site, so `--mode` is only passed when admin — keeping the command
+		# identical to before for every existing site-mode deploy.
+		build_mode = mode or vm.build_mode or "site"
 		if build_mode == "admin":
 			command += " --mode admin"
+		# The admin console's FQDN, wired into `[admin].domain` regardless of mode: a
+		# site-mode VM that also serves an attached Pilot console passes the pilot FQDN
+		# here so the admin vhost is emitted in the SAME rename-site pass (no
+		# `admin.localhost` placeholder window). Only appended when the caller knows it.
+		if admin_domain:
+			command += substitute(" --admin-domain {}", (admin_domain,))
 		# A warm-restored clone (resumed from a golden memory snapshot, not
 		# booted): the deploy gates on the in-guest identity freshen having
 		# completed for THIS VM before it renames the site — see deploy-site.py's
 		# --warm-vm-uuid.
 		if vm.warm_snapshot:
 			command += substitute(" --warm-vm-uuid {}", (vm.name,))
+		# Central handoff: the pilot's bench-level callback endpoint + token, threaded from
+		# create_site (never stored on the Site). deploy-site.py writes them into the
+		# bench's bench.toml so pilot→Central calls authenticate.
+		if central_endpoint and central_auth_token:
+			command += substitute(
+				" --central-endpoint {} --central-auth-token {}",
+				(central_endpoint, central_auth_token),
+			)
 		_trace(
 			f"running deploy-site.py in guest ({'warm' if vm.warm_snapshot else 'cold'}, mode={build_mode}) …"
 		)
@@ -171,6 +201,55 @@ def deploy_site(virtual_machine: str, site_name: str) -> None:
 	_record_guest_task(virtual_machine, "deploy-site", {"site": site_name}, stdout, stderr, code)
 	if code != 0:
 		frappe.throw(f"Deploy of {site_name} on {virtual_machine} failed (exit {code}): {stderr[-500:]}")
+	return _parse_result(stdout)
+
+
+def regenerate_login(virtual_machine: str, site_name: str, mode: str | None = None) -> dict | None:
+	"""Re-mint the one-click login URL for an already-deployed FQDN and return the
+	parsed result. The refresh Central asks for when a tenant clicks after the current
+	URL's short-lived token expired (the admin JWT lasts 5 minutes, the site session
+	24h) — so the URL is minted fresh on demand, never handed out stale.
+
+	Same guest-SSH path as `deploy_site`, but runs the guest script with
+	`--regenerate-login`: the site is already renamed / the admin domain already set,
+	so the guest skips every front-door step and only signs a new session (see
+	deploy-site.py `_regenerate_login`). Recorded as its own `regenerate-login` Task
+	row for the audit trail; fails loud on a non-zero exit. Returns the parsed
+	`ATLAS_RESULT` dict (`site`, `serving`, `login_url`) — `None` if the guest emitted
+	no result line (defensive; every real run emits exactly one). The `--mode` follows
+	the explicit `mode` when given (a self-serve Site's attached Pilot re-mints its admin
+	console URL), else the clone's `build_mode` (admin → `generate-admin-session`, else
+	`browse`), exactly as the original deploy chose it."""
+	vm = frappe.get_doc("Virtual Machine", virtual_machine)
+	connection = connection_for_guest(vm)
+	local_script = str(_deploy_script_path())
+	remote_script = f"{REMOTE_DEPLOY_DIRECTORY}/{DEPLOY_SCRIPT_NAME}"
+
+	wait_for_ssh(connection, timeout_seconds=300)
+	with ssh_key_file(connection.ssh_private_key) as key_path:
+		run_ssh(connection, key_path, "mkdir -p {}", _remote_parent(remote_script), timeout_seconds=60)
+		run_scp(connection, key_path, local_script, remote_script, timeout_seconds=300)
+		command = substitute("python3 {} --site-name {} --regenerate-login", (remote_script, site_name))
+		if (mode or vm.build_mode or "site") == "admin":
+			command += " --mode admin"
+		stdout, stderr, code = run_ssh(connection, key_path, command, timeout_seconds=600)
+	_record_guest_task(virtual_machine, "regenerate-login", {"site": site_name}, stdout, stderr, code)
+	if code != 0:
+		frappe.throw(
+			f"Regenerate login for {site_name} on {virtual_machine} failed (exit {code}): {stderr[-500:]}"
+		)
+	return _parse_result(stdout)
+
+
+def _parse_result(stdout: str) -> dict | None:
+	"""Parse the guest script's one `ATLAS_RESULT={json}` line — the last such line
+	on stdout, mirroring the guest's `DeploySiteResult.emit()` shape (`site`,
+	`serving`, and — site mode — `login_url`). `None` if absent (defensive; every
+	real run emits exactly one)."""
+	for line in reversed(stdout.splitlines()):
+		if line.startswith(RESULT_MARKER):
+			return json.loads(line[len(RESULT_MARKER) :])
+	return None
 
 
 def wait_for_http(

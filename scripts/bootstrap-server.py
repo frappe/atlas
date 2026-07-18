@@ -21,6 +21,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib
 
 from atlas._run import _substitute, install_directory, install_file, run, run_input, run_ok
 from atlas._task import TaskInputs, TaskResult
+from atlas.hostfacts import host_capacity_facts
 from atlas.lvm import ThinPool
 from atlas.network_env import default_route_device
 from atlas.paths import ATLAS_PYTHON
@@ -166,6 +167,21 @@ PACKAGES = [
 	"squashfs-tools",
 	"thin-provisioning-tools",
 	"wireguard-tools",
+	# VM migration (spec/24): qemu-utils ships qemu-nbd (the source NBD export),
+	# nbd-client connects it on the target. socat bridges the SSH-forwarded TCP
+	# stream to a tun device for the keep-address §2.1 tunnel. The `nbd` +
+	# `dm_clone` kernel modules come from linux-modules-extra, installed
+	# version-pinned in step 11b (a floating metapackage could drag in a
+	# different kernel). Folded into every Active host so migration is a
+	# first-class server capability, not a re-bootstrap-on-demand prereq.
+	"qemu-utils",
+	"nbd-client",
+	"socat",
+	# Snapshot backup to S3 (spec/29): zstd compresses each disk image / memory
+	# file on the way to S3 and decompresses it on restore. Kernel decompression in
+	# sync-image already leaned on `zstd -d`; installing it makes that dependency
+	# explicit rather than relying on it being pre-seeded.
+	"zstd",
 ]
 
 # The host's Atlas interpreter — a uv-managed venv on a controlled CPython — is
@@ -198,6 +214,14 @@ class BootstrapResult(TaskResult):
 	# backs it (the venv + install.sh's PY_VERSION constant are live truth), so the
 	# controller reads it for display only, never persists it.
 	python_version: str
+	# The host's capacity totals (see atlas.hostfacts): logical CPU count, physical
+	# RAM in MB, and the thin pool's data capacity in GB. Stamped onto the Server so
+	# placement packs against real numbers instead of the uncatalogued→unlimited
+	# fallback. Pool *fullness* (data_percent) is deliberately NOT here — it is ~0 on
+	# a freshly-created pool and is live/advisory, so the `server-facts` Task owns it.
+	vcpus_total: int
+	memory_megabytes_total: int
+	pool_disk_gigabytes_total: int
 
 
 def _uname(flag: str) -> str:
@@ -410,6 +434,19 @@ def main() -> None:
 	if "ip daddr 169.254.169.254" not in run("sudo nft list chain inet atlas forward"):
 		run("sudo nft add rule inet atlas forward ip daddr 169.254.169.254 drop")
 
+	# 9-priv. Private-plane DEFAULT-DENY (design §4a). A single terminal guard,
+	#     appended LAST, makes the fdaa::/16 private plane default-deny WITHOUT
+	#     flipping the whole forward chain's policy (public / NAT44 / reserved-IP
+	#     traffic stays under `policy accept`). Every per-VM private rule
+	#     vm-network-up.py installs is allow-by-exception, `nft insert`ed (head)
+	#     ABOVE this drop. Without it, the ABSENCE of a per-VM rule (a stale-script,
+	#     pre-feature, or half-migrated VM) would silently forward cross-tenant.
+	#     Appended here at scaffold time; vm-network-up.py re-asserts it after a host
+	#     reboot, exactly like the IMDS + masquerade rules. Idempotent (guarded on the
+	#     rule text; `add` appends so it stays terminal as long as it is present once).
+	if "ip6 daddr fdaa::/16 drop" not in run("sudo nft list chain inet atlas forward"):
+		run("sudo nft add rule inet atlas forward ip6 daddr fdaa::/16 drop")
+
 	# 9a. IPv4 egress: masquerade the per-VM private /30s (carved from
 	#     100.64.0.0/16) out the host's public uplink. One host-wide rule covers
 	#     every VM — the source range is fixed, so no per-VM NAT churn. The guest
@@ -480,17 +517,50 @@ def main() -> None:
 	ThinPool().ensure()
 	run("sudo systemctl enable atlas-pool.service", check=False, quiet=True)
 
+	# 11b. VM migration kernel modules (spec/24). The cold-migration disk move runs
+	#      over NBD into a device-mapper `clone` target, so the target host needs
+	#      `nbd` and `dm_clone`. They live in linux-modules-extra (not the cloud
+	#      kernel's base set), so install the package matching the RUNNING kernel
+	#      exactly — `linux-modules-extra-$(uname -r)`, never the floating
+	#      `-generic` metapackage, which can pull a different kernel. Then load both
+	#      modules and persist them for reboots, mirroring dm_thin_pool. The
+	#      60-atlas-blocklist (step 6) only ever lists unused fs/net modules, so it
+	#      never shadows dm_clone/nbd. `dm_clone` (CONFIG_DM_CLONE) merged in 6.4;
+	#      Ubuntu 24.04 ships 6.8, so the module is present once the extra package
+	#      is installed.
+	run("sudo apt-get -o DPkg::Lock::Timeout=300 install -y {}", f"linux-modules-extra-{_uname('-r')}")
+	run("sudo modprobe {}", "nbd")
+	run("sudo modprobe {}", "dm_clone")
+	install_file("nbd\ndm_clone\n", "/etc/modules-load.d/60-atlas-migration.conf", mode="0644")
+
+	# 11c. WireGuard host mesh (private-plane fabric, design §3). The `wireguard`
+	#      kernel module carries the mesh; the hosts run full Ubuntu with /lib/modules
+	#      (not the guest vmlinux), so `modprobe wireguard` works — the guest
+	#      CONFIG_WIREGUARD gate that variant (a) hit is dead here. Load it now and
+	#      persist it for reboots (the 60-atlas-blocklist targets unused fs/net modules
+	#      only and never touches wireguard). wireguard-tools is already in PACKAGES.
+	#      host-mesh.service re-asserts the wg-mesh device on boot (create + key +
+	#      fdaa::/16 route) once the controller has pushed /etc/atlas-host-mesh.env,
+	#      the host-fabric analog of atlas-pool.service. Enabled here; brought up by
+	#      the first reconcile_host_mesh(), not at bootstrap (no peers exist yet).
+	run("sudo modprobe wireguard")
+	install_file("wireguard\n", "/etc/modules-load.d/60-atlas-wireguard.conf", mode="0644")
+	run("sudo systemctl enable host-mesh.service", check=False, quiet=True)
 
 	# 12. Record state for Atlas to pick up. Single JSON file is the canonical
 	#     source of truth. The bytes still land in /var/lib/atlas/bootstrap.json;
 	#     BootstrapResult.emit() carries the same values on stdout as the typed
 	#     Task result (replacing the trailing `cat bootstrap.json`).
+	facts = host_capacity_facts()
 	result = BootstrapResult(
 		firecracker_version=_binary_version("/usr/local/bin/firecracker"),
 		jailer_version=_binary_version("/usr/local/bin/jailer"),
 		kernel_version=_uname("-r"),
 		architecture=_uname("-m"),
 		python_version=python_version,
+		vcpus_total=facts["vcpus_total"],
+		memory_megabytes_total=facts["memory_megabytes_total"],
+		pool_disk_gigabytes_total=facts["pool_disk_gigabytes_total"],
 	)
 	install_directory("/var/lib/atlas", mode="0755")
 	install_file(_bootstrap_json(result), "/var/lib/atlas/bootstrap.json", mode="0644")

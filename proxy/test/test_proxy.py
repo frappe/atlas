@@ -24,7 +24,16 @@ ADMIN_SOCK = "/run/nginx/admin.sock"  # inside the proxy container
 
 HTTPS = "127.0.0.1:8443"
 HTTP = "127.0.0.1:8080"
+# REGION is the bare region id (scopes the cert dir, certs/<region>/). ZONE is the
+# FULL wildcard zone the proxy strips from each Host/SNI — what the region file
+# holds (Dockerfile writes ZONE, _finalize_proxy writes active_root_domain().domain).
+# ZONE is deliberately DEEPER than "<region>.frappe.dev" (an extra `.x` label) so the
+# suffix predicate is exercised against a real platform zone like x.frappe.dev — the
+# shape that broke when the lua reconstructed the zone as region .. ".frappe.dev"
+# (every wildcard SNI missed → "no host in upstream"). A flat REGION + ".frappe.dev"
+# would have hidden that bug, since the two coincide one label under frappe.dev.
 REGION = "test"
+ZONE = "test.x.frappe.dev"
 VM_A = "fd00:a71a:5::a"
 VM_B = "fd00:a71a:5::b"
 
@@ -62,9 +71,9 @@ def fetch(
 	http2: bool = False,
 	extra: list[str] | None = None,
 ) -> tuple[int, str, str]:
-	"""curl the proxy with Host/SNI forced to <subdomain>.test.local.
+	"""curl the proxy with Host/SNI forced to <subdomain>.<ZONE>.
 	Returns (status, body, headers)."""
-	host = f"{subdomain}.{REGION}.frappe.dev"
+	host = f"{subdomain}.{ZONE}"
 	target = HTTPS if scheme == "https" else HTTP
 	ip, _, port = target.partition(":")
 	# Dump headers to a temp file (-D) so stdout is the body alone; the status
@@ -82,6 +91,34 @@ def fetch(
 	res = subprocess.run(cmd, capture_output=True, text=True)
 	body, _, status = res.stdout.rpartition(marker)
 	return int(status or 0), body, res.stderr
+
+
+def terminator(host: str, path: str = "/", container: str = "proxy") -> tuple[str, str]:
+	"""Probe the wildcard TLS terminator DIRECTLY; return (status, body). The terminator
+	listens on loopback 127.0.0.1:8443 `ssl proxy_protocol` (the public :443 SNI
+	front-door is what's published on host 8443 → container 443), so a host probe can't
+	reach it: it's loopback-bound AND requires the PROXY header the front-door emits. We
+	curl it FROM INSIDE the container with --haproxy-protocol — exactly the hop the
+	front-door makes — so these tests exercise the terminator's own behavior
+	(default_server branded 404, host-suffix routing) without depending on the
+	front-door's SNI fork. Junk/non-zone SNI at the PUBLIC :443 is a separate concern,
+	covered by test_front_door_drops_unroutable_sni below."""
+	# Marker must NOT start with '@' — curl's -w reads "@file" as a format file.
+	marker = "\nSTATUS::"
+	curl = [
+		"curl",
+		"-sk",
+		"--haproxy-protocol",
+		"-w",
+		marker + "%{http_code}",
+		"--resolve",
+		f"{host}:8443:127.0.0.1",
+		f"https://{host}:8443{path}",
+	]
+	cmd = ["docker", "compose", "exec", "-T", container, *curl]
+	out = subprocess.run(cmd, cwd=HERE, capture_output=True, text=True, check=True).stdout
+	body, _, status = out.rpartition(marker)
+	return status.strip(), body
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -113,7 +150,7 @@ def test_routing_preserves_host():
 	status, body, _ = fetch("acme")
 	assert status == 200
 	assert "upstream=vm-a" in body
-	assert "host=acme.test.frappe.dev" in body  # Host preserved end-to-end
+	assert "host=acme.test.x.frappe.dev" in body  # Host preserved end-to-end
 
 
 def test_multi_subdomain_one_vm():
@@ -159,22 +196,11 @@ def test_tombstone_serves_503():
 
 def test_no_region_suffix_serves_404():
 	# A host that doesn't end in ".<region>.frappe.dev" has no derivable subdomain
-	# under a configured region → branded 404, never a 500.
+	# under a configured region → the terminator's branded 404, never a 500. Probed
+	# directly at the terminator (the front-door would drop a non-zone SNI at L4 before
+	# it ever reaches here — that drop is asserted by test_front_door_drops_unroutable_sni).
 	admin("PUT", "/map/acme", VM_A)
-	host = "acme.wrongregion.example.com"
-	cmd = [
-		"curl",
-		"-sk",
-		"-o",
-		"/dev/null",
-		"-w",
-		"%{http_code}",
-		"--resolve",
-		f"{host}:8443:127.0.0.1",
-		f"https://{host}:8443/",
-	]
-	status = subprocess.run(cmd, capture_output=True, text=True).stdout.strip()
-	assert status == "404", status
+	assert terminator("acme.wrongregion.example.com")[0] == "404"
 
 
 # --- bulk /sync ------------------------------------------------------------
@@ -278,7 +304,7 @@ def test_restart_reloads_from_mapjson():
 def test_http_redirects_to_https():
 	status, _, headers = fetch("acme", scheme="http")
 	assert status == 308
-	assert "location: https://acme.test.frappe.dev" in headers.lower()
+	assert "location: https://acme.test.x.frappe.dev" in headers.lower()
 
 
 # --- HTTP/2 ----------------------------------------------------------------
@@ -348,7 +374,7 @@ def test_tls11_refused():
 	# nginx.conf pins ssl_protocols TLSv1.2 TLSv1.3. Forcing a 1.1-max handshake
 	# must be refused (curl can't negotiate → exits non-zero, status "000"). We
 	# cap at 1.1 with --tls-max so curl doesn't fall back up to an allowed version.
-	host = f"acme.{REGION}.frappe.dev"
+	host = f"acme.{ZONE}"
 	cmd = [
 		"curl",
 		"-sk",
@@ -425,11 +451,13 @@ def test_host_case_insensitive_routes():
 	# route identically to lowercase. (nginx core lowercases $host before Lua, and
 	# router.lua also :lower()s — together they keep routing case-insensitive.)
 	admin("PUT", "/map/acme", VM_A)
-	status, body, _ = fetch("acme", extra=["-H", "Host: ACME.TEST.FRAPPE.DEV"])
+	# Uppercase the WHOLE host (subdomain + the real zone) — the suffix must still be the
+	# active zone or router.lua can't strip it; the point is case, not zone.
+	status, body, _ = fetch("acme", extra=["-H", f"Host: {('acme.' + ZONE).upper()}"])
 	assert status == 200
 	assert "upstream=vm-a" in body
 	# Observation (not the assertion's point): the forwarded host is lowercase.
-	assert "host=acme.test.frappe.dev" in body
+	assert f"host=acme.{ZONE}" in body
 
 
 def test_sni_host_mismatch_routes_by_host():
@@ -438,8 +466,8 @@ def test_sni_host_mismatch_routes_by_host():
 	# an explicit Host while --resolve sets SNI to acme.)
 	admin("PUT", "/map/acme", VM_A)
 	admin("PUT", "/map/widgets", VM_B)
-	host_sni = f"acme.{REGION}.frappe.dev"  # SNI / cert match
-	host_hdr = f"widgets.{REGION}.frappe.dev"  # routing key
+	host_sni = f"acme.{ZONE}"  # SNI / cert match
+	host_hdr = f"widgets.{ZONE}"  # routing key
 	cmd = [
 		"curl",
 		"-sk",
@@ -544,7 +572,7 @@ def test_acme_challenge_served_not_redirected():
 	token_dir = "/var/lib/nginx/acme/.well-known/acme-challenge"
 	exec_proxy_text("mkdir", "-p", token_dir)
 	exec_proxy_text("sh", "-c", f"printf 'TOKEN-OK' > {token_dir}/probe")
-	host = f"acme.{REGION}.frappe.dev"
+	host = f"acme.{ZONE}"
 	cmd = [
 		"curl",
 		"-s",
@@ -563,23 +591,54 @@ def test_acme_challenge_served_not_redirected():
 
 
 def test_default_server_handles_bare_ip_host():
-	# A request whose Host is a bare IP (no derivable subdomain under the region)
-	# hits the default_server and gets the branded 404 — never a 500/000.
+	# A request whose Host has no derivable subdomain under the region (a bare IP, or
+	# the bare zone with no subdomain label) reaches the terminator's default_server and
+	# gets the branded 404 — never a 500/000. Probed directly at the terminator; such a
+	# name carries no zone-matching SNI, so at the public :443 it is dropped at L4
+	# (test_front_door_drops_unroutable_sni), never reaching the default_server.
 	admin("PUT", "/map/acme", VM_A)  # seed something routable
-	for host in ("127.0.0.1", f"{REGION}.frappe.dev"):
-		cmd = [
-			"curl",
-			"-sk",
-			"-o",
-			"/dev/null",
-			"-w",
-			"%{http_code}",
-			"--resolve",
-			f"{host}:8443:127.0.0.1",
-			f"https://{host}:8443/",
-		]
-		status = subprocess.run(cmd, capture_output=True, text=True).stdout.strip()
-		assert status == "404", f"bare-IP host {host!r} gave {status}, want 404"
+	for host in ("127.0.0.1", ZONE):
+		assert terminator(host)[0] == "404", f"bare-IP host {host!r} did not get branded 404"
+
+
+def test_front_door_forks_unroutable_sni():
+	# The public :443 SNI front-door (sni_router.lua) routes raw TLS by the ClientHello
+	# SNI: a name under the wildcard zone → the wildcard terminator (8443), a known custom
+	# domain → the strip-path (8445). The two miss cases SPLIT:
+	#   - a NAMED miss (a foreign domain, or the bare zone with no subdomain label) → the
+	#     dummy-cert terminator (8446), which serves the branded "Domain not configured"
+	#     page with status 404 over the self-signed placeholder cert (-k past the warning);
+	#   - an SNI-LESS connection (a bare IP — curl sends no SNI for an IP literal) → DROP at
+	#     L4 (ngx.exit(ngx.ERROR)), no handshake, curl fails (non-zero rc / 000).
+	admin("PUT", "/map/acme", VM_A)  # a populated map must not matter
+
+	def front(host: str) -> subprocess.CompletedProcess:
+		return subprocess.run(
+			[
+				"curl",
+				"-sk",
+				"-o",
+				"/dev/null",
+				"-w",
+				"%{http_code}",
+				"--resolve",
+				f"{host}:{HTTPS.rpartition(':')[2]}:127.0.0.1",
+				f"https://{host}:{HTTPS.rpartition(':')[2]}/",
+			],
+			capture_output=True,
+			text=True,
+		)
+
+	# Named misses now terminate on the dummy cert and serve the branded page (404).
+	for host in ("acme.wrongregion.example.com", ZONE):
+		res = front(host)
+		assert res.returncode == 0, f"{host!r} did not complete (rc={res.returncode})"
+		assert res.stdout.strip() == "404", f"{host!r} got HTTP {res.stdout.strip()}, expected branded 404"
+
+	# A bare-IP client sends no SNI → still an L4 drop, no handshake.
+	res = front("127.0.0.1")
+	assert res.returncode != 0, f"bare IP unexpectedly completed (rc=0, status={res.stdout.strip()})"
+	assert res.stdout.strip() in ("000", ""), f"bare IP got HTTP {res.stdout.strip()}, expected an L4 drop"
 
 
 # --- admin route/method dispatch -------------------------------------------
@@ -708,9 +767,9 @@ def test_weird_host_headers_degrade():
 	# (Sending the weird value via --resolve instead would make curl reject the
 	# resolve entry before the proxy ever sees it — a curl artifact, not behavior.)
 	admin("PUT", "/map/acme", VM_A)
-	sni = f"acme.{REGION}.frappe.dev"
+	sni = f"acme.{ZONE}"
 	expect = {
-		f".{REGION}.frappe.dev": ("404",),  # empty subdomain → branded 404
+		f".{ZONE}": ("404",),  # empty subdomain → branded 404
 		"192.0.2.7": ("404",),  # no region suffix → branded 404
 		"fd00:a71a:5::1": ("400",),  # invalid Host → nginx 400 (pre-Lua)
 	}
@@ -931,40 +990,18 @@ def test_corrupt_mapjson_boots_and_serves(corrupt):
 
 
 def test_empty_region_first_label_fallback():
-	# With NO region configured, router.lua falls back to routing by the first host
-	# label (everything before the first dot) instead of 500ing. The proxy-noregion
-	# service runs the SAME image with an empty /var/lib/nginx/region; drive it on
-	# :8444. A dotted host routes by its first label; a dotless host has no label to
-	# strip → branded 404.
+	# With NO region configured, router.lua (the L7 terminator) falls back to routing by
+	# the first host label (everything before the first dot) instead of 500ing. The
+	# proxy-noregion service runs the SAME image with an empty /var/lib/nginx/region. This
+	# is a terminator behavior, so we probe its terminator directly (the empty-region
+	# front-door has no zone to match an SNI against, so it can't fork there): a dotted
+	# host routes by its first label; a dotless host has no label to strip → branded 404.
 	noregion_admin("PUT", "/map/acme", VM_A)
-	host = "acme.anything.example.com"
-	cmd = [
-		"curl",
-		"-sk",
-		"-w",
-		"\n%{http_code}",
-		"--resolve",
-		f"{host}:8444:127.0.0.1",
-		f"https://{host}:8444/",
-	]
-	out = subprocess.run(cmd, capture_output=True, text=True).stdout
-	body, _, status = out.rpartition("\n")
-	assert status == "200", out
-	assert "upstream=vm-a" in body, out
+	status, body = terminator("acme.anything.example.com", container="proxy-noregion")
+	assert status == "200", (status, body)
+	assert "upstream=vm-a" in body, body
 	# A dotless host (no first label to strip) → branded 404, not a 500.
-	cmd = [
-		"curl",
-		"-sk",
-		"-o",
-		"/dev/null",
-		"-w",
-		"%{http_code}",
-		"--resolve",
-		"acme:8444:127.0.0.1",
-		"https://acme:8444/",
-	]
-	status = subprocess.run(cmd, capture_output=True, text=True).stdout.strip()
-	assert status == "404", status
+	assert terminator("acme", container="proxy-noregion")[0] == "404"
 
 
 # --- helpers ---------------------------------------------------------------
@@ -976,7 +1013,7 @@ VM_BAD = "fd00:a71a:5::bad"
 def fetch_rc(subdomain: str, path: str = "/", extra: list[str] | None = None) -> int:
 	"""Like fetch() but returns curl's exit code — for asserting a transport
 	failure (e.g. an upstream that closes mid-body) rather than a status."""
-	host = f"{subdomain}.{REGION}.frappe.dev"
+	host = f"{subdomain}.{ZONE}"
 	cmd = [
 		"curl",
 		"-sk",

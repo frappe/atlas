@@ -37,7 +37,10 @@ In summary, in this order:
 1. Verifies architecture matches and `/dev/kvm` is readable+writable.
 2. Waits for the apt locks to clear, then installs `ca-certificates`,
    `curl`, `e2fsprogs`, `iproute2`, `jq`, `lvm2`, `nftables`,
-   `squashfs-tools`, `thin-provisioning-tools`.
+   `squashfs-tools`, `thin-provisioning-tools`, and the VM-migration userspace
+   (`qemu-utils` for `qemu-nbd`, `nbd-client`, `socat` for the keep-address §2.1
+   tunnel; the matching `nbd`/`dm_clone` kernel modules are installed
+   version-pinned in step 8b).
    A freshly-booted cloud image still has cloud-init / unattended-upgrades
    running its own `apt-get` for the first minutes, holding the apt locks;
    the script blocks on `cloud-init status --wait` and then polls the
@@ -85,6 +88,18 @@ In summary, in this order:
    gate. So by the time `bootstrap-server` runs — itself as `atlas bootstrap-server`
    on that venv — the interpreter every other Task and every VM-boot hook uses is
    already proven. See *The Atlas interpreter and CLI* below.
+<<<<<<< HEAD
+=======
+10. Installs the **VM-migration kernel modules** (spec/24; the script's
+   step 11b): the cold-migration disk move runs over NBD into a device-mapper
+   `clone` target, so every host carries `nbd` and `dm_clone`. They live in `linux-modules-extra`, so the
+   script installs the package matching the **running** kernel exactly
+   (`linux-modules-extra-$(uname -r)`, never the floating `-generic`
+   metapackage), loads both modules, and persists them via
+   `/etc/modules-load.d/60-atlas-migration.conf` — the same pattern as
+   `dm_thin_pool`. `CONFIG_DM_CLONE` merged in kernel 6.4 and Ubuntu 24.04 ships
+   6.8, so the module is present once the extra package is on.
+>>>>>>> origin/main
 11. Writes `FIRECRACKER_VERSION`, `JAILER_VERSION`, `KERNEL_VERSION`,
    `ARCHITECTURE`, and `PYTHON_VERSION` to `/var/lib/atlas/bootstrap.json` (the
    single source of truth) and `cat`s it on stdout. `firecracker_version` and

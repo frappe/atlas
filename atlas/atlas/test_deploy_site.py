@@ -138,20 +138,23 @@ class TestDeploySite(IntegrationTestCase):
 
 	def test_uploads_and_runs_with_fqdn_no_password(self) -> None:
 		vm_name = self._make_backing_vm()
-		# run_ssh: (stdout, stderr, exit_code). The script's own ATLAS_RESULT line is
-		# on stdout; deploy_site doesn't parse it (the rename model returns nothing),
-		# but a realistic stdout is recorded on the Task.
+		# run_ssh: (stdout, stderr, exit_code). The guest's own ATLAS_RESULT line
+		# carries the minted login_url; deploy_site parses the LAST such line.
+		login_url = "https://acme.blr1.frappe.dev/app?sid=abc123"
+		stdout = (
+			f'noise\nATLAS_RESULT={{"site": "acme.blr1.frappe.dev", "serving": true, '
+			f'"login_url": "{login_url}"}}'
+		)
 		with (
-			patch.object(deploy_module, "run_ssh", return_value=("ATLAS_RESULT={}", "", 0)) as m_ssh,
+			patch.object(deploy_module, "run_ssh", return_value=(stdout, "", 0)) as m_ssh,
 			patch.object(deploy_module, "run_scp") as m_scp,
 			patch.object(deploy_module, "wait_for_ssh") as m_wait,
 		):
 			result = deploy_module.deploy_site(vm_name, "acme.blr1.frappe.dev")
 		# The deploy gates on sshd answering before the first scp (clone boot-storm guard).
 		m_wait.assert_called_once()
-		# The rename model returns nothing — the owner gets the baked password, stored
-		# by the Site controller, not a value the guest hands back.
-		self.assertIsNone(result)
+		# The parsed result carries the tenant's one-click login URL — not a password.
+		self.assertEqual(result["login_url"], login_url)
 		# The script was scp'd to the guest, then run.
 		m_scp.assert_called_once()
 		self.assertIn(deploy_module.DEPLOY_SCRIPT_NAME, m_scp.call_args.args[3])
@@ -302,6 +305,84 @@ class TestGuestScriptTypedIO(IntegrationTestCase):
 		payload = json.loads(lines[0][len(self.guest.RESULT_MARKER) :])
 		self.assertEqual(payload, {"site": "acme.blr1.frappe.dev", "serving": True})
 
+	def test_result_emits_login_url_when_present(self) -> None:
+		import io
+		import json
+		from contextlib import redirect_stdout
+
+		buffer = io.StringIO()
+		login_url = "https://acme.blr1.frappe.dev/app?sid=abc123"
+		with redirect_stdout(buffer):
+			self.guest.DeploySiteResult(site="acme.blr1.frappe.dev", serving=True, login_url=login_url).emit()
+		line = next(line for line in buffer.getvalue().splitlines() if line)
+		payload = json.loads(line[len(self.guest.RESULT_MARKER) :])
+		self.assertEqual(payload["login_url"], login_url)
+
+	def test_mint_login_url_uses_browse_sid_no_password(self) -> None:
+		"""`_mint_login_url` mints via `bench browse` (never a password) and builds
+		`https://<fqdn>/app?sid=<sid>` from the sid parsed out of its printed Login
+		URL — there is no `--sid` flag on stock Frappe's `browse`."""
+		with patch.object(
+			self.guest, "_bench", return_value="Login URL: http://acme.blr1.frappe.dev:8000/app?sid=abc123\n"
+		) as m_bench:
+			url = self.guest._mint_login_url("acme.blr1.frappe.dev")
+		self.assertEqual(url, "https://acme.blr1.frappe.dev/app?sid=abc123")
+		call_args = m_bench.call_args
+		self.assertTrue(call_args.kwargs.get("capture"))
+		positional = call_args.args
+		self.assertIn("browse", positional)
+		self.assertNotIn("--sid", positional)
+		self.assertIn("--session-end", positional)
+		self.assertNotIn("--password", positional)
+
+	def test_mint_login_url_fails_loud_without_sid(self) -> None:
+		"""If `bench browse` ever prints no `sid=` (a broken guest, a future Frappe
+		change), fail loud with the raw output rather than minting a garbage URL."""
+		with patch.object(
+			self.guest, "_bench", return_value="Login URL: http://acme.blr1.frappe.dev:8000/app\n"
+		):
+			with self.assertRaises(SystemExit):
+				self.guest._mint_login_url("acme.blr1.frappe.dev")
+
+	def test_await_db_ready_returns_when_unit_active(self) -> None:
+		"""The gate returns as soon as `systemctl is-active mariadb@<bench>` exits 0
+		(the Type=notify unit has opened its socket) — and probes the right unit."""
+		import subprocess as sp
+
+		with patch.object(self.guest.subprocess, "run", return_value=sp.CompletedProcess([], 0)) as m_run:
+			self.guest._await_db_ready()
+		m_run.assert_called_once()
+		self.assertEqual(
+			m_run.call_args.args[0],
+			["systemctl", "is-active", "--quiet", f"mariadb@{self.guest.BENCH_NAME}.service"],
+		)
+
+	def test_await_db_ready_polls_until_active(self) -> None:
+		"""On a snapshot-booted clone MariaDB can still be starting: the gate keeps
+		polling (returncode 3 = inactive) until it flips to active, then returns."""
+		import subprocess as sp
+
+		codes = [sp.CompletedProcess([], 3), sp.CompletedProcess([], 3), sp.CompletedProcess([], 0)]
+		with (
+			patch.object(self.guest.subprocess, "run", side_effect=codes) as m_run,
+			patch.object(self.guest.time, "sleep") as m_sleep,
+		):
+			self.guest._await_db_ready()
+		self.assertEqual(m_run.call_count, 3)
+		self.assertEqual(m_sleep.call_count, 2)
+
+	def test_await_db_ready_fails_loud_on_timeout(self) -> None:
+		"""If MariaDB never comes up, exit loud (not a swallowed browse crash later)."""
+		import subprocess as sp
+
+		with (
+			patch.object(self.guest.subprocess, "run", return_value=sp.CompletedProcess([], 3)),
+			patch.object(self.guest.time, "sleep"),
+		):
+			with self.assertRaises(SystemExit) as raised:
+				self.guest._await_db_ready(timeout_seconds=0.01)
+		self.assertIn("did not become active", str(raised.exception))
+
 	def test_baked_site_constant_matches_build_sh(self) -> None:
 		"""The baked-site name the deploy renames must stay in lockstep with the name
 		build.sh bakes (BAKED_SITE). A drift would make `_rename_site_to_fqdn`'s
@@ -364,13 +445,15 @@ class TestGuestScriptTypedIO(IntegrationTestCase):
 		gates on the freshen and renames the site (`bench rename-site` does nginx +
 		production setup itself) — NO `bench start`, NO restart. That absence is the
 		latency win. The rename is mocked here, so the deploy path makes no direct
-		`_bench` call of its own."""
+		`_bench` call of its own (login-URL minting is mocked separately)."""
 		guest = self.guest
 		with (
 			patch.object(guest, "_preflight"),
 			patch.object(guest, "_await_freshen") as m_freshen,
+			patch.object(guest, "_await_db_ready"),
 			patch.object(guest, "_bench") as m_bench,
 			patch.object(guest, "_rename_site_to_fqdn", return_value=True) as m_rename,
+			patch.object(guest, "_mint_login_url", return_value="https://acme.blr1.frappe.dev/app?sid=x"),
 			patch.object(guest, "_serving", return_value=True),
 			patch.object(
 				guest.DeploySiteInputs,
@@ -393,8 +476,10 @@ class TestGuestScriptTypedIO(IntegrationTestCase):
 		with (
 			patch.object(guest, "_preflight"),
 			patch.object(guest, "_await_freshen") as m_freshen,
+			patch.object(guest, "_await_db_ready") as m_db_ready,
 			patch.object(guest, "_bench") as m_bench,
 			patch.object(guest, "_rename_site_to_fqdn", return_value=True) as m_rename,
+			patch.object(guest, "_mint_login_url", return_value="https://acme.blr1.frappe.dev/app?sid=x"),
 			patch.object(guest, "_serving", return_value=True),
 			patch.object(
 				guest.DeploySiteInputs,
@@ -404,17 +489,24 @@ class TestGuestScriptTypedIO(IntegrationTestCase):
 		):
 			guest.main()
 		m_bench.assert_called_once_with("start")
+		# The DB-readiness gate runs before rename/mint — the whole point is that a
+		# snapshot-booted clone's MariaDB can still be starting when the deploy lands.
+		m_db_ready.assert_called_once()
 		m_rename.assert_called_once_with("acme.blr1.frappe.dev")
 		m_freshen.assert_not_called()
 
 	def test_admin_main_sets_admin_domain_no_rename(self) -> None:
 		"""Admin mode: no site rename — instead `[admin].domain` is set to the FQDN +
-		`bench setup production`, mapping the FQDN to the admin app's vhost."""
+		`bench setup production`, mapping the FQDN to the admin app's vhost — then
+		the admin login URL is minted (Pilot #117 `generate-admin-session`)."""
 		guest = self.guest
+		admin_login_url = "http://admin.blr1.frappe.dev/?sid=jwt-token"
 		with (
 			patch.object(guest, "_preflight"),
+			patch.object(guest, "_await_db_ready"),
 			patch.object(guest, "_bench"),
 			patch.object(guest, "_set_admin_domain") as m_admin,
+			patch.object(guest, "_mint_admin_login_url", return_value=admin_login_url) as m_mint,
 			patch.object(guest, "_rename_site_to_fqdn") as m_rename,
 			patch.object(guest, "_serving", return_value=True),
 			patch.object(
@@ -428,6 +520,19 @@ class TestGuestScriptTypedIO(IntegrationTestCase):
 			guest.main()
 		m_admin.assert_called_once_with("acme.blr1.frappe.dev")
 		m_rename.assert_not_called()
+		# Minting runs AFTER _set_admin_domain, so the printed URL carries the real
+		# FQDN, not the placeholder admin.localhost.
+		m_mint.assert_called_once_with()
+
+	def test_mint_admin_login_url_uses_generate_admin_session_full_path(self) -> None:
+		"""`_mint_admin_login_url` shells out to Pilot #117's
+		`bench generate-admin-session --full-path` and returns its bare stdout —
+		never touching the (random, bake-time) [admin].password."""
+		guest = self.guest
+		with patch.object(guest, "_bench", return_value="http://admin.example/?sid=jwt\n") as m_bench:
+			url = guest._mint_admin_login_url()
+		self.assertEqual(url, "http://admin.example/?sid=jwt")
+		m_bench.assert_called_once_with("generate-admin-session", "--full-path", capture=True)
 
 	def test_set_admin_domain_rewrites_toml_and_regenerates(self) -> None:
 		"""Admin mode points the admin vhost at the FQDN by rewriting `domain = ""`
@@ -446,3 +551,126 @@ class TestGuestScriptTypedIO(IntegrationTestCase):
 				self.guest._set_admin_domain("acme.blr1.frappe.dev")
 			self.assertIn('domain = "acme.blr1.frappe.dev"', open(toml).read())
 			m_bench.assert_called_once_with("setup", "production")
+
+	def test_set_admin_domain_skips_setup_when_run_setup_false(self) -> None:
+		"""`run_setup=False` writes the toml line but does NOT run production setup — the
+		site-mode caller's later `bench rename-site` regenerates nginx in one pass, so a
+		second setup here would be a redundant CPU-throttled no-op."""
+		import os
+		import tempfile
+
+		with tempfile.TemporaryDirectory() as tmp:
+			toml = os.path.join(tmp, "bench.toml")
+			with open(toml, "w") as f:
+				f.write('[admin]\nenabled = true\ndomain = ""\n')
+			with (
+				patch.object(self.guest, "BENCH_TOML", toml),
+				patch.object(self.guest, "_bench") as m_bench,
+			):
+				self.guest._set_admin_domain("acme-pilot.blr1.frappe.dev", run_setup=False)
+			self.assertIn('domain = "acme-pilot.blr1.frappe.dev"', open(toml).read())
+			m_bench.assert_not_called()
+
+	def test_from_args_parses_admin_domain(self) -> None:
+		inputs = self.guest.DeploySiteInputs.from_args(
+			["--site-name", "acme.blr1.frappe.dev", "--admin-domain", "acme-pilot.blr1.frappe.dev"]
+		)
+		self.assertEqual(inputs.admin_domain, "acme-pilot.blr1.frappe.dev")
+		# Defaults empty when the flag is absent (an ordinary deploy that knows no console FQDN).
+		bare = self.guest.DeploySiteInputs.from_args(["--site-name", "acme.blr1.frappe.dev"])
+		self.assertEqual(bare.admin_domain, "")
+
+	def test_site_main_sets_admin_domain_before_rename(self) -> None:
+		"""site mode with --admin-domain: `[admin].domain` is written (run_setup=False)
+		BEFORE the rename, so the rename-site's production setup emits the admin vhost in
+		the same pass — the console is reachable at its real FQDN out of this one deploy,
+		not left at the baked `admin.localhost`."""
+		guest = self.guest
+		calls = []
+		with (
+			patch.object(guest, "_preflight"),
+			patch.object(guest, "_await_db_ready"),
+			patch.object(guest, "_bench"),
+			patch.object(
+				guest, "_set_admin_domain", side_effect=lambda *a, **k: calls.append(("admin", a, k))
+			) as m_admin,
+			patch.object(
+				guest, "_rename_site_to_fqdn", side_effect=lambda *a: calls.append(("rename", a, {})) or True
+			),
+			patch.object(guest, "_mint_login_url", return_value="https://acme.blr1.frappe.dev/app?sid=x"),
+			patch.object(guest, "_serving", return_value=True),
+			patch.object(
+				guest.DeploySiteInputs,
+				"from_args",
+				return_value=guest.DeploySiteInputs(
+					site_name="acme.blr1.frappe.dev",
+					warm_vm_uuid="",
+					admin_domain="acme-pilot.blr1.frappe.dev",
+				),
+			),
+		):
+			guest.main()
+		# The admin domain is the PILOT FQDN, written with run_setup=False, and the write
+		# lands strictly before the rename.
+		m_admin.assert_called_once_with(
+			"acme-pilot.blr1.frappe.dev", run_setup=False, update_site="site.local"
+		)
+		self.assertEqual([c[0] for c in calls], ["admin", "rename"])
+
+	def test_site_main_skips_admin_domain_when_not_given(self) -> None:
+		"""No --admin-domain (an ordinary site deploy that knows no console): the admin
+		domain write is skipped entirely — back-compat for every existing site deploy."""
+		guest = self.guest
+		with (
+			patch.object(guest, "_preflight"),
+			patch.object(guest, "_await_db_ready"),
+			patch.object(guest, "_bench"),
+			patch.object(guest, "_set_admin_domain") as m_admin,
+			patch.object(guest, "_rename_site_to_fqdn", return_value=True),
+			patch.object(guest, "_mint_login_url", return_value="https://acme.blr1.frappe.dev/app?sid=x"),
+			patch.object(guest, "_serving", return_value=True),
+			patch.object(
+				guest.DeploySiteInputs,
+				"from_args",
+				return_value=guest.DeploySiteInputs(site_name="acme.blr1.frappe.dev", warm_vm_uuid=""),
+			),
+		):
+			guest.main()
+		m_admin.assert_not_called()
+
+	def test_site_main_writes_central_config_after_admin_domain(self) -> None:
+		"""Ordering invariant: `set-central-config` reads `[admin].domain` out of
+		bench.toml to write site_config.json, so it MUST run after the admin domain is in
+		place — never before, or it captures the `admin.localhost` placeholder."""
+		guest = self.guest
+		order = []
+		with (
+			patch.object(guest, "_preflight"),
+			patch.object(guest, "_await_db_ready"),
+			patch.object(
+				guest, "_set_admin_domain", side_effect=lambda *a, **k: order.append("admin-domain")
+			),
+			patch.object(guest, "_rename_site_to_fqdn", return_value=True),
+			patch.object(guest, "_mint_login_url", return_value="https://acme.blr1.frappe.dev/app?sid=x"),
+			patch.object(guest, "_serving", return_value=True),
+			patch.object(
+				guest,
+				"_bench",
+				side_effect=lambda *a, **k: order.append(a[0])
+				if a and a[0] == "set-central-config"
+				else None,
+			),
+			patch.object(
+				guest.DeploySiteInputs,
+				"from_args",
+				return_value=guest.DeploySiteInputs(
+					site_name="acme.blr1.frappe.dev",
+					warm_vm_uuid="",
+					admin_domain="acme-pilot.blr1.frappe.dev",
+					central_endpoint="https://central.example",
+					central_auth_token="tok",
+				),
+			),
+		):
+			guest.main()
+		self.assertEqual(order, ["admin-domain", "set-central-config"])

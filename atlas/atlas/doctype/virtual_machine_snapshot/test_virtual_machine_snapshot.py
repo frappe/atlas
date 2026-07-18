@@ -1,3 +1,4 @@
+import json
 from unittest.mock import patch
 
 import frappe
@@ -227,11 +228,39 @@ class TestVirtualMachineSnapshot(IntegrationTestCase):
 			mocked.call_args.kwargs["variables"]["DATA_SNAPSHOT_ROOTFS_PATH"], snapshot.data_rootfs_path
 		)
 
-	def test_promote_to_image_creates_local_image_row(self) -> None:
+	def test_promote_inserts_inactive_and_enqueues(self) -> None:
+		# The button inserts the image row INACTIVE and hands the long host dd to a
+		# background job — no run_task in the request. is_active=0 keeps placement from
+		# provisioning a half-baked image while the dd is still in flight.
+		snapshot = _make_snapshot(_stopped_vm())
+		frappe.db.delete("Virtual Machine Image", {"image_name": "promoted-async"})
+		with patch("frappe.enqueue") as enqueue:
+			image_name = snapshot.promote_to_image("promoted-async")
+
+		image = frappe.get_doc("Virtual Machine Image", image_name)
+		self.assertEqual(image.name, "promoted-async")
+		self.assertEqual(image.is_active, 0)  # not provisionable until the job finishes
+		self.assertTrue(image.is_local)
+		# The job is enqueued to run the host half, keyed by snapshot + image name.
+		call = enqueue.call_args
+		self.assertEqual(
+			call.args[0],
+			"atlas.atlas.doctype.virtual_machine_snapshot.virtual_machine_snapshot.run_promote",
+		)
+		self.assertTrue(call.kwargs["enqueue_after_commit"])
+		self.assertEqual(call.kwargs["snapshot_name"], snapshot.name)
+		self.assertEqual(call.kwargs["image_name"], "promoted-async")
+
+	def test_run_promote_runs_dd_and_activates(self) -> None:
+		# The background job runs promote-snapshot-image.py on the snapshot's server
+		# with the snapshot's LV path as the dd source, then flips the row active.
 		from atlas.atlas.doctype.virtual_machine_snapshot import virtual_machine_snapshot as module
 
 		snapshot = _make_snapshot(_stopped_vm())
 		frappe.db.delete("Virtual Machine Image", {"image_name": "promoted-v1"})
+		with patch("frappe.enqueue"):
+			image_name = snapshot.promote_to_image("promoted-v1")
+
 		with patch.object(
 			module,
 			"run_task",
@@ -239,10 +268,8 @@ class TestVirtualMachineSnapshot(IntegrationTestCase):
 				stdout='ATLAS_RESULT={"image_lv": "atlas-image-promoted-v1", "size_bytes": 4096}'
 			),
 		) as mocked:
-			image_name = snapshot.promote_to_image("promoted-v1")
+			module.run_promote(snapshot.name, image_name)
 
-		# The Task ran promote-snapshot-image.py on the snapshot's server with the
-		# snapshot's LV path as the dd source.
 		self.assertEqual(mocked.call_args.kwargs["script"], "promote-snapshot-image")
 		self.assertEqual(mocked.call_args.kwargs["server"], snapshot.server)
 		variables = mocked.call_args.kwargs["variables"]
@@ -255,36 +282,54 @@ class TestVirtualMachineSnapshot(IntegrationTestCase):
 		source = frappe.get_doc("Virtual Machine Image", snapshot.source_image)
 		self.assertEqual(variables["KERNEL_FILENAME"], source.kernel_filename)
 
-		# A local (URL-less) image row was registered, kernel inherited from the
-		# snapshot's source image, rootfs_filename = the promoted LV name.
+		# A local (URL-less) image row, kernel inherited from the snapshot's source
+		# image, rootfs_filename = the promoted LV name — and now ACTIVE.
 		image = frappe.get_doc("Virtual Machine Image", image_name)
 		self.assertEqual(image.name, "promoted-v1")
 		self.assertEqual(image.kernel_url, "")
 		self.assertEqual(image.rootfs_url, "")
 		self.assertEqual(image.rootfs_filename, "atlas-image-promoted-v1")
 		self.assertEqual(image.default_disk_gigabytes, snapshot.disk_gigabytes)
-		source = frappe.get_doc("Virtual Machine Image", snapshot.source_image)
 		self.assertEqual(image.kernel_filename, source.kernel_filename)
 		self.assertTrue(image.is_local)
 		self.assertEqual(image.is_active, 1)
 
-	def test_promote_skips_sync_fanout(self) -> None:
-		# A promoted (local) image must NOT enqueue a sync Task on after_insert —
-		# its bytes are an LV already on its server, nothing to download.
+	def test_run_promote_deletes_image_row_when_host_dd_fails(self) -> None:
+		# The host dd raising (SSH error, non-zero exit, timeout) must leave NO image
+		# row behind — not even the inactive anchor. Otherwise a retry collides with a
+		# ghost row, and (the old bug) a survivor with is_active=1 would be provisioned
+		# from despite its LV never being written.
 		from atlas.atlas.doctype.virtual_machine_snapshot import virtual_machine_snapshot as module
 
-		# setUp's _ensure_test_server() already created an Active server, so a
-		# non-local image WOULD fan out here; the local image must not.
+		snapshot = _make_snapshot(_stopped_vm())
+		frappe.db.delete("Virtual Machine Image", {"image_name": "promoted-doomed"})
+		with patch("frappe.enqueue"):
+			image_name = snapshot.promote_to_image("promoted-doomed")
+		self.assertTrue(frappe.db.exists("Virtual Machine Image", image_name))  # inactive anchor
+
+		with patch.object(module, "run_task", side_effect=frappe.ValidationError("host dd blew up")):
+			with self.assertRaises(frappe.ValidationError):
+				module.run_promote(snapshot.name, image_name)
+		self.assertFalse(
+			frappe.db.exists("Virtual Machine Image", "promoted-doomed"),
+			"a failed promote must leave no image row",
+		)
+
+	def test_promote_skips_sync_fanout(self) -> None:
+		# A promoted (local) image must NOT enqueue a sync Task on after_insert —
+		# its bytes are an LV already on its server, nothing to download. (promote
+		# itself enqueues run_promote for the host dd; that is the only allowed enqueue.)
 		snapshot = _make_snapshot(_stopped_vm())
 		frappe.db.delete("Virtual Machine Image", {"image_name": "promoted-nosync"})
-		with patch.object(
-			module,
-			"run_task",
-			return_value=fake_task(stdout='ATLAS_RESULT={"image_lv": "x", "size_bytes": 1}'),
-		):
-			with patch("frappe.enqueue") as enqueue:
-				snapshot.promote_to_image("promoted-nosync")
-		enqueue.assert_not_called()
+		with patch("frappe.enqueue") as enqueue:
+			snapshot.promote_to_image("promoted-nosync")
+
+		enqueued = [c.args[0] for c in enqueue.call_args_list]
+		self.assertEqual(
+			enqueued,
+			["atlas.atlas.doctype.virtual_machine_snapshot.virtual_machine_snapshot.run_promote"],
+			"only the promote host-job may be enqueued — no image sync fan-out",
+		)
 
 	def test_promote_rejects_warm_snapshot(self) -> None:
 		# A warm snapshot's value is its frozen memory pair — promoting it would
@@ -416,19 +461,19 @@ class TestVirtualMachineSnapshot(IntegrationTestCase):
 		mocked.assert_not_called()
 
 	def test_promote_requires_typed_result_line(self) -> None:
-		# A truncated/failed Task with no ATLAS_RESULT line fails loud. The image row
-		# is inserted FIRST (the durable anchor), so it exists right up to the throw;
-		# in production the uncaught exception rolls the request back, undoing it —
-		# the rollback() here simulates that, and the row is then gone, so promote is
-		# all-or-nothing (no row pointing at an LV the failed Task never finished).
+		# A truncated/failed Task with no ATLAS_RESULT line fails loud in run_promote.
+		# The except handler deletes the inactive anchor, so promote is all-or-nothing
+		# (no row pointing at an LV the failed Task never finished) — without relying on
+		# a request rollback.
 		from atlas.atlas.doctype.virtual_machine_snapshot import virtual_machine_snapshot as module
 
 		snapshot = _make_snapshot(_stopped_vm())
 		frappe.db.delete("Virtual Machine Image", {"image_name": "promote-truncated"})
+		with patch("frappe.enqueue"):
+			image_name = snapshot.promote_to_image("promote-truncated")
 		with patch.object(module, "run_task", return_value=fake_task(stdout="no marker here")):
 			with self.assertRaises(ValueError):
-				snapshot.promote_to_image("promote-truncated")
-		frappe.db.rollback()  # the request-layer rollback an uncaught throw triggers
+				module.run_promote(snapshot.name, image_name)
 		self.assertFalse(frappe.db.exists("Virtual Machine Image", "promote-truncated"))
 
 	def test_on_trash_skips_when_no_rootfs_path(self) -> None:
@@ -569,3 +614,280 @@ class TestBuildModeCarry(IntegrationTestCase):
 				}
 			).insert(ignore_permissions=True)
 		self.assertFalse(vm_from_image.build_mode)
+
+
+class TestSnapshotS3Backup(IntegrationTestCase):
+	"""Upload a snapshot's artifacts to S3 and restore them back
+	(spec/29-snapshot-backup.md). The host Task and the boto3 presign are both
+	mocked — these cover the controller's guards, background-job wiring, manifest
+	recording, the cold-rollback vs. warm-rehydrate-only split, and on_trash S3
+	cleanup, none of which need a host or real S3."""
+
+	def setUp(self) -> None:
+		from atlas.atlas.doctype.virtual_machine_snapshot import virtual_machine_snapshot as module
+
+		_ensure_test_server()
+		_ensure_test_image()
+		with patch.object(module, "run_task", return_value=fake_task()):
+			for name in frappe.get_all("Virtual Machine Snapshot", pluck="name"):
+				frappe.delete_doc("Virtual Machine Snapshot", name, force=1, ignore_permissions=True)
+		for name in frappe.get_all("Virtual Machine", pluck="name"):
+			frappe.delete_doc("Virtual Machine", name, force=1, ignore_permissions=True)
+
+	def _configure_s3(self) -> None:
+		frappe.get_doc("S3 Settings").setup(
+			bucket="atlas-backups-test",
+			access_key_id="A",
+			secret_access_key="S",
+			key_prefix="atlas/snapshots",
+		)
+
+	def _uploaded_cold_snapshot(self):
+		"""An Available cold snapshot marked Uploaded, with a one-object manifest —
+		the shape restore_from_s3 / _run_restore consume."""
+		snapshot = _make_snapshot(_stopped_vm())
+		manifest = [
+			{
+				"name": "rootfs",
+				"object_name": "rootfs.img.zst",
+				"source": snapshot.rootfs_path,
+				"block": True,
+				"compress": True,
+				"disk_gigabytes": snapshot.disk_gigabytes,
+				"sha256": "deadbeef",
+				"compressed_bytes": 100,
+				"raw_bytes": 1000,
+			}
+		]
+		snapshot.db_set({"s3_status": "Uploaded", "s3_objects": json.dumps(manifest)})
+		snapshot.reload()
+		return snapshot
+
+	# --- upload guards + wiring ---
+
+	def test_upload_rejects_unavailable_snapshot(self) -> None:
+		vm = _stopped_vm()
+		pending = frappe.get_doc(
+			{
+				"doctype": "Virtual Machine Snapshot",
+				"title": "pending-upload",
+				"virtual_machine": vm.name,
+				"server": vm.server,
+				"status": "Pending",
+			}
+		).insert(ignore_permissions=True)
+		with self.assertRaises(frappe.ValidationError) as raised:
+			pending.upload_to_s3()
+		self.assertIn("not Available", str(raised.exception))
+
+	def test_upload_requires_s3_config(self) -> None:
+		# S3 Settings left unconfigured — upload must refuse before any job.
+		frappe.db.set_single_value("S3 Settings", "bucket", "")
+		snapshot = _make_snapshot(_stopped_vm())
+		with patch("frappe.enqueue") as enqueue:
+			with self.assertRaises(frappe.ValidationError) as raised:
+				snapshot.upload_to_s3()
+		self.assertIn("not configured", str(raised.exception))
+		enqueue.assert_not_called()
+
+	def test_upload_enqueues_background_job(self) -> None:
+		self._configure_s3()
+		snapshot = _make_snapshot(_stopped_vm())
+		with patch("frappe.enqueue") as enqueue:
+			snapshot.upload_to_s3()
+		snapshot.reload()
+		self.assertEqual(snapshot.s3_status, "Uploading")
+		call = enqueue.call_args
+		self.assertEqual(
+			call.args[0],
+			"atlas.atlas.doctype.virtual_machine_snapshot.virtual_machine_snapshot.run_upload",
+		)
+		self.assertTrue(call.kwargs["enqueue_after_commit"])
+		self.assertEqual(call.kwargs["snapshot_name"], snapshot.name)
+
+	def test_run_upload_records_manifest(self) -> None:
+		from atlas.atlas import s3
+		from atlas.atlas.doctype.virtual_machine_snapshot import virtual_machine_snapshot as module
+
+		self._configure_s3()
+		snapshot = _make_snapshot(_stopped_vm())
+		result = (
+			'ATLAS_RESULT={"objects": [{"name": "rootfs", "object_name": "rootfs.img.zst", '
+			'"sha256": "deadbeef", "compressed_bytes": 100, "raw_bytes": 1000}], '
+			'"total_compressed_bytes": 100}'
+		)
+		with (
+			patch.object(s3.S3Backup, "presign_put", return_value="https://signed-put"),
+			patch.object(module, "run_task", return_value=fake_task(stdout=result)) as mocked,
+		):
+			snapshot._run_upload()
+
+		snapshot.reload()
+		self.assertEqual(snapshot.s3_status, "Uploaded")
+		self.assertEqual(snapshot.s3_bucket, "atlas-backups-test")
+		self.assertEqual(snapshot.s3_key_prefix, f"atlas/snapshots/{snapshot.name}/")
+		self.assertEqual(snapshot.s3_size_bytes, 100)
+		manifest = json.loads(snapshot.s3_objects)
+		self.assertEqual(manifest[0]["sha256"], "deadbeef")
+		self.assertEqual(manifest[0]["source"], snapshot.rootfs_path)
+		self.assertEqual(manifest[0]["disk_gigabytes"], snapshot.disk_gigabytes)
+		# The stored manifest must NOT leak the time-limited presigned url.
+		self.assertNotIn("url", manifest[0])
+		# The host Task got the plan with the presigned PUT url.
+		self.assertEqual(mocked.call_args.kwargs["script"], "upload-snapshot-s3")
+		variables = mocked.call_args.kwargs["variables"]
+		self.assertEqual(variables["SNAPSHOT_NAME"], snapshot.name)
+		plan = json.loads(variables["OBJECTS_JSON"])
+		self.assertEqual(plan[0]["url"], "https://signed-put")
+
+	def test_run_upload_failure_sets_failed(self) -> None:
+		from atlas.atlas import s3
+		from atlas.atlas.doctype.virtual_machine_snapshot import virtual_machine_snapshot as module
+
+		self._configure_s3()
+		snapshot = _make_snapshot(_stopped_vm())
+		with (
+			patch.object(s3.S3Backup, "presign_put", return_value="https://signed-put"),
+			patch.object(module, "run_task", side_effect=frappe.ValidationError("host blew up")),
+		):
+			with self.assertRaises(frappe.ValidationError):
+				snapshot._run_upload()
+		snapshot.reload()
+		self.assertEqual(snapshot.s3_status, "Failed")
+
+	# --- restore guards + wiring ---
+
+	def test_restore_rejects_when_not_uploaded(self) -> None:
+		snapshot = _make_snapshot(_stopped_vm())
+		with self.assertRaises(frappe.ValidationError) as raised:
+			snapshot.restore_from_s3()
+		self.assertIn("No S3 backup", str(raised.exception))
+
+	def test_restore_cold_requires_stopped_vm(self) -> None:
+		snapshot = self._uploaded_cold_snapshot()
+		frappe.db.set_value("Virtual Machine", snapshot.virtual_machine, "status", "Running")
+		with patch("frappe.enqueue") as enqueue:
+			with self.assertRaises(frappe.ValidationError) as raised:
+				snapshot.restore_from_s3()
+		self.assertIn("Stop", str(raised.exception))
+		enqueue.assert_not_called()
+
+	def test_restore_enqueues_background_job(self) -> None:
+		snapshot = self._uploaded_cold_snapshot()
+		with patch("frappe.enqueue") as enqueue:
+			snapshot.restore_from_s3()
+		snapshot.reload()
+		self.assertEqual(snapshot.s3_status, "Restoring")
+		call = enqueue.call_args
+		self.assertEqual(
+			call.args[0],
+			"atlas.atlas.doctype.virtual_machine_snapshot.virtual_machine_snapshot.run_restore",
+		)
+		self.assertEqual(call.kwargs["snapshot_name"], snapshot.name)
+
+	def test_run_restore_cold_rehydrates_then_rolls_back(self) -> None:
+		from atlas.atlas import s3
+		from atlas.atlas.doctype.virtual_machine import virtual_machine as vm_module
+		from atlas.atlas.doctype.virtual_machine_snapshot import virtual_machine_snapshot as module
+
+		self._configure_s3()
+		snapshot = self._uploaded_cold_snapshot()
+		with (
+			patch.object(s3.S3Backup, "presign_get", return_value="https://signed-get"),
+			patch.object(
+				module, "run_task", return_value=fake_task(stdout='ATLAS_RESULT={"objects": ["rootfs"]}')
+			) as rehydrate,
+			patch.object(vm_module, "run_task", return_value=fake_task()) as rollback,
+		):
+			task_name = snapshot._run_restore()
+
+		# Rehydrate first (restore-snapshot-s3), then the in-place rollback (rebuild-vm).
+		self.assertEqual(rehydrate.call_args.kwargs["script"], "restore-snapshot-s3")
+		self.assertEqual(rollback.call_args.kwargs["script"], "rebuild-vm")
+		self.assertTrue(task_name)  # the rollback Task name is returned
+		snapshot.reload()
+		self.assertEqual(snapshot.s3_status, "Uploaded")  # the backup stays in S3
+		# The rehydrate Task got the presigned GET url + the manifest sha256.
+		plan = json.loads(rehydrate.call_args.kwargs["variables"]["OBJECTS_JSON"])
+		self.assertEqual(plan[0]["url"], "https://signed-get")
+		self.assertEqual(plan[0]["sha256"], "deadbeef")
+
+	def test_run_restore_warm_rehydrates_only(self) -> None:
+		from atlas.atlas import s3
+		from atlas.atlas.doctype.virtual_machine import virtual_machine as vm_module
+		from atlas.atlas.doctype.virtual_machine_snapshot import virtual_machine_snapshot as module
+
+		self._configure_s3()
+		vm = _stopped_vm()
+		manifest = [
+			{
+				"name": "rootfs",
+				"object_name": "rootfs.img.zst",
+				"source": "/dev/atlas/atlas-snap-warm",
+				"block": True,
+				"compress": True,
+				"disk_gigabytes": 2,
+				"sha256": "d",
+				"compressed_bytes": 1,
+				"raw_bytes": 2,
+			}
+		]
+		warm = frappe.get_doc(
+			{
+				"doctype": "Virtual Machine Snapshot",
+				"title": "warm-uploaded",
+				"virtual_machine": vm.name,
+				"server": vm.server,
+				"status": "Available",
+				"kind": "Warm",
+				"source_image": vm.image,
+				"disk_gigabytes": 2,
+				"rootfs_path": "/dev/atlas/atlas-snap-warm",
+				"memory_directory": "/var/lib/atlas/snapshots/warm-uploaded",
+				"s3_status": "Uploaded",
+				"s3_objects": json.dumps(manifest),
+			}
+		).insert(ignore_permissions=True)
+
+		with (
+			patch.object(s3.S3Backup, "presign_get", return_value="https://signed-get"),
+			patch.object(
+				module, "run_task", return_value=fake_task(stdout='ATLAS_RESULT={"objects": ["rootfs"]}')
+			) as rehydrate,
+			patch.object(vm_module, "run_task") as rollback,
+		):
+			result = warm._run_restore()
+
+		# Warm rehydrates only — no in-place rollback (consume it via Clone to new VM).
+		self.assertIsNone(result)
+		self.assertEqual(rehydrate.call_args.kwargs["script"], "restore-snapshot-s3")
+		rollback.assert_not_called()
+		warm.reload()
+		self.assertEqual(warm.s3_status, "Uploaded")
+
+	# --- on_trash S3 cleanup ---
+
+	def test_on_trash_deletes_s3_backup(self) -> None:
+		from atlas.atlas import s3
+		from atlas.atlas.doctype.virtual_machine_snapshot import virtual_machine_snapshot as module
+
+		self._configure_s3()
+		snapshot = self._uploaded_cold_snapshot()
+		with (
+			patch.object(s3.S3Backup, "delete_prefix", return_value=1) as deleter,
+			patch.object(module, "run_task", return_value=fake_task()),
+		):
+			frappe.delete_doc("Virtual Machine Snapshot", snapshot.name, ignore_permissions=True)
+		deleter.assert_called_once_with(snapshot.name)
+
+	def test_on_trash_skips_s3_when_not_uploaded(self) -> None:
+		from atlas.atlas import s3
+		from atlas.atlas.doctype.virtual_machine_snapshot import virtual_machine_snapshot as module
+
+		snapshot = _make_snapshot(_stopped_vm())  # s3_status empty
+		with (
+			patch.object(s3.S3Backup, "delete_prefix") as deleter,
+			patch.object(module, "run_task", return_value=fake_task()),
+		):
+			frappe.delete_doc("Virtual Machine Snapshot", snapshot.name, ignore_permissions=True)
+		deleter.assert_not_called()

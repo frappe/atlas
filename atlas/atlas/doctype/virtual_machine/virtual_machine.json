@@ -12,6 +12,7 @@
   "column_break_header",
   "status",
   "tenant",
+  "pilot_credential_id",
   "section_break_resources",
   "size_preset",
   "column_break_resources_0",
@@ -29,6 +30,7 @@
   "clone_source_data_rootfs",
   "warm_snapshot",
   "build_mode",
+  "routing_subdomains",
   "section_break_security",
   "ssh_public_key",
   "ssh_command",
@@ -39,11 +41,17 @@
   "section_break_networking",
   "ipv6_address",
   "public_ipv4",
+  "public_networking",
+  "egress_nat44",
+  "private_address",
   "column_break_networking",
   "mac_address",
   "tap_device",
+  "traffic_forwarded_from",
+  "traffic_forwarded_since",
   "section_break_proxy",
   "is_proxy",
+  "is_gateway",
   "column_break_proxy",
   "section_break_sshpiper",
   "is_sshpiper",
@@ -77,8 +85,7 @@
    "in_standard_filter": 1,
    "label": "Server",
    "options": "Server",
-   "reqd": 1,
-   "set_only_once": 1
+   "reqd": 1
   },
   {
    "fieldname": "image",
@@ -245,6 +252,15 @@
    "set_only_once": 1
   },
   {
+   "description": "Internal (routing dedup): the Site/Pilot subdomain label(s) this VM should be routed at, as a JSON list. The provisioner records them here instead of creating a Subdomain; the Satellite orchestrator reads them off the read API and reconciles its own Subdomain rows. Empty for a VM with no routed site.",
+   "fieldname": "routing_subdomains",
+   "fieldtype": "Small Text",
+   "hidden": 1,
+   "label": "Routing Subdomains",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
    "collapsible": 1,
    "fieldname": "section_break_security",
    "fieldtype": "Section Break",
@@ -309,6 +325,27 @@
    "read_only": 1
   },
   {
+   "default": "1",
+   "description": "When set (the default, preserving today's behavior) this VM gets a public IPv6 /128, proxy-NDP, and the public forward rule. When cleared, the VM is dark: no public /128 at all, reachable only over the WireGuard host mesh via its private_address. Flipping this is rebuild-only. See llm/references/private-networking-host-mesh.md section 6.",
+   "fieldname": "public_networking",
+   "fieldtype": "Check",
+   "label": "Public Networking"
+  },
+  {
+   "default": "1",
+   "description": "Give the guest outbound IPv4 via host NAT44 (apt/pip/security updates). Independent of public_networking: a dark VM still gets v4 egress by default; clear this for a truly air-gapped VM reachable only inside its tenant /48 + the proxy.",
+   "fieldname": "egress_nat44",
+   "fieldtype": "Check",
+   "label": "IPv4 Egress (NAT44)"
+  },
+  {
+   "description": "The VM's private-plane /128 on the WireGuard host mesh, derived (not allocated) from (tenant, VM UUID) so it survives migration byte-for-byte. Empty when the VM has no tenant (operator-created). Denormalized for legibility and the Subdomain denorm; the source of truth is atlas.networking.derive_private_address.",
+   "fieldname": "private_address",
+   "fieldtype": "Data",
+   "label": "Private Address",
+   "read_only": 1
+  },
+  {
    "fieldname": "column_break_networking",
    "fieldtype": "Column Break"
   },
@@ -325,6 +362,21 @@
    "read_only": 1
   },
   {
+   "description": "Set after a keep-address migration: the source Server whose host still receives this VM's /128 and forwards it here over a per-VM tunnel (spec/19 §2.9). While set, the VM depends on that host being up; the operator can collapse the forward (falling back to a new address) from the VM form. Empty for a VM that has never been migrated keep-address, or after the forward is collapsed.",
+   "fieldname": "traffic_forwarded_from",
+   "fieldtype": "Link",
+   "label": "Traffic Forwarded From",
+   "options": "Server",
+   "read_only": 1
+  },
+  {
+   "description": "When the keep-address forward from traffic_forwarded_from was established.",
+   "fieldname": "traffic_forwarded_since",
+   "fieldtype": "Datetime",
+   "label": "Traffic Forwarded Since",
+   "read_only": 1
+  },
+  {
    "collapsible": 1,
    "fieldname": "section_break_proxy",
    "fieldtype": "Section Break",
@@ -336,6 +388,13 @@
    "fieldname": "is_proxy",
    "fieldtype": "Check",
    "label": "Is Proxy"
+  },
+  {
+   "default": "0",
+   "description": "Mark this VM as the region's customer gateway (spec/25 Phase 5, spec/26). Customers dial its fixed reserved public IPv4 :51820 over WireGuard and land inside their tenant's /48, reaching every VM in their VPC. Carries one shared wg0 with the static same_48 eBPF guard. Reconciled by atlas.customer_gateway. Mutually exclusive with is_proxy.",
+   "fieldname": "is_gateway",
+   "fieldtype": "Check",
+   "label": "Is Gateway"
   },
   {
    "fieldname": "column_break_proxy",
@@ -400,6 +459,13 @@
    "fieldtype": "Check",
    "label": "Has Memory Snapshot",
    "read_only": 1
+  },
+  {
+   "fieldname": "pilot_credential_id",
+   "fieldtype": "Data",
+   "label": "Pilot Credential ID",
+   "read_only": 1,
+   "description": "Central-minted per-pilot credential id, copied from the owning Site. Echoed to Central on vm.* events so Central links/revokes the credential."
   }
  ],
  "links": [],

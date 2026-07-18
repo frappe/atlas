@@ -52,6 +52,13 @@ class ImageRecipe:
 	snapshot_title: str
 	task_script: str
 	exclude: tuple[str, ...] = ()
+	# Memory to BOOT the build VM at, when the build needs more RAM than a clone
+	# does to RESTORE at. `bench init` / `get-app` build Node assets (~4 GB peak);
+	# a clone only serves. So the build VM boots fat here, then image_build.run
+	# resizes it DOWN to `memory_megabytes` before the snapshot — the captured
+	# (and therefore clone-restore) size is `memory_megabytes`, not this. 0 = "same
+	# as memory_megabytes" (proxy: build and restore at one size, no resize step).
+	build_memory_megabytes: int = 0
 	finalize: Callable | None = None
 	registers_as: str | None = None
 	is_proxy: bool = False
@@ -100,6 +107,13 @@ class ImageRecipe:
 		return f"{self.remote_directory}/{self.build_entrypoint}"
 
 	@property
+	def effective_build_memory_megabytes(self) -> int:
+		"""The memory to boot the build VM at: the fat `build_memory_megabytes` when
+		set, else the plain restore size. image_build.run boots the VM at this and
+		resizes down to `memory_megabytes` before the snapshot when the two differ."""
+		return self.build_memory_megabytes or self.memory_megabytes
+
+	@property
 	def effective_build_mode(self) -> str:
 		"""The bake mode build.sh/deploy-site.py understand: site or admin. A recipe
 		that leaves `build_mode` empty (proxy) is treated as site — the harmless
@@ -136,21 +150,31 @@ def _finalize_proxy(virtual_machine, connection, key_path) -> tuple[str, str, in
 	# Local import: proxy.py imports image_builder (for build_proxy → run_build),
 	# which imports this module — so importing proxy at module scope would cycle.
 	# REGION_FILE is a plain constant; pull it in only when the finalize runs.
-	from atlas.atlas.placement import atlas_region
+	from atlas.atlas.placement import active_root_domain
 	from atlas.atlas.proxy import REGION_FILE
 
-	region = atlas_region()
+	# The proxy's routing lua strips the FULL regional wildcard zone from each Host /
+	# SNI (router.lua / sni_router.lua / acme_router.lua), so write the active Root
+	# Domain's zone (e.g. "blr1.frappe.dev" or "aditya-blr3.x.frappe.dev") — NOT the
+	# bare region. The lua used to reconstruct region .. ".frappe.dev", which assumed
+	# the region sat one label under frappe.dev and dropped every connection under a
+	# deeper platform zone like x.frappe.dev. The file name stays REGION_FILE for
+	# image/back-compat; its contents are now the zone.
+	root_domain = active_root_domain().domain
 	command = (
-		f"printf '%s\\n' {shlex.quote(region)} > {shlex.quote(REGION_FILE)} && "
+		f"printf '%s\\n' {shlex.quote(root_domain)} > {shlex.quote(REGION_FILE)} && "
 		"systemctl restart nginx.service"
 	)
 	return run_ssh(connection, key_path, command, timeout_seconds=120)
 
 
-# The build VM clones Frappe + builds a uv venv + Node deps; 4 GB is too tight, so
-# the bench build VM (and therefore the snapshot, and clones from it) gets a
-# roomier disk and 2 GB RAM. These were GOLDEN_DISK_GB / GOLDEN_MEMORY_MB in the
-# e2e module; they live with the recipe now (spec/14 "~2 GB/site" host-sizing).
+# The build VM clones Frappe + builds a uv venv + Node deps. Two INDEPENDENT memory
+# sizes (see the constants below): the build needs ~4 GB peak (the yarn/webpack asset
+# build in `bench init` / `get-app`), but a running clone needs ~2 GB (spec/14
+# "~2 GB/site"). So the build VM BOOTS at _BENCH_BUILD_MEMORY_MB (6 GB) and
+# image_build.run / bootstrap RESIZE it down to _BENCH_MEMORY_MB (2 GB) before the
+# snapshot, so the captured — and therefore clone-restore — size is 2 GB. These were
+# GOLDEN_DISK_GB / GOLDEN_MEMORY_MB in the e2e module; they live with the recipe now.
 #
 # Sizing is dominated by the ZFS file vdev: bench.toml's [volume.image] preallocates
 # a 15 GB image (`bench-pool.img`) on ROOT, so root must hold that 16 GB file PLUS
@@ -161,8 +185,16 @@ def _finalize_proxy(virtual_machine, connection, key_path) -> tuple[str, str, in
 # root 100% full (16 GB vdev left only ~4 GB). 28 GB restores ~9 GB of headroom above
 # the vdev + OS for the node-deps build (and for MariaDB's /tmp during the ERPNext
 # schema build). Keep this in step with bench.toml's [volume.image] size.
-_BENCH_DISK_GB = 28
+# Clone RESTORE size: a running bench (MariaDB + Redis + gunicorn + workers) needs
+# ~2 GB — 512 MB thrashes into swap (Site.SITE_VM_SIZE documents the proof). A WARM
+# clone restores at EXACTLY this captured size (snapshot enforces it), so this must
+# stay the working per-site budget, NOT shrink. Kept in step with Site.SITE_VM_SIZE.
 _BENCH_MEMORY_MB = 2048
+_BENCH_DISK_GB = 28
+# Build-time only: `bench init` / `get-app` build Node assets at ~4 GB peak, which
+# overflows the 2 GB restore size. Boot the build VM at 6 GB for headroom, then
+# resize DOWN to _BENCH_MEMORY_MB before the snapshot (image_build.run / bootstrap).
+_BENCH_BUILD_MEMORY_MB = 6144
 
 # The proven bench-cli commit (main @ 2026-06-25, incl. the two-path install.sh,
 # `bench rename-site`, and the IPv6-listeners commit dd14ad4) every bench variant
@@ -173,9 +205,7 @@ _BENCH_MEMORY_MB = 2048
 # (not `main`) so the golden is reproducible; a variant can override it if a future
 # Frappe release needs a newer bench-cli. Kept in lockstep with bench/build.sh's
 # BENCH_CLI_REF default (the value a direct `build.sh` run uses with no env override).
-_BENCH_CLI_REF = (
-	"03a4272068f78a402d407c4ae9b071be5e00a14b"  # main @ 2026-06-25 (two-path install.sh + rename-site)
-)
+_BENCH_CLI_REF = "c6e5253ef46c23fb1f2f776dc7372c7d39224e42"  # central-billing-client @ prathameshkurunkar7/pilot (Central billing client)
 
 
 def _bench_variant(
@@ -194,7 +224,15 @@ def _bench_variant(
 	promote target image name (= the series name). Everything else — the committed
 	`bench/` tree, the build-VM sizing, the bench-cli ref, the snapshot/task naming
 	scheme — is shared. `promote_image_name` defaults to the recipe name
-	(`bench-v15` etc.)."""
+	(`bench-v15` etc.).
+
+	`snapshot_title` is the recipe `name` (the `bench-<token>` series), NOT the prose
+	`title`: the snapshot-form promote dialog derives its default image name by
+	slugifying the snapshot title, so a prose title (`Bench nightly admin (develop)`)
+	would slug to `bench-nightly-admin-develop` — a name `version_from_image` can't
+	strip back to the `nightly` version token, so Central mirrors garbage. Feeding the
+	clean series name makes that slug a no-op that lands on the same name the Image
+	Build promote path uses (`promote_image_name`)."""
 	return ImageRecipe(
 		name=name,
 		title=title,
@@ -203,8 +241,9 @@ def _bench_variant(
 		remote_directory="/tmp/atlas-bench-build",
 		disk_gigabytes=_BENCH_DISK_GB,
 		memory_megabytes=_BENCH_MEMORY_MB,
+		build_memory_megabytes=_BENCH_BUILD_MEMORY_MB,
 		vcpus=2,
-		snapshot_title=title,
+		snapshot_title=name,
 		task_script="bench-build",
 		frappe_branch=frappe_branch,
 		erpnext_branch=erpnext_branch,
@@ -222,15 +261,17 @@ RECIPES: dict[str, "ImageRecipe"] = {
 	# release; promoted to a base image named exactly `bench-v<NN>` / `bench-nightly`
 	# so customers pick the version through the ordinary VM `image` field (spec/15). ---
 	#
-	# v16 is the current/default line: it keeps the warm entrypoint (it doubles as the
-	# self-serve site accelerator base) and `registers_as=default_bench_snapshot`, so
-	# an auto-registered v16 warm bake stays the self-serve golden — the existing
-	# behaviour, unchanged. v15 + nightly are COLD customer goldens (no warm, no
-	# register): promote-to-image requires cold, and only one warm golden registers
-	# per server.
+	# All three site variants carry the warm entrypoint (`warm.sh`): a customer VM off
+	# any version boots from a pre-warmed guest, not a cold ~17s boot. What sets v16
+	# apart is `registers_as=default_bench_snapshot`: v16 is the current/default line,
+	# so an auto-registered v16 warm bake also becomes the self-serve site golden. v15
+	# + nightly are warm-clonable but never the registered golden (only one registers
+	# per server). Warm is orthogonal to promote-to-image — a warm golden still
+	# promotes to its cold `bench-v<NN>` base image for the ordinary VM `image` field.
+	# The admin twins below stay COLD (no warm entrypoint); see their note.
 	"bench-v16": _bench_variant(
 		"bench-v16",
-		"Golden bench v16",
+		"Bench v16",
 		frappe_branch="version-16",
 		erpnext_branch="version-16",
 		python_version="3.14",
@@ -243,20 +284,26 @@ RECIPES: dict[str, "ImageRecipe"] = {
 	# (spec/15 release gate).
 	"bench-v15": _bench_variant(
 		"bench-v15",
-		"Golden bench v15",
+		"Bench v15",
 		frappe_branch="version-15",
 		erpnext_branch="version-15",
 		python_version="3.11",
+		warm_entrypoint="warm.sh",
 	),
 	# Nightly tracks the moving `develop` of both Frappe and ERPNext. The bake records
 	# the resolved commit SHAs into the Image Build for traceability (image_build.run),
 	# since the inputs float.
+	#
+	# TEMPORARY: Frappe is pinned to `feature/cloud-settings` (not `develop`) for the
+	# extra cloud-settings commits create_site needs before they land on develop.
+	# Revert to `develop` once https://github.com/frappe/frappe/pull/40590 merges.
 	"bench-nightly": _bench_variant(
 		"bench-nightly",
-		"Golden bench nightly (develop)",
-		frappe_branch="develop",
+		"Bench nightly (develop)",
+		frappe_branch="feature/cloud-settings",
 		erpnext_branch="develop",
 		python_version="3.14",
+		warm_entrypoint="warm.sh",
 	),
 	# --- The admin-console line. Same three Frappe versions, but baked in `admin`
 	# mode: build.sh skips `new-site` + ERPNext entirely and leaves only the bench +
@@ -273,7 +320,7 @@ RECIPES: dict[str, "ImageRecipe"] = {
 	# ordinary `image` field. ---
 	"bench-v16-admin": _bench_variant(
 		"bench-v16-admin",
-		"Golden bench v16 (admin)",
+		"Bench v16 (admin)",
 		frappe_branch="version-16",
 		erpnext_branch="version-16",
 		python_version="3.14",
@@ -281,16 +328,19 @@ RECIPES: dict[str, "ImageRecipe"] = {
 	),
 	"bench-v15-admin": _bench_variant(
 		"bench-v15-admin",
-		"Golden bench v15 (admin)",
+		"Bench v15 (admin)",
 		frappe_branch="version-15",
 		erpnext_branch="version-15",
 		python_version="3.11",
 		build_mode="admin",
 	),
+	# TEMPORARY: mirrors the site twin's `feature/cloud-settings` pin (the admin
+	# twin tracks the site twin — one edit per bump). Revert to `develop` with the
+	# site twin once https://github.com/frappe/frappe/pull/40590 merges.
 	"bench-nightly-admin": _bench_variant(
 		"bench-nightly-admin",
-		"Golden bench nightly admin (develop)",
-		frappe_branch="develop",
+		"Bench nightly admin (develop)",
+		frappe_branch="feature/cloud-settings",
 		erpnext_branch="develop",
 		python_version="3.14",
 		build_mode="admin",

@@ -153,11 +153,24 @@ IMAGE_NAME = "ubuntu-24.04"
 MINIMAL_IMAGE_NAME = "ubuntu-24.04-minimal"
 
 # Golden bench build VM sizing — a Frappe clone + uv venv + node deps overflow the
-# 4 GB base image, so the build VM (and therefore the snapshot, and every site VM
-# cloned from it) gets a roomier disk + RAM. Mirrors bench_image.GOLDEN_DISK_GB /
-# GOLDEN_MEMORY_MB (the e2e bake) — keep the two in sync.
-GOLDEN_DISK_GB = 12
-GOLDEN_MEMORY_MB = 2048
+# 4 GB base image, so the build VM gets a roomier disk + RAM. The bench recipe is the
+# SINGLE source of truth (image_recipes._BENCH_DISK_GB / _BENCH_MEMORY_MB /
+# _BENCH_BUILD_MEMORY_MB — disk bumped 12→20→28 as the ZFS vdev grew), so read the
+# sizing off it the way the e2e bake does. A hardcoded constant drifted below the
+# recipe once (stale `12`) and the bench bake died with a ZFS-vdev / yarn-step "No
+# space left on device" that looked like a build bug but was just an undersized disk —
+# derive it so that can never recur.
+#
+# Memory has TWO sizes (like image_build.run): the build VM BOOTS at the fat
+# GOLDEN_BUILD_MEMORY_MB (headroom for the node-asset build), then this bake resizes it
+# DOWN to GOLDEN_MEMORY_MB before the snapshot — so the golden (and every site VM
+# cloned from it) restores small.
+from atlas.atlas.image_recipes import get_recipe as _get_recipe
+
+_BENCH_RECIPE = _get_recipe("bench")
+GOLDEN_DISK_GB = _BENCH_RECIPE.disk_gigabytes
+GOLDEN_MEMORY_MB = _BENCH_RECIPE.memory_megabytes
+GOLDEN_BUILD_MEMORY_MB = _BENCH_RECIPE.effective_build_memory_megabytes
 GOLDEN_SNAPSHOT_TITLE = "golden-bench"
 
 # Proxy VM sizing. The proxy runs nginx+Lua only (no site DB), so it is small; it
@@ -611,7 +624,8 @@ def bake_golden_image(server_name: str, force: bool = False) -> str:
 		server_name,
 		title="golden bench — build",
 		image=image_name,
-		memory_megabytes=GOLDEN_MEMORY_MB,
+		# Boot fat for the build; resized down to GOLDEN_MEMORY_MB before the snapshot.
+		memory_megabytes=GOLDEN_BUILD_MEMORY_MB,
 		disk_gigabytes=GOLDEN_DISK_GB,
 		vcpus=2,
 	)
@@ -630,6 +644,15 @@ def bake_golden_image(server_name: str, force: bool = False) -> str:
 	frappe.db.commit()
 	_wait_for_vm_status(vm.name, "Stopped", timeout_seconds=180)
 	vm.reload()
+	# Shrink the fat build VM down to the clone-RESTORE size before capturing — the
+	# snapshot (and every VM cloned from it) inherits the VM's memory, so this is what
+	# makes the golden restore small. resize() requires Stopped, which we are. No-op
+	# when the recipe didn't fatten (build == restore memory).
+	if GOLDEN_BUILD_MEMORY_MB != GOLDEN_MEMORY_MB:
+		vm.resize(memory_megabytes=GOLDEN_MEMORY_MB)
+		# nosemgrep: frappe-manual-commit -- bootstrap script: persist the resized size before the snapshot job reads it
+		frappe.db.commit()
+		vm.reload()
 	snapshot_name = vm.snapshot(title=GOLDEN_SNAPSHOT_TITLE)
 	# nosemgrep: frappe-manual-commit -- bootstrap script: persist the snapshot row before polling the DB for the Available status set by the snapshot job
 	frappe.db.commit()

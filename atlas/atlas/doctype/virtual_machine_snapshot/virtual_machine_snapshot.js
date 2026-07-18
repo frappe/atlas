@@ -6,6 +6,7 @@ frappe.ui.form.on("Virtual Machine Snapshot", {
 		frappe.atlas.add_primary(frm, "Clone to new VM", () => open_clone_dialog(frm));
 		add_restore_button(frm);
 		add_promote_button(frm);
+		add_s3_buttons(frm);
 		frappe.atlas.add_danger(frm, "Delete", () => confirm_delete(frm));
 	},
 });
@@ -164,6 +165,84 @@ function confirm_restore(frm) {
 				frappe.atlas.task_started(frm, "Restore", task_name)
 			);
 		},
+	});
+}
+
+function add_s3_buttons(frm) {
+	// Off-host S3 backup (spec/29-snapshot-backup.md). Upload streams the snapshot's
+	// artifacts to S3; Restore rehydrates them and (cold) rolls the VM back. While a
+	// background job runs, surface the state instead of a button that would refuse.
+	const s3_status = frm.doc.s3_status || "";
+	if (s3_status === "Uploading" || s3_status === "Restoring") {
+		frappe.atlas.add_action(frm, __("S3 backup {0}…", [s3_status.toLowerCase()]), () =>
+			frappe.msgprint({
+				title: __("S3 backup in progress"),
+				message: __(
+					"A background job is {0} this snapshot's S3 backup — watch the S3 Status field.",
+					[s3_status.toLowerCase()]
+				),
+				indicator: "blue",
+			})
+		);
+		return;
+	}
+	const upload_label = s3_status === "Uploaded" ? "Re-upload to S3" : "Upload to S3";
+	frappe.atlas.add_secondary(frm, upload_label, () => confirm_upload(frm));
+	if (s3_status === "Uploaded") {
+		frappe.atlas.add_secondary(frm, "Restore from S3", () => confirm_restore_from_s3(frm));
+	}
+}
+
+function confirm_upload(frm) {
+	frappe.atlas.confirm_cost({
+		title: __("Upload {0} to S3?", [frm.doc.title]),
+		body_html: `<p>${__(
+			"Streams the snapshot's disk — and, for a warm snapshot, its frozen memory state — to S3 as an off-host durable copy. Runs in the background over a few minutes; watch the S3 Status field."
+		)}</p>`,
+		proceed_label: __("Upload"),
+		proceed() {
+			frm.call("upload_to_s3").then(() => {
+				frappe.show_alert(
+					{ message: __("Upload started; watch S3 Status."), indicator: "blue" },
+					6
+				);
+				frm.reload_doc();
+			});
+		},
+	});
+}
+
+function confirm_restore_from_s3(frm) {
+	if (frm.doc.kind === "Warm") {
+		frappe.atlas.confirm_cost({
+			title: __("Restore {0} from S3?", [frm.doc.title]),
+			body_html: `<p>${__(
+				"Rehydrates this warm snapshot's disk + memory from S3 so it can be cloned again (Clone to new VM). Runs in the background; watch S3 Status."
+			)}</p>`,
+			proceed_label: __("Restore"),
+			proceed: () => start_restore(frm),
+		});
+		return;
+	}
+	frappe.atlas.confirm_destructive({
+		title: __("Restore {0} onto {1} from S3?", [frm.doc.title, frm.doc.virtual_machine]),
+		body_html: `<p>${__(
+			"Rehydrates the snapshot from S3, then overwrites the VM's disk with it — current data is lost. Stop the VM first. Runs in the background; watch S3 Status."
+		)}</p>`,
+		match_string: frm.doc.title,
+		match_label: __("Type the snapshot title to confirm"),
+		proceed_label: __("Restore"),
+		proceed: () => start_restore(frm),
+	});
+}
+
+function start_restore(frm) {
+	frm.call("restore_from_s3").then(() => {
+		frappe.show_alert(
+			{ message: __("Restore started; watch S3 Status."), indicator: "blue" },
+			6
+		);
+		frm.reload_doc();
 	});
 }
 

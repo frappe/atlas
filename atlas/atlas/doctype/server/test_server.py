@@ -43,15 +43,18 @@ class TestServerBootstrap(IntegrationTestCase):
 			stdout='ATLAS_RESULT={"firecracker_version": "", "jailer_version": "", "kernel_version": "", "architecture": ""}',
 		)
 
-		with patch.object(server_module, "upload_files") as upload:
-			with patch.object(server_module, "run_ssh", return_value=("ok", "", 0)) as run_ssh:
-				with patch.object(server_module, "run_task", return_value=task) as run:
-					with patch.object(
-						server_module,
-						"connection_for_server",
-						return_value=Connection(host="x", ssh_private_key="k"),
-					):
-						self.server.bootstrap()
+		# Neutralize the best-effort dashboard ship — it's an independent step with
+		# its own test; here we assert the install.sh ordering in isolation.
+		with patch.object(server_module.Server, "_ship_dashboard"):
+			with patch.object(server_module, "upload_files") as upload:
+				with patch.object(server_module, "run_ssh", return_value=("ok", "", 0)) as run_ssh:
+					with patch.object(server_module, "run_task", return_value=task) as run:
+						with patch.object(
+							server_module,
+							"connection_for_server",
+							return_value=Connection(host="x", ssh_private_key="k"),
+						):
+							self.server.bootstrap()
 
 		upload.assert_called_once()
 		# install.sh is SSHed after the upload, before the bootstrap Task.
@@ -117,15 +120,16 @@ class TestServerBootstrap(IntegrationTestCase):
 		)
 		task = fake_task(name="task-y", stdout=stdout)
 
-		with patch.object(server_module, "upload_files"):
-			with patch.object(server_module, "run_ssh", return_value=("ok", "", 0)):
-				with patch.object(server_module, "run_task", return_value=task):
-					with patch.object(
-						server_module,
-						"connection_for_server",
-						return_value=Connection(host="x", ssh_private_key="k"),
-					):
-						self.server.bootstrap()
+		with patch.object(server_module.Server, "_ship_dashboard"):
+			with patch.object(server_module, "upload_files"):
+				with patch.object(server_module, "run_ssh", return_value=("ok", "", 0)):
+					with patch.object(server_module, "run_task", return_value=task):
+						with patch.object(
+							server_module,
+							"connection_for_server",
+							return_value=Connection(host="x", ssh_private_key="k"),
+						):
+							self.server.bootstrap()
 		self.server.reload()
 		self.assertEqual(self.server.firecracker_version, "1.16.0")
 		self.assertEqual(self.server.jailer_version, "1.16.0")
@@ -159,6 +163,53 @@ class TestServerBootstrap(IntegrationTestCase):
 		# Lifecycle scripts must not leak into the desk picker.
 		hidden = {"provision-vm", "start-vm", "stop-vm", "terminate-vm", "restart-vm"}
 		self.assertFalse(hidden & {entry["name"] for entry in entries})
+
+	def test_ship_dashboard_uploads_then_enables_socket(self) -> None:
+		# When the controller can build the dashboard, _ship_dashboard scp's the
+		# manifest and then SSHes the socket-enable command. Best-effort, so we
+		# stub the build to a fixed manifest rather than running npm here.
+		from atlas.atlas import dashboard
+		from atlas.atlas.doctype.server import server as server_module
+
+		manifest = [("/local/server.py", "/opt/atlas-dashboard/server.py")]
+		connection = Connection(host="x", ssh_private_key="k")
+		with patch.object(dashboard, "dashboard_uploads", return_value=manifest):
+			with patch.object(server_module, "upload_files") as upload:
+				with patch.object(server_module, "run_ssh", return_value=("", "", 0)) as run_ssh:
+					self.server._ship_dashboard(connection)
+
+		upload.assert_called_once_with(connection, manifest)
+		# The enable runs the socket unit (socket activation), reachable in the cmd.
+		run_ssh.assert_called_once()
+		self.assertIn("atlas-dashboard.socket", run_ssh.call_args.args[2])
+
+	def test_ship_dashboard_skips_when_build_unavailable(self) -> None:
+		# No build (empty manifest) → ship nothing, enable nothing. A host simply
+		# has no dashboard; the bootstrap is unaffected.
+		from atlas.atlas import dashboard
+		from atlas.atlas.doctype.server import server as server_module
+
+		connection = Connection(host="x", ssh_private_key="k")
+		with patch.object(dashboard, "dashboard_uploads", return_value=[]):
+			with patch.object(server_module, "upload_files") as upload:
+				with patch.object(server_module, "run_ssh") as run_ssh:
+					self.server._ship_dashboard(connection)
+
+		upload.assert_not_called()
+		run_ssh.assert_not_called()
+
+	def test_ship_dashboard_never_raises_on_error(self) -> None:
+		# A dashboard hiccup (here: the build helper itself throwing) must never
+		# fail a bootstrap — _ship_dashboard swallows it.
+		from atlas.atlas import dashboard
+		from atlas.atlas.doctype.server import server as server_module
+
+		connection = Connection(host="x", ssh_private_key="k")
+		with patch.object(dashboard, "dashboard_uploads", side_effect=RuntimeError("boom")):
+			with patch.object(server_module, "upload_files") as upload:
+				# Must return normally despite the raise inside.
+				self.server._ship_dashboard(connection)
+		upload.assert_not_called()
 
 
 class TestServerArchive(IntegrationTestCase):

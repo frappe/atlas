@@ -20,11 +20,20 @@
 --                           with NO PROXY header, so the VM terminates a clean
 --                           handshake with its OWN cert). sni_passthrough.lua there
 --                           re-reads the SNI to pick the VM.
---   miss (no SNI, or an unknown name)
---       -> drop the connection (ngx.exit(ngx.ERROR)). An unregistered or deregistered
---          custom name is simply absent from `domains`, so its handshake is dropped
---          rather than forwarded to no backend (spec/13 § Custom domains). A REGISTERED
---          domain is in `domains` the moment it is created — there is no readiness gate.
+--   SNI is a real but unknown name (not under the wildcard zone, absent from `domains`)
+--       -> 127.0.0.1:8446  (the dummy-cert terminator: it RECEIVES the PROXY header,
+--                           terminates TLS under the self-signed placeholder cert, and
+--                           serves the branded "Domain not configured" page —
+--                           unconfigured.lua). This is the custom-domain analogue of the
+--                           wildcard subdomain's not_found page. Because we hold no cert
+--                           for the name (spec/13 keeps it on the VM), the client gets a
+--                           browser cert warning first; clicking through shows the page
+--                           instead of a dropped socket. A REGISTERED custom domain is in
+--                           `domains` the moment it is created (no readiness gate), so this
+--                           fork is only hit by typos / stale DNS / unregistered names.
+--   miss with no SNI (bare-IP TLS client, junk probe, scanner)
+--       -> drop the connection (ngx.exit(ngx.ERROR)). There is no name to brand and no
+--          point spending a handshake on it, so it dies at L4.
 --
 -- Both loopback targets EXPECT the PROXY header the edge emits (8443 receives it,
 -- 8445 consumes+strips it), so `proxy_protocol on` on this edge is correct for ALL
@@ -43,6 +52,10 @@ local domains = ngx.shared.domains
 -- (loopback, consumes PROXY then forwards raw). Both are nginx.conf servers below.
 local WILDCARD_TERMINATOR = "127.0.0.1:8443"
 local CUSTOM_STRIP_PATH = "127.0.0.1:8445"
+-- The dummy-cert terminator for a named-but-unrouted SNI: serves the branded
+-- "Domain not configured" page (unconfigured.lua) instead of dropping. A NAMED
+-- miss only — an empty SNI is still dropped above.
+local UNCONFIGURED_TERMINATOR = "127.0.0.1:8446"
 
 -- The SNI, lowercased and port-stripped to a bare host. ssl_preread gives the raw
 -- SNI; normalize it the same way router.lua normalizes Host so the suffix test and
@@ -56,11 +69,14 @@ if sni == "" then
 end
 
 -- A name under the regional wildcard terminates AT the proxy (the L7 path). The
--- suffix predicate is the one router.lua uses; atlas_region is loaded once at init
--- from /var/lib/nginx/region (nginx.conf stream init_by_lua), the same file the
--- http subsystem reads.
-if atlas_region and atlas_region ~= "" then
-	local suffix = "." .. atlas_region .. ".frappe.dev"
+-- suffix predicate is the one router.lua uses; atlas_root_domain is the FULL
+-- regional wildcard zone (e.g. "blr1.frappe.dev" or "aditya-blr3.x.frappe.dev"),
+-- loaded once at init from /var/lib/nginx/region (nginx.conf stream init_by_lua),
+-- the same file the http subsystem reads. We strip that exact zone — NOT
+-- region .. ".frappe.dev", which assumed the region sat one label under
+-- frappe.dev and broke under a deeper platform zone like x.frappe.dev.
+if atlas_root_domain and atlas_root_domain ~= "" then
+	local suffix = "." .. atlas_root_domain
 	if sni:sub(-#suffix) == suffix then
 		ngx.var.sni_upstream = WILDCARD_TERMINATOR
 		return
@@ -69,12 +85,14 @@ end
 
 -- A known custom domain: hand to the strip-path, which re-reads the SNI and dials
 -- the VM raw. Every registered (active) custom domain is present here — no readiness
--- gate — so an unknown/deregistered name misses and is dropped below.
+-- gate — so an unknown/deregistered name misses and falls to the terminator below.
 if domains:get(sni) then
 	ngx.var.sni_upstream = CUSTOM_STRIP_PATH
 	return
 end
 
--- Unknown name (unregistered / deregistered): drop. No branded page — this is L4,
--- the client just sees a closed socket.
-return ngx.exit(ngx.ERROR)
+-- A real but unknown name (unregistered / deregistered / typo'd custom domain):
+-- hand to the dummy-cert terminator, which serves the branded "Domain not
+-- configured" page over the self-signed placeholder cert. The empty-SNI case is
+-- already dropped above, so only a NAMED miss reaches here — never a bare probe.
+ngx.var.sni_upstream = UNCONFIGURED_TERMINATOR

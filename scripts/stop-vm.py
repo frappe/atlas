@@ -8,14 +8,22 @@
 
 import os
 import sys
+import time
 import typing
 from dataclasses import dataclass
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib"))
 
-from atlas._run import run
+from atlas._run import firecracker_api, install_file, run, run_ok
 from atlas._task import TaskInputs
 from atlas.paths import VirtualMachinePaths
+
+# How long to wait for the guest to power itself off after a SendCtrlAltDel before
+# we fall through to the systemd stop (which SIGKILLs the cgroup if still up). Long
+# enough for a normal Linux shutdown (fs sync + unmount), short enough not to hang a
+# stop on a wedged guest — the systemd stop below is the hard backstop either way.
+GRACEFUL_SHUTDOWN_TIMEOUT_SECONDS = 30
+GRACEFUL_POLL_INTERVAL_SECONDS = 1
 
 
 @dataclass(frozen=True)
@@ -24,15 +32,106 @@ class StopInputs(TaskInputs):
 
 	command: typing.ClassVar[str] = "stop-vm"
 	virtual_machine_name: str  # UUID; selects the firecracker-vm@<uuid> instance
+	# Cooperative shutdown (default 1). Sends the guest a ctrl+alt+del via the Firecracker
+	# API so its kernel runs a real shutdown — syncs filesystems and unmounts — BEFORE
+	# the unit is stopped. 0 (forced) = today's behaviour: `systemctl stop` KILLs
+	# Firecracker (KillMode=mixed SIGKILLs the cgroup) with the guest never told to
+	# halt, so anything dirty in the guest page cache at that instant is lost. Forced is
+	# for callers that discard the guest's RAM anyway (migration cold-stop) or capture
+	# the disk another way; the default keeps writes durable. int (not bool) because the
+	# task-input parser only special-cases int; a bool field would arrive as the string
+	# "0", which is truthy — so 0/1 it is.
+	graceful: int = 1
+	# Optional short graceful-stop timeout (seconds). A migration discards the guest's
+	# RAM anyway (spec/24 §0.5.2), so waiting out a full shutdown grace period is
+	# wasted downtime — a short TimeoutStopSec bounds it. This uses `systemctl stop`
+	# with a per-unit runtime override, NOT `systemctl kill -SIGKILL`: the graceful
+	# stop still runs ExecStopPost (vm-network-down.py tears down netns/veth/proxy-NDP,
+	# which a SIGKILL would skip — leaving the source answering NDP for a /128 that a
+	# keep-address forward then collides with). Empty (0) = systemd's default drain.
+	stop_timeout_seconds: int = 0
+
+
+def _graceful_guest_shutdown(paths: VirtualMachinePaths) -> None:
+	"""Ask the guest to power itself off via a Firecracker SendCtrlAltDel, then wait
+	for the unit to go inactive (the guest has synced + halted, Firecracker exited).
+
+	Best-effort: a missing socket (VM not running) or a guest that never halts just
+	falls through — the caller's `systemctl stop` is the hard backstop and runs
+	ExecStopPost regardless. On systemd guests ctrl-alt-del.target maps to
+	poweroff.target, so this triggers a clean shutdown; a guest that ignores it
+	simply times out here and gets the forced stop next."""
+	if not os.path.exists(paths.api_socket):
+		return
+	firecracker_api(
+		paths.api_socket_directory,
+		paths.api_socket_name,
+		"PUT",
+		"/actions",
+		'{"action_type": "SendCtrlAltDel"}',
+	)
+	deadline = time.monotonic() + GRACEFUL_SHUTDOWN_TIMEOUT_SECONDS
+	while time.monotonic() < deadline:
+		if not run_ok("systemctl is-active --quiet {}", paths.systemd_unit):
+			return
+		time.sleep(GRACEFUL_POLL_INTERVAL_SECONDS)
 
 
 def main() -> None:
 	inputs = StopInputs.from_args()
 	paths = VirtualMachinePaths(inputs.virtual_machine_name)
 
-	run("sudo systemctl stop {}", paths.systemd_unit)
+	if inputs.graceful:
+		_graceful_guest_shutdown(paths)
+
+	if inputs.stop_timeout_seconds > 0:
+		# Bound the graceful drain WITHOUT skipping ExecStopPost. TimeoutStopSec is a
+		# load-time property (set-property can't change it at runtime — host-verified),
+		# so drop a runtime override under /run and daemon-reload (~0.1s, host-timed).
+		# `systemctl stop` still runs ExecStopPost; if the guest doesn't halt in the
+		# window systemd SIGKILLs the cgroup and STILL runs ExecStopPost — so
+		# vm-network-down.py (netns/veth/proxy-NDP teardown) always fires, which a bare
+		# `systemctl kill -SIGKILL` would skip. The override lives in /run (tmpfs), so
+		# it evaporates on reboot; we also remove it + reload after the stop so the
+		# unit's default drain is restored for an ordinary later stop.
+		dropin_dir = f"/run/systemd/system/{paths.systemd_unit}.d"
+		dropin = f"{dropin_dir}/atlas-migration-faststop.conf"
+		run("sudo mkdir -p {}", dropin_dir)
+		install_file(
+			f"[Service]\nTimeoutStopSec={inputs.stop_timeout_seconds}s\n",
+			dropin,
+			mode="0644",
+		)
+		run("sudo systemctl daemon-reload")
+		try:
+			run("sudo systemctl stop {}", paths.systemd_unit)
+		finally:
+			run("sudo rm -f {}", dropin, check=False)
+			run("sudo rmdir {}", dropin_dir, check=False, quiet=True)
+			run("sudo systemctl daemon-reload", check=False)
+	else:
+		run("sudo systemctl stop {}", paths.systemd_unit)
+
+	# Boot-then-hydrate convergence (spec/24 §0): once the guest is stopped (its rootfs
+	# fd released), tear down any leftover dm-clone device so the disk converges to the
+	# plain atlas-vm-<uuid> LV. During a boot-then-hydrate migration the guest ran on the
+	# clone (read-through, then collapsed to a linear map onto the plain LV); that clone
+	# device lingers and holds the plain LV BUSY — a later lvremove (terminate/rebuild)
+	# would fail "used by another device". Removing it here is safe now that nothing has
+	# it open, and lets the next start expose the plain LV directly. No-op for an
+	# ordinary VM (no clone). Idempotent and best-effort.
+	_converge_clone(inputs.virtual_machine_name)
 
 	print(f"Stopped {inputs.virtual_machine_name}.")
+
+
+def _converge_clone(uuid: str) -> None:
+	"""Remove a leftover dm-clone (root and data) so the disk falls back to the plain
+	LV. Safe only after the guest is stopped (fd released). Best-effort."""
+	for suffix in ("", "-data"):
+		name = f"atlas-vm-{uuid}{suffix}-clone"
+		if run_ok("sudo dmsetup info {}", name):
+			run("sudo dmsetup remove {}", name, check=False)
 
 
 if __name__ == "__main__":

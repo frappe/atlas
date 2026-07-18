@@ -96,8 +96,10 @@ webroot_path = "/var/www/letsencrypt"
 # build.sh bakes a placeholder `domain` (current bench-cli rejects an empty
 # `admin.domain` during production setup); deploy-site.py rewrites it to the FQDN
 # per clone in admin mode. The placeholder is never served — in site mode the FQDN
-# maps to the baked site, not the admin app. The password is a shared baked
-# throwaway, rotated after first login.
+# maps to the baked site, not the admin app. The `password` below is a placeholder
+# build.sh replaces with a long random secret at bake time (never surfaced) — the
+# tenant handoff is `bench generate-admin-session`'s one-click URL
+# (bench/deploy-site.py), not this password.
 [admin]
 port = 8002
 timeout = 180

@@ -28,9 +28,11 @@ local host = ngx.var.host or ""
 host = host:lower():gsub(":%d+$", "")
 
 -- A name under the regional wildcard: the proxy answers the challenge itself from
--- its own webroot. NEVER proxy these to a VM (the wildcard guard).
-if atlas_region and atlas_region ~= "" then
-	local suffix = "." .. atlas_region .. ".frappe.dev"
+-- its own webroot. NEVER proxy these to a VM (the wildcard guard). atlas_root_domain
+-- is the FULL regional wildcard zone (e.g. "blr1.frappe.dev" or
+-- "aditya-blr3.x.frappe.dev"); strip that exact zone, not region .. ".frappe.dev".
+if atlas_root_domain and atlas_root_domain ~= "" then
+	local suffix = "." .. atlas_root_domain
 	if host:sub(-#suffix) == suffix then
 		return ngx.exec("@acme_local")
 	end

@@ -39,6 +39,9 @@ venv.bak/
 node_modules/
 jspm_packages/
 
+# Vite dev-server cache
+.vite/
+
 # IDEs and editors
 .vscode/
 .vs/

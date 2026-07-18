@@ -36,7 +36,7 @@ Usage (on bootstrap.local, with a running bench VM and proxy VM):
 The bench VM must be:
   - Running, non-proxy, with a public ipv6_address
   - Have bench-cli installed with a bench named 'atlas' under
-    /home/frappe/bench-cli/benches/atlas
+    /home/frappe/pilot/benches/atlas
   - Have /usr/local/bin/bench-domain-provider installed (build.sh) and
     /etc/atlas-routing.env pointing at this controller (cold inject / warm freshen)
 
@@ -65,7 +65,7 @@ _STRAY = "stray-e2e-test"
 # A label reserved then force-failed (the create-failure rollback for check 2).
 _ROLLBACK = "fail-e2e-test"
 
-_BENCH = "/home/frappe/bench-cli/benches/atlas"
+_BENCH = "/home/frappe/pilot/benches/atlas"
 
 # The baked MariaDB root password (bench/bench.toml `root_password`) drop-site prompts
 # for. Kept in step with bench.toml.
@@ -145,7 +145,7 @@ def _check_register_reserves_and_serves(
 	_guest(
 		bench_vm,
 		(
-			f'sudo -u frappe bash -lc "export PATH=/home/frappe/bench-cli:$PATH; cd {_BENCH}; '
+			f'sudo -u frappe bash -lc "export PATH=/home/frappe/pilot:$PATH; cd {_BENCH}; '
 			f'bench -b atlas new-site {fqdn} --admin-password atlas-baked --apps erpnext"'
 		),
 		timeout=600,
@@ -173,7 +173,7 @@ def _check_create_failure_rollback(bench_vm: str, domain: str) -> None:
 	_stdout, _stderr, code = _guest_raw(
 		bench_vm,
 		(
-			f'sudo -u frappe bash -lc "export PATH=/home/frappe/bench-cli:$PATH; cd {_BENCH}; '
+			f'sudo -u frappe bash -lc "export PATH=/home/frappe/pilot:$PATH; cd {_BENCH}; '
 			f'bench -b atlas new-site {_ROLLBACK}.{domain} --admin-password atlas-baked --apps no_such_app_xyz"'
 		),
 		timeout=300,
@@ -199,7 +199,7 @@ def _check_drop_deregister_deconverges(
 	_guest(
 		bench_vm,
 		(
-			f'sudo -u frappe bash -lc "export PATH=/home/frappe/bench-cli:$PATH; cd {_BENCH}; '
+			f'sudo -u frappe bash -lc "export PATH=/home/frappe/pilot:$PATH; cd {_BENCH}; '
 			f'echo {_BAKED_MARIADB_ROOT_PASSWORD} | bench -b atlas drop-site {fqdn} --no-backup --force"'
 		),
 		timeout=300,

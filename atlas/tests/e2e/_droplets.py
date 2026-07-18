@@ -176,6 +176,37 @@ def ensure_bootstrapped_server(
 	return server, client, True
 
 
+def ensure_two_active_servers(
+	reuse: bool = True,
+	keep: bool = True,
+) -> tuple["frappe.model.document.Document", "frappe.model.document.Document"]:
+	"""Return a (source, target) pair of distinct Active, same-provider Servers, both
+	SSH-reachable — the reusable harness for any two-host e2e (migration, host-mesh,
+	future cross-host features). Reuses an existing reachable pair when `reuse`;
+	provisions whatever is missing.
+
+	The pair is same-provider by construction: the source is whatever
+	`ensure_bootstrapped_server` returns, and the target is filtered to the source's
+	provider_type (a second host on a different vendor could never be a migration
+	target — cross-provider is out of scope). Both are returned as fresh docs."""
+	source, _client, _created = ensure_bootstrapped_server(reuse=reuse, keep=keep)
+	source_provider = frappe.db.get_value("Server", source.name, "provider_type")
+
+	if reuse:
+		for name in frappe.get_all("Server", filters={"status": "Active"}, pluck="name"):
+			if name == source.name:
+				continue
+			if frappe.db.get_value("Server", name, "provider_type") != source_provider:
+				continue
+			if server_is_reachable(name):
+				return source, frappe.get_doc("Server", name)
+
+	# No reusable second host — provision a fresh one. reuse=False forces a new
+	# droplet, so it never hands back `source` (already returned above).
+	target, _client2, _created2 = ensure_bootstrapped_server(reuse=False, keep=keep)
+	return source, target
+
+
 def ensure_e2e_provider() -> str:
 	"""Seed Atlas Settings + DigitalOcean Settings + the Provider Size / Image rows
 	from the E2E fixture, via the explicit Layer-1 setters. Returns the active

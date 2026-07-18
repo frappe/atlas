@@ -146,6 +146,12 @@ def run_all_smoke() -> None:
 
 	    bench --site atlas.tests.local execute atlas.tests.e2e.use_cases.server_provisioning.run
 	    bench --site atlas.tests.local execute atlas.tests.e2e.use_cases.digitalocean_client.run_smoke
+
+	VM migration needs a SECOND host, so it owns its two-droplet harness and is
+	invoked directly too (one scenario per address scheme):
+
+	    bench --site atlas.tests.local execute atlas.tests.e2e.use_cases.virtual_machine_migration.run_smoke
+	    bench --site atlas.tests.local execute atlas.tests.e2e.use_cases.virtual_machine_migration.run_keep_address_smoke
 	"""
 	overall_start = time.monotonic()
 	client = get_client()

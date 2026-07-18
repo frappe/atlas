@@ -198,6 +198,22 @@ class Provider(ABC):
 		harmless overwrite."""
 		return None
 
+	def vm_range_is_forwardable(self, provider_resource_id: str) -> bool:
+		"""True iff a VM keeping its /128 across a migration can have its inbound
+		traffic permanently forwarded from the source host to wherever it now lives
+		(spec/24-vm-migration.md §2.8). This is the keep-address gate: the source
+		host keeps holding the /64 the /128 is carved from — so it keeps receiving
+		the address and tunnels it to the target — and nothing ever reclaims or
+		moves the /64. Default False (Self-Managed, Fake) → those providers fall
+		back to change-address (a NEW /128 on the target + a proxy re-point).
+
+		Unlike moving the whole /64, this needs no provider API call: it is a fact
+		about the delivery mechanism (routed-prefix or proxy-NDP), not a movable
+		vendor resource. `provider_resource_id` is accepted for symmetry with the
+		other capability methods and in case a future provider must probe per-box;
+		the current overrides ignore it."""
+		return False
+
 	# --- Reserved IPs (the inbound-v4 primitive) -------------------------
 	# A reserved IP is allocated to a region, assigned to the *droplet*
 	# (host), and host-side 1:1-NATed to the guest by a later Task. The

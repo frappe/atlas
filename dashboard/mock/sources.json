@@ -1,0 +1,5 @@
+[
+  { "id": "ordinary", "label": "Ordinary", "file": "state-ordinary.json" },
+  { "id": "scale", "label": "Scale", "file": "state-scale.json" },
+  { "id": "real", "label": "Real Host", "file": "state-real.json" }
+]

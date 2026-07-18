@@ -217,9 +217,20 @@ class TestSiteOrchestration(IntegrationTestCase):
 		with (
 			patch.object(site_module, "_provision_backing_vm", return_value=vm_name) as m_prov,
 			patch.object(site_module, "_wait_for_vm_running") as m_wait,
-			patch.object(site_module, "_deploy_site") as m_deploy,
+			patch.object(
+				site_module,
+				"_deploy_site",
+				return_value={
+					"site": site_name,
+					"serving": True,
+					"login_url": f"https://{site_name}/app?sid=tok",
+				},
+			) as m_deploy,
 			patch.object(site_module, "_wait_for_http") as m_http,
 			patch.object(site_module, "_create_subdomain", return_value="sub-1") as m_sub,
+			patch.object(
+				site_module, "_provision_pilot", return_value="acme-pilot.blr1.frappe.dev"
+			) as m_pilot,
 			patch.object(site_module.frappe.db, "commit"),
 		):
 			site_module.auto_provision(site_name)
@@ -229,6 +240,7 @@ class TestSiteOrchestration(IntegrationTestCase):
 			"deploy": m_deploy,
 			"http": m_http,
 			"sub": m_sub,
+			"pilot": m_pilot,
 		}
 
 	def test_happy_path_reaches_running(self) -> None:
@@ -238,10 +250,14 @@ class TestSiteOrchestration(IntegrationTestCase):
 		self.assertEqual(site.status, "Running")
 		self.assertEqual(site.virtual_machine, "cloned-vm")
 		self.assertEqual(site.subdomain_doc, "sub-1")
-		# The owner is handed the SHARED baked Administrator password (rotated after
-		# first login) — stored (encrypted) on the row by the controller, NOT a value
-		# the deploy returns (the per-VM reset is gone). It is the build.sh constant.
-		self.assertEqual(site.get_password("admin_password"), site_module.BAKED_ADMIN_PASSWORD)
+		# The owner is handed the one-click login URL the deploy minted (`bench
+		# browse --sid`) — NOT a password. Stored on the row by the controller from
+		# the deploy's parsed result.
+		self.assertEqual(site.login_url, f"https://{site.name}/app?sid=tok")
+		# The login URL is a real 24h `bench browse --sid` session, so the controller
+		# stamps when it stops working — Central regenerates a fresh one for a late
+		# click. Stamped iff the URL is (both written in the same step).
+		self.assertTrue(site.login_url_expires_at)
 		# The whole chain fired, in order.
 		mocks["prov"].assert_called_once()
 		mocks["wait"].assert_called_once_with("cloned-vm")
@@ -250,6 +266,14 @@ class TestSiteOrchestration(IntegrationTestCase):
 		http_args = mocks["http"].call_args.args
 		self.assertEqual(http_args[1], "cloned-vm")
 		mocks["sub"].assert_called_once()
+		# The attached Pilot admin console was stood up on the SAME backing VM (the
+		# front door Central's Asset resolves for "Open") — see spec/14-self-serve.md.
+		# (auto_provision passes its own re-fetched Site doc, so assert on the args:
+		# the Site name + the just-cloned VM name.)
+		mocks["pilot"].assert_called_once()
+		pilot_args = mocks["pilot"].call_args.args
+		self.assertEqual(pilot_args[0].name, site.name)
+		self.assertEqual(pilot_args[1], "cloned-vm")
 		# Each phase transition stamped its start time (drives the status page's
 		# per-phase timing). All three real phases were entered, so all three carry
 		# a stamp, in non-decreasing order.
@@ -257,11 +281,41 @@ class TestSiteOrchestration(IntegrationTestCase):
 		self.assertTrue(all(stamps), f"a phase entry left no timestamp: {stamps}")
 		self.assertEqual(stamps, sorted(stamps))
 
+	def test_regenerate_login_url_remints_and_restamps(self) -> None:
+		# A Running site whose stored login URL Central asks to refresh: re-mint in the
+		# guest (mocked seam), re-stamp login_url + a fresh expiry, and return the mirror.
+		site = _new_site("acme")
+		self._run_with_mocks(site.name)
+		site.reload()
+		old_expiry = site.login_url_expires_at
+		fresh = f"https://{site.name}/app?sid=fresh"
+		with (
+			patch.object(site_module, "_regenerate_login", return_value={"login_url": fresh}) as m_regen,
+			patch.object(site_module.frappe.db, "commit"),
+		):
+			mirror = site.regenerate_login_url()
+		m_regen.assert_called_once_with(site, site.virtual_machine)
+		site.reload()
+		self.assertEqual(site.login_url, fresh)
+		self.assertTrue(site.login_url_expires_at)
+		self.assertGreaterEqual(site.login_url_expires_at, old_expiry)
+		# The returned mirror is what Central re-reads — it carries the fresh URL.
+		self.assertEqual(mirror["login_url"], fresh)
+		self.assertEqual(mirror["url"], f"https://{site.name}")
+
+	def test_regenerate_login_url_refused_before_running(self) -> None:
+		# Nothing to sign into before the site serves — the guard fails loud.
+		site = _new_site("acme")
+		self.assertEqual(site.status, "Pending")
+		with self.assertRaises(frappe.ValidationError):
+			site.regenerate_login_url()
+
 	def test_deploy_failure_marks_failed_and_raises(self) -> None:
 		site = _new_site("acme")
 		with (
 			patch.object(site_module, "_provision_backing_vm", return_value="cloned-vm"),
 			patch.object(site_module, "_wait_for_vm_running"),
+			patch.object(site_module, "_create_subdomain", return_value="sub-1"),
 			patch.object(site_module, "_deploy_site", side_effect=RuntimeError("deploy broke")),
 			patch.object(site_module.frappe.db, "commit"),
 		):
@@ -269,8 +323,11 @@ class TestSiteOrchestration(IntegrationTestCase):
 				site_module.auto_provision(site.name)
 		site.reload()
 		self.assertEqual(site.status, "Failed")
-		# No Subdomain was created on the failed path.
-		self.assertFalse(site.subdomain_doc)
+		# The Subdomain (proxy route) is registered BEFORE the deploy, so a deploy that
+		# then fails leaves the route stamped — it points at a Failed VM (the proxy
+		# 502s until a retry/terminate), the deliberate cost of registering up front so
+		# a successful deploy's proxy sync overlaps the deploy instead of trailing it.
+		self.assertEqual(site.subdomain_doc, "sub-1")
 		# The deploy phase was entered (stamped) but never finished — so the page
 		# shows it as the broken phase with an elapsed-until-failure time, and the
 		# running phase never started (no stamp → no time shown).
@@ -290,9 +347,14 @@ class TestSiteOrchestration(IntegrationTestCase):
 			patch.object(
 				site_module, "_wait_for_vm_running", side_effect=lambda *a, **k: order.append("wait")
 			),
-			patch.object(site_module, "_deploy_site", return_value="pw"),
+			patch.object(
+				site_module,
+				"_deploy_site",
+				return_value={"login_url": "https://acme.blr1.frappe.dev/app?sid=tok"},
+			),
 			patch.object(site_module, "_wait_for_http"),
 			patch.object(site_module, "_create_subdomain", return_value="sub-1"),
+			patch.object(site_module, "_provision_pilot", return_value="acme-pilot.blr1.frappe.dev"),
 			patch.object(site_module.frappe.db, "commit", side_effect=lambda: order.append("commit")),
 		):
 			site_module.auto_provision(site.name)
@@ -338,8 +400,13 @@ class TestSiteOrchestration(IntegrationTestCase):
 		with (
 			patch.object(site_module, "_provision_backing_vm", return_value=vm.name),
 			patch.object(site_module, "_wait_for_vm_running"),
-			patch.object(site_module, "_deploy_site"),
+			patch.object(
+				site_module,
+				"_deploy_site",
+				return_value={"login_url": f"https://{site.name}/app?sid=tok"},
+			),
 			patch.object(site_module, "_wait_for_http"),
+			patch.object(site_module, "_provision_pilot", return_value="acme-pilot.blr1.frappe.dev"),
 			patch.object(site_module.frappe.db, "commit"),
 		):
 			site_module.auto_provision(site.name)
@@ -348,6 +415,73 @@ class TestSiteOrchestration(IntegrationTestCase):
 		subdomain = frappe.get_doc("Subdomain", site.subdomain_doc)
 		self.assertEqual(subdomain.subdomain, "acme")
 		self.assertEqual(subdomain.virtual_machine, vm.name)
+
+
+class TestSiteFakeProvisionStages(IntegrationTestCase):
+	"""The deploy + HTTP-probe stages short-circuit on a Fake-backed VM (the same
+	`is_fake_server` gate `run_task` uses). A Fake VM carries a documentation IP that
+	never answers SSH or HTTP, so without this the real flow times out and the Site is
+	left Failed with no Subdomain — the whole point is that a developer_mode/Fake
+	auto_provision still creates EVERY record a real one does, only skipping the two
+	stages that physically can't run. A real (non-Fake) VM still calls through."""
+
+	def setUp(self) -> None:
+		_ensure_root_domain()
+		from atlas.tests.fixtures import make_image, make_provider_row, make_server, make_virtual_machine
+
+		for name in frappe.get_all("Site", pluck="name"):
+			frappe.delete_doc("Site", name, force=1, ignore_permissions=True)
+		for name in frappe.get_all("Subdomain", pluck="name"):
+			frappe.delete_doc("Subdomain", name, force=1, ignore_permissions=True)
+		image = make_image("fake-stage-image")
+		fake_server = make_server(
+			make_provider_row("fake-stage-provider", provider_type="Fake"),
+			title="fake-stage-server",
+			provider_type="Fake",
+			status="Active",
+		)
+		self.fake_vm = make_virtual_machine(
+			fake_server, image, title="fake-stage-vm", ipv6_address="2001:db8:f::1"
+		)
+		real_server = make_server(title="real-stage-server", ipv6_address="2001:db8:9::1")
+		self.real_vm = make_virtual_machine(
+			real_server, image, title="real-stage-vm", ipv6_address="2001:db8:9::5"
+		)
+		self.site = _new_site("acme")
+
+	def test_deploy_site_noops_on_fake_vm(self) -> None:
+		from atlas.atlas import deploy_site as deploy_module
+
+		with patch.object(deploy_module, "deploy_site") as m_deploy:
+			result = site_module._deploy_site(self.site, self.fake_vm.name)
+		m_deploy.assert_not_called()
+		# A synthesized placeholder login_url keeps the mirror shape stable for
+		# e2e/desk tests that run against a Fake server.
+		self.assertTrue(result["login_url"])
+
+	def test_wait_for_http_noops_on_fake_vm(self) -> None:
+		from atlas.atlas import deploy_site as deploy_module
+
+		with patch.object(deploy_module, "wait_for_http") as m_http:
+			site_module._wait_for_http(self.site, self.fake_vm.name)
+		m_http.assert_not_called()
+
+	def test_deploy_site_calls_through_on_real_vm(self) -> None:
+		from atlas.atlas import deploy_site as deploy_module
+
+		with patch.object(deploy_module, "deploy_site") as m_deploy:
+			site_module._deploy_site(self.site, self.real_vm.name)
+		# The two trailing positional args are the bench-level Central endpoint + token,
+		# threaded from create_site; `admin_domain` (the attached Pilot's FQDN) is None here
+		# since this unit test calls `_deploy_site` directly without resolving one.
+		m_deploy.assert_called_once_with(self.real_vm.name, self.site.name, None, None, admin_domain=None)
+
+	def test_wait_for_http_calls_through_on_real_vm(self) -> None:
+		from atlas.atlas import deploy_site as deploy_module
+
+		with patch.object(deploy_module, "wait_for_http") as m_http:
+			site_module._wait_for_http(self.site, self.real_vm.name)
+		m_http.assert_called_once()
 
 
 class TestSiteWarmFirstProvision(IntegrationTestCase):
@@ -445,6 +579,154 @@ class TestSiteWarmFirstProvision(IntegrationTestCase):
 		self.assertEqual(kw["cpu_max_cores"], site_module.SITE_VM_SIZE["cpu_max_cores"])
 		self.assertNotIn("vcpus", kw)
 		self.assertNotIn("memory_megabytes", kw)
+
+	def test_clone_title_is_the_bare_subdomain_label_not_the_fqdn(self) -> None:
+		"""The clone's `title` MUST be the bare subdomain label (`acme`), NOT the
+		Site's FQDN name (`acme.blr1.frappe.dev`) — a VM title is a plain descriptive
+		handle, and the bare label keeps it a clean single token (matching the
+		subdomain the Site is fronted at). The warm path passes `title` from the same
+		`site.subdomain` expression, so the cold path guards both."""
+		site = _new_site("acme")
+		self.assertEqual(site.name, "acme.blr1.frappe.dev")
+		ctx, recorded = self._record_clone("cold-clone")
+		with ctx:
+			site_module._provision_backing_vm(site)
+		self.assertEqual(recorded[0]["kwargs"]["title"], "acme")
+
+
+class TestPilotSubdomainFor(IntegrationTestCase):
+	"""`pilot_subdomain_for` derives the attached-Pilot label from a site's label:
+	`acme` → `acme-pilot`, disambiguated on collision (spec/14-self-serve.md)."""
+
+	def setUp(self) -> None:
+		_ensure_root_domain()
+		for name in frappe.get_all("Pilot", pluck="name"):
+			frappe.delete_doc("Pilot", name, force=1, ignore_permissions=True)
+
+	def test_appends_pilot_suffix(self) -> None:
+		from atlas.atlas.subdomain_label import pilot_subdomain_for
+
+		self.assertEqual(pilot_subdomain_for("acme"), "acme-pilot")
+
+	def test_collision_appends_random_tail(self) -> None:
+		"""When `<label>-pilot` already backs a Pilot, a short random tail disambiguates
+		so a re-created / colliding site still gets a unique console name."""
+		from atlas.atlas.doctype.pilot import pilot as pilot_module
+		from atlas.atlas.subdomain_label import PILOT_SUFFIX, pilot_subdomain_for
+
+		# Stand up a Pilot at `acme-pilot.<domain>` so the base name is taken. Patch the
+		# own-VM provisioner + enqueue so the row exists without a real backing VM.
+		with (
+			patch.object(pilot_module, "_provision_backing_vm", return_value="stub-vm"),
+			patch.object(pilot_module.frappe, "enqueue"),
+		):
+			frappe.get_doc({"doctype": "Pilot", "subdomain": "acme-pilot"}).insert(ignore_permissions=True)
+		label = pilot_subdomain_for("acme")
+		self.assertNotEqual(label, "acme-pilot")
+		self.assertTrue(label.startswith("acme" + PILOT_SUFFIX + "-"))
+		# The result is still a valid Contract-A label.
+		from atlas.atlas.subdomain_label import validate_label
+
+		validate_label(label)
+
+
+class TestSitePilotAttachment(IntegrationTestCase):
+	"""create_site stands up an attached Pilot admin console on the site's OWN backing
+	VM (spec/14-self-serve.md): `<subdomain>-pilot.<region>` → the same VM, so Central's
+	Asset "Open" resolves a bench console (front_door_for_vm prefers Pilot), not the
+	customer site. The deploy short-circuits on the Fake VM, so the real `_provision_pilot`
+	orchestration (create the Pilot, attach it, mint, route, mark Running, link back) runs
+	hostless here."""
+
+	def setUp(self) -> None:
+		_ensure_root_domain()
+		from atlas.tests.fixtures import make_image, make_provider_row, make_server, make_virtual_machine
+
+		for name in frappe.get_all("Site", pluck="name"):
+			frappe.delete_doc("Site", name, force=1, ignore_permissions=True)
+		for name in frappe.get_all("Pilot", pluck="name"):
+			frappe.delete_doc("Pilot", name, force=1, ignore_permissions=True)
+		for name in frappe.get_all("Subdomain", pluck="name"):
+			frappe.delete_doc("Subdomain", name, force=1, ignore_permissions=True)
+		image = make_image("pilot-attach-image")
+		fake_server = make_server(
+			make_provider_row("pilot-attach-provider", provider_type="Fake"),
+			title="pilot-attach-server",
+			provider_type="Fake",
+			status="Active",
+		)
+		self.fake_vm = make_virtual_machine(
+			fake_server, image, title="pilot-attach-vm", ipv6_address="2001:db8:f::9"
+		)
+		self.site = _new_site("acme")
+		# deploy_attached commits on its FAILURE path (so a Failed pilot survives the job
+		# rollback, like the other auto_provision funcs). In-test that commit would leak
+		# rows past IntegrationTestCase's per-test rollback and poison the shared DB with a
+		# committed `acme` row that later `delete_doc`s deadlock on (FOR UPDATE NOWAIT). Mock
+		# commit to a no-op for the whole class — the same discipline TestPilot._drive_provision
+		# uses. Rows then roll back cleanly between tests.
+		from atlas.atlas.doctype.pilot import pilot as pilot_module
+
+		self._commit_patches = [
+			patch.object(site_module.frappe.db, "commit"),
+			patch.object(pilot_module.frappe.db, "commit"),
+		]
+		for p in self._commit_patches:
+			p.start()
+		self.addCleanup(lambda: [p.stop() for p in self._commit_patches])
+
+	def test_provision_pilot_attaches_console_to_same_vm(self) -> None:
+		pilot_name = site_module._provision_pilot(self.site, self.fake_vm.name, "acme-pilot")
+		# Named `<subdomain>-pilot.<region>` and linked back on the Site.
+		self.assertEqual(pilot_name, "acme-pilot.blr1.frappe.dev")
+		self.site.reload()
+		self.assertEqual(self.site.pilot, pilot_name)
+		pilot = frappe.get_doc("Pilot", pilot_name)
+		# Attached: bound to the site's VM, admin build_mode, and Running with a login URL.
+		self.assertTrue(pilot.attached)
+		self.assertEqual(pilot.virtual_machine, self.fake_vm.name)
+		self.assertEqual(pilot.build_mode, "admin")
+		self.assertEqual(pilot.status, "Running")
+		self.assertTrue(pilot.login_url)
+		# The Pilot's own Subdomain routes `acme-pilot` → the SAME backing VM /128.
+		self.assertTrue(pilot.subdomain_doc)
+		pilot_sub = frappe.get_doc("Subdomain", pilot.subdomain_doc)
+		self.assertEqual(pilot_sub.subdomain, "acme-pilot")
+		self.assertEqual(pilot_sub.virtual_machine, self.fake_vm.name)
+
+	def test_attached_pilot_does_not_create_or_boot_its_own_vm(self) -> None:
+		# The attach path must NOT provision a VM or enqueue a boot job (the Site owns
+		# the VM). Assert the module's own-VM provisioner is never touched.
+		from atlas.atlas.doctype.pilot import pilot as pilot_module
+
+		with patch.object(pilot_module, "_provision_backing_vm") as m_prov:
+			site_module._provision_pilot(self.site, self.fake_vm.name, "acme-pilot")
+		m_prov.assert_not_called()
+
+	def test_attached_pilot_terminate_does_not_touch_the_vm(self) -> None:
+		# The attached Pilot's own terminate() must NOT terminate the shared VM (the Site
+		# owns it) — the `.attached` guard makes _terminate_backing_vm a no-op. Terminate
+		# the Pilot alone and assert the VM is untouched (only the Site would terminate it).
+		site_module._provision_pilot(self.site, self.fake_vm.name, "acme-pilot")
+		pilot = frappe.get_doc("Pilot", self.site.pilot)
+		pilot.terminate()
+		pilot.reload()
+		self.assertEqual(pilot.status, "Terminated")
+		self.assertFalse(frappe.db.exists("Subdomain", pilot.get("subdomain_doc")))
+		# The shared VM is NOT terminated by the Pilot (attached guard).
+		self.assertNotEqual(frappe.db.get_value("Virtual Machine", self.fake_vm.name, "status"), "Terminated")
+
+	def test_terminate_cascades_to_pilot_and_vm_once(self) -> None:
+		# Full cascade: Site.terminate → Pilot Terminated + VM Terminated (once each).
+		site_module._provision_pilot(self.site, self.fake_vm.name, "acme-pilot")
+		self.site.db_set("virtual_machine", self.fake_vm.name)
+		self.site.reload()
+		pilot_name = self.site.pilot
+		self.site.terminate()
+		self.site.reload()
+		self.assertEqual(self.site.status, "Terminated")
+		self.assertEqual(frappe.db.get_value("Pilot", pilot_name, "status"), "Terminated")
+		self.assertEqual(frappe.db.get_value("Virtual Machine", self.fake_vm.name, "status"), "Terminated")
 
 
 class TestSiteTerminate(IntegrationTestCase):

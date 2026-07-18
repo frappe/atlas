@@ -159,7 +159,7 @@ class _StubHandler(BaseHTTPRequestHandler):
 		length = int(self.headers.get("Content-Length", 0))
 		body = self.rfile.read(length).decode()
 		self.server.calls.append((self.path, body))
-		# /api/method/atlas.atlas.bench_routing.<method>; key on the last dot-segment.
+		# /api/method/satellite.routing.api.<method>; key on the last dot-segment.
 		method = self.path.rsplit(".", 1)[-1]
 		status, payload = self.server.responses.get(method, (404, {"message": {"status": "ok"}}))
 		data = json.dumps(payload).encode()
@@ -204,10 +204,10 @@ class _ProviderTestCase(unittest.TestCase):
 		self.server.responses.update(per_verb)
 
 	def _register_calls(self) -> list:
-		return [c for c in self.server.calls if c[0].endswith("bench_routing.register")]
+		return [c for c in self.server.calls if c[0].endswith("api.register")]
 
 	def _deregister_calls(self) -> list:
-		return [c for c in self.server.calls if c[0].endswith("bench_routing.deregister")]
+		return [c for c in self.server.calls if c[0].endswith("api.deregister")]
 
 
 class TestRegister(_ProviderTestCase):
@@ -248,7 +248,7 @@ class TestRegister(_ProviderTestCase):
 		self.assertEqual(rc, 0)
 		# It POSTed register_custom_domain with the WHOLE host, NOT register(label).
 		self.assertEqual(self._register_calls(), [])
-		custom = [c for c in self.server.calls if c[0].endswith("bench_routing.register_custom_domain")]
+		custom = [c for c in self.server.calls if c[0].endswith("api.register_custom_domain")]
 		self.assertEqual(len(custom), 1)
 		self.assertIn("domain=shop.acme.com", custom[0][1])
 
@@ -322,7 +322,7 @@ class TestDeregister(_ProviderTestCase):
 		rc = self.provider.main(["bench-domain-provider", "deregister", "shop.acme.com"])
 		self.assertEqual(rc, 0)
 		self.assertEqual(self._deregister_calls(), [])  # not the wildcard endpoint
-		custom = [c for c in self.server.calls if c[0].endswith("bench_routing.deregister_custom_domain")]
+		custom = [c for c in self.server.calls if c[0].endswith("api.deregister_custom_domain")]
 		self.assertEqual(len(custom), 1)
 		self.assertIn("domain=shop.acme.com", custom[0][1])
 
@@ -382,7 +382,7 @@ class TestGenerateDnsRecords(_ProviderTestCase):
 		self.assertEqual(rc, 0)
 		self.assertEqual(json.loads(out.getvalue().strip()), recipe)
 		# It POSTed dns_records carrying BOTH the custom domain and the regional site.
-		calls = [c for c in self.server.calls if c[0].endswith("bench_routing.dns_records")]
+		calls = [c for c in self.server.calls if c[0].endswith("api.dns_records")]
 		self.assertEqual(len(calls), 1)
 		self.assertIn("domain=shop.acme.com", calls[0][1])
 		self.assertIn(f"site=app.{_REGION_DOMAIN}", calls[0][1])

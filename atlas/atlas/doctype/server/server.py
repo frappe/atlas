@@ -1,5 +1,7 @@
 import json
+import shlex
 import uuid
+from contextlib import contextmanager
 from typing import ClassVar
 
 import frappe
@@ -79,6 +81,11 @@ class Server(Document):
 		("vm-restore.py", "/var/lib/atlas/bin/vm-restore.py"),
 		("systemd/firecracker-vm@.service", "/etc/systemd/system/firecracker-vm@.service"),
 		("systemd/atlas-pool.service", "/etc/systemd/system/atlas-pool.service"),
+		# host-mesh.service brings up the wg-mesh private-plane device in the host
+		# root netns at boot (design §3), the host-fabric analog of atlas-pool.service:
+		# bootstrap creates the mesh but is not re-run on boot, so this oneshot
+		# re-asserts the device from /etc/atlas-host-mesh.{env,key} + wg-mesh.conf.
+		("systemd/host-mesh.service", "/etc/systemd/system/host-mesh.service"),
 	]
 
 	def autoname(self) -> None:
@@ -87,6 +94,22 @@ class Server(Document):
 
 	def validate(self) -> None:
 		self._validate_immutability()
+		self._denormalize_mesh_identity()
+
+	def _denormalize_mesh_identity(self) -> None:
+		"""Fill the derived WireGuard host-mesh denorm fields (design §8). Both are pure
+		functions of the Server UUID — recomputed by the controller wherever they are
+		needed (host_mesh.reconcile), so these fields are a legible read-through, not a
+		source of truth. Set once; a re-derive yields the same value, so an existing row
+		is unchanged on save."""
+		if not self.wireguard_public_key:
+			from atlas.atlas.networking import derive_host_wireguard_keypair
+
+			_private_key, self.wireguard_public_key = derive_host_wireguard_keypair(self.name)
+		if not self.mesh_address:
+			from atlas.atlas.networking import derive_host_mesh_address
+
+			self.mesh_address = derive_host_mesh_address(self.name)
 
 	def _validate_immutability(self) -> None:
 		"""Lock fields once they carry a value. Allow None → value transitions
@@ -175,6 +198,8 @@ class Server(Document):
 			connection = connection_for_server(self)
 			upload_files(connection, self._bootstrap_uploads())
 			self._run_install_sh(connection)
+			self._authorize_satellite_keys(connection)
+			self._ship_dashboard(connection)
 
 		task = run_task(
 			server=self.name,
@@ -203,10 +228,66 @@ class Server(Document):
 				f"install.sh failed on {self.name} (exit {exit_code}): {stderr[-500:] or stdout[-500:]}"
 			)
 
+	def _authorize_satellite_keys(self, connection) -> None:
+		"""Append the Satellite orchestrator's public key(s) to the host's root
+		authorized_keys so a Satellite can SSH the HOST for host-plane services (the
+		mesh, the gateway — spec/30). Idempotent: a re-bootstrap never duplicates a line.
+		No-op on an Atlas with no Satellite configured."""
+		from atlas.atlas.atlas_settings import satellite_public_keys
+
+		keys = satellite_public_keys()
+		if not keys:
+			return
+		appends = " && ".join(
+			f"grep -qxF {shlex.quote(key)} $AUTH || echo {shlex.quote(key)} >> $AUTH" for key in keys
+		)
+		command = (
+			"AUTH=/root/.ssh/authorized_keys; mkdir -p /root/.ssh && chmod 700 /root/.ssh "
+			f"&& touch $AUTH && chmod 600 $AUTH && {appends}"
+		)
+		with ssh_key_file(connection.ssh_private_key) as key_path:
+			_stdout, stderr, exit_code = run_ssh(connection, key_path, command, timeout_seconds=60)
+		if exit_code != 0:
+			frappe.throw(
+				f"authorizing Satellite keys on {self.name} failed (exit {exit_code}): {stderr[-300:]}"
+			)
+
+	def _ship_dashboard(self, connection) -> None:
+		"""Build the read-only host dashboard on the controller and ship it to the
+		host, then enable its socket unit. WHOLLY best-effort: the dashboard is a
+		convenience, not part of the host's function, so nothing here may fail a
+		bootstrap. A build that can't run (no npm/node_modules) ships nothing; an
+		SSH error shipping or enabling it is logged and swallowed. Runs AFTER
+		install.sh so a broken venv still surfaces as a hard bootstrap failure —
+		the dashboard ships onto an already-good host or not at all.
+
+		Freshness: dashboard.dashboard_uploads() ships assets ONLY from a build it
+		just ran (dist/ is a gitignored artifact), so a re-bootstrap always lands
+		current assets alongside a matching server.py, never a stale dist."""
+		from atlas.atlas import dashboard
+
+		try:
+			uploads = dashboard.dashboard_uploads()
+			if not uploads:
+				return  # build could not be produced — skip silently, no unit enabled
+			upload_files(connection, uploads)
+			with ssh_key_file(connection.ssh_private_key) as key_path:
+				_stdout, stderr, exit_code = run_ssh(
+					connection, key_path, dashboard.enable_command(), timeout_seconds=60
+				)
+			if exit_code != 0:
+				frappe.logger("atlas").warning(
+					f"dashboard socket enable failed on {self.name} (exit {exit_code}): {stderr[-300:]}"
+				)
+		except Exception as exception:
+			# Never let a dashboard hiccup fail a real bootstrap.
+			frappe.logger("atlas").warning(f"dashboard ship skipped on {self.name}: {exception}")
+
 	@frappe.whitelist()
 	def sync_scripts(self) -> int:
 		"""Re-upload the durable scripts (atlas package + systemd-invoked .py
-		hooks) to /var/lib/atlas/bin without re-running bootstrap.
+		hooks) to /var/lib/atlas/bin without re-running bootstrap, then reinstall
+		the atlas package into the venv so the new code is what imports resolve.
 
 		The development fast path: after editing anything under scripts/lib/atlas/
 		(or vm-network-up.py et al.) push the change to a live host in one scp
@@ -214,13 +295,26 @@ class Server(Document):
 		and mutates status). Bootstrap remains the single refresh point for unit
 		files; this is the subset that's pure code. Idempotent — a plain overwrite.
 
+		The scp lands the package at /var/lib/atlas/bin/atlas, but every entry
+		script and systemd hook imports `atlas` from the venv's site-packages,
+		where install.sh COPY-installed it at bootstrap (`uv pip install`, not
+		editable). Overwriting bin/atlas alone leaves that copy frozen — the edit
+		never takes effect. So we `uv pip install --reinstall` the just-uploaded
+		tree into the venv, exactly as install.sh's step 3 does; that is what makes
+		sync a true code refresh rather than a dead-drop into bin/atlas.
+
 		Returns the number of files uploaded.
 		"""
 		if not self.ipv4_address:
 			frappe.throw(f"Server {self.name} has no ipv4_address; cannot sync scripts")
+		connection = connection_for_server(self)
 		uploads = self._script_uploads()
-		upload_files(connection_for_server(self), uploads)
+		upload_files(connection, uploads)
+		self._reinstall_atlas_venv_package(connection)
 		return len(uploads)
+
+	def _reinstall_atlas_venv_package(self, connection) -> None:
+		reinstall_atlas_venv_package(connection, self.name)
 
 	@frappe.whitelist()
 	def reboot(self) -> str:
@@ -335,6 +429,16 @@ class Server(Document):
 		self.jailer_version = parsed["jailer_version"]
 		self.kernel_version = parsed["kernel_version"]
 		self.architecture = parsed["architecture"]
+		# The host's capacity totals ride the same BootstrapResult line (see
+		# atlas.hostfacts). `.get()` because a Fake host's synthesized bootstrap
+		# result omits them — its capacity comes from `fake_host_totals` in
+		# `capacity_for_server`, so the row's totals stay unset and it reads as a
+		# measured Fake host regardless. A real bootstrap always carries all three.
+		self._stamp_capacity_facts(
+			parsed.get("vcpus_total"),
+			parsed.get("memory_megabytes_total"),
+			parsed.get("pool_disk_gigabytes_total"),
+		)
 		# Reaching here means the bootstrap Task succeeded — and run_task raises on
 		# any failure, so bootstrap-server.py's deep sanity gate (which runs
 		# `atlas --help` to prove the console script dispatches) passed. Persist
@@ -342,6 +446,67 @@ class Server(Document):
 		# trip: a legacy/unbootstrapped host has cli_ready=0 and the operator sees
 		# the re-bootstrap signal. Fail-fast moved from per-Task to once-at-bootstrap.
 		self.cli_ready = 1
+
+	def _stamp_capacity_facts(
+		self,
+		vcpus_total: int | None,
+		memory_megabytes_total: int | None,
+		pool_disk_gigabytes_total: int | None,
+		pool_data_percent: float | None = None,
+	) -> None:
+		"""Persist the host's measured capacity totals and the stamp time. Shared by
+		bootstrap (three totals; pool fullness starts ~0, so it is left out) and
+		Refresh Capacity (all four). `capacity_reported_at` records when the host was
+		last measured, so a host silent past a staleness threshold can be treated as
+		uncatalogued later rather than trusting stale totals (a future guard)."""
+		self.vcpus_total = vcpus_total
+		self.memory_megabytes_total = memory_megabytes_total
+		self.pool_disk_gigabytes_total = pool_disk_gigabytes_total
+		if pool_data_percent is not None:
+			self.pool_data_percent = pool_data_percent
+		self.capacity_reported_at = frappe.utils.now_datetime()
+
+	@frappe.whitelist()
+	def refresh_capacity_facts(self) -> str:
+		"""Re-measure the host's capacity facts and stamp them — the Refresh Capacity
+		button. For an already-Active host whose shape changed (a resized droplet, a
+		grown pool) or that was bootstrapped before the totals were reported. Runs the
+		read-only `server-facts` Task and persists the four numbers; returns the Task
+		name. Bootstrap already stamps the three totals, so this is the no-re-bootstrap
+		refresh — and the one path that also captures live `pool_data_percent`."""
+		if self.status != "Active":
+			frappe.throw(f"Refresh capacity on an Active host (status is {self.status})")
+		task = run_task(server=self.name, script="server-facts", variables={}, timeout_seconds=120)
+		parsed = parse_result(task.stdout)
+		self._stamp_capacity_facts(
+			parsed["vcpus_total"],
+			parsed["memory_megabytes_total"],
+			parsed["pool_disk_gigabytes_total"],
+			parsed["pool_data_percent"],
+		)
+		self.save(ignore_permissions=True)
+		return task.name
+
+
+def reinstall_atlas_venv_package(connection, server_name: str) -> None:
+	"""Reinstall the durable /var/lib/atlas/bin tree into the Atlas venv so the
+	just-synced code is what `import atlas` resolves to. Mirrors install.sh's
+	step 3 (`uv pip install --reinstall`) verbatim — the venv holds a COPY, not an
+	editable link, so a plain scp overwrite of bin/atlas would not reach it. The
+	uv/venv literals match install.sh (UV_DIR / ATLAS_VENV / BIN_DIRECTORY); the
+	two trees don't share imports, so the paths are repeated here. Pure SSH — safe
+	to call from a sync_scripts_to_all worker thread."""
+	command = (
+		"sudo env VIRTUAL_ENV=/var/lib/atlas/venv "
+		"/var/lib/atlas/uv/uv pip install --reinstall /var/lib/atlas/bin"
+	)
+	with ssh_key_file(connection.ssh_private_key) as key_path:
+		stdout, stderr, exit_code = run_ssh(connection, key_path, command, timeout_seconds=300)
+	if exit_code != 0:
+		frappe.throw(
+			f"atlas venv reinstall failed on {server_name} (exit {exit_code}): "
+			f"{stderr[-500:] or stdout[-500:]}"
+		)
 
 
 def sync_scripts_to_all() -> dict[str, int]:
@@ -351,9 +516,63 @@ def sync_scripts_to_all() -> dict[str, int]:
 	`bench --site <site> execute atlas.sync_scripts_to_all` (or `atlas.sync_scripts_to_all()`
 	in a console) to refresh every live host. Active-only because a Pending/Broken
 	server has no working SSH endpoint. Returns {server_name: files_uploaded}.
-	"""
-	results: dict[str, int] = {}
-	for name in frappe.get_all("Server", filters={"status": "Active"}, pluck="name"):
+
+	Hosts are synced CONCURRENTLY: each host's cost is now dominated by its cold SSH
+	handshake (a few seconds to a remote region), and those handshakes are
+	independent I/O — a serial sweep pays them back-to-back (N x handshake), a
+	parallel one overlaps them (~1 x handshake).
+
+	All Frappe/DB work (the doc load, the connection, the upload list) is resolved
+	HERE on the main thread first; the pool threads only do the pure-SSH push. That
+	push still reaches Frappe for cosmetics (`frappe.utils.nowtime()` in the upload
+	log line reads `frappe.local`, which is thread-local and empty in a fresh
+	worker), so each worker binds its own Frappe context to the SAME site for the
+	duration of its upload via `frappe_thread_context`."""
+	names = frappe.get_all("Server", filters={"status": "Active"}, pluck="name")
+
+	# Resolve everything that touches the DB on the main thread: the doc, its SSH
+	# connection, and the file list. The thread only does the SSH upload.
+	jobs = []
+	for name in names:
 		server = frappe.get_doc("Server", name)
-		results[name] = server.sync_scripts()
-	return results
+		if not server.ipv4_address:
+			frappe.throw(f"Server {name} has no ipv4_address; cannot sync scripts")
+		jobs.append((name, connection_for_server(server), server._script_uploads()))
+
+	if not jobs:
+		return {}
+
+	site = frappe.local.site
+
+	def _push(job) -> tuple[str, int]:
+		name, connection, uploads = job
+		with frappe_thread_context(site):
+			print(f"Syncing durable scripts to {name} ({connection.host})")
+			upload_files(connection, uploads)
+			reinstall_atlas_venv_package(connection, name)
+			print(f"Done syncing durable scripts to {name} ({connection.host})")
+		return name, len(uploads)
+
+	from concurrent.futures import ThreadPoolExecutor
+
+	with ThreadPoolExecutor(max_workers=len(jobs)) as pool:
+		return dict(pool.map(_push, jobs))
+
+
+@contextmanager
+def frappe_thread_context(site: str):
+	"""Bind a Frappe context to `site` for the current thread, then tear it down.
+
+	`frappe.local` is thread-local, so a worker thread spawned off the request/CLI
+	main thread starts with no site bound — any `frappe.*` that reads `local` (e.g.
+	`frappe.utils.nowtime()` reaching for the site timezone) raises `AttributeError:
+	conf`. Init + connect gives the worker its own bound context and DB connection
+	(NOT shared with the main thread's, which would be unsafe); `destroy()` closes
+	it so the thread leaves nothing behind. Read-mostly here — the upload does no
+	writes — but each worker owning its connection keeps it correct if that changes."""
+	frappe.init(site=site)
+	frappe.connect()
+	try:
+		yield
+	finally:
+		frappe.destroy()

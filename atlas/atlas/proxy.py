@@ -39,6 +39,22 @@ ADMIN_SOCKET = "/run/nginx/admin.sock"
 # path the http admin's curl uses: GET-SNI / SYNC-SNI for the custom-domain :443 SNI map.
 STREAM_ADMIN_BIN = "stream-admin"
 CERT_DIRECTORY = "/var/lib/nginx/certs"
+# The self-signed cert the :8446 unconfigured-domain terminator presents for a custom
+# domain pointed here but not connected to a site. Its Subject DN IS the message: a
+# browser never trusts it, so the visitor lands on the cert warning and can open "view
+# certificate" — the only channel a self-signed cert has to a human — where the details
+# pane shows these fields verbatim (and, self-signed ⇒ issuer==subject, "Issued By"
+# mirrors them). Kept byte-identical to build.sh's `-subj` so a targeted regen
+# (`regenerate_placeholder_cert`) and a full re-bake write the SAME cert. The `\/` is
+# OpenSSL's `-subj` escape for a literal slash in the URL (an unescaped `/` starts a new
+# RDN); it survives shell-quoting as one argv token. Plain ASCII ≤64 chars/field
+# (RFC 5280 DN bound; no emoji — PrintableString rejects them, some cert UIs mangle them).
+PLACEHOLDER_DIRECTORY = f"{CERT_DIRECTORY}/_placeholder"
+PLACEHOLDER_CERT_SUBJECT = (
+	"/CN=This domain is not connected to a site yet"
+	"/O=Frappe Cloud"
+	"/OU=Connect it in your dashboard: frappe.dev\\/domains"
+)
 # The guest file build.sh leaves empty and the proxy recipe's finalize step writes
 # the real region into (image_recipes._finalize_proxy); init_by_lua reads it.
 REGION_FILE = "/var/lib/nginx/region"
@@ -100,6 +116,43 @@ def _desired_maps() -> dict[str, str]:
 		"sni": canonical_json(custom_domain_sni_map()),
 		"acme": canonical_json(custom_domain_acme_map()),
 	}
+
+
+def read_live_maps(virtual_machine: str) -> dict:
+	"""Read all three of a proxy guest's live maps in one SSH session and return them
+	alongside the desired maps + a per-map drift flag — the read-only twin of
+	_reconcile_proxy (same three reads, no writes). Powers the Desk "Live proxy maps"
+	button: an operator can see, without mutating anything, exactly what the proxy is
+	serving (the `no host in upstream ""` class of bug is a live-vs-desired drift, and
+	this surfaces it directly).
+
+	Returns, per map (`sites` / `sni` / `acme`):
+	    {"live": <parsed dict>, "desired": <parsed dict>, "in_sync": bool}
+	The live read uses the SAME guest-side reads the reconcile uses, so `in_sync` is the
+	same byte compare reconcile makes before deciding to sync. A read failure raises —
+	a button that silently showed an empty map would lie about what the proxy serves."""
+	desired = _desired_maps()
+	reads = {
+		"sites": _curl_command("GET", "/map"),
+		"sni": f"{STREAM_ADMIN_BIN} GET-SNI",
+		"acme": _curl_command("GET", "/acme"),
+	}
+	vm = frappe.get_doc("Virtual Machine", virtual_machine)
+	connection = connection_for_guest(vm)
+	out: dict = {}
+	with ssh_key_file(connection.ssh_private_key) as key_path:
+		for key, command in reads.items():
+			live_json, stderr, code = run_ssh(connection, key_path, command, timeout_seconds=60)
+			if code != 0:
+				frappe.throw(
+					f"Reading the {key} map from {virtual_machine} failed (exit {code}): {stderr[-300:]}"
+				)
+			out[key] = {
+				"live": json.loads(live_json),
+				"desired": json.loads(desired[key]),
+				"in_sync": live_json == desired[key],
+			}
+	return out
 
 
 def _reconcile_proxy(virtual_machine: str, desired: dict[str, str]) -> bool:
@@ -223,6 +276,50 @@ def push_cert(virtual_machine: str, fullchain: str, privkey: str) -> None:
 		frappe.throw(f"Cert push/reload to {virtual_machine} failed (exit {code}): {stderr[-500:]}")
 
 
+def regenerate_placeholder_cert(virtual_machine: str) -> None:
+	"""Regenerate the :8446 unconfigured-domain placeholder cert on a live proxy and
+	reload, WITHOUT a full re-bake.
+
+	build.sh writes this same cert (PLACEHOLDER_CERT_SUBJECT) every bake, so the
+	authoritative way to change it is `build_proxy` (the 10-20 min guest recompile).
+	This is the fast path for a cert-only change: run the byte-identical `openssl req`
+	in the guest's `_placeholder` dir, restore the perms build.sh sets, and reload. It
+	touches ONLY certs/_placeholder/{fullchain,privkey}.pem — the flat certs/ symlink
+	nginx reads for the wildcard block still points at the real region cert push_cert
+	installed (the :8446 block pins the _placeholder path directly), so the wildcard is
+	untouched. Idempotent; recorded as a `proxy-regen-placeholder` Task like every guest
+	op. Keep this openssl invocation in lockstep with build.sh's."""
+	vm = frappe.get_doc("Virtual Machine", virtual_machine)
+	if not vm.is_proxy:
+		frappe.throw(f"Virtual Machine {virtual_machine} is not a proxy (is_proxy unset)")
+	connection = connection_for_guest(vm)
+	fullchain = f"{PLACEHOLDER_DIRECTORY}/fullchain.pem"
+	privkey = f"{PLACEHOLDER_DIRECTORY}/privkey.pem"
+	# One round trip: (re)generate into the _placeholder dir, restore the perms build.sh
+	# sets (dir 0750, key 0640, both root-owned — the master reads the key at config
+	# parse, never a worker, so no group-read; CIS 4.1.3), then reload so the new cert is
+	# served. `-nodes` = unencrypted key, rsa:2048/3650d exactly as build.sh.
+	command = substitute(
+		"install -d -m 0750 {} && "
+		"openssl req -x509 -newkey rsa:2048 -nodes -days 3650 -keyout {} -out {} -subj {} && "
+		"chmod 0640 {} && /usr/sbin/nginx -s reload",
+		(
+			PLACEHOLDER_DIRECTORY,
+			privkey,
+			fullchain,
+			PLACEHOLDER_CERT_SUBJECT,
+			privkey,
+		),
+	)
+	with ssh_key_file(connection.ssh_private_key) as key_path:
+		stdout, stderr, code = run_ssh(connection, key_path, command, timeout_seconds=60)
+	_record_guest_task(virtual_machine, "proxy-regen-placeholder", {}, stdout, stderr, code)
+	if code != 0:
+		frappe.throw(
+			f"Placeholder cert regen/reload to {virtual_machine} failed (exit {code}): {stderr[-500:]}"
+		)
+
+
 def build_proxy(virtual_machine: str) -> None:
 	"""Turn a freshly-provisioned Ubuntu guest into a proxy: upload the committed
 	`proxy/` tree and run build.sh inside the guest, then write the region and
@@ -309,11 +406,14 @@ def _curl_command(method: str, path: str, data_stdin: bool = False) -> str:
 
 
 def _proxy_vms() -> list[str]:
-	"""Every VM marked is_proxy. These are the reconcile targets; each gets the full
-	map."""
+	"""Every LIVE VM marked is_proxy. These are the reconcile targets; each gets the
+	full map, and each contributes its address to the regional wildcard. A Terminated
+	proxy is excluded: its guest is gone and its `/128` no longer answers, so leaving it
+	in the fleet would keep publishing a dead address in the wildcard AAAA set (half the
+	round-robin blackholes) and keep trying to reconcile a VM that doesn't exist."""
 	return frappe.get_all(
 		"Virtual Machine",
-		filters={"is_proxy": 1},
+		filters={"is_proxy": 1, "status": ["!=", "Terminated"]},
 		pluck="name",
 	)
 

@@ -42,14 +42,12 @@ from atlas.atlas.subdomain_label import (
 # and proven on.
 SITE_VM_SIZE = SIZE_PRESETS["Shared 4x"]
 
-# The Administrator password the golden image bakes into the site — a SHARED
-# throwaway, the same on every clone. The deploy path no longer resets it per VM
-# (that reset cost a ~28s CPU-throttled `bench frappe` boot that dominated the
-# deploy); instead the tenant is handed this and rotates it after first login.
-# MUST stay in lockstep with bench/build.sh BAKED_ADMIN_PASSWORD ("$BENCH_NAME
-# -baked", bench name "atlas") and warm.sh's pre-warm login — a drift would hand
-# the owner a password that does not authenticate.
-BAKED_ADMIN_PASSWORD = "atlas-baked"
+# How long the handed-off login_url stays good: `deploy-site.py` mints it via
+# `bench browse --sid`, a real 24h Administrator session, so the URL stops working
+# 24h after mint. Atlas stamps `login_url_expires_at` = mint time + this so Central
+# can compare against the expiry and regenerate a fresh one for a late click —
+# same contract as Virtual Machine's LOGIN_URL_TTL_MINUTES["site"].
+LOGIN_URL_TTL_MINUTES = 24 * 60
 
 # The routing key (subdomain) and the backing VM are the identity; once written
 # they are fixed. Repointing a live Site at a different VM is a delete-and-recreate,
@@ -74,8 +72,10 @@ class Site(Document):
 	if TYPE_CHECKING:
 		from frappe.types import DF
 
-		admin_password: DF.Password | None
 		deploying_started: DF.Datetime | None
+		login_url: DF.SmallText | None
+		login_url_expires_at: DF.Datetime | None
+		pilot: DF.Link | None
 		provisioning_started: DF.Datetime | None
 		running_started: DF.Datetime | None
 		status: DF.Literal["Pending", "Provisioning", "Deploying", "Running", "Failed", "Terminated"]
@@ -122,6 +122,11 @@ class Site(Document):
 			timeout=1800,
 			enqueue_after_commit=True,
 			site_name=self.name,
+			# The pilot credential is bench-level; it rides the job (never the Site row) to
+			# the backing VM + the bench's bench.toml. Flags are set by create_site.
+			pilot_credential_id=self.flags.get("pilot_credential_id"),
+			central_endpoint=self.flags.get("central_endpoint"),
+			central_auth_token=self.flags.get("central_auth_token"),
 		)
 
 	# ----- validation -----------------------------------------------------
@@ -175,6 +180,7 @@ class Site(Document):
 		if self.status == "Terminated":
 			frappe.throw(_("Site is already terminated"))
 		self._delete_subdomain()
+		self._terminate_pilot()
 		self._terminate_backing_vm()
 		self.status = "Terminated"
 		self.save(ignore_permissions=True)
@@ -195,6 +201,19 @@ class Site(Document):
 		if frappe.db.exists("Subdomain", subdomain):
 			frappe.delete_doc("Subdomain", subdomain, ignore_permissions=True)
 
+	def _terminate_pilot(self) -> None:
+		"""Terminate the attached Pilot admin console before the VM (if one was stood up).
+
+		The Pilot is ATTACHED — its own terminate() drops its Subdomain and marks itself
+		Terminated but does NOT touch the VM (the Site owns it, torn down next). So this
+		is safe to call before `_terminate_backing_vm`: no double-terminate. No-op when
+		the site never got a Pilot (failed before the console stage) or it is already gone."""
+		if not self.pilot or not frappe.db.exists("Pilot", self.pilot):
+			return
+		pilot = frappe.get_doc("Pilot", self.pilot)
+		if pilot.status != "Terminated":
+			pilot.terminate()
+
 	def _terminate_backing_vm(self) -> None:
 		"""Terminate the backing VM if one was created and is not already gone."""
 		if not self.virtual_machine or not frappe.db.exists("Virtual Machine", self.virtual_machine):
@@ -202,6 +221,34 @@ class Site(Document):
 		vm = frappe.get_doc("Virtual Machine", self.virtual_machine)
 		if vm.status != "Terminated":
 			vm.terminate()
+
+	@frappe.whitelist()
+	def regenerate_login_url(self) -> dict:
+		"""Re-mint the one-click login URL for a serving site and return the fresh
+		handoff. Central calls this (operator token) when a tenant clicks their login
+		link after the current URL's 24h `bench browse` session has expired — the URL
+		is short-lived by design, so it is re-signed on demand rather than kept alive.
+
+		Only a Running site can be regenerated (before that there is no served site to
+		sign into, and the field may be unstamped). Re-mint in the guest via the deploy
+		seam, stamp `login_url` + `login_url_expires_at` = now + the session TTL (same as
+		the original deploy), COMMIT so the `get_site` poll sees it, and return the
+		mirror shape Central re-reads. A Fake-backed VM never answers SSH, so its login
+		URL is synthesized here exactly as the deploy synthesizes it — desk/e2e stay
+		green without a host."""
+		if self.status != "Running":
+			frappe.throw(_("Only a running site's login URL can be regenerated"))
+		result = _regenerate_login(self, self.virtual_machine)
+		self.db_set("login_url", (result or {}).get("login_url", ""))
+		self.db_set(
+			"login_url_expires_at",
+			frappe.utils.add_to_date(frappe.utils.now_datetime(), minutes=LOGIN_URL_TTL_MINUTES),
+		)
+		# nosemgrep: frappe-manual-commit -- persist the fresh URL so Central's get_site poll sees it cross-transaction (the mint has no status change, so no event fires)
+		frappe.db.commit()
+		from atlas.atlas.api.site import _mirror
+
+		return _mirror(self)
 
 
 class _ProvisionClock:
@@ -250,20 +297,32 @@ class _ProvisionClock:
 		self._emit(f"FAILED after {self._now() - self._t0:.1f}s total")
 
 
-def auto_provision(site_name: str) -> None:
+def auto_provision(
+	site_name: str,
+	pilot_credential_id: str | None = None,
+	central_endpoint: str | None = None,
+	central_auth_token: str | None = None,
+) -> None:
 	"""Background-job entrypoint (enqueued by after_insert). Drives the whole
 	create_site→live-site flow for one Site:
 
 	  1. clone the backing VM from the golden bench snapshot and provision it,
 	  2. wait for the VM to boot (SSH up),
-	  3. run deploy-site.py in the guest,
-	  4. wait for an HTTP 200 from the guest :80 — the readiness gate (Contract B),
-	  5. create the Subdomain row (this is what makes the proxy route it),
+	  3. create the Subdomain row (this is what makes the proxy route it) — done
+	     BEFORE the deploy so the fleet reconcile runs while the guest deploys,
+	  4. run deploy-site.py in the guest,
+	  5. wait for an HTTP 200 from the guest :80 — the readiness gate (Contract B),
 	  6. mark Running.
+
+	The Subdomain is created right after the VM is Running (step 3), not after the
+	readiness gate: the proxy route needs only the FQDN + the VM's /128, both present
+	once the VM boots, and registering it up front lets the proxy catch up in parallel
+	with the deploy so a tenant redirected the instant the Site flips Running doesn't
+	beat the proxy sync.
 
 	On any failure the Site is marked Failed (fail loud) and the exception is
 	re-raised so the Task/job log carries it. No-op if the Site has moved past
-	Pending (operator intervened, a manual retry raced us). Steps 3-4 are plan
+	Pending (operator intervened, a manual retry raced us). Steps 4-5 are plan
 	03's contract — this owns the orchestration, 03 owns the script + probe.
 
 	Every status transition is committed (`_set_status`) so Central sees progress
@@ -271,18 +330,14 @@ def auto_provision(site_name: str) -> None:
 	site = frappe.get_doc("Site", site_name)
 	if site.status != "Pending":
 		return
-	# Developer-mode short-circuit: a laptop has no Firecracker/KVM host, so the
-	# real clone→boot→deploy→HTTP chain can't complete (the Fake provider's VMs
-	# carry documentation IPs that never serve). In developer_mode we skip straight
-	# to the tenant handoff — stamp the shared baked Administrator password and mark
-	# the site Running — so the Central self-serve flow is testable end-to-end
-	# locally. The same `_set_status` path the real flow uses, so Central's
-	# `site.status_changed` event + `get_site` poll see Running identically. Never
-	# fires in production (developer_mode off).
-	if frappe.conf.developer_mode:
-		site.db_set("admin_password", BAKED_ADMIN_PASSWORD)
-		_set_status(site, "Running")
-		return
+	# A Fake-backed site (developer_mode laptop) runs this WHOLE flow for real —
+	# clone the backing VM, wait for it to boot, create the Subdomain, mark Running —
+	# so every record a production provision creates is created here too (the old
+	# short-circuit stamped Running and skipped them, leaving an un-routable Site with
+	# no VM and no Subdomain). Only the two stages that physically can't run against a
+	# Fake VM's documentation IP — the SSH deploy and the HTTP readiness probe —
+	# short-circuit, inside `_deploy_site`/`_wait_for_http`, the same `is_fake_server`
+	# gate `run_task` uses. Never fires in production (no Fake servers there).
 	# Per-stage wall-clock trace, printed to the job log (and the bench `worker`
 	# console) so the whole provision can be followed live and the slow stage
 	# pinpointed — `_stage` logs the prior stage's duration as the next begins.
@@ -293,6 +348,10 @@ def auto_provision(site_name: str) -> None:
 		clock.stage("clone backing VM")
 		vm_name = _provision_backing_vm(site)
 		site.db_set("virtual_machine", vm_name)
+		# The pilot credential is the bench's: stamp its id on the backing VM so vm.* events
+		# echo it to Central (central_report), which links/revokes the credential by it.
+		if pilot_credential_id:
+			frappe.db.set_value("Virtual Machine", vm_name, "pilot_credential_id", pilot_credential_id)
 		# COMMIT before waiting. The clone's own after_insert enqueued its
 		# provision (boot) job; that job is a SEPARATE transaction and cannot run
 		# until this one commits. If we held the transaction open and blocked here,
@@ -303,23 +362,55 @@ def auto_provision(site_name: str) -> None:
 		frappe.db.commit()
 		clock.stage(f"wait for VM {vm_name} to boot (Running)")
 		_wait_for_vm_running(vm_name)
-		_set_status(site, "Deploying")
-		clock.stage("deploy site in guest (wait_for_ssh + run deploy-site.py)")
-		_deploy_site(site, vm_name)
-		# The Administrator password handed to the tenant is the SHARED baked
-		# throwaway (BAKED_ADMIN_PASSWORD) — the deploy no longer resets it per VM
-		# (that cost a full CPU-throttled `bench frappe` boot, ~28s under the
-		# 0.25-core cap, which dominated the deploy). The tenant rotates it after
-		# first login. Stored encrypted on the Site BEFORE the readiness wait so the
-		# handoff (the site.status_changed event + get_site poll) survives even if
-		# the http gate later times out. db_set on a Password field round-trips
-		# through Frappe's field encryption.
-		site.db_set("admin_password", BAKED_ADMIN_PASSWORD)
-		clock.stage("wait for HTTP 200 from guest :80 (Contract B)")
-		_wait_for_http(site, vm_name)
+		# Register the proxy route AS SOON AS the VM has an address — before the long
+		# deploy + HTTP-readiness waits, not after. The Subdomain's after_insert enqueues
+		# the fleet reconcile (a separate `long` job), so the proxy learns the FQDN→/128
+		# map while the guest deploy is still running. Otherwise the tenant, redirected to
+		# the FQDN the moment the Site flips Running, races a proxy that hasn't been synced
+		# yet. The route needs only the FQDN + the VM's /128 (`_denormalize_address`), both
+		# present once the VM is Running; the deploy result is not a prerequisite.
 		clock.stage("create Subdomain (proxy route)")
 		subdomain_name = _create_subdomain(site, vm_name)
 		site.db_set("subdomain_doc", subdomain_name)
+		frappe.db.commit()
+		_set_status(site, "Deploying")
+		# Resolve the attached Pilot's console FQDN up front (deterministic from the
+		# site subdomain, disambiguated on collision) and thread it into BOTH the
+		# site-mode deploy — which writes it into `[admin].domain` so the admin vhost
+		# is emitted in the rename-site pass — and `_provision_pilot`, which reuses the
+		# SAME label so the two agree on the console name. See spec/14-self-serve.md.
+		from atlas.atlas.placement import active_root_domain
+		from atlas.atlas.subdomain_label import pilot_subdomain_for
+
+		pilot_label = pilot_subdomain_for(site.subdomain)
+		admin_domain = f"{pilot_label}.{active_root_domain().domain}"
+		clock.stage("deploy site in guest (wait_for_ssh + run deploy-site.py)")
+		result = _deploy_site(site, vm_name, central_endpoint, central_auth_token, admin_domain)
+		# The tenant handoff is the one-click login URL `deploy-site.py` minted
+		# (`bench browse --sid`, a real 24h session) — NOT a password; the baked
+		# Administrator password is a long random secret generated at bake time and
+		# never surfaced. Stored BEFORE the readiness wait so the handoff (the
+		# site.status_changed event + get_site poll) survives even if the http gate
+		# later times out. Stamp `login_url_expires_at` = now + the session's 24h TTL
+		# alongside, so Central regenerates a fresh URL for a late click (mirrors
+		# Virtual Machine). A Fake-backed VM's `_deploy_site` short-circuits with a
+		# synthesized result so this stays stamped in tests/e2e too.
+		site.db_set("login_url", (result or {}).get("login_url", ""))
+		site.db_set(
+			"login_url_expires_at",
+			frappe.utils.add_to_date(frappe.utils.now_datetime(), minutes=LOGIN_URL_TTL_MINUTES),
+		)
+		clock.stage("wait for HTTP 200 from guest :80 (Contract B)")
+		_wait_for_http(site, vm_name)
+		# Stand up the bench admin console (a Pilot) on this SAME backing VM, fronted at
+		# `<subdomain>-pilot.<region>` — the front door Central's Asset resolves for
+		# "Open" (front_door_for_vm prefers Pilot). The customer's Frappe site is this
+		# Site (get_site); the Pilot is the admin console on the same bench. Done AFTER
+		# the site serves (the VM is up + the admin app is installed on every golden) and
+		# BEFORE Running so a console-wiring failure fails the whole site loud. See
+		# spec/14-self-serve.md.
+		clock.stage("attach Pilot admin console (proxy route + admin login)")
+		_provision_pilot(site, vm_name, pilot_label)
 		_set_status(site, "Running")
 		clock.done()
 	except Exception:
@@ -360,6 +451,15 @@ def _set_status(site, status: str) -> None:
 	if stamp_field:
 		site.db_set(stamp_field, frappe.utils.now_datetime())
 	site.db_set("status", status)
+	# db_set runs on_change, NOT on_update, so the on_site_update doc_event never
+	# fires for these transitions — emit the status_changed explicitly (same gap the
+	# Pilot closes with report_pilot_status). Its delivery is enqueue_after_commit, so
+	# it rides the commit just below. Without this the mirror only ever sees the initial
+	# Pending (site.created + the insert's on_update) and, with no site reconcile pull,
+	# stays stuck Pending forever.
+	from atlas.atlas.central_report import report_site_status
+
+	report_site_status(site)
 	# nosemgrep: frappe-manual-commit -- background job: commit each status transition so Central's poll sees it cross-transaction, the status_changed event delivers, and progress survives a crash mid-provision
 	frappe.db.commit()
 
@@ -395,16 +495,18 @@ def _provision_backing_vm(site) -> str:
 		snapshot = frappe.get_doc("Virtual Machine Snapshot", warm_name)
 	if snapshot.kind == "Warm":
 		return snapshot.clone_to_new_vm(
-			title=site.name,
+			title=site.subdomain,
 			ssh_public_key=ssh_public_key,
 			cpu_max_cores=size["cpu_max_cores"],
+			tenant=site.tenant,
 		)
 	return snapshot.clone_to_new_vm(
-		title=site.name,
+		title=site.subdomain,
 		ssh_public_key=ssh_public_key,
 		vcpus=size["vcpus"],
 		cpu_max_cores=size["cpu_max_cores"],
 		memory_megabytes=size["memory_megabytes"],
+		tenant=site.tenant,
 		# Disk is not passed: the golden's rootfs is already grown to its own
 		# disk_gigabytes and the clone can't shrink below it. The snapshot's size
 		# is the floor; the entry tier's nominal disk would only ever be smaller.
@@ -448,17 +550,54 @@ def _wait_for_vm_running(
 	frappe.throw(f"Backing VM {vm_name} did not reach Running within {timeout_seconds}s")
 
 
-def _deploy_site(site, vm_name: str) -> None:
+def _deploy_site(
+	site,
+	vm_name: str,
+	central_endpoint: str | None = None,
+	central_auth_token: str | None = None,
+	admin_domain: str | None = None,
+) -> dict:
 	"""Run deploy-site.py in the guest: rename the baked `site.local` dir to the FQDN
 	(Contract A), regenerate the bench's nginx vhost (`server_name <fqdn>` + a v6
 	listener) and reload — no `set-admin-password`, no `setup production`, no restart
 	(the multitenant gunicorn resolves the site by Host header per request, so the
-	rename + reload serve it live). Confirms it answers on :80 before returning.
+	rename + reload serve it live). Confirms it answers on :80, then mints the
+	tenant's one-click login URL, before returning.
 
-	Seam for the in-guest deploy script + its guest-SSH driver."""
+	Seam for the in-guest deploy script + its guest-SSH driver. A Fake-backed VM
+	carries a documentation IP that never answers SSH, so the deploy is a no-op
+	there — the same `is_fake_server` gate `run_task` uses (atlas.atlas._ssh.runner).
+	The baked site already serves on the (synthetic) guest in the fiction the Fake
+	provider maintains, so there is nothing to rename; a placeholder `login_url` is
+	synthesized instead so the mirror shape stays stable for e2e/desk tests that
+	run against a Fake server."""
 	from atlas.atlas.deploy_site import deploy_site
+	from atlas.atlas.providers.fake_tasks import is_fake_server
 
-	deploy_site(vm_name, site.name)
+	vm = frappe.get_doc("Virtual Machine", vm_name)
+	if is_fake_server(vm.server):
+		return {"site": site.name, "serving": True, "login_url": f"https://{site.name}/app?sid=fake-sid"}
+	return (
+		deploy_site(vm_name, site.name, central_endpoint, central_auth_token, admin_domain=admin_domain) or {}
+	)
+
+
+def _regenerate_login(site, vm_name: str) -> dict:
+	"""Re-mint the site's one-click login URL in the guest and return the result.
+
+	Seam for the regenerate driver + its Fake short-circuit — the sibling of
+	`_deploy_site`, sharing its `is_fake_server` gate. On a real VM it runs
+	deploy-site.py with `--regenerate-login` (re-sign only, no rename/setup). A
+	Fake-backed VM's documentation /128 never answers SSH, so the same placeholder
+	`login_url` is synthesized instead, keeping the mirror shape stable for the
+	desk/e2e tests that run against a Fake server."""
+	from atlas.atlas.deploy_site import regenerate_login
+	from atlas.atlas.providers.fake_tasks import is_fake_server
+
+	vm = frappe.get_doc("Virtual Machine", vm_name)
+	if is_fake_server(vm.server):
+		return {"site": site.name, "serving": True, "login_url": f"https://{site.name}/app?sid=fake-sid"}
+	return regenerate_login(vm_name, site.name) or {}
 
 
 def _wait_for_http(site, vm_name: str) -> None:
@@ -470,10 +609,17 @@ def _wait_for_http(site, vm_name: str) -> None:
 	routes the probe to THIS site, not just any site on the VM. The readiness PATH is
 	mode-aware: `/api/method/ping` for a site-mode clone, `/api/status` for an
 	admin-mode clone (the admin console is a Flask app with no Frappe ping route) —
-	resolved from the clone's `build_mode`."""
+	resolved from the clone's `build_mode`.
+
+	A Fake-backed VM's documentation /128 never answers, so the probe is skipped
+	there (the same `is_fake_server` gate `_deploy_site` and `run_task` use) — the
+	readiness gate is the deploy's twin, both no-ops on a Fake VM."""
 	from atlas.atlas.deploy_site import readiness_path_for_mode, wait_for_http
+	from atlas.atlas.providers.fake_tasks import is_fake_server
 
 	vm = frappe.get_doc("Virtual Machine", vm_name)
+	if is_fake_server(vm.server):
+		return
 	wait_for_http(vm.ipv6_address, site.name, path=readiness_path_for_mode(vm.build_mode))
 
 
@@ -491,3 +637,28 @@ def _create_subdomain(site, vm_name: str) -> str:
 		}
 	).insert(ignore_permissions=True)
 	return subdomain.name
+
+
+def _provision_pilot(site, vm_name: str, pilot_label: str) -> str:
+	"""Stand up the attached Pilot admin console on this site's backing VM and link it.
+
+	Creates a `Pilot` at `<subdomain>-pilot.<region>` (the label resolved by the caller
+	via `pilot_subdomain_for` and already written into the VM's `[admin].domain` by the
+	site-mode deploy), ATTACHED to this site's VM (`flags.attach_vm` → the Pilot binds
+	the VM instead of creating one, and won't tear it down). Its `after_insert` only
+	links the VM; `deploy_attached` mints the admin login URL, creates the Pilot's own
+	Subdomain (a second proxy route → the SAME VM /128), and marks the Pilot Running —
+	the admin vhost itself was already emitted in the site deploy's rename-site pass. The
+	Pilot is linked on the Site so terminate() cascades. Returns the Pilot name.
+
+	This is the create_site half that makes the Asset's "Open" resolve a bench admin
+	console (front_door_for_vm prefers Pilot) rather than the customer site — the bug
+	this closes (spec/14-self-serve.md)."""
+	from atlas.atlas.doctype.pilot.pilot import deploy_attached
+
+	pilot = frappe.get_doc({"doctype": "Pilot", "subdomain": pilot_label, "tenant": site.tenant})
+	pilot.flags.attach_vm = vm_name
+	pilot.insert(ignore_permissions=True)
+	site.db_set("pilot", pilot.name)
+	deploy_attached(pilot.name)
+	return pilot.name

@@ -8,7 +8,8 @@
 #     the cert the client sees is the BACKEND's (CN=tls-vm.custom.example), NOT the proxy
 #     wildcard — proof the proxy never decrypted;
 #   - the negotiated SNI survives the strip-path (echoed back by the backend);
-#   - a custom SNI NOT in the map is DROPPED (an unknown/deregistered name);
+#   - a NAMED custom SNI NOT in the map terminates on the dummy cert and serves the
+#     branded "Domain not configured" page (404); an EMPTY SNI is still dropped at L4;
 #   - a wildcard SNI still terminates AT the proxy (the L7 path is unregressed);
 #   - the :80 ACME fork: a custom host's /.well-known/acme-challenge/ reaches the VM,
 #     a wildcard host's is served LOCALLY (the wildcard guard).
@@ -24,7 +25,12 @@ import time
 import pytest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-REGION = "test"
+# The FULL wildcard zone the proxy strips from an SNI/Host — what the Dockerfile
+# writes to /var/lib/nginx/region (active_root_domain().domain), the SAME constant
+# test_proxy.py uses. Deliberately DEEPER than "<region>.frappe.dev" (the extra `.x`
+# label) so the gate exercises the real platform-zone shape; a wildcard SNI must
+# match this exact suffix for sni_router.lua's wildcard fork to terminate it.
+ZONE = "test.x.frappe.dev"
 
 # Host-published ports (docker-compose.yml): 8443->container :443 (the SNI front-door),
 # 8080->container :80 (the ACME fork).
@@ -38,7 +44,7 @@ SNI_BACKEND = f"[{TLS_VM_V6}]:443"  # the :443 SNI map value
 ACME_BACKEND = f"[{TLS_VM_V6}]"  # the :80 ACME map value (bare bracketed; :80 appended)
 
 # A wildcard subdomain for the unregressed-L7 + ACME-guard checks.
-WILDCARD_HOST = f"acme.{REGION}.frappe.dev"
+WILDCARD_HOST = f"acme.{ZONE}"
 
 
 def _exec(*cmd: str, stdin: str | None = None) -> subprocess.CompletedProcess:
@@ -149,17 +155,47 @@ def test_passthrough_presents_the_backend_cert_not_the_proxy_wildcard():
 	res = _curl(FRONT_443, CUSTOM_DOMAIN, extra=["-v"])
 	combined = res.stdout + res.stderr
 	assert "tls-vm.custom.example" in combined, combined
-	# The proxy's wildcard placeholder CN must NOT be what was presented.
-	assert "nginx-placeholder" not in combined, combined
+	# The proxy's self-signed placeholder must NOT be what was presented. Its Subject
+	# carries the "Frappe Cloud" org line (build.sh packs the unconfigured-domain copy
+	# into the DN); seeing that here would mean the proxy terminated instead of passing
+	# the raw stream through.
+	assert "Frappe Cloud" not in combined, combined
 
 
-def test_unknown_custom_sni_is_dropped():
-	# A custom SNI NOT in the map (an unregistered / deregistered name) is dropped at L4 —
-	# the connection fails, no handshake forwarded. (A registered domain is in the map
-	# immediately; there is no readiness gate — only the unknown-name drop.)
+def test_unknown_custom_sni_serves_the_unconfigured_page():
+	# A NAMED custom SNI NOT in the map (an unregistered / deregistered / typo'd name) is
+	# no longer dropped: the front-door forks it to the loopback dummy-cert terminator
+	# (:8446), which terminates TLS under the self-signed placeholder cert and serves the
+	# branded "Domain not configured" page with status 404. -k lets curl past the expected
+	# cert warning (the proxy holds no cert for this name — spec/13 keeps it on the VM), so
+	# the test sees what a user sees AFTER clicking through the warning. (A registered
+	# domain is in the map immediately — no readiness gate — so this fork is only the
+	# unknown-name fallback.)
 	stream_admin("SYNC-SNI", "{}")  # empty map
-	res = _curl(FRONT_443, "notmapped.custom.example")
-	# curl reports a connection/TLS failure (non-zero), never a 200.
+	res = _curl(FRONT_443, "notmapped.custom.example", extra=["-v"])
+	assert "@@STATUS@@404" in res.stdout, res.stdout + res.stderr
+	body = res.stdout.split("@@STATUS@@")[0]
+	assert "Domain not configured" in body, body
+	# -v dumps the peer cert: it was the placeholder (proxy-held) cert, proving the
+	# proxy TERMINATED here, NOT a passthrough to some backend. The placeholder's Subject
+	# is human-readable copy (build.sh packs the "connect this domain" guidance into the
+	# DN so the browser's cert-details pane shows it); "Frappe Cloud" is its O field.
+	combined = res.stdout + res.stderr
+	assert "Frappe Cloud" in combined, combined
+
+
+def test_empty_sni_is_dropped_at_l4():
+	# An SNI-less TLS client (bare IP, junk probe, scanner) has no name to brand and gets
+	# no handshake — the front-door drops it at L4 before any terminator. Forcing an empty
+	# SNI from curl isn't portable, so probe the front-door by IP with NO --resolve name:
+	# curl sends no SNI, sni_router sees "" and ngx.exit(ngx.ERROR)s.
+	stream_admin("SYNC-SNI", "{}")
+	res = subprocess.run(
+		["curl", "-sk", "-w", "\n@@STATUS@@%{http_code}", f"https://{FRONT_443}/"],
+		capture_output=True,
+		text=True,
+	)
+	# The connection fails (non-zero); no 200, no branded page.
 	assert "@@STATUS@@200" not in res.stdout, res.stdout + res.stderr
 	assert res.returncode != 0
 
@@ -170,6 +206,8 @@ def test_wildcard_sni_still_terminates_at_the_proxy():
 	# empty sites map it 404s (branded), which proves it terminated AT the proxy (a passthrough
 	# would have failed the handshake — the proxy holds the cert the wildcard SNI matches).
 	stream_admin("SYNC-SNI", "{}")
+	acme_admin("POST", "/sync", "{}")  # empty the HTTP sites map too — else a leftover
+	# mapping for this subdomain (from another test sharing the container) 200s instead.
 	res = _curl(FRONT_443, WILDCARD_HOST)
 	# It reached the L7 terminator (a real HTTP status from nginx), not an L4 drop.
 	assert "@@STATUS@@" in res.stdout, res.stdout + res.stderr
@@ -201,6 +239,9 @@ def test_custom_acme_challenge_reaches_the_vm():
 		capture_output=True,
 		text=True,
 	)
+	# Fail loud if the seed didn't land (e.g. the backend image lacks curl) — otherwise
+	# the fetch below 404s for the wrong reason and the assertion misleads.
+	assert _seed.returncode == 0 and "seeded" in _seed.stdout, (_seed.stdout, _seed.stderr)
 	# Fetch the challenge through the proxy's :80, Host = the custom domain.
 	res = subprocess.run(
 		[

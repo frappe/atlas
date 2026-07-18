@@ -63,6 +63,17 @@ def tree_uploads(recipe: ImageRecipe) -> list[tuple[Path, str]]:
 		):
 			continue
 		uploads.append((entry, f"{recipe.remote_directory}/{relative.as_posix()}"))
+	# Fail loud if a declared entrypoint isn't in the tree. is_file() above silently
+	# skips a missing file, but the build/warm steps still invoke recipe.<entrypoint>
+	# by name — a stale app checkout (missing warm.sh) then dies deep in the guest with
+	# a cryptic "No such file or directory". Catch it here, at the source of truth.
+	staged = {remote for _, remote in uploads}
+	for entrypoint in (recipe.build_entrypoint, recipe.warm_entrypoint):
+		if entrypoint and f"{recipe.remote_directory}/{entrypoint}" not in staged:
+			frappe.throw(
+				f"Recipe {recipe.name} declares entrypoint {entrypoint!r} but it is not "
+				f"in source tree {source} (stale app checkout?)"
+			)
 	return uploads
 
 
@@ -306,6 +317,18 @@ def run_build(
 			on_task(task_name)
 	if code != 0:
 		frappe.throw(f"{recipe.title} build on {virtual_machine} failed (exit {code}): {stderr[-500:]}")
+
+
+def stage_recipe_tree(recipe: ImageRecipe, connection, key_path) -> None:
+	"""Re-stage the recipe's committed tree into the guest under `remote_directory`,
+	rendered bench.toml and all. run_build stages it once before the build, but the
+	tree lives under /tmp (tmpfs) — a bake that reboots the guest between build and a
+	later in-guest step (the fat-boot resize, then the warm entrypoint) loses it. The
+	warm path calls this to put warm.sh + its siblings back before invoking them; a
+	fresh stage is idempotent (scp overwrites) and cheap (the tree is small)."""
+	with ExitStack() as stack:
+		uploads = _uploads_with_rendered_toml(recipe, stack)
+		_stage_tree(connection, key_path, uploads)
 
 
 def _uploads_with_rendered_toml(recipe: ImageRecipe, stack: ExitStack) -> list[tuple[Path, str]]:

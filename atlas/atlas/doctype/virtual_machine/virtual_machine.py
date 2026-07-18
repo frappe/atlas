@@ -12,12 +12,14 @@ from atlas.atlas.networking import (
 	derive_ipv4_link,
 	derive_mac,
 	derive_netns,
+	derive_private_address,
 	derive_tap,
+	derive_tenant_prefix,
 	derive_uid,
 	derive_veth_pair,
 	resource_limit_args,
 )
-from atlas.atlas.placement import apply_user_defaults
+from atlas.atlas.placement import apply_user_defaults, check_resize_capacity
 from atlas.atlas.ssh import run_task
 from atlas.atlas.task_results import parse_result
 
@@ -42,6 +44,14 @@ RESIZE_MUTABLE = (
 	"data_disk_gigabytes",
 )
 
+# The one field a migration cutover is allowed to repoint, and nothing else may.
+# `server` is otherwise immutable (identity + the key the rootfs was built with);
+# migration is the single sanctioned path that moves a VM between hosts, gated by
+# `flags.migrating` in validate() exactly as resize() gates RESIZE_MUTABLE.
+# `ipv6_address` is not in IMMUTABLE_AFTER_INSERT, so it needs no gate — the
+# change-address cutover rewrites it on an ordinary save. (spec/24 §1)
+MIGRATE_MUTABLE = ("server",)
+
 
 class VirtualMachine(Document):
 	# begin: auto-generated types
@@ -64,6 +74,7 @@ class VirtualMachine(Document):
 		has_memory_snapshot: DF.Check
 		image: DF.Link
 		ipv6_address: DF.Data | None
+		is_gateway: DF.Check
 		is_proxy: DF.Check
 		is_sshpiper: DF.Check
 		last_started: DF.Datetime | None
@@ -73,6 +84,7 @@ class VirtualMachine(Document):
 		memory_snapshot_on_stop: DF.Check
 		public_ipv4: DF.Data | None
 		server: DF.Link
+		pilot_credential_id: DF.Data | None
 		size_preset: DF.Literal["Custom", "Shared 1x", "Shared 2x", "Shared 4x", "Shared 8x", "Dedicated 1x"]
 		sshpiper_api_key: DF.Password | None
 		sshpiper_configured: DF.Check
@@ -83,6 +95,8 @@ class VirtualMachine(Document):
 		tenant: DF.Link | None
 		termination_protection: DF.Check
 		title: DF.Data
+		traffic_forwarded_from: DF.Link | None
+		traffic_forwarded_since: DF.Datetime | None
 		vcpus: DF.Int
 		warm_snapshot: DF.Link | None
 	# end: auto-generated types
@@ -149,6 +163,30 @@ class VirtualMachine(Document):
 		self.set_cpu_defaults()
 		self.set_mac_address()
 		self.set_tap_device()
+		self.set_private_address()
+		self.validate_dark_vm_has_identity()
+		self.validate_infra_role()
+
+	def validate_infra_role(self) -> None:
+		"""A VM is at most ONE infra role. The proxy fronts public subdomains; the gateway
+		terminates customer WireGuard peers (spec/26). They carry different images, different
+		reconcile paths (proxy map vs. wg0 peers), and would collide on the one attached
+		reserved IPv4 — so a single VM can't be both."""
+		if self.is_proxy and self.is_gateway:
+			frappe.throw(_("A VM cannot be both a proxy and a customer gateway"))
+
+	def validate_dark_vm_has_identity(self) -> None:
+		"""A dark VM (public_networking=0, §6) has NO public /128, so its ONLY identity is
+		the private fdaa:: address — which requires a tenant (the /48 the address derives
+		from). Reject a tenant-less dark VM at insert: it would have no address at all, and
+		_ipv4_link_variables would have no private address to index its NAT44 /30 off. The
+		design's §6 invariant: public_networking=0 ⟹ private addressing forced on."""
+		if not self.public_networking and not self.tenant:
+			frappe.throw(
+				_(
+					"A dark VM (Public Networking off) needs a Tenant — its only identity is the private address"
+				)
+			)
 
 	def set_cpu_defaults(self) -> None:
 		# cpu_max_cores is the VM's guaranteed CPU bandwidth share; vcpus is the
@@ -183,8 +221,23 @@ class VirtualMachine(Document):
 			self.status = "Pending"
 
 	def set_ipv6_address(self) -> None:
+		# A dark VM (public_networking=0, §6) has NO public /128 — its only identity is
+		# the private fdaa:: address (set in before_validate). Skip allocation so it does
+		# not consume a scarce DO /124 slot. public_networking defaults to 1, so every
+		# ordinary VM allocates exactly as before.
+		if not self.public_networking:
+			return
 		if not self.ipv6_address:
 			self.ipv6_address = allocate_ipv6(self.server)
+
+	def set_private_address(self) -> None:
+		"""Denormalize the VM's private-plane /128 (§8). Derived, not allocated — a pure
+		function of (tenant, VM UUID), so it survives migration byte-for-byte and the
+		field is just a legible read-through (the source of truth is
+		derive_private_address). Empty when the VM has no tenant (operator-created): such
+		a VM has no derivable /48, so it stays off the private plane entirely."""
+		if self.tenant and not self.private_address:
+			self.private_address = derive_private_address(self.tenant, self.name)
 
 	def set_mac_address(self) -> None:
 		if not self.mac_address:
@@ -195,6 +248,9 @@ class VirtualMachine(Document):
 			self.tap_device = derive_tap(self.name)
 
 	def validate(self) -> None:
+		# Role exclusivity holds for every save, not just insert — a later db-flip of
+		# is_gateway on a live proxy (or vice versa) is caught here too.
+		self.validate_infra_role()
 		if self.is_new():
 			return
 		original = self.get_doc_before_save()
@@ -204,6 +260,10 @@ class VirtualMachine(Document):
 		if not self.flags.resizing:
 			# Outside resize(), the resource fields are frozen too.
 			guarded = guarded + RESIZE_MUTABLE
+		if self.flags.migrating:
+			# The cutover commits `server` (the host move already happened on-host);
+			# let exactly that through. Everything else stays frozen.
+			guarded = tuple(f for f in guarded if f not in MIGRATE_MUTABLE)
 		for field in guarded:
 			if getattr(self, field) != getattr(original, field):
 				frappe.throw(f"{field} is immutable after insert")
@@ -229,7 +289,106 @@ class VirtualMachine(Document):
 		self.status = "Running"
 		self.last_started = frappe.utils.now_datetime()
 		self.save()
+		# The VM's private /128 joins its host's AllowedIPs (design §3, trigger 3): a
+		# provision adds exactly one /128 to one host, changing every OTHER host's mesh
+		# config. Enqueued after commit, so a mesh push failure never rolls back the
+		# provision — the converging reconcile + backstop sweep bring the fabric to match.
+		# No-op for a tenant-less VM (nothing to advertise) and on a Fake/test fleet.
+		self._reconcile_host_mesh()
 		return task.name
+
+	def _reconcile_host_mesh(self) -> None:
+		"""Enqueue a host-mesh reconcile after a lifecycle change that moves this VM's
+		private /128 on/off the mesh (provision, terminate). No-op for a VM with no
+		tenant (it has no private /128 to advertise), so an operator-created VM never
+		touches the mesh."""
+		if not self.tenant:
+			return
+		from atlas.atlas.host_mesh import enqueue_reconcile_host_mesh
+
+		enqueue_reconcile_host_mesh()
+
+	@frappe.whitelist()
+	def migrate(self, target_server: str, release_reserved_ip: bool = False) -> str:
+		"""Begin migrating this VM's disk to `target_server`, keeping its identity
+		(UUID and everything derived from it). Returns the Virtual Machine Migration
+		row name; `start_migration` (enqueued below) then drives it phase by phase
+		back-to-back, with the `reconcile_migrations` cron as the idempotent, resumable
+		safety net (spec/24).
+
+		Cold migration: the VM is stopped during cutover. On the change-address path
+		(stage 1) it gets a NEW public IPv6 on the target and the proxy/Subdomain
+		layer is re-pointed. Pre-flight (the cheap synchronous half) runs here; the
+		on-host checks that need SSH run in the first phase."""
+		from atlas.atlas.migration import preflight_checks  # local import: avoids a cycle
+
+		# frm.call / REST send a stringy bool.
+		release_reserved_ip = release_reserved_ip in (True, 1, "1", "true", "True", "yes")
+
+		preflight_checks(self, target_server, release_reserved_ip)
+
+		migration = frappe.get_doc(
+			{
+				"doctype": "Virtual Machine Migration",
+				"virtual_machine": self.name,
+				"source_server": self.server,
+				"target_server": target_server,
+				"release_reserved_ip": 1 if release_reserved_ip else 0,
+				"status": "Pending",
+			}
+		).insert(ignore_permissions=True)
+		# Drive the migration now instead of waiting for the reconcile_migrations
+		# cron: start_migration runs the first phase and chains each subsequent step
+		# (including each Hydrating poll) as soon as it completes, so the migration
+		# walks its phases back-to-back and self-paces the long copy to 100% on its
+		# own. enqueue_after_commit so the worker only starts once this insert has
+		# committed (else start_migration can't load the row). The cron is the safety
+		# net that re-drives the row if a self-drive job is ever dropped.
+		frappe.enqueue(
+			"atlas.atlas.migration.start_migration",
+			queue="long",
+			timeout=300,
+			enqueue_after_commit=True,
+			name=migration.name,
+		)
+		return migration.name
+
+	@frappe.whitelist()
+	def collapse_forward(self) -> None:
+		"""Tear down this VM's keep-address forward and fall back to change-address
+		(spec/24 §2.9.5). Only meaningful for a VM whose traffic is still forwarded
+		from another host (set after a keep-address migration); the source host keeps
+		egressing the VM's /128 until this runs. The VM gets a NEW /128 on its
+		current host, the Subdomains re-point, and the cross-host tunnel is removed.
+
+		Guarded against a concurrent migration (the phase machine owns the host while
+		it runs). The heavy lifting — host teardown on both ends, re-provision,
+		re-point — lives in migration.collapse_forward."""
+		from atlas.atlas.migration import collapse_forward
+
+		if not self.traffic_forwarded_from:
+			frappe.throw(_("Virtual Machine {0} has no active forward to collapse").format(self.name))
+		self._guard_no_active_migration()
+		collapse_forward(self)
+
+	def _guard_no_active_migration(self) -> None:
+		"""Throw if a non-terminal migration exists for this VM. The migration phase
+		machine owns every host operation while it runs; a concurrent lifecycle action
+		would race it against the wrong (stale) server. The migration's own internal
+		saves set `flags.migrating`, which exempts them from this guard."""
+		if self.flags.migrating:
+			return
+		from atlas.atlas.doctype.virtual_machine_migration.virtual_machine_migration import (
+			active_migration_for,
+		)
+
+		migration = active_migration_for(self.name)
+		if migration:
+			frappe.throw(
+				_(
+					"Virtual Machine {0} has an in-flight migration ({1}); wait for it to finish or fail"
+				).format(self.name, migration)
+			)
 
 	@frappe.whitelist()
 	def start(self) -> str:
@@ -241,6 +400,7 @@ class VirtualMachine(Document):
 		clears here unconditionally."""
 		if self.status != "Stopped":
 			frappe.throw(f"Cannot start from {self.status}")
+		self._guard_no_active_migration()
 		task = run_task(
 			server=self.server,
 			script="start-vm",
@@ -255,18 +415,36 @@ class VirtualMachine(Document):
 		return task.name
 
 	@frappe.whitelist()
-	def stop(self, memory_snapshot: bool | None = None) -> str:
+	def stop(
+		self,
+		memory_snapshot: bool | None = None,
+		stop_timeout_seconds: int = 0,
+		graceful: bool = True,
+	) -> str:
 		"""Stop a Running/Paused VM. The default is the plain unit stop. With
 		`memory_snapshot` (default: the VM's memory_snapshot_on_stop flag, off
 		unless the operator opted in), the stop Task first captures the guest's
 		full memory state so the next Start resumes it in milliseconds; on any
 		snapshot failure the Task falls back to the plain stop on its own — the
 		VM always ends up Stopped, only the next Start's speed differs.
-		has_memory_snapshot records which way it went."""
+		has_memory_snapshot records which way it went.
+
+		`graceful` (default True) sends the guest a ctrl+alt+del first so its kernel
+		syncs filesystems and unmounts before the unit is stopped; `graceful=False`
+		is the forced kill (Firecracker SIGKILLed with the guest never told to halt —
+		dirty guest page cache is lost). Forced is for callers that discard the RAM
+		anyway (migration cold-stop) or capture the disk another way. Only applies to
+		the plain (non-snapshot) stop; the snapshot path pauses+dumps RAM instead.
+
+		`stop_timeout_seconds` (>0) bounds the graceful drain via a runtime
+		TimeoutStopSec override (ExecStopPost still fires) — the migration fast-stop
+		path passes it, since a cold migration discards the guest's RAM anyway
+		(spec/24 §0.5.2). It only applies to the plain (non-snapshot) stop."""
 		# A Paused VM's unit is still active (vCPUs frozen, not shut down), so
 		# `systemctl stop` is the correct full shutdown from either state.
 		if self.status not in ("Running", "Paused"):
 			frappe.throw(f"Cannot stop from {self.status}")
+		self._guard_no_active_migration()
 		if self.stop_protection:
 			frappe.throw(_("Disable stop protection before stopping this VM"))
 		if memory_snapshot is None:
@@ -289,10 +467,15 @@ class VirtualMachine(Document):
 			)
 			snapshotted = bool(parse_result(task.stdout)["memory_snapshot"])
 		else:
+			# frm.call / REST send a JSON/stringy value; normalize to bool.
+			graceful = graceful in (True, 1, "1", "true", "True", "yes")
+			variables = {"VIRTUAL_MACHINE_NAME": self.name, "GRACEFUL": "1" if graceful else "0"}
+			if stop_timeout_seconds > 0:
+				variables["STOP_TIMEOUT_SECONDS"] = str(stop_timeout_seconds)
 			task = run_task(
 				server=self.server,
 				script="stop-vm",
-				variables={"VIRTUAL_MACHINE_NAME": self.name},
+				variables=variables,
 				virtual_machine=self.name,
 				timeout_seconds=30,
 			)
@@ -327,6 +510,7 @@ class VirtualMachine(Document):
 		resume()."""
 		if self.status != "Running":
 			frappe.throw(f"Cannot pause from {self.status}")
+		self._guard_no_active_migration()
 		task = run_task(
 			server=self.server,
 			script="pause-vm",
@@ -343,6 +527,7 @@ class VirtualMachine(Document):
 		"""Unfreeze a Paused VM's vCPUs via the API socket."""
 		if self.status != "Paused":
 			frappe.throw(f"Cannot resume from {self.status}")
+		self._guard_no_active_migration()
 		task = run_task(
 			server=self.server,
 			script="resume-vm",
@@ -392,6 +577,7 @@ class VirtualMachine(Document):
 				f"Stop the VM before snapshotting (status is {self.status}), "
 				f"or pass live=True for a crash-consistent live snapshot"
 			)
+		self._guard_no_active_migration()
 		title = (title or "").strip() or self._default_snapshot_title()
 		# A snapshot captures BOTH disks: the data disk is a first-class peer of
 		# root. We record its size + mount config on the row so a clone/restore can
@@ -491,6 +677,7 @@ class VirtualMachine(Document):
 				f"A warm snapshot needs a Running or Paused VM (status is {self.status}); "
 				f"for a Stopped VM take a plain snapshot"
 			)
+		self._guard_no_active_migration()
 		title = (title or "").strip() or self._default_snapshot_title()
 		snapshot = frappe.get_doc(
 			{
@@ -553,6 +740,7 @@ class VirtualMachine(Document):
 		the operator starts it when ready."""
 		if self.status != "Stopped":
 			frappe.throw(f"Stop the VM before rebuilding (status is {self.status})")
+		self._guard_no_active_migration()
 		variables = self._rebuild_variables(source_type, source)
 		task = run_task(
 			server=self.server,
@@ -579,7 +767,7 @@ class VirtualMachine(Document):
 			"VIRTUAL_MACHINE_NAME": self.name,
 			"DISK_GB": str(self.disk_gigabytes),
 			"VIRTUAL_MACHINE_IPV6": self.ipv6_address,
-			"SSH_PUBLIC_KEY": self.ssh_public_key,
+			"SSH_PUBLIC_KEY": self._guest_authorized_keys(),
 			"ATLAS_FC_UID": str(derive_uid(self.name)),
 			**self._ipv4_link_variables(),
 			# Data-disk config so the rebuilt rootfs regains its fstab mount line.
@@ -633,17 +821,20 @@ class VirtualMachine(Document):
 
 		`cpu_max_cores` is the VM's guaranteed CPU bandwidth share and `cpu_mode`
 		is how it is enforced (hard cgroup cpu.max ceiling vs. cpu.weight floor +
-		burst). resize-vm.py rewrites firecracker.json (vcpu_count/mem) and grows
-		the disk, but does NOT regenerate the per-VM jailer launcher — so a new
-		share, mode, or burst ceiling takes effect on the next re-provision, not on
-		the next Start (the same pre-existing behavior the whole-core cpu.max cap
-		already has). We still persist the new values so the doc stays the source
-		of truth and capacity accounting is correct. When the caller changes vcpus
-		but leaves cpu_max_cores unset, keep the share in step for a whole-core VM
-		(share == old vcpus); otherwise the explicit share (or the unchanged
-		fractional one) stands. cpu_mode is left untouched unless passed."""
+		burst). resize-vm.py rewrites firecracker.json (vcpu_count/mem), grows the
+		disk, AND splices the new cgroup caps (CGROUP_ARG below) into the per-VM
+		jailer launcher — so the new memory.max / cpu.max take effect on the next
+		Start. The launcher rewrite is load-bearing for memory: firecracker.json's
+		guest RAM and the launcher's `memory.max` are independent ceilings, and a
+		stale memory.max caps the guest below its new RAM → CONSTRAINT_MEMCG
+		OOM-kill on first boot (the exact failure this once had before CGROUP_ARG
+		was forwarded). When the caller changes vcpus but leaves cpu_max_cores
+		unset, keep the share in step for a whole-core VM (share == old vcpus);
+		otherwise the explicit share (or the unchanged fractional one) stands.
+		cpu_mode is left untouched unless passed."""
 		if self.status != "Stopped":
 			frappe.throw(f"Stop the VM before resizing (status is {self.status})")
+		self._guard_no_active_migration()
 		new_vcpus = int(vcpus) if vcpus else self.vcpus
 		new_memory = int(memory_megabytes) if memory_megabytes else self.memory_megabytes
 		new_disk = int(disk_gigabytes) if disk_gigabytes else self.disk_gigabytes
@@ -665,6 +856,19 @@ class VirtualMachine(Document):
 				frappe.throw(
 					f"Data disk can only grow: {self.data_disk_gigabytes} GB → {new_data_disk} GB is a shrink"
 				)
+		# Capacity gate (spec/28): a resize must not silently oversubscribe the host.
+		# Charge only the positive per-axis deltas against the host's FULL effective
+		# budget — the arrival headroom reserve is the resize's to spend. Raises
+		# NoResizeCapacityError (a NoCapacityError subclass) when the delta doesn't
+		# fit; that is the trigger for a future migrate-to-grow (case 2). CPU cost is
+		# the bandwidth share (cpu_max_cores or vcpus), matching capacity accounting.
+		check_resize_capacity(
+			self.server,
+			delta_cpu=new_cpu_max - float(self.cpu_max_cores or self.vcpus or 0),
+			delta_memory_mb=new_memory - (self.memory_megabytes or 0),
+			delta_disk_gb=(new_disk + new_data_disk)
+			- (self.disk_gigabytes + (self.data_disk_gigabytes or 0)),
+		)
 		# Run the on-host resize first; run_task raises on failure, so we only
 		# persist the new values once the config and disk actually changed.
 		# Saving before the Task would let a failed resize-vm.py leave the doc
@@ -675,6 +879,13 @@ class VirtualMachine(Document):
 			"VCPUS": str(new_vcpus),
 			"MEMORY_MB": str(new_memory),
 			"DISK_GB": str(new_disk),
+			# The new jailer cgroup caps, derived from the resized memory/cpu exactly
+			# as provision does. resize-vm.py splices these into jailer-launch.sh so
+			# the host cgroup memory.max tracks the new RAM — without it the launcher
+			# pins the pre-resize cap and the guest OOM-kills on the RAM it was given.
+			"CGROUP_ARG": _cgroup_values(
+				cgroup_args(new_cpu_max, new_memory, new_disk, new_cpu_mode, new_vcpus)
+			),
 		}
 		if new_data_disk:
 			variables["DATA_DISK_GB"] = str(new_data_disk)
@@ -724,6 +935,7 @@ class VirtualMachine(Document):
 		clients must refresh known_hosts — that is the intended effect."""
 		if self.status != "Stopped":
 			frappe.throw(f"Stop the VM before regenerating host keys (status is {self.status})")
+		self._guard_no_active_migration()
 		task = run_task(
 			server=self.server,
 			script="regenerate-host-keys-vm",
@@ -737,11 +949,34 @@ class VirtualMachine(Document):
 		return task.name
 
 	@frappe.whitelist()
+	def deploy_gateway(self) -> bool:
+		"""Stand up (or re-assert) this gateway VM's wg0 + the static same_48 guard, over
+		guest-SSH (spec/26). Gateway-only: a non-gateway VM has no wg0 to bring up.
+		Idempotent — safe to re-run after a reboot or rebuild."""
+		if not self.is_gateway:
+			frappe.throw(f"{self.name} is not a customer gateway (is_gateway unset)")
+		from atlas.atlas import customer_gateway
+
+		return customer_gateway.deploy_gateway(self.name)
+
+	@frappe.whitelist()
+	def read_proxy_maps(self) -> dict:
+		"""Return this proxy's three live maps (sites / sni / acme) alongside the
+		desired maps and a per-map drift flag — read-only. Proxy-only: a non-proxy VM
+		has no admin sockets to read."""
+		if not self.is_proxy:
+			frappe.throw(f"{self.name} is not a proxy (is_proxy unset)")
+		from atlas.atlas import proxy
+
+		return proxy.read_live_maps(self.name)
+
+	@frappe.whitelist()
 	def terminate(self) -> str:
 		if self.status == "Terminated":
 			frappe.throw(_("VM is already terminated"))
 		if self.termination_protection:
 			frappe.throw(_("Disable termination protection before terminating this VM"))
+		self._guard_no_active_migration()
 		task = run_task(
 			server=self.server,
 			script="terminate-vm",
@@ -753,10 +988,37 @@ class VirtualMachine(Document):
 		self.save()
 		self._detach_reserved_ip()
 		self._revoke_tunnels()
+		self._revoke_vpc_peers()
 		self._delete_subdomains()
 		self._delete_custom_domains()
 		self._delete_snapshots()
+		self._deprovision_proxy()
+		# The VM's private /128 leaves its host's AllowedIPs (design §3, trigger 3, and
+		# the §8 teardown fix: withdraw the /128 from peers on teardown, not only on
+		# provision). status is now Terminated, so _residents_by_host excludes it and the
+		# reconcile drops it fleet-wide. Enqueued after commit, no-op for a tenant-less VM.
+		self._reconcile_host_mesh()
 		return task.name
+
+	def _deprovision_proxy(self) -> None:
+		"""If this VM fronted traffic as a proxy, drop it out of the fleet on terminate
+		so its dead `/128` stops being published in the regional wildcard AAAA set (else
+		half the round-robin blackholes into a VM whose guest is gone). Clear `is_proxy`
+		and re-publish the wildcard: `status` is already "Terminated" above, so
+		`wildcard_targets()` now excludes this VM and the upsert drops its address. No-op
+		for a non-proxy VM. A DNS failure is logged inside `_publish_wildcard`, not raised
+		— it must not wedge the rest of teardown."""
+		if not self.is_proxy:
+			return
+		self.db_set("is_proxy", 0)
+		from atlas.atlas.placement import active_root_domain
+
+		domain = active_root_domain().domain
+		cert_name = frappe.db.get_value(
+			"TLS Certificate", {"root_domain": domain, "status": "Active"}, "name"
+		)
+		if cert_name:
+			frappe.get_doc("TLS Certificate", cert_name)._publish_wildcard()
 
 	def _revoke_tunnels(self) -> None:
 		"""Revoke every VPN Tunnel to this VM on terminate (spec/19-vpn-broker.md).
@@ -770,6 +1032,24 @@ class VirtualMachine(Document):
 			pluck="name",
 		):
 			frappe.get_doc("VPN Tunnel", name).revoke()
+
+	def _revoke_vpc_peers(self) -> None:
+		"""Revoke every VPN Peer this VM terminates as a gateway (spec/26). A
+		terminated gateway's peers are dead — drop each from the (gone) wg0 and withdraw
+		its /128 from the mesh. revoke_peer skips the wg0 push for a Terminated gateway (the
+		peers are already gone with the VM) and only withdraws the mesh /128. Idempotent:
+		a non-gateway VM has no peers; already-Revoked peers are skipped."""
+		# The customer gateway (spec/26) is a later feature than the VM lifecycle: a site
+		# may not have migrated the `VPN Peer` DocType. Its absence means "no peers"
+		# — never block a terminate on it.
+		if not frappe.db.exists("DocType", "VPN Peer"):
+			return
+		for name in frappe.get_all(
+			"VPN Peer",
+			filters={"gateway": self.name, "status": ["!=", "Revoked"]},
+			pluck="name",
+		):
+			frappe.get_doc("VPN Peer", name).revoke()
 
 	def _detach_reserved_ip(self) -> None:
 		"""Release the VM's attached public IPv4 (if any) back to its Server's
@@ -787,16 +1067,33 @@ class VirtualMachine(Document):
 		Subdomain) — would otherwise strand its routes on a /128 that `allocate_ipv6`
 		re-hands to the next tenant, a cross-tenant traffic leak.
 
-		A `Subdomain` is the LINKER (its `virtual_machine` field points AT this VM), so
-		deleting it is unobstructed by Frappe's link-integrity guard (which protects the
-		linked-TO doc) — unlike `Site._delete_subdomain`, which first clears the Site's
-		own Link field to the Subdomain. Idempotent: a VM with no Subdomains is a no-op.
+		A `Subdomain` is the LINKER of the VM (its `virtual_machine` field points AT this
+		VM), so nothing on the VM side obstructs the delete. But a bench VM's Subdomain is
+		itself linked-TO by the `Pilot` that fronts it (`subdomain_doc`), and a self-serve
+		site's by its `Site` (`subdomain_doc`) — and Frappe's link-integrity guard protects
+		that linked-TO doc, so deleting the Subdomain out from under a live Pilot/Site raises
+		`LinkExistsError`. Both `Pilot._delete_subdomain` and `Site._delete_subdomain` clear
+		their own `subdomain_doc` before deleting, but a VM terminated directly (the operator,
+		or Central's `terminate_server` driving the VM's own `terminate`) bypasses those
+		paths, so we clear the referencing link here first — the same clear-then-delete order,
+		from the side that owns the Subdomain rather than the side that references it.
+		Idempotent: a VM with no Subdomains is a no-op.
 		`terminate()` is the ONLY controller-side teardown — there is deliberately NO
 		scheduled sweeper backstop (spec/18 Component F, "Why no sweeper"): because this
 		deletes a VM's rows in the same teardown that releases its /128, a row never
 		outlives its VM's address, so the case a sweeper would catch is closed here."""
 		for name in frappe.get_all("Subdomain", filters={"virtual_machine": self.name}, pluck="name"):
+			self._clear_subdomain_references(name)
 			frappe.delete_doc("Subdomain", name, ignore_permissions=True)
+
+	def _clear_subdomain_references(self, subdomain: str) -> None:
+		"""Null out any `Pilot`/`Site` `subdomain_doc` Link pointing at `subdomain`, so the
+		link-integrity guard lets the Subdomain be deleted. The null must be persisted
+		(db_set) before the delete, since the guard queries the DB — mirrors the db_set order
+		in `Pilot._delete_subdomain` / `Site._delete_subdomain`."""
+		for doctype in ("Pilot", "Site"):
+			for name in frappe.get_all(doctype, filters={"subdomain_doc": subdomain}, pluck="name"):
+				frappe.db.set_value(doctype, name, "subdomain_doc", None)
 
 	def _delete_custom_domains(self) -> None:
 		"""Drop every Custom Domain that routes to this VM, so terminating it stops routing
@@ -847,12 +1144,39 @@ class VirtualMachine(Document):
 		stored field. The guest gets a private v4 + default route; the host
 		masquerades it (see scripts/vm-network-up.py, spec/06-networking.md).
 		Shared by provision (clone too) and rebuild, which both re-inject the
-		guest network env."""
-		host_cidr, guest_cidr = derive_ipv4_link(self.ipv6_address)
+		guest network env.
+
+		A dark VM (public_networking=0, §6) has NO public ipv6_address to index the
+		/30 off, so it indexes off its private /128's low bits (per-host unique the
+		same way the public allocator is: the private address is HKDF-derived, so we
+		pass the explicit index). egress_nat44=0 opts a VM out of v4 egress entirely
+		(air-gapped), so no link is emitted and vm-network-up skips the NAT block."""
+		if not self.egress_nat44:
+			return {}
+		if self.ipv6_address:
+			host_cidr, guest_cidr = derive_ipv4_link(self.ipv6_address)
+		else:
+			# Dark VM: index off the private /128's low 14 bits (unique per host).
+			index = int(ipaddress.IPv6Address(self.private_address)) & 0x3FFF
+			host_cidr, guest_cidr = derive_ipv4_link(index=index)
 		return {
 			"IPV4_HOST_CIDR": host_cidr,
 			"IPV4_GUEST_CIDR": guest_cidr,
 			"IPV4_GATEWAY": str(ipaddress.ip_interface(host_cidr).ip),
+		}
+
+	def _private_network_variables(self) -> dict:
+		"""The private-plane identity written into network.env (§5): the VM's derived
+		fdaa:: /128 and its tenant /48. vm-network-up.py gates the whole private block on
+		BOTH being present, so this is empty (and the block a no-op) for a VM with no
+		tenant. Shared by provision + rebuild, which both re-inject the guest network env,
+		so a rebuild re-creates the private routes + isolation rules on first boot."""
+		if not self.tenant:
+			return {}
+		private_address = self.private_address or derive_private_address(self.tenant, self.name)
+		return {
+			"PRIVATE_ADDRESS": private_address,
+			"TENANT_PREFIX": derive_tenant_prefix(self.tenant),
 		}
 
 	def _data_disk_variables(self) -> dict:
@@ -869,6 +1193,17 @@ class VirtualMachine(Document):
 			"DATA_DISK_MOUNT_AT": self.data_disk_mount_point if self.data_disk_format_and_mount else "",
 		}
 
+	def _guest_authorized_keys(self) -> str:
+		"""The guest's root authorized_keys: the VM owner's key plus the Satellite
+		orchestrator key(s) (spec/28), one per line. Atlas hands over a bare Ubuntu box;
+		injecting Satellite's key here is what lets a Satellite SSH in and set up
+		services. The rootfs writes this value verbatim, so each extra line is one more
+		authorized key. No-op (just the owner's key) on an Atlas with no Satellite."""
+		from atlas.atlas.atlas_settings import satellite_public_keys
+
+		keys = [self.ssh_public_key, *satellite_public_keys()]
+		return "\n".join(key.strip() for key in keys if key and key.strip())
+
 	def _provision_variables(self) -> dict:
 		image = frappe.get_doc("Virtual Machine Image", self.image)
 		host_veth, namespace_veth = derive_veth_pair(self.name)
@@ -883,7 +1218,7 @@ class VirtualMachine(Document):
 			"MAC_ADDRESS": self.mac_address,
 			"TAP_DEVICE": self.tap_device,
 			"VIRTUAL_MACHINE_IPV6": self.ipv6_address,
-			"SSH_PUBLIC_KEY": self.ssh_public_key,
+			"SSH_PUBLIC_KEY": self._guest_authorized_keys(),
 			# Jail isolation parameters. All derived from the VM's own UUID and
 			# resource fields, so the on-host jail is reconstructible from the
 			# row. provision-vm.py bakes these into the per-VM jailer-launch.sh
@@ -909,8 +1244,13 @@ class VirtualMachine(Document):
 				)
 			),
 			"RESOURCE_ARG": _cgroup_values(resource_limit_args(self.disk_gigabytes)),
-			# Per-VM NAT44 v4 egress link (host/guest /30 + gateway).
+			# Per-VM NAT44 v4 egress link (host/guest /30 + gateway). Empty when
+			# egress_nat44=0 (an air-gapped VM), leaving the env's v4 block unwritten.
 			**self._ipv4_link_variables(),
+			# The private-plane identity on the WireGuard host mesh (§5): the derived
+			# fdaa:: /128 + tenant /48. Empty for a tenant-less VM, so vm-network-up
+			# skips the whole private block and the VM keeps today's public-only behavior.
+			**self._private_network_variables(),
 			# An attached Reserved IP (if any) so a fresh provision re-creates its
 			# inbound 1:1-NAT on first boot. Empty/None is dropped by the Task
 			# runner's flag rendering, leaving the env clean for ordinary VMs.
@@ -950,18 +1290,15 @@ class VirtualMachine(Document):
 
 
 def _routing_base_url() -> str:
-	"""The Atlas controller base URL a guest's routing client POSTs to (spec/18).
+	"""The Satellite orchestrator base URL a guest's routing client POSTs to (spec/28:
+	routing moved off Atlas to the Satellite).
 
-	`frappe.utils.get_url()` resolves the public site URL (honoring `host_name` /
-	the request host behind the proxy). Returns "" if it can't be resolved (no
-	configured host_name and no request context — e.g. a bare worker job before
-	host_name is set), which the Task runner drops, leaving /etc/atlas-routing.env
-	unwritten and the guest client a clean no-op. NON-SECRET, so there is no harm in
-	injecting it broadly."""
-	try:
-		return frappe.utils.get_url() or ""
-	except Exception:
-		return ""
+	Read from `Atlas Settings.satellite_routing_base_url` — the Satellite's public site
+	URL (e.g. `https://orchestrator.blr1.frappe.dev`). Returns "" when unset, which the
+	Task runner drops, leaving /etc/atlas-routing.env unwritten and the guest client a
+	clean no-op (an Atlas with no Satellite, or before the URL is configured). NON-SECRET,
+	so there is no harm in injecting it broadly."""
+	return frappe.db.get_single_value("Atlas Settings", "satellite_routing_base_url") or ""
 
 
 def _cgroup_values(interleaved: list[str]) -> list[str]:

@@ -1,0 +1,26 @@
+[Unit]
+Description=Atlas host dashboard
+Documentation=https://github.com/atlas/dashboard
+# Started on demand by the socket; the socket is the primary handle.
+Requires=atlas-dashboard.socket
+After=atlas-dashboard.socket
+
+[Service]
+# Socket-activated: systemd passes the listening socket as fd 3 (LISTEN_FDS),
+# server.py adopts it instead of binding its own port.
+ExecStart=/usr/bin/python3 /opt/atlas-dashboard/server.py
+WorkingDirectory=/opt/atlas-dashboard
+Environment=ATLAS_ROOT=/var/lib/atlas
+Environment=ATLAS_DIST=/opt/atlas-dashboard/dist
+# Read-only inspection tools live in the standard paths; keep them reachable.
+Environment=PATH=/usr/sbin:/usr/bin:/sbin:/bin
+
+# The server is read-only; run it as an ordinary process. No hardening applied,
+# by design — the dashboard exposes host state and takes no actions, and this
+# host is not treated as security-sensitive.
+Restart=on-failure
+RestartSec=1
+
+[Install]
+# Socket activation is the entry point; no WantedBy here so the service only
+# runs when the socket hands it a connection (enable the .socket, not this).

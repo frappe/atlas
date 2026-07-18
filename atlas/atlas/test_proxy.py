@@ -245,6 +245,50 @@ def _reserved_ip(ip_address: str, server: str, vm: str | None = None):
 	return doc.insert(ignore_permissions=True)
 
 
+class TestReadLiveMaps(IntegrationTestCase):
+	def setUp(self) -> None:
+		_ensure_test_server()
+		_ensure_test_image()
+		_purge()
+		frappe.db.set_single_value("Atlas Settings", "region", "blr1")
+
+	def test_reads_all_three_maps_and_flags_in_sync(self) -> None:
+		# The live maps equal desired (sites has the one subdomain, sni+acme empty) → every
+		# map reports in_sync, parsed live == parsed desired. Three reads, zero writes.
+		proxy_vm = _proxy_vm()
+		site_vm = _new_vm()
+		_make_subdomain("acme", site_vm.name)
+		sites_live = proxy.canonical_json({"acme": site_vm.ipv6_address})
+		with _mock_ssh([(sites_live, "", 0), (EMPTY_MAP, "", 0), (EMPTY_MAP, "", 0)]) as run_ssh:
+			maps = proxy.read_live_maps(proxy_vm.name)
+		self.assertEqual(run_ssh.call_count, 3)  # read-only: three GETs, no writes
+		self.assertEqual([c.args[2] for c in run_ssh.call_args_list][1], "stream-admin GET-SNI")
+		self.assertEqual(maps["sites"]["live"], {"acme": site_vm.ipv6_address})
+		self.assertTrue(maps["sites"]["in_sync"])
+		self.assertTrue(maps["sni"]["in_sync"])
+		self.assertTrue(maps["acme"]["in_sync"])
+
+	def test_flags_drift_when_live_differs(self) -> None:
+		# The live sites map is empty but desired has the subdomain → in_sync False, and the
+		# returned live/desired differ so the Desk table can highlight the missing key.
+		proxy_vm = _proxy_vm()
+		site_vm = _new_vm()
+		_make_subdomain("acme", site_vm.name)
+		with _mock_ssh([(EMPTY_MAP, "", 0), (EMPTY_MAP, "", 0), (EMPTY_MAP, "", 0)]):
+			maps = proxy.read_live_maps(proxy_vm.name)
+		self.assertFalse(maps["sites"]["in_sync"])
+		self.assertEqual(maps["sites"]["live"], {})
+		self.assertEqual(maps["sites"]["desired"], {"acme": site_vm.ipv6_address})
+
+	def test_read_failure_raises(self) -> None:
+		# A wedged guest (non-zero read exit) must raise, not silently report empty maps —
+		# a button that lied about what the proxy serves would be worse than no button.
+		proxy_vm = _proxy_vm()
+		with _mock_ssh([("", "boom", 1)]):
+			with self.assertRaises(frappe.ValidationError):
+				proxy.read_live_maps(proxy_vm.name)
+
+
 class TestWildcardTargets(IntegrationTestCase):
 	# The proxy fleet is global now (no per-region scoping), so wildcard_targets()
 	# sees every is_proxy VM. Purge the whole fleet — and any Reserved IPs attached
@@ -289,6 +333,18 @@ class TestWildcardTargets(IntegrationTestCase):
 		ipv4, ipv6 = proxy.wildcard_targets()
 		self.assertEqual(sorted(ipv4), ["198.51.100.10", "198.51.100.11"])
 		self.assertEqual(sorted(ipv6), ["2400:6180::a", "2400:6180::b"])
+
+	def test_terminated_proxy_is_excluded(self) -> None:
+		# A terminated proxy's guest is gone and its /128 no longer answers, so its
+		# address must drop out of the wildcard — else half the round-robin blackholes.
+		live = _proxy_vm()
+		live.db_set("ipv6_address", "2400:6180::a")
+		dead = _proxy_vm()
+		dead.db_set("ipv6_address", "2400:6180::b")
+		dead.db_set("status", "Terminated")
+		ipv4, ipv6 = proxy.wildcard_targets()
+		self.assertEqual(ipv4, [])
+		self.assertEqual(ipv6, ["2400:6180::a"])
 
 
 class TestPushCert(IntegrationTestCase):

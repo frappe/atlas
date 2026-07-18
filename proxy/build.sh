@@ -20,8 +20,10 @@
 # This is the AUTHORITATIVE build. The docker-compose test harness (proxy/test)
 # runs this same script so the tested stack and the shipped stack are identical.
 #
-# Idempotent (spec taste #14: retry = re-run). Re-running reinstalls the held apt
-# nginx and rebuilds the modules from the pinned sources; already-present source
+# Idempotent (spec taste #14: retry = re-run). Re-running force-reinstalls the held
+# apt nginx (unhold + --reinstall, §1) AND rebuilds the modules from the pinned
+# sources in the same run, so the binary and the modules are always one coordinated
+# build — never a stale binary under freshly-compiled modules. Already-present source
 # tarballs are reused.
 #
 # Run as root. Reads the committed tree from the directory this script lives in.
@@ -107,7 +109,18 @@ apt-get update
 # the highest available. The pin can ONLY resolve to the nginx.org package, and if
 # the repo can't serve it the install fails loud (no silent base substitution).
 NGINX_PKG_VERSION="${NGINX_VERSION}-${NGINX_PKG_RELEASE}~$(lsb_release -cs)"
-apt-get install -y --no-install-recommends "nginx=${NGINX_PKG_VERSION}"
+# --reinstall (after clearing any prior hold) is LOAD-BEARING on a re-bake, not
+# cosmetic: the dynamic modules below are ABI-bound to the EXACT nginx binary they
+# were compiled against, and on a re-run the previous bake has already installed +
+# held this same version — a plain `apt install nginx=<held version>` is then a
+# no-op that leaves the OLD binary in place while we recompile the modules against a
+# freshly-fetched nginx source. That ships a binary and a module set from two
+# different build moments — the silent base/module mismatch this whole stack pins to
+# avoid (a mismatched dynamic module can still load + pass `nginx -t` yet misbehave
+# at runtime). unhold→--reinstall forces the binary to be laid down fresh every run,
+# so the binary and the modules are always one coordinated set.
+apt-mark unhold nginx 2>/dev/null || true
+apt-get install -y --reinstall --no-install-recommends "nginx=${NGINX_PKG_VERSION}"
 apt-mark hold nginx          # frozen in the snapshot; bump = deliberate rebake
 
 # Belt-and-suspenders: confirm the binary the pin installed is the version we
@@ -193,31 +206,101 @@ for pair in "nginx.tar.gz:nginx" "ndk.tar.gz:ndk" \
 	tar -xzf "$tarball" -C "$dir" --strip-components=1
 done
 
-# --- 4. Build the modules as DYNAMIC .so's against the apt binary. The pivot
-# from the old all-source build: instead of compiling nginx + modules into one
-# binary, we `make modules` only. Order still matters: NDK before lua-nginx.
+# --- 3b. Patch nginx's stream ssl_preread so preread_by_lua can read the SNI.
+# nginx 1.25.5 (Apr 2024) reworked the stream phase engine: when `ssl_preread on`
+# successfully parses the ClientHello its handler returns NGX_OK, which now ENDS the
+# preread phase — so `preread_by_lua` (also a preread-phase handler) never runs, and
+# `proxy_pass $sni_upstream` fires with the variable still unset ("no host in
+# upstream """ → connection reset). That kills the :443 SNI front-door
+# (sni_router.lua / sni_passthrough.lua), which routes raw TLS by reading
+# $ssl_preread_server_name inside preread_by_lua (spec/12 § The stream front-door).
+#
+# OpenResty ships the fix as a one-line nginx patch (their bundle's
+# nginx-<ver>-stream_ssl_preread_no_skip.patch): on a successful SNI parse,
+# ssl_preread returns NGX_DECLINED instead of NGX_OK, so the preread phase KEEPS
+# running and the lua handler gets its turn with the SNI already populated. The
+# committed copy (proxy/patches/) is OpenResty's exact hunk; the changed lines are
+# byte-identical across nginx stable, so it applies clean on the pinned base — and
+# build.sh fails loud (`patch` under set -e) if a base bump ever moves them. The
+# compose gate (test_custom_domain_proxy.py) asserts the :443 fork end-to-end.
+patch -p1 -d nginx < "$SRC_DIR/patches/nginx-stream_ssl_preread_no_skip.patch"
+
+# --- 4. Build nginx (patched binary) + the DYNAMIC module .so's, one configure.
+# We compile our OWN nginx binary here — NOT just `make modules` — because the §3b
+# ssl_preread fix lives in nginx CORE (ssl_preread is --with-stream_ssl_preread_module,
+# static, compiled INTO the binary), so the apt binary can't carry it. The apt nginx
+# is still installed in §1 (it owns OpenSSL, the repo, the deps, the held package
+# metadata and the stock dir layout); §4b overwrites only its binary FILE with this
+# same-version patched recompile. The configure mirrors the apt build's flags + paths
+# so the result is behavior-identical apart from the one-line ssl_preread fix. Order
+# still matters: NDK before lua-nginx.
 #
 # --with-compat is load-bearing: it gives every nginx build the same module-ABI
-# signature, so a .so compiled HERE loads into the separately-installed apt
-# binary. Without it the module is rejected at load. The rpath wires the lua .so
-# to libluajit-5.1.so in /usr/local/lib. We pass the SAME http feature flags the
-# stock nginx was built with (`nginx -V` shows v2/ssl/realip) so the module build
-# sees the same module set — but emit only the .so's, never `make install`. ---
+# signature, so the .so's compiled HERE load into this binary. The rpath wires the lua
+# .so to libluajit-5.1.so in /usr/local/lib. `make` (not `make modules`) emits BOTH
+# objs/nginx and objs/*.so from one configure, so binary + modules are one coordinated
+# ABI set. ---
 cd "$BUILD_DIR/nginx"
+# The --prefix and --*-path flags MUST mirror the apt nginx.org package's own build
+# (its `nginx -V`: --prefix=/etc/nginx, --sbin-path=/usr/sbin/nginx,
+# --modules-path=/usr/lib/nginx/modules, …) so our recompiled binary (§4b) resolves
+# the SAME stock paths the apt binary did — load_module's relative `modules/…` is
+# relative to --prefix, the conf/log/pid/temp paths are baked in, and the snapshot
+# layout is unchanged. Without these the recompile would default to --prefix=
+# /usr/local/nginx and `nginx -t` would look for modules + logs in the wrong place.
 LUAJIT_LIB=/usr/local/lib LUAJIT_INC=/usr/local/include/luajit-2.1 \
 ./configure \
+	--prefix=/etc/nginx \
+	--sbin-path=/usr/sbin/nginx \
+	--modules-path=/usr/lib/nginx/modules \
+	--conf-path=/etc/nginx/nginx.conf \
+	--error-log-path=/var/log/nginx/error.log \
+	--http-log-path=/var/log/nginx/access.log \
+	--pid-path=/run/nginx.pid \
+	--lock-path=/run/nginx.lock \
+	--http-client-body-temp-path=/var/cache/nginx/client_temp \
+	--http-proxy-temp-path=/var/cache/nginx/proxy_temp \
+	--http-fastcgi-temp-path=/var/cache/nginx/fastcgi_temp \
+	--http-uwsgi-temp-path=/var/cache/nginx/uwsgi_temp \
+	--http-scgi-temp-path=/var/cache/nginx/scgi_temp \
+	--user=nginx \
+	--group=nginx \
 	--with-compat \
-	--with-http_v2_module \
-	--with-http_ssl_module \
+	--with-file-aio \
+	--with-threads \
+	--with-http_addition_module \
+	--with-http_auth_request_module \
+	--with-http_dav_module \
+	--with-http_flv_module \
+	--with-http_gunzip_module \
+	--with-http_gzip_static_module \
+	--with-http_mp4_module \
+	--with-http_random_index_module \
 	--with-http_realip_module \
+	--with-http_secure_link_module \
+	--with-http_slice_module \
+	--with-http_ssl_module \
+	--with-http_stub_status_module \
+	--with-http_sub_module \
+	--with-http_v2_module \
 	--with-stream \
+	--with-stream_realip_module \
+	--with-stream_ssl_module \
 	--with-stream_ssl_preread_module \
 	--with-ld-opt="-Wl,-rpath,/usr/local/lib" \
 	--add-dynamic-module="$BUILD_DIR/ndk" \
 	--add-dynamic-module="$BUILD_DIR/lua-nginx-module" \
 	--add-dynamic-module="$BUILD_DIR/stream-lua-nginx-module" \
 	--add-dynamic-module="$BUILD_DIR/headers-more"
-make -j"$(nproc)" modules
+# Build BOTH the nginx binary and the dynamic .so's (not `make modules` alone). We
+# now ship our OWN nginx binary because the ssl_preread patch (§3b) lives in nginx
+# CORE, not in a module — ssl_preread is `--with-stream_ssl_preread_module` (static,
+# no `=dynamic`), so it is compiled INTO the binary. The apt nginx.org binary cannot
+# carry the patch; only a binary we compile from the patched source can. The full
+# `make` produces objs/nginx (patched) alongside objs/*.so. apt still owns the deps,
+# OpenSSL, repo and stock paths; we replace only the binary FILE with a same-version
+# patched recompile (§4b).
+make -j"$(nproc)"
 install -d "$MODULES_DIR"
 # NDK builds no runtime .so of its own (it's linked into the lua modules); the
 # http-lua, stream-lua, and headers-more .so's land here. The stream-lua module
@@ -225,6 +308,23 @@ install -d "$MODULES_DIR"
 # loaded by the apt binary via a load_module line in nginx.conf. Copy whatever
 # objs/ produced.
 install -m 0644 objs/*.so "$MODULES_DIR/"
+
+# --- 4b. Replace the apt nginx BINARY with our patched recompile of the SAME
+# version. §3b's ssl_preread fix is in nginx core, which the apt binary can't carry,
+# so the patched objs/nginx must be the binary that runs. We overwrite only the
+# binary file at the apt path — apt still owns OpenSSL, the repo, the deps, the
+# stock dir layout and the (held) package metadata; `nginx -V` still reads 1.30.3.
+# The recompile uses the same flags `nginx -V` reported, plus --with-compat, so the
+# dynamic .so's above load into it unchanged. Replace-by-rename (mv old aside, then
+# install) so it works even if the path is busy on a re-bake. ABI-bound: binary and
+# .so's are now one coordinated build from one configure, same as before.
+install -m 0755 objs/nginx "$SBIN_PATH.atlas-patched"
+mv -f "$SBIN_PATH.atlas-patched" "$SBIN_PATH"
+# Confirm the running binary is genuinely our patched recompile (its `nginx -V`
+# configure line carries the --add-dynamic-module args the apt binary never had) and
+# still reports the pinned version.
+"$SBIN_PATH" -V 2>&1 | grep -q -- "--add-dynamic-module=.*stream-lua" \
+	|| { echo "FATAL: patched nginx not the recompile — wrong binary installed" >&2; exit 1; }
 
 
 # --- 5. Pure-Lua resty libs. NOT compiled into nginx — nginx loads them at
@@ -287,7 +387,12 @@ install -m 0644 "$SRC_DIR/lua/stream_persist.lua" "$LUA_DIR/stream_persist.lua"
 install -m 0644 "$SRC_DIR/lua/sni_router.lua"      "$LUA_DIR/sni_router.lua"
 install -m 0644 "$SRC_DIR/lua/sni_passthrough.lua" "$LUA_DIR/sni_passthrough.lua"
 install -m 0644 "$SRC_DIR/lua/sni_persist.lua"     "$LUA_DIR/sni_persist.lua"
+# unconfigured.lua: the dummy-cert terminator that serves the branded "Domain not
+# configured" page for a custom domain pointed here but not yet routed (the :8446
+# fork sni_router.lua takes on a named miss instead of dropping at L4).
+install -m 0644 "$SRC_DIR/lua/unconfigured.lua"    "$LUA_DIR/unconfigured.lua"
 install -m 0644 "$SRC_DIR/html/not_found.html" "$HTML_DIR/not_found.html"
+install -m 0644 "$SRC_DIR/html/domain_unconfigured.html" "$HTML_DIR/domain_unconfigured.html"
 # The nginx.org package drops conf.d/default.conf, included by ITS nginx.conf. Our
 # nginx.conf does NOT include conf.d (see the note there), so it never loads — we
 # leave the dpkg-owned conffile in place rather than hand-deleting it and desyncing
@@ -337,13 +442,28 @@ install -d -o root -g nginx -m 0750 "$STATE_DIR/acme"
 # `nginx` does NOT require the key to be group-readable. Leaving it root-only keeps
 # the wildcard private key off every lower-priv principal on the box (CIS 4.1.3).
 install -d -m 0750 "$STATE_DIR/certs/_placeholder"
-if [ ! -f "$STATE_DIR/certs/_placeholder/fullchain.pem" ]; then
-	openssl req -x509 -newkey rsa:2048 -nodes -days 3650 \
-		-keyout "$STATE_DIR/certs/_placeholder/privkey.pem" \
-		-out "$STATE_DIR/certs/_placeholder/fullchain.pem" \
-		-subj "/CN=nginx-placeholder"
-	chmod 0640 "$STATE_DIR/certs/_placeholder/privkey.pem"
-fi
+# Regenerate every bake (no `[ ! -f ]` guard): the cert is a self-signed throwaway
+# the :8446 unconfigured-domain terminator presents, so a fresh one each re-bake
+# costs nothing and — unlike a guard — lets the Subject copy below actually take
+# effect instead of being pinned to whatever the first bake happened to write. NOT
+# the wildcard key (that's push_cert's, untouched).
+#
+# The Subject is the message. A browser never trusts this cert, so the visitor lands
+# on the "your connection is not private" interstitial and can open "view certificate"
+# — the ONLY channel a self-signed cert has to a human, since the interstitial itself
+# renders the typed hostname, not our fields. So every readable DN field is a line of
+# copy the details pane shows verbatim (and, self-signed ⇒ issuer==subject, "Issued By"
+# mirrors it): CN is the headline, O says who we are, OU is the next step + URL. Keep
+# it plain ASCII ≤64 chars/field (RFC 5280 DN bound; PrintableString/UTF8String — no
+# emoji, some cert UIs mangle them). The old CN was "atlas-unconfigured", which read
+# like a bug; this reads like an answer. KEEP THIS -subj byte-identical to
+# atlas.proxy.PLACEHOLDER_CERT_SUBJECT, which regenerate_placeholder_cert runs to push a
+# copy change to a live proxy without a full re-bake — the two must write the same cert.
+openssl req -x509 -newkey rsa:2048 -nodes -days 3650 \
+	-keyout "$STATE_DIR/certs/_placeholder/privkey.pem" \
+	-out "$STATE_DIR/certs/_placeholder/fullchain.pem" \
+	-subj "/CN=This domain is not connected to a site yet/O=Frappe Cloud/OU=Connect it in your dashboard: frappe.dev\/domains"
+chmod 0640 "$STATE_DIR/certs/_placeholder/privkey.pem"
 # Point the flat path nginx reads at the placeholder region (repointed by
 # build_proxy once the real region is known). -n so we replace the symlink
 # itself, not follow it into the target dir on a re-run.

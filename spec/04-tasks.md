@@ -605,6 +605,61 @@ whitelisted method that:
 A retry is a new Task row, not a mutation of the failed one. The audit
 trail keeps both.
 
+## The SSH Console — ad-hoc commands
+
+Everything above is the **verb** model: a Task references a script from a fixed
+catalog, executed as `atlas <verb>`. That is the right primitive for the
+lifecycle, but it leaves a gap — an operator debugging a host or guest needs to
+run a *one-off* command (`journalctl -u firecracker`, `systemctl status overmind`,
+`df -h`, `apt list --upgradable`) that no verb covers. The **SSH Console** fills
+that gap: the one surface that runs an arbitrary operator-typed command over the
+same transport.
+
+It is deliberately **not** a Task. A Task is a typed verb with `variables`, a
+catalog entry, retry semantics, and a contract that a non-zero exit *raises* so a
+controller can flip a doc's status. An ad-hoc command has none of that, and
+forcing a free-form string into the verb model would bend it. So the console is
+its own pair of doctypes:
+
+- **`SSH Console`** (a Single) — the operator picks targets (a child table of
+  `Server` and/or `Virtual Machine` rows), types one command, and clicks
+  **Execute**. The command fans out across every target and the per-target output
+  streams back into a results table. Mirrors press's Ansible Console.
+- **`SSH Command Log`** — the immutable audit record, one row per run (the
+  command, who ran it, start/end, and a result row per target). The command and
+  caller are frozen at insert; the run-state (status, timing, results) fills in
+  as the fan-out streams. A **Re-run** opens the console pre-filled.
+
+The engine is [`atlas/atlas/ssh_console.py`](../atlas/atlas/ssh_console.py) —
+stdlib + `atlas.atlas.ssh` only, so its classification and fan-out unit-test in
+milliseconds with no host. It reuses the two existing Connection builders
+unchanged: a `Server` target is reached over its public IPv4 via
+`connection_for_server`, a `Virtual Machine` target over its public IPv6 `/128`
+via `connection_for_guest` (the same guest path the proxy/bench control plane
+uses). No new transport, no new dependency.
+
+**The one behavioural departure from `run_task`:** a failed command is a
+*result*, never an exception. `run_on_target` classifies a clean exit as
+`Success`, a non-zero exit as `Failure`, and any transport error (missing
+address, connect timeout) as `Unreachable` — and `run_fan_out` reports every
+target's outcome rather than aborting on the first failure. The console's job is
+to *report*, so a failure is a red row, not a raise.
+
+**Execution is async + streamed.** `SSH Console.execute()` validates, pre-creates
+the `Running` log (the operator's receipt), and enqueues the fan-out on the long
+queue; the worker appends each result to the log and publishes it on the
+`ssh_console_update` realtime event (nonce-keyed and user-scoped, so a stale
+console form or a sibling operator never sees another run's stream). The
+per-form **Run Command** action on `Server` (Active) and `Virtual Machine`
+(Running, with a `/128`) is just a pre-targeted entry into this one console — not
+a second execution path.
+
+**Guardrail:** `frappe.only_for("System Manager")` plus the immutable log is the
+whole gate. There is no command allow-list — Atlas is operator-only
+([README § operating principles](./README.md)), operators already SSH as root,
+and every run is recorded. (Dropping the root SSH transport is on the
+[roadmap](./09-roadmap.md); when it lands, the console inherits it for free.)
+
 ## Why SSH, not HTTP
 
 The transport is SSH and stays SSH. We measured the alternative — a resident

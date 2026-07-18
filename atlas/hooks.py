@@ -61,6 +61,7 @@ doctype_js = {
 	"Virtual Machine Snapshot": "public/js/atlas_form_overrides.js",
 	"Reserved IP": "public/js/atlas_form_overrides.js",
 	"VPN Tunnel": "public/js/atlas_form_overrides.js",
+	"VPN Peer": "public/js/atlas_form_overrides.js",
 	"Firewall": "public/js/atlas_form_overrides.js",
 	"Task": "public/js/atlas_form_overrides.js",
 	"Route53 Settings": "public/js/atlas_form_overrides.js",
@@ -68,6 +69,8 @@ doctype_js = {
 	"Root Domain": "public/js/atlas_form_overrides.js",
 	"TLS Certificate": "public/js/atlas_form_overrides.js",
 	"Central Settings": "public/js/atlas_form_overrides.js",
+	"SSH Console": "public/js/atlas_form_overrides.js",
+	"SSH Command Log": "public/js/atlas_form_overrides.js",
 }
 
 # Note: redirecting `/desk` → `/app/atlas` is non-trivial (Frappe hardcodes
@@ -180,13 +183,27 @@ after_migrate = "atlas.install.after_migrate"
 
 doc_events = {
 	"Virtual Machine": {
-		"after_insert": "atlas.atlas.central_report.on_vm_after_insert",
-		"on_update": "atlas.atlas.central_report.on_vm_update",
-		"on_trash": "atlas.atlas.central_report.on_vm_trash",
+		"after_insert": [
+			"atlas.atlas.central_report.on_vm_after_insert",
+			"atlas.atlas.satellite_events.on_vm_after_insert",
+		],
+		"on_update": [
+			"atlas.atlas.central_report.on_vm_update",
+			"atlas.atlas.satellite_events.on_vm_update",
+		],
+		"on_trash": [
+			"atlas.atlas.central_report.on_vm_trash",
+			"atlas.atlas.satellite_events.on_vm_trash",
+		],
 	},
 	"Site": {
 		"after_insert": "atlas.atlas.central_report.on_site_after_insert",
 		"on_update": "atlas.atlas.central_report.on_site_update",
+	},
+	# A Pilot reports AS its backing VM (Central mirrors VMs, not Pilots), so its
+	# status change emits a vm.status_changed carrying the login handoff.
+	"Pilot": {
+		"on_update": "atlas.atlas.central_report.on_pilot_update",
 	},
 	"Virtual Machine Snapshot": {
 		"on_update": "atlas.atlas.central_report.on_snapshot_update",
@@ -223,8 +240,24 @@ scheduler_events = {
 		"atlas.atlas.doctype.tls_certificate.tls_certificate.renew_expiring",
 	],
 	"cron": {
+		"*/1 * * * *": [
+			"atlas.atlas.central_report.retry_pending",
+		],
 		"*/10 * * * *": [
 			"atlas.atlas.providers.worker.reconcile_pending_servers",
+		],
+		"*/2 * * * *": [
+			"atlas.atlas.migration.reconcile_migrations",
+			"atlas.atlas.export.reconcile_image_exports",
+		],
+		# The WireGuard host-mesh backstop sweep (design §3): re-reconcile the whole
+		# fabric so a rebooted / rebuilt / drifted host self-heals without operator
+		# action. The mesh is the live cross-host forwarding plane, so a missed
+		# lifecycle-event push is a PARTITION, not a stale row — this converging sweep is
+		# the safety net that heals it. Idempotent and cheap when in sync (a byte-compare
+		# per host); a no-op on a Fake/test fleet (no real hosts to SSH). Every 5 minutes.
+		"*/5 * * * *": [
+			"atlas.atlas.host_mesh.reconcile_all_host_meshes",
 		],
 	},
 }

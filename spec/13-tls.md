@@ -86,7 +86,11 @@ the proxy never decrypts and no other tenant is affected, so gating the `:443` m
 on a cert-confirmation signal isn't worth its machinery. (Pilot keeps on-script
 users off the domain until TLS is issued; an off-script user who points DNS early
 gets the transient error.) An SNI lookup miss is only an unknown / deregistered
-name. (See
+name; a *named* miss terminates on the self-signed placeholder cert and serves a
+branded "Domain not configured" page (the client clicks through a cert warning,
+since we hold no trusted cert for a domain we don't control — the wildcard-subdomain
+miss keeps its own warning-free page under the valid wildcard cert), while an
+SNI-less connection (bare IP / probe) is dropped at L4. (See
 [llm/references/custom-domain-sni-passthrough.md](../llm/references/custom-domain-sni-passthrough.md)
 and [llm/references/drop-custom-domain-readiness-gate.md](../llm/references/drop-custom-domain-readiness-gate.md)
 for the full rationale.)

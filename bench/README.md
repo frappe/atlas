@@ -77,6 +77,10 @@ bench-domain-provider.py
                 One-way push: `register <domain>` (BEFORE `bench new-site`) reserves
                 the name; `deregister <domain>` (after drop / as rollback) removes it;
                 `wildcard-domains` / `proxy-servers` answer host-level queries.
+                build.sh installs it AFTER its own `bench new-site site.local` — pilot
+                gates register + the wildcard name-check on the binary being on PATH, and
+                `site.local` matches no region wildcard, so a provider present at bake
+                would reject the baked site. Deferring the install lets the bake skip it.
                 Stdlib-only, IPv6-only, no-ops with no routing config
 README.md       this file
 ```

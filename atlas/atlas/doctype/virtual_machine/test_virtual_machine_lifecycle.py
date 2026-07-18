@@ -269,7 +269,13 @@ class TestVirtualMachineLifecycle(IntegrationTestCase):
 
 		vm = _vm_with_status("Stopped")
 		task = fake_task(name="task-resize-1")
-		with patch.object(module, "run_task", return_value=task) as mocked:
+		# Bypass the capacity gate: this test pins the resize MECHANICS (fields persist,
+		# resize-vm runs) on the small shared test host; the gate itself is covered by
+		# test_provision_resize_capacity.
+		with (
+			patch.object(module, "run_task", return_value=task) as mocked,
+			patch.object(module, "check_resize_capacity"),
+		):
 			result = vm.resize(vcpus=4, memory_megabytes=4096, disk_gigabytes=20)
 		self.assertEqual(result, "task-resize-1")
 		self.assertEqual(mocked.call_args.kwargs["script"], "resize-vm")
@@ -277,6 +283,10 @@ class TestVirtualMachineLifecycle(IntegrationTestCase):
 		self.assertEqual(variables["VCPUS"], "4")
 		self.assertEqual(variables["MEMORY_MB"], "4096")
 		self.assertEqual(variables["DISK_GB"], "20")
+		# CGROUP_ARG carries the NEW memory.max so resize-vm.py can retrack the
+		# launcher's cgroup cap — a stale cap OOM-kills the guest on the new RAM.
+		# 4096 MB + MEMORY_HEADROOM_MIB (256) = 4352 MiB whole-process ceiling.
+		self.assertIn(f"memory.max={(4096 + 256) * 1024 * 1024}", variables["CGROUP_ARG"])
 		vm.reload()
 		self.assertEqual(vm.vcpus, 4)
 		self.assertEqual(vm.memory_megabytes, 4096)
@@ -315,7 +325,12 @@ class TestVirtualMachineLifecycle(IntegrationTestCase):
 		from atlas.atlas.doctype.virtual_machine import virtual_machine as module
 
 		vm = _vm_with_status("Stopped")  # vcpus=1, cpu_max_cores=1
-		with patch.object(module, "run_task", return_value=fake_task()):
+		# Capacity gate covered separately (test_provision_resize_capacity); this pins
+		# whole-core cap tracking when vcpus grow without an explicit cap.
+		with (
+			patch.object(module, "run_task", return_value=fake_task()),
+			patch.object(module, "check_resize_capacity"),
+		):
 			vm.resize(vcpus=4)
 		vm.reload()
 		self.assertEqual(vm.vcpus, 4)

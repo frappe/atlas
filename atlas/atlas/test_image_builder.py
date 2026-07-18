@@ -31,6 +31,26 @@ def _purge() -> None:
 		frappe.delete_doc("Virtual Machine", name, force=1, ignore_permissions=True)
 
 
+def _ensure_active_root_domain(domain: str, region: str) -> None:
+	"""The single active Root Domain `_finalize_proxy` reads (active_root_domain())
+	to write the proxy's wildcard zone. Idempotent; mirrors test_bench_routing."""
+	if not frappe.db.exists("Root Domain", domain):
+		frappe.get_doc(
+			{
+				"doctype": "Root Domain",
+				"domain": domain,
+				"region": region,
+				"is_active": 1,
+				"dns_provider_type": "Route53",
+				"tls_provider_type": "Let's Encrypt",
+			}
+		).insert(ignore_permissions=True)
+	frappe.db.set_value("Root Domain", domain, "is_active", 1)
+	for name in frappe.get_all("Root Domain", filters={"is_active": 1}, pluck="name"):
+		if name != domain:
+			frappe.db.set_value("Root Domain", name, "is_active", 0)
+
+
 @contextlib.contextmanager
 def _mock_build_ssh(build_result, finalize_result=("", "", 0)):
 	"""Patch the guest-SSH plumbing run_build uses. `build_result` is what the
@@ -131,7 +151,9 @@ class TestRecipeRegistry(IntegrationTestCase):
 		self.assertEqual(
 			(v15.frappe_branch, v15.erpnext_branch, v15.python_version), ("version-15", "version-15", "3.11")
 		)
-		self.assertEqual((nightly.frappe_branch, nightly.erpnext_branch), ("develop", "develop"))
+		self.assertEqual(
+			(nightly.frappe_branch, nightly.erpnext_branch), ("feature/cloud-settings", "develop")
+		)
 		# All three share the proven bench-cli ref + the bench source tree + sizing.
 		self.assertEqual({v16.bench_cli_ref, v15.bench_cli_ref, nightly.bench_cli_ref}, {v16.bench_cli_ref})
 		self.assertTrue(v16.bench_cli_ref)
@@ -144,13 +166,37 @@ class TestRecipeRegistry(IntegrationTestCase):
 		for name in ("bench-v15", "bench-v16", "bench-nightly"):
 			self.assertEqual(RECIPES[name].promote_image_name, name)
 
-	def test_v16_is_the_only_warm_registering_variant(self) -> None:
-		# v16 doubles as the self-serve site accelerator base (warm + registers); v15
-		# and nightly are cold customer goldens (promote-to-image requires cold).
-		self.assertEqual(RECIPES["bench-v16"].warm_entrypoint, "warm.sh")
+	def test_bench_snapshot_title_slugs_to_a_version_mappable_name(self) -> None:
+		# The Virtual Machine Snapshot promote dialog derives its default image name by
+		# slugifying the snapshot title (title.toLowerCase().replace(/[^a-z0-9.-]+/g,'-')
+		# in virtual_machine_snapshot.js). A prose snapshot_title ("Bench nightly admin
+		# (develop)") slugged to `bench-nightly-admin-develop` — a name version_from_image
+		# can't strip back to `nightly`, so a VM off it mirrored a garbage version token.
+		# snapshot_title is the clean series name, so the slug is a no-op that lands on the
+		# same name the Image Build promote path uses AND parses back to the version token.
+		import re
+
+		from atlas.atlas.placement import version_from_image
+
+		def slug(title: str) -> str:
+			return re.sub(r"^-+|-+$", "", re.sub(r"[^a-z0-9.-]+", "-", title.lower()))
+
+		for name, recipe in RECIPES.items():
+			if not name.startswith("bench-"):
+				continue
+			slugged = slug(recipe.snapshot_title)
+			self.assertEqual(slugged, recipe.promote_image_name)
+			self.assertIsNotNone(version_from_image(slugged))
+
+	def test_all_site_variants_are_warm_only_v16_registers(self) -> None:
+		# Every site variant is warm-clonable (warm.sh) so a customer VM off any
+		# version boots from a pre-warmed guest. v16 alone also doubles as the
+		# self-serve golden (registers_as=default_bench_snapshot); v15 + nightly are
+		# warm but never the registered golden. (Admin twins stay cold — see below.)
+		for name in ("bench-v15", "bench-v16", "bench-nightly"):
+			self.assertEqual(RECIPES[name].warm_entrypoint, "warm.sh")
 		self.assertEqual(RECIPES["bench-v16"].registers_as, "default_bench_snapshot")
 		for name in ("bench-v15", "bench-nightly"):
-			self.assertEqual(RECIPES[name].warm_entrypoint, "")
 			self.assertIsNone(RECIPES[name].registers_as)
 
 	def test_build_mode_defaults_to_site(self) -> None:
@@ -217,6 +263,16 @@ class TestTreeUploads(IntegrationTestCase):
 		self.assertTrue(any("/sshpiper.crypto/ssh/" in r for r in remotes), remotes)
 		self.assertFalse(any("/.git" in r for r in remotes), remotes)
 
+	def test_declared_entrypoint_missing_from_tree_throws(self) -> None:
+		# A stale app checkout (missing warm.sh) uploads a tree without the file, but
+		# the warm step still invokes recipe.warm_entrypoint by name — catch it here
+		# instead of dying deep in the guest with "No such file or directory".
+		import dataclasses
+
+		stale = dataclasses.replace(_BENCH, warm_entrypoint="ghost.sh")
+		with self.assertRaisesRegex(frappe.ValidationError, "ghost.sh"):
+			image_builder.tree_uploads(stale)
+
 	def test_proxy_tree_excludes_test_harness(self) -> None:
 		remotes = [remote for _, remote in image_builder.tree_uploads(_PROXY)]
 		self.assertTrue(any(r.endswith("/build.sh") for r in remotes), remotes)
@@ -233,10 +289,12 @@ class TestRunBuild(IntegrationTestCase):
 		_ensure_test_server()
 		_ensure_test_image()
 		_purge()
-		# The proxy finalize recipe reads Atlas Settings.region (no per-VM region
-		# field anymore) to write the region + name the cert dir. Pin it so the
-		# finalize command carries "blr1" and atlas_region() doesn't throw.
+		# The proxy finalize recipe writes the active Root Domain's wildcard zone to
+		# the region file (the proxy lua strips that full suffix). Pin the region and
+		# an active Root Domain so the finalize command carries "blr1.frappe.dev" and
+		# active_root_domain() doesn't throw.
 		frappe.db.set_single_value("Atlas Settings", "region", "blr1")
+		_ensure_active_root_domain("blr1.frappe.dev", "blr1")
 
 	def test_uploads_tree_then_runs_detached_and_records_task(self) -> None:
 		vm = _new_vm()
@@ -289,10 +347,10 @@ class TestRunBuild(IntegrationTestCase):
 		vm = _new_vm(is_proxy=1, region="blr1")
 		with _mock_build_ssh(("built", "", 0)) as (_ssh, _scp, _det, _fh, finalize_run_ssh):
 			image_builder.run_build(vm.name, _PROXY)
-		# The proxy recipe's finalize wrote the region + restarted the unit.
+		# The proxy recipe's finalize wrote the wildcard zone + restarted the unit.
 		finalize_run_ssh.assert_called_once()
 		finalize_command = finalize_run_ssh.call_args.args[2]
-		self.assertIn("blr1", finalize_command)
+		self.assertIn("blr1.frappe.dev", finalize_command)
 		self.assertIn("systemctl restart nginx.service", finalize_command)
 		# It must NOT repoint the cert symlink (push_cert owns that, after the real
 		# cert lands — repointing here would dangle the symlink at start).
@@ -450,9 +508,9 @@ class TestRenderBenchToml(IntegrationTestCase):
 		self.assertNotIn('python = "3.14"', rendered)
 		self.assertNotIn('branch = "version-16"', rendered)
 
-	def test_renders_develop_for_nightly(self) -> None:
+	def test_renders_frappe_branch_for_nightly(self) -> None:
 		rendered = image_builder._render_bench_toml(_NIGHTLY)
-		self.assertIn('branch = "develop"', rendered)
+		self.assertIn('branch = "feature/cloud-settings"', rendered)
 		self.assertIn('python = "3.14"', rendered)
 
 	def test_render_is_a_noop_shape_for_v16(self) -> None:

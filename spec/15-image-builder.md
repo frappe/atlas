@@ -71,8 +71,8 @@ ship:
 | Recipe | Tree | Build VM | Snapshot | Frappe / ERPNext / Python | Special |
 | ------ | ---- | -------- | -------- | ------------------------- | ------- |
 | `bench-v16` | `bench/` | 2 vCPU / 2 GB / 28 GB | `Golden bench v16` | `version-16` / `version-16` / `3.14` | site mode; `registers_as = default_bench_snapshot`, `warm_entrypoint = warm.sh` |
-| `bench-v15` | `bench/` | 2 vCPU / 2 GB / 28 GB | `Golden bench v15` | `version-15` / `version-15` / `3.11` | site mode, cold-only |
-| `bench-nightly` | `bench/` | 2 vCPU / 2 GB / 28 GB | `Golden bench nightly (develop)` | `develop` / `develop` / `3.14` | site mode, cold-only, records resolved SHAs |
+| `bench-v15` | `bench/` | 2 vCPU / 2 GB / 28 GB | `Golden bench v15` | `version-15` / `version-15` / `3.11` | site mode; `warm_entrypoint = warm.sh` (warm but does not register) |
+| `bench-nightly` | `bench/` | 2 vCPU / 2 GB / 28 GB | `Golden bench nightly (develop)` | `develop` / `develop` / `3.14` | site mode; `warm_entrypoint = warm.sh` (warm but does not register); records resolved SHAs |
 | `bench-v16-admin` | `bench/` | 2 vCPU / 2 GB / 28 GB | `Golden bench v16 (admin)` | `version-16` / `version-16` / `3.14` | `build_mode = admin`, cold-only |
 | `bench-v15-admin` | `bench/` | 2 vCPU / 2 GB / 28 GB | `Golden bench v15 (admin)` | `version-15` / `version-15` / `3.11` | `build_mode = admin`, cold-only |
 | `bench-nightly-admin` | `bench/` | 2 vCPU / 2 GB / 28 GB | `Golden bench nightly admin (develop)` | `develop` / `develop` / `3.14` | `build_mode = admin`, cold-only |
@@ -103,8 +103,9 @@ is a callback because the proxy's post-build step (write `REGION_FILE` with
 is genuinely code; the bench recipes have `finalize = None`. `registers_as` lets a
 successful **v16** bake auto-set `Atlas Settings.default_bench_snapshot` (the field
 self-serve already reads); only v16 registers (one warm self-serve golden per
-server) — v15/nightly are cold customer goldens that promote to a base image but
-don't replace the self-serve default. Proxy snapshots feed a fleet, not a Single, so
+server). All three site variants are warm-clonable (`warm_entrypoint = warm.sh`), but
+v15/nightly are warm customer goldens that promote to a base image without replacing
+the self-serve default. Proxy snapshots feed a fleet, not a Single, so
 they have no `registers_as`.
 
 ### Versioned bench variants — one tree, three versions, two modes

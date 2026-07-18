@@ -507,7 +507,7 @@ deletion.
 | `clone_source_rootfs` | Data                       |      | Y         |         | Internal, hidden. On-host snapshot rootfs to seed this VM's disk from (clone). Empty for a normal image-backed VM. `set_only_once`, `no_copy`. |
 | `clone_source_data_rootfs` | Data                  |      | Y         |         | Internal, hidden. On-host data-disk snapshot to seed this VM's data disk from (clone). Empty for a normal VM. `set_only_once`, `no_copy`. |
 | `warm_snapshot`    | Link → Virtual Machine Snapshot |    | Y         |         | Internal, hidden. The `Warm` snapshot this VM restores from (provision stages the memory pair + MMDS identity; see [05 § Warm snapshot fan-out](./05-virtual-machine-lifecycle.md#warm-snapshot-fan-out-one-golden-n-restored-clones)). Empty for every ordinary VM. `set_only_once`, `no_copy`. |
-| `build_mode`       | Select (`site`/`admin`)       |      | Y         |         | Internal, hidden. The bench bake mode this VM should deploy in — carried build VM → snapshot → clone, OR inherited from the base image when the VM is created from a promoted bench golden (`set_build_mode_default`) — so first-boot `deploy_site` maps the FQDN to the baked site (`site`) or the admin console (`admin`). Empty for an ordinary image-backed VM (treated as `site`). `set_only_once`, `no_copy`. See [08-images.md § golden bench image](./08-images.md#the-golden-bench-image-self-serve). |
+| `build_mode`       | Select (`site`/`admin`)       |      | Y         |         | Internal, hidden. The bench bake mode this VM should deploy in — carried build VM → snapshot → clone, OR inherited from the base image when the VM is created from a promoted bench golden (`set_build_mode_default`) — so first-boot `deploy_site` maps the FQDN to the baked site (`site`) or the admin console (`admin`). Empty for an ordinary image-backed VM (treated as `site`). `set_only_once`, `no_copy`. See [08-images.md § golden bench image](./08-images.md#the-golden-bench-image-self-serve). The bench *front door* (subdomain, login URL) lives on the [Pilot](#pilot) that owns a bench VM, not on the VM itself. |
 | `ipv6_address`     | Data                          |      | Y         |         | From the server's /124. Set in `before_insert`.                  |
 | `public_ipv4`      | Data                          |      | Y         |         | The attached public IPv4, denormalized from the `Reserved IP` row whose `virtual_machine` points here. Empty until one is attached. Maintained by `Reserved IP.attach()` / `detach()` (and cleared on terminate); never hand-edited. See [Reserved IP](#reserved-ip) and [06-networking.md](./06-networking.md). |
 | `mac_address`      | Data                          |      | Y         |         | Derived from `name`. Set in `before_validate`.                   |
@@ -869,15 +869,19 @@ allocate/attach/detach/release lifecycle and is independently queryable
 | ---------------------- | --------------------- | ---- | --------- | --------- | ---------------------------------------------------------------- |
 | `name`                 | UUID (autoname `hash`) | Y   | Y         |           | Primary key. |
 | `ip_address`           | Data                  | Y    | Y         |           | The public IPv4. `unique`. `title_field`. Locked once written. |
-| `server`               | Link → Server         | Y    | Y         |           | The host this IP is allocated to. The IP belongs to the Server even with no VM attached. Locked once written. |
+| `server`               | Link → Server         |      | Y         |           | The host this IP is currently bound to. The IP belongs to the Server even with no VM attached. **Not immutable** — the vendor can reassign the IP to another droplet, so `reassign()` repoints this field (migration uses it — [24](./24-vm-migration.md)). Empty when the IP rests allocated-on-the-vendor with no Server (a valid resting/handoff state). |
 | `status`               | Select                | Y    | Y         | Allocated | `Allocated` (on the Server, no VM) or `Attached` (bound to a VM). Derived in `validate()` from `virtual_machine` — never set by hand. |
 | `virtual_machine`      | Link → Virtual Machine |     | Y         |           | The attached VM, or empty when unattached. Only a VM on the **same Server** may be attached. Maintained by `attach()` / `detach()`. |
 | `provider_resource_id` | Data                  |      | Y         |           | Vendor's handle for the reserved IP (DigitalOcean reserved-IP id). Empty for Self-Managed. Locked once written. |
 
-Immutability follows the `Server` idiom: `ip_address`, `server`, and
-`provider_resource_id` lock once they carry a value (`None → value` allowed for
-initial population). `status` is always derived from `virtual_machine`, so it is
-never an independent input.
+Immutability follows the `Server` idiom: `ip_address` and `provider_resource_id`
+lock once they carry a value (`None → value` allowed for initial population) — a
+Reserved IP is bound to its address and vendor handle for life. `server` is
+**deliberately not** in that set: the vendor can move the IP to a different
+droplet, so the row's `server` is a mutable pointer that follows it
+(`reassign()`), and an IP may rest with **no Server** (allocated-on-the-vendor).
+`status` is always derived from `virtual_machine`, so it is never an independent
+input.
 
 ### Controller methods
 
@@ -914,6 +918,14 @@ invariant together (in failure-safe order).
   removed the host networking and `rm -rf`'d the env). Guards a missing VM row.
   Called automatically by `Virtual Machine.terminate()` so a terminated VM
   returns its address to the pool.
+- `reassign(target_server)` — move this **detached** IP from its current Server
+  to `target_server` at the vendor and repoint `server`. The address and vendor
+  handle never change; only which droplet the IP is bound to (and so which
+  Server's pool it sits in) does. Same-provider only. Idempotent (a no-op if
+  already there). Self-Managed has no vendor bind, so it only repoints the row
+  (the operator re-routes the address). This is the path that lets a customer's
+  inbound v4 **survive a VM migration** ([24](./24-vm-migration.md)): detach,
+  `reassign` to the target droplet, repoint, re-attach to the migrated VM.
 - `release()` — destroy the vendor reserved IP and delete this row, returning
   the address to the vendor pool. Refuses while the IP is attached. **Explicit,
   like `Server.archive()`** — destroying the vendor resource is never a side
@@ -1155,10 +1167,12 @@ Atlas as the operator. The tenant's `name` **is** the Central `Team.name`:
 Central passes that id as `team` on every provisioning call, and the Tenant is
 named by it. There is no translation table — the primary key carries the mapping,
 so the `tenant` link stamped on a resource already *is* the Central team. Central
-also sets
-the immutable `email` once at creation, then stamps the optional, set-only-once
-`tenant` link on the resources it provisions (`Virtual Machine`, `Virtual
-Machine Image`, `Virtual Machine Snapshot`).
+stamps the optional, set-only-once `tenant` link on the resources it provisions
+(`Virtual Machine`, `Virtual Machine Image`, `Virtual Machine Snapshot`).
+
+The tenant carries no identity of its own beyond that key. Central performs every
+permission check, so Atlas keeps no contact `email` or end-user scoping — the
+tenant is just the tag that groups a team's resources (its VPC).
 
 This is operator/Central-facing only (System Manager permission). It is pure data
 plus list helpers — no Tasks, no lifecycle.
@@ -1175,17 +1189,12 @@ plus list helpers — no Tasks, no lifecycle.
 | Field    | Type                  | Reqd | Read-only | Notes                                                                              |
 | -------- | --------------------- | ---- | --------- | ---------------------------------------------------------------------------------- |
 | `name`   | (autoname, set by user) | Y    | Y       | Primary key — **is** the Central `Team.name`. `autoname()` sets it from the `team` create kwarg (not a stored field); throws if absent. Reusing a team get-or-creates the same row; a fresh collision is a DB duplicate-key error. |
-| `title`  | Data                  |      |           | `title_field`. Human label for lists. `before_insert` defaults it to `email` (or the `name` / team) when Central omits it, so Desk lists show a readable name. Still editable. |
-| `email`  | Data (`Email`)        | Y    |           | `set_only_once`, `unique`. Central sets once. Lowercased in `validate()`.          |
+| `title`  | Data                  |      |           | `title_field`. Human label for lists. `before_insert` defaults it to the `name` (team id) when Central omits it, so Desk lists show a readable name. Still editable. |
 
 The Central `Team.name` is supplied as the `team` kwarg on create (`ensure_tenant`
 / the provisioning APIs) and becomes the row's `name` — it is not persisted as a
-separate column. Immutability of `email` is enforced both by the JSON
-`set_only_once` and by a controller `IMMUTABLE_AFTER_INSERT` guard — the same
-belt-and-suspenders pattern as `Virtual Machine` and `Virtual Machine Image`.
-`name` is immutable by virtue of being the primary key. Uniqueness of `email` is
-a DB unique index from the JSON `unique` flag; the team is unique because it is
-the primary key.
+separate column. `name` is immutable by virtue of being the primary key, and the
+team is unique because it is the primary key. There are no other identity fields.
 
 ### The `tenant` link on resources
 
@@ -1199,8 +1208,8 @@ the framework's `set_only_once` alone — it has no immutability tuple).
 
 - `autoname()` — sets `name` from the `team` create kwarg, so the tenant's
   primary key *is* its Central `Team.name`; throws if absent.
-- `before_insert()` — defaults `title` to `email` (or the `name` / team) when
-  Central omits it, so a tenant never shows up in Desk lists as a bare team id.
+- `before_insert()` — defaults `title` to the `name` (team id) when Central omits
+  it, so a tenant always has a human label in Desk lists.
 - `virtual_machines()` / `images()` / `snapshots()` (whitelisted) — the rows of
   each resource type stamped with this tenant, newest first.
 - `resources()` (whitelisted) — all three in one round-trip as
@@ -1212,7 +1221,6 @@ the framework's `set_only_once` alone — it has no immutability tuple).
 ```
 ── Overview ──
 title
-email
 ```
 
 The `name` (the Central reference) shows as the document id; there is no separate
@@ -1220,7 +1228,7 @@ field for it.
 
 ### List view
 
-- Columns: `title`, `email`.
+- Columns: `title`.
 
 ### Permissions
 
@@ -1513,7 +1521,9 @@ proxy map it creates once serving) and **not** the
 | `status`        | Select                 |      | Y         | `Pending` → `Provisioning` → `Deploying` → `Running` / `Failed` / `Terminated`. Controller-written. `Running` is reached **only** on an observed HTTP 200 from the guest `:80` (Contract B), not when the backing VM boots. |
 | `virtual_machine` | Link → Virtual Machine |    | Y         | `set_only_once`. The backing VM, cloned from the golden bench snapshot by the background job (the user never picks it). |
 | `subdomain_doc` | Link → Subdomain       |      | Y         | The proxy-map row the site created once it began serving. Deleting it (or the Site) takes the site off the front door. |
-| `admin_password` | Password              |      | Y         | The Frappe Administrator password handed to the tenant — the **shared baked throwaway** (`Site.BAKED_ADMIN_PASSWORD`, in lockstep with build.sh; the deploy no longer resets it per VM, and the tenant rotates it after first login). The db root password is baked + shared too. Stored encrypted; surfaced to Central (the `site.status_changed` Running event + `get_site` poll) so the tenant can sign in. Controller-written. |
+| `pilot`         | Link → Pilot           |      | Y         | The attached [Pilot](#pilot) admin console the site stood up on its OWN backing VM, fronted at `<subdomain>-pilot.<region domain>` — the front door Central's Asset resolves for "Open" (`front_door_for_vm` prefers a Pilot). Created by `auto_provision` after the site serves; terminated with the site. The customer's Frappe site is this Site (surfaced via `get_site`); the Pilot is the bench admin console on the same bench. See [14-self-serve.md § The attached Pilot admin console](./14-self-serve.md). |
+| `login_url` | Small Text            |      | Y         | The one-click Administrator session URL handed to the tenant instead of a password — minted by `deploy-site.py` (`bench browse --user Administrator --session-end`, a real 24h session) and stamped before the readiness wait. `no_copy`. The baked Administrator password is a long random secret generated at bake time and never surfaced (the tenant may rotate it later themselves). Surfaced to Central (the `site.status_changed` Running event + `get_site` poll) once the site is Running; before then it is empty (no handoff yet). Regenerated on demand via `regenerate_login_url()` when expired. Controller-written. |
+| `login_url_expires_at` | Datetime         |      | Y         | When `login_url` stops working — mint time + the session's 24h TTL (1440 min). `no_copy`. Stamped alongside `login_url` before the readiness wait; empty until the site is Running. Central compares against it to decide "use it" vs "regenerate". Controller-written. |
 
 The `tenant` link is the attribution key (Central, [16-central.md](./16-central.md));
 Atlas stamps no end-user `owner` scoping.
@@ -1538,10 +1548,12 @@ Atlas stamps no end-user `owner` scoping.
 - `auto_provision(site_name)` *(module function)* — the background entrypoint:
   clone the backing VM from `Atlas Settings.default_bench_snapshot` →
   `wait_for_ssh` → run `deploy-site.py` in the guest ([14-self-serve.md](./14-self-serve.md)) → `wait_for_http`
-  for the 200 → create the `Subdomain` row → `status = Running`. Any
+  for the 200 → create the site `Subdomain` row → **stand up the attached `Pilot`
+  admin console on the same VM** (`_provision_pilot`) → `status = Running`. Any
   failure flips `Failed` and re-raises (fail loud). No-op past `Pending`.
-- `terminate()` — delete the `Subdomain` (proxy stops routing), terminate the
-  backing VM, set `Terminated`. Mirrors `VirtualMachine.terminate()`'s
+- `terminate()` — delete the site's `Subdomain` (proxy stops routing), terminate the
+  attached `Pilot` (which drops only its own Subdomain + row — the VM is the Site's),
+  terminate the backing VM, set `Terminated`. Mirrors `VirtualMachine.terminate()`'s
   cleanup-then-mark shape.
 
 ### Permissions
@@ -1553,6 +1565,67 @@ the operator token). No end-user role or row-level scoping.
 
 - Columns: `subdomain`, `status`.
 - Standard filters: `status`.
+
+## Pilot
+
+The bench analogue of [Site](#site): a tenant-owned bench environment fronted at a
+subdomain, backed by a [Virtual Machine](#virtual-machine) it creates from a bench
+image. A `Pilot` exists so the *bench provision* (boot a bench image, deploy
+in-guest, mint the one-click login URL) lives OFF the Virtual Machine — the VM stays
+a pure microVM lifecycle. The Pilot owns its VM (creates it in `after_insert`, tears
+it down on `terminate`) and holds the bench front door (subdomain, login URL);
+plain VM facts (ipv6, sizing) are read *through* the `virtual_machine` link, never
+copied onto the Pilot row.
+
+Like a Site, a Pilot is **not** the [Subdomain](#subdomain) (the proxy map) — it
+**creates** one once its backing VM has booted and deployed, so the proxy routes
+`<subdomain>.<region domain>` → the backing VM's public /128. That row is linked back
+as `subdomain_doc` and deleted on `terminate`, exactly as a Site does.
+
+Central still talks to Atlas in **VM terms**: it calls `create_vm`
+([16-central.md](./16-central.md)), which creates a Pilot under the hood, and
+mirrors a VM-shaped row. The bench fields (`gateway_url`, `login_url`, its expiry)
+are read back through the Pilot; a Pilot reports lifecycle changes AS its backing VM
+(a `vm.status_changed` event carrying the login handoff — see `on_pilot_update`).
+
+### Fields
+
+| Field           | Type                   | Reqd | Read-only | Notes                                                       |
+| --------------- | ---------------------- | ---- | --------- | ----------------------------------------------------------- |
+| `name`          | the FQDN               | Y    | Y         | Primary key, built in `autoname()` as `<subdomain>.<region domain>` (Contract A), the same routing string a Site derives. |
+| `subdomain`     | Data                   | Y    |           | The bare DNS label Central chose (`acme`). `set_only_once`. Same Contract-A rules as a Site's subdomain (single label, no dots, lowercase, ≤63 chars, reserved denylist). |
+| `tenant`        | Link → Tenant          |      | Y         | `set_only_once`. The Central team this pilot belongs to, stamped by `create_vm`. |
+| `status`        | Select                 |      | Y         | `Pending` → `Running` / `Failed` / `Terminated`. Controller-written. `Running` is reached only after the backing VM boots and the in-guest deploy mints the login URL. |
+| `build_mode`    | Data                   |      | Y         | `set_only_once`. The bench front door mode inherited from the backing VM's image (`admin` / `site`); drives the login-URL mint mode + TTL. An **attached** Pilot forces `admin` (it serves the console) regardless of the shared VM's `site` mode. |
+| `attached`      | Check                  |      | Y         | `set_only_once`. Set when this Pilot was **attached** to a VM another aggregate owns (a self-serve [Site](#site)'s backing VM) rather than creating its own. An attached Pilot only wires the admin console (vhost + login mint) on the shared VM; it never provisions or terminates the VM — the owning Site does. A `create_vm` Pilot leaves it `0` (it owns its VM). See [14-self-serve.md § The attached Pilot admin console](./14-self-serve.md). |
+| `virtual_machine` | Link → Virtual Machine |    | Y         | `set_only_once`. The VM this pilot boots and deploys into, created in `after_insert` — or, when `attached`, a VM the owning Site created and this Pilot binds. |
+| `subdomain_doc` | Link → Subdomain       |      | Y         | The proxy-map row the pilot created once its backing VM booted and deployed. Deleting it (or the Pilot) takes the pilot off the front door. Same routing entry a Site creates. |
+| `login_url`     | Small Text             |      | Y         | The one-click sign-in URL minted after boot (`bench generate-admin-session` in admin mode, `bench browse` in site mode). Short-lived — see `login_url_expires_at`; regenerated on demand via `regenerate_login_url()`. `no_copy`. Surfaced to Central once the pilot is Running. Controller-written. |
+| `login_url_expires_at` | Datetime        |      | Y         | When `login_url` stops working — mint time + the mode's TTL (5 min for admin's single-use JWT, 24h for a site session). `no_copy`. Central compares against it to decide "use it" vs "regenerate". |
+
+`gateway_url` (`https://<subdomain>.<region domain>`) is a **derived property**, not
+a stored field — the URL Central deep-links the pilot at, mirroring a Site's `url`.
+
+### Lifecycle
+
+`before_insert` validates the label; `after_insert` creates the backing VM
+synchronously (so `create_vm` can return its identity) and enqueues the background
+job, which waits for the VM to boot (its own auto-provision), runs the in-guest
+deploy to mint the login URL, creates the `Subdomain` (proxy route), then marks the
+pilot `Running`. `terminate` deletes the `Subdomain` (proxy stops routing) and tears
+down the backing VM. Full flow in [14-self-serve.md](./14-self-serve.md).
+
+**Attached mode** (a self-serve Site's admin console, `flags.attach_vm` set): a Pilot
+created this way **binds** the given VM in `after_insert` (no VM creation, no boot job —
+the Site owns the VM and already booted it) and marks itself `attached`; the Site's
+`auto_provision` then calls `deploy_attached(pilot)` to wire the admin console
+(admin-mode deploy at the pilot FQDN, mint, Subdomain, `Running`). Its `terminate` skips
+VM teardown (the Site owns it). See [14-self-serve.md § The attached Pilot admin console](./14-self-serve.md).
+
+### Permissions
+
+`System Manager` only (operator/Central-facing). No end-user role or row-level
+scoping.
 
 ## Image Build
 

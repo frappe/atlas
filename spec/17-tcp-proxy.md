@@ -216,16 +216,18 @@ it). The guest never resolves DNS.
 
 ## Build: one stack, one new dynamic module
 
-The proxy is **stock nginx from the nginx.org apt repo + the Lua/headers-more
-modules compiled as dynamic `.so`s** against it (see [12-proxy.md](./12-proxy.md)
-and [`build.sh`](../proxy/build.sh)); the TCP forwarder rides the same binary —
-`--with-stream` and `--with-stream_ssl_preread_module` are already in the stock
-nginx.org package. [`build.sh`](../proxy/build.sh) gains, as a deliberate
+The proxy is **the nginx.org 1.30.3 base + a same-version patched binary recompile
++ the Lua/headers-more modules compiled as dynamic `.so`s** against it (see
+[12-proxy.md § Why these decisions #7](./12-proxy.md) for the recompile and the
+load-bearing `stream_ssl_preread_no_skip` patch, and
+[`build.sh`](../proxy/build.sh)); the TCP forwarder rides the same binary —
+`--with-stream` and `--with-stream_ssl_preread_module` are in the build's
+`--with-*` set. [`build.sh`](../proxy/build.sh) gains, as a deliberate
 pinned-version stack bump rolled into a new proxy snapshot:
 
 - `--add-dynamic-module=…/stream-lua-nginx-module` on the module `./configure`
   line — **a separate module** from `lua-nginx-module`; both are built as dynamic
-  `.so`s and `load_module`'d by the apt binary in `nginx.conf`
+  `.so`s and `load_module`'d by the patched binary in `nginx.conf`
   (`ngx_stream_lua_module.so` alongside `ngx_http_lua_module.so`). It depends on
   the same NDK, luajit2, and **lua-resty-core** already built for the HTTP Lua
   side.

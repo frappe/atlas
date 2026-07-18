@@ -215,6 +215,13 @@ class TestGuestWarmTooling(unittest.TestCase):
 		self.assertIn("*pong*", source)  # the stack must be serving in the frozen RAM
 		self.assertIn("rm -f /var/lib/systemd/random-seed", source)  # clone-entropy hygiene
 		self.assertIn("/etc/atlas-vm-uuid", source)  # the adopted-identity marker
+		# The freshen unit MUST be verified enabled + running BEFORE the freeze, so a
+		# golden captured without a live freshen fails the bake loud instead of fanning
+		# out into clones that never adopt their identity (unreachable on their own /128).
+		self.assertIn("systemctl is-enabled --quiet atlas-warm-freshen.service", source)
+		self.assertIn("systemctl is-active --quiet atlas-warm-freshen.service", source)
+		# The check must precede the freeze's final sync (the capture point).
+		self.assertLess(source.index("is-active --quiet atlas-warm-freshen"), source.index("\nsync\n"))
 
 	def test_freshen_pure_helpers(self) -> None:
 		freshen = _load_by_path("freshen_under_test", _BENCH_DIR / "atlas-warm-freshen.py")
@@ -377,6 +384,8 @@ class TestWarmClone(IntegrationTestCase):
 
 		class FakeSite:
 			name = "warm-site.example.test"
+			subdomain = "warm-site"
+			tenant = None
 
 		clone_name = _provision_backing_vm(FakeSite())
 		clone = frappe.get_doc("Virtual Machine", clone_name)

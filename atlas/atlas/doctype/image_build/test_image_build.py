@@ -5,6 +5,8 @@ the guest, snapshot it) are mocked at the module seams; only the pure orchestrat
 (status transitions, artifact linking, auto-register, terminate, immutability,
 fail-loud, rebake) is asserted here. The real bake is the e2e's job (spec/15)."""
 
+from contextlib import contextmanager
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import frappe
@@ -49,7 +51,7 @@ class TestImageBuildInsert(IntegrationTestCase):
 
 	def test_before_insert_fills_title_and_status(self) -> None:
 		build = _new_build("bench-v16")
-		self.assertEqual(build.title, "Golden bench v16")
+		self.assertEqual(build.title, "Bench v16")
 		self.assertEqual(build.status, "Draft")
 		# Base image defaulted from Atlas Settings / the active image.
 		self.assertTrue(build.base_image)
@@ -95,6 +97,9 @@ class TestImageBuildRun(IntegrationTestCase):
 	def _run_with_mocks(self, build, **extra):
 		"""Drive run() with every host seam mocked. Returns the mocks for asserting."""
 		defaults = dict(
+			# The preflight capacity guard SSHes the host; mock it so the host-free run()
+			# flow doesn't try to reach the fake build server.
+			_capacity=patch.object(image_build_module, "_assert_host_has_capacity"),
 			_provision_build_vm=patch.object(
 				image_build_module, "_provision_build_vm", return_value="build-vm-1"
 			),
@@ -104,17 +109,22 @@ class TestImageBuildRun(IntegrationTestCase):
 			# The post-build serve+login gate SSHes a real guest; mock it here so the
 			# host-free run() flow doesn't try to reach the fake build VM.
 			sanity=patch.object(image_build_module.bench_image, "sanity_check"),
+			# The pre-snapshot shrink stops/resizes/(re)boots a real build VM; mock it
+			# so the host-free flow doesn't reach the fake VM.
+			_resize=patch.object(image_build_module, "_resize_to_restore_memory"),
 			_snap=patch.object(image_build_module, "_stop_and_snapshot", return_value="snap-1"),
 			_register=patch.object(image_build_module, "_register"),
 			_terminate=patch.object(image_build_module, "_terminate_build_vm"),
 			commit=patch.object(image_build_module.frappe.db, "commit"),
 		)
 		with (
+			defaults["_capacity"],
 			defaults["_provision_build_vm"] as m_prov,
 			defaults["auto_provision"] as m_auto_provision,
 			defaults["_wait"] as m_wait,
 			defaults["run_build"] as m_build,
 			defaults["sanity"] as m_sanity,
+			defaults["_resize"],
 			defaults["_snap"] as m_snap,
 			defaults["_register"] as m_register,
 			defaults["_terminate"] as m_terminate,
@@ -172,6 +182,7 @@ class TestImageBuildRun(IntegrationTestCase):
 		# build loud and never reach the snapshot step.
 		build = _new_build("bench-v16")
 		with (
+			patch.object(image_build_module, "_assert_host_has_capacity"),
 			patch.object(image_build_module, "_provision_build_vm", return_value="vm-x"),
 			patch.object(image_build_module, "auto_provision"),
 			patch.object(image_build_module, "_wait_for_vm_running"),
@@ -204,6 +215,7 @@ class TestImageBuildRun(IntegrationTestCase):
 	def test_failure_marks_failed_and_records_error_and_reraises(self) -> None:
 		build = _new_build("bench-v16")
 		with (
+			patch.object(image_build_module, "_assert_host_has_capacity"),
 			patch.object(image_build_module, "_provision_build_vm", return_value="vm-x"),
 			patch.object(image_build_module, "auto_provision"),
 			patch.object(image_build_module, "_wait_for_vm_running"),
@@ -255,6 +267,206 @@ class TestImageBuildRun(IntegrationTestCase):
 		vm = frappe.get_doc("Virtual Machine", vm_name)
 		self.assertTrue(vm.is_sshpiper)
 		self.assertFalse(vm.is_proxy)
+
+	def test_provision_boots_build_vm_at_fat_build_memory(self) -> None:
+		# A bench recipe fattens the build VM (build_memory_megabytes) so the Node-asset
+		# build has headroom; the VM must boot at THAT, not the smaller restore size.
+		from atlas.atlas.image_recipes import get_recipe
+
+		recipe = get_recipe("bench-v16")
+		self.assertGreater(recipe.build_memory_megabytes, recipe.memory_megabytes)
+		frappe.db.set_single_value("Atlas Settings", "ssh_public_key", "ssh-ed25519 AAAA test")
+		build = _new_build("bench-v16")
+		with patch.object(image_build_module.frappe, "enqueue"):
+			vm_name = image_build_module._provision_build_vm(build, recipe)
+		self.assertEqual(
+			frappe.db.get_value("Virtual Machine", vm_name, "memory_megabytes"),
+			recipe.effective_build_memory_megabytes,
+		)
+
+	def test_provision_boots_proxy_vm_at_its_single_memory(self) -> None:
+		# The proxy leaves build_memory_megabytes unset (0), so effective_* falls back
+		# to memory_megabytes — build and restore at one size, no resize step.
+		from atlas.atlas.image_recipes import get_recipe
+
+		recipe = get_recipe("proxy")
+		self.assertEqual(recipe.build_memory_megabytes, 0)
+		frappe.db.set_single_value("Atlas Settings", "ssh_public_key", "ssh-ed25519 AAAA test")
+		build = _new_build("proxy")
+		with patch.object(image_build_module.frappe, "enqueue"):
+			vm_name = image_build_module._provision_build_vm(build, recipe)
+		self.assertEqual(
+			frappe.db.get_value("Virtual Machine", vm_name, "memory_megabytes"),
+			recipe.memory_megabytes,
+		)
+
+	def _run_capacity_guard(self, mem_available_kb: int, needed_megabytes: int = 6144) -> None:
+		"""Drive _assert_host_has_capacity with the host memory probe stubbed."""
+		server = _ensure_test_server()
+		connection = SimpleNamespace(host="host-1", ssh_private_key="pk")
+
+		@contextmanager
+		def fake_key_file(_key):
+			yield "/tmp/key"
+
+		with (
+			patch("atlas.atlas.ssh.connection_for_server", return_value=connection),
+			patch("atlas.atlas._ssh.transport.ssh_key_file", fake_key_file),
+			patch("atlas.atlas._ssh.transport.run_ssh", return_value=(str(mem_available_kb), "", 0)),
+		):
+			image_build_module._assert_host_has_capacity(server, needed_megabytes)
+
+	def test_capacity_guard_throws_when_host_too_small(self) -> None:
+		# A 4 GB host (~3.9 GB available) can't hold a 6 GB fat build VM — the exact
+		# mismatch that OOM-kills firecracker mid-build. Fail loud BEFORE booting it.
+		with self.assertRaises(frappe.ValidationError):
+			self._run_capacity_guard(3_900_000)
+
+	def test_capacity_guard_passes_when_host_large_enough(self) -> None:
+		# An 8 GB host (~7.4 GB available) fits the 6 GB build VM plus the margin.
+		self._run_capacity_guard(7_400_000)
+
+	def test_capacity_guard_fails_open_on_unreadable_probe(self) -> None:
+		# An empty MemAvailable read (odd host / parse miss) skips the guard rather than
+		# blocking an otherwise-fine bake.
+		self._run_capacity_guard(0)
+
+	def test_resize_shrinks_stopped_vm_and_leaves_it_stopped(self) -> None:
+		# The shrink: stop (if needed) → resize to the restore size → NO reboot. Both
+		# snapshot paths pick up from here — the cold path snapshots Stopped, the warm
+		# path boots it back up itself (_warm_snapshot). Assert resize with the restore
+		# memory and the VM is never started back up by resize.
+		from atlas.atlas.image_recipes import get_recipe
+
+		recipe = get_recipe("bench-v16")
+		vm = self._fake_vm(status="Running")
+		with (
+			patch.object(image_build_module.frappe, "get_doc", return_value=vm),
+			patch.object(image_build_module, "_sync_guest_before_stop"),
+		):
+			image_build_module._resize_to_restore_memory(recipe, vm.name)
+		vm.stop.assert_called_once()
+		vm.resize.assert_called_once_with(memory_megabytes=recipe.memory_megabytes)
+		vm.start.assert_not_called()
+
+	def test_resize_is_noop_when_build_memory_equals_restore(self) -> None:
+		# A recipe that didn't fatten (proxy: build == restore) never touches the VM.
+		from atlas.atlas.image_recipes import get_recipe
+
+		with patch.object(image_build_module.frappe, "get_doc") as m_get:
+			image_build_module._resize_to_restore_memory(get_recipe("proxy"), "vm-x")
+		m_get.assert_not_called()
+
+	def test_cold_snapshot_syncs_guest_before_stopping(self) -> None:
+		# The bug this guards: build.sh's last write (bench-domain-provider) was still
+		# dirty in the guest page cache when the plain `systemctl stop` KILLED the guest,
+		# so ext4 journalled the inode but not the data → the snapshot captured a 0-byte
+		# binary that fails at deploy with `Exec format error`. The cold snapshot must
+		# flush the guest BEFORE it stops it, so the capture is durable.
+		from atlas.atlas.image_recipes import get_recipe
+
+		recipe = get_recipe("bench-v16")
+		vm = self._fake_vm(status="Running")
+		with (
+			patch.object(image_build_module.frappe, "get_doc", return_value=vm),
+			patch.object(image_build_module, "_sync_guest_before_stop") as m_sync,
+		):
+			image_build_module._stop_and_snapshot(None, recipe, vm.name)
+		m_sync.assert_called_once_with(vm.name)
+		vm.stop.assert_called_once()
+		vm.snapshot.assert_called_once_with(title=recipe.snapshot_title)
+
+	def test_sync_guest_before_stop_noops_when_not_running(self) -> None:
+		# A guest that is already Stopped has nothing live to flush (and no VM to SSH),
+		# so the sync is a clean no-op — it never reaches for a connection.
+		vm = self._fake_vm(status="Stopped")
+		with patch.object(image_build_module.frappe, "get_doc", return_value=vm):
+			image_build_module._sync_guest_before_stop(vm.name)
+		vm.stop.assert_not_called()
+
+	def test_warm_snapshot_boots_stopped_vm_before_capture(self) -> None:
+		# The warm path owns getting its own guest warm: the resize step leaves the VM
+		# Stopped, so _warm_snapshot must boot it back up (at the small size) BEFORE it
+		# arms + freezes. start() is synchronous (returns Running), so the boot is a
+		# start() + commit — NOT a rollback-polling wait, which would wipe start()'s
+		# uncommitted save in this job's txn. Stop the test right after the boot (raise
+		# from _run_warm_entrypoint) — the run_task/capture tail needs a real host.
+		from atlas.atlas.image_recipes import get_recipe
+
+		recipe = get_recipe("bench-v16")
+		vm = self._fake_vm(status="Stopped")
+		# start() flips it Running, mirroring the synchronous controller start().
+		vm.start.side_effect = lambda: setattr(vm, "status", "Running")
+		with (
+			patch.object(image_build_module.frappe, "get_doc", return_value=vm),
+			patch.object(image_build_module.frappe.db, "commit") as m_commit,
+			patch.object(image_build_module, "_wait_for_guest_serving") as m_wait,
+			patch.object(image_build_module, "_run_warm_entrypoint", side_effect=RuntimeError("stop here")),
+		):
+			with self.assertRaises(RuntimeError):
+				image_build_module._warm_snapshot(_new_build("bench-v16"), recipe, vm.name)
+		vm.start.assert_called_once()
+		m_commit.assert_called_once()
+		# The guest must be proven SERVING (not just Running) before the warm arm.
+		m_wait.assert_called_once_with(vm.name)
+
+	def test_warm_snapshot_skips_boot_when_already_running(self) -> None:
+		# A warm bake whose recipe DID fatten left the VM Running after the resize
+		# reboot (or a no-fatten recipe never stopped it) — don't double-boot.
+		from atlas.atlas.image_recipes import get_recipe
+
+		recipe = get_recipe("bench-v16")
+		vm = self._fake_vm(status="Running")
+		with (
+			patch.object(image_build_module.frappe, "get_doc", return_value=vm),
+			patch.object(image_build_module.frappe.db, "commit") as m_commit,
+			patch.object(image_build_module, "_wait_for_guest_serving") as m_wait,
+			patch.object(image_build_module, "_run_warm_entrypoint", side_effect=RuntimeError("stop here")),
+		):
+			with self.assertRaises(RuntimeError):
+				image_build_module._warm_snapshot(_new_build("bench-v16"), recipe, vm.name)
+		vm.start.assert_not_called()
+		m_commit.assert_not_called()
+		m_wait.assert_not_called()
+
+	def test_wait_for_guest_serving_retries_until_sanity_passes(self) -> None:
+		# The readiness probe: retry sanity_check (SSH refused / not-yet-serving raises)
+		# until it passes. First two probes fail, third succeeds → returns, no throw.
+		with (
+			patch.object(
+				image_build_module.bench_image,
+				"sanity_check",
+				side_effect=[RuntimeError("ssh refused"), RuntimeError("no pong"), {"ok": True}],
+			) as m_sanity,
+			patch.object(image_build_module.time, "sleep"),
+		):
+			image_build_module._wait_for_guest_serving("vm-1", timeout_seconds=300, poll_seconds=0)
+		self.assertEqual(m_sanity.call_count, 3)
+
+	def test_wait_for_guest_serving_throws_on_timeout(self) -> None:
+		# Never serves before the deadline → throw carrying the last probe error.
+		with (
+			patch.object(
+				image_build_module.bench_image,
+				"sanity_check",
+				side_effect=RuntimeError("still booting"),
+			),
+			patch.object(image_build_module.time, "sleep"),
+			patch.object(image_build_module.time, "monotonic", side_effect=[0, 1, 400]),
+		):
+			with self.assertRaises(frappe.ValidationError) as ctx:
+				image_build_module._wait_for_guest_serving("vm-1", timeout_seconds=300, poll_seconds=0)
+		self.assertIn("still booting", str(ctx.exception))
+
+	def _fake_vm(self, status: str):
+		from unittest.mock import MagicMock
+
+		vm = MagicMock()
+		vm.name = "build-vm-1"
+		vm.status = status
+		# reload() re-reads status; keep it Stopped after a stop so the code path is stable.
+		vm.reload.side_effect = lambda: setattr(vm, "status", "Stopped")
+		return vm
 
 	def test_records_build_inputs_from_task_stdout(self) -> None:
 		# _record_build_inputs harvests the ATLAS_BUILD_*= lines build.sh stamped into

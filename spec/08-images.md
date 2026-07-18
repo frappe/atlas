@@ -337,10 +337,16 @@ service. Atlas never touches MariaDB auth — bench-cli secures it.
 **ZFS.** `bench init` creates the pool + dataset from `[volume]` in `bench.toml`
 (a preallocated **file vdev**, since the build VM is single-disk) and mounts it,
 so BOTH the bench code and the MariaDB data live on ZFS. At the pinned bench-cli the mere presence of a `[volume]` table enables ZFS.
-The Firecracker `vmlinux` ships no ZFS module, so the **one** ZFS thing `build.sh`
-does itself is DKMS-build `zfs.ko` against the running kernel (`zfs-dkms` +
-`linux-headers-$(uname -r)` + `modprobe zfs`); the built `.ko` travels in the
-snapshot. (Cold-boot ZFS auto-import/mount-ordering is not yet wired — to be
+The Firecracker `vmlinux` ships no ZFS module and the cloud squashfs has an empty
+`/lib/modules`, so Ubuntu's prebuilt `zfs.ko` (+ its `spl.ko` dep) is baked into the
+guest rootfs at **sync time** — `scripts/sync-image.py` `_install_guest_modules` copies
+both from the manifest-pinned `linux-modules-<kver>` (the same package/pass that bakes
+`virtio_rng`; no DKMS compile or `linux-headers`) and pins `zfs` in `modules-load.d`, so
+the module travels in the snapshot and loads on the cold boot that first mounts the pool.
+Deriving `kver` from the manifest (not `uname -r`) keeps the module matched to the kernel
+the guest actually boots, independent of the build VM. The **one** ZFS thing `build.sh`
+does itself is install the `zfsutils-linux` userspace (`zpool`/`zfs`) that bench-cli's
+VolumeManager needs. (Cold-boot ZFS auto-import/mount-ordering is not yet wired — to be
 verified on a host.)
 
 The golden image is a **`Virtual Machine Snapshot`, not a from-URL
@@ -350,8 +356,9 @@ build-in-guest pattern the proxy uses ([12-proxy.md](./12-proxy.md)):
 1. Provision a plain `ubuntu-24.04` VM on a server in the region.
 2. `atlas.atlas.bench_image.build_bench(<vm>)` uploads the committed
    [`bench/`](../bench/) tree and runs `bench/build.sh` over guest-SSH — the
-   sibling of `proxy.build_proxy`. `build.sh` fixes setuid bits, DKMS-installs the
-   ZFS module, runs bench-cli's `install.sh` (at a pinned commit) as root — which
+   sibling of `proxy.build_proxy`. `build.sh` fixes setuid bits, installs the
+   `zfsutils-linux` userspace (the `zfs.ko` module is baked at sync time), runs
+   bench-cli's `install.sh` (at a pinned commit) as root — which
    creates the `frappe` user + sudoers — then again as `frappe` to install bench-cli,
    drops the committed [`bench/bench.toml`](../bench/bench.toml), and runs
    `bench init` + `bench start` as `frappe`. `bench init` is the heavy,
@@ -378,18 +385,20 @@ existing snapshot machinery for the rollable artifact. The bake is driven by the
 shared across every VM from this image — correct because each VM is
 single-tenant and MariaDB binds localhost only (the south hop reaches Frappe's
 `:80`, never `3306`). The Frappe Administrator password is **also baked + shared** —
-a throwaway the owner is handed and rotates after first login. The signup path no
-longer resets it per VM: that reset cost a full CPU-throttled `bench frappe` boot
-(~28s under the 0.25-core cap) that dominated the deploy, and dropping it is the
-main latency win (14-self-serve.md). Lazy per-site rotation (first login / a job)
-is deferred.
+a randomized bake-time throwaway that is **never surfaced**: the owner signs in via
+the one-click `login_url` the deploy mints (a real Administrator session — see
+[14-self-serve.md](./14-self-serve.md)) and can rotate the password later themselves.
+The signup path no longer resets it per VM: that reset cost a full CPU-throttled
+`bench frappe` boot (~28s under the 0.25-core cap) that dominated the deploy, and
+dropping it is the main latency win (14-self-serve.md).
 
 **Why bake the site, not `bench new-site` per signup.** The slow part of standing
 up a Frappe site — `bench new-site`'s schema-create + frappe-install, plus
 `install-app erpnext` — is per-site-invariant, so it is paid **once** here at bake
 time. A signup's `deploy-site.py` then does only the per-VM work — rename the baked
 site to the FQDN via `bench rename-site` — never that multi-minute path, and never a
-`set-admin-password` (the owner is handed the shared baked password and rotates it);
+`set-admin-password` (the owner signs in via the one-click `login_url` the deploy
+mints, and may rotate the baked password later themselves);
 see [14-self-serve.md](./14-self-serve.md).
 
 **Per-VM identity is the rename (Contract A, site mode).** The bake leaves the

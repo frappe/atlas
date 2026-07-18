@@ -156,8 +156,8 @@ def _assert_bench_works(vm) -> str:
 			# sources it for interactive shells, `case $- in *i*`), so the bench-cli PATH
 			# install.sh writes there is absent and a bare `bench` exits 127 — the same
 			# trap build.sh and the spec/18 self-routing step guard against by prepending
-			# /home/frappe/bench-cli to PATH. Match them here, don't rely on .bashrc.
-			"sudo -u frappe bash -lc 'export PATH=/home/frappe/bench-cli:$PATH; bench -b atlas list-apps'",
+			# /home/frappe/pilot to PATH. Match them here, don't rely on .bashrc.
+			"sudo -u frappe bash -lc 'export PATH=/home/frappe/pilot:$PATH; bench -b atlas list-apps'",
 			timeout_seconds=120,
 		)
 	assert code == 0, f"bench did not run in the guest (exit {code}): {stderr[-500:]}"
@@ -275,10 +275,14 @@ def verify_admin_url(image_name: str, server: str, fqdn: str) -> dict:
 	INHERITED from the image (set_build_mode_default), so deploy_site passes
 	`--mode admin` without us restating it. We then probe the admin app's `/api/status`
 	(200, unauthenticated — the admin console is Flask, no Frappe ping route) over the
-	VM's public v6 /128, and fetch `/` to confirm the console HTML renders.
+	VM's public v6 /128, and fetch `/` to confirm the console HTML renders. Also
+	asserts the deploy minted a one-click admin login URL (Pilot #117
+	`bench generate-admin-session --full-path`) — the login-URL handoff (Phase B of
+	llm/references/login-url-handoff-plan.md), proven here since there is no
+	"Bench" doctype yet to persist it on (only Site has a login_url field today).
 
-	Returns a dict with the VM name, the inherited build_mode, and the two probe
-	results. Leaves the VM Running for inspection."""
+	Returns a dict with the VM name, the inherited build_mode, the minted
+	login_url, and the two probe results. Leaves the VM Running for inspection."""
 	from atlas.atlas.deploy_site import deploy_site, readiness_path_for_mode, wait_for_http
 
 	ssh_public_key = ephemeral_public_key() + "\n" + control_plane_public_key()
@@ -304,9 +308,14 @@ def verify_admin_url(image_name: str, server: str, fqdn: str) -> dict:
 	vm.reload()
 	assert vm.status == "Running", vm.status
 
-	# Deploy: maps the FQDN to the admin app ([admin].domain = <fqdn> + setup nginx).
+	# Deploy: maps the FQDN to the admin app ([admin].domain = <fqdn> + setup nginx)
+	# and mints the admin login URL (bench generate-admin-session --full-path).
 	print(f"[verify_admin_url] deploying {fqdn} in admin mode …")
-	deploy_site(vm.name, fqdn)
+	result = deploy_site(vm.name, fqdn)
+	login_url = (result or {}).get("login_url", "")
+	assert login_url, f"deploy_site returned no login_url for admin-mode {fqdn}: {result!r}"
+	assert "sid=" in login_url, f"admin login_url has no sid: {login_url!r}"
+	print(f"[verify_admin_url] admin login URL minted: {login_url}")
 
 	# Probe the admin readiness path over the public v6 path (mode-aware = /api/status).
 	path = readiness_path_for_mode("admin")
@@ -320,6 +329,7 @@ def verify_admin_url(image_name: str, server: str, fqdn: str) -> dict:
 		"vm_ipv6": vm.ipv6_address,
 		"build_mode": vm.build_mode,
 		"fqdn": fqdn,
+		"login_url": login_url,
 		"status_probe": status,
 		"root_probe": root,
 	}

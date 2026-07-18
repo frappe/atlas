@@ -246,6 +246,23 @@ class AtlasSettings(Document):
 		resource_ids = frappe.parse_json(resource_ids)
 		return provisioning.import_servers(self.provider_type, resource_ids)
 
+	@frappe.whitelist()
+	def discover_reserved_ips(self) -> list[dict]:
+		"""Discover Reserved IPs button. List the active vendor's reserved IPs
+		(fleet-wide) and, for each, resolve the Server it maps to by droplet binding.
+		The recovery path after the Reserved IP rows are gone (a server reset dropped
+		them) — the vendor still holds the IPs. Read-only; only `import_reserved_ips`
+		writes."""
+		return provisioning.discover_reserved_ips(self.provider_type)
+
+	@frappe.whitelist()
+	def import_reserved_ips(self, ip_addresses: list[str] | str) -> dict:
+		"""Import the picked vendor reserved IPs as Reserved IP rows, auto-mapping each
+		to its Server by droplet binding. Idempotent: an already-modeled address is
+		skipped. The dialog posts `ip_addresses` as a JSON string, so parse it."""
+		ip_addresses = frappe.parse_json(ip_addresses)
+		return provisioning.import_reserved_ips(self.provider_type, ip_addresses)
+
 
 def _newest_active_server() -> str:
 	"""The newest Active Server — the target the bake / proxy desk buttons act on,

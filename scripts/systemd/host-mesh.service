@@ -1,0 +1,35 @@
+[Unit]
+# Brings up the HOST's wg-mesh device in the host ROOT netns (invisible to every
+# guest netns) — the private-plane fabric (design §3, private-networking-host-mesh.md).
+# The host-fabric analog of vm-network-up.py's reboot self-sufficiency: bootstrap
+# creates the mesh but is NOT re-run on boot, so this oneshot re-asserts the device
+# (create, pin MTU 1420, assign the host's own infra mesh /128, load the last-pushed
+# peer config, set the derived key, add the fdaa::/16 route) — so a rebooted host
+# rejoins the fabric before the controller's next reconcile rather than black-holing
+# the private plane until the backstop sweep runs.
+#
+# Installed to the host by bootstrap (BOOTSTRAP_UPLOAD_SOURCES), NOT into the guest
+# image. There is NO wg in the guest.
+Description=Atlas host WireGuard mesh (private-plane fabric)
+After=network-online.target
+Wants=network-online.target
+# The controller pushes /etc/atlas-host-mesh.env (host mesh address, port, MTU) and
+# /etc/atlas-host-mesh.key + /etc/wireguard/wg-mesh.conf via reconcile_host_mesh.
+# Gate on the env file: absent it (host not yet reconciled) there is nothing to bring
+# up. bring_up_mesh() still tolerates a missing key/config (comes up peer-empty).
+ConditionPathExists=/etc/atlas-host-mesh.env
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# Re-assert the mesh via the durable atlas package. bring_up_mesh() is idempotent:
+# create-or-replace at every step, with the key set LAST so a config load can never
+# clear it (verified on a real host). The package lives under /var/lib/atlas/bin
+# (placed by bootstrap); its sys.path shim adds that dir. Runs under the Atlas venv
+# python, the same interpreter atlas-pool.service uses.
+ExecStart=/var/lib/atlas/venv/bin/python -c "import sys; sys.path.insert(0, '/var/lib/atlas/bin'); from atlas.host_mesh import bring_up_mesh; bring_up_mesh()"
+# Teardown so a `systemctl restart` (re-applying a freshly-pushed config) starts clean.
+ExecStop=/var/lib/atlas/venv/bin/python -c "import sys; sys.path.insert(0, '/var/lib/atlas/bin'); from atlas.host_mesh import tear_down_mesh; tear_down_mesh()"
+
+[Install]
+WantedBy=multi-user.target

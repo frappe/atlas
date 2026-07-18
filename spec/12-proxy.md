@@ -47,13 +47,26 @@ both public ports:
 :443  stream{}  — SNI fork (ssl_preread, no decrypt):
         SNI under *.<region>.<domain>  -> 127.0.0.1:8443  (local http{} terminator, the L7 path below)
         SNI is a known custom domain   -> [vm_v6]:443      (raw passthrough; VM terminates)
-        miss                           -> drop             (unknown / deregistered name, 13-tls.md)
+        named miss                     -> 127.0.0.1:8446   (dummy-cert terminator -> branded "Domain not configured" page, 13-tls.md)
+        empty SNI (bare IP / probe)    -> drop             (no name to brand)
 
 :80   http{}   — Host-header fork (cleartext, no SNI):
         acme-challenge + Host under wildcard  -> serve LOCALLY  (no VM may answer a *.<region> challenge)
         acme-challenge + Host is custom        -> [vm_v6]:80     (VM completes its own HTTP-01)
         everything else                        -> 308 -> https   (unchanged)
 ```
+
+**The wildcard-zone suffix the proxy strips is the FULL active `Root Domain`**
+(`<region>.<platform>`, e.g. `blr1.frappe.dev` or `aditya-blr3.x.frappe.dev`),
+**not** `region + ".frappe.dev"`. `_finalize_proxy` writes that zone to the proxy's
+region file (`/var/lib/nginx/region`); `init_by_lua` reads it into the global
+`atlas_root_domain`, and all three predicates (`router.lua`, `sni_router.lua`,
+`acme_router.lua`) strip exactly `".<atlas_root_domain>"`. Reconstructing the zone
+as `region + ".frappe.dev"` assumed the region sat one label under `frappe.dev`,
+so a deeper platform zone (`x.frappe.dev`) made every wildcard SNI miss the suffix
+test and drop the connection (`no host in upstream ""`). The region *id* still
+scopes the on-disk cert dir (`certs/<region>/`, controller-side via
+`atlas_region()`) — that is a separate concern from the zone the lua strips.
 
 The `stream{}` subsystem moves to the **front** and owns `[::]:443` + the
 reserved-v4 `:443` (it already owns the `10000-19999` L4 pool,
@@ -65,6 +78,14 @@ wildcard SNIs, with `set_real_ip_from 127.0.0.1` + `real_ip_header proxy_protoco
 so the tenant still sees the true client IP across the loopback hop. **TLS is
 terminated once** (at 8443), never twice — `ssl_preread` only peeks at the
 ClientHello SNI; the loopback hop carries encrypted bytes.
+
+**This SNI fork reads `$ssl_preread_server_name` inside `preread_by_lua`, which
+needs a one-line nginx-core patch on nginx ≥ 1.25.5** — see *Why these decisions*
+#7 below and
+[llm/references/proxy-sni-preread-broken-on-nginx-1.25.5.md](../llm/references/proxy-sni-preread-broken-on-nginx-1.25.5.md).
+Without it the front-door drops every connection (`no host in upstream ""`); the
+patch is the reason `build.sh` compiles its own nginx binary rather than shipping
+the stock apt one.
 
 The custom-domain → VM `/128` map lives in a **separate** `lua_shared_dict` from
 the wildcard `sites` map (full host as key, not bare label), and is needed in
@@ -143,8 +164,10 @@ The proxy is built the Atlas-native way (no custom rootfs, no host service):
 provision an ordinary VM from stock Ubuntu, then `build_proxy(vm)` SSHes in,
 uploads the [`proxy/`](../proxy) tree, and runs
 [`proxy/build.sh`](../proxy/build.sh) inside the guest (`apt install`s the
-signed, `apt-mark hold`-frozen nginx.org stock nginx 1.30.3, compiles **only**
-the modules apt cannot supply — OpenResty `luajit2` + `lua-nginx-module` +
+signed, `apt-mark hold`-frozen nginx.org nginx 1.30.3 for its OpenSSL/deps/stock
+layout, then **recompiles the binary from the same-version source** carrying the
+OpenResty `stream_ssl_preread_no_skip` patch and overwrites `/usr/sbin/nginx`,
+compiles the modules apt cannot supply — OpenResty `luajit2` + `lua-nginx-module` +
 stream-lua + NDK + resty-core/lrucache + lua-cjson + headers-more — as dynamic
 `.so`s against that exact binary, and installs the config, the six Lua modules,
 and a thin `nginx.service.d/atlas.conf` drop-in over the package's own unit),
@@ -154,8 +177,11 @@ image". Install / update / roll / rollback are the existing VM lifecycle verbs
 the others serving — a zero-downtime rolling update.
 
 The nginx image's behavior is the **image-level release gate**: the
-docker-compose harness under [`proxy/test/`](../proxy/test) exercises the same
-`conf/` + `lua/` the in-guest build installs. Beyond the happy path (routing,
+docker-compose harness under [`proxy/test/`](../proxy/test) runs the same
+`build.sh` the in-guest build runs, so it exercises the same patched-nginx binary
++ `conf/` + `lua/` the guest installs — which is what catches the
+nginx-≥-1.25.5 preread regression (*Why these decisions* #7): the `:443` SNI tests
+are red the instant the binary isn't patched. Beyond the happy path (routing,
 remap-no-reload, branded 404, bulk `/sync`, canonical-JSON byte-match,
 restart-reload-from-`map.json`, HTTP→HTTPS, HTTP/2, socket.io upgrade) it pins the
 subtler behaviors and failure modes — forwarded-header/query fidelity, security
@@ -163,8 +189,11 @@ headers on the branded page, the admin method/route matrix, bad-address and
 misbehaving-upstream fail-clean, corrupt-`map.json` boot, the dump debounce + its
 durability window, concurrent-read atomicity — plus latency/timing/scale guards
 (routing overhead, streaming first-byte, TLS resumption, a concurrency soak, a
-10k-entry map). `test_proxy.py` + `test_build.py` + `test_latency.py`, all green.
-Nothing is installed on the dev host.
+10k-entry map) and the SNI front-door itself (`test_custom_domain_proxy.py`,
+`test_tcp.py`). `test_proxy.py` + `test_build.py` + `test_tcp.py` +
+`test_custom_domain_proxy.py` = 118 pass (one pre-existing flaky http-admin
+concurrency test trips occasionally under full-suite load). Nothing is installed
+on the dev host.
 
 ## Host-bound facts — the `proxy_vm` Atlas e2e
 
@@ -251,11 +280,31 @@ alternatives they beat, kept so a future change knows what it is overturning.
    canonical JSON (sorted keys, 2-space indent), so "in sync?" is a byte compare.
    Per-entry PUT/DELETE exist for low-latency single changes; the periodic full
    `/sync` is the backstop.
-7. **Stock nginx unless a custom part is *absolutely* necessary.** The base binary
-   is genuinely stock — `apt install`'d from the signed nginx.org repo,
-   dpkg-owned, `apt-mark hold`-frozen at 1.30.3, at stock paths
-   (`/usr/sbin/nginx`, `/etc/nginx`, `/var/log/nginx`, `/run/nginx.pid`), with the
-   L4 `stream` core taken straight from it. The build was audited for every place
+7. **Stock nginx unless a custom part is *absolutely* necessary.** The base is the
+   signed nginx.org repo — `apt install`'d, dpkg-owned, `apt-mark hold`-frozen at
+   1.30.3 — which owns OpenSSL, the deps, and the stock layout (`/usr/sbin/nginx`,
+   `/etc/nginx`, `/var/log/nginx`, `/run/nginx.pid`). The **binary file**, however,
+   is **not** the apt one: it is a **same-version (1.30.3) recompile from source
+   carrying one OpenResty nginx-core patch**, `stream_ssl_preread_no_skip`, which
+   `build.sh` `./configure`s mirroring the apt build's full `--with-*` + `--*-path`
+   flag set, `make`s, and overwrites `/usr/sbin/nginx` with (asserting `nginx -V`).
+   **This patch is load-bearing for the entire `:443` SNI front-door.** On nginx
+   ≥ 1.25.5 the reworked stream phase engine ends the preread phase the instant
+   `ssl_preread`'s handler returns `NGX_OK` on a successful SNI parse, so
+   `preread_by_lua` never runs and `$ssl_preread_server_name` is never read — every
+   front-door connection drops with `no host in upstream ""`. The patch returns
+   `NGX_DECLINED` ("done, keep the phase running") instead, so the lua handler gets
+   its turn with the SNI already populated, making the `ssl_preread on` +
+   `preread_by_lua reads $ssl_preread_server_name` idiom — which the stream-lua
+   module's own regression test skips as unsupported on ≥ 1.25.5 — work again. The
+   non-obvious wiring: `ssl_preread` is `--with-stream_ssl_preread_module`, which is
+   **static** (compiled INTO the binary, no `=dynamic`), so patching only the source
+   tree and rebuilding modules is a no-op against the running apt binary — carrying
+   the patch *requires* `build.sh` to compile its own binary, not just modules.
+   Rationale and the A/B proof on the pinned 1.30.3 live in
+   [llm/references/proxy-sni-preread-broken-on-nginx-1.25.5.md](../llm/references/proxy-sni-preread-broken-on-nginx-1.25.5.md).
+   The L4 `stream` core is otherwise straight from this same-version build. The
+   build was audited for every place
    it diverged from stock, and four reducible divergences were collapsed back:
    the custom `mime.types` (deleted — `include /etc/nginx/mime.types` reads the
    package conffile), the full `nginx.service` shadow + the standalone `tmpfiles.d`

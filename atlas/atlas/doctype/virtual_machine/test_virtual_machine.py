@@ -3,8 +3,31 @@ from unittest.mock import patch
 import frappe
 from frappe.tests import IntegrationTestCase
 
+from atlas.atlas.placement import NoResizeCapacityError
 from atlas.tests._mocks import fake_task
 from atlas.tests.fixtures import make_image, make_provider, make_server, make_virtual_machine
+
+
+def _resize_server(**totals) -> str:
+	"""A distinct Active server catalogued with the given capacity totals — the
+	resize-gate tests need a MEASURED host so the gate has an effective budget to
+	check against (the shared vm-test-server is memory/disk-uncatalogued on purpose).
+	Also clears the memory floor so `effective` equals the stamped total exactly."""
+	frappe.db.set_single_value("Atlas Settings", "host_memory_reserve_megabytes", 0)
+	provider = make_provider("vm-resize-provider")
+	server = make_server(
+		provider,
+		"vm-resize-server",
+		ipv4_address="10.0.0.77",
+		ipv6_address="2001:db8:5::1",
+		ipv6_prefix="2001:db8:5::/64",
+		ipv6_virtual_machine_range="2001:db8:5::/120",
+		status="Active",
+	)
+	stamped = {"vcpus_total": 0, "memory_megabytes_total": 0, "pool_disk_gigabytes_total": 0, **totals}
+	for field, value in stamped.items():
+		server.db_set(field, value)
+	return server.name
 
 
 def _ensure_test_server() -> str:
@@ -27,6 +50,24 @@ def _ensure_test_image() -> str:
 
 def _new_vm(**overrides) -> "frappe.model.document.Document":
 	return make_virtual_machine(_ensure_test_server(), _ensure_test_image(), **overrides)
+
+
+def _ensure_active_root_domain(domain: str = "blr1.frappe.dev") -> str:
+	"""A single active Root Domain so `active_root_domain()` resolves. Provider types
+	and region are set explicitly so the row inserts without depending on Settings."""
+	if frappe.db.exists("Root Domain", domain):
+		return domain
+	frappe.get_doc(
+		{
+			"doctype": "Root Domain",
+			"domain": domain,
+			"region": "blr1",
+			"is_active": 1,
+			"dns_provider_type": "Route53",
+			"tls_provider_type": "Let's Encrypt",
+		}
+	).insert(ignore_permissions=True)
+	return domain
 
 
 class TestVirtualMachine(IntegrationTestCase):
@@ -321,12 +362,14 @@ class TestVirtualMachine(IntegrationTestCase):
 
 		with patch.object(module.frappe, "enqueue") as enqueue:
 			vm = _new_vm()
-		enqueue.assert_called_once()
-		_, kwargs = enqueue.call_args
-		self.assertEqual(
-			kwargs["virtual_machine_name"],
-			vm.name,
-		)
+		# The insert also enqueues central_report.deliver events (vm.created,
+		# vm.status_changed); single out the auto_provision enqueue and assert it
+		# targets this VM, rather than assuming it is the only enqueue.
+		auto_provision_calls = [
+			call for call in enqueue.call_args_list if call.args and call.args[0].endswith(".auto_provision")
+		]
+		self.assertEqual(len(auto_provision_calls), 1)
+		self.assertEqual(auto_provision_calls[0].kwargs["virtual_machine_name"], vm.name)
 
 	def test_auto_provision_is_noop_when_not_pending(self) -> None:
 		from atlas.atlas.doctype.virtual_machine import virtual_machine as module
@@ -501,6 +544,66 @@ class TestVirtualMachine(IntegrationTestCase):
 		# The referenced golden survives the build VM's termination.
 		self.assertTrue(frappe.db.exists("Virtual Machine Snapshot", snapshot_name))
 
+	def test_terminate_deprovisions_a_proxy(self) -> None:
+		# A terminated proxy must drop out of the fleet: `is_proxy` clears and the
+		# wildcard is re-published so the dead /128 stops answering in the round-robin.
+		from atlas.atlas.doctype.tls_certificate import tls_certificate as cert_module
+		from atlas.atlas.doctype.virtual_machine import virtual_machine as module
+
+		domain = _ensure_active_root_domain()
+		cert = frappe.get_doc(
+			{"doctype": "TLS Certificate", "root_domain": domain, "status": "Active"}
+		).insert(ignore_permissions=True)
+
+		vm = _new_vm(is_proxy=1)
+		vm.db_set("status", "Stopped")
+		vm.reload()
+
+		with (
+			patch.object(module, "run_task", return_value=fake_task(name="task-term")),
+			# Spy the re-publish so no real Route53 call fires; assert it targets the
+			# region's Active cert.
+			patch.object(cert_module.TLSCertificate, "_publish_wildcard") as publish,
+		):
+			vm.terminate()
+
+		self.assertFalse(frappe.db.get_value("Virtual Machine", vm.name, "is_proxy"))
+		publish.assert_called_once()
+		self.assertTrue(frappe.db.exists("TLS Certificate", cert.name))
+
+	def test_terminate_deletes_a_subdomain_a_pilot_still_links(self) -> None:
+		# A bench VM's Subdomain is linked-TO by the Pilot that fronts it
+		# (`subdomain_doc`), so deleting it out from under the Pilot would trip Frappe's
+		# link-integrity guard (LinkExistsError). This is the exact state Central's
+		# terminate_server drives (run_doc_method → the VM's own terminate). Terminate
+		# must clear the Pilot's link first, then delete the Subdomain — not 500.
+		from atlas.atlas.doctype.virtual_machine import virtual_machine as module
+
+		_ensure_active_root_domain()
+		vm = _new_vm()
+		subdomain = frappe.get_doc(
+			{
+				"doctype": "Subdomain",
+				"subdomain": "linked-sub",
+				"virtual_machine": vm.name,
+				"address": "2001:db8:1::5",
+			}
+		).insert(ignore_permissions=True)
+		# The attach path binds an existing VM without provisioning a new one, so the
+		# Pilot lands with a subdomain_doc link but no heavy after_insert side effects.
+		pilot = frappe.get_doc({"doctype": "Pilot", "subdomain": "linked-sub"})
+		pilot.flags.attach_vm = vm.name
+		pilot.insert(ignore_permissions=True)
+		pilot.db_set("subdomain_doc", subdomain.name)
+
+		vm.db_set("status", "Stopped")
+		vm.reload()
+		with patch.object(module, "run_task", return_value=fake_task(name="task-term")):
+			vm.terminate()  # must not raise LinkExistsError
+
+		self.assertFalse(frappe.db.exists("Subdomain", subdomain.name))
+		self.assertIsNone(frappe.db.get_value("Pilot", pilot.name, "subdomain_doc"))
+
 	def test_parse_size_bytes(self) -> None:
 		from atlas.atlas.task_results import parse_result
 
@@ -535,6 +638,36 @@ class TestVirtualMachine(IntegrationTestCase):
 		self.assertEqual(vm.status, "Stopped")
 		self.assertEqual(mocked.call_args.kwargs["script"], "stop-vm")
 		self.assertFalse(vm.has_memory_snapshot)
+		# Cooperative shutdown by default: the guest gets a ctrl+alt+del (GRACEFUL=1)
+		# so it syncs + unmounts before the unit is killed.
+		self.assertEqual(mocked.call_args.kwargs["variables"]["GRACEFUL"], "1")
+
+	def test_stop_forced_skips_graceful_shutdown(self) -> None:
+		# graceful=False is the forced kill — no ctrl+alt+del, guest RAM discarded.
+		# The migration cold-stop and any caller that throws the RAM away use this.
+		from atlas.atlas.doctype.virtual_machine import virtual_machine as module
+
+		vm = _new_vm()
+		vm.db_set("status", "Running")
+		vm.reload()
+		with patch.object(module, "run_task", return_value=fake_task(name="task-stop")) as mocked:
+			vm.stop(graceful=False)
+		vm.reload()
+		self.assertEqual(vm.status, "Stopped")
+		self.assertEqual(mocked.call_args.kwargs["variables"]["GRACEFUL"], "0")
+
+	def test_stop_forced_normalizes_stringy_flag(self) -> None:
+		# REST/frm.call send a stringy value; "0"/"false" must read as forced, not
+		# truthy-string. (Python bool("0") is True — the normalize guards that.)
+		from atlas.atlas.doctype.virtual_machine import virtual_machine as module
+
+		for value in ("0", "false", "False"):
+			vm = _new_vm()
+			vm.db_set("status", "Running")
+			vm.reload()
+			with patch.object(module, "run_task", return_value=fake_task(name="task-stop")) as mocked:
+				vm.stop(graceful=value)
+			self.assertEqual(mocked.call_args.kwargs["variables"]["GRACEFUL"], "0", value)
 
 	def test_stop_captures_memory_snapshot_when_opted_in(self) -> None:
 		from atlas.atlas.doctype.virtual_machine import virtual_machine as module
@@ -727,6 +860,67 @@ class TestVirtualMachine(IntegrationTestCase):
 				vm.resize(data_disk_gigabytes=4)
 		self.assertIn("no data disk", str(raised.exception))
 		mocked.assert_not_called()
+
+	# --- resize capacity gate (spec/28) ------------------------------------
+
+	def test_resize_within_capacity_passes(self) -> None:
+		from atlas.atlas.doctype.virtual_machine import virtual_machine as module
+
+		server = _resize_server(memory_megabytes_total=4096)
+		vm = make_virtual_machine(server, _ensure_test_image(), memory_megabytes=512, disk_gigabytes=4)
+		vm.db_set("status", "Stopped")
+		vm.reload()
+		with patch.object(module, "run_task", return_value=fake_task(name="task-resize")) as mocked:
+			vm.resize(memory_megabytes=1024)
+		vm.reload()
+		self.assertEqual(vm.memory_megabytes, 1024)
+		mocked.assert_called_once()
+
+	def test_resize_over_capacity_raises(self) -> None:
+		from atlas.atlas.doctype.virtual_machine import virtual_machine as module
+
+		# Host holds exactly 1024 MB and the VM already fills it; doubling the RAM
+		# doesn't fit → NoResizeCapacityError, and the on-host resize never runs.
+		server = _resize_server(memory_megabytes_total=1024)
+		vm = make_virtual_machine(server, _ensure_test_image(), memory_megabytes=1024, disk_gigabytes=4)
+		vm.db_set("status", "Stopped")
+		vm.reload()
+		with patch.object(module, "run_task") as mocked:
+			with self.assertRaises(NoResizeCapacityError):
+				vm.resize(memory_megabytes=2048)
+		mocked.assert_not_called()
+
+	def test_resize_charges_only_positive_deltas(self) -> None:
+		from atlas.atlas.doctype.virtual_machine import virtual_machine as module
+
+		# CPU is measured and already full (1 core on a 1-core host), but growing RAM
+		# only charges the RAM delta — the unchanged CPU axis must not block it.
+		server = _resize_server(vcpus_total=1, memory_megabytes_total=4096)
+		vm = make_virtual_machine(
+			server, _ensure_test_image(), vcpus=1, cpu_max_cores=1, memory_megabytes=512, disk_gigabytes=4
+		)
+		vm.db_set("status", "Stopped")
+		vm.reload()
+		with patch.object(module, "run_task", return_value=fake_task(name="task-resize")):
+			vm.resize(memory_megabytes=1024)
+		vm.reload()
+		self.assertEqual(vm.memory_megabytes, 1024, "a full CPU axis doesn't block a RAM-only grow")
+
+	def test_resize_spends_the_placement_reserve(self) -> None:
+		from atlas.atlas.doctype.virtual_machine import virtual_machine as module
+
+		# A 50% arrival reserve would refuse PLACING a new VM past 512 MB, but resize
+		# checks the FULL effective budget (1024) — so it spends into the reserve.
+		server = _resize_server(memory_megabytes_total=1024)
+		frappe.db.set_single_value("Atlas Settings", "placement_headroom_percent", 50)
+		self.addCleanup(frappe.db.set_single_value, "Atlas Settings", "placement_headroom_percent", 0)
+		vm = make_virtual_machine(server, _ensure_test_image(), memory_megabytes=512, disk_gigabytes=4)
+		vm.db_set("status", "Stopped")
+		vm.reload()
+		with patch.object(module, "run_task", return_value=fake_task(name="task-resize")):
+			vm.resize(memory_megabytes=1024)
+		vm.reload()
+		self.assertEqual(vm.memory_megabytes, 1024, "resize spends the headroom placement reserved")
 
 	def test_snapshot_persists_data_disk_fields(self) -> None:
 		from atlas.atlas.doctype.virtual_machine import virtual_machine as module

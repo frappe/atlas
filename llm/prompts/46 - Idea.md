@@ -1,1 +1,0 @@
-IPv4 is still needed for general egress. We can use hosts IPv4 address for this. Setup NAT on host to do this correctly.
