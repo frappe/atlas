@@ -245,13 +245,15 @@ class Server(Document):
 		for row in other_actives:
 			if not row.ipv6_address:
 				continue
-			seed.append({
-				"host_id": row.name,
-				"endpoint": row.ipv6_address,
-				"wg_public_key": row.wireguard_public_key or "",
-				"mesh_address": row.mesh_address or derive_host_mesh_address(row.name),
-				"generation": 1,
-			})
+			seed.append(
+				{
+					"host_id": row.name,
+					"endpoint": row.ipv6_address,
+					"wg_public_key": row.wireguard_public_key or "",
+					"mesh_address": row.mesh_address or derive_host_mesh_address(row.name),
+					"generation": 1,
+				}
+			)
 		from atlas.atlas.networking import derive_host_wireguard_keypair
 
 		wg_private_key, _wg_public_key = derive_host_wireguard_keypair(self.name)

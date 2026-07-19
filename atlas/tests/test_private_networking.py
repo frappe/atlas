@@ -243,4 +243,3 @@ class TestDarkVmIpv4Link(IntegrationTestCase):
 			derive_ipv4_link("2001:db8::2", index=7)
 		with self.assertRaises(frappe.ValidationError):
 			derive_ipv4_link()
-

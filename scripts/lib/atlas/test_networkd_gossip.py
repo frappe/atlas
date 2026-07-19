@@ -405,7 +405,7 @@ class TestGossipEndToEnd(unittest.TestCase):
 		b.state.apply_membership(a.own_membership)
 		bus = Bus()
 		for d in (a, b):
-			t = FakeTransport(bind=(	d.identity.endpoint, 7946), bus=bus)
+			t = FakeTransport(bind=(d.identity.endpoint, 7946), bus=bus)
 			t.socket = object()
 			d.transport = t
 		# A's advertising: it has owned /128s the apply_state advertised.

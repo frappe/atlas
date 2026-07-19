@@ -61,7 +61,6 @@ def run_smoke(reuse: bool = True, keep: bool = False) -> None:
 	image = ensure_image_on_server(source.name)
 	print(f"[e2e] customer-gateway smoke: gateway host {source.name}, peer host {target.name}")
 
-	
 	gateway = None
 	peer = None
 	try:
@@ -100,7 +99,6 @@ def run(reuse: bool = True, keep: bool = False) -> None:
 	image = ensure_image_on_server(target.name)
 	print(f"[e2e] customer-gateway full: gateway host {source.name}, client host {target.name}")
 
-	
 	gateway = None
 	vms: list[str] = []
 	peer = None

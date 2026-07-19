@@ -81,8 +81,8 @@ class TestRenderShape(unittest.TestCase):
 class TestEmptyKeySkip(unittest.TestCase):
 	def test_peer_with_empty_key_omitted(self):
 		m = {
-			"h1": member("h1", "", "fdaa:0:0:1::1"),       # empty key — seed before handshake
-			"h2": member("h2", "BBB", "fdaa:0:0:2::1"),   # known key
+			"h1": member("h1", "", "fdaa:0:0:1::1"),  # empty key — seed before handshake
+			"h2": member("h2", "BBB", "fdaa:0:0:2::1"),  # known key
 		}
 		out = render_wg_desired("h0", m, OwnershipTable())
 		pubkey_lines = [l for l in out.splitlines() if l.startswith("PublicKey = ")]

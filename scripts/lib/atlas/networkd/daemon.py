@@ -264,8 +264,7 @@ def default_signature_verifier(record, daemon) -> None:
 			return  # pre-Stage-5 peer — accept unsigned
 		if not wire_sig:
 			raise SignatureError(
-				f"MembershipRecord from {record.host_id} has signing_public_key "
-				"but carries no wire signature"
+				f"MembershipRecord from {record.host_id} has signing_public_key but carries no wire signature"
 			)
 		d = wire.membership_to_dict(record)
 		d["signature"] = wire_sig
