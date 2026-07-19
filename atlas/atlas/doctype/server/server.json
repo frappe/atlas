@@ -148,7 +148,7 @@
    "read_only": 1
   },
   {
-   "description": "This host's WireGuard public key on the wg-mesh private-plane fabric, derived (not stored) from the Server UUID. Shown for legibility; the controller recomputes it from atlas.networking.derive_host_wireguard_keypair. The private key is injected at bootstrap and never stored.",
+   "description": "This host's WireGuard public key on the wg-mesh private-plane fabric, derived from the Server UUID. Shown for legibility; the controller writes it to the host at bootstrap alongside the private key. The private key is never stored on the controller.",
    "fieldname": "wireguard_public_key",
    "fieldtype": "Data",
    "label": "WireGuard Public Key",

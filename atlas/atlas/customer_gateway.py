@@ -313,7 +313,9 @@ def enroll_peer(peer) -> None:
 	if peer.status != "Active":
 		peer.db_set("status", "Active")
 	reconcile_gateway(peer.gateway)
-	_reconcile_host_mesh_after_commit()
+	# The client /128 is folded into the local-ownership cache (vm-network-up.py
+	# writes it on the gateway VM's host); atlas-networkd's scan detects the new
+	# Active peer and gossips its /128 fleet-wide (spec/31 §11 / §16.6).
 
 
 def revoke_peer(peer) -> None:
@@ -326,18 +328,9 @@ def revoke_peer(peer) -> None:
 	gateway_alive = frappe.db.get_value("Virtual Machine", peer.gateway, "status") != "Terminated"
 	if gateway_alive:
 		reconcile_gateway(peer.gateway)
-	_reconcile_host_mesh_after_commit()
-
-
-def _reconcile_host_mesh_after_commit() -> None:
-	"""Enqueue a converging host-mesh reconcile so the client /128 is advertised /
-	withdrawn fleet-wide (rides the existing delta-push, reference §6.3). Enqueued
-	after-commit + deduped, exactly like the VM lifecycle triggers — a push failure
-	never rolls back the peer transaction; the converging reconcile + scheduler sweep
-	bring the fabric to match."""
-	from atlas.atlas.host_mesh import enqueue_reconcile_host_mesh
-
-	enqueue_reconcile_host_mesh()
+	# The client /128 is withdrawn from the local-ownership cache
+	# (vm-network-down.py on the gateway VM's host); atlas-networkd's scan
+	# detects the Revoked peer and gossips the withdrawal (spec/31 §11).
 
 
 def reconcile_gateway(gateway_vm: str) -> bool:

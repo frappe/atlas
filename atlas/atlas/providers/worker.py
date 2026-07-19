@@ -112,15 +112,10 @@ def finish_provisioning(server_name: str) -> None:
 	# nosemgrep: frappe-manual-commit -- background job: persist the final Active state so it is durable and observers see provisioning completed
 	frappe.db.commit()
 	frappe.logger("atlas").info(f"finish_provisioning: server {server_name} is Active")
-
-	# A host reaching Active joins the WireGuard host mesh (design §3, trigger 1):
-	# every OTHER host needs the newcomer as a peer, and the newcomer needs all of
-	# them, so this reconciles the WHOLE mesh. Enqueued after the Active commit above
-	# so it runs against the committed state; a push failure is caught by the converging
-	# reconcile + the scheduler backstop, never wedging finish_provisioning.
-	from atlas.atlas.host_mesh import enqueue_reconcile_host_mesh
-
-	enqueue_reconcile_host_mesh()
+	# The host's atlas-networkd daemon joins the ANCP mesh autonomously on boot
+	# (spec/31 §9): it cold-joins by unicasting its Membership Advertisement to
+	# every seed, and anti-entropy fills in the rest of the cluster. No
+	# controller-side reconcile needed — the mesh is self-healing.
 
 
 def _apply_describe_result(server, result: ProvisionResult) -> None:

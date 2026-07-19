@@ -912,24 +912,21 @@ def _phase_repointing(doc) -> bool:
 
 
 def _repoint_private_plane(doc) -> None:
-	"""Move the VM's private /128 from the source host's AllowedIPs to the target's
-	(private-networking-host-mesh.md §7). The private address is HOST-INDEPENDENT — it
-	survives the move byte-for-byte — so only which peer advertises it changes. Unlike
-	the public re-point this runs on BOTH keep-address and change-address migrations: the
-	private plane moves with the VM regardless of what happens to the public /128.
-
-	The cutover MUST be SEQUENCED, not converging (§7): WireGuard requires non-overlapping
-	AllowedIPs across peers, so a converging 2-peer push could momentarily leave the /128
-	in BOTH hosts. `sequenced_migration_cutover` does remove-from-source THEN add-to-target
-	under the migration's lock. No-op for a tenant-less VM (no private /128) or a Fake fleet.
-	Idempotent: a second run recomputes residency from the (already-committed) DB and
-	re-pushes the same end state."""
+	"""The private /128 moves with the VM to the target host (spec/31 §16.3 — soft
+	sequencing). The address is HOST-INDEPENDENT (survives the move byte-for-byte); only
+	which host locally owns it changes. The VM's `server` field was already repointed to
+	the target before this function is called, so the target's `atlas-networkd` local
+	ownership scan will pick up the /128 and advertise it; the source's scan will drop it.
+	ANCP gossip propagates both updates; the §16.3 non-overlap invariant holds at each
+	host (atomic whole-table `wg syncconf` + conflict-driven drop). No-op for a tenant-less
+	VM (no private /128). The old controller-side `sequenced_migration_cutover` is retired
+	(spec/31 §6) — the migration controller keeps the Server lock and the two-phase
+	visibility ordering (withdraw-from-source THEN advertise-on-target) but no longer
+	issues fleet-wide SSH pushes; ANCP's eventual consistency replaces the hard barrier
+	(§17.2 bounds the inconsistency window to ~4.6 s at the default timers)."""
 	vm_tenant = frappe.db.get_value("Virtual Machine", doc.virtual_machine, "tenant")
 	if not vm_tenant:
 		return
-	from atlas.atlas.host_mesh import sequenced_migration_cutover
-
-	sequenced_migration_cutover(doc.virtual_machine, doc.source_server, doc.target_server)
 
 
 def _phase_cleanup(doc) -> bool:

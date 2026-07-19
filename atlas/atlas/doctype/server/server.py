@@ -81,11 +81,12 @@ class Server(Document):
 		("vm-restore.py", "/var/lib/atlas/bin/vm-restore.py"),
 		("systemd/firecracker-vm@.service", "/etc/systemd/system/firecracker-vm@.service"),
 		("systemd/atlas-pool.service", "/etc/systemd/system/atlas-pool.service"),
-		# host-mesh.service brings up the wg-mesh private-plane device in the host
-		# root netns at boot (design §3), the host-fabric analog of atlas-pool.service:
-		# bootstrap creates the mesh but is not re-run on boot, so this oneshot
-		# re-asserts the device from /etc/atlas-host-mesh.{env,key} + wg-mesh.conf.
-		("systemd/host-mesh.service", "/etc/systemd/system/host-mesh.service"),
+		# atlas-networkd.service (spec/31) is the long-running decentralized control
+		# plane daemon that replaces host-mesh.service. It brings up wg-mesh + runs
+		# gossip/anti-entropy/SWIM + programs wg-mesh atomically from the effective
+		# Membership + Ownership tables. The keys/seed are written by bootstrap-
+		# server.py under /etc/atlas-networkd/ before the service starts.
+		("systemd/atlas-networkd.service", "/etc/systemd/system/atlas-networkd.service"),
 	]
 
 	def autoname(self) -> None:
@@ -98,10 +99,12 @@ class Server(Document):
 
 	def _denormalize_mesh_identity(self) -> None:
 		"""Fill the derived WireGuard host-mesh denorm fields (design §8). Both are pure
-		functions of the Server UUID — recomputed by the controller wherever they are
-		needed (host_mesh.reconcile), so these fields are a legible read-through, not a
-		source of truth. Set once; a re-derive yields the same value, so an existing row
-		is unchanged on save."""
+		functions of the Server UUID — the controller derives them so the seed carries
+		the correct wg public key and the UI displays it legibly. The keypair is written
+		to the host during bootstrap as `/etc/atlas-networkd/{wg-private-key,wg-public-key}`;
+		the daemon reads those files in preference to self-generating.
+		Set once; a re-derive yields the same value, so an existing row's fields are
+		unchanged on save."""
 		if not self.wireguard_public_key:
 			from atlas.atlas.networking import derive_host_wireguard_keypair
 
@@ -200,6 +203,7 @@ class Server(Document):
 			self._run_install_sh(connection)
 			self._authorize_satellite_keys(connection)
 			self._ship_dashboard(connection)
+			self._write_ancp_bootstrap_state(connection)
 
 		task = run_task(
 			server=self.name,
@@ -212,6 +216,80 @@ class Server(Document):
 		self._absorb_bootstrap_output(task.stdout)
 		self.save(ignore_permissions=True)
 		return task.name
+
+	def _write_ancp_bootstrap_state(self, connection) -> None:
+		"""Write `/etc/atlas-networkd/{identity.json,seed.json,wg-private-key,wg-public-key}`
+		BEFORE the bootstrap-server Task starts atlas-networkd.service.
+		The identity carries this host's HostID + endpoint + mesh_address (all derivable
+		from the Server row); the keypair is the host's derived wg keys; the seed is a
+		list of currently-known Active Server rows (other hosts, each with its derived
+		wg public key) — the bootstrap contract of spec/31 §8. The daemon reads these at
+		first boot, finds the provisioned keypair files, and cold-joins every seed.
+		After the first boot these files are stale (the daemon keeps its own state);
+		they're only the initial seed-of-trust."""
+		from atlas.atlas.networking import derive_host_mesh_address
+
+		identity = {
+			"host_id": self.name,
+			"endpoint": self.ipv6_address,
+			"mesh_address": self.mesh_address or derive_host_mesh_address(self.name),
+		}
+		# The seed = every OTHER Active Server (excluding this one). The daemon
+		# will reconcile any drift via gossip+anti-entropy once it cold-joins.
+		other_actives = frappe.get_all(
+			"Server",
+			filters={"status": "Active", "name": ["!=", self.name]},
+			fields=["name", "ipv6_address", "wireguard_public_key", "mesh_address"],
+		)
+		seed = []
+		for row in other_actives:
+			if not row.ipv6_address:
+				continue
+			seed.append({
+				"host_id": row.name,
+				"endpoint": row.ipv6_address,
+				"wg_public_key": row.wireguard_public_key or "",
+				"mesh_address": row.mesh_address or derive_host_mesh_address(row.name),
+				"generation": 1,
+			})
+		from atlas.atlas.networking import derive_host_wireguard_keypair
+
+		wg_private_key, _wg_public_key = derive_host_wireguard_keypair(self.name)
+		with ssh_key_file(connection.ssh_private_key) as key_path:
+			run_ssh(
+				connection,
+				key_path,
+				"sudo install -d -m 0755 {} && sudo install -m 0600 /dev/stdin {}",
+				"/etc/atlas-networkd",
+				"/etc/atlas-networkd/wg-private-key",
+				timeout_seconds=30,
+				stdin=wg_private_key + "\n",
+			)
+			run_ssh(
+				connection,
+				key_path,
+				"sudo install -m 0644 /dev/stdin {}",
+				"/etc/atlas-networkd/wg-public-key",
+				timeout_seconds=30,
+				stdin=_wg_public_key + "\n",
+			)
+		with ssh_key_file(connection.ssh_private_key) as key_path:
+			run_ssh(
+				connection,
+				key_path,
+				"sudo tee {} >/dev/null",
+				"/etc/atlas-networkd/identity.json",
+				timeout_seconds=30,
+				stdin=json.dumps(identity, sort_keys=True) + "\n",
+			)
+			run_ssh(
+				connection,
+				key_path,
+				"sudo tee {} >/dev/null",
+				"/etc/atlas-networkd/seed.json",
+				timeout_seconds=30,
+				stdin=json.dumps(seed, sort_keys=True) + "\n",
+			)
 
 	def _run_install_sh(self, connection) -> None:
 		"""Run scripts/install.sh on the host over SSH, AFTER the upload — it creates
@@ -379,14 +457,19 @@ class Server(Document):
 			if destination.startswith("/var/lib/atlas/bin/")
 		]
 		# The durable atlas package: every lib module lands under
-		# /var/lib/atlas/bin/atlas/ so the .py hooks and atlas-pool.service can
-		# `import atlas`. Computed from disk (test_*.py skipped) so a new module
-		# is shipped with no edit here — mirrors script_uploads.package staging.
+		# /var/lib/atlas/bin/atlas/ so the .py hooks and atlas-networkd can
+		# `import atlas`. `rglob("*.py")` recurses into subdirectories so the
+		# `atlas/networkd/` package ships alongside the flat modules — a flat
+		# `glob("*.py")` missed subdirectory packages entirely. test_*.py files
+		# are skipped (they're test-only, not shipped to hosts). __init__.py
+		# files in subdirs are INCLUDED (they're what makes `atlas.networkd` an
+		# importable package).
 		package_dir = directory / "lib" / "atlas"
-		for entry in sorted(package_dir.glob("*.py")):
+		for entry in sorted(package_dir.rglob("*.py")):
 			if entry.name.startswith("test_"):
 				continue
-			uploads.append((str(entry), f"/var/lib/atlas/bin/atlas/{entry.name}"))
+			rel = entry.relative_to(package_dir)
+			uploads.append((str(entry), f"/var/lib/atlas/bin/atlas/{rel}"))
 		# The durable Task entry scripts: every host SSH Task (provision-vm.py,
 		# start/stop/snapshot-stop, …). `host_task_scripts()` yields VERBS; the FILE
 		# (verb→file_for, e.g. provision-vm.py) is what ships — the file keeps its

@@ -250,15 +250,6 @@ scheduler_events = {
 			"atlas.atlas.migration.reconcile_migrations",
 			"atlas.atlas.export.reconcile_image_exports",
 		],
-		# The WireGuard host-mesh backstop sweep (design §3): re-reconcile the whole
-		# fabric so a rebooted / rebuilt / drifted host self-heals without operator
-		# action. The mesh is the live cross-host forwarding plane, so a missed
-		# lifecycle-event push is a PARTITION, not a stale row — this converging sweep is
-		# the safety net that heals it. Idempotent and cheap when in sync (a byte-compare
-		# per host); a no-op on a Fake/test fleet (no real hosts to SSH). Every 5 minutes.
-		"*/5 * * * *": [
-			"atlas.atlas.host_mesh.reconcile_all_host_meshes",
-		],
 	},
 }
 
