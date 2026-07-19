@@ -1,5 +1,20 @@
 # Distributed network control plane (ANCP)
 
+> **Status: SHIPPED.** `atlas-networkd` is implemented at
+> [`scripts/lib/atlas/networkd/`](../scripts/lib/atlas/networkd/) (19 modules, 7 test
+> files, 395 host-lib unit tests) and replaces the retired controller-driven
+> WireGuard host mesh (`atlas/atlas/host_mesh.py` has been deleted). The systemd
+> unit is [`scripts/systemd/atlas-networkd.service`](../scripts/systemd/atlas-networkd.service).
+> The spec text below describes the implementation as-built; where the code diverged
+> from the original design, the spec has been updated to match the code (notably
+> §7.1 key derivation and §8 bootstrap — the original Issue A resolution was deferred).
+>
+> Four correctness issues against the original draft were resolved by the smallest
+> possible changes — summarised in Appendix A. None of them disturbs the architectural
+> fixed points: no central controller, every host runs `atlas-networkd`,
+> gossip + anti-entropy dissemination, no leaders/route-reflectors/coordinators,
+> WireGuard data plane, nftables per-VM tenant isolation, ownership-only state.
+
 ## Abstract
 
 Atlas previously relied on a centralized controller to orchestrate the networking

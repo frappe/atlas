@@ -69,44 +69,47 @@ for a real tenant) holds the proxy's tap and each host's own mesh address.
   stronger isolation than an in-guest model), MTU 1420, owning `ip -6 route fdaa::/16`.
 - **Keys** are **derived from the Server UUID**
   ([`derive_host_wireguard_keypair`](../atlas/atlas/networking.py), a real Curve25519
-  base-point multiply verified byte-for-byte against `wg pubkey`), never stored: the
-  whole desired mesh reconstructs from the `Server` table, so a re-bootstrap re-derives
-  the same identity with zero peer churn. The public key + the host's own
+  base-point multiply verified byte-for-byte against `wg pubkey`), so a re-bootstrap
+  re-derives the same identity with zero peer churn. The public key + the host's own
   `fdaa:0:0:<idx>::1` mesh address are denormed onto `Server`
   (`wireguard_public_key`, `mesh_address`) for legibility. The private key is injected
-  to the host over the root-SSH layer, into `/etc/atlas-host-mesh.key` (0600), never an argv.
+  to the host over the root-SSH layer at bootstrap, into `/etc/atlas-networkd/wg-private-key`
+  (0600), never an argv.
 - **Peer set** = every *other* Active `Server`. Each peer's `AllowedIPs` is the
   enumerated set of `/128`s of the VMs currently on that host (all tenants) **plus** the
   peer's own infra mesh `/128` (§2.4 of the design — so the host↔host bus can dial it).
   Every `/128` lives on exactly one host, so the sets are non-overlapping and
   longest-prefix match resolves to one peer — no eBPF, no host-encoded address, no
   separate routing table.
-- **Reconcile** — [`reconcile_host_mesh()`](../atlas/atlas/host_mesh.py), controller-
-  over-**host**-SSH (`connection_for_server`, the root layer — the mesh is a host
-  fabric), mirroring the proxy reconcile but **converging, never log-and-skip**: a
-  skipped push is a *partition* of the forwarding fabric, so failures are collected and
-  re-raised, and the job retries. It reads live `wg show wg-mesh dump`, canonicalizes
-  both sides, and pushes a full `wg syncconf` on drift. **Fake-provider Servers are
-  skipped** (no real host to SSH), so the reconcile is a clean no-op on a test fleet.
-- **Host-side bring-up** — `host-mesh.service` (a boot oneshot, gated on
-  `/etc/atlas-host-mesh.env`) re-asserts the device on reboot via
-  [`scripts/lib/atlas/host_mesh.py`](../scripts/lib/atlas/host_mesh.py): create the
-  device, pin MTU, assign the infra address, load the pushed peer config, and **set the
-  derived key LAST** — `wg syncconf` from a key-less config *clears* the interface key,
-  so key-after-syncconf is load-bearing (verified on a real host).
+- **Reconcile (ANCP)** — the controller-driven `reconcile_host_mesh()` has been
+  replaced by the decentralized `atlas-networkd` daemon. Each host runs
+  `atlas-networkd` ([`scripts/lib/atlas/networkd/`](../scripts/lib/atlas/networkd/)),
+  which collaboratively maintains cluster membership and VM ownership via gossip +
+  anti-entropy ([spec/31-ancp-network-control-plane.md](./31-ancp-network-control-plane.md)).
+  The daemon scans a local-ownership cache (`/etc/atlas-networkd/local-ownership.json`)
+  written by `vm-network-up.py`/`vm-network-down.py` and gossips advertisements to
+  peers. The WireGuard peer set converges without any controller involvement.
+- **Host-side bring-up** — `atlas-networkd.service` (a long-running daemon, not a
+  oneshot) manages the `wg-mesh` device: bring-up on start, periodic anti-entropy,
+  and atomic `wg syncconf` on every change. The daemon is started by
+  `bootstrap-server.py` after `_write_ancp_bootstrap_state` has written the keypair,
+  identity, and seed files.
 
-**Triggers** (all enqueued after-commit so a mesh push failure never rolls back the
-lifecycle transaction; the converging reconcile + a `*/5 * * * *` scheduler backstop
-sweep bring the fabric to match):
+**Triggers** — because ANCP is event-driven via local ownership scanning, there are
+no controller-enqueued mesh pushes. Mesh state converges automatically:
 
-1. a host reaching `Active` (end of `finish_provisioning`) — reconciles the whole mesh;
-2. a VM provision / terminate — the VM's `/128` joins / leaves its host's `AllowedIPs`;
-3. a **migration cutover** — the one path that must be **sequenced, not converging**:
-   WireGuard requires non-overlapping `AllowedIPs`, so the VM's `/128` is
-   removed-from-source **then** added-to-target under the migration lock
-   ([`sequenced_migration_cutover`](../atlas/atlas/host_mesh.py)). Runs on **both**
-   keep- and change-address migrations — the private plane moves with the VM regardless
-   of what happens to the public `/128`.
+1. **Local ownership change**: a VM provision/terminate on this host (detected by
+   `vm-network-up.py`/`vm-network-down.py` writing the local-ownership cache) is
+   picked up by the daemon's periodic scan (every 2 s, configurable), which bumps
+   the local ownership generation and gossips the new advertisement to peers.
+2. **New host joins**: the bootstrap seed file gives the newcomer initial peers; it
+   self-advertises, seeds reply with their membership + ownership, and anti-entropy
+   fills the rest within one round.
+3. **Migration cutover**: the soft sequencing of §16.3 in
+   [31-ancp-network-control-plane.md](./31-ancp-network-control-plane.md) — the
+   source's scan drops the /128 before the target's scan picks it up; the brief
+   overlap window is a §7.3 conflict (blackhole), self-healing when the source
+   withdraws.
 
 ## Tenant isolation + anti-spoof (host nftables)
 
@@ -236,9 +239,11 @@ gateway bake and never changes per customer.
 
 For a VM to reach the laptop back, every other host must route the client `/128` to the
 **gateway VM's host**. That is one `AllowedIPs` addition to the gateway host's stanza,
-riding the existing `reconcile_host_mesh()` converging delta-push — identical to how a
-VM's `/128` is advertised. **It must be withdrawn on revoke** (the exact teardown-bug
-class this chapter already flags for `/128`s — reconcile on teardown, not only on enroll).
+riding the existing ANCP ownership advertisement — identical to how a VM's `/128` is
+advertised. The gateway VM's host adds the client /128 to its local-ownership cache via
+`add_local_owned`, and `atlas-networkd` gossips it; on revoke, `remove_local_owned`
+withdraws it. **It must be withdrawn on revoke** (the exact teardown-bug class this
+chapter already flags for `/128`s — withdraw on teardown, not only on enroll).
 This is the *only* change the host mesh sees; the gateway does everything else as a plain
 mesh guest emitting `fdaa::`.
 
@@ -311,10 +316,11 @@ fields forces it (see [The customer gateway](#the-customer-gateway--external-dia
 The derivations + config render are unit-tested (`atlas/tests/test_private_networking.py`);
 the controller/Task wiring is unit-tested (`atlas/tests/test_private_networking_wiring.py`);
 the host-side nft rules + bring-up commands are unit-tested
-(`scripts/lib/atlas/test_private_network.py`, `test_host_mesh.py`). The host facts only two
-real cross-edge hosts can prove — the mesh coming up over UDP/51820 across the provider
-edge, host↔host reachability over the tunnel, same-tenant cross-host guest reachability,
-and the cross-tenant isolation drop — live in the **two-droplet**
+(`scripts/lib/atlas/test_private_network.py`). The ANCP daemon itself has
+395 host-lib unit tests (`scripts/lib/atlas/test_networkd.py` and siblings). The host
+facts only two real cross-edge hosts can prove — the mesh coming up over UDP/51820
+across the provider edge, host↔host reachability over the tunnel, same-tenant cross-host
+guest reachability, and the cross-tenant isolation drop — live in the **two-droplet**
 [`host_mesh`](../atlas/tests/e2e/use_cases/host_mesh.py) e2e use case, invoked directly
 (like migration):
 
