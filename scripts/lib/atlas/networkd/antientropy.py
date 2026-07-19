@@ -226,7 +226,7 @@ def anti_entropy_round(
 	# Without this, a cluster larger than ~17 hosts silently loses the anti-
 	# entropy backstop — every request overflows 1280 bytes and crashes the loop.
 	vector = build_vector(daemon.state)
-	for attempt in range(2):
+	for _attempt in range(2):
 		msg = Message(
 			type=TYPE_ANTI_ENTROPY_REQ,
 			sender=daemon.identity.host_id,

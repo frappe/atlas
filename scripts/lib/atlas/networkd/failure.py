@@ -143,30 +143,28 @@ class FailureTracker:
 		     missing ladder step — §14.3).
 		  2. Reap any `dead` peer whose `dead_grace` has elapsed from `dead_at`.
 
-		Returns the list of host_ids that were reaped this round. Removes both
-		the `peers` entry AND the membership/ownership records for the host
-		from the applied-state.
-
-		`ownership_grace` is enforced in `applied_state.gc_dead_origin` (it's
-		a separate window from `dead_grace` because the routes a dead host
-		advertised must outlast the ladder's dead phase — see §14.3 /
-		§14.6). This method only consults `dead_at + dead_grace` for the
-		membership reaping; the reaper for ownership lives in
-		`state.py:gc_dead_origin` (added in this Stage 4 — small helper on
-		`AppliedState`)."""
+		Returns the list of host_ids whose MEMBERSHIP was reaped this round
+		(the loop uses this to schedule a wg-mesh re-render). Ownership
+		records are NOT reaped here — they outlast membership by
+		`ownership_grace` (§14.3), so we keep the `dead_at` entry until the
+		loop's ownership-reap step (`gc_origin_if_dead`) clears it past
+		`ownership_grace`. Without this, a reaped host's ownership records
+		leak forever — the loop's step 2 iterates `dead_at` and can't find
+		the timestamp once we popped it."""
 		now = self.now_fn()
 		# 1) Promote suspect → dead (§14.3).
 		for host_id in list(self.peers.keys()):
 			peer = self.peers[host_id]
 			if peer.state == FailureState.SUSPECT and now - peer.since >= suspect_timeout:
 				self.mark_dead(host_id)
-		# 2) Reap dead past dead_grace.
+		# 2) Reap membership past `dead_grace`. Keep `dead_at` + the `peers`
+		# ladder entry alive until `ownership_grace` elapses — the loop's
+		# ownership-reap step (`gc_origin_if_dead`) needs the timestamp and
+		# pops `dead_at` itself once it has reaped the ownership records.
 		reaped: list[HostID] = []
 		for host_id in list(self.dead_at.keys()):
 			if now - self.dead_at[host_id] < dead_grace:
 				continue
-			self.peers.pop(host_id, None)
-			self.dead_at.pop(host_id, None)
 			state.membership.pop(host_id, None)
 			reaped.append(host_id)
 		return reaped

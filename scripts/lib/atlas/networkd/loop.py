@@ -177,30 +177,42 @@ class Loop:
 		tracker = getattr(self.daemon, "failure_tracker", None)
 		if tracker is None:
 			return
-		# 1) Reap membership records past `dead_grace`; clears the ladder
-		# entry too so a returning host re-joins cleanly.
+		# 1) Reap membership records past `dead_grace`. `tracker.gc` keeps the
+		# `dead_at` entry alive so step 2 can reap ownership past
+		# `ownership_grace` (§14.3 — routes outlast the membership reaped
+		# window). Without keeping `dead_at`, the ownership records leak
+		# forever once the host is popped.
 		reaped = tracker.gc(
 			self.daemon.config.suspect_timeout,
 			self.daemon.config.dead_grace,
 			self.daemon.config.ownership_grace,
 			self.daemon.state,
 		)
-		# 2) For each dead host still in `dead_at`, also reap its ownership
-		# advertisement past `ownership_grace` (the routes the dead host
-		# advertised outlast its membership reaping so a late refuter doesn't
-		# lose routes mid-refute).
+		# 2) For each dead host still in `dead_at`, reap ownership past
+		# `ownership_grace` AND clear the `dead_at` + ladder entry once the
+		# ownership is reaped (the host is fully gone then).
 		for host_id in list(tracker.dead_at.keys()):
 			dead_at = tracker.dead_at[host_id]
-			if self.daemon.state.gc_origin_if_dead(
-				host_id, dead_at=dead_at, ownership_grace=self.daemon.config.ownership_grace, now=now
-			):
-				# An ownership advertisement reaped — schedule a debounced wg
-				# apply so the effective table's wg-mesh config drops the
-				# /128s the dead host had been routing.
-				self.apply.schedule(now, self.daemon.config.apply_debounce)
+			ownership_reaped = self.daemon.state.gc_origin_if_dead(
+				host_id,
+				dead_at=dead_at,
+				ownership_grace=self.daemon.config.ownership_grace,
+				now=now,
+			)
+			# Once BOTH the membership (reaped in step 1) AND the ownership
+			# (reaped here, or no ownership record existed) are gone, clear
+			# the `dead_at` entry + the ladder slot so the host is fully GC'd.
+			if ownership_reaped or host_id in reaped:
+				if ownership_reaped:
+					self.apply.schedule(now, self.daemon.config.apply_debounce)
+				# Pop `dead_at` only once `ownership_grace` has elapsed so a
+				# late refuter (§14.3) doesn't lose its routes mid-window.
+				if now - dead_at >= self.daemon.config.ownership_grace:
+					tracker.dead_at.pop(host_id, None)
+					tracker.peers.pop(host_id, None)
 		if reaped:
-			# A membership was reaped too — schedule the apply for the same
-			# reason (the peer disappears from WgDesired's peer set).
+			# A membership was reaped — schedule the apply so the peer
+			# disappears from WgDesired's peer set.
 			self.apply.schedule(now, self.daemon.config.apply_debounce)
 
 	def _drain_incoming(self) -> None:

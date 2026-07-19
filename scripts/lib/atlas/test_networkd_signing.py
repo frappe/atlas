@@ -351,7 +351,7 @@ class TestDefaultVerifier(unittest.TestCase):
 		# real signing key — the verifier must check against the STORED key,
 		# so the attacker's self-signed record is rejected. Verifier should
 		# reject even though the incoming record's self-signature is valid.
-		real_priv, real_pub = generate_keypair_raw()
+		_real_priv, real_pub = generate_keypair_raw()
 		real_pub_b64 = base64.b64encode(real_pub).decode()
 		att_priv, att_pub = generate_keypair_raw()
 		att_pub_b64 = base64.b64encode(att_pub).decode()
