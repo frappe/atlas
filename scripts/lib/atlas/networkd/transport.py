@@ -84,9 +84,11 @@ class UdpTransport:
 		count = 0
 		while True:
 			try:
-				data, addr = self.socket.recvfrom(MAX_DATAGRAM_BYTES)
+				data, addr = self.socket.recvfrom(MAX_DATAGRAM_BYTES + 1)
 			except BlockingIOError:
 				break
+			if len(data) > MAX_DATAGRAM_BYTES:
+				continue  # oversized datagram — silently truncated by the kernel
 			count += 1
 			try:
 				msg = from_bytes(data)
