@@ -180,6 +180,7 @@ class Loop:
 		# 1) Reap membership records past `dead_grace`; clears the ladder
 		# entry too so a returning host re-joins cleanly.
 		reaped = tracker.gc(
+			self.daemon.config.suspect_timeout,
 			self.daemon.config.dead_grace,
 			self.daemon.config.ownership_grace,
 			self.daemon.state,

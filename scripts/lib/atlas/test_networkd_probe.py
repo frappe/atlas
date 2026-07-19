@@ -192,12 +192,12 @@ class TestGarbageCollection(unittest.TestCase):
 		state.apply_membership(member("h2", 1))
 		t.mark_dead("h2")
 		# Before `dead_grace` → no reap.
-		reaped = t.gc(dead_grace=10.0, ownership_grace=20.0, state=state)
+		reaped = t.gc(suspect_timeout=999.0, dead_grace=10.0, ownership_grace=20.0, state=state)
 		self.assertEqual(reaped, [])
 		self.assertIn("h2", state.membership)
 		# Advance past `dead_grace` → reap.
 		clock[0] = 11.0
-		reaped = t.gc(dead_grace=10.0, ownership_grace=20.0, state=state)
+		reaped = t.gc(suspect_timeout=999.0, dead_grace=10.0, ownership_grace=20.0, state=state)
 		self.assertEqual(reaped, ["h2"])
 		self.assertNotIn("h2", state.membership)
 		self.assertNotIn("h2", t.peers)  # ladder state is also dropped
@@ -213,7 +213,7 @@ class TestGarbageCollection(unittest.TestCase):
 		t.mark_dead("h2")
 		# At dead_grace=10 — membership reaped but ownership stays.
 		clock[0] = 11.0
-		t.gc(dead_grace=10.0, ownership_grace=20.0, state=state)
+		t.gc(suspect_timeout=999.0, dead_grace=10.0, ownership_grace=20.0, state=state)
 		self.assertNotIn("h2", state.membership)
 		self.assertIn("h2", state.ownership)  # routes preserved
 		# Advance past `ownership_grace` → ownership reaped via the loop's
@@ -222,6 +222,30 @@ class TestGarbageCollection(unittest.TestCase):
 		reaped = state.gc_origin_if_dead("h2", dead_at=0.0, ownership_grace=20.0, now=clock[0])
 		self.assertTrue(reaped)
 		self.assertNotIn("h2", state.ownership)
+
+	def test_suspect_promoted_to_dead_after_suspect_timeout(self):
+		# A suspect peer whose `suspect_timeout` elapsed is promoted to dead
+		# by gc, then reaped after `dead_grace` (§14.3 ladder).
+		clock = [0.0]
+		t = FailureTracker(now_fn=lambda: clock[0])
+		state = AppliedState()
+		state.apply_membership(member("h2", 1))
+		t.mark_suspect("h2")
+		# Before suspect_timeout → still suspect, not dead.
+		clock[0] = 4.0
+		t.gc(suspect_timeout=5.0, dead_grace=10.0, ownership_grace=20.0, state=state)
+		self.assertEqual(t.state_of("h2"), FailureState.SUSPECT)
+		self.assertNotIn("h2", t.dead_at)
+		# Advance past suspect_timeout → promoted to dead.
+		clock[0] = 6.0
+		t.gc(suspect_timeout=5.0, dead_grace=10.0, ownership_grace=20.0, state=state)
+		self.assertEqual(t.state_of("h2"), FailureState.DEAD)
+		self.assertIn("h2", t.dead_at)
+		# Advance past dead_grace → reaped.
+		clock[0] = 17.0
+		reaped = t.gc(suspect_timeout=5.0, dead_grace=10.0, ownership_grace=20.0, state=state)
+		self.assertIn("h2", reaped)
+		self.assertNotIn("h2", state.membership)
 
 	def test_ownership_grace_strictly_longer_than_dead_grace(self):
 		# The spec §14.3 invariant: ownership_grace > dead_grace so a host that
