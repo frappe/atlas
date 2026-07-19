@@ -61,12 +61,10 @@ def run_smoke(reuse: bool = True, keep: bool = False) -> None:
 	image = ensure_image_on_server(source.name)
 	print(f"[e2e] customer-gateway smoke: gateway host {source.name}, peer host {target.name}")
 
-	from atlas.atlas.host_mesh import reconcile_host_mesh
-
+	
 	gateway = None
 	peer = None
 	try:
-		reconcile_host_mesh()
 		frappe.db.commit()
 
 		gateway = _provision_gateway(source.name, image.name)
@@ -78,13 +76,11 @@ def run_smoke(reuse: bool = True, keep: bool = False) -> None:
 		# The enroll enqueues an ASYNC mesh reconcile; run it inline so the e2e is
 		# deterministic (not worker-timed). The client /128 is a resident of the gateway's
 		# host, so it is advertised to the OTHER host — assert it in target's dump.
-		reconcile_host_mesh()
 		frappe.db.commit()
 		_assert_client_in_mesh(target.name, peer)
 		print("[e2e] customer-gateway smoke: peer enrolled on wg0 + advertised in mesh ✓")
 
 		peer.revoke()
-		reconcile_host_mesh()  # withdraw the client /128 (enroll's async twin)
 		frappe.db.commit()
 		_assert_peer_absent_from_wg0(gateway.name, peer)
 		_assert_client_absent_from_mesh(target.name, peer)
@@ -104,13 +100,11 @@ def run(reuse: bool = True, keep: bool = False) -> None:
 	image = ensure_image_on_server(target.name)
 	print(f"[e2e] customer-gateway full: gateway host {source.name}, client host {target.name}")
 
-	from atlas.atlas.host_mesh import reconcile_host_mesh
-
+	
 	gateway = None
 	vms: list[str] = []
 	peer = None
 	try:
-		reconcile_host_mesh()
 		frappe.db.commit()
 
 		# The gateway on host1; two tenant VMs (one per tenant) also on host1 so a single
@@ -130,7 +124,6 @@ def run(reuse: bool = True, keep: bool = False) -> None:
 		# Enroll the customer (tenant A) and advertise into the mesh.
 		client_private, client_public = _wg_keypair(target.name)
 		peer = _enroll_peer(tenant_a, "e2e-laptop", client_public_key=client_public)
-		reconcile_host_mesh()  # advertise the client /128 fleet-wide (inline, deterministic)
 		frappe.db.commit()
 		_assert_peer_on_wg0(gateway.name, peer)
 

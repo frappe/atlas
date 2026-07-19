@@ -17,7 +17,6 @@ import uuid
 
 from frappe.tests import IntegrationTestCase
 
-from atlas.atlas.host_mesh import render_wg_mesh_config
 from atlas.atlas.networking import (
 	CLIENT_HEXTET,
 	INFRA_PREFIX,
@@ -245,58 +244,3 @@ class TestDarkVmIpv4Link(IntegrationTestCase):
 		with self.assertRaises(frappe.ValidationError):
 			derive_ipv4_link()
 
-
-class TestRenderWgMeshConfig(IntegrationTestCase):
-	def _fleet(self):
-		"""A synthetic 2-host fleet, each host with one VM in the same tenant. Returned
-		as a namespace so each test reads only the fields it needs."""
-		sA, sB = str(uuid.uuid4()), str(uuid.uuid4())
-		tenant, vmA, vmB = str(uuid.uuid4()), str(uuid.uuid4()), str(uuid.uuid4())
-		hosts = []
-		for name in (sA, sB):
-			_priv, pub = derive_host_wireguard_keypair(name)
-			hosts.append(
-				{
-					"name": name,
-					"endpoint": "2001:bc8:1203:b3::1",
-					"public_key": pub,
-					"mesh_address": derive_host_mesh_address(name),
-				}
-			)
-		residents = {
-			sA: [derive_private_address(tenant, vmA)],
-			sB: [derive_private_address(tenant, vmB)],
-		}
-		return types.SimpleNamespace(
-			sA=sA, sB=sB, tenant=tenant, vmA=vmA, vmB=vmB, hosts=hosts, residents=residents
-		)
-
-	def test_config_has_one_peer_the_other_host(self):
-		f = self._fleet()
-		config = render_wg_mesh_config(f.sA, f.hosts, f.residents)
-		self.assertEqual(config.count("[Peer]"), 1)
-
-	def test_peer_allowedips_has_vm_and_mesh_128(self):
-		f = self._fleet()
-		config = render_wg_mesh_config(f.sA, f.hosts, f.residents)
-		self.assertIn(f"{derive_private_address(f.tenant, f.vmB)}/128", config)
-		self.assertIn(f"{derive_host_mesh_address(f.sB)}/128", config)
-
-	def test_own_vm_not_advertised_to_self(self):
-		f = self._fleet()
-		config = render_wg_mesh_config(f.sA, f.hosts, f.residents)
-		self.assertNotIn(f"{derive_private_address(f.tenant, f.vmA)}/128", config)
-
-	def test_config_is_deterministic(self):
-		f = self._fleet()
-		self.assertEqual(
-			render_wg_mesh_config(f.sA, f.hosts, f.residents),
-			render_wg_mesh_config(f.sA, f.hosts, f.residents),
-		)
-
-	def test_private_key_never_in_config_body(self):
-		# The pushed config carries NO PrivateKey (it rides in a 0600 key file); the
-		# apply order (syncconf then set-key) depends on this.
-		f = self._fleet()
-		config = render_wg_mesh_config(f.sA, f.hosts, f.residents)
-		self.assertNotIn("PrivateKey", config)

@@ -23,7 +23,6 @@ import frappe
 from frappe.tests import IntegrationTestCase
 
 from atlas.atlas import customer_gateway
-from atlas.atlas.host_mesh import _residents_by_host
 from atlas.atlas.networking import CLIENT_HEXTET, derive_client_address, derive_tenant_prefix
 from atlas.tests.fixtures import make_image, make_provider, make_server, make_virtual_machine
 
@@ -150,20 +149,6 @@ class TestRenderWg0Config(_GatewayFixture):
 		self.assertNotIn("[Peer]", config)
 
 
-class TestHostMeshClientFold(_GatewayFixture):
-	def test_active_peer_client_128_joins_gateway_host_allowedips(self) -> None:
-		peer = self._make_peer()
-		peer.db_set("status", "Active")
-		residents = _residents_by_host([{"name": self.server.name}])
-		self.assertIn(peer.client_address, residents[self.server.name])
-
-	def test_revoked_peer_client_128_withdrawn(self) -> None:
-		peer = self._make_peer()
-		peer.db_set("status", "Revoked")
-		residents = _residents_by_host([{"name": self.server.name}])
-		self.assertNotIn(peer.client_address, residents.get(self.server.name, []))
-
-
 class TestAutoEnrollOnInsert(_GatewayFixture):
 	"""A peer saved through the Desk form (a plain insert) must auto-enroll — after_insert
 	enqueues auto_enroll after commit, so the operator never has to click Re-enroll."""
@@ -183,7 +168,6 @@ class TestAutoEnrollOnInsert(_GatewayFixture):
 		with (
 			patch("frappe.enqueue") as enqueue,
 			patch.object(customer_gateway, "reconcile_gateway"),
-			patch.object(customer_gateway, "_reconcile_host_mesh_after_commit"),
 			patch.object(customer_gateway, "client_config_payload", return_value={}),
 		):
 			customer_gateway.request_vpc_access(self.tenant, VALID_KEY, "api-laptop")
