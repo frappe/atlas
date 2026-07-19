@@ -132,7 +132,9 @@ class TestSdnotify(unittest.TestCase):
 		# protocol path (NOT a stub) — the only thing we trust without a real
 		# systemd is the in-process datagram exchange.
 		server = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
-		addr = tempfile.mktemp()
+		fd, addr = tempfile.mkstemp()
+		os.close(fd)
+		os.unlink(addr)
 		server.bind(addr)
 		server.settimeout(1.0)
 		try:
