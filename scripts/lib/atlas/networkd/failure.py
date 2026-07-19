@@ -137,9 +137,7 @@ class FailureTracker:
 		peer.since = self.now_fn()
 		self.dead_at[host_id] = self.now_fn()
 
-	def gc(
-		self, suspect_timeout: float, dead_grace: float, ownership_grace: float, state
-	) -> list[HostID]:
+	def gc(self, suspect_timeout: float, dead_grace: float, ownership_grace: float, state) -> list[HostID]:
 		"""Run one GC tick (called from the loop every probe round):
 		  1. Promote suspect→dead for any peer past `suspect_timeout` (the
 		     missing ladder step — §14.3).
