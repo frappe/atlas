@@ -14,21 +14,25 @@ File shape (atomic tempfile + os.replace from the writers):
     { "owned": ["fdaa:1a2b:3c4d:0:9f3e:1100:abcd:42", ...] }
 
 The reader is pure; the writers (`add_local_owned` / `remove_local_owned`) do a
-read-modify-write under an O_TMPFILE + `os.replace` (ACID-equivalent for
-single-process updates on a tmpfs). The cache file is shared across all VMs
-on the host; the scripts serialize via the file's own mkdir-plus-replace
-discipline (the networkd scan never writes — only the VM-lifecycle scripts
-write — so the lock-free read-modify-write is safe).
+read-modify-write under a POSIX `flock` exclusive lock (`/etc/atlas-networkd/
+local-ownership.lock`). The lock is needed because two concurrent
+`vm-network-up.py` processes (triggered by overlapping VM boots) would both
+read the same baseline set, then each overwrite with only its own addition —
+the second `os.replace` silently clobbers the first VM's /128. The daemon
+scan never writes (only reads), so the lock serializes only the VM-lifecycle
+writers; the daemon reads the final file lock-free after the writer releases.
 """
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import tempfile
 from pathlib import Path
 
 _DEFAULT_CACHE_PATH = "/etc/atlas-networkd/local-ownership.json"
+_LOCK_PATH = "/etc/atlas-networkd/local-ownership.lock"
 
 
 def read_local_ownership(path: str = _DEFAULT_CACHE_PATH) -> frozenset[str]:
@@ -58,12 +62,17 @@ def add_local_owned(ip: str, path: str = _DEFAULT_CACHE_PATH) -> None:
 	"""Atomically add `ip` to the local-ownership cache (spec §11.3). Used by
 	`vm-network-up.py` once the per-VM veth + routes are installed: the address
 	now belongs to this host and the daemon's scan will pick it up on the next
-	tick. Read-modify-write under `os.replace` so a crash mid-write leaves the
-	previous cache intact. No-op if `ip` is already in the cache (idempotent)."""
-	current = read_local_ownership(path)
-	if ip in current:
-		return
-	_atomic_write(path, {**_read_dict(path), "owned": sorted(current | {ip})})
+	tick. Read-modify-write under a POSIX ``flock`` (exclusive) so concurrent
+	vm-network-up.py invocations don't clobber each other. No-op if `ip` is
+	already in the cache (idempotent)."""
+	fd = _lock()
+	try:
+		current = read_local_ownership(path)
+		if ip in current:
+			return
+		_atomic_write(path, {**_read_dict(path), "owned": sorted(current | {ip})})
+	finally:
+		_unlock(fd)
 
 
 def remove_local_owned(ip: str, path: str = _DEFAULT_CACHE_PATH) -> None:
@@ -71,10 +80,14 @@ def remove_local_owned(ip: str, path: str = _DEFAULT_CACHE_PATH) -> None:
 	the per-VM teardown completes: the /128 no longer belongs to this host. No-op
 	if the cache is missing or `ip` isn't in it. The daemon's next scan will see
 	the smaller set and advertise the withdrawal at a fresh Generation (§12.1)."""
-	current = read_local_ownership(path)
-	if ip not in current:
-		return
-	_atomic_write(path, {**_read_dict(path), "owned": sorted(current - {ip})})
+	fd = _lock()
+	try:
+		current = read_local_ownership(path)
+		if ip not in current:
+			return
+		_atomic_write(path, {**_read_dict(path), "owned": sorted(current - {ip})})
+	finally:
+		_unlock(fd)
 
 
 def same_set(a: frozenset[str], b: frozenset[str]) -> bool:
@@ -82,6 +95,29 @@ def same_set(a: frozenset[str], b: frozenset[str]) -> bool:
 	whether a fresh scan warrants a new advertisement (Generation bump) or not.
 	Exposed for the daemon loop; pure so the trigger is unit-testable."""
 	return a == b
+
+
+# --- writers (flock-serialized) --------------------------------------------
+
+# Lock file shared across all VM-lifecycle scripts on the host. Writers acquire
+# an exclusive flock before the read-modify-write so two concurrent
+# vm-network-up.py invocations don't clobber each other's additions.
+
+
+def _lock() -> int:
+	"""Acquire an exclusive flock on ``_LOCK_PATH``. Blocks until held.
+	Returns the fd so the caller can ``_unlock(fd)``."""
+	p = Path(_LOCK_PATH)
+	p.parent.mkdir(parents=True, exist_ok=True)
+	fd = os.open(str(p), os.O_CREAT | os.O_RDWR, 0o644)
+	fcntl.flock(fd, fcntl.LOCK_EX)
+	return fd
+
+
+def _unlock(fd: int) -> None:
+	"""Release the exclusive lock and close the fd."""
+	fcntl.flock(fd, fcntl.LOCK_UN)
+	os.close(fd)
 
 
 # --- helpers (atomic write + defensive read) -------------------------------
