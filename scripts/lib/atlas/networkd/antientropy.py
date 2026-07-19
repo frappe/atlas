@@ -67,18 +67,39 @@ DEFAULT_ANTIENTROPY_RECORDS_MAX = 64
 
 # --- generation vector -------------------------------------------------------
 
+# Conservative max origins in an AntiEntropyReq generation vector, chosen so the
+# serialized JSON always fits within MAX_DATAGRAM_BYTES (1280). A 36-char UUID
+# entry in JSON costs ~43 bytes; with envelope overhead (~80 bytes) and both
+# vector_m + vector_o, 8 origins × 2 dicts × ~43 bytes ≈ 688 bytes — well
+# within budget. The Merkle optimization (§15.3) removes the vector entirely,
+# but until then a >8-host cluster samples a different subset each round and
+# converges over N rounds (§15.2, "protocol is the same either way").
+MAX_VECTOR_ORIGINS = 8
+
 
 def build_vector(state) -> dict:
 	"""The §15.1 compact summary: latest Generation per origin, for both kinds.
 	Computed on demand from the AppliedState; NOT persisted (derived, just like
-	the effective ownership table). Size is O(N) in membership count — ~2 ints
-	per host — trivially small enough to ride a 1280-byte datagram past ~500
-	hosts. The spec's Merkle optimization only matters past 100 hosts because
-	of the bytes BEFORE any records ship, not because of the vector itself.
-	"""
+	the effective ownership table)."""
 	return {
 		"vector_m": {h: m.generation for h, m in state.membership.items()},
 		"vector_o": {o: a.generation for o, a in state.ownership.items()},
+	}
+
+
+def _sampled_vector(state, max_origins: int = MAX_VECTOR_ORIGINS) -> dict:
+	"""Build a generation vector that fits within a single datagram by sampling
+	at most ``max_origins`` random origins. Over multiple rounds against
+	different peers the cluster still converges, just in more rounds (§15.2
+	paragraph 2 — "protocol is the same either way"). Each call picks a fresh
+	random subset so every origin is eventually covered."""
+	all_hosts = list(state.membership.keys())
+	if len(all_hosts) <= max_origins:
+		return build_vector(state)
+	sampled = set(random.sample(all_hosts, max_origins))
+	return {
+		"vector_m": {h: state.membership[h].generation for h in sampled if h in state.membership},
+		"vector_o": {o: state.ownership[o].generation for o in sampled if o in state.ownership},
 	}
 
 
@@ -200,14 +221,28 @@ def anti_entropy_round(
 		return 0
 	peer_id = peers[0]
 	peer = daemon.state.membership[peer_id]
+	# Build the full generation vector, falling back to a sampled subset if it
+	# doesn't fit a single datagram (§15.3 Merkle optimization placeholder).
+	# Without this, a cluster larger than ~17 hosts silently loses the anti-
+	# entropy backstop — every request overflows 1280 bytes and crashes the loop.
 	vector = build_vector(daemon.state)
-	msg = Message(
-		type=TYPE_ANTI_ENTROPY_REQ,
-		sender=daemon.identity.host_id,
-		payload=anti_entropy_req_payload(vector),
-	)
-	transport.send((peer.endpoint, daemon.config.ancp_port), msg.to_bytes())
-	return 1
+	for attempt in range(2):
+		msg = Message(
+			type=TYPE_ANTI_ENTROPY_REQ,
+			sender=daemon.identity.host_id,
+			payload=anti_entropy_req_payload(vector),
+		)
+		try:
+			data = msg.to_bytes()
+		except DatagramTooLarge:
+			vector = _sampled_vector(daemon.state)
+			continue
+		transport.send((peer.endpoint, daemon.config.ancp_port), data)
+		return 1
+	# Even the sampled vector overflows (shouldn't happen at our constants, but
+	# guard against a pathological state). In that case the sender is entirely
+	# unreachable via anti-entropy this round — next round picks a new peer.
+	return 0
 
 
 def handle_anti_entropy_req(msg: Message, daemon, _gossip_state) -> None:
@@ -389,6 +424,7 @@ def _serialize_with_trim(message: Message) -> bytes:
 
 __all__ = [
 	"DEFAULT_ANTIENTROPY_RECORDS_MAX",
+	"MAX_VECTOR_ORIGINS",
 	"anti_entropy_req_payload",
 	"anti_entropy_resp_payload",
 	"anti_entropy_round",
