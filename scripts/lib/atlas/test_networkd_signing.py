@@ -356,16 +356,18 @@ class TestDefaultVerifier(unittest.TestCase):
 		att_priv, att_pub = generate_keypair_raw()
 		att_pub_b64 = base64.b64encode(att_pub).decode()
 		state = AppliedState()
-		state.apply_membership(MembershipRecord(
-			host_id="h1",
-			kind=MembershipKind.MEMBER,
-			state=MemberState.ALIVE,
-			endpoint="2001:db9::h1",
-			wg_public_key="K",
-			mesh_address="fdaa:0:0:h1::1",
-			generation=5,
-			signing_public_key=real_pub_b64,
-		))
+		state.apply_membership(
+			MembershipRecord(
+				host_id="h1",
+				kind=MembershipKind.MEMBER,
+				state=MemberState.ALIVE,
+				endpoint="2001:db9::h1",
+				wg_public_key="K",
+				mesh_address="fdaa:0:0:h1::1",
+				generation=5,
+				signing_public_key=real_pub_b64,
+			)
+		)
 		body = MembershipRecord(
 			host_id="h1",
 			kind=MembershipKind.MEMBER,
@@ -382,6 +384,7 @@ class TestDefaultVerifier(unittest.TestCase):
 		d = _FakeDaemon(state)
 		d.metrics = Counter()
 		from atlas.networkd.wire import wire_signature
+
 		d._incoming_wire_sigs = {id(decoded): wire_signature(tagged)}
 		with self.assertRaises(SignatureError):
 			default_signature_verifier(decoded, d)

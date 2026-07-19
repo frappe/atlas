@@ -59,9 +59,7 @@ class ConflictTracker:
 	# knows which origins were contesting the /128 that just cleared.
 	_prev_origins: dict[IP6, frozenset[HostID]] = field(default_factory=dict)
 
-	def observe(
-		self, table: OwnershipTable, latest_per_origin: dict | None = None
-	) -> list[ConflictEvent]:
+	def observe(self, table: OwnershipTable, latest_per_origin: dict | None = None) -> list[ConflictEvent]:
 		"""Compare the new effective table's conflicts to the previous one,
 		emit START events for new conflicts and END events for cleared ones,
 		persist any subscribers' callbacks. Returns the events emitted this
