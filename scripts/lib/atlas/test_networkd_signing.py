@@ -280,6 +280,36 @@ class TestDefaultVerifier(unittest.TestCase):
 		with self.assertRaises(SignatureError):
 			default_signature_verifier(own, d)
 
+	def test_unsigned_downgrade_rejected_when_stored_has_key(self):
+		# If the stored record already has a non-empty signing_public_key, an
+		# incoming unsigned record (signing_public_key="") at a higher generation
+		# must be rejected — it's a downgrade attempt that would erase the
+		# signing key and let the attacker forge unsigned ownership claims.
+		state = AppliedState()
+		state.apply_membership(MembershipRecord(
+			host_id="h1",
+			kind=MembershipKind.MEMBER,
+			state=MemberState.ALIVE,
+			endpoint="2001:db9::h1",
+			wg_public_key="K",
+			mesh_address="fdaa:0:0:h1::1",
+			generation=5,
+			signing_public_key="EXISTING_PUBKEY",
+		))
+		d = _FakeDaemon(state)
+		incoming = MembershipRecord(
+			host_id="h1",
+			kind=MembershipKind.MEMBER,
+			state=MemberState.ALIVE,
+			endpoint="2001:db9::h1",
+			wg_public_key="K",
+			mesh_address="fdaa:0:0:h1::1",
+			generation=6,  # higher gen — would replace without the guard
+			signing_public_key="",
+		)
+		with self.assertRaises(SignatureError):
+			default_signature_verifier(incoming, d)
+
 	def test_forged_signature_drops_via_apply(self):
 		# A record's `signing_public_key` claims a different origin's pubkey
 		# (a forgery — would let an attacker route records through someone

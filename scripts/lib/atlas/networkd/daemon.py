@@ -257,6 +257,12 @@ def default_signature_verifier(record, daemon) -> None:
 	wire_sig = sigs.get(id(record))
 	if isinstance(record, MembershipRecord):
 		if not record.signing_public_key:
+			existing = daemon.state.membership.get(record.host_id)
+			if existing is not None and existing.signing_public_key:
+				raise SignatureError(
+					f"MembershipRecord from {record.host_id} drops signing_public_key "
+					"(downgrade attempt rejected)"
+				)
 			return  # pre-Stage-5 peer — accept unsigned
 		if not wire_sig:
 			raise SignatureError(
