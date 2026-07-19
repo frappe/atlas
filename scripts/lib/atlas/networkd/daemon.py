@@ -251,8 +251,6 @@ def default_signature_verifier(record, daemon) -> None:
 	from . import wire
 	from .records import MembershipRecord, OwnershipAdvertisement
 
-	from .signing import SignatureError
-
 	sigs = getattr(daemon, "_incoming_wire_sigs", None) or {}
 	wire_sig = sigs.get(id(record))
 	if isinstance(record, MembershipRecord):
