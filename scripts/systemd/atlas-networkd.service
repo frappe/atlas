@@ -1,0 +1,69 @@
+# atlas-networkd — the Atlas Network Control Plane daemon (spec/31).
+#
+# Replaces `host-mesh.service` (the controller-driven private-plane bring-up
+# oneshot) with a long-running decentralized daemon. Every compute host runs
+# exactly one atlas-networkd; together they maintain Membership + Ownership
+# (spec/31 §7) over gossip + anti-entropy and program `wg-mesh` atomically from
+# the effective tables (§16). The predecessor `atlas/atlas/host_mesh.py`
+# controller path retires in Stage 6 of the build — until then both can coexist
+# (host-mesh.service re-asserts the device on boot, atlas-networkd owns the
+# live peer table and the periodic apply).
+#
+# Why `Type=notify` (not the predecessor's `oneshot`): atlas-networkd is
+# long-running; systemd must consider the unit `active` only AFTER the daemon
+# has finished bootstrap and is ready to serve. The daemon pats the watchdog
+# every loop tick (200 ms default), so a stuck daemon is relaunched within
+# `WatchdogSec` — a stronger liveness guarantee than host-mesh.service's
+# oneshot could give.
+#
+# Bootstrap contract is the four files under /etc/atlas-networkd/:
+#   identity.json  — host_id, endpoint, mesh_address (operator-injected)
+#   seed.json      — list of currently-known active hosts (operator-injected)
+#   ancp.toml      — tunable timers (optional; defaults are spec §14.3)
+#   wg-private-key / wg-public-key — generated on first boot by the daemon
+# The unit fails loudly if identity.json or the wg binary is missing; seed.json
+# is optional (a host with no seeds comes up peer-empty and waits, spec §9.2).
+[Unit]
+Description=Atlas network control plane daemon (atlas-networkd)
+Documentation=file:///usr/share/doc/atlas/spec/31-ancp-network-control-plane.md
+After=network-online.target
+Wants=network-online.target
+# Run before any VM unit so a VM coming up sees the mesh already configured
+# (a guest veth's fdaa:: /128 routes through wg-mesh; a not-yet-up mesh = a
+# blackholed guest from boot).
+Before=firecracker-vm@.service
+
+[Service]
+Type=notify
+# systemd auto-creates /run/atlas-networkd (RuntimeDirectory) and
+# /var/lib/atlas-networkd (StateDirectory) BEFORE ExecStart, so the daemon's
+# tmpfs config writer + persistent state path are always writable. Without
+# these directives the 226/NAMESPACE failure fires on every fresh boot
+# (ReadWritePaths alone doesn't create the dirs — it only GATES access).
+RuntimeDirectory=atlas-networkd
+RuntimeDirectoryMode=0755
+StateDirectory=atlas-networkd
+StateDirectoryMode=0755
+# The daemon pats the watchdog each loop tick (~200 ms by default); give systemd
+# a 10 s margin before relaunching so a brief stall (a slow ssh-less local
+# ownership read, a syncconf that took a second) doesn't flap.
+WatchdogSec=10
+Restart=on-failure
+RestartSec=2
+# The Atlas venv Python at /var/lib/atlas/venv/bin/python, the same interpreter
+# atlas-pool.service uses. The `sys.path` shim adds the bin/ dir where the
+# durable atlas package lives. Run as root: the daemon must `ip link add dev
+# wg-mesh` and `wg set private-key` — root-only operations.
+ExecStart=/var/lib/atlas/venv/bin/python -c "import sys; sys.path.insert(0, '/var/lib/atlas/bin'); from atlas.networkd.main import main; sys.exit(main())"
+# Send SIGTERM for a graceful shutdown: the daemon saves state + sd_notify
+# STOPPING (spec §14.4) within the timeout.
+KillSignal=SIGTERM
+TimeoutStopSec=15
+# /etc/atlas-networkd is created by the controller's _write_ancp_bootstrap_state
+# (mkdir -d + write identity.json + seed.json over SSH, before the bootstrap
+# Task runs). RuntimeDirectory + StateDirectory already cover /run + /var/lib;
+# /etc needs the explicit ReadWritePaths entry.
+ReadWritePaths=/etc/atlas-networkd
+
+[Install]
+WantedBy=multi-user.target
