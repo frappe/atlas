@@ -223,33 +223,39 @@ def get_ssh_private_key_path() -> str:
 
 
 def get_tls_config() -> dict:
-	"""Read the Route 53 + ACME inputs the TLS layer needs from the `tls` block.
+	"""Read the DNS + ACME inputs the TLS layer needs from the `tls` block.
 
 	Raises `MissingConfig` naming the first absent key, so a fixture without a
 	`tls` block skips the TLS e2e / bootstrap tail cleanly rather than failing
-	deep inside certbot. Keys (under `tls`):
-
-	    domain                     the wildcard zone, e.g. blr1.frappe.dev
-	                               (its Route 53 hosted zone must exist)
-	    route53_access_key_id      IAM key with route53:* on the zone
-	    route53_secret_access_key  …its secret
-	    acme_account_email         ACME registration / expiry-notice email
-	    region                     optional; the Atlas region the wildcard fronts
-	    route53_region             optional; AWS API region (default us-east-1)
-	    acme_directory_url         optional; defaults to LE staging
+	deep inside certbot. Defaults to Route53 for existing fixtures; set
+	`dns_provider_type = PowerDNS` plus the `powerdns_*` keys to exercise PowerDNS.
 	"""
 	config = E2EConfig.load()
 	tls = config.section("tls")
 	domain = config.require_in("tls", "domain")
-	return {
+	dns_provider_type = tls.get("dns_provider_type") or "Route53"
+	result = {
 		"domain": domain,
 		"region": tls.get("region") or get_region(),
-		"access_key_id": config.require_in("tls", "route53_access_key_id"),
-		"secret_access_key": config.require_in("tls", "route53_secret_access_key"),
+		"dns_provider_type": dns_provider_type,
 		"account_email": config.require_in("tls", "acme_account_email"),
 		"acme_directory_url": tls.get("acme_directory_url") or LETS_ENCRYPT_STAGING,
-		"aws_region": tls.get("route53_region") or "us-east-1",
 	}
+	if dns_provider_type == "PowerDNS":
+		result["powerdns"] = {
+			"api_url": config.require_in("tls", "powerdns_api_url"),
+			"api_key": config.require_in("tls", "powerdns_api_key"),
+			"server_id": tls.get("powerdns_server_id") or "localhost",
+		}
+	else:
+		result.update(
+			{
+				"access_key_id": config.require_in("tls", "route53_access_key_id"),
+				"secret_access_key": config.require_in("tls", "route53_secret_access_key"),
+				"aws_region": tls.get("route53_region") or "us-east-1",
+			}
+		)
+	return result
 
 
 def get_tls_domain() -> str | None:

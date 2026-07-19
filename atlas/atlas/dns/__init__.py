@@ -47,4 +47,5 @@ def for_dns_provider_type(provider_type: str) -> "DnsProvider":
 def _load_implementations() -> None:
 	"""Import vendor modules so their `@register` decorators run. Idempotent —
 	Python caches the import. Separate so tests that stub the registry can skip it."""
+	import atlas.atlas.dns.powerdns
 	import atlas.atlas.dns.route53

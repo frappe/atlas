@@ -26,7 +26,6 @@ from typing import TYPE_CHECKING
 import frappe
 
 from atlas.atlas import scripts_catalog
-from atlas.atlas._ssh.runner import _variables_to_flags
 
 if TYPE_CHECKING:
 	from atlas.atlas.doctype.task.task import Task
@@ -99,17 +98,15 @@ def _run_local_script(
 	timeout_seconds: int,
 ) -> tuple[str, str, int]:
 	import os
-	import shlex
 
 	script_path = scripts_catalog.resolve(script)
-	flags = _variables_to_flags(variables)
 	# `script` is a VERB (`issue-cert`); resolve() maps it to the file. Controller
 	# Tasks invoke `[sys.executable, <file>, …]` by path, not the host's `atlas`
 	# console script — the controller runs from the repo tree and these
 	# controller-only verbs never had a console entry. The script and its
 	# `scripts/lib/atlas` package are already on the controller's disk, so we invoke
 	# them in place.
-	argv = [sys.executable, str(script_path), *shlex.split(flags)]
+	argv = [sys.executable, str(script_path), *_variables_to_argv(variables)]
 	subprocess_env = {**os.environ, **env}
 	result = subprocess.run(
 		argv,
@@ -120,6 +117,27 @@ def _run_local_script(
 		env=subprocess_env,
 	)
 	return result.stdout, result.stderr, result.returncode
+
+
+def _variables_to_argv(variables: dict) -> list[str]:
+	"""Render Task variables as a real argv vector.
+
+	Unlike the SSH path, local tasks call subprocess directly, so list values must
+	not go through a shell string and shlex.split(). Repeated flags whose values
+	look like options (for example --certbot-arg=--authenticator) need the
+	--flag=value form or argparse treats the value as a new option.
+	"""
+	argv: list[str] = []
+	for key, value in variables.items():
+		flag = "--" + key.lower().replace("_", "-")
+		if isinstance(value, (list, tuple)):
+			for item in value:
+				argv.append(f"{flag}={item}")
+		elif value is None or value == "":
+			continue
+		else:
+			argv.extend([flag, str(value)])
+	return argv
 
 
 def _finalize(

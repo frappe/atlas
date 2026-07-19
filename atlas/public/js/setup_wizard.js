@@ -270,30 +270,59 @@ function atlas_setup_slides() {
 					fieldtype: "Data",
 					depends_on: "eval:doc.setup_tls",
 					mandatory_depends_on: "eval:doc.setup_tls",
-					description: __(
-						"e.g. blr1.frappe.dev (its Route 53 hosted zone must already exist)."
-					),
+					description: __("e.g. blr1.frappe.dev (the DNS zone must already exist)."),
+				},
+				{
+					fieldname: "dns_provider_type",
+					label: __("DNS Provider"),
+					fieldtype: "Select",
+					options: ["Route53", "PowerDNS"].join("\n"),
+					default: "Route53",
+					depends_on: "eval:doc.setup_tls",
+					mandatory_depends_on: "eval:doc.setup_tls",
 				},
 				{
 					fieldname: "route53_access_key_id",
 					label: __("Route 53 Access Key ID"),
 					fieldtype: "Data",
-					depends_on: "eval:doc.setup_tls",
-					mandatory_depends_on: "eval:doc.setup_tls",
+					depends_on: "eval:doc.setup_tls && doc.dns_provider_type=='Route53'",
+					mandatory_depends_on: "eval:doc.setup_tls && doc.dns_provider_type=='Route53'",
 				},
 				{
 					fieldname: "route53_secret_access_key",
 					label: __("Route 53 Secret Access Key"),
 					fieldtype: "Password",
-					depends_on: "eval:doc.setup_tls",
-					mandatory_depends_on: "eval:doc.setup_tls",
+					depends_on: "eval:doc.setup_tls && doc.dns_provider_type=='Route53'",
+					mandatory_depends_on: "eval:doc.setup_tls && doc.dns_provider_type=='Route53'",
 				},
 				{
 					fieldname: "route53_region",
 					label: __("AWS API Region"),
 					fieldtype: "Data",
 					default: "us-east-1",
-					depends_on: "eval:doc.setup_tls",
+					depends_on: "eval:doc.setup_tls && doc.dns_provider_type=='Route53'",
+				},
+				{
+					fieldname: "powerdns_api_url",
+					label: __("PowerDNS API URL"),
+					fieldtype: "Data",
+					depends_on: "eval:doc.setup_tls && doc.dns_provider_type=='PowerDNS'",
+					mandatory_depends_on: "eval:doc.setup_tls && doc.dns_provider_type=='PowerDNS'",
+					description: __("Base URL without /api/v1."),
+				},
+				{
+					fieldname: "powerdns_api_key",
+					label: __("PowerDNS API Key"),
+					fieldtype: "Password",
+					depends_on: "eval:doc.setup_tls && doc.dns_provider_type=='PowerDNS'",
+					mandatory_depends_on: "eval:doc.setup_tls && doc.dns_provider_type=='PowerDNS'",
+				},
+				{
+					fieldname: "powerdns_server_id",
+					label: __("PowerDNS Server ID"),
+					fieldtype: "Data",
+					default: "localhost",
+					depends_on: "eval:doc.setup_tls && doc.dns_provider_type=='PowerDNS'",
 				},
 				{
 					fieldname: "acme_account_email",
@@ -336,7 +365,7 @@ function atlas_provider_slide_onload(slide) {
 	// the first/declared option visually but leaves the doc value empty, so a field a
 	// user never touches would post blank and fail its `mandatory_depends_on` — make
 	// "what you see selected" == "what gets posted".
-	["provider_type", "do_region"].forEach((fieldname) => {
+	["provider_type", "do_region", "dns_provider_type", "powerdns_server_id"].forEach((fieldname) => {
 		const field = slide.get_field(fieldname);
 		if (field?.df.default && !slide.get_value(fieldname)) field.set_input(field.df.default);
 	});

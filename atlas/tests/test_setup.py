@@ -96,6 +96,18 @@ _TLS_BLOCK = {
 	"account_email": "ops@example.com",
 	"acme_directory_url": "https://acme-staging-v02.api.letsencrypt.org/directory",
 }
+_POWERDNS_TLS_BLOCK = {
+	"domain": "blr1.frappe.dev",
+	"region": "blr1",
+	"dns_provider_type": "PowerDNS",
+	"powerdns": {
+		"api_url": "https://pdns.example.test",
+		"api_key": "powerdns-secret",
+		"server_id": "primary",
+	},
+	"account_email": "ops@example.com",
+	"acme_directory_url": "https://acme-staging-v02.api.letsencrypt.org/directory",
+}
 
 
 class _FakeDO:
@@ -211,6 +223,17 @@ class TestSetupContract(IntegrationTestCase):
 			frappe.db.get_single_value("Lets Encrypt Settings", "account_email"), "ops@example.com"
 		)
 		self.assertEqual(frappe.db.get_single_value("Atlas Settings", "dns_provider_type"), "Route53")
+		self.assertEqual(frappe.db.get_single_value("Atlas Settings", "tls_provider_type"), "Let's Encrypt")
+		self.assertTrue(frappe.db.exists("Root Domain", "blr1.frappe.dev"))
+
+	def test_tls_block_seeds_powerdns_le_and_root_domain(self) -> None:
+		setup.run(_do_config(tls=_POWERDNS_TLS_BLOCK))
+		self.assertEqual(frappe.db.get_single_value("PowerDNS Settings", "api_url"), "https://pdns.example.test")
+		self.assertEqual(frappe.db.get_single_value("PowerDNS Settings", "server_id"), "primary")
+		self.assertEqual(
+			get_secret("PowerDNS Settings", "PowerDNS Settings", "api_key"), "powerdns-secret"
+		)
+		self.assertEqual(frappe.db.get_single_value("Atlas Settings", "dns_provider_type"), "PowerDNS")
 		self.assertEqual(frappe.db.get_single_value("Atlas Settings", "tls_provider_type"), "Let's Encrypt")
 		self.assertTrue(frappe.db.exists("Root Domain", "blr1.frappe.dev"))
 
@@ -607,6 +630,8 @@ _TOUCHED_SINGLES = (
 	("Scaleway Settings", "billing"),
 	("Route53 Settings", "access_key_id"),
 	("Route53 Settings", "region"),
+	("PowerDNS Settings", "api_url"),
+	("PowerDNS Settings", "server_id"),
 	("Lets Encrypt Settings", "account_email"),
 	("Lets Encrypt Settings", "acme_directory_url"),
 )
