@@ -339,7 +339,10 @@ def _handle_membership_advert(msg: Message, daemon, gossip_state: GossipState) -
 		# Send back to the newcomer's public endpoint on the same ANCP port.
 		# ANCP rides plain UDP (not over wg-mesh), so the newcomer receives
 		# this on its own ANCP socket bound to its public endpoint.
-		daemon.unicast_send(newcomer_record.endpoint, advert_reply.to_bytes())
+		daemon.unicast_send(
+			newcomer_record.endpoint,
+			_serialize_with_trim(advert_reply),
+		)
 
 
 __all__ = [
