@@ -227,6 +227,17 @@ def handle_anti_entropy_req(msg: Message, daemon, _gossip_state) -> None:
 		return
 	records, newer = _missing_for_requester(daemon.state, vector)
 	payload = anti_entropy_resp_payload(records, newer)
+	# Stage 5 — sign our own records before send, exactly as gossip_round and
+	# _reverse_push do. Without this, the receiver's §19.3 verifier drops every
+	# record carrying a signing_public_key but no wire signature, making
+	# anti-entropy a no-op in any cluster with signing enabled (§15.5).
+	# sign_records_if_owned mutates the tagged dicts in place, which is fine —
+	# they are the same objects referenced by payload["records"].
+	wire.sign_records_if_owned(
+		payload.setdefault("records", []),
+		daemon.own_signing_priv_b64,
+		daemon.identity.host_id,
+	)
 	resp = Message(
 		type=TYPE_ANTI_ENTROPY_RESP,
 		sender=daemon.identity.host_id,
