@@ -68,10 +68,12 @@ class ProbeProtocol:
 	# nonce -> (target_host_id, deadline). Acks are matched by nonce; the
 	# deadline is when, if no ack has arrived, we mark suspect and stop waiting.
 	in_flight: dict[int, tuple[str, float]] = field(default_factory=dict)
-	# nonce -> set of requester host_ids that asked us to relay a ping (we
-	# forward the eventual ack to each). Bounded by `indirect_relays ×
-	# concurrent_indirect_pings`.
-	_pending_relays: dict[int, set[str]] = field(default_factory=dict)
+	# nonce -> (received_at, set of requester host_ids) that asked us to relay
+	# a ping (we forward the eventual ack to each). `received_at` is
+	# `self.now_fn()` at the time of `handle_indirect_ping`, used by the
+	# `check_timeouts` TTL sweep to drop stale entries whose ack never came
+	# (§14.6 — otherwise the map grows without bound on dead targets).
+	_pending_relays: dict[int, tuple[float, set[str]]] = field(default_factory=dict)
 	# nonces we've already extended once (sent K indirect pings, re-armed to
 	# `indirect_timeout`). The next miss for one of these → `mark_suspect`.
 	_extended_nonces: set[int] = field(default_factory=set)
@@ -127,6 +129,13 @@ class ProbeProtocol:
 		loop's bookkeeping + a Stage 5 operator event).
 		"""
 		now = self.now_fn()
+		# Stale-relay TTL sweep (§14.6): drop `_pending_relays` entries whose
+		# ack never arrived past `indirect_timeout` — otherwise they accumulate
+		# for dead targets (or a flooding peer), unbounded.
+		for nonce in list(self._pending_relays.keys()):
+			received_at, _ = self._pending_relays[nonce]
+			if now - received_at > self.config.indirect_timeout:
+				self._pending_relays.pop(nonce, None)
 		marked_suspect: list[str] = []
 		for nonce in list(self.in_flight.keys()):
 			target_id, deadline = self.in_flight[nonce]
@@ -192,7 +201,10 @@ class ProbeProtocol:
 		# requester's `handle_ack` will match the nonce against ITS own
 		# `in_flight` (the nonce was the requester's original — we preserved it
 		# in the indirect_ping → ping → ack round trip).
-		requesters = self._pending_relays.pop(nonce, set())
+		entry = self._pending_relays.pop(nonce, None)
+		if entry is None:
+			return
+		_, requesters = entry
 		for requester_id in requesters:
 			requester_record = daemon.state.membership.get(requester_id)
 			if requester_record is None:
@@ -224,7 +236,8 @@ class ProbeProtocol:
 		# know where to forward it. We stash these in a parallel dict so the
 		# direct-ping's in_flight state (keyed on our own nonces, not this) is
 		# untouched.
-		self._pending_relays.setdefault(nonce, set()).add(requester_id)
+		entry = self._pending_relays.setdefault(nonce, (self.now_fn(), set()))
+		entry[1].add(requester_id)
 		# Send the ping to the target with the REQUESTER's nonce, so the
 		# target's ack carries the same nonce and we can match.
 		ping = Message(
