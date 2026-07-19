@@ -254,8 +254,8 @@ def default_signature_verifier(record, daemon) -> None:
 	sigs = getattr(daemon, "_incoming_wire_sigs", None) or {}
 	wire_sig = sigs.get(id(record))
 	if isinstance(record, MembershipRecord):
+		existing = daemon.state.membership.get(record.host_id)
 		if not record.signing_public_key:
-			existing = daemon.state.membership.get(record.host_id)
 			if existing is not None and existing.signing_public_key:
 				raise SignatureError(
 					f"MembershipRecord from {record.host_id} drops signing_public_key "
@@ -268,7 +268,15 @@ def default_signature_verifier(record, daemon) -> None:
 			)
 		d = wire.membership_to_dict(record)
 		d["signature"] = wire_sig
-		verify(d, record.signing_public_key, kind="membership")
+		# Verify against the EXISTING stored signing key when available (§19.3
+		# key-rotation binding). Without this, any relay can hijack an origin's
+		# signing key by publishing a MembershipRecord with a fresh keypair —
+		# the verifier would accept it against the record's own key, not the
+		# origin's established key.
+		if existing is not None and existing.signing_public_key:
+			verify(d, existing.signing_public_key, kind="membership")
+		else:
+			verify(d, record.signing_public_key, kind="membership")
 		return
 	if isinstance(record, OwnershipAdvertisement):
 		origin_membership = daemon.state.membership.get(record.origin)

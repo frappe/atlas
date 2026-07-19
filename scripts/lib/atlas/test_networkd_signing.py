@@ -345,6 +345,47 @@ class TestDefaultVerifier(unittest.TestCase):
 		with self.assertRaises(SignatureError):
 			default_signature_verifier(decoded, d)
 
+	def test_key_hijack_rejected_when_stored_key_differs(self):
+		# Attacker creates its own keypair, publishes a MembershipRecord for
+		# h1 with the attacker's key, self-signed. The stored record has h1's
+		# real signing key — the verifier must check against the STORED key,
+		# so the attacker's self-signed record is rejected. Verifier should
+		# reject even though the incoming record's self-signature is valid.
+		real_priv, real_pub = generate_keypair_raw()
+		real_pub_b64 = base64.b64encode(real_pub).decode()
+		att_priv, att_pub = generate_keypair_raw()
+		att_pub_b64 = base64.b64encode(att_pub).decode()
+		state = AppliedState()
+		state.apply_membership(MembershipRecord(
+			host_id="h1",
+			kind=MembershipKind.MEMBER,
+			state=MemberState.ALIVE,
+			endpoint="2001:db9::h1",
+			wg_public_key="K",
+			mesh_address="fdaa:0:0:h1::1",
+			generation=5,
+			signing_public_key=real_pub_b64,
+		))
+		body = MembershipRecord(
+			host_id="h1",
+			kind=MembershipKind.MEMBER,
+			state=MemberState.ALIVE,
+			endpoint="2001:db9::h1",
+			wg_public_key="K",
+			mesh_address="fdaa:0:0:h1::1",
+			generation=6,
+			signing_public_key=att_pub_b64,
+		)
+		att_priv_b64 = base64.b64encode(att_priv).decode()
+		tagged = sign_records_if_owned(gossip_payload([body]), att_priv_b64, own_host_id="h1")[0]
+		decoded = decode_record(tagged)
+		d = _FakeDaemon(state)
+		d.metrics = Counter()
+		from atlas.networkd.wire import wire_signature
+		d._incoming_wire_sigs = {id(decoded): wire_signature(tagged)}
+		with self.assertRaises(SignatureError):
+			default_signature_verifier(decoded, d)
+
 
 # --- conflict event hook (§7.3 / §18.2) ----------------------------------
 
