@@ -59,16 +59,26 @@ class ConflictTracker:
 	# knows which origins were contesting the /128 that just cleared.
 	_prev_origins: dict[IP6, frozenset[HostID]] = field(default_factory=dict)
 
-	def observe(self, table: OwnershipTable) -> list[ConflictEvent]:
+	def observe(
+		self, table: OwnershipTable, latest_per_origin: dict | None = None
+	) -> list[ConflictEvent]:
 		"""Compare the new effective table's conflicts to the previous one,
 		emit START events for new conflicts and END events for cleared ones,
 		persist any subscribers' callbacks. Returns the events emitted this
-		observed transition."""
+		observed transition.
+
+		``latest_per_origin`` must be the ``{origin: OwnershipAdvertisement}``
+		dict that produced `table`; it is used to populate the ``origins`` field
+		on each event. If omitted (no caller provides it today), the events
+		carry empty origin sets — correct only for tests that don't inspect
+		that field."""
 		now = self.now_fn()
 		new = table.conflicts
 		new_origins: dict[IP6, frozenset[HostID]] = {}
 		for ip in new:
-			origins = frozenset(origin for origin, adv in _ownership_iter(table) if ip in adv.owned)
+			origins = frozenset(
+				origin for origin, adv in (latest_per_origin or {}).items() if ip in adv.owned
+			)
 			new_origins[ip] = origins
 		started = new - self._prev
 		ended = self._prev - new
@@ -119,21 +129,6 @@ class ConflictTracker:
 			# Best-effort. A conflict-log-write failure is operationally
 			# interesting but not a reason to crash the mesh.
 			pass
-
-
-def _ownership_iter(table: OwnershipTable):
-	"""adarsh placeholder: the `OwnershipTable` doesn't carry the per-origin
-	advertisements themselves (just `owner_of` + `conflicts`). The
-	`ConflictTracker.observe` caller has the advertisements in scope — pass
-	them in via the daemon. For the in-test path we just expose empty
-	origins; the real caller (the loop's `_gc_if_due` + the apply step) passes
-	`daemon.state.ownership` directly via `observe` taking that dict. We
-	simplify by having the caller pass the latest-per-origin dict here."""
-	# This helper is only used to look up which origins carry a conflicting
-	# /128. The `OwnershipTable` doesn't carry the source advertisements, so
-	# the caller passes the `latest_per_origin` dict that PRODUCED the table.
-	# Returning nothing here is wrong; the real API takes it as an arg.
-	yield from ()
 
 
 def observe_with_origins(

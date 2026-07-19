@@ -229,11 +229,10 @@ def _membership_from_dict(d: dict) -> MembershipRecord:
 
 
 def _ownership_to_dict(a: OwnershipAdvertisement) -> dict:
-	return {
-		"origin": a.origin,
-		"generation": a.generation,
-		"owned": sorted(a.owned),
-	}
+	d = {"origin": a.origin, "generation": a.generation, "owned": sorted(a.owned)}
+	if a.signature:
+		d["signature"] = a.signature
+	return d
 
 
 def _ownership_from_dict(d: dict) -> OwnershipAdvertisement:
@@ -241,6 +240,7 @@ def _ownership_from_dict(d: dict) -> OwnershipAdvertisement:
 		origin=d["origin"],
 		generation=int(d["generation"]),
 		owned=frozenset(d["owned"]),
+		signature=d.get("signature", ""),
 	)
 
 
