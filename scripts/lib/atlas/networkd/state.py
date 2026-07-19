@@ -201,7 +201,7 @@ def save_state(state: AppliedState, data_dir: str) -> None:
 
 
 def _membership_to_dict(m: MembershipRecord) -> dict:
-	return {
+	d = {
 		"host_id": m.host_id,
 		"kind": m.kind.value,
 		"state": m.state.value,
@@ -210,6 +210,9 @@ def _membership_to_dict(m: MembershipRecord) -> dict:
 		"mesh_address": m.mesh_address,
 		"generation": m.generation,
 	}
+	if m.signing_public_key:
+		d["signing_public_key"] = m.signing_public_key
+	return d
 
 
 def _membership_from_dict(d: dict) -> MembershipRecord:
@@ -221,6 +224,7 @@ def _membership_from_dict(d: dict) -> MembershipRecord:
 		wg_public_key=d["wg_public_key"],
 		mesh_address=d["mesh_address"],
 		generation=int(d["generation"]),
+		signing_public_key=d.get("signing_public_key", ""),
 	)
 
 
