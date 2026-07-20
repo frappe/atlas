@@ -67,6 +67,13 @@ the result of one SSH invocation that runs one shell script. The script comes
 from this repository, under [`atlas/scripts/`](../scripts/). The Frappe code
 uploads the script, runs it, and records the result.
 
+Public VM SSH enters through dedicated, operator-owned **SSHPiper VMs**, not a
+host daemon. Each gateway has its own Reserved IPv4: an end user connects as
+`ssh <vm-title>@<gateway>`, the plugin asks Atlas for the uniquely titled running
+VM on the gateway's compute Server, checks `Virtual Machine.ssh_public_key`,
+and proxies to the guest IPv6 as root using that compute Server's key. Gateway port 22 is ingress and its management
+`sshd` is on 222. See [30-sshpiper.md](./30-sshpiper.md).
+
 ### Desk navigation
 
 When the operator logs in, the desk has to surface Atlas. Frappe v16 has

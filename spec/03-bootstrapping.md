@@ -55,16 +55,19 @@ In summary, in this order:
    release tarball, so this is one download. Production runs every VM under the
    jailer; a host bootstrapped before the jailer existed picks it up on re-run
    (the gate checks both binaries).
-4. Writes `/etc/sysctl.d/60-atlas.conf` with IPv6 forwarding, proxy NDP, and
+4. Ensures `/root/.ssh/id_ed25519{,.pub}` exists. `provision-vm.py` appends
+   this host key to guest `authorized_keys` for host-to-guest maintenance and
+   for the dedicated SSHPiper gateway assigned to this Server.
+5. Writes `/etc/sysctl.d/60-atlas.conf` with IPv6 forwarding, proxy NDP, and
    IPv4 forwarding (`net.ipv4.ip_forward`, for NAT44 egress), **plus the
    CIS 3.3 network-hardening sysctls** — see *Host hardening* below.
-5. Writes the sshd hardening drop-in, the kernel-module blocklist, enables
+6. Writes the sshd hardening drop-in, the kernel-module blocklist, enables
    unattended security updates, and disables KSM/swap — see *Host hardening*.
-6. Creates the `inet atlas` nftables table with a `forward` chain (IPv6
+7. Creates the `inet atlas` nftables table with a `forward` chain (IPv6
    filter) and a `postrouting` chain holding the host-wide IPv4 masquerade
    rule. See [06-networking.md](./06-networking.md).
-7. Creates the `/var/lib/atlas/` directory tree.
-8. Creates the **LVM thin pool** that backs every VM disk: loads `dm_thin_pool`
+8. Creates the `/var/lib/atlas/` directory tree.
+9. Creates the **LVM thin pool** that backs every VM disk: loads `dm_thin_pool`
    (persisted via `/etc/modules-load.d/60-atlas-lvm.conf`), then runs the
    idempotent `atlas_pool_ensure` — a sparse backing file at
    `/var/lib/atlas/pool/atlas-pool.img`, a loop device over it, a PV/VG
@@ -76,7 +79,7 @@ In summary, in this order:
    that imports the durable package (`from atlas.lvm import ThinPool`) and calls
    `ThinPool().ensure()` to re-assert the pool's loop device on boot, ordered
    before the VM units. See [07-filesystem-layout.md](./07-filesystem-layout.md).
-9. **Reads the Atlas virtualenv's python version** for the bootstrap log. The
+10. **Reads the Atlas virtualenv's python version** for the bootstrap log. The
    venv itself is *already created* by [`scripts/install.sh`](../scripts/install.sh),
    which the controller runs over SSH **before** this Task (right after the upload);
    it installs `uv`, creates a uv-managed virtualenv on CPython 3.14 at
@@ -94,6 +97,7 @@ In summary, in this order:
    `/etc/modules-load.d/60-atlas-migration.conf` — the same pattern as
    `dm_thin_pool`. `CONFIG_DM_CLONE` merged in kernel 6.4 and Ubuntu 24.04 ships
    6.8, so the module is present once the extra package is on.
+>>>>>>> origin/main
 11. Writes `FIRECRACKER_VERSION`, `JAILER_VERSION`, `KERNEL_VERSION`,
    `ARCHITECTURE`, and `PYTHON_VERSION` to `/var/lib/atlas/bootstrap.json` (the
    single source of truth) and `cat`s it on stdout. `firecracker_version` and

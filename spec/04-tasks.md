@@ -93,8 +93,8 @@ def wait_for_ssh(connection, timeout_seconds: int = 300) -> None:
 ### Connection details
 
 - User: `root` — for both target types. The host path SSHes a Server by its
-  public v4; the guest path (`connection_for_guest`) SSHes a VM by its public
-  v6 `/128`, also as `root`, with the same key (the guest's
+  public v4: port 22 
+  The guest path (`connection_for_guest`) SSHes a VM by its public v6 `/128`, also as `root`, with the same key (the guest's
   `root/.ssh/authorized_keys` already carries it). `Connection.user` is the
   field that carries this, defaulting to `root`.
 - Auth: SSH private key read from the path on

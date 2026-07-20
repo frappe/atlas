@@ -28,7 +28,6 @@ IMMUTABLE_AFTER_INSERT = (
 	"title",
 	"server",
 	"image",
-	"ssh_public_key",
 	"tenant",
 )
 
@@ -77,6 +76,7 @@ class VirtualMachine(Document):
 		ipv6_address: DF.Data | None
 		is_gateway: DF.Check
 		is_proxy: DF.Check
+		is_sshpiper: DF.Check
 		last_started: DF.Datetime | None
 		last_stopped: DF.Datetime | None
 		mac_address: DF.Data | None
@@ -86,6 +86,8 @@ class VirtualMachine(Document):
 		server: DF.Link
 		pilot_credential_id: DF.Data | None
 		size_preset: DF.Literal["Custom", "Shared 1x", "Shared 2x", "Shared 4x", "Shared 8x", "Dedicated 1x"]
+		sshpiper_api_key: DF.Password | None
+		sshpiper_configured: DF.Check
 		ssh_public_key: DF.LongText
 		status: DF.Literal["Pending", "Running", "Paused", "Stopped", "Failed", "Terminated"]
 		stop_protection: DF.Check
@@ -101,9 +103,20 @@ class VirtualMachine(Document):
 
 	@property
 	def ssh_command(self) -> str:
-		if not self.ipv6_address:
-			return ""
-		return f"ssh root@{self.ipv6_address}"
+		if self.is_sshpiper:
+			return f"ssh -p 222 root@{self.ipv6_address}" if self.ipv6_address else ""
+		gateway_ipv4 = frappe.db.get_value(
+			"Virtual Machine",
+			{
+				"server": self.server,
+				"is_sshpiper": 1,
+				"sshpiper_configured": 1,
+				"status": "Running",
+				"public_ipv4": ["is", "set"],
+			},
+			"public_ipv4",
+		)
+		return f"ssh {self.title}@{gateway_ipv4}" if gateway_ipv4 else ""
 
 	@ssh_command.setter
 	def ssh_command(self, _value: object) -> None:
@@ -134,6 +147,8 @@ class VirtualMachine(Document):
 		enqueue_after_commit so the worker only starts once this insert's
 		transaction has committed — otherwise auto_provision can look up the VM
 		before the row exists ("Virtual Machine ... not found")."""
+		if self.flags.skip_auto_provision:
+			return
 		frappe.enqueue(
 			"atlas.atlas.doctype.virtual_machine.virtual_machine.auto_provision",
 			queue="long",
@@ -252,6 +267,13 @@ class VirtualMachine(Document):
 		for field in guarded:
 			if getattr(self, field) != getattr(original, field):
 				frappe.throw(f"{field} is immutable after insert")
+
+	@frappe.whitelist()
+	def configure_sshpiper(self) -> str:
+		"""Inject this ingress VM's gateway credentials and start SSHPiper."""
+		from atlas.atlas.sshpiper import configure_gateway
+
+		return configure_gateway(self.name)
 
 	@frappe.whitelist()
 	def provision(self) -> str:

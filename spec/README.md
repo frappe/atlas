@@ -161,6 +161,8 @@ keep it the source of truth.
 27. [Placement — load-aware host selection for the size ladder](./28-placement.md)
 28. [Snapshot backup to S3](./29-snapshot-backup.md) — *push a point-in-time snapshot off-host to S3 and rehydrate it back (same-VM rollback)*
 29. [The core ↔ service boundary and the `satellite` app](./30-core-service-boundary.md) — *how service logic (proxy, gateway, mesh, bench/site) leaves core for a separate app via an explicit VM-lifecycle seam*
+30. [SSHPiper — VM SSH ingress](./30-sshpiper.md)
+>>>>>>> origin/main
 
 ## First run on a fresh site
 

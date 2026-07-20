@@ -21,6 +21,7 @@ from atlas.atlas.image_recipes import RECIPES, get_recipe
 
 _BENCH = get_recipe("bench")
 _PROXY = get_recipe("proxy")
+_SSHPIPER = get_recipe("sshpiper")
 
 
 def _purge() -> None:
@@ -237,6 +238,13 @@ class TestRecipeRegistry(IntegrationTestCase):
 		self.assertIsNotNone(_PROXY.finalize)
 		self.assertIn("test", _PROXY.exclude)
 
+	def test_sshpiper_recipe_shape(self) -> None:
+		self.assertEqual(_SSHPIPER.task_script, "sshpiper-build")
+		self.assertIsNone(_SSHPIPER.registers_as)
+		self.assertTrue(_SSHPIPER.is_sshpiper)
+		self.assertIsNotNone(_SSHPIPER.finalize)
+		self.assertIn("test", _SSHPIPER.exclude)
+
 
 class TestTreeUploads(IntegrationTestCase):
 	def test_bench_tree_has_build_and_toml_no_caches(self) -> None:
@@ -247,6 +255,13 @@ class TestTreeUploads(IntegrationTestCase):
 		# build.sh sits at the staging root so it finds its sibling bench.toml.
 		build = next(r for _, r in image_builder.tree_uploads(_BENCH) if r.endswith("/build.sh"))
 		self.assertEqual(build, _BENCH.remote_entrypoint)
+
+	def test_sshpiper_tree_has_plugin_and_excludes_submodule_git_metadata(self) -> None:
+		remotes = [remote for _, remote in image_builder.tree_uploads(_SSHPIPER)]
+		self.assertTrue(any(r.endswith("/build.sh") for r in remotes), remotes)
+		self.assertTrue(any(r.endswith("/skel.go") for r in remotes), remotes)
+		self.assertTrue(any("/sshpiper.crypto/ssh/" in r for r in remotes), remotes)
+		self.assertFalse(any("/.git" in r for r in remotes), remotes)
 
 	def test_declared_entrypoint_missing_from_tree_throws(self) -> None:
 		# A stale app checkout (missing warm.sh) uploads a tree without the file, but

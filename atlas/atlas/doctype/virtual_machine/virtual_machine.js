@@ -98,6 +98,16 @@ function add_lifecycle_buttons(frm) {
 			frappe.atlas.add_action(frm, action.label, () => action.handler(frm));
 		}
 	}
+	if (status === "Running" && frm.doc.is_sshpiper) {
+		frappe.atlas.add_action(frm, "Configure SSHPiper", () =>
+			frappe.call({
+				doc: frm.doc,
+				method: "configure_sshpiper",
+				freeze: true,
+				freeze_message: "Configuring SSHPiper gateway...",
+			}).then(() => frm.reload_doc())
+		);
+	}
 	if (status === "Running" || status === "Paused") {
 		// Live snapshot: no stop required. Crash-consistent (the dialog says so).
 		frappe.atlas.add_action(frm, "Snapshot (live)", () =>

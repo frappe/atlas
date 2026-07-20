@@ -295,6 +295,23 @@ def _install_firecracker(version: str, architecture: str) -> None:
 	run("sudo rm -rf /tmp/firecracker-install")
 
 
+def _ensure_server_ssh_key() -> None:
+	"""Keep the host-to-guest key pair required by provision-vm.py."""
+	run("sudo install -d -m 0700 -o root -g root /root/.ssh")
+	run(
+		"sudo sh -c {}",
+		"""
+		if [ ! -f /root/.ssh/id_ed25519 ]; then
+			ssh-keygen -q -t ed25519 -f /root/.ssh/id_ed25519 -N ''
+		elif [ ! -f /root/.ssh/id_ed25519.pub ]; then
+			ssh-keygen -y -f /root/.ssh/id_ed25519 > /root/.ssh/id_ed25519.pub
+		fi
+
+		chmod 0600 /root/.ssh/id_ed25519
+		chmod 0644 /root/.ssh/id_ed25519.pub
+		""",
+	)
+
 def main() -> None:
 	inputs = BootstrapInputs.from_args()
 
@@ -326,8 +343,13 @@ def main() -> None:
 	packages = _substitute(" ".join("{}" for _ in PACKAGES), tuple(PACKAGES))
 	run("sudo apt-get -o DPkg::Lock::Timeout=300 install -y " + packages)
 
-	# 3. Install Firecracker + jailer (version-gated).
+	# 3A Install Firecracker + jailer (version-gated).
 	_install_firecracker(inputs.firecracker_version, inputs.architecture)
+
+	# 3B provision-vm.py appends this host's public key to every guest so host-side
+	# maintenance can enter the VM. Dedicated SSHPiper gateways do not replace
+	# this host-to-guest trust path.
+	_ensure_server_ssh_key()
 
 	# 4. Kernel/network sysctls: VM-networking essentials + CIS 3.3 hardening.
 	#    The forwarding + proxy_ndp lines are LOAD-BEARING for the routed-tap VM

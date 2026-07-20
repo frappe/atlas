@@ -514,6 +514,9 @@ deletion.
 | `mac_address`      | Data                          |      | Y         |         | Derived from `name`. Set in `before_validate`.                   |
 | `tap_device`       | Data                          |      | Y         |         | Derived from `name`. Set in `before_validate`.                   |
 | `is_proxy`         | Check                         |      |           | 0       | Marks this VM as a reverse-proxy node. A proxy VM fronts the fleet's [Subdomain](#subdomain)s and is reconciled by the proxy control plane. It is an *ordinary* operator-owned VM (no infra tier) running the proxy image with an attached `public_ipv4`. The region it serves is this Atlas's single `Atlas Settings.region` — proxy VMs carry no denormalized `region`. See [12-proxy.md](./12-proxy.md). |
+| `is_sshpiper`      | Check                         |      |           | 0       | Marks an operator-owned VM as a dedicated SSH ingress gateway. It runs the SSHPiper image, owns a Reserved IPv4, serves public SSH on 22, and manages itself on 222. See [23-sshpiper.md](./23-sshpiper.md). |
+| `sshpiper_api_key` | Password                      |      | Y         |         | Hidden, encrypted per-gateway lookup token installed by Configure SSHPiper. |
+| `sshpiper_configured` | Check                      |      | Y         | 0       | Set after Atlas installs runtime credentials and starts `sshpiper.service`. |
 | `last_started`     | Datetime                      |      | Y         |         |                                                                  |
 | `last_stopped`     | Datetime                      |      | Y         |         |                                                                  |
 

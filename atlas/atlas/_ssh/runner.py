@@ -117,7 +117,7 @@ def connection_for_server(server) -> Connection:
 	if not server.ipv4_address:
 		frappe.throw(f"Server {server.name} has no ipv4_address; cannot SSH")
 	path = atlas.get_ssh_private_key_path()
-	return Connection(host=server.ipv4_address, ssh_private_key=get_ssh_key_from_disk(path))
+	return Connection(host=server.ipv4_address, ssh_private_key=get_ssh_key_from_disk(path), port=22)
 
 
 def connection_for_guest(virtual_machine) -> Connection:
@@ -142,7 +142,12 @@ def connection_for_guest(virtual_machine) -> Connection:
 	if not virtual_machine.ipv6_address:
 		frappe.throw(f"Virtual Machine {virtual_machine.name} has no ipv6_address; cannot SSH to the guest")
 	path = atlas.get_ssh_private_key_path()
-	return Connection(host=virtual_machine.ipv6_address, ssh_private_key=get_ssh_key_from_disk(path))
+	port = 222 if getattr(virtual_machine, "sshpiper_configured", False) else 22
+	return Connection(
+		host=virtual_machine.ipv6_address,
+		ssh_private_key=get_ssh_key_from_disk(path),
+		port=port,
+	)
 
 
 def _execute_into(

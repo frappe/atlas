@@ -73,7 +73,7 @@ class ProvisionInputs(TaskInputs):
 	vcpus: int
 	memory_mb: int
 	disk_gb: int  # final rootfs size for this VM
-	ssh_public_key: str  # injected into the rootfs
+	ssh_public_key: str  # tenant/operator keys injected into the rootfs
 	# --- DERIVED flags. Every field below is a controller-allocated value, NOT
 	# defaultable: a wrong value mis-wires the jail/network. They stay REQUIRED; the
 	# break-glass ergonomic is the `help=` recipe naming the atlas.networking function
@@ -195,6 +195,13 @@ class ProvisionInputs(TaskInputs):
 
 def main() -> None:
 	inputs = ProvisionInputs.from_args()
+	with open("/root/.ssh/id_ed25519.pub") as server_key_file:
+		server_public_key = server_key_file.read().strip()
+	ssh_public_key = "\n".join(
+		part.strip()
+		for part in (inputs.ssh_public_key, server_public_key)
+		if part.strip()
+	)
 	pool = ThinPool()
 	paths = VirtualMachinePaths(inputs.virtual_machine_name)
 	image = image_directory(inputs.image_name)
@@ -327,7 +334,7 @@ def main() -> None:
 			Identity(
 				uuid=inputs.virtual_machine_name,
 				ipv6_address=inputs.virtual_machine_ipv6,
-				ssh_public_key=inputs.ssh_public_key,
+				ssh_public_key=ssh_public_key,
 				ipv4_guest_cidr=inputs.ipv4_guest_cidr,
 				ipv4_gateway=inputs.ipv4_gateway,
 				data_disk_mount_at=inputs.data_disk_mount_at,
@@ -392,7 +399,7 @@ def main() -> None:
 	#     at 169.254.169.254 — vm-restore.py PUTs this file into MMDS before
 	#     resuming, and the launcher preloads it (--metadata) on a cold boot.
 	if warm:
-		install_file(_mmds_metadata(inputs), paths.metadata_file, mode="0644")
+		install_file(_mmds_metadata(inputs, ssh_public_key), paths.metadata_file, mode="0644")
 
 	# 5. Hand the jail tree to the per-VM uid/gid. The jailer also chowns the
 	#    jail root and the device nodes it creates, but the backing files we laid
@@ -479,7 +486,7 @@ def _resolve_origin(inputs: "ProvisionInputs", pool: ThinPool):
 	return origin
 
 
-def _mmds_metadata(inputs: "ProvisionInputs") -> str:
+def _mmds_metadata(inputs: "ProvisionInputs", ssh_public_key: str) -> str:
 	"""The MMDS payload for a warm clone: everything inject_identity would have
 	written to the disk, served to the guest over the metadata service instead.
 	The hostname/machine-id rules are Identity's own, so a warm clone's identity
@@ -487,7 +494,7 @@ def _mmds_metadata(inputs: "ProvisionInputs") -> str:
 	identity = Identity(
 		uuid=inputs.virtual_machine_name,
 		ipv6_address=inputs.virtual_machine_ipv6,
-		ssh_public_key=inputs.ssh_public_key,
+		ssh_public_key=ssh_public_key,
 		ipv4_guest_cidr=inputs.ipv4_guest_cidr,
 		ipv4_gateway=inputs.ipv4_gateway,
 		routing_base_url=inputs.routing_base_url,

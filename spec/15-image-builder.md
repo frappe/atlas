@@ -77,6 +77,7 @@ ship:
 | `bench-v15-admin` | `bench/` | 2 vCPU / 2 GB / 28 GB | `Golden bench v15 (admin)` | `version-15` / `version-15` / `3.11` | `build_mode = admin`, cold-only |
 | `bench-nightly-admin` | `bench/` | 2 vCPU / 2 GB / 28 GB | `Golden bench nightly admin (develop)` | `develop` / `develop` / `3.14` | `build_mode = admin`, cold-only |
 | `proxy` | `proxy/` | 2 vCPU / 1 GB / 10 GB | `proxy-image` | — | `exclude = ("test",)`, `finalize = _finalize_proxy`, `is_proxy` |
+| `sshpiper` | `sshpiper/` | 1 vCPU / 512 MB / 10 GB | `sshpiper-image` | — | builds plugin + daemon; moves guest SSH to 222; `is_sshpiper` |
 
 The three `*-admin` recipes bake the same `bench/` tree at each Frappe version but in
 **`admin` mode**: `build.sh` skips `bench new-site` + ERPNext and leaves only the
@@ -154,7 +155,7 @@ two build verbs collapse into. It:
    trap (real-provision-traps #1); this path goes straight to scp/ssh with no
    `wait_for_ssh`, so a stale pinned key must be dropped first.
 2. `tree_uploads(recipe)` — enumerate the committed tree (`rglob`, skipping
-   `recipe.exclude` and `__pycache__`), then `mkdir -p` + `run_scp` every file
+   `recipe.exclude`, `__pycache__`, and nested `.git` metadata), then `mkdir -p` + `run_scp` every file
    under one staging dir so `build.sh` finds its siblings.
 3. `run_detached(build.sh, log, done)` — run the long build (apt/clone/uv for
    bench, an nginx+luajit compile for proxy) **detached**, so a mid-build SSH
@@ -164,7 +165,7 @@ two build verbs collapse into. It:
    the recipe has one. Its exit status becomes the build's, so a finalize failure
    is a build failure.
 5. `_record_guest_task(...)` — one Task row (named by `recipe.task_script`,
-   `bench-build` / `proxy-build`) for the audit trail, the same row shape as every
+   `bench-build` / `proxy-build` / `sshpiper-build`) for the audit trail, the same row shape as every
    guest op. `on_task`, if given, is called with the Task name **before** the
    throw, so the Image Build controller links the build Task even on failure.
 6. `frappe.throw` on any non-zero exit — fail loud at the boundary (spec taste

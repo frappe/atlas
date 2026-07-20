@@ -1,10 +1,8 @@
 {
  "actions": [],
- "allow_rename": 0,
  "autoname": "hash",
- "creation": "2026-05-25 00:00:00.000000",
+ "creation": "2026-05-25 00:00:00",
  "doctype": "DocType",
- "editable_grid": 0,
  "engine": "InnoDB",
  "field_order": [
   "tab_overview",
@@ -55,6 +53,10 @@
   "is_proxy",
   "is_gateway",
   "column_break_proxy",
+  "section_break_sshpiper",
+  "is_sshpiper",
+  "sshpiper_api_key",
+  "sshpiper_configured",
   "section_break_activity",
   "last_started",
   "column_break_activity",
@@ -70,8 +72,8 @@
   {
    "fieldname": "title",
    "fieldtype": "Data",
-   "in_list_view": 1,
    "in_global_search": 1,
+   "in_list_view": 1,
    "label": "Title",
    "reqd": 1,
    "set_only_once": 1
@@ -154,8 +156,8 @@
    "reqd": 1
   },
   {
-   "default": "Relaxed",
-   "description": "How cpu_max_cores is enforced. Relaxed (default): cpu_max_cores becomes a guaranteed share via cpu.weight (the floor under contention) and cpu.max is loosened to vcpus whole cores, so the VM bursts into spare host CPU when the host is idle. Hard cap: cpu_max_cores is a hard cgroup cpu.max ceiling \u2014 the VM never exceeds its share, even on an idle host.",
+   "default": "Hard cap",
+   "description": "How cpu_max_cores is enforced. Hard cap (default): cpu_max_cores is a hard cgroup cpu.max ceiling \u2014 the VM never exceeds its share, even on an idle host. Relaxed: cpu_max_cores becomes a guaranteed share via cpu.weight (the floor under contention) and cpu.max is loosened to vcpus whole cores, so the VM bursts into spare host CPU when the host is idle.",
    "fieldname": "cpu_mode",
    "fieldtype": "Select",
    "label": "CPU mode",
@@ -268,11 +270,9 @@
    "fieldname": "ssh_public_key",
    "fieldtype": "Long Text",
    "label": "SSH Public Key",
-   "reqd": 1,
-   "set_only_once": 1
+   "reqd": 1
   },
   {
-   "description": "IPv6 is the only stable identifier outside the desk.",
    "fieldname": "ssh_command",
    "fieldtype": "Code",
    "is_virtual": 1,
@@ -402,6 +402,36 @@
   },
   {
    "collapsible": 1,
+   "fieldname": "section_break_sshpiper",
+   "fieldtype": "Section Break",
+   "label": "SSHPiper Gateway"
+  },
+  {
+   "default": "0",
+   "description": "Operator-owned SSH ingress VM for guests on this compute Server. Attach a Reserved IPv4, then run Configure SSHPiper. Public port 22 proxies to tenant VMs; Atlas manages this guest on port 222.",
+   "fieldname": "is_sshpiper",
+   "fieldtype": "Check",
+   "label": "Is SSHPiper Gateway"
+  },
+  {
+   "description": "Per-gateway bearer token used only by this VM when resolving SSH targets on its compute Server.",
+   "fieldname": "sshpiper_api_key",
+   "fieldtype": "Password",
+   "hidden": 1,
+   "label": "SSHPiper API Key",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "description": "Set after Atlas installs this gateway token and compute-Server key, then starts sshpiper.service.",
+   "fieldname": "sshpiper_configured",
+   "fieldtype": "Check",
+   "label": "SSHPiper Configured",
+   "read_only": 1
+  },
+  {
+   "collapsible": 1,
    "fieldname": "section_break_activity",
    "fieldtype": "Section Break",
    "label": "Activity"
@@ -439,7 +469,7 @@
   }
  ],
  "links": [],
- "modified": "2026-05-28 00:00:00.000000",
+ "modified": "2026-07-05 13:09:02.108483",
  "modified_by": "Administrator",
  "module": "Atlas",
  "name": "Virtual Machine",
@@ -447,47 +477,52 @@
  "owner": "Administrator",
  "permissions": [
   {
-   "amend": 0,
-   "cancel": 0,
    "create": 1,
    "delete": 1,
    "export": 1,
-   "import": 0,
    "read": 1,
    "report": 1,
    "role": "System Manager",
    "share": 1,
-   "submit": 0,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "if_owner": 1,
+   "read": 1,
+   "role": "Atlas User",
    "write": 1
   }
  ],
+ "row_format": "Dynamic",
  "search_fields": "title,status,server",
  "sort_field": "creation",
  "sort_order": "DESC",
  "states": [
   {
-   "title": "Pending",
-   "color": "Orange"
+   "color": "Orange",
+   "title": "Pending"
   },
   {
-   "title": "Running",
-   "color": "Green"
+   "color": "Green",
+   "title": "Running"
   },
   {
-   "title": "Paused",
-   "color": "Yellow"
+   "color": "Yellow",
+   "title": "Paused"
   },
   {
-   "title": "Stopped",
-   "color": "Gray"
+   "color": "Gray",
+   "title": "Stopped"
   },
   {
-   "title": "Failed",
-   "color": "Red"
+   "color": "Red",
+   "title": "Failed"
   },
   {
-   "title": "Terminated",
-   "color": "Gray"
+   "color": "Gray",
+   "title": "Terminated"
   }
  ],
  "title_field": "title",

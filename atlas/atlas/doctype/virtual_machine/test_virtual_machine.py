@@ -89,6 +89,26 @@ class TestVirtualMachine(IntegrationTestCase):
 		self.assertTrue(vm.ipv6_address.startswith("2001:db8:1::"))
 		self.assertEqual(vm.status, "Pending")
 
+	def test_skip_auto_provision_flag_suppresses_enqueue(self) -> None:
+		from atlas.atlas.doctype.virtual_machine import virtual_machine as module
+
+		vm = frappe.get_doc(
+			{
+				"doctype": "Virtual Machine",
+				"title": "manual scratch VM",
+				"server": _ensure_test_server(),
+				"image": _ensure_test_image(),
+				"vcpus": 1,
+				"memory_megabytes": 512,
+				"disk_gigabytes": 4,
+				"ssh_public_key": "ssh-ed25519 AAAA test",
+			}
+		)
+		vm.flags.skip_auto_provision = True
+		with patch.object(module.frappe, "enqueue") as enqueue:
+			vm.insert(ignore_permissions=True)
+		enqueue.assert_not_called()
+
 	def test_immutable_fields_raise(self) -> None:
 		vm = _new_vm()
 		vm.vcpus = 4

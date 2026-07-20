@@ -82,6 +82,22 @@ class Connection:
 	host: str
 	ssh_private_key: str
 	user: str = "root"
+	port: int = 22
+
+
+def _ssh_port_args(connection: Connection) -> list[str]:
+	return [] if connection.port == 22 else ["-p", str(connection.port)]
+
+
+def _scp_port_args(connection: Connection) -> list[str]:
+	return [] if connection.port == 22 else ["-P", str(connection.port)]
+
+
+def _known_hosts_target(connection: Connection) -> str:
+	host = connection.host[1:-1] if connection.host.startswith("[") and connection.host.endswith("]") else connection.host
+	if connection.port == 22:
+		return host
+	return f"[{host}]:{connection.port}"
 
 
 def _bracket_host(host: str) -> str:
@@ -109,7 +125,7 @@ def wait_for_ssh(connection: Connection, timeout_seconds: int = 300, poll_second
 	to match so it doesn't kill ssh before its own connect attempt finishes. Either
 	signal is retried until the real `deadline`, then raised."""
 	_ensure_known_hosts_directory()
-	forget_host(connection.host)
+	forget_host(connection)
 	deadline = time.monotonic() + timeout_seconds
 	with ssh_key_file(connection.ssh_private_key) as key_path:
 		while True:
@@ -266,6 +282,7 @@ def run_ssh(
 		key_path,
 		*SSH_OPTIONS,
 		*override_options,
+		*_ssh_port_args(connection),
 		f"{connection.user}@{connection.host}",
 		remote_command,
 	]
@@ -412,6 +429,7 @@ def run_scp(
 		"-i",
 		key_path,
 		*SSH_OPTIONS,
+		*_scp_port_args(connection),
 		local_path,
 		f"{connection.user}@{_bracket_host(connection.host)}:{remote_path}",
 	]
@@ -455,7 +473,7 @@ def _ensure_known_hosts_directory() -> None:
 		CONTROL_PATH_DIRECTORY.mkdir(mode=0o700, parents=True, exist_ok=True)
 
 
-def forget_host(host: str) -> None:
+def forget_host(connection_or_host: Connection | str) -> None:
 	"""Drop any cached host key for `host` from `~/.atlas/known_hosts`.
 
 	The provider recycles public IPs: a new VM can land on an address a terminated
@@ -473,7 +491,11 @@ def forget_host(host: str) -> None:
 	# ssh-keygen stores v6 literals bracketed and non-22 ports as [host]:port; for
 	# the default-port case the bare literal is the key. Strip our own brackets so
 	# the form matches what accept-new wrote.
-	target = host[1:-1] if host.startswith("[") and host.endswith("]") else host
+	if isinstance(connection_or_host, Connection):
+		target = _known_hosts_target(connection_or_host)
+	else:
+		host = connection_or_host
+		target = host[1:-1] if host.startswith("[") and host.endswith("]") else host
 	try:
 		subprocess.run(
 			["ssh-keygen", "-R", target, "-f", str(KNOWN_HOSTS_PATH)],
