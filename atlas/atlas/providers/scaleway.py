@@ -59,14 +59,6 @@ from atlas.atlas.secrets import get_secret
 # so the worker waits longer for a Scaleway server than the 600s default.
 READY_TIMEOUT_SECONDS = 3600
 
-# Fixed-size RAID-1 members (bytes). Everything else on the disk falls to the
-# `data` partition (use_all_available_space), which becomes the LVM pool PV.
-_EFI_SIZE_BYTES = 512 * 1024 * 1024  # 512 MiB ESP (only disk 0's is mounted)
-_BOOT_SIZE_BYTES = 1024 * 1024 * 1024  # 1 GiB /boot
-_ROOT_SIZE_BYTES = 64 * 1024 * 1024 * 1024  # 64 GiB / (raid1)
-_RAID_LEVEL_1 = "raid_level_1"
-
-
 @register
 class ScalewayProvider(Provider):
 	provider_type = "Scaleway"
@@ -103,15 +95,6 @@ class ScalewayProvider(Provider):
 			"hostname": request.title,
 			"ssh_key_ids": [ssh_key_id] if ssh_key_id else [],
 		}
-		# Drive the install with an explicit partitioning schema: symmetric, aligned
-		# disks (boot + 64 GiB root mirrored RAID-1, the rest a RAID-1 `data` array
-		# left raw for the LVM thin pool). Without this Scaleway's default lands
-		# boot/root on disk 0 and leaves disk 1 inconsistent, so the pool backing is
-		# non-deterministic. Fetch the vendor default (the source of truth for THIS
-		# box's real device names) and rewrite it.
-		schema = self._build_partitioning_schema(offer_id, os_id)
-		if schema is not None:
-			install["partitioning_schema"] = schema
 		server = self.client.create_server(
 			name=request.title,
 			offer_id=offer_id,
@@ -323,30 +306,6 @@ class ScalewayProvider(Provider):
 				return str(key["id"])
 		return None
 
-	def _build_partitioning_schema(self, offer_id: str, os_id: str) -> dict | None:
-		"""Fetch the vendor default partitioning schema for this offer+OS and rewrite
-		it into the RAID-1 layout (see `build_raid_partitioning_schema`). Returns None
-		— so the install falls back to Scaleway's default — if the offer/OS does not
-		support custom partitioning (the endpoint 404s) or exposes fewer than two
-		disks (RAID-1 needs a mirror pair). A bad-shape default raises through, since
-		that is an Atlas/vendor contract change worth surfacing, not silently ignoring."""
-		try:
-			default = self.client.get_default_partitioning_schema(offer_id, os_id)
-		except ScalewayError as exception:
-			# Offer/OS without custom partitioning (or a transient 4xx): fall back to
-			# the vendor default install rather than failing the whole provision.
-			frappe.logger().info(
-				f"Scaleway default partitioning unavailable ({exception}); using vendor default"
-			)
-			return None
-		devices = [disk.get("device") for disk in (default.get("disks") or []) if disk.get("device")]
-		if len(devices) < 2:
-			frappe.logger().info(
-				f"Scaleway offer exposes {len(devices)} disk(s); RAID-1 needs ≥2 — using vendor default"
-			)
-			return None
-		return build_raid_partitioning_schema(devices)
-
 	def _ensure_flexible_ipv6(self, server_id: str) -> str:
 		"""Allocate + attach a (free) flexible IPv6 /64 to the server, returning
 		its /64 CIDR. Idempotent: if the server already holds a v6 flexible IP,
@@ -368,59 +327,6 @@ class ScalewayProvider(Provider):
 			if str(fip.get("server_id")) == server_id and _is_ipv6_fip(fip):
 				return _flexible_ipv6_cidr(fip)
 		return None
-
-
-def build_raid_partitioning_schema(devices: list[str]) -> dict:
-	"""Build a symmetric RAID-1 `partitioning_schema` across the first two disks.
-
-	The rules (operator spec): both disks get an IDENTICAL partition table so the
-	partition numbers line up across them — including a `uefi` partition on the
-	second disk that is pure buffer (only disk 0's ESP is mounted), matching what
-	Scaleway otherwise puts only on disk 0. Each disk carries:
-
-	  p1 uefi  512 MiB   — ESP on disk 0; an aligning buffer on disk 1
-	  p2 boot  1 GiB     — RAID-1 → /dev/md0 → /boot
-	  p3 root  64 GiB    — RAID-1 → /dev/md1 → /
-	  p4 data  rest      — RAID-1 → /dev/md2 → raw, becomes the LVM thin-pool PV
-
-	`devices` are the box's real disk paths (e.g. /dev/nvme0n1), taken from the
-	vendor's default schema so this adapts to the actual hardware. Only the first
-	two are mirrored; any extra disks are left untouched by the installer. The
-	`data` RAID (md2) is deliberately ABSENT from `filesystems` — left raw so
-	`ThinPool` consumes it as the PV (`discover_pool_disks` picks the unused md
-	array). Pure: device list in, schema dict out — unit-testable with no API."""
-	disk0, disk1 = devices[0], devices[1]
-
-	def _table(device: str) -> dict:
-		return {
-			"device": device,
-			"partitions": [
-				{"label": "uefi", "number": 1, "size": _EFI_SIZE_BYTES},
-				{"label": "boot", "number": 2, "size": _BOOT_SIZE_BYTES},
-				{"label": "root", "number": 3, "size": _ROOT_SIZE_BYTES},
-				{"label": "data", "number": 4, "use_all_available_space": True},
-			],
-		}
-
-	def _part(device: str, number: int) -> str:
-		# nvme drives number partitions /dev/nvme0n1p1; sd/vd drives /dev/sda1. The
-		# vendor default uses the same `<device>p<n>` form for nvme members, which is
-		# what Elastic Metal exposes — derive it off the trailing digit either way.
-		separator = "p" if device[-1].isdigit() else ""
-		return f"{device}{separator}{number}"
-
-	raids = [
-		{"name": "/dev/md0", "level": _RAID_LEVEL_1, "devices": [_part(disk0, 2), _part(disk1, 2)]},
-		{"name": "/dev/md1", "level": _RAID_LEVEL_1, "devices": [_part(disk0, 3), _part(disk1, 3)]},
-		{"name": "/dev/md2", "level": _RAID_LEVEL_1, "devices": [_part(disk0, 4), _part(disk1, 4)]},
-	]
-	filesystems = [
-		{"device": _part(disk0, 1), "format": "fat32", "mountpoint": "/boot/efi"},
-		{"device": "/dev/md0", "format": "ext4", "mountpoint": "/boot"},
-		{"device": "/dev/md1", "format": "ext4", "mountpoint": "/"},
-		# /dev/md2 (data) intentionally omitted — raw block device for the LVM pool.
-	]
-	return {"disks": [_table(disk0), _table(disk1)], "raids": raids, "filesystems": filesystems}
 
 
 def _discovered_from_server(provider_type: str, server: dict) -> DiscoveredServer:
