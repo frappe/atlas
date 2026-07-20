@@ -35,7 +35,7 @@ class AtlasSettings(Document):
 
 		default_bench_snapshot: DF.Link | None
 		default_user_image: DF.Link | None
-		dns_provider_type: DF.Literal["", "Route53", "Cloudflare"]
+		dns_provider_type: DF.Literal["", "Route53", "PowerDNS", "Cloudflare"]
 		fail_scripts: DF.SmallText | None
 		overprovision_factor: DF.Float
 		provider_type: DF.Literal["", "DigitalOcean", "Scaleway", "Self-Managed", "Fake"]

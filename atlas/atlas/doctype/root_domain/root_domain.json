@@ -57,7 +57,7 @@
    "fieldname": "dns_provider_type",
    "fieldtype": "Select",
    "label": "DNS Provider Type",
-   "options": "\nRoute53\nCloudflare",
+   "options": "\nRoute53\nPowerDNS\nCloudflare",
    "read_only": 1,
    "description": "DNS vendor that owns the zone (DNS-01 challenge). Denormalized from Atlas Settings.dns_provider_type at insert; the DNS registry keys off it."
   },
@@ -76,7 +76,7 @@
    "link_fieldname": "root_domain"
   }
  ],
- "modified": "2026-06-08 00:00:00.000000",
+ "modified": "2026-07-18 00:00:00.000000",
  "modified_by": "Administrator",
  "module": "Atlas",
  "name": "Root Domain",

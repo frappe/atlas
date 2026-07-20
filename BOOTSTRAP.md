@@ -76,7 +76,7 @@ bootstrap; they bill far more than the test VM needs.
 | ------------------------------------------------------------ | ----------------- |
 | `atlas.bootstrap.run`                                         | Compute only: server → base image → one test VM. |
 | `atlas.bootstrap.run_with_proxy`                             | `run` + the TLS layer (Route 53 + Let's Encrypt + Root Domain) and the regional wildcard cert. Needs the `atlas_tls_*` keys. |
-| `atlas.bootstrap.run_self_serve`                            | The whole signup flow, left running: compute + golden image + proxy VM + reserved IPv4 + wildcard cert. Needs the `atlas_tls_*` keys, plus `certbot`, `certbot-dns-route53`, `openssl`, and `boto3` on the controller. |
+| `atlas.bootstrap.run_self_serve`                            | The whole signup flow, left running: compute + golden image + proxy VM + reserved IPv4 + wildcard cert. Needs the `atlas_tls_*` keys, plus `certbot`, `openssl`, and the selected certbot DNS plugin on the controller (`certbot-dns-route53` + `boto3` for Route53, `certbot-dns-pdns` for PowerDNS). |
 
 ```bash
 bench --site $SITE execute atlas.bootstrap.run_self_serve
@@ -91,9 +91,12 @@ DigitalOcean also needs `atlas_do_token`, `atlas_do_region`,
 `atlas_do_default_size`, `atlas_do_default_image` (shown above). Scaleway and
 Self-Managed have their own key sets. The TLS tail (`run_with_proxy` /
 `run_self_serve`) reads `atlas_tls_domain`, `atlas_tls_region`,
-`atlas_route53_access_key_id`, `atlas_route53_secret_access_key`,
-`atlas_acme_account_email`, and `atlas_acme_directory_url` (defaults to Let's
-Encrypt **staging** so an unattended run never burns production quota).
+`atlas_dns_provider_type` (defaults to `Route53`), provider credentials
+(`atlas_route53_access_key_id` / `atlas_route53_secret_access_key` or
+`atlas_powerdns_api_url` / `atlas_powerdns_api_key` / optional
+`atlas_powerdns_server_id`), `atlas_acme_account_email`, and
+`atlas_acme_directory_url` (defaults to Let's Encrypt **staging** so an unattended
+run never burns production quota).
 
 The authoritative, fully-commented list of every key for every provider lives in
 the module docstring of [`atlas/bootstrap.py`](./atlas/bootstrap.py), and the

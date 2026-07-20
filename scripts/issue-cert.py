@@ -10,12 +10,14 @@
 # controller-local runner (atlas.atlas.local_task) calls
 #   issue-cert.py --domain blr1.frappe.dev --acme-directory-url ... \
 #                 --account-email ops@... --certbot-arg --dns-route53
-# and the DNS vendor credentials arrive in the environment (e.g. AWS_ACCESS_KEY_ID),
-# never in argv. certbot + the DNS plugin are a controller-host dependency, not a
+# and the DNS vendor credentials arrive in the environment (e.g. AWS_ACCESS_KEY_ID
+# or POWERDNS_API_KEY), never in argv. certbot + the DNS plugin are a
+# controller-host dependency, not a
 # server-runtime one, so spec principle #5's stdlib-only server rule is intact.
 #
 # Idempotent: certbot renews-or-skips a still-valid lineage (--keep-until-expiring).
 
+import dataclasses
 import os
 import sys
 import typing
@@ -36,10 +38,12 @@ class IssueCertInputs(TaskInputs):
 	domain: str  # the wildcard zone, e.g. blr1.frappe.dev → issues *.blr1.frappe.dev
 	acme_directory_url: str  # ACME server directory (LE production or staging)
 	account_email: str  # ACME registration / expiry-notice email
-	# The DNS plugin NAME (e.g. route53), from the DNS provider. The script renders
-	# it as the certbot `--dns-<name>` flag — a plain name crosses the CLI, never a
-	# `--`-prefixed token argparse would misread as an option.
+	# The DNS plugin NAME (e.g. route53), from the DNS provider. Kept for the
+	# typed contract and for providers whose certbot args are derived in this script.
 	dns_authenticator: str
+	# Full certbot authenticator argv from the DNS provider. Repeatable. Empty keeps
+	# the legacy `--dns-<dns_authenticator>` rendering.
+	certbot_arg: list[str] = dataclasses.field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -50,8 +54,26 @@ class IssueCertResult(TaskResult):
 	not_after: str
 
 
+def _write_powerdns_credentials(domain: str) -> None:
+	api_url = os.environ.get("POWERDNS_API_URL")
+	api_key = os.environ.get("POWERDNS_API_KEY")
+	server_id = os.environ.get("POWERDNS_SERVER_ID") or "localhost"
+	if not api_url or not api_key:
+		sys.exit("POWERDNS_API_URL and POWERDNS_API_KEY are required for PowerDNS DNS-01")
+	path = certs.powerdns_credentials_path(domain)
+	os.makedirs(os.path.dirname(path), exist_ok=True)
+	with open(path, "w") as handle:
+		handle.write(f"dns_pdns_endpoint = {api_url}\n")
+		handle.write(f"dns_pdns_api_key = {api_key}\n")
+		handle.write(f"dns_pdns_server_id = {server_id}\n")
+		handle.write(f"dns_pdns_disable_notify = false\n")
+	os.chmod(path, 0o600)
+
+
 def main() -> None:
 	inputs = IssueCertInputs.from_args()
+	if inputs.dns_authenticator == "powerdns":
+		_write_powerdns_credentials(inputs.domain)
 
 	run(
 		certs.certbot_command(
@@ -59,6 +81,7 @@ def main() -> None:
 			acme_directory_url=inputs.acme_directory_url,
 			account_email=inputs.account_email,
 			dns_authenticator=inputs.dns_authenticator,
+			certbot_args=inputs.certbot_arg,
 		)
 	)
 

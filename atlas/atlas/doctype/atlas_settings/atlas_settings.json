@@ -75,8 +75,8 @@
    "fieldname": "dns_provider_type",
    "fieldtype": "Select",
    "label": "DNS Provider Type",
-   "options": "\nRoute53\nCloudflare",
-   "description": "The active DNS vendor (DNS-01 challenge). The DNS registry maps this to the registered DnsProvider (dns.for_dns_provider_type); Root Domain denormalizes it at insert. Pairs with Route53 Settings for the credentials. Only Route53 is implemented; Cloudflare is reserved."
+   "options": "\nRoute53\nPowerDNS\nCloudflare",
+   "description": "The active DNS vendor (DNS-01 challenge). The DNS registry maps this to the registered DnsProvider (dns.for_dns_provider_type); Root Domain denormalizes it at insert. Pairs with the matching DNS Settings Single for the credentials. Route53 and PowerDNS are implemented; Cloudflare is reserved."
   },
   {
    "fieldname": "fail_scripts",
@@ -218,7 +218,7 @@
  ],
  "issingle": 1,
  "links": [],
- "modified": "2026-05-28 00:00:00.000000",
+ "modified": "2026-07-18 00:00:00.000000",
  "modified_by": "Administrator",
  "module": "Atlas",
  "name": "Atlas Settings",

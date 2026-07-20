@@ -147,7 +147,7 @@ works unchanged — the S3 round trip is invisible to them.
   (default `atlas/snapshots`), `presign_expiry_seconds` (default 3600). A **Test
   Connection** button (`test_connection`) `head_bucket`s to prove the credentials
   reach the bucket before any upload — the lightest read that exercises the same
-  permissions, like `Route53Settings.test_connection`.
+  permissions, like `Route53Settings.test_connection / PowerDNSSettings.test_connection`.
 - **`Virtual Machine Snapshot`** gains a read-only *S3 Backup* section:
   `s3_status` (`""` / `Uploading` / `Uploaded` / `Restoring` / `Failed`),
   `s3_bucket`, `s3_key_prefix`, `s3_size_bytes` (Long Int — the total compressed

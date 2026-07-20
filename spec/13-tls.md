@@ -100,14 +100,15 @@ for the full rationale.)
 Two registries under `atlas/atlas/`, each modeled on `atlas/atlas/providers/`:
 
 - **`dns/`** — the DNS seam. `DnsProvider(ABC)`: `authenticate()`,
-  `credential_env()` (vendor secrets as the env certbot's plugin reads),
-  `certbot_authenticator()` (the plugin NAME, e.g. `route53`), and
+  `credential_env()` (vendor secrets as env for `issue-cert.py` / certbot),
+  `certbot_authenticator()` (stable provider name, e.g. `route53`),
+  `certbot_args(domain)` (the exact certbot authenticator argv), and
   `upsert_wildcard(domain, targets)` (publish the public `*.<domain>` A/AAAA
   records that point the regional wildcard at the proxy fleet — A → the proxies'
   reserved IPv4s, AAAA → their `/128`s, round-robin). `for_dns_provider_type(type)`
   resolves the active `Atlas Settings.dns_provider_type` to an instance.
-  `Route53DnsProvider` is the only implementation; Cloudflare is a reserved
-  Select option.
+  `Route53DnsProvider` and `PowerDNSDnsProvider` are implemented; Cloudflare is a
+  reserved Select option.
 
   The challenge TXT records are certbot's job (Atlas never writes them); the
   durable `*.<domain>` record is Atlas's, reconciled by `TLS Certificate`'s
@@ -138,15 +139,17 @@ and there is no remote host to stage a script onto. So:
   operator picker, but `resolve()` still finds it for the local runner.
 - A `Task` row is still recorded, so a cert issuance shows up in the same audit
   list as every host/guest op.
-- The DNS authenticator name crosses the CLI as a plain value (`route53`), never a
-  `--`-prefixed token — the script renders `--dns-route53` itself. (Passing a
-  `--`-value through argparse's repeated-flag form silently breaks; the name form
-  sidesteps it.)
-- Vendor credentials (AWS keys) travel through the subprocess **environment**,
-  never argv, so they never appear in `ps`.
+- The DNS provider passes a stable authenticator name plus provider-specific
+  certbot args through repeatable `--certbot-arg` flags. Route53 renders
+  `--dns-route53`; PowerDNS renders the third-party plugin's authenticator and a
+  credentials-file path.
+- Vendor credentials travel through the subprocess **environment** and, when a
+  plugin requires it, a controller-local `0600` credentials file. Secret values are
+  never placed in argv, so they never appear in `ps`.
 
-certbot + `certbot-dns-route53` + openssl are a **controller-host dependency**
-(documented here; install on the Atlas controller). They are *not* a server- or
+certbot + openssl + the selected DNS plugin are a **controller-host dependency**
+(documented here; install on the Atlas controller). Route53 needs
+`certbot-dns-route53` + `boto3`; PowerDNS needs `certbot-dns-powerdns`. They are *not* a server- or
 script-runtime dependency, so the server-side "stdlib only" rule
 ([04-tasks.md](./04-tasks.md), principle #5) is intact: `scripts/lib/atlas/certs.py`
 is pure stdlib string logic, and the two subprocess calls (certbot, openssl) live
@@ -178,10 +181,10 @@ failure and moves on, exactly like `proxy.reconcile_proxies`.
 
 Layered on top of the proxy first-run ([12-proxy.md](./12-proxy.md)):
 
-1. **Route53 Settings** — the IAM access key and secret with `route53:*` on the
-   zone.
-2. **Atlas Settings** — `dns_provider_type = Route53` (the active DNS vendor) +
-   `tls_provider_type = Let's Encrypt` (the active issuer).
+1. **DNS Settings** — either Route53 Settings (IAM key/secret with `route53:*` on
+   the zone) or PowerDNS Settings (Authoritative HTTP API URL/key/server id).
+2. **Atlas Settings** — `dns_provider_type = Route53` or `PowerDNS` (the active
+   DNS vendor) + `tls_provider_type = Let's Encrypt` (the active issuer).
 3. **Lets Encrypt Settings** — ACME directory (staging while testing) + account
    email. (ToS agreement is implicit: certbot is always run with `--agree-tos`.)
 4. **Root Domain** — one row per region: `domain = <region>.frappe.dev`,
@@ -206,8 +209,8 @@ The split follows the project's host-facts-vs-unit-logic rule
 - **Unit (no host, the bulk of coverage):** the registries resolve a vendor type
   to its class and reject an unknown type (`for_dns_provider_type` /
   `for_tls_provider_type`, twins of
-  `providers/test_registry.py`); `Route53DnsProvider.credential_env()` /
-  `certbot_authenticator()` and the `LetsEncryptProvider` certbot argv compose
+  `providers/test_registry.py`); DNS provider `credential_env()` /
+  `certbot_authenticator()` / `certbot_args()` and the `LetsEncryptProvider` certbot argv compose
   correctly against a mocked local runner (**no real certbot**); `Root Domain`
   autoname/immutability and `*.<domain>` derivation; the `TLS Certificate` status
   machine, `renew_expiring` window, and `_push_to_proxies` fan-out to the proxy
@@ -216,9 +219,9 @@ The split follows the project's host-facts-vs-unit-logic rule
 - **E2E (host fact, real ACME):** `tls_issuance` is the only e2e that drives the
   real producer chain — Let's Encrypt **staging** → DNS-01 → certbot →
   `_push_to_proxies` → off-droplet HTTPS — on top of the proxy infra. It needs a
-  live Route 53 zone and the controller-host deps, and skips cleanly
+  live DNS zone and the controller-host deps, and skips cleanly
   (`MissingConfig`, before any billable provision) when the e2e fixture has no
   `tls` block (`$ATLAS_E2E_CONFIG`, see the README). `proxy_vm` uses a self-signed stand-in cert, not this
   chain. The new desk buttons (Issue/Renew, Push to Proxies, Test Connection on
-  Route53 Settings / Lets Encrypt Settings) are exercised through the HTTP layer
+  Route53 Settings / PowerDNS Settings / Lets Encrypt Settings) are exercised through the HTTP layer
   in `desk_buttons`.
