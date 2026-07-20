@@ -1,0 +1,120 @@
+#!/usr/bin/env python3
+# Put a Running VM to sleep: capture its full memory state, stop the unit, then
+# write a SLEEPING marker file. The marker prevents systemd from auto-starting the
+# VM on host reboot (ConditionPathNotExists in firecracker-vm@.service) and is the
+# authority for the Sleeping status in Frappe.
+#
+# Falls back to plain stop on any snapshot failure — the VM always ends up stopped;
+# only the next wake's speed differs. The SLEEPING marker is written after the unit
+# stops in both paths, so the reboot-suppression always takes effect.
+#
+# Mirrors snapshot-stop-vm.py's snapshot logic exactly; they share no library
+# because the jail/paths setup is identical and a shared lib would add indirection
+# with no reuse benefit (two callers, same repo, always evolved together).
+
+import json
+import os
+import sys
+import typing
+from dataclasses import dataclass
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib"))
+
+from atlas._run import CommandError, firecracker_api, install_directory, run, run_ok
+from atlas._task import TaskInputs, TaskResult
+from atlas.paths import ATLAS_ROOT, VirtualMachinePaths
+
+FREE_SPACE_MARGIN_BYTES = 256 * 1024 * 1024
+
+
+@dataclass(frozen=True)
+class SleepVmInputs(TaskInputs):
+	"""Stop a VM with a memory snapshot and mark it sleeping (no reboot auto-start)."""
+
+	command: typing.ClassVar[str] = "sleep-vm"
+	virtual_machine_name: str
+	atlas_fc_uid: int
+
+
+@dataclass(frozen=True)
+class SleepVmResult(TaskResult):
+	memory_snapshot: bool
+	reason: str = ""
+	memory_snapshot_bytes: int = 0
+
+
+def main() -> None:
+	inputs = SleepVmInputs.from_args()
+	paths = VirtualMachinePaths(inputs.virtual_machine_name)
+
+	reason = _preflight(paths)
+	if reason:
+		_stop_and_sleep(paths, reason)
+		return
+
+	try:
+		_create_snapshot(paths, inputs.atlas_fc_uid)
+	except CommandError as error:
+		_stop_and_sleep(paths, f"snapshot failed: {error}")
+		return
+
+	run("sudo systemctl stop {}", paths.systemd_unit)
+	run("sudo touch {}", paths.sleeping_marker)
+	mem_bytes = int(run("sudo stat -c %s {}", paths.memory_snapshot_mem).strip())
+	SleepVmResult(memory_snapshot=True, memory_snapshot_bytes=mem_bytes).emit()
+	print(f"VM {inputs.virtual_machine_name} is now sleeping (memory snapshot captured).")
+
+
+def _preflight(paths: VirtualMachinePaths) -> str:
+	"""Return a non-empty reason string if a memory snapshot can't be taken."""
+	if not run_ok("sudo grep -q snapshot/READY {}", paths.jailer_launch):
+		return "launcher predates memory snapshots; re-provision the VM to enable fast start"
+	if not os.path.exists(paths.api_socket):
+		return "API socket missing; is the VM running?"
+	run("sudo rm -rf {}", paths.memory_snapshot_directory)
+	mem_size_mib = int(
+		run("sudo jq -r {} {}", '."machine-config".mem_size_mib', paths.firecracker_config).strip()
+	)
+	needed = mem_size_mib * 1024 * 1024 + FREE_SPACE_MARGIN_BYTES
+	available = int(run("df --output=avail -B1 {}", ATLAS_ROOT).splitlines()[1].strip())
+	if available < needed:
+		return f"not enough free space for a {mem_size_mib} MiB memory file ({available} B available)"
+	return ""
+
+
+def _create_snapshot(paths: VirtualMachinePaths, uid: int) -> None:
+	install_directory(paths.memory_snapshot_directory, mode="0700")
+	run("sudo chown {} {}", f"{uid}:{uid}", paths.memory_snapshot_directory)
+	firecracker_api(paths.api_socket_directory, paths.api_socket_name, "PATCH", "/vm", '{"state": "Paused"}')
+	firecracker_api(
+		paths.api_socket_directory,
+		paths.api_socket_name,
+		"PUT",
+		"/snapshot/create",
+		json.dumps(
+			{
+				"snapshot_type": "Full",
+				"snapshot_path": paths.memory_snapshot_vmstate_in_jail,
+				"mem_file_path": paths.memory_snapshot_mem_in_jail,
+			}
+		),
+	)
+	for snapshot_file in (paths.memory_snapshot_vmstate, paths.memory_snapshot_mem):
+		if not run_ok("sudo test -s {}", snapshot_file):
+			raise CommandError(["test", "-s", snapshot_file], 1, "snapshot file missing or empty")
+	run("sudo touch {}", paths.memory_snapshot_marker)
+
+
+def _stop_and_sleep(paths: VirtualMachinePaths, reason: str) -> None:
+	"""Fallback path: no memory snapshot, but still write the SLEEPING marker so
+	the unit won't auto-restart on host reboot. The stale snapshot marker (if any)
+	must not survive a partial run."""
+	run("sudo rm -f {}", paths.memory_snapshot_marker)
+	run("sudo systemctl stop {}", paths.systemd_unit)
+	run("sudo touch {}", paths.sleeping_marker)
+	SleepVmResult(memory_snapshot=False, reason=reason).emit()
+	print(f"VM {paths.uuid} is now sleeping (no memory snapshot): {reason}")
+
+
+if __name__ == "__main__":
+	main()

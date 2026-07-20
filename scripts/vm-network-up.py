@@ -214,16 +214,22 @@ def main() -> None:
 	#    host namespace to match on). The v4 masquerade rule (host postrouting,
 	#    100.64.0.0/16 -> uplink) is created in the nft scaffold above and covers the
 	#    guest's v4 egress once it reaches the host via the veth.
-	run(
-		"sudo nft add rule inet atlas forward ip6 daddr {} oifname {} accept",
-		virtual_machine_ipv6,
-		host_veth,
-	)
-	run(
-		"sudo nft add rule inet atlas forward ip6 saddr {} iifname {} accept",
-		virtual_machine_ipv6,
-		host_veth,
-	)
+	#    `counter` records per-VM byte totals that poll-vm-traffic.py reads to detect
+	#    idle VMs for the Sleepy VMs feature. Idempotency guards prevent duplicate
+	#    rules (which would split the counter across two entries) on restarts.
+	_forward = run("sudo nft list chain inet atlas forward")
+	if f"ip6 daddr {virtual_machine_ipv6} oifname {host_veth}" not in _forward:
+		run(
+			"sudo nft add rule inet atlas forward ip6 daddr {} oifname {} counter accept",
+			virtual_machine_ipv6,
+			host_veth,
+		)
+	if f"ip6 saddr {virtual_machine_ipv6} iifname {host_veth}" not in _forward:
+		run(
+			"sudo nft add rule inet atlas forward ip6 saddr {} iifname {} counter accept",
+			virtual_machine_ipv6,
+			host_veth,
+		)
 
 	# 7a. Private plane (the WireGuard host mesh, design §5). Present only once the
 	#     controller writes PRIVATE_ADDRESS + TENANT_PREFIX into network.env; absent

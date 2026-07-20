@@ -243,6 +243,8 @@ scheduler_events = {
 	"cron": {
 		"*/1 * * * *": [
 			"atlas.atlas.central_report.retry_pending",
+			"atlas.atlas.doctype.virtual_machine.virtual_machine.poll_vm_traffic",
+			"atlas.atlas.doctype.virtual_machine.virtual_machine.sleep_idle_vms",
 		],
 		"*/10 * * * *": [
 			"atlas.atlas.providers.worker.reconcile_pending_servers",

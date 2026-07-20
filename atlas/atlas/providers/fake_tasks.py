@@ -186,6 +186,20 @@ def _snapshot_stop_result(_variables: dict) -> dict:
 	return {"memory_snapshot": True, "reason": "", "memory_snapshot_bytes": 536_870_912}
 
 
+def _sleep_vm_result(_variables: dict) -> dict:
+	return {"memory_snapshot": True, "reason": "", "memory_snapshot_bytes": 536_870_912}
+
+
+def _poll_vm_traffic_result(variables: dict) -> dict:
+	import json
+
+	try:
+		vms = json.loads(variables.get("VMS_JSON") or "[]")
+	except (json.JSONDecodeError, TypeError):
+		vms = []
+	return {"counters": {vm["name"]: {"active": False} for vm in vms}}
+
+
 def _warm_snapshot_result(variables: dict) -> dict:
 	return {
 		"size_bytes": _fake_disk_bytes(variables),
@@ -250,6 +264,8 @@ _RESULT_BUILDERS = {
 	"server-facts": _server_facts_result,
 	"snapshot-vm": _snapshot_result,
 	"snapshot-stop-vm": _snapshot_stop_result,
+	"sleep-vm": _sleep_vm_result,
+	"poll-vm-traffic": _poll_vm_traffic_result,
 	"warm-snapshot-vm": _warm_snapshot_result,
 	"upload-snapshot-s3": _upload_snapshot_s3_result,
 	"restore-snapshot-s3": _restore_snapshot_s3_result,

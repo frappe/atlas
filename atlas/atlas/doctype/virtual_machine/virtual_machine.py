@@ -73,12 +73,14 @@ class VirtualMachine(Document):
 		data_disk_mount_point: DF.Data | None
 		disk_gigabytes: DF.Int
 		has_memory_snapshot: DF.Check
+		idle_timeout_seconds: DF.Int
 		image: DF.Link
 		ipv6_address: DF.Data | None
 		is_gateway: DF.Check
 		is_proxy: DF.Check
 		last_started: DF.Datetime | None
 		last_stopped: DF.Datetime | None
+		last_traffic_at: DF.Datetime | None
 		mac_address: DF.Data | None
 		memory_megabytes: DF.Int
 		memory_snapshot_on_stop: DF.Check
@@ -86,8 +88,9 @@ class VirtualMachine(Document):
 		server: DF.Link
 		pilot_credential_id: DF.Data | None
 		size_preset: DF.Literal["Custom", "Shared 1x", "Shared 2x", "Shared 4x", "Shared 8x", "Dedicated 1x"]
+		sleep_on_idle: DF.Check
 		ssh_public_key: DF.LongText
-		status: DF.Literal["Pending", "Running", "Paused", "Stopped", "Failed", "Terminated"]
+		status: DF.Literal["Pending", "Running", "Paused", "Stopped", "Sleeping", "Failed", "Terminated"]
 		stop_protection: DF.Check
 		tap_device: DF.Data | None
 		tenant: DF.Link | None
@@ -236,6 +239,8 @@ class VirtualMachine(Document):
 		# Role exclusivity holds for every save, not just insert — a later db-flip of
 		# is_gateway on a live proxy (or vice versa) is caught here too.
 		self.validate_infra_role()
+		if self.sleep_on_idle and (not self.idle_timeout_seconds or self.idle_timeout_seconds < 120):
+			frappe.throw(_("idle_timeout_seconds must be at least 120 when sleep_on_idle is enabled"))
 		if self.is_new():
 			return
 		original = self.get_doc_before_save()
@@ -362,7 +367,12 @@ class VirtualMachine(Document):
 		instead of cold-booting; the start Task is the same either way — the
 		launcher and the unit's vm-restore.py hook decide from the on-host marker.
 		The snapshot is consumed by the start (restored or not), so the flag
-		clears here unconditionally."""
+		clears here unconditionally.
+
+		A Sleeping VM is woken instead of started — Desk's Start button works for
+		both states transparently."""
+		if self.status == "Sleeping":
+			return self.wake()
 		if self.status != "Stopped":
 			frappe.throw(f"Cannot start from {self.status}")
 		self._guard_no_active_migration()
@@ -407,6 +417,10 @@ class VirtualMachine(Document):
 		(spec/24 §0.5.2). It only applies to the plain (non-snapshot) stop."""
 		# A Paused VM's unit is still active (vCPUs frozen, not shut down), so
 		# `systemctl stop` is the correct full shutdown from either state.
+		# A Sleeping VM's unit is already stopped — wake it first to get it
+		# Running, then call stop() normally.
+		if self.status == "Sleeping":
+			frappe.throw(_("VM is sleeping — wake it first, then stop"))
 		if self.status not in ("Running", "Paused"):
 			frappe.throw(f"Cannot stop from {self.status}")
 		self._guard_no_active_migration()
@@ -447,6 +461,67 @@ class VirtualMachine(Document):
 		self.status = "Stopped"
 		self.has_memory_snapshot = 1 if snapshotted else 0
 		self.last_stopped = frappe.utils.now_datetime()
+		self.save()
+		return task.name
+
+	@frappe.whitelist()
+	def sleep(self) -> str:
+		"""Put a Running VM to sleep: memory snapshot on the host + SLEEPING marker
+		file that suppresses systemd auto-start on host reboot. The VM's cgroup is
+		released, freeing its RAM on the host — that is the whole point.
+
+		Falls back to a plain stop if the snapshot fails (launcher too old, not
+		enough disk, etc.) — the VM always ends up Sleeping; only the next wake's
+		speed differs. sleep_on_idle must be enabled on the VM."""
+		if not self.sleep_on_idle:
+			frappe.throw(_("Enable sleep_on_idle before putting this VM to sleep"))
+		if self.status != "Running":
+			frappe.throw(f"Cannot sleep from {self.status}")
+		self._guard_no_active_migration()
+		if self.stop_protection:
+			frappe.throw(_("Disable stop protection before sleeping this VM"))
+		task = run_task(
+			server=self.server,
+			script="sleep-vm",
+			variables={
+				"VIRTUAL_MACHINE_NAME": self.name,
+				"ATLAS_FC_UID": str(derive_uid(self.name)),
+			},
+			virtual_machine=self.name,
+			timeout_seconds=120,
+		)
+		snapshotted = bool(parse_result(task.stdout)["memory_snapshot"])
+		self.status = "Sleeping"
+		self.has_memory_snapshot = 1 if snapshotted else 0
+		self.last_stopped = frappe.utils.now_datetime()
+		self.save()
+		return task.name
+
+	@frappe.whitelist()
+	def wake(self) -> str:
+		"""Wake a Sleeping VM. Removes the SLEEPING marker on the host so systemd
+		will auto-start it on the next host reboot, then starts the unit. If a
+		memory snapshot is present (has_memory_snapshot), the guest resumes in
+		milliseconds; otherwise it cold-boots."""
+		if self.status != "Sleeping":
+			frappe.throw(f"Cannot wake from {self.status}")
+		# FOR UPDATE holds the row lock for this transaction, preventing two
+		# concurrent wake() calls (e.g. two proxy wake-ups) from both dispatching
+		# a start Task and racing each other.
+		frappe.db.sql("SELECT name FROM `tabVirtual Machine` WHERE name = %s FOR UPDATE", self.name)
+		current_status = frappe.db.get_value("Virtual Machine", self.name, "status")
+		if current_status != "Sleeping":
+			return ""  # Another caller already woke it
+		task = run_task(
+			server=self.server,
+			script="wake-vm",
+			variables={"VIRTUAL_MACHINE_NAME": self.name},
+			virtual_machine=self.name,
+			timeout_seconds=30,
+		)
+		self.status = "Running"
+		self.has_memory_snapshot = 0
+		self.last_started = frappe.utils.now_datetime()
 		self.save()
 		return task.name
 
@@ -531,6 +606,10 @@ class VirtualMachine(Document):
 		  guaranteed-clean image."""
 		# frm.call / REST send `live` as a JSON/stringy value; normalize to bool.
 		live = live in (True, 1, "1", "true", "True", "yes")
+		if self.status == "Sleeping":
+			frappe.throw(
+				_("Cannot snapshot a Sleeping VM — wake it first, stop it, then snapshot")
+			)
 		if live:
 			if self.status not in ("Running", "Paused"):
 				frappe.throw(
@@ -1281,3 +1360,66 @@ def auto_provision(virtual_machine_name: str) -> None:
 	if virtual_machine.status != "Pending":
 		return
 	virtual_machine.provision()
+
+
+def poll_vm_traffic() -> None:
+	"""Scheduled job (*/1 * * * *): for each server with sleep_on_idle Running VMs,
+	dispatch a poll-vm-traffic Task and stamp last_traffic_at on active VMs."""
+	import json
+
+	vms = frappe.get_all(
+		"Virtual Machine",
+		filters={"status": "Running", "sleep_on_idle": 1},
+		fields=["name", "server", "ipv6_address"],
+	)
+	if not vms:
+		return
+
+	by_server: dict = {}
+	for vm in vms:
+		by_server.setdefault(vm.server, []).append(vm)
+
+	now = frappe.utils.now_datetime()
+	for server, server_vms in by_server.items():
+		vms_json = json.dumps([{"name": vm.name, "ipv6_address": vm.ipv6_address} for vm in server_vms])
+		try:
+			task = run_task(
+				server=server,
+				script="poll-vm-traffic",
+				variables={"VMS_JSON": vms_json},
+				virtual_machine=None,
+				timeout_seconds=30,
+			)
+			counters = parse_result(task.stdout).get("counters", {})
+			for vm_name, counter in counters.items():
+				if counter.get("active"):
+					frappe.db.set_value("Virtual Machine", vm_name, "last_traffic_at", now)
+		except Exception:
+			pass  # Per-server failures don't abort other servers
+
+
+def sleep_idle_vms() -> None:
+	"""Scheduled job (*/1 * * * *): find Running sleep_on_idle VMs whose
+	last_traffic_at is older than their idle_timeout_seconds and put them to sleep.
+	The per-minute poll (poll_vm_traffic) keeps last_traffic_at fresh; this sweeper
+	acts on the staleness."""
+	vms = frappe.get_all(
+		"Virtual Machine",
+		filters={"status": "Running", "sleep_on_idle": 1},
+		fields=["name", "last_traffic_at", "idle_timeout_seconds"],
+	)
+	for vm_data in vms:
+		if not vm_data.last_traffic_at:
+			continue
+		elapsed = (frappe.utils.now_datetime() - vm_data.last_traffic_at).total_seconds()
+		if elapsed < (vm_data.idle_timeout_seconds or 300):
+			continue
+		# Re-read status under a transaction so a concurrent poll doesn't race us.
+		current_status = frappe.db.get_value("Virtual Machine", vm_data.name, "status")
+		if current_status != "Running":
+			continue
+		try:
+			vm = frappe.get_doc("Virtual Machine", vm_data.name)
+			vm.sleep()
+		except Exception:
+			pass  # Failures are recorded in the Task row; don't abort the sweep
