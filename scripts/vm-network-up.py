@@ -47,12 +47,12 @@ def main() -> None:
 
 	env = read_network_env(VirtualMachinePaths(uuid).network_env)
 	tap_device = env.require("TAP_DEVICE")
-	virtual_machine_ipv6 = env.require("VIRTUAL_MACHINE_IPV6")
+	virtual_machine_ipv6 = env.get("VIRTUAL_MACHINE_IPV6")
 	atlas_netns = env.require("ATLAS_NETNS")
 	host_veth = env.require("HOST_VETH")
 	namespace_veth = env.require("NAMESPACE_VETH")
-	ipv4_host_cidr = env.require("IPV4_HOST_CIDR")
-	ipv4_guest_cidr = env.require("IPV4_GUEST_CIDR")
+	ipv4_host_cidr = env.get("IPV4_HOST_CIDR")
+	ipv4_guest_cidr = env.get("IPV4_GUEST_CIDR")
 	# Optional: a Reserved IP attached to this VM. Present only for the VMs that
 	# opted into inbound v4 (today, the reverse proxy). Absent for every ordinary
 	# VM, so the 1:1-NAT block below is skipped and nothing changes.
@@ -68,8 +68,9 @@ def main() -> None:
 	# The guest's private v4 as a bare host address. The host routes a /32 to it
 	# (the v4 analog of the VM's /128 v6 route) — a route prefix must be a network
 	# address, so we cannot reuse IPV4_HOST_CIDR (a /30 carrying a host address;
-	# `ip route` rejects "100.64.x.9/30" as an invalid prefix).
-	ipv4_guest_address = ipv4_guest_cidr.split("/", 1)[0]
+	# `ip route` rejects "100.64.x.9/30" as an invalid prefix). Only derivable when
+	# the VM has a NAT44 link (absent for an air-gapped VM, egress_nat44=0).
+	ipv4_guest_address = ipv4_guest_cidr.split("/", 1)[0] if ipv4_guest_cidr else ""
 
 	uplink = default_route_device("-6")
 	# The default-route dev for v4 egress (may differ from the v6 uplink on a
@@ -149,18 +150,20 @@ def main() -> None:
 		atlas_netns,
 		tap_device,
 	)
-	run(
-		"sudo ip netns exec {} ip -6 route replace {} dev {}",
-		atlas_netns,
-		f"{virtual_machine_ipv6}/128",
-		tap_device,
-	)
-	run(
-		"sudo ip netns exec {} ip -4 addr replace {} dev {}",
-		atlas_netns,
-		ipv4_host_cidr,
-		tap_device,
-	)
+	if virtual_machine_ipv6:
+		run(
+			"sudo ip netns exec {} ip -6 route replace {} dev {}",
+			atlas_netns,
+			f"{virtual_machine_ipv6}/128",
+			tap_device,
+		)
+	if ipv4_host_cidr:
+		run(
+			"sudo ip netns exec {} ip -4 addr replace {} dev {}",
+			atlas_netns,
+			ipv4_host_cidr,
+			tap_device,
+		)
 
 	# 5. Bring up both ends of the veth and address it for transit. IPv6 uses
 	#    fe80::2 (host) / fe80::3 (ns); IPv4 uses a link-local /30 (169.254.0.0/30)
@@ -196,33 +199,39 @@ def main() -> None:
 	#    namespace via the veth, and answer NDP for the VM on the uplink so the
 	#    upstream router delivers its v6 packets here. The v4 return path relies on
 	#    the masquerade conntrack, but the explicit /30 route lets the host reach the
-	#    guest's private v4 directly too.
-	run(
-		"sudo ip -6 route replace {} via fe80::3 dev {}",
-		f"{virtual_machine_ipv6}/128",
-		host_veth,
-	)
-	run("sudo ip -6 neigh replace proxy {} dev {}", virtual_machine_ipv6, uplink)
-	run(
-		"sudo ip -4 route replace {} via 169.254.0.2 dev {}",
-		f"{ipv4_guest_address}/32",
-		host_veth,
-	)
+	#    guest's private v4 directly too. A dark VM (public_networking=0) has no
+	#    public /128 and no proxy-NDP; an air-gapped VM (egress_nat44=0) has no v4
+	#    link — both skip their respective blocks.
+	if virtual_machine_ipv6:
+		run(
+			"sudo ip -6 route replace {} via fe80::3 dev {}",
+			f"{virtual_machine_ipv6}/128",
+			host_veth,
+		)
+		run("sudo ip -6 neigh replace proxy {} dev {}", virtual_machine_ipv6, uplink)
+	if ipv4_guest_address:
+		run(
+			"sudo ip -4 route replace {} via 169.254.0.2 dev {}",
+			f"{ipv4_guest_address}/32",
+			host_veth,
+		)
 
 	# 7. Forwarding rules, matching the host-side veth (the tap is no longer in the
 	#    host namespace to match on). The v4 masquerade rule (host postrouting,
 	#    100.64.0.0/16 -> uplink) is created in the nft scaffold above and covers the
-	#    guest's v4 egress once it reaches the host via the veth.
-	run(
-		"sudo nft add rule inet atlas forward ip6 daddr {} oifname {} accept",
-		virtual_machine_ipv6,
-		host_veth,
-	)
-	run(
-		"sudo nft add rule inet atlas forward ip6 saddr {} iifname {} accept",
-		virtual_machine_ipv6,
-		host_veth,
-	)
+	#    guest's v4 egress once it reaches the host via the veth. A dark VM has no
+	#    public v6 forward rules — its only reachability is via the private plane.
+	if virtual_machine_ipv6:
+		run(
+			"sudo nft add rule inet atlas forward ip6 daddr {} oifname {} accept",
+			virtual_machine_ipv6,
+			host_veth,
+		)
+		run(
+			"sudo nft add rule inet atlas forward ip6 saddr {} iifname {} accept",
+			virtual_machine_ipv6,
+			host_veth,
+		)
 
 	# 7a. Private plane (the WireGuard host mesh, design §5). Present only once the
 	#     controller writes PRIVATE_ADDRESS + TENANT_PREFIX into network.env; absent
