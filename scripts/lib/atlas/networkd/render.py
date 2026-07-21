@@ -91,6 +91,20 @@ def render_wg_desired(
 			# "" because the host self-generates its key on first boot).  Skip
 			# until the real key arrives via gossip/anti-entropy.
 			continue
+		# Belt-and-suspenders: belt = the parse boundary (wire.membership_from_dict
+		# + seed._seed_entry_to_record) already calls `peer.validate()` and
+		# rejects whitespace/control chars in any of the three fields
+		# interpolated below. Suspenders: call it AGAIN at the render doorstep
+		# so a future code path that constructs a `MembershipRecord` directly
+		# (tests, a new apply entry, an in-place mutation) cannot emit newline-
+		# injected `[Peer]` directives into wg-mesh.conf. The config body is
+		# fed to `wg syncconf` via `wg-quick strip`, which preserves all
+		# `[Peer]` sections — a newline in `wg_public_key`/`endpoint`/`mesh_address`
+		# would inject a rogue peer with an attacker-controlled pubkey (whose
+		# priv mate the attacker actually holds, unlike the §19.2 self-forgery
+		# case where they don't hold the priv mate of the cluster's trusted wg
+		# key). The check is ~3 µs/peer; the loop runs every 200 ms.
+		peer.validate()
 		allowed = sorted([*allowed_by_peer.get(peer.host_id, []), f"{peer.mesh_address}/128"])
 		lines += [
 			"[Peer]",

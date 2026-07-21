@@ -153,5 +153,233 @@ class TestOwnershipAdvertisementEquality(unittest.TestCase):
 		self.assertEqual(hash(a), hash(b))
 
 
+class TestRecordInjectionGuard(unittest.TestCase):
+	"""A compromised-but-authenticated host can sign a MembershipRecord with
+	`wg_public_key = "valid_key\\n[Peer]\\nPublicKey = <evil_pubkey>\\n..."` and
+	the per-record signature still verifies (the attacker holds the priv mate
+	of their own signing key — the §19.3 layer authenticates the AUTHOR's
+	identity, not the safety of field values). Render interpolates
+	`wg_public_key` / `endpoint` / `mesh_address` verbatim into wg-mesh.conf;
+	`wg-quick strip` preserves all `[Peer]` sections, so a newline in any of
+	those three fields injects a rogue `[Peer]` entry into every host's
+	wg-mesh.conf with an attacker-controlled pubkey (whose priv mate the
+	attacker actually holds — unlike the §19.2 self-forgery case where they
+	don't hold the priv mate of the cluster's trusted wg key). Spec §19.2
+	bounds the "compromised-host can forge its own record" damage by the peer
+	slot; newline injection escapes that bound, so
+	`MembershipRecord.validate()` rejects whitespace/control chars at the
+	parse boundary (wire + seed), and `render.render_wg_desired` calls
+	`validate()` again at the rendering doorstep as belt-and-suspenders for
+	records constructed directly (bypassing parse).
+	"""
+
+	def _seed_dict(self, **overrides) -> dict:
+		d = {
+			"host_id": "h-ev",
+			"kind": "member",
+			"state": "alive",
+			"endpoint": "2001:db9::1",
+			"wg_public_key": "A" * 44,
+			"mesh_address": "fdaa:0:0:1::1",
+			"generation": 1,
+		}
+		d.update(overrides)
+		return d
+
+	def test_valid_record_passes_validation(self):
+		# Sanity — a well-formed record is accepted by the parse path.
+		from atlas.networkd.wire import membership_from_dict
+
+		record = membership_from_dict(self._seed_dict())  # must not raise
+		# Idempotent — calling validate() again also passes.
+		record.validate()
+
+	def test_wg_public_key_with_newline_rejected_at_parse(self):
+		# The headline attack vector: a signed MembershipRecord whose
+		# wg_public_key carries `[Peer]\nPublicKey = <evil_pubkey>` past the
+		# sig check, then injects a rogue peer at render.
+		from atlas.networkd.wire import membership_from_dict
+
+		evil = "A" * 44 + "\n[Peer]\nPublicKey = " + "B" * 44 + "\nAllowedIPs = fdab::/8"
+		with self.assertRaises(ValueError) as raised:
+			membership_from_dict(self._seed_dict(wg_public_key=evil))
+		self.assertIn("wg_public_key", str(raised.exception))
+
+	def test_endpoint_with_newline_rejected_at_parse(self):
+		from atlas.networkd.wire import membership_from_dict
+
+		evil = "2001:db9::1\n[Peer]\nPublicKey = " + "B" * 44
+		with self.assertRaises(ValueError) as raised:
+			membership_from_dict(self._seed_dict(endpoint=evil))
+		self.assertIn("endpoint", str(raised.exception))
+
+	def test_mesh_address_with_newline_rejected_at_parse(self):
+		from atlas.networkd.wire import membership_from_dict
+
+		evil = "fdaa:0:0:1::1\n[Peer]\nPublicKey = " + "B" * 44
+		with self.assertRaises(ValueError) as raised:
+			membership_from_dict(self._seed_dict(mesh_address=evil))
+		self.assertIn("mesh_address", str(raised.exception))
+
+	def test_carriage_return_in_wg_public_key_rejected_at_parse(self):
+		# `\r` is the alternate line-separator that some parsers honor; the
+		# loose check (`c.isspace() or ord(c) < 32`) catches both `\r` (ord 13
+		# < 32, also isspace) and `\n` (ord 10 < 32, also isspace).
+		from atlas.networkd.wire import membership_from_dict
+
+		with self.assertRaises(ValueError):
+			membership_from_dict(self._seed_dict(wg_public_key="A" * 44 + "\r[Peer]"))
+
+	def test_tab_in_wg_public_key_rejected_at_parse(self):
+		from atlas.networkd.wire import membership_from_dict
+
+		with self.assertRaises(ValueError):
+			membership_from_dict(self._seed_dict(wg_public_key="A" * 44 + "\t[Peer]"))
+
+	def test_null_byte_in_endpoint_rejected_at_parse(self):
+		from atlas.networkd.wire import membership_from_dict
+
+		with self.assertRaises(ValueError):
+			membership_from_dict(self._seed_dict(endpoint="2001:db9::1\x00[Peer]"))
+
+	def test_seed_entry_with_newline_in_wg_public_key_rejected(self):
+		# The seed path is the other parse boundary; mirror coverage there.
+		# Operator-controlled input should never carry newlines either, but
+		# defense in depth catches a mis-fabricated seed file.
+		from atlas.networkd.seed import _seed_entry_to_record
+
+		evil = "A" * 44 + "\n[Peer]\nPublicKey = " + "B" * 44
+		entry = self._seed_dict(wg_public_key=evil)
+		with self.assertRaises(ValueError) as raised:
+			_seed_entry_to_record(entry, "<test>")
+		self.assertIn("wg_public_key", str(raised.exception))
+
+	def test_seed_entry_with_newline_in_endpoint_rejected(self):
+		from atlas.networkd.seed import _seed_entry_to_record
+
+		entry = self._seed_dict(endpoint="2001:db9::1\n[Peer]")
+		with self.assertRaises(ValueError):
+			_seed_entry_to_record(entry, "<test>")
+
+	def test_render_rejects_peer_with_whitespace_in_wg_public_key(self):
+		# Belt-and-suspenders: render refuses to emit a peer whose
+		# interpolated fields carry whitespace, EVEN IF the record was
+		# constructed directly (bypassing the wire/seed parse validators).
+		from atlas.networkd.render import render_wg_desired
+
+		evil = MembershipRecord(
+			host_id="h-ev",
+			kind=MembershipKind.MEMBER,
+			state=MemberState.ALIVE,
+			endpoint="2001:db9::1",
+			wg_public_key="A" * 44 + "\n[Peer]\nPublicKey = " + "B" * 44,
+			mesh_address="fdaa:0:0:1::1",
+			generation=1,
+		)
+		self_host = MembershipRecord(
+			host_id="self",
+			kind=MembershipKind.MEMBER,
+			state=MemberState.ALIVE,
+			endpoint="2001:db9::2",
+			wg_public_key="C" * 44,
+			mesh_address="fdaa:0:0:2::1",
+			generation=1,
+		)
+		with self.assertRaises(ValueError) as raised:
+			render_wg_desired("self", {"h-ev": evil, "self": self_host}, OwnershipTable())
+		self.assertIn("wg_public_key", str(raised.exception))
+
+	def test_render_rejects_peer_with_newline_in_endpoint(self):
+		# Even without an injected `[Peer]` payload, a newline in `endpoint`
+		# corrupts the `[{endpoint}]:{port}` wrap — wg syncconf would reject
+		# the whole config (fail-closed), but render refuses to emit in the
+		# first place so the conflict surfaces loud here instead of as a
+		# silent wg-syncconf rejection on the host.
+		from atlas.networkd.render import render_wg_desired
+
+		evil_endpoint = MembershipRecord(
+			host_id="h-ev",
+			kind=MembershipKind.MEMBER,
+			state=MemberState.ALIVE,
+			endpoint="2001:db9::1\n[Peer]",
+			wg_public_key="A" * 44,
+			mesh_address="fdaa:0:0:1::1",
+			generation=1,
+		)
+		self_host = MembershipRecord(
+			host_id="self",
+			kind=MembershipKind.MEMBER,
+			state=MemberState.ALIVE,
+			endpoint="2001:db9::2",
+			wg_public_key="C" * 44,
+			mesh_address="fdaa:0:0:2::1",
+			generation=1,
+		)
+		with self.assertRaises(ValueError):
+			render_wg_desired("self", {"h-ev": evil_endpoint, "self": self_host}, OwnershipTable())
+
+	def test_render_rejects_peer_with_newline_in_mesh_address(self):
+		from atlas.networkd.render import render_wg_desired
+
+		evil_mesh = MembershipRecord(
+			host_id="h-ev",
+			kind=MembershipKind.MEMBER,
+			state=MemberState.ALIVE,
+			endpoint="2001:db9::1",
+			wg_public_key="A" * 44,
+			mesh_address="fdaa:0:0:1::1\n[Peer]",
+			generation=1,
+		)
+		self_host = MembershipRecord(
+			host_id="self",
+			kind=MembershipKind.MEMBER,
+			state=MemberState.ALIVE,
+			endpoint="2001:db9::2",
+			wg_public_key="C" * 44,
+			mesh_address="fdaa:0:0:2::1",
+			generation=1,
+		)
+		with self.assertRaises(ValueError):
+			render_wg_desired("self", {"h-ev": evil_mesh, "self": self_host}, OwnershipTable())
+
+	def test_render_emits_no_injected_pubkey_after_rejecting_evil_peer(self):
+		# The render MUST raise BEFORE emitting any config body, so the
+		# attacker's injected pubkey never reaches the bytes handed to `wg
+		# syncconf`. Verify by replacing the evil peer with a valid one and
+		# asserting the attacker-controlled key never appears in the body.
+		from dataclasses import replace
+
+		from atlas.networkd.render import render_wg_desired
+
+		evil_pubkey = "B" * 44
+		evil = MembershipRecord(
+			host_id="h-ev",
+			kind=MembershipKind.MEMBER,
+			state=MemberState.ALIVE,
+			endpoint="2001:db9::1",
+			wg_public_key="A" * 44 + "\n[Peer]\nPublicKey = " + evil_pubkey,
+			mesh_address="fdaa:0:0:1::1",
+			generation=1,
+		)
+		self_host = MembershipRecord(
+			host_id="self",
+			kind=MembershipKind.MEMBER,
+			state=MemberState.ALIVE,
+			endpoint="2001:db9::2",
+			wg_public_key="C" * 44,
+			mesh_address="fdaa:0:0:2::1",
+			generation=1,
+		)
+		# First the reject path: render raises (no body produced at all).
+		with self.assertRaises(ValueError):
+			render_wg_desired("self", {"h-ev": evil, "self": self_host}, OwnershipTable())
+		# Now swap the evil peer for a valid one with no whitespace; render
+		# succeeds and the attacker's pubkey must NOT appear in the body.
+		good = replace(evil, wg_public_key="D" * 44)
+		body = render_wg_desired("self", {"h-ev": good, "self": self_host}, OwnershipTable())
+		self.assertNotIn(evil_pubkey, body)
+		self.assertIn("D" * 44, body)
+
+
 if __name__ == "__main__":
 	unittest.main()

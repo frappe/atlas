@@ -73,6 +73,48 @@ class MembershipRecord:
 		"""The origin of this record — always `host_id` (§19.2)."""
 		return self.host_id
 
+	def validate(self) -> None:
+		"""Reject records whose wire-fields could inject config-file directives
+		downstream (render.py interpolates them verbatim into wg-mesh.conf).
+
+		The auth layers (§19) authenticate WHO sent a record, not WHAT field
+		values the author chose — a compromised-but-authenticated host can sign
+		a MembershipRecord carrying `wg_public_key = "valid_key\\n[Peer]\\nPublicKey
+		= <evil_pubkey>\\nAllowedIPs = fdab::/8"` and the per-record signature
+		still verifies (the attacker holds the priv mate of their own signing
+		key). A newline injects a rogue `[Peer]` entry into every host's
+		wg-mesh.conf via render; `wg-quick strip` preserves all `[Peer]`
+		sections, so the injected entry reaches the kernel with a pubkey whose
+		priv mate the attacker actually controls (unlike the §19.2 self-forgery
+		case where the attacker doesn't hold the priv mate of the cluster's
+		trusted wg key). Spec §19.2 bounds the compromised-host damage by the
+		peer slot; injection escapes that bound, so reject anything outside
+		the no-whitespace, no-control-chars class for the three interpolated
+		fields (`wg_public_key`, `endpoint`, `mesh_address`).
+
+		Called explicitly from the two parse boundaries
+		(`wire.membership_from_dict` + `seed._seed_entry_to_record`) AND from
+		`render.render_wg_desired` as belt-and-suspenders — a direct-constructed
+		record that bypasses parse still can't reach the config body. The
+		loose check (whitespace + control chars only) is sufficient because
+		any arbitrary-peer-injection requires a line-separator in one of the
+		three fields; non-whitespace chars that aren't valid in the field
+		(e.g. `]` inside `endpoint`) fat-finger the line but are fail-closed
+		by `wg syncconf`'s strict parser (it rejects the whole config), not an
+		injection of an additional `[Peer]` slot.
+		"""
+		for field_name in ("wg_public_key", "endpoint", "mesh_address"):
+			value = getattr(self, field_name)
+			if not isinstance(value, str):
+				raise ValueError(
+					f"MembershipRecord from {self.host_id}: field {field_name!r} is not a string: {value!r}"
+				)
+			if any(c.isspace() or ord(c) < 32 for c in value):
+				raise ValueError(
+					f"MembershipRecord from {self.host_id} carries whitespace or control chars in "
+					f"{field_name!r}: {value!r} — would inject directives into wg-mesh.conf at render"
+				)
+
 
 @dataclass(frozen=True, slots=True)
 class OwnershipAdvertisement:

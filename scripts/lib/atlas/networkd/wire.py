@@ -246,7 +246,7 @@ def membership_to_dict(m: MembershipRecord) -> dict:
 def membership_from_dict(d: dict) -> MembershipRecord:
 	from .records import MembershipKind, MemberState
 
-	return MembershipRecord(
+	record = MembershipRecord(
 		host_id=d["host_id"],
 		kind=MembershipKind(d["kind"]),
 		state=MemberState(d["state"]),
@@ -256,6 +256,16 @@ def membership_from_dict(d: dict) -> MembershipRecord:
 		generation=int(d["generation"]),
 		signing_public_key=d.get("signing_public_key", ""),
 	)
+	# Reject records whose wire-fields would inject directives into the
+	# rendered wg-mesh.conf (`\n[Peer]\nPublicKey = <evil>` in `wg_public_key`
+	# etc.) — see `MembershipRecord.validate` for the threat model. The
+	# per-record sig (§19.3) only authenticates the author's identity, not
+	# the safety of field values, so a compromised-but-authenticated host
+	# can sign a record whose fields carry newlines that wire's render
+	# interpolates verbatim. Drop the record here, at the parse boundary,
+	# before it reaches apply_membership → render.
+	record.validate()
+	return record
 
 
 def ownership_to_dict(a: OwnershipAdvertisement) -> dict:

@@ -108,7 +108,7 @@ def _seed_entry_to_record(entry: dict, path: str) -> MembershipRecord:
 	if not isinstance(entry, dict):
 		raise ValueError(f"seed entry in {path} is not a dict: {entry!r}")
 	try:
-		return MembershipRecord(
+		record = MembershipRecord(
 			host_id=entry["host_id"],
 			kind=MembershipKind(entry.get("kind", "member")),
 			state=MemberState(entry.get("state", "alive")),
@@ -124,6 +124,12 @@ def _seed_entry_to_record(entry: dict, path: str) -> MembershipRecord:
 		)
 	except KeyError as missing:
 		raise ValueError(f"seed entry in {path} missing field {missing}: {entry!r}") from missing
+	# Same injection guard as `wire.membership_from_dict`: an operator-
+	# controlled seed should never carry newlines in interpolated fields,
+	# but defense in depth catches a mis-fabricated seed file (or a future
+	# code path that bypasses parse) before the records reach render.
+	record.validate()
+	return record
 
 
 __all__ = [
