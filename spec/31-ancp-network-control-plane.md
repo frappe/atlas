@@ -93,7 +93,7 @@ Local Ownership Discovery   (atlas-networkd scans non-terminated VMs on this hos
    ▼
 atlas-networkd
    │
-Atlas Network Control Protocol (gossip + anti-entropy inside wg-mesh)
+Atlas Network Control Protocol (plain UDP on public IPv6 endpoint, port 7946)
    │
    ▼
 WireGuard (wg-mesh) + nftables (per-VM veth, owned by vm-network-up.py)
@@ -338,7 +338,7 @@ New node N                         Seed S1, S2, S3 (from bootstrap seed file)
    1. bring_up_mesh()         # device up, mesh_address/128 set, listen-port, peers empty
    2. read seed file -> initial Membership Records (alive, gen=seed-gen from provision)
    3. install seeds as wg-mesh peers (atomic syncconf, §16.4)
-   4. self-advertise:  N --MembershipAdvertisement(gen=1)--> S1, S2, S3   (unicast over wg-mesh)
+   4. self-advertise:  N --MembershipAdvertisement(gen=1)--> S1, S2, S3   (unicast over plain UDP to each seed's public `endpoint`, port 7946)
    │
    └──────────────────────────────────────────────────────────────────────┐
                                                                           ▼
@@ -680,7 +680,7 @@ membership table (excluding self and recently-probed — see health-aware
 selection below) and sends each a `Ping`. The `Ping` piggybacks on the gossip
 round.
 
-1. A peer that receives a `Ping` replies `Ack` immediately (inside wg-mesh).
+1. A peer that receives a `Ping` replies `Ack` immediately (over the same plain-UDP ANCP socket the `Ping` arrived on).
 2. If the prober receives `Ack` within `probe_timeout` → peer stays `alive`.
 3. If not, the prober selects `indirect Relay_peers` other members (default 3)
    and sends each an `IndirectPing(target=peer)`. Each relay forwards a `Ping`
@@ -1153,48 +1153,99 @@ specify a particular alerting stack (out of scope per §3).
 
 ## 19. Authentication
 
-All ANCP messages flow exclusively inside the mesh's WireGuard tunnels, so
-they inherit WireGuard's L3 transport authentication. Above that, ANCP adds
-**sender-identity binding** and a **cross-origin forwarding ban** — together
-they defeat a compromised-host forging another host's records.
+ANCP rides plain UDP on each host's public IPv6 endpoint, port 7946 (see §5
+and `scripts/lib/atlas/networkd/transport.py`). The protocol is reachable
+from any host on the public IPv6 internet that can route to the recipient —
+there is **no L3 transport binding to WireGuard**. `wg-mesh` is the *output*
+of the control plane (the data-plane device the daemon programs in §16), never
+its transport. The earlier spec drafts' claim that ANCP "flows inside the
+mesh's WireGuard tunnels" was an aspiration that the shipped implementation
+deliberately diverged from: ANCP cannot depend on wg-mesh, because wg-mesh is
+itself configured from gossip convergence (§16) — the control plane must
+bootstrap before the data plane it produces.
 
-### 19.1 Two-layer authentication
+Because the ANCP socket is publicly reachable, every message and every record
+is cryptographically authenticated at the application layer. Three layers
+compose:
 
-- **L3 transport** — WireGuard's per-peer `AllowedIPs` + Curve25519
-  handshake. A peer that can't produce a valid handshake never sees an ANCP
-  byte. A host is authenticated by its pubkey at the IP layer.
-- **L4 origin binding** — every ANCP message carries `sender : HostID`, and
-  the receiver asserts **`sender == wg-authenticated-peer-host-id`**. A host
-  can only declare a message's Origin as its own HostID.
+1. **Envelope signature** (§19.1) — every `Message` is whole-envelope-signed
+   by its `sender`'s ed25519 private key. The receiver verifies against its
+   cached pubkey for that `sender`, dropping the datagram on any failure
+   before any payload work.
+2. **Per-record signature** (§19.3) — every piggybacked `MembershipRecord`
+   and `OwnershipAdvertisement` is signed by its *origin*'s ed25519 private
+   key, independent of the relay that forwarded it. Stops a relay from
+   fabricating or mutating records "from" another origin.
+3. **Operator-anchored trust directory** (§19.4) — every host's trusted
+   signing-pubkey directory is seeded at provision time from the
+   operator-signed `seed.json`, which carries `(HostID, endpoint,
+   wg_public_key, signing_public_key, mesh_address, generation)` per known
+   host and the operator's provision pubkey as the trust root. A newcomer
+   whose `host_id` is not in any existing host's seed carries an
+   **operator-signed introduction certificate** on its first
+   MembershipAdvertisement (§19.5); existing hosts verify it against the
+   seeded operator pubkey and only then absorb the newcomer's self-asserted
+   signing pubkey.
 
-The check is psychological — the transport already authenticates — but it
-matters for the relay/forwarding case (§13.2 step 6) where a record may arrive
-from a relay peer whose HostID is not its origin: the relay forwards it but the
-record's *origin* is the original writer, and the receiver, on apply, validates
-that the **current** message's `sender` equals the record's origin **for any
-record the relay is forwarding as the origin** — i.e. relays forward but do not
-*vouch*. The simple rule:
+All three layers are MANDATORY — there is no pre-Stage-5 / mixed-version
+"accept unsigned" fallback. A host whose own signing keypair materializes empty
+at boot (`/etc/atlas-networkd/signing-private-key` missing or invalid) refuses
+to start (`main.py:build_initial` fails closed).
 
-> A receiver accepts a record `R` from sender `S` iff:
-> - `S == R.origin`, OR
-> - `S` is forwarding `R`, in which case `R` is *gossiped onward* but only
->   applied on receipt **if** the receiver already trusts `R.origin`'s key AND
->   the message signs `R` with `R.origin`'s signing key (ed25519, see §19.3).
+### 19.1 Envelope signature (L4 sender authentication)
 
-The branch "S forwards R but the receiver hasn't seen R.origin's key yet" is
-the bootstrap case — the receiver waits for the origin to advertise directly or
-for anti-entropy to carry the origin's Membership Record, then the forwarded R
-becomes applicable. Slightly more latency at join, same correctness.
+Every ANCP `Message` carries, on the wire:
+
+    {
+      "type":               "gossip" | "membership_advert" | "ping" | ...,
+      "sender":             HostID,
+      "signing_public_key": base64,           # sender's ed25519 pubkey
+      "payload":            <type-specific JSON>,
+      "signature":         base64            # ed25519 over {type, sender,
+                                             #         signing_public_key, payload}
+    }
+
+The receiver (`wire.from_bytes` → daemon's `envelope_verifier`):
+
+1. Looks up its cached signing pubkey for `sender`. If seeded/absorbed
+   previously, use the cached one. If the sender is unknown AND the message
+   is a `membership_advert` introducing a host not in the trust directory,
+   use the envelope's self-asserted `signing_public_key` AND require the
+   §19.5 operator-signed introduction certificate (any other case for an
+   unknown sender → drop + counter `signature_failed`).
+2. Reconstructs the canonical body (the four envelope fields minus
+   `signature`, sort-keys compact JSON) and verifies the ed25519 signature
+   against the chosen pubkey.
+3. On any failure (no signature, bad base64, wrong key) → drop + counter
+   `signature_failed`. No payload work occurs.
+
+The envelope signature authenticates the SENDER (the immediate relay that
+emitted the datagram), NOT the ORIGIN of any record inside. Proving the
+origin's authorship of a record is the job of the per-record signature
+(§19.3). The two layers compose: a relay can sign the envelope as itself and
+forward records from other origins; the receiver verifies the relay's
+identity at the envelope, then the origin's authorship at the record.
+
+> The check is **not** psychological. Unlike the earlier §19.1 design that
+> leaned on WireGuard for transport auth, the shipped protocol does the
+> authentication in the application layer because ANCP rides plain UDP.
+> The §19.4 seed-anchored trust directory is what makes `(sender → pubkey)`
+> a meaningful lookup rather than a self-attestation.
 
 ### 19.2 Cross-origin forwarding ban (the security core)
 
-The rule of §19.1 reduces to: **a host may only originate updates to its own
-records**. Concretely:
+The envelope signature authenticates the sender; the per-record signature
+authenticates the origin. The §19.2 rule reduces to: **a host may only
+originate updates to its own records** — the per-record signature must be
+verifiable against the origin's trusted signing pubkey, which is what stops a
+relay (or anyone other than the origin) from mutating the origin's records.
+
+Concretely:
 
 - **Membership Records** — only the host named in `host_id` may publish or
   mutate its own Membership Record. No relay ever claims "host X is leaving"
-  on X's behalf. This means a relay forwards X's record unchanged (signed by
-  X, §19.3); it never synthesizes one.
+  on X's behalf. This means a relay forwards X's record unchanged
+  (envelope-signed by the relay, record-signed by X); it never synthesizes one.
 - **Ownership Advertisements** — only the host named in `owner_host` may
   publish the advertisement. A relay forwards; it never invents an
   ownership claim for another host.
@@ -1212,36 +1263,127 @@ A compromised host can:
   is still advertising, the dropped-on-conflict path means the forger can DoS
   the /128 but cannot steal traffic.
 
-A compromised host **cannot** forge another host's records because of the
-sender-identity binding.
+A compromised host **cannot** forge another host's records because the
+per-record signature must verify against the origin's trusted (and seeded)
+signing pubkey. The blast radius of a single compromised member is bounded to
+its own records — exactly the property the earlier spec asked §19.1's wg
+binding for, now delivered by the per-record ed25519 layer.
 
-### 19.3 Optional ed25519 end-to-end signatures (defense in depth)
+### 19.3 Per-record ed25519 signatures (origin authentication)
 
-The transport-binding of §19.1 is sufficient under a threat model where every
-host runs the same ANCP code and WireGuard key management is intact. For
-defense-in-depth against a future where a relay is reachable from a host that
-can't itself authenticate (e.g. a future reflection-attack surface), each
-host additionally advertises an **ed25519 signing public key** in its
-Membership Record and signs every record it originates. Verify is a per-apply
-check; the keys ride Membership Generations like the wg pubkey (key rotation =
-Generation bump). Recommended to ship from day one — the overhead is ~64 B
-per record and a handful of µs per verify.
+Inside the envelope payload, each piggybacked `MembershipRecord` and
+`OwnershipAdvertisement` carries an additional `signature` field — an
+ed25519 signature over the canonical JSON of the record's wire dict (the
+fields produced by `wire.membership_to_dict` / `wire.ownership_to_dict`
+minus the `signature` field itself, with a domain-separation `kind` tag so a
+signature over a Membership Record cannot be replayed as an Ownership
+Advertisement).
 
-The signing key is generated alongside the wg keypair at first boot and stored
-at `/etc/atlas-networkd/signing-key` (0600). It is **not** derived (Issue A
+Verify is per-apply (`gossip._apply_record` → `default_signature_verifier`,
+`daemon.py:234`). The verifier selects the pubkey:
+
+- **MembershipRecord** — the trusted signing pubkey for `record.host_id`,
+  looked up from the receiver's persisted Membership Record for that origin.
+  If the receiver has none and the record is the origin's first advertisement,
+  the §19.5 introduction certificate must be present and valid; otherwise the
+  record is rejected.
+- **OwnershipAdvertisement** — the trusted signing pubkey for `record.origin`,
+  looked up from the receiver's persisted Membership Record for that origin.
+  An OwnershipAdvertisement from an origin the receiver has no Membership
+  Record for is deferred (carried to the next anti-entropy round, since the
+  MembershipRecord must arrive first for the OwnershipAd to be verifiable).
+
+The signing-pubkey rotation binding: for a MembershipRecord whose origin
+already has a trusted signing pubkey in the receiver's cache, the verifier
+requires the new record's `signing_public_key` to equal the cached one **OR**
+the new record to be a key-rotation record signed by the *old* cached key. A
+self-asserted "I rotated my signing key" record signed by the *new* key is
+rejected; only the established key can rotate itself off. This stops a relay
+that hijacks an origin's `host_id` from rotating the origin's signing key to
+one the relay controls.
+
+The signing key is generated alongside the wg keypair at first boot
+(`keys.ensure_signing_keypair`) and stored at
+`/etc/atlas-networkd/signing-private-key` (0600); the public half lives at
+`/etc/atlas-networkd/signing-public-key` (0644). Neither is derived (Issue A
 applies equally — a derived signing key's seed would be public).
 
-### 19.4 Bootstrap trust (Issue A closeout)
+### 19.4 Bootstrap trust (seed-anchored trust directory)
 
-- The first set of Membership Records is installed trust-on-first-use from the
-  operator-signed seed file (`/etc/atlas-networkd/seed.json` signed with the
-  provision key). The seed carries `(HostID, endpoint, wg_public_key,
-  signing_public_key, mesh_address, generation)`.
-- After first install, each origin updates only its own record at a higher
-  Generation (§10.3).
-- A re-provisioned host gets a new keypair and rejoins at a higher Generation
-  as a normal §10 key rotation — peers drop the old pubkey, install the new.
-  The HostID is stable; only the cryptomaterial rotates.
+The first set of Membership Records is installed trust-on-first-use from the
+operator-signed seed file (`/etc/atlas-networkd/seed.json`). The seed
+carries one entry per known host:
+
+    [
+      { "host_id": "...", "endpoint": "2001:db9::7",
+        "wg_public_key":       "base64",
+        "signing_public_key":  "base64",         # ed25519 — the §19.1/§19.3 trust anchor
+        "mesh_address":        "fdaa:0:0:a1b2::1",
+        "generation": 1 },
+      ...
+    ]
+
+Plus the operator's provision pubkey at `/etc/atlas-networkd/operator-public-key`
+(the §19.5 trust root — used to verify newcomer introduction certificates).
+Both files are written by the controller's bootstrap write path
+(`atlas/atlas/doctype/server/server.py:_write_ancp_bootstrap_state`) at
+provision time, before `atlas-networkd.service` starts.
+
+The seed file itself is signed by the operator's provision key (the same key
+Atlas uses to sign other bootstrap artifacts); `seed.load_seed` verifies that
+signature before installing any records. A bad signature is a hard bootstrap
+failure — no partial bring-up, no "trust the unsigned list" fallback.
+
+After first install, each origin updates only its own record at a higher
+Generation (§10.3). A re-provisioned host gets a new keypair and rejoins at a
+higher Generation as a normal §10 key rotation — peers drop the old pubkey,
+install the new. The HostID is stable; only the cryptomaterial rotates.
+
+### 19.5 Newcomer introduction (operator-signed certificate)
+
+A host Q bootstrapped into an existing cluster — i.e. one whose `host_id` is
+not in any older host's `seed.json` — must prove its identity to existing
+hosts on first contact. The proof is an **operator-signed introduction
+certificate**: the newcomer's first `MembershipAdvertisement` (and ONLY its
+first) carries an extra wire field on the envelope:
+
+    {
+      "type": "membership_advert",
+      "sender": "Q",
+      "signing_public_key": "KQ",
+      "payload": { ...the MembershipRecord Q is announcing... },
+      "signature": "<sig over envelope with KQ_priv>",
+      "introduction_signature": "<sig over (host_id=Q, signing_public_key=KQ,
+                                              generation=1) with operator_priv>"
+    }
+
+The receiver's verifier:
+
+- The envelope `signature` authenticates Q as the sender (against KQ, the
+  self-asserted key, used only for the envelope check since the receiver has
+  no cached `Q_pub`).
+- The `introduction_signature` authenticates Q's identity binding
+  (`host_id=Q ↔ signing_public_key=KQ`) against the **operator's provision
+  pubkey**, which the receiver knows from its seed (§19.4).
+- If both verify, the receiver TOFUs `KQ` as its trusted `Q_pub` going
+  forward. Subsequent messages from Q (any type) are verified against the
+  cached `KQ` — no further introduction signatures are needed.
+
+The introduction certificate is one-shot: only the first MembershipRecord
+from a previously-unknown `host_id` MUST carry it; records from known origins
+that omit it are processed normally, and records from unknown origins that
+omit it are rejected. The certificate is generated by the controller at
+provision time (it holds the operator's provision private key) and written to
+the new host alongside `seed.json` at bootstrap. The first MembershipRecord
+sends it; no further payloads carry it.
+
+A compromised operator provision key = total cluster trust compromise (same
+exposure as compromising the `seed.json` signing key today). The introduction
+certificate does not add new attack surface — it merely extends the existing
+root to cover runtime newcomer introduction, not just the static seed file.
+This is the deliberate trade for not re-introducing the central controller at
+the trust-onboarding seam: the operator signs Q's identity binding once, at
+provision time, and the cluster then runs fully decentralized thereafter.
 
 ## 20. Future Work / Scalability
 

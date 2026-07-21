@@ -9,6 +9,29 @@ from atlas.tests._mocks import fake_task
 from atlas.tests.fixtures import make_provider, make_server
 
 
+def _bootstrap_ssh_side_effect(server):
+	"""A `patch` side_effect for `run_ssh` during `Server.bootstrap()` tests.
+
+	`_write_ancp_bootstrap_state`'s read-back canary cats
+	`/etc/atlas-networkd/signing-public-key` and asserts the on-disk pub
+	equals `Server.signing_public_key`. With a flat `return_value` mock that
+	returns the same tuple for every call, the cat returns `"ok"` — which
+	never matches the real ed25519 pubkey the controller signed — and the
+	canary fires `frappe.throw`, aborting bootstrap long before the assertions
+	about install.sh ordering and `run_task` invocation can run. Route the
+	cat call to the test's own `Server.signing_public_key` (which the
+	controller just wrote via `install -m 0644 /dev/stdin`) and keep
+	`("ok", "", 0)` for everything else."""
+
+	def side_effect(*args, **_kwargs):
+		remote_command = args[2] if len(args) > 2 else None
+		if remote_command and remote_command.startswith("sudo cat /etc/atlas-networkd/signing-public-key"):
+			return ((server.signing_public_key or "") + "\n", "", 0)
+		return ("ok", "", 0)
+
+	return side_effect
+
+
 class TestNetworking(IntegrationTestCase):
 	def test_carve_virtual_machine_range(self) -> None:
 		self.assertEqual(
@@ -47,7 +70,9 @@ class TestServerBootstrap(IntegrationTestCase):
 		# its own test; here we assert the install.sh ordering in isolation.
 		with patch.object(server_module.Server, "_ship_dashboard"):
 			with patch.object(server_module, "upload_files") as upload:
-				with patch.object(server_module, "run_ssh", return_value=("ok", "", 0)) as run_ssh:
+				with patch.object(
+					server_module, "run_ssh", side_effect=_bootstrap_ssh_side_effect(self.server)
+				) as run_ssh:
 					with patch.object(server_module, "run_task", return_value=task) as run:
 						with patch.object(
 							server_module,
@@ -58,8 +83,10 @@ class TestServerBootstrap(IntegrationTestCase):
 
 		upload.assert_called_once()
 		# install.sh is SSHed after the upload, before the bootstrap Task.
-		run_ssh.assert_called_once()
-		self.assertIn("/var/lib/atlas/bin/install.sh", run_ssh.call_args.args[2])
+		# There may be additional SSH calls (e.g. operator-public-key write);
+		# verify install.sh is among them and is the very first one.
+		first_call = run_ssh.call_args_list[0]
+		self.assertIn("/var/lib/atlas/bin/install.sh", first_call.args[2])
 		run.assert_called_once()
 
 	def test_bootstrap_aborts_if_install_sh_fails(self) -> None:
@@ -122,7 +149,9 @@ class TestServerBootstrap(IntegrationTestCase):
 
 		with patch.object(server_module.Server, "_ship_dashboard"):
 			with patch.object(server_module, "upload_files"):
-				with patch.object(server_module, "run_ssh", return_value=("ok", "", 0)):
+				with patch.object(
+					server_module, "run_ssh", side_effect=_bootstrap_ssh_side_effect(self.server)
+				):
 					with patch.object(server_module, "run_task", return_value=task):
 						with patch.object(
 							server_module,

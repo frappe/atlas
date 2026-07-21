@@ -40,7 +40,7 @@ from .._run import run as host_run
 from . import commands, join, keys, sdnotify, seed
 from .config import Config
 from .config import load as load_config
-from .daemon import Daemon, build_initial, default_signature_verifier
+from .daemon import Daemon, build_initial, default_envelope_verifier, default_signature_verifier
 from .failure import FailureTracker
 from .identity import load_identity
 from .loop import Loop
@@ -91,18 +91,45 @@ def main() -> int:
 	daemon.failure_tracker = tracker
 	probe_protocol = ProbeProtocol(tracker=tracker, config=config, now_fn=_time.monotonic)
 	daemon.probe_protocol = probe_protocol
-	# Stage 5 — verifier + metrics + conflict tracker.
+	# Stage 5 — per-record verifier + metrics + conflict tracker.
 	daemon.signature_verifier = default_signature_verifier
 	daemon.metrics = Counter()
 	daemon.conflict_tracker = _CT(now_fn=_time.monotonic)
 	daemon.advertise_leaving = lambda: _advertise_leaving(daemon)
+	# Stage 5+ — envelope verifier + seed-anchored trust directory (spec §19.1,
+	# §19.4). The cache pre-populates from the seed's per-host
+	# `signing_public_key` (§19.4); the operator pubkey is loaded from
+	# `/etc/atlas-networkd/operator-public-key` (the §19.5 trust root). Both
+	# are no-ops in tests that don't install the envelope verifier; production
+	# wires both here so every incoming datagram is envelope-verified at the
+	# boundary before any payload work.
+	daemon.signing_pubkey_cache = seed.signing_pubkey_index(seeds)
+	operator_pubkey = seed.load_operator_pubkey(config.config_dir + "/operator-public-key")
+	daemon.operator_public_key = operator_pubkey
+	daemon.envelope_verifier = default_envelope_verifier
+	# Stage 5+ (§19.5) — load the operator-signed introduction certificate.
+	# Empty for the initial-seed hosts (the seed anchors them — no introduction
+	# needed); present for a host that joined an existing cluster
+	# post-bootstrap (the controller signed its binding at provision time and
+	# wrote it to /etc/atlas-networkd/introduction-signature). `cold_join`
+	# attaches it to the first MembershipAdvertisement if non-empty.
+	daemon.own_introduction_signature = _read_optional_file(config.config_dir + "/introduction-signature")
 	sdnotify.ready()
 	daemon.apply_if_changed()
 	join.cold_join(daemon, transport, seeds)
+	# §9.2 — pass the seeds to the Loop so `_cold_join_if_due` can re-send
+	# the MembershipAdvertisement until a peer reply arrives. The Loop's
+	# retry closes the one-shot failure mode: a dropped initial cold-join UDP
+	# datagram would otherwise leave the newcomer peer-empty forever (gossip
+	# doesn't carry the introduction_signature, so the existing hosts'
+	# verifier would reject every subsequent TYPE_GOSSIP from the newcomer).
+	# `join.cold_join` above is the first attempt (the original one-shot);
+	# the loop owns attempts 2..N.
 	loop = Loop(
 		daemon=daemon,
 		tick_interval=config.gossip_interval,
 		probe_protocol=probe_protocol,
+		cold_join_seeds=seeds,
 	)
 	_install_signal_handlers(loop, transport, daemon)
 	loop.run()
@@ -161,6 +188,19 @@ def _read_public_key(path: str) -> str:
 	from pathlib import Path
 
 	return Path(path).read_text(encoding="utf-8").strip()
+
+
+def _read_optional_file(path: str) -> str:
+	"""Read a one-line file and return the stripped body, returning "" if the
+	file is absent. Used for the §19.5 introduction-signature — present only on
+	hosts that joined an existing cluster post-bootstrap; absent for initial-
+	seed hosts (no introduction needed)."""
+	from pathlib import Path
+
+	p = Path(path)
+	if not p.exists():
+		return ""
+	return p.read_text(encoding="utf-8").strip()
 
 
 def _install_signal_handlers(loop: Loop, transport: UdpTransport, daemon: Daemon) -> None:

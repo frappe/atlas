@@ -173,13 +173,14 @@ class ProbeProtocol:
 		ack = Message(
 			type=TYPE_ACK,
 			sender=daemon.identity.host_id,
+			signing_public_key=daemon.own_signing_pub_b64,
 			payload=wire.ack_payload(nonce, target),
 		)
 		requester_record = daemon.state.membership.get(msg.sender)
 		if requester_record is None:
 			return  # we don't know the requester; their own Membership
 			# Advertisement will arrive and they'll retry.
-		daemon.unicast_send(requester_record.endpoint, ack.to_bytes())
+		daemon.unicast_send(requester_record.endpoint, ack.to_bytes(daemon.own_signing_priv_b64))
 
 	def handle_ack(self, msg: Message, daemon, _transport: UdpTransport) -> None:
 		"""A direct or relayed ack arrived. Match it to a pending ping by
@@ -212,9 +213,10 @@ class ProbeProtocol:
 			ack_fwd = Message(
 				type=TYPE_ACK,
 				sender=daemon.identity.host_id,  # attackers can't forge: §19.3
+				signing_public_key=daemon.own_signing_pub_b64,
 				payload=wire.ack_payload(nonce, _target),
 			)
-			daemon.unicast_send(requester_record.endpoint, ack_fwd.to_bytes())
+			daemon.unicast_send(requester_record.endpoint, ack_fwd.to_bytes(daemon.own_signing_priv_b64))
 
 	def handle_indirect_ping(self, msg: Message, daemon, transport: UdpTransport) -> None:
 		"""A peer asked us to ping `target` on its behalf (§14.2 step 3). We
@@ -243,9 +245,10 @@ class ProbeProtocol:
 		ping = Message(
 			type=TYPE_PING,
 			sender=daemon.identity.host_id,
+			signing_public_key=daemon.own_signing_pub_b64,
 			payload=wire.ping_payload(nonce, target_id),
 		)
-		daemon.unicast_send(target_record.endpoint, ping.to_bytes())
+		daemon.unicast_send(target_record.endpoint, ping.to_bytes(daemon.own_signing_priv_b64))
 
 	# --- helpers --------------------------------------------------------------
 
@@ -258,9 +261,10 @@ class ProbeProtocol:
 		msg = Message(
 			type=TYPE_PING,
 			sender=daemon.identity.host_id,
+			signing_public_key=daemon.own_signing_pub_b64,
 			payload=wire.ping_payload(nonce, target_id),
 		)
-		daemon.unicast_send(target.endpoint, msg.to_bytes())
+		daemon.unicast_send(target.endpoint, msg.to_bytes(daemon.own_signing_priv_b64))
 
 	def _send_indirect_pings(self, daemon, transport, target_id: str, nonce: int) -> None:
 		"""Forward the ping to `config.indirect_relays` random other peers with
@@ -284,9 +288,10 @@ class ProbeProtocol:
 			req = Message(
 				type=TYPE_INDIRECT_PING,
 				sender=daemon.identity.host_id,
+				signing_public_key=daemon.own_signing_pub_b64,
 				payload=wire.indirect_ping_payload(nonce, target_id, daemon.identity.host_id),
 			)
-			daemon.unicast_send(relay_record.endpoint, req.to_bytes())
+			daemon.unicast_send(relay_record.endpoint, req.to_bytes(daemon.own_signing_priv_b64))
 
 	def _mint_nonce(self) -> int:
 		"""A 64-bit random nonce. `secrets` for cryptographic randomness —

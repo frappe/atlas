@@ -54,18 +54,44 @@ def cold_join(
 
 	Stage 5: the Membership Advertisement is signed with the daemon's own
 	ed25519 signing key (§19.3) so the seed's verifier can confirm the
-	cold-join origin's identity on top of the wg-transport binding."""
+	cold-join origin's identity on top of the wg-transport binding. Stage 5+
+	(§19.1): the envelope is whole-envelope-signed by the sender's key. Stage
+	5+ (§19.5): if this host is a newcomer to an existing cluster (its own
+	`host_id` is NOT in any older host's `seed.json`), the operator has
+	additionally signed its `(host_id, signing_public_key, generation)`
+	binding with the operator provision key; that signature rides the envelope
+	as `introduction_signature`, and the seed's verifier accepts the
+	self-asserted signing key ONLY against this operator cert. The
+	introduction cert is pre-loaded by `main.py` from disk and stored on the
+	daemon as `own_introduction_signature` (empty if absent — the host
+	assumes it's part of the initial seed and seeds already trust its
+	pubkey)."""
 	_ = (retry_interval, max_attempts, now_fn)  # kept in the signature for Stage 4 wiring
 	if transport.socket is None:
 		raise RuntimeError("cold_join called before transport started")
 	payload = wire.membership_advert_payload(daemon.own_membership)
-	# Stage 5 — sign the advertisement. The advert's origin IS us
-	# (`own_membership.host_id == identity.host_id`) so the verifier on the
-	# seed side accepts it.
+	# Stage 5 — sign the inner MembershipRecord's wire dict (the per-record
+	# signature, §19.3). The advert's origin IS us
+	# (`own_membership.host_id == identity.host_id`).
 	if daemon.own_signing_priv_b64:
 		wire.attach_signature({"k": "m", "v": payload}, daemon.own_signing_priv_b64)
-	message = Message(type=TYPE_MEMBERSHIP_ADVERT, sender=daemon.identity.host_id, payload=payload)
-	data = message.to_bytes()
+	# Stage 5+ — build the envelope. `signing_public_key` rides the wire so a
+	# seed with no cached pubkey for us can verify against the self-asserted
+	# key (gated by the §19.5 introduction cert below). `to_bytes(priv_b64)`
+	# signs the canonical envelope body with our own signing key (§19.1).
+	message = Message(
+		type=TYPE_MEMBERSHIP_ADVERT,
+		sender=daemon.identity.host_id,
+		signing_public_key=daemon.own_signing_pub_b64,
+		payload=payload,
+		# §19.5 — the operator-signed introduction certificate. Empty when
+		# the host was part of the initial seed (the cluster's other members
+		# already have its pubkey anchored via their own seed.json; no
+		# introduction needed). Non-empty when the host joined an existing
+		# cluster post-bootstrap.
+		introduction_signature=getattr(daemon, "own_introduction_signature", "") or "",
+	)
+	data = message.to_bytes(daemon.own_signing_priv_b64)
 	sent = 0
 	for seed in seed_records:
 		try:

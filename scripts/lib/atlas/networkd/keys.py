@@ -137,7 +137,16 @@ def _existing_signing_pair_valid(priv_path: str, pub_path: str) -> bool:
 	"""True iff both ed25519 key files exist AND the public verifies against
 	the private — a tampered / interrupted first-boot pair is regenerated
 	rather than trusted. Cheap check: try to sign a fixed nonce and verify;
-	failure means a bad pair."""
+	failure means a bad pair.
+
+	CANARY: when BOTH files exist with non-empty content but the pair is
+	invalid, log a loud warning to stderr before returning False. The most
+	common cause is the controller pushing the Frappe Password-field mask
+	(``"****"``) instead of the decrypted plaintext to
+	`/etc/atlas-networkd/signing-private-key` — silent regeneration here
+	leaves the host with a key the controller doesn't know, and the cluster
+	silently partitions on the next MembershipAdvertisement envelope verify.
+	Without this canary that bug class is invisible from the host side."""
 	from pathlib import Path
 
 	from . import signing
@@ -146,12 +155,30 @@ def _existing_signing_pair_valid(priv_path: str, pub_path: str) -> bool:
 		return False
 	priv_b64 = _read_key(priv_path)
 	pub_b64 = _read_key(pub_path)
+	both_nonempty = bool(priv_b64) and bool(pub_b64)
 	test_dict = {"v": "self-test", "host_id": "self", "generation": 0}
 	try:
 		sig = signing.sign(test_dict, priv_b64, kind="membership")
 		signing.verify({**test_dict, "signature": sig}, pub_b64, kind="membership")
 		return True
-	except Exception:
+	except Exception as exc:
+		if both_nonempty:
+			# Surface loud — silent regeneration here is exactly the bug class
+			# that left the cluster silently partitioned (the on-disk pub
+			# diverged from `Server.signing_public_key` for weeks).
+			import sys
+
+			print(
+				"atlas-networkd: WARNING: existing signing keypair at "
+				f"{priv_path} + {pub_path} failed validation ({exc}); regenerating "
+				"a fresh keypair. If the controller's `Server.signing_public_key` "
+				"for this host doesn't match the new on-disk value, the host and "
+				"controller have diverged and the cluster will silently partition "
+				"on every MembershipAdvertisement verify. Most common cause: the "
+				'controller pushed the Frappe Password-field mask ("****") '
+				"instead of the decrypted plaintext to signing-private-key.",
+				file=sys.stderr,
+			)
 		return False
 
 

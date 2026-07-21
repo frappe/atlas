@@ -20,6 +20,7 @@ milliseconds. It covers:
 """
 
 import ipaddress
+import unittest
 
 import frappe
 from frappe.tests import IntegrationTestCase
@@ -30,6 +31,7 @@ from atlas.atlas.networking import (
 	derive_host_wireguard_keypair,
 	derive_private_address,
 	derive_tenant_prefix,
+	generate_host_signing_keypair,
 )
 from atlas.tests.fixtures import make_image, make_provider, make_server, make_virtual_machine
 
@@ -51,10 +53,64 @@ class TestServerMeshDenorm(IntegrationTestCase):
 		expected_key = derive_host_wireguard_keypair(server.name)[1]
 		self.assertEqual(server.wireguard_public_key, expected_key)
 		self.assertEqual(server.mesh_address, derive_host_mesh_address(server.name))
+		# Stage 5+ (spec/31 §19.4) — a freshly-validated Server gains an ed25519
+		# `signing_public_key` (NOT derived; randomly generated ONCE; the priv
+		# is pushed to the host at bootstrap and never persisted on the controller).
+		self.assertTrue(server.signing_public_key)
+		self.assertEqual(len(server.signing_public_key), 44)  # base64(32B) + 1 pad
+		# A re-save does not regenerate — the key is stable across validates.
+		stable_key = server.signing_public_key
+		server.save(ignore_permissions=True)
+		self.assertEqual(server.signing_public_key, stable_key)
+		# Different Servers get different keys (signing is NOT derived).
+		other = make_server(self.provider, title="atlas-mesh-other")
+		self.assertNotEqual(other.signing_public_key, server.signing_public_key)
 
 	def test_mesh_address_is_in_the_infra_48(self) -> None:
 		server = make_server(self.provider, title="atlas-mesh-server-2")
 		self.assertIn(ipaddress.IPv6Address(server.mesh_address), ipaddress.IPv6Network(INFRA_PREFIX))
+
+
+class TestGenerateHostSigningKeypair(unittest.TestCase):
+	"""`generate_host_signing_keypair` (spec/31 §19.4) — the controller-side
+	generator for a host's ed25519 ANCP signing keypair. NOT derived (use
+	this generator fresh per call; the wg half has its own deterministic
+	derivation in `derive_host_wireguard_keypair`)."""
+
+	def test_returns_two_distinct_base64_keys(self):
+		priv, pub = generate_host_signing_keypair()
+		self.assertTrue(priv)
+		self.assertTrue(pub)
+		# Both are 32 raw bytes → 44 chars including 1 pad char.
+		self.assertEqual(len(priv), 44)
+		self.assertEqual(len(pub), 44)
+
+	def test_each_call_produces_fresh_keypair(self):
+		# NOT derived — each call is a fresh ed25519 generation.
+		priv1, pub1 = generate_host_signing_keypair()
+		priv2, pub2 = generate_host_signing_keypair()
+		self.assertNotEqual(priv1, priv2)
+		self.assertNotEqual(pub1, pub2)
+
+	def test_pubkey_verifies_against_privkey(self):
+		"""The generated keypair must round-trip ed25519 sign+verify (the
+		daemon-side `keys.ensure_signing_keypair` validates a similar check
+		on first boot)."""
+		import base64
+
+		from cryptography.hazmat.primitives import serialization
+		from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+		priv_b64, pub_b64 = generate_host_signing_keypair()
+		priv_raw = base64.b64decode(priv_b64)
+		pub_raw = base64.b64decode(pub_b64)
+		priv = Ed25519PrivateKey.from_private_bytes(priv_raw)
+		# Round-trip: sign a test payload, verify with the pub half.
+		msg = b"atlas-self-test"
+		sig = priv.sign(msg)
+		from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+
+		Ed25519PublicKey.from_public_bytes(pub_raw).verify(sig, msg)
 
 
 class TestPrivateAddressDenorm(IntegrationTestCase):

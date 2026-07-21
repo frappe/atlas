@@ -1,22 +1,36 @@
-"""ed25519 record signatures (spec §19.3 — defense in depth).
+"""ed25519 signatures for ANCP — envelope (§19.1), per-record (§19.3), and
+operator-signed newcomer introduction (§19.5).
 
-The §19.1 transport binding (a record's sender == wg-authenticated MeshID) is
-enough under "every host runs the same ANCP code"; §19.3 adds end-to-end
-ed25519 record signatures so that a *relay* forwarding another host's record
-can't tamper with it. The signing key is generated on first boot alongside the
-wg keypair (Issue A); its public half rides the Membership Record (one more
-field), so peers can verify every record's signature against the origin's
-published signing pubkey at apply time.
+ANCP rides plain UDP on the public IPv6 endpoint (spec §5, §19 intro) — there
+is no WireGuard transport binding. Authentication happens in three layered
+checks, all in this module's primitives:
 
-Verification is per-apply (`gossip._apply_record` calls `verify_record`); a
-forged origin (a relay that rewrote a record's `host_id` to its own) fails the
-signature check and is dropped + logged. The cost is ~64 B per record + a few
-µs per verify.
+1. **Envelope signature** (§19.1) — `sign_envelope` / `verify_envelope` —
+   every `Message` is whole-envelope-signed by its `sender`'s ed25519 private
+   key. The receiver verifies the signature against its cached pubkey for that
+   `sender` (`daemon.signing_pubkey_cache`), dropping the datagram before any
+   payload work on any failure.
+2. **Per-record signature** (§19.3) — `sign` / `verify` (with `kind=
+   "membership"|"ownership"`) — every piggybacked `MembershipRecord` and
+   `OwnershipAdvertisement` is signed by its *origin*'s key, independent of
+   the relay that forwarded it. Stops a relay fabricating or mutating records
+   "from" another origin.
+3. **Introduction certificate** (§19.5) — `sign_introduction` /
+   `verify_introduction` — the newcomer's first `MembershipAdvertisement`
+   carries an operator-signed binding `({host_id, signing_public_key,
+   generation=1})`; existing hosts verify against the operator's provision
+   pubkey (seeded at §19.4) and only then absorb the newcomer's self-asserted
+   signing pubkey.
 
-This module is pure above the keypair file (signing keys themselves are
-materialized in `keys.ensure_signing_keypair`, alongside the wg keypair). The
-two halves are split so the apply-path verifier never touches the key file
-directly — `verify_record(record, signing_pubkey_b64)` is a pure function.
+The signing keypair is generated on first boot alongside the wg keypair
+(`keys.ensure_signing_keypair`); its public half rides the Membership Record,
+so peers can verify every subsequent record against the origin's published
+signing pubkey at apply time.
+
+This module is pure above the keypair files (signing keys themselves are
+materialized in `keys.ensure_signing_keypair`; the operator key is materialized
+controller-side and written to every host's
+`/etc/atlas-networkd/operator-public-key` at provision time).
 """
 
 from __future__ import annotations
@@ -128,6 +142,93 @@ def _canonical_body(record_dict: dict, kind: str) -> bytes:
 	return json.dumps(body, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
 
+# --- envelope + introduction signatures (spec §19.1, §19.5) -----------------
+#
+# The envelope signature (§19.1) authenticates the SENDER of an ANCP datagram —
+# `Message.signature` over the canonical body of {type, sender,
+# signing_public_key, payload}. The introduction signature (§19.5) authenticates
+# a newcomer's identity binding (`host_id ↔ signing_public_key` at generation 1)
+# against the operator's provision pubkey, not the sender's own key — a
+# separate kind so a signature over one domain can't be replayed across the
+# other. Both reuse `_canonical_body`; the kind tag is the domain separator.
+
+
+def sign_envelope(body: dict, signing_priv_b64: str) -> str:
+	"""Sign the canonical envelope body ({type, sender, signing_public_key,
+	payload}) with the sender's ed25519 signing key. Returns the base64
+	signature the wire serializer embeds as `Message.signature`."""
+	import base64
+
+	from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+	canonical = _canonical_body(body, kind="envelope")
+	priv = _load_private(signing_priv_b64)
+	return base64.b64encode(priv.sign(canonical)).decode("utf-8")
+
+
+def verify_envelope(body: dict, sig_b64: str, signing_pub_b64: str) -> None:
+	"""Verify an envelope signature against the sender's signing pubkey. Raises
+	`SignatureError` on any failure. The `body` is the same dict the signer
+	passed to `sign_envelope` (no `signature` field needed); `sig_b64` is the
+	wire signature extracted by `wire.from_bytes`."""
+	import base64
+
+	from cryptography.exceptions import InvalidSignature
+	from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+
+	if not isinstance(sig_b64, str) or not sig_b64:
+		raise SignatureError("envelope carries no signature")
+	try:
+		raw = base64.b64decode(sig_b64)
+	except Exception as exc:
+		raise SignatureError(f"envelope signature is not base64: {exc}") from exc
+	canonical = _canonical_body(body, kind="envelope")
+	try:
+		Ed25519PublicKey.from_public_bytes(_b64decode_pub(signing_pub_b64)).verify(raw, canonical)
+	except InvalidSignature as exc:
+		raise SignatureError("invalid envelope signature") from exc
+	except Exception as exc:
+		raise SignatureError(f"envelope verify failed: {exc}") from exc
+
+
+def sign_introduction(introduction_body: dict, operator_priv_b64: str) -> str:
+	"""Sign the canonical introduction body `{host_id, signing_public_key,
+	generation}` with the operator's provision private key (spec §19.5). The
+	result rides the newcomer's first MembershipAdvertisement as
+	`Message.introduction_signature`; existing hosts verify it against the
+	operator's provision pubkey (seeded to every host, §19.4)."""
+	import base64
+
+	from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+	canonical = _canonical_body(introduction_body, kind="introduction")
+	priv = _load_private(operator_priv_b64)
+	return base64.b64encode(priv.sign(canonical)).decode("utf-8")
+
+
+def verify_introduction(introduction_body: dict, sig_b64: str, operator_pub_b64: str) -> None:
+	"""Verify an introduction certificate against the operator's provision
+	pubkey (spec §19.5). Raises `SignatureError` on any failure."""
+	import base64
+
+	from cryptography.exceptions import InvalidSignature
+	from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+
+	if not isinstance(sig_b64, str) or not sig_b64:
+		raise SignatureError("introduction carries no signature")
+	try:
+		raw = base64.b64decode(sig_b64)
+	except Exception as exc:
+		raise SignatureError(f"introduction signature is not base64: {exc}") from exc
+	canonical = _canonical_body(introduction_body, kind="introduction")
+	try:
+		Ed25519PublicKey.from_public_bytes(_b64decode_pub(operator_pub_b64)).verify(raw, canonical)
+	except InvalidSignature as exc:
+		raise SignatureError("invalid introduction signature") from exc
+	except Exception as exc:
+		raise SignatureError(f"introduction verify failed: {exc}") from exc
+
+
 def _load_private(priv_b64: str):
 	"""Decode a base64 ed25519 private seed into an `Ed25519PrivateKey`."""
 	import base64
@@ -170,5 +271,9 @@ __all__ = [
 	"SignatureError",
 	"generate_keypair_raw",
 	"sign",
+	"sign_envelope",
+	"sign_introduction",
 	"verify",
+	"verify_envelope",
+	"verify_introduction",
 ]

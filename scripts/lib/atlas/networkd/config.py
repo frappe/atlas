@@ -102,7 +102,7 @@ class Config:
 	wg_host_port: int = DEFAULT_WG_HOST_PORT
 	wireguard_mtu: int = DEFAULT_WIREGUARD_MTU
 	wg_device: str = DEFAULT_WG_DEVICE
-	ancp_port: int = DEFAULT_ANCP_PORT  # the UDP port inside wg-mesh (§13)
+	ancp_port: int = DEFAULT_ANCP_PORT  # the plain-UDP ANCP port on the public IPv6 endpoint (§5, §13)
 	data_dir: str = DEFAULT_DATA_DIR
 	config_dir: str = DEFAULT_CONFIG_DIR
 	seed_path: str = DEFAULT_SEED_PATH

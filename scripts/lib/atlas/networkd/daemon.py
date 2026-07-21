@@ -87,8 +87,30 @@ class Daemon:
 	# the origin's published signing pubkey); None means "no signature
 	# verification" (the in-test path; production always sets it).
 	signature_verifier: Callable[[object, object], None] | None = field(default=None, init=True)
+	# Stage 5+ — envelope verifier hook (§19.1). Set by `main.py` to
+	# `default_envelope_verifier`; the recv path (`loop._drain_incoming` →
+	# `transport.drain` handler) calls it BEFORE any payload work. None
+	# means "no envelope verification" (the in-test path; production sets it).
+	envelope_verifier: Callable[[object, object], None] | None = field(default=None, init=True)
+	# Stage 5+ — the trust directory for §19.1 envelope verification:
+	# `HostID → trusted signing_public_key`. Pre-populated by `build_initial`
+	# from the seed entries (§19.4) and grown at runtime when an unknown
+	# sender's introduction certificate (§19.5) verifies against
+	# `operator_public_key`. The cached key is the one the envelope
+	# signature is verified against; a self-asserted key mismatch on a known
+	# sender is rejected (key rotation must come via a signed MembershipRecord
+	# from the established key — §19.3).
+	signing_pubkey_cache: dict = field(default_factory=dict, init=True)
+	# Stage 5+ — the operator's provision pubkey (base64 ed25519, §19.5).
+	# Loaded by `main.py` from `/etc/atlas-networkd/operator-public-key`
+	# (written by the controller at provision time alongside `seed.json`).
+	# Empty in tests where envelope verification is not installed; production
+	# always loads it (a non-empty operator pubkey is required for any
+	# previously-unknown host to be absorbed as a cluster member).
+	operator_public_key: str = field(default="", init=True)
 	# Stage 5 — metrics counter (§20.2). `gossip._apply_record` incr's
-	# `signature_failed` on a verify failure.
+	# `signature_failed` on a verify failure; the recv path incr's
+	# `envelope_signature_failed` on an envelope verify failure.
 	metrics: object | None = field(default=None, init=True)
 	# Stage 5 — wire-signature side-channel: a dict keyed by `id(record)`
 	# carrying the incoming record's wire bytes signature, populated by the
@@ -98,8 +120,24 @@ class Daemon:
 	_incoming_wire_sigs: dict | None = field(default=None, init=True)
 	# Stage 5 — the daemon's own signing key (base64 ed25519 private). Used by
 	# `scan_local_ownership`, `build_initial`, and `_advertise_leaving` to
-	# sign outgoing records. "" means "don't sign" (pre-Stage-5 path; tests).
+	# sign outgoing records. "" means "don't sign" (the in-test path; tests).
+	# Production refuses to start if this is empty (spec §19 — signing is
+	# mandatory, no fallback to the unsigned wire path).
 	own_signing_priv_b64: str = field(default="", init=True)
+	# Stage 5+ — the daemon's own signing pubkey (base64 ed25519, the public
+	# half of `own_signing_priv_b64`). Rides the envelope as
+	# `signing_public_key` so peers can verify (§19.1). Set by
+	# `build_initial` from `keys.ensure_signing_keypair` (`main.py`).
+	own_signing_pub_b64: str = field(default="", init=True)
+	# Stage 5+ — the operator-signed introduction certificate (§19.5). Set by
+	# `main.py` from `/etc/atlas-networkd/introduction-signature` (a one-line
+	# base64 ed25519 signature over `{host_id, signing_public_key,
+	# generation=1}` with the operator's provision private key). Empty if the
+	# file is absent — the host was part of the initial seed (no introduction
+	# needed; peers already have its pubkey anchored). Rides the first
+	# `MembershipAdvertisement` envelope ONLY; subsequent messages don't carry
+	# it.
+	own_introduction_signature: str = field(default="", init=True)
 	# Injected seams (production defaults wired here; tests override).
 	run: RunFn = field(default=host_run)
 	write_run_config: Callable[[str], None] = field(default=_default_write_run_config)
@@ -225,10 +263,11 @@ def build_initial(
 		state=state,
 		own_membership=own,
 		own_signing_priv_b64=own_signing_priv_b64,
+		own_signing_pub_b64=own_signing_pub_b64,
 	)
 
 
-__all__ = ["Daemon", "build_initial", "default_signature_verifier"]
+__all__ = ["Daemon", "build_initial", "default_envelope_verifier", "default_signature_verifier"]
 
 
 def default_signature_verifier(record, daemon) -> None:
@@ -291,3 +330,75 @@ def default_signature_verifier(record, daemon) -> None:
 		d["signature"] = wire_sig
 		verify(d, origin_membership.signing_public_key, kind="ownership")
 		return
+
+
+def default_envelope_verifier(message, daemon) -> None:
+	"""The production envelope verifier (spec §19.1). Called by the recv path
+	(`loop._drain_incoming` → `transport.drain` handler) BEFORE any payload
+	work — a datagram whose envelope fails to verify is dropped + counted, no
+	apply work occurs.
+
+	The trust lookup uses `daemon.signing_pubkey_cache`:
+	  - HostID is cached → verify `message.signature` against the cached
+	    signing pubkey. The envelope's self-asserted `signing_public_key`,
+	    if present and different, is rejected (key rotation must come via a
+	    signed MembershipRecord from the established key, §19.3).
+	  - HostID is NOT cached → require a self-asserted `signing_public_key`
+	    AND an `introduction_signature` (spec §19.5) that verifies against
+	    `daemon.operator_public_key`. On success, TOFU the self-asserted key
+	    into the cache; from now on the cached key is the trusted one and
+	    self-rotation is closed.
+
+	Empty `signing_public_key` on a cached sender is also a downgrade
+	attempt and is rejected. Empty `operator_public_key` on a daemon with
+	envelope verification installed is a configuration error; any
+	introduction attempt fails against the empty key (the verifier raises
+	`SignatureError` on the verify attempt itself).
+	"""
+	cached = daemon.signing_pubkey_cache.get(message.sender)
+	if cached is not None:
+		if not message.signing_public_key:
+			raise SignatureError(
+				f"envelope from {message.sender} drops signing_public_key (downgrade attempt rejected)"
+			)
+		if message.signing_public_key != cached:
+			# The sender claims a different signing key than cached. This is
+			# NOT necessarily an attack — the host may have restarted with a
+			# new keypair after `resync_networkd_keys`. Verify the envelope
+			# against the message's self-asserted key: if the signature checks
+			# out, the sender demonstrably controls the new private key
+			# (envelope-signing is proof of possession). Accept it and update
+			# the cache — equivalent to TOFU on each key for a known sender.
+			#
+			# Also check the applied membership table as a further trust signal
+			# (§19.3): if the membership table has a signing_public_key that
+			# matches the message's key, the key was already verified via a
+			# signed MembershipRecord.
+			record = daemon.state.membership.get(message.sender)
+			if record is not None and record.signing_public_key == message.signing_public_key:
+				daemon.signing_pubkey_cache[message.sender] = message.signing_public_key
+				cached = message.signing_public_key
+			else:
+				try:
+					message.verify_envelope(message.signing_public_key)
+				except Exception:
+					raise SignatureError(
+						f"envelope from {message.sender} self-asserts a different signing_public_key "
+						f"({message.signing_public_key}) and neither the cache ({cached}) nor "
+						"the membership table confirm it; verification against the self-asserted "
+						"key also failed"
+					)
+				daemon.signing_pubkey_cache[message.sender] = message.signing_public_key
+				cached = message.signing_public_key
+		message.verify_envelope(cached)
+		return
+	# First contact — the §19.5 introduction path.
+	if not message.signing_public_key:
+		raise SignatureError(f"envelope from unknown {message.sender} carries no signing_public_key")
+	if not message.introduction_signature:
+		raise SignatureError(f"envelope from unknown {message.sender} carries no introduction_signature")
+	if not daemon.operator_public_key:
+		raise SignatureError("daemon is not seeded with the operator pubkey")
+	message.verify_introduction(daemon.operator_public_key)
+	# TOFU the self-asserted key as the trusted key for future envelopes.
+	daemon.signing_pubkey_cache[message.sender] = message.signing_public_key

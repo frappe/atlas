@@ -119,13 +119,14 @@ def gossip_round(
 	message = Message(
 		type=TYPE_GOSSIP,
 		sender=daemon.identity.host_id,
+		signing_public_key=daemon.own_signing_pub_b64,
 		payload=wire.sign_records_if_owned(
 			wire.gossip_payload(piggyback),
 			daemon.own_signing_priv_b64,
 			daemon.identity.host_id,
 		),
 	)
-	data = _serialize_with_trim(message)
+	data = _serialize_with_trim(message, daemon.own_signing_priv_b64)
 	for peer_id in peers:
 		peer = daemon.state.membership[peer_id]
 		transport.send((peer.endpoint, daemon.config.ancp_port), data)
@@ -160,14 +161,20 @@ def _record_key(r: MembershipRecord | OwnershipAdvertisement) -> tuple:
 	return ("o", r.origin, r.generation)
 
 
-def _serialize_with_trim(message: Message) -> bytes:
-	"""Serialize `message`, trimming the piggyback tail if the datagram would
-	overflow `MAX_DATAGRAM_BYTES`. We mutate the payload (a list of tagged
-	dicts) in place by popping the end until `to_bytes` succeeds; the dropped
-	records stay in the apply state (we don't lose them) and they re-enter the
-	piggyback next round via `recently_applied` (MRU preservation)."""
+def _serialize_with_trim(message: Message, sender_priv_b64: str = "") -> bytes:
+	"""Serialize `message`, signing the envelope with `sender_priv_b64` (spec
+	§19.1) and trimming the piggyback tail if the datagram would overflow
+	`MAX_DATAGRAM_BYTES`. We mutate the payload (a list of tagged dicts) in
+	place by popping the end until `to_bytes` succeeds; the dropped records
+	stay in the apply state (we don't lose them) and they re-enter the
+	piggyback next round via `recently_applied` (MRU preservation).
+
+	`sender_priv_b64 == ""` skips signing (the in-test path; production always
+	signs) — the envelope goes out unsigned and the receiver's
+	`envelope_verifier` would drop it, but tests that install no verifier
+	still pass."""
 	try:
-		return message.to_bytes()
+		return message.to_bytes(sender_priv_b64)
 	except DatagramTooLarge:
 		payload = message.payload
 		if not isinstance(payload, list):
@@ -175,13 +182,13 @@ def _serialize_with_trim(message: Message) -> bytes:
 		while payload:
 			payload.pop()  # drop the tail (least-recent record)
 			try:
-				return message.to_bytes()
+				return message.to_bytes(sender_priv_b64)
 			except DatagramTooLarge:
 				continue
 		# Even an empty piggyback overflowed — would mean the envelope itself
 		# is over 1280 bytes, which is impossible at our record sizes. Let it
 		# fail loud so we surface it.
-		return message.to_bytes()
+		return message.to_bytes(sender_priv_b64)
 
 
 def handle_message(msg: Message, sender_addr: tuple[str, int], daemon, gossip_state: GossipState) -> None:
@@ -271,7 +278,10 @@ def _apply_record(record: MembershipRecord | OwnershipAdvertisement, daemon) -> 
 	against its origin's published signing pubkey is dropped + counted, never
 	applied. A record with NO signature field is accepted iff the daemon's
 	verifier is None (the in-test / pre-Stage-5 path); in production every
-	genuine record is signed and the verifier rejects unsigned ones."""
+	genuine record is signed and the verifier rejects unsigned ones.
+
+	When a MembershipRecord is applied and carries a signing_public_key, the
+	daemon's signing_pubkey_cache is updated (§19.1 trust-directory sync)."""
 	verifier = getattr(daemon, "signature_verifier", None)
 	if verifier is not None:
 		try:
@@ -282,7 +292,8 @@ def _apply_record(record: MembershipRecord | OwnershipAdvertisement, daemon) -> 
 				counter.incr("signature_failed")
 			return False
 	if isinstance(record, MembershipRecord):
-		changed = daemon.state.apply_membership(record)
+		cache = getattr(daemon, "signing_pubkey_cache", None)
+		changed = daemon.state.apply_membership(record, pubkey_cache=cache)
 		if changed:
 			tracker = getattr(daemon, "failure_tracker", None)
 			if tracker is not None:
@@ -330,6 +341,7 @@ def _handle_membership_advert(msg: Message, daemon, gossip_state: GossipState) -
 		advert_reply = Message(
 			type=TYPE_GOSSIP,  # reuse Gossip — the newcomer's recv path is identical
 			sender=daemon.identity.host_id,
+			signing_public_key=daemon.own_signing_pub_b64,
 			payload=wire.sign_records_if_owned(
 				wire.gossip_payload(bundle),
 				daemon.own_signing_priv_b64,
@@ -341,7 +353,7 @@ def _handle_membership_advert(msg: Message, daemon, gossip_state: GossipState) -
 		# this on its own ANCP socket bound to its public endpoint.
 		daemon.unicast_send(
 			newcomer_record.endpoint,
-			_serialize_with_trim(advert_reply),
+			_serialize_with_trim(advert_reply, daemon.own_signing_priv_b64),
 		)
 
 

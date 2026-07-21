@@ -20,11 +20,13 @@ from __future__ import annotations
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from typing import ClassVar
 
 from .antientropy import anti_entropy_round
 from .daemon import Daemon
 from .gossip import GossipState, gossip_round, handle_message
 from .probe import ProbeProtocol
+from .state import save_state
 
 
 @dataclass(slots=True)
@@ -70,10 +72,31 @@ class Loop:
 	# loop can leave both None to exercise only the gossip scan/apply/gossip
 	# path; `main.py` always wires them in production.
 	probe_protocol: ProbeProtocol | None = field(default=None)
+	# §9.2 — the cold-join retry. `main.py` seeds `cold_join_seeds` with the
+	# same seeds passed to the one-shot `cold_join` call; the loop re-sends
+	# the MembershipAdvertisement every `cold_join_retry_interval` (2 s)
+	# until a peer datagram reaches `handle_message` (`_cold_join_done` flips
+	# True in `_drain_incoming`), or until `cold_join_max_attempts` (15) is
+	# hit. Closes the §9.2 one-shot failure mode: if the initial cold-join UDP
+	# datagram drops, a newcomer would otherwise sit peer-empty forever —
+	# gossip doesn't carry the `introduction_signature`, so the existing
+	# hosts' verifier would reject every subsequent TYPE_GOSSIP from the
+	# newcomer ("no introduction_signature"). Retried `cold_join` is the
+	# only path that re-sends the introduction cert.
+	cold_join_seeds: list | None = field(default=None)
+	_next_cold_join_at: float = 0.0
+	_cold_join_attempts: int = 0
+	_cold_join_done: bool = False
 	_next_scan_at: float = 0.0
 	_next_gossip_at: float = 0.0
 	_next_anti_entropy_at: float = 0.0
 	_next_probe_at: float = 0.0
+
+	# §9.2 — the cold-join retry cadence. 2 s between attempts, 15 attempts
+	# max → a newcomer keeps retrying for ~30 s, plenty for a UDP datagram to
+	# land on at least one seed even over a flaky path.
+	COLD_JOIN_RETRY_INTERVAL: ClassVar[float] = 2.0
+	COLD_JOIN_MAX_ATTEMPTS: ClassVar[int] = 15
 
 	def run(self) -> None:
 		"""Main loop body. Returns on `self.running = False` (SIGTERM). Each
@@ -86,6 +109,7 @@ class Loop:
 		self._next_gossip_at = now_start
 		self._next_anti_entropy_at = now_start
 		self._next_probe_at = now_start
+		self._next_cold_join_at = now_start + self.COLD_JOIN_RETRY_INTERVAL
 		while self.running:
 			now = self._now()
 			self._scan_if_due(now)
@@ -94,10 +118,54 @@ class Loop:
 			self._anti_entropy_if_due(now)
 			self._probe_if_due(now)
 			self._drain_incoming()
+			self._cold_join_if_due(now)
 			self._check_probe_timeouts()
 			self._gc_if_due(now)
 			self.daemon.notify_watchdog()
 			time.sleep(self.tick_interval)
+
+	def _cold_join_if_due(self, now: float) -> None:
+		"""§9.2 — re-send the MembershipAdvertisement to every seed until one
+		replies (the reply arrives as a TYPE_GOSSIP bundle that drains through
+		`_drain_incoming`; any datagram that reaches `handle_message` flips
+		`_cold_join_done`), or until `COLD_JOIN_MAX_ATTEMPTS` is hit.
+
+		Idempotent: a re-send at the same generation re-applies the same
+		record on the seed (no-op). Safe even after the join has succeeded —
+		but `_cold_join_done` short-circuits once a peer reply was observed,
+		so the re-sends stop."""
+		if self._cold_join_done:
+			return
+		if self.cold_join_seeds is None:
+			# `main.py` didn't wire the retry (e.g., a test loop). The
+			# one-shot `cold_join` from `main()` already ran; nothing more
+			# to do here.
+			self._cold_join_done = True
+			return
+		if not self.cold_join_seeds:
+			# No seeds configured (lone-host posture per §9.2). Nothing to
+			# retry; come up peer-empty and let later gossip/anti-entropy
+			# fill in.
+			self._cold_join_done = True
+			return
+		if self._cold_join_attempts >= self.COLD_JOIN_MAX_ATTEMPTS:
+			# Cap reached — give up. The regular gossip/anti-entropy loop
+			# keeps running; if a seed was just slow to reply it will reach
+			# us through that path. The risk of permanent partition is low
+			# (15 datagrams over 30 s on a UDP path that drops ALL of them is
+			# a sign the network is broken, not a transient loss).
+			self._cold_join_done = True
+			return
+		if now < self._next_cold_join_at:
+			return
+		self._next_cold_join_at = now + self.COLD_JOIN_RETRY_INTERVAL
+		self._cold_join_attempts += 1
+		t = self.daemon.transport
+		if t is None:
+			return
+		from .join import cold_join
+
+		cold_join(self.daemon, t, self.cold_join_seeds)
 
 	def _now(self) -> float:
 		return self.now_fn()
@@ -177,6 +245,8 @@ class Loop:
 		tracker = getattr(self.daemon, "failure_tracker", None)
 		if tracker is None:
 			return
+		changed = False  # any state mutation across membership + ownership
+
 		# 1) Reap membership records past `dead_grace`. `tracker.gc` keeps the
 		# `dead_at` entry alive so step 2 can reap ownership past
 		# `ownership_grace` (§14.3 — routes outlast the membership reaped
@@ -188,6 +258,8 @@ class Loop:
 			self.daemon.config.ownership_grace,
 			self.daemon.state,
 		)
+		if reaped:
+			changed = True
 		# 2) For each dead host still in `dead_at`, reap ownership past
 		# `ownership_grace` AND clear the `dead_at` + ladder entry once the
 		# ownership is reaped (the host is fully gone then).
@@ -203,6 +275,7 @@ class Loop:
 			# (reaped here, or no ownership record existed) are gone, clear
 			# the `dead_at` entry + the ladder slot so the host is fully GC'd.
 			if ownership_reaped or host_id in reaped:
+				changed = True
 				if ownership_reaped:
 					self.apply.schedule(now, self.daemon.config.apply_debounce)
 				# Pop `dead_at` only once `ownership_grace` has elapsed so a
@@ -210,22 +283,49 @@ class Loop:
 				if now - dead_at >= self.daemon.config.ownership_grace:
 					tracker.dead_at.pop(host_id, None)
 					tracker.peers.pop(host_id, None)
-		if reaped:
-			# A membership was reaped — schedule the apply so the peer
-			# disappears from WgDesired's peer set.
-			self.apply.schedule(now, self.daemon.config.apply_debounce)
+		if changed:
+			# Persist the reaped state so a crash-restart doesn't bring
+			# dead peers back from a stale state.json.
+			save_state(self.daemon.state, self.daemon.config.data_dir)
+			if reaped:
+				# A membership was reaped — schedule the apply so the peer
+				# disappears from WgDesired's peer set.
+				self.apply.schedule(now, self.daemon.config.apply_debounce)
 
 	def _drain_incoming(self) -> None:
 		"""Spec §13.2 — recv every pending UDP datagram (non-blocking) and
 		dispatch through the same `handle_message` that join replies use. A
 		freshly-applied record marks the apply as needing a re-render (the
-		renderer reads the effective table from `state` next apply round)."""
+		renderer reads the effective table from `state` next apply round).
+
+		Stage 5+ — the envelope signature (§19.1) is verified BEFORE any
+		payload work; a datagram whose envelope fails to verify is dropped +
+		counted (`envelope_signature_failed`). The verify runs only if
+		`daemon.envelope_verifier` is installed (production path; tests that
+		build unsigned envelopes leave it unset)."""
 		t = self.daemon.transport
 		if t is None:
 			return
 
 		def _on_msg(msg, sender_addr) -> None:
+			verifier = getattr(self.daemon, "envelope_verifier", None)
+			if verifier is not None:
+				try:
+					verifier(msg, self.daemon)
+				except Exception:
+					counter = getattr(self.daemon, "metrics", None)
+					if counter is not None:
+						counter.incr("envelope_signature_failed")
+					return  # drop silently — loop stays alive
 			handle_message(msg, sender_addr, self.daemon, self.gossip_state)
+			# We received a verified peer datagram → our cold-join succeeded
+			# (the §9.2 retry in `_cold_join_if_due` can stop re-sending). A
+			# seed's cold-join reply arrives as a TYPE_GOSSIP bundle here; the
+			# envelope verifier + handler both passing means we are now in the
+			# cluster. Subsequent cold-join attempts would just re-apply the
+			# same MembershipRecord on the seed — no-op, but pointless.
+			if not self._cold_join_done:
+				self._cold_join_done = True
 			# A membership change (someone joined) or ownership change (a peer
 			# advertised new /128s) potentially changes our desired wg-mesh
 			# config. Schedule a debounced apply so we re-render + syncconf.

@@ -49,6 +49,8 @@ class Server(Document):
 		provider_resource_id: DF.Data | None
 		provider_type: DF.Literal["", "DigitalOcean", "Scaleway", "Self-Managed", "Fake"]
 		size: DF.Link | None
+		signing_private_key: DF.Password | None
+		signing_public_key: DF.Data | None
 		status: DF.Literal["Pending", "Bootstrapping", "Active", "Draining", "Broken", "Archived"]
 		title: DF.Data
 	# end: auto-generated types
@@ -94,6 +96,9 @@ class Server(Document):
 		self.name = str(uuid.uuid4())
 
 	def validate(self) -> None:
+		atlas_settings = frappe.get_single("Atlas Settings")
+		atlas_settings._ensure_ancp_operator_keypair()
+		atlas_settings.save(ignore_permissions=True)
 		self._validate_immutability()
 		self._denormalize_mesh_identity()
 
@@ -104,7 +109,14 @@ class Server(Document):
 		to the host during bootstrap as `/etc/atlas-networkd/{wg-private-key,wg-public-key}`;
 		the daemon reads those files in preference to self-generating.
 		Set once; a re-derive yields the same value, so an existing row's fields are
-		unchanged on save."""
+		unchanged on save.
+
+		Stage 5+ (spec/31 §19.4) — ALSO fill the ed25519 `signing_public_key` for
+		this host. NOT derived (a derived signing key's seed would be public,
+		defeating the purpose — §19.3). Generated ONCE at first validate.
+		The matching private key is persisted as `signing_private_key` (encrypted
+		Password) so the controller can write it to the host during bootstrap and
+		push it to existing hosts when resyncing networkd state."""
 		if not self.wireguard_public_key:
 			from atlas.atlas.networking import derive_host_wireguard_keypair
 
@@ -113,6 +125,17 @@ class Server(Document):
 			from atlas.atlas.networking import derive_host_mesh_address
 
 			self.mesh_address = derive_host_mesh_address(self.name)
+		if not self.signing_public_key:
+			from atlas.atlas.networking import generate_host_signing_keypair
+
+			priv_b64, self.signing_public_key = generate_host_signing_keypair()
+			# Persist the private key so it's available at bootstrap time and
+			# for resync_networkd_keys. Silently skip if the field hasn't been
+			# migrated yet (test env without bench migrate).
+			try:
+				self.signing_private_key = priv_b64
+			except AttributeError:
+				pass
 
 	def _validate_immutability(self) -> None:
 		"""Lock fields once they carry a value. Allow None → value transitions
@@ -218,15 +241,28 @@ class Server(Document):
 		return task.name
 
 	def _write_ancp_bootstrap_state(self, connection) -> None:
-		"""Write `/etc/atlas-networkd/{identity.json,seed.json,wg-private-key,wg-public-key}`
-		BEFORE the bootstrap-server Task starts atlas-networkd.service.
-		The identity carries this host's HostID + endpoint + mesh_address (all derivable
-		from the Server row); the keypair is the host's derived wg keys; the seed is a
-		list of currently-known Active Server rows (other hosts, each with its derived
-		wg public key) — the bootstrap contract of spec/31 §8. The daemon reads these at
-		first boot, finds the provisioned keypair files, and cold-joins every seed.
-		After the first boot these files are stale (the daemon keeps its own state);
-		they're only the initial seed-of-trust."""
+		"""Write the `/etc/atlas-networkd/` bootstrap files BEFORE the bootstrap-
+		server Task starts `atlas-networkd.service`:
+		- `wg-{private,public}-key` and `signing-{private,public}-key` — the host's
+		  wg-mesh + ed25519 signing keypairs (spec/31 §7.1, §19.3, §19.4). The wg
+		  half is derived from the Server UUID (`derive_host_wireguard_keypair`);
+		  the ed25519 signing half is randomly generated ONCE at first
+		  `Server.validate` (`generate_host_signing_keypair`) — never derived.
+		- `identity.json` — this host's `(host_id, endpoint, mesh_address)`.
+		- `seed.json` — every OTHER Active Server's `(host_id, endpoint,
+		  wg_public_key, signing_public_key, mesh_address, generation=1)` (spec/31
+		  §8, §19.4 — the seed now ALSO anchors each other host's ed25519 signing
+		  pubkey so the envelope verifier's `signing_pubkey_cache` can be
+		  pre-populated at build time).
+		- TODO Stage 5+ (§19.5): `/etc/atlas-networkd/operator-public-key` — the
+		  operator provision pubkey (the §19.5 newcomer trust root) and
+		  `/etc/atlas-networkd/introduction-signature` — the operator-signed
+		  `{host_id, signing_public_key, generation=1}` binding for THIS host
+		  (present only when this host joins an existing cluster
+		  post-bootstrap). Written below from the Atlas Settings operator
+		  keypair when configured.
+		After the first boot these files are stale (the daemon keeps its own
+		state); they're only the initial seed-of-trust."""
 		from atlas.atlas.networking import derive_host_mesh_address
 
 		identity = {
@@ -239,7 +275,7 @@ class Server(Document):
 		other_actives = frappe.get_all(
 			"Server",
 			filters={"status": "Active", "name": ["!=", self.name]},
-			fields=["name", "ipv6_address", "wireguard_public_key", "mesh_address"],
+			fields=["name", "ipv6_address", "wireguard_public_key", "mesh_address", "signing_public_key"],
 		)
 		seed = []
 		for row in other_actives:
@@ -250,6 +286,12 @@ class Server(Document):
 					"host_id": row.name,
 					"endpoint": row.ipv6_address,
 					"wg_public_key": row.wireguard_public_key or "",
+					# §19.4 — the seed now anchors each other host's ed25519 pubkey
+					# so the envelope verifier's `signing_pubkey_cache` is populated
+					# at build time. Empty for a host bootstrapped before the field
+					# existed; the envelope verifier demands a §19.5 introduction
+					# cert on first contact in that case.
+					"signing_public_key": getattr(row, "signing_public_key", "") or "",
 					"mesh_address": row.mesh_address or derive_host_mesh_address(row.name),
 					"generation": 1,
 				}
@@ -257,6 +299,48 @@ class Server(Document):
 		from atlas.atlas.networking import derive_host_wireguard_keypair
 
 		wg_private_key, _wg_public_key = derive_host_wireguard_keypair(self.name)
+		# Stage 5+ — the host's signing keypair. validate() generated one on first
+		# insert and persisted the priv in `signing_private_key`. A re-Bootstrap
+		# or resync reads it from the persisted field (encrypted Password) and
+		# writes the key files again. If the field is empty (a host bootstrapped
+		# before this migration), we read the existing keys from the host instead.
+		#
+		# IMPORTANT: `signing_private_key` is a Frappe Password field. Frappe's
+		# `_save_passwords` (base_document.py) stores the plaintext encrypted in
+		# `__Auth` and REPLACES the in-memory + column value with a `"****"` mask
+		# of asterisks on every `save()`. `self.get()` returns the mask; reading
+		# it back pushes `"****"` to `/etc/atlas-networkd/signing-private-key`,
+		# `b64decode("****")` yields `b""`, `Ed25519PrivateKey.from_private_bytes
+		# (b"")` raises, `keys._existing_signing_pair_valid` returns False → the
+		# daemon silently regenerates a fresh keypair that doesn't match
+		# `Server.signing_public_key` → every peer's envelope verifier drops the
+		# host's MembershipAdvertisement → silent cluster partition. Use
+		# `get_password` (which reads the decrypted plaintext from `__Auth`)
+		# instead — the canonical Frappe way to read a Password field in code.
+		pending_signing_priv = self.get_password("signing_private_key", raise_exception=False) or ""
+		if pending_signing_priv:
+			# Defensive in depth — refuse to push a non-ed25519-shaped priv.
+			# `b64decode(validate=True)` rejects the `"****"` mask (which
+			# contains non-base64 chars) and any other malformed value loud,
+			# surfacing a regression here instead of letting the daemon mute-
+			# regenerate a mismatched keypair.
+			import base64
+
+			try:
+				priv_raw = base64.b64decode(pending_signing_priv, validate=True)
+			except Exception as exc:
+				frappe.throw(
+					f"signing_private_key for {self.name} is not valid base64: {exc} — "
+					"the field was likely read as the Frappe Password-field mask "
+					"('****') instead of the decrypted plaintext"
+				)
+			if len(priv_raw) != 32:
+				frappe.throw(
+					f"signing_private_key for {self.name} is {len(priv_raw)} bytes, "
+					"expected 32 (an ed25519 seed) — refusing to push a malformed "
+					"signing key to the host (the daemon would silently regenerate "
+					"a mismatched keypair and partition from the cluster)"
+				)
 		with ssh_key_file(connection.ssh_private_key) as key_path:
 			run_ssh(
 				connection,
@@ -275,6 +359,47 @@ class Server(Document):
 				timeout_seconds=30,
 				stdin=_wg_public_key + "\n",
 			)
+			if pending_signing_priv and self.signing_public_key:
+				# Stage 5+ — push the host's ed25519 signing keypair. The daemon's
+				# `ensure_signing_keypair` is idempotent and validates the files;
+				# if we wrote them here, the daemon reads them instead of generating.
+				run_ssh(
+					connection,
+					key_path,
+					"sudo install -m 0600 /dev/stdin {}",
+					"/etc/atlas-networkd/signing-private-key",
+					timeout_seconds=30,
+					stdin=pending_signing_priv + "\n",
+				)
+				run_ssh(
+					connection,
+					key_path,
+					"sudo install -m 0644 /dev/stdin {}",
+					"/etc/atlas-networkd/signing-public-key",
+					timeout_seconds=30,
+					stdin=self.signing_public_key + "\n",
+				)
+				# CANARY — read back the on-disk signing-pub and assert it equals
+				# `Server.signing_public_key`. If the daemon's `ensure_signing_keypair`
+				# were about to regenerate (because the priv we pushed failed
+				# validation), the on-disk pub would diverge from what the controller
+				# signed the introduction cert over. Surface the divergence HERE,
+				# at the controller, loud — the alternative is a silent cluster
+				# partition on the next MembershipAdvertisement verify.
+				read_back, _rb_err, rb_exit = run_ssh(
+					connection,
+					key_path,
+					"sudo cat /etc/atlas-networkd/signing-public-key",
+					timeout_seconds=30,
+				)
+				if rb_exit != 0 or (read_back or "").strip() != (self.signing_public_key or "").strip():
+					frappe.throw(
+						f"signing-public-key read-back from {self.name} "
+						f"({(read_back or '').strip()!r}) doesn't match "
+						f"Server.signing_public_key ({(self.signing_public_key or '').strip()!r}) — "
+						"the daemon's ensure_signing_keypair is about to regenerate a "
+						"mismatched keypair; the controller and host would diverge."
+					)
 		with ssh_key_file(connection.ssh_private_key) as key_path:
 			run_ssh(
 				connection,
@@ -292,6 +417,79 @@ class Server(Document):
 				timeout_seconds=30,
 				stdin=json.dumps(seed, sort_keys=True) + "\n",
 			)
+			# Stage 5+ (§19.5) — write the operator provision pubkey so the
+			# host can verify any future newcomer's introduction certificate.
+			# Also write the introduction-signature for THIS host when it's
+			# joining an existing cluster (seed is non-empty → there are
+			# existing hosts that don't know us yet) and the controller has
+			# the operator priv key configured. Initial-seed hosts (seed is
+			# empty → this is the first host in a fresh cluster) get no
+			# introduction cert — every other host gets their pubkey via their
+			# own seed.json on their own first boot. Empty operator pubkey
+			# (no Atlas Settings keypair yet) means no §19.5 trust root; we
+			# write nothing, leave the host's verifier fail-closed on any
+			# future newcomer until the operator configures one.
+			from atlas.atlas.doctype.atlas_settings.atlas_settings import (
+				get_ancp_operator_private_key,
+				get_ancp_operator_public_key,
+			)
+
+			operator_pub = get_ancp_operator_public_key()
+			if operator_pub:
+				run_ssh(
+					connection,
+					key_path,
+					"sudo install -m 0644 /dev/stdin {}",
+					"/etc/atlas-networkd/operator-public-key",
+					timeout_seconds=30,
+					stdin=operator_pub + "\n",
+				)
+				# A host joining an existing cluster (seed has peers → the
+				# existing hosts didn't get us in their initial seed.json).
+				# Sign {host_id, signing_public_key, generation=1} with the
+				# operator priv; the §19.5 verifier accepts the self-asserted
+				# signing_public_key iff this signature verifies against
+				# operator_pub. Initial-seed hosts skip this (their pubkey is
+				# already anchored on every peer via the seed).
+				if seed and self.signing_public_key:
+					operator_priv = get_ancp_operator_private_key()
+					if operator_priv:
+						intro_body = {
+							"host_id": self.name,
+							"signing_public_key": self.signing_public_key,
+							"generation": 1,
+						}
+						# Re-use the host-lib's pure sign_introduction (it's
+						# pure above the keypair file — runs in the bench venv
+						# where `cryptography` is already a dep).
+						# Use importlib to bypass the cached top-level `atlas`
+						# package (the bench app) — sys.path insertion alone
+						# won't reach scripts/lib/atlas/networkd/signing.py.
+						import importlib.util
+						from pathlib import Path
+
+						signing_path = str(
+							Path(frappe.get_app_path("atlas")).parent
+							/ "scripts"
+							/ "lib"
+							/ "atlas"
+							/ "networkd"
+							/ "signing.py"
+						)
+						_spec = importlib.util.spec_from_file_location("_host_signing", signing_path)
+						_host_signing = importlib.util.module_from_spec(_spec)
+						_spec.loader.exec_module(_host_signing)  # type: ignore[union-attr]
+						sign_introduction = _host_signing.sign_introduction
+
+						intro_sig = sign_introduction(intro_body, operator_priv)
+						run_ssh(
+							connection,
+							key_path,
+							"sudo install -m 0600 /dev/stdin {}",
+							"/etc/atlas-networkd/introduction-signature",
+							timeout_seconds=30,
+							stdin=intro_sig + "\n",
+						)
 
 	def _run_install_sh(self, connection) -> None:
 		"""Run scripts/install.sh on the host over SSH, AFTER the upload — it creates
@@ -552,6 +750,39 @@ class Server(Document):
 		self.capacity_reported_at = frappe.utils.now_datetime()
 
 	@frappe.whitelist()
+	def resync_networkd_keys(self) -> None:
+		"""Re-push this host's ed25519 signing keypair and seed.json, then restart
+		atlas-networkd. Fixes signing key mismatch between the controller and host
+		(for hosts bootstrapped before signing_private_key was persisted).
+
+		If signing_private_key is empty (migration case): read the existing signing
+		keys from the host and adopt them as the canonical keys, so the controller
+		matches what the host already has on disk. If the host has no signing keys
+		either, generate a fresh keypair.
+
+		After all hosts in the fleet are resynced, every host's seed.json carries
+		the correct signing_public_key for every other host, and the daemon restarts
+		with a correct `signing_pubkey_cache`.
+		"""
+		if self.status != "Active":
+			frappe.throw(f"resync_networkd_keys requires Active status (got {self.status})")
+
+		connection = connection_for_server(self)
+		with ssh_key_file(connection.ssh_private_key) as key_path:
+			# `signing_private_key` is a Frappe Password field — `self.get()`
+			# returns the `"****"` mask after every `save()`, not the plaintext.
+			# The mask reads as truthy, so a `not self.get(...)` guard would
+			# always skip adoption and push the mask again (the same bug
+			# `_write_ancp_bootstrap_state` had). Use `get_password` (reads the
+			# decrypted plaintext from `__Auth`, returns `None` if the entry
+			# doesn't exist) so adoption actually fires when there's no key.
+			if not self.get_password("signing_private_key", raise_exception=False):
+				_maybe_adopt_host_keys(self, connection, key_path)
+
+			self._write_ancp_bootstrap_state(connection)
+			_run_restart_networkd(connection, key_path)
+
+	@frappe.whitelist()
 	def refresh_capacity_facts(self) -> str:
 		"""Re-measure the host's capacity facts and stamp them — the Refresh Capacity
 		button. For an already-Active host whose shape changed (a resized droplet, a
@@ -592,6 +823,56 @@ def reinstall_atlas_venv_package(connection, server_name: str) -> None:
 			f"atlas venv reinstall failed on {server_name} (exit {exit_code}): "
 			f"{stderr[-500:] or stdout[-500:]}"
 		)
+
+
+def _maybe_adopt_host_keys(server, connection, key_path: str) -> None:
+	"""Read the host's existing signing keys and adopt them into the Server doc.
+	The daemon generates its own signing keypair on first boot if the files don't
+	exist yet. For a host bootstrapped before `signing_private_key` was persisted,
+	the keys on disk are the canonical ones — we read them and save to the doc so
+	the controller matches what the host already has (instead of forcing a new
+	keypair that would break existing cache entries on peers)."""
+	_stdout, _stderr, exit_code = run_ssh(
+		connection,
+		key_path,
+		"sudo cat /etc/atlas-networkd/signing-private-key 2>/dev/null",
+		timeout_seconds=30,
+	)
+	if exit_code != 0 or not _stdout.strip():
+		from atlas.atlas.networking import generate_host_signing_keypair
+
+		priv_b64, server.signing_public_key = generate_host_signing_keypair()
+		server.signing_private_key = priv_b64
+	else:
+		host_priv = _stdout.strip()
+		_stdout2, _stderr2, _exit2 = run_ssh(
+			connection,
+			key_path,
+			"sudo cat /etc/atlas-networkd/signing-public-key 2>/dev/null",
+			timeout_seconds=30,
+		)
+		if _exit2 == 0 and _stdout2.strip():
+			host_pub = _stdout2.strip()
+		else:
+			from atlas.atlas.networking import generate_host_signing_keypair
+
+			priv_b64, host_pub = generate_host_signing_keypair()
+			host_priv = priv_b64
+		server.signing_private_key = host_priv
+		server.signing_public_key = host_pub
+	server.save(ignore_permissions=True)
+
+
+def _run_restart_networkd(connection, key_path: str) -> None:
+	"""Restart atlas-networkd on the host so it re-reads the signing key files
+	and seed.json. Best-effort: a restart failure is logged but not fatal — the
+	host will pick up the new config on its next natural restart."""
+	run_ssh(
+		connection,
+		key_path,
+		"sudo systemctl restart atlas-networkd 2>/dev/null || true",
+		timeout_seconds=30,
+	)
 
 
 def sync_scripts_to_all() -> dict[str, int]:

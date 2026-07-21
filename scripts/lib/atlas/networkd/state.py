@@ -64,16 +64,28 @@ class AppliedState:
 
 	# --- apply rules ---------------------------------------------------------
 
-	def apply_membership(self, incoming: MembershipRecord) -> bool:
+	def apply_membership(
+		self,
+		incoming: MembershipRecord,
+		*,
+		pubkey_cache: dict[str, str] | None = None,
+	) -> bool:
 		"""Apply the §13.2 rule for a Membership Record: replace iff the incoming
 		Generation is strictly higher than the existing record's for this origin.
 		Returns True iff the table changed. The dedupe key is recorded regardless
 		(re-delivery of the same generation is a no-op apply but still gets
-		cached, so we don't keep forwarding the byte-equal record)."""
+		cached, so we don't keep forwarding the byte-equal record).
+
+		When `pubkey_cache` is provided and the incoming record carries a
+		`signing_public_key`, the cache is updated so the envelope verifier
+		(§19.1) can find the latest key for this origin. This allows key
+		rotation via a higher-generation signed MembershipRecord."""
 		existing = self.membership.get(incoming.host_id)
 		changed = membership_replaces(existing, incoming)
 		if changed:
 			self.membership[incoming.host_id] = incoming
+			if pubkey_cache is not None and incoming.signing_public_key:
+				pubkey_cache[incoming.host_id] = incoming.signing_public_key
 		self._mark_seen(dedupe_key_membership(incoming))
 		return changed
 

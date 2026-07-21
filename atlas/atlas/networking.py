@@ -704,6 +704,36 @@ def derive_host_mesh_address(server_name: str) -> str:
 	return str(ipaddress.IPv6Address(address))
 
 
+def generate_host_signing_keypair() -> tuple[str, str]:
+	"""Random ed25519 signing keypair for a HOST's ANCP envelope + record
+	signatures (spec/31 §19.3 / §19.4). NOT derived from the Server UUID —
+	a derived signing key's seed would be public (the UUID is on every
+	Membership Record), defeating the purpose. Generated ONCE at first
+	`Server.validate`; the priv lives only on the host after
+	`_write_ancp_bootstrap_state` pushes it (the controller never persists
+	the priv; a re-Bootstrap reads the existing files from the host — the
+	host already has them).
+
+	Returns `(priv_b64, pub_b64)` — base64-standard for both halves, the
+	shape the host's `/etc/atlas-networkd/signing-{private,public}-key` files
+	hold (one line, stripped).
+	"""
+	import base64
+
+	from cryptography.hazmat.primitives import serialization
+	from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+	priv = Ed25519PrivateKey.generate()
+	pub = priv.public_key()
+	priv_raw = priv.private_bytes(
+		encoding=serialization.Encoding.Raw,
+		format=serialization.PrivateFormat.Raw,
+		encryption_algorithm=serialization.NoEncryption(),
+	)
+	pub_raw = pub.public_bytes(encoding=serialization.Encoding.Raw, format=serialization.PublicFormat.Raw)
+	return base64.b64encode(priv_raw).decode(), base64.b64encode(pub_raw).decode()
+
+
 def derive_client_address(tenant_name: str, client_peer_name: str) -> str:
 	"""A customer client's /128 inside the tenant /48 (spec/25 Phase 5, spec/26), e.g.
 	'fdaa:1a2b:3c4d:1:abcd:ef01:2345'.

@@ -1,25 +1,35 @@
-"""Wire format for ANCP messages (spec §13 / §9).
+"""Wire format for ANCP messages (spec §13 / §9 / §19).
+
+ANCP rides plain UDP on each host's public IPv6 endpoint, port 7946 (spec §5).
+The implementation deliberately diverges from spec drafts that asserted
+transport over wg-mesh — wg-mesh is the *output* of the control plane (the
+data-plane device the daemon programs in §16), not its transport; ANCP must
+bootstrap before the data plane it produces.
 
 Stage 2 uses a JSON envelope: debuggable, easy to evolve, and small enough at
-our record sizes that theencode/decode cost is irrelevant over a 200 ms gossip
+our record sizes that the encode/decode cost is irrelevant over a 200 ms gossip
 tick. Binary is a §20 optimization held off until profiling proves it needs to
 be — Taste.md's "don't import, copy" rule applies (no protobuf/cbor dep).
 
-Envelope:
+Envelope (spec §19.1):
 
     Message = {
-      "type"    : "gossip" | "membership_advert" | "anti_entropy_req" | ...,
-      "sender"  : HostID,                # the wg-authenticated origin (§19.1)
-      "payload" : <type-specific JSON>,  # records, summaries, etc.
+      "type"               : "gossip" | "membership_advert" | "anti_entropy_req" | ...,
+      "sender"             : HostID,                # the origin of this datagram
+      "signing_public_key" : base64,                # the sender's ed25519 pubkey
+      "payload"            : <type-specific JSON>,  # records, summaries, etc.
+      "signature"          : base64,                # ed25519 over {type, sender,
+                                                    #          signing_public_key, payload}
+      "introduction_signature": base64 | omitted    # §19.5 newcomer cert (only the
+                                                    # first MembershipAdvertisement
+                                                    # from an unknown host_id)
     }
 
-Datagram sizes are bounded: a single ANCP UDP datagram rides inside a wg-mesh
-frame, and wg-mesh has MTU 1420. After IPv6 + UDP + wg overhead the safe
-payload floor is 1280 B (the well-known IPv6 minimum MTU payload); we cap a
-serialized Gossip piggyback to fit that, dropping the tail when it would
-overflow. Larger state transfers ride anti-entropy (§15, Stage 3) which can
-use a multi-datagram or TCP exchange — gossip is the hot-path small-burst
-channel, not the bulk channel.
+Datagram sizes are bounded by the IPv6 minimum MTU payload floor (1280 B); we
+cap a serialized Gossip piggyback to fit that, dropping the tail when it would
+overflow. Larger state transfers ride anti-entropy (§15, Stage 3) which can use
+a multi-datagram or TCP exchange — gossip is the hot-path small-burst channel,
+not the bulk channel.
 """
 
 from __future__ import annotations
@@ -33,12 +43,14 @@ from .records import (
 	MembershipRecord,
 	OwnershipAdvertisement,
 )
+from .signing import SignatureError
 
-# The maximum serialized Message size we'll send over a single ANCP UDP
-# datagram. wg-mesh MTU is 1420 (proven on real hosts); IPv6 + UDP headers eat
-# 48 bytes, leaving 1372. We pin 1280 — the IPv6 minimum MTU payload floor — so
-# a datagram never fragments even if a future wg MTU change or a routed path
-# shrinks the effective MTU further. Larger state rides anti-entropy (§15).
+# The maximum serialized Message size we'll send or accept over a single ANCP
+# UDP datagram. ANCP rides plain UDP on the public IPv6 endpoint (§5); the IPv6
+# minimum MTU payload floor is 1280 B, so a datagram never fragments even if a
+# routed path shrinks the effective MTU further. The apply-path recv loop
+# rejects oversized datagrams at the kernel boundary (no parse work — drops +
+# counts `oversized_drops`). Larger state rides anti-entropy (§15).
 MAX_DATAGRAM_BYTES = 1280
 
 # Message types. SWIM probe types (§14) and anti-entropy (§15) are declared here
@@ -57,46 +69,153 @@ TYPE_ANTI_ENTROPY_RESP = "anti_entropy_resp"  # §15 — Stage 3
 
 @dataclass(frozen=True, slots=True)
 class Message:
-	"""One ANCP message envelope. `sender` is the wg-authenticated origin's
-	HostID; the receiver asserts (§19.1) that the UDP datagram arrived from the
-	wg peer whose pubkey matches that HostID's MembershipRecord. We don't
-	enforce the check in the wire layer — the transport does."""
+	"""One ANCP message envelope (spec §19.1 — the signed-envelope shape). The
+	`sender` field is the HostID of the host that emitted this datagram (the
+	*relay*, for a gossip message forwarding another origin's records); the
+	receiver verifies the envelope signature against its cached signing pubkey
+	for `sender` before any payload work. `signing_public_key` rides the wire so
+	a first-contact receiver (one with no cached pubkey for `sender` yet) can
+	verify the envelope against the self-asserted pubkey — but only when paired
+	with an `introduction_signature` (spec §19.5) that proves the binding to the
+	operator's provision key. In every other case the receiver drops a datagram
+	whose `sender` is not in its trust directory.
+
+	`signature` is the whole-envelope ed25519 signature over the canonical body
+	`{type, sender, signing_public_key, payload}` (see `signing.sign_envelope`).
+	`introduction_signature` is present ONLY on the first MembershipAdvertisement
+	from a previously-unknown `host_id`; it is the operator's signature over
+	`{host_id, signing_public_key, generation}` (spec §19.5)."""
 
 	type: str
 	sender: str
 	payload: Any
+	signing_public_key: str = ""
+	signature: str = ""
+	introduction_signature: str = ""
 
-	def to_bytes(self) -> bytes:
-		"""Serialize to UTF-8 JSON bytes (compact, no whitespace). Raises if the
-		serialized form exceeds `MAX_DATAGRAM_BYTES` — the caller (Gossip
-		handler) catches and trims the piggyback tail."""
-		body = json.dumps(
-			{"type": self.type, "sender": self.sender, "payload": self.payload},
-			separators=(",", ":"),
-			sort_keys=True,
-		).encode("utf-8")
+	def envelope_signed_body(self) -> dict:
+		"""The canonical dict that the envelope signature covers — the four
+		envelope fields, NO `signature`/`introduction_signature`. Used by both
+		`sign_envelope` (sign) and `verify_envelope` (verify) so the bytes a
+		 signer signs are byte-identical to the bytes the verifier reconstructs.
+		"""
+		return {
+			"type": self.type,
+			"sender": self.sender,
+			"signing_public_key": self.signing_public_key,
+			"payload": self.payload,
+		}
+
+	def introduction_signed_body(self) -> dict:
+		"""The canonical dict that the `introduction_signature` covers —
+		`{host_id, signing_public_key, generation}` from the MembershipRecord
+		inside the payload. Returns `{}` if the payload is not a single
+		MembershipRecord dict (in which case `introduction_signature` must be
+		empty and is ignored)."""
+		if not self.introduction_signature:
+			return {}
+		# the introduction binds the MembershipRecord's (host_id,
+		# signing_public_key, generation) — those are looked up from the
+		# payload's wire dict, not the envelope fields.
+		if not isinstance(self.payload, dict):
+			return {}
+		host_id = self.payload.get("host_id")
+		signing_public_key = self.payload.get("signing_public_key")
+		generation = self.payload.get("generation")
+		if host_id is None or signing_public_key is None or generation is None:
+			return {}
+		return {
+			"host_id": host_id,
+			"signing_public_key": signing_public_key,
+			"generation": int(generation),
+		}
+
+	def to_bytes(self, sender_priv_b64: str = "") -> bytes:
+		"""Serialize to UTF-8 JSON bytes (compact, sort_keys). Signs the
+		envelope with `sender_priv_b64` (spec §19.1) before serializing; if
+		`self.signature` is already set (a pre-signed message passed through),
+		uses that. Raises `DatagramTooLarge` if the serialized form exceeds
+		`MAX_DATAGRAM_BYTES` — the gossip handler catches and trims the
+		piggyback tail.
+
+		If `sender_priv_b64` is empty AND `self.signature` is empty, emits an
+		UNSIGNED envelope (the test path — production always passes a priv
+		key). The receiver's `envelope_verifier` (`daemon.py`) rejects any
+		unsigned datagram in production."""
+		from . import signing
+
+		sig = self.signature
+		if sender_priv_b64:
+			sig = signing.sign_envelope(self.envelope_signed_body(), sender_priv_b64)
+		d: dict[str, Any] = {
+			"type": self.type,
+			"sender": self.sender,
+			"signing_public_key": self.signing_public_key,
+			"payload": self.payload,
+			"signature": sig,
+		}
+		if self.introduction_signature:
+			d["introduction_signature"] = self.introduction_signature
+		body = json.dumps(d, separators=(",", ":"), sort_keys=True).encode("utf-8")
 		if len(body) > MAX_DATAGRAM_BYTES:
 			raise DatagramTooLarge(len(body))
 		return body
 
+	def verify_envelope(self, signing_pub_b64: str) -> None:
+		"""Verify the envelope signature against the supplied pubkey (the
+		cached signing pubkey for `sender`, OR the self-asserted
+		`signing_public_key` if the caller has none cached). Raises
+		`SignatureError` on any failure. The caller selects which pubkey to
+		pass — the wire layer does not consult the daemon's trust directory."""
+		from . import signing
+
+		signing.verify_envelope(self.envelope_signed_body(), self.signature, signing_pub_b64)
+
+	def verify_introduction(self, operator_pub_b64: str) -> None:
+		"""Verify the `introduction_signature` against the operator's provision
+		pubkey (spec §19.5). Raises `SignatureError` if the cert is absent or
+		invalid. The caller passes the operator pubkey (seeded to every host,
+		spec §19.4)."""
+		from . import signing
+
+		if not self.introduction_signature:
+			raise SignatureError("message carries no introduction_signature")
+		signing.verify_introduction(
+			self.introduction_signed_body(), self.introduction_signature, operator_pub_b64
+		)
+
 
 class DatagramTooLarge(RuntimeError):
 	"""Raised by `Message.to_bytes` when the serialized form would overflow the
-	wg-mesh MTU budget. The gossip handler catches it and trims the piggyback
-	(by dropping tail records) until it fits — see `gossip.trim_to_fit`."""
+	IPv6-minimum-MTU payload budget (§5). The gossip handler catches it and
+	trims the piggyback (by dropping tail records) until it fits — see
+	`gossip.trim_to_fit`. The recv path (`transport.drain`) mirrors the cap by
+	dropping oversized inbound datagrams at the kernel boundary."""
 
 
 def from_bytes(data: bytes) -> Message:
 	"""Deserialize a UDP datagram body. Raises `ValueError` on malformed JSON
 	or a missing `type`/`sender` (fail loud at the boundary — a malformed
 	datagram from a peer should not be silently dropped, since it usually means
-	a version skew the operator needs to know about)."""
+	a version skew the operator needs to know about).
+
+	NOTE: this parses the envelope but does NOT verify the signature. The
+	receiver must call `Message.verify_envelope(cached_pub)` before any payload
+	work — typically in the loop's recv path via the daemon's
+	`envelope_verifier` (`daemon.py:default_envelope_verifier`)."""
 	obj = json.loads(data.decode("utf-8"))
 	if not isinstance(obj, dict):
 		raise ValueError("ANCP message is not a JSON object")
 	if "type" not in obj or "sender" not in obj:
 		raise ValueError("ANCP message missing type/sender")
-	return Message(type=obj["type"], sender=obj["sender"], payload=obj.get("payload"))
+	return Message(
+		type=obj["type"],
+		sender=obj["sender"],
+		payload=obj.get("payload"),
+		signing_public_key=obj.get("signing_public_key", ""),
+		signature=obj.get("signature", ""),
+		introduction_signature=obj.get("introduction_signature", ""),
+	)
 
 
 # --- record (de)serializers (shared with state.py — kept pure & I/O-free) -----
@@ -329,8 +448,9 @@ def parse_membership_advert_payload(payload: Any) -> MembershipRecord:
 
 
 def ping_payload(nonce: int, target_host_id: str) -> dict:
-	"""A direct ping to `target_host_id` (over wg-mesh, unicast). The peer
-	responds with `ack_payload(nonce, target_host_id)` to confirm liveness."""
+	"""A direct ping to `target_host_id` (over the plain-UDP ANCP socket,
+	unicast). The peer responds with `ack_payload(nonce, target_host_id)` to
+	confirm liveness."""
 	return {"nonce": int(nonce), "target": target_host_id}
 
 

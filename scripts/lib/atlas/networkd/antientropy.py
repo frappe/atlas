@@ -230,10 +230,11 @@ def anti_entropy_round(
 		msg = Message(
 			type=TYPE_ANTI_ENTROPY_REQ,
 			sender=daemon.identity.host_id,
+			signing_public_key=daemon.own_signing_pub_b64,
 			payload=anti_entropy_req_payload(vector),
 		)
 		try:
-			data = msg.to_bytes()
+			data = msg.to_bytes(daemon.own_signing_priv_b64)
 		except DatagramTooLarge:
 			vector = _sampled_vector(daemon.state)
 			continue
@@ -276,6 +277,7 @@ def handle_anti_entropy_req(msg: Message, daemon, _gossip_state) -> None:
 	resp = Message(
 		type=TYPE_ANTI_ENTROPY_RESP,
 		sender=daemon.identity.host_id,
+		signing_public_key=daemon.own_signing_pub_b64,
 		payload=payload,
 	)
 	# Send back to the requester's public endpoint. The endpoint comes from
@@ -285,7 +287,7 @@ def handle_anti_entropy_req(msg: Message, daemon, _gossip_state) -> None:
 	if requester_record is None:
 		return  # unknown host — their cold-join advert will arrive and
 		# the next anti-entropy req from them will succeed.
-	data = _serialize_with_trim(resp)
+	data = _serialize_with_trim(resp, daemon.own_signing_priv_b64)
 	daemon.unicast_send(requester_record.endpoint, data)
 
 
@@ -333,6 +335,8 @@ def _apply(record: MembershipRecord | OwnershipAdvertisement, daemon) -> bool:
 	"""Apply via the state's monotonic rule, with §19.3 signature verification
 	first (same as gossip's `_apply_record`). A record whose signature fails to
 	verify against its origin's published signing pubkey is dropped + counted.
+	When a MembershipRecord is applied and carries a signing_public_key, the
+	daemon's signing_pubkey_cache is updated (§19.1 trust-directory sync).
 	"""
 	verifier = getattr(daemon, "signature_verifier", None)
 	if verifier is not None:
@@ -344,7 +348,8 @@ def _apply(record: MembershipRecord | OwnershipAdvertisement, daemon) -> bool:
 				counter.incr("signature_failed")
 			return False
 	if isinstance(record, MembershipRecord):
-		changed = daemon.state.apply_membership(record)
+		cache = getattr(daemon, "signing_pubkey_cache", None)
+		changed = daemon.state.apply_membership(record, pubkey_cache=cache)
 		if changed:
 			tracker = getattr(daemon, "failure_tracker", None)
 			if tracker is not None:
@@ -384,25 +389,27 @@ def _reverse_push(
 	msg = Message(
 		type=TYPE_GOSSIP,
 		sender=daemon.identity.host_id,
+		signing_public_key=daemon.own_signing_pub_b64,
 		payload=wire.sign_records_if_owned(
 			wire.gossip_payload(records),
 			daemon.own_signing_priv_b64,
 			daemon.identity.host_id,
 		),
 	)
-	daemon.unicast_send(target_record.endpoint, _serialize_with_trim(msg))
+	daemon.unicast_send(target_record.endpoint, _serialize_with_trim(msg, daemon.own_signing_priv_b64))
 	# `transport` is unused here — `daemon.unicast_send` is the path; the param
 	# is kept in the signature for symmetry with `gossip_round` and a future
 	# Stage-5 direct-call API.
 	_ = transport
 
 
-def _serialize_with_trim(message: Message) -> bytes:
-	"""Serialize, trimming the records list tail to fit MAX_DATAGRAM_BYTES. The
-	records we drop stay in our state; the next anti-entropy round picks them
-	up (convergence is over N rounds at worst). Mutates `message.payload`."""
+def _serialize_with_trim(message: Message, sender_priv_b64: str = "") -> bytes:
+	"""Serialize, signing the envelope with `sender_priv_b64` (spec §19.1) and
+	trimming the records list tail to fit MAX_DATAGRAM_BYTES. The records we
+	drop stay in our state; the next anti-entropy round picks them up
+	(convergence is over N rounds at worst). Mutates `message.payload`."""
 	try:
-		return message.to_bytes()
+		return message.to_bytes(sender_priv_b64)
 	except DatagramTooLarge:
 		payload = message.payload
 		if not isinstance(payload, dict) or not isinstance(payload.get("records"), list):
@@ -416,10 +423,10 @@ def _serialize_with_trim(message: Message) -> bytes:
 		while records_list:
 			records_list.pop()
 			try:
-				return message.to_bytes()
+				return message.to_bytes(sender_priv_b64)
 			except DatagramTooLarge:
 				continue
-		return message.to_bytes()
+		return message.to_bytes(sender_priv_b64)
 
 
 __all__ = [
