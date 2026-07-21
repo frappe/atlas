@@ -76,7 +76,9 @@ class TestCertbotArgv(unittest.TestCase):
 class TestCertPaths(unittest.TestCase):
 	def test_powerdns_credentials_path_is_absolute(self):
 		self.assertTrue(os.path.isabs(certs.powerdns_credentials_path(DOMAIN)))
-		self.assertTrue(certs.powerdns_credentials_path(DOMAIN).endswith(os.path.join(DOMAIN, "powerdns.ini")))
+		self.assertTrue(
+			certs.powerdns_credentials_path(DOMAIN).endswith(os.path.join(DOMAIN, "powerdns.ini"))
+		)
 
 	def test_pem_paths_live_under_the_domain_live_dir(self):
 		self.assertTrue(certs.fullchain_path(DOMAIN).endswith(os.path.join("live", DOMAIN, "fullchain.pem")))

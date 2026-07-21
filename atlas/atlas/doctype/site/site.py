@@ -126,7 +126,7 @@ class Site(Document):
 			# the backing VM + the bench's bench.toml. Flags are set by create_site.
 			pilot_credential_id=self.flags.get("pilot_credential_id"),
 			central_endpoint=self.flags.get("central_endpoint"),
-			central_auth_token=self.flags.get("central_auth_token"),
+			bootstrap_token=self.flags.get("bootstrap_token"),
 		)
 
 	# ----- validation -----------------------------------------------------
@@ -301,7 +301,7 @@ def auto_provision(
 	site_name: str,
 	pilot_credential_id: str | None = None,
 	central_endpoint: str | None = None,
-	central_auth_token: str | None = None,
+	bootstrap_token: str | None = None,
 ) -> None:
 	"""Background-job entrypoint (enqueued by after_insert). Drives the whole
 	create_site→live-site flow for one Site:
@@ -385,7 +385,7 @@ def auto_provision(
 		pilot_label = pilot_subdomain_for(site.subdomain)
 		admin_domain = f"{pilot_label}.{active_root_domain().domain}"
 		clock.stage("deploy site in guest (wait_for_ssh + run deploy-site.py)")
-		result = _deploy_site(site, vm_name, central_endpoint, central_auth_token, admin_domain)
+		result = _deploy_site(site, vm_name, central_endpoint, bootstrap_token, admin_domain)
 		# The tenant handoff is the one-click login URL `deploy-site.py` minted
 		# (`bench browse --sid`, a real 24h session) — NOT a password; the baked
 		# Administrator password is a long random secret generated at bake time and
@@ -554,7 +554,7 @@ def _deploy_site(
 	site,
 	vm_name: str,
 	central_endpoint: str | None = None,
-	central_auth_token: str | None = None,
+	bootstrap_token: str | None = None,
 	admin_domain: str | None = None,
 ) -> dict:
 	"""Run deploy-site.py in the guest: rename the baked `site.local` dir to the FQDN
@@ -577,9 +577,7 @@ def _deploy_site(
 	vm = frappe.get_doc("Virtual Machine", vm_name)
 	if is_fake_server(vm.server):
 		return {"site": site.name, "serving": True, "login_url": f"https://{site.name}/app?sid=fake-sid"}
-	return (
-		deploy_site(vm_name, site.name, central_endpoint, central_auth_token, admin_domain=admin_domain) or {}
-	)
+	return deploy_site(vm_name, site.name, central_endpoint, bootstrap_token, admin_domain=admin_domain) or {}
 
 
 def _regenerate_login(site, vm_name: str) -> dict:
