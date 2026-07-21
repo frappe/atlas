@@ -249,6 +249,7 @@ def _advertise_leaving(daemon: Daemon) -> None:
 		wg_public_key=daemon.own_membership.wg_public_key,
 		mesh_address=daemon.identity.mesh_address,
 		generation=daemon.state.own_generation,
+		signing_public_key=daemon.own_signing_pub_b64,
 	)
 	daemon.state.apply_membership(own)
 	save_state(daemon.state, daemon.config.data_dir)
