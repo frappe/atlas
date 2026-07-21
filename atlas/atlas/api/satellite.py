@@ -70,9 +70,7 @@ def list_virtual_machines(modified_after: str | None = None) -> list[dict]:
 	oldest-change first so a paging caller can advance its watermark."""
 	frappe.only_for("System Manager")
 	filters = {"modified": (">", modified_after)} if modified_after else {}
-	names = frappe.get_all(
-		"Virtual Machine", filters=filters, pluck="name", order_by="modified asc"
-	)
+	names = frappe.get_all("Virtual Machine", filters=filters, pluck="name", order_by="modified asc")
 	return [_vm_payload(frappe.get_doc("Virtual Machine", n)) for n in names]
 
 
