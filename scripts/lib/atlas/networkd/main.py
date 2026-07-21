@@ -104,6 +104,9 @@ def main() -> int:
 	# wires both here so every incoming datagram is envelope-verified at the
 	# boundary before any payload work.
 	daemon.signing_pubkey_cache = seed.signing_pubkey_index(seeds)
+	for _hid, _rec in state.membership.items():
+		if _rec.signing_public_key and _hid not in daemon.signing_pubkey_cache:
+			daemon.signing_pubkey_cache[_hid] = _rec.signing_public_key
 	operator_pubkey = seed.load_operator_pubkey(config.config_dir + "/operator-public-key")
 	daemon.operator_public_key = operator_pubkey
 	daemon.envelope_verifier = default_envelope_verifier
