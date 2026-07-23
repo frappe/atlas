@@ -52,72 +52,70 @@ function openVMConsole(vmUUID) {
 	};
 }
 
-wss.on("connection", async (ws, request) => {
-	let consoleSession;
+wss.on("connection", (ws) => {
+	let consoleSession = null;
+	let authenticated = false;
+	let vmUUID = null;
 
-	try {
-		const url = new URL(request.url, "http://localhost");
+	ws.on("message", async (data) => {
+		try {
+			if (!authenticated) {
+				const message = JSON.parse(data.toString());
 
-		const token = url.searchParams.get("api");
+				if (message.type !== "auth") {
+					ws.close(1008, "Authentication required");
+					return;
+				}
 
-		if (!token) {
-			ws.close(1008, "Missing token");
-			return;
+				vmUUID = await validateToken(message.token);
+
+				console.log("Opening console for", vmUUID);
+
+				consoleSession = openVMConsole(vmUUID);
+
+				const { input, output } = consoleSession;
+
+				output.on("data", (chunk) => {
+					if (ws.readyState === WebSocket.OPEN) {
+						ws.send(chunk);
+					}
+				});
+
+				output.on("error", (err) => {
+					console.error("FIFO output error:", err);
+					ws.close(1011, "Console unavailable");
+				});
+
+				input.on("error", (err) => {
+					console.error("FIFO input error:", err);
+					ws.close(1011, "Console unavailable");
+				});
+
+				authenticated = true;
+
+				return;
+			}
+
+
+			// Browser -> VM input
+			consoleSession.input.write(data);
+
+
+		} catch (error) {
+			console.error(error);
+			ws.close(1011, "Console failed");
 		}
+	});
 
-		const vmUUID = await validateToken(token);
 
-		console.log("Opening console for", vmUUID);
+	ws.on("close", () => {
+		console.log("Console closed", vmUUID);
 
-		consoleSession = openVMConsole(vmUUID);
-
-		const { input, output } = consoleSession;
-
-		/*
-                VM -> Browser
-            */
-
-		output.on("data", (data) => {
-			if (ws.readyState === WebSocket.OPEN) {
-				ws.send(data);
-			}
-		});
-
-		output.on("error", (err) => {
-			console.error(err);
-
-			if (ws.readyState === WebSocket.OPEN) {
-				ws.close(1011, "Console unavailable");
-			}
-		});
-
-		input.on("error", (err) => {
-			console.error(err);
-
-			if (ws.readyState === WebSocket.OPEN) {
-				ws.close(1011, "Console unavailable");
-			}
-		});
-
-		/*
-                Browser -> VM
-            */
-
-		ws.on("message", (data) => {
-			input.write(data);
-		});
-
-		ws.on("close", () => {
-			console.log("Console closed", vmUUID);
-
-			input.destroy();
-			output.destroy();
-		});
-	} catch (error) {
-		console.error(error);
-
-		ws.close(1011, "Console failed");
-	}
+		if (consoleSession) {
+			consoleSession.input.destroy();
+			consoleSession.output.destroy();
+		}
+	});
 });
 
 app.use(express.static("public"));

@@ -50,10 +50,16 @@
 			const protocol = location.protocol === "https:" ? "wss:" : "ws:";
 
 			const ws = new WebSocket(
-				`${protocol}//${location.host}/?api=${encodeURIComponent(api)}`,
+				`${protocol}//${location.host}/`,
 			);
 
 			ws.binaryType = "arraybuffer";
+			ws.onopen = () => {
+				ws.send(JSON.stringify({
+					type: "auth",
+					token: api,
+				}));
+			};
 
 			ws.onmessage = (event) => {
 				term.write(new Uint8Array(event.data));
