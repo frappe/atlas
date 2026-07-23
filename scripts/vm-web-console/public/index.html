@@ -1,69 +1,82 @@
 <!doctype html>
 <html>
-<head>
-    <title>Firecracker Console</title>
-<link rel="stylesheet"
-      href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css">
+	<head>
+		<title>Firecracker Console</title>
+		<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css" />
 
-    <style>
-        html, body {
-            height:100%;
-            width:100%;
-            margin:0;
-	    overflow:hidden;
-        }
+		<style>
+			html,
+			body {
+				height: 100%;
+				width: 100%;
+				margin: 0;
+				overflow: hidden;
+			}
 
-        #terminal {
-            height:100%;
-            width:100%;
-        }
-    </style>
-<script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@xterm/addon-clipboard@0.2.0/lib/addon-clipboard.js"></script>
-</head>
+			#terminal {
+				height: 100%;
+				width: 100%;
+			}
+		</style>
+		<script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.js"></script>
+		<script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.js"></script>
+		<script src="https://cdn.jsdelivr.net/npm/@xterm/addon-clipboard@0.2.0/lib/addon-clipboard.js"></script>
+	</head>
 
-<body>
-<div id="terminal"></div>
+	<body>
+		<div id="terminal"></div>
 
-<script>
-const term = new Terminal({
-    cursorBlink: true
-});
+		<script>
+			const term = new Terminal({
+				cursorBlink: true,
+			});
 
-const fitAddon = new FitAddon.FitAddon();
-term.loadAddon(fitAddon);
+			const fitAddon = new FitAddon.FitAddon();
+			term.loadAddon(fitAddon);
 
-const clipboardAddon = new ClipboardAddon.ClipboardAddon();
-term.loadAddon(clipboardAddon);
+			const clipboardAddon = new ClipboardAddon.ClipboardAddon();
+			term.loadAddon(clipboardAddon);
 
-term.open(document.getElementById("terminal"));
+			term.open(document.getElementById("terminal"));
 
-const ws = new WebSocket(`ws://${location.host}/${location.search}`);
-ws.binaryType = "arraybuffer";
+			const api = new URLSearchParams(window.location.hash.substring(1)).get("api");
 
-ws.onmessage = (event) => {
-    term.write(new Uint8Array(event.data));
-};
+			if (!api) {
+				term.write("\r\nMissing console token\r\n");
 
-term.onData((data) => {
-    ws.send(data);
-});
+				throw new Error("Missing console token");
+			}
 
-window.addEventListener("resize", () => {
-    fitAddon.fit();
-});
+			const protocol = location.protocol === "https:" ? "wss:" : "ws:";
 
-term.onRender = function () {
-  fitAddon.fit();
-};
+			const ws = new WebSocket(
+				`${protocol}//${location.host}/?api=${encodeURIComponent(api)}`,
+			);
 
-window.onresize = function () {
-  fitAddon.fit();
-};
+			ws.binaryType = "arraybuffer";
 
-term.write("Connected\r\n");
-fitAddon.fit();
-</script>
-</body>
+			ws.onmessage = (event) => {
+				term.write(new Uint8Array(event.data));
+			};
+
+			term.onData((data) => {
+				ws.send(data);
+			});
+
+			window.addEventListener("resize", () => {
+				fitAddon.fit();
+			});
+
+			term.onRender = function () {
+				fitAddon.fit();
+			};
+
+			window.onresize = function () {
+				fitAddon.fit();
+			};
+
+			term.write("Connected\r\n");
+			fitAddon.fit();
+		</script>
+	</body>
 </html>

@@ -529,7 +529,7 @@ function open_virtual_console(frm) {
 		const baseUrl = message.base_url;
 
 		const url =
-			`${baseUrl}/?api=${encodeURIComponent(apiKey)}`;
+			`${baseUrl}/#api=${encodeURIComponent(apiKey)}`;
 
 		frappe.msgprint({
 			title: __("Web Console"),
