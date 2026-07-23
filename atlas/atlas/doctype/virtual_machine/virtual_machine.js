@@ -98,6 +98,11 @@ function add_lifecycle_buttons(frm) {
 			frappe.atlas.add_action(frm, action.label, () => action.handler(frm));
 		}
 	}
+
+	if (status === "Running") {
+		frappe.atlas.add_action(frm, "Open Virtual Console", () => open_virtual_console(frm));
+	}
+
 	if (status === "Running" || status === "Paused") {
 		// Live snapshot: no stop required. Crash-consistent (the dialog says so).
 		frappe.atlas.add_action(frm, "Snapshot (live)", () =>
@@ -518,6 +523,24 @@ function open_warm_snapshot_dialog(frm) {
 	);
 }
 
+function open_virtual_console(frm) {
+	frm.call("get_console_api_key").then(({ message }) => {
+		const apiKey = message.api_key;
+		const baseUrl = message.base_url;
+
+		const url =
+			`${baseUrl}/?api=${encodeURIComponent(apiKey)}`;
+
+		frappe.msgprint({
+			title: __("Web Console"),
+			message: `
+				<a href="${url}" target="_blank" rel="noopener noreferrer">
+					Open Web Console
+				</a>
+			`,
+		});
+	});
+}
 function confirm_regenerate_host_keys(frm) {
 	const who = frm.doc.title || frm.doc.name.slice(0, 8);
 	frappe.confirm(

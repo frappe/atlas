@@ -552,7 +552,7 @@ def _firecracker_config(inputs: "ProvisionInputs") -> str:
 			# the guest can technically re-enable the device after boot, so the
 			# bounded-storage half is the load-bearing mitigation. reboot=k / panic=1
 			# keep the guest's reboot+panic behaviour unchanged.
-			"boot_args": "8250.nr_uarts=0 reboot=k panic=1",
+			"boot_args": "8250.nr_uarts=1 console=ttyS0 reboot=k panic=1",
 		},
 		"drives": [
 			{
@@ -696,6 +696,13 @@ def _jailer_launch(inputs: "ProvisionInputs", paths: VirtualMachinePaths) -> str
 		"    boot_args=()\n"
 		"fi\n"
 		"\n"
+		f"rm -rf {paths.directory}/fifo.in\n"
+		f"rm -rf {paths.directory}/fifo.out\n"
+		f"mkfifo {paths.directory}/fifo.in\n"
+		f"mkfifo {paths.directory}/fifo.out\n"
+		f"exec 0<>{paths.directory}/fifo.in\n"
+		f"exec 1<>{paths.directory}/fifo.out\n"
+		"exec 2>&1\n"
 		f"{exec_block}\n"
 	)
 

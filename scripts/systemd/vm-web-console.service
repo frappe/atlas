@@ -1,0 +1,15 @@
+[Unit]
+Description=Firecracker VM Web Console XtermJS
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=/etc/atlas/vm-web-console.env
+[Service]
+Type=simple
+EnvironmentFile=/etc/default/vm-web-console
+WorkingDirectory=/var/lib/atlas/vm-web-console
+ExecStart=/usr/bin/node /var/lib/atlas/vm-web-console/server.js
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

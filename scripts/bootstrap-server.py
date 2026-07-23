@@ -182,6 +182,11 @@ PACKAGES = [
 	# sync-image already leaned on `zstd -d`; installing it makes that dependency
 	# explicit rather than relying on it being pre-seeded.
 	"zstd",
+	# For VM Web Console:
+	"nodejs",
+	"node-express",
+	"node-ws",
+	"node-axios",
 ]
 
 # The host's Atlas interpreter — a uv-managed venv on a controlled CPython — is
@@ -200,6 +205,7 @@ class BootstrapInputs(TaskInputs):
 	command: typing.ClassVar[str] = "bootstrap-server"
 	firecracker_version: str  # e.g. v1.16.0
 	architecture: str  # e.g. x86_64 (must match `uname -m`)
+	atlas_url: str
 
 
 @dataclass(frozen=True)
@@ -525,6 +531,11 @@ def main() -> None:
 	install_file("wireguard\n", "/etc/modules-load.d/60-atlas-wireguard.conf", mode="0644")
 	run("sudo systemctl enable host-mesh.service", check=False, quiet=True)
 
+	# 11d. VM Web Console: Start the web service
+	WEBCONSOLE_ENV = "ATLAS_BASE_URL="+inputs.atlas_url
+	install_file(WEBCONSOLE_ENV, "/etc/default/vm-web-console", mode="0644")
+	run("sudo systemctl enable --now vm-web-console.service", check=False, quiet=True)
+
 	# 12. Record state for Atlas to pick up. Single JSON file is the canonical
 	#     source of truth. The bytes still land in /var/lib/atlas/bootstrap.json;
 	#     BootstrapResult.emit() carries the same values on stdout as the typed
@@ -541,6 +552,8 @@ def main() -> None:
 		pool_disk_gigabytes_total=facts["pool_disk_gigabytes_total"],
 	)
 	install_directory("/var/lib/atlas", mode="0755")
+	install_directory("/var/lib/atlas/vm-web-console", mode="0755")
+	install_directory("/var/lib/atlas/vm-web-console/public", mode="0755")
 	install_file(_bootstrap_json(result), "/var/lib/atlas/bootstrap.json", mode="0644")
 
 	result.emit()
