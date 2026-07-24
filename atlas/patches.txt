@@ -20,3 +20,4 @@ atlas.patches.v1_0.move_settings_fields_off_singles
 atlas.patches.v1_0.move_region_to_atlas_settings
 atlas.patches.v1_0.seed_settings_from_site_config
 atlas.patches.v1_0.mark_default_catalog_rows
+atlas.patches.v1_0.backfill_server_signing_key
