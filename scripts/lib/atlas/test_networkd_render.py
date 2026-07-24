@@ -17,7 +17,21 @@ from atlas.networkd.records import (
 	OwnershipTable,
 	owning_advertisement,
 )
-from atlas.networkd.render import render_wg_desired
+from atlas.networkd.render import _assert_no_input_overlap, render_wg_desired
+
+
+def _ip_counts(out: str) -> dict[str, int]:
+	"""Count how many peers each /128 appears under across the rendered
+	AllowedIPs lines (a /128 with count > 1 is a §16.3 overlap)."""
+	counts: dict[str, int] = {}
+	for line in out.splitlines():
+		if line.startswith("AllowedIPs ="):
+			body = line.split("= ", 1)[1].strip()
+			if not body:
+				continue
+			for ip in body.split(", "):
+				counts[ip] = counts.get(ip, 0) + 1
+	return counts
 
 
 def member(host_id: str, key: str, mesh: str, endpoint: str = "2001:db9::7") -> MembershipRecord:
@@ -151,6 +165,75 @@ class TestNonOverlapInvariant(unittest.TestCase):
 					ip_counts[ip] = ip_counts.get(ip, 0) + 1
 		dup = {ip: c for ip, c in ip_counts.items() if c > 1}
 		self.assertEqual(dup, {}, f"rendered overlapping AllowedIPs: {dup}")
+
+
+class TestMeshAddressOverlap(unittest.TestCase):
+	"""H2 — a peer's mesh_address/128 is folded into the SAME cross-peer overlap
+	accounting as owned /128s (§16.3). Before the fix mesh_address was appended
+	AFTER the overlap check, so a mesh_address == a victim /128 produced the same
+	/128 in two peers' AllowedIPs → WireGuard cryptokey-routing misdelivery."""
+
+	def test_two_peers_sharing_a_mesh_address_drop_it(self):
+		# Two honest hosts collide on a mesh_address (a birthday collision, or a
+		# compromised host copying a victim's). The shared /128 must appear in
+		# ZERO peers (dropped as a conflict), and the final config passes the
+		# non-overlap assertion.
+		collide = "fdaa:0:0:9::1"
+		m = {
+			"h1": member("h1", "AAA", collide),
+			"h2": member("h2", "BBB", collide),
+		}
+		out = render_wg_desired("h0", m, OwnershipTable())
+		self.assertNotIn(f"{collide}/128", out)
+		counts = _ip_counts(out)
+		self.assertEqual({ip: c for ip, c in counts.items() if c > 1}, {})
+
+	def test_mesh_address_equal_to_a_tenant_owned_128_is_dropped(self):
+		# A malicious host signs a Membership Record whose mesh_address equals a
+		# victim tenant's owned /128. Folding mesh_address into the overlap pass
+		# means the /128 lands in >1 peer → dropped from ALL peers, no
+		# misdelivery.
+		victim = "fdaa:1::7"
+		m = {
+			"h1": member("h1", "AAA", "fdaa:0:0:1::1"),  # legit owner of `victim`
+			"h2": member("h2", "BBB", victim),  # attacker: mesh_address == victim /128
+		}
+		owner_of = {victim: "h1"}
+		out = render_wg_desired("h0", m, OwnershipTable(owner_of=owner_of))
+		self.assertNotIn(f"{victim}/128", out)
+		counts = _ip_counts(out)
+		self.assertEqual({ip: c for ip, c in counts.items() if c > 1}, {})
+
+	def test_non_colliding_mesh_addresses_still_route(self):
+		# The fix must not over-drop: distinct mesh_addresses each still render.
+		m = {
+			"h1": member("h1", "AAA", "fdaa:0:0:1::1"),
+			"h2": member("h2", "BBB", "fdaa:0:0:2::1"),
+		}
+		out = render_wg_desired("h0", m, OwnershipTable())
+		self.assertIn("fdaa:0:0:1::1/128", out)
+		self.assertIn("fdaa:0:0:2::1/128", out)
+
+	def test_peer_whose_only_128_collides_renders_empty_allowedips(self):
+		# A peer whose sole /128 (its mesh_address) collided renders an empty
+		# AllowedIPs rather than a misdelivering one — the [Peer] survives (still
+		# reachable for keepalive), it just advertises no routes this round.
+		collide = "fdaa:0:0:9::1"
+		m = {
+			"h1": member("h1", "AAA", collide),
+			"h2": member("h2", "BBB", collide),
+		}
+		out = render_wg_desired("h0", m, OwnershipTable())
+		h1_block = out.split("PublicKey = AAA")[1].split("[Peer]")[0]
+		self.assertIn("AllowedIPs = \n", h1_block + "\n")
+
+	def test_assert_no_input_overlap_catches_a_duplicate(self):
+		# Direct unit of the invariant hook: two peers carrying the same /128
+		# trips the assertion (defends a future folding bug).
+		with self.assertRaises(AssertionError):
+			_assert_no_input_overlap(
+				{"h1": ["fdaa::7/128"], "h2": ["fdaa::7/128"]}, OwnershipTable()
+			)
 
 
 if __name__ == "__main__":
