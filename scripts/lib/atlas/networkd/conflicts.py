@@ -70,25 +70,33 @@ class ConflictTracker:
 		on each event. If omitted (no caller provides it today), the events
 		carry empty origin sets — correct only for tests that don't inspect
 		that field."""
-		now = self.now_fn()
-		new = table.conflicts
 		new_origins: dict[IP6, frozenset[HostID]] = {}
-		for ip in new:
-			origins = frozenset(
+		for ip in table.conflicts:
+			new_origins[ip] = frozenset(
 				origin for origin, adv in (latest_per_origin or {}).items() if ip in adv.owned
 			)
-			new_origins[ip] = origins
+		return self.observe_conflicts(new_origins)
+
+	def observe_conflicts(self, current: dict[IP6, frozenset[HostID]]) -> list[ConflictEvent]:
+		"""The general entry point: diff a pre-computed CURRENT conflict map
+		`{private_ip: origins}` against the previous one, emitting START events for
+		newly-conflicting /128s and END events for cleared ones. Used by the daemon
+		apply path (`daemon.observe_conflicts`) to surface BOTH owned-/128 double-
+		ownership (§7.3, from `OwnershipTable.conflicts`) AND the H2 mesh_address
+		collisions (from render) in one call — the union is computed by the caller
+		and handed here. Emits to subscribers + the jsonl sink; returns the events.
+		"""
+		now = self.now_fn()
+		new = frozenset(current)
 		started = new - self._prev
 		ended = self._prev - new
 		events: list[ConflictEvent] = []
 		for ip in sorted(started):
-			ev = ConflictEvent("start", ip, new_origins[ip], now)
-			events.append(ev)
+			events.append(ConflictEvent("start", ip, current.get(ip, frozenset()), now))
 		for ip in sorted(ended):
-			ev = ConflictEvent("end", ip, self._prev_origins.get(ip, frozenset()), now)
-			events.append(ev)
+			events.append(ConflictEvent("end", ip, self._prev_origins.get(ip, frozenset()), now))
 		self._prev = new
-		self._prev_origins = new_origins
+		self._prev_origins = dict(current)
 		for ev in events:
 			for cb in self._subscribers:
 				cb(ev)

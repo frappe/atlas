@@ -47,6 +47,24 @@ class Counter:
 		return dict(self._counts)
 
 
+def wire_conflict_metrics(conflict_tracker, counter: Counter) -> None:
+	"""Subscribe `counter` to `conflict_tracker` so a conflict START bumps
+	`conflict_started` + `conflicts_total`, and a conflict END bumps
+	`conflict_ended` (spec §7.3 / §18.2). This is the clean integration seam the
+	tracker's `subscribe` docstring refers to — `main.py` calls it once at
+	startup; the apply path's `observe_conflicts` then drives the events. These
+	counters ride in `status.json` alongside the active conflict list."""
+
+	def _on_event(ev) -> None:
+		if ev.kind == "start":
+			counter.incr("conflict_started")
+			counter.incr("conflicts_total")
+		elif ev.kind == "end":
+			counter.incr("conflict_ended")
+
+	conflict_tracker.subscribe(_on_event)
+
+
 def wire_default_metrics(daemon) -> Counter:
 	"""Attach a `Counter` to `daemon.metrics` and wire the simple stage-5
 	hooks: incr `signature_failed` (already done in gossip `_apply_record`;
@@ -64,4 +82,4 @@ def wire_default_metrics(daemon) -> Counter:
 	return counter
 
 
-__all__ = ["Counter", "wire_default_metrics"]
+__all__ = ["Counter", "wire_conflict_metrics", "wire_default_metrics"]
