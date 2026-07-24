@@ -399,6 +399,115 @@ class TestDefaultVerifier(unittest.TestCase):
 			default_signature_verifier(decoded, d)
 
 
+# --- M1: unsigned OwnershipAdvertisement from an unknown origin is DEFERRED --
+
+
+class TestOwnershipDeferredWithoutMembership(unittest.TestCase):
+	"""Spec §19.3 — an OwnershipAdvertisement from an origin the receiver has no
+	MembershipRecord (hence no trusted signing pubkey) for MUST NOT be applied.
+	It is deferred: dropped + counted, the ownership gen-vector is NOT advanced,
+	so anti-entropy re-pulls it once the origin's MembershipRecord arrives."""
+
+	def _member_with_key(self, host_id, gen, signing_pub_b64):
+		return MembershipRecord(
+			host_id=host_id,
+			kind=MembershipKind.MEMBER,
+			state=MemberState.ALIVE,
+			endpoint=f"2001:db9::{host_id}",
+			wg_public_key="K",
+			mesh_address=f"fdaa:0:0:{host_id}::1",
+			generation=gen,
+			signing_public_key=signing_pub_b64,
+		)
+
+	def _daemon(self, state):
+		from atlas.networkd.daemon import default_signature_verifier
+
+		d = _FakeDaemon(state)
+		d.signature_verifier = default_signature_verifier
+		d.signing_pubkey_cache = {}
+		d.failure_tracker = None
+		return d
+
+	def test_unsigned_ad_from_unknown_origin_not_applied(self):
+		from atlas.networkd.antientropy import build_vector
+		from atlas.networkd.gossip import _apply_record
+
+		state = AppliedState()
+		d = self._daemon(state)
+		# An OwnershipAdvertisement whose origin has no MembershipRecord yet.
+		ad = owning_advertisement("h2", 3, ("fdaa::99",))
+		changed = _apply_record(ad, d)
+		# NOT applied — dropped + counted, effective table stays empty.
+		self.assertFalse(changed)
+		self.assertNotIn("h2", state.ownership)
+		self.assertNotIn("fdaa::99", effective_ownership(state.ownership).owner_of)
+		self.assertEqual(d.metrics.snapshot().get("signature_failed"), 1)
+		# The ownership gen-vector is NOT advanced for h2 — so anti-entropy will
+		# re-pull the record (theirs=None in `_missing_for_requester`) once h2's
+		# membership arrives. If it HAD been applied, vector_o["h2"]=3 would stop
+		# the re-pull of the same-generation authentic record.
+		self.assertNotIn("h2", build_vector(state)["vector_o"])
+
+	def test_bogus_unsigned_ad_cannot_manufacture_conflict(self):
+		from atlas.networkd.gossip import _apply_record
+
+		# A real owner h1 (with membership + a signed ad) owns fdaa::1. A relay
+		# injects an UNSIGNED ad from unknown origin h-phantom also claiming
+		# fdaa::1 — that must NOT create a §7.3 conflict entry.
+		priv_raw, pub_raw = generate_keypair_raw()
+		priv_b64 = base64.b64encode(priv_raw).decode()
+		pub_b64 = base64.b64encode(pub_raw).decode()
+		state = AppliedState()
+		state.apply_membership(self._member_with_key("h1", 1, pub_b64))
+		d = self._daemon(state)
+		d.signing_pubkey_cache = {"h1": pub_b64}
+		# h1's own signed ad applies.
+		h1_ad = owning_advertisement("h1", 1, ("fdaa::1",))
+		tagged = sign_records_if_owned(gossip_payload([h1_ad]), priv_b64, own_host_id="h1")[0]
+		decoded = decode_record(tagged)
+		from atlas.networkd.wire import wire_signature
+
+		d._incoming_wire_sigs = {id(decoded): wire_signature(tagged)}
+		self.assertTrue(_apply_record(decoded, d))
+		# The phantom unsigned ad for the same /128 is dropped, not applied.
+		phantom = owning_advertisement("h-phantom", 9, ("fdaa::1",))
+		self.assertFalse(_apply_record(phantom, d))
+		self.assertNotIn("h-phantom", state.ownership)
+		# No conflict — only h1 owns fdaa::1 in the effective table.
+		table = effective_ownership(state.ownership)
+		self.assertEqual(table.owner_of.get("fdaa::1"), "h1")
+		self.assertEqual(table.conflicts, frozenset())
+
+	def test_ad_applies_after_membership_arrives(self):
+		from atlas.networkd.gossip import _apply_record
+		from atlas.networkd.wire import wire_signature
+
+		priv_raw, pub_raw = generate_keypair_raw()
+		priv_b64 = base64.b64encode(priv_raw).decode()
+		pub_b64 = base64.b64encode(pub_raw).decode()
+		state = AppliedState()
+		d = self._daemon(state)
+		# First delivery: the signed ad arrives BEFORE h2's membership → deferred.
+		ad = owning_advertisement("h2", 3, ("fdaa::7",))
+		ad_tagged = sign_records_if_owned(gossip_payload([ad]), priv_b64, own_host_id="h2")[0]
+		ad_decoded = decode_record(ad_tagged)
+		d._incoming_wire_sigs = {id(ad_decoded): wire_signature(ad_tagged)}
+		self.assertFalse(_apply_record(ad_decoded, d))
+		self.assertNotIn("h2", state.ownership)
+		# Now h2's MembershipRecord (carrying its signing key) arrives + applies.
+		mem = self._member_with_key("h2", 1, pub_b64)
+		mem_tagged = sign_records_if_owned(gossip_payload([mem]), priv_b64, own_host_id="h2")[0]
+		mem_decoded = decode_record(mem_tagged)
+		d._incoming_wire_sigs = {id(mem_decoded): wire_signature(mem_tagged)}
+		self.assertTrue(_apply_record(mem_decoded, d))
+		# Re-delivery of the signed ad (as anti-entropy would re-pull) now applies.
+		ad_decoded2 = decode_record(ad_tagged)
+		d._incoming_wire_sigs = {id(ad_decoded2): wire_signature(ad_tagged)}
+		self.assertTrue(_apply_record(ad_decoded2, d))
+		self.assertEqual(state.ownership["h2"].owned, frozenset({"fdaa::7"}))
+
+
 # --- conflict event hook (§7.3 / §18.2) ----------------------------------
 
 
@@ -810,6 +919,78 @@ class TestDefaultEnvelopeVerifier(unittest.TestCase):
 		msg = from_bytes(msg.to_bytes(new_priv_b64))
 		with self.assertRaises(SignatureError):
 			default_envelope_verifier(msg, d)
+
+
+# --- M6: TOFU-learned signing keys survive a restart ------------------------
+
+
+class TestTofuKeysPersist(unittest.TestCase):
+	"""Spec §19.5 — a signing key learned at runtime via the operator-signed
+	introduction path must survive a daemon restart. Without persistence the
+	introduced peer is treated as first-contact again after a restart and its
+	envelopes are dropped (`signature_failed`) until it re-cold-joins — a one-
+	sided partition (M6). Learn a key via TOFU, save_state, reload the way
+	`main.py`/`load_state` does, and assert the key still verifies without a
+	fresh introduction certificate."""
+
+	def _reload_cache(self, state, seeds_index=None):
+		"""Reconstruct `daemon.signing_pubkey_cache` the way `main.py` does at
+		boot: seeds ∪ persisted-membership-keys ∪ persisted-TOFU-keys."""
+		cache = dict(seeds_index or {})
+		for hid, rec in state.membership.items():
+			if rec.signing_public_key and hid not in cache:
+				cache[hid] = rec.signing_public_key
+		for hid, pub in state.signing_pubkeys.items():
+			if pub and hid not in cache:
+				cache[hid] = pub
+		return cache
+
+	def test_introduced_key_verifies_after_reload(self):
+		import tempfile
+
+		from atlas.networkd.state import load_state, save_state
+
+		op_priv_raw, op_pub_raw = generate_keypair_raw()
+		op_priv_b64 = base64.b64encode(op_priv_raw).decode()
+		op_pub_b64 = base64.b64encode(op_pub_raw).decode()
+		new_priv_raw, new_pub_raw = generate_keypair_raw()
+		new_priv_b64 = base64.b64encode(new_priv_raw).decode()
+		new_pub_b64 = base64.b64encode(new_pub_raw).decode()
+
+		# A live daemon-like object whose TOFU writes land on a real AppliedState.
+		d = _EnvelopeDaemon(operator_public_key=op_pub_b64)
+		d.state = AppliedState()  # replace the stub with a real, persistable state
+
+		# First contact with a valid operator-signed introduction → TOFU learn.
+		payload = {"host_id": "Q", "signing_public_key": new_pub_b64, "generation": 1}
+		intro_sig = sign_introduction(payload, op_priv_b64)
+		intro = Message(
+			type="membership_advert",
+			sender="Q",
+			signing_public_key=new_pub_b64,
+			payload=payload,
+			introduction_signature=intro_sig,
+		)
+		intro = from_bytes(intro.to_bytes(new_priv_b64))
+		default_envelope_verifier(intro, d)
+		self.assertEqual(d.signing_pubkey_cache.get("Q"), new_pub_b64)
+		# The TOFU key is now on the DURABLE state, not just the runtime cache.
+		self.assertEqual(d.state.signing_pubkeys.get("Q"), new_pub_b64)
+
+		with tempfile.TemporaryDirectory() as data_dir:
+			save_state(d.state, data_dir)
+			reloaded = load_state(data_dir)
+			# Reconstruct the cache the way main.py does at boot (no seeds, no
+			# membership record for Q — only the persisted TOFU key).
+			d2 = _EnvelopeDaemon(operator_public_key=op_pub_b64)
+			d2.state = reloaded
+			d2.signing_pubkey_cache = self._reload_cache(reloaded)
+			self.assertEqual(d2.signing_pubkey_cache.get("Q"), new_pub_b64)
+			# A follow-up envelope from Q (NO introduction cert) verifies against
+			# the reloaded cache — no re-introduction needed, no partition.
+			follow_up = Message(type="gossip", sender="Q", signing_public_key=new_pub_b64, payload=[])
+			follow_up = from_bytes(follow_up.to_bytes(new_priv_b64))
+			default_envelope_verifier(follow_up, d2)  # must not raise
 
 
 # --- seed loader: signing_public_key + operator pubkey (§19.4) --------------

@@ -59,6 +59,20 @@ def member(host_id: str, gen: int, key: str = "k", mesh: str | None = None) -> M
 	)
 
 
+def leaving_member(host_id: str, gen: int, key: str = "k", mesh: str | None = None) -> MembershipRecord:
+	"""A graceful-shutdown Membership Record (§14.4) — `kind=leaving`, wire
+	`state=leaving`. This is what `main._advertise_leaving` emits on SIGTERM."""
+	return MembershipRecord(
+		host_id=host_id,
+		kind=MembershipKind.LEAVING,
+		state=MemberState.LEAVING,
+		endpoint=f"2001:db9::{host_id}",
+		wg_public_key=key,
+		mesh_address=mesh or f"fdaa:0:0:{host_id}::1",
+		generation=gen,
+	)
+
+
 def ownership(origin: str, gen: int, *ips: str):
 	return owning_advertisement(origin=origin, generation=gen, owned=ips)
 
@@ -283,6 +297,113 @@ class TestGarbageCollection(unittest.TestCase):
 
 		c = Config()
 		self.assertGreater(c.ownership_grace, c.dead_grace)
+
+
+# --- H7: routes survive to ownership_grace, not dead_grace -------------------
+
+
+class TestDeadPeerRoutesSurviveOwnershipGrace(unittest.TestCase):
+	"""H7 — a dead host's `[Peer]` (endpoint, key, mesh_address) must SURVIVE
+	for rendering as long as its Ownership Records do (until `ownership_grace`),
+	not vanish at `dead_grace` when its membership is reaped. Before the fix the
+	/128s blackholed ~`ownership_grace - dead_grace` s early because the reaped
+	membership left no `[Peer]` to carry them."""
+
+	def _daemon_with_dead_owner(self):
+		"""Build a rendering daemon (self=h1) that has learned a peer h2 which
+		owns a /128, then declares h2 dead at t=0 via the tracker. Returns
+		(daemon, tracker, clock, the /128 h2 owns)."""
+		daemon = _daemon("h1")
+		clock = [0.0]
+		tracker = FailureTracker(now_fn=lambda: clock[0])
+		daemon.failure_tracker = tracker
+		owned = "fdaa:1::42"
+		daemon.state.apply_membership(member("h2", 1))
+		daemon.state.apply_ownership(ownership("h2", 1, owned))
+		tracker.mark_dead("h2")
+		return daemon, tracker, clock, owned
+
+	def _run_gc(self, daemon, tracker, clock) -> None:
+		"""Drive the GC lifecycle the way the loop's `_gc_if_due` does: reap
+		membership at dead_grace (moving still-owning hosts to routable_dead),
+		then reap ownership + clear the render entry past ownership_grace."""
+		cfg = daemon.config
+		tracker.gc(cfg.suspect_timeout, cfg.dead_grace, cfg.ownership_grace, daemon.state)
+		for host_id in list(tracker.dead_at.keys()):
+			dead_at = tracker.dead_at[host_id]
+			daemon.state.gc_origin_if_dead(
+				host_id, dead_at=dead_at, ownership_grace=cfg.ownership_grace, now=clock[0]
+			)
+			if clock[0] - dead_at >= cfg.ownership_grace:
+				tracker.dead_at.pop(host_id, None)
+				tracker.peers.pop(host_id, None)
+
+	def test_routes_present_while_dead_but_within_ownership_grace(self):
+		# dead_grace=30, ownership_grace=60 (defaults). At t=40 h2's membership is
+		# reaped but its ownership survives → its /128 must STILL be in a [Peer].
+		daemon, tracker, clock, owned = self._daemon_with_dead_owner()
+		clock[0] = 40.0  # past dead_grace (30), within ownership_grace (60)
+		self._run_gc(daemon, tracker, clock)
+		self.assertNotIn("h2", daemon.state.membership)  # membership reaped
+		self.assertIn("h2", daemon.state.routable_dead)  # kept render-only
+		out = daemon.render_current()
+		self.assertIn("PublicKey = k", out)  # h2's [Peer] still rendered
+		self.assertIn(f"{owned}/128", out)  # its owned /128 still routes
+		self.assertIn("fdaa:0:0:h2::1/128", out)  # its mesh /128 too
+
+	def test_routes_gone_after_ownership_grace(self):
+		# At t=61 both membership AND ownership are reaped → no [Peer], no /128.
+		daemon, tracker, clock, owned = self._daemon_with_dead_owner()
+		clock[0] = 40.0
+		self._run_gc(daemon, tracker, clock)  # reap membership first (dead_grace)
+		clock[0] = 61.0  # past ownership_grace (60)
+		self._run_gc(daemon, tracker, clock)
+		self.assertNotIn("h2", daemon.state.routable_dead)
+		out = daemon.render_current()
+		self.assertNotIn(f"{owned}/128", out)
+		self.assertNotIn("fdaa:0:0:h2::1/128", out)
+
+	def test_dead_owner_that_owns_nothing_reaped_at_dead_grace(self):
+		# A dead host with NO ownership records is reaped outright at dead_grace —
+		# we don't leak a render-only [Peer] for a host with nothing to route.
+		daemon = _daemon("h1")
+		clock = [0.0]
+		tracker = FailureTracker(now_fn=lambda: clock[0])
+		daemon.failure_tracker = tracker
+		daemon.state.apply_membership(member("h2", 1))  # no ownership for h2
+		tracker.mark_dead("h2")
+		clock[0] = 40.0  # past dead_grace
+		self._run_gc(daemon, tracker, clock)
+		self.assertNotIn("h2", daemon.state.membership)
+		self.assertNotIn("h2", daemon.state.routable_dead)  # not leaked
+		self.assertNotIn("PublicKey = k", daemon.render_current())
+
+	def test_late_refute_repopulates_and_clears_routable_dead(self):
+		# A host that refutes late (§14.5) — a higher-gen alive Membership Record
+		# — repopulates `membership` and drops the stale render-only record; it
+		# is not double-carried.
+		daemon, tracker, clock, owned = self._daemon_with_dead_owner()
+		clock[0] = 40.0
+		self._run_gc(daemon, tracker, clock)
+		self.assertIn("h2", daemon.state.routable_dead)
+		# h2 refutes with gen 2.
+		daemon.state.apply_membership(member("h2", 2))
+		tracker.note_alive("h2")
+		self.assertIn("h2", daemon.state.membership)
+		self.assertNotIn("h2", daemon.state.routable_dead)  # stale copy dropped
+		out = daemon.render_current()
+		self.assertEqual(out.count(f"{owned}/128"), 1)  # rendered exactly once
+
+	def test_dead_peer_excluded_from_gossip_peer_selection(self):
+		# The dead host must not be gossiped-to / anti-entropy'd / probed: those
+		# read `state.membership`, from which it was reaped. Only render sees it.
+		from atlas.networkd.peers import select_peers
+
+		daemon, tracker, clock, _ = self._daemon_with_dead_owner()
+		clock[0] = 40.0
+		self._run_gc(daemon, tracker, clock)
+		peers = select_peers(daemon.state.membership, "h1", count=5)
+		self.assertNotIn("h2", peers)
 
 
 # --- ProbeProtocol: round + ack matching ------------------------------------
@@ -516,6 +637,184 @@ class TestIndirectRelay(unittest.TestCase):
 				if other_id != hd:
 					d.state.apply_membership(other.own_membership)
 		return daemons, bus
+
+
+# --- H6: graceful `leaving` fast-paths alive → dead (§14.3 / §14.4) ----------
+
+
+class TestLeavingFastPath(unittest.TestCase):
+	"""H6 — a `kind=leaving` graceful-shutdown record must NOT resurrect the
+	origin to ALIVE (the inverted `note_alive` bug); instead it arms a
+	`leaving_grace` countdown that marks the origin `dead` DIRECTLY (skipping
+	`suspect`). A sub-`leaving_grace` `alive` refute cancels the countdown."""
+
+	def _daemon_with_tracker(self, host_id: str = "h1"):
+		daemon = _daemon(host_id)
+		clock = [0.0]
+		tracker = FailureTracker(now_fn=lambda: clock[0])
+		daemon.failure_tracker = tracker
+		return daemon, tracker, clock
+
+	# (a) applying a leaving record does NOT mark the origin ALIVE, and does NOT
+	# clear an existing suspicion into alive.
+	def test_leaving_record_does_not_mark_origin_alive(self):
+		daemon, tracker, _clock = self._daemon_with_tracker()
+		daemon.state.apply_membership(member("h2", 1))
+		# h2 gracefully leaves at gen 2.
+		msg = Message(type="gossip", sender="h2", payload=wire.gossip_payload([leaving_member("h2", 2)]))
+		handle_message(msg, ("2001:db9::h2", 7946), daemon, GossipState())
+		# The origin is NOT reset to alive; the leaving countdown is armed.
+		self.assertIn("h2", tracker.leaving_at)
+		self.assertNotIn("h2", tracker.dead_at)  # not dead yet (grace not elapsed)
+
+	def test_leaving_record_does_not_clear_existing_suspicion(self):
+		# The inverted-note_alive bug: a leaving record on a SUSPECT peer would
+		# have flipped it back to alive. It must stay suspect (and additionally
+		# arm the leaving countdown).
+		daemon, tracker, _clock = self._daemon_with_tracker()
+		daemon.state.apply_membership(member("h2", 1))
+		tracker.mark_suspect("h2")
+		msg = Message(type="gossip", sender="h2", payload=wire.gossip_payload([leaving_member("h2", 2)]))
+		handle_message(msg, ("2001:db9::h2", 7946), daemon, GossipState())
+		self.assertEqual(tracker.state_of("h2"), FailureState.SUSPECT)
+		self.assertIn("h2", tracker.leaving_at)
+
+	# (b) after leaving_grace elapses the origin is marked dead WITHOUT passing
+	# through suspect.
+	def test_leaving_promoted_to_dead_skipping_suspect(self):
+		daemon, tracker, clock = self._daemon_with_tracker()
+		daemon.state.apply_membership(member("h2", 1))
+		msg = Message(type="gossip", sender="h2", payload=wire.gossip_payload([leaving_member("h2", 2)]))
+		handle_message(msg, ("2001:db9::h2", 7946), daemon, GossipState())
+		# Before leaving_grace (2 s default) → still alive, still counting down.
+		clock[0] = 1.0
+		promoted = tracker.promote_leaving_if_due(daemon.config.leaving_grace)
+		self.assertEqual(promoted, [])
+		self.assertEqual(tracker.state_of("h2"), FailureState.ALIVE)
+		# The peer NEVER entered suspect on the way to dead.
+		self.assertNotEqual(tracker.state_of("h2"), FailureState.SUSPECT)
+		# Past leaving_grace → dead directly, and dead_at armed for the normal
+		# dead_grace/ownership_grace ladder.
+		clock[0] = 3.0
+		promoted = tracker.promote_leaving_if_due(daemon.config.leaving_grace)
+		self.assertEqual(promoted, ["h2"])
+		self.assertEqual(tracker.state_of("h2"), FailureState.DEAD)
+		self.assertIn("h2", tracker.dead_at)
+		self.assertNotIn("h2", tracker.leaving_at)  # countdown consumed
+
+	def test_leaving_promotion_driven_by_loop_gc(self):
+		# End-to-end via the loop's `_gc_if_due`: a leaving record → dead after
+		# leaving_grace, membership reaped after dead_grace (§14.4 hands off to
+		# the normal ladder). Uses default timers.
+		from atlas.networkd.loop import Loop
+
+		daemon, tracker, clock = self._daemon_with_tracker()
+		daemon.state.apply_membership(member("h2", 1))
+		msg = Message(type="gossip", sender="h2", payload=wire.gossip_payload([leaving_member("h2", 2)]))
+		handle_message(msg, ("2001:db9::h2", 7946), daemon, GossipState())
+		loop = Loop(daemon=daemon, tick_interval=0.001, now_fn=lambda: clock[0])
+		# Past leaving_grace (2 s) but before dead_grace (30 s): dead, still in
+		# membership.
+		clock[0] = 3.0
+		loop._gc_if_due(clock[0])
+		self.assertEqual(tracker.state_of("h2"), FailureState.DEAD)
+		self.assertIn("h2", daemon.state.membership)
+		# Past dead_grace: membership reaped (h2 owns nothing → no routable_dead).
+		clock[0] = 35.0
+		loop._gc_if_due(clock[0])
+		self.assertNotIn("h2", daemon.state.membership)
+
+	# (c) a leaving host is NOT selected as a probe/gossip/anti-entropy target.
+	def test_leaving_host_excluded_from_target_selection(self):
+		from atlas.networkd.peers import select_peers
+
+		daemon, _tracker, _clock = self._daemon_with_tracker()
+		daemon.state.apply_membership(member("h2", 1))
+		daemon.state.apply_membership(leaving_member("h3", 2))  # h3 is leaving
+		# Gossip / anti-entropy target selection (wire-state filter drops leaving).
+		peers = select_peers(daemon.state.membership, "h1", count=5)
+		self.assertIn("h2", peers)
+		self.assertNotIn("h3", peers)
+		# Probe selection (probe.py builds `eligible` then calls select_peers).
+		daemon.failure_tracker = _tracker
+		probe = ProbeProtocol(tracker=_tracker, config=daemon.config, now_fn=lambda: 0.0)
+		eligible = {
+			h: m
+			for h, m in daemon.state.membership.items()
+			if h != "h1" and probe.tracker.state_of(h).value == "alive"
+		}
+		probe_targets = select_peers(eligible, "h1", count=5)
+		self.assertNotIn("h3", probe_targets)
+
+	# (d) an alive refute at a higher generation BEFORE leaving_grace elapses
+	# CANCELS the countdown (host stays alive, not reaped).
+	def test_alive_refute_before_grace_cancels_countdown(self):
+		daemon, tracker, clock = self._daemon_with_tracker()
+		daemon.state.apply_membership(member("h2", 1))
+		# h2 announces leaving at gen 2.
+		msg = Message(type="gossip", sender="h2", payload=wire.gossip_payload([leaving_member("h2", 2)]))
+		handle_message(msg, ("2001:db9::h2", 7946), daemon, GossipState())
+		self.assertIn("h2", tracker.leaving_at)
+		# Sub-leaving_grace `systemctl restart`: h2 re-advertises alive at gen 3.
+		clock[0] = 1.0  # < leaving_grace (2 s)
+		refute = Message(type="gossip", sender="h2", payload=wire.gossip_payload([member("h2", 3)]))
+		handle_message(refute, ("2001:db9::h2", 7946), daemon, GossipState())
+		# The countdown is cancelled; the host stays alive.
+		self.assertNotIn("h2", tracker.leaving_at)
+		self.assertEqual(tracker.state_of("h2"), FailureState.ALIVE)
+		# And the grace elapsing now reaps nothing.
+		clock[0] = 5.0
+		self.assertEqual(tracker.promote_leaving_if_due(daemon.config.leaving_grace), [])
+		self.assertEqual(tracker.state_of("h2"), FailureState.ALIVE)
+
+	def test_note_alive_clears_leaving_at_directly(self):
+		# Tracker-level: note_alive must clear a pending leaving_at (§14.4 step 3).
+		clock = [0.0]
+		t = FailureTracker(now_fn=lambda: clock[0])
+		t.note_leaving("h2")
+		self.assertIn("h2", t.leaving_at)
+		t.note_alive("h2")
+		self.assertNotIn("h2", t.leaving_at)
+		self.assertEqual(t.state_of("h2"), FailureState.ALIVE)
+
+	def test_note_leaving_keeps_original_timestamp(self):
+		# Re-delivery of the leaving record (or a later one) doesn't reset the
+		# grace clock — it runs from the FIRST notice.
+		clock = [0.0]
+		t = FailureTracker(now_fn=lambda: clock[0])
+		t.note_leaving("h2")
+		clock[0] = 1.5
+		t.note_leaving("h2")  # second delivery
+		self.assertEqual(t.leaving_at["h2"], 0.0)  # original, not 1.5
+
+	# (e) a leaving host that owns /128s still gets the H7 `routable_dead` grace
+	# once it goes dead (H6 must not regress H7).
+	def test_leaving_owner_keeps_routable_dead_grace(self):
+		from atlas.networkd.loop import Loop
+
+		daemon, tracker, clock = self._daemon_with_tracker()
+		owned = "fdaa:1::99"
+		daemon.state.apply_membership(member("h2", 1))
+		daemon.state.apply_ownership(ownership("h2", 1, owned))
+		# h2 leaves at gen 2.
+		msg = Message(type="gossip", sender="h2", payload=wire.gossip_payload([leaving_member("h2", 2)]))
+		handle_message(msg, ("2001:db9::h2", 7946), daemon, GossipState())
+		loop = Loop(daemon=daemon, tick_interval=0.001, now_fn=lambda: clock[0])
+		# leaving_grace (2) → dead at t=3; dead_grace (30) reaps membership at
+		# t=35 but h2 OWNS a /128, so it goes to routable_dead (H7), not gone.
+		clock[0] = 3.0
+		loop._gc_if_due(clock[0])
+		self.assertEqual(tracker.state_of("h2"), FailureState.DEAD)
+		dead_at = tracker.dead_at["h2"]
+		clock[0] = 35.0
+		loop._gc_if_due(clock[0])
+		self.assertNotIn("h2", daemon.state.membership)  # membership reaped
+		self.assertIn("h2", daemon.state.routable_dead)  # H7: kept render-only
+		self.assertIn("h2", daemon.state.ownership)  # routes survive
+		out = daemon.render_current()
+		self.assertIn(f"{owned}/128", out)  # still routes during ownership_grace
+		# ownership_grace measured from dead_at (t=3): reaped past t=63.
+		self.assertLess(clock[0] - dead_at, daemon.config.ownership_grace)
 
 
 if __name__ == "__main__":
