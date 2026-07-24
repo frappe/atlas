@@ -19,6 +19,7 @@ from atlas.atlas import atlas_settings
 from atlas.atlas.doctype.atlas_settings.atlas_settings import (
 	get_ancp_operator_private_key,
 	get_ancp_operator_public_key,
+	get_ancp_wg_derivation_secret,
 )
 from atlas.atlas.providers.base import (
 	AuthResult,
@@ -648,3 +649,65 @@ class TestAncpOperatorKeypair(IntegrationTestCase):
 
 		with self.assertRaises(SignatureError):
 			verify_introduction({**body, "host_id": "attacker"}, sig, pub)
+
+
+class TestAncpWgDerivationSecret(IntegrationTestCase):
+	"""Atlas Settings generates the cluster-wide wg KEY-derivation secret on first
+	save when empty (C1 fix). The secret is HMAC-keyed into
+	`derive_host_wireguard_keypair` so a host's wg PRIVATE key is not recomputable
+	from the public Server UUID. Idempotent — never regenerates an existing secret
+	(rotation re-keys every host's wg identity)."""
+
+	def setUp(self) -> None:
+		self.settings = frappe.get_single("Atlas Settings")
+
+	def _clear_secret(self) -> None:
+		frappe.utils.password.set_encrypted_password(
+			"Atlas Settings", "Atlas Settings", "", "ancp_wg_derivation_secret"
+		)
+
+	def test_first_save_generates_the_secret(self) -> None:
+		self._clear_secret()
+		self.settings.reload()
+		self.settings.save(ignore_permissions=True)
+		secret = get_ancp_wg_derivation_secret()
+		self.assertEqual(len(secret), 32, "the wg derivation secret is 32 raw bytes")
+
+	def test_setup_generates_the_secret(self) -> None:
+		# The bootstrap-driven path bypasses validate; setup() must generate it too.
+		self._clear_secret()
+		self.settings.reload()
+		from atlas.tests.fixtures import _ensure_fake_ssh_key_path
+
+		self.settings.setup(
+			provider_type="Fake",
+			ssh_private_key_path=_ensure_fake_ssh_key_path(),
+			region="blr1",
+		)
+		self.assertEqual(len(get_ancp_wg_derivation_secret()), 32)
+
+	def test_idempotent_existing_secret_is_not_regenerated(self) -> None:
+		self.settings.save(ignore_permissions=True)
+		stable = get_ancp_wg_derivation_secret()
+		self.assertEqual(len(stable), 32)
+		self.settings.save(ignore_permissions=True)
+		self.assertEqual(get_ancp_wg_derivation_secret(), stable)
+
+	def test_get_secret_raises_when_unset(self) -> None:
+		self._clear_secret()
+		with self.assertRaises(frappe.ValidationError):
+			get_ancp_wg_derivation_secret()
+		# Restore for other tests that assume a populated Single.
+		self.settings.reload()
+		self.settings.save(ignore_permissions=True)
+
+	def test_secret_gates_the_derived_wg_key(self) -> None:
+		# The C1 property, end-to-end through the accessor: the same Server UUID under
+		# the real cluster secret vs. an attacker's guessed secret yield different keys.
+		from atlas.atlas.networking import derive_host_wireguard_keypair
+
+		self.settings.save(ignore_permissions=True)
+		uuid_public = "11111111-2222-3333-4444-555555555555"
+		real = derive_host_wireguard_keypair(uuid_public, get_ancp_wg_derivation_secret())
+		attacker = derive_host_wireguard_keypair(uuid_public, b"\x00" * 32)
+		self.assertNotEqual(real, attacker)

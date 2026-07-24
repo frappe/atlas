@@ -35,6 +35,7 @@ class AtlasSettings(Document):
 
 		ancp_operator_private_key: DF.Password | None
 		ancp_operator_public_key: DF.Data | None
+		ancp_wg_derivation_secret: DF.Password | None
 		default_bench_snapshot: DF.Link | None
 		default_user_image: DF.Link | None
 		dns_provider_type: DF.Literal["", "Route53", "Cloudflare"]
@@ -51,6 +52,7 @@ class AtlasSettings(Document):
 	def validate(self) -> None:
 		self._validate_provider_switch()
 		self._ensure_ancp_operator_keypair()
+		self._ensure_ancp_wg_derivation_secret()
 
 	def _validate_provider_switch(self) -> None:
 		"""Refuse to change `provider_type` while any non-Archived Server was
@@ -101,6 +103,27 @@ class AtlasSettings(Document):
 		# In-memory assignment only; the calling `doc.save()` persists.
 		self.ancp_operator_private_key = priv_b64
 		self.ancp_operator_public_key = pub_b64
+
+	def _ensure_ancp_wg_derivation_secret(self) -> None:
+		"""Generate the cluster-wide WireGuard KEY-derivation secret AT FIRST
+		SAVE when the field is empty. This 32-byte secret is HMAC-keyed into
+		`derive_host_wireguard_keypair` (networking.py) so a host's wg-mesh
+		PRIVATE key is NOT recomputable from public data — the Server UUID is
+		the `host_id` gossiped in cleartext, and this repo is open source, so a
+		hardcoded-salt derivation would let anyone impersonate any host. Keying
+		off this secret makes the ability to derive the same trust class as the
+		Atlas root SSH key (only the controller holds it).
+
+		Idempotent — never regenerates an existing secret; a rotation would
+		re-key EVERY host's wg identity (full mesh peer churn), so it requires
+		explicit operator intervention (delete the field and re-save). Reads the
+		DB truth (not `self.*`) so it's correct whether the caller is `validate()`
+		(in-memory doc) or `setup()` (which writes via `set_single_value`)."""
+		secret = _generate_ancp_wg_derivation_secret_if_empty()
+		if secret is None:
+			return
+		# In-memory assignment only; the calling `doc.save()` persists.
+		self.ancp_wg_derivation_secret = secret
 
 	@frappe.whitelist()
 	def setup(
@@ -173,6 +196,10 @@ class AtlasSettings(Document):
 		# generates AND persists the keypair when both halves are empty.
 		# Idempotent — a re-`setup()` finds the keypair populated and skips.
 		ensure_ancp_operator_keypair_in_db()
+		# The cluster-wide wg-key-derivation secret (networking.py), on the same
+		# validate-bypassing path — generate + persist it here when empty so a
+		# bootstrap-driven setup() has it before the first Server derives its key.
+		ensure_ancp_wg_derivation_secret_in_db()
 		# Refresh the in-memory doc so callers that read `self` after `setup()`
 		# see the freshly-persisted keypair without a round-trip.
 		self.ancp_operator_public_key = (
@@ -365,6 +392,82 @@ def get_ancp_operator_private_key() -> str:
 		).strip()
 	except Exception:
 		return ""
+
+
+def get_ancp_wg_derivation_secret() -> bytes:
+	"""Read the cluster-wide WireGuard KEY-derivation secret (encrypted at rest
+	in Atlas Settings) as raw bytes. Used ONLY by
+	`server.py:_denormalize_mesh_identity` / `_write_ancp_bootstrap_state` to
+	pass into `networking.derive_host_wireguard_keypair`, whose seed is
+	HMAC-keyed off this secret so a host's wg PRIVATE key is not recomputable
+	from the public Server UUID.
+
+	Raises if unset — a missing secret means the wg key would fall back to a
+	public-recomputable derivation, exactly the flaw this closes; fail loud
+	rather than silently derive an impersonable key (the secret is generated on
+	first save / setup, so an empty secret at this point is a real
+	misconfiguration)."""
+	import base64
+
+	from frappe.utils.password import get_decrypted_password
+
+	secret_b64 = ""
+	try:
+		secret_b64 = (
+			get_decrypted_password(
+				"Atlas Settings", "Atlas Settings", "ancp_wg_derivation_secret", raise_exception=False
+			)
+			or ""
+		).strip()
+	except Exception:
+		secret_b64 = ""
+	if not secret_b64:
+		frappe.throw(
+			_(
+				"Atlas Settings has no ancp_wg_derivation_secret — the WireGuard host-key "
+				"derivation secret is unset. Save Atlas Settings (or run setup) to generate it."
+			)
+		)
+	return base64.b64decode(secret_b64)
+
+
+def _generate_ancp_wg_derivation_secret_if_empty() -> str | None:
+	"""Return a fresh base64 32-byte secret if Atlas Settings has none, else
+	`None` (so a re-`setup()` / re-`save()` is a no-op). Reads the DB truth so
+	it's correct for both the `validate()` (in-memory doc) and `setup()`
+	(set_single_value, bypasses validate) paths — same discipline as the
+	operator keypair. Rotating this secret re-keys every host's wg identity, so
+	it is never regenerated once set."""
+	import base64
+	import os
+
+	from frappe.utils.password import get_decrypted_password
+
+	try:
+		existing = (
+			get_decrypted_password(
+				"Atlas Settings", "Atlas Settings", "ancp_wg_derivation_secret", raise_exception=False
+			)
+			or ""
+		).strip()
+	except Exception:
+		existing = ""
+	if existing:
+		return None
+	return base64.b64encode(os.urandom(32)).decode()
+
+
+def ensure_ancp_wg_derivation_secret_in_db() -> None:
+	"""Idempotent DB-level generator + persister for the cluster-wide wg
+	KEY-derivation secret. Called by `AtlasSettings.setup()` so the
+	bootstrap-driven path (which bypasses `validate`) ALSO generates the secret
+	when empty. No-op if already set."""
+	from frappe.utils.password import set_encrypted_password
+
+	secret = _generate_ancp_wg_derivation_secret_if_empty()
+	if secret is None:
+		return
+	set_encrypted_password("Atlas Settings", "Atlas Settings", secret, "ancp_wg_derivation_secret")
 
 
 def _generate_ancp_operator_keypair_if_empty() -> tuple[str, str] | None:

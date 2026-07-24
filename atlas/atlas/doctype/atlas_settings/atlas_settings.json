@@ -35,7 +35,8 @@
   "satellite_routing_base_url",
   "section_break_ancp",
   "ancp_operator_public_key",
-  "ancp_operator_private_key"
+  "ancp_operator_private_key",
+  "ancp_wg_derivation_secret"
  ],
  "fields": [
   {
@@ -235,6 +236,12 @@
    "fieldtype": "Password",
    "label": "ANCP Operator Private Key",
    "description": "The matching ed25519 private key (base64-standard, 32 raw bytes), stored encrypted at the controller and used ONLY to sign each joining host's introduction certificate when server.py:_write_ancp_bootstrap_state writes /etc/atlas-networkd/introduction-signature. Generated once on first save when this field AND the public key are both empty; never re-derived (rotating the operator key invalidates every existing host's trust anchor)."
+  },
+  {
+   "fieldname": "ancp_wg_derivation_secret",
+   "fieldtype": "Password",
+   "label": "ANCP WireGuard Derivation Secret",
+   "description": "The cluster-wide secret (base64, 32 raw bytes) HMAC-keyed into networking.derive_host_wireguard_keypair so a host's wg-mesh PRIVATE key is NOT recomputable from the public Server UUID (the host_id gossiped in cleartext). Held ONLY by the controller — the same trust class as the Atlas root SSH key. Generated once on first save / setup when empty; never re-derived (rotating it re-keys EVERY host's wg identity — full mesh peer churn — so rotation requires explicit operator intervention: delete this field and re-save)."
   }
  ],
  "issingle": 1,
