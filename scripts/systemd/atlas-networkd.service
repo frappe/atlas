@@ -28,6 +28,16 @@ Description=Atlas network control plane daemon (atlas-networkd)
 Documentation=file:///usr/share/doc/atlas/spec/31-ancp-network-control-plane.md
 After=network-online.target
 Wants=network-online.target
+# M8 backstop — bound the restart rate so a genuinely fatal fault (one the
+# in-loop `_guard` can't degrade past, e.g. a bind failure at startup) can't
+# hot-loop every RestartSec forever. If the unit restarts more than
+# StartLimitBurst times within StartLimitIntervalSec, systemd stops trying and
+# leaves it `failed` (visible to the operator + alerting) instead of pinning a
+# CPU and spamming the journal. 5 starts / 60 s is well above any transient
+# flap but trips fast on a persistent crash. `_guard` in loop.py is the primary
+# fix (the loop degrades rather than exits); this is the second line of defense.
+StartLimitIntervalSec=60
+StartLimitBurst=5
 # Run before any VM unit so a VM coming up sees the mesh already configured
 # (a guest veth's fdaa:: /128 routes through wg-mesh; a not-yet-up mesh = a
 # blackholed guest from boot).
