@@ -29,17 +29,22 @@ jobs:
         run: uv run --python 3.14 --no-project python -m compileall -q scripts/
       - name: Lib + CLI unit tests (stdlib, no bench) with coverage
         working-directory: scripts/lib
-        # coverage is pulled ephemerally by uv (--with); it is NOT a project
-        # dependency — the host code itself stays pure stdlib. `coverage run -m
+        # `cryptography` (ed25519 signing) is a runtime dep of atlas-networkd;
+        # `coverage` is ephemeral (--with). Both are pulled by uv in the
+        # ephemeral venv so the host-side unit tests resolve. `coverage run -m
         # unittest` is a drop-in for `python -m unittest`. We emit both an XML
         # (machine-readable) and a self-contained HTML report to browse locally.
         run: |
-          uv run --python 3.14 --no-project --with coverage \
+          uv run --python 3.14 --no-project \
+            --with cryptography>=42 --with coverage \
             coverage run --source=atlas --omit="atlas/test_*.py" \
             -m unittest discover -s atlas -p "test_*.py"
-          uv run --python 3.14 --no-project --with coverage coverage report
-          uv run --python 3.14 --no-project --with coverage coverage xml -o coverage.xml
-          uv run --python 3.14 --no-project --with coverage coverage html -d htmlcov
+          uv run --python 3.14 --no-project \
+            --with cryptography>=42 --with coverage coverage report
+          uv run --python 3.14 --no-project \
+            --with cryptography>=42 --with coverage coverage xml -o coverage.xml
+          uv run --python 3.14 --no-project \
+            --with cryptography>=42 --with coverage coverage html -d htmlcov
 
       - name: Upload host-scripts coverage
         if: always()

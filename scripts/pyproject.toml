@@ -19,7 +19,13 @@ name = "atlas-scripts"
 version = "0.0.0"
 description = "Atlas host-side provisioning scripts and the `atlas` host CLI"
 requires-python = ">=3.14"
-dependencies = []
+# Lockstep with scripts/host-pyproject.toml. `cryptography` is the host daemon's
+# only third-party runtime dep (atlas-networkd signs records with ed25519; see
+# scripts/lib/atlas/networkd/signing.py + spec/31 §19.3). The dev manifest also
+# needs it so `python3 -m unittest` against `scripts/lib/atlas/test_networkd_*`
+# resolves `cryptography` without the bench's site-packages; it's already a
+# Frappe dep so the bench venv carries it for controller-side use too.
+dependencies = ["cryptography>=42"]
 
 [project.scripts]
 atlas = "atlas._cli:main"

@@ -751,6 +751,111 @@ class TestMigrationPhaseMachine(IntegrationTestCase):
 			self.assertEqual(row.hydration_percent, 40)
 
 
+class TestPrivatePlaneCutoverOrdering(IntegrationTestCase):
+	"""spec/31 §16.3 (soft migration sequencing): the private /128 is host-independent
+	(a pure HKDF of tenant+VM — it survives the move byte-for-byte), so the SOURCE host
+	must STOP advertising it BEFORE the TARGET host starts. If both advertise at once it
+	is the §7.3 conflict → ANCP drops the /128 from every host's wg-mesh AllowedIPs and
+	the migrated VM's private plane blackholes for the whole hydration window.
+
+	The withdraw is `migration-withdraw-private-source` on the SOURCE (it removes only the
+	/128 from the source's local-ownership cache); the advertise is `provision-vm` on the
+	TARGET (its ExecStartPre vm-network-up.py add_local_owns the /128 there). These assert
+	the withdraw runs, on the source, and STRICTLY BEFORE the target advertise — the
+	ordering `_repoint_private_plane`'s docstring promises. NOTE: this drives the
+	controller-side phase machine with run_task mocked; it needs bench to execute and does
+	NOT exercise the real host cache / gossip (that is host/integration-only)."""
+
+	def setUp(self) -> None:
+		self.source = _source_server()
+		self.target = _target_server()
+		self.image = make_image("mig-priv-image").name
+		for name in frappe.get_all("Virtual Machine Migration", pluck="name"):
+			frappe.delete_doc("Virtual Machine Migration", name, force=1, ignore_permissions=True)
+		for name in frappe.get_all("Virtual Machine", pluck="name"):
+			frappe.delete_doc("Virtual Machine", name, force=1, ignore_permissions=True)
+
+	def _tenant(self, name: str = "TEAM-91004") -> str:
+		if not frappe.db.exists("Tenant", name):
+			frappe.get_doc({"doctype": "Tenant", "team": name}).insert(ignore_permissions=True)
+		return name
+
+	def _row(self, vm):
+		doc = frappe.get_doc(
+			{
+				"doctype": "Virtual Machine Migration",
+				"virtual_machine": vm.name,
+				"target_server": self.target,
+			}
+		)
+		doc.keep_address = 0
+		doc.forward_address = 0
+		doc.flags.keep_address_forced = True
+		return doc.insert(ignore_permissions=True)
+
+	def _fake_run_task(self, calls):
+		def _run(*, script, variables, server, virtual_machine, timeout_seconds):
+			calls.append((script, server, dict(variables)))
+			if script == "migration-export-source":
+				return fake_task(
+					stdout='ATLAS_RESULT={"nbd_port": 10001, "nbd_pid": 4242, '
+					'"root_size_bytes": 1, "data_size_bytes": 0}'
+				)
+			if script == "migration-poll-hydration":
+				return fake_task(stdout='ATLAS_RESULT={"hydration_percent": 100}')
+			return fake_task(stdout="ok")
+
+		return _run
+
+	def _drive(self, row):
+		from atlas.atlas import proxy as proxy_module
+
+		calls: list = []
+		with (
+			patch.object(migration_module, "run_task", side_effect=self._fake_run_task(calls)),
+			patch.object(proxy_module, "reconcile_proxies", return_value=[]),
+		):
+			for _ in range(9):
+				row.reload()
+				migration_module.advance_migration(row)
+		return calls
+
+	def test_source_withdraw_precedes_target_advertise(self) -> None:
+		tenant = self._tenant()
+		vm = make_virtual_machine(self.source, self.image, tenant=tenant, status="Stopped")
+		self.assertTrue(vm.private_address, "a tenant VM has a private /128 to move")
+		row = self._row(vm)
+
+		calls = self._drive(row)
+		scripts = [script for script, _server, _vars in calls]
+
+		# The withdraw ran, on the SOURCE, carrying the VM's real /128.
+		self.assertIn("migration-withdraw-private-source", scripts)
+		withdraw = next(c for c in calls if c[0] == "migration-withdraw-private-source")
+		self.assertEqual(withdraw[1], self.source, "the withdraw must run on the SOURCE host")
+		self.assertEqual(withdraw[2].get("PRIVATE_ADDRESS"), vm.private_address)
+
+		# The withdraw (source stops advertising) STRICTLY precedes the provision-vm on
+		# the target (target starts advertising via vm-network-up add_local_owned) — the
+		# §16.3 withdraw-from-source-THEN-advertise-on-target ordering. No §7.3 overlap.
+		self.assertLess(
+			scripts.index("migration-withdraw-private-source"),
+			scripts.index("provision-vm"),
+			"source must withdraw the /128 before the target advertises it",
+		)
+
+	def test_tenantless_vm_skips_the_private_withdraw(self) -> None:
+		# An operator VM with no tenant has no private /128 — the withdraw must no-op
+		# (never issue the task), matching _repoint_private_plane's tenant-less early-out.
+		vm = make_virtual_machine(self.source, self.image, status="Stopped")
+		self.assertFalse(vm.private_address)
+		row = self._row(vm)
+
+		calls = self._drive(row)
+		scripts = [script for script, _server, _vars in calls]
+		self.assertNotIn("migration-withdraw-private-source", scripts)
+
+
 class TestLocalBaseImageShip(IntegrationTestCase):
 	"""spec/24 §5.1: a VM on a LOCAL (snapshot-promoted, un-syncable) base image
 	must ship that base to the target during TargetPreparing. Drives the phase

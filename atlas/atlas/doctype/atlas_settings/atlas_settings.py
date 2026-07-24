@@ -33,6 +33,9 @@ class AtlasSettings(Document):
 	if TYPE_CHECKING:
 		from frappe.types import DF
 
+		ancp_operator_private_key: DF.Password | None
+		ancp_operator_public_key: DF.Data | None
+		ancp_wg_derivation_secret: DF.Password | None
 		default_bench_snapshot: DF.Link | None
 		default_user_image: DF.Link | None
 		dns_provider_type: DF.Literal["", "Route53", "PowerDNS", "Cloudflare"]
@@ -48,6 +51,8 @@ class AtlasSettings(Document):
 
 	def validate(self) -> None:
 		self._validate_provider_switch()
+		self._ensure_ancp_operator_keypair()
+		self._ensure_ancp_wg_derivation_secret()
 
 	def _validate_provider_switch(self) -> None:
 		"""Refuse to change `provider_type` while any non-Archived Server was
@@ -73,6 +78,52 @@ class AtlasSettings(Document):
 					"through a different vendor (e.g. {1}). Archive them first."
 				).format(len(stranded), ", ".join(stranded))
 			)
+
+	def _ensure_ancp_operator_keypair(self) -> None:
+		"""Generate the ANCP operator ed25519 keypair AT FIRST SAVE when both
+		halves are empty (spec/31 §19.4 / §19.5 — the operator pubkey is the
+		trust root for newcomer introduction certificates). Idempotent — never
+		regenerates an existing pair; rotating the operator key invalidates
+		every existing host's trust anchor, so a rotation requires explicit
+		operator intervention (delete both fields and save).
+
+		NOT derived (a derived signing key's seed would be public, defeating
+		the purpose — §19.3). Random ed25519 generated once and stored at the
+		controller.
+
+		Reads the DB truth (not `self.*`) so the helper is correct regardless
+		of whether the caller is `validate()` (in-memory doc) or `setup()`
+		(which writes via `set_single_value` and bypasses validate — the
+		bootstrap-driven path; without the DB read, setup() would regenerate
+		the keypair on every run, breaking idempotency)."""
+		pair = _generate_ancp_operator_keypair_if_empty()
+		if pair is None:
+			return
+		priv_b64, pub_b64 = pair
+		# In-memory assignment only; the calling `doc.save()` persists.
+		self.ancp_operator_private_key = priv_b64
+		self.ancp_operator_public_key = pub_b64
+
+	def _ensure_ancp_wg_derivation_secret(self) -> None:
+		"""Generate the cluster-wide WireGuard KEY-derivation secret AT FIRST
+		SAVE when the field is empty. This 32-byte secret is HMAC-keyed into
+		`derive_host_wireguard_keypair` (networking.py) so a host's wg-mesh
+		PRIVATE key is NOT recomputable from public data — the Server UUID is
+		the `host_id` gossiped in cleartext, and this repo is open source, so a
+		hardcoded-salt derivation would let anyone impersonate any host. Keying
+		off this secret makes the ability to derive the same trust class as the
+		Atlas root SSH key (only the controller holds it).
+
+		Idempotent — never regenerates an existing secret; a rotation would
+		re-key EVERY host's wg identity (full mesh peer churn), so it requires
+		explicit operator intervention (delete the field and re-save). Reads the
+		DB truth (not `self.*`) so it's correct whether the caller is `validate()`
+		(in-memory doc) or `setup()` (which writes via `set_single_value`)."""
+		secret = _generate_ancp_wg_derivation_secret_if_empty()
+		if secret is None:
+			return
+		# In-memory assignment only; the calling `doc.save()` persists.
+		self.ancp_wg_derivation_secret = secret
 
 	@frappe.whitelist()
 	def setup(
@@ -135,6 +186,30 @@ class AtlasSettings(Document):
 			frappe.db.set_single_value(
 				"Atlas Settings", "default_bench_snapshot", default_bench_snapshot, update_modified=False
 			)
+
+		# Stage 5+ (spec/31 §19.4 / §19.5) — the ANCP operator provision keypair
+		# is the §19.5 newcomer trust root. `setup()` writes via
+		# `set_single_value` (NOT `doc.save()`), so `validate()`'s
+		# `_ensure_ancp_operator_keypair` never runs on this path. Call the
+		# DB-level equivalent here at the end so the bootstrap-driven flow
+		# (Setup Wizard → bootstrap.run → setup.run, OR E2E → atlas.setup.run)
+		# generates AND persists the keypair when both halves are empty.
+		# Idempotent — a re-`setup()` finds the keypair populated and skips.
+		ensure_ancp_operator_keypair_in_db()
+		# The cluster-wide wg-key-derivation secret (networking.py), on the same
+		# validate-bypassing path — generate + persist it here when empty so a
+		# bootstrap-driven setup() has it before the first Server derives its key.
+		ensure_ancp_wg_derivation_secret_in_db()
+		# Refresh the in-memory doc so callers that read `self` after `setup()`
+		# see the freshly-persisted keypair without a round-trip.
+		self.ancp_operator_public_key = (
+			frappe.db.get_single_value("Atlas Settings", "ancp_operator_public_key") or ""
+		)
+		# The private-key field is a Password (encrypted at rest); the in-memory
+		# doc carries the encrypted value, so a subsequent `save()` round-trip
+		# preserves it rather than overwriting with the raw priv. We don't need
+		# the priv on `self` post-setup — only `get_ancp_operator_private_key()`
+		# reads it (an accessor, not a doc attribute read).
 
 	@staticmethod
 	def _derive_public_key(private_key_path: str) -> str | None:
@@ -288,3 +363,179 @@ def _proxy_region_and_domain() -> tuple[str, str]:
 			_("No Root Domain. Create one (the region's wildcard zone) before standing up its proxy.")
 		)
 	return rows[0].region, rows[0].domain
+
+
+def get_ancp_operator_public_key() -> str:
+	"""Read the ANCP operator provision pubkey (base64, the §19.5 trust root).
+	Returns "" if Atlas Settings has no keypair configured — the caller
+	(`server.py:_write_ancp_bootstrap_state`) writes nothing to the host's
+	`/etc/atlas-networkd/operator-public-key` in that case, and the host's
+	envelope verifier fails-closed on any newcomer introduction (existing
+	seeded hosts still gossip fine — the §19.4 seed anchors their trust
+	directory)."""
+	return (frappe.db.get_single_value("Atlas Settings", "ancp_operator_public_key") or "").strip()
+
+
+def get_ancp_operator_private_key() -> str:
+	"""Read the ANCP operator provision PRIVKEY (encrypted at rest in
+	Atlas Settings). Returns "" if unset. Used ONLY by
+	`server.py:_write_ancp_bootstrap_state` to sign the introduction
+	certificate for a host joining an existing cluster (spec/31 §19.5)."""
+	from frappe.utils.password import get_decrypted_password
+
+	try:
+		return (
+			get_decrypted_password(
+				"Atlas Settings", "Atlas Settings", "ancp_operator_private_key", raise_exception=False
+			)
+			or ""
+		).strip()
+	except Exception:
+		return ""
+
+
+def get_ancp_wg_derivation_secret() -> bytes:
+	"""Read the cluster-wide WireGuard KEY-derivation secret (encrypted at rest
+	in Atlas Settings) as raw bytes. Used ONLY by
+	`server.py:_denormalize_mesh_identity` / `_write_ancp_bootstrap_state` to
+	pass into `networking.derive_host_wireguard_keypair`, whose seed is
+	HMAC-keyed off this secret so a host's wg PRIVATE key is not recomputable
+	from the public Server UUID.
+
+	Raises if unset — a missing secret means the wg key would fall back to a
+	public-recomputable derivation, exactly the flaw this closes; fail loud
+	rather than silently derive an impersonable key (the secret is generated on
+	first save / setup, so an empty secret at this point is a real
+	misconfiguration)."""
+	import base64
+
+	from frappe.utils.password import get_decrypted_password
+
+	secret_b64 = ""
+	try:
+		secret_b64 = (
+			get_decrypted_password(
+				"Atlas Settings", "Atlas Settings", "ancp_wg_derivation_secret", raise_exception=False
+			)
+			or ""
+		).strip()
+	except Exception:
+		secret_b64 = ""
+	if not secret_b64:
+		frappe.throw(
+			_(
+				"Atlas Settings has no ancp_wg_derivation_secret — the WireGuard host-key "
+				"derivation secret is unset. Save Atlas Settings (or run setup) to generate it."
+			)
+		)
+	return base64.b64decode(secret_b64)
+
+
+def _generate_ancp_wg_derivation_secret_if_empty() -> str | None:
+	"""Return a fresh base64 32-byte secret if Atlas Settings has none, else
+	`None` (so a re-`setup()` / re-`save()` is a no-op). Reads the DB truth so
+	it's correct for both the `validate()` (in-memory doc) and `setup()`
+	(set_single_value, bypasses validate) paths — same discipline as the
+	operator keypair. Rotating this secret re-keys every host's wg identity, so
+	it is never regenerated once set."""
+	import base64
+	import os
+
+	from frappe.utils.password import get_decrypted_password
+
+	try:
+		existing = (
+			get_decrypted_password(
+				"Atlas Settings", "Atlas Settings", "ancp_wg_derivation_secret", raise_exception=False
+			)
+			or ""
+		).strip()
+	except Exception:
+		existing = ""
+	if existing:
+		return None
+	return base64.b64encode(os.urandom(32)).decode()
+
+
+def ensure_ancp_wg_derivation_secret_in_db() -> None:
+	"""Idempotent DB-level generator + persister for the cluster-wide wg
+	KEY-derivation secret. Called by `AtlasSettings.setup()` so the
+	bootstrap-driven path (which bypasses `validate`) ALSO generates the secret
+	when empty. No-op if already set."""
+	from frappe.utils.password import set_encrypted_password
+
+	secret = _generate_ancp_wg_derivation_secret_if_empty()
+	if secret is None:
+		return
+	set_encrypted_password("Atlas Settings", "Atlas Settings", secret, "ancp_wg_derivation_secret")
+
+
+def _generate_ancp_operator_keypair_if_empty() -> tuple[str, str] | None:
+	"""Read the ANCP operator keypair from the DB truth. If BOTH halves are
+	empty, generate a fresh ed25519 pair and return `(priv_b64, pub_b64)`
+	so the caller can persist. Return `None` if either half is already set,
+	so a re-`setup()` / re-`save()` is a no-op (rotating the operator key
+	invalidates every existing host's §19.5 trust anchor — rotation requires
+	explicit operator intervention: delete both fields and re-save).
+
+	Spec/31 §19.4 / §19.5; the §19.3 "NOT derived" rule (a derived signing
+	key's seed is public, defeating the purpose — applies equally to an
+	operator-level key, not just per-host).
+
+	Reading the DB (not the in-memory doc) makes this helper correct for
+	both `AtlasSettings.validate()` (in-memory doc) AND `AtlasSettings.setup()`
+	(which writes via `set_single_value` — bypasses validate, the path the
+	Frappe Setup Wizard + `bootstrap.setup_run` take)."""
+	from frappe.utils.password import get_decrypted_password
+
+	from atlas.atlas.networking import generate_host_signing_keypair
+
+	pub = (frappe.db.get_single_value("Atlas Settings", "ancp_operator_public_key") or "").strip()
+	if pub:
+		return None
+	try:
+		priv = (
+			get_decrypted_password(
+				"Atlas Settings", "Atlas Settings", "ancp_operator_private_key", raise_exception=False
+			)
+			or ""
+		).strip()
+	except Exception:
+		priv = ""
+	if priv:
+		# A field with only one half set is an operator-edit mistake; sink to
+		# idempotence here so the inconsistency surfaces in the form rather than
+		# a hidden rewrite (matches the validate-path stance).
+		return None
+	return generate_host_signing_keypair()
+
+
+def _persist_ancp_operator_keypair_in_db(priv_b64: str, pub_b64: str) -> None:
+	"""Write a freshly-generated `(priv, pub)` to the Atlas Settings Single via
+	direct DB writes (the `setup()` path — which bypasses `validate` and
+	`save()`). Used by `AtlasSettings.setup()`. Idempotent at the caller — only
+	invoked when `_generate_ancp_operator_keypair_if_empty` returned a fresh
+	pair, so AT MOST one write per run."""
+	from frappe.utils.password import set_encrypted_password
+
+	frappe.db.set_single_value("Atlas Settings", "ancp_operator_public_key", pub_b64, update_modified=False)
+	set_encrypted_password("Atlas Settings", "Atlas Settings", priv_b64, "ancp_operator_private_key")
+
+
+def ensure_ancp_operator_keypair_in_db() -> None:
+	"""Idempotent DB-level generator + persister for the ANCP operator
+	provision keypair (spec/31 §19.4 / §19.5). Called by
+	`AtlasSettings.setup()` at the END of its set_single_value block so the
+	bootstrap-driven path (which bypasses `validate`) ALSO generates the
+	keypair when empty — the Setup Wizard's setup_run → bootstrap.run →
+	setup.run flow goes through here, not through `doc.save()`.
+
+	No-op if either half is already set. Independent of whether
+	`AtlasSettings.validate()` runs later — both paths share the DB-truth
+	read, so a desk-triggered `doc.save()` after a setup() sees the
+	keypair already populated and passes through unchanged."""
+	pair = _generate_ancp_operator_keypair_if_empty()
+	if pair is None:
+		return
+	priv_b64, pub_b64 = pair
+	_persist_ancp_operator_keypair_in_db(priv_b64, pub_b64)

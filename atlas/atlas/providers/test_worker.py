@@ -221,3 +221,116 @@ class TestReconcilePendingServers(IntegrationTestCase):
 
 		cron_jobs = [job for jobs in hooks.scheduler_events.get("cron", {}).values() for job in jobs]
 		self.assertIn("atlas.atlas.providers.worker.reconcile_pending_servers", cron_jobs)
+
+
+class TestCheckNetworkdLiveness(IntegrationTestCase):
+	"""The controller-side liveness BACKSTOP: flag (never reconfigure) any Active
+	host whose atlas-networkd daemon is not healthy. Read-only by construction."""
+
+	def setUp(self) -> None:
+		from atlas.tests.fixtures import make_provider, make_server
+
+		self.provider = make_provider("test-provider-liveness")
+		self.make_server = make_server
+
+	def test_healthy_hosts_are_not_flagged(self) -> None:
+		server = self.make_server(
+			self.provider, "liveness-healthy", provider_resource_id="lh1", status="Active"
+		)
+		with (
+			patch.object(worker, "_probe_networkd_liveness", return_value=(True, "active")),
+			patch.object(worker.frappe, "log_error") as log_error,
+		):
+			unhealthy = worker.check_networkd_liveness()
+		self.assertNotIn(server.name, unhealthy)
+		# A healthy host raises nothing operator-facing.
+		for call in log_error.call_args_list:
+			self.assertNotIn(server.name, str(call))
+
+	def test_unhealthy_host_is_flagged_and_surfaced(self) -> None:
+		server = self.make_server(
+			self.provider, "liveness-unhealthy", provider_resource_id="lu1", status="Active"
+		)
+
+		def _probe(name: str) -> tuple[bool, str]:
+			# Only this test's host is unhealthy; the shared DB may hold others.
+			return (name != server.name, "failed" if name == server.name else "active")
+
+		with (
+			patch.object(worker, "_probe_networkd_liveness", side_effect=_probe),
+			patch.object(worker.frappe, "log_error") as log_error,
+		):
+			unhealthy = worker.check_networkd_liveness()
+		self.assertIn(server.name, unhealthy)
+		# Surfaced as an Error Log the operator can see (the codebase's convention).
+		self.assertTrue(any(server.name in str(c) for c in log_error.call_args_list))
+
+	def test_unreachable_host_does_not_abort_the_sweep(self) -> None:
+		# One host whose probe raises (SSH timeout, no ipv4) must be flagged but must
+		# NOT prevent the other Active hosts from being probed.
+		bad = self.make_server(
+			self.provider, "liveness-unreachable", provider_resource_id="lx1", status="Active"
+		)
+		good = self.make_server(
+			self.provider, "liveness-reachable", provider_resource_id="lx2", status="Active"
+		)
+
+		def _probe(name: str) -> tuple[bool, str]:
+			if name == bad.name:
+				raise RuntimeError("ssh timeout")
+			return True, "active"
+
+		with (
+			patch.object(worker, "_probe_networkd_liveness", side_effect=_probe),
+			patch.object(worker.frappe, "log_error"),
+		):
+			unhealthy = worker.check_networkd_liveness()
+		self.assertIn(bad.name, unhealthy)
+		self.assertNotIn(good.name, unhealthy)
+
+	def test_fake_servers_are_skipped(self) -> None:
+		# A Fake server has no host to SSH; it must never be probed.
+		fake = self.make_server(
+			self.provider, "liveness-fake", provider_resource_id="lf1", status="Active", provider_type="Fake"
+		)
+		with (
+			patch.object(worker, "_probe_networkd_liveness") as probe,
+			patch.object(worker.frappe, "log_error"),
+		):
+			worker.check_networkd_liveness()
+		for call in probe.call_args_list:
+			self.assertNotEqual(call.args[0], fake.name)
+
+	def test_probe_is_read_only(self) -> None:
+		# The probe must only OBSERVE (systemctl is-active / cat status.json) — never
+		# push config or restart. Assert every SSH command it issues is read-only.
+		server = self.make_server(
+			self.provider, "liveness-probe-readonly", provider_resource_id="lp1", status="Active"
+		)
+		issued: list[str] = []
+
+		def _fake_run_ssh(connection, key_path, remote_command, *params, **kwargs):
+			issued.append(remote_command)
+			# First call = the is-active/is-enabled probe: report healthy.
+			return "active\nenabled\n", "", 0
+
+		with (
+			patch("atlas.atlas.ssh.connection_for_server", return_value=MagicMock()),
+			patch("atlas.atlas.ssh.ssh_key_file") as key_file,
+			patch("atlas.atlas.ssh.run_ssh", side_effect=_fake_run_ssh),
+		):
+			key_file.return_value.__enter__.return_value = "/tmp/key"
+			healthy, detail = worker._probe_networkd_liveness(server.name)
+		self.assertTrue(healthy)
+		self.assertEqual(detail, "active")
+		# No command may reconfigure the mesh — no syncconf, no restart, no seed push.
+		joined = " ; ".join(issued).lower()
+		for forbidden in ("syncconf", "restart", "systemctl start", "install ", "tee "):
+			self.assertNotIn(forbidden, joined)
+
+	def test_backstop_is_registered_in_scheduler(self) -> None:
+		# The backstop only backstops if it actually runs on a schedule.
+		from atlas import hooks
+
+		cron_jobs = [job for jobs in hooks.scheduler_events.get("cron", {}).values() for job in jobs]
+		self.assertIn("atlas.atlas.providers.worker.check_networkd_liveness", cron_jobs)

@@ -1,0 +1,565 @@
+"""The daemon orchestrator (spec §6 + §16.4). Composes the pure pieces into
+host-touching steps: scan local ownership, recompute WgDesired, atomic apply.
+Kept small and split into ~10-line methods so each is one operation; the loop
+(`loop.py`) drives them on the right timers (spec §11.2 / §16.4).
+
+Dependency injection: the host-touching seams (`run`, `write_run_config`,
+`sd_notify` helpers) are overridable per-instance so the apply path is
+unit-testable without touching the kernel — a test passes a `run` that records
+argv instead of `subprocess.run`, the same shape `scripts/lib/atlas/test_*`
+already use through `_run`/`_run_input`.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import sys
+import tempfile
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from pathlib import Path
+
+from .._run import run as host_run
+from . import commands, render, sdnotify
+from .config import Config
+from .identity import HostIdentity
+from .localownership import read_local_ownership, same_set
+from .records import (
+	MembershipKind,
+	MembershipRecord,
+	MemberState,
+	effective_ownership,
+	owning_advertisement,
+)
+from .signing import SignatureError, sign, verify
+from .state import AppliedState, save_state
+
+# `run(command_template, *params, check=True, quiet=False) -> stdout`. Host's
+# `_run.run` raises CommandError on non-zero (converging apply, §16.4). Tests
+# pass a stub that records argv or raises — the same call shape either way.
+RunFn = Callable[..., str]
+
+
+def _default_write_run_config(body: str) -> None:
+	"""The hot-path writer: `/run/atlas-networkd/wg-mesh.conf`. `/run` is tmpfs
+	so it never persists across reboot (the persisted state is the JSON under
+	`/var/lib/atlas-networkd/`). Atomic via tempfile + `os.replace` so a crash
+	mid-write doesn't leave a half-config for `wg syncconf` to choke on."""
+	p = Path(commands.WG_CONFIG_PATH)
+	p.parent.mkdir(parents=True, exist_ok=True)
+	tmp = p.with_suffix(p.suffix + ".tmp")
+	tmp.write_text(body, encoding="utf-8")
+	os.replace(tmp, p)
+
+
+@dataclass(slots=True)
+class Daemon:
+	"""One instance per host. Holds the frozen identity, the applied-state
+	(persisted), the last scanned /128 set, and the last applied config bytes.
+	The loop in `loop.py` is pure scheduling on top of these — each method does
+	one operation."""
+
+	identity: HostIdentity
+	config: Config
+	state: AppliedState
+	own_membership: MembershipRecord
+	last_local_set: frozenset[str] = field(default_factory=frozenset)
+	last_applied_config: str = ""
+	# The ANCP UDP transport (`transport.py`); the daemon owns the socket, the
+	# loop polls it each tick. `Optional` so `build_initial` can construct a
+	# Daemon without yet binding the socket — `main.py` wires `.transport =
+	# UdpTransport(...).start()` after `build_initial`. Tests inject an
+	# in-memory queue pair (`FakeTransport` in `test_networkd_gossip`) so the
+	# gossip round is end-to-end testable without a kernel.
+	transport: object | None = field(default=None, init=True)
+	# The SWIM probe protocol (Stage 4) — wired by `main.py` after the
+	# transport; None during early bootstrap + in tests that don't drive
+	# probes. The gossip `handle_message` path defends against None.
+	probe_protocol: object | None = field(default=None, init=True)
+	# The observer-local failure tracker (Stage 4) — owned by the daemon so
+	# gossip's refute-trigger (`note_alive`) and the probe protocol share it.
+	# Tests inject a `FailureTracker` with a controlled `now_fn`.
+	failure_tracker: object | None = field(default=None, init=True)
+	# Stage 5 — the conflict event tracker (§7.3 / §18.2). The loop's
+	# `_gc_if_due` and the apply step observe the effective table's conflicts
+	# via this; START/END events fire the operator hook + the metrics counter.
+	conflict_tracker: object | None = field(default=None, init=True)
+	# Stage 5 — ed25519 signature verifier hook (§19.3). Set by `main.py` to
+	# the default verifier (`signing.verify` over the canonical record dict +
+	# the origin's published signing pubkey); None means "no signature
+	# verification" (the in-test path; production always sets it).
+	signature_verifier: Callable[[object, object], None] | None = field(default=None, init=True)
+	# Stage 5+ — envelope verifier hook (§19.1). Set by `main.py` to
+	# `default_envelope_verifier`; the recv path (`loop._drain_incoming` →
+	# `transport.drain` handler) calls it BEFORE any payload work. None
+	# means "no envelope verification" (the in-test path; production sets it).
+	envelope_verifier: Callable[[object, object], None] | None = field(default=None, init=True)
+	# Stage 5+ — the trust directory for §19.1 envelope verification:
+	# `HostID → trusted signing_public_key`. Pre-populated by `build_initial`
+	# from the seed entries (§19.4) and grown at runtime when an unknown
+	# sender's introduction certificate (§19.5) verifies against
+	# `operator_public_key`. The cached key is the one the envelope
+	# signature is verified against; a self-asserted key mismatch on a known
+	# sender is rejected (key rotation must come via a signed MembershipRecord
+	# from the established key — §19.3).
+	signing_pubkey_cache: dict = field(default_factory=dict, init=True)
+	# Stage 5+ — the operator's provision pubkey (base64 ed25519, §19.5).
+	# Loaded by `main.py` from `/etc/atlas-networkd/operator-public-key`
+	# (written by the controller at provision time alongside `seed.json`).
+	# Empty in tests where envelope verification is not installed; production
+	# always loads it (a non-empty operator pubkey is required for any
+	# previously-unknown host to be absorbed as a cluster member).
+	operator_public_key: str = field(default="", init=True)
+	# Stage 5 — metrics counter (§20.2). `gossip._apply_record` incr's
+	# `signature_failed` on a verify failure; the recv path incr's
+	# `envelope_signature_failed` on an envelope verify failure.
+	metrics: object | None = field(default=None, init=True)
+	# Stage 5 — wire-signature side-channel: a dict keyed by `id(record)`
+	# carrying the incoming record's wire bytes signature, populated by the
+	# gossip / anti-entropy apply path before invoking the verifier. The
+	# frozen slots dataclasses can't carry ad-hoc attributes, so the sig
+	# lives here keyed by record identity. Cleared each apply round.
+	_incoming_wire_sigs: dict | None = field(default=None, init=True)
+	# Stage 5 — the daemon's own signing key (base64 ed25519 private). Used by
+	# `scan_local_ownership`, `build_initial`, and `_advertise_leaving` to
+	# sign outgoing records. "" means "don't sign" (the in-test path; tests).
+	# Production refuses to start if this is empty (spec §19 — signing is
+	# mandatory, no fallback to the unsigned wire path).
+	own_signing_priv_b64: str = field(default="", init=True)
+	# Stage 5+ — the daemon's own signing pubkey (base64 ed25519, the public
+	# half of `own_signing_priv_b64`). Rides the envelope as
+	# `signing_public_key` so peers can verify (§19.1). Set by
+	# `build_initial` from `keys.ensure_signing_keypair` (`main.py`).
+	own_signing_pub_b64: str = field(default="", init=True)
+	# Stage 5+ — the operator-signed introduction certificate (§19.5). Set by
+	# `main.py` from `/etc/atlas-networkd/introduction-signature` (a one-line
+	# base64 ed25519 signature over `{host_id, signing_public_key,
+	# generation=1}` with the operator's provision private key). Empty if the
+	# file is absent — the host was part of the initial seed (no introduction
+	# needed; peers already have its pubkey anchored). Rides the first
+	# `MembershipAdvertisement` envelope ONLY; subsequent messages don't carry
+	# it.
+	own_introduction_signature: str = field(default="", init=True)
+	# Injected seams (production defaults wired here; tests override).
+	run: RunFn = field(default=host_run)
+	write_run_config: Callable[[str], None] = field(default=_default_write_run_config)
+	notify_ready: Callable[[], bool] = field(default=sdnotify.ready)
+	notify_watchdog: Callable[[], bool] = field(default=sdnotify.watchdog)
+	notify_stopping: Callable[[], bool] = field(default=sdnotify.stopping)
+	# A hook for the §14.4 graceful-shutdown `leaving` advertisement.
+	# main.py wires it; tests can swap it. None means "do nothing" for tests
+	# that don't care about shutdown.
+	advertise_leaving: Callable[[], None] | None = field(default=None, init=True)
+	# §15 anti-entropy rotating-window cursor. When the origin set exceeds
+	# `MAX_VECTOR_ORIGINS`, each `anti_entropy_round` advertises a contiguous
+	# window of origins (HostID-sorted) starting here and advances the cursor by
+	# the window, so consecutive rounds tile the full set with no gaps and every
+	# origin is covered within a bounded ceil(N / window) rounds (§15.4). A fresh
+	# daemon starts at 0; it is round state, not persisted (a restart re-sweeps
+	# from 0, which is harmless — coverage is still bounded).
+	_ae_cursor: int = field(default=0, init=True)
+
+	# --- unicast send (the reply path for §9.1 bundle reply) ----------------
+
+	def unicast_send(self, endpoint: str, data: bytes) -> None:
+		"""Send a single ANCP datagram to ``(endpoint, ancp_port)``. Used by
+		gossip/probe/anti-entropy handlers to reply to a peer's request. A
+		no-op if ``daemon.transport`` isn't wired yet — a pre-loop caller gets
+		the silent no-op so bootstrap doesn't crash before
+		``transport.start()`` runs."""
+		t = self.transport
+		if t is None:
+			return  # tests / pre-loop bootstrap can hit this; fail-soft, the
+			# next gossip round will spread the record via the normal fan-out.
+		t.send((endpoint, self.config.ancp_port), data)
+
+	# --- scan (spec §11) ----------------------------------------------------
+
+	def scan_local_ownership(self) -> bool:
+		"""Read the /etc/atlas-networkd/local-ownership.json cache (§11.1) and on
+		a changed set, bump the host's own Ownership Generation (§12.1) and
+		update the applied-state's advertisement for this origin. Returns True
+		iff the set changed this scan (the loop uses the bool to schedule the
+		debounced apply). Stage 5: the signature is attached at wire-serialize
+		time (in `gossip` / `antientropy`), not here — keeps the apply-state's
+		record byte-equivalent to the pure-data record."""
+		scanned = read_local_ownership(self.config.local_ownership_path)
+		if same_set(scanned, self.last_local_set):
+			return False
+		self.last_local_set = scanned
+		self.state.bump_own_generation()
+		adv = owning_advertisement(
+			origin=self.identity.host_id,
+			generation=self.state.own_generation,
+			owned=scanned,
+		)
+		self.state.apply_ownership(adv)
+		# Persist BEFORE the loop can gossip this advertisement (§12.1 / H5): the
+		# loop reads the returned True in the same tick and fans the new
+		# generation out. If we crashed after the wire send but before an
+		# unrelated `save_state` (shutdown / GC), the on-disk `own_generation`
+		# would be stale and a restart would reuse an already-advertised
+		# generation for DIFFERENT content — peers reject that as stale (strict
+		# `>` in `ownership_replaces`) and the real route update is silently
+		# dropped fleet-wide. Persisting here guarantees the loop can only gossip
+		# a generation that is already durable. This path runs only on an actual
+		# set change (the `same_set` short-circuit above), so it is not hot.
+		save_state(self.state, self.config.data_dir)
+		return True
+
+	# --- apply (spec §16) ----------------------------------------------------
+
+	def render_current(self) -> str:
+		"""Recompute the canonical wg-mesh config body from the persisted state:
+		effective Ownership = union of latest per-origin advertisements;
+		membership = the table the apply pipeline reads. Renders the host's own
+		host_id out (a host never peers with itself). Thin wrapper over
+		`render_current_with_conflicts` that discards the render-level conflict map."""
+		body, _ownership, _render_conflicts = self.render_current_with_conflicts()
+		return body
+
+	def render_current_with_conflicts(self):
+		"""Like `render_current` but ALSO returns the effective `OwnershipTable`
+		and the render-level conflict map `{private_ip: origins}` (the H2
+		mesh_address collisions). The apply path (`observe_conflicts`) unions
+		`ownership.conflicts` (owned-/128 double-ownership) with the render map so
+		BOTH sources reach the operator surface (spec §7.3 / §18.2)."""
+		ownership = effective_ownership(self.state.ownership)
+		# §14.3 — merge in the render-only `routable_dead` records (hosts reaped
+		# from `membership` at `dead_grace` but whose Ownership Records survive
+		# until `ownership_grace`) so their /128s keep a `[Peer]` during the
+		# late-refute window. A live `membership` record always wins over a stale
+		# `routable_dead` one (a refute repopulates `membership` + clears the
+		# dead timer; the merge order guarantees the refuted record renders).
+		members = {**self.state.routable_dead, **self.state.membership}
+		body, render_conflicts = render.render_wg_desired_with_conflicts(
+			self.identity.host_id, members, ownership
+		)
+		return body, ownership, render_conflicts
+
+	def apply_if_changed(self) -> bool:
+		"""Render, drift-check, push on drift (spec §16.4 — atomic whole-table
+		`wg syncconf`). Returns True iff an apply ran. The §16.3 non-overlap
+		invariant is asserted by the render itself. The apply path runs
+		`sudo bash -c <apply_script>` exactly like the predecessor
+		`host_mesh._push_wg_mesh` — `bash -c` for the process substitution;
+		`sudo` no-op when the unit already runs as root, matching the existing
+		lib. Raises on non-zero (converging apply — a failed syncconf is a
+		partition, not a soft warning)."""
+		desired, ownership, render_conflicts = self.render_current_with_conflicts()
+		# §7.3 / §18.2 — surface conflicts to the operator on EVERY recompute (not
+		# only when the config bytes change): a conflict clearing can leave the
+		# rendered body identical to a prior no-conflict render, so run the observe
+		# path before the drift short-circuit below.
+		self.observe_conflicts(ownership, render_conflicts)
+		if desired == self.last_applied_config:
+			return False
+		self.write_run_config(desired)
+		self.run("sudo bash -c {}", commands.apply_script())
+		self.last_applied_config = desired
+		return True
+
+	# --- conflict observability (spec §7.3 / §18.2) -------------------------
+
+	def observe_conflicts(self, ownership, render_conflicts: dict) -> None:
+		"""Compute the CURRENT conflict set as `{private_ip: origins}` — the union
+		of §7.3 owned-/128 double-ownership (`ownership.conflicts`, origins from
+		the per-origin advertisements) AND the H2 mesh_address collisions from
+		render (`render_conflicts`) — hand it to the `ConflictTracker` (which diffs
+		against the previous set to emit START/END events to `conflicts.jsonl` +
+		the metrics counter), log new conflicts at ERROR, and refresh
+		`status.json`. Best-effort: a status-write failure is counted + logged, it
+		never crashes the apply path. A no-op if `conflict_tracker` isn't wired
+		(the in-test path that doesn't care about observability)."""
+		tracker = self.conflict_tracker
+		if tracker is None:
+			return
+		current: dict[str, frozenset[str]] = {}
+		for ip in ownership.conflicts:
+			current[ip] = frozenset(
+				origin for origin, adv in self.state.ownership.items() if ip in adv.owned
+			)
+		# The H2 mesh collisions carry their own contending-peer origins; union
+		# them in (a /128 could in principle be both an owned conflict and a mesh
+		# collision — merge the origin sets so neither source is lost).
+		for ip, origins in render_conflicts.items():
+			current[ip] = current.get(ip, frozenset()) | origins
+		events = tracker.observe_conflicts(current)
+		for ev in events:
+			if ev.kind == "start":
+				# Spec §7.3 / §18.2 — log at ERROR on a new conflict. `_run`-style
+				# modules here emit to stderr (no `logging` config in the daemon);
+				# match that.
+				print(
+					f"atlas-networkd: ERROR: conflict on {ev.private_ip} claimed by "
+					f"{sorted(ev.origins)} — /128 dropped from wg-mesh AllowedIPs until it clears (§7.3)",
+					file=sys.stderr,
+				)
+		self._write_status(current)
+
+	def _write_status(self, current: dict) -> None:
+		"""Atomically refresh `/var/lib/atlas-networkd/status.json` (§18.2) with the
+		active conflict count, the conflicting /128s + origins, and the metrics
+		counters. tempfile + `os.replace` (the `state.py`/`localownership.py`
+		idiom) so a reader sees the old or new file, never a torn one. Best-effort:
+		a write failure is counted (`status_write_failed`) + logged, never raised —
+		the mesh keeps converging even if the status surface can't be written."""
+		counter = self.metrics
+		try:
+			doc = {
+				"conflict_count": len(current),
+				"conflicts": [
+					{"private_ip": ip, "origins": sorted(origins)}
+					for ip, origins in sorted(current.items())
+				],
+				"metrics": counter.snapshot() if counter is not None else {},
+			}
+			p = Path(self.config.status_path)
+			p.parent.mkdir(parents=True, exist_ok=True)
+			tmp = tempfile.NamedTemporaryFile(
+				"w", dir=p.parent, delete=False, suffix=".tmp", encoding="utf-8"
+			)
+			try:
+				json.dump(doc, tmp, indent=2, sort_keys=True)
+				tmp.write("\n")
+				tmp.flush()
+				os.fsync(tmp.fileno())
+				tmp.close()
+				os.replace(tmp.name, p)
+			except Exception:
+				tmp.close()
+				try:
+					os.unlink(tmp.name)
+				except FileNotFoundError:
+					pass
+				raise
+		except Exception as exc:
+			if counter is not None:
+				counter.incr("status_write_failed")
+			print(
+				f"atlas-networkd: WARNING: could not write status.json at {self.config.status_path}: {exc}",
+				file=sys.stderr,
+			)
+
+	# --- shutdown (spec §14.4) ----------------------------------------------
+
+	def shutdown(self) -> None:
+		"""Persistence + sd_notify STOPPING. Called from the SIGTERM handler
+		before the loop exits (graceful shutdown, §14.4). The leaving Membership
+		Advertisement (spec §14.4 step 1) is a Stage-5 addition — Stage 1b just
+		persists state so a restart recovers the Generation counter."""
+		save_state(self.state, self.config.data_dir)
+		self.notify_stopping()
+
+
+def build_initial(
+	identity: HostIdentity,
+	config: Config,
+	state: AppliedState,
+	public_key: str,
+	own_signing_priv_b64: str = "",
+	own_signing_pub_b64: str = "",
+) -> Daemon:
+	"""Construct the host's first Membership Record for itself (§9). Called at
+	daemon startup after `keys.ensure_keypair` + `keys.ensure_signing_keypair`
+	so the wg pubkey + ed25519 signing pubkey exist to be advertised.
+	Generation = `state.own_generation + 1` — a restart bumps to `persisted+1`
+	(§14.5 fast-refute shape); a first boot starts at 1.
+
+	Stage 5: the Membership Record carries `signing_public_key` (the ed25519
+	pubkey peers will use to verify subsequent records from this origin).
+	Outbound signatures are attached at wire-serialize time (in `gossip` /
+	`join` / `antientropy`), not at record-store time — keeps the dataclass
+	immutable and the apply-state shape byte-equivalent across stages."""
+	current_gen = state.own_generation + 1
+	own = MembershipRecord(
+		host_id=identity.host_id,
+		kind=MembershipKind.MEMBER,
+		state=MemberState.ALIVE,
+		endpoint=identity.endpoint,
+		wg_public_key=public_key,
+		mesh_address=identity.mesh_address,
+		generation=current_gen,
+		signing_public_key=own_signing_pub_b64,
+	)
+	state.bump_own_generation()  # consume the +1 we used
+	state.apply_membership(own)  # the apply rule replaces wholesale on higher gen
+	save_state(state, config.data_dir)  # persist so a crash keeps gen ≥ current
+	return Daemon(
+		identity=identity,
+		config=config,
+		state=state,
+		own_membership=own,
+		own_signing_priv_b64=own_signing_priv_b64,
+		own_signing_pub_b64=own_signing_pub_b64,
+	)
+
+
+__all__ = ["Daemon", "build_initial", "default_envelope_verifier", "default_signature_verifier"]
+
+
+def _tofu_learn(daemon, host_id: str, signing_pub_b64: str) -> None:
+	"""Record a TOFU-learned signing pubkey (§19.5) into BOTH the runtime
+	`signing_pubkey_cache` and the DURABLE `state.signing_pubkeys` (M6). The
+	runtime cache is what the envelope verifier consults each datagram; the
+	state map is what `save_state` persists so a restart re-trusts the peer
+	(`main.py` merges `state.signing_pubkeys` into the cache on boot). Without
+	the durable half, a key learned via introduction — but not otherwise
+	captured in a persisted MembershipRecord — is treated as first-contact
+	again after a restart and the peer's envelopes are dropped until it
+	re-cold-joins (a one-sided partition)."""
+	daemon.signing_pubkey_cache[host_id] = signing_pub_b64
+	st = getattr(daemon, "state", None)
+	pubkeys = getattr(st, "signing_pubkeys", None)
+	if pubkeys is not None:
+		pubkeys[host_id] = signing_pub_b64
+
+
+def default_signature_verifier(record, daemon) -> None:
+	"""The production verifier (§19.3) wired by `main.py`. For a Membership
+	Record: verify the wire-dict signature against the record's own
+	`signing_public_key`. For an Ownership Advertisement: verify against the
+	origin's cached signing pubkey (looked up from the applied Membership
+	Record for that origin). Raises `SignatureError` on any failure.
+
+	Records WITH `signing_public_key` set MUST carry a valid wire signature —
+	unsigned records from a peer that advertises a signing key are rejected.
+	Records WITHOUT `signing_public_key` are accepted unsigned (pre-Stage-5
+	peer path; transport-binding trust is the only defense).
+
+	The actual wire signature is threaded in via the daemon's
+	`_incoming_wire_sigs` side-channel keyed by the record object's `id()`;
+	the gossip / anti-entropy apply path populates it before invoking the
+	verifier.
+	"""
+	from . import wire
+	from .records import MembershipRecord, OwnershipAdvertisement
+
+	sigs = getattr(daemon, "_incoming_wire_sigs", None) or {}
+	wire_sig = sigs.get(id(record))
+	if isinstance(record, MembershipRecord):
+		existing = daemon.state.membership.get(record.host_id)
+		if not record.signing_public_key:
+			if existing is not None and existing.signing_public_key:
+				raise SignatureError(
+					f"MembershipRecord from {record.host_id} drops signing_public_key "
+					"(downgrade attempt rejected)"
+				)
+			return  # pre-Stage-5 peer — accept unsigned
+		if not wire_sig:
+			raise SignatureError(
+				f"MembershipRecord from {record.host_id} has signing_public_key but carries no wire signature"
+			)
+		d = wire.membership_to_dict(record)
+		d["signature"] = wire_sig
+		# Verify against the EXISTING stored signing key when available (§19.3
+		# key-rotation binding). Without this, any relay can hijack an origin's
+		# signing key by publishing a MembershipRecord with a fresh keypair —
+		# the verifier would accept it against the record's own key, not the
+		# origin's established key.
+		if existing is not None and existing.signing_public_key:
+			verify(d, existing.signing_public_key, kind="membership")
+		else:
+			verify(d, record.signing_public_key, kind="membership")
+		return
+	if isinstance(record, OwnershipAdvertisement):
+		origin_membership = daemon.state.membership.get(record.origin)
+		if origin_membership is None or not origin_membership.signing_public_key:
+			# §19.3 — an OwnershipAdvertisement from an origin we have no trusted
+			# signing pubkey for yet is DEFERRED, not applied: reject so
+			# `_apply_record` drops + counts it and never calls `apply_ownership`.
+			# Because it isn't applied, the ownership generation-vector for this
+			# origin is NOT advanced (anti-entropy derives that vector from
+			# `state.ownership`), so once the origin's MembershipRecord arrives —
+			# carrying its signing key — the next gossip / anti-entropy round
+			# re-delivers this advertisement and it verifies. Applying it
+			# unverified would instead let any authenticated relay inject a
+			# phantom /128 (a §7.3 conflict → fleet-wide drop) AND advance the
+			# gen-vector so the authentic signed record is never re-pulled.
+			raise SignatureError(
+				f"OwnershipAdvertisement from {record.origin} has no trusted signing "
+				"pubkey yet (no MembershipRecord) — deferred until its membership arrives"
+			)
+		if not wire_sig:
+			raise SignatureError(
+				f"OwnershipAdvertisement from {record.origin} has signing_public_key "
+				"but carries no wire signature"
+			)
+		d = wire.ownership_to_dict(record)
+		d["signature"] = wire_sig
+		verify(d, origin_membership.signing_public_key, kind="ownership")
+		return
+
+
+def default_envelope_verifier(message, daemon) -> None:
+	"""The production envelope verifier (spec §19.1). Called by the recv path
+	(`loop._drain_incoming` → `transport.drain` handler) BEFORE any payload
+	work — a datagram whose envelope fails to verify is dropped + counted, no
+	apply work occurs.
+
+	The trust lookup uses `daemon.signing_pubkey_cache`:
+	  - HostID is cached → verify `message.signature` against the cached
+	    signing pubkey. The envelope's self-asserted `signing_public_key`,
+	    if present and different, is rejected (key rotation must come via a
+	    signed MembershipRecord from the established key, §19.3).
+	  - HostID is NOT cached → require a self-asserted `signing_public_key`
+	    AND an `introduction_signature` (spec §19.5) that verifies against
+	    `daemon.operator_public_key`. On success, TOFU the self-asserted key
+	    into the cache; from now on the cached key is the trusted one and
+	    self-rotation is closed.
+
+	Empty `signing_public_key` on a cached sender is also a downgrade
+	attempt and is rejected. Empty `operator_public_key` on a daemon with
+	envelope verification installed is a configuration error; any
+	introduction attempt fails against the empty key (the verifier raises
+	`SignatureError` on the verify attempt itself).
+	"""
+	cached = daemon.signing_pubkey_cache.get(message.sender)
+	if cached is not None:
+		if not message.signing_public_key:
+			raise SignatureError(
+				f"envelope from {message.sender} drops signing_public_key (downgrade attempt rejected)"
+			)
+		if message.signing_public_key != cached:
+			# The sender claims a different signing key than cached. This is
+			# NOT necessarily an attack — the host may have restarted with a
+			# new keypair after `resync_networkd_keys`. Verify the envelope
+			# against the message's self-asserted key: if the signature checks
+			# out, the sender demonstrably controls the new private key
+			# (envelope-signing is proof of possession). Accept it and update
+			# the cache — equivalent to TOFU on each key for a known sender.
+			#
+			# Also check the applied membership table as a further trust signal
+			# (§19.3): if the membership table has a signing_public_key that
+			# matches the message's key, the key was already verified via a
+			# signed MembershipRecord.
+			record = daemon.state.membership.get(message.sender)
+			if record is not None and record.signing_public_key == message.signing_public_key:
+				_tofu_learn(daemon, message.sender, message.signing_public_key)
+				cached = message.signing_public_key
+			else:
+				try:
+					message.verify_envelope(message.signing_public_key)
+				except Exception:
+					raise SignatureError(
+						f"envelope from {message.sender} self-asserts a different signing_public_key "
+						f"({message.signing_public_key}) and neither the cache ({cached}) nor "
+						"the membership table confirm it; verification against the self-asserted "
+						"key also failed"
+					)
+				_tofu_learn(daemon, message.sender, message.signing_public_key)
+				cached = message.signing_public_key
+		message.verify_envelope(cached)
+		return
+	# First contact — the §19.5 introduction path.
+	if not message.signing_public_key:
+		raise SignatureError(f"envelope from unknown {message.sender} carries no signing_public_key")
+	if not message.introduction_signature:
+		raise SignatureError(f"envelope from unknown {message.sender} carries no introduction_signature")
+	if not daemon.operator_public_key:
+		raise SignatureError("daemon is not seeded with the operator pubkey")
+	message.verify_introduction(daemon.operator_public_key)
+	# TOFU the self-asserted key as the trusted key for future envelopes, and
+	# persist it (M6) so a restart re-trusts this introduced peer.
+	_tofu_learn(daemon, message.sender, message.signing_public_key)

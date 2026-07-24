@@ -24,7 +24,9 @@
   "ipv6_prefix",
   "ipv6_virtual_machine_range",
   "wireguard_public_key",
-  "mesh_address",
+   "signing_public_key",
+   "signing_private_key",
+   "mesh_address",
   "section_break_host_info",
   "architecture",
   "column_break_host_info",
@@ -148,13 +150,26 @@
    "read_only": 1
   },
   {
-   "description": "This host's WireGuard public key on the wg-mesh private-plane fabric, derived (not stored) from the Server UUID. Shown for legibility; the controller recomputes it from atlas.networking.derive_host_wireguard_keypair. The private key is injected at bootstrap and never stored.",
+   "description": "This host's WireGuard public key on the wg-mesh private-plane fabric, derived from the Server UUID. Shown for legibility; the controller writes it to the host at bootstrap alongside the private key. The private key is never stored on the controller.",
    "fieldname": "wireguard_public_key",
    "fieldtype": "Data",
    "label": "WireGuard Public Key",
    "read_only": 1
   },
-  {
+   {
+    "description": "This host's ed25519 public key (base64, 32 raw bytes) for ANCP envelope + record signatures (spec/31 §19.1, §19.3). Generated once at Server-validate time (NOT derived — derived signing keys have public seeds, defeating the purpose, §19.4); the public half is stored here so other hosts' `seed.json` can carry it as the §19.1/§19.3 trust anchor. The controller writes the matching private key to the host at bootstrap; it is never stored on the controller.",
+    "fieldname": "signing_public_key",
+    "fieldtype": "Data",
+    "label": "Signing Public Key",
+    "read_only": 1
+   },
+   {
+    "description": "The matching ed25519 private key (base64, 32 raw bytes) for the signing_public_key above. Persisted as an encrypted Password so the controller can push the signing key to existing hosts when re-syncing network state. Generated once at first Server-validate time alongside the public key; written to the host at bootstrap as /etc/atlas-networkd/signing-private-key.",
+    "fieldname": "signing_private_key",
+    "fieldtype": "Password",
+    "label": "Signing Private Key"
+   },
+   {
    "description": "This host's own fdaa:0:0:<idx>::1 endpoint on the mesh bus (the infra /48), used for host-to-host transport (migration NBD, snapshot replication, image fan-out) inside the tunnel. Derived from the Server UUID; shown for legibility.",
    "fieldname": "mesh_address",
    "fieldtype": "Data",
