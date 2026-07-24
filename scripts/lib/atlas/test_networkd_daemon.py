@@ -362,13 +362,33 @@ class TestDaemonScan(unittest.TestCase):
 		with tempfile.TemporaryDirectory() as d:
 			lo_path = Path(d) / "lo.json"
 			lo_path.write_text(json.dumps({"owned": ["fdaa::1", "fdaa::2"]}))
-			daemon.config = daemon.config.with_overrides(local_ownership_path=str(lo_path))
+			daemon.config = daemon.config.with_overrides(local_ownership_path=str(lo_path), data_dir=d)
 			self.assertTrue(daemon.scan_local_ownership())
 			self.assertEqual(daemon.state.own_generation, 1)
 			# The new advertisement is stored under the host's own origin.
 			adv = daemon.state.ownership[daemon.identity.host_id]
 			self.assertEqual(adv.generation, 1)
 			self.assertEqual(adv.owned, frozenset({"fdaa::1", "fdaa::2"}))
+
+	def test_scan_changed_persists_generation_before_returning(self):
+		# H5 — the bumped own_generation MUST be on disk before scan returns True
+		# (the loop gossips the new advertisement in the same tick). A crash
+		# after the wire send but before an unrelated save_state would otherwise
+		# leave the on-disk generation stale, and a restart would reuse an
+		# already-advertised generation for different content — peers reject it
+		# as stale (§12.1). Assert load_state sees the bumped value.
+		from atlas.networkd.state import load_state
+
+		daemon = _fake_daemon()
+		daemon.last_local_set = frozenset({"fdaa::1"})
+		with tempfile.TemporaryDirectory() as d:
+			lo_path = Path(d) / "lo.json"
+			lo_path.write_text(json.dumps({"owned": ["fdaa::1", "fdaa::2"]}))
+			daemon.config = daemon.config.with_overrides(local_ownership_path=str(lo_path), data_dir=d)
+			self.assertTrue(daemon.scan_local_ownership())
+			# Persisted before any gossip could send the new generation.
+			self.assertEqual(load_state(d).own_generation, daemon.state.own_generation)
+			self.assertEqual(load_state(d).own_generation, 1)
 
 
 # --- daemon.Daemon.apply_if_changed -----------------------------------------
@@ -416,6 +436,142 @@ class TestDaemonApply(unittest.TestCase):
 		# The second positional is the inner script body (syncconf + set key).
 		self.assertIn("syncconf", run_calls[0][1])
 		self.assertIn("private-key", run_calls[0][1])
+
+
+# --- daemon conflict observability (spec §7.3 / §18.2 — H3) ------------------
+
+
+def _member(host_id, key, mesh, endpoint="2001:db9::7"):
+	return MembershipRecord(
+		host_id=host_id,
+		kind=MembershipKind.MEMBER,
+		state=MemberState.ALIVE,
+		endpoint=endpoint,
+		wg_public_key=key,
+		mesh_address=mesh,
+		generation=1,
+	)
+
+
+class TestDaemonConflictObservability(unittest.TestCase):
+	"""H3: the §7.3/§18.2 "report loudly" promise. The apply path MUST drive the
+	`ConflictTracker` (jsonl events + counters) and write `status.json` for BOTH
+	an owned-/128 conflict and an H2 mesh_address collision."""
+
+	def _daemon_with_tracker(self, tmp):
+		from atlas.networkd.conflicts import ConflictTracker
+		from atlas.networkd.observe import Counter, wire_conflict_metrics
+		from atlas.networkd.records import owning_advertisement
+
+		clock = [1000.0]
+		daemon = _fake_daemon()
+		daemon.config = daemon.config.with_overrides(status_path=str(Path(tmp) / "status.json"))
+		tracker = ConflictTracker(now_fn=lambda: clock[0])
+		tracker._log_path = str(Path(tmp) / "conflicts.jsonl")
+		daemon.conflict_tracker = tracker
+		daemon.metrics = Counter()
+		wire_conflict_metrics(tracker, daemon.metrics)
+		return daemon, tracker, clock, owning_advertisement
+
+	def _read_status(self, daemon):
+		return json.loads(Path(daemon.config.status_path).read_text())
+
+	def _read_jsonl(self, tmp):
+		p = Path(tmp) / "conflicts.jsonl"
+		if not p.exists():
+			return []
+		return [json.loads(line) for line in p.read_text().splitlines()]
+
+	def test_owned_conflict_start_and_end_surface(self):
+		with tempfile.TemporaryDirectory() as tmp:
+			daemon, tracker, clock, adv = self._daemon_with_tracker(tmp)
+			# Two origins both own fdaa::9 → owned §7.3 conflict.
+			daemon.state.membership["h1"] = _member("h1", "K1", "fdaa:0:0:1::1")
+			daemon.state.membership["h2"] = _member("h2", "K2", "fdaa:0:0:2::1")
+			daemon.state.ownership["h1"] = adv("h1", 1, ("fdaa::9",))
+			daemon.state.ownership["h2"] = adv("h2", 1, ("fdaa::9",))
+			daemon.last_applied_config = "STALE\n"
+			daemon.apply_if_changed()
+			# jsonl: one START with {private_ip, origins}.
+			lines = self._read_jsonl(tmp)
+			starts = [l for l in lines if l["kind"] == "start"]
+			self.assertEqual(len(starts), 1)
+			self.assertEqual(starts[0]["private_ip"], "fdaa::9")
+			self.assertEqual(sorted(starts[0]["origins"]), ["h1", "h2"])
+			# status.json: active conflict + incremented counter.
+			status = self._read_status(daemon)
+			self.assertEqual(status["conflict_count"], 1)
+			self.assertEqual(status["conflicts"][0]["private_ip"], "fdaa::9")
+			self.assertEqual(sorted(status["conflicts"][0]["origins"]), ["h1", "h2"])
+			self.assertEqual(status["metrics"]["conflict_started"], 1)
+			self.assertEqual(status["metrics"]["conflicts_total"], 1)
+			# h2 withdraws → conflict clears → END event, count back to 0.
+			clock[0] = 2000.0
+			daemon.state.ownership["h2"] = adv("h2", 2, ())
+			daemon.last_applied_config = "STALE-AGAIN\n"
+			daemon.apply_if_changed()
+			ends = [l for l in self._read_jsonl(tmp) if l["kind"] == "end"]
+			self.assertEqual(len(ends), 1)
+			self.assertEqual(ends[0]["private_ip"], "fdaa::9")
+			status2 = self._read_status(daemon)
+			self.assertEqual(status2["conflict_count"], 0)
+			self.assertEqual(status2["metrics"]["conflict_ended"], 1)
+
+	def test_mesh_address_collision_surfaces(self):
+		# H2 mesh_address collision: two members share a mesh_address /128 — NOT an
+		# owned conflict (empty ownership table), so this proves the render-level
+		# source is threaded out and surfaced too.
+		with tempfile.TemporaryDirectory() as tmp:
+			daemon, tracker, clock, _adv = self._daemon_with_tracker(tmp)
+			daemon.state.membership["h1"] = _member("h1", "K1", "fdaa:0:0:5::1")
+			daemon.state.membership["h2"] = _member("h2", "K2", "fdaa:0:0:5::1")  # same mesh
+			daemon.last_applied_config = "STALE\n"
+			daemon.apply_if_changed()
+			starts = [l for l in self._read_jsonl(tmp) if l["kind"] == "start"]
+			self.assertEqual(len(starts), 1)
+			self.assertEqual(starts[0]["private_ip"], "fdaa:0:0:5::1")
+			self.assertEqual(sorted(starts[0]["origins"]), ["h1", "h2"])
+			status = self._read_status(daemon)
+			self.assertEqual(status["conflict_count"], 1)
+			self.assertEqual(status["metrics"]["conflict_started"], 1)
+
+	def test_status_write_failure_does_not_crash_apply(self):
+		# A status_path that can't be written (parent is a file) → best-effort:
+		# the apply still runs, a counter is bumped, no exception escapes.
+		with tempfile.TemporaryDirectory() as tmp:
+			daemon, tracker, clock, adv = self._daemon_with_tracker(tmp)
+			blocker = Path(tmp) / "afile"
+			blocker.write_text("x")
+			daemon.config = daemon.config.with_overrides(status_path=str(blocker / "status.json"))
+			daemon.state.ownership["h1"] = adv("h1", 1, ("fdaa::9",))
+			daemon.state.ownership["h2"] = adv("h2", 1, ("fdaa::9",))
+			daemon.state.membership["h1"] = _member("h1", "K1", "fdaa:0:0:1::1")
+			daemon.state.membership["h2"] = _member("h2", "K2", "fdaa:0:0:2::1")
+			daemon.last_applied_config = "STALE\n"
+			# Must not raise.
+			self.assertTrue(daemon.apply_if_changed())
+			self.assertEqual(daemon.metrics.snapshot().get("status_write_failed"), 1)
+
+	def test_conflict_observed_even_when_config_bytes_unchanged(self):
+		# A conflict that clears can render byte-identical to a prior state; the
+		# observe path must run BEFORE the drift short-circuit so the END still
+		# fires + status.json refreshes.
+		with tempfile.TemporaryDirectory() as tmp:
+			daemon, tracker, clock, adv = self._daemon_with_tracker(tmp)
+			daemon.state.ownership["h1"] = adv("h1", 1, ("fdaa::9",))
+			daemon.state.ownership["h2"] = adv("h2", 1, ("fdaa::9",))
+			daemon.state.membership["h1"] = _member("h1", "K1", "fdaa:0:0:1::1")
+			daemon.state.membership["h2"] = _member("h2", "K2", "fdaa:0:0:2::1")
+			daemon.apply_if_changed()  # START (config also changed from "")
+			self.assertEqual(self._read_status(daemon)["conflict_count"], 1)
+			# Now clear the conflict; prime last_applied to the NEW render so the
+			# drift check would short-circuit — the observe path must still run.
+			daemon.state.ownership["h2"] = adv("h2", 2, ())
+			clock[0] = 3000.0
+			daemon.last_applied_config = daemon.render_current()
+			self.assertFalse(daemon.apply_if_changed())  # no drift → no syncconf
+			self.assertEqual(self._read_status(daemon)["conflict_count"], 0)
+			self.assertEqual(daemon.metrics.snapshot()["conflict_ended"], 1)
 
 
 if __name__ == "__main__":
