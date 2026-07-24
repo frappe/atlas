@@ -73,29 +73,51 @@ class UdpTransport:
 			raise ValueError(f"datagram size {len(data)} > {MAX_DATAGRAM_BYTES}")
 		self.socket.sendto(data, target)
 
-	def drain(self, handler: Callable[[Message, tuple[str, int]], None]) -> int:
-		"""Non-blocking: recv every pending datagram, dispatch to `handler`.
-		Returns the count processed. Stops at the first EWOULDBLOCK (the kernel
-		queue is drained for this tick). A malformed datagram raises
-		`ValueError` from the wire layer; the caller decides whether to swallow
-		it (drop + log) or surface it. We swallow here — one bad byte from a
-		peer shouldn't crash the loop; the operator's log surfaces it."""
+	def drain(
+		self,
+		handler: Callable[[Message, tuple[str, int]], None],
+		max_datagrams: int | None = None,
+		pre_filter: Callable[[tuple], bool] | None = None,
+	) -> int:
+		"""Non-blocking: recv pending datagrams, dispatch to `handler`. Returns
+		the count dispatched. Stops at the first EWOULDBLOCK (the kernel queue is
+		drained for this tick) OR once `max_datagrams` have been dispatched — the
+		per-tick inbound budget (spec §19 flood defense) that caps how much a
+		single tick spends draining+verifying so a public-UDP flood can never
+		monopolize the tick (excess stays in the socket buffer for the next tick,
+		or the kernel drops it). `None` = unbounded (the old behavior; tests that
+		don't care about the budget).
+
+		`pre_filter(addr) -> bool`, if given, is called on the RAW recv address
+		BEFORE `from_bytes`/verify — the cheap per-source rate-limit gate (spec
+		§19), so an abusive source is dropped without the parse or ed25519 cost.
+		Returning False drops the datagram (not counted as dispatched) and keeps
+		draining the socket so one abusive source can't wedge the recv queue.
+
+		A malformed datagram raises `ValueError` from the wire layer; we swallow
+		it here — one bad byte from a peer shouldn't crash the loop; the
+		operator's log surfaces it."""
 		assert self.socket is not None  # caller invariant: started before drain
 		count = 0
 		while True:
+			if max_datagrams is not None and count >= max_datagrams:
+				# Budget spent this tick — leave the rest in the kernel buffer.
+				break
 			try:
 				data, addr = self.socket.recvfrom(MAX_DATAGRAM_BYTES + 1)
 			except BlockingIOError:
 				break
 			if len(data) > MAX_DATAGRAM_BYTES:
 				continue  # oversized datagram — silently truncated by the kernel
-			count += 1
+			if pre_filter is not None and not pre_filter(addr):
+				continue  # rate-limited source — dropped before parse/verify
 			try:
 				msg = from_bytes(data)
 			except ValueError:
 				# Drop + continue — a malformed datagram is logged at operator
 				# level once we wire structured logging; the loop stays alive.
 				continue
+			count += 1
 			handler(msg, addr)
 		return count
 
