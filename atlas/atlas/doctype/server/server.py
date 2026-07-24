@@ -98,6 +98,7 @@ class Server(Document):
 	def validate(self) -> None:
 		atlas_settings = frappe.get_single("Atlas Settings")
 		atlas_settings._ensure_ancp_operator_keypair()
+		atlas_settings._ensure_ancp_wg_derivation_secret()
 		atlas_settings.save(ignore_permissions=True)
 		self._validate_immutability()
 		self._denormalize_mesh_identity()
@@ -118,9 +119,12 @@ class Server(Document):
 		Password) so the controller can write it to the host during bootstrap and
 		push it to existing hosts when resyncing networkd state."""
 		if not self.wireguard_public_key:
+			from atlas.atlas.doctype.atlas_settings.atlas_settings import get_ancp_wg_derivation_secret
 			from atlas.atlas.networking import derive_host_wireguard_keypair
 
-			_private_key, self.wireguard_public_key = derive_host_wireguard_keypair(self.name)
+			_private_key, self.wireguard_public_key = derive_host_wireguard_keypair(
+				self.name, get_ancp_wg_derivation_secret()
+			)
 		if not self.mesh_address:
 			from atlas.atlas.networking import derive_host_mesh_address
 
@@ -254,6 +258,12 @@ class Server(Document):
 		  §8, §19.4 — the seed now ALSO anchors each other host's ed25519 signing
 		  pubkey so the envelope verifier's `signing_pubkey_cache` can be
 		  pre-populated at build time).
+		- `seed.json.sig` — the detached operator ed25519 signature over the exact
+		  bytes of seed.json (spec/31 §9.2 / §19.4 — the seed is the sole trust
+		  root; the host's `seed.load_seed` fails closed unless this verifies
+		  against operator-public-key). Written only when the operator keypair is
+		  configured (mirrors the operator-public-key / introduction-signature
+		  gating).
 		- TODO Stage 5+ (§19.5): `/etc/atlas-networkd/operator-public-key` — the
 		  operator provision pubkey (the §19.5 newcomer trust root) and
 		  `/etc/atlas-networkd/introduction-signature` — the operator-signed
@@ -281,24 +291,46 @@ class Server(Document):
 		for row in other_actives:
 			if not row.ipv6_address:
 				continue
+			# §19.4 — the seed anchors each other host's ed25519 pubkey so the
+			# envelope verifier's `signing_pubkey_cache` is populated at build
+			# time. A legacy host bootstrapped before `signing_public_key`
+			# existed has an EMPTY key here. SKIP it rather than emit an empty
+			# entry: `seed.signing_pubkey_index` drops empty keys anyway, so an
+			# emitted-empty entry gives the peer NO cached key AND forces the
+			# §19.5 introduction path — but the introduction cert only rides the
+			# legacy host's OWN first direct MembershipAdvertisement, never a
+			# relayed/gossiped record, so a peer that first learns of it via a
+			# relay silently drops (`signature_failed`) → one-sided partition.
+			# Skipping is strictly safer: the peer just isn't seeded with this
+			# host and learns it later once it HAS a key (the `backfill_server_
+			# signing_key` migration fills every legacy row, so this is a
+			# belt-and-braces guard for a row that slipped through). Warn loud so
+			# an operator sees the gap instead of it silently partitioning.
+			signing_public_key = getattr(row, "signing_public_key", "") or ""
+			if not signing_public_key:
+				frappe.logger("atlas").warning(
+					f"skipping {row.name} from {self.name}'s ANCP seed: it has no "
+					"signing_public_key (a host bootstrapped before the field existed). "
+					"Run `bench migrate` (the backfill_server_signing_key patch) or "
+					"resync_networkd_keys on it so it gets a signing key and can be seeded."
+				)
+				continue
 			seed.append(
 				{
 					"host_id": row.name,
 					"endpoint": row.ipv6_address,
 					"wg_public_key": row.wireguard_public_key or "",
-					# §19.4 — the seed now anchors each other host's ed25519 pubkey
-					# so the envelope verifier's `signing_pubkey_cache` is populated
-					# at build time. Empty for a host bootstrapped before the field
-					# existed; the envelope verifier demands a §19.5 introduction
-					# cert on first contact in that case.
-					"signing_public_key": getattr(row, "signing_public_key", "") or "",
+					"signing_public_key": signing_public_key,
 					"mesh_address": row.mesh_address or derive_host_mesh_address(row.name),
 					"generation": 1,
 				}
 			)
+		from atlas.atlas.doctype.atlas_settings.atlas_settings import get_ancp_wg_derivation_secret
 		from atlas.atlas.networking import derive_host_wireguard_keypair
 
-		wg_private_key, _wg_public_key = derive_host_wireguard_keypair(self.name)
+		wg_private_key, _wg_public_key = derive_host_wireguard_keypair(
+			self.name, get_ancp_wg_derivation_secret()
+		)
 		# Stage 5+ — the host's signing keypair. validate() generated one on first
 		# insert and persisted the priv in `signing_private_key`. A re-Bootstrap
 		# or resync reads it from the persisted field (encrypted Password) and
@@ -409,13 +441,18 @@ class Server(Document):
 				timeout_seconds=30,
 				stdin=json.dumps(identity, sort_keys=True) + "\n",
 			)
+			# The exact bytes we push to the host — sign THESE below so the
+			# controller's signature is byte-identical to what the host's
+			# `seed.load_seed` verifies (spec §9.2 / §19.4: the seed is the sole
+			# trust root, so its operator signature is a hard load-time MUST).
+			seed_content = json.dumps(seed, sort_keys=True) + "\n"
 			run_ssh(
 				connection,
 				key_path,
 				"sudo tee {} >/dev/null",
 				"/etc/atlas-networkd/seed.json",
 				timeout_seconds=30,
-				stdin=json.dumps(seed, sort_keys=True) + "\n",
+				stdin=seed_content,
 			)
 			# Stage 5+ (§19.5) — write the operator provision pubkey so the
 			# host can verify any future newcomer's introduction certificate.
@@ -444,44 +481,58 @@ class Server(Document):
 					timeout_seconds=30,
 					stdin=operator_pub + "\n",
 				)
-				# A host joining an existing cluster (seed has peers → the
-				# existing hosts didn't get us in their initial seed.json).
-				# Sign {host_id, signing_public_key, generation=1} with the
-				# operator priv; the §19.5 verifier accepts the self-asserted
-				# signing_public_key iff this signature verifies against
-				# operator_pub. Initial-seed hosts skip this (their pubkey is
-				# already anchored on every peer via the seed).
-				if seed and self.signing_public_key:
-					operator_priv = get_ancp_operator_private_key()
-					if operator_priv:
+				operator_priv = get_ancp_operator_private_key()
+				# Re-use the host-lib's pure signing primitives (pure above the
+				# keypair file — runs in the bench venv where `cryptography` is
+				# already a dep). Use importlib to bypass the cached top-level
+				# `atlas` package (the bench app) — sys.path insertion alone
+				# won't reach scripts/lib/atlas/networkd/signing.py. Loaded once;
+				# reused for the seed signature AND the introduction signature.
+				if operator_priv:
+					import importlib.util
+					from pathlib import Path
+
+					signing_path = str(
+						Path(frappe.get_app_path("atlas")).parent
+						/ "scripts"
+						/ "lib"
+						/ "atlas"
+						/ "networkd"
+						/ "signing.py"
+					)
+					_spec = importlib.util.spec_from_file_location("_host_signing", signing_path)
+					_host_signing = importlib.util.module_from_spec(_spec)
+					_spec.loader.exec_module(_host_signing)  # type: ignore[union-attr]
+
+					# The seed is the sole trust root (spec §9.2 / §19.4), so the
+					# host's `seed.load_seed` fails closed unless the exact bytes
+					# of seed.json verify against operator_pub. Sign the SAME
+					# bytes we pushed to /etc/atlas-networkd/seed.json above and
+					# write the detached signature to the sibling seed.json.sig
+					# (0644, matching the other pushed non-secret files).
+					seed_sig = _host_signing.sign_detached(seed_content.encode("utf-8"), operator_priv)
+					run_ssh(
+						connection,
+						key_path,
+						"sudo install -m 0644 /dev/stdin {}",
+						"/etc/atlas-networkd/seed.json.sig",
+						timeout_seconds=30,
+						stdin=seed_sig + "\n",
+					)
+					# A host joining an existing cluster (seed has peers → the
+					# existing hosts didn't get us in their initial seed.json).
+					# Sign {host_id, signing_public_key, generation=1} with the
+					# operator priv; the §19.5 verifier accepts the self-asserted
+					# signing_public_key iff this signature verifies against
+					# operator_pub. Initial-seed hosts skip this (their pubkey is
+					# already anchored on every peer via the seed).
+					if seed and self.signing_public_key:
 						intro_body = {
 							"host_id": self.name,
 							"signing_public_key": self.signing_public_key,
 							"generation": 1,
 						}
-						# Re-use the host-lib's pure sign_introduction (it's
-						# pure above the keypair file — runs in the bench venv
-						# where `cryptography` is already a dep).
-						# Use importlib to bypass the cached top-level `atlas`
-						# package (the bench app) — sys.path insertion alone
-						# won't reach scripts/lib/atlas/networkd/signing.py.
-						import importlib.util
-						from pathlib import Path
-
-						signing_path = str(
-							Path(frappe.get_app_path("atlas")).parent
-							/ "scripts"
-							/ "lib"
-							/ "atlas"
-							/ "networkd"
-							/ "signing.py"
-						)
-						_spec = importlib.util.spec_from_file_location("_host_signing", signing_path)
-						_host_signing = importlib.util.module_from_spec(_spec)
-						_spec.loader.exec_module(_host_signing)  # type: ignore[union-attr]
-						sign_introduction = _host_signing.sign_introduction
-
-						intro_sig = sign_introduction(intro_body, operator_priv)
+						intro_sig = _host_signing.sign_introduction(intro_body, operator_priv)
 						run_ssh(
 							connection,
 							key_path,

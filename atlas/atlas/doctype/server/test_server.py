@@ -1,6 +1,7 @@
 from unittest.mock import patch
 
 import frappe
+from frappe.model.document import Document
 from frappe.tests import IntegrationTestCase
 
 from atlas.atlas.networking import carve_virtual_machine_range
@@ -394,3 +395,88 @@ class TestServerImmutability(IntegrationTestCase):
 		blank.save(ignore_permissions=True)
 		blank.reload()
 		self.assertEqual(blank.ipv4_address, "10.0.0.77")
+
+
+class TestServerSigningKeyBackfill(IntegrationTestCase):
+	"""M9 — a legacy Server (bootstrapped before the ed25519 signing fields
+	existed) must never leave an empty `signing_public_key` in the fleet: the
+	backfill patch fills it, and the seed builder never emits an empty entry that
+	would force the broken §19.5 relayed-introduction path (spec/31 §19.4/§19.5)."""
+
+	def _make_legacy_server(self, title: str, resource_id: str, hextet: str) -> Document:
+		"""An Active Server with its signing keypair blanked out on disk — the
+		legacy shape. `validate()` auto-generates the keypair on insert, so we
+		clear both fields via `db.set_value` (which bypasses validate) to recreate
+		a row that predates the fields."""
+		frappe.db.delete("Server", {"title": title})
+		server = make_server(
+			make_provider(f"test-provider-{title}"),
+			title,
+			provider_resource_id=resource_id,
+			ipv4_address=f"10.0.0.{resource_id}",
+			ipv6_address=f"2a03:b0c0:abcd:{hextet}::1",
+			ipv6_prefix=f"2a03:b0c0:abcd:{hextet}::/64",
+			ipv6_virtual_machine_range=f"2a03:b0c0:abcd:{hextet}::/124",
+			status="Active",
+		)
+		frappe.db.set_value("Server", server.name, "signing_public_key", "", update_modified=False)
+		frappe.db.set_value("Server", server.name, "signing_private_key", "", update_modified=False)
+		return frappe.get_doc("Server", server.name)
+
+	def test_backfill_patch_populates_every_empty_signing_key(self) -> None:
+		from atlas.patches.v1_0.backfill_server_signing_key import execute
+
+		legacy = self._make_legacy_server("test-server-m9-backfill", "81", "8181")
+		self.assertFalse(legacy.signing_public_key)
+
+		execute()
+
+		# No Server is left with an empty signing key after the migration.
+		self.assertEqual(
+			frappe.get_all("Server", filters={"signing_public_key": ("in", ("", None))}, pluck="name"),
+			[],
+		)
+		filled = frappe.get_doc("Server", legacy.name)
+		self.assertTrue(filled.signing_public_key)
+		# The private half is persisted (encrypted) and reads back decrypted.
+		self.assertTrue(filled.get_password("signing_private_key", raise_exception=False))
+
+	def test_seed_build_skips_a_peer_with_an_empty_signing_key(self) -> None:
+		from atlas.atlas.doctype.server import server as server_module
+		from atlas.atlas.networking import generate_host_signing_keypair
+
+		# The host being bootstrapped — give it a real keypair (persisted, since
+		# the seed query and the priv-push read it back from the DB).
+		this_host = self._make_legacy_server("test-server-m9-this", "82", "8282")
+		priv_b64, pub_b64 = generate_host_signing_keypair()
+		this_host.signing_public_key = pub_b64
+		this_host.signing_private_key = priv_b64
+		this_host.save(ignore_permissions=True)
+		this_host = frappe.get_doc("Server", this_host.name)
+		# A legacy PEER still missing its key — must NOT appear in the seed.
+		legacy_peer = self._make_legacy_server("test-server-m9-peer", "83", "8383")
+
+		captured = {}
+
+		def _capture_seed(*args, **_kwargs):
+			# The seed.json write is the one `sudo tee /etc/atlas-networkd/seed.json`.
+			remote = args[2] if len(args) > 2 else ""
+			stdin = _kwargs.get("stdin", "")
+			if "seed.json" in remote and "seed.json.sig" not in remote:
+				captured["seed"] = stdin
+			# Satisfy the own-key read-back canary (see `_bootstrap_ssh_side_effect`).
+			if remote.startswith("sudo cat /etc/atlas-networkd/signing-public-key"):
+				return ((this_host.signing_public_key or "") + "\n", "", 0)
+			return ("ok", "", 0)
+
+		with patch.object(server_module, "run_ssh", side_effect=_capture_seed):
+			this_host._write_ancp_bootstrap_state(Connection(host="x", ssh_private_key="k"))
+
+		import json
+
+		seed = json.loads(captured["seed"])
+		host_ids = {entry["host_id"] for entry in seed}
+		# The legacy peer with no signing key is skipped entirely...
+		self.assertNotIn(legacy_peer.name, host_ids)
+		# ...and no emitted entry ever carries an empty signing_public_key.
+		self.assertTrue(all(entry["signing_public_key"] for entry in seed))
