@@ -86,14 +86,19 @@ class TestAddressDerivation(IntegrationTestCase):
 
 
 class TestHostKeyDerivation(IntegrationTestCase):
+	# A fixed cluster secret so the pure derivation tests don't touch Atlas Settings.
+	SECRET = b"\x11" * 32
+
 	def test_keypair_is_deterministic(self):
 		s = str(uuid.uuid4())
-		self.assertEqual(derive_host_wireguard_keypair(s), derive_host_wireguard_keypair(s))
+		self.assertEqual(
+			derive_host_wireguard_keypair(s, self.SECRET), derive_host_wireguard_keypair(s, self.SECRET)
+		)
 
 	def test_keypair_shapes_are_base64_32_bytes(self):
 		import base64
 
-		priv, pub = derive_host_wireguard_keypair(str(uuid.uuid4()))
+		priv, pub = derive_host_wireguard_keypair(str(uuid.uuid4()), self.SECRET)
 		self.assertEqual(len(base64.b64decode(priv)), 32)
 		self.assertEqual(len(base64.b64decode(pub)), 32)
 
@@ -107,7 +112,7 @@ class TestHostKeyDerivation(IntegrationTestCase):
 		from cryptography.hazmat.primitives import serialization
 		from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 
-		priv, pub = derive_host_wireguard_keypair(str(uuid.uuid4()))
+		priv, pub = derive_host_wireguard_keypair(str(uuid.uuid4()), self.SECRET)
 		key = X25519PrivateKey.from_private_bytes(base64.b64decode(priv))
 		expected = base64.b64encode(
 			key.public_key().public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
@@ -116,8 +121,19 @@ class TestHostKeyDerivation(IntegrationTestCase):
 
 	def test_two_servers_get_distinct_keys(self):
 		self.assertNotEqual(
-			derive_host_wireguard_keypair(str(uuid.uuid4())),
-			derive_host_wireguard_keypair(str(uuid.uuid4())),
+			derive_host_wireguard_keypair(str(uuid.uuid4()), self.SECRET),
+			derive_host_wireguard_keypair(str(uuid.uuid4()), self.SECRET),
+		)
+
+	def test_secret_gates_the_derivation(self):
+		# The security fix (C1): the same Server UUID under a DIFFERENT cluster secret
+		# yields a DIFFERENT key — so a public UUID alone can't recompute the private
+		# key. Anyone lacking the controller's secret can't derive.
+		s = str(uuid.uuid4())
+		other_secret = b"\x22" * 32
+		self.assertNotEqual(
+			derive_host_wireguard_keypair(s, self.SECRET),
+			derive_host_wireguard_keypair(s, other_secret),
 		)
 
 

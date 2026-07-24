@@ -648,9 +648,27 @@ def _clamp_curve25519_scalar(scalar: bytearray) -> bytearray:
 	return scalar
 
 
-def derive_host_wireguard_keypair(server_name: str) -> tuple[str, str]:
+def _hkdf_secret(key: bytes, seed: bytes, info: bytes, length: int) -> bytes:
+	"""HKDF-SHA256 keyed off a SECRET (not the public `_hkdf` salt).
+
+	Same single-block extract+expand shape as `_hkdf`, but the HMAC salt is the
+	controller-held cluster secret instead of the public `b"atlas-private-network"`
+	constant. Used ONLY by `derive_host_wireguard_keypair` — the one derivation
+	whose output is a private key, so it must not be recomputable from public data.
+	The address derivations keep using `_hkdf` unchanged (their outputs are public
+	addresses, so they must stay byte-for-byte identical). `seed` is mixed into the
+	expand step so the same secret still domain-separates by Server UUID + `info`.
+	"""
+	if length > 32:
+		raise ValueError("this minimal HKDF emits at most one SHA256 block (32 bytes)")
+	pseudorandom_key = hmac.new(key, seed, hashlib.sha256).digest()
+	block = hmac.new(pseudorandom_key, info + b"\x01", hashlib.sha256).digest()
+	return block[:length]
+
+
+def derive_host_wireguard_keypair(server_name: str, derivation_secret: bytes) -> tuple[str, str]:
 	"""(private_key_b64, public_key_b64) for a HOST's wg-mesh device, derived from
-	the Server UUID (§3, §8).
+	the Server UUID (§3, §8) AND a controller-held cluster secret.
 
 	Variant (b) puts WireGuard on the HOST, not the guest — so this keys off the
 	*Server* UUID. Derived (not stored) so the entire desired mesh reconstructs from
@@ -664,15 +682,22 @@ def derive_host_wireguard_keypair(server_name: str) -> tuple[str, str]:
 	direct frappe dependency — not a new one). Verified byte-for-byte against `wg
 	pubkey` on a real Scaleway host.
 
-	Cost (§10/#1): derivation is secret-equivalent — anyone who can derive can
-	recompute any host's private key, the same trust class as the Atlas root SSH key.
+	SECURITY (§10/#1): the seed is HMAC-keyed off `derivation_secret` — the
+	cluster-wide secret held ONLY by the controller (Atlas Settings
+	`ancp_wg_derivation_secret`). The Server UUID is public (it is the `host_id`
+	gossiped in cleartext over public UDP), and this repo is open source, so the
+	derivation MUST NOT be recomputable from public data alone. Keying off the
+	secret makes the ability to derive require the cluster secret — the same trust
+	class as the Atlas root SSH key. Distinct from `_hkdf` (which uses a public,
+	hardcoded salt) precisely because its callers emit public ADDRESSES, not
+	secrets; this is the one derivation whose output is a private key.
 	"""
 	import base64
 
 	from cryptography.hazmat.primitives import serialization
 	from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 
-	seed = _hkdf(uuid.UUID(server_name).bytes, _INFO_HOST_WIREGUARD_KEY, 32)
+	seed = _hkdf_secret(derivation_secret, uuid.UUID(server_name).bytes, _INFO_HOST_WIREGUARD_KEY, 32)
 	private_scalar = bytes(_clamp_curve25519_scalar(bytearray(seed)))
 	private_key = X25519PrivateKey.from_private_bytes(private_scalar)
 	public_raw = private_key.public_key().public_bytes(

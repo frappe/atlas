@@ -49,8 +49,12 @@ class TestServerMeshDenorm(IntegrationTestCase):
 		self.provider = make_provider("atlas-mesh-provider")
 
 	def test_server_denormalizes_mesh_identity(self) -> None:
+		from atlas.atlas.doctype.atlas_settings.atlas_settings import get_ancp_wg_derivation_secret
+
 		server = make_server(self.provider, title="atlas-mesh-server")
-		expected_key = derive_host_wireguard_keypair(server.name)[1]
+		# The denorm keys off the controller's cluster secret (C1 fix) — recompute the
+		# expected pub with the SAME secret to prove the wiring passes it through.
+		expected_key = derive_host_wireguard_keypair(server.name, get_ancp_wg_derivation_secret())[1]
 		self.assertEqual(server.wireguard_public_key, expected_key)
 		self.assertEqual(server.mesh_address, derive_host_mesh_address(server.name))
 		# Stage 5+ (spec/31 §19.4) — a freshly-validated Server gains an ed25519
