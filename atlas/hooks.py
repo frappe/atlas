@@ -250,6 +250,20 @@ scheduler_events = {
 			"atlas.atlas.migration.reconcile_migrations",
 			"atlas.atlas.export.reconcile_image_exports",
 		],
+		# Controller-side liveness BACKSTOP for the decentralized mesh. Retiring
+		# the centralized `*/5` host-mesh reconcile for the host-local
+		# atlas-networkd daemon (spec/31) removed the only controller-side signal
+		# that a host's daemon is down — a host whose atlas-networkd is failed /
+		# masked / disabled silently drops its VMs off the private mesh with no
+		# operator signal. This sweep OBSERVES each Active host with a read-only
+		# `systemctl is-active atlas-networkd` probe and FLAGS the unhealthy ones
+		# (Error Log + WARNING). It does NOT reconfigure anything, so it does not
+		# re-centralize the networking control plane — the mesh stays self-healing;
+		# this is a smoke detector, not a thermostat. Same `*/5` cadence the
+		# retired reconcile ran on.
+		"*/5 * * * *": [
+			"atlas.atlas.providers.worker.check_networkd_liveness",
+		],
 	},
 }
 

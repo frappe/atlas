@@ -28,6 +28,12 @@ DEFAULT_READY_TIMEOUT = 600
 RECONCILE_PENDING_GRACE_SECONDS = 15 * 60
 RECONCILE_BOOTSTRAPPING_GRACE_SECONDS = 70 * 60
 
+# Read-only liveness probe (check_networkd_liveness): how long the single SSH
+# round-trip that asks the host `systemctl is-active atlas-networkd` may take.
+# Short — it is a one-shot local systemctl query, not a Task — so a wedged host
+# fails the probe fast and the sweep moves on to the next one.
+NETWORKD_PROBE_TIMEOUT_SECONDS = 30
+
 
 def wait_until_ready(
 	provider: Provider,
@@ -211,3 +217,106 @@ def reconcile_pending_servers() -> list[str]:
 					f"{server_name} (stuck {status} past {grace_seconds}s)"
 				)
 	return re_enqueued
+
+
+def _probe_networkd_liveness(server_name: str) -> tuple[bool, str]:
+	"""Run the READ-ONLY liveness probe against one host over SSH.
+
+	Two local systemctl queries + a status.json peek, all observe-only — no
+	config push, no `wg syncconf`, nothing that touches the mesh control plane.
+	Returns `(healthy, detail)`; `detail` is a short human string for the log /
+	Error Log when unhealthy. `systemctl is-active` exits 0 and prints `active`
+	only when the unit is running; a failed / masked / disabled-and-stopped unit
+	prints `failed` / `inactive` / `unknown` with a non-zero exit, which is
+	exactly the CONTROLLER-side signal that was lost when the `*/5` reconcile and
+	`enqueue_reconcile_host_mesh` were retired for the decentralized daemon.
+
+	The status.json read is best-effort colour only (the daemon's live conflict
+	counter, spec/31 §18.2): a non-zero `conflict_count` rides in the detail so
+	the operator sees a host that is up but wedged on a duplicate /128, but its
+	absence never flips a healthy `is-active` result to unhealthy."""
+	from atlas.atlas.ssh import connection_for_server, run_ssh, ssh_key_file
+
+	server = frappe.get_doc("Server", server_name)
+	connection = connection_for_server(server)
+	with ssh_key_file(connection.ssh_private_key) as key_path:
+		stdout, _stderr, exit_code = run_ssh(
+			connection,
+			key_path,
+			# `is-active` alone exits non-zero (and prints nothing on stdout) for a
+			# masked unit, so pair it with `is-enabled` to tell the states apart in
+			# the detail string. Both are pure reads.
+			"systemctl is-active atlas-networkd; systemctl is-enabled atlas-networkd 2>/dev/null || true",
+			timeout_seconds=NETWORKD_PROBE_TIMEOUT_SECONDS,
+		)
+		active_state = (stdout or "").strip().splitlines()
+		is_active = bool(active_state) and active_state[0] == "active"
+		if is_active:
+			return True, "active"
+		# Read the daemon's status surface for extra colour on an unhealthy host
+		# (it may be up but wedged); best-effort, never gates the verdict.
+		conflict_note = ""
+		try:
+			status_out, _e, status_exit = run_ssh(
+				connection,
+				key_path,
+				"cat /var/lib/atlas-networkd/status.json 2>/dev/null || true",
+				timeout_seconds=NETWORKD_PROBE_TIMEOUT_SECONDS,
+			)
+			if status_exit == 0 and status_out.strip():
+				conflicts = json.loads(status_out).get("conflict_count")
+				if conflicts:
+					conflict_note = f", conflict_count={conflicts}"
+		except Exception:
+			pass
+		return False, f"systemctl is-active/is-enabled -> {active_state or ['<none>']} (exit {exit_code}){conflict_note}"
+
+
+def check_networkd_liveness() -> list[str]:
+	"""Scheduled controller-side liveness BACKSTOP for the decentralized mesh.
+
+	Replacing the centralized `*/5` mesh reconcile with the host-local
+	`atlas-networkd` daemon removed the only controller-side signal that a host's
+	daemon is down: a host whose `atlas-networkd` is failed / masked / disabled
+	silently drops its VMs off the private mesh, and nothing operator-facing
+	notices (the host-local systemd watchdog and the peers' SWIM `dead` mark stay
+	on the host / in the gossip plane). This sweep restores that signal — and
+	ONLY that signal: it OBSERVES each Active host with a read-only
+	`systemctl is-active atlas-networkd` probe and FLAGS the unhealthy ones. It
+	does NOT reconfigure anything (no seed push, no `wg syncconf`, no restart), so
+	it does not re-centralize the networking control plane — the mesh stays
+	self-healing; this is a smoke detector, not a thermostat.
+
+	Unhealthy hosts are surfaced the way the codebase already surfaces problems:
+	a WARNING on the `atlas` logger plus a Frappe Error Log (`frappe.log_error`)
+	per host, mirroring `central_report` / `satellite_events`. Resilient by
+	design — each host is probed under its own try/except, so one unreachable
+	host (SSH timeout, no ipv4) never aborts the sweep for the rest.
+
+	Fake servers (developer_mode) have no host to SSH, so they are skipped.
+	Returns the names of the hosts flagged unhealthy (for logging / tests).
+	"""
+	from atlas.atlas.providers.fake_tasks import is_fake_server
+
+	unhealthy: list[str] = []
+	active_servers = frappe.get_all("Server", filters={"status": "Active"}, pluck="name")
+	for server_name in active_servers:
+		if is_fake_server(server_name):
+			continue
+		try:
+			healthy, detail = _probe_networkd_liveness(server_name)
+		except Exception as exception:
+			# An unreachable host (SSH timeout, missing ipv4, key error) is itself a
+			# liveness signal worth surfacing — but it must NOT abort the sweep for
+			# the others. Flag it and keep going.
+			unhealthy.append(server_name)
+			message = f"atlas-networkd liveness probe could not reach {server_name}: {exception}"
+			frappe.logger("atlas").error(f"check_networkd_liveness: {message}")
+			frappe.log_error(message, "atlas-networkd liveness")
+			continue
+		if not healthy:
+			unhealthy.append(server_name)
+			message = f"atlas-networkd not healthy on Active server {server_name}: {detail}"
+			frappe.logger("atlas").warning(f"check_networkd_liveness: {message}")
+			frappe.log_error(message, "atlas-networkd liveness")
+	return unhealthy
