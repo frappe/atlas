@@ -37,6 +37,23 @@ DEFAULT_ANTI_ENTROPY_INTERVAL = 1.0
 DEFAULT_ANTI_ENTROPY_MERKLE_THRESHOLD = 100  # hosts; below this, naive pull
 DEFAULT_SEEN_CACHE_SIZE = 10_000
 
+# Inbound flood defense (§19 — ANCP is plaintext public UDP on 7946, reachable
+# from the IPv6 internet; every datagram costs an ed25519 verify on the single-
+# threaded loop). Two conservative bounds keep a remote flood from monopolizing
+# a tick or forcing a verify per packet:
+#   - a per-tick drain+verify budget (excess is left in the socket buffer for the
+#     next tick / dropped by the kernel), so scan/probe/apply/gossip always run.
+#   - a cheap per-source fixed-window rate limit applied BEFORE the ed25519 verify,
+#     so an abusive source is dropped without the crypto cost. The source table is
+#     capped + LRU-evicted so the limiter can't itself be a memory-exhaustion vector.
+# Defaults are generous vs. legitimate traffic (a handful of peers at 200 ms/1 s
+# cadences → a few datagrams/sec/source): 256 datagrams/tick and 64/source/second
+# are far above any honest peer yet cap a flood at a bounded cost.
+DEFAULT_INBOUND_TICK_BUDGET = 256
+DEFAULT_INBOUND_RATE_LIMIT = 64  # max datagrams per source per window
+DEFAULT_INBOUND_RATE_WINDOW = 1.0  # seconds — the fixed window the limit applies over
+DEFAULT_INBOUND_RATE_MAX_SOURCES = 4096  # cap tracked sources; LRU-evict past this
+
 # Ownership scan / advertisement (§11 / §12)
 DEFAULT_OWNERSHIP_SCAN_INTERVAL = 2.0
 DEFAULT_ADVERTISEMENT_REFRESH_INTERVAL = 60.0
@@ -59,6 +76,7 @@ DEFAULT_ANCP_PORT = 7946
 # controller-pushed `/etc/atlas-host-mesh.{env,key}` files of the predecessor).
 DEFAULT_DATA_DIR = "/var/lib/atlas-networkd"
 DEFAULT_CONFIG_DIR = "/etc/atlas-networkd"
+DEFAULT_STATUS_PATH = f"{DEFAULT_DATA_DIR}/status.json"
 DEFAULT_SEED_PATH = f"{DEFAULT_CONFIG_DIR}/seed.json"
 DEFAULT_LOCAL_OWNERSHIP_PATH = f"{DEFAULT_CONFIG_DIR}/local-ownership.json"
 DEFAULT_PRIVATE_KEY_PATH = f"{DEFAULT_CONFIG_DIR}/wg-private-key"
@@ -93,6 +111,11 @@ class Config:
 	# §15 anti-entropy
 	anti_entropy_interval: float = DEFAULT_ANTI_ENTROPY_INTERVAL
 	anti_entropy_merkle_threshold: int = DEFAULT_ANTI_ENTROPY_MERKLE_THRESHOLD
+	# §19 inbound flood defense
+	inbound_tick_budget: int = DEFAULT_INBOUND_TICK_BUDGET
+	inbound_rate_limit: int = DEFAULT_INBOUND_RATE_LIMIT
+	inbound_rate_window: float = DEFAULT_INBOUND_RATE_WINDOW
+	inbound_rate_max_sources: int = DEFAULT_INBOUND_RATE_MAX_SOURCES
 	# §11 / §12
 	ownership_scan_interval: float = DEFAULT_OWNERSHIP_SCAN_INTERVAL
 	advertisement_refresh_interval: float = DEFAULT_ADVERTISEMENT_REFRESH_INTERVAL
@@ -105,6 +128,10 @@ class Config:
 	ancp_port: int = DEFAULT_ANCP_PORT  # the plain-UDP ANCP port on the public IPv6 endpoint (§5, §13)
 	data_dir: str = DEFAULT_DATA_DIR
 	config_dir: str = DEFAULT_CONFIG_DIR
+	# §7.3 / §18.2 — the operator-visible conflict status surface (active conflict
+	# count + the conflicting /128s with origins + the metrics counters). Written
+	# atomically by the apply path whenever the conflict set changes.
+	status_path: str = DEFAULT_STATUS_PATH
 	seed_path: str = DEFAULT_SEED_PATH
 	local_ownership_path: str = DEFAULT_LOCAL_OWNERSHIP_PATH
 	private_key_path: str = DEFAULT_PRIVATE_KEY_PATH
@@ -169,6 +196,10 @@ __all__ = [
 	"DEFAULT_GOSSIP_INTERVAL",
 	"DEFAULT_HEARTBEAT_INTERVAL",
 	"DEFAULT_IDENTITY_PATH",
+	"DEFAULT_INBOUND_RATE_LIMIT",
+	"DEFAULT_INBOUND_RATE_MAX_SOURCES",
+	"DEFAULT_INBOUND_RATE_WINDOW",
+	"DEFAULT_INBOUND_TICK_BUDGET",
 	"DEFAULT_INDIRECT_RELAYS",
 	"DEFAULT_INDIRECT_TIMEOUT",
 	"DEFAULT_LEAVING_GRACE",
@@ -182,6 +213,7 @@ __all__ = [
 	"DEFAULT_PUBLIC_KEY_PATH",
 	"DEFAULT_SEED_PATH",
 	"DEFAULT_SEEN_CACHE_SIZE",
+	"DEFAULT_STATUS_PATH",
 	"DEFAULT_SUSPECT_TIMEOUT",
 	"DEFAULT_TOML_PATH",
 	"DEFAULT_WG_DEVICE",
