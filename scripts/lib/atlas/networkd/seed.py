@@ -15,9 +15,15 @@ time (spec §19.4 — the seed-anchored trust directory). The companion
 pubkey — the trust root for §19.5 newcomer introduction certificates. The
 controller writes both files at provision time via
 `server.py:_write_ancp_bootstrap_state` and signs the seed file alone with
-the operator's provision key (TODO: signature-verify at load time — spec §19.4
-says it must; the current loader reads JSON, the signature verify seam is the
-controller's responsibility and tracked separately).
+the operator's provision key. `load_seed` VERIFIES that operator signature at
+load time (spec §9.2 / §19.4 — the seed is the sole trust root, so a bad or
+missing signature is a HARD bootstrap failure: no partial bring-up, no "trust
+the unsigned list" fallback). The detached base64 ed25519 signature over the
+exact bytes of `seed.json` lives alongside it at `seed.json.sig`. Verification
+is MANDATORY whenever an operator public key is configured; a cluster with NO
+operator key (the dev/test posture `load_operator_pubkey` supports by returning
+"") loads unverified with a loud stderr warning so bring-up isn't blocked while
+production stays fail-closed.
 
 Shape (one entry per known host):
 
@@ -37,15 +43,22 @@ Plus the operator's provision pubkey at `/etc/atlas-networkd/operator-public-key
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
 from .records import MembershipKind, MembershipRecord, MemberState
+from .signing import SignatureError, verify_detached
 
 # The out-of-band operator provision pubkey file. Written by the controller
 # alongside seed.json at provision time (`server.py:_write_ancp_bootstrap_state`);
 # read by `main.py:build_initial` and stored on the daemon as
 # `operator_public_key` for §19.5 newcomer introduction verify.
 DEFAULT_OPERATOR_PUBKEY_PATH = "/etc/atlas-networkd/operator-public-key"
+
+# The detached operator signature over `seed.json`'s exact bytes lives alongside
+# it with this suffix (spec §9.2 / §19.4). `load_seed` verifies it against the
+# operator pubkey before installing any record.
+SEED_SIG_SUFFIX = ".sig"
 
 
 def load_seed(path: str) -> list[MembershipRecord]:
@@ -56,15 +69,55 @@ def load_seed(path: str) -> list[MembershipRecord]:
 	peer-empty bring-up would mask a misconfigured provision. Use
 	`load_seed_optional` if the caller wants a "no seeds yet, come up
 	peer-empty and wait" posture (spec §9.2 last paragraph — the newcomer
-	retries seeds every `join_retry_interval` until one answers)."""
+	retries seeds every `join_retry_interval` until one answers).
+
+	The seed is the SOLE trust root (it seeds the §19.4 signing-pubkey directory
+	and the initial membership), so its operator signature is verified BEFORE any
+	record is installed (spec §9.2 / §19.4). The exact on-disk bytes of the seed
+	file are verified against the operator pubkey (read from the sibling
+	`operator-public-key` file) using the detached base64 signature at
+	`seed.json.sig`:
+	  - operator pubkey CONFIGURED (non-empty): a missing or invalid signature is
+	    a HARD failure — this raises and installs NOTHING (fail closed). The
+	    production path.
+	  - operator pubkey ABSENT (""): loads UNVERIFIED with a loud stderr warning.
+	    The dev/test posture `load_operator_pubkey` already supports; it keeps
+	    bring-up working without weakening production."""
 	p = Path(path)
 	if not p.exists():
 		raise FileNotFoundError(f"seed file not found at {path}")
-	with p.open("r", encoding="utf-8") as fh:
-		data = json.load(fh)
+	raw = p.read_bytes()
+	_verify_seed_signature(p, raw)
+	data = json.loads(raw.decode("utf-8"))
 	if not isinstance(data, list):
 		raise ValueError(f"seed file at {path} is not a list of host entries")
 	return [_seed_entry_to_record(entry, path) for entry in data]
+
+
+def _verify_seed_signature(seed_path: Path, raw: bytes) -> None:
+	"""Verify the operator signature over the seed's exact bytes (spec §9.2 /
+	§19.4). The operator pubkey is read from the `operator-public-key` file that
+	sits alongside `seed.json`; the detached signature from `seed.json.sig`.
+	Raises on any verification failure when a pubkey is configured; warns loudly
+	and returns when none is (the dev/test posture). Installs nothing itself —
+	the caller only proceeds if this returns normally."""
+	operator_pub = load_operator_pubkey(str(seed_path.parent / "operator-public-key"))
+	if not operator_pub:
+		print(
+			f"WARNING: atlas-networkd seed {seed_path} loaded UNVERIFIED — no operator "
+			"public key is configured, so the trust root cannot be checked. Configure "
+			"an operator keypair (Atlas Settings) for a production cluster (spec §9.2 / §19.4).",
+			file=sys.stderr,
+		)
+		return
+	sig_path = seed_path.with_name(seed_path.name + SEED_SIG_SUFFIX)
+	if not sig_path.exists():
+		raise SignatureError(
+			f"seed file {seed_path} has no operator signature at {sig_path}, but an operator "
+			"public key is configured — refusing to install an unsigned trust root (spec §9.2)."
+		)
+	sig_b64 = sig_path.read_text(encoding="utf-8").strip()
+	verify_detached(raw, sig_b64, operator_pub)
 
 
 def load_seed_optional(path: str) -> list[MembershipRecord]:
@@ -134,6 +187,7 @@ def _seed_entry_to_record(entry: dict, path: str) -> MembershipRecord:
 
 __all__ = [
 	"DEFAULT_OPERATOR_PUBKEY_PATH",
+	"SEED_SIG_SUFFIX",
 	"load_operator_pubkey",
 	"load_seed",
 	"load_seed_optional",

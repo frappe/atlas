@@ -229,6 +229,43 @@ def verify_introduction(introduction_body: dict, sig_b64: str, operator_pub_b64:
 		raise SignatureError(f"introduction verify failed: {exc}") from exc
 
 
+def sign_detached(body: bytes, signing_priv_b64: str) -> str:
+	"""Sign arbitrary bytes with an ed25519 private key, returning the base64
+	detached signature. Unlike `sign`/`sign_envelope` there is NO canonical-dict
+	shaping or `_kind` domain tag — the signer commits to the exact `body` bytes
+	the verifier will re-read. Used for the operator-signed seed file (spec §19.4
+	/ §9.2 — the seed is the sole trust root and is signed as its literal on-disk
+	bytes so controller and host agree byte-for-byte)."""
+	import base64
+
+	priv = _load_private(signing_priv_b64)
+	return base64.b64encode(priv.sign(body)).decode("utf-8")
+
+
+def verify_detached(body: bytes, sig_b64: str, signing_pub_b64: str) -> None:
+	"""Verify a detached signature (from `sign_detached`) over the exact `body`
+	bytes against a base64 ed25519 pubkey. Raises `SignatureError` on any failure
+	(empty/missing signature, bad base64, wrong key, tampered body, malformed
+	pubkey). The verifier commits to the literal bytes — no canonicalization."""
+	import base64
+
+	from cryptography.exceptions import InvalidSignature
+	from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+
+	if not isinstance(sig_b64, str) or not sig_b64:
+		raise SignatureError("detached signature is missing")
+	try:
+		raw = base64.b64decode(sig_b64)
+	except Exception as exc:
+		raise SignatureError(f"detached signature is not base64: {exc}") from exc
+	try:
+		Ed25519PublicKey.from_public_bytes(_b64decode_pub(signing_pub_b64)).verify(raw, body)
+	except InvalidSignature as exc:
+		raise SignatureError("invalid detached signature") from exc
+	except Exception as exc:
+		raise SignatureError(f"detached verify failed: {exc}") from exc
+
+
 def _load_private(priv_b64: str):
 	"""Decode a base64 ed25519 private seed into an `Ed25519PrivateKey`."""
 	import base64
@@ -271,9 +308,11 @@ __all__ = [
 	"SignatureError",
 	"generate_keypair_raw",
 	"sign",
+	"sign_detached",
 	"sign_envelope",
 	"sign_introduction",
 	"verify",
+	"verify_detached",
 	"verify_envelope",
 	"verify_introduction",
 ]
