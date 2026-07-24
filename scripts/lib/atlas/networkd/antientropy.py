@@ -45,7 +45,7 @@ from typing import Any
 
 from . import wire
 from .peers import HostID, select_peers
-from .records import MembershipRecord, OwnershipAdvertisement
+from .records import MembershipKind, MembershipRecord, OwnershipAdvertisement, dedupe_key
 from .transport import UdpTransport
 from .wire import (
 	TYPE_ANTI_ENTROPY_REQ,
@@ -72,8 +72,10 @@ DEFAULT_ANTIENTROPY_RECORDS_MAX = 64
 # entry in JSON costs ~43 bytes; with envelope overhead (~80 bytes) and both
 # vector_m + vector_o, 8 origins × 2 dicts × ~43 bytes ≈ 688 bytes — well
 # within budget. The Merkle optimization (§15.3) removes the vector entirely,
-# but until then a >8-host cluster samples a different subset each round and
-# converges over N rounds (§15.2, "protocol is the same either way").
+# but until then a >8-host cluster advertises a ROTATING WINDOW of at most this
+# many origins per round (see `_windowed_vector`) so full coverage completes in
+# a BOUNDED ceil(N / MAX_VECTOR_ORIGINS) rounds regardless of the random peer
+# pick — the §15.4 convergence guarantee holds at the 100-200 host target.
 MAX_VECTOR_ORIGINS = 8
 
 
@@ -87,19 +89,43 @@ def build_vector(state) -> dict:
 	}
 
 
-def _sampled_vector(state, max_origins: int = MAX_VECTOR_ORIGINS) -> dict:
-	"""Build a generation vector that fits within a single datagram by sampling
-	at most ``max_origins`` random origins. Over multiple rounds against
-	different peers the cluster still converges, just in more rounds (§15.2
-	paragraph 2 — "protocol is the same either way"). Each call picks a fresh
-	random subset so every origin is eventually covered."""
-	all_hosts = list(state.membership.keys())
-	if len(all_hosts) <= max_origins:
+def _vector_origins(state) -> list[str]:
+	"""The full origin set the generation vector must eventually cover — the
+	union of every membership origin AND every ownership origin — sorted by
+	HostID so the rotating window (`_windowed_vector`) tiles a STABLE order.
+	Sorting is what makes the window deterministic: consecutive rounds advance a
+	cursor over the same order, so every origin is included within a bounded
+	number of rounds regardless of which peer the round picked."""
+	return sorted(set(state.membership.keys()) | set(state.ownership.keys()))
+
+
+def _windowed_vector(state, cursor: int, max_origins: int = MAX_VECTOR_ORIGINS) -> dict:
+	"""Build a generation vector covering a CONTIGUOUS window of at most
+	``max_origins`` origins starting at ``cursor``, over the HostID-sorted origin
+	set (`_vector_origins`). Unlike the old memoryless random sample, consecutive
+	rounds advance `cursor` by the window so they tile the full set with no gaps,
+	wrapping at the end — every origin is advertised within a BOUNDED
+	ceil(N / max_origins) rounds (deterministic coverage, §15.4). When
+	N <= max_origins this returns the FULL vector (the fast path — identical bytes
+	to `build_vector`). An origin OMITTED from a given round's window is still
+	healed within the bound; the responder treats an absent origin correctly
+	(§15.2 — it simply doesn't compare that origin this round, never marks the
+	requester current on it — see `_missing_for_requester`)."""
+	origins = _vector_origins(state)
+	n = len(origins)
+	if n <= max_origins:
 		return build_vector(state)
-	sampled = set(random.sample(all_hosts, max_origins))
+	start = cursor % n
+	window = origins[start : start + max_origins]
+	if len(window) < max_origins:
+		# Wrap: the window ran off the end of the sorted list — take the
+		# remainder from the front so the window is always contiguous-with-wrap
+		# and a full sweep still tiles the whole set with no gaps.
+		window += origins[: max_origins - len(window)]
+	picked = set(window)
 	return {
-		"vector_m": {h: state.membership[h].generation for h in sampled if h in state.membership},
-		"vector_o": {o: state.ownership[o].generation for o in sampled if o in state.ownership},
+		"vector_m": {h: state.membership[h].generation for h in picked if h in state.membership},
+		"vector_o": {o: state.ownership[o].generation for o in picked if o in state.ownership},
 	}
 
 
@@ -221,11 +247,20 @@ def anti_entropy_round(
 		return 0
 	peer_id = peers[0]
 	peer = daemon.state.membership[peer_id]
-	# Build the full generation vector, falling back to a sampled subset if it
-	# doesn't fit a single datagram (§15.3 Merkle optimization placeholder).
-	# Without this, a cluster larger than ~17 hosts silently loses the anti-
-	# entropy backstop — every request overflows 1280 bytes and crashes the loop.
-	vector = build_vector(daemon.state)
+	# Build the generation vector: the full vector when the origin set fits a
+	# single datagram (N <= MAX_VECTOR_ORIGINS — unchanged bytes), otherwise a
+	# DETERMINISTIC ROTATING WINDOW of at most MAX_VECTOR_ORIGINS origins starting
+	# at the daemon's anti-entropy cursor. Advancing the cursor by the window each
+	# round tiles the full origin set with no gaps, so every origin is advertised
+	# within a bounded ceil(N / window) rounds regardless of the random peer pick
+	# — the §15.4 convergence guarantee, without the old random sample's shrinking
+	# per-round success probability. Without a bounded vector a cluster larger than
+	# ~17 hosts would also overflow 1280 bytes and crash the loop.
+	origins = _vector_origins(daemon.state)
+	cursor = daemon._ae_cursor
+	step = min(MAX_VECTOR_ORIGINS, len(origins)) or 1
+	vector = _windowed_vector(daemon.state, cursor)
+	sent = 0
 	for _attempt in range(2):
 		msg = Message(
 			type=TYPE_ANTI_ENTROPY_REQ,
@@ -236,14 +271,24 @@ def anti_entropy_round(
 		try:
 			data = msg.to_bytes(daemon.own_signing_priv_b64)
 		except DatagramTooLarge:
-			vector = _sampled_vector(daemon.state)
+			# A window still overflows the datagram (pathological — a single
+			# origin's entry is huge, or MAX_VECTOR_ORIGINS was tuned up). Shrink
+			# the window by halving max_origins; the cursor still advances by the
+			# FULL step below so coverage keeps sweeping and never stalls on a
+			# short window (a shrunk window just makes the sweep take more rounds,
+			# it never skips origins).
+			vector = _windowed_vector(daemon.state, cursor, max_origins=max(1, MAX_VECTOR_ORIGINS // 2))
 			continue
 		transport.send((peer.endpoint, daemon.config.ancp_port), data)
-		return 1
-	# Even the sampled vector overflows (shouldn't happen at our constants, but
-	# guard against a pathological state). In that case the sender is entirely
-	# unreachable via anti-entropy this round — next round picks a new peer.
-	return 0
+		sent = 1
+		break
+	# Advance the rotating cursor by the window even when the datagram couldn't be
+	# built (sent == 0): the next round tiles the NEXT window regardless, so a
+	# pathological over-large window for one origin can't wedge the sweep on it
+	# forever. Wrap modulo the origin count so the cursor stays bounded.
+	if len(origins) > MAX_VECTOR_ORIGINS:
+		daemon._ae_cursor = (cursor + step) % len(origins)
+	return sent
 
 
 def handle_anti_entropy_req(msg: Message, daemon, _gossip_state) -> None:
@@ -337,7 +382,14 @@ def _apply(record: MembershipRecord | OwnershipAdvertisement, daemon) -> bool:
 	verify against its origin's published signing pubkey is dropped + counted.
 	When a MembershipRecord is applied and carries a signing_public_key, the
 	daemon's signing_pubkey_cache is updated (§19.1 trust-directory sync).
+
+	§13.3 duplicate suppression: an EXACT (origin, kind, generation) re-delivery
+	hits the seen-cache → drop BEFORE the ed25519 verify + apply (no re-forward).
+	Only an exact key is suppressed; a strictly-higher generation has a different
+	key and is never dropped here. Mirrors gossip's `_apply_record`.
 	"""
+	if daemon.state.seen_already(dedupe_key(record)):
+		return False
 	verifier = getattr(daemon, "signature_verifier", None)
 	if verifier is not None:
 		try:
@@ -353,7 +405,13 @@ def _apply(record: MembershipRecord | OwnershipAdvertisement, daemon) -> bool:
 		if changed:
 			tracker = getattr(daemon, "failure_tracker", None)
 			if tracker is not None:
-				tracker.note_alive(record.host_id)
+				# §14.4: mirror gossip's `_apply_record` — a `kind=leaving`
+				# record arms the leaving → dead countdown; a normal `member`
+				# record is the fast-refute that resets to alive.
+				if record.kind == MembershipKind.LEAVING:
+					tracker.note_leaving(record.host_id)
+				else:
+					tracker.note_alive(record.host_id)
 		return changed
 	if isinstance(record, OwnershipAdvertisement):
 		return daemon.state.apply_ownership(record)

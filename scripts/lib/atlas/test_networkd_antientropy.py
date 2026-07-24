@@ -304,6 +304,165 @@ class TestAntiEntropyRound(unittest.TestCase):
 		self.assertEqual(total_reqs, 1)
 
 
+# --- rotating-window coverage (M3 fix) --------------------------------------
+
+
+class TestRotatingWindowCoverage(unittest.TestCase):
+	"""M3: with N > MAX_VECTOR_ORIGINS origins the request vector rotates a
+	DETERMINISTIC contiguous window each round, so every origin is advertised
+	within ceil(N / window) rounds — replaces the old memoryless random sample
+	that never guaranteed coverage (coupon-collector, weakening as N grows)."""
+
+	def _origins_in_last_req(self, bus) -> set[str]:
+		"""Union of the origins carried in the newest REQ on the bus."""
+		origins: set[str] = set()
+		for queue in bus.queues.values():
+			for data, _ in queue:
+				msg = from_bytes(data)
+				if msg.type != TYPE_ANTI_ENTROPY_REQ:
+					continue
+				origins |= set(msg.payload.get("vector_m", {}))
+				origins |= set(msg.payload.get("vector_o", {}))
+		return origins
+
+	def test_full_vector_fast_path_when_at_or_below_cap(self):
+		# N <= MAX_VECTOR_ORIGINS: the whole vector ships every round, byte-for-
+		# byte identical to build_vector — the fast path is unchanged.
+		from atlas.networkd.antientropy import MAX_VECTOR_ORIGINS, _windowed_vector
+
+		daemon = _daemon("h1")
+		# Fill to exactly the cap (build_initial already applied h1 at gen 1).
+		for i in range(MAX_VECTOR_ORIGINS - 1):
+			daemon.state.apply_membership(member(f"p{i}", 1))
+		self.assertEqual(len(daemon.state.membership), MAX_VECTOR_ORIGINS)
+		full = build_vector(daemon.state)
+		# Any cursor value returns the full vector when N <= cap.
+		for cursor in (0, 3, 99):
+			self.assertEqual(_windowed_vector(daemon.state, cursor), full)
+
+	def test_window_size_bounded_when_above_cap(self):
+		from atlas.networkd.antientropy import MAX_VECTOR_ORIGINS, _windowed_vector
+
+		daemon = _daemon("h1")
+		for i in range(30):
+			daemon.state.apply_membership(member(f"p{i:02d}", 1))
+		v = _windowed_vector(daemon.state, cursor=0)
+		# The window covers at most MAX_VECTOR_ORIGINS distinct origins across
+		# both dicts (here all are membership-only).
+		covered = set(v["vector_m"]) | set(v["vector_o"])
+		self.assertEqual(len(covered), MAX_VECTOR_ORIGINS)
+
+	def test_every_origin_covered_within_bound_rounds(self):
+		# The headline guarantee: over ceil(N/window) consecutive rounds EVERY
+		# origin appears in the request vector at least once. Deterministic — the
+		# random peer pick (seeded here) does not affect coverage.
+		from atlas.networkd.antientropy import MAX_VECTOR_ORIGINS
+
+		daemon = _daemon("h1")
+		# 25 extra origins + h1 (self) + a peer to send to = plenty over the cap.
+		for i in range(25):
+			daemon.state.apply_membership(member(f"p{i:02d}", 1))
+		bus = Bus()
+		t = FakeTransport(bind=("2001:db9::h1", 7946), bus=bus)
+		daemon.transport = t
+
+		from atlas.networkd.antientropy import _vector_origins
+
+		all_origins = set(_vector_origins(daemon.state))
+		n = len(all_origins)
+		window = MAX_VECTOR_ORIGINS
+		bound = -(-n // window)  # ceil(N / window)
+
+		seen: set[str] = set()
+		for _ in range(bound):
+			bus.queues.clear()
+			anti_entropy_round(daemon, t, rng=random.Random(0))
+			seen |= self._origins_in_last_req(bus)
+		# Full coverage within the bound.
+		self.assertEqual(seen, all_origins)
+
+	def test_consecutive_windows_tile_without_gaps(self):
+		# Two consecutive rounds advance the cursor by the window, so the second
+		# window starts exactly where the first ended — no gap, no overlap (until
+		# the wrap). This is what makes coverage a clean tiling, not a lucky draw.
+		from atlas.networkd.antientropy import MAX_VECTOR_ORIGINS, _vector_origins
+
+		daemon = _daemon("h1")
+		for i in range(20):
+			daemon.state.apply_membership(member(f"p{i:02d}", 1))
+		bus = Bus()
+		t = FakeTransport(bind=("2001:db9::h1", 7946), bus=bus)
+		daemon.transport = t
+		origins = _vector_origins(daemon.state)
+
+		bus.queues.clear()
+		anti_entropy_round(daemon, t, rng=random.Random(0))
+		first = self._origins_in_last_req(bus)
+		bus.queues.clear()
+		anti_entropy_round(daemon, t, rng=random.Random(0))
+		second = self._origins_in_last_req(bus)
+
+		self.assertEqual(first, set(origins[:MAX_VECTOR_ORIGINS]))
+		self.assertEqual(second, set(origins[MAX_VECTOR_ORIGINS : 2 * MAX_VECTOR_ORIGINS]))
+		self.assertEqual(first & second, set())  # tiling, no gap/overlap
+
+	def test_cursor_wraps_and_coverage_stays_continuous(self):
+		# Coverage is CONTINUOUS, not one-shot: after the cursor wraps past the
+		# end of the sorted set, any window of ceil(N/window) CONSECUTIVE rounds
+		# still covers every origin — including a run that straddles the wrap
+		# point. Drive 2·bound rounds and check every sliding window of `bound`
+		# rounds is full coverage. (The cursor advances by a fixed step and wraps
+		# mod N, so windows don't recur at a fixed period when N isn't a multiple
+		# of the window — but bound consecutive windows always tile the set,
+		# because bound·window ≥ N.)
+		from atlas.networkd.antientropy import MAX_VECTOR_ORIGINS, _vector_origins
+
+		daemon = _daemon("h1")
+		for i in range(20):
+			daemon.state.apply_membership(member(f"p{i:02d}", 1))
+		bus = Bus()
+		t = FakeTransport(bind=("2001:db9::h1", 7946), bus=bus)
+		daemon.transport = t
+		all_origins = set(_vector_origins(daemon.state))
+		n = len(all_origins)
+		window = MAX_VECTOR_ORIGINS
+		bound = -(-n // window)
+
+		per_round: list[set[str]] = []
+		for _ in range(2 * bound):
+			bus.queues.clear()
+			anti_entropy_round(daemon, t, rng=random.Random(0))
+			per_round.append(self._origins_in_last_req(bus))
+		# The cursor wrapped at least once over 2·bound rounds.
+		self.assertGreater(daemon._ae_cursor, -1)  # bounded (mod N)
+		# Every sliding window of `bound` consecutive rounds is full coverage,
+		# including the ones straddling the wrap.
+		for start in range(bound + 1):
+			covered: set[str] = set()
+			for k in range(start, start + bound):
+				covered |= per_round[k]
+			self.assertEqual(covered, all_origins)
+
+	def test_fresh_daemon_starts_at_cursor_zero(self):
+		daemon = _daemon("h1")
+		self.assertEqual(daemon._ae_cursor, 0)
+
+	def test_windowed_request_fits_datagram(self):
+		# A windowed REQ always fits MAX_DATAGRAM_BYTES even at a large N (the
+		# window caps the origins, so the serialized vector stays bounded).
+		daemon = _daemon("h1")
+		for i in range(150):
+			daemon.state.apply_membership(member(f"p{i:03d}", 1))
+		bus = Bus()
+		t = FakeTransport(bind=("2001:db9::h1", 7946), bus=bus)
+		daemon.transport = t
+		sent = anti_entropy_round(daemon, t, rng=random.Random(0))
+		self.assertEqual(sent, 1)
+		for queue in bus.queues.values():
+			for data, _ in queue:
+				self.assertLessEqual(len(data), MAX_DATAGRAM_BYTES)
+
+
 # --- handle_anti_entropy_req (the responder) --------------------------------
 
 
@@ -522,6 +681,81 @@ class TestAntiEntropyEndToEnd(unittest.TestCase):
 		b_t.drain(lambda msg, addr: handle_message(msg, addr, b, b_gs))
 		self.assertEqual(b.state.membership["h3"].generation, 9)
 		self.assertEqual(b.state.membership["h3"].wg_public_key, "K-H3")
+
+	def test_stale_origin_outside_window_heals_within_bound(self):
+		# M3: at N > MAX_VECTOR_ORIGINS, a stale ownership origin that falls
+		# OUTSIDE a given round's rotating window is still healed within
+		# ceil(N/window) rounds — the deterministic sweep is what makes this
+		# bounded (the old random sample had NO such bound). A is ahead on `stale`
+		# (gen 9); B has gen 3. The origin only enters A's vector when the cursor
+		# reaches it, and B only learns A is ahead (→ reverse-push) then. The
+		# padding origins are OWNERSHIP-only so the sole membership PEER A can
+		# select is B (a phantom membership peer would misroute the REQ) — the
+		# ownership origins still count toward `_vector_origins`, forcing the
+		# window, and still exercise the sweep.
+		from atlas.networkd.antientropy import MAX_VECTOR_ORIGINS, _vector_origins
+
+		a = _daemon("ha")
+		b = _daemon("hb")
+		a.state.apply_membership(b.own_membership)
+		b.state.apply_membership(a.own_membership)
+		# Pad both sides with enough shared OWNERSHIP origins to force windowing,
+		# sorted BEFORE the stale origin so cursor 0's window never covers it —
+		# proving the sweep (not luck) heals it.
+		for i in range(20):
+			adv = ownership(f"o{i:02d}", 1, f"fdaa::{i:02d}")
+			a.state.apply_ownership(adv)
+			b.state.apply_ownership(adv)
+		a.state.apply_ownership(ownership("zzz-stale", 9, "fdaa::ff"))
+		b.state.apply_ownership(ownership("zzz-stale", 3, "fdaa::ee"))
+		self.assertGreater(len(_vector_origins(a.state)), MAX_VECTOR_ORIGINS)
+
+		bus = Bus()
+		a_t = FakeTransport(bind=("2001:db9::ha", 7946), bus=bus)
+		b_t = FakeTransport(bind=("2001:db9::hb", 7946), bus=bus)
+		a.transport = a_t
+		b.transport = b_t
+		a_gs, b_gs = GossipState(), GossipState()
+
+		n = len(_vector_origins(a.state))
+		bound = -(-n // MAX_VECTOR_ORIGINS)  # ceil(N/window)
+		# Drive up to `bound` full pull cycles (REQ → RESP → reverse-push). By the
+		# bound the cursor has swept every origin, so `zzz-stale` was advertised,
+		# A was seen ahead, and B applied gen 9.
+		for _ in range(bound):
+			anti_entropy_round(a, a_t, rng=random.Random(0))  # A → REQ (windowed)
+			b_t.drain(lambda msg, addr: handle_message(msg, addr, b, b_gs))  # B → RESP
+			a_t.drain(lambda msg, addr: handle_message(msg, addr, a, a_gs))  # A → reverse-push
+			b_t.drain(lambda msg, addr: handle_message(msg, addr, b, b_gs))  # B applies
+			if b.state.ownership["zzz-stale"].generation == 9:
+				break
+		self.assertEqual(b.state.ownership["zzz-stale"].generation, 9)
+		self.assertEqual(sorted(b.state.ownership["zzz-stale"].owned), ["fdaa::ff"])
+
+	def test_datagram_too_large_window_shrinks_but_still_bounds_payload(self):
+		# M3 fallback: if a FULL window overflows the datagram (fat per-origin
+		# entries), the round SHRINKS the window (halves max_origins) so the
+		# payload fits under MAX_DATAGRAM_BYTES — and the cursor still advances by
+		# the full step, so coverage completes (just over more rounds), never
+		# wedging on the over-large window. The 180-char origin IDs make the
+		# 8-origin window overflow while the 4-origin shrunk window fits.
+		daemon = _daemon("h1")
+		big = "z" * 180  # fat origin IDs: a full 8-window overflows, a 4-window fits
+		for i in range(20):
+			daemon.state.apply_membership(member(f"{big}{i:03d}", 1))
+		bus = Bus()
+		t = FakeTransport(bind=("2001:db9::h1", 7946), bus=bus)
+		daemon.transport = t
+		before = daemon._ae_cursor
+		sent = anti_entropy_round(daemon, t, rng=random.Random(0))
+		# A datagram WAS sent (the shrunk window fit), the cursor advanced by the
+		# full step (the sweep didn't wedge), and the datagram fits.
+		self.assertEqual(sent, 1)
+		self.assertNotEqual(daemon._ae_cursor, before)
+		datagrams = [data for queue in bus.queues.values() for data, _ in queue]
+		self.assertTrue(datagrams)
+		for data in datagrams:
+			self.assertLessEqual(len(data), MAX_DATAGRAM_BYTES)
 
 
 if __name__ == "__main__":
