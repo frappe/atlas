@@ -44,7 +44,7 @@ from .daemon import Daemon, build_initial, default_envelope_verifier, default_si
 from .failure import FailureTracker
 from .identity import load_identity
 from .loop import Loop
-from .observe import Counter
+from .observe import Counter, wire_conflict_metrics
 from .probe import ProbeProtocol
 from .records import MembershipKind, MembershipRecord, MemberState
 from .state import AppliedState, load_state, save_state
@@ -95,6 +95,10 @@ def main() -> int:
 	daemon.signature_verifier = default_signature_verifier
 	daemon.metrics = Counter()
 	daemon.conflict_tracker = _CT(now_fn=_time.monotonic)
+	# §7.3 / §18.2 — wire the conflict metrics counters: every START/END event
+	# from the tracker (driven by the apply path's `observe_conflicts`) bumps the
+	# operator-visible counters that ride in `status.json`.
+	wire_conflict_metrics(daemon.conflict_tracker, daemon.metrics)
 	daemon.advertise_leaving = lambda: _advertise_leaving(daemon)
 	# Stage 5+ — envelope verifier + seed-anchored trust directory (spec §19.1,
 	# §19.4). The cache pre-populates from the seed's per-host
@@ -107,6 +111,15 @@ def main() -> int:
 	for _hid, _rec in state.membership.items():
 		if _rec.signing_public_key and _hid not in daemon.signing_pubkey_cache:
 			daemon.signing_pubkey_cache[_hid] = _rec.signing_public_key
+	# M6 — merge the TOFU-learned signing pubkeys (§19.5) persisted in the
+	# applied state. A peer introduced at runtime whose key is not otherwise
+	# captured in a seed entry or a persisted MembershipRecord would be treated
+	# as first-contact again after this restart (its envelopes dropped until it
+	# re-cold-joins) without this merge. Reconstruction = seeds ∪ persisted-
+	# membership-keys ∪ persisted-TOFU-keys.
+	for _hid, _pub in state.signing_pubkeys.items():
+		if _pub and _hid not in daemon.signing_pubkey_cache:
+			daemon.signing_pubkey_cache[_hid] = _pub
 	operator_pubkey = seed.load_operator_pubkey(config.config_dir + "/operator-public-key")
 	daemon.operator_public_key = operator_pubkey
 	daemon.envelope_verifier = default_envelope_verifier
