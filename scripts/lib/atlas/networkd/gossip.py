@@ -30,7 +30,12 @@ from dataclasses import dataclass, field
 from . import wire
 from .antientropy import handle_anti_entropy_req, handle_anti_entropy_resp
 from .peers import HostID, select_peers
-from .records import MembershipRecord, OwnershipAdvertisement
+from .records import (
+	MembershipKind,
+	MembershipRecord,
+	OwnershipAdvertisement,
+	dedupe_key,
+)
 from .transport import UdpTransport
 from .wire import (
 	TYPE_ACK,
@@ -263,7 +268,16 @@ def _handle_gossip(msg: Message, daemon, gossip_state: GossipState) -> None:
 		records = wire.parse_gossip_payload(msg.payload, sigs_target=sigs)
 	except ValueError:
 		return  # malformed datagram — drop + retrieve
-	for record in records:
+	# §19.3 — apply MembershipRecords before OwnershipAdvertisements within a
+	# batch. An OwnershipAdvertisement can only be verified once its origin's
+	# MembershipRecord (carrying the signing key) is applied; ordering the pair
+	# so membership lands first lets a co-delivered pair verify on the first
+	# delivery instead of dropping the ownership and waiting for anti-entropy to
+	# re-pull it. A stable sort preserves the per-kind wire order. Correctness
+	# does not depend on this ordering — an out-of-order or split delivery is
+	# still healed by the drop + re-pull path (the ownership isn't applied, so
+	# its gen-vector never advances and the next round re-delivers it).
+	for record in sorted(records, key=lambda r: 0 if isinstance(r, MembershipRecord) else 1):
 		changed = _apply_record(record, daemon)
 		if changed:
 			gossip_state.note_applied(record)
@@ -281,7 +295,20 @@ def _apply_record(record: MembershipRecord | OwnershipAdvertisement, daemon) -> 
 	genuine record is signed and the verifier rejects unsigned ones.
 
 	When a MembershipRecord is applied and carries a signing_public_key, the
-	daemon's signing_pubkey_cache is updated (§19.1 trust-directory sync)."""
+	daemon's signing_pubkey_cache is updated (§19.1 trust-directory sync).
+
+	§13.3 duplicate suppression: BEFORE the expensive per-record ed25519 verify
+	and the apply, check the seen-cache on the record's (origin, kind, generation)
+	key. An EXACT re-delivery hits → drop silently (no verify, no apply, no
+	re-forward) and return "unchanged". This gives a cheap pre-verify drop for
+	replayed/re-delivered records (a DoS-posture win). Only an exact key matches:
+	a strictly-higher generation from the same origin has a DIFFERENT key, so it
+	is never suppressed — the generation check at apply still gates it. `_mark_seen`
+	runs inside `apply_*` on the miss path, so a record that verify defers (e.g.
+	an OwnershipAdvertisement whose origin's signing key isn't known yet) is NOT
+	cached and stays re-deliverable."""
+	if daemon.state.seen_already(dedupe_key(record)):
+		return False
 	verifier = getattr(daemon, "signature_verifier", None)
 	if verifier is not None:
 		try:
@@ -297,7 +324,14 @@ def _apply_record(record: MembershipRecord | OwnershipAdvertisement, daemon) -> 
 		if changed:
 			tracker = getattr(daemon, "failure_tracker", None)
 			if tracker is not None:
-				tracker.note_alive(record.host_id)
+				# §14.4: a `kind=leaving` record is a graceful-shutdown notice —
+				# arm the leaving → dead countdown, do NOT reset the origin to
+				# alive (that would resurrect the departing host). A normal
+				# `member` record is the §14.2/§14.5 fast-refute: reset to alive.
+				if record.kind == MembershipKind.LEAVING:
+					tracker.note_leaving(record.host_id)
+				else:
+					tracker.note_alive(record.host_id)
 		return changed
 	if isinstance(record, OwnershipAdvertisement):
 		return daemon.state.apply_ownership(record)

@@ -391,6 +391,82 @@ class TestColdJoin(unittest.TestCase):
 		self.assertEqual(seed.state.membership["n1"].generation, 1)
 
 
+# --- M4: seen-cache wired into the apply path (§13.3) ------------------------
+
+
+class TestSeenCacheSuppression(unittest.TestCase):
+	def _counting_verifier(self):
+		"""A verifier that counts invocations and always accepts — lets a test
+		assert the ed25519 verify is NOT re-run on a suppressed duplicate."""
+		calls = {"n": 0}
+
+		def verifier(record, daemon):
+			calls["n"] += 1  # accept everything (no raise)
+
+		return verifier, calls
+
+	def test_exact_dup_dropped_without_second_verify(self):
+		# §13.3: an EXACT (origin, kind, generation) re-delivery is dropped BEFORE
+		# the per-record signature verify — assert the verifier runs once (first
+		# delivery) and not again on the dup, and the dup is not forwarded.
+		daemon = _daemon("h1", owned=frozenset())
+		verifier, calls = self._counting_verifier()
+		daemon.signature_verifier = verifier
+		gossip_state = GossipState()
+		peer = member("h2", 5, key="K-H2")
+		msg = Message(type=TYPE_GOSSIP, sender="h2", payload=wire.gossip_payload([peer]))
+		handle_message(msg, ("2001:db9::h2", 7946), daemon, gossip_state)
+		self.assertEqual(calls["n"], 1)  # verified once on first delivery
+		self.assertEqual(len(gossip_state.forward_queue), 1)
+		# Re-deliver the exact same record (a replay / gossip echo).
+		msg2 = Message(type=TYPE_GOSSIP, sender="h2", payload=wire.gossip_payload([peer]))
+		handle_message(msg2, ("2001:db9::h2", 7946), daemon, gossip_state)
+		# No second verify (dropped before verify) and nothing new to forward.
+		self.assertEqual(calls["n"], 1)
+		self.assertEqual(len(gossip_state.forward_queue), 1)
+
+	def test_higher_generation_not_suppressed(self):
+		# A strictly-higher generation from the SAME origin has a DIFFERENT dedupe
+		# key, so the seen-cache never suppresses it — it applies + forwards.
+		daemon = _daemon("h1", owned=frozenset())
+		verifier, calls = self._counting_verifier()
+		daemon.signature_verifier = verifier
+		gossip_state = GossipState()
+		handle_message(
+			Message(type=TYPE_GOSSIP, sender="h2", payload=wire.gossip_payload([member("h2", 5, key="K")])),
+			("2001:db9::h2", 7946),
+			daemon,
+			gossip_state,
+		)
+		# Higher gen from the same origin — a fresh key, must apply.
+		handle_message(
+			Message(type=TYPE_GOSSIP, sender="h2", payload=wire.gossip_payload([member("h2", 6, key="K")])),
+			("2001:db9::h2", 7946),
+			daemon,
+			gossip_state,
+		)
+		self.assertEqual(daemon.state.membership["h2"].generation, 6)
+		self.assertEqual(calls["n"], 2)  # both verified (neither suppressed)
+		# Both fresh applies were forwarded.
+		self.assertEqual(len(gossip_state.forward_queue), 2)
+
+	def test_dup_via_antientropy_apply_also_suppressed(self):
+		# The anti-entropy apply path shares the same seen-cache gate: an exact
+		# re-delivery there is dropped pre-verify too.
+		from atlas.networkd.antientropy import _apply
+
+		daemon = _daemon("h1", owned=frozenset())
+		verifier, calls = self._counting_verifier()
+		daemon.signature_verifier = verifier
+		daemon._incoming_wire_sigs = {}
+		rec = member("h2", 4, key="K")
+		self.assertTrue(_apply(rec, daemon))
+		self.assertEqual(calls["n"], 1)
+		# Exact dup → dropped before verify, unchanged.
+		self.assertFalse(_apply(member("h2", 4, key="K"), daemon))
+		self.assertEqual(calls["n"], 1)
+
+
 # --- end-to-end: two daemons converge ---------------------------------------
 
 
