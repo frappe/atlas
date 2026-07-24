@@ -142,11 +142,27 @@ def _read_dict(path: str) -> dict:
 		return {}
 
 
+def _fsync_dir(path: Path) -> None:
+	"""fsync the directory `path` so a preceding `os.replace` into it is durable
+	across a crash/power-cut. Without this the rename can be lost even though
+	`os.replace` returned — a just-added VM's /128 could vanish after a power
+	cut. Linux is the target (`O_DIRECTORY`); degrade to a no-op elsewhere."""
+	dir_flag = getattr(os, "O_DIRECTORY", 0)
+	if not dir_flag:
+		return
+	fd = os.open(str(path), dir_flag)
+	try:
+		os.fsync(fd)
+	finally:
+		os.close(fd)
+
+
 def _atomic_write(path: str, body: dict) -> None:
 	"""Write `body` to `path` atomically: tempfile + os.replace, creating the
 	parent dir (0755) on the way. Atomic at the rename level so a daemon mid-
 	scan sees either the OLD or the NEW file, never an empty/truncated one.
-	A missing parent dir is a fresh install; we create it once."""
+	A missing parent dir is a fresh install; we create it once. The parent dir
+	is fsync'd after the rename so the replace survives a power-cut."""
 	p = Path(path)
 	p.parent.mkdir(parents=True, exist_ok=True)
 	# write_text + flush + os.replace — inside `try` to clean up on failure.
@@ -160,6 +176,7 @@ def _atomic_write(path: str, body: dict) -> None:
 			os.fsync(fh.fileno())
 		os.chmod(tmp_name, 0o644)
 		os.replace(tmp_name, str(p))
+		_fsync_dir(p.parent)
 	except Exception:
 		if tmp_name is not None:
 			try:

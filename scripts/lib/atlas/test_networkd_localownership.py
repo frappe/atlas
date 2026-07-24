@@ -1,11 +1,13 @@
 """Unit tests for `networkd.localownership` + `networkd.seed`."""
 
 import json
+import os
+import stat
 import tempfile
 import unittest
 from pathlib import Path
 
-from atlas.networkd.localownership import read_local_ownership, same_set
+from atlas.networkd.localownership import _atomic_write, read_local_ownership, same_set
 from atlas.networkd.records import MembershipKind, MemberState
 from atlas.networkd.seed import load_seed, load_seed_optional
 
@@ -43,6 +45,36 @@ class TestReadLocalOwnership(unittest.TestCase):
 			p.write_text(json.dumps({"addrs": ["fdaa::1"]}))
 			with self.assertRaises(ValueError):
 				read_local_ownership(str(p))
+
+
+class TestAtomicWriteDurability(unittest.TestCase):
+	def test_parent_dir_fsync_after_replace(self):
+		# M5 — `_atomic_write` must fsync the PARENT DIR after os.replace so a
+		# just-added VM's /128 survives a power-cut. Spy on os.fsync to confirm a
+		# directory fd is fsync'd; assert the write lands intact. Exercise
+		# `_atomic_write` directly (avoids the /etc lock path add_local_owned
+		# uses, which needs root).
+		fsync_on_dir = {"seen": False}
+		real_fsync = os.fsync
+
+		def spy_fsync(fd):
+			try:
+				if stat.S_ISDIR(os.fstat(fd).st_mode):
+					fsync_on_dir["seen"] = True
+			except OSError:
+				pass
+			return real_fsync(fd)
+
+		with tempfile.TemporaryDirectory() as d:
+			path = str(Path(d) / "local-ownership.json")
+			os.fsync = spy_fsync
+			try:
+				_atomic_write(path, {"owned": ["fdaa::42"]})  # must not raise
+			finally:
+				os.fsync = real_fsync
+			if getattr(os, "O_DIRECTORY", 0):
+				self.assertTrue(fsync_on_dir["seen"])
+			self.assertEqual(read_local_ownership(path), frozenset({"fdaa::42"}))
 
 
 class TestSameSet(unittest.TestCase):
