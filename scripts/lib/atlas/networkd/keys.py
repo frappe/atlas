@@ -1,4 +1,5 @@
-"""Self-generated WireGuard keypair (spec §7.1 / §8 — **Issue A closeout**).
+"""WireGuard keypair on the host — controller-derived, host-generated fallback
+(spec §7.1 / §8).
 
 Storage: 32-byte Curve25519 private scalar at
 `/etc/atlas-networkd/wg-private-key` (0600), base64-standard because that's
@@ -6,18 +7,28 @@ what `wg set private-key` reads. The public key (also base64) is stored
 alongside at `wg-public-key` so the daemon can advertise it on its Membership
 Record without re-running `wg pubkey` on every boot.
 
-We deliberately use `wg genkey` + `wg pubkey` (guaranteed present on every
-Atlas host — `host-mesh.service` already requires wg) instead of pulling in
-`cryptography` (a Frappe dep, not a host dep). Matches the spec's "few deps"
-operating principle (#5) and Taste.md's "don't import — copy" rule: `os.urandom`
-seed could be clamped by hand, but the public-key base-point multiply is most
-honestly done by the WireGuard tools themselves — they already do, on every
-host. No new dependency.
+In the normal path the controller writes both files during bootstrap: it
+derives the host's keypair with `networking.derive_host_wireguard_keypair`
+(seed HMAC-keyed off the cluster-wide `ancp_wg_derivation_secret`, so the key
+is NOT recomputable from the public Server UUID), and pushes them via the
+root-SSH layer. `ensure_keypair` then finds the pushed pair valid and adopts
+it verbatim — the derivation is stable, so a re-bootstrap re-derives the SAME
+identity with zero peer churn, and `Server.wireguard_public_key` matches the
+on-disk pub.
+
+Only when those files are ABSENT (a host that came up before the controller
+wrote them) does this self-generate a fresh keypair via `wg genkey` + `wg
+pubkey` (guaranteed present on every Atlas host — the mesh already requires wg)
+rather than pulling in `cryptography` (a Frappe dep, not a host dep) — matching
+the spec's "few deps" operating principle (#5). A self-generated key won't
+match the controller's derived `Server.wireguard_public_key`; the controller's
+pushed pair is the canonical one.
 
 `ensure_keypair(private_key_path, public_key_path)` is **idempotent**: if both
-files exist with valid keys, it does nothing; otherwise it generates and
-writes. The systemd unit (Stage 1b) calls this once before bring-up so the
-device-bring-up step can `wg set private-key` against a real key.
+files exist with valid keys, it does nothing (adopts the controller's pushed
+pair); otherwise it generates and writes. The systemd unit (Stage 1b) calls
+this once before bring-up so the device-bring-up step can `wg set private-key`
+against a real key.
 """
 
 from __future__ import annotations
