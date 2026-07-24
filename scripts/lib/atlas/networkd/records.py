@@ -209,6 +209,16 @@ def dedupe_key_ownership(record: OwnershipAdvertisement) -> tuple[str, str, Gene
 	return (record.origin, "ownership", record.generation)
 
 
+def dedupe_key(record: MembershipRecord | OwnershipAdvertisement) -> tuple[str, str, Generation]:
+	"""The §13.3 (origin, kind, generation) key for either record kind.
+	Membership and Ownership live in disjoint `kind` namespaces, so a membership
+	and an ownership record from the same origin at the same generation never
+	collide. The apply path gates the seen-cache on this before verify + apply."""
+	if isinstance(record, MembershipRecord):
+		return dedupe_key_membership(record)
+	return dedupe_key_ownership(record)
+
+
 def owning_advertisement(
 	origin: HostID, generation: Generation, owned: Iterable[IP6]
 ) -> OwnershipAdvertisement:
@@ -226,6 +236,7 @@ __all__ = [
 	"MembershipRecord",
 	"OwnershipAdvertisement",
 	"OwnershipTable",
+	"dedupe_key",
 	"dedupe_key_membership",
 	"dedupe_key_ownership",
 	"effective_ownership",
