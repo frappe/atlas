@@ -69,10 +69,18 @@ class FailureTracker:
 	"""The observer-local ladder + garbage collection of dead peers' records.
 	Sizes: `peers` is O(N) — one `PeerFailureState` per alive/suspect/dead
 	peer; `dead_at` is O(#dead) — a timestamp per host that's been declared
-	dead but not yet GC'd (`dead_grace`)."""
+	dead but not yet GC'd (`dead_grace`); `leaving_at` is O(#leaving) — a
+	timestamp per host that announced graceful shutdown (§14.4) and is being
+	fast-pathed alive → dead after `leaving_grace`."""
 
 	peers: dict[HostID, PeerFailureState] = field(default_factory=dict)
 	dead_at: dict[HostID, float] = field(default_factory=dict)
+	# §14.3/§14.4 — a host that advertised `kind=leaving` records its leave
+	# timestamp here; the loop's GC tick (`promote_leaving_if_due`) marks it
+	# `dead` DIRECTLY (skipping `suspect`) once `leaving_grace` elapses. A
+	# fast-restart that re-advertises `alive` before the grace elapses clears
+	# this via `note_alive` (§14.4 step 3 refute).
+	leaving_at: dict[HostID, float] = field(default_factory=dict)
 	# The injected clock — `time.monotonic` in production, controlled in tests.
 	now_fn: Callable[[], float] = field(default=lambda: 0.0)
 
@@ -103,11 +111,47 @@ class FailureTracker:
 		marked `suspect` (or even `dead` within `dead_grace`) cleared the
 		suspicion by sending us an `alive` Membership Record at a higher
 		Generation than we had stored. Reset its observer-local state to
-		`alive` and drop any `dead_at` GC timer we'd armed."""
+		`alive` and drop any `dead_at` GC timer we'd armed.
+
+		Also cancels a pending leaving → dead countdown (§14.4 step 3): a
+		sub-`leaving_grace` `systemctl restart` re-advertises `alive` at a
+		higher Generation before the grace elapses; that refute keeps the host
+		alive instead of reaping it."""
 		peer = self.peers.setdefault(host_id, PeerFailureState())
 		peer.state = FailureState.ALIVE
 		peer.since = self.now_fn()
 		self.dead_at.pop(host_id, None)
+		self.leaving_at.pop(host_id, None)
+
+	def note_leaving(self, host_id: HostID) -> None:
+		"""Graceful-shutdown notice (§14.4): the origin advertised a
+		`kind=leaving` Membership Record. Arm the leaving → dead countdown from
+		`now`; the loop's `promote_leaving_if_due` marks the host `dead`
+		DIRECTLY (skipping `suspect`) once `leaving_grace` elapses. We do NOT
+		touch the observer-local ladder state here — the host stays wherever it
+		was on the wire (its record carries `state=leaving`, which already
+		excludes it from probe/gossip/anti-entropy target selection); the
+		countdown is the sole driver toward `dead`.
+
+		Idempotent: a re-delivery of the same leaving record (or a later one at
+		a higher generation) keeps the ORIGINAL `leaving_at` so the grace runs
+		from the first notice, not the last."""
+		self.leaving_at.setdefault(host_id, self.now_fn())
+
+	def promote_leaving_if_due(self, leaving_grace: float) -> list[HostID]:
+		"""§14.4: mark `dead` any host whose `leaving_at` is older than
+		`leaving_grace`, skipping `suspect`. Clears the `leaving_at` entry (the
+		host is now on the normal `dead_grace`/`ownership_grace` ladder driven
+		by `mark_dead`'s `dead_at`). Returns the host_ids promoted this tick."""
+		now = self.now_fn()
+		promoted: list[HostID] = []
+		for host_id in list(self.leaving_at.keys()):
+			if now - self.leaving_at[host_id] < leaving_grace:
+				continue
+			self.leaving_at.pop(host_id, None)
+			self.mark_dead(host_id)
+			promoted.append(host_id)
+		return promoted
 
 	def mark_suspect(self, host_id: HostID) -> None:
 		"""A direct + indirect probe failed (§14.2 step 5). Move the peer from
@@ -161,11 +205,23 @@ class FailureTracker:
 		# ladder entry alive until `ownership_grace` elapses — the loop's
 		# ownership-reap step (`gc_origin_if_dead`) needs the timestamp and
 		# pops `dead_at` itself once it has reaped the ownership records.
+		#
+		# §14.3: a host reaped from `membership` here that still has live
+		# Ownership Records is moved to `state.routable_dead` — a render-ONLY
+		# view — so its `[Peer]` keeps carrying its /128s until its ownership is
+		# also reaped at `ownership_grace`. It is gone from `membership`, so
+		# every peer-selection / probe / anti-entropy path (all of which read
+		# `membership`) stops targeting it — it is not probed or gossiped-to,
+		# only rendered. A host that owns NOTHING is reaped outright (no
+		# `routable_dead` entry) — we don't leak membership for a host with no
+		# routes to keep alive.
 		reaped: list[HostID] = []
 		for host_id in list(self.dead_at.keys()):
 			if now - self.dead_at[host_id] < dead_grace:
 				continue
-			state.membership.pop(host_id, None)
+			record = state.membership.pop(host_id, None)
+			if record is not None and host_id in state.ownership:
+				state.routable_dead[host_id] = record
 			reaped.append(host_id)
 		return reaped
 
