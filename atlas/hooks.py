@@ -65,6 +65,7 @@ doctype_js = {
 	"Firewall": "public/js/atlas_form_overrides.js",
 	"Task": "public/js/atlas_form_overrides.js",
 	"Route53 Settings": "public/js/atlas_form_overrides.js",
+	"PowerDNS Settings": "public/js/atlas_form_overrides.js",
 	"Lets Encrypt Settings": "public/js/atlas_form_overrides.js",
 	"Root Domain": "public/js/atlas_form_overrides.js",
 	"TLS Certificate": "public/js/atlas_form_overrides.js",

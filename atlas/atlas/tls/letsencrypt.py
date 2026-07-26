@@ -53,6 +53,7 @@ class LetsEncryptProvider(TlsProvider):
 			# certbot flag (--dns-route53). A plain name, never a --flag, so it
 			# crosses the typed-CLI boundary without confusing argparse.
 			"DNS_AUTHENTICATOR": dns_provider.certbot_authenticator(),
+			"CERTBOT_ARG": dns_provider.certbot_args(domain),
 		}
 		task = run_local_task(
 			script="issue-cert",

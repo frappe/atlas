@@ -51,12 +51,16 @@ step, then layers the provisioning on top.
                 "ipv6_virtual_machine_range": "…",
             },
         },
-        "tls": {  # optional — seeds Route53/LE/Root Domain
+        "tls": {  # optional — seeds DNS/LE/Root Domain
             "domain": "blr1.frappe.dev",
             "region": "blr1",  # the Atlas region the wildcard fronts
+            "dns_provider_type": "Route53" | "PowerDNS",  # optional; defaults Route53
+            # Route53:
             "access_key_id": "…",
             "secret_access_key": "…",
             "aws_region": "us-east-1",  # optional
+            # PowerDNS:
+            "powerdns": {"api_url": "https://pdns.example", "api_key": "…", "server_id": "localhost"},
             "account_email": "ops@…",
             "acme_directory_url": "…",  # optional; defaults to LE staging
         },
@@ -118,7 +122,7 @@ def run(config: dict) -> dict:
 
 	summary = {"provider_type": provider_type}
 
-	# 3. TLS layer (optional): Route53 + LE setters, the active DNS/TLS vendor types
+	# 3. TLS layer (optional): DNS + LE setters, the active DNS/TLS vendor types
 	#    on Atlas Settings, and the Root Domain row Site.before_insert reads.
 	tls = config.get("tls")
 	if tls:
@@ -131,21 +135,18 @@ def run(config: dict) -> dict:
 
 
 def setup_tls_layer(tls: dict) -> None:
-	"""Seed Route53 Settings + Lets Encrypt Settings via their setters, set the active
+	"""Seed DNS Settings + Lets Encrypt Settings via their setters, set the active
 	DNS/TLS vendor types on Atlas Settings, and create the Root Domain row. Mirrors
 	the desk first-run order (spec/13-tls.md). `tls['region']` is the Atlas region the
 	wildcard fronts (Root Domain denormalizes it)."""
-	frappe.get_single("Route53 Settings").setup(
-		access_key_id=tls["access_key_id"],
-		secret_access_key=tls["secret_access_key"],
-		region=tls.get("aws_region", "us-east-1"),
-	)
+	dns_provider_type = tls.get("dns_provider_type") or "Route53"
+	_setup_dns_provider(dns_provider_type, tls)
 	frappe.get_single("Lets Encrypt Settings").setup(
 		account_email=tls["account_email"],
 		acme_directory_url=tls.get("acme_directory_url")
 		or "https://acme-staging-v02.api.letsencrypt.org/directory",
 	)
-	frappe.db.set_single_value("Atlas Settings", "dns_provider_type", "Route53", update_modified=False)
+	frappe.db.set_single_value("Atlas Settings", "dns_provider_type", dns_provider_type, update_modified=False)
 	frappe.db.set_single_value("Atlas Settings", "tls_provider_type", "Let's Encrypt", update_modified=False)
 	if not frappe.db.exists("Root Domain", tls["domain"]):
 		frappe.get_doc(
@@ -156,6 +157,24 @@ def setup_tls_layer(tls: dict) -> None:
 				"is_active": 1,
 			}
 		).insert(ignore_permissions=True)
+
+
+def _setup_dns_provider(dns_provider_type: str, tls: dict) -> None:
+	if dns_provider_type == "Route53":
+		frappe.get_single("Route53 Settings").setup(
+			access_key_id=tls["access_key_id"],
+			secret_access_key=tls["secret_access_key"],
+			region=tls.get("aws_region", "us-east-1"),
+		)
+	elif dns_provider_type == "PowerDNS":
+		powerdns = tls.get("powerdns") or tls
+		frappe.get_single("PowerDNS Settings").setup(
+			api_url=powerdns["api_url"],
+			api_key=powerdns["api_key"],
+			server_id=powerdns.get("server_id") or "localhost",
+		)
+	else:
+		frappe.throw(_(f"Unsupported DNS provider type: {dns_provider_type}"))
 
 
 def self_managed_networking(config: dict) -> dict | None:
@@ -243,15 +262,29 @@ def from_site_config() -> dict:
 
 	domain = frappe.conf.get("atlas_tls_domain")
 	if domain:
-		config["tls"] = {
+		dns_provider_type = frappe.conf.get("atlas_dns_provider_type") or "Route53"
+		tls = {
 			"domain": domain,
-			"region": frappe.conf.get("atlas_tls_region") or require_config("atlas_do_region"),
-			"access_key_id": require_config("atlas_route53_access_key_id"),
-			"secret_access_key": require_config("atlas_route53_secret_access_key"),
-			"aws_region": frappe.conf.get("atlas_route53_region", "us-east-1"),
+			"region": frappe.conf.get("atlas_tls_region") or region,
+			"dns_provider_type": dns_provider_type,
 			"account_email": require_config("atlas_acme_account_email"),
 			"acme_directory_url": frappe.conf.get("atlas_acme_directory_url", LETS_ENCRYPT_STAGING),
 		}
+		if dns_provider_type == "PowerDNS":
+			tls["powerdns"] = {
+				"api_url": require_config("atlas_powerdns_api_url"),
+				"api_key": require_config("atlas_powerdns_api_key"),
+				"server_id": frappe.conf.get("atlas_powerdns_server_id") or "localhost",
+			}
+		else:
+			tls.update(
+				{
+					"access_key_id": require_config("atlas_route53_access_key_id"),
+					"secret_access_key": require_config("atlas_route53_secret_access_key"),
+					"aws_region": frappe.conf.get("atlas_route53_region", "us-east-1"),
+				}
+			)
+		config["tls"] = tls
 
 	return config
 
@@ -330,9 +363,15 @@ def _stage_tls(args: dict) -> None:
 		{
 			"domain": args.get("tls_domain"),
 			"region": args.get("region"),
+			"dns_provider_type": args.get("dns_provider_type") or "Route53",
 			"access_key_id": args.get("route53_access_key_id"),
 			"secret_access_key": args.get("route53_secret_access_key"),
 			"aws_region": args.get("route53_region") or "us-east-1",
+			"powerdns": {
+				"api_url": args.get("powerdns_api_url"),
+				"api_key": args.get("powerdns_api_key"),
+				"server_id": args.get("powerdns_server_id") or "localhost",
+			},
 			"account_email": args.get("acme_account_email"),
 			"acme_directory_url": _resolve_acme_url(args),
 		}

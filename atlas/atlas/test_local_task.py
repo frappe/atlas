@@ -43,6 +43,24 @@ class TestRunLocalTask(IntegrationTestCase):
 		self.assertFalse(any("AKIA" in str(token) for token in argv))
 		self.assertEqual(run.call_args.kwargs["env"]["AWS_ACCESS_KEY_ID"], "AKIA")
 
+	def test_list_values_that_look_like_flags_use_equals_form(self) -> None:
+		out = 'ATLAS_RESULT={"ok": 1}\nIssued.'
+		with (
+			patch.object(local_task.scripts_catalog, "resolve", return_value="/repo/scripts/issue-cert.py"),
+			patch.object(local_task.subprocess, "run", return_value=self._fake_completed(stdout=out)) as run,
+		):
+			local_task.run_local_task(
+				script="issue-cert",
+				variables={
+					"DOMAIN": "blr1.frappe.dev",
+					"CERTBOT_ARG": ["--authenticator", "certbot-dns-powerdns:dns-powerdns"],
+				},
+			)
+
+		argv = run.call_args.args[0]
+		self.assertIn("--certbot-arg=--authenticator", argv)
+		self.assertIn("--certbot-arg=certbot-dns-powerdns:dns-powerdns", argv)
+
 	def test_nonzero_exit_marks_failure_and_raises(self) -> None:
 		with (
 			patch.object(local_task.scripts_catalog, "resolve", return_value="/repo/scripts/issue-cert.py"),

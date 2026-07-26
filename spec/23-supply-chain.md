@@ -131,9 +131,9 @@ installed out of band (not by a Task):
 | Artefact | Source | Notes |
 | --- | --- | --- |
 | `certbot` | OS package / pip | ACME client; DNS-01 |
-| `certbot-dns-route53` | pip | the Route 53 DNS-01 plugin |
+| `certbot-dns-route53` / `certbot-dns-pdns` | pip | DNS-01 plugins for the supported DNS providers |
 | `openssl` | OS package | reads cert dates |
-| `boto3` | pip | Route 53 client; imported lazily so it never loads at module import |
+| `boto3` | pip | Route 53 client; imported lazily and only needed for Route53 |
 
 Issuance fails its preflight with a clear message if these are absent
 ([README.md](./README.md) "First run", `tls_issuance` e2e). They are **not**

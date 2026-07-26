@@ -19,6 +19,7 @@ Read permission for `System Manager`.
 14. [SSH Key](#ssh-key) — a user's public key, chosen when creating a VM.
 15. [Task](#task)
 16. [Route53 Settings](#route53-settings) — AWS Route 53 API config (Single). The active DNS vendor lives on `Atlas Settings.dns_provider_type`.
+17. [PowerDNS Settings](#powerdns-settings) — PowerDNS Authoritative HTTP API config (Single).
 17. [Lets Encrypt Settings](#lets-encrypt-settings) — ACME account config (Single); the active TLS issuer is `Atlas Settings.tls_provider_type`.
 18. [Root Domain](#root-domain) — one wildcard zone == one region.
 19. [TLS Certificate](#tls-certificate) — the issued regional wildcard cert.
@@ -76,7 +77,7 @@ indirection layer; there is no `Provider` row to load.
 | `region`               | Data             | Y    | This Atlas instance's single region (e.g. `blr1`, `nyc3`) — the **one source of truth** for region, and the **only** place region is stored. It is the cert-dir scope on every proxy guest, the label that separates this bench's servers in a shared cloud account (`provisioning.provision_region`), the value `Root Domain` denormalizes at insert, and the region announced to Central at Register. `Subdomain` / `Site` / `Port Mapping` / proxy VMs carry **no** denormalized copy — they belong to the one region by definition. Read everywhere through `placement.atlas_region()`, which fails loud when unset. Set by the setup contract (`setup.run` / the Setup Wizard) from the explicit `region` input; the `from_site_config` adapter / `bootstrap.py` derive it from `atlas_tls_region` (else the active vendor's region key). Atlas is single-region, so there is exactly one value. |
 | `provider_type`        | Select           | Y    | The currently-active vendor: `DigitalOcean` / `Scaleway` / `Self-Managed` (`Fake` is also an option in `developer_mode` / test builds). `atlas.get_provider()` reads this and calls `for_provider_type` against the registry directly. Guarded in `validate()` (see below). |
 | `tls_provider_type`    | Select           |      | The active certificate issuer: `Let's Encrypt` / `ZeroSSL` / `Self-Managed`. Drives the TLS registry (`tls.for_tls_provider_type`); denormalized onto `Root Domain` / `TLS Certificate` at insert. See [13-tls.md](./13-tls.md). |
-| `dns_provider_type`    | Select           |      | The active DNS vendor (DNS-01 challenge): `Route53` / `Cloudflare`. Keys the DNS registry (`dns.for_dns_provider_type`); denormalized onto `Root Domain` at insert. Pairs with `Route53 Settings` for the credentials. Only Route53 implemented; Cloudflare reserved. See [13-tls.md](./13-tls.md). |
+| `dns_provider_type`    | Select           |      | The active DNS vendor (DNS-01 challenge): `Route53` / `PowerDNS` / `Cloudflare`. Keys the DNS registry (`dns.for_dns_provider_type`); denormalized onto `Root Domain` at insert. Pairs with the matching DNS Settings Single for credentials. Route53 and PowerDNS implemented; Cloudflare reserved. See [13-tls.md](./13-tls.md). |
 | `fail_scripts`         | Small Text       |      | Developer-mode fault injection, shown only when `provider_type=Fake`. Comma/newline-separated script names whose Tasks the Fake provider makes FAIL; `*` fails every script. Read by `fake_tasks._configured_failure` (replaces the old per-`Provider`-row field). |
 | `default_user_image`   | Link → Virtual Machine Image | | Base image a dashboard user's new machine provisions from when they don't pick one. Disambiguates placement when several images are active. See [11-user-ui.md](./11-user-ui.md). |
 | `default_bench_snapshot` | Link → Virtual Machine Snapshot | | The golden bench snapshot a self-serve `Site`'s backing VM is cloned from (the baked bench + MariaDB + Redis, [08-images.md § golden bench image](./08-images.md)). `Site.before_insert` placement resolves it; provisioning clones via `Virtual Machine Snapshot.clone_to_new_vm`. Must be set + `Available` before any Site is created. See [14-self-serve.md](./14-self-serve.md). |
@@ -1394,6 +1395,35 @@ account_email
 
 - **Test Connection** — `tls.for_tls_provider_type(Atlas Settings.tls_provider_type).authenticate()`.
   Result surfaces via a toast; no auto-painted indicator.
+
+---
+
+
+## PowerDNS Settings
+
+A Single. PowerDNS Authoritative HTTP API credentials. Read by
+`PowerDNSDnsProvider`; the API key comes out via
+`atlas.atlas.secrets.get_secret`. The *active* DNS vendor is not stored here — it
+lives on `Atlas Settings.dns_provider_type`.
+
+### Fields
+
+| Field       | Type     | Reqd | Notes |
+| ----------- | -------- | ---- | ----- |
+| `api_url`   | Data     | Y    | Base URL for the PowerDNS Authoritative API, without `/api/v1`. |
+| `api_key`   | Password | Y    | Sent to PowerDNS as `X-API-Key`; also written to certbot's 0600 PowerDNS credentials file during issuance. |
+| `server_id` | Data     |      | PowerDNS server id; defaults to `localhost`. |
+
+### API endpoints used
+
+- `GET /api/v1/servers/{server_id}` — Test Connection.
+- `GET /api/v1/servers/{server_id}/zones?zone=<zone>.` — discover the zone that owns a Root Domain.
+- `PATCH /api/v1/servers/{server_id}/zones/{zone_id}` — replace wildcard A/AAAA RRsets with `changetype = REPLACE`.
+
+### Buttons
+
+- **Test Connection** — `dns.for_dns_provider_type(Atlas Settings.dns_provider_type).authenticate()`
+  (PowerDNS reads the configured server endpoint).
 
 ---
 

@@ -623,7 +623,7 @@ never touches real DO/Scaleway rows.
   resolved by name. `Root Domain` → **Issue / Renew Certificate** issues the
   regional `*.<region>.frappe.dev` wildcard via Let's Encrypt over a DNS-01
   challenge (`issue-cert.py` runs on the **controller**, a host dependency:
-  certbot, certbot-dns-route53, openssl, boto3), pushes the PEMs onto every proxy
+  certbot, certbot-dns-route53 / certbot-dns-pdns, openssl, boto3), pushes the PEMs onto every proxy
   VM in the region (`push_cert`), and publishes the public `*.<domain>` A/AAAA at
   the proxy fleet (`upsert_wildcard`). One `Root Domain` = one region = one
   wildcard. See [13-tls.md](./13-tls.md).

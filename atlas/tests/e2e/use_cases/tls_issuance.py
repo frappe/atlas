@@ -8,14 +8,14 @@ that nothing else does:
     Root Domain.issue_certificate()
       → TLS Certificate.issue()
         → LetsEncryptProvider.issue()          (real certbot subprocess)
-          → certbot DNS-01 via Route53DnsProvider  (real AWS Route 53 zone)
+          → certbot DNS-01 via the configured DnsProvider
             → PEMs on the controller's disk
         → _push_to_proxies() → proxy.push_cert(...)  (real proxy guest, nginx reload)
 
 What it proves, end to end, that only a live run can:
 
-- **Route 53 reachability** — `Route53DnsProvider.authenticate()` lists hosted zones
-  with the configured IAM creds (the same `route53:*` issuance needs).
+- **DNS reachability** — the configured `DnsProvider.authenticate()` reaches the
+  real DNS API with the same credentials issuance needs.
 - **Real ACME DNS-01 issuance** — certbot runs on the controller, plants the TXT
   record in the real zone, and Let's Encrypt (staging) issues `*.<domain>`. Proves
   `local_task.run_local_task` + `issue-cert.py` + `scripts/lib/atlas/certs.py`
@@ -31,10 +31,11 @@ What it proves, end to end, that only a live run can:
   here is that the REAL producer feeds push_cert, not chain trust.)
 
 Cost: the proxy_vm infra (one droplet, two VMs, one reserved IPv4) PLUS a real
-ACME issuance against a real Route 53 zone. It needs the TLS config keys
-(`atlas_tls_domain` etc., see `_config.get_tls_config`) and certbot +
-certbot-dns-route53 + boto3 installed on the controller; absent either, it raises
-`MissingConfig` / a clear preflight error and runs nothing billable.
+ACME issuance against a real DNS zone. It needs the TLS config keys
+(`atlas_tls_domain` etc., see `_config.get_tls_config`) and certbot + the selected
+DNS plugin installed on the controller; absent either, it raises `MissingConfig` /
+a clear preflight error and runs nothing billable. Route53 also needs boto3 for
+the authenticate read.
 
     bench --site atlas.tests.local execute atlas.tests.e2e.use_cases.tls_issuance.run_smoke
 
@@ -77,8 +78,7 @@ from atlas.tests.e2e.use_cases.proxy_vm import (
 	_teardown,
 )
 
-# Active vendor types the harness configures on the Settings singles each run.
-_DNS_PROVIDER_TYPE = "Route53"
+# Active TLS issuer the harness configures on the Settings singles each run.
 _TLS_PROVIDER_TYPE = "Let's Encrypt"
 
 
@@ -91,7 +91,7 @@ def run(reuse: bool = True, keep: bool = True) -> None:
 
 def run_smoke(reuse: bool = True, keep: bool = True) -> None:
 	config = get_tls_config()
-	_preflight_controller_deps()
+	_preflight_controller_deps(config["dns_provider_type"])
 
 	with phase("tls-issuance (smoke)", reuse=reuse, keep=keep) as server:
 		region = config["region"]
@@ -100,8 +100,8 @@ def run_smoke(reuse: bool = True, keep: bool = True) -> None:
 
 		_seed_tls_doctypes(config)
 		try:
-			# 1. Route 53 reachability — the same read issuance depends on.
-			_assert_route53_reachable()
+			# 1. DNS provider reachability — the same API issuance depends on.
+			_assert_dns_reachable(config["dns_provider_type"])
 
 			# 2. Real ACME issuance: certbot DNS-01 against the live zone, LE staging.
 			#    This drives the controller Task + issue-cert.py + real certbot.
@@ -149,24 +149,24 @@ def run_smoke(reuse: bool = True, keep: bool = True) -> None:
 # --- preflight -----------------------------------------------------------
 
 
-def _preflight_controller_deps() -> None:
-	"""Fail fast, before any billable provision, if the controller-host deps the
-	TLS layer needs are missing (spec/13-tls.md: certbot + certbot-dns-route53 +
-	openssl, plus boto3 for the Route 53 authenticate read)."""
+def _preflight_controller_deps(dns_provider_type: str) -> None:
+	"""Fail fast, before any billable provision, if controller-host TLS deps are
+	missing (spec/13-tls.md: certbot + selected DNS plugin + openssl)."""
 	missing = [binary for binary in ("certbot", "openssl") if shutil.which(binary) is None]
 	if missing:
 		raise RuntimeError(
 			f"controller is missing TLS dependencies: {', '.join(missing)}. "
-			"Install certbot + certbot-dns-route53 (and openssl) on the Atlas controller "
-			"(spec/13-tls.md, 'controller-host dependency')."
+			"Install certbot, openssl, and the selected certbot DNS plugin on the Atlas "
+			"controller (spec/13-tls.md, 'controller-host dependency')."
 		)
-	try:
-		import boto3
-	except ImportError as exception:
-		raise RuntimeError(
-			"controller is missing boto3 (needed for Route 53 authenticate / certbot-dns-route53). "
-			"pip install boto3 certbot-dns-route53 on the Atlas controller."
-		) from exception
+	if dns_provider_type == "Route53":
+		try:
+			import boto3
+		except ImportError as exception:
+			raise RuntimeError(
+				"controller is missing boto3 (needed for Route 53 authenticate / certbot-dns-route53). "
+				"pip install boto3 certbot-dns-route53 on the Atlas controller."
+			) from exception
 
 
 # --- DocType seeding -----------------------------------------------------
@@ -175,10 +175,8 @@ def _preflight_controller_deps() -> None:
 def _seed_tls_doctypes(config: dict) -> None:
 	"""Configure the TLS-layer Settings singles + the Root Domain from config,
 	idempotently. Mirrors the operator first-run order (spec/13-tls.md): set the
-	active DNS vendor on Route53 Settings, the active TLS issuer on Atlas Settings,
-	their credential singles, then the Root Domain (which denormalizes both vendor
-	types in before_insert)."""
-	import frappe.utils.password
+	active DNS/TLS vendors on Atlas Settings, their credential singles, then the
+	Root Domain (which denormalizes both vendor types in before_insert)."""
 
 	_cleanup_tls_doctypes(config)  # start from a clean slate (immutable fields)
 
@@ -191,19 +189,14 @@ def _seed_tls_doctypes(config: dict) -> None:
 	# live map comes back empty (subdomain_map finds no active row for the proxy's
 	# region).
 	frappe.db.set_single_value("Atlas Settings", "region", config["region"], update_modified=False)
+	dns_provider_type = config["dns_provider_type"]
 	frappe.db.set_single_value(
-		"Atlas Settings", "dns_provider_type", _DNS_PROVIDER_TYPE, update_modified=False
+		"Atlas Settings", "dns_provider_type", dns_provider_type, update_modified=False
 	)
 	frappe.db.set_single_value(
 		"Atlas Settings", "tls_provider_type", _TLS_PROVIDER_TYPE, update_modified=False
 	)
-	frappe.db.set_single_value(
-		"Route53 Settings", "access_key_id", config["access_key_id"], update_modified=False
-	)
-	frappe.db.set_single_value("Route53 Settings", "region", config["aws_region"], update_modified=False)
-	frappe.utils.password.set_encrypted_password(
-		"Route53 Settings", "Route53 Settings", config["secret_access_key"], "secret_access_key"
-	)
+	_seed_dns_provider_settings(config)
 	frappe.db.set_single_value(
 		"Lets Encrypt Settings", "acme_directory_url", config["acme_directory_url"], update_modified=False
 	)
@@ -216,12 +209,32 @@ def _seed_tls_doctypes(config: dict) -> None:
 			"doctype": "Root Domain",
 			"domain": config["domain"],
 			"region": config["region"],
-			"dns_provider_type": _DNS_PROVIDER_TYPE,
+			"dns_provider_type": dns_provider_type,
 			"tls_provider_type": _TLS_PROVIDER_TYPE,
 		}
 	).insert(ignore_permissions=True)
 	frappe.db.commit()
 	print(f"[e2e] seeded TLS doctypes for {config['domain']} (region {config['region']})")
+
+
+def _seed_dns_provider_settings(config: dict) -> None:
+	import frappe.utils.password
+
+	if config["dns_provider_type"] == "PowerDNS":
+		powerdns = config["powerdns"]
+		frappe.db.set_single_value("PowerDNS Settings", "api_url", powerdns["api_url"], update_modified=False)
+		frappe.db.set_single_value("PowerDNS Settings", "server_id", powerdns["server_id"], update_modified=False)
+		frappe.utils.password.set_encrypted_password(
+			"PowerDNS Settings", "PowerDNS Settings", powerdns["api_key"], "api_key"
+		)
+		return
+	frappe.db.set_single_value(
+		"Route53 Settings", "access_key_id", config["access_key_id"], update_modified=False
+	)
+	frappe.db.set_single_value("Route53 Settings", "region", config["aws_region"], update_modified=False)
+	frappe.utils.password.set_encrypted_password(
+		"Route53 Settings", "Route53 Settings", config["secret_access_key"], "secret_access_key"
+	)
 
 
 def _cleanup_tls_doctypes(config: dict) -> None:
@@ -239,15 +252,13 @@ def _cleanup_tls_doctypes(config: dict) -> None:
 # --- assertions ----------------------------------------------------------
 
 
-def _assert_route53_reachable() -> None:
-	"""Route53 DNS provider authenticate() against the real account — the
-	GetHostedZone read that proves the IAM creds carry the route53 permissions
-	issuance needs."""
+def _assert_dns_reachable(dns_provider_type: str) -> None:
+	"""Selected DNS provider authenticate() against the real account."""
 	from atlas.atlas import dns
 
-	result = dns.for_dns_provider_type(_DNS_PROVIDER_TYPE).authenticate()
-	assert result.ok, f"Route 53 authenticate failed: {result.error}"
-	print(f"[e2e] Route 53 reachable (account: {result.account_label}) OK")
+	result = dns.for_dns_provider_type(dns_provider_type).authenticate()
+	assert result.ok, f"{dns_provider_type} authenticate failed: {result.error}"
+	print(f"[e2e] {dns_provider_type} reachable (account: {result.account_label}) OK")
 
 
 def _issue_certificate(domain: str) -> str:

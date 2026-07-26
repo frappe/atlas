@@ -68,7 +68,7 @@ engine only for its own provisioning — it is no longer a shared executor.
 ### 1c. Service doctypes → `satellite`
 `pilot`, `site`, `site_request`, `subdomain`, `subdomain_denylist`, `custom_domain`,
 `port_mapping`, `root_domain`, `tls_certificate`, `tls_provider`, `lets_encrypt_settings`,
-`route53_settings`, `domain_provider`, `vpn_peer`, `vpn_tunnel`, `bench_routing_audit`.
+`route53_settings`, `powerdns_settings`, `domain_provider`, `vpn_peer`, `vpn_tunnel`, `bench_routing_audit`.
 Every satellite doctype is authored via **bench** (`frappe.get_doc({"doctype":"DocType",…})`
 / the Desk editor), committed as the generated `*.json` + controller — never hand-written.
 Because these names (`Virtual Machine`, `Server`, …) collide with Atlas's, a satellite
@@ -131,7 +131,7 @@ change, ever.
 - **Phase 3** — proxy: fleet + DNS wildcard + cert push; delete `proxy.py`/`is_proxy`.
 - **Phase 4** — bench/site/pilot: `Site`, `Site Request`, `Pilot`, `Image Build`,
   recipes; delete `build_mode`.
-- **Phase 5** — TLS/DNS/domain: `tls/`, `dns/`, `root_domain`, `tls_certificate`, LE/Route53.
+- **Phase 5** — TLS/DNS/domain: `tls/`, `dns/`, `root_domain`, `tls_certificate`, LE/Route53/PowerDNS.
 
 Each phase relocates the doctype(s), reimplements the logic on satellite's SSH, **deletes
 from Atlas core**, verifies, and stops. Central ([21](./21-tunnel.md)) is a separate,
