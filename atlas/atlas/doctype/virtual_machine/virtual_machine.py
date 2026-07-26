@@ -4,7 +4,7 @@ import uuid
 import frappe
 from frappe import _
 from frappe.model.document import Document
-from frappe.utils import now_datetime
+from frappe.utils import add_to_date, now_datetime
 
 from atlas.atlas.networking import (
 	CPU_MODE_RELAXED,
