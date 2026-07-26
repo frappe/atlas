@@ -2,7 +2,7 @@
 Description=Firecracker VM Web Console XtermJS
 After=network-online.target
 Wants=network-online.target
-ConditionPathExists=/etc/atlas/vm-web-console.env
+ConditionPathExists=/etc/default/vm-web-console
 [Service]
 Type=simple
 EnvironmentFile=/etc/default/vm-web-console
