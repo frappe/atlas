@@ -1,0 +1,140 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "hash",
+ "creation": "2026-07-27 00:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 0,
+ "engine": "InnoDB",
+ "field_order": [
+  "tab_overview",
+  "server",
+  "observed_epoch",
+  "column_break_header",
+  "observed_at",
+  "boat_version",
+  "section_break_drift",
+  "drift_count",
+  "virtual_machine_count",
+  "drift",
+  "section_break_document",
+  "export_document"
+ ],
+ "fields": [
+  {
+   "fieldname": "tab_overview",
+   "fieldtype": "Tab Break",
+   "label": "Overview"
+  },
+  {
+   "description": "The host this export came from. One row per (host, observed epoch).",
+   "fieldname": "server",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Server",
+   "options": "Server",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "description": "Boat's monotonic observed epoch for this snapshot (spec/33 §2.5). Bumped on every observed change, so it orders snapshots for one host and is what a later CAS write is matched against with If-Match.",
+   "fieldname": "observed_epoch",
+   "fieldtype": "Long Int",
+   "in_list_view": 1,
+   "label": "Observed Epoch",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_header",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "The export's own taken_at — when the host observed this, not when Atlas ingested it.",
+   "fieldname": "observed_at",
+   "fieldtype": "Datetime",
+   "in_list_view": 1,
+   "label": "Observed At",
+   "read_only": 1
+  },
+  {
+   "description": "The Boat binary running on the host when this export was taken. Every unit on that host is this build, so desired-vs-observed version drift is ordinary observed state rather than a separate bookkeeping channel (spec/33 §5).",
+   "fieldname": "boat_version",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Boat Version",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_break_drift",
+   "fieldtype": "Section Break",
+   "label": "Drift"
+  },
+  {
+   "default": "0",
+   "description": "How many ways this host and the DB disagreed at this epoch. 0 means the mirror matched.",
+   "fieldname": "drift_count",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Drift Count",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "description": "How many VMs the host observed at this epoch.",
+   "fieldname": "virtual_machine_count",
+   "fieldtype": "Int",
+   "label": "Virtual Machine Count",
+   "read_only": 1
+  },
+  {
+   "description": "Each disagreement between the DB and the host, stated once: {virtual_machine, kind, desired, observed}. Reported, never acted on — Atlas surfaces drift, Boat's reconciler is what drives observed towards desired (spec/33 §1).",
+   "fieldname": "drift",
+   "fieldtype": "Code",
+   "label": "Drift",
+   "options": "JSON",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_break_document",
+   "fieldtype": "Section Break",
+   "label": "Export document"
+  },
+  {
+   "description": "The whole GET /export document, verbatim: every VM's observed doc, host facts, LV inventory, unit liveness and every fence epoch. Kept for debugging, mirror rebuild and drift forensics — never read as authority.",
+   "fieldname": "export_document",
+   "fieldtype": "Code",
+   "label": "Export Document",
+   "options": "JSON",
+   "read_only": 1
+  }
+ ],
+ "links": [],
+ "modified": "2026-07-27 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Atlas",
+ "name": "Host State Snapshot",
+ "naming_rule": "Random",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "amend": 0,
+   "cancel": 0,
+   "create": 1,
+   "delete": 1,
+   "export": 1,
+   "import": 0,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "submit": 0,
+   "write": 0
+  }
+ ],
+ "search_fields": "server,observed_epoch,boat_version",
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 0
+}
