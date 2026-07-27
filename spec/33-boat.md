@@ -871,6 +871,37 @@ every work order.
 
 Everything else in this chapter is decided. These are not.
 
+0. **The fence epoch does not yet refuse anything except an empty store, and
+   §11.1 currently overstates what is built.** This is the largest gap between
+   this chapter and the code, and it is listed first because it reads as
+   finished from every direction: the gate is consulted on both boot paths, the
+   store refuses a regression, and the error type exists.
+
+   What works: a host holding no epoch for a UUID boots nothing. That is the
+   rule that saves a Boat which lost its bbolt file, and it is enforced.
+
+   What does not: the epoch *comparison* is a tautology. `PUT /vms/{uuid}`
+   writes the fence and the desired record from one document, so the held epoch
+   and the desired epoch are equal by construction and a stale epoch cannot be
+   detected. Two things have to land before it means anything, both in Atlas:
+
+   - **Atlas must bump the epoch at a migration's repoint.** Nothing in Atlas
+     writes `boot_epoch` today beyond the initial 1, and `migration.py` has no
+     Boat awareness at all. §11.1 names repoint as the single bump point; that
+     bump does not exist.
+   - **Atlas must be able to retract or supersede desired state on a host that
+     no longer owns a VM.** There is no `DELETE /vms/{uuid}` and no `server`
+     field in the desired document, so a source Boat keeps `{epoch, Running}`
+     for an evacuated VM forever and its sweep will start it again the moment it
+     observes it stopped.
+
+   Until both exist, split-brain is prevented by phase ordering and
+   `desired_power` — which §9 says explicitly is *not* what should prevent it.
+   The honest statement of today's guarantee is: **Boat will not boot a VM it
+   was never told about; it will boot a VM it was told about and then forgotten
+   about.** WO-4 owns closing this, and no host should carry production VMs
+   through a migration until it is closed.
+
 1. **Who writes ANCP's bootstrap trust artifacts after the split** (§4). The
    constraint is fixed — they are operator-signed, Atlas holds the key, Boat must
    never hold it, and they must land before `boat networkd` starts — but whether
