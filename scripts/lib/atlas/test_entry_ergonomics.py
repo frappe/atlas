@@ -155,6 +155,25 @@ class TestProvisionResourceArgDefault(unittest.TestCase):
 		self.assertEqual(raised.exception.code, 2)
 		self.assertIn("--cgroup-arg", err.getvalue())
 
+	def test_dark_vm_omits_public_ipv6_and_v4_link(self):
+		# A dark VM (public_networking=0, spec §6) has no public /128 and no proxy-NDP;
+		# an air-gapped VM (egress_nat44=0) has no v4 egress link. Both groups of flags
+		# are optional; the defaults resolve to "" and the controller drops them via
+		# _variables_to_flags.
+		no_v6_v4 = [flag for flag in _PROVISION_REQUIRED if flag not in (
+			"--virtual-machine-ipv6", "2a03::2",
+			"--ipv4-host-cidr", "100.64.0.1/30",
+			"--ipv4-guest-cidr", "100.64.0.2/30",
+			"--ipv4-gateway", "100.64.0.1",
+		)]
+		inputs = self.cls.from_args(no_v6_v4)
+		self.assertEqual(inputs.virtual_machine_ipv6, "")
+		self.assertEqual(inputs.ipv4_host_cidr, "")
+		self.assertEqual(inputs.ipv4_guest_cidr, "")
+		self.assertEqual(inputs.ipv4_gateway, "")
+		# The required fields are still present.
+		self.assertEqual(inputs.virtual_machine_name, "u")
+
 	def test_help_names_each_derived_flag_source_function(self):
 		help_text = self.cls.build_parser().format_help()
 		# Every derived flag names the atlas.networking function that computes it —

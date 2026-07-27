@@ -80,18 +80,6 @@ class ProvisionInputs(TaskInputs):
 	# that computes each, so an operator can reproduce them by hand. (See spec/06.)
 	mac_address: str = field(metadata={"help": "derived: atlas.networking.derive_mac(uuid)"})
 	tap_device: str = field(metadata={"help": "derived: atlas.networking.derive_tap(uuid)"})
-	virtual_machine_ipv6: str = field(
-		metadata={"help": "controller-allocated: atlas.networking.allocate_ipv6(server) (DB row-lock scan)"}
-	)
-	ipv4_host_cidr: str = field(
-		metadata={"help": "derived: atlas.networking.derive_ipv4_link(ipv6)[0] (host side of the NAT44 /30)"}
-	)
-	ipv4_guest_cidr: str = field(
-		metadata={"help": "derived: atlas.networking.derive_ipv4_link(ipv6)[1] (guest side of the /30)"}
-	)
-	ipv4_gateway: str = field(
-		metadata={"help": "derived: host side of ipv4_host_cidr without the mask (the guest's v4 gateway)"}
-	)
 	atlas_fc_uid: int = field(metadata={"help": "derived: atlas.networking.derive_uid(uuid) (gid == uid)"})
 	atlas_netns: str = field(metadata={"help": "derived: atlas.networking.derive_netns(uuid)"})
 	host_veth: str = field(
@@ -128,6 +116,39 @@ class ProvisionInputs(TaskInputs):
 		metadata={
 			"help": "resource-limit VALUES (launcher emits `--resource-limit <value>`); "
 			f"omit to default to {DEFAULT_RESOURCE_ARGS}"
+		},
+	)
+	# Optional: the VM's public /128 (empty for a dark VM, public_networking=0). 
+	# The controller drops empty values via _variables_to_flags, so the flag
+	# never reaches the wire — the provision script's argparse default picks "".
+	virtual_machine_ipv6: str = field(
+		default="",
+		metadata={
+			"help": "controller-allocated: atlas.networking.allocate_ipv6(server) "
+			"(DB row-lock scan). Empty for a dark VM (public_networking=0, spec §6)."
+		},
+	)
+	# Optional: the v4 egress link fields (empty for an air-gapped VM, egress_nat44=0).
+	# Same dropping rule as virtual_machine_ipv6.
+	ipv4_host_cidr: str = field(
+		default="",
+		metadata={
+			"help": "derived: atlas.networking.derive_ipv4_link(ipv6)[0] "
+			"(host side of the NAT44 /30). Empty for air-gapped (egress_nat44=0)."
+		},
+	)
+	ipv4_guest_cidr: str = field(
+		default="",
+		metadata={
+			"help": "derived: atlas.networking.derive_ipv4_link(ipv6)[1] "
+			"(guest side of the /30). Empty for air-gapped (egress_nat44=0)."
+		},
+	)
+	ipv4_gateway: str = field(
+		default="",
+		metadata={
+			"help": "derived: host side of ipv4_host_cidr without the mask "
+			"(the guest's v4 gateway). Empty for air-gapped (egress_nat44=0)."
 		},
 	)
 	# One optional source override: a snapshot rootfs path (clone path). Empty
@@ -608,18 +629,26 @@ def _firecracker_config(inputs: "ProvisionInputs") -> str:
 
 
 def _network_env(inputs: "ProvisionInputs") -> str:
-	"""The network.env sidecar vm-network-up.sh reads, byte-shape identical to
-	the shell heredoc."""
+	"""The network.env sidecar vm-network-up reads, byte-shape identical to
+	the shell heredoc.
+
+	A dark VM (public_networking=0, spec §6) has no public /128 — the
+	VIRTUAL_MACHINE_IPV6 line is omitted so vm-network-up.py skips the public
+	routing + NDP + forward block. An air-gapped VM (egress_nat44=0) similarly
+	omits the IPV4_* trio so vm-network-up.py skips the NAT44 block. Mirror of
+	vm-network-down.py's `.get()` + `if value:` pattern."""
 	env = (
 		f"TAP_DEVICE={inputs.tap_device}\n"
-		f"VIRTUAL_MACHINE_IPV6={inputs.virtual_machine_ipv6}\n"
 		f"ATLAS_NETNS={inputs.atlas_netns}\n"
 		f"HOST_VETH={inputs.host_veth}\n"
 		f"NAMESPACE_VETH={inputs.namespace_veth}\n"
-		f"IPV4_HOST_CIDR={inputs.ipv4_host_cidr}\n"
-		f"IPV4_GUEST_CIDR={inputs.ipv4_guest_cidr}\n"
 		f"ATLAS_FC_UID={inputs.atlas_fc_uid}\n"
 	)
+	if inputs.virtual_machine_ipv6:
+		env += f"VIRTUAL_MACHINE_IPV6={inputs.virtual_machine_ipv6}\n"
+	if inputs.ipv4_host_cidr:
+		env += f"IPV4_HOST_CIDR={inputs.ipv4_host_cidr}\n"
+		env += f"IPV4_GUEST_CIDR={inputs.ipv4_guest_cidr}\n"
 	# Only written when the VM has a Reserved IP attached — vm-network-up reads it
 	# with .get() and skips the 1:1-NAT block when absent, so an ordinary VM's env
 	# is unchanged.
