@@ -959,7 +959,8 @@ def sync_scripts_to_all() -> dict[str, int]:
 	for name in names:
 		server = frappe.get_doc("Server", name)
 		if not server.ipv4_address:
-			frappe.throw(f"Server {name} has no ipv4_address; cannot sync scripts")
+			print(f"Skipping {name}: no ipv4_address")
+			continue
 		jobs.append((name, connection_for_server(server), server._script_uploads()))
 
 	if not jobs:
@@ -969,12 +970,16 @@ def sync_scripts_to_all() -> dict[str, int]:
 
 	def _push(job) -> tuple[str, int]:
 		name, connection, uploads = job
-		with frappe_thread_context(site):
-			print(f"Syncing durable scripts to {name} ({connection.host})")
-			upload_files(connection, uploads)
-			reinstall_atlas_venv_package(connection, name)
-			print(f"Done syncing durable scripts to {name} ({connection.host})")
-		return name, len(uploads)
+		try:
+			with frappe_thread_context(site):
+				print(f"Syncing durable scripts to {name} ({connection.host})")
+				upload_files(connection, uploads)
+				reinstall_atlas_venv_package(connection, name)
+				print(f"Done syncing durable scripts to {name} ({connection.host})")
+			return name, len(uploads)
+		except Exception as exc:
+			print(f"Failed to sync {name} ({connection.host}): {exc}")
+			return name, 0
 
 	from concurrent.futures import ThreadPoolExecutor
 
