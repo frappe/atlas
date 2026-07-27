@@ -65,5 +65,127 @@ class TestWakeRuleCommand(unittest.TestCase):
 		self.assertEqual(shlex.split(command).count(f"wake_{HEX}"), 1)
 
 
+class _FakeHost:
+	"""Records every `run`/`run_ok` the park module issues, and answers the two
+	queries it branches on: whether the dummy exists and what the forward chain
+	currently holds. Lets the host-mutating paths be asserted with no root, no
+	nft and no network — the same bare-unittest contract as the builders above.
+	"""
+
+	def __init__(self, *, device_exists=True, counter_exists=False, chain_text="", listing=""):
+		self.device_exists = device_exists
+		self.counter_exists = counter_exists
+		self.chain_text = chain_text
+		self.listing = listing
+		self.commands: list[str] = []
+
+	def run(self, template, *args, **kwargs):
+		self.commands.append(template.format(*args) if "{}" in template else template)
+		if template.startswith("sudo nft -a list chain"):
+			return self.listing
+		if template.startswith("sudo nft list chain"):
+			return self.chain_text
+		return ""
+
+	def run_ok(self, template, *args, **kwargs):
+		self.commands.append(template.format(*args) if "{}" in template else template)
+		if template.startswith("ip link show"):
+			return self.device_exists
+		if template.startswith("sudo nft list counter"):
+			return self.counter_exists
+		return True
+
+	def issued(self, fragment: str) -> bool:
+		return any(fragment in command for command in self.commands)
+
+
+class _ParkHarness(unittest.TestCase):
+	"""Swaps park's host-touching collaborators for the recorder."""
+
+	env: dict = {"VIRTUAL_MACHINE_IPV6": VM_V6}
+
+	def install(self, host: _FakeHost, env=None) -> None:
+		self.host = host
+		env = self.env if env is None else env
+		patches = {
+			"run": host.run,
+			"run_ok": host.run_ok,
+			"read_network_env_optional": lambda _path: env,
+			"default_route_device": lambda *a, **k: "eth0",
+		}
+		for name, replacement in patches.items():
+			original = getattr(park, name)
+			setattr(park, name, replacement)
+			self.addCleanup(setattr, park, name, original)
+
+
+class TestPark(_ParkHarness):
+	def test_no_network_env_is_a_noop(self):
+		# A VM that was never provisioned (or is already terminated) has no /128 to
+		# park; touching the host for it would install a trap pointing nowhere.
+		self.install(_FakeHost(), env={})
+		park.park(UUID)
+		self.assertEqual(self.host.commands, [])
+
+	def test_installs_ndp_route_counter_and_rule(self):
+		self.install(_FakeHost())
+		park.park(UUID)
+		self.assertTrue(self.host.issued(f"ip -6 neigh replace proxy {VM_V6} dev eth0"))
+		self.assertTrue(self.host.issued(f"ip -6 route replace {VM_V6}/128 dev {park.PARK_DEVICE}"))
+		self.assertTrue(self.host.issued(f"add counter inet atlas wake_{HEX}"))
+		self.assertTrue(self.host.issued(f"counter name wake_{HEX} drop"))
+
+	def test_creates_the_dummy_when_missing(self):
+		self.install(_FakeHost(device_exists=False))
+		park.park(UUID)
+		self.assertTrue(self.host.issued(f"ip link add {park.PARK_DEVICE} type dummy"))
+
+	def test_re_park_does_not_duplicate_the_rule_or_counter(self):
+		# The daemon re-parks every sleeping VM at boot. A second rule would split
+		# the packet count across two entries and the trap could miss the first SYN.
+		existing = f"ip6 daddr {VM_V6} tcp flags syn / fin,syn,rst,ack counter name wake_{HEX} drop"
+		self.install(_FakeHost(counter_exists=True, chain_text=existing))
+		park.park(UUID)
+		self.assertFalse(self.host.issued("add rule inet atlas forward"))
+		self.assertFalse(self.host.issued("add counter inet atlas"))
+		# Reachability is still re-asserted — that is the point of the boot re-sweep.
+		self.assertTrue(self.host.issued(f"ip -6 route replace {VM_V6}/128"))
+
+
+class TestUnpark(_ParkHarness):
+	def test_deletes_the_rule_before_the_counter(self):
+		# nft refuses to drop a counter a rule still references, so the order is
+		# load-bearing, not cosmetic.
+		listing = (
+			f"\tip6 daddr {VM_V6} tcp flags syn / fin,syn,rst,ack "
+			f"counter name wake_{HEX} drop # handle 42\n"
+		)
+		self.install(_FakeHost(listing=listing))
+		park.unpark(UUID)
+		delete_rule = next(i for i, c in enumerate(self.host.commands) if "delete rule" in c)
+		delete_counter = next(i for i, c in enumerate(self.host.commands) if "delete counter" in c)
+		self.assertLess(delete_rule, delete_counter)
+		self.assertTrue(self.host.issued("delete rule inet atlas forward handle 42"))
+
+	def test_removes_the_parked_route(self):
+		self.install(_FakeHost())
+		park.unpark(UUID)
+		self.assertTrue(self.host.issued(f"ip -6 route del {VM_V6}/128 dev {park.PARK_DEVICE}"))
+
+	def test_never_parked_vm_deletes_no_rule(self):
+		# An ordinary start calls unpark() too; with nothing parked it must not try
+		# to delete a rule it never installed.
+		self.install(_FakeHost(listing=""))
+		park.unpark(UUID)
+		self.assertFalse(self.host.issued("delete rule"))
+
+	def test_leaves_proxy_ndp_alone(self):
+		# vm-network-up re-`replace`s NDP and vm-network-down deletes it; unpark
+		# touching it would strip reachability from a VM that is coming back up.
+		self.install(_FakeHost())
+		park.unpark(UUID)
+		self.assertFalse(self.host.issued("neigh"))
+
+
 if __name__ == "__main__":
 	unittest.main()

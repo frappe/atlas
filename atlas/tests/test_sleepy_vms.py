@@ -13,7 +13,8 @@ Exercises:
 - fake_tasks: sleep-vm, poll-vm-traffic and probe-woken-vms result builders
 
 The host-side wake trap itself (park/unpark, the atlas-wake-trap daemon) is
-covered by scripts/lib/atlas/test_park.py and atlas/tests/test_wake_trap.py.
+covered by scripts/lib/atlas/test_{park,wake_trap}.py — bare unittest, since the
+Frappe app shares the `atlas` name with the scripts package they import.
 """
 
 import json
