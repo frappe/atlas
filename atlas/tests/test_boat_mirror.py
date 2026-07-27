@@ -184,9 +184,23 @@ class TestExportLandsInBothPlaces(_MirrorTestCase):
 		self._sync(_export(virtual_machines=[_observed(self.virtual_machine.name, "Stopped", boot_epoch=7)]))
 
 		self.assertEqual(self._virtual_machine_value("observed_status"), "Stopped")
-		self.assertEqual(self._virtual_machine_value("boot_epoch"), 7)
 		# WO-1 is advisory: the DB is still authoritative.
 		self.assertEqual(self._virtual_machine_value("status"), "Running")
+
+	def test_the_host_can_never_dictate_the_fence_epoch(self) -> None:
+		"""Atlas is the sole issuer of the fence (spec/33 §11.1), and an issuer
+		that adopts the number its host reports is not an issuer.
+
+		A Boat restored from a backup — or one adopting a host it has never been
+		given a fence for — reports an epoch Atlas never granted. Writing it back
+		would leave Atlas with no record of what it actually issued, and would
+		turn the one mechanism that prevents two live copies of a VM into a value
+		the host chooses for itself."""
+		frappe.db.set_value("Virtual Machine", self.virtual_machine.name, "boot_epoch", 4)
+
+		self._sync(_export(virtual_machines=[_observed(self.virtual_machine.name, "Stopped", boot_epoch=7)]))
+
+		self.assertEqual(self._virtual_machine_value("boot_epoch"), 4)
 
 	def test_an_absent_fence_leaves_the_epoch_alone(self) -> None:
 		observed = _observed(self.virtual_machine.name)

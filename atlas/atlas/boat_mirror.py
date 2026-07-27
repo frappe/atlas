@@ -289,15 +289,24 @@ class HostMirror:
 		return _row_drift(row, observed)
 
 	def _write_observation(self, uuid: str, observed: dict) -> None:
-		"""The two observed fields, and only those. `status` is the DB's."""
-		values = {"observed_status": _observed_status(observed)}
-		if observed.get("boot_epoch") is not None:
-			# Only when Boat reports holding a fence. An absent epoch means Boat
-			# holds none and will refuse to boot the VM — writing 0 for that
-			# would be indistinguishable from Atlas having issued epoch 0, and
-			# from WO-2 it would clobber the issuer's value.
-			values["boot_epoch"] = int(observed["boot_epoch"])
-		frappe.db.set_value("Virtual Machine", uuid, values, update_modified=False)
+		"""The observed status, and only that. `status` is the DB's.
+
+		`boot_epoch` is deliberately NOT written back. Atlas is the sole issuer of
+		the fence (spec/33 §11.1), and an issuer that adopts the number its host
+		reports is not an issuer. A Boat restored from a backup, or one adopting a
+		host it has never fenced, would otherwise hand Atlas an epoch Atlas never
+		granted and see it re-stated as authoritative from then on — leaving no
+		record of what was actually issued, and turning the one mechanism that
+		prevents two live copies of a VM into a value the host chooses.
+
+		An epoch Boat holds that disagrees with the one Atlas issued is drift, and
+		is reported as drift like any other disagreement."""
+		frappe.db.set_value(
+			"Virtual Machine",
+			uuid,
+			{"observed_status": _observed_status(observed)},
+			update_modified=False,
+		)
 
 	def _atlas_rows(self) -> dict[str, dict]:
 		"""Every VM Atlas places on this host, by UUID."""

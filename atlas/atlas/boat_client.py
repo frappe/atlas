@@ -338,11 +338,24 @@ def base_url_for_server(server_name: str) -> str:
 	configured = (frappe.conf.get("atlas_boat_base_urls") or {}).get(server_name)
 	if configured:
 		return configured
-	address = frappe.db.get_value("Server", server_name, "ipv4_address")
+	# The MESH address, deliberately, and never `ipv4_address`. Boat binds the
+	# management tunnel and the local socket, so the mesh endpoint is the only
+	# address it actually answers on — and it is the only one that keeps the
+	# bearer token inside the tunnel. `ipv4_address` is the host's PUBLIC
+	# address, the one `connection_for_server` SSHes to; defaulting to it would
+	# put a long-lived token on the public internet in cleartext on every verb
+	# and every mirror poll, which is worse than not reaching the host at all.
+	address = frappe.db.get_value("Server", server_name, "mesh_address")
 	if not address:
-		frappe.throw(_("Server {0} has no ipv4_address; cannot reach its Boat").format(server_name))
+		frappe.throw(
+			_("Server {0} has no mesh_address; Boat is only reachable over the management tunnel").format(
+				server_name
+			)
+		)
 	port = frappe.conf.get("atlas_boat_port") or DEFAULT_BOAT_PORT
-	return f"http://{address}:{port}/v1"
+	# Bracketed: the mesh address is IPv6, and an unbracketed v6 literal in a URL
+	# parses its last colon as the port separator.
+	return f"http://[{address}]:{port}/v1"
 
 
 def token_for_server(server_name: str) -> str:

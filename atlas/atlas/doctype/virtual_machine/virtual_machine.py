@@ -304,7 +304,7 @@ class VirtualMachine(Document):
 		# the host's next reboot. Provisioning itself stays on SSH — Boat serves no
 		# provision verb — and this is a no-op off a Boat host.
 		if boat_enabled(self.server):
-			self._put_desired_state("Running")
+			self._enrol_after_provision()
 		# The VM's private /128 is locally owned by this host; atlas-networkd's
 		# periodic scan (spec/31 §11) detects it via the local-ownership cache
 		# (vm-network-up.py writes it on success) and gossips the advertisement.
@@ -412,6 +412,31 @@ class VirtualMachine(Document):
 			return run_task
 		self._put_desired_state(desired_power, **spec)
 		return run_boat_task
+
+	def _enrol_after_provision(self) -> None:
+		"""State the fence for a VM that is ALREADY RUNNING, without letting a
+		refusal undo the record of it.
+
+		Every other verb states intent *before* its task, so a refused PUT means
+		nothing ran. Provision is the one place that order is inverted: the VM has
+		already been created and booted by `provision-vm`, and `self.save()` above
+		is not yet committed. Letting the throw out would roll the row back to
+		Pending while the guest is live on the host — and Pending is an allowed
+		source state, so the operator's natural retry provisions a *second* VM for
+		the same UUID.
+
+		So this records the failure instead of raising. An unfenced VM is a VM
+		that will not come back after its host's next reboot, which is bad; a
+		live VM that Atlas has forgotten is worse. The next verb re-states the
+		fence — every one of them PUTs first — and `assert_desired_state` is the
+		explicit repair."""
+		try:
+			self._put_desired_state("Running")
+		except Exception:
+			frappe.log_error(
+				title=f"Boat enrolment failed for {self.name}",
+				message=frappe.get_traceback(),
+			)
 
 	def _put_desired_state(self, desired_power: str | None = None, **spec) -> dict:
 		"""Record this VM's intent on the row, then state it on its host's Boat.
@@ -593,11 +618,18 @@ class VirtualMachine(Document):
 		self._guard_no_active_migration()
 		if self.stop_protection:
 			frappe.throw(_("Disable stop protection before sleeping this VM"))
-		if self.desired_power == "Stopped":
+		if boat_enabled(self.server) and self.desired_power == "Stopped":
 			# The precedence rule from the enrolment side (spec/33 §11.3). Sleeping
 			# is a Running VM's low-power state — the address stays live and the
 			# first SYN brings it back — so parking a VM that was told to stop
 			# would arm exactly the resurrection the rule forbids.
+			#
+			# Gated on the flag because `desired_power` is only meaningful while a
+			# host is on Boat, and nothing ever clears it. Reading it unconditionally
+			# made clearing `boat_enabled` a one-way door: the transport reverted but
+			# a VM left stating Stopped could never sleep again, silently, because
+			# the idle sweeper swallows this throw. A rollback has to restore the
+			# behaviour, not just the transport.
 			frappe.throw(_("VM is stopped by intent — start it before putting it to sleep"))
 		# Sleeping satisfies Running: the VM is parked and wakeable, not powered
 		# off, so the intent it is parked under stays Running.
@@ -1641,13 +1673,17 @@ def _adopt_wake(name: str, now) -> None:
 	same fields wake() does: last_started + last_traffic_at (so sleep_idle_vms won't
 	immediately re-sleep it) and clears has_memory_snapshot (the wake consumed it)."""
 	frappe.db.sql("SELECT name FROM `tabVirtual Machine` WHERE name = %s FOR UPDATE", name)
-	row = frappe.db.get_value("Virtual Machine", name, ["status", "desired_power"], as_dict=True)
+	row = frappe.db.get_value("Virtual Machine", name, ["status", "desired_power", "server"], as_dict=True)
 	if not row or row.status != "Sleeping":
 		return  # operator wake() (or a previous tick) already adopted it
-	if row.desired_power == "Stopped":
+	if row.desired_power == "Stopped" and boat_enabled(row.server):
 		# The precedence rule (spec/33 §11.3): a VM Atlas has stated Stopped is not
 		# woken by traffic. A host that woke one anyway is drift for the mirror to
 		# report — never an observation Atlas launders into its own status.
+		#
+		# Gated on the flag for the same reason sleep() is: a stale `desired_power`
+		# on a host that has been rolled back off Boat would otherwise strand the
+		# VM as Sleeping in Atlas while it is up and serving traffic.
 		return
 	frappe.db.set_value(
 		"Virtual Machine",
