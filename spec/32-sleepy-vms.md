@@ -42,7 +42,7 @@ Two per-minute scheduled jobs
 wired in [hooks.py](../atlas/hooks.py)):
 
 - **`poll_vm_traffic`** — for each server with `Running` `sleep_on_idle` VMs, runs
-  the server-scoped `poll-vm-traffic` Task. The host reads each VM's `inet atlas
+  the server-scoped `poll-vm-traffic` probe. The host reads each VM's `inet atlas
   forward` nftables **byte counters** (`ip6 {s,d}addr <vm> … counter accept`,
   installed by [vm-network-up.py](../scripts/vm-network-up.py)), compares to the
   last-seen value stored on the host (`traffic-counter.json`), and returns only
@@ -53,6 +53,20 @@ wired in [hooks.py](../atlas/hooks.py)):
   `last_traffic_at` is older than its `idle_timeout_seconds`. Skips
   `stop_protection` and re-reads status under the row so a concurrent poll can't
   race it.
+
+Both sweeps — and `reconcile_sleeping_vms` below — go through **`run_probe`**,
+not `run_task`: they record **no Task row**. A read-only poll on every server
+every minute is ~2,880 rows/server/day of "polled, nothing happened", which
+would drown the audit log the Task list exists to be. `run_probe` never raises
+either; a failure logs a warning and returns `""`, so one unreachable host
+cannot abort the sweep and the next tick simply retries. The trade is
+deliberate: **a failed poll is visible in the logs, not in the desk**. Anything
+that changes host state still uses `run_task`, where the row *is* the audit
+trail and the failure must propagate.
+
+`last_traffic_at` is also stamped on every transition into `Running` —
+`provision()`, `start()`, and `wake()` — so a VM that has just been started is
+never measured against an idle clock that predates it.
 
 ## Sleeping
 

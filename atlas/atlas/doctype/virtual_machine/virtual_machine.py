@@ -20,7 +20,7 @@ from atlas.atlas.networking import (
 	resource_limit_args,
 )
 from atlas.atlas.placement import apply_user_defaults, check_resize_capacity
-from atlas.atlas.ssh import run_task
+from atlas.atlas.ssh import run_probe, run_task
 from atlas.atlas.task_results import parse_result
 
 # Never change after insert — identity and the key the rootfs was built with.
@@ -1395,20 +1395,21 @@ def poll_vm_traffic() -> None:
 	now = frappe.utils.now_datetime()
 	for server, server_vms in by_server.items():
 		vms_json = json.dumps([{"name": vm.name, "ipv6_address": vm.ipv6_address} for vm in server_vms])
-		try:
-			task = run_task(
-				server=server,
-				script="poll-vm-traffic",
-				variables={"VMS_JSON": vms_json},
-				virtual_machine=None,
-				timeout_seconds=30,
-			)
-			counters = parse_result(task.stdout).get("counters", {})
-			for vm_name, counter in counters.items():
-				if counter.get("active"):
-					frappe.db.set_value("Virtual Machine", vm_name, "last_traffic_at", now)
-		except Exception:
-			pass  # Per-server failures don't abort other servers
+		# run_probe, not run_task: a read-only poll on every server every minute
+		# would bury the Task log in rows nobody reads. It logs its own failures
+		# and returns "" instead of raising, so one bad server can't abort the rest.
+		stdout = run_probe(
+			server=server,
+			script="poll-vm-traffic",
+			variables={"VMS_JSON": vms_json},
+			timeout_seconds=30,
+		)
+		if not stdout:
+			continue
+		counters = parse_result(stdout).get("counters", {})
+		for vm_name, counter in counters.items():
+			if counter.get("active"):
+				frappe.db.set_value("Virtual Machine", vm_name, "last_traffic_at", now)
 
 
 def sleep_idle_vms() -> None:
@@ -1466,20 +1467,20 @@ def reconcile_sleeping_vms() -> None:
 
 	now = frappe.utils.now_datetime()
 	for server, names in by_server.items():
-		try:
-			task = run_task(
-				server=server,
-				script="probe-woken-vms",
-				variables={"VMS_JSON": json.dumps(names)},
-				virtual_machine=None,
-				timeout_seconds=30,
-			)
-			woken = parse_result(task.stdout).get("woken", {})
-			for name, is_woken in woken.items():
-				if is_woken:
-					_adopt_wake(name, now)
-		except Exception:
-			pass  # Per-server failures don't abort other servers
+		# run_probe, not run_task — see poll_vm_traffic: read-only, once a minute
+		# per server with any sleeping VM, and its rows would be pure noise.
+		stdout = run_probe(
+			server=server,
+			script="probe-woken-vms",
+			variables={"VMS_JSON": json.dumps(names)},
+			timeout_seconds=30,
+		)
+		if not stdout:
+			continue
+		woken = parse_result(stdout).get("woken", {})
+		for name, is_woken in woken.items():
+			if is_woken:
+				_adopt_wake(name, now)
 
 
 def _adopt_wake(name: str, now) -> None:

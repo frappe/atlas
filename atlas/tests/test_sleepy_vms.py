@@ -1,13 +1,19 @@
-"""Unit tests for the Sleepy VMs feature.
+"""Unit tests for the Sleepy VMs feature (spec/32).
 
 Exercises:
 - sleep_on_idle validate constraint (idle_timeout_seconds >= 120)
 - start() from Sleeping delegates to wake()
-- stop() from Sleeping throws
-- snapshot() from Sleeping throws
+- stop() / snapshot() from Sleeping throw
 - Capacity accounting: Sleeping excluded from RAM/CPU axes, included in disk
-- poll_vm_traffic() and sleep_idle_vms() scheduler functions
-- fake_tasks: sleep-vm and poll-vm-traffic result builders
+- poll_vm_traffic() and sleep_idle_vms() scheduler functions, over the
+  non-persisting run_probe path (no Task rows for the per-minute sweeps)
+- reconcile_sleeping_vms() / _adopt_wake(): adopting a host-initiated
+  (packet-triggered) wake into the DB, race-safe against an operator wake()
+- The idle clock is reset on every transition into Running (provision/start/wake)
+- fake_tasks: sleep-vm, poll-vm-traffic and probe-woken-vms result builders
+
+The host-side wake trap itself (park/unpark, the atlas-wake-trap daemon) is
+covered by scripts/lib/atlas/test_park.py and atlas/tests/test_wake_trap.py.
 """
 
 import json
@@ -287,41 +293,91 @@ class TestReconcileSleepingVms(IntegrationTestCase):
 		self.assertEqual(vm.status, "Running")
 
 	def test_reconcile_adopts_woken_vm(self) -> None:
-		from types import SimpleNamespace
 		from unittest.mock import patch
 
 		from atlas.atlas.doctype.virtual_machine import virtual_machine as vm_mod
 
 		vm = self._sleeping_vm()
-		task = SimpleNamespace(name="t", stdout=self._probe_stdout({vm.name: True}))
-		with patch.object(vm_mod, "run_task", return_value=task) as mocked:
+		stdout = self._probe_stdout({vm.name: True})
+		with patch.object(vm_mod, "run_probe", return_value=stdout) as mocked:
 			vm_mod.reconcile_sleeping_vms()
 		vm.reload()
 		self.assertEqual(vm.status, "Running")
-		# Server-scoped probe: no VM FK, the probe-woken-vms verb.
+		# Server-scoped probe on the non-persisting path: the probe-woken-vms verb,
+		# via run_probe so the per-minute sweep records no Task row.
 		_, kwargs = mocked.call_args
-		self.assertIsNone(kwargs.get("virtual_machine"))
 		self.assertEqual(kwargs.get("script"), "probe-woken-vms")
+		self.assertNotIn("virtual_machine", kwargs, "run_probe is server-scoped")
 
 	def test_reconcile_leaves_unwoken_vm_sleeping(self) -> None:
-		from types import SimpleNamespace
 		from unittest.mock import patch
 
 		from atlas.atlas.doctype.virtual_machine import virtual_machine as vm_mod
 
 		vm = self._sleeping_vm()
-		task = SimpleNamespace(name="t", stdout=self._probe_stdout({vm.name: False}))
-		with patch.object(vm_mod, "run_task", return_value=task):
+		stdout = self._probe_stdout({vm.name: False})
+		with patch.object(vm_mod, "run_probe", return_value=stdout):
 			vm_mod.reconcile_sleeping_vms()
 		vm.reload()
 		self.assertEqual(vm.status, "Sleeping")
+
+	def test_reconcile_tolerates_a_failed_probe(self) -> None:
+		"""run_probe returns "" on failure rather than raising; the VM stays put."""
+		from unittest.mock import patch
+
+		from atlas.atlas.doctype.virtual_machine import virtual_machine as vm_mod
+
+		vm = self._sleeping_vm()
+		with patch.object(vm_mod, "run_probe", return_value=""):
+			vm_mod.reconcile_sleeping_vms()
+		vm.reload()
+		self.assertEqual(vm.status, "Sleeping")
+
+	def test_poll_vm_traffic_stamps_active_vms(self) -> None:
+		"""An active VM gets a fresh last_traffic_at; an idle one is left alone."""
+		from unittest.mock import patch
+
+		from atlas.atlas.doctype.virtual_machine import virtual_machine as vm_mod
+
+		active = self._sleeping_vm()
+		idle = self._sleeping_vm()
+		for vm in (active, idle):
+			vm.db_set("status", "Running")
+			vm.db_set("last_traffic_at", frappe.utils.add_to_date(frappe.utils.now_datetime(), hours=-1))
+		stale = frappe.db.get_value("Virtual Machine", idle.name, "last_traffic_at")
+
+		stdout = "ATLAS_RESULT=" + json.dumps(
+			{"counters": {active.name: {"active": True}, idle.name: {"active": False}}}
+		)
+		with patch.object(vm_mod, "run_probe", return_value=stdout) as mocked:
+			vm_mod.poll_vm_traffic()
+
+		self.assertGreater(
+			frappe.db.get_value("Virtual Machine", active.name, "last_traffic_at"), stale
+		)
+		self.assertEqual(
+			frappe.db.get_value("Virtual Machine", idle.name, "last_traffic_at"), stale
+		)
+		_, kwargs = mocked.call_args
+		self.assertEqual(kwargs.get("script"), "poll-vm-traffic")
+		self.assertNotIn("virtual_machine", kwargs, "run_probe is server-scoped")
+
+	def test_poll_vm_traffic_tolerates_a_failed_probe(self) -> None:
+		from unittest.mock import patch
+
+		from atlas.atlas.doctype.virtual_machine import virtual_machine as vm_mod
+
+		vm = self._sleeping_vm()
+		vm.db_set("status", "Running")
+		with patch.object(vm_mod, "run_probe", return_value=""):
+			vm_mod.poll_vm_traffic()  # must not raise
 
 	def test_reconcile_no_sleeping_vms_skips_ssh(self) -> None:
 		from unittest.mock import patch
 
 		from atlas.atlas.doctype.virtual_machine import virtual_machine as vm_mod
 
-		with patch.object(vm_mod, "run_task") as mocked:
+		with patch.object(vm_mod, "run_probe") as mocked:
 			vm_mod.reconcile_sleeping_vms()
 		mocked.assert_not_called()
 

@@ -163,6 +163,15 @@ def _fake_stdout(script: str, variables: dict) -> str:
 	return RESULT_MARKER + json.dumps(builder(variables)) + "\n"
 
 
+def fake_stdout(script: str, variables: dict) -> str:
+	"""The synthesized stdout for a script, with no Task row involved.
+
+	`run_probe` (the non-persisting poller path) needs only the output a Fake
+	host would have produced — there is no row to finalize. Keeps the fake's
+	result synthesis in one place, shared with the Task-recording path."""
+	return _fake_stdout(script, variables)
+
+
 def _bootstrap_result(_variables: dict) -> dict:
 	return {
 		"firecracker_version": "v1.16.0",
