@@ -81,11 +81,19 @@ def run_with_vantage(vantage_name: str, reuse: bool = True, keep: bool = True) -
 
 
 def _find_vantage(server_name: str) -> str | None:
-	"""Another Active, SSH-reachable host to originate the inbound SYN from."""
+	"""Another Active, SSH-reachable, REAL host to originate the inbound SYN from.
+
+	Fake-provider Servers are excluded and the exclusion is load-bearing: a Task
+	on a Fake host is synthesized in-process and never touches SSH, so a probe
+	"succeeds" with canned output having dialed nothing. Picking one made the
+	whole scenario pass vacuously — ICMP "didn't wake" the VM because no ping was
+	ever sent, and TCP "woke" it without a packet leaving the controller.
+	"""
+	from atlas.atlas.providers.fake_tasks import is_fake_server
 	from atlas.tests.e2e._shared import server_is_reachable
 
 	for name in frappe.get_all("Server", filters={"status": "Active"}, pluck="name"):
-		if name == server_name:
+		if name == server_name or is_fake_server(name):
 			continue
 		if server_is_reachable(name, timeout_seconds=5):
 			return name
@@ -186,13 +194,16 @@ def _check_wake_on_inbound_tcp(server_name: str, vantage_name: str) -> None:
 
 		# Sanity: the vantage must reach the guest while it is UP, or every
 		# assertion below would pass or fail for reasons that have nothing to do
-		# with the trap.
+		# with the trap. This doubles as the wait for the guest to finish booting
+		# — sleeping a VM whose Firecracker API socket is not yet listening makes
+		# the memory snapshot fail ("API socket missing"), and the VM then wakes by
+		# cold boot instead of resume, which is not what this scenario is testing.
 		assert_probe(
 			vantage_name,
 			"phase-wake-tcp",
-			timeout_seconds=90,
+			timeout_seconds=180,
 			TARGET_IPV6=address,
-			TIMEOUT_SECONDS="60",
+			TIMEOUT_SECONDS="150",
 		)
 
 		# --- 1. Sleep, and assert the trap is armed ---
@@ -223,7 +234,9 @@ def _check_wake_on_inbound_tcp(server_name: str, vantage_name: str) -> None:
 			TARGET_IPV6=address,
 			TIMEOUT_SECONDS="150",
 		)
-		assert_probe(server_name, "phase5-is-active", VIRTUAL_MACHINE_NAME=vm.name)
+		assert_probe(
+			server_name, "phase5-is-active", timeout_seconds=90, VIRTUAL_MACHINE_NAME=vm.name
+		)
 		assert_probe(
 			server_name,
 			"phase-is-unparked",
