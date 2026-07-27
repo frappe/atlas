@@ -223,6 +223,11 @@ def preflight_checks(vm, target_server: str, release_reserved_ip: bool) -> None:
 
 	if active_migration_for(vm.name):
 		frappe.throw("This VM already has an in-flight migration")
+	if vm.status == "Sleeping":
+		# A sleeping VM's RAM lives in an on-host memory snapshot that is not
+		# transportable between hosts (spec/32, and the non-goal in ch.24), so
+		# there is nothing to migrate until it is resumed or discarded.
+		frappe.throw("Cannot migrate a sleeping VM — wake or stop it first")
 	if vm.status not in ("Stopped", "Running", "Paused"):
 		frappe.throw(f"Cannot migrate from {vm.status}")
 	if vm.server == target_server:

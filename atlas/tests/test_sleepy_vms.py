@@ -190,6 +190,16 @@ class TestSleepyVmsLifecycle(IntegrationTestCase):
 		with self.assertRaises(frappe.ValidationError):
 			vm.sleep()
 
+	def test_migration_rejects_a_sleeping_vm_by_name(self) -> None:
+		"""spec/32: the memory snapshot is not transportable, so migration from
+		Sleeping is refused — and says which action unblocks it."""
+		from atlas.atlas.migration import preflight_checks
+
+		vm = self._make_sleeping_vm()
+		with self.assertRaises(frappe.ValidationError) as caught:
+			preflight_checks(vm, self.server.name, release_reserved_ip=False)
+		self.assertIn("wake or stop", str(caught.exception).lower())
+
 	def test_wake_from_non_sleeping_throws(self) -> None:
 		vm = make_virtual_machine(
 			self.server, self.image, sleep_on_idle=1, idle_timeout_seconds=300
