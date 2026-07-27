@@ -64,6 +64,7 @@ class VirtualMachine(Document):
 	if TYPE_CHECKING:
 		from frappe.types import DF
 
+		boot_epoch: DF.Int
 		build_mode: DF.Literal["", "site", "admin"]
 		clone_source_data_rootfs: DF.Data | None
 		clone_source_rootfs: DF.Data | None
@@ -72,6 +73,7 @@ class VirtualMachine(Document):
 		data_disk_format_and_mount: DF.Check
 		data_disk_gigabytes: DF.Int
 		data_disk_mount_point: DF.Data | None
+		desired_power: DF.Literal["", "Running", "Stopped"]
 		disk_gigabytes: DF.Int
 		has_memory_snapshot: DF.Check
 		idle_timeout_seconds: DF.Int
@@ -85,6 +87,8 @@ class VirtualMachine(Document):
 		mac_address: DF.Data | None
 		memory_megabytes: DF.Int
 		memory_snapshot_on_stop: DF.Check
+		observed_authority: DF.Literal["DB", "Boat"]
+		observed_status: DF.Literal["", "Running", "Stopped", "Sleeping", "Unknown", "Failed"]
 		public_ipv4: DF.Data | None
 		server: DF.Link
 		pilot_credential_id: DF.Data | None

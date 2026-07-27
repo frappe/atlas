@@ -43,6 +43,14 @@
   "pool_data_percent",
   "capacity_reported_at",
   "placement_headroom_percent",
+  "section_break_boat_mirror",
+  "observed_boat_version",
+  "observed_epoch",
+  "observed_at",
+  "column_break_boat_mirror",
+  "mirror_status",
+  "observed_units_down",
+  "mirror_error",
   "section_break_metadata",
   "provider_metadata"
  ],
@@ -277,6 +285,60 @@
    "fieldtype": "Percent",
    "label": "Placement Headroom Percent",
    "non_negative": 1
+  },
+  {
+   "collapsible": 1,
+   "description": "Atlas's read-through mirror of what this host's Boat observes (spec/33 §2.5). Hot fields only — the capacity totals above are part of the mirror and the export keeps them live, so they are no longer a bootstrap-time snapshot. The full export document is archived per epoch as a Host State Snapshot. The mirror is disposable and is never authority.",
+   "fieldname": "section_break_boat_mirror",
+   "fieldtype": "Section Break",
+   "label": "Boat mirror"
+  },
+  {
+   "description": "The Boat binary this host is actually running, as its last export reported it. Every unit on the host is this build, so drift against the desired version is ordinary observed state rather than a separate bookkeeping channel (spec/33 §5).",
+   "fieldname": "observed_boat_version",
+   "fieldtype": "Data",
+   "label": "Observed Boat Version",
+   "read_only": 1
+  },
+  {
+   "description": "Boat's monotonic observed epoch for the snapshot this mirror was built from. It orders exports (an older one is a reordered poll and is ignored) and is what a later CAS write is matched against with If-Match (spec/33 §11.2).",
+   "fieldname": "observed_epoch",
+   "fieldtype": "Long Int",
+   "label": "Observed Epoch",
+   "read_only": 1
+  },
+  {
+   "description": "The export's own taken_at — when the host observed this, not when Atlas ingested it. Frozen while the mirror is Unknown, which is how its staleness is read.",
+   "fieldname": "observed_at",
+   "fieldtype": "Datetime",
+   "label": "Observed At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_boat_mirror",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Fresh means the mirror matches the host as of Observed At. Unknown means Boat did not answer — the host is Unknown, NOT dead (spec/33 §9): its VMs are still running, so the mirror freezes at its last values rather than being nulled, nothing is evicted, and placement is expected to exclude the host from new arrivals only. Empty means this host has never been mirrored.",
+   "fieldname": "mirror_status",
+   "fieldtype": "Select",
+   "label": "Mirror Status",
+   "options": "\nFresh\nUnknown",
+   "read_only": 1
+  },
+  {
+   "description": "The sibling units Boat supervises that were not active at the last export, comma-separated. Empty means every reported unit was up. Denormalized because it is read per host on a health sweep; the per-unit detail stays in the archived document.",
+   "fieldname": "observed_units_down",
+   "fieldtype": "Small Text",
+   "label": "Observed Units Down",
+   "read_only": 1
+  },
+  {
+   "description": "Why the last mirror sync failed, in the daemon's own sentence. Set alongside Mirror Status = Unknown and cleared on the next successful export.",
+   "fieldname": "mirror_error",
+   "fieldtype": "Small Text",
+   "label": "Mirror Error",
+   "read_only": 1
   },
   {
    "collapsible": 1,

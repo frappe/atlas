@@ -46,6 +46,11 @@ class Server(Document):
 		ipv6_virtual_machine_range: DF.Data | None
 		jailer_version: DF.Data | None
 		kernel_version: DF.Data | None
+		mirror_error: DF.SmallText | None
+		mirror_status: DF.Literal["", "Fresh", "Unknown"]
+		observed_at: DF.Datetime | None
+		observed_boat_version: DF.Data | None
+		observed_units_down: DF.SmallText | None
 		provider_metadata: DF.Code | None
 		provider_resource_id: DF.Data | None
 		provider_type: DF.Literal["", "DigitalOcean", "Scaleway", "Self-Managed", "Fake"]
