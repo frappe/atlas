@@ -234,9 +234,7 @@ def _check_wake_on_inbound_tcp(server_name: str, vantage_name: str) -> None:
 			TARGET_IPV6=address,
 			TIMEOUT_SECONDS="150",
 		)
-		assert_probe(
-			server_name, "phase5-is-active", timeout_seconds=90, VIRTUAL_MACHINE_NAME=vm.name
-		)
+		assert_probe(server_name, "phase5-is-active", timeout_seconds=90, VIRTUAL_MACHINE_NAME=vm.name)
 		assert_probe(
 			server_name,
 			"phase-is-unparked",

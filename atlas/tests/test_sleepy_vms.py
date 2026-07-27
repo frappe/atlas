@@ -75,9 +75,7 @@ class TestSleepyVmsCapacity(IntegrationTestCase):
 
 	def test_running_and_sleeping_vms_mixed(self) -> None:
 		make_virtual_machine(self.server, self.image, memory_megabytes=512, disk_gigabytes=10)
-		sleeping = make_virtual_machine(
-			self.server, self.image, memory_megabytes=1024, disk_gigabytes=20
-		)
+		sleeping = make_virtual_machine(self.server, self.image, memory_megabytes=1024, disk_gigabytes=20)
 		sleeping.db_set("status", "Sleeping")
 		result = server_capacity.capacity_for_server(self.server.name)
 		self.assertEqual(result["memory"]["used"], 512, "only running VM's RAM counted")
@@ -85,13 +83,9 @@ class TestSleepyVmsCapacity(IntegrationTestCase):
 		self.assertEqual(result["virtual_machine_count"], 1, "only running VM in resident count")
 
 	def test_terminated_and_sleeping_vm_disk_exclusion(self) -> None:
-		terminated = make_virtual_machine(
-			self.server, self.image, memory_megabytes=512, disk_gigabytes=50
-		)
+		terminated = make_virtual_machine(self.server, self.image, memory_megabytes=512, disk_gigabytes=50)
 		terminated.db_set("status", "Terminated")
-		sleeping = make_virtual_machine(
-			self.server, self.image, memory_megabytes=512, disk_gigabytes=10
-		)
+		sleeping = make_virtual_machine(self.server, self.image, memory_megabytes=512, disk_gigabytes=10)
 		sleeping.db_set("status", "Sleeping")
 		result = server_capacity.capacity_for_server(self.server.name)
 		self.assertEqual(result["disk"]["used"], 10, "only sleeping VM disk counted; terminated excluded")
@@ -116,33 +110,27 @@ class TestSleepyVmsLifecycle(IntegrationTestCase):
 		self.image = make_image("sleepy-lc-image")
 
 	def _make_sleeping_vm(self, **overrides) -> frappe.model.document.Document:
-		vm = make_virtual_machine(self.server, self.image, sleep_on_idle=1, idle_timeout_seconds=120, **overrides)
+		vm = make_virtual_machine(
+			self.server, self.image, sleep_on_idle=1, idle_timeout_seconds=120, **overrides
+		)
 		vm.db_set("status", "Sleeping")
 		vm.reload()
 		return vm
 
 	def test_validate_rejects_timeout_below_120(self) -> None:
 		with self.assertRaises(frappe.ValidationError):
-			make_virtual_machine(
-				self.server, self.image, sleep_on_idle=1, idle_timeout_seconds=60
-			)
+			make_virtual_machine(self.server, self.image, sleep_on_idle=1, idle_timeout_seconds=60)
 
 	def test_validate_rejects_zero_timeout_with_sleep_on_idle(self) -> None:
 		with self.assertRaises(frappe.ValidationError):
-			make_virtual_machine(
-				self.server, self.image, sleep_on_idle=1, idle_timeout_seconds=0
-			)
+			make_virtual_machine(self.server, self.image, sleep_on_idle=1, idle_timeout_seconds=0)
 
 	def test_validate_allows_120_seconds(self) -> None:
-		vm = make_virtual_machine(
-			self.server, self.image, sleep_on_idle=1, idle_timeout_seconds=120
-		)
+		vm = make_virtual_machine(self.server, self.image, sleep_on_idle=1, idle_timeout_seconds=120)
 		self.assertIsNotNone(vm.name)
 
 	def test_validate_allows_no_timeout_when_sleep_on_idle_off(self) -> None:
-		vm = make_virtual_machine(
-			self.server, self.image, sleep_on_idle=0, idle_timeout_seconds=0
-		)
+		vm = make_virtual_machine(self.server, self.image, sleep_on_idle=0, idle_timeout_seconds=0)
 		self.assertIsNotNone(vm.name)
 
 	def test_stop_from_sleeping_throws(self) -> None:
@@ -182,9 +170,7 @@ class TestSleepyVmsLifecycle(IntegrationTestCase):
 			vm.sleep()
 
 	def test_sleep_from_non_running_throws(self) -> None:
-		vm = make_virtual_machine(
-			self.server, self.image, sleep_on_idle=1, idle_timeout_seconds=300
-		)
+		vm = make_virtual_machine(self.server, self.image, sleep_on_idle=1, idle_timeout_seconds=300)
 		vm.db_set("status", "Stopped")
 		vm.reload()
 		with self.assertRaises(frappe.ValidationError):
@@ -201,9 +187,7 @@ class TestSleepyVmsLifecycle(IntegrationTestCase):
 		self.assertIn("wake or stop", str(caught.exception).lower())
 
 	def test_wake_from_non_sleeping_throws(self) -> None:
-		vm = make_virtual_machine(
-			self.server, self.image, sleep_on_idle=1, idle_timeout_seconds=300
-		)
+		vm = make_virtual_machine(self.server, self.image, sleep_on_idle=1, idle_timeout_seconds=300)
 		vm.db_set("status", "Running")
 		vm.reload()
 		with self.assertRaises(frappe.ValidationError):
@@ -363,12 +347,8 @@ class TestReconcileSleepingVms(IntegrationTestCase):
 		with patch.object(vm_mod, "run_probe", return_value=stdout) as mocked:
 			vm_mod.poll_vm_traffic()
 
-		self.assertGreater(
-			frappe.db.get_value("Virtual Machine", active.name, "last_traffic_at"), stale
-		)
-		self.assertEqual(
-			frappe.db.get_value("Virtual Machine", idle.name, "last_traffic_at"), stale
-		)
+		self.assertGreater(frappe.db.get_value("Virtual Machine", active.name, "last_traffic_at"), stale)
+		self.assertEqual(frappe.db.get_value("Virtual Machine", idle.name, "last_traffic_at"), stale)
 		_, kwargs = mocked.call_args
 		self.assertEqual(kwargs.get("script"), "poll-vm-traffic")
 		self.assertNotIn("virtual_machine", kwargs, "run_probe is server-scoped")
@@ -418,9 +398,7 @@ class TestIdleClockSeeding(IntegrationTestCase):
 
 	def _stale_vm(self, status: str) -> frappe.model.document.Document:
 		"""A sleep_on_idle VM whose idle clock is already well past its timeout."""
-		vm = make_virtual_machine(
-			self.server, self.image, sleep_on_idle=1, idle_timeout_seconds=120
-		)
+		vm = make_virtual_machine(self.server, self.image, sleep_on_idle=1, idle_timeout_seconds=120)
 		vm.db_set("status", status)
 		vm.db_set("last_traffic_at", frappe.utils.add_to_date(frappe.utils.now_datetime(), hours=-1))
 		vm.reload()
@@ -468,9 +446,7 @@ class TestIdleClockSeeding(IntegrationTestCase):
 
 		from atlas.atlas.doctype.virtual_machine import virtual_machine as vm_mod
 
-		vm = make_virtual_machine(
-			self.server, self.image, sleep_on_idle=1, idle_timeout_seconds=120
-		)
+		vm = make_virtual_machine(self.server, self.image, sleep_on_idle=1, idle_timeout_seconds=120)
 		vm.db_set("status", "Pending")
 		vm.db_set("last_traffic_at", None)
 		vm.reload()

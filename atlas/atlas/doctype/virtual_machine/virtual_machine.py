@@ -620,9 +620,7 @@ class VirtualMachine(Document):
 		# frm.call / REST send `live` as a JSON/stringy value; normalize to bool.
 		live = live in (True, 1, "1", "true", "True", "yes")
 		if self.status == "Sleeping":
-			frappe.throw(
-				_("Cannot snapshot a Sleeping VM — wake it first, stop it, then snapshot")
-			)
+			frappe.throw(_("Cannot snapshot a Sleeping VM — wake it first, stop it, then snapshot"))
 		if live:
 			if self.status not in ("Running", "Paused"):
 				frappe.throw(

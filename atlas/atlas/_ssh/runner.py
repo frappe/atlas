@@ -123,9 +123,7 @@ def run_probe(
 		stdout, stderr, exit_code = _run_remote_script(connection, script, variables, timeout_seconds)
 		if exit_code != 0:
 			# Tail, not head: scripts run under `bash -x`, so the real error is at the end.
-			frappe.logger("atlas").warning(
-				f"probe {script} on {server} exited {exit_code}: {stderr[-500:]}"
-			)
+			frappe.logger("atlas").warning(f"probe {script} on {server} exited {exit_code}: {stderr[-500:]}")
 			return ""
 		return stdout
 	except Exception as exception:

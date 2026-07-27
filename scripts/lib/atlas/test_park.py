@@ -158,8 +158,7 @@ class TestUnpark(_ParkHarness):
 		# nft refuses to drop a counter a rule still references, so the order is
 		# load-bearing, not cosmetic.
 		listing = (
-			f"\tip6 daddr {VM_V6} tcp flags syn / fin,syn,rst,ack "
-			f"counter name wake_{HEX} drop # handle 42\n"
+			f"\tip6 daddr {VM_V6} tcp flags syn / fin,syn,rst,ack counter name wake_{HEX} drop # handle 42\n"
 		)
 		self.install(_FakeHost(listing=listing))
 		park.unpark(UUID)

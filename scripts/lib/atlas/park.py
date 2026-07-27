@@ -74,10 +74,7 @@ def uuid_for_counter(name: str) -> str | None:
 	hex_digits = name[len(_COUNTER_PREFIX) :]
 	if len(hex_digits) != 32 or any(character not in "0123456789abcdef" for character in hex_digits):
 		return None
-	return (
-		f"{hex_digits[0:8]}-{hex_digits[8:12]}-{hex_digits[12:16]}-"
-		f"{hex_digits[16:20]}-{hex_digits[20:32]}"
-	)
+	return f"{hex_digits[0:8]}-{hex_digits[8:12]}-{hex_digits[12:16]}-{hex_digits[16:20]}-{hex_digits[20:32]}"
 
 
 def counter_command(uuid: str) -> str:

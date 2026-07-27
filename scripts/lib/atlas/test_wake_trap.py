@@ -32,9 +32,7 @@ HEX = "3f2504e04f8941d39a0c0305e82c3301"
 def _load_daemon():
 	if str(_SCRIPTS_DIR / "lib") not in sys.path:
 		sys.path.insert(0, str(_SCRIPTS_DIR / "lib"))
-	spec = importlib.util.spec_from_file_location(
-		"atlas_wake_trap", _SCRIPTS_DIR / "atlas-wake-trap.py"
-	)
+	spec = importlib.util.spec_from_file_location("atlas_wake_trap", _SCRIPTS_DIR / "atlas-wake-trap.py")
 	module = importlib.util.module_from_spec(spec)
 	spec.loader.exec_module(module)
 	return module
@@ -51,9 +49,7 @@ class TestWakeCounters(unittest.TestCase):
 			return self.daemon._wake_counters()
 
 	def test_maps_wake_counters_to_uuids(self) -> None:
-		output = json.dumps(
-			{"nftables": [{"counter": {"name": f"wake_{HEX}", "packets": 3, "bytes": 180}}]}
-		)
+		output = json.dumps({"nftables": [{"counter": {"name": f"wake_{HEX}", "packets": 3, "bytes": 180}}]})
 		self.assertEqual(self._with_nft_output(output), {UUID: 3})
 
 	def test_ignores_counters_that_are_not_ours(self) -> None:
@@ -185,9 +181,7 @@ class TestResweep(unittest.TestCase):
 		other = "11111111-2222-3333-4444-555555555555"
 		with (
 			patch.object(self.daemon.os, "listdir", return_value=[UUID, other]),
-			patch.object(
-				self.daemon.os.path, "exists", side_effect=lambda path: UUID in str(path)
-			),
+			patch.object(self.daemon.os.path, "exists", side_effect=lambda path: UUID in str(path)),
 		):
 			self.assertEqual(self.daemon._sleeping_uuids(), [UUID])
 
