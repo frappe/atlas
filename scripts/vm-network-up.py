@@ -31,6 +31,7 @@ from atlas._run import run, run_ok
 from atlas.firewall import apply_persisted_firewall
 from atlas.network_env import default_route_device, read_network_env
 from atlas.networkd.localownership import add_local_owned
+from atlas.park import unpark
 from atlas.paths import VirtualMachinePaths
 from atlas.private_network import apply_private_network
 from atlas.reserved_ip_nat import (
@@ -45,6 +46,13 @@ def main() -> None:
 	if len(sys.argv) != 2:
 		sys.exit("usage: vm-network-up.py <virtual-machine-uuid>")
 	uuid = sys.argv[1]
+
+	# If this start is a WAKE, the VM was "parked" while sleeping (proxy-NDP + a
+	# /128 route out atlas-park0 + a TCP-SYN wake trap; see atlas.park). Remove that
+	# trap BEFORE rebuilding the real netns/route below, so the client's
+	# retransmitted SYN reaches the resumed guest instead of being dropped by the
+	# park rule. A no-op on an ordinary start (nothing was parked). spec/32.
+	unpark(uuid)
 
 	env = read_network_env(VirtualMachinePaths(uuid).network_env)
 	tap_device = env.require("TAP_DEVICE")

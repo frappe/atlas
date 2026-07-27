@@ -1423,3 +1423,68 @@ def sleep_idle_vms() -> None:
 			vm.sleep()
 		except Exception:
 			pass  # Failures are recorded in the Task row; don't abort the sweep
+
+
+def reconcile_sleeping_vms() -> None:
+	"""Scheduled job (*/1 * * * *, BEFORE sleep_idle_vms): flip a Sleeping VM to
+	Running once the host has woken it on its own — the DB catch-up for a
+	packet-triggered wake (spec/32 sleepy VMs).
+
+	atlas-wake-trap.py on the host wakes a Sleeping VM the moment it receives an
+	inbound TCP SYN (removing the `sleeping` marker + starting the unit), but the
+	host cannot reach into Atlas's DB. This probes each server's sleeping VMs for the
+	marker's absence and mirrors that back into the status, so the DB drifts by at
+	most one minute while the guest is reachable throughout. Ordered before
+	sleep_idle_vms so a same-tick idle sweep sees the fresh last_traffic_at and does
+	not immediately re-sleep a just-woken VM."""
+	import json
+
+	vms = frappe.get_all(
+		"Virtual Machine",
+		filters={"status": "Sleeping"},
+		fields=["name", "server"],
+	)
+	if not vms:
+		return
+
+	by_server: dict = {}
+	for vm in vms:
+		by_server.setdefault(vm.server, []).append(vm.name)
+
+	now = frappe.utils.now_datetime()
+	for server, names in by_server.items():
+		try:
+			task = run_task(
+				server=server,
+				script="probe-woken-vms",
+				variables={"VMS_JSON": json.dumps(names)},
+				virtual_machine=None,
+				timeout_seconds=30,
+			)
+			woken = parse_result(task.stdout).get("woken", {})
+			for name, is_woken in woken.items():
+				if is_woken:
+					_adopt_wake(name, now)
+		except Exception:
+			pass  # Per-server failures don't abort other servers
+
+
+def _adopt_wake(name: str, now) -> None:
+	"""Record a host-initiated wake in the DB, race-safe against an operator wake().
+	Takes the same row lock wake() uses and re-reads status inside it, so whichever
+	of the two commits first flips Sleeping->Running and the other no-ops. Sets the
+	same fields wake() does: last_started + last_traffic_at (so sleep_idle_vms won't
+	immediately re-sleep it) and clears has_memory_snapshot (the wake consumed it)."""
+	frappe.db.sql("SELECT name FROM `tabVirtual Machine` WHERE name = %s FOR UPDATE", name)
+	if frappe.db.get_value("Virtual Machine", name, "status") != "Sleeping":
+		return  # operator wake() (or a previous tick) already adopted it
+	frappe.db.set_value(
+		"Virtual Machine",
+		name,
+		{
+			"status": "Running",
+			"last_started": now,
+			"last_traffic_at": now,
+			"has_memory_snapshot": 0,
+		},
+	)

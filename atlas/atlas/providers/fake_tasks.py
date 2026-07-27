@@ -200,6 +200,19 @@ def _poll_vm_traffic_result(variables: dict) -> dict:
 	return {"counters": {vm["name"]: {"active": False} for vm in vms}}
 
 
+def _probe_woken_vms_result(variables: dict) -> dict:
+	# A Fake host has no wake trap, so it reports nothing woken — a fake sleeping VM
+	# stays Sleeping until a test wakes it explicitly (vm.wake()). VMS_JSON is a flat
+	# list of uuids here (not the {name, ipv6} dicts poll-vm-traffic takes).
+	import json
+
+	try:
+		uuids = json.loads(variables.get("VMS_JSON") or "[]")
+	except (json.JSONDecodeError, TypeError):
+		uuids = []
+	return {"woken": {uuid: False for uuid in uuids}}
+
+
 def _warm_snapshot_result(variables: dict) -> dict:
 	return {
 		"size_bytes": _fake_disk_bytes(variables),
@@ -266,6 +279,7 @@ _RESULT_BUILDERS = {
 	"snapshot-stop-vm": _snapshot_stop_result,
 	"sleep-vm": _sleep_vm_result,
 	"poll-vm-traffic": _poll_vm_traffic_result,
+	"probe-woken-vms": _probe_woken_vms_result,
 	"warm-snapshot-vm": _warm_snapshot_result,
 	"upload-snapshot-s3": _upload_snapshot_s3_result,
 	"restore-snapshot-s3": _restore_snapshot_s3_result,

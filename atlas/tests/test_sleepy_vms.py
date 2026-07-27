@@ -223,3 +223,104 @@ class TestSleepyVmsFakeTasks(IntegrationTestCase):
 	def test_poll_vm_traffic_result_bad_json_returns_empty(self) -> None:
 		result = self._poll_vm_traffic_result({"VMS_JSON": "not-json"})
 		self.assertEqual(result["counters"], {})
+
+	def test_probe_woken_vms_result_reports_none_woken(self) -> None:
+		from atlas.atlas.providers.fake_tasks import _probe_woken_vms_result
+
+		result = _probe_woken_vms_result({"VMS_JSON": json.dumps(["u1", "u2"])})
+		self.assertEqual(result["woken"], {"u1": False, "u2": False})
+
+	def test_probe_woken_vms_result_bad_json_returns_empty(self) -> None:
+		from atlas.atlas.providers.fake_tasks import _probe_woken_vms_result
+
+		self.assertEqual(_probe_woken_vms_result({"VMS_JSON": "not-json"}), {"woken": {}})
+
+
+class TestReconcileSleepingVms(IntegrationTestCase):
+	"""reconcile_sleeping_vms() adopts a host-initiated (packet-triggered) wake into
+	the Frappe status, race-safe against an operator wake()."""
+
+	def setUp(self) -> None:
+		_clean_virtual_machines()
+		self.provider = make_provider("sleepy-rec-provider")
+		self.server = make_server(
+			self.provider,
+			"sleepy-rec-server",
+			ipv4_address="10.0.97.1",
+			ipv6_address="2001:db8:97::1",
+			ipv6_prefix="2001:db8:97::/64",
+			ipv6_virtual_machine_range="2001:db8:97::/124",
+			status="Active",
+		)
+		self.image = make_image("sleepy-rec-image")
+
+	def _sleeping_vm(self, **overrides) -> frappe.model.document.Document:
+		vm = make_virtual_machine(
+			self.server, self.image, sleep_on_idle=1, idle_timeout_seconds=120, **overrides
+		)
+		vm.db_set("status", "Sleeping")
+		vm.reload()
+		return vm
+
+	def _probe_stdout(self, woken: dict) -> str:
+		return "ATLAS_RESULT=" + json.dumps({"woken": woken}) + "\n"
+
+	def test_adopt_wake_flips_sleeping_to_running(self) -> None:
+		from atlas.atlas.doctype.virtual_machine import virtual_machine as vm_mod
+
+		vm = self._sleeping_vm()
+		vm.db_set("has_memory_snapshot", 1)
+		vm_mod._adopt_wake(vm.name, frappe.utils.now_datetime())
+		vm.reload()
+		self.assertEqual(vm.status, "Running")
+		self.assertEqual(vm.has_memory_snapshot, 0, "the wake consumed the snapshot")
+		self.assertIsNotNone(vm.last_started)
+		self.assertIsNotNone(vm.last_traffic_at, "fresh so sleep_idle_vms won't re-sleep it")
+
+	def test_adopt_wake_noop_when_operator_wake_won_the_race(self) -> None:
+		from atlas.atlas.doctype.virtual_machine import virtual_machine as vm_mod
+
+		vm = self._sleeping_vm()
+		vm.db_set("status", "Running")  # operator wake() already flipped it
+		vm_mod._adopt_wake(vm.name, frappe.utils.now_datetime())  # must not throw
+		vm.reload()
+		self.assertEqual(vm.status, "Running")
+
+	def test_reconcile_adopts_woken_vm(self) -> None:
+		from types import SimpleNamespace
+		from unittest.mock import patch
+
+		from atlas.atlas.doctype.virtual_machine import virtual_machine as vm_mod
+
+		vm = self._sleeping_vm()
+		task = SimpleNamespace(name="t", stdout=self._probe_stdout({vm.name: True}))
+		with patch.object(vm_mod, "run_task", return_value=task) as mocked:
+			vm_mod.reconcile_sleeping_vms()
+		vm.reload()
+		self.assertEqual(vm.status, "Running")
+		# Server-scoped probe: no VM FK, the probe-woken-vms verb.
+		_, kwargs = mocked.call_args
+		self.assertIsNone(kwargs.get("virtual_machine"))
+		self.assertEqual(kwargs.get("script"), "probe-woken-vms")
+
+	def test_reconcile_leaves_unwoken_vm_sleeping(self) -> None:
+		from types import SimpleNamespace
+		from unittest.mock import patch
+
+		from atlas.atlas.doctype.virtual_machine import virtual_machine as vm_mod
+
+		vm = self._sleeping_vm()
+		task = SimpleNamespace(name="t", stdout=self._probe_stdout({vm.name: False}))
+		with patch.object(vm_mod, "run_task", return_value=task):
+			vm_mod.reconcile_sleeping_vms()
+		vm.reload()
+		self.assertEqual(vm.status, "Sleeping")
+
+	def test_reconcile_no_sleeping_vms_skips_ssh(self) -> None:
+		from unittest.mock import patch
+
+		from atlas.atlas.doctype.virtual_machine import virtual_machine as vm_mod
+
+		with patch.object(vm_mod, "run_task") as mocked:
+			vm_mod.reconcile_sleeping_vms()
+		mocked.assert_not_called()

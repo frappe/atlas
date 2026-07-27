@@ -162,6 +162,7 @@ keep it the source of truth.
 28. [Snapshot backup to S3](./29-snapshot-backup.md) — *push a point-in-time snapshot off-host to S3 and rehydrate it back (same-VM rollback)*
 29. [The core ↔ service boundary and the `satellite` app](./30-core-service-boundary.md) — *how service logic (proxy, gateway, mesh, bench/site) leaves core for a separate app via an explicit VM-lifecycle seam*
 30. [Distributed network control plane (ANCP)](./31-ancp-network-control-plane.md) — *shipped: the decentralized `atlas-networkd` control plane (gossip + anti-entropy) that replaced the controller-driven WireGuard host mesh of [25](./25-private-networking.md)*
+31. [Sleepy VMs — auto-sleep idle VMs, wake on demand](./32-sleepy-vms.md) — *free host RAM by sleeping idle VMs; wake on operator Start or the first inbound TCP connection (fast resume from a memory snapshot)*
 
 ## First run on a fresh site
 
@@ -278,6 +279,7 @@ operator-facing features add to this list; new tests follow it.
 | Issue a TLS cert for a region  | `Root Domain` → **Issue / Renew Certificate**; `TLS Certificate` → **Issue/Renew / Push to Proxies**; DNS Settings / `Lets Encrypt Settings` → **Test Connection** | [13-tls.md](./13-tls.md) |
 | Route guest-created bench sites | (guest-driven, no operator action) the in-guest `bench-domain-provider register`/`deregister` POSTs reserve/remove a `Subdomain` the controller arbitrates (uniqueness, brand denylist, per-VM cap, own-VM scoping by source `/128`); the `wildcard-domains`/`proxy-servers` queries answer pilot's host-level questions; every call audited; `terminate()` is the only controller-side teardown | [18-bench-self-routing.md](./18-bench-self-routing.md) |
 | Refresh a host's capacity      | `Server` → **Refresh Capacity** (re-measure CPU/RAM/pool totals + fullness and stamp them, no re-bootstrap) | [28-placement.md](./28-placement.md) |
+| Auto-sleep idle VMs             | `Virtual Machine` → enable **`sleep_on_idle`** + set **`idle_timeout_seconds`** (idle VMs sleep to free host RAM; wake on **Start** or the first inbound TCP connection) | [32-sleepy-vms.md](./32-sleepy-vms.md) |
 | Run an ad-hoc task / reboot    | `Server` → **Run Task / Reboot**                        | [04-tasks.md](./04-tasks.md) |
 | Run an ad-hoc command on hosts/guests | `SSH Console` → **Execute** (fan one command across Servers and/or Virtual Machines; per-target output streams back; every run recorded as an `SSH Command Log`), or `Server` / `Virtual Machine` → **Run Command** (pre-targets the console at one row) | [04-tasks.md § The SSH Console](./04-tasks.md#the-ssh-console-ad-hoc-commands) |
 | Click any button on the desk   | every form button driven through `run_doc_method`       | (this section, *Desk-button coverage*) |

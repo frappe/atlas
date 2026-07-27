@@ -74,6 +74,12 @@ class Server(Document):
 		("install.sh", "/var/lib/atlas/bin/install.sh"),
 		("vm-network-up.py", "/var/lib/atlas/bin/vm-network-up.py"),
 		("vm-network-down.py", "/var/lib/atlas/bin/vm-network-down.py"),
+		# atlas-wake-trap.py is the always-on daemon that wakes a Sleeping VM on its
+		# first inbound TCP SYN (spec/32). Shipped durably like the systemd hooks
+		# (it imports the same durable atlas package); it is not a Task verb — the
+		# scripts_catalog SYSTEMD_HOOKS set excludes it from the host run-task gate.
+		("atlas-wake-trap.py", "/var/lib/atlas/bin/atlas-wake-trap.py"),
+		("systemd/atlas-wake-trap.service", "/etc/systemd/system/atlas-wake-trap.service"),
 		# vm-disk-up.py re-activates the VM's thin-snapshot disk LV and refreshes
 		# its in-jail block node at every unit start — the disk analogue of
 		# vm-network-up.py, so an enabled VM self-heals its disk after a reboot.

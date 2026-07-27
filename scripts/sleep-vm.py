@@ -22,6 +22,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib
 
 from atlas._run import CommandError, firecracker_api, install_directory, run, run_ok
 from atlas._task import TaskInputs, TaskResult
+from atlas.park import park
 from atlas.paths import ATLAS_ROOT, VirtualMachinePaths
 
 FREE_SPACE_MARGIN_BYTES = 256 * 1024 * 1024
@@ -60,6 +61,7 @@ def main() -> None:
 
 	run("sudo systemctl stop {}", paths.systemd_unit)
 	run("sudo touch {}", paths.sleeping_marker)
+	_park_for_wake(paths.uuid)
 	mem_bytes = int(run("sudo stat -c %s {}", paths.memory_snapshot_mem).strip())
 	SleepVmResult(memory_snapshot=True, memory_snapshot_bytes=mem_bytes).emit()
 	print(f"VM {inputs.virtual_machine_name} is now sleeping (memory snapshot captured).")
@@ -112,8 +114,22 @@ def _stop_and_sleep(paths: VirtualMachinePaths, reason: str) -> None:
 	run("sudo rm -f {}", paths.memory_snapshot_marker)
 	run("sudo systemctl stop {}", paths.systemd_unit)
 	run("sudo touch {}", paths.sleeping_marker)
+	_park_for_wake(paths.uuid)
 	SleepVmResult(memory_snapshot=False, reason=reason).emit()
 	print(f"VM {paths.uuid} is now sleeping (no memory snapshot): {reason}")
+
+
+def _park_for_wake(uuid: str) -> None:
+	"""Best-effort: install the parked reachability + TCP-SYN wake trap (atlas.park)
+	so an inbound TCP connection wakes the VM (spec/32). Done AFTER the marker is
+	written, so the VM is already officially sleeping. A failure here must not fail
+	the sleep — the VM still sleeps and stays wakeable by the operator; it just
+	won't auto-wake on a packet until something re-parks it (atlas-wake-trap re-parks
+	on host reboot)."""
+	try:
+		park(uuid)
+	except Exception as error:  # noqa: BLE001 — never let park failure abort the sleep
+		print(f"park failed (VM will not auto-wake on TCP until re-parked): {error}", file=sys.stderr)
 
 
 if __name__ == "__main__":
