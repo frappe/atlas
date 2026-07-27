@@ -182,16 +182,31 @@ class TestBoatCredentials(IntegrationTestCase):
 	def setUp(self) -> None:
 		self.server = _boat_server()
 
-	def test_base_url_defaults_to_the_hosts_address(self) -> None:
+	def test_base_url_defaults_to_the_management_tunnel_and_never_the_public_address(self) -> None:
+		"""The mesh address, and specifically NOT `ipv4_address`.
+
+		Boat binds the management tunnel and the local socket, so the mesh
+		endpoint is the only address it answers on — and it is the only one that
+		keeps the bearer token inside the tunnel. `ipv4_address` is the host's
+		PUBLIC address, the one SSH uses; defaulting to it would put a long-lived
+		token on the public internet in cleartext on every verb and every mirror
+		poll."""
+		mesh = frappe.db.get_value("Server", self.server.name, "mesh_address")
 		with _patch_conf({"atlas_boat_base_urls": None, "atlas_boat_port": None}):
-			self.assertEqual(base_url_for_server(self.server.name), "http://198.51.100.7:8080/v1")
+			url = base_url_for_server(self.server.name)
+
+		self.assertEqual(url, f"http://[{mesh}]:8080/v1")
+		self.assertNotIn("198.51.100.7", url)
 
 	def test_site_config_can_point_a_host_elsewhere(self) -> None:
 		with _patch_conf({"atlas_boat_base_urls": {self.server.name: "http://127.0.0.1:9000/v1"}}):
 			self.assertEqual(base_url_for_server(self.server.name), "http://127.0.0.1:9000/v1")
 
-	def test_base_url_throws_without_an_address(self) -> None:
-		frappe.db.set_value("Server", self.server.name, "ipv4_address", None)
+	def test_base_url_throws_without_a_mesh_address(self) -> None:
+		"""Refuse rather than fall back. A host with no mesh address has no
+		tunnel to reach Boat over, and the only other address available is the
+		public one — which is the thing this must never quietly use."""
+		frappe.db.set_value("Server", self.server.name, "mesh_address", None)
 		with _patch_conf({"atlas_boat_base_urls": None}), self.assertRaises(frappe.ValidationError):
 			base_url_for_server(self.server.name)
 
