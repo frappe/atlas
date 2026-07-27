@@ -5,11 +5,16 @@ row, different transport. This module is the Atlas half of that seam and nothing
 more — it speaks the HTTP/JSON contract in `api/openapi.yaml` (frappe/boat),
 which is the source of truth for every shape here.
 
-Two public entry points, and the split between them is deliberate:
+Three public entry points, and the split between them is deliberate:
 
-  - `BoatClient` is the typed transport, one method per WO-0 endpoint, shaped
+  - `BoatClient` is the typed transport, one method per endpoint, shaped
     like `DigitalOceanClient`: `requests`, no retries, one shot, fail loud. The
     operator retries by clicking the button.
+  - `put_desired_state` states what a VM should be — the desired spec and the
+    fence epoch — and is the push half of the pair `boat_mirror.sync_mirror`
+    completes (spec/33 §2.5). From WO-2 a lifecycle verb mutates desired state
+    and the host's reconciler drives observed toward it (§11.3), so this is the
+    mutation and the verb that follows only says "now".
   - `run_boat_task` is `run_task`'s twin. It takes the same keyword arguments,
     creates and drives the same `Task` row through the same `Pending → Running →
     Success/Failure` lifecycle with the same `stdout`/`stderr`/`exit_code`, and
@@ -43,6 +48,7 @@ from atlas.atlas.providers.fake_tasks import is_fake_server
 
 if TYPE_CHECKING:
 	from atlas.atlas.doctype.task.task import Task
+	from atlas.atlas.doctype.virtual_machine.virtual_machine import VirtualMachine
 
 # Boat binds the management-tunnel address and /run/boat.sock, never a public
 # interface. The port is not yet pinned by the contract, so it is configurable
@@ -53,10 +59,41 @@ DEFAULT_BOAT_PORT = 8080
 # `timeout_seconds` overrides it, exactly as it bounds an SSH run.
 DEFAULT_TIMEOUT_SECONDS = 30
 
-# Task verbs WO-0's Boat serves. Anything else must raise rather than quietly
-# take another path — see `_run_verb`.
+# The two Task verbs whose request carries more than an identifier.
 START_VERB = "start-vm"
 STOP_VERB = "stop-vm"
+
+# The first fence epoch Atlas issues. Epochs start at 1 (`api/openapi.yaml`,
+# `DesiredVirtualMachine.boot_epoch`): Boat gates on whether it holds a fence at
+# all, so 0 would read as a fence it holds rather than one it lacks. Atlas is the
+# sole issuer, and the epoch bumps at exactly one point — a migration's repoint
+# (spec/33 §11.1) — which is not this module's to do.
+FIRST_BOOT_EPOCH = 1
+
+# The desired spec, as `DesiredVirtualMachine` names it. Every one of these is a
+# `Virtual Machine` fieldname too, because both sides took their names from the
+# same chapter, so the mapping is the identity and stays legible as one list.
+#
+# What is deliberately absent is the point: `status`, `has_memory_snapshot`,
+# `last_started` and the rest are OBSERVED (spec/33 §1). Boat reports those, and
+# stating them back would make Atlas an authority on facts it does not hold.
+DESIRED_SPEC_FIELDS = (
+	"vcpus",
+	# Sent as the row's float. The contract types `cpu_max_cores` an integer,
+	# which cannot express the fractional share a Shared 1x VM is sold (a quarter
+	# of a core); sending the true number states the mismatch where it can be
+	# fixed, while rounding it would quietly sell a machine nobody bought.
+	"cpu_max_cores",
+	"cpu_mode",
+	"memory_megabytes",
+	"disk_gigabytes",
+	"data_disk_gigabytes",
+	"idle_timeout_seconds",
+	"ipv6_address",
+	"private_address",
+	"mac_address",
+	"tap_device",
+)
 
 
 class BoatError(Exception):
@@ -77,7 +114,7 @@ def boat_enabled(server_name: str | None) -> bool:
 class BoatClient:
 	"""One host's Boat daemon over HTTP/JSON.
 
-	One method per WO-0 endpoint of `api/openapi.yaml`. Every non-2xx and every
+	One method per endpoint of `api/openapi.yaml`. Every non-2xx and every
 	transport error raises `BoatError` carrying the daemon's own error sentence,
 	so a caller cannot mistake a failure for a result."""
 
@@ -123,6 +160,62 @@ class BoatClient:
 			body["stop_timeout_seconds"] = stop_timeout_seconds
 		return self._request("POST", f"/vms/{uuid}/stop", json=body)
 
+	def pause_virtual_machine(self, uuid: str, *, operation_id: str) -> dict:
+		"""POST /vms/{uuid}/pause — freeze the guest's vCPUs. The unit stays
+		active, so this frees CPU, not RAM."""
+		return self._operation(uuid, "pause", operation_id)
+
+	def resume_virtual_machine(self, uuid: str, *, operation_id: str) -> dict:
+		"""POST /vms/{uuid}/resume — the inverse of pause."""
+		return self._operation(uuid, "resume", operation_id)
+
+	def sleep_virtual_machine(self, uuid: str, *, operation_id: str) -> dict:
+		"""POST /vms/{uuid}/sleep — park the VM to free its RAM, so the first
+		inbound SYN wakes it. Refused when the wake trap is not running: a VM that
+		sleeps with nothing watching its counter never wakes (spec/32)."""
+		return self._operation(uuid, "sleep", operation_id)
+
+	def wake_virtual_machine(self, uuid: str, *, operation_id: str) -> dict:
+		"""POST /vms/{uuid}/wake — the operator's equivalent of the traffic that
+		would have woken it."""
+		return self._operation(uuid, "wake", operation_id)
+
+	def rebuild_virtual_machine(self, uuid: str, *, operation_id: str) -> dict:
+		"""POST /vms/{uuid}/rebuild — lay the root disk down again, keeping the
+		VM's identity, addresses and data disk."""
+		return self._operation(uuid, "rebuild", operation_id)
+
+	def terminate_virtual_machine(self, uuid: str, *, operation_id: str) -> dict:
+		"""POST /vms/{uuid}/terminate — destroy the VM and everything it holds on
+		this host. Idempotent: terminating what is already gone succeeds, so a
+		retry after a partial failure can finish the job."""
+		return self._operation(uuid, "terminate", operation_id)
+
+	def resize_virtual_machine(self, uuid: str, *, operation_id: str) -> dict:
+		"""POST /vms/{uuid}/resize — apply the desired vCPU, memory and disk
+		numbers. It carries none of them: they are desired state, so they arrive
+		by `put_desired` and this only asks for them to be applied now."""
+		return self._operation(uuid, "resize", operation_id)
+
+	def _operation(self, uuid: str, verb: str, operation_id: str) -> dict:
+		"""POST /vms/{uuid}/<verb> for every verb whose whole request is the
+		operation identifier. Same replay-by-`operation_id` rule as start."""
+		return self._request("POST", f"/vms/{uuid}/{verb}", json={"operation_id": operation_id})
+
+	def put_desired(self, uuid: str, desired: dict) -> dict:
+		"""PUT /vms/{uuid} — state this VM's whole desired spec, fence epoch
+		included.
+
+		The durable primitive (spec/33 §2.4): Boat diffs it against its store and
+		runs forward to converge, so re-stating an unchanged spec changes nothing
+		and re-stating it after a partition is how intent is re-asserted. It is
+		also the only channel by which a Boat learns it may boot a UUID at all.
+
+		The document names the VM as well as the path does, so the `uuid` is
+		filled from the path here — a request that named two VMs would have two
+		answers."""
+		return self._request("PUT", f"/vms/{uuid}", json={**desired, "uuid": uuid})
+
 	def get_virtual_machine(self, uuid: str) -> dict:
 		"""GET /vms/{uuid} — Boat's observed document for one VM."""
 		return self._request("GET", f"/vms/{uuid}")
@@ -167,6 +260,69 @@ class BoatClient:
 		if not response.content:
 			return {}
 		return response.json()
+
+
+# Task verb -> the `BoatClient` method that serves it, for every lifecycle verb
+# whose whole request is the operation identifier. They carry no arguments
+# because every argument they would have carried is desired state, stated by the
+# `put_desired` that precedes them (spec/33 §11.3).
+#
+# There is deliberately no default: a verb Boat does not serve must raise rather
+# than appear to have run — see `_run_verb`.
+OPERATION_VERBS = {
+	"pause-vm": BoatClient.pause_virtual_machine,
+	"resume-vm": BoatClient.resume_virtual_machine,
+	"sleep-vm": BoatClient.sleep_virtual_machine,
+	"wake-vm": BoatClient.wake_virtual_machine,
+	"rebuild-vm": BoatClient.rebuild_virtual_machine,
+	"terminate-vm": BoatClient.terminate_virtual_machine,
+	"resize-vm": BoatClient.resize_virtual_machine,
+}
+
+
+def desired_state(virtual_machine: "VirtualMachine", **spec) -> dict:
+	"""The `DesiredVirtualMachine` document for one VM row.
+
+	`spec` overrides a field the row does not carry yet: a resize's new numbers
+	are desired the moment the operator asks for them, and only reach the row once
+	the host has applied them.
+
+	A row with no `desired_power` raises rather than defaulting. Guessing a VM's
+	power is precisely the mistake this seam exists to prevent — a wrong guess
+	stops a live machine — so the caller states it."""
+	if not virtual_machine.desired_power:
+		raise BoatError(f"Virtual Machine {virtual_machine.name} has no desired_power to state")
+	desired = {
+		"uuid": virtual_machine.name,
+		"boot_epoch": virtual_machine.boot_epoch or FIRST_BOOT_EPOCH,
+		"desired_power": virtual_machine.desired_power,
+		**{field: getattr(virtual_machine, field) for field in DESIRED_SPEC_FIELDS},
+		**spec,
+	}
+	# Enrolment in the sleep reflex — and the one place Atlas declines to hand
+	# Boat a contradiction. §11.3 makes `desired_power = Stopped` outrank the wake
+	# trap, so a stopped VM would not be woken by traffic either way; this is
+	# Atlas not asking the daemon to resolve a conflict it never needed to send.
+	# The enrolment stays on the row, so the next start states it again.
+	desired["sleep_on_idle"] = bool(virtual_machine.sleep_on_idle) and desired["desired_power"] == "Running"
+	return desired
+
+
+def put_desired_state(virtual_machine: "VirtualMachine", **spec) -> dict:
+	"""State one VM's desired spec, fence epoch included, on its host's Boat.
+
+	The push half of the pair `boat_mirror.sync_mirror` completes (spec/33 §2.5):
+	`PUT` desired is how Atlas re-asserts intent, `GET /export` is how Boat
+	re-asserts fact, and those two calls back to back resynchronize a host from
+	any state.
+
+	The caller gates on `boat_enabled` — a host without the flag is never called
+	at all. A Fake-backed host is never called either, exactly as `run_boat_task`
+	gives it no request: there is no daemon there to hold a fence."""
+	if is_fake_server(virtual_machine.server):
+		return {}
+	client = BoatClient.for_server(virtual_machine.server)
+	return client.put_desired(virtual_machine.name, desired_state(virtual_machine, **spec))
 
 
 def base_url_for_server(server_name: str) -> str:
@@ -292,8 +448,11 @@ def _run_verb(client: BoatClient, script: str, uuid: str, operation_id: str, var
 
 	The variables dict is the same one the SSH path renders to `--kebab-flags`,
 	so a verb's inputs are stated once and mean the same thing on either
-	transport. An unmapped verb raises: WO-0's Boat serves start and stop, and a
-	verb it cannot run must fail loud rather than appear to have run."""
+	transport. Only start and stop read it: every other verb's inputs are desired
+	state, which reached the host by `put_desired` before this ran.
+
+	An unmapped verb raises. A verb Boat cannot run must fail loud rather than
+	appear to have run."""
 	if script == START_VERB:
 		return client.start_virtual_machine(uuid, operation_id=operation_id)
 	if script == STOP_VERB:
@@ -303,7 +462,11 @@ def _run_verb(client: BoatClient, script: str, uuid: str, operation_id: str, var
 			graceful=variables.get("GRACEFUL", "1") != "0",
 			stop_timeout_seconds=int(variables.get("STOP_TIMEOUT_SECONDS") or 0),
 		)
-	raise BoatError(f"Boat serves no endpoint for verb {script!r} (WO-0 ships {START_VERB} and {STOP_VERB})")
+	call = OPERATION_VERBS.get(script)
+	if call:
+		return call(client, uuid, operation_id=operation_id)
+	served = ", ".join(sorted((START_VERB, STOP_VERB, *OPERATION_VERBS)))
+	raise BoatError(f"Boat serves no endpoint for verb {script!r} (it serves {served})")
 
 
 def _outcome(operation: dict, operation_id: str) -> tuple[str, int]:

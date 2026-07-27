@@ -5,7 +5,13 @@ import frappe
 from frappe import _
 from frappe.model.document import Document
 
-from atlas.atlas.boat_client import boat_enabled, run_boat_task
+from atlas.atlas.boat_client import (
+	FIRST_BOOT_EPOCH,
+	BoatError,
+	boat_enabled,
+	put_desired_state,
+	run_boat_task,
+)
 from atlas.atlas.networking import (
 	CPU_MODE_RELAXED,
 	allocate_ipv6,
@@ -45,6 +51,18 @@ RESIZE_MUTABLE = (
 	"disk_gigabytes",
 	"data_disk_gigabytes",
 )
+
+# The desired power a status implies, for a VM Atlas has never stated one for —
+# which is every VM in the fleet until its first Boat-routed verb. Sleeping
+# implies Running: a parked VM wakes on traffic, it is not powered off (spec/32,
+# and `boat_mirror._power_of` reads the observed side of the same rule). Every
+# status that is not a live machine implies Stopped, so an unfinished or failed
+# VM is never stated as one a host should be booting.
+DESIRED_POWER_FOR_STATUS = {
+	"Running": "Running",
+	"Paused": "Running",
+	"Sleeping": "Running",
+}
 
 # The one field a migration cutover is allowed to repoint, and nothing else may.
 # `server` is otherwise immutable (identity + the key the rootfs was built with);
@@ -280,6 +298,13 @@ class VirtualMachine(Document):
 		# measured from now, not from a null that only the first traffic poll fills.
 		self.last_traffic_at = self.last_started
 		self.save()
+		# Enrolment (spec/33 §11.1). Provision is where a VM comes to exist on a
+		# host, so it is where Atlas first issues its fence: a Boat refuses to boot
+		# a UUID it holds no fence for, and an unfenced VM would stay down through
+		# the host's next reboot. Provisioning itself stays on SSH — Boat serves no
+		# provision verb — and this is a no-op off a Boat host.
+		if boat_enabled(self.server):
+			self._put_desired_state("Running")
 		# The VM's private /128 is locally owned by this host; atlas-networkd's
 		# periodic scan (spec/31 §11) detects it via the local-ownership cache
 		# (vm-network-up.py writes it on success) and gossips the advertisement.
@@ -368,6 +393,67 @@ class VirtualMachine(Document):
 				).format(self.name, migration)
 			)
 
+	def _transport(self, desired_power: str | None = None, **spec):
+		"""The transport this lifecycle verb runs over and, on a Boat host, the
+		desired state it acts on — stated before Boat is asked to act.
+
+		WO-2's whole shape in one line at each call site (spec/33 §11.3): a verb
+		mutates desired state and the host's per-VM reconciler drives observed
+		toward it, so the PUT is the mutation and the verb that follows only says
+		"now". Re-stating the whole spec before every verb costs one idempotent
+		round trip and buys three things: a VM provisioned before Boat existed is
+		fenced by its first verb, a Boat that lost its store is re-armed by the
+		next one, and no verb can act on a spec its host never received.
+
+		Off a Boat host this is `run_task` and nothing else happens at all — no
+		PUT, no row write — so a host without the flag runs exactly the call it
+		ran before."""
+		if not boat_enabled(self.server):
+			return run_task
+		self._put_desired_state(desired_power, **spec)
+		return run_boat_task
+
+	def _put_desired_state(self, desired_power: str | None = None, **spec) -> dict:
+		"""Record this VM's intent on the row, then state it on its host's Boat.
+
+		Both halves, in that order, because the row is the issuer's record. Atlas
+		is the fence epoch's sole issuer and a Boat refuses to boot a UUID it holds
+		no fence for (spec/33 §11.1), so a VM that has never been fenced is issued
+		epoch 1 here and its host learns that epoch from this PUT. The epoch bumps
+		at exactly one point — a migration's repoint — and this is not it, so an
+		epoch the row already carries is re-stated unchanged."""
+		values = {"desired_power": desired_power or self._desired_power()}
+		if not self.boot_epoch:
+			values["boot_epoch"] = FIRST_BOOT_EPOCH
+		self.db_set(values, update_modified=False)
+		try:
+			return put_desired_state(self, **spec)
+		except BoatError as error:
+			# Loud, and the verb never runs: a host that did not take the intent
+			# would either refuse the verb for want of a fence or converge back to
+			# the state Atlas just tried to leave.
+			frappe.throw(_("Boat on {0} refused this VM's desired state: {1}").format(self.server, error))
+
+	def _desired_power(self) -> str:
+		"""The power the row already states, or the one its status implies for a
+		VM Atlas has never stated one for."""
+		return self.desired_power or DESIRED_POWER_FOR_STATUS.get(self.status, "Stopped")
+
+	@frappe.whitelist()
+	def assert_desired_state(self) -> dict:
+		"""Re-state this VM's desired spec, fence epoch included, on its host's
+		Boat. Changes nothing when the host already holds it.
+
+		The operator's half of the resync pair (spec/33 §2.5): `sync_mirror` pulls
+		the host's fact, this pushes Atlas's intent, and the two together restore a
+		host from any state. It is also the recovery for the one window this seam
+		has — an HTTP PUT is not part of the Frappe transaction, so a lifecycle
+		call that states intent and then fails leaves the host holding an intent
+		the rolled-back row no longer records."""
+		if not boat_enabled(self.server):
+			frappe.throw(_("Server {0} is not on Boat").format(self.server))
+		return self._put_desired_state()
+
 	@frappe.whitelist()
 	def start(self) -> str:
 		"""Start a Stopped VM. When the last stop captured a memory snapshot
@@ -384,7 +470,7 @@ class VirtualMachine(Document):
 		if self.status != "Stopped":
 			frappe.throw(f"Cannot start from {self.status}")
 		self._guard_no_active_migration()
-		run = run_boat_task if boat_enabled(self.server) else run_task
+		run = self._transport("Running")
 		task = run(
 			server=self.server,
 			script="start-vm",
@@ -446,6 +532,15 @@ class VirtualMachine(Document):
 		memory_snapshot = memory_snapshot in (True, 1, "1", "true", "True", "yes")
 		snapshotted = False
 		if memory_snapshot:
+			# Boat serves no snapshot-stop verb, so this one keeps its SSH path.
+			# The intent still has to be stated first on a Boat host: a reconciler
+			# whose desired power still read Running would boot the VM again the
+			# moment the snapshot-stop brought its unit down. Stating it first
+			# lets the reconciler race the verb to the same Stopped end state, and
+			# the worst that costs is the memory snapshot — which this verb is
+			# already allowed to fall back from.
+			if boat_enabled(self.server):
+				self._put_desired_state("Stopped")
 			# The memory dump is RAM-sized; give it disk-write time, not the
 			# 30s a plain systemctl stop needs.
 			task = run_task(
@@ -465,9 +560,10 @@ class VirtualMachine(Document):
 			variables = {"VIRTUAL_MACHINE_NAME": self.name, "GRACEFUL": "1" if graceful else "0"}
 			if stop_timeout_seconds > 0:
 				variables["STOP_TIMEOUT_SECONDS"] = str(stop_timeout_seconds)
-			# The plain stop is WO-0's second Boat verb; the snapshot-stop above
-			# stays on SSH until Boat serves it (spec/33, WO-2).
-			run = run_boat_task if boat_enabled(self.server) else run_task
+			# Stopped is the intent a stop states, and it is the one that outranks
+			# the wake trap: from here the host will not bring this VM back for
+			# traffic (spec/33 §11.3).
+			run = self._transport("Stopped")
 			task = run(
 				server=self.server,
 				script="stop-vm",
@@ -497,7 +593,16 @@ class VirtualMachine(Document):
 		self._guard_no_active_migration()
 		if self.stop_protection:
 			frappe.throw(_("Disable stop protection before sleeping this VM"))
-		task = run_task(
+		if self.desired_power == "Stopped":
+			# The precedence rule from the enrolment side (spec/33 §11.3). Sleeping
+			# is a Running VM's low-power state — the address stays live and the
+			# first SYN brings it back — so parking a VM that was told to stop
+			# would arm exactly the resurrection the rule forbids.
+			frappe.throw(_("VM is stopped by intent — start it before putting it to sleep"))
+		# Sleeping satisfies Running: the VM is parked and wakeable, not powered
+		# off, so the intent it is parked under stays Running.
+		run = self._transport("Running")
+		task = run(
 			server=self.server,
 			script="sleep-vm",
 			variables={
@@ -529,7 +634,12 @@ class VirtualMachine(Document):
 		current_status = frappe.db.get_value("Virtual Machine", self.name, "status")
 		if current_status != "Sleeping":
 			return ""  # Another caller already woke it
-		task = run_task(
+		# An operator wake states Running, exactly as start() does — this is the
+		# explicit reversal of an intent, which is the one thing allowed to
+		# outrank a Stopped. What must not resurrect a stopped VM is *traffic*:
+		# that path is `_adopt_wake`, and it refuses (spec/33 §11.3).
+		run = self._transport("Running")
+		task = run(
 			server=self.server,
 			script="wake-vm",
 			variables={"VIRTUAL_MACHINE_NAME": self.name},
@@ -573,7 +683,11 @@ class VirtualMachine(Document):
 		if self.status != "Running":
 			frappe.throw(f"Cannot pause from {self.status}")
 		self._guard_no_active_migration()
-		task = run_task(
+		# A paused VM's unit is still active and its RAM still resident, so the
+		# intent stays Running: Stopped here would have the reconciler shut down
+		# the machine the operator only meant to freeze.
+		run = self._transport("Running")
+		task = run(
 			server=self.server,
 			script="pause-vm",
 			variables={"VIRTUAL_MACHINE_NAME": self.name},
@@ -590,7 +704,8 @@ class VirtualMachine(Document):
 		if self.status != "Paused":
 			frappe.throw(f"Cannot resume from {self.status}")
 		self._guard_no_active_migration()
-		task = run_task(
+		run = self._transport("Running")
+		task = run(
 			server=self.server,
 			script="resume-vm",
 			variables={"VIRTUAL_MACHINE_NAME": self.name},
@@ -806,7 +921,10 @@ class VirtualMachine(Document):
 			frappe.throw(f"Stop the VM before rebuilding (status is {self.status})")
 		self._guard_no_active_migration()
 		variables = self._rebuild_variables(source_type, source)
-		task = run_task(
+		# A rebuild changes the disk, not the intent: the VM is Stopped before and
+		# after, so the power stated is the one the row already carries.
+		run = self._transport()
+		task = run(
 			server=self.server,
 			script="rebuild-vm",
 			variables=variables,
@@ -954,7 +1072,20 @@ class VirtualMachine(Document):
 		if new_data_disk:
 			variables["DATA_DISK_GB"] = str(new_data_disk)
 			variables["DATA_DISK_FORMAT"] = "1" if self.data_disk_format_and_mount else "0"
-		task = run_task(
+		# Boat's resize carries no numbers — it applies the desired ones — so the
+		# new spec is stated before the verb is asked to apply it. The row is
+		# still written only after the host confirms, exactly as below: what is
+		# desired the moment the operator asks for it, and what is true, are two
+		# different facts (spec/33 §1).
+		run = self._transport(
+			vcpus=new_vcpus,
+			cpu_max_cores=new_cpu_max,
+			cpu_mode=new_cpu_mode,
+			memory_megabytes=new_memory,
+			disk_gigabytes=new_disk,
+			data_disk_gigabytes=new_data_disk,
+		)
+		task = run(
 			server=self.server,
 			script="resize-vm",
 			variables=variables,
@@ -1041,7 +1172,11 @@ class VirtualMachine(Document):
 		if self.termination_protection:
 			frappe.throw(_("Disable termination protection before terminating this VM"))
 		self._guard_no_active_migration()
-		task = run_task(
+		# Stopped first, and it matters: a terminate that fails half way through
+		# must not leave a host whose intent still reads Running, or its
+		# reconciler boots what the verb was in the middle of destroying.
+		run = self._transport("Stopped")
+		task = run(
 			server=self.server,
 			script="terminate-vm",
 			variables={"VIRTUAL_MACHINE_NAME": self.name},
@@ -1506,8 +1641,14 @@ def _adopt_wake(name: str, now) -> None:
 	same fields wake() does: last_started + last_traffic_at (so sleep_idle_vms won't
 	immediately re-sleep it) and clears has_memory_snapshot (the wake consumed it)."""
 	frappe.db.sql("SELECT name FROM `tabVirtual Machine` WHERE name = %s FOR UPDATE", name)
-	if frappe.db.get_value("Virtual Machine", name, "status") != "Sleeping":
+	row = frappe.db.get_value("Virtual Machine", name, ["status", "desired_power"], as_dict=True)
+	if not row or row.status != "Sleeping":
 		return  # operator wake() (or a previous tick) already adopted it
+	if row.desired_power == "Stopped":
+		# The precedence rule (spec/33 §11.3): a VM Atlas has stated Stopped is not
+		# woken by traffic. A host that woke one anyway is drift for the mirror to
+		# report — never an observation Atlas launders into its own status.
+		return
 	frappe.db.set_value(
 		"Virtual Machine",
 		name,

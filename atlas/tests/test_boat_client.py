@@ -467,7 +467,11 @@ class TestVirtualMachineBoatBranch(IntegrationTestCase):
 	def test_flag_on_starts_through_boat_with_the_same_arguments(self) -> None:
 		virtual_machine = self._virtual_machine("Stopped")
 		self._enable_boat(virtual_machine)
+		# From WO-2 the verb is preceded by the desired state it acts on; the
+		# argument list it runs with is unchanged (spec/33 §11.3).
 		with (
+			_boat_host_token(virtual_machine.server),
+			patch(REQUEST, return_value=_Response(payload={})) as request,
 			patch.object(virtual_machine_module, "run_task") as run_task,
 			patch.object(
 				virtual_machine_module, "run_boat_task", return_value=fake_task("task-boat-1")
@@ -476,6 +480,8 @@ class TestVirtualMachineBoatBranch(IntegrationTestCase):
 			result = virtual_machine.start()
 
 		self.assertEqual(result, "task-boat-1")
+		self.assertEqual(request.call_args.args[0], "PUT")
+		self.assertEqual(request.call_args.kwargs["json"]["desired_power"], "Running")
 		run_task.assert_not_called()
 		self.assertEqual(
 			run_boat.call_args.kwargs,
@@ -494,6 +500,8 @@ class TestVirtualMachineBoatBranch(IntegrationTestCase):
 		virtual_machine = self._virtual_machine("Running")
 		self._enable_boat(virtual_machine)
 		with (
+			_boat_host_token(virtual_machine.server),
+			patch(REQUEST, return_value=_Response(payload={})) as request,
 			patch.object(virtual_machine_module, "run_task") as run_task,
 			patch.object(
 				virtual_machine_module, "run_boat_task", return_value=fake_task("task-boat-2")
@@ -502,6 +510,7 @@ class TestVirtualMachineBoatBranch(IntegrationTestCase):
 			result = virtual_machine.stop(graceful=False, stop_timeout_seconds=20)
 
 		self.assertEqual(result, "task-boat-2")
+		self.assertEqual(request.call_args.kwargs["json"]["desired_power"], "Stopped")
 		run_task.assert_not_called()
 		self.assertEqual(
 			run_boat.call_args.kwargs["variables"],
@@ -515,12 +524,15 @@ class TestVirtualMachineBoatBranch(IntegrationTestCase):
 		self.assertEqual(virtual_machine.status, "Stopped")
 
 	def test_snapshot_stop_stays_on_ssh_even_with_the_flag_on(self) -> None:
-		# Boat serves no snapshot-stop verb in WO-0; the memory-snapshot stop keeps
-		# its SSH path until it does.
+		# Boat still serves no snapshot-stop verb, so the memory-snapshot stop keeps
+		# its SSH path. Its intent is stated all the same, or the host's reconciler
+		# would boot the VM again the moment the unit went down (spec/33 §11.3).
 		virtual_machine = self._virtual_machine("Running")
 		self._enable_boat(virtual_machine)
 		snapshot_task = fake_task("task-snap-1", stdout='ATLAS_RESULT={"memory_snapshot": true}\n')
 		with (
+			_boat_host_token(virtual_machine.server),
+			patch(REQUEST, return_value=_Response(payload={})) as request,
 			patch.object(virtual_machine_module, "run_task", return_value=snapshot_task) as run_task,
 			patch.object(virtual_machine_module, "run_boat_task") as run_boat,
 		):
@@ -528,3 +540,5 @@ class TestVirtualMachineBoatBranch(IntegrationTestCase):
 
 		run_boat.assert_not_called()
 		self.assertEqual(run_task.call_args.kwargs["script"], "snapshot-stop-vm")
+		self.assertEqual(request.call_args.args[0], "PUT")
+		self.assertEqual(request.call_args.kwargs["json"]["desired_power"], "Stopped")
