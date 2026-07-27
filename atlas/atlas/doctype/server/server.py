@@ -74,6 +74,12 @@ class Server(Document):
 		("install.sh", "/var/lib/atlas/bin/install.sh"),
 		("vm-network-up.py", "/var/lib/atlas/bin/vm-network-up.py"),
 		("vm-network-down.py", "/var/lib/atlas/bin/vm-network-down.py"),
+		# atlas-wake-trap.py is the always-on daemon that wakes a Sleeping VM on its
+		# first inbound TCP SYN (spec/32). Shipped durably like the systemd hooks
+		# (it imports the same durable atlas package); it is not a Task verb — the
+		# scripts_catalog SYSTEMD_HOOKS set excludes it from the host run-task gate.
+		("atlas-wake-trap.py", "/var/lib/atlas/bin/atlas-wake-trap.py"),
+		("systemd/atlas-wake-trap.service", "/etc/systemd/system/atlas-wake-trap.service"),
 		# vm-disk-up.py re-activates the VM's thin-snapshot disk LV and refreshes
 		# its in-jail block node at every unit start — the disk analogue of
 		# vm-network-up.py, so an enabled VM self-heals its disk after a reboot.
@@ -99,6 +105,15 @@ class Server(Document):
 		atlas_settings = frappe.get_single("Atlas Settings")
 		atlas_settings._ensure_ancp_operator_keypair()
 		atlas_settings._ensure_ancp_wg_derivation_secret()
+		# ignore_mandatory: this save is incidental — we are only persisting the two
+		# lazily-generated ANCP secrets, not asking the operator to have finished
+		# configuring Atlas Settings. Without it, a Single with an empty `region`
+		# (any site that has not been through setup(), including every fresh test
+		# site) makes EVERY Server insert die with "Value missing for Atlas
+		# Settings: Region" — an error naming a field the caller never touched.
+		# The operator's required fields are still enforced when they save the
+		# Single themselves.
+		atlas_settings.flags.ignore_mandatory = True
 		atlas_settings.save(ignore_permissions=True)
 		self._validate_immutability()
 		self._denormalize_mesh_identity()
@@ -953,7 +968,8 @@ def sync_scripts_to_all() -> dict[str, int]:
 	for name in names:
 		server = frappe.get_doc("Server", name)
 		if not server.ipv4_address:
-			frappe.throw(f"Server {name} has no ipv4_address; cannot sync scripts")
+			frappe.logger("atlas").warning(f"sync-scripts skipping {name}: no ipv4_address")
+			continue
 		jobs.append((name, connection_for_server(server), server._script_uploads()))
 
 	if not jobs:
@@ -963,12 +979,16 @@ def sync_scripts_to_all() -> dict[str, int]:
 
 	def _push(job) -> tuple[str, int]:
 		name, connection, uploads = job
-		with frappe_thread_context(site):
-			print(f"Syncing durable scripts to {name} ({connection.host})")
-			upload_files(connection, uploads)
-			reinstall_atlas_venv_package(connection, name)
-			print(f"Done syncing durable scripts to {name} ({connection.host})")
-		return name, len(uploads)
+		try:
+			with frappe_thread_context(site):
+				print(f"Syncing durable scripts to {name} ({connection.host})")
+				upload_files(connection, uploads)
+				reinstall_atlas_venv_package(connection, name)
+				print(f"Done syncing durable scripts to {name} ({connection.host})")
+			return name, len(uploads)
+		except Exception as exc:
+			frappe.logger("atlas").warning(f"sync-scripts failed for {name} ({connection.host}): {exc}")
+			return name, 0
 
 	from concurrent.futures import ThreadPoolExecutor
 

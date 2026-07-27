@@ -1,6 +1,7 @@
 const PRIMARY_BY_STATUS = {
 	Failed: { label: "Provision", method: "provision" },
 	Stopped: { label: "Start", method: "start" },
+	Sleeping: { label: "Start", method: "start" },
 	Running: { label: "Stop", method: "stop" },
 	Paused: { label: "Resume", method: "resume" },
 };

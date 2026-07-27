@@ -398,6 +398,17 @@ def main() -> None:
 			"{ type filter hook forward priority filter; policy accept; }",
 		)
 
+	# 9-park. The shared always-up dummy every SLEEPING VM's /128 routes out (spec/32
+	#     sleepy VMs). Parking a sleeping VM keeps its /128 reachable and routes it
+	#     off-link out this device so an inbound TCP SYN is FORWARDED (hits the forward
+	#     hook, where atlas.park's wake rule traps it) with no running guest. A dummy
+	#     never carries real traffic — it only gives the parked route a valid, always-up
+	#     next hop. atlas.park.ensure_park_device() re-creates it after a reboot; kept by
+	#     reset-server (bootstrap floor, like the nft scaffold). Idempotent.
+	if not run_ok("ip link show atlas-park0"):
+		run("sudo ip link add atlas-park0 type dummy")
+	run("sudo ip link set atlas-park0 up")
+
 	# 9-imds. Drop guest traffic to the cloud metadata endpoint (169.254.169.254).
 	#     prod-host-setup.md "Filtering Guest Egress Network Traffic": a guest must
 	#     not reach the HOST's IMDS, which on DigitalOcean serves the droplet's own
@@ -533,6 +544,15 @@ def main() -> None:
 	run("sudo systemctl daemon-reload")
 	run("sudo systemctl enable atlas-networkd.service", check=False, quiet=True)
 	run("sudo systemctl start atlas-networkd.service", check=False, quiet=True)
+
+	# 11d. Wake-on-TCP trap for sleeping VMs (spec/32). The always-on daemon polls the
+	#      per-VM nft `wake_<uuid>` counters atlas.park installs and wakes a Sleeping VM
+	#      on its first inbound TCP SYN. Enable AND start it now — unlike the pool/mesh
+	#      oneshots there is no per-boot re-assert to defer to; it must be running so a
+	#      VM slept later this session auto-wakes. Its startup sweep re-parks any already
+	#      sleeping VM, so an enable+start after a reboot self-heals. `--now` is
+	#      best-effort: a start failure must not fail an otherwise-good bootstrap.
+	run("sudo systemctl enable --now atlas-wake-trap.service", check=False, quiet=True)
 
 	# 12. Record state for Atlas to pick up. Single JSON file is the canonical
 	#     source of truth. The bytes still land in /var/lib/atlas/bootstrap.json;

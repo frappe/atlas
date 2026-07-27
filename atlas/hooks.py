@@ -243,6 +243,11 @@ scheduler_events = {
 	"cron": {
 		"*/1 * * * *": [
 			"atlas.atlas.central_report.retry_pending",
+			"atlas.atlas.doctype.virtual_machine.virtual_machine.poll_vm_traffic",
+			# BEFORE sleep_idle_vms: adopt any host-initiated (packet-triggered) wake so
+			# a just-woken VM is Running with fresh last_traffic_at before the idle sweep.
+			"atlas.atlas.doctype.virtual_machine.virtual_machine.reconcile_sleeping_vms",
+			"atlas.atlas.doctype.virtual_machine.virtual_machine.sleep_idle_vms",
 		],
 		"*/10 * * * *": [
 			"atlas.atlas.providers.worker.reconcile_pending_servers",

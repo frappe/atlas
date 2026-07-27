@@ -34,6 +34,7 @@
 #   - every per-VM rule in the nft `inet atlas forward` chain, the firewall
 #     chain, and every NDP proxy entry the VMs installed
 
+import json
 import os
 import sys
 import typing
@@ -136,6 +137,13 @@ def teardown_networking() -> None:
 		address, device = entry
 		run("sudo ip -6 neigh del proxy {} dev {}", address, device, check=False)
 
+	# Every parked-VM SYN trap: its forward rule + named counter (atlas.park). The
+	# per-VM vm-network-down above removed these for VMs it still knew about; this
+	# catches orphans whose VM directory was already gone. Delete the rules first
+	# (a counter a rule references can't be dropped), then the counters. The shared
+	# atlas-park0 dummy is bootstrap floor and is kept, like the nft table scaffold.
+	_sweep_park_state()
+
 
 def disconnect_nbd_and_dm_clone() -> None:
 	"""Disconnect any bound nbd client and remove any lingering dm-clone target —
@@ -174,6 +182,32 @@ def clear_state_directories() -> None:
 
 
 # --- host enumeration: read-only pokes, each tolerating absence ---------------
+
+
+def _sweep_park_state() -> None:
+	"""Delete every `wake_*` SYN-trap forward rule and named counter (atlas.park).
+	Best-effort and idempotent; rules first so the counters they reference can then
+	be dropped."""
+	chain = run("sudo nft -a list chain inet atlas forward", check=False)
+	for line in chain.splitlines():
+		if "wake_" in line and "handle" in line:
+			run("sudo nft delete rule inet atlas forward handle {}", line.split()[-1], check=False)
+	for name in _list_wake_counters():
+		run("sudo nft delete counter inet atlas {}", name, check=False)
+
+
+def _list_wake_counters() -> list[str]:
+	out = run("sudo nft -j list counters table inet atlas", check=False)
+	try:
+		data = json.loads(out)
+	except (json.JSONDecodeError, ValueError):
+		return []
+	names = []
+	for item in data.get("nftables", []):
+		counter = item.get("counter") if isinstance(item, dict) else None
+		if counter and str(counter.get("name", "")).startswith("wake_"):
+			names.append(counter["name"])
+	return names
 
 
 def _list_vm_directories() -> list[str]:

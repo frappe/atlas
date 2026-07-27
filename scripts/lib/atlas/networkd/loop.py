@@ -150,7 +150,7 @@ class Loop:
 		nothing in the guard itself can mask a shutdown signal."""
 		try:
 			fn(*args)
-		except Exception as exc:  # noqa: BLE001 — deliberate broad catch; see docstring
+		except Exception as exc:
 			counter = getattr(self.daemon, "metrics", None)
 			if counter is not None:
 				counter.incr("loop_step_error")

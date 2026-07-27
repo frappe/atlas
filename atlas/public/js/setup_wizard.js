@@ -307,7 +307,8 @@ function atlas_setup_slides() {
 					label: __("PowerDNS API URL"),
 					fieldtype: "Data",
 					depends_on: "eval:doc.setup_tls && doc.dns_provider_type=='PowerDNS'",
-					mandatory_depends_on: "eval:doc.setup_tls && doc.dns_provider_type=='PowerDNS'",
+					mandatory_depends_on:
+						"eval:doc.setup_tls && doc.dns_provider_type=='PowerDNS'",
 					description: __("Base URL without /api/v1."),
 				},
 				{
@@ -315,7 +316,8 @@ function atlas_setup_slides() {
 					label: __("PowerDNS API Key"),
 					fieldtype: "Password",
 					depends_on: "eval:doc.setup_tls && doc.dns_provider_type=='PowerDNS'",
-					mandatory_depends_on: "eval:doc.setup_tls && doc.dns_provider_type=='PowerDNS'",
+					mandatory_depends_on:
+						"eval:doc.setup_tls && doc.dns_provider_type=='PowerDNS'",
 				},
 				{
 					fieldname: "powerdns_server_id",
@@ -365,10 +367,13 @@ function atlas_provider_slide_onload(slide) {
 	// the first/declared option visually but leaves the doc value empty, so a field a
 	// user never touches would post blank and fail its `mandatory_depends_on` — make
 	// "what you see selected" == "what gets posted".
-	["provider_type", "do_region", "dns_provider_type", "powerdns_server_id"].forEach((fieldname) => {
-		const field = slide.get_field(fieldname);
-		if (field?.df.default && !slide.get_value(fieldname)) field.set_input(field.df.default);
-	});
+	["provider_type", "do_region", "dns_provider_type", "powerdns_server_id"].forEach(
+		(fieldname) => {
+			const field = slide.get_field(fieldname);
+			if (field?.df.default && !slide.get_value(fieldname))
+				field.set_input(field.df.default);
+		}
+	);
 	slide.form.refresh();
 
 	slide

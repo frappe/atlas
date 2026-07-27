@@ -31,6 +31,7 @@ from atlas._run import run, run_ok
 from atlas.firewall import apply_persisted_firewall
 from atlas.network_env import default_route_device, read_network_env
 from atlas.networkd.localownership import add_local_owned
+from atlas.park import unpark
 from atlas.paths import VirtualMachinePaths
 from atlas.private_network import apply_private_network
 from atlas.reserved_ip_nat import (
@@ -45,6 +46,13 @@ def main() -> None:
 	if len(sys.argv) != 2:
 		sys.exit("usage: vm-network-up.py <virtual-machine-uuid>")
 	uuid = sys.argv[1]
+
+	# If this start is a WAKE, the VM was "parked" while sleeping (proxy-NDP + a
+	# /128 route out atlas-park0 + a TCP-SYN wake trap; see atlas.park). Remove that
+	# trap BEFORE rebuilding the real netns/route below, so the client's
+	# retransmitted SYN reaches the resumed guest instead of being dropped by the
+	# park rule. A no-op on an ordinary start (nothing was parked). spec/32.
+	unpark(uuid)
 
 	env = read_network_env(VirtualMachinePaths(uuid).network_env)
 	tap_device = env.require("TAP_DEVICE")
@@ -214,16 +222,22 @@ def main() -> None:
 	#    host namespace to match on). The v4 masquerade rule (host postrouting,
 	#    100.64.0.0/16 -> uplink) is created in the nft scaffold above and covers the
 	#    guest's v4 egress once it reaches the host via the veth.
-	run(
-		"sudo nft add rule inet atlas forward ip6 daddr {} oifname {} accept",
-		virtual_machine_ipv6,
-		host_veth,
-	)
-	run(
-		"sudo nft add rule inet atlas forward ip6 saddr {} iifname {} accept",
-		virtual_machine_ipv6,
-		host_veth,
-	)
+	#    `counter` records per-VM byte totals that poll-vm-traffic.py reads to detect
+	#    idle VMs for the Sleepy VMs feature. Idempotency guards prevent duplicate
+	#    rules (which would split the counter across two entries) on restarts.
+	_forward = run("sudo nft list chain inet atlas forward")
+	if f"ip6 daddr {virtual_machine_ipv6} oifname {host_veth}" not in _forward:
+		run(
+			"sudo nft add rule inet atlas forward ip6 daddr {} oifname {} counter accept",
+			virtual_machine_ipv6,
+			host_veth,
+		)
+	if f"ip6 saddr {virtual_machine_ipv6} iifname {host_veth}" not in _forward:
+		run(
+			"sudo nft add rule inet atlas forward ip6 saddr {} iifname {} counter accept",
+			virtual_machine_ipv6,
+			host_veth,
+		)
 
 	# 7a. Private plane (the WireGuard host mesh, design §5). Present only once the
 	#     controller writes PRIVATE_ADDRESS + TENANT_PREFIX into network.env; absent

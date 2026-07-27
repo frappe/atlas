@@ -168,7 +168,15 @@ def capacity_for_server(server: str) -> dict:
 	memory_total = int(s["memory_megabytes_total"]) if s.get("memory_megabytes_total") else None
 	disk_total = int(s["pool_disk_gigabytes_total"]) if s.get("pool_disk_gigabytes_total") else None
 
-	resident = frappe.get_all(
+	# Sleeping VMs have released their cgroup (RAM freed, vCPUs idle) but their
+	# disk LV is still allocated. Query the two axes separately so placement can
+	# book new VMs on a host whose RAM is freed by sleeping tenants.
+	ram_resident = frappe.get_all(
+		"Virtual Machine",
+		filters={"server": server, "status": ["not in", ("Terminated", "Sleeping")]},
+		fields=list(_VM_COST_FIELDS),
+	)
+	disk_resident = frappe.get_all(
 		"Virtual Machine",
 		filters={"server": server, "status": ["!=", "Terminated"]},
 		fields=list(_VM_COST_FIELDS),
@@ -182,7 +190,11 @@ def capacity_for_server(server: str) -> dict:
 	# cutover): a migrating VM is deliberately charged to BOTH hosts for its brief
 	# life, the safe direction for a capacity gate.
 	incoming = _incoming_migration_vms(server)
-	vms = resident + incoming
+	# Sleeping VMs freed their cgroup (RAM + CPU released) but their disk LV
+	# remains allocated. Use separate VM lists per axis so placement can book
+	# new VMs on a host whose RAM is freed by sleeping tenants.
+	ram_vms = ram_resident + incoming
+	disk_vms = disk_resident + incoming
 	factor = overprovision_factor()
 	# Memory: hard fit, but never packable to the full physical total — the host OS
 	# + per-VM VMM overhead live in the same RAM, so effective = total − reserve
@@ -192,17 +204,17 @@ def capacity_for_server(server: str) -> dict:
 	cpu_axis = _axis(
 		total=vcpus_total,
 		effective=(vcpus_total * factor) if vcpus_total is not None else None,
-		used=sum(float(v.cpu_max_cores or v.vcpus or 0) for v in vms),
+		used=sum(float(v.cpu_max_cores or v.vcpus or 0) for v in ram_vms),
 	)
 	memory_axis = _axis(
 		total=memory_total,
 		effective=memory_effective,  # total − host_memory_reserve, no oversubscription
-		used=sum(int(v.memory_megabytes or 0) for v in vms),
+		used=sum(int(v.memory_megabytes or 0) for v in ram_vms),
 	)
 	disk_axis = _axis(
 		total=disk_total,
 		effective=disk_total,  # no oversubscription
-		used=sum(int(v.disk_gigabytes or 0) + int(v.data_disk_gigabytes or 0) for v in vms),
+		used=sum(int(v.disk_gigabytes or 0) + int(v.data_disk_gigabytes or 0) for v in disk_vms),
 	)
 	share = _share_units(cpu_axis, memory_axis, disk_axis)
 	return {
@@ -216,7 +228,7 @@ def capacity_for_server(server: str) -> dict:
 		"share_units": share["share_units"] if share else None,
 		"stranded": share["stranded"] if share else None,
 		"pool_data_percent": s.get("pool_data_percent"),  # advisory alert signal
-		"virtual_machine_count": len(resident),
+		"virtual_machine_count": len(ram_resident),
 		# VMs migrating in but not yet cut over — counted in `used` above, surfaced
 		# separately so the operator can see why a host reads fuller than its resident
 		# VM list.

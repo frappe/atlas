@@ -163,6 +163,15 @@ def _fake_stdout(script: str, variables: dict) -> str:
 	return RESULT_MARKER + json.dumps(builder(variables)) + "\n"
 
 
+def fake_stdout(script: str, variables: dict) -> str:
+	"""The synthesized stdout for a script, with no Task row involved.
+
+	`run_probe` (the non-persisting poller path) needs only the output a Fake
+	host would have produced — there is no row to finalize. Keeps the fake's
+	result synthesis in one place, shared with the Task-recording path."""
+	return _fake_stdout(script, variables)
+
+
 def _bootstrap_result(_variables: dict) -> dict:
 	return {
 		"firecracker_version": "v1.16.0",
@@ -184,6 +193,33 @@ def _snapshot_result(variables: dict) -> dict:
 
 def _snapshot_stop_result(_variables: dict) -> dict:
 	return {"memory_snapshot": True, "reason": "", "memory_snapshot_bytes": 536_870_912}
+
+
+def _sleep_vm_result(_variables: dict) -> dict:
+	return {"memory_snapshot": True, "reason": "", "memory_snapshot_bytes": 536_870_912}
+
+
+def _poll_vm_traffic_result(variables: dict) -> dict:
+	import json
+
+	try:
+		vms = json.loads(variables.get("VMS_JSON") or "[]")
+	except (json.JSONDecodeError, TypeError):
+		vms = []
+	return {"counters": {vm["name"]: {"active": False} for vm in vms}}
+
+
+def _probe_woken_vms_result(variables: dict) -> dict:
+	# A Fake host has no wake trap, so it reports nothing woken — a fake sleeping VM
+	# stays Sleeping until a test wakes it explicitly (vm.wake()). VMS_JSON is a flat
+	# list of uuids here (not the {name, ipv6} dicts poll-vm-traffic takes).
+	import json
+
+	try:
+		uuids = json.loads(variables.get("VMS_JSON") or "[]")
+	except (json.JSONDecodeError, TypeError):
+		uuids = []
+	return {"woken": {uuid: False for uuid in uuids}}
 
 
 def _warm_snapshot_result(variables: dict) -> dict:
@@ -250,6 +286,9 @@ _RESULT_BUILDERS = {
 	"server-facts": _server_facts_result,
 	"snapshot-vm": _snapshot_result,
 	"snapshot-stop-vm": _snapshot_stop_result,
+	"sleep-vm": _sleep_vm_result,
+	"poll-vm-traffic": _poll_vm_traffic_result,
+	"probe-woken-vms": _probe_woken_vms_result,
 	"warm-snapshot-vm": _warm_snapshot_result,
 	"upload-snapshot-s3": _upload_snapshot_s3_result,
 	"restore-snapshot-s3": _restore_snapshot_s3_result,

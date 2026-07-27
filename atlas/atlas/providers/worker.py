@@ -269,7 +269,10 @@ def _probe_networkd_liveness(server_name: str) -> tuple[bool, str]:
 					conflict_note = f", conflict_count={conflicts}"
 		except Exception:
 			pass
-		return False, f"systemctl is-active/is-enabled -> {active_state or ['<none>']} (exit {exit_code}){conflict_note}"
+		return (
+			False,
+			f"systemctl is-active/is-enabled -> {active_state or ['<none>']} (exit {exit_code}){conflict_note}",
+		)
 
 
 def check_networkd_liveness() -> list[str]:

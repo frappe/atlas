@@ -9,6 +9,7 @@ from atlas.atlas._ssh.runner import (
 	connection_for_guest,
 	connection_for_server,
 	execute_task,
+	run_probe,
 	run_task,
 )
 from atlas.atlas._ssh.transport import (
@@ -32,6 +33,7 @@ __all__ = [
 	"connection_for_server",
 	"execute_task",
 	"forget_host",
+	"run_probe",
 	"run_ssh",
 	"run_task",
 	"ssh_key_file",

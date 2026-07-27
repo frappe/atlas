@@ -89,6 +89,48 @@ def run_task(
 	return task
 
 
+def run_probe(
+	*,
+	script: str,
+	variables: dict,
+	server: str,
+	timeout_seconds: int = 30,
+) -> str:
+	"""Run a read-only polling script on a host WITHOUT recording a Task row.
+
+	The non-persisting sibling of `run_task`, for the per-minute sweeps whose
+	rows nobody reads. `poll-vm-traffic` and `probe-woken-vms` (spec/32 sleepy
+	VMs) each run once per server per minute; as Tasks that is ~2,880 rows per
+	server per day of "polled, nothing happened", drowning the audit log the
+	Task list exists to be. A probe is idempotent, read-only, and interesting
+	only when it fails, so it logs instead of persisting.
+
+	Returns the script's stdout for `parse_result`. Never raises: an SSH error,
+	timeout, or non-zero exit logs a warning and returns "" — a missed poll
+	cycle is at most one extra minute of idle time, and the next tick retries.
+	Callers therefore need no try/except of their own.
+
+	Use `run_task` for anything that changes host state: those rows ARE the
+	audit trail, and their failures must propagate.
+	"""
+	if is_fake_server(server):
+		from atlas.atlas.providers.fake_tasks import fake_stdout
+
+		return fake_stdout(script, variables)
+
+	try:
+		connection = connection_for_server(frappe.get_doc("Server", server))
+		stdout, stderr, exit_code = _run_remote_script(connection, script, variables, timeout_seconds)
+		if exit_code != 0:
+			# Tail, not head: scripts run under `bash -x`, so the real error is at the end.
+			frappe.logger("atlas").warning(f"probe {script} on {server} exited {exit_code}: {stderr[-500:]}")
+			return ""
+		return stdout
+	except Exception as exception:
+		frappe.logger("atlas").warning(f"probe {script} on {server} failed: {exception}")
+		return ""
+
+
 def execute_task(task_name: str) -> None:
 	"""Background-job entrypoint. Runs an already-inserted Pending Task."""
 	task = frappe.get_doc("Task", task_name)

@@ -111,16 +111,18 @@ def _search_paths() -> list[Path]:
 _TASK_SUFFIXES: frozenset[str] = frozenset({".py", ".sh"})
 
 
-# Systemd-invoked hooks live in scripts/ but are NOT Task-runnable: they take a
-# positional VM uuid (passed by the unit's ExecStartPre/ExecStopPost as `%i`),
-# not the --flag CLI contract a Task uses, and they import the durable package.
-# Excluded from the catalog (by verb) so the runner never executes them as a Task.
+# Systemd-invoked scripts live in scripts/ but are NOT Task-runnable: the per-VM
+# hooks take a positional VM uuid (passed by the unit's ExecStartPre/ExecStopPost as
+# `%i`), and atlas-wake-trap is an always-on daemon (no args) — neither speaks the
+# --flag CLI contract a Task uses, and all import the durable package. Excluded from
+# the catalog (by verb) so the runner never executes them as a Task.
 SYSTEMD_HOOKS: frozenset[str] = frozenset(
 	{
 		"vm-disk-up",
 		"vm-network-up",
 		"vm-network-down",
 		"vm-restore",
+		"atlas-wake-trap",
 	}
 )
 
