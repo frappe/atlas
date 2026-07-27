@@ -496,3 +496,32 @@ class TestIdleClockSeeding(IntegrationTestCase):
 			vm_mod.sleep_idle_vms()
 		vm.reload()
 		self.assertEqual(vm.status, "Running", "a just-woken VM must survive the next idle sweep")
+
+
+class TestServerInsertWithoutSetup(IntegrationTestCase):
+	"""A Server must be insertable before Atlas Settings is fully configured.
+
+	Server.validate() saves the Atlas Settings Single to persist two lazily
+	generated ANCP secrets. That save used to enforce the Single's own mandatory
+	fields, so on any site that had not been through setup() — every fresh test
+	site — inserting a Server died with "Value missing for Atlas Settings:
+	Region", naming a field the caller never touched. It accounted for the bulk
+	of the suite's failures in CI.
+	"""
+
+	def setUp(self) -> None:
+		_clean_virtual_machines()
+		self.provider = make_provider("sleepy-nosetup-provider")
+
+	def test_insert_succeeds_with_no_region_configured(self) -> None:
+		frappe.db.set_single_value("Atlas Settings", "region", "", update_modified=False)
+		server = make_server(
+			self.provider,
+			"sleepy-nosetup-server",
+			ipv4_address="10.0.95.1",
+			ipv6_address="2001:db8:95::1",
+			ipv6_prefix="2001:db8:95::/64",
+			ipv6_virtual_machine_range="2001:db8:95::/124",
+			status="Active",
+		)
+		self.assertIsNotNone(server.name)
