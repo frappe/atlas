@@ -135,6 +135,16 @@ class BoatClient:
 		"""GET /host — host facts and the running `boat_version`."""
 		return self._request("GET", "/host")
 
+	def get_export(self) -> dict:
+		"""GET /export — this host's entire observed state in one document.
+
+		The mirror image of `PUT` desired: those two calls, back to back, fully
+		resynchronize a host from any state (spec/33 §2.5). Boat materializes it
+		inside one short read transaction and releases before writing it out, so
+		this is a plain bounded request and not a stream — a busy host must never
+		be mis-declared partitioned because Atlas read it slowly."""
+		return self._request("GET", "/export")
+
 	def get_operation(self, operation_id: str) -> dict:
 		"""GET /ops/{operation_id} — the journal record for one Task name."""
 		return self._request("GET", f"/ops/{operation_id}")
