@@ -87,6 +87,15 @@ never measured against an idle clock that predates it.
    Sleeping status.
 4. **Park** the VM for a wake-on-TCP (below).
 
+`sleep-vm` **refuses outright** when `atlas-wake-trap.service` is not active on
+the host. Without the daemon a slept VM is still parked — its `/128` routes into
+the `atlas-park0` dummy — so it answers nothing and stays dark until an operator
+clicks **Start**: strictly worse than staying awake, and silent, because the
+sleep itself succeeds. The gap is reachable in practice, since unit files ship at
+**bootstrap** and not with a script sync, so a synced-but-not-re-bootstrapped
+host has `atlas-wake-trap.py` on disk with no unit. Failing the Task leaves the
+VM `Running` and records the reason.
+
 ## Capacity accounting
 
 A sleeping VM has released its RAM but still owns its disk LV and its in-jail

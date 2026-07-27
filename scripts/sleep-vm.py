@@ -26,6 +26,7 @@ from atlas.park import park
 from atlas.paths import ATLAS_ROOT, VirtualMachinePaths
 
 FREE_SPACE_MARGIN_BYTES = 256 * 1024 * 1024
+WAKE_TRAP_UNIT = "atlas-wake-trap.service"
 
 
 @dataclass(frozen=True)
@@ -48,6 +49,8 @@ def main() -> None:
 	inputs = SleepVmInputs.from_args()
 	paths = VirtualMachinePaths(inputs.virtual_machine_name)
 
+	_require_wake_trap()
+
 	reason = _preflight(paths)
 	if reason:
 		_stop_and_sleep(paths, reason)
@@ -65,6 +68,28 @@ def main() -> None:
 	mem_bytes = int(run("sudo stat -c %s {}", paths.memory_snapshot_mem).strip())
 	SleepVmResult(memory_snapshot=True, memory_snapshot_bytes=mem_bytes).emit()
 	print(f"VM {inputs.virtual_machine_name} is now sleeping (memory snapshot captured).")
+
+
+def _require_wake_trap() -> None:
+	"""Refuse to sleep when nothing on this host could wake the VM again.
+
+	atlas-wake-trap.service is what turns an inbound SYN into a `systemctl start`.
+	Without it a slept VM is still parked — its /128 routes into the atlas-park0
+	dummy — so it answers nothing and stays dark until an operator clicks Start.
+	That is strictly worse than leaving the VM awake, and it fails SILENTLY: the
+	sleep Task succeeds and the tenant just sees a black hole.
+
+	This is not hypothetical. A host that had `sync-scripts` run but was never
+	re-bootstrapped had atlas-wake-trap.py and park.py on disk with no unit file
+	(units ship at bootstrap, not with a script sync); VMs slept there and could
+	not be woken by traffic at all. Fail loudly and leave the VM Running instead —
+	the Task row records why, and the fix is to bootstrap the server."""
+	if not run_ok("systemctl is-active --quiet {}", WAKE_TRAP_UNIT):
+		sys.exit(
+			f"refusing to sleep: {WAKE_TRAP_UNIT} is not active on this host, so an "
+			"inbound connection could not wake the VM. Bootstrap the server to install "
+			"and enable it."
+		)
 
 
 def _preflight(paths: VirtualMachinePaths) -> str:
