@@ -9,6 +9,7 @@ SYN-only match / drop verb that make the trap "TCP only".
 
 import shlex
 import unittest
+from typing import ClassVar
 
 from atlas import park
 
@@ -102,7 +103,7 @@ class _FakeHost:
 class _ParkHarness(unittest.TestCase):
 	"""Swaps park's host-touching collaborators for the recorder."""
 
-	env: dict = {"VIRTUAL_MACHINE_IPV6": VM_V6}
+	env: ClassVar[dict] = {"VIRTUAL_MACHINE_IPV6": VM_V6}
 
 	def install(self, host: _FakeHost, env=None) -> None:
 		self.host = host

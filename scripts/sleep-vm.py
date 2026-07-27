@@ -128,7 +128,7 @@ def _park_for_wake(uuid: str) -> None:
 	on host reboot)."""
 	try:
 		park(uuid)
-	except Exception as error:  # noqa: BLE001 — never let park failure abort the sleep
+	except Exception as error:  # never let a park failure abort the sleep
 		print(f"park failed (VM will not auto-wake on TCP until re-parked): {error}", file=sys.stderr)
 
 

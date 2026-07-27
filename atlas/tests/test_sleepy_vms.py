@@ -215,7 +215,7 @@ class TestSleepyVmsFakeTasks(IntegrationTestCase):
 
 	def setUp(self) -> None:
 		_clean_virtual_machines()
-		from atlas.atlas.providers.fake_tasks import _sleep_vm_result, _poll_vm_traffic_result
+		from atlas.atlas.providers.fake_tasks import _poll_vm_traffic_result, _sleep_vm_result
 
 		self._sleep_vm_result = _sleep_vm_result
 		self._poll_vm_traffic_result = _poll_vm_traffic_result
