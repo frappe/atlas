@@ -484,7 +484,7 @@ class TestDaemonConflictObservability(unittest.TestCase):
 
 	def test_owned_conflict_start_and_end_surface(self):
 		with tempfile.TemporaryDirectory() as tmp:
-			daemon, tracker, clock, adv = self._daemon_with_tracker(tmp)
+			daemon, _tracker, clock, adv = self._daemon_with_tracker(tmp)
 			# Two origins both own fdaa::9 → owned §7.3 conflict.
 			daemon.state.membership["h1"] = _member("h1", "K1", "fdaa:0:0:1::1")
 			daemon.state.membership["h2"] = _member("h2", "K2", "fdaa:0:0:2::1")
@@ -522,7 +522,7 @@ class TestDaemonConflictObservability(unittest.TestCase):
 		# owned conflict (empty ownership table), so this proves the render-level
 		# source is threaded out and surfaced too.
 		with tempfile.TemporaryDirectory() as tmp:
-			daemon, tracker, clock, _adv = self._daemon_with_tracker(tmp)
+			daemon, _tracker, _clock, _adv = self._daemon_with_tracker(tmp)
 			daemon.state.membership["h1"] = _member("h1", "K1", "fdaa:0:0:5::1")
 			daemon.state.membership["h2"] = _member("h2", "K2", "fdaa:0:0:5::1")  # same mesh
 			daemon.last_applied_config = "STALE\n"
@@ -539,7 +539,7 @@ class TestDaemonConflictObservability(unittest.TestCase):
 		# A status_path that can't be written (parent is a file) → best-effort:
 		# the apply still runs, a counter is bumped, no exception escapes.
 		with tempfile.TemporaryDirectory() as tmp:
-			daemon, tracker, clock, adv = self._daemon_with_tracker(tmp)
+			daemon, _tracker, _clock, adv = self._daemon_with_tracker(tmp)
 			blocker = Path(tmp) / "afile"
 			blocker.write_text("x")
 			daemon.config = daemon.config.with_overrides(status_path=str(blocker / "status.json"))
@@ -557,7 +557,7 @@ class TestDaemonConflictObservability(unittest.TestCase):
 		# observe path must run BEFORE the drift short-circuit so the END still
 		# fires + status.json refreshes.
 		with tempfile.TemporaryDirectory() as tmp:
-			daemon, tracker, clock, adv = self._daemon_with_tracker(tmp)
+			daemon, _tracker, clock, adv = self._daemon_with_tracker(tmp)
 			daemon.state.ownership["h1"] = adv("h1", 1, ("fdaa::9",))
 			daemon.state.ownership["h2"] = adv("h2", 1, ("fdaa::9",))
 			daemon.state.membership["h1"] = _member("h1", "K1", "fdaa:0:0:1::1")

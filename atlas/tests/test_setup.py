@@ -228,11 +228,11 @@ class TestSetupContract(IntegrationTestCase):
 
 	def test_tls_block_seeds_powerdns_le_and_root_domain(self) -> None:
 		setup.run(_do_config(tls=_POWERDNS_TLS_BLOCK))
-		self.assertEqual(frappe.db.get_single_value("PowerDNS Settings", "api_url"), "https://pdns.example.test")
-		self.assertEqual(frappe.db.get_single_value("PowerDNS Settings", "server_id"), "primary")
 		self.assertEqual(
-			get_secret("PowerDNS Settings", "PowerDNS Settings", "api_key"), "powerdns-secret"
+			frappe.db.get_single_value("PowerDNS Settings", "api_url"), "https://pdns.example.test"
 		)
+		self.assertEqual(frappe.db.get_single_value("PowerDNS Settings", "server_id"), "primary")
+		self.assertEqual(get_secret("PowerDNS Settings", "PowerDNS Settings", "api_key"), "powerdns-secret")
 		self.assertEqual(frappe.db.get_single_value("Atlas Settings", "dns_provider_type"), "PowerDNS")
 		self.assertEqual(frappe.db.get_single_value("Atlas Settings", "tls_provider_type"), "Let's Encrypt")
 		self.assertTrue(frappe.db.exists("Root Domain", "blr1.frappe.dev"))

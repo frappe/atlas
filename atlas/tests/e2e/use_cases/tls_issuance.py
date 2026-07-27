@@ -223,7 +223,9 @@ def _seed_dns_provider_settings(config: dict) -> None:
 	if config["dns_provider_type"] == "PowerDNS":
 		powerdns = config["powerdns"]
 		frappe.db.set_single_value("PowerDNS Settings", "api_url", powerdns["api_url"], update_modified=False)
-		frappe.db.set_single_value("PowerDNS Settings", "server_id", powerdns["server_id"], update_modified=False)
+		frappe.db.set_single_value(
+			"PowerDNS Settings", "server_id", powerdns["server_id"], update_modified=False
+		)
 		frappe.utils.password.set_encrypted_password(
 			"PowerDNS Settings", "PowerDNS Settings", powerdns["api_key"], "api_key"
 		)

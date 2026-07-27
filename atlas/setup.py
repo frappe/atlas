@@ -146,7 +146,9 @@ def setup_tls_layer(tls: dict) -> None:
 		acme_directory_url=tls.get("acme_directory_url")
 		or "https://acme-staging-v02.api.letsencrypt.org/directory",
 	)
-	frappe.db.set_single_value("Atlas Settings", "dns_provider_type", dns_provider_type, update_modified=False)
+	frappe.db.set_single_value(
+		"Atlas Settings", "dns_provider_type", dns_provider_type, update_modified=False
+	)
 	frappe.db.set_single_value("Atlas Settings", "tls_provider_type", "Let's Encrypt", update_modified=False)
 	if not frappe.db.exists("Root Domain", tls["domain"]):
 		frappe.get_doc(

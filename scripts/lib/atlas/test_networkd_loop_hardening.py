@@ -22,7 +22,6 @@ from atlas.networkd.ratelimit import SourceRateLimiter
 from atlas.networkd.transport import UdpTransport
 from atlas.networkd.wire import Message
 
-
 # --- SourceRateLimiter (M2 per-source gate) ----------------------------------
 
 

@@ -33,14 +33,18 @@ class TestPowerDNSDnsProvider(IntegrationTestCase):
 		self.assertTrue(path.endswith("/.atlas/certbot/blr1.frappe.dev/powerdns.ini"))
 
 	def test_credential_env_carries_powerdns_settings(self) -> None:
-		env = _provider(api_url="https://pdns.example.test/", api_key="shh", server_id="primary").credential_env()
+		env = _provider(
+			api_url="https://pdns.example.test/", api_key="shh", server_id="primary"
+		).credential_env()
 		self.assertEqual(env["POWERDNS_API_URL"], "https://pdns.example.test")
 		self.assertEqual(env["POWERDNS_API_KEY"], "shh")
 		self.assertEqual(env["POWERDNS_SERVER_ID"], "primary")
 
 	def test_authenticate_reads_server_endpoint(self) -> None:
 		provider = _provider(server_id="primary")
-		with patch.object(provider, "_request", return_value={"id": "primary", "version": "4.9.0"}) as request:
+		with patch.object(
+			provider, "_request", return_value={"id": "primary", "version": "4.9.0"}
+		) as request:
 			result = provider.authenticate()
 		self.assertTrue(result.ok)
 		self.assertEqual(result.account_label, "primary (4.9.0)")
@@ -76,9 +80,10 @@ class TestPowerDNSDnsProvider(IntegrationTestCase):
 
 	def test_upsert_wildcard_skips_empty_family(self) -> None:
 		provider = _provider()
-		with patch.object(provider, "_zone_id", return_value="x.frappe.dev."), patch.object(
-			provider, "_request", return_value={}
-		) as request:
+		with (
+			patch.object(provider, "_zone_id", return_value="x.frappe.dev."),
+			patch.object(provider, "_request", return_value={}) as request,
+		):
 			records = provider.upsert_wildcard(
 				"atlas1.x.frappe.dev", WildcardTargets(ipv4=["1.2.3.4"], ipv6=[])
 			)

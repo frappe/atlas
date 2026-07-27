@@ -277,9 +277,7 @@ class Daemon:
 			return
 		current: dict[str, frozenset[str]] = {}
 		for ip in ownership.conflicts:
-			current[ip] = frozenset(
-				origin for origin, adv in self.state.ownership.items() if ip in adv.owned
-			)
+			current[ip] = frozenset(origin for origin, adv in self.state.ownership.items() if ip in adv.owned)
 		# The H2 mesh collisions carry their own contending-peer origins; union
 		# them in (a /128 could in principle be both an owned conflict and a mesh
 		# collision — merge the origin sets so neither source is lost).
@@ -310,8 +308,7 @@ class Daemon:
 			doc = {
 				"conflict_count": len(current),
 				"conflicts": [
-					{"private_ip": ip, "origins": sorted(origins)}
-					for ip, origins in sorted(current.items())
+					{"private_ip": ip, "origins": sorted(origins)} for ip, origins in sorted(current.items())
 				],
 				"metrics": counter.snapshot() if counter is not None else {},
 			}

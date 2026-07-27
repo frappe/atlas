@@ -231,9 +231,7 @@ class TestMeshAddressOverlap(unittest.TestCase):
 		# Direct unit of the invariant hook: two peers carrying the same /128
 		# trips the assertion (defends a future folding bug).
 		with self.assertRaises(AssertionError):
-			_assert_no_input_overlap(
-				{"h1": ["fdaa::7/128"], "h2": ["fdaa::7/128"]}, OwnershipTable()
-			)
+			_assert_no_input_overlap({"h1": ["fdaa::7/128"], "h2": ["fdaa::7/128"]}, OwnershipTable())
 
 
 if __name__ == "__main__":
