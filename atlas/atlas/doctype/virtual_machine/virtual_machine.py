@@ -5,6 +5,7 @@ import frappe
 from frappe import _
 from frappe.model.document import Document
 
+from atlas.atlas.boat_client import boat_enabled, run_boat_task
 from atlas.atlas.networking import (
 	CPU_MODE_RELAXED,
 	allocate_ipv6,
@@ -379,7 +380,8 @@ class VirtualMachine(Document):
 		if self.status != "Stopped":
 			frappe.throw(f"Cannot start from {self.status}")
 		self._guard_no_active_migration()
-		task = run_task(
+		run = run_boat_task if boat_enabled(self.server) else run_task
+		task = run(
 			server=self.server,
 			script="start-vm",
 			variables={"VIRTUAL_MACHINE_NAME": self.name},
@@ -459,7 +461,10 @@ class VirtualMachine(Document):
 			variables = {"VIRTUAL_MACHINE_NAME": self.name, "GRACEFUL": "1" if graceful else "0"}
 			if stop_timeout_seconds > 0:
 				variables["STOP_TIMEOUT_SECONDS"] = str(stop_timeout_seconds)
-			task = run_task(
+			# The plain stop is WO-0's second Boat verb; the snapshot-stop above
+			# stays on SSH until Boat serves it (spec/33, WO-2).
+			run = run_boat_task if boat_enabled(self.server) else run_task
+			task = run(
 				server=self.server,
 				script="stop-vm",
 				variables=variables,
