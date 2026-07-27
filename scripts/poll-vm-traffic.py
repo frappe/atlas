@@ -93,6 +93,9 @@ def _read_bytes(ipv6: str, chain_dump: str) -> int:
 
 def _load_last(counter_file: str) -> int | None:
 	try:
+		# nosemgrep: frappe-security-file-traversal -- host script, not a Frappe request
+		# path: counter_file is VirtualMachinePaths(<uuid>).traffic_counter_file, built
+		# from a controller-supplied UUID, never from user input.
 		with open(counter_file) as f:
 			return int(json.load(f)["bytes"])
 	except (FileNotFoundError, KeyError, json.JSONDecodeError, ValueError, TypeError):
@@ -101,6 +104,7 @@ def _load_last(counter_file: str) -> int | None:
 
 def _save_last(counter_file: str, current: int) -> None:
 	try:
+		# nosemgrep: frappe-security-file-traversal -- see _load_last above.
 		with open(counter_file, "w") as f:
 			json.dump({"bytes": current}, f)
 	except OSError:

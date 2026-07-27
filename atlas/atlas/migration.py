@@ -46,6 +46,7 @@ from __future__ import annotations
 import ipaddress
 
 import frappe
+from frappe import _
 
 from atlas.atlas.networking import (
 	address_is_free_on_server,
@@ -227,7 +228,7 @@ def preflight_checks(vm, target_server: str, release_reserved_ip: bool) -> None:
 		# A sleeping VM's RAM lives in an on-host memory snapshot that is not
 		# transportable between hosts (spec/32, and the non-goal in ch.24), so
 		# there is nothing to migrate until it is resumed or discarded.
-		frappe.throw("Cannot migrate a sleeping VM — wake or stop it first")
+		frappe.throw(_("Cannot migrate a sleeping VM — wake or stop it first"))
 	if vm.status not in ("Stopped", "Running", "Paused"):
 		frappe.throw(f"Cannot migrate from {vm.status}")
 	if vm.server == target_server:

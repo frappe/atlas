@@ -968,7 +968,7 @@ def sync_scripts_to_all() -> dict[str, int]:
 	for name in names:
 		server = frappe.get_doc("Server", name)
 		if not server.ipv4_address:
-			print(f"Skipping {name}: no ipv4_address")
+			frappe.logger("atlas").warning(f"sync-scripts skipping {name}: no ipv4_address")
 			continue
 		jobs.append((name, connection_for_server(server), server._script_uploads()))
 
@@ -987,7 +987,7 @@ def sync_scripts_to_all() -> dict[str, int]:
 				print(f"Done syncing durable scripts to {name} ({connection.host})")
 			return name, len(uploads)
 		except Exception as exc:
-			print(f"Failed to sync {name} ({connection.host}): {exc}")
+			frappe.logger("atlas").warning(f"sync-scripts failed for {name} ({connection.host}): {exc}")
 			return name, 0
 
 	from concurrent.futures import ThreadPoolExecutor
