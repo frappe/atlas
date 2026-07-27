@@ -34,6 +34,7 @@
   "jailer_version",
   "kernel_version",
   "cli_ready",
+  "boat_enabled",
   "section_break_capacity",
   "vcpus_total",
   "memory_megabytes_total",
@@ -217,6 +218,13 @@
    "fieldtype": "Check",
    "label": "CLI Ready",
    "read_only": 1
+  },
+  {
+   "default": "0",
+   "description": "Drive this host's VM lifecycle through its Boat daemon (HTTP/JSON over the management tunnel) instead of over SSH (spec/33, WO-0). Off by default, and clearing it is the rollback: the next operation takes the SSH path with nothing else changed. A Fake host never gets a Boat call regardless.",
+   "fieldname": "boat_enabled",
+   "fieldtype": "Check",
+   "label": "Boat Enabled"
   },
   {
    "collapsible": 1,

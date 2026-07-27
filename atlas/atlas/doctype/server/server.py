@@ -36,6 +36,7 @@ class Server(Document):
 		from frappe.types import DF
 
 		architecture: DF.Data | None
+		boat_enabled: DF.Check
 		cli_ready: DF.Check
 		firecracker_version: DF.Data | None
 		image: DF.Link | None
