@@ -267,24 +267,11 @@ class VirtualMachine(Document):
 		self.status = "Running"
 		self.last_started = frappe.utils.now_datetime()
 		self.save()
-		# The VM's private /128 joins its host's AllowedIPs (design §3, trigger 3): a
-		# provision adds exactly one /128 to one host, changing every OTHER host's mesh
-		# config. Enqueued after commit, so a mesh push failure never rolls back the
-		# provision — the converging reconcile + backstop sweep bring the fabric to match.
-		# No-op for a tenant-less VM (nothing to advertise) and on a Fake/test fleet.
-		self._reconcile_host_mesh()
+		# The VM's private /128 is locally owned by this host; atlas-networkd's
+		# periodic scan (spec/31 §11) detects it via the local-ownership cache
+		# (vm-network-up.py writes it on success) and gossips the advertisement.
+		# No controller-side reconcile — the mesh is self-healing.
 		return task.name
-
-	def _reconcile_host_mesh(self) -> None:
-		"""Enqueue a host-mesh reconcile after a lifecycle change that moves this VM's
-		private /128 on/off the mesh (provision, terminate). No-op for a VM with no
-		tenant (it has no private /128 to advertise), so an operator-created VM never
-		touches the mesh."""
-		if not self.tenant:
-			return
-		from atlas.atlas.host_mesh import enqueue_reconcile_host_mesh
-
-		enqueue_reconcile_host_mesh()
 
 	@frappe.whitelist()
 	def migrate(self, target_server: str, release_reserved_ip: bool = False) -> str:
@@ -971,11 +958,9 @@ class VirtualMachine(Document):
 		self._delete_custom_domains()
 		self._delete_snapshots()
 		self._deprovision_proxy()
-		# The VM's private /128 leaves its host's AllowedIPs (design §3, trigger 3, and
-		# the §8 teardown fix: withdraw the /128 from peers on teardown, not only on
-		# provision). status is now Terminated, so _residents_by_host excludes it and the
-		# reconcile drops it fleet-wide. Enqueued after commit, no-op for a tenant-less VM.
-		self._reconcile_host_mesh()
+		# The VM's private /128 leaves the local-ownership cache (vm-network-down.py
+		# removes it on teardown); atlas-networkd's scan detects the change and gossips
+		# the withdrawal (spec/31 §11). No controller-side reconcile.
 		return task.name
 
 	def _deprovision_proxy(self) -> None:

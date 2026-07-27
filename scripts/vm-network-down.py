@@ -17,6 +17,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from atlas._run import run
 from atlas.firewall import remove_firewall
 from atlas.network_env import default_route_device, read_network_env_optional
+from atlas.networkd.localownership import remove_local_owned
 from atlas.paths import VirtualMachinePaths
 from atlas.private_network import remove_private_network
 from atlas.reserved_ip_nat import remove_reserved_ip_nat
@@ -120,6 +121,10 @@ def main() -> None:
 	# for the next VM (like the masquerade / IMDS scaffold). Best-effort, idempotent.
 	if private_address and host_veth:
 		remove_private_network(private_address, host_veth)
+		# Withdraw the VM's private /128 from the local-ownership cache
+		# (spec/31 §11): atlas-networkd's scan picks up the smaller set on
+		# its next tick and gossips the withdrawal at a fresh Generation.
+		remove_local_owned(private_address)
 
 
 if __name__ == "__main__":

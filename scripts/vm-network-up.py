@@ -30,6 +30,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from atlas._run import run, run_ok
 from atlas.firewall import apply_persisted_firewall
 from atlas.network_env import default_route_device, read_network_env
+from atlas.networkd.localownership import add_local_owned
 from atlas.paths import VirtualMachinePaths
 from atlas.private_network import apply_private_network
 from atlas.reserved_ip_nat import (
@@ -250,6 +251,11 @@ def main() -> None:
 			host_veth,
 		)
 		apply_private_network(host_veth, private_address, tenant_prefix)
+		# Record the VM's private /128 in the local-ownership cache that
+		# atlas-networkd's scan (spec/31 §11) picks up on its next tick — the
+		# daemon then gossips the advertisement fleet-wide.
+		if private_address:
+			add_local_owned(private_address)
 
 	# 8. Inbound v4: if a Reserved IP is attached, 1:1-NAT it to the guest's /30,
 	#    rebuilt on every cold boot from the RESERVED_IPV4 flag like the scaffold

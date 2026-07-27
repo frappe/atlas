@@ -113,9 +113,9 @@ The single entry point a customer's action funnels through.
    all non-`Revoked` peers for that gateway and `wg syncconf`s it onto `wg0`,
    adding this peer with `AllowedIPs = <client>/128` (the source pin). Reads the
    gateway's `wg0` public key back and denorms `server_public_key`.
-5. Push the client `/128` into the host mesh (the one mesh delta —
-   `reconcile_host_mesh` learns the `/128` on the gateway VM's host, so VMs can
-   reach the laptop back).
+5. Push the client `/128` into the host mesh (the one mesh delta — the gateway
+   VM's host adds it to the local-ownership cache via `add_local_owned`, and
+   `atlas-networkd` gossips it, so VMs can reach the laptop back).
 6. Set `Active`, return the copy-paste config + setup instructions.
 
 ### `revoke()`
@@ -135,7 +135,7 @@ deletion.
 Convergent read-diff-push, callable from a scheduler sweep so a rebuilt gateway
 self-heals: read live `wg show wg0 dump`, compute the desired peer set from the
 rows, `wg syncconf` on drift. A single `request`/`revoke` is the hot-path delta;
-the full sweep is the backstop, the same split as `reconcile_host_mesh`.
+the full sweep is the backstop (analogous to the mesh's ANCP anti-entropy).
 
 ---
 

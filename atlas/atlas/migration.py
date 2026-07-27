@@ -727,6 +727,16 @@ def _phase_cutover_starting(doc) -> bool:
 	Order matters for keep-address (spec/24 §2.3): the forward path must be armed
 	BEFORE the guest can serve, or the guest is up but black-holed. So:
 
+	0. Private plane (spec/31 §16.3): withdraw the VM's private /128 from the SOURCE
+	   host's ownership cache BEFORE provision-vm boots the target and starts
+	   advertising the SAME /128. The /128 is host-independent (survives the move
+	   byte-for-byte), so two hosts advertising it concurrently is the §7.3 conflict
+	   — ANCP drops it from every host's wg-mesh AllowedIPs and the migrated VM's
+	   private plane blackholes for the whole hydration window. Withdrawing first
+	   keeps the two advertisements non-overlapping (§16.3 withdraw-from-source THEN
+	   advertise-on-target). Safe here: the source VM is Stopped from Pending until
+	   Cleanup (spec/24 §0.3), so the source stopped SERVING the /128 long ago — this
+	   only stops it ADVERTISING; it does not blackhole a live source VM.
 	1. keep-address only: `migration-target-receive` (return route) then
 	   `migration-source-forward` (point the /128 at the tunnel + re-assert proxy-NDP).
 	   Armed before boot so the first inbound packet is deliverable the instant the
@@ -735,14 +745,19 @@ def _phase_cutover_starting(doc) -> bool:
 	   /dev/mapper/atlas-vm-<uuid>-clone. It does NOT re-inject (done in
 	   InjectingIdentity through the clone), does NOT re-create the disk (the clone's
 	   dest LV exists and is hydrating), and exposes the CLONE device as the jail
-	   rootfs node. `--no-block` returns once the start is queued.
+	   rootfs node. `--no-block` returns once the start is queued. Its ExecStartPre
+	   (vm-network-up.py) ADD_LOCAL_OWNs the /128 on the target — the advertise that
+	   step 0's withdraw must precede.
 	3. Mark the VM Running + flip `server` to the target: the row now reflects
 	   "live on target", stopping the downtime clock. (change-address Subdomain
 	   re-point + reserved-IP handling stay in Repointing, off the clock.)
 
-	Resume key: every step is idempotent — the forward scripts re-assert, provision-vm
+	Resume key: every step is idempotent — the source-withdraw is a no-op once the
+	/128 is already out of the cache, the forward scripts re-assert, provision-vm
 	re-exposes the same node + re-launches, and _finalize_cutover no-ops once the row
 	already points at the target."""
+	_withdraw_private_from_source(doc)
+
 	if doc.keep_address:
 		_install_forward_routes(doc)
 
@@ -911,25 +926,62 @@ def _phase_repointing(doc) -> bool:
 	return True
 
 
-def _repoint_private_plane(doc) -> None:
-	"""Move the VM's private /128 from the source host's AllowedIPs to the target's
-	(private-networking-host-mesh.md §7). The private address is HOST-INDEPENDENT — it
-	survives the move byte-for-byte — so only which peer advertises it changes. Unlike
-	the public re-point this runs on BOTH keep-address and change-address migrations: the
-	private plane moves with the VM regardless of what happens to the public /128.
+def _withdraw_private_from_source(doc) -> None:
+	"""Stop the SOURCE host advertising the VM's private /128, BEFORE the target's
+	provision-vm boots the guest and starts advertising the SAME /128 (spec/31 §16.3).
+	This is the withdraw half of the §16.3 withdraw-from-source-THEN-advertise-on-target
+	ordering the migration controller owns — the ordering the retired
+	`sequenced_migration_cutover` used to give via a hard fleet-wide push. Because the
+	/128 is HOST-INDEPENDENT (a pure HKDF of tenant+VM — it is the same string on both
+	hosts), two hosts advertising it at once is the §7.3 conflict: ANCP drops it from
+	every host's wg-mesh AllowedIPs, blackholing the migrated VM's private plane for the
+	whole hydration window. Withdrawing first keeps the two advertisements non-overlapping.
 
-	The cutover MUST be SEQUENCED, not converging (§7): WireGuard requires non-overlapping
-	AllowedIPs across peers, so a converging 2-peer push could momentarily leave the /128
-	in BOTH hosts. `sequenced_migration_cutover` does remove-from-source THEN add-to-target
-	under the migration's lock. No-op for a tenant-less VM (no private /128) or a Fake fleet.
-	Idempotent: a second run recomputes residency from the (already-committed) DB and
-	re-pushes the same end state."""
+	Runs `migration-withdraw-private-source` on the SOURCE — it removes ONLY the /128 from
+	the source's local-ownership cache (no netns/veth/disk/LV work), so it never disturbs
+	the intact source copy the rollback-through-Hydrating path (spec/24 §0.3) depends on.
+	Safe: the source VM is Stopped from Pending until Cleanup (spec/24 §0.3), so it stopped
+	SERVING the /128 at Pending — this only stops it ADVERTISING; a live source VM is never
+	blackholed. Normally a re-assert (the source unit's Pending stop already withdrew it via
+	vm-network-down.py's remove_local_owned), kept EXPLICIT so the ordering is controller-
+	guaranteed at the cutover seam rather than an incidental side effect of the stop.
+	No-op for a tenant-less VM (no private /128): the task's private_address arrives empty
+	and remove_local_owned is skipped. Idempotent — remove_local_owned no-ops on an
+	absent /128, so a re-entered CutoverStarting re-runs cleanly."""
 	vm_tenant = frappe.db.get_value("Virtual Machine", doc.virtual_machine, "tenant")
 	if not vm_tenant:
 		return
-	from atlas.atlas.host_mesh import sequenced_migration_cutover
+	_run_phase_task(
+		doc,
+		server=doc.source_server,
+		script="migration-withdraw-private-source",
+		variables={
+			"VIRTUAL_MACHINE_NAME": doc.virtual_machine,
+			"PRIVATE_ADDRESS": _vm_field(doc, "private_address") or "",
+		},
+		timeout_seconds=60,
+	)
 
-	sequenced_migration_cutover(doc.virtual_machine, doc.source_server, doc.target_server)
+
+def _repoint_private_plane(doc) -> None:
+	"""The private /128 moves with the VM to the target host (spec/31 §16.3 — soft
+	sequencing). The address is HOST-INDEPENDENT (survives the move byte-for-byte); only
+	which host advertises it changes. This runs in Repointing AFTER the cutover has already
+	swapped the advertiser: the withdraw-from-source is done in CutoverStarting
+	(`_withdraw_private_from_source`, spec/31 §16.3), and the target began advertising the
+	/128 when its provision-vm booted the guest there in the same phase (vm-network-up.py's
+	`add_local_owned`) — so by the time this runs the source has stopped and the target has
+	started advertising, non-overlapping. Nothing is left for this function to push: ANCP
+	gossip has already propagated both updates and the §16.3 non-overlap invariant holds at
+	each host (atomic whole-table `wg syncconf` + conflict-driven drop). It stays as an
+	explicit, documented no-op (not deleted) so the private-plane cutover has a named seam
+	in the Repointing phase and the retirement of the old controller-side
+	`sequenced_migration_cutover` (spec/31 §6 — no more fleet-wide SSH pushes; §17.2 bounds
+	the eventual-consistency window to ~4.6 s at the default timers) is visible here. No-op
+	for a tenant-less VM (no private /128)."""
+	vm_tenant = frappe.db.get_value("Virtual Machine", doc.virtual_machine, "tenant")
+	if not vm_tenant:
+		return
 
 
 def _phase_cleanup(doc) -> bool:

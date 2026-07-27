@@ -32,7 +32,11 @@
   "satellite_public_keys",
   "satellite_webhook_url",
   "satellite_webhook_secret",
-  "satellite_routing_base_url"
+  "satellite_routing_base_url",
+  "section_break_ancp",
+  "ancp_operator_public_key",
+  "ancp_operator_private_key",
+  "ancp_wg_derivation_secret"
  ],
  "fields": [
   {
@@ -214,6 +218,30 @@
    "fieldtype": "Data",
    "label": "Satellite Routing Base URL",
    "description": "Public base URL of the Satellite orchestrator that serves this Atlas's guest routing API (spec/30). Injected into each guest as ROUTING_BASE_URL so the bench-domain-provider posts register/deregister/dns_records there instead of to Atlas. Empty leaves the guest routing client a clean no-op (routing not yet moved to a Satellite)."
+  },
+  {
+   "fieldname": "section_break_ancp",
+   "fieldtype": "Section Break",
+   "label": "ANCP"
+  },
+  {
+   "fieldname": "ancp_operator_public_key",
+   "fieldtype": "Data",
+   "label": "ANCP Operator Public Key",
+   "read_only": 1,
+   "description": "The controller's ed25519 provision pubkey (base64-standard, 32 raw bytes) — the trust root for ANCP newcomer introduction (spec/31 §19.5). A joining host's first MembershipAdvertisement carries a signature over (host_id, signing_public_key, generation=1) made with the operator private key; existing hosts verify against THIS pubkey before absorbing the new host's signing pubkey. Generated once on first save when the private key is empty;Never derived (a derived signing key's seed is public, defeating the purpose, §19.3). Written to every host's /etc/atlas-networkd/operator-public-key at bootstrap by server.py:_write_ancp_bootstrap_state."
+  },
+  {
+   "fieldname": "ancp_operator_private_key",
+   "fieldtype": "Password",
+   "label": "ANCP Operator Private Key",
+   "description": "The matching ed25519 private key (base64-standard, 32 raw bytes), stored encrypted at the controller and used ONLY to sign each joining host's introduction certificate when server.py:_write_ancp_bootstrap_state writes /etc/atlas-networkd/introduction-signature. Generated once on first save when this field AND the public key are both empty; never re-derived (rotating the operator key invalidates every existing host's trust anchor)."
+  },
+  {
+   "fieldname": "ancp_wg_derivation_secret",
+   "fieldtype": "Password",
+   "label": "ANCP WireGuard Derivation Secret",
+   "description": "The cluster-wide secret (base64, 32 raw bytes) HMAC-keyed into networking.derive_host_wireguard_keypair so a host's wg-mesh PRIVATE key is NOT recomputable from the public Server UUID (the host_id gossiped in cleartext). Held ONLY by the controller — the same trust class as the Atlas root SSH key. Generated once on first save / setup when empty; never re-derived (rotating it re-keys EVERY host's wg identity — full mesh peer churn — so rotation requires explicit operator intervention: delete this field and re-save)."
   }
  ],
  "issingle": 1,
