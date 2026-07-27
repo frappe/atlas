@@ -324,3 +324,103 @@ class TestReconcileSleepingVms(IntegrationTestCase):
 		with patch.object(vm_mod, "run_task") as mocked:
 			vm_mod.reconcile_sleeping_vms()
 		mocked.assert_not_called()
+
+
+class TestIdleClockSeeding(IntegrationTestCase):
+	"""last_traffic_at is stamped at provision/start/wake (spec/32).
+
+	Every transition into Running must reset the idle clock. A VM that slept did
+	so *because* last_traffic_at was older than idle_timeout_seconds, so waking it
+	without re-stamping leaves the field stale and the very next sleep_idle_vms
+	tick — within a minute — puts it straight back to sleep.
+	"""
+
+	def setUp(self) -> None:
+		_clean_virtual_machines()
+		self.provider = make_provider("sleepy-clock-provider")
+		self.server = make_server(
+			self.provider,
+			"sleepy-clock-server",
+			ipv4_address="10.0.96.1",
+			ipv6_address="2001:db8:96::1",
+			ipv6_prefix="2001:db8:96::/64",
+			ipv6_virtual_machine_range="2001:db8:96::/124",
+			status="Active",
+		)
+		self.image = make_image("sleepy-clock-image")
+
+	def _stale_vm(self, status: str) -> frappe.model.document.Document:
+		"""A sleep_on_idle VM whose idle clock is already well past its timeout."""
+		vm = make_virtual_machine(
+			self.server, self.image, sleep_on_idle=1, idle_timeout_seconds=120
+		)
+		vm.db_set("status", status)
+		vm.db_set("last_traffic_at", frappe.utils.add_to_date(frappe.utils.now_datetime(), hours=-1))
+		vm.reload()
+		return vm
+
+	def _fake_task(self):
+		"""A Task stub whose stdout parses as a real sleep-vm result.
+
+		It must: sleep() does `parse_result(task.stdout)["memory_snapshot"]`, and
+		sleep_idle_vms swallows exceptions — so an unparseable stdout would make a
+		re-sleep look like a pass in test_woken_vm_is_not_immediately_re_slept.
+		"""
+		from types import SimpleNamespace
+
+		return SimpleNamespace(name="t", stdout='ATLAS_RESULT={"memory_snapshot": true}\n')
+
+	def test_wake_refreshes_the_idle_clock(self) -> None:
+		from unittest.mock import patch
+
+		from atlas.atlas.doctype.virtual_machine import virtual_machine as vm_mod
+
+		vm = self._stale_vm("Sleeping")
+		before = vm.last_traffic_at
+		with patch.object(vm_mod, "run_task", return_value=self._fake_task()):
+			vm.wake()
+		vm.reload()
+		self.assertEqual(vm.status, "Running")
+		self.assertGreater(vm.last_traffic_at, before, "wake() must reset the idle clock")
+
+	def test_start_refreshes_the_idle_clock(self) -> None:
+		from unittest.mock import patch
+
+		from atlas.atlas.doctype.virtual_machine import virtual_machine as vm_mod
+
+		vm = self._stale_vm("Stopped")
+		before = vm.last_traffic_at
+		with patch.object(vm_mod, "run_task", return_value=self._fake_task()):
+			vm.start()
+		vm.reload()
+		self.assertEqual(vm.status, "Running")
+		self.assertGreater(vm.last_traffic_at, before, "start() must reset the idle clock")
+
+	def test_provision_seeds_the_idle_clock(self) -> None:
+		from unittest.mock import patch
+
+		from atlas.atlas.doctype.virtual_machine import virtual_machine as vm_mod
+
+		vm = make_virtual_machine(
+			self.server, self.image, sleep_on_idle=1, idle_timeout_seconds=120
+		)
+		vm.db_set("status", "Pending")
+		vm.db_set("last_traffic_at", None)
+		vm.reload()
+		with patch.object(vm_mod, "run_task", return_value=self._fake_task()):
+			vm.provision()
+		vm.reload()
+		self.assertIsNotNone(vm.last_traffic_at, "a fresh VM must start with a seeded idle clock")
+
+	def test_woken_vm_is_not_immediately_re_slept(self) -> None:
+		"""The regression this guards: wake() then the very next idle sweep."""
+		from unittest.mock import patch
+
+		from atlas.atlas.doctype.virtual_machine import virtual_machine as vm_mod
+
+		vm = self._stale_vm("Sleeping")
+		with patch.object(vm_mod, "run_task", return_value=self._fake_task()):
+			vm.wake()
+			vm_mod.sleep_idle_vms()
+		vm.reload()
+		self.assertEqual(vm.status, "Running", "a just-woken VM must survive the next idle sweep")

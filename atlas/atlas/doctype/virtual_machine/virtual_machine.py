@@ -271,6 +271,9 @@ class VirtualMachine(Document):
 		)
 		self.status = "Running"
 		self.last_started = frappe.utils.now_datetime()
+		# Seed the idle clock (spec/32) so a freshly provisioned sleep_on_idle VM is
+		# measured from now, not from a null that only the first traffic poll fills.
+		self.last_traffic_at = self.last_started
 		self.save()
 		# The VM's private /128 is locally owned by this host; atlas-networkd's
 		# periodic scan (spec/31 §11) detects it via the local-ownership cache
@@ -386,6 +389,11 @@ class VirtualMachine(Document):
 		self.status = "Running"
 		self.has_memory_snapshot = 0
 		self.last_started = frappe.utils.now_datetime()
+		# Treat the start itself as activity (spec/32). Without this a sleep_on_idle
+		# VM carries the last_traffic_at it had before it stopped — already older
+		# than idle_timeout_seconds — and the next sleep_idle_vms tick puts it
+		# straight back to sleep, within a minute of the operator starting it.
+		self.last_traffic_at = self.last_started
 		self.save()
 		return task.name
 
@@ -522,6 +530,11 @@ class VirtualMachine(Document):
 		self.status = "Running"
 		self.has_memory_snapshot = 0
 		self.last_started = frappe.utils.now_datetime()
+		# The wake is itself the activity (spec/32) — same reason as start(), and
+		# more acute here: this VM slept *because* last_traffic_at was stale, so
+		# leaving it would guarantee the next idle sweep re-sleeps it. _adopt_wake
+		# stamps the same field for the host-initiated (packet-triggered) wake.
+		self.last_traffic_at = self.last_started
 		self.save()
 		return task.name
 
