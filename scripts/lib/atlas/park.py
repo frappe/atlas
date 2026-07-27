@@ -107,6 +107,26 @@ def ensure_park_device() -> None:
 	run("sudo ip link set {} up", PARK_DEVICE)
 
 
+def ensure_forward_chain() -> None:
+	"""Recreate the `inet atlas` table and its `forward` chain if absent.
+
+	nftables is not persisted across a host reboot; today the first VM unit to
+	start rebuilds the scaffold in vm-network-up.py. A host whose VMs are ALL
+	sleeping starts no unit at all — every one of them is suppressed by its
+	`sleeping` marker — so nothing rebuilds it, and atlas-wake-trap's boot
+	re-sweep would then fail to add its counters and rules. The VMs would stay
+	parked-in-name-only and could never be woken by traffic, which is exactly the
+	case the re-sweep exists to cover. Same clause as vm-network-up's scaffold."""
+	if not run_ok("sudo nft list table inet atlas"):
+		run("sudo nft add table inet atlas")
+	if not run_ok("sudo nft list chain inet atlas {}", FORWARD):
+		run(
+			"sudo nft add chain inet atlas {} {}",
+			FORWARD,
+			"{ type filter hook forward priority filter; policy accept; }",
+		)
+
+
 def park(uuid: str) -> None:
 	"""Install parked reachability + the TCP-SYN wake trap for a Sleeping VM.
 	Idempotent and self-healing — called at sleep (after the unit stops) and at
@@ -118,6 +138,7 @@ def park(uuid: str) -> None:
 		return
 
 	ensure_park_device()
+	ensure_forward_chain()
 
 	# Keep answering NDP for the /128 so the upstream router still delivers here,
 	# and route it off-link out the dummy so an inbound packet is forwarded (hits

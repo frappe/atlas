@@ -145,16 +145,24 @@ def _stop_and_sleep(paths: VirtualMachinePaths, reason: str) -> None:
 
 
 def _park_for_wake(uuid: str) -> None:
-	"""Best-effort: install the parked reachability + TCP-SYN wake trap (atlas.park)
-	so an inbound TCP connection wakes the VM (spec/32). Done AFTER the marker is
-	written, so the VM is already officially sleeping. A failure here must not fail
-	the sleep — the VM still sleeps and stays wakeable by the operator; it just
-	won't auto-wake on a packet until something re-parks it (atlas-wake-trap re-parks
-	on host reboot)."""
+	"""Install the parked reachability + TCP-SYN wake trap (atlas.park) so an inbound
+	TCP connection wakes the VM (spec/32). Done AFTER the marker is written, so the
+	VM is already officially sleeping.
+
+	A failure here is NOT swallowed. The VM is stopped and marked sleeping by this
+	point, so we cannot undo it — but reporting success would tell the controller a
+	VM is safely asleep when nothing can wake it, the same silent black hole
+	_require_wake_trap() exists to prevent. Exit non-zero so the Task records the
+	failure and an operator sees it; the VM is still wakeable via Start, and
+	atlas-wake-trap re-parks every marked VM at its next startup."""
 	try:
 		park(uuid)
-	except Exception as error:  # never let a park failure abort the sleep
-		print(f"park failed (VM will not auto-wake on TCP until re-parked): {error}", file=sys.stderr)
+	except Exception as error:
+		sys.exit(
+			f"VM is stopped and marked sleeping, but parking the wake trap FAILED: {error}. "
+			"It will not wake on inbound traffic until re-parked (restart "
+			f"{WAKE_TRAP_UNIT} to re-park, or Start the VM)."
+		)
 
 
 if __name__ == "__main__":

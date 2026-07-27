@@ -1426,10 +1426,19 @@ def sleep_idle_vms() -> None:
 		elapsed = (frappe.utils.now_datetime() - vm_data.last_traffic_at).total_seconds()
 		if elapsed < (vm_data.idle_timeout_seconds or 300):
 			continue
-		# Re-read status under a transaction so a concurrent poll doesn't race us.
-		current_status = frappe.db.get_value("Virtual Machine", vm_data.name, "status")
-		if current_status != "Running":
+		# Re-read BOTH fields the decision rests on, not just status: the batch read
+		# above is a snapshot, and poll_vm_traffic can stamp last_traffic_at between
+		# it and here. Acting on the stale timestamp would sleep a VM that just went
+		# active — self-correcting (the next SYN wakes it) but a real interruption.
+		current = frappe.db.get_value(
+			"Virtual Machine", vm_data.name, ["status", "last_traffic_at"], as_dict=True
+		)
+		if current.status != "Running":
 			continue
+		if not current.last_traffic_at or (
+			frappe.utils.now_datetime() - current.last_traffic_at
+		).total_seconds() < (vm_data.idle_timeout_seconds or 300):
+			continue  # traffic arrived since the batch read
 		try:
 			vm = frappe.get_doc("Virtual Machine", vm_data.name)
 			vm.sleep()

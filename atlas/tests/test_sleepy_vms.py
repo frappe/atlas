@@ -455,6 +455,35 @@ class TestIdleClockSeeding(IntegrationTestCase):
 		vm.reload()
 		self.assertIsNotNone(vm.last_traffic_at, "a fresh VM must start with a seeded idle clock")
 
+	def test_traffic_arriving_mid_sweep_cancels_the_sleep(self) -> None:
+		"""sleep_idle_vms batch-reads, then decides. A poll that stamps
+		last_traffic_at in between must cancel the sleep, not be ignored."""
+		from unittest.mock import patch
+
+		from atlas.atlas.doctype.virtual_machine import virtual_machine as vm_mod
+
+		vm = self._stale_vm("Running")
+
+		original_get_value = frappe.db.get_value
+		fired = []
+
+		def _became_active(*args, **kwargs):
+			# Stand in for poll_vm_traffic landing between the batch read and the
+			# per-VM decision. Fires once, on the sweep's re-read.
+			if not fired:
+				fired.append(True)
+				frappe.db.set_value(
+					"Virtual Machine", vm.name, "last_traffic_at", frappe.utils.now_datetime()
+				)
+			return original_get_value(*args, **kwargs)
+
+		with patch.object(frappe.db, "get_value", side_effect=_became_active):
+			with patch.object(vm_mod, "run_task", return_value=self._fake_task()) as task:
+				vm_mod.sleep_idle_vms()
+		task.assert_not_called()
+		vm.reload()
+		self.assertEqual(vm.status, "Running", "an active VM must not be slept")
+
 	def test_woken_vm_is_not_immediately_re_slept(self) -> None:
 		"""The regression this guards: wake() then the very next idle sweep."""
 		from unittest.mock import patch

@@ -67,5 +67,35 @@ class TestRequireWakeTrap(unittest.TestCase):
 		)
 
 
+class TestParkForWake(unittest.TestCase):
+	"""A failed park must fail the Task, not report a successful sleep."""
+
+	def setUp(self) -> None:
+		self.sleep_vm = _load_sleep_vm()
+
+	def _with_park(self, raises):
+		def _park(_uuid):
+			if raises:
+				raise RuntimeError("nft table missing")
+
+		original = self.sleep_vm.park
+		self.sleep_vm.park = _park
+		self.addCleanup(setattr, self.sleep_vm, "park", original)
+
+	def test_success_is_silent(self) -> None:
+		self._with_park(False)
+		self.sleep_vm._park_for_wake("3f2504e0-4f89-41d3-9a0c-0305e82c3301")  # no raise
+
+	def test_failure_exits_non_zero(self) -> None:
+		# Reporting success here would tell the controller a VM is safely asleep
+		# when nothing can wake it — the same silent black hole the wake-trap
+		# preflight exists to prevent.
+		self._with_park(True)
+		with self.assertRaises(SystemExit) as caught:
+			self.sleep_vm._park_for_wake("3f2504e0-4f89-41d3-9a0c-0305e82c3301")
+		self.assertIn("nft table missing", str(caught.exception))
+		self.assertIn("will not wake on inbound traffic", str(caught.exception))
+
+
 if __name__ == "__main__":
 	unittest.main()

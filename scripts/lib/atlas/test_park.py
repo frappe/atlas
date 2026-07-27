@@ -153,6 +153,35 @@ class TestPark(_ParkHarness):
 		self.assertTrue(self.host.issued(f"ip -6 route replace {VM_V6}/128"))
 
 
+class TestEnsureForwardChain(_ParkHarness):
+	def test_creates_table_and_chain_when_absent(self):
+		# The post-reboot case: every VM on the host is sleeping, so no unit ever
+		# runs vm-network-up and nothing has rebuilt the nft scaffold.
+		host = _FakeHost()
+		host.run_ok = lambda template, *a, **k: (  # nothing exists yet
+			host.commands.append(template.format(*a)) or False
+		)
+		self.install(host)
+		park.ensure_forward_chain()
+		self.assertTrue(host.issued("add table inet atlas"))
+		self.assertTrue(host.issued("add chain inet atlas forward"))
+
+	def test_is_a_noop_when_the_scaffold_exists(self):
+		self.install(_FakeHost())  # run_ok defaults to True for nft queries
+		park.ensure_forward_chain()
+		self.assertFalse(self.host.issued("add table"))
+		self.assertFalse(self.host.issued("add chain"))
+
+	def test_park_scaffolds_before_adding_the_counter(self):
+		# Ordering matters: `nft add counter inet atlas ...` fails outright if the
+		# table does not exist yet.
+		self.install(_FakeHost())
+		park.park(UUID)
+		listed = [i for i, c in enumerate(self.host.commands) if "list table inet atlas" in c]
+		added = [i for i, c in enumerate(self.host.commands) if "add counter inet atlas" in c]
+		self.assertTrue(listed and added and listed[0] < added[0])
+
+
 class TestUnpark(_ParkHarness):
 	def test_deletes_the_rule_before_the_counter(self):
 		# nft refuses to drop a counter a rule still references, so the order is
