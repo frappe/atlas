@@ -984,6 +984,17 @@ class VirtualMachine(Document):
 			"SSH_PUBLIC_KEY": self._guest_authorized_keys(),
 			"ATLAS_FC_UID": str(derive_uid(self.name)),
 			**self._ipv4_link_variables(),
+			# The private-plane /128 (spec/25). The rebuilt rootfs's network env is
+			# written from scratch, so a VM whose address is not re-stated here comes
+			# back OFF the private plane. Only the address: TENANT_PREFIX belongs to
+			# the HOST's network.env, which a rebuild does not touch. Empty (a
+			# tenant-less VM) is dropped by the Task runner.
+			"PRIVATE_ADDRESS": self._private_network_variables().get("PRIVATE_ADDRESS", ""),
+			# The in-guest routing client's base URL (spec/18), for the same reason:
+			# a rebuild-from-image lays down a rootfs that never carried the file, and
+			# a bench VM without it can no longer register its own subdomains. Same
+			# value provision injects; empty (no Satellite) is dropped.
+			"ROUTING_BASE_URL": _routing_base_url(),
 			# Data-disk config so the rebuilt rootfs regains its fstab mount line.
 			# DATA_DISK_MOUNT_AT is the one consumed on a rebuild-from-image (data
 			# disk preserved); a restore also gets DATA_SNAPSHOT_ROOTFS_PATH below.

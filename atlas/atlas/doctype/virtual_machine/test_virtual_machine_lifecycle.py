@@ -142,6 +142,30 @@ class TestVirtualMachineLifecycle(IntegrationTestCase):
 		self.assertEqual(variables["SNAPSHOT_ROOTFS_PATH"], snapshot.rootfs_path)
 		self.assertNotIn("IMAGE_NAME", variables)
 
+	def test_rebuild_reinjects_the_private_address_and_the_routing_url(self) -> None:
+		"""A rebuild writes the guest's identity files from scratch, so anything it
+		does not re-state is lost: the VM comes back off the private plane (spec/25)
+		and a bench VM can no longer register its own subdomains (spec/18)."""
+		from atlas.atlas.doctype.virtual_machine import virtual_machine as module
+
+		if not frappe.db.exists("Tenant", "rebuild-identity-team"):
+			frappe.get_doc({"doctype": "Tenant", "team": "rebuild-identity-team"}).insert(
+				ignore_permissions=True
+			)
+		frappe.db.set_single_value("Atlas Settings", "satellite_routing_base_url", "https://sat.example")
+		vm = _vm_with_status("Stopped")
+		vm.db_set("tenant", "rebuild-identity-team", update_modified=False)
+		vm.reload()
+		task = fake_task(name="task-rebuild-identity")
+		with patch.object(module, "run_task", return_value=task) as mocked:
+			vm.rebuild("image")
+
+		variables = mocked.call_args.kwargs["variables"]
+		self.assertTrue(variables["PRIVATE_ADDRESS"].startswith("fdaa:"))
+		self.assertEqual(variables["ROUTING_BASE_URL"], "https://sat.example")
+		# The tenant /48 is the HOST's network.env, which a rebuild does not touch.
+		self.assertNotIn("TENANT_PREFIX", variables)
+
 	def test_rebuild_rejects_when_not_stopped(self) -> None:
 		vm = _vm_with_status("Running")
 		with self.assertRaises(frappe.ValidationError) as raised:
