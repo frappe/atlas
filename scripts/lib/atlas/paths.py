@@ -199,7 +199,7 @@ class VirtualMachinePaths:
 	@property
 	def sleeping_marker(self) -> str:
 		"""Present while the VM is sleeping: suppresses systemd auto-start on host
-		reboot (ConditionPathNotExists in the unit) and is the authority for the
+		reboot (ConditionPathExists=! in the unit) and is the authority for the
 		Sleeping status. Written by sleep-vm.py after stop; removed by wake-vm.py
 		before start. Lives outside the jail so terminate's rm -rf sweeps it with
 		the VM directory."""

@@ -81,7 +81,7 @@ never measured against an idle clock that predates it.
    networking **completely** down: the proxy-NDP entry, the `/128` route, the
    netns/veth/tap, and the per-VM forward rules.
 3. Write the **`SLEEPING` marker** (`…/<uuid>/sleeping`). The unit's
-   `ConditionPathNotExists=…/sleeping` makes systemd skip the unit on host reboot
+   `ConditionPathExists=!…/sleeping` makes systemd skip the unit on host reboot
    **without** disabling it, so the VM stays asleep across reboots while a Running
    VM's `WantedBy` symlink is untouched. The marker is the authority for the
    Sleeping status.

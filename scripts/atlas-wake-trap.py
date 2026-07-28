@@ -71,7 +71,7 @@ def _handover(previously: bool | None) -> bool:
 	removed hands it back within a poll.
 
 	Taking over always re-parks first. A sleeping VM's unit is suppressed on reboot
-	(ConditionPathNotExists), so vm-network-up never runs and the park state is
+	(ConditionPathExists=!), so vm-network-up never runs and the park state is
 	gone — this is the DB-free rebuild from the on-disk markers, the same self-heal
 	atlas-pool.service does for the pool. It runs on the first pass of a normal
 	boot, and again if this daemon ever inherits a host whose Boat has gone."""
