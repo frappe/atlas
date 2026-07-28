@@ -45,6 +45,7 @@ from frappe import _
 
 from atlas.atlas._ssh.runner import _elapsed_ms, _finalize, _mark_running
 from atlas.atlas.providers.fake_tasks import is_fake_server
+from atlas.atlas.task_results import result_line
 
 if TYPE_CHECKING:
 	from atlas.atlas.doctype.task.task import Task
@@ -81,6 +82,32 @@ ROUTING_ENVIRONMENT_PATH = "/etc/atlas-routing.env"
 # sole issuer, and the epoch bumps at exactly one point — a migration's repoint
 # (spec/33 §11.1) — which is not this module's to do.
 FIRST_BOOT_EPOCH = 1
+
+# The `Operation` field carrying a verb's TYPED RESULT — the structured answer a
+# verb produces beyond its trace, which on the SSH path travels as the script's one
+# `ATLAS_RESULT=` JSON line (spec/04, `task_results.parse_result`).
+#
+# **Not in the contract yet.** `api/openapi.yaml` gives `Operation` only `output`,
+# `error` and `exit_code`, so today a Boat verb that computes a result — `sleep`
+# computes exactly the boolean `VirtualMachine.sleep` wants — discards it on the way
+# out. What Boat needs to add is one optional free-form object on `Operation`:
+#
+#     result:
+#       type: object
+#       additionalProperties: true
+#       description: The verb's typed result. Same payload the SSH script's one
+#                    ATLAS_RESULT= line carries, so a Task reads the same either way.
+#
+# populated by every verb that has one — today `sleep-vm` with
+# `{"memory_snapshot": <SleepResult.MemorySnapshot>}`, and the same field for
+# `snapshot-vm` / `warm-snapshot-vm` (`size_bytes`, `memory_bytes`,
+# `host_signature`) whenever those verbs move onto Boat.
+#
+# Atlas is written against the field NOW, so the day it lands, every call site that
+# parses a verb's structured output reads it with no second mechanism — see
+# `_task_stdout`. Until then a Boat Task simply carries no result line, and the one
+# caller that reads one survives its absence.
+OPERATION_RESULT_FIELD = "result"
 
 # The desired spec, as `DesiredVirtualMachine` names it. Every one of these is a
 # `Virtual Machine` fieldname too, because both sides took their names from the
@@ -300,7 +327,18 @@ class BoatClient:
 			raise BoatError(f"{method} {path} -> {response.status_code}: {_error_sentence(response)}")
 		if not response.content:
 			return {}
-		return response.json()
+		try:
+			return response.json()
+		except ValueError as exception:
+			# A 2xx whose body is not JSON is this boundary failing, not the caller's
+			# data: a proxy's HTML interception page, a truncated response, a daemon
+			# answering a route it does not serve. Decoded outside this try it escaped
+			# as a `JSONDecodeError` past every caller that handles `BoatError` — the
+			# mirror's freeze among them, which is how a host answering nonsense
+			# stayed `Fresh` while a worker logged a traceback nobody reads.
+			raise BoatError(
+				f"{method} {path} answered {response.status_code} with a non-JSON body"
+			) from exception
 
 
 # Task verb -> the `BoatClient` method that serves it, for every lifecycle verb
@@ -590,9 +628,8 @@ def _execute_on_boat(
 	# Fold the daemon's own record onto the row: its trace becomes the Task's
 	# stdout, its one-sentence error the stderr. The operator surface is the
 	# same text it has always been.
-	output = operation.get("output") or ""
 	error = operation.get("error") or ""
-	_finalize(task, output, error, exit_code, status, _elapsed_ms(start))
+	_finalize(task, _task_stdout(operation), error, exit_code, status, _elapsed_ms(start))
 	if status == "Failure":
 		frappe.throw(f"Task {task.name} ({script}) exited {exit_code}: {error[-500:]}")
 
@@ -623,6 +660,30 @@ def _run_verb(client: BoatClient, script: str, uuid: str, operation_id: str, var
 		return call(client, uuid, operation_id=operation_id)
 	served = ", ".join(sorted((START_VERB, STOP_VERB, REBUILD_VERB, *OPERATION_VERBS)))
 	raise BoatError(f"Boat serves no endpoint for verb {script!r} (it serves {served})")
+
+
+def _task_stdout(operation: dict) -> str:
+	"""The Task stdout one operation record implies.
+
+	Boat's `output` is the verb's trace, and that is what an operator reads. A verb
+	that ALSO produced a typed result gets it appended as the very `ATLAS_RESULT=`
+	line an SSH script would have emitted, so `task_results.parse_result` reads one
+	Task the same way whichever transport filled it. That is the whole of what keeps
+	`run_boat_task` a twin of `run_task`: a call site that parses its verb's result
+	must not have to know which one ran it, and today only `sleep` is routed here —
+	the rest hold `run_task` — so this is the seam that stops the next one repeating
+	it the day it gains a Boat endpoint.
+
+	No result — which is EVERY operation today, because `OPERATION_RESULT_FIELD` is
+	not in the contract yet — leaves the trace alone and a parser finds no line.
+	Callers survive that with `parse_optional_result`."""
+	output = operation.get("output") or ""
+	result = operation.get(OPERATION_RESULT_FIELD)
+	if result is None:
+		return output
+	if output and not output.endswith("\n"):
+		output += "\n"
+	return output + result_line(result)
 
 
 def _outcome(operation: dict, operation_id: str) -> tuple[str, int]:

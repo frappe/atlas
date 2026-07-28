@@ -28,7 +28,7 @@ from atlas.atlas.networking import (
 )
 from atlas.atlas.placement import apply_user_defaults, check_resize_capacity
 from atlas.atlas.ssh import run_probe, run_task
-from atlas.atlas.task_results import parse_result
+from atlas.atlas.task_results import parse_optional_result, parse_result
 
 # Never change after insert — identity and the key the rootfs was built with.
 IMMUTABLE_AFTER_INSERT = (
@@ -644,9 +644,22 @@ class VirtualMachine(Document):
 			virtual_machine=self.name,
 			timeout_seconds=120,
 		)
-		snapshotted = bool(parse_result(task.stdout)["memory_snapshot"])
+		# The VM is parked either way, so the row reads Sleeping either way. Whether
+		# the host also dumped its RAM only changes the next wake's SPEED, and it is
+		# the one thing this verb cannot always learn: Boat computes it and the
+		# contract has nowhere to put it yet (`boat_client.OPERATION_RESULT_FIELD`),
+		# so on a Boat host the Task carries no result line at all. Insisting on one
+		# is how an idle VM ended up parked on its host and still Running in the DB —
+		# with the throw swallowed by the idle sweeper, which then re-slept it once a
+		# minute, forever, each time with a fresh op_id Boat genuinely re-ran.
+		#
+		# `has_memory_snapshot` is bookkeeping, not authority (spec/02): the on-host
+		# READY marker decides at wake time, so leaving it untouched when the
+		# transport did not say costs the operator a display detail and nothing else.
+		result = parse_optional_result(task.stdout)
 		self.status = "Sleeping"
-		self.has_memory_snapshot = 1 if snapshotted else 0
+		if result is not None:
+			self.has_memory_snapshot = 1 if result.get("memory_snapshot") else 0
 		self.last_stopped = frappe.utils.now_datetime()
 		self.save()
 		return task.name
@@ -1629,8 +1642,14 @@ def sleep_idle_vms() -> None:
 		try:
 			vm = frappe.get_doc("Virtual Machine", vm_data.name)
 			vm.sleep()
-		except Exception:
-			pass  # Failures are recorded in the Task row; don't abort the sweep
+		except Exception as exception:
+			# Don't abort the sweep — one VM that cannot sleep must not stop the
+			# others. But don't swallow it silently either: this runs every minute
+			# against a row that is still Running, so a refusal that repeats is a VM
+			# being re-slept sixty times an hour, and `pass` left that invisible
+			# everywhere except a Task list nobody is watching. A failure BEFORE the
+			# Task (a refused desired-state PUT) left no row at all.
+			frappe.logger("atlas").warning(f"sleep_idle_vms: {vm_data.name} could not sleep: {exception}")
 
 
 def reconcile_sleeping_vms() -> None:

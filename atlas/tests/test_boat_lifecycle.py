@@ -37,6 +37,7 @@ from atlas.atlas.boat_client import (
 	run_boat_task,
 )
 from atlas.atlas.doctype.virtual_machine import virtual_machine as virtual_machine_module
+from atlas.atlas.task_results import parse_result
 from atlas.tests import fixtures
 from atlas.tests._mocks import fake_task
 from atlas.tests.test_boat_client import (
@@ -63,12 +64,13 @@ VERB_ENDPOINTS = {
 	"resize-vm": "resize",
 }
 
-# Every operation in these tests carries the typed result line, because a verb's
-# result is read the same way on either transport: `sleep()` parses
-# `memory_snapshot` out of the daemon's `output` exactly as it parses it out of
-# an SSH task's stdout, which is what the contract's "the same text a Task row's
-# stdout carries today" has to mean (spec/33 §2.4).
+# A sleep task's typed result, in each transport's own shape. On SSH the script
+# emits the `ATLAS_RESULT=` line; through Boat it is the `Operation.result` object
+# `boat_client.OPERATION_RESULT_FIELD` names — which the contract does NOT carry
+# yet, so `TestSleepWithoutATypedResult` covers what Atlas does today and these
+# two cover the shape it is written against.
 TYPED_RESULT = 'ATLAS_RESULT={"memory_snapshot": true}\n'
+OPERATION_RESULT = {"memory_snapshot": True}
 
 # One rebuild Task's variables, as `_rebuild_variables` states them for a VM with
 # a data disk, a tenant and a Satellite: every field the mapping has a home for,
@@ -390,7 +392,9 @@ class TestLifecycleThroughBoat(_BoatHostTestCase):
 		for label, fields, act, endpoint, power in _lifecycle_cases():
 			with self.subTest(verb=label):
 				virtual_machine = self._fresh(**fields)
-				operation = _operation(verb=f"{endpoint}-vm", uuid=virtual_machine.name, output=TYPED_RESULT)
+				operation = _operation(
+					verb=f"{endpoint}-vm", uuid=virtual_machine.name, result=OPERATION_RESULT
+				)
 
 				_result, calls = self._drive(lambda: act(virtual_machine), {}, operation)
 
@@ -702,6 +706,116 @@ class TestStopOutranksWake(_BoatHostTestCase):
 		self.assertEqual(_sent(calls[0])[2]["desired_power"], "Running")
 		virtual_machine.reload()
 		self.assertEqual(virtual_machine.desired_power, "Running")
+
+
+class TestSleepWithoutATypedResult(_BoatHostTestCase):
+	"""`sleep` is the only verb routed through Boat that reads structured output,
+	and Boat's `Operation` has nowhere to put it: `output`, `error`, `exit_code`
+	and nothing else (`api/openapi.yaml`). Boat computes exactly the value Atlas
+	wants — `SleepResult.MemorySnapshot` — and discards it.
+
+	Insisting on the line was the defect, and it was quiet in every direction: the
+	VM parked on its host, the Task row committed `Success`, `self.status =
+	"Sleeping"` never ran, and `sleep_idle_vms` swallowed the throw. The row stayed
+	`Running`, so the next minute's sweep slept it again, with a fresh `op_id` that
+	made Boat genuinely re-run the verb — forever. Meanwhile `capacity_for_server`
+	excludes only `Sleeping` rows from the RAM sum, so the RAM the feature exists to
+	free was never booked back on exactly the hosts being cut over."""
+
+	def _sleepy(self, **fields) -> "frappe.model.document.Document":
+		return self._fresh(status="Running", sleep_on_idle=1, idle_timeout_seconds=300, **fields)
+
+	def _sleep(self, virtual_machine, **operation) -> tuple[object, list]:
+		return self._drive(
+			virtual_machine.sleep, {}, _operation(verb="sleep-vm", uuid=virtual_machine.name, **operation)
+		)
+
+	def test_a_sleep_that_cannot_learn_the_snapshot_state_still_parks_the_row(self) -> None:
+		virtual_machine = self._sleepy()
+
+		self._sleep(virtual_machine, output="parked vm\n")
+
+		virtual_machine.reload()
+		self.assertEqual(virtual_machine.status, "Sleeping")
+		self.assertIsNotNone(virtual_machine.last_stopped)
+
+	def test_the_idle_sweeper_sleeps_an_idle_vm_exactly_once(self) -> None:
+		"""The consequence that made it expensive rather than cosmetic: a row left
+		`Running` is re-selected by the next tick, one Task per minute per idle VM,
+		each one a real verb on the host."""
+		virtual_machine = self._sleepy(last_traffic_at="2020-01-01 00:00:00")
+		operation = _operation(verb="sleep-vm", uuid=virtual_machine.name, output="parked vm\n")
+
+		with _boat_host_token(self.server.name), patch(REQUEST, return_value=_Response(payload=operation)):
+			virtual_machine_module.sleep_idle_vms()
+			virtual_machine.reload()
+			self.assertEqual(virtual_machine.status, "Sleeping")
+
+			virtual_machine_module.sleep_idle_vms()
+
+		self.assertEqual(
+			frappe.db.count("Task", {"virtual_machine": virtual_machine.name, "script": "sleep-vm"}), 1
+		)
+
+	def test_a_typed_result_is_read_the_moment_boat_carries_one(self) -> None:
+		"""Atlas is written against the field it needs (`Operation.result`), so the
+		day the contract carries it nothing else has to change — and every OTHER call
+		site that parses a verb's stdout reads it the same way, which is what stops
+		the next verb repeating this the day it gains a Boat endpoint."""
+		virtual_machine = self._sleepy()
+
+		self._sleep(virtual_machine, output="parked vm\n", result=OPERATION_RESULT)
+
+		virtual_machine.reload()
+		self.assertEqual(virtual_machine.status, "Sleeping")
+		self.assertTrue(virtual_machine.has_memory_snapshot)
+
+	def test_the_typed_result_lands_on_the_task_as_the_line_ssh_would_have_written(self) -> None:
+		# One Task shape, whichever transport filled it: the operator still reads the
+		# trace, and `task_results.parse_result` still finds its line.
+		virtual_machine = self._sleepy()
+		operation = _operation(
+			verb="sleep-vm",
+			uuid=virtual_machine.name,
+			output="parked vm\n",
+			result={"memory_snapshot": False},
+		)
+
+		with _boat_host_token(self.server.name), patch(REQUEST, return_value=_Response(payload=operation)):
+			task_name = virtual_machine.sleep()
+
+		stdout = frappe.db.get_value("Task", task_name, "stdout")
+		self.assertIn("parked vm", stdout)
+		self.assertEqual(parse_result(stdout), {"memory_snapshot": False})
+
+	def test_any_verb_that_gains_a_result_is_read_the_same_way(self) -> None:
+		"""What keeps the defect from repeating. `sleep` is the only Boat-routed verb
+		that parses structured output today — every other such call site (`snapshot`,
+		`warm-snapshot`, the migration phases, the bootstrap facts) holds `run_task`
+		directly — and the latent risk is the day one of them gains a Boat endpoint.
+
+		So the fix lives in the TRANSPORT, not in the call site: a typed result
+		becomes the same `ATLAS_RESULT=` line on the Task row for every verb, and
+		`parse_result` reads one Task the same way whichever transport filled it."""
+		verbs = [verb for verb in VERB_ENDPOINTS if verb != "rebuild-vm"]
+		for verb in verbs:
+			payload = _operation(
+				verb=verb, uuid=self.virtual_machine.name, output="trace\n", result={"size_bytes": 42}
+			)
+			with (
+				self.subTest(verb=verb),
+				_boat_host_token(self.server.name),
+				patch(REQUEST, return_value=_Response(payload=payload)),
+			):
+				task = run_boat_task(
+					server=self.server.name,
+					script=verb,
+					variables={"VIRTUAL_MACHINE_NAME": self.virtual_machine.name},
+					virtual_machine=self.virtual_machine.name,
+					timeout_seconds=30,
+				)
+
+				self.assertEqual(parse_result(task.stdout), {"size_bytes": 42})
 
 
 class TestFlagOffChangesNothing(IntegrationTestCase):
