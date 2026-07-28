@@ -87,6 +87,22 @@ never measured against an idle clock that predates it.
    Sleeping status.
 4. **Park** the VM for a wake-on-TCP (below).
 
+**On a Boat host the snapshot outcome is not knowable yet, and the row does not
+wait for it.** Boat's `sleep` computes exactly the same boolean, but its
+`Operation` has nowhere to put a typed result ([33-boat.md § 2.7](./33-boat.md)),
+so the Task carries the daemon's trace and no `ATLAS_RESULT=` line. `sleep()`
+therefore records the park unconditionally — the VM *is* parked, and
+`has_memory_snapshot` is bookkeeping, not authority
+([02-doctypes.md](./02-doctypes.md)): the on-host `READY` marker decides at wake
+time either way. Requiring the line instead was silent in every direction: the VM
+parked, the Task committed `Success`, `status` stayed `Running`, `sleep_idle_vms`
+swallowed the throw and slept it again the next minute — one Task per minute
+forever, each with a fresh `op_id` that made Boat genuinely re-run the verb — and
+because `server_capacity.py` excludes only `Sleeping` rows from the RAM sum, the
+RAM this feature exists to free was never booked back on exactly the hosts being
+cut over. The idle sweeper still keeps going past a VM it cannot sleep, but it now
+logs the reason rather than discarding it.
+
 `sleep-vm` **refuses outright** when `atlas-wake-trap.service` is not active on
 the host. Without the daemon a slept VM is still parked — its `/128` routes into
 the `atlas-park0` dummy — so it answers nothing and stays dark until an operator
@@ -190,7 +206,15 @@ at most one minute; the guest is reachable the whole time.
 - **Terminate / stop** — `vm-network-down.py` also `unpark()`s, so a
   `Sleeping → Terminated` cleans the rule/counter/route even though the
   already-stopped unit's `ExecStopPost` won't re-run. `reset-server` sweeps any
-  orphan `wake_*` counters; `atlas-park0` is kept as bootstrap floor.
+  orphan `wake_*` counters; `atlas-park0` is kept as bootstrap floor. **On a
+  Boat-driven host the verb does it itself** (`internal/park.Retire`, called by
+  `terminate` before the `rm -rf` that would take `network.env` with it), and it
+  takes the **proxy-NDP entry** as well as the rule, counter and route — an
+  unpark leaves that entry alone because it runs in front of a bring-up that is
+  about to re-assert it, and a terminated VM has no bring-up coming. What Boat
+  still cannot unwind on its own is the rest of `vm-network-down` — namespace,
+  veth, tap, per-VM forward rules — which the unit's `ExecStopPost` owns until
+  WO-3 ports it ([33-boat.md](./33-boat.md) §6).
 - **Per-VM firewall** ([20-firewall.md](./20-firewall.md)) — the `public_filter`
   chain runs before `forward`, so a SYN to a **blocked** port is dropped before the
   wake rule and does not wake (correct — that port is firewalled); a SYN to an

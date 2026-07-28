@@ -329,6 +329,18 @@ re-sending the same document is a no-op with nothing to deduplicate.
   yet wake that VM's actor, so a `PUT` alone can wait a sweep interval to take
   effect; Atlas never relies on that, because it posts the verb straight after.*
   This is how Atlas re-asserts intent on reconnect.
+- **A′. Desired-state retract.** `DELETE /v1/vms/{uuid}` — the `PUT`'s mirror,
+  and the only way an assertion is ever taken back. It touches nothing on the
+  host: a VM running here goes on running, and what ends is this host's
+  authority to act on it, because the reconciler treats a UUID with no desired
+  record as one it was never told about (§1). **It does not clear the fence
+  epoch**, and that asymmetry is the design: retraction removes an authority and
+  must not hand back permission to boot, or an evacuated source host would accept
+  a stale epoch from a partitioned Atlas and boot a VM that has moved (§11.1,
+  §16.0). Idempotent — retracting what was never asserted is the same 204.
+  `terminate` performs the same retraction inside the verb, before it touches the
+  host, because a destroyed VM whose desired state still says Running is one the
+  sweep starts every interval forever.
 - **B. Lifecycle verbs.** `POST /v1/vms/{uuid}/<verb>` for `start`, `stop`,
   `pause`, `resume`, `sleep`, `wake`, `resize`, `rebuild` and `terminate`. *NOT
   BUILT:* `snapshot` and `warm-snapshot` (WO-4), `reserved-ip` (WO-3),
@@ -440,9 +452,46 @@ Three properties are load-bearing:
   indistinguishable from a VM that was cleanly deleted — and that is the reading
   under which an operator re-creates or re-starts it.
 
-An ingest at an epoch the mirror already holds is a no-op, and so is an older
-one: the epoch is monotonic per host, so a re-poll cannot duplicate a snapshot
-and a late answer from a slow request cannot overwrite a newer one.
+An ingest at an epoch the mirror already holds re-lands nothing — the host state
+it describes is the one already mirrored — but it does re-stamp freshness and the
+verdict, because a host that answers is a host that has been *seen* and the epoch
+only moves on an observed *change*: a healthy idle host reports the same number
+forever, and recovery that waited for it to move would leave a quiet host flagged
+`Unknown` for as long as it stayed quiet. **Zero is a legitimate epoch** — the
+counter starts there — so absent and zero are different answers, and reading them
+as the same rejected the first export of every host between enabling the flag and
+its first observation.
+
+**An older epoch is where the per-host reading of a per-store counter breaks.** A
+late answer from a slow request must not overwrite a newer mirror; but a Boat that
+lost bbolt, was reinstalled, or was restored from a backup counts again from below
+the number Atlas holds, and read as merely late its exports are dropped forever
+while Atlas reports it `Fresh` and keeps placing onto it. The epoch alone cannot
+tell those apart, so the **fences** do: a reordered poll comes from the store Atlas
+knows and still holds every fence it was given, while a lost store holds none. A
+regression with the fences intact stays a no-op; a regression from a host that has
+forgotten what it was told is adopted — the mirror must describe the host that
+exists now — and lands `Unknown`.
+
+**`Fresh` is not the automatic reward for answering.** `mirror_status` answers one
+question — can Atlas still take this host at its word? — and there are two ways to
+answer no: the daemon did not answer (§9's freeze), or it answered and holds no
+fence for a VM Atlas placed there. The second is §11.1's most dangerous state
+wearing a healthy export's clothes: the host will boot *nothing* it is asked to.
+Both read `Unknown`, so placement stops filling the host; neither evicts anything,
+because the fence governs only the next boot. Both clear themselves — the next
+successful export for the first, the next `PUT` of desired state (every lifecycle
+verb, or `assert_desired_state`) for the second.
+
+**Clearing `Server.boat_enabled` clears `mirror_status` and `mirror_error` too.**
+The flag is the whole rollback, and a rollback has to restore the *behaviour* and
+not just the transport: an `Unknown` written by one failed poll is otherwise
+permanent on a host off Boat, because the sweep skips it, `HostMirror.sync` returns
+before it can write, and the field is read-only in the desk. The ordinary way in is
+not exotic — flip the flag before the token is configured, and the host is
+`Unknown` within five minutes, then rolled back and stranded. Only the live claim
+is dropped; the frozen observation (`observed_epoch`, `observed_at`, the capacity
+totals) stands, exactly as it does under `_freeze`.
 
 ### 2.6 Push commands, pull truth
 
@@ -489,6 +538,42 @@ ran. What an operator loses meanwhile is live progress on a long verb, and what
 Atlas loses is a way to distinguish a slow verb from a lost one: a non-terminal
 status coming back is treated as a protocol surprise and raised, because on this
 shape it cannot happen.
+
+**"Boat returns the typed result" is a promise the contract does not yet keep, and
+it is the one gap in this section with a live consequence.** `Operation` carries
+`output`, `error` and `exit_code` and nothing else, so a verb that computes a
+structured answer discards it on the way out — `sleep` computes exactly the boolean
+Atlas wants (`SleepResult.MemorySnapshot`) and throws it away. What Boat has to add
+is one optional free-form object on `Operation`:
+
+```yaml
+result:
+  type: object
+  additionalProperties: true
+  description: The verb's typed result. Same payload the SSH script's one
+               ATLAS_RESULT= line carries, so a Task reads the same either way.
+```
+
+populated by every verb that has one — today `sleep-vm` with
+`{"memory_snapshot": <bool>}`, and the same field for `snapshot-vm` /
+`warm-snapshot-vm` (`size_bytes`, `memory_bytes`, `host_signature`) whenever those
+verbs move onto Boat.
+
+Atlas is already written against it (`boat_client.OPERATION_RESULT_FIELD`), and the
+reading is done **in the transport, not at the call site**: a present `result`
+becomes the same `ATLAS_RESULT=` line on the Task row that an SSH script would have
+written, so `task_results.parse_result` reads one Task the same way whichever
+transport filled it. That placement is what stops this repeating. `sleep` is the
+only Boat-routed verb that parses structured output today — every other such call
+site holds `run_task` directly — and the latent defect is the day one of them gains
+a Boat endpoint and silently finds no line. Until the field lands, a Boat Task
+carries no result line at all, and the one caller that reads one **records what the
+verb did anyway**: a `sleep` that cannot learn whether RAM was dumped still marks
+the row `Sleeping`, because the VM is parked either way and the snapshot only
+changes the next wake's speed. Insisting on the line instead was silent in every
+direction — the VM parked, the Task committed `Success`, the row stayed `Running`,
+the idle sweeper swallowed the throw and re-slept it every minute forever, and the
+RAM the feature exists to free was never booked back.
 
 **Replay never double-runs.** Re-POSTing an in-flight or completed `op_id`
 returns the recorded operation unchanged and runs nothing. An `op_id` already
@@ -1004,16 +1089,27 @@ is `placement.placement_candidates()` — Active *and* not `Unknown` — and eve
 placement path is built from it (`default_server`, and through it
 `default_server_for_image`; the consolidation planner's `_fleet_snapshot`, so an
 unseen host is neither drained nor sent an evictee; and `largest_vm`, so what
-Central is told matches what placement would do). It is an *arrivals* gate and
+Central is told matches what placement would do). The two arrivals that **pin
+their own host** — a clone, whose disk is a host-local thin snapshot, and a
+migration, whose target the operator names — cannot choose from a set, so they
+apply the same gate through `placement.assert_visible` and refuse instead. That
+covers the path every self-serve Site VM takes (`site.py` →
+`default_bench_snapshot()` → `clone_to_new_vm`); migration gates the *target*
+only, because moving a VM off an unseen host is the move an operator most wants.
+When every Active host reads `Unknown`, placement raises `HostNotVisibleError`
+and **not** `NoCapacityError`: the region is blind, not full, and the type is the
+only channel that can stop Central queueing and retrying against a region that
+has room. It is an *arrivals* gate and
 nothing more: no eviction, no write to `status`, capacity accounting and
 `cluster_capacity` unchanged, and a resize on a VM already there still allowed.
 Only the literal `Unknown` excludes — an empty `mirror_status` means never
 mirrored, which is every SSH host and a `boat_enabled` host the sweep has not yet
 reached, and "I have not looked" is not "I have lost sight of it". Recovery needs
 no operator: the next successful export writes `Fresh` and the host is a candidate
-again on that tick. *NOT BUILT:* buffering observed transitions across the blip
-(nothing replays what happened while Atlas was away — the export is the only
-catch-up, and it carries current state rather than the transitions) and the
+again on that tick, and clearing `boat_enabled` clears the flag outright so a
+rollback is a rollback (§2.5). *NOT BUILT:* buffering observed transitions across
+the blip (nothing replays what happened while Atlas was away — the export is the
+only catch-up, and it carries current state rather than the transitions) and the
 `/watch` resume.
 
 **Split-brain is prevented by the fence epoch (§11.1), not by phase ordering.**
@@ -1081,6 +1177,18 @@ nothing**. The epoch bumps at exactly one point: migration Repoint (§8).
 > comparison, which is a tautology because the `PUT` writes the fence and the
 > desired record from one document; and `server == self`, which cannot be checked
 > at all because **there is no `server` field in the desired document**.
+>
+> **Atlas now reports the disagreement, which is the half it can do on its own.**
+> The export's `fence_epochs` map — every fence the host holds, by UUID — is read
+> against the epoch Atlas issued for each VM it placed there, and every difference
+> is a `fence` drift row on the epoch's `Host State Snapshot` (`desired` = what
+> Atlas issued, `observed` = what the host holds, absent when it holds none). Only
+> VMs Atlas has actually fenced are compared: a row with no `boot_epoch` was never
+> issued one, and an export with no `fence_epochs` key at all is silence rather
+> than a claim of none — the empty map `{}` is the claim. The **absent** case is
+> the one with teeth, because it is the one that says the host will boot nothing:
+> it puts `mirror_status` at `Unknown` and takes the host out of arrivals (§2.5,
+> §9). Until this, the map shipped on every export and Atlas archived it unread.
 
 **Failure mode.** Without it, a partitioned migration produces two live copies of
 one VM: the source Boat, reconnecting with a desired state that still says
@@ -1223,7 +1331,24 @@ operations would replay on every boot forever.
 the old root, after which "what was this supposed to become" has no answer left
 on the host; it records that source before it acts. The other eight are
 idempotent by construction — every input is desired state, a host fact, or an
-on-disk artifact laid down at provision. The decisions this invariant was really
+on-disk artifact laid down at provision.
+
+**`sleep` had to be MADE idempotent, and the fact that it was not is the reason
+this paragraph is worth re-reading rather than trusting.** Its inputs are all
+host facts, so it read as idempotent by the rule above; replaying it on a VM that
+was already asleep nevertheless `rm -rf`'d the memory snapshot it was about to
+re-take — the preflight is guarded on `test -S` against a socket inode that
+outlives the Firecracker that bound it — failed to reach the dead socket, took
+the plain-stop fallback, removed the READY marker, and reported **Success**. The
+VM cold-booted on its next wake with a green Task beside it. It now branches on
+the sleeping marker first and re-asserts what a sleep leaves behind (stop, marker,
+park) without touching the snapshot, which is what the recovery path above
+actually needs: the operation a crash most plausibly interrupts is one that
+stopped the unit and wrote the marker but had not yet armed the wake trap, and
+that VM is asleep and unreachable until something replays the verb. A verb whose
+replay is the designed recovery has to converge, not refuse.
+
+The decisions this invariant was really
 written for (which address, which host slot, which LV) belong to **provision and
 migration**, which are NOT BUILT. Saying so is the point: inventing decisions to
 justify the machinery would have been worse than the gap.
@@ -1460,24 +1585,36 @@ behind them. These are the questions that have no answer yet.
    What does not: the epoch *comparison* is a tautology. `PUT /vms/{uuid}`
    writes the fence and the desired record from one document, so the held epoch
    and the desired epoch are equal by construction and a stale epoch cannot be
-   detected. Two things have to land before it means anything, both in Atlas:
+   detected. Two things had to land before it means anything. **One now has**:
 
    - **Atlas must bump the epoch at a migration's repoint.** Nothing in Atlas
      writes `boot_epoch` today beyond the initial 1, and `migration.py` has no
      Boat awareness at all. §11.1 names repoint as the single bump point; that
-     bump does not exist.
-   - **Atlas must be able to retract or supersede desired state on a host that
-     no longer owns a VM.** There is no `DELETE /vms/{uuid}` and no `server`
-     field in the desired document, so a source Boat keeps `{epoch, Running}`
-     for an evacuated VM forever and its sweep will start it again the moment it
-     observes it stopped.
+     bump does not exist. **Still open, and it is now the whole of the gap.**
+   - ~~**Atlas must be able to retract or supersede desired state on a host that
+     no longer owns a VM.**~~ **Closed.** `DELETE /v1/vms/{uuid}` retracts an
+     assertion (§2.4 A′), and `terminate` retracts its own before it touches the
+     host. A Boat that has been told to forget a VM stops driving it, because the
+     reconciler acts only on VMs it holds a desired record for. The retraction
+     keeps the fence epoch: dropping it would leave the host holding **no** epoch,
+     which is the state any fresh `PUT` satisfies — including a stale one — so a
+     retraction that cleared the fence would hand back exactly the boot the fence
+     exists to refuse. There is still no `server` field in the desired document,
+     so `server == self` remains uncheckable (§11.1).
 
-   Until both exist, split-brain is prevented by phase ordering and
+     What made this urgent was not migration. `terminate` destroyed a VM and left
+     `{epoch, Running}` behind, so the next sweep saw Stopped against Running,
+     passed the fence — still held — and ran `systemctl start` on a VM whose root
+     volume had just been `lvremove`d, every interval, forever.
+
+   Until the bump exists, split-brain is prevented by phase ordering and
    `desired_power` — which §9 says explicitly is *not* what should prevent it.
    The honest statement of today's guarantee is: **Boat will not boot a VM it
-   was never told about; it will boot a VM it was told about and then forgotten
-   about.** WO-4 owns closing this, and no host should carry production VMs
-   through a migration until it is closed.
+   was never told about, and will not boot one it has been told to forget — but
+   it will boot a VM it was told about and then merely superseded.** Retraction
+   made forgetting possible; only the epoch bump can make superseding detectable,
+   and that is still Atlas's to write. WO-4 owns it, and no host should carry
+   production VMs through a migration until it is closed.
 
 1. **Who writes ANCP's bootstrap trust artifacts after the split** (§4). The
    constraint is fixed — they are operator-signed, Atlas holds the key, Boat must
