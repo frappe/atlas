@@ -59,9 +59,21 @@ DEFAULT_BOAT_PORT = 8080
 # `timeout_seconds` overrides it, exactly as it bounds an SSH run.
 DEFAULT_TIMEOUT_SECONDS = 30
 
-# The two Task verbs whose request carries more than an identifier.
+# The Task verbs `_run_verb` routes by hand. `stop` and `rebuild` are the two
+# whose request carries more than the operation identifier; `start` keeps its own
+# method for the replay contract its docstring states.
 START_VERB = "start-vm"
 STOP_VERB = "stop-vm"
+REBUILD_VERB = "rebuild-vm"
+
+# The guest file the in-guest routing client reads (spec/18), and the one place
+# Atlas states its content. It travels as one anonymous `extra_env` entry, which
+# is the whole of the guest-service seam (spec/33 §7.2): naming a field for what
+# a file MEANS would put a service semantic into Boat's vocabulary, so Boat gets
+# a path and its bytes and cannot tell this file from any other. The content is
+# byte-for-byte what `rootfs.py` writes on the SSH path — the two transports must
+# lay down the same guest.
+ROUTING_ENVIRONMENT_PATH = "/etc/atlas-routing.env"
 
 # The first fence epoch Atlas issues. Epochs start at 1 (`api/openapi.yaml`,
 # `DesiredVirtualMachine.boot_epoch`): Boat gates on whether it holds a fence at
@@ -180,10 +192,39 @@ class BoatClient:
 		would have woken it."""
 		return self._operation(uuid, "wake", operation_id)
 
-	def rebuild_virtual_machine(self, uuid: str, *, operation_id: str) -> dict:
+	def rebuild_virtual_machine(
+		self,
+		uuid: str,
+		*,
+		operation_id: str,
+		image: str | None = None,
+		snapshot_device: str | None = None,
+		data_snapshot_device: str | None = None,
+		identity: dict | None = None,
+	) -> dict:
 		"""POST /vms/{uuid}/rebuild — lay the root disk down again, keeping the
-		VM's identity, addresses and data disk."""
-		return self._operation(uuid, "rebuild", operation_id)
+		VM's identity, addresses and data disk.
+
+		The one verb whose request carries more than an identifier (spec/33 §2.4).
+		The source is a choice made at the moment of asking and `identity` is what
+		the fresh filesystem must be told about itself, so neither has an answer in
+		desired state; the sizes it grows to do, and are read from the store rather
+		than sent. The per-VM uid is neither, and Boat reads it off the host.
+
+		`identity` is opaque to Boat and stays opaque here — it is passed through
+		as `rebuild_request` built it, and nothing on this path parses a key or
+		validates an address (§7.2)."""
+		optional = {
+			"image": image,
+			"snapshot_device": snapshot_device,
+			"data_snapshot_device": data_snapshot_device,
+			"identity": identity,
+		}
+		body = {"operation_id": operation_id}
+		# An absent field is left out entirely, so the daemon distinguishes "no
+		# image named" from "an image named empty".
+		body.update({field: value for field, value in optional.items() if value})
+		return self._request("POST", f"/vms/{uuid}/rebuild", json=body)
 
 	def terminate_virtual_machine(self, uuid: str, *, operation_id: str) -> dict:
 		"""POST /vms/{uuid}/terminate — destroy the VM and everything it holds on
@@ -274,10 +315,110 @@ OPERATION_VERBS = {
 	"resume-vm": BoatClient.resume_virtual_machine,
 	"sleep-vm": BoatClient.sleep_virtual_machine,
 	"wake-vm": BoatClient.wake_virtual_machine,
-	"rebuild-vm": BoatClient.rebuild_virtual_machine,
 	"terminate-vm": BoatClient.terminate_virtual_machine,
 	"resize-vm": BoatClient.resize_virtual_machine,
 }
+
+
+# A rebuild Task's variables, mapped onto the `RebuildRequest` they state. The
+# four collections below are the whole translation, and every variable the verb
+# sends belongs to exactly one of them. A variable in none of them raises,
+# because a silently dropped one is a rootfs laid down without the thing it was
+# supposed to carry, and nothing would say so.
+#
+# The source to lay down. Boat takes the snapshot when both are given.
+REBUILD_SOURCES = {
+	"SNAPSHOT_ROOTFS_PATH": "snapshot_device",
+	"DATA_SNAPSHOT_ROOTFS_PATH": "data_snapshot_device",
+	"IMAGE_NAME": "image",
+}
+
+# The guest identity, field for field. Every one is written into the fresh
+# filesystem verbatim; neither side parses any of it.
+REBUILD_IDENTITY = {
+	"VIRTUAL_MACHINE_IPV6": "ipv6_address",
+	"IPV4_GUEST_CIDR": "ipv4_guest_cidr",
+	"IPV4_GATEWAY": "ipv4_gateway",
+	"PRIVATE_ADDRESS": "private_address",
+	"SSH_PUBLIC_KEY": "authorized_keys_blob",
+	"DATA_DISK_MOUNT_AT": "data_disk_mount_at",
+}
+
+# Variables the request deliberately does not carry, each because something that
+# is not this request already answers it:
+#
+#   VIRTUAL_MACHINE_NAME              the path names the VM
+#   DISK_GB, DATA_DISK_GB             desired state; a rebuild is not a resize
+#   DATA_DISK_FORMAT                  a restore never formats — it snapshots a
+#                                     filesystem that already exists
+#   ATLAS_FC_UID                      the host reads the uid off its own network.env
+#   IPV4_HOST_CIDR                    host-side networking, which a rebuild does
+#                                     not touch (the SSH script declares it only
+#                                     to accept-and-ignore it)
+#   ROOTFS_FILENAME                   read by nothing on either transport
+REBUILD_ANSWERED_ELSEWHERE = frozenset(
+	{
+		"VIRTUAL_MACHINE_NAME",
+		"DISK_GB",
+		"DATA_DISK_GB",
+		"DATA_DISK_FORMAT",
+		"ATLAS_FC_UID",
+		"IPV4_HOST_CIDR",
+		"ROOTFS_FILENAME",
+	}
+)
+
+# Variables that become one guest file each, written verbatim and anonymously.
+REBUILD_GUEST_FILES = frozenset({"ROUTING_BASE_URL"})
+
+
+def rebuild_request(variables: dict) -> dict:
+	"""The `RebuildRequest` fields one rebuild Task's variables state.
+
+	Refuses the two ways a rebuild can be meaningless, exactly as Boat's own CLI
+	does and for the same reason: with no source there is nothing to lay down, and
+	with no authorized keys the VM boots a rootfs carrying the SOURCE's identity —
+	it comes up, reports success, and nothing can ever log in to it again.
+
+	A variable this does not name also raises. The failure this seam invites is a
+	value that exists on one side and is dropped on the other, and a rebuild is the
+	one verb where that drop is invisible until someone tries to reach the VM."""
+	unknown = set(variables) - set(REBUILD_SOURCES) - set(REBUILD_IDENTITY)
+	unknown -= REBUILD_ANSWERED_ELSEWHERE | REBUILD_GUEST_FILES
+	if unknown:
+		raise BoatError(
+			f"rebuild-vm states {', '.join(sorted(unknown))}, which the rebuild request has no field for"
+		)
+	request = {field: variables[key] for key, field in REBUILD_SOURCES.items() if variables.get(key)}
+	if not request.get("image") and not request.get("snapshot_device"):
+		raise BoatError("rebuild-vm states no source: Boat needs an image name or a snapshot device")
+	request["identity"] = _guest_identity(variables)
+	return request
+
+
+def _guest_identity(variables: dict) -> dict:
+	"""The `GuestIdentity` blob — what makes the fresh rootfs this VM's rather
+	than the image's. Absent fields are left out rather than sent empty; Boat
+	writes a defined value for each either way."""
+	identity = {field: variables[key] for key, field in REBUILD_IDENTITY.items() if variables.get(key)}
+	if not identity.get("authorized_keys_blob"):
+		raise BoatError("rebuild-vm states no SSH key: the rebuilt VM would have no way back in")
+	files = _guest_files(variables)
+	if files:
+		identity["extra_env"] = files
+	return identity
+
+
+def _guest_files(variables: dict) -> list[dict]:
+	"""Every guest file the rebuild lays down, as `{path, content}` pairs.
+
+	One entry today — the routing client's base URL (spec/18) — and it is here
+	rather than in a named field precisely so Boat cannot tell it from the next
+	one (spec/33 §7.2)."""
+	routing_base_url = variables.get("ROUTING_BASE_URL")
+	if not routing_base_url:
+		return []
+	return [{"path": ROUTING_ENVIRONMENT_PATH, "content": f"ATLAS_BASE_URL={routing_base_url}\n"}]
 
 
 def desired_state(virtual_machine: "VirtualMachine", **spec) -> dict:
@@ -461,8 +602,8 @@ def _run_verb(client: BoatClient, script: str, uuid: str, operation_id: str, var
 
 	The variables dict is the same one the SSH path renders to `--kebab-flags`,
 	so a verb's inputs are stated once and mean the same thing on either
-	transport. Only start and stop read it: every other verb's inputs are desired
-	state, which reached the host by `put_desired` before this ran.
+	transport. Only start, stop and rebuild read it: every other verb's inputs are
+	desired state, which reached the host by `put_desired` before this ran.
 
 	An unmapped verb raises. A verb Boat cannot run must fail loud rather than
 	appear to have run."""
@@ -475,10 +616,12 @@ def _run_verb(client: BoatClient, script: str, uuid: str, operation_id: str, var
 			graceful=variables.get("GRACEFUL", "1") != "0",
 			stop_timeout_seconds=int(variables.get("STOP_TIMEOUT_SECONDS") or 0),
 		)
+	if script == REBUILD_VERB:
+		return client.rebuild_virtual_machine(uuid, operation_id=operation_id, **rebuild_request(variables))
 	call = OPERATION_VERBS.get(script)
 	if call:
 		return call(client, uuid, operation_id=operation_id)
-	served = ", ".join(sorted((START_VERB, STOP_VERB, *OPERATION_VERBS)))
+	served = ", ".join(sorted((START_VERB, STOP_VERB, REBUILD_VERB, *OPERATION_VERBS)))
 	raise BoatError(f"Boat serves no endpoint for verb {script!r} (it serves {served})")
 
 

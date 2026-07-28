@@ -16,6 +16,7 @@ about what Boat's wire looks like.
 
 from __future__ import annotations
 
+import json
 from unittest.mock import patch
 
 import frappe
@@ -23,10 +24,16 @@ from frappe.tests import IntegrationTestCase
 
 from atlas.atlas.boat_client import (
 	FIRST_BOOT_EPOCH,
+	REBUILD_ANSWERED_ELSEWHERE,
+	REBUILD_GUEST_FILES,
+	REBUILD_IDENTITY,
+	REBUILD_SOURCES,
+	ROUTING_ENVIRONMENT_PATH,
 	BoatClient,
 	BoatError,
 	desired_state,
 	put_desired_state,
+	rebuild_request,
 	run_boat_task,
 )
 from atlas.atlas.doctype.virtual_machine import virtual_machine as virtual_machine_module
@@ -63,6 +70,26 @@ VERB_ENDPOINTS = {
 # stdout carries today" has to mean (spec/33 §2.4).
 TYPED_RESULT = 'ATLAS_RESULT={"memory_snapshot": true}\n'
 
+# One rebuild Task's variables, as `_rebuild_variables` states them for a VM with
+# a data disk, a tenant and a Satellite: every field the mapping has a home for,
+# alongside the ones the host answers for itself.
+REBUILD_VARIABLES = {
+	"VIRTUAL_MACHINE_NAME": "vm-1",
+	"DISK_GB": "20",
+	"VIRTUAL_MACHINE_IPV6": "2001:db8:b0a7::5",
+	"SSH_PUBLIC_KEY": "ssh-ed25519 AAAA owner\nssh-ed25519 BBBB satellite",
+	"ATLAS_FC_UID": "247312",
+	"IPV4_HOST_CIDR": "100.64.0.1/30",
+	"IPV4_GUEST_CIDR": "100.64.0.2/30",
+	"IPV4_GATEWAY": "100.64.0.1",
+	"PRIVATE_ADDRESS": "fdaa:1:2::7",
+	"ROUTING_BASE_URL": "https://orchestrator.blr1.frappe.dev",
+	"DATA_DISK_GB": "100",
+	"DATA_DISK_FORMAT": "1",
+	"DATA_DISK_MOUNT_AT": "/home",
+	"IMAGE_NAME": "ubuntu-24-04",
+}
+
 
 def _sent(call) -> tuple[str, str, dict]:
 	"""One recorded request as (method, url, body)."""
@@ -77,12 +104,13 @@ class TestBoatLifecycleWire(IntegrationTestCase):
 		self.client = BoatClient(base_url="http://198.51.100.7:8080/v1", token="s3cret")
 
 	def test_every_verb_posts_its_own_endpoint_with_the_operation_identifier(self) -> None:
+		# Rebuild is not here: it is the one verb whose request carries more than
+		# the identifier, and `TestRebuildRequest` below is where that body lives.
 		cases = (
 			(self.client.pause_virtual_machine, "pause"),
 			(self.client.resume_virtual_machine, "resume"),
 			(self.client.sleep_virtual_machine, "sleep"),
 			(self.client.wake_virtual_machine, "wake"),
-			(self.client.rebuild_virtual_machine, "rebuild"),
 			(self.client.terminate_virtual_machine, "terminate"),
 			(self.client.resize_virtual_machine, "resize"),
 		)
@@ -126,6 +154,100 @@ class TestBoatLifecycleWire(IntegrationTestCase):
 			self.client.wake_virtual_machine("vm-1", operation_id="task-boat-9")
 
 		self.assertIn("no fence held for this VM", str(raised.exception))
+
+
+class TestRebuildRequest(IntegrationTestCase):
+	"""The one verb whose request is more than an identifier (spec/33 §2.4, §7.2).
+
+	The rebuilt rootfs comes off the source's blocks, so everything that makes it
+	THIS VM's has to be written back into it. A field that goes missing here is
+	invisible until nobody can log in to the machine, which is why the mapping
+	refuses a variable it does not know rather than dropping it."""
+
+	def test_the_source_and_every_identity_field_reach_the_request(self) -> None:
+		request = rebuild_request(REBUILD_VARIABLES)
+
+		self.assertEqual(request["image"], "ubuntu-24-04")
+		self.assertEqual(
+			request["identity"],
+			{
+				"ipv6_address": "2001:db8:b0a7::5",
+				"ipv4_guest_cidr": "100.64.0.2/30",
+				"ipv4_gateway": "100.64.0.1",
+				"private_address": "fdaa:1:2::7",
+				"authorized_keys_blob": "ssh-ed25519 AAAA owner\nssh-ed25519 BBBB satellite",
+				"data_disk_mount_at": "/home",
+				"extra_env": [
+					{
+						"path": "/etc/atlas-routing.env",
+						"content": "ATLAS_BASE_URL=https://orchestrator.blr1.frappe.dev\n",
+					}
+				],
+			},
+		)
+
+	def test_the_routing_url_rides_as_an_anonymous_guest_file(self) -> None:
+		"""§7.2's whole point: Boat's schema names no service-semantic field, so
+		the routing config is a path and its bytes — byte-for-byte what the SSH
+		path's `rootfs.py` writes — that the daemon cannot tell from any other."""
+		identity = rebuild_request(REBUILD_VARIABLES)["identity"]
+
+		self.assertNotIn("routing_base_url", identity)
+		self.assertEqual(identity["extra_env"][0]["path"], ROUTING_ENVIRONMENT_PATH)
+		self.assertEqual(
+			identity["extra_env"][0]["content"], "ATLAS_BASE_URL=https://orchestrator.blr1.frappe.dev\n"
+		)
+
+	def test_an_atlas_with_no_satellite_writes_no_guest_file(self) -> None:
+		identity = rebuild_request({**REBUILD_VARIABLES, "ROUTING_BASE_URL": ""})["identity"]
+		self.assertNotIn("extra_env", identity)
+
+	def test_a_restore_carries_both_snapshot_devices(self) -> None:
+		variables = {
+			**REBUILD_VARIABLES,
+			"IMAGE_NAME": "",
+			"SNAPSHOT_ROOTFS_PATH": "/dev/atlas/atlas-snap-s1",
+			"DATA_SNAPSHOT_ROOTFS_PATH": "/dev/atlas/atlas-snap-s1-data",
+		}
+		request = rebuild_request(variables)
+
+		self.assertEqual(request["snapshot_device"], "/dev/atlas/atlas-snap-s1")
+		self.assertEqual(request["data_snapshot_device"], "/dev/atlas/atlas-snap-s1-data")
+		# A rebuild from an image never states one: there is no image source for a
+		# data disk, and wiping a tenant's home on an OS rebuild is not a default.
+		self.assertNotIn("data_snapshot_device", rebuild_request(REBUILD_VARIABLES))
+
+	def test_nothing_the_host_or_desired_state_answers_is_sent(self) -> None:
+		"""The sizes are desired state, the uid is a host fact, and the host's end
+		of the NAT44 /30 is host-side networking a rebuild does not touch. A verb
+		that took a per-VM number off the wire when the store holds one could be
+		asked to apply a shape the store disagrees with (spec/33 §2.4)."""
+		body = json.dumps(rebuild_request(REBUILD_VARIABLES))
+
+		for dropped in ("20", "247312", "100.64.0.1/30", "100"):
+			self.assertNotIn(f'"{dropped}"', body)
+
+	def test_a_variable_the_mapping_does_not_name_raises(self) -> None:
+		# The failure this seam invites: a value that exists on one side and is
+		# dropped on the other. Loud beats invisible.
+		with self.assertRaises(BoatError) as raised:
+			rebuild_request({**REBUILD_VARIABLES, "RESERVED_IPV4": "198.51.100.9"})
+
+		self.assertIn("RESERVED_IPV4", str(raised.exception))
+
+	def test_a_rebuild_with_no_source_is_refused(self) -> None:
+		with self.assertRaises(BoatError) as raised:
+			rebuild_request({**REBUILD_VARIABLES, "IMAGE_NAME": ""})
+
+		self.assertIn("no source", str(raised.exception))
+
+	def test_a_rebuild_with_no_authorized_keys_is_refused(self) -> None:
+		# Boat's own CLI refuses this; Atlas is no more permissive. The VM would
+		# boot, report success, and be unreachable forever.
+		with self.assertRaises(BoatError) as raised:
+			rebuild_request({**REBUILD_VARIABLES, "SSH_PUBLIC_KEY": ""})
+
+		self.assertIn("no way back in", str(raised.exception))
 
 
 class _BoatHostTestCase(IntegrationTestCase):
@@ -208,6 +330,11 @@ class TestBoatVerbRouting(_BoatHostTestCase):
 	def test_each_verb_routes_to_its_endpoint_as_the_task(self) -> None:
 		for verb, endpoint in VERB_ENDPOINTS.items():
 			payload = _operation(verb=verb, uuid=self.virtual_machine.name)
+			# Rebuild is the one verb with inputs of its own, and it refuses a
+			# request that names no source, so it is given a real one.
+			variables = {"VIRTUAL_MACHINE_NAME": self.virtual_machine.name}
+			if verb == "rebuild-vm":
+				variables = {**REBUILD_VARIABLES, **variables}
 			with (
 				self.subTest(verb=verb),
 				_boat_host_token(self.server.name),
@@ -216,7 +343,7 @@ class TestBoatVerbRouting(_BoatHostTestCase):
 				task = run_boat_task(
 					server=self.server.name,
 					script=verb,
-					variables={"VIRTUAL_MACHINE_NAME": self.virtual_machine.name},
+					variables=variables,
 					virtual_machine=self.virtual_machine.name,
 					timeout_seconds=30,
 				)
@@ -373,6 +500,94 @@ class TestLifecycleThroughBoat(_BoatHostTestCase):
 		self.assertEqual(desired["desired_power"], "Running")
 		virtual_machine.reload()
 		self.assertEqual(virtual_machine.status, "Running")
+
+
+class TestRebuildThroughBoat(_BoatHostTestCase):
+	"""A desk-driven rebuild, end to end: what `_rebuild_variables` states is what
+	reaches the host, and the two transports lay down the same guest."""
+
+	def _rebuild(self, virtual_machine, *arguments) -> dict:
+		"""Drive one rebuild and return the body of the POST that carried it."""
+		operation = _operation(verb="rebuild-vm", uuid=virtual_machine.name)
+		_result, calls = self._drive(lambda: virtual_machine.rebuild(*arguments), {}, operation)
+		return _sent(calls[1])[2]
+
+	def _loaded(self) -> "frappe.model.document.Document":
+		"""A VM carrying everything a rebuild has to write back: a tenant (so it is
+		on the private plane), a mounted data disk, and a Satellite to route to."""
+		if not frappe.db.exists("Tenant", "boat-rebuild-team"):
+			frappe.get_doc({"doctype": "Tenant", "team": "boat-rebuild-team"}).insert(ignore_permissions=True)
+		frappe.db.set_single_value(
+			"Atlas Settings", "satellite_routing_base_url", "https://orchestrator.blr1.frappe.dev"
+		)
+		return self._fresh(
+			status="Stopped",
+			tenant="boat-rebuild-team",
+			data_disk_gigabytes=100,
+			data_disk_format_and_mount=1,
+			data_disk_mount_point="/home",
+		)
+
+	def _snapshot_of(self, virtual_machine, title: str) -> str:
+		"""An Available snapshot of `virtual_machine`, root and data disk both."""
+		snapshot = frappe.get_doc(
+			{
+				"doctype": "Virtual Machine Snapshot",
+				"title": title,
+				"virtual_machine": virtual_machine.name,
+				"server": virtual_machine.server,
+				"status": "Available",
+				"rootfs_path": "/dev/atlas/atlas-snap-s1",
+				"data_rootfs_path": "/dev/atlas/atlas-snap-s1-data",
+			}
+		).insert(ignore_permissions=True)
+		return snapshot.name
+
+	def test_a_rebuild_from_an_image_carries_the_source_and_the_identity(self) -> None:
+		virtual_machine = self._loaded()
+
+		body = self._rebuild(virtual_machine, "image")
+
+		self.assertEqual(body["image"], self.image.name)
+		identity = body["identity"]
+		self.assertEqual(identity["ipv6_address"], virtual_machine.ipv6_address)
+		self.assertEqual(identity["authorized_keys_blob"], virtual_machine.ssh_public_key)
+		self.assertEqual(identity["data_disk_mount_at"], "/home")
+		# The two the fresh rootfs would otherwise lose outright: a rebuilt VM off
+		# the private plane, and a bench VM that can no longer route its own sites.
+		self.assertTrue(identity["private_address"].startswith("fdaa:"))
+		self.assertEqual(
+			identity["extra_env"],
+			[
+				{
+					"path": ROUTING_ENVIRONMENT_PATH,
+					"content": "ATLAS_BASE_URL=https://orchestrator.blr1.frappe.dev\n",
+				}
+			],
+		)
+
+	def test_a_rebuild_from_a_snapshot_carries_the_devices_and_no_image(self) -> None:
+		virtual_machine = self._fresh(status="Stopped")
+		snapshot = self._snapshot_of(virtual_machine, "snap")
+
+		body = self._rebuild(virtual_machine, "snapshot", snapshot)
+
+		self.assertEqual(body["snapshot_device"], "/dev/atlas/atlas-snap-s1")
+		self.assertEqual(body["data_snapshot_device"], "/dev/atlas/atlas-snap-s1-data")
+		self.assertNotIn("image", body)
+
+	def test_every_rebuild_variable_has_a_home_on_the_wire(self) -> None:
+		"""The guard the mapping exists for. A variable added to the SSH path's
+		dict and not to the tables would otherwise be dropped in silence — this
+		fails the moment the two sides stop agreeing on the same list."""
+		virtual_machine = self._loaded()
+		snapshot = self._snapshot_of(virtual_machine, "mapping-snap")
+		mapped = set(REBUILD_SOURCES) | set(REBUILD_IDENTITY) | REBUILD_GUEST_FILES
+		mapped |= REBUILD_ANSWERED_ELSEWHERE
+
+		for source_type, source in (("image", None), ("snapshot", snapshot)):
+			stated = set(virtual_machine._rebuild_variables(source_type, source))
+			self.assertEqual(stated - mapped, set(), f"unmapped {source_type} rebuild variables")
 
 
 class TestBoatFailuresAreLoud(_BoatHostTestCase):
