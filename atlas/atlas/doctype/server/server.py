@@ -50,6 +50,7 @@ class Server(Document):
 		mirror_status: DF.Literal["", "Fresh", "Unknown"]
 		observed_at: DF.Datetime | None
 		observed_boat_version: DF.Data | None
+		observed_quarantined: DF.SmallText | None
 		observed_units_down: DF.SmallText | None
 		provider_metadata: DF.Code | None
 		provider_resource_id: DF.Data | None

@@ -50,6 +50,7 @@
   "column_break_boat_mirror",
   "mirror_status",
   "observed_units_down",
+  "observed_quarantined",
   "mirror_error",
   "section_break_metadata",
   "provider_metadata"
@@ -319,7 +320,7 @@
    "fieldtype": "Column Break"
   },
   {
-   "description": "Fresh means the mirror matches the host as of Observed At. Unknown means Boat did not answer — the host is Unknown, NOT dead (spec/33 §9): its VMs are still running, so the mirror freezes at its last values rather than being nulled, nothing is evicted, and placement is expected to exclude the host from new arrivals only. Empty means this host has never been mirrored.",
+   "description": "Fresh means the mirror matches the host as of Observed At. Unknown means Boat did not answer — the host is Unknown, NOT dead (spec/33 §9): its VMs are still running, so the mirror freezes at its last values rather than being nulled, nothing is evicted, and placement excludes the host from NEW arrivals only (placement.placement_candidates — its VMs still count against capacity, and one already there may still resize). It re-enters the candidate set on the next successful export, with no operator action. Empty means this host has never been mirrored — every SSH host reads empty, and so does a Boat host the sweep has not reached yet; that does NOT exclude it, because \"not looked at\" is not \"lost sight of\".",
    "fieldname": "mirror_status",
    "fieldtype": "Select",
    "label": "Mirror Status",
@@ -331,6 +332,13 @@
    "fieldname": "observed_units_down",
    "fieldtype": "Small Text",
    "label": "Observed Units Down",
+   "read_only": 1
+  },
+  {
+   "description": "Artifact sets on this host that Boat could not read as a coherent VM — a crash part-way through a terminate, an LV with no VM directory — comma-separated identifiers (spec/33 §3.4). Reported, never ingested as VMs: adopting one is how a controller boots a guest whose disk it already released. Each also appears as a `quarantined` drift row on the epoch's Host State Snapshot, with the reason and evidence beside it. Empty means none — the export omits the array entirely when there is nothing quarantined, so absent is a claim of none and this is cleared, unlike a host fact whose absence leaves the last value standing. NOT a placement input: leftovers on a host say nothing about its capacity.",
+   "fieldname": "observed_quarantined",
+   "fieldtype": "Small Text",
+   "label": "Observed Quarantined",
    "read_only": 1
   },
   {

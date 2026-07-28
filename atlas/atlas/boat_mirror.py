@@ -14,8 +14,9 @@ the disagreement is recorded as **drift** and left standing (spec/33 §1).
 The export lands in two places, deliberately both (§2.5):
 
   - **Hot fields denormalized onto `Server`** — the capacity totals, the unit
-    liveness summary, `observed_boat_version` — because placement queries them
-    on every provision and cannot afford a document parse. Those totals are the
+    liveness summary, the quarantined artifact sets, `observed_boat_version` —
+    because placement and the operator read them per host and neither can afford
+    a document parse to do it. Those totals are the
     *existing* `Refresh Capacity` fields, not a parallel set: the export keeps
     them live instead of them being a bootstrap-time snapshot, and a second set
     would only leave placement choosing which one it believed.
@@ -342,6 +343,14 @@ class HostMirror:
 			values["capacity_reported_at"] = frappe.utils.now_datetime()
 		if export.get("units") is not None:
 			values["observed_units_down"] = _units_down(export["units"])
+		# Quarantine is the one part of the export where an ABSENT key is a claim
+		# and not a silence: Boat omits the array entirely when nothing is
+		# quarantined, so absent means *none* and the field is written on every
+		# ingest — including to clear it. That is the opposite of the host facts
+		# above and of `units`, where absent means "not looked at"; reading it the
+		# other way round would leave a host flagged forever for artifact sets an
+		# operator has already cleaned up.
+		values["observed_quarantined"] = _quarantined_identifiers(export)
 		frappe.db.set_value("Server", self.server, values, update_modified=False)
 
 	def _stamp_virtual_machines(self, export: dict) -> list[dict]:
@@ -350,32 +359,36 @@ class HostMirror:
 		Drift is surfaced, never corrected: WO-1 is advisory, so the DB's
 		`status` is not touched here and no lifecycle action is taken. The
 		record goes onto the snapshot row, where an operator can diff one epoch
-		against its neighbours."""
+		against its neighbours.
+
+		**Quarantine is read first, and its identifiers count as accounted for.**
+		That ordering is the whole point of reading it: a half-terminated artifact
+		set is invisible from the VM list by construction, so without it the VM
+		Atlas has a row for would fall out the bottom of this method as ordinary
+		`absent` drift — indistinguishable from a VM that was cleanly deleted, and
+		the one reading that invites an operator to re-create or re-start it."""
 		rows = self._atlas_rows()
-		drift: list[dict] = []
-		observed_uuids = set()
+		quarantine = _quarantine_records(export)
+		quarantined = {record["identifier"] for record in quarantine}
+		drift = [_quarantine_drift(rows.get(record["identifier"]), record) for record in quarantine]
+		accounted_for = set(quarantined)
 		for observed in export.get("virtual_machines") or []:
 			uuid = observed.get("uuid")
-			if not uuid:
+			if not uuid or uuid in quarantined:
 				continue
-			observed_uuids.add(uuid)
+			accounted_for.add(uuid)
 			drift.extend(self._absorb(rows.get(uuid), observed))
-		drift.extend(_absent_drift(rows, observed_uuids))
+		drift.extend(_absent_drift(rows, accounted_for))
 		return drift
 
 	def _absorb(self, row: dict | None, observed: dict) -> list[dict]:
-		"""One exported VM against its row, if it has one."""
+		"""One exported VM against its row, if it has one. Never a quarantined
+		one — the caller has already taken those out."""
 		uuid = observed["uuid"]
 		if row is None:
 			# The host runs a VM this host's Atlas rows do not account for.
 			# Recorded, never adopted: enrolment is Atlas's (spec/33 §1).
 			return [_drift(uuid, "unenrolled", None, _observed_status(observed))]
-		if observed.get("quarantined"):
-			# Artifacts Boat could not read as a coherent state — a crash
-			# part-way through a terminate. Reported, never ingested as truth,
-			# because a half-deleted VM ingested as truth is a VM Atlas will try
-			# to start (spec/33 §3.4).
-			return [_drift(uuid, "quarantined", row["status"], observed.get("quarantine_reason") or "")]
 		self._write_observation(uuid, observed)
 		return _row_drift(row, observed)
 
@@ -423,13 +436,82 @@ def _row_drift(row: dict, observed: dict) -> list[dict]:
 	return drift
 
 
-def _absent_drift(rows: dict[str, dict], observed_uuids: set) -> list[dict]:
-	"""VMs Atlas places on this host that the host did not report."""
+def _absent_drift(rows: dict[str, dict], accounted_for: set) -> list[dict]:
+	"""VMs Atlas places on this host that the host neither reported nor quarantined.
+
+	`accounted_for` is deliberately wider than the exported VM list. A quarantined
+	artifact set is the host saying "this identifier is here and I cannot read it",
+	which is the opposite of absent; reporting it twice — once quarantined, once
+	missing — would leave the operator acting on whichever they read second."""
 	return [
 		_drift(uuid, "absent", row["status"], None)
 		for uuid, row in rows.items()
-		if uuid not in observed_uuids and row["status"] in PLACED_STATUSES
+		if uuid not in accounted_for and row["status"] in PLACED_STATUSES
 	]
+
+
+def _quarantine_records(export: dict) -> list[dict]:
+	"""Every artifact set this host holds that Boat could not read as a coherent
+	VM, as `{identifier, reason}` (spec/33 §3.4).
+
+	Read from the export's **top-level `quarantine` array**, which is where Boat
+	puts them. It has to be a top-level array rather than a per-VM flag, because a
+	quarantined artifact set is not in the VM list at all — a half-terminated VM is
+	invisible from that list by construction — and a host reporting no VMs and a
+	host reporting no VMs plus three quarantined artifact sets must not be the same
+	document.
+
+	`identifier`, not `uuid`: it is usually a VM UUID, but a stranded namespace or
+	address keeps only its own name, and inventing a UUID for it would record a
+	guess as a fact — which is the thing quarantine exists to refuse. One with no
+	identifier at all cannot be named to an operator or matched to a row, so it is
+	dropped here; the archived document still carries it verbatim.
+
+	The per-VM `quarantined` flag is folded into the same set. The contract no
+	longer declares it — `api/openapi.yaml` now lists `quarantined` /
+	`quarantine_reason` among the fields deliberately absent from `VirtualMachine`,
+	on the grounds that the host scan keeps the two sets disjoint by construction —
+	but it was in the shipped schema until that change, and a Boat fleet runs mixed
+	versions by design (§5 rolls a version canary-first and rolls a failed host back
+	to N-1). An Atlas that ignored a host still sending it would write an observed
+	status for a half-deleted VM, and a half-deleted VM ingested as truth is a VM
+	Atlas will try to start. Reading both channels costs one loop; it stops finding
+	anything on its own the day no host sends it. The array wins a tie: it is the
+	channel that can name an artifact set with no UUID, and the one with the
+	evidence."""
+	records: dict[str, str] = {}
+	for record in export.get("quarantine") or []:
+		records.setdefault((record.get("identifier") or "").strip(), record.get("reason") or "")
+	for observed in export.get("virtual_machines") or []:
+		if observed.get("quarantined"):
+			records.setdefault((observed.get("uuid") or "").strip(), observed.get("quarantine_reason") or "")
+	records.pop("", None)
+	return [{"identifier": identifier, "reason": reason} for identifier, reason in records.items()]
+
+
+def _quarantine_drift(row: dict | None, record: dict) -> dict:
+	"""One quarantined artifact set, stated in the drift vocabulary.
+
+	`desired` is what Atlas believes that identifier is (None when Atlas has no row
+	for it — the quarantine analogue of `unenrolled`), `observed` is Boat's
+	one-sentence reason. Drift is reused rather than given a second channel because
+	it is already the mirror's word for "the host and the DB disagree", and because
+	it lands quarantine on the `Host State Snapshot` row and in its `drift_count`
+	for free: an operator diffing one epoch against its neighbours finds the
+	artifact set in the same place as every other disagreement, with the evidence
+	still in the archived document beside it."""
+	return _drift(record["identifier"], "quarantined", row["status"] if row else None, record["reason"])
+
+
+def _quarantined_identifiers(export: dict) -> str:
+	"""The quarantined artifact sets for the `Server` row, comma-separated.
+
+	Denormalized for the same reason `observed_units_down` is — it is read per host
+	on a health sweep, and the detail stays in the archived document — and NOT as a
+	placement input. Quarantine is unresolved leftovers on a host Atlas can see
+	perfectly well; it says nothing about the host's capacity, and draining a host
+	over one stale LV would be a policy Atlas invented for itself."""
+	return ", ".join(record["identifier"] for record in _quarantine_records(export))
 
 
 def _drift(uuid: str, kind: str, desired: str | None, observed: str | None) -> dict:

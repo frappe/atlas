@@ -41,6 +41,7 @@ MIRROR_FIELDS = (
 	"mirror_status",
 	"mirror_error",
 	"observed_units_down",
+	"observed_quarantined",
 	"vcpus_total",
 	"memory_megabytes_total",
 	"pool_disk_gigabytes_total",
@@ -77,6 +78,19 @@ def _observed(uuid: str, status: str = "Running", **overrides) -> dict:
 	return document
 
 
+def _quarantine(identifier: str, reason: str = "half-terminated", **overrides) -> dict:
+	"""A Quarantine document shaped like `api/openapi.yaml`'s schema. `identifier`,
+	not `uuid`: a stranded namespace or address keeps only its own name."""
+	record = {
+		"identifier": identifier,
+		"reason": reason,
+		"evidence": ["unit is active", "no network namespace"],
+		"seen_at": "2026-07-27T10:00:00Z",
+	}
+	record.update(overrides)
+	return record
+
+
 def _export(epoch: int = 5, virtual_machines: list | None = None, **overrides) -> dict:
 	export = {
 		"observed_epoch": epoch,
@@ -103,7 +117,13 @@ class _MirrorTestCase(IntegrationTestCase):
 		frappe.db.set_value(
 			"Server",
 			self.server.name,
-			{"boat_enabled": 1, "observed_epoch": 0, "mirror_status": "", "mirror_error": ""},
+			{
+				"boat_enabled": 1,
+				"observed_epoch": 0,
+				"mirror_status": "",
+				"mirror_error": "",
+				"observed_quarantined": "",
+			},
 			update_modified=False,
 		)
 		self.virtual_machine = fixtures.make_virtual_machine(self.server.name, self.image.name)
@@ -417,26 +437,119 @@ class TestDriftIsSurfacedNotCorrected(_MirrorTestCase):
 		self.assertEqual([row["kind"] for row in drift], ["unenrolled"])
 		self.assertFalse(frappe.db.exists("Virtual Machine", "11111111-2222-3333-4444-555555555555"))
 
-	def test_a_quarantined_vm_is_reported_and_never_ingested_as_truth(self) -> None:
-		observed = _observed(
-			self.virtual_machine.name,
-			"Stopped",
-			quarantined=True,
-			quarantine_reason="rootfs LV gone but the unit file remains",
-		)
-		drift = self._drift(_export(virtual_machines=[observed]))
-
-		self.assertEqual([row["kind"] for row in drift], ["quarantined"])
-		self.assertIn("rootfs LV gone", drift[0]["observed"])
-		# A half-deleted VM ingested as truth is a VM Atlas will try to start.
-		self.assertFalse(self._virtual_machine_value("observed_status"))
-		self.assertEqual(self._virtual_machine_value("status"), "Running")
-
 	def test_an_unprovisioned_vm_is_not_reported_missing(self) -> None:
 		self._set_status("Pending")
 		drift = self._drift(_export(virtual_machines=[]))
 
 		self.assertEqual(drift, [])
+
+
+class TestQuarantineIsReportedNeverIngested(_MirrorTestCase):
+	"""§3.4: artifact sets on the host that Boat could not read as a coherent VM —
+	a crash part-way through a terminate, an LV with no VM directory, a unit with
+	no `network.env`.
+
+	Boat reports them in the export's own **top-level `quarantine` array**, and it
+	has to be top-level: a quarantined artifact set is not in the VM list at all —
+	a half-terminated VM is invisible from that list by construction — so without
+	the array, a host reporting no VMs and a host reporting no VMs plus three
+	quarantined artifact sets would be the same document."""
+
+	def _drift(self, export: dict) -> list[dict]:
+		return self._sync(export)["drift"]
+
+	def test_the_top_level_array_is_read_and_reported_as_drift(self) -> None:
+		drift = self._drift(
+			_export(quarantine=[_quarantine(self.virtual_machine.name, "rootfs LV gone, unit remains")])
+		)
+
+		self.assertEqual([row["kind"] for row in drift], ["quarantined"])
+		self.assertEqual(drift[0]["virtual_machine"], self.virtual_machine.name)
+		self.assertEqual(drift[0]["desired"], "Running")
+		self.assertIn("rootfs LV gone", drift[0]["observed"])
+		# Riding the drift list is what puts it on the snapshot row for free, where
+		# an operator diffs one epoch against its neighbours.
+		self.assertEqual(self._snapshots()[0]["drift_count"], 1)
+
+	def test_it_is_never_ingested_as_an_observation(self) -> None:
+		self._sync(_export(quarantine=[_quarantine(self.virtual_machine.name)]))
+
+		# A half-deleted VM ingested as truth is a VM Atlas will try to start —
+		# a guest booted onto a disk the controller already released.
+		self.assertFalse(self._virtual_machine_value("observed_status"))
+		self.assertEqual(self._virtual_machine_value("status"), "Running")
+
+	def test_a_quarantined_vm_is_not_reported_merely_absent(self) -> None:
+		"""The defect this class exists for. The VM is missing from the export's VM
+		list by construction, so with the array unread it arrived as ordinary
+		`absent` drift — indistinguishable from a VM that was cleanly deleted, which
+		is the reading under which an operator re-creates or re-starts it."""
+		drift = self._drift(_export(virtual_machines=[], quarantine=[_quarantine(self.virtual_machine.name)]))
+
+		self.assertEqual([row["kind"] for row in drift], ["quarantined"])
+
+	def test_an_artifact_set_with_no_vm_row_is_reported_too(self) -> None:
+		"""The identifier need not be a UUID: a stranded namespace keeps only its own
+		name, and inventing a UUID for it would record a guess as a fact — which is
+		what quarantine exists to refuse."""
+		drift = self._drift(
+			_export(
+				virtual_machines=[_observed(self.virtual_machine.name)],
+				quarantine=[_quarantine("atlas-ns-orphan", "namespace with no VM directory")],
+			)
+		)
+
+		self.assertEqual([row["kind"] for row in drift], ["quarantined"])
+		self.assertEqual(drift[0]["virtual_machine"], "atlas-ns-orphan")
+		self.assertIsNone(drift[0]["desired"])
+		# The healthy VM beside it is absorbed exactly as before.
+		self.assertEqual(self._virtual_machine_value("observed_status"), "Running")
+
+	def test_the_identifiers_land_on_the_server_row(self) -> None:
+		self._sync(_export(quarantine=[_quarantine("orphan-a"), _quarantine("orphan-b")]))
+
+		self.assertEqual(self._server_value("observed_quarantined"), "orphan-a, orphan-b")
+
+	def test_an_export_with_no_quarantine_clears_the_row(self) -> None:
+		"""Quarantine is the one part of the export whose ABSENCE is a claim: Boat
+		omits the array when there is nothing to report. Read like a host fact —
+		where a missing value leaves the last one standing — a host would stay
+		flagged forever for artifact sets an operator had already cleaned up."""
+		self._sync(_export(epoch=1, quarantine=[_quarantine("orphan-a")]))
+		self._sync(_export(epoch=2))
+
+		self.assertEqual(self._server_value("observed_quarantined"), "")
+
+	def test_a_host_with_quarantine_is_not_a_host_with_nothing(self) -> None:
+		healthy = [_observed(self.virtual_machine.name)]
+		quiet = self._sync(_export(epoch=1, virtual_machines=healthy))
+		messy = self._sync(_export(epoch=2, virtual_machines=healthy, quarantine=[_quarantine("orphan-a")]))
+
+		self.assertEqual(quiet["drift"], [])
+		self.assertEqual([row["kind"] for row in messy["drift"]], ["quarantined"])
+
+	def test_the_per_vm_flag_is_honoured_as_well(self) -> None:
+		"""The contract has since dropped `quarantined` from `VirtualMachine`, but it
+		was in the shipped schema and a Boat fleet runs mixed versions by design
+		(spec/33 §5 canaries a version and rolls a failed host back to N-1). An Atlas
+		that ignored a host still sending it would write an observed status for a
+		half-deleted VM, so both channels feed one set."""
+		drift = self._drift(
+			_export(
+				virtual_machines=[
+					_observed(
+						self.virtual_machine.name,
+						"Stopped",
+						quarantined=True,
+						quarantine_reason="unit is active with no namespace",
+					)
+				]
+			)
+		)
+
+		self.assertEqual([row["kind"] for row in drift], ["quarantined"])
+		self.assertFalse(self._virtual_machine_value("observed_status"))
+		self.assertEqual(self._server_value("observed_quarantined"), self.virtual_machine.name)
 
 
 class TestTheSweepIsWhatMakesTheMirrorLive(_MirrorTestCase):
