@@ -15,6 +15,7 @@ from frappe.tests import IntegrationTestCase
 from atlas.atlas import placement
 from atlas.atlas.placement import (
 	ConsolidationInProgressError,
+	HostNotVisibleError,
 	NoCapacityError,
 	default_server,
 	plan_consolidation,
@@ -538,7 +539,13 @@ class TestPlacement(IntegrationTestCase):
 
 		self.assertEqual(vm.server, host.name)
 
-	def test_a_fleet_atlas_cannot_see_reads_full_never_empty(self) -> None:
+	def test_a_fleet_atlas_cannot_see_is_blind_not_full(self) -> None:
+		"""A blind region and a full one call for opposite responses, and Central
+		acts on the difference: `NoCapacityError` is its signal to queue, retry and
+		alert on capacity, so reporting it here sends Central to retry — repeatedly —
+		against a region that has room and will keep failing identically until the
+		mirror recovers. The remedy is an operator looking at the control plane, and
+		the exception type is the only place that can say so."""
 		from atlas.atlas.api.server_capacity import capacity_for_server
 
 		host = self._measured_server("atlas-placement-unseen", 41, memory_megabytes_total=4096)
@@ -546,8 +553,9 @@ class TestPlacement(IntegrationTestCase):
 		self._unseen(host)
 		frappe.set_user(_acting_user())
 
-		with self.assertRaises(NoCapacityError):
+		with self.assertRaises(HostNotVisibleError):
 			self._new_machine(memory_megabytes=512)
+		self.assertFalse(issubclass(HostNotVisibleError, NoCapacityError))
 
 		# Nothing else moved: the host is not drained, its VM is not evicted, and its
 		# usage is still counted. A gate that also emptied the accounting would read
@@ -564,7 +572,7 @@ class TestPlacement(IntegrationTestCase):
 		host = self._measured_server("atlas-placement-unseen", 41, memory_megabytes_total=4096)
 		self._unseen(host)
 		frappe.set_user(_acting_user())
-		with self.assertRaises(NoCapacityError):
+		with self.assertRaises(HostNotVisibleError):
 			self._new_machine(memory_megabytes=512)
 
 		frappe.db.set_value("Server", host.name, "mirror_status", "Fresh", update_modified=False)
@@ -591,6 +599,78 @@ class TestPlacement(IntegrationTestCase):
 		self._unseen(unseen)
 
 		self.assertEqual(placement.largest_vm()["memory_megabytes"], 1024)
+
+	# --- the arrivals that pin their own host, and so cannot choose ---
+	#
+	# `placement_candidates`'s docstring and spec/33 §9 both say every placement
+	# path is built from it. Two were not: a clone lands where its snapshot's bytes
+	# are, and a migration lands where the operator said. Neither could choose, so
+	# neither had any way to decline — and one of them is the path every self-serve
+	# Site VM takes.
+
+	def _snapshot_on(self, server):
+		"""An Available cold snapshot of a VM on `server` — the golden a Site clones."""
+		source = self._place_vm(server, 512, status="Stopped")
+		return frappe.get_doc(
+			{
+				"doctype": "Virtual Machine Snapshot",
+				"title": "golden",
+				"virtual_machine": source.name,
+				"server": server.name,
+				"status": "Available",
+				"disk_gigabytes": 4,
+				"rootfs_path": f"/dev/atlas/atlas-snap-{source.name}",
+			}
+		).insert(ignore_permissions=True)
+
+	def test_a_clone_refuses_a_host_atlas_cannot_see(self) -> None:
+		"""The busiest arrival in the app: `site.py` → `default_bench_snapshot()` →
+		`clone_to_new_vm`. A clone's host is decided by where the LVM thin snapshot
+		lives, so it cannot pick another one — but it could keep taking every new
+		site onto a host Atlas had lost sight of, and it did."""
+		host = self._measured_server("atlas-placement-clone-host", 44, memory_megabytes_total=8192)
+		snapshot = self._snapshot_on(host)
+		self._unseen(host)
+
+		with self.assertRaises(HostNotVisibleError):
+			snapshot.clone_to_new_vm(title="site-vm", ssh_public_key="ssh-ed25519 AAAA", vcpus=1)
+
+	def test_a_clone_onto_a_visible_host_is_unaffected(self) -> None:
+		host = self._measured_server("atlas-placement-clone-host", 44, memory_megabytes_total=8192)
+		snapshot = self._snapshot_on(host)
+
+		clone = snapshot.clone_to_new_vm(
+			title="site-vm", ssh_public_key="ssh-ed25519 AAAA", vcpus=1, memory_megabytes=512
+		)
+
+		self.assertEqual(frappe.db.get_value("Virtual Machine", clone, "server"), host.name)
+
+	def test_a_migration_refuses_a_target_atlas_cannot_see(self) -> None:
+		"""A live VM, stopped for the cutover, landing on a host whose daemon Atlas
+		cannot reach. `Active` was the only gate — and Active is an operator's
+		judgement about the host, made once, not a statement that Atlas can see it
+		now."""
+		from atlas.atlas.migration import preflight_checks
+
+		source = self._measured_server("atlas-placement-migrate-source", 45, memory_megabytes_total=8192)
+		target = self._measured_server("atlas-placement-migrate-target", 46, memory_megabytes_total=8192)
+		vm = self._place_vm(source, 512, status="Running")
+		self._unseen(target)
+
+		with self.assertRaises(HostNotVisibleError):
+			preflight_checks(frappe.get_doc("Virtual Machine", vm.name), target.name, False)
+
+	def test_a_migration_off_an_unseen_host_is_still_allowed(self) -> None:
+		"""Only the target is gated. Moving a VM OFF a host Atlas has lost sight of
+		is the migration an operator most wants to be able to run."""
+		from atlas.atlas.migration import preflight_checks
+
+		source = self._measured_server("atlas-placement-migrate-source", 45, memory_megabytes_total=8192)
+		target = self._measured_server("atlas-placement-migrate-target", 46, memory_megabytes_total=8192)
+		vm = self._place_vm(source, 512, status="Running")
+		self._unseen(source)
+
+		preflight_checks(frappe.get_doc("Virtual Machine", vm.name), target.name, False)
 
 	def test_consolidation_never_moves_a_vm_onto_a_host_it_cannot_see(self) -> None:
 		# Host B is both the only place host A's small VM could go and the other

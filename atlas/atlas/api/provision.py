@@ -162,7 +162,7 @@ def capacity() -> dict:
 	(capacity can change between this call and the create). Runs with the Central
 	token, like create_vm — operator orchestration, not desk RBAC.
 	"""
-	from atlas.atlas.placement import NoCapacityError, default_server
+	from atlas.atlas.placement import HostNotVisibleError, NoCapacityError, default_server
 	from atlas.atlas.placement import largest_vm as _largest_vm
 	from atlas.atlas.sizes import SIZE_PRESETS
 
@@ -176,7 +176,10 @@ def capacity() -> dict:
 			float(smallest["disk_gigabytes"]),
 		)
 		available = True
-	except NoCapacityError:
+	except (NoCapacityError, HostNotVisibleError):
+		# Both refusals answer this question the same way — nothing can be placed
+		# right now — even though Central acts on them very differently at create
+		# time. This is a read: it must report, never raise.
 		available = False
 
 	shape = _largest_vm()

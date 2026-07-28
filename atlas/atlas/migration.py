@@ -221,6 +221,7 @@ def preflight_checks(vm, target_server: str, release_reserved_ip: bool) -> None:
 	from atlas.atlas.doctype.virtual_machine_migration.virtual_machine_migration import (
 		active_migration_for,
 	)
+	from atlas.atlas.placement import assert_visible
 
 	if active_migration_for(vm.name):
 		frappe.throw("This VM already has an in-flight migration")
@@ -239,6 +240,13 @@ def preflight_checks(vm, target_server: str, release_reserved_ip: bool) -> None:
 		frappe.throw(f"Target server {target_server} does not exist")
 	if target.status != "Active":
 		frappe.throw(f"Target server {target_server} is not Active (status is {target.status})")
+	# A migration target is an ARRIVAL, and every arrival goes through the placement
+	# gate (spec/33 §9). Active alone let a LIVE VM be moved onto a host Atlas had
+	# lost sight of — the one arrival where "it will fail loudly on the box" is not
+	# an acceptable answer, because the VM is already stopped by then. The SOURCE is
+	# deliberately not gated: moving a VM OFF an unseen host is the migration an
+	# operator most wants to be able to run.
+	assert_visible(target_server)
 
 	# Same provider: cross-provider migration is out of scope. The Server's own
 	# frozen `provider_type` is the vendor (a real column, not a derived property).

@@ -37,6 +37,56 @@ class NoCapacityError(frappe.ValidationError):
 UNSEEN_MIRROR_STATUS = "Unknown"
 
 
+class HostNotVisibleError(frappe.ValidationError):
+	"""Atlas has lost sight of the host(s) this arrival would have landed on
+	(spec/33 §9) — the fault is in the control plane, not in the region's capacity.
+
+	Deliberately **not** a `NoCapacityError`. That type exists so Central can tell
+	"the region is full — queue, retry, alert the operator" apart from a bad
+	request, and a region whose hosts Atlas cannot currently see is neither: told it
+	is full, Central retries a region that has room, and every retry fails the same
+	way for the same reason until the mirror comes back. Same ValidationError
+	message shape and HTTP status; only the type carries the different remedy."""
+
+
+def unseen_hosts() -> list[str]:
+	"""The Active hosts `placement_candidates` left out because Atlas has lost sight
+	of them.
+
+	The failure-path half of the same read: when the candidate set comes back empty,
+	this is what says whether the region is full or blind."""
+	return frappe.get_all(
+		"Server",
+		filters={"status": "Active", "mirror_status": UNSEEN_MIRROR_STATUS},
+		pluck="name",
+		ignore_permissions=True,
+	)
+
+
+def assert_visible(server: str) -> None:
+	"""Refuse to place a NEW virtual machine on a host Atlas has lost sight of.
+
+	`default_server` applies the gate by CHOOSING among `placement_candidates()`.
+	The arrival paths that cannot choose apply it here instead: a clone lands where
+	its snapshot's bytes are (`Virtual Machine Snapshot.clone_to_new_vm` — the path
+	every self-serve Site VM takes), and a migration lands where the operator said
+	(`migration.preflight_checks`). Neither had any way to decline, so both kept
+	filling a host whose mirror read `Unknown` — which made both
+	`placement_candidates`'s own docstring and spec/33 §9's "every placement path is
+	built from it" false for the busiest path in the app.
+
+	Only the mirror gate, deliberately: whether the host is Active, holds the bytes,
+	or has room are questions those callers already answer their own way."""
+	if frappe.db.get_value("Server", server, "mirror_status") != UNSEEN_MIRROR_STATUS:
+		return
+	frappe.throw(
+		_(
+			"Atlas has lost sight of server {0}; it is not taking new machines until its mirror is fresh."
+		).format(server),
+		HostNotVisibleError,
+	)
+
+
 def placement_candidates() -> list[str]:
 	"""The hosts a NEW virtual machine may land on, in creation order.
 
@@ -63,6 +113,11 @@ def placement_candidates() -> list[str]:
 	export flips `mirror_status` back to `Fresh` (`boat_mirror.HostMirror._stamp_host`),
 	so a recovered host re-enters the candidate set on the next sweep tick —
 	bounded by the sweep interval, not by anyone noticing.
+
+	**Every arrival goes through this gate, but not every arrival goes through this
+	function.** A clone and a migration have their host pinned before anyone asks
+	where it should go, so they apply the same gate through `assert_visible` and
+	refuse rather than choose.
 
 	Filtered in Python rather than in the query on purpose: `mirror_status` is NULL
 	on a host that has never been mirrored, and SQL's `!= 'Unknown'` drops NULL
@@ -421,7 +476,7 @@ def default_server(
 	if candidate_servers is not None:
 		servers = [server for server in servers if server in candidate_servers]
 	if not servers:
-		frappe.throw(_("No capacity available — contact your operator."), NoCapacityError)
+		_no_candidates(candidate_servers)
 	strategy = _strategy()
 	needs = {"cpu": required_vcpus, "memory": required_memory_mb, "disk": required_disk_gb}
 	# The rank key is (unmeasured axes, strategy score, creation index); min wins. The
@@ -445,6 +500,24 @@ def default_server(
 	# coming") when a plan exists or is already running, and NoCapacityError only when
 	# the region is genuinely full with nothing movable.
 	_raise_no_capacity(needs)
+
+
+def _no_candidates(candidate_servers: set[str] | None) -> NoReturn:
+	"""Nothing to choose from. Say WHICH kind of nothing.
+
+	An empty candidate set has two causes that call for opposite responses, and
+	Central acts on the difference (spec/16): no Active host at all is the region's
+	shape and `NoCapacityError` is the right word for it, but a fleet whose hosts
+	have all gone `Unknown` is a control-plane fault, and reported as capacity it
+	sends Central to retry — and queue, and alert — against a region that is not
+	full and will keep failing identically until the mirror recovers."""
+	unseen = [name for name in unseen_hosts() if candidate_servers is None or name in candidate_servers]
+	if unseen:
+		frappe.throw(
+			_("Atlas has lost sight of every server that could take this machine — contact your operator."),
+			HostNotVisibleError,
+		)
+	frappe.throw(_("No capacity available — contact your operator."), NoCapacityError)
 
 
 # --- Consolidation: free a host by migrating a few small VMs (spec/28 case 3) ---
