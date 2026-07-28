@@ -92,9 +92,30 @@ on the `Server`:
   totals + live `pool_data_percent`), without a re-bootstrap. `capacity_reported_at`
   records the measurement.
 
+## The candidate set (`placement.py::placement_candidates`)
+
+Before anything is scored, a host has to be admitted. Two conditions, both of them
+exclusions from *new arrivals* only:
+
+- `status == "Active"` — the operator's vouch. `Draining`, `Broken` and the rest are
+  operator decisions recorded on the row.
+- `mirror_status != "Unknown"` — the host's Boat answered the last export sweep, so
+  Atlas can still see it ([33-boat.md § 9](./33-boat.md)). An `Unknown` host is one
+  Atlas has lost sight of, not one that is dead: it is still running every VM it
+  holds, so it is skipped for arrivals and nothing else — no eviction, no write to
+  `status`, its VMs still counted by `capacity_for_server`, still in
+  `cluster_capacity`, and a VM already on it may still resize. It re-enters on the
+  next successful export with no operator action. An **empty** `mirror_status` does
+  not exclude: that is a host never mirrored — every SSH host, and a `boat_enabled`
+  host the five-minute sweep has not reached yet — and "not looked at" is not "lost".
+
+`default_server`, the consolidation planner (`_fleet_snapshot`) and `largest_vm` all
+read the same set, so the host Central is told about, the host an arrival lands on
+and the host a defragmentation move targets can never disagree.
+
 ## The scorer (`placement.py::default_server` → `packing.rank_key`)
 
-For each Active server, filter to those where the VM fits, then score:
+For each candidate server, filter to those where the VM fits, then score:
 
 ```
 reserve = server.placement_headroom_percent if > 0

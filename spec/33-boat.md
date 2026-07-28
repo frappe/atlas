@@ -12,11 +12,13 @@
 >
 > The chapter carries both the design and what of it exists. **Every claim not
 > yet true of the code is marked `NOT BUILT` where it is made, naming the work
-> order that owns it**; everything unmarked is in the code. The four largest gaps
-> are the fence *comparison* (§16.0), CAS on contended reservations (§11.2),
-> write-ahead journalling (§11.5) and Firecracker re-attach (§3.3). The last two
-> are the dangerous shape: the packages exist, are tested, and have **no caller**,
-> so they read as finished from the file list and enforce nothing.
+> order that owns it**; everything unmarked is in the code. The two largest gaps
+> are the fence *comparison* (§16.0) and CAS on contended reservations (§11.2).
+> Write-ahead journalling (§11.5) and Firecracker re-attach (§3.3) were a third
+> and fourth until recently, and they had the shape worth naming: packages that
+> existed, were tested, and had **no caller at all**, so they read as finished
+> from the file list while enforcing nothing. Both have callers now. A claim in
+> this chapter is only ever worth the call site that makes it true.
 
 ## The split
 
@@ -198,13 +200,17 @@ verb (§11.2) does not re-check against the host.
 
 The observed status vocabulary is Running / Stopped / Paused / Sleeping /
 Failed, plus **Unknown** when Boat cannot read the host. Boat derives it from the
-unit's `ActiveState`/`SubState` and the on-disk markers — **never** from a
-command having succeeded. **Paused is in the contract's enum and is not yet
-produced**: a paused guest's unit is still active, so `statusOf` reads it as
-Running until the pause verb records the Firecracker API's own state. Atlas's
-`observed_status` Select carries no Paused for the same reason, and a Running
-observation is therefore accepted against a DB status of either Running or
-Paused.
+unit's `ActiveState`/`SubState`, the on-disk markers, and — for a VM the unit
+calls active — the guest's own state read back from the Firecracker API socket.
+**Never** from a command having succeeded.
+
+That last source is what produces Paused, and it was missing until recently. A
+paused guest's unit is still active, so a status derived from systemd alone read
+it as Running: pause frees CPU and not memory, so there was no other symptom, and
+a paused VM was indistinguishable from a running one everywhere in Atlas.
+**Atlas's `observed_status` Select still carries no Paused**, so a Running
+observation is accepted against a DB status of either Running or Paused —
+`NOT BUILT`, and it belongs with WO-3.
 
 **What Boat reports today.** The observed rows above are the contract; the export
 carries a subset. Live: `observed_status`, the unit's `ActiveState`/`SubState`,
@@ -409,16 +415,30 @@ Three properties are load-bearing:
 
 **Atlas lands the export in two places, deliberately both:**
 
-- **Hot fields denormalized onto `Server`** — capacity, unit liveness,
-  `observed_boat_version` — because placement queries them on every provision and
-  cannot afford a document parse. This reuses the existing capacity fields
-  (`vcpus_total`, `memory_megabytes_total`, `pool_disk_gigabytes_total`) that
+- **Hot fields denormalized onto `Server`** — capacity, unit liveness, the
+  quarantine set, `observed_boat_version` — because placement queries them on every
+  provision and cannot afford a document parse. This reuses the existing capacity
+  fields (`vcpus_total`, `memory_megabytes_total`, `pool_disk_gigabytes_total`) that
   **Refresh Capacity** already stamps ([28-placement.md](./28-placement.md)).
+  `observed_quarantined` carries the identifiers from the top-level `quarantine`
+  array (§3.4). Quarantine is the one part of the document whose **absence is a
+  claim**: Boat omits the array when there is nothing to report, so absent means
+  *none* and the field is cleared — the opposite of a host fact or the unit/LV
+  inventories, where absent means "not looked at" and the last value stands. It is
+  reported, never a placement input: leftovers on a host Atlas can see perfectly
+  well say nothing about that host's capacity.
 - **The full document archived as a `Host State Snapshot` row**, keyed by host
   and observed-epoch, for debugging, mirror rebuild and drift forensics.
   Retention is bounded per host — 20 epochs — so the mirror stays obviously
   disposable. Each row also carries the drift list computed at ingest, so an
-  operator diffs one epoch against its neighbours without re-deriving it.
+  operator diffs one epoch against its neighbours without re-deriving it. Each
+  quarantined artifact set is one `quarantined` drift row (`desired` = what Atlas
+  believes that identifier is, or absent when Atlas has no row for it; `observed` =
+  Boat's reason) and it **suppresses the `absent` row** the same identifier would
+  otherwise produce. That suppression is the substance of it: a half-terminated VM
+  is invisible from the VM list by construction, so reported as merely absent it is
+  indistinguishable from a VM that was cleanly deleted — and that is the reading
+  under which an operator re-creates or re-starts it.
 
 An ingest at an epoch the mirror already holds is a no-op, and so is an older
 one: the epoch is monotonic per host, so a re-poll cannot duplicate a snapshot
@@ -490,11 +510,15 @@ Buckets, as built: `virtual-machines` (by UUID), `operations` (by `op_id`),
 per scan rather than a journal — a resolved quarantine must stop being reported),
 and `meta`, which today holds the observed epoch and nothing else.
 
+`decisions` holds the write-ahead records of §11.5, and `meta` also carries the
+incarnation counter that tells a crashed operation from a slow one. Both live
+here rather than in a file of their own: a decision, and the operation it
+justifies, have to commit together or the crash window they exist to close opens
+between them.
+
 *NOT BUILT:* `alloc/ipv6` and `held/ipv6` (forward leases, §11.4 — WO-6) and
 `progress/` (§11.6), which has no writer because no long operation has been
-ported yet. A **second bbolt file** sits beside the store, `journal.db`, holding
-the write-ahead decisions of §11.5; that split is a defect, not a design — see
-§11.5.
+ported yet.
 
 **On-disk artifacts — `network.env`, LV names, markers — are the ground truth
 Boat re-derives from on adoption; bbolt is the fast transactional index, not a
@@ -517,12 +541,15 @@ rest to the next pass, so a pass killed half-way leaves nothing to unwind. A VM
 that cannot converge backs off per VM, doubling to a five-minute cap, so a broken
 image costs the host one attempt an interval rather than a core.
 
-***Checkpointed* steps are NOT BUILT.** No ported verb writes a checkpoint (§11.5),
-so a verb interrupted part-way is not re-entered where it stopped: the VM is
-converged by the reconciler's ordinary forward pass instead. That is safe for
-every verb ported so far, all of which are idempotent from the top. It stops
-being safe for the first verb that makes a non-idempotent choice — an address, an
-LV, a host slot — which is precisely the boundary §11.5 draws.
+***Re-entry* at a checkpoint is NOT BUILT.** A verb interrupted part-way is not
+resumed where it stopped: the VM is converged by the reconciler's ordinary
+forward pass, and the interrupted operation's record is closed as a failure
+naming the restart. That is safe for eight of the nine verbs, which are
+idempotent from the top; `rebuild` is the exception and writes its source down
+ahead of the destructive step (§11.5), so the decision survives even though the
+re-entry does not. It stops being merely safe-enough at the first verb that
+allocates — an address, an LV, a host slot — which is the boundary §11.5 draws
+and which arrives with provision and migration.
 
 ### 3.3 Crash recovery — re-attach, do not restart
 
@@ -546,17 +573,32 @@ startup** — the VMs are not its children, its unit is deliberately not ordered
 `Before=firecracker-vm@.service`, and a restart under live guests leaves every one
 of them running. That is the guarantee auto-update needs, and it holds today.
 
-**NOT BUILT: the re-attach itself, and the journal replay.** `internal/fcattach`
-finds a live Firecracker by *talking to* its per-UUID API socket — the only honest
-liveness test, since a socket inode outlives the process that bound it — and it
-**has no caller**. So no observed record carries a Firecracker PID or an attached
-socket, and nothing can drive a running guest through its API across a daemon
-restart; observation after a restart is systemd's `ActiveState` plus the on-disk
-markers alone. Likewise the reconciler asks the journal for unfinished operations
-before its first sweep, but **nothing records a decision** (§11.5), so that list
-is always empty, and an operation a crash left `Running` in the store stays
-`Running` — there is no way to list the operations bucket to find it. Both are
-WO-2 wiring, and **§5's hard gate is not yet satisfied**.
+**Built: the re-attach.** `internal/fcattach` finds a live Firecracker by
+*talking to* its per-UUID API socket — the only honest liveness test, since a
+socket inode outlives the process that bound it — and it now has two callers. The
+adoption scan uses it for its coherence cross-check, and `Observe` uses it to
+confirm a VM systemd calls active really has a Firecracker behind it. The reply
+carries the guest's own state, which is where `Paused` comes from: before this,
+`Observe` could not produce that status at all, so a paused VM exported as
+`Running` and was indistinguishable from a running one everywhere in Atlas.
+
+The probe runs only for the VMs whose status depends on it — an active unit with
+no sleeping marker — so a stopped, failed, sleeping or mid-transition VM costs no
+round trip. **A socket that does not answer yields `Unknown`, never `Stopped`.**
+Nothing asked such a VM to stop and its unit did not fail; a stopped VM, a
+sleeping VM and a VM mid-launch all look identical from the socket, so the
+liveness cross-check must not become a claim the host cannot support.
+
+**NOT BUILT: driving a running guest through its API across a restart.** Boat can
+now say *that* a Firecracker is alive and report its pid; it does not yet hold or
+re-establish an API conversation with one, which is what a pause-across-upgrade or
+a snapshot-across-upgrade would need. **§5's hard gate — a binary swap leaves
+every guest running — is satisfied**, because that gate is about what Boat does
+*not* do on startup, and that has always held.
+
+The journal replay is live: an operation is stamped in flight when it is claimed,
+so a crash between the claim and the terminal record leaves a record the next
+incarnation finds (§11.5).
 
 **Fail closed on an empty fence store.** A Boat that lost bbolt refuses to boot
 any UUID until it re-registers and re-pulls desired state and epochs (§11.1).
@@ -577,11 +619,16 @@ gate**; there is no create, remove, start or stop anywhere in the package, which
 is what makes "a scan never changes the host it is reading" a property rather
 than a convention.
 
-That cross-check is socket *presence*, not liveness. It answers the one question
-coherence needs — a unit reporting active with no socket describes a process that
-is not there — and it is deliberately weaker than the HTTP probe `fcattach`
-performs, which is the test that would prove something is alive behind the socket
-(§3.3, not wired).
+That cross-check is a real liveness probe: the scan asks the socket, rather than
+asking whether the socket exists. The weaker test was there first and was wrong in
+the direction that matters — a Firecracker that segfaulted leaves its socket inode
+behind, and a `stat` is perfectly happy with it, so a unit reporting active over a
+dead process read as coherent. "Nothing answered" is now evidence, and an
+artifact set that shows it is quarantined rather than adopted.
+
+The distinction the scan holds onto: a probe that **cannot be made** fails the
+whole scan, because a partial scan is a lie and this is the lie that matters; a
+probe that **was made and got no answer** is data.
 
 **Ambiguous or partially torn-down artifacts — a crash mid-terminate — go to a
 `quarantine` state requiring confirmation, never into the observed set.** A
@@ -846,15 +893,26 @@ as `{path, content}` pairs — and it rides on the rebuild request, the one verb
 whose input is neither desired state nor a host fact. Boat copies every field
 across as bytes: nothing in the path parses a key, validates an address, or knows
 what a file called `/etc/anything` is for. It injects them into a freshly
-laid-down rootfs with host keys regenerated and the hostname derived from the
-UUID.
+laid-down rootfs with the hostname derived from the UUID and the disk's SSH host
+keys **preserved** — they are the VM's SSH identity, and rotating them on every
+rebuild would break every client's `known_hosts`, which looks exactly like an
+attack. A disk carrying none at all is the one exception, because a keyless sshd
+does not start; that is a self-heal, not a rotation.
 
-Two things are still owed. There is **no provision verb**, so the `ProvisionSpec`
+**Atlas fills the blob.** `BoatClient.rebuild_virtual_machine` sends the source
+and a `GuestIdentity` built from the same `_rebuild_variables` the SSH path
+renders to flags, so a desk-driven rebuild lays down the same guest on either
+transport: the same authorized keys, the same addresses, the same fstab line, and
+`routing_base_url` as one anonymous `extra_env` entry. What the request does
+**not** carry is as deliberate — the disk sizes are desired state, the per-VM uid
+is a host fact, and the host's end of the NAT44 `/30` is host-side networking a
+rebuild does not touch. A Task variable the mapping does not name **raises**
+rather than being dropped, because a rebuild is the one verb where a dropped
+value is invisible until nobody can log in to the VM.
+
+One thing is still owed: there is **no provision verb**, so the `ProvisionSpec`
 above exists only as the rebuild half of itself — provisioning is still an SSH
-Task (§4). And **Atlas does not yet fill the blob**: `BoatClient.rebuild_virtual_machine`
-sends the operation identifier alone, so a rebuild driven from the desk lays down
-a rootfs with no authorized keys and no env files. The seam is right and the
-caller has not caught up.
+Task (§4).
 
 ### 7.3 Accepted constraint — dark and private-only VMs
 
@@ -941,13 +999,22 @@ waking VMs, and the CLI keeps working. `boat_mirror` freezes the mirror and
 flags the host `Unknown` on an unreachable Boat and writes nothing else: it does
 not null a capacity total, touch a VM row, mark anything stopped, or evict. Atlas
 re-`PUT`s intent before every verb and on `assert_desired_state`, and pulls the
-export with `sync_mirror`. *NOT BUILT:* buffering observed transitions across the
-blip (nothing replays what happened while Atlas was away — the export is the only
+export with `sync_mirror`. **Placement reads `mirror_status`**: the candidate set
+is `placement.placement_candidates()` — Active *and* not `Unknown` — and every
+placement path is built from it (`default_server`, and through it
+`default_server_for_image`; the consolidation planner's `_fleet_snapshot`, so an
+unseen host is neither drained nor sent an evictee; and `largest_vm`, so what
+Central is told matches what placement would do). It is an *arrivals* gate and
+nothing more: no eviction, no write to `status`, capacity accounting and
+`cluster_capacity` unchanged, and a resize on a VM already there still allowed.
+Only the literal `Unknown` excludes — an empty `mirror_status` means never
+mirrored, which is every SSH host and a `boat_enabled` host the sweep has not yet
+reached, and "I have not looked" is not "I have lost sight of it". Recovery needs
+no operator: the next successful export writes `Fresh` and the host is a candidate
+again on that tick. *NOT BUILT:* buffering observed transitions across the blip
+(nothing replays what happened while Atlas was away — the export is the only
 catch-up, and it carries current state rather than the transitions) and the
-`/watch` resume. And **placement does not yet read `mirror_status`**: the field is
-written and nothing consults it, so "an Unknown host gets no new arrivals" is
-recorded but not enforced. That is the one bullet above whose failure is
-silent — the mirror looks right and the scheduler ignores it.
+`/watch` resume.
 
 **Split-brain is prevented by the fence epoch (§11.1), not by phase ordering.**
 Ordering is a property of a saga that completes; the fence is a property that
@@ -996,7 +1063,7 @@ inconvenient.
 | 11.2 CAS on contended reservations | **No.** No operation accepts `If-Match`; nothing returns 409 on a moved observed-epoch |
 | 11.3 `desired_power` vs `observed_status` | **Yes**, including the precedence rule, though not in the shape the prose below describes — see the rule |
 | 11.4 forward lease, union reconciliation | **No.** Boat allocates no address; the `held/ipv6` bucket does not exist |
-| 11.5 write-ahead journalling | **No.** The package exists, is tested, and has no caller |
+| 11.5 write-ahead journalling | **Partly.** Every operation is stamped in flight in its claim's own transaction, and rebuild records its source ahead of the destructive step. No verb re-enters at a checkpoint |
 | 11.6 bbolt isolation | **Partly.** The export's short-`View`-then-release is real; the lock-free read and the `progress/` bucket are not |
 
 ### 11.1 The fence epoch
@@ -1129,26 +1196,46 @@ then a retry replays deterministically. Allocation, LV create and operation
 completion commit in one bbolt transaction. Reserved-IP attach is CAS on the
 host's reserved-IP slot.
 
-> **NOT BUILT, in the way that is easiest to miss: the package is there and
-> nothing calls it.** `internal/journal` records a decision durably before it
-> returns, keys it so an operation's own decisions can be read back in order, and
-> tells crashed operations from merely slow ones by stamping each with the
-> **incarnation** of the daemon run that took it — an exact test where a timeout
-> would have been a guess. All of it is tested. **`Record` has no non-test
-> caller.** So the reconciler's startup resume reads an empty list every time, no
-> verb re-enters at a checkpoint (§3.2), and the invariant enforces nothing.
+**Built, in one file.** `internal/store` holds the decisions bucket and the
+incarnation counter; there is no second bbolt file and no `journal.db`.
+`internal/journal` is the reader over it. That merge was forced rather than
+tidy-minded: the in-flight stamp has to be atomic with the claim, and two files
+mean two commits with a crash window between them — the exact gap the invariant
+exists to close.
+
+**Every claimed operation is stamped, not only the ones that decide something.**
+`ClaimOperation` writes the daemon run's incarnation inside the claim's own
+transaction, so there is no window at all, and a replay never re-stamps: an
+operation belongs to the run that began it. `Unfinished` is then exact —
+non-terminal *and* claimed by an earlier incarnation — which distinguishes a
+crashed operation from a merely slow one where a timeout would have guessed. The
+store can list its operations, so one a crash left `Running` is findable.
+
+Resume concludes. An interrupted operation is closed as **Failure** with a
+sentence naming the restart, after the VM is driven forward. Failure because Boat
+does not know whether the verb finished, and inventing a Success is the habit
+this split exists to end; it is the safe direction because every verb is
+idempotent. Without a conclusion the resume queue would never empty and the same
+operations would replay on every boot forever.
+
+**Of the nine verbs, exactly one makes a choice its own retry could not repeat.**
+`rebuild` picks the volume the new root is snapshotted from and then `lvremove`s
+the old root, after which "what was this supposed to become" has no answer left
+on the host; it records that source before it acts. The other eight are
+idempotent by construction — every input is desired state, a host fact, or an
+on-disk artifact laid down at provision. The decisions this invariant was really
+written for (which address, which host slot, which LV) belong to **provision and
+migration**, which are NOT BUILT. Saying so is the point: inventing decisions to
+justify the machinery would have been worse than the gap.
+
+> **NOT BUILT: re-entry at a checkpoint.** `Decisions(id)` is written and
+> readable and nothing consumes it. Worth being blunt about why that is not
+> merely unfinished: an Atlas retry mints a **new Task name**, so a retry cannot
+> reach the previous operation's decisions at all. Until a verb re-enters,
+> `rebuild-source` is forensics with correct write-ahead ordering — the plumbing
+> is proven for WO-4 and WO-6, and the checkpoint semantics are not.
 >
-> Two further gaps, both structural rather than oversights. The journal keeps its
-> **own bbolt file** beside the store, because `internal/store` exposes no
-> decisions bucket and bbolt holds an exclusive lock per file — so "allocation,
-> LV create and operation completion commit in one transaction" is **not
-> achievable** until the decisions bucket moves into the store. The consequence
-> is bounded and is the safe direction: a crash between the two writes leaves a
-> decision recorded for an operation whose outcome was not, and a replay reads
-> the decision and finishes. And the store **cannot list its own operations**, so
-> an operation a crash left `Running` with no decision recorded is invisible to
-> every mechanism here; the reconciler's ordinary forward pass converges the VM,
-> but the record stays non-terminal. Reserved-IP CAS is WO-3 and unbuilt (§11.2).
+> Reserved-IP CAS is WO-3 and unbuilt (§11.2).
 
 **Failure mode.** "Every verb is idempotent, so retry equals re-run"
 ([Taste](../llm/Taste.md), [04-tasks.md](./04-tasks.md)) only holds if the retry
@@ -1321,13 +1408,13 @@ rolls back by clearing its flag.
 | WO | Status | Ships |
 |---|---|---|
 | **WO-0** | **SHIPPED** | Walking skeleton: a `boat` binary that starts, serves the API on the tunnel and the unix socket, persists to bbolt, and starts/stops one real VM driven from Atlas through `BoatClient`. |
-| **WO-1** | **SHIPPED, less re-attach** | Observed state: adoption scan, ~~firecracker re-attach~~, `GET /v1/export`, `/watch` SSE, the `Host State Snapshot` mirror, and the fence store — advisory only, the DB still authoritative. `internal/fcattach` is written and has no caller (§3.3), so the hard gate on WO-5b is **not** satisfied. |
+| **WO-1** | **SHIPPED** | Observed state: adoption scan, firecracker re-attach, `GET /v1/export`, `/watch` SSE, the `Host State Snapshot` mirror, and the fence store — advisory only, the DB still authoritative. `internal/fcattach` now has callers in both the scan and `Observe` (§3.3), so **WO-5b's hard gate is satisfied**: a binary swap leaves every guest running, and Boat can confirm one is alive rather than inferring it from systemd. |
 | **WO-1b** | not started | `boat bootstrap`: a bare host brought to Active by the binary itself, with the armed auto-revert registration handshake (§4). |
-| **WO-2** | **IN FLIGHT** | Full lifecycle and reflexes: every VM verb through Boat, the per-VM reconciler, the journal, and the wake trap resident in Boat; per-VM authority flips to Boat. Landed: all nine lifecycle verbs end to end, the per-VM reconciler and single actor, the resident wake trap, the guest-identity blob on the wire, and the five-minute mirror sweep. Outstanding: the journal has no caller (§11.5), `observed_authority` is never read so authority has not flipped (§1), Atlas does not fill the identity blob on a rebuild (§7.2), and there is no `/watch` consumer (§2.6). |
+| **WO-2** | **IN FLIGHT** | Full lifecycle and reflexes: every VM verb through Boat, the per-VM reconciler, the journal, and the wake trap resident in Boat; per-VM authority flips to Boat. Landed: all nine lifecycle verbs end to end, the per-VM reconciler and single actor, the resident wake trap, the guest-identity blob on the wire, and the five-minute mirror sweep. Outstanding: `observed_authority` is never read so authority has not flipped (§1), no verb re-enters at a checkpoint (§11.5), and there is no `/watch` consumer (§2.6). |
 | **WO-3** | not started | Unit supervision and host-local network apply: the sibling units re-pointed at `boat <sub>`, `local-ownership.json` written by Boat, reserved-IP NAT and gateway forwarding applied under CAS (§11.2, which WO-3 must build). |
 | **WO-4** | not started | Cross-host sagas: migration, warm fan-out and S3 sync driven over Boat RPCs, with Repoint gated on positive source fencing (§8). **Owns closing §16.0.** |
 | **WO-5** | not started | `boat networkd`: the ANCP daemon in Go, same binary, own unit, byte-identical wg and nft output — a port, not a redesign (§13). |
-| **WO-5b** | not started | Auto-update (§5). Hard-gated on WO-1's firecracker re-attach; cannot ship before it. |
+| **WO-5b** | not started, **no longer gate-blocked** | Auto-update (§5). Its hard gate was WO-1's firecracker re-attach, which now has callers; what remains is the update mechanism itself. |
 | **WO-6** | not started | Verb-port completion and cutover: the remaining verbs as `boat <verb>`, the venv and durable package retired, public-IPv6 allocation pushed down **only** once §11.4 is proven. SSH break-glass and `connection_for_guest` are **not** deleted. |
 | **Track S** | not started | Services de-fusion (§13, last bullet). Parallel, no Boat dependency; one service moved at a time, green each commit. |
 
@@ -1400,25 +1487,34 @@ behind them. These are the questions that have no answer yet.
 2. **API version negotiation.** Atlas must speak `[vN-1, vN]` of the Boat API for
    at least one release window, negotiated on connect. The paths are `/v{N}`; how
    a client discovers `N` is unspecified.
-3. **The Boat-side equivalent of `sleep-vm`'s wake-trap gate — decided, and it
-   currently names the wrong unit.** Boat's sleep is a hard precondition,
-   checked before anything touches the VM: it refuses when the wake trap is not
-   active, because a slept-but-unparked VM answers nothing until an operator
-   clicks Start and fails *silently*, which is strictly worse than leaving the VM
-   awake ([32-sleepy-vms.md](./32-sleepy-vms.md)). What it probes is
+3. ~~**The Boat-side equivalent of `sleep-vm`'s wake-trap gate.**~~ **Closed.**
+   Boat's sleep is a hard precondition, checked before anything touches the VM:
+   it refuses when the wake trap is not running, because a slept-but-unparked VM
+   answers nothing until an operator clicks Start and fails *silently*, which is
+   strictly worse than leaving the VM awake
+   ([32-sleepy-vms.md](./32-sleepy-vms.md)). It used to probe
    `systemctl is-active atlas-wake-trap.service` — the **Python** unit — while
-   Boat's own trap runs in-process (THE RULE). On a host with both, the gate
-   passes for the wrong reason and two traps poll one set of counters; on a host
-   with only Boat, a correct sleep is refused. The precondition is right; the
-   thing it asks is one unit out of date, and the fix belongs with WO-3, when the
-   Python trap is retired.
+   Boat's own trap ran in-process, so a Boat-only host refused every sleep and a
+   dual host passed the gate for the wrong reason.
+
+   It now asks Boat's own trap loop directly, and the two sides compose without
+   asking each other anything: the Python daemon stands down while `boat.service`
+   is active but **stays active while it does**, so `is-active` would have
+   answered yes for a reflex nobody was running — the exact silent failure the
+   gate exists to prevent, wearing the gate's clothes. Fail-closed in the instant
+   before the loop starts, and fail-closed loudly on the day the trap becomes its
+   own process.
 4. **Quarantine resolution** (§3.4). A partially-torn-down VM lands in quarantine
-   requiring confirmation; the operator surface and the API that clears it are
-   not specified. Boat reports the set in every export, keyed by identifier and
-   carrying its evidence; Atlas has nowhere to put it — `boat_mirror` reads a
-   per-VM `quarantined` flag that the export does not populate and ignores the
-   `quarantine` array entirely, so a quarantined artifact set reaches an operator
-   only through the archived document.
+   requiring confirmation; the **API that clears it** is still not specified.
+   Reporting is no longer the gap: Boat sends the set in every export, keyed by
+   identifier and carrying its evidence, and `boat_mirror` reads that array —
+   `Server.observed_quarantined` names the artifact sets per host, each is a
+   `quarantined` drift row on the epoch's snapshot (suppressing the `absent` row it
+   would otherwise be mistaken for), and the evidence stays in the archived
+   document. What an operator cannot yet do is *resolve* one: there is no verb that
+   confirms an artifact set for deletion or for re-adoption, so the only exit is the
+   `boat` CLI on the host. Deciding what that verb asserts — and who is allowed to
+   assert it — is the open part.
 5. **One number**: the hard expiry on a token served under partition (§12). The
    `Host State Snapshot` retention bound is answered — **20 epochs per host**,
    chosen as a first answer rather than derived, which keeps a 100-host fleet at
