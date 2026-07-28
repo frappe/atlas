@@ -88,6 +88,10 @@ class TestPlacement(IntegrationTestCase):
 					"memory_megabytes_total": 0,
 					"pool_disk_gigabytes_total": 0,
 					"placement_headroom_percent": 0,
+					# Servers are reused by title, so an Unknown mirror left by the
+					# tests below would quietly take a host out of every later test's
+					# candidate set — the exact failure those tests exist to catch.
+					"mirror_status": "",
 				},
 			)
 
@@ -494,4 +498,106 @@ class TestPlacement(IntegrationTestCase):
 		self.assertIsNotNone(plan_consolidation({"cpu": 0.0625, "memory": 2048, "disk": 4}))
 		# Pin it with a public IPv4 → now nothing is safely movable → no plan.
 		pinned.db_set("public_ipv4", "203.0.113.5")
+		self.assertIsNone(plan_consolidation({"cpu": 0.0625, "memory": 2048, "disk": 4}))
+
+	# --- a host whose mirror is Unknown is one Atlas cannot see (spec/33 §9) ---
+	#
+	# Not one that is dead. An unreachable Boat is evidence about the daemon, not
+	# about firecracker: the host is almost certainly still running every VM it
+	# holds. So it is excluded from NEW arrivals and from nothing else — the
+	# distinction these tests exist to hold, because conflating "I cannot see it"
+	# with "drain it" would be worse than the bug.
+
+	def _unseen(self, server) -> None:
+		"""Lose sight of a host: the state `boat_mirror.HostMirror._freeze` leaves
+		behind when the host's daemon does not answer an export sweep."""
+		frappe.db.set_value("Server", server.name, "mirror_status", "Unknown", update_modified=False)
+
+	def test_an_unseen_host_gets_no_new_arrivals(self) -> None:
+		# The unseen host is both emptier by relative fill AND created first, so it
+		# wins the Spread score and the tie-break. Only the mirror gate can move this.
+		unseen = self._measured_server("atlas-placement-unseen", 41, memory_megabytes_total=8192)
+		seen = self._measured_server("atlas-placement-seen", 42, memory_megabytes_total=1024)
+		self._unseen(unseen)
+		frappe.set_user(_acting_user())
+
+		vm = self._new_machine(memory_megabytes=512)
+
+		self.assertEqual(vm.server, seen.name)
+
+	def test_a_host_never_mirrored_is_still_a_candidate(self) -> None:
+		"""Empty is not Unknown, and the difference is most of the field's value.
+		Every SSH host reads empty, and so does a `boat_enabled` host the five-minute
+		sweep has not reached yet — "I have not looked" is not "I have lost sight of
+		it", and gating on "anything but Fresh" would empty a whole fleet."""
+		host = self._measured_server("atlas-placement-never-swept", 43, memory_megabytes_total=4096)
+		self.assertFalse(frappe.db.get_value("Server", host.name, "mirror_status"))
+		frappe.set_user(_acting_user())
+
+		vm = self._new_machine(memory_megabytes=512)
+
+		self.assertEqual(vm.server, host.name)
+
+	def test_a_fleet_atlas_cannot_see_reads_full_never_empty(self) -> None:
+		from atlas.atlas.api.server_capacity import capacity_for_server
+
+		host = self._measured_server("atlas-placement-unseen", 41, memory_megabytes_total=4096)
+		resident = self._place_vm(host, 512, status="Running")
+		self._unseen(host)
+		frappe.set_user(_acting_user())
+
+		with self.assertRaises(NoCapacityError):
+			self._new_machine(memory_megabytes=512)
+
+		# Nothing else moved: the host is not drained, its VM is not evicted, and its
+		# usage is still counted. A gate that also emptied the accounting would read
+		# as "this host has no VMs", which is the input that turns a management-plane
+		# blip into a fleet-wide double-booking.
+		self.assertEqual(frappe.db.get_value("Server", host.name, "status"), "Active")
+		self.assertEqual(frappe.db.get_value("Virtual Machine", resident.name, "status"), "Running")
+		self.assertEqual(capacity_for_server(host.name)["memory"]["used"], 512)
+
+	def test_the_way_back_needs_no_operator(self) -> None:
+		"""The gate is a live read of `mirror_status`, and the next successful export
+		writes `Fresh`. So recovery is bounded by the sweep interval, not by anyone
+		noticing — nobody has to un-flag a host that came back."""
+		host = self._measured_server("atlas-placement-unseen", 41, memory_megabytes_total=4096)
+		self._unseen(host)
+		frappe.set_user(_acting_user())
+		with self.assertRaises(NoCapacityError):
+			self._new_machine(memory_megabytes=512)
+
+		frappe.db.set_value("Server", host.name, "mirror_status", "Fresh", update_modified=False)
+
+		self.assertEqual(self._new_machine(memory_megabytes=512).server, host.name)
+
+	def test_a_vm_already_there_may_still_grow(self) -> None:
+		"""Excluded from arrivals is not drained. The resize gate charges against the
+		host's full budget and must not consult the mirror: an unseen host whose Boat
+		really is gone fails loudly at the Boat call, which is the honest place for it
+		to fail — refusing here would turn a blip into "your machine cannot resize"."""
+		host = self._measured_server("atlas-placement-unseen", 41, memory_megabytes_total=4096)
+		self._place_vm(host, 512, status="Running")
+		self._unseen(host)
+
+		placement.check_resize_capacity(host.name, 0, 1024, 0)
+
+	def test_largest_vm_answers_for_the_hosts_placement_would_use(self) -> None:
+		"""Central never sees hosts, so the shape it is offered has to be one
+		`default_server` would actually seat. Two answers from one fleet is how
+		Central ends up retrying a create that can never succeed."""
+		unseen = self._measured_server("atlas-placement-unseen", 41, memory_megabytes_total=8192)
+		self._measured_server("atlas-placement-seen", 42, memory_megabytes_total=1024)
+		self._unseen(unseen)
+
+		self.assertEqual(placement.largest_vm()["memory_megabytes"], 1024)
+
+	def test_consolidation_never_moves_a_vm_onto_a_host_it_cannot_see(self) -> None:
+		# Host B is both the only place host A's small VM could go and the other
+		# candidate recipient. Unseen, there is no plan at all — rather than a plan
+		# that migrates a running VM onto a host Atlas has lost sight of, which is the
+		# least defensible migration in the fleet.
+		_host_a, host_b = self._fragmented_pair()
+		self._unseen(host_b)
+
 		self.assertIsNone(plan_consolidation({"cpu": 0.0625, "memory": 2048, "disk": 4}))

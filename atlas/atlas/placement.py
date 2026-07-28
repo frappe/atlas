@@ -28,6 +28,56 @@ class NoCapacityError(frappe.ValidationError):
 	for the dashboard path; only the exception type carries the extra signal."""
 
 
+# The one `Server.mirror_status` that takes a host out of the placement candidate
+# set (spec/33 §9). Only this one value, and the distinction matters more than it
+# looks: the field is EMPTY on a host that has never been mirrored — every SSH
+# host in the fleet, and a `boat_enabled` host the sweep has not reached yet — and
+# "I have not looked at this host" is not "I have lost sight of it". Gating on
+# "anything but Fresh" would empty the candidate set of an entire non-Boat fleet.
+UNSEEN_MIRROR_STATUS = "Unknown"
+
+
+def placement_candidates() -> list[str]:
+	"""The hosts a NEW virtual machine may land on, in creation order.
+
+	Placement admits a host through one gate, and that gate has always asked two
+	questions: has the operator vouched for it (`status == "Active"`), and — for an
+	image whose bytes live on particular hosts — does it hold them
+	(`default_server_for_image`). This adds the third question in the same place
+	rather than as a parallel mechanism: can Atlas still see it? A host whose Boat
+	mirror reads `Unknown` is one Atlas has lost sight of (spec/33 §9), and Atlas
+	must not keep filling a host it cannot see.
+
+	**Excluded from arrivals is not drained, and the difference is the whole
+	point.** An unreachable daemon is evidence about the daemon, not about
+	firecracker: the host is almost certainly still running every VM it holds. So
+	nothing here evicts anything, nothing writes `status` (`Draining` is an
+	operator's decision, and inferring one from a network blip would both invent a
+	decision and fail to undo it), `capacity_for_server` still counts the host's
+	VMs, `cluster_capacity` still reports it to the operator, and
+	`check_resize_capacity` still lets a VM already there grow — a resize is not an
+	arrival, and if the host really is unreachable the operation fails loudly at
+	the Boat call, which is the right place for it to fail.
+
+	**The way back needs no operator.** This is a live read and the next successful
+	export flips `mirror_status` back to `Fresh` (`boat_mirror.HostMirror._stamp_host`),
+	so a recovered host re-enters the candidate set on the next sweep tick —
+	bounded by the sweep interval, not by anyone noticing.
+
+	Filtered in Python rather than in the query on purpose: `mirror_status` is NULL
+	on a host that has never been mirrored, and SQL's `!= 'Unknown'` drops NULL
+	rows — the never-swept host would be silently excluded by the very gate meant
+	to spare it."""
+	rows = frappe.get_all(
+		"Server",
+		filters={"status": "Active"},
+		fields=["name", "mirror_status"],
+		order_by="creation asc",
+		ignore_permissions=True,
+	)
+	return [row["name"] for row in rows if row["mirror_status"] != UNSEEN_MIRROR_STATUS]
+
+
 def default_image() -> str:
 	"""The base image a user's machine provisions from.
 
@@ -351,23 +401,23 @@ def default_server(
 	determinism. Raises `NoCapacityError` when nothing fits — Central reads that as
 	"region full for that size".
 
-	`candidate_servers`, when given, restricts the pool to that set (still ordered
-	by creation, still Active) — `default_server_for_image` passes the servers that
-	hold the image so placement never picks a host missing its bytes. None means the
-	whole Active fleet, the original behaviour.
+	The pool is `placement_candidates()`, so a host whose Boat mirror is `Unknown`
+	is not considered: Atlas cannot see it, and a host it cannot see is one it must
+	stop filling (spec/33 §9). It is excluded from arrivals only — nothing is
+	evicted and its VMs keep counting against capacity — and it returns on its own
+	the moment an export lands.
+
+	`candidate_servers`, when given, restricts the pool further (still ordered by
+	creation, still Active, still visible) — `default_server_for_image` passes the
+	servers that hold the image so placement never picks a host missing its bytes.
+	None means the whole candidate fleet, the original behaviour.
 
 	Runs with ignore_permissions: this is system placement, not desk RBAC — Central
 	triggers it without needing Server read access; the system still has to choose."""
 	from atlas.atlas import packing
 	from atlas.atlas.api.server_capacity import capacity_for_server
 
-	servers = frappe.get_all(
-		"Server",
-		filters={"status": "Active"},
-		pluck="name",
-		order_by="creation asc",
-		ignore_permissions=True,
-	)
+	servers = placement_candidates()
 	if candidate_servers is not None:
 		servers = [server for server in servers if server in candidate_servers]
 	if not servers:
@@ -617,20 +667,19 @@ def _host_fits(budgets: dict, used: dict, needs: dict, reserve: float) -> bool:
 
 
 def _fleet_snapshot() -> dict:
-	"""A per-Active-host snapshot the planner mutates in memory: `{server: {budgets, used,
-	reserve, creation_index, provider}}`. `used` already counts VMs migrating in (spec/24
-	accounting), so the planner sees a host receiving migrations as the fuller host it
-	really is."""
+	"""A per-candidate-host snapshot the planner mutates in memory: `{server: {budgets,
+	used, reserve, creation_index, provider}}`. `used` already counts VMs migrating in
+	(spec/24 accounting), so the planner sees a host receiving migrations as the fuller
+	host it really is.
+
+	Built from `placement_candidates()`, so a host with an `Unknown` mirror is neither a
+	recipient to clear nor a target to receive an evictee: consolidation moves running
+	VMs, and moving one onto — or off — a host Atlas cannot currently see is the least
+	defensible migration in the fleet."""
 	from atlas.atlas import packing
 	from atlas.atlas.api.server_capacity import capacity_for_server
 
-	names = frappe.get_all(
-		"Server",
-		filters={"status": "Active"},
-		pluck="name",
-		order_by="creation asc",
-		ignore_permissions=True,
-	)
+	names = placement_candidates()
 	snapshot = {}
 	for index, name in enumerate(names):
 		cap = capacity_for_server(name)
@@ -771,17 +820,13 @@ def largest_vm() -> dict | None:
 	measured contributes a large sentinel and marks the shape `unmeasured`.
 
 	Returns `{vcpus, memory_megabytes, disk_gigabytes, unmeasured}` for the winner,
-	or None when there is no Active host at all. Central asks this in resources; it
-	never sees hosts."""
+	or None when no host is currently placeable. Central asks this in resources; it
+	never sees hosts — which is exactly why it must be told what `default_server`
+	would actually do, so this walks `placement_candidates()` and a host with an
+	`Unknown` mirror is left out of both answers rather than only one."""
 	from atlas.atlas.api.server_capacity import capacity_for_server
 
-	servers = frappe.get_all(
-		"Server",
-		filters={"status": "Active"},
-		pluck="name",
-		order_by="creation asc",
-		ignore_permissions=True,
-	)
+	servers = placement_candidates()
 	if not servers:
 		return None
 
