@@ -24,6 +24,11 @@ The export lands in two places, deliberately both (§2.5):
 
 One export is one transaction (`_apply`), so a mirror is never half a host.
 
+Nothing pulls without a clock, so `sweep_mirrors` is the scheduled entry point
+that refreshes every `boat_enabled` host — one enqueued job each, wired in
+[hooks.py](../hooks.py). It is §2.6's *backstop*, deliberately: the `/watch` SSE
+consumer that will carry low-latency deltas is a separate work order.
+
 The rule that is easiest to get wrong is in `_freeze`, and it is the reason this
 module has a failure path at all: **an unreachable Boat means the host is
 Unknown, not dead.**
@@ -50,6 +55,20 @@ INGEST_SAVEPOINT = "boat_mirror_ingest"
 # a slow read is exactly how a busy host gets mis-declared partitioned, and a
 # false Unknown is a false everything (spec/33 §11.6).
 EXPORT_TIMEOUT_SECONDS = 30
+
+# One host's refresh job deadline. The export is the only slow part and already
+# carries its own; the ingest that follows is one short transaction. Twice the
+# request's deadline covers it without letting a wedged job hold a `short` worker
+# for minutes on end.
+SYNC_JOB_TIMEOUT_SECONDS = EXPORT_TIMEOUT_SECONDS * 2
+
+# Which hosts the sweep polls. `boat_enabled` is the switch — clearing it is the
+# whole rollback, so a host without it must be poll-free as well as verb-free.
+# Archived is the one status excluded: it names a retired host, and polling one
+# forever would do nothing but flag a mirror nobody reads as Unknown. Draining and
+# Broken are deliberately IN — a host in trouble is the host an operator most
+# wants observed.
+SWEEPABLE_HOSTS = {"boat_enabled": 1, "status": ("!=", "Archived")}
 
 # The statuses `Virtual Machine.observed_status` allows. Anything else is
 # recorded as Unknown — the mirror never invents an observation.
@@ -101,9 +120,70 @@ CAPACITY_FACTS = ("vcpus_total", "memory_megabytes_total", "pool_disk_gigabytes_
 @frappe.whitelist()
 def sync_mirror(server: str) -> dict:
 	"""Refresh one host's mirror from its Boat. Returns what happened, never
-	raises for an unreachable host — see `HostMirror.sync`."""
+	raises for an unreachable host — see `HostMirror.sync`.
+
+	Also the enqueued job body: `sweep_mirrors` schedules this same entry point per
+	host, so the operator's button and the sweep cannot drift apart."""
 	frappe.only_for("System Manager")
 	return HostMirror(server).sync()
+
+
+def sweep_mirrors() -> list[str]:
+	"""Scheduled: refresh every Boat host's mirror. Returns the hosts enqueued.
+
+	This is the whole of what keeps observed state observed. `PUT` desired is
+	driven by an operator's click, but nothing clicks for the pull half — so
+	without this sweep the mirror is whatever the last manual `sync_mirror` left
+	behind, `Server.mirror_status` never turns Unknown for a host that has gone
+	silent, and the capacity totals placement reads are a bootstrap-time snapshot
+	again. The pull has to be on a clock.
+
+	**Deliberately a periodic export and not a stream.** spec/33 §2.6 gives
+	`GET /v1/watch` the low-latency deltas and makes the §2.5 export the
+	truth-restoring backstop; a reader expecting the SSE consumer here will not
+	find it, because it is a separate work order. The two are not alternatives —
+	the backstop is what makes a dropped stream survivable — and a backstop that
+	runs is worth more than a stream that does not.
+
+	One enqueued job per host, never one loop over the fleet: a host that has gone
+	quiet takes the full `EXPORT_TIMEOUT_SECONDS` to say so, and serially that is
+	the sweep's whole budget spent on the hosts with the least to report — the
+	fleet's healthy majority would go unpolled precisely when one host broke. The
+	jobs are independent, so an unreachable Boat costs one worker one timeout and
+	nothing else."""
+	hosts = frappe.get_all("Server", filters=SWEEPABLE_HOSTS, pluck="name")
+	return [server for server in hosts if enqueue_sync_mirror(server)]
+
+
+def sync_job_id(server: str) -> str:
+	"""The stable RQ job id for one host's refresh, so a sweep tick can never
+	stack a second poll on top of one still waiting out its timeout."""
+	return f"boat_sync_mirror::{server}"
+
+
+def enqueue_sync_mirror(server: str) -> bool:
+	"""Enqueue one host's mirror refresh. True if a job was queued, False if one
+	was already in flight.
+
+	Shaped after `worker.enqueue_finish_provisioning`, including the belt-and-braces
+	dedup: `is_job_enqueued` answers for the caller (so the sweep can report what it
+	actually did) and `deduplicate` closes the race between the check and the push.
+	`short`, because a refresh is one bounded HTTP GET and one transaction — a host
+	that cannot answer within its timeout has already told us what we needed to
+	know."""
+	from frappe.utils.background_jobs import is_job_enqueued
+
+	if is_job_enqueued(sync_job_id(server)):
+		return False
+	frappe.enqueue(
+		"atlas.atlas.boat_mirror.sync_mirror",
+		queue="short",
+		timeout=SYNC_JOB_TIMEOUT_SECONDS,
+		job_id=sync_job_id(server),
+		deduplicate=True,
+		server=server,
+	)
+	return True
 
 
 class HostMirror:
@@ -119,14 +199,25 @@ class HostMirror:
 		was. `boat_enabled` is checked first because clearing it is the whole
 		rollback — a host without it behaves precisely as it did before Boat
 		existed. A Fake-backed host is then never called at all, exactly as
-		`run_task` gives it no SSH connection."""
+		`run_task` gives it no SSH connection.
+
+		The catch takes `frappe.ValidationError` as well as `BoatError` because
+		`base_url_for_server` and `token_for_server` `frappe.throw` — a host with no
+		mesh address or no token is unreachable in the only sense that matters here
+		(Atlas cannot ask it anything), and it is only a different exception type
+		because it is raised where credentials are resolved rather than on the
+		socket. It reaches `_freeze` for the same reason everything else does: on a
+		sweep tick, raising would be a traceback in a worker log every few minutes
+		and no mark on the host, where freezing puts the sentence on the row. The
+		try wraps the request and nothing else, so an ingest that throws still
+		throws."""
 		if not boat_enabled(self.server):
 			return self._untouched("boat-disabled")
 		if is_fake_server(self.server):
 			return self._untouched("fake-host")
 		try:
 			export = self._client().get_export()
-		except BoatError as error:
+		except (BoatError, frappe.ValidationError) as error:
 			return self._freeze(error)
 		return self._ingest(export)
 
@@ -136,7 +227,7 @@ class HostMirror:
 	def _untouched(self, reason: str) -> dict:
 		return {"server": self.server, "applied": False, "reason": reason}
 
-	def _freeze(self, error: BoatError) -> dict:
+	def _freeze(self, error: Exception) -> dict:
 		"""Boat did not answer. **The host is Unknown, not dead** (spec/33 §9).
 
 		Stated as code because it is the rule this module exists to get right:

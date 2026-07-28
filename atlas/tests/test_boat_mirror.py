@@ -96,7 +96,16 @@ class _MirrorTestCase(IntegrationTestCase):
 		self.image = fixtures.make_image("boat-mirror-image")
 		_clear_virtual_machines()
 		frappe.db.delete("Host State Snapshot")
-		frappe.db.set_value("Server", self.server.name, "boat_enabled", 1, update_modified=False)
+		# The mirror is reset, not just the flag: `IntegrationTestCase` rolls back
+		# per CLASS and the Server fixture is get-or-create by title, so an epoch a
+		# previous test landed is still on the row for the next one — which then
+		# reads its export as already seen and applies nothing.
+		frappe.db.set_value(
+			"Server",
+			self.server.name,
+			{"boat_enabled": 1, "observed_epoch": 0, "mirror_status": "", "mirror_error": ""},
+			update_modified=False,
+		)
 		self.virtual_machine = fixtures.make_virtual_machine(self.server.name, self.image.name)
 		self._set_status("Running")
 
@@ -321,6 +330,18 @@ class TestUnreachableBoatFreezesTheMirror(_MirrorTestCase):
 		self.assertEqual(self._server_value("observed_epoch"), 6)
 		self.assertEqual(self._virtual_machine_value("observed_status"), "Running")
 
+	def test_a_host_with_no_credentials_is_unknown_too_not_a_traceback(self) -> None:
+		# A host Atlas cannot address or authenticate to is unreachable in the only
+		# sense that matters. On a scheduled sweep, raising it would be a worker
+		# traceback every tick and nothing on the row an operator would ever see.
+		with _patch_conf({"atlas_boat_tokens": None, "atlas_boat_token": None}), patch(REQUEST) as request:
+			result = boat_mirror.sync_mirror(self.server.name)
+
+		request.assert_not_called()
+		self.assertEqual(result["reason"], "unreachable")
+		self.assertIn("atlas_boat_tokens", self._server_value("mirror_error"))
+		self.assertEqual(self._server_value("observed_epoch"), 6)
+
 	def test_a_later_successful_export_clears_the_flag(self) -> None:
 		self._sync_failing(side_effect=requests.ConnectionError("connection refused"))
 		self._sync(_export(epoch=7, virtual_machines=[_observed(self.virtual_machine.name)]))
@@ -416,6 +437,112 @@ class TestDriftIsSurfacedNotCorrected(_MirrorTestCase):
 		drift = self._drift(_export(virtual_machines=[]))
 
 		self.assertEqual(drift, [])
+
+
+class TestTheSweepIsWhatMakesTheMirrorLive(_MirrorTestCase):
+	"""The scheduled pull (spec/33 §2.5). Atlas pushes desired state when an
+	operator clicks; nothing clicks for the pull half, so without this sweep every
+	observed field on every host is whatever the last manual refresh left."""
+
+	def setUp(self) -> None:
+		super().setUp()
+		self.enqueued: list[dict] = []
+
+	def _sweep(self, in_flight: bool = False) -> list[str]:
+		with (
+			patch("frappe.utils.background_jobs.is_job_enqueued", return_value=in_flight),
+			patch("frappe.enqueue", side_effect=lambda method, **kwargs: self.enqueued.append(kwargs)),
+		):
+			return boat_mirror.sweep_mirrors()
+
+	def _host(self, title: str, **overrides) -> "frappe.model.document.Document":
+		overrides.setdefault("status", "Active")
+		return fixtures.make_server(fixtures.make_provider("boat-test-provider"), title, **overrides)
+
+	def test_the_sweep_is_registered_in_the_scheduler(self) -> None:
+		# The defect this class exists for: `sync_mirror` had no caller anywhere, so
+		# the whole observed-state path only ever ran inside its own tests.
+		from atlas import hooks
+
+		cron_jobs = [job for jobs in hooks.scheduler_events.get("cron", {}).values() for job in jobs]
+		self.assertIn("atlas.atlas.boat_mirror.sweep_mirrors", cron_jobs)
+
+	def test_only_boat_enabled_hosts_are_swept(self) -> None:
+		ssh_host = self._host("boat-mirror-ssh-host", boat_enabled=0)
+
+		swept = self._sweep()
+
+		self.assertIn(self.server.name, swept)
+		# Clearing the flag is the whole rollback: an SSH host must be poll-free as
+		# well as verb-free, or the mirror would keep flagging a host nobody drives.
+		self.assertNotIn(ssh_host.name, swept)
+
+	def test_a_retired_host_is_not_polled_forever(self) -> None:
+		archived = self._host("boat-mirror-archived-host", boat_enabled=1, status="Archived")
+
+		self.assertNotIn(archived.name, self._sweep())
+
+	def test_a_host_in_trouble_is_the_one_most_worth_observing(self) -> None:
+		broken = self._host("boat-mirror-broken-host", boat_enabled=1, status="Broken")
+
+		self.assertIn(broken.name, self._sweep())
+
+	def test_each_host_gets_its_own_job(self) -> None:
+		"""One job per host, never one loop over the fleet: a silent host takes the
+		full export timeout to say so, and serially that is the sweep's whole budget
+		spent on the hosts with the least to report."""
+		second = self._host("boat-mirror-second-host", boat_enabled=1)
+
+		swept = self._sweep()
+
+		self.assertIn(second.name, swept)
+		servers = [job["server"] for job in self.enqueued]
+		self.assertEqual(sorted(servers), sorted(set(servers)))
+		self.assertEqual(len(self.enqueued), len(swept))
+		self.assertEqual(
+			{job["job_id"] for job in self.enqueued},
+			{boat_mirror.sync_job_id(server) for server in swept},
+		)
+
+	def test_a_poll_still_in_flight_is_never_stacked(self) -> None:
+		# A host that has gone quiet holds its job for the whole export timeout,
+		# which is longer than the gap between two sweep ticks.
+		self.assertEqual(self._sweep(in_flight=True), [])
+		self.assertEqual(self.enqueued, [])
+
+	def test_the_job_is_the_entry_point_the_operator_clicks(self) -> None:
+		with (
+			patch("frappe.utils.background_jobs.is_job_enqueued", return_value=False),
+			patch("frappe.enqueue") as enqueue,
+		):
+			boat_mirror.enqueue_sync_mirror(self.server.name)
+
+		self.assertEqual(enqueue.call_args.args[0], "atlas.atlas.boat_mirror.sync_mirror")
+		self.assertEqual(enqueue.call_args.kwargs["queue"], "short")
+		self.assertTrue(enqueue.call_args.kwargs["deduplicate"])
+		self.assertEqual(enqueue.call_args.kwargs["timeout"], boat_mirror.SYNC_JOB_TIMEOUT_SECONDS)
+
+	def test_one_unreachable_host_does_not_starve_the_others(self) -> None:
+		"""The reason the sweep may enqueue rather than loop, proved on the job body:
+		a host that does not answer records a state and returns. If it raised, the
+		next host's poll would be the exception handler's problem."""
+		quiet = self._host("boat-mirror-quiet-host", boat_enabled=1)
+		answers = [requests.ConnectionError("connection refused"), _Response(payload=_export(epoch=3))]
+
+		def _answer(*args, **kwargs):
+			answer = answers.pop(0)
+			if isinstance(answer, Exception):
+				raise answer
+			return answer
+
+		tokens = {"atlas_boat_tokens": {quiet.name: "s3cret", self.server.name: "s3cret"}}
+		with _patch_conf({**tokens, "atlas_boat_token": None}), patch(REQUEST, side_effect=_answer):
+			silent, answered = (boat_mirror.sync_mirror(name) for name in (quiet.name, self.server.name))
+
+		self.assertEqual(silent["reason"], "unreachable")
+		self.assertEqual(frappe.db.get_value("Server", quiet.name, "mirror_status"), "Unknown")
+		self.assertTrue(answered["applied"])
+		self.assertEqual(self._server_value("mirror_status"), "Fresh")
 
 
 class TestOffByDefault(_MirrorTestCase):
