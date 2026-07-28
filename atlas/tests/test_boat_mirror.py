@@ -120,6 +120,10 @@ class _MirrorTestCase(IntegrationTestCase):
 			{
 				"boat_enabled": 1,
 				"observed_epoch": 0,
+				# Cleared too, and not only for tidiness: `observed_at` is what tells
+				# "mirrored at epoch 0" from "never mirrored", and epoch 0 is a real
+				# epoch a brand-new Boat reports.
+				"observed_at": None,
 				"mirror_status": "",
 				"mirror_error": "",
 				"observed_quarantined": "",
@@ -265,8 +269,45 @@ class TestIngestIsIdempotent(_MirrorTestCase):
 
 		self.assertTrue(first["applied"])
 		self.assertFalse(second["applied"])
-		self.assertEqual(second["reason"], "stale-epoch")
+		self.assertEqual(second["reason"], "unchanged")
 		self.assertEqual(len(self._snapshots()), 1)
+
+	def test_a_quiet_host_that_answers_is_a_host_that_was_seen(self) -> None:
+		"""The epoch bumps on every observed CHANGE, so a healthy idle host answers
+		with the same one forever. Recovery must not wait for it to happen to move:
+		an ingest that only ever re-stated the verdict when something changed left a
+		host that came back — but came back unchanged — flagged `Unknown` for as long
+		as it stayed quiet, and out of placement the whole time."""
+		export = _export(epoch=4, virtual_machines=[_observed(self.virtual_machine.name)])
+		self._sync(export)
+		self._sync_failing(side_effect=requests.ConnectionError("connection refused"))
+		self.assertEqual(self._server_value("mirror_status"), "Unknown")
+
+		result = self._sync(export)
+
+		self.assertEqual(result["reason"], "unchanged")
+		self.assertEqual(self._server_value("mirror_status"), "Fresh")
+		self.assertEqual(self._server_value("mirror_error"), "")
+		self.assertEqual(len(self._snapshots()), 1)
+
+	def _sync_failing(self, side_effect=None, response=None) -> dict:
+		with (
+			_boat_host_token(self.server.name),
+			patch(REQUEST, side_effect=side_effect, return_value=response),
+		):
+			return boat_mirror.sync_mirror(self.server.name)
+
+	def test_a_brand_new_boat_reports_epoch_zero_and_is_ingested(self) -> None:
+		"""Zero is a legitimate observed epoch — the counter starts there and only
+		moves on an observed change — so every freshly-enabled host reports it until
+		something happens on it. Read as "absent", that export was rejected as
+		unorderable, which put every host in the window between enabling the flag and
+		its first observation permanently outside the mirror."""
+		result = self._sync(_export(epoch=0, virtual_machines=[_observed(self.virtual_machine.name)]))
+
+		self.assertTrue(result["applied"])
+		self.assertEqual(self._server_value("mirror_status"), "Fresh")
+		self.assertEqual(self._virtual_machine_value("observed_status"), "Running")
 
 	def test_an_older_epoch_is_ignored(self) -> None:
 		self._sync(_export(epoch=8, virtual_machines=[_observed(self.virtual_machine.name, "Running")]))
@@ -280,13 +321,35 @@ class TestIngestIsIdempotent(_MirrorTestCase):
 		self.assertEqual(self._virtual_machine_value("observed_status"), "Running")
 		self.assertEqual([row["observed_epoch"] for row in self._snapshots()], [8])
 
-	def test_an_export_without_an_epoch_cannot_be_ordered_and_raises(self) -> None:
+	def test_an_export_without_an_epoch_lands_on_the_row_not_in_a_worker_log(self) -> None:
+		"""A document Atlas cannot order is a host Atlas cannot read, which is the
+		same state as one that did not answer. It used to raise straight out of the
+		scheduled sweep: a traceback every few minutes, nothing on the row, and the
+		host still reading `Fresh` from its last good poll."""
 		export = _export()
 		del export["observed_epoch"]
-		with self.assertRaises(boat_mirror.BoatError):
-			self._sync(export)
 
+		result = self._sync(export)
+
+		self.assertFalse(result["applied"])
+		self.assertEqual(result["reason"], "unreachable")
+		self.assertEqual(self._server_value("mirror_status"), "Unknown")
+		self.assertIn("observed_epoch", self._server_value("mirror_error"))
 		self.assertEqual(self._snapshots(), [])
+
+	def test_a_two_hundred_with_a_body_that_is_not_json_is_caught_too(self) -> None:
+		"""`response.json()` was called outside the client's own try, so a proxy's
+		HTML interception page came back as a `JSONDecodeError` — past every caller
+		that handles `BoatError`, including the freeze."""
+		with (
+			_boat_host_token(self.server.name),
+			patch(REQUEST, return_value=_Response(status_code=200, text="<html>gateway</html>")),
+		):
+			result = boat_mirror.sync_mirror(self.server.name)
+
+		self.assertEqual(result["reason"], "unreachable")
+		self.assertEqual(self._server_value("mirror_status"), "Unknown")
+		self.assertIn("non-JSON", self._server_value("mirror_error"))
 
 	def test_retention_bounds_the_archived_snapshots(self) -> None:
 		with patch.object(snapshot_module, "SNAPSHOTS_KEPT_PER_HOST", 3):
@@ -294,6 +357,126 @@ class TestIngestIsIdempotent(_MirrorTestCase):
 				self._sync(_export(epoch=epoch))
 
 		self.assertEqual([row["observed_epoch"] for row in self._snapshots()], [5, 4, 3])
+
+
+class TestABoatThatLostItsStore(_MirrorTestCase):
+	"""§11.1 calls a Boat that lost its bbolt file the single most dangerous state
+	the system can reach: it answers every request, reports its VMs, and holds no
+	fence — so it will boot NOTHING it is asked to.
+
+	Atlas's only report of it used to be the word `Fresh`. The observed epoch is
+	monotonic per STORE, so a reinstalled or restored host counts again from below
+	the number the mirror holds; read as nothing but a reordered poll, its exports
+	were dropped without a trace — no `mirror_status`, no `mirror_error`, not even
+	an `observed_at` — while placement went on filling it."""
+
+	def setUp(self) -> None:
+		super().setUp()
+		frappe.db.set_value("Virtual Machine", self.virtual_machine.name, "boot_epoch", 3)
+
+	def _fenced(self, epoch: int = 9, held: int = 3, status: str = "Running") -> dict:
+		"""An export from a host that holds a fence for this VM."""
+		return _export(
+			epoch=epoch,
+			virtual_machines=[_observed(self.virtual_machine.name, status)],
+			fence_epochs={self.virtual_machine.name: held},
+		)
+
+	def _forgetful(self, epoch: int = 9) -> dict:
+		"""An export from a host whose fence bucket is empty. `{}`, not absent: Boat
+		sends the map empty when it holds none, precisely so "this host fences
+		nothing" is stated rather than left to be inferred."""
+		return _export(
+			epoch=epoch,
+			virtual_machines=[_observed(self.virtual_machine.name)],
+			fence_epochs={},
+		)
+
+	def test_a_host_that_holds_no_fence_is_not_fresh(self) -> None:
+		result = self._sync(self._forgetful())
+
+		self.assertTrue(result["applied"])
+		self.assertEqual(self._server_value("mirror_status"), "Unknown")
+		self.assertIn(self.virtual_machine.name, self._server_value("mirror_error"))
+
+	def test_the_missing_fence_is_reported_as_drift(self) -> None:
+		"""`_write_observation` has always claimed an epoch disagreeing with the one
+		Atlas issued "is reported as drift like any other disagreement". Nothing
+		computed it: the export shipped `fence_epochs` and Atlas archived it unread."""
+		drift = self._sync(self._forgetful())["drift"]
+
+		fences = [row for row in drift if row["kind"] == "fence"]
+		self.assertEqual(len(fences), 1)
+		self.assertEqual(fences[0]["virtual_machine"], self.virtual_machine.name)
+		self.assertEqual(fences[0]["desired"], "3")
+		self.assertIsNone(fences[0]["observed"])
+
+	def test_a_host_holding_a_different_epoch_is_drift_but_not_blindness(self) -> None:
+		# It still knows the VM, so it can still boot it. Reported, not gated.
+		drift = self._sync(self._fenced(epoch=9, held=2))["drift"]
+
+		self.assertEqual([(row["kind"], row["observed"]) for row in drift], [("fence", "2")])
+		self.assertEqual(self._server_value("mirror_status"), "Fresh")
+
+	def test_nothing_is_evicted_and_no_vm_row_is_touched(self) -> None:
+		# The same rule as an unreachable host (§9): the fence governs the NEXT
+		# boot, and every VM this host holds is running right now.
+		self._sync(self._forgetful())
+
+		self.assertEqual(self._virtual_machine_value("status"), "Running")
+		self.assertEqual(self._server_value("status"), "Active")
+		self.assertEqual(self._virtual_machine_value("boot_epoch"), 3)
+
+	def test_re_asserting_the_fence_clears_it_with_no_operator(self) -> None:
+		self._sync(self._forgetful(epoch=9))
+
+		self._sync(self._fenced(epoch=10))
+
+		self.assertEqual(self._server_value("mirror_status"), "Fresh")
+		self.assertEqual(self._server_value("mirror_error"), "")
+
+	def test_a_regression_from_a_forgetful_host_is_adopted_not_dropped(self) -> None:
+		"""The whole defect. A reinstalled Boat's epoch is below the mirror's, so
+		every export it ever sends is "older" — and the mirror stayed frozen at a
+		description of a host that no longer exists, reporting Fresh, forever."""
+		self._sync(self._fenced(epoch=40))
+
+		result = self._sync(self._forgetful(epoch=2))
+
+		self.assertTrue(result["applied"])
+		self.assertEqual(self._server_value("observed_epoch"), 2)
+		self.assertEqual(self._server_value("mirror_status"), "Unknown")
+
+	def test_a_late_answer_from_the_store_atlas_knows_is_still_ignored(self) -> None:
+		"""The epoch alone cannot tell a lost store from a slow request, so the
+		fences do: a reordered poll comes from the store Atlas knows and still holds
+		every fence it was given. That one must not overwrite a newer mirror."""
+		self._sync(self._fenced(epoch=40))
+
+		result = self._sync(self._fenced(epoch=3, status="Stopped"))
+
+		self.assertEqual(result["reason"], "stale-epoch")
+		self.assertEqual(self._server_value("observed_epoch"), 40)
+		self.assertEqual(self._virtual_machine_value("observed_status"), "Running")
+
+	def test_an_export_that_reports_no_fences_at_all_claims_nothing(self) -> None:
+		"""Absent is silence, not a claim — the opposite of quarantine. A Boat old
+		enough not to send the map has not said it holds no fences, and a fleet runs
+		mixed versions by design (§5)."""
+		self._sync(_export(epoch=9, virtual_machines=[_observed(self.virtual_machine.name)]))
+
+		self.assertEqual(self._server_value("mirror_status"), "Fresh")
+
+	def test_a_vm_atlas_never_fenced_is_not_compared(self) -> None:
+		"""Every VM on a host still on SSH carries no `boot_epoch` until its first
+		PUT. Comparing against a fence Atlas never issued would flag the whole fleet
+		`Unknown` the day a host is enabled."""
+		frappe.db.set_value("Virtual Machine", self.virtual_machine.name, "boot_epoch", 0)
+
+		result = self._sync(self._forgetful())
+
+		self.assertEqual(result["drift"], [])
+		self.assertEqual(self._server_value("mirror_status"), "Fresh")
 
 
 class TestUnreachableBoatFreezesTheMirror(_MirrorTestCase):
@@ -670,6 +853,49 @@ class TestOffByDefault(_MirrorTestCase):
 		request.assert_not_called()
 		self.assertEqual(result["reason"], "boat-disabled")
 		self.assertFalse(self._server_value("mirror_status"))
+
+	def test_unticking_the_box_drops_the_mirror_it_produced(self) -> None:
+		"""The rollback has to restore the BEHAVIOUR, not just the transport. A host
+		frozen `Unknown` once and then rolled back was excluded from placement
+		forever: the sweep skips it, so no export could ever clear the flag, and the
+		field is read-only in the desk — leaving a DB write as the only remedy for a
+		field whose own help text promises the host re-enters with no operator
+		action. The ordinary way in is not exotic: flip the flag before the token is
+		configured, and the host is `Unknown` within five minutes."""
+		self._sync_failing()
+		self.assertEqual(self._server_value("mirror_status"), "Unknown")
+
+		server = frappe.get_doc("Server", self.server.name)
+		server.boat_enabled = 0
+		server.save(ignore_permissions=True)
+
+		self.assertFalse(self._server_value("mirror_status"))
+		self.assertFalse(self._server_value("mirror_error"))
+		# The frozen OBSERVATION stands — it was true when it was made, and `_freeze`
+		# leaves it standing for the same reason. Only the live claim is dropped.
+		self.assertEqual(self._server_value("observed_epoch"), 6)
+
+	def test_the_sync_button_repairs_a_host_the_flag_left_behind(self) -> None:
+		"""The flag also goes off by paths that never load the document — a direct
+		`set_value`, a patch, a fixture — so the operator's Sync button is the second
+		way out rather than a second dead end."""
+		self._sync_failing()
+		frappe.db.set_value("Server", self.server.name, "boat_enabled", 0, update_modified=False)
+
+		with _boat_host_token(self.server.name), patch(REQUEST) as request:
+			result = boat_mirror.sync_mirror(self.server.name)
+
+		request.assert_not_called()
+		self.assertEqual(result["reason"], "boat-disabled")
+		self.assertFalse(self._server_value("mirror_status"))
+
+	def _sync_failing(self) -> dict:
+		self._sync(_export(epoch=6, virtual_machines=[_observed(self.virtual_machine.name)]))
+		with (
+			_boat_host_token(self.server.name),
+			patch(REQUEST, side_effect=requests.ConnectionError("connection refused")),
+		):
+			return boat_mirror.sync_mirror(self.server.name)
 
 	def test_a_fake_host_is_never_called_and_needs_no_credentials(self) -> None:
 		provider = fixtures.make_provider_row("boat-mirror-fake-provider", provider_type="Fake")

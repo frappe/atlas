@@ -33,6 +33,11 @@ consumer that will carry low-latency deltas is a separate work order.
 The rule that is easiest to get wrong is in `_freeze`, and it is the reason this
 module has a failure path at all: **an unreachable Boat means the host is
 Unknown, not dead.**
+
+Its twin is in `_mirror_verdict`: **answering is not the same as being seen.** A
+Boat that lost its store answers every request and holds no fence for anything, so
+it will boot nothing it is asked to — `Unknown` is the honest word for that too,
+and the export's `fence_epochs` map is where Atlas reads it.
 """
 
 from __future__ import annotations
@@ -192,6 +197,7 @@ class HostMirror:
 
 	def __init__(self, server: str):
 		self.server = server
+		self._rows: dict[str, dict] | None = None
 
 	def sync(self) -> dict:
 		"""Pull `GET /export` and land it, or record why it could not be landed.
@@ -209,24 +215,47 @@ class HostMirror:
 		because it is raised where credentials are resolved rather than on the
 		socket. It reaches `_freeze` for the same reason everything else does: on a
 		sweep tick, raising would be a traceback in a worker log every few minutes
-		and no mark on the host, where freezing puts the sentence on the row. The
-		try wraps the request and nothing else, so an ingest that throws still
-		throws."""
+		and no mark on the host, where freezing puts the sentence on the row.
+
+		The try wraps **the request and the one read that decides whether the answer
+		can be placed at all**, and nothing else — so an ingest that throws still
+		throws, but a host that answers with a document Atlas cannot order lands on
+		the row instead of escaping past the freeze. A document that cannot be
+		ordered is a host that cannot be read, which is the same state as one that
+		did not answer, and it belongs in the same place for the same reason."""
 		if not boat_enabled(self.server):
-			return self._untouched("boat-disabled")
+			return self._rolled_back()
 		if is_fake_server(self.server):
 			return self._untouched("fake-host")
 		try:
 			export = self._client().get_export()
+			epoch = self._epoch(export)
 		except (BoatError, frappe.ValidationError) as error:
 			return self._freeze(error)
-		return self._ingest(export)
+		return self._ingest(export, epoch)
 
 	def _client(self) -> BoatClient:
 		return BoatClient.for_server(self.server, timeout_seconds=EXPORT_TIMEOUT_SECONDS)
 
 	def _untouched(self, reason: str) -> dict:
 		return {"server": self.server, "applied": False, "reason": reason}
+
+	def _rolled_back(self) -> dict:
+		"""This host is off Boat, so it has no mirror — and any claim left over from
+		when it was on Boat is dropped here.
+
+		`Server.validate` clears the pair when an operator unticks the box; this
+		clears it for every OTHER way the flag goes off (a direct `set_value`, a
+		patch, a fixture), which makes the operator's **Sync** button a repair
+		instead of a second dead end. Without one of the two, a host frozen
+		`Unknown` once and then rolled back was excluded from placement forever:
+		the sweep skips it, so no export could ever clear the flag, and the field
+		is read-only in the desk."""
+		if frappe.db.get_value("Server", self.server, "mirror_status"):
+			frappe.db.set_value(
+				"Server", self.server, {"mirror_status": "", "mirror_error": ""}, update_modified=False
+			)
+		return self._untouched("boat-disabled")
 
 	def _freeze(self, error: Exception) -> dict:
 		"""Boat did not answer. **The host is Unknown, not dead** (spec/33 §9).
@@ -247,39 +276,70 @@ class HostMirror:
 		*state* Atlas must hold about the host, not an operation that failed.
 		The failure is still loud — it is on the row, in the operator's face,
 		with the daemon's own sentence."""
+		# Bounded: `_error_sentence` falls back to a raw body, which can be a
+		# proxy's whole HTML error page.
+		return self._lose_sight(str(error), "unreachable")
+
+	def _lose_sight(self, sentence: str, reason: str) -> dict:
+		"""Flag the host `Unknown` with one sentence, and write nothing else.
+
+		The single place the two mirror flags turn negative, so the rule `_freeze`
+		states holds for every way of reaching it: no capacity total is nulled, no
+		`Virtual Machine` row is touched, nothing is marked stopped and nothing is
+		evicted."""
 		frappe.db.set_value(
 			"Server",
 			self.server,
-			# Bounded: `_error_sentence` falls back to a raw body, which can be a
-			# proxy's whole HTML error page.
-			{"mirror_status": "Unknown", "mirror_error": str(error)[:1000]},
+			{"mirror_status": "Unknown", "mirror_error": sentence[:1000]},
 			update_modified=False,
 		)
 		return {
 			"server": self.server,
 			"applied": False,
-			"reason": "unreachable",
+			"reason": reason,
 			"mirror_status": "Unknown",
-			"error": str(error),
+			"error": sentence,
 		}
 
-	def _ingest(self, export: dict) -> dict:
-		"""Land one export, or ignore it as already seen.
+	def _ingest(self, export: dict, epoch: int) -> dict:
+		"""Land one export, ignore one already seen, or adopt one from a host whose
+		store is not the one Atlas has been talking to.
 
-		**Idempotency, stated once:** the observed epoch is monotonic per host,
-		so an epoch the mirror already holds is the same snapshot and an older
-		one is a reordered poll. Both are no-ops — re-ingesting must not
-		duplicate a snapshot row, and a late answer from a slow request must
-		never overwrite a newer one."""
-		epoch = self._epoch(export)
-		if epoch <= self._mirrored_epoch():
-			return {
-				"server": self.server,
-				"applied": False,
-				"reason": "stale-epoch",
-				"observed_epoch": epoch,
-			}
-		return self._apply(export, epoch)
+		**Idempotency, stated once:** the observed epoch is monotonic, so the epoch
+		the mirror already holds describes the same host state — nothing is
+		re-landed and no snapshot row is duplicated. Freshness still is: a quiet
+		host that answers is a host that has been SEEN, and freezing `observed_at`
+		at the last change would report a healthy idle host as one nobody has heard
+		from (`_reobserved`).
+
+		**But the counter is per STORE, not per host** (spec/33 §3.1), and that is
+		the distinction this method has to carry. A Boat that lost bbolt, was
+		reinstalled, or was restored from a backup counts again from below the
+		number Atlas holds. Read as nothing but a reordered poll, that host was
+		never ingested again while Atlas went on reporting it `Fresh` and placing
+		onto it — and §11.1 calls a Boat that lost its store the single most
+		dangerous state the system can reach.
+
+		The epoch alone cannot tell those two apart, so the **fences** do, which is
+		what makes them worth reading: a late answer from a slow request comes from
+		the store Atlas knows and still holds every fence it was given, while a lost
+		store holds none. So a regression with the fences intact stays a no-op, and
+		a regression from a host that has forgotten what it was told is adopted —
+		the mirror must describe the host that exists now — and `_mirror_verdict`
+		flags it on the way in."""
+		mirrored = self._mirrored_epoch()
+		if mirrored is None or epoch > mirrored:
+			return self._apply(export, epoch)
+		if epoch == mirrored:
+			return self._reobserved(export, epoch)
+		if _unfenced(self._fence_drift(export)):
+			return self._apply(export, epoch)
+		return {
+			"server": self.server,
+			"applied": False,
+			"reason": "stale-epoch",
+			"observed_epoch": epoch,
+		}
 
 	def _apply(self, export: dict, epoch: int) -> dict:
 		"""Both landing places and the VM observations, in one transaction."""
@@ -287,7 +347,7 @@ class HostMirror:
 		frappe.db.savepoint(INGEST_SAVEPOINT)
 		try:
 			drift = self._stamp_virtual_machines(export)
-			self._stamp_host(export, epoch, observed_at)
+			self._stamp_host(export, epoch, observed_at, _unfenced(drift))
 			snapshot = HostStateSnapshot.record(self.server, export, observed_at, drift)
 		except Exception:
 			frappe.db.rollback(save_point=INGEST_SAVEPOINT)
@@ -302,22 +362,60 @@ class HostMirror:
 			"drift": drift,
 		}
 
+	def _reobserved(self, export: dict, epoch: int) -> dict:
+		"""The host answered with the snapshot the mirror already holds.
+
+		Nothing on the host changed, so nothing is re-landed and the archive is not
+		extended. What IS re-stated is the verdict: the host was reached, so a
+		mirror frozen `Unknown` by an earlier failure recovers here rather than
+		waiting for the host to happen to change. Freezing recovery behind "and it
+		must also have moved since" is how a quiet host stays flagged forever."""
+		self._stamp_host(export, epoch, _observed_at(export), _unfenced(self._fence_drift(export)))
+		return {
+			"server": self.server,
+			"applied": False,
+			"reason": "unchanged",
+			"observed_epoch": epoch,
+		}
+
 	def _epoch(self, export: dict) -> int:
 		"""The export's observed epoch.
 
-		Required by the contract and the whole basis of ordering: an export
-		without one cannot be placed against the mirror, so it is a protocol
-		surprise rather than a snapshot. Raise instead of guessing, exactly as
-		`boat_client._outcome` does for a non-terminal operation."""
-		epoch = int(export.get("observed_epoch") or 0)
-		if epoch <= 0:
+		Required by the contract and the whole basis of ordering, so an export
+		without one is a protocol surprise rather than a snapshot. It is raised
+		inside `sync`'s try, where it becomes a flag on the row: a host answering
+		a document Atlas cannot order is one Atlas cannot read, and on a sweep tick
+		raising instead would be a worker traceback every few minutes with nothing
+		an operator ever sees.
+
+		**Zero is a legitimate epoch and telling it from absent is the point.** The
+		counter starts at zero and is bumped on every observed CHANGE, so a
+		brand-new Boat reports 0 until it first observes one — which is exactly the
+		window between an operator enabling the flag and the host doing anything.
+		Reading absent-as-zero rejected the export of every host in that window."""
+		raw = export.get("observed_epoch")
+		if raw is None:
 			raise BoatError(f"Boat export for {self.server} carried no observed_epoch")
+		try:
+			epoch = int(raw)
+		except (TypeError, ValueError) as error:
+			raise BoatError(f"Boat export for {self.server} carried a non-numeric epoch {raw!r}") from error
+		if epoch < 0:
+			raise BoatError(f"Boat export for {self.server} carried a negative epoch {epoch}")
 		return epoch
 
-	def _mirrored_epoch(self) -> int:
-		return int(frappe.db.get_value("Server", self.server, "observed_epoch") or 0)
+	def _mirrored_epoch(self) -> int | None:
+		"""The epoch the mirror holds, or None when this host has never been
+		ingested. The distinction only matters because zero is a real epoch: a host
+		mirrored at 0 and a host never mirrored at all both read 0 out of the
+		column, and conflating them left a fresh Boat's first export looking like
+		one already seen."""
+		row = frappe.db.get_value("Server", self.server, ["observed_at", "observed_epoch"], as_dict=True)
+		if not row or not row.observed_at:
+			return None
+		return int(row.observed_epoch or 0)
 
-	def _stamp_host(self, export: dict, epoch: int, observed_at) -> None:
+	def _stamp_host(self, export: dict, epoch: int, observed_at, unfenced: list[str]) -> None:
 		"""Denormalize the hot fields onto `Server` — one UPDATE, no document
 		lifecycle.
 
@@ -331,8 +429,7 @@ class HostMirror:
 		values = {
 			"observed_epoch": epoch,
 			"observed_at": observed_at,
-			"mirror_status": "Fresh",
-			"mirror_error": "",
+			**_mirror_verdict(unfenced),
 		}
 		# Only facts the export actually carried: a missing fact must leave the
 		# last known value standing, never null it (same rule as `_freeze`).
@@ -379,6 +476,41 @@ class HostMirror:
 			accounted_for.add(uuid)
 			drift.extend(self._absorb(rows.get(uuid), observed))
 		drift.extend(_absent_drift(rows, accounted_for))
+		drift.extend(self._fence_drift(export))
+		return drift
+
+	def _fence_drift(self, export: dict) -> list[dict]:
+		"""Every disagreement between the fence Atlas issued for a VM and the one
+		its host actually holds.
+
+		The export ships `fence_epochs` keyed by UUID — "every fence this host
+		holds" — and until now Atlas archived it unread while `_write_observation`
+		claimed a disagreeing epoch "is reported as drift like any other
+		disagreement". Nothing computed it, and it is the one comparison that says
+		whether a host can do what Atlas has already asked of it: **a Boat refuses
+		to boot a UUID it holds no fence for** (spec/33 §11.1), so a missing entry
+		is not a bookkeeping nit — it is a VM that will not come back.
+
+		Only VMs Atlas has actually FENCED and actually placed here are compared. A
+		row with no `boot_epoch` was never issued one (every VM on a host still on
+		SSH, until its first `PUT`), and comparing against a fence Atlas never
+		issued would report the whole fleet as drifted the day a host is enabled.
+
+		An export with no `fence_epochs` key at all reports nothing: unlike
+		quarantine, absence here is silence rather than a claim — a Boat old enough
+		not to send the map has not told Atlas it holds no fences (it always sends
+		`{}` when it holds none, so the empty map IS the claim)."""
+		fences = export.get("fence_epochs")
+		if fences is None:
+			return []
+		drift = []
+		for uuid, row in self._atlas_rows().items():
+			if not row["boot_epoch"] or row["status"] not in PLACED_STATUSES:
+				continue
+			held = fences.get(uuid)
+			if held == row["boot_epoch"]:
+				continue
+			drift.append(_drift(uuid, "fence", str(row["boot_epoch"]), None if held is None else str(held)))
 		return drift
 
 	def _absorb(self, row: dict | None, observed: dict) -> list[dict]:
@@ -404,7 +536,9 @@ class HostMirror:
 		prevents two live copies of a VM into a value the host chooses.
 
 		An epoch Boat holds that disagrees with the one Atlas issued is drift, and
-		is reported as drift like any other disagreement."""
+		is reported as drift like any other disagreement — computed in
+		`_fence_drift` from the export's own `fence_epochs` map, which is the only
+		channel that can say a host holds NO fence for a VM."""
 		frappe.db.set_value(
 			"Virtual Machine",
 			uuid,
@@ -413,13 +547,54 @@ class HostMirror:
 		)
 
 	def _atlas_rows(self) -> dict[str, dict]:
-		"""Every VM Atlas places on this host, by UUID."""
-		rows = frappe.get_all(
-			"Virtual Machine",
-			filters={"server": self.server},
-			fields=["name", "status", "desired_power"],
-		)
-		return {row["name"]: row for row in rows}
+		"""Every VM Atlas places on this host, by UUID. Read once per sync — the
+		VM comparison, the fence comparison and the regression test all ask the
+		same question of the same rows."""
+		if self._rows is None:
+			rows = frappe.get_all(
+				"Virtual Machine",
+				filters={"server": self.server},
+				fields=["name", "status", "desired_power", "boot_epoch"],
+			)
+			self._rows = {row["name"]: row for row in rows}
+		return self._rows
+
+
+def _unfenced(drift: list[dict]) -> list[str]:
+	"""The VMs whose host holds no fence for them at all — the subset of fence drift
+	that is not a disagreement but an absence. A host holding a DIFFERENT epoch still
+	knows the VM; a host holding none will boot nothing when asked (spec/33 §11.1)."""
+	return [row["virtual_machine"] for row in drift if row["kind"] == "fence" and row["observed"] is None]
+
+
+def _mirror_verdict(unfenced: list[str]) -> dict:
+	"""`mirror_status` / `mirror_error` for a host that answered.
+
+	**`Fresh` is not the automatic reward for answering.** A Boat that lost its
+	bbolt file answers perfectly well, reports its VMs, and holds no fence for any of
+	them — so it will boot NOTHING it is asked to (spec/33 §11.1 names that the most
+	dangerous state the system can reach), and reported `Fresh` it went on receiving
+	every new arrival. So the verdict asks the same question `_freeze` asks, and
+	spells the answer with the same word: can Atlas still take this host at its word?
+	A host that cannot run what Atlas already placed on it cannot, so it reads
+	`Unknown` and `placement.placement_candidates` stops filling it.
+
+	Nothing is evicted, exactly as for an unreachable host (§9): the VMs it holds are
+	running right now, and the fence governs only the NEXT boot. And it needs no
+	operator to clear — every lifecycle verb re-`PUT`s desired state and
+	`assert_desired_state` is the explicit repair, so the fences come back and the
+	next export reads `Fresh` again."""
+	if not unfenced:
+		return {"mirror_status": "Fresh", "mirror_error": ""}
+	named = ", ".join(sorted(unfenced)[:5])
+	return {
+		"mirror_status": "Unknown",
+		"mirror_error": (
+			f"Boat holds no fence for {len(unfenced)} VM(s) placed here ({named}): its store was lost, "
+			f"reinstalled or restored from a backup, so it will boot none of them until desired state "
+			f"is re-asserted."
+		)[:1000],
+	}
 
 
 def _row_drift(row: dict, observed: dict) -> list[dict]:

@@ -320,7 +320,7 @@
    "fieldtype": "Column Break"
   },
   {
-   "description": "Fresh means the mirror matches the host as of Observed At. Unknown means Boat did not answer — the host is Unknown, NOT dead (spec/33 §9): its VMs are still running, so the mirror freezes at its last values rather than being nulled, nothing is evicted, and placement excludes the host from NEW arrivals only (placement.placement_candidates — its VMs still count against capacity, and one already there may still resize). It re-enters the candidate set on the next successful export, with no operator action. Empty means this host has never been mirrored — every SSH host reads empty, and so does a Boat host the sweep has not reached yet; that does NOT exclude it, because \"not looked at\" is not \"lost sight of\".",
+   "description": "Fresh means the mirror matches the host as of Observed At. Unknown means Atlas can no longer take this host at its word, and there are two ways in: Boat did not answer, or Boat answered but holds no fence for VMs Atlas placed here (its store was lost, reinstalled or restored from a backup — it will boot none of them; Mirror Error names them). Either way the host is Unknown, NOT dead (spec/33 §9): its VMs are still running, so the mirror freezes at its last values rather than being nulled, nothing is evicted, and placement excludes the host from NEW arrivals only (placement.placement_candidates — its VMs still count against capacity, and one already there may still resize). It re-enters the candidate set with no operator action: the next successful export clears an unreachable host, and any lifecycle verb (or Assert Desired State) re-asserts the fences that clear a forgetful one. Clearing Boat Enabled clears this field too — the rollback restores the behaviour, not just the transport. Empty means this host has never been mirrored — every SSH host reads empty, and so does a Boat host the sweep has not reached yet; that does NOT exclude it, because \"not looked at\" is not \"lost sight of\".",
    "fieldname": "mirror_status",
    "fieldtype": "Select",
    "label": "Mirror Status",
@@ -342,7 +342,7 @@
    "read_only": 1
   },
   {
-   "description": "Why the last mirror sync failed, in the daemon's own sentence. Set alongside Mirror Status = Unknown and cleared on the next successful export.",
+   "description": "Why Atlas cannot take this host at its word — the daemon's own sentence when it did not answer, or the VMs it holds no fence for when it did. Set alongside Mirror Status = Unknown and cleared as soon as the host answers cleanly again.",
    "fieldname": "mirror_error",
    "fieldtype": "Small Text",
    "label": "Mirror Error",
