@@ -152,6 +152,25 @@ so `vm-network-up` never runs — the daemon **re-parks** every VM still carryin
 `sleeping` marker, rebuilding `atlas-park0`, NDP, route, and rule from the on-disk
 markers + `network.env`, DB-free (the same self-heal pattern as `atlas-pool.service`).
 
+**One trap per host.** Boat ([33-boat.md](./33-boat.md)) ships a port of this same
+reflex inside its daemon, so on a host running `boat.service` both would poll the
+same counters and both would start the same unit on one SYN — two uncoordinated
+actors on one VM. **Boat wins**: it holds that VM's fence epoch and desired record
+and gates its wake on them, while this daemon's wake is a bare `systemctl start`
+that knows neither and could resurrect, on a stray SYN to a stale parked route, a VM
+Atlas has repointed to another host. So `atlas-wake-trap.py` re-reads
+`systemctl is-active boat.service` every tick and **stands down** — no poll, no boot
+re-park — for as long as Boat is running there. The decision is the **host's**, not
+`Server.boat_enabled`: the race exists whenever both daemons are resident, which can
+be true before Atlas flips that flag and after it clears it, and deciding on the host
+needs nothing pushed, survives a reboot with nothing persisted, and reverses within
+one poll when Boat stops (this daemon re-parks before it resumes trapping). The unit
+deliberately stays **enabled and active** while stood down, because Boat's own sleep
+refuses a VM on a host with no active `atlas-wake-trap.service` — masking it would
+make every sleep on a Boat host fail. That gate should ask about Boat's own trap
+instead of this unit; until it does, standing down in place is what keeps a Boat host
+able to sleep at all.
+
 ### 3. Adopting the wake into the DB ([virtual_machine.py](../atlas/atlas/doctype/virtual_machine/virtual_machine.py))
 
 The host can't reach Atlas's DB, so a per-minute `reconcile_sleeping_vms` job
