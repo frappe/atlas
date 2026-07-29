@@ -501,7 +501,7 @@ class TestGuestScriptTypedIO(IntegrationTestCase):
 	def test_admin_main_sets_admin_domain_no_rename(self) -> None:
 		"""Admin mode: no site rename — instead `[admin].domain` is set to the FQDN +
 		`bench setup production`, mapping the FQDN to the admin app's vhost — then
-		the admin login URL is minted (Pilot #117 `generate-admin-session`)."""
+		the admin login URL is minted (the bench-cli admin session verb)."""
 		guest = self.guest
 		admin_login_url = "http://admin.blr1.frappe.dev/?sid=jwt-token"
 		with (
@@ -527,15 +527,65 @@ class TestGuestScriptTypedIO(IntegrationTestCase):
 		# FQDN, not the placeholder admin.localhost.
 		m_mint.assert_called_once_with()
 
-	def test_mint_admin_login_url_uses_generate_admin_session_full_path(self) -> None:
-		"""`_mint_admin_login_url` shells out to Pilot #117's
-		`bench generate-admin-session --full-path` and returns its bare stdout —
+	def test_mint_admin_login_url_prefers_the_grouped_session_verb(self) -> None:
+		"""`_mint_admin_login_url` tries the GROUPED spelling first
+		(`bench admin generate-session --full-path`) and returns its bare stdout —
 		never touching the (random, bake-time) [admin].password."""
 		guest = self.guest
 		with patch.object(guest, "_bench", return_value="http://admin.example/?sid=jwt\n") as m_bench:
 			url = guest._mint_admin_login_url()
 		self.assertEqual(url, "http://admin.example/?sid=jwt")
-		m_bench.assert_called_once_with("generate-admin-session", "--full-path", capture=True)
+		m_bench.assert_called_once_with("admin", "generate-session", "--full-path", capture=True)
+
+	def test_mint_admin_login_url_falls_back_to_the_legacy_verb(self) -> None:
+		"""A golden whose bench-cli has no grouped spelling (the fork-pinned admin
+		recipes) falls back to the legacy top-level `bench generate-admin-session
+		--full-path` — the ONLY spelling those goldens carry."""
+		guest = self.guest
+		calls = []
+
+		def _bench(*args, **kwargs):
+			calls.append(args)
+			if args[0] == "admin":
+				raise self._no_such_command(args)
+			return "http://admin.example/?sid=legacy\n"
+
+		with patch.object(guest, "_bench", side_effect=_bench):
+			url = guest._mint_admin_login_url()
+		self.assertEqual(url, "http://admin.example/?sid=legacy")
+		self.assertEqual(calls[-1], ("generate-admin-session", "--full-path"))
+
+	def test_mint_admin_login_url_degrades_when_no_verb_exists(self) -> None:
+		"""frappe/pilot v0.0.9 deleted the verb and its `bench admin` group ships no
+		replacement: the mint returns "" instead of exiting. An absent one-click link
+		is a poorer handoff (the console still takes `[admin].password`), NOT a failed
+		deploy — and the same script deploys the tenant SITE, which must not be marked
+		Failed because its companion console could not sign a URL."""
+		guest = self.guest
+		with patch.object(guest, "_bench", side_effect=self._no_such_command(("admin",))):
+			self.assertEqual(guest._mint_admin_login_url(), "")
+
+	def test_mint_admin_login_url_still_fails_loud_on_a_real_error(self) -> None:
+		"""Only a MISSING VERB degrades. A mint that actually broke (an unwritable
+		`admin.jwt_secret`, a wedged bench) propagates, so the deploy fails loud rather
+		than silently handing back an empty login URL."""
+		guest = self.guest
+		import subprocess
+
+		boom = subprocess.CalledProcessError(1, ["bench"], output="", stderr="jwt_secret unwritable\n")
+		with patch.object(guest, "_bench", side_effect=boom):
+			with self.assertRaises(subprocess.CalledProcessError):
+				guest._mint_admin_login_url()
+
+	@staticmethod
+	def _no_such_command(args) -> Exception:
+		"""The exception `_bench` raises when the VERB doesn't exist: click's usage
+		error — exit 2, `No such command` on stderr (`_missing_verb`'s signal)."""
+		import subprocess
+
+		return subprocess.CalledProcessError(
+			2, ["bench", *args], output="", stderr=f"Error: No such command '{args[-1]}'.\n"
+		)
 
 	def test_set_admin_domain_rewrites_toml_and_regenerates(self) -> None:
 		"""Admin mode points the admin vhost at the FQDN by rewriting `domain = ""`

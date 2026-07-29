@@ -333,8 +333,10 @@ def deploy_attached(pilot_name: str) -> None:
 	(the Site owns and already waited on the VM) and minus the front-door setup (the site
 	deploy already did the admin-mode wiring).
 
-	Fail loud: a pilot whose login mint fails is Failed, not a silently console-less
-	Running — the Site's job surfaces it (and the Site itself still serves)."""
+	Fail loud ON THE PILOT ROW: a pilot whose login mint fails is Failed, not a silently
+	console-less Running. The raise does NOT fail the owning Site, though — the console
+	is a second, additive front door on a VM whose site already serves, so
+	`Site._attach_pilot_console` logs it and lets the Site reach Running."""
 	pilot = frappe.get_doc("Pilot", pilot_name)
 	if pilot.status != "Pending":
 		return

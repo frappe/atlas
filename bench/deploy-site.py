@@ -19,9 +19,11 @@
 # baked Administrator password is a long random secret generated at bake time and
 # never surfaced. Instead, site mode mints a one-click session URL with
 # `bench browse --user Administrator` (a real 24h session, no password);
-# admin mode mints one with `bench generate-admin-session --full-path` (Pilot #117,
-# a 5-minute single-use JWT). Either way the result carries `login_url` — the only
-# way in besides a password the tenant/operator sets themselves later.
+# admin mode mints one with the bench-cli admin session verb (a 5-minute single-use
+# JWT), when the golden's bench-cli still carries one — `login_url` is then the only
+# way in besides a password the tenant/operator sets themselves later. A golden whose
+# bench-cli dropped that verb emits NO `login_url` and the console falls back to its
+# baked `[admin].password`; see `_mint_admin_login_url`.
 #
 # The rename is one bench-cli command: `bench rename-site <old> <new>`
 # (bench-setup-manual.md) moves the site dir, updates the site config, regenerates
@@ -179,8 +181,10 @@ class DeploySiteResult:
 	way: site mode mints it with `bench browse` (a real 24h session, built
 	into `https://<fqdn>/app?sid=<sid>` — Contract A: the FQDN is the one routing
 	string, HTTPS terminates at the edge proxy, never in-guest); admin mode mints it
-	with `bench generate-admin-session --full-path` (a 5-minute single-use JWT,
-	Pilot #117)."""
+	with the bench-cli admin session verb (a 5-minute single-use JWT). It is OMITTED
+	from the payload when empty — an admin console on a bench-cli with no session
+	verb still deploys and still serves, it just has no one-click link
+	(`_mint_admin_login_url`), so every consumer must treat it as optional."""
 
 	site: str
 	serving: bool
@@ -376,17 +380,60 @@ def _mint_login_url(fqdn: str) -> str:
 	return f"https://{fqdn}/app?sid={match.group(1)}"
 
 
+# The spellings of the admin session-minting verb, newest first. The fork-pinned
+# admin recipes carry the top-level `generate-admin-session` (Pilot #117);
+# frappe/pilot v0.0.9-pre-alpha DELETED it and its `bench admin` group ships no
+# replacement (build, enroll, issue-site-token, revoke-totp, run-patches,
+# set-central-config, upgrade). We try the grouped spelling the regroup would use
+# first — so a future upstream release that restores the verb needs no change here —
+# then the legacy top-level one, then degrade (see `_mint_admin_login_url`).
+_ADMIN_SESSION_VERBS = (("admin", "generate-session"), ("generate-admin-session",))
+
+
+def _missing_verb(error: subprocess.CalledProcessError) -> bool:
+	"""True iff a failed `_bench(...)` died because the VERB does not exist on this
+	golden's bench-cli, rather than because the mint itself broke. bench-cli is click,
+	so an unknown subcommand under a known group is a usage error: exit 2 with
+	`No such command` on stderr (the Frappe passthrough an unknown TOP-level verb falls
+	through to answers the same way). Both signals are required so a REAL failure — an
+	unwritable `admin.jwt_secret`, a wedged bench — still propagates and fails the
+	deploy loud."""
+	streams = f"{error.stdout or ''}\n{error.stderr or ''}".lower()
+	return error.returncode == 2 and ("no such command" in streams or "unknown command" in streams)
+
+
 def _mint_admin_login_url() -> str:
 	"""Admin mode only: mint the admin console's one-click sign-in URL, replacing
-	the shared baked `[admin].password` handoff.
+	the shared baked `[admin].password` handoff. Returns "" when this golden's
+	bench-cli carries no session-minting verb at all.
 
-	`bench generate-admin-session --full-path` (Pilot #117, bench-cli) issues a
+	The verb (`--full-path`, either spelling in `_ADMIN_SESSION_VERBS`) issues a
 	5-minute single-use `?sid=` JWT, signed by `admin.jwt_secret` (auto-generated
 	in bench.toml on first call) — the admin frontend exchanges it for a 1-day
 	HttpOnly session cookie. Password login still works but is no longer the
 	handoff. Run AFTER `_set_admin_domain` so the printed URL already carries the
-	real FQDN, not the placeholder `admin.localhost`."""
-	return _bench("generate-admin-session", "--full-path", capture=True).strip()
+	real FQDN, not the placeholder `admin.localhost`.
+
+	DEGRADE, don't die, when neither spelling exists: the console is still fully
+	reachable at its FQDN with the baked `[admin].password`, so an absent one-click
+	link is a poorer handoff, not a failed deploy — and this same script deploys the
+	tenant's SITE, which must not be marked Failed because its companion console
+	could not mint a URL. A missing verb is detected precisely (`_missing_verb`);
+	anything else re-raises and fails loud."""
+	for verb in _ADMIN_SESSION_VERBS:
+		try:
+			return _bench(*verb, "--full-path", capture=True).strip()
+		except subprocess.CalledProcessError as error:
+			if not _missing_verb(error):
+				raise
+	print(
+		"WARNING: this bench-cli carries no admin session verb ("
+		+ " / ".join("bench " + " ".join(verb) for verb in _ADMIN_SESSION_VERBS)
+		+ "); the admin console has no one-click login URL — sign in with [admin].password instead",
+		file=sys.stderr,
+		flush=True,
+	)
+	return ""
 
 
 def _set_admin_domain(fqdn: str, *, run_setup: bool = True, update_site: str = "") -> None:
@@ -564,7 +611,7 @@ def _regenerate_login(inputs: "DeploySiteInputs", log) -> None:
 	session.
 
 	We still gate on the bench DB accepting connections — the mint (`bench browse` in
-	site mode, `bench generate-admin-session` in admin mode) opens a `frappe.connect()`,
+	site mode, the admin session verb in admin mode) opens a `frappe.connect()`,
 	and a regenerate can land on a VM that was just resumed from a memory snapshot with
 	MariaDB still racing sshd. Emits the same `ATLAS_RESULT` shape as a full deploy
 	(`serving` reflects the local probe) so the controller stamps it identically."""
@@ -573,7 +620,7 @@ def _regenerate_login(inputs: "DeploySiteInputs", log) -> None:
 	_await_db_ready()
 	log("bench DB ready")
 	if inputs.mode == "admin":
-		log("minting admin login URL (bench generate-admin-session --full-path) …")
+		log("minting admin login URL (bench-cli admin session verb) …")
 		login_url = _mint_admin_login_url()
 	else:
 		log("minting tenant login URL (bench browse) …")
@@ -651,7 +698,7 @@ def main() -> None:
 		log("admin mode: pointing [admin].domain at the FQDN + setup production …")
 		_set_admin_domain(inputs.admin_domain or inputs.site_name)
 		log("admin vhost regenerated + reloaded")
-		log("minting admin login URL (bench generate-admin-session --full-path) …")
+		log("minting admin login URL (bench-cli admin session verb) …")
 		login_url = _mint_admin_login_url()
 		log("admin login URL minted")
 	else:
