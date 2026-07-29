@@ -169,7 +169,23 @@ INSTALL_URL="https://raw.githubusercontent.com/$BENCH_CLI_REPO/$BENCH_CLI_REF/in
 # it, surfacing as a confusing `curl: (23)`). The env var satisfies both pins: the
 # fork seeds NONINTERACTIVE from ${BENCH_YES:-0}, and v0.0.9 needs no opt-out at all
 # here because its run_sudo short-circuits when already root — which this call is.
-curl -fsSL "$INSTALL_URL" | BENCH_YES=1 bash -s -- --user "$BENCH_USER"
+#
+# PILOT_DEV=1 forces the GIT install shape, and it is what makes the pin mean
+# anything. install.sh's default (release) path always downloads the LATEST release
+# tarball — it has no way to fetch a specific one — so a release pin can only ever
+# be asserted after the fact, and every upstream release breaks the next bake with a
+# drift failure. Chasing the tag is unwinnable: two consecutive bakes here failed
+# against v0.0.9 and v0.0.14 because v0.0.14 and then v0.0.15 shipped underneath
+# them. The git path clones and then §3b checks out BENCH_CLI_REF exactly, so the
+# pin is reproducible no matter what upstream releases. Dev mode also compiles the
+# admin frontend from source, so the console is still served (the release tarball's
+# only real advantage was shipping it prebuilt).
+#
+# Passed as an ENV VAR, not the equivalent `--dev` FLAG, for the same reason as
+# BENCH_YES: an unrecognised flag is a hard `Unknown option` + exit 1, and the
+# fork-pinned admin recipes run an older install.sh whose arg parser predates it.
+# An env var an install.sh does not read is simply ignored.
+curl -fsSL "$INSTALL_URL" | BENCH_YES=1 PILOT_DEV=1 bash -s -- --user "$BENCH_USER"
 
 # Enable lingering for the bench user NOW that it exists. Current bench-cli runs
 # the production stack (redis_queue/redis_cache, web, workers) as `systemctl --user`
@@ -208,7 +224,10 @@ fi
 # verbatim, and raw.githubusercontent resolves it for INSTALL_URL above) and a commit
 # SHA for a git pin.
 if [ -d "$BENCH_CLI_DIR/.git" ]; then
-	as_frappe "git -C '$BENCH_CLI_DIR' remote set-url origin 'https://github.com/$BENCH_CLI_REPO' && git -C '$BENCH_CLI_DIR' fetch --quiet origin && git -C '$BENCH_CLI_DIR' checkout --quiet '$BENCH_CLI_REF'"
+	# --tags: install.sh clones a single branch (develop), so a pin expressed as a
+	# release TAG is not present until it is fetched explicitly. Without this a tag
+	# pin dies on `pathspec ... did not match` even though the tag exists upstream.
+	as_frappe "git -C '$BENCH_CLI_DIR' remote set-url origin 'https://github.com/$BENCH_CLI_REPO' && git -C '$BENCH_CLI_DIR' fetch --quiet --tags origin && git -C '$BENCH_CLI_DIR' checkout --quiet '$BENCH_CLI_REF'"
 else
 	INSTALLED_VERSION="$(cat "$BENCH_CLI_DIR/VERSION" 2>/dev/null || true)"
 	if [ "$INSTALLED_VERSION" != "$BENCH_CLI_REF" ]; then

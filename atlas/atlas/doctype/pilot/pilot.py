@@ -463,7 +463,21 @@ def _create_subdomain(pilot) -> str:
 	`<subdomain>.<region domain>` → the backing VM's public /128. The subdomain label
 	and target VM both flow straight from the Pilot — no transformation (Contract A).
 	Identical to Site._create_subdomain, minus the (site-only) build_mode probe path:
-	the Subdomain row is the same proxy contract for both aggregates."""
+	the Subdomain row is the same proxy contract for both aggregates.
+
+	Get-or-create, because retry = re-run (taste #16) and this is now the FIRST step
+	of the attached deploy: a pilot that got its route and then failed at the mint is
+	re-driven from the top, and a bare insert made that retry die on a duplicate-key
+	error instead — leaving the row Failed while its route was in fact already live
+	and serving, which is the most confusing state of the three."""
+	existing = frappe.db.get_value("Subdomain", pilot.subdomain, "virtual_machine")
+	if existing is not None:
+		if existing != pilot.virtual_machine:
+			frappe.throw(
+				f"Subdomain '{pilot.subdomain}' already routes to VM {existing}, "
+				f"not this pilot's {pilot.virtual_machine}"
+			)
+		return pilot.subdomain
 	subdomain = frappe.get_doc(
 		{
 			"doctype": "Subdomain",
