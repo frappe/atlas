@@ -59,12 +59,12 @@ set -euo pipefail
 # The defaults below keep a direct `build.sh` run (no env) reproducible at v16. ---
 # BENCH_CLI_REPO is the GitHub org/repo the CLI is cloned from, and always travels
 # with BENCH_CLI_REF — a ref is only resolvable against the repo it lives in.
-# Default is the frappe/pilot v0.0.9-pre-alpha release (the site line's pin);
+# Default is the frappe/pilot v0.0.14-pre-alpha release (the site line's pin);
 # override BOTH to bake off a fork. install.sh hardcodes the frappe/pilot origin, so
 # §3 below re-points the clone's origin at this repo before checking out
 # BENCH_CLI_REF (a fork SHA is unreachable otherwise).
 BENCH_CLI_REPO="${BENCH_CLI_REPO:-frappe/pilot}"
-BENCH_CLI_REF="${BENCH_CLI_REF:-v0.0.9-pre-alpha}"  # default: release tag @ frappe/pilot (see §3b for tag-vs-SHA)
+BENCH_CLI_REF="${BENCH_CLI_REF:-v0.0.14-pre-alpha}"  # default: release tag @ frappe/pilot (see §3b for tag-vs-SHA)
 ERPNEXT_BRANCH="${ERPNEXT_BRANCH:-version-16}"  # default: v16; controller overrides for v15 / develop
 
 BENCH_USER="frappe"

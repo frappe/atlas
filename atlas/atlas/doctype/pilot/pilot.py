@@ -341,12 +341,23 @@ def deploy_attached(pilot_name: str) -> None:
 	if pilot.status != "Pending":
 		return
 	try:
+		# Register the proxy route BEFORE minting, mirroring `auto_provision`. The route
+		# needs only the FQDN + the VM's /128 — both already present, since an attached
+		# pilot binds to a VM the Site has already booted — so the mint is not a
+		# prerequisite for it. Ordering it after the mint made the console's ENTIRE front
+		# door contingent on the one-click link: on a golden whose bench-cli has no
+		# session verb the mint raises, `_create_subdomain` never runs, and the console
+		# FQDN 404s at the proxy with no Subdomain row to explain why. Routed-but-no-link
+		# degrades to password sign-in with `[admin].password`; unrouted degrades to
+		# nothing at all.
+		subdomain_name = _create_subdomain(pilot)
+		pilot.db_set("subdomain_doc", subdomain_name)
+		# nosemgrep: frappe-manual-commit -- fire the after_commit proxy reconcile now, as auto_provision does
+		frappe.db.commit()
 		result = _regenerate_login(pilot)
 		pilot._stamp_login(result)
 		pilot.db_set("login_url", pilot.login_url)
 		pilot.db_set("login_url_expires_at", pilot.login_url_expires_at)
-		subdomain_name = _create_subdomain(pilot)
-		pilot.db_set("subdomain_doc", subdomain_name)
 		pilot.db_set("status", "Running")
 		# db_set skips on_update, so emit the status event (carrying the login handoff)
 		# explicitly — the same gap auto_provision closes. Its delivery is

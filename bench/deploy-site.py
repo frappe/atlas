@@ -392,14 +392,30 @@ _ADMIN_SESSION_VERBS = (("admin", "generate-session"), ("generate-admin-session"
 
 def _missing_verb(error: subprocess.CalledProcessError) -> bool:
 	"""True iff a failed `_bench(...)` died because the VERB does not exist on this
-	golden's bench-cli, rather than because the mint itself broke. bench-cli is click,
-	so an unknown subcommand under a known group is a usage error: exit 2 with
-	`No such command` on stderr (the Frappe passthrough an unknown TOP-level verb falls
-	through to answers the same way). Both signals are required so a REAL failure — an
-	unwritable `admin.jwt_secret`, a wedged bench — still propagates and fails the
-	deploy loud."""
+	golden's bench-cli, rather than because the mint itself broke.
+
+	TWO different parsers answer here and they word it differently — both must be
+	matched, or the grouped spelling reads as a real failure and fails the deploy loud:
+
+	* An unknown TOP-level verb falls through to the Frappe passthrough (click):
+	  exit 2, `No such command` on stderr.
+	* An unknown subcommand under a KNOWN group (`bench admin …`) never reaches click.
+	  Pilot's group parser is argparse, which exits 2 with
+	  `argument admin_command: invalid choice: 'generate-session' (choose from …)`.
+
+	Matching only click's phrasing is what let a v0.0.9 golden — which has the `admin`
+	group but no session verb in it — re-raise out of `_mint_admin_login_url`, mark the
+	companion console Failed, and (because the Pilot creates its proxy route only after
+	the mint) leave the console FQDN unrouted entirely.
+
+	Exit 2 is still required alongside the phrase, so a REAL failure — an unwritable
+	`admin.jwt_secret`, a wedged bench — still propagates and fails the deploy loud."""
 	streams = f"{error.stdout or ''}\n{error.stderr or ''}".lower()
-	return error.returncode == 2 and ("no such command" in streams or "unknown command" in streams)
+	if error.returncode != 2:
+		return False
+	return any(
+		phrase in streams for phrase in ("no such command", "unknown command", "invalid choice")
+	)
 
 
 def _mint_admin_login_url() -> str:

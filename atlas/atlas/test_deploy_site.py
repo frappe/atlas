@@ -579,13 +579,44 @@ class TestGuestScriptTypedIO(IntegrationTestCase):
 
 	@staticmethod
 	def _no_such_command(args) -> Exception:
-		"""The exception `_bench` raises when the VERB doesn't exist: click's usage
-		error — exit 2, `No such command` on stderr (`_missing_verb`'s signal)."""
+		"""The exception `_bench` raises when an unknown TOP-level verb falls through to
+		the Frappe passthrough: click's usage error — exit 2, `No such command`."""
 		import subprocess
 
 		return subprocess.CalledProcessError(
 			2, ["bench", *args], output="", stderr=f"Error: No such command '{args[-1]}'.\n"
 		)
+
+	@staticmethod
+	def _invalid_choice(args) -> Exception:
+		"""The exception `_bench` raises when the GROUP exists but the subcommand does
+		not (`bench admin generate-session` on a golden whose bench-cli has no session
+		verb). Pilot's group parser is argparse, not click, so the wording is `invalid
+		choice` — verbatim from a v0.0.9 golden. Matching only click's phrasing is what
+		made the console fail its deploy and never get a proxy route."""
+		import subprocess
+
+		return subprocess.CalledProcessError(
+			2,
+			["bench", *args],
+			output="",
+			stderr=(
+				f"bench admin: error: argument admin_command: invalid choice: '{args[-1]}' "
+				"(choose from 'build', 'enroll', 'issue-site-token', 'revoke-totp', "
+				"'run-patches', 'set-central-config', 'upgrade')\n"
+			),
+		)
+
+	def test_mint_degrades_when_group_rejects_subcommand(self) -> None:
+		"""A golden carrying the `admin` GROUP but no session verb answers with
+		argparse's `invalid choice`. That must degrade to "" like click's `No such
+		command`, not raise — otherwise the companion console is marked Failed and,
+		because its proxy route is created after the mint, never gets routed at all."""
+		guest = self.guest
+		with patch.object(guest, "_bench", side_effect=lambda *a, **k: (_ for _ in ()).throw(
+			self._invalid_choice(a)
+		)):
+			self.assertEqual(guest._mint_admin_login_url(), "")
 
 	def test_set_admin_domain_rewrites_toml_and_regenerates(self) -> None:
 		"""Admin mode points the admin vhost at the FQDN by rewriting `domain = ""`

@@ -209,7 +209,7 @@ _BENCH_BUILD_MEMORY_MB = 6144
 # the only spelling build.sh §3b can verify the delivered tree against. A SHA would
 # still resolve for the install.sh download URL but could never be asserted.
 _BENCH_CLI_REPO = "frappe/pilot"
-_BENCH_CLI_REF = "v0.0.9-pre-alpha"  # release tag @ frappe/pilot (commit 916f4090)
+_BENCH_CLI_REF = "v0.0.14-pre-alpha"  # release tag @ frappe/pilot (commit 27c6772a)
 
 # The ADMIN variants stay on the fork pin. `bench generate-admin-session` — the
 # admin-mode login-URL handoff deploy-site.py mints its one-click session with
