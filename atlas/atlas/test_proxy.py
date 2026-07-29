@@ -10,6 +10,7 @@ from atlas.atlas.doctype.virtual_machine.test_virtual_machine import (
 	_ensure_test_server,
 	_new_vm,
 )
+from atlas.tests.fixtures import make_virtual_machine
 
 
 def _purge() -> None:
@@ -48,6 +49,23 @@ EMPTY_MAP = "{}\n"
 def _proxy_vm():
 	"""A VM marked as a proxy — the reconcile target."""
 	return _new_vm(is_proxy=1)
+
+
+def _drained_server() -> str:
+	"""A second, NON-Active host — the "repurposed underneath a live-looking proxy"
+	case. Its own IPv6 range so VMs on it allocate independently of the shared
+	Active test server."""
+	from atlas.tests.fixtures import make_provider, make_server
+
+	return make_server(
+		make_provider("proxy-drained-provider"),
+		"proxy-drained-server",
+		ipv4_address="10.0.0.98",
+		ipv6_address="2001:db8:9::1",
+		ipv6_prefix="2001:db8:9::/64",
+		ipv6_virtual_machine_range="2001:db8:9::/124",
+		status="Draining",
+	).name
 
 
 @contextlib.contextmanager
@@ -345,6 +363,38 @@ class TestWildcardTargets(IntegrationTestCase):
 		ipv4, ipv6 = proxy.wildcard_targets()
 		self.assertEqual(ipv4, [])
 		self.assertEqual(ipv6, ["2400:6180::a"])
+
+	def test_proxy_on_a_non_active_host_is_excluded(self) -> None:
+		# The VM's own status is not enough: a proxy whose HOST was drained/rebuilt/
+		# repurposed underneath it still reads Running (nobody terminated the row), yet
+		# its /128 is exactly as dead as a Terminated proxy's — same blackhole, different
+		# route. Only a proxy on an Active Server is in the fleet.
+		live = _proxy_vm()
+		live.db_set("ipv6_address", "2400:6180::a")
+		drained_host = _drained_server()
+		stale = make_virtual_machine(drained_host, _ensure_test_image(), title="stale-proxy", is_proxy=1)
+		stale.db_set("ipv6_address", "2400:6180::b")
+		stale.db_set("status", "Running")  # never terminated — that is the whole point
+		_reserved_ip("198.51.100.12", drained_host, stale.name)
+		ipv4, ipv6 = proxy.wildcard_targets()
+		# Neither a wildcard DNS address …
+		self.assertEqual(ipv6, ["2400:6180::a"])
+		self.assertEqual(ipv4, [])
+		# … nor a reconcile / cert-push target.
+		self.assertNotIn(stale.name, proxy._proxy_vms())
+
+	def test_no_active_host_yields_an_empty_fleet(self) -> None:
+		# Degenerate case: every host is non-Active, so the `server in (…)` filter has an
+		# empty set. Return an empty fleet rather than building an `IN ()` query — and
+		# publish no addresses at all, which is the honest answer.
+		# Resolve the shared Active host BEFORE draining it (the fixture re-asserts
+		# status="Active" on every call).
+		shared_host = _ensure_test_server()
+		stale = make_virtual_machine(_drained_server(), _ensure_test_image(), is_proxy=1)
+		stale.db_set("ipv6_address", "2400:6180::b")
+		frappe.db.set_value("Server", shared_host, "status", "Draining")
+		self.assertEqual(proxy._proxy_vms(), [])
+		self.assertEqual(proxy.wildcard_targets(), ([], []))
 
 
 class TestPushCert(IntegrationTestCase):

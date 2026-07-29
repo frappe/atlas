@@ -406,14 +406,27 @@ def _curl_command(method: str, path: str, data_stdin: bool = False) -> str:
 
 
 def _proxy_vms() -> list[str]:
-	"""Every LIVE VM marked is_proxy. These are the reconcile targets; each gets the
-	full map, and each contributes its address to the regional wildcard. A Terminated
-	proxy is excluded: its guest is gone and its `/128` no longer answers, so leaving it
-	in the fleet would keep publishing a dead address in the wildcard AAAA set (half the
-	round-robin blackholes) and keep trying to reconcile a VM that doesn't exist."""
+	"""Every LIVE VM marked is_proxy, ON A LIVE HOST. These are the reconcile targets;
+	each gets the full map, and each contributes its address to the regional wildcard. A
+	Terminated proxy is excluded: its guest is gone and its `/128` no longer answers, so
+	leaving it in the fleet would keep publishing a dead address in the wildcard AAAA set
+	(half the round-robin blackholes) and keep trying to reconcile a VM that doesn't exist.
+
+	The VM's own status is not enough. It is written by Atlas when Atlas acts on the VM,
+	so a proxy whose HOST was drained, rebuilt, or repurposed underneath it still reads
+	Running — nobody ever terminated the row. That is the same dead address by a different
+	route, and it blackholed roughly half of a region's public traffic in exactly that
+	shape. So gate on the host too: only a proxy on an `Active` Server is in the fleet.
+	Draining/Broken/Archived (and a host still Pending/Bootstrapping) contribute neither a
+	cert push target nor a wildcard DNS address — the operator's host status is the one
+	honest signal that a guest is still where Atlas thinks it is. A host coming back
+	Active puts its proxy back in on the next reconcile; nothing here is destructive."""
+	live_hosts = frappe.get_all("Server", filters={"status": "Active"}, pluck="name")
+	if not live_hosts:
+		return []
 	return frappe.get_all(
 		"Virtual Machine",
-		filters={"is_proxy": 1, "status": ["!=", "Terminated"]},
+		filters={"is_proxy": 1, "status": ["!=", "Terminated"], "server": ["in", live_hosts]},
 		pluck="name",
 	)
 
