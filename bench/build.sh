@@ -136,8 +136,10 @@ chmod u+s /usr/bin/sudo /usr/bin/passwd /usr/bin/su /bin/su \
 # copies the PREBUILT zfs.ko + spl.ko from the manifest-pinned linux-modules-<kver>
 # and pins them in modules-load.d), so build.sh no longer touches the module — that
 # derives kver from the manifest, immune to the `uname -r` of this build VM. Here we
-# install only `zfsutils-linux` (zpool/zfs binaries), which bench-cli's VolumeManager
-# needs to build the pool/datasets. This is the ONE ZFS thing build.sh does. ---
+# install only `zfsutils-linux` (zpool/zfs binaries), which the FORK-PINNED admin
+# recipes' VolumeManager needs to build the pool/datasets from bench.toml's `[volume]`.
+# frappe/pilot v0.0.9-pre-alpha has no volume schema at all, so on a site bake this
+# package is installed and never used. This is the ONE ZFS thing build.sh does. ---
 apt-get update
 # `git` is bench-cli's own bootstrap dependency: install.sh (below) clones bench-cli
 # with git, and bench pulls/updates apps over git at runtime. The standard Ubuntu base
@@ -240,10 +242,18 @@ if grep -q '^password = "admin-password"$' "$BENCH_DIR/bench.toml"; then
 fi
 
 # --- 5. `bench init` (bench-setup.md §6). The heavy, idempotent step that sets
-# up the per-bench substrate from bench.toml: the ZFS pool + datasets
-# (volume.enabled), the DEDICATED mariadb@atlas instance (provisioned, secured,
-# enabled-at-boot), the bench's Redis config, the uv venv, the Frappe clone, Node
-# deps, the admin frontend, and dns_multitenant = 1.
+# up the per-bench substrate from bench.toml: MariaDB (provisioned + secured), the
+# bench's Redis config, the uv venv, the Frappe clone, Node deps, the admin frontend,
+# and dns_multitenant = 1.
+#
+# WHICH MariaDB depends on the pin. frappe/pilot v0.0.9-pre-alpha (the site line)
+# provisions ONE rootless, user-owned `pilot-mariadb.service` shared by the host's
+# benches, datadir + socket under $BENCH_CLI_DIR/databases/mariadb — it reads no
+# `[mariadb]` table from bench.toml (that config comes from the host common config)
+# and has no volume/ZFS schema at all. The fork-pinned ADMIN recipes read both tables
+# and instead provision a dedicated system `mariadb@atlas` (own datadir/socket,
+# enabled-at-boot) on top of the ZFS pool + datasets. deploy-site.py stays out of that
+# argument by probing the DB SOCKET rather than any unit name (its DB_SOCKET).
 #
 # `bench init` does NOT bring the production stack up: in current bench-cli the
 # production `systemctl --user` units (redis_queue/redis_cache, web, workers, nginx)

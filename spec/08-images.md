@@ -305,15 +305,15 @@ and disk creation is **instant** (a CoW snapshot, not a multi-second copy).
 
 Self-serve site VMs don't boot the plain `ubuntu-24.04` image — they boot a
 **golden bench image**: the same Ubuntu rootfs with bench-cli, its uv venv, the
-Frappe clone (**plus ERPNext (version-16)** in site mode), MariaDB + Redis (the
-bench code and MariaDB datadir on ZFS datasets), nginx + the production stack
+Frappe clone (**plus ERPNext (version-16)** in site mode), MariaDB + Redis,
+nginx + the production stack
 configured and **running and serving** — so a snapshot-booted clone comes up
 answering on `:80` (IPv4 *and* IPv6) with no deploy step. `build.sh` is the
 **proven recipe** ([`../llm/references/bench-setup.md`](../llm/references/bench-setup.md))
 and nothing more — its key move is that `bench.toml` sets `process_manager =
 "systemd"`, so **bench-cli itself stands up and manages the whole stack** as
 lingering `systemctl --user` units that survive reboot. There is no hand-rolled
-supervisord unit, ZFS boot drop-in, or nginx surgery; that is all bench-cli's job.
+supervisord unit or nginx surgery; that is all bench-cli's job.
 
 **Two modes** (`build.sh`'s first arg → two golden snapshots): **`site`** bakes a
 fully-created Frappe + ERPNext site under the fixed name `site.local`, so a clone's
@@ -329,23 +329,36 @@ enabled `systemctl --user` units), so it needs a real lingering non-root user. T
 controller SSHes in as root; `build.sh` runs bench-cli's `install.sh` as root to
 create `frappe` (+ its sudoers), then runs every bench step as it.
 
-**MariaDB** is a **dedicated per-bench instance** (`[mariadb].instance = "atlas"`):
-`bench init` provisions `mariadb@atlas` with its own socket + datadir and
-`systemctl enable --now`s it, so it auto-starts at boot as an ordinary system
-service. Atlas never touches MariaDB auth — bench-cli secures it.
+**MariaDB**'s shape follows the bench-cli pin, and the two lines have diverged
+(`image_recipes`: the site variants bake off `frappe/pilot v0.0.9-pre-alpha`, the
+admin variants are still on the older fork pin). On the **site** line `bench init`
+provisions ONE rootless, **user-owned `pilot-mariadb.service`** shared by the host's
+benches, with its datadir + socket under the pilot directory
+(`~/pilot/databases/mariadb/`) and unix_socket auth for the bench user; it is a
+`systemctl --user` unit like the rest of the stack, so lingering is what brings it back
+at boot, and the `[mariadb]` table in `bench.toml` is not read at all (that config comes
+from the host-level common config). On the **admin** line the fork still provisions a
+dedicated per-bench system instance `mariadb@atlas` (`[mariadb].instance = "atlas"`) with
+its own socket + datadir, `systemctl enable --now`d. Atlas never touches MariaDB auth
+either way — bench-cli secures it. Because the unit name is pin-dependent and the socket
+is not, `deploy-site.py` gates every deploy on the **socket** accepting a connection
+(`DB_SOCKET`), never on `systemctl is-active`.
 
-**ZFS.** `bench init` creates the pool + dataset from `[volume]` in `bench.toml`
-(a preallocated **file vdev**, since the build VM is single-disk) and mounts it,
-so BOTH the bench code and the MariaDB data live on ZFS. At the pinned bench-cli the mere presence of a `[volume]` table enables ZFS.
-The Firecracker `vmlinux` ships no ZFS module and the cloud squashfs has an empty
-`/lib/modules`, so Ubuntu's prebuilt `zfs.ko` (+ its `spl.ko` dep) is baked into the
+**ZFS — the admin (fork-pinned) line only.** `frappe/pilot v0.0.9-pre-alpha` has no
+volume schema at all, so a **site** golden uses no ZFS: the bench code and the MariaDB
+datadir sit on the plain rootfs and `bench.toml`'s `[volume]` tables are inert there.
+On the fork pin `bench init` still creates the pool + dataset from `[volume]` (a
+preallocated **file vdev**, since the build VM is single-disk) and mounts it, so both the
+bench code and the MariaDB data live on ZFS; the mere presence of a `[volume]` table
+enables it. The Firecracker `vmlinux` ships no ZFS module and the cloud squashfs has an
+empty `/lib/modules`, so Ubuntu's prebuilt `zfs.ko` (+ its `spl.ko` dep) is baked into the
 guest rootfs at **sync time** — `scripts/sync-image.py` `_install_guest_modules` copies
 both from the manifest-pinned `linux-modules-<kver>` (the same package/pass that bakes
 `virtio_rng`; no DKMS compile or `linux-headers`) and pins `zfs` in `modules-load.d`, so
 the module travels in the snapshot and loads on the cold boot that first mounts the pool.
 Deriving `kver` from the manifest (not `uname -r`) keeps the module matched to the kernel
 the guest actually boots, independent of the build VM. The **one** ZFS thing `build.sh`
-does itself is install the `zfsutils-linux` userspace (`zpool`/`zfs`) that bench-cli's
+does itself is install the `zfsutils-linux` userspace (`zpool`/`zfs`) the fork's
 VolumeManager needs. (Cold-boot ZFS auto-import/mount-ordering is not yet wired — to be
 verified on a host.)
 
@@ -362,8 +375,8 @@ build-in-guest pattern the proxy uses ([12-proxy.md](./12-proxy.md)):
    creates the `frappe` user + sudoers — then again as `frappe` to install bench-cli,
    drops the committed [`bench/bench.toml`](../bench/bench.toml), and runs
    `bench init` + `bench start` as `frappe`. `bench init` is the heavy,
-   per-site-invariant step (the dedicated MariaDB instance + Redis, the ZFS pool,
-   the uv venv, the Frappe clone, Node deps, the admin frontend, and — because
+   per-site-invariant step (MariaDB + Redis — plus, on the fork-pinned admin line
+   only, the ZFS pool — the uv venv, the Frappe clone, Node deps, the admin frontend, and — because
    `[production].nginx = true` + `process_manager = "systemd"` — the production
    process units + nginx config + `dns_multitenant = 1`). In **site** mode it then
    installs ERPNext (version-16) and bakes a `site.local` site (`bench new-site` +

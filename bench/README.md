@@ -2,14 +2,13 @@
 
 The bake recipe for the **bench-preinstalled image** self-serve sites land on.
 build.sh is the PROVEN recipe ([`../llm/references/bench-setup.md`](../llm/references/bench-setup.md))
-and **nothing more**: it creates the `frappe` user, installs the ZFS kernel
-module, runs bench-cli's `install.sh`, drops the committed `bench.toml`, and runs
+and **nothing more**: it creates the `frappe` user, installs the ZFS userspace,
+runs bench-cli's `install.sh`, drops the committed `bench.toml`, and runs
 `bench init` + `bench start`. Because `bench.toml` sets `process_manager =
-"systemd"`, **bench-cli itself stands up and manages the whole stack** — the
-dedicated `mariadb@atlas` instance, Redis, nginx (with v6 listeners), the ZFS
-pool, and the bench processes — as lingering `systemctl --user` units that
-survive reboot. So there is no hand-rolled supervisord unit, ZFS boot drop-in, or
-nginx surgery here; that is all bench-cli's job now.
+"systemd"`, **bench-cli itself stands up and manages the whole stack** — MariaDB,
+Redis, nginx (with v6 listeners), and the bench processes — as lingering
+`systemctl --user` units that survive reboot. So there is no hand-rolled
+supervisord unit or nginx surgery here; that is all bench-cli's job now.
 
 A freshly-provisioned VM from this image already has bench-cli, its uv venv, the
 Frappe clone (+ **ERPNext (version-16)** in site mode), MariaDB + Redis, nginx +
@@ -32,15 +31,24 @@ The spec slice is [`../spec/08-images.md`](../spec/08-images.md) (§ golden benc
 image); the self-serve flow it feeds is
 [`../spec/14-self-serve.md`](../spec/14-self-serve.md).
 
-**ZFS.** `bench init` creates the pool + `benches`/`mariadb` datasets from the
-committed `bench.toml` (`[volume]`, a preallocated **file vdev** since the build
-VM is single-disk) and mounts them — the bench code and MariaDB data live on ZFS.
-At the pinned bench-cli, the mere presence of a `[volume]` table enables ZFS
-(`_parse_volume` defaults `enabled` to true). The Firecracker `vmlinux` ships no
-ZFS module, so the **one** ZFS thing build.sh does itself is DKMS-build `zfs.ko`
-against the running kernel (`zfs-dkms` + `linux-headers-$(uname -r)` + `modprobe
-zfs`); the built `.ko` travels in the snapshot. (Cold-boot ZFS
-auto-import/mount-ordering is not wired here — to be verified on a host.)
+**MariaDB.** On the site line's pin (`frappe/pilot v0.0.9-pre-alpha`) `bench init`
+provisions ONE rootless, **user-owned `pilot-mariadb.service`** shared by the host's
+benches, with its datadir and socket under `~/pilot/databases/mariadb/` and
+unix_socket auth for the bench user. It is a `systemctl --user` unit like the rest of
+the stack, so lingering is what brings it back at boot. `bench/deploy-site.py` gates
+every deploy on that socket accepting a connection (`DB_SOCKET`) rather than on any
+unit name, so it works against either pin. The **fork-pinned admin line** still
+provisions a dedicated system `mariadb@atlas` instead (own datadir + socket, enabled
+at boot) — the shape the committed `bench.toml`'s `[mariadb]` table describes.
+
+**ZFS — fork pin only.** `frappe/pilot v0.0.9-pre-alpha` has no volume schema at all,
+so on a site golden the `[volume]` tables are inert and the bench + DB live on the
+plain rootfs. build.sh still installs the ZFS **userspace** (`zfsutils-linux`) because
+the fork-pinned admin bake reads those tables and builds the pool + dataset from them
+(a preallocated **file vdev**, since the build VM is single-disk); the `zfs.ko` module
+itself is baked into the guest rootfs at image-sync time, so build.sh never DKMS-builds
+anything. (Cold-boot ZFS auto-import/mount-ordering is not wired here — to be verified
+on a host.)
 
 **The golden image is a VM snapshot**, not a from-URL `Virtual Machine Image`.
 It is built *inside* a plain Ubuntu VM (this directory's `build.sh`, run over
@@ -53,12 +61,13 @@ host never boots.
 ## Layout
 
 ```
-bench.toml      committed bench config — pins Frappe (version-16), the dedicated
-                mariadb@atlas instance, the systemd [production] process manager,
-                nginx :80 serving (http_port = 80), the admin app, and `[volume]`
-                (ZFS on a file vdev, benches + mariadb datasets)
+bench.toml      committed bench config — pins Frappe (version-16), the systemd
+                [production] process manager, nginx :80 serving (http_port = 80),
+                and the admin app. Its `[mariadb]` + `[volume]` tables are read
+                ONLY by the fork-pinned admin recipes (v0.0.9 declares neither);
+                see bench.toml.md
 build.sh        the PROVEN recipe, nothing more: fix setuid bits; install the ZFS
-                kernel module (DKMS); create the frappe user (+ NOPASSWD sudo);
+                userspace; create the frappe user (+ NOPASSWD sudo);
                 bench-cli install.sh (pinned ref); `bench new` + drop bench.toml;
                 `bench init` + `bench start` (run AS frappe). Site mode also bakes
                 a `site.local` ERPNext site. Takes `[site|admin]` as the first arg
@@ -139,7 +148,7 @@ contract is the exit-code + stdout-JSON boundary, **not** a typed Python surface
 The golden boots with the production stack already running and serving — bench-cli's
 lingering `systemctl --user` units (enabled by `bench start` under
 `process_manager = "systemd"`, with `loginctl enable-linger frappe`) bring the
-bench, the dedicated `mariadb@atlas`, Redis, and nginx up at boot. The production
+bench, MariaDB, Redis, and nginx up at boot. The production
 gunicorn is **multitenant** — `frappe.app:application` runs with no fixed `--site`,
 so it resolves the site from the request `Host` header **per request**
 (`get_site_name`), with nothing cached at boot. When a `Site` is created the
