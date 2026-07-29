@@ -638,10 +638,10 @@ class TestGuestScriptTypedIO(IntegrationTestCase):
 			guest.main()
 		m_admin.assert_not_called()
 
-	def test_site_main_writes_central_config_after_admin_domain(self) -> None:
-		"""Ordering invariant: `set-central-config` reads `[admin].domain` out of
-		bench.toml to write site_config.json, so it MUST run after the admin domain is in
-		place — never before, or it captures the `admin.localhost` placeholder."""
+	def test_site_main_enrols_after_admin_domain(self) -> None:
+		"""Ordering invariant: `bench enroll` runs after the admin domain is in place, so the
+		pilot's Central config is written to a bench.toml that already carries the real
+		`[admin].domain` — never the `admin.localhost` placeholder."""
 		guest = self.guest
 		order = []
 		with (
@@ -656,9 +656,7 @@ class TestGuestScriptTypedIO(IntegrationTestCase):
 			patch.object(
 				guest,
 				"_bench",
-				side_effect=lambda *a, **k: order.append(a[0])
-				if a and a[0] == "set-central-config"
-				else None,
+				side_effect=lambda *a, **k: order.append(a[0]) if a and a[0] == "enroll" else None,
 			),
 			patch.object(
 				guest.DeploySiteInputs,
@@ -668,9 +666,9 @@ class TestGuestScriptTypedIO(IntegrationTestCase):
 					warm_vm_uuid="",
 					admin_domain="acme-pilot.blr1.frappe.dev",
 					central_endpoint="https://central.example",
-					central_auth_token="tok",
+					bootstrap_token="tok",
 				),
 			),
 		):
 			guest.main()
-		self.assertEqual(order, ["admin-domain", "set-central-config"])
+		self.assertEqual(order, ["admin-domain", "enroll"])

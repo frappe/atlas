@@ -108,7 +108,7 @@ class DeploySiteInputs:
 	mode: str = "site"
 	admin_domain: str = ""
 	central_endpoint: str = ""
-	central_auth_token: str = ""
+	bootstrap_token: str = ""
 	regenerate_login: bool = False
 
 	@classmethod
@@ -140,7 +140,7 @@ class DeploySiteInputs:
 			"--central-endpoint", default="", help="Central API base URL the pilot calls back on"
 		)
 		parser.add_argument(
-			"--central-auth-token", default="", help="Opaque token the pilot presents to Central"
+			"--bootstrap-token", default="", help="Single-use enrollment token the pilot exchanges at Central"
 		)
 		parser.add_argument(
 			"--regenerate-login",
@@ -159,7 +159,7 @@ class DeploySiteInputs:
 			mode=ns.mode,
 			admin_domain=ns.admin_domain,
 			central_endpoint=ns.central_endpoint,
-			central_auth_token=ns.central_auth_token,
+			bootstrap_token=ns.bootstrap_token,
 			regenerate_login=ns.regenerate_login,
 		)
 
@@ -658,15 +658,14 @@ def main() -> None:
 		login_url = _mint_login_url(inputs.site_name)
 		log("login URL minted")
 
-	# Central handoff: persist the pilot's callback endpoint + token into the bench's
-	# bench.toml (Pilot owns that file, so we go through its command rather than writing
-	# TOML here), so pilot→Central calls can authenticate with X-Pilot-Token.
-	if inputs.central_endpoint and inputs.central_auth_token:
-		log("writing Central config to bench.toml (bench set-central-config) …")
-		_bench(
-			"set-central-config", "--endpoint", inputs.central_endpoint, "--token", inputs.central_auth_token
-		)
-		log("Central config written")
+	# Central handoff: seed the endpoint + single-use bootstrap token and enrol. `bench
+	# enroll` exchanges the token for the pilot's long-lived credential + JWKS trust config
+	# and writes them into bench.toml (Pilot owns that file). Only the short-lived token is
+	# ever injected here — the durable secret is minted by the pilot itself.
+	if inputs.central_endpoint and inputs.bootstrap_token:
+		log("enrolling with Central (bench enroll) …")
+		_bench("enroll", "--endpoint", inputs.central_endpoint, "--bootstrap-token", inputs.bootstrap_token)
+		log("enrolled with Central")
 
 	log("local serving probe (v6 + v4) …")
 	serving = _serving(inputs.site_name, inputs.mode)

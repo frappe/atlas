@@ -95,7 +95,7 @@ def deploy_site(
 	virtual_machine: str,
 	site_name: str,
 	central_endpoint: str | None = None,
-	central_auth_token: str | None = None,
+	bootstrap_token: str | None = None,
 	mode: str | None = None,
 	admin_domain: str | None = None,
 ) -> dict | None:
@@ -184,13 +184,14 @@ def deploy_site(
 		# --warm-vm-uuid.
 		if vm.warm_snapshot:
 			command += substitute(" --warm-vm-uuid {}", (vm.name,))
-		# Central handoff: the pilot's bench-level callback endpoint + token, threaded from
-		# create_site (never stored on the Site). deploy-site.py writes them into the
-		# bench's bench.toml so pilot→Central calls authenticate.
-		if central_endpoint and central_auth_token:
+		# Central handoff: the endpoint + a single-use bootstrap token, threaded from
+		# create_site (never stored on the Site). deploy-site.py runs `bench enroll` with
+		# them, so the pilot exchanges the token for its own long-lived credential — the
+		# durable secret is never injected here.
+		if central_endpoint and bootstrap_token:
 			command += substitute(
-				" --central-endpoint {} --central-auth-token {}",
-				(central_endpoint, central_auth_token),
+				" --central-endpoint {} --bootstrap-token {}",
+				(central_endpoint, bootstrap_token),
 			)
 		_trace(
 			f"running deploy-site.py in guest ({'warm' if vm.warm_snapshot else 'cold'}, mode={build_mode}) …"

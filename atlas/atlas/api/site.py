@@ -27,7 +27,7 @@ def create_site(
 	subdomain: str,
 	pilot_credential_id: str | None = None,
 	central_endpoint: str | None = None,
-	central_auth_token: str | None = None,
+	bootstrap_token: str | None = None,
 ) -> dict:
 	"""Provision a self-serve site for a Central team and return its mirror row.
 
@@ -54,7 +54,7 @@ def create_site(
 	site = frappe.get_doc({"doctype": "Site", "subdomain": subdomain, "tenant": tenant})
 	site.flags.pilot_credential_id = pilot_credential_id
 	site.flags.central_endpoint = central_endpoint
-	site.flags.central_auth_token = central_auth_token
+	site.flags.bootstrap_token = bootstrap_token
 	site.insert(ignore_permissions=True)
 
 	return _mirror(site)
