@@ -446,15 +446,22 @@ def _reissue_pilot_auth_token(fqdn: str) -> None:
 	(pilot generate_session.has_scope), baked at new-site time (pilot new_site.py)
 	scoped to the placeholder `site.local` — so after the rename to the FQDN the bench
 	rejects it (`claims["site"] != <fqdn>`) and every site→bench API call 403s. Mint a
-	fresh one for the FQDN with `bench issue-site-token <fqdn> --ttl <365d>` (same TTL
-	as the bake) and write it back. Run AFTER the rename, against the FQDN dir.
+	fresh one for the FQDN with `bench admin issue-site-token <fqdn> --ttl <365d>` (same
+	TTL as the bake) and write it back. Run AFTER the rename, against the FQDN dir.
 	`issue-site-token` mints purely from the FQDN arg + bench.toml's jwt_secret and does
 	not read the site off disk, so scoping to the FQDN is safe. Idempotent (a re-run
-	just mints another valid token). No-op if the config is missing."""
+	just mints another valid token). No-op if the config is missing.
+
+	The verb lives under the `admin` GROUP (`bench admin issue-site-token`) as of
+	frappe/pilot v0.0.9-pre-alpha. Pilot registers a grouped command only under its
+	group — there is no top-level alias — and its dispatcher treats an unrecognised
+	leading verb as a FRAPPE PASSTHROUGH, so the old top-level spelling does not fail
+	loudly as an unknown bench command: it is handed to Frappe, which rejects it. Keep
+	this in step with image_recipes._BENCH_CLI_REF."""
 	config_path = os.path.join(SITES_DIR, fqdn, "site_config.json")
 	if not os.path.exists(config_path):
 		return
-	token = _bench("issue-site-token", fqdn, "--ttl", str(365 * 24 * 3600), capture=True).strip()
+	token = _bench("admin", "issue-site-token", fqdn, "--ttl", str(365 * 24 * 3600), capture=True).strip()
 	# nosemgrep: frappe-security-file-traversal -- guest script; reads a fixed site_config.json under the baked bench, not untrusted web input
 	with open(config_path) as f:
 		config = json.load(f)
@@ -659,12 +666,16 @@ def main() -> None:
 		log("login URL minted")
 
 	# Central handoff: seed the endpoint + single-use bootstrap token and enrol. `bench
-	# enroll` exchanges the token for the pilot's long-lived credential + JWKS trust config
-	# and writes them into bench.toml (Pilot owns that file). Only the short-lived token is
-	# ever injected here — the durable secret is minted by the pilot itself.
+	# admin enroll` exchanges the token for the pilot's long-lived credential + JWKS trust
+	# config and writes them into bench.toml (Pilot owns that file). Only the short-lived
+	# token is ever injected here — the durable secret is minted by the pilot itself.
+	# Grouped under `admin` since frappe/pilot v0.0.9-pre-alpha, same as
+	# `admin issue-site-token` above.
 	if inputs.central_endpoint and inputs.bootstrap_token:
-		log("enrolling with Central (bench enroll) …")
-		_bench("enroll", "--endpoint", inputs.central_endpoint, "--bootstrap-token", inputs.bootstrap_token)
+		log("enrolling with Central (bench admin enroll) …")
+		_bench(
+			"admin", "enroll", "--endpoint", inputs.central_endpoint, "--bootstrap-token", inputs.bootstrap_token
+		)
 		log("enrolled with Central")
 
 	log("local serving probe (v6 + v4) …")

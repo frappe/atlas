@@ -57,13 +57,14 @@ set -euo pipefail
 # bakes any Frappe version (v15 / v16 / nightly). The Frappe branch + Python
 # version are pinned in bench.toml (rendered by the controller before upload).
 # The defaults below keep a direct `build.sh` run (no env) reproducible at v16. ---
-# BENCH_CLI_REPO is the GitHub org/repo the CLI is cloned from. Default is the
-# prathameshkurunkar7/pilot fork's central-billing-client branch (the Central
-# billing client); override to frappe/pilot for an upstream bake. install.sh
-# hardcodes the frappe/pilot origin, so §3 below re-points the clone's origin at
-# this repo before checking out BENCH_CLI_REF (a fork SHA is unreachable otherwise).
-BENCH_CLI_REPO="${BENCH_CLI_REPO:-prathameshkurunkar7/pilot}"
-BENCH_CLI_REF="${BENCH_CLI_REF:-c6e5253ef46c23fb1f2f776dc7372c7d39224e42}"  # default: central-billing-client @ prathameshkurunkar7/pilot
+# BENCH_CLI_REPO is the GitHub org/repo the CLI is cloned from, and always travels
+# with BENCH_CLI_REF — a ref is only resolvable against the repo it lives in.
+# Default is the frappe/pilot v0.0.9-pre-alpha release (the site line's pin);
+# override BOTH to bake off a fork. install.sh hardcodes the frappe/pilot origin, so
+# §3 below re-points the clone's origin at this repo before checking out
+# BENCH_CLI_REF (a fork SHA is unreachable otherwise).
+BENCH_CLI_REPO="${BENCH_CLI_REPO:-frappe/pilot}"
+BENCH_CLI_REF="${BENCH_CLI_REF:-v0.0.9-pre-alpha}"  # default: release tag @ frappe/pilot (see §3b for tag-vs-SHA)
 ERPNEXT_BRANCH="${ERPNEXT_BRANCH:-version-16}"  # default: v16; controller overrides for v15 / develop
 
 BENCH_USER="frappe"
@@ -149,20 +150,24 @@ apt-get install -y --no-install-recommends zfsutils-linux git
 # --- 3. Install bench-cli — install.sh creates the bench user too (bench-setup.md
 # §3+§4). install.sh has two paths (bench-cli @ 03a4272 install.sh): run AS ROOT it
 # creates the `$BENCH_USER` (`useradd -m`, adds to sudo) + writes a visudo-validated
-# `/etc/sudoers.d/$BENCH_USER` (passwordless), then STOPS; run AS THAT USER it clones
-# bench-cli to ~/bench-cli, installs uv + Node + tzdata, adds bench-cli to PATH, and
-# sets up the .admin-venv (flask/psutil/pymysql/gunicorn). So we no longer hand-roll
+# `/etc/sudoers.d/$BENCH_USER` (passwordless), then STOPS; run AS THAT USER it lays
+# the CLI down under ~/pilot, installs uv + Node + tzdata, adds it to PATH, and sets
+# up the .admin-venv (flask/psutil/pymysql/gunicorn). So we no longer hand-roll
 # useradd/usermod/sudoers — the root call does it (no explicit uid; frappe takes the
-# next free uid). We then check out the pinned ref so the golden is reproducible
-# (install.sh tracks moving main).
+# next free uid). §3b below then pins the CLI, so the golden is reproducible rather
+# than "whatever install.sh happened to fetch".
 #
 # Idempotent: the root call is a no-op-ish re-run (user exists → skips useradd,
-# rewrites the same sudoers); the user call runs install.sh only on a FRESH guest (no
-# bench-cli dir yet) — a re-run must NOT re-invoke it, as install.sh `git pull`s to
-# self-update and FATALs on the detached HEAD the pin below leaves ("not currently on
-# a branch"). Re-running just re-fetches + re-pins the ref. ---
+# rewrites the same sudoers); the user call runs install.sh only on a FRESH guest, per
+# the entrypoint gate below. ---
 INSTALL_URL="https://raw.githubusercontent.com/$BENCH_CLI_REPO/$BENCH_CLI_REF/install.sh"
-curl -fsSL "$INSTALL_URL" | bash -s -- --user "$BENCH_USER" -y
+# Non-interactive via the BENCH_YES ENV VAR, not a `-y` flag: frappe/pilot dropped
+# `-y` from install.sh's arg parser at v0.0.9-pre-alpha, and an unrecognised flag is
+# a hard `Unknown option: -y` + exit 1 there (which also SIGPIPEs the curl feeding
+# it, surfacing as a confusing `curl: (23)`). The env var satisfies both pins: the
+# fork seeds NONINTERACTIVE from ${BENCH_YES:-0}, and v0.0.9 needs no opt-out at all
+# here because its run_sudo short-circuits when already root — which this call is.
+curl -fsSL "$INSTALL_URL" | BENCH_YES=1 bash -s -- --user "$BENCH_USER"
 
 # Enable lingering for the bench user NOW that it exists. Current bench-cli runs
 # the production stack (redis_queue/redis_cache, web, workers) as `systemctl --user`
@@ -173,12 +178,44 @@ curl -fsSL "$INSTALL_URL" | bash -s -- --user "$BENCH_USER" -y
 # as_frappe exports as XDG_RUNTIME_DIR. Idempotent.
 loginctl enable-linger "$BENCH_USER"
 
-if [ ! -d "$BENCH_CLI_DIR/.git" ]; then
+# Gate on the CLI entrypoint, not on `.git`: a RELEASE install (below) never leaves a
+# `.git`, so a `.git` test would re-run install.sh on every re-bake — and on a git
+# install a re-run is exactly what must not happen (it `git pull`s to self-update and
+# FATALs on the detached HEAD the pin leaves, "not currently on a branch"). `bench`
+# exists at the tree root under both install shapes.
+if [ ! -x "$BENCH_CLI_DIR/bench" ]; then
 	as_frappe "curl -fsSL '$INSTALL_URL' | bash"
 fi
-# install.sh clones origin=frappe/pilot; re-point it at BENCH_CLI_REPO so a fork
-# SHA is fetchable (idempotent — set-url is safe on a re-run).
-as_frappe "git -C '$BENCH_CLI_DIR' remote set-url origin 'https://github.com/$BENCH_CLI_REPO' && git -C '$BENCH_CLI_DIR' fetch --quiet origin && git -C '$BENCH_CLI_DIR' checkout --quiet '$BENCH_CLI_REF'"
+
+# --- 3b. Pin the CLI. frappe/pilot ships TWO install shapes and install.sh picks by
+# flag, so which one we got decides how the pin is enforced:
+#
+#   git      (the fork, and any `--dev` install) — install.sh `git clone`s the repo.
+#            origin is hardcoded to frappe/pilot, so re-point it at BENCH_CLI_REPO
+#            (a fork SHA is unreachable otherwise) and check the pinned ref out.
+#            Idempotent: set-url is safe on a re-run.
+#   release  (frappe/pilot default since v0.0.9-pre-alpha) — install.sh downloads the
+#            `pilot.tar.gz` asset of the LATEST release and untars it: no git, nothing
+#            to check out, and the version is whatever was newest at bake time. It
+#            ships a VERSION file, so ASSERT that against the pin instead. This is the
+#            reproducibility guard the checkout used to provide: when upstream cuts a
+#            newer release the bake FAILS LOUD here rather than silently baking a
+#            golden nobody pinned. Bumping the pin is the deliberate fix.
+#
+# BENCH_CLI_REF is therefore the release TAG for a release pin (it matches VERSION
+# verbatim, and raw.githubusercontent resolves it for INSTALL_URL above) and a commit
+# SHA for a git pin.
+if [ -d "$BENCH_CLI_DIR/.git" ]; then
+	as_frappe "git -C '$BENCH_CLI_DIR' remote set-url origin 'https://github.com/$BENCH_CLI_REPO' && git -C '$BENCH_CLI_DIR' fetch --quiet origin && git -C '$BENCH_CLI_DIR' checkout --quiet '$BENCH_CLI_REF'"
+else
+	INSTALLED_VERSION="$(cat "$BENCH_CLI_DIR/VERSION" 2>/dev/null || true)"
+	if [ "$INSTALLED_VERSION" != "$BENCH_CLI_REF" ]; then
+		echo "bench-cli pin mismatch: wanted '$BENCH_CLI_REF', install.sh delivered '${INSTALLED_VERSION:-<no VERSION file>}'." >&2
+		echo "install.sh's release path always fetches the LATEST release; bump BENCH_CLI_REF (and image_recipes._BENCH_CLI_REF) to it." >&2
+		exit 1
+	fi
+	echo "bench-cli release pin verified: $INSTALLED_VERSION"
+fi
 
 # --- 4. Create the bench + drop our pinned bench.toml (bench-setup.md §5).
 # `bench new` scaffolds benches/<name>/ non-interactively (name positional, no
@@ -297,6 +334,20 @@ else
 	as_frappe "bench -b '$BENCH_NAME' setup production"
 fi
 
+# --- 6a. Enable nginx for boot. `bench setup production` START*s* nginx but never
+# ENABLE*s* it (pilot's NginxManager only ever runs start/stop/reload — v0.0.9's
+# reload_or_start picks `reload` when running and `start` when not, and nothing in
+# pilot calls `systemctl enable nginx`). The Ubuntu package ships the unit `disabled`,
+# so a running-but-disabled nginx survives only until the next boot — and this VM is
+# ALWAYS rebooted before capture (image_build.run resizes it down from the fat build
+# size to the restore size). The golden then boots with gunicorn up on 127.0.0.1:8000
+# and nothing on :80, which is exactly the "does not serve (readiness HTTP 000)"
+# post-build sanity failure. The bench's own units are `systemctl --user` and are
+# already persisted by `setup production` + lingering; nginx is the one SYSTEM unit in
+# the serving path, so it needs this. Idempotent, and correct for either bench-cli pin.
+systemctl enable nginx
+systemctl start nginx
+
 # --- 6b. Install the in-guest domain provider (spec/18 Component D), AFTER the site
 # is baked. The thin "push" half of one-way self-service subdomain routing, and the
 # `bench-domain-provider` plug-in pilot (formerly bench-cli) discovers on PATH and
@@ -330,7 +381,15 @@ install -m 0755 "$SRC_DIR/bench-domain-provider.py" /usr/local/bin/bench-domain-
 # nightly image traceable to its real inputs. `git -C` is cheap and the repos are
 # right here in the bench. ---
 git_sha() { git -C "$1" rev-parse HEAD 2>/dev/null || echo "unknown"; }
-echo "ATLAS_BUILD_BENCH_CLI_REF=$(git_sha "$BENCH_CLI_DIR")"
+# The bench-cli tree is only a git checkout under a git install (§3b); a release
+# install has no HEAD to read, so fall back to the VERSION file the tarball ships.
+# Without this the audit would record a bare "unknown" for the one input the whole
+# golden is pinned on.
+bench_cli_stamp() {
+	git -C "$BENCH_CLI_DIR" rev-parse HEAD 2>/dev/null && return
+	cat "$BENCH_CLI_DIR/VERSION" 2>/dev/null || echo "unknown"
+}
+echo "ATLAS_BUILD_BENCH_CLI_REF=$(bench_cli_stamp)"
 echo "ATLAS_BUILD_FRAPPE_SHA=$(git_sha "$BENCH_DIR/apps/frappe")"
 if [ "$MODE" = "site" ]; then
 	echo "ATLAS_BUILD_ERPNEXT_SHA=$(git_sha "$BENCH_DIR/apps/erpnext")"
