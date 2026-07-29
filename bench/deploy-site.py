@@ -50,6 +50,7 @@ import argparse
 import json
 import os
 import shlex
+import socket
 import subprocess
 import sys
 import time
@@ -70,6 +71,12 @@ BENCH_CLI_DIR = f"{BENCH_HOME}/pilot"
 BENCH_NAME = "atlas"
 BENCH_DIR = f"{BENCH_CLI_DIR}/benches/{BENCH_NAME}"
 BENCH = f"{BENCH_CLI_DIR}/bench"
+# The bench DB's UNIX socket — the readiness contract `_await_db_ready` probes, and
+# what the baked site_config.json's `db_socket` points at. pilot v0.0.9 runs MariaDB
+# as a user-owned `pilot-mariadb.service` with its datadir + socket under the pilot
+# dir; the older fork ran a system `mariadb@<bench>` instance instead. We probe the
+# socket precisely so the deploy doesn't care which. See `_await_db_ready`.
+DB_SOCKET = f"{BENCH_CLI_DIR}/databases/mariadb/run/mysqld.sock"
 
 # The site baked into the golden image (bench/build.sh BAKED_SITE, site mode). The
 # per-site deploy renames this directory to the FQDN; a clone that doesn't carry it
@@ -256,26 +263,37 @@ def _await_db_ready(timeout_seconds: int = 60) -> None:
 	"""Gate the deploy on the baked bench's MariaDB instance actually accepting
 	connections before any DB-touching step (rename-site / browse / setup).
 
-	The instance is a system `mariadb@<bench>.service` (Type=notify, so `active`
-	means it has opened its socket). It is ordered only `After=network.target`
-	with NO ordering against sshd — so on a snapshot-booted clone sshd can (and
-	does) win the race and answer while MariaDB is still in its ~15s startup.
-	The controller then connects and runs the deploy before the socket exists;
-	`rename-site` survives (its production-setup brings the DB up / retries), but
-	`bench browse` connects with a bare `frappe.connect()` and no retry, so it
-	dies with `(2002) Can't connect ... mysqld-<bench>.sock`. Waiting for the
-	unit to report active closes that window. Fail loud on timeout — a deploy
-	onto a bench whose DB never came up cannot mint a session."""
-	unit = f"mariadb@{BENCH_NAME}.service"
+	The DB is ordered only `After=network.target` with NO ordering against sshd —
+	so on a snapshot-booted clone sshd can (and does) win the race and answer while
+	MariaDB is still in its ~15s startup. The controller then connects and runs the
+	deploy before the socket exists; `rename-site` survives (its production-setup
+	brings the DB up / retries), but `bench browse` connects with a bare
+	`frappe.connect()` and no retry, so it dies with `(2002) Can't connect ...`.
+	Waiting for the socket to accept closes that window.
+
+	We probe the SOCKET, not a unit name, because the socket is the stable contract
+	and the unit behind it is not. Up to the previous fork the DB was a system
+	`mariadb@<bench>.service` (multi-instance, own datadir on the ZFS pool);
+	pilot v0.0.9-pre-alpha moved it to a user-owned `pilot-mariadb.service` under
+	the bench user, datadir under the pilot dir, no ZFS at all. We run as root, so
+	`systemctl is-active mariadb@atlas` could never succeed against a v0.0.9 golden
+	and EVERY deploy failed here at the timeout. A socket probe is indifferent to
+	which shape the golden carries — and to the next rename. Fail loud on timeout —
+	a deploy onto a bench whose DB never came up cannot mint a session."""
 	deadline = time.monotonic() + timeout_seconds
 	while time.monotonic() < deadline:
-		probe = subprocess.run(
-			["systemctl", "is-active", "--quiet", unit],
-		)
-		if probe.returncode == 0:
-			return
+		if os.path.exists(DB_SOCKET):
+			probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+			try:
+				probe.connect(DB_SOCKET)
+				return
+			except OSError:
+				# Socket file is published but mariadbd isn't accepting yet.
+				pass
+			finally:
+				probe.close()
 		time.sleep(0.5)
-	sys.exit(f"{unit} did not become active within {timeout_seconds}s; the bench DB is not up")
+	sys.exit(f"{DB_SOCKET} did not accept a connection within {timeout_seconds}s; the bench DB is not up")
 
 
 def _preflight() -> None:

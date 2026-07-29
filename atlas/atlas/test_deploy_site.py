@@ -15,7 +15,7 @@ proven in the e2e (spec/14-self-serve.md), not here."""
 from __future__ import annotations
 
 import importlib.util
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import frappe
 from frappe.tests import IntegrationTestCase
@@ -344,44 +344,47 @@ class TestGuestScriptTypedIO(IntegrationTestCase):
 			with self.assertRaises(SystemExit):
 				self.guest._mint_login_url("acme.blr1.frappe.dev")
 
-	def test_await_db_ready_returns_when_unit_active(self) -> None:
-		"""The gate returns as soon as `systemctl is-active mariadb@<bench>` exits 0
-		(the Type=notify unit has opened its socket) — and probes the right unit."""
-		import subprocess as sp
-
-		with patch.object(self.guest.subprocess, "run", return_value=sp.CompletedProcess([], 0)) as m_run:
-			self.guest._await_db_ready()
-		m_run.assert_called_once()
-		self.assertEqual(
-			m_run.call_args.args[0],
-			["systemctl", "is-active", "--quiet", f"mariadb@{self.guest.BENCH_NAME}.service"],
-		)
-
-	def test_await_db_ready_polls_until_active(self) -> None:
-		"""On a snapshot-booted clone MariaDB can still be starting: the gate keeps
-		polling (returncode 3 = inactive) until it flips to active, then returns."""
-		import subprocess as sp
-
-		codes = [sp.CompletedProcess([], 3), sp.CompletedProcess([], 3), sp.CompletedProcess([], 0)]
+	def test_await_db_ready_returns_when_socket_accepts(self) -> None:
+		"""The gate returns as soon as a connect() to the bench DB's UNIX socket is
+		accepted — and dials the socket path, not any systemd unit name (pilot v0.0.9
+		moved MariaDB to a user-owned `pilot-mariadb.service`, so a root `systemctl
+		is-active mariadb@<bench>` could never succeed)."""
+		probe = MagicMock()
 		with (
-			patch.object(self.guest.subprocess, "run", side_effect=codes) as m_run,
+			patch.object(self.guest.os.path, "exists", return_value=True),
+			patch.object(self.guest.socket, "socket", return_value=probe) as m_socket,
+		):
+			self.guest._await_db_ready()
+		m_socket.assert_called_once_with(self.guest.socket.AF_UNIX, self.guest.socket.SOCK_STREAM)
+		probe.connect.assert_called_once_with(self.guest.DB_SOCKET)
+		probe.close.assert_called_once()  # closed even on the success path
+
+	def test_await_db_ready_polls_until_socket_accepts(self) -> None:
+		"""On a snapshot-booted clone MariaDB can still be starting, in two shapes: the
+		socket file isn't published yet, then it is but mariadbd isn't accepting
+		(ECONNREFUSED). The gate keeps polling through both, then returns."""
+		probe = MagicMock()
+		probe.connect.side_effect = [ConnectionRefusedError("not accepting yet"), None]
+		with (
+			patch.object(self.guest.os.path, "exists", side_effect=[False, True, True]),
+			patch.object(self.guest.socket, "socket", return_value=probe),
 			patch.object(self.guest.time, "sleep") as m_sleep,
 		):
 			self.guest._await_db_ready()
-		self.assertEqual(m_run.call_count, 3)
-		self.assertEqual(m_sleep.call_count, 2)
+		self.assertEqual(probe.connect.call_count, 2)
+		self.assertEqual(m_sleep.call_count, 2)  # one per not-ready pass, none after success
 
 	def test_await_db_ready_fails_loud_on_timeout(self) -> None:
-		"""If MariaDB never comes up, exit loud (not a swallowed browse crash later)."""
-		import subprocess as sp
-
+		"""If MariaDB never comes up, exit loud (not a swallowed browse crash later) —
+		naming the socket the deploy waited on."""
 		with (
-			patch.object(self.guest.subprocess, "run", return_value=sp.CompletedProcess([], 3)),
+			patch.object(self.guest.os.path, "exists", return_value=False),
 			patch.object(self.guest.time, "sleep"),
 		):
 			with self.assertRaises(SystemExit) as raised:
 				self.guest._await_db_ready(timeout_seconds=0.01)
-		self.assertIn("did not become active", str(raised.exception))
+		self.assertIn("did not accept a connection", str(raised.exception))
+		self.assertIn(self.guest.DB_SOCKET, str(raised.exception))
 
 	def test_baked_site_constant_matches_build_sh(self) -> None:
 		"""The baked-site name the deploy renames must stay in lockstep with the name
