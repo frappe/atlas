@@ -148,6 +148,12 @@ class Pilot(Document):
 			timeout=1800,
 			enqueue_after_commit=True,
 			pilot_name=self.name,
+			# The pilot credential is bench-level and never persisted on the Pilot row; it
+			# rides the job to the backing VM + the bench's bench.toml, exactly as
+			# Site.after_insert carries it. Flags are set by api.provision.create_vm.
+			pilot_credential_id=self.flags.get("pilot_credential_id"),
+			central_endpoint=self.flags.get("central_endpoint"),
+			bootstrap_token=self.flags.get("bootstrap_token"),
 		)
 
 	def _validate_immutability(self) -> None:
@@ -243,7 +249,12 @@ class Pilot(Document):
 		self.login_url_expires_at = frappe.utils.add_to_date(frappe.utils.now_datetime(), minutes=ttl)
 
 
-def auto_provision(pilot_name: str) -> None:
+def auto_provision(
+	pilot_name: str,
+	pilot_credential_id: str | None = None,
+	central_endpoint: str | None = None,
+	bootstrap_token: str | None = None,
+) -> None:
 	"""Background-job entrypoint. Wait for the (already-created) backing VM to boot,
 	create the Subdomain that puts the pilot on the front door, mint the one-click
 	login URL in the booted guest, and THEN mark the pilot Running — the same
@@ -277,6 +288,13 @@ def auto_provision(pilot_name: str) -> None:
 		return
 
 	try:
+		# Stamp the credential id on the backing VM before anything else, so the vm.*
+		# events Atlas emits from here on echo it back and Central can bind its reserved
+		# Pilot Credential to this VM (mirrors Site.auto_provision).
+		if pilot_credential_id:
+			frappe.db.set_value(
+				"Virtual Machine", pilot.virtual_machine, "pilot_credential_id", pilot_credential_id
+			)
 		_trace(f"waiting for backing VM {pilot.virtual_machine} to boot (Running) …")
 		_t = time.monotonic()
 		_wait_for_vm_running(pilot.virtual_machine)
@@ -296,7 +314,7 @@ def auto_provision(pilot_name: str) -> None:
 		frappe.db.commit()
 		_trace("Subdomain created; minting login URL (in-guest deploy) …", since=_t)
 		_t = time.monotonic()
-		result = _deploy(pilot)
+		result = _deploy(pilot, central_endpoint=central_endpoint, bootstrap_token=bootstrap_token)
 		pilot._stamp_login(result)
 		pilot.db_set("login_url", pilot.login_url)
 		pilot.db_set("login_url_expires_at", pilot.login_url_expires_at)
@@ -435,11 +453,16 @@ def _wait_for_vm_running(vm_name: str) -> None:
 	_wait(vm_name)
 
 
-def _deploy(pilot) -> dict:
+def _deploy(pilot, central_endpoint: str | None = None, bootstrap_token: str | None = None) -> dict:
 	"""Run the in-guest deploy for the booted backing VM and return the parsed result
 	(carries `login_url`). Points the FQDN at the admin console (admin mode) or the
 	baked site (site mode) and mints the mode's login URL — the same script and result
 	shape Site consumes.
+
+	`central_endpoint`/`bootstrap_token` (when Central supplied them) are what the guest
+	runs `bench admin enroll` with — the step that turns Central's RESERVED Pilot
+	Credential into an Active one. Skip it and the bench never enrolls, so Central
+	refuses to open the console with "This VM's pilot hasn't enrolled yet".
 
 	A Fake-backed VM's documentation IP never answers SSH, so `deploy_site` is a no-op
 	there; synthesize a placeholder so desk/e2e stay green without a host."""
@@ -453,7 +476,16 @@ def _deploy(pilot) -> dict:
 	# the shared VM's build_mode is `site`; pass mode explicitly so the deploy wires the
 	# admin vhost, not another site rename. A stand-alone Pilot passes None → the VM's mode.
 	mode = pilot.build_mode if pilot.attached else None
-	return deploy_site(pilot.virtual_machine, pilot.bench_fqdn, mode=mode) or {}
+	return (
+		deploy_site(
+			pilot.virtual_machine,
+			pilot.bench_fqdn,
+			central_endpoint=central_endpoint,
+			bootstrap_token=bootstrap_token,
+			mode=mode,
+		)
+		or {}
+	)
 
 
 def _create_subdomain(pilot) -> str:
