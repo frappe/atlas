@@ -578,17 +578,17 @@ class TestGuestScriptTypedIO(IntegrationTestCase):
 				guest._mint_admin_login_url()
 
 	@staticmethod
-	def _no_such_command(args) -> Exception:
+	def _no_such_command(argv) -> Exception:
 		"""The exception `_bench` raises when an unknown TOP-level verb falls through to
 		the Frappe passthrough: click's usage error — exit 2, `No such command`."""
 		import subprocess
 
 		return subprocess.CalledProcessError(
-			2, ["bench", *args], output="", stderr=f"Error: No such command '{args[-1]}'.\n"
+			2, ["bench", *argv], output="", stderr=f"Error: No such command '{argv[-1]}'.\n"
 		)
 
 	@staticmethod
-	def _invalid_choice(args) -> Exception:
+	def _invalid_choice(argv) -> Exception:
 		"""The exception `_bench` raises when the GROUP exists but the subcommand does
 		not (`bench admin generate-session` on a golden whose bench-cli has no session
 		verb). Pilot's group parser is argparse, not click, so the wording is `invalid
@@ -598,10 +598,10 @@ class TestGuestScriptTypedIO(IntegrationTestCase):
 
 		return subprocess.CalledProcessError(
 			2,
-			["bench", *args],
+			["bench", *argv],
 			output="",
 			stderr=(
-				f"bench admin: error: argument admin_command: invalid choice: '{args[-1]}' "
+				f"bench admin: error: argument admin_command: invalid choice: '{argv[-1]}' "
 				"(choose from 'build', 'enroll', 'issue-site-token', 'revoke-totp', "
 				"'run-patches', 'set-central-config', 'upgrade')\n"
 			),
