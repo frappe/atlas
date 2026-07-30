@@ -277,17 +277,23 @@ with the fleet key), recording the op as a `deploy-site` Task row.
   4. **Mints the one-click `login_url`** — in **site** mode
      `bench browse --user Administrator --session-end <24h>` opens a real 24h
      Administrator session and builds `https://<fqdn>/app?sid=<sid>`; in **admin**
-     mode the bench-cli admin session verb `--full-path` (a 5-minute single-use JWT).
-     The script emits it on its one `ATLAS_RESULT` line; the controller
-     stamps it (+ `login_url_expires_at` = mint + the mode's TTL) on the doc. The
-     `--regenerate-login` flag re-runs only this step (skips the rename/bring-up) so
-     an expired URL can be re-signed on demand. The admin mint **degrades**: the verb
-     is pin-dependent (the fork-pinned admin recipes spell it `generate-admin-session`;
-     `frappe/pilot v0.0.9-pre-alpha` deleted it and its `bench admin` group ships no
-     replacement), so when neither spelling exists the deploy logs a warning and emits
-     **no** `login_url` rather than failing — the console is still reachable at its FQDN
-     with the baked `[admin].password`. Only a missing verb degrades; a mint that
-     actually broke still fails loud.
+     mode the in-guest admin session verb `--full-path` (a 5-minute single-use JWT),
+     on a golden that carries one. The script emits it on its one `ATLAS_RESULT` line;
+     the controller stamps it (+ `login_url_expires_at` = mint + the mode's TTL) on the
+     doc. The `--regenerate-login` flag re-runs only this step (skips the
+     rename/bring-up) so an expired URL can be re-signed on demand. The admin mint
+     **degrades**, and on a current golden that is the *normal* path, not a pin
+     accident: upstream pilot ships no session-minting verb at any spelling (its `bench
+     admin` group is build, enroll, issue-site-token, revoke-totp, run-patches,
+     set-central-config, upgrade) and needs none — an enrolled bench trusts **Central's**
+     JWKS (written by `bench admin enroll` during the deploy), so Central mints the
+     console's one-click `?sid=` link itself. `deploy-site.py` tries the grouped
+     spelling, then the legacy top-level `generate-admin-session` (both reachable only on
+     an older or forked golden), and when neither exists logs a warning and emits **no**
+     `login_url` rather than failing — the console is still reachable at its FQDN (with
+     the baked `[admin].password`), and one-click openable through Central for any bench
+     that enrolled. Only a missing verb degrades; a mint that actually broke still fails
+     loud.
   - **No `set-admin-password`.** The tenant signs in via the minted `login_url`, not
     a password; the baked Administrator password is never surfaced (the tenant may
     rotate it later themselves). Resetting it per VM cost a full CPU-throttled
@@ -384,9 +390,11 @@ door on a VM whose site has already deployed and cleared the readiness gate, so
 row itself is marked `Failed` (its own fail-loud), and the Site still reaches `Running`
 with its own `login_url` intact. This is the one deliberate exception to
 `auto_provision`'s fail-loud rule — a tenant whose site serves HTTP 200 must never be
-told their site failed because its admin console could not be wired (e.g. the golden's
-bench-cli carries no admin session verb). Every earlier step is the tenant site itself
-and stays fail-loud.
+told their site failed because its admin console could not be wired (e.g. the admin
+`bench setup production` fails on a site-mode golden, or the console's `/api/status`
+never answers). Every earlier step is the tenant site itself and stays fail-loud. A
+golden with **no in-guest admin session verb** is not such a failure — that degrades to
+an empty `login_url` and the console still comes up (step 4 above).
 
 ## The Subdomain it creates
 

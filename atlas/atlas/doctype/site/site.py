@@ -607,20 +607,21 @@ def _wait_for_http(site, vm_name: str) -> None:
 	Seam for the `wait_for_http` probe over the VM's public /128. Passes
 	the site FQDN as the Host header (Contract A) so the bench's multitenant nginx
 	routes the probe to THIS site, not just any site on the VM. The readiness PATH is
-	mode-aware: `/api/method/ping` for a site-mode clone, `/api/status` for an
-	admin-mode clone (the admin console is a Flask app with no Frappe ping route) —
-	resolved from the clone's `build_mode`.
+	mode-aware: `/api/method/ping` for a site-mode clone, the admin console's health
+	endpoint for an admin-mode clone (a Flask app with no Frappe ping route; both the
+	upstream and the legacy spelling are tried) — resolved from the clone's
+	`build_mode`.
 
 	A Fake-backed VM's documentation /128 never answers, so the probe is skipped
 	there (the same `is_fake_server` gate `_deploy_site` and `run_task` use) — the
 	readiness gate is the deploy's twin, both no-ops on a Fake VM."""
-	from atlas.atlas.deploy_site import readiness_path_for_mode, wait_for_http
+	from atlas.atlas.deploy_site import readiness_paths_for_mode, wait_for_http
 	from atlas.atlas.providers.fake_tasks import is_fake_server
 
 	vm = frappe.get_doc("Virtual Machine", vm_name)
 	if is_fake_server(vm.server):
 		return
-	wait_for_http(vm.ipv6_address, site.name, path=readiness_path_for_mode(vm.build_mode))
+	wait_for_http(vm.ipv6_address, site.name, path=readiness_paths_for_mode(vm.build_mode))
 
 
 def _create_subdomain(site, vm_name: str) -> str:

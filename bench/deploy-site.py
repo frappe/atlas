@@ -380,13 +380,15 @@ def _mint_login_url(fqdn: str) -> str:
 	return f"https://{fqdn}/app?sid={match.group(1)}"
 
 
-# The spellings of the admin session-minting verb, newest first. The fork-pinned
-# admin recipes carry the top-level `generate-admin-session` (Pilot #117);
-# frappe/pilot v0.0.9-pre-alpha DELETED it and its `bench admin` group ships no
-# replacement (build, enroll, issue-site-token, revoke-totp, run-patches,
-# set-central-config, upgrade). We try the grouped spelling the regroup would use
-# first — so a future upstream release that restores the verb needs no change here —
-# then the legacy top-level one, then degrade (see `_mint_admin_login_url`).
+# The spellings of the admin session-minting verb, newest first. UPSTREAM PILOT SHIPS
+# NEITHER — its `bench admin` group is build, enroll, issue-site-token, revoke-totp,
+# run-patches, set-central-config, upgrade — and does not need to: an enrolled bench
+# trusts Central's JWKS, so CENTRAL mints the console's one-click `?sid=` link itself
+# (central/api/sso.get_bench_link) and no in-guest verb is involved. These two are kept
+# for older/forked goldens that do carry one (the top-level `generate-admin-session` of
+# Pilot #117, and the grouped spelling a future regroup would use), tried newest-first
+# so a release that restores the verb needs no change here. Finding none is the normal
+# upstream case and DEGRADES, it does not fail (see `_mint_admin_login_url`).
 _ADMIN_SESSION_VERBS = (("admin", "generate-session"), ("generate-admin-session",))
 
 
@@ -420,14 +422,13 @@ def _regrouped(group: str, verb: str, *args: str, capture: bool = False) -> str:
 	"""Run a pilot verb that moved under a CLI GROUP, newest spelling first, falling
 	back to the legacy top-level one.
 
-	THIS SCRIPT RUNS ON BOTH PINS. `issue-site-token` and `enroll` are `bench admin
-	<verb>` as of frappe/pilot v0.0.9-pre-alpha, but the admin recipes stay on the
-	pre-regrouping fork (image_recipes._ADMIN_BENCH_CLI_REF) where `issue-site-token` is
-	top-level and there is no `admin` group at all — so on a fork golden the grouped
+	THIS SCRIPT RUNS ON ANY GOLDEN, WHATEVER PILOT IT CARRIES. `issue-site-token` and
+	`enroll` are `bench admin <verb>` on current pilot, and were top-level before the
+	regroup — and on a pre-regroup tree there is no `admin` group at all, so the grouped
 	spelling is not a bad subcommand under a known group, it is an unrecognised LEADING
 	verb, which pilot's dispatcher hands to Frappe as a passthrough. `_missing_verb`
-	recognises both wordings, so one fallback covers both shapes and the two pins are
-	free to diverge (which is the whole point of keeping them separate).
+	recognises both wordings, so one fallback covers both shapes: an image baked before
+	the regroup (or off a fork) still deploys against this same script.
 
 	NO degrade here, unlike `_mint_admin_login_url`: a verb we were asked to run and
 	cannot find anywhere is a bake/pin bug, not a poorer handoff. Degrading would be
@@ -449,10 +450,11 @@ def _regrouped(group: str, verb: str, *args: str, capture: bool = False) -> str:
 		if not _missing_verb(error):
 			raise
 		sys.exit(
-			f"this golden's bench-cli carries `{verb}` at neither `bench {group} {verb}` nor "
-			f"`bench {verb}` — it cannot do what the deploy was asked to do. Re-pin the recipe "
-			f"(image_recipes._BENCH_CLI_REF for the site line, _ADMIN_BENCH_CLI_REF for admin) "
-			f"to a bench-cli that carries the verb, or stop passing the input that requests it."
+			f"this golden's pilot carries `{verb}` at neither `bench {group} {verb}` nor "
+			f"`bench {verb}` — it cannot do what the deploy was asked to do. Re-bake the image "
+			f"(the recipe installs pilot the documented way, so a re-bake picks up the current "
+			f"release; image_recipes._BENCH_CLI_REPO/_BENCH_CLI_REF pin it elsewhere), or stop "
+			f"passing the input that requests it."
 		)
 
 
@@ -591,13 +593,19 @@ def _reissue_pilot_auth_token(fqdn: str) -> None:
 		json.dump(config, f, indent=1)
 
 
-# The local readiness path, per bake mode. site mode serves a Frappe site whose
-# built-in unauthenticated `/api/method/ping` returns 200; admin mode serves the
-# bench-cli admin console — a FLASK app with NO `/api/method/ping` (it would 404),
-# whose unauthenticated health endpoint is `/api/status` (admin/backend app.py
-# `_OPEN_PATHS`). Kept in lockstep with the controller's deploy_site.READINESS_PATH /
-# readiness_path_for_mode.
-_HEALTH_PATH = {"site": "/api/method/ping", "admin": "/api/status"}
+# The local readiness paths, per bake mode, newest spelling first — a probe passes on
+# the FIRST that answers 200. site mode serves a Frappe site whose built-in
+# unauthenticated `/api/method/ping` returns 200; admin mode serves the pilot admin
+# console — a FLASK app with NO `/api/method/ping` (it would 404) — whose
+# unauthenticated health endpoint is `/api/v1/health` on upstream pilot
+# (admin/backend/api/v1/core.py) and was `/api/status` on the pre-`/api/v1` fork, which
+# upstream answers with a 404 `API route not found`. Both are tried so a golden of
+# either vintage passes. Kept in lockstep with the controller's
+# deploy_site.READINESS_PATH / readiness_paths_for_mode.
+_HEALTH_PATHS = {
+	"site": ("/api/method/ping",),
+	"admin": ("/api/v1/health", "/api/status"),
+}
 
 
 def _serving(host_header: str, mode: str) -> bool:
@@ -610,9 +618,13 @@ def _serving(host_header: str, mode: str) -> bool:
 	public /128, so a v6 200 proves the path that matters is wired. The Host header
 	is the FQDN (Contract A); in site mode the multitenant gunicorn resolves the
 	renamed site from it, in admin mode nginx routes it to the admin app. The health
-	PATH is mode-aware (the admin app has no Frappe ping route)."""
-	path = _HEALTH_PATH.get(mode, _HEALTH_PATH["site"])
-	return _local_ping(host_header, "[::1]", path) and _local_ping(host_header, "127.0.0.1", path)
+	PATH is mode-aware (the admin app has no Frappe ping route) and, in admin mode,
+	spelling-tolerant — the first path that answers on BOTH stacks wins."""
+	paths = _HEALTH_PATHS.get(mode, _HEALTH_PATHS["site"])
+	return any(
+		_local_ping(host_header, "[::1]", path) and _local_ping(host_header, "127.0.0.1", path)
+		for path in paths
+	)
 
 
 def _local_ping(site_name: str, host_ip: str, path: str) -> bool:
@@ -789,11 +801,11 @@ def main() -> None:
 	# admin enroll` exchanges the token for the pilot's long-lived credential + JWKS trust
 	# config and writes them into bench.toml (Pilot owns that file). Only the short-lived
 	# token is ever injected here — the durable secret is minted by the pilot itself.
-	# Grouped under `admin` since frappe/pilot v0.0.9-pre-alpha, same as
-	# `admin issue-site-token` above — and through the same `_regrouped` fallback,
-	# because an admin-mode VM runs this line against the fork pin, which has no
-	# `admin` group (and, at the pinned commit, no `enroll` at either spelling — so
-	# that bake fails loud here rather than reporting an enrolment that never happened).
+	# Grouped under `admin` on current pilot, same as `admin issue-site-token` above —
+	# and through the same `_regrouped` fallback, so a golden baked off an older tree
+	# (where the verb was top-level, or absent entirely) still deploys, and one that
+	# carries it at NO spelling fails loud here rather than reporting an enrolment that
+	# never happened.
 	if inputs.central_endpoint and inputs.bootstrap_token:
 		log("enrolling with Central (bench admin enroll) …")
 		_regrouped(

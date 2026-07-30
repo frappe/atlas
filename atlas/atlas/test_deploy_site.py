@@ -214,20 +214,36 @@ class TestDeploySite(IntegrationTestCase):
 		self.assertIn("--mode admin", m_ssh.call_args_list[-1].args[2])
 
 
-class TestReadinessPathForMode(IntegrationTestCase):
+class TestReadinessPathsForMode(IntegrationTestCase):
 	"""The readiness/health PATH is mode-aware: a Frappe site answers
-	`/api/method/ping`; the admin console (a Flask app) answers `/api/status`."""
+	`/api/method/ping`; the admin console (a Flask app) has no such route and answers
+	`/api/v1/health` on upstream pilot (`/api/status` on the older fork)."""
 
 	def test_site_and_empty_default_to_ping(self) -> None:
-		self.assertEqual(deploy_module.readiness_path_for_mode("site"), "/api/method/ping")
-		self.assertEqual(deploy_module.readiness_path_for_mode(""), "/api/method/ping")
-		self.assertEqual(deploy_module.readiness_path_for_mode(None), "/api/method/ping")
+		self.assertEqual(deploy_module.readiness_paths_for_mode("site"), ("/api/method/ping",))
+		self.assertEqual(deploy_module.readiness_paths_for_mode(""), ("/api/method/ping",))
+		self.assertEqual(deploy_module.readiness_paths_for_mode(None), ("/api/method/ping",))
 
-	def test_admin_uses_status(self) -> None:
-		self.assertEqual(deploy_module.readiness_path_for_mode("admin"), "/api/status")
+	def test_admin_tries_the_upstream_health_path_first(self) -> None:
+		"""Newest spelling first: an upstream golden is ready on the first probe, and
+		`/api/status` — which upstream 404s — is only a fallback for an older/forked
+		golden. Getting this order wrong costs every admin deploy one dead probe."""
+		self.assertEqual(deploy_module.readiness_paths_for_mode("admin"), ("/api/v1/health", "/api/status"))
 
 	def test_unknown_mode_falls_back_to_ping(self) -> None:
-		self.assertEqual(deploy_module.readiness_path_for_mode("weird"), "/api/method/ping")
+		self.assertEqual(deploy_module.readiness_paths_for_mode("weird"), ("/api/method/ping",))
+
+	def test_wait_for_http_accepts_any_of_several_paths(self) -> None:
+		"""A tuple means ready as soon as ANY path answers 200 — that is what lets one
+		probe cover goldens whose pilot spells the admin health route differently."""
+		with patch.object(deploy_module, "_http_ok", side_effect=lambda _a, _h, _p, path: path == "/b"):
+			deploy_module.wait_for_http("::1", "acme.example", path=("/a", "/b"), timeout_seconds=1)
+
+	def test_wait_for_http_names_every_path_it_tried_on_timeout(self) -> None:
+		with patch.object(deploy_module, "_http_ok", return_value=False):
+			with self.assertRaises(frappe.ValidationError) as caught:
+				deploy_module.wait_for_http("::1", "acme.example", path=("/a", "/b"), timeout_seconds=0)
+		self.assertIn("/a|/b", str(caught.exception))
 
 
 class TestGuestScriptTypedIO(IntegrationTestCase):
@@ -266,21 +282,39 @@ class TestGuestScriptTypedIO(IntegrationTestCase):
 			self.assertTrue(self.guest._serving("acme.blr1.frappe.dev", "site"))
 		self.assertEqual(set(seen), {"/api/method/ping"})
 
-	def test_serving_probes_status_in_admin_mode(self) -> None:
+	def test_serving_probes_the_admin_health_path(self) -> None:
 		"""admin mode: the admin console is a Flask app with no Frappe ping route, so
-		the local health probe hits `/api/status` (200 unauthenticated)."""
+		the local health probe hits pilot's `/api/v1/health` (200 unauthenticated) and
+		stops there — the legacy `/api/status` is never reached on an upstream golden."""
 		seen = []
 		with patch.object(
 			self.guest, "_local_ping", side_effect=lambda host, ip, path: seen.append(path) or True
 		):
 			self.assertTrue(self.guest._serving("admin.blr1.frappe.dev", "admin"))
-		self.assertEqual(set(seen), {"/api/status"})
+		self.assertEqual(set(seen), {"/api/v1/health"})
+
+	def test_serving_falls_back_to_the_legacy_admin_health_path(self) -> None:
+		"""A golden whose pilot only answers `/api/status` still reports serving — the
+		same both-spellings tolerance the controller's probe has."""
+		seen = []
+		with patch.object(
+			self.guest,
+			"_local_ping",
+			side_effect=lambda host, ip, path: seen.append(path) or path == "/api/status",
+		):
+			self.assertTrue(self.guest._serving("admin.blr1.frappe.dev", "admin"))
+		self.assertEqual(seen[0], "/api/v1/health")
+		self.assertIn("/api/status", seen)
 
 	def test_guest_health_paths_match_controller(self) -> None:
 		"""The in-guest health-path map stays in lockstep with the controller's
 		readiness paths (a drift would make one probe a route the other doesn't)."""
-		self.assertEqual(self.guest._HEALTH_PATH["site"], deploy_module.readiness_path_for_mode("site"))
-		self.assertEqual(self.guest._HEALTH_PATH["admin"], deploy_module.readiness_path_for_mode("admin"))
+		self.assertEqual(
+			tuple(self.guest._HEALTH_PATHS["site"]), deploy_module.readiness_paths_for_mode("site")
+		)
+		self.assertEqual(
+			tuple(self.guest._HEALTH_PATHS["admin"]), deploy_module.readiness_paths_for_mode("admin")
+		)
 
 	def test_from_args_requires_site_name(self) -> None:
 		# argparse exits(2) on the missing required flag — the CLI form of a required
@@ -619,10 +653,9 @@ class TestGuestScriptTypedIO(IntegrationTestCase):
 			self.assertEqual(guest._mint_admin_login_url(), "")
 
 	# ----- _regrouped: one script, two CLI shapes -------------------------
-	# `issue-site-token` and `enroll` are `bench admin <verb>` on the upstream release
-	# the SITE line is pinned to, and top-level on the fork the ADMIN line stays pinned
-	# to (image_recipes._ADMIN_BENCH_CLI_REF — that fork has no `admin` group at all).
-	# The same deploy-site.py runs on both goldens, so it must not assume either shape.
+	# `issue-site-token` and `enroll` are `bench admin <verb>` on current pilot, and were
+	# top-level before the regroup (a tree with no `admin` group at all). The same
+	# deploy-site.py runs on goldens of either vintage, so it must not assume a shape.
 
 	def test_regrouped_prefers_the_grouped_spelling(self) -> None:
 		"""The upstream shape: the grouped call succeeds, so the legacy spelling is never
@@ -670,7 +703,7 @@ class TestGuestScriptTypedIO(IntegrationTestCase):
 		message = str(caught.exception)
 		self.assertIn("bench admin enroll", message)
 		self.assertIn("bench enroll", message)
-		self.assertIn("_ADMIN_BENCH_CLI_REF", message)
+		self.assertIn("_BENCH_CLI_REF", message)
 
 	def test_regrouped_does_not_retry_a_real_failure(self) -> None:
 		"""Only a MISSING VERB falls back. A grouped call that reached the verb and broke
