@@ -173,11 +173,13 @@ Fields, validation, permissions, and the full field table are in
    | 3 | Run `deploy-site.py` in the guest: rename the baked `site.local` to the FQDN via `bench rename-site` (regenerates the vhost as `server_name <fqdn>` + a v6 listener + reloads + re-runs production setup, a fast no-op) — no admin reset, no restart (cold clones also `bench start` first to bring the stack up; a warm clone is already serving — see the in-guest deploy below). The guest then mints a one-click `login_url` (`bench browse --user Administrator --session-end`, a real 24h session) → stamped with `login_url_expires_at` on the Site. `status → Deploying`. | deploy seam |
    | 4 | `wait_for_http` — block on the guest's HTTP 200 (Contract B). | deploy seam |
    | 5 | Create the `Subdomain` row (this is what makes the proxy route it — its own `after_insert` reconciles the regional fleet). | this layer |
-   | 5b | Stand up the **attached Pilot** admin console on the SAME VM (`_provision_pilot`): create a `Pilot` at `<subdomain>-pilot.<region>` bound to this VM, run its admin-mode deploy, create its Subdomain, mark it Running, link it on `Site.pilot`. This is the front door Central's Asset "Open" resolves. See § The attached Pilot admin console. | this layer |
+   | 5b | Stand up the **attached Pilot** admin console on the SAME VM (`_attach_pilot_console` → `_provision_pilot`): create a `Pilot` at `<subdomain>-pilot.<region>` bound to this VM, run its admin-mode deploy, create its Subdomain, mark it Running, link it on `Site.pilot`. This is the front door Central's Asset "Open" resolves. **The one non-fatal step** — see § The attached Pilot admin console. | this layer |
    | 6 | `status → Running`. | this layer |
 
    Any failure flips `status = Failed` and re-raises (fail loud, the job log
-   carries the traceback). No-op if the Site has moved past `Pending`.
+   carries the traceback) — **except step 5b**, the companion admin console, whose
+   failure is logged and leaves the Site `Running`. No-op if the Site has moved past
+   `Pending`.
 
 5. **`terminate()`** deletes the site's `Subdomain` (proxy stops routing on the next
    reconcile), terminates the **attached Pilot** (which drops only its own Subdomain +
@@ -275,11 +277,17 @@ with the fleet key), recording the op as a `deploy-site` Task row.
   4. **Mints the one-click `login_url`** — in **site** mode
      `bench browse --user Administrator --session-end <24h>` opens a real 24h
      Administrator session and builds `https://<fqdn>/app?sid=<sid>`; in **admin**
-     mode `bench generate-admin-session --full-path` (a 5-minute single-use JWT,
-     Pilot #117). The script emits it on its one `ATLAS_RESULT` line; the controller
+     mode the bench-cli admin session verb `--full-path` (a 5-minute single-use JWT).
+     The script emits it on its one `ATLAS_RESULT` line; the controller
      stamps it (+ `login_url_expires_at` = mint + the mode's TTL) on the doc. The
      `--regenerate-login` flag re-runs only this step (skips the rename/bring-up) so
-     an expired URL can be re-signed on demand.
+     an expired URL can be re-signed on demand. The admin mint **degrades**: the verb
+     is pin-dependent (the fork-pinned admin recipes spell it `generate-admin-session`;
+     `frappe/pilot v0.0.9-pre-alpha` deleted it and its `bench admin` group ships no
+     replacement), so when neither spelling exists the deploy logs a warning and emits
+     **no** `login_url` rather than failing — the console is still reachable at its FQDN
+     with the baked `[admin].password`. Only a missing verb degrades; a mint that
+     actually broke still fails loud.
   - **No `set-admin-password`.** The tenant signs in via the minted `login_url`, not
     a password; the baked Administrator password is never surfaced (the tenant may
     rotate it later themselves). Resetting it per VM cost a full CPU-throttled
@@ -326,7 +334,7 @@ A `create_site` stands up **two** front doors on the **one** backing VM:
 
 ```
 acme.blr1.frappe.dev         → the customer's Frappe site   (Site, `bench browse` 24h session)
-acme-pilot.blr1.frappe.dev   → the bench admin console      (Pilot, `generate-admin-session` 5-min JWT)
+acme-pilot.blr1.frappe.dev   → the bench admin console      (Pilot, admin-session 5-min JWT)
 ```
 
 The `Site` is the tenant's Frappe site (surfaced to Central via `get_site`). The
@@ -367,9 +375,18 @@ FQDN) both target the VM's public `/128`.
 **`auto_provision` gains a stage.** After the site reaches serving (its Subdomain is
 created) and **before** the Site is marked `Running`, `_provision_pilot(site, vm)` creates
 the attached Pilot, runs its admin deploy, creates the pilot's Subdomain, marks the Pilot
-`Running`, and links it on `Site.pilot`. A console-wiring failure fails the whole site
-loud (consistent with the rest of `auto_provision`). `Site.terminate()` cascades to the
-Pilot (attached → drops only its Subdomain + row) before terminating the VM.
+`Running`, and links it on `Site.pilot`. `Site.terminate()` cascades to the Pilot
+(attached → drops only its Subdomain + row) before terminating the VM.
+
+**A console failure does NOT fail the site.** The console is a *second*, additive front
+door on a VM whose site has already deployed and cleared the readiness gate, so
+`_attach_pilot_console` wraps the stage: the traceback goes to the Error Log, the Pilot
+row itself is marked `Failed` (its own fail-loud), and the Site still reaches `Running`
+with its own `login_url` intact. This is the one deliberate exception to
+`auto_provision`'s fail-loud rule — a tenant whose site serves HTTP 200 must never be
+told their site failed because its admin console could not be wired (e.g. the golden's
+bench-cli carries no admin session verb). Every earlier step is the tenant site itself
+and stays fail-loud.
 
 ## The Subdomain it creates
 

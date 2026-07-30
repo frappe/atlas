@@ -151,6 +151,13 @@ def _build_env(recipe: ImageRecipe) -> dict[str, str]:
 	are env, not bench.toml: the ref is install.sh's checkout target and the ERPNext
 	branch is a `get-app --branch` arg, neither of which lives in bench.toml."""
 	env: dict[str, str] = {}
+	# Repo travels with the ref: build.sh pulls install.sh from
+	# `raw.githubusercontent.com/<repo>/<ref>/` and re-points the clone's origin at
+	# <repo> before checking <ref> out, so exporting a ref without its repo would
+	# resolve it against build.sh's committed default repo — a 404 (or, worse, a
+	# same-named ref on the wrong fork) whenever the two disagree.
+	if recipe.bench_cli_repo:
+		env["BENCH_CLI_REPO"] = recipe.bench_cli_repo
 	if recipe.bench_cli_ref:
 		env["BENCH_CLI_REF"] = recipe.bench_cli_ref
 	if recipe.erpnext_branch:

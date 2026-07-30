@@ -19,9 +19,11 @@
 # baked Administrator password is a long random secret generated at bake time and
 # never surfaced. Instead, site mode mints a one-click session URL with
 # `bench browse --user Administrator` (a real 24h session, no password);
-# admin mode mints one with `bench generate-admin-session --full-path` (Pilot #117,
-# a 5-minute single-use JWT). Either way the result carries `login_url` — the only
-# way in besides a password the tenant/operator sets themselves later.
+# admin mode mints one with the bench-cli admin session verb (a 5-minute single-use
+# JWT), when the golden's bench-cli still carries one — `login_url` is then the only
+# way in besides a password the tenant/operator sets themselves later. A golden whose
+# bench-cli dropped that verb emits NO `login_url` and the console falls back to its
+# baked `[admin].password`; see `_mint_admin_login_url`.
 #
 # The rename is one bench-cli command: `bench rename-site <old> <new>`
 # (bench-setup-manual.md) moves the site dir, updates the site config, regenerates
@@ -50,6 +52,7 @@ import argparse
 import json
 import os
 import shlex
+import socket
 import subprocess
 import sys
 import time
@@ -70,6 +73,12 @@ BENCH_CLI_DIR = f"{BENCH_HOME}/pilot"
 BENCH_NAME = "atlas"
 BENCH_DIR = f"{BENCH_CLI_DIR}/benches/{BENCH_NAME}"
 BENCH = f"{BENCH_CLI_DIR}/bench"
+# The bench DB's UNIX socket — the readiness contract `_await_db_ready` probes, and
+# what the baked site_config.json's `db_socket` points at. pilot v0.0.9 runs MariaDB
+# as a user-owned `pilot-mariadb.service` with its datadir + socket under the pilot
+# dir; the older fork ran a system `mariadb@<bench>` instance instead. We probe the
+# socket precisely so the deploy doesn't care which. See `_await_db_ready`.
+DB_SOCKET = f"{BENCH_CLI_DIR}/databases/mariadb/run/mysqld.sock"
 
 # The site baked into the golden image (bench/build.sh BAKED_SITE, site mode). The
 # per-site deploy renames this directory to the FQDN; a clone that doesn't carry it
@@ -172,8 +181,10 @@ class DeploySiteResult:
 	way: site mode mints it with `bench browse` (a real 24h session, built
 	into `https://<fqdn>/app?sid=<sid>` — Contract A: the FQDN is the one routing
 	string, HTTPS terminates at the edge proxy, never in-guest); admin mode mints it
-	with `bench generate-admin-session --full-path` (a 5-minute single-use JWT,
-	Pilot #117)."""
+	with the bench-cli admin session verb (a 5-minute single-use JWT). It is OMITTED
+	from the payload when empty — an admin console on a bench-cli with no session
+	verb still deploys and still serves, it just has no one-click link
+	(`_mint_admin_login_url`), so every consumer must treat it as optional."""
 
 	site: str
 	serving: bool
@@ -256,26 +267,37 @@ def _await_db_ready(timeout_seconds: int = 60) -> None:
 	"""Gate the deploy on the baked bench's MariaDB instance actually accepting
 	connections before any DB-touching step (rename-site / browse / setup).
 
-	The instance is a system `mariadb@<bench>.service` (Type=notify, so `active`
-	means it has opened its socket). It is ordered only `After=network.target`
-	with NO ordering against sshd — so on a snapshot-booted clone sshd can (and
-	does) win the race and answer while MariaDB is still in its ~15s startup.
-	The controller then connects and runs the deploy before the socket exists;
-	`rename-site` survives (its production-setup brings the DB up / retries), but
-	`bench browse` connects with a bare `frappe.connect()` and no retry, so it
-	dies with `(2002) Can't connect ... mysqld-<bench>.sock`. Waiting for the
-	unit to report active closes that window. Fail loud on timeout — a deploy
-	onto a bench whose DB never came up cannot mint a session."""
-	unit = f"mariadb@{BENCH_NAME}.service"
+	The DB is ordered only `After=network.target` with NO ordering against sshd —
+	so on a snapshot-booted clone sshd can (and does) win the race and answer while
+	MariaDB is still in its ~15s startup. The controller then connects and runs the
+	deploy before the socket exists; `rename-site` survives (its production-setup
+	brings the DB up / retries), but `bench browse` connects with a bare
+	`frappe.connect()` and no retry, so it dies with `(2002) Can't connect ...`.
+	Waiting for the socket to accept closes that window.
+
+	We probe the SOCKET, not a unit name, because the socket is the stable contract
+	and the unit behind it is not. Up to the previous fork the DB was a system
+	`mariadb@<bench>.service` (multi-instance, own datadir on the ZFS pool);
+	pilot v0.0.9-pre-alpha moved it to a user-owned `pilot-mariadb.service` under
+	the bench user, datadir under the pilot dir, no ZFS at all. We run as root, so
+	`systemctl is-active mariadb@atlas` could never succeed against a v0.0.9 golden
+	and EVERY deploy failed here at the timeout. A socket probe is indifferent to
+	which shape the golden carries — and to the next rename. Fail loud on timeout —
+	a deploy onto a bench whose DB never came up cannot mint a session."""
 	deadline = time.monotonic() + timeout_seconds
 	while time.monotonic() < deadline:
-		probe = subprocess.run(
-			["systemctl", "is-active", "--quiet", unit],
-		)
-		if probe.returncode == 0:
-			return
+		if os.path.exists(DB_SOCKET):
+			probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+			try:
+				probe.connect(DB_SOCKET)
+				return
+			except OSError:
+				# Socket file is published but mariadbd isn't accepting yet.
+				pass
+			finally:
+				probe.close()
 		time.sleep(0.5)
-	sys.exit(f"{unit} did not become active within {timeout_seconds}s; the bench DB is not up")
+	sys.exit(f"{DB_SOCKET} did not accept a connection within {timeout_seconds}s; the bench DB is not up")
 
 
 def _preflight() -> None:
@@ -358,17 +380,114 @@ def _mint_login_url(fqdn: str) -> str:
 	return f"https://{fqdn}/app?sid={match.group(1)}"
 
 
+# The spellings of the admin session-minting verb, newest first. The fork-pinned
+# admin recipes carry the top-level `generate-admin-session` (Pilot #117);
+# frappe/pilot v0.0.9-pre-alpha DELETED it and its `bench admin` group ships no
+# replacement (build, enroll, issue-site-token, revoke-totp, run-patches,
+# set-central-config, upgrade). We try the grouped spelling the regroup would use
+# first — so a future upstream release that restores the verb needs no change here —
+# then the legacy top-level one, then degrade (see `_mint_admin_login_url`).
+_ADMIN_SESSION_VERBS = (("admin", "generate-session"), ("generate-admin-session",))
+
+
+def _missing_verb(error: subprocess.CalledProcessError) -> bool:
+	"""True iff a failed `_bench(...)` died because the VERB does not exist on this
+	golden's bench-cli, rather than because the mint itself broke.
+
+	TWO different parsers answer here and they word it differently — both must be
+	matched, or the grouped spelling reads as a real failure and fails the deploy loud:
+
+	* An unknown TOP-level verb falls through to the Frappe passthrough (click):
+	  exit 2, `No such command` on stderr.
+	* An unknown subcommand under a KNOWN group (`bench admin …`) never reaches click.
+	  Pilot's group parser is argparse, which exits 2 with
+	  `argument admin_command: invalid choice: 'generate-session' (choose from …)`.
+
+	Matching only click's phrasing is what let a v0.0.9 golden — which has the `admin`
+	group but no session verb in it — re-raise out of `_mint_admin_login_url`, mark the
+	companion console Failed, and (because the Pilot creates its proxy route only after
+	the mint) leave the console FQDN unrouted entirely.
+
+	Exit 2 is still required alongside the phrase, so a REAL failure — an unwritable
+	`admin.jwt_secret`, a wedged bench — still propagates and fails the deploy loud."""
+	streams = f"{error.stdout or ''}\n{error.stderr or ''}".lower()
+	if error.returncode != 2:
+		return False
+	return any(phrase in streams for phrase in ("no such command", "unknown command", "invalid choice"))
+
+
+def _regrouped(group: str, verb: str, *args: str, capture: bool = False) -> str:
+	"""Run a pilot verb that moved under a CLI GROUP, newest spelling first, falling
+	back to the legacy top-level one.
+
+	THIS SCRIPT RUNS ON BOTH PINS. `issue-site-token` and `enroll` are `bench admin
+	<verb>` as of frappe/pilot v0.0.9-pre-alpha, but the admin recipes stay on the
+	pre-regrouping fork (image_recipes._ADMIN_BENCH_CLI_REF) where `issue-site-token` is
+	top-level and there is no `admin` group at all — so on a fork golden the grouped
+	spelling is not a bad subcommand under a known group, it is an unrecognised LEADING
+	verb, which pilot's dispatcher hands to Frappe as a passthrough. `_missing_verb`
+	recognises both wordings, so one fallback covers both shapes and the two pins are
+	free to diverge (which is the whole point of keeping them separate).
+
+	NO degrade here, unlike `_mint_admin_login_url`: a verb we were asked to run and
+	cannot find anywhere is a bake/pin bug, not a poorer handoff. Degrading would be
+	worse than failing — an un-enrolled bench that reports success reaches `Running`
+	and then refuses to open from Central with nothing to explain why, which is the
+	exact failure mode 8f7a591 was written to remove. So we fail, but we fail
+	ACTIONABLY: naming both spellings tried and where the pin lives, because click's
+	bare `No such command` on a Frappe passthrough is the confusing part, not the exit
+	code. A verb that exists and BROKE still propagates unchanged (`_missing_verb` is
+	what tells the two apart)."""
+	try:
+		return _bench(group, verb, *args, capture=capture)
+	except subprocess.CalledProcessError as error:
+		if not _missing_verb(error):
+			raise
+	try:
+		return _bench(verb, *args, capture=capture)
+	except subprocess.CalledProcessError as error:
+		if not _missing_verb(error):
+			raise
+		sys.exit(
+			f"this golden's bench-cli carries `{verb}` at neither `bench {group} {verb}` nor "
+			f"`bench {verb}` — it cannot do what the deploy was asked to do. Re-pin the recipe "
+			f"(image_recipes._BENCH_CLI_REF for the site line, _ADMIN_BENCH_CLI_REF for admin) "
+			f"to a bench-cli that carries the verb, or stop passing the input that requests it."
+		)
+
+
 def _mint_admin_login_url() -> str:
 	"""Admin mode only: mint the admin console's one-click sign-in URL, replacing
-	the shared baked `[admin].password` handoff.
+	the shared baked `[admin].password` handoff. Returns "" when this golden's
+	bench-cli carries no session-minting verb at all.
 
-	`bench generate-admin-session --full-path` (Pilot #117, bench-cli) issues a
+	The verb (`--full-path`, either spelling in `_ADMIN_SESSION_VERBS`) issues a
 	5-minute single-use `?sid=` JWT, signed by `admin.jwt_secret` (auto-generated
 	in bench.toml on first call) — the admin frontend exchanges it for a 1-day
 	HttpOnly session cookie. Password login still works but is no longer the
 	handoff. Run AFTER `_set_admin_domain` so the printed URL already carries the
-	real FQDN, not the placeholder `admin.localhost`."""
-	return _bench("generate-admin-session", "--full-path", capture=True).strip()
+	real FQDN, not the placeholder `admin.localhost`.
+
+	DEGRADE, don't die, when neither spelling exists: the console is still fully
+	reachable at its FQDN with the baked `[admin].password`, so an absent one-click
+	link is a poorer handoff, not a failed deploy — and this same script deploys the
+	tenant's SITE, which must not be marked Failed because its companion console
+	could not mint a URL. A missing verb is detected precisely (`_missing_verb`);
+	anything else re-raises and fails loud."""
+	for verb in _ADMIN_SESSION_VERBS:
+		try:
+			return _bench(*verb, "--full-path", capture=True).strip()
+		except subprocess.CalledProcessError as error:
+			if not _missing_verb(error):
+				raise
+	print(
+		"WARNING: this bench-cli carries no admin session verb ("
+		+ " / ".join("bench " + " ".join(verb) for verb in _ADMIN_SESSION_VERBS)
+		+ "); the admin console has no one-click login URL — sign in with [admin].password instead",
+		file=sys.stderr,
+		flush=True,
+	)
+	return ""
 
 
 def _set_admin_domain(fqdn: str, *, run_setup: bool = True, update_site: str = "") -> None:
@@ -446,15 +565,23 @@ def _reissue_pilot_auth_token(fqdn: str) -> None:
 	(pilot generate_session.has_scope), baked at new-site time (pilot new_site.py)
 	scoped to the placeholder `site.local` — so after the rename to the FQDN the bench
 	rejects it (`claims["site"] != <fqdn>`) and every site→bench API call 403s. Mint a
-	fresh one for the FQDN with `bench issue-site-token <fqdn> --ttl <365d>` (same TTL
-	as the bake) and write it back. Run AFTER the rename, against the FQDN dir.
+	fresh one for the FQDN with `bench admin issue-site-token <fqdn> --ttl <365d>` (same
+	TTL as the bake) and write it back. Run AFTER the rename, against the FQDN dir.
 	`issue-site-token` mints purely from the FQDN arg + bench.toml's jwt_secret and does
 	not read the site off disk, so scoping to the FQDN is safe. Idempotent (a re-run
-	just mints another valid token). No-op if the config is missing."""
+	just mints another valid token). No-op if the config is missing.
+
+	The verb lives under the `admin` GROUP (`bench admin issue-site-token`) as of
+	frappe/pilot v0.0.9-pre-alpha. Pilot registers a grouped command only under its
+	group — there is no top-level alias — and its dispatcher treats an unrecognised
+	leading verb as a FRAPPE PASSTHROUGH, so the old top-level spelling does not fail
+	loudly as an unknown bench command: it is handed to Frappe, which rejects it. Goes
+	through `_regrouped` so the pre-regrouping fork pin (where it is top-level) works
+	too. Keep this in step with image_recipes._BENCH_CLI_REF."""
 	config_path = os.path.join(SITES_DIR, fqdn, "site_config.json")
 	if not os.path.exists(config_path):
 		return
-	token = _bench("issue-site-token", fqdn, "--ttl", str(365 * 24 * 3600), capture=True).strip()
+	token = _regrouped("admin", "issue-site-token", fqdn, "--ttl", str(365 * 24 * 3600), capture=True).strip()
 	# nosemgrep: frappe-security-file-traversal -- guest script; reads a fixed site_config.json under the baked bench, not untrusted web input
 	with open(config_path) as f:
 		config = json.load(f)
@@ -539,7 +666,7 @@ def _regenerate_login(inputs: "DeploySiteInputs", log) -> None:
 	session.
 
 	We still gate on the bench DB accepting connections — the mint (`bench browse` in
-	site mode, `bench generate-admin-session` in admin mode) opens a `frappe.connect()`,
+	site mode, the admin session verb in admin mode) opens a `frappe.connect()`,
 	and a regenerate can land on a VM that was just resumed from a memory snapshot with
 	MariaDB still racing sshd. Emits the same `ATLAS_RESULT` shape as a full deploy
 	(`serving` reflects the local probe) so the controller stamps it identically."""
@@ -548,7 +675,7 @@ def _regenerate_login(inputs: "DeploySiteInputs", log) -> None:
 	_await_db_ready()
 	log("bench DB ready")
 	if inputs.mode == "admin":
-		log("minting admin login URL (bench generate-admin-session --full-path) …")
+		log("minting admin login URL (bench-cli admin session verb) …")
 		login_url = _mint_admin_login_url()
 	else:
 		log("minting tenant login URL (bench browse) …")
@@ -626,7 +753,7 @@ def main() -> None:
 		log("admin mode: pointing [admin].domain at the FQDN + setup production …")
 		_set_admin_domain(inputs.admin_domain or inputs.site_name)
 		log("admin vhost regenerated + reloaded")
-		log("minting admin login URL (bench generate-admin-session --full-path) …")
+		log("minting admin login URL (bench-cli admin session verb) …")
 		login_url = _mint_admin_login_url()
 		log("admin login URL minted")
 	else:
@@ -659,12 +786,24 @@ def main() -> None:
 		log("login URL minted")
 
 	# Central handoff: seed the endpoint + single-use bootstrap token and enrol. `bench
-	# enroll` exchanges the token for the pilot's long-lived credential + JWKS trust config
-	# and writes them into bench.toml (Pilot owns that file). Only the short-lived token is
-	# ever injected here — the durable secret is minted by the pilot itself.
+	# admin enroll` exchanges the token for the pilot's long-lived credential + JWKS trust
+	# config and writes them into bench.toml (Pilot owns that file). Only the short-lived
+	# token is ever injected here — the durable secret is minted by the pilot itself.
+	# Grouped under `admin` since frappe/pilot v0.0.9-pre-alpha, same as
+	# `admin issue-site-token` above — and through the same `_regrouped` fallback,
+	# because an admin-mode VM runs this line against the fork pin, which has no
+	# `admin` group (and, at the pinned commit, no `enroll` at either spelling — so
+	# that bake fails loud here rather than reporting an enrolment that never happened).
 	if inputs.central_endpoint and inputs.bootstrap_token:
-		log("enrolling with Central (bench enroll) …")
-		_bench("enroll", "--endpoint", inputs.central_endpoint, "--bootstrap-token", inputs.bootstrap_token)
+		log("enrolling with Central (bench admin enroll) …")
+		_regrouped(
+			"admin",
+			"enroll",
+			"--endpoint",
+			inputs.central_endpoint,
+			"--bootstrap-token",
+			inputs.bootstrap_token,
+		)
 		log("enrolled with Central")
 
 	log("local serving probe (v6 + v4) …")

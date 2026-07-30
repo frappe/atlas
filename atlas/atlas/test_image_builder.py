@@ -153,9 +153,11 @@ class TestRecipeRegistry(IntegrationTestCase):
 		self.assertEqual(
 			(nightly.frappe_branch, nightly.erpnext_branch), ("feature/cloud-settings", "develop")
 		)
-		# All three share the proven bench-cli ref + the bench source tree + sizing.
+		# All three share the proven bench-cli repo + ref + the bench source tree + sizing.
 		self.assertEqual({v16.bench_cli_ref, v15.bench_cli_ref, nightly.bench_cli_ref}, {v16.bench_cli_ref})
 		self.assertTrue(v16.bench_cli_ref)
+		# The site line bakes off the UPSTREAM release, not a fork.
+		self.assertEqual({v16.bench_cli_repo, v15.bench_cli_repo, nightly.bench_cli_repo}, {"frappe/pilot"})
 		for r in (v16, v15, nightly):
 			self.assertEqual(r.source_directory, "bench")
 			self.assertEqual(r.task_script, "bench-build")
@@ -228,7 +230,13 @@ class TestRecipeRegistry(IntegrationTestCase):
 				(site.frappe_branch, site.erpnext_branch, site.python_version),
 			)
 			self.assertEqual(admin.source_directory, "bench")
-			self.assertEqual(admin.bench_cli_ref, site.bench_cli_ref)
+			# The bench-cli pin is the ONE thing the admin twin does NOT share with its
+			# site twin: only admin mode calls `bench generate-admin-session`, which the
+			# upstream release the site line is pinned to does not carry, so the admin
+			# line stays on the fork. Repo and ref must move together.
+			self.assertNotEqual(admin.bench_cli_ref, site.bench_cli_ref)
+			self.assertEqual(admin.bench_cli_repo, "prathameshkurunkar7/pilot")
+			self.assertTrue(admin.bench_cli_ref)
 
 	def test_proxy_recipe_shape(self) -> None:
 		self.assertEqual(_PROXY.task_script, "proxy-build")
@@ -589,12 +597,21 @@ class TestBuildCommand(IntegrationTestCase):
 		self.assertEqual(env["BENCH_CLI_REF"], _V15.bench_cli_ref)
 		self.assertEqual(env["ERPNEXT_BRANCH"], "version-15")
 
+	def test_env_carries_cli_repo_alongside_ref(self) -> None:
+		"""The repo must ride with the ref: build.sh resolves install.sh and the
+		origin re-point off BENCH_CLI_REPO, so exporting a ref alone would resolve it
+		against the committed default repo — the wrong tree whenever they disagree."""
+		env = image_builder._build_env(_V15)
+		self.assertEqual(env["BENCH_CLI_REPO"], _V15.bench_cli_repo)
+		self.assertEqual(env["BENCH_CLI_REPO"], "frappe/pilot")
+
 	def test_proxy_env_is_empty(self) -> None:
 		self.assertEqual(image_builder._build_env(_PROXY), {})
 
 	def test_command_exports_env_and_passes_mode(self) -> None:
 		command = image_builder._build_command(_V16)
 		self.assertIn(f"export BENCH_CLI_REF={_V16.bench_cli_ref}", command)
+		self.assertIn(f"export BENCH_CLI_REPO={_V16.bench_cli_repo}", command)
 		self.assertIn("export ERPNEXT_BRANCH=version-16", command)
 		# Ends with `… build.sh site` (the bake mode, the entrypoint's positional arg).
 		self.assertTrue(command.rstrip().endswith("build.sh site"), command)

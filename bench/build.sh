@@ -57,14 +57,21 @@ set -euo pipefail
 # bakes any Frappe version (v15 / v16 / nightly). The Frappe branch + Python
 # version are pinned in bench.toml (rendered by the controller before upload).
 # The defaults below keep a direct `build.sh` run (no env) reproducible at v16. ---
-# BENCH_CLI_REPO is the GitHub org/repo the CLI is cloned from. Default is the
-# prathameshkurunkar7/pilot fork's central-billing-client branch (the Central
-# billing client); override to frappe/pilot for an upstream bake. install.sh
-# hardcodes the frappe/pilot origin, so §3 below re-points the clone's origin at
-# this repo before checking out BENCH_CLI_REF (a fork SHA is unreachable otherwise).
-BENCH_CLI_REPO="${BENCH_CLI_REPO:-prathameshkurunkar7/pilot}"
-BENCH_CLI_REF="${BENCH_CLI_REF:-c6e5253ef46c23fb1f2f776dc7372c7d39224e42}"  # default: central-billing-client @ prathameshkurunkar7/pilot
+# BENCH_CLI_REPO is the GitHub org/repo the CLI is cloned from, and always travels
+# with BENCH_CLI_REF — a ref is only resolvable against the repo it lives in.
+# Default is the frappe/pilot v0.0.14-pre-alpha release (the site line's pin);
+# override BOTH to bake off a fork. install.sh hardcodes the frappe/pilot origin, so
+# §3 below re-points the clone's origin at this repo before checking out
+# BENCH_CLI_REF (a fork SHA is unreachable otherwise).
+BENCH_CLI_REPO="${BENCH_CLI_REPO:-frappe/pilot}"
+BENCH_CLI_REF="${BENCH_CLI_REF:-v0.0.14-pre-alpha}"  # default: release tag @ frappe/pilot (see §3b for tag-vs-SHA)
 ERPNEXT_BRANCH="${ERPNEXT_BRANCH:-version-16}"  # default: v16; controller overrides for v15 / develop
+# Bake ERPNext into the golden? OFF by default: `get-app erpnext` + `install-app` is
+# by far the longest phase of the bake (clone + asset build + a full app install on
+# the baked site), and a Frappe-only golden is a complete, serving bench — sites and
+# the admin console work identically without it. Set INCLUDE_ERPNEXT=1 to bake the
+# ERPNext-bearing golden back.
+INCLUDE_ERPNEXT="${INCLUDE_ERPNEXT:-0}"
 
 BENCH_USER="frappe"
 BENCH_HOME="/home/$BENCH_USER"
@@ -120,8 +127,17 @@ export DEBIAN_FRONTEND=noninteractive
 # redis_queue/redis_cache units never come up (install-app then dies on
 # "Connection refused @ localhost:11000"). Lingering (enabled in §3) is what makes
 # /run/user/<uid> exist outside a login session.
+# NODE_OPTIONS raises Node's old-space cap for every command run here. Node defaults
+# to roughly 2 GB regardless of how much RAM the box has, and the git (PILOT_DEV)
+# install compiles the admin frontend from source — a Rollup/Vite build over the full
+# dependency tree that blows straight through that default and aborts with
+# `FATAL ERROR: Reached heap limit ... JavaScript heap out of memory` (npm exit 134),
+# after which bench init rolls the whole bench back. The release install shape never
+# hit this because it ships the frontend prebuilt. Set on the wrapper rather than the
+# one call so the bench's own asset builds get the same headroom. 4 GB against the
+# build VM's 6 GB leaves room for the rest of the bake.
 as_frappe() {
-	sudo -u "$BENCH_USER" bash -lc "export PATH='$BENCH_CLI_DIR':\$PATH; export XDG_RUNTIME_DIR=/run/user/\$(id -u); cd '$BENCH_CLI_DIR' 2>/dev/null || cd '$BENCH_HOME'; $*"
+	sudo -u "$BENCH_USER" bash -lc "export PATH='$BENCH_CLI_DIR':\$PATH; export XDG_RUNTIME_DIR=/run/user/\$(id -u); export NODE_OPTIONS=\"\${NODE_OPTIONS:---max-old-space-size=4096}\"; cd '$BENCH_CLI_DIR' 2>/dev/null || cd '$BENCH_HOME'; $*"
 }
 
 # --- 1. Fix setuid bits (bench-setup.md §1). The Ubuntu cloud rootfs is
@@ -135,8 +151,10 @@ chmod u+s /usr/bin/sudo /usr/bin/passwd /usr/bin/su /bin/su \
 # copies the PREBUILT zfs.ko + spl.ko from the manifest-pinned linux-modules-<kver>
 # and pins them in modules-load.d), so build.sh no longer touches the module — that
 # derives kver from the manifest, immune to the `uname -r` of this build VM. Here we
-# install only `zfsutils-linux` (zpool/zfs binaries), which bench-cli's VolumeManager
-# needs to build the pool/datasets. This is the ONE ZFS thing build.sh does. ---
+# install only `zfsutils-linux` (zpool/zfs binaries), which the FORK-PINNED admin
+# recipes' VolumeManager needs to build the pool/datasets from bench.toml's `[volume]`.
+# frappe/pilot v0.0.9-pre-alpha has no volume schema at all, so on a site bake this
+# package is installed and never used. This is the ONE ZFS thing build.sh does. ---
 apt-get update
 # `git` is bench-cli's own bootstrap dependency: install.sh (below) clones bench-cli
 # with git, and bench pulls/updates apps over git at runtime. The standard Ubuntu base
@@ -149,20 +167,40 @@ apt-get install -y --no-install-recommends zfsutils-linux git
 # --- 3. Install bench-cli — install.sh creates the bench user too (bench-setup.md
 # §3+§4). install.sh has two paths (bench-cli @ 03a4272 install.sh): run AS ROOT it
 # creates the `$BENCH_USER` (`useradd -m`, adds to sudo) + writes a visudo-validated
-# `/etc/sudoers.d/$BENCH_USER` (passwordless), then STOPS; run AS THAT USER it clones
-# bench-cli to ~/bench-cli, installs uv + Node + tzdata, adds bench-cli to PATH, and
-# sets up the .admin-venv (flask/psutil/pymysql/gunicorn). So we no longer hand-roll
+# `/etc/sudoers.d/$BENCH_USER` (passwordless), then STOPS; run AS THAT USER it lays
+# the CLI down under ~/pilot, installs uv + Node + tzdata, adds it to PATH, and sets
+# up the .admin-venv (flask/psutil/pymysql/gunicorn). So we no longer hand-roll
 # useradd/usermod/sudoers — the root call does it (no explicit uid; frappe takes the
-# next free uid). We then check out the pinned ref so the golden is reproducible
-# (install.sh tracks moving main).
+# next free uid). §3b below then pins the CLI, so the golden is reproducible rather
+# than "whatever install.sh happened to fetch".
 #
 # Idempotent: the root call is a no-op-ish re-run (user exists → skips useradd,
-# rewrites the same sudoers); the user call runs install.sh only on a FRESH guest (no
-# bench-cli dir yet) — a re-run must NOT re-invoke it, as install.sh `git pull`s to
-# self-update and FATALs on the detached HEAD the pin below leaves ("not currently on
-# a branch"). Re-running just re-fetches + re-pins the ref. ---
+# rewrites the same sudoers); the user call runs install.sh only on a FRESH guest, per
+# the entrypoint gate below. ---
 INSTALL_URL="https://raw.githubusercontent.com/$BENCH_CLI_REPO/$BENCH_CLI_REF/install.sh"
-curl -fsSL "$INSTALL_URL" | bash -s -- --user "$BENCH_USER" -y
+# Non-interactive via the BENCH_YES ENV VAR, not a `-y` flag: frappe/pilot dropped
+# `-y` from install.sh's arg parser at v0.0.9-pre-alpha, and an unrecognised flag is
+# a hard `Unknown option: -y` + exit 1 there (which also SIGPIPEs the curl feeding
+# it, surfacing as a confusing `curl: (23)`). The env var satisfies both pins: the
+# fork seeds NONINTERACTIVE from ${BENCH_YES:-0}, and v0.0.9 needs no opt-out at all
+# here because its run_sudo short-circuits when already root — which this call is.
+#
+# PILOT_DEV=1 forces the GIT install shape, and it is what makes the pin mean
+# anything. install.sh's default (release) path always downloads the LATEST release
+# tarball — it has no way to fetch a specific one — so a release pin can only ever
+# be asserted after the fact, and every upstream release breaks the next bake with a
+# drift failure. Chasing the tag is unwinnable: two consecutive bakes here failed
+# against v0.0.9 and v0.0.14 because v0.0.14 and then v0.0.15 shipped underneath
+# them. The git path clones and then §3b checks out BENCH_CLI_REF exactly, so the
+# pin is reproducible no matter what upstream releases. Dev mode also compiles the
+# admin frontend from source, so the console is still served (the release tarball's
+# only real advantage was shipping it prebuilt).
+#
+# Passed as an ENV VAR, not the equivalent `--dev` FLAG, for the same reason as
+# BENCH_YES: an unrecognised flag is a hard `Unknown option` + exit 1, and the
+# fork-pinned admin recipes run an older install.sh whose arg parser predates it.
+# An env var an install.sh does not read is simply ignored.
+curl -fsSL "$INSTALL_URL" | BENCH_YES=1 bash -s -- --user "$BENCH_USER"
 
 # Enable lingering for the bench user NOW that it exists. Current bench-cli runs
 # the production stack (redis_queue/redis_cache, web, workers) as `systemctl --user`
@@ -173,12 +211,66 @@ curl -fsSL "$INSTALL_URL" | bash -s -- --user "$BENCH_USER" -y
 # as_frappe exports as XDG_RUNTIME_DIR. Idempotent.
 loginctl enable-linger "$BENCH_USER"
 
-if [ ! -d "$BENCH_CLI_DIR/.git" ]; then
+# Gate on the CLI entrypoint, not on `.git`: a RELEASE install (below) never leaves a
+# `.git`, so a `.git` test would re-run install.sh on every re-bake — and on a git
+# install a re-run is exactly what must not happen (it `git pull`s to self-update and
+# FATALs on the detached HEAD the pin leaves, "not currently on a branch"). `bench`
+# exists at the tree root under both install shapes.
+# PILOT_DEV=1 here too, and this is the call that MATTERS: the root call above only
+# provisions the bench user and system packages, while THIS one installs the CLI tree
+# into $BENCH_CLI_DIR. Setting the env on the root call alone leaves this one on the
+# default RELEASE path, which silently reintroduces exactly the drift the git pin
+# exists to remove — the tree lands with a VERSION file, no `.git`, and §3b then fails
+# the bake on a pin mismatch against whatever release happens to be newest.
+if [ ! -x "$BENCH_CLI_DIR/bench" ]; then
 	as_frappe "curl -fsSL '$INSTALL_URL' | bash"
 fi
-# install.sh clones origin=frappe/pilot; re-point it at BENCH_CLI_REPO so a fork
-# SHA is fetchable (idempotent — set-url is safe on a re-run).
-as_frappe "git -C '$BENCH_CLI_DIR' remote set-url origin 'https://github.com/$BENCH_CLI_REPO' && git -C '$BENCH_CLI_DIR' fetch --quiet origin && git -C '$BENCH_CLI_DIR' checkout --quiet '$BENCH_CLI_REF'"
+
+# --- 3b. Pin the CLI. frappe/pilot ships TWO install shapes and install.sh picks by
+# flag, so which one we got decides how the pin is enforced:
+#
+#   git      (the fork, and any `--dev` install) — install.sh `git clone`s the repo.
+#            origin is hardcoded to frappe/pilot, so re-point it at BENCH_CLI_REPO
+#            (a fork SHA is unreachable otherwise) and check the pinned ref out.
+#            Idempotent: set-url is safe on a re-run.
+#   release  (frappe/pilot default since v0.0.9-pre-alpha) — install.sh downloads the
+#            `pilot.tar.gz` asset of the LATEST release and untars it: no git, nothing
+#            to check out, and the version is whatever was newest at bake time. It
+#            ships a VERSION file, so ASSERT that against the pin instead. This is the
+#            reproducibility guard the checkout used to provide: when upstream cuts a
+#            newer release the bake FAILS LOUD here rather than silently baking a
+#            golden nobody pinned. Bumping the pin is the deliberate fix.
+#
+# BENCH_CLI_REF is therefore the release TAG for a release pin (it matches VERSION
+# verbatim, and raw.githubusercontent resolves it for INSTALL_URL above) and a commit
+# SHA for a git pin.
+if [ -d "$BENCH_CLI_DIR/.git" ]; then
+	# --tags: install.sh clones a single branch (develop), so a pin expressed as a
+	# release TAG is not present until it is fetched explicitly. Without this a tag
+	# pin dies on `pathspec ... did not match` even though the tag exists upstream.
+	as_frappe "git -C '$BENCH_CLI_DIR' remote set-url origin 'https://github.com/$BENCH_CLI_REPO' && git -C '$BENCH_CLI_DIR' fetch --quiet --tags origin && git -C '$BENCH_CLI_DIR' checkout --quiet '$BENCH_CLI_REF'"
+else
+	# RECORD the delivered version; do NOT fail on drift. install.sh's release path
+	# has no way to request a specific release — it always fetches the newest — so a
+	# tag pin here was never enforceable, only detectable after the fact. Asserting it
+	# turned every upstream release into a broken bake (three in a row: wanted v0.0.9
+	# got v0.0.14, then wanted v0.0.14 got v0.0.15 mid-run).
+	#
+	# The obvious alternative, forcing the git shape with PILOT_DEV, is worse here:
+	# pilot's README scopes `--dev` to contributors who want to compile the admin UI
+	# locally, and that build OOMs Node on a build VM (npm exit 134, bench rolled
+	# back). The release tarball ships the UI prebuilt and needs no build step, which
+	# is exactly what a bake wants.
+	#
+	# So take what upstream ships and STAMP it. The golden records its own version
+	# (§ATLAS_BUILD_BENCH_CLI_REF below), so an image is always identifiable after the
+	# fact even though it is not pinnable in advance.
+	INSTALLED_VERSION="$(cat "$BENCH_CLI_DIR/VERSION" 2>/dev/null || true)"
+	if [ "$INSTALLED_VERSION" != "$BENCH_CLI_REF" ]; then
+		echo "NOTE: bench-cli ref '$BENCH_CLI_REF' requested; install.sh delivered '${INSTALLED_VERSION:-<no VERSION file>}' (release path always ships latest). Baking with the delivered version." >&2
+	fi
+	echo "bench-cli release version: ${INSTALLED_VERSION:-<unknown>}"
+fi
 
 # --- 4. Create the bench + drop our pinned bench.toml (bench-setup.md §5).
 # `bench new` scaffolds benches/<name>/ non-interactively (name positional, no
@@ -203,10 +295,18 @@ if grep -q '^password = "admin-password"$' "$BENCH_DIR/bench.toml"; then
 fi
 
 # --- 5. `bench init` (bench-setup.md §6). The heavy, idempotent step that sets
-# up the per-bench substrate from bench.toml: the ZFS pool + datasets
-# (volume.enabled), the DEDICATED mariadb@atlas instance (provisioned, secured,
-# enabled-at-boot), the bench's Redis config, the uv venv, the Frappe clone, Node
-# deps, the admin frontend, and dns_multitenant = 1.
+# up the per-bench substrate from bench.toml: MariaDB (provisioned + secured), the
+# bench's Redis config, the uv venv, the Frappe clone, Node deps, the admin frontend,
+# and dns_multitenant = 1.
+#
+# WHICH MariaDB depends on the pin. frappe/pilot v0.0.9-pre-alpha (the site line)
+# provisions ONE rootless, user-owned `pilot-mariadb.service` shared by the host's
+# benches, datadir + socket under $BENCH_CLI_DIR/databases/mariadb — it reads no
+# `[mariadb]` table from bench.toml (that config comes from the host common config)
+# and has no volume/ZFS schema at all. The fork-pinned ADMIN recipes read both tables
+# and instead provision a dedicated system `mariadb@atlas` (own datadir/socket,
+# enabled-at-boot) on top of the ZFS pool + datasets. deploy-site.py stays out of that
+# argument by probing the DB SOCKET rather than any unit name (its DB_SOCKET).
 #
 # `bench init` does NOT bring the production stack up: in current bench-cli the
 # production `systemctl --user` units (redis_queue/redis_cache, web, workers, nginx)
@@ -240,7 +340,7 @@ if [ "$MODE" = "site" ]; then
 	# so install-app erpnext is a separate, required step. install-app enqueues
 	# background jobs, so Redis must be up: `bench start` brings the production
 	# stack up (its systemd units), which we leave running for the rest of the bake.
-	if [ ! -d "$BENCH_DIR/apps/erpnext" ]; then
+	if [ "$INCLUDE_ERPNEXT" = "1" ] && [ ! -d "$BENCH_DIR/apps/erpnext" ]; then
 		as_frappe "bench -b '$BENCH_NAME' get-app https://github.com/frappe/erpnext --branch '$ERPNEXT_BRANCH'"
 	fi
 
@@ -269,8 +369,12 @@ if [ "$MODE" = "site" ]; then
 	fi
 
 	if [ ! -d "$BENCH_DIR/sites/$BAKED_SITE" ]; then
-		as_frappe "bench -b '$BENCH_NAME' new-site '$BAKED_SITE' --admin-password '$BAKED_ADMIN_PASSWORD' --apps erpnext"
-		as_frappe "bench -b '$BENCH_NAME' frappe --site '$BAKED_SITE' install-app erpnext"
+		if [ "$INCLUDE_ERPNEXT" = "1" ]; then
+			as_frappe "bench -b '$BENCH_NAME' new-site '$BAKED_SITE' --admin-password '$BAKED_ADMIN_PASSWORD' --apps erpnext"
+			as_frappe "bench -b '$BENCH_NAME' frappe --site '$BAKED_SITE' install-app erpnext"
+		else
+			as_frappe "bench -b '$BENCH_NAME' new-site '$BAKED_SITE' --admin-password '$BAKED_ADMIN_PASSWORD'"
+		fi
 		as_frappe "bench -b '$BENCH_NAME' frappe --site '$BAKED_SITE' migrate"
 	fi
 
@@ -296,6 +400,20 @@ else
 	# is what installs+enables the systemd --user units in current bench-cli.
 	as_frappe "bench -b '$BENCH_NAME' setup production"
 fi
+
+# --- 6a. Enable nginx for boot. `bench setup production` START*s* nginx but never
+# ENABLE*s* it (pilot's NginxManager only ever runs start/stop/reload — v0.0.9's
+# reload_or_start picks `reload` when running and `start` when not, and nothing in
+# pilot calls `systemctl enable nginx`). The Ubuntu package ships the unit `disabled`,
+# so a running-but-disabled nginx survives only until the next boot — and this VM is
+# ALWAYS rebooted before capture (image_build.run resizes it down from the fat build
+# size to the restore size). The golden then boots with gunicorn up on 127.0.0.1:8000
+# and nothing on :80, which is exactly the "does not serve (readiness HTTP 000)"
+# post-build sanity failure. The bench's own units are `systemctl --user` and are
+# already persisted by `setup production` + lingering; nginx is the one SYSTEM unit in
+# the serving path, so it needs this. Idempotent, and correct for either bench-cli pin.
+systemctl enable nginx
+systemctl start nginx
 
 # --- 6b. Install the in-guest domain provider (spec/18 Component D), AFTER the site
 # is baked. The thin "push" half of one-way self-service subdomain routing, and the
@@ -330,9 +448,17 @@ install -m 0755 "$SRC_DIR/bench-domain-provider.py" /usr/local/bin/bench-domain-
 # nightly image traceable to its real inputs. `git -C` is cheap and the repos are
 # right here in the bench. ---
 git_sha() { git -C "$1" rev-parse HEAD 2>/dev/null || echo "unknown"; }
-echo "ATLAS_BUILD_BENCH_CLI_REF=$(git_sha "$BENCH_CLI_DIR")"
+# The bench-cli tree is only a git checkout under a git install (§3b); a release
+# install has no HEAD to read, so fall back to the VERSION file the tarball ships.
+# Without this the audit would record a bare "unknown" for the one input the whole
+# golden is pinned on.
+bench_cli_stamp() {
+	git -C "$BENCH_CLI_DIR" rev-parse HEAD 2>/dev/null && return
+	cat "$BENCH_CLI_DIR/VERSION" 2>/dev/null || echo "unknown"
+}
+echo "ATLAS_BUILD_BENCH_CLI_REF=$(bench_cli_stamp)"
 echo "ATLAS_BUILD_FRAPPE_SHA=$(git_sha "$BENCH_DIR/apps/frappe")"
-if [ "$MODE" = "site" ]; then
+if [ "$MODE" = "site" ] && [ "$INCLUDE_ERPNEXT" = "1" ]; then
 	echo "ATLAS_BUILD_ERPNEXT_SHA=$(git_sha "$BENCH_DIR/apps/erpnext")"
 fi
 

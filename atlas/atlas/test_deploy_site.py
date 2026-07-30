@@ -15,7 +15,7 @@ proven in the e2e (spec/14-self-serve.md), not here."""
 from __future__ import annotations
 
 import importlib.util
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import frappe
 from frappe.tests import IntegrationTestCase
@@ -344,44 +344,47 @@ class TestGuestScriptTypedIO(IntegrationTestCase):
 			with self.assertRaises(SystemExit):
 				self.guest._mint_login_url("acme.blr1.frappe.dev")
 
-	def test_await_db_ready_returns_when_unit_active(self) -> None:
-		"""The gate returns as soon as `systemctl is-active mariadb@<bench>` exits 0
-		(the Type=notify unit has opened its socket) — and probes the right unit."""
-		import subprocess as sp
-
-		with patch.object(self.guest.subprocess, "run", return_value=sp.CompletedProcess([], 0)) as m_run:
-			self.guest._await_db_ready()
-		m_run.assert_called_once()
-		self.assertEqual(
-			m_run.call_args.args[0],
-			["systemctl", "is-active", "--quiet", f"mariadb@{self.guest.BENCH_NAME}.service"],
-		)
-
-	def test_await_db_ready_polls_until_active(self) -> None:
-		"""On a snapshot-booted clone MariaDB can still be starting: the gate keeps
-		polling (returncode 3 = inactive) until it flips to active, then returns."""
-		import subprocess as sp
-
-		codes = [sp.CompletedProcess([], 3), sp.CompletedProcess([], 3), sp.CompletedProcess([], 0)]
+	def test_await_db_ready_returns_when_socket_accepts(self) -> None:
+		"""The gate returns as soon as a connect() to the bench DB's UNIX socket is
+		accepted — and dials the socket path, not any systemd unit name (pilot v0.0.9
+		moved MariaDB to a user-owned `pilot-mariadb.service`, so a root `systemctl
+		is-active mariadb@<bench>` could never succeed)."""
+		probe = MagicMock()
 		with (
-			patch.object(self.guest.subprocess, "run", side_effect=codes) as m_run,
+			patch.object(self.guest.os.path, "exists", return_value=True),
+			patch.object(self.guest.socket, "socket", return_value=probe) as m_socket,
+		):
+			self.guest._await_db_ready()
+		m_socket.assert_called_once_with(self.guest.socket.AF_UNIX, self.guest.socket.SOCK_STREAM)
+		probe.connect.assert_called_once_with(self.guest.DB_SOCKET)
+		probe.close.assert_called_once()  # closed even on the success path
+
+	def test_await_db_ready_polls_until_socket_accepts(self) -> None:
+		"""On a snapshot-booted clone MariaDB can still be starting, in two shapes: the
+		socket file isn't published yet, then it is but mariadbd isn't accepting
+		(ECONNREFUSED). The gate keeps polling through both, then returns."""
+		probe = MagicMock()
+		probe.connect.side_effect = [ConnectionRefusedError("not accepting yet"), None]
+		with (
+			patch.object(self.guest.os.path, "exists", side_effect=[False, True, True]),
+			patch.object(self.guest.socket, "socket", return_value=probe),
 			patch.object(self.guest.time, "sleep") as m_sleep,
 		):
 			self.guest._await_db_ready()
-		self.assertEqual(m_run.call_count, 3)
-		self.assertEqual(m_sleep.call_count, 2)
+		self.assertEqual(probe.connect.call_count, 2)
+		self.assertEqual(m_sleep.call_count, 2)  # one per not-ready pass, none after success
 
 	def test_await_db_ready_fails_loud_on_timeout(self) -> None:
-		"""If MariaDB never comes up, exit loud (not a swallowed browse crash later)."""
-		import subprocess as sp
-
+		"""If MariaDB never comes up, exit loud (not a swallowed browse crash later) —
+		naming the socket the deploy waited on."""
 		with (
-			patch.object(self.guest.subprocess, "run", return_value=sp.CompletedProcess([], 3)),
+			patch.object(self.guest.os.path, "exists", return_value=False),
 			patch.object(self.guest.time, "sleep"),
 		):
 			with self.assertRaises(SystemExit) as raised:
 				self.guest._await_db_ready(timeout_seconds=0.01)
-		self.assertIn("did not become active", str(raised.exception))
+		self.assertIn("did not accept a connection", str(raised.exception))
+		self.assertIn(self.guest.DB_SOCKET, str(raised.exception))
 
 	def test_baked_site_constant_matches_build_sh(self) -> None:
 		"""The baked-site name the deploy renames must stay in lockstep with the name
@@ -498,7 +501,7 @@ class TestGuestScriptTypedIO(IntegrationTestCase):
 	def test_admin_main_sets_admin_domain_no_rename(self) -> None:
 		"""Admin mode: no site rename — instead `[admin].domain` is set to the FQDN +
 		`bench setup production`, mapping the FQDN to the admin app's vhost — then
-		the admin login URL is minted (Pilot #117 `generate-admin-session`)."""
+		the admin login URL is minted (the bench-cli admin session verb)."""
 		guest = self.guest
 		admin_login_url = "http://admin.blr1.frappe.dev/?sid=jwt-token"
 		with (
@@ -524,15 +527,170 @@ class TestGuestScriptTypedIO(IntegrationTestCase):
 		# FQDN, not the placeholder admin.localhost.
 		m_mint.assert_called_once_with()
 
-	def test_mint_admin_login_url_uses_generate_admin_session_full_path(self) -> None:
-		"""`_mint_admin_login_url` shells out to Pilot #117's
-		`bench generate-admin-session --full-path` and returns its bare stdout —
+	def test_mint_admin_login_url_prefers_the_grouped_session_verb(self) -> None:
+		"""`_mint_admin_login_url` tries the GROUPED spelling first
+		(`bench admin generate-session --full-path`) and returns its bare stdout —
 		never touching the (random, bake-time) [admin].password."""
 		guest = self.guest
 		with patch.object(guest, "_bench", return_value="http://admin.example/?sid=jwt\n") as m_bench:
 			url = guest._mint_admin_login_url()
 		self.assertEqual(url, "http://admin.example/?sid=jwt")
-		m_bench.assert_called_once_with("generate-admin-session", "--full-path", capture=True)
+		m_bench.assert_called_once_with("admin", "generate-session", "--full-path", capture=True)
+
+	def test_mint_admin_login_url_falls_back_to_the_legacy_verb(self) -> None:
+		"""A golden whose bench-cli has no grouped spelling (the fork-pinned admin
+		recipes) falls back to the legacy top-level `bench generate-admin-session
+		--full-path` — the ONLY spelling those goldens carry."""
+		guest = self.guest
+		calls = []
+
+		def _bench(*args, **kwargs):
+			calls.append(args)
+			if args[0] == "admin":
+				raise self._no_such_command(args)
+			return "http://admin.example/?sid=legacy\n"
+
+		with patch.object(guest, "_bench", side_effect=_bench):
+			url = guest._mint_admin_login_url()
+		self.assertEqual(url, "http://admin.example/?sid=legacy")
+		self.assertEqual(calls[-1], ("generate-admin-session", "--full-path"))
+
+	def test_mint_admin_login_url_degrades_when_no_verb_exists(self) -> None:
+		"""frappe/pilot v0.0.9 deleted the verb and its `bench admin` group ships no
+		replacement: the mint returns "" instead of exiting. An absent one-click link
+		is a poorer handoff (the console still takes `[admin].password`), NOT a failed
+		deploy — and the same script deploys the tenant SITE, which must not be marked
+		Failed because its companion console could not sign a URL."""
+		guest = self.guest
+		with patch.object(guest, "_bench", side_effect=self._no_such_command(("admin",))):
+			self.assertEqual(guest._mint_admin_login_url(), "")
+
+	def test_mint_admin_login_url_still_fails_loud_on_a_real_error(self) -> None:
+		"""Only a MISSING VERB degrades. A mint that actually broke (an unwritable
+		`admin.jwt_secret`, a wedged bench) propagates, so the deploy fails loud rather
+		than silently handing back an empty login URL."""
+		guest = self.guest
+		import subprocess
+
+		boom = subprocess.CalledProcessError(1, ["bench"], output="", stderr="jwt_secret unwritable\n")
+		with patch.object(guest, "_bench", side_effect=boom):
+			with self.assertRaises(subprocess.CalledProcessError):
+				guest._mint_admin_login_url()
+
+	@staticmethod
+	def _no_such_command(argv) -> Exception:
+		"""The exception `_bench` raises when an unknown TOP-level verb falls through to
+		the Frappe passthrough: click's usage error — exit 2, `No such command`."""
+		import subprocess
+
+		return subprocess.CalledProcessError(
+			2, ["bench", *argv], output="", stderr=f"Error: No such command '{argv[-1]}'.\n"
+		)
+
+	@staticmethod
+	def _invalid_choice(argv) -> Exception:
+		"""The exception `_bench` raises when the GROUP exists but the subcommand does
+		not (`bench admin generate-session` on a golden whose bench-cli has no session
+		verb). Pilot's group parser is argparse, not click, so the wording is `invalid
+		choice` — verbatim from a v0.0.9 golden. Matching only click's phrasing is what
+		made the console fail its deploy and never get a proxy route."""
+		import subprocess
+
+		return subprocess.CalledProcessError(
+			2,
+			["bench", *argv],
+			output="",
+			stderr=(
+				f"bench admin: error: argument admin_command: invalid choice: '{argv[-1]}' "
+				"(choose from 'build', 'enroll', 'issue-site-token', 'revoke-totp', "
+				"'run-patches', 'set-central-config', 'upgrade')\n"
+			),
+		)
+
+	def test_mint_degrades_when_group_rejects_subcommand(self) -> None:
+		"""A golden carrying the `admin` GROUP but no session verb answers with
+		argparse's `invalid choice`. That must degrade to "" like click's `No such
+		command`, not raise — otherwise the companion console is marked Failed and,
+		because its proxy route is created after the mint, never gets routed at all."""
+		guest = self.guest
+		with patch.object(
+			guest, "_bench", side_effect=lambda *a, **k: (_ for _ in ()).throw(self._invalid_choice(a))
+		):
+			self.assertEqual(guest._mint_admin_login_url(), "")
+
+	# ----- _regrouped: one script, two CLI shapes -------------------------
+	# `issue-site-token` and `enroll` are `bench admin <verb>` on the upstream release
+	# the SITE line is pinned to, and top-level on the fork the ADMIN line stays pinned
+	# to (image_recipes._ADMIN_BENCH_CLI_REF — that fork has no `admin` group at all).
+	# The same deploy-site.py runs on both goldens, so it must not assume either shape.
+
+	def test_regrouped_prefers_the_grouped_spelling(self) -> None:
+		"""The upstream shape: the grouped call succeeds, so the legacy spelling is never
+		tried — a pilot that has both must not be hit twice."""
+		guest = self.guest
+		calls = []
+		with patch.object(guest, "_bench", side_effect=lambda *a, **k: calls.append(a) or "tok\n"):
+			self.assertEqual(guest._regrouped("admin", "issue-site-token", "acme", capture=True), "tok\n")
+		self.assertEqual(calls, [("admin", "issue-site-token", "acme")])
+
+	def test_regrouped_falls_back_to_the_legacy_top_level_verb(self) -> None:
+		"""The fork shape: `admin` is not a command at all there, so the grouped call is an
+		unrecognised LEADING verb — pilot hands it to Frappe, which answers with click's
+		`No such command`. That must fall back to the top-level spelling, not fail: a
+		fork-pinned admin golden has to keep deploying."""
+		guest = self.guest
+		calls = []
+
+		def bench(*args, **kwargs):
+			calls.append(args)
+			if args[0] == "admin":
+				raise self._no_such_command(("admin",))
+			return "tok\n"
+
+		with patch.object(guest, "_bench", side_effect=bench):
+			self.assertEqual(guest._regrouped("admin", "issue-site-token", "acme", capture=True), "tok\n")
+		self.assertEqual(calls, [("admin", "issue-site-token", "acme"), ("issue-site-token", "acme")])
+
+	def test_regrouped_fails_loud_when_neither_spelling_exists(self) -> None:
+		"""No degrade: a verb asked for and findable at NO spelling is a bake/pin bug (the
+		fork pin carries no `enroll` at all). Reporting success would tell Central a bench
+		had enrolled when it never did — it would reach Running and then refuse to open,
+		with nothing to explain why.
+
+		Fails ACTIONABLY rather than letting click's bare `No such command` out: the
+		message names both spellings tried and the recipe knobs that pick the bench-cli,
+		because on a Frappe passthrough the raw error says nothing about the pin."""
+		guest = self.guest
+
+		with patch.object(
+			guest, "_bench", side_effect=lambda *a, **k: (_ for _ in ()).throw(self._no_such_command(a))
+		):
+			with self.assertRaises(SystemExit) as caught:
+				guest._regrouped("admin", "enroll", "--endpoint", "https://central.example")
+		message = str(caught.exception)
+		self.assertIn("bench admin enroll", message)
+		self.assertIn("bench enroll", message)
+		self.assertIn("_ADMIN_BENCH_CLI_REF", message)
+
+	def test_regrouped_does_not_retry_a_real_failure(self) -> None:
+		"""Only a MISSING VERB falls back. A grouped call that reached the verb and broke
+		inside it propagates on the spot — retrying the legacy spelling would run the same
+		side effect twice and bury the real error under an unknown-command one."""
+		guest = self.guest
+		import subprocess
+
+		calls = []
+
+		def bench(*args, **kwargs):
+			calls.append(args)
+			raise subprocess.CalledProcessError(
+				1, ["bench", *args], output="", stderr="jwt_secret unwritable\n"
+			)
+
+		with patch.object(guest, "_bench", side_effect=bench):
+			with self.assertRaises(subprocess.CalledProcessError):
+				guest._regrouped("admin", "enroll", "--endpoint", "https://central.example")
+		self.assertEqual(calls, [("admin", "enroll", "--endpoint", "https://central.example")])
 
 	def test_set_admin_domain_rewrites_toml_and_regenerates(self) -> None:
 		"""Admin mode points the admin vhost at the FQDN by rewriting `domain = ""`
@@ -639,9 +797,14 @@ class TestGuestScriptTypedIO(IntegrationTestCase):
 		m_admin.assert_not_called()
 
 	def test_site_main_enrols_after_admin_domain(self) -> None:
-		"""Ordering invariant: `bench enroll` runs after the admin domain is in place, so the
-		pilot's Central config is written to a bench.toml that already carries the real
-		`[admin].domain` — never the `admin.localhost` placeholder."""
+		"""Ordering invariant: `bench admin enroll` runs after the admin domain is in place,
+		so the pilot's Central config is written to a bench.toml that already carries the
+		real `[admin].domain` — never the `admin.localhost` placeholder.
+
+		Matches the GROUPED verb, which is also the assertion that the call keeps its
+		`admin` prefix: the top-level spelling doesn't fail as an unknown bench command on
+		a v0.0.9+ golden, it is handed to Frappe as a passthrough, so a regression here is
+		invisible unless the prefix itself is what we assert on."""
 		guest = self.guest
 		order = []
 		with (
@@ -656,7 +819,7 @@ class TestGuestScriptTypedIO(IntegrationTestCase):
 			patch.object(
 				guest,
 				"_bench",
-				side_effect=lambda *a, **k: order.append(a[0]) if a and a[0] == "enroll" else None,
+				side_effect=lambda *a, **k: order.append("enroll") if a[:2] == ("admin", "enroll") else None,
 			),
 			patch.object(
 				guest.DeploySiteInputs,
