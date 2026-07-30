@@ -66,6 +66,11 @@ DEFAULT_TIMEOUT_SECONDS = 30
 START_VERB = "start-vm"
 STOP_VERB = "stop-vm"
 REBUILD_VERB = "rebuild-vm"
+# reserved-ip keeps the Python script's own name (vm-reserved-ip.py), and carries
+# its two variables (the action and, on attach, the reserved IP) the way rebuild
+# carries its source — so it is routed by hand alongside them, not through
+# OPERATION_VERBS whose members carry only the operation identifier.
+RESERVED_IP_VERB = "vm-reserved-ip"
 
 # The guest file the in-guest routing client reads (spec/18), and the one place
 # Atlas states its content. It travels as one anonymous `extra_env` entry, which
@@ -264,6 +269,22 @@ class BoatClient:
 		numbers. It carries none of them: they are desired state, so they arrive
 		by `put_desired` and this only asks for them to be applied now."""
 		return self._operation(uuid, "resize", operation_id)
+
+	def reserved_ip_virtual_machine(
+		self, uuid: str, *, operation_id: str, action: str, reserved_ipv4: str | None = None
+	) -> dict:
+		"""POST /vms/{uuid}/reserved-ip — attach or detach a Reserved IP's host
+		1:1-NAT, live and recorded in the VM's network.env.
+
+		The reserved IP is the one input a caller states — the public identity Atlas
+		allocated, neither host state nor desired power — so it rides in the body;
+		the guest address and veth the NAT is built around are read off the host, not
+		sent. `reserved_ipv4` is omitted for detach, which keys on the guest, so the
+		daemon distinguishes a detach from an attach that forgot its address."""
+		body = {"operation_id": operation_id, "action": action}
+		if reserved_ipv4:
+			body["reserved_ipv4"] = reserved_ipv4
+		return self._request("POST", f"/vms/{uuid}/reserved-ip", json=body)
 
 	def _operation(self, uuid: str, verb: str, operation_id: str) -> dict:
 		"""POST /vms/{uuid}/<verb> for every verb whose whole request is the
@@ -655,10 +676,17 @@ def _run_verb(client: BoatClient, script: str, uuid: str, operation_id: str, var
 		)
 	if script == REBUILD_VERB:
 		return client.rebuild_virtual_machine(uuid, operation_id=operation_id, **rebuild_request(variables))
+	if script == RESERVED_IP_VERB:
+		return client.reserved_ip_virtual_machine(
+			uuid,
+			operation_id=operation_id,
+			action=variables.get("ACTION", "attach"),
+			reserved_ipv4=variables.get("RESERVED_IPV4"),
+		)
 	call = OPERATION_VERBS.get(script)
 	if call:
 		return call(client, uuid, operation_id=operation_id)
-	served = ", ".join(sorted((START_VERB, STOP_VERB, REBUILD_VERB, *OPERATION_VERBS)))
+	served = ", ".join(sorted((START_VERB, STOP_VERB, REBUILD_VERB, RESERVED_IP_VERB, *OPERATION_VERBS)))
 	raise BoatError(f"Boat serves no endpoint for verb {script!r} (it serves {served})")
 
 

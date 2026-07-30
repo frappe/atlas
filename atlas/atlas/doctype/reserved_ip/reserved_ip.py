@@ -1,6 +1,7 @@
 import frappe
 from frappe.model.document import Document
 
+from atlas.atlas.boat_client import boat_enabled, run_boat_task
 from atlas.atlas.providers import for_provider_type
 from atlas.atlas.ssh import run_task
 
@@ -123,10 +124,15 @@ class ReservedIP(Document):
 			vm.db_set("public_ipv4", None)
 
 	def _run_nat_task(self, vm, action: str) -> None:
-		"""Dispatch vm-reserved-ip.py to add/remove the host 1:1-NAT on the VM's
-		Server. One task, one script (spec principle #3); run_task raises on
-		failure so the caller's invariant commit is gated on the host change."""
-		run_task(
+		"""Dispatch vm-reserved-ip to add/remove the host 1:1-NAT on the VM's
+		Server. One task, one script (spec principle #3); the runner raises on
+		failure so the caller's invariant commit is gated on the host change.
+
+		Routed to the host's Boat when it has the flag, over SSH when it does not —
+		`run_boat_task` is `run_task`'s twin (same keywords, same Task row), so the
+		attach/detach ordering above is unchanged whichever transport carries it."""
+		run = run_boat_task if boat_enabled(self.server) else run_task
+		run(
 			server=self.server,
 			script="vm-reserved-ip",
 			variables={

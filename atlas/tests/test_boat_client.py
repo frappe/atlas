@@ -298,6 +298,31 @@ class TestRunBoatTask(IntegrationTestCase):
 		self.assertEqual(request.call_args.kwargs["json"]["graceful"], False)
 		self.assertEqual(request.call_args.kwargs["json"]["stop_timeout_seconds"], 20)
 
+	def test_reserved_ip_variables_become_the_reserved_ip_body(self) -> None:
+		_task, request = self._run(
+			"vm-reserved-ip",
+			{
+				"VIRTUAL_MACHINE_NAME": self.virtual_machine.name,
+				"RESERVED_IPV4": "146.190.11.153",
+				"ACTION": "attach",
+			},
+			_Response(payload=_operation(verb="vm-reserved-ip")),
+		)
+		self.assertTrue(request.call_args.args[1].endswith(f"/vms/{self.virtual_machine.name}/reserved-ip"))
+		self.assertEqual(request.call_args.kwargs["json"]["action"], "attach")
+		self.assertEqual(request.call_args.kwargs["json"]["reserved_ipv4"], "146.190.11.153")
+
+	def test_reserved_ip_omits_the_address_when_it_is_not_given(self) -> None:
+		# A detach keys on the guest, so the body carries no reserved IP — the daemon
+		# tells it from an attach that forgot its address by its absence.
+		_task, request = self._run(
+			"vm-reserved-ip",
+			{"VIRTUAL_MACHINE_NAME": self.virtual_machine.name, "ACTION": "detach"},
+			_Response(payload=_operation(verb="vm-reserved-ip")),
+		)
+		self.assertEqual(request.call_args.kwargs["json"]["action"], "detach")
+		self.assertNotIn("reserved_ipv4", request.call_args.kwargs["json"])
+
 	def test_a_failed_operation_fails_the_task_and_raises(self) -> None:
 		operation = _operation("Failure", output="trace\n", error="firecracker refused to start")
 		with (
