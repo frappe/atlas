@@ -619,10 +619,9 @@ class TestGuestScriptTypedIO(IntegrationTestCase):
 			self.assertEqual(guest._mint_admin_login_url(), "")
 
 	# ----- _regrouped: one script, two CLI shapes -------------------------
-	# `issue-site-token` and `enroll` are `bench admin <verb>` on the upstream release
-	# the SITE line is pinned to, and top-level on the fork the ADMIN line stays pinned
-	# to (image_recipes._ADMIN_BENCH_CLI_REF — that fork has no `admin` group at all).
-	# The same deploy-site.py runs on both goldens, so it must not assume either shape.
+	# `issue-site-token` and `enroll` are `bench admin <verb>` on current pilot, and were
+	# top-level before the regroup (a tree with no `admin` group at all). The same
+	# deploy-site.py runs on goldens of either vintage, so it must not assume a shape.
 
 	def test_regrouped_prefers_the_grouped_spelling(self) -> None:
 		"""The upstream shape: the grouped call succeeds, so the legacy spelling is never
@@ -670,7 +669,7 @@ class TestGuestScriptTypedIO(IntegrationTestCase):
 		message = str(caught.exception)
 		self.assertIn("bench admin enroll", message)
 		self.assertIn("bench enroll", message)
-		self.assertIn("_ADMIN_BENCH_CLI_REF", message)
+		self.assertIn("_BENCH_CLI_REF", message)
 
 	def test_regrouped_does_not_retry_a_real_failure(self) -> None:
 		"""Only a MISSING VERB falls back. A grouped call that reached the verb and broke

@@ -188,39 +188,37 @@ _BENCH_DISK_GB = 28
 # resize DOWN to _BENCH_MEMORY_MB before the snapshot (image_build.run / bootstrap).
 _BENCH_BUILD_MEMORY_MB = 6144
 
-# The bench-cli (frappe/pilot) the SITE variants build with: the upstream
-# `v0.0.9-pre-alpha` release. bench-cli is the build *tool*, not the framework: it
-# reads the Frappe branch + Python version from bench.toml and natively knows
-# `version-15`/`version-16`/`develop` (core/app.py), so ONE ref bakes all three
-# variants — the version lives in the per-recipe pins below, not in the tool. Pinned
-# to the tag's commit (not a branch) so the golden is reproducible. Kept in lockstep
-# with bench/build.sh's BENCH_CLI_REPO/REF defaults (what a direct `build.sh` run
-# uses with no env override).
+# The pilot EVERY recipe builds with — site line and admin line alike — installed the
+# way pilot's README documents (`install.sh` off `develop`, which lays down the latest
+# release). pilot is the build *tool*, not the framework: it reads the Frappe branch +
+# Python version from bench.toml and natively knows `version-15`/`version-16`/`develop`
+# (core/app.py), so ONE install bakes all the variants — the framework version lives in
+# the per-recipe pins below, not in the tool.
 #
-# v0.0.9-pre-alpha regrouped the CLI: `issue-site-token` and `enroll` now live under
-# the `bench admin` group (pilot registry.py registers a grouped command ONLY under
-# its group — there is no top-level alias, and an unrecognised leading verb is
-# treated as a Frappe passthrough instead). bench/deploy-site.py calls both through
-# the `admin` group for exactly this reason; keep the two in step when re-pinning.
+# `_BENCH_CLI_REF` is EMPTY = unpinned, matching bench/build.sh's default (what a
+# direct `build.sh` run with no env override does). install.sh's release path has no
+# way to request a specific release, so a pin here was never enforceable — only
+# detectable after the fact, and asserting it broke three bakes in a row as upstream
+# cut releases underneath them. The bake RECORDS the version it got instead
+# (`ATLAS_BUILD_BENCH_CLI_REF` → the Image Build's audit), so an image is always
+# identifiable even though it is not pinnable in advance. Set the pair to bake off a
+# fork or an older release; keep them together, since a ref only resolves against the
+# repo it lives in.
 #
-# This ref is a RELEASE TAG, not a commit SHA — deliberately. Upstream install.sh
-# installs by downloading the latest release's `pilot.tar.gz` (no git clone, nothing
-# to check out), and the tag is what the tarball's VERSION file carries, so the tag is
-# the only spelling build.sh §3b can verify the delivered tree against. A SHA would
-# still resolve for the install.sh download URL but could never be asserted.
+# The `bench admin` GROUP is the surface this depends on: `enroll`, `set-central-config`
+# and `issue-site-token` all live under it (pilot registry.py registers a grouped
+# command ONLY under its group — no top-level alias; an unrecognised leading verb is
+# treated as a Frappe passthrough instead). bench/deploy-site.py calls them through the
+# group for exactly that reason.
+#
+# The ADMIN variants used to hold a separate FORK pin for `bench generate-admin-session`,
+# the in-guest one-click session mint. Upstream ships no such verb and does not need to:
+# an enrolled bench trusts CENTRAL's JWKS, so Central mints the console's `?sid=` link
+# itself (central/api/sso.get_bench_link) and the in-guest verb is redundant.
+# deploy-site.py degrades to the baked `[admin].password` when it finds none, so the
+# admin line rides the same documented install as everything else.
 _BENCH_CLI_REPO = "frappe/pilot"
-_BENCH_CLI_REF = "v0.0.14-pre-alpha"  # release tag @ frappe/pilot (commit 27c6772a)
-
-# The ADMIN variants stay on the fork pin. `bench generate-admin-session` — the
-# admin-mode login-URL handoff deploy-site.py mints its one-click session with
-# (Pilot #117) — does NOT exist in any frappe/pilot release up to and including the
-# site pin above, and has no equivalent there, so moving the admin line would break its
-# deploy outright. The admin console is a distinct product from the self-serve site
-# line (see the recipe notes below), so the two pins are allowed to diverge; drop
-# this pair once an upstream release carries a session-minting verb again.
-_ADMIN_BENCH_CLI_REPO = "prathameshkurunkar7/pilot"
-# central-billing-client @ prathameshkurunkar7/pilot
-_ADMIN_BENCH_CLI_REF = "c6e5253ef46c23fb1f2f776dc7372c7d39224e42"
+_BENCH_CLI_REF = ""  # unpinned: take what the documented install delivers
 
 
 def _bench_variant(
@@ -335,9 +333,9 @@ RECIPES: dict[str, "ImageRecipe"] = {
 	# `default_bench_snapshot` a self-serve site clones). They promote to their own
 	# series name (`bench-v16-admin` etc.) so the Central catalog links them by
 	# name-match alongside the site variants; a customer picks an admin VM through the
-	# ordinary `image` field. All three also stay on the FORK bench-cli pin — they are
-	# the only recipes that need `bench generate-admin-session`, which the upstream
-	# release the site line moved to does not carry (see _ADMIN_BENCH_CLI_REF). ---
+	# ordinary `image` field. All three ride the SAME documented pilot install as the
+	# site line (_BENCH_CLI_REPO/_REF) — the fork pin they used to carry existed only
+	# for `bench generate-admin-session`, which Central's own SSO mint replaced. ---
 	"bench-v16-admin": _bench_variant(
 		"bench-v16-admin",
 		"Bench v16 (admin)",
@@ -345,8 +343,6 @@ RECIPES: dict[str, "ImageRecipe"] = {
 		erpnext_branch="version-16",
 		python_version="3.14",
 		build_mode="admin",
-		bench_cli_repo=_ADMIN_BENCH_CLI_REPO,
-		bench_cli_ref=_ADMIN_BENCH_CLI_REF,
 	),
 	"bench-v15-admin": _bench_variant(
 		"bench-v15-admin",
@@ -355,8 +351,6 @@ RECIPES: dict[str, "ImageRecipe"] = {
 		erpnext_branch="version-15",
 		python_version="3.11",
 		build_mode="admin",
-		bench_cli_repo=_ADMIN_BENCH_CLI_REPO,
-		bench_cli_ref=_ADMIN_BENCH_CLI_REF,
 	),
 	# TEMPORARY: mirrors the site twin's `feature/cloud-settings` pin (the admin
 	# twin tracks the site twin — one edit per bump). Revert to `develop` with the
@@ -368,8 +362,6 @@ RECIPES: dict[str, "ImageRecipe"] = {
 		erpnext_branch="develop",
 		python_version="3.14",
 		build_mode="admin",
-		bench_cli_repo=_ADMIN_BENCH_CLI_REPO,
-		bench_cli_ref=_ADMIN_BENCH_CLI_REF,
 	),
 	"proxy": ImageRecipe(
 		name="proxy",

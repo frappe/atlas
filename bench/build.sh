@@ -35,36 +35,50 @@
 
 set -euo pipefail
 
-# --- Pins. install.sh clones bench-cli's MOVING main; we check out the exact
-# committed ref afterwards so the golden is reproducible (the same discipline
-# proxy/build.sh follows). The Frappe branch + the production/MariaDB/ZFS shape
-# are pinned in bench.toml.
+# --- Pilot install. The DEFAULT is the path pilot's README documents, verbatim:
 #
-# Pinned at 1e0332b (main @ 2026-07-03). This ref carries the five things this
-# build/deploy flow now depends on: (1) the two-path install.sh — run as root it
-# creates the bench user + sudoers, run as the user it installs bench-cli (so we no
-# longer hand-roll useradd/sudoers); (2) `bench rename-site` (deploy-site.py renames
-# the baked site through it — ABSENT before commit 0bc54f2, so an older pin breaks
-# the deploy); (3) nginx emits `listen [::]:80` for every site + admin vhost (since
-# dd14ad4), so the Atlas v6-only inbound path is served by bench-cli itself — no
-# v6-listener / default_server surgery here; (4) `bench generate-admin-session`
-# (Pilot #117, merged as 35ae14e) — the admin-mode login-URL handoff; (5) `bench
-# set-central-config` (Pilot #150) — the Central endpoint/token handoff deploy-site.py
-# writes into bench.toml. An older pin dies at that step with "No such command".
+#     curl -fsSL https://raw.githubusercontent.com/frappe/pilot/develop/install.sh | bash
 #
-# BENCH_CLI_REF / ERPNEXT_BRANCH are ENV OVERRIDES: the controller
-# (atlas.atlas.image_builder) exports them per recipe so one committed build.sh
-# bakes any Frappe version (v15 / v16 / nightly). The Frappe branch + Python
-# version are pinned in bench.toml (rendered by the controller before upload).
-# The defaults below keep a direct `build.sh` run (no env) reproducible at v16. ---
-# BENCH_CLI_REPO is the GitHub org/repo the CLI is cloned from, and always travels
-# with BENCH_CLI_REF — a ref is only resolvable against the repo it lives in.
-# Default is the frappe/pilot v0.0.14-pre-alpha release (the site line's pin);
-# override BOTH to bake off a fork. install.sh hardcodes the frappe/pilot origin, so
-# §3 below re-points the clone's origin at this repo before checking out
-# BENCH_CLI_REF (a fork SHA is unreachable otherwise).
+# i.e. install.sh off `develop`, which lays down the LATEST release (prebuilt admin
+# UI, no build step). EVERY recipe — the site line and the admin line — bakes through
+# that one path, so a golden is what an operator following the README would get and a
+# fresh environment needs no pin bumped to work. The Frappe branch and the production
+# shape are pinned (bench.toml); the pilot version deliberately is not.
+#
+# What that path must carry for this build/deploy flow (all present upstream):
+# (1) the two-path install.sh — run as root it creates the bench user + sudoers, run
+# as the user it installs pilot (so we no longer hand-roll useradd/sudoers);
+# (2) `bench rename-site` (deploy-site.py renames the baked site through it);
+# (3) nginx emits `listen [::]:80` for every site + admin vhost, so the Atlas v6-only
+# inbound path is served by pilot itself — no v6-listener surgery here; (4) the
+# `bench admin` GROUP: `enroll` (the Central credential exchange), `set-central-config`
+# and `issue-site-token`. A one-click admin session verb is NOT on that list — upstream
+# pilot ships none, and the console's one-click sign-in is minted by CENTRAL instead (a
+# `?sid=` JWT the bench verifies offline against the JWKS `bench admin enroll` writes),
+# so deploy-site.py degrades to the baked `[admin].password` when no in-guest verb
+# exists rather than failing the deploy.
+#
+# PILOT_INSTALL_REF / BENCH_CLI_REPO / BENCH_CLI_REF / ERPNEXT_BRANCH are ENV
+# OVERRIDES: the controller (atlas.atlas.image_builder) exports them per recipe so one
+# committed build.sh bakes any Frappe version (v15 / v16 / nightly). The Frappe branch
+# + Python version are pinned in bench.toml (rendered by the controller before upload).
+# The defaults below keep a direct `build.sh` run (no env) on the documented path. ---
+# The repo install.sh is fetched from, and installs the releases of. BENCH_CLI_REPO
+# travels with BENCH_CLI_REF — a ref only resolves against the repo it lives in.
 BENCH_CLI_REPO="${BENCH_CLI_REPO:-frappe/pilot}"
-BENCH_CLI_REF="${BENCH_CLI_REF:-v0.0.14-pre-alpha}"  # default: release tag @ frappe/pilot (see §3b for tag-vs-SHA)
+# The git ref install.sh ITSELF is fetched at — `develop` is the README's URL. This is
+# not a version pin: the release path installs the newest release whatever it says.
+PILOT_INSTALL_REF="${PILOT_INSTALL_REF:-develop}"
+# EMPTY BY DEFAULT = no version pin, which is what "the documented install" means.
+# install.sh's release path has no way to request a specific release — it always
+# fetches the newest — so a pin here was never enforceable, only detectable after the
+# fact, and asserting it turned every upstream release into a broken bake (three in a
+# row: wanted v0.0.9 got v0.0.14, then wanted v0.0.14 got v0.0.15 mid-run). Set it to
+# pin a FORK's commit (the git install shape, §3b), or to make a release bake NOTE when
+# upstream has moved past the version you expected. Either way the golden RECORDS the
+# version it actually got (ATLAS_BUILD_BENCH_CLI_REF, §7), so an image is always
+# identifiable after the fact even though it is not pinnable in advance.
+BENCH_CLI_REF="${BENCH_CLI_REF:-}"
 ERPNEXT_BRANCH="${ERPNEXT_BRANCH:-version-16}"  # default: v16; controller overrides for v15 / develop
 # Bake ERPNext into the golden? OFF by default: `get-app erpnext` + `install-app` is
 # by far the longest phase of the bake (clone + asset build + a full app install on
@@ -151,10 +165,12 @@ chmod u+s /usr/bin/sudo /usr/bin/passwd /usr/bin/su /bin/su \
 # copies the PREBUILT zfs.ko + spl.ko from the manifest-pinned linux-modules-<kver>
 # and pins them in modules-load.d), so build.sh no longer touches the module — that
 # derives kver from the manifest, immune to the `uname -r` of this build VM. Here we
-# install only `zfsutils-linux` (zpool/zfs binaries), which the FORK-PINNED admin
-# recipes' VolumeManager needs to build the pool/datasets from bench.toml's `[volume]`.
-# frappe/pilot v0.0.9-pre-alpha has no volume schema at all, so on a site bake this
-# package is installed and never used. This is the ONE ZFS thing build.sh does. ---
+# install only `zfsutils-linux` (zpool/zfs binaries), which a VolumeManager needs to
+# build the pool/datasets from bench.toml's `[volume]` tables. Upstream pilot has no
+# volume schema at all, so with every recipe now on the documented upstream install
+# NOTHING reads those tables and this package is installed and never used — kept
+# because the module + userspace pair is what a volume-aware pin would need and
+# re-deriving it is the fiddly part. This is the ONE ZFS thing build.sh does. ---
 apt-get update
 # `git` is bench-cli's own bootstrap dependency: install.sh (below) clones bench-cli
 # with git, and bench pulls/updates apps over git at runtime. The standard Ubuntu base
@@ -164,43 +180,27 @@ apt-get update
 # `Cloning bench-cli` with `git: command not found` (exit 127).
 apt-get install -y --no-install-recommends zfsutils-linux git
 
-# --- 3. Install bench-cli — install.sh creates the bench user too (bench-setup.md
-# §3+§4). install.sh has two paths (bench-cli @ 03a4272 install.sh): run AS ROOT it
-# creates the `$BENCH_USER` (`useradd -m`, adds to sudo) + writes a visudo-validated
+# --- 3. Install pilot — install.sh creates the bench user too (bench-setup.md
+# §3+§4). install.sh has two passes: run AS ROOT it creates the `$BENCH_USER`
+# (`useradd -m`, adds to sudo) + writes a visudo-validated
 # `/etc/sudoers.d/$BENCH_USER` (passwordless), then STOPS; run AS THAT USER it lays
 # the CLI down under ~/pilot, installs uv + Node + tzdata, adds it to PATH, and sets
 # up the .admin-venv (flask/psutil/pymysql/gunicorn). So we no longer hand-roll
 # useradd/usermod/sudoers — the root call does it (no explicit uid; frappe takes the
-# next free uid). §3b below then pins the CLI, so the golden is reproducible rather
-# than "whatever install.sh happened to fetch".
+# next free uid).
+#
+# Both calls are the README's command with `--user` added, which is the only thing
+# the README itself says to vary ("On a root-only VPS, run it as root; the installer
+# creates a non-root bench user"). No `--dev`: pilot's README scopes that to
+# contributors who want to compile the admin UI locally, and that build OOMs Node on
+# a build VM (npm exit 134, bench rolled back) — the release tarball ships the UI
+# prebuilt and needs no build step, which is exactly what a bake wants.
 #
 # Idempotent: the root call is a no-op-ish re-run (user exists → skips useradd,
 # rewrites the same sudoers); the user call runs install.sh only on a FRESH guest, per
 # the entrypoint gate below. ---
-INSTALL_URL="https://raw.githubusercontent.com/$BENCH_CLI_REPO/$BENCH_CLI_REF/install.sh"
-# Non-interactive via the BENCH_YES ENV VAR, not a `-y` flag: frappe/pilot dropped
-# `-y` from install.sh's arg parser at v0.0.9-pre-alpha, and an unrecognised flag is
-# a hard `Unknown option: -y` + exit 1 there (which also SIGPIPEs the curl feeding
-# it, surfacing as a confusing `curl: (23)`). The env var satisfies both pins: the
-# fork seeds NONINTERACTIVE from ${BENCH_YES:-0}, and v0.0.9 needs no opt-out at all
-# here because its run_sudo short-circuits when already root — which this call is.
-#
-# PILOT_DEV=1 forces the GIT install shape, and it is what makes the pin mean
-# anything. install.sh's default (release) path always downloads the LATEST release
-# tarball — it has no way to fetch a specific one — so a release pin can only ever
-# be asserted after the fact, and every upstream release breaks the next bake with a
-# drift failure. Chasing the tag is unwinnable: two consecutive bakes here failed
-# against v0.0.9 and v0.0.14 because v0.0.14 and then v0.0.15 shipped underneath
-# them. The git path clones and then §3b checks out BENCH_CLI_REF exactly, so the
-# pin is reproducible no matter what upstream releases. Dev mode also compiles the
-# admin frontend from source, so the console is still served (the release tarball's
-# only real advantage was shipping it prebuilt).
-#
-# Passed as an ENV VAR, not the equivalent `--dev` FLAG, for the same reason as
-# BENCH_YES: an unrecognised flag is a hard `Unknown option` + exit 1, and the
-# fork-pinned admin recipes run an older install.sh whose arg parser predates it.
-# An env var an install.sh does not read is simply ignored.
-curl -fsSL "$INSTALL_URL" | BENCH_YES=1 bash -s -- --user "$BENCH_USER"
+INSTALL_URL="https://raw.githubusercontent.com/$BENCH_CLI_REPO/$PILOT_INSTALL_REF/install.sh"
+curl -fsSL "$INSTALL_URL" | bash -s -- --user "$BENCH_USER"
 
 # Enable lingering for the bench user NOW that it exists. Current bench-cli runs
 # the production stack (redis_queue/redis_cache, web, workers) as `systemctl --user`
@@ -211,66 +211,45 @@ curl -fsSL "$INSTALL_URL" | BENCH_YES=1 bash -s -- --user "$BENCH_USER"
 # as_frappe exports as XDG_RUNTIME_DIR. Idempotent.
 loginctl enable-linger "$BENCH_USER"
 
-# Gate on the CLI entrypoint, not on `.git`: a RELEASE install (below) never leaves a
-# `.git`, so a `.git` test would re-run install.sh on every re-bake — and on a git
-# install a re-run is exactly what must not happen (it `git pull`s to self-update and
-# FATALs on the detached HEAD the pin leaves, "not currently on a branch"). `bench`
-# exists at the tree root under both install shapes.
-# PILOT_DEV=1 here too, and this is the call that MATTERS: the root call above only
-# provisions the bench user and system packages, while THIS one installs the CLI tree
-# into $BENCH_CLI_DIR. Setting the env on the root call alone leaves this one on the
-# default RELEASE path, which silently reintroduces exactly the drift the git pin
-# exists to remove — the tree lands with a VERSION file, no `.git`, and §3b then fails
-# the bake on a pin mismatch against whatever release happens to be newest.
+# Gate on the CLI entrypoint, not on `.git`: a RELEASE install never leaves a `.git`,
+# so a `.git` test would re-run install.sh on every re-bake — and on a git install a
+# re-run is exactly what must not happen (it `git pull`s to self-update and FATALs on
+# the detached HEAD a pin leaves, "not currently on a branch"). `bench` exists at the
+# tree root under both install shapes. This is the call that installs the CLI tree
+# into $BENCH_CLI_DIR; the root call above only provisions the bench user and the
+# system packages.
 if [ ! -x "$BENCH_CLI_DIR/bench" ]; then
 	as_frappe "curl -fsSL '$INSTALL_URL' | bash"
 fi
 
-# --- 3b. Pin the CLI. frappe/pilot ships TWO install shapes and install.sh picks by
-# flag, so which one we got decides how the pin is enforced:
+# --- 3b. Record (or, when asked, pin) the CLI version. install.sh ships TWO shapes
+# and which one we got decides what can be done here:
 #
-#   git      (the fork, and any `--dev` install) — install.sh `git clone`s the repo.
-#            origin is hardcoded to frappe/pilot, so re-point it at BENCH_CLI_REPO
-#            (a fork SHA is unreachable otherwise) and check the pinned ref out.
-#            Idempotent: set-url is safe on a re-run.
-#   release  (frappe/pilot default since v0.0.9-pre-alpha) — install.sh downloads the
+#   release  (the DEFAULT, and the documented path) — install.sh downloads the
 #            `pilot.tar.gz` asset of the LATEST release and untars it: no git, nothing
 #            to check out, and the version is whatever was newest at bake time. It
-#            ships a VERSION file, so ASSERT that against the pin instead. This is the
-#            reproducibility guard the checkout used to provide: when upstream cuts a
-#            newer release the bake FAILS LOUD here rather than silently baking a
-#            golden nobody pinned. Bumping the pin is the deliberate fix.
-#
-# BENCH_CLI_REF is therefore the release TAG for a release pin (it matches VERSION
-# verbatim, and raw.githubusercontent resolves it for INSTALL_URL above) and a commit
-# SHA for a git pin.
-if [ -d "$BENCH_CLI_DIR/.git" ]; then
+#            ships a VERSION file, so RECORD that. With BENCH_CLI_REF set we also NOTE
+#            the drift — never fail on it: the release path has no way to request a
+#            specific release, so a tag pin was only ever detectable after the fact,
+#            and asserting it turned every upstream release into a broken bake (three
+#            in a row: wanted v0.0.9 got v0.0.14, then wanted v0.0.14 got v0.0.15
+#            mid-run).
+#   git      (a `--dev` install, or a fork whose install.sh clones) — install.sh
+#            `git clone`s the repo. origin is hardcoded to frappe/pilot, so re-point
+#            it at BENCH_CLI_REPO (a fork SHA is unreachable otherwise) and check
+#            BENCH_CLI_REF out. Idempotent: set-url is safe on a re-run. Skipped
+#            entirely when BENCH_CLI_REF is empty — nothing was asked for, so the
+#            clone's own branch stands.
+INSTALLED_VERSION="$(cat "$BENCH_CLI_DIR/VERSION" 2>/dev/null || true)"
+if [ -d "$BENCH_CLI_DIR/.git" ] && [ -n "$BENCH_CLI_REF" ]; then
 	# --tags: install.sh clones a single branch (develop), so a pin expressed as a
 	# release TAG is not present until it is fetched explicitly. Without this a tag
 	# pin dies on `pathspec ... did not match` even though the tag exists upstream.
 	as_frappe "git -C '$BENCH_CLI_DIR' remote set-url origin 'https://github.com/$BENCH_CLI_REPO' && git -C '$BENCH_CLI_DIR' fetch --quiet --tags origin && git -C '$BENCH_CLI_DIR' checkout --quiet '$BENCH_CLI_REF'"
-else
-	# RECORD the delivered version; do NOT fail on drift. install.sh's release path
-	# has no way to request a specific release — it always fetches the newest — so a
-	# tag pin here was never enforceable, only detectable after the fact. Asserting it
-	# turned every upstream release into a broken bake (three in a row: wanted v0.0.9
-	# got v0.0.14, then wanted v0.0.14 got v0.0.15 mid-run).
-	#
-	# The obvious alternative, forcing the git shape with PILOT_DEV, is worse here:
-	# pilot's README scopes `--dev` to contributors who want to compile the admin UI
-	# locally, and that build OOMs Node on a build VM (npm exit 134, bench rolled
-	# back). The release tarball ships the UI prebuilt and needs no build step, which
-	# is exactly what a bake wants.
-	#
-	# So take what upstream ships and STAMP it. The golden records its own version
-	# (§ATLAS_BUILD_BENCH_CLI_REF below), so an image is always identifiable after the
-	# fact even though it is not pinnable in advance.
-	INSTALLED_VERSION="$(cat "$BENCH_CLI_DIR/VERSION" 2>/dev/null || true)"
-	if [ "$INSTALLED_VERSION" != "$BENCH_CLI_REF" ]; then
-		echo "NOTE: bench-cli ref '$BENCH_CLI_REF' requested; install.sh delivered '${INSTALLED_VERSION:-<no VERSION file>}' (release path always ships latest). Baking with the delivered version." >&2
-	fi
-	echo "bench-cli release version: ${INSTALLED_VERSION:-<unknown>}"
+elif [ -n "$BENCH_CLI_REF" ] && [ "$INSTALLED_VERSION" != "$BENCH_CLI_REF" ]; then
+	echo "NOTE: pilot ref '$BENCH_CLI_REF' requested; install.sh delivered '${INSTALLED_VERSION:-<no VERSION file>}' (the release path always ships latest). Baking with the delivered version." >&2
 fi
+echo "pilot version: ${INSTALLED_VERSION:-<git checkout>}"
 
 # --- 4. Create the bench + drop our pinned bench.toml (bench-setup.md §5).
 # `bench new` scaffolds benches/<name>/ non-interactively (name positional, no
@@ -299,14 +278,12 @@ fi
 # bench's Redis config, the uv venv, the Frappe clone, Node deps, the admin frontend,
 # and dns_multitenant = 1.
 #
-# WHICH MariaDB depends on the pin. frappe/pilot v0.0.9-pre-alpha (the site line)
-# provisions ONE rootless, user-owned `pilot-mariadb.service` shared by the host's
-# benches, datadir + socket under $BENCH_CLI_DIR/databases/mariadb — it reads no
-# `[mariadb]` table from bench.toml (that config comes from the host common config)
-# and has no volume/ZFS schema at all. The fork-pinned ADMIN recipes read both tables
-# and instead provision a dedicated system `mariadb@atlas` (own datadir/socket,
-# enabled-at-boot) on top of the ZFS pool + datasets. deploy-site.py stays out of that
-# argument by probing the DB SOCKET rather than any unit name (its DB_SOCKET).
+# MariaDB. Upstream pilot provisions ONE rootless, user-owned `pilot-mariadb.service`
+# shared by the host's benches, datadir + socket under $BENCH_CLI_DIR/databases/mariadb
+# — it reads no `[mariadb]` table from bench.toml (that config comes from the host
+# common config) and has no volume/ZFS schema at all, so both tables are inert on every
+# recipe now. deploy-site.py stays out of the unit-name argument entirely by probing the
+# DB SOCKET rather than any unit name (its DB_SOCKET), so it works against any pin.
 #
 # `bench init` does NOT bring the production stack up: in current bench-cli the
 # production `systemctl --user` units (redis_queue/redis_cache, web, workers, nginx)
@@ -478,4 +455,4 @@ rm -rf /var/lib/apt/lists/* "$BENCH_HOME/.cache" 2>/dev/null || true
 # the whole bake durable before the stop regardless of what wrote last. ---
 sync
 
-echo "Golden bench image baked (mode=$MODE): bench-cli @ ${BENCH_CLI_REF:0:12}, bench '$BENCH_NAME'$([ "$MODE" = site ] && echo " + ERPNext site '$BAKED_SITE'"), production stack running."
+echo "Golden bench image baked (mode=$MODE): pilot @ $(bench_cli_stamp), bench '$BENCH_NAME'$([ "$MODE" = site ] && echo " + site '$BAKED_SITE'"), production stack running."
