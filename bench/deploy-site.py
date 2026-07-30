@@ -430,14 +430,30 @@ def _regrouped(group: str, verb: str, *args: str, capture: bool = False) -> str:
 	free to diverge (which is the whole point of keeping them separate).
 
 	NO degrade here, unlike `_mint_admin_login_url`: a verb we were asked to run and
-	cannot find anywhere is a bake/pin bug, not a poorer handoff — so the second
-	attempt's error propagates and fails the deploy loud."""
+	cannot find anywhere is a bake/pin bug, not a poorer handoff. Degrading would be
+	worse than failing — an un-enrolled bench that reports success reaches `Running`
+	and then refuses to open from Central with nothing to explain why, which is the
+	exact failure mode 8f7a591 was written to remove. So we fail, but we fail
+	ACTIONABLY: naming both spellings tried and where the pin lives, because click's
+	bare `No such command` on a Frappe passthrough is the confusing part, not the exit
+	code. A verb that exists and BROKE still propagates unchanged (`_missing_verb` is
+	what tells the two apart)."""
 	try:
 		return _bench(group, verb, *args, capture=capture)
 	except subprocess.CalledProcessError as error:
 		if not _missing_verb(error):
 			raise
-	return _bench(verb, *args, capture=capture)
+	try:
+		return _bench(verb, *args, capture=capture)
+	except subprocess.CalledProcessError as error:
+		if not _missing_verb(error):
+			raise
+		sys.exit(
+			f"this golden's bench-cli carries `{verb}` at neither `bench {group} {verb}` nor "
+			f"`bench {verb}` — it cannot do what the deploy was asked to do. Re-pin the recipe "
+			f"(image_recipes._BENCH_CLI_REF for the site line, _ADMIN_BENCH_CLI_REF for admin) "
+			f"to a bench-cli that carries the verb, or stop passing the input that requests it."
+		)
 
 
 def _mint_admin_login_url() -> str:

@@ -653,16 +653,24 @@ class TestGuestScriptTypedIO(IntegrationTestCase):
 
 	def test_regrouped_fails_loud_when_neither_spelling_exists(self) -> None:
 		"""No degrade: a verb asked for and findable at NO spelling is a bake/pin bug (the
-		fork pin carries no `enroll` at all), so it propagates. Reporting success here
-		would tell Central a bench had enrolled when it never did."""
+		fork pin carries no `enroll` at all). Reporting success would tell Central a bench
+		had enrolled when it never did — it would reach Running and then refuse to open,
+		with nothing to explain why.
+
+		Fails ACTIONABLY rather than letting click's bare `No such command` out: the
+		message names both spellings tried and the recipe knobs that pick the bench-cli,
+		because on a Frappe passthrough the raw error says nothing about the pin."""
 		guest = self.guest
-		import subprocess
 
 		with patch.object(
 			guest, "_bench", side_effect=lambda *a, **k: (_ for _ in ()).throw(self._no_such_command(a))
 		):
-			with self.assertRaises(subprocess.CalledProcessError):
+			with self.assertRaises(SystemExit) as caught:
 				guest._regrouped("admin", "enroll", "--endpoint", "https://central.example")
+		message = str(caught.exception)
+		self.assertIn("bench admin enroll", message)
+		self.assertIn("bench enroll", message)
+		self.assertIn("_ADMIN_BENCH_CLI_REF", message)
 
 	def test_regrouped_does_not_retry_a_real_failure(self) -> None:
 		"""Only a MISSING VERB falls back. A grouped call that reached the verb and broke
