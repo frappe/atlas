@@ -142,6 +142,10 @@ class TestCentralReport(IntegrationTestCase):
 		# name == <subdomain>.<region domain>, so stand that in as the name here.
 		pilot = SimpleNamespace(
 			name="acme.blr1.frappe.dev",
+			# FrontDoor reads gateway_url off a Pilot's console host, so the stand-in has
+			# to carry both (admin-mode here, hence console == name).
+			doctype="Pilot",
+			console_fqdn="acme.blr1.frappe.dev",
 			virtual_machine=vm.name,
 			tenant=None,
 			status="Running",
@@ -474,6 +478,10 @@ class TestCentralReportPilot(IntegrationTestCase):
 			tenant=None,
 			status=status,
 			gateway_url="https://acme.blr1.frappe.dev",
+			# The host the console answers a Central `?sid=` on — what FrontDoor reports
+			# as gateway_url. Same as the name for this admin-mode stand-in; a site-mode
+			# pilot's would carry the `-pilot` suffix.
+			console_fqdn="acme.blr1.frappe.dev",
 			login_url=login_url,
 			login_url_expires_at="2026-07-04 10:19:56",
 			doctype="Pilot",
