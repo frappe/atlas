@@ -12,8 +12,12 @@
 >
 > The chapter carries both the design and what of it exists. **Every claim not
 > yet true of the code is marked `NOT BUILT` where it is made, naming the work
-> order that owns it**; everything unmarked is in the code. The two largest gaps
-> are the fence *comparison* (§16.0) and CAS on contended reservations (§11.2).
+> order that owns it**; everything unmarked is in the code. The largest gap is
+> the fence *comparison* (§16.0). CAS on contended reservations (§11.2) was the
+> other until WO-3a; the mechanism now exists and is proven on a real host, and
+> what it lacks is a contended caller — which is a smaller and more honest kind
+> of gap, and exactly the shape the paragraph below warns about, so it is named
+> as such at §11.2 rather than counted as done.
 > Write-ahead journalling (§11.5) and Firecracker re-attach (§3.3) were a third
 > and fourth until recently, and they had the shape worth naming: packages that
 > existed, were tested, and had **no caller at all**, so they read as finished
@@ -122,8 +126,16 @@ ExecStartPre=/usr/local/bin/boat vm-network-up %i   # firecracker-vm@ hooks
 **One unit ships today.** `systemd/boat.service` runs `boat daemon`, and the
 binary's dispatcher answers `daemon`, `vm`, `host` and `version` — nothing else.
 Every other line above is **NOT BUILT** and lands with its work order: `networkd`
-at WO-5, `pool` / `gateway` / `mgmt-firewall` / the `firecracker-vm@` hooks at
-WO-3.
+at WO-5, `pool` / `mgmt-firewall` / the `firecracker-vm@` hooks at WO-6. WO-3a
+supervises those units where they are — as the Python entry points they are
+today — because supervision and re-pointing are separable and only the first is
+needed before self-update (§5, §3.7).
+
+**One line above is wrong and is struck: there is no `boat gateway`.**
+`gateway.service` runs INSIDE the customer gateway guest — its own unit file says
+so, and `atlas/atlas/customer_gateway.py` installs it into a guest over
+guest-SSH. It is never on a Boat host, and a `boat gateway` subcommand would put
+the host daemon on the guest plane that §7.1 keeps in Atlas.
 
 **One line has been struck rather than deferred: there is no `boat wake-trap`
 unit, and there will not be.** The reflex runs as a goroutine inside
@@ -210,7 +222,7 @@ it as Running: pause frees CPU and not memory, so there was no other symptom, an
 a paused VM was indistinguishable from a running one everywhere in Atlas.
 **Atlas's `observed_status` Select still carries no Paused**, so a Running
 observation is accepted against a DB status of either Running or Paused —
-`NOT BUILT`, and it belongs with WO-3.
+`NOT BUILT`, and it belongs with WO-3b.
 
 **What Boat reports today.** The observed rows above are the contract; the export
 carries a subset. Live: `observed_status`, the unit's `ActiveState`/`SubState`,
@@ -219,7 +231,7 @@ host facts `vcpus_total` / `memory_megabytes_total` / `memory_megabytes_free` /
 `pool_disk_gigabytes_total` / `pool_used_percent` / `host_signature` / kernel and
 Firecracker versions / running `boat_version`. **NOT BUILT:** `last_started`,
 `last_stopped`, `last_traffic_at`, `boot_id`, the `observed_*` resource numbers,
-`public_ipv4` (WO-3), the running Firecracker PID (§3.3), and the LV inventory —
+`public_ipv4` (WO-3b), the running Firecracker PID (§3.3), and the LV inventory —
 which adoption reads and the export then drops (§2.5). Of the per-VM fields
 Atlas's mirror lands, `observed_status` is the only one
 ([`boat_mirror.py`](../atlas/atlas/boat_mirror.py)).
@@ -343,15 +355,21 @@ re-sending the same document is a no-op with nothing to deduplicate.
   sweep starts every interval forever.
 - **B. Lifecycle verbs.** `POST /v1/vms/{uuid}/<verb>` for `start`, `stop`,
   `pause`, `resume`, `sleep`, `wake`, `resize`, `rebuild` and `terminate`. *NOT
-  BUILT:* `snapshot` and `warm-snapshot` (WO-4), `reserved-ip` (WO-3),
+  BUILT:* `snapshot` and `warm-snapshot` (WO-4), `reserved-ip` (WO-3b),
   `POST /v1/images/sync` (WO-6) and the migration sub-operations of §8 (WO-4).
 - **C. Observed read and watch.** `GET /v1/vms/{uuid}`, `GET /v1/vms`,
   `GET /v1/host`, `GET /v1/export` (§2.5), `GET /v1/watch` (SSE deltas).
-  *NOT BUILT:* operation progress on the stream (§2.7), and the CAS `If-Match:
-  <observed-epoch>` reads of §11.2 — no operation takes that header today.
-- **D. Host control.** *All NOT BUILT:* `POST /v1/bootstrap` (§4, WO-1b),
-  `POST /v1/update` (§5, WO-5b), `GET|POST /v1/units/{name}` (sibling-unit
-  supervision, §3.7, WO-3).
+  `PUT /v1/vms/{uuid}` takes the CAS `If-Match: <observed-epoch>` of §11.2.
+  *NOT BUILT:* operation progress on the stream (§2.7).
+- **D. Host control.** `GET|POST /v1/units/{name}` — sibling-unit supervision
+  (§3.7). The POST is the one mutating operation in the contract that carries no
+  `op_id`, and the exemption is argued rather than assumed: an `op_id` exists so
+  a retry cannot run a verb twice into two guests, two addresses or two volumes,
+  and a unit action is idempotent by outcome — `start` and `restart` both
+  converge the unit to "running, now". What bounds a retry storm is the unit's
+  own `StartLimitBurst`, which systemd enforces and which Boat is deliberately
+  not granted the `reset-failed` to clear. *NOT BUILT:* `POST /v1/bootstrap`
+  (§4, WO-1b) and `POST /v1/update` (§5, WO-5b).
 - **E. The journal.** `GET /v1/ops/{op_id}` (§10) and the unauthenticated
   `GET /v1/health` (§2.3). Both built.
 
@@ -372,7 +390,10 @@ and [`scripts_catalog.py`](../atlas/atlas/scripts_catalog.py) still names them.
 The wire is not: it is JSON, so `_variables_to_flags` and
 `task_results.parse_result` do **not** run on the Boat path. `run_boat_task` maps
 a verb to its endpoint, and the typed operation record — `status`, `exit_code`,
-`output` — replaces the scraped `ATLAS_RESULT=` line.
+`output`, `result` — replaces the scraped `ATLAS_RESULT=` line. `result` is the
+one field that is still that line's payload: Atlas folds it back onto the Task's
+stdout as an `ATLAS_RESULT=` line, so a call site that parses its verb's result
+does not have to know which transport ran it (§2.7).
 
 **Almost every verb's whole request is its `op_id`**, and that is a deliberate
 consequence of the desired-state split rather than a minimal first cut: a resize
@@ -392,14 +413,22 @@ VM's observed doc, host facts, LV and thin-pool inventory, network state,
 sibling-unit liveness, the quarantine set, every fence epoch, and the running
 `boat_version`. Atlas ingests it **in one transaction** to rebuild its mirror.
 
-**Three of those are NOT BUILT and the document simply omits them:** the LV
+**Two of those are NOT BUILT and the document simply omits them:** the LV
 inventory (adoption enumerates it and the scan result is dropped rather than
-stored — the fix is a store bucket, not a new command), **network state** (WO-3
-owns per-VM networking), and **sibling-unit liveness** (WO-3 owns supervision;
-Atlas already has the `observed_units_down` field waiting for it). Everything
-else in the list is carried. The omissions are absences, not empty arrays: an
-empty `logical_volumes` would assert "this host has no volumes", which is a claim
-nothing in the daemon has looked closely enough to make.
+stored — the fix is a store bucket, not a new command) and **network state**
+(WO-3b owns per-VM networking). Everything else in the list is carried. The
+omissions are absences, not empty arrays: an empty `logical_volumes` would assert
+"this host has no volumes", which is a claim nothing in the daemon has looked
+closely enough to make.
+
+**Sibling-unit liveness is carried (WO-3a), and it is the one array where empty
+is a claim rather than a silence.** The supervisor asks systemd about every
+supervised name on every export, so `[]` means "asked, and this host runs none of
+them" — true of a machine that was never bootstrapped, and a fact worth
+reporting. Absent would mean "not looked at", which is what it meant until the
+supervisor existed and what Atlas's mirror still reads it as. Quarantine is the
+other array of that kind (below); the host facts and the LV inventory are the
+opposite.
 
 **State the symmetry explicitly:** `PUT` desired is how Atlas re-asserts intent;
 `GET /v1/export` is how Boat re-asserts fact. Those two calls, run back to back,
@@ -539,12 +568,12 @@ Atlas loses is a way to distinguish a slow verb from a lost one: a non-terminal
 status coming back is treated as a protocol surprise and raised, because on this
 shape it cannot happen.
 
-**"Boat returns the typed result" is a promise the contract does not yet keep, and
-it is the one gap in this section with a live consequence.** `Operation` carries
-`output`, `error` and `exit_code` and nothing else, so a verb that computes a
-structured answer discards it on the way out — `sleep` computes exactly the boolean
-Atlas wants (`SleepResult.MemorySnapshot`) and throws it away. What Boat has to add
-is one optional free-form object on `Operation`:
+**Boat returns the typed result, and until it did this was the one gap in this
+section with a live consequence.** `Operation` used to carry `output`, `error` and
+`exit_code` and nothing else, so a verb that computed a structured answer
+discarded it on the way out — `sleep` computes exactly the boolean Atlas wants
+(`SleepResult.MemorySnapshot`) and threw it away. `Operation` now carries one
+optional free-form object:
 
 ```yaml
 result:
@@ -554,10 +583,19 @@ result:
                ATLAS_RESULT= line carries, so a Task reads the same either way.
 ```
 
-populated by every verb that has one — today `sleep-vm` with
-`{"memory_snapshot": <bool>}`, and the same field for `snapshot-vm` /
+populated by every verb that has one — today `sleep-vm` alone, with
+`memory_snapshot`, plus `reason` when the snapshot was skipped and
+`memory_snapshot_bytes` when one was taken, which are the same three fields
+`scripts/sleep-vm.py` has always emitted. The same field serves `snapshot-vm` /
 `warm-snapshot-vm` (`size_bytes`, `memory_bytes`, `host_signature`) whenever those
 verbs move onto Boat.
+
+**Absent is not false.** A verb with nothing to report omits the field, and so
+does one that FAILED — a failed verb may have computed half a result, and
+recording it would hand a caller a value to act on out of an operation that did
+not finish. It rides in the journal with the rest of the record, so a replayed
+`op_id` answers with the result the first attempt recorded rather than losing it
+to the retry that most needs it.
 
 Atlas is already written against it (`boat_client.OPERATION_RESULT_FIELD`), and the
 reading is done **in the transport, not at the call site**: a present `result`
@@ -565,15 +603,15 @@ becomes the same `ATLAS_RESULT=` line on the Task row that an SSH script would h
 written, so `task_results.parse_result` reads one Task the same way whichever
 transport filled it. That placement is what stops this repeating. `sleep` is the
 only Boat-routed verb that parses structured output today — every other such call
-site holds `run_task` directly — and the latent defect is the day one of them gains
-a Boat endpoint and silently finds no line. Until the field lands, a Boat Task
-carries no result line at all, and the one caller that reads one **records what the
-verb did anyway**: a `sleep` that cannot learn whether RAM was dumped still marks
-the row `Sleeping`, because the VM is parked either way and the snapshot only
-changes the next wake's speed. Insisting on the line instead was silent in every
-direction — the VM parked, the Task committed `Success`, the row stayed `Running`,
-the idle sweeper swallowed the throw and re-slept it every minute forever, and the
-RAM the feature exists to free was never booked back.
+site holds `run_task` directly — and the latent defect it would otherwise have left
+is the day one of them gains a Boat endpoint and silently finds no line. The
+caller stays tolerant regardless (`parse_optional_result`): a `sleep` that cannot
+learn whether RAM was dumped still marks the row `Sleeping`, because the VM is
+parked either way and the snapshot only changes the next wake's speed. Insisting
+on the line instead was silent in every direction — the VM parked, the Task
+committed `Success`, the row stayed `Running`, the idle sweeper swallowed the
+throw and re-slept it every minute forever, and the RAM the feature exists to free
+was never booked back.
 
 **Replay never double-runs.** Re-POSTing an in-flight or completed `op_id`
 returns the recorded operation unchanged and runs nothing. An `op_id` already
@@ -764,7 +802,7 @@ the wake-trap loop landed early, firecracker re-attach is written but unwired
 
 The gate is honoured per module. Skipping it under schedule pressure re-creates
 exactly the risk it exists to retire, and the risk has already been taken once —
-so the harness is owed before WO-3's network apply, where a rendering difference
+so the harness is owed before WO-3b's network apply, where a rendering difference
 stops being a wrong command and becomes a VM off the network.
 
 ### 3.6 CLI and daemon
@@ -790,10 +828,47 @@ restart, and surfaces each one's liveness in `GET /v1/host`. **It never reaches
 into networkd's gossip state** — supervision is lifecycle only, and the ANCP
 boundary of §0 stays intact.
 
-**NOT BUILT (WO-3).** There are no sibling units to supervise yet (THE RULE),
-there is no `GET|POST /v1/units/{name}`, and `GET /v1/host` reports hostname,
-`boat_version`, the daemon's start time and the VM count — no unit liveness. The
-export's `units` array is absent for the same reason (§2.5).
+**BUILT (WO-3a), over the units that exist today rather than the `boat`
+subcommands THE RULE will eventually re-point them at.** `GET /v1/units/{name}`
+reports one unit's liveness and `POST /v1/units/{name}` acts on it; `GET /v1/host`
+and the export both carry the set (§2.5).
+
+Three decisions in it are worth the chapter rather than the code comment.
+
+**The verb set is `start` and `restart`, and there is deliberately no `stop`.**
+Supervision converges the host's own services upward: "be running" and "be
+running afresh" are the only states a control plane ever wants this host's pool,
+network daemon, wake trap or firewall in, and `restart` covers every legitimate
+stop-then-start, including the config re-apply the mesh unit's own `ExecStop`
+exists for. A stop would be the verb with teeth and no driver behind it — nothing
+in Boat wants a sibling unit down, so nothing would ever notice or undo one —
+and what it would buy is the ability to strand every sleeping VM on the host by
+stopping the process that watches their counters. `reset-failed` is left out for
+the adjacent reason: it would let the daemon clear a unit's own
+`StartLimitBurst`, and a rate limit the rate-limited thing can reset is not one.
+An operator who needs either has SSH break-glass (§12).
+
+**The supervised set is a closed list of literal names**, enforced in Go and
+pinned in `sudoers.d/boat` one grant per unit per action with no wildcard
+anywhere: `atlas-pool.service`, `atlas-networkd.service`,
+`atlas-wake-trap.service`, `atlas-mgmt-firewall.service`. That is what makes
+"the per-VM `firecracker-vm@` instances are not reachable here" a property of the
+list rather than a rule somebody remembers — a UUID cannot be spelled with four
+literals — and it is what keeps `sshd.service` and `boat.service` out. Two units
+in `scripts/systemd/` are excluded on purpose: `gateway.service` runs inside the
+customer gateway GUEST and is guest-plane (§7.1), and `host-mesh.service` is the
+pre-ANCP predecessor that nothing installs any more.
+
+**A unit systemd reports `not-found` is omitted, not reported inactive.** Atlas's
+mirror reads any unit whose `active_state` is not `active` as down
+([`boat_mirror.py`](../atlas/atlas/boat_mirror.py) `_units_down`), so listing the
+supervised names a host does not have would flag every host in the fleet as
+permanently degraded — and a health field that is always red is one nobody reads.
+"This host does not run atlas-networkd" is not "atlas-networkd is down".
+
+The liveness read is `systemctl show`, which is a property read over the system
+bus that the unprivileged service user can make, so it costs no sudoers grant at
+all. Only `start` and `restart` are privileged.
 
 The unit template follows
 [`atlas-networkd.service`](../scripts/systemd/atlas-networkd.service) for
@@ -918,9 +993,10 @@ polls those named counters once a second and asks the reconciler for a pass. Tha
 is the whole of Boat's networking today, and it exists because sleep needs it.
 Everything else in the table — per-VM netns, veth, tap, NAT44, proxy-NDP and nft
 isolation for a *running* VM, `local-ownership.json`, reserved-IP 1:1 NAT,
-customer-gateway forwarding — is **NOT BUILT (WO-3)** and remains the
-`firecracker-vm@` unit's Python hooks. Boat also does not yet supervise the
-`networkd` unit (§3.7); it only inherits the boundary.
+customer-gateway forwarding — is **NOT BUILT (WO-3b)** and remains the
+`firecracker-vm@` unit's Python hooks. Boat now supervises the `networkd` unit's
+lifecycle and reports its liveness (§3.7), and reads none of its state: the mesh,
+its membership and its wg peer table stay ANCP's, exactly as §0 requires.
 
 ### 6.2 Public IPv6 allocation stays in Atlas for v1
 
@@ -1156,7 +1232,7 @@ inconvenient.
 | Invariant | Enforced? |
 |---|---|
 | 11.1 fence epoch | **Partly.** No fence means boot nothing — enforced on both boot paths. The epoch *comparison* refuses nothing (§16.0) |
-| 11.2 CAS on contended reservations | **No.** No operation accepts `If-Match`; nothing returns 409 on a moved observed-epoch |
+| 11.2 CAS on contended reservations | **Yes, as a mechanism; no contended caller yet.** `PUT /v1/vms/{uuid}` takes `If-Match: <observed-epoch>` and answers 409 `stale-observation`. Atlas sends no such header yet |
 | 11.3 `desired_power` vs `observed_status` | **Yes**, including the precedence rule, though not in the shape the prose below describes — see the rule |
 | 11.4 forward lease, union reconciliation | **No.** Boat allocates no address; the `held/ipv6` bucket does not exist |
 | 11.5 write-ahead journalling | **Partly.** Every operation is stamped in flight in its claim's own transaction, and rebuild records its source ahead of the destructive step. No verb re-enters at a checkpoint |
@@ -1209,16 +1285,45 @@ attach all go through `PUT` with `If-Match: <observed-epoch>`. **Boat returns
 `ipv6_address` and the reserved bindings stay frozen except through those CAS
 verbs.
 
-> **NOT BUILT — none of it.** No operation in the contract accepts `If-Match`, no
-> handler compares an offered epoch against the store's, and the only `409` the
-> `PUT` can return is a fence *regression*, which is a different check answering a
-> different question. The observed-epoch itself is live and monotonic, so the
-> token a CAS would match on already exists and is already carried in the export;
-> what is missing is every reader of it. Until then, §1's "the mirror is
-> disposable **because** no contended decision is taken from it" holds only
-> because Atlas has not yet been taught to take one from it — the guarantee is
-> the absence of a caller, not a mechanism. WO-3 needs this for reserved-IP
-> attach and WO-4 for migration-target choice; whichever lands first owns it.
+> **BUILT as a mechanism (WO-3a), with no contended caller yet.**
+> `PUT /v1/vms/{uuid}` accepts `If-Match: <observed-epoch>` — bare or in the
+> quotes an HTTP entity tag carries — and answers `409` with
+> `reason: stale-observation`. Omitting the header is ungated, which is the
+> common case and has to be: Atlas re-asserts intent before every verb and on
+> every reconnect, and a precondition there would make resynchronisation fail
+> exactly when the mirror is furthest behind. The PUT's other `409` now carries
+> `reason: fence-regression`, because the two share a code and call for opposite
+> behaviour — one must never be retried, the other must be retried against a
+> fresh export.
+>
+> **The token is whole-host and the COMPARISON is per-resource, and that is a
+> correction to the rule as written above.** A whole-host comparison is not
+> merely coarse, it is unusable: every observation bumps the epoch, the
+> reconciler writes one per VM per 30-second sweep, and Atlas's mirror is
+> refreshed every five minutes — so on a forty-VM host the offered epoch is some
+> four hundred bumps stale by construction and *every* CAS would fail. The
+> failure direction is safe, which is what makes it dangerous: a precondition
+> that always fails is one somebody removes, and removing it takes the real
+> protection with it. So each observed record is stamped with the epoch it was
+> written at, in the same transaction as the bump, and `If-Match` on
+> `PUT /v1/vms/{uuid}` asks only whether THAT record has moved. Atlas still
+> quotes one number and still orders its ingests by it. An epoch *newer* than any
+> this host has issued is also refused: that caller read a different Boat's store,
+> which is the state in which a mirror is most confidently wrong.
+>
+> **What the scoping costs, plainly:** it protects a decision about one VM and
+> nothing else. A contended decision about a HOST-WIDE resource — the last slot of
+> RAM, the thin pool's free bytes, the reserved-IP slot — is not covered, and must
+> not be covered by widening this comparison back to the host, which would
+> reintroduce the noise above. It is covered by giving that resource a record with
+> a stamp of its own and comparing against that: the same primitive, one more
+> caller. Nothing regresses meanwhile, because no host-wide contended verb exists.
+>
+> **Reserved-IP attach is still NOT BUILT (WO-3b)**, so §1's "the mirror is
+> disposable **because** no contended decision is taken from it" still holds by
+> the absence of a caller. The difference is that the mechanism now exists and is
+> proven on a real host, so the caller that lands next inherits it instead of
+> inventing it. WO-4's migration-target choice is the other.
 
 **Failure mode.** Drift on an observation field is a display nuisance; drift on a
 reservation is corruption. Without CAS, two provisions read the same stale mirror
@@ -1360,7 +1465,8 @@ justify the machinery would have been worse than the gap.
 > `rebuild-source` is forensics with correct write-ahead ordering — the plumbing
 > is proven for WO-4 and WO-6, and the checkpoint semantics are not.
 >
-> Reserved-IP CAS is WO-3 and unbuilt (§11.2).
+> Reserved-IP CAS is WO-3b. The CAS primitive it needs is built (§11.2); the
+> reserved-IP slot it would compare against is not.
 
 **Failure mode.** "Every verb is idempotent, so retry equals re-run"
 ([Taste](../llm/Taste.md), [04-tasks.md](./04-tasks.md)) only holds if the retry
@@ -1474,7 +1580,7 @@ false everything.
 ## §13. What is explicitly not Boat's
 
 - **The ANCP gossip plane.** Boat supervises the `networkd` unit and writes
-  `/etc/atlas-networkd/local-ownership.json` — *both NOT BUILT, WO-3; today it
+  `/etc/atlas-networkd/local-ownership.json` — *both NOT BUILT, WO-3b; today it
   neither supervises the unit nor writes the file, and the `vm-network-up` /
   `vm-network-down` hooks remain its writer.* What holds already is the
   prohibition: Boat **never touches membership, the ownership table, the
@@ -1536,7 +1642,8 @@ rolls back by clearing its flag.
 | **WO-1** | **SHIPPED** | Observed state: adoption scan, firecracker re-attach, `GET /v1/export`, `/watch` SSE, the `Host State Snapshot` mirror, and the fence store — advisory only, the DB still authoritative. `internal/fcattach` now has callers in both the scan and `Observe` (§3.3), so **WO-5b's hard gate is satisfied**: a binary swap leaves every guest running, and Boat can confirm one is alive rather than inferring it from systemd. |
 | **WO-1b** | not started | `boat bootstrap`: a bare host brought to Active by the binary itself, with the armed auto-revert registration handshake (§4). |
 | **WO-2** | **IN FLIGHT** | Full lifecycle and reflexes: every VM verb through Boat, the per-VM reconciler, the journal, and the wake trap resident in Boat; per-VM authority flips to Boat. Landed: all nine lifecycle verbs end to end, the per-VM reconciler and single actor, the resident wake trap, the guest-identity blob on the wire, and the five-minute mirror sweep. Outstanding: `observed_authority` is never read so authority has not flipped (§1), no verb re-enters at a checkpoint (§11.5), and there is no `/watch` consumer (§2.6). |
-| **WO-3** | not started | Unit supervision and host-local network apply: the sibling units re-pointed at `boat <sub>`, `local-ownership.json` written by Boat, reserved-IP NAT and gateway forwarding applied under CAS (§11.2, which WO-3 must build). |
+| **WO-3a** | **built** | Sibling-unit supervision — `GET|POST /v1/units/{name}`, unit liveness in `GET /v1/host` and in the export (§3.7) — and the CAS primitive of §11.2: `If-Match` on the desired-state PUT, compared per-resource, answering `409 stale-observation`. |
+| **WO-3b** | not started | Host-local network apply: `local-ownership.json` written by Boat, reserved-IP NAT and gateway forwarding. The reserved-IP attach is the first contended CAS caller (§11.2) and inherits the primitive rather than inventing one. Re-pointing the supervised units at `boat <sub>` is not here either: they are supervised as the Python entry points they are, and THE RULE's re-pointing is WO-5/WO-6. |
 | **WO-4** | not started | Cross-host sagas: migration, warm fan-out and S3 sync driven over Boat RPCs, with Repoint gated on positive source fencing (§8). **Owns closing §16.0.** |
 | **WO-5** | not started | `boat networkd`: the ANCP daemon in Go, same binary, own unit, byte-identical wg and nft output — a port, not a redesign (§13). |
 | **WO-5b** | not started, **no longer gate-blocked** | Auto-update (§5). Its hard gate was WO-1's firecracker re-attach, which now has callers; what remains is the update mechanism itself. |
@@ -1594,13 +1701,26 @@ behind them. These are the questions that have no answer yet.
    - ~~**Atlas must be able to retract or supersede desired state on a host that
      no longer owns a VM.**~~ **Closed.** `DELETE /v1/vms/{uuid}` retracts an
      assertion (§2.4 A′), and `terminate` retracts its own before it touches the
-     host. A Boat that has been told to forget a VM stops driving it, because the
-     reconciler acts only on VMs it holds a desired record for. The retraction
-     keeps the fence epoch: dropping it would leave the host holding **no** epoch,
-     which is the state any fresh `PUT` satisfies — including a stale one — so a
-     retraction that cleared the fence would hand back exactly the boot the fence
-     exists to refuse. There is still no `server` field in the desired document,
-     so `server == self` remains uncheckable (§11.1).
+     host. The retraction keeps the fence epoch: dropping it would leave the host
+     holding **no** epoch, which is the state any fresh `PUT` satisfies —
+     including a stale one — so a retraction that cleared the fence would hand
+     back exactly the boot the fence exists to refuse. There is still no `server`
+     field in the desired document, so `server == self` remains uncheckable
+     (§11.1).
+
+     **A retracted VM is refused on both paths, and for a while it was refused on
+     only one.** "A Boat that has been told to forget a VM stops driving it"
+     was true of the *reconciler*, which acts only on VMs it holds a desired
+     record for — and false of the nine API *verbs*. `allowedToBoot` read its
+     requested epoch out of the desired record and fell back to the held epoch
+     when there was none, so a retracted UUID compared a number to itself and
+     passed; `start` and `wake` answered 200 and started the guest, on a source
+     whose tree a keep-address repoint leaves in place. That is worth recording
+     rather than quietly fixing, because retraction *removed* a working guard on
+     the way in: before it existed, Atlas's tool for an evacuated source was
+     `PUT desired_power=Stopped`, which both verbs did refuse. An absent desired
+     record is now a refusal in its own right (`fence.ErrNoAuthority`), which is
+     the rule the reconciler always applied and the verbs did not share.
 
      What made this urgent was not migration. `terminate` destroyed a VM and left
      `{epoch, Running}` behind, so the next sweep saw Stopped against Running,
