@@ -593,13 +593,19 @@ def _reissue_pilot_auth_token(fqdn: str) -> None:
 		json.dump(config, f, indent=1)
 
 
-# The local readiness path, per bake mode. site mode serves a Frappe site whose
-# built-in unauthenticated `/api/method/ping` returns 200; admin mode serves the
-# bench-cli admin console — a FLASK app with NO `/api/method/ping` (it would 404),
-# whose unauthenticated health endpoint is `/api/status` (admin/backend app.py
-# `_OPEN_PATHS`). Kept in lockstep with the controller's deploy_site.READINESS_PATH /
-# readiness_path_for_mode.
-_HEALTH_PATH = {"site": "/api/method/ping", "admin": "/api/status"}
+# The local readiness paths, per bake mode, newest spelling first — a probe passes on
+# the FIRST that answers 200. site mode serves a Frappe site whose built-in
+# unauthenticated `/api/method/ping` returns 200; admin mode serves the pilot admin
+# console — a FLASK app with NO `/api/method/ping` (it would 404) — whose
+# unauthenticated health endpoint is `/api/v1/health` on upstream pilot
+# (admin/backend/api/v1/core.py) and was `/api/status` on the pre-`/api/v1` fork, which
+# upstream answers with a 404 `API route not found`. Both are tried so a golden of
+# either vintage passes. Kept in lockstep with the controller's
+# deploy_site.READINESS_PATH / readiness_paths_for_mode.
+_HEALTH_PATHS = {
+	"site": ("/api/method/ping",),
+	"admin": ("/api/v1/health", "/api/status"),
+}
 
 
 def _serving(host_header: str, mode: str) -> bool:
@@ -612,9 +618,13 @@ def _serving(host_header: str, mode: str) -> bool:
 	public /128, so a v6 200 proves the path that matters is wired. The Host header
 	is the FQDN (Contract A); in site mode the multitenant gunicorn resolves the
 	renamed site from it, in admin mode nginx routes it to the admin app. The health
-	PATH is mode-aware (the admin app has no Frappe ping route)."""
-	path = _HEALTH_PATH.get(mode, _HEALTH_PATH["site"])
-	return _local_ping(host_header, "[::1]", path) and _local_ping(host_header, "127.0.0.1", path)
+	PATH is mode-aware (the admin app has no Frappe ping route) and, in admin mode,
+	spelling-tolerant — the first path that answers on BOTH stacks wins."""
+	paths = _HEALTH_PATHS.get(mode, _HEALTH_PATHS["site"])
+	return any(
+		_local_ping(host_header, "[::1]", path) and _local_ping(host_header, "127.0.0.1", path)
+		for path in paths
+	)
 
 
 def _local_ping(site_name: str, host_ip: str, path: str) -> bool:

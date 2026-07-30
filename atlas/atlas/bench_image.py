@@ -73,13 +73,20 @@ def build_bench(virtual_machine: str) -> None:
 #  just the default nginx server. So we probe the internal admin port directly (no
 #  Host header needed; the admin app answers any), reading `[admin].port` from the
 #  guest bench.toml:
-#   * SERVE   — `/api/status` on the admin gunicorn answers 200. Admin stack serving.
+#   * SERVE   — the admin gunicorn's unauthenticated health endpoint answers 200. Admin
+#               stack serving. Upstream pilot serves it at `/api/v1/health`
+#               (`admin/backend/api/v1/core.py`, `@allow_unauthenticated`); the fork the
+#               admin line used to bake off spelled it `/api/status`, which upstream
+#               answers with a 404 `API route not found`. We try the paths in
+#               `_ADMIN_HEALTH_PATHS` and take the first 200, so one probe covers a
+#               golden of either vintage — the same both-spellings discipline
+#               `deploy-site.py::_regrouped` follows for the moved CLI verbs.
 #   * ADMINUI — GET `/` on the admin gunicorn returns 200 AND the served HTML shell
 #               carries the `<title>Pilot</title>` marker (the admin console's own
-#               index.html since the bench-cli → pilot rename). /api/status can be 200
-#               while the console
-#               page is blank/broken (bad asset build, 500 template) — this asserts the
-#               admin URL actually RENDERS, which is what a customer hits after deploy.
+#               index.html since the bench-cli → pilot rename). The health endpoint can
+#               be 200 while the console page is blank/broken (bad asset build, 500
+#               template) — this asserts the admin URL actually RENDERS, which is what a
+#               customer hits after deploy.
 _SANITY_SITE_BLOCK = r"""
 set +e
 H='Host: {site}'
@@ -100,6 +107,12 @@ echo "http_code=$bad_code"
 echo "user=$(grep -c -w Administrator /tmp/atlas_sane_bad.out)"
 """
 
+# The admin console's unauthenticated health endpoint, newest spelling first. Upstream
+# pilot serves `/api/v1/health`; the pre-`/api/v1` fork the admin line used to bake off
+# served `/api/status`. A golden of either vintage must pass this gate, so we take the
+# first path that answers 200 and report THAT path (`serve_path`) for the audit.
+_ADMIN_HEALTH_PATHS = ("/api/v1/health", "/api/status")
+
 # Reads [admin].port from the guest bench.toml SECTION-AWARELY (awk: the first `port`
 # key after the `[admin]` header, stopping at the next section), probes the admin
 # gunicorn at port+1. `{bench_toml}` is the only substitution. The `%{{ }}`
@@ -111,8 +124,15 @@ echo "admin_port=$admin_port"
 internal=$((admin_port + 1))
 echo "internal_port=$internal"
 echo '=== SERVE ==='
-serve_code=$(curl -s -m 20 -o /tmp/atlas_sane_serve.out -w '%{{http_code}}' "http://127.0.0.1:$internal/api/status")
+serve_code=000
+serve_path=
+for p in {admin_health_paths}; do
+	serve_path="$p"
+	serve_code=$(curl -s -m 20 -o /tmp/atlas_sane_serve.out -w '%{{http_code}}' "http://127.0.0.1:$internal$p")
+	[ "$serve_code" = "200" ] && break
+done
 echo "http_code=$serve_code"
+echo "path=$serve_path"
 echo "body=$(head -c 200 /tmp/atlas_sane_serve.out)"
 echo '=== ADMINUI ==='
 adminui_code=$(curl -s -m 20 -o /tmp/atlas_sane_adminui.out -w '%{{http_code}}' "http://127.0.0.1:$internal/")
@@ -137,8 +157,9 @@ def sanity_check(virtual_machine: str, timeout_seconds: int = 120) -> dict:
 	`bench browse`-minted session + a garbage-session rejection; admin mode probes
 	the INTERNAL admin gunicorn (`[admin].port`+1, read from the guest bench.toml —
 	at bake time no `:80` admin vhost exists yet, that is wired per clone at deploy)
-	for serve (`/api/status`) AND that GET `/` renders the admin console page
-	(`<title>Pilot</title>` marker, not a blank/500 shell). Returns the parsed
+	for serve (the first of `_ADMIN_HEALTH_PATHS` that answers 200) AND that GET `/`
+	renders the admin console page (`<title>Pilot</title>` marker, not a blank/500
+	shell). Returns the parsed
 	result dict on success; raises
 	frappe.ValidationError on any failed assertion or a non-zero SSH exit."""
 	vm = frappe.get_doc("Virtual Machine", virtual_machine)
@@ -151,7 +172,10 @@ def sanity_check(virtual_machine: str, timeout_seconds: int = 120) -> dict:
 			site=SANITY_SITE, bench_cli_dir=SANITY_BENCH_CLI_DIR, bench_name=SANITY_BENCH_NAME
 		)
 	else:
-		remote = _SANITY_ADMIN_BLOCK.format(bench_toml=SANITY_BENCH_TOML)
+		remote = _SANITY_ADMIN_BLOCK.format(
+			bench_toml=SANITY_BENCH_TOML,
+			admin_health_paths=" ".join(_ADMIN_HEALTH_PATHS),
+		)
 
 	connection = connection_for_guest(vm)
 	with ssh_key_file(connection.ssh_private_key) as key_path:
@@ -186,6 +210,10 @@ def _parse_sanity(out: str, mode: str) -> dict:
 		"serve_http": grab("=== SERVE", "http_code"),
 		"serve_body": grab("=== SERVE", "body"),
 	}
+	if mode != "site":
+		# WHICH health path answered — the audit record of the golden's vintage
+		# (`/api/v1/health` = upstream pilot, `/api/status` = the old fork).
+		parsed["serve_path"] = grab("=== SERVE", "path")
 	if mode == "site":
 		parsed.update(
 			{
