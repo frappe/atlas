@@ -613,10 +613,76 @@ class TestGuestScriptTypedIO(IntegrationTestCase):
 		command`, not raise — otherwise the companion console is marked Failed and,
 		because its proxy route is created after the mint, never gets routed at all."""
 		guest = self.guest
-		with patch.object(guest, "_bench", side_effect=lambda *a, **k: (_ for _ in ()).throw(
-			self._invalid_choice(a)
-		)):
+		with patch.object(
+			guest, "_bench", side_effect=lambda *a, **k: (_ for _ in ()).throw(self._invalid_choice(a))
+		):
 			self.assertEqual(guest._mint_admin_login_url(), "")
+
+	# ----- _regrouped: one script, two CLI shapes -------------------------
+	# `issue-site-token` and `enroll` are `bench admin <verb>` on the upstream release
+	# the SITE line is pinned to, and top-level on the fork the ADMIN line stays pinned
+	# to (image_recipes._ADMIN_BENCH_CLI_REF — that fork has no `admin` group at all).
+	# The same deploy-site.py runs on both goldens, so it must not assume either shape.
+
+	def test_regrouped_prefers_the_grouped_spelling(self) -> None:
+		"""The upstream shape: the grouped call succeeds, so the legacy spelling is never
+		tried — a pilot that has both must not be hit twice."""
+		guest = self.guest
+		calls = []
+		with patch.object(guest, "_bench", side_effect=lambda *a, **k: calls.append(a) or "tok\n"):
+			self.assertEqual(guest._regrouped("admin", "issue-site-token", "acme", capture=True), "tok\n")
+		self.assertEqual(calls, [("admin", "issue-site-token", "acme")])
+
+	def test_regrouped_falls_back_to_the_legacy_top_level_verb(self) -> None:
+		"""The fork shape: `admin` is not a command at all there, so the grouped call is an
+		unrecognised LEADING verb — pilot hands it to Frappe, which answers with click's
+		`No such command`. That must fall back to the top-level spelling, not fail: a
+		fork-pinned admin golden has to keep deploying."""
+		guest = self.guest
+		calls = []
+
+		def bench(*args, **kwargs):
+			calls.append(args)
+			if args[0] == "admin":
+				raise self._no_such_command(("admin",))
+			return "tok\n"
+
+		with patch.object(guest, "_bench", side_effect=bench):
+			self.assertEqual(guest._regrouped("admin", "issue-site-token", "acme", capture=True), "tok\n")
+		self.assertEqual(calls, [("admin", "issue-site-token", "acme"), ("issue-site-token", "acme")])
+
+	def test_regrouped_fails_loud_when_neither_spelling_exists(self) -> None:
+		"""No degrade: a verb asked for and findable at NO spelling is a bake/pin bug (the
+		fork pin carries no `enroll` at all), so it propagates. Reporting success here
+		would tell Central a bench had enrolled when it never did."""
+		guest = self.guest
+		import subprocess
+
+		with patch.object(
+			guest, "_bench", side_effect=lambda *a, **k: (_ for _ in ()).throw(self._no_such_command(a))
+		):
+			with self.assertRaises(subprocess.CalledProcessError):
+				guest._regrouped("admin", "enroll", "--endpoint", "https://central.example")
+
+	def test_regrouped_does_not_retry_a_real_failure(self) -> None:
+		"""Only a MISSING VERB falls back. A grouped call that reached the verb and broke
+		inside it propagates on the spot — retrying the legacy spelling would run the same
+		side effect twice and bury the real error under an unknown-command one."""
+		guest = self.guest
+		import subprocess
+
+		calls = []
+
+		def bench(*args, **kwargs):
+			calls.append(args)
+			raise subprocess.CalledProcessError(
+				1, ["bench", *args], output="", stderr="jwt_secret unwritable\n"
+			)
+
+		with patch.object(guest, "_bench", side_effect=bench):
+			with self.assertRaises(subprocess.CalledProcessError):
+				guest._regrouped("admin", "enroll", "--endpoint", "https://central.example")
+		self.assertEqual(calls, [("admin", "enroll", "--endpoint", "https://central.example")])
 
 	def test_set_admin_domain_rewrites_toml_and_regenerates(self) -> None:
 		"""Admin mode points the admin vhost at the FQDN by rewriting `domain = ""`
@@ -723,9 +789,14 @@ class TestGuestScriptTypedIO(IntegrationTestCase):
 		m_admin.assert_not_called()
 
 	def test_site_main_enrols_after_admin_domain(self) -> None:
-		"""Ordering invariant: `bench enroll` runs after the admin domain is in place, so the
-		pilot's Central config is written to a bench.toml that already carries the real
-		`[admin].domain` — never the `admin.localhost` placeholder."""
+		"""Ordering invariant: `bench admin enroll` runs after the admin domain is in place,
+		so the pilot's Central config is written to a bench.toml that already carries the
+		real `[admin].domain` — never the `admin.localhost` placeholder.
+
+		Matches the GROUPED verb, which is also the assertion that the call keeps its
+		`admin` prefix: the top-level spelling doesn't fail as an unknown bench command on
+		a v0.0.9+ golden, it is handed to Frappe as a passthrough, so a regression here is
+		invisible unless the prefix itself is what we assert on."""
 		guest = self.guest
 		order = []
 		with (
@@ -740,7 +811,7 @@ class TestGuestScriptTypedIO(IntegrationTestCase):
 			patch.object(
 				guest,
 				"_bench",
-				side_effect=lambda *a, **k: order.append(a[0]) if a and a[0] == "enroll" else None,
+				side_effect=lambda *a, **k: order.append("enroll") if a[:2] == ("admin", "enroll") else None,
 			),
 			patch.object(
 				guest.DeploySiteInputs,

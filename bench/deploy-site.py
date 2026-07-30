@@ -413,9 +413,31 @@ def _missing_verb(error: subprocess.CalledProcessError) -> bool:
 	streams = f"{error.stdout or ''}\n{error.stderr or ''}".lower()
 	if error.returncode != 2:
 		return False
-	return any(
-		phrase in streams for phrase in ("no such command", "unknown command", "invalid choice")
-	)
+	return any(phrase in streams for phrase in ("no such command", "unknown command", "invalid choice"))
+
+
+def _regrouped(group: str, verb: str, *args: str, capture: bool = False) -> str:
+	"""Run a pilot verb that moved under a CLI GROUP, newest spelling first, falling
+	back to the legacy top-level one.
+
+	THIS SCRIPT RUNS ON BOTH PINS. `issue-site-token` and `enroll` are `bench admin
+	<verb>` as of frappe/pilot v0.0.9-pre-alpha, but the admin recipes stay on the
+	pre-regrouping fork (image_recipes._ADMIN_BENCH_CLI_REF) where `issue-site-token` is
+	top-level and there is no `admin` group at all — so on a fork golden the grouped
+	spelling is not a bad subcommand under a known group, it is an unrecognised LEADING
+	verb, which pilot's dispatcher hands to Frappe as a passthrough. `_missing_verb`
+	recognises both wordings, so one fallback covers both shapes and the two pins are
+	free to diverge (which is the whole point of keeping them separate).
+
+	NO degrade here, unlike `_mint_admin_login_url`: a verb we were asked to run and
+	cannot find anywhere is a bake/pin bug, not a poorer handoff — so the second
+	attempt's error propagates and fails the deploy loud."""
+	try:
+		return _bench(group, verb, *args, capture=capture)
+	except subprocess.CalledProcessError as error:
+		if not _missing_verb(error):
+			raise
+	return _bench(verb, *args, capture=capture)
 
 
 def _mint_admin_login_url() -> str:
@@ -537,12 +559,13 @@ def _reissue_pilot_auth_token(fqdn: str) -> None:
 	frappe/pilot v0.0.9-pre-alpha. Pilot registers a grouped command only under its
 	group — there is no top-level alias — and its dispatcher treats an unrecognised
 	leading verb as a FRAPPE PASSTHROUGH, so the old top-level spelling does not fail
-	loudly as an unknown bench command: it is handed to Frappe, which rejects it. Keep
-	this in step with image_recipes._BENCH_CLI_REF."""
+	loudly as an unknown bench command: it is handed to Frappe, which rejects it. Goes
+	through `_regrouped` so the pre-regrouping fork pin (where it is top-level) works
+	too. Keep this in step with image_recipes._BENCH_CLI_REF."""
 	config_path = os.path.join(SITES_DIR, fqdn, "site_config.json")
 	if not os.path.exists(config_path):
 		return
-	token = _bench("admin", "issue-site-token", fqdn, "--ttl", str(365 * 24 * 3600), capture=True).strip()
+	token = _regrouped("admin", "issue-site-token", fqdn, "--ttl", str(365 * 24 * 3600), capture=True).strip()
 	# nosemgrep: frappe-security-file-traversal -- guest script; reads a fixed site_config.json under the baked bench, not untrusted web input
 	with open(config_path) as f:
 		config = json.load(f)
@@ -751,11 +774,19 @@ def main() -> None:
 	# config and writes them into bench.toml (Pilot owns that file). Only the short-lived
 	# token is ever injected here — the durable secret is minted by the pilot itself.
 	# Grouped under `admin` since frappe/pilot v0.0.9-pre-alpha, same as
-	# `admin issue-site-token` above.
+	# `admin issue-site-token` above — and through the same `_regrouped` fallback,
+	# because an admin-mode VM runs this line against the fork pin, which has no
+	# `admin` group (and, at the pinned commit, no `enroll` at either spelling — so
+	# that bake fails loud here rather than reporting an enrolment that never happened).
 	if inputs.central_endpoint and inputs.bootstrap_token:
 		log("enrolling with Central (bench admin enroll) …")
-		_bench(
-			"admin", "enroll", "--endpoint", inputs.central_endpoint, "--bootstrap-token", inputs.bootstrap_token
+		_regrouped(
+			"admin",
+			"enroll",
+			"--endpoint",
+			inputs.central_endpoint,
+			"--bootstrap-token",
+			inputs.bootstrap_token,
 		)
 		log("enrolled with Central")
 
