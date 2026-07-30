@@ -157,9 +157,7 @@ class TestRecipeRegistry(IntegrationTestCase):
 		self.assertEqual({v16.bench_cli_ref, v15.bench_cli_ref, nightly.bench_cli_ref}, {v16.bench_cli_ref})
 		self.assertTrue(v16.bench_cli_ref)
 		# The site line bakes off the UPSTREAM release, not a fork.
-		self.assertEqual(
-			{v16.bench_cli_repo, v15.bench_cli_repo, nightly.bench_cli_repo}, {"frappe/pilot"}
-		)
+		self.assertEqual({v16.bench_cli_repo, v15.bench_cli_repo, nightly.bench_cli_repo}, {"frappe/pilot"})
 		for r in (v16, v15, nightly):
 			self.assertEqual(r.source_directory, "bench")
 			self.assertEqual(r.task_script, "bench-build")

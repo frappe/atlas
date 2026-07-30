@@ -213,13 +213,14 @@ _BENCH_CLI_REF = "v0.0.14-pre-alpha"  # release tag @ frappe/pilot (commit 27c67
 
 # The ADMIN variants stay on the fork pin. `bench generate-admin-session` — the
 # admin-mode login-URL handoff deploy-site.py mints its one-click session with
-# (Pilot #117) — does NOT exist in frappe/pilot v0.0.9-pre-alpha and has no
-# equivalent there, so moving the admin line to the upstream release would break its
+# (Pilot #117) — does NOT exist in any frappe/pilot release up to and including the
+# site pin above, and has no equivalent there, so moving the admin line would break its
 # deploy outright. The admin console is a distinct product from the self-serve site
 # line (see the recipe notes below), so the two pins are allowed to diverge; drop
 # this pair once an upstream release carries a session-minting verb again.
 _ADMIN_BENCH_CLI_REPO = "prathameshkurunkar7/pilot"
-_ADMIN_BENCH_CLI_REF = "c6e5253ef46c23fb1f2f776dc7372c7d39224e42"  # central-billing-client @ prathameshkurunkar7/pilot
+# central-billing-client @ prathameshkurunkar7/pilot
+_ADMIN_BENCH_CLI_REF = "c6e5253ef46c23fb1f2f776dc7372c7d39224e42"
 
 
 def _bench_variant(
