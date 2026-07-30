@@ -228,13 +228,18 @@ class Pilot(Document):
 
 		No-op when ATTACHED: an attached Pilot shares a VM the owning Site created and
 		tears down — terminating it here would double-terminate (and race the Site's own
-		VM teardown). The attached Pilot's teardown is only its Subdomain + its own row."""
+		VM teardown). The attached Pilot's teardown is only its Subdomain + its own row.
+
+		`front_door_terminating` tells the VM this aggregate is already tearing itself
+		down, so it skips `_terminate_front_doors`: this Pilot marks and saves itself in
+		`terminate()`, and re-marking there would emit its status event twice."""
 		if self.attached:
 			return
 		if not self.virtual_machine or not frappe.db.exists("Virtual Machine", self.virtual_machine):
 			return
 		vm = frappe.get_doc("Virtual Machine", self.virtual_machine)
 		if vm.status != "Terminated":
+			vm.flags.front_door_terminating = True
 			vm.terminate()
 
 	@frappe.whitelist()

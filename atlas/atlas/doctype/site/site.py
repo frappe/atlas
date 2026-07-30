@@ -215,11 +215,17 @@ class Site(Document):
 			pilot.terminate()
 
 	def _terminate_backing_vm(self) -> None:
-		"""Terminate the backing VM if one was created and is not already gone."""
+		"""Terminate the backing VM if one was created and is not already gone.
+
+		`front_door_terminating` tells the VM its aggregates are already tearing
+		themselves down, so it skips `_terminate_front_doors` — this Site marks and saves
+		itself below, and the attached Pilot was marked by `_terminate_pilot` above.
+		Without the flag both would be re-marked and their status events emitted twice."""
 		if not self.virtual_machine or not frappe.db.exists("Virtual Machine", self.virtual_machine):
 			return
 		vm = frappe.get_doc("Virtual Machine", self.virtual_machine)
 		if vm.status != "Terminated":
+			vm.flags.front_door_terminating = True
 			vm.terminate()
 
 	@frappe.whitelist()
