@@ -54,9 +54,18 @@ class FrontDoor:
 
 	@property
 	def gateway_url(self) -> str:
-		# The aggregate's name IS the fqdn (Contract A) for both Pilot and Site, so the
-		# front-door URL is `https://<name>` either way — the same value Pilot.gateway_url
-		# derives and Site's `url` uses.
+		# What Central DEEP-LINKS: it opens this URL with a Central-signed `?sid=`, which
+		# only the bench's admin console verifies. So for a Pilot the answer is its
+		# console host, not its name. Those are the same thing for an admin-mode pilot
+		# (including every attached console, whose name already carries `-pilot`), but a
+		# site-mode pilot — a server — is named after the host serving the TENANT SITE,
+		# and that site has no idea what the sid means: opening it drops the user on the
+		# site's login page as Guest instead of in their bench.
+		#
+		# A Site front door has no console of its own; its name IS the fqdn (Contract A)
+		# and its handoff is the one-click `login_url`, not the sid, so it keeps `name`.
+		if self.doc.doctype == "Pilot":
+			return f"https://{self.doc.console_fqdn}"
 		return f"https://{self.doc.name}"
 
 	@property

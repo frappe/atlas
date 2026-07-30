@@ -273,6 +273,24 @@ class TestPilot(IntegrationTestCase):
 		self.assertEqual(pilot_module._create_console_subdomain(pilot), "srv-pilot")
 		self.assertEqual(pilot_module._create_console_subdomain(pilot), "srv-pilot")
 
+	def test_front_door_gateway_is_the_console_in_site_mode(self) -> None:
+		"""`gateway_url` is what Central deep-links with a `?sid=`, and only the console
+		verifies that token — pointing it at a server's site host lands the user on the
+		site's login page as Guest instead of in their bench."""
+		from atlas.atlas.front_door import front_door_for_vm
+
+		pilot = self._site_mode_pilot("srv")
+		front_door = front_door_for_vm(pilot.virtual_machine)
+		self.assertEqual(front_door.gateway_url, "https://srv-pilot.blr1.frappe.dev")
+
+	def test_front_door_gateway_is_the_fqdn_in_admin_mode(self) -> None:
+		"""An admin-mode bench already answers the sid on its own host — unchanged."""
+		from atlas.atlas.front_door import front_door_for_vm
+
+		pilot = self._new_pilot("acme")
+		front_door = front_door_for_vm(pilot.virtual_machine)
+		self.assertEqual(front_door.gateway_url, "https://acme.blr1.frappe.dev")
+
 	def test_console_route_pointing_elsewhere_fails_loud(self) -> None:
 		"""A label already routing to someone else is a real conflict, not something to
 		silently repoint."""
