@@ -83,7 +83,7 @@ class CommandError(RuntimeError):
 		super().__init__(f"command failed (exit {returncode}): {shlex.join(argv)}\n{output}")
 
 
-def run(command: str, *params: object, check: bool = True, quiet: bool = False) -> str:
+def run(command: str, *params: object, check: bool = True, quiet: bool = False, trace: bool = True) -> str:
 	"""Run one command, echo it (the `set -x` trace), return its stdout.
 
 	- `command` reads like a shell line; interpolated values go through `{}`
@@ -102,11 +102,15 @@ def run(command: str, *params: object, check: bool = True, quiet: bool = False) 
 	- The `+ <command>` line goes to stderr so it interleaves with `bash -x`
 	  tracing already in the Task log and never pollutes stdout that a caller
 	  parses (e.g. blockdev --getsize64).
+	- `trace=False` suppresses that `+ <command>` line — for an always-on daemon
+	  that polls the same read-only command every second (atlas-wake-trap.py), where
+	  a per-second trace would flood the journal for no diagnostic value.
 	"""
 	argv = _render(command, params)
-	start = _trace(argv)
+	start = _trace(argv) if trace else 0.0
 	result = subprocess.run(argv, capture_output=True, text=True, check=False)
-	_traced(argv, start)
+	if trace:
+		_traced(argv, start)
 	if result.stderr and not quiet:
 		sys.stderr.write(result.stderr)
 		sys.stderr.flush()

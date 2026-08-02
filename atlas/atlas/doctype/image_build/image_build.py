@@ -20,9 +20,8 @@ from frappe import _
 from frappe.model.document import Document
 
 from atlas.atlas import bench_image
-from atlas.atlas.image_builder import run_build
+from atlas.atlas.image_builder import default_build_base_image, run_build
 from atlas.atlas.image_recipes import get_recipe
-from atlas.atlas.placement import default_image
 from atlas.atlas.ssh import run_task
 
 # The routing identity of a build: what to bake, where, and on which base. Once
@@ -70,14 +69,20 @@ class ImageBuild(Document):
 	def before_insert(self) -> None:
 		"""Resolve the recipe and fill what the operator didn't pick.
 
-		Copy the recipe's human title for the list view, default the base image
-		from Atlas Settings, and start Draft. The build VM is created in the
+		Copy the recipe's human title for the list view, default the base image to a
+		plain base OS image, and start Draft. The build VM is created in the
 		background job (after_insert), not here — provisioning SSHes and must not
-		block the insert."""
+		block the insert.
+
+		The base image is `image_builder.default_build_base_image()`, NOT the
+		customer-facing `placement.default_image()`: a bake must start from plain
+		Ubuntu, and pointing the customer default at a promoted golden (the reason to
+		promote one) would otherwise make every later bake start from the previous
+		golden and skip build.sh's install step entirely."""
 		recipe = get_recipe(self.recipe)
 		self.title = recipe.title
 		if not self.base_image:
-			self.base_image = default_image()
+			self.base_image = default_build_base_image()
 		if self.warm and not recipe.warm_entrypoint:
 			frappe.throw(f"The {recipe.title} recipe has no warm entrypoint; it can only bake cold")
 		if not self.status:

@@ -21,7 +21,7 @@ from atlas.atlas.networking import (
 	resource_limit_args,
 )
 from atlas.atlas.placement import apply_user_defaults, check_resize_capacity
-from atlas.atlas.ssh import run_task
+from atlas.atlas.ssh import run_probe, run_task
 from atlas.atlas.task_results import parse_result
 
 # Never change after insert — identity and the key the rootfs was built with.
@@ -74,12 +74,14 @@ class VirtualMachine(Document):
 		data_disk_mount_point: DF.Data | None
 		disk_gigabytes: DF.Int
 		has_memory_snapshot: DF.Check
+		idle_timeout_seconds: DF.Int
 		image: DF.Link
 		ipv6_address: DF.Data | None
 		is_gateway: DF.Check
 		is_proxy: DF.Check
 		last_started: DF.Datetime | None
 		last_stopped: DF.Datetime | None
+		last_traffic_at: DF.Datetime | None
 		mac_address: DF.Data | None
 		memory_megabytes: DF.Int
 		memory_snapshot_on_stop: DF.Check
@@ -87,8 +89,9 @@ class VirtualMachine(Document):
 		server: DF.Link
 		pilot_credential_id: DF.Data | None
 		size_preset: DF.Literal["Custom", "Shared 1x", "Shared 2x", "Shared 4x", "Shared 8x", "Dedicated 1x"]
+		sleep_on_idle: DF.Check
 		ssh_public_key: DF.LongText
-		status: DF.Literal["Pending", "Running", "Paused", "Stopped", "Failed", "Terminated"]
+		status: DF.Literal["Pending", "Running", "Paused", "Stopped", "Sleeping", "Failed", "Terminated"]
 		stop_protection: DF.Check
 		tap_device: DF.Data | None
 		tenant: DF.Link | None
@@ -237,6 +240,8 @@ class VirtualMachine(Document):
 		# Role exclusivity holds for every save, not just insert — a later db-flip of
 		# is_gateway on a live proxy (or vice versa) is caught here too.
 		self.validate_infra_role()
+		if self.sleep_on_idle and (not self.idle_timeout_seconds or self.idle_timeout_seconds < 120):
+			frappe.throw(_("idle_timeout_seconds must be at least 120 when sleep_on_idle is enabled"))
 		if self.is_new():
 			return
 		original = self.get_doc_before_save()
@@ -267,25 +272,15 @@ class VirtualMachine(Document):
 		)
 		self.status = "Running"
 		self.last_started = frappe.utils.now_datetime()
+		# Seed the idle clock (spec/32) so a freshly provisioned sleep_on_idle VM is
+		# measured from now, not from a null that only the first traffic poll fills.
+		self.last_traffic_at = self.last_started
 		self.save()
-		# The VM's private /128 joins its host's AllowedIPs (design §3, trigger 3): a
-		# provision adds exactly one /128 to one host, changing every OTHER host's mesh
-		# config. Enqueued after commit, so a mesh push failure never rolls back the
-		# provision — the converging reconcile + backstop sweep bring the fabric to match.
-		# No-op for a tenant-less VM (nothing to advertise) and on a Fake/test fleet.
-		self._reconcile_host_mesh()
+		# The VM's private /128 is locally owned by this host; atlas-networkd's
+		# periodic scan (spec/31 §11) detects it via the local-ownership cache
+		# (vm-network-up.py writes it on success) and gossips the advertisement.
+		# No controller-side reconcile — the mesh is self-healing.
 		return task.name
-
-	def _reconcile_host_mesh(self) -> None:
-		"""Enqueue a host-mesh reconcile after a lifecycle change that moves this VM's
-		private /128 on/off the mesh (provision, terminate). No-op for a VM with no
-		tenant (it has no private /128 to advertise), so an operator-created VM never
-		touches the mesh."""
-		if not self.tenant:
-			return
-		from atlas.atlas.host_mesh import enqueue_reconcile_host_mesh
-
-		enqueue_reconcile_host_mesh()
 
 	@frappe.whitelist()
 	def migrate(self, target_server: str, release_reserved_ip: bool = False) -> str:
@@ -376,7 +371,12 @@ class VirtualMachine(Document):
 		instead of cold-booting; the start Task is the same either way — the
 		launcher and the unit's vm-restore.py hook decide from the on-host marker.
 		The snapshot is consumed by the start (restored or not), so the flag
-		clears here unconditionally."""
+		clears here unconditionally.
+
+		A Sleeping VM is woken instead of started — Desk's Start button works for
+		both states transparently."""
+		if self.status == "Sleeping":
+			return self.wake()
 		if self.status != "Stopped":
 			frappe.throw(f"Cannot start from {self.status}")
 		self._guard_no_active_migration()
@@ -390,6 +390,11 @@ class VirtualMachine(Document):
 		self.status = "Running"
 		self.has_memory_snapshot = 0
 		self.last_started = frappe.utils.now_datetime()
+		# Treat the start itself as activity (spec/32). Without this a sleep_on_idle
+		# VM carries the last_traffic_at it had before it stopped — already older
+		# than idle_timeout_seconds — and the next sleep_idle_vms tick puts it
+		# straight back to sleep, within a minute of the operator starting it.
+		self.last_traffic_at = self.last_started
 		self.save()
 		return task.name
 
@@ -421,6 +426,10 @@ class VirtualMachine(Document):
 		(spec/24 §0.5.2). It only applies to the plain (non-snapshot) stop."""
 		# A Paused VM's unit is still active (vCPUs frozen, not shut down), so
 		# `systemctl stop` is the correct full shutdown from either state.
+		# A Sleeping VM's unit is already stopped — wake it first to get it
+		# Running, then call stop() normally.
+		if self.status == "Sleeping":
+			frappe.throw(_("VM is sleeping — wake it first, then stop"))
 		if self.status not in ("Running", "Paused"):
 			frappe.throw(f"Cannot stop from {self.status}")
 		self._guard_no_active_migration()
@@ -461,6 +470,72 @@ class VirtualMachine(Document):
 		self.status = "Stopped"
 		self.has_memory_snapshot = 1 if snapshotted else 0
 		self.last_stopped = frappe.utils.now_datetime()
+		self.save()
+		return task.name
+
+	@frappe.whitelist()
+	def sleep(self) -> str:
+		"""Put a Running VM to sleep: memory snapshot on the host + SLEEPING marker
+		file that suppresses systemd auto-start on host reboot. The VM's cgroup is
+		released, freeing its RAM on the host — that is the whole point.
+
+		Falls back to a plain stop if the snapshot fails (launcher too old, not
+		enough disk, etc.) — the VM always ends up Sleeping; only the next wake's
+		speed differs. sleep_on_idle must be enabled on the VM."""
+		if not self.sleep_on_idle:
+			frappe.throw(_("Enable sleep_on_idle before putting this VM to sleep"))
+		if self.status != "Running":
+			frappe.throw(f"Cannot sleep from {self.status}")
+		self._guard_no_active_migration()
+		if self.stop_protection:
+			frappe.throw(_("Disable stop protection before sleeping this VM"))
+		task = run_task(
+			server=self.server,
+			script="sleep-vm",
+			variables={
+				"VIRTUAL_MACHINE_NAME": self.name,
+				"ATLAS_FC_UID": str(derive_uid(self.name)),
+			},
+			virtual_machine=self.name,
+			timeout_seconds=120,
+		)
+		snapshotted = bool(parse_result(task.stdout)["memory_snapshot"])
+		self.status = "Sleeping"
+		self.has_memory_snapshot = 1 if snapshotted else 0
+		self.last_stopped = frappe.utils.now_datetime()
+		self.save()
+		return task.name
+
+	@frappe.whitelist()
+	def wake(self) -> str:
+		"""Wake a Sleeping VM. Removes the SLEEPING marker on the host so systemd
+		will auto-start it on the next host reboot, then starts the unit. If a
+		memory snapshot is present (has_memory_snapshot), the guest resumes in
+		milliseconds; otherwise it cold-boots."""
+		if self.status != "Sleeping":
+			frappe.throw(f"Cannot wake from {self.status}")
+		# FOR UPDATE holds the row lock for this transaction, preventing two
+		# concurrent wake() calls (e.g. two proxy wake-ups) from both dispatching
+		# a start Task and racing each other.
+		frappe.db.sql("SELECT name FROM `tabVirtual Machine` WHERE name = %s FOR UPDATE", self.name)
+		current_status = frappe.db.get_value("Virtual Machine", self.name, "status")
+		if current_status != "Sleeping":
+			return ""  # Another caller already woke it
+		task = run_task(
+			server=self.server,
+			script="wake-vm",
+			variables={"VIRTUAL_MACHINE_NAME": self.name},
+			virtual_machine=self.name,
+			timeout_seconds=30,
+		)
+		self.status = "Running"
+		self.has_memory_snapshot = 0
+		self.last_started = frappe.utils.now_datetime()
+		# The wake is itself the activity (spec/32) — same reason as start(), and
+		# more acute here: this VM slept *because* last_traffic_at was stale, so
+		# leaving it would guarantee the next idle sweep re-sleeps it. _adopt_wake
+		# stamps the same field for the host-initiated (packet-triggered) wake.
+		self.last_traffic_at = self.last_started
 		self.save()
 		return task.name
 
@@ -545,6 +620,8 @@ class VirtualMachine(Document):
 		  guaranteed-clean image."""
 		# frm.call / REST send `live` as a JSON/stringy value; normalize to bool.
 		live = live in (True, 1, "1", "true", "True", "yes")
+		if self.status == "Sleeping":
+			frappe.throw(_("Cannot snapshot a Sleeping VM — wake it first, stop it, then snapshot"))
 		if live:
 			if self.status not in ("Running", "Paused"):
 				frappe.throw(
@@ -1010,12 +1087,59 @@ class VirtualMachine(Document):
 		self._delete_custom_domains()
 		self._delete_snapshots()
 		self._deprovision_proxy()
-		# The VM's private /128 leaves its host's AllowedIPs (design §3, trigger 3, and
-		# the §8 teardown fix: withdraw the /128 from peers on teardown, not only on
-		# provision). status is now Terminated, so _residents_by_host excludes it and the
-		# reconcile drops it fleet-wide. Enqueued after commit, no-op for a tenant-less VM.
-		self._reconcile_host_mesh()
+		self._terminate_front_doors()
+		# The VM's private /128 leaves the local-ownership cache (vm-network-down.py
+		# removes it on teardown); atlas-networkd's scan detects the change and gossips
+		# the withdrawal (spec/31 §11). No controller-side reconcile.
 		return task.name
+
+	def _terminate_front_doors(self) -> None:
+		"""Mark every aggregate backed by this VM Terminated, and push that status.
+
+		A `Pilot`/`Site` is the AUTHORITATIVE status Central mirrors for a bench VM
+		(`front_door.FrontDoor.status`, `central_report.on_vm_update`, which suppresses the
+		raw VM status for exactly these VMs). The aggregate→VM direction was wired —
+		`Pilot.terminate()` tears down its VM — but the VM→aggregate direction was not, so
+		terminating the VM DIRECTLY left the aggregate claiming Running forever. That is
+		not a corner: it is what Central's own `terminate_server` does (it invokes the
+		action on the Virtual Machine), and what the desk's Terminate button on a VM does.
+
+		Nothing corrected it afterwards, either: `vm.deleted` fires from `on_trash` and
+		Atlas never deletes the row (terminate is a status flip), and the reconcile pull
+		(`api.inventory.tenant_vms`) reports the FRONT DOOR's status — so it re-asserted
+		Running rather than repairing it. The result was a tenant seeing a dead server
+		listed as Running, with Open minting a session for a gateway that answers nothing.
+
+		Both aggregates, not just the handoff owner: a self-serve VM carries a Site AND
+		its attached Pilot (`front_doors_for_vm`), and leaving either behind reproduces the
+		bug on that half. `db_set` skips `on_update`, so the status event is emitted
+		explicitly — the same gap `report_pilot_status` / `report_site_status` exist to
+		close. Delivery is best-effort by design (a queued POST); a Central that is down
+		must not fail a terminate, so emission is guarded but the status write is not.
+
+		Skipped when the aggregate is the one doing the terminating (`Pilot.terminate()` /
+		`Site.terminate()` set `flags.front_door_terminating` before calling us): it marks
+		and saves itself, and re-marking here would fire the same event twice."""
+		if self.flags.get("front_door_terminating"):
+			return
+		from atlas.atlas.front_door import front_doors_for_vm
+
+		for door in front_doors_for_vm(self.name):
+			doc = door.doc
+			if doc.status == "Terminated":
+				continue
+			doc.db_set("status", "Terminated")
+			try:
+				from atlas.atlas import central_report
+
+				if doc.doctype == "Pilot":
+					central_report.report_pilot_status(doc)
+				else:
+					central_report.report_site_status(doc)
+			except Exception:
+				# The status is already persisted; a reporting failure must not undo the
+				# terminate. Central's own reconcile now reads the corrected status.
+				frappe.log_error(title=f"front-door terminate report failed: {doc.doctype} {doc.name}")
 
 	def _deprovision_proxy(self) -> None:
 		"""If this VM fronted traffic as a proxy, drop it out of the fleet on terminate
@@ -1138,7 +1262,19 @@ class VirtualMachine(Document):
 		currently referenced by Atlas Settings.default_bench_snapshot — and every
 		Available WARM snapshot, the same durable-artifact contract: a warm golden is
 		the per-server fan-out source and outlives its build VM by design (its own
-		on_trash removes the LV + memory pair when the operator retires it)."""
+		on_trash removes the LV + memory pair when the operator retires it).
+
+		A snapshot RECORDED AS AN IMAGE BUILD'S OUTPUT is durable for the same reason,
+		and this is the case the two exceptions above missed. A COLD bake's snapshot is
+		neither the registered golden nor warm, so `terminate_build_vm` — an ordinary
+		checkbox on the very form that offers **Promote** — used to delete the artifact
+		the promote needs, seconds after the build reported `Available`. What was left
+		was an Image Build pointing at a row that no longer exists, so Promote failed
+		with a bare "Virtual Machine Snapshot <name> not found" that reads as data
+		corruption rather than "you asked for this". Two staging bakes died that way
+		before the cause was found. Retiring a promoted image is the operator's
+		explicit call (delete the snapshot, or the Image Build first), never a side
+		effect of reaping the scratch VM."""
 		golden = frappe.db.get_single_value("Atlas Settings", "default_bench_snapshot")
 		for row in frappe.get_all(
 			"Virtual Machine Snapshot",
@@ -1149,11 +1285,13 @@ class VirtualMachine(Document):
 				continue
 			if row.kind == "Warm" and row.status == "Available":
 				continue
-			# force=1: a bake's snapshot is linked from its Image Build row, and
-			# delete_doc runs on_trash (host artifact removal, non-transactional)
-			# BEFORE the link check — a plain delete would destroy the artifacts
-			# and then abort on the link, stranding the row. The Image Build keeps
-			# a dangling audit link instead.
+			if frappe.db.exists("Image Build", {"snapshot": row.name}):
+				continue
+			# force=1: delete_doc runs on_trash (host artifact removal,
+			# non-transactional) BEFORE the link check, so a plain delete on a linked
+			# row would destroy the artifacts and then abort on the link, stranding
+			# the row. Nothing that survives to here is an Image Build's output (the
+			# guard above), so force only covers incidental links.
 			frappe.delete_doc("Virtual Machine Snapshot", row.name, ignore_permissions=True, force=1)
 
 	def _ipv4_link_variables(self) -> dict:
@@ -1335,3 +1473,141 @@ def auto_provision(virtual_machine_name: str) -> None:
 	if virtual_machine.status != "Pending":
 		return
 	virtual_machine.provision()
+
+
+def poll_vm_traffic() -> None:
+	"""Scheduled job (*/1 * * * *): for each server with sleep_on_idle Running VMs,
+	dispatch a poll-vm-traffic Task and stamp last_traffic_at on active VMs."""
+	import json
+
+	vms = frappe.get_all(
+		"Virtual Machine",
+		filters={"status": "Running", "sleep_on_idle": 1},
+		fields=["name", "server", "ipv6_address"],
+	)
+	if not vms:
+		return
+
+	by_server: dict = {}
+	for vm in vms:
+		by_server.setdefault(vm.server, []).append(vm)
+
+	now = frappe.utils.now_datetime()
+	for server, server_vms in by_server.items():
+		vms_json = json.dumps([{"name": vm.name, "ipv6_address": vm.ipv6_address} for vm in server_vms])
+		# run_probe, not run_task: a read-only poll on every server every minute
+		# would bury the Task log in rows nobody reads. It logs its own failures
+		# and returns "" instead of raising, so one bad server can't abort the rest.
+		stdout = run_probe(
+			server=server,
+			script="poll-vm-traffic",
+			variables={"VMS_JSON": vms_json},
+			timeout_seconds=30,
+		)
+		if not stdout:
+			continue
+		counters = parse_result(stdout).get("counters", {})
+		for vm_name, counter in counters.items():
+			if counter.get("active"):
+				frappe.db.set_value("Virtual Machine", vm_name, "last_traffic_at", now)
+
+
+def sleep_idle_vms() -> None:
+	"""Scheduled job (*/1 * * * *): find Running sleep_on_idle VMs whose
+	last_traffic_at is older than their idle_timeout_seconds and put them to sleep.
+	The per-minute poll (poll_vm_traffic) keeps last_traffic_at fresh; this sweeper
+	acts on the staleness."""
+	vms = frappe.get_all(
+		"Virtual Machine",
+		filters={"status": "Running", "sleep_on_idle": 1},
+		fields=["name", "last_traffic_at", "idle_timeout_seconds"],
+	)
+	for vm_data in vms:
+		if not vm_data.last_traffic_at:
+			continue
+		elapsed = (frappe.utils.now_datetime() - vm_data.last_traffic_at).total_seconds()
+		if elapsed < (vm_data.idle_timeout_seconds or 300):
+			continue
+		# Re-read BOTH fields the decision rests on, not just status: the batch read
+		# above is a snapshot, and poll_vm_traffic can stamp last_traffic_at between
+		# it and here. Acting on the stale timestamp would sleep a VM that just went
+		# active — self-correcting (the next SYN wakes it) but a real interruption.
+		current = frappe.db.get_value(
+			"Virtual Machine", vm_data.name, ["status", "last_traffic_at"], as_dict=True
+		)
+		if current.status != "Running":
+			continue
+		if not current.last_traffic_at or (
+			frappe.utils.now_datetime() - current.last_traffic_at
+		).total_seconds() < (vm_data.idle_timeout_seconds or 300):
+			continue  # traffic arrived since the batch read
+		try:
+			vm = frappe.get_doc("Virtual Machine", vm_data.name)
+			vm.sleep()
+		except Exception:
+			pass  # Failures are recorded in the Task row; don't abort the sweep
+
+
+def reconcile_sleeping_vms() -> None:
+	"""Scheduled job (*/1 * * * *, BEFORE sleep_idle_vms): flip a Sleeping VM to
+	Running once the host has woken it on its own — the DB catch-up for a
+	packet-triggered wake (spec/32 sleepy VMs).
+
+	atlas-wake-trap.py on the host wakes a Sleeping VM the moment it receives an
+	inbound TCP SYN (removing the `sleeping` marker + starting the unit), but the
+	host cannot reach into Atlas's DB. This probes each server's sleeping VMs for the
+	marker's absence and mirrors that back into the status, so the DB drifts by at
+	most one minute while the guest is reachable throughout. Ordered before
+	sleep_idle_vms so a same-tick idle sweep sees the fresh last_traffic_at and does
+	not immediately re-sleep a just-woken VM."""
+	import json
+
+	vms = frappe.get_all(
+		"Virtual Machine",
+		filters={"status": "Sleeping"},
+		fields=["name", "server"],
+	)
+	if not vms:
+		return
+
+	by_server: dict = {}
+	for vm in vms:
+		by_server.setdefault(vm.server, []).append(vm.name)
+
+	now = frappe.utils.now_datetime()
+	for server, names in by_server.items():
+		# run_probe, not run_task — see poll_vm_traffic: read-only, once a minute
+		# per server with any sleeping VM, and its rows would be pure noise.
+		stdout = run_probe(
+			server=server,
+			script="probe-woken-vms",
+			variables={"VMS_JSON": json.dumps(names)},
+			timeout_seconds=30,
+		)
+		if not stdout:
+			continue
+		woken = parse_result(stdout).get("woken", {})
+		for name, is_woken in woken.items():
+			if is_woken:
+				_adopt_wake(name, now)
+
+
+def _adopt_wake(name: str, now) -> None:
+	"""Record a host-initiated wake in the DB, race-safe against an operator wake().
+	Takes the same row lock wake() uses and re-reads status inside it, so whichever
+	of the two commits first flips Sleeping->Running and the other no-ops. Sets the
+	same fields wake() does: last_started + last_traffic_at (so sleep_idle_vms won't
+	immediately re-sleep it) and clears has_memory_snapshot (the wake consumed it)."""
+	frappe.db.sql("SELECT name FROM `tabVirtual Machine` WHERE name = %s FOR UPDATE", name)
+	if frappe.db.get_value("Virtual Machine", name, "status") != "Sleeping":
+		return  # operator wake() (or a previous tick) already adopted it
+	frappe.db.set_value(
+		"Virtual Machine",
+		name,
+		{
+			"status": "Running",
+			"last_started": now,
+			"last_traffic_at": now,
+			"has_memory_snapshot": 0,
+		},
+	)

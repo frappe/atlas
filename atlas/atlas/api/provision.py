@@ -38,6 +38,9 @@ def create_vm(
 	disk_gigabytes: int,
 	cpu_max_cores: float | None = None,
 	frappe_version: str | None = None,
+	pilot_credential_id: str | None = None,
+	central_endpoint: str | None = None,
+	bootstrap_token: str | None = None,
 ) -> dict:
 	"""Provision a bench VM for a Central team and return its (VM-shaped) mirror row.
 
@@ -80,7 +83,31 @@ def create_vm(
 	# The VM spec rides the insert (flags → after_insert) to the VM the Pilot creates;
 	# it is never persisted on the Pilot row, which stores only bench-level state.
 	pilot.flags.vm_spec = spec
+	# Same carriage for the pilot credential as `api.site.create_site`: Central mints the
+	# id + the endpoint/token the bench calls back with, and they ride the insert (flags →
+	# after_insert → the provision job) to their real homes — pilot_credential_id onto the
+	# backing VM (echoed to Central on vm.* events), the endpoint/token into the bench's
+	# bench.toml at deploy, where `bench admin enroll` exchanges the token for the bench's
+	# long-lived credential. Without them the guest never enrolls and Central refuses to
+	# open the console ("This VM's pilot hasn't enrolled yet") — servers were missing this
+	# entirely while sites had it.
+	pilot.flags.pilot_credential_id = pilot_credential_id
+	pilot.flags.central_endpoint = central_endpoint
+	pilot.flags.bootstrap_token = bootstrap_token
 	pilot.insert(ignore_permissions=True)
+
+	# Stamp the credential id on the backing VM HERE, synchronously, rather than leaving it
+	# to the provision job. The Pilot's after_insert already created the VM (that is why
+	# this function can return its identity), so the row exists — and doing it inline means
+	# the very first `vm.*` event Atlas emits already carries the id, which is what lets
+	# Central bind its reserved Pilot Credential to this VM. Deferring it to the background
+	# job loses the earliest events, and Central then has an Active credential with no
+	# `asset`, which `api/sso.get_bench_link` reads as "This VM's pilot hasn't enrolled
+	# yet" even though the bench enrolled perfectly well.
+	if pilot_credential_id and pilot.virtual_machine:
+		frappe.db.set_value(
+			"Virtual Machine", pilot.virtual_machine, "pilot_credential_id", pilot_credential_id
+		)
 
 	# The Pilot created its VM in after_insert; read the plain VM facts through the
 	# link and the bench fields off the Pilot. Shape matches central.atlas._mirror_vm
@@ -102,35 +129,6 @@ def create_vm(
 		# ground truth — not merely what it requested.
 		"frappe_version": version_from_image(vm.image),
 	}
-
-
-@frappe.whitelist()
-def regenerate_vm_login(name: str) -> dict:
-	"""Re-mint a bench VM's one-click login URL and return its (VM-shaped) mirror row.
-
-	Central calls this on Open when the Asset's stored URL has expired or never
-	arrived (the admin JWT lasts 5 minutes, so a login is almost always a fresh mint).
-	Central knows the VM only — it mirrors VMs — but the login URL lives on the front
-	door that owns the VM (a `Pilot` for a bench, a `Site` for a self-serve site), not
-	the pure-microVM `Virtual Machine`. So this resolves the VM to its front door,
-	re-mints in the guest via its `regenerate_login_url` (re-stamps + commits), then
-	returns the VM-shaped payload — always the Asset shape Central re-reads, whichever
-	aggregate backs the VM (the Site's own regenerate returns a site-shaped mirror; the
-	Asset caller needs the VM shape keyed by VM id, so we re-derive it here).
-
-	Raises if the VM has no front door (a plain proxy/operator VM has no login to
-	regenerate) — Central only ever calls this for a bench/site Asset.
-	"""
-	from atlas.atlas.central_report import _vm_payload
-	from atlas.atlas.front_door import front_door_for_vm
-
-	front_door = front_door_for_vm(name)
-	if front_door is None:
-		frappe.throw(f"No bench or site front door backs VM {name}.")
-	front_door.regenerate_login_url()
-	# Re-read the VM: its front door just committed the fresh login_url, and _vm_payload
-	# reads the handoff back through that front door — the VM-shaped Asset mirror row.
-	return _vm_payload(frappe.get_doc("Virtual Machine", name))
 
 
 @frappe.whitelist()

@@ -211,6 +211,102 @@ class TestPilot(IntegrationTestCase):
 		self.assertEqual(subdomain.virtual_machine, pilot.virtual_machine)
 		self.assertTrue(subdomain.active)
 
+	# ----- the admin console's front door (issue #128) --------------------
+
+	def _site_mode_pilot(self, subdomain: str = "srv"):
+		"""A stand-alone pilot off a SITE-mode image — what `create_server` provisions.
+		Its bench_fqdn serves the baked site, so the console needs a host of its own."""
+		image = fixtures.make_image("fake-bench-site-image", build_mode="site")
+		return fixtures.make_pilot(
+			subdomain,
+			vm_spec={"server": self.server.name, "image": image.name},
+			tenant=ensure_tenant(TEAM),
+		)
+
+	def test_console_fqdn_falls_back_to_the_bench_host_in_admin_mode(self) -> None:
+		"""An admin-mode bench IS the console, so it needs no separate host."""
+		pilot = self._new_pilot("acme")
+		self.assertEqual(pilot.build_mode, "admin")
+		self.assertEqual(pilot.console_fqdn, pilot.bench_fqdn)
+
+	def test_console_fqdn_is_suffixed_in_site_mode(self) -> None:
+		"""A server's bench_fqdn serves the site, so its console gets `<label>-pilot`."""
+		pilot = self._site_mode_pilot("srv")
+		self.assertEqual(pilot.build_mode, "site")
+		self.assertEqual(pilot.bench_fqdn, "srv.blr1.frappe.dev")
+		self.assertEqual(pilot.console_fqdn, "srv-pilot.blr1.frappe.dev")
+
+	def test_provision_routes_the_console_host_in_site_mode(self) -> None:
+		"""The console's host needs its own proxy route or it resolves nowhere — before
+		this, a server got only its site's route and the console was unreachable."""
+		pilot = self._site_mode_pilot("srv")
+		self._drive_provision(pilot)
+		console = frappe.db.get_value("Subdomain", "srv-pilot", ["virtual_machine", "active"], as_dict=True)
+		self.assertIsNotNone(console)
+		self.assertEqual(console.virtual_machine, pilot.virtual_machine)
+		self.assertTrue(console.active)
+
+	def test_provision_adds_no_console_route_in_admin_mode(self) -> None:
+		"""The admin-mode console is already on bench_fqdn — a second row would just
+		collide with the one `_create_subdomain` inserted."""
+		pilot = self._new_pilot("acme")
+		self._drive_provision(pilot)
+		self.assertFalse(frappe.db.exists("Subdomain", "acme-pilot"))
+
+	def test_deploy_wires_the_console_host_as_admin_domain(self) -> None:
+		"""Site mode only writes `[admin].domain` when the deploy is told a host; without
+		it the guest keeps the baked `admin.localhost` placeholder."""
+		pilot = self._site_mode_pilot("srv")
+		# The Fake server short-circuits _deploy before it reaches deploy_site (both are
+		# imported inside the function, so patch them at their source modules).
+		with (
+			patch("atlas.atlas.providers.fake_tasks.is_fake_server", return_value=False),
+			patch("atlas.atlas.deploy_site.deploy_site", return_value={}) as m_deploy,
+		):
+			pilot_module._deploy(pilot)
+		self.assertEqual(m_deploy.call_args.kwargs["admin_domain"], "srv-pilot.blr1.frappe.dev")
+
+	def test_console_route_is_idempotent_across_a_retry(self) -> None:
+		"""Retry = re-run: re-driving a provision must not die on the console row's
+		duplicate key when the route is already live."""
+		pilot = self._site_mode_pilot("srv")
+		self.assertEqual(pilot_module._create_console_subdomain(pilot), "srv-pilot")
+		self.assertEqual(pilot_module._create_console_subdomain(pilot), "srv-pilot")
+
+	def test_front_door_gateway_is_the_console_in_site_mode(self) -> None:
+		"""`gateway_url` is what Central deep-links with a `?sid=`, and only the console
+		verifies that token — pointing it at a server's site host lands the user on the
+		site's login page as Guest instead of in their bench."""
+		from atlas.atlas.front_door import front_door_for_vm
+
+		pilot = self._site_mode_pilot("srv")
+		front_door = front_door_for_vm(pilot.virtual_machine)
+		self.assertEqual(front_door.gateway_url, "https://srv-pilot.blr1.frappe.dev")
+
+	def test_front_door_gateway_is_the_fqdn_in_admin_mode(self) -> None:
+		"""An admin-mode bench already answers the sid on its own host — unchanged."""
+		from atlas.atlas.front_door import front_door_for_vm
+
+		pilot = self._new_pilot("acme")
+		front_door = front_door_for_vm(pilot.virtual_machine)
+		self.assertEqual(front_door.gateway_url, "https://acme.blr1.frappe.dev")
+
+	def test_console_route_pointing_elsewhere_fails_loud(self) -> None:
+		"""A label already routing to someone else is a real conflict, not something to
+		silently repoint."""
+		pilot = self._site_mode_pilot("srv")
+		other = fixtures.make_virtual_machine(self.server, self.admin_image)
+		frappe.get_doc(
+			{
+				"doctype": "Subdomain",
+				"subdomain": "srv-pilot",
+				"virtual_machine": other.name,
+				"active": 1,
+			}
+		).insert(ignore_permissions=True)
+		with self.assertRaises(frappe.ValidationError):
+			pilot_module._create_console_subdomain(pilot)
+
 	def test_provision_failure_marks_failed_and_raises(self) -> None:
 		pilot = self._new_pilot("acme")
 		frappe.db.set_value("Virtual Machine", pilot.virtual_machine, "status", "Running")

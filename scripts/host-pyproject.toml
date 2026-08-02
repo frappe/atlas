@@ -12,7 +12,13 @@ name = "atlas-scripts"
 version = "0.0.0"
 description = "Atlas host-side provisioning scripts and the `atlas` host CLI"
 requires-python = ">=3.14"
-dependencies = []
+# atlas-networkd signs every Membership/Ownership record with the origin host's
+# ed25519 key (spec/31 §19.3 defense-in-depth). The key is generated on first
+# boot alongside the wg keypair (Issue A close-out). `cryptography` is already
+# a direct Frappe dep on the controller; declaring it here makes the host
+# install self-contained (uv resolves it at install time). Keep these two
+# pyproject.toml files in lockstep (this and scripts/pyproject.toml).
+dependencies = ["cryptography>=42"]
 
 [project.scripts]
 atlas = "atlas._cli:main"

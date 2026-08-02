@@ -77,6 +77,13 @@ class ImageRecipe:
 	# bench.toml as-committed), which is exactly the proxy recipe's situation.
 	frappe_branch: str = ""
 	erpnext_branch: str = ""
+	# The GitHub `org/repo` the bench-cli is cloned from, paired with `bench_cli_ref`
+	# below. build.sh fetches install.sh from `raw.githubusercontent.com/<repo>/<ref>/`
+	# and re-points the clone's origin at `<repo>` before checking `<ref>` out, so a
+	# ref that only exists in one of upstream/fork is unreachable unless the repo
+	# travels with it — the two must always be set together. Empty means "use
+	# build.sh's own committed default".
+	bench_cli_repo: str = ""
 	bench_cli_ref: str = ""
 	python_version: str = ""
 	# What the bake produces and a clone's FQDN maps to on first boot (spec/08):
@@ -181,16 +188,37 @@ _BENCH_DISK_GB = 28
 # resize DOWN to _BENCH_MEMORY_MB before the snapshot (image_build.run / bootstrap).
 _BENCH_BUILD_MEMORY_MB = 6144
 
-# The proven bench-cli commit (main @ 2026-06-25, incl. the two-path install.sh,
-# `bench rename-site`, and the IPv6-listeners commit dd14ad4) every bench variant
-# builds with. bench-cli is the build *tool*, not the
-# framework: it reads the Frappe branch + Python version from bench.toml and natively
-# knows `version-15`/`version-16`/`develop` (core/app.py), so ONE ref bakes all three
-# variants — the version lives in the per-recipe pins below, not in the tool. Pinned
-# (not `main`) so the golden is reproducible; a variant can override it if a future
-# Frappe release needs a newer bench-cli. Kept in lockstep with bench/build.sh's
-# BENCH_CLI_REF default (the value a direct `build.sh` run uses with no env override).
-_BENCH_CLI_REF = "c6e5253ef46c23fb1f2f776dc7372c7d39224e42"  # central-billing-client @ prathameshkurunkar7/pilot (Central billing client)
+# The pilot EVERY recipe builds with — site line and admin line alike — installed the
+# way pilot's README documents (`install.sh` off `develop`, which lays down the latest
+# release). pilot is the build *tool*, not the framework: it reads the Frappe branch +
+# Python version from bench.toml and natively knows `version-15`/`version-16`/`develop`
+# (core/app.py), so ONE install bakes all the variants — the framework version lives in
+# the per-recipe pins below, not in the tool.
+#
+# `_BENCH_CLI_REF` is EMPTY = unpinned, matching bench/build.sh's default (what a
+# direct `build.sh` run with no env override does). install.sh's release path has no
+# way to request a specific release, so a pin here was never enforceable — only
+# detectable after the fact, and asserting it broke three bakes in a row as upstream
+# cut releases underneath them. The bake RECORDS the version it got instead
+# (`ATLAS_BUILD_BENCH_CLI_REF` → the Image Build's audit), so an image is always
+# identifiable even though it is not pinnable in advance. Set the pair to bake off a
+# fork or an older release; keep them together, since a ref only resolves against the
+# repo it lives in.
+#
+# The `bench admin` GROUP is the surface this depends on: `enroll`, `set-central-config`
+# and `issue-site-token` all live under it (pilot registry.py registers a grouped
+# command ONLY under its group — no top-level alias; an unrecognised leading verb is
+# treated as a Frappe passthrough instead). bench/deploy-site.py calls them through the
+# group for exactly that reason.
+#
+# The ADMIN variants used to hold a separate FORK pin for `bench generate-admin-session`,
+# the in-guest one-click session mint. Upstream ships no such verb and does not need to:
+# an enrolled bench trusts CENTRAL's JWKS, so Central mints the console's `?sid=` link
+# itself (central/api/sso.get_bench_link) and the in-guest verb is redundant.
+# deploy-site.py degrades to the baked `[admin].password` when it finds none, so the
+# admin line rides the same documented install as everything else.
+_BENCH_CLI_REPO = "frappe/pilot"
+_BENCH_CLI_REF = ""  # unpinned: take what the documented install delivers
 
 
 def _bench_variant(
@@ -203,6 +231,8 @@ def _bench_variant(
 	build_mode: str = "site",
 	registers_as: str | None = None,
 	warm_entrypoint: str = "",
+	bench_cli_repo: str = _BENCH_CLI_REPO,
+	bench_cli_ref: str = _BENCH_CLI_REF,
 ) -> ImageRecipe:
 	"""A versioned golden bench recipe. The three customer variants (v15/v16/nightly)
 	differ ONLY in their Frappe/ERPNext branch + Python pins, the bake mode, and their
@@ -232,7 +262,8 @@ def _bench_variant(
 		task_script="bench-build",
 		frappe_branch=frappe_branch,
 		erpnext_branch=erpnext_branch,
-		bench_cli_ref=_BENCH_CLI_REF,
+		bench_cli_repo=bench_cli_repo,
+		bench_cli_ref=bench_cli_ref,
 		python_version=python_version,
 		build_mode=build_mode,
 		registers_as=registers_as,
@@ -302,7 +333,9 @@ RECIPES: dict[str, "ImageRecipe"] = {
 	# `default_bench_snapshot` a self-serve site clones). They promote to their own
 	# series name (`bench-v16-admin` etc.) so the Central catalog links them by
 	# name-match alongside the site variants; a customer picks an admin VM through the
-	# ordinary `image` field. ---
+	# ordinary `image` field. All three ride the SAME documented pilot install as the
+	# site line (_BENCH_CLI_REPO/_REF) — the fork pin they used to carry existed only
+	# for `bench generate-admin-session`, which Central's own SSO mint replaced. ---
 	"bench-v16-admin": _bench_variant(
 		"bench-v16-admin",
 		"Bench v16 (admin)",

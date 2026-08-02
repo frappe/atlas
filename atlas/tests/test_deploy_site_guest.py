@@ -128,9 +128,13 @@ class ReissuePilotAuthTokenTest(unittest.TestCase):
 	def test_reissues_token_scoped_to_fqdn(self) -> None:
 		config = self._make_site("acme.blr1.frappe.dev")
 		self.mod._reissue_pilot_auth_token("acme.blr1.frappe.dev")
+		# Grouped under `admin` since frappe/pilot v0.0.9-pre-alpha. The top-level
+		# spelling is NOT an unknown-command error on a v0.0.9 golden — pilot's dispatch
+		# hands an unrecognised leading verb to Frappe as a passthrough, so asserting the
+		# group prefix is what keeps this from regressing back to a confusing Frappe error.
 		self.assertEqual(
 			self.calls,
-			[("issue-site-token", "acme.blr1.frappe.dev", "--ttl", str(365 * 24 * 3600))],
+			[("admin", "issue-site-token", "acme.blr1.frappe.dev", "--ttl", str(365 * 24 * 3600))],
 		)
 		data = json.loads(config.read_text())
 		self.assertEqual(data["pilot_auth_token"], "jwt.for.fqdn")

@@ -153,9 +153,14 @@ class TestRecipeRegistry(IntegrationTestCase):
 		self.assertEqual(
 			(nightly.frappe_branch, nightly.erpnext_branch), ("feature/cloud-settings", "develop")
 		)
-		# All three share the proven bench-cli ref + the bench source tree + sizing.
+		# All three share the pilot repo + ref + the bench source tree + sizing.
 		self.assertEqual({v16.bench_cli_ref, v15.bench_cli_ref, nightly.bench_cli_ref}, {v16.bench_cli_ref})
-		self.assertTrue(v16.bench_cli_ref)
+		# UNPINNED: the documented install always lays down the latest release, so a ref
+		# here could never be enforced — build.sh records what it got instead. An empty
+		# ref is also what keeps BENCH_CLI_REF out of the build env entirely (_build_env).
+		self.assertEqual(v16.bench_cli_ref, "")
+		# Every bench recipe bakes off UPSTREAM pilot, not a fork.
+		self.assertEqual({v16.bench_cli_repo, v15.bench_cli_repo, nightly.bench_cli_repo}, {"frappe/pilot"})
 		for r in (v16, v15, nightly):
 			self.assertEqual(r.source_directory, "bench")
 			self.assertEqual(r.task_script, "bench-build")
@@ -228,7 +233,12 @@ class TestRecipeRegistry(IntegrationTestCase):
 				(site.frappe_branch, site.erpnext_branch, site.python_version),
 			)
 			self.assertEqual(admin.source_directory, "bench")
+			# The admin twin rides the SAME documented upstream pilot install as its site
+			# twin. It used to hold a fork pin for `bench generate-admin-session`; Central
+			# mints the console sid itself now, so nothing is left to diverge for.
+			self.assertEqual(admin.bench_cli_repo, site.bench_cli_repo)
 			self.assertEqual(admin.bench_cli_ref, site.bench_cli_ref)
+			self.assertEqual(admin.bench_cli_repo, "frappe/pilot")
 
 	def test_proxy_recipe_shape(self) -> None:
 		self.assertEqual(_PROXY.task_script, "proxy-build")
@@ -584,17 +594,31 @@ class TestRenderBenchToml(IntegrationTestCase):
 
 
 class TestBuildCommand(IntegrationTestCase):
-	def test_env_carries_cli_ref_and_erpnext_branch(self) -> None:
+	def test_env_omits_the_cli_ref_when_unpinned(self) -> None:
+		"""An empty recipe ref must not export BENCH_CLI_REF at all. build.sh treats an
+		empty ref as "take what the documented install delivers", so exporting the key
+		with an empty value would be the same thing — but exporting nothing keeps the
+		build command honest about which knobs the recipe actually turns."""
 		env = image_builder._build_env(_V15)
-		self.assertEqual(env["BENCH_CLI_REF"], _V15.bench_cli_ref)
+		self.assertEqual(_V15.bench_cli_ref, "")
+		self.assertNotIn("BENCH_CLI_REF", env)
 		self.assertEqual(env["ERPNEXT_BRANCH"], "version-15")
+
+	def test_env_carries_cli_repo_alongside_ref(self) -> None:
+		"""The repo must ride with the ref: build.sh resolves install.sh and the
+		origin re-point off BENCH_CLI_REPO, so exporting a ref alone would resolve it
+		against the committed default repo — the wrong tree whenever they disagree."""
+		env = image_builder._build_env(_V15)
+		self.assertEqual(env["BENCH_CLI_REPO"], _V15.bench_cli_repo)
+		self.assertEqual(env["BENCH_CLI_REPO"], "frappe/pilot")
 
 	def test_proxy_env_is_empty(self) -> None:
 		self.assertEqual(image_builder._build_env(_PROXY), {})
 
 	def test_command_exports_env_and_passes_mode(self) -> None:
 		command = image_builder._build_command(_V16)
-		self.assertIn(f"export BENCH_CLI_REF={_V16.bench_cli_ref}", command)
+		self.assertNotIn("BENCH_CLI_REF", command)
+		self.assertIn(f"export BENCH_CLI_REPO={_V16.bench_cli_repo}", command)
 		self.assertIn("export ERPNEXT_BRANCH=version-16", command)
 		# Ends with `… build.sh site` (the bake mode, the entrypoint's positional arg).
 		self.assertTrue(command.rstrip().endswith("build.sh site"), command)
@@ -645,7 +669,7 @@ class TestUploadsWithRenderedToml(IntegrationTestCase):
 			image_builder.run_build(vm.name, _V15)
 		# The detached build command carries the version env + bake mode.
 		command = run_detached.call_args.args[2]
-		self.assertIn(f"export BENCH_CLI_REF={_V15.bench_cli_ref}", command)
+		self.assertIn(f"export BENCH_CLI_REPO={_V15.bench_cli_repo}", command)
 		self.assertIn("export ERPNEXT_BRANCH=version-15", command)
 		self.assertTrue(command.rstrip().endswith("build.sh site"))
 		# The bench.toml that was scp'd is the rendered (v15) one, not the committed v16.

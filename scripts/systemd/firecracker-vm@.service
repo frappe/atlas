@@ -2,6 +2,11 @@
 Description=Atlas Firecracker VM %i
 After=network-online.target
 Wants=network-online.target
+# Do not auto-start a sleeping VM on host reboot. sleep-vm.py writes this
+# marker after stopping the unit; wake-vm.py removes it before starting.
+# ConditionPathNotExists prevents the unit from starting while the file
+# exists, without disabling WantedBy (so wake-vm.py's systemctl start works).
+ConditionPathNotExists=/var/lib/atlas/virtual-machines/%i/sleeping
 
 [Service]
 Type=simple

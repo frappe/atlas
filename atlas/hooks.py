@@ -243,6 +243,11 @@ scheduler_events = {
 	"cron": {
 		"*/1 * * * *": [
 			"atlas.atlas.central_report.retry_pending",
+			"atlas.atlas.doctype.virtual_machine.virtual_machine.poll_vm_traffic",
+			# BEFORE sleep_idle_vms: adopt any host-initiated (packet-triggered) wake so
+			# a just-woken VM is Running with fresh last_traffic_at before the idle sweep.
+			"atlas.atlas.doctype.virtual_machine.virtual_machine.reconcile_sleeping_vms",
+			"atlas.atlas.doctype.virtual_machine.virtual_machine.sleep_idle_vms",
 		],
 		"*/10 * * * *": [
 			"atlas.atlas.providers.worker.reconcile_pending_servers",
@@ -251,14 +256,19 @@ scheduler_events = {
 			"atlas.atlas.migration.reconcile_migrations",
 			"atlas.atlas.export.reconcile_image_exports",
 		],
-		# The WireGuard host-mesh backstop sweep (design §3): re-reconcile the whole
-		# fabric so a rebooted / rebuilt / drifted host self-heals without operator
-		# action. The mesh is the live cross-host forwarding plane, so a missed
-		# lifecycle-event push is a PARTITION, not a stale row — this converging sweep is
-		# the safety net that heals it. Idempotent and cheap when in sync (a byte-compare
-		# per host); a no-op on a Fake/test fleet (no real hosts to SSH). Every 5 minutes.
+		# Controller-side liveness BACKSTOP for the decentralized mesh. Retiring
+		# the centralized `*/5` host-mesh reconcile for the host-local
+		# atlas-networkd daemon (spec/31) removed the only controller-side signal
+		# that a host's daemon is down — a host whose atlas-networkd is failed /
+		# masked / disabled silently drops its VMs off the private mesh with no
+		# operator signal. This sweep OBSERVES each Active host with a read-only
+		# `systemctl is-active atlas-networkd` probe and FLAGS the unhealthy ones
+		# (Error Log + WARNING). It does NOT reconfigure anything, so it does not
+		# re-centralize the networking control plane — the mesh stays self-healing;
+		# this is a smoke detector, not a thermostat. Same `*/5` cadence the
+		# retired reconcile ran on.
 		"*/5 * * * *": [
-			"atlas.atlas.host_mesh.reconcile_all_host_meshes",
+			"atlas.atlas.providers.worker.check_networkd_liveness",
 		],
 	},
 }

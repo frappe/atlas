@@ -66,7 +66,7 @@ def _write_powerdns_credentials(domain: str) -> None:
 		handle.write(f"dns_pdns_endpoint = {api_url}\n")
 		handle.write(f"dns_pdns_api_key = {api_key}\n")
 		handle.write(f"dns_pdns_server_id = {server_id}\n")
-		handle.write(f"dns_pdns_disable_notify = false\n")
+		handle.write("dns_pdns_disable_notify = false\n")
 	os.chmod(path, 0o600)
 
 

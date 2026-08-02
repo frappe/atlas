@@ -541,6 +541,53 @@ class TestTerminateKeepsWarmGoldens(IntegrationTestCase):
 		self.assertTrue(frappe.db.exists("Virtual Machine Snapshot", warm.name))
 		self.assertFalse(frappe.db.exists("Virtual Machine Snapshot", cold.name))
 
+	def test_delete_snapshots_keeps_an_image_builds_output(self) -> None:
+		"""A COLD bake's snapshot is neither the registered golden nor warm, so before
+		this guard `terminate_build_vm` deleted the very artifact `Image Build.promote()`
+		needs — leaving the build pointing at a row that no longer exists. Retiring a
+		bake artifact is an explicit operator act, never a side effect of reaping the
+		scratch VM."""
+		server = _ensure_server()
+		image = make_image("bake-output-image").name
+		vm = frappe.get_doc(
+			{
+				"doctype": "Virtual Machine",
+				"title": "build vm",
+				"server": server,
+				"image": image,
+				"vcpus": 2,
+				"memory_megabytes": 2048,
+				"disk_gigabytes": 12,
+				"ssh_public_key": "k",
+			}
+		).insert(ignore_permissions=True)
+		baked = frappe.get_doc(
+			{
+				"doctype": "Virtual Machine Snapshot",
+				"title": "bake output",
+				"virtual_machine": vm.name,
+				"server": server,
+				"status": "Available",
+				"rootfs_path": "/dev/atlas/atlas-snap-bake",
+			}
+		).insert(ignore_permissions=True)
+		build = frappe.get_doc(
+			{
+				"doctype": "Image Build",
+				"recipe": "bench-v16",
+				"server": server,
+				"base_image": image,
+				"status": "Available",
+			}
+		).insert(ignore_permissions=True)
+		build.db_set("snapshot", baked.name)
+		with patch(
+			"atlas.atlas.doctype.virtual_machine_snapshot.virtual_machine_snapshot.run_task",
+			return_value=fake_task(),
+		):
+			vm._delete_snapshots()
+		self.assertTrue(frappe.db.exists("Virtual Machine Snapshot", baked.name))
+
 
 if __name__ == "__main__":
 	unittest.main()

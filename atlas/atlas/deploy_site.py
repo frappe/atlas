@@ -62,20 +62,28 @@ RESULT_MARKER = "ATLAS_RESULT="
 #             `/`, not the API). Probed for the FQDN Host header (Contract A) so
 #             multitenant routing is exercised, not just "some site answers".
 #   * admin — the admin console is a FLASK app, not a Frappe site, so it has NO
-#             `/api/method/ping` (that would 404 forever). `/api/status` is the
-#             admin app's unauthenticated health endpoint (bench-cli admin/backend
-#             app.py `_OPEN_PATHS` + `@app.route("/api/status")`, 200 unauthenticated);
-#             the `_admin.conf` vhost proxies `location /` to the admin gunicorn, so
-#             nginx routes `/api/status` straight through.
+#             `/api/method/ping` (that would 404 forever). Its unauthenticated health
+#             endpoint is `/api/v1/health` on upstream pilot (admin/backend/api/v1/
+#             core.py, `@allow_unauthenticated`); the fork the admin line used to bake
+#             off spelled it `/api/status`, which upstream answers with a 404
+#             `API route not found`. Both are probed, newest first, so a golden of
+#             either vintage reaches Running — the same both-spellings discipline
+#             `bench/deploy-site.py::_regrouped` follows for the moved CLI verbs. The
+#             `_admin.conf` vhost proxies `location /` to the admin gunicorn, so nginx
+#             routes either straight through.
 READINESS_PATH = "/api/method/ping"  # site mode (back-compat default for callers passing no path)
-_READINESS_PATH_FOR_MODE = {"site": "/api/method/ping", "admin": "/api/status"}
+_READINESS_PATHS_FOR_MODE = {
+	"site": ("/api/method/ping",),
+	"admin": ("/api/v1/health", "/api/status"),
+}
 READINESS_TIMEOUT_SECONDS = 600
 
 
-def readiness_path_for_mode(build_mode: str | None) -> str:
-	"""The HTTP readiness path for a bench bake mode. Empty/None/unknown → site (the
-	harmless default — every ordinary VM and every site-mode golden uses it)."""
-	return _READINESS_PATH_FOR_MODE.get((build_mode or "site"), READINESS_PATH)
+def readiness_paths_for_mode(build_mode: str | None) -> tuple[str, ...]:
+	"""The HTTP readiness paths for a bench bake mode, newest spelling first — a probe
+	succeeds on the FIRST that answers 200. Empty/None/unknown → site (the harmless
+	default: every ordinary VM and every site-mode golden uses it)."""
+	return _READINESS_PATHS_FOR_MODE.get((build_mode or "site"), (READINESS_PATH,))
 
 
 # Initial poll, then geometric backoff to READINESS_MAX_POLL_SECONDS. A warm clone
@@ -95,7 +103,7 @@ def deploy_site(
 	virtual_machine: str,
 	site_name: str,
 	central_endpoint: str | None = None,
-	central_auth_token: str | None = None,
+	bootstrap_token: str | None = None,
 	mode: str | None = None,
 	admin_domain: str | None = None,
 ) -> dict | None:
@@ -184,13 +192,14 @@ def deploy_site(
 		# --warm-vm-uuid.
 		if vm.warm_snapshot:
 			command += substitute(" --warm-vm-uuid {}", (vm.name,))
-		# Central handoff: the pilot's bench-level callback endpoint + token, threaded from
-		# create_site (never stored on the Site). deploy-site.py writes them into the
-		# bench's bench.toml so pilot→Central calls authenticate.
-		if central_endpoint and central_auth_token:
+		# Central handoff: the endpoint + a single-use bootstrap token, threaded from
+		# create_site (never stored on the Site). deploy-site.py runs `bench enroll` with
+		# them, so the pilot exchanges the token for its own long-lived credential — the
+		# durable secret is never injected here.
+		if central_endpoint and bootstrap_token:
 			command += substitute(
-				" --central-endpoint {} --central-auth-token {}",
-				(central_endpoint, central_auth_token),
+				" --central-endpoint {} --bootstrap-token {}",
+				(central_endpoint, bootstrap_token),
 			)
 		_trace(
 			f"running deploy-site.py in guest ({'warm' if vm.warm_snapshot else 'cold'}, mode={build_mode}) …"
@@ -257,7 +266,7 @@ def wait_for_http(
 	host_header: str,
 	*,
 	port: int = 80,
-	path: str = READINESS_PATH,
+	path: str | tuple[str, ...] = READINESS_PATH,
 	timeout_seconds: int = READINESS_TIMEOUT_SECONDS,
 	poll_seconds: float = READINESS_POLL_SECONDS,
 	max_poll_seconds: float = READINESS_MAX_POLL_SECONDS,
@@ -276,18 +285,24 @@ def wait_for_http(
 	The controller is off-host, so this is an honest end-to-end probe over the same
 	path the proxy uses — not a host-local shortcut.
 
+	`path` may be a single path or a tuple of them (`readiness_paths_for_mode`); with
+	a tuple the guest is ready as soon as ANY of them answers 200, which is how one
+	probe covers goldens whose pilot spells the admin health endpoint differently.
+
 	The poll starts at `poll_seconds` and backs off geometrically to
 	`max_poll_seconds`: a warm clone answers the first probe, so the tight start
 	removes the old flat-5s granularity from the readiness wait. Raises
 	frappe.ValidationError on timeout."""
+	paths = (path,) if isinstance(path, str) else tuple(path)
 	deadline = time.monotonic() + timeout_seconds
 	poll = poll_seconds
 	while True:
-		if _http_ok(ipv6_address, host_header, port, path):
+		if any(_http_ok(ipv6_address, host_header, port, p) for p in paths):
 			return
 		if time.monotonic() >= deadline:
 			raise frappe.ValidationError(
-				f"HTTP 200 from {host_header} ([{ipv6_address}]:{port}{path}) not seen after {timeout_seconds}s"
+				f"HTTP 200 from {host_header} ([{ipv6_address}]:{port}{'|'.join(paths)}) "
+				f"not seen after {timeout_seconds}s"
 			)
 		time.sleep(poll)
 		poll = min(poll * 1.5, max_poll_seconds)

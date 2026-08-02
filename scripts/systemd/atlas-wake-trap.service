@@ -1,0 +1,23 @@
+[Unit]
+Description=Atlas wake-on-TCP trap for sleeping VMs
+# Wakes a Sleeping VM when it receives an inbound TCP SYN (spec/32-sleepy-vms.md):
+# polls the per-VM nft `wake_<uuid>` counters atlas.park installs and does the local
+# wake on the first packet. Needs the uplink up (it re-parks proxy-NDP/routes on
+# boot) and the local fs (the sleeping markers + network.env it re-parks from). Not
+# ordered Before=firecracker-vm@.service: a sleeping VM is suppressed on boot anyway
+# (ConditionPathNotExists), and the daemon's startup sweep re-parks it.
+After=network-online.target local-fs.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# The durable atlas package lives under /var/lib/atlas/bin (placed by bootstrap);
+# the daemon's own sys.path shim adds that dir. Runs under the Atlas venv python
+# (/var/lib/atlas/venv/bin/python), like every other hook/unit — bootstrap's sanity
+# gate py_compiles it on that interpreter first.
+ExecStart=/var/lib/atlas/venv/bin/python /var/lib/atlas/bin/atlas-wake-trap.py
+Restart=always
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target

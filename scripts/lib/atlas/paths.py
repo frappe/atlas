@@ -197,6 +197,22 @@ class VirtualMachinePaths:
 		return "firecracker.socket"
 
 	@property
+	def sleeping_marker(self) -> str:
+		"""Present while the VM is sleeping: suppresses systemd auto-start on host
+		reboot (ConditionPathNotExists in the unit) and is the authority for the
+		Sleeping status. Written by sleep-vm.py after stop; removed by wake-vm.py
+		before start. Lives outside the jail so terminate's rm -rf sweeps it with
+		the VM directory."""
+		return f"{self.directory}/sleeping"
+
+	@property
+	def traffic_counter_file(self) -> str:
+		"""Last-seen nftables byte total for this VM, written by poll-vm-traffic.py.
+		Stores JSON {"bytes": N} so per-minute polls compute deltas on the host and
+		return only active:bool to the controller."""
+		return f"{self.directory}/traffic-counter.json"
+
+	@property
 	def systemd_unit(self) -> str:
 		"""The per-VM systemd instance name."""
 		return f"firecracker-vm@{self.uuid}.service"

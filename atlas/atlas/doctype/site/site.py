@@ -126,7 +126,7 @@ class Site(Document):
 			# the backing VM + the bench's bench.toml. Flags are set by create_site.
 			pilot_credential_id=self.flags.get("pilot_credential_id"),
 			central_endpoint=self.flags.get("central_endpoint"),
-			central_auth_token=self.flags.get("central_auth_token"),
+			bootstrap_token=self.flags.get("bootstrap_token"),
 		)
 
 	# ----- validation -----------------------------------------------------
@@ -215,11 +215,17 @@ class Site(Document):
 			pilot.terminate()
 
 	def _terminate_backing_vm(self) -> None:
-		"""Terminate the backing VM if one was created and is not already gone."""
+		"""Terminate the backing VM if one was created and is not already gone.
+
+		`front_door_terminating` tells the VM its aggregates are already tearing
+		themselves down, so it skips `_terminate_front_doors` — this Site marks and saves
+		itself below, and the attached Pilot was marked by `_terminate_pilot` above.
+		Without the flag both would be re-marked and their status events emitted twice."""
 		if not self.virtual_machine or not frappe.db.exists("Virtual Machine", self.virtual_machine):
 			return
 		vm = frappe.get_doc("Virtual Machine", self.virtual_machine)
 		if vm.status != "Terminated":
+			vm.flags.front_door_terminating = True
 			vm.terminate()
 
 	@frappe.whitelist()
@@ -301,7 +307,7 @@ def auto_provision(
 	site_name: str,
 	pilot_credential_id: str | None = None,
 	central_endpoint: str | None = None,
-	central_auth_token: str | None = None,
+	bootstrap_token: str | None = None,
 ) -> None:
 	"""Background-job entrypoint (enqueued by after_insert). Drives the whole
 	create_site→live-site flow for one Site:
@@ -321,9 +327,12 @@ def auto_provision(
 	beat the proxy sync.
 
 	On any failure the Site is marked Failed (fail loud) and the exception is
-	re-raised so the Task/job log carries it. No-op if the Site has moved past
-	Pending (operator intervened, a manual retry raced us). Steps 4-5 are plan
-	03's contract — this owns the orchestration, 03 owns the script + probe.
+	re-raised so the Task/job log carries it. The ONE exception is the companion
+	admin console attached after step 5 (`_attach_pilot_console`): it is a second,
+	additive front door on the same VM, so its failure is logged and the tenant site
+	still reaches Running. No-op if the Site has moved past Pending (operator
+	intervened, a manual retry raced us). Steps 4-5 are plan 03's contract — this owns
+	the orchestration, 03 owns the script + probe.
 
 	Every status transition is committed (`_set_status`) so Central sees progress
 	cross-transaction (the `site.status_changed` event + the `get_site` poll)."""
@@ -385,7 +394,7 @@ def auto_provision(
 		pilot_label = pilot_subdomain_for(site.subdomain)
 		admin_domain = f"{pilot_label}.{active_root_domain().domain}"
 		clock.stage("deploy site in guest (wait_for_ssh + run deploy-site.py)")
-		result = _deploy_site(site, vm_name, central_endpoint, central_auth_token, admin_domain)
+		result = _deploy_site(site, vm_name, central_endpoint, bootstrap_token, admin_domain)
 		# The tenant handoff is the one-click login URL `deploy-site.py` minted
 		# (`bench browse --sid`, a real 24h session) — NOT a password; the baked
 		# Administrator password is a long random secret generated at bake time and
@@ -406,11 +415,10 @@ def auto_provision(
 		# `<subdomain>-pilot.<region>` — the front door Central's Asset resolves for
 		# "Open" (front_door_for_vm prefers Pilot). The customer's Frappe site is this
 		# Site (get_site); the Pilot is the admin console on the same bench. Done AFTER
-		# the site serves (the VM is up + the admin app is installed on every golden) and
-		# BEFORE Running so a console-wiring failure fails the whole site loud. See
+		# the site serves (the VM is up + the admin app is installed on every golden). See
 		# spec/14-self-serve.md.
 		clock.stage("attach Pilot admin console (proxy route + admin login)")
-		_provision_pilot(site, vm_name, pilot_label)
+		_attach_pilot_console(site, vm_name, pilot_label)
 		_set_status(site, "Running")
 		clock.done()
 	except Exception:
@@ -554,7 +562,7 @@ def _deploy_site(
 	site,
 	vm_name: str,
 	central_endpoint: str | None = None,
-	central_auth_token: str | None = None,
+	bootstrap_token: str | None = None,
 	admin_domain: str | None = None,
 ) -> dict:
 	"""Run deploy-site.py in the guest: rename the baked `site.local` dir to the FQDN
@@ -577,9 +585,7 @@ def _deploy_site(
 	vm = frappe.get_doc("Virtual Machine", vm_name)
 	if is_fake_server(vm.server):
 		return {"site": site.name, "serving": True, "login_url": f"https://{site.name}/app?sid=fake-sid"}
-	return (
-		deploy_site(vm_name, site.name, central_endpoint, central_auth_token, admin_domain=admin_domain) or {}
-	)
+	return deploy_site(vm_name, site.name, central_endpoint, bootstrap_token, admin_domain=admin_domain) or {}
 
 
 def _regenerate_login(site, vm_name: str) -> dict:
@@ -607,20 +613,21 @@ def _wait_for_http(site, vm_name: str) -> None:
 	Seam for the `wait_for_http` probe over the VM's public /128. Passes
 	the site FQDN as the Host header (Contract A) so the bench's multitenant nginx
 	routes the probe to THIS site, not just any site on the VM. The readiness PATH is
-	mode-aware: `/api/method/ping` for a site-mode clone, `/api/status` for an
-	admin-mode clone (the admin console is a Flask app with no Frappe ping route) —
-	resolved from the clone's `build_mode`.
+	mode-aware: `/api/method/ping` for a site-mode clone, the admin console's health
+	endpoint for an admin-mode clone (a Flask app with no Frappe ping route; both the
+	upstream and the legacy spelling are tried) — resolved from the clone's
+	`build_mode`.
 
 	A Fake-backed VM's documentation /128 never answers, so the probe is skipped
 	there (the same `is_fake_server` gate `_deploy_site` and `run_task` use) — the
 	readiness gate is the deploy's twin, both no-ops on a Fake VM."""
-	from atlas.atlas.deploy_site import readiness_path_for_mode, wait_for_http
+	from atlas.atlas.deploy_site import readiness_paths_for_mode, wait_for_http
 	from atlas.atlas.providers.fake_tasks import is_fake_server
 
 	vm = frappe.get_doc("Virtual Machine", vm_name)
 	if is_fake_server(vm.server):
 		return
-	wait_for_http(vm.ipv6_address, site.name, path=readiness_path_for_mode(vm.build_mode))
+	wait_for_http(vm.ipv6_address, site.name, path=readiness_paths_for_mode(vm.build_mode))
 
 
 def _create_subdomain(site, vm_name: str) -> str:
@@ -637,6 +644,37 @@ def _create_subdomain(site, vm_name: str) -> str:
 		}
 	).insert(ignore_permissions=True)
 	return subdomain.name
+
+
+def _attach_pilot_console(site, vm_name: str, pilot_label: str) -> str | None:
+	"""Attach the companion admin console — and never let ITS failure fail the tenant site.
+
+	The console is a SECOND front door on the same backing VM (`_provision_pilot`), and
+	it is strictly additive: by the time we reach it the tenant's own site has already
+	deployed, cleared the Contract-B readiness gate, and is serving HTTP 200. So a
+	console that can't be wired — this golden's bench-cli carries no session-minting
+	verb, the mint itself broke, the console's Subdomain insert raced — is a DEGRADED
+	handoff, not a failed provision: the tenant still reaches their site, and the
+	console itself is still reachable at its own FQDN with the baked
+	`[admin].password`. Letting it propagate marked the Site Failed while the site it
+	names was serving perfectly — the failure mode this closes.
+
+	Nothing is swallowed quietly: the Pilot's own row records it (`deploy_attached`
+	marks the Pilot Failed and commits before re-raising) and the traceback lands in
+	the Error Log. Returns the Pilot name, or None when the console failed.
+
+	This is the ONLY step of `auto_provision` that degrades. Everything before it —
+	the clone, the boot wait, the Subdomain, the site's own deploy, the readiness
+	gate — is the tenant site itself and stays fail-loud."""
+	try:
+		return _provision_pilot(site, vm_name, pilot_label)
+	except Exception:
+		frappe.log_error(
+			f"Admin console {pilot_label} for site {site.name} failed to attach; the site is "
+			f"unaffected and stays Running: {frappe.get_traceback()}",
+			"Site admin console",
+		)
+		return None
 
 
 def _provision_pilot(site, vm_name: str, pilot_label: str) -> str:

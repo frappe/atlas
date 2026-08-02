@@ -59,7 +59,12 @@
   "last_started",
   "column_break_activity",
   "last_stopped",
-  "has_memory_snapshot"
+  "has_memory_snapshot",
+  "section_break_sleep",
+  "sleep_on_idle",
+  "idle_timeout_seconds",
+  "column_break_sleep",
+  "last_traffic_at"
  ],
  "fields": [
   {
@@ -106,7 +111,7 @@
    "in_list_view": 1,
    "in_standard_filter": 1,
    "label": "Status",
-   "options": "Pending\nRunning\nPaused\nStopped\nFailed\nTerminated",
+   "options": "Pending\nRunning\nPaused\nStopped\nSleeping\nFailed\nTerminated",
    "read_only": 1,
    "reqd": 1
   },
@@ -428,6 +433,38 @@
    "fieldname": "has_memory_snapshot",
    "fieldtype": "Check",
    "label": "Has Memory Snapshot",
+   "read_only": 1
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "section_break_sleep",
+   "fieldtype": "Section Break",
+   "label": "Sleep Settings"
+  },
+  {
+   "default": "0",
+   "description": "When set, the scheduler will automatically put this VM to sleep after idle_timeout_seconds of no network activity (measured by nftables byte counters). A sleeping VM frees its host RAM without losing state — the next Start resumes it in milliseconds via a memory snapshot.",
+   "fieldname": "sleep_on_idle",
+   "fieldtype": "Check",
+   "label": "Sleep on Idle"
+  },
+  {
+   "default": "300",
+   "depends_on": "sleep_on_idle",
+   "description": "Seconds of no network activity before the VM is put to sleep. Minimum 120 (validated on save). The scheduler polls every minute, so actual idle time is between idle_timeout_seconds and idle_timeout_seconds + 60 seconds.",
+   "fieldname": "idle_timeout_seconds",
+   "fieldtype": "Int",
+   "label": "Idle Timeout (seconds)"
+  },
+  {
+   "fieldname": "column_break_sleep",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Last time the per-minute traffic poll detected network activity on this VM. The scheduler compares this to idle_timeout_seconds to decide when to sleep it.",
+   "fieldname": "last_traffic_at",
+   "fieldtype": "Datetime",
+   "label": "Last Traffic At",
    "read_only": 1
   },
   {

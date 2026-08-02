@@ -334,6 +334,37 @@ class TestSiteOrchestration(IntegrationTestCase):
 		self.assertTrue(site.deploying_started)
 		self.assertFalse(site.running_started)
 
+	def test_admin_console_failure_leaves_the_site_running(self) -> None:
+		"""The companion admin console is a SECOND, additive front door on a VM whose
+		site already deployed and answered the readiness gate — so a console that can't
+		be wired (this golden's bench-cli carries no session-minting verb, the mint
+		broke, its Subdomain raced) must NOT flip the tenant Site to Failed. It is
+		logged and the Site reaches Running with its own login URL intact."""
+		site = _new_site("acme")
+		with (
+			patch.object(site_module, "_provision_backing_vm", return_value="cloned-vm"),
+			patch.object(site_module, "_wait_for_vm_running"),
+			patch.object(
+				site_module,
+				"_deploy_site",
+				return_value={"login_url": f"https://{site.name}/app?sid=tok"},
+			),
+			patch.object(site_module, "_wait_for_http"),
+			patch.object(site_module, "_create_subdomain", return_value="sub-1"),
+			patch.object(site_module, "_provision_pilot", side_effect=RuntimeError("no session verb")),
+			patch.object(site_module.frappe, "log_error") as m_log,
+			patch.object(site_module.frappe.db, "commit"),
+		):
+			site_module.auto_provision(site.name)
+		site.reload()
+		self.assertEqual(site.status, "Running")
+		self.assertTrue(site.running_started)
+		# The tenant's own handoff is untouched; only the console is missing.
+		self.assertEqual(site.login_url, f"https://{site.name}/app?sid=tok")
+		self.assertFalse(site.pilot)
+		# Not swallowed quietly — the operator gets the traceback in the Error Log.
+		m_log.assert_called_once()
+
 	def test_commits_after_clone_so_boot_job_can_run(self) -> None:
 		"""Regression: the clone's boot runs in a SEPARATE after_insert job that
 		cannot start until auto_provision commits. If we don't commit after the

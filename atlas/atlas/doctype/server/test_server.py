@@ -1,12 +1,36 @@
 from unittest.mock import patch
 
 import frappe
+from frappe.model.document import Document
 from frappe.tests import IntegrationTestCase
 
 from atlas.atlas.networking import carve_virtual_machine_range
 from atlas.atlas.ssh import Connection
 from atlas.tests._mocks import fake_task
 from atlas.tests.fixtures import make_provider, make_server
+
+
+def _bootstrap_ssh_side_effect(server):
+	"""A `patch` side_effect for `run_ssh` during `Server.bootstrap()` tests.
+
+	`_write_ancp_bootstrap_state`'s read-back canary cats
+	`/etc/atlas-networkd/signing-public-key` and asserts the on-disk pub
+	equals `Server.signing_public_key`. With a flat `return_value` mock that
+	returns the same tuple for every call, the cat returns `"ok"` — which
+	never matches the real ed25519 pubkey the controller signed — and the
+	canary fires `frappe.throw`, aborting bootstrap long before the assertions
+	about install.sh ordering and `run_task` invocation can run. Route the
+	cat call to the test's own `Server.signing_public_key` (which the
+	controller just wrote via `install -m 0644 /dev/stdin`) and keep
+	`("ok", "", 0)` for everything else."""
+
+	def side_effect(*args, **_kwargs):
+		remote_command = args[2] if len(args) > 2 else None
+		if remote_command and remote_command.startswith("sudo cat /etc/atlas-networkd/signing-public-key"):
+			return ((server.signing_public_key or "") + "\n", "", 0)
+		return ("ok", "", 0)
+
+	return side_effect
 
 
 class TestNetworking(IntegrationTestCase):
@@ -47,7 +71,9 @@ class TestServerBootstrap(IntegrationTestCase):
 		# its own test; here we assert the install.sh ordering in isolation.
 		with patch.object(server_module.Server, "_ship_dashboard"):
 			with patch.object(server_module, "upload_files") as upload:
-				with patch.object(server_module, "run_ssh", return_value=("ok", "", 0)) as run_ssh:
+				with patch.object(
+					server_module, "run_ssh", side_effect=_bootstrap_ssh_side_effect(self.server)
+				) as run_ssh:
 					with patch.object(server_module, "run_task", return_value=task) as run:
 						with patch.object(
 							server_module,
@@ -58,8 +84,10 @@ class TestServerBootstrap(IntegrationTestCase):
 
 		upload.assert_called_once()
 		# install.sh is SSHed after the upload, before the bootstrap Task.
-		run_ssh.assert_called_once()
-		self.assertIn("/var/lib/atlas/bin/install.sh", run_ssh.call_args.args[2])
+		# There may be additional SSH calls (e.g. operator-public-key write);
+		# verify install.sh is among them and is the very first one.
+		first_call = run_ssh.call_args_list[0]
+		self.assertIn("/var/lib/atlas/bin/install.sh", first_call.args[2])
 		run.assert_called_once()
 
 	def test_bootstrap_aborts_if_install_sh_fails(self) -> None:
@@ -122,7 +150,9 @@ class TestServerBootstrap(IntegrationTestCase):
 
 		with patch.object(server_module.Server, "_ship_dashboard"):
 			with patch.object(server_module, "upload_files"):
-				with patch.object(server_module, "run_ssh", return_value=("ok", "", 0)):
+				with patch.object(
+					server_module, "run_ssh", side_effect=_bootstrap_ssh_side_effect(self.server)
+				):
 					with patch.object(server_module, "run_task", return_value=task):
 						with patch.object(
 							server_module,
@@ -365,3 +395,88 @@ class TestServerImmutability(IntegrationTestCase):
 		blank.save(ignore_permissions=True)
 		blank.reload()
 		self.assertEqual(blank.ipv4_address, "10.0.0.77")
+
+
+class TestServerSigningKeyBackfill(IntegrationTestCase):
+	"""M9 — a legacy Server (bootstrapped before the ed25519 signing fields
+	existed) must never leave an empty `signing_public_key` in the fleet: the
+	backfill patch fills it, and the seed builder never emits an empty entry that
+	would force the broken §19.5 relayed-introduction path (spec/31 §19.4/§19.5)."""
+
+	def _make_legacy_server(self, title: str, resource_id: str, hextet: str) -> Document:
+		"""An Active Server with its signing keypair blanked out on disk — the
+		legacy shape. `validate()` auto-generates the keypair on insert, so we
+		clear both fields via `db.set_value` (which bypasses validate) to recreate
+		a row that predates the fields."""
+		frappe.db.delete("Server", {"title": title})
+		server = make_server(
+			make_provider(f"test-provider-{title}"),
+			title,
+			provider_resource_id=resource_id,
+			ipv4_address=f"10.0.0.{resource_id}",
+			ipv6_address=f"2a03:b0c0:abcd:{hextet}::1",
+			ipv6_prefix=f"2a03:b0c0:abcd:{hextet}::/64",
+			ipv6_virtual_machine_range=f"2a03:b0c0:abcd:{hextet}::/124",
+			status="Active",
+		)
+		frappe.db.set_value("Server", server.name, "signing_public_key", "", update_modified=False)
+		frappe.db.set_value("Server", server.name, "signing_private_key", "", update_modified=False)
+		return frappe.get_doc("Server", server.name)
+
+	def test_backfill_patch_populates_every_empty_signing_key(self) -> None:
+		from atlas.patches.v1_0.backfill_server_signing_key import execute
+
+		legacy = self._make_legacy_server("test-server-m9-backfill", "81", "8181")
+		self.assertFalse(legacy.signing_public_key)
+
+		execute()
+
+		# No Server is left with an empty signing key after the migration.
+		self.assertEqual(
+			frappe.get_all("Server", filters={"signing_public_key": ("in", ("", None))}, pluck="name"),
+			[],
+		)
+		filled = frappe.get_doc("Server", legacy.name)
+		self.assertTrue(filled.signing_public_key)
+		# The private half is persisted (encrypted) and reads back decrypted.
+		self.assertTrue(filled.get_password("signing_private_key", raise_exception=False))
+
+	def test_seed_build_skips_a_peer_with_an_empty_signing_key(self) -> None:
+		from atlas.atlas.doctype.server import server as server_module
+		from atlas.atlas.networking import generate_host_signing_keypair
+
+		# The host being bootstrapped — give it a real keypair (persisted, since
+		# the seed query and the priv-push read it back from the DB).
+		this_host = self._make_legacy_server("test-server-m9-this", "82", "8282")
+		priv_b64, pub_b64 = generate_host_signing_keypair()
+		this_host.signing_public_key = pub_b64
+		this_host.signing_private_key = priv_b64
+		this_host.save(ignore_permissions=True)
+		this_host = frappe.get_doc("Server", this_host.name)
+		# A legacy PEER still missing its key — must NOT appear in the seed.
+		legacy_peer = self._make_legacy_server("test-server-m9-peer", "83", "8383")
+
+		captured = {}
+
+		def _capture_seed(*args, **_kwargs):
+			# The seed.json write is the one `sudo tee /etc/atlas-networkd/seed.json`.
+			remote = args[2] if len(args) > 2 else ""
+			stdin = _kwargs.get("stdin", "")
+			if "seed.json" in remote and "seed.json.sig" not in remote:
+				captured["seed"] = stdin
+			# Satisfy the own-key read-back canary (see `_bootstrap_ssh_side_effect`).
+			if remote.startswith("sudo cat /etc/atlas-networkd/signing-public-key"):
+				return ((this_host.signing_public_key or "") + "\n", "", 0)
+			return ("ok", "", 0)
+
+		with patch.object(server_module, "run_ssh", side_effect=_capture_seed):
+			this_host._write_ancp_bootstrap_state(Connection(host="x", ssh_private_key="k"))
+
+		import json
+
+		seed = json.loads(captured["seed"])
+		host_ids = {entry["host_id"] for entry in seed}
+		# The legacy peer with no signing key is skipped entirely...
+		self.assertNotIn(legacy_peer.name, host_ids)
+		# ...and no emitted entry ever carries an empty signing_public_key.
+		self.assertTrue(all(entry["signing_public_key"] for entry in seed))

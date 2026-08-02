@@ -22,6 +22,7 @@ from contextlib import ExitStack
 from pathlib import Path
 
 import frappe
+from frappe import _
 
 from atlas.atlas._ssh._quote import substitute
 from atlas.atlas._ssh.transport import forget_host, run_detached, run_scp, run_ssh, ssh_key_file
@@ -35,6 +36,38 @@ from atlas.atlas.ssh import connection_for_guest
 # proven invariant. A recipe whose source tree has no bench.toml (proxy) renders
 # nothing — _render_bench_toml returns None and the verbatim upload stands.
 BENCH_TOML_NAME = "bench.toml"
+
+
+def default_build_base_image() -> str:
+	"""The image a scratch BUILD VM boots from: a plain base OS image, never a
+	golden this pipeline produced.
+
+	`Image Build` used to default its `base_image` to `placement.default_image()` —
+	the image a CUSTOMER's machine provisions from. Those are different questions,
+	and they only gave the same answer while `Atlas Settings.default_user_image` was
+	unset. Once an operator points the customer default at a promoted golden (which
+	is the whole point of promoting one), every new bake silently starts FROM that
+	golden: build.sh's install gate (`[ ! -x $BENCH_CLI_DIR/bench ]`) then sees pilot
+	already present and SKIPS the install, so the "fresh" image re-ships the old
+	pilot, the old Frappe clone and the old baked site — a bake that reports success
+	and changes nothing.
+
+	A base OS image is the one fetched from a URL (`rootfs_url`) and carrying no
+	`build_mode`; a promoted golden is a local LV with the bake mode stamped on it.
+	Fail loud when the choice is absent or ambiguous rather than guessing — same
+	taste as `placement.default_image()` (Taste 17)."""
+	base = frappe.get_all(
+		"Virtual Machine Image",
+		filters={"is_active": 1, "rootfs_url": ("!=", ""), "build_mode": ("in", ("", None))},
+		pluck="name",
+		limit=2,
+		ignore_permissions=True,
+	)
+	if not base:
+		frappe.throw(_("No base OS image is available to build from — register one first."))
+	if len(base) > 1:
+		frappe.throw(_("Several base OS images are active — pick the base image explicitly."))
+	return base[0]
 
 
 def _source_directory(recipe: ImageRecipe) -> Path:
@@ -151,6 +184,13 @@ def _build_env(recipe: ImageRecipe) -> dict[str, str]:
 	are env, not bench.toml: the ref is install.sh's checkout target and the ERPNext
 	branch is a `get-app --branch` arg, neither of which lives in bench.toml."""
 	env: dict[str, str] = {}
+	# Repo travels with the ref: build.sh pulls install.sh from
+	# `raw.githubusercontent.com/<repo>/<ref>/` and re-points the clone's origin at
+	# <repo> before checking <ref> out, so exporting a ref without its repo would
+	# resolve it against build.sh's committed default repo — a 404 (or, worse, a
+	# same-named ref on the wrong fork) whenever the two disagree.
+	if recipe.bench_cli_repo:
+		env["BENCH_CLI_REPO"] = recipe.bench_cli_repo
 	if recipe.bench_cli_ref:
 		env["BENCH_CLI_REF"] = recipe.bench_cli_ref
 	if recipe.erpnext_branch:
