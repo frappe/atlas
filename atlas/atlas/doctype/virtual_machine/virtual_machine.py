@@ -913,13 +913,10 @@ class VirtualMachine(Document):
 			"name",
 		)
 
-		ipv4 = frappe.db.get_value(
-			"Server",
-			{ "name": self.server },
-			"ipv4_address",
-		)
+		root_domain = frappe.db.get_value("Root Domain",
+					{ "is_active": True }, "domain" )
 
-		base_url = "http://"+ipv4+":3000"
+		base_url = "https://console-"+self.server+"."+root_domain
 
 		if key:
 			return {

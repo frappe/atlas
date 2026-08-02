@@ -120,6 +120,6 @@ wss.on("connection", (ws) => {
 
 app.use(express.static("public"));
 
-server.listen(3000, "0.0.0.0", () => {
-	console.log("Atlas console listening on port 3000");
+server.listen(80, "0.0.0.0", () => {
+	console.log("Atlas console listening on port 80");
 });
