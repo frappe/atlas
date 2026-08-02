@@ -13,7 +13,9 @@ esac
 
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
-apt-get install -y --no-install-recommends ca-certificates curl
+apt-get install -y --no-install-recommends ca-certificates curl nginx
+
+rm -rf /etc/nginx/sites-enabled/default
 
 curl -fsSL \
   "https://garagehq.deuxfleurs.fr/_releases/${GARAGE_VERSION}/${RELEASE_ARCH}-unknown-linux-musl/garage" \

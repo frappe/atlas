@@ -12,6 +12,7 @@ from atlas.atlas.ssh import connection_for_guest, connection_for_server
 from secrets import token_hex, token_urlsafe
 
 _CONFIG_FILE = "/etc/garage.toml"
+_NGINX_CONFIG = "/etc/nginx/conf.d/garage.conf"
 
 
 def build_garage(virtual_machine: str) -> None:
@@ -55,12 +56,37 @@ def configure_garage(virtual_machine: str) -> str:
 	    if row.peer_id and row.peer_id != vm.peer_id
 	]
 
+	nginx_conf = f"""
+	server {{
+		listen 80;
+        listen [::]:80;
+		server_name {garage.api_domain}
+		location / {{
+			proxy_pass http://127.0.0.1:3900
+			proxy_set_header Host $host;
+			proxy_set_header X-Real-IP $remote_addr;
+		}}
+	}}
+	server {{
+		listen 80;
+        listen [::]:80;
+		server_name {garage.web_domain}
+		location / {{
+			proxy_pass http://127.0.0.1:3902
+			proxy_set_header Host $host;
+			proxy_set_header X-Real-IP $remote_addr;
+		}}
+	}}
+
+	"""
 	garage_toml = _generate_garage_config(garage.num_nodes, vm.garage_type, bootstrap_peers, vm.ipv6_address, garage.rpc_secret,
 									  garage.admin_secret, garage.metrics_secret, region,
 									  garage.api_domain, garage.web_domain)
 	with ssh_key_file(connection.ssh_private_key) as key_path:
 		_write_guest_file(connection, key_path, _CONFIG_FILE, garage_toml, "0600")
-		command = f"""systemctl enable --now garage.service && \
+		if vm.garage_type == "gateway":
+			_write_guest_file(connection, key_path, _NGINX_CONFIG, nginx_conf, "0600")
+		command = f"""systemctl enable --now garage.service { "nginx.service" if vm.garage_type == "gateway" else "" } && \
 		until garage status >/dev/null 2>&1; do
 		    sleep 2
 		done && \
