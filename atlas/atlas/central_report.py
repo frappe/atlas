@@ -248,7 +248,11 @@ def deliver(log_name: str, event_type: str, payload: dict, occurred_at: str | No
 	row with the outcome. Also updates the single's `status` breadcrumb so the
 	operator sees the last delivery at a glance. Runs only on commit
 	(enqueue_after_commit), so a rolled-back emit's row is never reached here and is
-	stamped `rolled_back` — logged, never delivered."""
+	stamped `rolled_back` — logged, never delivered.
+
+	Sends the Central Event Log row's own name as `event_id`: it's already the
+	stable identity of one emit (retry_pending redelivers the same log_name, never a
+	new one), so Central can dedup on it without Atlas inventing a second id."""
 	settings = frappe.get_single("Central Settings")
 	if not settings.enabled:
 		return
@@ -262,6 +266,7 @@ def deliver(log_name: str, event_type: str, payload: dict, occurred_at: str | No
 	try:
 		settings.client().post_event(
 			{
+				"event_id": log_name,
 				"type": event_type,
 				"payload": payload,
 				"occurred_at": _iso(occurred_at) or frappe.utils.now(),
