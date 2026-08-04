@@ -496,6 +496,9 @@ def desired_state(virtual_machine: "VirtualMachine", **spec) -> dict:
 		"uuid": virtual_machine.name,
 		"boot_epoch": virtual_machine.boot_epoch or FIRST_BOOT_EPOCH,
 		"desired_power": virtual_machine.desired_power,
+		# The host this VM is placed on, so the target Boat can enforce §11.1's
+		# "server == self" gate: a host boots a VM only when the record names it.
+		"server": virtual_machine.server,
 		**{field: getattr(virtual_machine, field) for field in DESIRED_SPEC_FIELDS},
 		**spec,
 	}
