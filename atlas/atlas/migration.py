@@ -48,6 +48,7 @@ import ipaddress
 import frappe
 from frappe import _
 
+from atlas.atlas.boat_client import FIRST_BOOT_EPOCH
 from atlas.atlas.networking import (
 	address_is_free_on_server,
 	allocate_ipv6,
@@ -1074,6 +1075,13 @@ def _finalize_cutover(doc) -> None:
 	vm.ipv6_address = doc.ipv6_address_new
 	vm.status = "Running"
 	vm.has_memory_snapshot = 0
+	# The fence epoch bumps here and ONLY here (spec/33 §11.1): a migration's
+	# repoint is the single point an epoch advances. Past this line the VM belongs
+	# to the target at a higher epoch, so the losing source's Boat — which still
+	# holds the old epoch — refuses a stale or partitioned start of the same UUID
+	# (fence.Allow returns ErrStaleEpoch). The idempotency guard above makes this
+	# run once, so a re-entered Repointing bumps the epoch a single time.
+	vm.boot_epoch = (vm.boot_epoch or FIRST_BOOT_EPOCH) + 1
 	vm.last_started = frappe.utils.now_datetime()
 	vm.save(ignore_permissions=True)
 
