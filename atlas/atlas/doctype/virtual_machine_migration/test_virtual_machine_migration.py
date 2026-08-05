@@ -553,6 +553,108 @@ class TestMigrationPhaseMachine(IntegrationTestCase):
 			doc.flags.keep_address_forced = True
 		return doc.insert(ignore_permissions=True)
 
+	def _drive_to_done(self, row) -> list:
+		"""Run every phase to Done with the host tasks faked. Returns the
+		(script, server, variables) triples the phase machine issued, in order."""
+		calls: list = []
+
+		def _fake_run_task(*, script, variables, server, virtual_machine, timeout_seconds):
+			calls.append((script, server, dict(variables)))
+			if script == "migration-export-source":
+				return fake_task(
+					stdout='ATLAS_RESULT={"nbd_port": 10001, "nbd_pid": 4242, '
+					'"root_size_bytes": 1, "data_size_bytes": 0}'
+				)
+			if script == "migration-poll-hydration":
+				return fake_task(stdout='ATLAS_RESULT={"hydration_percent": 100}')
+			return fake_task(stdout="ok")
+
+		from atlas.atlas import proxy as proxy_module
+
+		with (
+			patch.object(migration_module, "run_task", side_effect=_fake_run_task),
+			patch.object(proxy_module, "reconcile_proxies", return_value=[]),
+		):
+			for _ in range(len(migration_module.PHASE_ORDER) - 1):
+				row.reload()
+				migration_module.advance_migration(row)
+		row.reload()
+		self.assertEqual(row.status, "Done")
+		return calls
+
+	def _cleanup_variables(self, keep_address: int) -> dict:
+		"""The variables Cleanup handed migration-cleanup-source on a full run."""
+		row = self._row(self._vm(), keep_address=keep_address)
+		calls = self._drive_to_done(row)
+		cleanup = [call for call in calls if call[0] == "migration-cleanup-source"]
+		self.assertEqual(len(cleanup), 1, "cleanup runs exactly once, on the source")
+		self.assertEqual(cleanup[0][1], self.source)
+		return cleanup[0][2]
+
+	def test_cleanup_spares_the_forward_on_a_kept_address(self) -> None:
+		"""Regression (spec/24 §2.9.4): Cleanup's source teardown re-runs
+		vm-network-down.py, which deletes the source's proxy-NDP entry for the VM's
+		/128 and sweeps every `inet atlas forward` rule mentioning it — exactly the two
+		rules migration-source-forward.py installed at cutover. On a keep-address
+		migration those ARE the migrated VM's permanent delivery path, so Cleanup must
+		tell the script to skip that step; without it every DigitalOcean/Scaleway
+		migration (the DEFAULT path — both providers are forwardable) ends by
+		black-holing the tenant's public ingress while the row reports Done."""
+		self.assertEqual(self._cleanup_variables(keep_address=1).get("KEEP_ADDRESS"), "1")
+
+	def test_cleanup_tears_networking_down_on_a_changed_address(self) -> None:
+		"""The other branch is untouched: a change-address migration leaves nothing
+		behind on the source, so the defensive teardown still runs."""
+		self.assertEqual(self._cleanup_variables(keep_address=0).get("KEEP_ADDRESS"), "0")
+
+	def test_pending_disables_the_source_units_autostart(self) -> None:
+		"""Regression (spec/24 §3): the source unit stayed ENABLED from Pending until
+		Cleanup's `disable --now` — the LAST phase. provision-vm enables it, it carries
+		[Install] WantedBy=multi-user.target, and its only condition is the SLEEPING
+		marker, so any source-host reboot in that window cold-booted a SECOND live copy
+		of the guest (same UUID, same UUID-derived MAC/tap, same host keys, and on
+		keep-address the same public /128 answered by two hosts) with nothing asked.
+		Pending must take the unit out of multi-user.target, FIRST — before its own stop,
+		so a reboot landing mid-stop cannot bring the guest back either."""
+		row = self._row(self._vm(), keep_address=0)
+
+		calls: list = []
+
+		def _fake_run_task(*, script, variables, server, virtual_machine, timeout_seconds):
+			calls.append((script, server, dict(variables)))
+			return fake_task(stdout="ok")
+
+		with patch.object(migration_module, "run_task", side_effect=_fake_run_task):
+			row.reload()
+			migration_module.advance_migration(row)
+
+		row.reload()
+		self.assertEqual(row.status, "ExportingSnapshot")
+		self.assertEqual(len(calls), 1, "Pending's only host task is the autostart disable")
+		script, server, variables = calls[0]
+		self.assertEqual(script, "migration-source-autostart")
+		self.assertEqual(server, self.source, "the unit to disable is the SOURCE's")
+		self.assertEqual(variables["ENABLED"], "0")
+		self.assertEqual(variables["VIRTUAL_MACHINE_NAME"], row.virtual_machine)
+
+	def test_cutover_restores_the_desired_power_the_stop_wrote(self) -> None:
+		"""Regression (spec/24 §3, spec/33 §11.3): Pending stops the VM through
+		vm.stop(), which states `desired_power = Stopped` on the row, and the cutover
+		set `status = Running` without ever walking that back — so every migrated VM
+		was left Running-by-status, Stopped-by-intent, permanently. Stopped is the half
+		that outranks everything: assert_desired_state() (the repair) would push it at
+		the live guest, resize() re-states it, the VM can never sleep again, and a
+		host-initiated wake is never adopted."""
+		vm = self._vm()
+		vm.db_set("desired_power", "Stopped")  # what Pending's cold stop leaves behind
+		row = self._row(vm, keep_address=0)
+
+		self._drive_to_done(row)
+
+		vm.reload()
+		self.assertEqual(vm.status, "Running")
+		self.assertEqual(vm.desired_power, "Running")
+
 	def test_phases_advance_in_order(self) -> None:
 		# Pin the change-address path (a new /128 on the target); the keep-address
 		# path is covered by test_keep_address_phases_keep_the_128.
@@ -1150,8 +1252,12 @@ class TestCollapseForward(IntegrationTestCase):
 			patch.object(migration_module, "run_task", side_effect=_fake_run_task),
 			# collapse_forward now stops the live VM first (so the disk converges off
 			# any dm-clone before the re-provision); vm.stop() runs a host Task through
-			# the VM module's run_task, so mock that too.
+			# the VM module's run_task, so mock that too. Every host is on Boat now, so
+			# that stop also states its intent over HTTP before the verb — stub both
+			# halves rather than reach a real daemon.
 			patch.object(vm_module, "run_task", side_effect=_fake_run_task),
+			patch.object(vm_module, "run_boat_task", side_effect=_fake_run_task),
+			patch.object(vm_module, "put_desired_state", return_value={}),
 			patch.object(proxy_module, "reconcile_proxies", return_value=[]),
 		):
 			vm.collapse_forward()
@@ -1165,6 +1271,10 @@ class TestCollapseForward(IntegrationTestCase):
 		self.assertTrue(str(vm.ipv6_address).startswith("2001:db8:a::"))
 		self.assertFalse(vm.traffic_forwarded_from)
 		self.assertFalse(vm.traffic_forwarded_since)
+		# The collapse stops the VM to converge the disk and then re-provisions it, so
+		# the intent has to follow the guest back up — same walk-back _finalize_cutover
+		# does, and the same drift if it is skipped (spec/33 §11.3).
+		self.assertEqual(vm.desired_power, "Running")
 
 	def test_collapse_forward_refused_without_active_forward(self) -> None:
 		vm = make_virtual_machine(self.target, self.image, status="Running")

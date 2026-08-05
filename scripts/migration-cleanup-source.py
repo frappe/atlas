@@ -10,7 +10,9 @@
 #   3. Tear down the stale source VM: disable the unit, run vm-network-down, remove
 #      the VM directory (jail tree) and the disk LV(s) — the same teardown
 #      terminate-vm.py does, so the source host is left as if the VM had never been
-#      there (its identity now lives on the target).
+#      there (its identity now lives on the target). On a KEEP-ADDRESS migration the
+#      vm-network-down step is skipped — this host is the migrated VM's permanent
+#      delivery path now; see `keep_address` below.
 #
 # Idempotent + best-effort (check=False on teardown pokes): a re-entry after a
 # partial cleanup just finishes the rest.
@@ -19,6 +21,11 @@
 #   virtual_machine_name  - UUID
 #   nbd_port              - source NBD port (data on nbd_port+1)
 #   nbd_pid               - recorded qemu-nbd pid (fallback: pidfile / pkill by port)
+#   keep_address          - 1 when the VM kept its /128 and this host forwards it
+#                           (spec/24 §2.9.4). Suppresses the vm-network-down re-run,
+#                           which would delete the live forward. int, not bool: the
+#                           task-input parser only special-cases int, and a bool
+#                           field would arrive as the string "0" (truthy).
 
 import os
 import sys
@@ -45,6 +52,7 @@ class CleanupInputs(TaskInputs):
 	virtual_machine_name: str
 	nbd_port: int = 0
 	nbd_pid: int = 0
+	keep_address: int = 0
 
 
 def main() -> None:
@@ -72,7 +80,7 @@ def main() -> None:
 	# 3. Tear down the stale source VM — the terminate-vm.py teardown, verbatim in
 	#    shape. Best-effort: the unit may already be gone.
 	run("sudo systemctl disable --now {}", paths.systemd_unit, check=False)
-	if run_ok("sudo test -f {}", paths.network_env):
+	if _tears_down_networking(inputs) and run_ok("sudo test -f {}", paths.network_env):
 		run(
 			"sudo {} /var/lib/atlas/bin/vm-network-down.py {}",
 			ATLAS_PYTHON,
@@ -84,6 +92,29 @@ def main() -> None:
 	pool.data_disk(uuid).remove()
 
 	print(f"Cleaned up source copy of {uuid} (NBD, snapshots, unit, disk).")
+
+
+def _tears_down_networking(inputs: CleanupInputs) -> bool:
+	"""Whether this cleanup may run vm-network-down.py on the source.
+
+	False on a keep-address migration (spec/24 §2.9.4): this host is now the VM's
+	PERMANENT delivery path. `CutoverStarting` re-asserted the proxy-NDP entry for
+	the /128 and installed the `<vmv6>/128 dev mig6-…` route plus two
+	`inet atlas forward` rules (migration-source-forward.py). vm-network-down.py
+	deletes that proxy-NDP entry and then sweeps EVERY rule in that chain whose text
+	contains the /128 — i.e. exactly those two rules — so running it here tears down
+	the live tenant ingress spec/24 §2.9.4 says is never torn down. The symptom is
+	the one migration-source-forward.py's own header records: egress keeps working
+	and public ingress goes to 0%, because the upstream switch only delivers the
+	/128 to a host that answers NDP for it.
+
+	Nothing leaks by skipping it: the source unit's own ExecStopPost ran this exact
+	teardown when `Pending` stopped the VM, so the netns/veth/tap/routes went with
+	it — the call here was only ever a defensive re-run for the change-address path,
+	where re-deleting a dead VM's networking is harmless. The forward is removed by
+	exactly one thing, the operator's Collapse-forward action (spec/24 §2.9.5,
+	migration-forward-down.py)."""
+	return not inputs.keep_address
 
 
 def _kill_nbd(pid: int, port: int) -> None:
