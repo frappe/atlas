@@ -116,6 +116,17 @@ FIRST_BOOT_EPOCH = 1
 # caller that reads one survives its absence.
 OPERATION_RESULT_FIELD = "result"
 
+# The statuses an operation stops at. Anything else means it is still running.
+TERMINAL_OPERATION_STATUSES = ("Success", "Failure")
+
+# The poll's shape. The per-request timeout is short because each request is a
+# small read — the long wait is the loop, bounded by the verb's own timeout —
+# and the interval backs off so a fast verb is answered fast without a slow one
+# costing a poll a second for its whole length.
+POLL_REQUEST_TIMEOUT_SECONDS = 30
+POLL_FIRST_INTERVAL_SECONDS = 0.1
+POLL_MAX_INTERVAL_SECONDS = 1.0
+
 # The desired spec, as `DesiredVirtualMachine` names it. Every one of these is a
 # `Virtual Machine` fieldname too, because both sides took their names from the
 # same chapter, so the mapping is the identity and stays legible as one list.
@@ -153,21 +164,38 @@ class BoatClient:
 	transport error raises `BoatError` carrying the daemon's own error sentence,
 	so a caller cannot mistake a failure for a result."""
 
-	def __init__(self, base_url: str, token: str, timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS):
+	def __init__(
+		self,
+		base_url: str,
+		token: str,
+		timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
+		poll: bool = False,
+	):
 		self.base_url = base_url.rstrip("/")
 		# Underscored and never rendered: the token goes into the Authorization
 		# header and nowhere else — not into a log line, not into an exception.
 		self._token = token
 		self.timeout_seconds = timeout_seconds
+		# Ask the daemon to answer a verb with its claim rather than its outcome,
+		# and read the outcome from `/ops/{id}`. Off by default because a caller
+		# that has nowhere to poll from — a Desk action reading one field back —
+		# wants the answer in the response.
+		self._poll = poll
 
 	@classmethod
-	def for_server(cls, server_name: str, timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS) -> "BoatClient":
+	def for_server(
+		cls,
+		server_name: str,
+		timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
+		poll: bool = False,
+	) -> "BoatClient":
 		"""The client for one Server row, credentials resolved the way every other
 		Atlas client resolves them."""
 		return cls(
 			base_url=base_url_for_server(server_name),
 			token=token_for_server(server_name),
 			timeout_seconds=timeout_seconds,
+			poll=poll,
 		)
 
 	def start_virtual_machine(self, uuid: str, *, operation_id: str) -> dict:
@@ -329,6 +357,14 @@ class BoatClient:
 			"Content-Type": "application/json",
 			"Accept": "application/json",
 		}
+		if self._poll and method == "POST":
+			# RFC 7240. The daemon answers with the claim and runs the verb after,
+			# and this side reads the outcome from `GET /ops/{operation_id}`. A
+			# thirty-minute sync therefore holds no connection for thirty minutes,
+			# and a connection dropped mid-verb loses no outcome — the record is
+			# on the host either way, which is the whole reason the identifier is
+			# the Task name.
+			headers["Prefer"] = "respond-async"
 		try:
 			response = requests.request(method, url, json=json, headers=headers, timeout=self.timeout_seconds)
 		except requests.RequestException as exception:
@@ -625,12 +661,27 @@ def _execute_on_boat(
 ) -> None:
 	"""Drive an inserted Task to its outcome over Boat. Mirrors
 	`_ssh.runner._execute_into` step for step, and shares its `_mark_running` /
-	`_finalize` so the row's shape cannot drift between the two transports."""
+	`_finalize` so the row's shape cannot drift between the two transports.
+
+	The verb is ASKED for and then POLLED for, rather than waited on inside one
+	request. Two things follow, and both are the point:
+
+	  - a verb that takes half an hour holds no connection for half an hour, so
+	    no proxy, no keep-alive and no worker timeout sits between Atlas and an
+	    outcome that is already recorded on the host;
+	  - a connection dropped mid-verb costs nothing. The operation is keyed by
+	    this Task's own name, so the next poll finds the record whether the verb
+	    is still running or long finished — where a broken request used to leave
+	    a Task that could never be answered.
+
+	`timeout_seconds` is the deadline for the whole verb, as it always was. It
+	bounds the poll rather than one HTTP request."""
 	_mark_running(task)
 	start = time.monotonic()
 	try:
-		client = BoatClient.for_server(server, timeout_seconds=timeout_seconds)
+		client = BoatClient.for_server(server, timeout_seconds=POLL_REQUEST_TIMEOUT_SECONDS, poll=True)
 		operation = _run_verb(client, script, task.virtual_machine, task.name, variables)
+		operation = _await_operation(client, task.name, operation, timeout_seconds)
 		status, exit_code = _outcome(operation, task.name)
 	except Exception as exception:
 		_finalize(task, "", str(exception), None, "Failure", _elapsed_ms(start))
@@ -706,13 +757,39 @@ def _task_stdout(operation: dict) -> str:
 	return output + result_line(result)
 
 
+def _await_operation(client: BoatClient, operation_id: str, operation: dict, timeout_seconds: int) -> dict:
+	"""Poll `GET /ops/{operation_id}` until the operation finishes.
+
+	The daemon answers a verb with its claim, so the record is where the outcome
+	appears. The interval backs off to a second: a start settles in well under
+	one, an image sync takes minutes, and one poll a second for a long verb is
+	nothing next to the SSH session it replaced.
+
+	A deadline reached is a failed Task with a sentence saying what to look at,
+	never a guess. The operation is still on the host under this Task's name, so
+	a retry of the same Task reads the same record rather than running the verb
+	again."""
+	deadline = time.monotonic() + timeout_seconds
+	interval = POLL_FIRST_INTERVAL_SECONDS
+	while operation.get("status") not in TERMINAL_OPERATION_STATUSES:
+		if time.monotonic() >= deadline:
+			raise BoatError(
+				f"Boat operation {operation_id} did not finish within {timeout_seconds}s; "
+				f"it is still recorded on the host — GET /ops/{operation_id} has its state"
+			)
+		time.sleep(interval)
+		interval = min(interval * 2, POLL_MAX_INTERVAL_SECONDS)
+		operation = client.get_operation(operation_id)
+	return operation
+
+
 def _outcome(operation: dict, operation_id: str) -> tuple[str, int]:
 	"""The Task status and exit code an operation record implies.
 
-	WO-0's daemon records an operation terminal before it answers, so a
-	non-terminal status here means the operation outlived its request — a
-	protocol surprise, not an outcome. Raise instead of guessing; the operator
-	reads `GET /ops/{id}` for the real state."""
+	A non-terminal status here is a bug in the caller, not a surprise from the
+	host: `_await_operation` is what waits, and it only returns a record that has
+	finished or raises. Raise rather than guess — a Task marked Success off a
+	Running record would be Atlas inventing an outcome."""
 	status = operation.get("status")
 	if status not in ("Success", "Failure"):
 		raise BoatError(f"Boat operation {operation_id} came back {status!r}, not a terminal result")

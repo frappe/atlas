@@ -38,6 +38,10 @@ OPERATOR_VISIBLE: frozenset[str] = frozenset(
 # entry is `{intro: str, fields: list[dict]}`; field dicts use Frappe Dialog
 # field shapes (`fieldname`, `fieldtype`, `label`, `default`, `reqd`, ...).
 SCRIPT_FORMS: dict[str, dict] = {
+	# These two fields are also what `Server.bootstrap()` sends, as
+	# `boat bootstrap --firecracker-version … --architecture …` (BOAT_ONLY_VERBS);
+	# the entry stays keyed on the Python verb because the .py is what an operator
+	# can still pick by hand.
 	"bootstrap-server": {
 		"intro": "Idempotent. Safe to re-run on an Active server.",
 		"fields": [
@@ -196,6 +200,13 @@ def file_for(verb: str) -> str:
 def kind(verb: str) -> str:
 	"""`"shell"` iff the verb's file is a `.sh` (only reboot-server today), else
 	`"python"`. This replaces every `.endswith(".py")` suffix-sniff downstream."""
+	if verb in BOAT_ONLY_VERBS:
+		# No file on disk to ask — the boat binary IS the implementation (see
+		# BOAT_ONLY_VERBS). The runner reads this to pick a command SHAPE, and a
+		# boat verb's shape is the flag-taking one: `<entry> <verb> --kebab-flag
+		# value`, the same line `boat snapshot-vm` gets. "python" is that shape's
+		# name here for historical reasons; it never meant "run an interpreter".
+		return "python"
 	return "shell" if file_for(verb).endswith(".sh") else "python"
 
 
@@ -222,10 +233,7 @@ def kind(verb: str) -> str:
 #   - the `migration-*` verbs. Boat serves those over the daemon's phase RPCs
 #     rather than as CLI verbs, so routing them is a change to migration.py's
 #     transport and not a change of the first word.
-#   - `bootstrap-server`. `boat bootstrap` takes no arguments where the Task
-#     takes a Firecracker version and an architecture; same job, different
-#     contract, so it is WO-1b's cutover and not this one.
-BOAT_VERBS: frozenset[str] = frozenset(
+_PORTED_VERBS: frozenset[str] = frozenset(
 	{
 		"snapshot-vm",
 		"snapshot-stop-vm",
@@ -239,6 +247,23 @@ BOAT_VERBS: frozenset[str] = frozenset(
 		"reset-server",
 	}
 )
+
+# Verbs the boat binary implements and NOTHING in scripts/ does — the set above
+# with no `.py` oracle beside it. They are named separately because every other
+# question the catalog answers is answered by looking at a file, and for these
+# there is no file to look at: `kind()` cannot read a suffix, `file_for()` raises,
+# and `durable_remote_path()` ships nothing.
+#
+# `bootstrap` is the first, and it is a rename rather than a new verb. The Task
+# was `bootstrap-server` (scripts/bootstrap-server.py, still on disk as the
+# differential's oracle and still runnable as `atlas bootstrap-server`); the host
+# prep Atlas drives is now `boat bootstrap --firecracker-version … --architecture
+# …`, which takes the same two flags and prints the same ATLAS_RESULT= line. The
+# verb had to change with it because the runner renders `<entry> <verb>` and
+# `boat bootstrap-server` is not a command boat has (spec/33-boat.md §4, WO-1b).
+BOAT_ONLY_VERBS: frozenset[str] = frozenset({"bootstrap"})
+
+BOAT_VERBS: frozenset[str] = _PORTED_VERBS | BOAT_ONLY_VERBS
 
 
 def runs_on_boat(verb: str) -> bool:

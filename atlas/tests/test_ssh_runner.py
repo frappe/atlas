@@ -367,6 +367,18 @@ class TestRemoteCommand(IntegrationTestCase):
 		self.assertNotIn("python3", command)
 		self.assertNotIn("PYTHONPATH", command)
 
+	def test_the_host_prep_task_runs_as_boat_bootstrap(self) -> None:
+		# What Server.bootstrap() actually drives now: the verb `bootstrap`, which
+		# has no file in scripts/ at all (scripts_catalog.BOAT_ONLY_VERBS) and takes
+		# the SAME two flags the Python BootstrapInputs declared — so the cutover is
+		# the first word of the command and the argument surface is unchanged.
+		command = runner._remote_command(
+			"bootstrap",
+			None,
+			{"FIRECRACKER_VERSION": "v1.16.0", "ARCHITECTURE": "x86_64"},
+		)
+		self.assertEqual(command, "boat bootstrap --firecracker-version v1.16.0 --architecture x86_64")
+
 	def test_non_bootstrap_python_never_uses_an_interpreter_path(self) -> None:
 		# Every OTHER python verb runs as `atlas <verb>`, never an interpreter+path.
 		command = runner._remote_command("start-vm", None, {"VIRTUAL_MACHINE_NAME": "u"})

@@ -1,3 +1,6 @@
+import hashlib
+import tempfile
+from pathlib import Path
 from unittest.mock import patch
 
 import frappe
@@ -8,6 +11,23 @@ from atlas.atlas.networking import carve_virtual_machine_range
 from atlas.atlas.ssh import Connection
 from atlas.tests._mocks import fake_task
 from atlas.tests.fixtures import make_provider, make_server
+
+# What a boat distribution on the controller looks like: a boat checkout after
+# `make build`, or an unpacked release. `Server._boat_uploads` ships exactly these
+# four, so a test distribution is these four files with any bytes in them.
+BOAT_ARTIFACT_PATHS = ("bin/boat", "sudoers.d/boat", "systemd/boat.service", "systemd/boat-networkd.service")
+FAKE_BOAT_BINARY = b"#!/bin/false\nnot really a Go binary\n"
+FAKE_BOAT_VERSION = "v0.0.1-test"
+
+
+def make_boat_distribution(directory: str) -> Path:
+	"""Write a complete boat distribution into `directory` and return it."""
+	root = Path(directory)
+	for relative in BOAT_ARTIFACT_PATHS:
+		path = root / relative
+		path.parent.mkdir(parents=True, exist_ok=True)
+		path.write_bytes(FAKE_BOAT_BINARY if relative == "bin/boat" else b"# a boat artifact\n")
+	return root
 
 
 def _bootstrap_ssh_side_effect(server):
@@ -22,12 +42,21 @@ def _bootstrap_ssh_side_effect(server):
 	about install.sh ordering and `run_task` invocation can run. Route the
 	cat call to the test's own `Server.signing_public_key` (which the
 	controller just wrote via `install -m 0644 /dev/stdin`) and keep
-	`("ok", "", 0)` for everything else."""
+	`("ok", "", 0)` for everything else.
+
+	`_verify_boat_binary` is the second reader with a real answer: it holds the
+	host's `sha256sum` against the digest of the binary Atlas shipped and refuses
+	`boat version` printing nothing, so a flat `"ok"` fails the install for a
+	reason the test never meant to assert."""
 
 	def side_effect(*args, **_kwargs):
 		remote_command = args[2] if len(args) > 2 else None
 		if remote_command and remote_command.startswith("sudo cat /etc/atlas-networkd/signing-public-key"):
 			return ((server.signing_public_key or "") + "\n", "", 0)
+		if remote_command and remote_command.startswith("sha256sum "):
+			return (f"{hashlib.sha256(FAKE_BOAT_BINARY).hexdigest()}  /usr/local/bin/boat\n", "", 0)
+		if remote_command and remote_command.endswith("boat version"):
+			return (FAKE_BOAT_VERSION + "\n", "", 0)
 		return ("ok", "", 0)
 
 	return side_effect
@@ -47,6 +76,12 @@ class TestNetworking(IntegrationTestCase):
 
 class TestServerBootstrap(IntegrationTestCase):
 	def setUp(self) -> None:
+		# Every real bootstrap now ships the boat artifacts, so every bootstrap test
+		# needs a distribution to ship. A temporary one, not the operator's: the
+		# suite must not depend on a boat checkout existing on the machine.
+		directory = tempfile.TemporaryDirectory()
+		self.addCleanup(directory.cleanup)
+		self.boat_distribution = make_boat_distribution(directory.name)
 		provider = make_provider("test-provider-server")
 		self.server = make_server(
 			provider,
@@ -59,7 +94,12 @@ class TestServerBootstrap(IntegrationTestCase):
 			status="Bootstrapping",
 		)
 
-	def test_bootstrap_uploads_helpers_then_install_sh_then_runs_script(self) -> None:
+	def test_bootstrap_installs_boat_then_install_sh_then_runs_the_host_prep_task(self) -> None:
+		# The whole bootstrap order, in one assertion each, because every step here
+		# is a precondition of the next: boat is installed before install.sh (whose
+		# last gate is `command -v boat`) and before the host-prep Task (which IS
+		# `boat bootstrap`); boat.service is started only after that Task, because
+		# there is nothing for the daemon to adopt until it has run.
 		from atlas.atlas.doctype.server import server as server_module
 
 		task = fake_task(
@@ -68,27 +108,49 @@ class TestServerBootstrap(IntegrationTestCase):
 		)
 
 		# Neutralize the best-effort dashboard ship — it's an independent step with
-		# its own test; here we assert the install.sh ordering in isolation.
-		with patch.object(server_module.Server, "_ship_dashboard"):
-			with patch.object(server_module, "upload_files") as upload:
-				with patch.object(
-					server_module, "run_ssh", side_effect=_bootstrap_ssh_side_effect(self.server)
-				) as run_ssh:
-					with patch.object(server_module, "run_task", return_value=task) as run:
-						with patch.object(
-							server_module,
-							"connection_for_server",
-							return_value=Connection(host="x", ssh_private_key="k"),
-						):
-							self.server.bootstrap()
+		# its own test; here we assert the install ordering in isolation.
+		with patch.object(server_module, "boat_distribution", return_value=self.boat_distribution):
+			with patch.object(server_module.Server, "_ship_dashboard"):
+				with patch.object(server_module, "upload_files") as upload:
+					with patch.object(
+						server_module, "run_ssh", side_effect=_bootstrap_ssh_side_effect(self.server)
+					) as run_ssh:
+						with patch.object(server_module, "run_task", return_value=task) as run:
+							with patch.object(
+								server_module,
+								"connection_for_server",
+								return_value=Connection(host="x", ssh_private_key="k"),
+							):
+								self.server.bootstrap()
 
 		upload.assert_called_once()
-		# install.sh is SSHed after the upload, before the bootstrap Task.
-		# There may be additional SSH calls (e.g. operator-public-key write);
-		# verify install.sh is among them and is the very first one.
-		first_call = run_ssh.call_args_list[0]
-		self.assertIn("/var/lib/atlas/bin/install.sh", first_call.args[2])
+		commands = [call.args[2] for call in run_ssh.call_args_list]
+		# The allow-list is CHECKED before it is installed. Reversed, a sudoers file
+		# sudo cannot parse leaves the boat user with no grants at all.
+		self.assertLess(
+			commands.index("sudo visudo -cf /var/lib/atlas/boat/sudoers"),
+			next(index for index, text in enumerate(commands) if text.startswith("sudo install -m 0440")),
+		)
+		# The binary lands by rename, and only after the service user its units run
+		# as exists.
+		self.assertLess(
+			next(index for index, text in enumerate(commands) if "useradd" in text),
+			next(index for index, text in enumerate(commands) if "mv -f" in text),
+		)
+		install_sh = next(index for index, text in enumerate(commands) if "install.sh" in text)
+		self.assertLess(next(index for index, text in enumerate(commands) if "mv -f" in text), install_sh)
+		self.assertLess(commands.index("sudo systemctl daemon-reload"), install_sh)
 		run.assert_called_once()
+		# The Task is the boat verb, with the Python's two flags.
+		self.assertEqual(run.call_args.kwargs["script"], "bootstrap")
+		self.assertEqual(
+			run.call_args.kwargs["variables"],
+			{"FIRECRACKER_VERSION": "v1.16.0", "ARCHITECTURE": "x86_64"},
+		)
+		# ...and the daemon is started after it, not before.
+		self.assertGreater(commands.index("sudo systemctl restart boat.service"), install_sh)
+		self.server.reload()
+		self.assertEqual(self.server.observed_boat_version, FAKE_BOAT_VERSION)
 
 	def test_bootstrap_aborts_if_install_sh_fails(self) -> None:
 		# A non-zero install.sh (broken venv) must fail the bootstrap loudly, before
@@ -96,18 +158,113 @@ class TestServerBootstrap(IntegrationTestCase):
 		# to install.sh.
 		from atlas.atlas.doctype.server import server as server_module
 
-		with patch.object(server_module, "upload_files"):
-			with patch.object(server_module, "run_ssh", return_value=("", "boom", 1)):
-				with patch.object(server_module, "run_task") as run:
-					with patch.object(
-						server_module,
-						"connection_for_server",
-						return_value=Connection(host="x", ssh_private_key="k"),
-					):
-						with self.assertRaises(frappe.ValidationError) as raised:
-							self.server.bootstrap()
+		def only_install_sh_fails(*args, **_kwargs):
+			if "install.sh" in args[2]:
+				return ("", "boom", 1)
+			return _bootstrap_ssh_side_effect(self.server)(*args, **_kwargs)
+
+		with patch.object(server_module, "boat_distribution", return_value=self.boat_distribution):
+			with patch.object(server_module, "upload_files"):
+				with patch.object(server_module, "run_ssh", side_effect=only_install_sh_fails):
+					with patch.object(server_module, "run_task") as run:
+						with patch.object(
+							server_module,
+							"connection_for_server",
+							return_value=Connection(host="x", ssh_private_key="k"),
+						):
+							with self.assertRaises(frappe.ValidationError) as raised:
+								self.server.bootstrap()
 		self.assertIn("install.sh failed", str(raised.exception))
 		run.assert_not_called()
+
+	def test_bootstrap_aborts_if_the_allow_list_does_not_parse(self) -> None:
+		# `visudo -cf` fails ⇒ nothing is installed and the bootstrap stops. This is
+		# the failure the order exists for: an unparseable file in /etc/sudoers.d
+		# disables the WHOLE directory, so the boat user would lose every grant and
+		# every verb on the host would fail at once — and the host would look fine.
+		from atlas.atlas.doctype.server import server as server_module
+
+		def visudo_refuses(*args, **_kwargs):
+			if args[2].startswith("sudo visudo"):
+				return ("", ">>> syntax error near line 3 <<<", 1)
+			return _bootstrap_ssh_side_effect(self.server)(*args, **_kwargs)
+
+		with patch.object(server_module, "boat_distribution", return_value=self.boat_distribution):
+			with patch.object(server_module, "upload_files"):
+				with patch.object(server_module, "run_ssh", side_effect=visudo_refuses) as run_ssh:
+					with patch.object(server_module, "run_task") as run:
+						with patch.object(
+							server_module,
+							"connection_for_server",
+							return_value=Connection(host="x", ssh_private_key="k"),
+						):
+							with self.assertRaises(frappe.ValidationError) as raised:
+								self.server.bootstrap()
+		self.assertIn("sudoers allow-list", str(raised.exception))
+		run.assert_not_called()
+		commands = [call.args[2] for call in run_ssh.call_args_list]
+		self.assertFalse([text for text in commands if "/etc/sudoers.d/boat" in text])
+
+	def test_bootstrap_aborts_if_the_landed_binary_is_not_the_one_shipped(self) -> None:
+		# No signature is checked on this path, so the digest is the whole proof
+		# that /usr/local/bin/boat holds the bytes the operator staged. A host
+		# reporting anything else stops the bootstrap rather than running verbs
+		# through an unknown binary.
+		from atlas.atlas.doctype.server import server as server_module
+
+		def wrong_digest(*args, **_kwargs):
+			if args[2].startswith("sha256sum "):
+				return ("0" * 64 + "  /usr/local/bin/boat\n", "", 0)
+			return _bootstrap_ssh_side_effect(self.server)(*args, **_kwargs)
+
+		with patch.object(server_module, "boat_distribution", return_value=self.boat_distribution):
+			with patch.object(server_module, "upload_files"):
+				with patch.object(server_module, "run_ssh", side_effect=wrong_digest):
+					with patch.object(server_module, "run_task") as run:
+						with patch.object(
+							server_module,
+							"connection_for_server",
+							return_value=Connection(host="x", ssh_private_key="k"),
+						):
+							with self.assertRaises(frappe.ValidationError) as raised:
+								self.server.bootstrap()
+		self.assertIn("not the binary Atlas shipped", str(raised.exception))
+		run.assert_not_called()
+
+	def test_boat_uploads_name_every_missing_artifact(self) -> None:
+		# An absent or half-built distribution fails HERE, where nothing has been
+		# installed yet, naming the paths and the command that produces them —
+		# rather than on the host, halfway through.
+		from atlas.atlas.doctype.server import server as server_module
+
+		(self.boat_distribution / "bin" / "boat").unlink()
+		with patch.object(server_module, "boat_distribution", return_value=self.boat_distribution):
+			with self.assertRaises(frappe.ValidationError) as raised:
+				self.server._boat_uploads()
+		self.assertIn("bin/boat", str(raised.exception))
+		self.assertIn("make build", str(raised.exception))
+
+	def test_boat_uploads_are_bootstrap_only(self) -> None:
+		# The binary ships with a bootstrap and NOT with sync_scripts: refreshing it
+		# needs the privileged install and the daemon restart that only bootstrap
+		# runs, so a dev-loop scp would leave the binary on disk and the running
+		# daemon disagreeing about which one is live.
+		from atlas.atlas.doctype.server import server as server_module
+
+		with patch.object(server_module, "boat_distribution", return_value=self.boat_distribution):
+			boat = dict((destination, source) for source, destination in self.server._boat_uploads())
+			bootstrap = {destination for _source, destination in self.server._bootstrap_uploads()}
+		script_only = {destination for _source, destination in self.server._script_uploads()}
+
+		# Staged, never straight into place: /usr/local/bin/boat is renamed over by
+		# _install_boat, and the allow-list is validated before it reaches /etc.
+		self.assertIn("/usr/local/bin/boat.incoming", boat)
+		self.assertIn("/var/lib/atlas/boat/sudoers", boat)
+		self.assertIn("/var/lib/atlas/boat/boat.service", boat)
+		self.assertIn("/var/lib/atlas/boat/boat-networkd.service", boat)
+		self.assertNotIn("/etc/sudoers.d/boat", boat)
+		self.assertTrue(set(boat) <= bootstrap)
+		self.assertFalse(set(boat) & script_only)
 
 	def test_script_uploads_ship_task_entry_scripts_durably(self) -> None:
 		# The Task entry scripts (provision/start/stop/snapshot-stop) ship to
@@ -148,18 +305,19 @@ class TestServerBootstrap(IntegrationTestCase):
 		)
 		task = fake_task(name="task-y", stdout=stdout)
 
-		with patch.object(server_module.Server, "_ship_dashboard"):
-			with patch.object(server_module, "upload_files"):
-				with patch.object(
-					server_module, "run_ssh", side_effect=_bootstrap_ssh_side_effect(self.server)
-				):
-					with patch.object(server_module, "run_task", return_value=task):
-						with patch.object(
-							server_module,
-							"connection_for_server",
-							return_value=Connection(host="x", ssh_private_key="k"),
-						):
-							self.server.bootstrap()
+		with patch.object(server_module, "boat_distribution", return_value=self.boat_distribution):
+			with patch.object(server_module.Server, "_ship_dashboard"):
+				with patch.object(server_module, "upload_files"):
+					with patch.object(
+						server_module, "run_ssh", side_effect=_bootstrap_ssh_side_effect(self.server)
+					):
+						with patch.object(server_module, "run_task", return_value=task):
+							with patch.object(
+								server_module,
+								"connection_for_server",
+								return_value=Connection(host="x", ssh_private_key="k"),
+							):
+								self.server.bootstrap()
 		self.server.reload()
 		self.assertEqual(self.server.firecracker_version, "1.16.0")
 		self.assertEqual(self.server.jailer_version, "1.16.0")

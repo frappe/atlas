@@ -83,6 +83,29 @@ class TestScriptsCatalog(unittest.TestCase):
 		self.assertEqual(scripts_catalog.kind("provision-vm"), "python")
 		self.assertEqual(scripts_catalog.kind("reboot-server"), "shell")
 
+	def test_a_boat_only_verb_has_no_file_and_is_still_flag_shaped(self) -> None:
+		# `bootstrap` is implemented by the boat binary and by nothing in scripts/,
+		# so every file-derived answer has to come from BOAT_ONLY_VERBS instead:
+		# `kind()` cannot read a suffix (it is asked what SHAPE the command line
+		# has, and a boat verb's shape is the flag-taking one), `file_for()` has
+		# nothing to return, and nothing is shipped durably for it.
+		for verb in scripts_catalog.BOAT_ONLY_VERBS:
+			self.assertTrue(scripts_catalog.runs_on_boat(verb), verb)
+			self.assertEqual(scripts_catalog.kind(verb), "python", verb)
+			self.assertIsNone(scripts_catalog.durable_remote_path(verb), verb)
+			self.assertNotIn(verb, scripts_catalog.allowed_scripts())
+			with self.assertRaises(FileNotFoundError):
+				scripts_catalog.file_for(verb)
+
+	def test_the_host_prep_verb_is_bootstrap_and_its_oracle_is_still_on_disk(self) -> None:
+		# The cutover renamed the Task's verb because the runner renders
+		# `<entry> <verb>` and `boat bootstrap-server` is not a command boat has.
+		# The Python it replaced stays on disk as the differential's oracle, still
+		# runnable as `atlas bootstrap-server`, and must NOT be routed at boat.
+		self.assertIn("bootstrap", scripts_catalog.BOAT_ONLY_VERBS)
+		self.assertIn("bootstrap-server", scripts_catalog.allowed_scripts())
+		self.assertFalse(scripts_catalog.runs_on_boat("bootstrap-server"))
+
 	def test_allowed_scripts_are_suffixless_verbs(self) -> None:
 		# The allowlist returns verbs, never filenames.
 		for verb in scripts_catalog.allowed_scripts():

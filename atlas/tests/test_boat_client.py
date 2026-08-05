@@ -360,7 +360,13 @@ class TestRunBoatTask(IntegrationTestCase):
 		run_ssh.assert_not_called()
 		self.assertEqual(self._last_task().status, "Failure")
 
-	def test_a_non_terminal_operation_is_a_protocol_error(self) -> None:
+	def test_an_operation_that_never_finishes_fails_at_the_deadline(self) -> None:
+		"""The verb is polled for, so a host that never records an outcome is a
+		Task that fails when its own timeout runs out — never one marked Success
+		off a record that still says Running. The sentence names where the state
+		actually is, because the operation is still on the host under this Task's
+		name and a retry reads the same record rather than running the verb
+		again."""
 		with (
 			_boat_host_token(self.server.name),
 			patch(REQUEST, return_value=_Response(payload=_operation("Running"))),
@@ -371,11 +377,17 @@ class TestRunBoatTask(IntegrationTestCase):
 				script="start-vm",
 				variables={"VIRTUAL_MACHINE_NAME": self.virtual_machine.name},
 				virtual_machine=self.virtual_machine.name,
-				timeout_seconds=30,
+				timeout_seconds=1,
 			)
 
-		self.assertIn("not a terminal result", str(raised.exception))
-		self.assertEqual(self._last_task().status, "Failure")
+		self.assertIn("did not finish within", str(raised.exception))
+		self.assertIn("/ops/", str(raised.exception))
+		# By script, not just by VM: making the VM leaves a provision Task on the
+		# same row, and `_last_task` would answer about that one.
+		started = frappe.get_last_doc(
+			"Task", filters={"virtual_machine": self.virtual_machine.name, "script": "start-vm"}
+		)
+		self.assertEqual(started.status, "Failure")
 
 	def test_a_verb_boat_does_not_serve_raises_before_any_request(self) -> None:
 		with (

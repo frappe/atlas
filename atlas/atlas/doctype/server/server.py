@@ -1,7 +1,9 @@
+import hashlib
 import json
 import shlex
 import uuid
 from contextlib import contextmanager
+from pathlib import Path
 from typing import ClassVar
 
 import frappe
@@ -12,6 +14,73 @@ from atlas.atlas import scripts_catalog
 from atlas.atlas.providers.fake_tasks import is_fake_server
 from atlas.atlas.ssh import connection_for_server, run_ssh, run_task, ssh_key_file, upload_files
 from atlas.atlas.task_results import parse_result
+
+# --- WHERE THE BOAT ARTIFACTS COME FROM ---------------------------------------
+#
+# Atlas routes ten host verbs and every VM lifecycle verb at `boat`
+# (scripts_catalog.BOAT_VERBS, boat_client), so a host without boat is a host
+# where those fail — one at a time, mid-flow. Bootstrap therefore installs it,
+# and this is where the artifacts it installs come from.
+#
+# Atlas cannot build Go. It also must not assemble the install out of pieces:
+# the binary, the sudoers allow-list and the two units are version-locked to each
+# other in the boat repo — `go test ./internal/allowlist/` fails when the
+# allow-list and the binary's own call sites disagree — so a host given the
+# allow-list of one build and the binary of another has grants that do not match
+# the commands it renders. Atlas ships ONE DIRECTORY the operator produced from
+# ONE boat checkout, and never a file it composed itself:
+#
+#     git clone https://github.com/frappe/boat && cd boat && make build
+#     # then in site_config.json:  "atlas_boat_distribution": "/path/to/boat"
+#
+# The relative paths below are that checkout's own layout after `make build`
+# (bin/boat, sudoers.d/boat, systemd/*.service), which an unpacked release
+# tarball shares — so "a checkout" and "a release" are the same instruction.
+#
+# WHY NOT A SIGNED RELEASE FETCHED HERE. Boat has signed-release verification and
+# an atomic self-install (internal/update, spec/33-boat.md §5), and that is the
+# right channel for the SECOND binary a host receives. It cannot be the first:
+# the verification runs inside a daemon that is not installed yet, and
+# `POST /v1/update` needs a boat to post it to. Landing the first binary over the
+# SSH connection Atlas already holds is what spec/33 §4 specifies — "landing the
+# binary reuses the existing SSH path" — and it is the only channel that exists
+# before the host has boat on it.
+#
+# WHY SITE CONFIG AND NOT ATLAS SETTINGS. Every other Boat knob already lives
+# there (`atlas_boat_base_urls`, `atlas_boat_tokens`, `atlas_boat_port`), and this
+# one is a path on the CONTROLLER's filesystem: a property of the machine running
+# bench, not fleet policy worth replicating into a DB row on every site.
+#
+# WHAT IS VERIFIED, since no signature is checked on this path: the four
+# artifacts must exist locally (a missing one throws, naming the path and the
+# command that produces it); the SHA-256 Atlas computed before the upload must
+# equal the one the host reports after the swap, so a truncated or altered
+# transfer never becomes the binary; and the landed binary must run — its
+# `boat version` is what lands on `Server.observed_boat_version`, which until now
+# was only ever written by the mirror sweep, long after the fact. When spec/33
+# §5's desired `Server.boat_version` exists, comparing the two is the drift check
+# and this is the place it goes.
+DEFAULT_BOAT_DISTRIBUTION = "/opt/boat"
+
+# Host paths. The binary is staged in its OWN directory (see _install_boat step 3
+# for why the rename has to stay on one filesystem); the rest stage under
+# /var/lib/atlas/boat, where they also serve as the record of what was installed.
+BOAT_BINARY = "/usr/local/bin/boat"
+BOAT_INCOMING_BINARY = f"{BOAT_BINARY}.incoming"
+BOAT_STAGING_DIRECTORY = "/var/lib/atlas/boat"
+BOAT_ARTIFACTS: list[tuple[str, str]] = [
+	("bin/boat", BOAT_INCOMING_BINARY),
+	("sudoers.d/boat", f"{BOAT_STAGING_DIRECTORY}/sudoers"),
+	("systemd/boat.service", f"{BOAT_STAGING_DIRECTORY}/boat.service"),
+	("systemd/boat-networkd.service", f"{BOAT_STAGING_DIRECTORY}/boat-networkd.service"),
+]
+
+
+def boat_distribution() -> Path:
+	"""The boat checkout (or unpacked release) on the CONTROLLER that bootstrap
+	ships to hosts. `atlas_boat_distribution` in site config, else /opt/boat."""
+	return Path(frappe.conf.get("atlas_boat_distribution") or DEFAULT_BOAT_DISTRIBUTION)
+
 
 IMMUTABLE_AFTER_INSERT = (
 	"title",
@@ -231,23 +300,31 @@ class Server(Document):
 
 	@frappe.whitelist()
 	def bootstrap(self) -> str:
-		"""Upload helpers + units, create the Atlas venv (install.sh), then run the
-		bootstrap-server verb. Returns Task name.
+		"""Upload helpers, units and the boat artifacts, install boat, create the
+		Atlas venv (install.sh), then run the host-prep Task. Returns Task name.
 
-		Ordering is load-bearing: install.sh's `uv pip install` needs the uploaded
-		/var/lib/atlas/bin, and the bootstrap Task now runs as `atlas bootstrap-server`
-		on the venv install.sh creates — so it's upload → install.sh → bootstrap Task.
+		Ordering is load-bearing, and each step is a precondition of the next:
+
+		  1. the upload lands every artifact the steps below install from;
+		  2. boat is installed, because install.sh's last gate is `command -v boat`
+		     and the host-prep Task IS `boat bootstrap`;
+		  3. install.sh's `uv pip install` needs the uploaded /var/lib/atlas/bin and
+		     leaves the venv the remaining `atlas <verb>` Tasks run on;
+		  4. `boat bootstrap` brings the host to VM-ready;
+		  5. boat.service is started last — it adopts what the host holds, and there
+		     is nothing to adopt until step 4 has laid the tree (see _start_boat).
 		"""
 		if self.status not in self.BOOTSTRAP_ALLOWED_STATUS:
 			frappe.throw(f"Cannot bootstrap from status {self.status}")
 
-		# A Fake server has no host to scp the durable package onto or SSH install.sh
-		# into; the bootstrap-server Task below is faked too and still records the
-		# host versions, so the row ends up Active exactly as a real bootstrap leaves
-		# it. Skip both the upload AND install.sh for it, in lockstep.
-		if not is_fake_server(self.name):
-			connection = connection_for_server(self)
+		# A Fake server has no host to scp the durable package onto, no boat to
+		# install and nothing to SSH install.sh into; the host-prep Task below is
+		# faked too and still records the host versions, so the row ends up Active
+		# exactly as a real bootstrap leaves it. Skip every host step in lockstep.
+		connection = None if is_fake_server(self.name) else connection_for_server(self)
+		if connection is not None:
 			upload_files(connection, self._bootstrap_uploads())
+			self._install_boat(connection)
 			self._run_install_sh(connection)
 			self._authorize_satellite_keys(connection)
 			self._ship_dashboard(connection)
@@ -255,13 +332,15 @@ class Server(Document):
 
 		task = run_task(
 			server=self.name,
-			script="bootstrap-server",
+			script="bootstrap",
 			variables={
 				"FIRECRACKER_VERSION": "v1.16.0",
 				"ARCHITECTURE": "x86_64",
 			},
 		)
 		self._absorb_bootstrap_output(task.stdout)
+		if connection is not None:
+			self._start_boat(connection)
 		self.save(ignore_permissions=True)
 		return task.name
 
@@ -563,6 +642,143 @@ class Server(Document):
 							stdin=intro_sig + "\n",
 						)
 
+	def _install_boat(self, connection) -> None:
+		"""Install the boat binary, its allow-list, its service user and its units —
+		the step that makes `boat <verb>` a command this host has. Runs after the
+		upload (which staged all four artifacts) and before install.sh, whose last
+		gate is `command -v boat`.
+
+		THE ORDER IS THE POINT, and it is deliberately not the boat README's:
+
+		  1. the `boat` system user. Both units run as it and every line of the
+		     allow-list grants to it by name, so nothing below means anything until
+		     it exists. Idempotent: a re-bootstrap finds it and adds nothing.
+		  2. `visudo -cf` the STAGED allow-list, and only then `install` it 0440
+		     root:root. Validate-then-install, never the README's reverse: a sudoers
+		     file sudo cannot parse does not merely disable boat's grants, it takes
+		     out the whole /etc/sudoers.d directory — the boat user ends up with no
+		     grants at all and every verb on the host fails at once. Checking the
+		     staged copy means an invalid file never reaches /etc.
+		  3. the binary, renamed into place from a staging name in the SAME
+		     directory. `mv` within one filesystem is rename(2), so a process that
+		     execs /usr/local/bin/boat mid-install gets the whole old inode or the
+		     whole new one and never a half-written file — and a running daemon
+		     keeps its own open inode until it is restarted. That is
+		     internal/update's Install reasoning, and the same reason it stages
+		     inside /usr/local/bin rather than in /tmp.
+		  4. the two units, then `daemon-reload`: systemd has to be told about a
+		     unit file before anything asks it to start one.
+
+		Starting boat.service is NOT here — see _start_boat for why it waits.
+		"""
+		digest = self._staged_boat_digest()
+		steps = [
+			(
+				"creating the boat service user",
+				"id boat >/dev/null 2>&1 || sudo useradd --system --home-dir /var/lib/boat "
+				"--shell /usr/sbin/nologin boat",
+			),
+			("checking the sudoers allow-list", f"sudo visudo -cf {BOAT_STAGING_DIRECTORY}/sudoers"),
+			(
+				"installing the sudoers allow-list",
+				f"sudo install -m 0440 -o root -g root {BOAT_STAGING_DIRECTORY}/sudoers /etc/sudoers.d/boat",
+			),
+			(
+				"installing the boat binary",
+				f"sudo chmod 0755 {BOAT_INCOMING_BINARY} && sudo mv -f {BOAT_INCOMING_BINARY} {BOAT_BINARY}",
+			),
+			(
+				"installing boat.service",
+				f"sudo install -m 0644 {BOAT_STAGING_DIRECTORY}/boat.service "
+				"/etc/systemd/system/boat.service",
+			),
+			(
+				"installing boat-networkd.service",
+				f"sudo install -m 0644 {BOAT_STAGING_DIRECTORY}/boat-networkd.service "
+				"/etc/systemd/system/boat-networkd.service",
+			),
+			("reloading systemd", "sudo systemctl daemon-reload"),
+		]
+		with ssh_key_file(connection.ssh_private_key) as key_path:
+			for description, command in steps:
+				self._boat_ssh(connection, key_path, description, command)
+			self._verify_boat_binary(connection, key_path, digest)
+
+	def _staged_boat_digest(self) -> str:
+		"""SHA-256 of the boat binary this bootstrap is shipping, read on the
+		controller. Compared against the host's after the swap: the tar stream fails
+		loud on a broken transfer, but only the digest proves the bytes now at
+		/usr/local/bin/boat are the bytes the operator staged."""
+		return hashlib.sha256((boat_distribution() / "bin" / "boat").read_bytes()).hexdigest()
+
+	def _verify_boat_binary(self, connection, key_path, digest: str) -> None:
+		"""Prove the binary that landed is the one Atlas shipped, and that it runs.
+
+		Two different failures, both silent without this: bytes that changed in
+		flight (the digest), and a binary built for another architecture or a
+		non-executable file (`boat version`, which is also the only way Atlas can
+		learn the version — it cannot run a host's binary locally). The answer lands
+		on `observed_boat_version` so the field records what was installed at
+		install time rather than only what a later mirror sweep happened to see."""
+		landed = self._boat_ssh(
+			connection, key_path, "reading the installed digest", f"sha256sum {BOAT_BINARY}"
+		)
+		if landed.split()[:1] != [digest]:
+			frappe.throw(
+				f"boat on {self.name} is not the binary Atlas shipped: the host reports "
+				f"{landed.split()[0] if landed.split() else '(nothing)'}, Atlas shipped {digest}"
+			)
+		version = self._boat_ssh(
+			connection, key_path, "running boat version", f"{BOAT_BINARY} version"
+		).strip()
+		if not version:
+			frappe.throw(f"`boat version` on {self.name} printed nothing; the binary is not usable")
+		self.observed_boat_version = version
+
+	def _start_boat(self, connection) -> None:
+		"""Enable and (re)start boat.service — after the `boat bootstrap` Task.
+
+		The order is not obvious, so: the daemon's first act is to scan the host and
+		adopt what it finds (spec/33 §3.4), and on a fresh box there is nothing to
+		find until `boat bootstrap` has made /var/lib/atlas, the thin pool and the
+		nft scaffold. Starting it earlier points the adoption scan at a host that
+		does not exist yet and makes a daemon fault indistinguishable from an
+		unbootstrapped host.
+
+		`restart`, not `start`: on a re-bootstrap the unit is already running the
+		PREVIOUS binary and `start` would leave it there — the rename in
+		_install_boat only takes effect on re-exec. `enable` is separate and
+		idempotent, and is what survives a reboot.
+
+		boat-networkd.service is installed but deliberately NOT started: ANCP is
+		still served by atlas-networkd on these hosts, and two daemons programming
+		one wg-mesh is worse than either.
+		"""
+		with ssh_key_file(connection.ssh_private_key) as key_path:
+			self._boat_ssh(
+				connection, key_path, "enabling boat.service", "sudo systemctl enable boat.service"
+			)
+			self._boat_ssh(
+				connection, key_path, "starting boat.service", "sudo systemctl restart boat.service"
+			)
+			# is-active AFTER the restart: `systemctl restart` returns once the unit
+			# has been exec'd (the unit is Type=exec), not once it has settled, so a
+			# daemon that dies on its first read of the host exits 0 here.
+			self._boat_ssh(
+				connection, key_path, "boat.service did not stay up", "sudo systemctl is-active boat.service"
+			)
+
+	def _boat_ssh(self, connection, key_path, description: str, command: str) -> str:
+		"""One step of the boat install, failing loud and naming which step. Every
+		step is a precondition of the ones after it, so none may be logged past."""
+		stdout, stderr, exit_code = run_ssh(connection, key_path, command, timeout_seconds=120)
+		if exit_code != 0:
+			frappe.throw(
+				f"boat install on {self.name}: {description} failed "
+				f"(exit {exit_code}): {(stderr or stdout)[-500:]}"
+			)
+		return stdout
+
 	def _run_install_sh(self, connection) -> None:
 		"""Run scripts/install.sh on the host over SSH, AFTER the upload — it creates
 		the uv venv + `atlas` console script and runs the deep sanity gate. This is
@@ -714,7 +930,33 @@ class Server(Document):
 		]
 
 	def _bootstrap_uploads(self) -> list[tuple[str, str]]:
-		return self._script_uploads() + self._unit_uploads()
+		return self._script_uploads() + self._unit_uploads() + self._boat_uploads()
+
+	def _boat_uploads(self) -> list[tuple[str, str]]:
+		"""The four boat artifacts, staged on the host for `_install_boat` to put in
+		place. They ride the same one tar stream as everything else — a 15MB binary
+		gzips to a few MB and a bootstrap is minutes long, so a second transport
+		would buy nothing and cost a second thing to keep working.
+
+		Deliberately NOT in `_script_uploads()`, which `sync_scripts()` also
+		re-uploads: refreshing boat means a privileged install and a daemon restart,
+		which is bootstrap's job. Shipping the binary on the dev fast path would
+		leave a host whose /usr/local/bin/boat and running daemon disagree.
+
+		Throws when the distribution is absent or incomplete, naming every missing
+		path and the command that produces them: a host that fails here has nothing
+		installed, where a host that fails later has half."""
+		distribution = boat_distribution()
+		uploads = [(str(distribution / source), destination) for source, destination in BOAT_ARTIFACTS]
+		missing = [local for local, _destination in uploads if not Path(local).is_file()]
+		if missing:
+			frappe.throw(
+				f"the boat distribution at {distribution} is missing {', '.join(missing)}. "
+				"Build it (`git clone https://github.com/frappe/boat && cd boat && make build`) "
+				"and point `atlas_boat_distribution` in site config at that directory — Atlas "
+				"runs this host's verbs through boat and cannot build it."
+			)
+		return uploads
 
 	def _script_uploads(self) -> list[tuple[str, str]]:
 		"""The durable scripts that live under /var/lib/atlas/bin: the importable
@@ -768,10 +1010,11 @@ class Server(Document):
 		]
 
 	def _absorb_bootstrap_output(self, stdout: str) -> None:
-		# bootstrap-server.py emits a typed BootstrapResult as one
-		# `ATLAS_RESULT=<json>` line; parse_result pulls it out (the host still
-		# also writes /var/lib/atlas/bootstrap.json as the on-disk source of
-		# truth). Replaces the old "last non-empty stdout line is the JSON" scrape.
+		# `boat bootstrap` emits the same typed BootstrapResult bootstrap-server.py
+		# did, as one `ATLAS_RESULT=<json>` line; parse_result pulls it out (the host
+		# still also writes /var/lib/atlas/bootstrap.json as the on-disk source of
+		# truth). The keys are identical either way — that is what let the cutover be
+		# the first word of the command and nothing else.
 		#
 		# The result also carries `python_version` (the resolved Atlas venv python).
 		# It is deliberately NOT absorbed onto a Server field: it is derived state —
@@ -795,8 +1038,9 @@ class Server(Document):
 			parsed.get("pool_disk_gigabytes_total"),
 		)
 		# Reaching here means the bootstrap Task succeeded — and run_task raises on
-		# any failure, so bootstrap-server.py's deep sanity gate (which runs
-		# `atlas --help` to prove the console script dispatches) passed. Persist
+		# any failure, so install.sh's deep sanity gate (which runs `atlas --help` to
+		# prove the console script dispatches, and `boat version` to prove the other
+		# host CLI is installed) passed earlier in the same bootstrap. Persist
 		# CLI-readiness once, here, instead of paying a per-Task `test -e` round
 		# trip: a legacy/unbootstrapped host has cli_ready=0 and the operator sees
 		# the re-bootstrap signal. Fail-fast moved from per-Task to once-at-bootstrap.

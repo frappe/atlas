@@ -892,15 +892,23 @@ a liveness guarantee. Both become the ANCP shape when the daemon learns
 
 ## §4. Bootstrap, registration, re-adoption
 
-> **NOT BUILT — WO-1b**, except re-adoption, which is §3.4 and is live. There is
-> no `boat bootstrap` subcommand and no `POST /v1/bootstrap`; a host is still
-> brought to Active by [`bootstrap-server.py`](../scripts/bootstrap-server.py)
-> over SSH, and the Boat binary, its service user, its sudoers file and its unit
-> are installed by hand from the Boat repo's README. There is no registration
-> handshake: `Server.bootstrap()` is unchanged, `install.sh` still writes the
-> `atlas` symlink and does not place `boat`, and the daemon's address and token
-> come from site config (§2.3, §12) rather than from a host that registered
-> itself.
+> **PARTLY BUILT — WO-1b.** Re-adoption is §3.4 and is live. `boat bootstrap` is
+> built and is now the host-prep Task: `Server.bootstrap()` runs the verb
+> `bootstrap` (`scripts_catalog.BOAT_ONLY_VERBS`) as
+> `boat bootstrap --firecracker-version … --architecture …`, taking the flags
+> `bootstrap-server.py` took and printing the same `ATLAS_RESULT=` line — the
+> `.py` stays on disk as the differential's oracle. `Server.bootstrap()` also
+> deploys Boat itself: it ships the binary, `sudoers.d/boat` and both units from
+> an operator-staged boat checkout named by `atlas_boat_distribution` in site
+> config, creates the `boat` service user, validates the allow-list with
+> `visudo -cf` BEFORE installing it, renames the binary into place, and starts
+> `boat.service` after the host is VM-ready. `install.sh` asserts `boat` is on
+> PATH rather than demanding a hand-install.
+>
+> **Still NOT built:** `POST /v1/bootstrap`, and the registration handshake —
+> the daemon's address and token still come from site config (§2.3, §12) rather
+> than from a host that registered itself, and nothing writes `/etc/boat/token`,
+> so a freshly bootstrapped daemon serves its local socket only.
 
 **`boat bootstrap` brings a bare host to Active by itself** — thin pool, network
 scaffold, firecracker and jailer install, sudoers, unit installation, then

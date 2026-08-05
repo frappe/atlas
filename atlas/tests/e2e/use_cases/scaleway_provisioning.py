@@ -161,11 +161,13 @@ def _server_is_reachable(server_name: str, timeout_seconds: int = 5) -> bool:
 
 
 def _assert_bootstrap_succeeded(server_name: str) -> None:
+	# The host-prep verb is `bootstrap` (`boat bootstrap`, spec/33 §4), not the
+	# Python `bootstrap-server` it replaced.
 	tasks = frappe.get_all(
 		"Task",
-		filters={"server": server_name, "script": "bootstrap-server", "status": "Success"},
+		filters={"server": server_name, "script": "bootstrap", "status": "Success"},
 	)
-	assert tasks, "no successful bootstrap-server.py Task — host bring-up did not complete"
+	assert tasks, "no successful bootstrap Task — host bring-up did not complete"
 	server = frappe.get_doc("Server", server_name)
 	assert server.firecracker_version, "firecracker_version not recorded"
 	assert server.jailer_version, "jailer_version not recorded"
