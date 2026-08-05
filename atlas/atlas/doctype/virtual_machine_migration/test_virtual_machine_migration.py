@@ -297,6 +297,11 @@ class TestMigrationRow(IntegrationTestCase):
 
 		with (
 			patch.object(migration_module, "run_task", side_effect=_fake_run_task),
+			# The migration phases now run over Boat (item 9); source-autostart, the
+			# cutover provision-vm and collapse_forward's forward-down stay on run_task.
+			# Stub both entry points with the same fake so the phase machine is driven
+			# whichever transport a step uses.
+			patch.object(migration_module, "run_boat_migration_phase", side_effect=_fake_run_task),
 			patch.object(proxy_module, "reconcile_proxies", return_value=[]),
 		):
 			# Pending → … → CutoverStarting each report "more work" (advance to a further
@@ -328,6 +333,11 @@ class TestMigrationRow(IntegrationTestCase):
 
 		with (
 			patch.object(migration_module, "run_task", side_effect=_fake_run_task),
+			# The migration phases now run over Boat (item 9); source-autostart, the
+			# cutover provision-vm and collapse_forward's forward-down stay on run_task.
+			# Stub both entry points with the same fake so the phase machine is driven
+			# whichever transport a step uses.
+			patch.object(migration_module, "run_boat_migration_phase", side_effect=_fake_run_task),
 			patch.object(migration_module.frappe, "enqueue") as enqueue,
 		):
 			# A phase that advances re-enqueues the next.
@@ -573,6 +583,11 @@ class TestMigrationPhaseMachine(IntegrationTestCase):
 
 		with (
 			patch.object(migration_module, "run_task", side_effect=_fake_run_task),
+			# The migration phases now run over Boat (item 9); source-autostart, the
+			# cutover provision-vm and collapse_forward's forward-down stay on run_task.
+			# Stub both entry points with the same fake so the phase machine is driven
+			# whichever transport a step uses.
+			patch.object(migration_module, "run_boat_migration_phase", side_effect=_fake_run_task),
 			patch.object(proxy_module, "reconcile_proxies", return_value=[]),
 		):
 			for _ in range(len(migration_module.PHASE_ORDER) - 1):
@@ -690,6 +705,11 @@ class TestMigrationPhaseMachine(IntegrationTestCase):
 
 		with (
 			patch.object(migration_module, "run_task", side_effect=_fake_run_task),
+			# The migration phases now run over Boat (item 9); source-autostart, the
+			# cutover provision-vm and collapse_forward's forward-down stay on run_task.
+			# Stub both entry points with the same fake so the phase machine is driven
+			# whichever transport a step uses.
+			patch.object(migration_module, "run_boat_migration_phase", side_effect=_fake_run_task),
 			patch.object(proxy_module, "reconcile_proxies", return_value=[]),
 		):
 			for want in expected:
@@ -729,6 +749,11 @@ class TestMigrationPhaseMachine(IntegrationTestCase):
 
 		with (
 			patch.object(migration_module, "run_task", side_effect=_fake_run_task),
+			# The migration phases now run over Boat (item 9); source-autostart, the
+			# cutover provision-vm and collapse_forward's forward-down stay on run_task.
+			# Stub both entry points with the same fake so the phase machine is driven
+			# whichever transport a step uses.
+			patch.object(migration_module, "run_boat_migration_phase", side_effect=_fake_run_task),
 			patch.object(proxy_module, "reconcile_proxies", return_value=[]) as reconcile,
 		):
 			for _ in range(9):
@@ -785,6 +810,11 @@ class TestMigrationPhaseMachine(IntegrationTestCase):
 
 		with (
 			patch.object(migration_module, "run_task", side_effect=_fake_run_task),
+			# The migration phases now run over Boat (item 9); source-autostart, the
+			# cutover provision-vm and collapse_forward's forward-down stay on run_task.
+			# Stub both entry points with the same fake so the phase machine is driven
+			# whichever transport a step uses.
+			patch.object(migration_module, "run_boat_migration_phase", side_effect=_fake_run_task),
 			patch.object(proxy_module, "reconcile_proxies", return_value=[]),
 		):
 			for _ in range(9):
@@ -823,6 +853,11 @@ class TestMigrationPhaseMachine(IntegrationTestCase):
 
 		with (
 			patch.object(migration_module, "run_task", side_effect=_fake_run_task),
+			# The migration phases now run over Boat (item 9); source-autostart, the
+			# cutover provision-vm and collapse_forward's forward-down stay on run_task.
+			# Stub both entry points with the same fake so the phase machine is driven
+			# whichever transport a step uses.
+			patch.object(migration_module, "run_boat_migration_phase", side_effect=_fake_run_task),
 			patch.object(proxy_module, "reconcile_proxies", return_value=[]),
 		):
 			# Drive to Hydrating (boot-then-hydrate: Pending → ExportingSnapshot →
@@ -913,8 +948,12 @@ class TestPrivatePlaneCutoverOrdering(IntegrationTestCase):
 		from atlas.atlas import proxy as proxy_module
 
 		calls: list = []
+		# One fake, both transports: the phases run over Boat (item 9) while
+		# provision-vm stays on run_task — record from whichever a step uses.
+		fake = self._fake_run_task(calls)
 		with (
-			patch.object(migration_module, "run_task", side_effect=self._fake_run_task(calls)),
+			patch.object(migration_module, "run_task", side_effect=fake),
+			patch.object(migration_module, "run_boat_migration_phase", side_effect=fake),
 			patch.object(proxy_module, "reconcile_proxies", return_value=[]),
 		):
 			for _ in range(9):
@@ -1033,6 +1072,11 @@ class TestLocalBaseImageShip(IntegrationTestCase):
 
 		with (
 			patch.object(migration_module, "run_task", side_effect=_fake_run_task),
+			# The migration phases now run over Boat (item 9); source-autostart, the
+			# cutover provision-vm and collapse_forward's forward-down stay on run_task.
+			# Stub both entry points with the same fake so the phase machine is driven
+			# whichever transport a step uses.
+			patch.object(migration_module, "run_boat_migration_phase", side_effect=_fake_run_task),
 			patch.object(proxy_module, "reconcile_proxies", return_value=[]),
 		):
 			# Advance to TargetPreparing.
@@ -1112,6 +1156,11 @@ class TestLocalBaseImageShip(IntegrationTestCase):
 
 		with (
 			patch.object(migration_module, "run_task", side_effect=_fake_run_task),
+			# The migration phases now run over Boat (item 9); source-autostart, the
+			# cutover provision-vm and collapse_forward's forward-down stay on run_task.
+			# Stub both entry points with the same fake so the phase machine is driven
+			# whichever transport a step uses.
+			patch.object(migration_module, "run_boat_migration_phase", side_effect=_fake_run_task),
 			patch.object(proxy_module, "reconcile_proxies", return_value=[]),
 		):
 			# Advance to TargetPreparing.
@@ -1201,6 +1250,11 @@ class TestLocalBaseImageShip(IntegrationTestCase):
 
 		with (
 			patch.object(migration_module, "run_task", side_effect=_fake_run_task),
+			# The migration phases now run over Boat (item 9); source-autostart, the
+			# cutover provision-vm and collapse_forward's forward-down stay on run_task.
+			# Stub both entry points with the same fake so the phase machine is driven
+			# whichever transport a step uses.
+			patch.object(migration_module, "run_boat_migration_phase", side_effect=_fake_run_task),
 			patch.object(proxy_module, "reconcile_proxies", return_value=[]),
 		):
 			for _ in range(9):
@@ -1250,6 +1304,11 @@ class TestCollapseForward(IntegrationTestCase):
 
 		with (
 			patch.object(migration_module, "run_task", side_effect=_fake_run_task),
+			# The migration phases now run over Boat (item 9); source-autostart, the
+			# cutover provision-vm and collapse_forward's forward-down stay on run_task.
+			# Stub both entry points with the same fake so the phase machine is driven
+			# whichever transport a step uses.
+			patch.object(migration_module, "run_boat_migration_phase", side_effect=_fake_run_task),
 			# collapse_forward now stops the live VM first (so the disk converges off
 			# any dm-clone before the re-provision); vm.stop() runs a host Task through
 			# the VM module's run_task, so mock that too. Every host is on Boat now, so

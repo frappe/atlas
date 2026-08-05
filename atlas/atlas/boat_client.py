@@ -50,6 +50,8 @@ from atlas.atlas.providers.fake_tasks import is_fake_server
 from atlas.atlas.task_results import result_line
 
 if TYPE_CHECKING:
+	from collections.abc import Callable
+
 	from atlas.atlas.doctype.task.task import Task
 	from atlas.atlas.doctype.virtual_machine.virtual_machine import VirtualMachine
 
@@ -349,6 +351,36 @@ class BoatClient:
 	def get_operation(self, operation_id: str) -> dict:
 		"""GET /ops/{operation_id} — the journal record for one Task name."""
 		return self._request("GET", f"/ops/{operation_id}")
+
+	def migrate(self, uuid: str, phase: str, *, operation_id: str, params: dict) -> dict:
+		"""POST /vms/{uuid}/migrate/{phase} — run one MUTATING phase of the
+		cross-host migration saga, returning the operation record (spec/33 §8).
+
+		`operation_id` is the Frappe Task name — the same replay key every verb
+		shares, so a retried migration Task returns the phase's first result rather
+		than re-running it. `params` are the phase-specific `MigrateRequest` fields,
+		the UUID-derived ones (nbd port/slots, tunnel device/port, route table)
+		already dropped by the caller because Boat re-derives them from the UUID.
+		The poll-only Hydrating phase is `get_migration_hydration`, not this."""
+		return self._request(
+			"POST", f"/vms/{uuid}/migrate/{phase}", json={"operation_id": operation_id, **params}
+		)
+
+	def get_migration_hydration(self, uuid: str, *, clone_device: str | None = None) -> dict:
+		"""GET /vms/{uuid}/migrate/hydration — the Hydrating phase's per-tick poll.
+
+		A plain read, deliberately carrying no operation identifier and writing no
+		journal record (spec/33 §8): a poll runs every controller tick for the life
+		of the copy, so it must not bury the op journal. Returns `hydration_percent`
+		(0..100, the MIN across the VM's disk clones) and `source_healthy`.
+
+		`clone_device` polls one named dm device instead of the VM's own clones —
+		the base-image ship's `atlas-base-<image>-clone` (spec/24 §5.1) — and is
+		omitted for the ordinary disk poll."""
+		path = f"/vms/{uuid}/migrate/hydration"
+		if clone_device:
+			path += f"?clone_device={clone_device}"
+		return self._request("GET", path)
 
 	def _request(self, method: str, path: str, json: dict | None = None):
 		url = f"{self.base_url}{path}"
@@ -807,3 +839,293 @@ def _error_sentence(response: "requests.Response") -> str:
 		return response.json()["error"]
 	except (ValueError, KeyError, TypeError):
 		return response.text
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Migration phases (spec/33 §8, item 9). The cross-host migration saga's host work
+# moves off SSH onto Boat one PHASE at a time, exactly as the lifecycle verbs did.
+# `run_boat_migration_phase` is `run_boat_task`'s twin for the saga: same Task row,
+# same replay-by-operation-id, same Fake shortcut. The two transports differ only
+# in the grammar — a lifecycle verb is `POST /vms/{uuid}/{verb}`, a migration phase
+# is `POST /vms/{uuid}/migrate/{phase}` — so the mapping below is the whole of the
+# translation, the migration analogue of `_run_verb` + the rebuild collections.
+#
+# Boat DERIVES every per-VM device from the UUID (nbd port = NBDPort(uuid), the nbd
+# client slots, the tunnel device/port, the route table), so the matching Atlas
+# variables — NBD_PORT, NBD_BASE_SLOT, TUNNEL_DEVICE, TUNNEL_PORT, ROUTE_TABLE — are
+# NOT sent: two sides deriving the same value from the same UUID need no wire field,
+# and sending one invites a disagreement. VIRTUAL_MACHINE_NAME is likewise dropped
+# because the path names the VM.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# The Hydrating poll's Atlas verb. Special-cased out of MIGRATION_PHASES because it
+# is a GET with no operation record (spec/33 §8), not one of the mutating POST phases.
+MIGRATION_POLL_HYDRATION = "migration-poll-hydration"
+
+# migration-inject-identity variable -> GuestIdentity field. Every value is written
+# into the mounted rootfs verbatim; Boat parses none of it (spec/33 §7.2). Absent
+# here on purpose:
+#   VIRTUAL_MACHINE_NAME   the path names the VM
+#   CLONE_DEVICE           Boat derives the write device from the UUID
+#                          (/dev/mapper/atlas-vm-<uuid>-clone, falling back to the
+#                          plain LV — inject_identity.go), so a device sent here
+#                          could only disagree with the one it will actually use
+#   ROUTING_BASE_URL       becomes one anonymous guest file (extra_env), never a
+#                          named field — the guest-service seam, exactly as rebuild
+MIGRATION_INJECT_IDENTITY = {
+	"VIRTUAL_MACHINE_IPV6": "ipv6_address",
+	"IPV4_GUEST_CIDR": "ipv4_guest_cidr",
+	"IPV4_GATEWAY": "ipv4_gateway",
+	"SSH_PUBLIC_KEY": "authorized_keys_blob",
+	"DATA_DISK_MOUNT_AT": "data_disk_mount_at",
+}
+
+
+def _migration_guest_identity(variables: dict) -> dict:
+	"""The `GuestIdentity` blob an inject-identity phase writes through the clone.
+
+	Absent fields are left out rather than sent empty (Boat writes a defined value
+	for each either way), and DATA_DISK_MOUNT_AT empty means no data mount and no
+	fstab line. ROUTING_BASE_URL rides as one anonymous `extra_env` file, reusing
+	`_guest_files` so the byte-for-byte content matches the rebuild path's."""
+	identity = {
+		field: variables[key] for key, field in MIGRATION_INJECT_IDENTITY.items() if variables.get(key)
+	}
+	files = _guest_files(variables)
+	if files:
+		identity["extra_env"] = files
+	return identity
+
+
+def _export_source_params(variables: dict) -> dict:
+	# The source's own public IPv4 qemu-nbd binds — the one thing the source cannot
+	# derive from the UUID. NBD_PORT is dropped (Boat derives it).
+	return {"bind_address": variables["BIND_ADDRESS"]}
+
+
+def _export_base_params(variables: dict) -> dict:
+	return {"image_name": variables["IMAGE_NAME"], "bind_address": variables["BIND_ADDRESS"]}
+
+
+def _clone_target_params(variables: dict) -> dict:
+	return {
+		"image_name": variables["IMAGE_NAME"],
+		"disk_gb": int(variables["DISK_GB"]),
+		"data_disk_gb": int(variables["DATA_DISK_GB"]),
+		"source_host": variables["SOURCE_HOST"],
+	}
+
+
+def _receive_base_params(variables: dict) -> dict:
+	# PHASE (prepare|finalize) is the base-ship's own half, not a UUID-derived value,
+	# so it IS sent — as `base_phase`.
+	return {
+		"image_name": variables["IMAGE_NAME"],
+		"disk_gb": int(variables["DISK_GB"]),
+		"source_host": variables["SOURCE_HOST"],
+		"base_phase": variables["PHASE"],
+	}
+
+
+def _inject_identity_params(variables: dict) -> dict:
+	return {"identity": _migration_guest_identity(variables)}
+
+
+def _collapse_clone_params(variables: dict) -> dict:
+	# Whether a second (data) clone must be collapsed too; NBD_BASE_SLOT dropped.
+	return {"data_disk_gb": int(variables["DATA_DISK_GB"])}
+
+
+def _forward_up_params(variables: dict) -> dict:
+	# ROLE is required; SOURCE_HOST rides on the target role only (the connector's
+	# dial address); VIRTUAL_MACHINE_IPV6 is optional — forward-up runs once bare
+	# before the routes are known and again at cutover once they are. TUNNEL_DEVICE,
+	# TUNNEL_PORT and ROUTE_TABLE are all UUID-derived and dropped.
+	params = {"role": variables["ROLE"]}
+	if variables.get("SOURCE_HOST"):
+		params["source_host"] = variables["SOURCE_HOST"]
+	if variables.get("VIRTUAL_MACHINE_IPV6"):
+		params["virtual_machine_ipv6"] = variables["VIRTUAL_MACHINE_IPV6"]
+	return params
+
+
+def _source_forward_params(variables: dict) -> dict:
+	# REASSERT_PROXY_NDP is NOT sent: Boat's source-forward re-asserts proxy-NDP
+	# UNCONDITIONALLY on every provider (forward.go), so the flag has no field — it
+	# is the always-on behaviour, not a choice. TUNNEL_DEVICE is UUID-derived.
+	return {"virtual_machine_ipv6": variables["VIRTUAL_MACHINE_IPV6"]}
+
+
+def _target_receive_params(variables: dict) -> dict:
+	return {"virtual_machine_ipv6": variables["VIRTUAL_MACHINE_IPV6"]}
+
+
+def _forward_down_params(variables: dict) -> dict:
+	# DEASSERT_PROXY_NDP is likewise unconditional in Boat's forward-down, so only
+	# the role and the /128 are sent. (forward-down stays controller-side over SSH in
+	# migration.collapse_forward today; this entry is the catalog for symmetry.)
+	return {"role": variables["ROLE"], "virtual_machine_ipv6": variables["VIRTUAL_MACHINE_IPV6"]}
+
+
+def _withdraw_private_params(variables: dict) -> dict:
+	# The /128 to withdraw from the source's local-ownership cache; empty is a clean
+	# no-op for a tenant-less VM, so the empty string is passed through as-is.
+	return {"private_address": variables.get("PRIVATE_ADDRESS", "")}
+
+
+def _cleanup_source_params(variables: dict) -> dict:
+	# TODO(item9-live): KEEP_ADDRESS has no field on Boat's MigrateRequest /
+	# CleanupSourceParams (cleanup_source.go carries only NBDPID). On the keep-address
+	# path Atlas passes KEEP_ADDRESS=1 to SUPPRESS the ingress teardown — the M1 fix:
+	# CleanupSource runs vm-network-down, which deletes the proxy-NDP entry and the nft
+	# forward rules migration-source-forward installed, black-holing the migrated
+	# tenant's public ingress. Boat's cleanup-source cannot yet honour that suppression,
+	# so a keep-address migration driven over Boat would tear down its own forward. This
+	# gap MUST be closed by the live migration (a keep_address field on the phase, or a
+	# split verb) before the keep-address path runs on a real Boat host. NBD_PORT is
+	# UUID-derived and dropped; nbd_pid is the one thing Boat still needs.
+	return {"nbd_pid": int(variables.get("NBD_PID") or 0)}
+
+
+# Atlas migration verb -> (Boat phase string, `variables -> body params` builder).
+# The 12 mutating phases Boat's MigrateVirtualMachine serves (api/migration.go); the
+# poll-only Hydrating phase is MIGRATION_POLL_HYDRATION above. A verb not in this map
+# raises rather than appearing to have run — the migration analogue of `_run_verb`'s
+# "Boat serves no endpoint" refusal.
+MIGRATION_PHASES = {
+	"migration-export-source": ("export-source", _export_source_params),
+	"migration-export-base": ("export-base", _export_base_params),
+	"migration-clone-target": ("clone-target", _clone_target_params),
+	"migration-receive-base": ("receive-base", _receive_base_params),
+	"migration-inject-identity": ("inject-identity", _inject_identity_params),
+	# The collapse script keeps its Atlas name (migration-cutover-target.py); Boat
+	# calls the phase collapse-clone.
+	"migration-cutover-target": ("collapse-clone", _collapse_clone_params),
+	"migration-forward-up": ("forward-up", _forward_up_params),
+	"migration-source-forward": ("source-forward", _source_forward_params),
+	"migration-target-receive": ("target-receive", _target_receive_params),
+	"migration-forward-down": ("forward-down", _forward_down_params),
+	"migration-withdraw-private-source": ("withdraw-private", _withdraw_private_params),
+	"migration-cleanup-source": ("cleanup-source", _cleanup_source_params),
+}
+
+
+def run_boat_migration_phase(
+	*,
+	script: str,
+	variables: dict,
+	server: str,
+	virtual_machine: str | None = None,
+	timeout_seconds: int = 1800,
+) -> "Task":
+	"""Run one migration saga phase through the host's Boat daemon, recording the
+	Task row `run_task` would have recorded — `run_boat_task`'s twin for the phases
+	(spec/33 §8, item 9).
+
+	Keyword-for-keyword `run_task`'s signature, so `migration._run_phase_task` calls
+	it exactly as it called `run_task`. The Hydrating poll (`migration-poll-hydration`)
+	is a GET whose reading is folded onto the row as the one `ATLAS_RESULT=` line the
+	SSH poll script emitted, so `_phase_hydrating` parses it unchanged; the 12 mutating
+	phases are POST-claimed and polled like every other verb. Raises
+	`frappe.ValidationError` on any failure, with the Task saved first."""
+	# Fake provider (developer_mode): a Task on a Fake-backed Server succeeds (or
+	# fails on demand) with no Boat call, exactly as run_boat_task/run_task give it no
+	# request. The dev/test fleet is Fake hosts, so a real socket would go nowhere —
+	# the synthesized Task row (with its ATLAS_RESULT for the phases that return one)
+	# stands in, which is what keeps the Fake↔Fake migration tests transport-real.
+	if is_fake_server(server):
+		from atlas.atlas.providers.fake_tasks import run_fake_task
+
+		return run_fake_task(server, script, variables, virtual_machine)
+
+	if not virtual_machine:
+		frappe.throw(
+			_("run_boat_migration_phase: {0} needs a virtual_machine — Boat addresses VMs by UUID").format(
+				script
+			)
+		)
+
+	task = frappe.get_doc(
+		{
+			"doctype": "Task",
+			"server": server,
+			"virtual_machine": virtual_machine,
+			"script": script,
+			"status": "Pending",
+			"triggered_by": frappe.session.user if frappe.session else "Administrator",
+		}
+	)
+	task.variables_dict = variables
+	task.insert(ignore_permissions=True)
+
+	_execute_migration_phase_on_boat(task, server, script, variables, timeout_seconds)
+	return task
+
+
+def _execute_migration_phase_on_boat(
+	task: "Task",
+	server: str,
+	script: str,
+	variables: dict,
+	timeout_seconds: int,
+) -> None:
+	"""Drive an inserted migration-phase Task to its outcome over Boat. Mirrors
+	`_execute_on_boat` step for step — same `_mark_running` / `_finalize` so the row
+	shape cannot drift between the lifecycle and migration transports — and forks only
+	on the one structural difference: the Hydrating poll is a GET with no operation
+	record, so it takes no claim and no poll loop.
+
+	Both branches end at the same `_finalize`: the mutating phases fold the operation's
+	trace + typed result the way every verb does (`_task_stdout`), and the poll folds
+	its `hydration_percent`/`source_healthy` reading onto the row as the same
+	`ATLAS_RESULT=` line the SSH poll script wrote, so the controller reads one Task
+	the same way whichever transport filled it."""
+	_mark_running(task)
+	start = time.monotonic()
+	try:
+		client = BoatClient.for_server(server, timeout_seconds=POLL_REQUEST_TIMEOUT_SECONDS, poll=True)
+		if script == MIGRATION_POLL_HYDRATION:
+			hydration = client.get_migration_hydration(
+				task.virtual_machine, clone_device=variables.get("CLONE_DEVICE")
+			)
+			result = {
+				"hydration_percent": hydration["hydration_percent"],
+				"source_healthy": hydration["source_healthy"],
+			}
+			# Reuse _task_stdout with an operation-shaped payload so the row's stdout is
+			# assembled by the one place that owns the ATLAS_RESULT= fold.
+			stdout = _task_stdout({OPERATION_RESULT_FIELD: result})
+			status, exit_code, error = "Success", 0, ""
+		else:
+			phase, build_params = _migration_phase(script)
+			operation = client.migrate(
+				task.virtual_machine, phase, operation_id=task.name, params=build_params(variables)
+			)
+			operation = _await_operation(client, task.name, operation, timeout_seconds)
+			status, exit_code = _outcome(operation, task.name)
+			stdout = _task_stdout(operation)
+			error = operation.get("error") or ""
+	except Exception as exception:
+		_finalize(task, "", str(exception), None, "Failure", _elapsed_ms(start))
+		if isinstance(exception, frappe.ValidationError):
+			raise
+		raise frappe.ValidationError(str(exception)) from exception
+
+	_finalize(task, stdout, error, exit_code, status, _elapsed_ms(start))
+	if status == "Failure":
+		frappe.throw(f"Task {task.name} ({script}) exited {exit_code}: {error[-500:]}")
+
+
+def _migration_phase(script: str) -> "tuple[str, Callable[[dict], dict]]":
+	"""The Boat phase string and body builder for one Atlas migration verb.
+
+	An unmapped verb raises. A phase Boat cannot run must fail loud rather than appear
+	to have run — the same discipline `_run_verb` keeps for the lifecycle verbs."""
+	mapping = MIGRATION_PHASES.get(script)
+	if mapping is None:
+		served = ", ".join(sorted(MIGRATION_PHASES))
+		raise BoatError(
+			f"Boat serves no migration phase for verb {script!r} "
+			f"(it serves {served}, plus {MIGRATION_POLL_HYDRATION})"
+		)
+	return mapping
