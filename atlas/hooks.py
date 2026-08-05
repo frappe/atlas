@@ -269,6 +269,22 @@ scheduler_events = {
 		# retired reconcile ran on.
 		"*/5 * * * *": [
 			"atlas.atlas.providers.worker.check_networkd_liveness",
+			# The Boat mirror's pull half (spec/33 §2.5): GET /v1/export from every
+			# host, ingested into `Host State Snapshot` + the observed
+			# fields on Server / Virtual Machine, one enqueued job per host. Atlas
+			# pushes desired state when an operator clicks; NOTHING pulls observed
+			# state without this entry, so the whole WO-1 path is inert without it.
+			#
+			# A reader looking for the `GET /v1/watch` SSE consumer will not find one:
+			# §2.6 makes the stream the low-latency path and this export the
+			# truth-restoring backstop, and the stream is a later work order. The
+			# backstop is what makes a dropped stream survivable, so it lands first.
+			#
+			# Same */5 as the probe above, and for the same reason: both are read-only
+			# host observations with no operator waiting on them. A slower backstop
+			# would leave a partitioned host un-flagged for longer; a faster one would
+			# only shorten the forensic window the bounded snapshot archive holds.
+			"atlas.atlas.boat_mirror.sweep_mirrors",
 		],
 	},
 }

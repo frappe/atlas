@@ -85,4 +85,25 @@ esac
 	"${BIN_DIRECTORY}/vm-restore.py"
 "${ATLAS_CLI}" --help >/dev/null
 
-echo "Atlas venv ready: ${version}"
+# 6. The OTHER host CLI. Atlas runs ten host verbs as `boat <verb>` rather than
+#    `atlas <verb>` (scripts_catalog.BOAT_VERBS), and the host-prep Task itself is
+#    `boat bootstrap` — so a host without the boat binary is a host where the very
+#    next step of its own bootstrap fails, and later where snapshot, sync-image and
+#    reset-server fail at the first Task that needs one, mid-flow.
+#
+#    This is now an ASSERTION, not an instruction: `Server._install_boat` placed
+#    the binary, its allow-list, its service user and its units over this same SSH
+#    connection immediately before running this script (see the "WHERE THE BOAT
+#    ARTIFACTS COME FROM" comment in server.py). A failure here means that step did
+#    not happen or did not take, and the same argument the venv gate is built on
+#    applies: a missing dependency must fail the install, not the operation.
+if ! command -v boat >/dev/null; then
+	echo "boat is not on PATH, but Server.bootstrap() should have just installed it" >&2
+	echo "(from the checkout named by \`atlas_boat_distribution\` in site config, to" >&2
+	echo "/usr/local/bin/boat). Re-run Bootstrap; if it persists, that upload+install" >&2
+	echo "step is broken — Atlas runs this host's verbs through boat." >&2
+	exit 1
+fi
+boat version >/dev/null
+
+echo "Atlas venv ready: ${version}; boat $(boat version)"

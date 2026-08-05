@@ -183,11 +183,12 @@ class TestExceptionWrapping(IntegrationTestCase):
 
 
 class TestSidecarUploads(IntegrationTestCase):
-	def test_sync_image_uploads_sidecars_then_runs_atlas_verb(self) -> None:
+	def test_sync_image_uploads_sidecars_then_runs_the_verb(self) -> None:
 		# sync-image is a python verb WITH a sidecar (it bakes atlas-network.service
 		# into the image). The sidecar is scp'd to its fixed path; the verb itself
-		# runs as `atlas sync-image` — its own file is NOT scp'd (the console script
-		# is the entry).
+		# runs as `boat sync-image` — its own file is NOT scp'd, because the entry
+		# is a binary already on the host rather than a script to be staged. The
+		# sidecar is unaffected by the cutover: Boat reads it from the same path.
 		scp_destinations: list[str] = []
 		ssh_commands: list[str] = []
 
@@ -213,8 +214,8 @@ class TestSidecarUploads(IntegrationTestCase):
 		)
 		# The verb's own file is never scp'd — only the sidecar is.
 		self.assertFalse(any(destination.endswith("sync-image.py") for destination in scp_destinations))
-		# The verb runs through the console script.
-		self.assertTrue(any(command.strip().startswith("atlas sync-image") for command in ssh_commands))
+		# The verb runs through the boat binary on PATH.
+		self.assertTrue(any(command.strip().startswith("boat sync-image") for command in ssh_commands))
 
 
 class TestStagingPath(IntegrationTestCase):
@@ -316,22 +317,39 @@ class TestDurableScriptInvocation(IntegrationTestCase):
 
 class TestRemoteCommand(IntegrationTestCase):
 	"""The verb-kind dispatch in runner._remote_command — the heart of the cutover.
-	A python verb (incl. bootstrap-server) runs as `atlas <verb> --flag value`; a
-	shell verb keeps `env VAR=val bash -x <file>`."""
+	A python verb (incl. bootstrap-server) runs as `atlas <verb> --flag value`, a
+	verb Boat implements runs as `boat <verb> --flag value`, and a shell verb keeps
+	`env VAR=val bash -x <file>`."""
 
-	def test_python_verb_builds_atlas_console_command(self) -> None:
+	def test_a_boat_verb_runs_on_boat_with_the_same_flags(self) -> None:
 		command = runner._remote_command(
 			"snapshot-vm",
 			None,
 			{"VIRTUAL_MACHINE_NAME": "uuid-1", "SNAPSHOT_ROOTFS_PATH": "/dev/atlas/x"},
 		)
-		# The pip-installed console script on PATH, no interpreter path, no PYTHONPATH.
-		self.assertTrue(command.startswith("atlas snapshot-vm "))
+		# Only the first word changes. Boat takes the flags this function renders
+		# and prints the `ATLAS_RESULT=` line TaskResult.parse reads back, so
+		# nothing downstream of here can tell which implementation answered.
+		self.assertTrue(command.startswith("boat snapshot-vm "))
 		self.assertIn("--virtual-machine-name uuid-1", command)
 		self.assertIn("--snapshot-rootfs-path /dev/atlas/x", command)
 		self.assertNotIn("bash -x", command)
 		self.assertNotIn("python3", command)
 		self.assertNotIn("PYTHONPATH", command)
+
+	def test_a_verb_boat_does_not_implement_stays_on_the_atlas_console_script(self) -> None:
+		# The port is not finished, and the seam has to carry a mixed host: a verb
+		# outside scripts_catalog.BOAT_VERBS keeps the venv console script.
+		command = runner._remote_command("firewall-apply", None, {"VIRTUAL_MACHINE_NAME": "uuid-1"})
+		self.assertTrue(command.startswith("atlas firewall-apply "))
+
+	def test_a_controller_only_verb_stays_on_atlas(self) -> None:
+		# issue-cert and the mgmt-firewall trio run on the CONTROLLER through
+		# run_local_task, and the controller is not a Boat host. Boat implements
+		# them for the day it is; until then routing them at boat would send the
+		# command to a binary that is not installed there.
+		command = runner._remote_command("issue-cert", None, {"DOMAIN": "blr1.frappe.dev"})
+		self.assertTrue(command.startswith("atlas issue-cert "))
 
 	def test_bootstrap_runs_as_the_atlas_console_verb(self) -> None:
 		# NO CARVE-OUT: install.sh creates the Atlas venv + `atlas` console script
@@ -348,6 +366,18 @@ class TestRemoteCommand(IntegrationTestCase):
 		# Specifically NOT the old carve-out shape.
 		self.assertNotIn("python3", command)
 		self.assertNotIn("PYTHONPATH", command)
+
+	def test_the_host_prep_task_runs_as_boat_bootstrap(self) -> None:
+		# What Server.bootstrap() actually drives now: the verb `bootstrap`, which
+		# has no file in scripts/ at all (scripts_catalog.BOAT_ONLY_VERBS) and takes
+		# the SAME two flags the Python BootstrapInputs declared — so the cutover is
+		# the first word of the command and the argument surface is unchanged.
+		command = runner._remote_command(
+			"bootstrap",
+			None,
+			{"FIRECRACKER_VERSION": "v1.16.0", "ARCHITECTURE": "x86_64"},
+		)
+		self.assertEqual(command, "boat bootstrap --firecracker-version v1.16.0 --architecture x86_64")
 
 	def test_non_bootstrap_python_never_uses_an_interpreter_path(self) -> None:
 		# Every OTHER python verb runs as `atlas <verb>`, never an interpreter+path.

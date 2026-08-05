@@ -4,9 +4,18 @@ After=network-online.target
 Wants=network-online.target
 # Do not auto-start a sleeping VM on host reboot. sleep-vm.py writes this
 # marker after stopping the unit; wake-vm.py removes it before starting.
-# ConditionPathNotExists prevents the unit from starting while the file
-# exists, without disabling WantedBy (so wake-vm.py's systemctl start works).
-ConditionPathNotExists=/var/lib/atlas/virtual-machines/%i/sleeping
+# The condition prevents the unit from starting while the file exists, without
+# disabling WantedBy (so wake-vm.py's systemctl start works).
+#
+# The negation is `ConditionPathExists=!<path>`. It was written as
+# `ConditionPathNotExists=`, WHICH IS NOT A SYSTEMD DIRECTIVE — systemd logs
+# "Unknown key name ... ignoring" and starts the unit anyway, so this condition
+# has never suppressed anything. Every sleeping VM cold-booted on the next host
+# reboot with its marker still on disk, which then reads as Sleeping forever to
+# anything that checks the marker first, and re-parks a running VM into the
+# wake trap's black hole. A directive that does not exist fails open and says so
+# only in the journal; `systemd-analyze verify` is what catches it.
+ConditionPathExists=!/var/lib/atlas/virtual-machines/%i/sleeping
 
 [Service]
 Type=simple

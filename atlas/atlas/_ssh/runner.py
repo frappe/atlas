@@ -379,7 +379,13 @@ def _remote_command(script: str, remote_script_path: str | None, variables: dict
 
 	if scripts_catalog.kind(script) == "python":
 		args = _variables_to_flags(variables)
-		return f"atlas {shlex.quote(script)} {args}".strip()
+		# `boat <verb>` for the verbs the Go daemon's binary implements, `atlas
+		# <verb>` for the rest. Only the first word differs: boat takes the same
+		# flags this function renders and prints the same `ATLAS_RESULT=` line
+		# `TaskResult.parse` reads back, which is what lets one host run a mix
+		# while the port finishes (spec/33-boat.md, WO-6).
+		entry = "boat" if scripts_catalog.runs_on_boat(script) else "atlas"
+		return f"{entry} {shlex.quote(script)} {args}".strip()
 	env_prefix = " ".join(f"{key}={shlex.quote(str(value))}" for key, value in variables.items())
 	return f"env {env_prefix} bash -x {shlex.quote(remote_script_path)}".strip()
 

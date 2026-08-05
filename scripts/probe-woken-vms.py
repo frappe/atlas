@@ -39,7 +39,7 @@ def main() -> None:
 	# Woken = the sleeping marker is gone. wake-vm.py and atlas-wake-trap.py both
 	# remove it as the FIRST step of a wake (before `systemctl start`), so its
 	# absence is the authority that a wake has begun — the same signal the unit's
-	# ConditionPathNotExists keys on. A VM whose directory is already gone (a racing
+	# ConditionPathExists=! keys on. A VM whose directory is already gone (a racing
 	# terminate) reads as woken too; reconcile only acts on rows still Sleeping.
 	woken = {uuid: not os.path.exists(VirtualMachinePaths(uuid).sleeping_marker) for uuid in uuids}
 	ProbeWokenVmsResult(woken=woken).emit()

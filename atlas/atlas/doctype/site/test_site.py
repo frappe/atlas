@@ -805,7 +805,10 @@ class TestSiteTerminate(IntegrationTestCase):
 		site.db_set("virtual_machine", vm.name)
 		site.db_set("subdomain_doc", subdomain.name)
 		site.reload()
-		with _patch.object(vm_module, "run_task", return_value=fake_task(name="task-term-site")):
+		with (
+			_patch.object(vm_module, "run_boat_task", return_value=fake_task(name="task-term-site")),
+			_patch.object(vm_module, "put_desired_state", return_value={}),
+		):
 			site.terminate()
 		site.reload()
 		self.assertEqual(site.status, "Terminated")

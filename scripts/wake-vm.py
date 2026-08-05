@@ -28,7 +28,7 @@ def main() -> None:
 	inputs = WakeVmInputs.from_args()
 	paths = VirtualMachinePaths(inputs.virtual_machine_name)
 
-	# Remove the marker BEFORE starting the unit: if the unit's ConditionPathNotExists
+	# Remove the marker BEFORE starting the unit: if the unit's ConditionPathExists=!
 	# sees the marker it will silently refuse to start (exit 0, unit skipped).
 	# Remove first so a restart after a failed start also clears it.
 	run("sudo rm -f {}", paths.sleeping_marker)

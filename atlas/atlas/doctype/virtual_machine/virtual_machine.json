@@ -64,7 +64,13 @@
   "sleep_on_idle",
   "idle_timeout_seconds",
   "column_break_sleep",
-  "last_traffic_at"
+  "last_traffic_at",
+  "section_break_boat",
+  "desired_power",
+  "observed_status",
+  "column_break_boat",
+  "boot_epoch",
+  "observed_authority"
  ],
  "fields": [
   {
@@ -473,6 +479,48 @@
    "label": "Pilot Credential ID",
    "read_only": 1,
    "description": "Central-minted per-pilot credential id, copied from the owning Site. Echoed to Central on vm.* events so Central links/revokes the credential."
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "section_break_boat",
+   "fieldtype": "Section Break",
+   "label": "Boat"
+  },
+  {
+   "description": "Atlas's intent for this VM's power, and from spec/33 WO-2 the only input to Boat's reconciler. Empty means Atlas has not stated one yet: WO-1 mirrors observation only, so nothing writes this field and `status` remains the operator surface. Blank is therefore normal, not a missing value.",
+   "fieldname": "desired_power",
+   "fieldtype": "Select",
+   "label": "Desired Power",
+   "options": "\nRunning\nStopped",
+   "read_only": 1
+  },
+  {
+   "description": "What the host's Boat last observed, derived from the unit's state and the on-disk markers — never from a command having succeeded (spec/33 §1). Advisory in WO-1: the DB's `status` is still authoritative, and a disagreement between the two is surfaced as drift on the Host State Snapshot rather than corrected here. Empty means this host has never been mirrored.",
+   "fieldname": "observed_status",
+   "fieldtype": "Select",
+   "label": "Observed Status",
+   "options": "\nRunning\nStopped\nSleeping\nUnknown\nFailed",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_boat",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "0",
+   "description": "The per-UUID monotonic fence that decides whether a host may boot this VM at all (spec/33 §11.1). Atlas is its sole issuer and it bumps at exactly one point, a migration's repoint. WO-1 has no issuer yet, so this starts as the mirror of the fence Boat reports holding; once Atlas issues it, a difference between the two is the drift that stops two live copies of one VM.",
+   "fieldname": "boot_epoch",
+   "fieldtype": "Int",
+   "label": "Boot Epoch",
+   "read_only": 1
+  },
+  {
+   "default": "DB",
+   "description": "Whose observation wins for this VM. DB (the default) keeps today's behaviour exactly: the row's `status` is authority and Boat's report is advisory. Boat, from spec/33 WO-2, makes the host's observation authoritative for this VM. Reversible per VM — flipping it back to DB is that work order's rollback.",
+   "fieldname": "observed_authority",
+   "fieldtype": "Select",
+   "label": "Observed Authority",
+   "options": "DB\nBoat"
   }
  ],
  "links": [],

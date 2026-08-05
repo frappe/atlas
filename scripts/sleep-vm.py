@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # Put a Running VM to sleep: capture its full memory state, stop the unit, then
 # write a SLEEPING marker file. The marker prevents systemd from auto-starting the
-# VM on host reboot (ConditionPathNotExists in firecracker-vm@.service) and is the
+# VM on host reboot (ConditionPathExists=! in firecracker-vm@.service) and is the
 # authority for the Sleeping status in Frappe.
 #
 # Falls back to plain stop on any snapshot failure — the VM always ends up stopped;

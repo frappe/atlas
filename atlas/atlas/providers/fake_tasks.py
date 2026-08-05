@@ -282,6 +282,11 @@ def _restore_snapshot_s3_result(variables: dict) -> dict:
 
 
 _RESULT_BUILDERS = {
+	# Both names for the same job. `Server.bootstrap()` now runs the verb
+	# `bootstrap` (`boat bootstrap`, spec/33 §4); `bootstrap-server` is the Python
+	# oracle that is still on disk and still runnable by hand as `atlas
+	# bootstrap-server`, and a Fake host must answer whichever one it is asked.
+	"bootstrap": _bootstrap_result,
 	"bootstrap-server": _bootstrap_result,
 	"server-facts": _server_facts_result,
 	"snapshot-vm": _snapshot_result,

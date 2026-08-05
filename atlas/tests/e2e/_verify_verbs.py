@@ -87,16 +87,18 @@ def _run(keep: bool, start: float) -> None:
 		assert server.cli_ready == 1, f"cli_ready not set: {server.cli_ready!r}"
 		print("[verify] OK (1) Server.cli_ready == 1")
 
-		# (2) the bootstrap Task is recorded with the verb.
+		# (2) the bootstrap Task is recorded with the verb. That verb is now
+		# `bootstrap` — the host prep runs as `boat bootstrap` (spec/33 §4); the
+		# Python `bootstrap-server` is still on disk as the differential's oracle.
 		bootstrap_tasks = frappe.get_all(
 			"Task",
-			filters={"server": server_name, "script": "bootstrap-server", "status": "Success"},
+			filters={"server": server_name, "script": "bootstrap", "status": "Success"},
 		)
-		assert bootstrap_tasks, "no Success Task with script == 'bootstrap-server' (verb) found"
+		assert bootstrap_tasks, "no Success Task with script == 'bootstrap' (verb) found"
 		# And no legacy '.py' row was written for this fresh server.
 		legacy = frappe.get_all("Task", filters={"server": server_name, "script": "bootstrap-server.py"})
 		assert not legacy, f"unexpected legacy .py Task rows: {legacy}"
-		print("[verify] OK (2) bootstrap Task recorded as verb 'bootstrap-server'")
+		print("[verify] OK (2) bootstrap Task recorded as verb 'bootstrap'")
 
 		# (3) the atlas console script dispatches verbs on the real host.
 		out, err, code = _ssh(server, "which atlas && atlas --help")

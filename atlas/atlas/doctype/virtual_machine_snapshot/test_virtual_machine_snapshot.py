@@ -797,7 +797,11 @@ class TestSnapshotS3Backup(IntegrationTestCase):
 			patch.object(
 				module, "run_task", return_value=fake_task(stdout='ATLAS_RESULT={"objects": ["rootfs"]}')
 			) as rehydrate,
-			patch.object(vm_module, "run_task", return_value=fake_task()) as rollback,
+			# The rollback is `rebuild`, a lifecycle verb: it goes to the host's
+			# Boat and states its intent first. The rehydrate above is an ordinary
+			# Task and stays where it is.
+			patch.object(vm_module, "run_boat_task", return_value=fake_task()) as rollback,
+			patch.object(vm_module, "put_desired_state", return_value={}),
 		):
 			task_name = snapshot._run_restore()
 

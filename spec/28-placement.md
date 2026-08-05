@@ -92,9 +92,54 @@ on the `Server`:
   totals + live `pool_data_percent`), without a re-bootstrap. `capacity_reported_at`
   records the measurement.
 
+## The candidate set (`placement.py::placement_candidates`)
+
+Before anything is scored, a host has to be admitted. Two conditions, both of them
+exclusions from *new arrivals* only:
+
+- `status == "Active"` — the operator's vouch. `Draining`, `Broken` and the rest are
+  operator decisions recorded on the row.
+- `mirror_status != "Unknown"` — Atlas can still take this host at its word
+  ([33-boat.md § 9](./33-boat.md)): its Boat answered the last export sweep, and
+  answered as the host Atlas has been talking to (it still holds a fence for the VMs
+  Atlas placed there — a Boat that lost its store answers perfectly well and will
+  boot none of them). An `Unknown` host is one Atlas has lost sight of, not one that
+  is dead: it is still running every VM it holds, so it is skipped for arrivals and
+  nothing else — no eviction, no write to `status`, its VMs still counted by
+  `capacity_for_server`, still in `cluster_capacity`, and a VM already on it may
+  still resize. It re-enters with no operator action (the next successful export, or
+  the next `PUT` of desired state). An **empty** `mirror_status` does not exclude:
+  that is a host never mirrored — every SSH host, and a `boat_enabled` host the
+  five-minute sweep has not reached yet — and "not looked at" is not "lost".
+
+Every arrival goes through this gate, but **not every arrival goes through
+`placement_candidates`**, because not every arrival gets to choose its host:
+
+- `default_server` (and through it `default_server_for_image`), the consolidation
+  planner (`_fleet_snapshot`) and `largest_vm` build their candidate list from it, so
+  the host Central is told about, the host an arrival lands on and the host a
+  defragmentation move targets can never disagree.
+- A **clone** lands where its snapshot's bytes are — an LVM thin snapshot is
+  host-local — and a **migration** lands where the operator said. Those two call
+  `placement.assert_visible(server)` and *refuse*, which is the same gate applied the
+  only way that is left to them. The clone one is not a corner: `site.py` →
+  `default_bench_snapshot()` → `Virtual Machine Snapshot.clone_to_new_vm` is the path
+  **every self-serve Site VM** takes, so without it a golden's host went on receiving
+  every new site after Atlas had lost sight of it. Migration gates the **target**
+  only — moving a VM *off* an unseen host is the migration an operator most wants to
+  be able to run.
+
+**A blind region is not a full one.** When the candidate set comes back empty
+because every Active host reads `Unknown`, placement raises `HostNotVisibleError`,
+which is deliberately *not* a `NoCapacityError`. `NoCapacityError` exists so Central
+can tell "the region is full — queue, retry, alert" from a bad request; told that
+about a region that has room, Central retries, and every retry fails identically
+until the mirror recovers. The remedy is an operator looking at the control plane,
+and the exception type is the only place that can say so.
+
 ## The scorer (`placement.py::default_server` → `packing.rank_key`)
 
-For each Active server, filter to those where the VM fits, then score:
+For each candidate server, filter to those where the VM fits, then score:
 
 ```
 reserve = server.placement_headroom_percent if > 0
