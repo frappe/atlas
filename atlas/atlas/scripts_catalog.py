@@ -245,6 +245,17 @@ _PORTED_VERBS: frozenset[str] = frozenset(
 		"promote-snapshot-image",
 		"regenerate-host-keys-vm",
 		"reset-server",
+		# provision-vm + the five later ports (firewall/tunnel/traffic/wake/export).
+		# The boat binary implements each as a native verb taking the same
+		# --kebab-flags and printing the same ATLAS_RESULT= line, so the runner swaps
+		# only the first word. provision-vm creates LVs and boots a guest, so its
+		# differential is a real guest boot on a host, not goldens alone.
+		"provision-vm",
+		"firewall-apply",
+		"vm-tunnel",
+		"poll-vm-traffic",
+		"probe-woken-vms",
+		"export-cleanup-source",
 	}
 )
 
