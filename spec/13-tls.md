@@ -36,9 +36,14 @@ Root Domain ──Issue / Renew Certificate──▶ TLS Certificate.issue()
 
 One `Root Domain` row == one region == one wildcard. `Root Domain.region` freezes
 the region (the wildcard domain suffix) at insert. Atlas is single-region, so the
-proxy fleet is the whole set of `Virtual Machine.is_proxy=1` rows (`proxy._proxy_vms`)
-— issuance never needs to know which VMs are proxies, and there is no per-region
-filter to apply.
+proxy fleet is every LIVE `Virtual Machine.is_proxy=1` row ON A LIVE HOST
+(`proxy._proxy_vms`: not `Terminated`, and its `Server` is `Active`) — issuance never
+needs to know which VMs are proxies, and there is no per-region filter to apply. The
+host gate matters because a proxy VM's own status is only written when Atlas acts on
+it: a proxy whose host was drained or repurposed underneath it still reads `Running`,
+and publishing its dead address blackholes its share of the wildcard round-robin. It
+contributes neither a cert push target nor a DNS address until its host is `Active`
+again.
 
 ## Custom domains: SNI passthrough, the VM holds the cert
 

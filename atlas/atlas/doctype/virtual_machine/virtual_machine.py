@@ -1241,10 +1241,59 @@ class VirtualMachine(Document):
 		self._delete_custom_domains()
 		self._delete_snapshots()
 		self._deprovision_proxy()
+		self._terminate_front_doors()
 		# The VM's private /128 leaves the local-ownership cache (vm-network-down.py
 		# removes it on teardown); atlas-networkd's scan detects the change and gossips
 		# the withdrawal (spec/31 §11). No controller-side reconcile.
 		return task.name
+
+	def _terminate_front_doors(self) -> None:
+		"""Mark every aggregate backed by this VM Terminated, and push that status.
+
+		A `Pilot`/`Site` is the AUTHORITATIVE status Central mirrors for a bench VM
+		(`front_door.FrontDoor.status`, `central_report.on_vm_update`, which suppresses the
+		raw VM status for exactly these VMs). The aggregate→VM direction was wired —
+		`Pilot.terminate()` tears down its VM — but the VM→aggregate direction was not, so
+		terminating the VM DIRECTLY left the aggregate claiming Running forever. That is
+		not a corner: it is what Central's own `terminate_server` does (it invokes the
+		action on the Virtual Machine), and what the desk's Terminate button on a VM does.
+
+		Nothing corrected it afterwards, either: `vm.deleted` fires from `on_trash` and
+		Atlas never deletes the row (terminate is a status flip), and the reconcile pull
+		(`api.inventory.tenant_vms`) reports the FRONT DOOR's status — so it re-asserted
+		Running rather than repairing it. The result was a tenant seeing a dead server
+		listed as Running, with Open minting a session for a gateway that answers nothing.
+
+		Both aggregates, not just the handoff owner: a self-serve VM carries a Site AND
+		its attached Pilot (`front_doors_for_vm`), and leaving either behind reproduces the
+		bug on that half. `db_set` skips `on_update`, so the status event is emitted
+		explicitly — the same gap `report_pilot_status` / `report_site_status` exist to
+		close. Delivery is best-effort by design (a queued POST); a Central that is down
+		must not fail a terminate, so emission is guarded but the status write is not.
+
+		Skipped when the aggregate is the one doing the terminating (`Pilot.terminate()` /
+		`Site.terminate()` set `flags.front_door_terminating` before calling us): it marks
+		and saves itself, and re-marking here would fire the same event twice."""
+		if self.flags.get("front_door_terminating"):
+			return
+		from atlas.atlas.front_door import front_doors_for_vm
+
+		for door in front_doors_for_vm(self.name):
+			doc = door.doc
+			if doc.status == "Terminated":
+				continue
+			doc.db_set("status", "Terminated")
+			try:
+				from atlas.atlas import central_report
+
+				if doc.doctype == "Pilot":
+					central_report.report_pilot_status(doc)
+				else:
+					central_report.report_site_status(doc)
+			except Exception:
+				# The status is already persisted; a reporting failure must not undo the
+				# terminate. Central's own reconcile now reads the corrected status.
+				frappe.log_error(title=f"front-door terminate report failed: {doc.doctype} {doc.name}")
 
 	def _deprovision_proxy(self) -> None:
 		"""If this VM fronted traffic as a proxy, drop it out of the fleet on terminate
@@ -1367,7 +1416,19 @@ class VirtualMachine(Document):
 		currently referenced by Atlas Settings.default_bench_snapshot — and every
 		Available WARM snapshot, the same durable-artifact contract: a warm golden is
 		the per-server fan-out source and outlives its build VM by design (its own
-		on_trash removes the LV + memory pair when the operator retires it)."""
+		on_trash removes the LV + memory pair when the operator retires it).
+
+		A snapshot RECORDED AS AN IMAGE BUILD'S OUTPUT is durable for the same reason,
+		and this is the case the two exceptions above missed. A COLD bake's snapshot is
+		neither the registered golden nor warm, so `terminate_build_vm` — an ordinary
+		checkbox on the very form that offers **Promote** — used to delete the artifact
+		the promote needs, seconds after the build reported `Available`. What was left
+		was an Image Build pointing at a row that no longer exists, so Promote failed
+		with a bare "Virtual Machine Snapshot <name> not found" that reads as data
+		corruption rather than "you asked for this". Two staging bakes died that way
+		before the cause was found. Retiring a promoted image is the operator's
+		explicit call (delete the snapshot, or the Image Build first), never a side
+		effect of reaping the scratch VM."""
 		golden = frappe.db.get_single_value("Atlas Settings", "default_bench_snapshot")
 		for row in frappe.get_all(
 			"Virtual Machine Snapshot",
@@ -1378,11 +1439,13 @@ class VirtualMachine(Document):
 				continue
 			if row.kind == "Warm" and row.status == "Available":
 				continue
-			# force=1: a bake's snapshot is linked from its Image Build row, and
-			# delete_doc runs on_trash (host artifact removal, non-transactional)
-			# BEFORE the link check — a plain delete would destroy the artifacts
-			# and then abort on the link, stranding the row. The Image Build keeps
-			# a dangling audit link instead.
+			if frappe.db.exists("Image Build", {"snapshot": row.name}):
+				continue
+			# force=1: delete_doc runs on_trash (host artifact removal,
+			# non-transactional) BEFORE the link check, so a plain delete on a linked
+			# row would destroy the artifacts and then abort on the link, stranding
+			# the row. Nothing that survives to here is an Image Build's output (the
+			# guard above), so force only covers incidental links.
 			frappe.delete_doc("Virtual Machine Snapshot", row.name, ignore_permissions=True, force=1)
 
 	def _ipv4_link_variables(self) -> dict:

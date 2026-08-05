@@ -63,7 +63,9 @@ proxy's dev-only `test/` harness), a `finalize` callback, a `registers_as` Atlas
 Settings field, `is_proxy`, an optional `warm_entrypoint` (the in-guest script
 a **warm bake** runs before the paused capture — see *The warm bake* below; empty
 means the recipe only bakes cold), and — for the bench variants — the **per-version
-pins** (`frappe_branch`, `erpnext_branch`, `bench_cli_ref`, `python_version`), the
+pins** (`frappe_branch`, `erpnext_branch`, `python_version`, plus the
+`bench_cli_repo`/`bench_cli_ref` escape hatch, which every shipped recipe leaves at
+the unpinned default — pilot is installed the way its README documents), the
 bake `build_mode` (`site`/`admin`), and the `promote_image_name` (the base-image
 name a promote defaults to; see *Versioned bench variants* below). The recipes that
 ship:
@@ -125,20 +127,26 @@ the controller injects the version two ways:
   for the rendered temp file (via an `ExitStack` that unlinks it after staging,
   success or throw), so `build.sh` still copies its sibling `bench.toml` verbatim —
   the proven recipe is unchanged.
-- **`bench-cli` ref + ERPNext branch ride the build command's env.** Neither lives
-  in `bench.toml` (the cli ref is `install.sh`'s checkout target; the ERPNext branch
-  is a `get-app --branch` arg), so `_build_command(recipe)` prefixes the detached
-  build with `export BENCH_CLI_REF=… ERPNEXT_BRANCH=… && … build.sh <mode>`.
-  `build.sh` reads each as `${VAR:-<default>}`, keeping a direct run reproducible at
-  v16. `bench-cli` is the build *tool*, not the framework — it reads the branch +
-  Python from `bench.toml` and natively knows `version-15`/`version-16`/`develop`, so
-  **one pinned cli ref bakes all three** variants (`uv venv --python <X>` fetches the
-  interpreter, so the host needn't preinstall 3.11 for v15).
+- **The pilot repo + ERPNext branch ride the build command's env.** Neither lives in
+  `bench.toml` (the repo is where `install.sh` is fetched from; the ERPNext branch is
+  a `get-app --branch` arg), so `_build_command(recipe)` prefixes the detached build
+  with `export BENCH_CLI_REPO=… ERPNEXT_BRANCH=… && … build.sh <mode>`. `build.sh`
+  reads each as `${VAR:-<default>}`, keeping a direct run at v16. `BENCH_CLI_REF` rides
+  the same prefix but is exported **only when the recipe sets one**, and no shipped
+  recipe does: pilot is installed unpinned, the way its README documents
+  ([08-images.md](08-images.md)), so `build.sh` takes whatever release install.sh
+  delivers. `bench-cli` is the build *tool*, not the framework — it reads the
+  branch + Python from `bench.toml` and natively knows
+  `version-15`/`version-16`/`develop`, so **one pilot install bakes all three**
+  variants (`uv venv --python <X>` fetches the interpreter, so the host needn't
+  preinstall 3.11 for v15).
 
-The nightly variant tracks moving `develop`, so `build.sh` stamps the resolved
-`frappe`/`erpnext`/`bench-cli` commit SHAs on `ATLAS_BUILD_*=` lines; the controller
-harvests them from the build Task into `Image Build.build_inputs` (JSON), so even a
-nightly image is traceable to its real inputs.
+`build.sh` stamps the resolved `frappe`/`erpnext` commit SHAs **and the pilot version
+it was actually delivered** on `ATLAS_BUILD_*=` lines; the controller harvests them
+from the build Task into `Image Build.build_inputs` (JSON). That record is what
+replaces the pilot pin (it is not pinnable in advance — see 08-images.md), and it is
+also what makes the nightly variant, which tracks moving `develop`, traceable to its
+real inputs.
 
 **Release gate:** v15 + Python 3.11 compatibility is unproven until a real bake (a
 host fact, deferred to the e2e ride-along; the unit suite covers the rendering +
@@ -194,9 +202,19 @@ in-place edit (the same shape as `Site` / `Virtual Machine`).
 ### Lifecycle
 
 1. **`before_insert`** resolves the recipe, copies its `title`, defaults
-   `base_image` from `placement.default_image()`, and starts `Draft`. The build
-   VM is created in the background job, not here — provisioning SSHes and must
-   not block the insert.
+   `base_image` from `image_builder.default_build_base_image()`, and starts
+   `Draft`. The build VM is created in the background job, not here —
+   provisioning SSHes and must not block the insert.
+
+   That default is the plain **base OS** image — the active `Virtual Machine
+   Image` fetched from a `rootfs_url` and carrying no `build_mode` — *not* the
+   customer-facing `placement.default_image()`. Those are different questions and
+   agree only while `Atlas Settings.default_user_image` is unset; point the
+   customer default at a promoted golden (the reason to promote one) and every
+   later bake starts FROM that golden, whereupon `build.sh`'s install gate sees
+   pilot already present and **skips the install** — the "fresh" image silently
+   re-ships the old pilot, the old Frappe clone and the old baked site. Absent or
+   ambiguous fails loud rather than guessing.
 2. **`after_insert`** enqueues `run` on `queue="long"` (it SSHes and waits
    ~10–20 min — the same queue `Site.auto_provision` and image-sync use). No-op if
    not `Draft`.

@@ -283,7 +283,7 @@ def verify_admin_url(image_name: str, server: str, fqdn: str) -> dict:
 
 	Returns a dict with the VM name, the inherited build_mode, the minted
 	login_url, and the two probe results. Leaves the VM Running for inspection."""
-	from atlas.atlas.deploy_site import deploy_site, readiness_path_for_mode, wait_for_http
+	from atlas.atlas.deploy_site import deploy_site, readiness_paths_for_mode, wait_for_http
 
 	ssh_public_key = ephemeral_public_key() + "\n" + control_plane_public_key()
 	default_disk = frappe.db.get_value("Virtual Machine Image", image_name, "default_disk_gigabytes")
@@ -317,11 +317,13 @@ def verify_admin_url(image_name: str, server: str, fqdn: str) -> dict:
 	assert "sid=" in login_url, f"admin login_url has no sid: {login_url!r}"
 	print(f"[verify_admin_url] admin login URL minted: {login_url}")
 
-	# Probe the admin readiness path over the public v6 path (mode-aware = /api/status).
-	path = readiness_path_for_mode("admin")
-	print(f"[verify_admin_url] waiting for admin {path} on [{vm.ipv6_address}] (Host: {fqdn}) …")
-	wait_for_http(vm.ipv6_address, fqdn, path=path, timeout_seconds=300)
+	# Probe the admin readiness path over the public v6 path (mode-aware; the first
+	# spelling the golden's pilot answers wins).
+	paths = readiness_paths_for_mode("admin")
+	print(f"[verify_admin_url] waiting for admin {'|'.join(paths)} on [{vm.ipv6_address}] (Host: {fqdn}) …")
+	wait_for_http(vm.ipv6_address, fqdn, path=paths, timeout_seconds=300)
 
+	path = next((p for p in paths if _curl_admin(vm.ipv6_address, fqdn, p) == 200), paths[0])
 	status = _curl_admin(vm.ipv6_address, fqdn, path)
 	root = _curl_admin(vm.ipv6_address, fqdn, "/")
 	summary = {

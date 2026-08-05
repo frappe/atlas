@@ -29,7 +29,7 @@ from frappe import _
 from frappe.model.document import Document
 
 from atlas.atlas.placement import active_root_domain
-from atlas.atlas.subdomain_label import validate_label, validate_reserved
+from atlas.atlas.subdomain_label import PILOT_SUFFIX, validate_label, validate_reserved
 
 # How long a freshly-minted login URL stays usable, keyed by build_mode — the TTL
 # of the token deploy-site.py minted (bench/deploy-site.py). admin:
@@ -81,6 +81,31 @@ class Pilot(Document):
 		Site's `url` (also `https://<host>`) so the console + billing views open it the
 		same way."""
 		return f"https://{self.bench_fqdn}"
+
+	@property
+	def console_fqdn(self) -> str:
+		"""The host the bench ADMIN console is fronted at — what `[admin].domain` in the
+		guest's bench.toml must say, and the label that needs a proxy route.
+
+		Which shape depends on what the bench serves at `bench_fqdn`, i.e. on `build_mode`
+		(the effective deploy mode: inherited from the backing VM's image, and forced to
+		`admin` for an attached pilot):
+
+		- **admin** — the bench IS the console, so it owns `bench_fqdn` outright and the
+		  console host is the bench host. Covers every attached pilot (the console that
+		  comes with a Site) and a stand-alone pilot baked from an admin image.
+		- **site** — `bench_fqdn` serves the baked SITE, so the console needs a host of
+		  its own or it would collide with the site's vhost:
+		  `<subdomain>-pilot.<region domain>`, the same suffix a Site's attached console
+		  uses (`subdomain_label.PILOT_SUFFIX`). This is the server case.
+
+		Derived, never stored, and deterministic: `_create_subdomain` routes it and
+		`_deploy` wires it in two separate steps, and a re-driven provision (retry =
+		re-run) must derive the same host both times.
+		"""
+		if (self.build_mode or "site") == "admin":
+			return self.bench_fqdn
+		return f"{self.subdomain}{PILOT_SUFFIX}.{active_root_domain().domain}"
 
 	# ----- lifecycle -----------------------------------------------------
 
@@ -148,6 +173,12 @@ class Pilot(Document):
 			timeout=1800,
 			enqueue_after_commit=True,
 			pilot_name=self.name,
+			# The pilot credential is bench-level and never persisted on the Pilot row; it
+			# rides the job to the backing VM + the bench's bench.toml, exactly as
+			# Site.after_insert carries it. Flags are set by api.provision.create_vm.
+			pilot_credential_id=self.flags.get("pilot_credential_id"),
+			central_endpoint=self.flags.get("central_endpoint"),
+			bootstrap_token=self.flags.get("bootstrap_token"),
 		)
 
 	def _validate_immutability(self) -> None:
@@ -197,13 +228,18 @@ class Pilot(Document):
 
 		No-op when ATTACHED: an attached Pilot shares a VM the owning Site created and
 		tears down — terminating it here would double-terminate (and race the Site's own
-		VM teardown). The attached Pilot's teardown is only its Subdomain + its own row."""
+		VM teardown). The attached Pilot's teardown is only its Subdomain + its own row.
+
+		`front_door_terminating` tells the VM this aggregate is already tearing itself
+		down, so it skips `_terminate_front_doors`: this Pilot marks and saves itself in
+		`terminate()`, and re-marking there would emit its status event twice."""
 		if self.attached:
 			return
 		if not self.virtual_machine or not frappe.db.exists("Virtual Machine", self.virtual_machine):
 			return
 		vm = frappe.get_doc("Virtual Machine", self.virtual_machine)
 		if vm.status != "Terminated":
+			vm.flags.front_door_terminating = True
 			vm.terminate()
 
 	@frappe.whitelist()
@@ -243,7 +279,12 @@ class Pilot(Document):
 		self.login_url_expires_at = frappe.utils.add_to_date(frappe.utils.now_datetime(), minutes=ttl)
 
 
-def auto_provision(pilot_name: str) -> None:
+def auto_provision(
+	pilot_name: str,
+	pilot_credential_id: str | None = None,
+	central_endpoint: str | None = None,
+	bootstrap_token: str | None = None,
+) -> None:
 	"""Background-job entrypoint. Wait for the (already-created) backing VM to boot,
 	create the Subdomain that puts the pilot on the front door, mint the one-click
 	login URL in the booted guest, and THEN mark the pilot Running — the same
@@ -277,6 +318,13 @@ def auto_provision(pilot_name: str) -> None:
 		return
 
 	try:
+		# Stamp the credential id on the backing VM before anything else, so the vm.*
+		# events Atlas emits from here on echo it back and Central can bind its reserved
+		# Pilot Credential to this VM (mirrors Site.auto_provision).
+		if pilot_credential_id:
+			frappe.db.set_value(
+				"Virtual Machine", pilot.virtual_machine, "pilot_credential_id", pilot_credential_id
+			)
 		_trace(f"waiting for backing VM {pilot.virtual_machine} to boot (Running) …")
 		_t = time.monotonic()
 		_wait_for_vm_running(pilot.virtual_machine)
@@ -296,7 +344,7 @@ def auto_provision(pilot_name: str) -> None:
 		frappe.db.commit()
 		_trace("Subdomain created; minting login URL (in-guest deploy) …", since=_t)
 		_t = time.monotonic()
-		result = _deploy(pilot)
+		result = _deploy(pilot, central_endpoint=central_endpoint, bootstrap_token=bootstrap_token)
 		pilot._stamp_login(result)
 		pilot.db_set("login_url", pilot.login_url)
 		pilot.db_set("login_url_expires_at", pilot.login_url_expires_at)
@@ -333,18 +381,31 @@ def deploy_attached(pilot_name: str) -> None:
 	(the Site owns and already waited on the VM) and minus the front-door setup (the site
 	deploy already did the admin-mode wiring).
 
-	Fail loud: a pilot whose login mint fails is Failed, not a silently console-less
-	Running — the Site's job surfaces it (and the Site itself still serves)."""
+	Fail loud ON THE PILOT ROW: a pilot whose login mint fails is Failed, not a silently
+	console-less Running. The raise does NOT fail the owning Site, though — the console
+	is a second, additive front door on a VM whose site already serves, so
+	`Site._attach_pilot_console` logs it and lets the Site reach Running."""
 	pilot = frappe.get_doc("Pilot", pilot_name)
 	if pilot.status != "Pending":
 		return
 	try:
+		# Register the proxy route BEFORE minting, mirroring `auto_provision`. The route
+		# needs only the FQDN + the VM's /128 — both already present, since an attached
+		# pilot binds to a VM the Site has already booted — so the mint is not a
+		# prerequisite for it. Ordering it after the mint made the console's ENTIRE front
+		# door contingent on the one-click link: on a golden whose bench-cli has no
+		# session verb the mint raises, `_create_subdomain` never runs, and the console
+		# FQDN 404s at the proxy with no Subdomain row to explain why. Routed-but-no-link
+		# degrades to password sign-in with `[admin].password`; unrouted degrades to
+		# nothing at all.
+		subdomain_name = _create_subdomain(pilot)
+		pilot.db_set("subdomain_doc", subdomain_name)
+		# nosemgrep: frappe-manual-commit -- fire the after_commit proxy reconcile now, as auto_provision does
+		frappe.db.commit()
 		result = _regenerate_login(pilot)
 		pilot._stamp_login(result)
 		pilot.db_set("login_url", pilot.login_url)
 		pilot.db_set("login_url_expires_at", pilot.login_url_expires_at)
-		subdomain_name = _create_subdomain(pilot)
-		pilot.db_set("subdomain_doc", subdomain_name)
 		pilot.db_set("status", "Running")
 		# db_set skips on_update, so emit the status event (carrying the login handoff)
 		# explicitly — the same gap auto_provision closes. Its delivery is
@@ -422,11 +483,16 @@ def _wait_for_vm_running(vm_name: str) -> None:
 	_wait(vm_name)
 
 
-def _deploy(pilot) -> dict:
+def _deploy(pilot, central_endpoint: str | None = None, bootstrap_token: str | None = None) -> dict:
 	"""Run the in-guest deploy for the booted backing VM and return the parsed result
 	(carries `login_url`). Points the FQDN at the admin console (admin mode) or the
 	baked site (site mode) and mints the mode's login URL — the same script and result
 	shape Site consumes.
+
+	`central_endpoint`/`bootstrap_token` (when Central supplied them) are what the guest
+	runs `bench admin enroll` with — the step that turns Central's RESERVED Pilot
+	Credential into an Active one. Skip it and the bench never enrolls, so Central
+	refuses to open the console with "This VM's pilot hasn't enrolled yet".
 
 	A Fake-backed VM's documentation IP never answers SSH, so `deploy_site` is a no-op
 	there; synthesize a placeholder so desk/e2e stay green without a host."""
@@ -440,7 +506,23 @@ def _deploy(pilot) -> dict:
 	# the shared VM's build_mode is `site`; pass mode explicitly so the deploy wires the
 	# admin vhost, not another site rename. A stand-alone Pilot passes None → the VM's mode.
 	mode = pilot.build_mode if pilot.attached else None
-	return deploy_site(pilot.virtual_machine, pilot.bench_fqdn, mode=mode) or {}
+	return (
+		deploy_site(
+			pilot.virtual_machine,
+			pilot.bench_fqdn,
+			central_endpoint=central_endpoint,
+			bootstrap_token=bootstrap_token,
+			mode=mode,
+			# Site mode renames the baked site onto bench_fqdn and only wires
+			# `[admin].domain` when it is told a host. Without this a stand-alone pilot (a
+			# server) shipped with the baked `admin.localhost` placeholder still in
+			# bench.toml, so its console answered on no real hostname at all. Admin mode
+			# already defaults the domain to the FQDN it was given, so passing the same
+			# value there is a no-op that keeps the two paths honest.
+			admin_domain=pilot.console_fqdn,
+		)
+		or {}
+	)
 
 
 def _create_subdomain(pilot) -> str:
@@ -450,7 +532,21 @@ def _create_subdomain(pilot) -> str:
 	`<subdomain>.<region domain>` → the backing VM's public /128. The subdomain label
 	and target VM both flow straight from the Pilot — no transformation (Contract A).
 	Identical to Site._create_subdomain, minus the (site-only) build_mode probe path:
-	the Subdomain row is the same proxy contract for both aggregates."""
+	the Subdomain row is the same proxy contract for both aggregates.
+
+	Get-or-create, because retry = re-run (taste #16) and this is now the FIRST step
+	of the attached deploy: a pilot that got its route and then failed at the mint is
+	re-driven from the top, and a bare insert made that retry die on a duplicate-key
+	error instead — leaving the row Failed while its route was in fact already live
+	and serving, which is the most confusing state of the three."""
+	existing = frappe.db.get_value("Subdomain", pilot.subdomain, "virtual_machine")
+	if existing is not None:
+		if existing != pilot.virtual_machine:
+			frappe.throw(
+				f"Subdomain '{pilot.subdomain}' already routes to VM {existing}, "
+				f"not this pilot's {pilot.virtual_machine}"
+			)
+		return pilot.subdomain
 	subdomain = frappe.get_doc(
 		{
 			"doctype": "Subdomain",
@@ -459,7 +555,48 @@ def _create_subdomain(pilot) -> str:
 			"active": 1,
 		}
 	).insert(ignore_permissions=True)
+	_create_console_subdomain(pilot)
 	return subdomain.name
+
+
+def _create_console_subdomain(pilot) -> str | None:
+	"""Route the bench ADMIN console's own host, when it needs one of its own.
+
+	A stand-alone pilot (a server) serves the baked SITE at `bench_fqdn`, so its console
+	lives at `<subdomain>-pilot.<region domain>` (`Pilot.console_fqdn`) and that label
+	needs its own proxy route or the console is unreachable — `[admin].domain` in the
+	guest points at a host nothing routes. Both halves have to land for the console to
+	work: this row is the route, `_deploy`'s `admin_domain` is the vhost.
+
+	No-op for an attached pilot, whose console IS `bench_fqdn` — `_create_subdomain`
+	already routed it, and inserting the same label twice would just collide.
+
+	Get-or-create, because retry = re-run (taste #16): a provision that got the route
+	and then failed at the deploy is re-driven from the top, and a bare insert would die
+	on a duplicate key with the route in fact already live. A label that resolves
+	somewhere else is a genuine conflict, so that fails loud rather than silently
+	repointing someone else's host."""
+	if pilot.console_fqdn == pilot.bench_fqdn:
+		return None
+	label = pilot.console_fqdn.split(".", 1)[0]
+	existing = frappe.db.get_value("Subdomain", label, "virtual_machine")
+	if existing is not None:
+		if existing != pilot.virtual_machine:
+			frappe.throw(
+				_("Subdomain '{0}' already routes to VM {1}, not this pilot's {2}").format(
+					label, existing, pilot.virtual_machine
+				)
+			)
+		return label
+	console = frappe.get_doc(
+		{
+			"doctype": "Subdomain",
+			"subdomain": label,
+			"virtual_machine": pilot.virtual_machine,
+			"active": 1,
+		}
+	).insert(ignore_permissions=True)
+	return console.name
 
 
 def _regenerate_login(pilot) -> dict:

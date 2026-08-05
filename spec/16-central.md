@@ -202,8 +202,13 @@ once the Pilot is `Running`; before then, and for an ordinary (non-bench) VM wit
 Pilot, those are `None`. Because a bench `login_url` is a 5-minute single-use admin
 session, Central re-mints it on **Open** (`get_bench_link`) when the stored URL has
 expired, via the whitelisted `Pilot.regenerate_login_url()` method (which returns the
-same VM-shaped payload). This is the only Central→Atlas read; all Central→Atlas
-*writes* reuse the existing whitelisted controller methods.
+same VM-shaped payload). On a golden whose pilot carries **no in-guest session verb** —
+which upstream pilot does not, so this is the current normal — that re-mint comes back
+with an empty `login_url`, and Central signs the console's one-click `?sid=` link
+itself against the JWKS the bench trusts from `bench admin enroll`; the Atlas-side read
+and re-mint are unchanged either way ([08-images.md](./08-images.md)). This is the only
+Central→Atlas read; all Central→Atlas *writes* reuse the existing whitelisted
+controller methods.
 
 **A self-serve site's Asset resolves the pilot console.** A `create_site` VM is backed
 by **both** a `Site` (the customer's Frappe site) and an attached `Pilot` (a bench admin

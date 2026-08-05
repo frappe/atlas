@@ -54,9 +54,18 @@ class FrontDoor:
 
 	@property
 	def gateway_url(self) -> str:
-		# The aggregate's name IS the fqdn (Contract A) for both Pilot and Site, so the
-		# front-door URL is `https://<name>` either way — the same value Pilot.gateway_url
-		# derives and Site's `url` uses.
+		# What Central DEEP-LINKS: it opens this URL with a Central-signed `?sid=`, which
+		# only the bench's admin console verifies. So for a Pilot the answer is its
+		# console host, not its name. Those are the same thing for an admin-mode pilot
+		# (including every attached console, whose name already carries `-pilot`), but a
+		# site-mode pilot — a server — is named after the host serving the TENANT SITE,
+		# and that site has no idea what the sid means: opening it drops the user on the
+		# site's login page as Guest instead of in their bench.
+		#
+		# A Site front door has no console of its own; its name IS the fqdn (Contract A)
+		# and its handoff is the one-click `login_url`, not the sid, so it keeps `name`.
+		if self.doc.doctype == "Pilot":
+			return f"https://{self.doc.console_fqdn}"
 		return f"https://{self.doc.name}"
 
 	@property
@@ -79,9 +88,30 @@ def front_door_for_vm(vm_name: str) -> FrontDoor | None:
 	"""The Pilot or Site backing a VM as a `FrontDoor`, or None for a plain VM.
 
 	The single VM→front-door resolver: replaces the Pilot-only `pilot_for_vm` at the
-	Central seam so a Site-backed VM (create_site) resolves its login handoff too."""
+	Central seam so a Site-backed VM (create_site) resolves its login handoff too.
+
+	Returns the FIRST match in `_FRONT_DOOR_DOCTYPES` order — Pilot before Site — which
+	is deliberate for the handoff: a self-serve VM carries BOTH a Site and its attached
+	Pilot, and what Central deep-links is the console, not the tenant site. Use
+	`front_doors_for_vm` when you need every aggregate rather than the one that owns the
+	handoff."""
 	for doctype in _FRONT_DOOR_DOCTYPES:
 		name = frappe.db.get_value(doctype, {"virtual_machine": vm_name}, "name")
 		if name:
 			return FrontDoor(frappe.get_doc(doctype, name))
 	return None
+
+
+def front_doors_for_vm(vm_name: str) -> list["FrontDoor"]:
+	"""EVERY aggregate backed by this VM, not just the one that owns the handoff.
+
+	A self-serve VM is backed by two: the `Site` (the tenant's Frappe site) and the
+	attached `Pilot` (its admin console), which share the one microVM. `front_door_for_vm`
+	answers "who owns the login handoff" and stops at the first; anything that must act on
+	the VM's whole ownership — terminating it, above all — has to reach both, or one
+	aggregate is left claiming to be Running over a VM that no longer exists."""
+	doors = []
+	for doctype in _FRONT_DOOR_DOCTYPES:
+		for name in frappe.get_all(doctype, filters={"virtual_machine": vm_name}, pluck="name"):
+			doors.append(FrontDoor(frappe.get_doc(doctype, name)))
+	return doors

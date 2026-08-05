@@ -594,6 +594,79 @@ class TestVirtualMachine(IntegrationTestCase):
 		self.assertFalse(frappe.db.exists("Subdomain", subdomain.name))
 		self.assertIsNone(frappe.db.get_value("Pilot", pilot.name, "subdomain_doc"))
 
+	def test_terminate_marks_the_owning_pilot_terminated(self) -> None:
+		"""Terminating the VM directly — what Central's terminate_server and the desk's
+		Terminate button both do — must not leave the Pilot claiming Running. Central
+		mirrors the AGGREGATE's status, so a stale Running there is a dead server shown
+		as live, with Open minting a session for a gateway that answers nothing."""
+		from atlas.atlas.doctype.virtual_machine import virtual_machine as module
+
+		_ensure_active_root_domain()
+		vm = _new_vm()
+		pilot = frappe.get_doc({"doctype": "Pilot", "subdomain": "orphan-check"})
+		pilot.flags.attach_vm = vm.name
+		pilot.insert(ignore_permissions=True)
+		pilot.db_set("status", "Running")
+
+		vm.db_set("status", "Stopped")
+		vm.reload()
+		with patch.object(module, "run_task", return_value=fake_task(name="task-term")):
+			vm.terminate()
+
+		self.assertEqual(frappe.db.get_value("Pilot", pilot.name, "status"), "Terminated")
+
+	def test_terminate_marks_both_aggregates_of_a_self_serve_vm(self) -> None:
+		"""A self-serve VM is backed by a Site AND its attached Pilot on the one microVM.
+		Reaching only the first (front_door_for_vm stops at the Pilot) would leave the
+		Site — the tenant's actual site — reported Running over a VM that is gone."""
+		from atlas.atlas.doctype.virtual_machine import virtual_machine as module
+
+		_ensure_active_root_domain()
+		vm = _new_vm()
+		site = frappe.get_doc({"doctype": "Site", "subdomain": "bothends"})
+		site.flags.attach_vm = vm.name
+		site.insert(ignore_permissions=True)
+		site.db_set("virtual_machine", vm.name)
+		site.db_set("status", "Running")
+		pilot = frappe.get_doc({"doctype": "Pilot", "subdomain": "bothends-pilot"})
+		pilot.flags.attach_vm = vm.name
+		pilot.insert(ignore_permissions=True)
+		pilot.db_set("status", "Running")
+
+		vm.db_set("status", "Stopped")
+		vm.reload()
+		with patch.object(module, "run_task", return_value=fake_task(name="task-term")):
+			vm.terminate()
+
+		self.assertEqual(frappe.db.get_value("Pilot", pilot.name, "status"), "Terminated")
+		self.assertEqual(frappe.db.get_value("Site", site.name, "status"), "Terminated")
+
+	def test_pilot_terminate_does_not_double_report(self) -> None:
+		"""When the PILOT initiates, it marks and saves itself — the VM must not re-mark
+		it, or the same status event is emitted twice to Central."""
+		from atlas.atlas.doctype.virtual_machine import virtual_machine as module
+
+		_ensure_active_root_domain()
+		vm = _new_vm()
+		pilot = frappe.get_doc({"doctype": "Pilot", "subdomain": "selfterm"})
+		pilot.flags.attach_vm = vm.name
+		pilot.insert(ignore_permissions=True)
+		pilot.db_set("status", "Running")
+		pilot.db_set("attached", 0)
+		pilot.reload()
+
+		vm.db_set("status", "Stopped")
+		with (
+			patch.object(module, "run_task", return_value=fake_task(name="task-term")),
+			patch("atlas.atlas.central_report.report_pilot_status") as reported,
+		):
+			pilot.terminate()
+
+		self.assertEqual(frappe.db.get_value("Pilot", pilot.name, "status"), "Terminated")
+		# The VM's propagation is skipped (flags.front_door_terminating), so the only
+		# report is the Pilot's own save → on_pilot_update. Never two.
+		self.assertLessEqual(reported.call_count, 1)
+
 	def test_parse_size_bytes(self) -> None:
 		from atlas.atlas.task_results import parse_result
 

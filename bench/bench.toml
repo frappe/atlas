@@ -10,14 +10,22 @@
 # snapshot-booted clone comes back up serving with NO hand-rolled boot unit.
 # That is why build.sh is now ~the proven recipe and nothing more.
 #
-# MariaDB is a DEDICATED per-bench instance (`instance = "atlas"`): bench-cli
-# provisions `mariadb@atlas` with its own socket + datadir and `systemctl enable
-# --now`s it, so it auto-starts at boot as an ordinary system service. We never
-# touch MariaDB auth ourselves — bench-cli secures it (ALTER USER over the
-# instance socket). The root password is baked, fixed, and SHARED across every VM
-# from this image, which is correct: each VM is single-tenant and MariaDB binds
-# 127.0.0.1 only (the south hop reaches Frappe's :80, never 3306), so the secret
-# never crosses a VM boundary.
+# MariaDB. On upstream pilot — which every recipe now installs (image_recipes.
+# _BENCH_CLI_REPO) — the `[mariadb]` table below is NOT read from bench.toml at all.
+# The config parser takes MariaDB from the host-level common config
+# (`BenchConfig._from_dict` sets `mariadb=common.mariadb`), and the server is ONE
+# rootless, USER-OWNED `pilot-mariadb.service` shared by every bench on the host,
+# datadir + socket under `~/pilot/databases/mariadb/`, started by the bench user's
+# lingering systemd. Auth is unix_socket for the bench user; there is no per-bench
+# instance and no ZFS anywhere. An older fork DID read the table (`instance`/
+# `socket_path`/`data_dir` → a dedicated system `mariadb@atlas`), which is why it is
+# still here: unknown keys are ignored, so it costs nothing and a fork pin still works.
+#
+# Either way we never touch MariaDB auth ourselves — bench-cli secures it. The root
+# password is baked, fixed, and SHARED across every VM from this image, which is
+# correct: each VM is single-tenant and MariaDB is reachable only on 127.0.0.1 / a
+# local socket (the south hop reaches Frappe's :80, never 3306), so the secret never
+# crosses a VM boundary.
 
 [bench]
 name = "atlas"
@@ -31,9 +39,11 @@ name = "frappe"
 repo = "https://github.com/frappe/frappe"
 branch = "version-16"
 
-# Dedicated MariaDB instance — bench-cli runs + manages `mariadb@atlas` (its own
-# socket, datadir, and enabled-at-boot systemd service). We don't configure or
-# worry about MariaDB at all.
+# MariaDB. INERT on upstream pilot — it ignores this whole table (it reads the host
+# common config instead) and runs one user-owned `pilot-mariadb.service` under the
+# pilot dir. Read only by a fork pin, where `instance`/`socket_path`/`data_dir`
+# provision + manage a dedicated `mariadb@atlas` (own socket, datadir, enabled at
+# boot) — see the header. Either way we don't configure MariaDB ourselves.
 [mariadb]
 host = "localhost"
 port = 3306
@@ -98,8 +108,10 @@ webroot_path = "/var/www/letsencrypt"
 # per clone in admin mode. The placeholder is never served — in site mode the FQDN
 # maps to the baked site, not the admin app. The `password` below is a placeholder
 # build.sh replaces with a long random secret at bake time (never surfaced) — the
-# tenant handoff is `bench generate-admin-session`'s one-click URL
-# (bench/deploy-site.py), not this password.
+# tenant handoff is the one-click `?sid=` link CENTRAL mints against the JWKS trust
+# `bench admin enroll` writes here (central/api/sso.get_bench_link), not this
+# password. Upstream pilot has no in-guest session-minting verb; deploy-site.py falls
+# back to this password only on a golden that carries neither.
 [admin]
 port = 8002
 timeout = 180
@@ -107,16 +119,21 @@ enabled = true
 password = "admin-password"
 domain = "admin.localhost"
 
-# ZFS volume: bench code + MariaDB datadir on ZFS datasets, on a preallocated
-# file vdev (the build VM is a single disk with no spare block device). `bench
-# init` creates the pool + datasets and mounts them; the only ZFS thing build.sh
-# does itself is DKMS-build zfs.ko (the Firecracker vmlinux ships no ZFS module)
-# — everything else is bench-cli's job.
+# ZFS volume — INERT: NO CURRENT RECIPE READS THESE THREE TABLES. Upstream pilot,
+# which every recipe now installs, has no volume schema at all (no `volume` section in
+# its config parser), so on every golden the bench and the DB datadir live on the plain
+# rootfs and ZFS survives only as the `zfsutils-linux` package build.sh installs. They
+# are kept for a volume-aware pin, where they ARE read: bench code + MariaDB datadir on
+# ZFS datasets, on a preallocated file vdev (the build VM is a single disk with no spare
+# block device). `bench init` creates the pool + datasets and mounts them; the zfs.ko
+# module itself is baked into the guest rootfs at image-sync time (the Firecracker
+# vmlinux ships none).
 #
-# No `enabled` key: at the pinned bench-cli, `_parse_volume` defaults `enabled` to
-# TRUE when a [volume] table is present (bench_config.py), so the table's mere
-# presence turns ZFS on — exactly as bench-setup.md relies on. (Cold-boot ZFS
-# auto-import/mount-ordering is NOT wired here yet — to be verified on a host.)
+# ⚠️ No `enabled` key: on a parser that reads this, `_parse_volume` defaults `enabled`
+# to TRUE when a [volume] table is present, so the table's MERE PRESENCE turns ZFS on.
+# If upstream ever grows a volume schema, delete all three tables in the same change —
+# every golden would otherwise start building a pool it was never asked for. (Cold-boot
+# ZFS auto-import/mount-ordering is NOT wired here.)
 [volume]
 pool = "bench-pool"
 backing = "image"
