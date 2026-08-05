@@ -1365,3 +1365,36 @@ class TestMigrationOverFakeTransport(IntegrationTestCase):
 		vm.reload()
 		self.assertEqual(vm.server, self.target)
 		self.assertEqual(vm.status, "Running")
+
+	def test_keep_address_saga_runs_to_done_over_the_fake_transport(self) -> None:
+		from atlas.atlas import proxy as proxy_module
+
+		vm = make_virtual_machine(self.source, self.image, status="Running")
+		# Force the keep-address path — Fake providers derive change-address, but
+		# keep-address is the DEFAULT on a real DO fleet and the branch the M1 cleanup
+		# fix lives on: the forward tunnel + return route are wired, Repointing skips the
+		# Subdomain re-point, and Cleanup runs with KEEP_ADDRESS=1 carrying the /128 over.
+		with patch.object(migration_module, "_will_keep_address", return_value=True):
+			row = frappe.get_doc(
+				{
+					"doctype": "Virtual Machine Migration",
+					"virtual_machine": vm.name,
+					"target_server": self.target,
+				}
+			).insert(ignore_permissions=True)
+		self.assertTrue(row.keep_address)
+
+		with patch.object(proxy_module, "reconcile_proxies", return_value=[]):
+			for _ in range(20):
+				if not migration_module.advance_migration(row):
+					break
+				row.reload()
+			else:
+				self.fail(f"keep-address migration did not terminate within 20 ticks; stuck at {row.status}")
+
+		row.reload()
+		self.assertEqual(row.status, "Done")
+		vm.reload()
+		self.assertEqual(vm.server, self.target)
+		# keep-address carries the /128 over unchanged.
+		self.assertEqual(vm.ipv6_address, row.ipv6_address_old)
