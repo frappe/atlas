@@ -4,6 +4,7 @@ import uuid
 import frappe
 from frappe import _
 from frappe.model.document import Document
+from frappe.utils import add_to_date, now_datetime
 
 from atlas.atlas.boat_client import (
 	FIRST_BOOT_EPOCH,
@@ -1166,6 +1167,44 @@ class VirtualMachine(Document):
 		if self.cpu_max_cores == float(self.vcpus):
 			return float(new_vcpus)
 		return float(self.cpu_max_cores)
+
+	@frappe.whitelist()
+	def get_console_api_key(self):
+		key = frappe.db.get_value(
+			"VM Web Console API Keys",
+			{
+				"virtual_machine": self.name,
+				"expiry_time": (">", now_datetime()),
+			},
+			"name",
+		)
+
+		root_domain = frappe.db.get_value("Root Domain",
+					{ "is_active": True }, "domain" )
+
+		base_url = "https://console-"+self.server+"."+root_domain
+
+		if key:
+			return {
+				"api_key": key,
+				"base_url": base_url
+			}
+
+		doc = frappe.new_doc("VM Web Console API Keys")
+		doc.virtual_machine = self.name
+		doc.creation_time = now_datetime()
+		doc.expiry_time = add_to_date(
+			now_datetime(),
+			hours=1,
+			as_datetime=True,
+		)
+
+		doc.insert(ignore_permissions=True)
+
+		return {
+			"api_key": doc.name,
+			"base_url": base_url
+		}
 
 	@frappe.whitelist()
 	def regenerate_host_keys(self) -> str:
