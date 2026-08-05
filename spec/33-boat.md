@@ -4,7 +4,8 @@
 > written and reviewed before any Boat code — and **WO-0, WO-1 and WO-2 are
 > built**: `boat` is a running daemon with an adoption scan, a whole-host export,
 > a per-VM reconciler, a resident wake trap and every lifecycle verb, and Atlas
-> drives real hosts through it behind `Server.boat_enabled`. `make check` is
+> drives every real host through it — the `Server.boat_enabled` flag that used
+> to gate it is gone, and so is the SSH path it fell back to. `make check` is
 > green. The repository is `github.com/frappe/boat`; the contract IDL is
 > `api/openapi.yaml` in that repo and **this chapter governs it** — the Boat
 > repo's README points here. Per-work-order status, including what WO-2 still
@@ -248,11 +249,18 @@ the reserved-IP slot, the capacity gate. Those stay
 (`IMMUTABLE_AFTER_INSERT`) is unchanged, and Boat keys its store on the same
 UUID.
 
-Two flags carry the transition, both additive and both reversible:
-`Server.boat_enabled` (Check, default 0) gates whether Atlas ever calls a Boat at
-all, and `Virtual Machine.observed_authority` ∈ {DB, Boat} (default DB) gates
-per-VM whether Boat's observation wins. `boat_enabled` is live and is the whole
-rollback: clearing it returns the host to `run_task` with nothing else changed.
+One flag carries what is left of the transition: `Virtual Machine.
+observed_authority` ∈ {DB, Boat} (default DB) gates per-VM whether Boat's
+observation wins.
+
+`Server.boat_enabled` carried the other half and has been REMOVED. It gated
+whether Atlas called a Boat at all, and clearing it returned the host to
+`run_task` with nothing else changed — the right shape while both transports
+existed. The cutover ended that: every host is on Boat, the ten host verbs the
+binary implements run as `boat <verb>` (`scripts_catalog.BOAT_VERBS`), and there
+is no second transport to fall back to. Two of the flag's own call sites existed
+only to stop a stale `desired_power` from stranding a rolled-back host, so
+removing it removed the hazard it created as well as the escape it offered.
 `observed_authority` **exists as a field and nothing reads it yet** — the mirror
 is advisory for every VM, writing `observed_status` beside the DB's `status` and
 recording every disagreement as drift without ever acting on it. Flipping it to
@@ -512,13 +520,12 @@ because the fence governs only the next boot. Both clear themselves — the next
 successful export for the first, the next `PUT` of desired state (every lifecycle
 verb, or `assert_desired_state`) for the second.
 
-**Clearing `Server.boat_enabled` clears `mirror_status` and `mirror_error` too.**
-The flag is the whole rollback, and a rollback has to restore the *behaviour* and
-not just the transport: an `Unknown` written by one failed poll is otherwise
-permanent on a host off Boat, because the sweep skips it, `HostMirror.sync` returns
-before it can write, and the field is read-only in the desk. The ordinary way in is
-not exotic — flip the flag before the token is configured, and the host is
-`Unknown` within five minutes, then rolled back and stranded. Only the live claim
+**An `Unknown` mirror is cleared by the next successful export, and by nothing
+else.** That used to need a second exit: clearing `boat_enabled` also cleared
+`mirror_status` and `mirror_error`, because a host off Boat was never swept
+again and the field is read-only in the desk, so one failed poll plus one
+rollback stranded it out of placement permanently. With the flag gone every host
+is swept, so the export that fixes it always comes. Only the live claim
 is dropped; the frozen observation (`observed_epoch`, `observed_at`, the capacity
 totals) stands, exactly as it does under `_freeze`.
 
@@ -535,7 +542,7 @@ while a pulled one re-converges on the next sweep.
 every observation it writes; **Atlas has no SSE consumer**, and the **signed
 heartbeat is NOT BUILT**. What is built is the backstop, and it is the right half
 to have built first: `boat_mirror.sweep_mirrors` runs every five minutes and
-enqueues one `GET /v1/export` ingest per `boat_enabled` host. So the mirror's
+enqueues one `GET /v1/export` ingest per host. So the mirror's
 freshness bound is the sweep interval rather than the transition, and a dropped
 stream costs nothing because there is no stream. The consequence to keep in mind
 until the consumer lands: a host that becomes unreachable is flagged `Unknown`
@@ -1179,11 +1186,10 @@ has room. It is an *arrivals* gate and
 nothing more: no eviction, no write to `status`, capacity accounting and
 `cluster_capacity` unchanged, and a resize on a VM already there still allowed.
 Only the literal `Unknown` excludes — an empty `mirror_status` means never
-mirrored, which is every SSH host and a `boat_enabled` host the sweep has not yet
-reached, and "I have not looked" is not "I have lost sight of it". Recovery needs
-no operator: the next successful export writes `Fresh` and the host is a candidate
-again on that tick, and clearing `boat_enabled` clears the flag outright so a
-rollback is a rollback (§2.5). *NOT BUILT:* buffering observed transitions across
+mirrored — a freshly bootstrapped host, or the whole fleet after a restore — and
+"I have not looked" is not "I have lost sight of it". Recovery needs no operator:
+the next successful export writes `Fresh` and the host is a candidate again on
+that tick (§2.5). *NOT BUILT:* buffering observed transitions across
 the blip (nothing replays what happened while Atlas was away — the export is the
 only catch-up, and it carries current state rather than the transitions) and the
 `/watch` resume.
@@ -1612,7 +1618,9 @@ lifecycle wall time is gated by what the verb does on the host, not by how it is
 delivered, and Boat is not a latency change. The transport moves because **the
 state** moves. The Task model itself — a typed verb, `--kebab-case` flags in, one
 typed result out, one audited row — survives the port unchanged (§2.4, §2.7); only
-the delivery changes, and only for hosts with `boat_enabled`.
+the delivery changes. The ten verbs in `scripts_catalog.BOAT_VERBS` are delivered
+as `boat <verb>` on every host; the rest still run `atlas <verb>` on the venv,
+and the `.py` files stay in the tree as the differential's conformance oracle.
 
 ## §14. Repo conventions
 
@@ -1632,22 +1640,23 @@ and `llm/Taste.md`:
 
 ## §15. Delivery order
 
-Work orders, one line each — enough to place any commit. Each is gated behind
-`Server.boat_enabled` (and, from WO-2, per-VM `observed_authority`), and each
-rolls back by clearing its flag.
+Work orders, one line each — enough to place any commit. They were gated behind
+`Server.boat_enabled` (and, from WO-2, per-VM `observed_authority`) and rolled
+back by clearing a flag; `boat_enabled` is now removed, so the rollback for
+anything below is a revert rather than a switch.
 
 | WO | Status | Ships |
 |---|---|---|
 | **WO-0** | **SHIPPED** | Walking skeleton: a `boat` binary that starts, serves the API on the tunnel and the unix socket, persists to bbolt, and starts/stops one real VM driven from Atlas through `BoatClient`. |
 | **WO-1** | **SHIPPED** | Observed state: adoption scan, firecracker re-attach, `GET /v1/export`, `/watch` SSE, the `Host State Snapshot` mirror, and the fence store — advisory only, the DB still authoritative. `internal/fcattach` now has callers in both the scan and `Observe` (§3.3), so **WO-5b's hard gate is satisfied**: a binary swap leaves every guest running, and Boat can confirm one is alive rather than inferring it from systemd. |
-| **WO-1b** | not started | `boat bootstrap`: a bare host brought to Active by the binary itself, with the armed auto-revert registration handshake (§4). |
+| **WO-1b** | **built** | `boat bootstrap`: a bare host brought to VM-ready by the binary itself. Dogfooded from scratch on atlas-host-1 and idempotently over a pre-existing pool on host-2 — Firecracker, jailer, thin pool, nft scaffold, `atlas-park0`. The armed auto-revert registration handshake (§4) is NOT built; a host is still registered by the controller. |
 | **WO-2** | **IN FLIGHT** | Full lifecycle and reflexes: every VM verb through Boat, the per-VM reconciler, the journal, and the wake trap resident in Boat; per-VM authority flips to Boat. Landed: all nine lifecycle verbs end to end, the per-VM reconciler and single actor, the resident wake trap, the guest-identity blob on the wire, and the five-minute mirror sweep. Outstanding: `observed_authority` is never read so authority has not flipped (§1), no verb re-enters at a checkpoint (§11.5), and there is no `/watch` consumer (§2.6). |
 | **WO-3a** | **built** | Sibling-unit supervision — `GET|POST /v1/units/{name}`, unit liveness in `GET /v1/host` and in the export (§3.7) — and the CAS primitive of §11.2: `If-Match` on the desired-state PUT, compared per-resource, answering `409 stale-observation`. |
-| **WO-3b** | not started | Host-local network apply: `local-ownership.json` written by Boat, reserved-IP NAT and gateway forwarding. The reserved-IP attach is the first contended CAS caller (§11.2) and inherits the primitive rather than inventing one. Re-pointing the supervised units at `boat <sub>` is not here either: they are supervised as the Python entry points they are, and THE RULE's re-pointing is WO-5/WO-6. |
-| **WO-4** | not started | Cross-host sagas: migration, warm fan-out and S3 sync driven over Boat RPCs, with Repoint gated on positive source fencing (§8). **Owns closing §16.0.** |
-| **WO-5** | not started | `boat networkd`: the ANCP daemon in Go, same binary, own unit, byte-identical wg and nft output — a port, not a redesign (§13). |
-| **WO-5b** | not started, **no longer gate-blocked** | Auto-update (§5). Its hard gate was WO-1's firecracker re-attach, which now has callers; what remains is the update mechanism itself. |
-| **WO-6** | not started | Verb-port completion and cutover: the remaining verbs as `boat <verb>`, the venv and durable package retired, public-IPv6 allocation pushed down **only** once §11.4 is proven. SSH break-glass and `connection_for_guest` are **not** deleted. |
+| **WO-3b** | **built** | Host-local network apply: `vm-network-up`/`down`, the private-plane isolation, the public-ingress firewall, WireGuard tunnels, `local-ownership.json` and the reserved-IP 1:1 NAT — each held byte-identical to the Python on a real host, which is how the differential found a duplicate nft rule the Python added on every restart. Atlas routes the reserved-IP attach through Boat. Re-pointing the supervised units at `boat <sub>` is still WO-5/WO-6. |
+| **WO-4** | **code-complete, NOT dogfooded** | Cross-host sagas: `internal/migration` holds thirteen host-side phase functions behind `POST /v1/vms/{uuid}/migrate/{phase}`, `boot_epoch` bumps at repoint, and the `server == self` placement gate is wired end to end. Deploying it to a host found a real defect the tests could not: `nbd-client -N ''` both fails qemu-nbd negotiation AND is ungrantable in sudoers. **`migration.py` still drives every phase over SSH**, and no live two-host migration has run, so §16.0 is not closed. |
+| **WO-5** | **built and dogfooded** | `boat networkd`: the ANCP core on memberlist, same binary, own unit. Proven on two hosts — host-2 seed-joined host-1, both learned the other by TOFU and rendered it as a wg peer through gossip → syncconf. |
+| **WO-5b** | **built** | Auto-update (§5): signed-release verification, atomic install keeping N-1, the seven-step Apply with rollback, and `POST /v1/update` spawning a detached `boat update-apply` in its own systemd scope so the daemon restart cannot SIGTERM it mid-swap. Not exercised under a live guest, and **nothing ships the allow-list**, so the half of its drill that covers a sudoers change is still uncovered. |
+| **WO-6** | **IN FLIGHT** | Verb-port completion and cutover. Landed: `internal/{snapshot,backup,image,thinpool,hostkeys,cert,mgmtfirewall,reset}` and `snapshot.RestoreVM`, all reachable as `boat <verb>` taking the Python's flags and printing its `ATLAS_RESULT=` line; Atlas routes the ten host verbs of `scripts_catalog.BOAT_VERBS` at them; `Server.boat_enabled` deleted. Outstanding: the venv and durable package are NOT retired — `firewall-apply`, the tunnel verbs, `poll-vm-traffic`, `probe-woken-vms` and `export-cleanup-source` have no Boat verb, and the `.py` files of the ported ones stay as the differential's oracle. Public-IPv6 push-down still gated on §11.4. SSH break-glass and `connection_for_guest` are **not** deleted. |
 | **Track S** | not started | Services de-fusion (§13, last bullet). Parallel, no Boat dependency; one service moved at a time, green each commit. |
 
 Verification is spec'd with the work, not after it: the §11 invariants reviewed
