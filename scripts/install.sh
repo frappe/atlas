@@ -85,4 +85,18 @@ esac
 	"${BIN_DIRECTORY}/vm-restore.py"
 "${ATLAS_CLI}" --help >/dev/null
 
-echo "Atlas venv ready: ${version}"
+# 6. The OTHER host CLI. Atlas now runs ten host verbs as `boat <verb>` rather
+#    than `atlas <verb>` (scripts_catalog.BOAT_VERBS), so a host without the boat
+#    binary is a host where snapshot, sync-image and reset-server fail — at the
+#    first Task that needs one, in the middle of a flow, rather than here.
+#    That is the whole reason this gate exists for the venv, and the same
+#    argument now applies to boat: a missing dependency must fail the install,
+#    not the operation.
+if ! command -v boat >/dev/null; then
+	echo "boat is not on PATH. Atlas runs host verbs through it; install it" >&2
+	echo "(github.com/frappe/boat: install the binary, sudoers.d/boat and the units)" >&2
+	exit 1
+fi
+boat version >/dev/null
+
+echo "Atlas venv ready: ${version}; boat $(boat version)"

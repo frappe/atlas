@@ -199,6 +199,53 @@ def kind(verb: str) -> str:
 	return "shell" if file_for(verb).endswith(".sh") else "python"
 
 
+# Host verbs that `boat` now implements (spec/33-boat.md, WO-6). The runner
+# invokes these as `boat <verb> --flags` instead of `atlas <verb> --flags`.
+#
+# Nothing else about the Task changes, and that is the point of the port: `boat`
+# takes the same `--kebab-case` flags the Python TaskInputs declared and prints
+# the same one `ATLAS_RESULT=` line the controller parses back, so the seam is
+# the first word of the command and nothing downstream can tell the difference.
+#
+# The .py files stay on disk as the conformance oracle — llm/TESTING.md's
+# differential runs the two implementations against the same input on a staging
+# host and diffs the resulting host state. A verb is removed from this set, not
+# deleted from the tree, if it ever has to go back.
+#
+# NOT here, deliberately:
+#   - the CONTROLLER_ONLY verbs. `issue-cert`, `tunnel-*` and `mgmt-firewall-*`
+#     run on the Atlas controller through run_local_task, not on a Server host,
+#     and the controller is not a Boat host. `boat` implements them for the day
+#     it is, and this set is where that would be recorded.
+#   - the SYSTEMD_HOOKS. Those are invoked by the per-VM unit with `%i`, never
+#     as a Task, so their cutover is in the unit template rather than here.
+#   - the `migration-*` verbs. Boat serves those over the daemon's phase RPCs
+#     rather than as CLI verbs, so routing them is a change to migration.py's
+#     transport and not a change of the first word.
+#   - `bootstrap-server`. `boat bootstrap` takes no arguments where the Task
+#     takes a Firecracker version and an architecture; same job, different
+#     contract, so it is WO-1b's cutover and not this one.
+BOAT_VERBS: frozenset[str] = frozenset(
+	{
+		"snapshot-vm",
+		"snapshot-stop-vm",
+		"warm-snapshot-vm",
+		"delete-snapshot-vm",
+		"upload-snapshot-s3",
+		"restore-snapshot-s3",
+		"sync-image",
+		"promote-snapshot-image",
+		"regenerate-host-keys-vm",
+		"reset-server",
+	}
+)
+
+
+def runs_on_boat(verb: str) -> bool:
+	"""True iff the host runs this verb as `boat <verb>`."""
+	return verb in BOAT_VERBS
+
+
 # Production Task scripts are shipped durably to the host's /var/lib/atlas/bin by
 # Server.bootstrap()/sync_scripts() — the same place the importable atlas package
 # and the systemd hooks already live. Python verbs are then invoked as

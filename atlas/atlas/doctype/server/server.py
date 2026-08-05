@@ -36,7 +36,6 @@ class Server(Document):
 		from frappe.types import DF
 
 		architecture: DF.Data | None
-		boat_enabled: DF.Check
 		cli_ready: DF.Check
 		firecracker_version: DF.Data | None
 		image: DF.Link | None
@@ -124,32 +123,6 @@ class Server(Document):
 		atlas_settings.save(ignore_permissions=True)
 		self._validate_immutability()
 		self._denormalize_mesh_identity()
-		self._clear_mirror_when_rolled_back()
-
-	def _clear_mirror_when_rolled_back(self) -> None:
-		"""Clearing `boat_enabled` clears the mirror that flag produced.
-
-		Clearing the flag is the whole rollback (spec/33 §9), and a rollback has to
-		restore the BEHAVIOUR, not just the transport. `mirror_status = Unknown` is
-		written by a failed poll, read by `placement.placement_candidates` as "Atlas
-		has lost sight of this host", and cleared only by a successful export — which
-		a host off Boat never produces, because the sweep skips it and `HostMirror.sync`
-		returns before it can write. So one frozen mirror plus one rollback took the
-		host out of arrivals permanently, through a read-only field, with no operator
-		remedy short of a DB write. The likeliest way in is the ordinary one: flip the
-		flag before the token is configured, and the host is `Unknown` within five
-		minutes.
-
-		Only the two flags — the live CLAIM. `observed_epoch` / `observed_at` and the
-		capacity totals are frozen observations that were true when they were made, and
-		`_freeze` deliberately leaves those standing too. The mirror is disposable
-		(§1), so dropping the claim costs one export the day the flag goes back on."""
-		if self.is_new() or self.boat_enabled:
-			return
-		original = self.get_doc_before_save()
-		if original and original.boat_enabled:
-			self.mirror_status = ""
-			self.mirror_error = ""
 
 	def _denormalize_mesh_identity(self) -> None:
 		"""Fill the derived WireGuard host-mesh denorm fields (design §8). Both are pure

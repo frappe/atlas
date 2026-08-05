@@ -8,7 +8,6 @@ from frappe.model.document import Document
 from atlas.atlas.boat_client import (
 	FIRST_BOOT_EPOCH,
 	BoatError,
-	boat_enabled,
 	put_desired_state,
 	run_boat_task,
 )
@@ -301,10 +300,8 @@ class VirtualMachine(Document):
 		# Enrolment (spec/33 §11.1). Provision is where a VM comes to exist on a
 		# host, so it is where Atlas first issues its fence: a Boat refuses to boot
 		# a UUID it holds no fence for, and an unfenced VM would stay down through
-		# the host's next reboot. Provisioning itself stays on SSH — Boat serves no
-		# provision verb — and this is a no-op off a Boat host.
-		if boat_enabled(self.server):
-			self._enrol_after_provision()
+		# the host's next reboot.
+		self._enrol_after_provision()
 		# The VM's private /128 is locally owned by this host; atlas-networkd's
 		# periodic scan (spec/31 §11) detects it via the local-ownership cache
 		# (vm-network-up.py writes it on success) and gossips the advertisement.
@@ -405,11 +402,11 @@ class VirtualMachine(Document):
 		fenced by its first verb, a Boat that lost its store is re-armed by the
 		next one, and no verb can act on a spec its host never received.
 
-		Off a Boat host this is `run_task` and nothing else happens at all — no
-		PUT, no row write — so a host without the flag runs exactly the call it
-		ran before."""
-		if not boat_enabled(self.server):
-			return run_task
+		Every host is on Boat, so there is no second transport to choose between:
+		the intent is stated and the verb goes to the daemon. The `boat_enabled`
+		flag that used to pick between them is gone — a per-host rollback to SSH
+		was the right shape while the port was in progress and is the wrong shape
+		now that the SSH verbs it fell back to have been deleted."""
 		self._put_desired_state(desired_power, **spec)
 		return run_boat_task
 
@@ -475,8 +472,6 @@ class VirtualMachine(Document):
 		has — an HTTP PUT is not part of the Frappe transaction, so a lifecycle
 		call that states intent and then fails leaves the host holding an intent
 		the rolled-back row no longer records."""
-		if not boat_enabled(self.server):
-			frappe.throw(_("Server {0} is not on Boat").format(self.server))
 		return self._put_desired_state()
 
 	@frappe.whitelist()
@@ -558,14 +553,13 @@ class VirtualMachine(Document):
 		snapshotted = False
 		if memory_snapshot:
 			# Boat serves no snapshot-stop verb, so this one keeps its SSH path.
-			# The intent still has to be stated first on a Boat host: a reconciler
-			# whose desired power still read Running would boot the VM again the
-			# moment the snapshot-stop brought its unit down. Stating it first
-			# lets the reconciler race the verb to the same Stopped end state, and
-			# the worst that costs is the memory snapshot — which this verb is
-			# already allowed to fall back from.
-			if boat_enabled(self.server):
-				self._put_desired_state("Stopped")
+			# The intent has to be stated first: a reconciler whose desired power
+			# still read Running would boot the VM again the moment the
+			# snapshot-stop brought its unit down. Stating it first lets the
+			# reconciler race the verb to the same Stopped end state, and the worst
+			# that costs is the memory snapshot — which this verb is already
+			# allowed to fall back from.
+			self._put_desired_state("Stopped")
 			# The memory dump is RAM-sized; give it disk-write time, not the
 			# 30s a plain systemctl stop needs.
 			task = run_task(
@@ -618,18 +612,17 @@ class VirtualMachine(Document):
 		self._guard_no_active_migration()
 		if self.stop_protection:
 			frappe.throw(_("Disable stop protection before sleeping this VM"))
-		if boat_enabled(self.server) and self.desired_power == "Stopped":
+		if self.desired_power == "Stopped":
 			# The precedence rule from the enrolment side (spec/33 §11.3). Sleeping
 			# is a Running VM's low-power state — the address stays live and the
 			# first SYN brings it back — so parking a VM that was told to stop
 			# would arm exactly the resurrection the rule forbids.
 			#
-			# Gated on the flag because `desired_power` is only meaningful while a
-			# host is on Boat, and nothing ever clears it. Reading it unconditionally
-			# made clearing `boat_enabled` a one-way door: the transport reverted but
-			# a VM left stating Stopped could never sleep again, silently, because
-			# the idle sweeper swallows this throw. A rollback has to restore the
-			# behaviour, not just the transport.
+			# This read used to be gated on `boat_enabled`, because a VM left
+			# stating Stopped on a rolled-back host could never sleep again —
+			# silently, since the idle sweeper swallows this throw. With the flag
+			# gone the field is authoritative everywhere and the guard is simply
+			# the rule.
 			frappe.throw(_("VM is stopped by intent — start it before putting it to sleep"))
 		# Sleeping satisfies Running: the VM is parked and wakeable, not powered
 		# off, so the intent it is parked under stays Running.
@@ -1706,14 +1699,10 @@ def _adopt_wake(name: str, now) -> None:
 	row = frappe.db.get_value("Virtual Machine", name, ["status", "desired_power", "server"], as_dict=True)
 	if not row or row.status != "Sleeping":
 		return  # operator wake() (or a previous tick) already adopted it
-	if row.desired_power == "Stopped" and boat_enabled(row.server):
+	if row.desired_power == "Stopped":
 		# The precedence rule (spec/33 §11.3): a VM Atlas has stated Stopped is not
 		# woken by traffic. A host that woke one anyway is drift for the mirror to
 		# report — never an observation Atlas launders into its own status.
-		#
-		# Gated on the flag for the same reason sleep() is: a stale `desired_power`
-		# on a host that has been rolled back off Boat would otherwise strand the
-		# VM as Sleeping in Atlas while it is up and serving traffic.
 		return
 	frappe.db.set_value(
 		"Virtual Machine",

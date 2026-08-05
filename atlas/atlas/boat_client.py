@@ -20,18 +20,20 @@ Three public entry points, and the split between them is deliberate:
     Success/Failure` lifecycle with the same `stdout`/`stderr`/`exit_code`, and
     raises the same `frappe.ValidationError` on failure. Nothing downstream —
     the Task list, the retry button, `_propagate_status_to_virtual_machine` —
-    can tell which transport ran the verb. That is what lets a call site become
-    `run = run_boat_task if boat_enabled(server) else run_task`.
+    can tell which transport ran the verb. That twinning is what let each call
+    site move across one at a time while both transports still existed.
 
 `op_id` is the Frappe Task name. That single identity is what makes a retry a
 *replay* rather than a second boot: Boat keys its append-only op journal on it,
 so re-posting an identifier it has already seen returns the recorded result
 without touching the host (spec/33 §2.7).
 
-There is no fallback to SSH anywhere below. A fallback would hide exactly the
-failure this seam exists to expose, and would risk running a verb twice on a
-host whose Boat acted but whose answer was lost. The rollback is the per-host
-`Server.boat_enabled` flag, not a silent retry on another transport.
+There is no fallback to SSH anywhere below, and since the cutover there is no
+SSH verb left to fall back to. A fallback would hide exactly the failure this
+seam exists to expose, and would risk running a verb twice on a host whose Boat
+acted but whose answer was lost. A host whose daemon cannot be reached fails its
+verb and says so; the repair is `sync_mirror` + `assert_desired_state`
+(spec/33 §2.5), not a second transport.
 """
 
 from __future__ import annotations
@@ -142,17 +144,6 @@ DESIRED_SPEC_FIELDS = (
 
 class BoatError(Exception):
 	pass
-
-
-def boat_enabled(server_name: str | None) -> bool:
-	"""True iff this host is switched over to Boat. One cheap read, mirroring
-	`is_fake_server`.
-
-	Clearing the flag is WO-0's entire rollback: the next lifecycle call takes
-	the SSH path with nothing else changed."""
-	if not server_name:
-		return False
-	return bool(frappe.db.get_value("Server", server_name, "boat_enabled"))
 
 
 class BoatClient:
@@ -519,9 +510,8 @@ def put_desired_state(virtual_machine: "VirtualMachine", **spec) -> dict:
 	re-asserts fact, and those two calls back to back resynchronize a host from
 	any state.
 
-	The caller gates on `boat_enabled` — a host without the flag is never called
-	at all. A Fake-backed host is never called either, exactly as `run_boat_task`
-	gives it no request: there is no daemon there to hold a fence."""
+	A Fake-backed host is never called, exactly as `run_boat_task` gives it no
+	request: there is no daemon there to hold a fence."""
 	if is_fake_server(virtual_machine.server):
 		return {}
 	client = BoatClient.for_server(virtual_machine.server)
@@ -598,8 +588,7 @@ def run_boat_task(
 	# Fake provider (developer_mode): a Task on a Fake-backed Server succeeds (or
 	# fails on demand) with no Boat call, exactly as run_task gives it no SSH
 	# connection. The dev/test fleet is Fake hosts; a real socket from a test
-	# would go nowhere. So flipping boat_enabled on a Fake host is a no-op and
-	# the synthesized Task row is identical either way.
+	# would go nowhere, so the synthesized Task row stands in for the call.
 	if is_fake_server(server):
 		from atlas.atlas.providers.fake_tasks import run_fake_task
 

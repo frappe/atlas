@@ -3,7 +3,7 @@
 No daemon runs here: `requests.request` is patched throughout, which is also the
 point. These prove the exact wire shape Atlas sends, that a failure at that
 boundary raises instead of quietly finding another way onto the host, that a Fake
-host is never called at all, and that with `Server.boat_enabled` clear the VM
+host is never called at all, and that the VM
 lifecycle takes the same SSH path it always took.
 """
 
@@ -20,7 +20,6 @@ from atlas.atlas.boat_client import (
 	BoatClient,
 	BoatError,
 	base_url_for_server,
-	boat_enabled,
 	run_boat_task,
 	token_for_server,
 )
@@ -225,10 +224,6 @@ class TestBoatCredentials(IntegrationTestCase):
 		):
 			token_for_server(self.server.name)
 
-	def test_boat_enabled_is_off_by_default(self) -> None:
-		self.assertFalse(boat_enabled(self.server.name))
-		self.assertFalse(boat_enabled(None))
-
 
 class TestRunBoatTask(IntegrationTestCase):
 	"""The Task row a Boat verb leaves behind — the operator-facing surface that
@@ -402,8 +397,8 @@ class TestRunBoatTask(IntegrationTestCase):
 
 class TestFakeServerIsNeverCalled(IntegrationTestCase):
 	"""A Fake-backed host never gets a Boat call, exactly as it never gets an SSH
-	connection — the dev/test fleet is Fake hosts, so this is what keeps
-	`boat_enabled` a no-op there."""
+	connection — the dev/test fleet is Fake hosts, so this is what lets them run
+	the same code paths a real host does."""
 
 	def setUp(self) -> None:
 		provider = fixtures.make_provider_row("boat-fake-provider", provider_type="Fake")
@@ -422,7 +417,6 @@ class TestFakeServerIsNeverCalled(IntegrationTestCase):
 		self.virtual_machine = fixtures.make_virtual_machine(self.server.name, self.image.name)
 
 	def test_fake_host_gets_a_synthesized_task_and_no_request(self) -> None:
-		frappe.db.set_value("Server", self.server.name, "boat_enabled", 1)
 		with patch(REQUEST) as request:
 			task = run_boat_task(
 				server=self.server.name,
@@ -439,7 +433,6 @@ class TestFakeServerIsNeverCalled(IntegrationTestCase):
 
 	def test_fake_host_needs_no_boat_credentials(self) -> None:
 		# No token, no base URL, nothing configured: the fake seam is taken first.
-		frappe.db.set_value("Server", self.server.name, "boat_enabled", 1)
 		with (
 			_patch_conf({"atlas_boat_tokens": None, "atlas_boat_token": None}),
 			patch(REQUEST) as request,
@@ -455,7 +448,11 @@ class TestFakeServerIsNeverCalled(IntegrationTestCase):
 
 
 class TestVirtualMachineBoatBranch(IntegrationTestCase):
-	"""`start()`/`stop()` pick a transport and change nothing else."""
+	"""`start()`/`stop()` go to the daemon and change nothing else.
+
+	The two tests that proved the SSH path went with `boat_enabled`: there is no
+	second transport left to pick, so "leaves start on the SSH path" is not a
+	behaviour that can be asserted."""
 
 	def setUp(self) -> None:
 		_ensure_test_server()
@@ -472,41 +469,8 @@ class TestVirtualMachineBoatBranch(IntegrationTestCase):
 		virtual_machine.save(ignore_permissions=True)
 		return virtual_machine
 
-	def _enable_boat(self, virtual_machine) -> None:
-		frappe.db.set_value("Server", virtual_machine.server, "boat_enabled", 1)
-
-	def test_flag_off_leaves_start_on_the_ssh_path(self) -> None:
+	def test_start_goes_through_boat_with_the_same_arguments(self) -> None:
 		virtual_machine = self._virtual_machine("Stopped")
-		with (
-			patch.object(
-				virtual_machine_module, "run_task", return_value=fake_task("task-ssh-1")
-			) as run_task,
-			patch.object(virtual_machine_module, "run_boat_task") as run_boat,
-		):
-			result = virtual_machine.start()
-
-		self.assertEqual(result, "task-ssh-1")
-		run_boat.assert_not_called()
-		run_task.assert_called_once()
-		self.assertEqual(run_task.call_args.kwargs["script"], "start-vm")
-
-	def test_flag_off_leaves_stop_on_the_ssh_path(self) -> None:
-		virtual_machine = self._virtual_machine("Running")
-		with (
-			patch.object(
-				virtual_machine_module, "run_task", return_value=fake_task("task-ssh-2")
-			) as run_task,
-			patch.object(virtual_machine_module, "run_boat_task") as run_boat,
-		):
-			result = virtual_machine.stop()
-
-		self.assertEqual(result, "task-ssh-2")
-		run_boat.assert_not_called()
-		self.assertEqual(run_task.call_args.kwargs["script"], "stop-vm")
-
-	def test_flag_on_starts_through_boat_with_the_same_arguments(self) -> None:
-		virtual_machine = self._virtual_machine("Stopped")
-		self._enable_boat(virtual_machine)
 		# From WO-2 the verb is preceded by the desired state it acts on; the
 		# argument list it runs with is unchanged (spec/33 §11.3).
 		with (
@@ -536,9 +500,8 @@ class TestVirtualMachineBoatBranch(IntegrationTestCase):
 		virtual_machine.reload()
 		self.assertEqual(virtual_machine.status, "Running")
 
-	def test_flag_on_stops_through_boat_with_the_same_arguments(self) -> None:
+	def test_stop_goes_through_boat_with_the_same_arguments(self) -> None:
 		virtual_machine = self._virtual_machine("Running")
-		self._enable_boat(virtual_machine)
 		with (
 			_boat_host_token(virtual_machine.server),
 			patch(REQUEST, return_value=_Response(payload={})) as request,
@@ -563,12 +526,11 @@ class TestVirtualMachineBoatBranch(IntegrationTestCase):
 		virtual_machine.reload()
 		self.assertEqual(virtual_machine.status, "Stopped")
 
-	def test_snapshot_stop_stays_on_ssh_even_with_the_flag_on(self) -> None:
+	def test_snapshot_stop_stays_on_ssh(self) -> None:
 		# Boat still serves no snapshot-stop verb, so the memory-snapshot stop keeps
 		# its SSH path. Its intent is stated all the same, or the host's reconciler
 		# would boot the VM again the moment the unit went down (spec/33 §11.3).
 		virtual_machine = self._virtual_machine("Running")
-		self._enable_boat(virtual_machine)
 		snapshot_task = fake_task("task-snap-1", stdout='ATLAS_RESULT={"memory_snapshot": true}\n')
 		with (
 			_boat_host_token(virtual_machine.server),

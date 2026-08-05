@@ -4,8 +4,7 @@ state (spec/33 §2.4, §11.1, §11.3; WO-2).
 No daemon runs here: `requests.request` is patched throughout, which is also the
 point. These prove that each verb reaches its own endpoint under the Task's name,
 that the desired spec and its fence epoch are stated BEFORE the verb that acts on
-them, that a host without `Server.boat_enabled` takes the same SSH path it always
-took, and — the rule this work order exists to get right — that a VM Atlas has
+them, and — the rule this work order exists to get right — that a VM Atlas has
 stated Stopped is not brought back by traffic, by the idle sweeper, or by an
 enrolment that contradicts the stop.
 
@@ -258,7 +257,6 @@ class _BoatHostTestCase(IntegrationTestCase):
 	def setUp(self) -> None:
 		self.server = _boat_server()
 		self.image = fixtures.make_image("boat-lifecycle-image")
-		frappe.db.set_value("Server", self.server.name, "boat_enabled", 1, update_modified=False)
 		self.virtual_machine = self._fresh()
 
 	def _fresh(self, **fields) -> "frappe.model.document.Document":
@@ -818,56 +816,10 @@ class TestSleepWithoutATypedResult(_BoatHostTestCase):
 				self.assertEqual(parse_result(task.stdout), {"size_bytes": 42})
 
 
-class TestFlagOffChangesNothing(IntegrationTestCase):
-	"""`boat_enabled` clear is the rollback: every verb runs the call it ran
-	before, no desired state is stated, and no request is made at all."""
-
-	def setUp(self) -> None:
-		self.server = _boat_server()
-		self.image = fixtures.make_image("boat-lifecycle-image")
-		frappe.db.set_value("Server", self.server.name, "boat_enabled", 0, update_modified=False)
-
-	def _fresh(self, **fields) -> "frappe.model.document.Document":
-		_clear_virtual_machines()
-		virtual_machine = fixtures.make_virtual_machine(self.server.name, self.image.name)
-		frappe.db.set_value("Virtual Machine", virtual_machine.name, fields, update_modified=False)
-		virtual_machine.reload()
-		return virtual_machine
-
-	def test_every_verb_stays_on_the_ssh_path(self) -> None:
-		for label, fields, act, endpoint, _power in _lifecycle_cases():
-			with self.subTest(verb=label):
-				virtual_machine = self._fresh(**fields)
-				task = fake_task(f"task-ssh-{label}", stdout=TYPED_RESULT)
-				with (
-					patch.object(virtual_machine_module, "run_task", return_value=task) as run_task,
-					patch.object(virtual_machine_module, "run_boat_task") as run_boat,
-					patch(REQUEST) as request,
-				):
-					act(virtual_machine)
-
-				run_boat.assert_not_called()
-				request.assert_not_called()
-				self.assertEqual(run_task.call_args.kwargs["script"], f"{endpoint}-vm")
-				self.assertEqual(run_task.call_args.kwargs["server"], self.server.name)
-				virtual_machine.reload()
-				# Nothing states intent off a Boat host: `status` is still the
-				# whole operator surface, exactly as before WO-2.
-				self.assertFalse(virtual_machine.desired_power)
-				self.assertFalse(virtual_machine.boot_epoch)
-
-	def test_re_asserting_desired_state_is_refused_off_a_boat_host(self) -> None:
-		virtual_machine = self._fresh(status="Running")
-		with patch(REQUEST) as request, self.assertRaises(frappe.ValidationError):
-			virtual_machine.assert_desired_state()
-
-		request.assert_not_called()
-
-
 class TestFakeHostIsNeverCalled(IntegrationTestCase):
 	"""A Fake-backed host never gets a Boat call, exactly as it never gets an SSH
-	connection — the dev/test fleet is Fake hosts, so this is what keeps
-	`boat_enabled` a no-op there."""
+	connection — the dev/test fleet is Fake hosts, so this is what lets them run
+	the same code paths a real host does."""
 
 	def setUp(self) -> None:
 		provider = fixtures.make_provider_row("boat-fake-lifecycle-provider", provider_type="Fake")
@@ -880,7 +832,6 @@ class TestFakeHostIsNeverCalled(IntegrationTestCase):
 			ipv6_prefix="2001:db8:fa4f::/64",
 			ipv6_virtual_machine_range="2001:db8:fa4f::/124",
 			status="Active",
-			boat_enabled=1,
 		)
 		self.image = fixtures.make_image("boat-fake-lifecycle-image")
 		_clear_virtual_machines()

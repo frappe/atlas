@@ -30,10 +30,10 @@ class NoCapacityError(frappe.ValidationError):
 
 # The one `Server.mirror_status` that takes a host out of the placement candidate
 # set (spec/33 §9). Only this one value, and the distinction matters more than it
-# looks: the field is EMPTY on a host that has never been mirrored — every SSH
-# host in the fleet, and a `boat_enabled` host the sweep has not reached yet — and
-# "I have not looked at this host" is not "I have lost sight of it". Gating on
-# "anything but Fresh" would empty the candidate set of an entire non-Boat fleet.
+# looks: the field is EMPTY on a host the sweep has not reached yet — a freshly
+# bootstrapped one, or the whole fleet after a restore — and "I have not looked at
+# this host" is not "I have lost sight of it". Gating on "anything but Fresh"
+# would empty the candidate set until the first sweep completed.
 UNSEEN_MIRROR_STATUS = "Unknown"
 
 

@@ -26,7 +26,7 @@ The export lands in two places, deliberately both (§2.5):
 One export is one transaction (`_apply`), so a mirror is never half a host.
 
 Nothing pulls without a clock, so `sweep_mirrors` is the scheduled entry point
-that refreshes every `boat_enabled` host — one enqueued job each, wired in
+that refreshes every host — one enqueued job each, wired in
 [hooks.py](../hooks.py). It is §2.6's *backstop*, deliberately: the `/watch` SSE
 consumer that will carry low-latency deltas is a separate work order.
 
@@ -46,7 +46,7 @@ from datetime import datetime
 
 import frappe
 
-from atlas.atlas.boat_client import BoatClient, BoatError, boat_enabled
+from atlas.atlas.boat_client import BoatClient, BoatError
 from atlas.atlas.doctype.host_state_snapshot.host_state_snapshot import HostStateSnapshot
 from atlas.atlas.providers.fake_tasks import is_fake_server
 
@@ -68,13 +68,11 @@ EXPORT_TIMEOUT_SECONDS = 30
 # for minutes on end.
 SYNC_JOB_TIMEOUT_SECONDS = EXPORT_TIMEOUT_SECONDS * 2
 
-# Which hosts the sweep polls. `boat_enabled` is the switch — clearing it is the
-# whole rollback, so a host without it must be poll-free as well as verb-free.
-# Archived is the one status excluded: it names a retired host, and polling one
-# forever would do nothing but flag a mirror nobody reads as Unknown. Draining and
-# Broken are deliberately IN — a host in trouble is the host an operator most
-# wants observed.
-SWEEPABLE_HOSTS = {"boat_enabled": 1, "status": ("!=", "Archived")}
+# Which hosts the sweep polls: all of them but one status. Archived names a
+# retired host, and polling one forever would do nothing but flag a mirror nobody
+# reads as Unknown. Draining and Broken are deliberately IN — a host in trouble is
+# the host an operator most wants observed.
+SWEEPABLE_HOSTS = {"status": ("!=", "Archived")}
 
 # The statuses `Virtual Machine.observed_status` allows. Anything else is
 # recorded as Unknown — the mirror never invents an observation.
@@ -203,10 +201,8 @@ class HostMirror:
 		"""Pull `GET /export` and land it, or record why it could not be landed.
 
 		Every path that does not land an export leaves the mirror exactly as it
-		was. `boat_enabled` is checked first because clearing it is the whole
-		rollback — a host without it behaves precisely as it did before Boat
-		existed. A Fake-backed host is then never called at all, exactly as
-		`run_task` gives it no SSH connection.
+		was. A Fake-backed host is never called at all, exactly as `run_task` gives
+		it no SSH connection.
 
 		The catch takes `frappe.ValidationError` as well as `BoatError` because
 		`base_url_for_server` and `token_for_server` `frappe.throw` — a host with no
@@ -223,8 +219,6 @@ class HostMirror:
 		the row instead of escaping past the freeze. A document that cannot be
 		ordered is a host that cannot be read, which is the same state as one that
 		did not answer, and it belongs in the same place for the same reason."""
-		if not boat_enabled(self.server):
-			return self._rolled_back()
 		if is_fake_server(self.server):
 			return self._untouched("fake-host")
 		try:
@@ -239,23 +233,6 @@ class HostMirror:
 
 	def _untouched(self, reason: str) -> dict:
 		return {"server": self.server, "applied": False, "reason": reason}
-
-	def _rolled_back(self) -> dict:
-		"""This host is off Boat, so it has no mirror — and any claim left over from
-		when it was on Boat is dropped here.
-
-		`Server.validate` clears the pair when an operator unticks the box; this
-		clears it for every OTHER way the flag goes off (a direct `set_value`, a
-		patch, a fixture), which makes the operator's **Sync** button a repair
-		instead of a second dead end. Without one of the two, a host frozen
-		`Unknown` once and then rolled back was excluded from placement forever:
-		the sweep skips it, so no export could ever clear the flag, and the field
-		is read-only in the desk."""
-		if frappe.db.get_value("Server", self.server, "mirror_status"):
-			frappe.db.set_value(
-				"Server", self.server, {"mirror_status": "", "mirror_error": ""}, update_modified=False
-			)
-		return self._untouched("boat-disabled")
 
 	def _freeze(self, error: Exception) -> dict:
 		"""Boat did not answer. **The host is Unknown, not dead** (spec/33 §9).

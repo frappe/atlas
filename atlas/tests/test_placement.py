@@ -528,9 +528,9 @@ class TestPlacement(IntegrationTestCase):
 
 	def test_a_host_never_mirrored_is_still_a_candidate(self) -> None:
 		"""Empty is not Unknown, and the difference is most of the field's value.
-		Every SSH host reads empty, and so does a `boat_enabled` host the five-minute
-		sweep has not reached yet — "I have not looked" is not "I have lost sight of
-		it", and gating on "anything but Fresh" would empty a whole fleet."""
+		A host the five-minute sweep has not reached yet reads empty — "I have not
+		looked" is not "I have lost sight of it", and gating on "anything but
+		Fresh" would empty a whole fleet."""
 		host = self._measured_server("atlas-placement-never-swept", 43, memory_megabytes_total=4096)
 		self.assertFalse(frappe.db.get_value("Server", host.name, "mirror_status"))
 		frappe.set_user(_acting_user())

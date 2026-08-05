@@ -270,7 +270,7 @@ scheduler_events = {
 		"*/5 * * * *": [
 			"atlas.atlas.providers.worker.check_networkd_liveness",
 			# The Boat mirror's pull half (spec/33 §2.5): GET /v1/export from every
-			# boat_enabled host, ingested into `Host State Snapshot` + the observed
+			# host, ingested into `Host State Snapshot` + the observed
 			# fields on Server / Virtual Machine, one enqueued job per host. Atlas
 			# pushes desired state when an operator clicks; NOTHING pulls observed
 			# state without this entry, so the whole WO-1 path is inert without it.

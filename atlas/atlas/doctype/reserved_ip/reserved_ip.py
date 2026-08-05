@@ -1,9 +1,8 @@
 import frappe
 from frappe.model.document import Document
 
-from atlas.atlas.boat_client import boat_enabled, run_boat_task
+from atlas.atlas.boat_client import run_boat_task
 from atlas.atlas.providers import for_provider_type
-from atlas.atlas.ssh import run_task
 
 # A Reserved IP is bound to its address and vendor handle for life; those lock
 # once written. `server` is NOT immutable: the vendor can reassign the IP to a
@@ -128,11 +127,10 @@ class ReservedIP(Document):
 		Server. One task, one script (spec principle #3); the runner raises on
 		failure so the caller's invariant commit is gated on the host change.
 
-		Routed to the host's Boat when it has the flag, over SSH when it does not —
-		`run_boat_task` is `run_task`'s twin (same keywords, same Task row), so the
-		attach/detach ordering above is unchanged whichever transport carries it."""
-		run = run_boat_task if boat_enabled(self.server) else run_task
-		run(
+		Routed to the host's Boat. `run_boat_task` is `run_task`'s twin (same
+		keywords, same Task row), so the attach/detach ordering above reads exactly
+		as it did when SSH carried it."""
+		run_boat_task(
 			server=self.server,
 			script="vm-reserved-ip",
 			variables={

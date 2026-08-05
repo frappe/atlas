@@ -118,7 +118,6 @@ class _MirrorTestCase(IntegrationTestCase):
 			"Server",
 			self.server.name,
 			{
-				"boat_enabled": 1,
 				"observed_epoch": 0,
 				# Cleared too, and not only for tidiness: `observed_at` is what tells
 				# "mirrored at epoch 0" from "never mirrored", and epoch 0 is a real
@@ -763,23 +762,23 @@ class TestTheSweepIsWhatMakesTheMirrorLive(_MirrorTestCase):
 		cron_jobs = [job for jobs in hooks.scheduler_events.get("cron", {}).values() for job in jobs]
 		self.assertIn("atlas.atlas.boat_mirror.sweep_mirrors", cron_jobs)
 
-	def test_only_boat_enabled_hosts_are_swept(self) -> None:
-		ssh_host = self._host("boat-mirror-ssh-host", boat_enabled=0)
+	def test_every_host_is_swept(self) -> None:
+		# There is no longer a class of host that is verb-free: the flag that used
+		# to exclude one is gone, so a second ordinary host is swept like the first.
+		other = self._host("boat-mirror-other-host")
 
 		swept = self._sweep()
 
 		self.assertIn(self.server.name, swept)
-		# Clearing the flag is the whole rollback: an SSH host must be poll-free as
-		# well as verb-free, or the mirror would keep flagging a host nobody drives.
-		self.assertNotIn(ssh_host.name, swept)
+		self.assertIn(other.name, swept)
 
 	def test_a_retired_host_is_not_polled_forever(self) -> None:
-		archived = self._host("boat-mirror-archived-host", boat_enabled=1, status="Archived")
+		archived = self._host("boat-mirror-archived-host", status="Archived")
 
 		self.assertNotIn(archived.name, self._sweep())
 
 	def test_a_host_in_trouble_is_the_one_most_worth_observing(self) -> None:
-		broken = self._host("boat-mirror-broken-host", boat_enabled=1, status="Broken")
+		broken = self._host("boat-mirror-broken-host", status="Broken")
 
 		self.assertIn(broken.name, self._sweep())
 
@@ -787,7 +786,7 @@ class TestTheSweepIsWhatMakesTheMirrorLive(_MirrorTestCase):
 		"""One job per host, never one loop over the fleet: a silent host takes the
 		full export timeout to say so, and serially that is the sweep's whole budget
 		spent on the hosts with the least to report."""
-		second = self._host("boat-mirror-second-host", boat_enabled=1)
+		second = self._host("boat-mirror-second-host")
 
 		swept = self._sweep()
 
@@ -822,7 +821,7 @@ class TestTheSweepIsWhatMakesTheMirrorLive(_MirrorTestCase):
 		"""The reason the sweep may enqueue rather than loop, proved on the job body:
 		a host that does not answer records a state and returns. If it raised, the
 		next host's poll would be the exception handler's problem."""
-		quiet = self._host("boat-mirror-quiet-host", boat_enabled=1)
+		quiet = self._host("boat-mirror-quiet-host")
 		answers = [requests.ConnectionError("connection refused"), _Response(payload=_export(epoch=3))]
 
 		def _answer(*args, **kwargs):
@@ -841,61 +840,14 @@ class TestTheSweepIsWhatMakesTheMirrorLive(_MirrorTestCase):
 		self.assertEqual(self._server_value("mirror_status"), "Fresh")
 
 
-class TestOffByDefault(_MirrorTestCase):
-	"""With the flag clear, and on a Fake host, nothing is called and nothing
-	is written — the WO-0 rollback covers WO-1 unchanged."""
+class TestTheHostsThatAreNeverCalled(_MirrorTestCase):
+	"""A Fake host has no daemon to ask, so nothing is called and nothing written.
 
-	def test_a_host_without_boat_enabled_is_never_called(self) -> None:
-		frappe.db.set_value("Server", self.server.name, "boat_enabled", 0, update_modified=False)
-		with _boat_host_token(self.server.name), patch(REQUEST) as request:
-			result = boat_mirror.sync_mirror(self.server.name)
-
-		request.assert_not_called()
-		self.assertEqual(result["reason"], "boat-disabled")
-		self.assertFalse(self._server_value("mirror_status"))
-
-	def test_unticking_the_box_drops_the_mirror_it_produced(self) -> None:
-		"""The rollback has to restore the BEHAVIOUR, not just the transport. A host
-		frozen `Unknown` once and then rolled back was excluded from placement
-		forever: the sweep skips it, so no export could ever clear the flag, and the
-		field is read-only in the desk — leaving a DB write as the only remedy for a
-		field whose own help text promises the host re-enters with no operator
-		action. The ordinary way in is not exotic: flip the flag before the token is
-		configured, and the host is `Unknown` within five minutes."""
-		self._sync_failing()
-		self.assertEqual(self._server_value("mirror_status"), "Unknown")
-
-		server = frappe.get_doc("Server", self.server.name)
-		server.boat_enabled = 0
-		server.save(ignore_permissions=True)
-
-		self.assertFalse(self._server_value("mirror_status"))
-		self.assertFalse(self._server_value("mirror_error"))
-		# The frozen OBSERVATION stands — it was true when it was made, and `_freeze`
-		# leaves it standing for the same reason. Only the live claim is dropped.
-		self.assertEqual(self._server_value("observed_epoch"), 6)
-
-	def test_the_sync_button_repairs_a_host_the_flag_left_behind(self) -> None:
-		"""The flag also goes off by paths that never load the document — a direct
-		`set_value`, a patch, a fixture — so the operator's Sync button is the second
-		way out rather than a second dead end."""
-		self._sync_failing()
-		frappe.db.set_value("Server", self.server.name, "boat_enabled", 0, update_modified=False)
-
-		with _boat_host_token(self.server.name), patch(REQUEST) as request:
-			result = boat_mirror.sync_mirror(self.server.name)
-
-		request.assert_not_called()
-		self.assertEqual(result["reason"], "boat-disabled")
-		self.assertFalse(self._server_value("mirror_status"))
-
-	def _sync_failing(self) -> dict:
-		self._sync(_export(epoch=6, virtual_machines=[_observed(self.virtual_machine.name)]))
-		with (
-			_boat_host_token(self.server.name),
-			patch(REQUEST, side_effect=requests.ConnectionError("connection refused")),
-		):
-			return boat_mirror.sync_mirror(self.server.name)
+	The three rollback tests that stood here went with the flag: `boat_enabled`
+	clear used to mean "this host behaves as it did before Boat existed", and
+	there is no such host now. What they were really guarding — that a host
+	frozen `Unknown` can get back into placement — is now `sync_mirror`'s job on
+	its own, covered by the freeze/thaw tests above."""
 
 	def test_a_fake_host_is_never_called_and_needs_no_credentials(self) -> None:
 		provider = fixtures.make_provider_row("boat-mirror-fake-provider", provider_type="Fake")
@@ -905,7 +857,6 @@ class TestOffByDefault(_MirrorTestCase):
 			"boat-mirror-fake-server",
 			ipv4_address="203.0.113.45",
 			status="Active",
-			boat_enabled=1,
 		)
 		with (
 			_patch_conf({"atlas_boat_tokens": None, "atlas_boat_token": None}),
