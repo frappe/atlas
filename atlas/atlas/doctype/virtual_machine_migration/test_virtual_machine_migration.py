@@ -1336,3 +1336,32 @@ class TestMigrationOverFakeTransport(IntegrationTestCase):
 		self.assertEqual(row.nbd_pid, 424242)
 		self.assertGreater(row.root_disk_bytes, 0)
 		self.assertEqual(row.data_disk_bytes, 0)
+
+	def test_full_saga_runs_to_done_over_the_fake_transport(self) -> None:
+		vm = make_virtual_machine(self.source, self.image, status="Running")
+		row = frappe.get_doc(
+			{
+				"doctype": "Virtual Machine Migration",
+				"virtual_machine": vm.name,
+				"target_server": self.target,
+			}
+		).insert(ignore_permissions=True)
+
+		# Only reconcile_proxies is stubbed — that is proxy reconciliation, not the host
+		# transport. Every migration-* script runs on the Fake hosts unpatched, so this
+		# is the whole saga end to end over the transport audit M11 said no test exercised.
+		from atlas.atlas import proxy as proxy_module
+
+		with patch.object(proxy_module, "reconcile_proxies", return_value=[]):
+			for _ in range(20):
+				if not migration_module.advance_migration(row):
+					break
+				row.reload()
+			else:
+				self.fail(f"migration did not terminate within 20 ticks; stuck at {row.status}")
+
+		row.reload()
+		self.assertEqual(row.status, "Done")
+		vm.reload()
+		self.assertEqual(vm.server, self.target)
+		self.assertEqual(vm.status, "Running")
