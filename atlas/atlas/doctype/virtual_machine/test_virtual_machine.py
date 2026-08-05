@@ -610,7 +610,7 @@ class TestVirtualMachine(IntegrationTestCase):
 
 		vm.db_set("status", "Stopped")
 		vm.reload()
-		with patch.object(module, "run_task", return_value=fake_task(name="task-term")):
+		with patch.object(module, "run_boat_task", return_value=fake_task(name="task-term")):
 			vm.terminate()
 
 		self.assertEqual(frappe.db.get_value("Pilot", pilot.name, "status"), "Terminated")
@@ -635,7 +635,7 @@ class TestVirtualMachine(IntegrationTestCase):
 
 		vm.db_set("status", "Stopped")
 		vm.reload()
-		with patch.object(module, "run_task", return_value=fake_task(name="task-term")):
+		with patch.object(module, "run_boat_task", return_value=fake_task(name="task-term")):
 			vm.terminate()
 
 		self.assertEqual(frappe.db.get_value("Pilot", pilot.name, "status"), "Terminated")
@@ -657,7 +657,7 @@ class TestVirtualMachine(IntegrationTestCase):
 
 		vm.db_set("status", "Stopped")
 		with (
-			patch.object(module, "run_task", return_value=fake_task(name="task-term")),
+			patch.object(module, "run_boat_task", return_value=fake_task(name="task-term")),
 			patch("atlas.atlas.central_report.report_pilot_status") as reported,
 		):
 			pilot.terminate()
