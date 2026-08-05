@@ -638,3 +638,96 @@ class TestServerSigningKeyBackfill(IntegrationTestCase):
 		self.assertNotIn(legacy_peer.name, host_ids)
 		# ...and no emitted entry ever carries an empty signing_public_key.
 		self.assertTrue(all(entry["signing_public_key"] for entry in seed))
+
+
+class TestServerUpgradeBoat(IntegrationTestCase):
+	"""`Server.upgrade_boat` — the boat-artifact + unit + durable-script subset of
+	bootstrap, made idempotent and re-runnable so a new binary, allow-list line or
+	unit reaches an ALREADY-bootstrapped host. `sync_scripts` cannot (it ships
+	neither binary nor units), and until this the only path was a full re-bootstrap."""
+
+	def setUp(self) -> None:
+		directory = tempfile.TemporaryDirectory()
+		self.addCleanup(directory.cleanup)
+		self.boat_distribution = make_boat_distribution(directory.name)
+		provider = make_provider("test-provider-upgrade")
+		self.server = make_server(
+			provider,
+			"test-server-upgrade-boat",
+			provider_resource_id="7",
+			ipv4_address="10.0.0.7",
+			ipv6_address="2a03:b0c0:abcd:5678::1",
+			ipv6_prefix="2a03:b0c0:abcd:5678::/64",
+			ipv6_virtual_machine_range="2a03:b0c0:abcd:5678::/124",
+			status="Active",
+		)
+
+	def test_upgrade_reships_and_restarts_without_the_bootstrap_task(self) -> None:
+		# It ships the artifacts and installs them in BOOTSTRAP'S order, restarts the
+		# daemon onto the new inode and reinstalls the durable code — but never runs
+		# the `boat bootstrap` host-prep Task, the one thing that separates
+		# re-generating an already-VM-ready host from bootstrapping a fresh one.
+		from atlas.atlas.doctype.server import server as server_module
+
+		with patch.object(server_module, "boat_distribution", return_value=self.boat_distribution):
+			with patch.object(server_module.Server, "_reinstall_atlas_venv_package") as reinstall:
+				with patch.object(server_module, "upload_files") as upload:
+					with patch.object(
+						server_module, "run_ssh", side_effect=_bootstrap_ssh_side_effect(self.server)
+					) as run_ssh:
+						with patch.object(server_module, "run_task") as run_task_mock:
+							with patch.object(
+								server_module,
+								"connection_for_server",
+								return_value=Connection(host="x", ssh_private_key="k"),
+							):
+								version = self.server.upgrade_boat()
+
+		upload.assert_called_once()
+		reinstall.assert_called_once()
+		run_task_mock.assert_not_called()
+		commands = [call.args[2] for call in run_ssh.call_args_list]
+		# The allow-list is CHECKED before it is installed (a file sudo cannot parse
+		# would take out the whole /etc/sudoers.d directory), and the binary lands by
+		# rename only after the service user its units run as exists.
+		self.assertLess(
+			commands.index("sudo visudo -cf /var/lib/atlas/boat/sudoers"),
+			next(i for i, t in enumerate(commands) if t.startswith("sudo install -m 0440")),
+		)
+		self.assertLess(
+			next(i for i, t in enumerate(commands) if "useradd" in t),
+			next(i for i, t in enumerate(commands) if "mv -f" in t),
+		)
+		self.assertIn("sudo systemctl daemon-reload", commands)
+		self.assertIn("sudo systemctl restart boat.service", commands)
+		self.assertIn("sudo systemctl is-active boat.service", commands)
+		# The SHA-256 proof of what landed is recorded and returned.
+		self.assertEqual(version, FAKE_BOAT_VERSION)
+		self.server.reload()
+		self.assertEqual(self.server.observed_boat_version, FAKE_BOAT_VERSION)
+
+	def test_upgrade_is_a_noop_on_a_fake_host(self) -> None:
+		# A Fake server has no host to reach — like every other host step, upgrade
+		# skips its SSH entirely and records nothing.
+		from atlas.atlas.doctype.server import server as server_module
+
+		with patch.object(server_module, "is_fake_server", return_value=True):
+			with patch.object(server_module, "connection_for_server") as connect:
+				with patch.object(server_module, "upload_files") as upload:
+					self.assertEqual(self.server.upgrade_boat(), "")
+		connect.assert_not_called()
+		upload.assert_not_called()
+
+	def test_upgrade_all_hosts_enqueues_one_deduplicated_job_per_active_host(self) -> None:
+		# The fleet sweep queues one background upgrade per Active host so a migrate is
+		# never blocked on N SSH installs, keyed by host name so a re-run deduplicates.
+		from atlas.atlas.doctype.server import server as server_module
+
+		with patch.object(server_module.frappe, "enqueue") as enqueue:
+			results = server_module.upgrade_all_hosts_to_current_boat(enqueue=True)
+
+		self.assertEqual(results.get(self.server.name), "queued")
+		mine = [call for call in enqueue.call_args_list if call.kwargs.get("server_name") == self.server.name]
+		self.assertEqual(len(mine), 1)
+		self.assertEqual(mine[0].args[0], "atlas.atlas.doctype.server.server.upgrade_host_to_current_boat")
+		self.assertEqual(mine[0].kwargs.get("job_id"), f"upgrade-boat-{self.server.name}")
