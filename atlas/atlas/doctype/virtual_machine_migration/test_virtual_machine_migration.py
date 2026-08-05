@@ -1280,3 +1280,59 @@ class TestCollapseForward(IntegrationTestCase):
 		vm = make_virtual_machine(self.target, self.image, status="Running")
 		with self.assertRaisesRegex(frappe.ValidationError, "no active forward"):
 			vm.collapse_forward()
+
+
+class TestMigrationOverFakeTransport(IntegrationTestCase):
+	"""The first migration test that drives the controller through the REAL Fake
+	transport instead of patching run_task — the gap audit M11 named. A Fake host
+	had no ATLAS_RESULT for the three phases that return one, so a Fake↔Fake
+	migration raised at ExportingSnapshot and every migration test had to substitute
+	run_task. With the builders in place the controller records the source's export
+	straight off the Fake host's own result line, exactly as it would a real host's."""
+
+	def setUp(self) -> None:
+		provider = make_provider("mig-fake-provider", provider_type="Fake")
+		self.source = make_server(
+			provider,
+			"mig-fake-source",
+			ipv4_address="10.0.0.11",
+			ipv6_address="2001:db8:b::1",
+			ipv6_prefix="2001:db8:b::/64",
+			ipv6_virtual_machine_range="2001:db8:b::/124",
+			status="Active",
+		).name
+		self.target = make_server(
+			provider,
+			"mig-fake-target",
+			ipv4_address="10.0.0.12",
+			ipv6_address="2001:db8:c::1",
+			ipv6_prefix="2001:db8:c::/64",
+			ipv6_virtual_machine_range="2001:db8:c::/124",
+			status="Active",
+		).name
+		self.image = make_image("mig-fake-image").name
+		for name in frappe.get_all("Virtual Machine Migration", pluck="name"):
+			frappe.delete_doc("Virtual Machine Migration", name, force=1, ignore_permissions=True)
+		for name in frappe.get_all("Virtual Machine", pluck="name"):
+			frappe.delete_doc("Virtual Machine", name, force=1, ignore_permissions=True)
+
+	def test_exporting_snapshot_records_the_fake_hosts_export_result(self) -> None:
+		vm = make_virtual_machine(self.source, self.image, status="Running")
+		row = frappe.get_doc(
+			{
+				"doctype": "Virtual Machine Migration",
+				"virtual_machine": vm.name,
+				"target_server": self.target,
+			}
+		).insert(ignore_permissions=True)
+
+		# No run_task patch: the Fake source answers migration-export-source itself, and
+		# the controller records the port it echoed, the pid, and the disk's bytes.
+		advanced = migration_module._phase_exporting_snapshot(row)
+
+		self.assertTrue(advanced)
+		row.reload()
+		self.assertEqual(row.nbd_port, migration_module.nbd_port(vm.name))
+		self.assertEqual(row.nbd_pid, 424242)
+		self.assertGreater(row.root_disk_bytes, 0)
+		self.assertEqual(row.data_disk_bytes, 0)
