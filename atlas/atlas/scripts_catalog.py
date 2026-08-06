@@ -293,8 +293,84 @@ BOAT_VERBS: frozenset[str] = _PORTED_VERBS | BOAT_ONLY_VERBS
 
 
 def runs_on_boat(verb: str) -> bool:
-	"""True iff the host runs this verb as `boat <verb>`."""
+	"""True iff the host runs this verb as `boat <verb>` (whether over the daemon's
+	HTTP surface or, for the four holdouts, still over SSH)."""
 	return verb in BOAT_VERBS
+
+
+# The host verbs the boat DAEMON serves over HTTP — `POST /v1/host-verbs/{verb}`,
+# the endpoint that took these off the SSH `boat <verb>` path onto the same
+# journaled transport the lifecycle verbs use (spec/33 §2.4). This set MUST equal
+# boat's own `servedHostVerbs` (cmd/boat/hostverb_dispatch.go); a verb in one and
+# not the other is a verb Atlas routes to an endpoint the daemon 400s, or one the
+# daemon serves that Atlas still SSHes.
+#
+# These six lead because they reach ZERO privileged command the boat user is not
+# already granted: each shares its host mechanics with a verb the daemon already
+# runs (a disk snapshot is the lifecycle LVM path, the memory snapshot is
+# sleep-vm's, host keys / firewall / base-ship cleanup are migration's), so serving
+# them adds no new standing privilege — "no worse than today" holds trivially.
+#
+# NOT here yet, and each for a stated reason (see boat's servedHostVerbs):
+#   - provision-vm, sync-image, promote-snapshot-image, warm-snapshot-vm and the
+#     two s3 backups each need grants the boat user does not hold (curl, mkfs.ext4,
+#     dd, `systemctl start` an arbitrary unit), which must be written scoped and
+#     proven on a host before the daemon runs them; vm-tunnel needs its wireguard
+#     commands literalised first. Their transport is ready — `run_task` routes each
+#     the day boat's servedHostVerbs and its allow-list gain it. Until then they
+#     stay on the SSH `boat <verb>` path.
+#   - bootstrap and reset-server bookend the daemon's own existence; poll-vm-traffic
+#     and probe-woken-vms are read-only per-minute sweeps that want a read path.
+HTTP_HOST_VERBS: frozenset[str] = frozenset(
+	{
+		"snapshot-vm",
+		"snapshot-stop-vm",
+		"delete-snapshot-vm",
+		"regenerate-host-keys-vm",
+		"firewall-apply",
+		"export-cleanup-source",
+		# The heavier verbs, switched on now that boat serves them (their scoped
+		# grants are in sudoers.d/boat and the allow-list test proves coverage).
+		# Only bootstrap and reset-server stay on SSH — they install and tear down
+		# the daemon, so neither can be driven THROUGH it.
+		"provision-vm",
+		"warm-snapshot-vm",
+		"promote-snapshot-image",
+		"sync-image",
+		"upload-snapshot-s3",
+		"restore-snapshot-s3",
+		"vm-tunnel",
+	}
+)
+
+
+def runs_on_boat_http(verb: str) -> bool:
+	"""True iff Atlas drives this host verb through the boat daemon over HTTP
+	(`run_boat_host_task`) rather than as `boat <verb>` over SSH. `run_task`
+	delegates on this, so a call site does not change transport — it states the
+	verb and the seam routes it (spec/33 §2.4)."""
+	return verb in HTTP_HOST_VERBS
+
+
+# The READ-ONLY host verbs the boat daemon serves over HTTP — `POST
+# /v1/host-reads/{verb}`, the non-journaling read path for the per-minute sweeps
+# Atlas runs through `run_probe`. This set MUST equal boat's `servedHostReads`
+# (cmd/boat/hostverb_dispatch.go). They are grant-free — they only read nft counters
+# and sleeping markers, the wake trap's own reads — so serving them over the daemon
+# adds no new privilege, and unlike the mutating verbs they write no Task row.
+HTTP_HOST_READS: frozenset[str] = frozenset(
+	{
+		"poll-vm-traffic",
+		"probe-woken-vms",
+	}
+)
+
+
+def runs_on_boat_http_read(verb: str) -> bool:
+	"""True iff Atlas drives this read-only sweep through the boat daemon over HTTP
+	(`run_boat_host_read`) rather than as `boat <verb>` over SSH. `run_probe`
+	delegates on this, the read twin of `run_task`'s host-verb delegation."""
+	return verb in HTTP_HOST_READS
 
 
 # Production Task scripts are shipped durably to the host's /var/lib/atlas/bin by

@@ -362,9 +362,30 @@ re-sending the same document is a no-op with nothing to deduplicate.
   host, because a destroyed VM whose desired state still says Running is one the
   sweep starts every interval forever.
 - **B. Lifecycle verbs.** `POST /v1/vms/{uuid}/<verb>` for `start`, `stop`,
-  `pause`, `resume`, `sleep`, `wake`, `resize`, `rebuild` and `terminate`. *NOT
-  BUILT:* `snapshot` and `warm-snapshot` (WO-4), `reserved-ip` (WO-3b),
-  `POST /v1/images/sync` (WO-6) and the migration sub-operations of §8 (WO-4).
+  `pause`, `resume`, `sleep`, `wake`, `resize`, `rebuild`, `terminate` and
+  `reserved-ip`, plus the migration sub-operations of §8 at
+  `POST /v1/vms/{uuid}/migrate/{phase}`. All built.
+- **B′. Host verbs.** `POST /v1/host-verbs/{verb}` — the operations that were
+  `boat <verb>` over SSH: the snapshot family, provisioning, image sync, per-VM
+  networking. One endpoint rather than a typed path each, because a host verb's
+  inputs are the same UPPER_SNAKE variables dict the SSH runner rendered to flags
+  and the daemon renders them the same way; the whole request is `{operation_id,
+  variables}` and the reply is the same `Operation` record every verb returns.
+  Journaled by `op_id` and serialized on the VM's turn (a VM-scoped verb) or one
+  host-wide turn (a host-scoped verb), so a retried Task replays rather than
+  running twice, and — unlike a lifecycle verb — it needs no prior desired-state
+  `PUT`, because it takes no fence: `provision-vm` CREATES the VM. **Served today**
+  for the six verbs that reach no privileged command the boat user is not already
+  granted (`snapshot-vm`, `snapshot-stop-vm`, `delete-snapshot-vm`,
+  `regenerate-host-keys-vm`, `firewall-apply`, `export-cleanup-source`), each
+  because it shares its host mechanics with a verb the daemon already runs. **Not
+  yet served:** the verbs that need new scoped grants proven on a host —
+  `provision-vm`, `sync-image`, `promote-snapshot-image`, `warm-snapshot-vm`, the
+  s3 backups (curl, mkfs, dd, an arbitrary `systemctl start`) — and `vm-tunnel`,
+  whose wireguard commands are computed and must be literalised before any grant
+  can authorise them (§12); those stay on the SSH `boat <verb>` path until then.
+  `bootstrap` (§4) and `reset-server` never move here: they bookend the daemon's
+  own existence.
 - **C. Observed read and watch.** `GET /v1/vms/{uuid}`, `GET /v1/vms`,
   `GET /v1/host`, `GET /v1/export` (§2.5), `GET /v1/watch` (SSE deltas).
   `PUT /v1/vms/{uuid}` takes the CAS `If-Match: <observed-epoch>` of §11.2.
