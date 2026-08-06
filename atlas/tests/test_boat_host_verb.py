@@ -45,9 +45,19 @@ class TestHostVerbCatalog(IntegrationTestCase):
 			self.assertNotIn(verb, scripts_catalog.HTTP_HOST_VERBS)
 			self.assertFalse(scripts_catalog.runs_on_boat_http(verb))
 
-	def test_the_snapshot_and_provision_verbs_route_over_http(self) -> None:
-		for verb in ("provision-vm", "snapshot-vm", "warm-snapshot-vm", "sync-image", "firewall-apply"):
+	def test_the_zero_grant_verbs_route_over_http(self) -> None:
+		# The six that reach no privileged command the boat user is not already
+		# granted — snapshot/firewall/host-keys/base-ship-cleanup — lead the port.
+		for verb in ("snapshot-vm", "snapshot-stop-vm", "delete-snapshot-vm", "firewall-apply"):
 			self.assertTrue(scripts_catalog.runs_on_boat_http(verb), verb)
+
+	def test_the_verbs_awaiting_scoped_grants_still_use_ssh(self) -> None:
+		# provision-vm, sync-image and the rest each need new boat-user grants proven
+		# on a host first, so they stay on the SSH `boat <verb>` path until then —
+		# still boat verbs, just not yet HTTP ones.
+		for verb in ("provision-vm", "sync-image", "warm-snapshot-vm", "vm-tunnel"):
+			self.assertFalse(scripts_catalog.runs_on_boat_http(verb), verb)
+			self.assertTrue(scripts_catalog.runs_on_boat(verb), verb)
 
 
 class TestRunBoatHostTask(IntegrationTestCase):

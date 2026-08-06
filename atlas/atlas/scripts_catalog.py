@@ -303,31 +303,31 @@ def runs_on_boat(verb: str) -> bool:
 # journaled transport the lifecycle verbs use (spec/33 §2.4). This set MUST equal
 # boat's own `servedHostVerbs` (cmd/boat/hostverb_dispatch.go); a verb in one and
 # not the other is a verb Atlas routes to an endpoint the daemon 400s, or one the
-# daemon serves that Atlas still SSHes. It is a subset of BOAT_ONLY_VERBS, and the
-# four absentees are deliberate:
+# daemon serves that Atlas still SSHes.
 #
-#   - `bootstrap` and `reset-server` bookend the daemon's own existence — one
-#     brings the host up before there is a daemon to answer HTTP, the other tears
-#     it down and stops boat.service — so neither can be driven THROUGH the daemon.
-#     They keep the SSH path (bootstrap is WO-1b's to move; reset stays SSH).
-#   - `poll-vm-traffic` and `probe-woken-vms` are the read-only per-minute sweeps
-#     Atlas runs through `run_probe` with no Task row. A journaled POST would write
-#     ~2,880 operation records per host per day, so they want a non-journaling read
-#     endpoint, not this one.
+# These six lead because they reach ZERO privileged command the boat user is not
+# already granted: each shares its host mechanics with a verb the daemon already
+# runs (a disk snapshot is the lifecycle LVM path, the memory snapshot is
+# sleep-vm's, host keys / firewall / base-ship cleanup are migration's), so serving
+# them adds no new standing privilege — "no worse than today" holds trivially.
+#
+# NOT here yet, and each for a stated reason (see boat's servedHostVerbs):
+#   - provision-vm, sync-image, promote-snapshot-image, warm-snapshot-vm and the
+#     two s3 backups each need grants the boat user does not hold (curl, mkfs.ext4,
+#     dd, `systemctl start` an arbitrary unit), which must be written scoped and
+#     proven on a host before the daemon runs them; vm-tunnel needs its wireguard
+#     commands literalised first. Their transport is ready — `run_task` routes each
+#     the day boat's servedHostVerbs and its allow-list gain it. Until then they
+#     stay on the SSH `boat <verb>` path.
+#   - bootstrap and reset-server bookend the daemon's own existence; poll-vm-traffic
+#     and probe-woken-vms are read-only per-minute sweeps that want a read path.
 HTTP_HOST_VERBS: frozenset[str] = frozenset(
 	{
-		"provision-vm",
 		"snapshot-vm",
 		"snapshot-stop-vm",
-		"warm-snapshot-vm",
 		"delete-snapshot-vm",
-		"upload-snapshot-s3",
-		"restore-snapshot-s3",
-		"sync-image",
-		"promote-snapshot-image",
 		"regenerate-host-keys-vm",
 		"firewall-apply",
-		"vm-tunnel",
 		"export-cleanup-source",
 	}
 )
