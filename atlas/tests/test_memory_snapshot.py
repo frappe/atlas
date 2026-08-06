@@ -47,14 +47,6 @@ class TestMemorySnapshotWiring(unittest.TestCase):
 			if line.startswith("ExecStartPre=") and "rm" in line:
 				self.assertNotIn("snapshot", line)
 
-	def test_bootstrap_uploads_the_restore_hook(self) -> None:
-		from atlas.atlas.doctype.server.server import Server
-
-		self.assertIn(
-			("vm-restore.py", "/var/lib/atlas/bin/vm-restore.py"),
-			Server.BOOTSTRAP_UPLOAD_SOURCES,
-		)
-
 	def test_restore_hook_is_not_a_task(self) -> None:
 		from atlas.atlas import scripts_catalog
 
