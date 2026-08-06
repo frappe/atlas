@@ -643,17 +643,26 @@ def base_url_for_server(server_name: str) -> str:
 def token_for_server(server_name: str) -> str:
 	"""This host's bearer token.
 
-	Per-host and short-lived by design (spec/33 §12): Atlas mints it, Boat serves
-	the last valid one under partition. WO-0 has no minting yet, so it is
-	configured like every other Atlas credential and read through this one
-	chokepoint — `atlas_boat_tokens` maps a Server name to its token, and
-	`atlas_boat_token` is the single-host dev fallback. The value is never
-	logged and never appears in an error message."""
+	Per-host and short-lived (spec/33 §12): Atlas mints it (Server.mint_boat_token),
+	stores it encrypted on the Server row, and installs it to /etc/boat/token on the
+	host; the daemon serves the last valid one until its hard expiry. Read through
+	this one chokepoint, and never logged or put in an error message.
+
+	A host with no minted token yet — SSH-only, or one not bootstrapped/upgraded
+	since minting shipped — falls back to the static site config: `atlas_boat_tokens`
+	maps a Server name to its token, and `atlas_boat_token` is the single-host dev
+	fallback. Keeping the fallback is what lets minting roll out host by host without
+	stranding one whose token still lives in config."""
+	minted = frappe.get_cached_doc("Server", server_name).get_password("boat_token", raise_exception=False)
+	if minted:
+		return minted
 	tokens = frappe.conf.get("atlas_boat_tokens") or {}
 	token = tokens.get(server_name) or frappe.conf.get("atlas_boat_token")
 	if not token:
 		frappe.throw(
-			_("Server {0} has no Boat token; set atlas_boat_tokens in site config").format(server_name)
+			_(
+				"Server {0} has no Boat token; bootstrap/upgrade it to mint one, or set atlas_boat_tokens"
+			).format(server_name)
 		)
 	return token
 

@@ -27,6 +27,8 @@
    "signing_public_key",
    "signing_private_key",
    "mesh_address",
+   "boat_token",
+   "boat_token_expires_at",
   "section_break_host_info",
   "architecture",
   "column_break_host_info",
@@ -183,6 +185,21 @@
    "fieldname": "mesh_address",
    "fieldtype": "Data",
    "label": "Mesh Address",
+   "read_only": 1
+  },
+  {
+   "description": "The bearer token Atlas minted for this host's Boat tunnel listener (spec/33 §12). Short-lived and per-host: Atlas re-mints it before its hard expiry and installs it to /etc/boat/token on the host; the daemon serves the last valid one until then. Stored encrypted; never logged. Empty on an SSH-only or not-yet-bootstrapped host, where token_for_server falls back to atlas_boat_tokens in site config.",
+   "fieldname": "boat_token",
+   "fieldtype": "Password",
+   "label": "Boat Token",
+   "read_only": 1,
+   "no_copy": 1
+  },
+  {
+   "description": "When boat_token stops being valid if Atlas never re-mints it — the hard expiry the daemon enforces (fail-closed past it). Atlas re-mints well before this on every bootstrap/upgrade, so a reachable host never reaches it; it bounds how long a leaked-but-unrotated token stays good.",
+   "fieldname": "boat_token_expires_at",
+   "fieldtype": "Datetime",
+   "label": "Boat Token Expires At",
    "read_only": 1
   },
   {

@@ -731,3 +731,68 @@ class TestServerUpgradeBoat(IntegrationTestCase):
 		self.assertEqual(len(mine), 1)
 		self.assertEqual(mine[0].args[0], "atlas.atlas.doctype.server.server.upgrade_host_to_current_boat")
 		self.assertEqual(mine[0].kwargs.get("job_id"), f"upgrade-boat-{self.server.name}")
+
+
+class TestServerBoatToken(IntegrationTestCase):
+	"""WO-1b (spec/33 §12): Atlas mints the per-host bearer token, stores it
+	encrypted, re-mints it before its hard expiry, and reads it through
+	token_for_server. The install-to-host + daemon reload is the live half."""
+
+	def setUp(self) -> None:
+		frappe.db.delete("Server", {"title": "test-server-token"})
+		self.provider = make_provider("test-provider-token")
+
+	def _server(self) -> Document:
+		return make_server(self.provider, "test-server-token", provider_resource_id="77", status="Active")
+
+	def test_mint_stores_the_token_encrypted_and_stamps_a_future_expiry(self) -> None:
+		from atlas.atlas.doctype.server import server as server_module
+
+		server = self._server()
+		token = server.mint_boat_token()
+
+		self.assertTrue(token)
+		# Read back decrypted from __Auth — and NOT sitting in the row column, which
+		# is the whole point of a Password field for a bearer secret.
+		self.assertEqual(server.get_password("boat_token", raise_exception=False), token)
+		self.assertNotEqual(frappe.db.get_value("Server", server.name, "boat_token"), token)
+		remaining = frappe.utils.get_datetime(server.boat_token_expires_at) - frappe.utils.now_datetime()
+		self.assertGreater(remaining.days, server_module.BOAT_TOKEN_TTL_DAYS - 2)
+
+	def test_current_or_minted_reuses_a_fresh_token(self) -> None:
+		server = self._server()
+		first = server.mint_boat_token()
+		# Still far from expiry, so no new secret is handed out.
+		self.assertEqual(server._current_or_minted_boat_token(), first)
+
+	def test_current_or_minted_remints_inside_the_expiry_window(self) -> None:
+		from atlas.atlas.doctype.server import server as server_module
+
+		server = self._server()
+		first = server.mint_boat_token()
+		# Push the expiry inside the re-mint window: the next call must mint anew, so a
+		# reachable host never carries a token to its hard expiry.
+		near = frappe.utils.add_to_date(
+			frappe.utils.now_datetime(), days=server_module.BOAT_TOKEN_REMINT_WITHIN_DAYS - 1
+		)
+		server.db_set("boat_token_expires_at", near)
+
+		second = server._current_or_minted_boat_token()
+
+		self.assertNotEqual(second, first)
+		self.assertEqual(server.get_password("boat_token", raise_exception=False), second)
+
+	def test_token_for_server_prefers_the_minted_row_over_config(self) -> None:
+		from atlas.atlas.boat_client import token_for_server
+
+		server = self._server()
+		token = server.mint_boat_token()
+		with patch.dict(frappe.conf, {"atlas_boat_token": "the-config-fallback"}):
+			self.assertEqual(token_for_server(server.name), token)
+
+	def test_token_for_server_falls_back_to_config_when_unminted(self) -> None:
+		from atlas.atlas.boat_client import token_for_server
+
+		server = self._server()  # never minted
+		with patch.dict(frappe.conf, {"atlas_boat_token": "the-config-fallback"}):
+			self.assertEqual(token_for_server(server.name), "the-config-fallback")
