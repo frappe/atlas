@@ -240,7 +240,6 @@ def kind(verb: str) -> str:
 #     controller-side over SSH and keep their .py.
 _PORTED_VERBS: frozenset[str] = frozenset(
 	{
-		"reset-server",
 		# provision-vm + the five later ports (firewall/tunnel/traffic/wake/export).
 		# The boat binary implements each as a native verb taking the same
 		# --kebab-flags and printing the same ATLAS_RESULT= line, so the runner swaps
@@ -282,6 +281,7 @@ BOAT_ONLY_VERBS: frozenset[str] = frozenset(
 		"sync-image",
 		"promote-snapshot-image",
 		"regenerate-host-keys-vm",
+		"reset-server",
 	}
 )
 
