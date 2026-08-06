@@ -45,17 +45,24 @@ class TestHostVerbCatalog(IntegrationTestCase):
 			self.assertNotIn(verb, scripts_catalog.HTTP_HOST_VERBS)
 			self.assertFalse(scripts_catalog.runs_on_boat_http(verb))
 
-	def test_the_zero_grant_verbs_route_over_http(self) -> None:
-		# The six that reach no privileged command the boat user is not already
-		# granted — snapshot/firewall/host-keys/base-ship-cleanup — lead the port.
-		for verb in ("snapshot-vm", "snapshot-stop-vm", "delete-snapshot-vm", "firewall-apply"):
+	def test_every_boat_host_verb_routes_over_http_except_bootstrap_and_reset(self) -> None:
+		# Every host verb the boat binary implements now goes over HTTP — the whole
+		# snapshot/provision/image/networking set — save the two that bookend the
+		# daemon's own existence.
+		for verb in scripts_catalog.BOAT_ONLY_VERBS:
+			if verb in ("bootstrap", "reset-server", "poll-vm-traffic", "probe-woken-vms"):
+				continue
 			self.assertTrue(scripts_catalog.runs_on_boat_http(verb), verb)
 
-	def test_the_verbs_awaiting_scoped_grants_still_use_ssh(self) -> None:
-		# provision-vm, sync-image and the rest each need new boat-user grants proven
-		# on a host first, so they stay on the SSH `boat <verb>` path until then —
-		# still boat verbs, just not yet HTTP ones.
-		for verb in ("provision-vm", "sync-image", "warm-snapshot-vm", "vm-tunnel"):
+	def test_the_heavier_verbs_route_over_http_now(self) -> None:
+		# provision-vm, sync-image, warm-snapshot-vm and vm-tunnel moved off SSH once
+		# their scoped grants landed in sudoers.d/boat.
+		for verb in ("provision-vm", "sync-image", "warm-snapshot-vm", "vm-tunnel", "upload-snapshot-s3"):
+			self.assertTrue(scripts_catalog.runs_on_boat_http(verb), verb)
+
+	def test_bootstrap_and_reset_stay_on_ssh(self) -> None:
+		# They install and tear down the daemon, so neither can be driven through it.
+		for verb in ("bootstrap", "reset-server"):
 			self.assertFalse(scripts_catalog.runs_on_boat_http(verb), verb)
 			self.assertTrue(scripts_catalog.runs_on_boat(verb), verb)
 

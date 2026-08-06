@@ -329,6 +329,17 @@ HTTP_HOST_VERBS: frozenset[str] = frozenset(
 		"regenerate-host-keys-vm",
 		"firewall-apply",
 		"export-cleanup-source",
+		# The heavier verbs, switched on now that boat serves them (their scoped
+		# grants are in sudoers.d/boat and the allow-list test proves coverage).
+		# Only bootstrap and reset-server stay on SSH — they install and tear down
+		# the daemon, so neither can be driven THROUGH it.
+		"provision-vm",
+		"warm-snapshot-vm",
+		"promote-snapshot-image",
+		"sync-image",
+		"upload-snapshot-s3",
+		"restore-snapshot-s3",
+		"vm-tunnel",
 	}
 )
 
