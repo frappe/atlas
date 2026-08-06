@@ -55,13 +55,13 @@ def get_ssh_private_key_path() -> str:
 	return path
 
 
-def satellite_public_keys() -> list[str]:
-	"""OpenSSH public keys of the Satellite orchestrator(s) that manage this Atlas's
+def service_public_keys() -> list[str]:
+	"""OpenSSH public keys of an external service (e.g. chef) that manages this Atlas's
 	VMs (spec/30). Atlas is a pure provisioner; it injects these into every host (at
-	bootstrap) and guest (at provision) authorized_keys so a Satellite can SSH the bare
+	bootstrap) and guest (at provision) authorized_keys so the service can SSH the bare
 	box it is handed. Configured one-per-line on Atlas Settings; empty on an Atlas with
-	no Satellite, in which case injection is a no-op."""
-	raw = frappe.db.get_single_value("Atlas Settings", "satellite_public_keys") or ""
+	no such service, in which case injection is a no-op."""
+	raw = frappe.db.get_single_value("Atlas Settings", "service_public_keys") or ""
 	return [line.strip() for line in raw.splitlines() if line.strip()]
 
 
