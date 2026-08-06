@@ -30,8 +30,9 @@ class TestStemDiscovery(unittest.TestCase):
 
 	def test_includes_typed_tasks(self):
 		stems = _cli._stems()
-		# A representative spread: simple VM op, the heavy one, a controller task.
-		for stem in ("start-vm", "stop-vm", "provision-vm", "sync-image", "issue-cert"):
+		# A representative spread: two simple VM ops and a controller task.
+		# (provision-vm/sync-image were retired to boat — they are no longer atlas stems.)
+		for stem in ("start-vm", "stop-vm", "issue-cert"):
 			self.assertIn(stem, stems)
 
 	def test_excludes_private_and_shell(self):
