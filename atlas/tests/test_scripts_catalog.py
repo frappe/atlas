@@ -85,11 +85,15 @@ class TestScriptsCatalog(unittest.TestCase):
 		self.assertIsNone(scripts_catalog.durable_remote_path("phase1-probe"))
 
 	def test_file_for_maps_verb_to_basename(self) -> None:
-		self.assertEqual(scripts_catalog.file_for("provision-vm"), "provision-vm.py")
+		# start-vm keeps its .py (a lifecycle verb, not a deleted boat verb);
+		# reboot-server keeps its .sh.
+		self.assertEqual(scripts_catalog.file_for("start-vm"), "start-vm.py")
 		self.assertEqual(scripts_catalog.file_for("reboot-server"), "reboot-server.sh")
 
 	def test_kind_distinguishes_python_from_shell(self) -> None:
-		self.assertEqual(scripts_catalog.kind("provision-vm"), "python")
+		# A file-derived python verb reads "python" off its suffix; reboot-server.sh
+		# reads "shell". (BOAT_ONLY verbs answer "python" without a file — see above.)
+		self.assertEqual(scripts_catalog.kind("start-vm"), "python")
 		self.assertEqual(scripts_catalog.kind("reboot-server"), "shell")
 
 	def test_a_boat_only_verb_has_no_file_and_is_still_flag_shaped(self) -> None:
@@ -129,5 +133,5 @@ class TestScriptsCatalog(unittest.TestCase):
 			self.assertFalse(verb.endswith((".py", ".sh")), verb)
 
 	def test_resolve_finds_file_by_verb(self) -> None:
-		path = scripts_catalog.resolve("provision-vm")
-		self.assertEqual(path.name, "provision-vm.py")
+		path = scripts_catalog.resolve("start-vm")
+		self.assertEqual(path.name, "start-vm.py")

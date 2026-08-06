@@ -238,16 +238,11 @@ def kind(verb: str) -> str:
 #     RPCs (run_boat_migration_phase), so routing them is a change to migration.py's
 #     transport, not the first word; two (source-autostart, forward-down) remain
 #     controller-side over SSH and keep their .py.
-_PORTED_VERBS: frozenset[str] = frozenset(
-	{
-		# provision-vm + the five later ports (firewall/tunnel/traffic/wake/export).
-		# The boat binary implements each as a native verb taking the same
-		# --kebab-flags and printing the same ATLAS_RESULT= line, so the runner swaps
-		# only the first word. provision-vm creates LVs and boots a guest, so its
-		# differential is a real guest boot on a host, not goldens alone.
-		"provision-vm",
-	}
-)
+# Empty now — every ported verb's `.py` oracle has been deleted, so all of them
+# live in BOAT_ONLY_VERBS. The set is kept as the seam a future port re-enters: a
+# verb boat implements while its `.py` is still on disk as the oracle goes here
+# first, then crosses to BOAT_ONLY_VERBS when the file is deleted.
+_PORTED_VERBS: frozenset[str] = frozenset()
 
 # Verbs the boat binary implements and NOTHING in scripts/ does — a verb lands
 # here once its `.py` oracle is deleted (see the header above), plus `bootstrap`.
@@ -284,6 +279,9 @@ BOAT_ONLY_VERBS: frozenset[str] = frozenset(
 		"poll-vm-traffic",
 		"probe-woken-vms",
 		"firewall-apply",
+		# provision-vm creates LVs and boots a guest, so its differential was a real
+		# guest boot on a host (done), not goldens alone.
+		"provision-vm",
 	}
 )
 
