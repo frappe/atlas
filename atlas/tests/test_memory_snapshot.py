@@ -10,7 +10,6 @@ snapshot paths living inside the jail, the systemd wiring, and the new
 scripts' CLI/compile health.
 """
 
-import py_compile
 import unittest
 from pathlib import Path
 
@@ -21,20 +20,10 @@ _SCRIPTS_DIR = _REPO_ROOT / "scripts"
 # conditionals and the in-jail snapshot paths) was rendered by provision-vm.py and
 # tested here by loading that module in a clean interpreter. The .py is deleted —
 # boat renders the launch and its config — so those checks now live in boat's
-# internal/provision/render_test.go. The systemd-wiring and vm-restore contracts
-# below stay: vm-restore.py is a systemd hook, not a boat verb.
-
-
-class TestMemorySnapshotScripts(unittest.TestCase):
-	# snapshot-stop-vm's argparse contract was proven here by `snapshot-stop-vm.py
-	# --help`; the .py is deleted (boat serves snapshot-vm's stop), so its flag
-	# contract now lives in boat's internal/snapshot/snapshot_stop_test.go.
-
-	def test_vm_restore_compiles(self) -> None:
-		# vm-restore.py imports the DURABLE package that only exists next to it
-		# on a bootstrapped host, so it can't be imported here — but it must at
-		# least be valid Python before bootstrap uploads it.
-		py_compile.compile(str(_SCRIPTS_DIR / "vm-restore.py"), doraise=True)
+# internal/provision/render_test.go. vm-restore is a `boat vm-restore` verb now
+# (the snapshot-stop-vm argparse and the signature-guard/MMDS ordering it once
+# carried moved to boat's internal/snapshot + internal/image); the systemd-wiring
+# contract below stays — the unit still has to call the verb at ExecStartPost.
 
 
 class TestMemorySnapshotWiring(unittest.TestCase):

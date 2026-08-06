@@ -11,7 +11,6 @@ paths, the identity payload's derivation rules, the clone-time size pinning,
 the per-server warm resolution, and the durable-artifact GC wiring.
 """
 
-import py_compile
 import subprocess
 import sys
 import unittest
@@ -55,14 +54,10 @@ class TestWarmScripts(unittest.TestCase):
 	# delete-snapshot-vm), so its contract now lives in boat's
 	# internal/snapshot/delete_snapshot_test.go.
 
-	def test_vm_restore_compiles_and_guards(self) -> None:
-		py_compile.compile(str(_SCRIPTS_DIR / "vm-restore.py"), doraise=True)
-		source = (_SCRIPTS_DIR / "vm-restore.py").read_text()
-		# The signature guard must consume the marker BEFORE any load attempt,
-		# and the MMDS PUT must happen while still paused (before the resume).
-		self.assertIn("_signature_mismatch", source)
-		self.assertIn("_stage_mmds", source)
-		self.assertLess(source.index("_signature_mismatch(paths)"), source.index("_load_snapshot(paths)"))
+	# vm-restore's signature guard (consume the marker before any load attempt) and
+	# its MMDS-PUT-while-paused ordering were proven here by compiling vm-restore.py
+	# and asserting on its source. The .py is deleted (`boat vm-restore` serves it),
+	# so that ordering now lives in boat's internal/image restore path.
 
 	def test_hostinfo_parses(self) -> None:
 		hostinfo = _load_by_path("hostinfo_under_test", _SCRIPTS_DIR / "lib" / "atlas" / "hostinfo.py")
