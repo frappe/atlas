@@ -68,21 +68,16 @@ sudo ln -sfn "${ATLAS_CLI}" /usr/local/bin/atlas
 # 5. DEEP sanity gate (the safety). A green `import atlas` does NOT prove the units
 #    run, so exercise what they ACTUALLY do: atlas-pool.service's inline
 #    `from atlas.lvm import ThinPool` (the largest module, likeliest stdlib gap on
-#    a fresh interpreter), that the 4 firecracker-vm@.service boot hooks PARSE on
-#    the venv python (py_compile), and that the `atlas` console script dispatches.
-#    A broken venv must fail the install HERE — before the units are uploaded to
-#    point at it.
+#    a fresh interpreter), and that the `atlas` console script dispatches. The
+#    firecracker-vm@ boot hooks are `boat vm-*` verbs now (not venv-python files),
+#    so boat's own health is the separate assertion in step 6. A broken venv must
+#    fail the install HERE — before the units are uploaded to point at it.
 version="$("${ATLAS_PYTHON}" --version)"
 case "${version}" in
 	*"${PY_VERSION}"*) ;;
 	*) echo "Atlas venv python is '${version}', expected ${PY_VERSION}" >&2; exit 1 ;;
 esac
 "${ATLAS_PYTHON}" -c "import sys; sys.path.insert(0, '${BIN_DIRECTORY}'); from atlas.lvm import ThinPool"
-"${ATLAS_PYTHON}" -m py_compile \
-	"${BIN_DIRECTORY}/vm-disk-up.py" \
-	"${BIN_DIRECTORY}/vm-network-up.py" \
-	"${BIN_DIRECTORY}/vm-network-down.py" \
-	"${BIN_DIRECTORY}/vm-restore.py"
 "${ATLAS_CLI}" --help >/dev/null
 
 # 6. The OTHER host CLI. Atlas runs ten host verbs as `boat <verb>` rather than

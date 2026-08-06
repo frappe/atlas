@@ -46,12 +46,10 @@ else.
 │
 ├── bootstrap.json                    # host facts written by bootstrap-server.py
 │
-└── bin/                              # Durable hooks + package laid down by bootstrap
-    ├── vm-network-up.py              # ExecStartPre: build the VM's netns + tap + veth
-    ├── vm-network-down.py            # ExecStopPost: tear the same down
-    ├── vm-disk-up.py                 # ExecStartPre: re-activate the VM's disk LV + refresh its jail node
-    ├── vm-restore.py                 # ExecStartPost: resume a pending memory snapshot (no-op on cold boot)
-    └── atlas/                        # the durable stdlib-only package the hooks + atlas-pool.service import
+└── bin/                              # Durable package + Task scripts laid down by bootstrap
+    │                                 # (the per-VM firecracker-vm@ hooks are `boat vm-*` verbs — no file here)
+    ├── atlas-wake-trap.py            # sleepy-VM wake daemon (systemd hook, not a Task)
+    └── atlas/                        # the durable stdlib-only package atlas-wake-trap + atlas-pool.service import
         ├── hostinfo.py               # host signature (CPU/kernel/FC) for the warm-restore guard
         ├── lvm.py                    # ThinPool/LogicalVolume (successor to lvm.sh)
         ├── network_env.py            # read network.env, find default route device
@@ -61,11 +59,13 @@ else.
         └── _task.py                  # TaskInputs/TaskResult (typed CLI + ATLAS_RESULT= line)
 ```
 
-The systemd hooks (`vm-network-up.py`, `vm-network-down.py`, `vm-disk-up.py`,
-`vm-restore.py`) take a positional VM uuid (the unit passes `%i`) and add their
-own directory to `sys.path` so `import atlas` resolves the package next to
-them. They are NOT Tasks — they are excluded from the script catalog so the
-runner never executes them as one.
+The per-VM `firecracker-vm@` hooks (`vm-disk-up`, `vm-network-up`, `vm-restore`,
+`vm-network-down`) are `/usr/local/bin/boat vm-* %i` verbs now (a positional VM
+uuid the unit passes as `%i`) — served by the boat binary, so no hook file lives
+under `bin/`. They are NOT Tasks and own no script-catalog entry, so the runner
+never executes them as one. `atlas-wake-trap` (the sleepy-VM wake daemon) is the
+one remaining systemd-hook file here; it adds its own directory to `sys.path` so
+`import atlas` resolves the durable package next to it.
 
 The VM disks themselves are **LVM thin volumes**, not files in this tree —
 they live in the `atlas` volume group on the thin pool `pool0`, reachable at
@@ -220,10 +220,10 @@ both are reconstructed from on-disk state — never from the Frappe DB:
 - **Each VM's disk + jail node.** A VM disk's device-mapper minor can renumber
   across a reboot, which would dangle the `rootfs.ext4` block node mknod'd into
   the jail at provision time. Provision is not re-run on boot, so each
-  `firecracker-vm@.service` runs `vm-disk-up.py` as an `ExecStartPre`: it
+  `firecracker-vm@.service` runs `boat vm-disk-up %i` as an `ExecStartPre`: it
   re-activates the VM's own disk LV (`-K`) and re-mknods the jail node from the
   LV's *current* major:minor (reading the per-VM uid from `network.env`). This
-  is the disk analogue of `vm-network-up.py`, and it makes an enabled VM
+  is the disk analogue of `boat vm-network-up`, and it makes an enabled VM
   self-heal its disk on every start — reboot, dm-renumber, or a manual
   `lvchange -an` all recover with no operator action.
 

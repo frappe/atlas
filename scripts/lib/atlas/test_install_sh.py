@@ -70,15 +70,13 @@ class TestInstallSh(unittest.TestCase):
 	def test_exposes_the_console_script_on_path(self):
 		self.assertIn('ln -sfn "${ATLAS_CLI}" /usr/local/bin/atlas', self.text)
 
-	def test_deep_sanity_gate_exercises_lvm_import_hook_compile_and_cli(self):
+	def test_deep_sanity_gate_exercises_lvm_import_and_cli(self):
 		# (a) the atlas-pool.service inline import — the largest module, the likeliest
 		#     stdlib gap on a fresh interpreter — on the venv python.
 		self.assertIn("from atlas.lvm import ThinPool", self.text)
-		# (b) all four firecracker-vm@.service boot hooks py_compile'd on the venv python.
-		self.assertIn("py_compile", self.text)
-		for hook in ("vm-disk-up.py", "vm-network-up.py", "vm-network-down.py", "vm-restore.py"):
-			self.assertIn(hook, self.text)
-		# (c) the `atlas` console script dispatches.
+		# (b) the `atlas` console script dispatches. The firecracker-vm@ boot hooks are
+		#     `boat vm-*` verbs now (not venv-python files the gate could py_compile);
+		#     boat's presence is asserted separately in install.sh step 6.
 		self.assertIn('"${ATLAS_CLI}" --help', self.text)
 
 	def test_version_mismatch_aborts(self):

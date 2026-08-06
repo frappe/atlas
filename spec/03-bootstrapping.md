@@ -317,10 +317,6 @@ uploads (see `_BOOTSTRAP_UPLOADS` + `_bootstrap_uploads()` in `server.py`):
 - `scripts/install.sh` → `/var/lib/atlas/bin/install.sh` (the controller pipes
   this over SSH right after the upload to create the venv — shipped durably so the
   controller has a local copy and no public URL is needed)
-- `scripts/vm-network-up.py` → `/var/lib/atlas/bin/vm-network-up.py`
-- `scripts/vm-network-down.py` → `/var/lib/atlas/bin/vm-network-down.py`
-- `scripts/vm-disk-up.py` → `/var/lib/atlas/bin/vm-disk-up.py`
-- `scripts/vm-restore.py` → `/var/lib/atlas/bin/vm-restore.py`
 - `scripts/systemd/firecracker-vm@.service` → `/etc/systemd/system/firecracker-vm@.service`
 - `scripts/systemd/atlas-pool.service` → `/etc/systemd/system/atlas-pool.service`
 - every `scripts/lib/atlas/*.py` (test files skipped) → `/var/lib/atlas/bin/atlas/*.py`
@@ -328,21 +324,22 @@ uploads (see `_BOOTSTRAP_UPLOADS` + `_bootstrap_uploads()` in `server.py`):
 The `pyproject.toml` makes `/var/lib/atlas/bin` a pip-installable project: it is
 the manifest `uv pip install /var/lib/atlas/bin` consumes (its wheel package root
 is `atlas`, the flat durable layout, distinct from the dev
-[`scripts/pyproject.toml`](../scripts/pyproject.toml)). The systemd hooks
-(`vm-network-up.py`, `vm-network-down.py`, `vm-disk-up.py`, `vm-restore.py`) are
-invoked by the unit as `/var/lib/atlas/venv/bin/python <path> %i` (a positional VM
-uuid, not Task `--flags`) and `import` the durable package next to them; the
-package (`/var/lib/atlas/bin/atlas/`) replaces the old durable `lvm.sh` shell
-library. `/var/lib/atlas/venv/bin/python` is the **Atlas venv python** (see *The
-Atlas interpreter and CLI* below), not the host's `/usr/bin/python3` —
-`atlas-pool.service` runs under it too.
+[`scripts/pyproject.toml`](../scripts/pyproject.toml)). The per-VM
+`firecracker-vm@` hooks (`vm-disk-up`, `vm-network-up`, `vm-restore`,
+`vm-network-down`) are `/usr/local/bin/boat vm-* %i` verbs now (a positional VM
+uuid, not Task `--flags`) — served by the boat binary, so no hook file ships
+here. The durable package (`/var/lib/atlas/bin/atlas/`) replaces the old durable
+`lvm.sh` shell library and is imported by `atlas-wake-trap`, `atlas-pool.service`
+and the durable Task entry scripts, which run under the **Atlas venv python**
+`/var/lib/atlas/venv/bin/python` (see *The Atlas interpreter and CLI* below), not
+the host's `/usr/bin/python3`.
 
 The `Server.bootstrap()` Python method orchestrates this:
 
 ```
 1. open ssh connection (via `connection_for_server`)
-2. upload_files: the durable hooks, both systemd units, the atlas package, and
-   install.sh (mkdir of parent directories happens inside upload_files)
+2. upload_files: the atlas-wake-trap daemon, the systemd units, the atlas package,
+   and install.sh (mkdir of parent directories happens inside upload_files)
 3. run install.sh over SSH (`bash /var/lib/atlas/bin/install.sh`) — creates the
    uv venv + `atlas` console script and runs the deep sanity gate. This must run
    BEFORE the bootstrap Task (which now runs as `atlas bootstrap-server` on the

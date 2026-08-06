@@ -132,10 +132,12 @@ class Server(Document):
 
 	BOOTSTRAP_ALLOWED_STATUS: ClassVar[set[str]] = {"Pending", "Bootstrapping", "Active", "Broken"}
 	# Durable uploads beyond the atlas package (which _bootstrap_uploads()
-	# computes from disk). The systemd-invoked hooks are .py now (positional
-	# uuid); they and atlas-pool.service import the durable package under
-	# /var/lib/atlas/bin (their sys.path shim adds that dir). The package itself
-	# replaces the old durable lvm.sh — there is no shell helper library anymore.
+	# computes from disk). The per-VM firecracker-vm@ hooks are boat verbs now
+	# (`/usr/local/bin/boat vm-* %i`), so nothing is shipped here for them; what
+	# remains are the always-on atlas-wake-trap daemon and atlas-pool.service,
+	# which import the durable package under /var/lib/atlas/bin (their sys.path
+	# shim adds that dir). The package itself replaces the old durable lvm.sh —
+	# there is no shell helper library anymore.
 	BOOTSTRAP_UPLOAD_SOURCES: ClassVar[list[tuple[str, str]]] = [
 		# The pip-install manifest: bootstrap-server.py runs `uv pip install
 		# /var/lib/atlas/bin` into the Atlas venv, which needs a pyproject.toml at
@@ -147,21 +149,15 @@ class Server(Document):
 		# `atlas bootstrap-server` verb). Shipped durably so the controller has a
 		# local copy to pipe over SSH — no public URL needed.
 		("install.sh", "/var/lib/atlas/bin/install.sh"),
-		("vm-network-up.py", "/var/lib/atlas/bin/vm-network-up.py"),
-		("vm-network-down.py", "/var/lib/atlas/bin/vm-network-down.py"),
 		# atlas-wake-trap.py is the always-on daemon that wakes a Sleeping VM on its
-		# first inbound TCP SYN (spec/32). Shipped durably like the systemd hooks
-		# (it imports the same durable atlas package); it is not a Task verb — the
+		# first inbound TCP SYN (spec/32). Shipped durably (it imports the durable
+		# atlas package under /var/lib/atlas/bin); it is not a Task verb — the
 		# scripts_catalog SYSTEMD_HOOKS set excludes it from the host run-task gate.
 		("atlas-wake-trap.py", "/var/lib/atlas/bin/atlas-wake-trap.py"),
 		("systemd/atlas-wake-trap.service", "/etc/systemd/system/atlas-wake-trap.service"),
-		# vm-disk-up.py re-activates the VM's thin-snapshot disk LV and refreshes
-		# its in-jail block node at every unit start — the disk analogue of
-		# vm-network-up.py, so an enabled VM self-heals its disk after a reboot.
-		("vm-disk-up.py", "/var/lib/atlas/bin/vm-disk-up.py"),
-		# vm-restore.py resumes a pending memory snapshot at every unit start —
-		# the ExecStartPost counterpart of the two ExecStartPre hooks above.
-		("vm-restore.py", "/var/lib/atlas/bin/vm-restore.py"),
+		# The firecracker-vm@ unit's ExecStart* hooks are `/usr/local/bin/boat
+		# vm-* %i` (vm-disk-up/vm-network-up/vm-restore/vm-network-down) — served by
+		# the boat binary, so no per-VM hook file ships here anymore.
 		("systemd/firecracker-vm@.service", "/etc/systemd/system/firecracker-vm@.service"),
 		("systemd/atlas-pool.service", "/etc/systemd/system/atlas-pool.service"),
 		# atlas-networkd.service (spec/31) is the long-running decentralized control
