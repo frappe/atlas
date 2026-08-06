@@ -247,7 +247,6 @@ _PORTED_VERBS: frozenset[str] = frozenset(
 		# differential is a real guest boot on a host, not goldens alone.
 		"provision-vm",
 		"firewall-apply",
-		"vm-tunnel",
 		"poll-vm-traffic",
 		"probe-woken-vms",
 	}
@@ -284,6 +283,7 @@ BOAT_ONLY_VERBS: frozenset[str] = frozenset(
 		"regenerate-host-keys-vm",
 		"reset-server",
 		"export-cleanup-source",
+		"vm-tunnel",
 	}
 )
 
