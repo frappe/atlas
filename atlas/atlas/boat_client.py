@@ -974,17 +974,17 @@ def _withdraw_private_params(variables: dict) -> dict:
 
 
 def _cleanup_source_params(variables: dict) -> dict:
-	# TODO(item9-live): KEEP_ADDRESS has no field on Boat's MigrateRequest /
-	# CleanupSourceParams (cleanup_source.go carries only NBDPID). On the keep-address
-	# path Atlas passes KEEP_ADDRESS=1 to SUPPRESS the ingress teardown — the M1 fix:
-	# CleanupSource runs vm-network-down, which deletes the proxy-NDP entry and the nft
-	# forward rules migration-source-forward installed, black-holing the migrated
-	# tenant's public ingress. Boat's cleanup-source cannot yet honour that suppression,
-	# so a keep-address migration driven over Boat would tear down its own forward. This
-	# gap MUST be closed by the live migration (a keep_address field on the phase, or a
-	# split verb) before the keep-address path runs on a real Boat host. NBD_PORT is
-	# UUID-derived and dropped; nbd_pid is the one thing Boat still needs.
-	return {"nbd_pid": int(variables.get("NBD_PID") or 0)}
+	# nbd_pid is the qemu-nbd Boat must reap (NBD_PORT is UUID-derived and dropped).
+	# keep_address carries the ingress-teardown suppression the keep-address path needs:
+	# Atlas passes KEEP_ADDRESS=1 so Boat's cleanup-source LEAVES the proxy-NDP entry and
+	# the nft forward rules migration-source-forward installed, instead of running the
+	# full vm-network-down that would delete them and black-hole the migrated tenant's
+	# public ingress (spec/33 §8). Boat's MigrateRequest carries a `keep_address` bool;
+	# the Atlas variable is the string "1"/"0", so it is mapped to the boolean here.
+	return {
+		"nbd_pid": int(variables.get("NBD_PID") or 0),
+		"keep_address": variables.get("KEEP_ADDRESS") == "1",
+	}
 
 
 # Atlas migration verb -> (Boat phase string, `variables -> body params` builder).

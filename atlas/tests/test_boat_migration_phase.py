@@ -284,7 +284,7 @@ class TestMigrationPhaseMapping(IntegrationTestCase):
 		)
 		self.assertEqual(params, {"private_address": ""})
 
-	def test_cleanup_source_maps_nbd_pid_and_drops_keep_address(self) -> None:
+	def test_cleanup_source_maps_nbd_pid_and_keep_address(self) -> None:
 		phase, params = self._build(
 			"migration-cleanup-source",
 			{
@@ -295,9 +295,18 @@ class TestMigrationPhaseMapping(IntegrationTestCase):
 			},
 		)
 		self.assertEqual(phase, "cleanup-source")
-		# NBD_PORT is UUID-derived; KEEP_ADDRESS has no Boat field yet (TODO(item9-live)
-		# in the mapping) — only nbd_pid crosses the wire.
-		self.assertEqual(params, {"nbd_pid": 424242})
+		# NBD_PORT is UUID-derived and dropped; nbd_pid is reaped and KEEP_ADDRESS="1"
+		# maps to Boat's keep_address bool that SUPPRESSES the ingress teardown, so a
+		# keep-address migration over Boat no longer black-holes its own forward.
+		self.assertEqual(params, {"nbd_pid": 424242, "keep_address": True})
+
+	def test_cleanup_source_keep_address_zero_maps_to_false(self) -> None:
+		# The change-address path (KEEP_ADDRESS="0", or absent) tears the ingress down.
+		_phase, params = self._build(
+			"migration-cleanup-source",
+			{"VIRTUAL_MACHINE_NAME": UUID, "NBD_PID": "1", "KEEP_ADDRESS": "0"},
+		)
+		self.assertEqual(params, {"nbd_pid": 1, "keep_address": False})
 
 	def test_poll_hydration_is_special_cased_out_of_the_phase_map(self) -> None:
 		# The Hydrating poll is a GET with no operation record, not a mutating POST.
