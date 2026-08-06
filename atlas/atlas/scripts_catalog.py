@@ -38,11 +38,11 @@ OPERATOR_VISIBLE: frozenset[str] = frozenset(
 # entry is `{intro: str, fields: list[dict]}`; field dicts use Frappe Dialog
 # field shapes (`fieldname`, `fieldtype`, `label`, `default`, `reqd`, ...).
 SCRIPT_FORMS: dict[str, dict] = {
-	# These two fields are also what `Server.bootstrap()` sends, as
-	# `boat bootstrap --firecracker-version … --architecture …` (BOAT_ONLY_VERBS);
-	# the entry stays keyed on the Python verb because the .py is what an operator
-	# can still pick by hand.
-	"bootstrap-server": {
+	# What `Server.bootstrap()` sends, as `boat bootstrap --firecracker-version …
+	# --architecture …` (BOAT_ONLY_VERBS). Keyed on the live `bootstrap` verb — the
+	# Python `bootstrap-server` oracle is deleted, so there is no `.py` an operator
+	# could pick by hand.
+	"bootstrap": {
 		"intro": "Idempotent. Safe to re-run on an Active server.",
 		"fields": [
 			{
@@ -260,12 +260,14 @@ _PORTED_VERBS: frozenset[str] = frozenset(
 # `file_for()` raises, `durable_remote_path()` ships nothing, and they are runnable
 # only because `allowed_scripts()` unions this set in.
 #
-# `bootstrap` is a rename rather than a deletion. The Task was `bootstrap-server`
-# (scripts/bootstrap-server.py); the host prep Atlas drives is now `boat bootstrap
-# --firecracker-version … --architecture …`, the same two flags and the same
-# ATLAS_RESULT= line. The verb had to change because the runner renders
-# `<entry> <verb>` and `boat bootstrap-server` is not a command boat has
-# (spec/33-boat.md §4, WO-1b).
+# `bootstrap` is a rename rather than a straight port. The Task was
+# `bootstrap-server` (scripts/bootstrap-server.py, now deleted); the host prep
+# Atlas drives is `boat bootstrap --firecracker-version … --architecture …`, the
+# same two flags and the same ATLAS_RESULT= line. The verb had to change because
+# the runner renders `<entry> <verb>` and `boat bootstrap-server` is not a command
+# boat has (spec/33-boat.md §4, WO-1b). `bootstrap-server` keeps a SCRIPT_LABELS /
+# RETRYABLE entry and a Fake result builder for historical Task rows, but is no
+# longer a runnable verb — its .py is gone and it is not in allowed_scripts().
 BOAT_ONLY_VERBS: frozenset[str] = frozenset(
 	{
 		"bootstrap",

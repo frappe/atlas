@@ -315,10 +315,10 @@ def _migration_poll_hydration_result(_variables: dict) -> dict:
 
 
 _RESULT_BUILDERS = {
-	# Both names for the same job. `Server.bootstrap()` now runs the verb
-	# `bootstrap` (`boat bootstrap`, spec/33 §4); `bootstrap-server` is the Python
-	# oracle that is still on disk and still runnable by hand as `atlas
-	# bootstrap-server`, and a Fake host must answer whichever one it is asked.
+	# Both names for the same job. `Server.bootstrap()` runs the verb `bootstrap`
+	# (`boat bootstrap`, spec/33 §4). `bootstrap-server` was the Python oracle; its
+	# .py is now deleted so it is no longer a runnable verb, but the builder stays
+	# so a Fake host still answers a historical `bootstrap-server` Task the same way.
 	"bootstrap": _bootstrap_result,
 	"bootstrap-server": _bootstrap_result,
 	"server-facts": _server_facts_result,

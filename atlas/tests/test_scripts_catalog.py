@@ -109,14 +109,19 @@ class TestScriptsCatalog(unittest.TestCase):
 			with self.assertRaises(FileNotFoundError):
 				scripts_catalog.file_for(verb)
 
-	def test_the_host_prep_verb_is_bootstrap_and_its_oracle_is_still_on_disk(self) -> None:
+	def test_the_host_prep_verb_is_bootstrap_and_the_oracle_is_gone(self) -> None:
 		# The cutover renamed the Task's verb because the runner renders
 		# `<entry> <verb>` and `boat bootstrap-server` is not a command boat has.
-		# The Python it replaced stays on disk as the differential's oracle, still
-		# runnable as `atlas bootstrap-server`, and must NOT be routed at boat.
+		# `bootstrap` is the BOAT_ONLY verb Server.bootstrap() drives. Its Python
+		# oracle (bootstrap-server.py) is deleted, so `bootstrap-server` is no longer
+		# a runnable verb — no file, not in the allowlist — and was never routed at
+		# boat.
 		self.assertIn("bootstrap", scripts_catalog.BOAT_ONLY_VERBS)
-		self.assertIn("bootstrap-server", scripts_catalog.allowed_scripts())
+		self.assertIn("bootstrap", scripts_catalog.allowed_scripts())
+		self.assertNotIn("bootstrap-server", scripts_catalog.allowed_scripts())
 		self.assertFalse(scripts_catalog.runs_on_boat("bootstrap-server"))
+		with self.assertRaises(FileNotFoundError):
+			scripts_catalog.file_for("bootstrap-server")
 
 	def test_allowed_scripts_are_suffixless_verbs(self) -> None:
 		# The allowlist returns verbs, never filenames.

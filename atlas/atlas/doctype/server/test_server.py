@@ -294,7 +294,7 @@ class TestServerBootstrap(IntegrationTestCase):
 	def test_bootstrap_parses_result_line(self) -> None:
 		from atlas.atlas.doctype.server import server as server_module
 
-		# bootstrap-server.py emits one ATLAS_RESULT=<json> line amid trace noise;
+		# `boat bootstrap` emits one ATLAS_RESULT=<json> line amid trace noise;
 		# the controller parses that, not a bare trailing JSON line.
 		stdout = (
 			"+ some bash trace\n"
