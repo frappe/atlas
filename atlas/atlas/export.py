@@ -39,6 +39,7 @@ import uuid as _uuid
 
 import frappe
 
+from atlas.atlas.boat_client import run_boat_migration_phase
 from atlas.atlas.ssh import run_task
 from atlas.atlas.task_results import parse_result
 
@@ -425,14 +426,44 @@ PHASES = {
 # ─────────────────────────────────────────────────────────────────────────────
 
 
+# The three base-ship phases boat serves as MIGRATION phases (spec/33 §8) — the same
+# export-base / receive-base / poll-hydration boat runs for a VM migration's disk
+# ship, driven over HTTP by `run_boat_migration_phase`. The fourth, export-cleanup-
+# source, is a host verb and goes through `run_task` (which delegates it to the
+# daemon over HTTP itself, spec/33 §2.4).
+_BASE_SHIP_PHASES: frozenset[str] = frozenset(
+	{"migration-export-base", "migration-receive-base", "migration-poll-hydration"}
+)
+
+
+def _base_ship_uuid(image: str) -> str:
+	"""A synthetic, stable UUID for a standalone base-image ship. A standalone export
+	belongs to no VM, but boat addresses a migration phase by UUID and DERIVES the nbd
+	port from it (NBDPort(uuid)+2). Deriving one UUID from the image name gives the
+	source (export-base) and the target (receive-base) the SAME port to bind and dial
+	without either carrying it on the wire — the same "two sides derive it from one
+	identity" trick the per-VM ship uses with the VM's UUID (spec/33 §8)."""
+	return str(_uuid.uuid5(_uuid.NAMESPACE_URL, "atlas-base-ship/" + image))
+
+
 def _run_phase_task(doc, *, server: str, script: str, variables: dict, timeout_seconds: int):
-	"""Run a phase's host script inline. run_task saves the Task row first and raises
-	on failure (→ caught by reconcile_image_exports → Failed). Lost-task detection
-	re-enters a prior Running/Pending Task of the same script that blew its timeout
-	(recorded, never a silent duplicate). An export has no VM, so the Task carries no
-	`virtual_machine` link — lost-task detection keys off the script + this image in the
-	Task variables instead."""
+	"""Run a phase's host work inline, over HTTP. The three base-ship migration phases
+	go through `run_boat_migration_phase` keyed on the image's synthetic UUID (boat
+	derives the port from it, and returns the port it bound in the export-base result,
+	which cleanup then reuses); export-cleanup-source rides `run_task`'s own host-verb
+	delegation. Both save the Task row first and raise on failure (→ caught by
+	reconcile_image_exports → Failed). Lost-task detection re-enters a prior
+	Running/Pending Task of the same script that blew its timeout; an export has no VM,
+	so it keys off the script + this image in the Task variables instead."""
 	_detect_lost_task(doc, script, timeout_seconds)
+	if script in _BASE_SHIP_PHASES:
+		return run_boat_migration_phase(
+			server=server,
+			script=script,
+			variables=variables,
+			virtual_machine=_base_ship_uuid(doc.image),
+			timeout_seconds=timeout_seconds,
+		)
 	return run_task(
 		server=server,
 		script=script,
