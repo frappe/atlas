@@ -1208,7 +1208,7 @@ def collapse_forward(vm) -> None:
 	old_ipv6 = vm.ipv6_address
 
 	# 1a. Target end (the VM's current host): remove the return-route policy.
-	run_task(
+	run_boat_migration_phase(
 		server=vm.server,
 		script="migration-forward-down",
 		variables={
@@ -1226,7 +1226,7 @@ def collapse_forward(vm) -> None:
 	#     Deassert proxy-NDP for EVERY provider (mirror of the unconditional re-assert
 	#     in _install_forward_routes) — the source answered NDP for the /128 while
 	#     forwarding, so collapse must stop it on all providers, not just DigitalOcean.
-	run_task(
+	run_boat_migration_phase(
 		server=source_server,
 		script="migration-forward-down",
 		variables={

@@ -962,8 +962,9 @@ def _target_receive_params(variables: dict) -> dict:
 
 def _forward_down_params(variables: dict) -> dict:
 	# DEASSERT_PROXY_NDP is likewise unconditional in Boat's forward-down, so only
-	# the role and the /128 are sent. (forward-down stays controller-side over SSH in
-	# migration.collapse_forward today; this entry is the catalog for symmetry.)
+	# the role and the /128 are sent. Driven by migration.collapse_forward through
+	# run_boat_migration_phase (the operator-initiated teardown, outside the phase
+	# machine), not _run_phase_task's self-driving saga.
 	return {"role": variables["ROLE"], "virtual_machine_ipv6": variables["VIRTUAL_MACHINE_IPV6"]}
 
 
