@@ -250,7 +250,6 @@ _PORTED_VERBS: frozenset[str] = frozenset(
 		"vm-tunnel",
 		"poll-vm-traffic",
 		"probe-woken-vms",
-		"export-cleanup-source",
 	}
 )
 
@@ -284,6 +283,7 @@ BOAT_ONLY_VERBS: frozenset[str] = frozenset(
 		"promote-snapshot-image",
 		"regenerate-host-keys-vm",
 		"reset-server",
+		"export-cleanup-source",
 	}
 )
 
