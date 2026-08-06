@@ -164,6 +164,7 @@ keep it the source of truth.
 30. [Distributed network control plane (ANCP)](./31-ancp-network-control-plane.md) — *shipped: the decentralized `atlas-networkd` control plane (gossip + anti-entropy) that replaced the controller-driven WireGuard host mesh of [25](./25-private-networking.md)*
 31. [Sleepy VMs — auto-sleep idle VMs, wake on demand](./32-sleepy-vms.md) — *free host RAM by sleeping idle VMs; wake on operator Start or the first inbound TCP connection (fast resume from a memory snapshot)*
 32. [Boat — the per-host daemon, and what Atlas keeps](./33-boat.md) — *design: the split that makes Atlas authoritative for **desired** state and a per-host Go daemon authoritative for **observed** state; every host-side service becomes one unit off one `boat` binary, driven over an OpenAPI-typed HTTP contract on the [management tunnel](./21-tunnel.md)*
+33. [Metrics — host and per-VM telemetry shipped to datum](./34-metrics.md) — *the metrics half of the old "no metrics or alerting" non-goal, retired: the resident `boat` daemon pushes host and per-VM time-series to the frappe/datum telemetry store on a 30s best-effort tick — per-VM tenancy via one RS256 token per resource_id, no new privilege, and a slow or down datum can never touch a VM's lifecycle*
 
 ## First run on a fresh site
 
