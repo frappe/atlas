@@ -146,20 +146,9 @@ class TestWarmProvision(unittest.TestCase):
 
 
 class TestWarmScripts(unittest.TestCase):
-	def test_warm_snapshot_cli_contract(self) -> None:
-		result = subprocess.run(
-			[sys.executable, str(_SCRIPTS_DIR / "warm-snapshot-vm.py"), "--help"],
-			capture_output=True,
-			text=True,
-		)
-		self.assertEqual(result.returncode, 0, result.stderr)
-		for flag in (
-			"--virtual-machine-name",
-			"--atlas-fc-uid",
-			"--snapshot-rootfs-path",
-			"--memory-directory",
-		):
-			self.assertIn(flag, result.stdout)
+	# warm-snapshot-vm's argparse contract was proven here by `warm-snapshot-vm.py
+	# --help`; the .py is deleted (boat serves warm-snapshot-vm), so its flag
+	# contract now lives in boat's internal/snapshot/warm_test.go.
 
 	def test_delete_snapshot_gains_memory_directory(self) -> None:
 		result = subprocess.run(
