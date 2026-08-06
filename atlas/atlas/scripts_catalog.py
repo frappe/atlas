@@ -240,7 +240,6 @@ def kind(verb: str) -> str:
 #     controller-side over SSH and keep their .py.
 _PORTED_VERBS: frozenset[str] = frozenset(
 	{
-		"sync-image",
 		"promote-snapshot-image",
 		"regenerate-host-keys-vm",
 		"reset-server",
@@ -279,6 +278,10 @@ BOAT_ONLY_VERBS: frozenset[str] = frozenset(
 		"delete-snapshot-vm",
 		"upload-snapshot-s3",
 		"restore-snapshot-s3",
+		# sync-image keeps its per-Task sidecar (script_uploads.SCRIPT_SIDECARS
+		# bakes the guest atlas-network.service); that upload is independent of the
+		# deleted .py — Boat reads the sidecar from the same staged path.
+		"sync-image",
 	}
 )
 
