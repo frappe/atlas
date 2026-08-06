@@ -240,7 +240,6 @@ def kind(verb: str) -> str:
 #     controller-side over SSH and keep their .py.
 _PORTED_VERBS: frozenset[str] = frozenset(
 	{
-		"snapshot-stop-vm",
 		"warm-snapshot-vm",
 		"delete-snapshot-vm",
 		"upload-snapshot-s3",
@@ -279,6 +278,7 @@ BOAT_ONLY_VERBS: frozenset[str] = frozenset(
 	{
 		"bootstrap",
 		"snapshot-vm",
+		"snapshot-stop-vm",
 	}
 )
 

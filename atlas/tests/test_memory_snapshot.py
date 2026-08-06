@@ -114,17 +114,9 @@ class TestMemorySnapshotLauncher(unittest.TestCase):
 
 
 class TestMemorySnapshotScripts(unittest.TestCase):
-	def test_snapshot_stop_cli_contract(self) -> None:
-		# --help proves the argparse contract (both required flags declared)
-		# without touching a host.
-		result = subprocess.run(
-			[sys.executable, str(_SCRIPTS_DIR / "snapshot-stop-vm.py"), "--help"],
-			capture_output=True,
-			text=True,
-		)
-		self.assertEqual(result.returncode, 0, result.stderr)
-		self.assertIn("--virtual-machine-name", result.stdout)
-		self.assertIn("--atlas-fc-uid", result.stdout)
+	# snapshot-stop-vm's argparse contract was proven here by `snapshot-stop-vm.py
+	# --help`; the .py is deleted (boat serves snapshot-vm's stop), so its flag
+	# contract now lives in boat's internal/snapshot/snapshot_stop_test.go.
 
 	def test_vm_restore_compiles(self) -> None:
 		# vm-restore.py imports the DURABLE package that only exists next to it

@@ -274,7 +274,7 @@ class TestServerBootstrap(IntegrationTestCase):
 		destinations = {dest for _src, dest in self.server._script_uploads()}
 		# host_task_scripts() yields VERBS; the FILE (verb→file_for, keeping its
 		# .py/.sh suffix on the host disk) is what ships.
-		for file_name in ("provision-vm.py", "start-vm.py", "stop-vm.py", "snapshot-stop-vm.py"):
+		for file_name in ("provision-vm.py", "start-vm.py", "stop-vm.py", "resize-vm.py"):
 			self.assertIn(f"/var/lib/atlas/bin/{file_name}", destinations)
 		# The durable set covers every host SSH Task entry point.
 		for verb in scripts_catalog.host_task_scripts():
