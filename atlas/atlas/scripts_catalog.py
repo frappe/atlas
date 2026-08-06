@@ -293,8 +293,52 @@ BOAT_VERBS: frozenset[str] = _PORTED_VERBS | BOAT_ONLY_VERBS
 
 
 def runs_on_boat(verb: str) -> bool:
-	"""True iff the host runs this verb as `boat <verb>`."""
+	"""True iff the host runs this verb as `boat <verb>` (whether over the daemon's
+	HTTP surface or, for the four holdouts, still over SSH)."""
 	return verb in BOAT_VERBS
+
+
+# The host verbs the boat DAEMON serves over HTTP — `POST /v1/host-verbs/{verb}`,
+# the endpoint that took these off the SSH `boat <verb>` path onto the same
+# journaled transport the lifecycle verbs use (spec/33 §2.4). This set MUST equal
+# boat's own `servedHostVerbs` (cmd/boat/hostverb_dispatch.go); a verb in one and
+# not the other is a verb Atlas routes to an endpoint the daemon 400s, or one the
+# daemon serves that Atlas still SSHes. It is a subset of BOAT_ONLY_VERBS, and the
+# four absentees are deliberate:
+#
+#   - `bootstrap` and `reset-server` bookend the daemon's own existence — one
+#     brings the host up before there is a daemon to answer HTTP, the other tears
+#     it down and stops boat.service — so neither can be driven THROUGH the daemon.
+#     They keep the SSH path (bootstrap is WO-1b's to move; reset stays SSH).
+#   - `poll-vm-traffic` and `probe-woken-vms` are the read-only per-minute sweeps
+#     Atlas runs through `run_probe` with no Task row. A journaled POST would write
+#     ~2,880 operation records per host per day, so they want a non-journaling read
+#     endpoint, not this one.
+HTTP_HOST_VERBS: frozenset[str] = frozenset(
+	{
+		"provision-vm",
+		"snapshot-vm",
+		"snapshot-stop-vm",
+		"warm-snapshot-vm",
+		"delete-snapshot-vm",
+		"upload-snapshot-s3",
+		"restore-snapshot-s3",
+		"sync-image",
+		"promote-snapshot-image",
+		"regenerate-host-keys-vm",
+		"firewall-apply",
+		"vm-tunnel",
+		"export-cleanup-source",
+	}
+)
+
+
+def runs_on_boat_http(verb: str) -> bool:
+	"""True iff Atlas drives this host verb through the boat daemon over HTTP
+	(`run_boat_host_task`) rather than as `boat <verb>` over SSH. `run_task`
+	delegates on this, so a call site does not change transport — it states the
+	verb and the seam routes it (spec/33 §2.4)."""
+	return verb in HTTP_HOST_VERBS
 
 
 # Production Task scripts are shipped durably to the host's /var/lib/atlas/bin by

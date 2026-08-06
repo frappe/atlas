@@ -68,6 +68,25 @@ def run_task(
 
 		return run_fake_task(server, script, variables, virtual_machine)
 
+	# The host verbs the boat daemon serves over HTTP no longer open an SSH
+	# connection: they run through the daemon, journaled by op_id, exactly as the
+	# lifecycle verbs do (spec/33 §2.4). The delegation lives here, at the one SSH
+	# chokepoint every host verb passed through, so no call site changes transport —
+	# it states the verb and this routes it. The connection= path is bootstrap's,
+	# whose verb is never HTTP-served, so this is reached only with server= set.
+	from atlas.atlas import scripts_catalog
+
+	if server is not None and scripts_catalog.runs_on_boat_http(script):
+		from atlas.atlas.boat_client import run_boat_host_task
+
+		return run_boat_host_task(
+			script=script,
+			variables=variables,
+			server=server,
+			virtual_machine=virtual_machine,
+			timeout_seconds=timeout_seconds,
+		)
+
 	if connection is None:
 		server_doc = frappe.get_doc("Server", server)
 		connection = connection_for_server(server_doc)

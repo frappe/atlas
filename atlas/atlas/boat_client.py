@@ -96,26 +96,18 @@ FIRST_BOOT_EPOCH = 1
 # verb produces beyond its trace, which on the SSH path travels as the script's one
 # `ATLAS_RESULT=` JSON line (spec/04, `task_results.parse_result`).
 #
-# **Not in the contract yet.** `api/openapi.yaml` gives `Operation` only `output`,
-# `error` and `exit_code`, so today a Boat verb that computes a result — `sleep`
-# computes exactly the boolean `VirtualMachine.sleep` wants — discards it on the way
-# out. What Boat needs to add is one optional free-form object on `Operation`:
+# It is an optional free-form object on `Operation` in `api/openapi.yaml`, present
+# only on a verb that has a result and only when it succeeded. `sleep-vm` populates
+# it with `{"memory_snapshot": ..., "reason": ..., "memory_snapshot_bytes": ...}`;
+# the host verbs that emit an ATLAS_RESULT= line (`snapshot-vm`, `warm-snapshot-vm`,
+# `snapshot-stop-vm`, `vm-tunnel`, the s3 backups) carry theirs here too — the daemon
+# reads the line off the verb's stdout and folds it into this field.
 #
-#     result:
-#       type: object
-#       additionalProperties: true
-#       description: The verb's typed result. Same payload the SSH script's one
-#                    ATLAS_RESULT= line carries, so a Task reads the same either way.
-#
-# populated by every verb that has one — today `sleep-vm` with
-# `{"memory_snapshot": <SleepResult.MemorySnapshot>}`, and the same field for
-# `snapshot-vm` / `warm-snapshot-vm` (`size_bytes`, `memory_bytes`,
-# `host_signature`) whenever those verbs move onto Boat.
-#
-# Atlas is written against the field NOW, so the day it lands, every call site that
-# parses a verb's structured output reads it with no second mechanism — see
-# `_task_stdout`. Until then a Boat Task simply carries no result line, and the one
-# caller that reads one survives its absence.
+# `_task_stdout` folds a present result back onto the Task's stdout as the very
+# `ATLAS_RESULT=` line an SSH script would have printed, so a call site that parses
+# its verb's structured output reads one Task the same way whichever transport ran
+# it. A verb with no result omits the field, and the one caller that reads one
+# survives its absence via `parse_optional_result`.
 OPERATION_RESULT_FIELD = "result"
 
 # The statuses an operation stops at. Anything else means it is still running.
@@ -351,6 +343,22 @@ class BoatClient:
 	def get_operation(self, operation_id: str) -> dict:
 		"""GET /ops/{operation_id} — the journal record for one Task name."""
 		return self._request("GET", f"/ops/{operation_id}")
+
+	def run_host_verb(self, verb: str, *, operation_id: str, variables: dict) -> dict:
+		"""POST /host-verbs/{verb} — run one host operation Atlas used to drive as
+		`boat <verb>` over SSH (provision, the snapshot family, sync-image, per-VM
+		networking), returning the operation record.
+
+		`variables` is the SAME UPPER_SNAKE dict the SSH runner rendered to
+		`--kebab-case` flags; the daemon renders it to the verb's argv, so a verb's
+		inputs are stated once and mean the same thing whichever transport carried
+		them. `operation_id` is the Frappe Task name — the replay key every verb
+		shares, so a retried host-verb Task returns its first result rather than
+		running the verb twice (spec/33 §2.7)."""
+		body: dict = {"operation_id": operation_id}
+		if variables:
+			body["variables"] = variables
+		return self._request("POST", f"/host-verbs/{verb}", json=body)
 
 	def migrate(self, uuid: str, phase: str, *, operation_id: str, params: dict) -> dict:
 		"""POST /vms/{uuid}/migrate/{phase} — run one MUTATING phase of the
@@ -724,6 +732,87 @@ def _execute_on_boat(
 	# Fold the daemon's own record onto the row: its trace becomes the Task's
 	# stdout, its one-sentence error the stderr. The operator surface is the
 	# same text it has always been.
+	error = operation.get("error") or ""
+	_finalize(task, _task_stdout(operation), error, exit_code, status, _elapsed_ms(start))
+	if status == "Failure":
+		frappe.throw(f"Task {task.name} ({script}) exited {exit_code}: {error[-500:]}")
+
+
+def run_boat_host_task(
+	*,
+	script: str,
+	variables: dict,
+	server: str,
+	virtual_machine: str | None = None,
+	timeout_seconds: int = 1800,
+) -> "Task":
+	"""Run a host verb through the host's Boat daemon over HTTP, recording the Task
+	row `run_task` would have recorded — `run_boat_task`'s twin for the host verbs
+	(the operations that were `boat <verb>` over SSH: provision, the snapshot family,
+	sync-image, per-VM networking).
+
+	Keyword-for-keyword `run_task`'s signature, so `run_task` delegates to it with no
+	call site changing transport (see `_ssh.runner.run_task`). Unlike `run_boat_task`
+	it does NOT require a `virtual_machine`: a host-scoped verb (sync-image,
+	export-cleanup-source) names none, and the daemon serializes it host-wide. A
+	VM-scoped verb carries its UUID in the variables (VIRTUAL_MACHINE_NAME), which is
+	both the turn it takes on the host and the Task's `virtual_machine` link here.
+
+	Raises `frappe.ValidationError` on any failure — transport error, non-2xx, or a
+	failed operation — with the Task row saved first, exactly as the SSH path did."""
+	# Fake provider (developer_mode): a Task on a Fake-backed Server succeeds (or
+	# fails on demand) with no Boat call, exactly as run_task/run_boat_task give it no
+	# request — so a call site that delegated here from run_task behaves identically
+	# on the dev/test fleet, which is all Fake hosts.
+	if is_fake_server(server):
+		from atlas.atlas.providers.fake_tasks import run_fake_task
+
+		return run_fake_task(server, script, variables, virtual_machine)
+
+	task = frappe.get_doc(
+		{
+			"doctype": "Task",
+			"server": server,
+			"virtual_machine": virtual_machine,
+			"script": script,
+			"status": "Pending",
+			"triggered_by": frappe.session.user if frappe.session else "Administrator",
+		}
+	)
+	task.variables_dict = variables
+	task.insert(ignore_permissions=True)
+
+	_execute_host_verb_on_boat(task, server, script, variables, timeout_seconds)
+	return task
+
+
+def _execute_host_verb_on_boat(
+	task: "Task",
+	server: str,
+	script: str,
+	variables: dict,
+	timeout_seconds: int,
+) -> None:
+	"""Drive an inserted host-verb Task to its outcome over Boat. Mirrors
+	`_execute_on_boat` step for step — same `_mark_running` / `_await_operation` /
+	`_finalize`, so the row shape cannot drift between the lifecycle and host-verb
+	transports — and forks only on the one difference: the verb is posted to
+	`POST /host-verbs/{verb}` with its whole variables dict, rather than mapped to a
+	typed endpoint, because a host verb's inputs are the same UPPER_SNAKE dict the
+	SSH runner rendered to flags and the daemon renders them the same way."""
+	_mark_running(task)
+	start = time.monotonic()
+	try:
+		client = BoatClient.for_server(server, timeout_seconds=POLL_REQUEST_TIMEOUT_SECONDS, poll=True)
+		operation = client.run_host_verb(script, operation_id=task.name, variables=variables)
+		operation = _await_operation(client, task.name, operation, timeout_seconds)
+		status, exit_code = _outcome(operation, task.name)
+	except Exception as exception:
+		_finalize(task, "", str(exception), None, "Failure", _elapsed_ms(start))
+		if isinstance(exception, frappe.ValidationError):
+			raise
+		raise frappe.ValidationError(str(exception)) from exception
+
 	error = operation.get("error") or ""
 	_finalize(task, _task_stdout(operation), error, exit_code, status, _elapsed_ms(start))
 	if status == "Failure":
