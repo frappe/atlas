@@ -310,10 +310,11 @@ class TestRemoteCommand(IntegrationTestCase):
 		self.assertNotIn("PYTHONPATH", command)
 
 	def test_a_verb_boat_does_not_implement_stays_on_the_atlas_console_script(self) -> None:
-		# The port is not finished, and the seam has to carry a mixed host: a verb
-		# outside scripts_catalog.BOAT_VERBS keeps the venv console script.
-		command = runner._remote_command("firewall-apply", None, {"VIRTUAL_MACHINE_NAME": "uuid-1"})
-		self.assertTrue(command.startswith("atlas firewall-apply "))
+		# A verb outside scripts_catalog.BOAT_VERBS keeps the venv console script.
+		# start-vm reaches Boat through run_boat_task at the controller, not the
+		# runner's first-word swap, so the runner still renders it `atlas start-vm`.
+		command = runner._remote_command("start-vm", None, {"VIRTUAL_MACHINE_NAME": "uuid-1"})
+		self.assertTrue(command.startswith("atlas start-vm "))
 
 	def test_a_controller_only_verb_stays_on_atlas(self) -> None:
 		# issue-cert and the mgmt-firewall trio run on the CONTROLLER through

@@ -246,7 +246,6 @@ _PORTED_VERBS: frozenset[str] = frozenset(
 		# only the first word. provision-vm creates LVs and boots a guest, so its
 		# differential is a real guest boot on a host, not goldens alone.
 		"provision-vm",
-		"firewall-apply",
 	}
 )
 
@@ -284,6 +283,7 @@ BOAT_ONLY_VERBS: frozenset[str] = frozenset(
 		"vm-tunnel",
 		"poll-vm-traffic",
 		"probe-woken-vms",
+		"firewall-apply",
 	}
 )
 
