@@ -251,6 +251,7 @@ scheduler_events = {
 		],
 		"*/10 * * * *": [
 			"atlas.atlas.providers.worker.reconcile_pending_servers",
+			"atlas.atlas.datum_token.refresh_all",
 		],
 		"*/2 * * * *": [
 			"atlas.atlas.migration.reconcile_migrations",
