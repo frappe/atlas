@@ -172,12 +172,16 @@ def _verbs_in(directory: Path) -> dict[str, str]:
 def allowed_scripts() -> list[str]:
 	"""Return the sorted list of task-runnable *verbs* on a server host.
 
-	Both Python verbs (the typed CLI tasks) and shell verbs (the few remaining,
-	e.g. reboot-server) are runnable. The systemd hooks and controller-only tasks
-	are excluded — they are not host SSH Tasks (see SYSTEMD_HOOKS /
-	CONTROLLER_ONLY)."""
+	The file-derived verbs — both Python (the typed CLI tasks) and shell (the few
+	remaining, e.g. reboot-server) — UNION the BOAT_ONLY verbs, which the boat
+	binary implements with no file in scripts/ (see BOAT_ONLY_VERBS). A BOAT_ONLY
+	verb is runnable even though nothing on disk carries it, so the run-task gate
+	must admit it; it simply ships no durable file (see host_task_scripts). The
+	systemd hooks and controller-only tasks are excluded — they are not host SSH
+	Tasks (see SYSTEMD_HOOKS / CONTROLLER_ONLY)."""
 	excluded = SYSTEMD_HOOKS | CONTROLLER_ONLY
-	return sorted(verb for verb in _verbs_in(scripts_directory()) if verb not in excluded)
+	verbs = set(_verbs_in(scripts_directory())) | set(BOAT_ONLY_VERBS)
+	return sorted(verb for verb in verbs if verb not in excluded)
 
 
 def operator_visible_scripts() -> list[str]:
@@ -293,12 +297,15 @@ DURABLE_SCRIPT_DIRECTORY = "/var/lib/atlas/bin"
 
 
 def host_task_scripts() -> list[str]:
-	"""Production Task verbs shipped durably to /var/lib/atlas/bin — exactly
-	allowed_scripts(), every host SSH Task entry point. Bootstrap / sync_scripts
-	upload the FILES (verb→file_for) so the runner invokes them in place. e2e probe
-	scripts live in the test-only directory, are not shipped durably, and keep the
-	staging path."""
-	return allowed_scripts()
+	"""Production Task verbs shipped durably to /var/lib/atlas/bin: the FILE-derived
+	host SSH Tasks only. A BOAT_ONLY verb ships NO file — the boat binary is its
+	implementation, so there is nothing to upload for it — which is why this is the
+	file-derived subset of allowed_scripts() rather than all of it. Bootstrap /
+	sync_scripts upload the FILES (verb→file_for) so the runner invokes them in
+	place. e2e probe scripts live in the test-only directory, are not shipped
+	durably, and keep the staging path."""
+	excluded = SYSTEMD_HOOKS | CONTROLLER_ONLY
+	return sorted(verb for verb in _verbs_in(scripts_directory()) if verb not in excluded)
 
 
 def durable_remote_path(verb: str) -> str | None:
