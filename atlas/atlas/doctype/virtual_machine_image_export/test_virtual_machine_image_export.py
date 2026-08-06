@@ -177,7 +177,10 @@ class TestExportPhaseMachine(IntegrationTestCase):
 		row = _export_row(_local_image(), source, target)
 		self._percent = 20  # hydration holds below 100
 
-		with patch.object(export_module, "run_task", side_effect=self._fake_run_task):
+		with (
+			patch.object(export_module, "run_task", side_effect=self._fake_run_task),
+			patch.object(export_module, "run_boat_migration_phase", side_effect=self._fake_run_task),
+		):
 			# Pending → Exporting → Hydrating each advance to a further non-terminal phase.
 			row.reload()
 			while row.status != "Hydrating":
@@ -197,7 +200,10 @@ class TestExportPhaseMachine(IntegrationTestCase):
 		row = _export_row(_local_image(), source, target)
 		self._percent = 100  # hydration completes immediately
 
-		with patch.object(export_module, "run_task", side_effect=self._fake_run_task):
+		with (
+			patch.object(export_module, "run_task", side_effect=self._fake_run_task),
+			patch.object(export_module, "run_boat_migration_phase", side_effect=self._fake_run_task),
+		):
 			# Walk every phase; advance_export returns False only at the terminal step.
 			for _ in range(len(export_module.PHASE_ORDER) + 2):
 				row.reload()
@@ -215,6 +221,7 @@ class TestExportPhaseMachine(IntegrationTestCase):
 
 		with (
 			patch.object(export_module, "run_task", side_effect=self._fake_run_task),
+			patch.object(export_module, "run_boat_migration_phase", side_effect=self._fake_run_task),
 			patch.object(export_module.frappe, "enqueue") as enqueue,
 		):
 			export_module.start_export(row.name)
@@ -236,7 +243,10 @@ class TestExportPhaseMachine(IntegrationTestCase):
 		)
 		self._percent = 20  # no progress → stall
 
-		with patch.object(export_module, "run_task", side_effect=self._fake_run_task):
+		with (
+			patch.object(export_module, "run_task", side_effect=self._fake_run_task),
+			patch.object(export_module, "run_boat_migration_phase", side_effect=self._fake_run_task),
+		):
 			row.reload()
 			with self.assertRaises(frappe.ValidationError):
 				export_module.advance_export(row)
