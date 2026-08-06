@@ -297,6 +297,11 @@ class TestMigrationRow(IntegrationTestCase):
 
 		with (
 			patch.object(migration_module, "run_task", side_effect=_fake_run_task),
+			# The migration phases now run over Boat (item 9); source-autostart, the
+			# cutover provision-vm and collapse_forward's forward-down stay on run_task.
+			# Stub both entry points with the same fake so the phase machine is driven
+			# whichever transport a step uses.
+			patch.object(migration_module, "run_boat_migration_phase", side_effect=_fake_run_task),
 			patch.object(proxy_module, "reconcile_proxies", return_value=[]),
 		):
 			# Pending → … → CutoverStarting each report "more work" (advance to a further
@@ -328,6 +333,11 @@ class TestMigrationRow(IntegrationTestCase):
 
 		with (
 			patch.object(migration_module, "run_task", side_effect=_fake_run_task),
+			# The migration phases now run over Boat (item 9); source-autostart, the
+			# cutover provision-vm and collapse_forward's forward-down stay on run_task.
+			# Stub both entry points with the same fake so the phase machine is driven
+			# whichever transport a step uses.
+			patch.object(migration_module, "run_boat_migration_phase", side_effect=_fake_run_task),
 			patch.object(migration_module.frappe, "enqueue") as enqueue,
 		):
 			# A phase that advances re-enqueues the next.
@@ -573,6 +583,11 @@ class TestMigrationPhaseMachine(IntegrationTestCase):
 
 		with (
 			patch.object(migration_module, "run_task", side_effect=_fake_run_task),
+			# The migration phases now run over Boat (item 9); source-autostart, the
+			# cutover provision-vm and collapse_forward's forward-down stay on run_task.
+			# Stub both entry points with the same fake so the phase machine is driven
+			# whichever transport a step uses.
+			patch.object(migration_module, "run_boat_migration_phase", side_effect=_fake_run_task),
 			patch.object(proxy_module, "reconcile_proxies", return_value=[]),
 		):
 			for _ in range(len(migration_module.PHASE_ORDER) - 1):
@@ -690,6 +705,11 @@ class TestMigrationPhaseMachine(IntegrationTestCase):
 
 		with (
 			patch.object(migration_module, "run_task", side_effect=_fake_run_task),
+			# The migration phases now run over Boat (item 9); source-autostart, the
+			# cutover provision-vm and collapse_forward's forward-down stay on run_task.
+			# Stub both entry points with the same fake so the phase machine is driven
+			# whichever transport a step uses.
+			patch.object(migration_module, "run_boat_migration_phase", side_effect=_fake_run_task),
 			patch.object(proxy_module, "reconcile_proxies", return_value=[]),
 		):
 			for want in expected:
@@ -729,6 +749,11 @@ class TestMigrationPhaseMachine(IntegrationTestCase):
 
 		with (
 			patch.object(migration_module, "run_task", side_effect=_fake_run_task),
+			# The migration phases now run over Boat (item 9); source-autostart, the
+			# cutover provision-vm and collapse_forward's forward-down stay on run_task.
+			# Stub both entry points with the same fake so the phase machine is driven
+			# whichever transport a step uses.
+			patch.object(migration_module, "run_boat_migration_phase", side_effect=_fake_run_task),
 			patch.object(proxy_module, "reconcile_proxies", return_value=[]) as reconcile,
 		):
 			for _ in range(9):
@@ -785,6 +810,11 @@ class TestMigrationPhaseMachine(IntegrationTestCase):
 
 		with (
 			patch.object(migration_module, "run_task", side_effect=_fake_run_task),
+			# The migration phases now run over Boat (item 9); source-autostart, the
+			# cutover provision-vm and collapse_forward's forward-down stay on run_task.
+			# Stub both entry points with the same fake so the phase machine is driven
+			# whichever transport a step uses.
+			patch.object(migration_module, "run_boat_migration_phase", side_effect=_fake_run_task),
 			patch.object(proxy_module, "reconcile_proxies", return_value=[]),
 		):
 			for _ in range(9):
@@ -823,6 +853,11 @@ class TestMigrationPhaseMachine(IntegrationTestCase):
 
 		with (
 			patch.object(migration_module, "run_task", side_effect=_fake_run_task),
+			# The migration phases now run over Boat (item 9); source-autostart, the
+			# cutover provision-vm and collapse_forward's forward-down stay on run_task.
+			# Stub both entry points with the same fake so the phase machine is driven
+			# whichever transport a step uses.
+			patch.object(migration_module, "run_boat_migration_phase", side_effect=_fake_run_task),
 			patch.object(proxy_module, "reconcile_proxies", return_value=[]),
 		):
 			# Drive to Hydrating (boot-then-hydrate: Pending → ExportingSnapshot →
@@ -913,8 +948,12 @@ class TestPrivatePlaneCutoverOrdering(IntegrationTestCase):
 		from atlas.atlas import proxy as proxy_module
 
 		calls: list = []
+		# One fake, both transports: the phases run over Boat (item 9) while
+		# provision-vm stays on run_task — record from whichever a step uses.
+		fake = self._fake_run_task(calls)
 		with (
-			patch.object(migration_module, "run_task", side_effect=self._fake_run_task(calls)),
+			patch.object(migration_module, "run_task", side_effect=fake),
+			patch.object(migration_module, "run_boat_migration_phase", side_effect=fake),
 			patch.object(proxy_module, "reconcile_proxies", return_value=[]),
 		):
 			for _ in range(9):
@@ -1033,6 +1072,11 @@ class TestLocalBaseImageShip(IntegrationTestCase):
 
 		with (
 			patch.object(migration_module, "run_task", side_effect=_fake_run_task),
+			# The migration phases now run over Boat (item 9); source-autostart, the
+			# cutover provision-vm and collapse_forward's forward-down stay on run_task.
+			# Stub both entry points with the same fake so the phase machine is driven
+			# whichever transport a step uses.
+			patch.object(migration_module, "run_boat_migration_phase", side_effect=_fake_run_task),
 			patch.object(proxy_module, "reconcile_proxies", return_value=[]),
 		):
 			# Advance to TargetPreparing.
@@ -1112,6 +1156,11 @@ class TestLocalBaseImageShip(IntegrationTestCase):
 
 		with (
 			patch.object(migration_module, "run_task", side_effect=_fake_run_task),
+			# The migration phases now run over Boat (item 9); source-autostart, the
+			# cutover provision-vm and collapse_forward's forward-down stay on run_task.
+			# Stub both entry points with the same fake so the phase machine is driven
+			# whichever transport a step uses.
+			patch.object(migration_module, "run_boat_migration_phase", side_effect=_fake_run_task),
 			patch.object(proxy_module, "reconcile_proxies", return_value=[]),
 		):
 			# Advance to TargetPreparing.
@@ -1201,6 +1250,11 @@ class TestLocalBaseImageShip(IntegrationTestCase):
 
 		with (
 			patch.object(migration_module, "run_task", side_effect=_fake_run_task),
+			# The migration phases now run over Boat (item 9); source-autostart, the
+			# cutover provision-vm and collapse_forward's forward-down stay on run_task.
+			# Stub both entry points with the same fake so the phase machine is driven
+			# whichever transport a step uses.
+			patch.object(migration_module, "run_boat_migration_phase", side_effect=_fake_run_task),
 			patch.object(proxy_module, "reconcile_proxies", return_value=[]),
 		):
 			for _ in range(9):
@@ -1250,6 +1304,11 @@ class TestCollapseForward(IntegrationTestCase):
 
 		with (
 			patch.object(migration_module, "run_task", side_effect=_fake_run_task),
+			# The migration phases now run over Boat (item 9); source-autostart, the
+			# cutover provision-vm and collapse_forward's forward-down stay on run_task.
+			# Stub both entry points with the same fake so the phase machine is driven
+			# whichever transport a step uses.
+			patch.object(migration_module, "run_boat_migration_phase", side_effect=_fake_run_task),
 			# collapse_forward now stops the live VM first (so the disk converges off
 			# any dm-clone before the re-provision); vm.stop() runs a host Task through
 			# the VM module's run_task, so mock that too. Every host is on Boat now, so
@@ -1280,3 +1339,121 @@ class TestCollapseForward(IntegrationTestCase):
 		vm = make_virtual_machine(self.target, self.image, status="Running")
 		with self.assertRaisesRegex(frappe.ValidationError, "no active forward"):
 			vm.collapse_forward()
+
+
+class TestMigrationOverFakeTransport(IntegrationTestCase):
+	"""The first migration test that drives the controller through the REAL Fake
+	transport instead of patching run_task — the gap audit M11 named. A Fake host
+	had no ATLAS_RESULT for the three phases that return one, so a Fake↔Fake
+	migration raised at ExportingSnapshot and every migration test had to substitute
+	run_task. With the builders in place the controller records the source's export
+	straight off the Fake host's own result line, exactly as it would a real host's."""
+
+	def setUp(self) -> None:
+		provider = make_provider("mig-fake-provider", provider_type="Fake")
+		self.source = make_server(
+			provider,
+			"mig-fake-source",
+			ipv4_address="10.0.0.11",
+			ipv6_address="2001:db8:b::1",
+			ipv6_prefix="2001:db8:b::/64",
+			ipv6_virtual_machine_range="2001:db8:b::/124",
+			status="Active",
+		).name
+		self.target = make_server(
+			provider,
+			"mig-fake-target",
+			ipv4_address="10.0.0.12",
+			ipv6_address="2001:db8:c::1",
+			ipv6_prefix="2001:db8:c::/64",
+			ipv6_virtual_machine_range="2001:db8:c::/124",
+			status="Active",
+		).name
+		self.image = make_image("mig-fake-image").name
+		for name in frappe.get_all("Virtual Machine Migration", pluck="name"):
+			frappe.delete_doc("Virtual Machine Migration", name, force=1, ignore_permissions=True)
+		for name in frappe.get_all("Virtual Machine", pluck="name"):
+			frappe.delete_doc("Virtual Machine", name, force=1, ignore_permissions=True)
+
+	def test_exporting_snapshot_records_the_fake_hosts_export_result(self) -> None:
+		vm = make_virtual_machine(self.source, self.image, status="Running")
+		row = frappe.get_doc(
+			{
+				"doctype": "Virtual Machine Migration",
+				"virtual_machine": vm.name,
+				"target_server": self.target,
+			}
+		).insert(ignore_permissions=True)
+
+		# No run_task patch: the Fake source answers migration-export-source itself, and
+		# the controller records the port it echoed, the pid, and the disk's bytes.
+		advanced = migration_module._phase_exporting_snapshot(row)
+
+		self.assertTrue(advanced)
+		row.reload()
+		self.assertEqual(row.nbd_port, migration_module.nbd_port(vm.name))
+		self.assertEqual(row.nbd_pid, 424242)
+		self.assertGreater(row.root_disk_bytes, 0)
+		self.assertEqual(row.data_disk_bytes, 0)
+
+	def test_full_saga_runs_to_done_over_the_fake_transport(self) -> None:
+		vm = make_virtual_machine(self.source, self.image, status="Running")
+		row = frappe.get_doc(
+			{
+				"doctype": "Virtual Machine Migration",
+				"virtual_machine": vm.name,
+				"target_server": self.target,
+			}
+		).insert(ignore_permissions=True)
+
+		# Only reconcile_proxies is stubbed — that is proxy reconciliation, not the host
+		# transport. Every migration-* script runs on the Fake hosts unpatched, so this
+		# is the whole saga end to end over the transport audit M11 said no test exercised.
+		from atlas.atlas import proxy as proxy_module
+
+		with patch.object(proxy_module, "reconcile_proxies", return_value=[]):
+			for _ in range(20):
+				if not migration_module.advance_migration(row):
+					break
+				row.reload()
+			else:
+				self.fail(f"migration did not terminate within 20 ticks; stuck at {row.status}")
+
+		row.reload()
+		self.assertEqual(row.status, "Done")
+		vm.reload()
+		self.assertEqual(vm.server, self.target)
+		self.assertEqual(vm.status, "Running")
+
+	def test_keep_address_saga_runs_to_done_over_the_fake_transport(self) -> None:
+		from atlas.atlas import proxy as proxy_module
+
+		vm = make_virtual_machine(self.source, self.image, status="Running")
+		# Force the keep-address path — Fake providers derive change-address, but
+		# keep-address is the DEFAULT on a real DO fleet and the branch the M1 cleanup
+		# fix lives on: the forward tunnel + return route are wired, Repointing skips the
+		# Subdomain re-point, and Cleanup runs with KEEP_ADDRESS=1 carrying the /128 over.
+		with patch.object(migration_module, "_will_keep_address", return_value=True):
+			row = frappe.get_doc(
+				{
+					"doctype": "Virtual Machine Migration",
+					"virtual_machine": vm.name,
+					"target_server": self.target,
+				}
+			).insert(ignore_permissions=True)
+		self.assertTrue(row.keep_address)
+
+		with patch.object(proxy_module, "reconcile_proxies", return_value=[]):
+			for _ in range(20):
+				if not migration_module.advance_migration(row):
+					break
+				row.reload()
+			else:
+				self.fail(f"keep-address migration did not terminate within 20 ticks; stuck at {row.status}")
+
+		row.reload()
+		self.assertEqual(row.status, "Done")
+		vm.reload()
+		self.assertEqual(vm.server, self.target)
+		# keep-address carries the /128 over unchanged.
+		self.assertEqual(vm.ipv6_address, row.ipv6_address_old)

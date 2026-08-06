@@ -2,6 +2,20 @@
 Description=Atlas Firecracker VM %i
 After=network-online.target
 Wants=network-online.target
+# Order the pool/mesh dependencies from the template side (a bare
+# `Before=firecracker-vm@.service` in those units targets a phantom EMPTY template
+# instance and orders nothing). The thin pool must exist before vm-disk-up/the
+# jailer open rootfs.ext4, and the mesh before the guest veth routes — so a VM
+# never starts against a missing pool or a blackholed mesh.
+After=atlas-pool.service atlas-networkd.service
+# Bound the restart rate. With Restart=always a genuinely-broken VM (rootfs gone,
+# jail unrecoverable) would hot-loop forever — a real host reached 372,524
+# restarts. Mirror atlas-networkd's backstop: after StartLimitBurst starts within
+# StartLimitIntervalSec systemd stops trying and leaves the unit `failed` (visible
+# to the operator + alerting) instead of pinning a CPU and spamming the journal.
+# 5 starts / 60 s trips fast on a persistent crash but clears any transient flap.
+StartLimitIntervalSec=60
+StartLimitBurst=5
 # Do not auto-start a sleeping VM on host reboot. sleep-vm.py writes this
 # marker after stopping the unit; wake-vm.py removes it before starting.
 # The condition prevents the unit from starting while the file exists, without

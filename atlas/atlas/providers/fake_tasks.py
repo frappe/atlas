@@ -281,6 +281,39 @@ def _restore_snapshot_s3_result(variables: dict) -> dict:
 	return {"objects": [obj["name"] for obj in objects]}
 
 
+# Migration phases whose result the controller parses. The other migration-* scripts
+# (clone-target, inject-identity, forward-up, cutover-target, cleanup-source, …) run
+# for effect and their handlers never call parse_result, so `_fake_stdout` returning
+# "ok\n" is enough — only these three ever fed a JSON line back. Without them a
+# Fake↔Fake migration raised at ExportingSnapshot, which is why every migration test
+# had to patch `run_task` directly and none ever exercised the controller end to end.
+
+
+def _migration_export_source_result(variables: dict) -> dict:
+	# The source echoes the port the controller told it to bind and reports the disk's
+	# bytes (a Fake host has no LVM to measure — round DISK_GB; a real host reads the
+	# blockdev). No data disk: the export-source variables carry no data-disk size to
+	# key one off, so a Fake migration is of a single-disk VM.
+	return {
+		"nbd_port": int(variables.get("NBD_PORT") or 0),
+		"nbd_pid": 424242,
+		"root_size_bytes": _fake_disk_bytes(variables),
+		"data_size_bytes": 0,
+	}
+
+
+def _migration_export_base_result(_variables: dict) -> dict:
+	# The controller reads base_size_bytes to size the target's base LV; the rest of a
+	# real export-base result (the nbd/meta ports and pids) is not read on this path.
+	return {"base_size_bytes": 2 * 1024 * 1024 * 1024}
+
+
+def _migration_poll_hydration_result(_variables: dict) -> dict:
+	# A Fake host has no dm-clone to hydrate — report a healthy source already at 100%
+	# so a Fake migration advances through Hydrating in one tick instead of looping.
+	return {"hydration_percent": 100, "source_healthy": True}
+
+
 _RESULT_BUILDERS = {
 	# Both names for the same job. `Server.bootstrap()` now runs the verb
 	# `bootstrap` (`boat bootstrap`, spec/33 §4); `bootstrap-server` is the Python
@@ -297,4 +330,7 @@ _RESULT_BUILDERS = {
 	"warm-snapshot-vm": _warm_snapshot_result,
 	"upload-snapshot-s3": _upload_snapshot_s3_result,
 	"restore-snapshot-s3": _restore_snapshot_s3_result,
+	"migration-export-source": _migration_export_source_result,
+	"migration-export-base": _migration_export_base_result,
+	"migration-poll-hydration": _migration_poll_hydration_result,
 }

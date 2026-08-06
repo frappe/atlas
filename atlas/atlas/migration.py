@@ -48,7 +48,7 @@ import ipaddress
 import frappe
 from frappe import _
 
-from atlas.atlas.boat_client import FIRST_BOOT_EPOCH
+from atlas.atlas.boat_client import FIRST_BOOT_EPOCH, run_boat_migration_phase
 from atlas.atlas.networking import (
 	address_is_free_on_server,
 	allocate_ipv6,
@@ -387,12 +387,16 @@ def _disable_source_autostart(doc) -> None:
 	Runs FIRST, before the stop: a reboot that lands mid-stop must not bring the guest
 	back either. Plain `disable` (not `--now`, not `mask`) is the weakest thing that
 	closes the hole, so the spec/24 §3 rollback — "just restarts the intact source VM"
-	— still works: `systemctl start` on a disabled unit starts it. Idempotent."""
-	_run_phase_task(
-		doc,
+	— still works: `systemctl start` on a disabled unit starts it. Idempotent.
+
+	Stays on SSH via run_task DIRECTLY, not the Boat phase transport (item 9): Boat has
+	no migrate RPC for the unit-autostart toggle, so this is one of the two migration
+	verbs that remain controller-side over SSH."""
+	run_task(
 		server=doc.source_server,
 		script="migration-source-autostart",
 		variables={"VIRTUAL_MACHINE_NAME": doc.virtual_machine, "ENABLED": "0"},
+		virtual_machine=doc.virtual_machine,
 		timeout_seconds=60,
 	)
 
@@ -822,11 +826,15 @@ def _phase_cutover_starting(doc) -> bool:
 			"CLONE_ROOTFS_DEVICE": clone_device_path(doc.virtual_machine),
 		}
 	)
-	_run_phase_task(
-		doc,
+	# provision-vm is a LIFECYCLE op, not a migration saga phase — Boat has no
+	# migrate RPC for it (item 9) — so the cutover boot stays on SSH via run_task
+	# directly, exactly as collapse_forward's re-provision does. run_task keeps its
+	# own Fake shortcut, so a Fake-host migration boots the guest the same way.
+	run_task(
 		server=doc.target_server,
 		script="provision-vm",
 		variables=variables,
+		virtual_machine=doc.virtual_machine,
 		timeout_seconds=120,
 	)
 	# The guest is now live on the target. Commit the row so status/server reflect it
@@ -1308,12 +1316,19 @@ class _ForwardCollapse:
 
 
 def _run_phase_task(doc, *, server: str, script: str, variables: dict, timeout_seconds: int):
-	"""Run a phase's host script inline. run_task saves the Task row first and raises
-	on failure (→ caught by reconcile_migrations → Failed). Lost-task detection scans
-	for a prior Running/Pending Task of the same script that blew its timeout and
-	re-enters transparently (recorded, never a silent duplicate)."""
+	"""Run a migration PHASE's host work inline over Boat (spec/33 §8, item 9).
+	run_boat_migration_phase saves the Task row first and raises on failure (→ caught
+	by reconcile_migrations → Failed), recording the exact Task an SSH run would have
+	— the controller cannot tell which transport ran the phase. Lost-task detection
+	scans for a prior Running/Pending Task of the same script that blew its timeout and
+	re-enters transparently (recorded, never a silent duplicate).
+
+	Only the migration phases route here. The two migration verbs Boat has no migrate
+	RPC for stay on SSH and call run_task directly, NOT through this: source-autostart
+	(_disable_source_autostart) and the provision-vm boot at cutover (which is a
+	lifecycle op, not a saga phase)."""
 	_detect_lost_task(doc, script, timeout_seconds)
-	return run_task(
+	return run_boat_migration_phase(
 		server=server,
 		script=script,
 		variables=variables,

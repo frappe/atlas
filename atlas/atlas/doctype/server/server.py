@@ -883,6 +883,51 @@ class Server(Document):
 		reinstall_atlas_venv_package(connection, self.name)
 
 	@frappe.whitelist()
+	def upgrade_boat(self) -> str:
+		"""Bring an ALREADY-bootstrapped host up to the boat generation this
+		controller ships — the binary, the sudoers allow-list and the two units —
+		without a full `bootstrap` (which also re-runs `boat bootstrap`, mutates
+		status, and re-prepares a host that is already VM-ready).
+
+		This is the counterpart `sync_scripts` deliberately is not. `sync_scripts`
+		refreshes only the pure /var/lib/atlas/bin code and leaves the binary and
+		the units alone, because those need a privileged install and a daemon
+		restart. But that left NO lighter path than a full re-`bootstrap` to deliver
+		a new binary, a new allow-list line or an edited unit to a live host — so a
+		fix to any of the three could reach a freshly bootstrapped host and no other
+		(the deployment gap the split's audits kept naming: the binary, the
+		allow-list and the units are three uncoupled hand-installs). This closes it:
+		the boat-artifact + unit + durable-script subset of bootstrap, made a
+		first-class, idempotent, re-runnable operation.
+
+		Reuses bootstrap's own steps so the two can never drift:
+		  1. upload the boat artifacts, the units and the durable scripts;
+		  2. `_install_boat` — the service user, the validate-then-install sudoers,
+		     the rename-into-place binary, the units, `daemon-reload`, and the
+		     SHA-256 proof of what landed (which also records `observed_boat_version`);
+		  3. `_start_boat` — `restart` so the running daemon re-execs the new inode
+		     (the rename alone does not take effect until re-exec), then `is-active`
+		     to prove it stayed up;
+		  4. reinstall the durable atlas package into the venv so the refreshed hooks
+		     are what imports resolve — exactly `sync_scripts`' last step.
+
+		Idempotent: a host already at this generation re-ships identical bytes, the
+		`mv -f`/`install` overwrite in place, and the digest check confirms the swap.
+		Returns the `boat version` now installed. A Fake server has no host and is a
+		no-op that records nothing, exactly as `bootstrap` skips its host steps."""
+		if is_fake_server(self.name):
+			return ""
+		if not self.ipv4_address:
+			frappe.throw(f"Server {self.name} has no ipv4_address; cannot upgrade boat")
+		connection = connection_for_server(self)
+		upload_files(connection, self._bootstrap_uploads())
+		self._install_boat(connection)
+		self._start_boat(connection)
+		self._reinstall_atlas_venv_package(connection)
+		self.save(ignore_permissions=True)
+		return self.observed_boat_version or ""
+
+	@frappe.whitelist()
 	def reboot(self) -> str:
 		"""Run reboot-server.sh as a Task. SSH drops mid-Task — Task ends in
 		Failure; the operator confirms reboot by waiting and reconnecting."""
@@ -1244,6 +1289,52 @@ def sync_scripts_to_all() -> dict[str, int]:
 
 	with ThreadPoolExecutor(max_workers=len(jobs)) as pool:
 		return dict(pool.map(_push, jobs))
+
+
+def upgrade_all_hosts_to_current_boat(*, enqueue: bool = True) -> dict[str, str]:
+	"""Bring every Active host to the boat generation this controller ships.
+
+	The fleet-wide counterpart to `Server.upgrade_boat`, and the mechanism the
+	`upgrade_hosts_to_current_boat` patch runs once after a boat change lands: a
+	new binary, allow-list line or unit that `sync_scripts` cannot deliver reaches
+	the whole fleet here. Active-only — a Pending/Broken host has no working SSH.
+
+	`enqueue=True` (the default, and what the patch uses) queues ONE background job
+	per host, so a `bench migrate` is never blocked on N privileged installs and
+	daemon restarts over SSH and one slow or unreachable host cannot stall the rest
+	or the migrate itself. Returns {server_name: "queued"}. `enqueue=False` runs
+	them inline, serially and tolerantly — one host's failure is logged and does not
+	stop the next — returning {server_name: installed_version | "error: …"}, the
+	shape an operator watches from a `bench execute`/console sweep."""
+	names = frappe.get_all("Server", filters={"status": "Active"}, pluck="name")
+	results: dict[str, str] = {}
+	for name in names:
+		if enqueue:
+			frappe.enqueue(
+				"atlas.atlas.doctype.server.server.upgrade_host_to_current_boat",
+				queue="long",
+				timeout=1800,
+				job_id=f"upgrade-boat-{name}",
+				deduplicate=True,
+				server_name=name,
+			)
+			results[name] = "queued"
+			continue
+		try:
+			results[name] = frappe.get_doc("Server", name).upgrade_boat() or "ok"
+		except Exception as exc:
+			frappe.logger("atlas").warning(f"upgrade-boat failed for {name}: {exc}")
+			results[name] = f"error: {exc}"
+	return results
+
+
+def upgrade_host_to_current_boat(server_name: str) -> None:
+	"""Background-job entry for `upgrade_all_hosts_to_current_boat(enqueue=True)`:
+	upgrade one host and commit. The doc is loaded fresh inside the job so nothing
+	stale crosses the enqueue boundary, and a failure surfaces in the job record
+	rather than a caller's stack."""
+	frappe.get_doc("Server", server_name).upgrade_boat()
+	frappe.db.commit()
 
 
 @contextmanager

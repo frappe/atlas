@@ -38,10 +38,12 @@ Wants=network-online.target
 # fix (the loop degrades rather than exits); this is the second line of defense.
 StartLimitIntervalSec=60
 StartLimitBurst=5
-# Run before any VM unit so a VM coming up sees the mesh already configured
-# (a guest veth's fdaa:: /128 routes through wg-mesh; a not-yet-up mesh = a
-# blackholed guest from boot).
-Before=firecracker-vm@.service
+# A VM coming up must see the mesh already configured (a guest veth's fdaa:: /128
+# routes through wg-mesh; a not-yet-up mesh = a blackholed guest from boot). That
+# ordering is asserted from the template side (firecracker-vm@.service carries
+# `After=atlas-networkd.service`), NOT with a bare `Before=firecracker-vm@.service`
+# here — an empty template instance in Before= resolves to the phantom
+# `firecracker-vm@atlas-networkd.service` and orders nothing against real VMs.
 
 [Service]
 Type=notify

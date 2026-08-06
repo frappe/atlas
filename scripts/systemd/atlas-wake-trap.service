@@ -8,6 +8,12 @@ Description=Atlas wake-on-TCP trap for sleeping VMs
 # (ConditionPathExists=!), and the daemon's startup sweep re-parks it.
 After=network-online.target local-fs.target
 Wants=network-online.target
+# Bound the restart rate — same backstop the other Restart=always units carry.
+# Without it a persistently-broken trap (missing venv, unparseable nft state) would
+# hot-loop forever; after StartLimitBurst starts within StartLimitIntervalSec systemd
+# leaves it `failed` (visible to the operator) instead of pinning a CPU.
+StartLimitIntervalSec=60
+StartLimitBurst=5
 
 [Service]
 Type=simple
