@@ -234,10 +234,9 @@ def kind(verb: str) -> str:
 #     and the controller is not a Boat host.
 #   - the SYSTEMD_HOOKS. Those are invoked by the per-VM unit with `%i`, never
 #     as a Task, so their cutover is in the unit template rather than here.
-#   - the `migration-*` verbs. Boat serves most of those over the daemon's phase
+#   - the `migration-*` verbs. Boat serves all of those over the daemon's phase
 #     RPCs (run_boat_migration_phase), so routing them is a change to migration.py's
-#     transport, not the first word; two (source-autostart, forward-down) remain
-#     controller-side over SSH and keep their .py.
+#     transport, not the first word — none is a `boat <verb>` and none keeps a .py.
 # Empty now — every ported verb's `.py` oracle has been deleted, so all of them
 # live in BOAT_ONLY_VERBS. The set is kept as the seam a future port re-enters: a
 # verb boat implements while its `.py` is still on disk as the oracle goes here

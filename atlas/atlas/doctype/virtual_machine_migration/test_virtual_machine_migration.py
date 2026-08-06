@@ -277,8 +277,8 @@ class TestMigrationRow(IntegrationTestCase):
 
 		with (
 			patch.object(migration_module, "run_task", side_effect=_fake_run_task),
-			# The migration phases now run over Boat (item 9); source-autostart, the
-			# cutover provision-vm and collapse_forward's forward-down stay on run_task.
+			# The migration phases, source-autostart and collapse_forward's forward-down
+			# now run over Boat (item 9); only the cutover provision-vm stays on run_task.
 			# Stub both entry points with the same fake so the phase machine is driven
 			# whichever transport a step uses.
 			patch.object(migration_module, "run_boat_migration_phase", side_effect=_fake_run_task),
@@ -313,8 +313,8 @@ class TestMigrationRow(IntegrationTestCase):
 
 		with (
 			patch.object(migration_module, "run_task", side_effect=_fake_run_task),
-			# The migration phases now run over Boat (item 9); source-autostart, the
-			# cutover provision-vm and collapse_forward's forward-down stay on run_task.
+			# The migration phases, source-autostart and collapse_forward's forward-down
+			# now run over Boat (item 9); only the cutover provision-vm stays on run_task.
 			# Stub both entry points with the same fake so the phase machine is driven
 			# whichever transport a step uses.
 			patch.object(migration_module, "run_boat_migration_phase", side_effect=_fake_run_task),
@@ -563,8 +563,8 @@ class TestMigrationPhaseMachine(IntegrationTestCase):
 
 		with (
 			patch.object(migration_module, "run_task", side_effect=_fake_run_task),
-			# The migration phases now run over Boat (item 9); source-autostart, the
-			# cutover provision-vm and collapse_forward's forward-down stay on run_task.
+			# The migration phases, source-autostart and collapse_forward's forward-down
+			# now run over Boat (item 9); only the cutover provision-vm stays on run_task.
 			# Stub both entry points with the same fake so the phase machine is driven
 			# whichever transport a step uses.
 			patch.object(migration_module, "run_boat_migration_phase", side_effect=_fake_run_task),
@@ -689,8 +689,8 @@ class TestMigrationPhaseMachine(IntegrationTestCase):
 
 		with (
 			patch.object(migration_module, "run_task", side_effect=_fake_run_task),
-			# The migration phases now run over Boat (item 9); source-autostart, the
-			# cutover provision-vm and collapse_forward's forward-down stay on run_task.
+			# The migration phases, source-autostart and collapse_forward's forward-down
+			# now run over Boat (item 9); only the cutover provision-vm stays on run_task.
 			# Stub both entry points with the same fake so the phase machine is driven
 			# whichever transport a step uses.
 			patch.object(migration_module, "run_boat_migration_phase", side_effect=_fake_run_task),
@@ -733,8 +733,8 @@ class TestMigrationPhaseMachine(IntegrationTestCase):
 
 		with (
 			patch.object(migration_module, "run_task", side_effect=_fake_run_task),
-			# The migration phases now run over Boat (item 9); source-autostart, the
-			# cutover provision-vm and collapse_forward's forward-down stay on run_task.
+			# The migration phases, source-autostart and collapse_forward's forward-down
+			# now run over Boat (item 9); only the cutover provision-vm stays on run_task.
 			# Stub both entry points with the same fake so the phase machine is driven
 			# whichever transport a step uses.
 			patch.object(migration_module, "run_boat_migration_phase", side_effect=_fake_run_task),
@@ -794,8 +794,8 @@ class TestMigrationPhaseMachine(IntegrationTestCase):
 
 		with (
 			patch.object(migration_module, "run_task", side_effect=_fake_run_task),
-			# The migration phases now run over Boat (item 9); source-autostart, the
-			# cutover provision-vm and collapse_forward's forward-down stay on run_task.
+			# The migration phases, source-autostart and collapse_forward's forward-down
+			# now run over Boat (item 9); only the cutover provision-vm stays on run_task.
 			# Stub both entry points with the same fake so the phase machine is driven
 			# whichever transport a step uses.
 			patch.object(migration_module, "run_boat_migration_phase", side_effect=_fake_run_task),
@@ -837,8 +837,8 @@ class TestMigrationPhaseMachine(IntegrationTestCase):
 
 		with (
 			patch.object(migration_module, "run_task", side_effect=_fake_run_task),
-			# The migration phases now run over Boat (item 9); source-autostart, the
-			# cutover provision-vm and collapse_forward's forward-down stay on run_task.
+			# The migration phases, source-autostart and collapse_forward's forward-down
+			# now run over Boat (item 9); only the cutover provision-vm stays on run_task.
 			# Stub both entry points with the same fake so the phase machine is driven
 			# whichever transport a step uses.
 			patch.object(migration_module, "run_boat_migration_phase", side_effect=_fake_run_task),
@@ -1056,8 +1056,8 @@ class TestLocalBaseImageShip(IntegrationTestCase):
 
 		with (
 			patch.object(migration_module, "run_task", side_effect=_fake_run_task),
-			# The migration phases now run over Boat (item 9); source-autostart, the
-			# cutover provision-vm and collapse_forward's forward-down stay on run_task.
+			# The migration phases, source-autostart and collapse_forward's forward-down
+			# now run over Boat (item 9); only the cutover provision-vm stays on run_task.
 			# Stub both entry points with the same fake so the phase machine is driven
 			# whichever transport a step uses.
 			patch.object(migration_module, "run_boat_migration_phase", side_effect=_fake_run_task),
@@ -1140,8 +1140,8 @@ class TestLocalBaseImageShip(IntegrationTestCase):
 
 		with (
 			patch.object(migration_module, "run_task", side_effect=_fake_run_task),
-			# The migration phases now run over Boat (item 9); source-autostart, the
-			# cutover provision-vm and collapse_forward's forward-down stay on run_task.
+			# The migration phases, source-autostart and collapse_forward's forward-down
+			# now run over Boat (item 9); only the cutover provision-vm stays on run_task.
 			# Stub both entry points with the same fake so the phase machine is driven
 			# whichever transport a step uses.
 			patch.object(migration_module, "run_boat_migration_phase", side_effect=_fake_run_task),
@@ -1239,8 +1239,8 @@ class TestLocalBaseImageShip(IntegrationTestCase):
 
 		with (
 			patch.object(migration_module, "run_task", side_effect=_fake_run_task),
-			# The migration phases now run over Boat (item 9); source-autostart, the
-			# cutover provision-vm and collapse_forward's forward-down stay on run_task.
+			# The migration phases, source-autostart and collapse_forward's forward-down
+			# now run over Boat (item 9); only the cutover provision-vm stays on run_task.
 			# Stub both entry points with the same fake so the phase machine is driven
 			# whichever transport a step uses.
 			patch.object(migration_module, "run_boat_migration_phase", side_effect=_fake_run_task),
@@ -1293,8 +1293,8 @@ class TestCollapseForward(IntegrationTestCase):
 
 		with (
 			patch.object(migration_module, "run_task", side_effect=_fake_run_task),
-			# The migration phases now run over Boat (item 9); source-autostart, the
-			# cutover provision-vm and collapse_forward's forward-down stay on run_task.
+			# The migration phases, source-autostart and collapse_forward's forward-down
+			# now run over Boat (item 9); only the cutover provision-vm stays on run_task.
 			# Stub both entry points with the same fake so the phase machine is driven
 			# whichever transport a step uses.
 			patch.object(migration_module, "run_boat_migration_phase", side_effect=_fake_run_task),
