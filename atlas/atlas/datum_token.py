@@ -57,3 +57,44 @@ def datum_url() -> str | None:
 	import frappe
 
 	return frappe.conf.get("atlas_datum_url")
+
+
+def build_bundle(
+	server_name: str,
+	vm_names: list[str],
+	private_key_pem: str,
+	key_id: str | None = None,
+	ttl_seconds: int = DEFAULT_TTL_SECONDS,
+) -> dict:
+	"""The token file's JSON structure: one host token (resource_id = the Server name)
+	and one token per VM (resource_id = the VM name). Pure — no frappe — so it is unit-tested."""
+	return {
+		"host": encode_token(server_name, private_key_pem, ttl_seconds, key_id),
+		"vms": {name: encode_token(name, private_key_pem, ttl_seconds, key_id) for name in vm_names},
+	}
+
+
+def token_file_json(server_name: str, vm_names: list[str]) -> str:
+	"""The exact bytes written to /etc/boat/datum-tokens.json for one host, signed with the
+	configured fleet key."""
+	import json
+
+	private_key, key_id = _signing_config()
+	return json.dumps(build_bundle(server_name, vm_names, private_key, key_id))
+
+
+def refresh_all() -> None:
+	"""Scheduler entry: re-mint and re-ship every Active host's datum token bundle, so token
+	expiry and VM churn are both covered. A no-op when metrics export is not configured."""
+	import frappe
+
+	if not frappe.conf.get("atlas_datum_url"):
+		return
+	for name in frappe.get_all("Server", filters={"status": "Active"}, pluck="name"):
+		frappe.enqueue(
+			"atlas.atlas.doctype.server.server.refresh_datum_tokens_for_server",
+			queue="long",
+			job_id=f"datum-tokens-{name}",
+			deduplicate=True,
+			server_name=name,
+		)

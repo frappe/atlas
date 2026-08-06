@@ -43,6 +43,16 @@ class TestDatumToken(unittest.TestCase):
 		header = jwt.get_unverified_header(token)
 		self.assertEqual(header["kid"], "k1")
 
+	def test_build_bundle_has_host_and_vm_tokens(self):
+		module = _load_module()
+		private_pem, public_pem = _keypair()
+		bundle = module.build_bundle("atlas-host-1", ["vm-a", "vm-b"], private_pem, key_id="k1")
+		import jwt
+
+		self.assertEqual(jwt.decode(bundle["host"], public_pem, algorithms=["RS256"])["resource_id"], "atlas-host-1")
+		self.assertEqual(set(bundle["vms"]), {"vm-a", "vm-b"})
+		self.assertEqual(jwt.decode(bundle["vms"]["vm-a"], public_pem, algorithms=["RS256"])["resource_id"], "vm-a")
+
 	def test_wrong_key_is_rejected(self):
 		module = _load_module()
 		private_pem, _ = _keypair()
