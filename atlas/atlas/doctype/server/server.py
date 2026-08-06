@@ -82,6 +82,8 @@ BOAT_ARTIFACTS: list[tuple[str, str]] = [
 # of that on every bootstrap/upgrade, so a reachable host is always handed a fresh
 # token well before the hard expiry — and a leaked-but-unrotated one is still bounded.
 BOAT_TOKEN_PATH = "/etc/boat/token"
+DATUM_TOKENS_PATH = "/etc/boat/datum-tokens.json"
+DATUM_DROPIN_PATH = "/etc/systemd/system/boat.service.d/10-datum.conf"
 BOAT_TOKEN_TTL_DAYS = 30
 BOAT_TOKEN_REMINT_WITHIN_DAYS = 7
 
@@ -715,6 +717,9 @@ class Server(Document):
 			# to /etc/boat/token, not one of the four static artifacts the tar stream
 			# carried. _start_boat's restart reads it.
 			self._install_boat_token(connection, key_path)
+			# The datum token bundle + its drop-in, when metrics export is configured. A
+			# no-op otherwise, so a fleet without datum installs nothing extra.
+			self._install_datum_tokens(connection, key_path)
 
 	def _staged_boat_digest(self) -> str:
 		"""SHA-256 of the boat binary this bootstrap is shipping, read on the
@@ -802,6 +807,61 @@ class Server(Document):
 			f"sudo install -D -m 0640 -o root -g boat /dev/stdin {BOAT_TOKEN_PATH}",
 			stdin=payload,
 		)
+
+	def _datum_dropin_contents(self) -> str:
+		"""The systemd drop-in that turns metrics export on: it resets ExecStart and re-adds
+		the daemon command with --server-name and the datum flags. NOTE: this fully owns
+		ExecStart, so a host that also needs --listen must fold it in here too."""
+		url = frappe.conf.get("atlas_datum_url")
+		return (
+			"[Service]\n"
+			"ExecStart=\n"
+			"ExecStart=/usr/local/bin/boat daemon --socket /run/boat/boat.sock "
+			"--store /var/lib/boat/boat.db --token-file /etc/boat/token "
+			f"--server-name {self.name} --datum-url {url} "
+			"--datum-token-file /etc/boat/datum-tokens.json\n"
+		)
+
+	def _install_datum_tokens(self, connection, key_path) -> None:
+		"""Ship this host's datum token bundle and the drop-in that points boat at datum.
+		A no-op when metrics export is not configured (no atlas_datum_url), so a fleet that
+		has not turned datum on installs nothing. The bundle carries a token per VM this host
+		holds; the secret travels on stdin, never argv, like the bearer token."""
+		if not frappe.conf.get("atlas_datum_url"):
+			return
+		from atlas.atlas import datum_token
+
+		vm_names = frappe.get_all("Virtual Machine", filters={"server": self.name}, pluck="name")
+		payload = datum_token.token_file_json(self.name, vm_names)
+		self._boat_ssh(
+			connection,
+			key_path,
+			"installing the datum tokens",
+			f"sudo install -D -m 0640 -o root -g boat /dev/stdin {DATUM_TOKENS_PATH}",
+			stdin=payload,
+		)
+		self._boat_ssh(
+			connection,
+			key_path,
+			"installing the datum systemd drop-in",
+			f"sudo install -D -m 0644 -o root -g root /dev/stdin {DATUM_DROPIN_PATH}",
+			stdin=self._datum_dropin_contents(),
+		)
+		self._boat_ssh(connection, key_path, "reloading systemd for datum", "sudo systemctl daemon-reload")
+
+	@frappe.whitelist()
+	def refresh_datum_tokens(self) -> None:
+		"""Re-mint and re-ship this host's datum bundle, then SIGHUP boat so it picks up the
+		new tokens without a restart. This is the rotation + VM-churn path; bootstrap already
+		installs the first bundle. A no-op on a Fake server or when datum is not configured."""
+		if is_fake_server(self.name) or not frappe.conf.get("atlas_datum_url"):
+			return
+		connection = connection_for_server(self)
+		with ssh_key_file(connection.ssh_private_key) as key_path:
+			self._install_datum_tokens(connection, key_path)
+			self._boat_ssh(
+				connection, key_path, "reloading boat for datum rotation", "sudo systemctl reload boat.service"
+			)
 
 	def _start_boat(self, connection) -> None:
 		"""Enable and (re)start boat.service — after the `boat bootstrap` Task.
@@ -1429,3 +1489,8 @@ def frappe_thread_context(site: str):
 		yield
 	finally:
 		frappe.destroy()
+
+
+def refresh_datum_tokens_for_server(server_name: str) -> None:
+	"""Enqueue target for datum_token.refresh_all: load the Server and re-ship its bundle."""
+	frappe.get_doc("Server", server_name).refresh_datum_tokens()
