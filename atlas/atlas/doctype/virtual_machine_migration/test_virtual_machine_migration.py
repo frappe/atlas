@@ -68,14 +68,11 @@ class TestMigrationPure(IntegrationTestCase):
 		self.assertEqual(table, networking.derive_vm_tunnel_table(uuid))
 		self.assertGreaterEqual(table, 20000)  # clear of the reserved low table ids
 
-	def test_hydration_parse(self) -> None:
-		# <start> <len> clone <meta_used>/<meta_total> <region_size> <hydrated>/<total> ...
-		parse = _parse_hydration()
-		self.assertEqual(parse("0 8388608 clone 1/2048 32768 0/256 0 -"), 0)
-		self.assertEqual(parse("0 8388608 clone 1/2048 32768 128/256 0 -"), 50)
-		self.assertEqual(parse("0 8388608 clone 1/2048 32768 256/256 0 -"), 100)
-		with self.assertRaises(ValueError):
-			parse("garbage line")
+	# The dm-clone hydration-table parse (parse_hydration_percent) lived in
+	# migration-poll-hydration.py and was exec'd out of that file here. The .py is
+	# deleted — boat reads the hydration percent (GET /migrate/hydration) and Atlas
+	# folds it onto the Task — so the parse now lives in boat's
+	# internal/migration/poll_hydration_test.go + parse_test.go.
 
 	def test_nbd_base_slot_is_stable_and_in_range(self) -> None:
 		uuid = "5d0943c8-4e43-48ad-b652-3f181e22fc4d"
@@ -173,23 +170,6 @@ class TestTargetDiskSizing(IntegrationTestCase):
 	def test_absent_data_disk_is_zero(self) -> None:
 		row = self._doc_with(disk_gigabytes=20, data_disk_gigabytes=0)
 		self.assertEqual(migration_module._target_disk_gb(row, "data_disk_gigabytes", 0), 0)
-
-
-def _parse_hydration():
-	"""Load parse_hydration_percent from the on-disk script (its filename has dashes,
-	so a normal import won't work — read + exec its module namespace)."""
-	import os
-
-	root = frappe.get_app_path("atlas", "..")
-	path = os.path.join(root, "scripts", "migration-poll-hydration.py")
-	# The script's sys.path shim + heavy imports (atlas._run) load fine on the
-	# controller too; we only need the pure fn, so exec just that source.
-	namespace: dict = {}
-	src = open(path).read()
-	# Strip the `sys.path.insert` + heavy imports block by exec-ing only the fn.
-	start = src.index("def parse_hydration_percent")
-	exec(compile(src[start:], path, "exec"), namespace)
-	return namespace["parse_hydration_percent"]
 
 
 class TestMigrationRow(IntegrationTestCase):
