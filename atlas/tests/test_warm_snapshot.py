@@ -150,14 +150,10 @@ class TestWarmScripts(unittest.TestCase):
 	# --help`; the .py is deleted (boat serves warm-snapshot-vm), so its flag
 	# contract now lives in boat's internal/snapshot/warm_test.go.
 
-	def test_delete_snapshot_gains_memory_directory(self) -> None:
-		result = subprocess.run(
-			[sys.executable, str(_SCRIPTS_DIR / "delete-snapshot-vm.py"), "--help"],
-			capture_output=True,
-			text=True,
-		)
-		self.assertEqual(result.returncode, 0, result.stderr)
-		self.assertIn("--memory-directory", result.stdout)
+	# delete-snapshot-vm's `--memory-directory` flag was proven here by
+	# `delete-snapshot-vm.py --help`; the .py is deleted (boat serves
+	# delete-snapshot-vm), so its contract now lives in boat's
+	# internal/snapshot/delete_snapshot_test.go.
 
 	def test_vm_restore_compiles_and_guards(self) -> None:
 		py_compile.compile(str(_SCRIPTS_DIR / "vm-restore.py"), doraise=True)
