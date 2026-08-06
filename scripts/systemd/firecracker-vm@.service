@@ -48,15 +48,14 @@ ExecStartPre=/bin/rm -f /var/lib/atlas/virtual-machines/%i/jail/firecracker/%i/r
 # Disk (re-activate the thin-snapshot LV and refresh the in-jail block node)
 # must be present before the jailer opens rootfs.ext4. provision is not re-run
 # on boot and `lvcreate -s` disks are activation-skip, so without this a reboot
-# leaves the jail node dangling; vm-disk-up.py is idempotent and self-heals it.
-# The hook imports the durable atlas package (its own sys.path shim adds its
-# directory, /var/lib/atlas/bin) and takes the VM uuid as a positional arg.
-# Runs under the Atlas venv python (/var/lib/atlas/venv/bin/python), not the host
-# python3 — bootstrap's sanity gate py_compiles every hook on it first.
-ExecStartPre=/var/lib/atlas/venv/bin/python /var/lib/atlas/bin/vm-disk-up.py %i
+# leaves the jail node dangling; `boat vm-disk-up` is idempotent and self-heals it.
+# boat takes the VM uuid as a positional arg — a byte-compatible drop-in for the
+# venv-python hook it replaced, run through the same daemon-installed
+# /usr/local/bin/boat the host runs every other verb through.
+ExecStartPre=/usr/local/bin/boat vm-disk-up %i
 # Networking (netns + veth + in-namespace tap) must exist before the jailer
 # joins the namespace; ExecStartPre runs to completion before ExecStart.
-ExecStartPre=/var/lib/atlas/venv/bin/python /var/lib/atlas/bin/vm-network-up.py %i
+ExecStartPre=/usr/local/bin/boat vm-network-up %i
 # Run Firecracker under the jailer via the per-VM launcher that provision-vm.py
 # generated. The launcher (not this unit) assembles the jailer argv, because the
 # --cgroup cpu.max value carries an internal space that systemd's ExecStart
@@ -65,15 +64,15 @@ ExecStartPre=/var/lib/atlas/venv/bin/python /var/lib/atlas/bin/vm-network-up.py 
 # caps + fd/file rlimits, and joins the VM's own network namespace. It `exec`s
 # the jailer, so the jailer is this unit's main process (see KillMode below).
 ExecStart=/var/lib/atlas/virtual-machines/%i/jailer-launch.sh
-# When snapshot-stop-vm.py left a complete memory snapshot (marker present),
-# the launcher started Firecracker idle; this hook loads the snapshot, consumes
-# the marker, and resumes the guest — milliseconds instead of a cold boot. On a
-# cold boot (no marker) it exits 0 immediately. On a failed restore it removes
-# the marker and exits non-zero: the unit fails, Restart=always relaunches it,
-# and the marker-less launcher cold-boots — the fast path degrades to the
+# When snapshot-stop-vm left a complete memory snapshot (marker present),
+# the launcher started Firecracker idle; `boat vm-restore` loads the snapshot,
+# consumes the marker, and resumes the guest — milliseconds instead of a cold
+# boot. On a cold boot (no marker) it exits 0 immediately. On a failed restore it
+# removes the marker and exits non-zero: the unit fails, Restart=always relaunches
+# it, and the marker-less launcher cold-boots — the fast path degrades to the
 # default path on its own.
-ExecStartPost=/var/lib/atlas/venv/bin/python /var/lib/atlas/bin/vm-restore.py %i
-ExecStopPost=/var/lib/atlas/venv/bin/python /var/lib/atlas/bin/vm-network-down.py %i
+ExecStartPost=/usr/local/bin/boat vm-restore %i
+ExecStopPost=/usr/local/bin/boat vm-network-down %i
 StandardOutput=append:/var/lib/atlas/virtual-machines/%i/log/firecracker.log
 StandardError=append:/var/lib/atlas/virtual-machines/%i/log/firecracker.log
 Restart=always

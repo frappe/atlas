@@ -40,9 +40,7 @@ class TestMemorySnapshotScripts(unittest.TestCase):
 class TestMemorySnapshotWiring(unittest.TestCase):
 	def test_unit_restores_after_start(self) -> None:
 		unit = (_SCRIPTS_DIR / "systemd" / "firecracker-vm@.service").read_text()
-		self.assertIn(
-			"ExecStartPost=/var/lib/atlas/venv/bin/python /var/lib/atlas/bin/vm-restore.py %i", unit
-		)
+		self.assertIn("ExecStartPost=/usr/local/bin/boat vm-restore %i", unit)
 		# The pre-start jail cleanup must NOT sweep the snapshot directory, or a
 		# stop-with-snapshot could never be restored.
 		for line in unit.splitlines():

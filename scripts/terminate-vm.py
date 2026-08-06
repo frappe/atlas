@@ -16,7 +16,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib
 from atlas._run import run, run_ok
 from atlas._task import TaskInputs
 from atlas.lvm import ThinPool
-from atlas.paths import ATLAS_PYTHON, VirtualMachinePaths
+from atlas.paths import VirtualMachinePaths
 
 
 @dataclass(frozen=True)
@@ -36,20 +36,15 @@ def main() -> None:
 	run("sudo systemctl disable --now {}", paths.systemd_unit, check=False)
 
 	# In case the unit failed before its ExecStopPost ran, tear down networking
-	# explicitly. vm-network-down.py is the durable hook (positional uuid, imports
-	# the package under /var/lib/atlas/bin) and is itself idempotent — we invoke
-	# the same hook the unit's ExecStopPost runs rather than reimplement it. It is
-	# a .py now (the shell port); calling the old .sh path made `sudo` report
-	# "command not found" and, under check=False, silently skipped teardown.
+	# explicitly. `boat vm-network-down` is the durable hook (positional uuid) and
+	# is itself idempotent — we invoke the same verb the unit's ExecStopPost runs
+	# rather than reimplement it.
 	if run_ok("sudo test -f {}", paths.network_env):
-		# Invoke the hook under the Atlas venv python — the same interpreter the
-		# unit's ExecStopPost uses — not the host's python3, so the hook runs on the
-		# same CPython 3.14 everywhere. terminate-vm.py itself runs under the venv
-		# python (the runner uses it + fail-loud guards its presence), so
-		# ATLAS_PYTHON is guaranteed to exist here.
+		# The unit's ExecStopPost runs `/usr/local/bin/boat vm-network-down %i`;
+		# invoke the byte-identical verb here so a unit that failed before its own
+		# teardown still gets the netns/veth/proxy-NDP swept.
 		run(
-			"sudo {} /var/lib/atlas/bin/vm-network-down.py {}",
-			ATLAS_PYTHON,
+			"sudo /usr/local/bin/boat vm-network-down {}",
 			inputs.virtual_machine_name,
 			check=False,
 		)
