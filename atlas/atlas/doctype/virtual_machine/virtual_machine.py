@@ -1503,14 +1503,14 @@ class VirtualMachine(Document):
 		}
 
 	def _guest_authorized_keys(self) -> str:
-		"""The guest's root authorized_keys: the VM owner's key plus the Satellite
-		orchestrator key(s) (spec/28), one per line. Atlas hands over a bare Ubuntu box;
-		injecting Satellite's key here is what lets a Satellite SSH in and set up
-		services. The rootfs writes this value verbatim, so each extra line is one more
-		authorized key. No-op (just the owner's key) on an Atlas with no Satellite."""
-		from atlas.atlas.atlas_settings import satellite_public_keys
+		"""The guest's root authorized_keys: the VM owner's key plus an external
+		service's (e.g. chef) key(s) (spec/28), one per line. Atlas hands over a bare
+		Ubuntu box; injecting the service's key here is what lets the service SSH in and
+		set up services. The rootfs writes this value verbatim, so each extra line is one
+		more authorized key. No-op (just the owner's key) on an Atlas with no such service."""
+		from atlas.atlas.atlas_settings import service_public_keys
 
-		keys = [self.ssh_public_key, *satellite_public_keys()]
+		keys = [self.ssh_public_key, *service_public_keys()]
 		return "\n".join(key.strip() for key in keys if key and key.strip())
 
 	def _provision_variables(self) -> dict:

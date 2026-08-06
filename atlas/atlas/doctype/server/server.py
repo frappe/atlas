@@ -322,7 +322,7 @@ class Server(Document):
 			upload_files(connection, self._bootstrap_uploads())
 			self._install_boat(connection)
 			self._run_install_sh(connection)
-			self._authorize_satellite_keys(connection)
+			self._authorize_service_keys(connection)
 			self._ship_dashboard(connection)
 			self._write_ancp_bootstrap_state(connection)
 
@@ -790,14 +790,14 @@ class Server(Document):
 				f"install.sh failed on {self.name} (exit {exit_code}): {stderr[-500:] or stdout[-500:]}"
 			)
 
-	def _authorize_satellite_keys(self, connection) -> None:
-		"""Append the Satellite orchestrator's public key(s) to the host's root
-		authorized_keys so a Satellite can SSH the HOST for host-plane services (the
+	def _authorize_service_keys(self, connection) -> None:
+		"""Append an external service's (e.g. chef) public key(s) to the host's root
+		authorized_keys so the service can SSH the HOST for host-plane work (the
 		mesh, the gateway — spec/30). Idempotent: a re-bootstrap never duplicates a line.
-		No-op on an Atlas with no Satellite configured."""
-		from atlas.atlas.atlas_settings import satellite_public_keys
+		No-op on an Atlas with no such service configured."""
+		from atlas.atlas.atlas_settings import service_public_keys
 
-		keys = satellite_public_keys()
+		keys = service_public_keys()
 		if not keys:
 			return
 		appends = " && ".join(

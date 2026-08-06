@@ -1,7 +1,7 @@
 import frappe
 from frappe.tests import IntegrationTestCase
 
-from atlas.atlas.api import satellite as module
+from atlas.atlas.api import service as module
 from atlas.atlas.doctype.virtual_machine.test_virtual_machine import (
 	_ensure_test_image,
 	_ensure_test_server,

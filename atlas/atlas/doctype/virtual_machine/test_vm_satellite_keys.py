@@ -11,7 +11,7 @@ SAT_KEY = "ssh-ed25519 AAAASATELLITEORCHESTRATORKEY satellite@orchestrator"
 
 
 def _set_satellite_keys(value: str) -> None:
-	frappe.db.set_single_value("Atlas Settings", "satellite_public_keys", value)
+	frappe.db.set_single_value("Atlas Settings", "service_public_keys", value)
 
 
 class TestGuestSatelliteKeyInjection(IntegrationTestCase):
