@@ -17,8 +17,8 @@ import frappe
 from frappe.tests import IntegrationTestCase
 
 from atlas.atlas import scripts_catalog
-from atlas.atlas.boat_client import run_boat_host_task
-from atlas.atlas.ssh import run_task
+from atlas.atlas.boat_client import run_boat_host_read, run_boat_host_task
+from atlas.atlas.ssh import run_probe, run_task
 from atlas.tests import fixtures
 from atlas.tests.test_boat_client import (
 	REQUEST,
@@ -183,3 +183,46 @@ class TestRunTaskDelegatesHostVerbs(IntegrationTestCase):
 			run_task(server=self.server.name, script="reset-server", variables={}, timeout_seconds=30)
 
 		delegated.assert_not_called()
+
+
+class TestHostReadsOverHttp(IntegrationTestCase):
+	"""The read-only sweeps move off run_probe's SSH onto the daemon's read path."""
+
+	def setUp(self) -> None:
+		self.server = _boat_server()
+
+	def test_the_sweeps_route_over_http_and_stay_boat_verbs(self) -> None:
+		for verb in ("poll-vm-traffic", "probe-woken-vms"):
+			self.assertTrue(scripts_catalog.runs_on_boat_http_read(verb), verb)
+			self.assertTrue(scripts_catalog.runs_on_boat(verb), verb)
+		# A read is not a mutating host verb — the two sets never overlap.
+		self.assertFalse(scripts_catalog.HTTP_HOST_READS & scripts_catalog.HTTP_HOST_VERBS)
+
+	def test_run_boat_host_read_returns_the_daemons_output(self) -> None:
+		with _boat_host_token(self.server.name), patch(
+			REQUEST, return_value=_Response(payload={"output": 'ATLAS_RESULT={"woken": []}\n'})
+		) as request:
+			output = run_boat_host_read(
+				script="probe-woken-vms", variables={"VMS_JSON": "[]"}, server=self.server.name
+			)
+
+		self.assertIn("ATLAS_RESULT=", output)
+		self.assertTrue(request.call_args.args[1].endswith("/host-reads/probe-woken-vms"))
+
+	def test_run_boat_host_read_never_raises(self) -> None:
+		# run_probe's contract: a failed read logs and returns "", so a missed sweep
+		# is one idle minute rather than a raised exception up the scheduler.
+		with _boat_host_token(self.server.name), patch(
+			REQUEST, return_value=_Response(status_code=500, payload={"error": "nft is unreachable"})
+		):
+			output = run_boat_host_read(
+				script="poll-vm-traffic", variables={"VMS_JSON": "[]"}, server=self.server.name
+			)
+		self.assertEqual(output, "")
+
+	def test_run_probe_delegates_a_read_verb_to_the_daemon(self) -> None:
+		with patch("atlas.atlas.boat_client.run_boat_host_read", return_value="") as delegated:
+			run_probe(server=self.server.name, script="poll-vm-traffic", variables={"VMS_JSON": "[]"})
+
+		delegated.assert_called_once()
+		self.assertEqual(delegated.call_args.kwargs["script"], "poll-vm-traffic")

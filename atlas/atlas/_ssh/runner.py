@@ -137,6 +137,19 @@ def run_probe(
 
 		return fake_stdout(script, variables)
 
+	# The read-only sweeps the boat daemon serves over HTTP no longer open an SSH
+	# connection: they run through the daemon's non-journaling read path, exactly
+	# as run_task delegates the mutating host verbs (spec/33 §2.4). run_boat_host_read
+	# keeps run_probe's contract — it never raises and returns "" on failure.
+	from atlas.atlas import scripts_catalog
+
+	if scripts_catalog.runs_on_boat_http_read(script):
+		from atlas.atlas.boat_client import run_boat_host_read
+
+		return run_boat_host_read(
+			script=script, variables=variables, server=server, timeout_seconds=timeout_seconds
+		)
+
 	try:
 		connection = connection_for_server(frappe.get_doc("Server", server))
 		stdout, stderr, exit_code = _run_remote_script(connection, script, variables, timeout_seconds)

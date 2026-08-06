@@ -341,6 +341,27 @@ def runs_on_boat_http(verb: str) -> bool:
 	return verb in HTTP_HOST_VERBS
 
 
+# The READ-ONLY host verbs the boat daemon serves over HTTP — `POST
+# /v1/host-reads/{verb}`, the non-journaling read path for the per-minute sweeps
+# Atlas runs through `run_probe`. This set MUST equal boat's `servedHostReads`
+# (cmd/boat/hostverb_dispatch.go). They are grant-free — they only read nft counters
+# and sleeping markers, the wake trap's own reads — so serving them over the daemon
+# adds no new privilege, and unlike the mutating verbs they write no Task row.
+HTTP_HOST_READS: frozenset[str] = frozenset(
+	{
+		"poll-vm-traffic",
+		"probe-woken-vms",
+	}
+)
+
+
+def runs_on_boat_http_read(verb: str) -> bool:
+	"""True iff Atlas drives this read-only sweep through the boat daemon over HTTP
+	(`run_boat_host_read`) rather than as `boat <verb>` over SSH. `run_probe`
+	delegates on this, the read twin of `run_task`'s host-verb delegation."""
+	return verb in HTTP_HOST_READS
+
+
 # Production Task scripts are shipped durably to the host's /var/lib/atlas/bin by
 # Server.bootstrap()/sync_scripts() — the same place the importable atlas package
 # and the systemd hooks already live. Python verbs are then invoked as

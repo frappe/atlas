@@ -360,6 +360,19 @@ class BoatClient:
 			body["variables"] = variables
 		return self._request("POST", f"/host-verbs/{verb}", json=body)
 
+	def run_host_read(self, verb: str, *, variables: dict) -> dict:
+		"""POST /host-reads/{verb} — run one READ-ONLY host verb (the per-minute
+		sweeps poll-vm-traffic / probe-woken-vms) and return `{output}`, the same
+		stdout run_probe read off the SSH channel for `parse_result`.
+
+		No `operation_id`: a read is not journaled and not replayed, so the daemon
+		writes no operation record. Synchronous — the reply IS the output, not a
+		claim to poll."""
+		body: dict = {}
+		if variables:
+			body["variables"] = variables
+		return self._request("POST", f"/host-reads/{verb}", json=body)
+
 	def migrate(self, uuid: str, phase: str, *, operation_id: str, params: dict) -> dict:
 		"""POST /vms/{uuid}/migrate/{phase} — run one MUTATING phase of the
 		cross-host migration saga, returning the operation record (spec/33 §8).
@@ -817,6 +830,34 @@ def _execute_host_verb_on_boat(
 	_finalize(task, _task_stdout(operation), error, exit_code, status, _elapsed_ms(start))
 	if status == "Failure":
 		frappe.throw(f"Task {task.name} ({script}) exited {exit_code}: {error[-500:]}")
+
+
+def run_boat_host_read(
+	*,
+	script: str,
+	variables: dict,
+	server: str,
+	timeout_seconds: int = 30,
+) -> str:
+	"""Run a read-only host verb through the host's Boat daemon over HTTP, returning
+	its output for `parse_result` — `run_probe`'s twin for the sweeps that were
+	`boat <verb>` over SSH (poll-vm-traffic, probe-woken-vms).
+
+	Keyword-for-keyword `run_probe`'s signature, so `run_probe` delegates to it with
+	no caller changing. It NEVER raises, exactly as `run_probe` never does: a failed
+	read logs a warning and returns "" — a missed sweep is at most one extra idle
+	minute, and the next tick retries — so callers need no try/except of their own.
+	Records no Task row (the daemon writes no operation for a read)."""
+	if is_fake_server(server):
+		from atlas.atlas.providers.fake_tasks import fake_stdout
+
+		return fake_stdout(script, variables)
+	try:
+		client = BoatClient.for_server(server, timeout_seconds=timeout_seconds)
+		return client.run_host_read(script, variables=variables).get("output", "")
+	except Exception as exception:
+		frappe.logger("atlas").warning(f"boat read {script} on {server} failed: {exception}")
+		return ""
 
 
 def _run_verb(client: BoatClient, script: str, uuid: str, operation_id: str, variables: dict) -> dict:
