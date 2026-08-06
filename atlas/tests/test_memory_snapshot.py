@@ -10,121 +10,25 @@ snapshot paths living inside the jail, the systemd wiring, and the new
 scripts' CLI/compile health.
 """
 
-import json
 import py_compile
-import subprocess
-import sys
-import tempfile
 import unittest
 from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _SCRIPTS_DIR = _REPO_ROOT / "scripts"
 
-# Runs in a clean interpreter: load provision-vm.py by path (its sys.path shim
-# brings in scripts/lib), build a minimal ProvisionInputs, and emit the
-# generated launcher plus the snapshot paths as JSON for the asserts below.
-_LAUNCHER_DRIVER = """
-import importlib.util, json, sys
-
-spec = importlib.util.spec_from_file_location("provision_vm", sys.argv[1])
-module = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(module)
-from atlas.paths import VirtualMachinePaths
-
-uuid = "12345678-1234-1234-1234-123456789abc"
-inputs = module.ProvisionInputs(
-    virtual_machine_name=uuid,
-    image_name="img",
-    kernel_filename="vmlinux",
-    rootfs_filename="rootfs.squashfs",
-    vcpus=1,
-    memory_mb=512,
-    disk_gb=2,
-    mac_address="06:00:01:02:03:04",
-    tap_device="atlas-12345678",
-    virtual_machine_ipv6="2001:db8::2",
-    ipv4_host_cidr="100.64.0.1/30",
-    ipv4_guest_cidr="100.64.0.2/30",
-    ipv4_gateway="100.64.0.1",
-    ssh_public_key="ssh-ed25519 AAAA",
-    atlas_fc_uid=12345,
-    atlas_netns="atlas-ns",
-    host_veth="ave-h",
-    namespace_veth="ave-n",
-    cgroup_arg=["cpu.max=100000 100000"],
-    resource_arg=[],
-)
-paths = VirtualMachinePaths(uuid)
-print(json.dumps({
-    "launcher": module._jailer_launch(inputs, paths),
-    "jail_root": paths.jail_root,
-    "directory": paths.memory_snapshot_directory,
-    "marker": paths.memory_snapshot_marker,
-    "vmstate": paths.memory_snapshot_vmstate,
-    "mem": paths.memory_snapshot_mem,
-    "vmstate_in_jail": paths.memory_snapshot_vmstate_in_jail,
-    "mem_in_jail": paths.memory_snapshot_mem_in_jail,
-}))
-"""
-
-
-class TestMemorySnapshotLauncher(unittest.TestCase):
-	@classmethod
-	def setUpClass(cls) -> None:
-		result = subprocess.run(
-			[sys.executable, "-c", _LAUNCHER_DRIVER, str(_SCRIPTS_DIR / "provision-vm.py")],
-			capture_output=True,
-			text=True,
-		)
-		assert result.returncode == 0, result.stderr
-		cls.data = json.loads(result.stdout)
-
-	def test_snapshot_paths_live_inside_the_jail(self) -> None:
-		# Inside the jail so the jailed Firecracker (per-VM uid) can write the
-		# pair and terminate's rm -rf of the VM directory sweeps it.
-		jail_root = self.data["jail_root"]
-		for key in ("directory", "marker", "vmstate", "mem"):
-			self.assertTrue(self.data[key].startswith(jail_root + "/"), self.data[key])
-		# The marker is what every party keys off — one well-known name.
-		self.assertEqual(self.data["marker"], self.data["directory"] + "/READY")
-		# The API bodies use jail-RELATIVE paths (resolved post-chroot), and they
-		# must name the same files as the host-absolute forms.
-		self.assertEqual(self.data["jail_root"] + "/" + self.data["vmstate_in_jail"], self.data["vmstate"])
-		self.assertEqual(self.data["jail_root"] + "/" + self.data["mem_in_jail"], self.data["mem"])
-
-	def test_launcher_cold_boots_by_default_and_goes_idle_on_marker(self) -> None:
-		launcher = self.data["launcher"]
-		# Default: --config-file boot, exactly as before the feature.
-		self.assertIn("boot_args=(--config-file firecracker.json)", launcher)
-		# Marker present: empty boot args, so Firecracker starts idle for
-		# vm-restore.py's /snapshot/load (pre-boot only).
-		self.assertIn(f"if [[ -f {self.data['marker']} ]]", launcher)
-		self.assertIn("boot_args=()", launcher)
-		self.assertIn('"${boot_args[@]}"', launcher)
-		# The conditional must come before the exec line that consumes it.
-		self.assertLess(launcher.index("boot_args=("), launcher.index("exec /usr/local/bin/jailer"))
-
-	def test_launcher_parses(self) -> None:
-		with tempfile.NamedTemporaryFile("w", suffix=".sh") as handle:
-			handle.write(self.data["launcher"])
-			handle.flush()
-			result = subprocess.run(["bash", "-n", handle.name], capture_output=True, text=True)
-		self.assertEqual(result.returncode, 0, result.stderr)
+# The memory-snapshot launcher (the jailer boot line with its marker/metadata
+# conditionals and the in-jail snapshot paths) was rendered by provision-vm.py and
+# tested here by loading that module in a clean interpreter. The .py is deleted —
+# boat renders the launch and its config — so those checks now live in boat's
+# internal/provision/render_test.go. The systemd-wiring and vm-restore contracts
+# below stay: vm-restore.py is a systemd hook, not a boat verb.
 
 
 class TestMemorySnapshotScripts(unittest.TestCase):
-	def test_snapshot_stop_cli_contract(self) -> None:
-		# --help proves the argparse contract (both required flags declared)
-		# without touching a host.
-		result = subprocess.run(
-			[sys.executable, str(_SCRIPTS_DIR / "snapshot-stop-vm.py"), "--help"],
-			capture_output=True,
-			text=True,
-		)
-		self.assertEqual(result.returncode, 0, result.stderr)
-		self.assertIn("--virtual-machine-name", result.stdout)
-		self.assertIn("--atlas-fc-uid", result.stdout)
+	# snapshot-stop-vm's argparse contract was proven here by `snapshot-stop-vm.py
+	# --help`; the .py is deleted (boat serves snapshot-vm's stop), so its flag
+	# contract now lives in boat's internal/snapshot/snapshot_stop_test.go.
 
 	def test_vm_restore_compiles(self) -> None:
 		# vm-restore.py imports the DURABLE package that only exists next to it

@@ -14,7 +14,7 @@ first — it changes nothing.
 `confirm` exactly matches the server's title, so a reset is always deliberate and
 one host at a time — there is no fleet-wide sweep. It then:
 
-  1. runs the `reset-server` Task on the host (scripts/reset-server.py), wiping
+  1. runs the `reset-server` Task on the host (`boat reset-server`), wiping
      every VM/image/snapshot/tunnel/networking artifact off it while KEEPING the
      bootstrap floor (atlas VG + empty pool0, the venv, host hardening) so the
      host stays provision-ready without a re-bootstrap; and
@@ -35,8 +35,8 @@ from __future__ import annotations
 import frappe
 from frappe import _
 
-# The host-side wipe verb (scripts/reset-server.py). run_task stages the atlas
-# package + runs `atlas reset-server` over SSH, recording an auditable Task row.
+# The host-side wipe verb. A boat verb now: run_task renders `boat reset-server`
+# on the host and records an auditable Task row (the .py oracle is deleted).
 RESET_VERB = "reset-server"
 
 

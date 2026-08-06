@@ -982,8 +982,8 @@ all). `Subdomain` rows are only rewritten in `Repointing` (change-address only),
 the point of no return.
 
 **Stopped means stopped across a reboot: `Pending` disables the source unit's
-autostart** (`migration-source-autostart`, `--enabled 0`), *before* it stops the
-VM. `provision-vm` enables `firecracker-vm@<uuid>.service` and it carries
+autostart** (the `source-autostart` migrate phase, `enabled: false`), *before* it
+stops the VM. `provision-vm` enables `firecracker-vm@<uuid>.service` and it carries
 `[Install] WantedBy=multi-user.target`, whose only condition is the *sleeping*
 marker — there is no migration condition. Without this the source host's next
 reboot cold-boots a **second live copy** of the guest anywhere between `Pending`
@@ -994,8 +994,8 @@ asked. It is a plain `disable` (never `--now`, never `mask`): the WantedBy
 symlink goes and nothing else does, so the rollback above — an explicit
 `systemctl start` of the intact source VM — still works. A marker file with
 `ConditionPathExists=!` would block that explicit start too. **A rollback that
-ABANDONS the migration should re-enable the unit** (`migration-source-autostart
---enabled 1`) so the resurrected source survives its host's next reboot.
+ABANDONS the migration should re-enable the unit** (the same phase, `enabled:
+true`) so the resurrected source survives its host's next reboot.
 
 **The power intent follows the guest.** `Pending`'s stop states
 `desired_power = Stopped` on the VM row ([33 §11.3](./33-boat.md)); the cutover
@@ -1394,10 +1394,11 @@ spec, illustrative — not committed app code):
   round trip; `Pending` disabling the source unit's autostart **first**, on the
   source; `Cleanup` passing `keep_address` so the permanent forward survives its
   own teardown; and `desired_power` coming back to `Running` at cutover (and at
-  Collapse-forward). The two source-side scripts have their own host-free tests
-  (`scripts/lib/atlas/test_migration_source_scripts.py`): `main()` runs with
-  every host poke recorded, asserting `vm-network-down.py` is not issued on a
-  kept address and that the autostart verb is a plain `disable`.
+  Collapse-forward). The two source-side steps are now Boat migrate phases; their
+  host behaviour (a kept address's forward is not torn down; the autostart toggle
+  is a plain `disable`) is proven by Boat's own tests, and the Atlas-side wire
+  mapping — `cleanup-source`'s `keep_address` and `source-autostart`'s `enabled`
+  bool — by `atlas/tests/test_boat_migration_phase.py`.
 - **E2E** (`atlas/tests/e2e/use_cases/virtual_machine_migration.py`): real
   servers; full phase progression, one scenario per address scheme:
   - **Change-address (Self-Managed fallback):** assert the new `/128` is in the
