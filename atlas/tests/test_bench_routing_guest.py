@@ -48,16 +48,63 @@ def _load_by_path(name: str, path: Path):
 	return module
 
 
-# The controller-side routing injection (the cold Identity's routing_base_url and
-# the warm MMDS payload) was rendered by provision-vm.py and proven here by loading
-# that module in a clean interpreter. The .py is deleted — boat renders both paths
-# — so that carries-on-both-paths check now lives in boat's internal/provision
-# tests. What stays is the durable guest package's writer, scripts/lib/atlas/
-# rootfs.py, which is still shipped and read directly (no provision-vm.py needed).
+# A driver run in a clean interpreter (provision-vm.py's sys.path shim pulls in
+# scripts/lib): build a COLD and a WARM ProvisionInputs WITH a routing base URL and
+# emit the cold Identity's field + the warm MMDS payload, to prove both paths carry
+# the routing config.
+_ROUTING_DRIVER = """
+import importlib.util, json, sys
+spec = importlib.util.spec_from_file_location("provision_vm", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+from atlas.rootfs import Identity
+
+base = "https://atlas.blr1.frappe.dev"
+uuid = "12345678-1234-1234-1234-123456789abc"
+common = dict(
+    virtual_machine_name=uuid, image_name="img", kernel_filename="vmlinux",
+    rootfs_filename="rootfs.squashfs", vcpus=2, memory_mb=2048, disk_gb=12,
+    mac_address="06:00:01:02:03:04", tap_device="atlas-x", virtual_machine_ipv6="2001:db8::2",
+    ipv4_host_cidr="100.64.0.1/30", ipv4_guest_cidr="100.64.0.2/30", ipv4_gateway="100.64.0.1",
+    ssh_public_key="ssh-ed25519 AAAA", atlas_fc_uid=12345, atlas_netns="ns",
+    host_veth="h", namespace_veth="n", cgroup_arg=[], resource_arg=[],
+)
+warm = module.ProvisionInputs(**common, warm_snapshot_directory="/var/lib/atlas/snapshots/s", routing_base_url=base)
+identity = Identity(uuid=uuid, ipv6_address="2001:db8::2", ssh_public_key="k",
+                    ipv4_guest_cidr="100.64.0.2/30", ipv4_gateway="100.64.0.1", routing_base_url=base)
+print(json.dumps({
+    "base": base,
+    "identity_field": identity.routing_base_url,
+    "warm_metadata": json.loads(module._mmds_metadata(warm)),
+}))
+"""
 
 
 class TestRoutingIdentityInjection(unittest.TestCase):
-	"""The durable guest routing writer (rootfs.py) writes only /etc/atlas-routing.env."""
+	"""The controller-side injection carries routing_base_url on BOTH paths."""
+
+	@classmethod
+	def setUpClass(cls) -> None:
+		import subprocess
+		import sys
+
+		result = subprocess.run(
+			[sys.executable, "-c", _ROUTING_DRIVER, str(_SCRIPTS_DIR / "provision-vm.py")],
+			capture_output=True,
+			text=True,
+		)
+		assert result.returncode == 0, result.stderr
+		cls.data = json.loads(result.stdout)
+
+	def test_cold_identity_carries_routing_base_url(self) -> None:
+		self.assertEqual(self.data["identity_field"], self.data["base"])
+
+	def test_warm_mmds_payload_carries_routing_base_url(self) -> None:
+		identity = self.data["warm_metadata"]["identity"]
+		self.assertEqual(identity["routing_base_url"], self.data["base"])
+		# The uuid the freshen unit keys on (its adopted-identity marker) is still present
+		# beside it — unrelated to routing, untouched by the push-only model.
+		self.assertEqual(identity["uuid"], "12345678-1234-1234-1234-123456789abc")
 
 	def test_cold_path_writes_only_routing_env_not_vm_uuid_for_routing(self) -> None:
 		# Caller resolution is by source address, so the cold routing writer injects

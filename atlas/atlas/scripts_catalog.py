@@ -38,11 +38,11 @@ OPERATOR_VISIBLE: frozenset[str] = frozenset(
 # entry is `{intro: str, fields: list[dict]}`; field dicts use Frappe Dialog
 # field shapes (`fieldname`, `fieldtype`, `label`, `default`, `reqd`, ...).
 SCRIPT_FORMS: dict[str, dict] = {
-	# What `Server.bootstrap()` sends, as `boat bootstrap --firecracker-version …
-	# --architecture …` (BOAT_ONLY_VERBS). Keyed on the live `bootstrap` verb — the
-	# Python `bootstrap-server` oracle is deleted, so there is no `.py` an operator
-	# could pick by hand.
-	"bootstrap": {
+	# These two fields are also what `Server.bootstrap()` sends, as
+	# `boat bootstrap --firecracker-version … --architecture …` (BOAT_ONLY_VERBS);
+	# the entry stays keyed on the Python verb because the .py is what an operator
+	# can still pick by hand.
+	"bootstrap-server": {
 		"intro": "Idempotent. Safe to re-run on an Active server.",
 		"fields": [
 			{
@@ -172,16 +172,12 @@ def _verbs_in(directory: Path) -> dict[str, str]:
 def allowed_scripts() -> list[str]:
 	"""Return the sorted list of task-runnable *verbs* on a server host.
 
-	The file-derived verbs — both Python (the typed CLI tasks) and shell (the few
-	remaining, e.g. reboot-server) — UNION the BOAT_ONLY verbs, which the boat
-	binary implements with no file in scripts/ (see BOAT_ONLY_VERBS). A BOAT_ONLY
-	verb is runnable even though nothing on disk carries it, so the run-task gate
-	must admit it; it simply ships no durable file (see host_task_scripts). The
-	systemd hooks and controller-only tasks are excluded — they are not host SSH
-	Tasks (see SYSTEMD_HOOKS / CONTROLLER_ONLY)."""
+	Both Python verbs (the typed CLI tasks) and shell verbs (the few remaining,
+	e.g. reboot-server) are runnable. The systemd hooks and controller-only tasks
+	are excluded — they are not host SSH Tasks (see SYSTEMD_HOOKS /
+	CONTROLLER_ONLY)."""
 	excluded = SYSTEMD_HOOKS | CONTROLLER_ONLY
-	verbs = set(_verbs_in(scripts_directory())) | set(BOAT_ONLY_VERBS)
-	return sorted(verb for verb in verbs if verb not in excluded)
+	return sorted(verb for verb in _verbs_in(scripts_directory()) if verb not in excluded)
 
 
 def operator_visible_scripts() -> list[str]:
@@ -214,75 +210,69 @@ def kind(verb: str) -> str:
 	return "shell" if file_for(verb).endswith(".sh") else "python"
 
 
-# Host verbs the `boat` binary implements (spec/33-boat.md, WO-6, item 9). The
-# runner invokes each as `boat <verb> --flags` instead of `atlas <verb> --flags`:
-# `boat` takes the same `--kebab-case` flags the Python TaskInputs declared and
-# prints the same one `ATLAS_RESULT=` line the controller parses back, so the seam
-# is the first word of the command and nothing downstream can tell the difference.
+# Host verbs that `boat` now implements (spec/33-boat.md, WO-6). The runner
+# invokes these as `boat <verb> --flags` instead of `atlas <verb> --flags`.
 #
-# The set is split by whether the Python oracle is still on disk. A verb starts in
-# _PORTED_VERBS — boat implements it, its scripts/*.py is still present as the
-# conformance oracle (runnable by hand as `atlas <verb>`) — and MOVES to
-# BOAT_ONLY_VERBS the moment that .py is deleted (the Boat-verb Python deletion).
-# Once moved there is no file to read, so kind() cannot sniff a suffix, file_for()
-# raises, and durable_remote_path() ships nothing. BOAT_VERBS is their union and
-# does not change as a verb crosses over — runs_on_boat() gates on the union.
+# Nothing else about the Task changes, and that is the point of the port: `boat`
+# takes the same `--kebab-case` flags the Python TaskInputs declared and prints
+# the same one `ATLAS_RESULT=` line the controller parses back, so the seam is
+# the first word of the command and nothing downstream can tell the difference.
 #
-# NOT in either set, deliberately:
+# The .py files stay on disk as the conformance oracle — llm/TESTING.md's
+# differential runs the two implementations against the same input on a staging
+# host and diffs the resulting host state. A verb is removed from this set, not
+# deleted from the tree, if it ever has to go back.
+#
+# NOT here, deliberately:
 #   - the CONTROLLER_ONLY verbs. `issue-cert`, `tunnel-*` and `mgmt-firewall-*`
 #     run on the Atlas controller through run_local_task, not on a Server host,
-#     and the controller is not a Boat host.
+#     and the controller is not a Boat host. `boat` implements them for the day
+#     it is, and this set is where that would be recorded.
 #   - the SYSTEMD_HOOKS. Those are invoked by the per-VM unit with `%i`, never
 #     as a Task, so their cutover is in the unit template rather than here.
-#   - the `migration-*` verbs. Boat serves all of those over the daemon's phase
-#     RPCs (run_boat_migration_phase), so routing them is a change to migration.py's
-#     transport, not the first word — none is a `boat <verb>` and none keeps a .py.
-# Empty now — every ported verb's `.py` oracle has been deleted, so all of them
-# live in BOAT_ONLY_VERBS. The set is kept as the seam a future port re-enters: a
-# verb boat implements while its `.py` is still on disk as the oracle goes here
-# first, then crosses to BOAT_ONLY_VERBS when the file is deleted.
-_PORTED_VERBS: frozenset[str] = frozenset()
-
-# Verbs the boat binary implements and NOTHING in scripts/ does — a verb lands
-# here once its `.py` oracle is deleted (see the header above), plus `bootstrap`.
-# For these there is no file to look at: `kind()` cannot read a suffix,
-# `file_for()` raises, `durable_remote_path()` ships nothing, and they are runnable
-# only because `allowed_scripts()` unions this set in.
-#
-# `bootstrap` is a rename rather than a straight port. The Task was
-# `bootstrap-server` (scripts/bootstrap-server.py, now deleted); the host prep
-# Atlas drives is `boat bootstrap --firecracker-version … --architecture …`, the
-# same two flags and the same ATLAS_RESULT= line. The verb had to change because
-# the runner renders `<entry> <verb>` and `boat bootstrap-server` is not a command
-# boat has (spec/33-boat.md §4, WO-1b). `bootstrap-server` keeps a SCRIPT_LABELS /
-# RETRYABLE entry and a Fake result builder for historical Task rows, but is no
-# longer a runnable verb — its .py is gone and it is not in allowed_scripts().
-BOAT_ONLY_VERBS: frozenset[str] = frozenset(
+#   - the `migration-*` verbs. Boat serves those over the daemon's phase RPCs
+#     rather than as CLI verbs, so routing them is a change to migration.py's
+#     transport and not a change of the first word.
+_PORTED_VERBS: frozenset[str] = frozenset(
 	{
-		"bootstrap",
 		"snapshot-vm",
 		"snapshot-stop-vm",
 		"warm-snapshot-vm",
 		"delete-snapshot-vm",
 		"upload-snapshot-s3",
 		"restore-snapshot-s3",
-		# sync-image keeps its per-Task sidecar (script_uploads.SCRIPT_SIDECARS
-		# bakes the guest atlas-network.service); that upload is independent of the
-		# deleted .py — Boat reads the sidecar from the same staged path.
 		"sync-image",
 		"promote-snapshot-image",
 		"regenerate-host-keys-vm",
 		"reset-server",
-		"export-cleanup-source",
+		# provision-vm + the five later ports (firewall/tunnel/traffic/wake/export).
+		# The boat binary implements each as a native verb taking the same
+		# --kebab-flags and printing the same ATLAS_RESULT= line, so the runner swaps
+		# only the first word. provision-vm creates LVs and boots a guest, so its
+		# differential is a real guest boot on a host, not goldens alone.
+		"provision-vm",
+		"firewall-apply",
 		"vm-tunnel",
 		"poll-vm-traffic",
 		"probe-woken-vms",
-		"firewall-apply",
-		# provision-vm creates LVs and boots a guest, so its differential was a real
-		# guest boot on a host (done), not goldens alone.
-		"provision-vm",
+		"export-cleanup-source",
 	}
 )
+
+# Verbs the boat binary implements and NOTHING in scripts/ does — the set above
+# with no `.py` oracle beside it. They are named separately because every other
+# question the catalog answers is answered by looking at a file, and for these
+# there is no file to look at: `kind()` cannot read a suffix, `file_for()` raises,
+# and `durable_remote_path()` ships nothing.
+#
+# `bootstrap` is the first, and it is a rename rather than a new verb. The Task
+# was `bootstrap-server` (scripts/bootstrap-server.py, still on disk as the
+# differential's oracle and still runnable as `atlas bootstrap-server`); the host
+# prep Atlas drives is now `boat bootstrap --firecracker-version … --architecture
+# …`, which takes the same two flags and prints the same ATLAS_RESULT= line. The
+# verb had to change with it because the runner renders `<entry> <verb>` and
+# `boat bootstrap-server` is not a command boat has (spec/33-boat.md §4, WO-1b).
+BOAT_ONLY_VERBS: frozenset[str] = frozenset({"bootstrap"})
 
 BOAT_VERBS: frozenset[str] = _PORTED_VERBS | BOAT_ONLY_VERBS
 
@@ -303,15 +293,12 @@ DURABLE_SCRIPT_DIRECTORY = "/var/lib/atlas/bin"
 
 
 def host_task_scripts() -> list[str]:
-	"""Production Task verbs shipped durably to /var/lib/atlas/bin: the FILE-derived
-	host SSH Tasks only. A BOAT_ONLY verb ships NO file — the boat binary is its
-	implementation, so there is nothing to upload for it — which is why this is the
-	file-derived subset of allowed_scripts() rather than all of it. Bootstrap /
-	sync_scripts upload the FILES (verb→file_for) so the runner invokes them in
-	place. e2e probe scripts live in the test-only directory, are not shipped
-	durably, and keep the staging path."""
-	excluded = SYSTEMD_HOOKS | CONTROLLER_ONLY
-	return sorted(verb for verb in _verbs_in(scripts_directory()) if verb not in excluded)
+	"""Production Task verbs shipped durably to /var/lib/atlas/bin — exactly
+	allowed_scripts(), every host SSH Task entry point. Bootstrap / sync_scripts
+	upload the FILES (verb→file_for) so the runner invokes them in place. e2e probe
+	scripts live in the test-only directory, are not shipped durably, and keep the
+	staging path."""
+	return allowed_scripts()
 
 
 def durable_remote_path(verb: str) -> str | None:

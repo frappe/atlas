@@ -38,7 +38,6 @@ from atlas.atlas.boat_client import (
 )
 from atlas.atlas.task_results import parse_result
 from atlas.tests import fixtures
-from atlas.tests._mocks import fake_task
 from atlas.tests.test_boat_client import REQUEST, _operation, _Response
 
 UUID = "11111111-2222-3333-4444-555555555555"
@@ -285,7 +284,7 @@ class TestMigrationPhaseMapping(IntegrationTestCase):
 		)
 		self.assertEqual(params, {"private_address": ""})
 
-	def test_cleanup_source_maps_nbd_pid_and_keep_address(self) -> None:
+	def test_cleanup_source_maps_nbd_pid_and_drops_keep_address(self) -> None:
 		phase, params = self._build(
 			"migration-cleanup-source",
 			{
@@ -296,38 +295,9 @@ class TestMigrationPhaseMapping(IntegrationTestCase):
 			},
 		)
 		self.assertEqual(phase, "cleanup-source")
-		# NBD_PORT is UUID-derived and dropped; nbd_pid is reaped and KEEP_ADDRESS="1"
-		# maps to Boat's keep_address bool that SUPPRESSES the ingress teardown, so a
-		# keep-address migration over Boat no longer black-holes its own forward.
-		self.assertEqual(params, {"nbd_pid": 424242, "keep_address": True})
-
-	def test_cleanup_source_keep_address_zero_maps_to_false(self) -> None:
-		# The change-address path (KEEP_ADDRESS="0", or absent) tears the ingress down.
-		_phase, params = self._build(
-			"migration-cleanup-source",
-			{"VIRTUAL_MACHINE_NAME": UUID, "NBD_PID": "1", "KEEP_ADDRESS": "0"},
-		)
-		self.assertEqual(params, {"nbd_pid": 1, "keep_address": False})
-
-	def test_source_autostart_disabled_is_the_pending_default(self) -> None:
-		# What Pending sends: ENABLED="0" takes the source unit out of multi-user.target
-		# so it stays Stopped across a host reboot (spec/24 §3). The string maps to the
-		# `enabled` bool; VIRTUAL_MACHINE_NAME (the path) is dropped.
-		phase, params = self._build(
-			"migration-source-autostart",
-			{"VIRTUAL_MACHINE_NAME": UUID, "ENABLED": "0"},
-		)
-		self.assertEqual(phase, "source-autostart")
-		self.assertEqual(params, {"enabled": False})
-
-	def test_source_autostart_enabled_one_restores_the_unit(self) -> None:
-		# The inverse an abandoned migration runs so the resurrected source survives its
-		# host's next reboot: ENABLED="1" maps to `enabled` True.
-		_phase, params = self._build(
-			"migration-source-autostart",
-			{"VIRTUAL_MACHINE_NAME": UUID, "ENABLED": "1"},
-		)
-		self.assertEqual(params, {"enabled": True})
+		# NBD_PORT is UUID-derived; KEEP_ADDRESS has no Boat field yet (TODO(item9-live)
+		# in the mapping) — only nbd_pid crosses the wire.
+		self.assertEqual(params, {"nbd_pid": 424242})
 
 	def test_poll_hydration_is_special_cased_out_of_the_phase_map(self) -> None:
 		# The Hydrating poll is a GET with no operation record, not a mutating POST.
@@ -474,92 +444,3 @@ class TestRunMigrationPhaseOverBoat(IntegrationTestCase):
 		client.get_migration_hydration.assert_called_once_with(
 			self.vm.name, clone_device="atlas-base-bench-16-clone"
 		)
-
-
-class TestOutOfBandMigrationVerbsDriveBoat(IntegrationTestCase):
-	"""The two migration verbs that run OUTSIDE the self-driving phase machine —
-	_disable_source_autostart (Pending) and collapse_forward's forward-down
-	(operator-initiated) — moved off SSH onto run_boat_migration_phase (item 9).
-	These are the transport proof the mapping tests above cannot give: each now
-	reaches Boat, and neither reaches run_task."""
-
-	def setUp(self) -> None:
-		provider = fixtures.make_provider("boat-oob-provider")
-		self.source = fixtures.make_server(
-			provider,
-			"boat-oob-source",
-			ipv4_address="198.51.100.7",
-			ipv6_address="2001:db8:7::1",
-			ipv6_prefix="2001:db8:7::/64",
-			ipv6_virtual_machine_range="2001:db8:7::/124",
-			status="Active",
-		)
-		self.target = fixtures.make_server(
-			provider,
-			"boat-oob-target",
-			ipv4_address="198.51.100.8",
-			ipv6_address="2001:db8:8::1",
-			ipv6_prefix="2001:db8:8::/64",
-			ipv6_virtual_machine_range="2001:db8:8::/124",
-			status="Active",
-		)
-		self.image = fixtures.make_image("boat-oob-image")
-		for name in frappe.get_all("Virtual Machine", pluck="name"):
-			frappe.delete_doc("Virtual Machine", name, force=1, ignore_permissions=True)
-
-	def test_disable_source_autostart_posts_the_source_autostart_phase(self) -> None:
-		vm = fixtures.make_virtual_machine(self.source.name, self.image.name)
-		doc = SimpleNamespace(source_server=self.source.name, virtual_machine=vm.name)
-		client = MagicMock()
-		client.migrate.return_value = {"status": "Success", "exit_code": 0, "output": "ok\n"}
-		with (
-			patch.object(BoatClient, "for_server", return_value=client),
-			# The whole point of the move: it must NOT fall back to run_task.
-			patch.object(
-				migration_module, "run_task", side_effect=AssertionError("must not touch run_task")
-			),
-		):
-			migration_module._disable_source_autostart(doc)
-
-		# Reached Boat's migrate RPC as the source-autostart phase, disabling the unit
-		# (ENABLED="0" -> enabled False); the Task name is the replay key.
-		self.assertEqual(client.migrate.call_args.args, (vm.name, "source-autostart"))
-		self.assertEqual(client.migrate.call_args.kwargs["params"], {"enabled": False})
-
-	def test_collapse_forward_drives_forward_down_over_boat_not_run_task(self) -> None:
-		# A VM as it looks after a keep-address migration: living on the target, still
-		# on its source-range /128, forwarded from the source. Stopped so the collapse's
-		# converge-the-disk stop is a no-op and this stays a pure transport proof.
-		vm = fixtures.make_virtual_machine(self.target.name, self.image.name, status="Stopped")
-		vm.flags.migrating = True
-		vm.ipv6_address = "2001:db8:7::5"
-		vm.traffic_forwarded_from = self.source.name
-		vm.traffic_forwarded_since = frappe.utils.now_datetime()
-		vm.save(ignore_permissions=True)
-
-		boat_calls: list = []
-		task_calls: list = []
-
-		def _boat_spy(*, script, variables, server, virtual_machine, timeout_seconds):
-			boat_calls.append((script, variables.get("ROLE"), server))
-			return fake_task(stdout="ok")
-
-		def _task_spy(*, script, variables, server, virtual_machine, timeout_seconds):
-			task_calls.append(script)
-			return fake_task(stdout="ok")
-
-		from atlas.atlas import proxy as proxy_module
-
-		with (
-			patch.object(migration_module, "run_boat_migration_phase", side_effect=_boat_spy),
-			patch.object(migration_module, "run_task", side_effect=_task_spy),
-			patch.object(proxy_module, "reconcile_proxies", return_value=[]),
-		):
-			vm.collapse_forward()
-
-		# Both ends of the forward-down went over Boat's phase transport…
-		self.assertIn(("migration-forward-down", "target", self.target.name), boat_calls)
-		self.assertIn(("migration-forward-down", "source", self.source.name), boat_calls)
-		# …and run_task saw only the cutover re-provision, never forward-down.
-		self.assertIn("provision-vm", task_calls)
-		self.assertNotIn("migration-forward-down", task_calls)

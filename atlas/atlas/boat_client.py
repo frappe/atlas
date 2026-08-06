@@ -962,9 +962,8 @@ def _target_receive_params(variables: dict) -> dict:
 
 def _forward_down_params(variables: dict) -> dict:
 	# DEASSERT_PROXY_NDP is likewise unconditional in Boat's forward-down, so only
-	# the role and the /128 are sent. Driven by migration.collapse_forward through
-	# run_boat_migration_phase (the operator-initiated teardown, outside the phase
-	# machine), not _run_phase_task's self-driving saga.
+	# the role and the /128 are sent. (forward-down stays controller-side over SSH in
+	# migration.collapse_forward today; this entry is the catalog for symmetry.)
 	return {"role": variables["ROLE"], "virtual_machine_ipv6": variables["VIRTUAL_MACHINE_IPV6"]}
 
 
@@ -974,40 +973,26 @@ def _withdraw_private_params(variables: dict) -> dict:
 	return {"private_address": variables.get("PRIVATE_ADDRESS", "")}
 
 
-def _source_autostart_params(variables: dict) -> dict:
-	# Whether the source VM's systemd unit starts itself on the next host reboot.
-	# ENABLED="0" (what Pending sends) takes the unit out of multi-user.target so the
-	# source stays Stopped from Pending until Cleanup — a plain `systemctl stop` does
-	# not survive a host reboot, which cold-booted a second live copy of the guest
-	# (spec/24 §3). Boat's MigrateRequest carries an `enabled` bool; the Atlas variable
-	# is the string "1"/"0", so it is mapped to the boolean here. VIRTUAL_MACHINE_NAME
-	# is the uuid the path already names, so it is dropped.
-	return {"enabled": variables.get("ENABLED") == "1"}
-
-
 def _cleanup_source_params(variables: dict) -> dict:
-	# nbd_pid is the qemu-nbd Boat must reap (NBD_PORT is UUID-derived and dropped).
-	# keep_address carries the ingress-teardown suppression the keep-address path needs:
-	# Atlas passes KEEP_ADDRESS=1 so Boat's cleanup-source LEAVES the proxy-NDP entry and
-	# the nft forward rules migration-source-forward installed, instead of running the
-	# full vm-network-down that would delete them and black-hole the migrated tenant's
-	# public ingress (spec/33 §8). Boat's MigrateRequest carries a `keep_address` bool;
-	# the Atlas variable is the string "1"/"0", so it is mapped to the boolean here.
-	return {
-		"nbd_pid": int(variables.get("NBD_PID") or 0),
-		"keep_address": variables.get("KEEP_ADDRESS") == "1",
-	}
+	# TODO(item9-live): KEEP_ADDRESS has no field on Boat's MigrateRequest /
+	# CleanupSourceParams (cleanup_source.go carries only NBDPID). On the keep-address
+	# path Atlas passes KEEP_ADDRESS=1 to SUPPRESS the ingress teardown — the M1 fix:
+	# CleanupSource runs vm-network-down, which deletes the proxy-NDP entry and the nft
+	# forward rules migration-source-forward installed, black-holing the migrated
+	# tenant's public ingress. Boat's cleanup-source cannot yet honour that suppression,
+	# so a keep-address migration driven over Boat would tear down its own forward. This
+	# gap MUST be closed by the live migration (a keep_address field on the phase, or a
+	# split verb) before the keep-address path runs on a real Boat host. NBD_PORT is
+	# UUID-derived and dropped; nbd_pid is the one thing Boat still needs.
+	return {"nbd_pid": int(variables.get("NBD_PID") or 0)}
 
 
 # Atlas migration verb -> (Boat phase string, `variables -> body params` builder).
-# The 13 mutating phases Boat's MigrateVirtualMachine serves (api/migration.go); the
+# The 12 mutating phases Boat's MigrateVirtualMachine serves (api/migration.go); the
 # poll-only Hydrating phase is MIGRATION_POLL_HYDRATION above. A verb not in this map
 # raises rather than appearing to have run — the migration analogue of `_run_verb`'s
 # "Boat serves no endpoint" refusal.
 MIGRATION_PHASES = {
-	# Pending: toggle the source unit's reboot-autostart. Driven directly by
-	# _disable_source_autostart (outside the phase machine), not _run_phase_task.
-	"migration-source-autostart": ("source-autostart", _source_autostart_params),
 	"migration-export-source": ("export-source", _export_source_params),
 	"migration-export-base": ("export-base", _export_base_params),
 	"migration-clone-target": ("clone-target", _clone_target_params),

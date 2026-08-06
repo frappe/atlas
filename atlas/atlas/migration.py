@@ -389,13 +389,10 @@ def _disable_source_autostart(doc) -> None:
 	closes the hole, so the spec/24 §3 rollback — "just restarts the intact source VM"
 	— still works: `systemctl start` on a disabled unit starts it. Idempotent.
 
-	Driven over Boat via run_boat_migration_phase DIRECTLY, not through the phase
-	machine's _run_phase_task (item 9): it runs in Pending, before the self-driving
-	saga, so it wants neither the lost-task detection nor the phase bookkeeping — the
-	same reason it called run_task directly before the cutover. Boat's source-autostart
-	migrate phase toggles the unit's WantedBy symlink; ENABLED="0" maps to its `enabled`
-	bool false (disable)."""
-	run_boat_migration_phase(
+	Stays on SSH via run_task DIRECTLY, not the Boat phase transport (item 9): Boat has
+	no migrate RPC for the unit-autostart toggle, so this is one of the two migration
+	verbs that remain controller-side over SSH."""
+	run_task(
 		server=doc.source_server,
 		script="migration-source-autostart",
 		variables={"VIRTUAL_MACHINE_NAME": doc.virtual_machine, "ENABLED": "0"},
@@ -1211,7 +1208,7 @@ def collapse_forward(vm) -> None:
 	old_ipv6 = vm.ipv6_address
 
 	# 1a. Target end (the VM's current host): remove the return-route policy.
-	run_boat_migration_phase(
+	run_task(
 		server=vm.server,
 		script="migration-forward-down",
 		variables={
@@ -1229,7 +1226,7 @@ def collapse_forward(vm) -> None:
 	#     Deassert proxy-NDP for EVERY provider (mirror of the unconditional re-assert
 	#     in _install_forward_routes) — the source answered NDP for the /128 while
 	#     forwarding, so collapse must stop it on all providers, not just DigitalOcean.
-	run_boat_migration_phase(
+	run_task(
 		server=source_server,
 		script="migration-forward-down",
 		variables={
@@ -1326,11 +1323,10 @@ def _run_phase_task(doc, *, server: str, script: str, variables: dict, timeout_s
 	scans for a prior Running/Pending Task of the same script that blew its timeout and
 	re-enters transparently (recorded, never a silent duplicate).
 
-	Only the self-driving saga's phases route here. Three Boat-driven steps run OUTSIDE
-	this — source-autostart (_disable_source_autostart, Pending) and forward-down
-	(collapse_forward, operator-initiated) call run_boat_migration_phase directly, and
-	the provision-vm boot at cutover is a lifecycle op (run_task), not a saga phase — so
-	none wants the lost-task detection this adds."""
+	Only the migration phases route here. The two migration verbs Boat has no migrate
+	RPC for stay on SSH and call run_task directly, NOT through this: source-autostart
+	(_disable_source_autostart) and the provision-vm boot at cutover (which is a
+	lifecycle op, not a saga phase)."""
 	_detect_lost_task(doc, script, timeout_seconds)
 	return run_boat_migration_phase(
 		server=server,

@@ -42,8 +42,8 @@ Docker has no analog for these VM-native verbs:
 |---|---|---|
 | `VM.rebuild` | `rebuild-vm.py` | Replace a Stopped VM's disk from a base image or snapshot, keeping identity (IP, host keys) |
 | `VM.regenerate_host_keys` | `regenerate-host-keys-vm.py` | Rotate SSH host keys |
-| `VM.migrate` | Boat migrate-phase RPCs (`run_boat_migration_phase`) | Live-migrate the disk to another host, keeping the /128 address (see §5) |
-| `VM.collapse_forward` | Boat `forward-down` migrate phase | Abort a keep-address migration, fall back to change-address |
+| `VM.migrate` | `migration-*.py` (13 scripts) | Live-migrate the disk to another host, keeping the /128 address (see §5) |
+| `VM.collapse_forward` | `migration-forward-down.py` | Abort a keep-address migration, fall back to change-address |
 
 ---
 

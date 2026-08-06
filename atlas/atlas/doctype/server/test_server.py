@@ -274,7 +274,7 @@ class TestServerBootstrap(IntegrationTestCase):
 		destinations = {dest for _src, dest in self.server._script_uploads()}
 		# host_task_scripts() yields VERBS; the FILE (verb→file_for, keeping its
 		# .py/.sh suffix on the host disk) is what ships.
-		for file_name in ("start-vm.py", "stop-vm.py", "resize-vm.py", "terminate-vm.py"):
+		for file_name in ("provision-vm.py", "start-vm.py", "stop-vm.py", "snapshot-stop-vm.py"):
 			self.assertIn(f"/var/lib/atlas/bin/{file_name}", destinations)
 		# The durable set covers every host SSH Task entry point.
 		for verb in scripts_catalog.host_task_scripts():
@@ -294,7 +294,7 @@ class TestServerBootstrap(IntegrationTestCase):
 	def test_bootstrap_parses_result_line(self) -> None:
 		from atlas.atlas.doctype.server import server as server_module
 
-		# `boat bootstrap` emits one ATLAS_RESULT=<json> line amid trace noise;
+		# bootstrap-server.py emits one ATLAS_RESULT=<json> line amid trace noise;
 		# the controller parses that, not a bare trailing JSON line.
 		stdout = (
 			"+ some bash trace\n"
