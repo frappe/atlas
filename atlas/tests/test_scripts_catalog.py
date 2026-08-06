@@ -46,9 +46,10 @@ class TestScriptsCatalog(unittest.TestCase):
 		self.assertIn("reboot-server", allowed)
 
 	def test_allowed_excludes_systemd_hooks(self) -> None:
-		# vm-disk-up / vm-network-up / vm-network-down / vm-restore live in scripts/
-		# but are systemd-invoked (positional uuid), not Task-runnable — they must
-		# never appear in the runner's allowlist.
+		# The SYSTEMD_HOOKS verbs (atlas-wake-trap, a daemon) live in scripts/ but are
+		# systemd-invoked, not Task-runnable, so they must never appear in the runner's
+		# allowlist. (The per-VM vm-* hooks moved to `boat vm-*` verbs and own no file,
+		# so they are no longer in this set at all.)
 		allowed = set(scripts_catalog.allowed_scripts())
 		for hook in scripts_catalog.SYSTEMD_HOOKS:
 			self.assertNotIn(hook, allowed)

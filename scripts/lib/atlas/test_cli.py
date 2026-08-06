@@ -6,8 +6,8 @@ no site, no host. These pin the dispatcher's contract:
   - `atlas <stem> <flags>` parses to the IDENTICAL typed inputs object as calling
     that entry's own from_args — i.e. the CLI is a pure pass-through, no argv
     mangling (the headline Phase-A guarantee).
-  - the four systemd hooks are excluded by construction (they have no command /
-    no TaskInputs and must never be hand-runnable as a Task).
+  - the four per-VM firecracker-vm@ hooks are never CLI stems — they are `boat
+    vm-*` verbs with no .py in scripts/, so they cannot be hand-run as a Task.
   - an unknown command and bare `atlas` exit non-zero with usage.
 """
 
@@ -22,9 +22,11 @@ from atlas._task import TaskInputs
 
 class TestStemDiscovery(unittest.TestCase):
 	def test_excludes_systemd_hooks(self):
+		# The per-VM firecracker-vm@ hooks are `boat vm-*` verbs with no .py in
+		# scripts/, so they must never surface as an `atlas <verb>` stem.
 		stems = _cli._stems()
 		for hook in ("vm-disk-up", "vm-network-up", "vm-network-down", "vm-restore"):
-			self.assertNotIn(hook, stems, f"{hook} is a positional-uuid hook, not a Task")
+			self.assertNotIn(hook, stems, f"{hook} is a boat unit hook, not a Task")
 
 	def test_includes_typed_tasks(self):
 		stems = _cli._stems()

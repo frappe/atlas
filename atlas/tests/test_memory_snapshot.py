@@ -39,9 +39,12 @@ class TestMemorySnapshotWiring(unittest.TestCase):
 	def test_restore_hook_is_not_a_task(self) -> None:
 		from atlas.atlas import scripts_catalog
 
-		# SYSTEMD_HOOKS / allowed_scripts() speak VERBS (suffix-less).
-		self.assertIn("vm-restore", scripts_catalog.SYSTEMD_HOOKS)
+		# vm-restore is a `boat vm-restore` unit hook (ExecStartPost), never a Task:
+		# it owns no file in scripts/ and is deliberately in NO catalog set — not
+		# SYSTEMD_HOOKS, and (unlike a ported Task verb) not BOAT_ONLY_VERBS, which
+		# allowed_scripts() would admit to the run-task gate.
 		self.assertNotIn("vm-restore", scripts_catalog.allowed_scripts())
+		self.assertNotIn("vm-restore", scripts_catalog.BOAT_ONLY_VERBS)
 		# The fast stop IS a Task (the controller invokes it), but not one the
 		# Run Task picker should offer.
 		self.assertIn("snapshot-stop-vm", scripts_catalog.allowed_scripts())

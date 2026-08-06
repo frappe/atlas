@@ -115,17 +115,18 @@ def _search_paths() -> list[Path]:
 _TASK_SUFFIXES: frozenset[str] = frozenset({".py", ".sh"})
 
 
-# Systemd-invoked scripts live in scripts/ but are NOT Task-runnable: the per-VM
-# hooks take a positional VM uuid (passed by the unit's ExecStartPre/ExecStopPost as
-# `%i`), and atlas-wake-trap is an always-on daemon (no args) — neither speaks the
-# --flag CLI contract a Task uses, and all import the durable package. Excluded from
-# the catalog (by verb) so the runner never executes them as a Task.
+# Systemd-invoked scripts that live in scripts/ but are NOT Task-runnable.
+# atlas-wake-trap.py is an always-on daemon (no args): it does not speak the --flag
+# CLI contract a Task uses and imports the durable package, so it is excluded from
+# the catalog (by verb) and the runner never executes it as a Task.
+#
+# The per-VM firecracker-vm@ hooks (vm-disk-up / vm-network-up / vm-restore /
+# vm-network-down) used to be listed here too — they were positional-uuid .py files
+# the unit ran by path. They are `/usr/local/bin/boat vm-* %i` verbs now, own no
+# file in scripts/, and are invoked by the unit rather than the run-task gate, so
+# there is nothing left to exclude for them (they never appear as a verb at all).
 SYSTEMD_HOOKS: frozenset[str] = frozenset(
 	{
-		"vm-disk-up",
-		"vm-network-up",
-		"vm-network-down",
-		"vm-restore",
 		"atlas-wake-trap",
 	}
 )
@@ -232,8 +233,12 @@ def kind(verb: str) -> str:
 #   - the CONTROLLER_ONLY verbs. `issue-cert`, `tunnel-*` and `mgmt-firewall-*`
 #     run on the Atlas controller through run_local_task, not on a Server host,
 #     and the controller is not a Boat host.
-#   - the SYSTEMD_HOOKS. Those are invoked by the per-VM unit with `%i`, never
-#     as a Task, so their cutover is in the unit template rather than here.
+#   - the per-VM firecracker-vm@ hooks (`vm-disk-up` / `vm-network-up` /
+#     `vm-restore` / `vm-network-down`). The unit invokes each as
+#     `/usr/local/bin/boat vm-* %i`, never as a Task, so their cutover is in the
+#     unit template rather than here — they own no catalog entry at all. The
+#     remaining SYSTEMD_HOOKS verb, atlas-wake-trap, is a daemon kept out of the
+#     run-task gate the same way.
 #   - the `migration-*` verbs. Boat serves all of those over the daemon's phase
 #     RPCs (run_boat_migration_phase), so routing them is a change to migration.py's
 #     transport, not the first word — none is a `boat <verb>` and none keeps a .py.
