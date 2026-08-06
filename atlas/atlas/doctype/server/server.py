@@ -1,5 +1,6 @@
 import hashlib
 import json
+import secrets
 import shlex
 import uuid
 from contextlib import contextmanager
@@ -75,6 +76,15 @@ BOAT_ARTIFACTS: list[tuple[str, str]] = [
 	("systemd/boat-networkd.service", f"{BOAT_STAGING_DIRECTORY}/boat-networkd.service"),
 ]
 
+# Where the daemon reads its bearer token, and the token's lifetimes (spec/33 §12).
+# The daemon serves a minted token until BOAT_TOKEN_TTL_DAYS past minting and
+# refuses it after (fail-closed); Atlas re-mints within BOAT_TOKEN_REMINT_WITHIN_DAYS
+# of that on every bootstrap/upgrade, so a reachable host is always handed a fresh
+# token well before the hard expiry — and a leaked-but-unrotated one is still bounded.
+BOAT_TOKEN_PATH = "/etc/boat/token"
+BOAT_TOKEN_TTL_DAYS = 30
+BOAT_TOKEN_REMINT_WITHIN_DAYS = 7
+
 
 def boat_distribution() -> Path:
 	"""The boat checkout (or unpacked release) on the CONTROLLER that bootstrap
@@ -105,6 +115,8 @@ class Server(Document):
 		from frappe.types import DF
 
 		architecture: DF.Data | None
+		boat_token: DF.Password | None
+		boat_token_expires_at: DF.Datetime | None
 		cli_ready: DF.Check
 		firecracker_version: DF.Data | None
 		image: DF.Link | None
@@ -699,6 +711,10 @@ class Server(Document):
 			for description, command in steps:
 				self._boat_ssh(connection, key_path, description, command)
 			self._verify_boat_binary(connection, key_path, digest)
+			# The bearer token last: it is a per-host secret, minted here and written
+			# to /etc/boat/token, not one of the four static artifacts the tar stream
+			# carried. _start_boat's restart reads it.
+			self._install_boat_token(connection, key_path)
 
 	def _staged_boat_digest(self) -> str:
 		"""SHA-256 of the boat binary this bootstrap is shipping, read on the
@@ -730,6 +746,62 @@ class Server(Document):
 		if not version:
 			frappe.throw(f"`boat version` on {self.name} printed nothing; the binary is not usable")
 		self.observed_boat_version = version
+
+	def mint_boat_token(self) -> str:
+		"""Mint this host's bearer token and stamp its hard expiry (spec/33 §12).
+
+		Short-lived and per-host. The token is stored ENCRYPTED — a Password field, so
+		it lives in __Auth and never in the row or a log — and returned so the caller
+		installs the exact value without re-reading it. The expiry is the hard one the
+		daemon enforces; the re-mint window (below) means a reachable host is handed a
+		fresh token well before it and never reaches it.
+
+		Written with set_encrypted_password + db_set rather than a full self.save():
+		this runs mid-bootstrap/upgrade, and re-running every validate/before_save hook
+		to stamp one credential is both needless and a way to trip a half-built doc."""
+		from frappe.utils.password import set_encrypted_password
+
+		token = secrets.token_urlsafe(32)
+		set_encrypted_password(self.doctype, self.name, token, "boat_token")
+		self.db_set(
+			"boat_token_expires_at",
+			frappe.utils.add_to_date(frappe.utils.now_datetime(), days=BOAT_TOKEN_TTL_DAYS),
+		)
+		return token
+
+	def _current_or_minted_boat_token(self) -> str:
+		"""The stored token if it is present and not yet within the re-mint window of
+		its hard expiry, else a freshly minted one. Re-minting early is what keeps a
+		reachable host from ever reaching the hard expiry the daemon fails closed on."""
+		token = self.get_password("boat_token", raise_exception=False)
+		expires = self.boat_token_expires_at
+		if token and expires:
+			remaining = frappe.utils.get_datetime(expires) - frappe.utils.now_datetime()
+			if remaining.days > BOAT_TOKEN_REMINT_WITHIN_DAYS:
+				return token
+		return self.mint_boat_token()
+
+	def _install_boat_token(self, connection, key_path) -> None:
+		"""Write this host's bearer token to /etc/boat/token, minting or rotating it
+		first. The file is the JSON form Boat reads — the token and the hard expiry it
+		enforces — installed 0640 root:boat so the daemon user reads it and nobody
+		else. The secret is piped on stdin, never argv (§12). _start_boat's restart
+		reads it fresh; a rotation with no restart is this same write followed by
+		`systemctl reload boat` (the daemon reloads the token on SIGHUP)."""
+		token = self._current_or_minted_boat_token()
+		payload = json.dumps(
+			{
+				"token": token,
+				"hard_expires_at": frappe.utils.get_datetime(self.boat_token_expires_at).isoformat(),
+			}
+		)
+		self._boat_ssh(
+			connection,
+			key_path,
+			"installing the boat token",
+			f"sudo install -D -m 0640 -o root -g boat /dev/stdin {BOAT_TOKEN_PATH}",
+			stdin=payload,
+		)
 
 	def _start_boat(self, connection) -> None:
 		"""Enable and (re)start boat.service — after the `boat bootstrap` Task.
@@ -764,10 +836,17 @@ class Server(Document):
 				connection, key_path, "boat.service did not stay up", "sudo systemctl is-active boat.service"
 			)
 
-	def _boat_ssh(self, connection, key_path, description: str, command: str) -> str:
+	def _boat_ssh(
+		self, connection, key_path, description: str, command: str, stdin: str | None = None
+	) -> str:
 		"""One step of the boat install, failing loud and naming which step. Every
-		step is a precondition of the ones after it, so none may be logged past."""
-		stdout, stderr, exit_code = run_ssh(connection, key_path, command, timeout_seconds=120)
+		step is a precondition of the ones after it, so none may be logged past.
+
+		`stdin`, when given, is piped to the remote command instead of placed in its
+		argv — the token install uses it so the secret never appears in a process
+		list, in the command string, or in this method's error text (§12; `install`
+		reads /dev/stdin and echoes nothing, so stderr/stdout stay secret-free)."""
+		stdout, stderr, exit_code = run_ssh(connection, key_path, command, timeout_seconds=120, stdin=stdin)
 		if exit_code != 0:
 			frappe.throw(
 				f"boat install on {self.name}: {description} failed "
