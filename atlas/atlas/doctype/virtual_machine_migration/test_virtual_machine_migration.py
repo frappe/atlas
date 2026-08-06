@@ -619,7 +619,11 @@ class TestMigrationPhaseMachine(IntegrationTestCase):
 			calls.append((script, server, dict(variables)))
 			return fake_task(stdout="ok")
 
-		with patch.object(migration_module, "run_task", side_effect=_fake_run_task):
+		# source-autostart now runs over Boat (item 9), directly through
+		# run_boat_migration_phase rather than the phase machine — patch that entry
+		# point. (vm.stop() takes the guest down through the VM module's own transport,
+		# not migration_module's, so it never reaches this fake.)
+		with patch.object(migration_module, "run_boat_migration_phase", side_effect=_fake_run_task):
 			row.reload()
 			migration_module.advance_migration(row)
 
@@ -1190,7 +1194,12 @@ class TestLocalBaseImageShip(IntegrationTestCase):
 				return fake_task(stdout='ATLAS_RESULT={"hydration_percent": 100}')
 			return fake_task(stdout="ok")
 
-		with patch.object(migration_module, "run_task", side_effect=_fake_run_task):
+		with (
+			patch.object(migration_module, "run_task", side_effect=_fake_run_task),
+			# Pending's source-autostart and the saga phases both run over Boat (item 9),
+			# so stub that entry point too — Pending reaches it before any progress line.
+			patch.object(migration_module, "run_boat_migration_phase", side_effect=_fake_run_task),
+		):
 			# Pending → the line names the source and the stop.
 			migration_module.advance_migration(row)
 			row.reload()

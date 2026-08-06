@@ -974,6 +974,17 @@ def _withdraw_private_params(variables: dict) -> dict:
 	return {"private_address": variables.get("PRIVATE_ADDRESS", "")}
 
 
+def _source_autostart_params(variables: dict) -> dict:
+	# Whether the source VM's systemd unit starts itself on the next host reboot.
+	# ENABLED="0" (what Pending sends) takes the unit out of multi-user.target so the
+	# source stays Stopped from Pending until Cleanup — a plain `systemctl stop` does
+	# not survive a host reboot, which cold-booted a second live copy of the guest
+	# (spec/24 §3). Boat's MigrateRequest carries an `enabled` bool; the Atlas variable
+	# is the string "1"/"0", so it is mapped to the boolean here. VIRTUAL_MACHINE_NAME
+	# is the uuid the path already names, so it is dropped.
+	return {"enabled": variables.get("ENABLED") == "1"}
+
+
 def _cleanup_source_params(variables: dict) -> dict:
 	# nbd_pid is the qemu-nbd Boat must reap (NBD_PORT is UUID-derived and dropped).
 	# keep_address carries the ingress-teardown suppression the keep-address path needs:
@@ -989,11 +1000,14 @@ def _cleanup_source_params(variables: dict) -> dict:
 
 
 # Atlas migration verb -> (Boat phase string, `variables -> body params` builder).
-# The 12 mutating phases Boat's MigrateVirtualMachine serves (api/migration.go); the
+# The 13 mutating phases Boat's MigrateVirtualMachine serves (api/migration.go); the
 # poll-only Hydrating phase is MIGRATION_POLL_HYDRATION above. A verb not in this map
 # raises rather than appearing to have run — the migration analogue of `_run_verb`'s
 # "Boat serves no endpoint" refusal.
 MIGRATION_PHASES = {
+	# Pending: toggle the source unit's reboot-autostart. Driven directly by
+	# _disable_source_autostart (outside the phase machine), not _run_phase_task.
+	"migration-source-autostart": ("source-autostart", _source_autostart_params),
 	"migration-export-source": ("export-source", _export_source_params),
 	"migration-export-base": ("export-base", _export_base_params),
 	"migration-clone-target": ("clone-target", _clone_target_params),
