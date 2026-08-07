@@ -825,14 +825,15 @@ class Server(Document):
 	def _install_datum_tokens(self, connection, key_path) -> None:
 		"""Ship this host's datum token bundle and the drop-in that points boat at datum.
 		A no-op when metrics export is not configured (no atlas_datum_url), so a fleet that
-		has not turned datum on installs nothing. The bundle carries a token per VM this host
-		holds; the secret travels on stdin, never argv, like the bearer token."""
+		has not turned datum on installs nothing. The bundle is a single fleet token (resource_id="boat")
+		with an empty VM map — host and VMs both report under it, told apart by server=/vm= labels; a
+		static `atlas_datum_token` from site config is used when present, else a token is minted. The
+		secret travels on stdin, never argv."""
 		if not frappe.conf.get("atlas_datum_url"):
 			return
 		from atlas.atlas import datum_token
 
-		vm_names = frappe.get_all("Virtual Machine", filters={"server": self.name}, pluck="name")
-		payload = datum_token.token_file_json(self.name, vm_names)
+		payload = datum_token.single_token_file_json()
 		self._boat_ssh(
 			connection,
 			key_path,
@@ -852,7 +853,7 @@ class Server(Document):
 	@frappe.whitelist()
 	def refresh_datum_tokens(self) -> None:
 		"""Re-mint and re-ship this host's datum bundle, then SIGHUP boat so it picks up the
-		new tokens without a restart. This is the rotation + VM-churn path; bootstrap already
+		new tokens without a restart. This is the token-rotation path; bootstrap already
 		installs the first bundle. A no-op on a Fake server or when datum is not configured."""
 		if is_fake_server(self.name) or not frappe.conf.get("atlas_datum_url"):
 			return
