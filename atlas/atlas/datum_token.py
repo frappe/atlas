@@ -74,6 +74,41 @@ def build_bundle(
 	}
 
 
+# The fleet-wide resource_id every host and VM reports under in single-token mode.
+# datum stamps each sample with the token's resource_id, so with one token the host and
+# all VMs share it; per-VM samples are told apart by a vm=<uuid> label, and host samples
+# by a server=<name> label — not by resource_id (see boat internal/metricspush).
+FLEET_RESOURCE_ID = "boat"
+
+
+def fleet_token(ttl_seconds: int = DEFAULT_TTL_SECONDS) -> str:
+	"""The single fleet-wide datum token for single-token (primary) mode. Prefer a static
+	token from site config (`atlas_datum_token`) — required when datum verifies against a key
+	Atlas does not hold, e.g. a remote datum — otherwise mint one for resource_id="boat" with
+	the configured fleet signing key."""
+	import frappe
+
+	static = frappe.conf.get("atlas_datum_token")
+	if static:
+		return static
+	return mint(FLEET_RESOURCE_ID, ttl_seconds)
+
+
+def single_token_bundle(token: str) -> dict:
+	"""The single-token file shape: one fleet token and an empty VM map. Every sample lands
+	under the token's resource_id; per-VM samples are distinguished by a vm=<uuid> label.
+	Pure — no frappe — so it is unit-tested."""
+	return {"host": token, "vms": {}}
+
+
+def single_token_file_json() -> str:
+	"""The exact bytes written to /etc/boat/datum-tokens.json in single-token (primary) mode:
+	the fleet token (static from site config if provided, else minted)."""
+	import json
+
+	return json.dumps(single_token_bundle(fleet_token()))
+
+
 def token_file_json(server_name: str, vm_names: list[str]) -> str:
 	"""The exact bytes written to /etc/boat/datum-tokens.json for one host, signed with the
 	configured fleet key."""
@@ -84,8 +119,9 @@ def token_file_json(server_name: str, vm_names: list[str]) -> str:
 
 
 def refresh_all() -> None:
-	"""Scheduler entry: re-mint and re-ship every Active host's datum token bundle, so token
-	expiry and VM churn are both covered. A no-op when metrics export is not configured."""
+	"""Scheduler entry: re-ship every Active host's single fleet datum token, covering token
+	expiry (a minted token is re-minted each sweep; a static token is simply re-installed). A
+	no-op when metrics export is not configured."""
 	import frappe
 
 	if not frappe.conf.get("atlas_datum_url"):
