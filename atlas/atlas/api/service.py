@@ -225,3 +225,19 @@ def get_image(name: str) -> dict:
 		"is_active": bool(image.is_active),
 		"build_mode": image.build_mode or "",
 	}
+
+
+@frappe.whitelist()
+def publish_snapshot_as_fleet_image(
+	snapshot: str, image_name: str, servers=None, title: str | None = None
+) -> dict:
+	"""Distribute a cold snapshot to the fleet as a base image: squash its rootfs and
+	upload it public-read to S3, mint a NON-LOCAL Virtual Machine Image (a plain S3
+	rootfs url + the source image's inherited kernel), and fan out sync-image to
+	`servers` (a JSON list, or None = every Active server). The service (chef) polls
+	get_image(...).is_active for readiness.
+	Returns {image, rootfs_sha256, kernel_sha256, tasks}."""
+	frappe.only_for("System Manager")
+	from atlas.atlas import fleet_image
+
+	return fleet_image.publish_snapshot_as_fleet_image(snapshot, image_name, servers=servers, title=title)
