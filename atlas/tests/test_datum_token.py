@@ -53,6 +53,16 @@ class TestDatumToken(unittest.TestCase):
 		self.assertEqual(set(bundle["vms"]), {"vm-a", "vm-b"})
 		self.assertEqual(jwt.decode(bundle["vms"]["vm-a"], public_pem, algorithms=["RS256"])["resource_id"], "vm-a")
 
+	def test_single_token_bundle_has_empty_vms(self):
+		module = _load_module()
+		private_pem, public_pem = _keypair()
+		token = module.encode_token("boat", private_pem, key_id="k1")
+		bundle = module.single_token_bundle(token)
+		self.assertEqual(bundle["vms"], {})
+		self.assertEqual(
+			jwt.decode(bundle["host"], public_pem, algorithms=["RS256"])["resource_id"], "boat"
+		)
+
 	def test_wrong_key_is_rejected(self):
 		module = _load_module()
 		private_pem, _ = _keypair()
