@@ -768,6 +768,14 @@ class Server(Document):
 
 		token = secrets.token_urlsafe(32)
 		set_encrypted_password(self.doctype, self.name, token, "boat_token")
+		# Carry the token on the in-memory doc too: `Document._save_passwords`
+		# REMOVES any Password field that is empty at save time, and bootstrap /
+		# upgrade_boat both end with `self.save()` — so a mint that only wrote
+		# __Auth was silently deleted by the very save that closed the operation,
+		# leaving the host's /etc/boat/token the only copy (and the row tokenless
+		# on the next read). Setting the attribute makes the trailing save re-write
+		# the same value (then mask it), keeping row and host in agreement.
+		self.boat_token = token
 		self.db_set(
 			"boat_token_expires_at",
 			frappe.utils.add_to_date(frappe.utils.now_datetime(), days=BOAT_TOKEN_TTL_DAYS),
@@ -797,7 +805,7 @@ class Server(Document):
 		payload = json.dumps(
 			{
 				"token": token,
-				"hard_expires_at": frappe.utils.get_datetime(self.boat_token_expires_at).isoformat(),
+				"hard_expires_at": frappe.utils.get_datetime(self.boat_token_expires_at).astimezone().isoformat(),
 			}
 		)
 		self._boat_ssh(
