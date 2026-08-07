@@ -229,7 +229,7 @@ def get_image(name: str) -> dict:
 
 @frappe.whitelist()
 def publish_snapshot_as_fleet_image(
-	snapshot: str, image_name: str, servers=None, title: str | None = None
+	snapshot: str, image_name: str, servers: list | str | None = None, title: str | None = None
 ) -> dict:
 	"""Distribute a cold snapshot to the fleet as a base image: squash its rootfs and
 	upload it public-read to S3, mint a NON-LOCAL Virtual Machine Image (a plain S3
