@@ -797,7 +797,7 @@ class Server(Document):
 		payload = json.dumps(
 			{
 				"token": token,
-				"hard_expires_at": frappe.utils.get_datetime(self.boat_token_expires_at).isoformat(),
+				"hard_expires_at": frappe.utils.get_datetime(self.boat_token_expires_at).astimezone().isoformat(),
 			}
 		)
 		self._boat_ssh(
