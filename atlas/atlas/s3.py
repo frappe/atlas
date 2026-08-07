@@ -116,6 +116,20 @@ class S3Backup:
 	def presign_get(self, key: str) -> str:
 		return self._presign("get_object", key)
 
+	def make_public(self, key: str) -> None:
+		"""Set an object's ACL to public-read. A base-image artifact (a squashfs
+		rootfs) carries no secret, and a plain unsigned URL is both short enough for
+		the image row's 140-char url field — where a presigned url is not — and
+		non-expiring, so a host that re-syncs the image months later still fetches it."""
+		self._client().put_object_acl(Bucket=self.bucket, Key=key, ACL="public-read")
+
+	def public_url(self, key: str) -> str:
+		"""The plain (unsigned) URL of a public-read object — short and non-expiring,
+		unlike a presigned url. Path-style against the configured endpoint (DO Spaces,
+		MinIO); standard virtual-host S3 when no endpoint is set."""
+		base = (self.endpoint_url or f"https://s3.{self.region}.amazonaws.com").rstrip("/")
+		return f"{base}/{self.bucket}/{key}"
+
 	def delete_prefix(self, snapshot_name: str) -> int:
 		"""Delete every object under a snapshot's prefix; return how many. Used by
 		the snapshot row's on_trash so a deleted backup leaves no paid orphan."""
