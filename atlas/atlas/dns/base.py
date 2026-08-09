@@ -3,8 +3,8 @@ wildcard record that points the regional domain at its proxy fleet.
 
 A `DnsProvider` knows how to prove control of a zone to an ACME server via the
 DNS-01 challenge. For the challenge Atlas never writes TXT records itself; it hands
-certbot the provider's plugin flag (`certbot_authenticator()`) and the vendor
-credentials as env (`credential_env()`), and certbot's DNS plugin does the record
+certbot the provider's plugin args (`certbot_args()`) and the vendor
+credentials (`credential_env()`), and certbot's DNS plugin does the record
 dance. Atlas *does* write the public `*.<domain>` A/AAAA records itself
 (`upsert_wildcard()`), so a client resolving `<sub>.<domain>` reaches the proxy
 fleet — that record is the durable routing entry, not a transient challenge. The
@@ -44,8 +44,8 @@ class DnsProvider(ABC):
 
 	@abstractmethod
 	def authenticate(self) -> AuthResult:
-		"""Verify the credentials can reach the zone (Route 53: GetHostedZone).
-		Backs Route53 Settings' **Test Connection** button."""
+		"""Verify the credentials can reach the zone. Backs each DNS Settings
+		Single's **Test Connection** button."""
 		...
 
 	@abstractmethod
@@ -60,16 +60,19 @@ class DnsProvider(ABC):
 
 	@abstractmethod
 	def credential_env(self) -> dict[str, str]:
-		"""Vendor secrets as the environment certbot's DNS plugin reads (Route 53:
-		`AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`). Merged into the issue-cert
-		subprocess env, never placed in argv (secrets must not show up in `ps`)."""
+		"""Vendor secrets as environment for issue-cert.py / certbot. Merged into
+		the subprocess env, never placed in argv (secrets must not show up in `ps`)."""
 		...
 
 	@abstractmethod
 	def certbot_authenticator(self) -> str:
-		"""The certbot DNS authenticator NAME for this vendor (Route 53: `route53`).
-		The issue-cert script turns it into the plugin flag (`--dns-route53`); the
-		name (never a `--`-prefixed token) is what crosses the typed-CLI boundary,
-		so argparse can't mistake a value for an option. No credentials here — those
-		go through `credential_env()`."""
+		"""Stable authenticator name Atlas passes to the issue-cert task. Built-in
+		Certbot plugins usually map this to `--dns-<name>`; providers with different
+		CLI shapes can override `certbot_args()`."""
 		...
+
+	def certbot_args(self, domain: str) -> list[str]:
+		"""Full certbot authenticator argv for this provider. Credentials themselves
+		still travel through `credential_env()`; args may point certbot at a
+		controller-local credentials file prepared by issue-cert.py."""
+		return [f"--dns-{self.certbot_authenticator()}"]

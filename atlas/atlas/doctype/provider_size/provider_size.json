@@ -11,6 +11,7 @@
   "slug",
   "column_break_header",
   "enabled",
+  "is_default",
   "monthly_cost_usd",
   "section_break_metadata",
   "provider_metadata"
@@ -46,6 +47,14 @@
    "in_list_view": 1,
    "in_standard_filter": 1,
    "label": "Enabled"
+  },
+  {
+   "fieldname": "is_default",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Default",
+   "description": "The size the Provision Server modal prefills. At most one per provider type."
   },
   {
    "fieldname": "monthly_cost_usd",

@@ -1,0 +1,61 @@
+{
+ "actions": [],
+ "creation": "2026-07-18 00:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 0,
+ "engine": "InnoDB",
+ "field_order": [
+  "section_break_connection",
+  "api_url",
+  "api_key",
+  "server_id"
+ ],
+ "fields": [
+  {
+   "fieldname": "section_break_connection",
+   "fieldtype": "Section Break",
+   "label": "Connection"
+  },
+  {
+   "description": "Base URL for the PowerDNS Authoritative HTTP API, without /api/v1.",
+   "fieldname": "api_url",
+   "fieldtype": "Data",
+   "label": "API URL",
+   "reqd": 1
+  },
+  {
+   "description": "PowerDNS api-key value. Sent to the API as X-API-Key.",
+   "fieldname": "api_key",
+   "fieldtype": "Password",
+   "label": "API Key",
+   "reqd": 1
+  },
+  {
+   "default": "localhost",
+   "description": "PowerDNS server_id. Authoritative servers normally use localhost.",
+   "fieldname": "server_id",
+   "fieldtype": "Data",
+   "label": "Server ID"
+  }
+ ],
+ "issingle": 1,
+ "links": [],
+ "modified": "2026-07-18 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Atlas",
+ "name": "PowerDNS Settings",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "read": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}

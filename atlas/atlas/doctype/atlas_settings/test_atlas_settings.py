@@ -16,12 +16,18 @@ import frappe
 from frappe.tests import IntegrationTestCase
 
 from atlas.atlas import atlas_settings
+from atlas.atlas.doctype.atlas_settings.atlas_settings import (
+	get_ancp_operator_private_key,
+	get_ancp_operator_public_key,
+	get_ancp_wg_derivation_secret,
+)
 from atlas.atlas.providers.base import (
 	AuthResult,
 	Capabilities,
 	DiscoveredServer,
 	ImageInfo,
 	ProvisionResult,
+	ReservedIp,
 	SizeInfo,
 )
 from atlas.tests.fixtures import (
@@ -326,6 +332,10 @@ class TestAtlasSettingsEnsureProxy(IntegrationTestCase):
 
 	def setUp(self) -> None:
 		self.settings = frappe.get_single("Atlas Settings")
+		# Root Domain.validate requires the DNS/TLS provider types, now denormalized
+		# from Atlas Settings; pin both so _make_root_domain inserts.
+		frappe.db.set_single_value("Atlas Settings", "dns_provider_type", "Route53")
+		frappe.db.set_single_value("Atlas Settings", "tls_provider_type", "Let's Encrypt")
 
 	def _make_root_domain(self, domain: str, region: str):
 		if frappe.db.exists("Root Domain", domain):
@@ -442,3 +452,262 @@ class TestAtlasSettingsDiscoverServers(IntegrationTestCase):
 		self.assertEqual(imported.status, "Pending")
 		frappe.db.delete("Server", {"title": "import-modeled"})
 		frappe.db.delete("Server", {"provider_resource_id": "srv-new"})
+
+	def _reserved_server(self, title: str, droplet_id: str) -> str:
+		"""A DigitalOcean Server keyed to a vendor droplet id, so a discovered
+		reserved IP's droplet_resource_id maps back to it."""
+		return (
+			frappe.get_doc(
+				{
+					"doctype": "Server",
+					"title": title,
+					"provider_type": "DigitalOcean",
+					"provider_resource_id": droplet_id,
+					"status": "Pending",
+				}
+			)
+			.insert(ignore_permissions=True)
+			.name
+		)
+
+	def test_discover_reserved_ips_maps_server_and_flags_modeled(self) -> None:
+		server = self._reserved_server("rip-disc-srv", "droplet-disc-1")
+		# One already-modeled IP on that server; discover must flag it imported.
+		frappe.get_doc(
+			{
+				"doctype": "Reserved IP",
+				"ip_address": "51.159.10.1",
+				"server": server,
+				"provider_resource_id": "51.159.10.1",
+			}
+		).insert(ignore_permissions=True)
+
+		fake_impl = MagicMock()
+		fake_impl.list_reserved_ips.return_value = (
+			ReservedIp("51.159.10.1", "51.159.10.1", droplet_resource_id="droplet-disc-1"),  # known
+			ReservedIp("51.159.10.2", "51.159.10.2", droplet_resource_id="droplet-disc-1"),  # new, maps
+			ReservedIp("51.159.10.3", "51.159.10.3", droplet_resource_id=None),  # floating
+		)
+		with patch(
+			"atlas.atlas.provisioning.providers.for_provider_type",
+			return_value=fake_impl,
+		):
+			out = self.settings.discover_reserved_ips()
+
+		by_ip = {row["ip_address"]: row for row in out}
+		self.assertTrue(by_ip["51.159.10.1"]["imported"])
+		self.assertEqual(by_ip["51.159.10.2"]["server"], server)
+		self.assertFalse(by_ip["51.159.10.2"]["imported"])
+		self.assertIsNone(by_ip["51.159.10.3"]["server"])  # floating maps to no Server
+		frappe.db.delete("Reserved IP", {"ip_address": "51.159.10.1"})
+		frappe.db.delete("Server", {"name": server})
+
+	def test_import_reserved_ips_maps_server_and_imports_floating_unset(self) -> None:
+		server = self._reserved_server("rip-imp-srv", "droplet-imp-1")
+		frappe.get_doc(
+			{
+				"doctype": "Reserved IP",
+				"ip_address": "51.159.20.1",
+				"server": server,
+				"provider_resource_id": "51.159.20.1",
+			}
+		).insert(ignore_permissions=True)
+
+		fake_impl = MagicMock()
+		fake_impl.list_reserved_ips.return_value = (
+			ReservedIp("51.159.20.1", "51.159.20.1", droplet_resource_id="droplet-imp-1"),  # modeled
+			ReservedIp("51.159.20.2", "51.159.20.2", droplet_resource_id="droplet-imp-1"),  # maps
+			ReservedIp("51.159.20.3", "51.159.20.3", droplet_resource_id=None),  # floating
+		)
+		with patch(
+			"atlas.atlas.provisioning.providers.for_provider_type",
+			return_value=fake_impl,
+		):
+			result = self.settings.import_reserved_ips(
+				json.dumps(["51.159.20.1", "51.159.20.2", "51.159.20.3"])
+			)
+
+		self.assertEqual(result["skipped"], ["51.159.20.1"])
+		self.assertEqual(len(result["imported"]), 2)
+		mapped = frappe.get_doc("Reserved IP", {"ip_address": "51.159.20.2"})
+		self.assertEqual(mapped.server, server)
+		self.assertEqual(mapped.status, "Allocated")
+		floating = frappe.get_doc("Reserved IP", {"ip_address": "51.159.20.3"})
+		self.assertFalse(floating.server)  # floating imports unattached
+		for ip in ("51.159.20.1", "51.159.20.2", "51.159.20.3"):
+			frappe.db.delete("Reserved IP", {"ip_address": ip})
+		frappe.db.delete("Server", {"name": server})
+
+
+class TestAncpOperatorKeypair(IntegrationTestCase):
+	"""Atlas Settings generates an ed25519 operator provision keypair on first
+	save when both halves are empty (spec/31 §19.4 / §19.5 — the §19.5 newcomer
+	introduction trust root). Idempotent — never regenerates an existing pair
+	(rotating the operator key invalidates every existing host's trust anchor)."""
+
+	def setUp(self) -> None:
+		self.settings = frappe.get_single("Atlas Settings")
+
+	def test_first_save_generates_the_keypair(self) -> None:
+		# Pre-clean: clear any prior keypair so we exercise the generate branch.
+		frappe.db.set_single_value("Atlas Settings", "ancp_operator_public_key", "", update_modified=False)
+		frappe.utils.password.set_encrypted_password(
+			"Atlas Settings", "Atlas Settings", "", "ancp_operator_private_key"
+		)
+		# Reload so the in-memory doc reflects the cleared state.
+		self.settings.reload()
+		self.settings.save(ignore_permissions=True)
+		self.settings.reload()
+		pub = (self.settings.ancp_operator_public_key or "").strip()
+		self.assertTrue(pub, "the operator pubkey was generated on first save")
+		self.assertEqual(len(pub), 44)  # base64(32B) + 1 pad char
+
+	def test_setup_generates_the_keypair(self) -> None:
+		"""The bootstrap-driven path (Setup Wizard → atlas.setup.run →
+		AtlasSettings.setup) writes via `set_single_value` which bypasses
+		`validate` — so the `_ensure_ancp_operator_keypair` hook in
+		validate would never fire. The `setup()` method itself calls
+		`ensure_ancp_operator_keypair_in_db()` at the end to close that gap
+		(spec/31 §19.4). Exercise it directly: clear the keypair, run
+		`setup()`, verify the keypair is generated + persisted."""
+		# Pre-clean: clear any prior keypair so we exercise the generate branch.
+		frappe.db.set_single_value("Atlas Settings", "ancp_operator_public_key", "", update_modified=False)
+		frappe.utils.password.set_encrypted_password(
+			"Atlas Settings", "Atlas Settings", "", "ancp_operator_private_key"
+		)
+		self.settings.reload()
+		from atlas.tests.fixtures import _ensure_fake_ssh_key_path
+
+		self.settings.setup(
+			provider_type="Fake",
+			ssh_private_key_path=_ensure_fake_ssh_key_path(),
+			region="blr1",
+		)
+		# Reload: setup() bypasses save(), but the DB now carries the keypair.
+		self.settings.reload()
+		pub = (self.settings.ancp_operator_public_key or "").strip()
+		self.assertTrue(pub, "the operator pubkey was generated on setup() even though validate never ran")
+		self.assertEqual(len(pub), 44)
+		priv = get_ancp_operator_private_key()
+		self.assertTrue(priv, "the operator privkey is also populated via the setup() path")
+		self.assertNotEqual(priv, pub)
+
+	def test_idempotent_existing_keypair_is_not_regenerated(self) -> None:
+		# Ensure a keypair exists from a prior save.
+		self.settings.save(ignore_permissions=True)
+		self.settings.reload()
+		stable_pub = (self.settings.ancp_operator_public_key or "").strip()
+		stable_priv = get_ancp_operator_private_key()
+		self.assertTrue(stable_pub and stable_priv)
+		# Re-save: no regeneration.
+		self.settings.save(ignore_permissions=True)
+		self.settings.reload()
+		self.assertEqual(self.settings.ancp_operator_public_key, stable_pub)
+		self.assertEqual(get_ancp_operator_private_key(), stable_priv)
+
+	def test_get_public_key_returns_empty_when_unset(self) -> None:
+		frappe.db.set_single_value("Atlas Settings", "ancp_operator_public_key", "", update_modified=False)
+		frappe.utils.password.set_encrypted_password(
+			"Atlas Settings", "Atlas Settings", "", "ancp_operator_private_key"
+		)
+		self.assertEqual(get_ancp_operator_public_key(), "")
+		self.assertEqual(get_ancp_operator_private_key(), "")
+
+	def test_generated_keypair_verifies_via_host_lib(self) -> None:
+		"""The generated keypair round-trips ed25519 sign + verify via the
+		host-lib's `sign_introduction` / `verify_introduction` primitives —
+		proving the controller-write's bytes are exactly what the host's
+		`default_envelope_verifier` expects."""
+		import importlib.util
+		from pathlib import Path
+
+		scripts_lib = Path(frappe.get_app_path("atlas")).parent / "scripts" / "lib"
+		signing_path = str(scripts_lib / "atlas" / "networkd" / "signing.py")
+		spec = importlib.util.spec_from_file_location("_host_signing", signing_path)
+		host_signing = importlib.util.module_from_spec(spec)
+		spec.loader.exec_module(host_signing)
+		sign_introduction = host_signing.sign_introduction
+		verify_introduction = host_signing.verify_introduction
+		SignatureError = host_signing.SignatureError
+
+		# Force a fresh generate.
+		frappe.db.set_single_value("Atlas Settings", "ancp_operator_public_key", "", update_modified=False)
+		frappe.utils.password.set_encrypted_password(
+			"Atlas Settings", "Atlas Settings", "", "ancp_operator_private_key"
+		)
+		self.settings.reload()
+		self.settings.save(ignore_permissions=True)
+		self.settings.reload()
+		pub = get_ancp_operator_public_key()
+		priv = get_ancp_operator_private_key()
+		self.assertTrue(pub and priv)
+		body = {"host_id": "Q", "signing_public_key": "KQ", "generation": 1}
+		sig = sign_introduction(body, priv)
+		# Round-trips — must not raise.
+		verify_introduction(body, sig, pub)
+		# Tampered body must fail.
+
+		with self.assertRaises(SignatureError):
+			verify_introduction({**body, "host_id": "attacker"}, sig, pub)
+
+
+class TestAncpWgDerivationSecret(IntegrationTestCase):
+	"""Atlas Settings generates the cluster-wide wg KEY-derivation secret on first
+	save when empty (C1 fix). The secret is HMAC-keyed into
+	`derive_host_wireguard_keypair` so a host's wg PRIVATE key is not recomputable
+	from the public Server UUID. Idempotent — never regenerates an existing secret
+	(rotation re-keys every host's wg identity)."""
+
+	def setUp(self) -> None:
+		self.settings = frappe.get_single("Atlas Settings")
+
+	def _clear_secret(self) -> None:
+		frappe.utils.password.set_encrypted_password(
+			"Atlas Settings", "Atlas Settings", "", "ancp_wg_derivation_secret"
+		)
+
+	def test_first_save_generates_the_secret(self) -> None:
+		self._clear_secret()
+		self.settings.reload()
+		self.settings.save(ignore_permissions=True)
+		secret = get_ancp_wg_derivation_secret()
+		self.assertEqual(len(secret), 32, "the wg derivation secret is 32 raw bytes")
+
+	def test_setup_generates_the_secret(self) -> None:
+		# The bootstrap-driven path bypasses validate; setup() must generate it too.
+		self._clear_secret()
+		self.settings.reload()
+		from atlas.tests.fixtures import _ensure_fake_ssh_key_path
+
+		self.settings.setup(
+			provider_type="Fake",
+			ssh_private_key_path=_ensure_fake_ssh_key_path(),
+			region="blr1",
+		)
+		self.assertEqual(len(get_ancp_wg_derivation_secret()), 32)
+
+	def test_idempotent_existing_secret_is_not_regenerated(self) -> None:
+		self.settings.save(ignore_permissions=True)
+		stable = get_ancp_wg_derivation_secret()
+		self.assertEqual(len(stable), 32)
+		self.settings.save(ignore_permissions=True)
+		self.assertEqual(get_ancp_wg_derivation_secret(), stable)
+
+	def test_get_secret_raises_when_unset(self) -> None:
+		self._clear_secret()
+		with self.assertRaises(frappe.ValidationError):
+			get_ancp_wg_derivation_secret()
+		# Restore for other tests that assume a populated Single.
+		self.settings.reload()
+		self.settings.save(ignore_permissions=True)
+
+	def test_secret_gates_the_derived_wg_key(self) -> None:
+		# The C1 property, end-to-end through the accessor: the same Server UUID under
+		# the real cluster secret vs. an attacker's guessed secret yield different keys.
+		from atlas.atlas.networking import derive_host_wireguard_keypair
+
+		self.settings.save(ignore_permissions=True)
+		uuid_public = "11111111-2222-3333-4444-555555555555"
+		real = derive_host_wireguard_keypair(uuid_public, get_ancp_wg_derivation_secret())
+		attacker = derive_host_wireguard_keypair(uuid_public, b"\x00" * 32)
+		self.assertNotEqual(real, attacker)

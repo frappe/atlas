@@ -12,10 +12,59 @@ frappe.ui.form.on("Atlas Settings", {
 		frappe.atlas.add_action(frm, "Authenticate", () => run_authenticate(frm));
 		frappe.atlas.add_action(frm, "Refresh Catalog", () => run_refresh_catalog(frm));
 		frappe.atlas.add_action(frm, "Discover Servers", () => open_discover_servers_dialog(frm));
+		frappe.atlas.add_action(frm, "Discover Reserved IPs", () =>
+			open_discover_reserved_ips_dialog(frm)
+		);
 		frappe.atlas.add_action(frm, "Bake Golden Image", () => confirm_bake(frm));
 		frappe.atlas.add_action(frm, "Ensure Proxy", () => confirm_ensure_proxy(frm));
+
+		// Fake provider only: populate a clickable demo fleet (catalog, images,
+		// servers, VMs + snapshots) so the lifecycle is explorable with no real cloud.
+		if (frm.doc.provider_type === "Fake") {
+			frappe.atlas.add_action(frm, "Generate Demo Data", () => open_demo_data_dialog(frm));
+		}
 	},
 });
+
+// Generate Demo Data (Fake provider only). Kicks off the background job that
+// stands up the varied demo fleet (atlas.atlas.demo.run) — faked, so no real cloud.
+function open_demo_data_dialog(frm) {
+	const dialog = new frappe.ui.Dialog({
+		title: __("Generate demo data"),
+		fields: [
+			{
+				fieldname: "intro",
+				fieldtype: "HTML",
+				options: `<p class="text-muted">${__(
+					"Stands up a realistic, varied fleet on the Fake provider — Servers across " +
+						"every status, Virtual Machines in every state, snapshots, Reserved IPs, " +
+						"and back-dated Tasks. No real cloud, no SSH. Idempotent: a plain run " +
+						"reuses existing demo rows."
+				)}</p>`,
+			},
+			{
+				fieldname: "reset",
+				label: __("Reset (wipe the Fake fleet and rebuild)"),
+				fieldtype: "Check",
+				default: 0,
+				description: __(
+					"Deletes the existing demo Servers / VMs / snapshots / IPs first. Real DigitalOcean / Scaleway rows are never touched."
+				),
+			},
+		],
+		primary_action_label: __("Generate"),
+		primary_action(values) {
+			dialog.hide();
+			frm.call("generate_demo_data", { reset: values.reset ? 1 : 0 }).then(() => {
+				frappe.show_alert({
+					message: __("Generating demo data; watch the Server / Virtual Machine lists."),
+					indicator: "blue",
+				});
+			});
+		},
+	});
+	dialog.show();
+}
 
 // The desk equivalents of bootstrap's `bake_golden_image` / `ensure_proxy` steps:
 // each acts on the newest Active Server and is billable + multi-minute, so the
@@ -95,16 +144,19 @@ function run_refresh_catalog(frm) {
 
 function open_provision_dialog(frm) {
 	const is_self_managed = frm.doc.provider_type === "Self-Managed";
-	const settings_doctype = `${frm.doc.provider_type} Settings`;
-	// The Fake provider (developer_mode) has no Settings Single; default to no
-	// settings so the dialog still renders. DO/Scaleway/Self-Managed always have one.
-	const settings_promise = frappe.db.exists("DocType", settings_doctype)
-		? frappe.db.get_doc(settings_doctype)
-		: Promise.resolve(null);
-	settings_promise.then((settings) => {
+	// Prefill the Size / Image picks from the Provider Size / Provider Image rows
+	// marked `is_default` for this provider_type (the same default provision_server
+	// falls back to). Self-Managed and Fake have no catalog default — resolve to null.
+	const defaults_promise = is_self_managed
+		? Promise.resolve([null, null])
+		: Promise.all([
+				default_catalog_row("Provider Size", frm.doc.provider_type),
+				default_catalog_row("Provider Image", frm.doc.provider_type),
+		  ]);
+	defaults_promise.then(([default_size, default_image]) => {
 		const dialog = new frappe.ui.Dialog({
 			title: __("Provision Server"),
-			fields: build_provision_fields(frm, settings, is_self_managed),
+			fields: build_provision_fields(frm, { default_size, default_image }, is_self_managed),
 			primary_action_label: __("Provision"),
 			primary_action(values) {
 				if (!validate_server_title(dialog, values.title)) return;
@@ -116,7 +168,14 @@ function open_provision_dialog(frm) {
 	});
 }
 
-function build_provision_fields(frm, settings, is_self_managed) {
+// The `name` of the default catalog row (e.g. "DigitalOcean/s-2vcpu-4gb"), or null.
+function default_catalog_row(doctype, provider_type) {
+	return frappe.db
+		.get_value(doctype, { provider_type, is_default: 1, enabled: 1 }, "name")
+		.then(({ message }) => message?.name || null);
+}
+
+function build_provision_fields(frm, defaults, is_self_managed) {
 	const fields = [
 		{
 			fieldname: "title",
@@ -165,7 +224,7 @@ function build_provision_fields(frm, settings, is_self_managed) {
 				label: __("Size"),
 				fieldtype: "Link",
 				options: "Provider Size",
-				default: settings ? settings.default_size : null,
+				default: defaults.default_size,
 				reqd: 1,
 				get_query: () => ({ filters: link_filters }),
 			},
@@ -174,7 +233,7 @@ function build_provision_fields(frm, settings, is_self_managed) {
 				label: __("Image"),
 				fieldtype: "Link",
 				options: "Provider Image",
-				default: settings ? settings.default_image : null,
+				default: defaults.default_image,
 				reqd: 1,
 				get_query: () => ({ filters: link_filters }),
 			}
@@ -353,6 +412,136 @@ function run_import_servers(frm, resource_ids) {
 			});
 			// Route to the first imported Server form so the operator can Bootstrap it.
 			frappe.set_route("Form", "Server", imported[0].name);
+		}
+	);
+}
+
+// Discover Reserved IPs — the recovery path after the Reserved IP rows are gone
+// (a server reset dropped them). The vendor still holds the IPs; each one's droplet
+// binding maps it back to a Server (auto-resolved server-side). Mirrors Discover
+// Servers: read-only listing → tick → import.
+function open_discover_reserved_ips_dialog(frm) {
+	frappe.show_alert({ message: __("Discovering reserved IPs…"), indicator: "blue" });
+	frm.call("discover_reserved_ips").then(({ message: ips }) => {
+		if (!ips || !ips.length) {
+			frappe.msgprint({
+				title: __("No reserved IPs found"),
+				message: __("The vendor account holds no reserved IPs in this region/zone."),
+				indicator: "orange",
+			});
+			return;
+		}
+		render_discover_reserved_ips_dialog(frm, ips);
+	});
+}
+
+function render_discover_reserved_ips_dialog(frm, ips) {
+	const dialog = new frappe.ui.Dialog({
+		title: __("Reserved IPs at {0}", [frm.doc.provider_type]),
+		size: "large",
+		fields: [
+			{
+				fieldname: "ips_html",
+				fieldtype: "HTML",
+				options: discover_reserved_ips_table_html(ips),
+			},
+			{
+				fieldname: "caveat",
+				fieldtype: "HTML",
+				options: `<div class="text-muted small" style="margin-top: 8px;">${__(
+					"Each IP is mapped to its Server automatically by its droplet binding. " +
+						"A floating IP (attached to no droplet, or one Atlas doesn't model) " +
+						"imports unattached — reassign it to a Server later."
+				)}</div>`,
+			},
+		],
+		primary_action_label: __("Import selected"),
+		primary_action() {
+			const addrs = checked_reserved_ip_addresses(dialog);
+			if (!addrs.length) {
+				frappe.show_alert({
+					message: __("Tick at least one reserved IP to import."),
+					indicator: "orange",
+				});
+				return;
+			}
+			dialog.hide();
+			run_import_reserved_ips(frm, addrs);
+		},
+	});
+	dialog.show();
+}
+
+function discover_reserved_ips_table_html(ips) {
+	const rows = ips
+		.map((ip) => {
+			const addr = frappe.utils.escape_html(ip.ip_address);
+			const server = ip.server
+				? frappe.utils.escape_html(ip.server)
+				: `<span class="text-muted">${__("floating")}</span>`;
+			// Already-modeled IPs render disabled + badged so a re-run can't
+			// double-insert — the same dedup discipline as Discover Servers.
+			const badge = ip.imported
+				? `<span class="indicator-pill gray">${__("imported")}</span>`
+				: "";
+			const checkbox = `<input type="checkbox" class="atlas-discover-rip" data-ip-address="${addr}" ${
+				ip.imported ? "disabled" : ""
+			}>`;
+			const dim = ip.imported ? ' style="opacity: 0.5;"' : "";
+			return `<tr${dim}>
+				<td style="width: 32px; text-align: center;">${checkbox}</td>
+				<td>${addr}</td>
+				<td>${server}</td>
+				<td>${badge}</td>
+			</tr>`;
+		})
+		.join("");
+	return `<table class="table table-bordered" style="margin-bottom: 0;">
+		<thead>
+			<tr>
+				<th style="width: 32px;"></th>
+				<th>${__("IPv4")}</th>
+				<th>${__("Server")}</th>
+				<th></th>
+			</tr>
+		</thead>
+		<tbody>${rows}</tbody>
+	</table>`;
+}
+
+function checked_reserved_ip_addresses(dialog) {
+	const addrs = [];
+	dialog.$wrapper.find("input.atlas-discover-rip:checked").each(function () {
+		addrs.push($(this).data("ip-address").toString());
+	});
+	return addrs;
+}
+
+function run_import_reserved_ips(frm, ip_addresses) {
+	frappe.show_alert({
+		message: __("Importing {0} reserved IP(s)…", [ip_addresses.length]),
+		indicator: "blue",
+	});
+	// The dialog posts ip_addresses as a JSON string; import_reserved_ips parses it.
+	frm.call("import_reserved_ips", { ip_addresses: JSON.stringify(ip_addresses) }).then(
+		({ message }) => {
+			const imported = (message && message.imported) || [];
+			if (!imported.length) {
+				frappe.show_alert({
+					message: __("Nothing imported (already modeled)."),
+					indicator: "orange",
+				});
+				return;
+			}
+			const summary = imported
+				.map((row) => `${row.ip_address} → ${row.server || __("floating")}`)
+				.join(", ");
+			frappe.msgprint({
+				title: __("Imported {0} reserved IP(s)", [imported.length]),
+				message: frappe.utils.escape_html(summary),
+				indicator: "green",
+			});
+			frappe.set_route("List", "Reserved IP");
 		}
 	);
 }

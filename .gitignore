@@ -7,6 +7,9 @@ __pycache__/
 
 # Distribution / packaging
 .Python
+# scripts/ is a zero-dependency stdlib package; its uv.lock (dev-only pytest)
+# carries no meaningful pins and would just churn. The manifest is the contract.
+scripts/uv.lock
 develop-eggs/
 dist/
 downloads/
@@ -36,6 +39,9 @@ venv.bak/
 node_modules/
 jspm_packages/
 
+# Vite dev-server cache
+.vite/
+
 # IDEs and editors
 .vscode/
 .vs/
@@ -59,6 +65,7 @@ jspm_packages/
 .coverage*
 .coveragerc
 coverage*.xml
+htmlcov/
 plan/layouts.md
 
 ### Playwright

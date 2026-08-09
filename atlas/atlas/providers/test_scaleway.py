@@ -32,8 +32,6 @@ def _build_provider():
 		project_id="proj-uuid",
 		organization_id="org-uuid",
 		billing="hourly",
-		default_size="Scaleway/EM-A610R-NVMe",
-		default_image="Scaleway/Ubuntu_24.04",
 	)
 	with (
 		patch.object(frappe, "get_single", return_value=settings),

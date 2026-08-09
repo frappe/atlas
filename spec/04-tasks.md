@@ -15,9 +15,13 @@ Task = (server, script, variables) executed over SSH, with captured output
 Concretely, a Task is a row in `Task` with:
 
 - `server`, `virtual_machine` (optional)
-- `script`: the file name under `atlas/scripts/`, e.g. `provision-vm.py`
+- `script`: the **verb** — the name of a script under `scripts/` with its
+  extension dropped, e.g. `provision-vm` (the file on disk is `provision-vm.py`).
+  Executed on the host as `atlas provision-vm …`. The on-disk file keeps its
+  `.py`/`.sh` suffix; only the Task identifier drops it. `scripts_catalog` is the
+  authority that maps a verb to its file (`file_for`) and its nature (`kind`).
 - `variables`: a JSON object passed to the script — as `--kebab-case` CLI
-  flags for a `.py` task, or env vars for a `.sh` task
+  flags for a Python verb, or env vars for a shell verb
 - `started`, `ended`, `duration_milliseconds`
 - `exit_code`, `stdout`, `stderr`
 - `status`: one of `Pending`, `Running`, `Success`, `Failure`
@@ -115,19 +119,31 @@ def wait_for_ssh(connection, timeout_seconds: int = 300) -> None:
     Tasks to different servers on distinct sockets. This is a dominant latency
     win for a remote provision — each avoided handshake is ~1.5s+ over a real
     droplet.
-- Variables: how they reach the script depends on the script's language
-  (see [§ Tasks are Python](#tasks-are-python-the-zx-slice-we-built)):
-  - **`.py` task** —
-    `ssh ... PYTHONPATH=/var/lib/atlas/bin python3 /var/lib/atlas/bin/script.py --kebab-flag val …`.
-    The `variables` dict keys (`UPPER_SNAKE`) become `--kebab-case` CLI flags;
-    a list value becomes a repeated flag. Quoted with `shlex.quote()`. The
-    `PYTHONPATH` points `import atlas` at the durable package, and the script
-    itself is durable too, so the common case runs it **in place** (next section).
-    A *staged* script — a sidecar or an e2e probe — runs from `/tmp/atlas/script.py`.
-  - **`.sh` task** — `ssh ... env VAR=val VAR2=val2 bash -x /var/lib/atlas/bin/script.sh`.
-    The legacy form, kept for the few remaining shell tasks (`reboot-server.sh`).
-  Both are built in `_ssh/runner.py::_remote_command()`, dispatched on the
-  `.py`/`.sh` suffix.
+- Variables: how they reach the script depends on the verb's nature
+  (`scripts_catalog.kind(verb)` — never a suffix-sniff; see
+  [§ Tasks are Python](#tasks-are-python-the-zx-slice-we-built)):
+  - **Python verb** — `ssh ... atlas <verb> --kebab-flag val …`. The
+    pip-installed `atlas` console script on `PATH` (`/usr/local/bin/atlas`)
+    dispatches to the typed entry point; no interpreter path, no `PYTHONPATH` —
+    the durable `uv pip install` put both the package and the console entry into
+    the Atlas venv at bootstrap (see
+    [03-bootstrapping.md § The Atlas interpreter and CLI](./03-bootstrapping.md)).
+    The `variables` dict keys (`UPPER_SNAKE`) become `--kebab-case` CLI flags; a
+    list value becomes a repeated flag. Quoted with `shlex.quote()`. This is the
+    bulk of Tasks and needs no per-Task scp (next section). A stale/legacy host
+    with no `atlas` on `PATH` surfaces this as the Task's own
+    `atlas: command not found` — the fail-fast moved from a per-Task `test -e`
+    round trip to **once-at-bootstrap** (`Server.cli_ready`, set when the
+    bootstrap sanity gate proved `atlas --help` dispatches).
+    `bootstrap-server` is an ordinary Python verb here too: [`scripts/install.sh`](../scripts/install.sh)
+    creates the venv + console script over SSH *before* the bootstrap Task (see
+    [03-bootstrapping.md](./03-bootstrapping.md)), so by the time it runs the
+    interpreter already exists — no carve-out, no stock-`python3` branch.
+  - **Shell verb** — `ssh ... env VAR=val VAR2=val2 bash -x /var/lib/atlas/bin/reboot-server.sh`.
+    The legacy form, kept for the few remaining shell verbs (`reboot-server`) and
+    the e2e probes. Shell verbs run their file by path.
+  Both shapes are built in `_ssh/runner.py::_remote_command()`, dispatched on
+  `scripts_catalog.kind(verb)` — not a filename suffix.
 
 ### Timeouts
 
@@ -185,8 +201,10 @@ idempotent, exits non-zero on failure, replayable — but the implementation
 language is Python 3 (already on every Ubuntu 24.04 host; no new dependency).
 
 `reboot-server.sh` is the lone holdover (two lines); everything else under
-[`scripts/`](../scripts/) is `<name>.py`. The runner runs `.py` and `.sh`
-side by side, so the boundary is a suffix check, not a flag day.
+[`scripts/`](../scripts/) is `<name>.py`. The runner runs Python and shell verbs
+side by side — `scripts_catalog.kind(verb)` is the authority on which is which
+(it reads the on-disk file's extension), so the catalog, not a `Task.script`
+suffix-sniff, draws the boundary.
 
 ### Why Python, not "harden the shell"
 
@@ -238,8 +256,12 @@ def main() -> None:
   missing/!int flag for free — the CLI form of `${VAR:?required}`. A `list`
   field is a repeatable flag (`--cgroup-arg a --cgroup-arg b`), which is what
   kills the shell's `mapfile`/word-splitting workaround: a value with an
-  internal space stays one argv token. **This is the shape a future `atlas`
-  CLI mounts directly** — each task is already a subcommand.
+  internal space stays one argv token. **This is the shape the `atlas` host CLI
+  mounts directly** — each task is already a subcommand
+  ([`_cli.py`](../scripts/lib/atlas/_cli.py)). The CLI is no longer just a debug
+  face: the runner *executes every Python verb through it* (`atlas stop-vm …`),
+  installed at bootstrap via `uv pip install` (see
+  [03-bootstrapping.md § The `atlas` host CLI](./03-bootstrapping.md)).
 - **Typed output**, not stdout scraping. A task that returns data emits one
   `ATLAS_RESULT=<json>` line via `TaskResult.emit()`; the controller decodes
   it with `task_results.parse_result()`. This replaced the `SIZE_BYTES=` grep
@@ -253,55 +275,109 @@ def main() -> None:
   each command (the `set -x` trace into the Task log) and raises on non-zero
   (the `set -e` abort). Everything else is pure functions over strings.
 
+  **`run()` reads like a shell line, safely.** It takes a single command STRING;
+  interpolated values go through `{}` placeholders that are `shlex.quote`d
+  automatically, then the whole string is `shlex.split` into an argv and run with
+  `shell=False` (**no shell, ever**):
+
+  ```python
+  run("sudo systemctl stop nginx")                       # literals: clean
+  run("sudo ip link set {} up", tap_device)              # one var, auto-quoted
+  run("sudo ip -6 route replace {}/128 dev {}", ip, tap) # two vars
+  ```
+
+  This is the parameterized-SQL trust model (`execute("… WHERE id = ?", id)`):
+  literal template, quoted holes, and *forgetting to quote is not expressible* —
+  the property the earlier variadic-argv form gave by construction is preserved
+  (a value with an internal space, a `;`, a `|`, a `$(…)` stays exactly one argv
+  token and cannot break out), now with the obvious single-string reading. The
+  substitution is a tiny custom engine (`_substitute`/`_render`), **not**
+  `str.format()`: this codebase is brace-heavy (nft `{ type filter … }` clauses
+  appear verbatim in commands), and the engine consumes only the literal `{}`
+  token, leaving every other brace untouched, so those clauses migrate with zero
+  escaping. Two escape hatches: `shell()` is the *only* way to invoke a real `sh
+  -c` pipeline (`|`, `>`, `*`, `&&` honoured in the template, params still
+  auto-quoted), and an nft brace-clause that must reach `nft` as ONE argv element
+  is passed as a `{}` param (so `shlex.split` doesn't re-tokenize it). The
+  remote/SSH layer (`run_ssh`) shares the SAME `{}` author syntax but keeps the
+  rendered command a STRING — it is the line the remote sshd hands to the remote
+  shell, so it is quote-substituted but never locally `shlex.split`. Everything
+  else is pure functions over strings.
+
 ### The shared `atlas` package and how it is staged
 
 The lib lives in [`scripts/lib/atlas/`](../scripts/lib/atlas) and is
-**stdlib-only** — that constraint is load-bearing: it is why the logic tests
-with no host. A Task script imports it from **one durable copy** on the host:
+**stdlib-only today** — which is why the logic tests with no host. (That is a
+convenience, not a guarded invariant: the host installs the package into a venv,
+so a real dependency is fine — uv resolves it at `uv pip install`.) A Task script
+imports it from **one durable copy** on the host:
 
 - **Durable placement** (`Server.bootstrap()`): the package is placed once at
   `/var/lib/atlas/bin/atlas/`, beside the three systemd-hook scripts, so they
   and `atlas-pool.service` can `import atlas` after a reboot. The file list is
   computed from disk (`test_*.py` skipped), so a new lib module ships with no
   map edit.
-- **Tasks reach it via `PYTHONPATH`**: `_remote_command` prefixes every `.py`
-  task with `PYTHONPATH=/var/lib/atlas/bin`, so `import atlas` resolves the
-  durable copy. The package is **not** re-staged per Task — only per-script
-  sidecars (sync-image's guest `atlas-network.service`, in `SCRIPT_SIDECARS`)
-  are uploaded. This removes ~9 scp round-trips from every Task; combined with
-  SSH multiplexing it takes a remote provision from ~20s+ toward a few seconds.
+- **Tasks reach it as the pip-installed `atlas` console script**:
+  [`scripts/install.sh`](../scripts/install.sh) — run over SSH by
+  `Server.bootstrap()` right after the upload — runs `uv pip install
+  /var/lib/atlas/bin` into the Atlas venv, registering the `atlas` entry point
+  (and resolving the package's imports against that same durable tree). A Python
+  verb then runs as `atlas <verb>` — no `PYTHONPATH`, no per-Task scp of the
+  package. Only per-verb sidecars (sync-image's guest `atlas-network.service`, in
+  `SCRIPT_SIDECARS`) are uploaded. This removes ~9 scp round-trips from every Task;
+  combined with SSH multiplexing it takes a remote provision from ~20s+ toward a
+  few seconds.
 
-  **Staleness trade-off (deliberate):** because the package is no longer
-  shipped per Task, a controller-side change to a lib module reaches a host
-  only on the next `bootstrap` — bootstrap is the single refresh point. This is
-  the same contract the systemd hooks already follow (they too run the durable
-  copy). Re-run `bootstrap` (idempotent) after changing anything under
-  `scripts/lib/atlas/`. The entry-point scripts keep their old
-  `sys.path.insert(<staging>/lib)` shim; it is now a harmless no-op (that dir is
-  unpopulated) and `PYTHONPATH` wins because it sits ahead of it on `sys.path`.
+  **Staleness trade-off (deliberate):** because the package is shipped + installed
+  only at bootstrap, a controller-side change to a lib module reaches a host only
+  on the next `bootstrap` — bootstrap is the single refresh point. This is the
+  same contract the systemd hooks already follow (they too run the durable copy).
+  Re-run `bootstrap` (idempotent) after changing anything under
+  `scripts/lib/atlas/`. With install.sh creating the venv before the bootstrap
+  Task, there is no carve-out: `bootstrap-server` runs as `atlas bootstrap-server`
+  on the venv python like every other verb.
 
 - **The entry scripts are durable too.** Bootstrap / `sync_scripts` ship every
-  host Task entry script (`scripts_catalog.host_task_scripts()` — provision-vm.py,
-  start/stop/snapshot-stop, …) to `/var/lib/atlas/bin/` beside the package, and
-  `_run_remote_script` invokes the durable copy **in place** when the script
-  needs no sidecar: no per-Task `mkdir`+`scp`, just the one run. The scp was the
-  dominant latency of an otherwise sub-second op — dropping it took a live stop
-  from ~2.2s to ~0.6s, start ~2.8s→~1.1s, and provision ~5.7s→~3.0s on a real
-  droplet. Same staleness contract as the package (re-bootstrap / `sync_scripts`
-  to refresh). Two kinds of script keep the staging path and its stale-lib
-  purge: **e2e probes** (resolved from the test-only directory, never shipped
-  durably) and **sidecar scripts** (`sync-image.py`).
+  host Task entry FILE (`scripts_catalog.host_task_scripts()` yields verbs;
+  `file_for` maps each to its file — provision-vm.py, start/stop/snapshot-stop,
+  …) to `/var/lib/atlas/bin/` beside the package, where `uv pip install` registers
+  the console script and the runner reaches each as `atlas <verb>` **in place**:
+  no per-Task `mkdir`+`scp`, just the one run. The scp was the dominant latency of
+  an otherwise sub-second op — dropping it took a live stop from ~2.2s to ~0.6s,
+  start ~2.8s→~1.1s, and provision ~5.7s→~3.0s on a real droplet. Same staleness
+  contract as the package (re-bootstrap / `sync_scripts` to refresh). The staging
+  path and its stale-lib purge survive only for **shell verbs not shipped durably**
+  — the **e2e probes** (resolved from the test-only directory) — and any **sidecar
+  files** (`sync-image`'s guest unit) staged before a python verb runs.
 
 ### Systemd hooks are Python too, but not Tasks
 
-`vm-disk-up.py`, `vm-network-up.py`, `vm-network-down.py`, `vm-restore.py`
-run from the VM unit's `ExecStartPre`/`ExecStartPost`/`ExecStopPost`, not over
-SSH. They take a **positional uuid** (`%i`), not `--flags`, and import the
-durable package. They are excluded from
-`scripts_catalog.allowed_scripts()` (`SYSTEMD_HOOKS`) so the Task runner
-never executes them. `atlas-pool.service` runs the pool bring-up
-inline: `python3 -c "… ThinPool().ensure()"`. There is no shell helper
-library (`lvm.sh`) anymore — the durable `atlas` package replaced it.
+`vm-disk-up`, `vm-network-up`, `vm-restore` and `vm-network-down` run from the VM
+unit's `ExecStartPre`/`ExecStartPost`/`ExecStopPost`, not over SSH. They take a
+**positional uuid** (`%i`), not `--flags`. They are `/usr/local/bin/boat vm-* %i`
+verbs now — served by the boat binary, so they own no file in `scripts/` and no
+entry in the script catalog, and the Task runner never executes them. The one
+remaining Python systemd hook is `atlas-wake-trap` (the sleepy-VM wake daemon,
+excluded from `allowed_scripts()` via `SYSTEMD_HOOKS`); like every Python Task it
+runs under the **Atlas venv python**, and so does
+`atlas-pool.service`'s inline pool bring-up:
+`/var/lib/atlas/venv/bin/python -c "… ThinPool().ensure()"` (see
+[03-bootstrapping.md § The Atlas interpreter and CLI](./03-bootstrapping.md)).
+There is no shell helper library (`lvm.sh`) anymore — the durable `atlas`
+package replaced it.
+
+A second, **controller-only** bucket (`CONTROLLER_ONLY`: `issue-cert.py`,
+`tunnel-up/down.py`, `mgmt-firewall-*.py`) is also excluded from
+`allowed_scripts()` — those run on the *controller* via the local runner, never
+over SSH onto a host. The host `atlas` CLI ([§ Tasks are Python](#shape-of-a-task-script))
+discovers its commands from the filesystem and **does not** currently filter this
+bucket, so its command set is a superset of the host-SSH catalog. That is a
+known, deferred gap (Phase 2): running one of these on a host mostly just fails
+(they need controller-side context / deps), and the intended fix is to install
+the same CLI on the controller so `atlas mgmt-firewall-apply …` runs where it
+belongs — at which point the CLI's *available* command set is context-dependent
+(host vs controller) rather than wrong. Until Phase 2, do not assume
+`_cli` command set == `allowed_scripts()`.
 
 ## How Python triggers a Task
 
@@ -419,10 +495,10 @@ SCRIPT_SIDECARS: dict[str, list[tuple[str, str]]] = {
 The script reads a sidecar by its staged path, passed as a CLI flag
 (e.g. `--guest-network-unit /tmp/atlas/atlas-network.service`).
 
-The systemd-hook scripts (`vm-network-up.py`, `vm-network-down.py`,
-`vm-disk-up.py`), the unit files, and the durable `atlas` package are placed at
-`/var/lib/atlas/bin/` (and `/var/lib/atlas/bin/atlas/`) by `Server.bootstrap()`
-calling `upload_files` directly. See [03-bootstrapping.md](./03-bootstrapping.md).
+The unit files and the durable `atlas` package are placed at `/var/lib/atlas/bin/`
+(and `/var/lib/atlas/bin/atlas/`) by `Server.bootstrap()` calling `upload_files`
+directly; the per-VM `firecracker-vm@` hooks are `boat vm-*` verbs, so no hook
+file ships. See [03-bootstrapping.md](./03-bootstrapping.md).
 
 ## Scripts catalog
 
@@ -433,9 +509,9 @@ The list of scripts an operator can run lives in
   under [`scripts/`](../scripts/). This is the whitelist used by the SSH
   runner and the `Server.run_task_dialog` controller method.
   `scripts/guest/` and `scripts/systemd/` are excluded (not host-runnable),
-  and so are the systemd-hook scripts (`SYSTEMD_HOOKS`: `vm-disk-up.py`,
-  `vm-network-up.py`, `vm-network-down.py`, `vm-restore.py`) — they run from
-  the VM unit with a positional uuid, not as Tasks.
+  and so is the systemd-hook daemon `atlas-wake-trap` (`SYSTEMD_HOOKS`). The
+  per-VM `vm-*` hooks are `boat vm-*` verbs the unit invokes with a positional
+  uuid; they own no file and are not Tasks either.
 - `operator_visible_scripts()` is the strict subset the desk's `Run Task`
   picker is allowed to expose: `bootstrap-server.py`,
   `reboot-server.sh`, `sync-image.py`. Everything else
@@ -529,3 +605,90 @@ whitelisted method that:
 
 A retry is a new Task row, not a mutation of the failed one. The audit
 trail keeps both.
+
+## The SSH Console — ad-hoc commands
+
+Everything above is the **verb** model: a Task references a script from a fixed
+catalog, executed as `atlas <verb>`. That is the right primitive for the
+lifecycle, but it leaves a gap — an operator debugging a host or guest needs to
+run a *one-off* command (`journalctl -u firecracker`, `systemctl status overmind`,
+`df -h`, `apt list --upgradable`) that no verb covers. The **SSH Console** fills
+that gap: the one surface that runs an arbitrary operator-typed command over the
+same transport.
+
+It is deliberately **not** a Task. A Task is a typed verb with `variables`, a
+catalog entry, retry semantics, and a contract that a non-zero exit *raises* so a
+controller can flip a doc's status. An ad-hoc command has none of that, and
+forcing a free-form string into the verb model would bend it. So the console is
+its own pair of doctypes:
+
+- **`SSH Console`** (a Single) — the operator picks targets (a child table of
+  `Server` and/or `Virtual Machine` rows), types one command, and clicks
+  **Execute**. The command fans out across every target and the per-target output
+  streams back into a results table. Mirrors press's Ansible Console.
+- **`SSH Command Log`** — the immutable audit record, one row per run (the
+  command, who ran it, start/end, and a result row per target). The command and
+  caller are frozen at insert; the run-state (status, timing, results) fills in
+  as the fan-out streams. A **Re-run** opens the console pre-filled.
+
+The engine is [`atlas/atlas/ssh_console.py`](../atlas/atlas/ssh_console.py) —
+stdlib + `atlas.atlas.ssh` only, so its classification and fan-out unit-test in
+milliseconds with no host. It reuses the two existing Connection builders
+unchanged: a `Server` target is reached over its public IPv4 via
+`connection_for_server`, a `Virtual Machine` target over its public IPv6 `/128`
+via `connection_for_guest` (the same guest path the proxy/bench control plane
+uses). No new transport, no new dependency.
+
+**The one behavioural departure from `run_task`:** a failed command is a
+*result*, never an exception. `run_on_target` classifies a clean exit as
+`Success`, a non-zero exit as `Failure`, and any transport error (missing
+address, connect timeout) as `Unreachable` — and `run_fan_out` reports every
+target's outcome rather than aborting on the first failure. The console's job is
+to *report*, so a failure is a red row, not a raise.
+
+**Execution is async + streamed.** `SSH Console.execute()` validates, pre-creates
+the `Running` log (the operator's receipt), and enqueues the fan-out on the long
+queue; the worker appends each result to the log and publishes it on the
+`ssh_console_update` realtime event (nonce-keyed and user-scoped, so a stale
+console form or a sibling operator never sees another run's stream). The
+per-form **Run Command** action on `Server` (Active) and `Virtual Machine`
+(Running, with a `/128`) is just a pre-targeted entry into this one console — not
+a second execution path.
+
+**Guardrail:** `frappe.only_for("System Manager")` plus the immutable log is the
+whole gate. There is no command allow-list — Atlas is operator-only
+([README § operating principles](./README.md)), operators already SSH as root,
+and every run is recorded. (Dropping the root SSH transport is on the
+[roadmap](./09-roadmap.md); when it lands, the console inherits it for free.)
+
+## Why SSH, not HTTP
+
+The transport is SSH and stays SSH. We measured the alternative — a resident
+host server that runs `atlas <verb>` on an HTTP POST instead of an SSH exec — to
+see whether the per-Task SSH handshake was a real cost. It is not: with both
+sides keeping a warm channel (SSH ControlMaster, HTTP keep-alive), HTTP and SSH
+are statistically indistinguishable. The lifecycle wall time is gated by what
+`atlas <verb>` does on the host (cold-booting Firecracker for provision/start,
+tearing down the jail for terminate), not by how the verb is delivered.
+
+VM lifecycle, e2e.local, n=10 each, host-side Task duration (ms):
+
+| operation | SSH avg | HTTP avg |
+| --------- | ------: | -------: |
+| provision |    1739 |     1692 |
+| stop      |     560 |      526 |
+| start     |    1194 |     1145 |
+| terminate |    1426 |     1396 |
+
+Every operation lands within ~3–5% of the other transport — inside the
+run-to-run noise (the within-transport spread exceeds the between-transport
+gap), and the nominal winner flips direction between runs. The gap is on the
+order of ~50 ms per operation.
+
+**Don't switch to HTTP unless we're optimizing at the ~50 ms scale** — and even
+then it is the wrong lever, because the host-side verb cost (the ~1.7 s
+provision, the ~1.4 s terminate) dwarfs it. Note also that the measured HTTP
+path was plaintext; a real deployment would need HTTPS (or the management tunnel),
+whose handshake would only widen the gap against HTTP. SSH already gives us an
+authenticated, encrypted channel for free, so there is no transport win to chase
+here. (The PoC HTTP transport written to take these numbers has been removed.)

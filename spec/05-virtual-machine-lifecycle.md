@@ -459,6 +459,10 @@ reaching it — `curl --unix-socket` talks to it from the host as before.
 
 ## Snapshot
 
+A snapshot lives in one thin pool on one host — instant and space-thin, but not
+durable (lose the pool and it is gone). To make one survive its host, back it up
+to S3 and restore it later: [29](./29-snapshot-backup.md).
+
 `Virtual Machine.snapshot(title=None, live=False)`. `title` is optional:
 omitted (or blank), it defaults to `<vm title> — <YYYY-MM-DD HH:mm>`, so a
 caller — the SPA's one-click snapshot, or a direct API call — need not invent a
@@ -651,6 +655,14 @@ Unspecified fields keep their current value. The new
 values are persisted on the row through a guarded path (see
 [Why resource fields are frozen outside resize](#why-resource-fields-are-frozen-outside-resize)).
 
+**Capacity gate.** Before it touches the host, resize checks that the host has room
+for the *growth* (the positive per-axis deltas) against the host's full effective
+budget — a resize must not silently oversubscribe RAM or disk on a full host. It
+deliberately spends the arrival headroom reserve placement left free (that is what
+the reserve is for). When the delta doesn't fit it raises `NoResizeCapacityError`
+(a `NoCapacityError` subclass — the signal that the VM must migrate to grow, a
+deferred case). See [28-placement.md](./28-placement.md).
+
 **Data disk.** `resize(data_disk_gigabytes=…)` grows the data disk the same way
 (`lvextend -r`, grow-only). Resize only ever **grows an existing** data disk:
 adding one to a VM that never had one (0→N) would also need a new Firecracker
@@ -736,10 +748,10 @@ canonical artifact. Highlights:
   writes each as its own continued line in the launcher's `exec`. The real argv
   vector means the shell's `mapfile` dance is gone entirely. The unit template
   stays static and the launcher is regenerated on every (re)provision.
-- `ExecStartPre=/usr/bin/python3 /var/lib/atlas/bin/vm-network-up.py %i`
+- `ExecStartPre=/usr/local/bin/boat vm-network-up %i`
   (creates the netns + veth + in-namespace tap, so they exist when the jailer
-  joins the namespace) and the matching `ExecStopPost` for `vm-network-down.py`.
-  A third `ExecStartPre` runs `vm-disk-up.py %i` to re-activate the VM's disk LV
+  joins the namespace) and the matching `ExecStopPost` for `boat vm-network-down`.
+  A third `ExecStartPre` runs `boat vm-disk-up %i` to re-activate the VM's disk LV
   and refresh its in-jail block node (needed after a host reboot, when
   activation-skip snapshots don't auto-activate). `ExecStartPre` runs
   to completion before `ExecStart`, so the namespace is ready at jailer exec.
@@ -752,7 +764,7 @@ canonical artifact. Highlights:
   (and the stale API socket) first. Without this, the first Stop→Start cycle
   fails ("Failed to create /dev/net/tun via mknod: File exists"). The rootfs,
   kernel and config alongside `dev/` are left untouched.
-- `ExecStartPost=/usr/bin/python3 /var/lib/atlas/bin/vm-restore.py %i` — the
+- `ExecStartPost=/usr/local/bin/boat vm-restore %i` — the
   memory-snapshot restore hook. No marker → exit 0 (the common cold boot).
   Marker → load the snapshot over the API socket, consume the marker, resume.
   See [Memory snapshots](#memory-snapshots-fast-stop--start). The pre-start

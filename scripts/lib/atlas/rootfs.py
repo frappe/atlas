@@ -17,7 +17,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 from dataclasses import dataclass
 
-from atlas._run import install_directory, install_file, run, run_input, run_ok
+from atlas._run import _substitute, install_directory, install_file, run, run_input, run_ok
 from atlas.lvm import LogicalVolume
 
 
@@ -41,6 +41,12 @@ class Identity:
 	# client then raises NotConfigured and no-ops, so an ordinary (non-bench) VM is
 	# unaffected. NON-SECRET, no token (caller resolution is by source address).
 	routing_base_url: str = ""
+	# The VM's private-plane /128 on the WireGuard host mesh (spec/25). When set, the
+	# guest gets it as a SECOND address on eth0 and a route for fdaa::/16 via its existing
+	# fe80::1 gateway — the host's wg-mesh carries it. Empty for a VM with no tenant
+	# (off the private plane), so atlas-network.service skips the two extra ExecStarts and
+	# an ordinary VM's guest config is byte-for-byte unchanged.
+	private_address: str = ""
 
 	@property
 	def hostname(self) -> str:
@@ -69,8 +75,8 @@ def prepare_lv(origin: LogicalVolume, target: LogicalVolume, disk_gigabytes: int
 	device = target.device_path
 	# Grow to the VM's size if larger than the origin. -r resizes the fs in the
 	# same shot; a no-op when sizes already match, so guard on it failing-clean.
-	run("sudo", "lvextend", "-r", "-L", f"{disk_gigabytes}G", device, check=False, quiet=True)
-	run("sudo", "tune2fs", "-U", "random", "-L", "atlas-root", device)
+	run("sudo lvextend -r -L {} {}", f"{disk_gigabytes}G", device, check=False, quiet=True)
+	run("sudo tune2fs -U random -L atlas-root {}", device)
 	return target
 
 
@@ -97,9 +103,9 @@ def prepare_data_lv(
 	if origin is not None:
 		origin.snapshot_into(data_lv)
 		device = data_lv.device_path
-		run("sudo", "lvextend", "-r", "-L", f"{disk_gigabytes}G", device, check=False, quiet=True)
-		run("sudo", "e2fsck", "-fy", device, check=False, quiet=True)
-		run("sudo", "tune2fs", "-U", "random", "-L", "atlas-data", device)
+		run("sudo lvextend -r -L {} {}", f"{disk_gigabytes}G", device, check=False, quiet=True)
+		run("sudo e2fsck -fy {}", device, check=False, quiet=True)
+		run("sudo tune2fs -U random -L atlas-data {}", device)
 		return data_lv
 
 	freshly_created = not data_lv.exists
@@ -108,13 +114,13 @@ def prepare_data_lv(
 	if do_format:
 		if freshly_created:
 			# -F: non-interactive even though the device is whole-disk (no partition).
-			run("sudo", "mkfs.ext4", "-q", "-L", "atlas-data", "-F", device)
+			run("sudo mkfs.ext4 -q -L atlas-data -F {}", device)
 		else:
-			run("sudo", "lvextend", "-r", "-L", f"{disk_gigabytes}G", device, check=False, quiet=True)
-			run("sudo", "e2fsck", "-fy", device, check=False, quiet=True)
+			run("sudo lvextend -r -L {} {}", f"{disk_gigabytes}G", device, check=False, quiet=True)
+			run("sudo e2fsck -fy {}", device, check=False, quiet=True)
 	elif not freshly_created:
 		# Raw, unformatted disk: grow the block device only — there is no fs to -r.
-		run("sudo", "lvextend", "-L", f"{disk_gigabytes}G", device, check=False, quiet=True)
+		run("sudo lvextend -L {} {}", f"{disk_gigabytes}G", device, check=False, quiet=True)
 	return data_lv
 
 
@@ -156,13 +162,13 @@ def _mounted(device: str):
 	"""Mount `device` on a fresh temp dir; unmount + rmdir on exit, success or
 	failure. The LV is a block device — mount it directly, no `-o loop`. Replaces
 	the shell `trap ... EXIT`."""
-	mount_point = run("sudo", "mktemp", "-d", "/tmp/atlas-mount-XXXXXX").strip()
-	run("sudo", "mount", device, mount_point)
+	mount_point = run("sudo mktemp -d /tmp/atlas-mount-XXXXXX").strip()
+	run("sudo mount {} {}", device, mount_point)
 	try:
 		yield mount_point
 	finally:
-		run("sudo", "umount", mount_point, check=False, quiet=True)
-		run("sudo", "rmdir", mount_point, check=False, quiet=True)
+		run("sudo umount {}", mount_point, check=False, quiet=True)
+		run("sudo rmdir {}", mount_point, check=False, quiet=True)
 
 
 def _write_authorized_keys(mount_point: str, ssh_public_key: str) -> None:
@@ -175,6 +181,10 @@ def _write_network_env(mount_point: str, identity: Identity) -> None:
 		f"VIRTUAL_MACHINE_IPV6={identity.ipv6_address}\n"
 		f"VIRTUAL_MACHINE_IPV4={identity.ipv4_guest_cidr}\n"
 		f"VIRTUAL_MACHINE_IPV4_GATEWAY={identity.ipv4_gateway}\n"
+		# The private-plane /128 (spec/25). Always written (empty when off the plane) so
+		# atlas-network.service's ${PRIVATE_ADDRESS} test is well-defined; the service
+		# skips the fdaa:: config when it is empty.
+		f"PRIVATE_ADDRESS={identity.private_address}\n"
 	)
 	install_file(content, f"{mount_point}/etc/atlas-network.env", mode="0644")
 
@@ -209,13 +219,8 @@ def _write_hostname(mount_point: str, hostname: str) -> None:
 	# Append the 127.0.1.1 mapping `hostname -f` resolves against. `tee -a`
 	# writes the file and echoes to stdout; route the echo to a throwaway via
 	# `sh -c` so it never pollutes a task's parsed stdout.
-	run_input(
-		"sudo",
-		"sh",
-		"-c",
-		f"tee -a {hostname_hosts_path(mount_point)} >/dev/null",
-		stdin=f"\n127.0.1.1\t{hostname}\n",
-	)
+	inner = _substitute("tee -a {} >/dev/null", (hostname_hosts_path(mount_point),))
+	run_input("sudo sh -c {}", inner, stdin=f"\n127.0.1.1\t{hostname}\n")
 
 
 def hostname_hosts_path(mount_point: str) -> str:
@@ -235,7 +240,7 @@ def _ensure_host_keys(mount_point: str, hostname: str, *, force: bool) -> None:
 def _has_host_keys(mount_point: str) -> bool:
 	"""True if the rootfs already carries an ed25519 host key (the one sshd offers
 	by default). `test -f` via sudo because /etc/ssh is root-owned in the mount."""
-	return run_ok("sudo", "test", "-f", f"{mount_point}/etc/ssh/ssh_host_ed25519_key")
+	return run_ok("sudo test -f {}", f"{mount_point}/etc/ssh/ssh_host_ed25519_key")
 
 
 def _regenerate_host_keys(mount_point: str, hostname: str) -> None:
@@ -255,10 +260,10 @@ def _regenerate_host_keys(mount_point: str, hostname: str) -> None:
 	install_directory(f"{mount_point}/etc/ssh", mode="0755")
 	for stale in ("rsa", "ecdsa"):
 		stale_path = f"{mount_point}/etc/ssh/ssh_host_{stale}_key"
-		run("sudo", "rm", "-f", stale_path, f"{stale_path}.pub")
+		run("sudo rm -f {} {}", stale_path, f"{stale_path}.pub")
 	key_path = f"{mount_point}/etc/ssh/ssh_host_ed25519_key"
-	run("sudo", "rm", "-f", key_path, f"{key_path}.pub")
-	run("sudo", "ssh-keygen", "-q", "-t", "ed25519", "-f", key_path, "-N", "", "-C", f"root@{hostname}")
+	run("sudo rm -f {} {}", key_path, f"{key_path}.pub")
+	run("sudo ssh-keygen -q -t ed25519 -f {} -N {} -C {}", key_path, "", f"root@{hostname}")
 
 
 def _write_machine_id(mount_point: str, machine_id: str) -> None:
@@ -275,15 +280,14 @@ def _write_data_fstab(mount_point: str, mount_at: str) -> None:
 	down a fresh rootfs (image fstab has no such line, so append once), while a
 	restore-from-snapshot or re-provision may already carry it (don't duplicate)."""
 	fstab = f"{mount_point}/etc/fstab"
-	if run_ok("sudo", "grep", "-q", "LABEL=atlas-data", fstab):
+	if run_ok("sudo grep -q LABEL=atlas-data {}", fstab):
 		return
-	run("sudo", "mkdir", "-p", f"{mount_point}{mount_at}")
+	run("sudo mkdir -p {}", f"{mount_point}{mount_at}")
 	# tee -a appends and echoes; route the echo to /dev/null so it never lands in
 	# a Task's parsed stdout (same trick as _write_hostname).
+	inner = _substitute("tee -a {} >/dev/null", (fstab,))
 	run_input(
-		"sudo",
-		"sh",
-		"-c",
-		f"tee -a {fstab} >/dev/null",
+		"sudo sh -c {}",
+		inner,
 		stdin=f"LABEL=atlas-data\t{mount_at}\text4\tdefaults,nofail\t0\t2\n",
 	)

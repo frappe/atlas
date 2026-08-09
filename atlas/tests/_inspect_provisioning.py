@@ -6,22 +6,24 @@ def run():
 
 	Used to decide whether/where to provision a server for UI-test capacity.
 	"""
+	from atlas.atlas.setup_catalog import default_name
+
 	s = frappe.get_single("DigitalOcean Settings")
 	token = s.get_password("api_token", raise_exception=False)
+	size = default_name("Provider Size", "DigitalOcean")
+	image = default_name("Provider Image", "DigitalOcean")
 	print(f"SITE={frappe.local.site}")
-	print(f"DO region={s.region!r} size={s.default_size!r} image={s.default_image!r} token_set={bool(token)}")
-	for p in frappe.get_all("Provider", fields=["name", "provider_type"]):
-		print(f"PROVIDER name={p.name!r} type={p.provider_type!r}")
+	print(f"DO region={s.region!r} default_size={size!r} default_image={image!r} token_set={bool(token)}")
 	servers = frappe.get_all(
 		"Server",
-		fields=["name", "title", "status", "provider_resource_id", "ipv4_address", "provider"],
+		fields=["name", "title", "status", "provider_resource_id", "ipv4_address", "provider_type"],
 	)
 	if not servers:
 		print("SERVERS none")
 	for srv in servers:
 		print(
 			f"SERVER name={srv.name!r} title={srv.title!r} status={srv.status!r} "
-			f"droplet={srv.provider_resource_id!r} ipv4={srv.ipv4_address!r} provider={srv.provider!r}"
+			f"droplet={srv.provider_resource_id!r} ipv4={srv.ipv4_address!r} provider_type={srv.provider_type!r}"
 		)
 
 

@@ -126,7 +126,7 @@ def _wire_vms(server, region: str, proxy_vm, site_vm) -> dict:
 	print("[verify] proxy -> site over public v6 (:80) ...")
 	assert_probe(
 		server.name,
-		"phase-proxy-site-from-vantage.sh",
+		"phase-proxy-site-from-vantage",
 		timeout_seconds=180,
 		PROXY_IPV6=proxy_vm.ipv6_address,
 		SITE_IPV6=site_vm.ipv6_address,

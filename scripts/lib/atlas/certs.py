@@ -10,12 +10,20 @@ of the SSH `known_hosts` dir, so all controller-local Atlas state sits together.
 from __future__ import annotations
 
 import os
+import shlex
+import sys
+
+from atlas._run import _substitute
 
 
 def atlas_home() -> str:
 	"""The Atlas controller home, `~/.atlas`. Matches the SSH transport's
 	`KNOWN_HOSTS_PATH` parent so controller state is colocated."""
 	return os.path.join(os.path.expanduser("~"), ".atlas")
+
+
+def certbot_executable() -> str:
+	return os.path.join(os.path.dirname(sys.executable), "certbot")
 
 
 def certbot_config_dir(domain: str) -> str:
@@ -30,6 +38,19 @@ def live_dir(domain: str) -> str:
 	return os.path.join(certbot_config_dir(domain), "live", domain)
 
 
+def powerdns_credentials_path(domain: str) -> str:
+	return os.path.abspath(os.path.join(certbot_config_dir(domain), "powerdns.ini"))
+
+
+def powerdns_certbot_args(domain: str) -> list[str]:
+	return [
+		"--authenticator",
+		"dns-pdns",
+		"--dns-pdns-credentials",
+		powerdns_credentials_path(domain),
+	]
+
+
 def fullchain_path(domain: str) -> str:
 	return os.path.join(live_dir(domain), "fullchain.pem")
 
@@ -38,40 +59,47 @@ def privkey_path(domain: str) -> str:
 	return os.path.join(live_dir(domain), "privkey.pem")
 
 
-def certbot_argv(
+def certbot_command(
 	domain: str,
 	acme_directory_url: str,
 	account_email: str,
 	dns_authenticator: str,
-) -> list[str]:
-	"""The full certbot argv to issue (or renew) `*.<domain>` non-interactively
-	over DNS-01. `dns_authenticator` is the DNS plugin name (e.g. `route53`),
-	rendered here as the `--dns-<name>` flag — keeping the `--` spelling on the
-	script side means the value crossing the CLI is a plain name argparse can't
-	mistake for an option. Credentials travel via the environment, never argv, so
-	they never appear in `ps`. Idempotent: certbot renews-or-skips a still-valid
-	lineage."""
+	certbot_args: list[str] | None = None,
+) -> str:
+	"""The full certbot command line to issue (or renew) `*.<domain>`
+	non-interactively over DNS-01, rendered as a single auto-quoted string for
+	`_run.run`. `dns_authenticator` is the DNS plugin name (e.g. `route53`);
+	when `certbot_args` is omitted it is rendered as `--dns-<name>`. Providers with
+	a different certbot CLI shape pass explicit `certbot_args`. Credentials travel
+	via the environment or a controller-local 0600 file, never as secret argv
+	values. Idempotent: certbot renews-or-skips a still-valid lineage."""
 	config = certbot_config_dir(domain)
-	return [
-		"certbot",
-		"certonly",
-		"--non-interactive",
-		"--agree-tos",
-		"-m",
-		account_email,
-		"--server",
-		acme_directory_url,
-		f"--dns-{dns_authenticator}",
-		"-d",
-		f"*.{domain}",
-		"--config-dir",
-		config,
-		"--work-dir",
-		os.path.join(config, "work"),
-		"--logs-dir",
-		os.path.join(config, "logs"),
-		"--keep-until-expiring",
-	]
+	dns_args = certbot_args or _certbot_args_for(domain, dns_authenticator)
+	dns_arg_string = " ".join(shlex.quote(arg) for arg in dns_args)
+	return (
+		_substitute(
+			"{} certonly --non-interactive --agree-tos -m {} --server {}",
+			(certbot_executable(), account_email, acme_directory_url),
+		)
+		+ " "
+		+ dns_arg_string
+		+ " "
+		+ _substitute(
+			"-d {} --config-dir {} --work-dir {} --logs-dir {} --keep-until-expiring",
+			(
+				f"*.{domain}",
+				config,
+				os.path.join(config, "work"),
+				os.path.join(config, "logs"),
+			),
+		)
+	)
+
+
+def _certbot_args_for(domain: str, dns_authenticator: str) -> list[str]:
+	if dns_authenticator == "powerdns":
+		return powerdns_certbot_args(domain)
+	return [f"--dns-{dns_authenticator}"]
 
 
 def parse_openssl_dates(stdout: str) -> tuple[str, str]:

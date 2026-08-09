@@ -11,8 +11,10 @@
 
 local cjson = require("cjson.safe")
 local persist = require("persist")
+local acme_persist = require("acme_persist")
 
 local sites = ngx.shared.sites
+local acme_domains = ngx.shared.acme_domains
 
 local function send(status, body, content_type)
     ngx.status = status
@@ -105,6 +107,41 @@ if method == "POST" and uri == "/sync" then
     end
     persist.schedule_dump()
     return send_json(200, { synced = true, entries = sites:get_keys(0) and #sites:get_keys(0) or 0 })
+end
+
+-- GET /acme — the whole :80 custom-domain ACME map as canonical sorted pretty JSON
+-- (host -> bracketed bare v6), for the controller's byte-diff. The SECOND physical
+-- copy of the custom-domain map (the stream side holds the :443 SNI copy); see
+-- acme_persist.lua / spec/13 § Custom domains.
+if method == "GET" and uri == "/acme" then
+    return send(200, acme_persist.serialize(), "application/json")
+end
+
+-- POST /acme/sync — bulk declarative replace of the ACME map (same shape as
+-- /sync). Idempotent, self-healing, rebuild-safe.
+if method == "POST" and uri == "/acme/sync" then
+    local desired = cjson.decode(read_body())
+    if type(desired) ~= "table" then
+        return send_json(400, { error = "body must be a JSON object" })
+    end
+    for domain, backend in pairs(desired) do
+        if type(domain) ~= "string" or type(backend) ~= "string" then
+            return send_json(400, { error = "body must be a JSON object of domain->address strings" })
+        end
+    end
+    local existing = acme_domains:get_keys(0)
+    local keep = {}
+    for domain, backend in pairs(desired) do
+        acme_domains:set(domain, backend)
+        keep[domain] = true
+    end
+    for i = 1, #existing do
+        if not keep[existing[i]] then
+            acme_domains:delete(existing[i])
+        end
+    end
+    acme_persist.schedule_dump()
+    return send_json(200, { synced = true, entries = #acme_domains:get_keys(0) })
 end
 
 -- Per-subdomain routes: /map/<sub>

@@ -86,14 +86,28 @@ class Subdomain(Document):
 				frappe.throw(f"{field} is immutable after insert")
 
 	def _denormalize_address(self) -> None:
-		"""Copy the target VM's public IPv6 onto `address`, so the desired-map
-		query (subdomain_map) is a single SELECT with no join. The proxy dials
-		this literal; it never resolves a VM. A VM with no ipv6 yet is a hard
-		error — an unaddressable target can't be a routing destination."""
-		address = frappe.db.get_value("Virtual Machine", self.virtual_machine, "ipv6_address")
+		"""Copy the target VM's routing address onto `address`, so the desired-map
+		query (subdomain_map) is a single SELECT with no join. The proxy dials this
+		literal; it never resolves a VM.
+
+		A PUBLIC VM (public_networking=1, the default) is dialed over the public internet
+		at its public /128 — ZERO change from before this feature. A DARK VM
+		(public_networking=0, private-networking-host-mesh.md §6) has NO public /128; the
+		proxy reaches it over the WireGuard host mesh at its private fdaa:: address
+		instead — which is why the proxy VM must itself be a mesh node. Either way a VM
+		with no usable address yet is a hard error — an unaddressable target can't be a
+		routing destination."""
+		vm = frappe.db.get_value(
+			"Virtual Machine",
+			self.virtual_machine,
+			["ipv6_address", "public_networking", "private_address"],
+			as_dict=True,
+		)
+		address = vm.ipv6_address if vm.public_networking else vm.private_address
 		if not address:
+			field = "ipv6_address" if vm.public_networking else "private_address"
 			frappe.throw(
-				f"Virtual Machine {self.virtual_machine} has no ipv6_address; cannot map a subdomain to it"
+				f"Virtual Machine {self.virtual_machine} has no {field}; cannot map a subdomain to it"
 			)
 		self.address = address
 

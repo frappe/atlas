@@ -8,32 +8,36 @@ from frappe.model.document import Document
 IMMUTABLE_AFTER_INSERT = ("server", "virtual_machine", "script", "variables", "triggered_by")
 
 SCRIPT_LABELS = {
-	# Verb + Noun when the script creates a *new* object.
-	"bootstrap-server.py": "Bootstrap Server",
-	"sync-image.py": "Sync Image",
-	"provision-vm.py": "Create Virtual Machine",
-	"snapshot-vm.py": "Snapshot Virtual Machine",
-	"warm-snapshot-vm.py": "Capture Warm Snapshot",
-	# Verb-only when the script operates on the *same* object.
-	# reboot-server.sh stays a shell script (two lines).
-	"reboot-server.sh": "Reboot",
-	"start-vm.py": "Start",
-	"stop-vm.py": "Stop",
-	"snapshot-stop-vm.py": "Stop",
-	"restart-vm.py": "Restart",
-	"pause-vm.py": "Pause",
-	"resume-vm.py": "Resume",
-	"rebuild-vm.py": "Rebuild",
-	"resize-vm.py": "Resize",
-	"terminate-vm.py": "Terminate",
-	"delete-snapshot-vm.py": "Delete Snapshot",
-	# Networking — one script drives reserved-IP attach and detach, so a
+	# Task.script is a VERB (no .py/.sh suffix): `provision-vm`, executed on the
+	# host as `atlas provision-vm`. The on-disk file keeps its extension; only the
+	# Task identifier drops it. See scripts_catalog (the verb authority).
+	#
+	# Verb + Noun when the verb creates a *new* object.
+	"bootstrap-server": "Bootstrap Server",
+	"sync-image": "Sync Image",
+	"provision-vm": "Create Virtual Machine",
+	"snapshot-vm": "Snapshot Virtual Machine",
+	"warm-snapshot-vm": "Capture Warm Snapshot",
+	# Verb-only when the verb operates on the *same* object.
+	# reboot-server stays a shell verb (reboot-server.sh; two lines).
+	"reboot-server": "Reboot",
+	"start-vm": "Start",
+	"stop-vm": "Stop",
+	"snapshot-stop-vm": "Stop",
+	"restart-vm": "Restart",
+	"pause-vm": "Pause",
+	"resume-vm": "Resume",
+	"rebuild-vm": "Rebuild",
+	"resize-vm": "Resize",
+	"terminate-vm": "Terminate",
+	"delete-snapshot-vm": "Delete Snapshot",
+	# Networking — one verb drives reserved-IP attach and detach, so a
 	# neutral noun reads correctly in both directions.
-	"vm-reserved-ip.py": "Update Reserved IP",
+	"vm-reserved-ip": "Update Reserved IP",
 	# TLS.
-	"issue-cert.py": "Issue Certificate",
-	# Guest / recipe-side synthetic script names (no .py; run in-guest over
-	# guest-SSH and recorded for the audit trail — see proxy.py,
+	"issue-cert": "Issue Certificate",
+	# Guest / recipe-side synthetic script names (already suffix-less; run
+	# in-guest over guest-SSH and recorded for the audit trail — see proxy.py,
 	# image_build.py, image_recipes.py, deploy_site.py).
 	"bench-build": "Build Bench",
 	"bench-warm": "Warm Bench",
@@ -48,14 +52,14 @@ SCRIPT_LABELS = {
 # re-run through the VM's matching controller method so state-machine guards
 # stay live.
 RETRYABLE_VM_SCRIPTS: ClassVar = {
-	"provision-vm.py": "provision",
-	"start-vm.py": "start",
-	"stop-vm.py": "stop",
-	"snapshot-stop-vm.py": "stop",
-	"restart-vm.py": "restart",
-	"terminate-vm.py": "terminate",
+	"provision-vm": "provision",
+	"start-vm": "start",
+	"stop-vm": "stop",
+	"snapshot-stop-vm": "stop",
+	"restart-vm": "restart",
+	"terminate-vm": "terminate",
 }
-RETRYABLE_SERVER_SCRIPTS = frozenset({"bootstrap-server.py", "reboot-server.sh", "sync-image.py"})
+RETRYABLE_SERVER_SCRIPTS = frozenset({"bootstrap-server", "reboot-server", "sync-image"})
 
 
 class Task(Document):
@@ -165,7 +169,7 @@ class Task(Document):
 		Without this hook, an operator looking at the VM form sees Pending and
 		has no clue the last provision attempt blew up.
 		"""
-		if self.status != "Failure" or self.script != "provision-vm.py" or not self.virtual_machine:
+		if self.status != "Failure" or self.script != "provision-vm" or not self.virtual_machine:
 			return
 		current = frappe.db.get_value("Virtual Machine", self.virtual_machine, "status")
 		if current not in ("Pending", "Running"):

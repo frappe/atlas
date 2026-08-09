@@ -16,13 +16,20 @@ RUN chmod +x /src/proxy/build.sh && /src/proxy/build.sh
 # line-protocol client, spec/17-tcp-proxy.md), so test_tcp.py drives the SAME
 # binary the controller runs over SSH — nothing extra to add here.
 
-# A test region so router.lua strips ".test.local". build.sh wrote an empty
-# region file and aimed the flat cert symlink at certs/_placeholder; here we do
-# what build_proxy/push_cert do in the real flow — write the region and repoint
-# the flat symlink at certs/<region>/. There's no real wildcard for the harness
-# (the TLS tests use curl -k), so the region's cert dir just reuses the
-# build-time placeholder PEMs. This keeps the gate faithful to the symlink path.
-RUN printf 'test\n' > /var/lib/nginx/region \
+# A test wildcard zone so router.lua strips ".test.x.frappe.dev" (the region file
+# holds the FULL Root Domain zone, not the bare region — _finalize_proxy writes
+# active_root_domain().domain). The zone is deliberately DEEPER than
+# "<region>.frappe.dev" (the extra `.x` label) so the gate exercises the real
+# platform-zone shape (x.frappe.dev) that broke when the lua reconstructed the zone
+# as region .. ".frappe.dev"; it MUST match test_proxy.py's ZONE constant. build.sh
+# wrote an empty region file and aimed the flat cert symlink at certs/_placeholder;
+# here we do what build_proxy/push_cert do in the real flow — write the zone and
+# repoint the flat symlink at the cert dir. The cert dir is scoped by the bare REGION
+# id ("test"), which push_cert derives from atlas_region() — a SEPARATE thing from the
+# zone in the region file. There's no real wildcard for the harness (the TLS tests use
+# curl -k), so the cert dir just reuses the build-time placeholder PEMs. This keeps the
+# gate faithful to the symlink path.
+RUN printf 'test.x.frappe.dev\n' > /var/lib/nginx/region \
     && mkdir -p /var/lib/nginx/certs/test \
     && cp /var/lib/nginx/certs/_placeholder/fullchain.pem /var/lib/nginx/certs/test/fullchain.pem \
     && cp /var/lib/nginx/certs/_placeholder/privkey.pem   /var/lib/nginx/certs/test/privkey.pem \

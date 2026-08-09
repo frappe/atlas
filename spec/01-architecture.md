@@ -55,6 +55,13 @@ its whitelisted methods. Atlas trusts Central's session, attributes resources to
 a `Tenant`, and enforces only physical capacity — all policy (who, which team,
 paid-for-what) is decided in Central before it calls.
 
+Atlas core owns only the VM fabric — "a VM exists". Service-specific logic
+(reverse-proxy routing, the customer gateway, the WireGuard host mesh, bench/site
+deploy) attaches to the VM lifecycle through an explicit registry and lives, or is
+moving, in a separate app, **`satellite`** — see
+[30-core-service-boundary.md](./30-core-service-boundary.md). Core never imports
+satellite; satellite drives every infra effect back through methods Atlas exposes.
+
 There is no Atlas agent on the server. Everything Atlas does on a server is
 the result of one SSH invocation that runs one shell script. The script comes
 from this repository, under [`atlas/scripts/`](../scripts/). The Frappe code

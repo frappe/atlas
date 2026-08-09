@@ -1,0 +1,187 @@
+{
+  "actions": [],
+  "allow_rename": 0,
+  "autoname": "hash",
+  "creation": "2026-06-22 00:00:00.000000",
+  "doctype": "DocType",
+  "engine": "InnoDB",
+  "field_order": [
+    "virtual_machine",
+    "status",
+    "column_break_header",
+    "source_server",
+    "target_server",
+    "section_break_addressing",
+    "ipv6_address_old",
+    "ipv6_address_new",
+    "column_break_addressing",
+    "release_reserved_ip",
+    "section_break_transfer",
+    "nbd_port",
+    "nbd_pid",
+    "column_break_transfer",
+    "hydration_percent",
+    "hydration_last_polled",
+    "section_break_audit",
+    "error_message",
+    "started_at",
+    "completed_at"
+  ],
+  "fields": [
+    {
+      "fieldname": "virtual_machine",
+      "fieldtype": "Link",
+      "in_list_view": 1,
+      "in_standard_filter": 1,
+      "label": "Virtual Machine",
+      "options": "Virtual Machine",
+      "reqd": 1,
+      "set_only_once": 1
+    },
+    {
+      "default": "Pending",
+      "fieldname": "status",
+      "fieldtype": "Select",
+      "in_list_view": 1,
+      "in_standard_filter": 1,
+      "label": "Status",
+      "options": "Pending\nExportingSnapshot\nTargetPreparing\nInjectingIdentity\nHydrating\nCutoverStarting\nRepointing\nCleanup\nDone\nFailed",
+      "read_only": 1
+    },
+    {
+      "fieldname": "column_break_header",
+      "fieldtype": "Column Break"
+    },
+    {
+      "description": "Denormalized from the VM at insert. Immutable.",
+      "fieldname": "source_server",
+      "fieldtype": "Link",
+      "label": "Source Server",
+      "options": "Server",
+      "read_only": 1,
+      "set_only_once": 1
+    },
+    {
+      "fieldname": "target_server",
+      "fieldtype": "Link",
+      "in_list_view": 1,
+      "label": "Target Server",
+      "options": "Server",
+      "reqd": 1,
+      "set_only_once": 1
+    },
+    {
+      "fieldname": "section_break_addressing",
+      "fieldtype": "Section Break",
+      "label": "Addressing"
+    },
+    {
+      "description": "The VM's IPv6 on the source (history). Released implicitly once server flips.",
+      "fieldname": "ipv6_address_old",
+      "fieldtype": "Data",
+      "label": "IPv6 Address (old)",
+      "read_only": 1
+    },
+    {
+      "description": "Allocated from the target server's range during InjectingIdentity.",
+      "fieldname": "ipv6_address_new",
+      "fieldtype": "Data",
+      "label": "IPv6 Address (new)",
+      "read_only": 1
+    },
+    {
+      "fieldname": "column_break_addressing",
+      "fieldtype": "Column Break"
+    },
+    {
+      "default": "0",
+      "description": "Operator acknowledgment that an attached public IPv4 will be released (inbound v4 changes across the move).",
+      "fieldname": "release_reserved_ip",
+      "fieldtype": "Check",
+      "label": "Release Reserved IP",
+      "set_only_once": 1
+    },
+    {
+      "fieldname": "section_break_transfer",
+      "fieldtype": "Section Break",
+      "label": "Transfer"
+    },
+    {
+      "description": "Localhost port the source NBD server binds; derived from the VM UUID.",
+      "fieldname": "nbd_port",
+      "fieldtype": "Int",
+      "label": "NBD Port",
+      "read_only": 1
+    },
+    {
+      "fieldname": "nbd_pid",
+      "fieldtype": "Int",
+      "label": "NBD PID",
+      "read_only": 1
+    },
+    {
+      "fieldname": "column_break_transfer",
+      "fieldtype": "Column Break"
+    },
+    {
+      "fieldname": "hydration_percent",
+      "fieldtype": "Int",
+      "label": "Hydration %",
+      "read_only": 1
+    },
+    {
+      "fieldname": "hydration_last_polled",
+      "fieldtype": "Datetime",
+      "label": "Hydration Last Polled",
+      "read_only": 1
+    },
+    {
+      "fieldname": "section_break_audit",
+      "fieldtype": "Section Break",
+      "label": "Audit"
+    },
+    {
+      "fieldname": "error_message",
+      "fieldtype": "Long Text",
+      "label": "Error Message",
+      "read_only": 1
+    },
+    {
+      "fieldname": "started_at",
+      "fieldtype": "Datetime",
+      "label": "Started At",
+      "read_only": 1
+    },
+    {
+      "fieldname": "completed_at",
+      "fieldtype": "Datetime",
+      "label": "Completed At",
+      "read_only": 1
+    }
+  ],
+  "index_web_pages_for_search": 1,
+  "links": [],
+  "modified": "2026-06-22 00:00:00.000000",
+  "module": "Atlas",
+  "name": "Virtual Machine Migration",
+  "owner": "Administrator",
+  "permissions": [
+    {
+      "create": 1,
+      "delete": 1,
+      "email": 1,
+      "export": 1,
+      "print": 1,
+      "read": 1,
+      "report": 1,
+      "role": "System Manager",
+      "share": 1,
+      "write": 1
+    }
+  ],
+  "sort_field": "modified",
+  "sort_order": "DESC",
+  "states": [],
+  "title_field": "virtual_machine",
+  "track_changes": 1
+}

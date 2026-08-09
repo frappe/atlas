@@ -15,12 +15,14 @@
   "virtual_machine",
   "column_break_backing",
   "subdomain_doc",
+  "pilot",
   "section_break_timing",
   "provisioning_started",
   "deploying_started",
   "running_started",
   "section_break_credentials",
-  "admin_password"
+  "login_url",
+  "login_url_expires_at"
  ],
  "fields": [
   {
@@ -91,6 +93,14 @@
    "read_only": 1
   },
   {
+   "description": "The attached Pilot (bench admin console) this site stood up on its OWN backing VM — fronted at <subdomain>-pilot.<region domain>, the front door Central's Asset resolves for 'Open'. Created by auto_provision after the site serves; terminated with the site. The customer's Frappe site is this Site itself (surfaced via get_site); the Pilot is the admin console on the same bench.",
+   "fieldname": "pilot",
+   "fieldtype": "Link",
+   "label": "Pilot",
+   "options": "Pilot",
+   "read_only": 1
+  },
+  {
    "fieldname": "section_break_timing",
    "fieldtype": "Section Break",
    "label": "Timing"
@@ -119,18 +129,26 @@
   {
    "fieldname": "section_break_credentials",
    "fieldtype": "Section Break",
-   "label": "Credentials"
+   "label": "Handoff"
   },
   {
-   "description": "The Frappe Administrator password handed to the tenant — the shared baked throwaway (the deploy no longer resets it per VM; the tenant rotates it after first login). The db root password is baked + shared too. Stored encrypted; surfaced to Central (event payload + get_site poll) once the site is Running. Controller-written.",
-   "fieldname": "admin_password",
-   "fieldtype": "Password",
-   "label": "Administrator Password",
+   "description": "The one-click Administrator session URL handed to the tenant instead of a password — minted by deploy-site.py (`bench browse --sid`, a real 24h session) and stamped before the readiness wait. The baked Administrator password is a long random secret generated at bake time and never surfaced. Surfaced to Central (event payload + get_site poll) once the site is Running. Controller-written.",
+   "fieldname": "login_url",
+   "fieldtype": "Small Text",
+   "label": "Login URL",
+   "read_only": 1
+  },
+  {
+   "description": "When login_url stops working (mint time + the `bench browse --sid` session's 24h TTL). Central compares against this to decide 'use it' vs 'regenerate'. Stamped alongside login_url before the readiness wait; empty until the site is Running.",
+   "fieldname": "login_url_expires_at",
+   "fieldtype": "Datetime",
+   "label": "Login URL Expires At",
+   "no_copy": 1,
    "read_only": 1
   }
  ],
  "links": [],
- "modified": "2026-06-09 00:00:00.000000",
+ "modified": "2026-07-01 00:00:00.000000",
  "modified_by": "Administrator",
  "module": "Atlas",
  "name": "Site",

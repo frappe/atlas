@@ -30,6 +30,26 @@ def _purge() -> None:
 		frappe.delete_doc("Virtual Machine", name, force=1, ignore_permissions=True)
 
 
+def _ensure_active_root_domain(domain: str, region: str) -> None:
+	"""The single active Root Domain `_finalize_proxy` reads (active_root_domain())
+	to write the proxy's wildcard zone. Idempotent; mirrors test_bench_routing."""
+	if not frappe.db.exists("Root Domain", domain):
+		frappe.get_doc(
+			{
+				"doctype": "Root Domain",
+				"domain": domain,
+				"region": region,
+				"is_active": 1,
+				"dns_provider_type": "Route53",
+				"tls_provider_type": "Let's Encrypt",
+			}
+		).insert(ignore_permissions=True)
+	frappe.db.set_value("Root Domain", domain, "is_active", 1)
+	for name in frappe.get_all("Root Domain", filters={"is_active": 1}, pluck="name"):
+		if name != domain:
+			frappe.db.set_value("Root Domain", name, "is_active", 0)
+
+
 @contextlib.contextmanager
 def _mock_build_ssh(build_result, finalize_result=("", "", 0)):
 	"""Patch the guest-SSH plumbing run_build uses. `build_result` is what the
@@ -130,26 +150,57 @@ class TestRecipeRegistry(IntegrationTestCase):
 		self.assertEqual(
 			(v15.frappe_branch, v15.erpnext_branch, v15.python_version), ("version-15", "version-15", "3.11")
 		)
-		self.assertEqual((nightly.frappe_branch, nightly.erpnext_branch), ("develop", "develop"))
-		# All three share the proven bench-cli ref + the bench source tree + sizing.
+		self.assertEqual(
+			(nightly.frappe_branch, nightly.erpnext_branch), ("feature/cloud-settings", "develop")
+		)
+		# All three share the pilot repo + ref + the bench source tree + sizing.
 		self.assertEqual({v16.bench_cli_ref, v15.bench_cli_ref, nightly.bench_cli_ref}, {v16.bench_cli_ref})
-		self.assertTrue(v16.bench_cli_ref)
+		# UNPINNED: the documented install always lays down the latest release, so a ref
+		# here could never be enforced — build.sh records what it got instead. An empty
+		# ref is also what keeps BENCH_CLI_REF out of the build env entirely (_build_env).
+		self.assertEqual(v16.bench_cli_ref, "")
+		# Every bench recipe bakes off UPSTREAM pilot, not a fork.
+		self.assertEqual({v16.bench_cli_repo, v15.bench_cli_repo, nightly.bench_cli_repo}, {"frappe/pilot"})
 		for r in (v16, v15, nightly):
 			self.assertEqual(r.source_directory, "bench")
 			self.assertEqual(r.task_script, "bench-build")
 
 	def test_versioned_recipes_promote_to_series_image_name(self) -> None:
-		# The promote default name == the recipe name == the Central Image image_name.
+		# The promote default name == the recipe name (the series image name).
 		for name in ("bench-v15", "bench-v16", "bench-nightly"):
 			self.assertEqual(RECIPES[name].promote_image_name, name)
 
-	def test_v16_is_the_only_warm_registering_variant(self) -> None:
-		# v16 doubles as the self-serve site accelerator base (warm + registers); v15
-		# and nightly are cold customer goldens (promote-to-image requires cold).
-		self.assertEqual(RECIPES["bench-v16"].warm_entrypoint, "warm.sh")
+	def test_bench_snapshot_title_slugs_to_a_version_mappable_name(self) -> None:
+		# The Virtual Machine Snapshot promote dialog derives its default image name by
+		# slugifying the snapshot title (title.toLowerCase().replace(/[^a-z0-9.-]+/g,'-')
+		# in virtual_machine_snapshot.js). A prose snapshot_title ("Bench nightly admin
+		# (develop)") slugged to `bench-nightly-admin-develop` — a name version_from_image
+		# can't strip back to `nightly`, so a VM off it mirrored a garbage version token.
+		# snapshot_title is the clean series name, so the slug is a no-op that lands on the
+		# same name the Image Build promote path uses AND parses back to the version token.
+		import re
+
+		from atlas.atlas.placement import version_from_image
+
+		def slug(title: str) -> str:
+			return re.sub(r"^-+|-+$", "", re.sub(r"[^a-z0-9.-]+", "-", title.lower()))
+
+		for name, recipe in RECIPES.items():
+			if not name.startswith("bench-"):
+				continue
+			slugged = slug(recipe.snapshot_title)
+			self.assertEqual(slugged, recipe.promote_image_name)
+			self.assertIsNotNone(version_from_image(slugged))
+
+	def test_all_site_variants_are_warm_only_v16_registers(self) -> None:
+		# Every site variant is warm-clonable (warm.sh) so a customer VM off any
+		# version boots from a pre-warmed guest. v16 alone also doubles as the
+		# self-serve golden (registers_as=default_bench_snapshot); v15 + nightly are
+		# warm but never the registered golden. (Admin twins stay cold — see below.)
+		for name in ("bench-v15", "bench-v16", "bench-nightly"):
+			self.assertEqual(RECIPES[name].warm_entrypoint, "warm.sh")
 		self.assertEqual(RECIPES["bench-v16"].registers_as, "default_bench_snapshot")
 		for name in ("bench-v15", "bench-nightly"):
-			self.assertEqual(RECIPES[name].warm_entrypoint, "")
 			self.assertIsNone(RECIPES[name].registers_as)
 
 	def test_build_mode_defaults_to_site(self) -> None:
@@ -182,7 +233,12 @@ class TestRecipeRegistry(IntegrationTestCase):
 				(site.frappe_branch, site.erpnext_branch, site.python_version),
 			)
 			self.assertEqual(admin.source_directory, "bench")
+			# The admin twin rides the SAME documented upstream pilot install as its site
+			# twin. It used to hold a fork pin for `bench generate-admin-session`; Central
+			# mints the console sid itself now, so nothing is left to diverge for.
+			self.assertEqual(admin.bench_cli_repo, site.bench_cli_repo)
 			self.assertEqual(admin.bench_cli_ref, site.bench_cli_ref)
+			self.assertEqual(admin.bench_cli_repo, "frappe/pilot")
 
 	def test_proxy_recipe_shape(self) -> None:
 		self.assertEqual(_PROXY.task_script, "proxy-build")
@@ -202,6 +258,16 @@ class TestTreeUploads(IntegrationTestCase):
 		build = next(r for _, r in image_builder.tree_uploads(_BENCH) if r.endswith("/build.sh"))
 		self.assertEqual(build, _BENCH.remote_entrypoint)
 
+	def test_declared_entrypoint_missing_from_tree_throws(self) -> None:
+		# A stale app checkout (missing warm.sh) uploads a tree without the file, but
+		# the warm step still invokes recipe.warm_entrypoint by name — catch it here
+		# instead of dying deep in the guest with "No such file or directory".
+		import dataclasses
+
+		stale = dataclasses.replace(_BENCH, warm_entrypoint="ghost.sh")
+		with self.assertRaisesRegex(frappe.ValidationError, "ghost.sh"):
+			image_builder.tree_uploads(stale)
+
 	def test_proxy_tree_excludes_test_harness(self) -> None:
 		remotes = [remote for _, remote in image_builder.tree_uploads(_PROXY)]
 		self.assertTrue(any(r.endswith("/build.sh") for r in remotes), remotes)
@@ -218,6 +284,12 @@ class TestRunBuild(IntegrationTestCase):
 		_ensure_test_server()
 		_ensure_test_image()
 		_purge()
+		# The proxy finalize recipe writes the active Root Domain's wildcard zone to
+		# the region file (the proxy lua strips that full suffix). Pin the region and
+		# an active Root Domain so the finalize command carries "blr1.frappe.dev" and
+		# active_root_domain() doesn't throw.
+		frappe.db.set_single_value("Atlas Settings", "region", "blr1")
+		_ensure_active_root_domain("blr1.frappe.dev", "blr1")
 
 	def test_uploads_tree_then_runs_detached_and_records_task(self) -> None:
 		vm = _new_vm()
@@ -270,10 +342,10 @@ class TestRunBuild(IntegrationTestCase):
 		vm = _new_vm(is_proxy=1, region="blr1")
 		with _mock_build_ssh(("built", "", 0)) as (_ssh, _scp, _det, _fh, finalize_run_ssh):
 			image_builder.run_build(vm.name, _PROXY)
-		# The proxy recipe's finalize wrote the region + restarted the unit.
+		# The proxy recipe's finalize wrote the wildcard zone + restarted the unit.
 		finalize_run_ssh.assert_called_once()
 		finalize_command = finalize_run_ssh.call_args.args[2]
-		self.assertIn("blr1", finalize_command)
+		self.assertIn("blr1.frappe.dev", finalize_command)
 		self.assertIn("systemctl restart nginx.service", finalize_command)
 		# It must NOT repoint the cert symlink (push_cert owns that, after the real
 		# cert lands — repointing here would dangle the symlink at start).
@@ -431,9 +503,9 @@ class TestRenderBenchToml(IntegrationTestCase):
 		self.assertNotIn('python = "3.14"', rendered)
 		self.assertNotIn('branch = "version-16"', rendered)
 
-	def test_renders_develop_for_nightly(self) -> None:
+	def test_renders_frappe_branch_for_nightly(self) -> None:
 		rendered = image_builder._render_bench_toml(_NIGHTLY)
-		self.assertIn('branch = "develop"', rendered)
+		self.assertIn('branch = "feature/cloud-settings"', rendered)
 		self.assertIn('python = "3.14"', rendered)
 
 	def test_render_is_a_noop_shape_for_v16(self) -> None:
@@ -522,17 +594,31 @@ class TestRenderBenchToml(IntegrationTestCase):
 
 
 class TestBuildCommand(IntegrationTestCase):
-	def test_env_carries_cli_ref_and_erpnext_branch(self) -> None:
+	def test_env_omits_the_cli_ref_when_unpinned(self) -> None:
+		"""An empty recipe ref must not export BENCH_CLI_REF at all. build.sh treats an
+		empty ref as "take what the documented install delivers", so exporting the key
+		with an empty value would be the same thing — but exporting nothing keeps the
+		build command honest about which knobs the recipe actually turns."""
 		env = image_builder._build_env(_V15)
-		self.assertEqual(env["BENCH_CLI_REF"], _V15.bench_cli_ref)
+		self.assertEqual(_V15.bench_cli_ref, "")
+		self.assertNotIn("BENCH_CLI_REF", env)
 		self.assertEqual(env["ERPNEXT_BRANCH"], "version-15")
+
+	def test_env_carries_cli_repo_alongside_ref(self) -> None:
+		"""The repo must ride with the ref: build.sh resolves install.sh and the
+		origin re-point off BENCH_CLI_REPO, so exporting a ref alone would resolve it
+		against the committed default repo — the wrong tree whenever they disagree."""
+		env = image_builder._build_env(_V15)
+		self.assertEqual(env["BENCH_CLI_REPO"], _V15.bench_cli_repo)
+		self.assertEqual(env["BENCH_CLI_REPO"], "frappe/pilot")
 
 	def test_proxy_env_is_empty(self) -> None:
 		self.assertEqual(image_builder._build_env(_PROXY), {})
 
 	def test_command_exports_env_and_passes_mode(self) -> None:
 		command = image_builder._build_command(_V16)
-		self.assertIn(f"export BENCH_CLI_REF={_V16.bench_cli_ref}", command)
+		self.assertNotIn("BENCH_CLI_REF", command)
+		self.assertIn(f"export BENCH_CLI_REPO={_V16.bench_cli_repo}", command)
 		self.assertIn("export ERPNEXT_BRANCH=version-16", command)
 		# Ends with `… build.sh site` (the bake mode, the entrypoint's positional arg).
 		self.assertTrue(command.rstrip().endswith("build.sh site"), command)
@@ -583,7 +669,7 @@ class TestUploadsWithRenderedToml(IntegrationTestCase):
 			image_builder.run_build(vm.name, _V15)
 		# The detached build command carries the version env + bake mode.
 		command = run_detached.call_args.args[2]
-		self.assertIn(f"export BENCH_CLI_REF={_V15.bench_cli_ref}", command)
+		self.assertIn(f"export BENCH_CLI_REPO={_V15.bench_cli_repo}", command)
 		self.assertIn("export ERPNEXT_BRANCH=version-15", command)
 		self.assertTrue(command.rstrip().endswith("build.sh site"))
 		# The bench.toml that was scp'd is the rendered (v15) one, not the committed v16.

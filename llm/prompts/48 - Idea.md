@@ -1,1 +1,0 @@
-Implement Jailer and other security features recommended by Firecracker.

@@ -1,0 +1,177 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "creation": "2026-07-03 00:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 0,
+ "engine": "InnoDB",
+ "field_order": [
+  "tab_overview",
+  "subdomain",
+  "tenant",
+  "column_break_header",
+  "status",
+  "build_mode",
+  "attached",
+  "section_break_backing",
+  "virtual_machine",
+  "column_break_backing",
+  "subdomain_doc",
+  "section_break_credentials",
+  "login_url",
+  "login_url_expires_at"
+ ],
+ "fields": [
+  {
+   "fieldname": "tab_overview",
+   "fieldtype": "Tab Break",
+   "label": "Overview"
+  },
+  {
+   "description": "The bare DNS label Central chose, e.g. acme. A single label (no dots) so the pilot stays inside the one regional wildcard the proxy already terminates. The pilot is fronted at <subdomain>.<region domain> — that FQDN is this row's name and the proxy Host header. Same Contract-A rule a self-serve Site uses.",
+   "fieldname": "subdomain",
+   "fieldtype": "Data",
+   "in_global_search": 1,
+   "in_list_view": 1,
+   "label": "Subdomain",
+   "reqd": 1,
+   "set_only_once": 1
+  },
+  {
+   "description": "The Central team this pilot belongs to. Stamped by the Central-facing create_vm API; set once at insert. Operator/e2e pilots created directly may leave it empty.",
+   "fieldname": "tenant",
+   "fieldtype": "Link",
+   "in_standard_filter": 1,
+   "label": "Tenant",
+   "options": "Tenant",
+   "read_only": 1,
+   "set_only_once": 1
+  },
+  {
+   "fieldname": "column_break_header",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "Pending",
+   "description": "Controller-written lifecycle state. Running is reached only after the backing VM boots and the in-guest deploy mints the one-click login URL. Pending → Running; Failed on any error; Terminated after teardown.",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Status",
+   "options": "Pending\nRunning\nFailed\nTerminated",
+   "read_only": 1
+  },
+  {
+   "description": "Which bench front door the baked image serves: admin (the bench admin console, minted via `bench generate-admin-session`) or site (a single baked site, minted via `bench browse`). Inherited from the backing VM's image at insert; drives the login-URL mint mode and its TTL.",
+   "fieldname": "build_mode",
+   "fieldtype": "Data",
+   "label": "Build Mode",
+   "read_only": 1,
+   "set_only_once": 1
+  },
+  {
+   "default": "0",
+   "description": "Set when this Pilot was ATTACHED to a VM another aggregate owns (a self-serve Site's backing VM) rather than creating its own. An attached Pilot only wires the admin console (vhost + login mint) on the shared VM; it never provisions or terminates the VM — the owning Site does. Set once at insert by Site.auto_provision; a Central create_vm Pilot leaves it 0 (it owns its VM).",
+   "fieldname": "attached",
+   "fieldtype": "Check",
+   "label": "Attached",
+   "read_only": 1,
+   "set_only_once": 1
+  },
+  {
+   "fieldname": "section_break_backing",
+   "fieldtype": "Section Break",
+   "label": "Backing"
+  },
+  {
+   "description": "The Virtual Machine this pilot boots and deploys into, cloned from a bench image by the controller (Central never picks it). Immutable once chosen. Plain VM facts (ipv6, sizing) are read through this link — the pilot stores only its bench-level state.",
+   "fieldname": "virtual_machine",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Virtual Machine",
+   "options": "Virtual Machine",
+   "read_only": 1,
+   "set_only_once": 1
+  },
+  {
+   "fieldname": "column_break_backing",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "The Subdomain (proxy map) row this pilot created once its backing VM booted and deployed — deleting it takes the pilot off the front door. Written by the controller after the guest deploy mints the login URL. Same routing entry a self-serve Site creates.",
+   "fieldname": "subdomain_doc",
+   "fieldtype": "Link",
+   "label": "Routing Entry",
+   "options": "Subdomain",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_break_credentials",
+   "fieldtype": "Section Break",
+   "label": "Handoff"
+  },
+  {
+   "description": "The one-click admin sign-in URL minted after boot (bench generate-admin-session / bench browse). Short-lived and single-use — see login_url_expires_at; Central regenerates it if a tenant clicks after it expires. Surfaced to Central (event payload + poll) once Running. Controller-written.",
+   "fieldname": "login_url",
+   "fieldtype": "Small Text",
+   "label": "Login URL",
+   "no_copy": 1,
+   "read_only": 1
+  },
+  {
+   "description": "When login_url stops working (mint time + the mint mode's TTL: 5 min for admin's single-use JWT, 24h for a site session). Central compares against this to decide 'use it' vs 'regenerate'. Stamped alongside login_url; empty until Running.",
+   "fieldname": "login_url_expires_at",
+   "fieldtype": "Datetime",
+   "label": "Login URL Expires At",
+   "no_copy": 1,
+   "read_only": 1
+  }
+ ],
+ "links": [],
+ "modified": "2026-07-03 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Atlas",
+ "name": "Pilot",
+ "naming_rule": "Set by user",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "amend": 0,
+   "cancel": 0,
+   "create": 1,
+   "delete": 1,
+   "export": 1,
+   "import": 0,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "submit": 0,
+   "write": 1
+  }
+ ],
+ "search_fields": "subdomain,status",
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [
+  {
+   "title": "Pending",
+   "color": "Orange"
+  },
+  {
+   "title": "Running",
+   "color": "Green"
+  },
+  {
+   "title": "Failed",
+   "color": "Red"
+  },
+  {
+   "title": "Terminated",
+   "color": "Gray"
+  }
+ ],
+ "title_field": "subdomain",
+ "track_changes": 1
+}

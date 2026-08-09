@@ -1,17 +1,12 @@
 // Scaleway Settings — Single. Exposes a Test Connection action under
-// Actions ▾ and filters the size/image link queries to Scaleway rows.
-// Mirrors DigitalOcean Settings: no auto-painted credential chip — the
-// operator verifies via Test Connection, which surfaces a toast.
+// Actions ▾. Mirrors DigitalOcean Settings: no auto-painted credential chip —
+// the operator verifies via Test Connection, which surfaces a toast. The
+// default size/image are no longer fields here — they live as `is_default`
+// on Provider Size / Provider Image.
 
 frappe.ui.form.on("Scaleway Settings", {
 	refresh(frm) {
 		frappe.atlas.add_action(frm, "Test Connection", () => run_test_connection(frm));
-		frm.set_query("default_size", () => ({
-			filters: { provider_type: "Scaleway", enabled: 1 },
-		}));
-		frm.set_query("default_image", () => ({
-			filters: { provider_type: "Scaleway", enabled: 1 },
-		}));
 	},
 });
 

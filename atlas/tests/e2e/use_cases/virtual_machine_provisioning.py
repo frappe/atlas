@@ -149,14 +149,14 @@ def _check_provision_happy_path(server_name: str, image: str, public_key: str) -
 	assert vm.status == "Running", vm.status
 	assert vm.last_started
 
-	assert_probe(server_name, "phase5-is-active.sh", VIRTUAL_MACHINE_NAME=vm.name)
+	assert_probe(server_name, "phase5-is-active", VIRTUAL_MACHINE_NAME=vm.name)
 
 	# Production contract: Firecracker is jailed — runs as the per-VM uid (not
 	# root), chrooted into the VM's jail, in the VM's network namespace, bounded
 	# by per-VM cgroup caps. A green boot that still ran as root is a failure.
 	assert_probe(
 		server_name,
-		"phase-jailed.sh",
+		"phase-jailed",
 		VIRTUAL_MACHINE_NAME=vm.name,
 		ATLAS_FC_UID=str(derive_uid(vm.name)),
 		ATLAS_NETNS=derive_netns(vm.name),
@@ -169,7 +169,7 @@ def _check_provision_happy_path(server_name: str, image: str, public_key: str) -
 	# de-privileged, chrooted Firecracker booted off a thin LV.
 	assert_probe(
 		server_name,
-		"phase-vm-disk-is-lv.sh",
+		"phase-vm-disk-is-lv",
 		VIRTUAL_MACHINE_NAME=vm.name,
 		ATLAS_FC_UID=str(derive_uid(vm.name)),
 	)
@@ -187,7 +187,7 @@ def _check_provision_happy_path(server_name: str, image: str, public_key: str) -
 	# clean /etc/hosts, locked root, sshd password-auth off.
 	assert_probe(
 		server_name,
-		"phase5-guest-identity.sh",
+		"phase5-guest-identity",
 		timeout_seconds=180,
 		VIRTUAL_MACHINE_NAME=vm.name,
 		VIRTUAL_MACHINE_IPV6=vm.ipv6_address,
@@ -200,7 +200,7 @@ def _check_provision_happy_path(server_name: str, image: str, public_key: str) -
 	# fstab LABEL=atlas-data line all landed and came up at boot.
 	assert_probe(
 		server_name,
-		"phase-data-disk.sh",
+		"phase-data-disk",
 		timeout_seconds=180,
 		VIRTUAL_MACHINE_IPV6=vm.ipv6_address,
 		SSH_PRIVATE_KEY=ephemeral_private_key(),
@@ -216,7 +216,7 @@ def _check_provision_happy_path(server_name: str, image: str, public_key: str) -
 	# We hop in over the guest's IPv6 either way.
 	assert_probe(
 		server_name,
-		"phase5-ipv4-egress.sh",
+		"phase5-ipv4-egress",
 		timeout_seconds=180,
 		VIRTUAL_MACHINE_IPV6=vm.ipv6_address,
 		SSH_PRIVATE_KEY=ephemeral_private_key(),
@@ -413,7 +413,7 @@ def _move_image(server_name: str, image_doc, direction: str) -> None:
 	assert direction in {"aside", "back"}, direction
 	task = run_task(
 		server=server_name,
-		script="phase5-move-image.sh",
+		script="phase5-move-image",
 		variables={
 			"IMAGE_NAME": image_doc.image_name,
 			"ROOTFS_FILENAME": image_doc.rootfs_filename,

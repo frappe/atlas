@@ -74,7 +74,7 @@ class TestVPNTunnel(IntegrationTestCase):
 		with patch.object(module, "run_task", return_value=_up_task()) as run_task:
 			tunnel.bring_up()
 			(_, kwargs) = run_task.call_args
-		self.assertEqual(kwargs["script"], "vm-tunnel.py")
+		self.assertEqual(kwargs["script"], "vm-tunnel")
 		variables = kwargs["variables"]
 		self.assertEqual(variables["ACTION"], "up")
 		self.assertEqual(variables["TUNNEL_NAME"], tunnel.name)
@@ -93,7 +93,7 @@ class TestVPNTunnel(IntegrationTestCase):
 		with patch.object(module, "run_task", return_value=fake_task(name="t-down")) as run_task:
 			tunnel.revoke()
 			(_, kwargs) = run_task.call_args
-		self.assertEqual(kwargs["script"], "vm-tunnel.py")
+		self.assertEqual(kwargs["script"], "vm-tunnel")
 		self.assertEqual(kwargs["variables"]["ACTION"], "down")
 		self.assertEqual(kwargs["variables"]["INTERFACE"], tunnel.interface_name)
 		tunnel.reload()
@@ -130,10 +130,12 @@ class TestVPNTunnel(IntegrationTestCase):
 		vm.last_started = frappe.utils.now_datetime()
 		vm.save(ignore_permissions=True)
 		tunnel = _make_tunnel(vm.name)
-		# terminate-vm.py (vm_module.run_task) AND the tunnel down Task
-		# (module.run_task) both fire; patch both.
+		# The terminate verb goes to the host's Boat and states its intent first;
+		# the tunnel-down Task is still an ordinary SSH Task. Three patches, and
+		# the desired-state PUT is one of them because no daemon answers here.
 		with (
-			patch.object(vm_module, "run_task", return_value=fake_task(name="t-term")),
+			patch.object(vm_module, "run_boat_task", return_value=fake_task(name="t-term")),
+			patch.object(vm_module, "put_desired_state", return_value={}),
 			patch.object(module, "run_task", return_value=fake_task(name="t-down")),
 		):
 			vm.terminate()

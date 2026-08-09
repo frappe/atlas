@@ -7,8 +7,7 @@
  "engine": "InnoDB",
  "field_order": [
   "tab_overview",
-  "title",
-  "email"
+  "title"
  ],
  "fields": [
   {
@@ -22,18 +21,6 @@
    "in_list_view": 1,
    "in_global_search": 1,
    "label": "Title"
-  },
-  {
-   "description": "The tenant's contact email. Operator sets it once at creation; immutable afterward.",
-   "fieldname": "email",
-   "fieldtype": "Data",
-   "in_list_view": 1,
-   "in_global_search": 1,
-   "label": "Email",
-   "options": "Email",
-   "reqd": 1,
-   "set_only_once": 1,
-   "unique": 1
   }
  ],
  "links": [],
@@ -59,7 +46,7 @@
    "write": 1
   }
  ],
- "search_fields": "email",
+ "search_fields": "title",
  "sort_field": "creation",
  "sort_order": "DESC",
  "title_field": "title",

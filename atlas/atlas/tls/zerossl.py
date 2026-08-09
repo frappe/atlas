@@ -20,6 +20,7 @@ from atlas.atlas.tls.base import AuthResult, IssuedCert, TlsProvider
 @register
 class ZeroSslProvider(TlsProvider):
 	provider_type = "ZeroSSL"
+	caa_issuer = "sectigo.com"  # ZeroSSL certs chain to Sectigo's CAA identity
 
 	def authenticate(self) -> AuthResult:
 		return AuthResult(ok=False, error="ZeroSSL is not implemented yet")

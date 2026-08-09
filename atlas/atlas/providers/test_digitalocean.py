@@ -26,11 +26,7 @@ def _build_provider(monthly_cost=None):
 	"""Build a DigitalOceanProvider with stubbed Settings and client."""
 	from atlas.atlas.providers import digitalocean as do_module
 
-	settings = SimpleNamespace(
-		region="blr1",
-		default_size="DigitalOcean/s-2vcpu-4gb-intel",
-		default_image="DigitalOcean/ubuntu-24-04-x64",
-	)
+	settings = SimpleNamespace(region="blr1")
 	with (
 		patch.object(frappe, "get_single", return_value=settings),
 		patch.object(do_module, "get_secret", return_value="dop_v1_fake"),

@@ -86,7 +86,7 @@ def run_smoke(reuse: bool = True, keep: bool = True) -> None:
 			# 4. §2.1 release gate: the proxy can reach the site's :80 over public v6.
 			assert_probe(
 				server.name,
-				"phase-proxy-site-from-vantage.sh",
+				"phase-proxy-site-from-vantage",
 				timeout_seconds=180,
 				PROXY_IPV6=proxy_vm.ipv6_address,
 				SITE_IPV6=site_vm.ipv6_address,
@@ -163,7 +163,7 @@ def _start_site_server(server_name: str, site_vm, marker: str) -> None:
 	compose harness's vm-a/vm-b)."""
 	assert_probe(
 		server_name,
-		"phase-proxy-start-site.sh",
+		"phase-proxy-start-site",
 		timeout_seconds=180,
 		SITE_IPV6=site_vm.ipv6_address,
 		SITE_MARKER=marker,

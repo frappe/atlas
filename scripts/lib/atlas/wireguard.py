@@ -55,7 +55,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
-from atlas._run import run, run_ok
+from atlas._run import _substitute, run, run_ok
 from atlas.network_env import NetworkEnv
 
 TABLE = ("inet", "atlas")
@@ -112,59 +112,61 @@ class TunnelConfig:
 		)
 
 
-def link_add_argv(interface: str) -> list[str]:
+def link_add_command(interface: str) -> str:
 	"""Create the WireGuard interface in the current (host root) netns."""
-	return ["ip", "link", "add", interface, "type", "wireguard"]
+	return _substitute("ip link add {} type wireguard", (interface,))
 
 
-def link_up_argv(interface: str) -> list[str]:
-	return ["ip", "link", "set", interface, "up"]
+def link_up_command(interface: str) -> str:
+	return _substitute("ip link set {} up", (interface,))
 
 
-def link_del_argv(interface: str) -> list[str]:
+def link_del_command(interface: str) -> str:
 	"""Remove the interface — takes its addresses and connected routes with it."""
-	return ["ip", "link", "del", interface]
+	return _substitute("ip link del {}", (interface,))
 
 
-def addr_add_argv(interface: str, host_cidr: str) -> list[str]:
+def addr_add_command(interface: str, host_cidr: str) -> str:
 	"""Assign the host end's /127 overlay address. The kernel's connected route for
 	the /127 is the VM's return path to the client end (the upper address), so no
 	explicit per-client route is needed."""
-	return ["ip", "-6", "addr", "add", host_cidr, "dev", interface]
+	return _substitute("ip -6 addr add {} dev {}", (host_cidr, interface))
 
 
-def wg_set_interface_argv(interface: str, listen_port: int, private_key_path: str) -> list[str]:
+def wg_set_interface_command(interface: str, listen_port: int, private_key_path: str) -> str:
 	"""Set the listen port and private key (read from a 0600 file, never inline)."""
-	return ["wg", "set", interface, "listen-port", str(listen_port), "private-key", private_key_path]
+	return _substitute("wg set {} listen-port {} private-key {}", (interface, listen_port, private_key_path))
 
 
-def wg_set_peer_argv(interface: str, client_public_key: str, client_address: str) -> list[str]:
+def wg_set_peer_command(interface: str, client_public_key: str, client_address: str) -> str:
 	"""Add the one client peer, allowed-ips scoped to its overlay /128. Cryptokey
 	routing then accepts inbound only when its inner source is this address, and
 	sends return traffic only to this peer."""
-	return ["wg", "set", interface, "peer", client_public_key, "allowed-ips", f"{client_address}/128"]
+	return _substitute(
+		"wg set {} peer {} allowed-ips {}", (interface, client_public_key, f"{client_address}/128")
+	)
 
 
-def accept_rule_argv(interface: str, virtual_machine_ipv6: str) -> list[str]:
+def accept_rule_command(interface: str, virtual_machine_ipv6: str) -> str:
 	"""forward: accept decrypted tunnel traffic destined to the VM. Inserted at the
 	head AFTER the drop, so it ends up just above it ([accept, drop, …]); the VM is
 	reachable while everything else from the interface falls to the drop."""
-	return [
-		"insert", "rule", "inet", "atlas", FORWARD,
-		"iifname", interface, "ip6", "daddr", virtual_machine_ipv6, "accept",
-	]  # fmt: skip
+	return _substitute(
+		f"insert rule inet atlas {FORWARD} iifname {{}} ip6 daddr {{}} accept",
+		(interface, virtual_machine_ipv6),
+	)
 
 
-def drop_rule_argv(interface: str) -> list[str]:
+def drop_rule_command(interface: str) -> str:
 	"""forward: drop anything else *forwarded* off this tunnel's interface — another
 	VM, the internet. This is the transit isolation guarantee; without it a client
 	could address a VM that is not its own and the host would route it. Inserted at
 	the head (above the per-VM accepts that would otherwise shadow it). The host
-	*itself* is a different path — see host_drop_rule_argv."""
-	return ["insert", "rule", "inet", "atlas", FORWARD, "iifname", interface, "drop"]
+	*itself* is a different path — see host_drop_rule_command."""
+	return _substitute(f"insert rule inet atlas {FORWARD} iifname {{}} drop", (interface,))
 
 
-def host_drop_rule_argv(interface: str) -> list[str]:
+def host_drop_rule_command(interface: str) -> str:
 	"""input: drop a decrypted packet this tunnel addresses to the HOST itself. The
 	forward chain only sees *transit*; a packet bound for a host-local service — the
 	overlay /127's host end (which the client shares), or any host address bound to
@@ -172,7 +174,7 @@ def host_drop_rule_argv(interface: str) -> list[str]:
 	forward never sees, so without this a client could reach the host over the tunnel.
 	Appended, not inserted: the input chain holds only these per-tunnel drops, so
 	nothing shadows it."""
-	return ["add", "rule", "inet", "atlas", INPUT, "iifname", interface, "drop"]
+	return _substitute(f"add rule inet atlas {INPUT} iifname {{}} drop", (interface,))
 
 
 def apply_tunnel(config: TunnelConfig) -> None:
@@ -181,46 +183,44 @@ def apply_tunnel(config: TunnelConfig) -> None:
 	rules (the forward accept/drop pair plus the input host-drop). Re-running (cold
 	boot, reconcile, double apply) is a no-op — the same self-healing contract as
 	vm-network-up.py / reserved_ip_nat."""
-	if not run_ok("sudo", "ip", "link", "show", config.interface):
-		run("sudo", *link_add_argv(config.interface))
-	run("sudo", *wg_set_interface_argv(config.interface, config.listen_port, config.private_key_path))
-	run("sudo", *wg_set_peer_argv(config.interface, config.client_public_key, config.client_address))
-	addresses = run("sudo", "ip", "-6", "addr", "show", "dev", config.interface, check=False)
+	if not run_ok("sudo ip link show {}", config.interface):
+		run("sudo " + link_add_command(config.interface))
+	run("sudo " + wg_set_interface_command(config.interface, config.listen_port, config.private_key_path))
+	run("sudo " + wg_set_peer_command(config.interface, config.client_public_key, config.client_address))
+	addresses = run("sudo ip -6 addr show dev {}", config.interface, check=False)
 	if config.host_address not in addresses:
-		run("sudo", *addr_add_argv(config.interface, config.host_address))
-	run("sudo", *link_up_argv(config.interface))
+		run("sudo " + addr_add_command(config.interface, config.host_address))
+	run("sudo " + link_up_command(config.interface))
 
 	# The forward chain is created by the vm-network-up scaffold (which runs first,
 	# as ExecStartPre); guard defensively so a tunnel apply is self-sufficient.
-	if not run_ok("sudo", "nft", "list", "chain", *TABLE, FORWARD):
+	if not run_ok("sudo nft list chain {} {} {}", *TABLE, FORWARD):
 		run(
-			"sudo",
-			"nft",
-			"add chain inet atlas forward { type filter hook forward priority filter; policy accept; }",
+			"sudo nft add chain inet atlas forward {}",
+			"{ type filter hook forward priority filter; policy accept; }",
 		)
-	forward = run("sudo", "nft", "list", "chain", *TABLE, FORWARD)
+	forward = run("sudo nft list chain {} {} {}", *TABLE, FORWARD)
 	# Insert at the head so the pair precedes the broad per-VM accepts. Each insert
 	# goes to the top, so insert drop FIRST and accept SECOND to leave the chain as
 	# [accept, drop, …per-VM…] — accept reachable, everything else dropped.
 	if not _has_drop(forward, config.interface):
-		run("sudo", "nft", *drop_rule_argv(config.interface))
+		run("sudo nft " + drop_rule_command(config.interface))
 	if not _has_accept(forward, config.interface, config.virtual_machine_ipv6):
-		run("sudo", "nft", *accept_rule_argv(config.interface, config.virtual_machine_ipv6))
+		run("sudo nft " + accept_rule_command(config.interface, config.virtual_machine_ipv6))
 
 	# Host-local isolation: the forward rules above govern only transit. A packet
 	# this tunnel addresses to the host itself is delivered locally on the input
 	# path, which forward never sees. A dedicated input chain (policy accept, so
 	# ordinary host ingress is untouched; created defensively like forward above)
-	# carries one drop for this interface — see host_drop_rule_argv.
-	if not run_ok("sudo", "nft", "list", "chain", *TABLE, INPUT):
+	# carries one drop for this interface — see host_drop_rule_command.
+	if not run_ok("sudo nft list chain {} {} {}", *TABLE, INPUT):
 		run(
-			"sudo",
-			"nft",
-			"add chain inet atlas input { type filter hook input priority filter; policy accept; }",
+			"sudo nft add chain inet atlas input {}",
+			"{ type filter hook input priority filter; policy accept; }",
 		)
-	host_input = run("sudo", "nft", "list", "chain", *TABLE, INPUT)
+	host_input = run("sudo nft list chain {} {} {}", *TABLE, INPUT)
 	if not _has_drop(host_input, config.interface):
-		run("sudo", "nft", *host_drop_rule_argv(config.interface))
+		run("sudo nft " + host_drop_rule_command(config.interface))
 
 
 def remove_tunnel(interface: str) -> None:
@@ -230,10 +230,10 @@ def remove_tunnel(interface: str) -> None:
 	A missing rule, chain, or interface is not an error — a revoke may run after the VM
 	is already gone, symmetric with vm-network-down.py."""
 	for chain in (FORWARD, INPUT):
-		listing = run("sudo", "nft", "-a", "list", "chain", *TABLE, chain, check=False)
+		listing = run("sudo nft -a list chain {} {} {}", *TABLE, chain, check=False)
 		for handle in _handles_for(listing, interface):
-			run("sudo", "nft", "delete", "rule", "inet", "atlas", chain, "handle", handle, check=False)
-	run("sudo", *link_del_argv(interface), check=False)
+			run("sudo nft delete rule inet atlas {} handle {}", chain, handle, check=False)
+	run("sudo " + link_del_command(interface), check=False)
 
 
 def apply_persisted_tunnels(tunnels_directory: str) -> None:

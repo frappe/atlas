@@ -65,9 +65,9 @@ def run_smoke(reuse: bool = True, keep: bool = True) -> None:
 def _check_run_task_argument_validation(connection: Connection) -> None:
 	"""run_task requires exactly one of server= or connection=."""
 	with expect_validation_error("exactly one"):
-		run_task(server="any", connection=connection, script="x.sh", variables={})
+		run_task(server="any", connection=connection, script="x", variables={})
 	with expect_validation_error("exactly one"):
-		run_task(script="x.sh", variables={})
+		run_task(script="x", variables={})
 
 
 # ----- shared droplet (run_against_shared) ---------------------------------
@@ -153,7 +153,7 @@ def _check_execute_task_no_server() -> None:
 	task = frappe.get_doc(
 		{
 			"doctype": "Task",
-			"script": "noop.sh",
+			"script": "noop",
 			"status": "Pending",
 			"triggered_by": "Administrator",
 		}

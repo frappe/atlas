@@ -1,13 +1,16 @@
 import frappe
 from frappe.model.document import Document
 
+from atlas.atlas.boat_client import run_boat_task
 from atlas.atlas.providers import for_provider_type
-from atlas.atlas.ssh import run_task
 
-# The IP belongs to the Server for its lifetime; only the VM attachment moves.
+# A Reserved IP is bound to its address and vendor handle for life; those lock
+# once written. `server` is NOT immutable: the vendor can reassign the IP to a
+# different droplet (migration repoints it — spec/24), and the IP can rest
+# allocated-on-the-vendor with no Server at all. The same-Server attach invariant
+# is enforced in attach(), not by freezing the field.
 IMMUTABLE_AFTER_INSERT = (
 	"ip_address",
-	"server",
 	"provider_resource_id",
 )
 
@@ -120,12 +123,16 @@ class ReservedIP(Document):
 			vm.db_set("public_ipv4", None)
 
 	def _run_nat_task(self, vm, action: str) -> None:
-		"""Dispatch vm-reserved-ip.py to add/remove the host 1:1-NAT on the VM's
-		Server. One task, one script (spec principle #3); run_task raises on
-		failure so the caller's invariant commit is gated on the host change."""
-		run_task(
+		"""Dispatch vm-reserved-ip to add/remove the host 1:1-NAT on the VM's
+		Server. One task, one script (spec principle #3); the runner raises on
+		failure so the caller's invariant commit is gated on the host change.
+
+		Routed to the host's Boat. `run_boat_task` is `run_task`'s twin (same
+		keywords, same Task row), so the attach/detach ordering above reads exactly
+		as it did when SSH carried it."""
+		run_boat_task(
 			server=self.server,
-			script="vm-reserved-ip.py",
+			script="vm-reserved-ip",
 			variables={
 				"VIRTUAL_MACHINE_NAME": vm.name,
 				"RESERVED_IPV4": self.ip_address,
@@ -134,6 +141,49 @@ class ReservedIP(Document):
 			virtual_machine=vm.name,
 			timeout_seconds=60,
 		)
+
+	@frappe.whitelist()
+	def reassign(self, target_server: str) -> None:
+		"""Move this **detached** IP from its current Server to `target_server` at the
+		vendor, then repoint the row. The IP's address and vendor handle never change;
+		only which droplet it is bound to (and so which Server's pool it sits in) does.
+
+		This is the path that lets a customer's inbound v4 survive a VM migration
+		(spec/24): the migration detaches the IP, reassigns it to the target droplet,
+		repoints `server`, then re-attaches it to the migrated VM on the target. The IP
+		must be detached first — a bound IP is reassigned through detach()/attach(), not
+		here, so the host 1:1-NAT is never left pointing at the wrong droplet.
+
+		Same-provider only (a reserved IP cannot cross vendors). Idempotent: a row
+		already on `target_server` is a no-op. Self-Managed has no vendor bind, so the
+		operator re-routes the address by hand; this only repoints the row."""
+		if self.virtual_machine:
+			frappe.throw(f"Detach {self.ip_address} from {self.virtual_machine} before reassigning it")
+		if self.server == target_server:
+			return
+		source_provider_type = (
+			frappe.db.get_value("Server", self.server, "provider_type") if self.server else None
+		)
+		target = frappe.db.get_value(
+			"Server", target_server, ["provider_type", "provider_resource_id"], as_dict=True
+		)
+		if not target:
+			frappe.throw(f"Target server {target_server} does not exist")
+		if source_provider_type and source_provider_type != target.provider_type:
+			frappe.throw("A Reserved IP cannot move across providers")
+		# Bind to the target droplet at the vendor (Self-Managed is a no-op — the
+		# operator routes it). The IP is currently unassigned (detached unbinds it), so
+		# this is a fresh assign, idempotent at the vendor.
+		if self.provider_resource_id:
+			if not target.provider_resource_id:
+				frappe.throw(
+					f"Server {target_server} has no provider_resource_id; cannot reassign reserved IP"
+				)
+			for_provider_type(target.provider_type).assign_reserved_ip(
+				self.provider_resource_id, target.provider_resource_id
+			)
+		self.server = target_server
+		self.save()
 
 	@frappe.whitelist()
 	def release(self) -> None:
@@ -145,6 +195,11 @@ class ReservedIP(Document):
 		if self.virtual_machine:
 			frappe.throw(f"Detach {self.ip_address} from {self.virtual_machine} before releasing it")
 		if self.provider_resource_id:
+			if not self.server:
+				frappe.throw(
+					f"{self.ip_address} is not bound to any Server; reassign it to one before releasing "
+					"(the provider is resolved through the Server)"
+				)
 			_provider_for_server(self.server).release_reserved_ip(self.provider_resource_id)
 		self.delete()
 

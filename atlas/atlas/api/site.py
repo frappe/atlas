@@ -25,12 +25,14 @@ from atlas.atlas.doctype.tenant.tenant import ensure_tenant
 def create_site(
 	team: str,
 	subdomain: str,
-	email: str | None = None,
+	pilot_credential_id: str | None = None,
+	central_endpoint: str | None = None,
+	bootstrap_token: str | None = None,
 ) -> dict:
 	"""Provision a self-serve site for a Central team and return its mirror row.
 
-	`team` is the Central `Team.name`; `email` seeds the Tenant on first use (the
-	team owner). The `subdomain` is the single DNS label the site is
+	`team` is the Central `Team.name`; it get-or-creates the Tenant that groups this
+	team's resources. The `subdomain` is the single DNS label the site is
 	fronted at (`<subdomain>.<region domain>`); the Site controller enforces the
 	Contract-A label rules and the authoritative FQDN uniqueness, throwing a clean
 	"already taken" the caller can surface. The region is this Atlas instance's own
@@ -41,13 +43,48 @@ def create_site(
 	clone→deploy→route work runs in the background (`Site.auto_provision`) and is
 	reported to Central via `site.*` events / `get_site` polling.
 	"""
-	tenant = ensure_tenant(team, email)
+	tenant = ensure_tenant(team)
 
-	site = frappe.get_doc({"doctype": "Site", "subdomain": subdomain, "tenant": tenant}).insert(
-		ignore_permissions=True
-	)
+	# The pilot credential is a BENCH credential — it never lives on the Site. Central
+	# mints it and hands us the id + the endpoint/token the pilot calls back with; we
+	# ride them through the provision job (flags → auto_provision kwargs) to their real
+	# homes: pilot_credential_id on the backing VM (echoed to Central on vm.* events) and
+	# the endpoint/token in the bench's bench.toml (written at deploy). Nothing is
+	# persisted on the Site, and the token never appears in _mirror.
+	site = frappe.get_doc({"doctype": "Site", "subdomain": subdomain, "tenant": tenant})
+	site.flags.pilot_credential_id = pilot_credential_id
+	site.flags.central_endpoint = central_endpoint
+	site.flags.bootstrap_token = bootstrap_token
+	site.insert(ignore_permissions=True)
 
 	return _mirror(site)
+
+
+@frappe.whitelist()
+def check_subdomain(subdomain: str, region: str | None = None) -> dict:
+	"""Best-effort availability pre-check for Central's signup form.
+
+	Wraps the shared Contract-A rules (`atlas.atlas.subdomain_label`) so Central
+	can tell a user "taken" / "reserved" / "bad shape" before it calls
+	`create_site` — the authoritative uniqueness still lives in the `Site` FQDN
+	key at insert. Returns the resolved `fqdn`/`domain` so Central renders the real
+	suffix (never guesses `.frappe.cloud`). Operator-authorized (Central token)."""
+	from atlas.atlas import subdomain_label
+	from atlas.atlas.placement import active_root_domain
+
+	domain = active_root_domain().domain
+	label = subdomain_label.normalize(subdomain)
+	try:
+		subdomain_label.validate_label(label)
+		subdomain_label.validate_reserved(label)
+	except frappe.ValidationError as exc:
+		return {"available": False, "reason": str(exc), "fqdn": None, "domain": domain}
+
+	fqdn = f"{label}.{domain}"
+	if subdomain_label.is_taken(label):
+		return {"available": False, "reason": f"{fqdn} is already taken", "fqdn": fqdn, "domain": domain}
+
+	return {"available": True, "reason": None, "fqdn": fqdn, "domain": domain}
 
 
 @frappe.whitelist()
@@ -55,17 +92,17 @@ def get_site(name: str) -> dict:
 	"""Return the current state of a site so Central can poll for progress.
 
 	The poll fallback to the pushed `site.*` events: Central can call this to
-	learn a site reached `Running` (and read the admin password + live URL) even
-	if an event delivery was missed. Operator-authorized (Central token); no
-	owner gating (Atlas no longer owns end-users)."""
+	learn a site reached `Running` (and read the one-click login URL + its expiry +
+	live URL) even if an event delivery was missed. Operator-authorized (Central
+	token); no owner gating (Atlas no longer owns end-users)."""
 	return _mirror(frappe.get_doc("Site", name))
 
 
 def _mirror(site) -> dict:
 	"""The shape Central reflects: identity + lifecycle + (once Running) the
-	tenant handoff (admin password + live URL). The admin password is only
-	surfaced once the site is serving — before that there is nothing to hand
-	off, and the field may not yet be stamped."""
+	tenant handoff (a one-click login URL + when it expires + live site URL). The
+	login URL is only surfaced once the site is serving — before that there is
+	nothing to hand off, and the field may not yet be stamped."""
 	running = site.status == "Running"
 	# The Tenant `name` *is* the Central `Team.name`, so the Site's `tenant` link is
 	# the owning team directly; None for operator/e2e sites.
@@ -76,5 +113,6 @@ def _mirror(site) -> dict:
 		"status": site.status,
 		"fqdn": site.name,
 		"url": f"https://{site.name}" if running else None,
-		"admin_password": site.get_password("admin_password") if running else None,
+		"login_url": site.get("login_url") if running else None,
+		"login_url_expires_at": site.get("login_url_expires_at") if running else None,
 	}

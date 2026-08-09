@@ -238,20 +238,20 @@ def _check_server_buttons(server) -> None:
 	scripts = _call_button("Server", server.name, "get_scripts")
 	assert isinstance(scripts, list) and scripts, scripts
 	names = {entry["name"] for entry in scripts}
-	assert "sync-image.py" in names, names
+	assert "sync-image" in names, names
 	for hidden in (
-		"bootstrap-server.py",
-		"reboot-server.sh",
-		"provision-vm.py",
-		"start-vm.py",
-		"stop-vm.py",
-		"terminate-vm.py",
-		"snapshot-vm.py",
-		"rebuild-vm.py",
-		"resize-vm.py",
-		"pause-vm.py",
-		"resume-vm.py",
-		"delete-snapshot-vm.py",
+		"bootstrap-server",
+		"reboot-server",
+		"provision-vm",
+		"start-vm",
+		"stop-vm",
+		"terminate-vm",
+		"snapshot-vm",
+		"rebuild-vm",
+		"resize-vm",
+		"pause-vm",
+		"resume-vm",
+		"delete-snapshot-vm",
 	):
 		assert hidden not in names, f"{hidden} leaked into operator-visible scripts: {names}"
 
@@ -261,10 +261,10 @@ def _check_server_buttons(server) -> None:
 		"Server",
 		server.name,
 		"run_task_dialog",
-		script="bootstrap-server.py",
+		script="bootstrap-server",
 		variables=json.dumps(
 			{
-				"FIRECRACKER_VERSION": "v1.15.1",
+				"FIRECRACKER_VERSION": "v1.16.0",
 				"ARCHITECTURE": "x86_64",
 			}
 		),
@@ -279,7 +279,7 @@ def _check_server_buttons(server) -> None:
 			"Server",
 			server.name,
 			"run_task_dialog",
-			script="not-a-real-script.sh",
+			script="not-a-real-script",
 			variables="",
 		)
 
@@ -293,7 +293,7 @@ def _check_server_buttons(server) -> None:
 			"Server",
 			server.name,
 			"run_task_dialog",
-			script="bootstrap-server.py",
+			script="bootstrap-server",
 			variables="{not valid json",
 		)
 
@@ -303,7 +303,7 @@ def _check_server_buttons(server) -> None:
 			"Server",
 			server.name,
 			"run_task_dialog",
-			script="bootstrap-server.py",
+			script="bootstrap-server",
 			variables="[1, 2, 3]",
 		)
 
@@ -325,7 +325,7 @@ def _check_virtual_machine_image_buttons(server_name: str, image_name: str) -> N
 	# We don't wait for the queued Task to finish here — the image_sync use
 	# case already covers the full run. We only assert the button enqueues.
 	task = frappe.get_doc("Task", task_name)
-	assert task.script == "sync-image.py", task.script
+	assert task.script == "sync-image", task.script
 	assert task.server == server_name, task.server
 	assert task.status in ("Pending", "Running", "Success"), task.status
 

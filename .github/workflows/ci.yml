@@ -11,6 +11,50 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # The host-side scripts (scripts/) run under the Atlas venv (a uv-managed
+  # CPython 3.14) on a bootstrapped host: every Python verb runs as `atlas <verb>`
+  # under that venv, so the honest floor is 3.14 — nothing host-side runs on stock
+  # Ubuntu python. scripts/install.sh (POSIX sh) creates that venv over SSH BEFORE
+  # the bootstrap Task, so bootstrap-server runs as `atlas bootstrap-server` on the
+  # venv like every other verb — there is no carve-out and no script that must stay
+  # parseable on Ubuntu's stock 3.12. The 3.14 compileall over scripts/ is the floor
+  # gate. No bench: the lib unit-tests run standalone by design.
+  host-scripts:
+    runs-on: ubuntu-latest
+    name: Host scripts (py3.14 floor)
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v5
+      - name: Parse on the floor (py3.14)
+        run: uv run --python 3.14 --no-project python -m compileall -q scripts/
+      - name: Lib + CLI unit tests (stdlib, no bench) with coverage
+        working-directory: scripts/lib
+        # `cryptography` (ed25519 signing) is a runtime dep of atlas-networkd;
+        # `coverage` is ephemeral (--with). Both are pulled by uv in the
+        # ephemeral venv so the host-side unit tests resolve. `coverage run -m
+        # unittest` is a drop-in for `python -m unittest`. We emit both an XML
+        # (machine-readable) and a self-contained HTML report to browse locally.
+        run: |
+          uv run --python 3.14 --no-project \
+            --with cryptography>=42 --with coverage \
+            coverage run --source=atlas --omit="atlas/test_*.py" \
+            -m unittest discover -s atlas -p "test_*.py"
+          uv run --python 3.14 --no-project \
+            --with cryptography>=42 --with coverage coverage report
+          uv run --python 3.14 --no-project \
+            --with cryptography>=42 --with coverage coverage xml -o coverage.xml
+          uv run --python 3.14 --no-project \
+            --with cryptography>=42 --with coverage coverage html -d htmlcov
+
+      - name: Upload host-scripts coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-host-scripts
+          path: |
+            scripts/lib/coverage.xml
+            scripts/lib/htmlcov
+
   tests:
     runs-on: ubuntu-latest
     strategy:
@@ -98,8 +142,25 @@ jobs:
 
       - name: Run Tests
         working-directory: /home/runner/frappe-bench
+        # --coverage uses frappe.coverage.CodeCoverage (the `coverage` package is
+        # already a frappe dependency — no extra dependency added). bench runs
+        # its subcommands with cwd=<bench>/sites, and CodeCoverage uses relative
+        # paths, so both coverage.xml and the (suffixed) .coverage data file land
+        # in sites/, not the bench root. Render the browsable HTML report from
+        # that same directory. `|| true` keeps a missing/empty report from
+        # failing an otherwise-green test run (coverage html exits 1 on no data).
         run: |
           bench --site test_site set-config allow_tests true
-          bench --site test_site run-tests --app atlas
+          bench --site test_site run-tests --app atlas --coverage
+          ( cd sites && ../env/bin/coverage html -d htmlcov ) || true
         env:
           TYPE: server
+
+      - name: Upload server coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-server
+          path: |
+            /home/runner/frappe-bench/sites/coverage.xml
+            /home/runner/frappe-bench/sites/htmlcov

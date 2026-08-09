@@ -41,11 +41,11 @@ def main() -> None:
 	paths = VirtualMachinePaths(inputs.virtual_machine_name)
 
 	def marker_present() -> bool:
-		return run_ok("sudo", "test", "-f", paths.memory_snapshot_marker)
+		return run_ok("sudo test -f {}", paths.memory_snapshot_marker)
 
 	restoring = marker_present()
 	try:
-		run("sudo", "systemctl", "start", paths.systemd_unit)
+		run("sudo systemctl start {}", paths.systemd_unit)
 	except CommandError:
 		# A failed restore consumed the marker and failed the start job, while
 		# Restart=always schedules its own relaunch — which would leave the Task
@@ -53,12 +53,12 @@ def main() -> None:
 		# start synchronously: the marker is gone, so this one cold-boots.
 		if not (restoring and not marker_present()):
 			raise
-		run("sudo", "systemctl", "reset-failed", paths.systemd_unit)
-		run("sudo", "systemctl", "start", paths.systemd_unit)
+		run("sudo systemctl reset-failed {}", paths.systemd_unit)
+		run("sudo systemctl start {}", paths.systemd_unit)
 		restoring = False
 	# is-active confirms the unit actually came up (start returns before the
 	# service settles); a failed boot surfaces here as a non-zero Task.
-	run("sudo", "systemctl", "is-active", paths.systemd_unit)
+	run("sudo systemctl is-active {}", paths.systemd_unit)
 
 	how = "restored from memory snapshot" if restoring else "cold boot"
 	print(f"Started {inputs.virtual_machine_name} ({how}).")

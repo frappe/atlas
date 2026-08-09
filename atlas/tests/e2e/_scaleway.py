@@ -114,7 +114,10 @@ def ensure_scaleway_provider() -> str:
 	frappe.get_single("Atlas Settings").refresh_catalog()
 	frappe.db.commit()
 
-	# 4. Settings defaults point at the chosen size/image rows.
+	# 4. Mark the chosen size/image rows the catalog default (what the Provision
+	#    dialog and provision_server fall back to).
+	from atlas.atlas.setup_catalog import set_default
+
 	size_name = f"Scaleway/{config['size']}"
 	image_name = f"Scaleway/{config['image']}"
 	if not frappe.db.exists("Provider Size", size_name):
@@ -126,8 +129,8 @@ def ensure_scaleway_provider() -> str:
 		raise AssertionError(
 			f"Provider Image {image_name!r} not found after discover — check scaleway.image."
 		)
-	frappe.db.set_single_value("Scaleway Settings", "default_size", size_name, update_modified=False)
-	frappe.db.set_single_value("Scaleway Settings", "default_image", image_name, update_modified=False)
+	set_default("Provider Size", "Scaleway", config["size"])
+	set_default("Provider Image", "Scaleway", config["image"])
 	frappe.db.commit()
 
 	print(f"[e2e/scw] Scaleway ready: zone={config['zone']} size={size_name} key_id={key_id}")

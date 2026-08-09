@@ -1,0 +1,98 @@
+-- sni_router.lua — the :443 SNI front-door fork (spec/12-proxy.md § The stream
+-- front-door; spec/13-tls.md § Custom domains; spec/18 Phase 2).
+--
+-- Runs in preread_by_lua on the PUBLIC :443 stream server (`ssl_preread on`,
+-- `proxy_protocol on`). That server accepts the connection straight from the
+-- internet, so $remote_addr is the genuine client; with `proxy_protocol on` it
+-- prepends a PROXY v1 header carrying that real client IP to whichever loopback
+-- target we pick — so the true client survives the loopback hop (no L4 IP-loss
+-- regression). The only routing key a raw TLS connection gives us is the SNI in the
+-- ClientHello (ngx.var.ssl_preread_server_name) — no decrypt. We fork on it:
+--
+--   SNI under the regional wildcard (*.<region>.frappe.dev)
+--       -> 127.0.0.1:8443  (the http{} terminator, `listen ... ssl proxy_protocol`,
+--                           which RECEIVES the PROXY header and recovers the client
+--                           IP, then terminates TLS under the wildcard cert — the
+--                           existing L7 path, unchanged).
+--   SNI is a known custom domain (full host in the `domains` dict)
+--       -> 127.0.0.1:8445  (the strip-path: it RECEIVES + consumes the PROXY header,
+--                           then forwards the RAW TLS stream to the backend VM's :443
+--                           with NO PROXY header, so the VM terminates a clean
+--                           handshake with its OWN cert). sni_passthrough.lua there
+--                           re-reads the SNI to pick the VM.
+--   SNI is a real but unknown name (not under the wildcard zone, absent from `domains`)
+--       -> 127.0.0.1:8446  (the dummy-cert terminator: it RECEIVES the PROXY header,
+--                           terminates TLS under the self-signed placeholder cert, and
+--                           serves the branded "Domain not configured" page —
+--                           unconfigured.lua). This is the custom-domain analogue of the
+--                           wildcard subdomain's not_found page. Because we hold no cert
+--                           for the name (spec/13 keeps it on the VM), the client gets a
+--                           browser cert warning first; clicking through shows the page
+--                           instead of a dropped socket. A REGISTERED custom domain is in
+--                           `domains` the moment it is created (no readiness gate), so this
+--                           fork is only hit by typos / stale DNS / unregistered names.
+--   miss with no SNI (bare-IP TLS client, junk probe, scanner)
+--       -> drop the connection (ngx.exit(ngx.ERROR)). There is no name to brand and no
+--          point spending a handshake on it, so it dies at L4.
+--
+-- Both loopback targets EXPECT the PROXY header the edge emits (8443 receives it,
+-- 8445 consumes+strips it), so `proxy_protocol on` on this edge is correct for ALL
+-- forks. The wildcard-vs-custom test is the SAME host-suffix predicate router.lua
+-- uses, reused here at L4.
+--
+-- Phase-ordering note (stream-lua #153): both `ssl_preread` and `preread_by_lua`
+-- run in the preread phase, and Lua can otherwise run BEFORE ssl_preread has parsed
+-- the ClientHello (empty SNI). nginx.conf keeps `preread_by_lua_no_postpone` at its
+-- default (off) so this file runs at the END of the preread phase, after ssl_preread
+-- has populated ssl_preread_server_name. Do not set it on.
+
+local domains = ngx.shared.domains
+
+-- The http{} wildcard terminator (loopback, receives PROXY) and the custom strip-path
+-- (loopback, consumes PROXY then forwards raw). Both are nginx.conf servers below.
+local WILDCARD_TERMINATOR = "127.0.0.1:8443"
+local CUSTOM_STRIP_PATH = "127.0.0.1:8445"
+-- The dummy-cert terminator for a named-but-unrouted SNI: serves the branded
+-- "Domain not configured" page (unconfigured.lua) instead of dropping. A NAMED
+-- miss only — an empty SNI is still dropped above.
+local UNCONFIGURED_TERMINATOR = "127.0.0.1:8446"
+
+-- The SNI, lowercased and port-stripped to a bare host. ssl_preread gives the raw
+-- SNI; normalize it the same way router.lua normalizes Host so the suffix test and
+-- the dict lookup match what the controller stored.
+local sni = ngx.var.ssl_preread_server_name or ""
+sni = sni:lower():gsub(":%d+$", "")
+
+if sni == "" then
+	-- No SNI (a bare-IP TLS client, or a probe): nothing to route at L4. Drop.
+	return ngx.exit(ngx.ERROR)
+end
+
+-- A name under the regional wildcard terminates AT the proxy (the L7 path). The
+-- suffix predicate is the one router.lua uses; atlas_root_domain is the FULL
+-- regional wildcard zone (e.g. "blr1.frappe.dev" or "aditya-blr3.x.frappe.dev"),
+-- loaded once at init from /var/lib/nginx/region (nginx.conf stream init_by_lua),
+-- the same file the http subsystem reads. We strip that exact zone — NOT
+-- region .. ".frappe.dev", which assumed the region sat one label under
+-- frappe.dev and broke under a deeper platform zone like x.frappe.dev.
+if atlas_root_domain and atlas_root_domain ~= "" then
+	local suffix = "." .. atlas_root_domain
+	if sni:sub(-#suffix) == suffix then
+		ngx.var.sni_upstream = WILDCARD_TERMINATOR
+		return
+	end
+end
+
+-- A known custom domain: hand to the strip-path, which re-reads the SNI and dials
+-- the VM raw. Every registered (active) custom domain is present here — no readiness
+-- gate — so an unknown/deregistered name misses and falls to the terminator below.
+if domains:get(sni) then
+	ngx.var.sni_upstream = CUSTOM_STRIP_PATH
+	return
+end
+
+-- A real but unknown name (unregistered / deregistered / typo'd custom domain):
+-- hand to the dummy-cert terminator, which serves the branded "Domain not
+-- configured" page over the self-signed placeholder cert. The empty-SNI case is
+-- already dropped above, so only a NAMED miss reaches here — never a bare probe.
+ngx.var.sni_upstream = UNCONFIGURED_TERMINATOR

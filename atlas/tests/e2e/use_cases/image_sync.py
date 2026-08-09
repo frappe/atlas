@@ -83,7 +83,7 @@ def _clear_cached_rootfs(server_name: str, image) -> None:
 
 	task = run_task(
 		server=server_name,
-		script="phase4-clear-image.sh",
+		script="phase4-clear-image",
 		variables={
 			"IMAGE_NAME": image.image_name,
 			"ROOTFS_FILENAME": image.rootfs_filename,
@@ -101,7 +101,7 @@ def _check_sync_to_server(server_name: str, image) -> None:
 
 	probe = run_task(
 		server=server_name,
-		script="phase4-probe.sh",
+		script="phase4-probe",
 		variables={
 			"IMAGE_NAME": image.image_name,
 			"KERNEL_FILENAME": image.kernel_filename,
@@ -145,7 +145,7 @@ def _check_execute_task_sync(server_name: str, image) -> None:
 		{
 			"doctype": "Task",
 			"server": server_name,
-			"script": "sync-image.py",
+			"script": "sync-image",
 			"status": "Pending",
 			"triggered_by": "Administrator",
 		}

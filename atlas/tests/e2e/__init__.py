@@ -32,6 +32,7 @@ from atlas.tests.e2e.use_cases import (
 	reserved_ip_inbound,
 	run_task,
 	server_provisioning,
+	sleepy_vms,
 	ssh_primitive,
 	virtual_machine_lifecycle,
 	virtual_machine_provisioning,
@@ -72,6 +73,7 @@ def run_all() -> None:
 		("run-task", run_task.run),
 		("desk-buttons", desk_buttons.run),
 		("reserved-ip-inbound", reserved_ip_inbound.run),
+		("sleepy-vms", sleepy_vms.run),
 		# ("proxy-vm", proxy_vm.run),  # TODO: broken — re-enable when fixed
 		("server-provisioning (validation)", server_provisioning.run_against_shared),
 		("ssh-primitive (transport+bootstrap)", ssh_primitive.run_against_shared),
@@ -146,6 +148,12 @@ def run_all_smoke() -> None:
 
 	    bench --site atlas.tests.local execute atlas.tests.e2e.use_cases.server_provisioning.run
 	    bench --site atlas.tests.local execute atlas.tests.e2e.use_cases.digitalocean_client.run_smoke
+
+	VM migration needs a SECOND host, so it owns its two-droplet harness and is
+	invoked directly too (one scenario per address scheme):
+
+	    bench --site atlas.tests.local execute atlas.tests.e2e.use_cases.virtual_machine_migration.run_smoke
+	    bench --site atlas.tests.local execute atlas.tests.e2e.use_cases.virtual_machine_migration.run_keep_address_smoke
 	"""
 	overall_start = time.monotonic()
 	client = get_client()
@@ -161,6 +169,7 @@ def run_all_smoke() -> None:
 		("run-task", run_task.run_smoke),
 		("desk-buttons", desk_buttons.run_smoke),
 		("reserved-ip-inbound", reserved_ip_inbound.run_smoke),
+		("sleepy-vms", sleepy_vms.run_smoke),
 		# ("proxy-vm", proxy_vm.run_smoke),  # TODO: broken — re-enable when fixed
 		("server-provisioning", server_provisioning.run_smoke),
 		("ssh-primitive", ssh_primitive.run_smoke),

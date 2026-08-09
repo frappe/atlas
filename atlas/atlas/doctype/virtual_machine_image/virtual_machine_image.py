@@ -97,7 +97,7 @@ class VirtualMachineImage(Document):
 	def _validate_url_coherence(self) -> None:
 		"""All four download fields set (a from-URL image) or none set (a local image
 		promoted from a snapshot). A partial set — e.g. a URL with no checksum —
-		would pass `is_local` as non-local, fan out a `sync-image.py` Task, and only
+		would pass `is_local` as non-local, fan out a `sync-image` Task, and only
 		then fail on the host (the script requires the digest), so reject it at insert
 		instead. Restores the insert-time gate the dropped `reqd` flags gave."""
 		present = {field: bool((self.get(field) or "").strip()) for field in self._URL_FIELDS}
@@ -113,7 +113,7 @@ class VirtualMachineImage(Document):
 	def is_local(self) -> bool:
 		"""A local image was promoted from a snapshot on one server: its rootfs is
 		an `atlas-image-<name>` LV already on that host, not a downloadable URL. With
-		no rootfs URL there is nothing for `sync-image.py` to fetch, so a local image
+		no rootfs URL there is nothing for `sync-image` to fetch, so a local image
 		is non-syncable — it lives on exactly the server it was promoted on.
 		(`Virtual Machine Snapshot.promote_to_image`, spec/08-images.md.)"""
 		return not (self.rootfs_url or "").strip()
@@ -154,7 +154,7 @@ class VirtualMachineImage(Document):
 
 	@frappe.whitelist()
 	def sync_status(self) -> list[dict]:
-		"""For each Active server, the last successful sync-image.py Task
+		"""For each Active server, the last successful sync-image Task
 		referencing this image. None if never synced.
 
 		Returned shape:
@@ -173,7 +173,10 @@ class VirtualMachineImage(Document):
 				SELECT name, modified
 				FROM `tabTask`
 				WHERE server = %(server)s
-				  AND script IN ('sync-image.py', 'sync-image.sh')
+				  -- Task.script is now the verb 'sync-image'; older rows recorded the
+				  -- filename ('sync-image.py'/'.sh'). Task history is immutable, so match
+				  -- both the new verb and the legacy filenames.
+				  AND script IN ('sync-image', 'sync-image.py', 'sync-image.sh')
 				  AND status = 'Success'
 				  AND variables LIKE %(image_pattern)s
 				ORDER BY modified DESC
@@ -210,7 +213,7 @@ class VirtualMachineImage(Document):
 		"""Insert a Pending Task row and enqueue execute_task. Returns Task name.
 
 		A local image (promoted from a snapshot, no rootfs URL) cannot be synced —
-		`sync-image.py` has nothing to download, and the image lives only on the
+		`sync-image` has nothing to download, and the image lives only on the
 		server it was promoted on. Throw cleanly rather than enqueue a Task that
 		would fail on the host."""
 		if self.is_local:
@@ -233,7 +236,7 @@ class VirtualMachineImage(Document):
 			{
 				"doctype": "Task",
 				"server": server_name,
-				"script": "sync-image.py",
+				"script": "sync-image",
 				"status": "Pending",
 				"triggered_by": frappe.session.user if frappe.session else "Administrator",
 			}

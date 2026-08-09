@@ -68,6 +68,23 @@ dpkg -s unattended-upgrades >/dev/null 2>&1 \
     || fail "unattended-upgrades package not installed"
 echo "unattended-upgrades OK"
 
+# --- guest IMDS-drop: the host metadata endpoint (169.254.169.254) serves the
+#     droplet's own vendor credentials and must NOT be reachable from a guest
+#     (prod-host-setup.md "Filtering Guest Egress Network Traffic"). bootstrap's
+#     9-imds rule lives in the inet atlas forward chain; assert it is present. ---
+forward_chain="$(sudo nft list chain inet atlas forward 2>/dev/null || echo '<no chain>')"
+note "imds-drop: $(echo "$forward_chain" | grep -E '169\.254\.169\.254' || echo '<rule absent>')"
+echo "$forward_chain" | grep -qE 'ip daddr 169\.254\.169\.254 .*drop' \
+    || fail "guest IMDS-drop rule missing — a guest could read the host's vendor metadata"
+echo "IMDS-drop OK (guest -> 169.254.169.254 dropped)"
+
+# --- per-VM Firecracker log rotation (prod-host-setup.md "Log files"): a guest
+#     can influence log volume, so the per-VM firecracker.log must be bounded. ---
+note "logrotate: $([ -f /etc/logrotate.d/60-atlas-firecracker ] && echo present || echo MISSING)"
+test -f /etc/logrotate.d/60-atlas-firecracker \
+    || fail "Firecracker logrotate drop-in missing — per-VM logs are unbounded"
+echo "logrotate OK (per-VM firecracker.log bounded)"
+
 # --- KSM off (no cross-VM memory side channel) when KSM is present ---
 if [ -r /sys/kernel/mm/ksm/run ]; then
     ksm="$(cat /sys/kernel/mm/ksm/run)"

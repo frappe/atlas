@@ -310,9 +310,10 @@ the rendered DOM from CSS.
   field common to all vendor types, then:
   - **DigitalOcean**: two editable Link controls (`size` → `Provider
     Size`, `image` → `Provider Image`, both filtered to
-    `provider_type=DigitalOcean, enabled=1`) defaulting to
-    `DigitalOcean Settings.default_size` / `default_image`. Region is
-    fixed at `DigitalOcean Settings.region` and not shown. The dialog
+    `provider_type=DigitalOcean, enabled=1`) defaulting to the `Provider
+    Size` / `Provider Image` row marked `is_default` for the provider
+    type. Region is fixed at `DigitalOcean Settings.region` and not
+    shown. The dialog
     still hands off to `confirm_cost` ("Create a billable droplet?")
     before the DO API call. Monthly cost in the preview reads
     `Provider Size.monthly_cost_usd`; sizes without a cost render as
@@ -333,7 +334,8 @@ the rendered DOM from CSS.
 ### DigitalOcean Settings
 
 - Single DocType. Form layout mirrors the schema (api_token, region,
-  default_size, default_image).
+  ssh_key_id). The default size/image are not fields here — they live as
+  `is_default` on `Provider Size` / `Provider Image`.
 - **Test Connection** lives under `Actions ▾`. Calls the same
   `provider.authenticate()` path as Atlas Settings' Authenticate
   button — exposed here as a courtesy when the operator is mid-credentials.
@@ -353,9 +355,11 @@ the rendered DOM from CSS.
 
 - Regular DocTypes. Operators don't create rows by hand — the **Refresh
   Catalog** button on Atlas Settings seeds them. The list view exists so the
-  operator can spot-check the catalog and flip `enabled` if they want
-  to hide a slug from the Provision dialog without re-running
-  `discover()`.
+  operator can spot-check the catalog, flip `enabled` to hide a slug from
+  the Provision dialog without re-running `discover()`, and flip
+  `is_default` to choose which size/image the dialog prefills (the
+  controller clears the previous default on the same provider type, so
+  there is always at most one).
 - `provider_metadata` is a `Code` field with `read_only: 1`. The form
   renders the raw vendor JSON for debugging; operators don't edit it.
 

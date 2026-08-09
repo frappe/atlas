@@ -120,12 +120,14 @@ class TestEnsureProviderScaleway(IntegrationTestCase):
 		)
 		self.assertEqual(metadata["offer_id"], "offer-uuid")
 
-		# Defaults on Scaleway Settings point at the named rows (prefixed).
+		# The config-named rows are marked the lone default on the catalog.
 		self.assertEqual(
-			frappe.db.get_single_value("Scaleway Settings", "default_size"), f"Scaleway/{SIZE_SLUG}"
+			frappe.db.get_value("Provider Size", {"provider_type": "Scaleway", "is_default": 1}, "name"),
+			f"Scaleway/{SIZE_SLUG}",
 		)
 		self.assertEqual(
-			frappe.db.get_single_value("Scaleway Settings", "default_image"), f"Scaleway/{IMAGE_SLUG}"
+			frappe.db.get_value("Provider Image", {"provider_type": "Scaleway", "is_default": 1}, "name"),
+			f"Scaleway/{IMAGE_SLUG}",
 		)
 
 	def test_unknown_default_size_throws(self) -> None:
@@ -160,8 +162,6 @@ _TOUCHED_SINGLES = (
 	("Scaleway Settings", "project_id"),
 	("Scaleway Settings", "organization_id"),
 	("Scaleway Settings", "billing"),
-	("Scaleway Settings", "default_size"),
-	("Scaleway Settings", "default_image"),
 )
 
 

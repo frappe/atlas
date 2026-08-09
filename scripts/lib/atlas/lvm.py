@@ -28,7 +28,7 @@ import os
 import stat
 from dataclasses import dataclass
 
-from atlas._run import install_directory, install_file, run, run_ok
+from atlas._run import _substitute, install_directory, install_file, run, run_ok
 
 
 @dataclass(frozen=True)
@@ -106,7 +106,7 @@ class LogicalVolume:
 
 	@property
 	def exists(self) -> bool:
-		return run_ok("sudo", "lvs", "--noheadings", self._ref)
+		return run_ok("sudo lvs --noheadings {}", self._ref)
 
 	@property
 	def is_protected(self) -> bool:
@@ -115,17 +115,17 @@ class LogicalVolume:
 	@property
 	def size_bytes(self) -> int:
 		"""The device's byte count — typed int, not a stdout line to grep."""
-		return int(run("sudo", "blockdev", "--getsize64", self.device_path).strip())
+		return int(run("sudo blockdev --getsize64 {}", self.device_path).strip())
 
 	@property
 	def device_number(self) -> DeviceNumber:
-		return DeviceNumber.from_lsblk(run("lsblk", "-ndo", "MAJ:MIN", self.device_path))
+		return DeviceNumber.from_lsblk(run("lsblk -ndo MAJ:MIN {}", self.device_path))
 
 	def activate(self) -> "LogicalVolume":
 		"""Activate with -K (so activation-skip-flagged snapshots come up), wait
 		for udev, fall back to vgmknodes. Returns self once the node is a block
 		device, else raises. Chainable: `pool.snapshot(...).activate()`."""
-		run("sudo", "lvchange", "-ay", "-K", self._ref)
+		run("sudo lvchange -ay -K {}", self._ref)
 		self._wait_for_node()
 		return self
 
@@ -136,18 +136,14 @@ class LogicalVolume:
 		if new.exists:
 			return new.activate()
 		# No -L/--thinpool: snapshotting a thin LV inherits its pool and size.
-		run("sudo", "lvcreate", "-s", self._ref, "-n", new.name)
+		run("sudo lvcreate -s {} -n {}", self._ref, new.name)
 		return new.activate()
 
 	def expose_in_jail(self, jail_node: str, uid: int) -> None:
 		"""Expose this LV's block device inside a jailer chroot at jail_node,
 		owned by uid (gid == uid), mode 0660. On rebuild the dev_t can change, so
 		always remove and re-create (idempotent). Device access is pure DAC."""
-		number = self.device_number
-		run("sudo", "rm", "-f", jail_node)
-		run("sudo", "mknod", jail_node, "b", str(number.major), str(number.minor))
-		run("sudo", "chown", f"{uid}:{uid}", jail_node)
-		run("sudo", "chmod", "0660", jail_node)
+		expose_device_in_jail(self.device_path, jail_node, uid)
 
 	def remove(self) -> None:
 		"""Remove this LV. No-op if already gone. Refuses protected LVs so
@@ -155,7 +151,7 @@ class LogicalVolume:
 		if self.is_protected:
 			raise ProtectedVolumeError(f"refusing to remove protected LV {self.name!r}")
 		if self.exists:
-			run("sudo", "lvremove", "-f", self._ref)
+			run("sudo lvremove -f {}", self._ref)
 
 	# --- private: the raw host pokes ---
 
@@ -165,10 +161,10 @@ class LogicalVolume:
 		return f"{self._pool.volume_group}/{self.name}"
 
 	def _wait_for_node(self) -> None:
-		run("sudo", "udevadm", "settle")
+		run("sudo udevadm settle")
 		if not self._node_is_block_device():
-			run("sudo", "vgmknodes", self._pool.volume_group)
-			run("sudo", "udevadm", "settle")
+			run("sudo vgmknodes {}", self._pool.volume_group)
+			run("sudo udevadm settle")
 		if not self._node_is_block_device():
 			raise RuntimeError(f"LV {self.name} activated but {self.device_path} is not a block device")
 
@@ -177,6 +173,20 @@ class LogicalVolume:
 			return stat.S_ISBLK(os.stat(self.device_path).st_mode)
 		except (FileNotFoundError, PermissionError):
 			return False
+
+
+def expose_device_in_jail(device_path: str, jail_node: str, uid: int) -> None:
+	"""Expose any block device at `device_path` inside a jailer chroot at jail_node,
+	owned by uid (gid == uid), mode 0660. The device may be an LVM LV OR a
+	device-mapper node (e.g. /dev/mapper/atlas-vm-<uuid>-clone during a
+	boot-then-hydrate migration, spec/24 §0) — the mknod machinery is identical, it
+	only needs the device's (major, minor). Always remove-and-recreate (idempotent;
+	the dev_t can change across a rebuild). Device access is pure DAC."""
+	number = DeviceNumber.from_lsblk(run("lsblk -ndo MAJ:MIN {}", device_path))
+	run("sudo rm -f {}", jail_node)
+	run("sudo mknod {} b {} {}", jail_node, number.major, number.minor)
+	run("sudo chown {} {}", f"{uid}:{uid}", jail_node)
+	run("sudo chmod 0660 {}", jail_node)
 
 
 # Minimum size (bytes) for a disk to qualify as pool backing. Filters out a
@@ -293,9 +303,9 @@ class PoolBacking:
 		return [token for token in value.replace(",", " ").split() if token]
 
 	def _persisted_devices(self) -> list[str]:
-		if not run_ok("test", "-f", self.state_file):
+		if not run_ok("test -f {}", self.state_file):
 			return []
-		return self._split_devices(run("sudo", "cat", self.state_file))
+		return self._split_devices(run("sudo cat {}", self.state_file))
 
 	def select_devices(self) -> list[str]:
 		"""The device PVs to back the pool, or [] for the loopback file. Applies
@@ -306,9 +316,7 @@ class PoolBacking:
 		persisted = self._persisted_devices()
 		if persisted:
 			return persisted
-		return discover_pool_disks(
-			run("lsblk", "-J", "-b", "-o", "NAME,TYPE,MOUNTPOINT,FSTYPE,PKNAME,SIZE,RM")
-		)
+		return discover_pool_disks(run("lsblk -J -b -o NAME,TYPE,MOUNTPOINT,FSTYPE,PKNAME,SIZE,RM"))
 
 	def _persist_devices(self, devices: list[str]) -> None:
 		install_directory(self.pool_directory, mode="0700")
@@ -338,8 +346,8 @@ class PoolBacking:
 		sees it before pvcreate. `udevadm trigger` re-emits the add events a fresh
 		bare-metal boot may not have finished processing; `settle` waits them out.
 		Idempotent and cheap; harmless on a device that is already ready."""
-		run("sudo", "udevadm", "trigger", "--subsystem-match=block", check=False, quiet=True)
-		run("sudo", "udevadm", "settle", check=False, quiet=True)
+		run("sudo udevadm trigger --subsystem-match=block", check=False, quiet=True)
+		run("sudo udevadm settle", check=False, quiet=True)
 
 	def register_device(self, device: str) -> None:
 		"""Register `device` in LVM's devices file so pvcreate/pvs/vgcreate accept
@@ -353,7 +361,7 @@ class PoolBacking:
 		subcommand is absent) or when the device is already registered."""
 		if device.startswith("/dev/loop"):
 			return
-		run("sudo", "lvmdevices", "--adddev", device, check=False)
+		run("sudo lvmdevices --adddev {}", device, check=False)
 
 	def reassert(self) -> None:
 		"""Reboot re-assert of the backing, BEFORE vgchange. A real-device PV
@@ -361,18 +369,18 @@ class PoolBacking:
 		binding, so re-bind it from the persisted backing file."""
 		if self._persisted_devices():
 			return
-		if run_ok("test", "-f", self.backing_image):
-			if not run("sudo", "losetup", "-j", self.backing_image).strip():
-				run("sudo", "losetup", "--find", self.backing_image)
+		if run_ok("test -f {}", self.backing_image):
+			if not run("sudo losetup -j {}", self.backing_image).strip():
+				run("sudo losetup --find {}", self.backing_image)
 
 	def _ensure_loop_device(self) -> str:
 		install_directory(self.pool_directory, mode="0700")
-		if not run_ok("test", "-f", self.backing_image):
-			run("sudo", "truncate", "-s", self.data_size, self.backing_image)
-		bound = run("sudo", "losetup", "-j", self.backing_image).strip()
+		if not run_ok("test -f {}", self.backing_image):
+			run("sudo truncate -s {} {}", self.data_size, self.backing_image)
+		bound = run("sudo losetup -j {}", self.backing_image).strip()
 		loop_device = bound.split(":", 1)[0] if bound else ""
 		if not loop_device:
-			loop_device = run("sudo", "losetup", "--find", "--show", self.backing_image).strip()
+			loop_device = run("sudo losetup --find --show {}", self.backing_image).strip()
 		return loop_device
 
 
@@ -454,37 +462,33 @@ class ThinPool:
 		"""
 		if self._pool_lv.exists:
 			self.backing.reassert()
-			run("sudo", "vgchange", "-ay", "-K", self.volume_group, quiet=True)
+			run("sudo vgchange -ay -K {}", self.volume_group, quiet=True)
 			return
 
 		devices = self.backing.ensure_devices()
 
 		for device in devices:
 			self.backing.register_device(device)
-			if not run_ok("sudo", "pvs", device):
+			if not run_ok("sudo pvs {}", device):
 				# --yes: a freshly-installed bare-metal disk may carry a leftover
 				# partition/filesystem signature from the vendor image; accept the
 				# wipe non-interactively rather than let pvcreate stall on a prompt.
-				run("sudo", "pvcreate", "--yes", device, quiet=True)
-		if not run_ok("sudo", "vgs", self.volume_group):
-			run("sudo", "vgcreate", self.volume_group, *devices, quiet=True)
+				run("sudo pvcreate --yes {}", device, quiet=True)
+		if not run_ok("sudo vgs {}", self.volume_group):
+			args = _substitute(
+				" ".join("{}" for _ in [self.volume_group, *devices]), (self.volume_group, *devices)
+			)
+			run("sudo vgcreate " + args, quiet=True)
 
 		if not self._pool_lv.exists:
 			run(
-				"sudo",
-				"lvcreate",
-				"--type",
-				"thin-pool",
-				"--name",
+				"sudo lvcreate --type thin-pool --name {} --poolmetadatasize {} --extents 100%FREE {}",
 				self.pool_name,
-				"--poolmetadatasize",
 				self.metadata_size,
-				"--extents",
-				"100%FREE",
 				self.volume_group,
 				quiet=True,
 			)
-		run("sudo", "vgchange", "-ay", "-K", self.volume_group, quiet=True)
+		run("sudo vgchange -ay -K {}", self.volume_group, quiet=True)
 
 	def create_thin(self, lv: LogicalVolume, disk_gigabytes: int) -> LogicalVolume:
 		"""Create `lv` as a blank thin volume of disk_gigabytes (its bytes private
@@ -495,15 +499,9 @@ class ThinPool:
 		if lv.exists:
 			return lv.activate()
 		run(
-			"sudo",
-			"lvcreate",
-			"--type",
-			"thin",
-			"--thinpool",
+			"sudo lvcreate --type thin --thinpool {} -V {} -n {} {}",
 			self.pool_name,
-			"-V",
 			f"{disk_gigabytes}G",
-			"-n",
 			lv.name,
 			self.volume_group,
 			quiet=True,
@@ -525,15 +523,9 @@ class ThinPool:
 		if lv.exists:
 			return lv
 		run(
-			"sudo",
-			"lvcreate",
-			"--type",
-			"thin",
-			"--thinpool",
+			"sudo lvcreate --type thin --thinpool {} -V {} -n {} {}",
 			self.pool_name,
-			"-V",
 			f"{disk_gigabytes}G",
-			"-n",
 			lv.name,
 			self.volume_group,
 			quiet=True,
@@ -541,21 +533,17 @@ class ThinPool:
 		lv.activate()
 		try:
 			run(
-				"sudo",
-				"dd",
-				f"if={source_file}",
-				f"of={lv.device_path}",
-				"bs=4M",
-				"conv=fsync",
-				"status=none",
+				"sudo dd if={} of={} bs=4M conv=fsync status=none",
+				source_file,
+				lv.device_path,
 			)
 		except Exception:
-			run("sudo", "lvremove", "-f", f"{self.volume_group}/{lv.name}", check=False, quiet=True)
+			run("sudo lvremove -f {}", f"{self.volume_group}/{lv.name}", check=False, quiet=True)
 			raise
 		# Read-only at the LVM layer: the base is never mounted writable, so a
 		# stray write can't corrupt the shared origin. Per-VM snapshots are
 		# independently writable regardless.
-		run("sudo", "lvchange", "--permission", "r", f"{self.volume_group}/{lv.name}")
+		run("sudo lvchange --permission r {}", f"{self.volume_group}/{lv.name}")
 		return lv
 
 	def import_base_image_from_lv(
@@ -583,15 +571,9 @@ class ThinPool:
 			raise FileNotFoundError(f"source LV {source.name} not found; cannot promote to {lv.name}")
 		source.activate()
 		run(
-			"sudo",
-			"lvcreate",
-			"--type",
-			"thin",
-			"--thinpool",
+			"sudo lvcreate --type thin --thinpool {} -V {} -n {} {}",
 			self.pool_name,
-			"-V",
 			f"{disk_gigabytes}G",
-			"-n",
 			lv.name,
 			self.volume_group,
 			quiet=True,
@@ -599,18 +581,14 @@ class ThinPool:
 		lv.activate()
 		try:
 			run(
-				"sudo",
-				"dd",
-				f"if={source.device_path}",
-				f"of={lv.device_path}",
-				"bs=4M",
-				"conv=fsync",
-				"status=none",
+				"sudo dd if={} of={} bs=4M conv=fsync status=none",
+				source.device_path,
+				lv.device_path,
 			)
 		except Exception:
-			run("sudo", "lvremove", "-f", f"{self.volume_group}/{lv.name}", check=False, quiet=True)
+			run("sudo lvremove -f {}", f"{self.volume_group}/{lv.name}", check=False, quiet=True)
 			raise
-		run("sudo", "lvchange", "--permission", "r", f"{self.volume_group}/{lv.name}")
+		run("sudo lvchange --permission r {}", f"{self.volume_group}/{lv.name}")
 		return lv
 
 	@property
@@ -618,6 +596,17 @@ class ThinPool:
 		"""Current data/metadata fill, read from the pool LV."""
 		ref = f"{self.volume_group}/{self.pool_name}"
 		return PoolUsage.from_lvs(
-			run("sudo", "lvs", "--noheadings", "-o", "data_percent", ref),
-			run("sudo", "lvs", "--noheadings", "-o", "metadata_percent", ref),
+			run("sudo lvs --noheadings -o data_percent {}", ref),
+			run("sudo lvs --noheadings -o metadata_percent {}", ref),
 		)
+
+	@property
+	def size_bytes(self) -> int:
+		"""The thin pool's data capacity in bytes (`lvs -o lv_size` on the pool LV).
+
+		For a loopback-backed pool this is the sparse overcommit ceiling
+		(`ATLAS_POOL_DATA_SIZE`); for a real-device PV it is the physical disk the
+		pool was carved from. This is the disk budget capacity accounting packs the
+		VMs' reserved disk against — not the host's raw root filesystem."""
+		ref = f"{self.volume_group}/{self.pool_name}"
+		return int(run("sudo lvs --noheadings --nosuffix --units b -o lv_size {}", ref).strip())

@@ -1,1 +1,0 @@
-Use LVM as a backing store. Use RAID 1/5 (if multiple disks are available) for redundancy. Carve out thin pools for VMs. Allow faster disk snapshots and snapshot transfers to remote hosts

@@ -75,6 +75,16 @@ bumping the nginx version.
   block, dumped to `stream-map.json`, read only at start. A change is an atomic
   dict write — **zero reload**, exactly like the HTTP `sites` dict.
 
+> **The `stream{}` block has a second listener kind now.** Custom-domain SNI
+> passthrough ([18-bench-self-routing.md § Component L](./18-bench-self-routing.md),
+> [12-proxy.md § The stream front-door](./12-proxy.md#the-stream-front-door-sni-passthrough-for-custom-domains))
+> adds a `:443` `ssl_preread` front-door server (+ a loopback `:8445` strip-path) and a
+> `domains` `lua_shared_dict` alongside the L4 port pool described here. It reuses this
+> chapter's machinery — the same stream-admin unix socket (new `-SNI` verbs), the same
+> canonical-JSON persist pattern, the same zero-reload dict writes — so the two listener
+> kinds (the `10000-19999` raw-TCP pool and the `:443` SNI fork) coexist in one
+> `stream{}` block. Both count against `worker_connections` above.
+
 ## Desired state: the Port Mapping DocType
 
 One [`Port Mapping`](./02-doctypes.md#port-mapping) row per exposed port,
@@ -206,16 +216,18 @@ it). The guest never resolves DNS.
 
 ## Build: one stack, one new dynamic module
 
-The proxy is **stock nginx from the nginx.org apt repo + the Lua/headers-more
-modules compiled as dynamic `.so`s** against it (see [12-proxy.md](./12-proxy.md)
-and [`build.sh`](../proxy/build.sh)); the TCP forwarder rides the same binary —
-`--with-stream` and `--with-stream_ssl_preread_module` are already in the stock
-nginx.org package. [`build.sh`](../proxy/build.sh) gains, as a deliberate
+The proxy is **the nginx.org 1.30.3 base + a same-version patched binary recompile
++ the Lua/headers-more modules compiled as dynamic `.so`s** against it (see
+[12-proxy.md § Why these decisions #7](./12-proxy.md) for the recompile and the
+load-bearing `stream_ssl_preread_no_skip` patch, and
+[`build.sh`](../proxy/build.sh)); the TCP forwarder rides the same binary —
+`--with-stream` and `--with-stream_ssl_preread_module` are in the build's
+`--with-*` set. [`build.sh`](../proxy/build.sh) gains, as a deliberate
 pinned-version stack bump rolled into a new proxy snapshot:
 
 - `--add-dynamic-module=…/stream-lua-nginx-module` on the module `./configure`
   line — **a separate module** from `lua-nginx-module`; both are built as dynamic
-  `.so`s and `load_module`'d by the apt binary in `nginx.conf`
+  `.so`s and `load_module`'d by the patched binary in `nginx.conf`
   (`ngx_stream_lua_module.so` alongside `ngx_http_lua_module.so`). It depends on
   the same NDK, luajit2, and **lua-resty-core** already built for the HTTP Lua
   side.

@@ -56,6 +56,10 @@ def mgmt_ruleset(public_interface: str, wg_port: int, public_allow_ports: list[s
 		f"\t\tct state established,related accept\n"
 		f"\t\tct state invalid drop\n"
 		f"\t\tmeta l4proto {{ icmp, icmpv6 }} accept\n"
+		# UDP/wg_port (51820) carries BOTH WireGuard planes into this host: the
+		# Central-managed control tunnel (spec/21) AND the host-mesh private-plane fabric
+		# (wg-mesh, private-networking-host-mesh.md §C4). Both listen on the same fixed
+		# port region-wide, so this one accept covers both — no extra host-mesh rule needed.
 		f"\t\tudp dport {wg_port} accept\n"
 		f"{allow}"
 		f"\t\tdrop\n"
@@ -91,7 +95,7 @@ def apply(public_interface: str, wg_port: int, public_allow_ports: list[str], re
 	install_file(
 		loadable_ruleset(public_interface, wg_port, public_allow_ports), "/run/atlas-mgmt.nft", mode="0600"
 	)
-	run("sudo", "nft", "-f", "/run/atlas-mgmt.nft")
+	run("sudo nft -f /run/atlas-mgmt.nft")
 	arm_revert(revert_seconds)
 
 
@@ -101,17 +105,17 @@ def arm_revert(seconds: int) -> None:
 	armed revert first, so a re-apply re-arms cleanly."""
 	cancel_revert()
 	run(
-		"sudo", "systemd-run", "--collect", f"--on-active={seconds}", f"--unit={REVERT_UNIT}",
-		"--description=Atlas management-firewall auto-revert (lockout safety)",
-		"nft", "delete", "table", "inet", TABLE,
+		"sudo systemd-run --collect {} {} {} nft delete table inet {}",
+		f"--on-active={seconds}", f"--unit={REVERT_UNIT}",
+		"--description=Atlas management-firewall auto-revert (lockout safety)", TABLE,
 	)  # fmt: skip
 
 
 def cancel_revert() -> None:
 	"""Stop and clear the armed revert timer/service (best-effort)."""
 	for unit in (f"{REVERT_UNIT}.timer", f"{REVERT_UNIT}.service"):
-		run("sudo", "systemctl", "stop", unit, check=False)
-		run("sudo", "systemctl", "reset-failed", unit, check=False)
+		run("sudo systemctl stop {}", unit, check=False)
+		run("sudo systemctl reset-failed {}", unit, check=False)
 
 
 def revert() -> None:
@@ -119,9 +123,9 @@ def revert() -> None:
 	the persisted ruleset + disable the boot unit so a reboot does not re-lock. The
 	rollback path and what the armed timer's effect mirrors."""
 	cancel_revert()
-	run("sudo", "nft", "delete", "table", "inet", TABLE, check=False)
-	run("sudo", "rm", "-f", PERSIST_PATH, check=False)
-	run("sudo", "systemctl", "disable", PERSIST_UNIT, check=False)
+	run("sudo nft delete table inet {}", TABLE, check=False)
+	run("sudo rm -f {}", PERSIST_PATH, check=False)
+	run("sudo systemctl disable {}", PERSIST_UNIT, check=False)
 
 
 def persist(public_interface: str, wg_port: int, public_allow_ports: list[str]) -> None:
@@ -131,4 +135,4 @@ def persist(public_interface: str, wg_port: int, public_allow_ports: list[str]) 
 	cancel_revert()
 	install_directory("/etc/atlas", mode="0755")
 	install_file(loadable_ruleset(public_interface, wg_port, public_allow_ports), PERSIST_PATH, mode="0644")
-	run("sudo", "systemctl", "enable", PERSIST_UNIT, check=False)
+	run("sudo systemctl enable {}", PERSIST_UNIT, check=False)

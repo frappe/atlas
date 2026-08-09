@@ -1,0 +1,125 @@
+{
+ "actions": [],
+ "allow_rename": 0,
+ "autoname": "field:domain",
+ "creation": "2026-06-29 00:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 0,
+ "engine": "InnoDB",
+ "field_order": [
+  "tab_overview",
+  "domain",
+  "site",
+  "column_break_header",
+  "active",
+  "status",
+  "section_break_target",
+  "virtual_machine",
+  "column_break_target",
+  "address"
+ ],
+ "fields": [
+  {
+   "fieldname": "tab_overview",
+   "fieldtype": "Tab Break",
+   "label": "Overview"
+  },
+  {
+   "description": "The full external domain (e.g. shop.acme.com) a customer points at their Atlas site. Unique across the fleet — the routing key the proxy stores in its custom-domain map, keyed on the whole host (not a bare label, unlike Subdomain). This is the autoname source.",
+   "fieldname": "domain",
+   "fieldtype": "Data",
+   "in_global_search": 1,
+   "in_list_view": 1,
+   "label": "Domain",
+   "reqd": 1,
+   "unique": 1
+  },
+  {
+   "description": "The regional site FQDN this custom domain aliases (e.g. app.blr1.frappe.dev) — the Subdomain the customer owns. The custom domain CNAMEs to it, binding the route to a name reserved to this customer (no other tenant can claim it by merely pointing at the shared proxy).",
+   "fieldname": "site",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Site"
+  },
+  {
+   "fieldname": "column_break_header",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "1",
+   "description": "Inactive custom domains are excluded from the desired map the proxy serves (the row stays for history). Toggle off to take a custom domain off the front door without deleting the mapping.",
+   "fieldname": "active",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Active"
+  },
+  {
+   "default": "Active",
+   "description": "Informational, NOT a cert lifecycle (TLS terminates at the backend bench, not the proxy). Active = the domain is in both proxy maps (:80 ACME-passthrough and :443 SNI-passthrough) and serves end-to-end once the VM's own cert is issued. There is no readiness gate — a registered domain is Active immediately. Failed = a reconcile error.",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Status",
+   "options": "Active\nFailed"
+  },
+  {
+   "fieldname": "section_break_target",
+   "fieldtype": "Section Break",
+   "label": "Target"
+  },
+  {
+   "description": "The site VM this custom domain points at. The proxy dials its public IPv6 :80 (plaintext) over the v6 internet, the same south hop a Subdomain uses.",
+   "fieldname": "virtual_machine",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Virtual Machine",
+   "options": "Virtual Machine",
+   "reqd": 1
+  },
+  {
+   "fieldname": "column_break_target",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "The target VM's public IPv6 /128, denormalized so the desired SNI map is a single query with no join. Kept in sync with the linked VM's ipv6_address on save. The proxy passes the raw TLS stream to this address on :443 (the backend terminates TLS).",
+   "fieldname": "address",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Address",
+   "read_only": 1,
+   "reqd": 1
+  }
+ ],
+ "links": [],
+ "modified": "2026-06-29 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Atlas",
+ "name": "Custom Domain",
+ "naming_rule": "By fieldname",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "amend": 0,
+   "cancel": 0,
+   "create": 1,
+   "delete": 1,
+   "export": 1,
+   "import": 0,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "submit": 0,
+   "write": 1
+  }
+ ],
+ "search_fields": "domain,site,virtual_machine",
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "title_field": "domain",
+ "track_changes": 1
+}

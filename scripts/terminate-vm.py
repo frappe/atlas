@@ -33,19 +33,18 @@ def main() -> None:
 	paths = VirtualMachinePaths(inputs.virtual_machine_name)
 
 	# Tolerate failure: the unit may already be gone or never have started.
-	run("sudo", "systemctl", "disable", "--now", paths.systemd_unit, check=False)
+	run("sudo systemctl disable --now {}", paths.systemd_unit, check=False)
 
 	# In case the unit failed before its ExecStopPost ran, tear down networking
-	# explicitly. vm-network-down.py is the durable hook (positional uuid, imports
-	# the package under /var/lib/atlas/bin) and is itself idempotent — we invoke
-	# the same hook the unit's ExecStopPost runs rather than reimplement it. It is
-	# a .py now (the shell port); calling the old .sh path made `sudo` report
-	# "command not found" and, under check=False, silently skipped teardown.
-	if run_ok("sudo", "test", "-f", paths.network_env):
+	# explicitly. `boat vm-network-down` is the durable hook (positional uuid) and
+	# is itself idempotent — we invoke the same verb the unit's ExecStopPost runs
+	# rather than reimplement it.
+	if run_ok("sudo test -f {}", paths.network_env):
+		# The unit's ExecStopPost runs `/usr/local/bin/boat vm-network-down %i`;
+		# invoke the byte-identical verb here so a unit that failed before its own
+		# teardown still gets the netns/veth/proxy-NDP swept.
 		run(
-			"sudo",
-			"python3",
-			"/var/lib/atlas/bin/vm-network-down.py",
+			"sudo /usr/local/bin/boat vm-network-down {}",
 			inputs.virtual_machine_name,
 			check=False,
 		)
@@ -54,7 +53,16 @@ def main() -> None:
 	# socket, and the rootfs.ext4 block NODE) with it — they all live under jail/
 	# inside this directory. The node is just a pointer; the LV it points at is a
 	# separate object removed next.
-	run("sudo", "rm", "-rf", paths.directory)
+	run("sudo rm -rf {}", paths.directory)
+
+	# Boot-then-hydrate leftover (spec/24 §0): a migrated VM ran on a dm-clone that,
+	# after collapse, lingers as a linear map onto the plain LV and holds that LV
+	# BUSY — the lvremove below would fail "used by another device". The unit is now
+	# stopped (fd released), so remove the clone(s) first. No-op for an ordinary VM.
+	for suffix in ("", "-data"):
+		clone = f"atlas-vm-{inputs.virtual_machine_name}{suffix}-clone"
+		if run_ok("sudo dmsetup info {}", clone):
+			run("sudo dmsetup remove {}", clone, check=False)
 
 	# Remove the VM's disk LV. LogicalVolume.remove is idempotent (no-op if gone)
 	# and guarded: it refuses to remove the thin pool or a base image LV, so a bug

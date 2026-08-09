@@ -29,8 +29,8 @@ is that the host drops them regardless of what the client attempts, so this is
 the configuration that actually exercises the host-side rules.
 
 The host tunnel is brought up with the SAME `atlas.wireguard` argv builders that
-`apply_tunnel` ships (`link_add_argv`, `wg_set_*_argv`, `drop_rule_argv`,
-`accept_rule_argv`, `host_drop_rule_argv`), in the same order — so this drives the
+`apply_tunnel` ships (`link_add_command`, `wg_set_*_command`, `drop_rule_command`,
+`accept_rule_command`, `host_drop_rule_command`), in the same order — so this drives the
 real rule construction, not a paraphrase. The per-VM forward accepts that
 `vm-network-up.py` lays down are recreated too, so the test also proves the
 tunnel `drop` must be HEAD-inserted to win over them.
@@ -47,6 +47,7 @@ namespaced under the `atlas-e2e-*` prefix and torn down in tearDownClass.
 from __future__ import annotations
 
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -62,14 +63,14 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 # Imported after the sys.path insert above so the package resolves either way.
 from atlas.wireguard import (
 	_handles_for,
-	accept_rule_argv,
-	addr_add_argv,
-	drop_rule_argv,
-	host_drop_rule_argv,
-	link_add_argv,
-	link_up_argv,
-	wg_set_interface_argv,
-	wg_set_peer_argv,
+	accept_rule_command,
+	addr_add_command,
+	drop_rule_command,
+	host_drop_rule_command,
+	link_add_command,
+	link_up_command,
+	wg_set_interface_command,
+	wg_set_peer_command,
 )
 
 # --- topology constants (all namespaced under atlas-e2e-*) -------------------
@@ -241,17 +242,17 @@ class TunnelIsolationE2E(unittest.TestCase):
 		#    order: interface + key/port + the one peer + overlay address + up, then the
 		#    isolation rules — head-insert drop, head-insert accept (so the chain ends
 		#    [accept, drop, …per-VM…]), then the input chain + its host-drop.
-		cls._host(*link_add_argv(WG))
-		cls._host(*wg_set_interface_argv(WG, PORT, host_key_path))
-		cls._host(*wg_set_peer_argv(WG, client_pub, CLIENT_OVERLAY))
-		cls._host(*addr_add_argv(WG, HOST_OVERLAY_CIDR))
-		cls._host(*link_up_argv(WG))
-		cls._host("nft", *drop_rule_argv(WG))
-		cls._host("nft", *accept_rule_argv(WG, VM1_V6))
+		cls._host(*shlex.split(link_add_command(WG)))
+		cls._host(*shlex.split(wg_set_interface_command(WG, PORT, host_key_path)))
+		cls._host(*shlex.split(wg_set_peer_command(WG, client_pub, CLIENT_OVERLAY)))
+		cls._host(*shlex.split(addr_add_command(WG, HOST_OVERLAY_CIDR)))
+		cls._host(*shlex.split(link_up_command(WG)))
+		cls._host("nft", *shlex.split(drop_rule_command(WG)))
+		cls._host("nft", *shlex.split(accept_rule_command(WG, VM1_V6)))
 		cls._host(
 			"nft", "add chain inet atlas input { type filter hook input priority filter; policy accept; }"
 		)
-		cls._host("nft", *host_drop_rule_argv(WG))
+		cls._host("nft", *shlex.split(host_drop_rule_command(WG)))
 
 		# 8. The hostile client: AllowedIPs ::/0, routing vm1, vm2 AND the host overlay
 		#    into the tunnel so every probe is actually attempted.
@@ -363,7 +364,7 @@ class TunnelIsolationE2E(unittest.TestCase):
 				0, self._ping(HOST_OVERLAY), "WITHOUT the input drop the host IS reachable over the tunnel"
 			)
 		finally:
-			self._host("nft", *host_drop_rule_argv(WG))  # restore the fix
+			self._host("nft", *shlex.split(host_drop_rule_command(WG)))  # restore the fix
 		self.assertNotEqual(0, self._ping(HOST_OVERLAY), "re-applying the input drop blocks the host again")
 
 	def test_6_forward_drop_is_what_blocks_other_vm(self):
@@ -380,7 +381,7 @@ class TunnelIsolationE2E(unittest.TestCase):
 				0, self._ping(VM2_V6), "WITHOUT the forward drop vm2 leaks via its own per-VM accept"
 			)
 		finally:
-			self._host("nft", *drop_rule_argv(WG))  # restore the head-inserted drop
+			self._host("nft", *shlex.split(drop_rule_command(WG)))  # restore the head-inserted drop
 		self.assertNotEqual(0, self._ping(VM2_V6), "re-applying the forward drop blocks vm2 again")
 
 

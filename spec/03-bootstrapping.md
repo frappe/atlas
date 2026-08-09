@@ -25,7 +25,7 @@ The controller's `variables` dict (UPPER_SNAKE keys) is rendered to
 
 | Variable / flag                            | Notes                              |
 | ------------------------------------------ | ---------------------------------- |
-| `FIRECRACKER_VERSION` → `--firecracker-version` | Pinned in `atlas/atlas/doctype/server/server.py`, currently `v1.15.1`. |
+| `FIRECRACKER_VERSION` → `--firecracker-version` | Pinned in `atlas/atlas/doctype/server/server.py`, currently `v1.16.0`. Inventory of all pins: [spec/23-supply-chain.md](23-supply-chain.md). |
 | `ARCHITECTURE` → `--architecture`          | `x86_64` for this iteration.       |
 
 ### What the script does
@@ -37,7 +37,10 @@ In summary, in this order:
 1. Verifies architecture matches and `/dev/kvm` is readable+writable.
 2. Waits for the apt locks to clear, then installs `ca-certificates`,
    `curl`, `e2fsprogs`, `iproute2`, `jq`, `lvm2`, `nftables`,
-   `squashfs-tools`, `thin-provisioning-tools`.
+   `squashfs-tools`, `thin-provisioning-tools`, and the VM-migration userspace
+   (`qemu-utils` for `qemu-nbd`, `nbd-client`, `socat` for the keep-address §2.1
+   tunnel; the matching `nbd`/`dm_clone` kernel modules are installed
+   version-pinned in step 8b).
    A freshly-booted cloud image still has cloud-init / unattended-upgrades
    running its own `apt-get` for the first minutes, holding the apt locks;
    the script blocks on `cloud-init status --wait` and then polls the
@@ -73,15 +76,143 @@ In summary, in this order:
    that imports the durable package (`from atlas.lvm import ThinPool`) and calls
    `ThinPool().ensure()` to re-assert the pool's loop device on boot, ordered
    before the VM units. See [07-filesystem-layout.md](./07-filesystem-layout.md).
-9. Writes `FIRECRACKER_VERSION`, `JAILER_VERSION`, `KERNEL_VERSION`,
-   `ARCHITECTURE` to `/var/lib/atlas/bootstrap.json` (the single source of
-   truth) and `cat`s it on stdout. `firecracker_version` and `jailer_version`
-   are always the same (one tarball) but both are recorded on the `Server` row.
+9. **Reads the Atlas virtualenv's python version** for the bootstrap log. The
+   venv itself is *already created* by [`scripts/install.sh`](../scripts/install.sh),
+   which the controller runs over SSH **before** this Task (right after the upload);
+   it installs `uv`, creates a uv-managed virtualenv on CPython 3.14 at
+   `/var/lib/atlas/venv`, `uv pip install`s the `atlas` package into it, generates
+   the `atlas` console script (symlinked onto `PATH`), and runs the deep sanity
+   gate. So by the time `bootstrap-server` runs — itself as `atlas bootstrap-server`
+   on that venv — the interpreter every other Task and every VM-boot hook uses is
+   already proven. See *The Atlas interpreter and CLI* below.
+10. Installs the **VM-migration kernel modules** (spec/24; the script's
+   step 11b): the cold-migration disk move runs over NBD into a device-mapper
+   `clone` target, so every host carries `nbd` and `dm_clone`. They live in `linux-modules-extra`, so the
+   script installs the package matching the **running** kernel exactly
+   (`linux-modules-extra-$(uname -r)`, never the floating `-generic`
+   metapackage), loads both modules, and persists them via
+   `/etc/modules-load.d/60-atlas-migration.conf` — the same pattern as
+   `dm_thin_pool`. `CONFIG_DM_CLONE` merged in kernel 6.4 and Ubuntu 24.04 ships
+   6.8, so the module is present once the extra package is on.
+11. Writes `FIRECRACKER_VERSION`, `JAILER_VERSION`, `KERNEL_VERSION`,
+   `ARCHITECTURE`, and `PYTHON_VERSION` to `/var/lib/atlas/bootstrap.json` (the
+   single source of truth) and `cat`s it on stdout. `firecracker_version` and
+   `jailer_version` are always the same (one tarball) but both are recorded on
+   the `Server` row. `python_version` is the resolved Atlas venv python; it is
+   carried for visibility in the bootstrap log but **not** persisted to a Server
+   field (it is derived state — see below).
 
 The Python side `json.loads` the trailing JSON object and writes the
 fields onto the `Server` document. `jq` is invoked with `-nc` (compact,
 single-line) so the trailing line is a single object; the parser scans
 backwards for the last non-empty line.
+
+### The Atlas interpreter and CLI
+
+A managed host ships whatever `python3` its Ubuntu gave it (24.04 = 3.12); the
+controller runs 3.14. Rather than gamble on the host's stock interpreter,
+bootstrap installs Atlas's host code **the standard way** — a uv-managed
+virtualenv with the package `uv pip install`ed into it — so the controller and
+its hosts run the same CPython no matter what Ubuntu shipped. The same install
+produces the `atlas` console command for an operator.
+
+**The interpreter — a uv-managed venv, created by `install.sh`.** `uv` is an
+ordinary host tool here. The venv is created by
+[`scripts/install.sh`](../scripts/install.sh) — a small POSIX-sh script the
+controller runs over SSH as the **first step of `Server.bootstrap()`, right after
+the upload** and *before* the bootstrap Task. It:
+
+- installs the pinned `uv` to `/var/lib/atlas/uv` (the one network fetch),
+- creates a virtualenv on a uv-controlled CPython 3.14 at `/var/lib/atlas/venv`
+  (`uv venv --python 3.14`; uv fetches the interpreter if absent, kept under the
+  single `/var/lib/atlas/uv` tree), and
+- `uv pip install`s the `atlas` package into it from the durable tree the caller
+  already placed at `/var/lib/atlas/bin` (which carries a `pyproject.toml` for
+  exactly this — see *Files that must already be on the server* below),
+- symlinks the generated `atlas` console script onto `PATH` at `/usr/local/bin`.
+
+`install.sh` is the **single source of truth for `UV_VERSION` / `PY_VERSION`**
+(they moved out of `bootstrap-server.py`). It is **not** a code-transport
+mechanism — the package is already on the host; install.sh only creates the
+interpreter. It is idempotent (`uv pip install --reinstall`), so a code edit
+reaches the host on the next `bootstrap` — the same single refresh point the
+durable scripts already use.
+
+The boot hooks invoke `/var/lib/atlas/venv/bin/python` (the host-side
+`atlas.paths.ATLAS_PYTHON`); the runner invokes each Python verb as the
+pip-installed `atlas <verb>` console script (same venv interpreter, reached by
+name on `PATH`).
+
+- **No carve-out.** Because install.sh creates the venv + console script *before*
+  the bootstrap Task, `bootstrap-server` is an ordinary Python verb — it runs as
+  `atlas bootstrap-server` on the venv python like every other verb. There is no
+  stock-`python3` branch in the runner and no narrow CI gate keeping one script
+  parseable on Ubuntu's 3.12: nothing host-side touches the stock interpreter, so
+  the floor is 3.14 everywhere.
+- **Deep sanity gate (the safety):** before it returns, install.sh proves the venv
+  python actually runs what the units will run — not just `import atlas`, but the
+  `from atlas.lvm import ThinPool` that `atlas-pool.service` does, a `py_compile`
+  of all four boot hooks, and that the `atlas` console script dispatches
+  (`atlas --help`). A broken venv fails the install *here* — before the bootstrap
+  Task runs and before the units are pointed at it, so a unit never points at a
+  missing or broken `/var/lib/atlas/venv`. (For a **Fake** server there is no host,
+  so the install.sh SSH step is skipped exactly as the upload is.)
+- **CLI-readiness is persisted once, here.** A succeeded bootstrap (the gate
+  passed) sets `Server.cli_ready = 1`. This replaces the old per-Task
+  `test -e /var/lib/atlas/venv/bin/python` round trip the runner used to make
+  before every Python Task: the fail-fast moved from once-per-Task to
+  once-at-bootstrap. A legacy/unbootstrapped host has `cli_ready = 0` — the
+  operator-facing "re-bootstrap this server" signal — and a stale host with no
+  `atlas` on `PATH` simply fails its Task with `atlas: command not found`.
+- **`python_version` is derived state, not a Server field.**
+  `/var/lib/atlas/venv/bin/python --version` on the host and install.sh's
+  `PY_VERSION` constant are both live truth; persisting a copy on the `Server`
+  row would only drift. It rides the bootstrap log for visibility and nothing
+  reads it back.
+- **Migration of a running fleet:** a re-bootstrap rewrites the unit files +
+  `daemon-reload`, but a *running* `firecracker-vm@<uuid>` keeps its
+  already-loaded `ExecStart` until restarted, so the swap takes effect on the
+  next start/restart of each VM. `Restart=always` and the host-reboot LV
+  re-activation are **not** a grace period — they run the swapped hooks the
+  instant after `daemon-reload`; the sanity gate is what de-risks that (the venv
+  is proven-good before any unit points at it).
+
+**The `atlas` CLI.** The same `uv pip install` materialises the `atlas` console
+script in the venv (the package's `pyproject.toml` declares
+`atlas = "atlas._cli:main"` under `[project.scripts]` — the conventional way to
+ship a Python CLI). Bootstrap symlinks it onto `PATH` at `/usr/local/bin/atlas`,
+so an operator on a host has one front door: `atlas stop-vm
+--virtual-machine-name <uuid>`, `atlas --help` lists every command. It is **both**
+the break-glass / debug face for an operator AND the runner's execution entry —
+the controller drives the normal path over SSH as `atlas <verb> --flags`, the
+exact same typed entry points, exposed by name. (See
+[04-tasks.md § Tasks are Python](./04-tasks.md) and
+[`scripts/lib/atlas/_cli.py`](../scripts/lib/atlas/_cli.py).)
+
+The dispatcher discovers its commands from the durable entry scripts at
+`/var/lib/atlas/bin` (where bootstrap placed them); the four systemd hooks are
+excluded by construction (positional-uuid, no typed inputs — not hand-runnable).
+
+The CLI's grammar is delivered in **two phases, deliberately isolated** so a
+grammar change can never be confused with an install/packaging regression:
+
+- **Phase 1 (this) — install the scripts *as-is*, and execute through them.** The
+  verbs are exactly the script stems: `atlas stop-vm`, `atlas resize-vm`,
+  `atlas snapshot-vm`. No grammar change, no new flags — `atlas <stem> <flags>`
+  parses to the identical typed inputs as running the bare script, so the CLI
+  adds zero logic. The runner now invokes every Python verb this way (it no longer
+  shells `python3 <path>`), and `Task.script` stores the bare verb.
+- **Phase 2 (later, explicit) — a natural grammar.** `atlas vm stop`,
+  `atlas vm resize`, etc. — a verb/noun shape layered over the same dispatch.
+  Done as its own change once Phase 1 is proven; **not** in scope here.
+
+- **Controller-only scripts** (`issue-cert`, `tunnel-*`, `mgmt-firewall-*`) are
+  a separate question deferred to Phase 2: they run on the *controller*, not a
+  host, so the right end state is likely the same `atlas` CLI installed on the
+  controller too (`atlas mgmt-firewall-apply …` run where it belongs). Until
+  then the host CLI's command set and the host-SSH catalog
+  (`scripts_catalog.allowed_scripts()`) are **not** asserted equal — see the
+  note in [04-tasks.md](./04-tasks.md).
 
 ### Host hardening
 
@@ -106,6 +237,8 @@ The hardening is **not** a separate operation, button, or Task: it is part of
 | Module blocklist | `/etc/modprobe.d/60-atlas-blocklist.conf`: unused filesystem modules (`cramfs`, `freevxfs`, `hfs`, `hfsplus`, `jffs2`, `udf`, `usb-storage`) and unused network protocols (`dccp`, `tipc`, `rds`, `sctp`). It must **never** list a load-bearing module — `tun`/`tap` (VM taps), `kvm`/`kvm_intel`/`kvm_amd` (Firecracker), `vhost`/`vhost_net` (virtio), `nf_tables`/`nft_*` (firewall), `dm_mod`/`dm_thin_pool` (the thin-pool VM-disk backend); CIS only blocklists *unused* modules, so none of these appear, but the e2e probe asserts it. | CIS 1.1.1, 3.2 |
 | Security updates | install `unattended-upgrades`, scoped to the **security** pocket only, **no** automatic reboot (a reboot would kill running VMs) | CIS 1.2.2.1 |
 | KSM / swap off | disable Kernel Samepage Merging (cross-VM memory side channel) and swap (guest RAM remanence on disk) | Firecracker prod-host |
+| Guest IMDS-drop | one host-wide nft rule (`inet atlas forward: ip daddr 169.254.169.254 drop`) so a guest cannot reach the host's cloud metadata endpoint (the droplet's own userdata / vendor credentials). Firecracker does no egress filtering, so the host must. The guest's own MMDS lives at the same address but is served on the tap inside the netns and never crosses this chain. See [06-networking.md](./06-networking.md). | Firecracker prod-host |
+| FC log rotation | `/etc/logrotate.d/60-atlas-firecracker` bounds the per-VM `firecracker.log` (a guest can influence log volume; the systemd unit `append:`s it unbounded). `copytruncate` because systemd holds the file open with no reopen signal. | Firecracker prod-host |
 
 #### Deliberate deviations
 
@@ -137,6 +270,21 @@ an unprivileged `atlas` user, the Firecracker **jailer**, and the Firecracker
 [roadmap](./09-roadmap.md), along with `/tmp` `/dev/shm` mount hardening,
 `auditd`, and surfacing "reboot pending" after an unattended security update.
 
+#### Guest serial console disabled
+
+The other half of the Firecracker doc's "8250 Serial Device" / "Log files"
+guidance is a per-VM concern, applied where the VM config is built
+([`provision-vm.py`](../scripts/provision-vm.py)) rather than here: every VM
+boots with `8250.nr_uarts=0` and **without** `console=ttyS0`. The 8250 serial
+device is tied to Firecracker's stdout, and a guest with serial access can drive
+unbounded host log/storage growth. Disabling it at boot (plus the host-side **FC
+log rotation** in the table above) bounds both ends. The guest can technically
+re-enable the device after boot, so the bounded-storage half is the load-bearing
+mitigation. **Consequence:** `firecracker.log` no longer carries guest
+kernel/console output — debug a misbehaving guest from inside it over SSH, not
+from the host log (see the troubleshooting note in
+[06-networking.md](./06-networking.md)).
+
 #### What we deliberately skip (and won't re-litigate)
 
 The selection axis is *does this protect a Firecracker host without breaking it,
@@ -145,11 +293,14 @@ So we **do not** run the full `usg`/CIS profile (it sets the three deviations
 wrong and drags in a long tail of PAM/password-policy, AIDE, auditd, and banner
 controls that are pure box-ticking on a headless, key-only-root, machine-driven
 host); `usg` is at most an audit *reporter*, never the apply mechanism. We also
-skip the Firecracker doc's hardware/boot-cmdline items — `nosmt` (halves a
-2-vCPU droplet; a multi-tenant-with-hostile-neighbors concern), ECC/TRR memory
-and early microcode (provider procurement), and cgroup/`quiet loglevel` GRUB
-tuning (don't fit an idempotent re-runnable bootstrap). These are provider- or
-tenancy-level concerns that sit above Atlas; revisit only with a concrete need.
+skip the Firecracker doc's **host hardware/boot-cmdline** items — `nosmt`
+(halves a 2-vCPU droplet; a multi-tenant-with-hostile-neighbors concern),
+ECC/TRR memory and early microcode (provider procurement), and cgroup/`quiet
+loglevel` GRUB tuning (don't fit an idempotent re-runnable bootstrap). These are
+provider- or tenancy-level concerns that sit above Atlas; revisit only with a
+concrete need. (The guest-side serial/log items from the same doc *are* applied
+— see just above — because they are VM-config and host-storage, not host-cmdline
+tuning.)
 
 ### Files that must already be on the server
 
@@ -162,37 +313,49 @@ These are **durable** state (they live under `/var/lib/atlas/bin` and
 per-Task sidecar mechanism. Before running `bootstrap-server.py`, the caller
 uploads (see `_BOOTSTRAP_UPLOADS` + `_bootstrap_uploads()` in `server.py`):
 
-- `scripts/vm-network-up.py` → `/var/lib/atlas/bin/vm-network-up.py`
-- `scripts/vm-network-down.py` → `/var/lib/atlas/bin/vm-network-down.py`
-- `scripts/vm-disk-up.py` → `/var/lib/atlas/bin/vm-disk-up.py`
-- `scripts/vm-restore.py` → `/var/lib/atlas/bin/vm-restore.py`
+- `scripts/host-pyproject.toml` → `/var/lib/atlas/bin/pyproject.toml`
+- `scripts/install.sh` → `/var/lib/atlas/bin/install.sh` (the controller pipes
+  this over SSH right after the upload to create the venv — shipped durably so the
+  controller has a local copy and no public URL is needed)
 - `scripts/systemd/firecracker-vm@.service` → `/etc/systemd/system/firecracker-vm@.service`
 - `scripts/systemd/atlas-pool.service` → `/etc/systemd/system/atlas-pool.service`
 - every `scripts/lib/atlas/*.py` (test files skipped) → `/var/lib/atlas/bin/atlas/*.py`
 
-The systemd hooks (`vm-network-up.py`, `vm-network-down.py`, `vm-disk-up.py`,
-`vm-restore.py`) are invoked by the unit as `python3 <path> %i` (a positional
-VM uuid, not Task `--flags`) and `import` the durable package next to them; the
-package (`/var/lib/atlas/bin/atlas/`) replaces the old durable `lvm.sh` shell
-library.
+The `pyproject.toml` makes `/var/lib/atlas/bin` a pip-installable project: it is
+the manifest `uv pip install /var/lib/atlas/bin` consumes (its wheel package root
+is `atlas`, the flat durable layout, distinct from the dev
+[`scripts/pyproject.toml`](../scripts/pyproject.toml)). The per-VM
+`firecracker-vm@` hooks (`vm-disk-up`, `vm-network-up`, `vm-restore`,
+`vm-network-down`) are `/usr/local/bin/boat vm-* %i` verbs now (a positional VM
+uuid, not Task `--flags`) — served by the boat binary, so no hook file ships
+here. The durable package (`/var/lib/atlas/bin/atlas/`) replaces the old durable
+`lvm.sh` shell library and is imported by `atlas-wake-trap`, `atlas-pool.service`
+and the durable Task entry scripts, which run under the **Atlas venv python**
+`/var/lib/atlas/venv/bin/python` (see *The Atlas interpreter and CLI* below), not
+the host's `/usr/bin/python3`.
 
 The `Server.bootstrap()` Python method orchestrates this:
 
 ```
 1. open ssh connection (via `connection_for_server`)
-2. upload_files: the durable hooks, both systemd units, and the atlas package
-   (mkdir of parent directories happens inside upload_files)
-3. run_task(server=..., script="bootstrap-server.py",
+2. upload_files: the atlas-wake-trap daemon, the systemd units, the atlas package,
+   and install.sh (mkdir of parent directories happens inside upload_files)
+3. run install.sh over SSH (`bash /var/lib/atlas/bin/install.sh`) — creates the
+   uv venv + `atlas` console script and runs the deep sanity gate. This must run
+   BEFORE the bootstrap Task (which now runs as `atlas bootstrap-server` on the
+   venv). Skipped for a Fake server, exactly as the upload is.
+4. run_task(server=..., script="bootstrap-server",
             variables={"FIRECRACKER_VERSION": ..., "ARCHITECTURE": ...})
-   — scp of bootstrap-server.py (+ its staged atlas package under /tmp/atlas)
-   and the ssh exec happen inside run_task.
-4. parse the ATLAS_RESULT= line from stdout into Server fields
-   (firecracker_version, jailer_version, kernel_version, architecture);
-   the same JSON is also persisted on the host at /var/lib/atlas/bootstrap.json.
-5. save the Server row.
+   — the ssh exec (`atlas bootstrap-server --flags`) happens inside run_task.
+5. parse the ATLAS_RESULT= line from stdout into Server fields
+   (firecracker_version, jailer_version, kernel_version, architecture); the
+   line also carries python_version, which is read for the bootstrap log but
+   deliberately NOT written to a Server field (derived state). The same JSON is
+   also persisted on the host at /var/lib/atlas/bootstrap.json.
+6. save the Server row.
 ```
 
-This is one Task: `bootstrap-server.py`. The pre-copy step is not a Task,
+This is one Task: `bootstrap-server`. The pre-copy + install.sh steps are not a Task,
 it's plumbing, and its commands are not interesting individually. They do
 appear on stderr of the task because Python tasks echo each command (the
 `set -x` equivalent the `atlas._run.run` wrapper prints).
@@ -385,10 +548,14 @@ mode and there will not be one.
 
 ### Pinned versions
 
-`FIRECRACKER_VERSION = v1.15.1`. To bump, edit the constant in
+`FIRECRACKER_VERSION = v1.16.0`. To bump, edit the constant in
 `atlas/atlas/doctype/server/server.py` and re-run `Bootstrap` on every
 server. The script is idempotent so re-running is the only thing the
-operator does.
+operator does. **Warm snapshots are tied to the Firecracker version** —
+`host_signature()` folds it into the snapshot-restore compatibility check,
+so bumping invalidates every golden warm snapshot baked under the old
+version; re-bake them. The full inventory of every pinned binary, image,
+and package lives in [spec/23-supply-chain.md](23-supply-chain.md).
 
 `ARCHITECTURE = x86_64`. `aarch64` is on the roadmap.
 

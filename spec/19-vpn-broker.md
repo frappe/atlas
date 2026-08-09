@@ -1,4 +1,37 @@
-# The VPN broker (WireGuard tunnels)
+# The customer gateway (WireGuard dial-in)
+
+> **Superseded — this design moved onto the mesh.** Atlas brokers **WireGuard**
+> dial-in for a VM's owner, but the tunnel no longer terminates **on the host**.
+> It terminates on a **gateway VM on the private mesh**
+> ([25-private-networking.md](./25-private-networking.md)), where every customer is
+> one `[Peer]` on a single shared `wg0` (never an interface per tunnel), and the
+> client becomes a `/128` in its own tenant `/48` — so one tunnel reaches **all** the
+> owner's VMs. The current design lives in
+> [25 → The customer gateway](./25-private-networking.md#the-customer-gateway--external-dial-in-to-the-mesh)
+> (full rationale + the host-verified eBPF isolation program in
+> `llm/references/customer-vpc-vpn.md`).
+>
+> **Why the change.** Host-termination (below) put a public UDP listener on *every*
+> host carrying a customer VM, gave each tunnel its own interface (~100 k at fleet
+> scale), and steered the decrypted packet with head-inserted nft `drop` rules.
+> Atlas's invariant is that **the internet touches VMs, never hosts** (the
+> reverse/TCP proxies do the same). The gateway-on-mesh model keeps the
+> internet-facing surface down to a handful of static-IP VMs, carries all customers
+> as peers on one interface, and confines each to its own `/48` with **zero
+> per-customer isolation state** (source pinned by cryptokey routing, destination by
+> one static `same_48` eBPF guard) — this chapter's own "private-network seam
+> (future)" (below) anticipated exactly this swap.
+>
+> **What carries over unchanged:** the client generates its own keypair and sends
+> only the public half; the outer transport is a static public **IPv4** so a v4-only
+> client reaches a v6-only VM; and the [Client setup](#client-setup) UX is identical
+> except `AllowedIPs` is now the tenant `/48` and `Endpoint` is the gateway's v4.
+>
+> The rest of this chapter is retained for the design rationale (why a broker at all,
+> why not in-guest, the isolation reasoning) — read [25](./25-private-networking.md)
+> for what is actually built.
+
+---
 
 Atlas brokers **WireGuard** tunnels: a VM's owner asks Atlas for a tunnel to
 their VM, and Atlas provisions one on demand and hands back a ready client

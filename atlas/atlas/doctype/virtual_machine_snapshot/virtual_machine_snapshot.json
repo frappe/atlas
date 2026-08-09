@@ -34,7 +34,15 @@
   "vcpus",
   "memory_megabytes",
   "tap_device",
-  "host_signature"
+  "host_signature",
+  "section_break_s3",
+  "s3_status",
+  "s3_bucket",
+  "s3_key_prefix",
+  "column_break_s3",
+  "s3_size_bytes",
+  "s3_uploaded_at",
+  "s3_objects"
  ],
  "fields": [
   {
@@ -234,6 +242,58 @@
    "fieldname": "host_signature",
    "fieldtype": "Small Text",
    "label": "Host Signature",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_break_s3",
+   "fieldtype": "Section Break",
+   "label": "S3 Backup"
+  },
+  {
+   "default": "",
+   "description": "Off-host S3 backup state. Uploaded = the artifacts are in S3 and can be restored even if the local pool is lost (spec/29-snapshot-backup.md).",
+   "fieldname": "s3_status",
+   "fieldtype": "Select",
+   "in_standard_filter": 1,
+   "label": "S3 Status",
+   "options": "\nUploading\nUploaded\nRestoring\nFailed",
+   "read_only": 1
+  },
+  {
+   "fieldname": "s3_bucket",
+   "fieldtype": "Data",
+   "label": "S3 Bucket",
+   "read_only": 1
+  },
+  {
+   "description": "Key prefix under which this snapshot's objects live: <prefix>/<snapshot>/rootfs.img.zst, etc.",
+   "fieldname": "s3_key_prefix",
+   "fieldtype": "Data",
+   "label": "S3 Key Prefix",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_s3",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Total compressed bytes stored in S3.",
+   "fieldname": "s3_size_bytes",
+   "fieldtype": "Long Int",
+   "label": "S3 Size (bytes)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "s3_uploaded_at",
+   "fieldtype": "Datetime",
+   "label": "S3 Uploaded At",
+   "read_only": 1
+  },
+  {
+   "description": "The upload manifest: one JSON row per object (name, object, sha256, sizes, disk size). Restore reads it to re-presign GETs and recreate the LVs.",
+   "fieldname": "s3_objects",
+   "fieldtype": "Small Text",
+   "label": "S3 Objects (manifest)",
    "read_only": 1
   }
  ],

@@ -44,10 +44,9 @@ function open_promote_dialog(frm) {
 			{
 				// Left BLANK on purpose: an empty name lets the server apply the
 				// recipe's default — for a versioned bench recipe that is the SERIES
-				// name (bench-v15 / bench-v16 / bench-nightly), the exact name the
-				// Central Image catalog links by (spec/16). Pre-filling the old
-				// <recipe>-<build> slug here would override that and orphan the
-				// Central Image at Expected. Fill this only to override the default.
+				// name (bench-v15 / bench-v16 / bench-nightly), the name customers
+				// pick the version by (spec/15). Pre-filling the old <recipe>-<build>
+				// slug here would override that. Fill this only to override the default.
 				fieldname: "image_name",
 				label: __("Image name (optional)"),
 				fieldtype: "Data",

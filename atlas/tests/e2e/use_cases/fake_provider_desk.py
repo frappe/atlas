@@ -185,20 +185,18 @@ def _check_server_buttons(server) -> None:
 		"Server",
 		server.name,
 		"run_task_dialog",
-		script="bootstrap-server.py",
-		variables=json.dumps({"FIRECRACKER_VERSION": "v1.15.1", "ARCHITECTURE": "x86_64"}),
+		script="bootstrap-server",
+		variables=json.dumps({"FIRECRACKER_VERSION": "v1.16.0", "ARCHITECTURE": "x86_64"}),
 	)
 	assert frappe.get_doc("Task", task_name).status == "Success"
 
 	# Malformed JSON in the Code field surfaces as a clean ValidationError.
 	with expect_validation_error("must be valid json"):
-		_call_button(
-			"Server", server.name, "run_task_dialog", script="bootstrap-server.py", variables="{nope"
-		)
+		_call_button("Server", server.name, "run_task_dialog", script="bootstrap-server", variables="{nope")
 
 	# Unknown script is rejected.
 	with expect_validation_error("unknown script"):
-		_call_button("Server", server.name, "run_task_dialog", script="not-real.sh", variables="")
+		_call_button("Server", server.name, "run_task_dialog", script="not-real", variables="")
 
 
 # ----- Virtual Machine Image ----------------------------------------------
@@ -215,7 +213,7 @@ def _check_image_buttons(server_name: str, image_name: str) -> None:
 
 	task_name = _call_button("Virtual Machine Image", image_name, "sync_to_server", server_name=server_name)
 	task = frappe.get_doc("Task", task_name)
-	assert task.script == "sync-image.py", task.script
+	assert task.script == "sync-image", task.script
 	assert task.status in ("Pending", "Running", "Success"), task.status
 	execute_task(task_name)  # the enqueued job, run inline (faked, no SSH)
 	task.reload()
@@ -396,9 +394,9 @@ def _check_snapshot_family(vm) -> None:
 
 def _check_fault_injection(server_name: str, image_name: str) -> None:
 	"""The Fake provider's "fake a failed action": Atlas Settings with
-	fail_scripts="provision-vm.py" makes Provision fail through the desk exactly
+	fail_scripts="provision-vm" makes Provision fail through the desk exactly
 	like a real failure — the VM lands Failed and the Task is Failure."""
-	frappe.db.set_value("Atlas Settings", "Atlas Settings", "fail_scripts", "provision-vm.py")
+	frappe.db.set_value("Atlas Settings", "Atlas Settings", "fail_scripts", "provision-vm")
 	try:
 		vm = frappe.get_doc(
 			{

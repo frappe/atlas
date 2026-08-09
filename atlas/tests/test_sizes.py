@@ -52,6 +52,38 @@ class TestSizes(IntegrationTestCase):
 			self.assertGreater(p["memory_megabytes"], 0, label)
 			self.assertGreater(p["disk_gigabytes"], 0, label)
 
+	def test_share_unit_is_shared_1x(self) -> None:
+		# The share unit is derived from the ladder itself — Shared 1x's cost on the
+		# three packed axes — so there is exactly one source of truth.
+		self.assertEqual(sizes.SHARE_UNIT["cpu_max_cores"], 0.0625)
+		self.assertEqual(sizes.SHARE_UNIT["memory_megabytes"], 512)
+		self.assertEqual(sizes.SHARE_UNIT["disk_gigabytes"], 10)
+
+	def test_proportionality_invariant(self) -> None:
+		# THE load-bearing property: every preset is the SAME integer multiple of the
+		# share unit on all three axes. This is what makes packing one-dimensional and
+		# even-spread free (the placement scorer's relative-fill spread relies on it —
+		# spec/28). Break it deliberately (a non-proportional plan) and you must
+		# revisit spec/28 and the scorer, not just this test.
+		unit = sizes.SHARE_UNIT
+		for label, preset in sizes.SIZE_PRESETS.items():
+			cpu_units = preset["cpu_max_cores"] / unit["cpu_max_cores"]
+			memory_units = preset["memory_megabytes"] / unit["memory_megabytes"]
+			disk_units = preset["disk_gigabytes"] / unit["disk_gigabytes"]
+			self.assertEqual(
+				cpu_units,
+				int(cpu_units),
+				f"{label}: cpu is not a whole number of share units — packing is no "
+				f"longer one-dimensional; revisit spec/28 and the placement scorer",
+			)
+			self.assertEqual(
+				(cpu_units, memory_units, disk_units),
+				(int(cpu_units), int(cpu_units), int(cpu_units)),
+				f"{label}: axes are not the same multiple of the share unit "
+				f"({cpu_units}, {memory_units}, {disk_units}) — the scorer's "
+				f"even-spread-is-free property assumes proportional presets; revisit spec/28",
+			)
+
 	def test_options_string_starts_with_custom(self) -> None:
 		options = sizes.size_preset_options().split("\n")
 		self.assertEqual(options[0], "Custom")

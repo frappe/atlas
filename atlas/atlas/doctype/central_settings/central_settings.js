@@ -1,32 +1,14 @@
 // Central Settings — Single. Connects this Atlas to the global Central control
-// plane (spec/16-central.md). Actions ▾ carries Test Connection / Fetch Sizes /
-// Fetch Images. Results surface as toasts, matching the other Atlas Settings
-// singles (no auto-painted credential chip). Registration is Central-initiated
-// now (spec/21-tunnel.md) — there is no Register button here.
+// plane (spec/16-central.md). Actions ▾ carries Test Connection. Results surface
+// as toasts, matching the other Atlas Settings singles (no auto-painted
+// credential chip). Registration is Central-initiated now (spec/21-tunnel.md) —
+// there is no Register button here.
 
 frappe.ui.form.on("Central Settings", {
 	refresh(frm) {
 		frappe.atlas.add_action(frm, "Test Connection", () =>
 			run(frm, "test_connection", (m) =>
 				m.ok ? __("OK: {0}", [m.label || "Central"]) : null
-			)
-		);
-		frappe.atlas.add_action(frm, "Fetch Sizes", () =>
-			run(frm, "fetch_sizes", (m) =>
-				__("Sizes: {0} new, {1} updated, {2} disabled", [
-					m.inserted,
-					m.updated,
-					m.disabled,
-				])
-			)
-		);
-		frappe.atlas.add_action(frm, "Fetch Images", () =>
-			run(frm, "fetch_images", (m) =>
-				__("Images: {0} new, {1} updated, {2} disabled", [
-					m.inserted,
-					m.updated,
-					m.disabled,
-				])
 			)
 		);
 	},

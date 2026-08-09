@@ -128,22 +128,24 @@ class TestBuildBench(IntegrationTestCase):
 		self.assertEqual(status, ["Failure"])
 
 
-# A clean site-mode guest run: serves pong, the baked password logs in (200 +
-# session cookie), and a wrong password is rejected (401). The exact labelled
-# shape sanity_check parses back out.
+# A clean site-mode guest run: serves pong, a `bench browse`-minted session
+# authenticates as Administrator (200 + resolves to Administrator, not Guest),
+# and a garbage session resolves to Guest. The exact labelled shape
+# sanity_check parses back out.
 _SANE_SITE_STDOUT = (
 	"=== SERVE ===\n"
 	"http_code=200\n"
 	'body={"message":"pong"}\n'
 	"=== LOGIN ===\n"
 	"http_code=200\n"
-	'body={"message":"Logged In"}\n'
-	"sid_cookie=1\n"
+	'body="Administrator"\n'
+	"user=1\n"
 	"=== NEGCTL ===\n"
-	"http_code=401\n"
+	"http_code=200\n"
+	"user=0\n"
 )
 
-# A clean ADMIN-mode run: /api/status serves 200, and GET / renders the Bench Admin
+# A clean ADMIN-mode run: /api/status serves 200, and GET / renders the Pilot admin
 # console page (marker present). No login fields (admin bakes no Frappe site).
 _SANE_ADMIN_STDOUT = (
 	"=== SERVE ===\n"
@@ -163,19 +165,23 @@ class TestSanityFailureLogic(IntegrationTestCase):
 		parsed = bench_image._parse_sanity(_SANE_SITE_STDOUT, "site")
 		self.assertEqual(bench_image._sanity_failures(parsed, "site"), [])
 
-	def test_serves_but_baked_password_rejected(self) -> None:
-		# The exact gap the unauthenticated ping gate misses: site serves, login 401.
+	def test_serves_but_browse_session_rejected(self) -> None:
+		# The exact gap the unauthenticated ping gate misses: site serves, the
+		# bench browse session does not authenticate (resolves to Guest, not
+		# Administrator).
 		out = _SANE_SITE_STDOUT.replace(
-			'http_code=200\nbody={"message":"Logged In"}\nsid_cookie=1',
-			'http_code=401\nbody={"message":"Invalid login credentials"}\nsid_cookie=0',
+			'http_code=200\nbody="Administrator"\nuser=1',
+			'http_code=200\nbody="Guest"\nuser=0',
 		)
 		failures = bench_image._sanity_failures(bench_image._parse_sanity(out, "site"), "site")
 		self.assertEqual(len(failures), 1)
-		self.assertIn("did not log in", failures[0])
+		self.assertIn("did not authenticate", failures[0])
 
 	def test_open_door_login_is_untrustworthy(self) -> None:
-		# Login 200 but a wrong password is ALSO accepted → the login pass is meaningless.
-		out = _SANE_SITE_STDOUT.replace("=== NEGCTL ===\nhttp_code=401", "=== NEGCTL ===\nhttp_code=200")
+		# Login 200 but a GARBAGE session is ALSO accepted → the login pass is meaningless.
+		out = _SANE_SITE_STDOUT.replace(
+			"=== NEGCTL ===\nhttp_code=200\nuser=0", "=== NEGCTL ===\nhttp_code=200\nuser=1"
+		)
 		failures = bench_image._sanity_failures(bench_image._parse_sanity(out, "site"), "site")
 		self.assertEqual(len(failures), 1)
 		self.assertIn("NOT rejected", failures[0])
@@ -207,13 +213,13 @@ class TestSanityFailureLogic(IntegrationTestCase):
 		self.assertIn("does not render", failures[0])
 
 	def test_admin_console_200_without_marker_fails(self) -> None:
-		# GET / 200s but the page isn't the Bench Admin console (blank/wrong shell).
+		# GET / 200s but the page isn't the Pilot admin console (blank/wrong shell).
 		out = _SANE_ADMIN_STDOUT.replace(
 			"=== ADMINUI ===\nhttp_code=200\nmarker=1", "=== ADMINUI ===\nhttp_code=200\nmarker=0"
 		)
 		failures = bench_image._sanity_failures(bench_image._parse_sanity(out, "admin"), "admin")
 		self.assertEqual(len(failures), 1)
-		self.assertIn("not the Bench Admin console", failures[0])
+		self.assertIn("not the Pilot admin console", failures[0])
 
 	def test_admin_not_serving_fails(self) -> None:
 		# /api/status itself down — serve failure short-circuits before the UI check.
@@ -253,19 +259,23 @@ class TestSanityCheck(IntegrationTestCase):
 			result = bench_image.sanity_check(vm.name)
 		self.assertEqual(result["serve_http"], "200")
 		self.assertEqual(result["login_http"], "200")
-		# Site mode probes the baked password through the login endpoint.
+		# Site mode mints a session via `bench browse` — never a known password.
+		# There is no `--sid` flag on stock Frappe's `browse`; the sid is parsed out
+		# of the printed `Login URL: <url>?sid=<sid>` instead (grep -oP 'sid=\K\S+').
 		remote = run_ssh.call_args.args[2]
-		self.assertIn("/api/method/login", remote)
-		self.assertIn(bench_image.BAKED_ADMIN_PASSWORD, remote)
+		self.assertIn("browse", remote)
+		self.assertNotIn("--sid", remote)
+		self.assertIn(r"grep -oP 'sid=\K\S+'", remote)
+		self.assertIn("/api/method/frappe.auth.get_logged_user", remote)
 		self.assertIn("/api/method/ping", remote)
 
 	def test_failing_login_raises_and_names_the_problem(self) -> None:
 		vm = _new_vm(build_mode="site")
-		out = _SANE_SITE_STDOUT.replace("sid_cookie=1", "sid_cookie=0").replace(
-			'http_code=200\nbody={"message":"Logged In"}', "http_code=401\nbody=denied"
+		out = _SANE_SITE_STDOUT.replace(
+			'http_code=200\nbody="Administrator"\nuser=1', "http_code=401\nbody=denied\nuser=0"
 		)
 		with _mock_sanity_ssh(out):
-			with self.assertRaisesRegex(frappe.ValidationError, "did not log in"):
+			with self.assertRaisesRegex(frappe.ValidationError, "did not authenticate"):
 				bench_image.sanity_check(vm.name)
 
 	def test_unreachable_guest_raises(self) -> None:
@@ -283,7 +293,7 @@ class TestSanityCheck(IntegrationTestCase):
 		remote = run_ssh.call_args.args[2]
 		# Admin probes /api/status + renders the console at /, never the login endpoint.
 		self.assertIn("/api/status", remote)
-		self.assertIn("Bench Admin", remote)
+		self.assertIn("<title>Pilot</title>", remote)
 		self.assertNotIn("/api/method/login", remote)
 
 	def test_admin_console_render_failure_raises(self) -> None:

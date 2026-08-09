@@ -58,11 +58,11 @@ def spoke_conf(
 
 
 def _exists_as_root(path: str) -> bool:
-	return run_ok("sudo", "test", "-f", path)
+	return run_ok("sudo test -f {}", path)
 
 
 def interface_is_up(interface: str) -> bool:
-	return run_ok("sudo", "wg", "show", interface)
+	return run_ok("sudo wg show {}", interface)
 
 
 def ensure_keypair(private_key_path: str) -> str:
@@ -71,11 +71,11 @@ def ensure_keypair(private_key_path: str) -> str:
 	public key. Idempotent: an existing key is read, not regenerated, so this Atlas's
 	public key is stable across re-provision."""
 	if _exists_as_root(private_key_path):
-		private_key = run("sudo", "cat", private_key_path).strip()
+		private_key = run("sudo cat {}", private_key_path).strip()
 	else:
-		private_key = run("wg", "genkey").strip()
+		private_key = run("wg genkey").strip()
 		install_file(private_key + "\n", private_key_path, mode="0600", sudo=True)
-	return run_input("wg", "pubkey", stdin=private_key).strip()
+	return run_input("wg pubkey", stdin=private_key).strip()
 
 
 def ensure_interface(
@@ -93,17 +93,17 @@ def ensure_interface(
 	peer/address takes effect — a brief drop is fine: tunnel-up runs during
 	provisioning, before the tunnel is load-bearing). Enable `wg-quick@<interface>`
 	for reboot persistence."""
-	private_key = run("sudo", "cat", private_key_path).strip()
+	private_key = run("sudo cat {}", private_key_path).strip()
 	conf = spoke_conf(private_key, address, listen_port, hub_public_key, hub_endpoint, allowed_ips, keepalive)
 	install_file(conf, conf_path(interface), mode="0600", sudo=True)
 	if interface_is_up(interface):
-		run("sudo", "wg-quick", "down", interface)
-	run("sudo", "wg-quick", "up", interface)
-	run("sudo", "systemctl", "enable", f"wg-quick@{interface}")
+		run("sudo wg-quick down {}", interface)
+	run("sudo wg-quick up {}", interface)
+	run("sudo systemctl enable {}", f"wg-quick@{interface}")
 
 
 def down(interface: str) -> None:
 	"""Tear the interface down and disable its unit (the rollback path). Best-effort —
 	a missing interface/unit is not an error."""
-	run("sudo", "wg-quick", "down", interface, check=False)
-	run("sudo", "systemctl", "disable", f"wg-quick@{interface}", check=False)
+	run("sudo wg-quick down {}", interface, check=False)
+	run("sudo systemctl disable {}", f"wg-quick@{interface}", check=False)

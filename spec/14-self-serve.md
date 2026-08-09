@@ -26,7 +26,7 @@ host-proven — a golden snapshot baked from scratch, and a real `create_site` �
 cloned golden site → deploy → live HTTPS through the proxy on IPv4 + IPv6. The per-VM deploy **renames**
 the baked `site.local` to the FQDN via `bench rename-site`, which regenerates the
 bench's nginx vhost (`server_name <fqdn>` + a v6 listener) and reloads — no admin
-reset (the owner is handed the shared baked password and rotates it), no `bench
+reset (the owner signs in via the one-click `login_url` the deploy mints), no `bench
 restart`. The production gunicorn is multitenant (no `--site`), so it resolves the
 renamed `<fqdn>` from the request `Host` header per request and the rename serves it
 live.
@@ -105,16 +105,16 @@ Central (owns the tenant) → create_site(team, subdomain) → Tenant + Site (Pe
 ## The create_site → live surface *(built)*
 
 ```
-1. create_site(team, subdomain, email?)               (operator API, Central token)
-2.   ensure_tenant(team, email)                        → get-or-create Tenant
+1. create_site(team, subdomain)                        (operator API, Central token)
+2.   ensure_tenant(team)                                → get-or-create Tenant
 3.   insert Site (Pending), stamped with the tenant     → returns the mirror row
 4. Site.after_insert → auto_provision (worker)          → provision → deploy → 200 → Running
-5. site.* events to Central / get_site poll             → status, then URL + admin password
+5. site.* events to Central / get_site poll             → status, then URL + login URL
 ```
 
-- **`atlas.atlas.api.site.create_site(team, subdomain, email=None)`** is the
+- **`atlas.atlas.api.site.create_site(team, subdomain)`** is the
   write endpoint. It `ensure_tenant`s the Central team
-  (`email` seeds a new Tenant; an existing one is reused), inserts the `Site` with
+  (get-or-create, keyed on `team`), inserts the `Site` with
   the tenant stamped, and returns the **mirror row** Central reflects (`name`,
   `team`, `subdomain`, `status`, `fqdn`). The `Site`
   controller enforces the **same Contract-A label rules** (shared
@@ -124,25 +124,33 @@ Central (owns the tenant) → create_site(team, subdomain) → Tenant + Site (Pe
   picks a region — the FQDN suffix comes from the active `Root Domain`. Runs
   `ignore_permissions` — operator orchestration, not desk RBAC.
 - **`atlas.atlas.api.site.get_site(name)`** is the read/poll half: the same mirror
-  row, plus — once `status == Running` — the live `url` and the
-  `admin_password` (the tenant handoff). Before Running those two are `None` (no
+  row, plus — once `status == Running` — the live `url`, the `login_url` and its
+  `login_url_expires_at` (the tenant handoff). Before Running those are `None` (no
   handoff to give yet). Central polls this as a self-heal fallback to the pushed
-  events.
+  events; on the onboarding poll it compares `login_url_expires_at` to now and, if
+  the URL has lapsed, calls `regenerate_login_url()` (via `run_doc_method`) to
+  re-mint a fresh one before showing it.
 - **Event reporting.** The `Site` doc_events
   (`atlas.atlas.central_report.on_site_after_insert` / `on_site_update`) push
   `site.created` on insert and `site.status_changed` on every status transition to
   Central, gated on `Central Settings.enabled` (a site without Central configured
-  pays nothing). The `site.status_changed` for `Running` carries the admin handoff
-  (`url` + `admin_password`); earlier transitions carry neither. Delivery is
-  fire-and-forget (the documented v1 tradeoff); the `get_site` poll is the
-  self-heal. See [16-central.md](./16-central.md) § Event reporting.
+  pays nothing). The `site.status_changed` for `Running` carries the tenant handoff
+  (`url` + `login_url` + `login_url_expires_at`); earlier transitions carry neither.
+  Delivery is fire-and-forget (the documented v1 tradeoff); the `get_site` poll is
+  the self-heal. See [16-central.md](./16-central.md) § Event reporting.
 
-**Admin handoff.** After the Site reaches `Running`, the per-site Administrator
-password stored encrypted on `Site.admin_password` is surfaced to Central — both in
-the `site.status_changed` Running event payload and via `get_site`
-(`site.get_password("admin_password")`, gated on `status == Running`). There is no
-magic-login link and no Atlas-hosted status page; the handoff is that password +
-the live URL, delivered to Central.
+**Login handoff.** After the Site reaches `Running`, the one-click `login_url`
+minted in the guest is surfaced to Central — both in the `site.status_changed`
+Running event payload and via `get_site` (gated on `status == Running`). It is a
+plain `Small Text` (read-only, `no_copy`), not an encrypted password, so it is read
+straight off the doc. Because the URL is short-lived (a real 24h Administrator
+session, `login_url_expires_at` = mint + 1440 min), Atlas exposes
+`regenerate_login_url()` (a whitelisted doc method) that re-mints it in the guest;
+Central calls it via `run_doc_method` when the stored URL has expired. There is no
+Atlas-hosted status page; the handoff is that one-click link + the live URL,
+delivered to Central. The baked Administrator password still exists (a randomized
+bake-time throwaway) but is never surfaced — the tenant signs in via `login_url` and
+can rotate the password later themselves.
 
 ## The `Site` DocType *(built — this phase)*
 
@@ -162,16 +170,20 @@ Fields, validation, permissions, and the full field table are in
    | ---- | ------ | -------- |
    | 1 | Clone the backing VM from `Atlas Settings.default_bench_snapshot` (`Virtual Machine Snapshot.clone_to_new_vm` — carries the baked bench + grown disk). `status → Provisioning`. | this layer |
    | 2 | `wait_for_ssh` — the cloned VM booted. | existing |
-   | 3 | Run `deploy-site.py` in the guest: rename the baked `site.local` to the FQDN via `bench rename-site` (regenerates the vhost as `server_name <fqdn>` + a v6 listener + reloads + re-runs production setup, a fast no-op) — no admin reset, no restart (cold clones also `bench start` first to bring the stack up; a warm clone is already serving — see the in-guest deploy below). The tenant is handed the shared baked admin password → stored encrypted on the Site. `status → Deploying`. | deploy seam |
+   | 3 | Run `deploy-site.py` in the guest: rename the baked `site.local` to the FQDN via `bench rename-site` (regenerates the vhost as `server_name <fqdn>` + a v6 listener + reloads + re-runs production setup, a fast no-op) — no admin reset, no restart (cold clones also `bench start` first to bring the stack up; a warm clone is already serving — see the in-guest deploy below). The guest then mints a one-click `login_url` (`bench browse --user Administrator --session-end`, a real 24h session) → stamped with `login_url_expires_at` on the Site. `status → Deploying`. | deploy seam |
    | 4 | `wait_for_http` — block on the guest's HTTP 200 (Contract B). | deploy seam |
    | 5 | Create the `Subdomain` row (this is what makes the proxy route it — its own `after_insert` reconciles the regional fleet). | this layer |
+   | 5b | Stand up the **attached Pilot** admin console on the SAME VM (`_attach_pilot_console` → `_provision_pilot`): create a `Pilot` at `<subdomain>-pilot.<region>` bound to this VM, run its admin-mode deploy, create its Subdomain, mark it Running, link it on `Site.pilot`. This is the front door Central's Asset "Open" resolves. **The one non-fatal step** — see § The attached Pilot admin console. | this layer |
    | 6 | `status → Running`. | this layer |
 
    Any failure flips `status = Failed` and re-raises (fail loud, the job log
-   carries the traceback). No-op if the Site has moved past `Pending`.
+   carries the traceback) — **except step 5b**, the companion admin console, whose
+   failure is logged and leaves the Site `Running`. No-op if the Site has moved past
+   `Pending`.
 
-5. **`terminate()`** deletes the `Subdomain` (proxy stops routing on the next
-   reconcile), terminates the backing VM, sets `Terminated`. Clears
+5. **`terminate()`** deletes the site's `Subdomain` (proxy stops routing on the next
+   reconcile), terminates the **attached Pilot** (which drops only its own Subdomain +
+   row — the VM is the Site's), terminates the backing VM, sets `Terminated`. Clears
    `subdomain_doc` before deleting the linked Subdomain (the link-integrity guard
    queries the DB, so the null is persisted first).
 
@@ -262,10 +274,31 @@ with the fleet key), recording the op as a `deploy-site` Task row.
      workers serve it with **no restart**. Fails loud if neither the baked dir nor an
      already-renamed `<fqdn>` dir exists (a site-less snapshot). The setup-wizard gate
      is cleared at bake time; the db root password is baked + shared (08-images.md).
-  - **No `set-admin-password`.** The tenant is handed the shared baked Administrator
-    password (rotated after first login); resetting it per VM cost a full
-    CPU-throttled `bench frappe` boot (~28s under the 0.25-core cap) that dominated
-    the deploy. Dropping it is the main latency win.
+  4. **Mints the one-click `login_url`** — in **site** mode
+     `bench browse --user Administrator --session-end <24h>` opens a real 24h
+     Administrator session and builds `https://<fqdn>/app?sid=<sid>`; in **admin**
+     mode the in-guest admin session verb `--full-path` (a 5-minute single-use JWT),
+     on a golden that carries one. The script emits it on its one `ATLAS_RESULT` line;
+     the controller stamps it (+ `login_url_expires_at` = mint + the mode's TTL) on the
+     doc. The `--regenerate-login` flag re-runs only this step (skips the
+     rename/bring-up) so an expired URL can be re-signed on demand. The admin mint
+     **degrades**, and on a current golden that is the *normal* path, not a pin
+     accident: upstream pilot ships no session-minting verb at any spelling (its `bench
+     admin` group is build, enroll, issue-site-token, revoke-totp, run-patches,
+     set-central-config, upgrade) and needs none — an enrolled bench trusts **Central's**
+     JWKS (written by `bench admin enroll` during the deploy), so Central mints the
+     console's one-click `?sid=` link itself. `deploy-site.py` tries the grouped
+     spelling, then the legacy top-level `generate-admin-session` (both reachable only on
+     an older or forked golden), and when neither exists logs a warning and emits **no**
+     `login_url` rather than failing — the console is still reachable at its FQDN (with
+     the baked `[admin].password`), and one-click openable through Central for any bench
+     that enrolled. Only a missing verb degrades; a mint that actually broke still fails
+     loud.
+  - **No `set-admin-password`.** The tenant signs in via the minted `login_url`, not
+    a password; the baked Administrator password is never surfaced (the tenant may
+    rotate it later themselves). Resetting it per VM cost a full CPU-throttled
+    `bench frappe` boot (~28s under the 0.25-core cap) that dominated the deploy;
+    dropping it is the main latency win.
   - Idempotent (spec taste #14: retry = re-run): a re-run finds `sites/<fqdn>`
     already in place (the baked dir gone) and just re-asserts the vhost + serving.
 - `wait_for_http` runs **on the controller** — see Contract B above. It runs
@@ -284,16 +317,84 @@ plaintext `:80` over public v6 (the accepted limitation under
 wizard and `setup production` *remove* the manual TLS/certbot steps a stand-alone
 bench would need.
 
-**Admin-password handoff.** The tenant is handed the **shared baked** Administrator
-password (`Site.BAKED_ADMIN_PASSWORD`, in lockstep with build.sh's
-`BAKED_ADMIN_PASSWORD`) — the deploy no longer resets it per VM. It is stored
-encrypted in `Site.admin_password` (`Password` field) by the orchestration *before*
-the readiness wait so it survives a later http-gate timeout, and surfaced to Central
-(the `site.status_changed` Running event + `get_site` poll) so the tenant can sign in
-(and rotate it). The db root password is never surfaced (single-tenant,
-localhost-only). Rotating the per-site password lazily (first login / a background
-job) is deferred — the create_site path does zero password work, which is what
-removed the ~28s `bench frappe` boot.
+**Login-URL handoff.** The tenant is handed a one-click `login_url` — a real 24h
+Administrator session minted in the guest by `deploy-site.py`
+(`bench browse --user Administrator --session-end <24h>`, building
+`https://<fqdn>/app?sid=<sid>`). It is stamped on the Site (plain `Small Text`,
+read-only, `no_copy`) together with `login_url_expires_at` (mint + 1440 min) by the
+orchestration *before* the readiness wait so it survives a later http-gate timeout,
+and surfaced to Central (the `site.status_changed` Running event + `get_site` poll)
+so the tenant clicks straight in. The baked Administrator password
+(`Site.BAKED_ADMIN_PASSWORD`, in lockstep with build.sh's `BAKED_ADMIN_PASSWORD`) is
+a randomized bake-time throwaway that still exists but is never surfaced — the tenant
+rotates it later themselves; the db root password is never surfaced either
+(single-tenant, localhost-only). When a stored URL lapses, Central re-mints it via
+`regenerate_login_url()` (a whitelisted doc method that runs `deploy-site.py
+--regenerate-login`, which skips the rename/setup and only re-signs). The
+create_site path does no password work, which is what removed the ~28s `bench frappe`
+boot.
+
+## The attached Pilot admin console *(built — this phase)*
+
+A `create_site` stands up **two** front doors on the **one** backing VM:
+
+```
+acme.blr1.frappe.dev         → the customer's Frappe site   (Site, `bench browse` 24h session)
+acme-pilot.blr1.frappe.dev   → the bench admin console      (Pilot, admin-session 5-min JWT)
+```
+
+The `Site` is the tenant's Frappe site (surfaced to Central via `get_site`). The
+**`Pilot`** is the bench admin console on the **same bench**, and it is the front door
+**Central's Asset "Open" resolves** — `front_door_for_vm` prefers a Pilot over a Site
+(`_FRONT_DOOR_DOCTYPES = ("Pilot", "Site")`), so once both back the VM the Asset's
+`gateway_url` / `login_url` point at the console, not the customer site. Before this,
+`create_site` created no Pilot and the Asset resolved the Site, so "Open" landed on the
+customer site with a 24h `bench browse` URL — the modeling gap this closes.
+
+**One VM, one owner.** The `Site` owns the backing VM (it clones the golden and
+terminates it). The Pilot is created in **attached mode** (`Pilot.attached = 1`, set from
+`Site.auto_provision` via `pilot.flags.attach_vm = <vm>`): it **binds** the Site's VM
+instead of creating one, and its `terminate()` **skips** VM teardown (the Site owns the
+VM's lifecycle). So there is no double-provision and no double-terminate. A stand-alone
+Pilot (the `create_vm` bench product) is unchanged — it still owns its own VM.
+
+**The console label.** `subdomain_label.pilot_subdomain_for(<label>)` derives the pilot
+subdomain: `acme` → `acme-pilot`, or `acme-pilot-<rand>` if `acme-pilot` already backs a
+Pilot. It stays a valid Contract-A label (≤ 63 chars, `[a-z0-9-]`).
+
+**Two vhosts, one bench.** The admin app + its deps are baked into **every** golden
+(site and admin — see [08-images.md](./08-images.md), `build.sh`); a site-mode golden
+simply doesn't wire the admin vhost. So on the same booted VM the Pilot runs the
+**admin-mode** deploy (`deploy-site.py --mode admin` against the pilot FQDN:
+`[admin].domain = <pilot-fqdn>` + `bench setup production`), producing a second nginx
+vhost alongside the renamed site vhost. `deploy_site(...)` / `regenerate_login(...)` take
+an explicit `mode` that overrides the VM's `build_mode` (which stays `site`) so the same
+VM serves the site at one FQDN and the console at another. Two `Subdomain` rows (one per
+FQDN) both target the VM's public `/128`.
+
+> **Host fact to prove (e2e follow-up).** That the admin `bench setup production` on a
+> site-mode golden yields a working admin vhost **without disturbing** the renamed site
+> vhost — both served on `:80` over the VM's `/128` — is a host fact. The
+> `self_serve_site` e2e should add an assertion that `acme-pilot.<region>` answers the
+> admin health path (`/api/status`) while `acme.<region>` still answers the site path.
+
+**`auto_provision` gains a stage.** After the site reaches serving (its Subdomain is
+created) and **before** the Site is marked `Running`, `_provision_pilot(site, vm)` creates
+the attached Pilot, runs its admin deploy, creates the pilot's Subdomain, marks the Pilot
+`Running`, and links it on `Site.pilot`. `Site.terminate()` cascades to the Pilot
+(attached → drops only its Subdomain + row) before terminating the VM.
+
+**A console failure does NOT fail the site.** The console is a *second*, additive front
+door on a VM whose site has already deployed and cleared the readiness gate, so
+`_attach_pilot_console` wraps the stage: the traceback goes to the Error Log, the Pilot
+row itself is marked `Failed` (its own fail-loud), and the Site still reaches `Running`
+with its own `login_url` intact. This is the one deliberate exception to
+`auto_provision`'s fail-loud rule — a tenant whose site serves HTTP 200 must never be
+told their site failed because its admin console could not be wired (e.g. the admin
+`bench setup production` fails on a site-mode golden, or the console's `/api/status`
+never answers). Every earlier step is the tenant site itself and stays fail-loud. A
+golden with **no in-guest admin session verb** is not such a failure — that degrades to
+an empty `login_url` and the console still comes up (step 4 above).
 
 ## The Subdomain it creates
 
@@ -309,17 +410,17 @@ the tenant-owned aggregate. The Site stores the created Subdomain's name in
 - **Unit (milliseconds):**
   - *Site layer* — the routing-string validation (label/reserved/unique),
     immutability, the `auto_provision` state machine and its fail-loud path (host
-    steps mocked at the module seams, incl. storing the baked admin password), the
+    steps mocked at the module seams, incl. stamping the minted `login_url`), the
     `_create_subdomain` identity carry-through, and `terminate`. See
     `atlas/atlas/doctype/site/test_site.py`.
   - *Central API* — `create_site` get-or-creates the Tenant, stamps it on the
     Site, returns the mirror row, and gates the label;
-    `get_site` hides the admin handoff until Running. See
+    `get_site` hides the login handoff until Running. See
     `atlas/tests/test_api_site.py`. The `site.*` event reporting (created /
     status_changed, the Running handoff payload) is in `atlas/tests/test_central.py`.
   - *Deploy layer* — `wait_for_http`'s poll/timeout loop and 200-only
     predicate (the single probe mocked); the `deploy_site` upload + run +
-    Task-record + fail-loud path (SSH transport mocked, no admin password); and the
+    Task-record + fail-loud path (SSH transport mocked, no login_url minting); and the
     in-guest script's typed I/O (kebab-flag parsing, the one `ATLAS_RESULT` line,
     the rename + its idempotency/fail-loud, the v6-listener edit, the warm/cold
     branch). See `atlas/atlas/test_deploy_site.py`.

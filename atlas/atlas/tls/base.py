@@ -43,6 +43,13 @@ class AuthResult:
 class TlsProvider(ABC):
 	provider_type: ClassVar[str]
 
+	# The CAA `issue` domain authorizing this issuer to mint certs — the value a
+	# customer puts in a `CAA 0 issue "<domain>"` record so their DNS authorizes
+	# *us* to issue for their custom domain (the record `generate-dns-records`
+	# advises). `None` means "no public CA to authorize" (Self-Managed): omit the
+	# CAA record entirely rather than emit a meaningless one.
+	caa_issuer: ClassVar[str | None] = None
+
 	@abstractmethod
 	def authenticate(self) -> AuthResult:
 		"""Verify the issuer account is usable (ACME directory reachable / ToS

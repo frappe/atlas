@@ -1,0 +1,48 @@
+# Packaging manifest for the Atlas host-side scripts (the `atlas` package +
+# the typed CLI entry points under scripts/). This makes the host code an
+# installable, independently testable package — `uv run pytest` with no
+# bench/site/host — and declares the `atlas` console command.
+#
+# On a host, bootstrap-server.py creates a uv-managed venv on CPython 3.14 and
+# `uv pip install`s this package into it (see spec/03-bootstrapping.md); the dev
+# layout here (package root scripts/lib/atlas) mirrors the durable host layout
+# (/var/lib/atlas/bin/atlas).
+#
+# `requires-python` is the floor the code runs on: 3.14, the version of the
+# uv-managed Atlas venv every host Python verb runs under (`atlas <verb>`).
+# Nothing host-side runs on stock Ubuntu python anymore, so the old 3.12
+# except-tuple floor is gone; CI runs `compileall` on 3.14. `dependencies` is
+# empty today — the code happens to be stdlib-only — but that is no longer a
+# guarded invariant: a real dependency is fine, uv resolves it at install.
+[project]
+name = "atlas-scripts"
+version = "0.0.0"
+description = "Atlas host-side provisioning scripts and the `atlas` host CLI"
+requires-python = ">=3.14"
+# Lockstep with scripts/host-pyproject.toml. `cryptography` is the host daemon's
+# only third-party runtime dep (atlas-networkd signs records with ed25519; see
+# scripts/lib/atlas/networkd/signing.py + spec/31 §19.3). The dev manifest also
+# needs it so `python3 -m unittest` against `scripts/lib/atlas/test_networkd_*`
+# resolves `cryptography` without the bench's site-packages; it's already a
+# Frappe dep so the bench venv carries it for controller-side use too.
+dependencies = ["cryptography>=42"]
+
+[project.scripts]
+atlas = "atlas._cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["lib/atlas"]
+exclude = ["lib/atlas/test_*.py"]
+
+[tool.uv]
+# Dev-only — NEVER shipped to hosts (hosts run the stdlib code, no pip install).
+dev-dependencies = ["pytest>=8"]
+
+[tool.pytest.ini_options]
+# The tests live next to the package modules as test_*.py (unittest-style).
+testpaths = ["lib/atlas"]
+python_files = ["test_*.py"]

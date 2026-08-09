@@ -3,8 +3,31 @@ from unittest.mock import patch
 import frappe
 from frappe.tests import IntegrationTestCase
 
+from atlas.atlas.placement import NoResizeCapacityError
 from atlas.tests._mocks import fake_task
 from atlas.tests.fixtures import make_image, make_provider, make_server, make_virtual_machine
+
+
+def _resize_server(**totals) -> str:
+	"""A distinct Active server catalogued with the given capacity totals — the
+	resize-gate tests need a MEASURED host so the gate has an effective budget to
+	check against (the shared vm-test-server is memory/disk-uncatalogued on purpose).
+	Also clears the memory floor so `effective` equals the stamped total exactly."""
+	frappe.db.set_single_value("Atlas Settings", "host_memory_reserve_megabytes", 0)
+	provider = make_provider("vm-resize-provider")
+	server = make_server(
+		provider,
+		"vm-resize-server",
+		ipv4_address="10.0.0.77",
+		ipv6_address="2001:db8:5::1",
+		ipv6_prefix="2001:db8:5::/64",
+		ipv6_virtual_machine_range="2001:db8:5::/120",
+		status="Active",
+	)
+	stamped = {"vcpus_total": 0, "memory_megabytes_total": 0, "pool_disk_gigabytes_total": 0, **totals}
+	for field, value in stamped.items():
+		server.db_set(field, value)
+	return server.name
 
 
 def _ensure_test_server() -> str:
@@ -29,8 +52,36 @@ def _new_vm(**overrides) -> "frappe.model.document.Document":
 	return make_virtual_machine(_ensure_test_server(), _ensure_test_image(), **overrides)
 
 
+def _ensure_active_root_domain(domain: str = "blr1.frappe.dev") -> str:
+	"""A single active Root Domain so `active_root_domain()` resolves. Provider types
+	and region are set explicitly so the row inserts without depending on Settings."""
+	if frappe.db.exists("Root Domain", domain):
+		return domain
+	frappe.get_doc(
+		{
+			"doctype": "Root Domain",
+			"domain": domain,
+			"region": "blr1",
+			"is_active": 1,
+			"dns_provider_type": "Route53",
+			"tls_provider_type": "Let's Encrypt",
+		}
+	).insert(ignore_permissions=True)
+	return domain
+
+
 class TestVirtualMachine(IntegrationTestCase):
 	def setUp(self) -> None:
+		from atlas.atlas.doctype.virtual_machine import virtual_machine as module
+
+		# Every lifecycle verb states its intent on the host's Boat before it acts
+		# (spec/33 §11.1). No daemon answers in a unit test and these fixtures are
+		# real-provider hosts, so the PUT is stubbed for the whole class — without
+		# it each verb fails on the missing Boat token rather than on its own
+		# behaviour, which is what the test is here to check.
+		desired_state = patch.object(module, "put_desired_state", return_value={})
+		desired_state.start()
+		self.addCleanup(desired_state.stop)
 		_ensure_test_server()
 		_ensure_test_image()
 		# Clear VMs from prior tests so the /124 IPv6 range has capacity.
@@ -67,7 +118,7 @@ class TestVirtualMachine(IntegrationTestCase):
 		self.assertIsNotNone(vm.last_started)
 		# One Task per VM creation: provision-vm.py's step 0 is the image probe.
 		mocked.assert_called_once()
-		self.assertEqual(mocked.call_args.kwargs["script"], "provision-vm.py")
+		self.assertEqual(mocked.call_args.kwargs["script"], "provision-vm")
 
 	def test_provision_variables_carry_jail_parameters(self) -> None:
 		from atlas.atlas.networking import (
@@ -301,12 +352,14 @@ class TestVirtualMachine(IntegrationTestCase):
 
 		with patch.object(module.frappe, "enqueue") as enqueue:
 			vm = _new_vm()
-		enqueue.assert_called_once()
-		_, kwargs = enqueue.call_args
-		self.assertEqual(
-			kwargs["virtual_machine_name"],
-			vm.name,
-		)
+		# The insert also enqueues central_report.deliver events (vm.created,
+		# vm.status_changed); single out the auto_provision enqueue and assert it
+		# targets this VM, rather than assuming it is the only enqueue.
+		auto_provision_calls = [
+			call for call in enqueue.call_args_list if call.args and call.args[0].endswith(".auto_provision")
+		]
+		self.assertEqual(len(auto_provision_calls), 1)
+		self.assertEqual(auto_provision_calls[0].kwargs["virtual_machine_name"], vm.name)
 
 	def test_auto_provision_is_noop_when_not_pending(self) -> None:
 		from atlas.atlas.doctype.virtual_machine import virtual_machine as module
@@ -340,7 +393,7 @@ class TestVirtualMachine(IntegrationTestCase):
 		with patch.object(module, "run_task", return_value=task) as mocked:
 			snapshot_name = vm.snapshot("nightly")
 
-		self.assertEqual(mocked.call_args.kwargs["script"], "snapshot-vm.py")
+		self.assertEqual(mocked.call_args.kwargs["script"], "snapshot-vm")
 		snapshot = frappe.get_doc("Virtual Machine Snapshot", snapshot_name)
 		self.assertEqual(snapshot.status, "Available")
 		self.assertEqual(snapshot.virtual_machine, vm.name)
@@ -376,7 +429,7 @@ class TestVirtualMachine(IntegrationTestCase):
 		task = fake_task(name="task-live-snap", stdout='ATLAS_RESULT={"size_bytes": 4294967296}')
 		with patch.object(module, "run_task", return_value=task) as mocked:
 			snapshot_name = vm.snapshot("live one", live=True)
-		self.assertEqual(mocked.call_args.kwargs["script"], "snapshot-vm.py")
+		self.assertEqual(mocked.call_args.kwargs["script"], "snapshot-vm")
 		snapshot = frappe.get_doc("Virtual Machine Snapshot", snapshot_name)
 		self.assertEqual(snapshot.status, "Available")
 
@@ -402,7 +455,7 @@ class TestVirtualMachine(IntegrationTestCase):
 		vm.reload()
 		with patch.object(module, "run_task", return_value=fake_task(name="task-regen")) as mocked:
 			vm.regenerate_host_keys()
-		self.assertEqual(mocked.call_args.kwargs["script"], "regenerate-host-keys-vm.py")
+		self.assertEqual(mocked.call_args.kwargs["script"], "regenerate-host-keys-vm")
 		self.assertEqual(mocked.call_args.kwargs["variables"]["VIRTUAL_MACHINE_NAME"], vm.name)
 
 	def test_regenerate_host_keys_rejects_when_not_stopped(self) -> None:
@@ -450,7 +503,7 @@ class TestVirtualMachine(IntegrationTestCase):
 		from atlas.atlas.doctype.virtual_machine_snapshot import virtual_machine_snapshot as snapshot_module
 
 		with (
-			patch.object(module, "run_task", return_value=fake_task(name="task-term")),
+			patch.object(module, "run_boat_task", return_value=fake_task(name="task-term")),
 			patch.object(
 				snapshot_module, "run_task", return_value=fake_task(name="task-snap-del")
 			) as mocked_snapshot,
@@ -458,7 +511,7 @@ class TestVirtualMachine(IntegrationTestCase):
 			vm.terminate()
 		self.assertFalse(frappe.db.exists("Virtual Machine Snapshot", snapshot_name))
 		# The snapshot LV was removed via the per-snapshot delete script.
-		self.assertEqual(mocked_snapshot.call_args.kwargs["script"], "delete-snapshot-vm.py")
+		self.assertEqual(mocked_snapshot.call_args.kwargs["script"], "delete-snapshot-vm")
 
 	def test_terminate_preserves_the_golden_bench_snapshot(self) -> None:
 		# The golden snapshot is the durable artifact self-serve sites clone from;
@@ -476,10 +529,143 @@ class TestVirtualMachine(IntegrationTestCase):
 			snapshot_name = vm.snapshot("golden")
 		frappe.db.set_single_value("Atlas Settings", "default_bench_snapshot", snapshot_name)
 
-		with patch.object(module, "run_task", return_value=fake_task(name="task-term")):
+		with patch.object(module, "run_boat_task", return_value=fake_task(name="task-term")):
 			vm.terminate()
 		# The referenced golden survives the build VM's termination.
 		self.assertTrue(frappe.db.exists("Virtual Machine Snapshot", snapshot_name))
+
+	def test_terminate_deprovisions_a_proxy(self) -> None:
+		# A terminated proxy must drop out of the fleet: `is_proxy` clears and the
+		# wildcard is re-published so the dead /128 stops answering in the round-robin.
+		from atlas.atlas.doctype.tls_certificate import tls_certificate as cert_module
+		from atlas.atlas.doctype.virtual_machine import virtual_machine as module
+
+		domain = _ensure_active_root_domain()
+		cert = frappe.get_doc(
+			{"doctype": "TLS Certificate", "root_domain": domain, "status": "Active"}
+		).insert(ignore_permissions=True)
+
+		vm = _new_vm(is_proxy=1)
+		vm.db_set("status", "Stopped")
+		vm.reload()
+
+		with (
+			patch.object(module, "run_boat_task", return_value=fake_task(name="task-term")),
+			# Spy the re-publish so no real Route53 call fires; assert it targets the
+			# region's Active cert.
+			patch.object(cert_module.TLSCertificate, "_publish_wildcard") as publish,
+		):
+			vm.terminate()
+
+		self.assertFalse(frappe.db.get_value("Virtual Machine", vm.name, "is_proxy"))
+		publish.assert_called_once()
+		self.assertTrue(frappe.db.exists("TLS Certificate", cert.name))
+
+	def test_terminate_deletes_a_subdomain_a_pilot_still_links(self) -> None:
+		# A bench VM's Subdomain is linked-TO by the Pilot that fronts it
+		# (`subdomain_doc`), so deleting it out from under the Pilot would trip Frappe's
+		# link-integrity guard (LinkExistsError). This is the exact state Central's
+		# terminate_server drives (run_doc_method → the VM's own terminate). Terminate
+		# must clear the Pilot's link first, then delete the Subdomain — not 500.
+		from atlas.atlas.doctype.virtual_machine import virtual_machine as module
+
+		_ensure_active_root_domain()
+		vm = _new_vm()
+		subdomain = frappe.get_doc(
+			{
+				"doctype": "Subdomain",
+				"subdomain": "linked-sub",
+				"virtual_machine": vm.name,
+				"address": "2001:db8:1::5",
+			}
+		).insert(ignore_permissions=True)
+		# The attach path binds an existing VM without provisioning a new one, so the
+		# Pilot lands with a subdomain_doc link but no heavy after_insert side effects.
+		pilot = frappe.get_doc({"doctype": "Pilot", "subdomain": "linked-sub"})
+		pilot.flags.attach_vm = vm.name
+		pilot.insert(ignore_permissions=True)
+		pilot.db_set("subdomain_doc", subdomain.name)
+
+		vm.db_set("status", "Stopped")
+		vm.reload()
+		with patch.object(module, "run_boat_task", return_value=fake_task(name="task-term")):
+			vm.terminate()  # must not raise LinkExistsError
+
+		self.assertFalse(frappe.db.exists("Subdomain", subdomain.name))
+		self.assertIsNone(frappe.db.get_value("Pilot", pilot.name, "subdomain_doc"))
+
+	def test_terminate_marks_the_owning_pilot_terminated(self) -> None:
+		"""Terminating the VM directly — what Central's terminate_server and the desk's
+		Terminate button both do — must not leave the Pilot claiming Running. Central
+		mirrors the AGGREGATE's status, so a stale Running there is a dead server shown
+		as live, with Open minting a session for a gateway that answers nothing."""
+		from atlas.atlas.doctype.virtual_machine import virtual_machine as module
+
+		_ensure_active_root_domain()
+		vm = _new_vm()
+		pilot = frappe.get_doc({"doctype": "Pilot", "subdomain": "orphan-check"})
+		pilot.flags.attach_vm = vm.name
+		pilot.insert(ignore_permissions=True)
+		pilot.db_set("status", "Running")
+
+		vm.db_set("status", "Stopped")
+		vm.reload()
+		with patch.object(module, "run_boat_task", return_value=fake_task(name="task-term")):
+			vm.terminate()
+
+		self.assertEqual(frappe.db.get_value("Pilot", pilot.name, "status"), "Terminated")
+
+	def test_terminate_marks_both_aggregates_of_a_self_serve_vm(self) -> None:
+		"""A self-serve VM is backed by a Site AND its attached Pilot on the one microVM.
+		Reaching only the first (front_door_for_vm stops at the Pilot) would leave the
+		Site — the tenant's actual site — reported Running over a VM that is gone."""
+		from atlas.atlas.doctype.virtual_machine import virtual_machine as module
+
+		_ensure_active_root_domain()
+		vm = _new_vm()
+		site = frappe.get_doc({"doctype": "Site", "subdomain": "bothends"})
+		site.flags.attach_vm = vm.name
+		site.insert(ignore_permissions=True)
+		site.db_set("virtual_machine", vm.name)
+		site.db_set("status", "Running")
+		pilot = frappe.get_doc({"doctype": "Pilot", "subdomain": "bothends-pilot"})
+		pilot.flags.attach_vm = vm.name
+		pilot.insert(ignore_permissions=True)
+		pilot.db_set("status", "Running")
+
+		vm.db_set("status", "Stopped")
+		vm.reload()
+		with patch.object(module, "run_boat_task", return_value=fake_task(name="task-term")):
+			vm.terminate()
+
+		self.assertEqual(frappe.db.get_value("Pilot", pilot.name, "status"), "Terminated")
+		self.assertEqual(frappe.db.get_value("Site", site.name, "status"), "Terminated")
+
+	def test_pilot_terminate_does_not_double_report(self) -> None:
+		"""When the PILOT initiates, it marks and saves itself — the VM must not re-mark
+		it, or the same status event is emitted twice to Central."""
+		from atlas.atlas.doctype.virtual_machine import virtual_machine as module
+
+		_ensure_active_root_domain()
+		vm = _new_vm()
+		pilot = frappe.get_doc({"doctype": "Pilot", "subdomain": "selfterm"})
+		pilot.flags.attach_vm = vm.name
+		pilot.insert(ignore_permissions=True)
+		pilot.db_set("status", "Running")
+		pilot.db_set("attached", 0)
+		pilot.reload()
+
+		vm.db_set("status", "Stopped")
+		with (
+			patch.object(module, "run_boat_task", return_value=fake_task(name="task-term")),
+			patch("atlas.atlas.central_report.report_pilot_status") as reported,
+		):
+			pilot.terminate()
+
+		self.assertEqual(frappe.db.get_value("Pilot", pilot.name, "status"), "Terminated")
+		# The VM's propagation is skipped (flags.front_door_terminating), so the only
+		# report is the Pilot's own save → on_pilot_update. Never two.
+		self.assertLessEqual(reported.call_count, 1)
 
 	def test_parse_size_bytes(self) -> None:
 		from atlas.atlas.task_results import parse_result
@@ -509,12 +695,42 @@ class TestVirtualMachine(IntegrationTestCase):
 		vm = _new_vm()  # memory_snapshot_on_stop defaults OFF
 		vm.db_set("status", "Running")
 		vm.reload()
-		with patch.object(module, "run_task", return_value=fake_task(name="task-stop")) as mocked:
+		with patch.object(module, "run_boat_task", return_value=fake_task(name="task-stop")) as mocked:
 			vm.stop()
 		vm.reload()
 		self.assertEqual(vm.status, "Stopped")
-		self.assertEqual(mocked.call_args.kwargs["script"], "stop-vm.py")
+		self.assertEqual(mocked.call_args.kwargs["script"], "stop-vm")
 		self.assertFalse(vm.has_memory_snapshot)
+		# Cooperative shutdown by default: the guest gets a ctrl+alt+del (GRACEFUL=1)
+		# so it syncs + unmounts before the unit is killed.
+		self.assertEqual(mocked.call_args.kwargs["variables"]["GRACEFUL"], "1")
+
+	def test_stop_forced_skips_graceful_shutdown(self) -> None:
+		# graceful=False is the forced kill — no ctrl+alt+del, guest RAM discarded.
+		# The migration cold-stop and any caller that throws the RAM away use this.
+		from atlas.atlas.doctype.virtual_machine import virtual_machine as module
+
+		vm = _new_vm()
+		vm.db_set("status", "Running")
+		vm.reload()
+		with patch.object(module, "run_boat_task", return_value=fake_task(name="task-stop")) as mocked:
+			vm.stop(graceful=False)
+		vm.reload()
+		self.assertEqual(vm.status, "Stopped")
+		self.assertEqual(mocked.call_args.kwargs["variables"]["GRACEFUL"], "0")
+
+	def test_stop_forced_normalizes_stringy_flag(self) -> None:
+		# REST/frm.call send a stringy value; "0"/"false" must read as forced, not
+		# truthy-string. (Python bool("0") is True — the normalize guards that.)
+		from atlas.atlas.doctype.virtual_machine import virtual_machine as module
+
+		for value in ("0", "false", "False"):
+			vm = _new_vm()
+			vm.db_set("status", "Running")
+			vm.reload()
+			with patch.object(module, "run_boat_task", return_value=fake_task(name="task-stop")) as mocked:
+				vm.stop(graceful=value)
+			self.assertEqual(mocked.call_args.kwargs["variables"]["GRACEFUL"], "0", value)
 
 	def test_stop_captures_memory_snapshot_when_opted_in(self) -> None:
 		from atlas.atlas.doctype.virtual_machine import virtual_machine as module
@@ -532,7 +748,7 @@ class TestVirtualMachine(IntegrationTestCase):
 		vm.reload()
 		self.assertEqual(vm.status, "Stopped")
 		self.assertTrue(vm.has_memory_snapshot)
-		self.assertEqual(mocked.call_args.kwargs["script"], "snapshot-stop-vm.py")
+		self.assertEqual(mocked.call_args.kwargs["script"], "snapshot-stop-vm")
 		# The jailed Firecracker writes the snapshot, so the script needs the
 		# per-VM uid to hand it the directory.
 		self.assertEqual(mocked.call_args.kwargs["variables"]["ATLAS_FC_UID"], str(derive_uid(vm.name)))
@@ -569,7 +785,7 @@ class TestVirtualMachine(IntegrationTestCase):
 		with patch.object(module, "run_task", return_value=task) as mocked:
 			vm.stop(memory_snapshot=True)
 		vm.reload()
-		self.assertEqual(mocked.call_args.kwargs["script"], "snapshot-stop-vm.py")
+		self.assertEqual(mocked.call_args.kwargs["script"], "snapshot-stop-vm")
 		self.assertTrue(vm.has_memory_snapshot)
 
 	def test_start_consumes_the_memory_snapshot(self) -> None:
@@ -581,7 +797,7 @@ class TestVirtualMachine(IntegrationTestCase):
 		vm.db_set("status", "Stopped")
 		vm.db_set("has_memory_snapshot", 1)
 		vm.reload()
-		with patch.object(module, "run_task", return_value=fake_task(name="task-start")):
+		with patch.object(module, "run_boat_task", return_value=fake_task(name="task-start")):
 			vm.start()
 		vm.reload()
 		self.assertEqual(vm.status, "Running")
@@ -597,10 +813,10 @@ class TestVirtualMachine(IntegrationTestCase):
 		vm.reload()
 		stop_task = fake_task(name="task-stop")
 		start_task = fake_task(name="task-start")
-		with patch.object(module, "run_task", side_effect=[stop_task, start_task]) as mocked:
+		with patch.object(module, "run_boat_task", side_effect=[stop_task, start_task]) as mocked:
 			vm.restart(cold=True)
-		self.assertEqual(mocked.call_args_list[0].kwargs["script"], "stop-vm.py")
-		self.assertEqual(mocked.call_args_list[1].kwargs["script"], "start-vm.py")
+		self.assertEqual(mocked.call_args_list[0].kwargs["script"], "stop-vm")
+		self.assertEqual(mocked.call_args_list[1].kwargs["script"], "start-vm")
 
 	def test_restart_power_cycles_via_memory_snapshot(self) -> None:
 		# An opted-in VM's restart is a state-preserving power cycle.
@@ -614,10 +830,16 @@ class TestVirtualMachine(IntegrationTestCase):
 			stdout='ATLAS_RESULT={"memory_snapshot": true, "reason": "", "memory_snapshot_bytes": 1}',
 		)
 		start_task = fake_task(name="task-start")
-		with patch.object(module, "run_task", side_effect=[stop_task, start_task]) as mocked:
+		# Two transports, because a memory-snapshot stop is the one verb that is
+		# not a plain lifecycle call: `snapshot-stop-vm` is still an SSH Task while
+		# the start that follows goes to the daemon.
+		with (
+			patch.object(module, "run_task", return_value=stop_task) as snapshot_stop,
+			patch.object(module, "run_boat_task", return_value=start_task) as start,
+		):
 			vm.restart()
-		self.assertEqual(mocked.call_args_list[0].kwargs["script"], "snapshot-stop-vm.py")
-		self.assertEqual(mocked.call_args_list[1].kwargs["script"], "start-vm.py")
+		self.assertEqual(snapshot_stop.call_args.kwargs["script"], "snapshot-stop-vm")
+		self.assertEqual(start.call_args.kwargs["script"], "start-vm")
 
 	def test_resize_invalidates_the_memory_snapshot(self) -> None:
 		# resize-vm.py drops the on-host snapshot (vmstate no longer matches the
@@ -628,7 +850,7 @@ class TestVirtualMachine(IntegrationTestCase):
 		vm.db_set("status", "Stopped")
 		vm.db_set("has_memory_snapshot", 1)
 		vm.reload()
-		with patch.object(module, "run_task", return_value=fake_task(name="task-resize")):
+		with patch.object(module, "run_boat_task", return_value=fake_task(name="task-resize")):
 			vm.resize(memory_megabytes=1024)
 		vm.reload()
 		self.assertFalse(vm.has_memory_snapshot)
@@ -640,7 +862,7 @@ class TestVirtualMachine(IntegrationTestCase):
 		vm.db_set("status", "Stopped")
 		vm.db_set("has_memory_snapshot", 1)
 		vm.reload()
-		with patch.object(module, "run_task", return_value=fake_task(name="task-rebuild")):
+		with patch.object(module, "run_boat_task", return_value=fake_task(name="task-rebuild")):
 			vm.rebuild(source_type="image")
 		vm.reload()
 		self.assertFalse(vm.has_memory_snapshot)
@@ -676,7 +898,7 @@ class TestVirtualMachine(IntegrationTestCase):
 		vm = _new_vm(data_disk_gigabytes=2)
 		vm.db_set("status", "Stopped")
 		vm.reload()
-		with patch.object(module, "run_task", return_value=fake_task(name="task-resize")) as mocked:
+		with patch.object(module, "run_boat_task", return_value=fake_task(name="task-resize")) as mocked:
 			vm.resize(data_disk_gigabytes=5)
 		vm.reload()
 		self.assertEqual(vm.data_disk_gigabytes, 5)
@@ -707,6 +929,67 @@ class TestVirtualMachine(IntegrationTestCase):
 				vm.resize(data_disk_gigabytes=4)
 		self.assertIn("no data disk", str(raised.exception))
 		mocked.assert_not_called()
+
+	# --- resize capacity gate (spec/28) ------------------------------------
+
+	def test_resize_within_capacity_passes(self) -> None:
+		from atlas.atlas.doctype.virtual_machine import virtual_machine as module
+
+		server = _resize_server(memory_megabytes_total=4096)
+		vm = make_virtual_machine(server, _ensure_test_image(), memory_megabytes=512, disk_gigabytes=4)
+		vm.db_set("status", "Stopped")
+		vm.reload()
+		with patch.object(module, "run_boat_task", return_value=fake_task(name="task-resize")) as mocked:
+			vm.resize(memory_megabytes=1024)
+		vm.reload()
+		self.assertEqual(vm.memory_megabytes, 1024)
+		mocked.assert_called_once()
+
+	def test_resize_over_capacity_raises(self) -> None:
+		from atlas.atlas.doctype.virtual_machine import virtual_machine as module
+
+		# Host holds exactly 1024 MB and the VM already fills it; doubling the RAM
+		# doesn't fit → NoResizeCapacityError, and the on-host resize never runs.
+		server = _resize_server(memory_megabytes_total=1024)
+		vm = make_virtual_machine(server, _ensure_test_image(), memory_megabytes=1024, disk_gigabytes=4)
+		vm.db_set("status", "Stopped")
+		vm.reload()
+		with patch.object(module, "run_task") as mocked:
+			with self.assertRaises(NoResizeCapacityError):
+				vm.resize(memory_megabytes=2048)
+		mocked.assert_not_called()
+
+	def test_resize_charges_only_positive_deltas(self) -> None:
+		from atlas.atlas.doctype.virtual_machine import virtual_machine as module
+
+		# CPU is measured and already full (1 core on a 1-core host), but growing RAM
+		# only charges the RAM delta — the unchanged CPU axis must not block it.
+		server = _resize_server(vcpus_total=1, memory_megabytes_total=4096)
+		vm = make_virtual_machine(
+			server, _ensure_test_image(), vcpus=1, cpu_max_cores=1, memory_megabytes=512, disk_gigabytes=4
+		)
+		vm.db_set("status", "Stopped")
+		vm.reload()
+		with patch.object(module, "run_boat_task", return_value=fake_task(name="task-resize")):
+			vm.resize(memory_megabytes=1024)
+		vm.reload()
+		self.assertEqual(vm.memory_megabytes, 1024, "a full CPU axis doesn't block a RAM-only grow")
+
+	def test_resize_spends_the_placement_reserve(self) -> None:
+		from atlas.atlas.doctype.virtual_machine import virtual_machine as module
+
+		# A 50% arrival reserve would refuse PLACING a new VM past 512 MB, but resize
+		# checks the FULL effective budget (1024) — so it spends into the reserve.
+		server = _resize_server(memory_megabytes_total=1024)
+		frappe.db.set_single_value("Atlas Settings", "placement_headroom_percent", 50)
+		self.addCleanup(frappe.db.set_single_value, "Atlas Settings", "placement_headroom_percent", 0)
+		vm = make_virtual_machine(server, _ensure_test_image(), memory_megabytes=512, disk_gigabytes=4)
+		vm.db_set("status", "Stopped")
+		vm.reload()
+		with patch.object(module, "run_boat_task", return_value=fake_task(name="task-resize")):
+			vm.resize(memory_megabytes=1024)
+		vm.reload()
+		self.assertEqual(vm.memory_megabytes, 1024, "resize spends the headroom placement reserved")
 
 	def test_snapshot_persists_data_disk_fields(self) -> None:
 		from atlas.atlas.doctype.virtual_machine import virtual_machine as module

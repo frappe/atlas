@@ -5,52 +5,33 @@ end-users and talks to Atlas as the operator). The tenant's `name` **is** the
 Central `Team.name`: Central passes that id as `team`, and `ensure_tenant` names
 the row by it. There is no translation table — the primary key carries the
 mapping, so the `tenant` link stamped on a resource is already the Central team.
-Central also sets the immutable `email`
-once at creation, then stamps the set-only-once `tenant` link on the resources it
-provisions (Virtual Machine, Virtual Machine Image, Virtual Machine Snapshot).
+Central stamps the set-only-once `tenant` link on the resources it provisions
+(Virtual Machine, Virtual Machine Image, Virtual Machine Snapshot).
 
 This is operator/Central-facing only (System Manager permission). It is pure data
 plus list helpers — no Tasks, no lifecycle. Atlas no longer owns end-users or
-end-user row-level scoping; tenancy attribution (the `tenant` link on a Virtual
-Machine / Site) is how resources are tied back to a Central team.
+end-user row-level scoping; Central performs every permission check. The tenant is
+just the tag that groups a Central team's resources (its VPC) — tenancy attribution
+(the `tenant` link on a Virtual Machine / Site) is how resources tie back to a team.
 """
 
 import frappe
 from frappe.model.document import Document
 
-# Identity Central sets once at creation. `email` carries a unique index in the
-# JSON; this controller guard adds the same belt-and-suspenders immutability the
-# other resource DocTypes use (Virtual Machine, Virtual Machine Image). `name`
-# (the Central `Team.name`) is immutable by virtue of being the primary key.
-IMMUTABLE_AFTER_INSERT = ("email",)
 
-
-def ensure_tenant(team: str, email: str | None) -> str:
+def ensure_tenant(team: str) -> str:
 	"""Get-or-create the Tenant for a Central team and return its name.
 
 	The tenant is named by `team` (the Central `Team.name`) — its `name` *is* that
-	id — so the get-or-create is a primary-key lookup. `email` is immutable after
-	insert, so an existing tenant is reused as-is (the `email` is only consulted on
-	first creation). Shared by the Central-facing provisioning APIs (Virtual
-	Machine, Site) so there is one get-or-create path. Runs `ignore_permissions` —
-	this is operator orchestration authorized by the Central token, not desk RBAC."""
+	id — so the get-or-create is a primary-key lookup, and an existing tenant is
+	reused as-is. Shared by the Central-facing provisioning APIs (Virtual Machine,
+	Site) so there is one get-or-create path. Runs `ignore_permissions` — this is
+	operator orchestration authorized by the Central token, not desk RBAC."""
 	if not team:
 		frappe.throw("team is required.")
 	if frappe.db.exists("Tenant", team):
 		return team
-	if not email:
-		frappe.throw("email is required to create a tenant.")
-	return (
-		frappe.get_doc(
-			{
-				"doctype": "Tenant",
-				"team": team,
-				"email": email,
-			}
-		)
-		.insert(ignore_permissions=True)
-		.name
-	)
+	return frappe.get_doc({"doctype": "Tenant", "team": team}).insert(ignore_permissions=True).name
 
 
 class Tenant(Document):
@@ -62,7 +43,6 @@ class Tenant(Document):
 	if TYPE_CHECKING:
 		from frappe.types import DF
 
-		email: DF.Data
 		title: DF.Data | None
 	# end: auto-generated types
 
@@ -76,24 +56,10 @@ class Tenant(Document):
 		self.name = team
 
 	def before_insert(self) -> None:
-		# Central often omits `title`; default it so Desk lists read by a name, not the
-		# raw Central reference. Editable afterwards (unlike `email`).
+		# Central often omits `title`; default it to the team id so Desk lists read by
+		# a name. Editable afterwards.
 		if not self.title:
-			self.title = (self.email or "").strip().lower() or self.name
-
-	def validate(self) -> None:
-		self.email = (self.email or "").strip().lower()
-		self._validate_immutability()
-
-	def _validate_immutability(self) -> None:
-		if self.is_new():
-			return
-		original = self.get_doc_before_save()
-		if not original:
-			return
-		for field in IMMUTABLE_AFTER_INSERT:
-			if getattr(self, field) != getattr(original, field):
-				frappe.throw(f"{field} is immutable after insert")
+			self.title = self.name
 
 	@frappe.whitelist()
 	def virtual_machines(self) -> list[dict]:

@@ -71,7 +71,7 @@ def provision_tunnel(**payload) -> dict:
 		frappe.throw(f"provision_tunnel missing required fields: {', '.join(missing)}")
 
 	tunnel_task = run_local_task(
-		script="tunnel-up.py",
+		script="tunnel-up",
 		variables={
 			"PRIVATE_KEY_PATH": SPOKE_PRIVATE_KEY_PATH,
 			"TUNNEL_IP": payload["tunnel_ip"],
@@ -86,7 +86,7 @@ def provision_tunnel(**payload) -> dict:
 	# discovers the public interface from the default route and uses the default wg port
 	# (51820), revert window, and empty public_allow_ports — confirm_tunnel re-discovers
 	# the same way, so the persisted ruleset will match this live one.
-	run_local_task(script="mgmt-firewall-apply.py", variables={})
+	run_local_task(script="mgmt-firewall-apply", variables={})
 
 	_store_provisioning(payload, result)
 
@@ -138,7 +138,7 @@ def confirm_tunnel() -> dict:
 	flips `tunnel_status` Active.
 	"""
 	frappe.only_for("System Manager")
-	run_local_task(script="mgmt-firewall-confirm.py", variables={})
+	run_local_task(script="mgmt-firewall-confirm", variables={})
 	frappe.db.set_single_value("Central Settings", "tunnel_status", "Active")
 	return {"tunnel_status": "Active"}
 
@@ -157,8 +157,8 @@ def deprovision_tunnel() -> dict:
 	connection and re-verifies over the now-public base_url (see central remove_tunnel).
 	"""
 	frappe.only_for("System Manager")
-	run_local_task(script="mgmt-firewall-revert.py", variables={})
-	run_local_task(script="tunnel-down.py", variables={})
+	run_local_task(script="mgmt-firewall-revert", variables={})
+	run_local_task(script="tunnel-down", variables={})
 
 	settings = frappe.get_single("Central Settings")
 	settings.tunnel_status = "Inactive"

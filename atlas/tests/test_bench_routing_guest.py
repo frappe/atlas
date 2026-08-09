@@ -1,6 +1,6 @@
 """Guest-side tests for self-service subdomain routing (spec/18, the one-way push
 model): the identity injection that carries the routing config into the VM, and the
-in-guest `atlas-route` client that reads it.
+in-guest `bench-domain-provider` binary that reads it.
 
 All stdlib-only, no host:
 
@@ -8,16 +8,19 @@ All stdlib-only, no host:
   /etc/atlas-routing.env (no /etc/atlas-vm-uuid — caller resolution is by source
   address); `_mmds_metadata` (the warm path) puts `routing_base_url` in the payload.
 - `atlas-warm-freshen.py` writes /etc/atlas-routing.env from that payload.
-- `bench/atlas-route-client.py` (`atlas-route`): the TYPED surface the bench-cli wiring
-  imports — register → Registered|Declined, deregister → Deregistered, check_label →
-  Available|Declined, list_routes → Listing; NotConfigured (no config) / TransportError
-  (unreachable / no v6 / unknown wire status). The CLI wrapper's exit codes: register
-  non-zero on Declined (abort the create), deregister always 0, etc.
-- The IPv6-only transport: the client connects over AF_INET6 only and raises
+- `bench/bench-domain-provider.py` (`bench-domain-provider`): the process-I/O contract
+  pilot drives — `generate-dns-records <site> <domain>` (read-only `{}` for a wildcard
+  subdomain), `register <domain>` (peel the wildcard suffix → label, POST register;
+  exit 0 ok / 2 declined / 1 transport, **fail-closed**), `deregister <domain>` (always
+  exit 0), `wildcard-domains` / `proxy-servers` (JSON list, fail-soft). NotConfigured (no
+  config) no-ops; TransportError fails-closed on register, fail-soft elsewhere.
+- The IPv6-only transport: the binary connects over AF_INET6 only and raises
   TransportError (never a v4 fallback) when the host has no AAAA / no v6 route.
 
-The client is exercised against a real in-process HTTP stub bound to **::1** so the
-AF_INET6-only connector + the POST shape + the typed contract are proven, not mocked.
+The binary is exercised against a real in-process HTTP stub bound to **::1** so the
+AF_INET6-only connector + the POST shape + the exit-code contract are proven, not mocked.
+The stub always answers `wildcard_domains` with `["*.blr1.frappe.dev"]` so the binary's
+suffix-peel resolves; each test sets the per-verb responses it needs on top.
 """
 
 import importlib.util
@@ -31,7 +34,11 @@ from pathlib import Path
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _SCRIPTS_DIR = _REPO_ROOT / "scripts"
 _BENCH_DIR = _REPO_ROOT / "bench"
-_ROUTE_CLIENT = _BENCH_DIR / "atlas-route-client.py"
+_PROVIDER = _BENCH_DIR / "bench-domain-provider.py"
+
+# The region wildcard the stub advertises; the binary peels this suffix off a full FQDN.
+_REGION_DOMAIN = "blr1.frappe.dev"
+_WILDCARD = f"*.{_REGION_DOMAIN}"
 
 
 def _load_by_path(name: str, path: Path):
@@ -41,63 +48,16 @@ def _load_by_path(name: str, path: Path):
 	return module
 
 
-# A driver run in a clean interpreter (provision-vm.py's sys.path shim pulls in
-# scripts/lib): build a COLD and a WARM ProvisionInputs WITH a routing base URL and
-# emit the cold Identity's field + the warm MMDS payload, to prove both paths carry
-# the routing config.
-_ROUTING_DRIVER = """
-import importlib.util, json, sys
-spec = importlib.util.spec_from_file_location("provision_vm", sys.argv[1])
-module = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(module)
-from atlas.rootfs import Identity
-
-base = "https://atlas.blr1.frappe.dev"
-uuid = "12345678-1234-1234-1234-123456789abc"
-common = dict(
-    virtual_machine_name=uuid, image_name="img", kernel_filename="vmlinux",
-    rootfs_filename="rootfs.squashfs", vcpus=2, memory_mb=2048, disk_gb=12,
-    mac_address="06:00:01:02:03:04", tap_device="atlas-x", virtual_machine_ipv6="2001:db8::2",
-    ipv4_host_cidr="100.64.0.1/30", ipv4_guest_cidr="100.64.0.2/30", ipv4_gateway="100.64.0.1",
-    ssh_public_key="ssh-ed25519 AAAA", atlas_fc_uid=12345, atlas_netns="ns",
-    host_veth="h", namespace_veth="n", cgroup_arg=[], resource_arg=[],
-)
-warm = module.ProvisionInputs(**common, warm_snapshot_directory="/var/lib/atlas/snapshots/s", routing_base_url=base)
-identity = Identity(uuid=uuid, ipv6_address="2001:db8::2", ssh_public_key="k",
-                    ipv4_guest_cidr="100.64.0.2/30", ipv4_gateway="100.64.0.1", routing_base_url=base)
-print(json.dumps({
-    "base": base,
-    "identity_field": identity.routing_base_url,
-    "warm_metadata": json.loads(module._mmds_metadata(warm)),
-}))
-"""
+# The controller-side routing injection (the cold Identity's routing_base_url and
+# the warm MMDS payload) was rendered by provision-vm.py and proven here by loading
+# that module in a clean interpreter. The .py is deleted — boat renders both paths
+# — so that carries-on-both-paths check now lives in boat's internal/provision
+# tests. What stays is the durable guest package's writer, scripts/lib/atlas/
+# rootfs.py, which is still shipped and read directly (no provision-vm.py needed).
 
 
 class TestRoutingIdentityInjection(unittest.TestCase):
-	"""The controller-side injection carries routing_base_url on BOTH paths."""
-
-	@classmethod
-	def setUpClass(cls) -> None:
-		import subprocess
-		import sys
-
-		result = subprocess.run(
-			[sys.executable, "-c", _ROUTING_DRIVER, str(_SCRIPTS_DIR / "provision-vm.py")],
-			capture_output=True,
-			text=True,
-		)
-		assert result.returncode == 0, result.stderr
-		cls.data = json.loads(result.stdout)
-
-	def test_cold_identity_carries_routing_base_url(self) -> None:
-		self.assertEqual(self.data["identity_field"], self.data["base"])
-
-	def test_warm_mmds_payload_carries_routing_base_url(self) -> None:
-		identity = self.data["warm_metadata"]["identity"]
-		self.assertEqual(identity["routing_base_url"], self.data["base"])
-		# The uuid the freshen unit keys on (its adopted-identity marker) is still present
-		# beside it — unrelated to routing, untouched by the push-only model.
-		self.assertEqual(identity["uuid"], "12345678-1234-1234-1234-123456789abc")
+	"""The durable guest routing writer (rootfs.py) writes only /etc/atlas-routing.env."""
 
 	def test_cold_path_writes_only_routing_env_not_vm_uuid_for_routing(self) -> None:
 		# Caller resolution is by source address, so the cold routing writer injects
@@ -132,8 +92,8 @@ class TestFreshenWritesRoutingEnv(unittest.TestCase):
 
 
 class _IPv6HTTPServer(HTTPServer):
-	"""An HTTPServer bound to the IPv6 loopback, so the client's AF_INET6-only connector
-	can actually reach it (the client refuses IPv4)."""
+	"""An HTTPServer bound to the IPv6 loopback, so the binary's AF_INET6-only connector
+	can actually reach it (the binary refuses IPv4)."""
 
 	address_family = socket.AF_INET6
 
@@ -141,7 +101,9 @@ class _IPv6HTTPServer(HTTPServer):
 class _StubHandler(BaseHTTPRequestHandler):
 	"""A minimal Frappe-method stub: returns the configured JSON for the called method,
 	wrapped as {"message": …} like Frappe does. Reads config off the OWNING server
-	(server.responses / server.calls), so each test's server is isolated."""
+	(server.responses / server.calls), so each test's server is isolated. Defaults
+	`wildcard_domains` to the region wildcard so the binary's suffix-peel always resolves
+	unless a test overrides it."""
 
 	def log_message(self, *_args) -> None:  # silence the test output
 		pass
@@ -150,7 +112,7 @@ class _StubHandler(BaseHTTPRequestHandler):
 		length = int(self.headers.get("Content-Length", 0))
 		body = self.rfile.read(length).decode()
 		self.server.calls.append((self.path, body))
-		# /api/method/atlas.atlas.bench_routing.<method>; key on the last dot-segment.
+		# /api/method/satellite.routing.api.<method>; key on the last dot-segment.
 		method = self.path.rsplit(".", 1)[-1]
 		status, payload = self.server.responses.get(method, (404, {"message": {"status": "ok"}}))
 		data = json.dumps(payload).encode()
@@ -161,13 +123,14 @@ class _StubHandler(BaseHTTPRequestHandler):
 		self.wfile.write(data)
 
 
-class _ClientTestCase(unittest.TestCase):
-	"""Base: a real ::1-bound HTTP stub + a loaded client module pointed at a scratch
-	routing.env. The client connects over IPv6 only, so the stub MUST be on ::1."""
+class _ProviderTestCase(unittest.TestCase):
+	"""Base: a real ::1-bound HTTP stub + a loaded provider module pointed at a scratch
+	routing.env. The binary connects over IPv6 only, so the stub MUST be on ::1. The stub
+	answers `wildcard_domains` with the region wildcard by default."""
 
 	def setUp(self) -> None:
 		self.server = _IPv6HTTPServer(("::1", 0), _StubHandler)
-		self.server.responses = {}
+		self.server.responses = {"wildcard_domains": (200, {"message": {"domains": [_WILDCARD]}})}
 		self.server.calls = []
 		self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
 		self.thread.start()
@@ -176,7 +139,7 @@ class _ClientTestCase(unittest.TestCase):
 		self.addCleanup(self.thread.join)
 		self.addCleanup(self.server.server_close)
 		self.addCleanup(self.server.shutdown)
-		self.client = _load_by_path("route_client", _ROUTE_CLIENT)
+		self.provider = _load_by_path("domain_provider", _PROVIDER)
 
 	def _set_config(self, base_url: str | None) -> None:
 		import tempfile
@@ -185,246 +148,338 @@ class _ClientTestCase(unittest.TestCase):
 		self.addCleanup(lambda: __import__("shutil").rmtree(tmp, ignore_errors=True))
 		if base_url is not None:
 			(tmp / "routing.env").write_text(f"ATLAS_BASE_URL={base_url}\n")
-			self.client.ROUTING_ENV_PATH = str(tmp / "routing.env")
+			self.provider.ROUTING_ENV_PATH = str(tmp / "routing.env")
 		else:
-			self.client.ROUTING_ENV_PATH = str(tmp / "absent.env")
+			self.provider.ROUTING_ENV_PATH = str(tmp / "absent.env")
+
+	def _set_responses(self, **per_verb) -> None:
+		"""Layer per-verb responses on top of the default wildcard_domains answer."""
+		self.server.responses.update(per_verb)
+
+	def _register_calls(self) -> list:
+		return [c for c in self.server.calls if c[0].endswith("api.register")]
+
+	def _deregister_calls(self) -> list:
+		return [c for c in self.server.calls if c[0].endswith("api.deregister")]
 
 
-class TestTypedRegister(_ClientTestCase):
-	def test_register_ok_returns_registered_with_fqdn(self) -> None:
-		self.server.responses = {
-			"register": (200, {"message": {"status": "ok", "suffix": "blr1.frappe.dev"}})
-		}
+class TestRegister(_ProviderTestCase):
+	def test_register_ok_peels_label_and_exits_zero(self) -> None:
+		self._set_responses(register=(200, {"message": {"status": "ok", "suffix": _REGION_DOMAIN}}))
 		self._set_config(self.base)
-		outcome = self.client.register("acme")
-		self.assertIsInstance(outcome, self.client.Registered)
-		self.assertEqual(outcome.label, "acme")
-		self.assertEqual(outcome.fqdn, "acme.blr1.frappe.dev")
-		# The POST went to the register method with the label, over IPv6, no second call.
-		path, body = self.server.calls[-1]
-		self.assertTrue(path.endswith("/api/method/atlas.atlas.bench_routing.register"))
-		self.assertIn("label=acme", body)
-		self.assertEqual(len(self.server.calls), 1)
+		# pilot hands the FULL FQDN; the binary peels the wildcard suffix → bare label.
+		rc = self.provider.main(["bench-domain-provider", "register", f"app.{_REGION_DOMAIN}"])
+		self.assertEqual(rc, 0)
+		calls = self._register_calls()
+		self.assertEqual(len(calls), 1)
+		self.assertIn("label=app", calls[0][1])  # peeled to the bare label
 
-	def test_register_taken_returns_declined(self) -> None:
-		self.server.responses = {"register": (200, {"message": {"status": "taken"}})}
+	def test_register_taken_exits_two_aborting_the_create(self) -> None:
+		self._set_responses(register=(200, {"message": {"status": "taken"}}))
 		self._set_config(self.base)
-		outcome = self.client.register("acme")
-		self.assertIsInstance(outcome, self.client.Declined)
-		self.assertEqual(outcome.reason, self.client.Reason.TAKEN)
+		rc = self.provider.main(["bench-domain-provider", "register", f"acme.{_REGION_DOMAIN}"])
+		self.assertEqual(rc, 2)
 
-	def test_register_at_limit_returns_declined(self) -> None:
-		self.server.responses = {"register": (200, {"message": {"status": "at_limit"}})}
+	def test_register_at_limit_exits_two(self) -> None:
+		self._set_responses(register=(200, {"message": {"status": "at_limit"}}))
 		self._set_config(self.base)
-		outcome = self.client.register("acme")
-		self.assertIsInstance(outcome, self.client.Declined)
-		self.assertEqual(outcome.reason, self.client.Reason.AT_LIMIT)
+		rc = self.provider.main(["bench-domain-provider", "register", f"acme.{_REGION_DOMAIN}"])
+		self.assertEqual(rc, 2)
 
-	def test_register_invalid_carries_controller_message(self) -> None:
-		self.server.responses = {
-			"register": (200, {"message": {"status": "invalid", "reason": "must be a single label"}})
-		}
+	def test_register_invalid_exits_two(self) -> None:
+		self._set_responses(register=(200, {"message": {"status": "invalid", "reason": "bad label"}}))
 		self._set_config(self.base)
-		outcome = self.client.register("ac.me")
-		self.assertIsInstance(outcome, self.client.Declined)
-		self.assertEqual(outcome.reason, self.client.Reason.INVALID)
-		self.assertEqual(outcome.message, "must be a single label")
+		rc = self.provider.main(["bench-domain-provider", "register", f"acme.{_REGION_DOMAIN}"])
+		self.assertEqual(rc, 2)
 
-	def test_unknown_wire_status_is_transport_error(self) -> None:
-		# A status the Reason enum doesn't know must NOT pass silently.
-		self.server.responses = {"register": (200, {"message": {"status": "teapot"}})}
+	def test_custom_domain_posts_register_custom_domain(self) -> None:
+		# A custom external domain (does NOT peel to a wildcard label) now ROUTES via
+		# register_custom_domain (spec/18 Phase 2 SNI passthrough) — it no longer declines.
+		self._set_responses(register_custom_domain=(200, {"message": {"status": "ok"}}))
 		self._set_config(self.base)
-		with self.assertRaises(self.client.TransportError):
-			self.client.register("acme")
+		rc = self.provider.main(["bench-domain-provider", "register", "shop.acme.com"])
+		self.assertEqual(rc, 0)
+		# It POSTed register_custom_domain with the WHOLE host, NOT register(label).
+		self.assertEqual(self._register_calls(), [])
+		custom = [c for c in self.server.calls if c[0].endswith("api.register_custom_domain")]
+		self.assertEqual(len(custom), 1)
+		self.assertIn("domain=shop.acme.com", custom[0][1])
 
-	def test_no_config_raises_not_configured(self) -> None:
+	def test_custom_domain_taken_exits_two(self) -> None:
+		# A custom domain already claimed in the fleet → declined (exit 2), aborting create.
+		self._set_responses(register_custom_domain=(200, {"message": {"status": "taken"}}))
+		self._set_config(self.base)
+		rc = self.provider.main(["bench-domain-provider", "register", "shop.acme.com"])
+		self.assertEqual(rc, 2)
+
+	def test_custom_domain_register_transport_failure_fails_closed(self) -> None:
+		# Same fail-closed contract as the wildcard path: an unreachable controller aborts.
+		self._set_config("http://[::1]:1")
+		rc = self.provider.main(["bench-domain-provider", "register", "shop.acme.com"])
+		self.assertEqual(rc, 1)
+
+	def test_multi_label_under_wildcard_declines_as_invalid(self) -> None:
+		# `a.b.<region>` peels to `a.b`, which the controller rejects as invalid → exit 2.
+		self._set_responses(register=(200, {"message": {"status": "invalid", "reason": "no dots"}}))
+		self._set_config(self.base)
+		rc = self.provider.main(["bench-domain-provider", "register", f"a.b.{_REGION_DOMAIN}"])
+		self.assertEqual(rc, 2)
+		# It DID peel and POST `a.b` (the controller is the arbiter of the dot ban).
+		self.assertIn("label=a.b", self._register_calls()[0][1])
+
+	def test_register_transport_failure_fails_closed_exit_one(self) -> None:
+		# FAIL-CLOSED (the deliberate change from atlas-route): an unreachable controller
+		# → exit 1 so pilot ABORTS the create (no orphan site with no route).
+		self._set_config("http://[::1]:1")
+		rc = self.provider.main(["bench-domain-provider", "register", f"acme.{_REGION_DOMAIN}"])
+		self.assertEqual(rc, 1)
+
+	def test_register_no_config_is_a_noop_zero(self) -> None:
 		self._set_config(None)
-		with self.assertRaises(self.client.NotConfigured):
-			self.client.register("acme")
+		rc = self.provider.main(["bench-domain-provider", "register", f"acme.{_REGION_DOMAIN}"])
+		self.assertEqual(rc, 0)
 
-
-class TestTypedDeregisterCheckList(_ClientTestCase):
-	def test_deregister_returns_deregistered(self) -> None:
-		self.server.responses = {"deregister": (200, {"message": {"status": "ok"}})}
+	def test_unknown_wire_status_is_a_decline(self) -> None:
+		# A status the binary doesn't recognise is treated as a decline (exit 2), the
+		# conservative read — register never silently passes a non-`ok` answer.
+		self._set_responses(register=(200, {"message": {"status": "teapot"}}))
 		self._set_config(self.base)
-		outcome = self.client.deregister("acme")
-		self.assertIsInstance(outcome, self.client.Deregistered)
-		self.assertEqual(outcome.label, "acme")
-		path, body = self.server.calls[-1]
-		self.assertTrue(path.endswith("bench_routing.deregister"))
-		self.assertIn("label=acme", body)
+		rc = self.provider.main(["bench-domain-provider", "register", f"acme.{_REGION_DOMAIN}"])
+		self.assertEqual(rc, 2)
 
-	def test_check_label_available(self) -> None:
-		self.server.responses = {
-			"check_label": (200, {"message": {"status": "ok", "suffix": "blr1.frappe.dev"}})
-		}
+
+class TestDeregister(_ProviderTestCase):
+	def test_deregister_peels_and_exits_zero(self) -> None:
+		self._set_responses(deregister=(200, {"message": {"status": "ok"}}))
 		self._set_config(self.base)
-		outcome = self.client.check_label("acme")
-		self.assertIsInstance(outcome, self.client.Available)
-		self.assertEqual(outcome.suffix, "blr1.frappe.dev")
+		rc = self.provider.main(["bench-domain-provider", "deregister", f"acme.{_REGION_DOMAIN}"])
+		self.assertEqual(rc, 0)
+		self.assertIn("label=acme", self._deregister_calls()[0][1])
 
-	def test_check_label_declined(self) -> None:
-		self.server.responses = {"check_label": (200, {"message": {"status": "reserved"}})}
+	def test_deregister_unreachable_still_exits_zero(self) -> None:
+		# best-effort: a non-zero would throw on an otherwise-successful drop.
+		self._set_config("http://[::1]:1")
+		rc = self.provider.main(["bench-domain-provider", "deregister", f"acme.{_REGION_DOMAIN}"])
+		self.assertEqual(rc, 0)
+
+	def test_deregister_no_config_exits_zero(self) -> None:
+		self._set_config(None)
+		rc = self.provider.main(["bench-domain-provider", "deregister", f"acme.{_REGION_DOMAIN}"])
+		self.assertEqual(rc, 0)
+
+	def test_deregister_custom_domain_posts_deregister_custom_domain(self) -> None:
+		# A custom domain now tears down via deregister_custom_domain (spec/18 Phase 2),
+		# not a no-op. Still always exit 0 (best-effort).
+		self._set_responses(deregister_custom_domain=(200, {"message": {"status": "ok"}}))
 		self._set_config(self.base)
-		outcome = self.client.check_label("admin")
-		self.assertIsInstance(outcome, self.client.Declined)
-		self.assertEqual(outcome.reason, self.client.Reason.RESERVED)
+		rc = self.provider.main(["bench-domain-provider", "deregister", "shop.acme.com"])
+		self.assertEqual(rc, 0)
+		self.assertEqual(self._deregister_calls(), [])  # not the wildcard endpoint
+		custom = [c for c in self.server.calls if c[0].endswith("api.deregister_custom_domain")]
+		self.assertEqual(len(custom), 1)
+		self.assertIn("domain=shop.acme.com", custom[0][1])
 
-	def test_list_returns_listing_of_routes(self) -> None:
-		self.server.responses = {
-			"list": (
-				200,
-				{
-					"message": {
-						"domains": [
-							{"label": "acme", "fqdn": "acme.blr1.frappe.dev", "active": True},
-							{"label": "widgets", "fqdn": "widgets.blr1.frappe.dev", "active": False},
-						]
-					}
-				},
+	def test_deregister_custom_domain_unreachable_still_exits_zero(self) -> None:
+		# best-effort: a non-zero would throw on an otherwise-successful drop.
+		self._set_config("http://[::1]:1")
+		rc = self.provider.main(["bench-domain-provider", "deregister", "shop.acme.com"])
+		self.assertEqual(rc, 0)
+
+
+class TestGenerateDnsRecords(_ProviderTestCase):
+	def test_wildcard_subdomain_needs_no_records(self) -> None:
+		import io
+		from contextlib import redirect_stdout
+
+		self._set_config(self.base)
+		out = io.StringIO()
+		with redirect_stdout(out):
+			rc = self.provider.main(
+				[
+					"bench-domain-provider",
+					"generate-dns-records",
+					f"app.{_REGION_DOMAIN}",
+					f"app.{_REGION_DOMAIN}",
+				]
 			)
+		self.assertEqual(rc, 0)
+		# Blank `{}` — a wildcard subdomain we already route needs no user DNS records.
+		self.assertEqual(json.loads(out.getvalue().strip()), {})
+
+	def test_custom_domain_prints_controller_recipe(self) -> None:
+		# A custom (non-wildcard) domain asks the controller for the records the user
+		# pastes into THEIR DNS; the binary forwards `domain` + the regional `site`.
+		import io
+		from contextlib import redirect_stdout
+
+		recipe = {
+			"records": [
+				{"type": "CNAME", "name": "shop.acme.com", "value": f"app.{_REGION_DOMAIN}"},
+				{"type": "A", "name": "shop.acme.com", "value": "203.0.113.5"},
+				{"type": "AAAA", "name": "shop.acme.com", "value": "2001:db8::5"},
+				{"type": "CAA", "name": "shop.acme.com", "value": '0 issue "letsencrypt.org"'},
+			]
 		}
+		self._set_responses(dns_records=(200, {"message": recipe}))
 		self._set_config(self.base)
-		listing = self.client.list_routes()
-		self.assertIsInstance(listing, self.client.Listing)
-		self.assertEqual(len(listing.domains), 2)
-		self.assertEqual(listing.domains[0].label, "acme")
-		self.assertTrue(listing.domains[0].active)
-		self.assertFalse(listing.domains[1].active)
+		out = io.StringIO()
+		with redirect_stdout(out):
+			rc = self.provider.main(
+				[
+					"bench-domain-provider",
+					"generate-dns-records",
+					f"app.{_REGION_DOMAIN}",
+					"shop.acme.com",
+				]
+			)
+		self.assertEqual(rc, 0)
+		self.assertEqual(json.loads(out.getvalue().strip()), recipe)
+		# It POSTed dns_records carrying BOTH the custom domain and the regional site.
+		calls = [c for c in self.server.calls if c[0].endswith("api.dns_records")]
+		self.assertEqual(len(calls), 1)
+		self.assertIn("domain=shop.acme.com", calls[0][1])
+		self.assertIn(f"site=app.{_REGION_DOMAIN}", calls[0][1])
 
-	def test_list_empty_is_empty_listing(self) -> None:
-		self.server.responses = {"list": (200, {"message": {"domains": []}})}
+	def test_custom_domain_transport_failure_fails_open(self) -> None:
+		# Fail-OPEN (the real gate is register): an unreachable controller still prints
+		# {} / exits 0 so a momentary outage doesn't break the Add-Domain UI.
+		import io
+		from contextlib import redirect_stdout
+
+		self._set_config("http://[::1]:1")
+		out = io.StringIO()
+		with redirect_stdout(out):
+			rc = self.provider.main(
+				["bench-domain-provider", "generate-dns-records", f"app.{_REGION_DOMAIN}", "shop.acme.com"]
+			)
+		self.assertEqual(rc, 0)
+		self.assertEqual(json.loads(out.getvalue().strip()), {})
+
+	def test_no_config_fails_open_with_empty_records(self) -> None:
+		import io
+		from contextlib import redirect_stdout
+
+		self._set_config(None)
+		out = io.StringIO()
+		with redirect_stdout(out):
+			rc = self.provider.main(
+				["bench-domain-provider", "generate-dns-records", "mysite", f"app.{_REGION_DOMAIN}"]
+			)
+		self.assertEqual(rc, 0)
+		self.assertEqual(json.loads(out.getvalue().strip()), {})
+
+
+class TestWildcardDomains(_ProviderTestCase):
+	def test_prints_the_region_wildcard_list(self) -> None:
+		import io
+		from contextlib import redirect_stdout
+
 		self._set_config(self.base)
-		self.assertEqual(self.client.list_routes().domains, [])
+		out = io.StringIO()
+		with redirect_stdout(out):
+			rc = self.provider.main(["bench-domain-provider", "wildcard-domains"])
+		self.assertEqual(rc, 0)
+		self.assertEqual(json.loads(out.getvalue().strip()), [_WILDCARD])
+
+	def test_fail_soft_blank_on_outage(self) -> None:
+		import io
+		from contextlib import redirect_stdout
+
+		self._set_config("http://[::1]:1")
+		out = io.StringIO()
+		with redirect_stdout(out):
+			rc = self.provider.main(["bench-domain-provider", "wildcard-domains"])
+		# Fail-soft: BLANK stdout + exit 0 (pilot reads blank as []; a non-zero would
+		# break pilot's Add-Domain UI).
+		self.assertEqual(rc, 0)
+		self.assertEqual(out.getvalue().strip(), "")
+
+	def test_no_config_fail_soft_blank(self) -> None:
+		import io
+		from contextlib import redirect_stdout
+
+		self._set_config(None)
+		out = io.StringIO()
+		with redirect_stdout(out):
+			rc = self.provider.main(["bench-domain-provider", "wildcard-domains"])
+		self.assertEqual(rc, 0)
+		self.assertEqual(out.getvalue().strip(), "")
 
 
-class TestTransport(_ClientTestCase):
-	def test_unreachable_controller_is_transport_error(self) -> None:
+class TestProxyServers(_ProviderTestCase):
+	def test_prints_the_proxy_ip_list(self) -> None:
+		import io
+		from contextlib import redirect_stdout
+
+		self._set_responses(proxy_servers=(200, {"message": {"ips": ["203.0.113.10", "2001:db8::9"]}}))
+		self._set_config(self.base)
+		out = io.StringIO()
+		with redirect_stdout(out):
+			rc = self.provider.main(["bench-domain-provider", "proxy-servers"])
+		self.assertEqual(rc, 0)
+		self.assertEqual(json.loads(out.getvalue().strip()), ["203.0.113.10", "2001:db8::9"])
+
+	def test_fail_soft_blank_on_outage(self) -> None:
+		import io
+		from contextlib import redirect_stdout
+
+		self._set_config("http://[::1]:1")
+		out = io.StringIO()
+		with redirect_stdout(out):
+			rc = self.provider.main(["bench-domain-provider", "proxy-servers"])
+		# Fail-soft: BLANK stdout + exit 0 (pilot reads blank as []).
+		self.assertEqual(rc, 0)
+		self.assertEqual(out.getvalue().strip(), "")
+
+
+class TestTransport(_ProviderTestCase):
+	def test_unreachable_controller_fails_closed_on_register(self) -> None:
 		# Point at a closed port on ::1 (v6 route exists, nothing listening).
 		self._set_config("http://[::1]:1")
-		with self.assertRaises(self.client.TransportError):
-			self.client.register("acme")
+		self.assertEqual(self.provider.main(["bench-domain-provider", "register", f"a.{_REGION_DOMAIN}"]), 1)
 
-	def test_non_2xx_is_transport_error(self) -> None:
-		self.server.responses = {"register": (500, {"message": "boom"})}
+	def test_non_2xx_fails_closed_on_register(self) -> None:
+		self._set_responses(register=(500, {"message": "boom"}))
 		self._set_config(self.base)
-		with self.assertRaises(self.client.TransportError):
-			self.client.register("acme")
+		self.assertEqual(self.provider.main(["bench-domain-provider", "register", f"a.{_REGION_DOMAIN}"]), 1)
 
-	def test_ipv4_only_host_raises_transport_error_no_fallback(self) -> None:
+	def test_ipv4_only_host_fails_closed_no_fallback(self) -> None:
 		# 127.0.0.1 has NO AAAA / no v6 route — the AF_INET6-only connector must raise
-		# TransportError, never silently fall back to IPv4.
+		# TransportError (→ register fail-closed exit 1), never silently fall back to IPv4.
 		self._set_config(f"http://127.0.0.1:{self.port}")
-		with self.assertRaises(self.client.TransportError):
-			self.client.register("acme")
+		self.assertEqual(self.provider.main(["bench-domain-provider", "register", f"a.{_REGION_DOMAIN}"]), 1)
 
 	def test_connector_resolves_only_inet6(self) -> None:
 		# The connector asks getaddrinfo for AF_INET6 only — assert that directly so a
 		# refactor that drops the family is caught.
-		source = _ROUTE_CLIENT.read_text()
+		source = _PROVIDER.read_text()
 		self.assertIn("socket.AF_INET6", source)
 		self.assertNotIn("socket.AF_INET,", source)  # never the v4 family
 
 
-class TestCLIWrapper(_ClientTestCase):
-	"""The CLI exit-code contract the bench-cli wiring depends on."""
-
-	def test_register_ok_exits_zero(self) -> None:
-		self.server.responses = {
-			"register": (200, {"message": {"status": "ok", "suffix": "blr1.frappe.dev"}})
-		}
-		self._set_config(self.base)
-		self.assertEqual(self.client.main(["atlas-route", "register", "acme"]), 0)
-
-	def test_register_declined_exits_two_aborting_the_create(self) -> None:
-		self.server.responses = {"register": (200, {"message": {"status": "taken"}})}
-		self._set_config(self.base)
-		# Non-zero so the bench-cli flow ABORTS before `bench new-site`.
-		self.assertEqual(self.client.main(["atlas-route", "register", "acme"]), 2)
-
-	def test_register_no_config_is_a_noop_zero(self) -> None:
-		self._set_config(None)
-		self.assertEqual(self.client.main(["atlas-route", "register", "acme"]), 0)
-
-	def test_register_unreachable_fails_open_zero(self) -> None:
-		self._set_config("http://[::1]:1")
-		self.assertEqual(self.client.main(["atlas-route", "register", "acme"]), 0)
-
-	def test_deregister_always_exits_zero(self) -> None:
-		self.server.responses = {"deregister": (200, {"message": {"status": "ok"}})}
-		self._set_config(self.base)
-		self.assertEqual(self.client.main(["atlas-route", "deregister", "acme"]), 0)
-
-	def test_deregister_unreachable_still_zero(self) -> None:
-		self._set_config("http://[::1]:1")
-		self.assertEqual(self.client.main(["atlas-route", "deregister", "acme"]), 0)
-
-	def test_check_label_declined_exits_two(self) -> None:
-		self.server.responses = {"check_label": (200, {"message": {"status": "taken"}})}
-		self._set_config(self.base)
-		self.assertEqual(self.client.main(["atlas-route", "check-label", "acme"]), 2)
-
-	def test_list_deregisters_a_stray(self) -> None:
-		# A routed label with NO matching on-disk site is a stray the client clears with a
-		# per-stray deregister. Point the on-disk lister at an empty scratch dir so the
-		# routed label is a stray.
-		import tempfile
-
-		empty = Path(tempfile.mkdtemp())
-		self.addCleanup(lambda: __import__("shutil").rmtree(empty, ignore_errors=True))
-		self.client.BENCH_SITES_DIRECTORY = str(empty)
-		self.server.responses = {
-			"list": (
-				200,
-				{
-					"message": {
-						"domains": [{"label": "stray", "fqdn": "stray.blr1.frappe.dev", "active": True}]
-					}
-				},
-			),
-			"deregister": (200, {"message": {"status": "ok"}}),
-		}
-		self._set_config(self.base)
-		self.assertEqual(self.client.main(["atlas-route", "list"]), 0)
-		# The stray triggered a deregister POST.
-		deregisters = [c for c in self.server.calls if c[0].endswith("bench_routing.deregister")]
-		self.assertEqual(len(deregisters), 1)
-		self.assertIn("label=stray", deregisters[0][1])
-
-	def test_list_keeps_a_matching_route(self) -> None:
-		import tempfile
-
-		sites = Path(tempfile.mkdtemp())
-		self.addCleanup(lambda: __import__("shutil").rmtree(sites, ignore_errors=True))
-		# The on-disk dir name is the FQDN (bench layout: sites/<fqdn>).
-		(sites / "keep.blr1.frappe.dev").mkdir()
-		self.client.BENCH_SITES_DIRECTORY = str(sites)
-		self.server.responses = {
-			"list": (
-				200,
-				{"message": {"domains": [{"label": "keep", "fqdn": "keep.blr1.frappe.dev", "active": True}]}},
-			),
-			"deregister": (200, {"message": {"status": "ok"}}),
-		}
-		self._set_config(self.base)
-		self.assertEqual(self.client.main(["atlas-route", "list"]), 0)
-		deregisters = [c for c in self.server.calls if c[0].endswith("bench_routing.deregister")]
-		self.assertEqual(deregisters, [])  # the matching route is kept
-
+class TestUsage(_ProviderTestCase):
 	def test_usage_error(self) -> None:
-		self.assertEqual(self.client.main(["atlas-route", "bogus"]), 64)
+		self.assertEqual(self.provider.main(["bench-domain-provider", "bogus"]), 64)
+
+	def test_register_wrong_arg_count_is_usage_error(self) -> None:
+		self.assertEqual(self.provider.main(["bench-domain-provider", "register"]), 64)
 
 
-class TestBuildInstallsClient(unittest.TestCase):
-	def test_build_sh_installs_the_route_client(self) -> None:
+class TestBuildInstallsProvider(unittest.TestCase):
+	def test_build_sh_installs_the_provider_binary(self) -> None:
 		source = (_BENCH_DIR / "build.sh").read_text()
-		self.assertIn("atlas-route-client.py", source)
-		self.assertIn("/usr/local/bin/atlas-route", source)
+		self.assertIn("bench-domain-provider.py", source)
+		self.assertIn("/usr/local/bin/bench-domain-provider", source)
 
-	def test_route_client_is_stdlib_only(self) -> None:
-		source = _ROUTE_CLIENT.read_text()
+	def test_provider_is_stdlib_only(self) -> None:
+		source = _PROVIDER.read_text()
 		self.assertNotIn("import frappe", source)
-		self.assertNotIn("from atlas", source)
+		# No Atlas-package import (an `from atlas ... import` statement at a line start);
+		# matched line-anchored so prose like "reversal of atlas-route's" doesn't trip it.
+		import re
+
+		self.assertIsNone(re.search(r"(?m)^\s*from atlas\b.*\bimport\b", source))
+		self.assertIsNone(re.search(r"(?m)^\s*import atlas\b", source))
 
 
 if __name__ == "__main__":

@@ -10,6 +10,7 @@ reserved-IP packet to), not the reserved IP — proven on a live droplet; see th
 module docstring and the atlas-reserved-ip-anchor-dnat finding.
 """
 
+import shlex
 import unittest
 
 from atlas import reserved_ip_nat as nat
@@ -19,17 +20,20 @@ GUEST = "100.64.0.10"
 VETH = "atlas-h0a1b2c3"
 
 
-class TestRuleArgv(unittest.TestCase):
+class TestRuleCommand(unittest.TestCase):
+	# The builders now return a rendered command STRING; run() shlex.splits it into
+	# the same argv the old list form produced. Assert that round-trip.
 	def test_prerouting_chain_is_dstnat_hook(self):
-		argv = nat.prerouting_chain_argv()
+		argv = shlex.split(nat.prerouting_chain_command())
 		self.assertEqual(argv[:5], ["add", "chain", "inet", "atlas", "prerouting"])
-		self.assertIn("type nat hook prerouting priority dstnat", argv[-1])
+		# The brace clause must stay ONE argv token (Trap 2).
+		self.assertEqual(argv[-1], "{ type nat hook prerouting priority dstnat; policy accept; }")
 
 	def test_dnat_matches_anchor_not_reserved(self):
 		# prerouting: ip daddr <ANCHOR> dnat to <guest>. Matching the anchor is the
 		# whole fix — the reserved IP never appears on the droplet.
 		self.assertEqual(
-			nat.dnat_rule_argv(ANCHOR, GUEST),
+			shlex.split(nat.dnat_rule_command(ANCHOR, GUEST)),
 			["add", "rule", "inet", "atlas", "prerouting", "ip", "daddr", ANCHOR, "dnat", "to", GUEST],
 		)
 
@@ -37,7 +41,7 @@ class TestRuleArgv(unittest.TestCase):
 		# `insert` (not `add`) so the per-guest SNAT beats the /16 masquerade, and
 		# the source is the ANCHOR (DO maps anchor->reserved at its edge), not the
 		# reserved IP directly.
-		argv = nat.snat_rule_argv(ANCHOR, GUEST)
+		argv = shlex.split(nat.snat_rule_command(ANCHOR, GUEST))
 		self.assertEqual(argv[0], "insert")
 		self.assertEqual(
 			argv,
@@ -46,7 +50,7 @@ class TestRuleArgv(unittest.TestCase):
 
 	def test_forward_accepts_inbound_toward_guest(self):
 		self.assertEqual(
-			nat.forward_rule_argv(GUEST, VETH),
+			shlex.split(nat.forward_rule_command(GUEST, VETH)),
 			["add", "rule", "inet", "atlas", "forward", "ip", "daddr", GUEST, "oifname", VETH, "accept"],
 		)
 
@@ -61,13 +65,13 @@ class TestRoutedReservedIp(unittest.TestCase):
 
 	def test_routed_dnat_matches_the_reserved_ip_itself(self):
 		self.assertEqual(
-			nat.dnat_rule_argv(self.RESERVED, GUEST),
+			shlex.split(nat.dnat_rule_command(self.RESERVED, GUEST)),
 			["add", "rule", "inet", "atlas", "prerouting", "ip", "daddr", self.RESERVED, "dnat", "to", GUEST],
 		)
 
 	def test_routed_snat_sources_the_reserved_ip(self):
 		self.assertEqual(
-			nat.snat_rule_argv(self.RESERVED, GUEST),
+			shlex.split(nat.snat_rule_command(self.RESERVED, GUEST)),
 			[
 				"insert",
 				"rule",

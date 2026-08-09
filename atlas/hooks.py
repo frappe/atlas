@@ -61,15 +61,17 @@ doctype_js = {
 	"Virtual Machine Snapshot": "public/js/atlas_form_overrides.js",
 	"Reserved IP": "public/js/atlas_form_overrides.js",
 	"VPN Tunnel": "public/js/atlas_form_overrides.js",
+	"VPN Peer": "public/js/atlas_form_overrides.js",
 	"Firewall": "public/js/atlas_form_overrides.js",
 	"Task": "public/js/atlas_form_overrides.js",
 	"Route53 Settings": "public/js/atlas_form_overrides.js",
+	"PowerDNS Settings": "public/js/atlas_form_overrides.js",
 	"Lets Encrypt Settings": "public/js/atlas_form_overrides.js",
 	"Root Domain": "public/js/atlas_form_overrides.js",
 	"TLS Certificate": "public/js/atlas_form_overrides.js",
 	"Central Settings": "public/js/atlas_form_overrides.js",
-	"Central Size": "public/js/atlas_form_overrides.js",
-	"Central Image": "public/js/atlas_form_overrides.js",
+	"SSH Console": "public/js/atlas_form_overrides.js",
+	"SSH Command Log": "public/js/atlas_form_overrides.js",
 }
 
 # Note: redirecting `/desk` → `/app/atlas` is non-trivial (Frappe hardcodes
@@ -182,13 +184,27 @@ after_migrate = "atlas.install.after_migrate"
 
 doc_events = {
 	"Virtual Machine": {
-		"after_insert": "atlas.atlas.central_report.on_vm_after_insert",
-		"on_update": "atlas.atlas.central_report.on_vm_update",
-		"on_trash": "atlas.atlas.central_report.on_vm_trash",
+		"after_insert": [
+			"atlas.atlas.central_report.on_vm_after_insert",
+			"atlas.atlas.satellite_events.on_vm_after_insert",
+		],
+		"on_update": [
+			"atlas.atlas.central_report.on_vm_update",
+			"atlas.atlas.satellite_events.on_vm_update",
+		],
+		"on_trash": [
+			"atlas.atlas.central_report.on_vm_trash",
+			"atlas.atlas.satellite_events.on_vm_trash",
+		],
 	},
 	"Site": {
 		"after_insert": "atlas.atlas.central_report.on_site_after_insert",
 		"on_update": "atlas.atlas.central_report.on_site_update",
+	},
+	# A Pilot reports AS its backing VM (Central mirrors VMs, not Pilots), so its
+	# status change emits a vm.status_changed carrying the login handoff.
+	"Pilot": {
+		"on_update": "atlas.atlas.central_report.on_pilot_update",
 	},
 	"Virtual Machine Snapshot": {
 		"on_update": "atlas.atlas.central_report.on_snapshot_update",
@@ -225,8 +241,51 @@ scheduler_events = {
 		"atlas.atlas.doctype.tls_certificate.tls_certificate.renew_expiring",
 	],
 	"cron": {
+		"*/1 * * * *": [
+			"atlas.atlas.central_report.retry_pending",
+			"atlas.atlas.doctype.virtual_machine.virtual_machine.poll_vm_traffic",
+			# BEFORE sleep_idle_vms: adopt any host-initiated (packet-triggered) wake so
+			# a just-woken VM is Running with fresh last_traffic_at before the idle sweep.
+			"atlas.atlas.doctype.virtual_machine.virtual_machine.reconcile_sleeping_vms",
+			"atlas.atlas.doctype.virtual_machine.virtual_machine.sleep_idle_vms",
+		],
 		"*/10 * * * *": [
 			"atlas.atlas.providers.worker.reconcile_pending_servers",
+			"atlas.atlas.datum_token.refresh_all",
+		],
+		"*/2 * * * *": [
+			"atlas.atlas.migration.reconcile_migrations",
+			"atlas.atlas.export.reconcile_image_exports",
+		],
+		# Controller-side liveness BACKSTOP for the decentralized mesh. Retiring
+		# the centralized `*/5` host-mesh reconcile for the host-local
+		# atlas-networkd daemon (spec/31) removed the only controller-side signal
+		# that a host's daemon is down — a host whose atlas-networkd is failed /
+		# masked / disabled silently drops its VMs off the private mesh with no
+		# operator signal. This sweep OBSERVES each Active host with a read-only
+		# `systemctl is-active atlas-networkd` probe and FLAGS the unhealthy ones
+		# (Error Log + WARNING). It does NOT reconfigure anything, so it does not
+		# re-centralize the networking control plane — the mesh stays self-healing;
+		# this is a smoke detector, not a thermostat. Same `*/5` cadence the
+		# retired reconcile ran on.
+		"*/5 * * * *": [
+			"atlas.atlas.providers.worker.check_networkd_liveness",
+			# The Boat mirror's pull half (spec/33 §2.5): GET /v1/export from every
+			# host, ingested into `Host State Snapshot` + the observed
+			# fields on Server / Virtual Machine, one enqueued job per host. Atlas
+			# pushes desired state when an operator clicks; NOTHING pulls observed
+			# state without this entry, so the whole WO-1 path is inert without it.
+			#
+			# A reader looking for the `GET /v1/watch` SSE consumer will not find one:
+			# §2.6 makes the stream the low-latency path and this export the
+			# truth-restoring backstop, and the stream is a later work order. The
+			# backstop is what makes a dropped stream survivable, so it lands first.
+			#
+			# Same */5 as the probe above, and for the same reason: both are read-only
+			# host observations with no operator waiting on them. A slower backstop
+			# would leave a partitioned host un-flagged for longer; a faster one would
+			# only shorten the forensic window the bounded snapshot archive holds.
+			"atlas.atlas.boat_mirror.sweep_mirrors",
 		],
 	},
 }

@@ -11,11 +11,8 @@ paths, the identity payload's derivation rules, the clone-time size pinning,
 the per-server warm resolution, and the durable-artifact GC wiring.
 """
 
-import json
-import py_compile
 import subprocess
 import sys
-import tempfile
 import unittest
 from importlib import util as importlib_util
 from pathlib import Path
@@ -31,52 +28,12 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 _SCRIPTS_DIR = _REPO_ROOT / "scripts"
 _BENCH_DIR = _REPO_ROOT / "bench"
 
-# Runs in a clean interpreter: load provision-vm.py by path (its sys.path shim
-# brings in scripts/lib), build WARM ProvisionInputs, and emit the launcher,
-# the firecracker config, the MMDS payload and the relevant paths as JSON.
-_WARM_DRIVER = """
-import importlib.util, json, sys
-
-spec = importlib.util.spec_from_file_location("provision_vm", sys.argv[1])
-module = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(module)
-from atlas.paths import VirtualMachinePaths, warm_snapshot_directory
-
-uuid = "12345678-1234-1234-1234-123456789abc"
-inputs = module.ProvisionInputs(
-    virtual_machine_name=uuid,
-    image_name="img",
-    kernel_filename="vmlinux",
-    rootfs_filename="rootfs.squashfs",
-    vcpus=2,
-    memory_mb=2048,
-    disk_gb=12,
-    mac_address="06:00:01:02:03:04",
-    tap_device="atlas-golden999",
-    virtual_machine_ipv6="2001:db8::2",
-    ipv4_host_cidr="100.64.0.1/30",
-    ipv4_guest_cidr="100.64.0.2/30",
-    ipv4_gateway="100.64.0.1",
-    ssh_public_key="ssh-ed25519 AAAA",
-    atlas_fc_uid=12345,
-    atlas_netns="atlas-ns",
-    host_veth="ave-h",
-    namespace_veth="ave-n",
-    cgroup_arg=["cpu.max=100000 100000"],
-    resource_arg=[],
-    warm_snapshot_directory="/var/lib/atlas/snapshots/snapid",
-)
-paths = VirtualMachinePaths(uuid)
-print(json.dumps({
-    "launcher": module._jailer_launch(inputs, paths),
-    "config": json.loads(module._firecracker_config(inputs)),
-    "metadata": json.loads(module._mmds_metadata(inputs)),
-    "marker": paths.memory_snapshot_marker,
-    "metadata_file": paths.metadata_file,
-    "signature": paths.memory_snapshot_signature,
-    "warm_directory": warm_snapshot_directory("snapid"),
-}))
-"""
+# The warm launcher, firecracker config and MMDS metadata payload were rendered by
+# provision-vm.py and tested here by loading that module in a clean interpreter.
+# The .py is deleted — boat renders the warm launch, its config and the clone
+# identity — so those checks now live in boat's internal/provision/render_test.go
+# and clone_test.go. The stdlib-only in-guest pieces below (hostinfo, warm.sh, the
+# freshen unit) are unaffected and keep loading by path.
 
 
 def _load_by_path(name: str, path: Path):
@@ -87,97 +44,20 @@ def _load_by_path(name: str, path: Path):
 	return module
 
 
-class TestWarmProvision(unittest.TestCase):
-	@classmethod
-	def setUpClass(cls) -> None:
-		result = subprocess.run(
-			[sys.executable, "-c", _WARM_DRIVER, str(_SCRIPTS_DIR / "provision-vm.py")],
-			capture_output=True,
-			text=True,
-		)
-		assert result.returncode == 0, result.stderr
-		cls.data = json.loads(result.stdout)
-
-	def test_launcher_adds_metadata_on_cold_path_only(self) -> None:
-		launcher = self.data["launcher"]
-		# The metadata conditional rides the cold (config-file) path so the
-		# cold-boot FALLBACK still adopts the clone identity via --metadata.
-		self.assertIn(f"if [[ -f {self.data['metadata_file']} ]]", launcher)
-		self.assertIn("boot_args+=(--metadata metadata.json)", launcher)
-		# The marker conditional comes AFTER and resets boot_args to empty: the
-		# idle (restore) launch passes neither --config-file nor --metadata —
-		# vm-restore.py PUTs the payload over the API instead.
-		self.assertLess(launcher.index("--metadata"), launcher.index("boot_args=()"))
-		self.assertIn(f"if [[ -f {self.data['marker']} ]]", launcher)
-
-	def test_launcher_parses(self) -> None:
-		with tempfile.NamedTemporaryFile("w", suffix=".sh") as handle:
-			handle.write(self.data["launcher"])
-			handle.flush()
-			result = subprocess.run(["bash", "-n", handle.name], capture_output=True, text=True)
-		self.assertEqual(result.returncode, 0, result.stderr)
-
-	def test_every_config_carries_mmds(self) -> None:
-		# MMDS on every VM: the golden's vmstate must carry the MMDS-enabled net
-		# device, and a uniform config keeps every VM bakeable. V1 pinned.
-		mmds = self.data["config"]["mmds-config"]
-		self.assertEqual(mmds["version"], "V1")
-		self.assertEqual(mmds["network_interfaces"], ["eth0"])
-
-	def test_metadata_identity_matches_inject_identity_rules(self) -> None:
-		identity = self.data["metadata"]["identity"]
-		self.assertEqual(identity["uuid"], "12345678-1234-1234-1234-123456789abc")
-		# Same derivations as rootfs.Identity, so a warm clone's identity equals
-		# what a cold provision of the same UUID would have injected.
-		self.assertEqual(identity["hostname"], "atlas-12345678")
-		self.assertEqual(identity["machine_id"], "12345678123412341234123456789abc")
-		self.assertEqual(identity["ipv6"], "2001:db8::2")
-		self.assertEqual(identity["ipv4_cidr"], "100.64.0.2/30")
-		self.assertEqual(identity["ipv4_gateway"], "100.64.0.1")
-		self.assertEqual(identity["ssh_public_key"], "ssh-ed25519 AAAA")
-
-	def test_durable_artifacts_live_under_snapshots(self) -> None:
-		self.assertEqual(self.data["warm_directory"], "/var/lib/atlas/snapshots/snapid")
-		# The staged signature sits beside the marker inside the jail.
-		self.assertEqual(
-			self.data["signature"],
-			self.data["marker"].rsplit("/", 1)[0] + "/host-signature.json",
-		)
-
-
 class TestWarmScripts(unittest.TestCase):
-	def test_warm_snapshot_cli_contract(self) -> None:
-		result = subprocess.run(
-			[sys.executable, str(_SCRIPTS_DIR / "warm-snapshot-vm.py"), "--help"],
-			capture_output=True,
-			text=True,
-		)
-		self.assertEqual(result.returncode, 0, result.stderr)
-		for flag in (
-			"--virtual-machine-name",
-			"--atlas-fc-uid",
-			"--snapshot-rootfs-path",
-			"--memory-directory",
-		):
-			self.assertIn(flag, result.stdout)
+	# warm-snapshot-vm's argparse contract was proven here by `warm-snapshot-vm.py
+	# --help`; the .py is deleted (boat serves warm-snapshot-vm), so its flag
+	# contract now lives in boat's internal/snapshot/warm_test.go.
 
-	def test_delete_snapshot_gains_memory_directory(self) -> None:
-		result = subprocess.run(
-			[sys.executable, str(_SCRIPTS_DIR / "delete-snapshot-vm.py"), "--help"],
-			capture_output=True,
-			text=True,
-		)
-		self.assertEqual(result.returncode, 0, result.stderr)
-		self.assertIn("--memory-directory", result.stdout)
+	# delete-snapshot-vm's `--memory-directory` flag was proven here by
+	# `delete-snapshot-vm.py --help`; the .py is deleted (boat serves
+	# delete-snapshot-vm), so its contract now lives in boat's
+	# internal/snapshot/delete_snapshot_test.go.
 
-	def test_vm_restore_compiles_and_guards(self) -> None:
-		py_compile.compile(str(_SCRIPTS_DIR / "vm-restore.py"), doraise=True)
-		source = (_SCRIPTS_DIR / "vm-restore.py").read_text()
-		# The signature guard must consume the marker BEFORE any load attempt,
-		# and the MMDS PUT must happen while still paused (before the resume).
-		self.assertIn("_signature_mismatch", source)
-		self.assertIn("_stage_mmds", source)
-		self.assertLess(source.index("_signature_mismatch(paths)"), source.index("_load_snapshot(paths)"))
+	# vm-restore's signature guard (consume the marker before any load attempt) and
+	# its MMDS-PUT-while-paused ordering were proven here by compiling vm-restore.py
+	# and asserting on its source. The .py is deleted (`boat vm-restore` serves it),
+	# so that ordering now lives in boat's internal/image restore path.
 
 	def test_hostinfo_parses(self) -> None:
 		hostinfo = _load_by_path("hostinfo_under_test", _SCRIPTS_DIR / "lib" / "atlas" / "hostinfo.py")
@@ -199,7 +79,7 @@ class TestWarmScripts(unittest.TestCase):
 			signature["cpu_flags_sha256"],
 			hostinfo.parse_cpu_signature(reordered)["cpu_flags_sha256"],
 		)
-		self.assertEqual(hostinfo.parse_firecracker_version("Firecracker v1.15.1\n"), "v1.15.1")
+		self.assertEqual(hostinfo.parse_firecracker_version("Firecracker v1.16.0\n"), "v1.16.0")
 
 
 class TestGuestWarmTooling(unittest.TestCase):
@@ -215,6 +95,13 @@ class TestGuestWarmTooling(unittest.TestCase):
 		self.assertIn("*pong*", source)  # the stack must be serving in the frozen RAM
 		self.assertIn("rm -f /var/lib/systemd/random-seed", source)  # clone-entropy hygiene
 		self.assertIn("/etc/atlas-vm-uuid", source)  # the adopted-identity marker
+		# The freshen unit MUST be verified enabled + running BEFORE the freeze, so a
+		# golden captured without a live freshen fails the bake loud instead of fanning
+		# out into clones that never adopt their identity (unreachable on their own /128).
+		self.assertIn("systemctl is-enabled --quiet atlas-warm-freshen.service", source)
+		self.assertIn("systemctl is-active --quiet atlas-warm-freshen.service", source)
+		# The check must precede the freeze's final sync (the capture point).
+		self.assertLess(source.index("is-active --quiet atlas-warm-freshen"), source.index("\nsync\n"))
 
 	def test_freshen_pure_helpers(self) -> None:
 		freshen = _load_by_path("freshen_under_test", _BENCH_DIR / "atlas-warm-freshen.py")
@@ -377,6 +264,8 @@ class TestWarmClone(IntegrationTestCase):
 
 		class FakeSite:
 			name = "warm-site.example.test"
+			subdomain = "warm-site"
+			tenant = None
 
 		clone_name = _provision_backing_vm(FakeSite())
 		clone = frappe.get_doc("Virtual Machine", clone_name)
@@ -443,7 +332,7 @@ class TestWarmSnapshotAction(IntegrationTestCase):
 		self.assertEqual(snapshot.rootfs_path, f"/dev/atlas/atlas-snap-{snapshot_name}")
 		self.assertEqual(snapshot.memory_directory, f"/var/lib/atlas/snapshots/{snapshot_name}")
 		# The capture ran warm-snapshot-vm.py with the durable artifact targets.
-		self.assertEqual(mocked.call_args.kwargs["script"], "warm-snapshot-vm.py")
+		self.assertEqual(mocked.call_args.kwargs["script"], "warm-snapshot-vm")
 		variables = mocked.call_args.kwargs["variables"]
 		self.assertEqual(variables["VIRTUAL_MACHINE_NAME"], vm.name)
 		self.assertEqual(variables["SNAPSHOT_ROOTFS_PATH"], snapshot.rootfs_path)
@@ -531,6 +420,53 @@ class TestTerminateKeepsWarmGoldens(IntegrationTestCase):
 			vm._delete_snapshots()
 		self.assertTrue(frappe.db.exists("Virtual Machine Snapshot", warm.name))
 		self.assertFalse(frappe.db.exists("Virtual Machine Snapshot", cold.name))
+
+	def test_delete_snapshots_keeps_an_image_builds_output(self) -> None:
+		"""A COLD bake's snapshot is neither the registered golden nor warm, so before
+		this guard `terminate_build_vm` deleted the very artifact `Image Build.promote()`
+		needs — leaving the build pointing at a row that no longer exists. Retiring a
+		bake artifact is an explicit operator act, never a side effect of reaping the
+		scratch VM."""
+		server = _ensure_server()
+		image = make_image("bake-output-image").name
+		vm = frappe.get_doc(
+			{
+				"doctype": "Virtual Machine",
+				"title": "build vm",
+				"server": server,
+				"image": image,
+				"vcpus": 2,
+				"memory_megabytes": 2048,
+				"disk_gigabytes": 12,
+				"ssh_public_key": "k",
+			}
+		).insert(ignore_permissions=True)
+		baked = frappe.get_doc(
+			{
+				"doctype": "Virtual Machine Snapshot",
+				"title": "bake output",
+				"virtual_machine": vm.name,
+				"server": server,
+				"status": "Available",
+				"rootfs_path": "/dev/atlas/atlas-snap-bake",
+			}
+		).insert(ignore_permissions=True)
+		build = frappe.get_doc(
+			{
+				"doctype": "Image Build",
+				"recipe": "bench-v16",
+				"server": server,
+				"base_image": image,
+				"status": "Available",
+			}
+		).insert(ignore_permissions=True)
+		build.db_set("snapshot", baked.name)
+		with patch(
+			"atlas.atlas.doctype.virtual_machine_snapshot.virtual_machine_snapshot.run_task",
+			return_value=fake_task(),
+		):
+			vm._delete_snapshots()
+		self.assertTrue(frappe.db.exists("Virtual Machine Snapshot", baked.name))
 
 
 if __name__ == "__main__":

@@ -2,7 +2,7 @@
 `setup()` setters on each Settings Single.
 
 The contract is pure logic — no host, no network except the providers' `discover()`,
-which we mock (the only network call, exactly as `test_bootstrap.py` does). We assert
+which we mock (the only network call). We assert
 the Singles / catalog / Root Domain a `setup.run(config)` writes match what
 `bootstrap.run` wrote before this change, per provider x TLS on/off.
 
@@ -31,14 +31,18 @@ from atlas.atlas.secrets import get_secret
 _KEY_PATH = os.path.join(tempfile.gettempdir(), "atlas-setup-test-key.pem")
 
 DO_CAPS = Capabilities(
-	sizes=(SizeInfo(slug="s-2vcpu-4gb-intel", monthly_cost_usd=24, provider_metadata={}),),
-	images=(ImageInfo(slug="ubuntu-24-04-x64", provider_metadata={}),),
+	sizes=(SizeInfo(slug="s-2vcpu-4gb-intel", monthly_cost_usd=24, provider_metadata={}, is_default=True),),
+	images=(ImageInfo(slug="ubuntu-24-04-x64", provider_metadata={}, is_default=True),),
 )
 SCW_SIZE = "EM-A610R-NVME"
 SCW_IMAGE = "Ubuntu_24.04"
 SCW_CAPS = Capabilities(
-	sizes=(SizeInfo(slug=SCW_SIZE, monthly_cost_usd=40, provider_metadata={"offer_id": "offer-uuid"}),),
-	images=(ImageInfo(slug=SCW_IMAGE, provider_metadata={"os_id": "os-uuid"}),),
+	sizes=(
+		SizeInfo(
+			slug=SCW_SIZE, monthly_cost_usd=40, provider_metadata={"offer_id": "offer-uuid"}, is_default=True
+		),
+	),
+	images=(ImageInfo(slug=SCW_IMAGE, provider_metadata={"os_id": "os-uuid"}, is_default=True),),
 )
 
 
@@ -89,6 +93,18 @@ _TLS_BLOCK = {
 	"access_key_id": "AKIA_TEST",
 	"secret_access_key": "route53-secret",
 	"aws_region": "eu-west-1",
+	"account_email": "ops@example.com",
+	"acme_directory_url": "https://acme-staging-v02.api.letsencrypt.org/directory",
+}
+_POWERDNS_TLS_BLOCK = {
+	"domain": "blr1.frappe.dev",
+	"region": "blr1",
+	"dns_provider_type": "PowerDNS",
+	"powerdns": {
+		"api_url": "https://pdns.example.test",
+		"api_key": "powerdns-secret",
+		"server_id": "primary",
+	},
 	"account_email": "ops@example.com",
 	"acme_directory_url": "https://acme-staging-v02.api.letsencrypt.org/directory",
 }
@@ -143,14 +159,37 @@ class TestSetupContract(IntegrationTestCase):
 			frappe.db.get_single_value("Atlas Settings", "ssh_public_key"), "ssh-ed25519 AAAA test"
 		)
 		self.assertEqual(frappe.db.get_single_value("DigitalOcean Settings", "ssh_key_id"), "key-id-123")
+		# The explicit config slug is marked the lone default on the catalog row.
 		self.assertEqual(
-			frappe.db.get_single_value("DigitalOcean Settings", "default_size"),
+			frappe.db.get_value("Provider Size", {"provider_type": "DigitalOcean", "is_default": 1}, "name"),
 			"DigitalOcean/s-2vcpu-4gb-intel",
 		)
 		self.assertEqual(
 			get_secret("DigitalOcean Settings", "DigitalOcean Settings", "api_token"), "dop_v1_test"
 		)
 		self.assertTrue(frappe.db.exists("Provider Size", "DigitalOcean/s-2vcpu-4gb-intel"))
+
+	def test_default_size_outside_discover_set_stays_enabled(self) -> None:
+		"""A configured `default_size` the provider's `discover()` doesn't know about
+		must still resolve as the default.
+
+		`upsert_catalog` runs first and disables every enabled Size row not in the
+		`discover()` set (its stale-row prune); `set_default` then marks the
+		configured slug default. If `set_default` didn't re-enable it, the row would
+		be `is_default=1, enabled=0`, and `default_name` (which filters `enabled=1`)
+		would return "" — the empty size that DO rejects with a 422. Regression test
+		for the e2e default `s-8vcpu-32gb-amd`, which is outside DO_CAPS."""
+		from atlas.atlas.setup_catalog import default_name
+
+		config = _do_config()
+		config["provider"]["digitalocean"]["default_size"] = "s-8vcpu-32gb-amd"
+		setup.run(config)
+		row = frappe.db.get_value(
+			"Provider Size", "DigitalOcean/s-8vcpu-32gb-amd", ["is_default", "enabled"], as_dict=True
+		)
+		self.assertEqual(row.is_default, 1)
+		self.assertEqual(row.enabled, 1, "the configured default must be enabled, not pruned")
+		self.assertEqual(default_name("Provider Size", "DigitalOcean"), "DigitalOcean/s-8vcpu-32gb-amd")
 
 	# --- Scaleway setter (load-bearing discover ordering + casing check) ---
 
@@ -159,7 +198,8 @@ class TestSetupContract(IntegrationTestCase):
 		self.assertEqual(frappe.db.get_single_value("Scaleway Settings", "billing"), "monthly")
 		self.assertEqual(get_secret("Scaleway Settings", "Scaleway Settings", "secret_key"), "scw-secret")
 		self.assertEqual(
-			frappe.db.get_single_value("Scaleway Settings", "default_size"), f"Scaleway/{SCW_SIZE}"
+			frappe.db.get_value("Provider Size", {"provider_type": "Scaleway", "is_default": 1}, "name"),
+			f"Scaleway/{SCW_SIZE}",
 		)
 		self.assertTrue(frappe.db.exists("Provider Image", f"Scaleway/{SCW_IMAGE}"))
 
@@ -183,6 +223,17 @@ class TestSetupContract(IntegrationTestCase):
 			frappe.db.get_single_value("Lets Encrypt Settings", "account_email"), "ops@example.com"
 		)
 		self.assertEqual(frappe.db.get_single_value("Atlas Settings", "dns_provider_type"), "Route53")
+		self.assertEqual(frappe.db.get_single_value("Atlas Settings", "tls_provider_type"), "Let's Encrypt")
+		self.assertTrue(frappe.db.exists("Root Domain", "blr1.frappe.dev"))
+
+	def test_tls_block_seeds_powerdns_le_and_root_domain(self) -> None:
+		setup.run(_do_config(tls=_POWERDNS_TLS_BLOCK))
+		self.assertEqual(
+			frappe.db.get_single_value("PowerDNS Settings", "api_url"), "https://pdns.example.test"
+		)
+		self.assertEqual(frappe.db.get_single_value("PowerDNS Settings", "server_id"), "primary")
+		self.assertEqual(get_secret("PowerDNS Settings", "PowerDNS Settings", "api_key"), "powerdns-secret")
+		self.assertEqual(frappe.db.get_single_value("Atlas Settings", "dns_provider_type"), "PowerDNS")
 		self.assertEqual(frappe.db.get_single_value("Atlas Settings", "tls_provider_type"), "Let's Encrypt")
 		self.assertTrue(frappe.db.exists("Root Domain", "blr1.frappe.dev"))
 
@@ -271,8 +322,8 @@ class TestWizardStages(IntegrationTestCase):
 			"ssh_public_key": "ssh-ed25519 AAAA wiz",
 			"do_api_token": "dop_v1_wiz",
 			"do_region": "ams3",
-			"do_default_size": "s-2vcpu-4gb-intel",
-			"do_default_image": "ubuntu-24-04-x64",
+			# The wizard no longer collects size/image — the default comes from the
+			# provider's discover() hint, applied by upsert_catalog into the empty slot.
 			"do_ssh_key_id": "wiz-key",
 		}
 		args.update(over)
@@ -296,6 +347,11 @@ class TestWizardStages(IntegrationTestCase):
 		self.assertEqual(frappe.db.get_single_value("Atlas Settings", "region"), "blr1")
 		self.assertEqual(frappe.db.get_single_value("DigitalOcean Settings", "region"), "ams3")
 		self.assertEqual(frappe.db.get_single_value("DigitalOcean Settings", "ssh_key_id"), "wiz-key")
+		# No config slug: the discover() hint became the default.
+		self.assertEqual(
+			frappe.db.get_value("Provider Size", {"provider_type": "DigitalOcean", "is_default": 1}, "name"),
+			"DigitalOcean/s-2vcpu-4gb-intel",
+		)
 
 	def test_truthy_normalizes_wizard_checkbox(self) -> None:
 		self.assertTrue(setup._truthy("1"))
@@ -327,6 +383,11 @@ class TestWizardDiscover(IntegrationTestCase):
 	for the slide pick-lists. The clients are mocked (no network); we assert the auth
 	gate, the slug→option mapping, and that failures come back as a toast, not a raise."""
 
+	def setUp(self) -> None:
+		# A successful probe now upserts Provider Size / Provider Image rows; clean them
+		# up so the persisted catalog never leaks between tests.
+		self.addCleanup(_cleanup)
+
 	def test_digitalocean_returns_constant_catalog_after_auth(self) -> None:
 		fake_client = MagicMock()
 		fake_client.verify_credentials.return_value = {
@@ -341,6 +402,9 @@ class TestWizardDiscover(IntegrationTestCase):
 		# DO's catalog is hand-maintained constants — sizes/images come back regardless.
 		self.assertIn("s-2vcpu-4gb-intel", [s["value"] for s in result["sizes"]])
 		self.assertIn("ubuntu-24-04-x64", [i["value"] for i in result["images"]])
+		# A green probe also persists the catalog (no later Refresh needed).
+		self.assertTrue(frappe.db.exists("Provider Size", "DigitalOcean/s-2vcpu-4gb-intel"))
+		self.assertTrue(frappe.db.exists("Provider Image", "DigitalOcean/ubuntu-24-04-x64"))
 
 	def test_digitalocean_without_token_is_not_ok(self) -> None:
 		result = setup.wizard_discover("DigitalOcean", {})
@@ -376,6 +440,98 @@ class TestWizardDiscover(IntegrationTestCase):
 		self.assertIn(SCW_SIZE, [s["value"] for s in result["sizes"]])
 		self.assertIn(SCW_IMAGE, [i["value"] for i in result["images"]])
 		self.assertEqual([k["value"] for k in result["ssh_keys"]], ["key-uuid"])
+		# The verified live catalog is persisted to Provider Size / Provider Image.
+		self.assertTrue(frappe.db.exists("Provider Size", f"Scaleway/{SCW_SIZE}"))
+		self.assertTrue(frappe.db.exists("Provider Image", f"Scaleway/{SCW_IMAGE}"))
+
+	def test_digitalocean_resolves_controller_ssh_key(self) -> None:
+		# With the controller key path in credentials, the probe find-or-registers it
+		# with DO and returns the resolved key id (here ensure_ssh_key matched an
+		# existing key) — so the wizard never asks the operator to pick one.
+		fake_client = MagicMock()
+		fake_client.verify_credentials.return_value = {"email": "ops@acme.com"}
+		fake_client.list_ssh_keys.return_value = []
+		fake_client.ensure_ssh_key.return_value = "98765432"
+		with (
+			patch("atlas.atlas.digitalocean.DigitalOceanClient", return_value=fake_client),
+			patch.object(setup, "_controller_public_key", return_value="ssh-ed25519 AAAA me"),
+		):
+			result = setup.wizard_discover(
+				"DigitalOcean", {"api_token": "dop_v1_x", "ssh_private_key_path": "/k"}
+			)
+		self.assertTrue(result["ok"])
+		self.assertEqual(result["matched_ssh_key_id"], "98765432")
+		fake_client.ensure_ssh_key.assert_called_once_with("atlas-controller", "ssh-ed25519 AAAA me")
+
+	def test_digitalocean_skips_ssh_resolution_without_key_path(self) -> None:
+		# No controller key path → no ensure_ssh_key call, matched id stays None.
+		fake_client = MagicMock()
+		fake_client.verify_credentials.return_value = {"email": "ops@acme.com"}
+		fake_client.list_ssh_keys.return_value = []
+		with patch("atlas.atlas.digitalocean.DigitalOceanClient", return_value=fake_client):
+			result = setup.wizard_discover("DigitalOcean", {"api_token": "dop_v1_x"})
+		self.assertIsNone(result["matched_ssh_key_id"])
+		fake_client.ensure_ssh_key.assert_not_called()
+
+	def test_scaleway_registers_controller_key_when_absent(self) -> None:
+		# The project has no matching key, so the probe registers the controller key
+		# into the picked project and returns the new IAM key id.
+		fake_client = MagicMock()
+		fake_client.verify_credentials.return_value = {"account_label": "Acme"}
+		fake_client.list_projects.return_value = [{"id": "proj-uuid", "name": "Acme"}]
+		fake_client.list_offers.return_value = [
+			{"id": "offer-uuid", "name": SCW_SIZE, "price_per_month": {"units": 40, "nanos": 0}}
+		]
+		fake_client.list_os.return_value = [{"id": "os-uuid", "name": "Ubuntu", "version": "24.04 LTS"}]
+		fake_client.list_ssh_keys.return_value = []  # no existing key to match
+		fake_client.register_ssh_key.return_value = {"id": "new-key-uuid"}
+		with (
+			patch("atlas.atlas.scaleway.ScalewayClient", return_value=fake_client),
+			patch.object(setup, "_controller_public_key", return_value="ssh-ed25519 AAAA me"),
+		):
+			result = setup.wizard_discover(
+				"Scaleway",
+				{
+					"secret_key": "scw",
+					"zone": "fr-par-2",
+					"project_id": "proj-uuid",
+					"ssh_private_key_path": "/k",
+				},
+			)
+		self.assertTrue(result["ok"])
+		self.assertEqual(result["matched_ssh_key_id"], "new-key-uuid")
+		fake_client.register_ssh_key.assert_called_once_with(
+			"atlas-controller", "ssh-ed25519 AAAA me", "proj-uuid"
+		)
+
+	def test_scaleway_reuses_matching_controller_key(self) -> None:
+		# An existing project key matches the controller key by identity — reuse it,
+		# don't register a duplicate.
+		fake_client = MagicMock()
+		fake_client.verify_credentials.return_value = {"account_label": "Acme"}
+		fake_client.list_projects.return_value = [{"id": "proj-uuid", "name": "Acme"}]
+		fake_client.list_offers.return_value = [
+			{"id": "offer-uuid", "name": SCW_SIZE, "price_per_month": {"units": 40, "nanos": 0}}
+		]
+		fake_client.list_os.return_value = [{"id": "os-uuid", "name": "Ubuntu", "version": "24.04 LTS"}]
+		fake_client.list_ssh_keys.return_value = [
+			{"id": "existing-uuid", "name": "laptop", "public_key": "ssh-ed25519 AAAA me laptop@host"}
+		]
+		with (
+			patch("atlas.atlas.scaleway.ScalewayClient", return_value=fake_client),
+			patch.object(setup, "_controller_public_key", return_value="ssh-ed25519 AAAA me"),
+		):
+			result = setup.wizard_discover(
+				"Scaleway",
+				{
+					"secret_key": "scw",
+					"zone": "fr-par-2",
+					"project_id": "proj-uuid",
+					"ssh_private_key_path": "/k",
+				},
+			)
+		self.assertEqual(result["matched_ssh_key_id"], "existing-uuid")
+		fake_client.register_ssh_key.assert_not_called()
 
 	def test_scaleway_without_secret_is_not_ok(self) -> None:
 		result = setup.wizard_discover("Scaleway", {"zone": "fr-par-2"})
@@ -385,6 +541,76 @@ class TestWizardDiscover(IntegrationTestCase):
 		result = setup.wizard_discover("Self-Managed", {})
 		self.assertTrue(result["ok"])
 		self.assertEqual(result["sizes"], [])
+
+	def test_fake_has_empty_catalog(self) -> None:
+		# Fake has no remote catalog to probe — like Self-Managed, the wizard discover
+		# returns an ok-but-empty result (its catalog is seeded by the provider stage).
+		result = setup.wizard_discover("Fake", {})
+		self.assertTrue(result["ok"])
+		self.assertEqual(result["sizes"], [])
+
+
+class TestFakeProviderStage(IntegrationTestCase):
+	"""The Fake provider has no vendor Single, but its setup stage must seed the
+	synthetic Provider Size / Provider Image catalog so the Provision dialog has data."""
+
+	def setUp(self) -> None:
+		if not os.path.isfile(_KEY_PATH):
+			with open(_KEY_PATH, "w") as handle:
+				handle.write("-----BEGIN OPENSSH PRIVATE KEY-----\nfake\n-----END OPENSSH PRIVATE KEY-----\n")
+			os.chmod(_KEY_PATH, 0o600)
+		self.addCleanup(_cleanup_fake_catalog)
+		self.addCleanup(_restore_singles, _snapshot_singles())
+
+	def test_run_fake_seeds_catalog(self) -> None:
+		setup.run(
+			{
+				"provider": {
+					"provider_type": "Fake",
+					"region": "blr1",
+					"ssh_private_key_path": _KEY_PATH,
+					"ssh_public_key": "ssh-ed25519 AAAA test",
+				}
+			}
+		)
+		self.assertEqual(frappe.db.get_single_value("Atlas Settings", "provider_type"), "Fake")
+		# The synthetic Fake catalog landed (so the Provision dialog has Sizes/Images).
+		self.assertTrue(frappe.db.exists("Provider Size", "Fake/fake-2vcpu-4gb"))
+		self.assertTrue(frappe.db.exists("Provider Image", "Fake/ubuntu-24.04"))
+
+	def test_wizard_stage_fake_seeds_catalog(self) -> None:
+		args = {"provider_type": "Fake", "region": "blr1", "ssh_private_key_path": _KEY_PATH}
+		for stage in setup.get_setup_stages(args):
+			for task in stage["tasks"]:
+				task["fn"](task["args"])
+		self.assertTrue(frappe.db.exists("Provider Size", "Fake/fake-1vcpu-1gb"))
+		self.assertTrue(frappe.db.exists("Provider Image", "Fake/debian-12"))
+
+	def test_on_complete_enqueues_demo_when_fake_and_checked(self) -> None:
+		# tests.local runs in developer_mode, which the Fake demo requires.
+		args = {"provider_type": "Fake", "fake_generate_demo_data": "1"}
+		with patch.dict(frappe.conf, {"developer_mode": 1}), patch("frappe.enqueue") as enqueue:
+			setup.on_complete(args)
+		enqueue.assert_called_once()
+		self.assertEqual(enqueue.call_args.args[0], "atlas.atlas.demo.run")
+
+	def test_on_complete_skips_demo_when_unchecked(self) -> None:
+		args = {"provider_type": "Fake", "fake_generate_demo_data": "0"}
+		with patch.dict(frappe.conf, {"developer_mode": 1}), patch("frappe.enqueue") as enqueue:
+			setup.on_complete(args)
+		enqueue.assert_not_called()
+
+	def test_on_complete_skips_demo_for_non_fake(self) -> None:
+		args = {"provider_type": "DigitalOcean", "fake_generate_demo_data": "1"}
+		with patch.dict(frappe.conf, {"developer_mode": 1}), patch("frappe.enqueue") as enqueue:
+			setup.on_complete(args)
+		enqueue.assert_not_called()
+
+	def test_on_complete_skips_demo_without_developer_mode(self) -> None:
+		args = {"provider_type": "Fake", "fake_generate_demo_data": "1"}
+		with patch.dict(frappe.conf, {"developer_mode": 0}), patch("frappe.enqueue") as enqueue:
+			setup.on_complete(args)
+		enqueue.assert_not_called()
 
 
 # --- shared cleanup / single snapshot --------------------------------------
@@ -399,15 +625,13 @@ _TOUCHED_SINGLES = (
 	("Atlas Settings", "tls_provider_type"),
 	("DigitalOcean Settings", "region"),
 	("DigitalOcean Settings", "ssh_key_id"),
-	("DigitalOcean Settings", "default_size"),
-	("DigitalOcean Settings", "default_image"),
 	("Scaleway Settings", "zone"),
 	("Scaleway Settings", "project_id"),
 	("Scaleway Settings", "billing"),
-	("Scaleway Settings", "default_size"),
-	("Scaleway Settings", "default_image"),
 	("Route53 Settings", "access_key_id"),
 	("Route53 Settings", "region"),
+	("PowerDNS Settings", "api_url"),
+	("PowerDNS Settings", "server_id"),
 	("Lets Encrypt Settings", "account_email"),
 	("Lets Encrypt Settings", "acme_directory_url"),
 )
@@ -420,6 +644,20 @@ def _snapshot_singles() -> dict:
 def _restore_singles(snapshot: dict) -> None:
 	for (dt, field), value in snapshot.items():
 		frappe.db.set_single_value(dt, field, value, update_modified=False)
+	frappe.db.commit()
+
+
+def _cleanup_fake_catalog() -> None:
+	from atlas.atlas.providers.fake import FAKE_IMAGES, FAKE_SIZES
+
+	for size in FAKE_SIZES:
+		name = f"Fake/{size.slug}"
+		if frappe.db.exists("Provider Size", name):
+			frappe.delete_doc("Provider Size", name, force=True, ignore_permissions=True)
+	for image in FAKE_IMAGES:
+		name = f"Fake/{image.slug}"
+		if frappe.db.exists("Provider Image", name):
+			frappe.delete_doc("Provider Image", name, force=True, ignore_permissions=True)
 	frappe.db.commit()
 
 

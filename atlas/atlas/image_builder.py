@@ -22,7 +22,9 @@ from contextlib import ExitStack
 from pathlib import Path
 
 import frappe
+from frappe import _
 
+from atlas.atlas._ssh._quote import substitute
 from atlas.atlas._ssh.transport import forget_host, run_detached, run_scp, run_ssh, ssh_key_file
 from atlas.atlas.image_recipes import ImageRecipe
 from atlas.atlas.proxy import _record_guest_task, _remote_parent
@@ -34,6 +36,38 @@ from atlas.atlas.ssh import connection_for_guest
 # proven invariant. A recipe whose source tree has no bench.toml (proxy) renders
 # nothing — _render_bench_toml returns None and the verbatim upload stands.
 BENCH_TOML_NAME = "bench.toml"
+
+
+def default_build_base_image() -> str:
+	"""The image a scratch BUILD VM boots from: a plain base OS image, never a
+	golden this pipeline produced.
+
+	`Image Build` used to default its `base_image` to `placement.default_image()` —
+	the image a CUSTOMER's machine provisions from. Those are different questions,
+	and they only gave the same answer while `Atlas Settings.default_user_image` was
+	unset. Once an operator points the customer default at a promoted golden (which
+	is the whole point of promoting one), every new bake silently starts FROM that
+	golden: build.sh's install gate (`[ ! -x $BENCH_CLI_DIR/bench ]`) then sees pilot
+	already present and SKIPS the install, so the "fresh" image re-ships the old
+	pilot, the old Frappe clone and the old baked site — a bake that reports success
+	and changes nothing.
+
+	A base OS image is the one fetched from a URL (`rootfs_url`) and carrying no
+	`build_mode`; a promoted golden is a local LV with the bake mode stamped on it.
+	Fail loud when the choice is absent or ambiguous rather than guessing — same
+	taste as `placement.default_image()` (Taste 17)."""
+	base = frappe.get_all(
+		"Virtual Machine Image",
+		filters={"is_active": 1, "rootfs_url": ("!=", ""), "build_mode": ("in", ("", None))},
+		pluck="name",
+		limit=2,
+		ignore_permissions=True,
+	)
+	if not base:
+		frappe.throw(_("No base OS image is available to build from — register one first."))
+	if len(base) > 1:
+		frappe.throw(_("Several base OS images are active — pick the base image explicitly."))
+	return base[0]
 
 
 def _source_directory(recipe: ImageRecipe) -> Path:
@@ -58,6 +92,17 @@ def tree_uploads(recipe: ImageRecipe) -> list[tuple[Path, str]]:
 		if relative.parts[0] in recipe.exclude or "__pycache__" in relative.parts:
 			continue
 		uploads.append((entry, f"{recipe.remote_directory}/{relative.as_posix()}"))
+	# Fail loud if a declared entrypoint isn't in the tree. is_file() above silently
+	# skips a missing file, but the build/warm steps still invoke recipe.<entrypoint>
+	# by name — a stale app checkout (missing warm.sh) then dies deep in the guest with
+	# a cryptic "No such file or directory". Catch it here, at the source of truth.
+	staged = {remote for _, remote in uploads}
+	for entrypoint in (recipe.build_entrypoint, recipe.warm_entrypoint):
+		if entrypoint and f"{recipe.remote_directory}/{entrypoint}" not in staged:
+			frappe.throw(
+				f"Recipe {recipe.name} declares entrypoint {entrypoint!r} but it is not "
+				f"in source tree {source} (stale app checkout?)"
+			)
 	return uploads
 
 
@@ -139,6 +184,13 @@ def _build_env(recipe: ImageRecipe) -> dict[str, str]:
 	are env, not bench.toml: the ref is install.sh's checkout target and the ERPNext
 	branch is a `get-app --branch` arg, neither of which lives in bench.toml."""
 	env: dict[str, str] = {}
+	# Repo travels with the ref: build.sh pulls install.sh from
+	# `raw.githubusercontent.com/<repo>/<ref>/` and re-points the clone's origin at
+	# <repo> before checking <ref> out, so exporting a ref without its repo would
+	# resolve it against build.sh's committed default repo — a 404 (or, worse, a
+	# same-named ref on the wrong fork) whenever the two disagree.
+	if recipe.bench_cli_repo:
+		env["BENCH_CLI_REPO"] = recipe.bench_cli_repo
 	if recipe.bench_cli_ref:
 		env["BENCH_CLI_REF"] = recipe.bench_cli_ref
 	if recipe.erpnext_branch:
@@ -153,9 +205,12 @@ def _build_command(recipe: ImageRecipe) -> str:
 	setsid+nohup), so the version pins ride here — build.sh needs no new arg-parsing
 	beyond MODE, which it already has."""
 	env = _build_env(recipe)
-	prefix = "".join(f"export {k}={shlex.quote(v)} && " for k, v in env.items())
+	# Variable-length env exports — a loop, so quote each value directly (the {} form
+	# is for fixed templates). The entrypoint is a caller-fixed path; only the bake
+	# MODE is data, so it rides a {} hole.
+	prefix = "".join(substitute("export {}={} && ", (k, v)) for k, v in env.items())
 	entry = recipe.remote_entrypoint
-	return f"{prefix}chmod +x {entry} && {entry} {shlex.quote(recipe.effective_build_mode)}"
+	return prefix + substitute(f"chmod +x {entry} && {entry} {{}}", (recipe.effective_build_mode,))
 
 
 # How much streamed live output to keep on the Task row while it runs. A
@@ -298,6 +353,18 @@ def run_build(
 			on_task(task_name)
 	if code != 0:
 		frappe.throw(f"{recipe.title} build on {virtual_machine} failed (exit {code}): {stderr[-500:]}")
+
+
+def stage_recipe_tree(recipe: ImageRecipe, connection, key_path) -> None:
+	"""Re-stage the recipe's committed tree into the guest under `remote_directory`,
+	rendered bench.toml and all. run_build stages it once before the build, but the
+	tree lives under /tmp (tmpfs) — a bake that reboots the guest between build and a
+	later in-guest step (the fat-boot resize, then the warm entrypoint) loses it. The
+	warm path calls this to put warm.sh + its siblings back before invoking them; a
+	fresh stage is idempotent (scp overwrites) and cheap (the tree is small)."""
+	with ExitStack() as stack:
+		uploads = _uploads_with_rendered_toml(recipe, stack)
+		_stage_tree(connection, key_path, uploads)
 
 
 def _uploads_with_rendered_toml(recipe: ImageRecipe, stack: ExitStack) -> list[tuple[Path, str]]:

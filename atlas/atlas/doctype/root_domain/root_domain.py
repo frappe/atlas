@@ -24,7 +24,7 @@ class RootDomain(Document):
 	if TYPE_CHECKING:
 		from frappe.types import DF
 
-		dns_provider_type: DF.Literal["", "Route53", "Cloudflare"]
+		dns_provider_type: DF.Literal["", "Route53", "PowerDNS", "Cloudflare"]
 		domain: DF.Data
 		is_active: DF.Check
 		region: DF.Data | None

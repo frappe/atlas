@@ -1,0 +1,103 @@
+{
+ "actions": [],
+ "creation": "2026-07-14 00:00:00.000000",
+ "doctype": "DocType",
+ "editable_grid": 0,
+ "engine": "InnoDB",
+ "field_order": [
+  "section_break_bucket",
+  "bucket",
+  "region",
+  "endpoint_url",
+  "column_break_bucket",
+  "key_prefix",
+  "presign_expiry_seconds",
+  "section_break_credentials",
+  "access_key_id",
+  "secret_access_key"
+ ],
+ "fields": [
+  {
+   "fieldname": "section_break_bucket",
+   "fieldtype": "Section Break",
+   "label": "Bucket"
+  },
+  {
+   "description": "The S3 bucket that holds snapshot backups.",
+   "fieldname": "bucket",
+   "fieldtype": "Data",
+   "label": "Bucket",
+   "reqd": 1
+  },
+  {
+   "default": "us-east-1",
+   "description": "AWS region for SigV4 signing. us-east-1 is a safe default for a non-AWS endpoint.",
+   "fieldname": "region",
+   "fieldtype": "Data",
+   "label": "Region"
+  },
+  {
+   "description": "Leave blank for AWS S3. Set it for an S3-compatible store (MinIO, DigitalOcean Spaces), e.g. https://minio.example.com — path-style addressing is used automatically.",
+   "fieldname": "endpoint_url",
+   "fieldtype": "Data",
+   "label": "Endpoint URL"
+  },
+  {
+   "fieldname": "column_break_bucket",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "atlas/snapshots",
+   "description": "Key prefix under which each snapshot's objects are stored: <prefix>/<snapshot-name>/rootfs.img.zst, etc.",
+   "fieldname": "key_prefix",
+   "fieldtype": "Data",
+   "label": "Key Prefix"
+  },
+  {
+   "default": "3600",
+   "description": "How long a presigned upload/download URL stays valid. Long enough to move the largest object; the host holds no static credentials, only these time-limited URLs.",
+   "fieldname": "presign_expiry_seconds",
+   "fieldtype": "Int",
+   "label": "Presign Expiry (seconds)"
+  },
+  {
+   "fieldname": "section_break_credentials",
+   "fieldtype": "Section Break",
+   "label": "Credentials"
+  },
+  {
+   "description": "Access key id with s3:GetObject / s3:PutObject / s3:DeleteObject / s3:ListBucket on the bucket. Held on the controller only — never shipped to a host.",
+   "fieldname": "access_key_id",
+   "fieldtype": "Data",
+   "label": "Access Key ID",
+   "reqd": 1
+  },
+  {
+   "description": "The matching secret. Rotate by clearing via db.set_value, then re-saving.",
+   "fieldname": "secret_access_key",
+   "fieldtype": "Password",
+   "label": "Secret Access Key",
+   "reqd": 1
+  }
+ ],
+ "issingle": 1,
+ "links": [],
+ "modified": "2026-07-14 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Atlas",
+ "name": "S3 Settings",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "read": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}

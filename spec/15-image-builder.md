@@ -63,7 +63,9 @@ proxy's dev-only `test/` harness), a `finalize` callback, a `registers_as` Atlas
 Settings field, `is_proxy`, an optional `warm_entrypoint` (the in-guest script
 a **warm bake** runs before the paused capture — see *The warm bake* below; empty
 means the recipe only bakes cold), and — for the bench variants — the **per-version
-pins** (`frappe_branch`, `erpnext_branch`, `bench_cli_ref`, `python_version`), the
+pins** (`frappe_branch`, `erpnext_branch`, `python_version`, plus the
+`bench_cli_repo`/`bench_cli_ref` escape hatch, which every shipped recipe leaves at
+the unpinned default — pilot is installed the way its README documents), the
 bake `build_mode` (`site`/`admin`), and the `promote_image_name` (the base-image
 name a promote defaults to; see *Versioned bench variants* below). The recipes that
 ship:
@@ -71,8 +73,8 @@ ship:
 | Recipe | Tree | Build VM | Snapshot | Frappe / ERPNext / Python | Special |
 | ------ | ---- | -------- | -------- | ------------------------- | ------- |
 | `bench-v16` | `bench/` | 2 vCPU / 2 GB / 28 GB | `Golden bench v16` | `version-16` / `version-16` / `3.14` | site mode; `registers_as = default_bench_snapshot`, `warm_entrypoint = warm.sh` |
-| `bench-v15` | `bench/` | 2 vCPU / 2 GB / 28 GB | `Golden bench v15` | `version-15` / `version-15` / `3.11` | site mode, cold-only |
-| `bench-nightly` | `bench/` | 2 vCPU / 2 GB / 28 GB | `Golden bench nightly (develop)` | `develop` / `develop` / `3.14` | site mode, cold-only, records resolved SHAs |
+| `bench-v15` | `bench/` | 2 vCPU / 2 GB / 28 GB | `Golden bench v15` | `version-15` / `version-15` / `3.11` | site mode; `warm_entrypoint = warm.sh` (warm but does not register) |
+| `bench-nightly` | `bench/` | 2 vCPU / 2 GB / 28 GB | `Golden bench nightly (develop)` | `develop` / `develop` / `3.14` | site mode; `warm_entrypoint = warm.sh` (warm but does not register); records resolved SHAs |
 | `bench-v16-admin` | `bench/` | 2 vCPU / 2 GB / 28 GB | `Golden bench v16 (admin)` | `version-16` / `version-16` / `3.14` | `build_mode = admin`, cold-only |
 | `bench-v15-admin` | `bench/` | 2 vCPU / 2 GB / 28 GB | `Golden bench v15 (admin)` | `version-15` / `version-15` / `3.11` | `build_mode = admin`, cold-only |
 | `bench-nightly-admin` | `bench/` | 2 vCPU / 2 GB / 28 GB | `Golden bench nightly admin (develop)` | `develop` / `develop` / `3.14` | `build_mode = admin`, cold-only |
@@ -102,8 +104,9 @@ is a callback because the proxy's post-build step (write `REGION_FILE` with
 is genuinely code; the bench recipes have `finalize = None`. `registers_as` lets a
 successful **v16** bake auto-set `Atlas Settings.default_bench_snapshot` (the field
 self-serve already reads); only v16 registers (one warm self-serve golden per
-server) — v15/nightly are cold customer goldens that promote to a base image but
-don't replace the self-serve default. Proxy snapshots feed a fleet, not a Single, so
+server). All three site variants are warm-clonable (`warm_entrypoint = warm.sh`), but
+v15/nightly are warm customer goldens that promote to a base image without replacing
+the self-serve default. Proxy snapshots feed a fleet, not a Single, so
 they have no `registers_as`.
 
 ### Versioned bench variants — one tree, three versions, two modes
@@ -124,20 +127,26 @@ the controller injects the version two ways:
   for the rendered temp file (via an `ExitStack` that unlinks it after staging,
   success or throw), so `build.sh` still copies its sibling `bench.toml` verbatim —
   the proven recipe is unchanged.
-- **`bench-cli` ref + ERPNext branch ride the build command's env.** Neither lives
-  in `bench.toml` (the cli ref is `install.sh`'s checkout target; the ERPNext branch
-  is a `get-app --branch` arg), so `_build_command(recipe)` prefixes the detached
-  build with `export BENCH_CLI_REF=… ERPNEXT_BRANCH=… && … build.sh <mode>`.
-  `build.sh` reads each as `${VAR:-<default>}`, keeping a direct run reproducible at
-  v16. `bench-cli` is the build *tool*, not the framework — it reads the branch +
-  Python from `bench.toml` and natively knows `version-15`/`version-16`/`develop`, so
-  **one pinned cli ref bakes all three** variants (`uv venv --python <X>` fetches the
-  interpreter, so the host needn't preinstall 3.11 for v15).
+- **The pilot repo + ERPNext branch ride the build command's env.** Neither lives in
+  `bench.toml` (the repo is where `install.sh` is fetched from; the ERPNext branch is
+  a `get-app --branch` arg), so `_build_command(recipe)` prefixes the detached build
+  with `export BENCH_CLI_REPO=… ERPNEXT_BRANCH=… && … build.sh <mode>`. `build.sh`
+  reads each as `${VAR:-<default>}`, keeping a direct run at v16. `BENCH_CLI_REF` rides
+  the same prefix but is exported **only when the recipe sets one**, and no shipped
+  recipe does: pilot is installed unpinned, the way its README documents
+  ([08-images.md](08-images.md)), so `build.sh` takes whatever release install.sh
+  delivers. `bench-cli` is the build *tool*, not the framework — it reads the
+  branch + Python from `bench.toml` and natively knows
+  `version-15`/`version-16`/`develop`, so **one pilot install bakes all three**
+  variants (`uv venv --python <X>` fetches the interpreter, so the host needn't
+  preinstall 3.11 for v15).
 
-The nightly variant tracks moving `develop`, so `build.sh` stamps the resolved
-`frappe`/`erpnext`/`bench-cli` commit SHAs on `ATLAS_BUILD_*=` lines; the controller
-harvests them from the build Task into `Image Build.build_inputs` (JSON), so even a
-nightly image is traceable to its real inputs.
+`build.sh` stamps the resolved `frappe`/`erpnext` commit SHAs **and the pilot version
+it was actually delivered** on `ATLAS_BUILD_*=` lines; the controller harvests them
+from the build Task into `Image Build.build_inputs` (JSON). That record is what
+replaces the pilot pin (it is not pinnable in advance — see 08-images.md), and it is
+also what makes the nightly variant, which tracks moving `develop`, traceable to its
+real inputs.
 
 **Release gate:** v15 + Python 3.11 compatibility is unproven until a real bake (a
 host fact, deferred to the e2e ride-along; the unit suite covers the rendering +
@@ -193,9 +202,19 @@ in-place edit (the same shape as `Site` / `Virtual Machine`).
 ### Lifecycle
 
 1. **`before_insert`** resolves the recipe, copies its `title`, defaults
-   `base_image` from `placement.default_image()`, and starts `Draft`. The build
-   VM is created in the background job, not here — provisioning SSHes and must
-   not block the insert.
+   `base_image` from `image_builder.default_build_base_image()`, and starts
+   `Draft`. The build VM is created in the background job, not here —
+   provisioning SSHes and must not block the insert.
+
+   That default is the plain **base OS** image — the active `Virtual Machine
+   Image` fetched from a `rootfs_url` and carrying no `build_mode` — *not* the
+   customer-facing `placement.default_image()`. Those are different questions and
+   agree only while `Atlas Settings.default_user_image` is unset; point the
+   customer default at a promoted golden (the reason to promote one) and every
+   later bake starts FROM that golden, whereupon `build.sh`'s install gate sees
+   pilot already present and **skips the install** — the "fresh" image silently
+   re-ships the old pilot, the old Frappe clone and the old baked site. Absent or
+   ambiguous fails loud rather than guessing.
 2. **`after_insert`** enqueues `run` on `queue="long"` (it SSHes and waits
    ~10–20 min — the same queue `Site.auto_provision` and image-sync use). No-op if
    not `Draft`.
@@ -360,14 +379,12 @@ this layer just exposes the button.
   `bench-nightly`) when the recipe sets one, else `<recipe>-<build name>`. Both
   entry points funnel through the one snapshot method, so the warm-reject and every
   guard (not-Available, duplicate/invalid name, missing source kernel) live once.
-- **The series name is the load-bearing link to Central.** Central's
-  `upsert_central_images` links a `Central Image` to a `Virtual Machine Image` of
-  the **exact same name** (name-match, [16-central.md](./16-central.md)). Promoting a
-  versioned bench golden to `bench-v15` / `bench-v16` / `bench-nightly` and running
-  **Fetch Images** flips the matching `Central Image.bake_status` to **Baked** and
-  links `local_image`; customers then pick the version through the ordinary VM
-  `image` field. A name mismatch leaves the `Central Image` orphaned at `Expected`,
-  so the promote defaulting to the series name is what closes the loop.
+- **The series name is how a version is selected.** Promoting a versioned bench
+  golden to `bench-v15` / `bench-v16` / `bench-nightly` makes a `Virtual Machine
+  Image` of that exact name; Central then picks the version per VM through the
+  ordinary `image` field on `create_vm` ([16-central.md](./16-central.md)). The
+  promote defaulting to the series name is what makes the right image available
+  under the name Central asks for.
 - A **warm** bake's snapshot cannot be promoted (its value is the frozen memory
   pair a cold-booting base image discards); the button surfaces the same clean
   refusal from the snapshot method. Promote a cold bake; clone the warm one. (The

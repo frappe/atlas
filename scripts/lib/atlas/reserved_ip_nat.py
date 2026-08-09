@@ -43,7 +43,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from atlas._run import run, run_ok
+from atlas._run import _substitute, run, run_ok
 
 TABLE = ("inet", "atlas")
 PREROUTING = "prerouting"
@@ -86,67 +86,61 @@ def discover_reserved_ip_anchor() -> Anchor | None:
 	IP itself, no anchor — so metadata is absent and the caller falls back to the
 	routed path (`apply_routed_reserved_ip_nat`). Returning None (not raising) is
 	what lets the one `vm-reserved-ip` script serve both delivery models."""
-	if not run_ok("curl", "-s", "--max-time", "3", "-o", "/dev/null", f"{_METADATA}/address"):
+	if not run_ok("curl -s --max-time 3 -o /dev/null {}", f"{_METADATA}/address"):
 		return None
-	address = run("curl", "-s", "--max-time", "5", f"{_METADATA}/address", check=True).strip()
-	gateway = run("curl", "-s", "--max-time", "5", f"{_METADATA}/gateway", check=True).strip()
+	address = run("curl -s --max-time 5 {}", f"{_METADATA}/address", check=True).strip()
+	gateway = run("curl -s --max-time 5 {}", f"{_METADATA}/gateway", check=True).strip()
 	if not address or not gateway:
 		return None
 	return Anchor(address=address, gateway=gateway)
 
 
-def prerouting_chain_argv() -> list[str]:
+def prerouting_chain_command() -> str:
 	"""`nft add chain` for the dstnat prerouting chain (created on demand — the
 	scaffold only makes `forward` + the srcnat `postrouting`; inbound DNAT is the
-	first thing that needs a prerouting nat hook)."""
-	return [
-		"add",
-		"chain",
-		"inet",
-		"atlas",
-		PREROUTING,
-		"{ type nat hook prerouting priority dstnat; policy accept; }",
-	]
+	first thing that needs a prerouting nat hook). The brace clause goes through a
+	`{}` hole so it reaches nft as ONE argv token (Trap 2)."""
+	return _substitute(
+		f"add chain inet atlas {PREROUTING} {{}}",
+		("{ type nat hook prerouting priority dstnat; policy accept; }",),
+	)
 
 
-def dnat_rule_argv(anchor_ipv4: str, guest_ipv4: str) -> list[str]:
+def dnat_rule_command(anchor_ipv4: str, guest_ipv4: str) -> str:
 	"""prerouting DNAT: rewrite the ANCHOR IP (the destination DO actually
 	delivers a reserved-IP packet to) to the guest's private /30 address, so
 	routing then carries it across the veth into the namespace and out the tap. No
 	input-interface match — DO delivers to the anchor on eth0 and we don't pin the
 	iif."""
-	return [
-		"add", "rule", "inet", "atlas", PREROUTING,
-		"ip", "daddr", anchor_ipv4,
-		"dnat", "to", guest_ipv4,
-	]  # fmt: skip
+	return _substitute(
+		f"add rule inet atlas {PREROUTING} ip daddr {{}} dnat to {{}}",
+		(anchor_ipv4, guest_ipv4),
+	)
 
 
-def snat_rule_argv(anchor_ipv4: str, guest_ipv4: str) -> list[str]:
+def snat_rule_command(anchor_ipv4: str, guest_ipv4: str) -> str:
 	"""postrouting SNAT, **inserted at the chain head** so it is evaluated before
 	the host-wide 100.64.0.0/16 masquerade: this guest's egress is sourced as the
 	ANCHOR IP. Combined with the egress policy route (out the anchor gateway), DO's
 	edge then maps the anchor to the reserved IP, so the world sees the reserved
 	IP. Stamping the reserved IP directly here would NOT work — DO only maps
 	anchor-sourced, anchor-gateway-routed traffic."""
-	return [
-		"insert", "rule", "inet", "atlas", POSTROUTING,
-		"ip", "saddr", guest_ipv4,
-		"snat", "to", anchor_ipv4,
-	]  # fmt: skip
+	return _substitute(
+		f"insert rule inet atlas {POSTROUTING} ip saddr {{}} snat to {{}}",
+		(guest_ipv4, anchor_ipv4),
+	)
 
 
-def forward_rule_argv(guest_ipv4: str, host_veth: str) -> list[str]:
+def forward_rule_command(guest_ipv4: str, host_veth: str) -> str:
 	"""Accept the inbound (post-DNAT) flow toward the guest's private v4 out the
 	host-side veth. Today the forward chain is `policy accept`, so this is
 	belt-and-suspenders — but it keeps the inbound v4 path explicit and survives a
 	future per-VM firewall that flips the policy to drop (the §2.1 release gate:
 	a per-VM firewall must not silently drop this hop)."""
-	return [
-		"add", "rule", "inet", "atlas", FORWARD,
-		"ip", "daddr", guest_ipv4,
-		"oifname", host_veth, "accept",
-	]  # fmt: skip
+	return _substitute(
+		f"add rule inet atlas {FORWARD} ip daddr {{}} oifname {{}} accept",
+		(guest_ipv4, host_veth),
+	)
 
 
 def apply_reserved_ip_nat(anchor: Anchor, guest_ipv4: str, host_veth: str) -> None:
@@ -158,20 +152,20 @@ def apply_reserved_ip_nat(anchor: Anchor, guest_ipv4: str, host_veth: str) -> No
 	tracking: the match keys (the anchor IP and the guest /30 address) are unique
 	per guest, so the lines are an exact enough fingerprint and it survives nft
 	re-rendering the rule text."""
-	if not run_ok("sudo", "nft", "list", "chain", *TABLE, PREROUTING):
-		run("sudo", "nft", *prerouting_chain_argv())
+	if not run_ok("sudo nft list chain {} {} {}", *TABLE, PREROUTING):
+		run("sudo nft " + prerouting_chain_command())
 
-	prerouting = run("sudo", "nft", "list", "chain", *TABLE, PREROUTING)
+	prerouting = run("sudo nft list chain {} {} {}", *TABLE, PREROUTING)
 	if not _has_dnat(prerouting, anchor.address, guest_ipv4):
-		run("sudo", "nft", *dnat_rule_argv(anchor.address, guest_ipv4))
+		run("sudo nft " + dnat_rule_command(anchor.address, guest_ipv4))
 
-	postrouting = run("sudo", "nft", "list", "chain", *TABLE, POSTROUTING)
+	postrouting = run("sudo nft list chain {} {} {}", *TABLE, POSTROUTING)
 	if not _has_snat(postrouting, anchor.address, guest_ipv4):
-		run("sudo", "nft", *snat_rule_argv(anchor.address, guest_ipv4))
+		run("sudo nft " + snat_rule_command(anchor.address, guest_ipv4))
 
-	forward = run("sudo", "nft", "list", "chain", *TABLE, FORWARD)
+	forward = run("sudo nft list chain {} {} {}", *TABLE, FORWARD)
 	if not _has_forward(forward, guest_ipv4, host_veth):
-		run("sudo", "nft", *forward_rule_argv(guest_ipv4, host_veth))
+		run("sudo nft " + forward_rule_command(guest_ipv4, host_veth))
 
 	_apply_egress_route(anchor, guest_ipv4)
 
@@ -196,20 +190,20 @@ def apply_routed_reserved_ip_nat(reserved_ipv4: str, guest_ipv4: str, host_veth:
 	the guest /30 are unique per guest, so a re-run (cold boot, reconcile, double
 	attach) is a no-op. `remove_reserved_ip_nat` (keyed on the guest v4) tears both
 	models down — the routed path simply has no egress policy route to drop."""
-	if not run_ok("sudo", "nft", "list", "chain", *TABLE, PREROUTING):
-		run("sudo", "nft", *prerouting_chain_argv())
+	if not run_ok("sudo nft list chain {} {} {}", *TABLE, PREROUTING):
+		run("sudo nft " + prerouting_chain_command())
 
-	prerouting = run("sudo", "nft", "list", "chain", *TABLE, PREROUTING)
+	prerouting = run("sudo nft list chain {} {} {}", *TABLE, PREROUTING)
 	if not _has_dnat(prerouting, reserved_ipv4, guest_ipv4):
-		run("sudo", "nft", *dnat_rule_argv(reserved_ipv4, guest_ipv4))
+		run("sudo nft " + dnat_rule_command(reserved_ipv4, guest_ipv4))
 
-	postrouting = run("sudo", "nft", "list", "chain", *TABLE, POSTROUTING)
+	postrouting = run("sudo nft list chain {} {} {}", *TABLE, POSTROUTING)
 	if not _has_snat(postrouting, reserved_ipv4, guest_ipv4):
-		run("sudo", "nft", *snat_rule_argv(reserved_ipv4, guest_ipv4))
+		run("sudo nft " + snat_rule_command(reserved_ipv4, guest_ipv4))
 
-	forward = run("sudo", "nft", "list", "chain", *TABLE, FORWARD)
+	forward = run("sudo nft list chain {} {} {}", *TABLE, FORWARD)
 	if not _has_forward(forward, guest_ipv4, host_veth):
-		run("sudo", "nft", *forward_rule_argv(guest_ipv4, host_veth))
+		run("sudo nft " + forward_rule_command(guest_ipv4, host_veth))
 
 
 def remove_reserved_ip_nat(guest_ipv4: str) -> None:
@@ -222,9 +216,9 @@ def remove_reserved_ip_nat(guest_ipv4: str) -> None:
 	the prerouting chain itself are left in place — like the host-wide scaffold,
 	they cost nothing and serve the next attach."""
 	for chain in (PREROUTING, POSTROUTING, FORWARD):
-		listing = run("sudo", "nft", "-a", "list", "chain", *TABLE, chain, check=False)
+		listing = run("sudo nft -a list chain {} {} {}", *TABLE, chain, check=False)
 		for handle in _handles_for(listing, guest_ipv4):
-			run("sudo", "nft", "delete", "rule", "inet", "atlas", chain, "handle", handle, check=False)
+			run("sudo nft delete rule inet atlas {} handle {}", chain, handle, check=False)
 	_remove_egress_route(guest_ipv4)
 
 
@@ -237,24 +231,21 @@ def _apply_egress_route(anchor: Anchor, guest_ipv4: str) -> None:
 	# is idempotent. The anchor /16 is on-link on the uplink, so the gateway is
 	# reachable; scope link is not needed for the default route via a gateway.
 	run(
-		"sudo", "ip", "-4", "route", "replace",
-		"default", "via", anchor.gateway, "dev", uplink, "table", EGRESS_TABLE_ID,
+		"sudo ip -4 route replace default via {} dev {} table {}",
+		anchor.gateway, uplink, EGRESS_TABLE_ID,
 	)  # fmt: skip
 	# The rule: packets sourced from the guest's private v4 consult that table
 	# BEFORE main. Add only if absent (ip rule has no `replace`).
-	rules = run("sudo", "ip", "-4", "rule", "show")
+	rules = run("sudo ip -4 rule show")
 	if f"from {guest_ipv4} " not in rules and f"from {guest_ipv4}\t" not in rules:
-		run(
-			"sudo", "ip", "-4", "rule", "add",
-			"from", guest_ipv4, "lookup", EGRESS_TABLE_ID,
-		)  # fmt: skip
+		run("sudo ip -4 rule add from {} lookup {}", guest_ipv4, EGRESS_TABLE_ID)
 
 
 def _remove_egress_route(guest_ipv4: str) -> None:
 	"""Drop the policy rule for this guest (best-effort). The table's default route
 	is left — it is shared scaffolding keyed only by the rule, harmless when no
 	rule points at it, and re-`replace`d on the next attach."""
-	run("sudo", "ip", "-4", "rule", "del", "from", guest_ipv4, "lookup", EGRESS_TABLE_ID, check=False)
+	run("sudo ip -4 rule del from {} lookup {}", guest_ipv4, EGRESS_TABLE_ID, check=False)
 
 
 def _uplink_device() -> str:

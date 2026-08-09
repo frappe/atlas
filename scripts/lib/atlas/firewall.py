@@ -37,7 +37,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
-from atlas._run import run, run_ok
+from atlas._run import _substitute, run, run_ok
 from atlas.network_env import NetworkEnv, default_route_device
 
 TABLE = ("inet", "atlas")
@@ -101,41 +101,40 @@ class FirewallConfig:
 		return f"VIRTUAL_MACHINE_IPV6={self.virtual_machine_ipv6}\nRULES={rules}\n"
 
 
-def ensure_chain_argv() -> str:
-	"""The single-string `add chain` form (matches vm-network-up's forward-chain
-	creation). Idempotency is the caller's `run_ok` guard, as elsewhere."""
-	return (
-		f"add chain inet atlas {PUBLIC_FILTER} "
-		f"{{ type filter hook forward priority {PUBLIC_FILTER_PRIORITY}; policy accept; }}"
+def ensure_chain_command() -> str:
+	"""The rendered `add chain` command string. nft's brace clause must reach nft as
+	ONE argv token (Trap 2), so it goes through a `{}` hole — quoted — while the rest
+	is literal. Idempotency is the caller's `run_ok` guard, as elsewhere."""
+	clause = f"{{ type filter hook forward priority {PUBLIC_FILTER_PRIORITY}; policy accept; }}"
+	return _substitute(f"add chain inet atlas {PUBLIC_FILTER} {{}}", (clause,))
+
+
+def established_rule_command(uplink: str, virtual_machine_ipv6: str) -> str:
+	"""Accept replies to connections the VM itself opened — they arrive from the
+	uplink destined to the VM but are not new public ingress. Must precede the drop.
+	Returns a rendered command string (uplink/v6 quoted as single tokens)."""
+	return _substitute(
+		f"add rule inet atlas {PUBLIC_FILTER} iifname {{}} ip6 daddr {{}} "
+		f"ct state established,related accept",
+		(uplink, virtual_machine_ipv6),
 	)
 
 
-def established_rule_argv(uplink: str, virtual_machine_ipv6: str) -> list[str]:
-	"""Accept replies to connections the VM itself opened — they arrive from the
-	uplink destined to the VM but are not new public ingress. Must precede the drop."""
-	return [
-		"add", "rule", "inet", "atlas", PUBLIC_FILTER,
-		"iifname", uplink, "ip6", "daddr", virtual_machine_ipv6,
-		"ct", "state", "established,related", "accept",
-	]  # fmt: skip
-
-
-def port_rule_argv(uplink: str, virtual_machine_ipv6: str, rule: Rule) -> list[str]:
+def port_rule_command(uplink: str, virtual_machine_ipv6: str, rule: Rule) -> str:
 	"""Accept new public ingress to one allowed protocol/port on the VM."""
-	return [
-		"add", "rule", "inet", "atlas", PUBLIC_FILTER,
-		"iifname", uplink, "ip6", "daddr", virtual_machine_ipv6,
-		rule.protocol, "dport", str(rule.port), "accept",
-	]  # fmt: skip
+	return _substitute(
+		f"add rule inet atlas {PUBLIC_FILTER} iifname {{}} ip6 daddr {{}} {{}} dport {{}} accept",
+		(uplink, virtual_machine_ipv6, rule.protocol, rule.port),
+	)
 
 
-def drop_rule_argv(uplink: str, virtual_machine_ipv6: str) -> list[str]:
+def drop_rule_command(uplink: str, virtual_machine_ipv6: str) -> str:
 	"""Drop everything else arriving from the uplink for this VM — the closing rule
 	of the VM's block, so any public port not explicitly allowed is unreachable."""
-	return [
-		"add", "rule", "inet", "atlas", PUBLIC_FILTER,
-		"iifname", uplink, "ip6", "daddr", virtual_machine_ipv6, "drop",
-	]  # fmt: skip
+	return _substitute(
+		f"add rule inet atlas {PUBLIC_FILTER} iifname {{}} ip6 daddr {{}} drop",
+		(uplink, virtual_machine_ipv6),
+	)
 
 
 def apply_firewall(config: FirewallConfig) -> None:
@@ -145,13 +144,13 @@ def apply_firewall(config: FirewallConfig) -> None:
 	per allowed rule, drop. Re-running (cold boot, edit, retry) converges to the same
 	block — the self-healing contract shared with apply_tunnel / reserved_ip_nat."""
 	uplink = default_route_device("-6")
-	if not run_ok("sudo", "nft", "list", "chain", *TABLE, PUBLIC_FILTER):
-		run("sudo", "nft", ensure_chain_argv())
+	if not run_ok("sudo nft list chain {} {} {}", *TABLE, PUBLIC_FILTER):
+		run("sudo nft " + ensure_chain_command())
 	_clear_vm_rules(config.virtual_machine_ipv6)
-	run("sudo", "nft", *established_rule_argv(uplink, config.virtual_machine_ipv6))
+	run("sudo nft " + established_rule_command(uplink, config.virtual_machine_ipv6))
 	for rule in config.rules:
-		run("sudo", "nft", *port_rule_argv(uplink, config.virtual_machine_ipv6, rule))
-	run("sudo", "nft", *drop_rule_argv(uplink, config.virtual_machine_ipv6))
+		run("sudo nft " + port_rule_command(uplink, config.virtual_machine_ipv6, rule))
+	run("sudo nft " + drop_rule_command(uplink, config.virtual_machine_ipv6))
 
 
 def remove_firewall(virtual_machine_ipv6: str) -> None:
@@ -159,7 +158,7 @@ def remove_firewall(virtual_machine_ipv6: str) -> None:
 	accept takes over again). Best-effort and idempotent: a missing chain or absent
 	block is not an error — a detach may run after the VM is already gone, symmetric
 	with vm-network-down.py."""
-	if not run_ok("sudo", "nft", "list", "chain", *TABLE, PUBLIC_FILTER):
+	if not run_ok("sudo nft list chain {} {} {}", *TABLE, PUBLIC_FILTER):
 		return
 	_clear_vm_rules(virtual_machine_ipv6)
 
@@ -181,9 +180,9 @@ def _clear_vm_rules(virtual_machine_ipv6: str) -> None:
 	"""Delete every public_filter rule for this VM by handle. The chain is dedicated
 	to public filtering and every rule is daddr-scoped to one VM, so the VM's address
 	is an exact discriminator — the handle-scrape pattern from wireguard/reserved_ip."""
-	listing = run("sudo", "nft", "-a", "list", "chain", *TABLE, PUBLIC_FILTER, check=False)
+	listing = run("sudo nft -a list chain {} {} {}", *TABLE, PUBLIC_FILTER, check=False)
 	for handle in _handles_for(listing, virtual_machine_ipv6):
-		run("sudo", "nft", "delete", "rule", "inet", "atlas", PUBLIC_FILTER, "handle", handle, check=False)
+		run("sudo nft delete rule inet atlas {} handle {}", PUBLIC_FILTER, handle, check=False)
 
 
 def _handles_for(listing: str, virtual_machine_ipv6: str):

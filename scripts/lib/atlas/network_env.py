@@ -126,11 +126,10 @@ def default_route_device(family: str = "", *, tolerate_missing: bool = False) ->
 	`tolerate_missing=True` is the down-path form (the shell's trailing
 	`2>/dev/null || true`): on any failure or no default route, return "" instead
 	of raising, so teardown proceeds even when the route is already gone."""
-	argv = ["ip", "-j"]
-	if family:
-		argv.append(family)
-	argv += ["route", "show", "default"]
-	output = run(*argv, check=not tolerate_missing, quiet=tolerate_missing)
+	# `family` is a fixed flag ("-6"/"-4"/""), not data, so it inlines into the
+	# template; a missing family collapses the double space harmlessly.
+	command = f"ip -j {family} route show default"
+	output = run(command, check=not tolerate_missing, quiet=tolerate_missing)
 	if not output.strip():
 		return ""
 	routes = json.loads(output)

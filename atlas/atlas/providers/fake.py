@@ -61,6 +61,35 @@ FAKE_IMAGES: tuple[ImageInfo, ...] = (
 DEFAULT_FAKE_SIZE = f"{FAKE_PROVIDER_TYPE}/fake-2vcpu-4gb"
 DEFAULT_FAKE_IMAGE = f"{FAKE_PROVIDER_TYPE}/ubuntu-24.04"
 
+# A Fake host's synthetic thin-pool size. A pretend box has no real disk, but
+# capacity accounting must still see a measured disk total for it (a Fake host is
+# always "measured" — see fake_host_totals). Generous so the disk axis is never
+# the dev bottleneck; scaled off RAM to stay proportionate across sizes.
+_FAKE_POOL_DISK_GB_PER_GB_RAM = 25
+
+
+def fake_host_totals(size: str | None) -> dict:
+	"""Synthetic host capacity totals for a Fake server, keyed off its size slug.
+
+	A Fake host reports the same three totals a real host's agent would, derived
+	from the Fake size catalog (`FAKE_SIZES`) so dev capacity math is always
+	*measured* — never the "unreported → sentinel" fallback a real host shows
+	before its agent lands. Unknown/blank slug falls back to the default size so a
+	Fake row is never uncatalogued. Disk is synthesized (a pretend box has none).
+	"""
+	slug = size.split("/", 1)[1] if size and "/" in size else size
+	info = next((s for s in FAKE_SIZES if s.slug == slug), None)
+	if info is None:
+		default_slug = DEFAULT_FAKE_SIZE.split("/", 1)[1]
+		info = next(s for s in FAKE_SIZES if s.slug == default_slug)
+	memory_mb = int(info.provider_metadata["memory_mb"])
+	return {
+		"vcpus_total": int(info.provider_metadata["vcpus"]),
+		"memory_megabytes_total": memory_mb,
+		"pool_disk_gigabytes_total": (memory_mb // 1024) * _FAKE_POOL_DISK_GB_PER_GB_RAM,
+	}
+
+
 # Canned "account inventory" for discover/import. The vendor hostnames stand in
 # for boxes the operator built outside Atlas; the resource ids use the same
 # `fake-<token>` shape provision() mints, so import's authoritative describe(id)

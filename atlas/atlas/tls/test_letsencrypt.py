@@ -27,6 +27,9 @@ class _StubDns(DnsProvider):
 	def certbot_authenticator(self) -> str:
 		return "route53"
 
+	def certbot_args(self, domain: str) -> list[str]:
+		return ["--dns-route53"]
+
 	def upsert_wildcard(self, domain: str, targets: WildcardTargets) -> list[str]:
 		return []
 
@@ -58,9 +61,10 @@ class TestLetsEncryptProvider(IntegrationTestCase):
 
 		# The DNS authenticator name reaches the script as a plain value.
 		_, kwargs = run.call_args
-		self.assertEqual(kwargs["script"], "issue-cert.py")
+		self.assertEqual(kwargs["script"], "issue-cert")
 		self.assertEqual(kwargs["variables"]["DOMAIN"], "blr1.frappe.dev")
 		self.assertEqual(kwargs["variables"]["DNS_AUTHENTICATOR"], "route53")
+		self.assertEqual(kwargs["variables"]["CERTBOT_ARG"], ["--dns-route53"])
 		# AWS creds travel through env, never argv.
 		self.assertEqual(kwargs["env"]["AWS_ACCESS_KEY_ID"], "AKIA")
 

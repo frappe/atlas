@@ -1,0 +1,33 @@
+# The pip-install manifest used ON A HOST. Server.bootstrap() uploads this to
+# /var/lib/atlas/bin/pyproject.toml, then bootstrap-server.py's ensure_atlas_env()
+# runs `uv pip install /var/lib/atlas/bin` into the Atlas venv — which materialises
+# the `atlas` console script. It is a sibling of scripts/pyproject.toml (the dev
+# manifest) and must stay in lockstep with it: same name, console entry, and
+# requires-python. The ONLY difference is the package root — the durable host tree
+# is flat (/var/lib/atlas/bin/atlas/*.py beside the entry scripts), so the wheel
+# package is "atlas", whereas the dev tree nests it under lib/ (packages =
+# ["lib/atlas"]). Keep deps empty unless a real one is needed (uv resolves it).
+[project]
+name = "atlas-scripts"
+version = "0.0.0"
+description = "Atlas host-side provisioning scripts and the `atlas` host CLI"
+requires-python = ">=3.14"
+# atlas-networkd signs every Membership/Ownership record with the origin host's
+# ed25519 key (spec/31 §19.3 defense-in-depth). The key is generated on first
+# boot alongside the wg keypair (Issue A close-out). `cryptography` is already
+# a direct Frappe dep on the controller; declaring it here makes the host
+# install self-contained (uv resolves it at install time). Keep these two
+# pyproject.toml files in lockstep (this and scripts/pyproject.toml).
+dependencies = ["cryptography>=42"]
+
+[project.scripts]
+atlas = "atlas._cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+# Package root is `atlas/` — sitting at /var/lib/atlas/bin/atlas/ on the host.
+packages = ["atlas"]
+exclude = ["atlas/test_*.py"]

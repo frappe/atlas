@@ -6,9 +6,10 @@ knowing anything about ssh option strings or tempfile lifetimes for keys.
 """
 
 import dataclasses
+import io
 import os
-import shlex
 import subprocess
+import tarfile
 import tempfile
 import time
 from collections.abc import Callable
@@ -16,6 +17,8 @@ from contextlib import contextmanager
 from pathlib import Path
 
 import frappe
+
+from atlas.atlas._ssh._quote import substitute
 
 KNOWN_HOSTS_PATH = Path("~/.atlas/known_hosts").expanduser()
 REMOTE_STAGING_DIRECTORY = "/tmp/atlas"
@@ -129,42 +132,126 @@ def wait_for_ssh(connection: Connection, timeout_seconds: int = 300, poll_second
 
 
 def upload_files(connection: Connection, files: list[tuple[str, str]]) -> None:
-	"""scp files to the server. `files` is (local_path, remote_path) pairs.
+	"""Upload files to the server. `files` is (local_path, remote_path) pairs.
 
-	Not recorded as a Task. The remote parent directory is created first via
-	a single SSH call so callers don't have to think about mkdir order.
+	Not recorded as a Task. All files ship in ONE tar-over-ssh stream instead of
+	one scp per file: a tar archive is built in-process (each member named by its
+	remote path) and piped to a single remote `tar -x` that unpacks it into place.
+	One SSH connection, one round trip — a 54-file sync that was ~70s of per-file
+	scp handshakes lands in a couple of seconds. Remote parent directories are
+	created by tar as it extracts, so no separate mkdir pass.
+
+	Paths are made archive-relative (leading `/` stripped) and extracted under `/`
+	via `tar -C /`, so each `remote_path` lands exactly where it was mapped
+	regardless of the local path it came from.
 	"""
 	if not files:
 		return
 
 	_ensure_known_hosts_directory()
+	print(
+		str(frappe.utils.nowtime()),
+		f"Uploading {len(files)} files to {connection.host} in one tar stream",
+	)
 	with ssh_key_file(connection.ssh_private_key) as key_path:
-		remote_dirs = sorted({os.path.dirname(remote) for _, remote in files if os.path.dirname(remote)})
-		if remote_dirs:
-			mkdir_command = "mkdir -p " + " ".join(shlex.quote(d) for d in remote_dirs)
-			run_ssh(connection, key_path, mkdir_command, timeout_seconds=60)
+		_upload_via_tar(connection, key_path, files)
 
+
+def _build_tar_archive(files: list[tuple[str, str]]) -> bytes:
+	"""Pack `files` into a GZIPPED tar archive in memory, each member stored under
+	its remote path made relative (leading `/` stripped) so a remote `tar -xz -C /`
+	drops it at the absolute destination. Built with the stdlib `tarfile` — not the
+	local `tar` binary — so the client side needs no GNU-only features (macOS ships
+	BSD tar, which lacks `--transform`); the archive layout is identical regardless
+	of the operator's OS.
+
+	Compression is the point, not just tidiness: over a high-latency link the raw
+	stdin stream is what dominates — a 490KB uncompressed tar of the durable scripts
+	took ~4-7s to push (even piping it to `cat >/dev/null` on the host took ~4s),
+	while gzip shrinks it ~3.7x (490KB -> ~135KB, Python source compresses hugely)
+	and the same push lands in ~1.5s. The bottleneck was bytes-on-the-wire, so fewer
+	bytes is the fix.
+
+	Ownership is normalized to root:root: the connection runs as root, and tar
+	extracting as root restores the archived uid/gid — so without this the files
+	would land owned by the operator's LOCAL uid (e.g. 501:staff on macOS) rather
+	than root, unlike the scp path this replaces."""
+
+	def _root_owned(info: tarfile.TarInfo) -> tarfile.TarInfo:
+		info.uid = info.gid = 0
+		info.uname = info.gname = "root"
+		return info
+
+	buffer = io.BytesIO()
+	with tarfile.open(fileobj=buffer, mode="w:gz") as archive:
 		for local, remote in files:
-			run_scp(connection, key_path, local, remote, timeout_seconds=300)
+			archive.add(local, arcname=remote.lstrip("/"), recursive=False, filter=_root_owned)
+	return buffer.getvalue()
+
+
+def _upload_via_tar(connection: Connection, key_path: str, files: list[tuple[str, str]]) -> None:
+	"""Stream `files` to the host as a single gzipped tar archive over one SSH
+	connection.
+
+	The archive is assembled + compressed locally with stdlib `tarfile` and piped to
+	one remote `tar -xz -C /`, which decompresses and unpacks each member to its
+	absolute destination, creating parent directories as it goes. One connection,
+	one round trip, and the compressed payload keeps the transfer (the real cost
+	over a remote link) small. `-m` skips restoring mtimes (irrelevant for code) to
+	avoid clock-skew warnings."""
+	archive = _build_tar_archive(files)
+	ssh_args = [
+		"ssh",
+		"-i",
+		key_path,
+		*SSH_OPTIONS,
+		f"{connection.user}@{connection.host}",
+		"tar -xz -m -f - -C /",
+	]
+	result = subprocess.run(
+		ssh_args,
+		input=archive,
+		capture_output=True,
+		timeout=600,
+		check=False,
+	)
+	if result.returncode != 0:
+		stderr = result.stderr.decode(errors="replace")
+		stdout = result.stdout.decode(errors="replace")
+		raise frappe.ValidationError(
+			f"tar upload to {connection.host} failed: {stderr[-500:] or stdout[-500:]}"
+		)
 
 
 def run_ssh(
 	connection: Connection,
 	key_path: str,
 	remote_command: str,
+	*params: object,
 	timeout_seconds: int,
 	stdin: str | None = None,
 	extra_options: list[str] | None = None,
 ) -> tuple[str, str, int]:
-	"""Run one remote command over SSH. `stdin`, if given, is piped to the remote
-	command's stdin — the path the proxy control plane uses to stream a map body
-	to a guest's `curl --unix-socket … --data-binary @-` (design §7.3), without
-	first staging a file on the guest.
+	"""Run one remote command over SSH. `remote_command` reads like a shell line; any
+	interpolated values go through `{}` placeholders that are auto-quoted (`substitute`)
+	so each becomes exactly one token to the REMOTE shell — the same author syntax as the
+	host `run()`. Unlike `run()`, the result is NOT shlex.split: `remote_command` is the
+	command line the remote sshd hands to the remote shell, so it must stay a STRING with
+	the quoted holes intact (Trap 3).
+
+	    run_ssh(conn, key, "test -f {}", path, timeout_seconds=60)
+
+	`timeout_seconds` is keyword-only (it follows `*params`). `stdin`, if given, is piped
+	to the remote command's stdin — the path the proxy control plane uses to stream a map
+	body to a guest's `curl --unix-socket … --data-binary @-` (design §7.3), without first
+	staging a file on the guest.
 
 	`extra_options` are appended after SSH_OPTIONS as additional `-o key=value`
 	flags. ssh honours the LAST occurrence of a repeated option, so a caller can
 	override a default (e.g. ConnectTimeout) for one step without mutating the
 	shared SSH_OPTIONS."""
+	if params:
+		remote_command = substitute(remote_command, params)
 	# StrictHostKeyChecking=accept-new must WRITE the new host key into
 	# ~/.atlas/known_hosts, so the parent dir has to exist — ensure it here so no
 	# caller can forget (cheap + idempotent; the guest control plane in proxy.py
@@ -230,11 +317,15 @@ def run_detached(
 	sink should never kill the build it is only observing."""
 	# Fresh markers, then launch under setsid+nohup. `sh -c` so the redirect + the
 	# exit-code stamp run in the detached shell; the trailing write captures the
-	# command's own exit status ($?).
-	launch = (
-		f"rm -f {shlex.quote(log_path)} {shlex.quote(done_path)}; "
-		f"setsid nohup sh -c {shlex.quote(f'{remote_command} > {log_path} 2>&1; echo $? > {done_path}')} "
-		f">/dev/null 2>&1 < /dev/null &"
+	# command's own exit status ($?). The detached shell body is a single {} param so
+	# it reaches the outer remote shell as ONE token; log/done paths inside it are
+	# quoted via substitute too, so a path with a space survives the inner shell.
+	# `remote_command` is concatenated (NOT templated) so a literal `{}` in it is never
+	# mistaken for a placeholder.
+	inner = remote_command + " > " + substitute("{} 2>&1; echo $? > {}", (log_path, done_path))
+	launch = substitute(
+		"rm -f {} {}; setsid nohup sh -c {} >/dev/null 2>&1 < /dev/null &",
+		(log_path, done_path, inner),
 	)
 	run_ssh(connection, key_path, launch, timeout_seconds=60)
 
@@ -249,7 +340,7 @@ def run_detached(
 		# Short poll: has the marker appeared? A dropped poll just retries next loop.
 		try:
 			done, _stderr, _code = run_ssh(
-				connection, key_path, f"cat {shlex.quote(done_path)} 2>/dev/null || true", timeout_seconds=30
+				connection, key_path, "cat {} 2>/dev/null || true", done_path, timeout_seconds=30
 			)
 		except Exception:
 			continue  # transient SSH failure — keep polling, the build runs on
@@ -258,7 +349,7 @@ def run_detached(
 		if done.strip():
 			exit_code = int(done.strip())
 			log, _e, _c = run_ssh(
-				connection, key_path, f"cat {shlex.quote(log_path)} 2>/dev/null || true", timeout_seconds=120
+				connection, key_path, "cat {} 2>/dev/null || true", log_path, timeout_seconds=120
 			)
 			if on_log is not None:
 				# Final drain: emit anything written between the last tail and the
@@ -285,7 +376,9 @@ def _stream_log_tail(
 		tail, _stderr, code = run_ssh(
 			connection,
 			key_path,
-			f"tail -c +{offset} {shlex.quote(log_path)} 2>/dev/null || true",
+			"tail -c +{} {} 2>/dev/null || true",
+			offset,
+			log_path,
 			timeout_seconds=30,
 		)
 	except Exception:

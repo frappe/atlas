@@ -25,10 +25,9 @@ Each guest operation is recorded as a Task row (`script` = `tcp-proxy-sync`, wit
 the proxy VM) for the operator's audit trail — the same row shape as `proxy-sync`.
 """
 
-import shlex
-
 import frappe
 
+from atlas.atlas._ssh._quote import substitute
 from atlas.atlas._ssh.transport import run_ssh, ssh_key_file
 from atlas.atlas.doctype.port_mapping.port_mapping import port_map
 from atlas.atlas.placement import atlas_region
@@ -104,4 +103,4 @@ def _stream_admin_command(verb: str) -> str:
 	from the SSH stdin stream by the client (it reads stdin for SYNC), so the
 	command itself carries no body — exactly as the http side streams the body to
 	`curl --data-binary @-` over stdin."""
-	return f"{shlex.quote(STREAM_ADMIN)} {shlex.quote(verb)}"
+	return substitute("{} {}", (STREAM_ADMIN, verb))

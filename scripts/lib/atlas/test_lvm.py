@@ -16,6 +16,7 @@ import unittest
 from dataclasses import dataclass
 from unittest import mock
 
+from atlas._run import _render
 from atlas._task import TaskInputs, TaskResult
 from atlas.lvm import (
 	DeviceNumber,
@@ -28,6 +29,15 @@ from atlas.lvm import (
 )
 
 UUID = "d4f7c1a2-0000-0000-0000-000000000000"
+
+
+def _executed(call) -> str:
+	"""Render a mocked `run`/`run_ok` call back into the command line it would have
+	executed: the new runner takes `(template, *params)` with `{}` auto-quoted holes,
+	so re-render via `_render` and space-join. This lets the existing substring/argv
+	assertions check the REAL command independent of how it is templated."""
+	template, *params = call.args
+	return " ".join(_render(template, tuple(params)))
 
 
 class TestLogicalVolumeNaming(unittest.TestCase):
@@ -370,7 +380,7 @@ class TestImportBaseImageFromLV(unittest.TestCase):
 			self.pool.import_base_image_from_lv(
 				self.pool.from_device("/dev/atlas/atlas-snap-abc"), "golden-v1", 28
 			)
-		calls = [" ".join(str(a) for a in c.args) for c in run.call_args_list]
+		calls = [_executed(c) for c in run.call_args_list]
 		# dd reads the SOURCE device, writes the new image device.
 		dd = [c for c in calls if "dd" in c]
 		self.assertTrue(any("if=/dev/atlas/atlas-snap-abc" in c for c in dd), dd)
@@ -397,7 +407,7 @@ class TestImportBaseImageFromLV(unittest.TestCase):
 					self.pool.from_device("/dev/atlas/atlas-snap-gone"), "golden-v1", 28
 				)
 		# No lvcreate happened: we bailed before touching the pool.
-		self.assertFalse(any("lvcreate" in " ".join(str(a) for a in c.args) for c in run.call_args_list))
+		self.assertFalse(any("lvcreate" in _executed(c) for c in run.call_args_list))
 
 
 class TestPoolBackingSelection(unittest.TestCase):
@@ -447,7 +457,7 @@ class TestPoolBackingSelection(unittest.TestCase):
 		with mock.patch("atlas.lvm.run") as run:
 			self.backing.register_device("/dev/sda")
 		run.assert_called_once()
-		self.assertEqual(run.call_args.args, ("sudo", "lvmdevices", "--adddev", "/dev/sda"))
+		self.assertEqual(_executed(run.call_args), "sudo lvmdevices --adddev /dev/sda")
 		self.assertFalse(run.call_args.kwargs.get("check", True))  # tolerant: || true
 
 	def test_register_device_skips_loopback(self):

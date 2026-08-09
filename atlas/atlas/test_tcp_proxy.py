@@ -61,6 +61,10 @@ class TestReconcile(IntegrationTestCase):
 		_ensure_test_server()
 		_ensure_test_image()
 		_purge()
+		# reconcile records the tcp-proxy-sync Task with {"region": atlas_region()},
+		# which reads Atlas Settings.region (no per-VM region field anymore). Pin
+		# it so atlas_region() doesn't throw "Set Atlas Settings.region".
+		frappe.db.set_single_value("Atlas Settings", "region", "blr1")
 
 	def _desired(self, mapping) -> str:
 		return tcp_proxy.canonical_json(

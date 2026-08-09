@@ -23,12 +23,36 @@
   "column_break_networking",
   "ipv6_prefix",
   "ipv6_virtual_machine_range",
+  "wireguard_public_key",
+   "signing_public_key",
+   "signing_private_key",
+   "mesh_address",
+   "boat_token",
+   "boat_token_expires_at",
   "section_break_host_info",
   "architecture",
   "column_break_host_info",
   "firecracker_version",
   "jailer_version",
   "kernel_version",
+  "cli_ready",
+  "section_break_capacity",
+  "vcpus_total",
+  "memory_megabytes_total",
+  "column_break_capacity",
+  "pool_disk_gigabytes_total",
+  "pool_data_percent",
+  "capacity_reported_at",
+  "placement_headroom_percent",
+  "section_break_boat_mirror",
+  "observed_boat_version",
+  "observed_epoch",
+  "observed_at",
+  "column_break_boat_mirror",
+  "mirror_status",
+  "observed_units_down",
+  "observed_quarantined",
+  "mirror_error",
   "section_break_metadata",
   "provider_metadata"
  ],
@@ -137,6 +161,48 @@
    "read_only": 1
   },
   {
+   "description": "This host's WireGuard public key on the wg-mesh private-plane fabric, derived from the Server UUID. Shown for legibility; the controller writes it to the host at bootstrap alongside the private key. The private key is never stored on the controller.",
+   "fieldname": "wireguard_public_key",
+   "fieldtype": "Data",
+   "label": "WireGuard Public Key",
+   "read_only": 1
+  },
+   {
+    "description": "This host's ed25519 public key (base64, 32 raw bytes) for ANCP envelope + record signatures (spec/31 §19.1, §19.3). Generated once at Server-validate time (NOT derived — derived signing keys have public seeds, defeating the purpose, §19.4); the public half is stored here so other hosts' `seed.json` can carry it as the §19.1/§19.3 trust anchor. The controller writes the matching private key to the host at bootstrap; it is never stored on the controller.",
+    "fieldname": "signing_public_key",
+    "fieldtype": "Data",
+    "label": "Signing Public Key",
+    "read_only": 1
+   },
+   {
+    "description": "The matching ed25519 private key (base64, 32 raw bytes) for the signing_public_key above. Persisted as an encrypted Password so the controller can push the signing key to existing hosts when re-syncing network state. Generated once at first Server-validate time alongside the public key; written to the host at bootstrap as /etc/atlas-networkd/signing-private-key.",
+    "fieldname": "signing_private_key",
+    "fieldtype": "Password",
+    "label": "Signing Private Key"
+   },
+   {
+   "description": "This host's own fdaa:0:0:<idx>::1 endpoint on the mesh bus (the infra /48), used for host-to-host transport (migration NBD, snapshot replication, image fan-out) inside the tunnel. Derived from the Server UUID; shown for legibility.",
+   "fieldname": "mesh_address",
+   "fieldtype": "Data",
+   "label": "Mesh Address",
+   "read_only": 1
+  },
+  {
+   "description": "The bearer token Atlas minted for this host's Boat tunnel listener (spec/33 §12). Short-lived and per-host: Atlas re-mints it before its hard expiry and installs it to /etc/boat/token on the host; the daemon serves the last valid one until then. Stored encrypted; never logged. Empty on an SSH-only or not-yet-bootstrapped host, where token_for_server falls back to atlas_boat_tokens in site config.",
+   "fieldname": "boat_token",
+   "fieldtype": "Password",
+   "label": "Boat Token",
+   "read_only": 1,
+   "no_copy": 1
+  },
+  {
+   "description": "When boat_token stops being valid if Atlas never re-mints it — the hard expiry the daemon enforces (fail-closed past it). Atlas re-mints well before this on every bootstrap/upgrade, so a reachable host never reaches it; it bounds how long a leaked-but-unrotated token stays good.",
+   "fieldname": "boat_token_expires_at",
+   "fieldtype": "Datetime",
+   "label": "Boat Token Expires At",
+   "read_only": 1
+  },
+  {
    "collapsible": 1,
    "fieldname": "section_break_host_info",
    "fieldtype": "Section Break",
@@ -168,6 +234,127 @@
    "fieldname": "kernel_version",
    "fieldtype": "Data",
    "label": "Kernel Version",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "description": "Set when bootstrap's sanity gate proved `atlas --help` dispatches. A 0 means the host was never bootstrapped (or predates the console-script cutover) — re-bootstrap it.",
+   "fieldname": "cli_ready",
+   "fieldtype": "Check",
+   "label": "CLI Ready",
+   "read_only": 1
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "section_break_capacity",
+   "fieldtype": "Section Break",
+   "label": "Capacity"
+  },
+  {
+   "description": "Physical vCPU count reported by the on-host agent (nproc). 0/unset means uncatalogued — the host reports unlimited capacity and placement vouches for it by its Active status.",
+   "fieldname": "vcpus_total",
+   "fieldtype": "Int",
+   "label": "vCPUs Total",
+   "read_only": 1
+  },
+  {
+   "description": "Physical host RAM in MB, reported by the agent (/proc/meminfo MemTotal). Hard fit — no oversubscription.",
+   "fieldname": "memory_megabytes_total",
+   "fieldtype": "Int",
+   "label": "Memory Total (MB)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_capacity",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Thin-pool size in GB the VMs draw from (agent vgs/lvs), not raw root disk. Hard fit — no oversubscription.",
+   "fieldname": "pool_disk_gigabytes_total",
+   "fieldtype": "Int",
+   "label": "Pool Disk Total (GB)",
+   "read_only": 1
+  },
+  {
+   "description": "Live thin-pool fullness (agent lvs -o data_percent). Advisory alert/block signal, not the placement predicate.",
+   "fieldname": "pool_data_percent",
+   "fieldtype": "Float",
+   "label": "Pool Data Percent",
+   "read_only": 1
+  },
+  {
+   "description": "When the agent last stamped the totals above. A host silent past a staleness threshold reports as uncatalogued (unlimited) rather than trusting stale totals.",
+   "fieldname": "capacity_reported_at",
+   "fieldtype": "Datetime",
+   "label": "Capacity Reported At",
+   "read_only": 1
+  },
+  {
+   "description": "Per-host arrival fill ceiling. > 0 overrides Atlas Settings.placement_headroom_percent for this host; 0/unset inherits the fleet default. (Frappe writes 0 for an untouched Percent field, so \"explicitly 0 while the fleet default is > 0\" is not expressible per-host — an accepted trade-off.) The reserve applies to placing NEW VMs only; resize spends it.",
+   "fieldname": "placement_headroom_percent",
+   "fieldtype": "Percent",
+   "label": "Placement Headroom Percent",
+   "non_negative": 1
+  },
+  {
+   "collapsible": 1,
+   "description": "Atlas's read-through mirror of what this host's Boat observes (spec/33 §2.5). Hot fields only — the capacity totals above are part of the mirror and the export keeps them live, so they are no longer a bootstrap-time snapshot. The full export document is archived per epoch as a Host State Snapshot. The mirror is disposable and is never authority.",
+   "fieldname": "section_break_boat_mirror",
+   "fieldtype": "Section Break",
+   "label": "Boat mirror"
+  },
+  {
+   "description": "The Boat binary this host is actually running, as its last export reported it. Every unit on the host is this build, so drift against the desired version is ordinary observed state rather than a separate bookkeeping channel (spec/33 §5).",
+   "fieldname": "observed_boat_version",
+   "fieldtype": "Data",
+   "label": "Observed Boat Version",
+   "read_only": 1
+  },
+  {
+   "description": "Boat's monotonic observed epoch for the snapshot this mirror was built from. It orders exports (an older one is a reordered poll and is ignored) and is what a later CAS write is matched against with If-Match (spec/33 §11.2).",
+   "fieldname": "observed_epoch",
+   "fieldtype": "Long Int",
+   "label": "Observed Epoch",
+   "read_only": 1
+  },
+  {
+   "description": "The export's own taken_at — when the host observed this, not when Atlas ingested it. Frozen while the mirror is Unknown, which is how its staleness is read.",
+   "fieldname": "observed_at",
+   "fieldtype": "Datetime",
+   "label": "Observed At",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_boat_mirror",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "Fresh means the mirror matches the host as of Observed At. Unknown means Atlas can no longer take this host at its word, and there are two ways in: Boat did not answer, or Boat answered but holds no fence for VMs Atlas placed here (its store was lost, reinstalled or restored from a backup — it will boot none of them; Mirror Error names them). Either way the host is Unknown, NOT dead (spec/33 §9): its VMs are still running, so the mirror freezes at its last values rather than being nulled, nothing is evicted, and placement excludes the host from NEW arrivals only (placement.placement_candidates — its VMs still count against capacity, and one already there may still resize). It re-enters the candidate set with no operator action: the next successful export clears an unreachable host, and any lifecycle verb (or Assert Desired State) re-asserts the fences that clear a forgetful one. Clearing Boat Enabled clears this field too — the rollback restores the behaviour, not just the transport. Empty means this host has never been mirrored — every SSH host reads empty, and so does a Boat host the sweep has not reached yet; that does NOT exclude it, because \"not looked at\" is not \"lost sight of\".",
+   "fieldname": "mirror_status",
+   "fieldtype": "Select",
+   "label": "Mirror Status",
+   "options": "\nFresh\nUnknown",
+   "read_only": 1
+  },
+  {
+   "description": "The sibling units Boat supervises that were not active at the last export, comma-separated. Empty means every reported unit was up. Denormalized because it is read per host on a health sweep; the per-unit detail stays in the archived document.",
+   "fieldname": "observed_units_down",
+   "fieldtype": "Small Text",
+   "label": "Observed Units Down",
+   "read_only": 1
+  },
+  {
+   "description": "Artifact sets on this host that Boat could not read as a coherent VM — a crash part-way through a terminate, an LV with no VM directory — comma-separated identifiers (spec/33 §3.4). Reported, never ingested as VMs: adopting one is how a controller boots a guest whose disk it already released. Each also appears as a `quarantined` drift row on the epoch's Host State Snapshot, with the reason and evidence beside it. Empty means none — the export omits the array entirely when there is nothing quarantined, so absent is a claim of none and this is cleared, unlike a host fact whose absence leaves the last value standing. NOT a placement input: leftovers on a host say nothing about its capacity.",
+   "fieldname": "observed_quarantined",
+   "fieldtype": "Small Text",
+   "label": "Observed Quarantined",
+   "read_only": 1
+  },
+  {
+   "description": "Why Atlas cannot take this host at its word — the daemon's own sentence when it did not answer, or the VMs it holds no fence for when it did. Set alongside Mirror Status = Unknown and cleared as soon as the host answers cleanly again.",
+   "fieldname": "mirror_error",
+   "fieldtype": "Small Text",
+   "label": "Mirror Error",
    "read_only": 1
   },
   {

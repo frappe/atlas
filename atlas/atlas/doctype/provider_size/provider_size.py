@@ -13,6 +13,7 @@ class ProviderSize(Document):
 		from frappe.types import DF
 
 		enabled: DF.Check
+		is_default: DF.Check
 		monthly_cost_usd: DF.Int
 		provider_metadata: DF.Code | None
 		provider_type: DF.Literal["DigitalOcean", "Scaleway", "Self-Managed", "Fake"]
@@ -28,3 +29,7 @@ class ProviderSize(Document):
 		expected = f"{self.provider_type}/{self.slug}"
 		if self.name and self.name != expected:
 			frappe.throw(f"Provider Size name {self.name!r} does not match {expected!r}")
+		if self.is_default:
+			from atlas.atlas.setup_catalog import clear_other_defaults
+
+			clear_other_defaults("Provider Size", self.provider_type, self.name)

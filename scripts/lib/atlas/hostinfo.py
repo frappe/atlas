@@ -48,8 +48,8 @@ def parse_cpu_signature(cpuinfo_text: str) -> dict:
 
 
 def parse_firecracker_version(output: str) -> str:
-	"""The version token from `firecracker --version` ("Firecracker v1.15.1" →
-	"v1.15.1"). Falls back to the whole first line on an unexpected shape — the
+	"""The version token from `firecracker --version` ("Firecracker v1.16.0" →
+	"v1.16.0"). Falls back to the whole first line on an unexpected shape — the
 	comparison is equality, so any stable string works."""
 	first_line = output.strip().splitlines()[0] if output.strip() else ""
 	tokens = first_line.split()

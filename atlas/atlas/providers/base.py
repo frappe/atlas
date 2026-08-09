@@ -70,12 +70,18 @@ class SizeInfo:
 	slug: str
 	monthly_cost_usd: int | None
 	provider_metadata: dict | None = None
+	# The provider's opinionated default for the Provision Server modal. Only one
+	# size per discover() should set it. `upsert_catalog` honours the hint solely
+	# when no row of this provider_type is already marked default — an explicit
+	# operator/config choice (and a later manual flip) always wins.
+	is_default: bool = False
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class ImageInfo:
 	slug: str
 	provider_metadata: dict | None = None
+	is_default: bool = False
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -191,6 +197,22 @@ class Provider(ABC):
 		unchanged. Idempotent: re-running on an already-root-enabled host is a
 		harmless overwrite."""
 		return None
+
+	def vm_range_is_forwardable(self, provider_resource_id: str) -> bool:
+		"""True iff a VM keeping its /128 across a migration can have its inbound
+		traffic permanently forwarded from the source host to wherever it now lives
+		(spec/24-vm-migration.md §2.8). This is the keep-address gate: the source
+		host keeps holding the /64 the /128 is carved from — so it keeps receiving
+		the address and tunnels it to the target — and nothing ever reclaims or
+		moves the /64. Default False (Self-Managed, Fake) → those providers fall
+		back to change-address (a NEW /128 on the target + a proxy re-point).
+
+		Unlike moving the whole /64, this needs no provider API call: it is a fact
+		about the delivery mechanism (routed-prefix or proxy-NDP), not a movable
+		vendor resource. `provider_resource_id` is accepted for symmetry with the
+		other capability methods and in case a future provider must probe per-box;
+		the current overrides ignore it."""
+		return False
 
 	# --- Reserved IPs (the inbound-v4 primitive) -------------------------
 	# A reserved IP is allocated to a region, assigned to the *droplet*

@@ -36,23 +36,84 @@ Root Domain ──Issue / Renew Certificate──▶ TLS Certificate.issue()
 
 One `Root Domain` row == one region == one wildcard. `Root Domain.region` freezes
 the region (the wildcard domain suffix) at insert. Atlas is single-region, so the
-proxy fleet is the whole set of `Virtual Machine.is_proxy=1` rows (`proxy._proxy_vms`)
-— issuance never needs to know which VMs are proxies, and there is no per-region
-filter to apply.
+proxy fleet is every LIVE `Virtual Machine.is_proxy=1` row ON A LIVE HOST
+(`proxy._proxy_vms`: not `Terminated`, and its `Server` is `Active`) — issuance never
+needs to know which VMs are proxies, and there is no per-region filter to apply. The
+host gate matters because a proxy VM's own status is only written when Atlas acts on
+it: a proxy whose host was drained or repurposed underneath it still reads `Running`,
+and publishing its dead address blackholes its share of the wildcard round-robin. It
+contributes neither a cert push target nor a DNS address until its host is `Active`
+again.
+
+## Custom domains: SNI passthrough, the VM holds the cert
+
+The flow above is for the **regional wildcard** (`*.<region>.frappe.dev`), which
+the proxy terminates. A **custom domain** — an FQDN the customer owns
+(`shop.acme.com`), routed to one site VM via the `Custom Domain` DocType
+([18-bench-self-routing.md](./18-bench-self-routing.md)) — does **not** terminate
+at the proxy and Atlas issues **no** cert for it. The proxy reads the SNI at L4
+(nginx `ssl_preread`, no decrypt) and forwards the **raw TLS stream** to the
+backend VM's `:443`; the **VM terminates TLS with its own Let's Encrypt cert**.
+There is no per-domain cert in the Atlas TLS layer, no `push_cert` for a custom
+domain, no `TLS Certificate` row — `Custom Domain.status` is informational only.
+
+**Why passthrough, not a second issuer.** The trust boundary is symmetric: each
+party terminates the TLS whose private key it owns. The proxy owns the wildcard
+key (DNS-01) and can't share it down — a VM holding it could impersonate every
+sibling subdomain. The VM owns its custom-domain key and won't share it up. So the
+proxy terminates wildcard subdomains and passes custom domains through; neither key
+crosses the boundary.
+
+**The VM self-issues over HTTP-01.** The site VM already runs an in-guest nginx
+that terminates `:443` with a real per-site SAN cert and serves ACME HTTP-01
+challenges from its own webroot (it is built to run standalone on an
+internet-facing VM). DNS-01 from the VM is rejected — it would need a
+certbot-supported DNS provider *and* the customer's DNS credentials in the guest,
+neither guaranteed. HTTP-01 only needs the challenge to reach the VM's `:80`.
+
+**The proxy forks :443 (SNI) and :80 (Host header)** — see
+[12-proxy.md § The stream front-door](./12-proxy.md#the-stream-front-door-sni-passthrough-for-custom-domains)
+for the topology. The one subtlety that lives in *this* layer: the proxy must
+answer `*.<region>.frappe.dev` ACME challenges **itself** (serve `:80`
+`/.well-known/acme-challenge/` locally for any host under the wildcard suffix) and
+passthrough ACME to the VM **only** for custom domains — so that no tenant VM can
+ever satisfy a challenge for the regional wildcard and have a CA issue it a
+`*.<region>.frappe.dev` cert. The wildcard-vs-custom test is the same host-suffix
+predicate the router uses.
+
+**No readiness gate — both maps fill on registration.** A custom domain enters
+**both** the proxy's `:80` ACME-passthrough map (so the VM can issue) and its
+`:443` SNI-passthrough map the moment it is registered. If the VM's cert isn't
+issued yet, a `:443` handshake is forwarded to a VM that can't complete it — the
+client sees a transient TLS cert error (wrong-cert / authority warning) that
+self-heals the moment the VM's cert lands. That is harmless: pure SNI passthrough,
+the proxy never decrypts and no other tenant is affected, so gating the `:443` map
+on a cert-confirmation signal isn't worth its machinery. (Pilot keeps on-script
+users off the domain until TLS is issued; an off-script user who points DNS early
+gets the transient error.) An SNI lookup miss is only an unknown / deregistered
+name; a *named* miss terminates on the self-signed placeholder cert and serves a
+branded "Domain not configured" page (the client clicks through a cert warning,
+since we hold no trusted cert for a domain we don't control — the wildcard-subdomain
+miss keeps its own warning-free page under the valid wildcard cert), while an
+SNI-less connection (bare IP / probe) is dropped at L4. (See
+[llm/references/custom-domain-sni-passthrough.md](../llm/references/custom-domain-sni-passthrough.md)
+and [llm/references/drop-custom-domain-readiness-gate.md](../llm/references/drop-custom-domain-readiness-gate.md)
+for the full rationale.)
 
 ## Abstractions
 
 Two registries under `atlas/atlas/`, each modeled on `atlas/atlas/providers/`:
 
 - **`dns/`** — the DNS seam. `DnsProvider(ABC)`: `authenticate()`,
-  `credential_env()` (vendor secrets as the env certbot's plugin reads),
-  `certbot_authenticator()` (the plugin NAME, e.g. `route53`), and
+  `credential_env()` (vendor secrets as env for `issue-cert.py` / certbot),
+  `certbot_authenticator()` (stable provider name, e.g. `route53`),
+  `certbot_args(domain)` (the exact certbot authenticator argv), and
   `upsert_wildcard(domain, targets)` (publish the public `*.<domain>` A/AAAA
   records that point the regional wildcard at the proxy fleet — A → the proxies'
   reserved IPv4s, AAAA → their `/128`s, round-robin). `for_dns_provider_type(type)`
   resolves the active `Atlas Settings.dns_provider_type` to an instance.
-  `Route53DnsProvider` is the only implementation; Cloudflare is a reserved
-  Select option.
+  `Route53DnsProvider` and `PowerDNSDnsProvider` are implemented; Cloudflare is a
+  reserved Select option.
 
   The challenge TXT records are certbot's job (Atlas never writes them); the
   durable `*.<domain>` record is Atlas's, reconciled by `TLS Certificate`'s
@@ -83,15 +144,17 @@ and there is no remote host to stage a script onto. So:
   operator picker, but `resolve()` still finds it for the local runner.
 - A `Task` row is still recorded, so a cert issuance shows up in the same audit
   list as every host/guest op.
-- The DNS authenticator name crosses the CLI as a plain value (`route53`), never a
-  `--`-prefixed token — the script renders `--dns-route53` itself. (Passing a
-  `--`-value through argparse's repeated-flag form silently breaks; the name form
-  sidesteps it.)
-- Vendor credentials (AWS keys) travel through the subprocess **environment**,
-  never argv, so they never appear in `ps`.
+- The DNS provider passes a stable authenticator name plus provider-specific
+  certbot args through repeatable `--certbot-arg` flags. Route53 renders
+  `--dns-route53`; PowerDNS renders the third-party plugin's authenticator and a
+  credentials-file path.
+- Vendor credentials travel through the subprocess **environment** and, when a
+  plugin requires it, a controller-local `0600` credentials file. Secret values are
+  never placed in argv, so they never appear in `ps`.
 
-certbot + `certbot-dns-route53` + openssl are a **controller-host dependency**
-(documented here; install on the Atlas controller). They are *not* a server- or
+certbot + openssl + the selected DNS plugin are a **controller-host dependency**
+(documented here; install on the Atlas controller). Route53 needs
+`certbot-dns-route53` + `boto3`; PowerDNS needs `certbot-dns-powerdns`. They are *not* a server- or
 script-runtime dependency, so the server-side "stdlib only" rule
 ([04-tasks.md](./04-tasks.md), principle #5) is intact: `scripts/lib/atlas/certs.py`
 is pure stdlib string logic, and the two subprocess calls (certbot, openssl) live
@@ -123,10 +186,10 @@ failure and moves on, exactly like `proxy.reconcile_proxies`.
 
 Layered on top of the proxy first-run ([12-proxy.md](./12-proxy.md)):
 
-1. **Route53 Settings** — the IAM access key and secret with `route53:*` on the
-   zone.
-2. **Atlas Settings** — `dns_provider_type = Route53` (the active DNS vendor) +
-   `tls_provider_type = Let's Encrypt` (the active issuer).
+1. **DNS Settings** — either Route53 Settings (IAM key/secret with `route53:*` on
+   the zone) or PowerDNS Settings (Authoritative HTTP API URL/key/server id).
+2. **Atlas Settings** — `dns_provider_type = Route53` or `PowerDNS` (the active
+   DNS vendor) + `tls_provider_type = Let's Encrypt` (the active issuer).
 3. **Lets Encrypt Settings** — ACME directory (staging while testing) + account
    email. (ToS agreement is implicit: certbot is always run with `--agree-tos`.)
 4. **Root Domain** — one row per region: `domain = <region>.frappe.dev`,
@@ -151,8 +214,8 @@ The split follows the project's host-facts-vs-unit-logic rule
 - **Unit (no host, the bulk of coverage):** the registries resolve a vendor type
   to its class and reject an unknown type (`for_dns_provider_type` /
   `for_tls_provider_type`, twins of
-  `providers/test_registry.py`); `Route53DnsProvider.credential_env()` /
-  `certbot_authenticator()` and the `LetsEncryptProvider` certbot argv compose
+  `providers/test_registry.py`); DNS provider `credential_env()` /
+  `certbot_authenticator()` / `certbot_args()` and the `LetsEncryptProvider` certbot argv compose
   correctly against a mocked local runner (**no real certbot**); `Root Domain`
   autoname/immutability and `*.<domain>` derivation; the `TLS Certificate` status
   machine, `renew_expiring` window, and `_push_to_proxies` fan-out to the proxy
@@ -161,9 +224,9 @@ The split follows the project's host-facts-vs-unit-logic rule
 - **E2E (host fact, real ACME):** `tls_issuance` is the only e2e that drives the
   real producer chain — Let's Encrypt **staging** → DNS-01 → certbot →
   `_push_to_proxies` → off-droplet HTTPS — on top of the proxy infra. It needs a
-  live Route 53 zone and the controller-host deps, and skips cleanly
+  live DNS zone and the controller-host deps, and skips cleanly
   (`MissingConfig`, before any billable provision) when the e2e fixture has no
   `tls` block (`$ATLAS_E2E_CONFIG`, see the README). `proxy_vm` uses a self-signed stand-in cert, not this
   chain. The new desk buttons (Issue/Renew, Push to Proxies, Test Connection on
-  Route53 Settings / Lets Encrypt Settings) are exercised through the HTTP layer
+  Route53 Settings / PowerDNS Settings / Lets Encrypt Settings) are exercised through the HTTP layer
   in `desk_buttons`.

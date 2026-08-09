@@ -35,8 +35,6 @@ DEFAULT_TIMEOUT = 30
 # spec/16-central.md § "The wire contract".
 _ROUTES = {
 	"ping": "central.api.atlas.ping",
-	"sizes": "central.api.atlas.sizes",
-	"images": "central.api.atlas.images",
 	"event": "central.api.atlas.event",
 }
 
@@ -56,26 +54,6 @@ class CentralAuthResult:
 	error: str | None = None
 
 
-@dataclasses.dataclass(frozen=True, slots=True)
-class CentralSizeInfo:
-	slug: str
-	title: str
-	vcpus: int
-	cpu_max_cores: float
-	memory_megabytes: int
-	disk_gigabytes: int
-	monthly_cost_usd: int | None = None
-	central_metadata: dict | None = None
-
-
-@dataclasses.dataclass(frozen=True, slots=True)
-class CentralImageInfo:
-	image_name: str
-	title: str
-	series: str | None = None
-	central_metadata: dict | None = None
-
-
 class CentralClient:
 	"""Talks to a single Central instance. Constructed from Central Settings."""
 
@@ -93,34 +71,6 @@ class CentralClient:
 		except CentralError as exception:
 			return CentralAuthResult(ok=False, error=str(exception))
 		return CentralAuthResult(ok=True, label=body.get("label"))
-
-	def fetch_sizes(self) -> tuple[CentralSizeInfo, ...]:
-		rows = self._request("GET", "sizes").get("sizes", [])
-		return tuple(
-			CentralSizeInfo(
-				slug=row["slug"],
-				title=row.get("title") or row["slug"],
-				vcpus=int(row.get("vcpus") or 0),
-				cpu_max_cores=float(row.get("cpu_max_cores") or 0),
-				memory_megabytes=int(row.get("memory_megabytes") or 0),
-				disk_gigabytes=int(row.get("disk_gigabytes") or 0),
-				monthly_cost_usd=row.get("monthly_cost_usd"),
-				central_metadata=row,
-			)
-			for row in rows
-		)
-
-	def fetch_images(self) -> tuple[CentralImageInfo, ...]:
-		rows = self._request("GET", "images").get("images", [])
-		return tuple(
-			CentralImageInfo(
-				image_name=row["image_name"],
-				title=row.get("title") or row["image_name"],
-				series=row.get("series"),
-				central_metadata=row,
-			)
-			for row in rows
-		)
 
 	def post_event(self, event: dict) -> dict:
 		return self._request("POST", "event", json=event)
@@ -149,84 +99,3 @@ class CentralClient:
 			message = body["message"]
 			return message if isinstance(message, dict) else {"message": message}
 		return body
-
-
-# --- Local catalog upserts -------------------------------------------------
-# Mirror atlas/atlas/doctype/provider/provider.py upsert_catalog: insert or
-# update each fetched row, then disable rows Central no longer lists.
-
-
-def upsert_central_sizes(sizes: tuple[CentralSizeInfo, ...]) -> dict:
-	inserted = updated = 0
-	seen: set[str] = set()
-	for size in sizes:
-		seen.add(size.slug)
-		values = {
-			"title": size.title,
-			"vcpus": size.vcpus,
-			"cpu_max_cores": size.cpu_max_cores,
-			"memory_megabytes": size.memory_megabytes,
-			"disk_gigabytes": size.disk_gigabytes,
-			"monthly_cost_usd": size.monthly_cost_usd,
-			"central_metadata": frappe.as_json(size.central_metadata or {}),
-			"enabled": 1,
-		}
-		if frappe.db.exists("Central Size", size.slug):
-			frappe.db.set_value("Central Size", size.slug, values)
-			updated += 1
-		else:
-			frappe.get_doc({"doctype": "Central Size", "slug": size.slug, **values}).insert(
-				ignore_permissions=True
-			)
-			inserted += 1
-	disabled = _disable_missing("Central Size", seen)
-	return {"inserted": inserted, "updated": updated, "disabled": disabled}
-
-
-def upsert_central_images(images: tuple[CentralImageInfo, ...]) -> dict:
-	inserted = updated = 0
-	seen: set[str] = set()
-	for image in images:
-		seen.add(image.image_name)
-		local_image = (
-			image.image_name if frappe.db.exists("Virtual Machine Image", image.image_name) else None
-		)
-		values = {
-			"title": image.title,
-			"series": image.series,
-			"central_metadata": frappe.as_json(image.central_metadata or {}),
-			"local_image": local_image,
-			"bake_status": _bake_status(local_image),
-			"enabled": 1,
-		}
-		if frappe.db.exists("Central Image", image.image_name):
-			frappe.db.set_value("Central Image", image.image_name, values)
-			updated += 1
-		else:
-			frappe.get_doc({"doctype": "Central Image", "image_name": image.image_name, **values}).insert(
-				ignore_permissions=True
-			)
-			inserted += 1
-	disabled = _disable_missing("Central Image", seen)
-	return {"inserted": inserted, "updated": updated, "disabled": disabled}
-
-
-def _bake_status(local_image: str | None) -> str:
-	"""Expected (nothing baked) vs Baked (a matching active image exists) vs
-	Stale (a row exists but is no longer active)."""
-	if not local_image:
-		return "Expected"
-	is_active = frappe.db.get_value("Virtual Machine Image", local_image, "is_active")
-	return "Baked" if is_active else "Stale"
-
-
-def _disable_missing(doctype: str, seen: set[str]) -> int:
-	"""Set enabled=0 on rows Central no longer lists. Mirrors the disable pass
-	in provisioning.upsert_catalog so a removed size/image stops being offered
-	without deleting its history."""
-	disabled = 0
-	for name in frappe.get_all(doctype, filters={"enabled": 1}, pluck="name"):
-		if name not in seen:
-			frappe.db.set_value(doctype, name, "enabled", 0)
-			disabled += 1
-	return disabled

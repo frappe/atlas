@@ -64,6 +64,15 @@ class RebuildInputs(TaskInputs):
 	data_disk_format: int = 1
 	data_disk_mount_at: str = ""
 	data_snapshot_rootfs_path: str = ""
+	# The rest of the guest identity, re-injected for the same reason the addresses
+	# above are: the fresh rootfs carries the SOURCE's copy of these (the image's,
+	# or none at all), so a rebuild that does not re-state them silently drops them.
+	# private_address is the VM's /128 on the host mesh (spec/25) — without it the
+	# VM comes back off the private plane; routing_base_url is the in-guest routing
+	# client's controller URL (spec/18). Both optional: empty for a tenant-less VM
+	# and for an Atlas with no Satellite configured.
+	private_address: str = ""
+	routing_base_url: str = ""
 
 
 def main() -> None:
@@ -93,7 +102,7 @@ def main() -> None:
 
 	# The disk is about to change under any pending memory snapshot; saved RAM
 	# referencing the old disk must never be restored over the new one.
-	run("sudo", "rm", "-rf", paths.memory_snapshot_directory)
+	run("sudo rm -rf {}", paths.memory_snapshot_directory)
 
 	# Replace the existing disk: drop the old VM LV, then recreate it as a fresh
 	# CoW snapshot of the origin. prepare_lv no-ops when the LV exists, so the
@@ -109,6 +118,8 @@ def main() -> None:
 			ssh_public_key=inputs.ssh_public_key,
 			ipv4_guest_cidr=inputs.ipv4_guest_cidr,
 			ipv4_gateway=inputs.ipv4_gateway,
+			private_address=inputs.private_address,
+			routing_base_url=inputs.routing_base_url,
 			# Re-establish the data-disk fstab line in the fresh rootfs (empty when
 			# the VM has no data disk / format-and-mount is off → no line written).
 			data_disk_mount_at=inputs.data_disk_mount_at,

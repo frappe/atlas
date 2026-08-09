@@ -3,7 +3,11 @@ import dataclasses
 import frappe
 from frappe.model.document import Document
 
-from atlas.atlas.setup_catalog import ensure_provider_image, ensure_provider_size
+from atlas.atlas.setup_catalog import (
+	ensure_provider_image,
+	ensure_provider_size,
+	set_default,
+)
 
 
 class DigitalOceanSettings(Document):
@@ -16,8 +20,6 @@ class DigitalOceanSettings(Document):
 		from frappe.types import DF
 
 		api_token: DF.Password
-		default_image: DF.Link
-		default_size: DF.Link
 		region: DF.Data
 		ssh_key_id: DF.Data | None
 	# end: auto-generated types
@@ -27,19 +29,23 @@ class DigitalOceanSettings(Document):
 		self,
 		api_token: str,
 		region: str,
-		default_size: str,
-		default_image: str,
+		default_size: str | None = None,
+		default_image: str | None = None,
 		ssh_key_id: str | None = None,
 	) -> None:
 		"""Explicit, idempotent setter for DigitalOcean Settings (the contract).
 
 		`region` here is the DigitalOcean API region (e.g. "blr1") — the vendor's own
 		operating region, NOT `Atlas Settings.region`. DO operates in many regions;
-		this names the one Atlas provisions DO droplets in. `default_size` /
-		`default_image` are vendor-native slugs (Atlas prefixes "DigitalOcean/"); the
-		Provider Size / Provider Image rows they Link to are seeded here so the Links
-		resolve. A best-effort `discover()` then upserts the wider live catalog (as
-		bootstrap does); a failure there is non-fatal — the named slugs already exist.
+		this names the one Atlas provisions DO droplets in.
+
+		`default_size` / `default_image` are OPTIONAL vendor-native slugs (the operator's
+		`atlas_do_default_*` config keys). When given, the named Provider Size / Provider
+		Image rows are seeded and marked `is_default` — the operator choice overrides the
+		provider's discover() hint. When omitted, the best-effort `discover()` below seeds
+		the catalog and hints its own default into the empty slot (DO: s-2vcpu-4gb-intel /
+		ubuntu-24-04-x64); the operator can flip the default on the Provider Size/Image
+		list anytime.
 
 		`ssh_key_id` is optional: if omitted, the provider resolves it at provision time
 		by querying the DO account for a matching public key and uploading one if absent,
@@ -49,20 +55,15 @@ class DigitalOceanSettings(Document):
 		goes through the normal ORM path: `_save_passwords` encrypts the token into
 		`__Auth` AND stamps the field placeholder, so the desk form shows it as set.
 		Idempotent: re-running just overwrites the Single."""
-		ensure_provider_size("DigitalOcean", default_size)
-		ensure_provider_image("DigitalOcean", default_image)
-
 		self.region = region
-		self.default_size = f"DigitalOcean/{default_size}"
-		self.default_image = f"DigitalOcean/{default_image}"
 		if ssh_key_id:
 			self.ssh_key_id = ssh_key_id
 		self.api_token = api_token
 		self.save(ignore_permissions=True)
 
-		# Seed the wider catalog so the Refresh Catalog button starts from real data,
-		# not just the named slugs. Best-effort — same as bootstrap (DO's discover is
-		# gravy on top of the named slugs, unlike Scaleway's load-bearing discover).
+		# Seed the wider catalog so the Refresh Catalog button starts from real data.
+		# Best-effort — same as bootstrap (DO's discover is gravy, unlike Scaleway's
+		# load-bearing discover). discover() also hints its default into an empty slot.
 		from atlas.atlas.providers.digitalocean import DigitalOceanProvider
 		from atlas.atlas.provisioning import upsert_catalog
 
@@ -70,6 +71,15 @@ class DigitalOceanSettings(Document):
 			upsert_catalog("DigitalOcean", DigitalOceanProvider().discover())
 		except Exception as exception:
 			frappe.log_error(f"DigitalOcean catalog discover() failed during setup: {exception}")
+
+		# An explicit operator/config slug wins over the discover() hint: seed the row
+		# (in case discover() failed above) and mark it the lone default.
+		if default_size:
+			ensure_provider_size("DigitalOcean", default_size)
+			set_default("Provider Size", "DigitalOcean", default_size)
+		if default_image:
+			ensure_provider_image("DigitalOcean", default_image)
+			set_default("Provider Image", "DigitalOcean", default_image)
 
 	@frappe.whitelist()
 	def test_connection(self) -> dict:

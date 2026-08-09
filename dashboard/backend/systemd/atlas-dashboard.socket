@@ -1,0 +1,16 @@
+[Unit]
+Description=Atlas host dashboard socket
+Documentation=https://github.com/atlas/dashboard
+
+[Socket]
+# The dashboard's port. Nice-looking but arbitrary — not a registered service.
+# systemd owns this listening socket and starts atlas-dashboard.service on the
+# first connection, so the server itself need not run until someone opens it.
+ListenStream=9797
+# Serve v4 and v6 on the one socket.
+BindIPv6Only=both
+# One connection is enough to start the service; it inherits the same socket.
+Accept=no
+
+[Install]
+WantedBy=sockets.target

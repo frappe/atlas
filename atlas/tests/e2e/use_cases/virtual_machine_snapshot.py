@@ -78,7 +78,7 @@ def run_against_shared(reuse: bool = True, keep: bool = True) -> None:
 		vm.terminate()
 		for path in snapshot_paths:
 			if path:
-				assert_probe(server.name, "phase-snapshot-gone.sh", SNAPSHOT_ROOTFS_PATH=path)
+				assert_probe(server.name, "phase-snapshot-gone", SNAPSHOT_ROOTFS_PATH=path)
 		assert not frappe.get_all("Virtual Machine Snapshot", filters={"virtual_machine": vm.name}), (
 			"snapshot rows survived terminate"
 		)
@@ -119,8 +119,8 @@ def _check_snapshot_and_restore(server_name: str, vm) -> None:
 	# The data disk was captured too: a second snapshot LV with its own bytes.
 	assert snapshot.data_size_bytes > 0, snapshot.data_size_bytes
 	assert snapshot.data_rootfs_path, "snapshot is missing data_rootfs_path"
-	assert_probe(server_name, "phase-snapshot-present.sh", SNAPSHOT_ROOTFS_PATH=snapshot.rootfs_path)
-	assert_probe(server_name, "phase-snapshot-present.sh", SNAPSHOT_ROOTFS_PATH=snapshot.data_rootfs_path)
+	assert_probe(server_name, "phase-snapshot-present", SNAPSHOT_ROOTFS_PATH=snapshot.rootfs_path)
+	assert_probe(server_name, "phase-snapshot-present", SNAPSHOT_ROOTFS_PATH=snapshot.data_rootfs_path)
 
 	# Overwrite the marker so the restore has something to roll back.
 	vm.start()
@@ -141,7 +141,7 @@ def _check_snapshot_and_restore(server_name: str, vm) -> None:
 	assert vm.status == "Running", vm.status
 	assert_probe(
 		server_name,
-		"phase5-guest-identity.sh",
+		"phase5-guest-identity",
 		timeout_seconds=180,
 		VIRTUAL_MACHINE_NAME=vm.name,
 		VIRTUAL_MACHINE_IPV6=vm.ipv6_address,
@@ -162,7 +162,7 @@ def _check_resize(server_name: str, vm) -> None:
 	assert vm.vcpus == 2 and vm.memory_megabytes == 1024 and vm.disk_gigabytes == 6
 	assert_probe(
 		server_name,
-		"phase-resized-config.sh",
+		"phase-resized-config",
 		VIRTUAL_MACHINE_NAME=vm.name,
 		VCPUS="2",
 		MEMORY_MB="1024",
@@ -176,7 +176,7 @@ def _check_resize(server_name: str, vm) -> None:
 	vm.start()
 	vm.reload()
 	assert vm.status == "Running", vm.status
-	assert_probe(server_name, "phase5-is-active.sh", VIRTUAL_MACHINE_NAME=vm.name)
+	assert_probe(server_name, "phase5-is-active", VIRTUAL_MACHINE_NAME=vm.name)
 
 
 def _check_rebuild_from_image(server_name: str, vm) -> None:
@@ -198,7 +198,7 @@ def _check_rebuild_from_image(server_name: str, vm) -> None:
 	vm.reload()
 	assert_probe(
 		server_name,
-		"phase5-guest-identity.sh",
+		"phase5-guest-identity",
 		timeout_seconds=180,
 		VIRTUAL_MACHINE_NAME=vm.name,
 		VIRTUAL_MACHINE_IPV6=vm.ipv6_address,
@@ -209,7 +209,7 @@ def _check_rebuild_from_image(server_name: str, vm) -> None:
 	# provision (spec/06-networking.md).
 	assert_probe(
 		server_name,
-		"phase5-ipv4-egress.sh",
+		"phase5-ipv4-egress",
 		timeout_seconds=180,
 		VIRTUAL_MACHINE_IPV6=vm.ipv6_address,
 		SSH_PRIVATE_KEY=ephemeral_private_key(),
@@ -220,7 +220,7 @@ def _check_rebuild_from_image(server_name: str, vm) -> None:
 	_expect_data_marker(server_name, vm, "before-snapshot")
 	assert_probe(
 		server_name,
-		"phase-data-disk.sh",
+		"phase-data-disk",
 		timeout_seconds=180,
 		VIRTUAL_MACHINE_IPV6=vm.ipv6_address,
 		SSH_PRIVATE_KEY=ephemeral_private_key(),
@@ -251,7 +251,7 @@ def _check_clone(server_name: str, vm):
 	# regenerated host keys / machine-id) — the guest-identity probe asserts it.
 	assert_probe(
 		server_name,
-		"phase5-guest-identity.sh",
+		"phase5-guest-identity",
 		timeout_seconds=180,
 		VIRTUAL_MACHINE_NAME=clone.name,
 		VIRTUAL_MACHINE_IPV6=clone.ipv6_address,
@@ -274,7 +274,7 @@ def _check_pause_resume(server_name: str, vm) -> None:
 	vm.pause()
 	vm.reload()
 	assert vm.status == "Paused", vm.status
-	assert_probe(server_name, "phase-is-paused.sh", VIRTUAL_MACHINE_NAME=vm.name)
+	assert_probe(server_name, "phase-is-paused", VIRTUAL_MACHINE_NAME=vm.name)
 
 	# Pausing again from Paused is rejected by the controller guard.
 	with expect_validation_error("cannot pause"):
@@ -283,7 +283,7 @@ def _check_pause_resume(server_name: str, vm) -> None:
 	vm.resume()
 	vm.reload()
 	assert vm.status == "Running", vm.status
-	assert_probe(server_name, "phase5-is-active.sh", VIRTUAL_MACHINE_NAME=vm.name)
+	assert_probe(server_name, "phase5-is-active", VIRTUAL_MACHINE_NAME=vm.name)
 
 	# Stop it so the terminate at the end is from a quiet state.
 	vm.stop()
@@ -359,7 +359,7 @@ def _check_promote_to_image(server_name: str, data_disk_vm):
 	# the reused kernel + the rootfs sentinel — i.e. it looks like a synced image.
 	assert_probe(
 		server_name,
-		"phase-promoted-image.sh",
+		"phase-promoted-image",
 		IMAGE_NAME=image_name,
 		ROOTFS_FILENAME=image.rootfs_filename,
 		KERNEL_FILENAME=image.kernel_filename,
@@ -387,7 +387,7 @@ def _check_promote_to_image(server_name: str, data_disk_vm):
 	# It boots to a working guest with its own fresh, UUID-derived identity.
 	assert_probe(
 		server_name,
-		"phase5-guest-identity.sh",
+		"phase5-guest-identity",
 		timeout_seconds=180,
 		VIRTUAL_MACHINE_NAME=promoted_vm.name,
 		VIRTUAL_MACHINE_IPV6=promoted_vm.ipv6_address,
@@ -402,7 +402,7 @@ def _cleanup_promoted_image(server_name: str, image_name: str) -> None:
 	image LV is PROTECTED (the lifecycle never removes it), so this uses a dedicated
 	force probe — fine here because this image was minted by the e2e, not synced."""
 	image_lv = f"atlas-image-{image_name}"
-	assert_probe(server_name, "phase-remove-image.sh", IMAGE_NAME=image_name, IMAGE_LV=image_lv)
+	assert_probe(server_name, "phase-remove-image", IMAGE_NAME=image_name, IMAGE_LV=image_lv)
 	if frappe.db.exists("Virtual Machine Image", image_name):
 		frappe.delete_doc("Virtual Machine Image", image_name, force=1, ignore_permissions=True)
 
@@ -411,7 +411,7 @@ def _write_data_marker(server_name: str, vm, marker: str) -> None:
 	"""Write `marker` onto the VM's data disk (/home) over SSH."""
 	assert_probe(
 		server_name,
-		"phase-data-marker.sh",
+		"phase-data-marker",
 		timeout_seconds=180,
 		VIRTUAL_MACHINE_IPV6=vm.ipv6_address,
 		SSH_PRIVATE_KEY=ephemeral_private_key(),
@@ -425,7 +425,7 @@ def _expect_data_marker(server_name: str, vm, marker: str) -> None:
 	"""Assert the VM's data disk (/home) carries `marker`."""
 	assert_probe(
 		server_name,
-		"phase-data-marker.sh",
+		"phase-data-marker",
 		timeout_seconds=180,
 		VIRTUAL_MACHINE_IPV6=vm.ipv6_address,
 		SSH_PRIVATE_KEY=ephemeral_private_key(),

@@ -10,10 +10,7 @@
   "organization_id",
   "zone",
   "billing",
-  "ssh_key_id",
-  "section_break_defaults",
-  "default_size",
-  "default_image"
+  "ssh_key_id"
  ],
  "fields": [
   {
@@ -56,25 +53,6 @@
    "fieldtype": "Data",
    "label": "SSH Key ID",
    "description": "Scaleway's IAM SSH key id, installed on each new Elastic Metal server. Left blank, the provider registers Atlas Settings.ssh_public_key with IAM at provision time; cache the returned id here to reuse it. Vendor-specific — meaningless to other providers."
-  },
-  {
-   "fieldname": "section_break_defaults",
-   "fieldtype": "Section Break",
-   "label": "Defaults for new servers"
-  },
-  {
-   "fieldname": "default_size",
-   "fieldtype": "Link",
-   "label": "Default Size",
-   "options": "Provider Size",
-   "reqd": 1
-  },
-  {
-   "fieldname": "default_image",
-   "fieldtype": "Link",
-   "label": "Default Image",
-   "options": "Provider Image",
-   "reqd": 1
   }
  ],
  "issingle": 1,

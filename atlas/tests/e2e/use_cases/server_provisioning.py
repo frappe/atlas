@@ -61,7 +61,7 @@ def run() -> None:
 
 		bootstrap_tasks = frappe.get_all(
 			"Task",
-			filters={"server": server_name, "script": "bootstrap-server.py", "status": "Success"},
+			filters={"server": server_name, "script": "bootstrap-server", "status": "Success"},
 		)
 		assert bootstrap_tasks, "no successful bootstrap Task found"
 
@@ -136,13 +136,13 @@ def _wait_for_status(server_name: str, target: set[str], timeout: int):
 def _assert_remote_layout(server_name: str) -> None:
 	task = run_task(
 		server=server_name,
-		script="phase3-probe.sh",
+		script="phase3-probe",
 		variables={},
 		timeout_seconds=30,
 	)
 	assert task.status == "Success"
-	assert "vm-network-up.py OK" in task.stdout
-	assert "vm-network-down.py OK" in task.stdout
+	assert "boat OK" in task.stdout
+	assert "lvm.py OK" in task.stdout
 	assert "firecracker-vm@.service OK" in task.stdout
 
 
@@ -153,7 +153,7 @@ def _assert_hardening_applied(server_name: str) -> None:
 	or wrong control surfaces as a non-Success Task."""
 	task = run_task(
 		server=server_name,
-		script="phase-hardening-probe.sh",
+		script="phase-hardening-probe",
 		variables={},
 		timeout_seconds=60,
 	)
@@ -168,7 +168,7 @@ def _assert_pool_present(server_name: str) -> None:
 	surfaces as a non-Success Task."""
 	task = run_task(
 		server=server_name,
-		script="phase-pool-present.sh",
+		script="phase-pool-present",
 		variables={},
 		timeout_seconds=60,
 	)
@@ -184,9 +184,9 @@ def _check_test_connection(server) -> None:
 	an explanatory error message; both drive the same code path."""
 	provider = providers.for_provider_type(server.provider_type)
 	result = provider.authenticate()
-	assert "ok" in result, result
-	if not result["ok"]:
-		error = result.get("error") or ""
+	assert isinstance(result.ok, bool), result
+	if not result.ok:
+		error = result.error or ""
 		assert "401" in error or "403" in error or "forbidden" in error.lower(), error
 
 
@@ -214,7 +214,7 @@ def _check_get_scripts(server) -> None:
 	scripts = server.get_scripts()
 	assert isinstance(scripts, list) and scripts, scripts
 	names = {entry["name"] for entry in scripts}
-	assert "sync-image.py" in names, names
+	assert "sync-image" in names, names
 
 
 def _check_finish_provisioning_idempotent(server) -> None:

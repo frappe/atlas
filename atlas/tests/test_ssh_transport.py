@@ -10,6 +10,7 @@ import frappe
 from frappe.tests import IntegrationTestCase
 
 from atlas.atlas._ssh import transport
+from atlas.atlas._ssh._quote import substitute
 from atlas.atlas._ssh.transport import (
 	PROBE_CONNECT_TIMEOUT_SECONDS,
 	Connection,
@@ -31,6 +32,12 @@ CONNECTION = Connection(
 
 def _ok(args, **kwargs) -> subprocess.CompletedProcess:
 	return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+
+def _bytes_io(data: bytes):
+	import io
+
+	return io.BytesIO(data)
 
 
 class TestWaitForSsh(IntegrationTestCase):
@@ -148,7 +155,7 @@ class TestRunDetached(IntegrationTestCase):
 		# finds the marker. launch ok, poll raises, poll returns "0", log read.
 		calls = {"n": 0}
 
-		def flaky(connection, key_path, command, timeout_seconds):
+		def flaky(connection, key_path, command, *params, timeout_seconds, **kwargs):
 			calls["n"] += 1
 			if calls["n"] == 1:
 				return ("", "", 0)  # launch
@@ -229,7 +236,11 @@ class TestRunDetachedStreaming(IntegrationTestCase):
 		self.assertEqual((log, code), ("aaa\nbbb\n", 0))
 		self.assertEqual(chunks, ["aaa\n", "bbb\n"])
 		# Offsets: first tail at +1 (whole file), second at +5 (after "aaa\n" = 4 bytes).
-		tail_commands = [c.args[2] for c in run_ssh.call_args_list if "tail -c" in c.args[2]]
+		# run_ssh now takes a (template, *params) command with {} holes, so render each
+		# call back to the line it would have run before asserting the offset.
+		tail_commands = [
+			substitute(c.args[2], c.args[3:]) for c in run_ssh.call_args_list if "tail -c" in c.args[2]
+		]
 		self.assertIn("tail -c +1 ", tail_commands[0])
 		self.assertIn("tail -c +5 ", tail_commands[1])
 
@@ -273,29 +284,29 @@ class TestUploadFiles(IntegrationTestCase):
 			upload_files(CONNECTION, [])
 		run.assert_not_called()
 
-	def test_skips_mkdir_when_remote_files_have_no_parent_dir(self) -> None:
-		# A bare basename (no slash) has dirname == "" — the set
-		# comprehension filters it, leaving no dirs to mkdir.
-		commands: list[list[str]] = []
+	def test_streams_all_files_in_one_tar_over_ssh(self) -> None:
+		# Every file ships in a single tar-over-ssh stream: one `ssh ... tar -x`
+		# fed the whole archive on stdin. No per-file scp, no separate mkdir (tar
+		# creates parents on extract). The archive is built in-process so the local
+		# side needs no GNU tar.
+		import tarfile
 
-		def capture(args, **kwargs):
-			commands.append(list(args))
-			return _ok(args, **kwargs)
+		run_args: list[list[str]] = []
+		archives: list[bytes] = []
 
-		with patch("atlas.atlas._ssh.transport.subprocess.run", side_effect=capture):
-			upload_files(CONNECTION, [("/tmp/x.sh", "x.sh")])
+		def capture_run(args, **kwargs):
+			run_args.append(list(args))
+			archives.append(kwargs.get("input"))
+			return subprocess.CompletedProcess(args, 0, stdout=b"", stderr=b"")
 
-		# No `mkdir` call; first call is the scp.
-		self.assertEqual(commands[0][0], "scp")
-
-	def test_creates_remote_dirs_then_scps_each_file(self) -> None:
-		commands: list[list[str]] = []
-
-		def capture(args, **kwargs):
-			commands.append(list(args))
-			return _ok(args, **kwargs)
-
-		with patch("atlas.atlas._ssh.transport.subprocess.run", side_effect=capture):
+		with (
+			patch(
+				"atlas.atlas._ssh.transport.tarfile.TarFile.add",
+				autospec=True,
+				return_value=None,
+			),
+			patch("atlas.atlas._ssh.transport.subprocess.run", side_effect=capture_run),
+		):
 			upload_files(
 				CONNECTION,
 				[
@@ -304,16 +315,52 @@ class TestUploadFiles(IntegrationTestCase):
 				],
 			)
 
-		# First call: ssh mkdir -p ... .
-		first_command = commands[0]
-		self.assertEqual(first_command[0], "ssh")
-		self.assertIn("mkdir -p", first_command[-1])
-		self.assertIn("/remote/dir1", first_command[-1])
-		self.assertIn("/remote/dir2", first_command[-1])
+		# Exactly one ssh — not one call per file.
+		self.assertEqual(len(run_args), 1)
+		remote_ssh = run_args[0]
+		self.assertEqual(remote_ssh[0], "ssh")
+		# Remote side decompresses (-z) and extracts under /.
+		self.assertIn("tar -xz", remote_ssh[-1])
+		self.assertIn("-C /", remote_ssh[-1])
+		# A real (gzipped) tar archive is piped on stdin — is_tarfile auto-detects
+		# the gzip wrapper.
+		self.assertIsInstance(archives[0], bytes)
+		self.assertTrue(tarfile.is_tarfile(_bytes_io(archives[0])))
 
-		# Subsequent calls: scp for each file.
-		scp_calls = [command for command in commands[1:] if command[0] == "scp"]
-		self.assertEqual(len(scp_calls), 2)
+	def test_archive_stores_members_at_relative_remote_paths(self) -> None:
+		# The archive members are the remote paths with the leading `/` stripped,
+		# so `tar -x -C /` lands each file at its absolute destination regardless
+		# of the local path it came from.
+		import tarfile
+
+		with tempfile.TemporaryDirectory() as d:
+			local_a = os.path.join(d, "a.sh")
+			local_b = os.path.join(d, "nested", "b.sh")
+			os.makedirs(os.path.dirname(local_b))
+			Path(local_a).write_text("aaa")
+			Path(local_b).write_text("bbb")
+
+			archive = transport._build_tar_archive(
+				[(local_a, "/var/lib/atlas/bin/a.sh"), (local_b, "/var/lib/atlas/bin/atlas/b.sh")]
+			)
+
+		# The archive is gzip-compressed (magic bytes 0x1f 0x8b); tarfile.open
+		# auto-detects the wrapper and reads the members back at their remote paths.
+		self.assertEqual(archive[:2], b"\x1f\x8b")
+		with tarfile.open(fileobj=_bytes_io(archive)) as tar:
+			names = sorted(tar.getnames())
+		self.assertEqual(names, ["var/lib/atlas/bin/a.sh", "var/lib/atlas/bin/atlas/b.sh"])
+
+	def test_raises_when_remote_tar_fails(self) -> None:
+		def failing_run(args, **kwargs):
+			return subprocess.CompletedProcess(args, 2, stdout=b"", stderr=b"tar: boom")
+
+		with (
+			patch("atlas.atlas._ssh.transport.tarfile.TarFile.add", autospec=True, return_value=None),
+			patch("atlas.atlas._ssh.transport.subprocess.run", side_effect=failing_run),
+		):
+			with self.assertRaises(frappe.ValidationError):
+				upload_files(CONNECTION, [("/tmp/a.sh", "/remote/a.sh")])
 
 
 class TestEnsuresKnownHostsBeforeConnecting(IntegrationTestCase):

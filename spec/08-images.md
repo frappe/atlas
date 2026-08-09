@@ -305,18 +305,18 @@ and disk creation is **instant** (a CoW snapshot, not a multi-second copy).
 
 Self-serve site VMs don't boot the plain `ubuntu-24.04` image — they boot a
 **golden bench image**: the same Ubuntu rootfs with bench-cli, its uv venv, the
-Frappe clone (**plus ERPNext (version-16)** in site mode), MariaDB + Redis (the
-bench code and MariaDB datadir on ZFS datasets), nginx + the production stack
+Frappe clone (**plus ERPNext**, opt-in via `INCLUDE_ERPNEXT=1`), MariaDB + Redis,
+nginx + the production stack
 configured and **running and serving** — so a snapshot-booted clone comes up
 answering on `:80` (IPv4 *and* IPv6) with no deploy step. `build.sh` is the
 **proven recipe** ([`../llm/references/bench-setup.md`](../llm/references/bench-setup.md))
 and nothing more — its key move is that `bench.toml` sets `process_manager =
 "systemd"`, so **bench-cli itself stands up and manages the whole stack** as
 lingering `systemctl --user` units that survive reboot. There is no hand-rolled
-supervisord unit, ZFS boot drop-in, or nginx surgery; that is all bench-cli's job.
+supervisord unit or nginx surgery; that is all bench-cli's job.
 
 **Two modes** (`build.sh`'s first arg → two golden snapshots): **`site`** bakes a
-fully-created Frappe + ERPNext site under the fixed name `site.local`, so a clone's
+fully-created Frappe site under the fixed name `site.local`, so a clone's
 domain maps to the **site URL** (`deploy-site.py` renames `site.local` → the FQDN via
 `bench rename-site`); **`admin`** bakes only the bench + the admin app, so a clone's
 domain maps to the **admin URL** (`deploy-site.py` sets `[admin].domain = <fqdn>` +
@@ -329,19 +329,66 @@ enabled `systemctl --user` units), so it needs a real lingering non-root user. T
 controller SSHes in as root; `build.sh` runs bench-cli's `install.sh` as root to
 create `frappe` (+ its sudoers), then runs every bench step as it.
 
-**MariaDB** is a **dedicated per-bench instance** (`[mariadb].instance = "atlas"`):
-`bench init` provisions `mariadb@atlas` with its own socket + datadir and
-`systemctl enable --now`s it, so it auto-starts at boot as an ordinary system
-service. Atlas never touches MariaDB auth — bench-cli secures it.
+**Pilot is installed the way its README documents** — `install.sh` fetched off
+`develop` (`PILOT_INSTALL_REF`), whose default path lays down the **latest release**
+(prebuilt admin UI, no build step). **Every** recipe bakes through that one path, site
+line and admin line alike, so a golden is what an operator following pilot's README
+would get and a fresh checkout needs no pin bumped before it can bake. The version is
+deliberately **not** pinned: install.sh's release path has no way to request a specific
+release — it always fetches the newest — so a tag pin was never enforceable, only
+detectable after the fact, and asserting it turned every upstream release into a broken
+bake (three in a row). The bake **records** the delivered version instead
+(`ATLAS_BUILD_BENCH_CLI_REF` → `Image Build.build_inputs`), so an image is always
+identifiable even though it is not pinnable in advance. `BENCH_CLI_REPO` /
+`BENCH_CLI_REF` survive as the escape hatch for baking off a fork or an older release —
+they travel together, since a ref only resolves against the repo it lives in — and
+`build.sh` re-points the clone's origin + checks the ref out only on the git install
+shape a fork produces.
 
-**ZFS.** `bench init` creates the pool + dataset from `[volume]` in `bench.toml`
-(a preallocated **file vdev**, since the build VM is single-disk) and mounts it,
-so BOTH the bench code and the MariaDB data live on ZFS. At the pinned bench-cli the mere presence of a `[volume]` table enables ZFS.
-The Firecracker `vmlinux` ships no ZFS module, so the **one** ZFS thing `build.sh`
-does itself is DKMS-build `zfs.ko` against the running kernel (`zfs-dkms` +
-`linux-headers-$(uname -r)` + `modprobe zfs`); the built `.ko` travels in the
-snapshot. (Cold-boot ZFS auto-import/mount-ordering is not yet wired — to be
-verified on a host.)
+**The admin line carries no pin of its own.** It used to bake off a fork for `bench
+generate-admin-session`, the in-guest one-click session mint. Upstream pilot ships no
+such verb and needs none: an enrolled bench trusts **Central's** JWKS (written by `bench
+admin enroll`), so Central mints the console's one-click `?sid=` link itself and the
+in-guest mint merely degrades where the verb is absent — the console is still reachable
+and still openable ([14-self-serve.md](./14-self-serve.md)). With the fork gone there is
+**one** pilot install path for every bench recipe — the admin variants now carry no
+recipe difference from their site twins beyond the bake mode.
+
+**MariaDB.** `bench init` provisions ONE rootless, **user-owned
+`pilot-mariadb.service`** shared by the host's benches, with its datadir + socket under
+the pilot directory (`~/pilot/databases/mariadb/`) and unix_socket auth for the bench
+user; it is a `systemctl --user` unit like the rest of the stack, so lingering is what
+brings it back at boot, and the `[mariadb]` table in `bench.toml` is not read at all
+(that config comes from the host-level common config) — inert on every recipe now. The
+fork the admin line used to bake off DID read it, provisioning a dedicated per-bench
+system instance `mariadb@atlas` (`[mariadb].instance = "atlas"`) with its own socket +
+datadir, `systemctl enable --now`d; the table stays in the committed file for that pin,
+since unknown keys are preserved and ignored. Atlas never touches MariaDB auth either
+way — bench-cli secures it. Because the unit name is pin-dependent and the socket is
+not, `deploy-site.py` gates every deploy on the **socket** accepting a connection
+(`DB_SOCKET`), never on `systemctl is-active`.
+
+**ZFS — no current reader.** Upstream pilot, which every recipe now installs, has no
+volume schema at all, so **no** golden uses ZFS: the bench code and the MariaDB
+datadir sit on the plain rootfs and `bench.toml`'s `[volume]` tables are inert.
+A volume-aware pin DOES read them — `bench init` creates the pool + dataset from
+`[volume]` (a preallocated **file vdev**, since the build VM is single-disk) and mounts
+it, so both the bench code and the MariaDB data live on ZFS. The mere presence of a
+`[volume]` table is what enables that, so if upstream ever grows a volume schema all
+three tables must be deleted in the same change — every golden would otherwise start
+building a pool nobody asked for.
+The Firecracker `vmlinux` ships no ZFS module and the cloud squashfs has an
+empty `/lib/modules`, so Ubuntu's prebuilt `zfs.ko` (+ its `spl.ko` dep) is baked into the
+guest rootfs at **sync time** — `scripts/sync-image.py` `_install_guest_modules` copies
+both from the manifest-pinned `linux-modules-<kver>` (the same package/pass that bakes
+`virtio_rng`; no DKMS compile or `linux-headers`) and pins `zfs` in `modules-load.d`, so
+the module travels in the snapshot and loads on the cold boot that first mounts the pool.
+Deriving `kver` from the manifest (not `uname -r`) keeps the module matched to the kernel
+the guest actually boots, independent of the build VM. The **one** ZFS thing `build.sh`
+does itself is install the `zfsutils-linux` userspace (`zpool`/`zfs`) a VolumeManager
+needs — installed and never used today, kept because the module + userspace pair is
+what a volume-aware pin would need and re-deriving it is the fiddly part. (Cold-boot
+ZFS auto-import/mount-ordering is not yet wired — to be verified on a host.)
 
 The golden image is a **`Virtual Machine Snapshot`, not a from-URL
 `Virtual Machine Image`** — it is built *inside* a VM and snapshotted, the same
@@ -350,17 +397,20 @@ build-in-guest pattern the proxy uses ([12-proxy.md](./12-proxy.md)):
 1. Provision a plain `ubuntu-24.04` VM on a server in the region.
 2. `atlas.atlas.bench_image.build_bench(<vm>)` uploads the committed
    [`bench/`](../bench/) tree and runs `bench/build.sh` over guest-SSH — the
-   sibling of `proxy.build_proxy`. `build.sh` fixes setuid bits, DKMS-installs the
-   ZFS module, runs bench-cli's `install.sh` (at a pinned commit) as root — which
+   sibling of `proxy.build_proxy`. `build.sh` fixes setuid bits, installs the
+   `zfsutils-linux` userspace (the `zfs.ko` module is baked at sync time), runs
+   pilot's `install.sh` (the documented `develop` URL, unpinned) as root — which
    creates the `frappe` user + sudoers — then again as `frappe` to install bench-cli,
    drops the committed [`bench/bench.toml`](../bench/bench.toml), and runs
    `bench init` + `bench start` as `frappe`. `bench init` is the heavy,
-   per-site-invariant step (the dedicated MariaDB instance + Redis, the ZFS pool,
-   the uv venv, the Frappe clone, Node deps, the admin frontend, and — because
+   per-site-invariant step (MariaDB + Redis — no ZFS pool: nothing reads
+   `[volume]` — the uv venv, the Frappe clone, Node deps, the admin frontend, and — because
    `[production].nginx = true` + `process_manager = "systemd"` — the production
    process units + nginx config + `dns_multitenant = 1`). In **site** mode it then
-   installs ERPNext (version-16) and bakes a `site.local` site (`bench new-site` +
-   `install-app erpnext`). The stack is left **running and serving** on `:80` over
+   bakes a `site.local` site (`bench new-site`), and installs ERPNext into it only
+   when `INCLUDE_ERPNEXT=1` — `get-app` + `install-app erpnext` is by far the
+   longest phase of the bake and a Frappe-only golden is a complete, serving bench,
+   so it is OFF by default. The stack is left **running and serving** on `:80` over
    both IPv4 and IPv6 (bench-cli emits the v6 listeners).
 3. Stop the VM and `Virtual Machine.snapshot(...)` it. bench-cli's lingering
    `systemctl --user` units make a cold boot of the snapshot come up serving
@@ -378,18 +428,20 @@ existing snapshot machinery for the rollable artifact. The bake is driven by the
 shared across every VM from this image — correct because each VM is
 single-tenant and MariaDB binds localhost only (the south hop reaches Frappe's
 `:80`, never `3306`). The Frappe Administrator password is **also baked + shared** —
-a throwaway the owner is handed and rotates after first login. The signup path no
-longer resets it per VM: that reset cost a full CPU-throttled `bench frappe` boot
-(~28s under the 0.25-core cap) that dominated the deploy, and dropping it is the
-main latency win (14-self-serve.md). Lazy per-site rotation (first login / a job)
-is deferred.
+a randomized bake-time throwaway that is **never surfaced**: the owner signs in via
+the one-click `login_url` the deploy mints (a real Administrator session — see
+[14-self-serve.md](./14-self-serve.md)) and can rotate the password later themselves.
+The signup path no longer resets it per VM: that reset cost a full CPU-throttled
+`bench frappe` boot (~28s under the 0.25-core cap) that dominated the deploy, and
+dropping it is the main latency win (14-self-serve.md).
 
 **Why bake the site, not `bench new-site` per signup.** The slow part of standing
 up a Frappe site — `bench new-site`'s schema-create + frappe-install, plus
 `install-app erpnext` — is per-site-invariant, so it is paid **once** here at bake
 time. A signup's `deploy-site.py` then does only the per-VM work — rename the baked
 site to the FQDN via `bench rename-site` — never that multi-minute path, and never a
-`set-admin-password` (the owner is handed the shared baked password and rotates it);
+`set-admin-password` (the owner signs in via the one-click `login_url` the deploy
+mints, and may rotate the baked password later themselves);
 see [14-self-serve.md](./14-self-serve.md).
 
 **Per-VM identity is the rename (Contract A, site mode).** The bake leaves the
@@ -430,21 +482,25 @@ gunicorn, so `/api/status` routes through over the same v6 path the edge proxy u
 **Versioned variants — V15 / V16 / Nightly.** The bench recipe is **not** a single
 golden: three recipes ship — `bench-v15`, `bench-v16`, `bench-nightly` — baked per
 Frappe/Bench release and promoted to base images named exactly `bench-v15` /
-`bench-v16` / `bench-nightly` (the Central Image name-match link,
+`bench-v16` / `bench-nightly` (the name Central selects a version by,
 [15-image-builder.md](./15-image-builder.md), [16-central.md](./16-central.md)).
 They share the **one** committed `bench/` tree and `build.sh`; the only thing that
 varies is the per-version pins, which the controller injects without forking the
 tree: `bench.toml`'s `[bench].python` + `frappe` `[[apps]].branch` are **rendered**
-per recipe before upload, and the bench-cli ref + ERPNext branch ride the build
-command's env (`BENCH_CLI_REF` / `ERPNEXT_BRANCH`, which `build.sh` reads as
-`${VAR:-default}`). `bench-cli` is the build tool, not the framework — one pinned cli
-ref bakes all three (it reads the branch/Python from `bench.toml` and natively knows
-`version-15`/`version-16`/`develop`; `uv` fetches the requested interpreter). The
-nightly bake stamps the resolved Frappe/ERPNext/cli SHAs into `Image Build.build_inputs`
-since `develop` floats. A customer selects the version through the ordinary VM
-`image` field (the promoted base image); no new hot-path plumbing. Bumping any pin is
-a deliberate update rolled as a new bake + promote, the same discipline
-`proxy/build.sh`'s pins follow.
+per recipe before upload, and the ERPNext branch rides the build command's env
+(`ERPNEXT_BRANCH`, which `build.sh` reads as `${VAR:-default}`; `BENCH_CLI_REPO` rides
+the same way — every bench recipe sets it to `frappe/pilot`, the repo `install.sh` is
+fetched from — while `BENCH_CLI_REF` is exported only when a recipe sets one, and none
+does: pilot is installed unpinned, above). `bench-cli` is the
+build tool, not the framework — **one** pilot install bakes all three (it reads the
+branch/Python from `bench.toml` and natively knows
+`version-15`/`version-16`/`develop`; `uv` fetches the requested interpreter). Every
+bake stamps the delivered pilot version and the resolved Frappe/ERPNext SHAs into
+`Image Build.build_inputs` — the record that replaces the pilot pin, and what makes a
+nightly traceable at all since `develop` floats. A customer selects the version through
+the ordinary VM `image` field (the promoted base image); no new hot-path plumbing.
+Bumping a version pin is a deliberate update rolled as a new bake + promote, the same
+discipline `proxy/build.sh`'s pins follow.
 
 Each version also ships an **admin variant** — `bench-v16-admin`, `bench-v15-admin`,
 `bench-nightly-admin` — identical pins but `build_mode = admin`, so the bake skips
@@ -452,7 +508,7 @@ the site + ERPNext and produces the admin-console golden described above. They r
 the same `bench/` tree and version-injection; they differ from their site twins only
 in the mode (and so are cold-only, and never register as the self-serve
 `default_bench_snapshot`). They promote to base images named `bench-v<NN>-admin` — the
-Central name-match link, alongside the site images.
+name Central selects them by, alongside the site images.
 
 ## Verification
 

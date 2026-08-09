@@ -77,7 +77,7 @@ def _check_full_lifecycle(server_name: str, vm) -> None:
 	vm.reload()
 	assert vm.status == "Running", vm.status
 	first_started = vm.last_started
-	assert_probe(server_name, "phase5-is-active.sh", VIRTUAL_MACHINE_NAME=vm.name)
+	assert_probe(server_name, "phase5-is-active", VIRTUAL_MACHINE_NAME=vm.name)
 
 	# Stop, opted into the memory-snapshot fast path (the plain stop is the
 	# default; this VM opts in to prove the capture/restore round trip). A
@@ -91,7 +91,7 @@ def _check_full_lifecycle(server_name: str, vm) -> None:
 	assert vm.status == "Stopped", vm.status
 	assert vm.last_stopped, "last_stopped should be set"
 	assert vm.has_memory_snapshot, "default stop should have captured a memory snapshot"
-	assert_probe(server_name, "phase6-is-inactive.sh", VIRTUAL_MACHINE_NAME=vm.name)
+	assert_probe(server_name, "phase6-is-inactive", VIRTUAL_MACHINE_NAME=vm.name)
 
 	# Start — must RESUME from the memory snapshot, not cold-boot. The start
 	# Task says which way it went; the flag is consumed either way.
@@ -106,7 +106,7 @@ def _check_full_lifecycle(server_name: str, vm) -> None:
 		f"start did not restore the memory snapshot:\n{start_task.stdout}"
 	)
 	assert not vm.has_memory_snapshot, "the start should have consumed the snapshot"
-	assert_probe(server_name, "phase5-is-active.sh", VIRTUAL_MACHINE_NAME=vm.name)
+	assert_probe(server_name, "phase5-is-active", VIRTUAL_MACHINE_NAME=vm.name)
 
 	# Restart (Running -> Running, two tasks).
 	before_stop = vm.last_stopped
@@ -118,7 +118,7 @@ def _check_full_lifecycle(server_name: str, vm) -> None:
 	assert vm.status == "Running", vm.status
 	assert vm.last_stopped > before_stop, "last_stopped did not advance on restart"
 	assert vm.last_started > before_start, "last_started did not advance on restart"
-	assert_probe(server_name, "phase5-is-active.sh", VIRTUAL_MACHINE_NAME=vm.name)
+	assert_probe(server_name, "phase5-is-active", VIRTUAL_MACHINE_NAME=vm.name)
 
 	# Terminate.
 	tap_device = vm.tap_device
@@ -127,7 +127,7 @@ def _check_full_lifecycle(server_name: str, vm) -> None:
 	assert vm.status == "Terminated", vm.status
 	assert_probe(
 		server_name,
-		"phase6-assert-gone.sh",
+		"phase6-assert-gone",
 		VIRTUAL_MACHINE_NAME=vm.name,
 		TAP_DEVICE=tap_device,
 	)

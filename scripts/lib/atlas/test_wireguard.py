@@ -6,6 +6,7 @@ substring/handle helpers that drive apply()/remove() without touching the host,
 and the TunnelConfig sidecar (de)serialization.
 """
 
+import shlex
 import unittest
 
 from atlas import wireguard as wg
@@ -32,29 +33,33 @@ def _config() -> wg.TunnelConfig:
 	)
 
 
-class TestCommandArgv(unittest.TestCase):
-	def test_link_argv(self):
-		self.assertEqual(wg.link_add_argv(INTERFACE), ["ip", "link", "add", INTERFACE, "type", "wireguard"])
-		self.assertEqual(wg.link_up_argv(INTERFACE), ["ip", "link", "set", INTERFACE, "up"])
-		self.assertEqual(wg.link_del_argv(INTERFACE), ["ip", "link", "del", INTERFACE])
-
-	def test_addr_add_argv_uses_host_cidr(self):
+class TestCommand(unittest.TestCase):
+	# The builders now return a rendered command STRING; run() shlex.splits it into
+	# the same argv the old list form produced. Assert that round-trip.
+	def test_link_commands(self):
 		self.assertEqual(
-			wg.addr_add_argv(INTERFACE, HOST_ADDR),
+			shlex.split(wg.link_add_command(INTERFACE)), ["ip", "link", "add", INTERFACE, "type", "wireguard"]
+		)
+		self.assertEqual(shlex.split(wg.link_up_command(INTERFACE)), ["ip", "link", "set", INTERFACE, "up"])
+		self.assertEqual(shlex.split(wg.link_del_command(INTERFACE)), ["ip", "link", "del", INTERFACE])
+
+	def test_addr_add_uses_host_cidr(self):
+		self.assertEqual(
+			shlex.split(wg.addr_add_command(INTERFACE, HOST_ADDR)),
 			["ip", "-6", "addr", "add", HOST_ADDR, "dev", INTERFACE],
 		)
 
-	def test_wg_set_interface_argv_reads_key_from_path(self):
+	def test_wg_set_interface_reads_key_from_path(self):
 		# listen-port rendered as a string; the key comes from a file path, never
 		# inline on the command line.
 		self.assertEqual(
-			wg.wg_set_interface_argv(INTERFACE, PORT, KEY_PATH),
+			shlex.split(wg.wg_set_interface_command(INTERFACE, PORT, KEY_PATH)),
 			["wg", "set", INTERFACE, "listen-port", "51820", "private-key", KEY_PATH],
 		)
 
-	def test_wg_set_peer_argv_scopes_allowed_ips_to_128(self):
+	def test_wg_set_peer_scopes_allowed_ips_to_128(self):
 		self.assertEqual(
-			wg.wg_set_peer_argv(INTERFACE, CLIENT_PUB, CLIENT_ADDR),
+			shlex.split(wg.wg_set_peer_command(INTERFACE, CLIENT_PUB, CLIENT_ADDR)),
 			["wg", "set", INTERFACE, "peer", CLIENT_PUB, "allowed-ips", f"{CLIENT_ADDR}/128"],
 		)
 
@@ -62,7 +67,7 @@ class TestCommandArgv(unittest.TestCase):
 		# `insert` (not `add`): the pair goes to the head of the forward chain, above
 		# the broad per-VM accepts that would otherwise shadow the drop below it.
 		self.assertEqual(
-			wg.accept_rule_argv(INTERFACE, VM_V6),
+			shlex.split(wg.accept_rule_command(INTERFACE, VM_V6)),
 			[
 				"insert",
 				"rule",
@@ -82,7 +87,7 @@ class TestCommandArgv(unittest.TestCase):
 		# The transit isolation guarantee: anything else forwarded off this interface is
 		# dropped. Inserted at the head so a per-VM accept for another VM cannot pre-empt it.
 		self.assertEqual(
-			wg.drop_rule_argv(INTERFACE),
+			shlex.split(wg.drop_rule_command(INTERFACE)),
 			["insert", "rule", "inet", "atlas", "forward", "iifname", INTERFACE, "drop"],
 		)
 
@@ -91,7 +96,7 @@ class TestCommandArgv(unittest.TestCase):
 		# takes the input path, which the forward drop never sees. Appended (`add`) to the
 		# dedicated input chain, which holds only per-tunnel drops, so nothing shadows it.
 		self.assertEqual(
-			wg.host_drop_rule_argv(INTERFACE),
+			shlex.split(wg.host_drop_rule_command(INTERFACE)),
 			["add", "rule", "inet", "atlas", "input", "iifname", INTERFACE, "drop"],
 		)
 

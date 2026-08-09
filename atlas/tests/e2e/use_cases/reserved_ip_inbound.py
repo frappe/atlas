@@ -60,7 +60,7 @@ def run_smoke(reuse: bool = True, keep: bool = True) -> None:
 			# Egress SNAT: the guest's v4 egress is stamped with the reserved IP.
 			assert_probe(
 				server.name,
-				"phase-reserved-ip-snat.sh",
+				"phase-reserved-ip-snat",
 				timeout_seconds=180,
 				VIRTUAL_MACHINE_IPV6=vm.ipv6_address,
 				RESERVED_IPV4=reserved_ipv4,

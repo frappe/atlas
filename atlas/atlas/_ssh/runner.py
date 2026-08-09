@@ -22,12 +22,6 @@ from atlas.atlas.providers.fake_tasks import is_fake_server
 if TYPE_CHECKING:
 	from atlas.atlas.doctype.task.task import Task
 
-# Where `Server.bootstrap()` durably places the shared `atlas` package
-# (`…/bin/atlas/*.py`). Python tasks reach it via PYTHONPATH instead of a per-Task
-# re-upload — see `_remote_command` and script_uploads.py. The dir on the path is
-# the package's PARENT so `import atlas` resolves the `atlas/` directory under it.
-DURABLE_PACKAGE_DIRECTORY = "/var/lib/atlas/bin"
-
 # Where the pre-cutover runner staged the package per Task. The entry points'
 # `sys.path.insert(0, <staging>/lib)` shim puts this AHEAD of PYTHONPATH, so a
 # leftover copy on a legacy host shadows the durable package with stale modules.
@@ -74,6 +68,25 @@ def run_task(
 
 		return run_fake_task(server, script, variables, virtual_machine)
 
+	# The host verbs the boat daemon serves over HTTP no longer open an SSH
+	# connection: they run through the daemon, journaled by op_id, exactly as the
+	# lifecycle verbs do (spec/33 §2.4). The delegation lives here, at the one SSH
+	# chokepoint every host verb passed through, so no call site changes transport —
+	# it states the verb and this routes it. The connection= path is bootstrap's,
+	# whose verb is never HTTP-served, so this is reached only with server= set.
+	from atlas.atlas import scripts_catalog
+
+	if server is not None and scripts_catalog.runs_on_boat_http(script):
+		from atlas.atlas.boat_client import run_boat_host_task
+
+		return run_boat_host_task(
+			script=script,
+			variables=variables,
+			server=server,
+			virtual_machine=virtual_machine,
+			timeout_seconds=timeout_seconds,
+		)
+
 	if connection is None:
 		server_doc = frappe.get_doc("Server", server)
 		connection = connection_for_server(server_doc)
@@ -93,6 +106,61 @@ def run_task(
 
 	_execute_into(task, connection, script, variables, timeout_seconds)
 	return task
+
+
+def run_probe(
+	*,
+	script: str,
+	variables: dict,
+	server: str,
+	timeout_seconds: int = 30,
+) -> str:
+	"""Run a read-only polling script on a host WITHOUT recording a Task row.
+
+	The non-persisting sibling of `run_task`, for the per-minute sweeps whose
+	rows nobody reads. `poll-vm-traffic` and `probe-woken-vms` (spec/32 sleepy
+	VMs) each run once per server per minute; as Tasks that is ~2,880 rows per
+	server per day of "polled, nothing happened", drowning the audit log the
+	Task list exists to be. A probe is idempotent, read-only, and interesting
+	only when it fails, so it logs instead of persisting.
+
+	Returns the script's stdout for `parse_result`. Never raises: an SSH error,
+	timeout, or non-zero exit logs a warning and returns "" — a missed poll
+	cycle is at most one extra minute of idle time, and the next tick retries.
+	Callers therefore need no try/except of their own.
+
+	Use `run_task` for anything that changes host state: those rows ARE the
+	audit trail, and their failures must propagate.
+	"""
+	if is_fake_server(server):
+		from atlas.atlas.providers.fake_tasks import fake_stdout
+
+		return fake_stdout(script, variables)
+
+	# The read-only sweeps the boat daemon serves over HTTP no longer open an SSH
+	# connection: they run through the daemon's non-journaling read path, exactly
+	# as run_task delegates the mutating host verbs (spec/33 §2.4). run_boat_host_read
+	# keeps run_probe's contract — it never raises and returns "" on failure.
+	from atlas.atlas import scripts_catalog
+
+	if scripts_catalog.runs_on_boat_http_read(script):
+		from atlas.atlas.boat_client import run_boat_host_read
+
+		return run_boat_host_read(
+			script=script, variables=variables, server=server, timeout_seconds=timeout_seconds
+		)
+
+	try:
+		connection = connection_for_server(frappe.get_doc("Server", server))
+		stdout, stderr, exit_code = _run_remote_script(connection, script, variables, timeout_seconds)
+		if exit_code != 0:
+			# Tail, not head: scripts run under `bash -x`, so the real error is at the end.
+			frappe.logger("atlas").warning(f"probe {script} on {server} exited {exit_code}: {stderr[-500:]}")
+			return ""
+		return stdout
+	except Exception as exception:
+		frappe.logger("atlas").warning(f"probe {script} on {server} failed: {exception}")
+		return ""
 
 
 def execute_task(task_name: str) -> None:
@@ -221,26 +289,45 @@ def _run_remote_script(
 
 	_ensure_known_hosts_directory()
 
+	# `script` is a VERB (`provision-vm`, `reboot-server`), not a filename — the
+	# catalog is the single authority on its nature (python vs shell) and its file.
 	uploads = files_to_upload(script)
+	verb_kind = scripts_catalog.kind(script)
 	durable_remote = scripts_catalog.durable_remote_path(script)
 
 	with ssh_key_file(connection.ssh_private_key) as key_path:
-		# Fast path: the script is shipped durably at /var/lib/atlas/bin (by
-		# bootstrap/sync_scripts, like the atlas package and the systemd hooks) and
-		# needs no per-Task sidecar, so invoke it in place — one round trip, no
-		# mkdir+scp. This is the bulk of Tasks (every VM lifecycle op); the scp it
-		# skips was the dominant latency of an otherwise sub-second start/stop. A
-		# host bootstrapped before the durable-scripts cutover lacks the copy and
-		# must be re-bootstrapped / sync_scripts'd — the same refresh contract the
-		# durable atlas package already follows.
+		# Python-verb fast path: run the pip-installed `atlas <verb>` console entry
+		# on PATH — no scp, no interpreter path, no PYTHONPATH (install.sh's
+		# `uv pip install` put the package and the entry on PATH at bootstrap). This
+		# is the bulk of Tasks (every VM lifecycle op), and `bootstrap-server` itself:
+		# install.sh creates the venv + console script over SSH BEFORE the bootstrap
+		# Task, so by the time it runs `atlas bootstrap-server` dispatches like any
+		# other verb — there is no carve-out.
+		#
+		# A stale/legacy host with no `atlas` on PATH surfaces this as the Task's own
+		# `atlas: command not found` — the fail-fast moved from a per-Task `test -e`
+		# round trip to once-at-bootstrap (Server.cli_ready, the deep sanity gate).
+		# Sidecars (sync-image bakes atlas-network.service) are still staged first.
+		if verb_kind == "python":
+			if uploads:
+				_stage_sidecars(connection, key_path, uploads)
+			command = _remote_command(script, None, variables)
+			return run_ssh(connection, key_path, command, timeout_seconds=timeout_seconds)
+
+		# Durable-file fast path: the durable shell verbs (reboot-server, `bash -x`
+		# by path) are shipped durably at /var/lib/atlas/bin and invoked in place —
+		# one round trip, no mkdir+scp. (Python verbs, incl. bootstrap-server, took
+		# the `atlas <verb>` fast path above.) A host bootstrapped before the
+		# durable-scripts cutover lacks the copy and must be re-bootstrapped /
+		# sync_scripts'd — the same refresh contract the durable atlas package follows.
 		if durable_remote and not uploads:
 			# Guard so a host that predates the durable-scripts cutover (no
-			# /var/lib/atlas/bin/<script> yet) degrades to the staging path below
-			# for this one Task instead of failing: `test -f` short-circuits to the
-			# marker before the interpreter ever opens the file, so nothing ran and
-			# a staged re-run is safe. The marker can only come from this guard (the
-			# echo is gated behind the `||`), so it is an unambiguous fall-back
-			# signal. A re-bootstrap / sync_scripts makes the fast path stick.
+			# /var/lib/atlas/bin/<file> yet) degrades to the staging path below for
+			# this one Task instead of failing: `test -f` short-circuits to the
+			# marker before the file is ever opened, so nothing ran and a staged
+			# re-run is safe. The marker can only come from this guard (the echo is
+			# gated behind the `||`), so it is an unambiguous fall-back signal. A
+			# re-bootstrap / sync_scripts makes the fast path stick.
 			inner = _remote_command(script, durable_remote, variables)
 			guarded = (
 				f"test -f {shlex.quote(durable_remote)} "
@@ -257,17 +344,16 @@ def _run_remote_script(
 			)
 			# fall through to the staging path
 
-		# Staging path: e2e probe scripts (resolved from the test directory, never
-		# shipped durably), the few scripts with per-Task sidecars (sync-image), and
-		# a durable script whose host copy is missing (the fall-through just above).
-		# Create the staging dir and every remote parent directory the uploads need
-		# in one round trip. The purge first: hosts bootstrapped before the
-		# durable-package cutover still carry a per-Task staged copy of the lib at
-		# <staging>/lib, and the entry points' `sys.path.insert(0, <staging>/lib)`
-		# shim puts it AHEAD of PYTHONPATH — so a stale copy there shadows every
-		# durable-package update (e.g. an old paths.py without the new attributes).
-		# Removing it makes the shim the no-op the durable contract assumes.
+		# Staging path: e2e probe scripts (shell verbs resolved from the test
+		# directory, never shipped durably) and a durable shell verb whose host copy
+		# is missing (the fall-through just above). Create the staging dir and every
+		# remote parent directory the uploads need in one round trip. The purge
+		# first: hosts bootstrapped before the durable-package cutover still carry a
+		# per-Task staged copy of the lib at <staging>/lib, and a stale copy there
+		# would shadow every durable-package update; removing it keeps the durable
+		# package authoritative.
 		script_path = scripts_catalog.resolve(script)
+		file_name = scripts_catalog.file_for(script)
 		remote_dirs = {REMOTE_STAGING_DIRECTORY}
 		remote_dirs.update(os.path.dirname(remote) for _, remote in uploads)
 		mkdir = (
@@ -281,40 +367,59 @@ def _run_remote_script(
 			local_path = (scripts_catalog.scripts_directory() / ".." / local).resolve()
 			run_scp(connection, key_path, str(local_path), remote, timeout_seconds=300)
 
-		remote_script_path = f"{REMOTE_STAGING_DIRECTORY}/{script}"
+		remote_script_path = f"{REMOTE_STAGING_DIRECTORY}/{file_name}"
 		run_scp(connection, key_path, str(script_path), remote_script_path, timeout_seconds=300)
 
 		command = _remote_command(script, remote_script_path, variables)
 		return run_ssh(connection, key_path, command, timeout_seconds=timeout_seconds)
 
 
-def _remote_command(script: str, remote_script_path: str, variables: dict) -> str:
-	"""Build the remote invocation for a staged script.
+def _stage_sidecars(connection: Connection, key_path: str, uploads: list[tuple[str, str]]) -> None:
+	"""Create the staging dir + the sidecars' parent dirs, then scp each sidecar to
+	its fixed remote path. Used by the python-verb fast path: the verb itself runs
+	as `atlas <verb>`, but a few verbs (sync-image) read an extra file baked at a
+	known location. Sidecars are scarce, so this is at most a couple of scps."""
+	remote_dirs = {REMOTE_STAGING_DIRECTORY}
+	remote_dirs.update(os.path.dirname(remote) for _, remote in uploads)
+	mkdir = "mkdir -p " + " ".join(shlex.quote(d) for d in sorted(remote_dirs) if d)
+	run_ssh(connection, key_path, mkdir, timeout_seconds=60)
+	from atlas.atlas import scripts_catalog
 
-	Python tasks (`.py`) run as `python3 <script> --flag value …`: the variables
-	dict maps to CLI flags (UPPER_SNAKE → --kebab-case), the typed-input contract
-	the entry points parse with TaskInputs.from_args(). A list value becomes a
-	repeated flag (`--cgroup-arg a --cgroup-arg b`). Shell tasks (`.sh`) keep the
-	legacy `env VAR=val bash -x <script>` form. Both coexist so the migration can
-	proceed script by script.
+	for local, remote in uploads:
+		local_path = (scripts_catalog.scripts_directory() / ".." / local).resolve()
+		run_scp(connection, key_path, str(local_path), remote, timeout_seconds=300)
 
-	The Python form is strictly better for the operator: a Task row now yields a
-	runnable, `--help`-able command line, not an `env …` blob.
 
-	Python tasks `import atlas` from the DURABLE package bootstrap placed at
-	`/var/lib/atlas/bin/atlas/`, reached via `PYTHONPATH` here — the package is no
-	longer re-staged per Task (see script_uploads.py). The entry point's own
-	`sys.path.insert(0, <staging>/lib)` shim sits AHEAD of PYTHONPATH, which is
-	harmless only because `_run_remote_script` purges <staging>/lib before every
-	Task — a legacy host's leftover staged copy would otherwise shadow the
-	durable package with stale modules.
-	"""
-	quoted_path = shlex.quote(remote_script_path)
-	if script.endswith(".py"):
+def _remote_command(script: str, remote_script_path: str | None, variables: dict) -> str:
+	"""Build the remote invocation for a verb.
+
+	Two shapes, chosen by the catalog's `kind(verb)` (never a suffix-sniff):
+
+	  - Python verb (the bulk, incl. `bootstrap-server`): `atlas <verb> --flag value …`.
+	    The pip-installed console script on PATH dispatches to the typed entry point,
+	    which parses the flags via TaskInputs.from_args(). `remote_script_path` is
+	    None — there is no file path; the install IS the entry. The variables dict
+	    maps to CLI flags (UPPER_SNAKE → --kebab-case); a list value becomes a
+	    repeated flag. `bootstrap-server` is no longer a carve-out: install.sh creates
+	    the venv + console script over SSH before the bootstrap Task.
+
+	  - Shell verb (`reboot-server`, e2e probes): `env VAR=val bash -x <file>`.
+
+	The python form yields a runnable, `--help`-able command line in the Task row,
+	not an `env …` blob."""
+	from atlas.atlas import scripts_catalog
+
+	if scripts_catalog.kind(script) == "python":
 		args = _variables_to_flags(variables)
-		return f"PYTHONPATH={DURABLE_PACKAGE_DIRECTORY} python3 {quoted_path} {args}".strip()
+		# `boat <verb>` for the verbs the Go daemon's binary implements, `atlas
+		# <verb>` for the rest. Only the first word differs: boat takes the same
+		# flags this function renders and prints the same `ATLAS_RESULT=` line
+		# `TaskResult.parse` reads back, which is what lets one host run a mix
+		# while the port finishes (spec/33-boat.md, WO-6).
+		entry = "boat" if scripts_catalog.runs_on_boat(script) else "atlas"
+		return f"{entry} {shlex.quote(script)} {args}".strip()
 	env_prefix = " ".join(f"{key}={shlex.quote(str(value))}" for key, value in variables.items())
-	return f"env {env_prefix} bash -x {quoted_path}".strip()
+	return f"env {env_prefix} bash -x {shlex.quote(remote_script_path)}".strip()
 
 
 def _variables_to_flags(variables: dict) -> str:

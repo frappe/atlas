@@ -6,11 +6,12 @@ Description=Atlas LVM thin pool
 # does not, so the VG/pool are gone until the loop is re-attached. bootstrap-
 # server.py creates the pool but is NOT re-run on boot, so this oneshot re-asserts
 # it (ThinPool.ensure() → PoolBacking.reassert() re-binds the loop only when the
-# backing is the file). Ordered before any VM unit (firecracker-vm@.service Wants
-# network-online.target; this only needs local fs) so a VM never starts against a
-# missing pool.
+# backing is the file). A VM must never start against a missing pool; that
+# ordering is asserted from the template side (firecracker-vm@.service carries
+# `After=atlas-pool.service`), NOT with a bare `Before=firecracker-vm@.service`
+# here — an empty template instance in Before= resolves to the phantom
+# `firecracker-vm@atlas-pool.service` and orders nothing against real VMs.
 After=local-fs.target
-Before=firecracker-vm@.service
 DefaultDependencies=no
 RequiresMountsFor=/var/lib/atlas/pool
 
@@ -22,7 +23,10 @@ RemainAfterExit=yes
 # and activates the VG; otherwise it rebuilds pv/vg/pool from the backing file.
 # The package lives under /var/lib/atlas/bin (placed by bootstrap), added to
 # sys.path here so `from atlas.lvm import ThinPool` resolves.
-ExecStart=/usr/bin/python3 -c "import sys; sys.path.insert(0, '/var/lib/atlas/bin'); from atlas.lvm import ThinPool; ThinPool().ensure()"
+# Runs under the Atlas venv python (/var/lib/atlas/venv/bin/python, created by
+# bootstrap's ensure_atlas_env() — its sanity gate runs THIS exact import before
+# any unit points at the venv), not the host python3.
+ExecStart=/var/lib/atlas/venv/bin/python -c "import sys; sys.path.insert(0, '/var/lib/atlas/bin'); from atlas.lvm import ThinPool; ThinPool().ensure()"
 
 [Install]
 WantedBy=multi-user.target

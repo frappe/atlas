@@ -6,6 +6,7 @@ construction, the handle scrape that drives apply()/remove(), and the
 FirewallConfig sidecar (de)serialization.
 """
 
+import shlex
 import unittest
 
 from atlas import firewall as fw
@@ -42,73 +43,46 @@ class TestRuleParsing(unittest.TestCase):
 			fw.Rule.parse("tcp/0")
 
 
-class TestRuleArgv(unittest.TestCase):
+class TestRuleCommand(unittest.TestCase):
+	# The helpers now return a rendered command STRING (split into argv by run()),
+	# so we assert the rendered text. A `shlex.split` of each must yield the argv the
+	# previous list form produced — that round-trip is what guarantees behaviour is
+	# unchanged.
 	def test_established_rule_precedes_with_conntrack(self):
+		command = fw.established_rule_command(UPLINK, VM_V6)
 		self.assertEqual(
-			fw.established_rule_argv(UPLINK, VM_V6),
-			[
-				"add",
-				"rule",
-				"inet",
-				"atlas",
-				"public_filter",
-				"iifname",
-				UPLINK,
-				"ip6",
-				"daddr",
-				VM_V6,
-				"ct",
-				"state",
-				"established,related",
-				"accept",
-			],
-		)
+			shlex.split(command),
+			["add", "rule", "inet", "atlas", "public_filter", "iifname", UPLINK,
+			 "ip6", "daddr", VM_V6, "ct", "state", "established,related", "accept"],
+		)  # fmt: skip
 
 	def test_port_rule_targets_proto_and_port(self):
+		command = fw.port_rule_command(UPLINK, VM_V6, fw.Rule("tcp", 443))
 		self.assertEqual(
-			fw.port_rule_argv(UPLINK, VM_V6, fw.Rule("tcp", 443)),
-			[
-				"add",
-				"rule",
-				"inet",
-				"atlas",
-				"public_filter",
-				"iifname",
-				UPLINK,
-				"ip6",
-				"daddr",
-				VM_V6,
-				"tcp",
-				"dport",
-				"443",
-				"accept",
-			],
-		)
+			shlex.split(command),
+			["add", "rule", "inet", "atlas", "public_filter", "iifname", UPLINK,
+			 "ip6", "daddr", VM_V6, "tcp", "dport", "443", "accept"],
+		)  # fmt: skip
 
 	def test_drop_rule_closes_the_block(self):
+		command = fw.drop_rule_command(UPLINK, VM_V6)
 		self.assertEqual(
-			fw.drop_rule_argv(UPLINK, VM_V6),
-			[
-				"add",
-				"rule",
-				"inet",
-				"atlas",
-				"public_filter",
-				"iifname",
-				UPLINK,
-				"ip6",
-				"daddr",
-				VM_V6,
-				"drop",
-			],
-		)
+			shlex.split(command),
+			["add", "rule", "inet", "atlas", "public_filter", "iifname", UPLINK,
+			 "ip6", "daddr", VM_V6, "drop"],
+		)  # fmt: skip
 
 	def test_chain_runs_before_forward(self):
 		# priority filter - 5 is lower than forward's filter (0), so it is evaluated
 		# first and its drop pre-empts the broad per-VM accept in forward.
-		chain = fw.ensure_chain_argv()
-		self.assertIn("priority filter - 5", chain)
-		self.assertIn("public_filter", chain)
+		command = fw.ensure_chain_command()
+		self.assertIn("priority filter - 5", command)
+		self.assertIn("public_filter", command)
+		# The whole brace clause must remain ONE argv token (Trap 2), not be
+		# re-tokenized by run()'s shlex.split.
+		self.assertEqual(
+			shlex.split(command)[-1], "{ type filter hook forward priority filter - 5; policy accept; }"
+		)
 
 
 _LISTING = f"""chain public_filter {{

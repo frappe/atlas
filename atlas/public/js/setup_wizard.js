@@ -4,15 +4,33 @@
 // `atlas.setup.get_setup_stages` (the `setup_wizard_stages` hook), whose stage
 // fns call the Layer-1 `setup()` setters.
 //
+// The slides are ordered controller-first, then cloud, then optional TLS:
+//
+//   1. Atlas  — this installation's OWN facts: its single region (the source of
+//               truth) and the controller SSH private key. Both vendor-independent,
+//               so they come before any provider talk and need no "not the same as
+//               the provider region" disclaimer.
+//   2. Provider — purely how Atlas reaches the cloud: provider type + per-vendor
+//               credentials / region / project.
+//   3. TLS    — optional wildcard certificate.
+//
 // Hide-irrelevant-fields is pure `depends_on`. Per-provider required fields use
 // `mandatory_depends_on` so Next-validation doesn't block on a hidden field.
 //
 // The imperative bits (in each slide's `onload`) deliver the "discover, don't
 // type" experience: a Test Connection button calls `atlas.setup.wizard_discover`
-// with the just-typed (unsaved) credentials and turns the Size / Image / SSH Key /
-// Project slug boxes into pick-lists populated from the vendor's live catalog. The
-// default provider is applied on load so its section shows immediately (no blank
-// first paint), and the SSH-key slide validates the path before Next.
+// with the just-typed (unsaved) credentials — plus the controller key path from
+// the Atlas slide — and turns the Project slug box into a pick-list from the
+// vendor's live catalog. It ALSO find-or-registers the controller key with the
+// vendor and stashes the resulting vendor SSH key id (`matched_ssh_key_id`) into a
+// hidden field the stage posts — so the operator never picks or uploads an SSH key
+// by hand. The default provider is applied on load so its section shows immediately
+// (no blank first paint).
+//
+// The default size/image are NOT asked here — `setup()` adopts the provider's
+// discover() default into the empty catalog slot (operator's `atlas_*_default_*`
+// config keys override it), and the operator can flip the default on the Provider
+// Size / Provider Image list anytime.
 
 frappe.provide("frappe.setup");
 
@@ -20,15 +38,49 @@ frappe.setup.on("before_load", function () {
 	atlas_setup_slides().forEach((slide) => frappe.setup.add_slide(slide));
 });
 
-// Fields the wizard discovers rather than asks you to type. Start as empty Selects
-// (so they render as dropdowns, not text); Test Connection fills the options.
+// Selects the wizard discovers rather than asks you to type. Start empty (so they
+// render as dropdowns, not text); Test Connection fills the options. The vendor SSH
+// key is NOT here — it is resolved silently into a hidden field, not picked.
 const ATLAS_DISCOVERED = {
-	DigitalOcean: ["do_default_size", "do_default_image", "do_ssh_key_id"],
-	Scaleway: ["scw_default_size", "scw_default_image", "scw_project_id", "scw_ssh_key_id"],
+	DigitalOcean: [],
+	Scaleway: ["scw_project_id"],
 };
 
 function atlas_setup_slides() {
 	return [
+		{
+			name: "atlas",
+			title: __("Atlas"),
+			icon: "fa fa-globe",
+			fields: [
+				{
+					fieldname: "region",
+					label: __("Atlas Region"),
+					fieldtype: "Data",
+					reqd: 1,
+					description: __(
+						"This Atlas's single region — the source of truth, e.g. blr1. (Distinct from the provider's own API region/zone, set on the next slide.)"
+					),
+				},
+				{
+					fieldname: "ssh_private_key_path",
+					label: __("SSH Private Key Path"),
+					fieldtype: "Data",
+					reqd: 1,
+					description: __(
+						"Absolute path on the controller (0600, readable by the Frappe user) Atlas uses to reach the boxes it provisions. The matching public key is derived via ssh-keygen and registered with your provider for you when you Test Connection."
+					),
+				},
+				{
+					fieldname: "ssh_key_hint",
+					fieldtype: "HTML",
+					options: `<p class="text-muted small">${__(
+						"The file only needs to exist on the controller before you provision a Server — setup saves the path either way."
+					)}</p>`,
+				},
+			],
+		},
+
 		{
 			name: "atlas_provider",
 			title: __("Provider"),
@@ -38,18 +90,9 @@ function atlas_setup_slides() {
 					fieldname: "provider_type",
 					label: __("Provider"),
 					fieldtype: "Select",
-					options: ["DigitalOcean", "Scaleway", "Self-Managed"].join("\n"),
+					options: ["DigitalOcean", "Scaleway", "Self-Managed", "Fake"].join("\n"),
 					default: "DigitalOcean",
 					reqd: 1,
-				},
-				{
-					fieldname: "region",
-					label: __("Atlas Region"),
-					fieldtype: "Data",
-					reqd: 1,
-					description: __(
-						"This Atlas's single region (the source of truth, e.g. blr1). NOT the same as the provider's own API region/zone below — a provider operates in many regions."
-					),
 				},
 
 				// --- DigitalOcean ---
@@ -81,6 +124,7 @@ function atlas_setup_slides() {
 					fieldname: "do_region",
 					label: __("DigitalOcean Region"),
 					fieldtype: "Data",
+					default: "blr1",
 					depends_on: "eval:doc.provider_type=='DigitalOcean'",
 					mandatory_depends_on: "eval:doc.provider_type=='DigitalOcean'",
 					description: __(
@@ -88,33 +132,12 @@ function atlas_setup_slides() {
 					),
 				},
 				{
+					// Hidden: Test Connection find-or-registers the controller key and
+					// writes the resolved DO key id here for the stage to post.
 					fieldname: "do_ssh_key_id",
-					label: __("SSH Key (optional)"),
-					fieldtype: "Select",
+					fieldtype: "Data",
+					hidden: 1,
 					depends_on: "eval:doc.provider_type=='DigitalOcean'",
-					description: __(
-						"Pick after Test Connection, or leave blank — Atlas will find or upload the SSH public key automatically."
-					),
-				},
-				{
-					fieldname: "do_default_size",
-					label: __("Default Size"),
-					fieldtype: "Select",
-					depends_on: "eval:doc.provider_type=='DigitalOcean'",
-					mandatory_depends_on: "eval:doc.provider_type=='DigitalOcean'",
-					description: __(
-						"Pick after Test Connection, or type a vendor slug, e.g. s-2vcpu-4gb-intel."
-					),
-				},
-				{
-					fieldname: "do_default_image",
-					label: __("Default Image"),
-					fieldtype: "Select",
-					depends_on: "eval:doc.provider_type=='DigitalOcean'",
-					mandatory_depends_on: "eval:doc.provider_type=='DigitalOcean'",
-					description: __(
-						"Pick after Test Connection, or type a vendor slug, e.g. ubuntu-24-04-x64."
-					),
 				},
 
 				// --- Scaleway ---
@@ -158,27 +181,7 @@ function atlas_setup_slides() {
 					depends_on: "eval:doc.provider_type=='Scaleway'",
 					mandatory_depends_on: "eval:doc.provider_type=='Scaleway'",
 					description: __(
-						"Pick after Test Connection (the catalog needs it to list SSH keys)."
-					),
-				},
-				{
-					fieldname: "scw_default_size",
-					label: __("Default Size"),
-					fieldtype: "Select",
-					depends_on: "eval:doc.provider_type=='Scaleway'",
-					mandatory_depends_on: "eval:doc.provider_type=='Scaleway'",
-					description: __(
-						"Pick after Test Connection, or type a case-sensitive offer name, e.g. EM-A610R-NVME."
-					),
-				},
-				{
-					fieldname: "scw_default_image",
-					label: __("Default Image"),
-					fieldtype: "Select",
-					depends_on: "eval:doc.provider_type=='Scaleway'",
-					mandatory_depends_on: "eval:doc.provider_type=='Scaleway'",
-					description: __(
-						"Pick after Test Connection, or type a case-sensitive OS slug, e.g. Ubuntu_24.04."
+						"Pick after Test Connection (the SSH key is registered into this project)."
 					),
 				},
 				{ fieldtype: "Column Break", depends_on: "eval:doc.provider_type=='Scaleway'" },
@@ -197,13 +200,12 @@ function atlas_setup_slides() {
 					depends_on: "eval:doc.provider_type=='Scaleway'",
 				},
 				{
+					// Hidden: Test Connection find-or-registers the controller key with
+					// IAM and writes the resolved key id here for the stage to post.
 					fieldname: "scw_ssh_key_id",
-					label: __("IAM SSH Key (optional)"),
-					fieldtype: "Select",
+					fieldtype: "Data",
+					hidden: 1,
 					depends_on: "eval:doc.provider_type=='Scaleway'",
-					description: __(
-						"Pick after Test Connection, or leave blank to let Atlas register the SSH public key with IAM at provision time."
-					),
 				},
 
 				// --- Self-Managed ---
@@ -220,41 +222,34 @@ function atlas_setup_slides() {
 					)}</p>`,
 					depends_on: "eval:doc.provider_type=='Self-Managed'",
 				},
+
+				// --- Fake ---
+				{
+					fieldtype: "Section Break",
+					label: __("Fake"),
+					depends_on: "eval:doc.provider_type=='Fake'",
+				},
+				{
+					fieldname: "fake_note",
+					fieldtype: "HTML",
+					options: `<p class="text-muted">${__(
+						"The Fake provider is a development-only, no-op vendor — no credentials, no real cloud, no SSH. It needs developer_mode enabled."
+					)}</p>`,
+					depends_on: "eval:doc.provider_type=='Fake'",
+				},
+				{
+					fieldname: "fake_generate_demo_data",
+					label: __("Generate demo data after setup"),
+					fieldtype: "Check",
+					default: 1,
+					depends_on: "eval:doc.provider_type=='Fake'",
+					description: __(
+						"Stands up a varied Fake fleet — Servers across every status, Virtual Machines in every state, snapshots, Reserved IPs, and back-dated Tasks — so the desk is populated the moment setup finishes. You can also re-run it anytime from Generate Demo Data on Atlas Settings."
+					),
+				},
 			],
 
 			onload: atlas_provider_slide_onload,
-		},
-
-		{
-			name: "atlas_ssh_key",
-			title: __("SSH Key"),
-			icon: "fa fa-key",
-			fields: [
-				{
-					fieldname: "ssh_private_key_path",
-					label: __("SSH Private Key Path"),
-					fieldtype: "Data",
-					reqd: 1,
-					description: __(
-						"Absolute path on the controller (0600, readable by the Frappe user). The public key is derived from it via ssh-keygen if you leave the next field blank."
-					),
-				},
-				{
-					fieldname: "ssh_public_key",
-					label: __("SSH Public Key (optional)"),
-					fieldtype: "Small Text",
-					description: __(
-						"OpenSSH public key body. Derived from the private key path when omitted."
-					),
-				},
-				{
-					fieldname: "ssh_key_hint",
-					fieldtype: "HTML",
-					options: `<p class="text-muted small">${__(
-						"The file only needs to exist on the controller before you provision a Server — setup saves the path either way."
-					)}</p>`,
-				},
-			],
 		},
 
 		{
@@ -275,30 +270,61 @@ function atlas_setup_slides() {
 					fieldtype: "Data",
 					depends_on: "eval:doc.setup_tls",
 					mandatory_depends_on: "eval:doc.setup_tls",
-					description: __(
-						"e.g. blr1.frappe.dev (its Route 53 hosted zone must already exist)."
-					),
+					description: __("e.g. blr1.frappe.dev (the DNS zone must already exist)."),
+				},
+				{
+					fieldname: "dns_provider_type",
+					label: __("DNS Provider"),
+					fieldtype: "Select",
+					options: ["Route53", "PowerDNS"].join("\n"),
+					default: "Route53",
+					depends_on: "eval:doc.setup_tls",
+					mandatory_depends_on: "eval:doc.setup_tls",
 				},
 				{
 					fieldname: "route53_access_key_id",
 					label: __("Route 53 Access Key ID"),
 					fieldtype: "Data",
-					depends_on: "eval:doc.setup_tls",
-					mandatory_depends_on: "eval:doc.setup_tls",
+					depends_on: "eval:doc.setup_tls && doc.dns_provider_type=='Route53'",
+					mandatory_depends_on: "eval:doc.setup_tls && doc.dns_provider_type=='Route53'",
 				},
 				{
 					fieldname: "route53_secret_access_key",
 					label: __("Route 53 Secret Access Key"),
 					fieldtype: "Password",
-					depends_on: "eval:doc.setup_tls",
-					mandatory_depends_on: "eval:doc.setup_tls",
+					depends_on: "eval:doc.setup_tls && doc.dns_provider_type=='Route53'",
+					mandatory_depends_on: "eval:doc.setup_tls && doc.dns_provider_type=='Route53'",
 				},
 				{
 					fieldname: "route53_region",
 					label: __("AWS API Region"),
 					fieldtype: "Data",
 					default: "us-east-1",
-					depends_on: "eval:doc.setup_tls",
+					depends_on: "eval:doc.setup_tls && doc.dns_provider_type=='Route53'",
+				},
+				{
+					fieldname: "powerdns_api_url",
+					label: __("PowerDNS API URL"),
+					fieldtype: "Data",
+					depends_on: "eval:doc.setup_tls && doc.dns_provider_type=='PowerDNS'",
+					mandatory_depends_on:
+						"eval:doc.setup_tls && doc.dns_provider_type=='PowerDNS'",
+					description: __("Base URL without /api/v1."),
+				},
+				{
+					fieldname: "powerdns_api_key",
+					label: __("PowerDNS API Key"),
+					fieldtype: "Password",
+					depends_on: "eval:doc.setup_tls && doc.dns_provider_type=='PowerDNS'",
+					mandatory_depends_on:
+						"eval:doc.setup_tls && doc.dns_provider_type=='PowerDNS'",
+				},
+				{
+					fieldname: "powerdns_server_id",
+					label: __("PowerDNS Server ID"),
+					fieldtype: "Data",
+					default: "localhost",
+					depends_on: "eval:doc.setup_tls && doc.dns_provider_type=='PowerDNS'",
 				},
 				{
 					fieldname: "acme_account_email",
@@ -337,12 +363,18 @@ function atlas_setup_slides() {
 // --- Provider slide: default-on-load + Test Connection / auto-fill -----------
 
 function atlas_provider_slide_onload(slide) {
-	// Apply the default provider so its section renders on first paint (Frappe leaves
-	// the doc value empty even when the Select visually shows the first option).
-	if (!slide.get_value("provider_type")) {
-		slide.get_field("provider_type").set_input("DigitalOcean");
-		slide.form.refresh();
-	}
+	// Seed declared `default`s into the doc on first paint. The slide FieldGroup shows
+	// the first/declared option visually but leaves the doc value empty, so a field a
+	// user never touches would post blank and fail its `mandatory_depends_on` — make
+	// "what you see selected" == "what gets posted".
+	["provider_type", "do_region", "dns_provider_type", "powerdns_server_id"].forEach(
+		(fieldname) => {
+			const field = slide.get_field(fieldname);
+			if (field?.df.default && !slide.get_value(fieldname))
+				field.set_input(field.df.default);
+		}
+	);
+	slide.form.refresh();
 
 	slide
 		.get_field("do_test_connection")
@@ -351,7 +383,8 @@ function atlas_provider_slide_onload(slide) {
 		.get_field("scw_test_connection")
 		?.$input?.on("click", () => atlas_test_connection(slide, "Scaleway"));
 
-	// Scaleway lists SSH keys only once a project is chosen — re-fetch on change.
+	// Scaleway resolves the SSH key (and lists keys) only once a project is chosen —
+	// re-probe on change to register the controller key into the picked project.
 	slide.get_field("scw_project_id")?.$input?.on("change", () => {
 		if (slide.get_value("scw_project_id"))
 			atlas_test_connection(slide, "Scaleway", { silent: true });
@@ -359,15 +392,20 @@ function atlas_provider_slide_onload(slide) {
 }
 
 function atlas_test_connection(slide, provider_type, opts = {}) {
+	// The controller key path lives on the Atlas slide (visited before this one); it is
+	// already merged into the wizard's accumulated values. Pass it so the probe can
+	// find-or-register the matching vendor SSH key.
+	const ssh_private_key_path = frappe.wizard?.values?.ssh_private_key_path || "";
 	const credentials =
 		provider_type === "DigitalOcean"
-			? { api_token: slide.get_value("do_api_token") }
+			? { api_token: slide.get_value("do_api_token"), ssh_private_key_path }
 			: {
 					secret_key: slide.get_value("scw_secret_key"),
 					zone: slide.get_value("scw_zone"),
 					organization_id: slide.get_value("scw_organization_id"),
 					project_id: slide.get_value("scw_project_id"),
 					billing: slide.get_value("scw_billing"),
+					ssh_private_key_path,
 			  };
 
 	const status_field =
@@ -406,20 +444,14 @@ function atlas_test_connection(slide, provider_type, opts = {}) {
 }
 
 // Turn the discovered lists into <select> options, preserving any value the
-// operator already picked/typed.
+// operator already picked/typed, and stash the resolved vendor SSH key id into its
+// hidden field (the probe find-or-registered the controller key for us).
 function atlas_apply_catalog(slide, provider_type, catalog) {
 	const map =
 		provider_type === "DigitalOcean"
-			? {
-					do_default_size: catalog.sizes,
-					do_default_image: catalog.images,
-					do_ssh_key_id: catalog.ssh_keys,
-			  }
+			? {}
 			: {
-					scw_default_size: catalog.sizes,
-					scw_default_image: catalog.images,
 					scw_project_id: catalog.projects,
-					scw_ssh_key_id: catalog.ssh_keys,
 			  };
 
 	for (const [fieldname, items] of Object.entries(map)) {
@@ -431,6 +463,10 @@ function atlas_apply_catalog(slide, provider_type, catalog) {
 			ATLAS_DISCOVERED[provider_type]?.includes(fieldname)
 		);
 	}
+
+	const ssh_key_field = provider_type === "DigitalOcean" ? "do_ssh_key_id" : "scw_ssh_key_id";
+	if (catalog.matched_ssh_key_id)
+		slide.get_field(ssh_key_field)?.set_value(catalog.matched_ssh_key_id);
 }
 
 function atlas_fill_select(slide, fieldname, items, optional) {

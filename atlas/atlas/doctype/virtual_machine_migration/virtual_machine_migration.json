@@ -1,0 +1,323 @@
+{
+  "actions": [],
+  "allow_rename": 0,
+  "autoname": "hash",
+  "creation": "2026-07-02 00:00:00.000000",
+  "doctype": "DocType",
+  "engine": "InnoDB",
+  "field_order": [
+    "virtual_machine",
+    "status",
+    "progress_detail",
+    "progress_percent",
+    "column_break_header",
+    "source_server",
+    "target_server",
+    "section_break_addressing",
+    "ipv6_address_old",
+    "ipv6_address_new",
+    "identity_injected",
+    "column_break_addressing",
+    "release_reserved_ip",
+    "keep_address",
+    "section_break_forward",
+    "forward_address",
+    "tunnel_status",
+    "forward_active",
+    "column_break_forward",
+    "tunnel_device",
+    "section_break_transfer",
+    "nbd_port",
+    "nbd_pid",
+    "root_disk_bytes",
+    "data_disk_bytes",
+    "base_ship_state",
+    "base_ship_percent",
+    "column_break_transfer",
+    "hydration_percent",
+    "hydration_last_polled",
+    "hydration_stall_ticks",
+    "section_break_audit",
+    "error_message",
+    "error_at_status",
+    "started_at",
+    "completed_at"
+  ],
+  "fields": [
+    {
+      "fieldname": "virtual_machine",
+      "fieldtype": "Link",
+      "in_list_view": 1,
+      "in_standard_filter": 1,
+      "label": "Virtual Machine",
+      "options": "Virtual Machine",
+      "reqd": 1,
+      "set_only_once": 1
+    },
+    {
+      "default": "Pending",
+      "fieldname": "status",
+      "fieldtype": "Select",
+      "in_list_view": 1,
+      "in_standard_filter": 1,
+      "label": "Status",
+      "options": "Pending\nExportingSnapshot\nTargetPreparing\nInjectingIdentity\nCutoverStarting\nHydrating\nCollapseClone\nRepointing\nCleanup\nDone\nFailed",
+      "read_only": 1
+    },
+    {
+      "description": "Live, always-current line describing exactly what the migration is doing right now (which host, which step). Stamped by advance_migration BEFORE each phase runs, and refined by long sub-steps as they progress.",
+      "fieldname": "progress_detail",
+      "fieldtype": "Small Text",
+      "in_list_view": 1,
+      "label": "Progress",
+      "read_only": 1
+    },
+    {
+      "default": "-1",
+      "description": "Percent complete of the current long-running copy (base-image ship or disk hydration); -1 when the current phase is not a measurable copy.",
+      "fieldname": "progress_percent",
+      "fieldtype": "Int",
+      "label": "Progress %",
+      "read_only": 1
+    },
+    {
+      "fieldname": "column_break_header",
+      "fieldtype": "Column Break"
+    },
+    {
+      "description": "Denormalized from the VM at insert. Immutable.",
+      "fieldname": "source_server",
+      "fieldtype": "Link",
+      "label": "Source Server",
+      "options": "Server",
+      "read_only": 1,
+      "set_only_once": 1
+    },
+    {
+      "fieldname": "target_server",
+      "fieldtype": "Link",
+      "in_list_view": 1,
+      "label": "Target Server",
+      "options": "Server",
+      "reqd": 1,
+      "set_only_once": 1
+    },
+    {
+      "fieldname": "section_break_addressing",
+      "fieldtype": "Section Break",
+      "label": "Addressing"
+    },
+    {
+      "description": "The VM's IPv6 on the source (history). Released implicitly once server flips.",
+      "fieldname": "ipv6_address_old",
+      "fieldtype": "Data",
+      "label": "IPv6 Address (old)",
+      "read_only": 1
+    },
+    {
+      "description": "Allocated from the target server's range during InjectingIdentity (change-address path).",
+      "fieldname": "ipv6_address_new",
+      "fieldtype": "Data",
+      "label": "IPv6 Address (new)",
+      "read_only": 1
+    },
+    {
+      "default": "0",
+      "description": "Boot-then-hydrate (spec/24 §0): 1 once the VM's identity has been injected THROUGH the dm-clone device in InjectingIdentity (before boot). provision-vm at cutover then skips re-inject. Resume key for the inject step.",
+      "fieldname": "identity_injected",
+      "fieldtype": "Check",
+      "label": "Identity Injected",
+      "read_only": 1
+    },
+    {
+      "fieldname": "column_break_addressing",
+      "fieldtype": "Column Break"
+    },
+    {
+      "default": "0",
+      "description": "Operator acknowledgment that an attached public IPv4 will be released (inbound v4 changes across the move).",
+      "fieldname": "release_reserved_ip",
+      "fieldtype": "Check",
+      "label": "Release Reserved IP",
+      "set_only_once": 1
+    },
+    {
+      "default": "0",
+      "description": "1 iff the VM keeps its /128 across the move (the source host keeps forwarding it). Computed at insert from the provider's vm_range_is_forwardable capability. When 0, the migration takes the change-address path (new /128 + proxy re-point).",
+      "fieldname": "keep_address",
+      "fieldtype": "Check",
+      "label": "Keep Address",
+      "read_only": 1,
+      "set_only_once": 1
+    },
+    {
+      "depends_on": "keep_address",
+      "fieldname": "section_break_forward",
+      "fieldtype": "Section Break",
+      "label": "Keep-Address Forward"
+    },
+    {
+      "default": "0",
+      "description": "1 iff the keep-address mechanism must re-assert proxy-NDP on the source at cutover (DigitalOcean); 0 for a routed-prefix provider (Scaleway), where NDP is a no-op. Always 0 when keep_address is 0.",
+      "fieldname": "forward_address",
+      "fieldtype": "Check",
+      "label": "Forward Address (proxy-NDP)",
+      "read_only": 1,
+      "set_only_once": 1
+    },
+    {
+      "description": "Observability of the live forwarding path. On the keep-address path this reaches Forwarding at Cleanup and stays there until the operator collapses the forward.",
+      "fieldname": "tunnel_status",
+      "fieldtype": "Select",
+      "label": "Tunnel Status",
+      "options": "\nArmed\nForwarding\nTornDown",
+      "read_only": 1
+    },
+    {
+      "default": "0",
+      "description": "Mirrors tunnel_status == Forwarding as a simple predicate for the dashboard indicator and to gate the Collapse-forward action.",
+      "fieldname": "forward_active",
+      "fieldtype": "Check",
+      "label": "Forward Active",
+      "read_only": 1
+    },
+    {
+      "fieldname": "column_break_forward",
+      "fieldtype": "Column Break"
+    },
+    {
+      "description": "The mig6-<vm8> tunnel interface name on both hosts (teardown / lost-task re-entry handle). Derived from the VM UUID.",
+      "fieldname": "tunnel_device",
+      "fieldtype": "Data",
+      "label": "Tunnel Device",
+      "read_only": 1
+    },
+    {
+      "fieldname": "section_break_transfer",
+      "fieldtype": "Section Break",
+      "label": "Transfer"
+    },
+    {
+      "description": "TCP port the source NBD server binds; derived from the VM UUID.",
+      "fieldname": "nbd_port",
+      "fieldtype": "Int",
+      "label": "NBD Port",
+      "read_only": 1
+    },
+    {
+      "fieldname": "nbd_pid",
+      "fieldtype": "Int",
+      "label": "NBD PID",
+      "read_only": 1
+    },
+    {
+      "description": "The source root disk's ACTUAL byte size (blockdev), recorded at export. The target disk is created at least this large so a grown disk isn't truncated during hydration (spec/19 §5). Long Int — a disk byte count overflows a 32-bit Int.",
+      "fieldname": "root_disk_bytes",
+      "fieldtype": "Long Int",
+      "label": "Root Disk Bytes",
+      "read_only": 1
+    },
+    {
+      "description": "The source data disk's actual byte size (0 if none). Sizes the target data disk like root_disk_bytes.",
+      "fieldname": "data_disk_bytes",
+      "fieldtype": "Long Int",
+      "label": "Data Disk Bytes",
+      "read_only": 1
+    },
+    {
+      "description": "Local-image path only (spec/19 §5.1): tracks shipping the VM's un-syncable base image to the target during TargetPreparing. Empty when the base was already present (a synced image, or a re-entry after the ship finished).",
+      "fieldname": "base_ship_state",
+      "fieldtype": "Select",
+      "label": "Base Ship State",
+      "options": "\nShipping\nDone",
+      "read_only": 1
+    },
+    {
+      "default": "0",
+      "description": "Percent of the base-image copy complete (local-image path only).",
+      "fieldname": "base_ship_percent",
+      "fieldtype": "Int",
+      "label": "Base Ship %",
+      "read_only": 1
+    },
+    {
+      "fieldname": "column_break_transfer",
+      "fieldtype": "Column Break"
+    },
+    {
+      "fieldname": "hydration_percent",
+      "fieldtype": "Int",
+      "label": "Hydration %",
+      "read_only": 1
+    },
+    {
+      "fieldname": "hydration_last_polled",
+      "fieldtype": "Datetime",
+      "label": "Hydration Last Polled",
+      "read_only": 1
+    },
+    {
+      "default": "0",
+      "description": "Consecutive no-progress hydration polls; the phase fails past a threshold.",
+      "fieldname": "hydration_stall_ticks",
+      "fieldtype": "Int",
+      "label": "Hydration Stall Ticks",
+      "read_only": 1
+    },
+    {
+      "fieldname": "section_break_audit",
+      "fieldtype": "Section Break",
+      "label": "Audit"
+    },
+    {
+      "fieldname": "error_message",
+      "fieldtype": "Long Text",
+      "label": "Error Message",
+      "read_only": 1
+    },
+    {
+      "description": "The phase the migration was in when it failed; retry() resumes here.",
+      "fieldname": "error_at_status",
+      "fieldtype": "Data",
+      "label": "Error At Status",
+      "read_only": 1
+    },
+    {
+      "fieldname": "started_at",
+      "fieldtype": "Datetime",
+      "label": "Started At",
+      "read_only": 1
+    },
+    {
+      "fieldname": "completed_at",
+      "fieldtype": "Datetime",
+      "label": "Completed At",
+      "read_only": 1
+    }
+  ],
+  "index_web_pages_for_search": 1,
+  "links": [],
+  "modified": "2026-07-02 00:00:00.000000",
+  "module": "Atlas",
+  "name": "Virtual Machine Migration",
+  "owner": "Administrator",
+  "permissions": [
+    {
+      "create": 1,
+      "delete": 1,
+      "email": 1,
+      "export": 1,
+      "print": 1,
+      "read": 1,
+      "report": 1,
+      "role": "System Manager",
+      "share": 1,
+      "write": 1
+    }
+  ],
+  "sort_field": "modified",
+  "sort_order": "DESC",
+  "states": [],
+  "title_field": "virtual_machine",
+  "track_changes": 1
+}
