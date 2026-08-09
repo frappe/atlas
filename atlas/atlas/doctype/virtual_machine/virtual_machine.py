@@ -96,6 +96,7 @@ class VirtualMachine(Document):
 		idle_timeout_seconds: DF.Int
 		image: DF.Link
 		ipv6_address: DF.Data | None
+		is_garage: DF.Check
 		is_gateway: DF.Check
 		is_proxy: DF.Check
 		last_started: DF.Datetime | None
@@ -104,6 +105,9 @@ class VirtualMachine(Document):
 		mac_address: DF.Data | None
 		memory_megabytes: DF.Int
 		memory_snapshot_on_stop: DF.Check
+		peer_id: DF.Data | None
+		pilot_credential_id: DF.Data | None
+		private_address: DF.Data | None
 		observed_authority: DF.Literal["DB", "Boat"]
 		observed_status: DF.Literal["", "Running", "Stopped", "Sleeping", "Unknown", "Failed"]
 		public_ipv4: DF.Data | None
@@ -279,6 +283,13 @@ class VirtualMachine(Document):
 		for field in guarded:
 			if getattr(self, field) != getattr(original, field):
 				frappe.throw(f"{field} is immutable after insert")
+
+	@frappe.whitelist()
+	def configure_garage(self) -> str:
+		"""Inject this ingress VM's garage credentials and start garage."""
+		from atlas.atlas.garage import configure_garage
+
+		return configure_garage(self.name)
 
 	@frappe.whitelist()
 	def provision(self) -> str:
