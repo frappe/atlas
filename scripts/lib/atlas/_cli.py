@@ -58,22 +58,15 @@ def _scripts_dir() -> str:
 	return os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
-# Hooks invoked by firecracker-vm@.service with a positional uuid — not Tasks,
-# not hand-runnable. Mirrors scripts_catalog.SYSTEMD_HOOKS (this module is pure
-# stdlib and cannot import the Frappe-dependent catalog, so the literal is
-# duplicated here). NOTE: unlike the catalog, this set does NOT exclude
-# scripts_catalog.CONTROLLER_ONLY (issue-cert, tunnel-*, mgmt-firewall-*), so the
-# CLI command set is a SUPERSET of allowed_scripts() — a known, deferred gap
-# (Phase 2: install the CLI on the controller so those run where they belong).
+# The per-VM firecracker-vm@ hooks (vm-disk-up / vm-network-up / vm-restore /
+# vm-network-down) were listed here so `atlas <verb>` never dispatched a
+# positional-uuid hook as a Task. They are `/usr/local/bin/boat vm-* %i` verbs
+# now, own no .py in scripts/, and so can no longer be stems — the exclusion set
+# is empty. Kept as the seam a future scripts/ hook re-enters. (atlas-wake-trap.py
+# is the one remaining systemd-hook file in scripts/; it is out of scope for this
+# cutover and, as before, is not excluded here.)
 # See spec/04-tasks.md § "Systemd hooks are Python too, but not Tasks".
-_SYSTEMD_HOOKS = frozenset(
-	{
-		"vm-disk-up.py",
-		"vm-network-up.py",
-		"vm-network-down.py",
-		"vm-restore.py",
-	}
-)
+_SYSTEMD_HOOKS: frozenset[str] = frozenset()
 
 
 def _stems() -> dict[str, str]:

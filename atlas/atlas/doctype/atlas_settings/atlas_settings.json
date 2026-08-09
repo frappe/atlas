@@ -29,7 +29,7 @@
   "ssh_public_key",
   "ssh_private_key_path",
   "section_break_satellite",
-  "satellite_public_keys",
+  "service_public_keys",
   "satellite_webhook_url",
   "satellite_webhook_secret",
   "satellite_routing_base_url",
@@ -196,10 +196,10 @@
    "label": "Satellite"
   },
   {
-   "fieldname": "satellite_public_keys",
+   "fieldname": "service_public_keys",
    "fieldtype": "Small Text",
-   "label": "Satellite Public Keys",
-   "description": "OpenSSH public key(s), one per line, of the Satellite orchestrator(s) that manage this Atlas's VMs. Atlas injects them into every host (at bootstrap) and guest (at provision) authorized_keys so a Satellite can SSH the bare box it is handed (spec/30). Empty on an Atlas with no Satellite."
+   "label": "Service Public Keys",
+   "description": "OpenSSH public key(s), one per line, of an external service (e.g. chef) that manages this Atlas's VMs. Atlas injects them into every host (at bootstrap) and guest (at provision) authorized_keys so the service can SSH the bare box it is handed (spec/30). Empty on an Atlas with no such service."
   },
   {
    "fieldname": "satellite_webhook_url",

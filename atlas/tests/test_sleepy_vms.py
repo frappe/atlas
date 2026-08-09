@@ -422,7 +422,10 @@ class TestIdleClockSeeding(IntegrationTestCase):
 
 		vm = self._stale_vm("Sleeping")
 		before = vm.last_traffic_at
-		with patch.object(vm_mod, "run_task", return_value=self._fake_task()):
+		with (
+			patch.object(vm_mod, "run_boat_task", return_value=self._fake_task()),
+			patch.object(vm_mod, "put_desired_state", return_value={}),
+		):
 			vm.wake()
 		vm.reload()
 		self.assertEqual(vm.status, "Running")
@@ -435,7 +438,10 @@ class TestIdleClockSeeding(IntegrationTestCase):
 
 		vm = self._stale_vm("Stopped")
 		before = vm.last_traffic_at
-		with patch.object(vm_mod, "run_task", return_value=self._fake_task()):
+		with (
+			patch.object(vm_mod, "run_boat_task", return_value=self._fake_task()),
+			patch.object(vm_mod, "put_desired_state", return_value={}),
+		):
 			vm.start()
 		vm.reload()
 		self.assertEqual(vm.status, "Running")
@@ -491,7 +497,10 @@ class TestIdleClockSeeding(IntegrationTestCase):
 		from atlas.atlas.doctype.virtual_machine import virtual_machine as vm_mod
 
 		vm = self._stale_vm("Sleeping")
-		with patch.object(vm_mod, "run_task", return_value=self._fake_task()):
+		with (
+			patch.object(vm_mod, "run_boat_task", return_value=self._fake_task()),
+			patch.object(vm_mod, "put_desired_state", return_value={}),
+		):
 			vm.wake()
 			vm_mod.sleep_idle_vms()
 		vm.reload()

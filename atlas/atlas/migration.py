@@ -48,6 +48,7 @@ import ipaddress
 import frappe
 from frappe import _
 
+from atlas.atlas.boat_client import FIRST_BOOT_EPOCH, run_boat_migration_phase
 from atlas.atlas.networking import (
 	address_is_free_on_server,
 	allocate_ipv6,
@@ -221,6 +222,7 @@ def preflight_checks(vm, target_server: str, release_reserved_ip: bool) -> None:
 	from atlas.atlas.doctype.virtual_machine_migration.virtual_machine_migration import (
 		active_migration_for,
 	)
+	from atlas.atlas.placement import assert_visible
 
 	if active_migration_for(vm.name):
 		frappe.throw("This VM already has an in-flight migration")
@@ -239,6 +241,13 @@ def preflight_checks(vm, target_server: str, release_reserved_ip: bool) -> None:
 		frappe.throw(f"Target server {target_server} does not exist")
 	if target.status != "Active":
 		frappe.throw(f"Target server {target_server} is not Active (status is {target.status})")
+	# A migration target is an ARRIVAL, and every arrival goes through the placement
+	# gate (spec/33 §9). Active alone let a LIVE VM be moved onto a host Atlas had
+	# lost sight of — the one arrival where "it will fail loudly on the box" is not
+	# an acceptable answer, because the VM is already stopped by then. The SOURCE is
+	# deliberately not gated: moving a VM OFF an unseen host is the migration an
+	# operator most wants to be able to run.
+	assert_visible(target_server)
 
 	# Same provider: cross-provider migration is out of scope. The Server's own
 	# frozen `provider_type` is the vendor (a real column, not a derived property).
@@ -336,9 +345,11 @@ def _assert_kept_address_free(vm, target_server: str) -> None:
 
 
 def _phase_pending(doc) -> bool:
-	"""Ensure the VM is Stopped with NO pending memory snapshot. A captured RAM image
-	is worthless on the target (different host), so we always plain-stop and force a
-	cold boot. Idempotent: a Stopped VM with has_memory_snapshot=0 is a no-op."""
+	"""Ensure the source VM is Stopped, STAYS stopped across a host reboot, and has NO
+	pending memory snapshot. A captured RAM image is worthless on the target (different
+	host), so we always plain-stop and force a cold boot. Idempotent: a Stopped VM with
+	has_memory_snapshot=0 whose unit is already disabled is a no-op."""
+	_disable_source_autostart(doc)
 	vm = frappe.get_doc("Virtual Machine", doc.virtual_machine)
 	if vm.status in ("Running", "Paused"):
 		# Plain stop (never snapshot-stop). flags.migrating exempts this internal
@@ -357,6 +368,40 @@ def _phase_pending(doc) -> bool:
 	if vm.has_memory_snapshot:
 		vm.db_set("has_memory_snapshot", 0)
 	return vm.status == "Stopped"
+
+
+def _disable_source_autostart(doc) -> None:
+	"""Take the source VM's unit out of multi-user.target BEFORE anything else in the
+	move, and keep it out until Cleanup destroys the source copy (spec/24 §3).
+
+	"The source stays Stopped from Pending until Cleanup" (spec/24 §0.3) is the
+	invariant the whole design rests on, and a `systemctl stop` does not state it:
+	provision-vm ENABLED the unit, it carries `[Install] WantedBy=multi-user.target`,
+	and its only condition is the SLEEPING marker — there is no migration condition.
+	The only `systemctl disable` in the lifecycle was Cleanup's, the LAST phase, so a
+	source-host reboot anywhere in between cold-booted a SECOND live copy of the
+	guest: same UUID, same UUID-derived MAC and tap, same host keys, and — on the
+	keep-address path — the same public /128 answered by two hosts, all without
+	anything being asked (systemd's multi-user.target.wants symlink starts it).
+
+	Runs FIRST, before the stop: a reboot that lands mid-stop must not bring the guest
+	back either. Plain `disable` (not `--now`, not `mask`) is the weakest thing that
+	closes the hole, so the spec/24 §3 rollback — "just restarts the intact source VM"
+	— still works: `systemctl start` on a disabled unit starts it. Idempotent.
+
+	Driven over Boat via run_boat_migration_phase DIRECTLY, not through the phase
+	machine's _run_phase_task (item 9): it runs in Pending, before the self-driving
+	saga, so it wants neither the lost-task detection nor the phase bookkeeping — the
+	same reason it called run_task directly before the cutover. Boat's source-autostart
+	migrate phase toggles the unit's WantedBy symlink; ENABLED="0" maps to its `enabled`
+	bool false (disable)."""
+	run_boat_migration_phase(
+		server=doc.source_server,
+		script="migration-source-autostart",
+		variables={"VIRTUAL_MACHINE_NAME": doc.virtual_machine, "ENABLED": "0"},
+		virtual_machine=doc.virtual_machine,
+		timeout_seconds=60,
+	)
 
 
 def _phase_exporting_snapshot(doc) -> bool:
@@ -784,11 +829,15 @@ def _phase_cutover_starting(doc) -> bool:
 			"CLONE_ROOTFS_DEVICE": clone_device_path(doc.virtual_machine),
 		}
 	)
-	_run_phase_task(
-		doc,
+	# provision-vm is a LIFECYCLE op, not a migration saga phase — Boat has no
+	# migrate RPC for it (item 9) — so the cutover boot stays on SSH via run_task
+	# directly, exactly as collapse_forward's re-provision does. run_task keeps its
+	# own Fake shortcut, so a Fake-host migration boots the guest the same way.
+	run_task(
 		server=doc.target_server,
 		script="provision-vm",
 		variables=variables,
+		virtual_machine=doc.virtual_machine,
 		timeout_seconds=120,
 	)
 	# The guest is now live on the target. Commit the row so status/server reflect it
@@ -995,13 +1044,17 @@ def _phase_cleanup(doc) -> bool:
 	copy (old dir/LVs/netns). If it fails, the row stays at Cleanup with the error —
 	there is no orphaned-LV reconciler, so the row IS the backstop.
 
-	keep-address (spec/24 §2.9.4): the SAME source teardown runs (the stale disk copy
-	is gone either way), BUT the forward tunnel + source-forward route/nft + (DO)
-	proxy-NDP + target return-rule are LEFT IN PLACE — they carry the VM's live
-	traffic permanently. cleanup-source only removes the migration's transient
-	snapshot/NBD state, not the tunnel, so nothing extra is needed to keep the
-	forward up; we just record it on the VM so the cross-host dependency is visible
-	and the operator can collapse it later (§2.9.5)."""
+	keep-address (spec/24 §2.9.4): the disk half of the teardown is the same (the
+	stale copy is gone either way), BUT the forward tunnel + source-forward route/nft
+	+ proxy-NDP entry + target return-rule are LEFT IN PLACE — they carry the VM's
+	live traffic permanently. That is NOT free: cleanup-source's teardown re-runs
+	vm-network-down.py, which deletes the proxy-NDP entry and sweeps every nft forward
+	rule mentioning the /128 — precisely the two rules migration-source-forward.py
+	installed at cutover — so on a kept address it would tear down the tenant's
+	ingress (egress still works, public ingress 0%). KEEP_ADDRESS suppresses that one
+	step; everything else about the teardown is unchanged. Then we record the forward
+	on the VM so the cross-host dependency is visible and the operator can collapse it
+	later (§2.9.5)."""
 	_run_phase_task(
 		doc,
 		server=doc.source_server,
@@ -1010,6 +1063,7 @@ def _phase_cleanup(doc) -> bool:
 			"VIRTUAL_MACHINE_NAME": doc.virtual_machine,
 			"NBD_PORT": str(doc.nbd_port or 0),
 			"NBD_PID": str(doc.nbd_pid or 0),
+			"KEEP_ADDRESS": "1" if doc.keep_address else "0",
 		},
 		timeout_seconds=120,
 	)
@@ -1057,7 +1111,8 @@ PHASES = {
 def _finalize_cutover(doc) -> None:
 	"""Flip the VM row to the target server + new address. The ONLY place `server`
 	changes — gated by flags.migrating so validate() lets it through (the cutover
-	already happened on the host). status → Running, has_memory_snapshot → 0."""
+	already happened on the host). status → Running, desired_power → Running,
+	has_memory_snapshot → 0."""
 	vm = frappe.get_doc("Virtual Machine", doc.virtual_machine)
 	if vm.server == doc.target_server and vm.ipv6_address == doc.ipv6_address_new:
 		return  # idempotent: already committed
@@ -1065,7 +1120,25 @@ def _finalize_cutover(doc) -> None:
 	vm.server = doc.target_server
 	vm.ipv6_address = doc.ipv6_address_new
 	vm.status = "Running"
+	# Walk back the INTENT the migration's own cold-stop wrote. Pending stops the
+	# source through vm.stop(), which states `desired_power = Stopped` on the row
+	# (spec/33 §11.3); the cutover has just booted the guest on the target, so leaving
+	# that intent behind is permanent power drift on every migrated VM — and drift the
+	# dangerous way round, because Stopped is the half that OUTRANKS everything:
+	# assert_desired_state() (the repair spec/33 §2.5 names) would push Stopped at a
+	# live VM, resize() re-states it before every resize, the VM can never sleep again,
+	# and a host-initiated wake is never adopted. The migration drives the host over
+	# run_task (SSH), never a Boat PUT, so this row IS the only record of what Atlas
+	# now intends, and it has to say Running.
+	vm.desired_power = "Running"
 	vm.has_memory_snapshot = 0
+	# The fence epoch bumps here and ONLY here (spec/33 §11.1): a migration's
+	# repoint is the single point an epoch advances. Past this line the VM belongs
+	# to the target at a higher epoch, so the losing source's Boat — which still
+	# holds the old epoch — refuses a stale or partitioned start of the same UUID
+	# (fence.Allow returns ErrStaleEpoch). The idempotency guard above makes this
+	# run once, so a re-entered Repointing bumps the epoch a single time.
+	vm.boot_epoch = (vm.boot_epoch or FIRST_BOOT_EPOCH) + 1
 	vm.last_started = frappe.utils.now_datetime()
 	vm.save(ignore_permissions=True)
 
@@ -1138,7 +1211,7 @@ def collapse_forward(vm) -> None:
 	old_ipv6 = vm.ipv6_address
 
 	# 1a. Target end (the VM's current host): remove the return-route policy.
-	run_task(
+	run_boat_migration_phase(
 		server=vm.server,
 		script="migration-forward-down",
 		variables={
@@ -1156,7 +1229,7 @@ def collapse_forward(vm) -> None:
 	#     Deassert proxy-NDP for EVERY provider (mirror of the unconditional re-assert
 	#     in _install_forward_routes) — the source answered NDP for the /128 while
 	#     forwarding, so collapse must stop it on all providers, not just DigitalOcean.
-	run_task(
+	run_boat_migration_phase(
 		server=source_server,
 		script="migration-forward-down",
 		variables={
@@ -1220,6 +1293,9 @@ def collapse_forward(vm) -> None:
 		{
 			"ipv6_address": new_ipv6,
 			"status": "Running",
+			# Same walk-back _finalize_cutover does: the stop above stated Stopped, and
+			# the re-provision has the guest live again, so the intent must follow.
+			"desired_power": "Running",
 			"traffic_forwarded_from": None,
 			"traffic_forwarded_since": None,
 		}
@@ -1243,12 +1319,20 @@ class _ForwardCollapse:
 
 
 def _run_phase_task(doc, *, server: str, script: str, variables: dict, timeout_seconds: int):
-	"""Run a phase's host script inline. run_task saves the Task row first and raises
-	on failure (→ caught by reconcile_migrations → Failed). Lost-task detection scans
-	for a prior Running/Pending Task of the same script that blew its timeout and
-	re-enters transparently (recorded, never a silent duplicate)."""
+	"""Run a migration PHASE's host work inline over Boat (spec/33 §8, item 9).
+	run_boat_migration_phase saves the Task row first and raises on failure (→ caught
+	by reconcile_migrations → Failed), recording the exact Task an SSH run would have
+	— the controller cannot tell which transport ran the phase. Lost-task detection
+	scans for a prior Running/Pending Task of the same script that blew its timeout and
+	re-enters transparently (recorded, never a silent duplicate).
+
+	Only the self-driving saga's phases route here. Three Boat-driven steps run OUTSIDE
+	this — source-autostart (_disable_source_autostart, Pending) and forward-down
+	(collapse_forward, operator-initiated) call run_boat_migration_phase directly, and
+	the provision-vm boot at cutover is a lifecycle op (run_task), not a saga phase — so
+	none wants the lost-task detection this adds."""
 	_detect_lost_task(doc, script, timeout_seconds)
-	return run_task(
+	return run_boat_migration_phase(
 		server=server,
 		script=script,
 		variables=variables,

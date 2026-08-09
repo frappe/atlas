@@ -72,6 +72,16 @@ def _ensure_active_root_domain(domain: str = "blr1.frappe.dev") -> str:
 
 class TestVirtualMachine(IntegrationTestCase):
 	def setUp(self) -> None:
+		from atlas.atlas.doctype.virtual_machine import virtual_machine as module
+
+		# Every lifecycle verb states its intent on the host's Boat before it acts
+		# (spec/33 §11.1). No daemon answers in a unit test and these fixtures are
+		# real-provider hosts, so the PUT is stubbed for the whole class — without
+		# it each verb fails on the missing Boat token rather than on its own
+		# behaviour, which is what the test is here to check.
+		desired_state = patch.object(module, "put_desired_state", return_value={})
+		desired_state.start()
+		self.addCleanup(desired_state.stop)
 		_ensure_test_server()
 		_ensure_test_image()
 		# Clear VMs from prior tests so the /124 IPv6 range has capacity.
@@ -493,7 +503,7 @@ class TestVirtualMachine(IntegrationTestCase):
 		from atlas.atlas.doctype.virtual_machine_snapshot import virtual_machine_snapshot as snapshot_module
 
 		with (
-			patch.object(module, "run_task", return_value=fake_task(name="task-term")),
+			patch.object(module, "run_boat_task", return_value=fake_task(name="task-term")),
 			patch.object(
 				snapshot_module, "run_task", return_value=fake_task(name="task-snap-del")
 			) as mocked_snapshot,
@@ -519,7 +529,7 @@ class TestVirtualMachine(IntegrationTestCase):
 			snapshot_name = vm.snapshot("golden")
 		frappe.db.set_single_value("Atlas Settings", "default_bench_snapshot", snapshot_name)
 
-		with patch.object(module, "run_task", return_value=fake_task(name="task-term")):
+		with patch.object(module, "run_boat_task", return_value=fake_task(name="task-term")):
 			vm.terminate()
 		# The referenced golden survives the build VM's termination.
 		self.assertTrue(frappe.db.exists("Virtual Machine Snapshot", snapshot_name))
@@ -540,7 +550,7 @@ class TestVirtualMachine(IntegrationTestCase):
 		vm.reload()
 
 		with (
-			patch.object(module, "run_task", return_value=fake_task(name="task-term")),
+			patch.object(module, "run_boat_task", return_value=fake_task(name="task-term")),
 			# Spy the re-publish so no real Route53 call fires; assert it targets the
 			# region's Active cert.
 			patch.object(cert_module.TLSCertificate, "_publish_wildcard") as publish,
@@ -578,7 +588,7 @@ class TestVirtualMachine(IntegrationTestCase):
 
 		vm.db_set("status", "Stopped")
 		vm.reload()
-		with patch.object(module, "run_task", return_value=fake_task(name="task-term")):
+		with patch.object(module, "run_boat_task", return_value=fake_task(name="task-term")):
 			vm.terminate()  # must not raise LinkExistsError
 
 		self.assertFalse(frappe.db.exists("Subdomain", subdomain.name))
@@ -600,7 +610,7 @@ class TestVirtualMachine(IntegrationTestCase):
 
 		vm.db_set("status", "Stopped")
 		vm.reload()
-		with patch.object(module, "run_task", return_value=fake_task(name="task-term")):
+		with patch.object(module, "run_boat_task", return_value=fake_task(name="task-term")):
 			vm.terminate()
 
 		self.assertEqual(frappe.db.get_value("Pilot", pilot.name, "status"), "Terminated")
@@ -625,7 +635,7 @@ class TestVirtualMachine(IntegrationTestCase):
 
 		vm.db_set("status", "Stopped")
 		vm.reload()
-		with patch.object(module, "run_task", return_value=fake_task(name="task-term")):
+		with patch.object(module, "run_boat_task", return_value=fake_task(name="task-term")):
 			vm.terminate()
 
 		self.assertEqual(frappe.db.get_value("Pilot", pilot.name, "status"), "Terminated")
@@ -647,7 +657,7 @@ class TestVirtualMachine(IntegrationTestCase):
 
 		vm.db_set("status", "Stopped")
 		with (
-			patch.object(module, "run_task", return_value=fake_task(name="task-term")),
+			patch.object(module, "run_boat_task", return_value=fake_task(name="task-term")),
 			patch("atlas.atlas.central_report.report_pilot_status") as reported,
 		):
 			pilot.terminate()
@@ -685,7 +695,7 @@ class TestVirtualMachine(IntegrationTestCase):
 		vm = _new_vm()  # memory_snapshot_on_stop defaults OFF
 		vm.db_set("status", "Running")
 		vm.reload()
-		with patch.object(module, "run_task", return_value=fake_task(name="task-stop")) as mocked:
+		with patch.object(module, "run_boat_task", return_value=fake_task(name="task-stop")) as mocked:
 			vm.stop()
 		vm.reload()
 		self.assertEqual(vm.status, "Stopped")
@@ -703,7 +713,7 @@ class TestVirtualMachine(IntegrationTestCase):
 		vm = _new_vm()
 		vm.db_set("status", "Running")
 		vm.reload()
-		with patch.object(module, "run_task", return_value=fake_task(name="task-stop")) as mocked:
+		with patch.object(module, "run_boat_task", return_value=fake_task(name="task-stop")) as mocked:
 			vm.stop(graceful=False)
 		vm.reload()
 		self.assertEqual(vm.status, "Stopped")
@@ -718,7 +728,7 @@ class TestVirtualMachine(IntegrationTestCase):
 			vm = _new_vm()
 			vm.db_set("status", "Running")
 			vm.reload()
-			with patch.object(module, "run_task", return_value=fake_task(name="task-stop")) as mocked:
+			with patch.object(module, "run_boat_task", return_value=fake_task(name="task-stop")) as mocked:
 				vm.stop(graceful=value)
 			self.assertEqual(mocked.call_args.kwargs["variables"]["GRACEFUL"], "0", value)
 
@@ -787,7 +797,7 @@ class TestVirtualMachine(IntegrationTestCase):
 		vm.db_set("status", "Stopped")
 		vm.db_set("has_memory_snapshot", 1)
 		vm.reload()
-		with patch.object(module, "run_task", return_value=fake_task(name="task-start")):
+		with patch.object(module, "run_boat_task", return_value=fake_task(name="task-start")):
 			vm.start()
 		vm.reload()
 		self.assertEqual(vm.status, "Running")
@@ -803,7 +813,7 @@ class TestVirtualMachine(IntegrationTestCase):
 		vm.reload()
 		stop_task = fake_task(name="task-stop")
 		start_task = fake_task(name="task-start")
-		with patch.object(module, "run_task", side_effect=[stop_task, start_task]) as mocked:
+		with patch.object(module, "run_boat_task", side_effect=[stop_task, start_task]) as mocked:
 			vm.restart(cold=True)
 		self.assertEqual(mocked.call_args_list[0].kwargs["script"], "stop-vm")
 		self.assertEqual(mocked.call_args_list[1].kwargs["script"], "start-vm")
@@ -820,10 +830,16 @@ class TestVirtualMachine(IntegrationTestCase):
 			stdout='ATLAS_RESULT={"memory_snapshot": true, "reason": "", "memory_snapshot_bytes": 1}',
 		)
 		start_task = fake_task(name="task-start")
-		with patch.object(module, "run_task", side_effect=[stop_task, start_task]) as mocked:
+		# Two transports, because a memory-snapshot stop is the one verb that is
+		# not a plain lifecycle call: `snapshot-stop-vm` is still an SSH Task while
+		# the start that follows goes to the daemon.
+		with (
+			patch.object(module, "run_task", return_value=stop_task) as snapshot_stop,
+			patch.object(module, "run_boat_task", return_value=start_task) as start,
+		):
 			vm.restart()
-		self.assertEqual(mocked.call_args_list[0].kwargs["script"], "snapshot-stop-vm")
-		self.assertEqual(mocked.call_args_list[1].kwargs["script"], "start-vm")
+		self.assertEqual(snapshot_stop.call_args.kwargs["script"], "snapshot-stop-vm")
+		self.assertEqual(start.call_args.kwargs["script"], "start-vm")
 
 	def test_resize_invalidates_the_memory_snapshot(self) -> None:
 		# resize-vm.py drops the on-host snapshot (vmstate no longer matches the
@@ -834,7 +850,7 @@ class TestVirtualMachine(IntegrationTestCase):
 		vm.db_set("status", "Stopped")
 		vm.db_set("has_memory_snapshot", 1)
 		vm.reload()
-		with patch.object(module, "run_task", return_value=fake_task(name="task-resize")):
+		with patch.object(module, "run_boat_task", return_value=fake_task(name="task-resize")):
 			vm.resize(memory_megabytes=1024)
 		vm.reload()
 		self.assertFalse(vm.has_memory_snapshot)
@@ -846,7 +862,7 @@ class TestVirtualMachine(IntegrationTestCase):
 		vm.db_set("status", "Stopped")
 		vm.db_set("has_memory_snapshot", 1)
 		vm.reload()
-		with patch.object(module, "run_task", return_value=fake_task(name="task-rebuild")):
+		with patch.object(module, "run_boat_task", return_value=fake_task(name="task-rebuild")):
 			vm.rebuild(source_type="image")
 		vm.reload()
 		self.assertFalse(vm.has_memory_snapshot)
@@ -882,7 +898,7 @@ class TestVirtualMachine(IntegrationTestCase):
 		vm = _new_vm(data_disk_gigabytes=2)
 		vm.db_set("status", "Stopped")
 		vm.reload()
-		with patch.object(module, "run_task", return_value=fake_task(name="task-resize")) as mocked:
+		with patch.object(module, "run_boat_task", return_value=fake_task(name="task-resize")) as mocked:
 			vm.resize(data_disk_gigabytes=5)
 		vm.reload()
 		self.assertEqual(vm.data_disk_gigabytes, 5)
@@ -923,7 +939,7 @@ class TestVirtualMachine(IntegrationTestCase):
 		vm = make_virtual_machine(server, _ensure_test_image(), memory_megabytes=512, disk_gigabytes=4)
 		vm.db_set("status", "Stopped")
 		vm.reload()
-		with patch.object(module, "run_task", return_value=fake_task(name="task-resize")) as mocked:
+		with patch.object(module, "run_boat_task", return_value=fake_task(name="task-resize")) as mocked:
 			vm.resize(memory_megabytes=1024)
 		vm.reload()
 		self.assertEqual(vm.memory_megabytes, 1024)
@@ -954,7 +970,7 @@ class TestVirtualMachine(IntegrationTestCase):
 		)
 		vm.db_set("status", "Stopped")
 		vm.reload()
-		with patch.object(module, "run_task", return_value=fake_task(name="task-resize")):
+		with patch.object(module, "run_boat_task", return_value=fake_task(name="task-resize")):
 			vm.resize(memory_megabytes=1024)
 		vm.reload()
 		self.assertEqual(vm.memory_megabytes, 1024, "a full CPU axis doesn't block a RAM-only grow")
@@ -970,7 +986,7 @@ class TestVirtualMachine(IntegrationTestCase):
 		vm = make_virtual_machine(server, _ensure_test_image(), memory_megabytes=512, disk_gigabytes=4)
 		vm.db_set("status", "Stopped")
 		vm.reload()
-		with patch.object(module, "run_task", return_value=fake_task(name="task-resize")):
+		with patch.object(module, "run_boat_task", return_value=fake_task(name="task-resize")):
 			vm.resize(memory_megabytes=1024)
 		vm.reload()
 		self.assertEqual(vm.memory_megabytes, 1024, "resize spends the headroom placement reserved")

@@ -888,7 +888,7 @@ Scaleway's `keep_address`, disambiguated by which sub-mechanism applies.
 | `Hydrating` | as §5 | as §5 |
 | `CutoverStarting` | source unit down, target up; target `migration-target-receive.py` (§2.9.3) **then** source **re-asserts proxy-NDP** + `migration-source-forward.py` (§2.9.2) | target return-route then source-forward (§2.2–2.3) |
 | `Repointing` | no Subdomain re-point, no `reconcile_region` — flips `Virtual Machine.server` (`flags.migrating`), `status = Running`; `ipv6_address` not written | same |
-| `Cleanup` | source teardown as §5, **except the proxy-NDP entry, the tunnel, the `dev mig6-` route, the nft rules, and the target return-rule are never torn down** — they are the permanent delivery path now. Sets `Virtual Machine Migration.forward_active = 1` (observability, §2.9.5) | same teardown, but arms the deferred `/64` move instead (§2.6) |
+| `Cleanup` | source teardown as §5, **except the proxy-NDP entry, the tunnel, the `dev mig6-` route, the nft rules, and the target return-rule are never torn down** — they are the permanent delivery path now. Mechanically: `migration-cleanup-source` is run with `keep_address`, which suppresses its `vm-network-down.py` re-run (the step that would delete exactly those). Sets `Virtual Machine Migration.forward_active = 1` (observability, §2.9.5) | same teardown, same `keep_address` suppression, but arms the deferred `/64` move instead (§2.6) |
 
 There is **no deferred reconciler** for this path — no `reconcile_block_fip_moves`
 analog, because there is nothing to converge toward. The forward is simply part
@@ -937,7 +937,8 @@ The `Virtual Machine` itself stays `Stopped` throughout (it only flips to
 
 ```
  Pending
-   │ (pre-flight passes; VM stopped, mem-snapshot cleared)
+   │ (pre-flight passes; source unit's autostart disabled, VM stopped,
+   │  mem-snapshot cleared)
    ▼
  ExportingSnapshot ── source: thin-snap both LVs, start NBD on localhost:port
    ▼
@@ -957,8 +958,8 @@ The `Virtual Machine` itself stays `Stopped` throughout (it only flips to
    │                  source-forward onto the tunnel (§2.2–2.3)
    ▼
  Repointing ───────── controller: commit row (server [+ ipv6 on change-address],
-   │                  Running); change-address: db_set Subdomain addresses +
-   │                  reconcile_region; Reserved-IP handling (§6)
+   │                  status AND desired_power Running); change-address: db_set
+   │                  Subdomain addresses + reconcile_region; Reserved-IP (§6)
    ▼
  Cleanup ──────────── source: kill NBD, lvremove migrate-snapshots, tear down
    │                  the stale source copy (old dir/LVs/netns); range-move
@@ -979,6 +980,31 @@ through `CutoverStarting` rolls back by simply starting the source VM again — 
 disk and `/128` are untouched (on the keep-address path the `/128` never moved at
 all). `Subdomain` rows are only rewritten in `Repointing` (change-address only),
 the point of no return.
+
+**Stopped means stopped across a reboot: `Pending` disables the source unit's
+autostart** (the `source-autostart` migrate phase, `enabled: false`), *before* it
+stops the VM. `provision-vm` enables `firecracker-vm@<uuid>.service` and it carries
+`[Install] WantedBy=multi-user.target`, whose only condition is the *sleeping*
+marker — there is no migration condition. Without this the source host's next
+reboot cold-boots a **second live copy** of the guest anywhere between `Pending`
+and `Cleanup`'s `disable --now`: same UUID, same UUID-derived MAC/tap, same host
+keys, and on a keep-address migration the same public `/128` answered by two
+hosts — started by systemd's `multi-user.target.wants` symlink, with nothing
+asked. It is a plain `disable` (never `--now`, never `mask`): the WantedBy
+symlink goes and nothing else does, so the rollback above — an explicit
+`systemctl start` of the intact source VM — still works. A marker file with
+`ConditionPathExists=!` would block that explicit start too. **A rollback that
+ABANDONS the migration should re-enable the unit** (the same phase, `enabled:
+true`) so the resurrected source survives its host's next reboot.
+
+**The power intent follows the guest.** `Pending`'s stop states
+`desired_power = Stopped` on the VM row ([33 §11.3](./33-boat.md)); the cutover
+boots the guest on the target, so `_finalize_cutover` walks that back to
+`Running` in the same write as `status`. Leaving it Stopped is permanent drift
+the dangerous way round — Stopped is the half that outranks everything, so
+`assert_desired_state()` would push it at a live VM, `resize()` would re-state
+it, the VM could never sleep again, and a host-initiated wake would never be
+adopted.
 
 ## 4. Pre-flight (the `Pending` gate)
 
@@ -1162,9 +1188,9 @@ unchanged for N ticks, the migration goes `Failed`.
 
 ### Collapse + cutover (`migration-cutover-target.py`, phase `CutoverStarting`)
 
-Disable the source unit defensively (`systemctl disable --now
-firecracker-vm@<uuid>`), start the target unit, poll until `Running` and
-SSH-reachable. After cutover each dm-clone is collapsed (`dmsetup remove` once
+The source unit is already stopped and already out of `multi-user.target`
+(`Pending` did both — §3), so cutover only starts the target unit and polls until
+`Running` and SSH-reachable. After cutover each dm-clone is collapsed (`dmsetup remove` once
 its hydration is 100% — reads now serve from the fully-local thin LV) and the
 jail's `rootfs.ext4` node points at the plain `atlas-vm-<uuid>`. On the
 keep-address path this is where the target return-route and the source forward
@@ -1176,10 +1202,13 @@ Kill the NBD server(s) (by recorded pid, no-op if gone), `lvremove` both
 `-migrate` snapshots (guarded by `LogicalVolume.remove()` against base images),
 and tear down the **stale source copy** — the old per-VM directory, LVs, netns,
 veth, proxy-NDP entry — with the same teardown `terminate-vm.py` performs, but
-against the *old* host. This proxy-NDP removal already happened as part of the
-source unit's own stop (`vm-network-down.py`, `ExecStopPost`) before `Cleanup`
-even starts, on every path — so `Cleanup` itself has nothing v6-specific left to
-remove except:
+against the *old* host. That teardown re-runs `vm-network-down.py`, which on a
+change-address migration is a harmless defensive sweep: the source unit's own
+`ExecStopPost` already ran it when `Pending` stopped the VM, so the netns/veth
+went with that. **On a keep-address migration it is not harmless and must not
+run**, so `Cleanup` passes `keep_address` to `migration-cleanup-source` and the
+script skips that one step (everything else — NBD, snapshots, unit, directory,
+LVs — is unchanged):
 
 - **range-move keep-address (Scaleway):** the block tunnel + source forward
   route + nft + target return-rule are **left in place** (they carry live
@@ -1188,6 +1217,13 @@ remove except:
   (re-asserted in `CutoverStarting`, §2.9.2) + the per-VM tunnel + nft rules +
   target return-rule are **left in place permanently** — there is no drain
   condition to wait for (§2.9.4).
+
+Both bullets name state `vm-network-down.py` would delete: it removes the
+proxy-NDP entry for the `/128`, then sweeps **every** rule in
+`inet atlas forward` whose text contains that `/128` — which is exactly the two
+rules `migration-source-forward.py` installed. Running it after a kept-address
+cutover therefore black-holes the tenant's *public ingress* (egress keeps
+working) while Atlas reports the migration `Done`.
 
 If any step fails the row stays at `Cleanup` with explicit manual-recovery
 guidance in `error_message`: there is **no orphaned-LV reconciler**, so the
@@ -1355,7 +1391,14 @@ spec, illustrative — not committed app code):
   throws (Scaleway); the permanent-forward path never touching `Server`'s
   `pending_fip_move`/`fip_move_*` fields (DigitalOcean); the Collapse-forward
   action's fallback to change-address semantics; the Reserved-IP `reassign`
-  round trip.
+  round trip; `Pending` disabling the source unit's autostart **first**, on the
+  source; `Cleanup` passing `keep_address` so the permanent forward survives its
+  own teardown; and `desired_power` coming back to `Running` at cutover (and at
+  Collapse-forward). The two source-side steps are now Boat migrate phases; their
+  host behaviour (a kept address's forward is not torn down; the autostart toggle
+  is a plain `disable`) is proven by Boat's own tests, and the Atlas-side wire
+  mapping — `cleanup-source`'s `keep_address` and `source-autostart`'s `enabled`
+  bool — by `atlas/tests/test_boat_migration_phase.py`.
 - **E2E** (`atlas/tests/e2e/use_cases/virtual_machine_migration.py`): real
   servers; full phase progression, one scenario per address scheme:
   - **Change-address (Self-Managed fallback):** assert the new `/128` is in the

@@ -2,11 +2,34 @@
 Description=Atlas Firecracker VM %i
 After=network-online.target
 Wants=network-online.target
+# Order the pool/mesh dependencies from the template side (a bare
+# `Before=firecracker-vm@.service` in those units targets a phantom EMPTY template
+# instance and orders nothing). The thin pool must exist before vm-disk-up/the
+# jailer open rootfs.ext4, and the mesh before the guest veth routes — so a VM
+# never starts against a missing pool or a blackholed mesh.
+After=atlas-pool.service atlas-networkd.service
+# Bound the restart rate. With Restart=always a genuinely-broken VM (rootfs gone,
+# jail unrecoverable) would hot-loop forever — a real host reached 372,524
+# restarts. Mirror atlas-networkd's backstop: after StartLimitBurst starts within
+# StartLimitIntervalSec systemd stops trying and leaves the unit `failed` (visible
+# to the operator + alerting) instead of pinning a CPU and spamming the journal.
+# 5 starts / 60 s trips fast on a persistent crash but clears any transient flap.
+StartLimitIntervalSec=60
+StartLimitBurst=5
 # Do not auto-start a sleeping VM on host reboot. sleep-vm.py writes this
 # marker after stopping the unit; wake-vm.py removes it before starting.
-# ConditionPathNotExists prevents the unit from starting while the file
-# exists, without disabling WantedBy (so wake-vm.py's systemctl start works).
-ConditionPathNotExists=/var/lib/atlas/virtual-machines/%i/sleeping
+# The condition prevents the unit from starting while the file exists, without
+# disabling WantedBy (so wake-vm.py's systemctl start works).
+#
+# The negation is `ConditionPathExists=!<path>`. It was written as
+# `ConditionPathNotExists=`, WHICH IS NOT A SYSTEMD DIRECTIVE — systemd logs
+# "Unknown key name ... ignoring" and starts the unit anyway, so this condition
+# has never suppressed anything. Every sleeping VM cold-booted on the next host
+# reboot with its marker still on disk, which then reads as Sleeping forever to
+# anything that checks the marker first, and re-parks a running VM into the
+# wake trap's black hole. A directive that does not exist fails open and says so
+# only in the journal; `systemd-analyze verify` is what catches it.
+ConditionPathExists=!/var/lib/atlas/virtual-machines/%i/sleeping
 
 [Service]
 Type=simple
@@ -25,15 +48,14 @@ ExecStartPre=/bin/rm -f /var/lib/atlas/virtual-machines/%i/jail/firecracker/%i/r
 # Disk (re-activate the thin-snapshot LV and refresh the in-jail block node)
 # must be present before the jailer opens rootfs.ext4. provision is not re-run
 # on boot and `lvcreate -s` disks are activation-skip, so without this a reboot
-# leaves the jail node dangling; vm-disk-up.py is idempotent and self-heals it.
-# The hook imports the durable atlas package (its own sys.path shim adds its
-# directory, /var/lib/atlas/bin) and takes the VM uuid as a positional arg.
-# Runs under the Atlas venv python (/var/lib/atlas/venv/bin/python), not the host
-# python3 — bootstrap's sanity gate py_compiles every hook on it first.
-ExecStartPre=/var/lib/atlas/venv/bin/python /var/lib/atlas/bin/vm-disk-up.py %i
+# leaves the jail node dangling; `boat vm-disk-up` is idempotent and self-heals it.
+# boat takes the VM uuid as a positional arg — a byte-compatible drop-in for the
+# venv-python hook it replaced, run through the same daemon-installed
+# /usr/local/bin/boat the host runs every other verb through.
+ExecStartPre=/usr/local/bin/boat vm-disk-up %i
 # Networking (netns + veth + in-namespace tap) must exist before the jailer
 # joins the namespace; ExecStartPre runs to completion before ExecStart.
-ExecStartPre=/var/lib/atlas/venv/bin/python /var/lib/atlas/bin/vm-network-up.py %i
+ExecStartPre=/usr/local/bin/boat vm-network-up %i
 # Run Firecracker under the jailer via the per-VM launcher that provision-vm.py
 # generated. The launcher (not this unit) assembles the jailer argv, because the
 # --cgroup cpu.max value carries an internal space that systemd's ExecStart
@@ -42,15 +64,15 @@ ExecStartPre=/var/lib/atlas/venv/bin/python /var/lib/atlas/bin/vm-network-up.py 
 # caps + fd/file rlimits, and joins the VM's own network namespace. It `exec`s
 # the jailer, so the jailer is this unit's main process (see KillMode below).
 ExecStart=/var/lib/atlas/virtual-machines/%i/jailer-launch.sh
-# When snapshot-stop-vm.py left a complete memory snapshot (marker present),
-# the launcher started Firecracker idle; this hook loads the snapshot, consumes
-# the marker, and resumes the guest — milliseconds instead of a cold boot. On a
-# cold boot (no marker) it exits 0 immediately. On a failed restore it removes
-# the marker and exits non-zero: the unit fails, Restart=always relaunches it,
-# and the marker-less launcher cold-boots — the fast path degrades to the
+# When snapshot-stop-vm left a complete memory snapshot (marker present),
+# the launcher started Firecracker idle; `boat vm-restore` loads the snapshot,
+# consumes the marker, and resumes the guest — milliseconds instead of a cold
+# boot. On a cold boot (no marker) it exits 0 immediately. On a failed restore it
+# removes the marker and exits non-zero: the unit fails, Restart=always relaunches
+# it, and the marker-less launcher cold-boots — the fast path degrades to the
 # default path on its own.
-ExecStartPost=/var/lib/atlas/venv/bin/python /var/lib/atlas/bin/vm-restore.py %i
-ExecStopPost=/var/lib/atlas/venv/bin/python /var/lib/atlas/bin/vm-network-down.py %i
+ExecStartPost=/usr/local/bin/boat vm-restore %i
+ExecStopPost=/usr/local/bin/boat vm-network-down %i
 StandardOutput=append:/var/lib/atlas/virtual-machines/%i/log/firecracker.log
 StandardError=append:/var/lib/atlas/virtual-machines/%i/log/firecracker.log
 Restart=always

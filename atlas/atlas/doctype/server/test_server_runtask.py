@@ -40,7 +40,7 @@ class TestRunTaskDialog(IntegrationTestCase):
 
 		with patch.object(server_module, "run_task", return_value=task) as run:
 			result = self.server.run_task_dialog(
-				script="bootstrap-server",
+				script="server-facts",
 				variables={"FOO": "bar"},
 			)
 
@@ -48,7 +48,7 @@ class TestRunTaskDialog(IntegrationTestCase):
 		run.assert_called_once()
 		kwargs = run.call_args.kwargs
 		self.assertEqual(kwargs["server"], self.server.name)
-		self.assertEqual(kwargs["script"], "bootstrap-server")
+		self.assertEqual(kwargs["script"], "server-facts")
 		self.assertEqual(kwargs["variables"], {"FOO": "bar"})
 
 	def test_parses_string_variables_as_json(self) -> None:
@@ -58,7 +58,7 @@ class TestRunTaskDialog(IntegrationTestCase):
 
 		with patch.object(server_module, "run_task", return_value=task) as run:
 			self.server.run_task_dialog(
-				script="bootstrap-server",
+				script="server-facts",
 				variables=json.dumps({"A": "1", "B": "2"}),
 			)
 
@@ -70,7 +70,7 @@ class TestRunTaskDialog(IntegrationTestCase):
 		task = fake_task(name="task-runtask-3")
 
 		with patch.object(server_module, "run_task", return_value=task) as run:
-			self.server.run_task_dialog(script="bootstrap-server", variables=None)
+			self.server.run_task_dialog(script="server-facts", variables=None)
 
 		self.assertEqual(run.call_args.kwargs["variables"], {})
 
@@ -98,9 +98,10 @@ class TestRunTaskDialog(IntegrationTestCase):
 class TestScriptsCatalog(IntegrationTestCase):
 	def test_allowed_scripts_lists_real_verbs(self) -> None:
 		scripts = scripts_catalog.allowed_scripts()
-		# allowed_scripts() now speaks VERBS (suffix-less); the on-disk files keep
-		# their .py/.sh extension.
-		self.assertIn("bootstrap-server", scripts)
+		# allowed_scripts() speaks VERBS (suffix-less): file-derived (reboot-server.sh
+		# stays shell) plus the BOAT_ONLY verbs (`bootstrap`, whose .py oracle was
+		# deleted). provision-vm is a boat verb runnable through the same allowlist.
+		self.assertIn("bootstrap", scripts)
 		self.assertIn("reboot-server", scripts)
 		self.assertIn("provision-vm", scripts)
 

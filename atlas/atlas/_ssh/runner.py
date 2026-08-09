@@ -68,6 +68,25 @@ def run_task(
 
 		return run_fake_task(server, script, variables, virtual_machine)
 
+	# The host verbs the boat daemon serves over HTTP no longer open an SSH
+	# connection: they run through the daemon, journaled by op_id, exactly as the
+	# lifecycle verbs do (spec/33 §2.4). The delegation lives here, at the one SSH
+	# chokepoint every host verb passed through, so no call site changes transport —
+	# it states the verb and this routes it. The connection= path is bootstrap's,
+	# whose verb is never HTTP-served, so this is reached only with server= set.
+	from atlas.atlas import scripts_catalog
+
+	if server is not None and scripts_catalog.runs_on_boat_http(script):
+		from atlas.atlas.boat_client import run_boat_host_task
+
+		return run_boat_host_task(
+			script=script,
+			variables=variables,
+			server=server,
+			virtual_machine=virtual_machine,
+			timeout_seconds=timeout_seconds,
+		)
+
 	if connection is None:
 		server_doc = frappe.get_doc("Server", server)
 		connection = connection_for_server(server_doc)
@@ -117,6 +136,19 @@ def run_probe(
 		from atlas.atlas.providers.fake_tasks import fake_stdout
 
 		return fake_stdout(script, variables)
+
+	# The read-only sweeps the boat daemon serves over HTTP no longer open an SSH
+	# connection: they run through the daemon's non-journaling read path, exactly
+	# as run_task delegates the mutating host verbs (spec/33 §2.4). run_boat_host_read
+	# keeps run_probe's contract — it never raises and returns "" on failure.
+	from atlas.atlas import scripts_catalog
+
+	if scripts_catalog.runs_on_boat_http_read(script):
+		from atlas.atlas.boat_client import run_boat_host_read
+
+		return run_boat_host_read(
+			script=script, variables=variables, server=server, timeout_seconds=timeout_seconds
+		)
 
 	try:
 		connection = connection_for_server(frappe.get_doc("Server", server))
@@ -379,7 +411,13 @@ def _remote_command(script: str, remote_script_path: str | None, variables: dict
 
 	if scripts_catalog.kind(script) == "python":
 		args = _variables_to_flags(variables)
-		return f"atlas {shlex.quote(script)} {args}".strip()
+		# `boat <verb>` for the verbs the Go daemon's binary implements, `atlas
+		# <verb>` for the rest. Only the first word differs: boat takes the same
+		# flags this function renders and prints the same `ATLAS_RESULT=` line
+		# `TaskResult.parse` reads back, which is what lets one host run a mix
+		# while the port finishes (spec/33-boat.md, WO-6).
+		entry = "boat" if scripts_catalog.runs_on_boat(script) else "atlas"
+		return f"{entry} {shlex.quote(script)} {args}".strip()
 	env_prefix = " ".join(f"{key}={shlex.quote(str(value))}" for key, value in variables.items())
 	return f"env {env_prefix} bash -x {shlex.quote(remote_script_path)}".strip()
 

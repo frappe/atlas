@@ -2,9 +2,10 @@
 
 The daemon is the wake half of the parked SYN trap: it polls the `wake_<hex>`
 named counters and, on the first packet for a still-sleeping VM, does the local
-wake. These cover the three things it can get wrong without anyone noticing —
-misparsing `nft -j` output, waking a VM that is already awake, and failing to
-re-park after a reboot.
+wake. These cover the four things it can get wrong without anyone noticing —
+misparsing `nft -j` output, waking a VM that is already awake, failing to re-park
+after a reboot, and racing Boat's port of the same reflex on a host that runs
+both (spec/33-boat.md).
 
 Run with bare `python3 -m unittest atlas.test_wake_trap` from scripts/lib, like
 test_park.py: no Frappe, no site, no host, no nft. It has to live here rather
@@ -138,6 +139,84 @@ class TestWakeOrder(unittest.TestCase):
 		self.assertEqual(len(commands), 2)
 		self.assertIn("rm -f", commands[0])
 		self.assertIn("systemctl start", commands[1])
+
+
+class TestBoatOwnsTheWakeReflex(unittest.TestCase):
+	"""One trap per host: this daemon stands down while Boat's is running.
+
+	Boat ships a port of this same reflex, so on a Boat host both would poll the
+	same counters and both would start the same unit on one SYN. These cover the
+	handover in both directions — the direction that matters most is the second,
+	because a rollback that leaves a host with no trap at all is worse than the
+	race it was fixing."""
+
+	def setUp(self) -> None:
+		self.daemon = _load_daemon()
+
+	def _handover(self, boat_is_active: bool, previously=None) -> tuple:
+		re_parked = []
+		with (
+			patch.object(self.daemon, "run_ok", return_value=boat_is_active),
+			patch.object(self.daemon, "_resweep_parked_vms", side_effect=lambda: re_parked.append(1)),
+		):
+			return self.daemon._handover(previously), re_parked
+
+	def _main_until_first_sleep(self, boat_is_active: bool) -> list:
+		"""One pass of the poll loop. `time.sleep` is the loop's only statement
+		outside its own except, so raising there is how a test gets out of a daemon
+		that is meant to run forever."""
+		ticks = []
+		with (
+			patch.object(self.daemon, "run_ok", return_value=boat_is_active),
+			patch.object(self.daemon, "_resweep_parked_vms"),
+			patch.object(self.daemon, "_tick", side_effect=lambda: ticks.append(1)),
+			patch.object(self.daemon.time, "sleep", side_effect=KeyboardInterrupt),
+			self.assertRaises(KeyboardInterrupt),
+		):
+			self.daemon.main()
+		return ticks
+
+	def test_a_running_boat_takes_the_reflex(self) -> None:
+		owned, re_parked = self._handover(True)
+
+		self.assertTrue(owned)
+		# Not even the boot re-park: one actor, not one and a half. Boat's own
+		# startup sweep rebuilds the same park state from the same markers.
+		self.assertEqual(re_parked, [])
+
+	def test_no_counter_is_polled_while_boat_owns_the_reflex(self) -> None:
+		self.assertEqual(self._main_until_first_sleep(boat_is_active=True), [])
+
+	def test_the_counters_are_polled_when_no_boat_is_running(self) -> None:
+		self.assertEqual(self._main_until_first_sleep(boat_is_active=False), [1])
+
+	def test_a_host_without_boat_traps_and_re_parks_as_it_always_did(self) -> None:
+		owned, re_parked = self._handover(False)
+
+		self.assertFalse(owned)
+		self.assertEqual(re_parked, [1])
+
+	def test_a_boat_that_goes_away_hands_the_reflex_back(self) -> None:
+		# The rollback direction, and the one that has to re-park: while Boat owned
+		# the host this daemon rebuilt nothing, so it inherits park state it has
+		# never asserted.
+		owned, re_parked = self._handover(False, previously=True)
+
+		self.assertFalse(owned)
+		self.assertEqual(re_parked, [1])
+
+	def test_an_unchanged_owner_re_parks_nothing(self) -> None:
+		# Re-decided every tick, so the tick this costs must stay one systemctl call.
+		self.assertEqual(self._handover(False, previously=False)[1], [])
+		self.assertEqual(self._handover(True, previously=True)[1], [])
+
+	def test_the_question_asked_is_whether_boats_unit_is_active(self) -> None:
+		with patch.object(self.daemon, "run_ok", return_value=True) as run_ok:
+			self.assertTrue(self.daemon._boat_owns_the_wake_reflex())
+
+		command, unit = run_ok.call_args.args
+		self.assertIn("systemctl is-active", command)
+		self.assertEqual(unit, "boat.service")
 
 
 class TestResweep(unittest.TestCase):

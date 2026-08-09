@@ -29,15 +29,18 @@ def _make_reserved_ip(server: str, ip_address: str, **overrides) -> "frappe.mode
 @contextlib.contextmanager
 def _mock_host_side():
 	"""Patch the two host/vendor side effects attach()/detach() now perform — the
-	provider (assign/unassign on the droplet) and the host NAT Task — so the
-	invariant-focused tests don't reach a real droplet or SSH. Yields
-	(provider, run_task) MagicMocks so a test can assert the call shapes (assert
-	INSIDE the `with`: the patch is undone on exit)."""
+	provider (assign/unassign on the droplet) and the host NAT verb — so the
+	invariant-focused tests don't reach a real droplet or a real daemon. Yields
+	(provider, run_boat_task) MagicMocks so a test can assert the call shapes
+	(assert INSIDE the `with`: the patch is undone on exit).
+
+	One transport to patch, not two: the NAT verb goes to the host's Boat, and
+	the `boat_enabled` flag that used to choose between them is gone."""
 	provider = MagicMock()
 	run_task = MagicMock(return_value=fake_task(name="task-rip"))
 	with (
 		patch.object(module, "for_provider_type", return_value=provider),
-		patch.object(module, "run_task", run_task),
+		patch.object(module, "run_boat_task", run_task),
 	):
 		yield provider, run_task
 
@@ -190,11 +193,14 @@ class TestReservedIP(IntegrationTestCase):
 		# attach() denormalized public_ipv4 onto the VM row via db_set, so our
 		# handle's timestamp is stale; reload before terminate() saves it.
 		vm.reload()
-		# terminate-vm.py (vm_module.run_task) AND the reserved-IP detach Task +
-		# vendor unbind (the reserved_ip module's run_task / for_provider_type) all fire;
-		# patch both modules' side effects.
+		# The terminate verb AND the reserved-IP detach + vendor unbind all fire.
+		# Both verbs go to the host's Boat now, and terminate states its intent
+		# first, so the desired-state PUT is patched alongside the two transports —
+		# without it the test would need a Boat token in the site config to reach a
+		# daemon that is not there.
 		with (
-			patch.object(vm_module, "run_task", return_value=fake_task(name="task-term")),
+			patch.object(vm_module, "run_boat_task", return_value=fake_task(name="task-term")),
+			patch.object(vm_module, "put_desired_state", return_value={}),
 			_mock_host_side(),
 		):
 			vm.terminate()

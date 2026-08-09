@@ -352,14 +352,15 @@ imports it from **one durable copy** on the host:
 
 ### Systemd hooks are Python too, but not Tasks
 
-`vm-disk-up.py`, `vm-network-up.py`, `vm-network-down.py`, `vm-restore.py`
-run from the VM unit's `ExecStartPre`/`ExecStartPost`/`ExecStopPost`, not over
-SSH. They take a **positional uuid** (`%i`), not `--flags`, and import the
-durable package. They are excluded from
-`scripts_catalog.allowed_scripts()` (`SYSTEMD_HOOKS`) so the Task runner
-never executes them. Like every Python Task they run under the **Atlas venv
-python** — the units invoke `/var/lib/atlas/venv/bin/python <hook> %i`, and
-`atlas-pool.service` runs the pool bring-up inline:
+`vm-disk-up`, `vm-network-up`, `vm-restore` and `vm-network-down` run from the VM
+unit's `ExecStartPre`/`ExecStartPost`/`ExecStopPost`, not over SSH. They take a
+**positional uuid** (`%i`), not `--flags`. They are `/usr/local/bin/boat vm-* %i`
+verbs now — served by the boat binary, so they own no file in `scripts/` and no
+entry in the script catalog, and the Task runner never executes them. The one
+remaining Python systemd hook is `atlas-wake-trap` (the sleepy-VM wake daemon,
+excluded from `allowed_scripts()` via `SYSTEMD_HOOKS`); like every Python Task it
+runs under the **Atlas venv python**, and so does
+`atlas-pool.service`'s inline pool bring-up:
 `/var/lib/atlas/venv/bin/python -c "… ThinPool().ensure()"` (see
 [03-bootstrapping.md § The Atlas interpreter and CLI](./03-bootstrapping.md)).
 There is no shell helper library (`lvm.sh`) anymore — the durable `atlas`
@@ -494,10 +495,10 @@ SCRIPT_SIDECARS: dict[str, list[tuple[str, str]]] = {
 The script reads a sidecar by its staged path, passed as a CLI flag
 (e.g. `--guest-network-unit /tmp/atlas/atlas-network.service`).
 
-The systemd-hook scripts (`vm-network-up.py`, `vm-network-down.py`,
-`vm-disk-up.py`), the unit files, and the durable `atlas` package are placed at
-`/var/lib/atlas/bin/` (and `/var/lib/atlas/bin/atlas/`) by `Server.bootstrap()`
-calling `upload_files` directly. See [03-bootstrapping.md](./03-bootstrapping.md).
+The unit files and the durable `atlas` package are placed at `/var/lib/atlas/bin/`
+(and `/var/lib/atlas/bin/atlas/`) by `Server.bootstrap()` calling `upload_files`
+directly; the per-VM `firecracker-vm@` hooks are `boat vm-*` verbs, so no hook
+file ships. See [03-bootstrapping.md](./03-bootstrapping.md).
 
 ## Scripts catalog
 
@@ -508,9 +509,9 @@ The list of scripts an operator can run lives in
   under [`scripts/`](../scripts/). This is the whitelist used by the SSH
   runner and the `Server.run_task_dialog` controller method.
   `scripts/guest/` and `scripts/systemd/` are excluded (not host-runnable),
-  and so are the systemd-hook scripts (`SYSTEMD_HOOKS`: `vm-disk-up.py`,
-  `vm-network-up.py`, `vm-network-down.py`, `vm-restore.py`) — they run from
-  the VM unit with a positional uuid, not as Tasks.
+  and so is the systemd-hook daemon `atlas-wake-trap` (`SYSTEMD_HOOKS`). The
+  per-VM `vm-*` hooks are `boat vm-*` verbs the unit invokes with a positional
+  uuid; they own no file and are not Tasks either.
 - `operator_visible_scripts()` is the strict subset the desk's `Run Task`
   picker is allowed to expose: `bootstrap-server.py`,
   `reboot-server.sh`, `sync-image.py`. Everything else

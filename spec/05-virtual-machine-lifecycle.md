@@ -748,10 +748,10 @@ canonical artifact. Highlights:
   writes each as its own continued line in the launcher's `exec`. The real argv
   vector means the shell's `mapfile` dance is gone entirely. The unit template
   stays static and the launcher is regenerated on every (re)provision.
-- `ExecStartPre=/usr/bin/python3 /var/lib/atlas/bin/vm-network-up.py %i`
+- `ExecStartPre=/usr/local/bin/boat vm-network-up %i`
   (creates the netns + veth + in-namespace tap, so they exist when the jailer
-  joins the namespace) and the matching `ExecStopPost` for `vm-network-down.py`.
-  A third `ExecStartPre` runs `vm-disk-up.py %i` to re-activate the VM's disk LV
+  joins the namespace) and the matching `ExecStopPost` for `boat vm-network-down`.
+  A third `ExecStartPre` runs `boat vm-disk-up %i` to re-activate the VM's disk LV
   and refresh its in-jail block node (needed after a host reboot, when
   activation-skip snapshots don't auto-activate). `ExecStartPre` runs
   to completion before `ExecStart`, so the namespace is ready at jailer exec.
@@ -764,7 +764,7 @@ canonical artifact. Highlights:
   (and the stale API socket) first. Without this, the first Stop→Start cycle
   fails ("Failed to create /dev/net/tun via mknod: File exists"). The rootfs,
   kernel and config alongside `dev/` are left untouched.
-- `ExecStartPost=/usr/bin/python3 /var/lib/atlas/bin/vm-restore.py %i` — the
+- `ExecStartPost=/usr/local/bin/boat vm-restore %i` — the
   memory-snapshot restore hook. No marker → exit 0 (the common cold boot).
   Marker → load the snapshot over the API socket, consume the marker, resume.
   See [Memory snapshots](#memory-snapshots-fast-stop--start). The pre-start

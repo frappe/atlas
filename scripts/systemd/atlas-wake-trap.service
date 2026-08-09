@@ -5,9 +5,15 @@ Description=Atlas wake-on-TCP trap for sleeping VMs
 # wake on the first packet. Needs the uplink up (it re-parks proxy-NDP/routes on
 # boot) and the local fs (the sleeping markers + network.env it re-parks from). Not
 # ordered Before=firecracker-vm@.service: a sleeping VM is suppressed on boot anyway
-# (ConditionPathNotExists), and the daemon's startup sweep re-parks it.
+# (ConditionPathExists=!), and the daemon's startup sweep re-parks it.
 After=network-online.target local-fs.target
 Wants=network-online.target
+# Bound the restart rate — same backstop the other Restart=always units carry.
+# Without it a persistently-broken trap (missing venv, unparseable nft state) would
+# hot-loop forever; after StartLimitBurst starts within StartLimitIntervalSec systemd
+# leaves it `failed` (visible to the operator) instead of pinning a CPU.
+StartLimitIntervalSec=60
+StartLimitBurst=5
 
 [Service]
 Type=simple

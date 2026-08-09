@@ -141,8 +141,8 @@ def _assert_remote_layout(server_name: str) -> None:
 		timeout_seconds=30,
 	)
 	assert task.status == "Success"
-	assert "vm-network-up.py OK" in task.stdout
-	assert "vm-network-down.py OK" in task.stdout
+	assert "boat OK" in task.stdout
+	assert "lvm.py OK" in task.stdout
 	assert "firecracker-vm@.service OK" in task.stdout
 
 

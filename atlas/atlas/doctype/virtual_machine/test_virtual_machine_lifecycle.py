@@ -24,6 +24,15 @@ def _vm_with_status(status: str) -> "frappe.model.document.Document":
 
 class TestVirtualMachineLifecycle(IntegrationTestCase):
 	def setUp(self) -> None:
+		from atlas.atlas.doctype.virtual_machine import virtual_machine as module
+
+		# Every lifecycle verb states its intent on the host's Boat before it acts
+		# (spec/33 §11.1), and no daemon answers in a unit test. Stubbed for the
+		# class so each verb fails on its own behaviour rather than on the missing
+		# Boat token these real-provider fixtures have no reason to carry.
+		desired_state = patch.object(module, "put_desired_state", return_value={})
+		desired_state.start()
+		self.addCleanup(desired_state.stop)
 		_ensure_test_server()
 		_ensure_test_image()
 		# Clean up VMs from prior tests to free the /124 IPv6 range.
@@ -35,7 +44,7 @@ class TestVirtualMachineLifecycle(IntegrationTestCase):
 
 		vm = _vm_with_status("Stopped")
 		task = fake_task(name="task-start-1")
-		with patch.object(module, "run_task", return_value=task) as mocked:
+		with patch.object(module, "run_boat_task", return_value=task) as mocked:
 			result = vm.start()
 		self.assertEqual(result, "task-start-1")
 		vm.reload()
@@ -56,7 +65,7 @@ class TestVirtualMachineLifecycle(IntegrationTestCase):
 		# stop() defaults to the plain unit stop; the memory-snapshot fast path
 		# is opt-in via memory_snapshot_on_stop (covered in test_virtual_machine).
 		task = fake_task(name="task-stop-1")
-		with patch.object(module, "run_task", return_value=task) as mocked:
+		with patch.object(module, "run_boat_task", return_value=task) as mocked:
 			result = vm.stop()
 		self.assertEqual(result, "task-stop-1")
 		vm.reload()
@@ -77,7 +86,7 @@ class TestVirtualMachineLifecycle(IntegrationTestCase):
 		vm = _vm_with_status("Running")
 		stop_task = fake_task(name="task-stop-r")
 		start_task = fake_task(name="task-start-r")
-		with patch.object(module, "run_task", side_effect=[stop_task, start_task]) as mocked:
+		with patch.object(module, "run_boat_task", side_effect=[stop_task, start_task]) as mocked:
 			result = vm.restart()
 		self.assertEqual(result, {"stop_task": "task-stop-r", "start_task": "task-start-r"})
 		self.assertEqual(mocked.call_count, 2)
@@ -91,7 +100,7 @@ class TestVirtualMachineLifecycle(IntegrationTestCase):
 
 		vm = _vm_with_status("Stopped")
 		start_task = fake_task(name="task-start-only")
-		with patch.object(module, "run_task", return_value=start_task) as mocked:
+		with patch.object(module, "run_boat_task", return_value=start_task) as mocked:
 			result = vm.restart()
 		self.assertEqual(result, {"stop_task": None, "start_task": "task-start-only"})
 		mocked.assert_called_once()
@@ -109,7 +118,7 @@ class TestVirtualMachineLifecycle(IntegrationTestCase):
 
 		vm = _vm_with_status("Stopped")
 		task = fake_task(name="task-rebuild-img")
-		with patch.object(module, "run_task", return_value=task) as mocked:
+		with patch.object(module, "run_boat_task", return_value=task) as mocked:
 			result = vm.rebuild("image")
 		self.assertEqual(result, "task-rebuild-img")
 		self.assertEqual(mocked.call_args.kwargs["script"], "rebuild-vm")
@@ -135,12 +144,36 @@ class TestVirtualMachineLifecycle(IntegrationTestCase):
 			}
 		).insert(ignore_permissions=True)
 		task = fake_task(name="task-rebuild-snap")
-		with patch.object(module, "run_task", return_value=task) as mocked:
+		with patch.object(module, "run_boat_task", return_value=task) as mocked:
 			result = vm.rebuild("snapshot", snapshot.name)
 		self.assertEqual(result, "task-rebuild-snap")
 		variables = mocked.call_args.kwargs["variables"]
 		self.assertEqual(variables["SNAPSHOT_ROOTFS_PATH"], snapshot.rootfs_path)
 		self.assertNotIn("IMAGE_NAME", variables)
+
+	def test_rebuild_reinjects_the_private_address_and_the_routing_url(self) -> None:
+		"""A rebuild writes the guest's identity files from scratch, so anything it
+		does not re-state is lost: the VM comes back off the private plane (spec/25)
+		and a bench VM can no longer register its own subdomains (spec/18)."""
+		from atlas.atlas.doctype.virtual_machine import virtual_machine as module
+
+		if not frappe.db.exists("Tenant", "rebuild-identity-team"):
+			frappe.get_doc({"doctype": "Tenant", "team": "rebuild-identity-team"}).insert(
+				ignore_permissions=True
+			)
+		frappe.db.set_single_value("Atlas Settings", "satellite_routing_base_url", "https://sat.example")
+		vm = _vm_with_status("Stopped")
+		vm.db_set("tenant", "rebuild-identity-team", update_modified=False)
+		vm.reload()
+		task = fake_task(name="task-rebuild-identity")
+		with patch.object(module, "run_boat_task", return_value=task) as mocked:
+			vm.rebuild("image")
+
+		variables = mocked.call_args.kwargs["variables"]
+		self.assertTrue(variables["PRIVATE_ADDRESS"].startswith("fdaa:"))
+		self.assertEqual(variables["ROUTING_BASE_URL"], "https://sat.example")
+		# The tenant /48 is the HOST's network.env, which a rebuild does not touch.
+		self.assertNotIn("TENANT_PREFIX", variables)
 
 	def test_rebuild_rejects_when_not_stopped(self) -> None:
 		vm = _vm_with_status("Running")
@@ -197,7 +230,7 @@ class TestVirtualMachineLifecycle(IntegrationTestCase):
 
 		vm = _vm_with_status("Running")
 		task = fake_task(name="task-pause-1")
-		with patch.object(module, "run_task", return_value=task) as mocked:
+		with patch.object(module, "run_boat_task", return_value=task) as mocked:
 			result = vm.pause()
 		self.assertEqual(result, "task-pause-1")
 		self.assertEqual(mocked.call_args.kwargs["script"], "pause-vm")
@@ -216,7 +249,7 @@ class TestVirtualMachineLifecycle(IntegrationTestCase):
 		vm.status = "Paused"
 		vm.save(ignore_permissions=True)
 		task = fake_task(name="task-resume-1")
-		with patch.object(module, "run_task", return_value=task) as mocked:
+		with patch.object(module, "run_boat_task", return_value=task) as mocked:
 			result = vm.resume()
 		self.assertEqual(result, "task-resume-1")
 		self.assertEqual(mocked.call_args.kwargs["script"], "resume-vm")
@@ -234,7 +267,7 @@ class TestVirtualMachineLifecycle(IntegrationTestCase):
 		vm = _vm_with_status("Running")
 		vm.status = "Paused"
 		vm.save(ignore_permissions=True)
-		with patch.object(module, "run_task", return_value=fake_task(name="task-stop-p")):
+		with patch.object(module, "run_boat_task", return_value=fake_task(name="task-stop-p")):
 			vm.stop()
 		vm.reload()
 		self.assertEqual(vm.status, "Stopped")
@@ -245,7 +278,7 @@ class TestVirtualMachineLifecycle(IntegrationTestCase):
 		vm = _vm_with_status("Running")
 		vm.status = "Paused"
 		vm.save(ignore_permissions=True)
-		with patch.object(module, "run_task", return_value=fake_task(name="task-term-p")):
+		with patch.object(module, "run_boat_task", return_value=fake_task(name="task-term-p")):
 			vm.terminate()
 		vm.reload()
 		self.assertEqual(vm.status, "Terminated")
@@ -273,7 +306,7 @@ class TestVirtualMachineLifecycle(IntegrationTestCase):
 		# resize-vm runs) on the small shared test host; the gate itself is covered by
 		# test_provision_resize_capacity.
 		with (
-			patch.object(module, "run_task", return_value=task) as mocked,
+			patch.object(module, "run_boat_task", return_value=task) as mocked,
 			patch.object(module, "check_resize_capacity"),
 		):
 			result = vm.resize(vcpus=4, memory_megabytes=4096, disk_gigabytes=20)
@@ -299,7 +332,7 @@ class TestVirtualMachineLifecycle(IntegrationTestCase):
 		vm = _vm_with_status("Stopped")
 		before_memory = vm.memory_megabytes
 		before_disk = vm.disk_gigabytes
-		with patch.object(module, "run_task", return_value=fake_task()):
+		with patch.object(module, "run_boat_task", return_value=fake_task()):
 			vm.resize(vcpus=2)
 		vm.reload()
 		self.assertEqual(vm.vcpus, 2)
@@ -328,7 +361,7 @@ class TestVirtualMachineLifecycle(IntegrationTestCase):
 		# Capacity gate covered separately (test_provision_resize_capacity); this pins
 		# whole-core cap tracking when vcpus grow without an explicit cap.
 		with (
-			patch.object(module, "run_task", return_value=fake_task()),
+			patch.object(module, "run_boat_task", return_value=fake_task()),
 			patch.object(module, "check_resize_capacity"),
 		):
 			vm.resize(vcpus=4)
@@ -341,7 +374,7 @@ class TestVirtualMachineLifecycle(IntegrationTestCase):
 		from atlas.atlas.doctype.virtual_machine import virtual_machine as module
 
 		vm = _vm_with_status("Stopped")
-		with patch.object(module, "run_task", return_value=fake_task()):
+		with patch.object(module, "run_boat_task", return_value=fake_task()):
 			vm.resize(cpu_max_cores=0.5)
 		vm.reload()
 		self.assertEqual(vm.cpu_max_cores, 0.5)
@@ -360,12 +393,12 @@ class TestVirtualMachineLifecycle(IntegrationTestCase):
 		vm.last_stopped = frappe.utils.now_datetime()
 		vm.save(ignore_permissions=True)
 		self.assertEqual(vm.cpu_mode, "Hard cap")
-		with patch.object(module, "run_task", return_value=fake_task()):
+		with patch.object(module, "run_boat_task", return_value=fake_task()):
 			vm.resize(cpu_mode="Relaxed")
 		vm.reload()
 		self.assertEqual(vm.cpu_mode, "Relaxed")
 		# A later resize that omits cpu_mode keeps Relaxed.
-		with patch.object(module, "run_task", return_value=fake_task()):
+		with patch.object(module, "run_boat_task", return_value=fake_task()):
 			vm.resize(vcpus=2)
 		vm.reload()
 		self.assertEqual(vm.cpu_mode, "Relaxed", "cpu_mode is untouched unless passed")
@@ -404,7 +437,7 @@ class TestVirtualMachineLifecycle(IntegrationTestCase):
 
 		vm = _vm_with_status("Running")
 		task = fake_task(name="task-del-1")
-		with patch.object(module, "run_task", return_value=task) as mocked:
+		with patch.object(module, "run_boat_task", return_value=task) as mocked:
 			result = vm.terminate()
 		self.assertEqual(result, "task-del-1")
 		vm.reload()
@@ -438,7 +471,7 @@ class TestVirtualMachineLifecycle(IntegrationTestCase):
 
 		vm = _new_vm()  # Pending
 		task = fake_task(name="task-del-p")
-		with patch.object(module, "run_task", return_value=task):
+		with patch.object(module, "run_boat_task", return_value=task):
 			vm.terminate()
 		vm.reload()
 		self.assertEqual(vm.status, "Terminated")
@@ -449,7 +482,7 @@ class TestVirtualMachineLifecycle(IntegrationTestCase):
 		vm = _vm_with_status("Running")
 		vm.stop_protection = 1
 		vm.save(ignore_permissions=True)
-		with patch.object(module, "run_task") as mocked:
+		with patch.object(module, "run_boat_task") as mocked:
 			with self.assertRaises(frappe.ValidationError) as raised:
 				vm.stop()
 		self.assertIn("stop protection", str(raised.exception))
@@ -473,7 +506,7 @@ class TestVirtualMachineLifecycle(IntegrationTestCase):
 		vm = _vm_with_status("Running")
 		vm.stop_protection = 1
 		vm.save(ignore_permissions=True)
-		with patch.object(module, "run_task", return_value=fake_task(name="task-term-sp")):
+		with patch.object(module, "run_boat_task", return_value=fake_task(name="task-term-sp")):
 			vm.terminate()
 		vm.reload()
 		self.assertEqual(vm.status, "Terminated")
@@ -484,7 +517,7 @@ class TestVirtualMachineLifecycle(IntegrationTestCase):
 		vm = _vm_with_status("Running")
 		vm.termination_protection = 1
 		vm.save(ignore_permissions=True)
-		with patch.object(module, "run_task") as mocked:
+		with patch.object(module, "run_boat_task") as mocked:
 			with self.assertRaises(frappe.ValidationError) as raised:
 				vm.terminate()
 		self.assertIn("termination protection", str(raised.exception))
@@ -498,7 +531,7 @@ class TestVirtualMachineLifecycle(IntegrationTestCase):
 		vm = _vm_with_status("Running")
 		vm.termination_protection = 1
 		vm.save(ignore_permissions=True)
-		with patch.object(module, "run_task", return_value=fake_task(name="task-stop-tp")):
+		with patch.object(module, "run_boat_task", return_value=fake_task(name="task-stop-tp")):
 			vm.stop()
 		vm.reload()
 		self.assertEqual(vm.status, "Stopped")
@@ -512,7 +545,7 @@ class TestVirtualMachineLifecycle(IntegrationTestCase):
 		vm.save(ignore_permissions=True)
 		vm.termination_protection = 0
 		vm.save(ignore_permissions=True)
-		with patch.object(module, "run_task", return_value=fake_task(name="task-term-cleared")):
+		with patch.object(module, "run_boat_task", return_value=fake_task(name="task-term-cleared")):
 			vm.terminate()
 		vm.reload()
 		self.assertEqual(vm.status, "Terminated")

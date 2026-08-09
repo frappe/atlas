@@ -78,9 +78,21 @@ class VirtualMachineSnapshot(Document):
 		the resource sizing a caller didn't pass. If the build VM is gone AND the
 		caller passed no sizing, we fail loud with a clear message rather than
 		`DoesNotExistError` deep in get_doc. The self-serve caller always passes
-		an explicit size, so it never depends on the build VM surviving."""
+		an explicit size, so it never depends on the build VM surviving.
+
+		A clone is an ARRIVAL, so it goes through the placement gate — but it cannot
+		go through it the usual way: the disk it is seeded from is an LVM thin
+		snapshot on one host, so `self.server` is decided before anyone could pick.
+		`assert_visible` applies the same gate the only way that is left, by refusing
+		(spec/33 §9). It matters here more than anywhere: this is the path EVERY
+		self-serve Site VM takes (`site.py` → `default_bench_snapshot()` → here), so
+		a golden's host that Atlas had lost sight of went on receiving every new
+		site."""
+		from atlas.atlas.placement import assert_visible
+
 		if self.status != "Available":
 			frappe.throw(f"Snapshot is not Available (status is {self.status})")
+		assert_visible(self.server)
 		if self.kind == "Warm":
 			return self._clone_warm(
 				title, ssh_public_key, vcpus, cpu_max_cores, memory_megabytes, disk_gigabytes, tenant

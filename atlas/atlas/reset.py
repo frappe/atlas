@@ -14,7 +14,7 @@ first — it changes nothing.
 `confirm` exactly matches the server's title, so a reset is always deliberate and
 one host at a time — there is no fleet-wide sweep. It then:
 
-  1. runs the `reset-server` Task on the host (scripts/reset-server.py), wiping
+  1. runs the `reset-server` Task on the host (`boat reset-server`), wiping
      every VM/image/snapshot/tunnel/networking artifact off it while KEEPING the
      bootstrap floor (atlas VG + empty pool0, the venv, host hardening) so the
      host stays provision-ready without a re-bootstrap; and
@@ -35,8 +35,8 @@ from __future__ import annotations
 import frappe
 from frappe import _
 
-# The host-side wipe verb (scripts/reset-server.py). run_task stages the atlas
-# package + runs `atlas reset-server` over SSH, recording an auditable Task row.
+# The host-side wipe verb. A boat verb now: run_task renders `boat reset-server`
+# on the host and records an auditable Task row (the .py oracle is deleted).
 RESET_VERB = "reset-server"
 
 
@@ -110,12 +110,11 @@ def reset(server: str, confirm: str, delete_server: bool = False, skip_host: boo
 	else:
 		from atlas.atlas.ssh import run_task
 
-		# reset-server is a python VERB: run_task runs the pip-installed
-		# `atlas reset-server` on PATH rather than scp-ing the file per Task. A host
-		# whose durable /var/lib/atlas/bin predates this script won't have the verb,
-		# so refresh the durable package first (idempotent scp sweep, no bootstrap,
-		# no daemon-reload). The atlas CLI derives its subcommands from the on-disk
-		# entry scripts, so the verb is dispatchable the moment the file lands.
+		# reset-server is a boat VERB now: run_task runs `boat reset-server` on
+		# PATH rather than scp-ing anything per Task. The durable package is still
+		# refreshed first, because the wipe's network teardown reads the same
+		# per-VM sidecar files the Python hooks write, and a host whose
+		# /var/lib/atlas/bin predates this script would leave them stale.
 		count = doc.sync_scripts()
 		print(f"Synced {count} durable script(s) to the host.")
 
@@ -161,9 +160,11 @@ def _resolve_server(server: str):
 
 
 def verify_dispatch(server: str) -> None:
-	"""Sync the durable scripts to the host and prove `atlas reset-server` is
+	"""Sync the durable scripts to the host and prove `boat reset-server` is
 	dispatchable there — running only its `--help` (which wipes nothing). A safe
-	end-to-end check of the SSH + CLI wiring before committing to a real wipe."""
+	end-to-end check of the SSH + CLI wiring before committing to a real wipe, and
+	since the cutover it is also the check that the boat binary is installed at
+	all: a host without it fails here rather than half way through a wipe."""
 	require_developer_mode()
 	import atlas
 	from atlas.atlas.ssh import connection_for_server, run_ssh
@@ -174,8 +175,8 @@ def verify_dispatch(server: str) -> None:
 
 	connection = connection_for_server(doc)
 	key = atlas.get_ssh_private_key_path()
-	out, err, rc = run_ssh(connection, key, "atlas reset-server --help", timeout_seconds=60)
-	print(f"`atlas reset-server --help` rc={rc}")
+	out, err, rc = run_ssh(connection, key, "boat reset-server --help", timeout_seconds=60)
+	print(f"`boat reset-server --help` rc={rc}")
 	print(out or err)
 	if rc != 0:
 		frappe.throw(_("reset-server verb is NOT dispatchable on {0}").format(doc.title))
