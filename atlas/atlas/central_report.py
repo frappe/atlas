@@ -35,6 +35,13 @@ from atlas.atlas.central import CentralError
 
 MAX_PENDING_RETRY_BATCH = 100
 
+# Total delivery attempts for one event before its Central Event Log row is given
+# up on and stamped "error" (the dead queue — spec/16-central.md). deliver() makes
+# one attempt per call; a failed-but-not-yet-exhausted attempt is stamped back to
+# "queued" so the once-a-minute retry_pending cron (scheduler_events in hooks.py)
+# redrives it — that cron tick, not an in-process sleep, is the retry delay.
+MAX_RETRIES = 5
+
 
 def _enabled() -> bool:
 	# get_single_value tolerates the single's row not existing yet (fresh site).
@@ -163,6 +170,8 @@ def _enqueue_delivery_after_commit(log_name: str, event_type: str, payload: dict
 	frappe.enqueue(
 		"atlas.atlas.central_report.deliver",
 		queue="default",
+		# deliver() makes a single attempt now — this only needs to cover one
+		# CentralClient request (its own DEFAULT_TIMEOUT=30s) plus margin.
 		timeout=60,
 		enqueue_after_commit=True,
 		log_name=log_name,
@@ -250,9 +259,12 @@ def deliver(log_name: str, event_type: str, payload: dict, occurred_at: str | No
 	(enqueue_after_commit), so a rolled-back emit's row is never reached here and is
 	stamped `rolled_back` — logged, never delivered.
 
-	Sends the Central Event Log row's own name as `event_id`: it's already the
-	stable identity of one emit (retry_pending redelivers the same log_name, never a
-	new one), so Central can dedup on it without Atlas inventing a second id."""
+	Makes exactly one send attempt. A failed attempt that hasn't yet used up
+	MAX_RETRIES is stamped back to "queued", so the once-a-minute retry_pending
+	cron (scheduler_events in hooks.py) redrives it — that cron cadence is the
+	retry delay, not an in-process sleep. Once MAX_RETRIES is reached the row is
+	stamped "error" and left dead.
+	"""
 	settings = frappe.get_single("Central Settings")
 	if not settings.enabled:
 		return
@@ -263,21 +275,26 @@ def deliver(log_name: str, event_type: str, payload: dict, occurred_at: str | No
 		_stamp(log_name, status="skipped")
 		settings.db_set("status", "skipped: register with Central first", commit=True)
 		return
+
+	event = {
+		"event_id": log_name,
+		"type": event_type,
+		"payload": payload,
+		"occurred_at": _iso(occurred_at) or frappe.utils.now(),
+	}
 	try:
-		settings.client().post_event(
-			{
-				"event_id": log_name,
-				"type": event_type,
-				"payload": payload,
-				"occurred_at": _iso(occurred_at) or frappe.utils.now(),
-			}
-		)
+		settings.client().post_event(event)
 		_stamp(log_name, status="ok", http_status=200)
 		settings.db_set("status", f"ok: {event_type}", commit=True)
-	except CentralError as exception:
-		frappe.log_error(f"Central event {event_type} failed: {exception}", "Central event")
-		_stamp(log_name, status="error", last_error=str(exception)[:140], http_status=exception.status_code)
-		settings.db_set("status", f"error: {exception}"[:140], commit=True)
+		return
+	except CentralError as exc:
+		attempts_so_far = frappe.db.get_value("Central Event Log", log_name, "attempts") or 0
+		dead = attempts_so_far + 1 >= MAX_RETRIES
+		status = "error" if dead else "queued"
+		if dead:
+			frappe.log_error(f"Central event {event_type} failed: {exc}", "Central event")
+		_stamp(log_name, status=status, last_error=str(exc)[:140], http_status=exc.status_code)
+		settings.db_set("status", f"error: {exc}"[:140], commit=True)
 
 
 def _set_log_status(log_name: str, status: str) -> None:
