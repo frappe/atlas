@@ -98,15 +98,27 @@ class TestDistributeLocalImage(IntegrationTestCase):
 		teardown.assert_called_once()
 		enqueue.assert_called()
 
-		# Exactly one sync-image Task, to the target, with the mesh HTTP URL, the computed
-		# rootfs digest, the inherited kernel, and the LV-named rootfs filename.
-		tasks = frappe.get_all(
-			"Task",
-			filters={"server": self.target.name, "script": "sync-image"},
-			pluck="name",
-		)
-		self.assertEqual(len(tasks), 1)
-		variables = frappe.get_doc("Task", tasks[0]).variables_dict
+		# Exactly one sync-image Task from THIS fan-out, to the target, with the mesh HTTP
+		# URL, the computed rootfs digest, the inherited kernel, and the LV-named rootfs
+		# filename. Isolate it by its served-over-mesh ROOTFS_URL (a from-URL image's own
+		# after_insert sync of an unrelated image can leave other sync Tasks on a shared
+		# test DB), not by asserting the target has exactly one sync Task overall.
+		tasks = [
+			frappe.get_doc("Task", name)
+			for name in frappe.get_all(
+				"Task",
+				filters={"server": self.target.name, "script": "sync-image"},
+				pluck="name",
+			)
+		]
+		distribute_tasks = [
+			task
+			for task in tasks
+			if (task.variables_dict.get("ROOTFS_URL") or "").endswith("/rootfs.sqfs")
+			and task.variables_dict.get("IMAGE_NAME") == "distribute-localimg"
+		]
+		self.assertEqual(len(distribute_tasks), 1)
+		variables = distribute_tasks[0].variables_dict
 		self.assertEqual(variables["IMAGE_NAME"], "distribute-localimg")
 		self.assertEqual(variables["ROOTFS_SHA256"], ROOTFS_SHA256)
 		self.assertEqual(variables["KERNEL_URL"], SOURCE_KERNEL_URL)
