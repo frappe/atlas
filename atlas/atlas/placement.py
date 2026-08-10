@@ -290,11 +290,13 @@ def _synced_image_home_servers(image: str) -> set[str]:
 
 
 def _local_image_home_servers(image: str) -> set[str]:
-	"""Servers holding a local (snapshot-promoted) image: its promote home plus every
-	server a successful export shipped it to. The promote home comes from the same Task
-	trail `Virtual Machine Image Export.before_insert` denormalizes from; the export
-	targets come from the export rows themselves (their `target_server` is the durable
-	record that the bytes landed there)."""
+	"""Servers holding a local (snapshot-promoted) image: its promote home, every server
+	a successful export shipped it to, and every server an HTTP fleet-distribute synced
+	it to. The promote home comes from the same Task trail
+	`Virtual Machine Image Export.before_insert` denormalizes from; the export targets
+	come from the export rows themselves (their `target_server` is the durable record
+	that the bytes landed there); the distribute targets come from the `sync-image` Task
+	trail."""
 	from atlas.atlas.doctype.virtual_machine_image_export.virtual_machine_image_export import (
 		_image_home_server,
 	)
@@ -312,6 +314,13 @@ def _local_image_home_servers(image: str) -> set[str]:
 			pluck="target_server",
 		)
 	)
+	# `fleet_distribute` fans a local image out over HTTP by reusing `sync-image`, so a
+	# host with a successful sync-image Task for it holds its bytes too — the SAME trail a
+	# from-URL image's presence is read from (`_synced_image_home_servers`). Union it in
+	# so an HTTP-distributed host becomes a placement candidate. (fleet_distribute leaves
+	# the row LOCAL — the served URL is ephemeral, torn down after the fan-out — so
+	# `image_home_servers` still routes local images through here, not the sync path.)
+	homes.update(_synced_image_home_servers(image))
 	return {home for home in homes if home}
 
 
