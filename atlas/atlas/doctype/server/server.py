@@ -351,6 +351,7 @@ class Server(Document):
 		self._absorb_bootstrap_output(task.stdout)
 		if connection is not None:
 			self._start_boat(connection)
+			self._start_ancp_units(connection)
 		self.save(ignore_permissions=True)
 		return task.name
 
@@ -903,6 +904,35 @@ class Server(Document):
 			# daemon that dies on its first read of the host exits 0 here.
 			self._boat_ssh(
 				connection, key_path, "boat.service did not stay up", "sudo systemctl is-active boat.service"
+			)
+
+	def _start_ancp_units(self, connection) -> None:
+		"""Enable + start the ANCP host units after the `boat bootstrap` Task has laid
+		the tree they read.
+
+		bootstrap() writes `/etc/atlas-networkd/*` (`_write_ancp_bootstrap_state`) and
+		the Task creates `/var/lib/atlas`, the thin pool and the nft scaffold — but
+		nothing STARTS these units. `boat bootstrap` does not (they are Atlas units,
+		not boat's), and the shell `bootstrap-server.py` that used to enable them is
+		gone. Without this the wg-mesh never comes up (`atlas-networkd`), the loop PV
+		is not re-asserted on reboot (`atlas-pool`), and the wake trap is never armed
+		(`atlas-wake-trap`). `enable --now` is idempotent, so a re-bootstrap is a clean
+		no-op. `boat-networkd` stays installed-not-started (see `_start_boat`)."""
+		with ssh_key_file(connection.ssh_private_key) as key_path:
+			self._boat_ssh(
+				connection,
+				key_path,
+				"enabling the ANCP units",
+				"sudo systemctl enable --now atlas-networkd.service atlas-pool.service "
+				"atlas-wake-trap.service",
+			)
+			# is-active AFTER enable --now: the mesh daemon is what "networking works"
+			# rests on, so fail the bootstrap loud if it did not stay up.
+			self._boat_ssh(
+				connection,
+				key_path,
+				"atlas-networkd.service did not stay up",
+				"sudo systemctl is-active atlas-networkd.service",
 			)
 
 	def _boat_ssh(
