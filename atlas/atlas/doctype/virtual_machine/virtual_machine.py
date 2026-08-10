@@ -583,12 +583,21 @@ class VirtualMachine(Document):
 			# the wake trap: from here the host will not bring this VM back for
 			# traffic (spec/33 §11.3).
 			run = self._transport("Stopped")
+			# Boat's stop-vm waits up to its graceful-shutdown drain (30s in
+			# internal/vm/stop.go) for the guest to power off after SendCtrlAltDel
+			# BEFORE it stops the unit, so the op routinely runs ~30s+ on a guest
+			# that doesn't ACPI-poweroff instantly. A 30s controller wait is shorter
+			# than the drain it is waiting on and times out on the host's own
+			# success. Wait past the drain + the unit stop, matching the
+			# memory-snapshot stop path above. A custom STOP_TIMEOUT_SECONDS bounds
+			# the drain, so honor it plus margin.
+			op_timeout = max(120, (stop_timeout_seconds or 0) + 60)
 			task = run(
 				server=self.server,
 				script="stop-vm",
 				variables=variables,
 				virtual_machine=self.name,
-				timeout_seconds=30,
+				timeout_seconds=op_timeout,
 			)
 		self.status = "Stopped"
 		self.has_memory_snapshot = 1 if snapshotted else 0
