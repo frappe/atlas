@@ -83,7 +83,7 @@ BOAT_ARTIFACTS: list[tuple[str, str]] = [
 # token well before the hard expiry — and a leaked-but-unrotated one is still bounded.
 BOAT_TOKEN_PATH = "/etc/boat/token"
 DATUM_TOKENS_PATH = "/etc/boat/datum-tokens.json"
-DATUM_DROPIN_PATH = "/etc/systemd/system/boat.service.d/10-datum.conf"
+BOAT_DROPIN_PATH = "/etc/systemd/system/boat.service.d/10-boat.conf"
 BOAT_TOKEN_TTL_DAYS = 30
 BOAT_TOKEN_REMINT_WITHIN_DAYS = 7
 
@@ -351,6 +351,7 @@ class Server(Document):
 		self._absorb_bootstrap_output(task.stdout)
 		if connection is not None:
 			self._start_boat(connection)
+			self._start_ancp_units(connection)
 		self.save(ignore_permissions=True)
 		return task.name
 
@@ -712,6 +713,25 @@ class Server(Document):
 		with ssh_key_file(connection.ssh_private_key) as key_path:
 			for description, command in steps:
 				self._boat_ssh(connection, key_path, description, command)
+			# Give boat its HTTP listener. The shipped unit omits --listen on purpose
+			# (it awaits a registration handshake that hands over a tunnel address);
+			# until that exists, Atlas — the operator the unit defers to — writes the
+			# drop-in so the daemon serves the network API every HTTP host verb needs.
+			# Written before the token install; _start_boat's restart (after the token
+			# lands) is what brings the listener up.
+			self._boat_ssh(
+				connection,
+				key_path,
+				"installing the boat listener drop-in",
+				f"sudo install -D -m 0644 -o root -g root /dev/stdin {BOAT_DROPIN_PATH}",
+				stdin=self._boat_dropin_contents(),
+			)
+			self._boat_ssh(
+				connection,
+				key_path,
+				"reloading systemd for the boat drop-in",
+				"sudo systemctl daemon-reload",
+			)
 			self._verify_boat_binary(connection, key_path, digest)
 			# The bearer token last: it is a per-host secret, minted here and written
 			# to /etc/boat/token, not one of the four static artifacts the tar stream
@@ -816,19 +836,38 @@ class Server(Document):
 			stdin=payload,
 		)
 
-	def _datum_dropin_contents(self) -> str:
-		"""The systemd drop-in that turns metrics export on: it resets ExecStart and re-adds
-		the daemon command with --server-name and the datum flags. NOTE: this fully owns
-		ExecStart, so a host that also needs --listen must fold it in here too."""
-		url = frappe.conf.get("atlas_datum_url")
-		return (
-			"[Service]\n"
-			"ExecStart=\n"
-			"ExecStart=/usr/local/bin/boat daemon --socket /run/boat/boat.sock "
+	def _boat_dropin_contents(self) -> str:
+		"""The single systemd drop-in that fully owns boat's ExecStart.
+
+		It ALWAYS adds `--listen` so the daemon serves its HTTP API on the network.
+		Atlas drives every heavy host verb — provision-vm, sync-image, snapshot,
+		promote, the s3 backups — over the boat daemon's HTTP listener
+		(`scripts_catalog.HTTP_HOST_VERBS`, `boat_client.base_url_for_server`); the
+		shipped unit deliberately omits `--listen` (it expects a registration handshake
+		to hand over a tunnel address), so without this drop-in boat serves only the
+		local unix socket and NONE of those verbs can reach the host. Atlas is the
+		operator the unit's comment defers to, so it writes the listener here.
+
+		It also folds in the datum flags when metrics export is configured, because
+		two ExecStart-owning drop-ins would fight — one drop-in owns ExecStart.
+
+		The bind is `:<port>` (every interface, i.e. PUBLICLY reachable): the
+		controller reaches the host over the network and the per-host bearer token
+		(`--token-file`, checked by boat's TunnelHandler) is the auth boundary. Harden
+		to the management-tunnel address once that transport is built."""
+		port = frappe.conf.get("atlas_boat_port") or 8080
+		execstart = (
+			"/usr/local/bin/boat daemon --socket /run/boat/boat.sock "
 			"--store /var/lib/boat/boat.db --token-file /etc/boat/token "
-			f"--server-name {self.name} --datum-url {url} "
-			"--datum-token-file /etc/boat/datum-tokens.json\n"
+			f"--listen :{port}"
 		)
+		url = frappe.conf.get("atlas_datum_url")
+		if url:
+			execstart += (
+				f" --server-name {self.name} --datum-url {url} "
+				"--datum-token-file /etc/boat/datum-tokens.json"
+			)
+		return f"[Service]\nExecStart=\nExecStart={execstart}\n"
 
 	def _install_datum_tokens(self, connection, key_path) -> None:
 		"""Ship this host's datum token bundle and the drop-in that points boat at datum.
@@ -849,12 +888,14 @@ class Server(Document):
 			f"sudo install -D -m 0640 -o root -g boat /dev/stdin {DATUM_TOKENS_PATH}",
 			stdin=payload,
 		)
+		# Rewrite the SINGLE boat drop-in (it folds datum flags in alongside --listen),
+		# so turning datum on post-bootstrap keeps the network listener.
 		self._boat_ssh(
 			connection,
 			key_path,
-			"installing the datum systemd drop-in",
-			f"sudo install -D -m 0644 -o root -g root /dev/stdin {DATUM_DROPIN_PATH}",
-			stdin=self._datum_dropin_contents(),
+			"installing the boat systemd drop-in (with datum)",
+			f"sudo install -D -m 0644 -o root -g root /dev/stdin {BOAT_DROPIN_PATH}",
+			stdin=self._boat_dropin_contents(),
 		)
 		self._boat_ssh(connection, key_path, "reloading systemd for datum", "sudo systemctl daemon-reload")
 
@@ -901,6 +942,63 @@ class Server(Document):
 			# is-active AFTER the restart: `systemctl restart` returns once the unit
 			# has been exec'd (the unit is Type=exec), not once it has settled, so a
 			# daemon that dies on its first read of the host exits 0 here.
+			self._boat_ssh(
+				connection, key_path, "boat.service did not stay up", "sudo systemctl is-active boat.service"
+			)
+
+	def _start_ancp_units(self, connection) -> None:
+		"""Enable + start the ANCP host units after the `boat bootstrap` Task has laid
+		the tree they read.
+
+		bootstrap() writes `/etc/atlas-networkd/*` (`_write_ancp_bootstrap_state`) and
+		the Task creates `/var/lib/atlas`, the thin pool and the nft scaffold — but
+		nothing STARTS these units. `boat bootstrap` does not (they are Atlas units,
+		not boat's), and the shell `bootstrap-server.py` that used to enable them is
+		gone. Without this the wg-mesh never comes up (`atlas-networkd`), the loop PV
+		is not re-asserted on reboot (`atlas-pool`), and the wake trap is never armed
+		(`atlas-wake-trap`). `enable --now` is idempotent, so a re-bootstrap is a clean
+		no-op. `boat-networkd` stays installed-not-started (see `_start_boat`)."""
+		with ssh_key_file(connection.ssh_private_key) as key_path:
+			self._boat_ssh(
+				connection,
+				key_path,
+				"enabling the ANCP units",
+				"sudo systemctl enable --now atlas-networkd.service atlas-pool.service "
+				"atlas-wake-trap.service",
+			)
+			# is-active AFTER enable --now: the mesh daemon is what "networking works"
+			# rests on, so fail the bootstrap loud if it did not stay up.
+			self._boat_ssh(
+				connection,
+				key_path,
+				"atlas-networkd.service did not stay up",
+				"sudo systemctl is-active atlas-networkd.service",
+			)
+
+	@frappe.whitelist()
+	def configure_boat_listener(self) -> None:
+		"""(Re)write boat's ExecStart drop-in and restart the daemon so an already
+		bootstrapped host picks up the `--listen` network listener without a full
+		re-bootstrap. The same drop-in `bootstrap()` writes (see `_boat_dropin_contents`);
+		this is the operator path to apply it to a host bootstrapped before the listener
+		fix, or to re-assert it after a manual change."""
+		if is_fake_server(self.name):
+			return
+		connection = connection_for_server(self)
+		with ssh_key_file(connection.ssh_private_key) as key_path:
+			self._boat_ssh(
+				connection,
+				key_path,
+				"installing the boat listener drop-in",
+				f"sudo install -D -m 0644 -o root -g root /dev/stdin {BOAT_DROPIN_PATH}",
+				stdin=self._boat_dropin_contents(),
+			)
+			self._boat_ssh(
+				connection, key_path, "reloading systemd", "sudo systemctl daemon-reload"
+			)
+			self._boat_ssh(
+				connection, key_path, "restarting boat", "sudo systemctl restart boat.service"
+			)
 			self._boat_ssh(
 				connection, key_path, "boat.service did not stay up", "sudo systemctl is-active boat.service"
 			)
