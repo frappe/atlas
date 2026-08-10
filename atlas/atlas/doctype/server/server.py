@@ -352,6 +352,15 @@ class Server(Document):
 		if connection is not None:
 			self._start_boat(connection)
 			self._start_ancp_units(connection)
+		# Reaching here means every host step succeeded (run_task raises otherwise),
+		# so the host IS VM-ready — reflect that in the row. Without this, the desk
+		# **Bootstrap** button on an adopted `Pending` server (or a re-bootstrap of a
+		# `Broken` one) left it stuck in its old status: only the provider worker's
+		# `finish_provisioning` set `Active`, so a hand-driven adopt→Bootstrap never
+		# reached Active. `finish_provisioning` re-asserting Active afterwards is a
+		# harmless no-op. Bootstrap is gated to Pending/Bootstrapping/Active/Broken,
+		# all of which a successful bootstrap legitimately makes Active.
+		self.status = "Active"
 		self.save(ignore_permissions=True)
 		return task.name
 
