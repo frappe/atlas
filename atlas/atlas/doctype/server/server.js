@@ -77,6 +77,7 @@ function add_buttons(frm) {
 		frappe.atlas.add_action(frm, "Sync Image", () => open_sync_image_dialog(frm));
 		frappe.atlas.add_action(frm, "Bake Image", () => open_bake_image_dialog(frm));
 		frappe.atlas.add_action(frm, "Sync Scripts", () => sync_scripts(frm));
+		frappe.atlas.add_action(frm, "Upgrade Boat", () => confirm_upgrade_boat(frm));
 		frappe.atlas.add_action(frm, "Refresh Capacity", () => refresh_capacity(frm));
 		frappe.atlas.add_action(frm, "Allocate Reserved IP", () =>
 			confirm_allocate_reserved_ip(frm)
@@ -144,6 +145,35 @@ function discover_reserved_ips(frm) {
 			);
 			frm.dashboard.refresh();
 		});
+}
+
+function confirm_upgrade_boat(frm) {
+	// Reship the boat binary + sudoers allow-list + units from the controller's
+	// distribution and restart the daemon (upgrade_boat verifies the swap by
+	// SHA-256 digest + `boat version`, and that the daemon stayed up). The restart
+	// is a brief blip on the management plane — running VMs are unaffected — so
+	// confirm before doing it.
+	frappe.confirm(
+		__("Upgrade boat on {0}? Reships the binary, sudoers and units, then restarts the daemon.", [
+			frm.doc.title,
+		]),
+		() => {
+			frm.call(
+				"upgrade_boat",
+				{},
+				{ freeze: true, freeze_message: __("Upgrading boat…") }
+			).then(({ message: version }) => {
+				frappe.show_alert(
+					{
+						message: __("boat on {0} is now {1}.", [frm.doc.title, version || "(unknown)"]),
+						indicator: "green",
+					},
+					8
+				);
+				frm.reload_doc();
+			});
+		}
+	);
 }
 
 function sync_scripts(frm) {
