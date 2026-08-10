@@ -69,6 +69,29 @@ def image_http_port(image: str) -> int:
 	return _HTTP_PORT_BASE + int.from_bytes(digest[:4], "big") % _HTTP_PORT_SPAN
 
 
+def _serve_address(source_server: str) -> str:
+	"""The address the source host serves the squashed rootfs on. Defaults to the host
+	MESH address (`networking.derive_host_mesh_address`) — the documented, WG-encrypted,
+	host-only image-fan-out bus. Set `atlas_fleet_serve_public` in site config to serve on
+	the source's PUBLIC IPv4 instead, for an off-mesh controller / a dev fleet whose mesh
+	is not the transport (the same escape hatch `atlas_boat_base_urls` is for boat). The
+	served rootfs is then briefly reachable on the public wire (torn down after the
+	fan-out); prefer the mesh in production."""
+	from atlas.atlas.networking import derive_host_mesh_address
+
+	if frappe.conf.get("atlas_fleet_serve_public"):
+		public = frappe.db.get_value("Server", source_server, "ipv4_address")
+		if not public:
+			frappe.throw(_("Server {0} has no ipv4_address to serve the image on.").format(source_server))
+		return public
+	return derive_host_mesh_address(source_server)
+
+
+def _url_host(address: str) -> str:
+	"""Bracket an IPv6 literal for a URL authority; leave IPv4 / a hostname bare."""
+	return f"[{address}]" if ":" in address else address
+
+
 @frappe.whitelist()
 def distribute_local_image(image: str, servers: list[str] | str | None = None) -> dict:
 	"""Fan a local base image out to the fleet over HTTP. Called from the Image form's
@@ -147,7 +170,6 @@ def _run_distribution(image: str, servers: list[str]) -> None:
 	from atlas.atlas.doctype.virtual_machine_image_export.virtual_machine_image_export import (
 		_image_home_server,
 	)
-	from atlas.atlas.networking import derive_host_mesh_address
 
 	source = _image_home_server(image)
 	if not source:
@@ -157,21 +179,21 @@ def _run_distribution(image: str, servers: list[str]) -> None:
 		return
 
 	kernel = _source_image_kernel(image)
-	mesh_address = derive_host_mesh_address(source)
+	serve_address = _serve_address(source)
 	port = image_http_port(image)
 	image_doc = frappe.get_doc("Virtual Machine Image", image)
 
 	try:
-		rootfs_sha256 = _serve_rootfs_over_http(source, image, mesh_address, port)
+		rootfs_sha256 = _serve_rootfs_over_http(source, image, serve_address, port)
 		variables = {
 			"IMAGE_NAME": image_doc.image_name,
 			"KERNEL_URL": kernel["kernel_url"],
 			"KERNEL_FILENAME": kernel["kernel_filename"],
 			"KERNEL_SHA256": kernel["kernel_sha256"],
-			# Plain HTTP on the mesh bus (WG-encrypted, host-only); the `.sqfs` name
-			# makes sync-image skip the guest-module re-bake (the promoted rootfs
-			# already carries its modules).
-			"ROOTFS_URL": f"http://[{mesh_address}]:{port}/rootfs.sqfs",
+			# Plain HTTP on the mesh bus (WG-encrypted, host-only) by default; the
+			# `.sqfs` name makes sync-image skip the guest-module re-bake (the promoted
+			# rootfs already carries its modules).
+			"ROOTFS_URL": f"http://{_url_host(serve_address)}:{port}/rootfs.sqfs",
 			# The LV-named presence sentinel the promote wrote on the home host; passing
 			# it verbatim makes every target's on-disk name match the home host's, so a
 			# distributed host looks identical to the promoted one to provision-vm.
@@ -248,7 +270,7 @@ def _promote_source_image(image: str) -> str:
 	return source_image
 
 
-def _serve_rootfs_over_http(source_server: str, image: str, mesh_address: str, port: int) -> str:
+def _serve_rootfs_over_http(source_server: str, image: str, serve_address: str, port: int) -> str:
 	"""Squash the base LV on its home host and start serving it over HTTP; return the
 	squashfs sha256.
 
@@ -290,7 +312,7 @@ def _serve_rootfs_over_http(source_server: str, image: str, mesh_address: str, p
 					"--property=RuntimeMaxSec=3600",
 					"python3 -m http.server",
 					str(port),
-					f"--bind {shlex.quote(mesh_address)}",
+					f"--bind {shlex.quote(serve_address)}",
 					f"--directory {shlex.quote(serve_dir)}",
 				]
 			),
