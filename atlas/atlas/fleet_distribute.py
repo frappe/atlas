@@ -70,7 +70,7 @@ def image_http_port(image: str) -> int:
 
 
 @frappe.whitelist()
-def distribute_local_image(image: str, servers=None) -> dict:
+def distribute_local_image(image: str, servers: list[str] | str | None = None) -> dict:
 	"""Fan a local base image out to the fleet over HTTP. Called from the Image form's
 	`Sync Across Hosts` action; the operator picks the targets (or leaves it to the
 	default: every other Active host).
