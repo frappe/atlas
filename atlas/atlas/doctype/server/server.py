@@ -975,6 +975,34 @@ class Server(Document):
 				"sudo systemctl is-active atlas-networkd.service",
 			)
 
+	@frappe.whitelist()
+	def configure_boat_listener(self) -> None:
+		"""(Re)write boat's ExecStart drop-in and restart the daemon so an already
+		bootstrapped host picks up the `--listen` network listener without a full
+		re-bootstrap. The same drop-in `bootstrap()` writes (see `_boat_dropin_contents`);
+		this is the operator path to apply it to a host bootstrapped before the listener
+		fix, or to re-assert it after a manual change."""
+		if is_fake_server(self.name):
+			return
+		connection = connection_for_server(self)
+		with ssh_key_file(connection.ssh_private_key) as key_path:
+			self._boat_ssh(
+				connection,
+				key_path,
+				"installing the boat listener drop-in",
+				f"sudo install -D -m 0644 -o root -g root /dev/stdin {BOAT_DROPIN_PATH}",
+				stdin=self._boat_dropin_contents(),
+			)
+			self._boat_ssh(
+				connection, key_path, "reloading systemd", "sudo systemctl daemon-reload"
+			)
+			self._boat_ssh(
+				connection, key_path, "restarting boat", "sudo systemctl restart boat.service"
+			)
+			self._boat_ssh(
+				connection, key_path, "boat.service did not stay up", "sudo systemctl is-active boat.service"
+			)
+
 	def _boat_ssh(
 		self, connection, key_path, description: str, command: str, stdin: str | None = None
 	) -> str:
