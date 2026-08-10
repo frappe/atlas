@@ -35,11 +35,7 @@ from atlas.atlas.central import CentralError
 
 MAX_PENDING_RETRY_BATCH = 100
 
-# Total delivery attempts for one event before its Central Event Log row is given
-# up on and stamped "error" (the dead queue — spec/16-central.md). deliver() makes
-# one attempt per call; a failed-but-not-yet-exhausted attempt is stamped back to
-# "queued" so the once-a-minute retry_pending cron (scheduler_events in hooks.py)
-# redrives it — that cron tick, not an in-process sleep, is the retry delay.
+# Max attempts before an event is marked dead.
 MAX_RETRIES = 5
 
 
@@ -170,8 +166,6 @@ def _enqueue_delivery_after_commit(log_name: str, event_type: str, payload: dict
 	frappe.enqueue(
 		"atlas.atlas.central_report.deliver",
 		queue="default",
-		# deliver() makes a single attempt now — this only needs to cover one
-		# CentralClient request (its own DEFAULT_TIMEOUT=30s) plus margin.
 		timeout=60,
 		enqueue_after_commit=True,
 		log_name=log_name,
@@ -259,11 +253,7 @@ def deliver(log_name: str, event_type: str, payload: dict, occurred_at: str | No
 	(enqueue_after_commit), so a rolled-back emit's row is never reached here and is
 	stamped `rolled_back` — logged, never delivered.
 
-	Makes exactly one send attempt. A failed attempt that hasn't yet used up
-	MAX_RETRIES is stamped back to "queued", so the once-a-minute retry_pending
-	cron (scheduler_events in hooks.py) redrives it — that cron cadence is the
-	retry delay, not an in-process sleep. Once MAX_RETRIES is reached the row is
-	stamped "error" and left dead.
+	One attempt per call; failures under MAX_RETRIES requeue for the cron.
 	"""
 	settings = frappe.get_single("Central Settings")
 	if not settings.enabled:
