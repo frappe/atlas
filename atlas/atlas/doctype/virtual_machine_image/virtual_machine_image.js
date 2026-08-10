@@ -14,6 +14,12 @@ frappe.ui.form.on("Virtual Machine Image", {
 		// spec/24 §5.1). Only offered for a local image; a URL image uses Sync instead.
 		if (frm.doc.is_active && !frm.doc.rootfs_url) {
 			frappe.atlas.add_action(frm, "Export Image", () => open_export_dialog(frm));
+			// Sync Across Hosts: the fleet-wide sibling of Export. Export ships this
+			// local image to ONE host over NBD; this fans the same bytes out to MANY
+			// over HTTP on the mesh, reusing the sync-image verb (no object store).
+			frappe.atlas.add_action(frm, "Sync Across Hosts", () =>
+				open_distribute_dialog(frm)
+			);
 		}
 		if (frm.doc.is_active) {
 			frappe.atlas.add_danger(frm, "Archive", () => confirm_archive(frm));
@@ -66,6 +72,65 @@ function open_export_dialog(frm) {
 				});
 		},
 	});
+	dialog.show();
+}
+
+function open_distribute_dialog(frm) {
+	const who = frm.doc.title || frm.doc.image_name;
+	const dialog = new frappe.ui.Dialog({
+		title: __("Sync {0} across hosts", [who]),
+		fields: [
+			{
+				fieldname: "servers",
+				label: __("Target Hosts"),
+				fieldtype: "MultiSelectList",
+				get_data: (txt) =>
+					frappe.db.get_link_options("Server", txt, { status: "Active" }),
+				description: __(
+					"Active hosts to copy this local image to over the mesh (no object store). The host it was promoted on is skipped automatically. Leave empty to sync to every other Active host."
+				),
+			},
+			{
+				fieldname: "how_hint",
+				fieldtype: "HTML",
+				options: `<p class="text-muted small">${__(
+					"Squashes the read-only base image LV on its home host, serves it over HTTP on the mesh, and runs the sync-image verb on each target so it builds an identical base LV. Runs in the background; watch the Task list."
+				)}</p>`,
+			},
+		],
+		primary_action_label: __("Sync"),
+		primary_action(values) {
+			dialog.hide();
+			frappe
+				.call("atlas.atlas.fleet_distribute.distribute_local_image", {
+					image: frm.doc.name,
+					servers: values.servers || [],
+				})
+				.then(({ message }) => {
+					if (!message) return;
+					frappe.show_alert(
+						{
+							message: __("Distributing {0} to {1} host(s); watch the Task list.", [
+								frm.doc.name,
+								(message.servers || []).length,
+							]),
+							indicator: "blue",
+						},
+						6
+					);
+				});
+		},
+	});
+	// Default the picker to every Active host; distribute_local_image drops the source
+	// host from the list server-side (it already holds the bytes).
+	frappe.db
+		.get_list("Server", { filters: { status: "Active" }, fields: ["name"], limit: 0 })
+		.then((rows) =>
+			dialog.set_value(
+				"servers",
+				(rows || []).map((row) => row.name)
+			)
+		);
 	dialog.show();
 }
 
