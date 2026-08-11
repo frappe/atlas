@@ -241,3 +241,25 @@ def publish_snapshot_as_fleet_image(
 	from atlas.atlas import fleet_image
 
 	return fleet_image.publish_snapshot_as_fleet_image(snapshot, image_name, servers=servers, title=title)
+
+
+@frappe.whitelist()
+def distribute_image(image: str, servers: list | str | None = None) -> dict:
+	"""Fan an already-promoted LOCAL base image out to the fleet host-to-host over HTTP —
+	no object store, no S3. The no-bucket counterpart to `publish_snapshot_as_fleet_image`.
+
+	Where that squashes a snapshot to S3 and mints a from-URL image, this ships a LOCAL
+	image's base LV straight from its home host to every other Active host over the mesh
+	(`atlas.atlas.fleet_distribute`), reusing the ordinary `sync-image` verb unchanged. The
+	image stays local — no new row, no dangling URL — and placement then treats every host
+	with a successful sync as holding its bytes. Only a promoted local image qualifies; a
+	from-URL image is rejected (place it with sync-image instead).
+
+	`servers` is a JSON list of Server names (or None = every other Active host). The whole
+	fan-out runs on the `long` queue, so this only preflights + enqueues and returns the
+	handle `{image, source, servers}` immediately. The service (chef) calls this right after
+	a `promote_image` to propagate the golden across the fleet without a bucket."""
+	frappe.only_for("System Manager")
+	from atlas.atlas import fleet_distribute
+
+	return fleet_distribute.distribute_local_image(image, servers=servers)
