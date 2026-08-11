@@ -227,27 +227,28 @@ class TestCentralReport(IntegrationTestCase):
 			central_report.on_vm_after_insert(self._vm(before_status=None))
 		self.assertEqual(enqueue.call_args.kwargs["event_type"], "vm.created")
 
-	def test_deliver_records_error_and_does_not_raise(self) -> None:
+	def test_deliver_makes_a_single_attempt_and_requeues_on_failure(self) -> None:
+		"""Below MAX_RETRIES, a failed send is stamped back to "queued" -- not
+		retried in-process -- so the once-a-minute retry_pending cron picks it up
+		on its next tick. Only one HTTP call happens per deliver() invocation."""
 		settings = MagicMock()
 		settings.enabled = 1
 		settings.api_key = "svc_key"
 		settings.client.return_value.post_event.side_effect = CentralError("central down", 503)
 		with (
 			patch.object(central_report.frappe, "get_single", return_value=settings),
+			patch.object(central_report.frappe.db, "get_value", return_value=0),
 			patch.object(central_report, "_stamp") as stamp,
-			patch.object(central_report.frappe, "log_error"),
+			patch.object(central_report.frappe, "log_error") as log_error,
 		):
 			central_report.deliver("cel-1", "vm.created", {"name": "vm-1"})
-		# The single's breadcrumb still records the error...
-		settings.db_set.assert_called()
+		settings.client.return_value.post_event.assert_called_once()
+		stamp.assert_called_once_with("cel-1", status="queued", last_error="central down", http_status=503)
+		log_error.assert_not_called()
+		# The single's breadcrumb still records the error for at-a-glance visibility.
 		recorded = settings.db_set.call_args[0]
 		self.assertEqual(recorded[0], "status")
-		self.assertIn("error", recorded[1])
-		# ...and the audit row is stamped error with the HTTP status from Central.
-		stamp.assert_called_once()
-		self.assertEqual(stamp.call_args[0][0], "cel-1")
-		self.assertEqual(stamp.call_args.kwargs["status"], "error")
-		self.assertEqual(stamp.call_args.kwargs["http_status"], 503)
+		self.assertIn("central down", recorded[1])
 
 	def test_deliver_stamps_ok_on_success(self) -> None:
 		settings = MagicMock()
@@ -262,6 +263,23 @@ class TestCentralReport(IntegrationTestCase):
 		event = settings.client.return_value.post_event.call_args[0][0]
 		self.assertEqual(event["occurred_at"], "2026-07-06 00:23:05")
 		stamp.assert_called_once_with("cel-1", status="ok", http_status=200)
+
+	def test_deliver_marks_dead_once_max_retries_exhausted(self) -> None:
+		"""The MAX_RETRIES-th failed attempt is the last one -- no more cron
+		redrives after this, so the row is stamped error (dead) and logged."""
+		settings = MagicMock()
+		settings.enabled = 1
+		settings.api_key = "svc_key"
+		settings.client.return_value.post_event.side_effect = CentralError("still down", 503)
+		with (
+			patch.object(central_report.frappe, "get_single", return_value=settings),
+			patch.object(central_report.frappe.db, "get_value", return_value=central_report.MAX_RETRIES - 1),
+			patch.object(central_report, "_stamp") as stamp,
+			patch.object(central_report.frappe, "log_error") as log_error,
+		):
+			central_report.deliver("cel-1", "vm.created", {"name": "vm-1"})
+		stamp.assert_called_once_with("cel-1", status="error", last_error="still down", http_status=503)
+		log_error.assert_called_once()
 
 	def test_retry_pending_replays_queued_events_in_order(self) -> None:
 		rows = [

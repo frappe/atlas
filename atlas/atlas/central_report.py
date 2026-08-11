@@ -35,6 +35,9 @@ from atlas.atlas.central import CentralError
 
 MAX_PENDING_RETRY_BATCH = 100
 
+# Max attempts before an event is marked dead.
+MAX_RETRIES = 5
+
 
 def _enabled() -> bool:
 	# get_single_value tolerates the single's row not existing yet (fresh site).
@@ -248,7 +251,10 @@ def deliver(log_name: str, event_type: str, payload: dict, occurred_at: str | No
 	row with the outcome. Also updates the single's `status` breadcrumb so the
 	operator sees the last delivery at a glance. Runs only on commit
 	(enqueue_after_commit), so a rolled-back emit's row is never reached here and is
-	stamped `rolled_back` — logged, never delivered."""
+	stamped `rolled_back` — logged, never delivered.
+
+	One attempt per call; failures under MAX_RETRIES requeue for the cron.
+	"""
 	settings = frappe.get_single("Central Settings")
 	if not settings.enabled:
 		return
@@ -259,20 +265,26 @@ def deliver(log_name: str, event_type: str, payload: dict, occurred_at: str | No
 		_stamp(log_name, status="skipped")
 		settings.db_set("status", "skipped: register with Central first", commit=True)
 		return
+
+	event = {
+		"event_id": log_name,
+		"type": event_type,
+		"payload": payload,
+		"occurred_at": _iso(occurred_at) or frappe.utils.now(),
+	}
 	try:
-		settings.client().post_event(
-			{
-				"type": event_type,
-				"payload": payload,
-				"occurred_at": _iso(occurred_at) or frappe.utils.now(),
-			}
-		)
+		settings.client().post_event(event)
 		_stamp(log_name, status="ok", http_status=200)
 		settings.db_set("status", f"ok: {event_type}", commit=True)
-	except CentralError as exception:
-		frappe.log_error(f"Central event {event_type} failed: {exception}", "Central event")
-		_stamp(log_name, status="error", last_error=str(exception)[:140], http_status=exception.status_code)
-		settings.db_set("status", f"error: {exception}"[:140], commit=True)
+		return
+	except CentralError as exc:
+		attempts_so_far = frappe.db.get_value("Central Event Log", log_name, "attempts") or 0
+		dead = attempts_so_far + 1 >= MAX_RETRIES
+		status = "error" if dead else "queued"
+		if dead:
+			frappe.log_error(f"Central event {event_type} failed: {exc}", "Central event")
+		_stamp(log_name, status=status, last_error=str(exc)[:140], http_status=exc.status_code)
+		settings.db_set("status", f"error: {exc}"[:140], commit=True)
 
 
 def _set_log_status(log_name: str, status: str) -> None:

@@ -169,6 +169,12 @@ per-Atlas service user** ([21-tunnel.md](./21-tunnel.md)). The methods Atlas exp
 | `ping` | `central.api.atlas.ping` | `{ label }` |
 | `post_event` | `central.api.atlas.event` | (ignored) |
 
+`post_event`'s body is `{ event_id, type, payload, occurred_at }`. `event_id` is
+the `Central Event Log` row's own name — the emit's stable delivery identity, not
+a separate id Atlas has to mint. A `retry_pending` redelivery of the same row
+sends the same `event_id`, so Central can use it to dedup a resend from a
+genuinely new event.
+
 `register` is gone (registration is Central-initiated). **Central → Atlas
 (inbound)** now travels over the tunnel (`tunnel_url`) authenticated as the **Atlas
 admin** token, and adds the `provision_tunnel` / `confirm_tunnel` / `tunnel_status`
