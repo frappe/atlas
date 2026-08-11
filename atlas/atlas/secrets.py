@@ -4,10 +4,10 @@ import frappe
 from frappe.utils.password import get_decrypted_password
 
 
-def get_secret(doctype: str, name: str, fieldname: str) -> str:
+def get_secret(doctype: str, name: str, fieldname: str, raise_exception: bool = True) -> str:
 	"""Read a Password-type field, decrypted. Single chokepoint so the
 	storage backend can be swapped later."""
-	return get_decrypted_password(doctype, name, fieldname, raise_exception=True)
+	return get_decrypted_password(doctype, name, fieldname, raise_exception=raise_exception)
 
 
 def get_ssh_key_from_disk(path: str) -> str:

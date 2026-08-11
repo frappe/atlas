@@ -101,11 +101,16 @@ def _store_provisioning(payload: dict, result: dict) -> None:
 	"""Write the pushed Central service-user creds + tunnel parameters into the Central
 	Settings single. url/api_key/api_secret now hold the per-Atlas Central service-user
 	creds (no longer hand-entered) — Central rotates them by re-provisioning, so we
-	overwrite them every time. The Password (api_secret) is encrypted on save."""
+	overwrite them every time. The Password (api_secret) is encrypted on save.
+
+	service_webhook_secret is optional, and absent means "unchanged": assigning None
+	would wipe it, since _save_passwords() clears Password fields reading empty."""
 	settings = frappe.get_single("Central Settings")
 	settings.url = payload["central_url"]
 	settings.api_key = payload["service_api_key"]
 	settings.api_secret = payload["service_api_secret"]
+	if payload.get("service_webhook_secret"):
+		settings.webhook_secret = payload["service_webhook_secret"]
 	settings.tunnel_ip = payload["tunnel_ip"]
 	settings.tunnel_cidr = payload["tunnel_cidr"]
 	settings.hub_public_key = payload["hub_public_key"]
@@ -124,6 +129,9 @@ def _store_local(payload: dict) -> None:
 	settings.url = payload["central_url"]
 	settings.api_key = payload["service_api_key"]
 	settings.api_secret = payload["service_api_secret"]
+	# Absent means "unchanged" — see _store_provisioning.
+	if payload.get("service_webhook_secret"):
+		settings.webhook_secret = payload["service_webhook_secret"]
 	settings.enabled = 1
 	settings.tunnel_status = "Inactive"
 	settings.save(ignore_permissions=True)

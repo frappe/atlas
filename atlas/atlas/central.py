@@ -13,10 +13,10 @@ via `provision_tunnel`. Atlas no longer calls
 `register`; it only reports outward:
 
 - **ping** — `central.api.atlas.ping` returns `{label}`; a credential + reachability
-  check for the Test Connection toast.
+  check for the Test Connection toast. Stays on the plain admin token.
 - **event** — `central.api.atlas.event` (via `post_event`) carries VM lifecycle
-  events, authenticated as the pushed per-Atlas service user. Atlas's outbound is
-  unrestricted, so this works regardless of the management-plane firewall.
+  events, signed with HMAC-SHA256 over `X-Atlas-Timestamp + raw body` keyed on the
+  per-region `webhook_secret`, and carrying no `Authorization` header at all.
 
 The route names and payloads are the single external dependency; the whole
 contract is absorbed here, so a change on Central's side is a one-file edit.
@@ -25,6 +25,9 @@ contract is absorbed here, so a change on Central's side is a one-file edit.
 from __future__ import annotations
 
 import dataclasses
+import hashlib
+import hmac
+import json
 
 import frappe
 import requests
@@ -57,15 +60,23 @@ class CentralAuthResult:
 class CentralClient:
 	"""Talks to a single Central instance. Constructed from Central Settings."""
 
-	def __init__(self, url: str, api_key: str, api_secret: str, timeout: int = DEFAULT_TIMEOUT):
+	def __init__(
+		self,
+		url: str,
+		api_key: str,
+		api_secret: str,
+		webhook_secret: str | None = None,
+		timeout: int = DEFAULT_TIMEOUT,
+	):
 		self.url = url.rstrip("/")
 		self.api_key = api_key
 		self.api_secret = api_secret
+		self.webhook_secret = webhook_secret
 		self.timeout = timeout
 
 	def ping(self) -> CentralAuthResult:
-		"""Credential check. Never raises — returns ok=False so the Test
-		Connection toast can render a red indicator."""
+		"""Credential check. Never raises — returns ok=False for the Test Connection
+		toast. Plain token auth, out of scope for the webhook HMAC scheme."""
 		try:
 			body = self._request("GET", "ping")
 		except CentralError as exception:
@@ -73,17 +84,42 @@ class CentralClient:
 		return CentralAuthResult(ok=True, label=body.get("label"))
 
 	def post_event(self, event: dict) -> dict:
-		return self._request("POST", "event", json=event)
+		return self._request("POST", "event", json=event, sign=True)
 
-	def _request(self, method: str, route_key: str, json: dict | None = None) -> dict:
+	def _sign(self, headers: dict, json_payload: dict | None) -> bytes:
+		"""Sign the exact bytes sent, adding the X-Atlas-* headers in place. Returns the
+		body so the caller passes `data=`, not `json=` — requests' own serialization
+		isn't guaranteed byte-identical to what was signed."""
+		from atlas.atlas.placement import atlas_region
+
+		body_bytes = json.dumps(json_payload or {}).encode()
+		timestamp = frappe.utils.now()
+		signature = hmac.new(
+			self.webhook_secret.encode(), f"{timestamp}.".encode() + body_bytes, hashlib.sha256
+		).hexdigest()
+		headers["X-Atlas-Region"] = atlas_region()
+		headers["X-Atlas-Timestamp"] = timestamp
+		headers["X-Atlas-Signature"] = signature
+		return body_bytes
+
+	def _request(self, method: str, route_key: str, json: dict | None = None, sign: bool = False) -> dict:
 		url = f"{self.url}/api/method/{_ROUTES[route_key]}"
 		headers = {
-			"Authorization": f"token {self.api_key}:{self.api_secret}",
 			"Content-Type": "application/json",
 			"Accept": "application/json",
 		}
+		data = None
+		if sign:
+			if not self.webhook_secret:
+				raise CentralError(f"cannot sign {route_key}: no webhook_secret configured")
+			data = self._sign(headers, json_payload=json)
+			json = None
+		else:
+			headers["Authorization"] = f"token {self.api_key}:{self.api_secret}"
 		try:
-			response = requests.request(method, url, json=json, headers=headers, timeout=self.timeout)
+			response = requests.request(
+				method, url, json=json, data=data, headers=headers, timeout=self.timeout
+			)
 		except requests.RequestException as exception:
 			raise CentralError(f"{method} {route_key}: {exception}") from exception
 		if response.status_code >= 400:

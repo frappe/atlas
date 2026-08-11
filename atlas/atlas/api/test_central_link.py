@@ -26,6 +26,7 @@ PAYLOAD = {
 	"central_url": "https://central.example",
 	"service_api_key": "svc_key",
 	"service_api_secret": "svc_secret",
+	"service_webhook_secret": "whs_secret",
 }
 
 TUNNEL_UP_RESULT = {
@@ -67,6 +68,11 @@ def _make_plain_user() -> str:
 class IntegrationTestCentralLink(IntegrationTestCase):
 	def setUp(self) -> None:
 		self.addCleanup(frappe.set_user, "Administrator")
+		# webhook_secret is a Password field: db_set can't reliably clear it and residue
+		# survives rollback, so force a clean slate independent of run order.
+		from frappe.utils.password import remove_encrypted_password
+
+		remove_encrypted_password("Central Settings", "Central Settings", "webhook_secret")
 
 	# ----- provision_tunnel ------------------------------------------------
 
@@ -99,6 +105,22 @@ class IntegrationTestCentralLink(IntegrationTestCase):
 		self.assertEqual(settings.tunnel_status, "Provisioning")
 		# The pushed service-user secret is stored encrypted, readable back.
 		self.assertEqual(get_secret("Central Settings", "Central Settings", "api_secret"), "svc_secret")
+		# Same for the webhook signing secret.
+		self.assertEqual(get_secret("Central Settings", "Central Settings", "webhook_secret"), "whs_secret")
+
+	@patch.object(central_link, "run_local_task")
+	def test_provision_tunnel_without_webhook_secret_still_succeeds(self, run_local_task) -> None:
+		# An old Central that doesn't send service_webhook_secret yet (rollout
+		# window) must not break provisioning — the field stays optional.
+		run_local_task.side_effect = [_task(TUNNEL_UP_RESULT), _task()]
+		payload = {k: v for k, v in PAYLOAD.items() if k != "service_webhook_secret"}
+
+		out = central_link.provision_tunnel(**payload)
+
+		self.assertEqual(out["tunnel_ip"], "10.88.0.2")
+		self.assertFalse(
+			get_secret("Central Settings", "Central Settings", "webhook_secret", raise_exception=False)
+		)
 
 	@patch.object(central_link, "run_local_task")
 	def test_provision_tunnel_passes_keypath_and_tunnel_params(self, run_local_task) -> None:
@@ -135,11 +157,13 @@ class IntegrationTestCentralLink(IntegrationTestCase):
 			central_url="https://central.example",
 			service_api_key="svc_key",
 			service_api_secret="svc_secret",
+			service_webhook_secret="whs_secret",
 			skip_tunnel=1,
 		)
 
 		self.assertEqual(out, {"skip_tunnel": True, "tunnel_status": "Inactive"})
 		run_local_task.assert_not_called()
+		self.assertEqual(get_secret("Central Settings", "Central Settings", "webhook_secret"), "whs_secret")
 
 		settings = frappe.get_single("Central Settings")
 		self.assertEqual(settings.url, "https://central.example")

@@ -31,9 +31,55 @@ def _response(status_code=200, body=None, content=True):
 	return resp
 
 
+# --- Golden vector: pinned wire contract, mirrored in Central's
+# central/tests/test_atlas_webhook_signature.py ---------------------------------
+# Nothing binds the two repos: a format change made on ONE side leaves both suites green
+# while every real delivery fails. Do not regenerate the digest to make a test pass.
+GOLDEN_SECRET = "atlas-golden-secret"
+GOLDEN_TIMESTAMP = "2026-06-18 10:00:00.000000"
+GOLDEN_PAYLOAD = {
+	"event_id": "evt-golden-1",
+	"type": "vm.created",
+	"payload": {"name": "vm-golden"},
+	"occurred_at": "2026-06-18 10:00:00",
+}
+GOLDEN_BODY = (
+	b'{"event_id": "evt-golden-1", "type": "vm.created", '
+	b'"payload": {"name": "vm-golden"}, "occurred_at": "2026-06-18 10:00:00"}'
+)
+GOLDEN_SIGNATURE = "918bd05acd9cb434d5e2b78bb7ebc977d6c8abefa979687d6575c375ea9370c5"
+
+
+class TestGoldenVector(IntegrationTestCase):
+	"""Pin the signer to the wire contract Central verifies against."""
+
+	def test_serialization_is_byte_stable(self) -> None:
+		# json.dumps' default separators and key order are part of the contract.
+		client = CentralClient("https://central.example/", "ak", "s", webhook_secret=GOLDEN_SECRET)
+		with patch("atlas.atlas.placement.atlas_region", return_value="blr"):
+			body = client._sign({}, json_payload=GOLDEN_PAYLOAD)
+		self.assertEqual(body, GOLDEN_BODY)
+
+	def test_signer_produces_the_golden_signature(self) -> None:
+		client = CentralClient("https://central.example/", "ak", "s", webhook_secret=GOLDEN_SECRET)
+		headers: dict = {}
+		with (
+			patch("atlas.atlas.central.frappe.utils.now", return_value=GOLDEN_TIMESTAMP),
+			patch("atlas.atlas.placement.atlas_region", return_value="blr"),
+		):
+			client._sign(headers, json_payload=GOLDEN_PAYLOAD)
+		self.assertEqual(headers["X-Atlas-Timestamp"], GOLDEN_TIMESTAMP)
+		self.assertEqual(headers["X-Atlas-Signature"], GOLDEN_SIGNATURE)
+
+
 class TestCentralClient(IntegrationTestCase):
 	def setUp(self) -> None:
 		self.client = CentralClient("https://central.example/", "ak", "secret")
+		self.signing_client = CentralClient("https://central.example/", "ak", "secret", webhook_secret="whs")
+		# atlas_region() throws when Atlas Settings.region is unset, true on a fresh site.
+		region = patch("atlas.atlas.placement.atlas_region", return_value="blr")
+		region.start()
+		self.addCleanup(region.stop)
 
 	def test_request_builds_url_and_auth_header(self) -> None:
 		with patch("atlas.atlas.central.requests.request") as request:
@@ -66,11 +112,65 @@ class TestCentralClient(IntegrationTestCase):
 		self.assertFalse(result.ok)
 		self.assertIn("down", result.error)
 
+	def test_ping_stays_unsigned(self) -> None:
+		# ping is plain token auth even on a client that HAS a webhook_secret.
+		with patch("atlas.atlas.central.requests.request") as request:
+			request.return_value = _response(body={"message": {"label": "Central"}})
+			self.signing_client.ping()
+		kwargs = request.call_args.kwargs
+		self.assertNotIn("X-Atlas-Signature", kwargs["headers"])
+		self.assertIn("Authorization", kwargs["headers"])
+		self.assertIsNone(kwargs.get("data"))
+
+	def test_post_event_sends_no_authorization_header(self) -> None:
+		# Frappe validates any Authorization header it sees, so sending the token would
+		# put a stale api_secret in the path of a correctly signed event.
+		with patch("atlas.atlas.central.requests.request") as request:
+			request.return_value = _response(body={})
+			self.signing_client.post_event({"type": "vm.created"})
+		self.assertNotIn("Authorization", request.call_args.kwargs["headers"])
+
 	def test_post_event_raises_on_error(self) -> None:
 		with patch("atlas.atlas.central.requests.request") as request:
 			request.return_value = _response(status_code=500, body={"exc": "boom"})
 			with self.assertRaises(CentralError):
+				self.signing_client.post_event({"type": "vm.created"})
+
+	def test_post_event_raises_without_webhook_secret(self) -> None:
+		# No webhook_secret — post_event must refuse before the network call.
+		with patch("atlas.atlas.central.requests.request") as request:
+			with self.assertRaises(CentralError):
 				self.client.post_event({"type": "vm.created"})
+		request.assert_not_called()
+
+	def test_post_event_sends_data_not_json_kwarg(self) -> None:
+		# Signed bytes and sent bytes must be the same object.
+		with patch("atlas.atlas.central.requests.request") as request:
+			request.return_value = _response(body={})
+			self.signing_client.post_event({"type": "vm.created"})
+		kwargs = request.call_args.kwargs
+		self.assertIsNone(kwargs["json"])
+		self.assertIsInstance(kwargs["data"], bytes)
+		self.assertEqual(json.loads(kwargs["data"]), {"type": "vm.created"})
+
+	def test_post_event_signs_with_hmac_headers(self) -> None:
+		import hashlib
+		import hmac
+
+		with (
+			patch("atlas.atlas.central.requests.request") as request,
+			patch("atlas.atlas.placement.atlas_region", return_value="blr"),
+		):
+			request.return_value = _response(body={})
+			self.signing_client.post_event({"type": "vm.created"})
+		headers = request.call_args.kwargs["headers"]
+		body = request.call_args.kwargs["data"]
+		self.assertEqual(headers["X-Atlas-Region"], "blr")
+		self.assertTrue(headers["X-Atlas-Timestamp"])
+		expected = hmac.new(
+			b"whs", f"{headers['X-Atlas-Timestamp']}.".encode() + body, hashlib.sha256
+		).hexdigest()
+		self.assertEqual(headers["X-Atlas-Signature"], expected)
 
 
 @contextlib.contextmanager
@@ -353,6 +453,20 @@ class TestCentralReport(IntegrationTestCase):
 		settings = MagicMock()
 		settings.enabled = 1
 		settings.api_key = None  # enabled but no service-user creds yet
+		with (
+			patch.object(central_report.frappe, "get_single", return_value=settings),
+			patch.object(central_report, "_stamp") as stamp,
+		):
+			central_report.deliver("cel-1", "vm.created", {"name": "vm-1"})
+		settings.client.assert_not_called()
+		stamp.assert_called_once_with("cel-1", status="skipped")
+
+	def test_deliver_skips_when_webhook_secret_missing(self) -> None:
+		# api_key set but webhook_secret not yet: skip rather than send unsigned.
+		settings = MagicMock()
+		settings.enabled = 1
+		settings.api_key = "svc_key"
+		settings.get_password.return_value = None
 		with (
 			patch.object(central_report.frappe, "get_single", return_value=settings),
 			patch.object(central_report, "_stamp") as stamp,
