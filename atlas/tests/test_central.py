@@ -269,9 +269,7 @@ class TestCentralReport(IntegrationTestCase):
 		settings.client.return_value.post_event.side_effect = CentralError("still down", 503)
 		with (
 			patch.object(central_report.frappe, "get_single", return_value=settings),
-			patch.object(
-				central_report.frappe.db, "get_value", return_value=central_report.MAX_RETRIES - 1
-			),
+			patch.object(central_report.frappe.db, "get_value", return_value=central_report.MAX_RETRIES - 1),
 			patch.object(central_report, "_stamp") as stamp,
 			patch.object(central_report.frappe, "log_error") as log_error,
 		):
