@@ -31,7 +31,7 @@ class GarageSettings(Document):
 	_DOCTYPE_NAME = "Garage Settings"
 	@frappe.whitelist()
 	def apply_layout(self) -> str:
-		if len(self.data_machines) < self.num_nodes:
+		if self.num_nodes <= 0 or len(self.data_machines) < self.num_nodes:
 			frappe.throw("data machines are still less than num of required nodes")
 
 		machine = self.data_machines[0]
