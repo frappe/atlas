@@ -3,13 +3,29 @@ Description=Firecracker VM Web Console XtermJS
 After=network-online.target
 Wants=network-online.target
 ConditionPathExists=/etc/default/vm-web-console
+
 [Service]
 Type=simple
+# Enable dynamic user allocation (systemd creates a temporary user on start)
+DynamicUser=true
+
+# Assign the secondary/primary supplementary group
+SupplementaryGroups=atlas-vm-console
+
+# Allow binding to ports < 1024
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+
 EnvironmentFile=/etc/default/vm-web-console
 WorkingDirectory=/var/lib/atlas/vm-web-console
 ExecStart=/usr/bin/node /var/lib/atlas/vm-web-console/server.js
 Restart=always
 RestartSec=5
+
+# Security hardening (recommended with DynamicUser)
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
 
 [Install]
 WantedBy=multi-user.target
