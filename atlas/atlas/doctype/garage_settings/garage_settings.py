@@ -18,13 +18,13 @@ class GarageSettings(Document):
 		from atlas.atlas.doctype.garage_virtual_machines.garage_virtual_machines import GarageVirtualMachines
 		from frappe.types import DF
 
-		admin_secret: DF.Data
+		admin_secret: DF.Password
 		api_domain: DF.Data
 		data_machines: DF.Table[GarageVirtualMachines]
 		gateway_machines: DF.Table[GarageVirtualMachines]
-		metrics_secret: DF.Data
+		metrics_secret: DF.Password
 		num_nodes: DF.Int
-		rpc_secret: DF.Data
+		rpc_secret: DF.Password
 		web_domain: DF.Data
 	# end: auto-generated types
 
@@ -43,7 +43,6 @@ class GarageSettings(Document):
 			host=base.host,
 			ssh_private_key=base.ssh_private_key,
 			user=base.user,
-			port=22,
 		)
 
 		command = r'''

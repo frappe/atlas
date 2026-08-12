@@ -42,13 +42,11 @@ def configure_garage(virtual_machine: str) -> str:
 		host=base.host,
 		ssh_private_key=base.ssh_private_key,
 		user=base.user,
-		port=22,
 	)
 
 	region = frappe.db.get_single_value("Atlas Settings", "region")
 
 	garage = frappe.get_doc("Garage Settings")
-
 
 	bootstrap_peers = [
 	    row.peer_id
@@ -79,8 +77,10 @@ def configure_garage(virtual_machine: str) -> str:
 	}}
 
 	"""
-	garage_toml = _generate_garage_config(garage.num_nodes, vm.garage_type, bootstrap_peers, vm.ipv6_address, garage.rpc_secret,
-									  garage.admin_secret, garage.metrics_secret, region,
+	garage_toml = _generate_garage_config(garage.num_nodes, vm.garage_type, bootstrap_peers,
+									   vm.ipv6_address, garage.get_password("rpc_secret"),
+									  garage.get_password("admin_secret"),
+									  garage.get_password("metrics_secret"), region,
 									  garage.api_domain, garage.web_domain)
 	with ssh_key_file(connection.ssh_private_key) as key_path:
 		_write_guest_file(connection, key_path, _CONFIG_FILE, garage_toml, "0600")

@@ -18,7 +18,7 @@
  "fields": [
   {
    "fieldname": "rpc_secret",
-   "fieldtype": "Data",
+   "fieldtype": "Password",
    "in_list_view": 1,
    "label": "RPC Secret",
    "reqd": 1
@@ -37,13 +37,13 @@
   },
   {
    "fieldname": "admin_secret",
-   "fieldtype": "Data",
+   "fieldtype": "Password",
    "label": "Admin Secret",
    "reqd": 1
   },
   {
    "fieldname": "metrics_secret",
-   "fieldtype": "Data",
+   "fieldtype": "Password",
    "label": "Metrics Secret",
    "reqd": 1
   },
@@ -71,7 +71,7 @@
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-08-02 01:20:41.857136",
+ "modified": "2026-08-12 22:24:20.056061",
  "modified_by": "Administrator",
  "module": "Atlas",
  "name": "Garage Settings",
