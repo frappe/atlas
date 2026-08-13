@@ -15,16 +15,6 @@ _CONFIG_FILE = "/etc/garage.toml"
 _NGINX_CONFIG = "/etc/nginx/conf.d/garage.conf"
 
 
-def build_garage(virtual_machine: str) -> None:
-	"""Build the committed Garage tree inside an ingress build VM."""
-	from atlas.atlas.image_builder import run_build
-	from atlas.atlas.image_recipes import get_recipe
-
-	vm = frappe.get_doc("Virtual Machine", virtual_machine)
-	if not vm.is_garage:
-		frappe.throw(f"Virtual Machine {virtual_machine} is not a garage instance")
-	run_build(virtual_machine, get_recipe("garage"), stream=True)
-
 
 def configure_garage(virtual_machine: str) -> str:
 	"""Install per-garage runtime secrets and enable the baked service.
