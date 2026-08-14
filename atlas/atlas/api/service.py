@@ -18,6 +18,7 @@ exactly like the Central inbound API (`central_link.py`). Every method here is b
 from __future__ import annotations
 
 import frappe
+from frappe import _
 
 
 def _server_ipv4(server: str | None) -> str | None:
@@ -263,3 +264,50 @@ def distribute_image(image: str, servers: list | str | None = None) -> dict:
 	from atlas.atlas import fleet_distribute
 
 	return fleet_distribute.distribute_local_image(image, servers=servers)
+
+
+@frappe.whitelist()
+def register_bench_snapshot(snapshot: str) -> str:
+	"""Wire a snapshot in as `Atlas Settings.default_bench_snapshot` — the golden a
+	self-serve Site clones from (`placement.default_bench_snapshot`). The signup
+	counterpart to `register_user_image`, and the ONLY way the service (chef) can hand
+	its freshly-baked golden to the signup path: a Site's backing VM is not laid down
+	from a base image, it is CLONED from a `Virtual Machine Snapshot`, so promoting a
+	base image is not enough. Mirrors what the in-Atlas `Image Build` auto-register does
+	via `registers_as` (`image_build._register`), which chef's bake bypasses.
+
+	The snapshot must be Available — the signup path fails loud on a non-Available
+	pointer (`placement.default_bench_snapshot`), so reject it here rather than stranding
+	every future signup behind a bad default. A warm accelerator, if the service also
+	captured one on the same host, is discovered per-server by
+	`placement.warm_bench_snapshot_for_server`; this cold pointer only has to name the
+	host + kernel lineage. Returns the snapshot name."""
+	frappe.only_for("System Manager")
+	status = frappe.db.get_value("Virtual Machine Snapshot", snapshot, "status")
+	if status is None:
+		frappe.throw(_("Snapshot {0} does not exist").format(snapshot))
+	if status != "Available":
+		frappe.throw(_("Snapshot {0} is not Available (status is {1})").format(snapshot, status))
+	frappe.db.set_single_value("Atlas Settings", "default_bench_snapshot", snapshot)
+	return snapshot
+
+
+@frappe.whitelist()
+def register_user_image(image: str) -> str:
+	"""Wire a base image in as `Atlas Settings.default_user_image` — the image a server
+	(`api.provision.create_vm` → `placement.default_image`) boots when no per-version
+	`bench-<v>-admin` image matches. The server counterpart to `register_bench_snapshot`:
+	after `promote_image` (+ `distribute_image`) the service names the promoted golden
+	here so `create_vm` provisions from it without an operator hand-wiring the Single.
+
+	The image must be active (provisionable) — reject an inactive one rather than pointing
+	servers at an image whose host `dd` has not finished (poll `get_image(...).is_active`
+	first). Returns the image name."""
+	frappe.only_for("System Manager")
+	is_active = frappe.db.get_value("Virtual Machine Image", image, "is_active")
+	if is_active is None:
+		frappe.throw(_("Image {0} does not exist").format(image))
+	if not is_active:
+		frappe.throw(_("Image {0} is not active yet").format(image))
+	frappe.db.set_single_value("Atlas Settings", "default_user_image", image)
+	return image
