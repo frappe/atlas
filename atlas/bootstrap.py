@@ -253,7 +253,7 @@ def run_with_proxy() -> None:
 	issue_certificate(tls_config["domain"])
 
 
-def run_self_serve(force_bake: bool = False) -> None:
+def run_self_serve(force_bake: bool = False, bake: bool = True) -> None:
 	"""From-scratch one-shot: stand up the ENTIRE signup flow and leave it running.
 
 	The durable sibling of the `self_serve_site` e2e (it drives the same proven
@@ -265,6 +265,13 @@ def run_self_serve(force_bake: bool = False) -> None:
 	`force_bake=True` re-bakes the golden image even if an Available one is already
 	configured (proves the from-scratch `build.sh` bake); the default reuses a
 	configured Available snapshot and skips the slow bake.
+
+	`bake=False` skips the built-in golden bake entirely — for the flow where an
+	EXTERNAL image service (chef) already baked the pilot golden and wired
+	`default_bench_snapshot` (via `service.register_bench_snapshot`). It then only
+	asserts that golden is registered + Available (fail loud before building the
+	proxy/cert on top of a signup path that can't clone anything), rather than
+	baking with the in-Atlas `bench_image` builder chef is replacing.
 
 	Billable, leaves infra up. Requires the TLS config keys + certbot/boto3 (it
 	throws via `_read_tls_config` / the bake / the cert if a prerequisite is
@@ -284,8 +291,15 @@ def run_self_serve(force_bake: bool = False) -> None:
 	server_name = run_compute()
 
 	# 2. Golden bench image — the snapshot site VMs clone from. Wires
-	#    Atlas Settings.default_bench_snapshot.
-	bake_golden_image(server_name, force=force_bake)
+	#    Atlas Settings.default_bench_snapshot. Skipped when an external image service
+	#    (chef) already baked + registered the golden — then just assert it is usable.
+	if bake:
+		bake_golden_image(server_name, force=force_bake)
+	else:
+		from atlas.atlas import placement
+
+		snapshot = placement.default_bench_snapshot()  # throws unless set + Available
+		print(f"[bootstrap] bake=False — using externally-registered golden snapshot {snapshot}")
 
 	# 3. TLS layer rows (Root Domain etc.) BEFORE the proxy: Site.before_insert and
 	#    build_proxy/cert-push all read the region off the Root Domain.
