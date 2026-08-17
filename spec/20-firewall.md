@@ -104,8 +104,10 @@ disk** with no Frappe DB:
   holds even under concurrent inserts; the controller's `exists` check is just the
   friendly message over it): `virtual_machine` (immutable), denormalized `server`
   / `tenant`, an `enabled` toggle, a read-only `status` (Active/Disabled), and a
-  child table of **Firewall Rule** (`protocol` tcp/udp, `port`). Owner-scoped
-  (Atlas User `if_owner`, System Manager full), like `VPN Tunnel`.
+  child table of **Firewall Rule** (`protocol` tcp/udp, `port`). Owner-scoped by
+  the API — `set_firewall` gates on `_assert_can_access_vm` (the VM's owner or a
+  System Manager), not a DocType `if_owner` perm row — like `VPN Tunnel`. The
+  DocType itself is System-Manager-only (the retired `Atlas User` role's row is gone).
 - The controller keeps the host in step on save: `on_update` → `firewall-apply.py
   --action apply` with the rules when `enabled`, else `--action clear` (the VM
   reverts to public); `on_trash` clears. A **terminated** VM is skipped — its host
