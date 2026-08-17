@@ -2,9 +2,9 @@
 
 Extracted from migration.py: the forward-collapse is an operator-initiated,
 out-of-band teardown, not a phase of the migration saga, so it lives on its own.
-It reuses migration.py's `_repoint_routes` (imported back — migration.py never
-calls collapse_forward, so there is no cycle) via the `_ForwardCollapse`
-duck-typed stand-in.
+The final routing re-point (Subdomain denorm + proxy reconcile) fires core's
+`vm.address_changed` callback — the same PaaS-blind seam a change-address
+cutover uses — so this module never imports the routing/proxy code directly.
 
 The host work still runs through `run_boat_migration_phase` / `run_task`, so
 tests patch those seams on THIS module.
@@ -17,7 +17,7 @@ import ipaddress
 import frappe
 
 from atlas.atlas.boat_client import run_boat_migration_phase
-from atlas.atlas.migration import _repoint_routes
+from atlas.atlas.core import callbacks
 from atlas.atlas.networking import (
 	allocate_ipv6,
 	derive_ipv4_link,
@@ -146,14 +146,7 @@ def collapse_forward(vm) -> None:
 			"traffic_forwarded_since": None,
 		}
 	)
-	_repoint_routes(_ForwardCollapse(vm.name, new_ipv6))
-
-
-class _ForwardCollapse:
-	"""A tiny duck-typed stand-in so collapse_forward can reuse _repoint_routes
-	(which reads .virtual_machine and .ipv6_address_new off a migration row). The
-	collapse is not a migration row, but the re-point logic is identical."""
-
-	def __init__(self, virtual_machine: str, ipv6_address_new: str) -> None:
-		self.virtual_machine = virtual_machine
-		self.ipv6_address_new = ipv6_address_new
+	# Same routing re-point a change-address cutover fires — the address really
+	# did change here too. Core is PaaS-blind: services registered the
+	# `vm.address_changed` handler (Subdomain denorm + proxy reconcile).
+	callbacks.run("vm.address_changed", vm.name, new_ipv6)

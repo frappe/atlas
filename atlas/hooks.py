@@ -5,6 +5,14 @@ app_description = "Frappe Hosting Platform"
 app_email = "aditya@frappe.io"
 app_license = "agpl-3.0"
 
+# Services callback registration
+# ------------------
+# Modules that register their handlers on core's callback registry
+# (atlas.atlas.core.callbacks) at import. Core discovers them through this hook —
+# never a literal `services` import — so the one-way core⇏services rule holds
+# while services still wires its post-lifecycle handlers to core events.
+services_callbacks = ["atlas.atlas.services.callbacks_register"]
+
 # Apps
 # ------------------
 

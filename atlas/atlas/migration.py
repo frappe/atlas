@@ -48,6 +48,7 @@ import ipaddress
 import frappe
 
 from atlas.atlas.boat_client import FIRST_BOOT_EPOCH, run_boat_migration_phase
+from atlas.atlas.core import callbacks
 from atlas.atlas.migration_layout import (
 	_bytes_to_gib_ceil,
 	clone_device_path,
@@ -843,7 +844,10 @@ def _phase_repointing(doc) -> bool:
 	is on the target now); the address is copied verbatim."""
 	_finalize_cutover(doc)
 	if not doc.keep_address:
-		_repoint_routes(doc)
+		# The address really changed — fire the routing re-point (Subdomain denorm
+		# + proxy reconcile). Core is PaaS-blind: services registered the
+		# `vm.address_changed` handler; migration only says the address moved.
+		callbacks.run("vm.address_changed", doc.virtual_machine, doc.ipv6_address_new)
 	_handle_reserved_ip(doc)
 	_repoint_private_plane(doc)
 	return True
@@ -1009,28 +1013,6 @@ def _finalize_cutover(doc) -> None:
 	vm.boot_epoch = (vm.boot_epoch or FIRST_BOOT_EPOCH) + 1
 	vm.last_started = frappe.utils.now_datetime()
 	vm.save(ignore_permissions=True)
-
-
-def _repoint_routes(doc) -> None:
-	"""Rewrite every Subdomain's denormalized address to the new /128 via db_set (the
-	field is read_only + only refreshed inside validate's _denormalize_address, so a
-	plain save wouldn't change it predictably), then reconcile the whole proxy fleet
-	(each proxy holds the whole map; there is no per-region push). Idempotent."""
-	from atlas.atlas.proxy import reconcile_proxies
-
-	changed = False
-	for row in frappe.get_all(
-		"Subdomain",
-		filters={"virtual_machine": doc.virtual_machine},
-		fields=["name", "address"],
-	):
-		if row.address != doc.ipv6_address_new:
-			frappe.db.set_value("Subdomain", row.name, "address", doc.ipv6_address_new)
-			changed = True
-	if changed:
-		# reconcile_proxies tolerates a wedged/empty fleet (per-proxy failure
-		# isolation), so this never strands the migration.
-		reconcile_proxies()
 
 
 def _handle_reserved_ip(doc) -> None:
