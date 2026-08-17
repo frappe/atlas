@@ -650,25 +650,17 @@ class VirtualMachine(Document):
 
 	@frappe.whitelist()
 	def deploy_gateway(self) -> bool:
-		"""Stand up (or re-assert) this gateway VM's wg0 + the static same_48 guard, over
-		guest-SSH (spec/26). Gateway-only: a non-gateway VM has no wg0 to bring up.
-		Idempotent — safe to re-run after a reboot or rebuild."""
-		if not self.is_gateway:
-			frappe.throw(f"{self.name} is not a customer gateway (is_gateway unset)")
-		from atlas.atlas import customer_gateway
-
-		return customer_gateway.deploy_gateway(self.name)
+		"""Stand up (or re-assert) this gateway VM's wg0 + the static same_48 guard
+		(spec/26), idempotently. A pure PaaS action — core fires the services handler
+		(`vm.deploy_gateway`) and does not import the customer gateway."""
+		return callbacks.run_first("vm.deploy_gateway", self)
 
 	@frappe.whitelist()
 	def read_proxy_maps(self) -> dict:
-		"""Return this proxy's three live maps (sites / sni / acme) alongside the
-		desired maps and a per-map drift flag — read-only. Proxy-only: a non-proxy VM
-		has no admin sockets to read."""
-		if not self.is_proxy:
-			frappe.throw(f"{self.name} is not a proxy (is_proxy unset)")
-		from atlas.atlas import proxy
-
-		return proxy.read_live_maps(self.name)
+		"""This proxy's three live maps (sites / sni / acme) with the desired maps and
+		a per-map drift flag — read-only. A pure PaaS action; core fires the services
+		handler (`vm.read_proxy_maps`) and does not import the proxy."""
+		return callbacks.run_first("vm.read_proxy_maps", self)
 
 	@frappe.whitelist()
 	def terminate(self) -> str:
