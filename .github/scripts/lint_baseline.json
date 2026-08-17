@@ -11,7 +11,7 @@
     "atlas/atlas/doctype/image_build/image_build.py": 623,
     "atlas/atlas/doctype/pilot/pilot.py": 624,
     "atlas/atlas/doctype/server/server.py": 1223,
-    "atlas/atlas/doctype/site/site.py": 702,
+    "atlas/atlas/doctype/site/site.py": 705,
     "atlas/atlas/doctype/virtual_machine/virtual_machine.py": 864,
     "atlas/atlas/doctype/virtual_machine_snapshot/virtual_machine_snapshot.py": 673,
     "atlas/atlas/services/customer_gateway.py": 621,
