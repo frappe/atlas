@@ -650,7 +650,7 @@ class TestPlacement(IntegrationTestCase):
 		cannot reach. `Active` was the only gate — and Active is an operator's
 		judgement about the host, made once, not a statement that Atlas can see it
 		now."""
-		from atlas.atlas.migration import preflight_checks
+		from atlas.atlas.migration_preflight import preflight_checks
 
 		source = self._measured_server("atlas-placement-migrate-source", 45, memory_megabytes_total=8192)
 		target = self._measured_server("atlas-placement-migrate-target", 46, memory_megabytes_total=8192)
@@ -663,7 +663,7 @@ class TestPlacement(IntegrationTestCase):
 	def test_a_migration_off_an_unseen_host_is_still_allowed(self) -> None:
 		"""Only the target is gated. Moving a VM OFF a host Atlas has lost sight of
 		is the migration an operator most wants to be able to run."""
-		from atlas.atlas.migration import preflight_checks
+		from atlas.atlas.migration_preflight import preflight_checks
 
 		source = self._measured_server("atlas-placement-migrate-source", 45, memory_megabytes_total=8192)
 		target = self._measured_server("atlas-placement-migrate-target", 46, memory_megabytes_total=8192)

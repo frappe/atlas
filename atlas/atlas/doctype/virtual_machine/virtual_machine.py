@@ -313,7 +313,7 @@ class VirtualMachine(Document):
 		(stage 1) it gets a NEW public IPv6 on the target and the proxy/Subdomain
 		layer is re-pointed. Pre-flight (the cheap synchronous half) runs here; the
 		on-host checks that need SSH run in the first phase."""
-		from atlas.atlas.migration import preflight_checks  # local import: avoids a cycle
+		from atlas.atlas.migration_preflight import preflight_checks  # local import: avoids a cycle
 
 		# frm.call / REST send a stringy bool.
 		release_reserved_ip = release_reserved_ip in (True, 1, "1", "true", "True", "yes")

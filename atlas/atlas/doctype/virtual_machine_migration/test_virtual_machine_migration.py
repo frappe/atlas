@@ -10,6 +10,7 @@ from frappe.tests import IntegrationTestCase
 
 from atlas.atlas import migration as migration_module
 from atlas.atlas import migration_layout
+from atlas.atlas import migration_preflight
 from atlas.atlas.doctype.virtual_machine import virtual_machine as vm_module
 from atlas.atlas.doctype.virtual_machine_migration.virtual_machine_migration import (
 	active_migration_for,
@@ -425,18 +426,18 @@ class TestMigrationPreflight(IntegrationTestCase):
 	def test_preflight_rejects_same_server(self) -> None:
 		vm = self._vm()
 		with self.assertRaisesRegex(frappe.ValidationError, "already on that server"):
-			migration_module.preflight_checks(vm, self.source, False)
+			migration_preflight.preflight_checks(vm, self.source, False)
 
 	def test_preflight_rejects_missing_target(self) -> None:
 		vm = self._vm()
 		with self.assertRaisesRegex(frappe.ValidationError, "does not exist"):
-			migration_module.preflight_checks(vm, "no-such-server", False)
+			migration_preflight.preflight_checks(vm, "no-such-server", False)
 
 	def test_preflight_rejects_inactive_target(self) -> None:
 		vm = self._vm()
 		frappe.db.set_value("Server", self.target, "status", "Pending")
 		with self.assertRaisesRegex(frappe.ValidationError, "not Active"):
-			migration_module.preflight_checks(vm, self.target, False)
+			migration_preflight.preflight_checks(vm, self.target, False)
 
 	def test_preflight_rejects_inflight(self) -> None:
 		vm = self._vm()
@@ -448,7 +449,7 @@ class TestMigrationPreflight(IntegrationTestCase):
 			}
 		).insert(ignore_permissions=True)
 		with self.assertRaisesRegex(frappe.ValidationError, "in-flight migration"):
-			migration_module.preflight_checks(vm, self.target, False)
+			migration_preflight.preflight_checks(vm, self.target, False)
 
 	def test_preflight_keep_address_rejects_collision_on_target(self) -> None:
 		"""The bug: a keep-address migration carries the VM's /128 onto a target that
@@ -461,7 +462,7 @@ class TestMigrationPreflight(IntegrationTestCase):
 		conflict = make_virtual_machine(self.target, self.image, status="Running")
 		frappe.db.set_value("Virtual Machine", conflict.name, "ipv6_address", vm.ipv6_address)
 		with self.assertRaisesRegex(frappe.ValidationError, "already hosts a live VM"):
-			migration_module.preflight_checks(vm, self.target, False)
+			migration_preflight.preflight_checks(vm, self.target, False)
 
 	def test_preflight_keep_address_allows_when_target_free(self) -> None:
 		"""The kept /128 is free on the target (only a Terminated holder) → no raise."""
@@ -469,7 +470,7 @@ class TestMigrationPreflight(IntegrationTestCase):
 		freed = make_virtual_machine(self.target, self.image, status="Terminated")
 		frappe.db.set_value("Virtual Machine", freed.name, "ipv6_address", vm.ipv6_address)
 		# Must not raise.
-		migration_module.preflight_checks(vm, self.target, False)
+		migration_preflight.preflight_checks(vm, self.target, False)
 
 
 class TestMigrationGateAndGuard(IntegrationTestCase):
@@ -1423,7 +1424,7 @@ class TestMigrationOverFakeTransport(IntegrationTestCase):
 		# keep-address is the DEFAULT on a real DO fleet and the branch the M1 cleanup
 		# fix lives on: the forward tunnel + return route are wired, Repointing skips the
 		# Subdomain re-point, and Cleanup runs with KEEP_ADDRESS=1 carrying the /128 over.
-		with patch.object(migration_module, "_will_keep_address", return_value=True):
+		with patch.object(migration_preflight, "_will_keep_address", return_value=True):
 			row = frappe.get_doc(
 				{
 					"doctype": "Virtual Machine Migration",
