@@ -53,7 +53,7 @@ import time
 
 import frappe
 
-from atlas.atlas import proxy
+from atlas.atlas.services import proxy
 from atlas.tests.e2e._config import MissingConfig, get_tls_config
 from atlas.tests.e2e._shared import phase
 from atlas.tests.e2e.use_cases import bench_image, tls_issuance

@@ -18,9 +18,9 @@ from urllib.parse import quote
 import frappe
 import requests
 
-from atlas.atlas.dns import register
-from atlas.atlas.dns.base import AuthResult, DnsProvider, WildcardTargets
 from atlas.atlas.secrets import get_secret
+from atlas.atlas.services.dns import register
+from atlas.atlas.services.dns.base import AuthResult, DnsProvider, WildcardTargets
 
 WILDCARD_TTL_SECONDS = 60
 

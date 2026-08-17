@@ -47,8 +47,8 @@ def tenant_vms(team: str | None = None) -> list[dict]:
 	# in lockstep — including the login handoff (gateway_url + the login URL/expiry, the
 	# latter only once Running, exactly as the event gates them). The reconcile is the
 	# backstop if a status_changed event is lost, so it must carry them.
-	from atlas.atlas.front_door import front_door_for_vm
 	from atlas.atlas.placement import version_from_image
+	from atlas.atlas.services.front_door import front_door_for_vm
 
 	rows = []
 	for vm in vms:

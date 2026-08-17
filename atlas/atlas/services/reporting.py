@@ -73,7 +73,7 @@ def is_status_suppressed(vm_name: str) -> bool:
 	the aggregate, not off its own raw boot: the VM boots Running before deploy-site
 	and the login mint, so the raw flip is premature. True iff a Pilot or Site backs
 	this VM; a plain VM (proxy, operator machine) is never suppressed."""
-	from atlas.atlas.front_door import front_door_for_vm
+	from atlas.atlas.services.front_door import front_door_for_vm
 
 	return front_door_for_vm(vm_name) is not None
 
@@ -83,7 +83,7 @@ def augment_vm_payload(payload: dict, vm_name: str) -> None:
 	in place: the aggregate's status (a bench VM boots Running before the mint, so
 	its status is the front door's, not the raw VM's) plus the gateway/login URLs.
 	A plain VM has no front door, so the core payload's None defaults stand."""
-	from atlas.atlas.front_door import front_door_for_vm
+	from atlas.atlas.services.front_door import front_door_for_vm
 
 	front_door = front_door_for_vm(vm_name)
 	if front_door is not None:
@@ -96,8 +96,8 @@ def _pilot_vm_payload(pilot) -> dict:
 	# facts are read through the `virtual_machine` link, the bench fields off the
 	# Pilot. This is the event that carries the login handoff (the Pilot flips Running
 	# only after the mint), so its status is the PILOT's — the VM booted earlier.
-	from atlas.atlas.front_door import FrontDoor
 	from atlas.atlas.placement import version_from_image
+	from atlas.atlas.services.front_door import FrontDoor
 
 	vm = frappe.get_doc("Virtual Machine", pilot.virtual_machine)
 	return _merge_bench_fields(

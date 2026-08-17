@@ -12,9 +12,9 @@ from __future__ import annotations
 
 import frappe
 
-from atlas.atlas.dns import register
-from atlas.atlas.dns.base import AuthResult, DnsProvider, WildcardTargets
 from atlas.atlas.secrets import get_secret
+from atlas.atlas.services.dns import register
+from atlas.atlas.services.dns.base import AuthResult, DnsProvider, WildcardTargets
 
 # Round-robin A/AAAA TTL. Short so a proxy rebuild (new /128) or reserved-IP
 # reattach propagates quickly — the records are reconciled, not set-and-forget.

@@ -18,7 +18,7 @@ def on_vm_address_changed(virtual_machine: str, new_ipv6: str) -> None:
 	_denormalize_address, so a plain save wouldn't change it predictably), then
 	reconcile the whole proxy fleet (each proxy holds the whole map; there is no
 	per-region push). Idempotent."""
-	from atlas.atlas.proxy import reconcile_proxies
+	from atlas.atlas.services.proxy import reconcile_proxies
 
 	changed = False
 	for row in frappe.get_all(

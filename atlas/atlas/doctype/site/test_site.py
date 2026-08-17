@@ -481,7 +481,7 @@ class TestSiteFakeProvisionStages(IntegrationTestCase):
 		self.site = _new_site("acme")
 
 	def test_deploy_site_noops_on_fake_vm(self) -> None:
-		from atlas.atlas import deploy_site as deploy_module
+		from atlas.atlas.services import deploy_site as deploy_module
 
 		with patch.object(deploy_module, "deploy_site") as m_deploy:
 			result = site_module._deploy_site(self.site, self.fake_vm.name)
@@ -491,14 +491,14 @@ class TestSiteFakeProvisionStages(IntegrationTestCase):
 		self.assertTrue(result["login_url"])
 
 	def test_wait_for_http_noops_on_fake_vm(self) -> None:
-		from atlas.atlas import deploy_site as deploy_module
+		from atlas.atlas.services import deploy_site as deploy_module
 
 		with patch.object(deploy_module, "wait_for_http") as m_http:
 			site_module._wait_for_http(self.site, self.fake_vm.name)
 		m_http.assert_not_called()
 
 	def test_deploy_site_calls_through_on_real_vm(self) -> None:
-		from atlas.atlas import deploy_site as deploy_module
+		from atlas.atlas.services import deploy_site as deploy_module
 
 		with patch.object(deploy_module, "deploy_site") as m_deploy:
 			site_module._deploy_site(self.site, self.real_vm.name)
@@ -508,7 +508,7 @@ class TestSiteFakeProvisionStages(IntegrationTestCase):
 		m_deploy.assert_called_once_with(self.real_vm.name, self.site.name, None, None, admin_domain=None)
 
 	def test_wait_for_http_calls_through_on_real_vm(self) -> None:
-		from atlas.atlas import deploy_site as deploy_module
+		from atlas.atlas.services import deploy_site as deploy_module
 
 		with patch.object(deploy_module, "wait_for_http") as m_http:
 			site_module._wait_for_http(self.site, self.real_vm.name)
@@ -635,7 +635,7 @@ class TestPilotSubdomainFor(IntegrationTestCase):
 			frappe.delete_doc("Pilot", name, force=1, ignore_permissions=True)
 
 	def test_appends_pilot_suffix(self) -> None:
-		from atlas.atlas.subdomain_label import pilot_subdomain_for
+		from atlas.atlas.services.subdomain_label import pilot_subdomain_for
 
 		self.assertEqual(pilot_subdomain_for("acme"), "acme-pilot")
 
@@ -643,7 +643,7 @@ class TestPilotSubdomainFor(IntegrationTestCase):
 		"""When `<label>-pilot` already backs a Pilot, a short random tail disambiguates
 		so a re-created / colliding site still gets a unique console name."""
 		from atlas.atlas.doctype.pilot import pilot as pilot_module
-		from atlas.atlas.subdomain_label import PILOT_SUFFIX, pilot_subdomain_for
+		from atlas.atlas.services.subdomain_label import PILOT_SUFFIX, pilot_subdomain_for
 
 		# Stand up a Pilot at `acme-pilot.<domain>` so the base name is taken. Patch the
 		# own-VM provisioner + enqueue so the row exists without a real backing VM.
@@ -656,7 +656,7 @@ class TestPilotSubdomainFor(IntegrationTestCase):
 		self.assertNotEqual(label, "acme-pilot")
 		self.assertTrue(label.startswith("acme" + PILOT_SUFFIX + "-"))
 		# The result is still a valid Contract-A label.
-		from atlas.atlas.subdomain_label import validate_label
+		from atlas.atlas.services.subdomain_label import validate_label
 
 		validate_label(label)
 

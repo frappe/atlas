@@ -10,9 +10,9 @@ from unittest.mock import patch
 
 from frappe.tests import IntegrationTestCase
 
-from atlas.atlas.dns.base import AuthResult as DnsAuthResult
-from atlas.atlas.dns.base import DnsProvider, WildcardTargets
-from atlas.atlas.tls import letsencrypt
+from atlas.atlas.services.dns.base import AuthResult as DnsAuthResult
+from atlas.atlas.services.dns.base import DnsProvider, WildcardTargets
+from atlas.atlas.services.tls import letsencrypt
 
 
 class _StubDns(DnsProvider):

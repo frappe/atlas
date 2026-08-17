@@ -283,7 +283,7 @@ def verify_admin_url(image_name: str, server: str, fqdn: str) -> dict:
 
 	Returns a dict with the VM name, the inherited build_mode, the minted
 	login_url, and the two probe results. Leaves the VM Running for inspection."""
-	from atlas.atlas.deploy_site import deploy_site, readiness_paths_for_mode, wait_for_http
+	from atlas.atlas.services.deploy_site import deploy_site, readiness_paths_for_mode, wait_for_http
 
 	ssh_public_key = ephemeral_public_key() + "\n" + control_plane_public_key()
 	default_disk = frappe.db.get_value("Virtual Machine Image", image_name, "default_disk_gigabytes")

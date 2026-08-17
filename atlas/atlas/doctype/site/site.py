@@ -21,12 +21,12 @@ from atlas.atlas.placement import (
 	default_bench_snapshot,
 	warm_bench_snapshot_for_server,
 )
-from atlas.atlas.sizes import SIZE_PRESETS
-from atlas.atlas.subdomain_label import (
+from atlas.atlas.services.subdomain_label import (
 	RESERVED_SUBDOMAINS,
 	validate_label,
 	validate_reserved,
 )
+from atlas.atlas.sizes import SIZE_PRESETS
 
 # The size every self-serve backing VM is cloned at, from sizes.py (one source of
 # truth for the ladder). A Site is provisioned at a fixed tier today; when paid
@@ -58,7 +58,7 @@ IMMUTABLE_AFTER_INSERT = (
 )
 
 # Contract-A label rules (the single dotless DNS label, the reserved denylist)
-# live in atlas.atlas.subdomain_label so `Site` and `Site Request` enforce the
+# live in atlas.atlas.services.subdomain_label so `Site` and `Site Request` enforce the
 # SAME rules — see that module. RESERVED_SUBDOMAINS is re-exported above for the
 # callers/spec that reference `site.RESERVED_SUBDOMAINS`.
 
@@ -389,7 +389,7 @@ def auto_provision(
 		# is emitted in the rename-site pass — and `_provision_pilot`, which reuses the
 		# SAME label so the two agree on the console name. See spec/14-self-serve.md.
 		from atlas.atlas.placement import active_root_domain
-		from atlas.atlas.subdomain_label import pilot_subdomain_for
+		from atlas.atlas.services.subdomain_label import pilot_subdomain_for
 
 		pilot_label = pilot_subdomain_for(site.subdomain)
 		admin_domain = f"{pilot_label}.{active_root_domain().domain}"
@@ -579,8 +579,8 @@ def _deploy_site(
 	provider maintains, so there is nothing to rename; a placeholder `login_url` is
 	synthesized instead so the mirror shape stays stable for e2e/desk tests that
 	run against a Fake server."""
-	from atlas.atlas.deploy_site import deploy_site
 	from atlas.atlas.providers.fake_tasks import is_fake_server
+	from atlas.atlas.services.deploy_site import deploy_site
 
 	vm = frappe.get_doc("Virtual Machine", vm_name)
 	if is_fake_server(vm.server):
@@ -597,8 +597,8 @@ def _regenerate_login(site, vm_name: str) -> dict:
 	Fake-backed VM's documentation /128 never answers SSH, so the same placeholder
 	`login_url` is synthesized instead, keeping the mirror shape stable for the
 	desk/e2e tests that run against a Fake server."""
-	from atlas.atlas.deploy_site import regenerate_login
 	from atlas.atlas.providers.fake_tasks import is_fake_server
+	from atlas.atlas.services.deploy_site import regenerate_login
 
 	vm = frappe.get_doc("Virtual Machine", vm_name)
 	if is_fake_server(vm.server):
@@ -621,8 +621,8 @@ def _wait_for_http(site, vm_name: str) -> None:
 	A Fake-backed VM's documentation /128 never answers, so the probe is skipped
 	there (the same `is_fake_server` gate `_deploy_site` and `run_task` use) — the
 	readiness gate is the deploy's twin, both no-ops on a Fake VM."""
-	from atlas.atlas.deploy_site import readiness_paths_for_mode, wait_for_http
 	from atlas.atlas.providers.fake_tasks import is_fake_server
+	from atlas.atlas.services.deploy_site import readiness_paths_for_mode, wait_for_http
 
 	vm = frappe.get_doc("Virtual Machine", vm_name)
 	if is_fake_server(vm.server):

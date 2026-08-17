@@ -12,7 +12,7 @@ What it proves, end to end, with a REAL droplet + a REAL DigitalOcean reserved I
 
 - **Build inside the guest** — Atlas SSHes into a fresh Ubuntu VM, uploads the
   committed proxy/ tree, and runs build.sh; nginx + Lua compiles and the unit
-  comes up (atlas.atlas.proxy.build_proxy).
+  comes up (atlas.atlas.services.proxy.build_proxy).
 - **Guest-SSH map sync end-to-end** — Atlas reconciles the proxy's live map over
   SSH-to-the-guest (reconcile_proxy), then reads it back byte-for-byte.
 - **inbound :80 to a site from the proxy's vantage** (the §2.1 release gate that
@@ -34,7 +34,7 @@ import time
 
 import frappe
 
-from atlas.atlas import proxy
+from atlas.atlas.services import proxy
 from atlas.tests.e2e._shared import (
 	assert_probe,
 	control_plane_public_key,

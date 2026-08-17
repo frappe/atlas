@@ -549,7 +549,7 @@ class TestOutOfBandMigrationVerbsDriveBoat(IntegrationTestCase):
 			task_calls.append(script)
 			return fake_task(stdout="ok")
 
-		from atlas.atlas import proxy as proxy_module
+		from atlas.atlas.services import proxy as proxy_module
 
 		with (
 			# collapse_forward lives in migration_forward now — patch its seams there.

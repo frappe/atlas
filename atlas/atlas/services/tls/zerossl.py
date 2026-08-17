@@ -12,9 +12,9 @@ from __future__ import annotations
 import frappe
 from frappe import _
 
-from atlas.atlas.dns.base import DnsProvider
-from atlas.atlas.tls import register
-from atlas.atlas.tls.base import AuthResult, IssuedCert, TlsProvider
+from atlas.atlas.services.dns.base import DnsProvider
+from atlas.atlas.services.tls import register
+from atlas.atlas.services.tls.base import AuthResult, IssuedCert, TlsProvider
 
 
 @register

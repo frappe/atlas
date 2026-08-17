@@ -45,7 +45,7 @@ class Route53Settings(Document):
 	@frappe.whitelist()
 	def test_connection(self) -> dict:
 		"""Test Connection button — Route 53 ListHostedZones via the DNS provider."""
-		from atlas.atlas import dns
+		from atlas.atlas.services import dns
 
 		dns_provider_type = frappe.db.get_single_value("Atlas Settings", "dns_provider_type")
 		result = dns.for_dns_provider_type(dns_provider_type or "Route53").authenticate()

@@ -274,7 +274,7 @@ class TestMigrationRow(IntegrationTestCase):
 				return fake_task(stdout='ATLAS_RESULT={"hydration_percent": 20}')  # holds
 			return fake_task(stdout="ok")
 
-		from atlas.atlas import proxy as proxy_module
+		from atlas.atlas.services import proxy as proxy_module
 
 		with (
 			patch.object(migration_module, "run_task", side_effect=_fake_run_task),
@@ -560,7 +560,7 @@ class TestMigrationPhaseMachine(IntegrationTestCase):
 				return fake_task(stdout='ATLAS_RESULT={"hydration_percent": 100}')
 			return fake_task(stdout="ok")
 
-		from atlas.atlas import proxy as proxy_module
+		from atlas.atlas.services import proxy as proxy_module
 
 		with (
 			patch.object(migration_module, "run_task", side_effect=_fake_run_task),
@@ -686,7 +686,7 @@ class TestMigrationPhaseMachine(IntegrationTestCase):
 			"Cleanup",
 			"Done",
 		]
-		from atlas.atlas import proxy as proxy_module
+		from atlas.atlas.services import proxy as proxy_module
 
 		with (
 			patch.object(migration_module, "run_task", side_effect=_fake_run_task),
@@ -730,7 +730,7 @@ class TestMigrationPhaseMachine(IntegrationTestCase):
 				return fake_task(stdout='ATLAS_RESULT={"hydration_percent": 100}')
 			return fake_task(stdout="ok")
 
-		from atlas.atlas import proxy as proxy_module
+		from atlas.atlas.services import proxy as proxy_module
 
 		with (
 			patch.object(migration_module, "run_task", side_effect=_fake_run_task),
@@ -791,7 +791,7 @@ class TestMigrationPhaseMachine(IntegrationTestCase):
 				return fake_task(stdout='ATLAS_RESULT={"hydration_percent": 100}')
 			return fake_task(stdout="ok")
 
-		from atlas.atlas import proxy as proxy_module
+		from atlas.atlas.services import proxy as proxy_module
 
 		with (
 			patch.object(migration_module, "run_task", side_effect=_fake_run_task),
@@ -834,7 +834,7 @@ class TestMigrationPhaseMachine(IntegrationTestCase):
 				)
 			return fake_task(stdout="ok")
 
-		from atlas.atlas import proxy as proxy_module
+		from atlas.atlas.services import proxy as proxy_module
 
 		with (
 			patch.object(migration_module, "run_task", side_effect=_fake_run_task),
@@ -930,7 +930,7 @@ class TestPrivatePlaneCutoverOrdering(IntegrationTestCase):
 		return _run
 
 	def _drive(self, row):
-		from atlas.atlas import proxy as proxy_module
+		from atlas.atlas.services import proxy as proxy_module
 
 		calls: list = []
 		# One fake, both transports: the phases run over Boat (item 9) while
@@ -1053,7 +1053,7 @@ class TestLocalBaseImageShip(IntegrationTestCase):
 				return fake_task(stdout='ATLAS_RESULT={"hydration_percent": 100}')
 			return fake_task(stdout="ok")
 
-		from atlas.atlas import proxy as proxy_module
+		from atlas.atlas.services import proxy as proxy_module
 
 		with (
 			patch.object(migration_module, "run_task", side_effect=_fake_run_task),
@@ -1137,7 +1137,7 @@ class TestLocalBaseImageShip(IntegrationTestCase):
 				return fake_task(stdout='ATLAS_RESULT={"hydration_percent": 100}')
 			return fake_task(stdout="ok")
 
-		from atlas.atlas import proxy as proxy_module
+		from atlas.atlas.services import proxy as proxy_module
 
 		with (
 			patch.object(migration_module, "run_task", side_effect=_fake_run_task),
@@ -1236,7 +1236,7 @@ class TestLocalBaseImageShip(IntegrationTestCase):
 				return fake_task(stdout='ATLAS_RESULT={"hydration_percent": 100}')
 			return fake_task(stdout="ok")
 
-		from atlas.atlas import proxy as proxy_module
+		from atlas.atlas.services import proxy as proxy_module
 
 		with (
 			patch.object(migration_module, "run_task", side_effect=_fake_run_task),
@@ -1290,7 +1290,7 @@ class TestCollapseForward(IntegrationTestCase):
 				down_calls.append(f"{variables['ROLE']}@{server}")
 			return fake_task(stdout="ok")
 
-		from atlas.atlas import proxy as proxy_module
+		from atlas.atlas.services import proxy as proxy_module
 
 		with (
 			# collapse_forward lives in migration_forward now, so its provision-vm
@@ -1397,7 +1397,7 @@ class TestMigrationOverFakeTransport(IntegrationTestCase):
 		# Only reconcile_proxies is stubbed — that is proxy reconciliation, not the host
 		# transport. Every migration-* script runs on the Fake hosts unpatched, so this
 		# is the whole saga end to end over the transport audit M11 said no test exercised.
-		from atlas.atlas import proxy as proxy_module
+		from atlas.atlas.services import proxy as proxy_module
 
 		with patch.object(proxy_module, "reconcile_proxies", return_value=[]):
 			for _ in range(20):
@@ -1414,7 +1414,7 @@ class TestMigrationOverFakeTransport(IntegrationTestCase):
 		self.assertEqual(vm.status, "Running")
 
 	def test_keep_address_saga_runs_to_done_over_the_fake_transport(self) -> None:
-		from atlas.atlas import proxy as proxy_module
+		from atlas.atlas.services import proxy as proxy_module
 
 		vm = make_virtual_machine(self.source, self.image, status="Running")
 		# Force the keep-address path — Fake providers derive change-address, but

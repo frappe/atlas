@@ -31,7 +31,7 @@ class PowerDNSSettings(Document):
 
 	@frappe.whitelist()
 	def test_connection(self) -> dict:
-		from atlas.atlas import dns
+		from atlas.atlas.services import dns
 
 		result = dns.for_dns_provider_type("PowerDNS").authenticate()
 		return dataclasses.asdict(result)

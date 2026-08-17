@@ -29,8 +29,8 @@ import json
 
 import frappe
 
-from atlas.atlas import proxy
 from atlas.atlas.placement import active_root_domain
+from atlas.atlas.services import proxy
 from atlas.tests import _routing_host_run as hr
 
 _LABEL = "bdp-e2e"

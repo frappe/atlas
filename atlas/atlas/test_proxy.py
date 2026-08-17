@@ -4,12 +4,12 @@ from unittest.mock import MagicMock, patch
 import frappe
 from frappe.tests import IntegrationTestCase
 
-from atlas.atlas import proxy
 from atlas.atlas.doctype.virtual_machine.test_virtual_machine import (
 	_ensure_test_image,
 	_ensure_test_server,
 	_new_vm,
 )
+from atlas.atlas.services import proxy
 from atlas.tests.fixtures import make_virtual_machine
 
 

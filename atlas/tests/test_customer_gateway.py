@@ -22,8 +22,8 @@ from unittest.mock import patch
 import frappe
 from frappe.tests import IntegrationTestCase
 
-from atlas.atlas import customer_gateway
 from atlas.atlas.networking import CLIENT_HEXTET, derive_client_address, derive_tenant_prefix
+from atlas.atlas.services import customer_gateway
 from atlas.tests.fixtures import make_image, make_provider, make_server, make_virtual_machine
 
 TENANT_NAME = "TEAM-95001"  # a Central naming-series id — NOT a UUID, on purpose
@@ -158,7 +158,7 @@ class TestAutoEnrollOnInsert(_GatewayFixture):
 			peer = self._make_peer()
 		enqueue.assert_called_once()
 		_args, kwargs = enqueue.call_args
-		self.assertEqual(enqueue.call_args[0][0], "atlas.atlas.customer_gateway.auto_enroll")
+		self.assertEqual(enqueue.call_args[0][0], "atlas.atlas.services.customer_gateway.auto_enroll")
 		self.assertTrue(kwargs["enqueue_after_commit"])
 		self.assertEqual(kwargs["peer_name"], peer.name)
 
@@ -172,7 +172,7 @@ class TestAutoEnrollOnInsert(_GatewayFixture):
 		):
 			customer_gateway.request_vpc_access(self.tenant, VALID_KEY, "api-laptop")
 		for call in enqueue.call_args_list:
-			self.assertNotEqual(call[0][0], "atlas.atlas.customer_gateway.auto_enroll")
+			self.assertNotEqual(call[0][0], "atlas.atlas.services.customer_gateway.auto_enroll")
 
 
 class TestInfraRoleExclusivity(_GatewayFixture):

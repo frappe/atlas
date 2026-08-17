@@ -9,8 +9,8 @@ from unittest.mock import patch
 import frappe
 from frappe.tests import IntegrationTestCase
 
-from atlas.atlas import dns
-from atlas.atlas.dns.base import AuthResult, DnsProvider, WildcardTargets
+from atlas.atlas.services import dns
+from atlas.atlas.services.dns.base import AuthResult, DnsProvider, WildcardTargets
 
 
 class _StubDnsProvider(DnsProvider):

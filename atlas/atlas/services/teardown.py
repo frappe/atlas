@@ -159,7 +159,7 @@ def terminate_front_doors(vm) -> None:
 	and saves itself, and re-marking here would fire the same event twice."""
 	if vm.flags.get("front_door_terminating"):
 		return
-	from atlas.atlas.front_door import front_doors_for_vm
+	from atlas.atlas.services.front_door import front_doors_for_vm
 
 	for door in front_doors_for_vm(vm.name):
 		doc = door.doc

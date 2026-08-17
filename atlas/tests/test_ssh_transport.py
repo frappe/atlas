@@ -368,7 +368,7 @@ class TestEnsuresKnownHostsBeforeConnecting(IntegrationTestCase):
 	StrictHostKeyChecking=accept-new writes the new host key into
 	KNOWN_HOSTS_PATH, so the parent must exist or ssh warns and drops the key.
 	Pushing the guard into these two helpers (rather than relying on callers)
-	is what lets the proxy control plane (atlas.atlas.proxy) SSH guests safely —
+	is what lets the proxy control plane (atlas.atlas.services.proxy) SSH guests safely —
 	it doesn't go through the runner that used to ensure this."""
 
 	def test_run_ssh_ensures_known_hosts_dir(self) -> None:

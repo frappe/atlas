@@ -242,7 +242,7 @@ def _purge_known_host(address: str) -> None:
 def _deploy_and_assert_gateway(gateway) -> None:
 	"""Deploy wg0 + the static guard, then assert the device is up, the tc filter is
 	attached, and the host-local input drop is present (reference §9)."""
-	from atlas.atlas import customer_gateway
+	from atlas.atlas.services import customer_gateway
 
 	_purge_known_host(gateway.ipv6_address)
 	customer_gateway.deploy_gateway(gateway.name)
@@ -314,7 +314,7 @@ def _ensure_e2e_tenant(name: str) -> str:
 
 def _enroll_peer(tenant: str, label: str, client_public_key: str | None = None):
 	"""Enroll a customer peer via the real controller path (request_vpc_access)."""
-	from atlas.atlas import customer_gateway
+	from atlas.atlas.services import customer_gateway
 
 	if client_public_key is None:
 		# A structural smoke needs no real client; mint a throwaway keypair anywhere.

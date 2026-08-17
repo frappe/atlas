@@ -24,7 +24,7 @@ import json
 
 import frappe
 
-from atlas.atlas import proxy
+from atlas.atlas.services import proxy
 from atlas.tests import _provider_billable_run as bdp
 from atlas.tests import _routing_host_run as hr
 

@@ -49,7 +49,7 @@ import time
 
 import frappe
 
-from atlas.atlas import proxy
+from atlas.atlas.services import proxy
 from atlas.tests.e2e._config import MissingConfig, get_tls_config
 from atlas.tests.e2e._shared import (
 	ensure_image_on_server,
@@ -256,7 +256,7 @@ def _cleanup_tls_doctypes(config: dict) -> None:
 
 def _assert_dns_reachable(dns_provider_type: str) -> None:
 	"""Selected DNS provider authenticate() against the real account."""
-	from atlas.atlas import dns
+	from atlas.atlas.services import dns
 
 	result = dns.for_dns_provider_type(dns_provider_type).authenticate()
 	assert result.ok, f"{dns_provider_type} authenticate failed: {result.error}"

@@ -15,11 +15,11 @@ from __future__ import annotations
 import frappe
 from frappe import _
 
-from atlas.atlas.dns.base import DnsProvider
 from atlas.atlas.local_task import run_local_task
+from atlas.atlas.services.dns.base import DnsProvider
+from atlas.atlas.services.tls import register
+from atlas.atlas.services.tls.base import AuthResult, IssuedCert, TlsProvider
 from atlas.atlas.task_results import parse_result
-from atlas.atlas.tls import register
-from atlas.atlas.tls.base import AuthResult, IssuedCert, TlsProvider
 
 LETS_ENCRYPT_PRODUCTION = "https://acme-v02.api.letsencrypt.org/directory"
 

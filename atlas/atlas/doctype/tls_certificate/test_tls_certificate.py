@@ -22,7 +22,7 @@ from atlas.atlas.doctype.virtual_machine.test_virtual_machine import (
 	_ensure_test_server,
 	_new_vm,
 )
-from atlas.atlas.tls.base import IssuedCert
+from atlas.atlas.services.tls.base import IssuedCert
 
 
 def _set_provider_types() -> None:

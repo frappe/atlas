@@ -8,9 +8,9 @@ from unittest.mock import patch
 import frappe
 from frappe.tests import IntegrationTestCase
 
-from atlas.atlas import tls
-from atlas.atlas.dns.base import DnsProvider
-from atlas.atlas.tls.base import AuthResult, IssuedCert, TlsProvider
+from atlas.atlas.services import tls
+from atlas.atlas.services.dns.base import DnsProvider
+from atlas.atlas.services.tls.base import AuthResult, IssuedCert, TlsProvider
 
 
 class _StubTlsProvider(TlsProvider):

@@ -18,7 +18,7 @@ import dataclasses
 from abc import ABC, abstractmethod
 from typing import ClassVar
 
-from atlas.atlas.dns.base import DnsProvider
+from atlas.atlas.services.dns.base import DnsProvider
 
 
 @dataclasses.dataclass(frozen=True, slots=True)

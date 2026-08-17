@@ -16,7 +16,7 @@ from frappe import _
 
 from atlas.atlas.networking import tunnel_endpoint_address
 from atlas.atlas.permissions import _is_operator
-from atlas.atlas.wireguard import is_valid_public_key
+from atlas.atlas.services.wireguard import is_valid_public_key
 
 _INSTRUCTIONS = (
 	"1. Generate a keypair (the private key stays on your machine):\n"

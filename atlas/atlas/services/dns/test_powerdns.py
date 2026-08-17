@@ -8,8 +8,8 @@ from unittest.mock import patch
 
 from frappe.tests import IntegrationTestCase
 
-from atlas.atlas.dns import powerdns
-from atlas.atlas.dns.base import WildcardTargets
+from atlas.atlas.services.dns import powerdns
+from atlas.atlas.services.dns.base import WildcardTargets
 
 
 def _provider(api_url="https://pdns.example.test", api_key="secret", server_id="localhost"):

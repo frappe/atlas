@@ -55,7 +55,7 @@ class LetsEncryptSettings(Document):
 	@frappe.whitelist()
 	def test_connection(self) -> dict:
 		"""Test Connection button — Let's Encrypt account check via the TLS provider."""
-		from atlas.atlas import tls
+		from atlas.atlas.services import tls
 
 		result = tls.for_tls_provider_type("Let's Encrypt").authenticate()
 		return dataclasses.asdict(result)

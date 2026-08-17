@@ -24,8 +24,8 @@ import frappe
 from frappe import _
 from frappe.model.document import Document
 
-from atlas.atlas import wireguard
 from atlas.atlas.networking import WG_GATEWAY_PORT, derive_client_address, derive_tenant_prefix
+from atlas.atlas.services import wireguard
 
 # The scope + the crypto identity are frozen once the row exists. The tenant is the
 # isolation boundary (the client's /48), and the client public key is what the
@@ -51,7 +51,7 @@ class VPNPeer(Document):
 		# Resolve the region gateway (the operator does not pick it) and validate the
 		# client key BEFORE the row exists, so a malformed key or a missing gateway fails
 		# loud in the controller, never on the host.
-		from atlas.atlas.customer_gateway import resolve_region_gateway
+		from atlas.atlas.services.customer_gateway import resolve_region_gateway
 
 		if not wireguard.is_valid_public_key(self.client_public_key or ""):
 			frappe.throw(_("client_public_key is not a valid WireGuard public key"))
@@ -74,7 +74,7 @@ class VPNPeer(Document):
 		if self.flags.get("skip_auto_enroll"):
 			return
 		frappe.enqueue(
-			"atlas.atlas.customer_gateway.auto_enroll",
+			"atlas.atlas.services.customer_gateway.auto_enroll",
 			queue="short",
 			enqueue_after_commit=True,
 			peer_name=self.name,
@@ -109,7 +109,7 @@ class VPNPeer(Document):
 		gateway actually carries the peer."""
 		if self.status == "Revoked":
 			frappe.throw(_("Cannot re-enroll a revoked peer; create a new one"))
-		from atlas.atlas.customer_gateway import enroll_peer
+		from atlas.atlas.services.customer_gateway import enroll_peer
 
 		enroll_peer(self)
 		return self.name
@@ -121,7 +121,7 @@ class VPNPeer(Document):
 		guarded on Active."""
 		if self.status != "Active":
 			frappe.throw(_("Client config is only available once the peer is Active"))
-		from atlas.atlas.customer_gateway import client_config_payload
+		from atlas.atlas.services.customer_gateway import client_config_payload
 
 		return client_config_payload(self)
 
@@ -132,7 +132,7 @@ class VPNPeer(Document):
 		auto-revoke — a customer may hold a tunnel to an empty VPC."""
 		if self.status == "Revoked":
 			frappe.throw(_("Peer is already revoked"))
-		from atlas.atlas.customer_gateway import revoke_peer
+		from atlas.atlas.services.customer_gateway import revoke_peer
 
 		revoke_peer(self)
 		return self.name

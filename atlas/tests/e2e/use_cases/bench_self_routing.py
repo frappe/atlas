@@ -52,9 +52,9 @@ import json
 
 import frappe
 
-from atlas.atlas import proxy
 from atlas.atlas._ssh.transport import run_ssh, ssh_key_file
 from atlas.atlas.placement import active_root_domain
+from atlas.atlas.services import proxy
 from atlas.atlas.ssh import connection_for_guest
 
 # The label used for the guest-reserved test site. Short and clearly synthetic so a

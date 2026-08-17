@@ -20,7 +20,7 @@ from unittest.mock import MagicMock, patch
 import frappe
 from frappe.tests import IntegrationTestCase
 
-from atlas.atlas import deploy_site as deploy_module
+from atlas.atlas.services import deploy_site as deploy_module
 
 
 def _load_guest_script():

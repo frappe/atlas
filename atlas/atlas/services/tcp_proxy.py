@@ -32,7 +32,7 @@ from atlas.atlas._ssh.transport import run_ssh, ssh_key_file
 from atlas.atlas.core.guest_tasks import _record_guest_task
 from atlas.atlas.doctype.port_mapping.port_mapping import port_map
 from atlas.atlas.placement import atlas_region
-from atlas.atlas.proxy import _proxy_vms, canonical_json
+from atlas.atlas.services.proxy import _proxy_vms, canonical_json
 from atlas.atlas.ssh import connection_for_guest
 
 # The stream{}-side admin client build.sh installs on PATH (spec/17-tcp-proxy.md);

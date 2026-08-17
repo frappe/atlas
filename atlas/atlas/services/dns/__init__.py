@@ -15,10 +15,10 @@ import frappe
 
 # Re-exported for callers (the TLS Certificate controller builds `dns.WildcardTargets`).
 # base.py is stdlib-only at import time, so this triggers no boto3 load.
-from atlas.atlas.dns.base import WildcardTargets
+from atlas.atlas.services.dns.base import WildcardTargets
 
 if TYPE_CHECKING:
-	from atlas.atlas.dns.base import DnsProvider
+	from atlas.atlas.services.dns.base import DnsProvider
 
 __all__ = ["WildcardTargets", "for_dns_provider_type", "register"]
 
@@ -47,5 +47,5 @@ def for_dns_provider_type(provider_type: str) -> "DnsProvider":
 def _load_implementations() -> None:
 	"""Import vendor modules so their `@register` decorators run. Idempotent —
 	Python caches the import. Separate so tests that stub the registry can skip it."""
-	import atlas.atlas.dns.powerdns
-	import atlas.atlas.dns.route53
+	import atlas.atlas.services.dns.powerdns
+	import atlas.atlas.services.dns.route53

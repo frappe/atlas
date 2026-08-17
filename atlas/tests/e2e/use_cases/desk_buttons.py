@@ -630,7 +630,7 @@ def _check_tls_buttons() -> None:
 	from unittest.mock import patch
 
 	from atlas.atlas.doctype.tls_certificate import tls_certificate as cert_module
-	from atlas.atlas.tls.base import IssuedCert
+	from atlas.atlas.services.tls.base import IssuedCert
 
 	stamp = int(time.time())
 	domain = f"e2e-{stamp}.frappe.dev"

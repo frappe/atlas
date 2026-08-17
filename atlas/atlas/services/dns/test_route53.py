@@ -9,8 +9,8 @@ from unittest.mock import patch
 
 from frappe.tests import IntegrationTestCase
 
-from atlas.atlas.dns import route53
-from atlas.atlas.dns.base import WildcardTargets
+from atlas.atlas.services.dns import route53
+from atlas.atlas.services.dns.base import WildcardTargets
 
 
 class _FakeRoute53Client:

@@ -261,7 +261,7 @@ class TestPilot(IntegrationTestCase):
 		# imported inside the function, so patch them at their source modules).
 		with (
 			patch("atlas.atlas.providers.fake_tasks.is_fake_server", return_value=False),
-			patch("atlas.atlas.deploy_site.deploy_site", return_value={}) as m_deploy,
+			patch("atlas.atlas.services.deploy_site.deploy_site", return_value={}) as m_deploy,
 		):
 			pilot_module._deploy(pilot)
 		self.assertEqual(m_deploy.call_args.kwargs["admin_domain"], "srv-pilot.blr1.frappe.dev")
@@ -277,7 +277,7 @@ class TestPilot(IntegrationTestCase):
 		"""`gateway_url` is what Central deep-links with a `?sid=`, and only the console
 		verifies that token — pointing it at a server's site host lands the user on the
 		site's login page as Guest instead of in their bench."""
-		from atlas.atlas.front_door import front_door_for_vm
+		from atlas.atlas.services.front_door import front_door_for_vm
 
 		pilot = self._site_mode_pilot("srv")
 		front_door = front_door_for_vm(pilot.virtual_machine)
@@ -285,7 +285,7 @@ class TestPilot(IntegrationTestCase):
 
 	def test_front_door_gateway_is_the_fqdn_in_admin_mode(self) -> None:
 		"""An admin-mode bench already answers the sid on its own host — unchanged."""
-		from atlas.atlas.front_door import front_door_for_vm
+		from atlas.atlas.services.front_door import front_door_for_vm
 
 		pilot = self._new_pilot("acme")
 		front_door = front_door_for_vm(pilot.virtual_machine)

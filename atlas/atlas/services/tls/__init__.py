@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING
 import frappe
 
 if TYPE_CHECKING:
-	from atlas.atlas.tls.base import TlsProvider
+	from atlas.atlas.services.tls.base import TlsProvider
 
 
 _REGISTRY: dict[str, type["TlsProvider"]] = {}
@@ -40,6 +40,6 @@ def for_tls_provider_type(provider_type: str) -> "TlsProvider":
 
 def _load_implementations() -> None:
 	"""Import issuer modules so their `@register` decorators run. Idempotent."""
-	import atlas.atlas.tls.letsencrypt
-	import atlas.atlas.tls.self_managed
-	import atlas.atlas.tls.zerossl
+	import atlas.atlas.services.tls.letsencrypt
+	import atlas.atlas.services.tls.self_managed
+	import atlas.atlas.services.tls.zerossl

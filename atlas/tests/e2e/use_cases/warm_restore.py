@@ -146,7 +146,7 @@ def _resolve_or_bake_warm(server, base_image: str) -> "frappe.model.document.Doc
 def _fan_out_and_verify(server, snapshot, clones: list[str]) -> dict[str, dict]:
 	"""Clone the golden CLONES times, then prove restore + distinct identity +
 	warm serving for every clone. Returns the per-clone guest facts."""
-	from atlas.atlas.deploy_site import wait_for_http
+	from atlas.atlas.services.deploy_site import wait_for_http
 
 	started = time.monotonic()
 	for index in range(CLONES):
@@ -201,7 +201,7 @@ def _verify_deploy_on_warm(clone_name: str) -> None:
 	`setup production`, NO restart (the warm stack's multitenant gunicorn resolves
 	the site by Host header per request, so the rename + reload serve the FQDN live).
 	Proven end to end by an HTTP 200 for the FQDN Host header over the clone's /128."""
-	from atlas.atlas.deploy_site import deploy_site, wait_for_http
+	from atlas.atlas.services.deploy_site import deploy_site, wait_for_http
 
 	started = time.monotonic()
 	deploy_site(clone_name, DEPLOY_FQDN)
@@ -215,7 +215,7 @@ def _verify_cold_fallback(server, snapshot, clones: list[str], warm_facts: dict)
 	cold-boot fallback (vm-restore.py consumes the marker and fails the first
 	launch; the relaunch boots with --config-file + --metadata): a FRESH
 	boot_id, but still the clone's own identity and a serving site."""
-	from atlas.atlas.deploy_site import wait_for_http
+	from atlas.atlas.services.deploy_site import wait_for_http
 
 	_tamper(server.name, snapshot.memory_directory, "tamper")
 	try:

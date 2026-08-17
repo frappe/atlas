@@ -29,8 +29,8 @@ import time
 
 import frappe
 
-from atlas.atlas import proxy
 from atlas.atlas._ssh.transport import run_ssh, ssh_key_file
+from atlas.atlas.services import proxy
 from atlas.atlas.ssh import connection_for_guest
 from atlas.tests.e2e._config import (
 	control_plane_public_key,
