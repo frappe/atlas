@@ -28,6 +28,7 @@ import frappe
 from frappe.tests import IntegrationTestCase
 
 from atlas.atlas import migration as migration_module
+from atlas.atlas import migration_forward
 from atlas.atlas.boat_client import (
 	MIGRATION_PHASES,
 	MIGRATION_POLL_HYDRATION,
@@ -551,8 +552,9 @@ class TestOutOfBandMigrationVerbsDriveBoat(IntegrationTestCase):
 		from atlas.atlas import proxy as proxy_module
 
 		with (
-			patch.object(migration_module, "run_boat_migration_phase", side_effect=_boat_spy),
-			patch.object(migration_module, "run_task", side_effect=_task_spy),
+			# collapse_forward lives in migration_forward now — patch its seams there.
+			patch.object(migration_forward, "run_boat_migration_phase", side_effect=_boat_spy),
+			patch.object(migration_forward, "run_task", side_effect=_task_spy),
 			patch.object(proxy_module, "reconcile_proxies", return_value=[]),
 		):
 			vm.collapse_forward()

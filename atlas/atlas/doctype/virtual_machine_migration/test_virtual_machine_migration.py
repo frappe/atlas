@@ -9,8 +9,7 @@ import frappe
 from frappe.tests import IntegrationTestCase
 
 from atlas.atlas import migration as migration_module
-from atlas.atlas import migration_layout
-from atlas.atlas import migration_preflight
+from atlas.atlas import migration_forward, migration_layout, migration_preflight
 from atlas.atlas.doctype.virtual_machine import virtual_machine as vm_module
 from atlas.atlas.doctype.virtual_machine_migration.virtual_machine_migration import (
 	active_migration_for,
@@ -1294,13 +1293,11 @@ class TestCollapseForward(IntegrationTestCase):
 		from atlas.atlas import proxy as proxy_module
 
 		with (
-			patch.object(migration_module, "run_task", side_effect=_fake_run_task),
-			# The migration phases, source-autostart and collapse_forward's forward-down
-			# now run over Boat (item 9); only the cutover provision-vm stays on run_task.
-			# Stub both entry points with the same fake so the phase machine is driven
-			# whichever transport a step uses.
-			patch.object(migration_module, "run_boat_migration_phase", side_effect=_fake_run_task),
-			# collapse_forward now stops the live VM first (so the disk converges off
+			# collapse_forward lives in migration_forward now, so its provision-vm
+			# run_task and its forward-down run_boat_migration_phase are patched there.
+			patch.object(migration_forward, "run_task", side_effect=_fake_run_task),
+			patch.object(migration_forward, "run_boat_migration_phase", side_effect=_fake_run_task),
+			# collapse_forward stops the live VM first (so the disk converges off
 			# any dm-clone before the re-provision); vm.stop() runs a host Task through
 			# the VM module's run_task, so mock that too. Every host is on Boat now, so
 			# that stop also states its intent over HTTP before the verb — stub both

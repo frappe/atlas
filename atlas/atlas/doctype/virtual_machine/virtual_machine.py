@@ -357,7 +357,7 @@ class VirtualMachine(Document):
 		Guarded against a concurrent migration (the phase machine owns the host while
 		it runs). The heavy lifting — host teardown on both ends, re-provision,
 		re-point — lives in migration.collapse_forward."""
-		from atlas.atlas.migration import collapse_forward
+		from atlas.atlas.migration_forward import collapse_forward
 
 		if not self.traffic_forwarded_from:
 			frappe.throw(_("Virtual Machine {0} has no active forward to collapse").format(self.name))
