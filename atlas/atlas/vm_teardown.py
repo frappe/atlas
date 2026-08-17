@@ -94,3 +94,22 @@ def revoke_vpc_peers(vm) -> None:
 		pluck="name",
 	):
 		frappe.get_doc("VPN Peer", name).revoke()
+
+
+def deprovision_proxy(vm) -> None:
+	"""If this VM fronted traffic as a proxy, drop it out of the fleet on terminate
+	so its dead `/128` stops being published in the regional wildcard AAAA set (else
+	half the round-robin blackholes into a VM whose guest is gone). Clear `is_proxy`
+	and re-publish the wildcard: `status` is already "Terminated" above, so
+	`wildcard_targets()` now excludes this VM and the upsert drops its address. No-op
+	for a non-proxy VM. A DNS failure is logged inside `_publish_wildcard`, not raised
+	— it must not wedge the rest of teardown."""
+	if not vm.is_proxy:
+		return
+	vm.db_set("is_proxy", 0)
+	from atlas.atlas.placement import active_root_domain
+
+	domain = active_root_domain().domain
+	cert_name = frappe.db.get_value("TLS Certificate", {"root_domain": domain, "status": "Active"}, "name")
+	if cert_name:
+		frappe.get_doc("TLS Certificate", cert_name)._publish_wildcard()
