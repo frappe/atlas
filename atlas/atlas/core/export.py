@@ -39,7 +39,16 @@ import uuid as _uuid
 
 import frappe
 
+from atlas.atlas.core import resumable
 from atlas.atlas.core.boat_client import run_boat_migration_phase
+from atlas.atlas.core.resumable import (
+	HYDRATION_STALL_TICKS,
+	LOST_TASK_TIMEOUT_FACTOR,
+	ResumableOperation,
+	progress,
+	server_ipv4,
+	server_title,
+)
 from atlas.atlas.core.ssh import run_task
 from atlas.atlas.core.task_results import parse_result
 
@@ -60,13 +69,6 @@ PHASE_ORDER = (
 	"Cleanup",
 	"Done",
 )
-
-# A phase Task stuck Running/Pending past this multiple of its timeout is treated as
-# lost and the phase is re-entered.
-LOST_TASK_TIMEOUT_FACTOR = 2
-
-# How many consecutive no-progress hydration polls before we give up.
-HYDRATION_STALL_TICKS = 30
 
 
 def base_clone_device(image: str) -> str:
@@ -168,81 +170,26 @@ def preflight_checks(image: str, target_server: str, source_server: str | None) 
 
 
 def reconcile_image_exports() -> None:
-	"""Scheduler entry (the 'callback'). Advance every non-terminal export one step.
-	Try/except PER ROW: one wedged export never blocks the others. Re-entrant by
-	construction — if the previous tick crashed mid-phase, this tick re-enters the
-	same phase (idempotent), so nothing is lost and nothing double-runs."""
-	names = frappe.get_all(
-		"Virtual Machine Image Export",
-		filters={"status": ["not in", ("Done", "Failed")]},
-		pluck="name",
-	)
-	for name in names:
-		_reconcile_one(name)
+	"""Scheduler safety-net entry (the 'callback'). Advance every non-terminal export one
+	step; a dropped self-drive job never strands an export because this re-enters the
+	recorded phase (idempotent). See resumable.reconcile_all."""
+	resumable.reconcile_all(_OP)
 
 
 def start_export(name: str) -> None:
 	"""Background entrypoint and the export's OWN driver: advance one phase (or run one
-	Hydrating poll), then re-enqueue itself for the next step — until the row is
-	terminal. export_image enqueues the first call on insert, and every step chains the
-	next, so an export walks Pending → … → Hydrating(poll→…→100%) → … → Done on its own,
-	self-paced by the inline poll's round-trip with no wait for a cron tick. The
-	`reconcile_image_exports` cron is a pure SAFETY NET for a dropped self-drive job."""
-	if not frappe.db.exists("Virtual Machine Image Export", name):
-		return
-	_reconcile_one(name)
-	status = frappe.db.get_value("Virtual Machine Image Export", name, "status")
-	if status not in ("Done", "Failed"):
-		frappe.enqueue(
-			"atlas.atlas.core.export.start_export",
-			queue="long",
-			timeout=1800,
-			name=name,
-		)
-
-
-def _reconcile_one(name: str) -> bool:
-	"""Advance one export a single phase, committing progress on success and marking it
-	Failed on error — in isolation, so one wedged row never blocks or rolls back
-	another. Shared by the cron and the on-insert kick. Returns True iff the row
-	advanced to a further non-terminal phase (more work to run immediately)."""
-	try:
-		advanced = advance_export(frappe.get_doc("Virtual Machine Image Export", name))
-		# nosemgrep: frappe-manual-commit -- persist each export's progress independently
-		# so one row's later failure can't roll back another's
-		frappe.db.commit()
-		return advanced
-	except Exception as exception:
-		frappe.db.rollback()
-		_fail(name, str(exception))
-		frappe.logger("atlas").error(f"image export {name} failed: {exception}")
-		return False
+	Hydrating poll), then re-enqueue itself for the next step until the row is terminal —
+	self-paced by the inline poll's round-trip with no wait for a cron tick. export_image
+	enqueues the first call on insert; `reconcile_image_exports` is a pure SAFETY NET for
+	a dropped self-drive job. See resumable.self_drive."""
+	resumable.self_drive(_OP, name)
 
 
 def advance_export(doc) -> bool:
-	"""Run the phase recorded on the row, then advance the status on success. Returns
-	True iff the row advanced to a further NON-terminal phase (the caller should drive
-	the next phase now). Returns False when the phase held (Hydrating polling) or
-	reached a terminal phase (Done).
-
-	Resumability: we ALWAYS re-derive what to do from `doc.status`, never a carried
-	cursor. Each phase first checks its resume key, so a re-entry after a crash is a
-	cheap no-op up to where it got."""
-	phase = doc.status
-	if phase not in PHASE_ORDER or phase == "Done":
-		return False
-	_progress(doc, _phase_label(doc, phase), percent=-1)
-	handler = PHASES[phase]
-	completed = handler(doc)
-	if not completed:
-		return False
-	nxt = PHASE_ORDER[PHASE_ORDER.index(phase) + 1]
-	updates = {"status": nxt, "progress_percent": -1}
-	if nxt == "Done":
-		updates["completed_at"] = frappe.utils.now_datetime()
-		updates["progress_detail"] = "Export complete."
-	doc.db_set(updates)
-	return nxt != "Done"
+	"""Run the phase recorded on the row, then advance the status on success. Returns True
+	iff the row advanced to a further non-terminal phase (drive the next now). See
+	resumable.advance for the resumability contract."""
+	return resumable.advance(_OP, doc)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -270,7 +217,7 @@ def _phase_exporting(doc) -> bool:
 			variables={
 				"IMAGE_NAME": doc.image,
 				"NBD_PORT": str(export_port(doc.image)),
-				"BIND_ADDRESS": _server_ipv4(doc.source_server),
+				"BIND_ADDRESS": server_ipv4(doc.source_server),
 			},
 			timeout_seconds=120,
 		).stdout
@@ -303,7 +250,7 @@ def _phase_hydrating(doc) -> bool:
 		variables={
 			"IMAGE_NAME": doc.image,
 			"DISK_GB": str(base_disk_gb),
-			"SOURCE_HOST": _server_ipv4(doc.source_server),
+			"SOURCE_HOST": server_ipv4(doc.source_server),
 			"NBD_PORT": str(doc.nbd_port),
 			# Standalone export: no VM contends for nbd slots on the target, so the
 			# default per-VM block (base slot 0 → base image on nbd2, image-dir tar on
@@ -326,10 +273,10 @@ def _phase_hydrating(doc) -> bool:
 	)
 	stalled = percent == (doc.hydration_percent or 0)
 	doc.db_set({"hydration_percent": percent, "hydration_last_polled": frappe.utils.now_datetime()})
-	_progress(
+	progress(
 		doc,
-		f"Copying base image {doc.image} from {_server_title(doc.source_server)} to "
-		f"{_server_title(doc.target_server)} — {percent}% hydrated.",
+		f"Copying base image {doc.image} from {server_title(doc.source_server)} to "
+		f"{server_title(doc.target_server)} — {percent}% hydrated.",
 		percent=percent,
 	)
 	if percent >= 100:
@@ -358,7 +305,7 @@ def _phase_finalizing(doc) -> bool:
 		variables={
 			"IMAGE_NAME": doc.image,
 			"DISK_GB": str(base_disk_gb),
-			"SOURCE_HOST": _server_ipv4(doc.source_server),
+			"SOURCE_HOST": server_ipv4(doc.source_server),
 			"NBD_PORT": str(doc.nbd_port),
 			"PHASE": "finalize",
 		},
@@ -503,15 +450,6 @@ def _detect_lost_task(doc, script: str, timeout_seconds: int) -> None:
 		frappe.db.set_value("Task", rows[0].name, "status", "Failure")
 
 
-def _fail(name: str, message: str) -> None:
-	"""Mark an export Failed, recording the phase it failed at so retry() resumes there.
-	Best-effort and self-committing (it runs after a rollback)."""
-	doc = frappe.get_doc("Virtual Machine Image Export", name)
-	doc.db_set({"status": "Failed", "error_message": message[-2000:], "error_at_status": doc.status})
-	# nosemgrep: frappe-manual-commit -- persist the failure so the next tick sees it
-	frappe.db.commit()
-
-
 # ─────────────────────────────────────────────────────────────────────────────
 # Small read helpers.
 # ─────────────────────────────────────────────────────────────────────────────
@@ -524,17 +462,8 @@ def _bytes_to_gib_ceil(size_bytes: int) -> int:
 	return (size_bytes + gib - 1) // gib
 
 
-def _server_ipv4(server: str) -> str:
-	return frappe.db.get_value("Server", server, "ipv4_address")
-
-
-def _server_title(server: str) -> str:
-	"""A human-readable host name for the progress line, falling back to the row name."""
-	return frappe.db.get_value("Server", server, "title") or server
-
-
 def _phase_label(doc, phase: str) -> str:
-	source, target = _server_title(doc.source_server), _server_title(doc.target_server)
+	source, target = server_title(doc.source_server), server_title(doc.target_server)
 	return {
 		"Pending": f"Preparing to export {doc.image} from {source}.",
 		"Exporting": f"Serving base image {doc.image} over NBD from {source}.",
@@ -545,14 +474,6 @@ def _phase_label(doc, phase: str) -> str:
 	}.get(phase, phase)
 
 
-def _progress(doc, detail: str, *, percent: int = -1) -> None:
-	"""Write the always-current progress line (and, for a measurable copy, its percent)
-	straight to the row via db_set so it is visible immediately — every tick, mid-phase,
-	even while a long host task is still running. `percent=-1` means "not a measurable
-	copy" and the form hides the bar."""
-	doc.db_set({"progress_detail": detail, "progress_percent": percent})
-
-
 def export_port(image: str) -> int:
 	"""A stable per-image TCP port so concurrent exports of different images on one
 	source host never collide. Derived from the image name (hashed), matching how
@@ -561,3 +482,18 @@ def export_port(image: str) -> int:
 	export_port + 1, so we stride the range by 2 to keep pairs from overlapping."""
 	digest = int(_uuid.uuid5(_uuid.NAMESPACE_DNS, image).hex[:4], 16)
 	return 20000 + (digest % 2500) * 2
+
+
+# The self-description the shared driver advances (defined last: it binds PHASES and
+# _phase_label). Its `driver` re-enqueue path and 30-minute timeout bound the longest
+# phase — the multi-GB hydration copy.
+_OP = ResumableOperation(
+	doctype="Virtual Machine Image Export",
+	driver="atlas.atlas.core.export.start_export",
+	queue_timeout=1800,
+	phase_order=PHASE_ORDER,
+	phases=PHASES,
+	label=_phase_label,
+	complete_detail="Export complete.",
+	log_label="image export",
+)
