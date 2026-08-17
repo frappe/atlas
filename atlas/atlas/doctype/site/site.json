@@ -22,7 +22,8 @@
   "running_started",
   "section_break_credentials",
   "login_url",
-  "login_url_expires_at"
+  "login_url_expires_at",
+  "correlation_id"
  ],
  "fields": [
   {
@@ -31,7 +32,7 @@
    "label": "Overview"
   },
   {
-   "description": "The bare DNS label the user chose, e.g. acme. A single label (no dots) so the site stays inside the one regional wildcard the proxy already terminates. The full site URL is <subdomain>.<region domain> — that FQDN is this row's name, the site-name-on-disk, and the proxy Host header (one routing string).",
+   "description": "The bare DNS label the user chose, e.g. acme. A single label (no dots) so the site stays inside the one regional wildcard the proxy already terminates. The full site URL is <subdomain>.<region domain> \u2014 that FQDN is this row's name, the site-name-on-disk, and the proxy Host header (one routing string).",
    "fieldname": "subdomain",
    "fieldtype": "Data",
    "in_global_search": 1,
@@ -56,7 +57,7 @@
   },
   {
    "default": "Pending",
-   "description": "Controller-written lifecycle state. Running is reached ONLY on an observed HTTP 200 from the guest :80 (Frappe is actually serving), not when the backing VM boots. Pending → Provisioning → Deploying → Running; Failed on any error; Terminated after teardown.",
+   "description": "Controller-written lifecycle state. Running is reached ONLY on an observed HTTP 200 from the guest :80 (Frappe is actually serving), not when the backing VM boots. Pending \u2192 Provisioning \u2192 Deploying \u2192 Running; Failed on any error; Terminated after teardown.",
    "fieldname": "status",
    "fieldtype": "Select",
    "in_list_view": 1,
@@ -85,7 +86,7 @@
    "fieldtype": "Column Break"
   },
   {
-   "description": "The Subdomain (proxy map) row this site created once it began serving — deleting it takes the site off the front door. Written by the controller after the readiness gate.",
+   "description": "The Subdomain (proxy map) row this site created once it began serving \u2014 deleting it takes the site off the front door. Written by the controller after the readiness gate.",
    "fieldname": "subdomain_doc",
    "fieldtype": "Link",
    "label": "Routing Entry",
@@ -93,7 +94,7 @@
    "read_only": 1
   },
   {
-   "description": "The attached Pilot (bench admin console) this site stood up on its OWN backing VM — fronted at <subdomain>-pilot.<region domain>, the front door Central's Asset resolves for 'Open'. Created by auto_provision after the site serves; terminated with the site. The customer's Frappe site is this Site itself (surfaced via get_site); the Pilot is the admin console on the same bench.",
+   "description": "The attached Pilot (bench admin console) this site stood up on its OWN backing VM \u2014 fronted at <subdomain>-pilot.<region domain>, the front door Central's Asset resolves for 'Open'. Created by auto_provision after the site serves; terminated with the site. The customer's Frappe site is this Site itself (surfaced via get_site); the Pilot is the admin console on the same bench.",
    "fieldname": "pilot",
    "fieldtype": "Link",
    "label": "Pilot",
@@ -132,7 +133,7 @@
    "label": "Handoff"
   },
   {
-   "description": "The one-click Administrator session URL handed to the tenant instead of a password — minted by deploy-site.py (`bench browse --sid`, a real 24h session) and stamped before the readiness wait. The baked Administrator password is a long random secret generated at bake time and never surfaced. Surfaced to Central (event payload + get_site poll) once the site is Running. Controller-written.",
+   "description": "The one-click Administrator session URL handed to the tenant instead of a password \u2014 minted by deploy-site.py (`bench browse --sid`, a real 24h session) and stamped before the readiness wait. The baked Administrator password is a long random secret generated at bake time and never surfaced. Surfaced to Central (event payload + get_site poll) once the site is Running. Controller-written.",
    "fieldname": "login_url",
    "fieldtype": "Small Text",
    "label": "Login URL",
@@ -145,6 +146,13 @@
    "label": "Login URL Expires At",
    "no_copy": 1,
    "read_only": 1
+  },
+  {
+   "fieldname": "correlation_id",
+   "fieldtype": "Data",
+   "label": "Correlation ID",
+   "read_only": 1,
+   "description": "Central Resource Action id for the last lifecycle command. Echoed on site.* events so Central matches the outcome to the action that requested it."
   }
  ],
  "links": [],

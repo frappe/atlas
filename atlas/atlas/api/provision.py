@@ -41,6 +41,7 @@ def create_vm(
 	pilot_credential_id: str | None = None,
 	central_endpoint: str | None = None,
 	bootstrap_token: str | None = None,
+	correlation_id: str | None = None,
 ) -> dict:
 	"""Provision a bench VM for a Central team and return its (VM-shaped) mirror row.
 
@@ -108,6 +109,12 @@ def create_vm(
 		frappe.db.set_value(
 			"Virtual Machine", pilot.virtual_machine, "pilot_credential_id", pilot_credential_id
 		)
+
+	# Stamp the Central Server Action id the same way, so the vm.* events this create
+	# produces (Provisioning → Running / Failed) carry it and Central can resolve the
+	# create action it is tracking.
+	if correlation_id and pilot.virtual_machine:
+		frappe.db.set_value("Virtual Machine", pilot.virtual_machine, "correlation_id", correlation_id)
 
 	# The Pilot created its VM in after_insert; read the plain VM facts through the
 	# link and the bench fields off the Pilot. Shape matches central.atlas._mirror_vm
