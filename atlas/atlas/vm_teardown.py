@@ -1,0 +1,63 @@
+"""VM terminate teardown — releasing the routes, addresses, and artifacts a VM
+holds so terminating it leaves nothing stranded (spec/18 Component F, spec/24).
+
+Extracted from the `Virtual Machine` controller: the teardown fan-out is one
+reason-to-change (what a terminate must clean up), separate from the lifecycle
+state machine. `terminate()` calls these in order; each is idempotent and
+best-effort. Free functions taking the VM, following the `migration.py` pattern.
+"""
+
+from __future__ import annotations
+
+import frappe
+
+
+def delete_subdomains(vm) -> None:
+	"""Drop every Subdomain that routes to this VM, so terminating it stops routing
+	(each row's on_trash deconverges the regional proxy fleet). The leak fix
+	(spec/18 Component F): today ONLY `Site.terminate` cleans up Subdomains, so a VM
+	terminated directly — by the operator, or any non-`Site` path (a bench VM,
+	`Site.terminate`'s own backing-VM teardown after it already cleared its one
+	Subdomain) — would otherwise strand its routes on a /128 that `allocate_ipv6`
+	re-hands to the next tenant, a cross-tenant traffic leak.
+
+	A `Subdomain` is the LINKER of the VM (its `virtual_machine` field points AT this
+	VM), so nothing on the VM side obstructs the delete. But a bench VM's Subdomain is
+	itself linked-TO by the `Pilot` that fronts it (`subdomain_doc`), and a self-serve
+	site's by its `Site` (`subdomain_doc`) — and Frappe's link-integrity guard protects
+	that linked-TO doc, so deleting the Subdomain out from under a live Pilot/Site raises
+	`LinkExistsError`. Both `Pilot._delete_subdomain` and `Site._delete_subdomain` clear
+	their own `subdomain_doc` before deleting, but a VM terminated directly (the operator,
+	or Central's `terminate_server` driving the VM's own `terminate`) bypasses those
+	paths, so we clear the referencing link here first — the same clear-then-delete order,
+	from the side that owns the Subdomain rather than the side that references it.
+	Idempotent: a VM with no Subdomains is a no-op.
+	`terminate()` is the ONLY controller-side teardown — there is deliberately NO
+	scheduled sweeper backstop (spec/18 Component F, "Why no sweeper"): because this
+	deletes a VM's rows in the same teardown that releases its /128, a row never
+	outlives its VM's address, so the case a sweeper would catch is closed here."""
+	for name in frappe.get_all("Subdomain", filters={"virtual_machine": vm.name}, pluck="name"):
+		clear_subdomain_references(name)
+		frappe.delete_doc("Subdomain", name, ignore_permissions=True)
+
+
+def clear_subdomain_references(subdomain: str) -> None:
+	"""Null out any `Pilot`/`Site` `subdomain_doc` Link pointing at `subdomain`, so the
+	link-integrity guard lets the Subdomain be deleted. The null must be persisted
+	(db_set) before the delete, since the guard queries the DB — mirrors the db_set order
+	in `Pilot._delete_subdomain` / `Site._delete_subdomain`."""
+	for doctype in ("Pilot", "Site"):
+		for name in frappe.get_all(doctype, filters={"subdomain_doc": subdomain}, pluck="name"):
+			frappe.db.set_value(doctype, name, "subdomain_doc", None)
+
+
+def delete_custom_domains(vm) -> None:
+	"""Drop every Custom Domain that routes to this VM, so terminating it stops routing
+	(each row's on_trash deconverges the regional proxy fleet's custom-domain map). The
+	full-FQDN sibling of `delete_subdomains` (spec/18 Phase 2): a custom domain is the
+	LINKER (its `virtual_machine` points AT this VM), so deletion is unobstructed by the
+	link-integrity guard. Idempotent: a VM with no Custom Domains is a no-op. Like the
+	Subdomain teardown, this is part of the SAME teardown that releases the VM's /128, so
+	a custom-domain route never outlives its VM's address (Component F)."""
+	for name in frappe.get_all("Custom Domain", filters={"virtual_machine": vm.name}, pluck="name"):
+		frappe.delete_doc("Custom Domain", name, ignore_permissions=True)
