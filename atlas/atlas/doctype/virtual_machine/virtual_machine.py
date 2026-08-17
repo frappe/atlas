@@ -1238,8 +1238,8 @@ class VirtualMachine(Document):
 		self.status = "Terminated"
 		self.save()
 		self._detach_reserved_ip()
-		self._revoke_tunnels()
-		self._revoke_vpc_peers()
+		vm_teardown.revoke_tunnels(self)
+		vm_teardown.revoke_vpc_peers(self)
 		vm_teardown.delete_subdomains(self)
 		vm_teardown.delete_custom_domains(self)
 		self._delete_snapshots()
@@ -1317,37 +1317,6 @@ class VirtualMachine(Document):
 		)
 		if cert_name:
 			frappe.get_doc("TLS Certificate", cert_name)._publish_wildcard()
-
-	def _revoke_tunnels(self) -> None:
-		"""Revoke every VPN Tunnel to this VM on terminate (spec/19-vpn-broker.md).
-		terminate-vm.py tears down the VM's netns/veth but the tunnel's wg interface
-		lives in the host ROOT netns and survives that, so each tunnel's revoke()
-		runs the host down Task to remove it. Idempotent: a VM with no tunnels is a
-		no-op; already-Revoked tunnels are skipped."""
-		for name in frappe.get_all(
-			"VPN Tunnel",
-			filters={"virtual_machine": self.name, "status": ["!=", "Revoked"]},
-			pluck="name",
-		):
-			frappe.get_doc("VPN Tunnel", name).revoke()
-
-	def _revoke_vpc_peers(self) -> None:
-		"""Revoke every VPN Peer this VM terminates as a gateway (spec/26). A
-		terminated gateway's peers are dead — drop each from the (gone) wg0 and withdraw
-		its /128 from the mesh. revoke_peer skips the wg0 push for a Terminated gateway (the
-		peers are already gone with the VM) and only withdraws the mesh /128. Idempotent:
-		a non-gateway VM has no peers; already-Revoked peers are skipped."""
-		# The customer gateway (spec/26) is a later feature than the VM lifecycle: a site
-		# may not have migrated the `VPN Peer` DocType. Its absence means "no peers"
-		# — never block a terminate on it.
-		if not frappe.db.exists("DocType", "VPN Peer"):
-			return
-		for name in frappe.get_all(
-			"VPN Peer",
-			filters={"gateway": self.name, "status": ["!=", "Revoked"]},
-			pluck="name",
-		):
-			frappe.get_doc("VPN Peer", name).revoke()
 
 	def _detach_reserved_ip(self) -> None:
 		"""Release the VM's attached public IPv4 (if any) back to its Server's

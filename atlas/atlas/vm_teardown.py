@@ -61,3 +61,36 @@ def delete_custom_domains(vm) -> None:
 	a custom-domain route never outlives its VM's address (Component F)."""
 	for name in frappe.get_all("Custom Domain", filters={"virtual_machine": vm.name}, pluck="name"):
 		frappe.delete_doc("Custom Domain", name, ignore_permissions=True)
+
+
+def revoke_tunnels(vm) -> None:
+	"""Revoke every VPN Tunnel to this VM on terminate (spec/19-vpn-broker.md).
+	terminate-vm.py tears down the VM's netns/veth but the tunnel's wg interface
+	lives in the host ROOT netns and survives that, so each tunnel's revoke()
+	runs the host down Task to remove it. Idempotent: a VM with no tunnels is a
+	no-op; already-Revoked tunnels are skipped."""
+	for name in frappe.get_all(
+		"VPN Tunnel",
+		filters={"virtual_machine": vm.name, "status": ["!=", "Revoked"]},
+		pluck="name",
+	):
+		frappe.get_doc("VPN Tunnel", name).revoke()
+
+
+def revoke_vpc_peers(vm) -> None:
+	"""Revoke every VPN Peer this VM terminates as a gateway (spec/26). A
+	terminated gateway's peers are dead — drop each from the (gone) wg0 and withdraw
+	its /128 from the mesh. revoke_peer skips the wg0 push for a Terminated gateway (the
+	peers are already gone with the VM) and only withdraws the mesh /128. Idempotent:
+	a non-gateway VM has no peers; already-Revoked peers are skipped."""
+	# The customer gateway (spec/26) is a later feature than the VM lifecycle: a site
+	# may not have migrated the `VPN Peer` DocType. Its absence means "no peers"
+	# — never block a terminate on it.
+	if not frappe.db.exists("DocType", "VPN Peer"):
+		return
+	for name in frappe.get_all(
+		"VPN Peer",
+		filters={"gateway": vm.name, "status": ["!=", "Revoked"]},
+		pluck="name",
+	):
+		frappe.get_doc("VPN Peer", name).revoke()
