@@ -1,6 +1,7 @@
-"""Boat daemon management on a host — the per-host bearer token today, growing to
-the binary install + units + drop-in as the `Server` controller is thinned
-(spec/33-boat.md).
+"""Boat daemon management on a host — the per-host bearer token, the systemd
+drop-in that gives the daemon its network listener, and starting the service;
+growing to the binary + allow-list + unit install as the `Server` controller is
+thinned (spec/33-boat.md).
 
 Extracted from the `Server` controller: standing up and maintaining the boat
 daemon on a host is one cohesive reason to change, separate from the Server doc
@@ -19,6 +20,8 @@ import json
 import secrets
 
 import frappe
+
+from atlas.atlas.ssh import ssh_key_file
 
 # Where the daemon reads its bearer token, and the token's lifetimes (spec/33 §12).
 # The daemon serves a minted token until BOAT_TOKEN_TTL_DAYS past minting and
@@ -97,3 +100,71 @@ def install_boat_token(server, connection, key_path) -> None:
 		f"sudo install -D -m 0640 -o root -g boat /dev/stdin {BOAT_TOKEN_PATH}",
 		stdin=payload,
 	)
+
+
+def boat_dropin_contents(server) -> str:
+	"""The single systemd drop-in that fully owns boat's ExecStart.
+
+	It ALWAYS adds `--listen` so the daemon serves its HTTP API on the network.
+	Atlas drives every heavy host verb — provision-vm, sync-image, snapshot,
+	promote, the s3 backups — over the boat daemon's HTTP listener
+	(`scripts_catalog.HTTP_HOST_VERBS`, `boat_client.base_url_for_server`); the
+	shipped unit deliberately omits `--listen` (it expects a registration handshake
+	to hand over a tunnel address), so without this drop-in boat serves only the
+	local unix socket and NONE of those verbs can reach the host. Atlas is the
+	operator the unit's comment defers to, so it writes the listener here.
+
+	It also folds in the datum flags when metrics export is configured, because
+	two ExecStart-owning drop-ins would fight — one drop-in owns ExecStart.
+
+	The bind is `:<port>` (every interface, i.e. PUBLICLY reachable): the
+	controller reaches the host over the network and the per-host bearer token
+	(`--token-file`, checked by boat's TunnelHandler) is the auth boundary. Harden
+	to the management-tunnel address once that transport is built."""
+	port = frappe.conf.get("atlas_boat_port") or 8080
+	execstart = (
+		"/usr/local/bin/boat daemon --socket /run/boat/boat.sock "
+		"--store /var/lib/boat/boat.db --token-file /etc/boat/token "
+		f"--listen :{port}"
+	)
+	url = frappe.conf.get("atlas_datum_url")
+	if url:
+		execstart += (
+			f" --server-name {server.name} --datum-url {url} "
+			"--datum-token-file /etc/boat/datum-tokens.json"
+		)
+	return f"[Service]\nExecStart=\nExecStart={execstart}\n"
+
+
+def start_boat(server, connection) -> None:
+	"""Enable and (re)start boat.service — after the `boat bootstrap` Task.
+
+	The order is not obvious, so: the daemon's first act is to scan the host and
+	adopt what it finds (spec/33 §3.4), and on a fresh box there is nothing to
+	find until `boat bootstrap` has made /var/lib/atlas, the thin pool and the
+	nft scaffold. Starting it earlier points the adoption scan at a host that
+	does not exist yet and makes a daemon fault indistinguishable from an
+	unbootstrapped host.
+
+	`restart`, not `start`: on a re-bootstrap the unit is already running the
+	PREVIOUS binary and `start` would leave it there — the rename in
+	_install_boat only takes effect on re-exec. `enable` is separate and
+	idempotent, and is what survives a reboot.
+
+	boat-networkd.service is installed but deliberately NOT started: ANCP is
+	still served by atlas-networkd on these hosts, and two daemons programming
+	one wg-mesh is worse than either.
+	"""
+	with ssh_key_file(connection.ssh_private_key) as key_path:
+		server._boat_ssh(
+			connection, key_path, "enabling boat.service", "sudo systemctl enable boat.service"
+		)
+		server._boat_ssh(
+			connection, key_path, "starting boat.service", "sudo systemctl restart boat.service"
+		)
+		# is-active AFTER the restart: `systemctl restart` returns once the unit
+		# has been exec'd (the unit is Type=exec), not once it has settled, so a
+		# daemon that dies on its first read of the host exits 0 here.
+		server._boat_ssh(
+			connection, key_path, "boat.service did not stay up", "sudo systemctl is-active boat.service"
+		)
