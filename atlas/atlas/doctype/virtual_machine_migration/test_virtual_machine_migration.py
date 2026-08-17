@@ -9,6 +9,7 @@ import frappe
 from frappe.tests import IntegrationTestCase
 
 from atlas.atlas import migration as migration_module
+from atlas.atlas import migration_layout
 from atlas.atlas.doctype.virtual_machine import virtual_machine as vm_module
 from atlas.atlas.doctype.virtual_machine_migration.virtual_machine_migration import (
 	active_migration_for,
@@ -80,7 +81,7 @@ class TestMigrationPure(IntegrationTestCase):
 		self.assertEqual(slot, migration_module.nbd_base_slot(uuid))  # stable
 		# A 4-slot block that fits in nbds_max=16: base in {0,4,8,12}, +3 <= 15.
 		self.assertIn(slot, (0, 4, 8, 12))
-		self.assertLessEqual(slot + migration_module.NBD_SLOTS_PER_MIGRATION - 1, 15)
+		self.assertLessEqual(slot + migration_layout.NBD_SLOTS_PER_MIGRATION - 1, 15)
 
 	def test_nbd_base_slots_dont_overlap_across_vms(self) -> None:
 		# Two UUIDs in different residue classes get disjoint 4-slot blocks — the
@@ -89,8 +90,8 @@ class TestMigrationPure(IntegrationTestCase):
 		b = "00000001-0000-0000-0000-000000000000"  # hex[4:8]=0001 -> slot 4
 		sa, sb = migration_module.nbd_base_slot(a), migration_module.nbd_base_slot(b)
 		self.assertNotEqual(sa, sb)
-		block_a = set(range(sa, sa + migration_module.NBD_SLOTS_PER_MIGRATION))
-		block_b = set(range(sb, sb + migration_module.NBD_SLOTS_PER_MIGRATION))
+		block_a = set(range(sa, sa + migration_layout.NBD_SLOTS_PER_MIGRATION))
+		block_b = set(range(sb, sb + migration_layout.NBD_SLOTS_PER_MIGRATION))
 		self.assertEqual(block_a & block_b, set())
 
 	def test_boot_then_hydrate_phase_order(self) -> None:
