@@ -12,7 +12,7 @@ from frappe.model.document import Document
 
 from atlas.atlas import scripts_catalog, server_boat
 from atlas.atlas.providers.fake_tasks import is_fake_server
-from atlas.atlas.server_boat import BOAT_ARTIFACTS, BOAT_DROPIN_PATH
+from atlas.atlas.server_boat import BOAT_ARTIFACTS
 from atlas.atlas.ssh import connection_for_server, run_ssh, run_task, ssh_key_file, upload_files
 from atlas.atlas.task_results import parse_result
 
@@ -660,22 +660,9 @@ class Server(Document):
 	def _boat_dropin_contents(self) -> str:
 		return server_boat.boat_dropin_contents(self)
 
-	def _install_datum_tokens(self, connection, key_path) -> None:
-		server_boat.install_datum_tokens(self, connection, key_path)
-
 	@frappe.whitelist()
 	def refresh_datum_tokens(self) -> None:
-		"""Re-mint and re-ship this host's datum bundle, then SIGHUP boat so it picks up the
-		new tokens without a restart. This is the token-rotation path; bootstrap already
-		installs the first bundle. A no-op on a Fake server or when datum is not configured."""
-		if is_fake_server(self.name) or not frappe.conf.get("atlas_datum_url"):
-			return
-		connection = connection_for_server(self)
-		with ssh_key_file(connection.ssh_private_key) as key_path:
-			self._install_datum_tokens(connection, key_path)
-			self._boat_ssh(
-				connection, key_path, "reloading boat for datum rotation", "sudo systemctl reload boat.service"
-			)
+		server_boat.refresh_datum_tokens(self)
 
 	def _start_boat(self, connection) -> None:
 		server_boat.start_boat(self, connection)
@@ -711,31 +698,7 @@ class Server(Document):
 
 	@frappe.whitelist()
 	def configure_boat_listener(self) -> None:
-		"""(Re)write boat's ExecStart drop-in and restart the daemon so an already
-		bootstrapped host picks up the `--listen` network listener without a full
-		re-bootstrap. The same drop-in `bootstrap()` writes (see `_boat_dropin_contents`);
-		this is the operator path to apply it to a host bootstrapped before the listener
-		fix, or to re-assert it after a manual change."""
-		if is_fake_server(self.name):
-			return
-		connection = connection_for_server(self)
-		with ssh_key_file(connection.ssh_private_key) as key_path:
-			self._boat_ssh(
-				connection,
-				key_path,
-				"installing the boat listener drop-in",
-				f"sudo install -D -m 0644 -o root -g root /dev/stdin {BOAT_DROPIN_PATH}",
-				stdin=self._boat_dropin_contents(),
-			)
-			self._boat_ssh(
-				connection, key_path, "reloading systemd", "sudo systemctl daemon-reload"
-			)
-			self._boat_ssh(
-				connection, key_path, "restarting boat", "sudo systemctl restart boat.service"
-			)
-			self._boat_ssh(
-				connection, key_path, "boat.service did not stay up", "sudo systemctl is-active boat.service"
-			)
+		server_boat.configure_boat_listener(self)
 
 	def _boat_ssh(
 		self, connection, key_path, description: str, command: str, stdin: str | None = None

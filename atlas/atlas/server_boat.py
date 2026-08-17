@@ -21,7 +21,8 @@ import secrets
 
 import frappe
 
-from atlas.atlas.ssh import ssh_key_file
+from atlas.atlas.providers.fake_tasks import is_fake_server
+from atlas.atlas.ssh import connection_for_server, ssh_key_file
 
 # Where the daemon reads its bearer token, and the token's lifetimes (spec/33 §12).
 # The daemon serves a minted token until BOAT_TOKEN_TTL_DAYS past minting and
@@ -330,3 +331,45 @@ def install_datum_tokens(server, connection, key_path) -> None:
 		stdin=server._boat_dropin_contents(),
 	)
 	server._boat_ssh(connection, key_path, "reloading systemd for datum", "sudo systemctl daemon-reload")
+
+
+def refresh_datum_tokens(server) -> None:
+	"""Re-mint and re-ship this host's datum bundle, then SIGHUP boat so it picks up the
+	new tokens without a restart. This is the token-rotation path; bootstrap already
+	installs the first bundle. A no-op on a Fake server or when datum is not configured."""
+	if is_fake_server(server.name) or not frappe.conf.get("atlas_datum_url"):
+		return
+	connection = connection_for_server(server)
+	with ssh_key_file(connection.ssh_private_key) as key_path:
+		install_datum_tokens(server, connection, key_path)
+		server._boat_ssh(
+			connection, key_path, "reloading boat for datum rotation", "sudo systemctl reload boat.service"
+		)
+
+
+def configure_boat_listener(server) -> None:
+	"""(Re)write boat's ExecStart drop-in and restart the daemon so an already
+	bootstrapped host picks up the `--listen` network listener without a full
+	re-bootstrap. The same drop-in `install_boat` writes (see `boat_dropin_contents`);
+	this is the operator path to apply it to a host bootstrapped before the listener
+	fix, or to re-assert it after a manual change."""
+	if is_fake_server(server.name):
+		return
+	connection = connection_for_server(server)
+	with ssh_key_file(connection.ssh_private_key) as key_path:
+		server._boat_ssh(
+			connection,
+			key_path,
+			"installing the boat listener drop-in",
+			f"sudo install -D -m 0644 -o root -g root /dev/stdin {BOAT_DROPIN_PATH}",
+			stdin=server._boat_dropin_contents(),
+		)
+		server._boat_ssh(
+			connection, key_path, "reloading systemd", "sudo systemctl daemon-reload"
+		)
+		server._boat_ssh(
+			connection, key_path, "restarting boat", "sudo systemctl restart boat.service"
+		)
+		server._boat_ssh(
+			connection, key_path, "boat.service did not stay up", "sudo systemctl is-active boat.service"
+		)
