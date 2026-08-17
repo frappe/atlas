@@ -72,7 +72,10 @@ class Site(Document):
 	if TYPE_CHECKING:
 		from frappe.types import DF
 
+		attached: DF.Check
+		build_mode: DF.Data | None
 		deploying_started: DF.Datetime | None
+		kind: DF.Literal["bench-site", "pilot-console"]
 		login_url: DF.SmallText | None
 		login_url_expires_at: DF.Datetime | None
 		pilot: DF.Link | None
