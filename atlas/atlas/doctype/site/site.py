@@ -465,7 +465,7 @@ def _set_status(site, status: str) -> None:
 	# it rides the commit just below. Without this the mirror only ever sees the initial
 	# Pending (site.created + the insert's on_update) and, with no site reconcile pull,
 	# stays stuck Pending forever.
-	from atlas.atlas.central_report import report_site_status
+	from atlas.atlas.services.reporting import report_site_status
 
 	report_site_status(site)
 	# nosemgrep: frappe-manual-commit -- background job: commit each status transition so Central's poll sees it cross-transaction, the status_changed event delivers, and progress survives a crash mid-provision

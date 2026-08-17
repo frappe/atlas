@@ -262,7 +262,7 @@ class Pilot(Document):
 		self.save(ignore_permissions=True)
 		# nosemgrep: frappe-manual-commit -- persist the fresh URL so Central's poll/reconcile sees it cross-transaction (the mint has no status change, so no event fires)
 		frappe.db.commit()
-		from atlas.atlas.central_report import _pilot_vm_payload
+		from atlas.atlas.services.reporting import _pilot_vm_payload
 
 		return _pilot_vm_payload(self)
 
@@ -355,7 +355,7 @@ def auto_provision(
 		# after_commit, so it rides the commit just below. Without this the mirror only
 		# learns login_url on the next 10-min reconcile, and Open fails ("VM has no
 		# login URL yet") until then.
-		from atlas.atlas.central_report import report_pilot_status
+		from atlas.atlas.services.reporting import report_pilot_status
 
 		report_pilot_status(pilot)
 		# nosemgrep: frappe-manual-commit -- commit the handoff + Running so the status event delivers (enqueue_after_commit) and the poll sees it
@@ -410,7 +410,7 @@ def deploy_attached(pilot_name: str) -> None:
 		# db_set skips on_update, so emit the status event (carrying the login handoff)
 		# explicitly — the same gap auto_provision closes. Its delivery is
 		# enqueue_after_commit, so it rides the Site job's commit.
-		from atlas.atlas.central_report import report_pilot_status
+		from atlas.atlas.services.reporting import report_pilot_status
 
 		report_pilot_status(pilot)
 	except Exception:

@@ -60,5 +60,12 @@ class TestCallbackRegistry(IntegrationTestCase):
 		# The boot hook must actually register the services handler — this is the
 		# proof the one-way seam is connected, not just declared.
 		self.assertIn("atlas.atlas.services.callbacks_register", frappe.get_hooks("services_callbacks"))
-		self.assertTrue(callbacks.registered("vm.address_changed"))
-		self.assertTrue(callbacks.registered("vm.terminated"))
+		for event in (
+			"vm.address_changed",
+			"vm.terminated",
+			"vm.deploy_gateway",
+			"vm.read_proxy_maps",
+			"vm.status_suppressed",
+			"vm.payload_augment",
+		):
+			self.assertTrue(callbacks.registered(event), f"{event} not registered")

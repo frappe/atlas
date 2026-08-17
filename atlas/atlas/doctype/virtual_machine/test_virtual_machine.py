@@ -658,7 +658,7 @@ class TestVirtualMachine(IntegrationTestCase):
 		vm.db_set("status", "Stopped")
 		with (
 			patch.object(module, "run_boat_task", return_value=fake_task(name="task-term")),
-			patch("atlas.atlas.central_report.report_pilot_status") as reported,
+			patch("atlas.atlas.services.reporting.report_pilot_status") as reported,
 		):
 			pilot.terminate()
 

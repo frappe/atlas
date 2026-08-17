@@ -32,6 +32,7 @@ import json
 import frappe
 
 from atlas.atlas.central import CentralError
+from atlas.atlas.core import callbacks
 
 MAX_PENDING_RETRY_BATCH = 100
 
@@ -67,13 +68,11 @@ def on_vm_update(doc, method=None):
 		# before deploy-site runs and the login handoff is minted — so this raw flip is
 		# premature: Central would mirror the Asset as usable while it isn't. The
 		# authoritative Running (carrying the login handoff) arrives on the aggregate's own
-		# event: report_pilot_status / report_site_status after the in-guest mint. Suppress
-		# the raw VM status here for those VMs; a plain VM (proxy, operator machine) still
+		# event after the in-guest mint. Core is PaaS-blind: services owns the
+		# front-door check (`vm.status_suppressed`); a plain VM is never suppressed and
 		# reports its status directly. Terminate/delete still ride the aggregate's own
 		# status event + vm.deleted (on_vm_trash), so no signal is lost.
-		from atlas.atlas.front_door import front_door_for_vm
-
-		if front_door_for_vm(doc.name) is None:
+		if not callbacks.run_first("vm.status_suppressed", doc.name):
 			_emit("vm.status_changed", _vm_payload(doc), doc)
 	elif doc.flags.get("resizing"):
 		# A resize rewrites the machine's shape (vcpus/memory/disk) but leaves the VM
@@ -85,54 +84,6 @@ def on_vm_update(doc, method=None):
 def on_vm_trash(doc, method=None):
 	if _enabled():
 		_emit("vm.deleted", _vm_payload(doc), doc)
-
-
-def on_pilot_update(doc, method=None):
-	# A Pilot reports AS its backing VM (Central mirrors VMs, not Pilots): a Pilot
-	# status change is emitted as a vm.status_changed carrying the VM-shaped payload
-	# — this is the event that delivers the login handoff, since the Pilot flips
-	# Running only after the in-guest mint. A Pilot with no VM yet (created but its
-	# after_insert hasn't linked one) has nothing to report.
-	if _enabled() and _status_changed(doc) and doc.virtual_machine:
-		report_pilot_status(doc)
-
-
-def report_pilot_status(pilot) -> None:
-	"""Emit a Pilot's status as a vm.status_changed, carrying the login handoff.
-
-	The `on_update` doc_event above delivers this for a plain `.save()`. But the
-	terminal Running flip in `Pilot.auto_provision` is a `db_set` (skips validation
-	mid-job), and `db_set` runs only `on_change`, never `on_update` — so that flip,
-	the very event that carries the freshly-minted login_url, would otherwise never
-	push. auto_provision calls this explicitly after its commit to close that gap;
-	the periodic reconcile is only the backstop, not the primary delivery."""
-	if _enabled() and pilot.virtual_machine:
-		_emit("vm.status_changed", _pilot_vm_payload(pilot), pilot)
-
-
-def on_site_after_insert(doc, method=None):
-	if _enabled():
-		_emit("site.created", _site_payload(doc), doc)
-
-
-def on_site_update(doc, method=None):
-	if _enabled() and _status_changed(doc):
-		_emit("site.status_changed", _site_payload(doc), doc)
-
-
-def report_site_status(site) -> None:
-	"""Emit a Site's current status as a site.status_changed event.
-
-	The `on_update` doc_event above delivers this for a plain `.save()`. But every
-	real lifecycle transition in `Site.auto_provision` (Provisioning → Deploying →
-	Running / Failed) goes through `_set_status`, which uses `db_set` — and `db_set`
-	runs only `on_change`, never `on_update`, so those transitions would never push.
-	auto_provision's `_set_status` calls this explicitly (before its commit) to close
-	that gap; without it Central's mirror only ever sees the initial Pending
-	(site.created + the insert's on_update) and the site stays stuck at Pending —
-	there is no site reconcile pull to correct it. Same shape as report_pilot_status."""
-	if _enabled():
-		_emit("site.status_changed", _site_payload(site), site)
 
 
 def on_snapshot_update(doc, method=None):
@@ -336,109 +287,32 @@ def _vm_payload(doc) -> dict:
 	# link is the owning team directly; None for operator-owned VMs.
 	#
 	# A bench/site VM is owned by a Pilot OR a Site (the front door lives there, not on
-	# the VM), so the front-door fields are read THROUGH whichever aggregate backs this
-	# VM: gateway_url (`https://<fqdn>`) and, once it is Running, login_url + its expiry.
-	# A plain VM (proxy, operator machine) has neither → those stay None. The login
-	# handoff arrives on the aggregate's own status_changed event (_pilot_vm_payload for
-	# a Pilot, the site.* events for a Site); a plain VM lifecycle event just carries the
-	# (stable) gateway_url. front_door_for_vm resolves either aggregate — a Site-backed
-	# VM (create_site) is no longer login-less on the Asset (spec/14-self-serve.md).
-	from atlas.atlas.front_door import front_door_for_vm
+	# the VM). Those front-door fields — gateway_url, and once Running the login_url +
+	# its expiry, plus the aggregate's status override — are folded in by the
+	# `vm.payload_augment` callback (services), so core builds only the plain-VM shape
+	# and stays PaaS-blind. A plain VM (proxy, operator machine) keeps the None defaults.
 	from atlas.atlas.placement import version_from_image
 
-	return _merge_bench_fields(
-		{
-			"name": doc.name,
-			"team": doc.tenant or None,
-			"title": doc.title,
-			"status": doc.status,
-			"server": doc.server,
-			"pilot_credential_id": doc.get("pilot_credential_id"),
-			"size_preset": doc.get("size_preset"),
-			"vcpus": doc.get("vcpus"),
-			"memory_megabytes": doc.get("memory_megabytes"),
-			"disk_gigabytes": doc.get("disk_gigabytes"),
-			"ipv6_address": doc.get("ipv6_address"),
-			"public_ipv4": doc.get("public_ipv4"),
-			"frappe_version": version_from_image(doc.get("image")),
-		},
-		front_door_for_vm(doc.name),
-	)
-
-
-def _pilot_vm_payload(pilot) -> dict:
-	# The VM-shaped payload for a Pilot's own lifecycle event (and its regenerate
-	# return). Central mirrors VMs, so a Pilot reports AS its backing VM: plain VM
-	# facts are read through the `virtual_machine` link, the bench fields off the
-	# Pilot. This is the event that carries the login handoff (the Pilot flips Running
-	# only after the mint), so its status is the PILOT's — the VM booted earlier.
-	from atlas.atlas.front_door import FrontDoor
-	from atlas.atlas.placement import version_from_image
-
-	vm = frappe.get_doc("Virtual Machine", pilot.virtual_machine)
-	return _merge_bench_fields(
-		{
-			"name": vm.name,
-			"team": pilot.tenant or None,
-			"title": vm.title,
-			"status": pilot.status,
-			"server": vm.server,
-			"pilot_credential_id": vm.get("pilot_credential_id"),
-			"size_preset": vm.get("size_preset"),
-			"vcpus": vm.get("vcpus"),
-			"memory_megabytes": vm.get("memory_megabytes"),
-			"disk_gigabytes": vm.get("disk_gigabytes"),
-			"ipv6_address": vm.get("ipv6_address"),
-			"public_ipv4": vm.get("public_ipv4"),
-			"frappe_version": version_from_image(vm.get("image")),
-		},
-		FrontDoor(pilot),
-	)
-
-
-def _merge_bench_fields(payload: dict, front_door) -> dict:
-	"""Fold a front door's (Pilot or Site) fields onto a VM-shaped payload. gateway_url
-	is the derived FQDN URL (stable once the aggregate exists); login_url + its expiry
-	are the one-click handoff, meaningful only once it is Running (before that the mint
-	hasn't run — FrontDoor gates them). A None front_door (a plain, non-bench VM) leaves
-	all three None.
-
-	The status is taken from the front door too: a bench/site VM boots to Running before
-	deploy-site + the login mint, so the raw VM status would report the Asset usable while
-	it isn't. The aggregate flips Running only after the mint, so its status is the one
-	Central mirrors (this is a no-op for _pilot_vm_payload, which already passed the Pilot's
-	status). A plain VM keeps the VM status the payload already carries."""
-	if front_door is not None:
-		payload["status"] = front_door.status
-	payload["gateway_url"] = front_door.gateway_url if front_door is not None else None
-	payload["login_url"] = front_door.login_url if front_door is not None else None
-	payload["login_url_expires_at"] = (
-		_iso(front_door.login_url_expires_at) if front_door is not None else None
-	)
-	return payload
-
-
-def _site_payload(doc) -> dict:
-	# The owning Central team, so the control plane can attribute this site to a
-	# tenant. The Tenant `name` *is* the Central `Team.name`, so the Site's `tenant`
-	# link is the owning team directly; None for operator/e2e sites.
-	# The login URL + its expiry + live URL are the tenant handoff — only
-	# meaningful once the site is serving (Running), and the fields are stamped
-	# before the readiness wait. login_url_expires_at is when the URL stops working
-	# (mint time + the `bench browse --sid` session's 24h TTL), so Central compares
-	# against it and regenerates a fresh one for a late click. Before Running there
-	# is nothing to hand off.
-	running = doc.status == "Running"
-	return {
+	payload = {
 		"name": doc.name,
 		"team": doc.tenant or None,
-		"subdomain": doc.get("subdomain"),
+		"title": doc.title,
 		"status": doc.status,
-		"fqdn": doc.name,
-		"url": f"https://{doc.name}" if running else None,
-		"login_url": doc.get("login_url") if running else None,
-		"login_url_expires_at": _iso(doc.get("login_url_expires_at")) if running else None,
+		"server": doc.server,
+		"pilot_credential_id": doc.get("pilot_credential_id"),
+		"size_preset": doc.get("size_preset"),
+		"vcpus": doc.get("vcpus"),
+		"memory_megabytes": doc.get("memory_megabytes"),
+		"disk_gigabytes": doc.get("disk_gigabytes"),
+		"ipv6_address": doc.get("ipv6_address"),
+		"public_ipv4": doc.get("public_ipv4"),
+		"frappe_version": version_from_image(doc.get("image")),
+		"gateway_url": None,
+		"login_url": None,
+		"login_url_expires_at": None,
 	}
+	callbacks.run("vm.payload_augment", payload, doc.name)
+	return payload
 
 
 def _snapshot_payload(doc) -> dict:

@@ -167,12 +167,12 @@ def terminate_front_doors(vm) -> None:
 			continue
 		doc.db_set("status", "Terminated")
 		try:
-			from atlas.atlas import central_report
+			from atlas.atlas.services import reporting
 
 			if doc.doctype == "Pilot":
-				central_report.report_pilot_status(doc)
+				reporting.report_pilot_status(doc)
 			else:
-				central_report.report_site_status(doc)
+				reporting.report_site_status(doc)
 		except Exception:
 			# The status is already persisted; a reporting failure must not undo the
 			# terminate. Central's own reconcile now reads the corrected status.

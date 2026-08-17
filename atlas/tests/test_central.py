@@ -19,6 +19,7 @@ from frappe.tests import IntegrationTestCase
 
 from atlas.atlas import central_report
 from atlas.atlas.central import CentralClient, CentralError
+from atlas.atlas.services import reporting
 from atlas.tests import fixtures
 
 
@@ -252,7 +253,7 @@ class TestCentralReport(IntegrationTestCase):
 			login_url_expires_at=datetime.datetime(2026, 7, 4, 10, 19, 56),
 		)
 		pilot.get = lambda key, default=None: getattr(pilot, key, default)
-		payload = central_report._pilot_vm_payload(pilot)
+		payload = reporting._pilot_vm_payload(pilot)
 		self.assertEqual(payload["login_url_expires_at"], "2026-07-04 10:19:56")
 		self.assertEqual(payload["gateway_url"], "https://acme.blr1.frappe.dev")
 		json.dumps(payload)  # requests uses stdlib json.dumps with no default
@@ -525,7 +526,7 @@ class TestCentralReportSite(IntegrationTestCase):
 
 	def test_after_insert_emits_created(self) -> None:
 		with _patched_emit() as enqueue:
-			central_report.on_site_after_insert(self._site())
+			reporting.on_site_after_insert(self._site())
 		kwargs = enqueue.call_args.kwargs
 		self.assertEqual(kwargs["event_type"], "site.created")
 		self.assertEqual(kwargs["payload"]["name"], "acme.blr1.frappe.dev")
@@ -533,7 +534,7 @@ class TestCentralReportSite(IntegrationTestCase):
 
 	def test_status_change_emits_and_pending_hides_handoff(self) -> None:
 		with _patched_emit() as enqueue:
-			central_report.on_site_update(self._site(status="Provisioning", before_status="Pending"))
+			reporting.on_site_update(self._site(status="Provisioning", before_status="Pending"))
 		payload = enqueue.call_args.kwargs["payload"]
 		self.assertEqual(enqueue.call_args.kwargs["event_type"], "site.status_changed")
 		self.assertEqual(payload["status"], "Provisioning")
@@ -543,7 +544,7 @@ class TestCentralReportSite(IntegrationTestCase):
 
 	def test_running_event_carries_handoff(self) -> None:
 		with _patched_emit() as enqueue:
-			central_report.on_site_update(self._site(status="Running", before_status="Deploying"))
+			reporting.on_site_update(self._site(status="Running", before_status="Deploying"))
 		payload = enqueue.call_args.kwargs["payload"]
 		self.assertEqual(payload["url"], "https://acme.blr1.frappe.dev")
 		self.assertEqual(payload["login_url"], "https://acme.blr1.frappe.dev/app?sid=abc123")
@@ -554,7 +555,7 @@ class TestCentralReportSite(IntegrationTestCase):
 			patch.object(central_report, "_enabled", return_value=True),
 			patch.object(central_report.frappe, "enqueue") as enqueue,
 		):
-			central_report.on_site_update(self._site(status="Running", before_status="Running"))
+			reporting.on_site_update(self._site(status="Running", before_status="Running"))
 		enqueue.assert_not_called()
 
 	def test_report_site_status_emits_on_the_db_set_transition(self) -> None:
@@ -563,7 +564,7 @@ class TestCentralReportSite(IntegrationTestCase):
 		never pushes and the mirror is stuck at the initial Pending. report_site_status
 		is the explicit emit that carries each transition (Provisioning..Running)."""
 		with _patched_emit() as enqueue:
-			central_report.report_site_status(self._site(status="Provisioning"))
+			reporting.report_site_status(self._site(status="Provisioning"))
 		enqueue.assert_called_once()
 		kwargs = enqueue.call_args.kwargs
 		self.assertEqual(kwargs["event_type"], "site.status_changed")
@@ -574,7 +575,7 @@ class TestCentralReportSite(IntegrationTestCase):
 
 	def test_report_site_status_running_carries_handoff(self) -> None:
 		with _patched_emit() as enqueue:
-			central_report.report_site_status(self._site(status="Running"))
+			reporting.report_site_status(self._site(status="Running"))
 		payload = enqueue.call_args.kwargs["payload"]
 		self.assertEqual(payload["status"], "Running")
 		self.assertEqual(payload["url"], "https://acme.blr1.frappe.dev")
@@ -585,7 +586,7 @@ class TestCentralReportSite(IntegrationTestCase):
 			patch.object(central_report, "_enabled", return_value=False),
 			patch.object(central_report.frappe, "enqueue") as enqueue,
 		):
-			central_report.report_site_status(self._site(status="Running"))
+			reporting.report_site_status(self._site(status="Running"))
 		enqueue.assert_not_called()
 
 
@@ -628,7 +629,7 @@ class TestCentralReportPilot(IntegrationTestCase):
 		mirror would otherwise only learn it on the next 10-min reconcile."""
 		pilot = self._pilot_with_vm(status="Running")
 		with _patched_emit() as enqueue:
-			central_report.report_pilot_status(pilot)
+			reporting.report_pilot_status(pilot)
 		enqueue.assert_called_once()
 		kwargs = enqueue.call_args.kwargs
 		self.assertEqual(kwargs["event_type"], "vm.status_changed")
@@ -643,14 +644,14 @@ class TestCentralReportPilot(IntegrationTestCase):
 			patch.object(central_report, "_enabled", return_value=False),
 			patch.object(central_report.frappe, "enqueue") as enqueue,
 		):
-			central_report.report_pilot_status(pilot)
+			reporting.report_pilot_status(pilot)
 		enqueue.assert_not_called()
 
 	def test_report_pilot_status_no_op_without_backing_vm(self) -> None:
 		pilot = self._pilot_with_vm()
 		pilot.virtual_machine = None
 		with self._patched_emit_no_vm() as enqueue:
-			central_report.report_pilot_status(pilot)
+			reporting.report_pilot_status(pilot)
 		enqueue.assert_not_called()
 
 	@staticmethod
@@ -668,7 +669,7 @@ class TestCentralReportPilot(IntegrationTestCase):
 		even if a stale value sits on the row."""
 		pilot = self._pilot_with_vm(status="Pending", login_url="https://leftover/app?sid=x")
 		with _patched_emit() as enqueue:
-			central_report.report_pilot_status(pilot)
+			reporting.report_pilot_status(pilot)
 		payload = enqueue.call_args.kwargs["payload"]
 		self.assertEqual(payload["status"], "Pending")
 		self.assertIsNone(payload["login_url"])
