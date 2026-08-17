@@ -23,9 +23,7 @@ class IntegrationTestCentralEventLog(IntegrationTestCase):
 				**overrides,
 			}
 		).insert(ignore_permissions=True)
-		self.addCleanup(
-			frappe.delete_doc, "Central Event Log", doc.name, force=True, ignore_permissions=True
-		)
+		self.addCleanup(frappe.delete_doc, "Central Event Log", doc.name, force=True, ignore_permissions=True)
 		return doc
 
 	def test_retry_delivery_redelivers_and_resets_the_budget(self):
