@@ -11,6 +11,7 @@ from atlas.atlas.boat_client import (
 	put_desired_state,
 	run_boat_task,
 )
+from atlas.atlas.core import callbacks
 from atlas.atlas.networking import (
 	CPU_MODE_RELAXED,
 	allocate_ipv6,
@@ -689,21 +690,18 @@ class VirtualMachine(Document):
 		)
 		self.status = "Terminated"
 		self.save()
+		# Core teardown: the attached Reserved IP and this VM's snapshots.
 		vm_teardown.detach_reserved_ip(self)
-		vm_teardown.revoke_tunnels(self)
-		vm_teardown.revoke_vpc_peers(self)
-		vm_teardown.delete_subdomains(self)
-		vm_teardown.delete_custom_domains(self)
 		self._delete_snapshots()
-		vm_teardown.deprovision_proxy(self)
-		self._terminate_front_doors()
+		# The routing/proxy/gateway/front-door teardown is PaaS — core is blind to
+		# it: services registered the `vm.terminated` handler (VPN tunnels/peers,
+		# Subdomains, Custom Domains, proxy role, front doors), which runs them in
+		# the same order this method used to.
+		callbacks.run("vm.terminated", self)
 		# The VM's private /128 leaves the local-ownership cache (vm-network-down.py
 		# removes it on teardown); atlas-networkd's scan detects the change and gossips
 		# the withdrawal (spec/31 §11). No controller-side reconcile.
 		return task.name
-
-	def _terminate_front_doors(self) -> None:
-		vm_teardown.terminate_front_doors(self)
 
 	def _delete_snapshots(self) -> None:
 		vm_teardown.delete_snapshots(self)

@@ -10,6 +10,7 @@ edges are inverted.
 from __future__ import annotations
 
 from atlas.atlas.core import callbacks
-from atlas.atlas.services import routing
+from atlas.atlas.services import routing, teardown
 
 callbacks.register("vm.address_changed", routing.on_vm_address_changed)
+callbacks.register("vm.terminated", teardown.on_vm_terminated)

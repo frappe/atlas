@@ -61,3 +61,4 @@ class TestCallbackRegistry(IntegrationTestCase):
 		# proof the one-way seam is connected, not just declared.
 		self.assertIn("atlas.atlas.services.callbacks_register", frappe.get_hooks("services_callbacks"))
 		self.assertTrue(callbacks.registered("vm.address_changed"))
+		self.assertTrue(callbacks.registered("vm.terminated"))
