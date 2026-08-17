@@ -307,7 +307,7 @@ class TestVirtualMachineLifecycle(IntegrationTestCase):
 		# test_provision_resize_capacity.
 		with (
 			patch.object(module, "run_boat_task", return_value=task) as mocked,
-			patch.object(module, "check_resize_capacity"),
+			patch("atlas.atlas.vm_resize.check_resize_capacity"),
 		):
 			result = vm.resize(vcpus=4, memory_megabytes=4096, disk_gigabytes=20)
 		self.assertEqual(result, "task-resize-1")
@@ -362,7 +362,7 @@ class TestVirtualMachineLifecycle(IntegrationTestCase):
 		# whole-core cap tracking when vcpus grow without an explicit cap.
 		with (
 			patch.object(module, "run_boat_task", return_value=fake_task()),
-			patch.object(module, "check_resize_capacity"),
+			patch("atlas.atlas.vm_resize.check_resize_capacity"),
 		):
 			vm.resize(vcpus=4)
 		vm.reload()
