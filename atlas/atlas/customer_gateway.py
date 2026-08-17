@@ -541,7 +541,7 @@ def _push_wg0(connection, key_path, gateway_vm: str, desired: str) -> None:
 		frappe.throw(f"Writing wg0.conf to gateway {gateway_vm} failed (exit {code}): {stderr[-300:]}")
 	# syncconf the peers FIRST (rewrites [Interface], clearing the unmentioned port + key),
 	# THEN re-set the derived listen port + key from the 0600 file so they survive — the
-	# order is load-bearing, exactly like host_mesh._apply_script.
+	# order is load-bearing.
 	apply_script = (
 		f"wg syncconf {GATEWAY_DEVICE} <(wg-quick strip {GATEWAY_CONFIG_PATH}); "
 		f"wg set {GATEWAY_DEVICE} private-key {GATEWAY_KEY_PATH} listen-port {WG_GATEWAY_PORT}"

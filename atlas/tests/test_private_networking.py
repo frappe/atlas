@@ -1,10 +1,10 @@
-"""Unit tests for the WireGuard host-mesh derivations + config render (design §2-8).
+"""Unit tests for the WireGuard host-mesh derivations (design §2-8).
 
 These are pure-function tests — no host, no SSH, no wg — of the naming/keying layer:
 `derive_tenant_prefix`, `derive_private_address` (incl. region), the real
 `derive_host_wireguard_keypair` (a Curve25519 base-point multiply, verified
 byte-for-byte against `wg pubkey` on a real Scaleway host), `derive_host_mesh_address`,
-the `derive_ipv4_link` dark-VM index path, and `host_mesh.render_wg_mesh_config`.
+and the `derive_ipv4_link` dark-VM index path.
 
 They run under the bench suite (`bench --site … run-tests --app atlas`) like the rest
 of the controller unit tests. The host-touching reconcile transport is proven live,
