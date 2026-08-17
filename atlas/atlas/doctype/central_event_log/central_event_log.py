@@ -1,3 +1,7 @@
+import json
+
+import frappe
+from frappe import _
 from frappe.model.document import Document
 
 
@@ -31,10 +35,26 @@ class CentralEventLog(Document):
 	even for a reverted change — without ever delivering that reverted change to
 	Central (the after-commit deliver job never runs, so the row stays `pending`).
 
-	`atlas.atlas.central_report` is the sole writer: `_emit` inserts the row at
-	`pending`; `deliver` (and its `_stamp` helper) updates `status` / `attempts` /
-	`last_error` / `http_status` on the delivery outcome. No controller logic lives
-	here — the durability argument rests entirely on the table engine, asserted at
-	migrate (test + e2e), mirroring `Bench Routing Audit`."""
+	`atlas.atlas.central_report` is the sole automatic writer: `_emit` inserts the
+	row at `pending`; `deliver` (and its `_stamp` helper) updates `status` /
+	`attempts` / `last_error` / `http_status` on the delivery outcome. The one
+	operator action is `retry_delivery` — an on-demand redelivery from the desk."""
 
-	pass
+	@frappe.whitelist()
+	def retry_delivery(self) -> None:
+		"""Re-attempt delivery to Central right now, from the desk. Resets the attempt
+		budget (and clears the stale error) so the periodic retry cron re-arms too."""
+		if self.status not in ("queued", "error", "skipped"):
+			frappe.throw(_("Only queued, error or skipped events can be retried."))
+
+		from atlas.atlas.central_report import deliver
+
+		self.db_set("attempts", 0)
+		self.db_set("last_error", None)
+
+		if self.payload:
+			payload = json.loads(self.payload)
+		else:
+			payload = {}
+
+		deliver(self.name, self.event_type, payload, self.occurred_at)
