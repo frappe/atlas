@@ -404,22 +404,18 @@ class TestVirtualMachineLifecycle(IntegrationTestCase):
 		self.assertEqual(vm.cpu_mode, "Relaxed", "cpu_mode is untouched unless passed")
 
 	def test_snapshot_defaults_title_when_omitted(self) -> None:
-		from atlas.atlas.doctype.virtual_machine import virtual_machine as module
-
 		vm = _vm_with_status("Stopped")
 		vm.db_set("title", "web-01")
 		task = fake_task(stdout='ATLAS_RESULT={"size_bytes": 123}')
-		with patch.object(module, "run_task", return_value=task):
+		with patch("atlas.atlas.vm_images.run_task", return_value=task):
 			snapshot_name = vm.snapshot()  # no title
 		title = frappe.db.get_value("Virtual Machine Snapshot", snapshot_name, "title")
 		self.assertTrue(title.startswith("web-01 — "), title)
 
 	def test_snapshot_uses_given_title(self) -> None:
-		from atlas.atlas.doctype.virtual_machine import virtual_machine as module
-
 		vm = _vm_with_status("Stopped")
 		task = fake_task(stdout='ATLAS_RESULT={"size_bytes": 123}')
-		with patch.object(module, "run_task", return_value=task):
+		with patch("atlas.atlas.vm_images.run_task", return_value=task):
 			snapshot_name = vm.snapshot("nightly")
 		title = frappe.db.get_value("Virtual Machine Snapshot", snapshot_name, "title")
 		self.assertEqual(title, "nightly")

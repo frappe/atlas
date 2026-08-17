@@ -20,9 +20,9 @@ def _stopped_vm() -> "frappe.model.document.Document":
 
 
 def _make_snapshot(vm) -> "frappe.model.document.Document":
-	from atlas.atlas.doctype.virtual_machine import virtual_machine as module
-
-	with patch.object(module, "run_task", return_value=fake_task(stdout='ATLAS_RESULT={"size_bytes": 1024}')):
+	with patch(
+		"atlas.atlas.vm_images.run_task", return_value=fake_task(stdout='ATLAS_RESULT={"size_bytes": 1024}')
+	):
 		name = vm.snapshot("snap")
 	return frappe.get_doc("Virtual Machine Snapshot", name)
 
@@ -187,9 +187,8 @@ class TestVirtualMachineSnapshot(IntegrationTestCase):
 		source = _new_vm(data_disk_gigabytes=2, data_disk_format_and_mount=1, data_disk_mount_point="/home")
 		source.db_set("status", "Stopped")
 		source.reload()
-		with patch.object(
-			vm_module,
-			"run_task",
+		with patch(
+			"atlas.atlas.vm_images.run_task",
 			return_value=fake_task(stdout='ATLAS_RESULT={"size_bytes": 1024, "data_size_bytes": 2048}'),
 		):
 			snapshot = frappe.get_doc("Virtual Machine Snapshot", source.snapshot("snap-data"))
@@ -209,15 +208,13 @@ class TestVirtualMachineSnapshot(IntegrationTestCase):
 		self.assertEqual(variables["DATA_DISK_GB"], "2")
 
 	def test_on_trash_removes_data_snapshot_lv(self) -> None:
-		from atlas.atlas.doctype.virtual_machine import virtual_machine as vm_module
 		from atlas.atlas.doctype.virtual_machine_snapshot import virtual_machine_snapshot as module
 
 		source = _new_vm(data_disk_gigabytes=2)
 		source.db_set("status", "Stopped")
 		source.reload()
-		with patch.object(
-			vm_module,
-			"run_task",
+		with patch(
+			"atlas.atlas.vm_images.run_task",
 			return_value=fake_task(stdout='ATLAS_RESULT={"size_bytes": 1, "data_size_bytes": 2}'),
 		):
 			snapshot = frappe.get_doc("Virtual Machine Snapshot", source.snapshot("doomed-data"))
@@ -361,15 +358,13 @@ class TestVirtualMachineSnapshot(IntegrationTestCase):
 		# Promote is root-only: a base image has no data-disk fields, so promoting a
 		# data-disk snapshot would silently drop the data. Reject loudly before any
 		# host work — clone instead to keep the data disk.
-		from atlas.atlas.doctype.virtual_machine import virtual_machine as vm_module
 		from atlas.atlas.doctype.virtual_machine_snapshot import virtual_machine_snapshot as module
 
 		source = _new_vm(data_disk_gigabytes=2)
 		source.db_set("status", "Stopped")
 		source.reload()
-		with patch.object(
-			vm_module,
-			"run_task",
+		with patch(
+			"atlas.atlas.vm_images.run_task",
 			return_value=fake_task(stdout='ATLAS_RESULT={"size_bytes": 1, "data_size_bytes": 2}'),
 		):
 			snapshot = frappe.get_doc("Virtual Machine Snapshot", source.snapshot("snap-with-data"))
