@@ -292,7 +292,7 @@ def check_networkd_liveness() -> list[str]:
 
 	Unhealthy hosts are surfaced the way the codebase already surfaces problems:
 	a WARNING on the `atlas` logger plus a Frappe Error Log (`frappe.log_error`)
-	per host, mirroring `central_report` / `satellite_events`. Resilient by
+	per host, mirroring `central_report`. Resilient by
 	design — each host is probed under its own try/except, so one unreachable
 	host (SSH timeout, no ipv4) never aborts the sweep for the rest.
 
