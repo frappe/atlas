@@ -19,6 +19,12 @@ build-backend = "flit_core.buildapi"
 # These dependencies are only installed when developer mode is enabled
 [tool.bench.dev-dependencies]
 # package_name = "~=1.1.0"
+# Optional tools for the readability lint gate (.github/scripts/lint_gate.py): the
+# maintainability-index and cognitive-complexity checks. The gate degrades gracefully
+# when they are absent (the ruff + module-length checks still run), so these are a
+# convenience for running the full gate locally — CI installs them explicitly.
+radon = ">=5.1.0"
+flake8-cognitive-complexity = ">=0.1.0"
 
 # These apt dependencies will be installed from Ubuntu repositories when you host your app on Frappe Cloud
 [deploy.dependencies.apt]
@@ -29,6 +35,11 @@ line-length = 110
 target-version = "py314"
 
 [tool.ruff.lint]
+# NOTE: the readability complexity/size gates (mccabe C901, pylint PLR09xx, nesting
+# PLR1702, module length) are deliberately NOT in this enforced `select` — turning
+# them on here would fail CI on the whole pre-existing backlog. They run instead as a
+# delta-gate against a checked-in baseline (.github/scripts/lint_gate.py, wired into
+# the "Readability lint gate" job in linter.yml) that fails only on NEW violations.
 select = [
     "F",
     "E",

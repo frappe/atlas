@@ -33,6 +33,29 @@ jobs:
           pip install semgrep
           semgrep ci --config ./frappe-semgrep-rules/rules --config r/python.lang.correctness
 
+  readability-gate:
+    name: 'Readability lint gate'
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.14'
+          cache: pip
+
+      # The complexity/size gates are kept OUT of the enforced ruff select (that
+      # would fail on the whole pre-existing backlog); this job runs them against a
+      # checked-in baseline and fails only on NEW violations. ruff is pinned to the
+      # version the baseline was recorded with so the counts are reproducible; radon
+      # and flake8-cognitive-complexity add the maintainability-index / cognitive gates.
+      - name: Install lint tools
+        run: pip install ruff==0.15.11 radon flake8 flake8-cognitive-complexity
+
+      - name: Readability delta-gate (fail only on NEW complexity/size violations)
+        run: python .github/scripts/lint_gate.py
+
   deps-vulnerable-check:
     name: 'Vulnerable Dependency Check'
     runs-on: ubuntu-latest
