@@ -32,6 +32,23 @@ BOAT_TOKEN_PATH = "/etc/boat/token"
 BOAT_TOKEN_TTL_DAYS = 30
 BOAT_TOKEN_REMINT_WITHIN_DAYS = 7
 
+# Host paths. The binary is staged in its OWN directory (see install_boat step 3
+# for why the rename has to stay on one filesystem); the rest stage under
+# /var/lib/atlas/boat, where they also serve as the record of what was installed.
+BOAT_BINARY = "/usr/local/bin/boat"
+BOAT_INCOMING_BINARY = f"{BOAT_BINARY}.incoming"
+BOAT_STAGING_DIRECTORY = "/var/lib/atlas/boat"
+BOAT_ARTIFACTS: list[tuple[str, str]] = [
+	("bin/boat", BOAT_INCOMING_BINARY),
+	("sudoers.d/boat", f"{BOAT_STAGING_DIRECTORY}/sudoers"),
+	("systemd/boat.service", f"{BOAT_STAGING_DIRECTORY}/boat.service"),
+	("systemd/boat-networkd.service", f"{BOAT_STAGING_DIRECTORY}/boat-networkd.service"),
+]
+
+# Host paths for the boat systemd drop-in and the datum token bundle.
+DATUM_TOKENS_PATH = "/etc/boat/datum-tokens.json"
+BOAT_DROPIN_PATH = "/etc/systemd/system/boat.service.d/10-boat.conf"
+
 
 def mint_boat_token(server) -> str:
 	"""Mint this host's bearer token and stamp its hard expiry (spec/33 §12).
@@ -168,3 +185,148 @@ def start_boat(server, connection) -> None:
 		server._boat_ssh(
 			connection, key_path, "boat.service did not stay up", "sudo systemctl is-active boat.service"
 		)
+
+
+def install_boat(server, connection) -> None:
+	"""Install the boat binary, its allow-list, its service user and its units —
+	the step that makes `boat <verb>` a command this host has. Runs after the
+	upload (which staged all four artifacts) and before install.sh, whose last
+	gate is `command -v boat`.
+
+	THE ORDER IS THE POINT, and it is deliberately not the boat README's:
+
+	  1. the `boat` system user. Both units run as it and every line of the
+	     allow-list grants to it by name, so nothing below means anything until
+	     it exists. Idempotent: a re-bootstrap finds it and adds nothing.
+	  2. `visudo -cf` the STAGED allow-list, and only then `install` it 0440
+	     root:root. Validate-then-install, never the README's reverse: a sudoers
+	     file sudo cannot parse does not merely disable boat's grants, it takes
+	     out the whole /etc/sudoers.d directory — the boat user ends up with no
+	     grants at all and every verb on the host fails at once. Checking the
+	     staged copy means an invalid file never reaches /etc.
+	  3. the binary, renamed into place from a staging name in the SAME
+	     directory. `mv` within one filesystem is rename(2), so a process that
+	     execs /usr/local/bin/boat mid-install gets the whole old inode or the
+	     whole new one and never a half-written file — and a running daemon
+	     keeps its own open inode until it is restarted. That is
+	     internal/update's Install reasoning, and the same reason it stages
+	     inside /usr/local/bin rather than in /tmp.
+	  4. the two units, then `daemon-reload`: systemd has to be told about a
+	     unit file before anything asks it to start one.
+
+	Starting boat.service is NOT here — see start_boat for why it waits.
+	"""
+	digest = server._staged_boat_digest()
+	steps = [
+		(
+			"creating the boat service user",
+			"id boat >/dev/null 2>&1 || sudo useradd --system --home-dir /var/lib/boat "
+			"--shell /usr/sbin/nologin boat",
+		),
+		("checking the sudoers allow-list", f"sudo visudo -cf {BOAT_STAGING_DIRECTORY}/sudoers"),
+		(
+			"installing the sudoers allow-list",
+			f"sudo install -m 0440 -o root -g root {BOAT_STAGING_DIRECTORY}/sudoers /etc/sudoers.d/boat",
+		),
+		(
+			"installing the boat binary",
+			f"sudo chmod 0755 {BOAT_INCOMING_BINARY} && sudo mv -f {BOAT_INCOMING_BINARY} {BOAT_BINARY}",
+		),
+		(
+			"installing boat.service",
+			f"sudo install -m 0644 {BOAT_STAGING_DIRECTORY}/boat.service "
+			"/etc/systemd/system/boat.service",
+		),
+		(
+			"installing boat-networkd.service",
+			f"sudo install -m 0644 {BOAT_STAGING_DIRECTORY}/boat-networkd.service "
+			"/etc/systemd/system/boat-networkd.service",
+		),
+		("reloading systemd", "sudo systemctl daemon-reload"),
+	]
+	with ssh_key_file(connection.ssh_private_key) as key_path:
+		for description, command in steps:
+			server._boat_ssh(connection, key_path, description, command)
+		# Give boat its HTTP listener. The shipped unit omits --listen on purpose
+		# (it awaits a registration handshake that hands over a tunnel address);
+		# until that exists, Atlas — the operator the unit defers to — writes the
+		# drop-in so the daemon serves the network API every HTTP host verb needs.
+		# Written before the token install; start_boat's restart (after the token
+		# lands) is what brings the listener up.
+		server._boat_ssh(
+			connection,
+			key_path,
+			"installing the boat listener drop-in",
+			f"sudo install -D -m 0644 -o root -g root /dev/stdin {BOAT_DROPIN_PATH}",
+			stdin=server._boat_dropin_contents(),
+		)
+		server._boat_ssh(
+			connection,
+			key_path,
+			"reloading systemd for the boat drop-in",
+			"sudo systemctl daemon-reload",
+		)
+		verify_boat_binary(server, connection, key_path, digest)
+		# The bearer token last: it is a per-host secret, minted here and written
+		# to /etc/boat/token, not one of the four static artifacts the tar stream
+		# carried. start_boat's restart reads it.
+		install_boat_token(server, connection, key_path)
+		# The datum token bundle + its drop-in, when metrics export is configured. A
+		# no-op otherwise, so a fleet without datum installs nothing extra.
+		install_datum_tokens(server, connection, key_path)
+
+
+def verify_boat_binary(server, connection, key_path, digest: str) -> None:
+	"""Prove the binary that landed is the one Atlas shipped, and that it runs.
+
+	Two different failures, both silent without this: bytes that changed in
+	flight (the digest), and a binary built for another architecture or a
+	non-executable file (`boat version`, which is also the only way Atlas can
+	learn the version — it cannot run a host's binary locally). The answer lands
+	on `observed_boat_version` so the field records what was installed at
+	install time rather than only what a later mirror sweep happened to see."""
+	landed = server._boat_ssh(
+		connection, key_path, "reading the installed digest", f"sha256sum {BOAT_BINARY}"
+	)
+	if landed.split()[:1] != [digest]:
+		frappe.throw(
+			f"boat on {server.name} is not the binary Atlas shipped: the host reports "
+			f"{landed.split()[0] if landed.split() else '(nothing)'}, Atlas shipped {digest}"
+		)
+	version = server._boat_ssh(
+		connection, key_path, "running boat version", f"{BOAT_BINARY} version"
+	).strip()
+	if not version:
+		frappe.throw(f"`boat version` on {server.name} printed nothing; the binary is not usable")
+	server.observed_boat_version = version
+
+
+def install_datum_tokens(server, connection, key_path) -> None:
+	"""Ship this host's datum token bundle and the drop-in that points boat at datum.
+	A no-op when metrics export is not configured (no atlas_datum_url), so a fleet that
+	has not turned datum on installs nothing. The bundle is a single fleet token (resource_id="boat")
+	with an empty VM map — host and VMs both report under it, told apart by server=/vm= labels; a
+	static `atlas_datum_token` from site config is used when present, else a token is minted. The
+	secret travels on stdin, never argv."""
+	if not frappe.conf.get("atlas_datum_url"):
+		return
+	from atlas.atlas import datum_token
+
+	payload = datum_token.single_token_file_json()
+	server._boat_ssh(
+		connection,
+		key_path,
+		"installing the datum tokens",
+		f"sudo install -D -m 0640 -o root -g boat /dev/stdin {DATUM_TOKENS_PATH}",
+		stdin=payload,
+	)
+	# Rewrite the SINGLE boat drop-in (it folds datum flags in alongside --listen),
+	# so turning datum on post-bootstrap keeps the network listener.
+	server._boat_ssh(
+		connection,
+		key_path,
+		"installing the boat systemd drop-in (with datum)",
+		f"sudo install -D -m 0644 -o root -g root /dev/stdin {BOAT_DROPIN_PATH}",
+		stdin=server._boat_dropin_contents(),
+	)
+	server._boat_ssh(connection, key_path, "reloading systemd for datum", "sudo systemctl daemon-reload")
