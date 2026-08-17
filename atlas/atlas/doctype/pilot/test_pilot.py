@@ -260,7 +260,7 @@ class TestPilot(IntegrationTestCase):
 		# The Fake server short-circuits _deploy before it reaches deploy_site (both are
 		# imported inside the function, so patch them at their source modules).
 		with (
-			patch("atlas.atlas.providers.fake_tasks.is_fake_server", return_value=False),
+			patch("atlas.atlas.core.providers.fake_tasks.is_fake_server", return_value=False),
 			patch("atlas.atlas.services.deploy_site.deploy_site", return_value={}) as m_deploy,
 		):
 			pilot_module._deploy(pilot)

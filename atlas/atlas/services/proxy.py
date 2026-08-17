@@ -20,16 +20,16 @@ import shlex
 
 import frappe
 
-from atlas.atlas._ssh._quote import substitute
-from atlas.atlas._ssh.transport import run_ssh, ssh_key_file
+from atlas.atlas.core._ssh._quote import substitute
+from atlas.atlas.core._ssh.transport import run_ssh, ssh_key_file
 from atlas.atlas.core.guest_tasks import _record_guest_task
+from atlas.atlas.core.placement import atlas_region
+from atlas.atlas.core.ssh import connection_for_guest
 from atlas.atlas.doctype.custom_domain.custom_domain import (
 	custom_domain_acme_map,
 	custom_domain_sni_map,
 )
 from atlas.atlas.doctype.subdomain.subdomain import subdomain_map
-from atlas.atlas.placement import atlas_region
-from atlas.atlas.ssh import connection_for_guest
 
 # Paths mirror the stock Ubuntu `nginx` package (config /etc/nginx, state
 # /var/lib/nginx, socket /run/nginx, binary /usr/sbin/nginx) so the guest looks
@@ -334,8 +334,8 @@ def build_proxy(virtual_machine: str) -> None:
 
 	Recorded as a `proxy-build` Task row for the audit trail, like every guest op.
 	"""
-	from atlas.atlas.image_builder import run_build
-	from atlas.atlas.image_recipes import get_recipe
+	from atlas.atlas.core.image_builder import run_build
+	from atlas.atlas.core.image_recipes import get_recipe
 
 	vm = frappe.get_doc("Virtual Machine", virtual_machine)
 	if not vm.is_proxy:

@@ -22,7 +22,7 @@ from unittest.mock import patch
 import frappe
 from frappe.tests import IntegrationTestCase
 
-from atlas.atlas.networking import CLIENT_HEXTET, derive_client_address, derive_tenant_prefix
+from atlas.atlas.core.networking import CLIENT_HEXTET, derive_client_address, derive_tenant_prefix
 from atlas.atlas.services import customer_gateway
 from atlas.tests.fixtures import make_image, make_provider, make_server, make_virtual_machine
 

@@ -14,7 +14,7 @@ import pathlib
 
 from frappe.tests import IntegrationTestCase
 
-from atlas.atlas import sizes
+from atlas.atlas.core import sizes
 
 _VM_JSON = (
 	pathlib.Path(__file__).resolve().parents[1]

@@ -29,7 +29,7 @@ import json
 
 import frappe
 
-from atlas.atlas.placement import active_root_domain
+from atlas.atlas.core.placement import active_root_domain
 from atlas.atlas.services import proxy
 from atlas.tests import _routing_host_run as hr
 
@@ -42,8 +42,8 @@ def _guest(vm_name: str, command: str, timeout: int = 120):
 
 
 def _read_live_map(proxy_vm_name: str) -> dict:
-	from atlas.atlas._ssh.transport import run_ssh, ssh_key_file
-	from atlas.atlas.ssh import connection_for_guest
+	from atlas.atlas.core._ssh.transport import run_ssh, ssh_key_file
+	from atlas.atlas.core.ssh import connection_for_guest
 
 	vm = frappe.get_doc("Virtual Machine", proxy_vm_name)
 	connection = connection_for_guest(vm)

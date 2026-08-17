@@ -46,7 +46,7 @@ CLIENT_DEVICE = "vpc-e2e"
 
 
 def host_shell(server_name: str, command: str, timeout: int = 40) -> str:
-	from atlas.atlas.ssh import connection_for_server, run_ssh, ssh_key_file
+	from atlas.atlas.core.ssh import connection_for_server, run_ssh, ssh_key_file
 
 	conn = connection_for_server(frappe.get_doc("Server", server_name))
 	with ssh_key_file(conn.ssh_private_key) as key_path:
@@ -233,7 +233,7 @@ def _purge_known_host(address: str) -> None:
 	new key. A no-op in production, where /128s don't recycle like this."""
 	import subprocess
 
-	from atlas.atlas._ssh.transport import KNOWN_HOSTS_PATH
+	from atlas.atlas.core._ssh.transport import KNOWN_HOSTS_PATH
 
 	if KNOWN_HOSTS_PATH.exists():
 		subprocess.run(["ssh-keygen", "-f", str(KNOWN_HOSTS_PATH), "-R", address], capture_output=True)
@@ -260,7 +260,7 @@ def _deploy_and_assert_gateway(gateway) -> None:
 
 def _guest_shell(vm, command: str, timeout: int = 60) -> str:
 	"""Run a command inside a guest VM over guest-SSH (the controller connection)."""
-	from atlas.atlas.ssh import connection_for_guest, run_ssh, ssh_key_file
+	from atlas.atlas.core.ssh import connection_for_guest, run_ssh, ssh_key_file
 
 	conn = connection_for_guest(vm if hasattr(vm, "name") else frappe.get_doc("Virtual Machine", vm))
 	with ssh_key_file(conn.ssh_private_key) as key_path:

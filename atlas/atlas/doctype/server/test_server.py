@@ -7,8 +7,8 @@ import frappe
 from frappe.model.document import Document
 from frappe.tests import IntegrationTestCase
 
-from atlas.atlas.networking import carve_virtual_machine_range
-from atlas.atlas.ssh import Connection
+from atlas.atlas.core.networking import carve_virtual_machine_range
+from atlas.atlas.core.ssh import Connection
 from atlas.tests._mocks import fake_task
 from atlas.tests.fixtures import make_provider, make_server
 
@@ -269,7 +269,7 @@ class TestServerBootstrap(IntegrationTestCase):
 	def test_script_uploads_ship_task_entry_scripts_durably(self) -> None:
 		# The Task entry scripts (provision/start/stop/snapshot-stop) ship to
 		# /var/lib/atlas/bin so the runner invokes them in place — no per-Task scp.
-		from atlas.atlas import scripts_catalog
+		from atlas.atlas.core import scripts_catalog
 
 		destinations = {dest for _src, dest in self.server._script_uploads()}
 		# host_task_scripts() yields VERBS; the FILE (verb→file_for, keeping its
@@ -336,7 +336,7 @@ class TestServerBootstrap(IntegrationTestCase):
 		self.assertIn("Cannot bootstrap", str(raised.exception))
 
 	def test_get_scripts_returns_operator_visible_scripts(self) -> None:
-		from atlas.atlas import scripts_catalog
+		from atlas.atlas.core import scripts_catalog
 
 		entries = self.server.get_scripts()
 		# Each entry carries name + intro + fields so the desk Run Task
@@ -455,14 +455,14 @@ class TestServerRecover(IntegrationTestCase):
 		# A Pending row with a vendor id but NULL IPs (the lost-job case) — recover()
 		# must re-enqueue finish_provisioning, not run bootstrap directly.
 		server = self._server("Pending")
-		with patch("atlas.atlas.providers.worker.enqueue_finish_provisioning", return_value=True) as enqueue:
+		with patch("atlas.atlas.core.providers.worker.enqueue_finish_provisioning", return_value=True) as enqueue:
 			result = server.recover()
 		self.assertTrue(result)
 		enqueue.assert_called_once_with(server.name)
 
 	def test_recover_reports_already_in_flight(self) -> None:
 		server = self._server("Bootstrapping")
-		with patch("atlas.atlas.providers.worker.enqueue_finish_provisioning", return_value=False):
+		with patch("atlas.atlas.core.providers.worker.enqueue_finish_provisioning", return_value=False):
 			self.assertFalse(server.recover())
 
 	def test_recover_rejects_active(self) -> None:
@@ -600,8 +600,8 @@ class TestServerSigningKeyBackfill(IntegrationTestCase):
 		self.assertTrue(filled.get_password("signing_private_key", raise_exception=False))
 
 	def test_seed_build_skips_a_peer_with_an_empty_signing_key(self) -> None:
+		from atlas.atlas.core.networking import generate_host_signing_keypair
 		from atlas.atlas.doctype.server import server as server_module
-		from atlas.atlas.networking import generate_host_signing_keypair
 
 		# The host being bootstrapped — give it a real keypair (persisted, since
 		# the seed query and the priv-push read it back from the DB).
@@ -746,7 +746,7 @@ class TestServerBoatToken(IntegrationTestCase):
 		return make_server(self.provider, "test-server-token", provider_resource_id="77", status="Active")
 
 	def test_mint_stores_the_token_encrypted_and_stamps_a_future_expiry(self) -> None:
-		from atlas.atlas import server_boat
+		from atlas.atlas.core import server_boat
 
 		server = self._server()
 		token = server.mint_boat_token()
@@ -766,7 +766,7 @@ class TestServerBoatToken(IntegrationTestCase):
 		self.assertEqual(server._current_or_minted_boat_token(), first)
 
 	def test_current_or_minted_remints_inside_the_expiry_window(self) -> None:
-		from atlas.atlas import server_boat
+		from atlas.atlas.core import server_boat
 
 		server = self._server()
 		first = server.mint_boat_token()
@@ -783,7 +783,7 @@ class TestServerBoatToken(IntegrationTestCase):
 		self.assertEqual(server.get_password("boat_token", raise_exception=False), second)
 
 	def test_token_for_server_prefers_the_minted_row_over_config(self) -> None:
-		from atlas.atlas.boat_client import token_for_server
+		from atlas.atlas.core.boat_client import token_for_server
 
 		server = self._server()
 		token = server.mint_boat_token()
@@ -791,7 +791,7 @@ class TestServerBoatToken(IntegrationTestCase):
 			self.assertEqual(token_for_server(server.name), token)
 
 	def test_token_for_server_falls_back_to_config_when_unminted(self) -> None:
-		from atlas.atlas.boat_client import token_for_server
+		from atlas.atlas.core.boat_client import token_for_server
 
 		server = self._server()  # never minted
 		with patch.dict(frappe.conf, {"atlas_boat_token": "the-config-fallback"}):

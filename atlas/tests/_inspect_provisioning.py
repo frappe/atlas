@@ -6,7 +6,7 @@ def run():
 
 	Used to decide whether/where to provision a server for UI-test capacity.
 	"""
-	from atlas.atlas.setup_catalog import default_name
+	from atlas.atlas.core.setup_catalog import default_name
 
 	s = frappe.get_single("DigitalOcean Settings")
 	token = s.get_password("api_token", raise_exception=False)

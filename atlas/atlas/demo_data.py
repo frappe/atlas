@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import frappe
 
-from atlas.atlas.sizes import SIZE_PRESETS
+from atlas.atlas.core.sizes import SIZE_PRESETS
 
 # --- Static data ---------------------------------------------------------
 
@@ -217,8 +217,8 @@ def delete_demo_images() -> None:
 
 
 def ensure_servers(active_provider_type: str) -> dict[str, str]:
-	from atlas.atlas.providers.worker import finish_provisioning
-	from atlas.atlas.provisioning import provision_server
+	from atlas.atlas.core.providers.worker import finish_provisioning
+	from atlas.atlas.core.provisioning import provision_server
 
 	result: dict[str, str] = {}
 	for key, (title, final_status) in SERVERS.items():
@@ -242,7 +242,7 @@ def _ensure_self_managed_server() -> str:
 	provider_type, so the demo shows two vendor types even though only Fake is the
 	active vendor. Provisioned directly through the provisioning helper, not the
 	active-vendor path."""
-	from atlas.atlas.provisioning import provision_server
+	from atlas.atlas.core.provisioning import provision_server
 
 	existing = frappe.db.get_value("Server", {"title": SELF_MANAGED_SERVER["title"]}, "name")
 	if existing:

@@ -9,7 +9,7 @@ from unittest.mock import patch
 import frappe
 from frappe.tests import IntegrationTestCase
 
-from atlas.atlas import export as export_module
+from atlas.atlas.core import export as export_module
 from atlas.atlas.doctype.virtual_machine_image_export.virtual_machine_image_export import (
 	active_export_for,
 )

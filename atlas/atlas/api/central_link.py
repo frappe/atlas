@@ -24,8 +24,8 @@ from __future__ import annotations
 
 import frappe
 
-from atlas.atlas.local_task import run_local_task
-from atlas.atlas.task_results import parse_result
+from atlas.atlas.core.local_task import run_local_task
+from atlas.atlas.core.task_results import parse_result
 
 # The spoke private key lives 0600 at this path; tunnel-up.py generates it if absent
 # (sudoers pins cat/install on /etc/wireguard/*) and reuses it on re-provision, so this

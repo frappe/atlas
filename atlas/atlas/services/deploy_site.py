@@ -3,7 +3,7 @@ Frappe site, and the HTTP readiness gate that proves it (Contract B).
 
 This is the controller side of the in-guest deploy (spec/14-self-serve.md), the
 seam `atlas.atlas.doctype.site.site` imports (`deploy_site`, `wait_for_http`). It
-is the sibling of `atlas.atlas.bench_image.build_bench`: drive an in-guest script
+is the sibling of `atlas.atlas.core.bench_image.build_bench`: drive an in-guest script
 over the SAME SSH-to-the-guest path (`connection_for_guest`), recording the op as
 a Task row. Where `build_bench` runs the heavy, per-site-INVARIANT bake
 (bench-cli + `bench init` + a baked `site.local`, brought up + frozen serving),
@@ -36,10 +36,10 @@ from pathlib import Path
 
 import frappe
 
-from atlas.atlas._ssh._quote import substitute
-from atlas.atlas._ssh.transport import run_scp, run_ssh, ssh_key_file, wait_for_ssh
+from atlas.atlas.core._ssh._quote import substitute
+from atlas.atlas.core._ssh.transport import run_scp, run_ssh, ssh_key_file, wait_for_ssh
 from atlas.atlas.core.guest_tasks import _record_guest_task, _remote_parent
-from atlas.atlas.ssh import connection_for_guest
+from atlas.atlas.core.ssh import connection_for_guest
 
 # The committed deploy script ships in the repo's top-level `bench/` dir beside
 # build.sh. A site VM is a CLONE of the golden snapshot, taken AFTER build.sh's

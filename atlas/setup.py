@@ -351,8 +351,8 @@ def _seed_fake_catalog() -> None:
 	Fake has no vendor Single, so neither `run()` nor the wizard's `_stage_provider`
 	writes one — but the Provision dialog still needs catalog rows. Seed them at
 	setup time (the desk Refresh Catalog button does the same later)."""
-	from atlas.atlas import provisioning
-	from atlas.atlas.providers.fake import FakeProvider
+	from atlas.atlas.core import provisioning
+	from atlas.atlas.core.providers.fake import FakeProvider
 
 	provisioning.upsert_catalog("Fake", FakeProvider().discover())
 
@@ -485,8 +485,8 @@ def _persist_catalog(provider_type: str, sizes, images) -> None:
 	button drives. Best-effort: a write hiccup must NOT turn a successful probe into
 	a red toast, so swallow + log rather than propagate (this whole path never
 	tracebacks at the operator)."""
-	from atlas.atlas import provisioning
-	from atlas.atlas.providers.base import Capabilities
+	from atlas.atlas.core import provisioning
+	from atlas.atlas.core.providers.base import Capabilities
 
 	try:
 		provisioning.upsert_catalog(provider_type, Capabilities(sizes=tuple(sizes), images=tuple(images)))
@@ -495,9 +495,9 @@ def _persist_catalog(provider_type: str, sizes, images) -> None:
 
 
 def _discover_digitalocean(credentials: dict) -> dict:
-	from atlas.atlas.digitalocean import DigitalOceanClient
-	from atlas.atlas.providers.base import ImageInfo, SizeInfo
-	from atlas.atlas.providers.digitalocean import (
+	from atlas.atlas.core.digitalocean import DigitalOceanClient
+	from atlas.atlas.core.providers.base import ImageInfo, SizeInfo
+	from atlas.atlas.core.providers.digitalocean import (
 		DIGITALOCEAN_MONTHLY_COST_USD,
 		KNOWN_DIGITALOCEAN_IMAGES,
 		KNOWN_DIGITALOCEAN_SIZES,
@@ -558,8 +558,8 @@ def _discover_digitalocean(credentials: dict) -> dict:
 
 
 def _discover_scaleway(credentials: dict) -> dict:
-	from atlas.atlas.providers.scaleway import _image_from_os, _size_from_offer
-	from atlas.atlas.scaleway import ScalewayClient
+	from atlas.atlas.core.providers.scaleway import _image_from_os, _size_from_offer
+	from atlas.atlas.core.scaleway import ScalewayClient
 
 	result = {
 		"ok": False,
@@ -615,7 +615,7 @@ def _scw_ensure_ssh_key(client, keys: list[dict], public_key: str, project_id: s
 	Matched on the `<type> <base64>` identity (the same primitive the provider's
 	`_find_ssh_key_id` uses) against the project's already-listed `keys`, so a differing
 	comment doesn't cause a duplicate upload."""
-	from atlas.atlas.providers.scaleway import _ssh_key_identity
+	from atlas.atlas.core.providers.scaleway import _ssh_key_identity
 
 	wanted = _ssh_key_identity(public_key)
 	for key in keys:

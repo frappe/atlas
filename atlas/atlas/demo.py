@@ -26,7 +26,7 @@ from __future__ import annotations
 import frappe
 
 from atlas.atlas import demo_data
-from atlas.atlas.providers.fake import FAKE_PROVIDER_TYPE, require_developer_mode
+from atlas.atlas.core.providers.fake import FAKE_PROVIDER_TYPE, require_developer_mode
 
 # The active compute vendor for the demo. Servers march Pending → Active through
 # the real (faked) worker. The demo also stands up a Self-Managed host directly —

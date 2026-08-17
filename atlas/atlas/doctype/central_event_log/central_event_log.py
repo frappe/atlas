@@ -31,7 +31,7 @@ class CentralEventLog(Document):
 	even for a reverted change — without ever delivering that reverted change to
 	Central (the after-commit deliver job never runs, so the row stays `pending`).
 
-	`atlas.atlas.central_report` is the sole writer: `_emit` inserts the row at
+	`atlas.atlas.core.central_report` is the sole writer: `_emit` inserts the row at
 	`pending`; `deliver` (and its `_stamp` helper) updates `status` / `attempts` /
 	`last_error` / `http_status` on the delivery outcome. No controller logic lives
 	here — the durability argument rests entirely on the table engine, asserted at

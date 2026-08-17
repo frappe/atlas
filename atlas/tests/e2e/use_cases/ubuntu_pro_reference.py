@@ -40,8 +40,8 @@ don't run a full hardening audit yet.
 
 import frappe
 
-from atlas.atlas._ssh.transport import run_ssh, ssh_key_file
-from atlas.atlas.ssh import connection_for_guest, wait_for_ssh
+from atlas.atlas.core._ssh.transport import run_ssh, ssh_key_file
+from atlas.atlas.core.ssh import connection_for_guest, wait_for_ssh
 from atlas.tests.e2e._config import control_plane_public_key, ephemeral_public_key
 from atlas.tests.e2e._tasks import wait_for_vm_running
 

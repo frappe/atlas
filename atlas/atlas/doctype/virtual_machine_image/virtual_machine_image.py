@@ -263,7 +263,7 @@ def _enqueue_sync_image_task(server_name: str, variables: dict) -> str:
 	frappe.db.commit()
 
 	frappe.enqueue(
-		"atlas.atlas.ssh.execute_task",
+		"atlas.atlas.core.ssh.execute_task",
 		queue="long",
 		timeout=1800,
 		task_name=task.name,

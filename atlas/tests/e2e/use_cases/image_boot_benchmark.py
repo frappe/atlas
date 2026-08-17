@@ -50,7 +50,7 @@ import traceback
 
 import frappe
 
-from atlas.atlas.ssh import connection_for_server, run_ssh, ssh_key_file
+from atlas.atlas.core.ssh import connection_for_server, run_ssh, ssh_key_file
 from atlas.tests.e2e._config import ephemeral_private_key, ephemeral_public_key
 
 OLD_IMAGE = "ubuntu-24.04"

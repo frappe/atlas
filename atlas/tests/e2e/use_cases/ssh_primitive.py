@@ -18,15 +18,15 @@ ride along on this entry point.
 
 import frappe
 
-from atlas.atlas._ssh.runner import connection_for_server, execute_task, run_task
-from atlas.atlas._ssh.transport import (
+from atlas.atlas.core._ssh.runner import connection_for_server, execute_task, run_task
+from atlas.atlas.core._ssh.transport import (
 	Connection,
 	run_scp,
 	ssh_key_file,
 	upload_files,
 	wait_for_ssh,
 )
-from atlas.atlas.ssh import connection_for_server as public_connection_for_server
+from atlas.atlas.core.ssh import connection_for_server as public_connection_for_server
 from atlas.tests.e2e._shared import expect_validation_error, phase
 
 

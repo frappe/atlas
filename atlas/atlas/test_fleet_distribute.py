@@ -1,4 +1,4 @@
-"""Unit tests for atlas.atlas.fleet_distribute — fanning a LOCAL base image out to
+"""Unit tests for atlas.atlas.core.fleet_distribute — fanning a LOCAL base image out to
 the fleet over HTTP (squash on the home host → serve over the mesh → sync-image
 fan-out; the kernel is inherited from the promote provenance, not transferred).
 
@@ -15,7 +15,7 @@ from unittest.mock import patch
 import frappe
 from frappe.tests import IntegrationTestCase
 
-from atlas.atlas import fleet_distribute
+from atlas.atlas.core import fleet_distribute
 from atlas.tests import fixtures
 from atlas.tests.fixtures import no_commit_enqueue
 

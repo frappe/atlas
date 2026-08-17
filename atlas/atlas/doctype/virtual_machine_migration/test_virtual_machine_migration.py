@@ -8,8 +8,8 @@ from unittest.mock import patch
 import frappe
 from frappe.tests import IntegrationTestCase
 
-from atlas.atlas import migration as migration_module
-from atlas.atlas import migration_forward, migration_layout, migration_preflight
+from atlas.atlas.core import migration as migration_module
+from atlas.atlas.core import migration_forward, migration_layout, migration_preflight
 from atlas.atlas.doctype.virtual_machine import virtual_machine as vm_module
 from atlas.atlas.doctype.virtual_machine_migration.virtual_machine_migration import (
 	active_migration_for,
@@ -52,7 +52,7 @@ class TestMigrationPure(IntegrationTestCase):
 		self.assertTrue(10000 <= port < 15000)
 
 	def test_vm_tunnel_helpers_are_stable_and_safe(self) -> None:
-		from atlas.atlas import networking
+		from atlas.atlas.core import networking
 
 		uuid = "5d0943c8-4e43-48ad-b652-3f181e22fc4d"
 		device = networking.derive_vm_tunnel(uuid)
@@ -369,13 +369,13 @@ class TestAddressSchemeDerivation(IntegrationTestCase):
 		).insert(ignore_permissions=True)
 
 	def _with_forwardable(self, forwardable: bool):
-		import atlas.atlas.providers as providers_module
+		import atlas.atlas.core.providers as providers_module
 
 		class _Stub:
 			def vm_range_is_forwardable(self, _resource):
 				return forwardable
 
-		# _will_keep_address does a local `from atlas.atlas.providers import
+		# _will_keep_address does a local `from atlas.atlas.core.providers import
 		# for_provider_type`, so patch it at its source module.
 		return patch.object(providers_module, "for_provider_type", return_value=_Stub())
 

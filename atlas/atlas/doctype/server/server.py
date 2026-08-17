@@ -10,11 +10,11 @@ import frappe
 from frappe import _
 from frappe.model.document import Document
 
-from atlas.atlas import scripts_catalog, server_ancp, server_boat
-from atlas.atlas.providers.fake_tasks import is_fake_server
-from atlas.atlas.server_boat import BOAT_ARTIFACTS
-from atlas.atlas.ssh import connection_for_server, run_ssh, run_task, ssh_key_file, upload_files
-from atlas.atlas.task_results import parse_result
+from atlas.atlas.core import scripts_catalog, server_ancp, server_boat
+from atlas.atlas.core.providers.fake_tasks import is_fake_server
+from atlas.atlas.core.server_boat import BOAT_ARTIFACTS
+from atlas.atlas.core.ssh import connection_for_server, run_ssh, run_task, ssh_key_file, upload_files
+from atlas.atlas.core.task_results import parse_result
 
 # --- WHERE THE BOAT ARTIFACTS COME FROM ---------------------------------------
 #
@@ -195,18 +195,18 @@ class Server(Document):
 		Password) so the controller can write it to the host during bootstrap and
 		push it to existing hosts when resyncing networkd state."""
 		if not self.wireguard_public_key:
+			from atlas.atlas.core.networking import derive_host_wireguard_keypair
 			from atlas.atlas.doctype.atlas_settings.atlas_settings import get_ancp_wg_derivation_secret
-			from atlas.atlas.networking import derive_host_wireguard_keypair
 
 			_private_key, self.wireguard_public_key = derive_host_wireguard_keypair(
 				self.name, get_ancp_wg_derivation_secret()
 			)
 		if not self.mesh_address:
-			from atlas.atlas.networking import derive_host_mesh_address
+			from atlas.atlas.core.networking import derive_host_mesh_address
 
 			self.mesh_address = derive_host_mesh_address(self.name)
 		if not self.signing_public_key:
-			from atlas.atlas.networking import generate_host_signing_keypair
+			from atlas.atlas.core.networking import generate_host_signing_keypair
 
 			priv_b64, self.signing_public_key = generate_host_signing_keypair()
 			# Persist the private key so it's available at bootstrap time and
@@ -243,7 +243,7 @@ class Server(Document):
 		one (`atlas.get_provider()`) — a host outlives a vendor switch, so destroy()
 		must hit the client that owns the resource. Mirrors `reserved_ip.py`'s
 		`_provider_for_server`."""
-		from atlas.atlas.providers import for_provider_type
+		from atlas.atlas.core.providers import for_provider_type
 
 		if self.status == "Archived":
 			frappe.throw(_("Server is already archived"))
@@ -267,7 +267,7 @@ class Server(Document):
 		recover() runs the full describe()-poll first to fill them. Returns True if a
 		job was enqueued, False if one was already queued/running.
 		"""
-		from atlas.atlas.providers.worker import enqueue_finish_provisioning
+		from atlas.atlas.core.providers.worker import enqueue_finish_provisioning
 
 		if self.status not in ("Pending", "Bootstrapping", "Broken"):
 			frappe.throw(f"Cannot recover from status {self.status}; nothing is stuck")
@@ -1062,7 +1062,7 @@ def _maybe_adopt_host_keys(server, connection, key_path: str) -> None:
 		timeout_seconds=30,
 	)
 	if exit_code != 0 or not _stdout.strip():
-		from atlas.atlas.networking import generate_host_signing_keypair
+		from atlas.atlas.core.networking import generate_host_signing_keypair
 
 		priv_b64, server.signing_public_key = generate_host_signing_keypair()
 		server.signing_private_key = priv_b64
@@ -1077,7 +1077,7 @@ def _maybe_adopt_host_keys(server, connection, key_path: str) -> None:
 		if _exit2 == 0 and _stdout2.strip():
 			host_pub = _stdout2.strip()
 		else:
-			from atlas.atlas.networking import generate_host_signing_keypair
+			from atlas.atlas.core.networking import generate_host_signing_keypair
 
 			priv_b64, host_pub = generate_host_signing_keypair()
 			host_priv = priv_b64

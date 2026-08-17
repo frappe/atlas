@@ -2,7 +2,7 @@ import frappe
 from frappe import _
 from frappe.model.document import Document
 
-from atlas.atlas.ssh import run_task
+from atlas.atlas.core.ssh import run_task
 
 # Identity is frozen once written; the rules and the enabled toggle stay editable.
 IMMUTABLE_AFTER_INSERT = ("virtual_machine", "server", "tenant")

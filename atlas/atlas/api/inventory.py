@@ -47,7 +47,7 @@ def tenant_vms(team: str | None = None) -> list[dict]:
 	# in lockstep — including the login handoff (gateway_url + the login URL/expiry, the
 	# latter only once Running, exactly as the event gates them). The reconcile is the
 	# backstop if a status_changed event is lost, so it must carry them.
-	from atlas.atlas.placement import version_from_image
+	from atlas.atlas.core.placement import version_from_image
 	from atlas.atlas.services.front_door import front_door_for_vm
 
 	rows = []
@@ -84,6 +84,6 @@ def available_frappe_versions() -> list[str]:
 	the bench admin console — so its version picker is the versions that have an active
 	*admin* image, not the plain `bench-<token>` site images (those back self-serve
 	Sites, spec/14). Central derives its picker from this so the two never drift."""
-	from atlas.atlas.placement import version_image_map
+	from atlas.atlas.core.placement import version_image_map
 
 	return list(version_image_map())

@@ -22,7 +22,7 @@ plus the immutable log is the whole guardrail (the spec's operator-only model).
 import frappe
 from frappe.model.document import Document
 
-from atlas.atlas import ssh_console
+from atlas.atlas.core import ssh_console
 
 CONSOLE_DOCTYPE = "SSH Console"
 UPDATE_EVENT = "ssh_console_update"

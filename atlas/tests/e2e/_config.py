@@ -47,7 +47,7 @@ import json
 import os
 import subprocess
 
-from atlas.atlas.digitalocean import DigitalOceanClient
+from atlas.atlas.core.digitalocean import DigitalOceanClient
 
 TAG = "atlas-e2e"
 SWEEP_AGE_SECONDS = 30 * 60

@@ -31,11 +31,11 @@ dialog; it is not per-row identity.
 
 import frappe
 
-from atlas.atlas import scripts_catalog
-from atlas.atlas._ssh._quote import substitute
-from atlas.atlas._ssh.transport import run_ssh, ssh_key_file
-from atlas.atlas.networking import WG_GATEWAY_PORT, WIREGUARD_MTU
-from atlas.atlas.ssh import connection_for_guest
+from atlas.atlas.core import scripts_catalog
+from atlas.atlas.core._ssh._quote import substitute
+from atlas.atlas.core._ssh.transport import run_ssh, ssh_key_file
+from atlas.atlas.core.networking import WG_GATEWAY_PORT, WIREGUARD_MTU
+from atlas.atlas.core.ssh import connection_for_guest
 
 # The gateway's single WireGuard interface. One per gateway VM, shared by every
 # customer peer — the whole "peers, not interfaces" fix (reference §2).
@@ -168,11 +168,11 @@ def _wire_gateway_host_forwarding(gateway_vm: str) -> None:
 
 	Inserted at the head (above the terminal `fdaa::/16 drop`), idempotent via a
 	list-and-skip guard. A tenant VM's own per-veth rules are untouched."""
-	from atlas.atlas.networking import derive_veth_pair
-	from atlas.atlas.ssh import connection_for_server, run_ssh, ssh_key_file
+	from atlas.atlas.core.networking import derive_veth_pair
+	from atlas.atlas.core.ssh import connection_for_server, run_ssh, ssh_key_file
 
 	server = frappe.db.get_value("Virtual Machine", gateway_vm, "server")
-	from atlas.atlas.providers.fake_tasks import is_fake_server
+	from atlas.atlas.core.providers.fake_tasks import is_fake_server
 
 	if not server or is_fake_server(server):
 		return  # a Fake gateway has no host to wire
@@ -414,9 +414,14 @@ def _reconcile_gateway_host_routes(gateway_vm: str) -> None:
 
 	Reconciled from the rows: Active peers get both routes (idempotent `ip route replace`),
 	Revoked peers have them removed — the teardown-safe symmetry the mesh /128 push has."""
-	from atlas.atlas.networking import derive_guest_link_local, derive_netns, derive_tap, derive_veth_pair
-	from atlas.atlas.providers.fake_tasks import is_fake_server
-	from atlas.atlas.ssh import connection_for_server, run_ssh, ssh_key_file
+	from atlas.atlas.core.networking import (
+		derive_guest_link_local,
+		derive_netns,
+		derive_tap,
+		derive_veth_pair,
+	)
+	from atlas.atlas.core.providers.fake_tasks import is_fake_server
+	from atlas.atlas.core.ssh import connection_for_server, run_ssh, ssh_key_file
 
 	server = frappe.db.get_value("Virtual Machine", gateway_vm, "server")
 	if not server or is_fake_server(server):

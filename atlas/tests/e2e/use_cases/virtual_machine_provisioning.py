@@ -25,8 +25,8 @@ import time
 
 import frappe
 
-from atlas.atlas.networking import derive_netns, derive_uid
-from atlas.atlas.ssh import run_task
+from atlas.atlas.core.networking import derive_netns, derive_uid
+from atlas.atlas.core.ssh import run_task
 from atlas.tests.e2e._shared import (
 	DEFAULT_IMAGE,
 	assert_probe,
@@ -301,7 +301,7 @@ def _check_networking_helpers() -> None:
 	"""Pure-Python helpers: cheap to exercise, expensive to leave uncovered."""
 	import ipaddress
 
-	from atlas.atlas.networking import (
+	from atlas.atlas.core.networking import (
 		carve_virtual_machine_range,
 		derive_ipv4_link,
 		derive_mac,
@@ -340,7 +340,7 @@ def _check_ipv6_exhaustion(server) -> None:
 	A /124 holds 14 usable addresses (skipping ::0 and ::1). Use a synthetic
 	Server row so we don't compete with the real e2e server's allocator.
 	"""
-	from atlas.atlas.networking import allocate_ipv6
+	from atlas.atlas.core.networking import allocate_ipv6
 
 	fake_title = "usecase-ipv6-exhaust"
 	existing_name = frappe.db.get_value("Server", {"title": fake_title}, "name")

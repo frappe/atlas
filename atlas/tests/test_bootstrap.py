@@ -20,7 +20,7 @@ import frappe
 from frappe.tests import IntegrationTestCase
 
 from atlas import bootstrap
-from atlas.atlas.providers.base import Capabilities, ImageInfo, SizeInfo
+from atlas.atlas.core.providers.base import Capabilities, ImageInfo, SizeInfo
 
 # A REAL readable key file. `Atlas Settings.setup` (the contract ensure_provider now
 # drives) does an isfile() check on the key path — matching restore_credentials — so a
@@ -88,7 +88,7 @@ class TestEnsureProviderScaleway(IntegrationTestCase):
 		)
 		self._public_key_patch.start()
 		self.addCleanup(self._public_key_patch.stop)
-		self._provider_patch = patch("atlas.atlas.providers.scaleway.ScalewayProvider", _FakeScalewayProvider)
+		self._provider_patch = patch("atlas.atlas.core.providers.scaleway.ScalewayProvider", _FakeScalewayProvider)
 		self._provider_patch.start()
 		self.addCleanup(self._provider_patch.stop)
 
@@ -104,7 +104,7 @@ class TestEnsureProviderScaleway(IntegrationTestCase):
 		self.assertEqual(frappe.db.get_single_value("Scaleway Settings", "zone"), "fr-par-2")
 		self.assertEqual(frappe.db.get_single_value("Scaleway Settings", "project_id"), "proj-uuid")
 		self.assertEqual(frappe.db.get_single_value("Scaleway Settings", "billing"), "monthly")
-		from atlas.atlas.secrets import get_secret
+		from atlas.atlas.core.secrets import get_secret
 
 		self.assertEqual(get_secret("Scaleway Settings", "Scaleway Settings", "secret_key"), "scw-secret-key")
 

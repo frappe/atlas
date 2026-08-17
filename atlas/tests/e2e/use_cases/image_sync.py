@@ -18,7 +18,7 @@ This module exercises:
 
 import frappe
 
-from atlas.atlas.ssh import run_task
+from atlas.atlas.core.ssh import run_task
 from atlas.tests.e2e._config import MINIMAL_IMAGE
 from atlas.tests.e2e._image import ensure_image_row
 from atlas.tests.e2e._shared import (
@@ -79,7 +79,7 @@ def _clear_cached_rootfs(server_name: str, image) -> None:
 	normalize + mkfs path. Clearing here turns every run into a real
 	regression test of the sync script.
 	"""
-	from atlas.atlas.ssh import run_task
+	from atlas.atlas.core.ssh import run_task
 
 	task = run_task(
 		server=server_name,
@@ -128,7 +128,7 @@ def _check_execute_task_sync(server_name: str, image) -> None:
 	insert by hand and call execute_task directly so the runner's branches
 	are recorded by `coverage run` (the worker process is not instrumented).
 	"""
-	from atlas.atlas._ssh.runner import execute_task
+	from atlas.atlas.core._ssh.runner import execute_task
 
 	variables = {
 		"IMAGE_NAME": image.image_name,

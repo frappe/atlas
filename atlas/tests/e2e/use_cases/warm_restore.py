@@ -91,9 +91,9 @@ def _resolve_or_bake_warm(server, base_image: str) -> "frappe.model.document.Doc
 	the build VM's own provision still rides the background worker, exactly as
 	in production. after_insert's enqueue is suppressed so the worker can't
 	race this process into a duplicate bake."""
+	from atlas.atlas.core.placement import warm_bench_snapshot_for_server
 	from atlas.atlas.doctype.image_build import image_build as module
 	from atlas.atlas.doctype.image_build.image_build import ImageBuild
-	from atlas.atlas.placement import warm_bench_snapshot_for_server
 
 	existing = warm_bench_snapshot_for_server(server.name)
 	if existing:
@@ -244,7 +244,7 @@ def _verify_cold_fallback(server, snapshot, clones: list[str], warm_facts: dict)
 
 
 def _tamper(server_name: str, memory_directory: str, mode: str) -> None:
-	from atlas.atlas.ssh import run_task
+	from atlas.atlas.core.ssh import run_task
 
 	task = run_task(
 		server=server_name,
@@ -257,7 +257,7 @@ def _tamper(server_name: str, memory_directory: str, mode: str) -> None:
 
 def _guest_facts(server_name: str, virtual_machine_name: str, wait_seconds: int = 240) -> dict:
 	"""Run the facts probe on the host and parse its FACT_* lines."""
-	from atlas.atlas.ssh import run_task
+	from atlas.atlas.core.ssh import run_task
 
 	vm = frappe.get_doc("Virtual Machine", virtual_machine_name)
 	task = run_task(

@@ -307,7 +307,7 @@ class TestVirtualMachineLifecycle(IntegrationTestCase):
 		# test_provision_resize_capacity.
 		with (
 			patch.object(module, "run_boat_task", return_value=task) as mocked,
-			patch("atlas.atlas.vm_resize.check_resize_capacity"),
+			patch("atlas.atlas.core.vm_resize.check_resize_capacity"),
 		):
 			result = vm.resize(vcpus=4, memory_megabytes=4096, disk_gigabytes=20)
 		self.assertEqual(result, "task-resize-1")
@@ -362,7 +362,7 @@ class TestVirtualMachineLifecycle(IntegrationTestCase):
 		# whole-core cap tracking when vcpus grow without an explicit cap.
 		with (
 			patch.object(module, "run_boat_task", return_value=fake_task()),
-			patch("atlas.atlas.vm_resize.check_resize_capacity"),
+			patch("atlas.atlas.core.vm_resize.check_resize_capacity"),
 		):
 			vm.resize(vcpus=4)
 		vm.reload()
@@ -407,7 +407,7 @@ class TestVirtualMachineLifecycle(IntegrationTestCase):
 		vm = _vm_with_status("Stopped")
 		vm.db_set("title", "web-01")
 		task = fake_task(stdout='ATLAS_RESULT={"size_bytes": 123}')
-		with patch("atlas.atlas.vm_images.run_task", return_value=task):
+		with patch("atlas.atlas.core.vm_images.run_task", return_value=task):
 			snapshot_name = vm.snapshot()  # no title
 		title = frappe.db.get_value("Virtual Machine Snapshot", snapshot_name, "title")
 		self.assertTrue(title.startswith("web-01 — "), title)
@@ -415,7 +415,7 @@ class TestVirtualMachineLifecycle(IntegrationTestCase):
 	def test_snapshot_uses_given_title(self) -> None:
 		vm = _vm_with_status("Stopped")
 		task = fake_task(stdout='ATLAS_RESULT={"size_bytes": 123}')
-		with patch("atlas.atlas.vm_images.run_task", return_value=task):
+		with patch("atlas.atlas.core.vm_images.run_task", return_value=task):
 			snapshot_name = vm.snapshot("nightly")
 		title = frappe.db.get_value("Virtual Machine Snapshot", snapshot_name, "title")
 		self.assertEqual(title, "nightly")

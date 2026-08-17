@@ -4,7 +4,7 @@ import uuid
 import frappe
 from frappe.tests import IntegrationTestCase
 
-from atlas.atlas.networking import (
+from atlas.atlas.core.networking import (
 	ATLAS_TUNNEL_SUPERNET,
 	CPU_MODE_RELAXED,
 	CPU_WEIGHT_MAX,

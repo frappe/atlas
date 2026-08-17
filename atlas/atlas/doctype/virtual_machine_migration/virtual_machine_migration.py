@@ -112,7 +112,7 @@ class VirtualMachineMigration(Document):
 		(tests pinning a specific branch) keeps whatever keep_address it passed."""
 		if self.flags.keep_address_forced:
 			return
-		from atlas.atlas.migration_preflight import _will_keep_address
+		from atlas.atlas.core.migration_preflight import _will_keep_address
 
 		self.keep_address = 1 if _will_keep_address(self.source_server, self.target_server) else 0
 		provider_type = frappe.db.get_value("Server", self.source_server, "provider_type")

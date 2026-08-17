@@ -59,7 +59,7 @@ def create_vm(
 	if not team:
 		frappe.throw("team is required.")
 
-	from atlas.atlas.placement import image_for_version, version_from_image
+	from atlas.atlas.core.placement import image_for_version, version_from_image
 
 	tenant = ensure_tenant(team)
 
@@ -160,9 +160,9 @@ def capacity() -> dict:
 	(capacity can change between this call and the create). Runs with the Central
 	token, like create_vm — operator orchestration, not desk RBAC.
 	"""
-	from atlas.atlas.placement import HostNotVisibleError, NoCapacityError, default_server
-	from atlas.atlas.placement import largest_vm as _largest_vm
-	from atlas.atlas.sizes import SIZE_PRESETS
+	from atlas.atlas.core.placement import HostNotVisibleError, NoCapacityError, default_server
+	from atlas.atlas.core.placement import largest_vm as _largest_vm
+	from atlas.atlas.core.sizes import SIZE_PRESETS
 
 	# Floor of "can we provision anything?" — the smallest preset must fit some
 	# host under the same predicate the create path uses.
@@ -210,7 +210,7 @@ def resize_capacity(vm: str) -> dict:
 	unreported axis (sentinel numbers — treat the ceiling as "size unknown"). Advisory:
 	the resize path on the host is the authoritative gate. Runs with the Central token,
 	like `capacity()` / `create_vm`."""
-	from atlas.atlas.placement import resize_headroom
+	from atlas.atlas.core.placement import resize_headroom
 
 	shape = resize_headroom(vm)
 	if shape is None:

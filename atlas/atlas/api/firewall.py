@@ -15,7 +15,7 @@ from __future__ import annotations
 import frappe
 from frappe import _
 
-from atlas.atlas.permissions import _is_operator
+from atlas.atlas.core.permissions import _is_operator
 
 
 @frappe.whitelist()

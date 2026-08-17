@@ -21,7 +21,7 @@ import time
 
 import frappe
 
-from atlas.atlas.ssh import connection_for_server, run_ssh, ssh_key_file
+from atlas.atlas.core.ssh import connection_for_server, run_ssh, ssh_key_file
 from atlas.tests.e2e._config import ephemeral_public_key
 from atlas.tests.e2e._tasks import wait_for_vm_running
 from atlas.tests.e2e.use_cases.bench_image_compare import CLONE_VCPUS

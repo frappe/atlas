@@ -5,13 +5,13 @@ import frappe
 from frappe.tests import IntegrationTestCase
 
 from atlas.atlas.api import tunnel as module
+from atlas.atlas.core.networking import TUNNEL_PORT_BASE
 from atlas.atlas.doctype.virtual_machine.test_virtual_machine import (
 	_ensure_test_image,
 	_ensure_test_server,
 	_new_vm,
 )
 from atlas.atlas.doctype.vpn_tunnel import vpn_tunnel as controller
-from atlas.atlas.networking import TUNNEL_PORT_BASE
 from atlas.tests._mocks import fake_task
 from atlas.tests.test_ssh_key import _ensure_atlas_user_role, _make_user
 

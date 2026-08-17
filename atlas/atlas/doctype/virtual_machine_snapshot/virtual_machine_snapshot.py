@@ -5,8 +5,8 @@ import frappe
 from frappe import _
 from frappe.model.document import Document
 
-from atlas.atlas.ssh import run_task
-from atlas.atlas.task_results import parse_result
+from atlas.atlas.core.ssh import run_task
+from atlas.atlas.core.task_results import parse_result
 
 # An image name becomes both a Frappe doc name (autoname field:image_name) and an
 # LVM LV name (atlas-image-<name>). LVM LV names allow [a-zA-Z0-9+_.-]; we are
@@ -88,7 +88,7 @@ class VirtualMachineSnapshot(Document):
 		self-serve Site VM takes (`site.py` → `default_bench_snapshot()` → here), so
 		a golden's host that Atlas had lost sight of went on receiving every new
 		site."""
-		from atlas.atlas.placement import assert_visible
+		from atlas.atlas.core.placement import assert_visible
 
 		if self.status != "Available":
 			frappe.throw(f"Snapshot is not Available (status is {self.status})")
@@ -432,7 +432,7 @@ class VirtualMachineSnapshot(Document):
 		lesson promote_to_image learned), so this sets Uploading and enqueues a
 		background job that returns immediately. Poll s3_status / the enqueued Task.
 		Idempotent — a re-run overwrites the objects. See spec/29-snapshot-backup.md."""
-		from atlas.atlas import s3
+		from atlas.atlas.core import s3
 
 		if self.status != "Available":
 			frappe.throw(f"Snapshot is not Available (status is {self.status})")
@@ -454,7 +454,7 @@ class VirtualMachineSnapshot(Document):
 		"""Background half of upload_to_s3: presign a PUT per artifact, run the host
 		Task, and record the manifest. On any host failure set Failed and re-raise
 		(loud at the boundary — the operator retries the button)."""
-		from atlas.atlas import s3
+		from atlas.atlas.core import s3
 
 		backup = s3.S3Backup()
 		plan = s3.backup_plan(self)
@@ -547,7 +547,7 @@ class VirtualMachineSnapshot(Document):
 		the host Task to rehydrate the artifacts, then (cold) roll the VM back.
 		Returns the rollback Task name for a cold snapshot, else None. On host failure
 		set Failed and re-raise."""
-		from atlas.atlas import s3
+		from atlas.atlas.core import s3
 
 		backup = s3.S3Backup()
 		manifest = json.loads(self.s3_objects or "[]")
@@ -591,7 +591,7 @@ class VirtualMachineSnapshot(Document):
 		if self.s3_status != "Uploaded":
 			return
 		try:
-			from atlas.atlas import s3
+			from atlas.atlas.core import s3
 
 			if s3.is_configured():
 				s3.S3Backup().delete_prefix(self.name)

@@ -4,14 +4,14 @@ import frappe
 from frappe import _
 from frappe.model.document import Document
 
-from atlas.atlas.networking import (
+from atlas.atlas.core.networking import (
 	allocate_tunnel_slot,
 	derive_tunnel_interface,
 	tunnel_listen_port,
 	tunnel_overlay_link,
 )
-from atlas.atlas.ssh import run_task
-from atlas.atlas.task_results import parse_result
+from atlas.atlas.core.ssh import run_task
+from atlas.atlas.core.task_results import parse_result
 
 # Identity and the WireGuard parameters the host applied — frozen once written.
 # transport is locked too: a tunnel's endpoint family is fixed for its lifetime.

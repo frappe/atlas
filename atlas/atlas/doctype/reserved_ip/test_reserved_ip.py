@@ -4,13 +4,13 @@ from unittest.mock import MagicMock, patch
 import frappe
 from frappe.tests import IntegrationTestCase
 
+from atlas.atlas.core.providers.base import ReservedIp
 from atlas.atlas.doctype.reserved_ip import reserved_ip as module
 from atlas.atlas.doctype.virtual_machine.test_virtual_machine import (
 	_ensure_test_image,
 	_ensure_test_server,
 	_new_vm,
 )
-from atlas.atlas.providers.base import ReservedIp
 from atlas.tests._mocks import fake_task
 from atlas.tests.fixtures import make_provider, make_server
 

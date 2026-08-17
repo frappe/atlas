@@ -54,8 +54,8 @@ from types import SimpleNamespace
 import frappe
 from frappe.handler import run_doc_method
 
-from atlas.atlas import providers
-from atlas.atlas.digitalocean import DigitalOceanError
+from atlas.atlas.core import providers
+from atlas.atlas.core.digitalocean import DigitalOceanError
 from atlas.tests.e2e._shared import (
 	ensure_image_on_server,
 	ephemeral_public_key,

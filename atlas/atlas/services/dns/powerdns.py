@@ -18,7 +18,7 @@ from urllib.parse import quote
 import frappe
 import requests
 
-from atlas.atlas.secrets import get_secret
+from atlas.atlas.core.secrets import get_secret
 from atlas.atlas.services.dns import register
 from atlas.atlas.services.dns.base import AuthResult, DnsProvider, WildcardTargets
 

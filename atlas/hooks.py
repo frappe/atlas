@@ -192,9 +192,9 @@ after_migrate = "atlas.install.after_migrate"
 
 doc_events = {
 	"Virtual Machine": {
-		"after_insert": "atlas.atlas.central_report.on_vm_after_insert",
-		"on_update": "atlas.atlas.central_report.on_vm_update",
-		"on_trash": "atlas.atlas.central_report.on_vm_trash",
+		"after_insert": "atlas.atlas.core.central_report.on_vm_after_insert",
+		"on_update": "atlas.atlas.core.central_report.on_vm_update",
+		"on_trash": "atlas.atlas.core.central_report.on_vm_trash",
 	},
 	# Site/Pilot reporting is the services side of central reporting (services/reporting.py).
 	"Site": {
@@ -207,10 +207,10 @@ doc_events = {
 		"on_update": "atlas.atlas.services.reporting.on_pilot_update",
 	},
 	"Virtual Machine Snapshot": {
-		"on_update": "atlas.atlas.central_report.on_snapshot_update",
+		"on_update": "atlas.atlas.core.central_report.on_snapshot_update",
 	},
 	"Server": {
-		"on_update": "atlas.atlas.central_report.on_server_update",
+		"on_update": "atlas.atlas.core.central_report.on_server_update",
 	},
 }
 
@@ -242,7 +242,7 @@ scheduler_events = {
 	],
 	"cron": {
 		"*/1 * * * *": [
-			"atlas.atlas.central_report.retry_pending",
+			"atlas.atlas.core.central_report.retry_pending",
 			"atlas.atlas.doctype.virtual_machine.virtual_machine.poll_vm_traffic",
 			# BEFORE sleep_idle_vms: adopt any host-initiated (packet-triggered) wake so
 			# a just-woken VM is Running with fresh last_traffic_at before the idle sweep.
@@ -250,12 +250,12 @@ scheduler_events = {
 			"atlas.atlas.doctype.virtual_machine.virtual_machine.sleep_idle_vms",
 		],
 		"*/10 * * * *": [
-			"atlas.atlas.providers.worker.reconcile_pending_servers",
-			"atlas.atlas.datum_token.refresh_all",
+			"atlas.atlas.core.providers.worker.reconcile_pending_servers",
+			"atlas.atlas.core.datum_token.refresh_all",
 		],
 		"*/2 * * * *": [
-			"atlas.atlas.migration.reconcile_migrations",
-			"atlas.atlas.export.reconcile_image_exports",
+			"atlas.atlas.core.migration.reconcile_migrations",
+			"atlas.atlas.core.export.reconcile_image_exports",
 		],
 		# Controller-side liveness BACKSTOP for the decentralized mesh. Retiring
 		# the centralized `*/5` host-mesh reconcile for the host-local
@@ -269,7 +269,7 @@ scheduler_events = {
 		# this is a smoke detector, not a thermostat. Same `*/5` cadence the
 		# retired reconcile ran on.
 		"*/5 * * * *": [
-			"atlas.atlas.providers.worker.check_networkd_liveness",
+			"atlas.atlas.core.providers.worker.check_networkd_liveness",
 			# The Boat mirror's pull half (spec/33 §2.5): GET /v1/export from every
 			# host, ingested into `Host State Snapshot` + the observed
 			# fields on Server / Virtual Machine, one enqueued job per host. Atlas
@@ -285,7 +285,7 @@ scheduler_events = {
 			# host observations with no operator waiting on them. A slower backstop
 			# would leave a partitioned host un-flagged for longer; a faster one would
 			# only shorten the forensic window the bounded snapshot archive holds.
-			"atlas.atlas.boat_mirror.sweep_mirrors",
+			"atlas.atlas.core.boat_mirror.sweep_mirrors",
 		],
 	},
 }

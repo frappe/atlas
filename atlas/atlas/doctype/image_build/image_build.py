@@ -19,10 +19,10 @@ import frappe
 from frappe import _
 from frappe.model.document import Document
 
-from atlas.atlas import bench_image
-from atlas.atlas.image_builder import default_build_base_image, run_build
-from atlas.atlas.image_recipes import get_recipe
-from atlas.atlas.ssh import run_task
+from atlas.atlas.core import bench_image
+from atlas.atlas.core.image_builder import default_build_base_image, run_build
+from atlas.atlas.core.image_recipes import get_recipe
+from atlas.atlas.core.ssh import run_task
 
 # The routing identity of a build: what to bake, where, and on which base. Once
 # written they are fixed — re-baking with a different recipe/server/base is a new
@@ -288,8 +288,8 @@ def _assert_host_has_capacity(server_name: str, needed_megabytes: int) -> None:
 	MemAvailable (not MemTotal) so the check accounts for a host that is small OR
 	already busy with other VMs. Fail-open on an unreadable probe: a parse miss skips
 	the guard rather than blocking an otherwise-fine bake."""
-	from atlas.atlas._ssh.transport import run_ssh, ssh_key_file
-	from atlas.atlas.ssh import connection_for_server
+	from atlas.atlas.core._ssh.transport import run_ssh, ssh_key_file
+	from atlas.atlas.core.ssh import connection_for_server
 
 	connection = connection_for_server(frappe.get_doc("Server", server_name))
 	with ssh_key_file(connection.ssh_private_key) as key_path:
@@ -393,8 +393,8 @@ def _sync_guest_before_stop(vm_name: str) -> None:
 	case, but this is the durable seam — flush again right before the terminate so a
 	late write from anywhere (build.sh, a warm arm, an operator) is captured whole.
 	Best-effort: a guest we cannot reach is about to be stopped anyway."""
-	from atlas.atlas._ssh.transport import run_ssh, ssh_key_file
-	from atlas.atlas.ssh import connection_for_guest
+	from atlas.atlas.core._ssh.transport import run_ssh, ssh_key_file
+	from atlas.atlas.core.ssh import connection_for_guest
 
 	vm = frappe.get_doc("Virtual Machine", vm_name)
 	if vm.status != "Running":
@@ -450,8 +450,8 @@ def _warm_snapshot(build, recipe, vm_name: str) -> str:
 	server. Only then is the build VM stopped — the warmth is in the artifact,
 	not the scratch VM. Supersedes the server's previous warm snapshot (one
 	current warm golden per server). Returns the snapshot name."""
-	from atlas.atlas.networking import derive_uid
-	from atlas.atlas.task_results import parse_result
+	from atlas.atlas.core.networking import derive_uid
+	from atlas.atlas.core.task_results import parse_result
 
 	vm = frappe.get_doc("Virtual Machine", vm_name)
 	# A warm capture freezes the RUNNING guest's live RAM, so the VM must be booted
@@ -541,10 +541,10 @@ def _run_warm_entrypoint(recipe, vm) -> None:
 	goes back, not just warm.sh."""
 	import shlex
 
-	from atlas.atlas._ssh.transport import run_ssh, ssh_key_file
+	from atlas.atlas.core._ssh.transport import run_ssh, ssh_key_file
 	from atlas.atlas.core.guest_tasks import _record_guest_task
-	from atlas.atlas.image_builder import stage_recipe_tree
-	from atlas.atlas.ssh import connection_for_guest
+	from atlas.atlas.core.image_builder import stage_recipe_tree
+	from atlas.atlas.core.ssh import connection_for_guest
 
 	connection = connection_for_guest(vm)
 	command = (

@@ -4,8 +4,8 @@ import frappe
 from frappe import _
 from frappe.model.document import Document
 
-from atlas.atlas.central import CentralClient
-from atlas.atlas.secrets import get_secret
+from atlas.atlas.core.central import CentralClient
+from atlas.atlas.core.secrets import get_secret
 
 
 class CentralSettings(Document):
@@ -38,7 +38,7 @@ class CentralSettings(Document):
 		offer and the active admin image each resolves to. Live from this region's active
 		admin images, never stored: the field is read-only and this is the only writer, so
 		it always reflects what Central pulls from `available_frappe_versions`."""
-		from atlas.atlas.placement import version_image_map
+		from atlas.atlas.core.placement import version_image_map
 
 		self.version_image_map = json.dumps(version_image_map(), indent=2)
 

@@ -32,7 +32,7 @@ import time
 
 import frappe
 
-from atlas.atlas.providers.fake import FAKE_PROVIDER_TYPE
+from atlas.atlas.core.providers.fake import FAKE_PROVIDER_TYPE
 from atlas.tests.e2e._config import ephemeral_public_key
 from atlas.tests.e2e._tasks import expect_validation_error
 from atlas.tests.e2e.use_cases.desk_buttons import _call_button, _fake_post_request
@@ -128,7 +128,7 @@ def _throwaway_key() -> str:
 def _provision_server_via_desk():
 	"""Provision Server button: the dialog posts title (+ optional size/image) as
 	strings. The worker (faked) drives Pending -> Active inline here."""
-	from atlas.atlas.providers.worker import finish_provisioning
+	from atlas.atlas.core.providers.worker import finish_provisioning
 
 	server_name = _call_button("Atlas Settings", "Atlas Settings", "provision_server", title=SERVER_TITLE)
 	assert server_name, "provision_server returned no name"
@@ -209,7 +209,7 @@ def _check_image_buttons(server_name: str, image_name: str) -> None:
 	`execute_task` (the worker runs it). The button correctly returns the Pending
 	row; we then drive `execute_task` synchronously (the image_sync use case's
 	pattern) to prove the fake sync runs through to Success with no SSH."""
-	from atlas.atlas.ssh import execute_task
+	from atlas.atlas.core.ssh import execute_task
 
 	task_name = _call_button("Virtual Machine Image", image_name, "sync_to_server", server_name=server_name)
 	task = frappe.get_doc("Task", task_name)
@@ -222,7 +222,7 @@ def _check_image_buttons(server_name: str, image_name: str) -> None:
 	# Sync to All Servers fans out one Task per Active server. On a site that also
 	# has the demo fleet, that includes a Self-Managed host — whose Task correctly
 	# routes to REAL SSH (per-Server routing). Only drive the Fake-backed ones here.
-	from atlas.atlas.providers.fake_tasks import is_fake_server
+	from atlas.atlas.core.providers.fake_tasks import is_fake_server
 
 	tasks = _call_button("Virtual Machine Image", image_name, "sync_to_all_servers")
 	assert isinstance(tasks, list) and tasks, tasks

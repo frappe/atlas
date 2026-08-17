@@ -27,13 +27,13 @@ the proxy VM) for the operator's audit trail — the same row shape as `proxy-sy
 
 import frappe
 
-from atlas.atlas._ssh._quote import substitute
-from atlas.atlas._ssh.transport import run_ssh, ssh_key_file
+from atlas.atlas.core._ssh._quote import substitute
+from atlas.atlas.core._ssh.transport import run_ssh, ssh_key_file
 from atlas.atlas.core.guest_tasks import _record_guest_task
+from atlas.atlas.core.placement import atlas_region
+from atlas.atlas.core.ssh import connection_for_guest
 from atlas.atlas.doctype.port_mapping.port_mapping import port_map
-from atlas.atlas.placement import atlas_region
 from atlas.atlas.services.proxy import _proxy_vms, canonical_json
-from atlas.atlas.ssh import connection_for_guest
 
 # The stream{}-side admin client build.sh installs on PATH (spec/17-tcp-proxy.md);
 # the L4 analogue of `curl --unix-socket` for the http admin. It speaks the line

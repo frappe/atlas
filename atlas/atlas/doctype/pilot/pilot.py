@@ -28,7 +28,7 @@ import frappe
 from frappe import _
 from frappe.model.document import Document
 
-from atlas.atlas.placement import active_root_domain
+from atlas.atlas.core.placement import active_root_domain
 from atlas.atlas.services.subdomain_label import PILOT_SUFFIX, validate_label, validate_reserved
 
 # How long a freshly-minted login URL stays usable, keyed by build_mode — the TTL
@@ -429,7 +429,7 @@ def _provision_backing_vm(pilot) -> str:
 	over the fleet SSH key (Atlas Settings) by the control plane. `build_mode` is
 	inherited from the image by the VM at insert; the pilot mirrors it onto its own
 	row here so its login mint/TTL follows the mode without re-reading the VM."""
-	from atlas.atlas.placement import default_image, default_server_for_image
+	from atlas.atlas.core.placement import default_image, default_server_for_image
 
 	fleet_public_key = frappe.db.get_single_value("Atlas Settings", "ssh_public_key")
 	if not fleet_public_key:
@@ -496,7 +496,7 @@ def _deploy(pilot, central_endpoint: str | None = None, bootstrap_token: str | N
 
 	A Fake-backed VM's documentation IP never answers SSH, so `deploy_site` is a no-op
 	there; synthesize a placeholder so desk/e2e stay green without a host."""
-	from atlas.atlas.providers.fake_tasks import is_fake_server
+	from atlas.atlas.core.providers.fake_tasks import is_fake_server
 	from atlas.atlas.services.deploy_site import deploy_site
 
 	vm = frappe.get_doc("Virtual Machine", pilot.virtual_machine)
@@ -605,7 +605,7 @@ def _regenerate_login(pilot) -> dict:
 	guest deploy with `--regenerate-login` (re-sign only, no rename/setup). A
 	Fake-backed VM never answers SSH, so the placeholder is synthesized exactly as the
 	mint synthesizes it."""
-	from atlas.atlas.providers.fake_tasks import is_fake_server
+	from atlas.atlas.core.providers.fake_tasks import is_fake_server
 	from atlas.atlas.services.deploy_site import regenerate_login
 
 	vm = frappe.get_doc("Virtual Machine", pilot.virtual_machine)

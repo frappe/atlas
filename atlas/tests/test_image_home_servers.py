@@ -18,7 +18,7 @@ import json
 import frappe
 from frappe.tests import IntegrationTestCase
 
-from atlas.atlas.placement import (
+from atlas.atlas.core.placement import (
 	NoCapacityError,
 	default_server_for_image,
 	image_home_servers,

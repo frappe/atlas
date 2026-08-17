@@ -122,7 +122,7 @@ def deprovision_proxy(vm) -> None:
 	if not vm.is_proxy:
 		return
 	vm.db_set("is_proxy", 0)
-	from atlas.atlas.placement import active_root_domain
+	from atlas.atlas.core.placement import active_root_domain
 
 	domain = active_root_domain().domain
 	cert_name = frappe.db.get_value("TLS Certificate", {"root_domain": domain, "status": "Active"}, "name")

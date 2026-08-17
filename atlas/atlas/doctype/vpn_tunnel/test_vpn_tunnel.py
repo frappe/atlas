@@ -4,13 +4,13 @@ from unittest.mock import patch
 import frappe
 from frappe.tests import IntegrationTestCase
 
+from atlas.atlas.core.networking import TUNNEL_PORT_BASE, tunnel_overlay_link
 from atlas.atlas.doctype.virtual_machine.test_virtual_machine import (
 	_ensure_test_image,
 	_ensure_test_server,
 	_new_vm,
 )
 from atlas.atlas.doctype.vpn_tunnel import vpn_tunnel as module
-from atlas.atlas.networking import TUNNEL_PORT_BASE, tunnel_overlay_link
 from atlas.tests._mocks import fake_task
 
 # A syntactically valid client public key (32 bytes, standard base64).

@@ -89,7 +89,7 @@ def _find_vantage(server_name: str) -> str | None:
 	whole scenario pass vacuously — ICMP "didn't wake" the VM because no ping was
 	ever sent, and TCP "woke" it without a packet leaving the controller.
 	"""
-	from atlas.atlas.providers.fake_tasks import is_fake_server
+	from atlas.atlas.core.providers.fake_tasks import is_fake_server
 	from atlas.tests.e2e._shared import server_is_reachable
 
 	for name in frappe.get_all("Server", filters={"status": "Active"}, pluck="name"):

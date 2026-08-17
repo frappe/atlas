@@ -93,7 +93,7 @@ def pilot_subdomain_for(label: str) -> str:
 	FQDN key still throws on a true race, exactly as `Site`/`Pilot` autoname does."""
 	import secrets
 
-	from atlas.atlas.placement import active_root_domain
+	from atlas.atlas.core.placement import active_root_domain
 
 	base = normalize(label)
 	domain = active_root_domain().domain
@@ -118,7 +118,7 @@ def is_taken(subdomain: str | None) -> bool:
 	Terminated Site's FQDN is gone (the row is deleted on terminate's VM path? no
 	— the row stays Terminated), so we count any existing `Site` row with that
 	label: a Terminated label is still spoken for until the row is removed."""
-	from atlas.atlas.placement import active_root_domain
+	from atlas.atlas.core.placement import active_root_domain
 
 	label = normalize(subdomain)
 	if not label:

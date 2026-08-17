@@ -17,8 +17,8 @@ from unittest.mock import MagicMock, patch
 import frappe
 from frappe.tests import IntegrationTestCase
 
-from atlas.atlas import central_report
-from atlas.atlas.central import CentralClient, CentralError
+from atlas.atlas.core import central_report
+from atlas.atlas.core.central import CentralClient, CentralError
 from atlas.atlas.services import reporting
 from atlas.tests import fixtures
 
@@ -57,7 +57,7 @@ class TestGoldenVector(IntegrationTestCase):
 	def test_serialization_is_byte_stable(self) -> None:
 		# json.dumps' default separators and key order are part of the contract.
 		client = CentralClient("https://central.example/", "ak", "s", webhook_secret=GOLDEN_SECRET)
-		with patch("atlas.atlas.placement.atlas_region", return_value="blr"):
+		with patch("atlas.atlas.core.placement.atlas_region", return_value="blr"):
 			body = client._sign({}, json_payload=GOLDEN_PAYLOAD)
 		self.assertEqual(body, GOLDEN_BODY)
 
@@ -65,8 +65,8 @@ class TestGoldenVector(IntegrationTestCase):
 		client = CentralClient("https://central.example/", "ak", "s", webhook_secret=GOLDEN_SECRET)
 		headers: dict = {}
 		with (
-			patch("atlas.atlas.central.frappe.utils.now", return_value=GOLDEN_TIMESTAMP),
-			patch("atlas.atlas.placement.atlas_region", return_value="blr"),
+			patch("atlas.atlas.core.central.frappe.utils.now", return_value=GOLDEN_TIMESTAMP),
+			patch("atlas.atlas.core.placement.atlas_region", return_value="blr"),
 		):
 			client._sign(headers, json_payload=GOLDEN_PAYLOAD)
 		self.assertEqual(headers["X-Atlas-Timestamp"], GOLDEN_TIMESTAMP)
@@ -78,12 +78,12 @@ class TestCentralClient(IntegrationTestCase):
 		self.client = CentralClient("https://central.example/", "ak", "secret")
 		self.signing_client = CentralClient("https://central.example/", "ak", "secret", webhook_secret="whs")
 		# atlas_region() throws when Atlas Settings.region is unset, true on a fresh site.
-		region = patch("atlas.atlas.placement.atlas_region", return_value="blr")
+		region = patch("atlas.atlas.core.placement.atlas_region", return_value="blr")
 		region.start()
 		self.addCleanup(region.stop)
 
 	def test_request_builds_url_and_auth_header(self) -> None:
-		with patch("atlas.atlas.central.requests.request") as request:
+		with patch("atlas.atlas.core.central.requests.request") as request:
 			request.return_value = _response(body={"message": {"label": "Central"}})
 			self.client.ping()
 		args, kwargs = request.call_args
@@ -92,14 +92,14 @@ class TestCentralClient(IntegrationTestCase):
 		self.assertEqual(kwargs["headers"]["Authorization"], "token ak:secret")
 
 	def test_ping_ok(self) -> None:
-		with patch("atlas.atlas.central.requests.request") as request:
+		with patch("atlas.atlas.core.central.requests.request") as request:
 			request.return_value = _response(body={"message": {"label": "Prod Central"}})
 			result = self.client.ping()
 		self.assertTrue(result.ok)
 		self.assertEqual(result.label, "Prod Central")
 
 	def test_ping_never_raises_on_http_error(self) -> None:
-		with patch("atlas.atlas.central.requests.request") as request:
+		with patch("atlas.atlas.core.central.requests.request") as request:
 			request.return_value = _response(status_code=401, body={"exc": "auth"})
 			result = self.client.ping()
 		self.assertFalse(result.ok)
@@ -108,14 +108,14 @@ class TestCentralClient(IntegrationTestCase):
 	def test_ping_never_raises_on_transport_error(self) -> None:
 		import requests as requests_lib
 
-		with patch("atlas.atlas.central.requests.request", side_effect=requests_lib.ConnectionError("down")):
+		with patch("atlas.atlas.core.central.requests.request", side_effect=requests_lib.ConnectionError("down")):
 			result = self.client.ping()
 		self.assertFalse(result.ok)
 		self.assertIn("down", result.error)
 
 	def test_ping_stays_unsigned(self) -> None:
 		# ping is plain token auth even on a client that HAS a webhook_secret.
-		with patch("atlas.atlas.central.requests.request") as request:
+		with patch("atlas.atlas.core.central.requests.request") as request:
 			request.return_value = _response(body={"message": {"label": "Central"}})
 			self.signing_client.ping()
 		kwargs = request.call_args.kwargs
@@ -126,27 +126,27 @@ class TestCentralClient(IntegrationTestCase):
 	def test_post_event_sends_no_authorization_header(self) -> None:
 		# Frappe validates any Authorization header it sees, so sending the token would
 		# put a stale api_secret in the path of a correctly signed event.
-		with patch("atlas.atlas.central.requests.request") as request:
+		with patch("atlas.atlas.core.central.requests.request") as request:
 			request.return_value = _response(body={})
 			self.signing_client.post_event({"type": "vm.created"})
 		self.assertNotIn("Authorization", request.call_args.kwargs["headers"])
 
 	def test_post_event_raises_on_error(self) -> None:
-		with patch("atlas.atlas.central.requests.request") as request:
+		with patch("atlas.atlas.core.central.requests.request") as request:
 			request.return_value = _response(status_code=500, body={"exc": "boom"})
 			with self.assertRaises(CentralError):
 				self.signing_client.post_event({"type": "vm.created"})
 
 	def test_post_event_raises_without_webhook_secret(self) -> None:
 		# No webhook_secret — post_event must refuse before the network call.
-		with patch("atlas.atlas.central.requests.request") as request:
+		with patch("atlas.atlas.core.central.requests.request") as request:
 			with self.assertRaises(CentralError):
 				self.client.post_event({"type": "vm.created"})
 		request.assert_not_called()
 
 	def test_post_event_sends_data_not_json_kwarg(self) -> None:
 		# Signed bytes and sent bytes must be the same object.
-		with patch("atlas.atlas.central.requests.request") as request:
+		with patch("atlas.atlas.core.central.requests.request") as request:
 			request.return_value = _response(body={})
 			self.signing_client.post_event({"type": "vm.created"})
 		kwargs = request.call_args.kwargs
@@ -159,8 +159,8 @@ class TestCentralClient(IntegrationTestCase):
 		import hmac
 
 		with (
-			patch("atlas.atlas.central.requests.request") as request,
-			patch("atlas.atlas.placement.atlas_region", return_value="blr"),
+			patch("atlas.atlas.core.central.requests.request") as request,
+			patch("atlas.atlas.core.placement.atlas_region", return_value="blr"),
 		):
 			request.return_value = _response(body={})
 			self.signing_client.post_event({"type": "vm.created"})
@@ -271,7 +271,7 @@ class TestCentralReport(IntegrationTestCase):
 			central_report.on_vm_update(self._vm(status="Running", before_status="Pending"))
 		enqueue.assert_called_once()
 		args, kwargs = enqueue.call_args
-		self.assertEqual(args[0], "atlas.atlas.central_report.deliver")
+		self.assertEqual(args[0], "atlas.atlas.core.central_report.deliver")
 		self.assertTrue(kwargs["enqueue_after_commit"])
 		self.assertEqual(kwargs["event_type"], "vm.status_changed")
 		self.assertEqual(kwargs["payload"]["name"], "vm-1")

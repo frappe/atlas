@@ -1,6 +1,6 @@
 """Route53 Settings — AWS Route 53 credentials.
 
-The secret is read via `atlas.atlas.secrets.get_secret` by `Route53DnsProvider`.
+The secret is read via `atlas.atlas.core.secrets.get_secret` by `Route53DnsProvider`.
 The active DNS vendor is `Atlas Settings.dns_provider_type` (the DNS registry keys
 off it); `test_connection` is the Test Connection button the deleted
 `Domain Provider` form used to own.

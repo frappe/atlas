@@ -7,9 +7,9 @@ from unittest.mock import patch
 import frappe
 from frappe.tests import IntegrationTestCase
 
-from atlas.atlas._ssh import runner
-from atlas.atlas._ssh.transport import Connection
-from atlas.atlas.ssh import connection_for_server, execute_task, run_task
+from atlas.atlas.core._ssh import runner
+from atlas.atlas.core._ssh.transport import Connection
+from atlas.atlas.core.ssh import connection_for_server, execute_task, run_task
 from atlas.tests.fixtures import make_provider, make_server
 
 CONNECTION = Connection(
@@ -49,7 +49,7 @@ class TestRunTaskWithServer(IntegrationTestCase):
 
 	def test_server_path_builds_connection_from_doc(self) -> None:
 		with patch(
-			"atlas.atlas._ssh.runner._run_remote_script",
+			"atlas.atlas.core._ssh.runner._run_remote_script",
 			return_value=("hello\n", "", 0),
 		):
 			task = run_task(
@@ -84,7 +84,7 @@ class TestExecuteTask(IntegrationTestCase):
 		).insert(ignore_permissions=True)
 
 		with patch(
-			"atlas.atlas._ssh.runner._run_remote_script",
+			"atlas.atlas.core._ssh.runner._run_remote_script",
 			return_value=("hello\n", "", 0),
 		):
 			execute_task(task.name)
@@ -150,7 +150,7 @@ class TestConnectionForServer(IntegrationTestCase):
 class TestExceptionWrapping(IntegrationTestCase):
 	def test_generic_exception_wrapped_as_validation_error(self) -> None:
 		with patch(
-			"atlas.atlas._ssh.runner._run_remote_script",
+			"atlas.atlas.core._ssh.runner._run_remote_script",
 			side_effect=RuntimeError("boom"),
 		):
 			with self.assertRaises(frappe.ValidationError) as raised:
@@ -170,7 +170,7 @@ class TestExceptionWrapping(IntegrationTestCase):
 	def test_validation_error_re_raised_unwrapped(self) -> None:
 		inner = frappe.ValidationError("inner")
 		with patch(
-			"atlas.atlas._ssh.runner._run_remote_script",
+			"atlas.atlas.core._ssh.runner._run_remote_script",
 			side_effect=inner,
 		):
 			with self.assertRaises(frappe.ValidationError) as raised:
@@ -200,7 +200,7 @@ class TestSidecarUploads(IntegrationTestCase):
 				ssh_commands.append(args[-1])
 			return _ok(args, **kwargs)
 
-		with patch("atlas.atlas._ssh.transport.subprocess.run", side_effect=capture):
+		with patch("atlas.atlas.core._ssh.transport.subprocess.run", side_effect=capture):
 			run_task(
 				connection=CONNECTION,
 				script="sync-image",
@@ -236,7 +236,7 @@ class TestStagingPath(IntegrationTestCase):
 				ssh_commands.append(args[-1])
 			return _ok(args, **kwargs)
 
-		with patch("atlas.atlas._ssh.transport.subprocess.run", side_effect=capture):
+		with patch("atlas.atlas.core._ssh.transport.subprocess.run", side_effect=capture):
 			run_task(
 				connection=CONNECTION,
 				script="phase1-probe",
@@ -267,7 +267,7 @@ class TestDurableScriptInvocation(IntegrationTestCase):
 				scp_count += 1
 			return _ok(args, **kwargs)
 
-		with patch("atlas.atlas._ssh.transport.subprocess.run", side_effect=capture):
+		with patch("atlas.atlas.core._ssh.transport.subprocess.run", side_effect=capture):
 			run_task(
 				connection=CONNECTION,
 				script="start-vm",

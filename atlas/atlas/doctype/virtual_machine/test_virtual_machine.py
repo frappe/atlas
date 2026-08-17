@@ -3,7 +3,7 @@ from unittest.mock import patch
 import frappe
 from frappe.tests import IntegrationTestCase
 
-from atlas.atlas.placement import NoResizeCapacityError
+from atlas.atlas.core.placement import NoResizeCapacityError
 from atlas.tests._mocks import fake_task
 from atlas.tests.fixtures import make_image, make_provider, make_server, make_virtual_machine
 
@@ -121,7 +121,7 @@ class TestVirtualMachine(IntegrationTestCase):
 		self.assertEqual(mocked.call_args.kwargs["script"], "provision-vm")
 
 	def test_provision_variables_carry_jail_parameters(self) -> None:
-		from atlas.atlas.networking import (
+		from atlas.atlas.core.networking import (
 			cgroup_args,
 			derive_netns,
 			derive_uid,
@@ -381,7 +381,7 @@ class TestVirtualMachine(IntegrationTestCase):
 		self.assertEqual(vm.status, "Running")
 
 	def test_snapshot_from_stopped_creates_available_row(self) -> None:
-		from atlas.atlas import vm_images as module
+		from atlas.atlas.core import vm_images as module
 
 		vm = _new_vm()
 		vm.db_set("status", "Stopped")
@@ -407,7 +407,7 @@ class TestVirtualMachine(IntegrationTestCase):
 		self.assertEqual(snapshot.rootfs_path, f"/dev/atlas/atlas-snap-{snapshot.name}")
 
 	def test_snapshot_rejects_when_not_stopped(self) -> None:
-		from atlas.atlas import vm_images as module
+		from atlas.atlas.core import vm_images as module
 
 		vm = _new_vm()
 		vm.db_set("status", "Running")
@@ -421,7 +421,7 @@ class TestVirtualMachine(IntegrationTestCase):
 	def test_live_snapshot_from_running_creates_available_row(self) -> None:
 		# live=True relaxes the Stopped requirement: a Running VM is snapshotted in
 		# place (crash-consistent). The row still lands Available like a clean one.
-		from atlas.atlas import vm_images as module
+		from atlas.atlas.core import vm_images as module
 
 		vm = _new_vm()
 		vm.db_set("status", "Running")
@@ -435,7 +435,7 @@ class TestVirtualMachine(IntegrationTestCase):
 
 	def test_live_snapshot_accepts_stringy_true(self) -> None:
 		# frm.call / REST may send live as the string "true"; it must coerce to bool.
-		from atlas.atlas import vm_images as module
+		from atlas.atlas.core import vm_images as module
 
 		vm = _new_vm()
 		vm.db_set("status", "Running")
@@ -474,7 +474,7 @@ class TestVirtualMachine(IntegrationTestCase):
 	def test_live_snapshot_rejects_when_pending(self) -> None:
 		# Live needs a Running/Paused VM — there is no live disk to snapshot from
 		# Pending/Failed/Terminated.
-		from atlas.atlas import vm_images as module
+		from atlas.atlas.core import vm_images as module
 
 		vm = _new_vm()  # Pending
 		with patch.object(module, "run_task") as mocked:
@@ -490,7 +490,7 @@ class TestVirtualMachine(IntegrationTestCase):
 		vm.db_set("status", "Stopped")
 		vm.reload()
 		with patch(
-			"atlas.atlas.vm_images.run_task", return_value=fake_task(stdout='ATLAS_RESULT={"size_bytes": 1}')
+			"atlas.atlas.core.vm_images.run_task", return_value=fake_task(stdout='ATLAS_RESULT={"size_bytes": 1}')
 		):
 			snapshot_name = vm.snapshot("doomed")
 		self.assertTrue(frappe.db.exists("Virtual Machine Snapshot", snapshot_name))
@@ -524,7 +524,7 @@ class TestVirtualMachine(IntegrationTestCase):
 		vm.db_set("status", "Stopped")
 		vm.reload()
 		with patch(
-			"atlas.atlas.vm_images.run_task", return_value=fake_task(stdout='ATLAS_RESULT={"size_bytes": 1}')
+			"atlas.atlas.core.vm_images.run_task", return_value=fake_task(stdout='ATLAS_RESULT={"size_bytes": 1}')
 		):
 			snapshot_name = vm.snapshot("golden")
 		frappe.db.set_single_value("Atlas Settings", "default_bench_snapshot", snapshot_name)
@@ -668,7 +668,7 @@ class TestVirtualMachine(IntegrationTestCase):
 		self.assertLessEqual(reported.call_count, 1)
 
 	def test_parse_size_bytes(self) -> None:
-		from atlas.atlas.task_results import parse_result
+		from atlas.atlas.core.task_results import parse_result
 
 		self.assertEqual(parse_result('+ cmd\nATLAS_RESULT={"size_bytes": 512}\ndone')["size_bytes"], 512)
 
@@ -733,8 +733,8 @@ class TestVirtualMachine(IntegrationTestCase):
 			self.assertEqual(mocked.call_args.kwargs["variables"]["GRACEFUL"], "0", value)
 
 	def test_stop_captures_memory_snapshot_when_opted_in(self) -> None:
+		from atlas.atlas.core.networking import derive_uid
 		from atlas.atlas.doctype.virtual_machine import virtual_machine as module
-		from atlas.atlas.networking import derive_uid
 
 		vm = _new_vm(memory_snapshot_on_stop=1)
 		vm.db_set("status", "Running")
@@ -992,7 +992,7 @@ class TestVirtualMachine(IntegrationTestCase):
 		self.assertEqual(vm.memory_megabytes, 1024, "resize spends the headroom placement reserved")
 
 	def test_snapshot_persists_data_disk_fields(self) -> None:
-		from atlas.atlas import vm_images as module
+		from atlas.atlas.core import vm_images as module
 
 		vm = _new_vm(data_disk_gigabytes=2, data_disk_format_and_mount=1, data_disk_mount_point="/home")
 		vm.db_set("status", "Stopped")
@@ -1016,7 +1016,7 @@ class TestVirtualMachine(IntegrationTestCase):
 		self.assertEqual(snapshot.data_rootfs_path, f"/dev/atlas/atlas-datasnap-{snapshot_name}")
 
 	def test_snapshot_without_data_disk_has_no_data_snapshot(self) -> None:
-		from atlas.atlas import vm_images as module
+		from atlas.atlas.core import vm_images as module
 
 		vm = _new_vm()  # no data disk
 		vm.db_set("status", "Stopped")

@@ -14,8 +14,8 @@ from __future__ import annotations
 import frappe
 from frappe import _
 
-from atlas.atlas.networking import tunnel_endpoint_address
-from atlas.atlas.permissions import _is_operator
+from atlas.atlas.core.networking import tunnel_endpoint_address
+from atlas.atlas.core.permissions import _is_operator
 from atlas.atlas.services.wireguard import is_valid_public_key
 
 _INSTRUCTIONS = (

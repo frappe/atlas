@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import frappe
 
-from atlas.atlas import central_report
+from atlas.atlas.core import central_report
 
 
 def on_pilot_update(doc, method=None):
@@ -96,7 +96,7 @@ def _pilot_vm_payload(pilot) -> dict:
 	# facts are read through the `virtual_machine` link, the bench fields off the
 	# Pilot. This is the event that carries the login handoff (the Pilot flips Running
 	# only after the mint), so its status is the PILOT's — the VM booted earlier.
-	from atlas.atlas.placement import version_from_image
+	from atlas.atlas.core.placement import version_from_image
 	from atlas.atlas.services.front_door import FrontDoor
 
 	vm = frappe.get_doc("Virtual Machine", pilot.virtual_machine)

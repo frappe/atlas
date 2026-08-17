@@ -4,13 +4,13 @@ from unittest.mock import MagicMock, patch
 import frappe
 from frappe.tests import IntegrationTestCase
 
-from atlas.atlas import bench_image, image_builder
+from atlas.atlas.core import bench_image, image_builder
+from atlas.atlas.core.image_recipes import get_recipe
 from atlas.atlas.doctype.virtual_machine.test_virtual_machine import (
 	_ensure_test_image,
 	_ensure_test_server,
 	_new_vm,
 )
-from atlas.atlas.image_recipes import get_recipe
 
 _BENCH = get_recipe("bench")
 

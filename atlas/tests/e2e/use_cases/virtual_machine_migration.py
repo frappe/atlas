@@ -39,7 +39,7 @@ import time
 
 import frappe
 
-from atlas.atlas.ssh import connection_for_server, run_ssh, ssh_key_file
+from atlas.atlas.core.ssh import connection_for_server, run_ssh, ssh_key_file
 from atlas.tests.e2e._droplets import ensure_two_active_servers
 from atlas.tests.e2e._image import ensure_image_on_server
 from atlas.tests.e2e._shared import ephemeral_public_key

@@ -173,7 +173,7 @@ def _write_settings(state: dict | None) -> None:
 
 
 def _seed_catalogs() -> None:
-	from atlas.atlas.providers.digitalocean import (
+	from atlas.atlas.core.providers.digitalocean import (
 		DIGITALOCEAN_MONTHLY_COST_USD,
 		KNOWN_DIGITALOCEAN_IMAGES,
 		KNOWN_DIGITALOCEAN_SIZES,

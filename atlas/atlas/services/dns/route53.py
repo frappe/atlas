@@ -1,7 +1,7 @@
 """Route 53 DNS provider — DNS-01 via AWS Route 53.
 
 Reads `Route53 Settings` for the IAM credentials (the secret via
-`atlas.atlas.secrets.get_secret`, mirroring how `DigitalOceanProvider` reads its
+`atlas.atlas.core.secrets.get_secret`, mirroring how `DigitalOceanProvider` reads its
 token). The actual TXT-record dance is certbot's `dns-route53` plugin's job; this
 class only supplies the plugin flag and the AWS credential env. `authenticate()`
 proves the credentials reach the account by listing hosted zones — the lightest
@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import frappe
 
-from atlas.atlas.secrets import get_secret
+from atlas.atlas.core.secrets import get_secret
 from atlas.atlas.services.dns import register
 from atlas.atlas.services.dns.base import AuthResult, DnsProvider, WildcardTargets
 

@@ -69,7 +69,7 @@ def check_subdomain(subdomain: str, region: str | None = None) -> dict:
 	`create_site` — the authoritative uniqueness still lives in the `Site` FQDN
 	key at insert. Returns the resolved `fqdn`/`domain` so Central renders the real
 	suffix (never guesses `.frappe.cloud`). Operator-authorized (Central token)."""
-	from atlas.atlas.placement import active_root_domain
+	from atlas.atlas.core.placement import active_root_domain
 	from atlas.atlas.services import subdomain_label
 
 	domain = active_root_domain().domain

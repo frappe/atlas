@@ -2,7 +2,7 @@
 
 Reads `Let's Encrypt Settings` (ACME directory, account email, ToS agreement) and
 issues `*.<domain>` by driving the `scripts/issue-cert.py` Task locally
-(`atlas.atlas.local_task.run_local_task`). The certbot DNS authenticator and its
+(`atlas.atlas.core.local_task.run_local_task`). The certbot DNS authenticator and its
 credentials come from the *DNS* provider — `certbot_args()` into the script argv,
 `credential_env()` into the subprocess env — so the issuer is agnostic to which
 DNS vendor proves control. The issued PEMs land on the controller's disk; the
@@ -15,11 +15,11 @@ from __future__ import annotations
 import frappe
 from frappe import _
 
-from atlas.atlas.local_task import run_local_task
+from atlas.atlas.core.local_task import run_local_task
+from atlas.atlas.core.task_results import parse_result
 from atlas.atlas.services.dns.base import DnsProvider
 from atlas.atlas.services.tls import register
 from atlas.atlas.services.tls.base import AuthResult, IssuedCert, TlsProvider
-from atlas.atlas.task_results import parse_result
 
 LETS_ENCRYPT_PRODUCTION = "https://acme-v02.api.letsencrypt.org/directory"
 

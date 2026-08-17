@@ -27,9 +27,9 @@ from unittest.mock import MagicMock, patch
 import frappe
 from frappe.tests import IntegrationTestCase
 
-from atlas.atlas import migration as migration_module
-from atlas.atlas import migration_forward
-from atlas.atlas.boat_client import (
+from atlas.atlas.core import migration as migration_module
+from atlas.atlas.core import migration_forward
+from atlas.atlas.core.boat_client import (
 	MIGRATION_PHASES,
 	MIGRATION_POLL_HYDRATION,
 	ROUTING_ENVIRONMENT_PATH,
@@ -37,7 +37,7 @@ from atlas.atlas.boat_client import (
 	BoatError,
 	_migration_phase,
 )
-from atlas.atlas.task_results import parse_result
+from atlas.atlas.core.task_results import parse_result
 from atlas.tests import fixtures
 from atlas.tests._mocks import fake_task
 from atlas.tests.test_boat_client import REQUEST, _operation, _Response

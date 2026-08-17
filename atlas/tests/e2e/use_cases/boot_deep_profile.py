@@ -31,7 +31,7 @@ import traceback
 
 import frappe
 
-from atlas.atlas.ssh import connection_for_server, run_ssh, ssh_key_file
+from atlas.atlas.core.ssh import connection_for_server, run_ssh, ssh_key_file
 from atlas.tests.e2e._config import ephemeral_private_key, ephemeral_public_key
 from atlas.tests.e2e.use_cases.image_boot_benchmark import (
 	_HOST_WAIT,

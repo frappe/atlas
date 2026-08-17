@@ -22,8 +22,8 @@ import frappe
 from frappe.tests import IntegrationTestCase
 
 from atlas import setup
-from atlas.atlas.providers.base import Capabilities, ImageInfo, SizeInfo
-from atlas.atlas.secrets import get_secret
+from atlas.atlas.core.providers.base import Capabilities, ImageInfo, SizeInfo
+from atlas.atlas.core.secrets import get_secret
 
 # A real readable key file so AtlasSettings.setup's file-exists check + ssh-keygen
 # derivation have something to chew on (the derivation may fail on a non-key file;
@@ -128,8 +128,8 @@ class TestSetupContract(IntegrationTestCase):
 			os.chmod(_KEY_PATH, 0o600)
 		self.addCleanup(_cleanup)
 		self.addCleanup(_restore_singles, _snapshot_singles())
-		self._do = patch("atlas.atlas.providers.digitalocean.DigitalOceanProvider", _FakeDO)
-		self._scw = patch("atlas.atlas.providers.scaleway.ScalewayProvider", _FakeSCW)
+		self._do = patch("atlas.atlas.core.providers.digitalocean.DigitalOceanProvider", _FakeDO)
+		self._scw = patch("atlas.atlas.core.providers.scaleway.ScalewayProvider", _FakeSCW)
 		self._do.start()
 		self._scw.start()
 		self.addCleanup(self._do.stop)
@@ -179,7 +179,7 @@ class TestSetupContract(IntegrationTestCase):
 		be `is_default=1, enabled=0`, and `default_name` (which filters `enabled=1`)
 		would return "" — the empty size that DO rejects with a 422. Regression test
 		for the e2e default `s-8vcpu-32gb-amd`, which is outside DO_CAPS."""
-		from atlas.atlas.setup_catalog import default_name
+		from atlas.atlas.core.setup_catalog import default_name
 
 		config = _do_config()
 		config["provider"]["digitalocean"]["default_size"] = "s-8vcpu-32gb-amd"
@@ -310,7 +310,7 @@ class TestWizardStages(IntegrationTestCase):
 			os.chmod(_KEY_PATH, 0o600)
 		self.addCleanup(_cleanup)
 		self.addCleanup(_restore_singles, _snapshot_singles())
-		self._do = patch("atlas.atlas.providers.digitalocean.DigitalOceanProvider", _FakeDO)
+		self._do = patch("atlas.atlas.core.providers.digitalocean.DigitalOceanProvider", _FakeDO)
 		self._do.start()
 		self.addCleanup(self._do.stop)
 
@@ -395,7 +395,7 @@ class TestWizardDiscover(IntegrationTestCase):
 			"rate_limit": 5000,
 			"rate_remaining": 4900,
 		}
-		with patch("atlas.atlas.digitalocean.DigitalOceanClient", return_value=fake_client):
+		with patch("atlas.atlas.core.digitalocean.DigitalOceanClient", return_value=fake_client):
 			result = setup.wizard_discover("DigitalOcean", {"api_token": "dop_v1_x"})
 		self.assertTrue(result["ok"])
 		self.assertIn("ops@acme.com", result["account_label"])
@@ -412,11 +412,11 @@ class TestWizardDiscover(IntegrationTestCase):
 		self.assertTrue(result["error"])
 
 	def test_digitalocean_bad_token_returns_error_not_raise(self) -> None:
-		from atlas.atlas.digitalocean import DigitalOceanError
+		from atlas.atlas.core.digitalocean import DigitalOceanError
 
 		fake_client = MagicMock()
 		fake_client.verify_credentials.side_effect = DigitalOceanError("401 Unauthorized")
-		with patch("atlas.atlas.digitalocean.DigitalOceanClient", return_value=fake_client):
+		with patch("atlas.atlas.core.digitalocean.DigitalOceanClient", return_value=fake_client):
 			result = setup.wizard_discover("DigitalOcean", {"api_token": "bad"})
 		self.assertFalse(result["ok"])
 		self.assertIn("401", result["error"])
@@ -430,7 +430,7 @@ class TestWizardDiscover(IntegrationTestCase):
 		]
 		fake_client.list_os.return_value = [{"id": "os-uuid", "name": "Ubuntu", "version": "24.04 LTS"}]
 		fake_client.list_ssh_keys.return_value = [{"id": "key-uuid", "name": "laptop"}]
-		with patch("atlas.atlas.scaleway.ScalewayClient", return_value=fake_client):
+		with patch("atlas.atlas.core.scaleway.ScalewayClient", return_value=fake_client):
 			result = setup.wizard_discover(
 				"Scaleway",
 				{"secret_key": "scw", "zone": "fr-par-2", "project_id": "proj-uuid", "billing": "monthly"},
@@ -453,7 +453,7 @@ class TestWizardDiscover(IntegrationTestCase):
 		fake_client.list_ssh_keys.return_value = []
 		fake_client.ensure_ssh_key.return_value = "98765432"
 		with (
-			patch("atlas.atlas.digitalocean.DigitalOceanClient", return_value=fake_client),
+			patch("atlas.atlas.core.digitalocean.DigitalOceanClient", return_value=fake_client),
 			patch.object(setup, "_controller_public_key", return_value="ssh-ed25519 AAAA me"),
 		):
 			result = setup.wizard_discover(
@@ -468,7 +468,7 @@ class TestWizardDiscover(IntegrationTestCase):
 		fake_client = MagicMock()
 		fake_client.verify_credentials.return_value = {"email": "ops@acme.com"}
 		fake_client.list_ssh_keys.return_value = []
-		with patch("atlas.atlas.digitalocean.DigitalOceanClient", return_value=fake_client):
+		with patch("atlas.atlas.core.digitalocean.DigitalOceanClient", return_value=fake_client):
 			result = setup.wizard_discover("DigitalOcean", {"api_token": "dop_v1_x"})
 		self.assertIsNone(result["matched_ssh_key_id"])
 		fake_client.ensure_ssh_key.assert_not_called()
@@ -486,7 +486,7 @@ class TestWizardDiscover(IntegrationTestCase):
 		fake_client.list_ssh_keys.return_value = []  # no existing key to match
 		fake_client.register_ssh_key.return_value = {"id": "new-key-uuid"}
 		with (
-			patch("atlas.atlas.scaleway.ScalewayClient", return_value=fake_client),
+			patch("atlas.atlas.core.scaleway.ScalewayClient", return_value=fake_client),
 			patch.object(setup, "_controller_public_key", return_value="ssh-ed25519 AAAA me"),
 		):
 			result = setup.wizard_discover(
@@ -518,7 +518,7 @@ class TestWizardDiscover(IntegrationTestCase):
 			{"id": "existing-uuid", "name": "laptop", "public_key": "ssh-ed25519 AAAA me laptop@host"}
 		]
 		with (
-			patch("atlas.atlas.scaleway.ScalewayClient", return_value=fake_client),
+			patch("atlas.atlas.core.scaleway.ScalewayClient", return_value=fake_client),
 			patch.object(setup, "_controller_public_key", return_value="ssh-ed25519 AAAA me"),
 		):
 			result = setup.wizard_discover(
@@ -648,7 +648,7 @@ def _restore_singles(snapshot: dict) -> None:
 
 
 def _cleanup_fake_catalog() -> None:
-	from atlas.atlas.providers.fake import FAKE_IMAGES, FAKE_SIZES
+	from atlas.atlas.core.providers.fake import FAKE_IMAGES, FAKE_SIZES
 
 	for size in FAKE_SIZES:
 		name = f"Fake/{size.slug}"

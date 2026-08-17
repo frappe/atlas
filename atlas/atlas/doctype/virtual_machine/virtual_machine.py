@@ -4,15 +4,14 @@ import frappe
 from frappe import _
 from frappe.model.document import Document
 
-from atlas.atlas import vm_images, vm_power, vm_provisioning, vm_resize, vm_teardown
-from atlas.atlas.boat_client import (
+from atlas.atlas.core import callbacks, vm_images, vm_power, vm_provisioning, vm_resize, vm_teardown
+from atlas.atlas.core.boat_client import (
 	FIRST_BOOT_EPOCH,
 	BoatError,
 	put_desired_state,
 	run_boat_task,
 )
-from atlas.atlas.core import callbacks
-from atlas.atlas.networking import (
+from atlas.atlas.core.networking import (
 	CPU_MODE_RELAXED,
 	allocate_ipv6,
 	derive_mac,
@@ -20,9 +19,9 @@ from atlas.atlas.networking import (
 	derive_tap,
 	derive_uid,
 )
-from atlas.atlas.placement import apply_user_defaults
-from atlas.atlas.ssh import run_probe, run_task
-from atlas.atlas.task_results import parse_result
+from atlas.atlas.core.placement import apply_user_defaults
+from atlas.atlas.core.ssh import run_probe, run_task
+from atlas.atlas.core.task_results import parse_result
 
 # Never change after insert — identity and the key the rootfs was built with.
 IMMUTABLE_AFTER_INSERT = (
@@ -314,7 +313,7 @@ class VirtualMachine(Document):
 		(stage 1) it gets a NEW public IPv6 on the target and the proxy/Subdomain
 		layer is re-pointed. Pre-flight (the cheap synchronous half) runs here; the
 		on-host checks that need SSH run in the first phase."""
-		from atlas.atlas.migration_preflight import preflight_checks  # local import: avoids a cycle
+		from atlas.atlas.core.migration_preflight import preflight_checks  # local import: avoids a cycle
 
 		# frm.call / REST send a stringy bool.
 		release_reserved_ip = release_reserved_ip in (True, 1, "1", "true", "True", "yes")
@@ -339,7 +338,7 @@ class VirtualMachine(Document):
 		# committed (else start_migration can't load the row). The cron is the safety
 		# net that re-drives the row if a self-drive job is ever dropped.
 		frappe.enqueue(
-			"atlas.atlas.migration.start_migration",
+			"atlas.atlas.core.migration.start_migration",
 			queue="long",
 			timeout=300,
 			enqueue_after_commit=True,
@@ -358,7 +357,7 @@ class VirtualMachine(Document):
 		Guarded against a concurrent migration (the phase machine owns the host while
 		it runs). The heavy lifting — host teardown on both ends, re-provision,
 		re-point — lives in migration.collapse_forward."""
-		from atlas.atlas.migration_forward import collapse_forward
+		from atlas.atlas.core.migration_forward import collapse_forward
 
 		if not self.traffic_forwarded_from:
 			frappe.throw(_("Virtual Machine {0} has no active forward to collapse").format(self.name))

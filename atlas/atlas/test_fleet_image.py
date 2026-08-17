@@ -1,4 +1,4 @@
-"""Unit tests for atlas.atlas.fleet_image — fleet distribution of a promoted
+"""Unit tests for atlas.atlas.core.fleet_image — fleet distribution of a promoted
 snapshot as a NON-LOCAL base image (rootfs squashfs → S3 → sync-image fan-out;
 the kernel is inherited from the source image, not re-uploaded).
 
@@ -15,7 +15,7 @@ from unittest.mock import patch
 import frappe
 from frappe.tests import IntegrationTestCase
 
-from atlas.atlas import fleet_image
+from atlas.atlas.core import fleet_image
 from atlas.tests import fixtures
 from atlas.tests.fixtures import no_commit_enqueue
 
@@ -71,8 +71,8 @@ class TestPublishSnapshotAsFleetImage(IntegrationTestCase):
 		with (
 			no_commit_enqueue() as enqueue,
 			patch.object(fleet_image, "_produce_and_upload_rootfs", return_value=ROOTFS_SHA256),
-			patch("atlas.atlas.s3.is_configured", return_value=True),
-			patch("atlas.atlas.s3.S3Backup", _StubS3Backup),
+			patch("atlas.atlas.core.s3.is_configured", return_value=True),
+			patch("atlas.atlas.core.s3.S3Backup", _StubS3Backup),
 		):
 			vm = fixtures.make_virtual_machine(server, source_image, title="fleet-test-vm")
 			snapshot = frappe.get_doc(

@@ -24,7 +24,7 @@ import frappe
 from frappe import _
 from frappe.model.document import Document
 
-from atlas.atlas.networking import WG_GATEWAY_PORT, derive_client_address, derive_tenant_prefix
+from atlas.atlas.core.networking import WG_GATEWAY_PORT, derive_client_address, derive_tenant_prefix
 from atlas.atlas.services import wireguard
 
 # The scope + the crypto identity are frozen once the row exists. The tenant is the

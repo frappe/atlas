@@ -14,7 +14,7 @@ import frappe
 from frappe.tests import IntegrationTestCase
 
 from atlas.atlas.api import central_link
-from atlas.atlas.secrets import get_secret
+from atlas.atlas.core.secrets import get_secret
 
 PLAIN_USER_EMAIL = "central-link-plain@example.com"
 

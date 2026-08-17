@@ -188,8 +188,8 @@ def _make_subdomain(subdomain: str, vm_name: str, region: str) -> None:
 def _assert_live_map(proxy_vm_name: str, expected: dict[str, str]) -> None:
 	"""Read the proxy guest's live /map over guest SSH and assert it equals the
 	expected map byte-for-byte (the same canonical compare reconcile uses)."""
-	from atlas.atlas._ssh.transport import run_ssh, ssh_key_file
-	from atlas.atlas.ssh import connection_for_guest
+	from atlas.atlas.core._ssh.transport import run_ssh, ssh_key_file
+	from atlas.atlas.core.ssh import connection_for_guest
 
 	vm = frappe.get_doc("Virtual Machine", proxy_vm_name)
 	connection = connection_for_guest(vm)

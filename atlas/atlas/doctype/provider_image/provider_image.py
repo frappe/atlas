@@ -29,6 +29,6 @@ class ProviderImage(Document):
 		if self.name and self.name != expected:
 			frappe.throw(f"Provider Image name {self.name!r} does not match {expected!r}")
 		if self.is_default:
-			from atlas.atlas.setup_catalog import clear_other_defaults
+			from atlas.atlas.core.setup_catalog import clear_other_defaults
 
 			clear_other_defaults("Provider Image", self.provider_type, self.name)
