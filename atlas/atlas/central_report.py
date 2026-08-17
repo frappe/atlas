@@ -207,7 +207,11 @@ def retry_pending(limit: int = 50, include_legacy_pending: bool = False) -> int:
 
 def _delivery_ready() -> bool:
 	settings = frappe.get_single("Central Settings")
-	return bool(settings.enabled and settings.api_key)
+	return bool(
+		settings.enabled
+		and settings.api_key
+		and settings.get_password("webhook_secret", raise_exception=False)
+	)
 
 
 def _retry_limit(limit: int) -> int:
@@ -258,10 +262,9 @@ def deliver(log_name: str, event_type: str, payload: dict, occurred_at: str | No
 	settings = frappe.get_single("Central Settings")
 	if not settings.enabled:
 		return
-	if not settings.api_key:
-		# Enabled but not yet registered: without the scoped service-user creds we
-		# can't authenticate to Central (and the sender is resolved from that identity),
-		# so skip rather than POST unauthenticated. Register first.
+	if not (settings.api_key and settings.get_password("webhook_secret", raise_exception=False)):
+		# Rollout-safety gate: signing code deployed but not yet re-registered just
+		# skips (durable outbox, nothing lost) rather than POSTing unsigned.
 		_stamp(log_name, status="skipped")
 		settings.db_set("status", "skipped: register with Central first", commit=True)
 		return

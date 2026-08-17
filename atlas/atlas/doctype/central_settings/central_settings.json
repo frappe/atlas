@@ -8,6 +8,7 @@
   "url",
   "api_key",
   "api_secret",
+  "webhook_secret",
   "column_break_connection",
   "enabled",
   "section_break_registration",
@@ -54,6 +55,12 @@
    "in_list_view": 1,
    "label": "API Secret",
    "reqd": 1
+  },
+  {
+   "description": "HMAC signing secret for Atlas's webhook auth to Central. Set by Central via provision_tunnel; rotated by re-provisioning (same event as api_key/api_secret). Optional so a fresh/not-yet-registered Atlas doesn't fail validation.",
+   "fieldname": "webhook_secret",
+   "fieldtype": "Password",
+   "label": "Webhook Secret"
   },
   {
    "fieldname": "column_break_connection",
