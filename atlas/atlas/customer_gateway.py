@@ -249,7 +249,7 @@ def _stage_guest_file(connection, key_path, content: str, path: str, mode: str) 
 
 def _record(gateway_vm: str, script: str, stdout: str, stderr: str, code: int) -> None:
 	"""Record a gateway guest op as a Task row for the audit trail (the proxy idiom)."""
-	from atlas.atlas.proxy import _record_guest_task
+	from atlas.atlas.core.guest_tasks import _record_guest_task
 
 	_record_guest_task(gateway_vm, script, {}, stdout, stderr, code)
 

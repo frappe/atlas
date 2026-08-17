@@ -22,6 +22,7 @@ import frappe
 
 from atlas.atlas._ssh._quote import substitute
 from atlas.atlas._ssh.transport import run_ssh, ssh_key_file
+from atlas.atlas.core.guest_tasks import _record_guest_task
 from atlas.atlas.doctype.custom_domain.custom_domain import (
 	custom_domain_acme_map,
 	custom_domain_sni_map,
@@ -55,9 +56,6 @@ PLACEHOLDER_CERT_SUBJECT = (
 	"/O=Frappe Cloud"
 	"/OU=Connect it in your dashboard: frappe.dev\\/domains"
 )
-# The guest file build.sh leaves empty and the proxy recipe's finalize step writes
-# the real region into (image_recipes._finalize_proxy); init_by_lua reads it.
-REGION_FILE = "/var/lib/nginx/region"
 # The guest admin API answers HTTP over the unix socket; the host part is ignored
 # but curl needs one, so use a fixed placeholder.
 ADMIN_BASE = "http://localhost"
@@ -348,11 +346,6 @@ def build_proxy(virtual_machine: str) -> None:
 	run_build(virtual_machine, get_recipe("proxy"), stream=True)
 
 
-def _remote_parent(remote_path: str) -> str:
-	parent = remote_path.rsplit("/", 1)[0]
-	return parent or "/"
-
-
 def _write_guest_file(
 	connection, key_path, path: str, content: str, mode: str, make_dir: str | None = None
 ) -> None:
@@ -448,29 +441,6 @@ def wildcard_targets() -> tuple[list[str], list[str]]:
 	return ipv4, ipv6
 
 
-def _record_guest_task(
-	virtual_machine: str, script: str, variables: dict, stdout: str, stderr: str, exit_code: int
-) -> str:
-	"""Record one guest-SSH operation as a Task row for the operator's audit
-	trail. Unlike host Tasks this isn't a staged script — the `script` is a
-	synthetic name and there are no uploads — but the row shape (status, output,
-	exit code) is identical, so the operator sees proxy reconciles in the same
-	Task list as every other action. Returns the Task's name so a caller (the
-	Image Build controller) can link it for the audit trail."""
-	task = frappe.get_doc(
-		{
-			"doctype": "Task",
-			"server": frappe.db.get_value("Virtual Machine", virtual_machine, "server"),
-			"virtual_machine": virtual_machine,
-			"script": script,
-			"status": "Success" if exit_code == 0 else "Failure",
-			"triggered_by": frappe.session.user if frappe.session else "Administrator",
-			"stdout": stdout,
-			"stderr": stderr,
-			"exit_code": exit_code,
-			"ended": frappe.utils.now_datetime(),
-		}
-	)
-	task.variables_dict = variables
-	task.insert(ignore_permissions=True)
-	return task.name
+# _record_guest_task, _remote_parent and REGION_FILE moved to core.guest_tasks
+# (generic guest-SSH helpers, not proxy logic); _record_guest_task is imported
+# back above for the proxy reconciles that record a Task row.

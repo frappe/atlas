@@ -542,8 +542,8 @@ def _run_warm_entrypoint(recipe, vm) -> None:
 	import shlex
 
 	from atlas.atlas._ssh.transport import run_ssh, ssh_key_file
+	from atlas.atlas.core.guest_tasks import _record_guest_task
 	from atlas.atlas.image_builder import stage_recipe_tree
-	from atlas.atlas.proxy import _record_guest_task
 	from atlas.atlas.ssh import connection_for_guest
 
 	connection = connection_for_guest(vm)

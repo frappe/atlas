@@ -38,7 +38,7 @@ import frappe
 
 from atlas.atlas._ssh._quote import substitute
 from atlas.atlas._ssh.transport import run_scp, run_ssh, ssh_key_file, wait_for_ssh
-from atlas.atlas.proxy import _record_guest_task, _remote_parent
+from atlas.atlas.core.guest_tasks import _record_guest_task, _remote_parent
 from atlas.atlas.ssh import connection_for_guest
 
 # The committed deploy script ships in the repo's top-level `bench/` dir beside

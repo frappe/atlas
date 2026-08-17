@@ -26,8 +26,8 @@ from frappe import _
 
 from atlas.atlas._ssh._quote import substitute
 from atlas.atlas._ssh.transport import forget_host, run_detached, run_scp, run_ssh, ssh_key_file
+from atlas.atlas.core.guest_tasks import _record_guest_task, _remote_parent
 from atlas.atlas.image_recipes import ImageRecipe
-from atlas.atlas.proxy import _record_guest_task, _remote_parent
 from atlas.atlas.ssh import connection_for_guest
 
 # The committed bench.toml the bench recipes render per-version. Its `[bench] python`

@@ -142,8 +142,8 @@ def _finalize_proxy(virtual_machine, connection, key_path) -> tuple[str, str, in
 	# Local import: proxy.py imports image_builder (for build_proxy → run_build),
 	# which imports this module — so importing proxy at module scope would cycle.
 	# REGION_FILE is a plain constant; pull it in only when the finalize runs.
+	from atlas.atlas.core.guest_tasks import REGION_FILE
 	from atlas.atlas.placement import active_root_domain
-	from atlas.atlas.proxy import REGION_FILE
 
 	# The proxy's routing lua strips the FULL regional wildcard zone from each Host /
 	# SNI (router.lua / sni_router.lua / acme_router.lua), so write the active Root
