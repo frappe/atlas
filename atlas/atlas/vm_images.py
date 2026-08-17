@@ -1,15 +1,15 @@
-"""A VM's disk-image operations — snapshotting a VM's disk into a Virtual Machine
-Snapshot, and rebuilding a Stopped VM's disk from a snapshot or a base image
-(spec/05-vm-lifecycle, spec/08, spec/24).
+"""A VM's disk-image operations — snapshotting a VM's disk (cold or warm) into a
+Virtual Machine Snapshot, and rebuilding a Stopped VM's disk from a snapshot or a
+base image (spec/05-vm-lifecycle, spec/08, spec/24).
 
 Extracted from the `Virtual Machine` controller: producing and laying down a VM's
 disk image is one cohesive reason to change, separate from the create/power/
 terminate lifecycle and from the machine-spec resizing in `vm_resize.py`. Free
 functions taking the VM, following the `vm_provisioning.py` / `migration.py`
-pattern. The whitelisted operations (snapshot, rebuild) stay as thin controller
-delegators — the Central/desk RPC surface + external Python callers — and
-`_rebuild_variables` keeps a delegator too (`test_boat_lifecycle` calls it on the
-doc).
+pattern. The whitelisted operations (snapshot, capture_warm_snapshot, rebuild)
+stay as thin controller delegators — the Central/desk RPC surface + external
+Python callers — and `_rebuild_variables` keeps a delegator too
+(`test_boat_lifecycle` calls it on the doc).
 """
 
 from __future__ import annotations
@@ -128,6 +128,91 @@ def default_snapshot_title(vm) -> str:
 	"""`<vm title> — <YYYY-MM-DD HH:mm>` for an unnamed snapshot."""
 	stamp = frappe.utils.now_datetime().strftime("%Y-%m-%d %H:%M")
 	return f"{vm.title} — {stamp}"
+
+
+def capture_warm_snapshot(vm, title: str | None = None) -> str:
+	"""Capture this live VM's memory AND disk at one paused instant into a new
+	`kind=Warm` Virtual Machine Snapshot. Returns the snapshot's name.
+
+	Named with a verb (not `warm_snapshot`) on purpose: `warm_snapshot` is the
+	Link *field* that records the golden a warm clone was restored from, and a
+	method of that name would be shadowed by the field value on a hydrated doc.
+
+	The capture half of the Image Builder's warm bake
+	(`image_build._warm_snapshot`), exposed as a per-VM operator action: pause
+	the running guest's vCPUs, write the memory pair (`vmstate.bin` +
+	`mem.bin`) and an LVM thin disk snapshot at the *same* paused instant to a
+	durable per-snapshot directory, capture the host signature, then resume —
+	the VM never stops. The frozen RAM references exactly those disk blocks, so
+	the pair is only valid together (see
+	[05-virtual-machine-lifecycle.md → Warm snapshot fan-out]).
+
+	Running or Paused only (there is a live guest to freeze); a Stopped VM has
+	no memory to capture — take a plain `snapshot()` instead. The capture
+	script rejects a VM with a data disk (warm snapshots are root-only).
+
+	The row records the captured machine config (vcpus, memory) and tap name —
+	the vmstate pins all three, so a restore must reproduce them exactly. This
+	action only *produces* the artifact; restoring it onto its own VM is the
+	fast stop/start shape, and fanning it out into clones is safe only for a
+	golden baked with the in-guest freshen unit (the Image Builder warm bake) —
+	see `Virtual Machine Snapshot.clone_to_new_vm`."""
+	if vm.status not in ("Running", "Paused"):
+		frappe.throw(
+			f"A warm snapshot needs a Running or Paused VM (status is {vm.status}); "
+			f"for a Stopped VM take a plain snapshot"
+		)
+	vm._guard_no_active_migration()
+	title = (title or "").strip() or default_snapshot_title(vm)
+	snapshot = frappe.get_doc(
+		{
+			"doctype": "Virtual Machine Snapshot",
+			"title": title,
+			"virtual_machine": vm.name,
+			"server": vm.server,
+			"status": "Pending",
+			"kind": "Warm",
+			"source_image": vm.image,
+			"disk_gigabytes": vm.disk_gigabytes,
+			# Carry the bench bake mode (empty for an ordinary VM) so a clone of a
+			# golden maps its FQDN correctly on first boot (spec/08).
+			"build_mode": vm.build_mode or None,
+			# The frozen vmstate pins the machine and its tap name; a warm clone
+			# must reproduce all three exactly (clone_to_new_vm enforces it).
+			"vcpus": vm.vcpus,
+			"memory_megabytes": vm.memory_megabytes,
+			"tap_device": vm.tap_device,
+		}
+	).insert(ignore_permissions=True)
+	rootfs_path = f"/dev/atlas/atlas-snap-{snapshot.name}"
+	memory_directory = f"/var/lib/atlas/snapshots/{snapshot.name}"
+	task = run_task(
+		server=vm.server,
+		script="warm-snapshot-vm",
+		variables={
+			"VIRTUAL_MACHINE_NAME": vm.name,
+			"ATLAS_FC_UID": str(derive_uid(vm.name)),
+			"SNAPSHOT_ROOTFS_PATH": rootfs_path,
+			"MEMORY_DIRECTORY": memory_directory,
+		},
+		virtual_machine=vm.name,
+		timeout_seconds=600,
+	)
+	# One atomic update, like snapshot(): the Task succeeded and the durable
+	# artifacts exist on the host, so the row ends up Available with no window
+	# where the paths landed but the status didn't.
+	result = parse_result(task.stdout)
+	snapshot.db_set(
+		{
+			"rootfs_path": rootfs_path,
+			"size_bytes": result["size_bytes"],
+			"memory_directory": memory_directory,
+			"memory_bytes": result["memory_bytes"],
+			"host_signature": result["host_signature"],
+			"status": "Available",
+		}
+	)
+	return snapshot.name
 
 
 def rebuild(vm, source_type: str, source: str | None = None) -> str:

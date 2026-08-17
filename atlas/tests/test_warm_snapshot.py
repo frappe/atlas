@@ -312,7 +312,7 @@ class TestWarmSnapshotAction(IntegrationTestCase):
 	def test_capture_creates_warm_row_with_captured_config(self) -> None:
 		vm = self._running_vm()
 		with patch(
-			"atlas.atlas.doctype.virtual_machine.virtual_machine.run_task",
+			"atlas.atlas.vm_images.run_task",
 			return_value=fake_task(stdout=self.RESULT_STDOUT),
 		) as mocked:
 			snapshot_name = vm.capture_warm_snapshot(title="hot")
@@ -344,7 +344,7 @@ class TestWarmSnapshotAction(IntegrationTestCase):
 		vm.db_set("status", "Paused")
 		vm.reload()
 		with patch(
-			"atlas.atlas.doctype.virtual_machine.virtual_machine.run_task",
+			"atlas.atlas.vm_images.run_task",
 			return_value=fake_task(stdout=self.RESULT_STDOUT),
 		):
 			self.assertTrue(vm.capture_warm_snapshot())
