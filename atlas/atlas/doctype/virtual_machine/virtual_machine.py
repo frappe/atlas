@@ -104,7 +104,6 @@ class VirtualMachine(Document):
 		mac_address: DF.Data | None
 		memory_megabytes: DF.Int
 		memory_snapshot_on_stop: DF.Check
-		observed_authority: DF.Literal["DB", "Boat"]
 		observed_status: DF.Literal["", "Running", "Stopped", "Sleeping", "Unknown", "Failed"]
 		public_ipv4: DF.Data | None
 		server: DF.Link
