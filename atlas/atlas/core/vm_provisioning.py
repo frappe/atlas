@@ -105,15 +105,15 @@ def cgroup_values(interleaved: list[str]) -> list[str]:
 
 
 def routing_base_url() -> str:
-	"""The Satellite orchestrator base URL a guest's routing client POSTs to (spec/28:
-	routing moved off Atlas to the Satellite).
+	"""The base URL a guest's routing client POSTs to — the external service that
+	serves this Atlas's guest routing API (spec/28: routing moved off Atlas).
 
-	Read from `Atlas Settings.satellite_routing_base_url` — the Satellite's public site
+	Read from `Atlas Settings.guest_routing_base_url` — the service's public site
 	URL (e.g. `https://orchestrator.blr1.frappe.dev`). Returns "" when unset, which the
 	Task runner drops, leaving /etc/atlas-routing.env unwritten and the guest client a
-	clean no-op (an Atlas with no Satellite, or before the URL is configured). NON-SECRET,
-	so there is no harm in injecting it broadly."""
-	return frappe.db.get_single_value("Atlas Settings", "satellite_routing_base_url") or ""
+	clean no-op (an Atlas with routing not externally served, or before the URL is
+	configured). NON-SECRET, so there is no harm in injecting it broadly."""
+	return frappe.db.get_single_value("Atlas Settings", "guest_routing_base_url") or ""
 
 
 def provision_variables(vm) -> dict:

@@ -520,7 +520,7 @@ class TestRebuildThroughBoat(_BoatHostTestCase):
 		if not frappe.db.exists("Tenant", "boat-rebuild-team"):
 			frappe.get_doc({"doctype": "Tenant", "team": "boat-rebuild-team"}).insert(ignore_permissions=True)
 		frappe.db.set_single_value(
-			"Atlas Settings", "satellite_routing_base_url", "https://orchestrator.blr1.frappe.dev"
+			"Atlas Settings", "guest_routing_base_url", "https://orchestrator.blr1.frappe.dev"
 		)
 		return self._fresh(
 			status="Stopped",

@@ -161,7 +161,7 @@ class TestVirtualMachineLifecycle(IntegrationTestCase):
 			frappe.get_doc({"doctype": "Tenant", "team": "rebuild-identity-team"}).insert(
 				ignore_permissions=True
 			)
-		frappe.db.set_single_value("Atlas Settings", "satellite_routing_base_url", "https://sat.example")
+		frappe.db.set_single_value("Atlas Settings", "guest_routing_base_url", "https://sat.example")
 		vm = _vm_with_status("Stopped")
 		vm.db_set("tenant", "rebuild-identity-team", update_modified=False)
 		vm.reload()
