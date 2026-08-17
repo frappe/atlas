@@ -746,7 +746,7 @@ class TestServerBoatToken(IntegrationTestCase):
 		return make_server(self.provider, "test-server-token", provider_resource_id="77", status="Active")
 
 	def test_mint_stores_the_token_encrypted_and_stamps_a_future_expiry(self) -> None:
-		from atlas.atlas.doctype.server import server as server_module
+		from atlas.atlas import server_boat
 
 		server = self._server()
 		token = server.mint_boat_token()
@@ -757,7 +757,7 @@ class TestServerBoatToken(IntegrationTestCase):
 		self.assertEqual(server.get_password("boat_token", raise_exception=False), token)
 		self.assertNotEqual(frappe.db.get_value("Server", server.name, "boat_token"), token)
 		remaining = frappe.utils.get_datetime(server.boat_token_expires_at) - frappe.utils.now_datetime()
-		self.assertGreater(remaining.days, server_module.BOAT_TOKEN_TTL_DAYS - 2)
+		self.assertGreater(remaining.days, server_boat.BOAT_TOKEN_TTL_DAYS - 2)
 
 	def test_current_or_minted_reuses_a_fresh_token(self) -> None:
 		server = self._server()
@@ -766,14 +766,14 @@ class TestServerBoatToken(IntegrationTestCase):
 		self.assertEqual(server._current_or_minted_boat_token(), first)
 
 	def test_current_or_minted_remints_inside_the_expiry_window(self) -> None:
-		from atlas.atlas.doctype.server import server as server_module
+		from atlas.atlas import server_boat
 
 		server = self._server()
 		first = server.mint_boat_token()
 		# Push the expiry inside the re-mint window: the next call must mint anew, so a
 		# reachable host never carries a token to its hard expiry.
 		near = frappe.utils.add_to_date(
-			frappe.utils.now_datetime(), days=server_module.BOAT_TOKEN_REMINT_WITHIN_DAYS - 1
+			frappe.utils.now_datetime(), days=server_boat.BOAT_TOKEN_REMINT_WITHIN_DAYS - 1
 		)
 		server.db_set("boat_token_expires_at", near)
 
