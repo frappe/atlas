@@ -1251,52 +1251,7 @@ class VirtualMachine(Document):
 		return task.name
 
 	def _terminate_front_doors(self) -> None:
-		"""Mark every aggregate backed by this VM Terminated, and push that status.
-
-		A `Pilot`/`Site` is the AUTHORITATIVE status Central mirrors for a bench VM
-		(`front_door.FrontDoor.status`, `central_report.on_vm_update`, which suppresses the
-		raw VM status for exactly these VMs). The aggregate→VM direction was wired —
-		`Pilot.terminate()` tears down its VM — but the VM→aggregate direction was not, so
-		terminating the VM DIRECTLY left the aggregate claiming Running forever. That is
-		not a corner: it is what Central's own `terminate_server` does (it invokes the
-		action on the Virtual Machine), and what the desk's Terminate button on a VM does.
-
-		Nothing corrected it afterwards, either: `vm.deleted` fires from `on_trash` and
-		Atlas never deletes the row (terminate is a status flip), and the reconcile pull
-		(`api.inventory.tenant_vms`) reports the FRONT DOOR's status — so it re-asserted
-		Running rather than repairing it. The result was a tenant seeing a dead server
-		listed as Running, with Open minting a session for a gateway that answers nothing.
-
-		Both aggregates, not just the handoff owner: a self-serve VM carries a Site AND
-		its attached Pilot (`front_doors_for_vm`), and leaving either behind reproduces the
-		bug on that half. `db_set` skips `on_update`, so the status event is emitted
-		explicitly — the same gap `report_pilot_status` / `report_site_status` exist to
-		close. Delivery is best-effort by design (a queued POST); a Central that is down
-		must not fail a terminate, so emission is guarded but the status write is not.
-
-		Skipped when the aggregate is the one doing the terminating (`Pilot.terminate()` /
-		`Site.terminate()` set `flags.front_door_terminating` before calling us): it marks
-		and saves itself, and re-marking here would fire the same event twice."""
-		if self.flags.get("front_door_terminating"):
-			return
-		from atlas.atlas.front_door import front_doors_for_vm
-
-		for door in front_doors_for_vm(self.name):
-			doc = door.doc
-			if doc.status == "Terminated":
-				continue
-			doc.db_set("status", "Terminated")
-			try:
-				from atlas.atlas import central_report
-
-				if doc.doctype == "Pilot":
-					central_report.report_pilot_status(doc)
-				else:
-					central_report.report_site_status(doc)
-			except Exception:
-				# The status is already persisted; a reporting failure must not undo the
-				# terminate. Central's own reconcile now reads the corrected status.
-				frappe.log_error(title=f"front-door terminate report failed: {doc.doctype} {doc.name}")
+		vm_teardown.terminate_front_doors(self)
 
 	def _delete_snapshots(self) -> None:
 		vm_teardown.delete_snapshots(self)
