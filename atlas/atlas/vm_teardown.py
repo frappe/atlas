@@ -113,3 +113,11 @@ def deprovision_proxy(vm) -> None:
 	cert_name = frappe.db.get_value("TLS Certificate", {"root_domain": domain, "status": "Active"}, "name")
 	if cert_name:
 		frappe.get_doc("TLS Certificate", cert_name)._publish_wildcard()
+
+
+def detach_reserved_ip(vm) -> None:
+	"""Release the VM's attached public IPv4 (if any) back to its Server's
+	pool on terminate, so the address can be re-attached to another VM. The
+	Reserved IP row survives — only the attachment is cleared."""
+	for name in frappe.get_all("Reserved IP", filters={"virtual_machine": vm.name}, pluck="name"):
+		frappe.get_doc("Reserved IP", name).detach()

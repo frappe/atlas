@@ -1237,7 +1237,7 @@ class VirtualMachine(Document):
 		)
 		self.status = "Terminated"
 		self.save()
-		self._detach_reserved_ip()
+		vm_teardown.detach_reserved_ip(self)
 		vm_teardown.revoke_tunnels(self)
 		vm_teardown.revoke_vpc_peers(self)
 		vm_teardown.delete_subdomains(self)
@@ -1297,13 +1297,6 @@ class VirtualMachine(Document):
 				# The status is already persisted; a reporting failure must not undo the
 				# terminate. Central's own reconcile now reads the corrected status.
 				frappe.log_error(title=f"front-door terminate report failed: {doc.doctype} {doc.name}")
-
-	def _detach_reserved_ip(self) -> None:
-		"""Release the VM's attached public IPv4 (if any) back to its Server's
-		pool on terminate, so the address can be re-attached to another VM. The
-		Reserved IP row survives — only the attachment is cleared."""
-		for name in frappe.get_all("Reserved IP", filters={"virtual_machine": self.name}, pluck="name"):
-			frappe.get_doc("Reserved IP", name).detach()
 
 	def _delete_snapshots(self) -> None:
 		"""Drop this VM's snapshot rows after terminate. Each row's on_trash
