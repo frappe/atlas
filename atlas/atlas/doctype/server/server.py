@@ -371,13 +371,8 @@ class Server(Document):
 		state); they're only the initial seed-of-trust."""
 		identity = server_ancp.build_identity(self)
 		seed = server_ancp.build_seed(self)
+		seed_content = server_ancp.seed_document(seed)
 		wg_private_key, _wg_public_key = server_ancp.derive_wireguard_keypair(self)
-		# Stage 5+ — the host's signing keypair. validate() generated one on first
-		# insert and persisted the priv in `signing_private_key`. A re-Bootstrap
-		# or resync reads it from the persisted field (encrypted Password) and
-		# writes the key files again. If the field is empty (a host bootstrapped
-		# before this migration), we read the existing keys from the host instead.
-		#
 		# IMPORTANT: `signing_private_key` is a Frappe Password field. Frappe's
 		# `_save_passwords` (base_document.py) stores the plaintext encrypted in
 		# `__Auth` and REPLACES the in-memory + column value with a `"****"` mask
@@ -390,30 +385,46 @@ class Server(Document):
 		# host's MembershipAdvertisement → silent cluster partition. Use
 		# `get_password` (which reads the decrypted plaintext from `__Auth`)
 		# instead — the canonical Frappe way to read a Password field in code.
+		# validate() generated the keypair on first insert; a re-Bootstrap/resync
+		# reads it back here and writes the key files again.
 		pending_signing_priv = self.get_password("signing_private_key", raise_exception=False) or ""
-		if pending_signing_priv:
-			# Defensive in depth — refuse to push a non-ed25519-shaped priv.
-			# `b64decode(validate=True)` rejects the `"****"` mask (which
-			# contains non-base64 chars) and any other malformed value loud,
-			# surfacing a regression here instead of letting the daemon mute-
-			# regenerate a mismatched keypair.
-			import base64
+		self._validate_signing_priv(pending_signing_priv)
+		self._push_host_key_files(connection, wg_private_key, _wg_public_key, pending_signing_priv)
+		self._push_seed_files(connection, identity=identity, seed=seed, seed_content=seed_content)
 
-			try:
-				priv_raw = base64.b64decode(pending_signing_priv, validate=True)
-			except Exception as exc:
-				frappe.throw(
-					f"signing_private_key for {self.name} is not valid base64: {exc} — "
-					"the field was likely read as the Frappe Password-field mask "
-					"('****') instead of the decrypted plaintext"
-				)
-			if len(priv_raw) != 32:
-				frappe.throw(
-					f"signing_private_key for {self.name} is {len(priv_raw)} bytes, "
-					"expected 32 (an ed25519 seed) — refusing to push a malformed "
-					"signing key to the host (the daemon would silently regenerate "
-					"a mismatched keypair and partition from the cluster)"
-				)
+	def _validate_signing_priv(self, pending_signing_priv: str) -> None:
+		"""Refuse to push a non-ed25519-shaped signing priv to the host. Defensive
+		in depth: `b64decode(validate=True)` rejects the Frappe Password `"****"`
+		mask (non-base64 chars) and any other malformed value loud, surfacing a
+		regression HERE instead of letting the daemon mute-regenerate a mismatched
+		keypair and partition from the cluster (see the mask-trap note at the
+		`get_password` read)."""
+		if not pending_signing_priv:
+			return
+		import base64
+
+		try:
+			priv_raw = base64.b64decode(pending_signing_priv, validate=True)
+		except Exception as exc:
+			frappe.throw(
+				f"signing_private_key for {self.name} is not valid base64: {exc} — "
+				"the field was likely read as the Frappe Password-field mask "
+				"('****') instead of the decrypted plaintext"
+			)
+		if len(priv_raw) != 32:
+			frappe.throw(
+				f"signing_private_key for {self.name} is {len(priv_raw)} bytes, "
+				"expected 32 (an ed25519 seed) — refusing to push a malformed "
+				"signing key to the host (the daemon would silently regenerate "
+				"a mismatched keypair and partition from the cluster)"
+			)
+
+	def _push_host_key_files(self, connection, wg_private_key, wg_public_key, pending_signing_priv) -> None:
+		"""Push the wg-mesh keypair and, when the controller holds them, the host's
+		ed25519 signing keypair to /etc/atlas-networkd — then read the signing pub
+		back and assert it equals `Server.signing_public_key`. The canary catches a
+		daemon about to regenerate a mismatched keypair (a silent cluster partition
+		on the next MembershipAdvertisement verify) at the controller, loud."""
 		with ssh_key_file(connection.ssh_private_key) as key_path:
 			run_ssh(
 				connection,
@@ -430,49 +441,58 @@ class Server(Document):
 				"sudo install -m 0644 /dev/stdin {}",
 				"/etc/atlas-networkd/wg-public-key",
 				timeout_seconds=30,
-				stdin=_wg_public_key + "\n",
+				stdin=wg_public_key + "\n",
 			)
-			if pending_signing_priv and self.signing_public_key:
-				# Stage 5+ — push the host's ed25519 signing keypair. The daemon's
-				# `ensure_signing_keypair` is idempotent and validates the files;
-				# if we wrote them here, the daemon reads them instead of generating.
-				run_ssh(
-					connection,
-					key_path,
-					"sudo install -m 0600 /dev/stdin {}",
-					"/etc/atlas-networkd/signing-private-key",
-					timeout_seconds=30,
-					stdin=pending_signing_priv + "\n",
+			if not (pending_signing_priv and self.signing_public_key):
+				return
+			# Stage 5+ — push the host's ed25519 signing keypair. The daemon's
+			# `ensure_signing_keypair` is idempotent and validates the files;
+			# if we wrote them here, the daemon reads them instead of generating.
+			run_ssh(
+				connection,
+				key_path,
+				"sudo install -m 0600 /dev/stdin {}",
+				"/etc/atlas-networkd/signing-private-key",
+				timeout_seconds=30,
+				stdin=pending_signing_priv + "\n",
+			)
+			run_ssh(
+				connection,
+				key_path,
+				"sudo install -m 0644 /dev/stdin {}",
+				"/etc/atlas-networkd/signing-public-key",
+				timeout_seconds=30,
+				stdin=self.signing_public_key + "\n",
+			)
+			# CANARY — read back the on-disk signing-pub and assert it equals
+			# `Server.signing_public_key`. If the daemon's `ensure_signing_keypair`
+			# were about to regenerate (because the priv we pushed failed
+			# validation), the on-disk pub would diverge from what the controller
+			# signed the introduction cert over. Surface the divergence HERE,
+			# at the controller, loud — the alternative is a silent cluster
+			# partition on the next MembershipAdvertisement verify.
+			read_back, _rb_err, rb_exit = run_ssh(
+				connection,
+				key_path,
+				"sudo cat /etc/atlas-networkd/signing-public-key",
+				timeout_seconds=30,
+			)
+			if rb_exit != 0 or (read_back or "").strip() != (self.signing_public_key or "").strip():
+				frappe.throw(
+					f"signing-public-key read-back from {self.name} "
+					f"({(read_back or '').strip()!r}) doesn't match "
+					f"Server.signing_public_key ({(self.signing_public_key or '').strip()!r}) — "
+					"the daemon's ensure_signing_keypair is about to regenerate a "
+					"mismatched keypair; the controller and host would diverge."
 				)
-				run_ssh(
-					connection,
-					key_path,
-					"sudo install -m 0644 /dev/stdin {}",
-					"/etc/atlas-networkd/signing-public-key",
-					timeout_seconds=30,
-					stdin=self.signing_public_key + "\n",
-				)
-				# CANARY — read back the on-disk signing-pub and assert it equals
-				# `Server.signing_public_key`. If the daemon's `ensure_signing_keypair`
-				# were about to regenerate (because the priv we pushed failed
-				# validation), the on-disk pub would diverge from what the controller
-				# signed the introduction cert over. Surface the divergence HERE,
-				# at the controller, loud — the alternative is a silent cluster
-				# partition on the next MembershipAdvertisement verify.
-				read_back, _rb_err, rb_exit = run_ssh(
-					connection,
-					key_path,
-					"sudo cat /etc/atlas-networkd/signing-public-key",
-					timeout_seconds=30,
-				)
-				if rb_exit != 0 or (read_back or "").strip() != (self.signing_public_key or "").strip():
-					frappe.throw(
-						f"signing-public-key read-back from {self.name} "
-						f"({(read_back or '').strip()!r}) doesn't match "
-						f"Server.signing_public_key ({(self.signing_public_key or '').strip()!r}) — "
-						"the daemon's ensure_signing_keypair is about to regenerate a "
-						"mismatched keypair; the controller and host would diverge."
-					)
+
+	def _push_seed_files(self, connection, *, identity, seed, seed_content) -> None:
+		"""Push identity.json and seed.json, then — when the operator keypair is
+		configured — the §19.5 trust-root files: operator-public-key, the detached
+		seed.json.sig (over the exact seed_content bytes), and, for a host joining
+		an existing cluster, this host's introduction-signature. An empty operator
+		pubkey means no §19.5 trust root and none of them are written, leaving the
+		host's verifier fail-closed on any future newcomer until one is configured."""
 		with ssh_key_file(connection.ssh_private_key) as key_path:
 			run_ssh(
 				connection,
@@ -482,11 +502,6 @@ class Server(Document):
 				timeout_seconds=30,
 				stdin=json.dumps(identity, sort_keys=True) + "\n",
 			)
-			# The exact bytes we push to the host — sign THESE below so the
-			# controller's signature is byte-identical to what the host's
-			# `seed.load_seed` verifies (spec §9.2 / §19.4: the seed is the sole
-			# trust root, so its operator signature is a hard load-time MUST).
-			seed_content = server_ancp.seed_document(seed)
 			run_ssh(
 				connection,
 				key_path,
@@ -495,72 +510,56 @@ class Server(Document):
 				timeout_seconds=30,
 				stdin=seed_content,
 			)
-			# Stage 5+ (§19.5) — write the operator provision pubkey so the
-			# host can verify any future newcomer's introduction certificate.
-			# Also write the introduction-signature for THIS host when it's
-			# joining an existing cluster (seed is non-empty → there are
-			# existing hosts that don't know us yet) and the controller has
-			# the operator priv key configured. Initial-seed hosts (seed is
-			# empty → this is the first host in a fresh cluster) get no
-			# introduction cert — every other host gets their pubkey via their
-			# own seed.json on their own first boot. Empty operator pubkey
-			# (no Atlas Settings keypair yet) means no §19.5 trust root; we
-			# write nothing, leave the host's verifier fail-closed on any
-			# future newcomer until the operator configures one.
 			from atlas.atlas.doctype.atlas_settings.atlas_settings import (
 				get_ancp_operator_private_key,
 				get_ancp_operator_public_key,
 			)
 
 			operator_pub = get_ancp_operator_public_key()
-			if operator_pub:
+			if not operator_pub:
+				return
+			run_ssh(
+				connection,
+				key_path,
+				"sudo install -m 0644 /dev/stdin {}",
+				"/etc/atlas-networkd/operator-public-key",
+				timeout_seconds=30,
+				stdin=operator_pub + "\n",
+			)
+			operator_priv = get_ancp_operator_private_key()
+			if not operator_priv:
+				return
+			# The signing module (loaded once) serves BOTH the seed signature and
+			# the introduction signature. The seed is the sole trust root (spec
+			# §9.2 / §19.4): sign the EXACT bytes pushed to seed.json above so the
+			# host's `seed.load_seed` verifies against operator-public-key.
+			host_signing = server_ancp.load_host_signing_module()
+			seed_sig = server_ancp.sign_seed_document(seed_content, operator_priv, host_signing=host_signing)
+			run_ssh(
+				connection,
+				key_path,
+				"sudo install -m 0644 /dev/stdin {}",
+				"/etc/atlas-networkd/seed.json.sig",
+				timeout_seconds=30,
+				stdin=seed_sig + "\n",
+			)
+			# A host joining an existing cluster (seed has peers → the existing
+			# hosts didn't get us in their initial seed.json). The §19.5 verifier
+			# accepts the self-asserted signing_public_key iff this signature
+			# verifies against operator_pub. Initial-seed hosts skip this (their
+			# pubkey is already anchored on every peer via the seed).
+			if seed and self.signing_public_key:
+				intro_sig = server_ancp.build_introduction_signature(
+					self, operator_priv, host_signing=host_signing
+				)
 				run_ssh(
 					connection,
 					key_path,
-					"sudo install -m 0644 /dev/stdin {}",
-					"/etc/atlas-networkd/operator-public-key",
+					"sudo install -m 0600 /dev/stdin {}",
+					"/etc/atlas-networkd/introduction-signature",
 					timeout_seconds=30,
-					stdin=operator_pub + "\n",
+					stdin=intro_sig + "\n",
 				)
-				operator_priv = get_ancp_operator_private_key()
-				# The signing module (loaded once) serves BOTH the seed signature
-				# and the introduction signature below.
-				if operator_priv:
-					host_signing = server_ancp.load_host_signing_module()
-					# The seed is the sole trust root (spec §9.2 / §19.4), so the
-					# host's `seed.load_seed` fails closed unless the exact bytes
-					# of seed.json verify against operator_pub. Sign the SAME
-					# bytes we pushed to /etc/atlas-networkd/seed.json above and
-					# write the detached signature to the sibling seed.json.sig
-					# (0644, matching the other pushed non-secret files).
-					seed_sig = server_ancp.sign_seed_document(seed_content, operator_priv, host_signing=host_signing)
-					run_ssh(
-						connection,
-						key_path,
-						"sudo install -m 0644 /dev/stdin {}",
-						"/etc/atlas-networkd/seed.json.sig",
-						timeout_seconds=30,
-						stdin=seed_sig + "\n",
-					)
-					# A host joining an existing cluster (seed has peers → the
-					# existing hosts didn't get us in their initial seed.json).
-					# Sign {host_id, signing_public_key, generation=1} with the
-					# operator priv; the §19.5 verifier accepts the self-asserted
-					# signing_public_key iff this signature verifies against
-					# operator_pub. Initial-seed hosts skip this (their pubkey is
-					# already anchored on every peer via the seed).
-					if seed and self.signing_public_key:
-						intro_sig = server_ancp.build_introduction_signature(
-							self, operator_priv, host_signing=host_signing
-						)
-						run_ssh(
-							connection,
-							key_path,
-							"sudo install -m 0600 /dev/stdin {}",
-							"/etc/atlas-networkd/introduction-signature",
-							timeout_seconds=30,
-							stdin=intro_sig + "\n",
-						)
 
 	def _install_boat(self, connection) -> None:
 		server_boat.install_boat(self, connection)
