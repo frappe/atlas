@@ -10,7 +10,7 @@ import frappe
 from frappe import _
 from frappe.model.document import Document
 
-from atlas.atlas import scripts_catalog, server_boat
+from atlas.atlas import scripts_catalog, server_ancp, server_boat
 from atlas.atlas.providers.fake_tasks import is_fake_server
 from atlas.atlas.server_boat import BOAT_ARTIFACTS
 from atlas.atlas.ssh import connection_for_server, run_ssh, run_task, ssh_key_file, upload_files
@@ -369,64 +369,9 @@ class Server(Document):
 		  keypair when configured.
 		After the first boot these files are stale (the daemon keeps its own
 		state); they're only the initial seed-of-trust."""
-		from atlas.atlas.networking import derive_host_mesh_address
-
-		identity = {
-			"host_id": self.name,
-			"endpoint": self.ipv6_address,
-			"mesh_address": self.mesh_address or derive_host_mesh_address(self.name),
-		}
-		# The seed = every OTHER Active Server (excluding this one). The daemon
-		# will reconcile any drift via gossip+anti-entropy once it cold-joins.
-		other_actives = frappe.get_all(
-			"Server",
-			filters={"status": "Active", "name": ["!=", self.name]},
-			fields=["name", "ipv6_address", "wireguard_public_key", "mesh_address", "signing_public_key"],
-		)
-		seed = []
-		for row in other_actives:
-			if not row.ipv6_address:
-				continue
-			# §19.4 — the seed anchors each other host's ed25519 pubkey so the
-			# envelope verifier's `signing_pubkey_cache` is populated at build
-			# time. A legacy host bootstrapped before `signing_public_key`
-			# existed has an EMPTY key here. SKIP it rather than emit an empty
-			# entry: `seed.signing_pubkey_index` drops empty keys anyway, so an
-			# emitted-empty entry gives the peer NO cached key AND forces the
-			# §19.5 introduction path — but the introduction cert only rides the
-			# legacy host's OWN first direct MembershipAdvertisement, never a
-			# relayed/gossiped record, so a peer that first learns of it via a
-			# relay silently drops (`signature_failed`) → one-sided partition.
-			# Skipping is strictly safer: the peer just isn't seeded with this
-			# host and learns it later once it HAS a key (the `backfill_server_
-			# signing_key` migration fills every legacy row, so this is a
-			# belt-and-braces guard for a row that slipped through). Warn loud so
-			# an operator sees the gap instead of it silently partitioning.
-			signing_public_key = getattr(row, "signing_public_key", "") or ""
-			if not signing_public_key:
-				frappe.logger("atlas").warning(
-					f"skipping {row.name} from {self.name}'s ANCP seed: it has no "
-					"signing_public_key (a host bootstrapped before the field existed). "
-					"Run `bench migrate` (the backfill_server_signing_key patch) or "
-					"resync_networkd_keys on it so it gets a signing key and can be seeded."
-				)
-				continue
-			seed.append(
-				{
-					"host_id": row.name,
-					"endpoint": row.ipv6_address,
-					"wg_public_key": row.wireguard_public_key or "",
-					"signing_public_key": signing_public_key,
-					"mesh_address": row.mesh_address or derive_host_mesh_address(row.name),
-					"generation": 1,
-				}
-			)
-		from atlas.atlas.doctype.atlas_settings.atlas_settings import get_ancp_wg_derivation_secret
-		from atlas.atlas.networking import derive_host_wireguard_keypair
-
-		wg_private_key, _wg_public_key = derive_host_wireguard_keypair(
-			self.name, get_ancp_wg_derivation_secret()
-		)
+		identity = server_ancp.build_identity(self)
+		seed = server_ancp.build_seed(self)
+		wg_private_key, _wg_public_key = server_ancp.derive_wireguard_keypair(self)
 		# Stage 5+ — the host's signing keypair. validate() generated one on first
 		# insert and persisted the priv in `signing_private_key`. A re-Bootstrap
 		# or resync reads it from the persisted field (encrypted Password) and
@@ -541,7 +486,7 @@ class Server(Document):
 			# controller's signature is byte-identical to what the host's
 			# `seed.load_seed` verifies (spec §9.2 / §19.4: the seed is the sole
 			# trust root, so its operator signature is a hard load-time MUST).
-			seed_content = json.dumps(seed, sort_keys=True) + "\n"
+			seed_content = server_ancp.seed_document(seed)
 			run_ssh(
 				connection,
 				key_path,
@@ -578,35 +523,17 @@ class Server(Document):
 					stdin=operator_pub + "\n",
 				)
 				operator_priv = get_ancp_operator_private_key()
-				# Re-use the host-lib's pure signing primitives (pure above the
-				# keypair file — runs in the bench venv where `cryptography` is
-				# already a dep). Use importlib to bypass the cached top-level
-				# `atlas` package (the bench app) — sys.path insertion alone
-				# won't reach scripts/lib/atlas/networkd/signing.py. Loaded once;
-				# reused for the seed signature AND the introduction signature.
+				# The signing module (loaded once) serves BOTH the seed signature
+				# and the introduction signature below.
 				if operator_priv:
-					import importlib.util
-					from pathlib import Path
-
-					signing_path = str(
-						Path(frappe.get_app_path("atlas")).parent
-						/ "scripts"
-						/ "lib"
-						/ "atlas"
-						/ "networkd"
-						/ "signing.py"
-					)
-					_spec = importlib.util.spec_from_file_location("_host_signing", signing_path)
-					_host_signing = importlib.util.module_from_spec(_spec)
-					_spec.loader.exec_module(_host_signing)  # type: ignore[union-attr]
-
+					host_signing = server_ancp.load_host_signing_module()
 					# The seed is the sole trust root (spec §9.2 / §19.4), so the
 					# host's `seed.load_seed` fails closed unless the exact bytes
 					# of seed.json verify against operator_pub. Sign the SAME
 					# bytes we pushed to /etc/atlas-networkd/seed.json above and
 					# write the detached signature to the sibling seed.json.sig
 					# (0644, matching the other pushed non-secret files).
-					seed_sig = _host_signing.sign_detached(seed_content.encode("utf-8"), operator_priv)
+					seed_sig = server_ancp.sign_seed_document(seed_content, operator_priv, host_signing=host_signing)
 					run_ssh(
 						connection,
 						key_path,
@@ -623,12 +550,9 @@ class Server(Document):
 					# operator_pub. Initial-seed hosts skip this (their pubkey is
 					# already anchored on every peer via the seed).
 					if seed and self.signing_public_key:
-						intro_body = {
-							"host_id": self.name,
-							"signing_public_key": self.signing_public_key,
-							"generation": 1,
-						}
-						intro_sig = _host_signing.sign_introduction(intro_body, operator_priv)
+						intro_sig = server_ancp.build_introduction_signature(
+							self, operator_priv, host_signing=host_signing
+						)
 						run_ssh(
 							connection,
 							key_path,
