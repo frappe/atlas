@@ -47,7 +47,7 @@ import ipaddress
 
 import frappe
 
-from atlas.atlas.core import callbacks
+from atlas.atlas.core import callbacks, resumable
 from atlas.atlas.core.boat_client import FIRST_BOOT_EPOCH, run_boat_migration_phase
 from atlas.atlas.core.migration_layout import (
 	_bytes_to_gib_ceil,
@@ -62,6 +62,14 @@ from atlas.atlas.core.networking import (
 	derive_vm_tunnel,
 	derive_vm_tunnel_port,
 	derive_vm_tunnel_table,
+)
+from atlas.atlas.core.resumable import (
+	HYDRATION_STALL_TICKS,
+	LOST_TASK_TIMEOUT_FACTOR,
+	ResumableOperation,
+	progress,
+	server_ipv4,
+	server_title,
 )
 from atlas.atlas.core.ssh import run_task
 from atlas.atlas.core.task_results import parse_result
@@ -86,14 +94,6 @@ PHASE_ORDER = (
 	"Done",
 )
 
-# A phase Task stuck Running/Pending past this multiple of its timeout is treated
-# as lost and the phase is re-entered.
-LOST_TASK_TIMEOUT_FACTOR = 2
-
-
-# How many consecutive no-progress hydration polls before we give up.
-HYDRATION_STALL_TICKS = 30
-
 # Fast-stop grace period for the migration cold-stop (spec/24 §0.5.2). A migration
 # discards the guest's RAM, so a long graceful-shutdown drain is wasted downtime; a
 # few seconds is plenty for a clean guest halt, and ExecStopPost still fires on the
@@ -112,13 +112,7 @@ def reconcile_migrations() -> None:
 	terminal failure marks only its own row Failed. Re-entrant by construction — if
 	the previous tick crashed mid-phase, this tick re-enters the same phase
 	(idempotent), so nothing is lost and nothing double-runs."""
-	names = frappe.get_all(
-		"Virtual Machine Migration",
-		filters={"status": ["not in", ("Done", "Failed")]},
-		pluck="name",
-	)
-	for name in names:
-		_reconcile_one(name)
+	resumable.reconcile_all(_OP)
 
 
 def start_migration(name: str) -> None:
@@ -142,38 +136,7 @@ def start_migration(name: str) -> None:
 	One `long`-queue worker slot is held for the migration's duration (the pool ships 3
 	workers); this is the same tradeoff Site/VM auto_provision makes — the job that owns
 	the work stays resident until it's done."""
-	if not frappe.db.exists("Virtual Machine Migration", name):
-		return
-	_reconcile_one(name)
-	# Keep driving until the row is terminal — advanced phases AND a holding Hydrating
-	# poll both re-enqueue, so the migration finishes on its own. _reconcile_one already
-	# committed the new status (or marked the row Failed); re-read it to decide.
-	status = frappe.db.get_value("Virtual Machine Migration", name, "status")
-	if status not in ("Done", "Failed"):
-		frappe.enqueue(
-			"atlas.atlas.core.migration.start_migration",
-			queue="long",
-			timeout=300,
-			name=name,
-		)
-
-
-def _reconcile_one(name: str) -> bool:
-	"""Advance one migration a single phase, committing its progress on success and
-	marking it Failed on error — in isolation, so one wedged row never blocks or
-	rolls back another. Shared by the cron and the on-insert kick. Returns True iff
-	the row advanced to a further non-terminal phase (more work to run immediately)."""
-	try:
-		advanced = advance_migration(frappe.get_doc("Virtual Machine Migration", name))
-		# nosemgrep: frappe-manual-commit -- persist each migration's progress
-		# independently so one row's later failure can't roll back another's
-		frappe.db.commit()
-		return advanced
-	except Exception as exception:
-		frappe.db.rollback()
-		_fail(name, str(exception))
-		frappe.logger("atlas").error(f"migration {name} failed: {exception}")
-		return False
+	resumable.self_drive(_OP, name)
 
 
 def advance_migration(doc) -> bool:
@@ -187,25 +150,7 @@ def advance_migration(doc) -> bool:
 	cursor carried in. A phase returns True (advance) or False (re-enter next tick —
 	the only non-advancing phase is Hydrating, which polls). Each phase first checks
 	its resume key, so a re-entry after a crash is a cheap no-op up to where it got."""
-	phase = doc.status
-	if phase not in PHASE_ORDER or phase == "Done":
-		return False
-	# Stamp the live progress line BEFORE running the phase, so the form shows what
-	# the migration is doing the moment work starts — not only after the (possibly
-	# multi-minute) host task returns. Phases that poll (Hydrating) and long
-	# sub-steps (base-image ship) refine this line + progress_percent as they run.
-	_progress(doc, _phase_label(doc, phase), percent=-1)
-	handler = PHASES[phase]
-	completed = handler(doc)
-	if not completed:
-		return False
-	nxt = PHASE_ORDER[PHASE_ORDER.index(phase) + 1]
-	updates = {"status": nxt, "progress_percent": -1}
-	if nxt == "Done":
-		updates["completed_at"] = frappe.utils.now_datetime()
-		updates["progress_detail"] = "Migration complete."
-	doc.db_set(updates)
-	return nxt != "Done"
+	return resumable.advance(_OP, doc)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -284,7 +229,7 @@ def _phase_exporting_snapshot(doc) -> bool:
 		variables={
 			"VIRTUAL_MACHINE_NAME": doc.virtual_machine,
 			"NBD_PORT": str(nbd_port(doc.virtual_machine)),
-			"BIND_ADDRESS": _server_ipv4(doc.source_server),
+			"BIND_ADDRESS": server_ipv4(doc.source_server),
 		},
 		timeout_seconds=300,
 	)
@@ -341,7 +286,7 @@ def _run_clone_prepare(doc) -> None:
 			# truncates the filesystem during hydration (dead superblock at cutover).
 			"DISK_GB": str(_target_disk_gb(doc, "disk_gigabytes", doc.root_disk_bytes)),
 			"DATA_DISK_GB": str(_target_disk_gb(doc, "data_disk_gigabytes", doc.data_disk_bytes)),
-			"SOURCE_HOST": _server_ipv4(doc.source_server),
+			"SOURCE_HOST": server_ipv4(doc.source_server),
 			"NBD_PORT": str(doc.nbd_port),
 			# Per-VM nbd device block on the target: root = base+0, data = base+1
 			# (base+2/+3 belong to the base-image ship). Keeps concurrent migrations
@@ -386,12 +331,12 @@ def _ensure_base_on_target(doc) -> bool:
 		return True  # already shipped in a prior tick.
 
 	base_port = doc.nbd_port + 2  # disk root=port, data=port+1, base=port+2, meta=port+3
-	source_title, target_title = _server_title(doc.source_server), _server_title(doc.target_server)
+	source_title, target_title = server_title(doc.source_server), server_title(doc.target_server)
 
 	# 1. Source export (idempotent — returns the running pids). Record the base size
 	#    so the target's dest LV matches, and mark the ship in flight.
 	if doc.base_ship_state != "Shipping":
-		_progress(doc, f"Shipping base image {image} from {source_title} — starting export.", percent=0)
+		progress(doc, f"Shipping base image {image} from {source_title} — starting export.", percent=0)
 		doc.db_set({"base_ship_state": "Shipping", "base_ship_percent": 0})
 	export = parse_result(
 		_run_phase_task(
@@ -401,7 +346,7 @@ def _ensure_base_on_target(doc) -> bool:
 			variables={
 				"IMAGE_NAME": image,
 				"NBD_PORT": str(base_port),
-				"BIND_ADDRESS": _server_ipv4(doc.source_server),
+				"BIND_ADDRESS": server_ipv4(doc.source_server),
 			},
 			timeout_seconds=120,
 		).stdout
@@ -416,7 +361,7 @@ def _ensure_base_on_target(doc) -> bool:
 		variables={
 			"IMAGE_NAME": image,
 			"DISK_GB": str(base_disk_gb),
-			"SOURCE_HOST": _server_ipv4(doc.source_server),
+			"SOURCE_HOST": server_ipv4(doc.source_server),
 			"NBD_PORT": str(base_port),
 			# base = base_slot+2, image-dir tar = base_slot+3 (root/data are +0/+1).
 			"NBD_BASE_SLOT": str(nbd_base_slot(doc.virtual_machine)),
@@ -444,7 +389,7 @@ def _ensure_base_on_target(doc) -> bool:
 	# — so we just re-enter and let the next tick's prepare do it. WITHOUT this, a
 	# dropped NBD link mid-ship wedges forever (dm-clone spins on dead reads, log spam).
 	if not result.get("source_healthy", True):
-		_progress(
+		progress(
 			doc,
 			f"NBD link to {source_title} dropped mid base-image ship — rebuilding the "
 			f"base clone on {target_title} and resuming.",
@@ -455,7 +400,7 @@ def _ensure_base_on_target(doc) -> bool:
 
 	percent = int(result["hydration_percent"])
 	doc.db_set("base_ship_percent", percent)
-	_progress(doc, f"Shipping base image {image} to {target_title} — {percent}% copied.", percent=percent)
+	progress(doc, f"Shipping base image {image} to {target_title} — {percent}% copied.", percent=percent)
 	if percent < 100:
 		return False  # still copying — TargetPreparing re-enters next tick.
 
@@ -467,7 +412,7 @@ def _ensure_base_on_target(doc) -> bool:
 		variables={
 			"IMAGE_NAME": image,
 			"DISK_GB": str(base_disk_gb),
-			"SOURCE_HOST": _server_ipv4(doc.source_server),
+			"SOURCE_HOST": server_ipv4(doc.source_server),
 			"NBD_PORT": str(base_port),
 			"NBD_BASE_SLOT": str(nbd_base_slot(doc.virtual_machine)),
 			"PHASE": "finalize",
@@ -475,7 +420,7 @@ def _ensure_base_on_target(doc) -> bool:
 		timeout_seconds=120,
 	)
 	doc.db_set({"base_ship_state": "Done", "base_ship_percent": 100})
-	_progress(doc, f"Base image {image} shipped to {target_title}; preparing the disk clone.", percent=-1)
+	progress(doc, f"Base image {image} shipped to {target_title}; preparing the disk clone.", percent=-1)
 	return True
 
 
@@ -509,7 +454,7 @@ def _bring_up_forward_tunnel(doc) -> None:
 			"ROLE": "target",
 			"TUNNEL_DEVICE": tunnel_device,
 			"TUNNEL_PORT": str(tunnel_port),
-			"SOURCE_HOST": _server_ipv4(doc.source_server),
+			"SOURCE_HOST": server_ipv4(doc.source_server),
 		},
 		timeout_seconds=60,
 	)
@@ -605,10 +550,10 @@ def _phase_hydrating(doc) -> bool:
 	# on the next tick. We do NOT count this toward the stall guard — it is a
 	# recoverable transport failure, not a genuinely stuck copy.
 	if not result.get("source_healthy", True):
-		_progress(
+		progress(
 			doc,
-			f"NBD link to {_server_title(doc.source_server)} dropped — rebuilding the "
-			f"disk clone on {_server_title(doc.target_server)} and resuming hydration.",
+			f"NBD link to {server_title(doc.source_server)} dropped — rebuilding the "
+			f"disk clone on {server_title(doc.target_server)} and resuming hydration.",
 			percent=doc.hydration_percent or 0,
 		)
 		_rebuild_clone_stack(doc)
@@ -620,10 +565,10 @@ def _phase_hydrating(doc) -> bool:
 	percent = int(result["hydration_percent"])
 	stalled = percent == (doc.hydration_percent or 0)
 	doc.db_set({"hydration_percent": percent, "hydration_last_polled": frappe.utils.now_datetime()})
-	_progress(
+	progress(
 		doc,
-		f"Copying disk blocks from {_server_title(doc.source_server)} to "
-		f"{_server_title(doc.target_server)} — {percent}% hydrated.",
+		f"Copying disk blocks from {server_title(doc.source_server)} to "
+		f"{server_title(doc.target_server)} — {percent}% hydrated.",
 		percent=percent,
 	)
 	if percent >= 100:
@@ -824,7 +769,7 @@ def _relay_forward_tunnel(doc, tunnel_device: str, route_table: int) -> None:
 			"ROLE": "target",
 			"TUNNEL_DEVICE": tunnel_device,
 			"TUNNEL_PORT": str(tunnel_port),
-			"SOURCE_HOST": _server_ipv4(doc.source_server),
+			"SOURCE_HOST": server_ipv4(doc.source_server),
 			"VIRTUAL_MACHINE_IPV6": doc.ipv6_address_old,
 			"ROUTE_TABLE": str(route_table),
 		},
@@ -1085,15 +1030,6 @@ def _detect_lost_task(doc, script: str, timeout_seconds: int) -> None:
 		frappe.db.set_value("Task", rows[0].name, "status", "Failure")
 
 
-def _fail(name: str, message: str) -> None:
-	"""Mark a migration Failed, recording the phase it failed at so retry() resumes
-	there. Best-effort and self-committing (it runs after a rollback)."""
-	doc = frappe.get_doc("Virtual Machine Migration", name)
-	doc.db_set({"status": "Failed", "error_message": message[-2000:], "error_at_status": doc.status})
-	# nosemgrep: frappe-manual-commit -- persist the failure so the next tick sees it
-	frappe.db.commit()
-
-
 # ─────────────────────────────────────────────────────────────────────────────
 # Small read helpers.
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1128,22 +1064,12 @@ def _target_disk_gb(doc, doc_field: str, source_bytes) -> int:
 	return max(declared, from_source)
 
 
-def _server_ipv4(server: str) -> str:
-	return frappe.db.get_value("Server", server, "ipv4_address")
-
-
-def _server_title(server: str) -> str:
-	"""A human-readable host name for the progress line (the Server's title, e.g.
-	`f1-aditya-blr3`), falling back to the row name if a title isn't set."""
-	return frappe.db.get_value("Server", server, "title") or server
-
-
 # Human-readable, present-tense line per phase, naming the host the work runs on —
 # stamped BEFORE the phase runs so the form is never blank about what's happening.
 # Long phases (Hydrating, and the base-image ship inside TargetPreparing) overwrite
 # this with a finer-grained line + a percent as they progress.
 def _phase_label(doc, phase: str) -> str:
-	source, target = _server_title(doc.source_server), _server_title(doc.target_server)
+	source, target = server_title(doc.source_server), server_title(doc.target_server)
 	return {
 		"Pending": f"Stopping the VM on {source} for a cold, snapshot-free move.",
 		"ExportingSnapshot": f"Snapshotting the disk and starting the NBD export on {source}.",
@@ -1157,11 +1083,17 @@ def _phase_label(doc, phase: str) -> str:
 	}.get(phase, phase)
 
 
-def _progress(doc, detail: str, *, percent: int = -1) -> None:
-	"""Write the always-current progress line (and, for a measurable copy, its
-	percent) straight to the row via db_set so it is visible immediately — every
-	tick, mid-phase, even while a long host task is still running. `percent=-1`
-	means "not a measurable copy" and the form hides the bar."""
-	doc.db_set({"progress_detail": detail, "progress_percent": percent})
-
+# The self-description the shared driver advances (defined last: it binds PHASES and
+# _phase_label). The `driver` re-enqueue path and 300s timeout bound the longest phase;
+# the multi-minute hydration copy self-paces on the inline poll, re-enqueuing each tick.
+_OP = ResumableOperation(
+	doctype="Virtual Machine Migration",
+	driver="atlas.atlas.core.migration.start_migration",
+	queue_timeout=300,
+	phase_order=PHASE_ORDER,
+	phases=PHASES,
+	label=_phase_label,
+	complete_detail="Migration complete.",
+	log_label="migration",
+)
 
