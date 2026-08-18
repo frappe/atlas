@@ -42,19 +42,28 @@ class CentralEventLog(Document):
 
 	@frappe.whitelist()
 	def retry_delivery(self) -> None:
-		"""Re-attempt delivery to Central right now, from the desk. Resets the attempt
-		budget (and clears the stale error) so the periodic retry cron re-arms too."""
+		"""Re-attempt delivery to Central from the desk. Resets the attempt budget (and clears
+		the stale error) so the periodic retry cron re-arms too, then hands the POST to a
+		background worker.
+
+		Delivery must not run in this web request: `deliver` makes a network call to Central
+		and stamps this row, and the Central Event Log is MyISAM (table-level locking). Doing
+		it inline pins a web worker on the network round-trip and holds a table lock that
+		blocks concurrent event-log writes (live emits, other retries)."""
 		if self.status not in ("queued", "error", "skipped"):
 			frappe.throw(_("Only queued, error or skipped events can be retried."))
 
-		from atlas.atlas.central_report import deliver
-
 		self.db_set("attempts", 0)
 		self.db_set("last_error", None)
+		self.db_set("status", "queued")
 
-		if self.payload:
-			payload = json.loads(self.payload)
-		else:
-			payload = {}
-
-		deliver(self.name, self.event_type, payload, self.occurred_at)
+		payload = json.loads(self.payload) if self.payload else {}
+		frappe.enqueue(
+			"atlas.atlas.central_report.deliver",
+			queue="default",
+			timeout=60,
+			log_name=self.name,
+			event_type=self.event_type,
+			payload=payload,
+			occurred_at=self.occurred_at,
+		)

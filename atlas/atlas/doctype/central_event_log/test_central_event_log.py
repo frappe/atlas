@@ -26,18 +26,27 @@ class IntegrationTestCentralEventLog(IntegrationTestCase):
 		self.addCleanup(frappe.delete_doc, "Central Event Log", doc.name, force=True, ignore_permissions=True)
 		return doc
 
-	def test_retry_delivery_redelivers_and_resets_the_budget(self):
+	def test_retry_delivery_enqueues_redelivery_and_resets_the_budget(self):
 		log = self._log()
-		with patch("atlas.atlas.central_report.deliver") as deliver:
+		with patch("frappe.enqueue") as enqueue:
 			log.retry_delivery()
-		deliver.assert_called_once_with(log.name, "vm.created", {"name": "vm-1"}, "2026-07-06 00:23:05")
+		enqueue.assert_called_once_with(
+			"atlas.atlas.central_report.deliver",
+			queue="default",
+			timeout=60,
+			log_name=log.name,
+			event_type="vm.created",
+			payload={"name": "vm-1"},
+			occurred_at="2026-07-06 00:23:05",
+		)
 		log.reload()
 		self.assertEqual(log.attempts, 0)
 		self.assertIsNone(log.last_error)
+		self.assertEqual(log.status, "queued")
 
 	def test_retry_delivery_refuses_an_already_delivered_row(self):
 		log = self._log(status="ok")
-		with patch("atlas.atlas.central_report.deliver") as deliver:
+		with patch("frappe.enqueue") as enqueue:
 			with self.assertRaises(frappe.ValidationError):
 				log.retry_delivery()
-		deliver.assert_not_called()
+		enqueue.assert_not_called()
