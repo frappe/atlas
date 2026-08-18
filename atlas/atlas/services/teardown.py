@@ -169,7 +169,9 @@ def terminate_front_doors(vm) -> None:
 		try:
 			from atlas.atlas.services import reporting
 
-			if doc.doctype == "Pilot":
+			# A console (a Pilot, or a Site whose kind is pilot-console) reports AS its
+			# VM (vm.status_changed); only a bench-site reports site.status_changed.
+			if doc.doctype == "Pilot" or doc.get("kind") == "pilot-console":
 				reporting.report_pilot_status(doc)
 			else:
 				reporting.report_site_status(doc)
