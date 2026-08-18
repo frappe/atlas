@@ -80,12 +80,6 @@ MIGRATION_TUNNEL_PORT_SPAN = 5000
 MIGRATION_TABLE_BASE = 20000
 MIGRATION_TABLE_SPAN = 40000
 
-# WireGuard VPN broker (spec/19-vpn-broker.md). Each tunnel terminates on the
-# host with its own wg interface; a per-server slot index gives each one a UDP
-# listen port and a private overlay link, in the spirit of allocate_ipv6 /
-# derive_ipv4_link. The slot SCAN lives with the VPN Tunnel controller (it
-# queries the doctype); the derivations below are pure functions of the slot.
-
 # --- Private networking: the WireGuard HOST mesh -------------------------------
 # The fabric that carries every VM's `fdaa::` private address across hosts, and
 # gives each `Tenant` a /48 isolation boundary (see

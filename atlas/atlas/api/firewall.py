@@ -1,13 +1,14 @@
 """The per-VM firewall API — a VM owner (or Central) sets which public ports are
 open (spec/20-firewall.md).
 
-The user-facing write half of the firewall, mirroring `tunnel.request_tunnel`: it
-is owner-scoped and Central-callable as the service user (the caller must be an
-operator or own the VM), runs with `ignore_permissions` after the explicit access
-check, and reconciles the one per-VM `Firewall` row before pushing it to the host.
+The user-facing write half of the firewall: it is owner-scoped and Central-callable
+as the service user (the caller must be an operator or own the VM), runs with
+`ignore_permissions` after the explicit access check, and reconciles the one per-VM
+`Firewall` row before pushing it to the host.
 
-The VPN tunnel always bypasses the firewall (full access); this only governs the
-public surface. An empty rule set is a valid deny-all-public (VPN-only) firewall.
+The private / VPC plane always bypasses the firewall (full access); this only governs
+the public surface. An empty rule set is a valid deny-all-public (private-access-only)
+firewall.
 """
 
 from __future__ import annotations
@@ -66,7 +67,7 @@ def remove_firewall(virtual_machine: str) -> dict:
 
 
 def _assert_can_access_vm(virtual_machine: str) -> None:
-	"""Operator, or the VM's owner — the `tunnel.request_tunnel` access model."""
+	"""Operator, or the VM's owner — the owner-or-operator access model."""
 	if not frappe.db.exists("Virtual Machine", virtual_machine):
 		frappe.throw(_("Virtual Machine {0} not found").format(virtual_machine))
 	user = frappe.session.user

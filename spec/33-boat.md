@@ -272,8 +272,7 @@ re-sending the same document is a no-op with nothing to deduplicate.
   `delete-snapshot-vm`, `regenerate-host-keys-vm`, `firewall-apply`,
   `export-cleanup-source`). **Not yet served:** verbs needing new scoped grants
   proven on a host (`provision-vm`, `sync-image`, `promote-snapshot-image`,
-  `warm-snapshot-vm`, the s3 backups) and `vm-tunnel` (computed wireguard commands
-  must be literalised before a grant can authorise them, §12) — those stay on SSH
+  `warm-snapshot-vm`, the s3 backups) — those stay on SSH
   `boat <verb>`. `bootstrap` (§4) and `reset-server` never move here.
 - **C. Observed read and watch.** `GET /v1/vms/{uuid}`, `GET /v1/vms`,
   `GET /v1/host`, `GET /v1/export` (§2.5), `GET /v1/watch` (SSE deltas).

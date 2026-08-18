@@ -60,7 +60,6 @@ EXPECTED_BOAT_VERBS = frozenset(
 		# Gate 2 — provision + firewall/tunnel/traffic/wake/export.
 		"provision-vm",
 		"firewall-apply",
-		"vm-tunnel",
 		"poll-vm-traffic",
 		"probe-woken-vms",
 		"export-cleanup-source",

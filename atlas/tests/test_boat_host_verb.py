@@ -55,9 +55,9 @@ class TestHostVerbCatalog(IntegrationTestCase):
 			self.assertTrue(scripts_catalog.runs_on_boat_http(verb), verb)
 
 	def test_the_heavier_verbs_route_over_http_now(self) -> None:
-		# provision-vm, sync-image, warm-snapshot-vm and vm-tunnel moved off SSH once
-		# their scoped grants landed in sudoers.d/boat.
-		for verb in ("provision-vm", "sync-image", "warm-snapshot-vm", "vm-tunnel", "upload-snapshot-s3"):
+		# provision-vm, sync-image, warm-snapshot-vm moved off SSH once their scoped
+		# grants landed in sudoers.d/boat.
+		for verb in ("provision-vm", "sync-image", "warm-snapshot-vm", "upload-snapshot-s3"):
 			self.assertTrue(scripts_catalog.runs_on_boat_http(verb), verb)
 
 	def test_bootstrap_and_reset_stay_on_ssh(self) -> None:
