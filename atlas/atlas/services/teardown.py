@@ -16,10 +16,9 @@ import frappe
 
 def on_vm_terminated(vm) -> None:
 	"""The services teardown a terminate fires, in the order `terminate()` ran
-	them: revoke tunnels + VPC peers, drop the Subdomains + Custom Domains, drop
-	the proxy role, then mark the front doors Terminated. Each step is idempotent
-	and best-effort."""
-	revoke_tunnels(vm)
+	them: revoke the VM's gateway VPC peers, drop the Subdomains + Custom Domains,
+	drop the proxy role, then mark the front doors Terminated. Each step is
+	idempotent and best-effort."""
 	revoke_vpc_peers(vm)
 	delete_subdomains(vm)
 	delete_custom_domains(vm)
@@ -75,20 +74,6 @@ def delete_custom_domains(vm) -> None:
 	a custom-domain route never outlives its VM's address (Component F)."""
 	for name in frappe.get_all("Custom Domain", filters={"virtual_machine": vm.name}, pluck="name"):
 		frappe.delete_doc("Custom Domain", name, ignore_permissions=True)
-
-
-def revoke_tunnels(vm) -> None:
-	"""Revoke every VPN Tunnel to this VM on terminate (spec/19-vpn-broker.md).
-	terminate-vm.py tears down the VM's netns/veth but the tunnel's wg interface
-	lives in the host ROOT netns and survives that, so each tunnel's revoke()
-	runs the host down Task to remove it. Idempotent: a VM with no tunnels is a
-	no-op; already-Revoked tunnels are skipped."""
-	for name in frappe.get_all(
-		"VPN Tunnel",
-		filters={"virtual_machine": vm.name, "status": ["!=", "Revoked"]},
-		pluck="name",
-	):
-		frappe.get_doc("VPN Tunnel", name).revoke()
 
 
 def revoke_vpc_peers(vm) -> None:

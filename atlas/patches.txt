@@ -29,3 +29,4 @@ atlas.patches.v1_0.fold_pilots_into_sites
 atlas.patches.v1_0.delete_pilot_doctype
 atlas.patches.v1_0.rename_site_pilot_field_to_console
 atlas.patches.v1_0.drop_vpn_tunnel_transport
+atlas.patches.v1_0.drop_vpn_tunnel
