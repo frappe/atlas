@@ -43,11 +43,21 @@ def report_pilot_status(pilot) -> None:
 
 
 def on_site_after_insert(doc, method=None):
+	# A pilot-console Site reports AS its backing VM, and the VM's own after_insert emits
+	# vm.created — there is no site.created for a console (Central mirrors it as a VM).
+	if doc.get("kind") == "pilot-console":
+		return
 	if central_report._enabled():
 		central_report._emit("site.created", _site_payload(doc), doc)
 
 
 def on_site_update(doc, method=None):
+	# A pilot-console Site reports AS its backing VM — its status change is a
+	# vm.status_changed carrying the login handoff, exactly like a Pilot, never a
+	# site.status_changed. The one Site on_update handler dispatches on kind.
+	if doc.get("kind") == "pilot-console":
+		on_pilot_update(doc)
+		return
 	if central_report._enabled() and central_report._status_changed(doc):
 		central_report._emit("site.status_changed", _site_payload(doc), doc)
 

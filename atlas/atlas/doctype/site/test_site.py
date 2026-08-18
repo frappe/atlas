@@ -944,6 +944,24 @@ class TestSitePilotConsoleKind(IntegrationTestCase):
 		front_door = front_door_for_vm(site.virtual_machine)
 		self.assertEqual(front_door.gateway_url, "https://srv-pilot.blr1.frappe.dev")
 
+	def test_status_change_reports_as_the_vm_not_the_site(self) -> None:
+		"""A pilot-console reports AS its backing VM: an on_update status change emits
+		vm.status_changed (the shape Central mirrors), never site.status_changed."""
+		from atlas.atlas.services import reporting
+
+		site = self._new_console("acme")
+		self._drive(site)
+		site.reload()
+		with (
+			patch.object(reporting.central_report, "_enabled", return_value=True),
+			patch.object(reporting.central_report, "_emit") as m_emit,
+		):
+			site.status = "Failed"
+			site.save(ignore_permissions=True)
+		events = [call.args[0] for call in m_emit.call_args_list]
+		self.assertIn("vm.status_changed", events)
+		self.assertNotIn("site.status_changed", events)
+
 	def test_front_door_prefers_the_console_over_the_bench_site(self) -> None:
 		"""A self-serve VM is backed by BOTH a bench-site Site and its pilot-console (the
 		attached admin console). What Central deep-links is the console, so front_door_for_vm
