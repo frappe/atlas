@@ -1123,12 +1123,16 @@ VM's netns, with Boat never receiving a command, a shell, or the guest credentia
 
 ## §8. Cross-host operations are sagas
 
-> **NOT BUILT — WO-4.** [`migration.py`](../atlas/atlas/migration.py) has no Boat
-> awareness at all: every phase below still runs as an SSH `run_task`, on a
-> `boat_enabled` host as much as on any other. None of the sub-operations exist
-> in the contract, and **Repoint does not bump `boot_epoch`**, which is the
-> larger half of why the fence refuses nothing (§16.0). No host should carry
-> production VMs through a migration until that is closed.
+> **BUILT, NOT DOGFOODED — WO-4.** Each mutating phase below is a
+> `POST /v1/vms/{uuid}/migrate/{phase}` on the relevant Boat:
+> [`migration.py`](../atlas/atlas/core/migration.py)'s `_run_phase_task` routes the
+> saga through `run_boat_migration_phase` (only the cutover *boot* and
+> `collapse_forward`'s re-provision stay on `run_task` — they are lifecycle ops,
+> not saga phases), and **Repoint bumps `boot_epoch`** (`migration.py:958`), so the
+> fence is armed (§16.0). What is not closed: **no live two-host migration has been
+> dogfooded** — a real host surfaced an `nbd-client -N ''` defect (fails qemu-nbd
+> negotiation, ungrantable in sudoers) — so no host should carry production VMs
+> through a migration until WO-4 is exercised end to end.
 
 Atlas is the **saga orchestrator**; each Boat runs a **local idempotent state
 machine**. This is a near-verbatim relocation of
@@ -1682,7 +1686,7 @@ anything below is a revert rather than a switch.
 | **WO-2** | **IN FLIGHT** | Full lifecycle and reflexes: every VM verb through Boat, the per-VM reconciler, the journal, and the wake trap resident in Boat; per-VM authority flips to Boat. Landed: all nine lifecycle verbs end to end, the per-VM reconciler and single actor, the resident wake trap, the guest-identity blob on the wire, and the five-minute mirror sweep. Outstanding: `observed_authority` is never read so authority has not flipped (§1), no verb re-enters at a checkpoint (§11.5), and there is no `/watch` consumer (§2.6). |
 | **WO-3a** | **built** | Sibling-unit supervision — `GET|POST /v1/units/{name}`, unit liveness in `GET /v1/host` and in the export (§3.7) — and the CAS primitive of §11.2: `If-Match` on the desired-state PUT, compared per-resource, answering `409 stale-observation`. |
 | **WO-3b** | **built** | Host-local network apply: `vm-network-up`/`down`, the private-plane isolation, the public-ingress firewall, WireGuard tunnels, `local-ownership.json` and the reserved-IP 1:1 NAT — each held byte-identical to the Python on a real host, which is how the differential found a duplicate nft rule the Python added on every restart. Atlas routes the reserved-IP attach through Boat. Re-pointing the supervised units at `boat <sub>` is still WO-5/WO-6. |
-| **WO-4** | **code-complete, NOT dogfooded** | Cross-host sagas: `internal/migration` holds thirteen host-side phase functions behind `POST /v1/vms/{uuid}/migrate/{phase}`, `boot_epoch` bumps at repoint, and the `server == self` placement gate is wired end to end. Deploying it to a host found a real defect the tests could not: `nbd-client -N ''` both fails qemu-nbd negotiation AND is ungrantable in sudoers. **`migration.py` still drives every phase over SSH**, and no live two-host migration has run, so §16.0 is not closed. |
+| **WO-4** | **code-complete, NOT dogfooded** | Cross-host sagas: `internal/migration` holds thirteen host-side phase functions behind `POST /v1/vms/{uuid}/migrate/{phase}`, `boot_epoch` bumps at repoint, and the `server == self` placement gate is wired end to end. Deploying it to a host found a real defect the tests could not: `nbd-client -N ''` both fails qemu-nbd negotiation AND is ungrantable in sudoers. `migration.py` routes each saga phase over Boat via `run_boat_migration_phase` (only the cutover boot + collapse re-provision stay on `run_task`); what remains is that **no live two-host migration has been dogfooded**, so §16.0 is not fully closed. |
 | **WO-5** | **built and dogfooded** | `boat networkd`: the ANCP core on memberlist, same binary, own unit. Proven on two hosts — host-2 seed-joined host-1, both learned the other by TOFU and rendered it as a wg peer through gossip → syncconf. |
 | **WO-5b** | **built** | Auto-update (§5): signed-release verification, atomic install keeping N-1, the seven-step Apply with rollback, and `POST /v1/update` spawning a detached `boat update-apply` in its own systemd scope so the daemon restart cannot SIGTERM it mid-swap. Not exercised under a live guest, and **nothing ships the allow-list**, so the half of its drill that covers a sudoers change is still uncovered. |
 | **WO-6** | **IN FLIGHT** | Verb-port completion and cutover. Landed: `internal/{snapshot,backup,image,thinpool,hostkeys,cert,mgmtfirewall,reset}` and `snapshot.RestoreVM`, all reachable as `boat <verb>` taking the Python's flags and printing its `ATLAS_RESULT=` line; Atlas routes the ten host verbs of `scripts_catalog.BOAT_VERBS` at them; `Server.boat_enabled` deleted. Outstanding: the venv and durable package are NOT retired — `firewall-apply`, the tunnel verbs, `poll-vm-traffic`, `probe-woken-vms` and `export-cleanup-source` have no Boat verb, and the `.py` files of the ported ones stay as the differential's oracle. Public-IPv6 push-down still gated on §11.4. SSH break-glass and `connection_for_guest` are **not** deleted. |
@@ -1718,33 +1722,32 @@ Everything else in this chapter is **decided**, which is a weaker claim than
 built — the `NOT BUILT` markers throughout say which decided things have no code
 behind them. These are the questions that have no answer yet.
 
-0. **The fence epoch does not yet refuse anything except an empty store, and
-   §11.1 currently overstates what is built.** This is the largest gap between
-   this chapter and the code, and it is listed first because it reads as
-   finished from every direction: the gate is consulted on both boot paths, the
-   store refuses a regression, and the error type exists.
+0. **The fence epoch now refuses a stale epoch, not just an empty store.** For a
+   while this was the largest gap between this chapter and the code and §11.1
+   overstated what was built; both prerequisites have since landed, so the gate now
+   does what §11.1 says. What is left is dogfooding, not code.
 
    What works: a host holding no epoch for a UUID boots nothing. That is the
    rule that saves a Boat which lost its bbolt file, and it is enforced.
 
-   What does not: the epoch *comparison* is a tautology. `PUT /vms/{uuid}`
+   What used to not: the epoch *comparison* was a tautology. `PUT /vms/{uuid}`
    writes the fence and the desired record from one document, so the held epoch
-   and the desired epoch are equal by construction and a stale epoch cannot be
-   detected. Two things had to land before it means anything. **One now has**:
+   and the desired epoch were equal by construction and a stale epoch could not be
+   detected. Two things had to land to break that tautology, and **both now have**:
 
-   - **Atlas must bump the epoch at a migration's repoint.** Nothing in Atlas
-     writes `boot_epoch` today beyond the initial 1, and `migration.py` has no
-     Boat awareness at all. §11.1 names repoint as the single bump point; that
-     bump does not exist. **Still open, and it is now the whole of the gap.**
+   - **Atlas bumps the epoch at a migration's repoint** (`migration.py:958`) — the
+     single bump point §11.1 names — and `migration.py` now routes the saga over
+     Boat (`run_boat_migration_phase`). A superseded source's stale epoch is
+     detectable. **Closed.**
    - ~~**Atlas must be able to retract or supersede desired state on a host that
      no longer owns a VM.**~~ **Closed.** `DELETE /v1/vms/{uuid}` retracts an
      assertion (§2.4 A′), and `terminate` retracts its own before it touches the
      host. The retraction keeps the fence epoch: dropping it would leave the host
      holding **no** epoch, which is the state any fresh `PUT` satisfies —
      including a stale one — so a retraction that cleared the fence would hand
-     back exactly the boot the fence exists to refuse. There is still no `server`
-     field in the desired document, so `server == self` remains uncheckable
-     (§11.1).
+     back exactly the boot the fence exists to refuse. The desired document now
+     carries `server` (`boat_client.desired_state`), so the `server == self` gate
+     is checkable — a host boots a VM only when the record names it (§11.1).
 
      **A retracted VM is refused on both paths, and for a while it was refused on
      only one.** "A Boat that has been told to forget a VM stops driving it"
@@ -1765,14 +1768,13 @@ behind them. These are the questions that have no answer yet.
      passed the fence — still held — and ran `systemctl start` on a VM whose root
      volume had just been `lvremove`d, every interval, forever.
 
-   Until the bump exists, split-brain is prevented by phase ordering and
-   `desired_power` — which §9 says explicitly is *not* what should prevent it.
-   The honest statement of today's guarantee is: **Boat will not boot a VM it
-   was never told about, and will not boot one it has been told to forget — but
-   it will boot a VM it was told about and then merely superseded.** Retraction
-   made forgetting possible; only the epoch bump can make superseding detectable,
-   and that is still Atlas's to write. WO-4 owns it, and no host should carry
-   production VMs through a migration until it is closed.
+   With the bump in place, superseding is detectable too. The honest statement of
+   today's guarantee is: **Boat will not boot a VM it was never told about, will
+   not boot one it has been told to forget, and — now that repoint bumps the
+   epoch — will not boot one it was told about and then merely superseded.** What
+   remains is not code but proof: no live two-host migration has been dogfooded
+   (the `nbd-client -N ''` defect, WO-4), so no host should carry production VMs
+   through a migration until that runs end to end.
 
 1. **Who writes ANCP's bootstrap trust artifacts after the split** (§4). The
    constraint is fixed — they are operator-signed, Atlas holds the key, Boat must
