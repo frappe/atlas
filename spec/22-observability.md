@@ -23,12 +23,11 @@ that closes that gap.
 
 ## The model: the Task row is the live progress carrier
 
-We already have the right primitive. A Task ([04-tasks.md](./04-tasks.md)) is the
-unit of audit, replay, and failure, and **every** long operation lands one:
+**Every** long operation already lands a Task ([04-tasks.md](./04-tasks.md)):
 `bootstrap-server.py`, `sync-image.py`, the in-guest `bench-build` / `proxy-build`
-synthetic Tasks, `issue-cert.py`, `deploy-site`. The Task is therefore the right
-place to carry live progress — not a new parallel doctype. We extend the existing
-Task lifecycle in two ways, both additive:
+synthetic Tasks, `issue-cert.py`, `deploy-site`. The Task is therefore where live
+progress rides — not a new parallel doctype. We extend the existing Task lifecycle
+in two ways, both additive:
 
 1. **Live log streaming** — the running script's combined stdout/stderr is
    streamed onto the Task row *as it runs*, not written once when it exits.
@@ -45,16 +44,14 @@ are still moving. Streaming the log delivers exactly that.
 ### Why streaming, and why it is nearly free here
 
 The long in-guest builds already run **detached** through
-[`run_detached`](../atlas/atlas/_ssh/transport.py) (`bench-build`, `proxy-build`).
-That helper launches the build under `setsid nohup`, **tees its combined output to
-a remote `log_path`**, stamps the exit code into a `done_path` on completion, and
-then **polls** the guest over short, independently-retried SSH calls until the
-marker appears. Today the poll loop reads the log exactly once — `cat log_path`
-*after* `done_path` exists. The whole streaming mechanism is one change to that
-loop: on each poll, read the log's **new tail** (track a byte offset; `tail -c
-+<offset>`), and if it grew, append it to the Task and publish it. The build is
-already writing the file every poll interval; we are only choosing to read it
-sooner.
+[`run_detached`](../atlas/atlas/_ssh/transport.py) (`bench-build`, `proxy-build`),
+which tees combined output to a remote `log_path` and **polls** the guest until a
+`done_path` marker appears. Today the poll reads the log exactly once — `cat
+log_path` *after* `done_path` exists. The whole streaming mechanism is one change
+to that loop: on each poll, read the log's **new tail** (track a byte offset;
+`tail -c +<offset>`), and if it grew, append it to the Task and publish it. The
+build is already writing the file every poll interval; we are only choosing to
+read it sooner.
 
 For the **foreground** SSH Tasks (`sync-image.py`, `bootstrap-server.py`), which
 run through [`run_ssh`](../atlas/atlas/_ssh/transport.py) with `capture_output`,
@@ -162,9 +159,8 @@ This is a saved filter + a `progress_line` column, not new machinery. It is the
 ## What this is not
 
 - **Not metrics or alerting.** This is operator-facing *liveness* for actions an
-  operator triggered and is watching, not host telemetry, time-series, or paging.
-  The [README non-goal](./README.md#non-goals-this-iteration) on metrics/alerting
-  stands; this is the narrower "make the thing I clicked legible while it runs."
+  operator triggered and is watching, not host telemetry, time-series, or paging —
+  the narrower "make the thing I clicked legible while it runs."
 - **Not a new doctype.** Progress rides the existing Task row and the existing
   `image_build_progress` / `task_update` realtime channels.
 - **Not fabricated progress.** No percentage or ETA on operations whose step
