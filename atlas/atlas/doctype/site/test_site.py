@@ -736,7 +736,7 @@ class TestSitePilotAttachment(IntegrationTestCase):
 
 	def test_attached_pilot_terminate_does_not_touch_the_vm(self) -> None:
 		# The attached Pilot's own terminate() must NOT terminate the shared VM (the Site
-		# owns it) — the `.attached` guard makes _terminate_backing_vm a no-op. Terminate
+		# owns it) — the `.attached` guard makes terminate_backing_vm a no-op. Terminate
 		# the Pilot alone and assert the VM is untouched (only the Site would terminate it).
 		site_module._provision_pilot(self.site, self.fake_vm.name, "acme-pilot")
 		pilot = frappe.get_doc("Pilot", self.site.pilot)

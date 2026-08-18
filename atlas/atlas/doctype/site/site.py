@@ -185,7 +185,7 @@ class Site(Document):
 			frappe.throw(_("Site is already terminated"))
 		site_common.delete_subdomain(self)
 		self._terminate_pilot()
-		self._terminate_backing_vm()
+		site_common.terminate_backing_vm(self)
 		self.status = "Terminated"
 		self.save(ignore_permissions=True)
 
@@ -194,27 +194,13 @@ class Site(Document):
 
 		The Pilot is ATTACHED — its own terminate() drops its Subdomain and marks itself
 		Terminated but does NOT touch the VM (the Site owns it, torn down next). So this
-		is safe to call before `_terminate_backing_vm`: no double-terminate. No-op when
+		is safe to call before `site_common.terminate_backing_vm`: no double-terminate. No-op when
 		the site never got a Pilot (failed before the console stage) or it is already gone."""
 		if not self.pilot or not frappe.db.exists("Pilot", self.pilot):
 			return
 		pilot = frappe.get_doc("Pilot", self.pilot)
 		if pilot.status != "Terminated":
 			pilot.terminate()
-
-	def _terminate_backing_vm(self) -> None:
-		"""Terminate the backing VM if one was created and is not already gone.
-
-		`front_door_terminating` tells the VM its aggregates are already tearing
-		themselves down, so it skips `_terminate_front_doors` — this Site marks and saves
-		itself below, and the attached Pilot was marked by `_terminate_pilot` above.
-		Without the flag both would be re-marked and their status events emitted twice."""
-		if not self.virtual_machine or not frappe.db.exists("Virtual Machine", self.virtual_machine):
-			return
-		vm = frappe.get_doc("Virtual Machine", self.virtual_machine)
-		if vm.status != "Terminated":
-			vm.flags.front_door_terminating = True
-			vm.terminate()
 
 	@frappe.whitelist()
 	def regenerate_login_url(self) -> dict:

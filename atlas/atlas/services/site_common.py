@@ -25,3 +25,24 @@ def delete_subdomain(doc) -> None:
 	doc.db_set("subdomain_doc", None)
 	if frappe.db.exists("Subdomain", subdomain):
 		frappe.delete_doc("Subdomain", subdomain, ignore_permissions=True)
+
+
+def terminate_backing_vm(doc) -> None:
+	"""Terminate the aggregate's backing VM if one was created and is not already gone.
+
+	No-op when the aggregate is ATTACHED: it shares a VM another aggregate created and
+	tears down, so terminating it here would double-terminate (and race the owner's own
+	VM teardown). An attached aggregate's teardown is only its Subdomain + its own row.
+	(A bench-site is never attached, so the guard is inert for it.)
+
+	`front_door_terminating` tells the VM this aggregate is already tearing itself down,
+	so it skips `_terminate_front_doors` — the aggregate marks and saves itself in
+	`terminate()`, and re-marking there would emit its status event twice."""
+	if doc.attached:
+		return
+	if not doc.virtual_machine or not frappe.db.exists("Virtual Machine", doc.virtual_machine):
+		return
+	vm = frappe.get_doc("Virtual Machine", doc.virtual_machine)
+	if vm.status != "Terminated":
+		vm.flags.front_door_terminating = True
+		vm.terminate()

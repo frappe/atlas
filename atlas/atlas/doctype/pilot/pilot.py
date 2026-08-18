@@ -204,28 +204,9 @@ class Pilot(Document):
 		if self.status == "Terminated":
 			frappe.throw(_("Pilot is already terminated"))
 		site_common.delete_subdomain(self)
-		self._terminate_backing_vm()
+		site_common.terminate_backing_vm(self)
 		self.status = "Terminated"
 		self.save(ignore_permissions=True)
-
-	def _terminate_backing_vm(self) -> None:
-		"""Terminate the backing VM if one was created and is not already gone.
-
-		No-op when ATTACHED: an attached Pilot shares a VM the owning Site created and
-		tears down — terminating it here would double-terminate (and race the Site's own
-		VM teardown). The attached Pilot's teardown is only its Subdomain + its own row.
-
-		`front_door_terminating` tells the VM this aggregate is already tearing itself
-		down, so it skips `_terminate_front_doors`: this Pilot marks and saves itself in
-		`terminate()`, and re-marking there would emit its status event twice."""
-		if self.attached:
-			return
-		if not self.virtual_machine or not frappe.db.exists("Virtual Machine", self.virtual_machine):
-			return
-		vm = frappe.get_doc("Virtual Machine", self.virtual_machine)
-		if vm.status != "Terminated":
-			vm.flags.front_door_terminating = True
-			vm.terminate()
 
 	@frappe.whitelist()
 	def regenerate_login_url(self) -> dict:
