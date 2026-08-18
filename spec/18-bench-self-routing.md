@@ -1,214 +1,133 @@
 # Self-service subdomain routing (bench-admin sites)
 
 A bench VM is a long-lived box where the owner spins up **arbitrary sites** from
-inside the guest — the bench-admin UI (`admin/`) or the `bench new-site` CLI. This
-chapter makes those guest-created sites routable through the regional proxy, with
-**no operator action**, as long as the site is named inside the regional wildcard
-(`<label>.<region>.frappe.dev`). Dropping a site stops routing it. Uniqueness
-(one subdomain → one VM, fleet-wide) is enforced and surfaced to the bench user at
-create time.
+inside the guest — the bench-admin UI (`admin/`) or `bench new-site`. This chapter
+makes those guest-created sites routable through the regional proxy with **no operator
+action**, as long as the site is named inside the regional wildcard
+(`<label>.<region>.frappe.dev`). Dropping a site stops routing it. Uniqueness (one
+subdomain → one VM, fleet-wide) is enforced and surfaced to the bench user at create
+time.
 
-> **Relationship to self-serve (14-self-serve.md).** That chapter is the
-> **one-site-per-VM, Atlas-driven** flow: Atlas clones the golden, deploys *one*
-> site, and inserts *one* [`Subdomain`](./02-doctypes.md#subdomain) itself
-> (`Site.auto_provision` step 5). This chapter is the **many-sites-per-VM,
-> guest-driven** generalization: Atlas did not run `bench new-site`, so no
-> `Subdomain` row exists for the new site. The whole job here is to get a
-> `Subdomain` row inserted (and removed) for sites Atlas never created — reusing
-> the entire `Subdomain` → proxy engine that already exists.
+> **vs. 14-self-serve.md.** That chapter is the one-site-per-VM, Atlas-driven flow (Atlas
+> clones the golden and inserts the one [`Subdomain`](./02-doctypes.md#subdomain) itself).
+> This is the many-sites-per-VM, guest-driven generalization: Atlas never ran `bench
+> new-site`, so the job is to get a `Subdomain` row inserted/removed for sites Atlas never
+> created — reusing the whole `Subdomain` → proxy engine.
 
-> **Code is on the spec.** This chapter describes the **push-only** model, and
-> [`bench_routing.py`](../atlas/atlas/bench_routing.py) +
-> [`bench-domain-provider.py`](../bench/bench-domain-provider.py) implement exactly it:
-> the whitelisted controller endpoints (`register` / `deregister` / `check_label` /
-> `list` + the host-level `wildcard_domains` / `proxy_servers`), caller resolution by
-> source `/128`, the per-VM cap, the `Subdomain Denylist` + `Bench Routing Audit`
-> DocTypes, and the guest binary — with **no pull, no scheduler entry, and no sweeper**.
-> The old push-triggers-pull hybrid (`reconcile_bench_sites`, `route_hint`,
-> `_list_guest_sites`, the hourly scheduler entry) was deleted in the convergence.
->
-> **The guest binary is now `bench-domain-provider`** (Component D), the
-> language-agnostic plug-in [pilot](../../references/pilot) (formerly bench-cli)
-> discovers on `PATH` and drives by exit-code + stdout JSON — the boundary is process
-> I/O, not pilot importing a typed Python surface. It replaced `atlas-route`: the verb
-> set changed (`register`/`deregister` take a full FQDN; `check-label`/`list` are gone;
-> `generate-dns-records`/`wildcard-domains`/`proxy-servers` are new) and `register` is
-> now **fail-closed**. The controller engine is **unchanged** — the binary peels the
-> region wildcard suffix off the FQDN to the bare `label` the controller already
-> arbitrates. Unit-green on `atlas.tests.local` (test_bench_routing,
-> test_bench_routing_guest); the IPv6-origin host facts are proven by the self-serve
-> e2e and the `bench_self_routing` manual verifier.
+The model is **push-only, one-way (VM → Atlas)** over the guest's own egress: the
+guest *tells* the controller what changed; the controller never SSHes back, and there
+is no scheduled pull or sweeper. The guest binary is `bench-domain-provider`
+(Component D), the language-agnostic plug-in [pilot](../../references/pilot) discovers
+on `PATH` and drives by exit-code + stdout JSON.
 
 ## The shape (one-way push: the guest tells, Atlas writes)
 
-Everything downstream of a `Subdomain` row already works and is proven: its
-`after_insert` enqueues a deduplicated regional proxy reconcile, its `on_trash`
-deconverges, and `subdomain` is `unique:1` (DB-enforced fleet-wide uniqueness).
-See [12-proxy.md](./12-proxy.md) and
+Everything downstream of a `Subdomain` row already works: its `after_insert` enqueues a
+deduplicated regional proxy reconcile, its `on_trash` deconverges, and `subdomain` is
+`unique:1` (DB-enforced fleet-wide uniqueness) — see [12-proxy.md](./12-proxy.md) and
 [`subdomain.py`](../atlas/atlas/doctype/subdomain/subdomain.py). **No proxy code
-changes.** The only new code *creates and removes the row* for a guest-created
-site, now also lets the guest **list** its own rows, **arbitrates** every call,
-and **audits** every call.
+changes.** The new code only creates/removes the row for a guest-created site, lets the
+guest **list** its own rows, and **arbitrates** + **audits** every call.
 
-The communication is **one-way, VM → Atlas**, over the guest's own egress. The
-guest *tells* the controller what changed; the controller never reads the guest
-back. There is **no scheduled SSH pull** — no controller-initiated SSH into the
-guest at all:
+Four verbs, all carrying **no VM-identifying argument** — the controller resolves the
+calling VM from the request source address (*Caller resolution*), so a guest can only
+ever speak as its own box:
 
-```
-PUSH (the guest's word, VM → Atlas; the controller never SSHes back):
-  • register(label)     BEFORE `bench new-site` → the authoritative INSERT that
-                                                   RESERVES the name (active=1) — the
-                                                   real block-at-create gate
-  • deregister(label)   AFTER `bench drop-site`, OR if `bench new-site` FAILS
-                                                 → DELETE the caller's own Subdomain
-                                                   (idempotent — also the rollback)
-  • check_label(label)  OPTIONAL, before register → read-only advisory availability
-                                                   answer (UX nicety, never the gate)
-  • list()              ON DEMAND                → read-only; the caller VM's own
-                                                   Subdomain rows, to find + clear strays
+- **`register(label)`** — run **BEFORE** `bench new-site`: the authoritative INSERT that
+  reserves the name (`active=1`), atomically claiming the fleet-wide `unique` key so it can't
+  be grabbed out from under a create already underway — the block-at-create gate (Component A).
+  A decline → the guest never starts `bench new-site` (no orphan); a create failure → the
+  guest `deregister`s to release the reservation.
+- **`deregister(label)`** — after `bench drop-site`, **or** the rollback when `bench new-site`
+  fails: DELETEs the caller's own `Subdomain`, idempotent (Component A).
+- **`check_label(label)`** — OPTIONAL read-only advisory availability answer; a UX nicety,
+  never the gate (Component B).
+- **`list()`** — read-only; the caller VM's own `Subdomain` rows, to find and clear strays
+  (Component C).
 
-  All FOUR carry NO VM-identifying argument — the controller resolves the calling
-  VM from the request source address (Caller resolution). The guest can only ever
-  speak as its own box. check_label and list() are read-only; the controller stays
-  the sole writer of the fleet-wide-unique Subdomain table.
-```
+`register`/`deregister` carry the routing state (the only creator / the only remover of
+the row); `check_label`/`list` write nothing, so the controller stays the **sole
+writer** of the fleet-wide-unique table. Every write is **arbitrated, not trusted** — the
+controller owns the `unique` key, the per-VM cap (Component G), and the brand denylist
+(Component H), so a guest's word is accepted only if it passes the rules. **Every call**,
+read or write, accepted or rejected, is recorded in the MyISAM audit log (Component I).
 
-**`register` runs BEFORE `bench new-site`, not after.** Reserving the name first is
-what makes the create un-blockable: the authoritative insert atomically claims the
-fleet-wide `unique` key, so no one can grab the label out from under a create that's
-already underway. If `register` is declined (`taken`/`reserved`/`at_limit`/`invalid`),
-the guest **never starts** `bench new-site` — block-at-create by ordering, no orphan.
-If `bench new-site` then **fails**, the guest `deregister`s to release the
-reservation (the rollback). `check_label` survives only as an *optional, advisory*
-pre-flight for early UX feedback — it is no longer the gate, because an advisory
-"ok" followed by a create is exactly the window an attacker could block; `register`
-closes that window by writing first.
-
-`register`/`deregister` **carry the routing state**: a `register` is the only thing
-that ever creates the row, a `deregister` the only thing that removes it. `check_label`
-and `list` write nothing. The controller still **arbitrates** every write — it owns
-the fleet-wide `unique` key, the per-VM cap (Component G), and the brand denylist
-(Component H), so a guest's word is *accepted only if it passes the controller's
-rules*. Absent a pull, the guest's message is the **trigger and the content** of
-every change; `list` lets the guest *audit* the result without being able to *write*
-it. **Every call** — read or write, accepted or rejected — is recorded in the MyISAM
-audit log (Component I).
-
-> **What we gave up by dropping the pull, and why it's acceptable here.** The
-> earlier design used a scheduled SSH pull as the source of truth, with the guest
-> only *triggering* an early re-list. The pull made routing correct even when a
-> message was lost — and made teardown independent of guest liveness. Going one-way
-> trades that for simplicity and for surviving SSH-key loss (a guest with no inbound
-> SSH can still register/deregister/list over its own egress). The two risks the
-> pull was guarding are bounded as follows:
->
-> - **Hijack of another VM's name** — *closed*, by Caller resolution (a guest writes
->   only routes for its own source `/128`) + the DB unique key (an owned name can't
->   be taken) + the denylist (branded names can't be grabbed). The guest is a
->   *constrained* writer, not a free one.
-> - **A lost/withheld `deregister`** — *bounded, accepted residual*. A site dropped on
->   a still-alive VM whose `deregister` never lands stays routed. Because the bench
->   nginx emits a per-site `server_name <fqdn>` vhost with **no `default_server`
->   catch-all** ([`deploy-site.py`](../bench/deploy-site.py): "on-disk name == the
->   Host, so no `default_server` is needed"), the stale route serves a **404, not a
->   co-resident tenant's site** — a dead link, not a cross-site exposure. It is
->   cleaned when the VM is terminated (Component F deletes *all* its rows, no guest
->   cooperation) — **and the owner can self-clear it sooner**: `list()` surfaces the
->   stray (a route with no matching on-disk site), and a `deregister()` per stray
->   removes it without waiting for terminate. We **accept** the dead-link window
->   rather than add a TTL/heartbeat or a scheduled sweeper; it is documented, not
->   hidden.
+> **What dropping the pull costs.** An earlier design used a scheduled SSH pull as the
+> source of truth. One-way trades that for simplicity and for surviving SSH-key loss (a
+> guest with no inbound SSH still registers/deregisters/lists over its egress). The two
+> risks the pull guarded:
+> - **Hijack of another VM's name** — *closed* by Caller resolution (a guest writes only
+>   its own source `/128`'s routes) + the DB unique key + the denylist.
+> - **A lost/withheld `deregister`** — *bounded, accepted residual*. A site dropped on a
+>   still-alive VM whose `deregister` never lands stays routed, but the bench nginx emits a
+>   per-site `server_name <fqdn>` vhost with **no `default_server` catch-all**
+>   ([`deploy-site.py`](../bench/deploy-site.py)), so the stale route serves a **404, not a
+>   co-resident tenant's site** — a dead link, not a cross-site exposure. Cleared by terminate
+>   (Component F) or sooner by the owner (`list` + `deregister`); we accept the window rather
+>   than add a TTL/heartbeat/sweeper.
 
 ## Component A — `register` / `deregister` (the guest writes, the controller arbitrates)
 
 `atlas/atlas/bench_routing.py`, both `@frappe.whitelist(allow_guest=True)` +
-`@rate_limit`. Each resolves the calling VM from the request source address
-(*Caller resolution*) → region (*Component E*), runs its rules, writes if they
-pass, and records the outcome in the audit log (*Component I*) on **every** path:
+`@rate_limit`. Each resolves the calling VM from the request source (*Caller
+resolution*) → region (*Component E*), runs its rules, writes if they pass, and audits
+the outcome (*Component I*) on **every** path:
 
 ```
 register(label)   -> {"status": "ok" | "taken" | "reserved" | "at_limit" | "invalid"}
 deregister(label) -> {"status": "ok"}
 ```
 
-**`register(label)`** — the authoritative insert, run **before** `bench new-site`. It
-reserves the name: this is the real block-at-create gate, not `check_label`. It runs
-the **same** Contract-A rules `Site` enforces, in the same order, before
-writing: `validate_label` (shape) → `validate_reserved` + the brand denylist
-(Component H) → the fleet-wide availability (`is_taken` + an existing `Subdomain`) →
-the per-VM cap (Component G). On a pass, insert `Subdomain(subdomain=label,
-virtual_machine=<resolved vm>, active=1)`; the row's `after_insert` reconciles
-the proxy fleet (no extra push). A `DuplicateEntryError` (two benches racing the same
-label) maps to `taken` — the DB unique key is the **atomic arbiter**, and reserving
-*first* is what makes the subsequent create un-blockable: the name is already claimed
-before any work begins. `taken`/`reserved`/`at_limit`/`invalid` insert nothing and
-tell the guest why; the guest then never starts `bench new-site` (no orphan, no
-rollback). `register` admits exactly one label and never evicts. It is idempotent on
-an already-owned label — a retried `register` for the caller's own row is a clean
-`ok`, so a re-run after a transient failure is safe.
+**`register(label)`** runs the **same** Contract-A rules `Site` enforces, in order,
+before writing: `validate_label` (shape) → `validate_reserved` + brand denylist
+(Component H) → fleet-wide availability (`is_taken` + an existing `Subdomain`) → per-VM
+cap (Component G). On a pass it inserts `Subdomain(subdomain=label,
+virtual_machine=<resolved vm>, active=1)`; the row's `after_insert` reconciles the proxy.
+A `DuplicateEntryError` (two benches racing the same label) maps to `taken` — the DB
+unique key is the **atomic arbiter**, and reserving *first* is what makes the subsequent
+create un-blockable. `taken`/`reserved`/`at_limit`/`invalid` insert nothing and tell the
+guest why. `register` admits exactly one label, never evicts, and is **idempotent** on an
+already-owned label (a retry after a transient failure is a clean `ok`).
 
-**`deregister(label)`** — the teardown signal, fired on **two** paths: after a
-deliberate `bench drop-site`, *and* as the **rollback** when `bench new-site` fails
-after a successful `register` (the reservation is released so a failed create leaves
-no stale route). Resolve the VM, find its `Subdomain(subdomain=label,
-virtual_machine=<vm>)`, and **delete** it (its `on_trash` deconverges the proxy).
-Scoped to the caller's own VM by Caller resolution, so a guest can never deregister
-another VM's route. Idempotent: an absent row is a clean `ok` (a double
-`bench drop-site`, a replayed POST, a `list()`-driven stray clear, or a rollback for a
-`register` that itself failed). It asserts only *its own* teardown — a guest cannot
-deregister a label it doesn't own (the row's `virtual_machine` must match the
-resolved VM, else no-op).
+**`deregister(label)`** resolves the VM, finds its `Subdomain(subdomain=label,
+virtual_machine=<vm>)`, and **deletes** it (its `on_trash` deconverges the proxy). Scoped
+to the caller's own VM, so a guest can never deregister another VM's route (the row's
+`virtual_machine` must match, else no-op). **Idempotent**: an absent row is a clean `ok`
+(a double drop, a replayed POST, a `list`-driven stray clear, or a rollback for a
+`register` that itself failed).
 
-Both are **arbitrated, not trusted**: the guest supplies a label and an intent, but
-every rule that protects the fleet (uniqueness, reserved, denylist, cap, own-VM
-scoping) is applied controller-side. The guest's word can create/remove only what
-the rules allow, only for itself. **Both update the proxy immediately** through the
-existing `Subdomain` hooks — `register`'s `after_insert` and `deregister`'s `on_trash`
-each enqueue the regional reconcile inline, so a route appears or disappears the
-moment the write lands, with no second push and no pull to wait on.
+Both apply every fleet-protecting rule (uniqueness, reserved, denylist, cap, own-VM
+scoping) controller-side, and both update the proxy immediately through the existing
+`Subdomain` hooks — no second push, no pull to wait on.
 
-> **A rejected write is still arbitrated by a trustworthy source — *if* the edge
-> holds.** Both endpoints resolve the VM from `frappe.local.request_ip` (*Caller
-> resolution*), which is only the real peer `/128` behind a trusted edge that
-> overwrites `X-Forwarded-For`. **That production edge is not yet built and is a
-> hard prerequisite** (see *Caller resolution*); below it, a forged XFF lets a guest
-> register/deregister *another* VM's routes — a hijack, not a nuisance. The audit
-> log (Component I) is how such an attempt is detected after the fact.
+> **Only trustworthy if the edge holds.** Both resolve the VM from `frappe.local.request_ip`
+> — the real peer `/128` only behind the trusted edge (*Caller resolution*), which is **not
+> yet built, a hard prerequisite**. Below it a forged XFF is a route hijack; the audit log
+> (Component I) detects the attempt after the fact.
 
 ## Component B — `check_label` (the optional advisory pre-flight)
 
-`atlas/atlas/bench_routing.py`, `@frappe.whitelist(allow_guest=True)` +
-`@rate_limit`. **Read-only**, and **no longer the gate** — `register` is
-(*Component A*). `check_label` is an *optional* courtesy the guest may call to give
-the user early "that name's taken" feedback before committing to a `register`:
+`atlas/atlas/bench_routing.py`, `@frappe.whitelist(allow_guest=True)` + `@rate_limit`.
+**Read-only** and **not the gate** (`register` is):
 
 ```
 check_label(label) -> {"status": "ok" | "taken" | "reserved" | "at_limit" | "invalid",
                         "suffix": "<region domain>"}
 ```
 
-It runs the same checks `register` will (`validate_label`, `validate_reserved` +
-denylist, `is_taken`, the per-VM cap against the **source-resolved** VM) and returns
-the active region's domain (*Component E*) so the guest can build the FQDN without
-carrying it. It carries **no VM-identifying argument** — the cap check is always
-against the caller's own VM (*Caller resolution*). It writes nothing but **is
-audited** (status `ok`/`taken`/…, *Component I*).
-
-`check_label` is **advisory and fail-open**, and that is *why* it can't be the gate:
-a wrong/stale "ok" here, acted on by starting a create and only then registering,
-is exactly the window an attacker could use to grab the name first. The
-authoritative, race-free decision is `register`'s atomic insert (*Component A*) —
-`check_label` only saves the user a doomed create when the answer is already "taken".
-A malformed label is returned as a clean `{"status": "invalid", "reason": "<message>"}`
-(not a 417) so the guest hook can surface the operator's message verbatim without
-parsing an HTTP error body.
+It runs the same checks `register` will (`validate_label`, `validate_reserved` + denylist,
+`is_taken`, the per-VM cap against the **source-resolved** VM) and returns the active region's
+domain (*Component E*) so the guest can build the FQDN without carrying it. It takes **no
+VM-identifying argument**, writes nothing, but **is audited**. Fail-open, hence not the gate
+(a stale "ok" acted on by a create is the race window `register`'s atomic insert closes). A
+malformed label returns a typed `{"status": "invalid", "reason": "<message>"}` (not a 417) so
+the guest hook can surface the operator's message verbatim.
 
 ## Component C — `list` (the guest reads its OWN routes to find strays)
 
-`atlas/atlas/bench_routing.py`, `@frappe.whitelist(allow_guest=True)` +
-`@rate_limit`. **Read-only**, takes **no argument** — the VM is the source
-address (*Caller resolution*), never a parameter:
+`atlas/atlas/bench_routing.py`, `@frappe.whitelist(allow_guest=True)` + `@rate_limit`.
+**Read-only**, takes **no argument** — the VM is the source address (*Caller
+resolution*):
 
 ```
 list() -> {"domains": [{"label":  "<label>",
@@ -216,304 +135,201 @@ list() -> {"domains": [{"label":  "<label>",
                         "active": true | false}, ...]}     # [] for a VM with no rows
 ```
 
-Returns **all** the `Subdomain` rows where `virtual_machine ==` the source-resolved
-VM. `fqdn` is reconstructed controller-side as `f"{label}.{region_domain}"`
-(region/domain from the active Root Domain, *Component E*; never echoed from a guest
-suffix); `active` reflects the row's flag (in this push-only model `register` always
-inserts `active=1` and `deregister` deletes, so a route is either active or gone —
-the field is surfaced for completeness and forward-compat, not because this chapter
-deactivates rows). `list` is read-only: it writes nothing and **does not touch the
-cap** (Component G counts on a *write*; enumerating consumes nothing). It is audited
-like every call (*Component I*).
+Returns **all** `Subdomain` rows where `virtual_machine ==` the source-resolved VM.
+`fqdn` is reconstructed controller-side as `f"{label}.{region_domain}"` (from the active
+Root Domain, *Component E*; never echoed from a guest suffix). `list` writes nothing and
+**does not touch the cap** (Component G counts on a *write*). It is audited like every
+call.
 
-**Purpose — the guest's self-service stray finder.** The owner enumerates its
-own routes and compares them against its on-disk `sites/`. A `Subdomain` with
-**no matching on-disk site** is a *stray*: a lost `deregister` (Component D's
-best-effort POST never landed), or a site dropped while the controller was
-unreachable. The guest then calls `deregister(label)` on each stray. This is
-the on-demand complement to the accepted-residual dead-link window (*The shape*):
-because there is no scheduled sweeper, `list` + `deregister` is how a stray on a
-still-running VM gets cleared before the VM is terminated (Component F).
+**Purpose — the guest's stray finder.** The owner enumerates its own routes and compares
+them against its on-disk `sites/`. A `Subdomain` with **no matching on-disk site** is a
+*stray* (a lost `deregister`, or a drop while the controller was unreachable); the guest
+then `deregister`s each. Because there is no sweeper, `list` + `deregister` is how a stray
+on a still-running VM is cleared before terminate (Component F). The controller stays the
+**sole writer** — `list` is a *view*, never a lever — and each `deregister` is
+**per-stray**, individually arbitrated and audited. We deliberately do **not** expose a
+converge-style "here is my whole set, delete the rest" endpoint: that would re-introduce
+guest-driven reconcile (the pull-shaped coupling this chapter removed) and let one
+malformed set **mass-delete** its own routes in a single call.
 
-**Why read-only, and why the guest still drives each delete.** The controller
-stays the **sole writer**: `list` asserts nothing and writes nothing, so the guest
-gets a *view*, never a lever. The guest issues a **per-stray** `deregister`, each one
-arbitrated and individually audited (own-VM scoping, idempotent). We **deliberately
-do not** expose a converge-style "here is my whole set, delete the rest" endpoint:
-that would re-introduce a guest-driven reconcile (the exact pull-shaped coupling
-this chapter removed) and let one malformed guest set **mass-delete** its own routes
-in a single call. Per-stray `deregister` keeps every delete an explicit, individual,
-separately-audited act.
-
-A source matching no VM / a Terminated VM / a proxy is a **clean reject** — the same
-Caller-resolution gate the write endpoints use; such a caller can't legitimately own
-bench sites. The reject is a `frappe.throw` (no listing), distinct from the typed
-`{"status": …}` results `check_label`/`register` return; an empty inventory is the
-typed `{"domains": []}`, never a throw.
-
-> **`list` is read-scoped only behind the trusted edge — not unconditionally.**
-> `list` returns only `virtual_machine == <source-resolved VM>` rows, so behind a
-> trusted edge a guest can list **only its own box**. But Caller resolution is by
-> `frappe.local.request_ip`, so under a **broken edge** (the documented hard
-> prerequisite, *Caller resolution*) a forged `X-Forwarded-For` resolves `list()` to
-> a *victim* VM and leaks that VM's route inventory — `list` is a read-hijack below a
-> broken edge, the same trust dependency as the writes, never harmless.
-
-> **What `list` closes, and what it does not.** `list` + `deregister` lets the
-> *owner* clear a stray proactively, shrinking the dead-link window without an
-> operator. But it is still **guest-initiated**: a VM that never calls `list`
-> (or has lost egress) still depends on **terminate** (Component F) for cleanup —
-> that is the only controller-side teardown, and it is total (every row for the VM
-> goes when the VM goes). `list` is a **convenience, not a new safety guarantee**.
+A source matching no VM / a Terminated VM / a proxy is a **clean reject** (a
+`frappe.throw`, no listing) — the same Caller-resolution gate the writes use; an empty
+inventory is the typed `{"domains": []}`, never a throw. That gate cuts both ways: under a
+broken edge a forged `X-Forwarded-For` resolves `list()` to a *victim* and leaks its
+inventory (a read-hijack, the same trust dependency as the writes). And `list` is
+guest-initiated — a VM that never calls it still depends on **terminate** (Component F),
+the only controller-side teardown, for cleanup.
 
 ## Caller resolution (the VM is the source address, never a parameter)
 
-All four endpoints derive *which VM is calling* from the request's **public IPv6
-source `/128`**, matched against `Virtual Machine.ipv6_address` — never from a
-request parameter. A guest is root in its own VM and can read any value we inject
-(`/etc/atlas-vm-uuid`, any secret), so a guest-supplied `vm_uuid` could name
-*another* VM. Resolving from the source address means a guest can only ever speak
-**as the box its packets come from** — it cannot register/deregister/list/probe
-another tenant's VM. This scoping is what makes a *writing* one-way push tolerable:
-the guest is a writer, but only of its own routes.
+All four endpoints derive *which VM is calling* from the request's **public IPv6 source
+`/128`**, matched against `Virtual Machine.ipv6_address` — never from a request parameter. A
+guest is root in its own VM and could forge any injected `vm_uuid`/secret to name *another*
+VM; the source address it cannot forge, so it can only ever speak **as the box its packets
+come from**. That is what makes a *writing* one-way push tolerable: a writer, but only of its
+own routes.
 
-- No injected secret is involved. A secret written into the guest authenticates
-  "the VM" to a tenant who *is* root in that VM, so it identifies nothing the source
-  address doesn't already (and a shared per-region secret identifies only the
-  region) — the source `/128` is the one VM-identifying fact the tenant cannot forge
-  *if* it is read from a trusted hop (below). `/etc/atlas-routing.env` carries
-  **only** the base URL, no token (see *Identity*).
-- A spoofed/non-matching source is a clean reject (`frappe.throw`): no VM resolves,
-  so no write happens (and `list` returns no inventory). Resolution to a Terminated
-  VM or a proxy is likewise rejected — those can't legitimately own bench sites. The
-  rejected attempt is still **audited** with the source `/128` that tried (*Component
-  I*) — a non-resolving source is exactly the forensic signal worth keeping.
+- No injected secret is involved: a secret written into a guest authenticates "the VM" to
+  a tenant who *is* root in it, so it identifies nothing the source `/128` doesn't already.
+  `/etc/atlas-routing.env` carries **only** the base URL, no token (*Identity*).
+- A spoofed/non-matching source, or resolution to a Terminated VM or a proxy, is a clean
+  reject (`frappe.throw`): no write happens (and `list` returns no inventory). The rejected
+  attempt is still **audited** with the source `/128` that tried — a non-resolving source
+  is exactly the forensic signal worth keeping.
 - **The resolver filters Terminated/proxy in the query and fails closed on a duplicate
-  `/128`.** `ipv6_address` is **not** a unique column, and `allocate_ipv6` can recycle a
-  Terminated VM's `/128` onto a fresh Running VM (the reuse guard is deferred,
+  `/128`.** `ipv6_address` is **not** unique, and `allocate_ipv6` can recycle a Terminated
+  VM's `/128` onto a fresh Running VM (the reuse guard is deferred,
   [09-roadmap.md](./09-roadmap.md)). So resolution selects only `status != Terminated`
-  **and** `is_proxy = 0` rows — a stale Terminated row carrying the recycled address can
-  never *shadow* the live owner — and if two *live* non-proxy VMs ever share a `/128` it
-  resolves **neither** (a write under either would be wrong), rather than trusting an
-  arbitrary first row. This is a logic backstop *behind* the trust root, not a substitute
-  for it: the edge + host anti-spoof (below) are still what make the source `/128` honest.
+  **and** `is_proxy = 0` — a stale Terminated row can never *shadow* the live owner — and
+  if two *live* non-proxy VMs ever share a `/128` it resolves **neither** (a write under
+  either would be wrong). A logic backstop *behind* the trust root, not a substitute for it.
 
-**Where the source address comes from (the trust root — and a real gap).** The
-guest does **not** reach the controller's Frappe worker directly; it traverses a hop
-(ngrok in local dev; an edge/LB in production). So `request.remote_addr` at the
-worker is the *hop's* address, not the VM's `/128` — useless for resolution. The VM's
-real `/128` survives only in **`X-Forwarded-For`**, which Frappe exposes as
-`frappe.local.request_ip`. **Two traps make `request_ip` untrustworthy by default —
-and here it gates a *write*, so this is load-bearing, not cosmetic:**
+**The trust root — and a real gap.** The guest doesn't reach the Frappe worker directly; it
+traverses a hop (ngrok in dev, an edge/LB in prod), so `request.remote_addr` is the *hop's*
+address and the VM's real `/128` survives only in **`X-Forwarded-For`**
+(`frappe.local.request_ip`). Frappe's [`set_request_ip`](../../frappe/frappe/auth.py) trusts
+XFF **unconditionally** and takes its **leftmost** value, never checking that a trusted hop
+set it — and many proxies (ngrok) **append** rather than overwrite, so a guest sending
+`X-Forwarded-For: <victim-/128>` puts its forgery leftmost, *ahead* of the genuine appended
+IP, and **wins**. Used naively `request_ip` is attacker-settable — and here it gates a
+*write*, so a guest could register/deregister/list another VM's routes. This is the single
+most dangerous failure mode in the design.
 
-1. Frappe's [`set_request_ip`](../../frappe/frappe/auth.py) trusts `X-Forwarded-For`
-   **unconditionally** and takes its **leftmost** comma value — it never checks that a
-   trusted hop set it. A guest can send `X-Forwarded-For: <victim-/128>`; because the
-   worker reads the leftmost value, the guest's forged entry **wins over** anything
-   the real edge appended. Used naively, `request_ip` is attacker-settable — and in
-   the one-way model that means a guest could **register/deregister/list another VM's
-   routes**. This is the single most dangerous failure mode in the design.
-2. ngrok (and many proxies) **append** to XFF rather than overwrite it, so the genuine
-   client IP sits *after* the guest's forged one — the leftmost-wins parse picks the
-   forgery.
+**Therefore caller resolution requires a trusted edge that strips any client-supplied
+`X-Forwarded-For` and sets it to the real peer `/128`** before the request reaches the
+worker. The edge is the trust root of the whole feature.
 
-**Therefore caller resolution requires a trusted edge that *strips any
-client-supplied `X-Forwarded-For` and sets it to the real peer `/128`*** before the
-request reaches the worker (and the worker must read the edge-guaranteed value, not a
-raw leftmost-XFF). The edge is the trust root of the whole feature.
+- **Production edge: not yet built.** The base URL is just `frappe.utils.get_url()`;
+  nothing today overwrites XFF in front of the controller (the spec/12 regional proxy
+  fronts *tenant* traffic, not the Atlas controller). Standing up that edge is a **hard
+  prerequisite** — without it the writes are spoofable and `list` is a read-hijack.
+- **Local dev: ngrok, with the append trap** — configure ngrok so the worker keys off
+  ngrok's real-client header, not a guest-prepended XFF, else dev "works" while trivially
+  spoofable, hiding the prod gap.
+- **Host anti-spoof is also load-bearing:** even with a trusted edge, the routed-tap host
+  must not let VM-Y emit packets with VM-X's v6 source (RPF), or the edge faithfully records
+  a spoofed peer. Both the **edge XFF-overwrite** and the **host anti-spoof** must be
+  **verified**, not assumed — a failure is a hijack, not a nuisance.
 
-> **The rate limiter shares the trust root's fate.** `@rate_limit(ip_based=True)`
-> keys on the **same** `frappe.local.request_ip` caller resolution reads
-> ([`rate_limiter.py`](../../frappe/frappe/rate_limiter.py)). So below a broken edge a
-> forged XFF defeats **both**: per-VM scoping (a guest acts as a victim) *and* the
-> rate limit (a guest spreads its quota across forged source IPs). The edge isn't one
-> of two independent controls — it is the single hinge both swing on. Verify it
-> before trusting either.
-
-- **Production edge: not yet built.** The controller's base URL is just
-  `frappe.utils.get_url()`; nothing today sits in front of the controller that
-  overwrites XFF (the spec/12 regional proxy fronts *tenant* traffic, not the Atlas
-  controller). Standing up / configuring that edge is a **hard prerequisite** of this
-  model — without it, the write endpoints are spoofable and `list` is a read-hijack.
-- **Local dev: ngrok, with the append trap.** ngrok must be configured so the worker
-  keys off the value ngrok sets (its real-client header), not a guest-prepended XFF —
-  otherwise dev "works" while being trivially spoofable, hiding the prod gap.
-- **Still load-bearing below the edge:** even with a trusted edge, the routed-tap host
-  must not let VM-Y emit packets with VM-X's v6 source (anti-spoofing / RPF), or the
-  edge faithfully records a spoofed peer. Both the **edge XFF-overwrite** and the
-  **host anti-spoof** must be **verified**, not assumed — together they are the trust
-  root of caller resolution, and because resolution now gates a write, a failure is a
-  hijack, not a nuisance.
+> **The rate limiter shares the trust root's fate.** `@rate_limit(ip_based=True)` keys on the
+> **same** `frappe.local.request_ip`
+> ([`rate_limiter.py`](../../frappe/frappe/rate_limiter.py)), so a forged XFF below a broken
+> edge defeats **both** per-VM scoping and the rate limit — the edge is the single hinge both
+> swing on.
 
 ## Component D — the `bench-domain-provider` plug-in (guest side, process I/O)
 
-A small stdlib-only binary committed in the `bench/` tree as
-[`bench/bench-domain-provider.py`](../bench/bench-domain-provider.py), installed into
-the golden by [`bench/build.sh`](../bench/build.sh) at
-`/usr/local/bin/bench-domain-provider` (so it is present on every clone). It is the
-**`bench-domain-provider` plug-in** [pilot](../../references/pilot) (formerly bench-cli)
-looks up on `PATH` and drives by **exit code + stdout JSON** — the contract is process
-I/O, documented at [pilot's `docs/domain-provider.md`](../../references/pilot/bench-cli/docs/domain-provider.md)
-and [`pilot/core/domain_controller.py`](../../references/pilot/bench-cli/pilot/core/domain_controller.py).
-It reads only the Atlas base URL from `/etc/atlas-routing.env` (see *Identity*) and POSTs
-the whitelisted endpoints with **no VM-identifying argument** — the controller resolves
-the calling VM from the source address. pilot wires it at the choke points **both** the
-admin UI and the CLI flow through (`new_site`, `drop_site`, the Add/Remove-Domain admin
-path), so a site created either way is covered.
+A small stdlib-only binary committed at
+[`bench/bench-domain-provider.py`](../bench/bench-domain-provider.py), installed by
+[`bench/build.sh`](../bench/build.sh) at `/usr/local/bin/bench-domain-provider` (present on
+every clone). It is the plug-in [pilot](../../references/pilot) looks up on `PATH` and drives
+by **exit code + stdout JSON** (documented at
+[pilot's `docs/domain-provider.md`](../../references/pilot/bench-cli/docs/domain-provider.md)) —
+the boundary is process I/O, not a typed surface pilot imports. It reads only the Atlas base
+URL from `/etc/atlas-routing.env` (*Identity*) and POSTs with **no VM-identifying argument**.
+pilot wires it at the choke points both the admin UI and the CLI flow through (`new_site`,
+`drop_site`, the Add/Remove-Domain admin path). The binary **no-ops cleanly** (`register`
+exits 0, query verbs print blank) when `/etc/atlas-routing.env` is absent, so a non-Atlas
+bench is unaffected.
 
-> **This replaced `atlas-route`.** The old binary exposed a **typed Python surface**
-> (`Registered`/`Declined`/…) pilot *imported*. That coupling is gone: pilot now reads
-> exit code + stdout only, and the verb set changed. We kept the controller engine
-> exactly as it was — the binary does all the adapting.
+### The POST must go over IPv6
 
-### What changed from `atlas-route`
-
-- **Verbs.** `register`/`deregister` stay but now take a **full FQDN**, not a bare
-  label. `check-label` and `list` are **gone** (pilot never calls them).
-  `generate-dns-records`, `wildcard-domains`, `proxy-servers` are **new**.
-- **Argument is the full FQDN.** pilot calls `register("app.<region>.frappe.dev")`. The
-  binary **peels the region wildcard suffix** off the FQDN to the bare `label`
-  (`app`) before POSTing — so the controller still receives exactly the label it
-  arbitrates today (**no controller change**). The suffix it strips is the
-  `wildcard-domains` answer (below), the same thing pilot's `matches_wildcard` gates
-  on; a name that isn't under the wildcard peels to nothing and is **declined**.
-- **Output is exit code + stdout JSON**, not a typed surface. The convention this binary
-  follows (pilot only checks zero vs non-zero): `0` ok / fail-soft no-op; `1`
-  transport/config failure; `2` declined (taken/reserved/at_limit/invalid, or a name not
-  under the wildcard); `64` usage error. A declined `register` writes the operator
-  message to stderr (pilot surfaces it).
-- **`register` is now FAIL-CLOSED.** `atlas-route` returned `0` on a transport error
-  (fail-open: "don't block a local create"). The new `register` returns `1` on an
-  unreachable controller, so pilot **aborts** the create — if the route wasn't
-  provisioned, the site shouldn't exist. Our reservation is the authoritative gate, so
-  fail-closed is the more correct posture anyway. (`deregister` stays best-effort exit 0;
-  the query verbs stay fail-soft.)
-
-### The POST must go over IPv6 (the origin is the validation)
-
-Caller resolution matches the request's **source `/128`** against
-`Virtual Machine.ipv6_address` — so the binary **must** reach the controller over
-**IPv6**, or the controller has no VM-identifying address to resolve. The whole security
-model is "the VM is the box its v6 packets come from"; a POST over IPv4 arrives NAT'd with
-no per-VM `/128` to key on. The binary pins the connection to an `AF_INET6`-only connector
-(resolve the base-URL host to its `AAAA`, connect over v6; fail loudly if there is no v6
-route rather than silently falling back to v4) — "no v6 route" is a transport error
-(register → fail-closed; the query verbs → fail-soft), never a v4 retry.
+Caller resolution matches the request's **source `/128`**, so the binary **must** reach the
+controller over **IPv6** or there is no VM-identifying address to resolve (a v4 POST arrives
+NAT'd). The binary pins the connection to an `AF_INET6`-only connector (resolve the host's
+`AAAA`, connect over v6; fail loudly if there is no v6 route rather than silently falling
+back to v4) — "no v6 route" is a transport error (register → fail-closed; query verbs →
+fail-soft), never a v4 retry.
 
 ### The verbs
 
-- **`register <domain>`** — **before** `bench new-site`. Peels the wildcard suffix to the
-  label and POSTs `register(label)`. **Exit 0** = route reserved (the row appears on
-  register, not after create — the authoritative reservation that makes the create
-  un-blockable). **Exit 2** = declined (`taken`/`reserved`/`at_limit`/`invalid`, **or a
-  non-wildcard / multi-label name** Phase 1 doesn't route) — pilot stops, so no orphan.
-  **Exit 1** = transport failure → pilot aborts (**fail-closed**). NotConfigured → exit 0
-  (not an Atlas bench; pilot proceeds with its built-in behaviour). Idempotent on the
-  caller's own label, so a retry after a transient failure is safe.
-- **`deregister <domain>`** — after `bench drop-site`, **and as the rollback when
-  `bench new-site` fails**. Peels the label and POSTs `deregister(label)`, **always exit
-  0** (a non-zero would throw on an otherwise-successful drop). A lost `deregister` leaves
-  a stale (404-serving) route until the VM is terminated (the accepted residual). Since
-  the new contract has **no `list` verb**, guest-side stray clearing has no equivalent —
-  pilot drives `deregister` itself on drop, and total teardown is still `terminate()`
-  (Component F); the residual just widens slightly (noted in *The shape*).
-- **`generate-dns-records <site> <domain>`** — pre-flight, **read-only**, **advisory**:
-  report the DNS records the user adds at *their own* provider so a custom name reaches
-  their Atlas site. **Atlas writes nothing to any zone** — this only tells the user what to
-  paste. A **wildcard subdomain we already route needs none**, so it prints `{}` and exits
-  0. A **custom (non-wildcard) domain** (`shop.acme.com`) gets the recipe from the
-  controller endpoint `dns_records(domain, site)` (Component K): **CNAME → the caller's own
-  regional site FQDN** (`<label>.<region domain>`, the per-customer binding — a CNAME to a
-  name *reserved* to this VM, not just to the shared proxy, so no other tenant can claim
-  the route), **A + AAAA → the proxy fleet** (`wildcard_targets()`, the apex fallback where
-  a CNAME is illegal), **CAA → the active issuer** (`0 issue "<caa_issuer>"`, omitted for a
-  Self-Managed issuer with no public CA). The controller resolves the caller VM by source
-  `/128` and verifies it **owns** `site`, refusing to advise a CNAME to a name the caller
-  has no claim to. Fail-open per the doc (the real gate is `register`).
-- **`wildcard-domains`** — host-level: prints the wildcard pattern(s) sites here may be
-  named under, `["*.<active region domain>"]` (controller endpoint `wildcard_domains()`).
-  Fail-soft (blank + exit 0). pilot constrains site names to these and suggests subdomains.
-- **`proxy-servers`** — host-level: prints the regional edge proxies' public IPs that front
-  this bench (controller endpoint `proxy_servers()`). Fail-soft. When non-empty, pilot
-  locks its nginx down to exactly these (`allow … ; deny all;`), trusts their
-  `X-Forwarded-For`, and forwards it upstream untouched — see *Trust root* below.
+The controller receives exactly the bare `label` it already arbitrates: for a wildcard
+subdomain the binary **peels the region wildcard suffix** off the full FQDN
+(`app.<region>.frappe.dev` → `app`) before POSTing. The suffix is the `wildcard-domains`
+answer (below), the same thing pilot's `matches_wildcard` gates on; a name not under the
+wildcard peels to nothing and is **declined**. Exit-code convention (pilot only checks zero
+vs non-zero): `0` ok / fail-soft no-op; `1` transport/config failure; `2` declined; `64`
+usage error.
 
-The binary **no-ops cleanly** (`register` exits 0, the query verbs print blank) when
-`/etc/atlas-routing.env` is absent — so an ordinary (non-Atlas) bench is unaffected.
+- **`register <domain>`** — before `bench new-site`. Peels to the label and POSTs
+  `register(label)` (a custom, non-peeling FQDN routes to `register_custom_domain` —
+  Component L). **Exit 0** = route reserved (the row appears on register, not after create);
+  **exit 2** = declined (`taken`/`reserved`/`at_limit`/`invalid`, or a non-wildcard /
+  multi-label name Phase 1 doesn't route) — pilot stops, no orphan; **exit 1** = transport
+  failure → pilot aborts (**FAIL-CLOSED**: if the route wasn't provisioned, the site
+  shouldn't exist). Absent config → exit 0 (not an Atlas bench). Idempotent on the caller's
+  own label.
+- **`deregister <domain>`** — after `bench drop-site`, **and** as the rollback when
+  `bench new-site` fails. Peels and POSTs `deregister(label)`, **always exit 0** (a non-zero
+  would throw on an otherwise-successful drop). Best-effort: a lost `deregister` leaves a
+  404-serving route until terminate (the accepted residual). The guest binary has **no
+  `list` verb**, so guest-side stray clearing has no equivalent — pilot drives `deregister`
+  itself on drop, and total teardown is still `terminate()` (Component F).
+- **`generate-dns-records <site> <domain>`** — pre-flight, read-only, **advisory**: the DNS
+  records the user adds at *their own* provider so a custom name reaches their site (**Atlas
+  writes to no zone**). A wildcard subdomain we route needs none (`{}`, exit 0); a custom
+  domain gets the recipe from `dns_records(domain, site)`: **CNAME → the caller's own regional
+  site FQDN** (a name *reserved* to this VM, so no other tenant can claim the route), **A +
+  AAAA → the proxy fleet** (the apex fallback where a CNAME is illegal), **CAA → the active
+  issuer** (omitted for a Self-Managed issuer). The controller verifies the caller **owns**
+  `site` before advising a CNAME. Fail-open (the real gate is `register`).
+- **`wildcard-domains`** — host-level: the wildcard pattern(s) sites here may be named
+  under, `["*.<active region domain>"]`. Fail-soft (blank + exit 0). pilot constrains site
+  names to these.
+- **`proxy-servers`** — host-level: the regional edge proxies' public IPs that front this
+  bench. Fail-soft. When non-empty, pilot locks its nginx to exactly these
+  (`allow … ; deny all;`), trusts their `X-Forwarded-For`, and forwards it upstream
+  untouched — see *Trust root* below.
 
 ### Trust root — `proxy-servers` closes the gap caller resolution flagged
 
-Caller resolution by source `/128` is only sound if the bench reads the **real** client
-IP from a **trusted edge** that overwrites `X-Forwarded-For` (the hard prerequisite,
-*Caller resolution*). Until now that edge enforcement was **unbuilt** — the bench nginx
-trusted leftmost-XFF with nothing pinning which edge it should trust. **`proxy-servers`
-closes it**: pilot asks the provider which IPs front the bench, then locks nginx to
-exactly those (`allow … ; deny all;` + `set_real_ip_from` + forward XFF untouched). The
-bench now learns its trusted edge from the controller, so the forged-XFF hole the spec
-flagged is closeable in the field. (The doctype-side controller endpoints `check_label`
-and `list` still exist and are useful for our own e2e; the guest binary simply no longer
-exposes them.)
+Caller resolution is sound only if the bench reads the real client IP from a trusted edge
+(*Caller resolution*). `proxy-servers` is how the bench learns which IPs to trust: pilot locks
+nginx to exactly those (`allow … ; deny all;` + `set_real_ip_from` + forward XFF untouched),
+so the forged-XFF hole is closeable in the field.
 
 ## Component E — region (controller-resolved, not VM-asserted)
 
-No VM — site or proxy — carries a `region` field; Atlas is single-region and the
-one stored region is `Atlas Settings.region`. We **don't** make a VM-carried region
-a source of truth (it would drift and misroute). Region is resolved
-**controller-side**:
-
-- `register`/`deregister`/`check_label`/`list` build the FQDN from the single active
-  [Root Domain](./02-doctypes.md#root-domain)'s domain suffix
-  (`active_root_domain().domain`, [`placement.py`](../atlas/atlas/placement.py)) the
-  same way [`Site`](../atlas/atlas/doctype/site/site.py) does. Single-region today;
-  resolution stays controller-side, never parsed from a guest FQDN.
-- `check_label` returns the region **domain** so the guest can name its site
-  correctly; `list` returns each row's **FQDN** built from it; the guest never
-  *claims* a region.
-
-The label-to-FQDN reconstruct rule still applies on every `register`: the controller
-validates `label` and stores it; the served FQDN is `f"{label}.{region_domain}"`,
-built controller-side, never from a guest-supplied suffix.
+No VM — site or proxy — carries a `region` field; Atlas is single-region and the one stored
+region is `Atlas Settings.region`. A VM-carried region would drift and misroute, so region
+is resolved **controller-side**: every endpoint builds the FQDN from the single active
+[Root Domain](./02-doctypes.md#root-domain)'s domain suffix (`active_root_domain().domain`,
+[`placement.py`](../atlas/atlas/placement.py)) the same way
+[`Site`](../atlas/atlas/doctype/site/site.py) does. `check_label` returns the region
+**domain** so the guest can name its site; `list` returns each row's **FQDN** built from it.
+The served FQDN is always `f"{label}.{region_domain}"`, built controller-side, never parsed
+from a guest-supplied suffix.
 
 ## Component F — controller-side teardown (terminate deletes everything)
 
-The **only** controller-side teardown is `VirtualMachine.terminate()`, and it is
-total — so no scheduled sweeper is needed:
+The **only** controller-side teardown is `VirtualMachine.terminate()`, and it is total, so
+no sweeper is needed. It calls `_delete_subdomains()` beside `_detach_reserved_ip()` /
+`_delete_snapshots()`
+([`virtual_machine.py`](../atlas/atlas/doctype/virtual_machine/virtual_machine.py)): delete
+every `Subdomain` where `virtual_machine == self.name`. **Already built.** When a VM dies,
+*all* its routes die with it, no guest cooperation, each delete's `on_trash` deconverging
+the proxy. Because terminate removes the rows pointing at a `/128` *before* that address can
+be recycled (`allocate_ipv6` only re-hands an address a terminated VM released), **no
+surviving row can drift onto a new tenant** — which is why the old address-drift sweeper is
+gone.
 
-**`VirtualMachine.terminate()`** calls `_delete_subdomains()` beside
-`_detach_reserved_ip()` / `_delete_snapshots()`
-([`virtual_machine.py`](../atlas/atlas/doctype/virtual_machine/virtual_machine.py)):
-delete every `Subdomain` where `virtual_machine == self.name`. **Already built.** When
-a VM dies, *all* its routes die with it, with no guest cooperation — each delete's
-`on_trash` deconverges the proxy. Because terminate removes the rows that point at a
-`/128` *before* that address can be recycled (`allocate_ipv6` only re-hands an address
-a terminated VM has released), there is **no surviving row to drift onto a new
-tenant** — which is exactly why the old address-drift sweeper is gone.
-
-> **Why no sweeper.** The earlier design ran an hourly `sweep_stale_subdomains` to
-> catch (a) rows of VMs killed out-of-band and (b) a route whose VM's address drifted
-> onto a recycled `/128`. Case (b) is closed structurally: `terminate()` deletes a
-> VM's rows as part of the same teardown that releases its address, so a row never
-> outlives its VM's `/128`. Case (a) — a VM removed *without* going through
-> `terminate()` — is an Atlas-internal invariant to uphold (every VM removal goes
-> through `terminate()`), not a routing concern to paper over with a periodic scan.
-> The remaining residual — a stray route on a *still-running* VM whose `deregister`
-> was lost — is **not** a leak (it 404s, no `default_server`, *The shape*) and is
-> cleared by the owner via `list` + `deregister` (Component C) or by eventual
-> terminate. We delete correctly on terminate instead of scanning to repair; the
-> `allocate_ipv6` reuse guard ([09-roadmap.md](./09-roadmap.md)) is the belt-and-
-> suspenders follow-up.
+> **Why no sweeper.** The earlier hourly `sweep_stale_subdomains` caught (a) rows of VMs
+> killed out-of-band and (b) a route whose address drifted onto a recycled `/128`. Case (b)
+> is closed structurally (above); case (a) is an Atlas-internal invariant to uphold — every
+> VM removal goes through `terminate()` — not a routing concern to scan for. The
+> still-running-VM residual 404s (*The shape*) and is cleared by `list` + `deregister` or
+> terminate; the `allocate_ipv6` reuse guard ([09-roadmap.md](./09-roadmap.md)) is the
+> belt-and-suspenders follow-up.
 
 ## Component G — the per-VM subdomain cap (namespace-exhaustion control)
 
-A bench owner can `bench new-site` arbitrarily many sites; without a ceiling one
-tenant occupies an unbounded slice of the region's namespace (and bloats the proxy
-map). The DB unique key blocks hijacking an *owned* name and Component H blocks
-*branded* names; the cap blocks *bulk* squatting of unowned names and bounds blast
-radius per VM.
+A bench owner can `bench new-site` arbitrarily many sites; without a ceiling one tenant
+occupies an unbounded slice of the region's namespace (and bloats the proxy map). The unique
+key blocks hijacking an *owned* name and Component H blocks *branded* names; the cap blocks
+*bulk* squatting of unowned names.
 
-**The cap is a simple memory tier — start at 20, double a step at a time as the VM
-gets bigger.** No floor/multiply formula; just a small lookup keyed on
-`memory_megabytes`, so a `resize()` re-prices it for free:
+The cap is a **memory tier** — a small lookup keyed on `memory_megabytes`, so a `resize()`
+re-prices it for free:
 
 ```
 cap(vm):
@@ -523,78 +339,55 @@ cap(vm):
      ≥ 64 GB → 160
 ```
 
-20 is the **base**, not a pinch: every size in [`sizes.py`](../atlas/atlas/sizes.py)
-today (≤ 8 GB) gets 20. Each tier up doubles — bigger VMs serve more sites. Adding a
-size means adding one row to the table, nothing to recompute.
-
-**Enforced authoritatively in `register`** (and mirrored advisorily in `check_label`):
-count the resolved VM's `Subdomain` rows; at or above `cap(vm)`, `register` returns
-`at_limit` and inserts nothing. Because each `register` admits exactly one label and
-never evicts an existing route, the cap is a simple ceiling: the sites already routed
-stay routed, and the (N+1)th create is refused at write time. (There is no
-set-convergence step — each label arrives as its own `register`.)
+**Enforced authoritatively in `register`** (mirrored advisorily in `check_label`): count the
+resolved VM's `Subdomain` rows; at or above `cap(vm)`, `register` returns `at_limit` and
+inserts nothing. Because each `register` admits exactly one label and never evicts, the cap
+is a simple ceiling — sites already routed stay routed, the (N+1)th create is refused at
+write time. Adding a size is one more table row, [`sizes.py`](../atlas/atlas/sizes.py).
 
 ## Component H — the brand/keyword denylist (a DocType, editable live)
 
-`RESERVED_SUBDOMAINS` blocks structural labels (`www`, `api`, …) and is frozen in
-code. The **brand denylist** is the complement the unique key and cap don't cover: a
-tenant grabbing `paypal`/`stripe`/`login`/`account`/… under the valid wildcard TLS
-cert — phishing-as-a-service on a name no other VM holds yet. Unlike the structural
-reserved set, the brand list **changes over time** (a new payment brand, an abused
-keyword the operator spots in the audit log), so it lives in a **DocType**, not a
-code constant or a settings textarea:
+`RESERVED_SUBDOMAINS` blocks structural labels (`www`, `api`, …) and is frozen in code. The
+**brand denylist** is the complement: a tenant grabbing
+`paypal`/`stripe`/`login`/`account`/… under the valid wildcard TLS cert —
+phishing-as-a-service on a name no other VM holds yet. Because the brand list **changes over
+time** (a new payment brand, an abused keyword spotted in the audit log), it lives in a
+**DocType**, not a code constant:
 
 ```
 Subdomain Denylist  (engine: InnoDB; one row per blocked label)
   label    Data   autoname: field:label, unique:1 — the blocked label (lowercased)
-  reason   Data   why it's blocked (operator note: "payment brand", "auth keyword", …)
+  reason   Data   operator note ("payment brand", "auth keyword", …)
   enabled  Check  default 1 — flip off to lift a block without losing the row/reason
 ```
 
-An operator adds a row to block a name and the next `register`/`check_label` honors it
-**immediately** — no deploy, no migrate. Enforcement is in the same `validate_reserved`
-seam, so both `check_label` and `register` reject a denylisted label (told at create
-time; never written). The check is a single indexed `exists("Subdomain Denylist",
-{"label": <lowercased>, "enabled": 1})`, cheap enough to run inline on every call.
-Seeded at install with the obvious payment/auth/brand terms; the operator curates it
-from there — often straight from a hijack-attempt row in the audit log (*Component I*).
+An operator adds a row and the next `register`/`check_label` honors it **immediately** — no
+deploy, no migrate. Enforcement is in the same `validate_reserved` seam (both `check_label`
+and `register` reject a denylisted label), a single indexed `exists("Subdomain Denylist",
+{"label": <lowercased>, "enabled": 1})` run inline. Seeded at install with the obvious
+payment/auth/brand terms; the operator curates from there, often straight from a
+hijack-attempt row in the audit log (*Component I*).
 
 ## Component I — the request audit log (MyISAM)
 
-Every call to every endpoint — the four per-site (`check_label`, `register`,
-`deregister`, `list`) **and** the two host-level queries (`wildcard_domains`,
-`proxy_servers`, which carry no VM and audit with a blank `vm` + the asking source) —
-writes one row to a new append-only DocType, **`Bench Routing Audit`**, with
-`"engine": "MyISAM"`. It is the forensic backbone of the trust-root story: when the
-edge / host anti-spoof is the load-bearing risk (*Caller resolution*), this log is
-**how you detect a hijack attempt** — a `register` whose source `/128` resolved to
-VM-X while a forged `X-Forwarded-For` in the forwarded-header chain named VM-Y leaves
-a row with *both* facts side by side.
+Every call to every endpoint — the four per-site (`check_label`, `register`, `deregister`,
+`list`) **and** the two host-level queries (`wildcard_domains`, `proxy_servers`, which carry
+no VM and audit with a blank `vm` + the asking source) — writes one row to an append-only
+DocType, **`Bench Routing Audit`** (`"engine": "MyISAM"`). It is the forensic backbone of
+the trust-root story: this log is **how a hijack attempt is detected** — a `register` whose
+source `/128` resolved to VM-X while a forged `X-Forwarded-For` named VM-Y leaves a row with
+*both* facts side by side.
 
-**Why MyISAM, when every other Atlas DocType is InnoDB.** An audit log is
-append-only, write-heavy, and **never participates in the controller's transactional
-writes** — and that is the point, not a performance tweak. A MyISAM insert is **not
-rolled back** when the surrounding request transaction rolls back. A *rejected*
-`register` calls `frappe.throw` (or returns a non-`ok` status after a `is_taken`
-check), and a non-resolving source `frappe.throw`s in caller resolution — both unwind
-the request transaction; on InnoDB the audit insert would unwind with it and we would
-**lose the record of exactly the attempts most worth auditing** — the rejected /
-hijack-attempt ones. MyISAM's auto-committed table survives the throw, so the reject
-is recorded.
-
-> **The MyISAM insert survives the caller's rollback — that is the whole reason.**
-> The endpoint writes the audit row via the helper, and a later `frappe.throw` rolls
-> back its *own* transaction; the MyISAM row persists because the engine auto-commits
-> per statement and ignores the InnoDB transaction. So persistence rides **MyISAM's
-> auto-commit alone** — the helper does **not** call `frappe.db.commit()`, because an
-> explicit commit would also flush any partial transactional work done before the
-> throw (defeating the rollback the reject relies on). One mechanism, not "commit
-> and/or MyISAM": the table engine *is* the durability. The honest cost: MyISAM gives
-> **no crash-safe recovery and no FK integrity** — acceptable for an append-only
-> forensic log that references nothing transactionally and must outlive the rows it
-> describes. (Verify at migrate that the table is created `ENGINE=MyISAM` and not
-> silently coerced to InnoDB by the deployment's MariaDB config — the whole argument
-> rests on the engine actually being MyISAM.)
+**Why MyISAM, when every other Atlas DocType is InnoDB.** A MyISAM insert is **not rolled
+back** when the surrounding request transaction rolls back — and that is the point. A
+*rejected* `register` (or a non-resolving source) `frappe.throw`s, unwinding the request
+transaction; on InnoDB the audit insert would unwind with it and we would **lose the record
+of exactly the attempts most worth auditing**. Persistence rides **MyISAM's auto-commit
+alone** — the helper does **not** call `frappe.db.commit()`, which would also flush partial
+transactional work done before the throw (defeating the reject's rollback). The honest cost:
+no crash-safe recovery, no FK integrity — acceptable for an append-only log. (Verify at
+migrate that the table is created `ENGINE=MyISAM` and not coerced to InnoDB by the
+deployment's MariaDB config — the whole argument rests on it.)
 
 ```
 Bench Routing Audit  (engine: MyISAM, append-only, sole writer = _audit())
@@ -602,258 +395,176 @@ Bench Routing Audit  (engine: MyISAM, append-only, sole writer = _audit())
                       wildcard_domains | proxy_servers
   label        Data   the label argument; BLANK for list() and the host queries
   status       Data   ok | taken | reserved | at_limit | invalid | unresolved
-                      (the SAME values an endpoint returns/throws — no synthetic codes;
-                       "unresolved" = caller resolution found no VM, i.e. a spoof attempt)
-  business_reject Check  1 = a rules decline (taken/reserved/at_limit/invalid) or an
-                         unresolved source; 0 = a clean ok. (A @rate_limit throttle is
-                         NOT a row here — see the note below.)
-  vm           Data   resolved VM name — a Data SNAPSHOT, not a Link: an audit row must
+                      (the SAME values an endpoint returns/throws; "unresolved" =
+                       caller resolution found no VM, i.e. a spoof attempt)
+  business_reject Check 1 = a rules decline or an unresolved source; 0 = a clean ok.
+                       (A @rate_limit throttle is NOT a row here — see below.)
+  vm           Data   resolved VM name — a Data SNAPSHOT, not a Link: the row must
                       survive the VM's deletion (a Link would dangle/cascade), and a
-                      spoof attempt resolves to NO vm at all (blank vm + a source_ip)
+                      spoof resolves to NO vm (blank vm + a source_ip)
   source_ip    Data   the /128 caller resolution KEYED ON (frappe.local.request_ip) —
                       the exact value the trust decision used; recorded even when it
-                      resolved to no VM, so the spoofer's /128 is captured
-  fwd_headers  Long Text  the forwarded-header chain (incl. the raw X-Forwarded-For)
-                      stored VERBATIM — guest-controlled bytes
-  request_body Long Text  the raw POST body, guest-controlled, stored VERBATIM
-  creation     (built-in)  timestamp — Frappe's own; no extra field
+                      resolved to no VM
+  fwd_headers  Long Text  the forwarded-header chain (incl. raw X-Forwarded-For), VERBATIM
+  request_body Long Text  the raw POST body, guest-controlled, VERBATIM
+  creation     (built-in)  Frappe's own timestamp
 ```
 
-`vm` is **`Data`, not `Link`** deliberately: a `Link` would either dangle or
-cascade-delete when the VM is terminated, destroying the record precisely when it
-matters, and a spoof attempt resolves to *no* VM — there is nothing to link. The
-snapshot keeps the row self-contained and immortal.
+A single helper `_audit(endpoint, label, status, *, business_reject, vm, source_ip,
+fwd_headers, request_body)` is called on **every path of every endpoint, including the
+reject/throw paths** (audit-before-throw). `source_ip` (the single value resolution acted
+on) and `fwd_headers` (the whole forwarded chain verbatim) agree behind a correct edge; when
+they **disagree** — a clean edge peer in `source_ip` but a guest-prepended
+`X-Forwarded-For: <other-/128>` in `fwd_headers` — that is a recorded forgery attempt, the
+hijack signal.
 
-> **`source_ip` ≠ `fwd_headers`, and the difference *is* the hijack signal.**
-> `source_ip` is the single value caller resolution acted on (`frappe.local.request_ip`,
-> the leftmost-XFF the worker trusted); `fwd_headers` is the *whole* forwarded chain
-> verbatim. Behind a correct edge they agree. When they **disagree** — `source_ip` is
-> a clean edge-supplied peer but `fwd_headers` shows a guest-prepended
-> `X-Forwarded-For: <some-other-/128>` — that is a guest *attempting* the leftmost-XFF
-> forgery, recorded in full. Storing both is what turns "the edge is load-bearing"
-> into "and here is the log that proves whether it held."
+> **A `@rate_limit` throttle is *not* in this table.** The decorator raises *before* the
+> endpoint body, so `_audit()` never runs for a throttled request — a throttle surfaces as
+> Frappe's own 429 + rate-limiter logs, not a row here. The table records business
+> decisions, not transport throttling. (Auditing throttles from the decorator seam is a
+> future enhancement.)
 
-**Where it's written.** A single helper `_audit(endpoint, label, status, *,
-business_reject, vm, source_ip, fwd_headers, request_body)` is called on **every path
-of every endpoint, including the reject/throw paths** (audit-before-throw). Reads
-(`check_label`, `list`) audit with `status=ok` (or `invalid`/`unresolved`) and
-`business_reject` set accordingly; writes audit their `ok`/`taken`/`reserved`/
-`at_limit`/`invalid` outcome. The non-transactional MyISAM table is what makes the
-reject rows land despite the surrounding rollback (the blockquote above).
-
-> **A `@rate_limit` throttle is *not* in this table — and that's honest.** The
-> `@rate_limit` decorator raises *before* the endpoint body runs, so `_audit()` (which
-> runs inside the body) never executes for a throttled request. The audit log records
-> **business decisions** (resolved/declined/listed), not transport throttling; a
-> throttle surfaces as Frappe's own 429 + rate-limiter logs, not a `Bench Routing
-> Audit` row. We do **not** claim the table distinguishes a throttle from a decline —
-> it simply never sees the throttle. (A future enhancement could audit throttles from
-> the decorator seam; out of scope for v1.)
-
-**Retention.** The table grows **unbounded** — one row per request, forever, and it
-stores guest-controlled `fwd_headers`/`request_body` verbatim (a size/PII caution for
-any future export). A prune (a deferred sweep or a fixed retention window) is
-**wanted but out of scope for v1**; named here, not built.
+**Retention.** The table grows **unbounded** — one row per request, forever, storing
+guest-controlled `fwd_headers`/`request_body` verbatim (a size/PII caution for any export).
+A prune is **wanted but out of scope for v1**; named here, not built.
 
 ## Component L — custom (non-wildcard) domains (Phase 2, SNI passthrough — BUILT)
 
 A **custom domain** is an arbitrary external FQDN the customer already owns
-(`shop.acme.com`), routed to one site VM. It is the full-FQDN sibling of `register`:
-a wildcard subdomain (`app.<region>.frappe.dev`) is one bare label terminated **at the
-proxy** under the regional wildcard cert; a custom domain keys on the **whole host** and
-is **SNI passthrough** — the proxy reads the SNI at L4 (`ssl_preread`, no decrypt) and
-forwards the raw TLS stream to the VM's `:443`; **the VM terminates with its own Let's
-Encrypt cert** ([12-proxy.md § The stream front-door](./12-proxy.md#the-stream-front-door-sni-passthrough-for-custom-domains),
-[13-tls.md § Custom domains](./13-tls.md#custom-domains-sni-passthrough-the-vm-holds-the-cert)).
-The proxy holds **zero** per-domain certs.
+(`shop.acme.com`), routed to one site VM — the full-FQDN sibling of `register`. It keys on the
+**whole host** and is **SNI passthrough**: the proxy reads the SNI at L4 (`ssl_preread`, no
+decrypt) and forwards the raw TLS stream to the VM's `:443`, which terminates with **its own
+Let's Encrypt cert**
+([12-proxy.md](./12-proxy.md#the-stream-front-door-sni-passthrough-for-custom-domains),
+[13-tls.md](./13-tls.md#custom-domains-sni-passthrough-the-vm-holds-the-cert)) — the proxy
+holds **zero** per-domain certs.
 
-- **`Custom Domain` DocType** (`atlas/atlas/doctype/custom_domain/`): autoname
-  `field:domain` (the full FQDN, fleet-unique), `virtual_machine` Link, `address` (the
-  VM's `/128`, denormalized, the passthrough target), `site` (the regional FQDN it
-  aliases — provenance), and `status` Select **Active/Failed** (informational — a
-  registered domain is Active immediately; Failed signals a reconcile error). Hooks mirror
-  `Subdomain` and share the **same dedup reconcile job** (`auto_reconcile_subdomains`),
-  reconciling on `active` (the only field that changes the served maps), so one reconcile
-  reads the whole desired state (subdomain map + both custom-domain maps). The dot ban +
-  per-VM cap stay on `Subdomain` (correct for wildcard labels) and do **not** apply here.
-- **`register_custom_domain(domain)` / `deregister_custom_domain(domain)`**: the full-FQDN
-  twins of `register`/`deregister` — same trust root (caller resolution by source `/128`),
-  same audit, same atomic arbitration (the `Custom Domain` unique key). `validate_custom_domain`
-  (`custom_domain_label.py`) requires a real FQDN **not** under the regional wildcard (a
+- **`Custom Domain` DocType** (`atlas/atlas/doctype/custom_domain/`): autoname `field:domain`
+  (the full FQDN, fleet-unique), `virtual_machine` Link, `address` (the VM's `/128`,
+  denormalized passthrough target), `site` (the regional FQDN it aliases — provenance), and
+  `status` Select **Active/Failed** (informational — Active on register; Failed signals a
+  reconcile error). Hooks mirror `Subdomain` and share the **same dedup reconcile job**
+  (`auto_reconcile_subdomains`), reconciling on `active`. The dot ban + per-VM cap stay on
+  `Subdomain` and do **not** apply here.
+- **`register_custom_domain(domain)` / `deregister_custom_domain(domain)`** — the full-FQDN
+  twins of `register`/`deregister`: same trust root (caller resolution by source `/128`),
+  same audit, same atomic arbitration (the `Custom Domain` unique key).
+  `validate_custom_domain` requires a real FQDN **not** under the regional wildcard (a
   wildcard-shadowing name belongs in the `register(label)` path). `register_custom_domain`
-  inserts `status=Active`: the domain enters **both** proxy maps immediately.
+  inserts `status=Active` and the domain enters **both** proxy maps immediately.
 - **Two maps, one fill-time (no readiness gate).** The custom-domain → VM map lives in
-  **both** proxy subsystems — a `:80` ACME-passthrough copy (http `acme_domains` dict) and
-  a `:443` SNI-passthrough copy (stream `domains` dict). They carry the **same** row set
-  (every active custom domain), differing only in value shape: the `:80` copy is the bare
-  bracketed v6 (so the VM can complete its first HTTP-01 issuance), the `:443` copy appends
-  `:443`. A domain is in both maps the moment it is registered — there is no readiness gate.
-  If the VM's cert isn't issued yet, the proxy forwards a TLS handshake the VM can't
-  complete (a transient client-side cert error that self-heals once the cert lands); pure
-  passthrough, no cross-tenant effect, so the gate's machinery isn't worth its cost.
-  `proxy.py` reconciles all three maps per proxy (subdomain `/sync`, SNI `SYNC-SNI` over
-  the stream-admin line protocol, ACME `/acme/sync`), each on its own byte-diff.
+  **both** proxy subsystems — a `:80` ACME-passthrough copy (http `acme_domains`) and a
+  `:443` SNI-passthrough copy (stream `domains`) — the **same** row set, differing only in
+  value shape (the `:80` copy is the bare bracketed v6 so the VM can complete its first
+  HTTP-01 issuance; the `:443` copy appends `:443`). A domain is in both maps the moment it
+  is registered. If the VM's cert isn't issued yet the proxy forwards a handshake the VM
+  can't complete (a transient client-side error that self-heals once the cert lands); pure
+  passthrough, no cross-tenant effect, so a gate isn't worth its cost. `proxy.py` reconciles
+  all three maps per proxy (subdomain `/sync`, SNI `SYNC-SNI` over the stream-admin line
+  protocol, ACME `/acme/sync`), each on its own byte-diff.
 - **Guest binary** (`bench-domain-provider`): `register`/`deregister` route a custom
-  (non-peeling) domain to `register_custom_domain`/`deregister_custom_domain` (was: declined
-  exit 2). The VM issues its own cert out-of-band (pilot's `setup-letsencrypt` over the
-  `:80` ACME route); Atlas does nothing on cert issuance — no confirm verb, no timer.
+  (non-peeling) domain to `register_custom_domain`/`deregister_custom_domain`. The VM issues
+  its own cert out-of-band (pilot's `setup-letsencrypt` over the `:80` ACME route); Atlas
+  does nothing on cert issuance — no confirm verb, no timer.
 - **Teardown** (Component F.1): `terminate()` deletes every `Custom Domain` for the VM, the
   full-FQDN sibling of `_delete_subdomains`, so a custom-domain route never outlives its VM.
 
 ## Identity injected into the guest
 
 The **only** thing routing injects is the Atlas base URL, to `/etc/atlas-routing.env`
-(`0644 root:root`) — the guest needs somewhere to POST and nothing else. It carries
-**no VM UUID and no token**: caller resolution is by source address, so the guest
-never sends a VM-identifying value, and there is no secret to ride MMDS (which is
-unauthenticated plain HTTP any tenant SSRF can read).
+(`0644 root:root`) — the guest needs somewhere to POST and nothing else. It carries **no VM
+UUID and no token**: caller resolution is by source address, so the guest never sends a
+VM-identifying value, and there is no secret to ride MMDS (unauthenticated plain HTTP any
+tenant SSRF can read).
 
-- **Cold provision** — [`rootfs.inject_identity`](../scripts/lib/atlas/rootfs.py)
-  writes `/etc/atlas-routing.env` (the base URL) while the rootfs is mounted,
-  alongside `authorized_keys` and the network env. The base URL rides a new optional
-  `routing_base_url` field on `Identity`, threaded from a `ROUTING_BASE_URL` Task var
-  ([`provision-vm.py`](../scripts/provision-vm.py)) the controller sets to
-  `frappe.utils.get_url()` — **the FQDN of the trusted edge**, so the guest's POSTs
+- **Cold provision** — [`rootfs.inject_identity`](../scripts/lib/atlas/rootfs.py) writes the
+  file while the rootfs is mounted, alongside `authorized_keys` and the network env. The base
+  URL rides an optional `routing_base_url` field on `Identity`, threaded from a
+  `ROUTING_BASE_URL` Task var ([`provision-vm.py`](../scripts/provision-vm.py)) the controller
+  sets to `frappe.utils.get_url()` — **the FQDN of the trusted edge**, so the guest's POSTs
   traverse the hop that overwrites XFF (*Caller resolution*).
-- **Warm clone** — the disk is never mounted, so the base URL rides MMDS:
-  `_mmds_metadata` adds `routing_base_url`, and the in-guest
-  [`atlas-warm-freshen.py`](../bench/atlas-warm-freshen.py) writes the env file when
-  it adopts a clone's identity.
+- **Warm clone** — the disk is never mounted, so the base URL rides MMDS: `_mmds_metadata`
+  adds `routing_base_url`, and the in-guest
+  [`atlas-warm-freshen.py`](../bench/atlas-warm-freshen.py) writes the env file when it adopts
+  a clone's identity.
 
 > **`/etc/atlas-vm-uuid` is not a routing dependency.** Caller resolution is by source
-> address, so routing needs neither a cold-path UUID injection nor a `vm_uuid` field
-> in the MMDS payload. `/etc/atlas-vm-uuid` remains only the warm-freshen
-> adopted-identity marker (`warm.sh` writes it on the golden, the freshen unit adopts
-> it) — untouched by this chapter.
+> address, so routing needs neither a cold-path UUID injection nor a `vm_uuid` in the MMDS
+> payload. `/etc/atlas-vm-uuid` remains only the warm-freshen adopted-identity marker,
+> untouched by this chapter.
 
 ## Why this is simple, and where the risk lives
 
-- **Simple** — one-way push reuses the whole `Subdomain` → proxy engine (hooks,
-  `proxy.py`, the unique key). The new code is two write endpoints + two read
-  endpoints (`check_label`, `list`) + the audit log + the denylist DocType + a thin
-  typed guest client. **No SSH pull job, no scheduled sweeper, no TTL/heartbeat
-  machinery, no token lifecycle, no MMDS secret.** Teardown is one place —
-  `terminate()` — and the guest can self-clear strays via `list`. A guest with no
-  inbound SSH still routes its sites.
-- **Where the risk concentrates** — the trust root is **Caller resolution**, because
-  it gates a *write* (and a same-fate read in `list`, and the rate limiter). If the
-  edge fails to overwrite XFF (or the host lets a VM spoof another's v6 source), a
-  guest can register/deregister/list another VM's routes — a hijack, not a nuisance.
-  The IPv6-only client (Component D) is load-bearing here: a v4 POST has no per-VM
-  source to resolve. This is the one property that must be verified on a host before
-  this ships; everything else degrades gracefully. The audit log (Component I) is how
-  a failure is *detected*, not prevented — the edge is the prevention.
-- **Accepted residual** — a lost `deregister` on a still-running VM leaves a
-  404-serving stale route until the owner clears it (`list` + `deregister`) or the VM
-  is terminated. No default_server means it can't serve a co-resident tenant's site;
-  terminate deletes every row before its `/128` can be recycled, so the route never
-  drifts onto a new tenant. We document it rather than add a sweeper or heartbeat.
-- **Debuggable** — every write is a `Subdomain` row change with its own proxy
-  reconcile, and every call is a `Bench Routing Audit` row; a routing failure is "did
-  the `register` POST arrive and pass the rules" (one audit entry), and the
-  controller's own state is the whole truth.
+- **Simple** — reuses the whole `Subdomain` → proxy engine; the new code is four endpoints +
+  the audit log + the denylist DocType + a thin guest client, with **no pull, no sweeper, no
+  TTL/heartbeat, no token lifecycle, no MMDS secret**. Teardown is one place (`terminate()`),
+  and a guest with no inbound SSH still routes its sites.
+- **The risk concentrates in Caller resolution** — it gates a *write* (and the same-fate
+  `list` read, and the rate limiter). If the edge fails to overwrite XFF (or the host lets a
+  VM spoof another's v6 source), a guest can act as another VM — a hijack. The IPv6-only
+  client (Component D) is load-bearing (a v4 POST has no per-VM source). This is the one
+  property that must be verified on a host before shipping; everything else degrades
+  gracefully, and the audit log **detects** a failure rather than preventing it.
+- **Accepted residual** — a lost `deregister` on a still-running VM leaves a 404-serving route
+  (no `default_server`) until the owner clears it (`list` + `deregister`) or terminate does.
+  The only intentional gap; documented, not swept. Every write is one `Subdomain` change +
+  reconcile and every call one `Bench Routing Audit` row, so a failure is "did the `register`
+  POST arrive and pass the rules."
 
 ## Deferred (out of scope for v1)
 
-- A per-region shared secret on the endpoints (Caller resolution by source address +
+- A per-region shared secret on the endpoints (caller resolution by source address +
   rate-limit are the v1 controls).
-- The `allocate_ipv6` reuse guard (v1 relies on `terminate()` deleting a VM's rows
-  before its `/128` is released — belt-and-suspenders only).
-- A TTL + guest keepalive heartbeat to expire stale routes on a still-running VM
-  (v1 accepts the 404-serving dead-link window, narrowable by the owner via
-  `list` + `deregister` — *The shape* / Component C).
-- A scheduled sweeper (v1 has none — `terminate()` is the only controller-side
-  teardown, and it is total; *Component F*).
-- A "management access lost" / liveness signal per VM (one-way push has no pull whose
-  failure would surface key loss; revisit if operators need it).
-- Auditing `@rate_limit` throttles (the v1 audit log records business decisions, not
-  transport throttles — Component I).
-- A retention prune for `Bench Routing Audit` (it grows unbounded in v1 — Component I).
-- Multi-region cross-region suffix hardening (single-region today; the
-  reconstruct-and-compare rule is specified now so it's correct when a second region
-  lands).
+- The `allocate_ipv6` reuse guard (v1 relies on `terminate()` deleting a VM's rows before its
+  `/128` is released — belt-and-suspenders only, [09-roadmap.md](./09-roadmap.md)).
+- A TTL + guest keepalive heartbeat to expire stale routes on a still-running VM (v1 accepts
+  the 404-serving dead-link window, narrowable by the owner via `list` + `deregister`).
+- A scheduled sweeper (v1 has none — `terminate()` is the only controller-side teardown, and
+  it is total).
+- A "management access lost" / liveness signal per VM (one-way push has no pull whose failure
+  would surface key loss; revisit if operators need it).
+- Auditing `@rate_limit` throttles (the v1 audit log records business decisions, not transport
+  throttles).
+- A retention prune for `Bench Routing Audit` (it grows unbounded in v1).
+- Multi-region cross-region suffix hardening (single-region today; the reconstruct-and-compare
+  rule is specified now so it's correct when a second region lands).
 - **Per-token whole-domain routing — a future billable tier.** Beyond the `*-{token}`
-  suffix-match (one name → one VM, [vm-url-tokens](../llm/references/vm-url-tokens.md)),
-  routing an **entire domain** `*.{token}.{region}.{domain}` to a single VM needs **one
-  wildcard TLS cert per token** — a per-token issuance cost, so it is a **paid service**,
-  not the default. It composes with the Phase-2 SNI hook (the per-token wildcard cert is
-  one more entry in the per-domain cert map). Documented, not built.
+  suffix-match ([vm-url-tokens](../llm/references/vm-url-tokens.md)), routing an **entire
+  domain** `*.{token}.{region}.{domain}` to a single VM needs **one wildcard TLS cert per
+  token** — a per-token issuance cost, so a **paid service**, not the default. It composes
+  with the Phase-2 SNI hook (the per-token wildcard cert is one more entry in the per-domain
+  cert map). Documented, not built.
 
 ## Testing
 
-- **Unit (milliseconds):**
-  - `check_label` status mapping (ok/taken/reserved/invalid/at_limit) over
-    `subdomain_label`'s rules + denylist + cap; the suffix matches the active Root
-    Domain.
-  - **Caller resolution:** all four endpoints resolve the VM from the edge-supplied
-    source `/128` (`frappe.local.request_ip`) against `Virtual Machine.ipv6_address`,
-    take **no** `vm_uuid` parameter (a body param is ignored), and reject a source
-    that matches no VM / a Terminated VM / a proxy with **no write** (and, for `list`,
-    no inventory). The leftmost-XFF forgery (a guest-supplied `X-Forwarded-For`) must
-    NOT resolve to the named victim under the trusted-edge contract — the regression
-    test for the one-way model's worst failure. (The edge XFF-overwrite and host
-    anti-spoof are e2e/host facts; the unit boundary is "given this `request_ip`, the
-    right VM or a reject.")
-  - `register` (the reserve-first gate): passes the full rule chain in order and
-    inserts `active=1` on ok; returns `taken` on an owned label and on a
-    `DuplicateEntryError` race (the atomic-reservation regression — two benches racing
-    the same label, one wins the unique key, the other gets `taken`); `reserved`
-    /denylist; `at_limit` at cap; `invalid` on a bad label; the inserted row's
-    `virtual_machine` is the **source-resolved** VM, never a param. Idempotent
-    re-register of an already-owned label is a clean `ok` (the retry-after-transient
-    case).
-  - `deregister` (drop **and** create-failure rollback): deletes only the caller's own
-    `Subdomain` for the label (a row owned by another VM is a no-op), is idempotent on
-    an absent row (a rollback for a `register` that itself failed, a replayed POST, a
-    double drop), and fires the proxy reconcile via `on_trash`.
-  - `list`: returns only the caller VM's own rows, each with a controller-built `fqdn`;
-    an empty inventory is `{"domains": []}`; a non-resolving / Terminated / proxy
-    source is a clean `throw` (no inventory); it writes nothing and does not affect the
-    cap.
-  - **Component G (cap):** the tier lookup (≤8 GB → 20; 16 GB → 40; 32 GB → 80; a
-    resize re-prices it); `register` admits up to cap then `at_limit`-refuses, never
-    evicts an existing row.
-  - **Component H (denylist DocType):** a `Subdomain Denylist` row with `enabled=1`
-    is rejected by both `check_label` and `register` in the `validate_reserved` seam;
-    flipping `enabled=0` lifts the block immediately (no migrate); a row added at
-    runtime is honored on the next call.
-  - **Component I (audit):** every endpoint writes one `Bench Routing Audit` row on
-    **both** the ok and the reject path; the doctype is `engine: MyISAM`; the row
-    survives a request rollback (a rejected `register` that `throw`s still leaves its
-    audit row — the InnoDB-would-lose-it regression); a non-resolving source records
-    `vm` blank + the spoofing `source_ip`; `source_ip` is the value resolution used
-    and `fwd_headers` holds the raw XFF chain (the two can differ); the helper does
-    **not** call `frappe.db.commit()`.
-  - **Component F:** `VirtualMachine.terminate()` deletes **every** `Subdomain` for
-    the VM (each `on_trash` reconciles the proxy); there is **no** sweeper to test
-    (assert the scheduler carries no `sweep_stale_subdomains`/`reconcile_*` entry).
-  - The guest client's **typed** contract: `register` returns `Registered` on ok and
-    `Declined(reason=…)` on `taken`/`reserved`/`invalid`/`at_limit` (the caller aborts
-    the create on `Declined`, before `bench new-site` runs); a missing
-    `/etc/atlas-routing.env` raises `NotConfigured` (the no-op signal); an
-    unreachable controller / no-v6-route raises `TransportError`; an unknown wire
-    status is a `TransportError`, never a silent pass; `deregister` is best-effort
-    non-fatal and is the create-failure rollback; `list` returns `Listing`, diffs
-    against on-disk `sites/`, and deregisters each stray (per-stray, never bulk).
-  - **IPv6-only transport (Component D):** the client connects over `AF_INET6` only;
-    given a controller host with no `AAAA` (or no v6 route) it raises `TransportError`
-    rather than falling back to IPv4 — the unit boundary is "the connector refuses v4",
-    the actual v6 reachability is a host fact.
-  - The cold-path identity injection writes `/etc/atlas-routing.env` (base URL only,
-    no UUID) pointing at the trusted-edge FQDN; the warm MMDS payload + freshen carry
-    the same.
-- **Host facts (e2e):** rides along in the self-serve use case
-  ([`self_serve_site.py`](../atlas/tests/e2e/use_cases/self_serve_site.py)) — on a
-  real bench VM: `register <label>` **then** `bench new-site <label>.<region>.frappe.dev`
-  → assert the reservation exists **and the proxy's live map serves it** (read the map
-  back, not just the DB row); a forced `bench new-site` failure → assert the client's
-  `deregister` rollback left **no** stale `Subdomain`; `bench drop-site` then
-  `deregister` → assert it **drops from the live map**; `list` from inside the guest
-  returns that VM's routes and a manufactured stray is cleared by the client's
-  per-stray `deregister`; a direct `VirtualMachine.terminate` leaves no `Subdomain`.
-  **IPv6 origin (the trust root):** the in-guest POST actually traverses IPv6, so a
-  `register` from inside the real guest, through the trusted edge, resolves to *that*
-  VM by its v6 source `/128` even when the guest sends a forged `X-Forwarded-For` (and
-  the audit row records the divergence); the routed-tap host prevents a second VM from
-  emitting that source; and a forced v4 attempt fails to resolve (no per-VM v4). Only a
-  host run can prove these, and the feature is not safe to ship until they pass.
+- **Unit (milliseconds)** — each contract above has a regression; the load-bearing ones:
+  - **Caller resolution:** all four endpoints resolve the VM from `frappe.local.request_ip`
+    against `Virtual Machine.ipv6_address`, ignore any `vm_uuid` param, and reject no-VM /
+    Terminated / proxy sources with no write (no inventory for `list`). The leftmost-XFF
+    forgery must **NOT** resolve to the named victim — the one-way model's worst-failure
+    regression.
+  - **`register`:** the full rule chain in order + `active=1` on ok; `taken` on an owned label
+    **and** on a `DuplicateEntryError` race (the atomic-reservation regression); `reserved`/
+    `at_limit`/`invalid`; the row's `virtual_machine` is source-resolved; a re-register of an
+    owned label is idempotent `ok`.
+  - **`deregister`:** deletes only the caller's own row (another VM's is a no-op), idempotent
+    on an absent row (drop + create-failure rollback), fires the `on_trash` reconcile.
+  - **`check_label`/`list`:** advisory status mapping + the region suffix; `list` returns only
+    the caller's own rows (`{"domains": []}` when empty), no write, no cap effect.
+  - **Cap / denylist / audit / terminate:** the tier lookup + `at_limit` (never evict); a live
+    `Subdomain Denylist` `enabled` flip; a `Bench Routing Audit` row on **both** ok and reject
+    that **survives a request rollback** (the InnoDB-would-lose-it regression) with no
+    `frappe.db.commit()`; `terminate()` deletes **every** `Subdomain` and the scheduler carries
+    **no** sweeper entry.
+  - **Guest client:** the typed `Registered`/`Declined`/`NotConfigured`/`TransportError`
+    contract (the caller aborts the create on `Declined`); **IPv6-only** — an `AF_INET6`
+    connector that raises `TransportError` rather than falling back to v4.
+- **Host facts (e2e)** — rides the self-serve use case
+  ([`self_serve_site.py`](../atlas/tests/e2e/use_cases/self_serve_site.py)) on a real bench VM:
+  `register` then `bench new-site` → the reservation is in the proxy's **live map** (read
+  back); a forced create failure → the `deregister` rollback leaves no stale `Subdomain`; drop
+  + `deregister` → it drops from the live map; a direct `terminate` leaves none. **IPv6 origin
+  (the trust root):** the in-guest POST traverses IPv6, so a `register` through the trusted edge
+  resolves to *that* VM by its v6 `/128` even against a forged `X-Forwarded-For` (audited); the
+  host blocks a second VM emitting that source; a v4 attempt fails to resolve. Only a host run
+  proves these, and the feature is not safe to ship until they pass.
