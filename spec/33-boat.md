@@ -1,8 +1,10 @@
 # Boat — the per-host daemon, and what Atlas keeps
 
 > **Status: PARTLY BUILT.** The spec-first gate held — §11's invariants were
-> written and reviewed before any Boat code — and **WO-0, WO-1 and WO-2 are
-> built**: `boat` is a running daemon with an adoption scan, a whole-host export,
+> written and reviewed before any Boat code — and **most of the delivery order
+> (§15) is built**: WO-0/WO-1 shipped, WO-1b/WO-3a/WO-3b/WO-5/WO-5b built (WO-5
+> dogfooded), with WO-2/WO-4/WO-6 still carrying the gaps §15 lists.
+> `boat` is a running daemon with an adoption scan, a whole-host export,
 > a per-VM reconciler, a resident wake trap and every lifecycle verb, and Atlas
 > drives every real host through it — the `Server.boat_enabled` flag that used
 > to gate it is gone, and so is the SSH path it fell back to. `make check` is
@@ -1022,15 +1024,17 @@ function of *(fleet, placement, tenancy)* is Atlas-computed and Boat-applied; a
 function of *(vendor account, Central)* is pure Atlas; **and the private-plane
 mesh is nobody's — it is gossiped.**
 
-**Of Boat's four rows, one is built.** The park/wake reflex is live: Boat
-installs the proxy-NDP entry, the `/128` route out the shared `atlas-park0`
-dummy, and the counting SYN rule in the forward chain, and its resident trap
-polls those named counters once a second and asks the reconciler for a pass. That
-is the whole of Boat's networking today, and it exists because sleep needs it.
-Everything else in the table — per-VM netns, veth, tap, NAT44, proxy-NDP and nft
-isolation for a *running* VM, `local-ownership.json`, reserved-IP 1:1 NAT,
-customer-gateway forwarding — is **NOT BUILT (WO-3b)** and remains the
-`firecracker-vm@` unit's Python hooks. Boat now supervises the `networkd` unit's
+**Boat's network apply is built (WO-3b); the runtime cutover is not.** The
+park/wake reflex has been live longest: Boat installs the proxy-NDP entry, the
+`/128` route out the shared `atlas-park0` dummy, and the counting SYN rule in the
+forward chain, and its resident trap polls those named counters once a second and
+asks the reconciler for a pass — it exists because sleep needs it. WO-3b then built
+the rest of the table — per-VM netns, veth, tap, NAT44, proxy-NDP and nft isolation
+for a *running* VM, `local-ownership.json`, reserved-IP 1:1 NAT, customer-gateway
+forwarding — in Go, held byte-identical to the Python on a real host (the
+differential caught a duplicate nft rule the Python added on every restart), and
+Atlas routes the reserved-IP attach through Boat. What remains (WO-6) is repointing
+the running-VM units off the `firecracker-vm@` unit's Python hooks onto `boat <sub>`. Boat now supervises the `networkd` unit's
 lifecycle and reports its liveness (§3.7), and reads none of its state: the mesh,
 its membership and its wg peer table stay ANCP's, exactly as §0 requires.
 
@@ -1619,9 +1623,10 @@ false everything.
 ## §13. What is explicitly not Boat's
 
 - **The ANCP gossip plane.** Boat supervises the `networkd` unit and writes
-  `/etc/atlas-networkd/local-ownership.json` — *both NOT BUILT, WO-3b; today it
-  neither supervises the unit nor writes the file, and the `vm-network-up` /
-  `vm-network-down` hooks remain its writer.* What holds already is the
+  `/etc/atlas-networkd/local-ownership.json` — *both built: unit supervision
+  (WO-3a/WO-5) and the `local-ownership.json` write (WO-3b); repointing the
+  running-VM `vm-network-up`/`vm-network-down` apply onto `boat <sub>` is WO-6.*
+  What holds already is the
   prohibition: Boat **never touches membership, the ownership table, the
   generation counters, or the wg peer table**, and nothing in it reads or writes
   ANCP state of any kind. Porting
