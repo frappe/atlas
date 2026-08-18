@@ -942,16 +942,6 @@ provisioning path; it is a user-facing convenience over the existing field.
 | `public_key`  | Long Text | Y    |           | `set_only_once`. OpenSSH public-key body. `validate()` strips it and rejects anything whose first token isn't a known key type (`ssh-ed25519`, `ssh-rsa`, `ecdsa-*`, `sk-*`). |
 | `fingerprint` | Data      |      | Y         | Derived in `validate()` from `public_key` — the standard `SHA256:<base64nopad>` form `ssh-keygen -lf` prints. A recognizable key identity without echoing the whole blob. |
 
-### Form layout
-
-```
-── Overview ──
-key_name
-fingerprint
-── Key ──
-public_key
-```
-
 ### List view
 
 - Columns: `key_name`, `fingerprint`.
@@ -1026,16 +1016,6 @@ the framework's `set_only_once` alone — it has no immutability tuple).
   `{"virtual_machines": [...], "images": [...], "snapshots": [...]}`; reuses the
   individual helpers so there is one source of truth for fields/filters.
 
-### Form layout
-
-```
-── Overview ──
-title
-```
-
-The `name` (the Central reference) shows as the document id; there is no separate
-field for it.
-
 ### List view
 
 - Columns: `title`.
@@ -1083,44 +1063,6 @@ the contract for what the row holds, not for what an operator can type.
 Secrets are not put in `variables`. If a task needs a secret, the secret is
 read from another DocType at execution time and not echoed into the Task
 record.
-
-### Form layout
-
-A single `Overview` Tab Break with the Output section folded
-underneath as a collapsible Section Break (the old `Output` tab is
-gone):
-
-```
-status
-| exit_code
-  duration_milliseconds
-subject
-server
-virtual_machine
-script
-triggered_by
-── Timing ──
-started
-| ended
-── Inputs ──
-variables
-── Output ── (collapsible)
-stdout
-stderr
-```
-
-The client script overlays this with a status-coloured dashboard
-headline and a Retry button on Failure. The header `chips` (Server /
-VM / Triggered by) and the **Sibling Tasks** quick_list are gone —
-both surfaced data already in the form body or the Connections
-dashboard. See [10-desk-ui.md § Task](./10-desk-ui.md#task) for the
-full behavior.
-
-The controller publishes a `task_update` realtime event (scoped to
-the Task's document room) from `after_insert` and `on_update`, with
-`{name, status, exit_code, duration_milliseconds, server, virtual_machine, subject}`.
-The Task form subscribes and reloads on each tick — long-running
-Tasks aren't a black box.
 
 ### List view
 
