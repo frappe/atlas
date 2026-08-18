@@ -70,7 +70,7 @@
   },
   {
    "default": "bench-site",
-   "description": "Discriminates the two kinds of bench-backed tenant environment this DocType models: `bench-site` (a self-serve customer site, cloned from the golden bench snapshot) or `pilot-console` (a bench admin console on a backing VM). Set once at insert. Reserved for the Site/Pilot merge (Phase 4); today every row is `bench-site`.",
+   "description": "Discriminates the two kinds of bench-backed tenant environment this DocType models: `bench-site` (a self-serve customer site, cloned from the golden bench snapshot) or `pilot-console` (a bench admin console on a backing VM, created by `create_vm` — the former Pilot DocType). Set once at insert; drives which lifecycle the controller runs (bench-site inline, pilot-console via services/site_console.py).",
    "fieldname": "kind",
    "fieldtype": "Select",
    "in_standard_filter": 1,
