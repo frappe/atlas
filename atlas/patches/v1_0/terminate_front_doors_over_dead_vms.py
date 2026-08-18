@@ -20,6 +20,10 @@ import frappe
 
 def execute():
 	for doctype in ("Pilot", "Site"):
+		# Pilot was folded into Site(kind=pilot-console) and its DocType deleted; on a fresh
+		# install the table never existed, so this historical patch simply skips it.
+		if not frappe.db.table_exists(doctype):
+			continue
 		for row in frappe.get_all(
 			doctype,
 			filters={"status": ("!=", "Terminated")},

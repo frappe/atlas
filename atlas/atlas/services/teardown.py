@@ -57,13 +57,12 @@ def delete_subdomains(vm) -> None:
 
 
 def clear_subdomain_references(subdomain: str) -> None:
-	"""Null out any `Pilot`/`Site` `subdomain_doc` Link pointing at `subdomain`, so the
+	"""Null out any `Site` `subdomain_doc` Link pointing at `subdomain`, so the
 	link-integrity guard lets the Subdomain be deleted. The null must be persisted
 	(db_set) before the delete, since the guard queries the DB — mirrors the db_set order
 	in `site_common.delete_subdomain`."""
-	for doctype in ("Pilot", "Site"):
-		for name in frappe.get_all(doctype, filters={"subdomain_doc": subdomain}, pluck="name"):
-			frappe.db.set_value(doctype, name, "subdomain_doc", None)
+	for name in frappe.get_all("Site", filters={"subdomain_doc": subdomain}, pluck="name"):
+		frappe.db.set_value("Site", name, "subdomain_doc", None)
 
 
 def delete_custom_domains(vm) -> None:
@@ -169,9 +168,9 @@ def terminate_front_doors(vm) -> None:
 		try:
 			from atlas.atlas.services import reporting
 
-			# A console (a Pilot, or a Site whose kind is pilot-console) reports AS its
-			# VM (vm.status_changed); only a bench-site reports site.status_changed.
-			if doc.doctype == "Pilot" or doc.get("kind") == "pilot-console":
+			# A pilot-console reports AS its VM (vm.status_changed); a bench-site reports
+			# site.status_changed.
+			if doc.get("kind") == "pilot-console":
 				reporting.report_pilot_status(doc)
 			else:
 				reporting.report_site_status(doc)

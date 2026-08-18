@@ -101,10 +101,9 @@ def pilot_subdomain_for(label: str) -> str:
 	max_base = LABEL_MAX_LENGTH - len(PILOT_SUFFIX) - (1 + _PILOT_RANDOM_LENGTH)
 	base = base[:max_base].rstrip("-")
 	candidate = f"{base}{PILOT_SUFFIX}"
-	# A console is a Pilot (transitional) or a Site(kind="pilot-console") after the merge,
-	# and both autoname to this FQDN — check either so the base name is free.
-	fqdn = f"{candidate}.{domain}"
-	if not (frappe.db.exists("Pilot", fqdn) or frappe.db.exists("Site", fqdn)):
+	# The console is a Site(kind="pilot-console") autonamed to this FQDN — check the Site
+	# table so the base name is free before handing it out.
+	if not frappe.db.exists("Site", f"{candidate}.{domain}"):
 		return candidate
 	# Collision: append a short random hex tail. secrets so two racing create_sites for
 	# the same label don't derive the same console name.
