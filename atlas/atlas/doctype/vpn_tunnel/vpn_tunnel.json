@@ -14,7 +14,6 @@
   "tenant",
   "column_break_header",
   "status",
-  "transport",
   "section_break_wireguard",
   "client_public_key",
   "server_public_key",
@@ -77,15 +76,6 @@
    "options": "Pending\nActive\nRevoked",
    "read_only": 1,
    "reqd": 1
-  },
-  {
-   "default": "public-ipv4",
-   "description": "Where the client dials the tunnel: the server's public IPv4 today; the seam for a private VPC address later.",
-   "fieldname": "transport",
-   "fieldtype": "Select",
-   "label": "Transport",
-   "options": "public-ipv4\nprivate-vpc",
-   "read_only": 1
   },
   {
    "fieldname": "section_break_wireguard",

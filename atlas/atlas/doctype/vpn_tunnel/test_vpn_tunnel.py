@@ -45,7 +45,6 @@ class TestVPNTunnel(IntegrationTestCase):
 		vm = _new_vm()
 		tunnel = _make_tunnel(vm.name)
 		self.assertEqual(tunnel.status, "Pending")
-		self.assertEqual(tunnel.transport, "public-ipv4")
 		self.assertEqual(tunnel.server, vm.server)
 		self.assertEqual(tunnel.slot_index, 0)
 		self.assertEqual(tunnel.listen_port, TUNNEL_PORT_BASE)

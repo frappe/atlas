@@ -14,20 +14,16 @@ from atlas.atlas.core.ssh import run_task
 from atlas.atlas.core.task_results import parse_result
 
 # Identity and the WireGuard parameters the host applied — frozen once written.
-# transport is locked too: a tunnel's endpoint family is fixed for its lifetime.
 IMMUTABLE_AFTER_INSERT = (
 	"virtual_machine",
 	"server",
 	"tenant",
-	"transport",
 	"client_public_key",
 	"slot_index",
 	"listen_port",
 	"interface_name",
 	"client_address",
 )
-
-TRANSPORT_PUBLIC_IPV4 = "public-ipv4"
 
 
 class VPNTunnel(Document):
@@ -52,8 +48,6 @@ class VPNTunnel(Document):
 	def _set_defaults(self) -> None:
 		if not self.status:
 			self.status = "Pending"
-		if not self.transport:
-			self.transport = TRANSPORT_PUBLIC_IPV4
 
 	def _allocate_slot(self) -> None:
 		slot = allocate_tunnel_slot(self.server)
