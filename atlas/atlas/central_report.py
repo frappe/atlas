@@ -354,6 +354,7 @@ def _vm_payload(doc) -> dict:
 			"status": doc.status,
 			"server": doc.server,
 			"pilot_credential_id": doc.get("pilot_credential_id"),
+			"correlation_id": doc.get("correlation_id"),
 			"size_preset": doc.get("size_preset"),
 			"vcpus": doc.get("vcpus"),
 			"memory_megabytes": doc.get("memory_megabytes"),
@@ -384,6 +385,7 @@ def _pilot_vm_payload(pilot) -> dict:
 			"status": pilot.status,
 			"server": vm.server,
 			"pilot_credential_id": vm.get("pilot_credential_id"),
+			"correlation_id": vm.get("correlation_id"),
 			"size_preset": vm.get("size_preset"),
 			"vcpus": vm.get("vcpus"),
 			"memory_megabytes": vm.get("memory_megabytes"),
@@ -438,6 +440,7 @@ def _site_payload(doc) -> dict:
 		"url": f"https://{doc.name}" if running else None,
 		"login_url": doc.get("login_url") if running else None,
 		"login_url_expires_at": _iso(doc.get("login_url_expires_at")) if running else None,
+		"correlation_id": doc.get("correlation_id"),
 	}
 
 

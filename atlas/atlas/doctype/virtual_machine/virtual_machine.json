@@ -15,6 +15,7 @@
   "status",
   "tenant",
   "pilot_credential_id",
+  "correlation_id",
   "section_break_resources",
   "size_preset",
   "column_break_resources_0",
@@ -479,6 +480,13 @@
    "label": "Pilot Credential ID",
    "read_only": 1,
    "description": "Central-minted per-pilot credential id, copied from the owning Site. Echoed to Central on vm.* events so Central links/revokes the credential."
+  },
+  {
+   "fieldname": "correlation_id",
+   "fieldtype": "Data",
+   "label": "Correlation ID",
+   "read_only": 1,
+   "description": "Central Server Action id for the last lifecycle command. Echoed on vm.* events so Central matches the outcome to the action that requested it."
   },
   {
    "collapsible": 1,

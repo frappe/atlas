@@ -173,10 +173,9 @@ class Pilot(Document):
 			timeout=1800,
 			enqueue_after_commit=True,
 			pilot_name=self.name,
-			# The pilot credential is bench-level and never persisted on the Pilot row; it
-			# rides the job to the backing VM + the bench's bench.toml, exactly as
-			# Site.after_insert carries it. Flags are set by api.provision.create_vm.
-			pilot_credential_id=self.flags.get("pilot_credential_id"),
+			# The bench enrollment inputs ride the job to the bench's bench.toml, exactly as
+			# Site.after_insert carries them. Flags are set by api.provision.create_vm. (The
+			# pilot credential id is stamped on the VM at insert, not here.)
 			central_endpoint=self.flags.get("central_endpoint"),
 			bootstrap_token=self.flags.get("bootstrap_token"),
 		)
@@ -281,7 +280,6 @@ class Pilot(Document):
 
 def auto_provision(
 	pilot_name: str,
-	pilot_credential_id: str | None = None,
 	central_endpoint: str | None = None,
 	bootstrap_token: str | None = None,
 ) -> None:
@@ -318,13 +316,9 @@ def auto_provision(
 		return
 
 	try:
-		# Stamp the credential id on the backing VM before anything else, so the vm.*
-		# events Atlas emits from here on echo it back and Central can bind its reserved
-		# Pilot Credential to this VM (mirrors Site.auto_provision).
-		if pilot_credential_id:
-			frappe.db.set_value(
-				"Virtual Machine", pilot.virtual_machine, "pilot_credential_id", pilot_credential_id
-			)
+		# The credential id is already on the backing VM (stamped at insert in
+		# _provision_backing_vm), so the vm.* events from here on echo it back and Central
+		# can bind its reserved Pilot Credential to this VM.
 		_trace(f"waiting for backing VM {pilot.virtual_machine} to boot (Running) …")
 		_t = time.monotonic()
 		_wait_for_vm_running(pilot.virtual_machine)
@@ -444,6 +438,11 @@ def _provision_backing_vm(pilot) -> str:
 		"memory_megabytes": spec.get("memory_megabytes", 512),
 		"disk_gigabytes": spec.get("disk_gigabytes", 2),
 		"ssh_public_key": fleet_public_key,
+		# Set at insert so the VM's after_insert emits vm.created already carrying them: the
+		# credential id lets Central bind its reserved Pilot Credential, the correlation id
+		# lets it attribute the create action.
+		"pilot_credential_id": pilot.flags.get("pilot_credential_id"),
+		"correlation_id": pilot.flags.get("correlation_id"),
 	}
 	# server/image are Atlas's placement concern. The image is the pinned bench image
 	# (caller override, else the Atlas Settings default). The server must be one that

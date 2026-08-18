@@ -170,7 +170,7 @@ class Site(Document):
 	# ----- lifecycle methods (Contract B state machine) ------------------
 
 	@frappe.whitelist()
-	def terminate(self) -> None:
+	def terminate(self, correlation_id: str | None = None) -> None:
 		"""Take the site off the front door and tear down its backing VM.
 
 		Delete the Subdomain (the proxy stops routing on the next reconcile),
@@ -182,6 +182,7 @@ class Site(Document):
 		self._delete_subdomain()
 		self._terminate_pilot()
 		self._terminate_backing_vm()
+		self.correlation_id = correlation_id
 		self.status = "Terminated"
 		self.save(ignore_permissions=True)
 

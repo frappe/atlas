@@ -475,7 +475,7 @@ class VirtualMachine(Document):
 		return self._put_desired_state()
 
 	@frappe.whitelist()
-	def start(self) -> str:
+	def start(self, correlation_id: str | None = None) -> str:
 		"""Start a Stopped VM. When the last stop captured a memory snapshot
 		(has_memory_snapshot), the host resumes the guest from it in milliseconds
 		instead of cold-booting; the start Task is the same either way — the
@@ -506,6 +506,7 @@ class VirtualMachine(Document):
 		# than idle_timeout_seconds — and the next sleep_idle_vms tick puts it
 		# straight back to sleep, within a minute of the operator starting it.
 		self.last_traffic_at = self.last_started
+		self.correlation_id = correlation_id
 		self.save()
 		return task.name
 
@@ -515,6 +516,7 @@ class VirtualMachine(Document):
 		memory_snapshot: bool | None = None,
 		stop_timeout_seconds: int = 0,
 		graceful: bool = True,
+		correlation_id: str | None = None,
 	) -> str:
 		"""Stop a Running/Paused VM. The default is the plain unit stop. With
 		`memory_snapshot` (default: the VM's memory_snapshot_on_stop flag, off
@@ -602,6 +604,7 @@ class VirtualMachine(Document):
 		self.status = "Stopped"
 		self.has_memory_snapshot = 1 if snapshotted else 0
 		self.last_stopped = frappe.utils.now_datetime()
+		self.correlation_id = correlation_id
 		self.save()
 		return task.name
 
@@ -1224,7 +1227,7 @@ class VirtualMachine(Document):
 		return proxy.read_live_maps(self.name)
 
 	@frappe.whitelist()
-	def terminate(self) -> str:
+	def terminate(self, correlation_id: str | None = None) -> str:
 		if self.status == "Terminated":
 			frappe.throw(_("VM is already terminated"))
 		if self.termination_protection:
@@ -1242,6 +1245,7 @@ class VirtualMachine(Document):
 			timeout_seconds=60,
 		)
 		self.status = "Terminated"
+		self.correlation_id = correlation_id
 		self.save()
 		self._detach_reserved_ip()
 		self._revoke_tunnels()
