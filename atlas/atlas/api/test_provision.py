@@ -70,12 +70,10 @@ class TestCreateVM(IntegrationTestCase):
 		# the image a home on the fake server by recording a successful sync-image Task,
 		# so placement finds a candidate instead of throwing "not present on any server".
 		self._sync_image_to(self.admin_image.name, self.server.name)
-		# create_vm now creates a pilot-console Site (not a Pilot); clear both so a leftover
-		# `acme` row from a prior test doesn't collide on the FQDN autoname.
+		# create_vm creates a pilot-console Site; clear leftover Sites so a prior test's
+		# `acme` row doesn't collide on the FQDN autoname.
 		for name in frappe.get_all("Site", pluck="name"):
 			frappe.delete_doc("Site", name, force=1, ignore_permissions=True)
-		for name in frappe.get_all("Pilot", pluck="name"):
-			frappe.delete_doc("Pilot", name, force=1, ignore_permissions=True)
 		self.addCleanup(frappe.set_user, "Administrator")
 
 	def _sync_image_to(self, image: str, server: str) -> None:

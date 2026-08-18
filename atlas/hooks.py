@@ -196,15 +196,12 @@ doc_events = {
 		"on_update": "atlas.atlas.core.central_report.on_vm_update",
 		"on_trash": "atlas.atlas.core.central_report.on_vm_trash",
 	},
-	# Site/Pilot reporting is the services side of central reporting (services/reporting.py).
+	# Site reporting is the services side of central reporting (services/reporting.py). A
+	# bench-site emits site.*; a pilot-console reports AS its VM (vm.*) — the one Site
+	# handler dispatches on kind.
 	"Site": {
 		"after_insert": "atlas.atlas.services.reporting.on_site_after_insert",
 		"on_update": "atlas.atlas.services.reporting.on_site_update",
-	},
-	# A Pilot reports AS its backing VM (Central mirrors VMs, not Pilots), so its
-	# status change emits a vm.status_changed carrying the login handoff.
-	"Pilot": {
-		"on_update": "atlas.atlas.services.reporting.on_pilot_update",
 	},
 	"Virtual Machine Snapshot": {
 		"on_update": "atlas.atlas.core.central_report.on_snapshot_update",
