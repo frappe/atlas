@@ -32,6 +32,26 @@ def _response(status_code=200, body=None, content=True):
 	return resp
 
 
+def _ensure_solo_root_domain(domain: str = "blr1.frappe.dev") -> None:
+	"""Exactly one active Root Domain, so `active_root_domain()` resolves (a pilot-console
+	console derives its FQDN from it). Deactivates any other active row for the test's txn."""
+	if not frappe.db.exists("Root Domain", domain):
+		frappe.get_doc(
+			{
+				"doctype": "Root Domain",
+				"domain": domain,
+				"region": domain.split(".", 1)[0],
+				"is_active": 1,
+				"dns_provider_type": "Route53",
+				"tls_provider_type": "Let's Encrypt",
+			}
+		).insert(ignore_permissions=True)
+	frappe.db.set_value("Root Domain", domain, "is_active", 1)
+	for name in frappe.get_all("Root Domain", filters={"is_active": 1}, pluck="name"):
+		if name != domain:
+			frappe.db.set_value("Root Domain", name, "is_active", 0)
+
+
 # --- Golden vector: pinned wire contract, mirrored in Central's
 # central/tests/test_atlas_webhook_signature.py ---------------------------------
 # Nothing binds the two repos: a format change made on ONE side leaves both suites green
@@ -239,21 +259,22 @@ class TestCentralReport(IntegrationTestCase):
 			ipv6_virtual_machine_range="2001:db8:c::/124",
 		)
 		vm = fixtures.make_virtual_machine(server, fixtures.make_image("central-vm-image"), title="pilot-vm")
-		# gateway_url is derived from the front door's name (its fqdn) — for a real Pilot
-		# name == <subdomain>.<region domain>, so stand that in as the name here.
-		pilot = SimpleNamespace(
+		_ensure_solo_root_domain()
+		# gateway_url is derived from the console's console_fqdn — for an admin-mode console
+		# that is <subdomain>.<region domain>, i.e. the row name.
+		console = SimpleNamespace(
 			name="acme.blr1.frappe.dev",
-			# FrontDoor reads gateway_url off a Pilot's console host, so the stand-in has
-			# to carry both (admin-mode here, hence console == name).
-			doctype="Pilot",
-			console_fqdn="acme.blr1.frappe.dev",
+			doctype="Site",
+			kind="pilot-console",
+			subdomain="acme",
+			build_mode="admin",
 			virtual_machine=vm.name,
 			tenant=None,
 			status="Running",
 			login_url_expires_at=datetime.datetime(2026, 7, 4, 10, 19, 56),
 		)
-		pilot.get = lambda key, default=None: getattr(pilot, key, default)
-		payload = reporting._pilot_vm_payload(pilot)
+		console.get = lambda key, default=None: getattr(console, key, default)
+		payload = reporting._pilot_vm_payload(console)
 		self.assertEqual(payload["login_url_expires_at"], "2026-07-04 10:19:56")
 		self.assertEqual(payload["gateway_url"], "https://acme.blr1.frappe.dev")
 		json.dumps(payload)  # requests uses stdlib json.dumps with no default
@@ -606,18 +627,20 @@ class TestCentralReportPilot(IntegrationTestCase):
 			ipv6_virtual_machine_range="2001:db8:e::/124",
 		)
 		vm = fixtures.make_virtual_machine(server, fixtures.make_image("pilot-evt-image"), title="pilot-vm")
+		_ensure_solo_root_domain()
+		# FrontDoor derives gateway_url from the console's console_fqdn — admin mode, so it
+		# is <subdomain>.<region domain> (the row name); a site-mode console would carry the
+		# `-pilot` suffix.
 		pilot = SimpleNamespace(
 			virtual_machine=vm.name,
 			tenant=None,
 			status=status,
-			gateway_url="https://acme.blr1.frappe.dev",
-			# The host the console answers a Central `?sid=` on — what FrontDoor reports
-			# as gateway_url. Same as the name for this admin-mode stand-in; a site-mode
-			# pilot's would carry the `-pilot` suffix.
-			console_fqdn="acme.blr1.frappe.dev",
+			subdomain="acme",
+			build_mode="admin",
 			login_url=login_url,
 			login_url_expires_at="2026-07-04 10:19:56",
-			doctype="Pilot",
+			doctype="Site",
+			kind="pilot-console",
 			name="acme.blr1.frappe.dev",
 		)
 		pilot.get = lambda key, default=None: getattr(pilot, key, default)
@@ -799,21 +822,23 @@ class TestFrontDoorResolvesSite(IntegrationTestCase):
 		self.assertEqual(row["status"], "Pending")
 
 	def test_asset_prefers_pilot_console_when_one_backs_the_vm(self) -> None:
-		"""A COMPLETED create_site backs its VM with BOTH a Site (customer site) and an
-		attached Pilot (admin console). The Central Asset "Open" resolves the PILOT (a
-		bench admin JWT), not the customer site — front_door_for_vm prefers Pilot. This is
-		the bug fix: the Asset gateway/login point at the console, per spec/14-self-serve.md."""
+		"""A COMPLETED create_site backs its VM with BOTH a bench-site Site (customer site)
+		and an attached pilot-console Site (admin console). The Central Asset "Open" resolves
+		the CONSOLE (a bench admin JWT), not the customer site — front_door_for_vm prefers the
+		pilot-console kind. The Asset gateway/login point at the console (spec/14-self-serve.md)."""
 		vm, site = self._running_site_backed_vm("both")
-		# Attach a Running admin-mode Pilot to the SAME VM, as Site.auto_provision does.
-		pilot = frappe.get_doc({"doctype": "Pilot", "subdomain": "both-pilot", "tenant": site.tenant})
-		pilot.flags.attach_vm = vm.name
-		pilot.insert(ignore_permissions=True)
-		pilot_login = f"https://both-pilot.{self.ROOT_DOMAIN}/app?sid=admin-jwt"
-		pilot.db_set("login_url", pilot_login)
-		pilot.db_set("login_url_expires_at", "2026-07-05 12:00:00")
-		pilot.db_set("status", "Running")
+		# Attach a Running admin-mode console to the SAME VM, as Site.auto_provision does.
+		console = frappe.get_doc(
+			{"doctype": "Site", "kind": "pilot-console", "subdomain": "both-pilot", "tenant": site.tenant}
+		)
+		console.flags.attach_vm = vm.name
+		console.insert(ignore_permissions=True)
+		console_login = f"https://both-pilot.{self.ROOT_DOMAIN}/app?sid=admin-jwt"
+		console.db_set("login_url", console_login)
+		console.db_set("login_url_expires_at", "2026-07-05 12:00:00")
+		console.db_set("status", "Running")
 		payload = central_report._vm_payload(vm)
-		# The Asset now opens the PILOT console FQDN + admin login, not the site's.
+		# The Asset now opens the CONSOLE FQDN + admin login, not the site's.
 		self.assertEqual(payload["gateway_url"], f"https://both-pilot.{self.ROOT_DOMAIN}")
-		self.assertEqual(payload["login_url"], pilot_login)
+		self.assertEqual(payload["login_url"], console_login)
 		self.assertNotEqual(payload["login_url"], self.login_url)

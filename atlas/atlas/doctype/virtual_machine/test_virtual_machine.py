@@ -580,11 +580,11 @@ class TestVirtualMachine(IntegrationTestCase):
 			}
 		).insert(ignore_permissions=True)
 		# The attach path binds an existing VM without provisioning a new one, so the
-		# Pilot lands with a subdomain_doc link but no heavy after_insert side effects.
-		pilot = frappe.get_doc({"doctype": "Pilot", "subdomain": "linked-sub"})
-		pilot.flags.attach_vm = vm.name
-		pilot.insert(ignore_permissions=True)
-		pilot.db_set("subdomain_doc", subdomain.name)
+		# console lands with a subdomain_doc link but no heavy after_insert side effects.
+		console = frappe.get_doc({"doctype": "Site", "kind": "pilot-console", "subdomain": "linked-sub"})
+		console.flags.attach_vm = vm.name
+		console.insert(ignore_permissions=True)
+		console.db_set("subdomain_doc", subdomain.name)
 
 		vm.db_set("status", "Stopped")
 		vm.reload()
@@ -592,7 +592,7 @@ class TestVirtualMachine(IntegrationTestCase):
 			vm.terminate()  # must not raise LinkExistsError
 
 		self.assertFalse(frappe.db.exists("Subdomain", subdomain.name))
-		self.assertIsNone(frappe.db.get_value("Pilot", pilot.name, "subdomain_doc"))
+		self.assertIsNone(frappe.db.get_value("Site", console.name, "subdomain_doc"))
 
 	def test_terminate_marks_the_owning_pilot_terminated(self) -> None:
 		"""Terminating the VM directly — what Central's terminate_server and the desk's
@@ -603,17 +603,17 @@ class TestVirtualMachine(IntegrationTestCase):
 
 		_ensure_active_root_domain()
 		vm = _new_vm()
-		pilot = frappe.get_doc({"doctype": "Pilot", "subdomain": "orphan-check"})
-		pilot.flags.attach_vm = vm.name
-		pilot.insert(ignore_permissions=True)
-		pilot.db_set("status", "Running")
+		console = frappe.get_doc({"doctype": "Site", "kind": "pilot-console", "subdomain": "orphan-check"})
+		console.flags.attach_vm = vm.name
+		console.insert(ignore_permissions=True)
+		console.db_set("status", "Running")
 
 		vm.db_set("status", "Stopped")
 		vm.reload()
 		with patch.object(module, "run_boat_task", return_value=fake_task(name="task-term")):
 			vm.terminate()
 
-		self.assertEqual(frappe.db.get_value("Pilot", pilot.name, "status"), "Terminated")
+		self.assertEqual(frappe.db.get_value("Site", console.name, "status"), "Terminated")
 
 	def test_terminate_marks_both_aggregates_of_a_self_serve_vm(self) -> None:
 		"""A self-serve VM is backed by a Site AND its attached Pilot on the one microVM.
@@ -628,17 +628,17 @@ class TestVirtualMachine(IntegrationTestCase):
 		site.insert(ignore_permissions=True)
 		site.db_set("virtual_machine", vm.name)
 		site.db_set("status", "Running")
-		pilot = frappe.get_doc({"doctype": "Pilot", "subdomain": "bothends-pilot"})
-		pilot.flags.attach_vm = vm.name
-		pilot.insert(ignore_permissions=True)
-		pilot.db_set("status", "Running")
+		console = frappe.get_doc({"doctype": "Site", "kind": "pilot-console", "subdomain": "bothends-pilot"})
+		console.flags.attach_vm = vm.name
+		console.insert(ignore_permissions=True)
+		console.db_set("status", "Running")
 
 		vm.db_set("status", "Stopped")
 		vm.reload()
 		with patch.object(module, "run_boat_task", return_value=fake_task(name="task-term")):
 			vm.terminate()
 
-		self.assertEqual(frappe.db.get_value("Pilot", pilot.name, "status"), "Terminated")
+		self.assertEqual(frappe.db.get_value("Site", console.name, "status"), "Terminated")
 		self.assertEqual(frappe.db.get_value("Site", site.name, "status"), "Terminated")
 
 	def test_pilot_terminate_does_not_double_report(self) -> None:
@@ -648,23 +648,23 @@ class TestVirtualMachine(IntegrationTestCase):
 
 		_ensure_active_root_domain()
 		vm = _new_vm()
-		pilot = frappe.get_doc({"doctype": "Pilot", "subdomain": "selfterm"})
-		pilot.flags.attach_vm = vm.name
-		pilot.insert(ignore_permissions=True)
-		pilot.db_set("status", "Running")
-		pilot.db_set("attached", 0)
-		pilot.reload()
+		console = frappe.get_doc({"doctype": "Site", "kind": "pilot-console", "subdomain": "selfterm"})
+		console.flags.attach_vm = vm.name
+		console.insert(ignore_permissions=True)
+		console.db_set("status", "Running")
+		console.db_set("attached", 0)
+		console.reload()
 
 		vm.db_set("status", "Stopped")
 		with (
 			patch.object(module, "run_boat_task", return_value=fake_task(name="task-term")),
 			patch("atlas.atlas.services.reporting.report_pilot_status") as reported,
 		):
-			pilot.terminate()
+			console.terminate()
 
-		self.assertEqual(frappe.db.get_value("Pilot", pilot.name, "status"), "Terminated")
+		self.assertEqual(frappe.db.get_value("Site", console.name, "status"), "Terminated")
 		# The VM's propagation is skipped (flags.front_door_terminating), so the only
-		# report is the Pilot's own save → on_pilot_update. Never two.
+		# report is the console's own save → on_pilot_update. Never two.
 		self.assertLessEqual(reported.call_count, 1)
 
 	def test_parse_size_bytes(self) -> None:
