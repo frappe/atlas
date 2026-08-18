@@ -18,7 +18,7 @@
   "virtual_machine",
   "column_break_backing",
   "subdomain_doc",
-  "pilot",
+  "console",
   "section_break_timing",
   "provisioning_started",
   "deploying_started",
@@ -125,7 +125,7 @@
   },
   {
    "description": "The attached admin console (a Site of kind pilot-console) this site stood up on its OWN backing VM — fronted at <subdomain>-pilot.<region domain>, the front door Central's Asset resolves for 'Open'. Created by auto_provision after the site serves; terminated with the site. The customer's Frappe site is this Site itself (surfaced via get_site); the console is the admin bench on the same VM.",
-   "fieldname": "pilot",
+   "fieldname": "console",
    "fieldtype": "Link",
    "label": "Console",
    "options": "Site",

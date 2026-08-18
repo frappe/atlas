@@ -361,7 +361,7 @@ class TestSiteOrchestration(IntegrationTestCase):
 		self.assertTrue(site.running_started)
 		# The tenant's own handoff is untouched; only the console is missing.
 		self.assertEqual(site.login_url, f"https://{site.name}/app?sid=tok")
-		self.assertFalse(site.pilot)
+		self.assertFalse(site.console)
 		# Not swallowed quietly — the operator gets the traceback in the Error Log.
 		m_log.assert_called_once()
 
@@ -708,7 +708,7 @@ class TestSitePilotAttachment(IntegrationTestCase):
 		# Named `<subdomain>-pilot.<region>` and linked back on the Site.
 		self.assertEqual(console_name, "acme-pilot.blr1.frappe.dev")
 		self.site.reload()
-		self.assertEqual(self.site.pilot, console_name)
+		self.assertEqual(self.site.console, console_name)
 		console = frappe.get_doc("Site", console_name)
 		# Attached: a pilot-console bound to the site's VM, admin build_mode, Running with a URL.
 		self.assertEqual(console.kind, "pilot-console")
@@ -737,7 +737,7 @@ class TestSitePilotAttachment(IntegrationTestCase):
 		# owns it) — the `.attached` guard makes terminate_backing_vm a no-op. Terminate
 		# the console alone and assert the VM is untouched (only the Site would terminate it).
 		site_module._provision_console(self.site, self.fake_vm.name, "acme-pilot")
-		console = frappe.get_doc("Site", self.site.pilot)
+		console = frappe.get_doc("Site", self.site.console)
 		console.terminate()
 		console.reload()
 		self.assertEqual(console.status, "Terminated")
@@ -750,7 +750,7 @@ class TestSitePilotAttachment(IntegrationTestCase):
 		site_module._provision_console(self.site, self.fake_vm.name, "acme-pilot")
 		self.site.db_set("virtual_machine", self.fake_vm.name)
 		self.site.reload()
-		console_name = self.site.pilot
+		console_name = self.site.console
 		self.site.terminate()
 		self.site.reload()
 		self.assertEqual(self.site.status, "Terminated")

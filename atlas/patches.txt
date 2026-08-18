@@ -27,3 +27,4 @@ atlas.patches.v1_0.rename_satellite_public_keys
 atlas.patches.v1_0.rename_guest_routing_base_url
 atlas.patches.v1_0.fold_pilots_into_sites
 atlas.patches.v1_0.delete_pilot_doctype
+atlas.patches.v1_0.rename_site_pilot_field_to_console

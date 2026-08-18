@@ -75,11 +75,11 @@ class Site(Document):
 
 		attached: DF.Check
 		build_mode: DF.Data | None
+		console: DF.Link | None
 		deploying_started: DF.Datetime | None
 		kind: DF.Literal["bench-site", "pilot-console"]
 		login_url: DF.SmallText | None
 		login_url_expires_at: DF.Datetime | None
-		pilot: DF.Link | None
 		provisioning_started: DF.Datetime | None
 		running_started: DF.Datetime | None
 		status: DF.Literal["Pending", "Provisioning", "Deploying", "Running", "Failed", "Terminated"]
@@ -209,9 +209,9 @@ class Site(Document):
 		Site owns it, torn down next). So this is safe to call before
 		`site_common.terminate_backing_vm`: no double-terminate. No-op when the site never
 		got a console (failed before the console stage) or it is already gone."""
-		if not self.pilot or not frappe.db.exists("Site", self.pilot):
+		if not self.console or not frappe.db.exists("Site", self.console):
 			return
-		console = frappe.get_doc("Site", self.pilot)
+		console = frappe.get_doc("Site", self.console)
 		if console.status != "Terminated":
 			console.terminate()
 
@@ -685,7 +685,7 @@ def _provision_console(site, vm_name: str, console_label: str) -> str:
 	it down). Its `after_insert` only links the VM; `deploy_attached` mints the admin
 	login URL, creates the console's own Subdomain (a second proxy route → the SAME VM
 	/128), and marks it Running — the admin vhost itself was already emitted in the site
-	deploy's rename-site pass. The console is linked on the Site (`pilot` field) so
+	deploy's rename-site pass. The console is linked on the Site (`console` field) so
 	terminate() cascades. Returns the console name.
 
 	This is the create_site half that makes the Asset's "Open" resolve a bench admin
@@ -696,6 +696,6 @@ def _provision_console(site, vm_name: str, console_label: str) -> str:
 	)
 	console.flags.attach_vm = vm_name
 	console.insert(ignore_permissions=True)
-	site.db_set("pilot", console.name)
+	site.db_set("console", console.name)
 	site_console.deploy_attached(console)
 	return console.name
