@@ -250,13 +250,6 @@ calls `provider.discover()`).
 | `monthly_cost_usd`  | Int    |      |           |         | Hand-maintained for vendors without per-size pricing in the API (DO). Renders as "—" when blank. |
 | `provider_metadata` | Code (JSON) |  | Y      |         | Raw vendor response for this size — vCPU count, RAM, disk tier, anything the vendor returns. Read-only on the form. |
 
-### List view
-
-- Columns: `slug`, `provider_type`, `enabled`, `is_default`, `monthly_cost_usd`.
-- Standard filters: `provider_type`, `enabled`, `is_default`.
-
----
-
 ## Provider Image
 
 A regular DocType. One row per vendor-advertised OS image that Atlas is
@@ -276,13 +269,6 @@ that runs inside a Firecracker microVM.
 | `enabled`           | Check  |      |           | 1       | Flipped by `discover()`.                                           |
 | `is_default`        | Check  |      |           |         | The image the Provision Server dialog prefills. At most one per `provider_type` — same one-default invariant and precedence as [Provider Size](#provider-size)'s `is_default`. |
 | `provider_metadata` | Code (JSON) |  | Y      |         | Raw vendor response — architecture, distribution, release date, …  |
-
-### List view
-
-- Columns: `slug`, `provider_type`, `enabled`, `is_default`.
-- Standard filters: `provider_type`, `enabled`, `is_default`.
-
----
 
 ## Server
 
@@ -351,12 +337,6 @@ or /48) routed to the box and so the VM range can be much larger than
 /124. Atlas treats `ipv6_virtual_machine_range` as "the subnet I am
 allowed to allocate from" and does not try to derive it. Details in
 [06-networking.md](./06-networking.md).
-
-### List view
-
-- Columns (left to right): `title`, `provider_type`, `status`, `size`,
-  `ipv4_address`.
-- Standard filters: `provider_type`, `status`, `size`.
 
 ### Buttons
 
@@ -470,12 +450,6 @@ carries a primary action. A failed auto-provision flips the VM to
 `Failed`, at which point the form's **Provision** primary returns as
 a retry. See [05-virtual-machine-lifecycle.md](./05-virtual-machine-lifecycle.md).
 
-### List view
-
-- Columns (left to right): `title`, `server`, `image`, `status`,
-  `ipv6_address`.
-- Standard filters: `server`, `image`, `status`.
-
 ### Buttons
 
 Tiering is keyed off `status` — see [10-desk-ui.md § Virtual Machine](./10-desk-ui.md#virtual-machine):
@@ -560,11 +534,6 @@ and clone recreate the disks; see
 | `memory_megabytes`| Int                           |      | Y         |         | Warm only: captured memory size; same pinning rule as `vcpus`.   |
 | `tap_device`      | Data                          |      | Y         |         | Warm only: the golden's in-netns tap name. The vmstate binds the tap by name, so every warm clone's netns recreates it verbatim (netns-scoped; no collision). |
 | `host_signature`  | Small Text                    |      | Y         |         | Warm only: CPU model/flags hash/microcode + host kernel + Firecracker version at capture (JSON). `vm-restore.py` cold-boots a clone when the live host differs. |
-
-### List view
-
-- Columns: `title`, `virtual_machine`, `status`.
-- Standard filters: `virtual_machine`, `status`, `server`.
 
 ### Controller methods
 
@@ -773,11 +742,6 @@ invariant together (in failure-safe order).
   effect of deleting the Frappe row (`on_trash` only blocks deleting an attached
   IP; it does not touch the vendor).
 
-### List view
-
-- Columns: `ip_address`, `server`, `status`, `virtual_machine`.
-- Standard filters: `server`, `status`, `virtual_machine`.
-
 ### Buttons
 
 On the **Reserved IP** form (status-gated):
@@ -845,13 +809,6 @@ the linked VM, never hand-edited.
   byte-identical to the guest's `persist.lua`) and byte-compares it against each
   proxy guest's live `/map`. See [12-proxy.md](./12-proxy.md).
 
-### List view
-
-- Columns: `subdomain`, `active`, `virtual_machine`, `address`.
-- Standard filters: `active`, `virtual_machine`.
-
----
-
 ## Port Mapping
 
 One forwarding entry for the **TCP proxy** ([17-tcp-proxy.md](./17-tcp-proxy.md)):
@@ -908,13 +865,6 @@ derived from the linked VM, never hand-edited.
   byte-identical to the guest's `stream-persist.lua`) and byte-compares it against
   each proxy guest's live map. See [17-tcp-proxy.md](./17-tcp-proxy.md).
 
-### List view
-
-- Columns: `public_port`, `active`, `virtual_machine`, `target_port`, `protocol`.
-- Standard filters: `active`, `virtual_machine`, `protocol`.
-
----
-
 ## SSH Key
 
 A public SSH key a dashboard user registers once and chooses when creating a
@@ -936,11 +886,6 @@ provisioning path; it is a user-facing convenience over the existing field.
 | `key_name`    | Data      | Y    |           | `title_field`. User-chosen label (e.g. `laptop`).                |
 | `public_key`  | Long Text | Y    |           | `set_only_once`. OpenSSH public-key body. `validate()` strips it and rejects anything whose first token isn't a known key type (`ssh-ed25519`, `ssh-rsa`, `ecdsa-*`, `sk-*`). |
 | `fingerprint` | Data      |      | Y         | Derived in `validate()` from `public_key` — the standard `SHA256:<base64nopad>` form `ssh-keygen -lf` prints. A recognizable key identity without echoing the whole blob. |
-
-### List view
-
-- Columns: `key_name`, `fingerprint`.
-- No standard filters (a user's key list is short).
 
 ### Permissions
 
@@ -1010,10 +955,6 @@ the framework's `set_only_once` alone — it has no immutability tuple).
 - `resources()` (whitelisted) — all three in one round-trip as
   `{"virtual_machines": [...], "images": [...], "snapshots": [...]}`; reuses the
   individual helpers so there is one source of truth for fields/filters.
-
-### List view
-
-- Columns: `title`.
 
 ### Permissions
 
@@ -1190,13 +1131,6 @@ silently re-point an already-issued domain.
   the domain's single `TLS Certificate` (one cert per domain) and delegates to its
   `issue()`.
 
-### List view
-
-- Columns: `domain`, `region`, `is_active`.
-- Standard filters: `region`, `is_active`.
-
----
-
 ## TLS Certificate
 
 The issued regional wildcard cert, and the wiring that lands it on every proxy VM
@@ -1230,11 +1164,6 @@ in the domain's region — the producer the proxy's `push_cert` was missing. One
   re-push).
 
 Buttons: **Issue/Renew** (primary), **Push to Proxies**.
-
-### List view
-
-- Columns: `root_domain`, `common_name`, `status`.
-- Standard filters: `status`, `expires_on`.
 
 ## Site
 
@@ -1335,11 +1264,6 @@ inline, the `pilot-console` path to `services/site_console.py`.
 `System Manager` only (operator/Central-facing; Central calls `create_site` /
 `create_vm` with the operator token). No end-user role or row-level scoping.
 
-### List view
-
-- Columns: `subdomain`, `status`.
-- Standard filters: `status`, `kind`.
-
 ## Image Build
 
 One row per bake run of the [Image Builder](./15-image-builder.md): provision a
@@ -1389,11 +1313,6 @@ re-baking with different inputs is a new row, guarded in `validate()`.
 ### Permissions
 
 `System Manager` only (operator/Central-facing), like `Server` / `Task`.
-
-### List view
-
-- Columns: `recipe`, `status`, `snapshot`.
-- Standard filters: `recipe`, `status`, `server`.
 
 ### Buttons
 
