@@ -25,3 +25,4 @@ atlas.patches.v1_0.terminate_front_doors_over_dead_vms
 atlas.patches.v1_0.upgrade_hosts_to_current_boat
 atlas.patches.v1_0.rename_satellite_public_keys
 atlas.patches.v1_0.rename_guest_routing_base_url
+atlas.patches.v1_0.fold_pilots_into_sites

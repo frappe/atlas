@@ -821,6 +821,60 @@ class TestSiteTerminate(IntegrationTestCase):
 		)
 
 
+class TestFoldPilotsIntoSites(IntegrationTestCase):
+	"""The M6 data patch folds tabPilot rows into tabSite(kind="pilot-console"), preserving
+	name + fields, without re-running provisioning. Transient: removed with the Pilot
+	DocType at M7 — it validates the one-time migration while both tables still exist."""
+
+	def setUp(self) -> None:
+		_ensure_root_domain()
+		for name in frappe.get_all("Pilot", pluck="name"):
+			frappe.delete_doc("Pilot", name, force=1, ignore_permissions=True)
+		for name in frappe.get_all("Site", pluck="name"):
+			frappe.delete_doc("Site", name, force=1, ignore_permissions=True)
+
+	def _raw_pilot(self, subdomain: str = "srv") -> str:
+		"""A committed-shape Pilot row inserted WITHOUT its lifecycle (db_insert), so the
+		fold has a row to migrate without standing up a real backing VM."""
+		pilot = frappe.new_doc("Pilot")
+		pilot.update(
+			{
+				"subdomain": subdomain,
+				"virtual_machine": "vm-fold-uuid",
+				"status": "Running",
+				"build_mode": "admin",
+				"attached": 0,
+				"login_url": f"https://{subdomain}.blr1.frappe.dev/app?sid=x",
+			}
+		)
+		pilot.name = f"{subdomain}.blr1.frappe.dev"
+		pilot.flags.name_set = True
+		pilot.db_insert()
+		return pilot.name
+
+	def test_folds_a_pilot_into_a_pilot_console_site(self) -> None:
+		from atlas.patches.v1_0.fold_pilots_into_sites import execute
+
+		name = self._raw_pilot("srv")
+		execute()
+		self.assertTrue(frappe.db.exists("Site", name), "the Pilot was folded into a Site")
+		site = frappe.get_doc("Site", name)
+		self.assertEqual(site.kind, "pilot-console")
+		self.assertEqual(site.subdomain, "srv")
+		self.assertEqual(site.virtual_machine, "vm-fold-uuid")
+		self.assertEqual(site.status, "Running")
+		self.assertEqual(site.build_mode, "admin")
+		self.assertEqual(site.login_url, "https://srv.blr1.frappe.dev/app?sid=x")
+
+	def test_fold_is_idempotent(self) -> None:
+		from atlas.patches.v1_0.fold_pilots_into_sites import execute
+
+		self._raw_pilot("srv")
+		execute()
+		execute()  # a second run must not raise on the already-folded name
+		self.assertEqual(len(frappe.get_all("Site", filters={"kind": "pilot-console"})), 1)
+
+
 class TestSitePilotConsoleKind(IntegrationTestCase):
 	"""A `Site(kind="pilot-console")` runs the bench-image console flow (the old Pilot):
 	its VM is created SYNCHRONOUSLY in after_insert from a bench image, it reaches Running
