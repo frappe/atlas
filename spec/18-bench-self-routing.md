@@ -1,5 +1,20 @@
 # Self-service subdomain routing (bench-admin sites)
 
+> **Status: PARTLY BUILT — the controller half is currently ORPHANED.** The guest side
+> (the in-guest `bench-domain-provider` binary) and the routing substrate it drives —
+> the `Subdomain` and `Custom Domain` DocTypes + the regional proxy reconcile, the
+> `services/teardown.py` teardown, and the Contract-A label rules in
+> `services/subdomain_label.py` — are **built**. But the **controller endpoints** this
+> chapter specifies (`register` / `deregister` / `check_label` / `list`, the
+> custom-domain verbs, `dns_records`, `wildcard_domains` / `proxy_servers`) and the
+> `Subdomain Denylist` / `Bench Routing Audit` DocTypes were **removed from Atlas**
+> (`bench_routing.py` deleted) when the guest routing plane was cut over to the
+> `satellite` app — and that Satellite split was then **abandoned**
+> ([30-core-service-boundary.md](./30-core-service-boundary.md)). So the guest binary
+> targets endpoints with no live home; the controller half must be **re-homed in-app**
+> (like the other Satellite casualties) before this chapter is BUILT again. The design
+> below is the controller's design-of-record.
+
 A bench VM is a long-lived box where the owner spins up **arbitrary sites** from
 inside the guest — the bench-admin UI (`admin/`) or `bench new-site`. This chapter
 makes those guest-created sites routable through the regional proxy with **no operator

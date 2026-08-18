@@ -55,6 +55,14 @@ this feature existed. Metrics export is invisible until it is configured.
 
 ## Tenancy is per-VM
 
+> **Status: the per-VM design below is the target; today the producer ships a single
+> fleet-scoped token.** The per-VM token machinery exists (`datum_token.mint_for_vm` /
+> `build_bundle`) but is **unwired** — `server_boat.install_datum_tokens` currently
+> installs one fleet token (`resource_id="boat"`, empty `vms` map) and tells host and
+> VM samples apart by `server=` / `vm=` labels. Per-VM tenancy is the intended boundary
+> (a tenant's VM is the unit a hosting platform must address alone); wiring it — or
+> deciding the fleet token is enough — is the deferred call.
+
 `resource_id` is the Frappe **Server** name for host samples and the **Virtual
 Machine** name — which is the VM's UUID — for a VM's samples. Because datum
 stamps one `resource_id` per batch and a token names one resource, boat holds
