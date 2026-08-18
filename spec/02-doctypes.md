@@ -97,26 +97,6 @@ the `vendor_id` from the active vendor's Single — so callers still see one
 `SshKey`. Routing reads through a single helper also lets the storage backend
 swap to an external secret store later without touching callers.
 
-### Form layout
-
-```
-── Active provider ──
-provider_type
-| tls_provider_type
-  dns_provider_type
-  fail_scripts
-── User dashboard ──
-default_user_image
-default_bench_snapshot
-── Capacity ──
-overprovision_factor
-── TCP proxy ──
-tcp_port_pool
-── SSH key ──
-ssh_public_key
-| ssh_private_key_path
-```
-
 ### Buttons
 
 The compute-provider actions live here (there is no `Provider` form):
@@ -197,14 +177,6 @@ comes from the `Provider Size` / `Provider Image` row marked `is_default` (see
 `ubuntu-24-04-x64`); the operator's `atlas_do_default_*` config keys override the
 hint at setup, and the operator can flip the default on the catalog list anytime.
 
-### Form layout
-
-```
-api_token
-region
-ssh_key_id
-```
-
 ### Buttons
 
 - **Test Connection** — under `Actions ▾`. Calls
@@ -239,17 +211,6 @@ comes from the `is_default` `Provider Size` / `Provider Image` row, exactly as f
 DigitalOcean. `discover()` hints one (cheapest offer / Ubuntu LTS); the operator's
 `atlas_scw_default_*` config keys override the hint at setup, and the operator can
 flip the default on the catalog list anytime.
-
-### Form layout
-
-```
-secret_key
-project_id
-organization_id
-zone
-billing
-ssh_key_id
-```
 
 ### Buttons
 
@@ -1231,15 +1192,6 @@ Atlas-instance switch, not a Route 53 credential. There is no separate
 No zone-id field: `certbot-dns-route53` discovers the hosted zone from the domain
 name at issue time.
 
-### Form layout
-
-```
-── AWS credentials ──
-access_key_id
-secret_access_key
-region
-```
-
 ### Buttons
 
 - **Test Connection** — `dns.for_dns_provider_type(Atlas Settings.dns_provider_type).authenticate()`
@@ -1270,13 +1222,6 @@ There is no agree-to-ToS field: certbot is always invoked with `--agree-tos`
 ([scripts/lib/atlas/certs.py](../scripts/lib/atlas/certs.py)), so registering the
 ACME account agrees to the terms — a separate checkbox could only ever hold one
 valid value.
-
-### Form layout
-
-```
-acme_directory_url
-account_email
-```
 
 ### Buttons
 
