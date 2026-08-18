@@ -70,27 +70,28 @@ def validate_reserved(subdomain: str | None) -> None:
 		frappe.throw(f"Subdomain '{normalize(subdomain)}' is reserved — choose another")
 
 
-# The suffix that turns a site's label into its attached-Pilot label:
-# `acme` → `acme-pilot` (spec/14-self-serve.md). create_site stands up a Pilot admin
-# console at `<label>-pilot.<region>` on the same backing VM as the site; this is the
-# one place that derivation lives so Site and the Pilot attach agree on the name.
-PILOT_SUFFIX = "-pilot"
-# When `<label>-pilot` is already a live Pilot, disambiguate with a short random tail
+# The suffix that turns a site's label into its attached admin-console label:
+# `acme` → `acme-pilot` (spec/14-self-serve.md). create_site stands up an admin console
+# at `<label>-pilot.<region>` on the same backing VM as the site; this is the one place
+# that derivation lives so the Site and its console agree on the name. The `-pilot`
+# spelling is the historical user-facing console host and is kept as the suffix value.
+CONSOLE_SUFFIX = "-pilot"
+# When `<label>-pilot` already names a live console, disambiguate with a short random tail
 # (`acme-pilot-3f9a`). Kept short so the whole label stays inside LABEL_MAX_LENGTH.
-_PILOT_RANDOM_LENGTH = 4
+_CONSOLE_RANDOM_LENGTH = 4
 
 
-def pilot_subdomain_for(label: str) -> str:
-	"""The subdomain label for the Pilot admin console attached to a site's `label`.
+def console_subdomain_for(label: str) -> str:
+	"""The subdomain label for the admin console attached to a site's `label`.
 
-	`acme` → `acme-pilot`; if that FQDN already backs a Pilot, append a short random
+	`acme` → `acme-pilot`; if that FQDN already backs a console, append a short random
 	tail (`acme-pilot-3f9a`) so a re-created / colliding site still gets a unique
 	console name. The result stays a valid Contract-A label (≤ LABEL_MAX_LENGTH,
 	`[a-z0-9-]`, no leading/trailing hyphen): the site `label` already validated, and
 	we truncate the base before appending the suffix so the total never overflows.
 
-	The existence check is authoritative-ish only for the base name; the Pilot's own
-	FQDN key still throws on a true race, exactly as `Site`/`Pilot` autoname does."""
+	The existence check is authoritative-ish only for the base name; the console's own
+	FQDN key still throws on a true race, exactly as `Site` autoname does."""
 	import secrets
 
 	from atlas.atlas.core.placement import active_root_domain
@@ -98,16 +99,16 @@ def pilot_subdomain_for(label: str) -> str:
 	base = normalize(label)
 	domain = active_root_domain().domain
 	# Reserve room for the suffix (and, if needed, the random tail) inside the 63-char cap.
-	max_base = LABEL_MAX_LENGTH - len(PILOT_SUFFIX) - (1 + _PILOT_RANDOM_LENGTH)
+	max_base = LABEL_MAX_LENGTH - len(CONSOLE_SUFFIX) - (1 + _CONSOLE_RANDOM_LENGTH)
 	base = base[:max_base].rstrip("-")
-	candidate = f"{base}{PILOT_SUFFIX}"
+	candidate = f"{base}{CONSOLE_SUFFIX}"
 	# The console is a Site(kind="pilot-console") autonamed to this FQDN — check the Site
 	# table so the base name is free before handing it out.
 	if not frappe.db.exists("Site", f"{candidate}.{domain}"):
 		return candidate
 	# Collision: append a short random hex tail. secrets so two racing create_sites for
 	# the same label don't derive the same console name.
-	tail = secrets.token_hex(_PILOT_RANDOM_LENGTH)[:_PILOT_RANDOM_LENGTH]
+	tail = secrets.token_hex(_CONSOLE_RANDOM_LENGTH)[:_CONSOLE_RANDOM_LENGTH]
 	return f"{candidate}-{tail}"
 
 

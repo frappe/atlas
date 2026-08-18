@@ -625,8 +625,8 @@ class TestSiteWarmFirstProvision(IntegrationTestCase):
 		self.assertEqual(recorded[0]["kwargs"]["title"], "acme")
 
 
-class TestPilotSubdomainFor(IntegrationTestCase):
-	"""`pilot_subdomain_for` derives the attached-console label from a site's label:
+class TestConsoleSubdomainFor(IntegrationTestCase):
+	"""`console_subdomain_for` derives the attached-console label from a site's label:
 	`acme` → `acme-pilot`, disambiguated on collision (spec/14-self-serve.md)."""
 
 	def setUp(self) -> None:
@@ -634,15 +634,15 @@ class TestPilotSubdomainFor(IntegrationTestCase):
 		for name in frappe.get_all("Site", pluck="name"):
 			frappe.delete_doc("Site", name, force=1, ignore_permissions=True)
 
-	def test_appends_pilot_suffix(self) -> None:
-		from atlas.atlas.services.subdomain_label import pilot_subdomain_for
+	def test_appends_console_suffix(self) -> None:
+		from atlas.atlas.services.subdomain_label import console_subdomain_for
 
-		self.assertEqual(pilot_subdomain_for("acme"), "acme-pilot")
+		self.assertEqual(console_subdomain_for("acme"), "acme-pilot")
 
 	def test_collision_appends_random_tail(self) -> None:
 		"""When `<label>-pilot` already backs a console, a short random tail disambiguates
 		so a re-created / colliding site still gets a unique console name."""
-		from atlas.atlas.services.subdomain_label import PILOT_SUFFIX, pilot_subdomain_for
+		from atlas.atlas.services.subdomain_label import CONSOLE_SUFFIX, console_subdomain_for
 
 		# Stand up a pilot-console Site at `acme-pilot.<domain>` so the base name is taken.
 		# The attach path binds a stub VM, so no real backing VM is provisioned.
@@ -651,9 +651,9 @@ class TestPilotSubdomainFor(IntegrationTestCase):
 		)
 		console.flags.attach_vm = "stub-vm"
 		console.insert(ignore_permissions=True)
-		label = pilot_subdomain_for("acme")
+		label = console_subdomain_for("acme")
 		self.assertNotEqual(label, "acme-pilot")
-		self.assertTrue(label.startswith("acme" + PILOT_SUFFIX + "-"))
+		self.assertTrue(label.startswith("acme" + CONSOLE_SUFFIX + "-"))
 		# The result is still a valid Contract-A label.
 		from atlas.atlas.services.subdomain_label import validate_label
 

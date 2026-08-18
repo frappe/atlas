@@ -30,7 +30,7 @@ import frappe
 
 from atlas.atlas.core.placement import active_root_domain
 from atlas.atlas.services import site_common
-from atlas.atlas.services.subdomain_label import PILOT_SUFFIX
+from atlas.atlas.services.subdomain_label import CONSOLE_SUFFIX
 
 # How long a freshly-minted login URL stays usable, keyed by build_mode — the TTL of
 # the token deploy-site.py minted. admin: `generate-admin-session`'s 5-minute
@@ -69,7 +69,7 @@ def console_fqdn(doc) -> str:
 	host both times."""
 	if (doc.build_mode or "site") == "admin":
 		return bench_fqdn(doc)
-	return f"{doc.subdomain}{PILOT_SUFFIX}.{active_root_domain().domain}"
+	return f"{doc.subdomain}{CONSOLE_SUFFIX}.{active_root_domain().domain}"
 
 
 # ----- lifecycle ---------------------------------------------------------

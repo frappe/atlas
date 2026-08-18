@@ -381,16 +381,16 @@ def auto_provision(
 		site.db_set("subdomain_doc", subdomain_name)
 		frappe.db.commit()
 		_set_status(site, "Deploying")
-		# Resolve the attached Pilot's console FQDN up front (deterministic from the
+		# Resolve the attached console's FQDN up front (deterministic from the
 		# site subdomain, disambiguated on collision) and thread it into BOTH the
 		# site-mode deploy — which writes it into `[admin].domain` so the admin vhost
 		# is emitted in the rename-site pass — and `_provision_pilot`, which reuses the
 		# SAME label so the two agree on the console name. See spec/14-self-serve.md.
 		from atlas.atlas.core.placement import active_root_domain
-		from atlas.atlas.services.subdomain_label import pilot_subdomain_for
+		from atlas.atlas.services.subdomain_label import console_subdomain_for
 
-		pilot_label = pilot_subdomain_for(site.subdomain)
-		admin_domain = f"{pilot_label}.{active_root_domain().domain}"
+		console_label = console_subdomain_for(site.subdomain)
+		admin_domain = f"{console_label}.{active_root_domain().domain}"
 		clock.stage("deploy site in guest (wait_for_ssh + run deploy-site.py)")
 		result = _deploy_site(site, vm_name, central_endpoint, bootstrap_token, admin_domain)
 		# The tenant handoff is the one-click login URL `deploy-site.py` minted
@@ -416,7 +416,7 @@ def auto_provision(
 		# the site serves (the VM is up + the admin app is installed on every golden). See
 		# spec/14-self-serve.md.
 		clock.stage("attach Pilot admin console (proxy route + admin login)")
-		_attach_pilot_console(site, vm_name, pilot_label)
+		_attach_pilot_console(site, vm_name, console_label)
 		_set_status(site, "Running")
 		clock.done()
 	except Exception:
@@ -679,7 +679,7 @@ def _provision_pilot(site, vm_name: str, pilot_label: str) -> str:
 	"""Stand up the attached admin console on this site's backing VM and link it.
 
 	Creates a `Site(kind="pilot-console")` at `<subdomain>-pilot.<region>` (the label
-	resolved by the caller via `pilot_subdomain_for` and already written into the VM's
+	resolved by the caller via `console_subdomain_for` and already written into the VM's
 	`[admin].domain` by the site-mode deploy), ATTACHED to this site's VM
 	(`flags.attach_vm` → the console binds the VM instead of creating one, and won't tear
 	it down). Its `after_insert` only links the VM; `deploy_attached` mints the admin
