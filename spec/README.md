@@ -150,7 +150,7 @@ keep it the source of truth.
 16. [Central — the global control plane](./16-central.md)
 17. [The TCP proxy](./17-tcp-proxy.md)
 18. [Self-service subdomain routing (bench-admin sites)](./18-bench-self-routing.md)
-19. [The customer gateway (WireGuard dial-in)](./19-vpn-broker.md) — *superseded; now a gateway VM on the [mesh](./25-private-networking.md)*
+19. [The customer gateway (WireGuard dial-in)](./19-vpn-broker.md) — *epitaph: the host-terminated broker was retired; the customer gateway VM on the [mesh](./25-private-networking.md#the-customer-gateway--external-dial-in-to-the-mesh) replaced it*
 20. [The per-VM public firewall](./20-firewall.md)
 21. [The Central-managed tunnel (management-plane lockdown)](./21-tunnel.md)
 22. [Observability — making long-running tasks legible](./22-observability.md)
