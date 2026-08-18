@@ -554,8 +554,8 @@ totals) stands, exactly as it does under `_freeze`.
 
 Commands push, Atlas → Boat. State is pulled: Atlas maintains its mirror from the
 `/watch` SSE stream with the §2.5 export as backstop. Boat additionally POSTs a
-signed heartbeat on significant transitions, reusing the signed-webhook shape of
-[`satellite_events.py`](../atlas/atlas/satellite_events.py). **Push for liveness,
+signed heartbeat on significant transitions — a signed, HMAC-authenticated webhook.
+**Push for liveness,
 pull for truth** — a pushed state update that is lost has no self-healing path,
 while a pulled one re-converges on the next sweep.
 
