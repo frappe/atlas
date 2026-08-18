@@ -605,12 +605,9 @@ defense-in-depth check.
 
 ### List view
 
-- Columns (left to right): `name` (the `image_name` autoname),
-  `title`, `default_disk_gigabytes`, `is_active`. The legacy
-  `image_name` column is dropped from `in_list_view` — the framework
-  always renders the autoname as the ID column, so an extra
-  `image_name` column was redundant.
-- Standard filters: `is_active`.
+The legacy `image_name` column is deliberately kept out of `in_list_view`: the
+framework already renders the autoname as the ID column, so a separate
+`image_name` column would be redundant.
 
 A first-time operator does not need to invent any of these values. The
 Ubuntu 24.04 cloud image constants live in
@@ -1002,14 +999,11 @@ record.
 
 ### List view
 
-- Columns (left to right): `subject`, `server`, `virtual_machine`,
-  `script`, `status`, `duration_milliseconds`, `started`.
-  (Frappe orders list columns by their position in the field schema.
-  `started` lives in the Timing section, after the header, so it lands at
-  the end of the row. Putting it first would require moving the field
-  ahead of the header, which would break the form layout. Operators can
-  still sort the list by `started`.)
-- Standard filters: `server`, `virtual_machine`, `script`, `status`.
+`started` lands at the **end** of the row, not the front: Frappe orders list
+columns by their position in the field schema, and `started` lives in the Timing
+section after the header. Putting it first would mean moving the field ahead of
+the header and breaking the form layout — so the list keeps it last, and operators
+sort by it instead.
 
 ---
 
