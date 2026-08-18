@@ -778,18 +778,6 @@ invariant together (in failure-safe order).
   effect of deleting the Frappe row (`on_trash` only blocks deleting an attached
   IP; it does not touch the vendor).
 
-### Form layout
-
-```
-── Overview ──
-ip_address
-server
-| status
-  virtual_machine
-── Provider ──
-provider_resource_id
-```
-
 ### List view
 
 - Columns: `ip_address`, `server`, `status`, `virtual_machine`.
@@ -862,17 +850,6 @@ the linked VM, never hand-edited.
   byte-identical to the guest's `persist.lua`) and byte-compares it against each
   proxy guest's live `/map`. See [12-proxy.md](./12-proxy.md).
 
-### Form layout
-
-```
-── Overview ──
-subdomain
-| active
-── Target ──
-virtual_machine
-| address
-```
-
 ### List view
 
 - Columns: `subdomain`, `active`, `virtual_machine`, `address`.
@@ -935,19 +912,6 @@ derived from the linked VM, never hand-edited.
   (the same `json.dumps(sort_keys=True, indent=2)` + newline as `Subdomain`,
   byte-identical to the guest's `stream-persist.lua`) and byte-compares it against
   each proxy guest's live map. See [17-tcp-proxy.md](./17-tcp-proxy.md).
-
-### Form layout
-
-```
-── Overview ──
-public_port
-| active
-protocol
-── Target ──
-virtual_machine
-target_port
-| address
-```
 
 ### List view
 
@@ -1289,17 +1253,6 @@ silently re-point an already-issued domain.
   the domain's single `TLS Certificate` (one cert per domain) and delegates to its
   `issue()`.
 
-### Form layout
-
-```
-domain
-region
-| is_active
-── Providers ──
-dns_provider_type
-tls_provider_type
-```
-
 ### List view
 
 - Columns: `domain`, `region`, `is_active`.
@@ -1340,20 +1293,6 @@ in the domain's region — the producer the proxy's `push_cert` was missing. One
   re-push).
 
 Buttons: **Issue/Renew** (primary), **Push to Proxies**.
-
-### Form layout
-
-```
-root_domain
-common_name
-status
-| tls_provider_type
-issued_on
-expires_on
-── On-disk PEM paths (controller) ──
-fullchain_path
-privkey_path
-```
 
 ### List view
 
