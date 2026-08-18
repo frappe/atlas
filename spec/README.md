@@ -132,39 +132,40 @@ keep it the source of truth.
 
 ## Read this in order
 
-1. [Architecture](./01-architecture.md)
-2. [DocTypes](./02-doctypes.md)
-3. [Bootstrapping a server](./03-bootstrapping.md)
-4. [Tasks: the SSH execution model](./04-tasks.md)
-5. [Virtual machine lifecycle](./05-virtual-machine-lifecycle.md)
-6. [Networking](./06-networking.md)
-7. [Filesystem layout on the server](./07-filesystem-layout.md)
-8. [Images](./08-images.md)
-9. [Roadmap and deferred decisions](./09-roadmap.md)
-10. [Desk UI (operator)](./10-desk-ui.md)
-11. [User UI — the owner-scoped end-user boundary](./11-user-ui.md)
-12. [The reverse proxy](./12-proxy.md)
-13. [TLS & domain layer](./13-tls.md)
-14. [Self-serve sites](./14-self-serve.md)
-15. [Image builder](./15-image-builder.md)
-16. [Central — the global control plane](./16-central.md)
-17. [The TCP proxy](./17-tcp-proxy.md)
-18. [Self-service subdomain routing (bench-admin sites)](./18-bench-self-routing.md)
-19. [The customer gateway (WireGuard dial-in)](./19-vpn-broker.md) — *epitaph: the host-terminated broker was retired; the customer gateway VM on the [mesh](./25-private-networking.md#the-customer-gateway--external-dial-in-to-the-mesh) replaced it*
-20. [The per-VM public firewall](./20-firewall.md)
-21. [The Central-managed tunnel (management-plane lockdown)](./21-tunnel.md)
-22. [Observability — making long-running tasks legible](./22-observability.md)
-23. [Supply chain — the external artefacts Atlas pulls](./23-supply-chain.md)
-24. [VM migration between hosts](./24-vm-migration.md)
-25. [Private networking (the WireGuard host mesh)](./25-private-networking.md)
-26. [Docker compatibility (`docker run` against microVMs)](./27-docker-compat.md) — *design / proposal*
-27. [Placement — load-aware host selection for the size ladder](./28-placement.md)
-28. [Snapshot backup to S3](./29-snapshot-backup.md) — *push a point-in-time snapshot off-host to S3 and rehydrate it back (same-VM rollback)*
-29. [The core ↔ service boundary](./30-core-service-boundary.md) — *epitaph: the separate `satellite` app was abandoned; the core ↔ service separation shipped **in-app** as the `core/` + `services/` module split (one-way imports, gate-enforced)*
-30. [Distributed network control plane (ANCP)](./31-ancp-network-control-plane.md) — *shipped: the decentralized `atlas-networkd` control plane (gossip + anti-entropy) that replaced the controller-driven WireGuard host mesh of [25](./25-private-networking.md)*
-31. [Sleepy VMs — auto-sleep idle VMs, wake on demand](./32-sleepy-vms.md) — *free host RAM by sleeping idle VMs; wake on operator Start or the first inbound TCP connection (fast resume from a memory snapshot)*
-32. [Boat — the per-host daemon, and what Atlas keeps](./33-boat.md) — *design: the split that makes Atlas authoritative for **desired** state and a per-host Go daemon authoritative for **observed** state; every host-side service becomes one unit off one `boat` binary, driven over an OpenAPI-typed HTTP contract on the [management tunnel](./21-tunnel.md)*
-33. [Metrics — host and per-VM telemetry shipped to datum](./34-metrics.md) — *the metrics half of the old "no metrics or alerting" non-goal, retired: the resident `boat` daemon pushes host and per-VM time-series to the frappe/datum telemetry store on a 30s best-effort tick — per-VM tenancy via one RS256 token per resource_id, no new privilege, and a slow or down datum can never touch a VM's lifecycle*
+The spec is grouped into **~15 chapters across five parts** — Foundations, the VM
+fabric (core), the Services (PaaS) layer, the control plane + host daemon, and the
+operator/roadmap surface. Filenames keep their historical `NN-` numbers (hundreds of
+code comments point at them); the grouping is the reading order.
+
+### I. Foundations
+
+1. **Overview & principles** — this README (goals, non-goals, operating principles above) + [Architecture](./01-architecture.md).
+2. **DocType reference** — [DocTypes](./02-doctypes.md).
+3. **Tasks & the SSH execution model** — [Tasks](./04-tasks.md).
+4. **Bootstrapping & filesystem layout** — [Bootstrapping a server](./03-bootstrapping.md) + [Filesystem layout](./07-filesystem-layout.md).
+
+### II. The VM fabric (core)
+
+5. **VM lifecycle & sleepy VMs** — [Virtual machine lifecycle](./05-virtual-machine-lifecycle.md) + [Sleepy VMs](./32-sleepy-vms.md) *(auto-sleep idle VMs; wake on Start or first inbound TCP)*.
+6. **Migration & placement** — [VM migration between hosts](./24-vm-migration.md) + [Placement](./28-placement.md) *(load-aware host selection)*.
+7. **Images, the image builder & snapshot backup** — [Images](./08-images.md) + [Image builder](./15-image-builder.md) + [Snapshot backup to S3](./29-snapshot-backup.md).
+8. **Public network plane & per-VM firewall** — [Networking](./06-networking.md) + [The per-VM public firewall](./20-firewall.md).
+9. **Private plane, ANCP & the customer gateway** — [Private networking (WireGuard host mesh)](./25-private-networking.md) + [Distributed network control plane (ANCP)](./31-ancp-network-control-plane.md) *(the shipped decentralized `atlas-networkd` that replaced the controller-driven mesh)* + [The customer gateway (Desk)](./26-customer-gateway-desk.md) + [The customer gateway (WireGuard dial-in)](./19-vpn-broker.md) *(epitaph: the host-terminated broker was retired; the on-mesh gateway replaced it)*.
+
+### III. The Services (PaaS) layer
+
+10. **Self-serve sites & bench self-routing** — [Self-serve sites](./14-self-serve.md) + [Self-service subdomain routing](./18-bench-self-routing.md).
+11. **Reverse proxy, TCP proxy & TLS** — [The reverse proxy](./12-proxy.md) + [The TCP proxy](./17-tcp-proxy.md) + [TLS & domain layer](./13-tls.md).
+
+### IV. Control plane & the host daemon
+
+12. **Central & the management tunnel** — [Central](./16-central.md) + [The Central-managed tunnel](./21-tunnel.md).
+13. **Boat — the per-host daemon** — [Boat, and what Atlas keeps](./33-boat.md) *(Atlas owns desired state, a per-host Go daemon owns observed state, over an HTTP contract on the management tunnel)*.
+14. **Observability & metrics** — [Observability](./22-observability.md) *(live task progress)* + [Metrics](./34-metrics.md) *(host + per-VM time-series to frappe/datum)*.
+
+### V. Operator surface, roadmap & proposals
+
+15. **Desk UI, roadmap, supply chain & proposals** — [Desk UI (operator)](./10-desk-ui.md) + [User UI](./11-user-ui.md) *(removed — Central owns end-users)* + [Roadmap & deferred decisions](./09-roadmap.md) + [Supply chain](./23-supply-chain.md) + [Docker compatibility](./27-docker-compat.md) *(proposal)* + [The core ↔ service boundary](./30-core-service-boundary.md) *(epitaph: the separate `satellite` app was abandoned; the split shipped in-app as `core/` + `services/`)*.
 
 ## First run on a fresh site
 
