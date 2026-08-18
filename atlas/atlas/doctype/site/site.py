@@ -202,17 +202,18 @@ class Site(Document):
 		self.save(ignore_permissions=True)
 
 	def _terminate_pilot(self) -> None:
-		"""Terminate the attached Pilot admin console before the VM (if one was stood up).
+		"""Terminate the attached admin console before the VM (if one was stood up).
 
-		The Pilot is ATTACHED — its own terminate() drops its Subdomain and marks itself
-		Terminated but does NOT touch the VM (the Site owns it, torn down next). So this
-		is safe to call before `site_common.terminate_backing_vm`: no double-terminate. No-op when
-		the site never got a Pilot (failed before the console stage) or it is already gone."""
-		if not self.pilot or not frappe.db.exists("Pilot", self.pilot):
+		The console (a `Site(kind="pilot-console")`) is ATTACHED — its own terminate()
+		drops its Subdomain and marks itself Terminated but does NOT touch the VM (this
+		Site owns it, torn down next). So this is safe to call before
+		`site_common.terminate_backing_vm`: no double-terminate. No-op when the site never
+		got a console (failed before the console stage) or it is already gone."""
+		if not self.pilot or not frappe.db.exists("Site", self.pilot):
 			return
-		pilot = frappe.get_doc("Pilot", self.pilot)
-		if pilot.status != "Terminated":
-			pilot.terminate()
+		console = frappe.get_doc("Site", self.pilot)
+		if console.status != "Terminated":
+			console.terminate()
 
 	@frappe.whitelist()
 	def regenerate_login_url(self) -> dict:
@@ -675,25 +676,26 @@ def _attach_pilot_console(site, vm_name: str, pilot_label: str) -> str | None:
 
 
 def _provision_pilot(site, vm_name: str, pilot_label: str) -> str:
-	"""Stand up the attached Pilot admin console on this site's backing VM and link it.
+	"""Stand up the attached admin console on this site's backing VM and link it.
 
-	Creates a `Pilot` at `<subdomain>-pilot.<region>` (the label resolved by the caller
-	via `pilot_subdomain_for` and already written into the VM's `[admin].domain` by the
-	site-mode deploy), ATTACHED to this site's VM (`flags.attach_vm` → the Pilot binds
-	the VM instead of creating one, and won't tear it down). Its `after_insert` only
-	links the VM; `deploy_attached` mints the admin login URL, creates the Pilot's own
-	Subdomain (a second proxy route → the SAME VM /128), and marks the Pilot Running —
-	the admin vhost itself was already emitted in the site deploy's rename-site pass. The
-	Pilot is linked on the Site so terminate() cascades. Returns the Pilot name.
+	Creates a `Site(kind="pilot-console")` at `<subdomain>-pilot.<region>` (the label
+	resolved by the caller via `pilot_subdomain_for` and already written into the VM's
+	`[admin].domain` by the site-mode deploy), ATTACHED to this site's VM
+	(`flags.attach_vm` → the console binds the VM instead of creating one, and won't tear
+	it down). Its `after_insert` only links the VM; `deploy_attached` mints the admin
+	login URL, creates the console's own Subdomain (a second proxy route → the SAME VM
+	/128), and marks it Running — the admin vhost itself was already emitted in the site
+	deploy's rename-site pass. The console is linked on the Site (`pilot` field) so
+	terminate() cascades. Returns the console name.
 
 	This is the create_site half that makes the Asset's "Open" resolve a bench admin
-	console (front_door_for_vm prefers Pilot) rather than the customer site — the bug
-	this closes (spec/14-self-serve.md)."""
-	from atlas.atlas.doctype.pilot.pilot import deploy_attached
-
-	pilot = frappe.get_doc({"doctype": "Pilot", "subdomain": pilot_label, "tenant": site.tenant})
-	pilot.flags.attach_vm = vm_name
-	pilot.insert(ignore_permissions=True)
-	site.db_set("pilot", pilot.name)
-	deploy_attached(pilot.name)
-	return pilot.name
+	console (front_door_for_vm prefers the console) rather than the customer site — the
+	bug this closes (spec/14-self-serve.md)."""
+	console = frappe.get_doc(
+		{"doctype": "Site", "kind": "pilot-console", "subdomain": pilot_label, "tenant": site.tenant}
+	)
+	console.flags.attach_vm = vm_name
+	console.insert(ignore_permissions=True)
+	site.db_set("pilot", console.name)
+	site_console.deploy_attached(console)
+	return console.name
