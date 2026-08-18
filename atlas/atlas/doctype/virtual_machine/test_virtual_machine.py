@@ -658,13 +658,13 @@ class TestVirtualMachine(IntegrationTestCase):
 		vm.db_set("status", "Stopped")
 		with (
 			patch.object(module, "run_boat_task", return_value=fake_task(name="task-term")),
-			patch("atlas.atlas.services.reporting.report_pilot_status") as reported,
+			patch("atlas.atlas.services.reporting.report_console_status") as reported,
 		):
 			console.terminate()
 
 		self.assertEqual(frappe.db.get_value("Site", console.name, "status"), "Terminated")
 		# The VM's propagation is skipped (flags.front_door_terminating), so the only
-		# report is the console's own save → on_pilot_update. Never two.
+		# report is the console's own save → on_console_update. Never two.
 		self.assertLessEqual(reported.call_count, 1)
 
 	def test_parse_size_bytes(self) -> None:

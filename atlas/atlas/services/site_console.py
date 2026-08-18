@@ -166,9 +166,9 @@ def auto_provision(
 		# db_set skips on_update, so the status event that carries the login handoff won't
 		# fire on its own — emit it explicitly. Its delivery is enqueue_after_commit, so it
 		# rides the commit just below.
-		from atlas.atlas.services.reporting import report_pilot_status
+		from atlas.atlas.services.reporting import report_console_status
 
-		report_pilot_status(doc)
+		report_console_status(doc)
 		# nosemgrep: frappe-manual-commit -- commit the handoff + Running so the status event delivers (enqueue_after_commit) and the poll sees it
 		frappe.db.commit()
 		_trace("marked Running — console provision complete")
@@ -205,9 +205,9 @@ def deploy_attached(doc) -> None:
 		doc.db_set("login_url", doc.login_url)
 		doc.db_set("login_url_expires_at", doc.login_url_expires_at)
 		doc.db_set("status", "Running")
-		from atlas.atlas.services.reporting import report_pilot_status
+		from atlas.atlas.services.reporting import report_console_status
 
-		report_pilot_status(doc)
+		report_console_status(doc)
 	except Exception:
 		doc.db_set("status", "Failed")
 		# nosemgrep: frappe-manual-commit -- persist Failed so it survives a rollback
@@ -228,9 +228,9 @@ def regenerate_login_url(doc) -> dict:
 	doc.save(ignore_permissions=True)
 	# nosemgrep: frappe-manual-commit -- persist the fresh URL so Central's poll/reconcile sees it cross-transaction
 	frappe.db.commit()
-	from atlas.atlas.services.reporting import _pilot_vm_payload
+	from atlas.atlas.services.reporting import _console_vm_payload
 
-	return _pilot_vm_payload(doc)
+	return _console_vm_payload(doc)
 
 
 def _stamp_login(doc, result: dict) -> None:

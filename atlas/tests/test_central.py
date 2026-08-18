@@ -212,9 +212,9 @@ class TestCentralReport(IntegrationTestCase):
 	_patched_emit = staticmethod(_patched_emit)
 
 	def _vm(self, status="Running", before_status="Pending", resizing=False):
-		# A plain VM stand-in — no Pilot backs "vm-1", so _vm_payload's pilot_for_vm
+		# A plain VM stand-in — no console backs "vm-1", so _vm_payload's front-door
 		# lookup returns None and the bench fields (gateway_url/login_url/expiry) are all
-		# None. The bench handoff is exercised via _pilot_vm_payload below.
+		# None. The bench handoff is exercised via _console_vm_payload below.
 		doc = SimpleNamespace(
 			name="vm-1",
 			title="vm-1",
@@ -245,10 +245,10 @@ class TestCentralReport(IntegrationTestCase):
 		self.assertIsNone(payload["login_url"])
 		self.assertIsNone(payload["login_url_expires_at"])
 
-	def test_pilot_vm_payload_expiry_is_json_serializable(self) -> None:
-		# _merge_bench_fields renders the Pilot's expiry via _iso so requests' stdlib
-		# json.dumps (no default=str) can POST it. _pilot_vm_payload reads plain VM facts
-		# through the link, so stand in a real VM the pilot points at.
+	def test_console_vm_payload_expiry_is_json_serializable(self) -> None:
+		# _merge_bench_fields renders the console's expiry via _iso so requests' stdlib
+		# json.dumps (no default=str) can POST it. _console_vm_payload reads plain VM facts
+		# through the link, so stand in a real VM the console points at.
 		import datetime
 
 		server = fixtures.make_server(
@@ -274,7 +274,7 @@ class TestCentralReport(IntegrationTestCase):
 			login_url_expires_at=datetime.datetime(2026, 7, 4, 10, 19, 56),
 		)
 		console.get = lambda key, default=None: getattr(console, key, default)
-		payload = reporting._pilot_vm_payload(console)
+		payload = reporting._console_vm_payload(console)
 		self.assertEqual(payload["login_url_expires_at"], "2026-07-04 10:19:56")
 		self.assertEqual(payload["gateway_url"], "https://acme.blr1.frappe.dev")
 		json.dumps(payload)  # requests uses stdlib json.dumps with no default
@@ -612,13 +612,13 @@ class TestCentralReportSite(IntegrationTestCase):
 
 
 class TestCentralReportPilot(IntegrationTestCase):
-	"""Pilot lifecycle events. A Pilot reports AS its backing VM, so the payload is
-	VM-shaped with the front-door fields folded on. The Running flip in auto_provision
+	"""pilot-console lifecycle events. A console reports AS its backing VM, so the payload
+	is VM-shaped with the front-door fields folded on. The Running flip in auto_provision
 	is a db_set (skips validation), which never fires on_update — so the push that
-	carries the login handoff rides an explicit report_pilot_status() call instead of
+	carries the login handoff rides an explicit report_console_status() call instead of
 	the doc_event. These tests pin that the explicit emit still delivers the handoff."""
 
-	def _pilot_with_vm(self, status="Running", *, login_url="https://acme.blr1.frappe.dev/app?sid=abc"):
+	def _console_with_vm(self, status="Running", *, login_url="https://acme.blr1.frappe.dev/app?sid=abc"):
 		server = fixtures.make_server(
 			fixtures.make_provider("pilot-evt-provider"),
 			"pilot-evt-server",
@@ -631,7 +631,7 @@ class TestCentralReportPilot(IntegrationTestCase):
 		# FrontDoor derives gateway_url from the console's console_fqdn — admin mode, so it
 		# is <subdomain>.<region domain> (the row name); a site-mode console would carry the
 		# `-pilot` suffix.
-		pilot = SimpleNamespace(
+		console = SimpleNamespace(
 			virtual_machine=vm.name,
 			tenant=None,
 			status=status,
@@ -643,16 +643,16 @@ class TestCentralReportPilot(IntegrationTestCase):
 			kind="pilot-console",
 			name="acme.blr1.frappe.dev",
 		)
-		pilot.get = lambda key, default=None: getattr(pilot, key, default)
-		return pilot
+		console.get = lambda key, default=None: getattr(console, key, default)
+		return console
 
-	def test_report_pilot_status_emits_handoff_on_the_db_set_running_flip(self) -> None:
+	def test_report_console_status_emits_handoff_on_the_db_set_running_flip(self) -> None:
 		"""The bug this closes: auto_provision flips Running via db_set (no on_update),
-		so report_pilot_status must be what pushes the freshly-minted login_url — the
+		so report_console_status must be what pushes the freshly-minted login_url — the
 		mirror would otherwise only learn it on the next 10-min reconcile."""
-		pilot = self._pilot_with_vm(status="Running")
+		console = self._console_with_vm(status="Running")
 		with _patched_emit() as enqueue:
-			reporting.report_pilot_status(pilot)
+			reporting.report_console_status(console)
 		enqueue.assert_called_once()
 		kwargs = enqueue.call_args.kwargs
 		self.assertEqual(kwargs["event_type"], "vm.status_changed")
@@ -661,20 +661,20 @@ class TestCentralReportPilot(IntegrationTestCase):
 		self.assertEqual(kwargs["payload"]["login_url"], "https://acme.blr1.frappe.dev/app?sid=abc")
 		self.assertEqual(kwargs["payload"]["gateway_url"], "https://acme.blr1.frappe.dev")
 
-	def test_report_pilot_status_no_op_when_disabled(self) -> None:
-		pilot = self._pilot_with_vm()
+	def test_report_console_status_no_op_when_disabled(self) -> None:
+		console = self._console_with_vm()
 		with (
 			patch.object(central_report, "_enabled", return_value=False),
 			patch.object(central_report.frappe, "enqueue") as enqueue,
 		):
-			reporting.report_pilot_status(pilot)
+			reporting.report_console_status(console)
 		enqueue.assert_not_called()
 
-	def test_report_pilot_status_no_op_without_backing_vm(self) -> None:
-		pilot = self._pilot_with_vm()
-		pilot.virtual_machine = None
+	def test_report_console_status_no_op_without_backing_vm(self) -> None:
+		console = self._console_with_vm()
+		console.virtual_machine = None
 		with self._patched_emit_no_vm() as enqueue:
-			reporting.report_pilot_status(pilot)
+			reporting.report_console_status(console)
 		enqueue.assert_not_called()
 
 	@staticmethod
@@ -687,12 +687,12 @@ class TestCentralReportPilot(IntegrationTestCase):
 		):
 			yield enqueue
 
-	def test_pre_running_pilot_hides_the_handoff(self) -> None:
+	def test_pre_running_console_hides_the_handoff(self) -> None:
 		"""Before Running the mint hasn't happened — _merge_bench_fields blanks login_url
 		even if a stale value sits on the row."""
-		pilot = self._pilot_with_vm(status="Pending", login_url="https://leftover/app?sid=x")
+		console = self._console_with_vm(status="Pending", login_url="https://leftover/app?sid=x")
 		with _patched_emit() as enqueue:
-			reporting.report_pilot_status(pilot)
+			reporting.report_console_status(console)
 		payload = enqueue.call_args.kwargs["payload"]
 		self.assertEqual(payload["status"], "Pending")
 		self.assertIsNone(payload["login_url"])

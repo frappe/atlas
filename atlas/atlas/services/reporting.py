@@ -1,7 +1,7 @@
-"""Services side of Central reporting — the Site/Pilot events and the VM-payload
-front-door augmentation. Central mirrors VMs, so a bench Site/Pilot reports AS
-its backing VM (carrying the login handoff), and a bench VM's Central payload
-folds in the front door's status + URLs.
+"""Services side of Central reporting — the Site + pilot-console events and the
+VM-payload front-door augmentation. Central mirrors VMs, so a bench Site or console
+reports AS its backing VM (carrying the login handoff), and a bench VM's Central
+payload folds in the front door's status + URLs.
 
 Split off `central_report.py`, which keeps the PaaS-blind core reporting (VM /
 Snapshot / Server events + the delivery machinery). The two front-door reads the
@@ -19,27 +19,27 @@ import frappe
 from atlas.atlas.core import central_report
 
 
-def on_pilot_update(doc, method=None):
-	# A Pilot reports AS its backing VM (Central mirrors VMs, not Pilots): a Pilot
-	# status change is emitted as a vm.status_changed carrying the VM-shaped payload
-	# — this is the event that delivers the login handoff, since the Pilot flips
-	# Running only after the in-guest mint. A Pilot with no VM yet (created but its
+def on_console_update(doc, method=None):
+	# A pilot-console Site reports AS its backing VM (Central mirrors VMs, not consoles): a
+	# console status change is emitted as a vm.status_changed carrying the VM-shaped payload
+	# — this is the event that delivers the login handoff, since the console flips
+	# Running only after the in-guest mint. A console with no VM yet (created but its
 	# after_insert hasn't linked one) has nothing to report.
 	if central_report._enabled() and central_report._status_changed(doc) and doc.virtual_machine:
-		report_pilot_status(doc)
+		report_console_status(doc)
 
 
-def report_pilot_status(pilot) -> None:
-	"""Emit a Pilot's status as a vm.status_changed, carrying the login handoff.
+def report_console_status(console) -> None:
+	"""Emit a console's status as a vm.status_changed, carrying the login handoff.
 
 	The `on_update` doc_event above delivers this for a plain `.save()`. But the
-	terminal Running flip in `Pilot.auto_provision` is a `db_set` (skips validation
+	terminal Running flip in the console's `auto_provision` is a `db_set` (skips validation
 	mid-job), and `db_set` runs only `on_change`, never `on_update` — so that flip,
 	the very event that carries the freshly-minted login_url, would otherwise never
 	push. auto_provision calls this explicitly after its commit to close that gap;
 	the periodic reconcile is only the backstop, not the primary delivery."""
-	if central_report._enabled() and pilot.virtual_machine:
-		central_report._emit("vm.status_changed", _pilot_vm_payload(pilot), pilot)
+	if central_report._enabled() and console.virtual_machine:
+		central_report._emit("vm.status_changed", _console_vm_payload(console), console)
 
 
 def on_site_after_insert(doc, method=None):
@@ -53,10 +53,10 @@ def on_site_after_insert(doc, method=None):
 
 def on_site_update(doc, method=None):
 	# A pilot-console Site reports AS its backing VM — its status change is a
-	# vm.status_changed carrying the login handoff, exactly like a Pilot, never a
-	# site.status_changed. The one Site on_update handler dispatches on kind.
+	# vm.status_changed carrying the login handoff, never a site.status_changed. The
+	# one Site on_update handler dispatches on kind.
 	if doc.get("kind") == "pilot-console":
-		on_pilot_update(doc)
+		on_console_update(doc)
 		return
 	if central_report._enabled() and central_report._status_changed(doc):
 		central_report._emit("site.status_changed", _site_payload(doc), doc)
@@ -72,16 +72,16 @@ def report_site_status(site) -> None:
 	auto_provision's `_set_status` calls this explicitly (before its commit) to close
 	that gap; without it Central's mirror only ever sees the initial Pending
 	(site.created + the insert's on_update) and the site stays stuck at Pending —
-	there is no site reconcile pull to correct it. Same shape as report_pilot_status."""
+	there is no site reconcile pull to correct it. Same shape as report_console_status."""
 	if central_report._enabled():
 		central_report._emit("site.status_changed", _site_payload(site), site)
 
 
 def is_status_suppressed(vm_name: str) -> bool:
 	"""Whether core should SUPPRESS a VM's raw status flip because a front door owns
-	it (spec/14). A front-door-backed VM (Pilot or Site) reports its status THROUGH
+	it (spec/14). A front-door-backed VM (console or Site) reports its status THROUGH
 	the aggregate, not off its own raw boot: the VM boots Running before deploy-site
-	and the login mint, so the raw flip is premature. True iff a Pilot or Site backs
+	and the login mint, so the raw flip is premature. True iff a console or Site backs
 	this VM; a plain VM (proxy, operator machine) is never suppressed."""
 	from atlas.atlas.services.front_door import front_door_for_vm
 
@@ -100,22 +100,22 @@ def augment_vm_payload(payload: dict, vm_name: str) -> None:
 		_merge_bench_fields(payload, front_door)
 
 
-def _pilot_vm_payload(pilot) -> dict:
-	# The VM-shaped payload for a Pilot's own lifecycle event (and its regenerate
-	# return). Central mirrors VMs, so a Pilot reports AS its backing VM: plain VM
+def _console_vm_payload(console) -> dict:
+	# The VM-shaped payload for a console's own lifecycle event (and its regenerate
+	# return). Central mirrors VMs, so a console reports AS its backing VM: plain VM
 	# facts are read through the `virtual_machine` link, the bench fields off the
-	# Pilot. This is the event that carries the login handoff (the Pilot flips Running
-	# only after the mint), so its status is the PILOT's — the VM booted earlier.
+	# console. This is the event that carries the login handoff (the console flips Running
+	# only after the mint), so its status is the CONSOLE's — the VM booted earlier.
 	from atlas.atlas.core.placement import version_from_image
 	from atlas.atlas.services.front_door import FrontDoor
 
-	vm = frappe.get_doc("Virtual Machine", pilot.virtual_machine)
+	vm = frappe.get_doc("Virtual Machine", console.virtual_machine)
 	return _merge_bench_fields(
 		{
 			"name": vm.name,
-			"team": pilot.tenant or None,
+			"team": console.tenant or None,
 			"title": vm.title,
-			"status": pilot.status,
+			"status": console.status,
 			"server": vm.server,
 			"pilot_credential_id": vm.get("pilot_credential_id"),
 			"size_preset": vm.get("size_preset"),
@@ -126,12 +126,12 @@ def _pilot_vm_payload(pilot) -> dict:
 			"public_ipv4": vm.get("public_ipv4"),
 			"frappe_version": version_from_image(vm.get("image")),
 		},
-		FrontDoor(pilot),
+		FrontDoor(console),
 	)
 
 
 def _merge_bench_fields(payload: dict, front_door) -> dict:
-	"""Fold a front door's (Pilot or Site) fields onto a VM-shaped payload. gateway_url
+	"""Fold a front door's (console or Site) fields onto a VM-shaped payload. gateway_url
 	is the derived FQDN URL (stable once the aggregate exists); login_url + its expiry
 	are the one-click handoff, meaningful only once it is Running (before that the mint
 	hasn't run — FrontDoor gates them). A None front_door (a plain, non-bench VM) leaves
@@ -140,8 +140,8 @@ def _merge_bench_fields(payload: dict, front_door) -> dict:
 	The status is taken from the front door too: a bench/site VM boots to Running before
 	deploy-site + the login mint, so the raw VM status would report the Asset usable while
 	it isn't. The aggregate flips Running only after the mint, so its status is the one
-	Central mirrors (this is a no-op for _pilot_vm_payload, which already passed the Pilot's
-	status). A plain VM keeps the VM status the payload already carries."""
+	Central mirrors (this is a no-op for _console_vm_payload, which already passed the
+	console's status). A plain VM keeps the VM status the payload already carries."""
 	if front_door is not None:
 		payload["status"] = front_door.status
 	payload["gateway_url"] = front_door.gateway_url if front_door is not None else None

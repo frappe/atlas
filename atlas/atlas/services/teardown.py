@@ -147,9 +147,9 @@ def terminate_front_doors(vm) -> None:
 	listed as Running, with Open minting a session for a gateway that answers nothing.
 
 	Both aggregates, not just the handoff owner: a self-serve VM carries a Site AND
-	its attached Pilot (`front_doors_for_vm`), and leaving either behind reproduces the
+	its attached console (`front_doors_for_vm`), and leaving either behind reproduces the
 	bug on that half. `db_set` skips `on_update`, so the status event is emitted
-	explicitly — the same gap `report_pilot_status` / `report_site_status` exist to
+	explicitly — the same gap `report_console_status` / `report_site_status` exist to
 	close. Delivery is best-effort by design (a queued POST); a Central that is down
 	must not fail a terminate, so emission is guarded but the status write is not.
 
@@ -171,7 +171,7 @@ def terminate_front_doors(vm) -> None:
 			# A pilot-console reports AS its VM (vm.status_changed); a bench-site reports
 			# site.status_changed.
 			if doc.get("kind") == "pilot-console":
-				reporting.report_pilot_status(doc)
+				reporting.report_console_status(doc)
 			else:
 				reporting.report_site_status(doc)
 		except Exception:

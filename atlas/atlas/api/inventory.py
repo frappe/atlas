@@ -43,7 +43,7 @@ def tenant_vms(team: str | None = None) -> list[dict]:
 	# all three None. Resolving through EITHER aggregate is what stops a Site-backed VM
 	# (create_site) from reconciling into a login-less Asset (spec/14-self-serve.md).
 	#
-	# Same shape as central_report._vm_payload / reporting._pilot_vm_payload so push and pull stay
+	# Same shape as central_report._vm_payload / reporting._console_vm_payload so push and pull stay
 	# in lockstep — including the login handoff (gateway_url + the login URL/expiry, the
 	# latter only once Running, exactly as the event gates them). The reconcile is the
 	# backstop if a status_changed event is lost, so it must carry them.
