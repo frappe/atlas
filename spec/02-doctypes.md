@@ -396,34 +396,6 @@ or /48) routed to the box and so the VM range can be much larger than
 allowed to allocate from" and does not try to derive it. Details in
 [06-networking.md](./06-networking.md).
 
-### Form layout
-
-Single `Overview` tab. Networking / Host info / Notes are collapsible
-sections, not separate tabs.
-
-```
-── Overview ──
-title
-provider_type
-| status
-── Provider resource ──
-provider_resource_id
-| size
-  image
-── Networking (collapsible) ──
-ipv4_address
-ipv6_address
-| ipv6_prefix
-  ipv6_virtual_machine_range
-── Host info (collapsible) ──
-architecture
-| firecracker_version
-  jailer_version
-  kernel_version
-── Provider metadata (collapsible) ──
-provider_metadata
-```
-
 ### List view
 
 - Columns (left to right): `title`, `provider_type`, `status`, `size`,
@@ -542,44 +514,6 @@ carries a primary action. A failed auto-provision flips the VM to
 `Failed`, at which point the form's **Provision** primary returns as
 a retry. See [05-virtual-machine-lifecycle.md](./05-virtual-machine-lifecycle.md).
 
-### Form layout
-
-A single `Overview` Tab Break with the rest as collapsible Section
-Breaks (the old `Networking` / `Activity` tabs folded in):
-
-```
-title
-server
-image
-| status
-── Resources ──
-vcpus
-cpu_max_cores
-cpu_mode
-| memory_megabytes
-| disk_gigabytes
-data_disk_gigabytes
-data_disk_format_and_mount
-data_disk_mount_point
-── Security ── (collapsible)
-ssh_public_key
-| stop_protection
-  termination_protection
-  memory_snapshot_on_stop
-── Networking ── (collapsible)
-ipv6_address
-public_ipv4
-| mac_address
-  tap_device
-── Proxy ── (collapsible)
-is_proxy
-| region
-── Activity ── (collapsible)
-last_started
-| last_stopped
-  has_memory_snapshot
-```
-
 ### List view
 
 - Columns (left to right): `title`, `server`, `image`, `status`,
@@ -671,34 +605,6 @@ and clone recreate the disks; see
 | `tap_device`      | Data                          |      | Y         |         | Warm only: the golden's in-netns tap name. The vmstate binds the tap by name, so every warm clone's netns recreates it verbatim (netns-scoped; no collision). |
 | `host_signature`  | Small Text                    |      | Y         |         | Warm only: CPU model/flags hash/microcode + host kernel + Firecracker version at capture (JSON). `vm-restore.py` cold-boots a clone when the live host differs. |
 
-### Form layout
-
-```
-── Overview ──
-title
-virtual_machine
-server
-| status
-── Disk ──
-source_image
-disk_gigabytes
-data_disk_gigabytes
-data_disk_mount_point
-data_disk_format_and_mount
-| size_bytes
-  rootfs_path
-  data_size_bytes
-  data_rootfs_path
-── Warm Snapshot ── (fields shown only when kind=Warm)
-kind
-memory_directory
-memory_bytes
-| vcpus
-  memory_megabytes
-  tap_device
-  host_signature
-```
-
 ### List view
 
 - Columns: `title`, `virtual_machine`, `status`.
@@ -771,25 +677,6 @@ Every non-`is_active` field is immutable from `after_insert` onward —
 the framework `set_only_once` flag paints them read-only on the form,
 and the controller's `_validate_immutability` is the
 defense-in-depth check.
-
-### Form layout
-
-A single `Overview` Tab Break with the image-data fields under a
-collapsible Section Break:
-
-```
-image_name
-title
-| is_active
-  default_disk_gigabytes
-── Image data ── (collapsible)
-kernel_url
-kernel_filename
-| kernel_sha256
-rootfs_url
-rootfs_filename
-| rootfs_sha256
-```
 
 ### List view
 
