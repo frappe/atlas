@@ -192,7 +192,7 @@ def deploy_attached(doc) -> None:
 
 	Fail loud ON THE CONSOLE ROW; the raise does NOT fail the owning Site, though — the
 	console is a second, additive front door on a VM whose site already serves, so
-	`Site._attach_pilot_console` logs it and lets the Site reach Running."""
+	`Site._attach_console` logs it and lets the Site reach Running."""
 	if doc.status != "Pending":
 		return
 	try:

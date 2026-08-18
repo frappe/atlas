@@ -196,12 +196,12 @@ class Site(Document):
 		if self.status == "Terminated":
 			frappe.throw(_("Site is already terminated"))
 		site_common.delete_subdomain(self)
-		self._terminate_pilot()
+		self._terminate_console()
 		site_common.terminate_backing_vm(self)
 		self.status = "Terminated"
 		self.save(ignore_permissions=True)
 
-	def _terminate_pilot(self) -> None:
+	def _terminate_console(self) -> None:
 		"""Terminate the attached admin console before the VM (if one was stood up).
 
 		The console (a `Site(kind="pilot-console")`) is ATTACHED — its own terminate()
@@ -320,7 +320,7 @@ def auto_provision(
 
 	On any failure the Site is marked Failed (fail loud) and the exception is
 	re-raised so the Task/job log carries it. The ONE exception is the companion
-	admin console attached after step 5 (`_attach_pilot_console`): it is a second,
+	admin console attached after step 5 (`_attach_console`): it is a second,
 	additive front door on the same VM, so its failure is logged and the tenant site
 	still reaches Running. No-op if the Site has moved past Pending (operator
 	intervened, a manual retry raced us). Steps 4-5 are plan 03's contract — this owns
@@ -384,7 +384,7 @@ def auto_provision(
 		# Resolve the attached console's FQDN up front (deterministic from the
 		# site subdomain, disambiguated on collision) and thread it into BOTH the
 		# site-mode deploy — which writes it into `[admin].domain` so the admin vhost
-		# is emitted in the rename-site pass — and `_provision_pilot`, which reuses the
+		# is emitted in the rename-site pass — and `_provision_console`, which reuses the
 		# SAME label so the two agree on the console name. See spec/14-self-serve.md.
 		from atlas.atlas.core.placement import active_root_domain
 		from atlas.atlas.services.subdomain_label import console_subdomain_for
@@ -409,14 +409,14 @@ def auto_provision(
 		)
 		clock.stage("wait for HTTP 200 from guest :80 (Contract B)")
 		_wait_for_http(site, vm_name)
-		# Stand up the bench admin console (a Pilot) on this SAME backing VM, fronted at
+		# Stand up the bench admin console on this SAME backing VM, fronted at
 		# `<subdomain>-pilot.<region>` — the front door Central's Asset resolves for
-		# "Open" (front_door_for_vm prefers Pilot). The customer's Frappe site is this
-		# Site (get_site); the Pilot is the admin console on the same bench. Done AFTER
+		# "Open" (front_door_for_vm prefers the console). The customer's Frappe site is this
+		# Site (get_site); the console is the admin console on the same bench. Done AFTER
 		# the site serves (the VM is up + the admin app is installed on every golden). See
 		# spec/14-self-serve.md.
-		clock.stage("attach Pilot admin console (proxy route + admin login)")
-		_attach_pilot_console(site, vm_name, console_label)
+		clock.stage("attach admin console (proxy route + admin login)")
+		_attach_console(site, vm_name, console_label)
 		_set_status(site, "Running")
 		clock.done()
 	except Exception:
@@ -644,10 +644,10 @@ def _create_subdomain(site, vm_name: str) -> str:
 	return subdomain.name
 
 
-def _attach_pilot_console(site, vm_name: str, pilot_label: str) -> str | None:
+def _attach_console(site, vm_name: str, console_label: str) -> str | None:
 	"""Attach the companion admin console — and never let ITS failure fail the tenant site.
 
-	The console is a SECOND front door on the same backing VM (`_provision_pilot`), and
+	The console is a SECOND front door on the same backing VM (`_provision_console`), and
 	it is strictly additive: by the time we reach it the tenant's own site has already
 	deployed, cleared the Contract-B readiness gate, and is serving HTTP 200. So a
 	console that can't be wired — this golden's bench-cli carries no session-minting
@@ -657,25 +657,25 @@ def _attach_pilot_console(site, vm_name: str, pilot_label: str) -> str | None:
 	`[admin].password`. Letting it propagate marked the Site Failed while the site it
 	names was serving perfectly — the failure mode this closes.
 
-	Nothing is swallowed quietly: the Pilot's own row records it (`deploy_attached`
-	marks the Pilot Failed and commits before re-raising) and the traceback lands in
-	the Error Log. Returns the Pilot name, or None when the console failed.
+	Nothing is swallowed quietly: the console's own row records it (`deploy_attached`
+	marks the console Failed and commits before re-raising) and the traceback lands in
+	the Error Log. Returns the console name, or None when the console failed.
 
 	This is the ONLY step of `auto_provision` that degrades. Everything before it —
 	the clone, the boot wait, the Subdomain, the site's own deploy, the readiness
 	gate — is the tenant site itself and stays fail-loud."""
 	try:
-		return _provision_pilot(site, vm_name, pilot_label)
+		return _provision_console(site, vm_name, console_label)
 	except Exception:
 		frappe.log_error(
-			f"Admin console {pilot_label} for site {site.name} failed to attach; the site is "
+			f"Admin console {console_label} for site {site.name} failed to attach; the site is "
 			f"unaffected and stays Running: {frappe.get_traceback()}",
 			"Site admin console",
 		)
 		return None
 
 
-def _provision_pilot(site, vm_name: str, pilot_label: str) -> str:
+def _provision_console(site, vm_name: str, console_label: str) -> str:
 	"""Stand up the attached admin console on this site's backing VM and link it.
 
 	Creates a `Site(kind="pilot-console")` at `<subdomain>-pilot.<region>` (the label
@@ -692,7 +692,7 @@ def _provision_pilot(site, vm_name: str, pilot_label: str) -> str:
 	console (front_door_for_vm prefers the console) rather than the customer site — the
 	bug this closes (spec/14-self-serve.md)."""
 	console = frappe.get_doc(
-		{"doctype": "Site", "kind": "pilot-console", "subdomain": pilot_label, "tenant": site.tenant}
+		{"doctype": "Site", "kind": "pilot-console", "subdomain": console_label, "tenant": site.tenant}
 	)
 	console.flags.attach_vm = vm_name
 	console.insert(ignore_permissions=True)

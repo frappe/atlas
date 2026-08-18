@@ -2,7 +2,7 @@
 
 The Site and Pilot DocTypes merged: a bench console is now a `Site(kind="pilot-console")`
 (services/site_console.py). New consoles are already created as Sites (create_vm,
-_provision_pilot); this migrates the rows that predate the flip so the Pilot DocType can be
+_provision_console); this migrates the rows that predate the flip so the Pilot DocType can be
 deleted without losing them. Runs before `delete_pilot_doctype` (patches.txt order).
 
 Each Pilot becomes a Site of the SAME name (both autoname to `<subdomain>.<region>`), so a

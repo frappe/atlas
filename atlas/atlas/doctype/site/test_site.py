@@ -229,8 +229,8 @@ class TestSiteOrchestration(IntegrationTestCase):
 			patch.object(site_module, "_wait_for_http") as m_http,
 			patch.object(site_module, "_create_subdomain", return_value="sub-1") as m_sub,
 			patch.object(
-				site_module, "_provision_pilot", return_value="acme-pilot.blr1.frappe.dev"
-			) as m_pilot,
+				site_module, "_provision_console", return_value="acme-pilot.blr1.frappe.dev"
+			) as m_console,
 			patch.object(site_module.frappe.db, "commit"),
 		):
 			site_module.auto_provision(site_name)
@@ -240,7 +240,7 @@ class TestSiteOrchestration(IntegrationTestCase):
 			"deploy": m_deploy,
 			"http": m_http,
 			"sub": m_sub,
-			"pilot": m_pilot,
+			"console": m_console,
 		}
 
 	def test_happy_path_reaches_running(self) -> None:
@@ -266,14 +266,14 @@ class TestSiteOrchestration(IntegrationTestCase):
 		http_args = mocks["http"].call_args.args
 		self.assertEqual(http_args[1], "cloned-vm")
 		mocks["sub"].assert_called_once()
-		# The attached Pilot admin console was stood up on the SAME backing VM (the
+		# The attached admin console was stood up on the SAME backing VM (the
 		# front door Central's Asset resolves for "Open") — see spec/14-self-serve.md.
 		# (auto_provision passes its own re-fetched Site doc, so assert on the args:
 		# the Site name + the just-cloned VM name.)
-		mocks["pilot"].assert_called_once()
-		pilot_args = mocks["pilot"].call_args.args
-		self.assertEqual(pilot_args[0].name, site.name)
-		self.assertEqual(pilot_args[1], "cloned-vm")
+		mocks["console"].assert_called_once()
+		console_args = mocks["console"].call_args.args
+		self.assertEqual(console_args[0].name, site.name)
+		self.assertEqual(console_args[1], "cloned-vm")
 		# Each phase transition stamped its start time (drives the status page's
 		# per-phase timing). All three real phases were entered, so all three carry
 		# a stamp, in non-decreasing order.
@@ -351,7 +351,7 @@ class TestSiteOrchestration(IntegrationTestCase):
 			),
 			patch.object(site_module, "_wait_for_http"),
 			patch.object(site_module, "_create_subdomain", return_value="sub-1"),
-			patch.object(site_module, "_provision_pilot", side_effect=RuntimeError("no session verb")),
+			patch.object(site_module, "_provision_console", side_effect=RuntimeError("no session verb")),
 			patch.object(site_module.frappe, "log_error") as m_log,
 			patch.object(site_module.frappe.db, "commit"),
 		):
@@ -385,7 +385,7 @@ class TestSiteOrchestration(IntegrationTestCase):
 			),
 			patch.object(site_module, "_wait_for_http"),
 			patch.object(site_module, "_create_subdomain", return_value="sub-1"),
-			patch.object(site_module, "_provision_pilot", return_value="acme-pilot.blr1.frappe.dev"),
+			patch.object(site_module, "_provision_console", return_value="acme-pilot.blr1.frappe.dev"),
 			patch.object(site_module.frappe.db, "commit", side_effect=lambda: order.append("commit")),
 		):
 			site_module.auto_provision(site.name)
@@ -437,7 +437,7 @@ class TestSiteOrchestration(IntegrationTestCase):
 				return_value={"login_url": f"https://{site.name}/app?sid=tok"},
 			),
 			patch.object(site_module, "_wait_for_http"),
-			patch.object(site_module, "_provision_pilot", return_value="acme-pilot.blr1.frappe.dev"),
+			patch.object(site_module, "_provision_console", return_value="acme-pilot.blr1.frappe.dev"),
 			patch.object(site_module.frappe.db, "commit"),
 		):
 			site_module.auto_provision(site.name)
@@ -665,7 +665,7 @@ class TestSitePilotAttachment(IntegrationTestCase):
 	the site's OWN backing VM (spec/14-self-serve.md): `<subdomain>-pilot.<region>` → the
 	same VM, so Central's Asset "Open" resolves a bench console (front_door_for_vm prefers
 	the console), not the customer site. The deploy short-circuits on the Fake VM, so the
-	real `_provision_pilot` orchestration (create the console, attach it, mint, route, mark
+	real `_provision_console` orchestration (create the console, attach it, mint, route, mark
 	Running, link back) runs hostless here."""
 
 	def setUp(self) -> None:
@@ -703,8 +703,8 @@ class TestSitePilotAttachment(IntegrationTestCase):
 			p.start()
 		self.addCleanup(lambda: [p.stop() for p in self._commit_patches])
 
-	def test_provision_pilot_attaches_console_to_same_vm(self) -> None:
-		console_name = site_module._provision_pilot(self.site, self.fake_vm.name, "acme-pilot")
+	def test_provision_console_attaches_console_to_same_vm(self) -> None:
+		console_name = site_module._provision_console(self.site, self.fake_vm.name, "acme-pilot")
 		# Named `<subdomain>-pilot.<region>` and linked back on the Site.
 		self.assertEqual(console_name, "acme-pilot.blr1.frappe.dev")
 		self.site.reload()
@@ -729,14 +729,14 @@ class TestSitePilotAttachment(IntegrationTestCase):
 		from atlas.atlas.services import site_console as site_console_module
 
 		with patch.object(site_console_module, "_provision_backing_vm") as m_prov:
-			site_module._provision_pilot(self.site, self.fake_vm.name, "acme-pilot")
+			site_module._provision_console(self.site, self.fake_vm.name, "acme-pilot")
 		m_prov.assert_not_called()
 
 	def test_attached_console_terminate_does_not_touch_the_vm(self) -> None:
 		# The attached console's own terminate() must NOT terminate the shared VM (the Site
 		# owns it) — the `.attached` guard makes terminate_backing_vm a no-op. Terminate
 		# the console alone and assert the VM is untouched (only the Site would terminate it).
-		site_module._provision_pilot(self.site, self.fake_vm.name, "acme-pilot")
+		site_module._provision_console(self.site, self.fake_vm.name, "acme-pilot")
 		console = frappe.get_doc("Site", self.site.pilot)
 		console.terminate()
 		console.reload()
@@ -747,7 +747,7 @@ class TestSitePilotAttachment(IntegrationTestCase):
 
 	def test_terminate_cascades_to_console_and_vm_once(self) -> None:
 		# Full cascade: Site.terminate → console Terminated + VM Terminated (once each).
-		site_module._provision_pilot(self.site, self.fake_vm.name, "acme-pilot")
+		site_module._provision_console(self.site, self.fake_vm.name, "acme-pilot")
 		self.site.db_set("virtual_machine", self.fake_vm.name)
 		self.site.reload()
 		console_name = self.site.pilot
