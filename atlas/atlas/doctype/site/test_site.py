@@ -626,13 +626,13 @@ class TestSiteWarmFirstProvision(IntegrationTestCase):
 
 
 class TestPilotSubdomainFor(IntegrationTestCase):
-	"""`pilot_subdomain_for` derives the attached-Pilot label from a site's label:
+	"""`pilot_subdomain_for` derives the attached-console label from a site's label:
 	`acme` → `acme-pilot`, disambiguated on collision (spec/14-self-serve.md)."""
 
 	def setUp(self) -> None:
 		_ensure_root_domain()
-		for name in frappe.get_all("Pilot", pluck="name"):
-			frappe.delete_doc("Pilot", name, force=1, ignore_permissions=True)
+		for name in frappe.get_all("Site", pluck="name"):
+			frappe.delete_doc("Site", name, force=1, ignore_permissions=True)
 
 	def test_appends_pilot_suffix(self) -> None:
 		from atlas.atlas.services.subdomain_label import pilot_subdomain_for
@@ -640,18 +640,17 @@ class TestPilotSubdomainFor(IntegrationTestCase):
 		self.assertEqual(pilot_subdomain_for("acme"), "acme-pilot")
 
 	def test_collision_appends_random_tail(self) -> None:
-		"""When `<label>-pilot` already backs a Pilot, a short random tail disambiguates
+		"""When `<label>-pilot` already backs a console, a short random tail disambiguates
 		so a re-created / colliding site still gets a unique console name."""
-		from atlas.atlas.doctype.pilot import pilot as pilot_module
 		from atlas.atlas.services.subdomain_label import PILOT_SUFFIX, pilot_subdomain_for
 
-		# Stand up a Pilot at `acme-pilot.<domain>` so the base name is taken. Patch the
-		# own-VM provisioner + enqueue so the row exists without a real backing VM.
-		with (
-			patch.object(pilot_module, "_provision_backing_vm", return_value="stub-vm"),
-			patch.object(pilot_module.frappe, "enqueue"),
-		):
-			frappe.get_doc({"doctype": "Pilot", "subdomain": "acme-pilot"}).insert(ignore_permissions=True)
+		# Stand up a pilot-console Site at `acme-pilot.<domain>` so the base name is taken.
+		# The attach path binds a stub VM, so no real backing VM is provisioned.
+		console = frappe.get_doc(
+			{"doctype": "Site", "kind": "pilot-console", "subdomain": "acme-pilot"}
+		)
+		console.flags.attach_vm = "stub-vm"
+		console.insert(ignore_permissions=True)
 		label = pilot_subdomain_for("acme")
 		self.assertNotEqual(label, "acme-pilot")
 		self.assertTrue(label.startswith("acme" + PILOT_SUFFIX + "-"))
@@ -675,8 +674,6 @@ class TestSitePilotAttachment(IntegrationTestCase):
 
 		for name in frappe.get_all("Site", pluck="name"):
 			frappe.delete_doc("Site", name, force=1, ignore_permissions=True)
-		for name in frappe.get_all("Pilot", pluck="name"):
-			frappe.delete_doc("Pilot", name, force=1, ignore_permissions=True)
 		for name in frappe.get_all("Subdomain", pluck="name"):
 			frappe.delete_doc("Subdomain", name, force=1, ignore_permissions=True)
 		image = make_image("pilot-attach-image")
@@ -819,60 +816,6 @@ class TestSiteTerminate(IntegrationTestCase):
 			"Terminated",
 			"backing VM terminated",
 		)
-
-
-class TestFoldPilotsIntoSites(IntegrationTestCase):
-	"""The M6 data patch folds tabPilot rows into tabSite(kind="pilot-console"), preserving
-	name + fields, without re-running provisioning. Transient: removed with the Pilot
-	DocType at M7 — it validates the one-time migration while both tables still exist."""
-
-	def setUp(self) -> None:
-		_ensure_root_domain()
-		for name in frappe.get_all("Pilot", pluck="name"):
-			frappe.delete_doc("Pilot", name, force=1, ignore_permissions=True)
-		for name in frappe.get_all("Site", pluck="name"):
-			frappe.delete_doc("Site", name, force=1, ignore_permissions=True)
-
-	def _raw_pilot(self, subdomain: str = "srv") -> str:
-		"""A committed-shape Pilot row inserted WITHOUT its lifecycle (db_insert), so the
-		fold has a row to migrate without standing up a real backing VM."""
-		pilot = frappe.new_doc("Pilot")
-		pilot.update(
-			{
-				"subdomain": subdomain,
-				"virtual_machine": "vm-fold-uuid",
-				"status": "Running",
-				"build_mode": "admin",
-				"attached": 0,
-				"login_url": f"https://{subdomain}.blr1.frappe.dev/app?sid=x",
-			}
-		)
-		pilot.name = f"{subdomain}.blr1.frappe.dev"
-		pilot.flags.name_set = True
-		pilot.db_insert()
-		return pilot.name
-
-	def test_folds_a_pilot_into_a_pilot_console_site(self) -> None:
-		from atlas.patches.v1_0.fold_pilots_into_sites import execute
-
-		name = self._raw_pilot("srv")
-		execute()
-		self.assertTrue(frappe.db.exists("Site", name), "the Pilot was folded into a Site")
-		site = frappe.get_doc("Site", name)
-		self.assertEqual(site.kind, "pilot-console")
-		self.assertEqual(site.subdomain, "srv")
-		self.assertEqual(site.virtual_machine, "vm-fold-uuid")
-		self.assertEqual(site.status, "Running")
-		self.assertEqual(site.build_mode, "admin")
-		self.assertEqual(site.login_url, "https://srv.blr1.frappe.dev/app?sid=x")
-
-	def test_fold_is_idempotent(self) -> None:
-		from atlas.patches.v1_0.fold_pilots_into_sites import execute
-
-		self._raw_pilot("srv")
-		execute()
-		execute()  # a second run must not raise on the already-folded name
-		self.assertEqual(len(frappe.get_all("Site", filters={"kind": "pilot-console"})), 1)
 
 
 class TestSitePilotConsoleKind(IntegrationTestCase):

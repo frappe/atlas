@@ -258,17 +258,6 @@ def make_image(name: str = "test-image", **overrides: Any) -> Document:
 		return frappe.get_doc(doc).insert(ignore_permissions=True)
 
 
-def make_pilot(subdomain: str = "acme", vm_spec: dict | None = None, **overrides: Any) -> Document:
-	"""Create a `Pilot` row. Its `after_insert` creates the backing VM synchronously
-	from `vm_spec` (server/image/sizing), so the caller supplies at least a
-	Fake-backed server + a bench image for the VM to inherit build_mode from."""
-	doc = {"doctype": "Pilot", "subdomain": subdomain}
-	doc.update(overrides)
-	pilot = frappe.get_doc(doc)
-	pilot.flags.vm_spec = vm_spec or {}
-	return pilot.insert(ignore_permissions=True)
-
-
 def make_virtual_machine(
 	server: Document | str,
 	image: Document | str,
