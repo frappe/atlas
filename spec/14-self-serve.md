@@ -173,7 +173,7 @@ Fields, validation, permissions, and the full field table are in
    | 3 | Run `deploy-site.py` in the guest: rename the baked `site.local` to the FQDN via `bench rename-site` (regenerates the vhost as `server_name <fqdn>` + a v6 listener + reloads + re-runs production setup, a fast no-op) — no admin reset, no restart (cold clones also `bench start` first to bring the stack up; a warm clone is already serving — see the in-guest deploy below). The guest then mints a one-click `login_url` (`bench browse --user Administrator --session-end`, a real 24h session) → stamped with `login_url_expires_at` on the Site. `status → Deploying`. | deploy seam |
    | 4 | `wait_for_http` — block on the guest's HTTP 200 (Contract B). | deploy seam |
    | 5 | Create the `Subdomain` row (this is what makes the proxy route it — its own `after_insert` reconciles the regional fleet). | this layer |
-   | 5b | Stand up the **attached Pilot** admin console on the SAME VM (`_attach_pilot_console` → `_provision_pilot`): create a `Pilot` at `<subdomain>-pilot.<region>` bound to this VM, run its admin-mode deploy, create its Subdomain, mark it Running, link it on `Site.pilot`. This is the front door Central's Asset "Open" resolves. **The one non-fatal step** — see § The attached Pilot admin console. | this layer |
+   | 5b | Stand up the **attached admin console** on the SAME VM (`_attach_console` → `_provision_console`): create a `Site(kind="pilot-console")` at `<subdomain>-pilot.<region>` bound to this VM, run its admin-mode deploy, create its Subdomain, mark it Running, link it on `Site.console`. This is the front door Central's Asset "Open" resolves. **The one non-fatal step** — see § The attached admin console. | this layer |
    | 6 | `status → Running`. | this layer |
 
    Any failure flips `status = Failed` and re-raises (fail loud, the job log
@@ -182,7 +182,7 @@ Fields, validation, permissions, and the full field table are in
    `Pending`.
 
 5. **`terminate()`** deletes the site's `Subdomain` (proxy stops routing on the next
-   reconcile), terminates the **attached Pilot** (which drops only its own Subdomain +
+   reconcile), terminates the **attached console** (which drops only its own Subdomain +
    row — the VM is the Site's), terminates the backing VM, sets `Terminated`. Clears
    `subdomain_doc` before deleting the linked Subdomain (the link-integrity guard
    queries the DB, so the null is persisted first).
@@ -334,39 +334,40 @@ rotates it later themselves; the db root password is never surfaced either
 create_site path does no password work, which is what removed the ~28s `bench frappe`
 boot.
 
-## The attached Pilot admin console *(built — this phase)*
+## The attached admin console *(built)*
 
 A `create_site` stands up **two** front doors on the **one** backing VM:
 
 ```
-acme.blr1.frappe.dev         → the customer's Frappe site   (Site, `bench browse` 24h session)
-acme-pilot.blr1.frappe.dev   → the bench admin console      (Pilot, admin-session 5-min JWT)
+acme.blr1.frappe.dev         → the customer's Frappe site   (bench-site Site, `bench browse` 24h session)
+acme-pilot.blr1.frappe.dev   → the bench admin console      (pilot-console Site, admin-session 5-min JWT)
 ```
 
-The `Site` is the tenant's Frappe site (surfaced to Central via `get_site`). The
-**`Pilot`** is the bench admin console on the **same bench**, and it is the front door
-**Central's Asset "Open" resolves** — `front_door_for_vm` prefers a Pilot over a Site
-(`_FRONT_DOOR_DOCTYPES = ("Pilot", "Site")`), so once both back the VM the Asset's
+The `bench-site` Site is the tenant's Frappe site (surfaced to Central via `get_site`).
+The **`pilot-console` Site** is the bench admin console on the **same bench**, and it is
+the front door **Central's Asset "Open" resolves** — `front_door_for_vm` prefers the
+`pilot-console` over the `bench-site`: it looks up the VM's `Site(kind="pilot-console")`
+first and falls back to the `bench-site` Site, so once both back the VM the Asset's
 `gateway_url` / `login_url` point at the console, not the customer site. Before this,
-`create_site` created no Pilot and the Asset resolved the Site, so "Open" landed on the
+`create_site` created no console and the Asset resolved the site, so "Open" landed on the
 customer site with a 24h `bench browse` URL — the modeling gap this closes.
 
-**One VM, one owner.** The `Site` owns the backing VM (it clones the golden and
-terminates it). The Pilot is created in **attached mode** (`Pilot.attached = 1`, set from
-`Site.auto_provision` via `pilot.flags.attach_vm = <vm>`): it **binds** the Site's VM
-instead of creating one, and its `terminate()` **skips** VM teardown (the Site owns the
-VM's lifecycle). So there is no double-provision and no double-terminate. A stand-alone
-Pilot (the `create_vm` bench product) is unchanged — it still owns its own VM.
+**One VM, one owner.** The `bench-site` Site owns the backing VM (it clones the golden and
+terminates it). The console is created in **attached mode** (`attached = 1`, set from
+`Site.auto_provision` via `console.flags.attach_vm = <vm>`): it **binds** the site's VM
+instead of creating one, and its `terminate()` **skips** VM teardown (the owning site owns
+the VM's lifecycle). So there is no double-provision and no double-terminate. A stand-alone
+console (a `create_vm` `pilot-console` Site) is unchanged — it still owns its own VM.
 
-**The console label.** `subdomain_label.pilot_subdomain_for(<label>)` derives the pilot
+**The console label.** `subdomain_label.console_subdomain_for(<label>)` derives the console
 subdomain: `acme` → `acme-pilot`, or `acme-pilot-<rand>` if `acme-pilot` already backs a
-Pilot. It stays a valid Contract-A label (≤ 63 chars, `[a-z0-9-]`).
+console. It stays a valid Contract-A label (≤ 63 chars, `[a-z0-9-]`).
 
 **Two vhosts, one bench.** The admin app + its deps are baked into **every** golden
 (site and admin — see [08-images.md](./08-images.md), `build.sh`); a site-mode golden
-simply doesn't wire the admin vhost. So on the same booted VM the Pilot runs the
-**admin-mode** deploy (`deploy-site.py --mode admin` against the pilot FQDN:
-`[admin].domain = <pilot-fqdn>` + `bench setup production`), producing a second nginx
+simply doesn't wire the admin vhost. So on the same booted VM the console runs the
+**admin-mode** deploy (`deploy-site.py --mode admin` against the console FQDN:
+`[admin].domain = <console-fqdn>` + `bench setup production`), producing a second nginx
 vhost alongside the renamed site vhost. `deploy_site(...)` / `regenerate_login(...)` take
 an explicit `mode` that overrides the VM's `build_mode` (which stays `site`) so the same
 VM serves the site at one FQDN and the console at another. Two `Subdomain` rows (one per
@@ -379,14 +380,14 @@ FQDN) both target the VM's public `/128`.
 > admin health path (`/api/status`) while `acme.<region>` still answers the site path.
 
 **`auto_provision` gains a stage.** After the site reaches serving (its Subdomain is
-created) and **before** the Site is marked `Running`, `_provision_pilot(site, vm)` creates
-the attached Pilot, runs its admin deploy, creates the pilot's Subdomain, marks the Pilot
-`Running`, and links it on `Site.pilot`. `Site.terminate()` cascades to the Pilot
-(attached → drops only its Subdomain + row) before terminating the VM.
+created) and **before** the Site is marked `Running`, `_provision_console(site, vm,
+console_label)` creates the attached console, runs its admin deploy, creates the console's
+Subdomain, marks the console `Running`, and links it on `Site.console`. `Site.terminate()`
+cascades to the console (attached → drops only its Subdomain + row) before terminating the VM.
 
 **A console failure does NOT fail the site.** The console is a *second*, additive front
 door on a VM whose site has already deployed and cleared the readiness gate, so
-`_attach_pilot_console` wraps the stage: the traceback goes to the Error Log, the Pilot
+`_attach_console` wraps the stage: the traceback goes to the Error Log, the console
 row itself is marked `Failed` (its own fail-loud), and the Site still reaches `Running`
 with its own `login_url` intact. This is the one deliberate exception to
 `auto_provision`'s fail-loud rule — a tenant whose site serves HTTP 200 must never be
