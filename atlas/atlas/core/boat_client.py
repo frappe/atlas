@@ -100,7 +100,7 @@ FIRST_BOOT_EPOCH = 1
 # only on a verb that has a result and only when it succeeded. `sleep-vm` populates
 # it with `{"memory_snapshot": ..., "reason": ..., "memory_snapshot_bytes": ...}`;
 # the host verbs that emit an ATLAS_RESULT= line (`snapshot-vm`, `warm-snapshot-vm`,
-# `snapshot-stop-vm`, `vm-tunnel`, the s3 backups) carry theirs here too — the daemon
+# `snapshot-stop-vm`, the s3 backups) carry theirs here too — the daemon
 # reads the line off the verb's stdout and folds it into this field.
 #
 # `_task_stdout` folds a present result back onto the Task's stdout as the very

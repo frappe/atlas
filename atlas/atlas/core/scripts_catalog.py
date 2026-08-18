@@ -279,7 +279,6 @@ BOAT_ONLY_VERBS: frozenset[str] = frozenset(
 		"regenerate-host-keys-vm",
 		"reset-server",
 		"export-cleanup-source",
-		"vm-tunnel",
 		"poll-vm-traffic",
 		"probe-woken-vms",
 		"firewall-apply",
@@ -315,8 +314,7 @@ def runs_on_boat(verb: str) -> bool:
 #   - provision-vm, sync-image, promote-snapshot-image, warm-snapshot-vm and the
 #     two s3 backups each need grants the boat user does not hold (curl, mkfs.ext4,
 #     dd, `systemctl start` an arbitrary unit), which must be written scoped and
-#     proven on a host before the daemon runs them; vm-tunnel needs its wireguard
-#     commands literalised first. Their transport is ready — `run_task` routes each
+#     proven on a host before the daemon runs them. Their transport is ready — `run_task` routes each
 #     the day boat's servedHostVerbs and its allow-list gain it. Until then they
 #     stay on the SSH `boat <verb>` path.
 #   - bootstrap and reset-server bookend the daemon's own existence; poll-vm-traffic
@@ -339,7 +337,6 @@ HTTP_HOST_VERBS: frozenset[str] = frozenset(
 		"sync-image",
 		"upload-snapshot-s3",
 		"restore-snapshot-s3",
-		"vm-tunnel",
 	}
 )
 
