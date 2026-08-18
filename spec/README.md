@@ -160,7 +160,7 @@ keep it the source of truth.
 26. [Docker compatibility (`docker run` against microVMs)](./27-docker-compat.md) — *design / proposal*
 27. [Placement — load-aware host selection for the size ladder](./28-placement.md)
 28. [Snapshot backup to S3](./29-snapshot-backup.md) — *push a point-in-time snapshot off-host to S3 and rehydrate it back (same-VM rollback)*
-29. [The core ↔ service boundary and the `satellite` app](./30-core-service-boundary.md) — *how service logic (proxy, gateway, mesh, bench/site) leaves core for a separate app via an explicit VM-lifecycle seam*
+29. [The core ↔ service boundary](./30-core-service-boundary.md) — *epitaph: the separate `satellite` app was abandoned; the core ↔ service separation shipped **in-app** as the `core/` + `services/` module split (one-way imports, gate-enforced)*
 30. [Distributed network control plane (ANCP)](./31-ancp-network-control-plane.md) — *shipped: the decentralized `atlas-networkd` control plane (gossip + anti-entropy) that replaced the controller-driven WireGuard host mesh of [25](./25-private-networking.md)*
 31. [Sleepy VMs — auto-sleep idle VMs, wake on demand](./32-sleepy-vms.md) — *free host RAM by sleeping idle VMs; wake on operator Start or the first inbound TCP connection (fast resume from a memory snapshot)*
 32. [Boat — the per-host daemon, and what Atlas keeps](./33-boat.md) — *design: the split that makes Atlas authoritative for **desired** state and a per-host Go daemon authoritative for **observed** state; every host-side service becomes one unit off one `boat` binary, driven over an OpenAPI-typed HTTP contract on the [management tunnel](./21-tunnel.md)*
