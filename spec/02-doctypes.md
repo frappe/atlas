@@ -44,18 +44,13 @@ one on `Atlas Settings`) and `atlas/atlas/tls/` (a `TlsProvider` ABC per
 `tls_provider_type`, also on `Atlas Settings`). Same rule: controllers
 resolve an implementation by type and never branch on the vendor.
 
-Each DocType is specified by three sections: **Fields** (the schema), **Form
-layout** (the section/column structure of the desk form), and **List view**
-(column order and standard filters). Together these are enough to
-regenerate the JSON without consulting the implementation.
-
-Notation in the Form layout sections:
-
-- `── <label> ──` is a Section Break with that label.
-- `(collapsible)` after a section label means the section is collapsed by
-  default.
-- `|` is a Column Break inside a section. Fields after `|` lay out in the
-  next column.
+Each DocType is documented by its **Fields** — the schema, annotated with the
+non-obvious semantics and invariants a reader needs. This is a *semantic*
+reference, not a duplicate of the JSON: the DocType definition under
+[`atlas/atlas/doctype/`](../atlas/atlas/doctype/) is authoritative for the exact
+field set, the desk form layout, and the list-view columns/filters. This chapter
+documents only what the JSON does not carry — the *why* behind a field, the
+cross-field contracts, the immutability rules, and the controller lifecycle.
 
 ---
 
