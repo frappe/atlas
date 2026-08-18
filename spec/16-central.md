@@ -227,28 +227,30 @@ list periodically to correct drift. Atlas exposes one operator-only read for thi
 
 It returns every tenant-tagged VM (optionally scoped to one `team`);
 untenanted operator VMs are never returned. The wire shape stays **VM-shaped**, but
-a bench VM's front door lives on the [Pilot](./02-doctypes.md#pilot) that owns it:
-the handoff (`gateway_url` — the derived `https://<subdomain>.<region domain>` — plus
-`login_url` and `login_url_expires_at`) is read *through* that Pilot, and is present
-once the Pilot is `Running`; before then, and for an ordinary (non-bench) VM with no
-Pilot, those are `None`. Because a bench `login_url` is a 5-minute single-use admin
+a bench VM's front door lives on the admin console — a `Site(kind="pilot-console")`
+([02-doctypes.md § Site](./02-doctypes.md#site)) — that fronts it: the handoff
+(`gateway_url` — the derived `https://<subdomain>.<region domain>` — plus `login_url`
+and `login_url_expires_at`) is read *through* that console, and is present once the
+console is `Running`; before then, and for an ordinary (non-bench) VM with no console,
+those are `None`. Because a bench `login_url` is a 5-minute single-use admin
 session, Central re-mints it on **Open** (`get_bench_link`) when the stored URL has
-expired, via the whitelisted `Pilot.regenerate_login_url()` method (which returns the
-same VM-shaped payload). On a golden whose pilot carries **no in-guest session verb** —
-which upstream pilot does not, so this is the current normal — that re-mint comes back
-with an empty `login_url`, and Central signs the console's one-click `?sid=` link
-itself against the JWKS the bench trusts from `bench admin enroll`; the Atlas-side read
-and re-mint are unchanged either way ([08-images.md](./08-images.md)). This is the only
-Central→Atlas read; all Central→Atlas *writes* reuse the existing whitelisted
-controller methods.
+expired, via the whitelisted `Site.regenerate_login_url()` (dispatched on `kind`, which
+returns the same VM-shaped payload). On a golden whose bench-cli carries **no in-guest
+session verb** — which upstream pilot does not, so this is the current normal — that
+re-mint comes back with an empty `login_url`, and Central signs the console's one-click
+`?sid=` link itself against the JWKS the bench trusts from `bench admin enroll`; the
+Atlas-side read and re-mint are unchanged either way ([08-images.md](./08-images.md)).
+This is the only Central→Atlas read; all Central→Atlas *writes* reuse the existing
+whitelisted controller methods.
 
-**A self-serve site's Asset resolves the pilot console.** A `create_site` VM is backed
-by **both** a `Site` (the customer's Frappe site) and an attached `Pilot` (a bench admin
-console at `<subdomain>-pilot.<region>` on the same VM — see
-[14-self-serve.md § The attached Pilot admin console](./14-self-serve.md)). The VM→front-door
-resolver (`front_door_for_vm`) prefers the Pilot, so the **Asset's `gateway_url` / `login_url`
-point at the console** (a 5-min admin JWT), while the customer's site handoff (its 24h
-`bench browse` URL + live `url`) is surfaced separately through `get_site` /
-`site.*` events. **Open** on a self-serve Asset therefore re-mints via the Pilot exactly
-as a bench Asset does. (A Site-backed VM with no Pilot yet — mid-provision, or a directly
-created Site — still resolves the Site's handoff as a fallback.)
+**A self-serve site's Asset resolves the admin console.** A `create_site` VM is backed
+by **both** a `bench-site` Site (the customer's Frappe site) and an attached
+`pilot-console` Site (a bench admin console at `<subdomain>-pilot.<region>` on the same
+VM — see [14-self-serve.md § The attached admin console](./14-self-serve.md)). The
+VM→front-door resolver (`front_door_for_vm`) prefers the `pilot-console`, so the
+**Asset's `gateway_url` / `login_url` point at the console** (a 5-min admin JWT), while
+the customer's site handoff (its 24h `bench browse` URL + live `url`) is surfaced
+separately through `get_site` / `site.*` events. **Open** on a self-serve Asset
+therefore re-mints via the console exactly as a bench Asset does. (A VM with no console
+yet — mid-provision, or a directly created `bench-site` — still resolves the site's
+handoff as a fallback.)
