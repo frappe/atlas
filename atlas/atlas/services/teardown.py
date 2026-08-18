@@ -41,8 +41,8 @@ def delete_subdomains(vm) -> None:
 	itself linked-TO by the `Pilot` that fronts it (`subdomain_doc`), and a self-serve
 	site's by its `Site` (`subdomain_doc`) — and Frappe's link-integrity guard protects
 	that linked-TO doc, so deleting the Subdomain out from under a live Pilot/Site raises
-	`LinkExistsError`. Both `Pilot._delete_subdomain` and `Site._delete_subdomain` clear
-	their own `subdomain_doc` before deleting, but a VM terminated directly (the operator,
+	`LinkExistsError`. The aggregate's own teardown (`site_common.delete_subdomain`) clears
+	its `subdomain_doc` before deleting, but a VM terminated directly (the operator,
 	or Central's `terminate_server` driving the VM's own `terminate`) bypasses those
 	paths, so we clear the referencing link here first — the same clear-then-delete order,
 	from the side that owns the Subdomain rather than the side that references it.
@@ -60,7 +60,7 @@ def clear_subdomain_references(subdomain: str) -> None:
 	"""Null out any `Pilot`/`Site` `subdomain_doc` Link pointing at `subdomain`, so the
 	link-integrity guard lets the Subdomain be deleted. The null must be persisted
 	(db_set) before the delete, since the guard queries the DB — mirrors the db_set order
-	in `Pilot._delete_subdomain` / `Site._delete_subdomain`."""
+	in `site_common.delete_subdomain`."""
 	for doctype in ("Pilot", "Site"):
 		for name in frappe.get_all(doctype, filters={"subdomain_doc": subdomain}, pluck="name"):
 			frappe.db.set_value(doctype, name, "subdomain_doc", None)

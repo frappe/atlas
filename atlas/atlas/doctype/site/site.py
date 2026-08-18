@@ -22,6 +22,7 @@ from atlas.atlas.core.placement import (
 	warm_bench_snapshot_for_server,
 )
 from atlas.atlas.core.sizes import SIZE_PRESETS
+from atlas.atlas.services import site_common
 from atlas.atlas.services.subdomain_label import (
 	RESERVED_SUBDOMAINS,
 	validate_label,
@@ -182,27 +183,11 @@ class Site(Document):
 		second call on an already-Terminated row throws."""
 		if self.status == "Terminated":
 			frappe.throw(_("Site is already terminated"))
-		self._delete_subdomain()
+		site_common.delete_subdomain(self)
 		self._terminate_pilot()
 		self._terminate_backing_vm()
 		self.status = "Terminated"
 		self.save(ignore_permissions=True)
-
-	def _delete_subdomain(self) -> None:
-		"""Drop the proxy map row (its on_trash reconciles the fleet). No-op when
-		the site never began serving (no Subdomain was created).
-
-		Clear `subdomain_doc` first: while the Site's Link field still references
-		the Subdomain, Frappe's link-integrity guard refuses the delete
-		(LinkExistsError). The guard queries the DB, so the null must be persisted
-		(db_set), not just set in-memory, before the delete. Same clear-then-remove
-		order terminate() uses for the VM."""
-		subdomain = self.subdomain_doc
-		if not subdomain:
-			return
-		self.db_set("subdomain_doc", None)
-		if frappe.db.exists("Subdomain", subdomain):
-			frappe.delete_doc("Subdomain", subdomain, ignore_permissions=True)
 
 	def _terminate_pilot(self) -> None:
 		"""Terminate the attached Pilot admin console before the VM (if one was stood up).

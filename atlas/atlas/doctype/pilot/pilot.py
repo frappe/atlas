@@ -29,6 +29,7 @@ from frappe import _
 from frappe.model.document import Document
 
 from atlas.atlas.core.placement import active_root_domain
+from atlas.atlas.services import site_common
 from atlas.atlas.services.subdomain_label import PILOT_SUFFIX, validate_label, validate_reserved
 
 # How long a freshly-minted login URL stays usable, keyed by build_mode — the TTL
@@ -202,26 +203,10 @@ class Pilot(Document):
 		row throws."""
 		if self.status == "Terminated":
 			frappe.throw(_("Pilot is already terminated"))
-		self._delete_subdomain()
+		site_common.delete_subdomain(self)
 		self._terminate_backing_vm()
 		self.status = "Terminated"
 		self.save(ignore_permissions=True)
-
-	def _delete_subdomain(self) -> None:
-		"""Drop the proxy-map row (its on_trash reconciles the fleet). No-op when the
-		pilot never began serving (no Subdomain was created).
-
-		Clear `subdomain_doc` first: while the Pilot's Link field still references the
-		Subdomain, Frappe's link-integrity guard refuses the delete (LinkExistsError).
-		The guard queries the DB, so the null must be persisted (db_set), not just set
-		in-memory, before the delete. Same clear-then-remove order Site.terminate() uses,
-		and the order terminate() uses for the VM."""
-		subdomain = self.subdomain_doc
-		if not subdomain:
-			return
-		self.db_set("subdomain_doc", None)
-		if frappe.db.exists("Subdomain", subdomain):
-			frappe.delete_doc("Subdomain", subdomain, ignore_permissions=True)
 
 	def _terminate_backing_vm(self) -> None:
 		"""Terminate the backing VM if one was created and is not already gone.
