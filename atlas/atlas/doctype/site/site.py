@@ -22,7 +22,7 @@ from atlas.atlas.core.placement import (
 	warm_bench_snapshot_for_server,
 )
 from atlas.atlas.core.sizes import SIZE_PRESETS
-from atlas.atlas.services import site_common
+from atlas.atlas.services import site_common, site_console
 from atlas.atlas.services.subdomain_label import (
 	RESERVED_SUBDOMAINS,
 	validate_label,
@@ -119,7 +119,13 @@ class Site(Document):
 
 		enqueue_after_commit so the worker only starts once this insert's
 		transaction has committed — otherwise auto_provision can look up the Site
-		before the row exists ("Site ... not found")."""
+		before the row exists ("Site ... not found").
+
+		A `pilot-console` Site runs a different flow (create its VM synchronously from a
+		bench image, then enqueue) — dispatched to `site_console`."""
+		if self.kind == "pilot-console":
+			site_console.after_insert(self)
+			return
 		frappe.enqueue(
 			"atlas.atlas.doctype.site.site.auto_provision",
 			queue="long",
@@ -180,7 +186,13 @@ class Site(Document):
 		Delete the Subdomain (the proxy stops routing on the next reconcile),
 		terminate the backing VM, then mark Terminated. Mirrors
 		VirtualMachine.terminate()'s cleanup-then-mark shape. Idempotent-ish: a
-		second call on an already-Terminated row throws."""
+		second call on an already-Terminated row throws.
+
+		A `pilot-console` Site has no companion console of its own to cascade to, so it
+		runs the leaner console teardown — dispatched to `site_console`."""
+		if self.kind == "pilot-console":
+			site_console.terminate(self)
+			return
 		if self.status == "Terminated":
 			frappe.throw(_("Site is already terminated"))
 		site_common.delete_subdomain(self)
@@ -215,7 +227,12 @@ class Site(Document):
 		the original deploy), COMMIT so the `get_site` poll sees it, and return the
 		mirror shape Central re-reads. A Fake-backed VM never answers SSH, so its login
 		URL is synthesized here exactly as the deploy synthesizes it — desk/e2e stay
-		green without a host."""
+		green without a host.
+
+		A `pilot-console` Site re-mints an admin session (a different TTL) and returns the
+		VM-shaped mirror Central re-reads, not the site.* one — dispatched to `site_console`."""
+		if self.kind == "pilot-console":
+			return site_console.regenerate_login_url(self)
 		if self.status != "Running":
 			frappe.throw(_("Only a running site's login URL can be regenerated"))
 		result = _regenerate_login(self, self.virtual_machine)
@@ -309,9 +326,15 @@ def auto_provision(
 	the orchestration, 03 owns the script + probe.
 
 	Every status transition is committed (`_set_status`) so Central sees progress
-	cross-transaction (the `site.status_changed` event + the `get_site` poll)."""
+	cross-transaction (the `site.status_changed` event + the `get_site` poll).
+
+	A `pilot-console` Site runs the bench-image console flow instead (no snapshot clone,
+	no HTTP gate, `vm.*` events) — dispatched to `site_console`."""
 	site = frappe.get_doc("Site", site_name)
 	if site.status != "Pending":
+		return
+	if site.kind == "pilot-console":
+		site_console.auto_provision(site, pilot_credential_id, central_endpoint, bootstrap_token)
 		return
 	# A Fake-backed site (developer_mode laptop) runs this WHOLE flow for real —
 	# clone the backing VM, wait for it to boot, create the Subdomain, mark Running —
