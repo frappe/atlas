@@ -62,10 +62,15 @@ class FrontDoor:
 		# and that site has no idea what the sid means: opening it drops the user on the
 		# site's login page as Guest instead of in their bench.
 		#
-		# A Site front door has no console of its own; its name IS the fqdn (Contract A)
-		# and its handoff is the one-click `login_url`, not the sid, so it keeps `name`.
+		# A bench-site Site has no console of its own; its name IS the fqdn (Contract A)
+		# and its handoff is the one-click `login_url`, not the sid, so it keeps `name`. A
+		# `pilot-console` Site is a console like a Pilot — same console_fqdn derivation.
 		if self.doc.doctype == "Pilot":
 			return f"https://{self.doc.console_fqdn}"
+		if self.doc.doctype == "Site" and self.doc.kind == "pilot-console":
+			from atlas.atlas.services import site_console
+
+			return f"https://{site_console.console_fqdn(self.doc)}"
 		return f"https://{self.doc.name}"
 
 	@property
@@ -90,13 +95,19 @@ def front_door_for_vm(vm_name: str) -> FrontDoor | None:
 	The single VM→front-door resolver: replaces the Pilot-only `pilot_for_vm` at the
 	Central seam so a Site-backed VM (create_site) resolves its login handoff too.
 
-	Returns the FIRST match in `_FRONT_DOOR_DOCTYPES` order — Pilot before Site — which
-	is deliberate for the handoff: a self-serve VM carries BOTH a Site and its attached
-	Pilot, and what Central deep-links is the console, not the tenant site. Use
+	Returns the FIRST match, CONSOLE before bench-site: a self-serve VM carries BOTH a
+	bench-site Site and its console, and what Central deep-links is the console, not the
+	tenant site. A console is a `Pilot` (transitional, until the Site/Pilot merge folds it)
+	or a `Site(kind="pilot-console")`; a bench-site is a `Site(kind="bench-site")`. Use
 	`front_doors_for_vm` when you need every aggregate rather than the one that owns the
 	handoff."""
-	for doctype in _FRONT_DOOR_DOCTYPES:
-		name = frappe.db.get_value(doctype, {"virtual_machine": vm_name}, "name")
+	lookups = (
+		("Pilot", {"virtual_machine": vm_name}),
+		("Site", {"virtual_machine": vm_name, "kind": "pilot-console"}),
+		("Site", {"virtual_machine": vm_name}),
+	)
+	for doctype, filters in lookups:
+		name = frappe.db.get_value(doctype, filters, "name")
 		if name:
 			return FrontDoor(frappe.get_doc(doctype, name))
 	return None

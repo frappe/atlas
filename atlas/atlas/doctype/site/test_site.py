@@ -928,3 +928,36 @@ class TestSitePilotConsoleKind(IntegrationTestCase):
 		self.assertEqual(site.status, "Terminated")
 		self.assertFalse(frappe.db.exists("Subdomain", site.get("subdomain_doc")))
 		self.assertEqual(frappe.db.get_value("Virtual Machine", vm_name, "status"), "Terminated")
+
+	def test_front_door_gateway_is_the_console_host_in_site_mode(self) -> None:
+		"""A site-mode console (a server) serves the baked site at its FQDN, so Central
+		deep-links its `-pilot` console host — resolved through the merged doctype."""
+		from atlas.atlas.services.front_door import front_door_for_vm
+		from atlas.tests.fixtures import make_image
+
+		image = make_image("console-site-image", build_mode="site")
+		site = frappe.get_doc(
+			{"doctype": "Site", "subdomain": "srv", "kind": "pilot-console", "tenant": self.tenant}
+		)
+		site.flags.vm_spec = {"server": self.server.name, "image": image.name}
+		site.insert(ignore_permissions=True)
+		front_door = front_door_for_vm(site.virtual_machine)
+		self.assertEqual(front_door.gateway_url, "https://srv-pilot.blr1.frappe.dev")
+
+	def test_front_door_prefers_the_console_over_the_bench_site(self) -> None:
+		"""A self-serve VM is backed by BOTH a bench-site Site and its pilot-console (the
+		attached admin console). What Central deep-links is the console, so front_door_for_vm
+		must resolve the pilot-console kind ahead of the bench-site."""
+		from atlas.atlas.services.front_door import front_door_for_vm
+
+		console = frappe.get_doc(
+			{"doctype": "Site", "subdomain": "acme-pilot", "kind": "pilot-console", "tenant": self.tenant}
+		)
+		console.flags.attach_vm = "shared-vm-uuid"
+		console.insert(ignore_permissions=True)
+		bench = frappe.get_doc({"doctype": "Site", "subdomain": "acme", "tenant": self.tenant})
+		bench.insert(ignore_permissions=True)
+		bench.db_set("virtual_machine", "shared-vm-uuid")
+		front_door = front_door_for_vm("shared-vm-uuid")
+		self.assertEqual(front_door.doc.name, console.name)
+		self.assertEqual(front_door.doc.kind, "pilot-console")
