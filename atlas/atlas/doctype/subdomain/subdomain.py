@@ -124,6 +124,12 @@ def subdomain_map() -> dict[str, str]:
 		filters={"active": 1},
 		fields=["subdomain", "address"],
 	)
+	servers = frappe.db.get_list('Server', filters={'status': 'Active'}, fields=['name', 'ipv6_address'], as_list=True)
+	for subdomain, ipv6 in servers:
+		rows.append({
+			"subdomain": "console-"+subdomain,
+			"address": ipv6,
+		})
 	return {row["subdomain"]: row["address"] for row in rows}
 
 

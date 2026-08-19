@@ -169,11 +169,21 @@ class Server(Document):
 		# scripts_catalog SYSTEMD_HOOKS set excludes it from the host run-task gate.
 		("atlas-wake-trap.py", "/var/lib/atlas/bin/atlas-wake-trap.py"),
 		("systemd/atlas-wake-trap.service", "/etc/systemd/system/atlas-wake-trap.service"),
+		("vm-web-console/server.js", "/var/lib/atlas/vm-web-console/server.js"),
+		("vm-web-console/package.json", "/var/lib/atlas/vm-web-console/package.json"),
+		("vm-web-console/package-lock.json", "/var/lib/atlas/vm-web-console/package-lock.json"),
+		("vm-web-console/public/index.html", "/var/lib/atlas/vm-web-console/public/index.html"),
 		# The firecracker-vm@ unit's ExecStart* hooks are `/usr/local/bin/boat
 		# vm-* %i` (vm-disk-up/vm-network-up/vm-restore/vm-network-down) — served by
 		# the boat binary, so no per-VM hook file ships here anymore.
 		("systemd/firecracker-vm@.service", "/etc/systemd/system/firecracker-vm@.service"),
 		("systemd/atlas-pool.service", "/etc/systemd/system/atlas-pool.service"),
+		("systemd/vm-web-console.service", "/etc/systemd/system/vm-web-console.service"),
+		# host-mesh.service brings up the wg-mesh private-plane device in the host
+		# root netns at boot (design §3), the host-fabric analog of atlas-pool.service:
+		# bootstrap creates the mesh but is not re-run on boot, so this oneshot
+		# re-asserts the device from /etc/atlas-host-mesh.{env,key} + wg-mesh.conf.
+		("systemd/host-mesh.service", "/etc/systemd/system/host-mesh.service"),
 		# atlas-networkd.service (spec/31) is the long-running decentralized control
 		# plane daemon that replaces host-mesh.service. It brings up wg-mesh + runs
 		# gossip/anti-entropy/SWIM + programs wg-mesh atomically from the effective
@@ -346,6 +356,7 @@ class Server(Document):
 			variables={
 				"FIRECRACKER_VERSION": "v1.16.0",
 				"ARCHITECTURE": "x86_64",
+				"ATLAS_URL": frappe.utils.get_url(),
 			},
 		)
 		self._absorb_bootstrap_output(task.stdout)
