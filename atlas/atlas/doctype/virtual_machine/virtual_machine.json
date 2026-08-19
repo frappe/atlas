@@ -56,6 +56,12 @@
   "is_proxy",
   "is_gateway",
   "column_break_proxy",
+  "column_break_garage",
+  "section_break_garage",
+  "is_garage",
+  "garage_type",
+  "garage_configured",
+  "peer_id",
   "section_break_activity",
   "last_started",
   "column_break_activity",
@@ -490,6 +496,43 @@
   },
   {
    "collapsible": 1,
+   "fieldname": "section_break_garage",
+   "fieldtype": "Section Break",
+   "label": "Garage"
+  },
+  {
+   "default": "0",
+   "fieldname": "is_garage",
+   "fieldtype": "Check",
+   "label": "Is Garage"
+  },
+  {
+   "fieldname": "garage_type",
+   "fieldtype": "Select",
+   "label": "Garage Type",
+   "options": "gateway\ndata",
+   "set_only_once": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "garage_configured",
+   "fieldtype": "Check",
+   "label": "Garage Configured",
+   "read_only": 1
+  },
+  {
+   "fieldname": "peer_id",
+   "fieldtype": "Data",
+   "label": "Peer ID",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_garage",
+   "fieldtype": "Column Break",
+   "label": "Garage"
+  },
+  {
+   "collapsible": 1,
    "fieldname": "section_break_boat",
    "fieldtype": "Section Break",
    "label": "Boat"
@@ -532,7 +575,7 @@
   }
  ],
  "links": [],
- "modified": "2026-05-28 00:00:00.000000",
+ "modified": "2026-08-09 00:00:00.000000",
  "modified_by": "Administrator",
  "module": "Atlas",
  "name": "Virtual Machine",
