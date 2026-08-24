@@ -28,7 +28,7 @@ from atlas.atlas.core.networking import derive_uid
 from atlas.atlas.core.task_results import parse_optional_result
 
 
-def start(vm) -> str:
+def start(vm, correlation_id: str | None = None) -> str:
 	"""Start a Stopped VM. When the last stop captured a memory snapshot
 	(has_memory_snapshot), the host resumes the guest from it in milliseconds
 	instead of cold-booting; the start Task is the same either way — the
@@ -59,6 +59,7 @@ def start(vm) -> str:
 	# than idle_timeout_seconds — and the next sleep_idle_vms tick puts it
 	# straight back to sleep, within a minute of the operator starting it.
 	vm.last_traffic_at = vm.last_started
+	vm.correlation_id = correlation_id
 	vm.save()
 	return task.name
 

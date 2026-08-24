@@ -180,7 +180,7 @@ class Site(Document):
 	# ----- lifecycle methods (Contract B state machine) ------------------
 
 	@frappe.whitelist()
-	def terminate(self) -> None:
+	def terminate(self, correlation_id: str | None = None) -> None:
 		"""Take the site off the front door and tear down its backing VM.
 
 		Delete the Subdomain (the proxy stops routing on the next reconcile),
@@ -198,6 +198,7 @@ class Site(Document):
 		site_common.delete_subdomain(self)
 		self._terminate_console()
 		site_common.terminate_backing_vm(self)
+		self.correlation_id = correlation_id
 		self.status = "Terminated"
 		self.save(ignore_permissions=True)
 
@@ -335,7 +336,7 @@ def auto_provision(
 	if site.status != "Pending":
 		return
 	if site.kind == "pilot-console":
-		site_console.auto_provision(site, pilot_credential_id, central_endpoint, bootstrap_token)
+		site_console.auto_provision(site, central_endpoint, bootstrap_token)
 		return
 	# A Fake-backed site (developer_mode laptop) runs this WHOLE flow for real —
 	# clone the backing VM, wait for it to boot, create the Subdomain, mark Running —

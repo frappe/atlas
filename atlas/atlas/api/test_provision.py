@@ -60,7 +60,10 @@ class TestCreateVM(IntegrationTestCase):
 		self.server = self._make_server()
 		self.admin_image = fixtures.make_image("fake-bench-admin-image", build_mode="admin")
 		# create_vm's default-image resolution needs exactly one active image; pin the
-		# bench admin image as the sole active one.
+		# bench admin image as the sole active one. Also clear any configured default_user_image
+		# so default_image() resolves to that pinned image rather than a value carried over from
+		# the environment (rolled back with the test — Atlas Settings is a Single/InnoDB row).
+		frappe.db.set_single_value("Atlas Settings", "default_user_image", None)
 		frappe.db.set_value("Virtual Machine Image", self.admin_image.name, "is_active", 1)
 		for name in frappe.get_all("Virtual Machine Image", filters={"is_active": 1}, pluck="name"):
 			if name != self.admin_image.name:
@@ -132,6 +135,37 @@ class TestCreateVM(IntegrationTestCase):
 		vm = frappe.get_doc("Virtual Machine", console.virtual_machine)
 		self.assertEqual(vm.title, "acme")
 		self.assertEqual(result["ipv6_address"], vm.ipv6_address)
+
+	def test_create_stamps_ids_on_the_vm_created_event(self) -> None:
+		"""Regression: the correlation id and pilot credential id must be on the VM before
+		insert, so the vm.created event (emitted in the VM's after_insert, its payload
+		snapshotted at that moment) already carries them. Stamping them after insert left
+		vm.created with nulls — so Central couldn't attribute that first event to the create
+		action, nor bind its reserved Pilot Credential to the VM."""
+		import json
+
+		result = provision_api.create_vm(
+			team=TEAM,
+			title="corr",
+			vcpus=1,
+			memory_megabytes=512,
+			disk_gigabytes=2,
+			correlation_id="action-123",
+			pilot_credential_id="cred-456",
+		)
+		vm = result["name"]
+		self.addCleanup(frappe.db.delete, "Central Event Log", {"reference_name": vm})
+		self.assertEqual(frappe.db.get_value("Virtual Machine", vm, "correlation_id"), "action-123")
+		self.assertEqual(frappe.db.get_value("Virtual Machine", vm, "pilot_credential_id"), "cred-456")
+		payloads = frappe.get_all(
+			"Central Event Log",
+			filters={"event_type": "vm.created", "reference_name": vm},
+			pluck="payload",
+		)
+		self.assertTrue(payloads, "vm.created was not emitted")
+		created = json.loads(payloads[0])
+		self.assertEqual(created["correlation_id"], "action-123")
+		self.assertEqual(created["pilot_credential_id"], "cred-456")
 
 	def test_gateway_url_is_the_derived_fqdn(self) -> None:
 		result = self._create("acme")

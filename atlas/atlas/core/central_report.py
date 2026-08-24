@@ -300,6 +300,7 @@ def _vm_payload(doc) -> dict:
 		"status": doc.status,
 		"server": doc.server,
 		"pilot_credential_id": doc.get("pilot_credential_id"),
+		"correlation_id": doc.get("correlation_id"),
 		"size_preset": doc.get("size_preset"),
 		"vcpus": doc.get("vcpus"),
 		"memory_megabytes": doc.get("memory_megabytes"),

@@ -238,6 +238,41 @@ class TestCentralReport(IntegrationTestCase):
 	def test_vm_payload_pilot_credential_id_none_when_unset(self) -> None:
 		self.assertIsNone(central_report._vm_payload(self._vm())["pilot_credential_id"])
 
+	def test_vm_payload_echoes_correlation_id(self) -> None:
+		vm = self._vm()
+		vm.correlation_id = "sa-123"
+		self.assertEqual(central_report._vm_payload(vm)["correlation_id"], "sa-123")
+
+	def test_vm_payload_correlation_id_none_when_unset(self) -> None:
+		self.assertIsNone(central_report._vm_payload(self._vm())["correlation_id"])
+
+	def test_console_vm_payload_echoes_correlation_id(self) -> None:
+		# The console-backed path reads the id off the real VM doc, so Central still matches a
+		# create's outcome even when it reports through the console (VM-shaped) front door.
+		server = fixtures.make_server(
+			fixtures.make_provider("corr-vm-provider"),
+			"corr-vm-server",
+			ipv6_address="2001:db8:d::1",
+			ipv6_prefix="2001:db8:d::/64",
+			ipv6_virtual_machine_range="2001:db8:d::/124",
+		)
+		vm = fixtures.make_virtual_machine(server, fixtures.make_image("corr-vm-image"), title="corr-vm")
+		vm.db_set("correlation_id", "sa-xyz")
+		_ensure_solo_root_domain()
+		console = SimpleNamespace(
+			name="acme.blr1.frappe.dev",
+			doctype="Site",
+			kind="pilot-console",
+			subdomain="acme",
+			build_mode="admin",
+			virtual_machine=vm.name,
+			tenant=None,
+			status="Running",
+			login_url_expires_at=None,
+		)
+		console.get = lambda key, default=None: getattr(console, key, default)
+		self.assertEqual(reporting._console_vm_payload(console)["correlation_id"], "sa-xyz")
+
 	def test_plain_vm_payload_has_no_bench_fields(self) -> None:
 		# A VM with no owning Pilot carries no front door.
 		payload = central_report._vm_payload(self._vm())
@@ -552,6 +587,14 @@ class TestCentralReportSite(IntegrationTestCase):
 		self.assertEqual(kwargs["event_type"], "site.created")
 		self.assertEqual(kwargs["payload"]["name"], "acme.blr1.frappe.dev")
 		self.assertEqual(kwargs["payload"]["subdomain"], "acme")
+
+	def test_site_payload_echoes_correlation_id(self) -> None:
+		site = self._site()
+		site.correlation_id = "ra-site-1"
+		self.assertEqual(reporting._site_payload(site)["correlation_id"], "ra-site-1")
+
+	def test_site_payload_correlation_id_none_when_unset(self) -> None:
+		self.assertIsNone(reporting._site_payload(self._site())["correlation_id"])
 
 	def test_status_change_emits_and_pending_hides_handoff(self) -> None:
 		with _patched_emit() as enqueue:

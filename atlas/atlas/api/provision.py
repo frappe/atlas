@@ -43,6 +43,7 @@ def create_vm(
 	pilot_credential_id: str | None = None,
 	central_endpoint: str | None = None,
 	bootstrap_token: str | None = None,
+	correlation_id: str | None = None,
 ) -> dict:
 	"""Provision a bench VM for a Central team and return its (VM-shaped) mirror row.
 
@@ -95,23 +96,17 @@ def create_vm(
 	# long-lived credential. Without them the guest never enrolls and Central refuses to
 	# open the console ("This VM's pilot hasn't enrolled yet") — servers were missing this
 	# entirely while sites had it.
-	console.flags.pilot_credential_id = pilot_credential_id
 	console.flags.central_endpoint = central_endpoint
 	console.flags.bootstrap_token = bootstrap_token
+	# The pilot credential id and correlation id must be on the VM BEFORE it is inserted: the
+	# VM's after_insert emits vm.created and snapshots its payload right then. Stamping them
+	# afterwards left vm.created carrying nulls — so Central couldn't bind its reserved Pilot
+	# Credential to the VM (the console then refused it as "pilot hasn't enrolled yet") nor
+	# attribute that first event to the create action. Ride both onto the VM via these flags,
+	# which _provision_backing_vm sets on the VM doc before it inserts it.
+	console.flags.pilot_credential_id = pilot_credential_id
+	console.flags.correlation_id = correlation_id
 	console.insert(ignore_permissions=True)
-
-	# Stamp the credential id on the backing VM HERE, synchronously, rather than leaving it
-	# to the provision job. The console's after_insert already created the VM (that is why
-	# this function can return its identity), so the row exists — and doing it inline means
-	# the very first `vm.*` event Atlas emits already carries the id, which is what lets
-	# Central bind its reserved Pilot Credential to this VM. Deferring it to the background
-	# job loses the earliest events, and Central then has an Active credential with no
-	# `asset`, which `api/sso.get_bench_link` reads as "This VM's pilot hasn't enrolled
-	# yet" even though the bench enrolled perfectly well.
-	if pilot_credential_id and console.virtual_machine:
-		frappe.db.set_value(
-			"Virtual Machine", console.virtual_machine, "pilot_credential_id", pilot_credential_id
-		)
 
 	# The console created its VM in after_insert; read the plain VM facts through the
 	# link and the bench fields off the console. Shape matches central.atlas._mirror_vm
