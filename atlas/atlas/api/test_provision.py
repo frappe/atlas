@@ -144,6 +144,10 @@ class TestCreateVM(IntegrationTestCase):
 		action, nor bind its reserved Pilot Credential to the VM."""
 		import json
 
+		# vm.created only emits when Central reporting is on (central_report._enabled); enable
+		# it here so the assertion doesn't depend on ambient/test-ordering state. Rolls back
+		# with the test (Atlas's Central Settings is an InnoDB Single).
+		frappe.db.set_single_value("Central Settings", "enabled", 1)
 		result = provision_api.create_vm(
 			team=TEAM,
 			title="corr",
