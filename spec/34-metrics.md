@@ -1,23 +1,16 @@
 # Metrics — host and per-VM telemetry shipped to datum
 
 The README's oldest non-goal — "No metrics or alerting. `journalctl` is enough."
-([README](./README.md#non-goals-this-iteration)) — was scoped exactly as far as
-[22-observability.md](./22-observability.md) drew it: observability stops at
-making long-running *tasks* legible to a human, and spec/22 explicitly disclaimed
-metrics, alerting, and time-series. This chapter retires the **metrics half** of
-that disclaimer. It ships what spec/22 declined to specify: machine telemetry —
-host and per-VM time-series — pushed to an external store, so the fleet's
-questions ("is this host low on RAM? which tenants are burning CPU? is a VM's
-disk filling?") are answered by numbers a chart can hold, not by grepping a
-journal.
+([README](./README.md#non-goals-this-iteration)) — is retired here in its
+**metrics half**. This chapter ships what [22-observability.md](./22-observability.md)
+declined to specify: machine telemetry — host and per-VM time-series — pushed to
+an external store, so the fleet's questions ("is this host low on RAM? which
+tenants are burning CPU? is a VM's disk filling?") are answered by numbers a chart
+can hold, not by grepping a journal.
 
-It does not supersede spec/22; the two are different layers and both stay. The
-Task row ([22](./22-observability.md)) answers "what is the thing I clicked doing
-right now" — live, human, ephemeral. The metric answers "what have the machines
-done, over time, across the fleet" — historical, aggregate, queryable. One is
-liveness for an operator watching; the other is a time-series for a fleet an
-operator is not watching. Nothing in spec/22 is retracted; this chapter adds the
-layer it explicitly left out.
+It does not supersede spec/22; the two are different layers and both stay. The Task
+row is liveness for an operator watching — live, human, ephemeral; the metric is a
+time-series for a fleet no one is watching — historical, aggregate, queryable.
 
 ## The store: frappe/datum
 
@@ -39,15 +32,11 @@ leaks exactly that resource's series and nothing else.
 
 ## The producer: boat
 
-The push lives in `boat`, the per-host Go daemon ([33-boat.md](./33-boat.md)),
-on a resident ticker defaulting to 30 seconds. The choice is attachment, not
-invention: boat already runs on every host, already gathers host facts for its
-export, and already runs a 30s reconcile loop
-([33-boat.md § 3.2](./33-boat.md#32-reconciler-and-forward-only-state-machines))
-— so the metric tick rides machinery that exists instead of a new agent, in the
-spirit of [README principle 5](./README.md#operating-principles) (no agent runs
-on the server). A separate collector would duplicate boat's host probes, its VM
-inventory, and its failure handling for no gain.
+The push lives in `boat`, the per-host Go daemon ([33-boat.md](./33-boat.md)), on
+a resident ticker defaulting to 30 seconds — riding the machinery boat already has
+(its host probes, its VM inventory, its 30s reconcile loop) instead of a new agent
+that would duplicate all three ([README principle 5](./README.md#operating-principles):
+no agent runs on the server).
 
 The push is strictly best-effort, by construction. Each tick runs in an isolated
 background worker with a 2-second HTTP timeout, no retry, and bounded per-VM
@@ -65,6 +54,14 @@ file, starts no tick, opens no connection — it behaves exactly as it did befor
 this feature existed. Metrics export is invisible until it is configured.
 
 ## Tenancy is per-VM
+
+> **Status: the per-VM design below is the target; today the producer ships a single
+> fleet-scoped token.** The per-VM token machinery exists (`datum_token.mint_for_vm` /
+> `build_bundle`) but is **unwired** — `server_boat.install_datum_tokens` currently
+> installs one fleet token (`resource_id="boat"`, empty `vms` map) and tells host and
+> VM samples apart by `server=` / `vm=` labels. Per-VM tenancy is the intended boundary
+> (a tenant's VM is the unit a hosting platform must address alone); wiring it — or
+> deciding the fleet token is enough — is the deferred call.
 
 `resource_id` is the Frappe **Server** name for host samples and the **Virtual
 Machine** name — which is the VM's UUID — for a VM's samples. Because datum
@@ -180,10 +177,6 @@ resource it belongs to, not by a label any producer could mistype.
 
 ## What this is not
 
-- **Not a supersession of spec/22.** Task liveness and fleet numbers are
-  different layers; both stay
-  ([22-observability.md](./22-observability.md),
-  [33-boat.md § 10](./33-boat.md#10-observability-and-audit)).
 - **Not alerting.** This chapter ships numbers, not pages. Alerting on the
   series is a consumer's job and stays out of scope — the non-goal's alerting
   half stands.

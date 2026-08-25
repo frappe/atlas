@@ -1,6 +1,6 @@
 import unittest
 
-from atlas.atlas import scripts_catalog
+from atlas.atlas.core import scripts_catalog
 
 
 class TestScriptsCatalog(unittest.TestCase):

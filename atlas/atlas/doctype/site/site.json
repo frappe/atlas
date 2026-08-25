@@ -11,11 +11,14 @@
   "tenant",
   "column_break_header",
   "status",
+  "kind",
+  "build_mode",
+  "attached",
   "section_break_backing",
   "virtual_machine",
   "column_break_backing",
   "subdomain_doc",
-  "pilot",
+  "console",
   "section_break_timing",
   "provisioning_started",
   "deploying_started",
@@ -67,6 +70,34 @@
    "read_only": 1
   },
   {
+   "default": "bench-site",
+   "description": "Discriminates the two kinds of bench-backed tenant environment this DocType models: `bench-site` (a self-serve customer site, cloned from the golden bench snapshot) or `pilot-console` (a bench admin console on a backing VM, created by `create_vm` — the former Pilot DocType). Set once at insert; drives which lifecycle the controller runs (bench-site inline, pilot-console via services/site_console.py).",
+   "fieldname": "kind",
+   "fieldtype": "Select",
+   "in_standard_filter": 1,
+   "label": "Kind",
+   "options": "bench-site\npilot-console",
+   "read_only": 1,
+   "set_only_once": 1
+  },
+  {
+   "description": "Which bench front door the baked image serves: admin (the bench admin console, minted via `bench generate-admin-session`) or site (a single baked site, minted via `bench browse`). Inherited from the backing VM's image at insert; drives the login-URL mint mode and its TTL. Only meaningful for a `pilot-console` row — a `bench-site` is always site-mode (its 24h TTL).",
+   "fieldname": "build_mode",
+   "fieldtype": "Data",
+   "label": "Build Mode",
+   "read_only": 1,
+   "set_only_once": 1
+  },
+  {
+   "default": "0",
+   "description": "Set when this console was ATTACHED to a VM another aggregate owns (a self-serve Site's backing VM) rather than creating its own. An attached console only wires the admin console (vhost + login mint) on the shared VM; it never provisions or terminates the VM — the owning site does. Only meaningful for a `pilot-console` row.",
+   "fieldname": "attached",
+   "fieldtype": "Check",
+   "label": "Attached",
+   "read_only": 1,
+   "set_only_once": 1
+  },
+  {
    "fieldname": "section_break_backing",
    "fieldtype": "Section Break",
    "label": "Backing"
@@ -94,11 +125,11 @@
    "read_only": 1
   },
   {
-   "description": "The attached Pilot (bench admin console) this site stood up on its OWN backing VM \u2014 fronted at <subdomain>-pilot.<region domain>, the front door Central's Asset resolves for 'Open'. Created by auto_provision after the site serves; terminated with the site. The customer's Frappe site is this Site itself (surfaced via get_site); the Pilot is the admin console on the same bench.",
-   "fieldname": "pilot",
+   "description": "The attached admin console (a Site of kind pilot-console) this site stood up on its OWN backing VM — fronted at <subdomain>-pilot.<region domain>, the front door Central's Asset resolves for 'Open'. Created by auto_provision after the site serves; terminated with the site. The customer's Frappe site is this Site itself (surfaced via get_site); the console is the admin bench on the same VM.",
+   "fieldname": "console",
    "fieldtype": "Link",
-   "label": "Pilot",
-   "options": "Pilot",
+   "label": "Console",
+   "options": "Site",
    "read_only": 1
   },
   {

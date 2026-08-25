@@ -30,7 +30,7 @@ from pathlib import Path
 
 import frappe
 
-from atlas.atlas import scripts_catalog
+from atlas.atlas.core import scripts_catalog
 
 # Host layout. The dashboard is self-contained under one root, served by systemd
 # socket activation on the port baked into the .socket unit (see the unit files).

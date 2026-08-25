@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 
 import frappe
 
-from atlas.atlas.digitalocean import DigitalOceanClient
+from atlas.atlas.core.digitalocean import DigitalOceanClient
 from atlas.tests.e2e._config import (
 	SWEEP_AGE_SECONDS,
 	TAG,
@@ -70,7 +70,7 @@ def _wait_for_droplet_active(client: DigitalOceanClient, droplet_id: int, timeou
 		if droplet.get("status") == "active":
 			return droplet
 		if time.monotonic() >= deadline:
-			from atlas.atlas.digitalocean import DigitalOceanError
+			from atlas.atlas.core.digitalocean import DigitalOceanError
 
 			raise DigitalOceanError(
 				f"Droplet {droplet_id} not active after {timeout_seconds}s (status={droplet.get('status')})"
@@ -90,7 +90,7 @@ def server_is_reachable(server_name: str, timeout_seconds: int = 5) -> bool:
 	separate decision the caller makes, because Active→Broken is a real state
 	change with downstream consequences.
 	"""
-	from atlas.atlas.ssh import connection_for_server, wait_for_ssh
+	from atlas.atlas.core.ssh import connection_for_server, wait_for_ssh
 
 	server = frappe.get_doc("Server", server_name)
 	try:

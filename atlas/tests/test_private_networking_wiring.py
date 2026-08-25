@@ -25,7 +25,7 @@ import unittest
 import frappe
 from frappe.tests import IntegrationTestCase
 
-from atlas.atlas.networking import (
+from atlas.atlas.core.networking import (
 	INFRA_PREFIX,
 	derive_host_mesh_address,
 	derive_host_wireguard_keypair,

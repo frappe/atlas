@@ -11,7 +11,7 @@ active image wins the key. The value stays the exact image name to provision fro
 import frappe
 from frappe.tests import IntegrationTestCase
 
-from atlas.atlas.placement import image_for_version, version_from_image, version_image_map
+from atlas.atlas.core.placement import image_for_version, version_from_image, version_image_map
 from atlas.tests.fixtures import make_image
 
 

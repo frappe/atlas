@@ -216,7 +216,7 @@ the internet. Replace `<your client private key>` with your `privatekey`
 contents; Atlas never sees it."*
 
 **Form links.** `VPN Peer` links off the **Tenant** form ("VPC access")
-and the Atlas workspace, alongside `VPN Tunnel`. The gateway VM shows its peers
+and the Atlas workspace. The gateway VM shows its peers
 via a linked-list on the `Virtual Machine` dashboard when `is_gateway=1`.
 
 ---

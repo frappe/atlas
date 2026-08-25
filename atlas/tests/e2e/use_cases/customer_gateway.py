@@ -46,7 +46,7 @@ CLIENT_DEVICE = "vpc-e2e"
 
 
 def host_shell(server_name: str, command: str, timeout: int = 40) -> str:
-	from atlas.atlas.ssh import connection_for_server, run_ssh, ssh_key_file
+	from atlas.atlas.core.ssh import connection_for_server, run_ssh, ssh_key_file
 
 	conn = connection_for_server(frappe.get_doc("Server", server_name))
 	with ssh_key_file(conn.ssh_private_key) as key_path:
@@ -233,7 +233,7 @@ def _purge_known_host(address: str) -> None:
 	new key. A no-op in production, where /128s don't recycle like this."""
 	import subprocess
 
-	from atlas.atlas._ssh.transport import KNOWN_HOSTS_PATH
+	from atlas.atlas.core._ssh.transport import KNOWN_HOSTS_PATH
 
 	if KNOWN_HOSTS_PATH.exists():
 		subprocess.run(["ssh-keygen", "-f", str(KNOWN_HOSTS_PATH), "-R", address], capture_output=True)
@@ -242,7 +242,7 @@ def _purge_known_host(address: str) -> None:
 def _deploy_and_assert_gateway(gateway) -> None:
 	"""Deploy wg0 + the static guard, then assert the device is up, the tc filter is
 	attached, and the host-local input drop is present (reference §9)."""
-	from atlas.atlas import customer_gateway
+	from atlas.atlas.services import customer_gateway
 
 	_purge_known_host(gateway.ipv6_address)
 	customer_gateway.deploy_gateway(gateway.name)
@@ -260,7 +260,7 @@ def _deploy_and_assert_gateway(gateway) -> None:
 
 def _guest_shell(vm, command: str, timeout: int = 60) -> str:
 	"""Run a command inside a guest VM over guest-SSH (the controller connection)."""
-	from atlas.atlas.ssh import connection_for_guest, run_ssh, ssh_key_file
+	from atlas.atlas.core.ssh import connection_for_guest, run_ssh, ssh_key_file
 
 	conn = connection_for_guest(vm if hasattr(vm, "name") else frappe.get_doc("Virtual Machine", vm))
 	with ssh_key_file(conn.ssh_private_key) as key_path:
@@ -314,7 +314,7 @@ def _ensure_e2e_tenant(name: str) -> str:
 
 def _enroll_peer(tenant: str, label: str, client_public_key: str | None = None):
 	"""Enroll a customer peer via the real controller path (request_vpc_access)."""
-	from atlas.atlas import customer_gateway
+	from atlas.atlas.services import customer_gateway
 
 	if client_public_key is None:
 		# A structural smoke needs no real client; mint a throwaway keypair anywhere.

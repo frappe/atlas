@@ -12,7 +12,7 @@ import frappe
 from frappe.tests import IntegrationTestCase
 
 from atlas.atlas import demo, demo_data
-from atlas.atlas.sizes import SIZE_PRESETS
+from atlas.atlas.core.sizes import SIZE_PRESETS
 
 
 class TestDemoDeveloperModeGate(IntegrationTestCase):

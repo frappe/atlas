@@ -129,7 +129,7 @@ def set_digitalocean_settings(
 
 def seed_catalogs() -> None:
 	"""Seed the test catalog rows used by make_server and provider tests."""
-	from atlas.atlas.providers.digitalocean import (
+	from atlas.atlas.core.providers.digitalocean import (
 		DIGITALOCEAN_MONTHLY_COST_USD,
 		KNOWN_DIGITALOCEAN_IMAGES,
 		KNOWN_DIGITALOCEAN_SIZES,
@@ -165,7 +165,7 @@ def seed_catalogs() -> None:
 
 	# Mark the canonical default so provisioning's catalog fallback resolves (the
 	# desk modal and provision_server both read the is_default row). Idempotent.
-	from atlas.atlas.setup_catalog import set_default
+	from atlas.atlas.core.setup_catalog import set_default
 
 	if not frappe.db.get_value("Provider Size", {"provider_type": "DigitalOcean", "is_default": 1}, "name"):
 		set_default("Provider Size", "DigitalOcean", DEFAULT_DIGITALOCEAN_SIZE.split("/", 1)[1])
@@ -256,17 +256,6 @@ def make_image(name: str = "test-image", **overrides: Any) -> Document:
 	doc.update(overrides)
 	with no_commit_enqueue():
 		return frappe.get_doc(doc).insert(ignore_permissions=True)
-
-
-def make_pilot(subdomain: str = "acme", vm_spec: dict | None = None, **overrides: Any) -> Document:
-	"""Create a `Pilot` row. Its `after_insert` creates the backing VM synchronously
-	from `vm_spec` (server/image/sizing), so the caller supplies at least a
-	Fake-backed server + a bench image for the VM to inherit build_mode from."""
-	doc = {"doctype": "Pilot", "subdomain": subdomain}
-	doc.update(overrides)
-	pilot = frappe.get_doc(doc)
-	pilot.flags.vm_spec = vm_spec or {}
-	return pilot.insert(ignore_permissions=True)
 
 
 def make_virtual_machine(

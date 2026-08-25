@@ -17,8 +17,9 @@ from unittest.mock import MagicMock, patch
 import frappe
 from frappe.tests import IntegrationTestCase
 
-from atlas.atlas import central_report
-from atlas.atlas.central import CentralClient, CentralError
+from atlas.atlas.core import central_report
+from atlas.atlas.core.central import CentralClient, CentralError
+from atlas.atlas.services import reporting
 from atlas.tests import fixtures
 
 
@@ -29,6 +30,26 @@ def _response(status_code=200, body=None, content=True):
 	resp.content = b"x" if content else b""
 	resp.json = lambda: body
 	return resp
+
+
+def _ensure_solo_root_domain(domain: str = "blr1.frappe.dev") -> None:
+	"""Exactly one active Root Domain, so `active_root_domain()` resolves (a pilot-console
+	console derives its FQDN from it). Deactivates any other active row for the test's txn."""
+	if not frappe.db.exists("Root Domain", domain):
+		frappe.get_doc(
+			{
+				"doctype": "Root Domain",
+				"domain": domain,
+				"region": domain.split(".", 1)[0],
+				"is_active": 1,
+				"dns_provider_type": "Route53",
+				"tls_provider_type": "Let's Encrypt",
+			}
+		).insert(ignore_permissions=True)
+	frappe.db.set_value("Root Domain", domain, "is_active", 1)
+	for name in frappe.get_all("Root Domain", filters={"is_active": 1}, pluck="name"):
+		if name != domain:
+			frappe.db.set_value("Root Domain", name, "is_active", 0)
 
 
 # --- Golden vector: pinned wire contract, mirrored in Central's
@@ -56,7 +77,7 @@ class TestGoldenVector(IntegrationTestCase):
 	def test_serialization_is_byte_stable(self) -> None:
 		# json.dumps' default separators and key order are part of the contract.
 		client = CentralClient("https://central.example/", "ak", "s", webhook_secret=GOLDEN_SECRET)
-		with patch("atlas.atlas.placement.atlas_region", return_value="blr"):
+		with patch("atlas.atlas.core.placement.atlas_region", return_value="blr"):
 			body = client._sign({}, json_payload=GOLDEN_PAYLOAD)
 		self.assertEqual(body, GOLDEN_BODY)
 
@@ -64,8 +85,8 @@ class TestGoldenVector(IntegrationTestCase):
 		client = CentralClient("https://central.example/", "ak", "s", webhook_secret=GOLDEN_SECRET)
 		headers: dict = {}
 		with (
-			patch("atlas.atlas.central.frappe.utils.now", return_value=GOLDEN_TIMESTAMP),
-			patch("atlas.atlas.placement.atlas_region", return_value="blr"),
+			patch("atlas.atlas.core.central.frappe.utils.now", return_value=GOLDEN_TIMESTAMP),
+			patch("atlas.atlas.core.placement.atlas_region", return_value="blr"),
 		):
 			client._sign(headers, json_payload=GOLDEN_PAYLOAD)
 		self.assertEqual(headers["X-Atlas-Timestamp"], GOLDEN_TIMESTAMP)
@@ -77,12 +98,12 @@ class TestCentralClient(IntegrationTestCase):
 		self.client = CentralClient("https://central.example/", "ak", "secret")
 		self.signing_client = CentralClient("https://central.example/", "ak", "secret", webhook_secret="whs")
 		# atlas_region() throws when Atlas Settings.region is unset, true on a fresh site.
-		region = patch("atlas.atlas.placement.atlas_region", return_value="blr")
+		region = patch("atlas.atlas.core.placement.atlas_region", return_value="blr")
 		region.start()
 		self.addCleanup(region.stop)
 
 	def test_request_builds_url_and_auth_header(self) -> None:
-		with patch("atlas.atlas.central.requests.request") as request:
+		with patch("atlas.atlas.core.central.requests.request") as request:
 			request.return_value = _response(body={"message": {"label": "Central"}})
 			self.client.ping()
 		args, kwargs = request.call_args
@@ -91,14 +112,14 @@ class TestCentralClient(IntegrationTestCase):
 		self.assertEqual(kwargs["headers"]["Authorization"], "token ak:secret")
 
 	def test_ping_ok(self) -> None:
-		with patch("atlas.atlas.central.requests.request") as request:
+		with patch("atlas.atlas.core.central.requests.request") as request:
 			request.return_value = _response(body={"message": {"label": "Prod Central"}})
 			result = self.client.ping()
 		self.assertTrue(result.ok)
 		self.assertEqual(result.label, "Prod Central")
 
 	def test_ping_never_raises_on_http_error(self) -> None:
-		with patch("atlas.atlas.central.requests.request") as request:
+		with patch("atlas.atlas.core.central.requests.request") as request:
 			request.return_value = _response(status_code=401, body={"exc": "auth"})
 			result = self.client.ping()
 		self.assertFalse(result.ok)
@@ -107,14 +128,14 @@ class TestCentralClient(IntegrationTestCase):
 	def test_ping_never_raises_on_transport_error(self) -> None:
 		import requests as requests_lib
 
-		with patch("atlas.atlas.central.requests.request", side_effect=requests_lib.ConnectionError("down")):
+		with patch("atlas.atlas.core.central.requests.request", side_effect=requests_lib.ConnectionError("down")):
 			result = self.client.ping()
 		self.assertFalse(result.ok)
 		self.assertIn("down", result.error)
 
 	def test_ping_stays_unsigned(self) -> None:
 		# ping is plain token auth even on a client that HAS a webhook_secret.
-		with patch("atlas.atlas.central.requests.request") as request:
+		with patch("atlas.atlas.core.central.requests.request") as request:
 			request.return_value = _response(body={"message": {"label": "Central"}})
 			self.signing_client.ping()
 		kwargs = request.call_args.kwargs
@@ -125,27 +146,27 @@ class TestCentralClient(IntegrationTestCase):
 	def test_post_event_sends_no_authorization_header(self) -> None:
 		# Frappe validates any Authorization header it sees, so sending the token would
 		# put a stale api_secret in the path of a correctly signed event.
-		with patch("atlas.atlas.central.requests.request") as request:
+		with patch("atlas.atlas.core.central.requests.request") as request:
 			request.return_value = _response(body={})
 			self.signing_client.post_event({"type": "vm.created"})
 		self.assertNotIn("Authorization", request.call_args.kwargs["headers"])
 
 	def test_post_event_raises_on_error(self) -> None:
-		with patch("atlas.atlas.central.requests.request") as request:
+		with patch("atlas.atlas.core.central.requests.request") as request:
 			request.return_value = _response(status_code=500, body={"exc": "boom"})
 			with self.assertRaises(CentralError):
 				self.signing_client.post_event({"type": "vm.created"})
 
 	def test_post_event_raises_without_webhook_secret(self) -> None:
 		# No webhook_secret — post_event must refuse before the network call.
-		with patch("atlas.atlas.central.requests.request") as request:
+		with patch("atlas.atlas.core.central.requests.request") as request:
 			with self.assertRaises(CentralError):
 				self.client.post_event({"type": "vm.created"})
 		request.assert_not_called()
 
 	def test_post_event_sends_data_not_json_kwarg(self) -> None:
 		# Signed bytes and sent bytes must be the same object.
-		with patch("atlas.atlas.central.requests.request") as request:
+		with patch("atlas.atlas.core.central.requests.request") as request:
 			request.return_value = _response(body={})
 			self.signing_client.post_event({"type": "vm.created"})
 		kwargs = request.call_args.kwargs
@@ -158,8 +179,8 @@ class TestCentralClient(IntegrationTestCase):
 		import hmac
 
 		with (
-			patch("atlas.atlas.central.requests.request") as request,
-			patch("atlas.atlas.placement.atlas_region", return_value="blr"),
+			patch("atlas.atlas.core.central.requests.request") as request,
+			patch("atlas.atlas.core.placement.atlas_region", return_value="blr"),
 		):
 			request.return_value = _response(body={})
 			self.signing_client.post_event({"type": "vm.created"})
@@ -191,9 +212,9 @@ class TestCentralReport(IntegrationTestCase):
 	_patched_emit = staticmethod(_patched_emit)
 
 	def _vm(self, status="Running", before_status="Pending", resizing=False):
-		# A plain VM stand-in — no Pilot backs "vm-1", so _vm_payload's pilot_for_vm
+		# A plain VM stand-in — no console backs "vm-1", so _vm_payload's front-door
 		# lookup returns None and the bench fields (gateway_url/login_url/expiry) are all
-		# None. The bench handoff is exercised via _pilot_vm_payload below.
+		# None. The bench handoff is exercised via _console_vm_payload below.
 		doc = SimpleNamespace(
 			name="vm-1",
 			title="vm-1",
@@ -225,9 +246,9 @@ class TestCentralReport(IntegrationTestCase):
 	def test_vm_payload_correlation_id_none_when_unset(self) -> None:
 		self.assertIsNone(central_report._vm_payload(self._vm())["correlation_id"])
 
-	def test_pilot_vm_payload_echoes_correlation_id(self) -> None:
-		# The pilot-backed path reads the id off the real VM doc, so Central still matches a
-		# create's outcome even when it reports through the Pilot front door.
+	def test_console_vm_payload_echoes_correlation_id(self) -> None:
+		# The console-backed path reads the id off the real VM doc, so Central still matches a
+		# create's outcome even when it reports through the console (VM-shaped) front door.
 		server = fixtures.make_server(
 			fixtures.make_provider("corr-vm-provider"),
 			"corr-vm-server",
@@ -237,17 +258,20 @@ class TestCentralReport(IntegrationTestCase):
 		)
 		vm = fixtures.make_virtual_machine(server, fixtures.make_image("corr-vm-image"), title="corr-vm")
 		vm.db_set("correlation_id", "sa-xyz")
-		pilot = SimpleNamespace(
+		_ensure_solo_root_domain()
+		console = SimpleNamespace(
 			name="acme.blr1.frappe.dev",
-			doctype="Pilot",
-			console_fqdn="acme.blr1.frappe.dev",
+			doctype="Site",
+			kind="pilot-console",
+			subdomain="acme",
+			build_mode="admin",
 			virtual_machine=vm.name,
 			tenant=None,
 			status="Running",
 			login_url_expires_at=None,
 		)
-		pilot.get = lambda key, default=None: getattr(pilot, key, default)
-		self.assertEqual(central_report._pilot_vm_payload(pilot)["correlation_id"], "sa-xyz")
+		console.get = lambda key, default=None: getattr(console, key, default)
+		self.assertEqual(reporting._console_vm_payload(console)["correlation_id"], "sa-xyz")
 
 	def test_plain_vm_payload_has_no_bench_fields(self) -> None:
 		# A VM with no owning Pilot carries no front door.
@@ -256,10 +280,10 @@ class TestCentralReport(IntegrationTestCase):
 		self.assertIsNone(payload["login_url"])
 		self.assertIsNone(payload["login_url_expires_at"])
 
-	def test_pilot_vm_payload_expiry_is_json_serializable(self) -> None:
-		# _merge_bench_fields renders the Pilot's expiry via _iso so requests' stdlib
-		# json.dumps (no default=str) can POST it. _pilot_vm_payload reads plain VM facts
-		# through the link, so stand in a real VM the pilot points at.
+	def test_console_vm_payload_expiry_is_json_serializable(self) -> None:
+		# _merge_bench_fields renders the console's expiry via _iso so requests' stdlib
+		# json.dumps (no default=str) can POST it. _console_vm_payload reads plain VM facts
+		# through the link, so stand in a real VM the console points at.
 		import datetime
 
 		server = fixtures.make_server(
@@ -270,21 +294,22 @@ class TestCentralReport(IntegrationTestCase):
 			ipv6_virtual_machine_range="2001:db8:c::/124",
 		)
 		vm = fixtures.make_virtual_machine(server, fixtures.make_image("central-vm-image"), title="pilot-vm")
-		# gateway_url is derived from the front door's name (its fqdn) — for a real Pilot
-		# name == <subdomain>.<region domain>, so stand that in as the name here.
-		pilot = SimpleNamespace(
+		_ensure_solo_root_domain()
+		# gateway_url is derived from the console's console_fqdn — for an admin-mode console
+		# that is <subdomain>.<region domain>, i.e. the row name.
+		console = SimpleNamespace(
 			name="acme.blr1.frappe.dev",
-			# FrontDoor reads gateway_url off a Pilot's console host, so the stand-in has
-			# to carry both (admin-mode here, hence console == name).
-			doctype="Pilot",
-			console_fqdn="acme.blr1.frappe.dev",
+			doctype="Site",
+			kind="pilot-console",
+			subdomain="acme",
+			build_mode="admin",
 			virtual_machine=vm.name,
 			tenant=None,
 			status="Running",
 			login_url_expires_at=datetime.datetime(2026, 7, 4, 10, 19, 56),
 		)
-		pilot.get = lambda key, default=None: getattr(pilot, key, default)
-		payload = central_report._pilot_vm_payload(pilot)
+		console.get = lambda key, default=None: getattr(console, key, default)
+		payload = reporting._console_vm_payload(console)
 		self.assertEqual(payload["login_url_expires_at"], "2026-07-04 10:19:56")
 		self.assertEqual(payload["gateway_url"], "https://acme.blr1.frappe.dev")
 		json.dumps(payload)  # requests uses stdlib json.dumps with no default
@@ -302,7 +327,7 @@ class TestCentralReport(IntegrationTestCase):
 			central_report.on_vm_update(self._vm(status="Running", before_status="Pending"))
 		enqueue.assert_called_once()
 		args, kwargs = enqueue.call_args
-		self.assertEqual(args[0], "atlas.atlas.central_report.deliver")
+		self.assertEqual(args[0], "atlas.atlas.core.central_report.deliver")
 		self.assertTrue(kwargs["enqueue_after_commit"])
 		self.assertEqual(kwargs["event_type"], "vm.status_changed")
 		self.assertEqual(kwargs["payload"]["name"], "vm-1")
@@ -557,7 +582,7 @@ class TestCentralReportSite(IntegrationTestCase):
 
 	def test_after_insert_emits_created(self) -> None:
 		with _patched_emit() as enqueue:
-			central_report.on_site_after_insert(self._site())
+			reporting.on_site_after_insert(self._site())
 		kwargs = enqueue.call_args.kwargs
 		self.assertEqual(kwargs["event_type"], "site.created")
 		self.assertEqual(kwargs["payload"]["name"], "acme.blr1.frappe.dev")
@@ -566,14 +591,14 @@ class TestCentralReportSite(IntegrationTestCase):
 	def test_site_payload_echoes_correlation_id(self) -> None:
 		site = self._site()
 		site.correlation_id = "ra-site-1"
-		self.assertEqual(central_report._site_payload(site)["correlation_id"], "ra-site-1")
+		self.assertEqual(reporting._site_payload(site)["correlation_id"], "ra-site-1")
 
 	def test_site_payload_correlation_id_none_when_unset(self) -> None:
-		self.assertIsNone(central_report._site_payload(self._site())["correlation_id"])
+		self.assertIsNone(reporting._site_payload(self._site())["correlation_id"])
 
 	def test_status_change_emits_and_pending_hides_handoff(self) -> None:
 		with _patched_emit() as enqueue:
-			central_report.on_site_update(self._site(status="Provisioning", before_status="Pending"))
+			reporting.on_site_update(self._site(status="Provisioning", before_status="Pending"))
 		payload = enqueue.call_args.kwargs["payload"]
 		self.assertEqual(enqueue.call_args.kwargs["event_type"], "site.status_changed")
 		self.assertEqual(payload["status"], "Provisioning")
@@ -583,7 +608,7 @@ class TestCentralReportSite(IntegrationTestCase):
 
 	def test_running_event_carries_handoff(self) -> None:
 		with _patched_emit() as enqueue:
-			central_report.on_site_update(self._site(status="Running", before_status="Deploying"))
+			reporting.on_site_update(self._site(status="Running", before_status="Deploying"))
 		payload = enqueue.call_args.kwargs["payload"]
 		self.assertEqual(payload["url"], "https://acme.blr1.frappe.dev")
 		self.assertEqual(payload["login_url"], "https://acme.blr1.frappe.dev/app?sid=abc123")
@@ -594,7 +619,7 @@ class TestCentralReportSite(IntegrationTestCase):
 			patch.object(central_report, "_enabled", return_value=True),
 			patch.object(central_report.frappe, "enqueue") as enqueue,
 		):
-			central_report.on_site_update(self._site(status="Running", before_status="Running"))
+			reporting.on_site_update(self._site(status="Running", before_status="Running"))
 		enqueue.assert_not_called()
 
 	def test_report_site_status_emits_on_the_db_set_transition(self) -> None:
@@ -603,7 +628,7 @@ class TestCentralReportSite(IntegrationTestCase):
 		never pushes and the mirror is stuck at the initial Pending. report_site_status
 		is the explicit emit that carries each transition (Provisioning..Running)."""
 		with _patched_emit() as enqueue:
-			central_report.report_site_status(self._site(status="Provisioning"))
+			reporting.report_site_status(self._site(status="Provisioning"))
 		enqueue.assert_called_once()
 		kwargs = enqueue.call_args.kwargs
 		self.assertEqual(kwargs["event_type"], "site.status_changed")
@@ -614,7 +639,7 @@ class TestCentralReportSite(IntegrationTestCase):
 
 	def test_report_site_status_running_carries_handoff(self) -> None:
 		with _patched_emit() as enqueue:
-			central_report.report_site_status(self._site(status="Running"))
+			reporting.report_site_status(self._site(status="Running"))
 		payload = enqueue.call_args.kwargs["payload"]
 		self.assertEqual(payload["status"], "Running")
 		self.assertEqual(payload["url"], "https://acme.blr1.frappe.dev")
@@ -625,18 +650,18 @@ class TestCentralReportSite(IntegrationTestCase):
 			patch.object(central_report, "_enabled", return_value=False),
 			patch.object(central_report.frappe, "enqueue") as enqueue,
 		):
-			central_report.report_site_status(self._site(status="Running"))
+			reporting.report_site_status(self._site(status="Running"))
 		enqueue.assert_not_called()
 
 
 class TestCentralReportPilot(IntegrationTestCase):
-	"""Pilot lifecycle events. A Pilot reports AS its backing VM, so the payload is
-	VM-shaped with the front-door fields folded on. The Running flip in auto_provision
+	"""pilot-console lifecycle events. A console reports AS its backing VM, so the payload
+	is VM-shaped with the front-door fields folded on. The Running flip in auto_provision
 	is a db_set (skips validation), which never fires on_update — so the push that
-	carries the login handoff rides an explicit report_pilot_status() call instead of
+	carries the login handoff rides an explicit report_console_status() call instead of
 	the doc_event. These tests pin that the explicit emit still delivers the handoff."""
 
-	def _pilot_with_vm(self, status="Running", *, login_url="https://acme.blr1.frappe.dev/app?sid=abc"):
+	def _console_with_vm(self, status="Running", *, login_url="https://acme.blr1.frappe.dev/app?sid=abc"):
 		server = fixtures.make_server(
 			fixtures.make_provider("pilot-evt-provider"),
 			"pilot-evt-server",
@@ -645,30 +670,32 @@ class TestCentralReportPilot(IntegrationTestCase):
 			ipv6_virtual_machine_range="2001:db8:e::/124",
 		)
 		vm = fixtures.make_virtual_machine(server, fixtures.make_image("pilot-evt-image"), title="pilot-vm")
-		pilot = SimpleNamespace(
+		_ensure_solo_root_domain()
+		# FrontDoor derives gateway_url from the console's console_fqdn — admin mode, so it
+		# is <subdomain>.<region domain> (the row name); a site-mode console would carry the
+		# `-pilot` suffix.
+		console = SimpleNamespace(
 			virtual_machine=vm.name,
 			tenant=None,
 			status=status,
-			gateway_url="https://acme.blr1.frappe.dev",
-			# The host the console answers a Central `?sid=` on — what FrontDoor reports
-			# as gateway_url. Same as the name for this admin-mode stand-in; a site-mode
-			# pilot's would carry the `-pilot` suffix.
-			console_fqdn="acme.blr1.frappe.dev",
+			subdomain="acme",
+			build_mode="admin",
 			login_url=login_url,
 			login_url_expires_at="2026-07-04 10:19:56",
-			doctype="Pilot",
+			doctype="Site",
+			kind="pilot-console",
 			name="acme.blr1.frappe.dev",
 		)
-		pilot.get = lambda key, default=None: getattr(pilot, key, default)
-		return pilot
+		console.get = lambda key, default=None: getattr(console, key, default)
+		return console
 
-	def test_report_pilot_status_emits_handoff_on_the_db_set_running_flip(self) -> None:
+	def test_report_console_status_emits_handoff_on_the_db_set_running_flip(self) -> None:
 		"""The bug this closes: auto_provision flips Running via db_set (no on_update),
-		so report_pilot_status must be what pushes the freshly-minted login_url — the
+		so report_console_status must be what pushes the freshly-minted login_url — the
 		mirror would otherwise only learn it on the next 10-min reconcile."""
-		pilot = self._pilot_with_vm(status="Running")
+		console = self._console_with_vm(status="Running")
 		with _patched_emit() as enqueue:
-			central_report.report_pilot_status(pilot)
+			reporting.report_console_status(console)
 		enqueue.assert_called_once()
 		kwargs = enqueue.call_args.kwargs
 		self.assertEqual(kwargs["event_type"], "vm.status_changed")
@@ -677,20 +704,20 @@ class TestCentralReportPilot(IntegrationTestCase):
 		self.assertEqual(kwargs["payload"]["login_url"], "https://acme.blr1.frappe.dev/app?sid=abc")
 		self.assertEqual(kwargs["payload"]["gateway_url"], "https://acme.blr1.frappe.dev")
 
-	def test_report_pilot_status_no_op_when_disabled(self) -> None:
-		pilot = self._pilot_with_vm()
+	def test_report_console_status_no_op_when_disabled(self) -> None:
+		console = self._console_with_vm()
 		with (
 			patch.object(central_report, "_enabled", return_value=False),
 			patch.object(central_report.frappe, "enqueue") as enqueue,
 		):
-			central_report.report_pilot_status(pilot)
+			reporting.report_console_status(console)
 		enqueue.assert_not_called()
 
-	def test_report_pilot_status_no_op_without_backing_vm(self) -> None:
-		pilot = self._pilot_with_vm()
-		pilot.virtual_machine = None
+	def test_report_console_status_no_op_without_backing_vm(self) -> None:
+		console = self._console_with_vm()
+		console.virtual_machine = None
 		with self._patched_emit_no_vm() as enqueue:
-			central_report.report_pilot_status(pilot)
+			reporting.report_console_status(console)
 		enqueue.assert_not_called()
 
 	@staticmethod
@@ -703,12 +730,12 @@ class TestCentralReportPilot(IntegrationTestCase):
 		):
 			yield enqueue
 
-	def test_pre_running_pilot_hides_the_handoff(self) -> None:
+	def test_pre_running_console_hides_the_handoff(self) -> None:
 		"""Before Running the mint hasn't happened — _merge_bench_fields blanks login_url
 		even if a stale value sits on the row."""
-		pilot = self._pilot_with_vm(status="Pending", login_url="https://leftover/app?sid=x")
+		console = self._console_with_vm(status="Pending", login_url="https://leftover/app?sid=x")
 		with _patched_emit() as enqueue:
-			central_report.report_pilot_status(pilot)
+			reporting.report_console_status(console)
 		payload = enqueue.call_args.kwargs["payload"]
 		self.assertEqual(payload["status"], "Pending")
 		self.assertIsNone(payload["login_url"])
@@ -838,21 +865,23 @@ class TestFrontDoorResolvesSite(IntegrationTestCase):
 		self.assertEqual(row["status"], "Pending")
 
 	def test_asset_prefers_pilot_console_when_one_backs_the_vm(self) -> None:
-		"""A COMPLETED create_site backs its VM with BOTH a Site (customer site) and an
-		attached Pilot (admin console). The Central Asset "Open" resolves the PILOT (a
-		bench admin JWT), not the customer site — front_door_for_vm prefers Pilot. This is
-		the bug fix: the Asset gateway/login point at the console, per spec/14-self-serve.md."""
+		"""A COMPLETED create_site backs its VM with BOTH a bench-site Site (customer site)
+		and an attached pilot-console Site (admin console). The Central Asset "Open" resolves
+		the CONSOLE (a bench admin JWT), not the customer site — front_door_for_vm prefers the
+		pilot-console kind. The Asset gateway/login point at the console (spec/14-self-serve.md)."""
 		vm, site = self._running_site_backed_vm("both")
-		# Attach a Running admin-mode Pilot to the SAME VM, as Site.auto_provision does.
-		pilot = frappe.get_doc({"doctype": "Pilot", "subdomain": "both-pilot", "tenant": site.tenant})
-		pilot.flags.attach_vm = vm.name
-		pilot.insert(ignore_permissions=True)
-		pilot_login = f"https://both-pilot.{self.ROOT_DOMAIN}/app?sid=admin-jwt"
-		pilot.db_set("login_url", pilot_login)
-		pilot.db_set("login_url_expires_at", "2026-07-05 12:00:00")
-		pilot.db_set("status", "Running")
+		# Attach a Running admin-mode console to the SAME VM, as Site.auto_provision does.
+		console = frappe.get_doc(
+			{"doctype": "Site", "kind": "pilot-console", "subdomain": "both-pilot", "tenant": site.tenant}
+		)
+		console.flags.attach_vm = vm.name
+		console.insert(ignore_permissions=True)
+		console_login = f"https://both-pilot.{self.ROOT_DOMAIN}/app?sid=admin-jwt"
+		console.db_set("login_url", console_login)
+		console.db_set("login_url_expires_at", "2026-07-05 12:00:00")
+		console.db_set("status", "Running")
 		payload = central_report._vm_payload(vm)
-		# The Asset now opens the PILOT console FQDN + admin login, not the site's.
+		# The Asset now opens the CONSOLE FQDN + admin login, not the site's.
 		self.assertEqual(payload["gateway_url"], f"https://both-pilot.{self.ROOT_DOMAIN}")
-		self.assertEqual(payload["login_url"], pilot_login)
+		self.assertEqual(payload["login_url"], console_login)
 		self.assertNotEqual(payload["login_url"], self.login_url)

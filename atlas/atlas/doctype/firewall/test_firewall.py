@@ -41,7 +41,7 @@ class TestFirewall(IntegrationTestCase):
 
 	def test_insert_derives_from_vm_and_defaults_disabled(self) -> None:
 		# Inserting alone never touches the host (no on_save dispatch) — apply is the
-		# explicit sync() verb, like VPN Tunnel.bring_up.
+		# explicit sync() verb.
 		vm = _new_vm()
 		firewall = _make_firewall(vm.name, rules=[("tcp", 443)])
 		self.assertEqual(firewall.server, vm.server)

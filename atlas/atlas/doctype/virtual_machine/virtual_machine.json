@@ -70,8 +70,7 @@
   "desired_power",
   "observed_status",
   "column_break_boat",
-  "boot_epoch",
-  "observed_authority"
+  "boot_epoch"
  ],
  "fields": [
   {
@@ -521,14 +520,6 @@
    "fieldtype": "Int",
    "label": "Boot Epoch",
    "read_only": 1
-  },
-  {
-   "default": "DB",
-   "description": "Whose observation wins for this VM. DB (the default) keeps today's behaviour exactly: the row's `status` is authority and Boat's report is advisory. Boat, from spec/33 WO-2, makes the host's observation authoritative for this VM. Reversible per VM — flipping it back to DB is that work order's rollback.",
-   "fieldname": "observed_authority",
-   "fieldtype": "Select",
-   "label": "Observed Authority",
-   "options": "DB\nBoat"
   }
  ],
  "links": [],

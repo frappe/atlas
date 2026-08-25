@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 import frappe
 from frappe.tests import IntegrationTestCase
 
-from atlas.atlas.providers.base import AuthResult
+from atlas.atlas.core.providers.base import AuthResult
 from atlas.tests.fixtures import make_provider
 
 
@@ -22,7 +22,7 @@ class TestDigitalOceanSettings(IntegrationTestCase):
 		)
 		settings = frappe.get_single("DigitalOcean Settings")
 		with patch(
-			"atlas.atlas.providers.for_provider_type",
+			"atlas.atlas.core.providers.for_provider_type",
 			return_value=fake_impl,
 		):
 			result = settings.test_connection()

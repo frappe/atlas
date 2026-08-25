@@ -31,7 +31,7 @@ class IntegrationTestCentralEventLog(IntegrationTestCase):
 		with patch("frappe.enqueue") as enqueue:
 			log.retry_delivery()
 		enqueue.assert_called_once_with(
-			"atlas.atlas.central_report.deliver",
+			"atlas.atlas.core.central_report.deliver",
 			queue="default",
 			timeout=60,
 			log_name=log.name,

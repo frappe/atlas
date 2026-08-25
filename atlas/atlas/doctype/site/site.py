@@ -16,13 +16,14 @@ import frappe
 from frappe import _
 from frappe.model.document import Document
 
-from atlas.atlas.placement import (
+from atlas.atlas.core.placement import (
 	active_root_domain,
 	default_bench_snapshot,
 	warm_bench_snapshot_for_server,
 )
-from atlas.atlas.sizes import SIZE_PRESETS
-from atlas.atlas.subdomain_label import (
+from atlas.atlas.core.sizes import SIZE_PRESETS
+from atlas.atlas.services import site_common, site_console
+from atlas.atlas.services.subdomain_label import (
 	RESERVED_SUBDOMAINS,
 	validate_label,
 	validate_reserved,
@@ -58,7 +59,7 @@ IMMUTABLE_AFTER_INSERT = (
 )
 
 # Contract-A label rules (the single dotless DNS label, the reserved denylist)
-# live in atlas.atlas.subdomain_label so `Site` and `Site Request` enforce the
+# live in atlas.atlas.services.subdomain_label so `Site` and `Site Request` enforce the
 # SAME rules — see that module. RESERVED_SUBDOMAINS is re-exported above for the
 # callers/spec that reference `site.RESERVED_SUBDOMAINS`.
 
@@ -72,10 +73,13 @@ class Site(Document):
 	if TYPE_CHECKING:
 		from frappe.types import DF
 
+		attached: DF.Check
+		build_mode: DF.Data | None
+		console: DF.Link | None
 		deploying_started: DF.Datetime | None
+		kind: DF.Literal["bench-site", "pilot-console"]
 		login_url: DF.SmallText | None
 		login_url_expires_at: DF.Datetime | None
-		pilot: DF.Link | None
 		provisioning_started: DF.Datetime | None
 		running_started: DF.Datetime | None
 		status: DF.Literal["Pending", "Provisioning", "Deploying", "Running", "Failed", "Terminated"]
@@ -115,7 +119,13 @@ class Site(Document):
 
 		enqueue_after_commit so the worker only starts once this insert's
 		transaction has committed — otherwise auto_provision can look up the Site
-		before the row exists ("Site ... not found")."""
+		before the row exists ("Site ... not found").
+
+		A `pilot-console` Site runs a different flow (create its VM synchronously from a
+		bench image, then enqueue) — dispatched to `site_console`."""
+		if self.kind == "pilot-console":
+			site_console.after_insert(self)
+			return
 		frappe.enqueue(
 			"atlas.atlas.doctype.site.site.auto_provision",
 			queue="long",
@@ -176,58 +186,35 @@ class Site(Document):
 		Delete the Subdomain (the proxy stops routing on the next reconcile),
 		terminate the backing VM, then mark Terminated. Mirrors
 		VirtualMachine.terminate()'s cleanup-then-mark shape. Idempotent-ish: a
-		second call on an already-Terminated row throws."""
+		second call on an already-Terminated row throws.
+
+		A `pilot-console` Site has no companion console of its own to cascade to, so it
+		runs the leaner console teardown — dispatched to `site_console`."""
+		if self.kind == "pilot-console":
+			site_console.terminate(self)
+			return
 		if self.status == "Terminated":
 			frappe.throw(_("Site is already terminated"))
-		self._delete_subdomain()
-		self._terminate_pilot()
-		self._terminate_backing_vm()
+		site_common.delete_subdomain(self)
+		self._terminate_console()
+		site_common.terminate_backing_vm(self)
 		self.correlation_id = correlation_id
 		self.status = "Terminated"
 		self.save(ignore_permissions=True)
 
-	def _delete_subdomain(self) -> None:
-		"""Drop the proxy map row (its on_trash reconciles the fleet). No-op when
-		the site never began serving (no Subdomain was created).
+	def _terminate_console(self) -> None:
+		"""Terminate the attached admin console before the VM (if one was stood up).
 
-		Clear `subdomain_doc` first: while the Site's Link field still references
-		the Subdomain, Frappe's link-integrity guard refuses the delete
-		(LinkExistsError). The guard queries the DB, so the null must be persisted
-		(db_set), not just set in-memory, before the delete. Same clear-then-remove
-		order terminate() uses for the VM."""
-		subdomain = self.subdomain_doc
-		if not subdomain:
+		The console (a `Site(kind="pilot-console")`) is ATTACHED — its own terminate()
+		drops its Subdomain and marks itself Terminated but does NOT touch the VM (this
+		Site owns it, torn down next). So this is safe to call before
+		`site_common.terminate_backing_vm`: no double-terminate. No-op when the site never
+		got a console (failed before the console stage) or it is already gone."""
+		if not self.console or not frappe.db.exists("Site", self.console):
 			return
-		self.db_set("subdomain_doc", None)
-		if frappe.db.exists("Subdomain", subdomain):
-			frappe.delete_doc("Subdomain", subdomain, ignore_permissions=True)
-
-	def _terminate_pilot(self) -> None:
-		"""Terminate the attached Pilot admin console before the VM (if one was stood up).
-
-		The Pilot is ATTACHED — its own terminate() drops its Subdomain and marks itself
-		Terminated but does NOT touch the VM (the Site owns it, torn down next). So this
-		is safe to call before `_terminate_backing_vm`: no double-terminate. No-op when
-		the site never got a Pilot (failed before the console stage) or it is already gone."""
-		if not self.pilot or not frappe.db.exists("Pilot", self.pilot):
-			return
-		pilot = frappe.get_doc("Pilot", self.pilot)
-		if pilot.status != "Terminated":
-			pilot.terminate()
-
-	def _terminate_backing_vm(self) -> None:
-		"""Terminate the backing VM if one was created and is not already gone.
-
-		`front_door_terminating` tells the VM its aggregates are already tearing
-		themselves down, so it skips `_terminate_front_doors` — this Site marks and saves
-		itself below, and the attached Pilot was marked by `_terminate_pilot` above.
-		Without the flag both would be re-marked and their status events emitted twice."""
-		if not self.virtual_machine or not frappe.db.exists("Virtual Machine", self.virtual_machine):
-			return
-		vm = frappe.get_doc("Virtual Machine", self.virtual_machine)
-		if vm.status != "Terminated":
-			vm.flags.front_door_terminating = True
-			vm.terminate()
+		console = frappe.get_doc("Site", self.console)
+		if console.status != "Terminated":
+			console.terminate()
 
 	@frappe.whitelist()
 	def regenerate_login_url(self) -> dict:
@@ -242,7 +229,12 @@ class Site(Document):
 		the original deploy), COMMIT so the `get_site` poll sees it, and return the
 		mirror shape Central re-reads. A Fake-backed VM never answers SSH, so its login
 		URL is synthesized here exactly as the deploy synthesizes it — desk/e2e stay
-		green without a host."""
+		green without a host.
+
+		A `pilot-console` Site re-mints an admin session (a different TTL) and returns the
+		VM-shaped mirror Central re-reads, not the site.* one — dispatched to `site_console`."""
+		if self.kind == "pilot-console":
+			return site_console.regenerate_login_url(self)
 		if self.status != "Running":
 			frappe.throw(_("Only a running site's login URL can be regenerated"))
 		result = _regenerate_login(self, self.virtual_machine)
@@ -329,16 +321,22 @@ def auto_provision(
 
 	On any failure the Site is marked Failed (fail loud) and the exception is
 	re-raised so the Task/job log carries it. The ONE exception is the companion
-	admin console attached after step 5 (`_attach_pilot_console`): it is a second,
+	admin console attached after step 5 (`_attach_console`): it is a second,
 	additive front door on the same VM, so its failure is logged and the tenant site
 	still reaches Running. No-op if the Site has moved past Pending (operator
 	intervened, a manual retry raced us). Steps 4-5 are plan 03's contract — this owns
 	the orchestration, 03 owns the script + probe.
 
 	Every status transition is committed (`_set_status`) so Central sees progress
-	cross-transaction (the `site.status_changed` event + the `get_site` poll)."""
+	cross-transaction (the `site.status_changed` event + the `get_site` poll).
+
+	A `pilot-console` Site runs the bench-image console flow instead (no snapshot clone,
+	no HTTP gate, `vm.*` events) — dispatched to `site_console`."""
 	site = frappe.get_doc("Site", site_name)
 	if site.status != "Pending":
+		return
+	if site.kind == "pilot-console":
+		site_console.auto_provision(site, central_endpoint, bootstrap_token)
 		return
 	# A Fake-backed site (developer_mode laptop) runs this WHOLE flow for real —
 	# clone the backing VM, wait for it to boot, create the Subdomain, mark Running —
@@ -384,16 +382,16 @@ def auto_provision(
 		site.db_set("subdomain_doc", subdomain_name)
 		frappe.db.commit()
 		_set_status(site, "Deploying")
-		# Resolve the attached Pilot's console FQDN up front (deterministic from the
+		# Resolve the attached console's FQDN up front (deterministic from the
 		# site subdomain, disambiguated on collision) and thread it into BOTH the
 		# site-mode deploy — which writes it into `[admin].domain` so the admin vhost
-		# is emitted in the rename-site pass — and `_provision_pilot`, which reuses the
+		# is emitted in the rename-site pass — and `_provision_console`, which reuses the
 		# SAME label so the two agree on the console name. See spec/14-self-serve.md.
-		from atlas.atlas.placement import active_root_domain
-		from atlas.atlas.subdomain_label import pilot_subdomain_for
+		from atlas.atlas.core.placement import active_root_domain
+		from atlas.atlas.services.subdomain_label import console_subdomain_for
 
-		pilot_label = pilot_subdomain_for(site.subdomain)
-		admin_domain = f"{pilot_label}.{active_root_domain().domain}"
+		console_label = console_subdomain_for(site.subdomain)
+		admin_domain = f"{console_label}.{active_root_domain().domain}"
 		clock.stage("deploy site in guest (wait_for_ssh + run deploy-site.py)")
 		result = _deploy_site(site, vm_name, central_endpoint, bootstrap_token, admin_domain)
 		# The tenant handoff is the one-click login URL `deploy-site.py` minted
@@ -412,14 +410,14 @@ def auto_provision(
 		)
 		clock.stage("wait for HTTP 200 from guest :80 (Contract B)")
 		_wait_for_http(site, vm_name)
-		# Stand up the bench admin console (a Pilot) on this SAME backing VM, fronted at
+		# Stand up the bench admin console on this SAME backing VM, fronted at
 		# `<subdomain>-pilot.<region>` — the front door Central's Asset resolves for
-		# "Open" (front_door_for_vm prefers Pilot). The customer's Frappe site is this
-		# Site (get_site); the Pilot is the admin console on the same bench. Done AFTER
+		# "Open" (front_door_for_vm prefers the console). The customer's Frappe site is this
+		# Site (get_site); the console is the admin console on the same bench. Done AFTER
 		# the site serves (the VM is up + the admin app is installed on every golden). See
 		# spec/14-self-serve.md.
-		clock.stage("attach Pilot admin console (proxy route + admin login)")
-		_attach_pilot_console(site, vm_name, pilot_label)
+		clock.stage("attach admin console (proxy route + admin login)")
+		_attach_console(site, vm_name, console_label)
 		_set_status(site, "Running")
 		clock.done()
 	except Exception:
@@ -462,11 +460,11 @@ def _set_status(site, status: str) -> None:
 	site.db_set("status", status)
 	# db_set runs on_change, NOT on_update, so the on_site_update doc_event never
 	# fires for these transitions — emit the status_changed explicitly (same gap the
-	# Pilot closes with report_pilot_status). Its delivery is enqueue_after_commit, so
+	# console closes with report_console_status). Its delivery is enqueue_after_commit, so
 	# it rides the commit just below. Without this the mirror only ever sees the initial
 	# Pending (site.created + the insert's on_update) and, with no site reconcile pull,
 	# stays stuck Pending forever.
-	from atlas.atlas.central_report import report_site_status
+	from atlas.atlas.services.reporting import report_site_status
 
 	report_site_status(site)
 	# nosemgrep: frappe-manual-commit -- background job: commit each status transition so Central's poll sees it cross-transaction, the status_changed event delivers, and progress survives a crash mid-provision
@@ -575,13 +573,13 @@ def _deploy_site(
 
 	Seam for the in-guest deploy script + its guest-SSH driver. A Fake-backed VM
 	carries a documentation IP that never answers SSH, so the deploy is a no-op
-	there — the same `is_fake_server` gate `run_task` uses (atlas.atlas._ssh.runner).
+	there — the same `is_fake_server` gate `run_task` uses (atlas.atlas.core._ssh.runner).
 	The baked site already serves on the (synthetic) guest in the fiction the Fake
 	provider maintains, so there is nothing to rename; a placeholder `login_url` is
 	synthesized instead so the mirror shape stays stable for e2e/desk tests that
 	run against a Fake server."""
-	from atlas.atlas.deploy_site import deploy_site
-	from atlas.atlas.providers.fake_tasks import is_fake_server
+	from atlas.atlas.core.providers.fake_tasks import is_fake_server
+	from atlas.atlas.services.deploy_site import deploy_site
 
 	vm = frappe.get_doc("Virtual Machine", vm_name)
 	if is_fake_server(vm.server):
@@ -598,8 +596,8 @@ def _regenerate_login(site, vm_name: str) -> dict:
 	Fake-backed VM's documentation /128 never answers SSH, so the same placeholder
 	`login_url` is synthesized instead, keeping the mirror shape stable for the
 	desk/e2e tests that run against a Fake server."""
-	from atlas.atlas.deploy_site import regenerate_login
-	from atlas.atlas.providers.fake_tasks import is_fake_server
+	from atlas.atlas.core.providers.fake_tasks import is_fake_server
+	from atlas.atlas.services.deploy_site import regenerate_login
 
 	vm = frappe.get_doc("Virtual Machine", vm_name)
 	if is_fake_server(vm.server):
@@ -622,8 +620,8 @@ def _wait_for_http(site, vm_name: str) -> None:
 	A Fake-backed VM's documentation /128 never answers, so the probe is skipped
 	there (the same `is_fake_server` gate `_deploy_site` and `run_task` use) — the
 	readiness gate is the deploy's twin, both no-ops on a Fake VM."""
-	from atlas.atlas.deploy_site import readiness_paths_for_mode, wait_for_http
-	from atlas.atlas.providers.fake_tasks import is_fake_server
+	from atlas.atlas.core.providers.fake_tasks import is_fake_server
+	from atlas.atlas.services.deploy_site import readiness_paths_for_mode, wait_for_http
 
 	vm = frappe.get_doc("Virtual Machine", vm_name)
 	if is_fake_server(vm.server):
@@ -647,10 +645,10 @@ def _create_subdomain(site, vm_name: str) -> str:
 	return subdomain.name
 
 
-def _attach_pilot_console(site, vm_name: str, pilot_label: str) -> str | None:
+def _attach_console(site, vm_name: str, console_label: str) -> str | None:
 	"""Attach the companion admin console — and never let ITS failure fail the tenant site.
 
-	The console is a SECOND front door on the same backing VM (`_provision_pilot`), and
+	The console is a SECOND front door on the same backing VM (`_provision_console`), and
 	it is strictly additive: by the time we reach it the tenant's own site has already
 	deployed, cleared the Contract-B readiness gate, and is serving HTTP 200. So a
 	console that can't be wired — this golden's bench-cli carries no session-minting
@@ -660,44 +658,45 @@ def _attach_pilot_console(site, vm_name: str, pilot_label: str) -> str | None:
 	`[admin].password`. Letting it propagate marked the Site Failed while the site it
 	names was serving perfectly — the failure mode this closes.
 
-	Nothing is swallowed quietly: the Pilot's own row records it (`deploy_attached`
-	marks the Pilot Failed and commits before re-raising) and the traceback lands in
-	the Error Log. Returns the Pilot name, or None when the console failed.
+	Nothing is swallowed quietly: the console's own row records it (`deploy_attached`
+	marks the console Failed and commits before re-raising) and the traceback lands in
+	the Error Log. Returns the console name, or None when the console failed.
 
 	This is the ONLY step of `auto_provision` that degrades. Everything before it —
 	the clone, the boot wait, the Subdomain, the site's own deploy, the readiness
 	gate — is the tenant site itself and stays fail-loud."""
 	try:
-		return _provision_pilot(site, vm_name, pilot_label)
+		return _provision_console(site, vm_name, console_label)
 	except Exception:
 		frappe.log_error(
-			f"Admin console {pilot_label} for site {site.name} failed to attach; the site is "
+			f"Admin console {console_label} for site {site.name} failed to attach; the site is "
 			f"unaffected and stays Running: {frappe.get_traceback()}",
 			"Site admin console",
 		)
 		return None
 
 
-def _provision_pilot(site, vm_name: str, pilot_label: str) -> str:
-	"""Stand up the attached Pilot admin console on this site's backing VM and link it.
+def _provision_console(site, vm_name: str, console_label: str) -> str:
+	"""Stand up the attached admin console on this site's backing VM and link it.
 
-	Creates a `Pilot` at `<subdomain>-pilot.<region>` (the label resolved by the caller
-	via `pilot_subdomain_for` and already written into the VM's `[admin].domain` by the
-	site-mode deploy), ATTACHED to this site's VM (`flags.attach_vm` → the Pilot binds
-	the VM instead of creating one, and won't tear it down). Its `after_insert` only
-	links the VM; `deploy_attached` mints the admin login URL, creates the Pilot's own
-	Subdomain (a second proxy route → the SAME VM /128), and marks the Pilot Running —
-	the admin vhost itself was already emitted in the site deploy's rename-site pass. The
-	Pilot is linked on the Site so terminate() cascades. Returns the Pilot name.
+	Creates a `Site(kind="pilot-console")` at `<subdomain>-pilot.<region>` (the label
+	resolved by the caller via `console_subdomain_for` and already written into the VM's
+	`[admin].domain` by the site-mode deploy), ATTACHED to this site's VM
+	(`flags.attach_vm` → the console binds the VM instead of creating one, and won't tear
+	it down). Its `after_insert` only links the VM; `deploy_attached` mints the admin
+	login URL, creates the console's own Subdomain (a second proxy route → the SAME VM
+	/128), and marks it Running — the admin vhost itself was already emitted in the site
+	deploy's rename-site pass. The console is linked on the Site (`console` field) so
+	terminate() cascades. Returns the console name.
 
 	This is the create_site half that makes the Asset's "Open" resolve a bench admin
-	console (front_door_for_vm prefers Pilot) rather than the customer site — the bug
-	this closes (spec/14-self-serve.md)."""
-	from atlas.atlas.doctype.pilot.pilot import deploy_attached
-
-	pilot = frappe.get_doc({"doctype": "Pilot", "subdomain": pilot_label, "tenant": site.tenant})
-	pilot.flags.attach_vm = vm_name
-	pilot.insert(ignore_permissions=True)
-	site.db_set("pilot", pilot.name)
-	deploy_attached(pilot.name)
-	return pilot.name
+	console (front_door_for_vm prefers the console) rather than the customer site — the
+	bug this closes (spec/14-self-serve.md)."""
+	console = frappe.get_doc(
+		{"doctype": "Site", "kind": "pilot-console", "subdomain": console_label, "tenant": site.tenant}
+	)
+	console.flags.attach_vm = vm_name
+	console.insert(ignore_permissions=True)
+	site.db_set("console", console.name)
+	site_console.deploy_attached(console)
+	return console.name

@@ -16,7 +16,7 @@ import frappe
 import requests
 from frappe.tests import IntegrationTestCase
 
-from atlas.atlas.boat_client import (
+from atlas.atlas.core.boat_client import (
 	BoatClient,
 	BoatError,
 	base_url_for_server,
@@ -32,7 +32,7 @@ from atlas.atlas.doctype.virtual_machine.test_virtual_machine import (
 from atlas.tests import fixtures
 from atlas.tests._mocks import fake_task
 
-REQUEST = "atlas.atlas.boat_client.requests.request"
+REQUEST = "atlas.atlas.core.boat_client.requests.request"
 
 
 class _Response:
@@ -345,7 +345,7 @@ class TestRunBoatTask(IntegrationTestCase):
 		with (
 			_boat_host_token(self.server.name),
 			patch(REQUEST, return_value=response),
-			patch("atlas.atlas._ssh.runner.run_ssh") as run_ssh,
+			patch("atlas.atlas.core._ssh.runner.run_ssh") as run_ssh,
 			self.assertRaises(frappe.ValidationError) as raised,
 		):
 			run_boat_task(

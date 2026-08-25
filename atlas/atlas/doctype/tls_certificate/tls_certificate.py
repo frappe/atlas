@@ -4,7 +4,7 @@ lands it on every proxy VM in the domain's region.
 `issue()` (and its idempotent twin `renew()`) drive the domain's TLS provider to
 produce PEMs on the controller's disk, record the paths + validity window + status,
 then `_push_to_proxies()` reads those PEMs and calls the EXISTING
-`atlas.atlas.proxy.push_cert(vm, fullchain, privkey)` for each `is_proxy` VM in the
+`atlas.atlas.services.proxy.push_cert(vm, fullchain, privkey)` for each `is_proxy` VM in the
 region — nginx reloads on each guest. This is the producer the proxy design's
 `push_cert` was always missing.
 
@@ -22,7 +22,7 @@ import frappe
 from frappe import _
 from frappe.model.document import Document
 
-from atlas.atlas import dns, proxy, tls
+from atlas.atlas.services import dns, proxy, tls
 
 # Renew certs whose expiry is within this many days (the scheduled job's window).
 RENEWAL_WINDOW_DAYS = 30

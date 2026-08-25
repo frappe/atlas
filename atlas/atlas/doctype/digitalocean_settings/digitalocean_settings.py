@@ -3,7 +3,7 @@ import dataclasses
 import frappe
 from frappe.model.document import Document
 
-from atlas.atlas.setup_catalog import (
+from atlas.atlas.core.setup_catalog import (
 	ensure_provider_image,
 	ensure_provider_size,
 	set_default,
@@ -64,8 +64,8 @@ class DigitalOceanSettings(Document):
 		# Seed the wider catalog so the Refresh Catalog button starts from real data.
 		# Best-effort — same as bootstrap (DO's discover is gravy, unlike Scaleway's
 		# load-bearing discover). discover() also hints its default into an empty slot.
-		from atlas.atlas.providers.digitalocean import DigitalOceanProvider
-		from atlas.atlas.provisioning import upsert_catalog
+		from atlas.atlas.core.providers.digitalocean import DigitalOceanProvider
+		from atlas.atlas.core.provisioning import upsert_catalog
 
 		try:
 			upsert_catalog("DigitalOcean", DigitalOceanProvider().discover())
@@ -84,7 +84,7 @@ class DigitalOceanSettings(Document):
 	@frappe.whitelist()
 	def test_connection(self) -> dict:
 		"""Ping DigitalOcean using the DigitalOcean provider's authenticate()."""
-		from atlas.atlas import providers
+		from atlas.atlas.core import providers
 
 		result = providers.for_provider_type("DigitalOcean").authenticate()
 		return dataclasses.asdict(result)

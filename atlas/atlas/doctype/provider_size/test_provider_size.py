@@ -12,9 +12,9 @@ import json
 import frappe
 from frappe.tests import IntegrationTestCase
 
-from atlas.atlas.providers.base import Capabilities, ImageInfo, SizeInfo
-from atlas.atlas.provisioning import upsert_catalog
-from atlas.atlas.setup_catalog import clear_other_defaults, default_name, set_default
+from atlas.atlas.core.providers.base import Capabilities, ImageInfo, SizeInfo
+from atlas.atlas.core.provisioning import upsert_catalog
+from atlas.atlas.core.setup_catalog import clear_other_defaults, default_name, set_default
 
 _PT = "Fake"  # isolate from DigitalOcean/Scaleway rows other tests seed
 

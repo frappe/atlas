@@ -239,7 +239,7 @@ def publish_snapshot_as_fleet_image(
 	get_image(...).is_active for readiness.
 	Returns {image, rootfs_sha256, kernel_sha256, tasks}."""
 	frappe.only_for("System Manager")
-	from atlas.atlas import fleet_image
+	from atlas.atlas.core import fleet_image
 
 	return fleet_image.publish_snapshot_as_fleet_image(snapshot, image_name, servers=servers, title=title)
 
@@ -261,7 +261,7 @@ def distribute_image(image: str, servers: list | str | None = None) -> dict:
 	handle `{image, source, servers}` immediately. The service (chef) calls this right after
 	a `promote_image` to propagate the golden across the fleet without a bucket."""
 	frappe.only_for("System Manager")
-	from atlas.atlas import fleet_distribute
+	from atlas.atlas.core import fleet_distribute
 
 	return fleet_distribute.distribute_local_image(image, servers=servers)
 

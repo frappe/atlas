@@ -53,7 +53,7 @@ import time
 
 import frappe
 
-from atlas.atlas import proxy
+from atlas.atlas.services import proxy
 from atlas.tests.e2e._config import MissingConfig, get_tls_config
 from atlas.tests.e2e._shared import phase
 from atlas.tests.e2e.use_cases import bench_image, tls_issuance
@@ -220,7 +220,7 @@ def _assert_bench_self_routing(
 	unit-covered (test_bench_routing); this run proves the IPv6 origin + the proxy serving
 	it. The binary takes the FULL FQDN and peels the region wildcard suffix to the label;
 	`register` is FAIL-CLOSED (a transport error aborts the create)."""
-	from atlas.atlas.ssh import connection_for_guest, run_ssh, ssh_key_file
+	from atlas.atlas.core.ssh import connection_for_guest, run_ssh, ssh_key_file
 
 	label = _BENCH_SELF_ROUTE_SUBDOMAIN
 	fqdn = f"{label}.{domain}"

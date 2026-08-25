@@ -9,9 +9,9 @@ deterministic and behaves sanely across arrivals, drops, resizes, and the edges.
 
 import unittest
 
-from atlas.atlas import packing, packing_metrics, packing_sim
-from atlas.atlas.packing import BEST_FIT, FIRST_FIT, HYBRID, SPREAD, TETRIS
-from atlas.atlas.packing_sim import SimConfig
+from atlas.atlas.core import packing, packing_metrics, packing_sim
+from atlas.atlas.core.packing import BEST_FIT, FIRST_FIT, HYBRID, SPREAD, TETRIS
+from atlas.atlas.core.packing_sim import SimConfig
 
 _FULL = {"cpu": 8.0, "memory": 16384.0, "disk": 320.0}
 _EMPTY = {"cpu": 0.0, "memory": 0.0, "disk": 0.0}

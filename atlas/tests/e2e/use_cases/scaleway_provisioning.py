@@ -37,7 +37,7 @@ import traceback
 
 import frappe
 
-from atlas.atlas.ssh import run_task
+from atlas.atlas.core.ssh import run_task
 from atlas.tests.e2e._config import ephemeral_private_key, ephemeral_public_key
 from atlas.tests.e2e._scaleway import (
 	cleanup_scaleway_server,
@@ -148,7 +148,7 @@ def _wait_for_status(server_name: str, target: set[str], timeout: int):
 
 
 def _server_is_reachable(server_name: str, timeout_seconds: int = 5) -> bool:
-	from atlas.atlas.ssh import connection_for_server, wait_for_ssh
+	from atlas.atlas.core.ssh import connection_for_server, wait_for_ssh
 
 	server = frappe.get_doc("Server", server_name)
 	if not server.ipv4_address:

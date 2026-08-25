@@ -2,7 +2,7 @@ import frappe
 from frappe import _
 from frappe.model.document import Document
 
-from atlas.atlas.ssh import run_task
+from atlas.atlas.core.ssh import run_task
 
 # Identity is frozen once written; the rules and the enabled toggle stay editable.
 IMMUTABLE_AFTER_INSERT = ("virtual_machine", "server", "tenant")
@@ -65,7 +65,7 @@ class Firewall(Document):
 	def sync(self) -> str:
 		"""Push the declared state to the host: `enabled` → apply the rules (an empty
 		list is a valid deny-all-public), disabled → clear them (VM reverts to public).
-		The explicit apply verb, like VPN Tunnel.bring_up — never fired on save, so a
+		The explicit apply verb — never fired on save, so a
 		plain edit does not SSH. Returns the dispatched Task name, or "" when skipped
 		(terminated VM, whose host state is already gone)."""
 		if self._virtual_machine_terminated():

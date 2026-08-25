@@ -24,7 +24,7 @@ import json
 
 import frappe
 
-from atlas.atlas import proxy
+from atlas.atlas.services import proxy
 from atlas.tests import _provider_billable_run as bdp
 from atlas.tests import _routing_host_run as hr
 
@@ -40,8 +40,8 @@ def _guest(vm_name: str, command: str, timeout: int = 120):
 def _read_live_sni_map(proxy_vm_name: str) -> dict:
 	"""The proxy's live :443 SNI map (the stream `domains` dict) via the stream-admin
 	GET-SNI line protocol over SSH-to-the-guest — the same transport proxy.py reconciles."""
-	from atlas.atlas._ssh.transport import run_ssh, ssh_key_file
-	from atlas.atlas.ssh import connection_for_guest
+	from atlas.atlas.core._ssh.transport import run_ssh, ssh_key_file
+	from atlas.atlas.core.ssh import connection_for_guest
 
 	vm = frappe.get_doc("Virtual Machine", proxy_vm_name)
 	connection = connection_for_guest(vm)
@@ -55,8 +55,8 @@ def _read_live_sni_map(proxy_vm_name: str) -> dict:
 
 def _read_live_acme_map(proxy_vm_name: str) -> dict:
 	"""The proxy's live :80 ACME map (the http `acme_domains` dict) via curl GET /acme."""
-	from atlas.atlas._ssh.transport import run_ssh, ssh_key_file
-	from atlas.atlas.ssh import connection_for_guest
+	from atlas.atlas.core._ssh.transport import run_ssh, ssh_key_file
+	from atlas.atlas.core.ssh import connection_for_guest
 
 	vm = frappe.get_doc("Virtual Machine", proxy_vm_name)
 	connection = connection_for_guest(vm)

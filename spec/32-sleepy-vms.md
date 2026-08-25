@@ -125,8 +125,9 @@ placement refuses new VMs — defeating the feature.
 Because step 2 above leaves a sleeping VM's `/128` **completely unrouted** (the host
 stops answering NDP for it), nothing — not even a SYN — would otherwise reach the
 host to trigger a wake. Three pieces close that gap, entirely host-side: **no proxy
-change and no inbound-to-Atlas API** (the [satellite](./30-core-service-boundary.md)
-read boundary stays read-only). A connection through the TCP/HTTP proxy is just a
+change and no inbound-to-Atlas API** (the core ↔ service boundary —
+[30-core-service-boundary.md](./30-core-service-boundary.md) — stays intact). A
+connection through the TCP/HTTP proxy is just a
 dial to the VM's `/128`, so it is trapped the same way as a direct `ssh [vm]:22`.
 
 ### 1. Parked reachability ([park.py](../scripts/lib/atlas/park.py))

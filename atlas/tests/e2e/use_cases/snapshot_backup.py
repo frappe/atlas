@@ -40,7 +40,7 @@ import json
 
 import frappe
 
-from atlas.atlas.ssh import run_task
+from atlas.atlas.core.ssh import run_task
 from atlas.tests.e2e._config import E2EConfig, MissingConfig
 from atlas.tests.e2e._droplets import ensure_e2e_provider
 from atlas.tests.e2e._shared import (
@@ -101,7 +101,7 @@ def _configure_s3() -> None:
 	)
 	frappe.db.commit()
 
-	from atlas.atlas import s3
+	from atlas.atlas.core import s3
 
 	result = s3.S3Backup().test_connection()
 	assert result.ok, f"S3 Test Connection failed — check the bucket/credentials/endpoint: {result.detail}"
@@ -174,7 +174,7 @@ def _upload_and_verify(snapshot) -> None:
 def _assert_objects_in_bucket(snapshot, manifest: list[dict]) -> None:
 	"""Controller-side head_object per manifest object — independent proof the bytes
 	reached S3, not just that the host reported success."""
-	from atlas.atlas import s3
+	from atlas.atlas.core import s3
 
 	backup = s3.S3Backup()
 	client = backup._client()

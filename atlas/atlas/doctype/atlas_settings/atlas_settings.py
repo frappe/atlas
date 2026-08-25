@@ -20,8 +20,8 @@ import frappe
 from frappe import _
 from frappe.model.document import Document
 
-from atlas.atlas import provisioning
-from atlas.atlas.providers.fake import require_developer_mode
+from atlas.atlas.core import provisioning
+from atlas.atlas.core.providers.fake import require_developer_mode
 
 
 class AtlasSettings(Document):
@@ -488,7 +488,7 @@ def _generate_ancp_operator_keypair_if_empty() -> tuple[str, str] | None:
 	Frappe Setup Wizard + `bootstrap.setup_run` take)."""
 	from frappe.utils.password import get_decrypted_password
 
-	from atlas.atlas.networking import generate_host_signing_keypair
+	from atlas.atlas.core.networking import generate_host_signing_keypair
 
 	pub = (frappe.db.get_single_value("Atlas Settings", "ancp_operator_public_key") or "").strip()
 	if pub:

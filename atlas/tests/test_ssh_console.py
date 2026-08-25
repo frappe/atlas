@@ -11,8 +11,8 @@ from unittest.mock import patch
 
 from frappe.tests import IntegrationTestCase
 
-from atlas.atlas import ssh_console
-from atlas.atlas.ssh import Connection
+from atlas.atlas.core import ssh_console
+from atlas.atlas.core.ssh import Connection
 
 CONNECTION = Connection(host="10.0.0.5", ssh_private_key="KEY")
 

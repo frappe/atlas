@@ -34,10 +34,10 @@ silently change WHICH verbs route to Boat — only where the catalog records the
 import json
 import unittest
 
-from atlas.atlas import scripts_catalog
-from atlas.atlas._ssh import runner
-from atlas.atlas.providers import fake_tasks
-from atlas.atlas.task_results import parse_result, result_line
+from atlas.atlas.core import scripts_catalog
+from atlas.atlas.core._ssh import runner
+from atlas.atlas.core.providers import fake_tasks
+from atlas.atlas.core.task_results import parse_result, result_line
 
 # The verbs Boat serves through the `boat <verb>` first-word swap: the ten
 # original ports, provision + the five later ports, and the one BOAT_ONLY rename
@@ -60,7 +60,6 @@ EXPECTED_BOAT_VERBS = frozenset(
 		# Gate 2 — provision + firewall/tunnel/traffic/wake/export.
 		"provision-vm",
 		"firewall-apply",
-		"vm-tunnel",
 		"poll-vm-traffic",
 		"probe-woken-vms",
 		"export-cleanup-source",

@@ -113,7 +113,7 @@ def assert_probe(
 	when the condition holds and non-zero otherwise. Probes that need to wait
 	on something (e.g. a guest VM booting) bump `timeout_seconds`.
 	"""
-	from atlas.atlas.ssh import run_task
+	from atlas.atlas.core.ssh import run_task
 
 	task = run_task(
 		server=server_name,

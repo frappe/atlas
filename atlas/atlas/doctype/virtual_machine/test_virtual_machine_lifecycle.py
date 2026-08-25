@@ -161,7 +161,7 @@ class TestVirtualMachineLifecycle(IntegrationTestCase):
 			frappe.get_doc({"doctype": "Tenant", "team": "rebuild-identity-team"}).insert(
 				ignore_permissions=True
 			)
-		frappe.db.set_single_value("Atlas Settings", "satellite_routing_base_url", "https://sat.example")
+		frappe.db.set_single_value("Atlas Settings", "guest_routing_base_url", "https://sat.example")
 		vm = _vm_with_status("Stopped")
 		vm.db_set("tenant", "rebuild-identity-team", update_modified=False)
 		vm.reload()
@@ -307,7 +307,7 @@ class TestVirtualMachineLifecycle(IntegrationTestCase):
 		# test_provision_resize_capacity.
 		with (
 			patch.object(module, "run_boat_task", return_value=task) as mocked,
-			patch.object(module, "check_resize_capacity"),
+			patch("atlas.atlas.core.vm_resize.check_resize_capacity"),
 		):
 			result = vm.resize(vcpus=4, memory_megabytes=4096, disk_gigabytes=20)
 		self.assertEqual(result, "task-resize-1")
@@ -362,7 +362,7 @@ class TestVirtualMachineLifecycle(IntegrationTestCase):
 		# whole-core cap tracking when vcpus grow without an explicit cap.
 		with (
 			patch.object(module, "run_boat_task", return_value=fake_task()),
-			patch.object(module, "check_resize_capacity"),
+			patch("atlas.atlas.core.vm_resize.check_resize_capacity"),
 		):
 			vm.resize(vcpus=4)
 		vm.reload()
@@ -404,22 +404,18 @@ class TestVirtualMachineLifecycle(IntegrationTestCase):
 		self.assertEqual(vm.cpu_mode, "Relaxed", "cpu_mode is untouched unless passed")
 
 	def test_snapshot_defaults_title_when_omitted(self) -> None:
-		from atlas.atlas.doctype.virtual_machine import virtual_machine as module
-
 		vm = _vm_with_status("Stopped")
 		vm.db_set("title", "web-01")
 		task = fake_task(stdout='ATLAS_RESULT={"size_bytes": 123}')
-		with patch.object(module, "run_task", return_value=task):
+		with patch("atlas.atlas.core.vm_images.run_task", return_value=task):
 			snapshot_name = vm.snapshot()  # no title
 		title = frappe.db.get_value("Virtual Machine Snapshot", snapshot_name, "title")
 		self.assertTrue(title.startswith("web-01 — "), title)
 
 	def test_snapshot_uses_given_title(self) -> None:
-		from atlas.atlas.doctype.virtual_machine import virtual_machine as module
-
 		vm = _vm_with_status("Stopped")
 		task = fake_task(stdout='ATLAS_RESULT={"size_bytes": 123}')
-		with patch.object(module, "run_task", return_value=task):
+		with patch("atlas.atlas.core.vm_images.run_task", return_value=task):
 			snapshot_name = vm.snapshot("nightly")
 		title = frappe.db.get_value("Virtual Machine Snapshot", snapshot_name, "title")
 		self.assertEqual(title, "nightly")

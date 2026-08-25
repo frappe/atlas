@@ -15,14 +15,14 @@ plane differs. The full design rationale (the 5-way design pass, the three isola
 holes an adversarial verifier closed, the 100×1000 scale analysis) lives in
 `llm/references/private-networking-host-mesh.md`; this is the shipped subset.
 
-> **Relationship to the customer gateway ([19](./19-vpn-broker.md)) and the management
-> tunnel ([21](./21-tunnel.md)).** All three use WireGuard, but they are distinct
-> planes. The **customer gateway** ([19](./19-vpn-broker.md)) is a customer's dial-in to
-> this private plane — it terminates on a **gateway VM on the mesh** (not a host), where
-> every customer is one `[Peer]` on a single shared `wg0`, and lands the client as a
-> `/128` in its own tenant `/48` (see [The customer gateway](#the-customer-gateway--external-dial-in-to-the-mesh)
-> below). The management tunnel is Central's *control-plane* dial-in (`wg0`,
-> hub-and-spoke). The device this chapter builds — `wg-mesh` — is a full mesh among the
+> **Relationship to the management tunnel ([21](./21-tunnel.md)).** Three WireGuard
+> planes, all distinct. The **customer gateway** — a customer's dial-in to this private
+> plane — is defined **in this chapter** ([The customer gateway](#the-customer-gateway--external-dial-in-to-the-mesh)
+> below): it terminates on a **gateway VM on the mesh** (not a host), carries every
+> customer as one `[Peer]` on a single shared `wg0`, and lands the client as a `/128` in
+> its own tenant `/48`. It **superseded** the host-terminated broker of
+> [19](./19-vpn-broker.md) (retired). The management tunnel is Central's *control-plane*
+> dial-in (`wg0`, hub-and-spoke). The device this chapter builds — `wg-mesh` — is a full mesh among the
 > hosts carrying the VM *data* plane. All three share the fixed UDP port `51820`, so the
 > management-firewall's one `udp dport 51820 accept` covers them all.
 >

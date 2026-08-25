@@ -117,7 +117,7 @@ def subdomain_map() -> dict[str, str]:
 	map every proxy VM serves (the design's "each proxy holds the whole map",
 	spec/12-proxy.md).
 
-	The proxy reconcile (atlas.atlas.proxy) compares this, serialized canonically,
+	The proxy reconcile (atlas.atlas.services.proxy) compares this, serialized canonically,
 	against each proxy guest's live `/map` and bulk-`/sync`s on drift."""
 	rows = frappe.get_all(
 		"Subdomain",
@@ -130,9 +130,9 @@ def subdomain_map() -> dict[str, str]:
 def auto_reconcile() -> None:
 	"""Background-job entrypoint. Enqueued by Subdomain's insert/active-toggle/
 	delete hooks so a mapping change reaches the proxy fleet without the operator
-	running a reconcile. Thin wrapper over atlas.atlas.proxy.reconcile_proxies —
+	running a reconcile. Thin wrapper over atlas.atlas.services.proxy.reconcile_proxies —
 	kept here (not as a direct enqueue of proxy.reconcile_proxies) so the Subdomain
 	module owns its own background verb and the import stays lazy."""
-	from atlas.atlas.proxy import reconcile_proxies
+	from atlas.atlas.services.proxy import reconcile_proxies
 
 	reconcile_proxies()

@@ -1,10 +1,10 @@
-"""Unit tests for the WireGuard host-mesh derivations + config render (design §2-8).
+"""Unit tests for the WireGuard host-mesh derivations (design §2-8).
 
 These are pure-function tests — no host, no SSH, no wg — of the naming/keying layer:
 `derive_tenant_prefix`, `derive_private_address` (incl. region), the real
 `derive_host_wireguard_keypair` (a Curve25519 base-point multiply, verified
 byte-for-byte against `wg pubkey` on a real Scaleway host), `derive_host_mesh_address`,
-the `derive_ipv4_link` dark-VM index path, and `host_mesh.render_wg_mesh_config`.
+and the `derive_ipv4_link` dark-VM index path.
 
 They run under the bench suite (`bench --site … run-tests --app atlas`) like the rest
 of the controller unit tests. The host-touching reconcile transport is proven live,
@@ -17,7 +17,7 @@ import uuid
 
 from frappe.tests import IntegrationTestCase
 
-from atlas.atlas.networking import (
+from atlas.atlas.core.networking import (
 	CLIENT_HEXTET,
 	INFRA_PREFIX,
 	REGION_ID_BITS,
@@ -215,7 +215,7 @@ class TestGuestLinkLocal(IntegrationTestCase):
 	"""EUI-64 guest link-local derivation (spec/26 return path)."""
 
 	def test_link_local_matches_eui64_of_derived_mac(self):
-		from atlas.atlas.networking import derive_guest_link_local, derive_mac
+		from atlas.atlas.core.networking import derive_guest_link_local, derive_mac
 
 		vm = str(uuid.uuid4())
 		mac = derive_mac(vm)  # 06:00:aa:bb:cc:dd
@@ -228,13 +228,13 @@ class TestGuestLinkLocal(IntegrationTestCase):
 		self.assertEqual(ipaddress.IPv6Address(derive_guest_link_local(vm)), expected)
 
 	def test_link_local_is_in_fe80(self):
-		from atlas.atlas.networking import derive_guest_link_local
+		from atlas.atlas.core.networking import derive_guest_link_local
 
 		address = ipaddress.IPv6Address(derive_guest_link_local(str(uuid.uuid4())))
 		self.assertIn(address, ipaddress.IPv6Network("fe80::/10"))
 
 	def test_link_local_is_deterministic(self):
-		from atlas.atlas.networking import derive_guest_link_local
+		from atlas.atlas.core.networking import derive_guest_link_local
 
 		vm = str(uuid.uuid4())
 		self.assertEqual(derive_guest_link_local(vm), derive_guest_link_local(vm))

@@ -27,7 +27,7 @@ thin **translation shim**, not a new platform:
 | Docker needs | Atlas already has | Where |
 |---|---|---|
 | Instant image → writable rootfs | CoW thin-LV snapshot of a read-only base image LV (`lvcreate -s`), "instant, not a copy" | [08-images.md](./08-images.md), `provision-vm.py` |
-| Per-request container create | `create_vm` whitelisted API → Pilot/VM, get-or-create Tenant | [api/provision.py](../atlas/atlas/api/provision.py) |
+| Per-request container create | `create_vm` whitelisted API → `Site(pilot-console)` + VM, get-or-create Tenant | [api/provision.py](../atlas/atlas/api/provision.py) |
 | Container network / VPC | Per-tenant `fdaa::/48` WireGuard host mesh, one VPC per tenant, nftables isolation + anti-spoof | [25-private-networking.md](./25-private-networking.md) |
 | Publish a port (`-p`) | Reserved IP attach (host 1:1 NAT, DNAT in / SNAT out) + per-VM firewall | [06-networking.md](./06-networking.md), [20-firewall.md](./20-firewall.md) |
 | Container lifecycle (start/stop/rm/pause) | The full VM lifecycle, 1:1 with docker verbs | [05-virtual-machine-lifecycle.md](./05-virtual-machine-lifecycle.md), [docker-command-map.md](../llm/docker-command-map.md) |

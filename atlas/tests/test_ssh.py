@@ -5,7 +5,7 @@ from unittest.mock import patch
 import frappe
 from frappe.tests import IntegrationTestCase
 
-from atlas.atlas.ssh import Connection, run_task
+from atlas.atlas.core.ssh import Connection, run_task
 
 DUMMY_CONNECTION = Connection(
 	host="10.0.0.1",
@@ -31,7 +31,7 @@ class TestRunTask(IntegrationTestCase):
 		self.script_name = "phase1-probe"
 
 	def test_run_task_success(self) -> None:
-		with patch("atlas.atlas._ssh.transport.subprocess.run", side_effect=_fake_completed):
+		with patch("atlas.atlas.core._ssh.transport.subprocess.run", side_effect=_fake_completed):
 			task = run_task(
 				connection=DUMMY_CONNECTION,
 				script=self.script_name,
@@ -47,7 +47,7 @@ class TestRunTask(IntegrationTestCase):
 				return subprocess.CompletedProcess(args, 2, stdout="", stderr="boom")
 			return _fake_completed(args, **kwargs)
 
-		with patch("atlas.atlas._ssh.transport.subprocess.run", side_effect=fail):
+		with patch("atlas.atlas.core._ssh.transport.subprocess.run", side_effect=fail):
 			with self.assertRaises(frappe.ValidationError):
 				run_task(
 					connection=DUMMY_CONNECTION,
@@ -64,7 +64,7 @@ class TestRunTask(IntegrationTestCase):
 				raise subprocess.TimeoutExpired(cmd=args, timeout=1)
 			return _fake_completed(args, **kwargs)
 
-		with patch("atlas.atlas._ssh.transport.subprocess.run", side_effect=timeout):
+		with patch("atlas.atlas.core._ssh.transport.subprocess.run", side_effect=timeout):
 			with self.assertRaises(frappe.ValidationError):
 				run_task(
 					connection=DUMMY_CONNECTION,
@@ -88,7 +88,7 @@ class TestRunTask(IntegrationTestCase):
 				assert mode == 0o600, f"key file mode is {oct(mode)}, expected 0o600"
 			return _fake_completed(args, **kwargs)
 
-		with patch("atlas.atlas._ssh.transport.subprocess.run", side_effect=capture):
+		with patch("atlas.atlas.core._ssh.transport.subprocess.run", side_effect=capture):
 			run_task(
 				connection=DUMMY_CONNECTION,
 				script=self.script_name,
@@ -106,7 +106,7 @@ class TestRunTask(IntegrationTestCase):
 				captured_commands.append(args[-1])
 			return _fake_completed(args, **kwargs)
 
-		with patch("atlas.atlas._ssh.transport.subprocess.run", side_effect=capture):
+		with patch("atlas.atlas.core._ssh.transport.subprocess.run", side_effect=capture):
 			run_task(
 				connection=DUMMY_CONNECTION,
 				script=self.script_name,

@@ -27,8 +27,9 @@ from unittest.mock import MagicMock, patch
 import frappe
 from frappe.tests import IntegrationTestCase
 
-from atlas.atlas import migration as migration_module
-from atlas.atlas.boat_client import (
+from atlas.atlas.core import migration as migration_module
+from atlas.atlas.core import migration_forward
+from atlas.atlas.core.boat_client import (
 	MIGRATION_PHASES,
 	MIGRATION_POLL_HYDRATION,
 	ROUTING_ENVIRONMENT_PATH,
@@ -36,7 +37,7 @@ from atlas.atlas.boat_client import (
 	BoatError,
 	_migration_phase,
 )
-from atlas.atlas.task_results import parse_result
+from atlas.atlas.core.task_results import parse_result
 from atlas.tests import fixtures
 from atlas.tests._mocks import fake_task
 from atlas.tests.test_boat_client import REQUEST, _operation, _Response
@@ -548,11 +549,12 @@ class TestOutOfBandMigrationVerbsDriveBoat(IntegrationTestCase):
 			task_calls.append(script)
 			return fake_task(stdout="ok")
 
-		from atlas.atlas import proxy as proxy_module
+		from atlas.atlas.services import proxy as proxy_module
 
 		with (
-			patch.object(migration_module, "run_boat_migration_phase", side_effect=_boat_spy),
-			patch.object(migration_module, "run_task", side_effect=_task_spy),
+			# collapse_forward lives in migration_forward now — patch its seams there.
+			patch.object(migration_forward, "run_boat_migration_phase", side_effect=_boat_spy),
+			patch.object(migration_forward, "run_task", side_effect=_task_spy),
 			patch.object(proxy_module, "reconcile_proxies", return_value=[]),
 		):
 			vm.collapse_forward()

@@ -230,7 +230,7 @@ class TestImageBuildRun(IntegrationTestCase):
 		# The real _provision_build_vm inserts a VM (its after_insert enqueues a boot
 		# job — patch enqueue so it doesn't run). A bench recipe stamps build_mode=site;
 		# the proxy recipe leaves it empty.
-		from atlas.atlas.image_recipes import get_recipe
+		from atlas.atlas.core.image_recipes import get_recipe
 
 		frappe.db.set_single_value("Atlas Settings", "ssh_public_key", "ssh-ed25519 AAAA test")
 		build = _new_build("bench-v16")
@@ -239,7 +239,7 @@ class TestImageBuildRun(IntegrationTestCase):
 		self.assertEqual(frappe.db.get_value("Virtual Machine", vm_name, "build_mode"), "site")
 
 	def test_provision_build_vm_proxy_has_no_mode(self) -> None:
-		from atlas.atlas.image_recipes import get_recipe
+		from atlas.atlas.core.image_recipes import get_recipe
 
 		frappe.db.set_single_value("Atlas Settings", "ssh_public_key", "ssh-ed25519 AAAA test")
 		build = _new_build("proxy")
@@ -250,7 +250,7 @@ class TestImageBuildRun(IntegrationTestCase):
 	def test_provision_boots_build_vm_at_fat_build_memory(self) -> None:
 		# A bench recipe fattens the build VM (build_memory_megabytes) so the Node-asset
 		# build has headroom; the VM must boot at THAT, not the smaller restore size.
-		from atlas.atlas.image_recipes import get_recipe
+		from atlas.atlas.core.image_recipes import get_recipe
 
 		recipe = get_recipe("bench-v16")
 		self.assertGreater(recipe.build_memory_megabytes, recipe.memory_megabytes)
@@ -266,7 +266,7 @@ class TestImageBuildRun(IntegrationTestCase):
 	def test_provision_boots_proxy_vm_at_its_single_memory(self) -> None:
 		# The proxy leaves build_memory_megabytes unset (0), so effective_* falls back
 		# to memory_megabytes — build and restore at one size, no resize step.
-		from atlas.atlas.image_recipes import get_recipe
+		from atlas.atlas.core.image_recipes import get_recipe
 
 		recipe = get_recipe("proxy")
 		self.assertEqual(recipe.build_memory_megabytes, 0)
@@ -289,9 +289,9 @@ class TestImageBuildRun(IntegrationTestCase):
 			yield "/tmp/key"
 
 		with (
-			patch("atlas.atlas.ssh.connection_for_server", return_value=connection),
-			patch("atlas.atlas._ssh.transport.ssh_key_file", fake_key_file),
-			patch("atlas.atlas._ssh.transport.run_ssh", return_value=(str(mem_available_kb), "", 0)),
+			patch("atlas.atlas.core.ssh.connection_for_server", return_value=connection),
+			patch("atlas.atlas.core._ssh.transport.ssh_key_file", fake_key_file),
+			patch("atlas.atlas.core._ssh.transport.run_ssh", return_value=(str(mem_available_kb), "", 0)),
 		):
 			image_build_module._assert_host_has_capacity(server, needed_megabytes)
 
@@ -315,7 +315,7 @@ class TestImageBuildRun(IntegrationTestCase):
 		# snapshot paths pick up from here — the cold path snapshots Stopped, the warm
 		# path boots it back up itself (_warm_snapshot). Assert resize with the restore
 		# memory and the VM is never started back up by resize.
-		from atlas.atlas.image_recipes import get_recipe
+		from atlas.atlas.core.image_recipes import get_recipe
 
 		recipe = get_recipe("bench-v16")
 		vm = self._fake_vm(status="Running")
@@ -330,7 +330,7 @@ class TestImageBuildRun(IntegrationTestCase):
 
 	def test_resize_is_noop_when_build_memory_equals_restore(self) -> None:
 		# A recipe that didn't fatten (proxy: build == restore) never touches the VM.
-		from atlas.atlas.image_recipes import get_recipe
+		from atlas.atlas.core.image_recipes import get_recipe
 
 		with patch.object(image_build_module.frappe, "get_doc") as m_get:
 			image_build_module._resize_to_restore_memory(get_recipe("proxy"), "vm-x")
@@ -342,7 +342,7 @@ class TestImageBuildRun(IntegrationTestCase):
 		# so ext4 journalled the inode but not the data → the snapshot captured a 0-byte
 		# binary that fails at deploy with `Exec format error`. The cold snapshot must
 		# flush the guest BEFORE it stops it, so the capture is durable.
-		from atlas.atlas.image_recipes import get_recipe
+		from atlas.atlas.core.image_recipes import get_recipe
 
 		recipe = get_recipe("bench-v16")
 		vm = self._fake_vm(status="Running")
@@ -370,7 +370,7 @@ class TestImageBuildRun(IntegrationTestCase):
 		# start() + commit — NOT a rollback-polling wait, which would wipe start()'s
 		# uncommitted save in this job's txn. Stop the test right after the boot (raise
 		# from _run_warm_entrypoint) — the run_task/capture tail needs a real host.
-		from atlas.atlas.image_recipes import get_recipe
+		from atlas.atlas.core.image_recipes import get_recipe
 
 		recipe = get_recipe("bench-v16")
 		vm = self._fake_vm(status="Stopped")
@@ -392,7 +392,7 @@ class TestImageBuildRun(IntegrationTestCase):
 	def test_warm_snapshot_skips_boot_when_already_running(self) -> None:
 		# A warm bake whose recipe DID fatten left the VM Running after the resize
 		# reboot (or a no-fatten recipe never stopped it) — don't double-boot.
-		from atlas.atlas.image_recipes import get_recipe
+		from atlas.atlas.core.image_recipes import get_recipe
 
 		recipe = get_recipe("bench-v16")
 		vm = self._fake_vm(status="Running")

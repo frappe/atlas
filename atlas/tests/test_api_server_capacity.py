@@ -325,7 +325,7 @@ class TestFakeServerAlwaysMeasured(IntegrationTestCase):
 		self.server.db_set("size", "Fake/fake-4vcpu-8gb")
 
 	def test_fake_totals_synthesized_from_size_catalog(self) -> None:
-		from atlas.atlas.providers.fake import fake_host_totals
+		from atlas.atlas.core.providers.fake import fake_host_totals
 
 		totals = fake_host_totals("Fake/fake-4vcpu-8gb")
 		self.assertEqual(totals["vcpus_total"], 4)

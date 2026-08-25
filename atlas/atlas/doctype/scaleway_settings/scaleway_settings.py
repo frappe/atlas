@@ -59,9 +59,9 @@ class ScalewaySettings(Document):
 		Writes through `doc.save()` so the `secret_key` Password goes through the normal
 		ORM path (`_save_passwords` encrypts to `__Auth` AND stamps the field placeholder,
 		so the desk form shows it as set)."""
-		from atlas.atlas.providers.scaleway import ScalewayProvider
-		from atlas.atlas.provisioning import upsert_catalog
-		from atlas.atlas.setup_catalog import set_default
+		from atlas.atlas.core.providers.scaleway import ScalewayProvider
+		from atlas.atlas.core.provisioning import upsert_catalog
+		from atlas.atlas.core.setup_catalog import set_default
 
 		self.zone = zone
 		self.project_id = project_id
@@ -108,7 +108,7 @@ class ScalewaySettings(Document):
 	@frappe.whitelist()
 	def test_connection(self) -> dict:
 		"""Ping Scaleway using the Scaleway provider's authenticate()."""
-		from atlas.atlas import providers
+		from atlas.atlas.core import providers
 
 		result = providers.for_provider_type("Scaleway").authenticate()
 		return dataclasses.asdict(result)

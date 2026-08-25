@@ -19,7 +19,7 @@ import time
 
 import frappe
 
-from atlas.atlas.providers.worker import finish_provisioning
+from atlas.atlas.core.providers.worker import finish_provisioning
 from atlas.tests.e2e._shared import ensure_e2e_provider, get_client
 
 

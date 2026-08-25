@@ -1,8 +1,8 @@
 import frappe
 from frappe.model.document import Document
 
-from atlas.atlas.boat_client import run_boat_task
-from atlas.atlas.providers import for_provider_type
+from atlas.atlas.core.boat_client import run_boat_task
+from atlas.atlas.core.providers import for_provider_type
 
 # A Reserved IP is bound to its address and vendor handle for life; those lock
 # once written. `server` is NOT immutable: the vendor can reassign the IP to a

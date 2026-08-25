@@ -4,13 +4,13 @@ from unittest.mock import MagicMock, patch
 import frappe
 from frappe.tests import IntegrationTestCase
 
-from atlas.atlas import tcp_proxy
+from atlas.atlas.core.placement import atlas_region
 from atlas.atlas.doctype.virtual_machine.test_virtual_machine import (
 	_ensure_test_image,
 	_ensure_test_server,
 	_new_vm,
 )
-from atlas.atlas.placement import atlas_region
+from atlas.atlas.services import tcp_proxy
 
 
 def _purge() -> None:

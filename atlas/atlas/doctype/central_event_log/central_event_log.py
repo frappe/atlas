@@ -35,8 +35,8 @@ class CentralEventLog(Document):
 	even for a reverted change — without ever delivering that reverted change to
 	Central (the after-commit deliver job never runs, so the row stays `pending`).
 
-	`atlas.atlas.central_report` is the sole automatic writer: `_emit` inserts the
-	row at `pending`; `deliver` (and its `_stamp` helper) updates `status` /
+	`atlas.atlas.core.central_report` is the sole automatic writer: `_emit` inserts
+	the row at `pending`; `deliver` (and its `_stamp` helper) updates `status` /
 	`attempts` / `last_error` / `http_status` on the delivery outcome. The one
 	operator action is `retry_delivery` — an on-demand redelivery from the desk."""
 
@@ -59,7 +59,7 @@ class CentralEventLog(Document):
 
 		payload = json.loads(self.payload) if self.payload else {}
 		frappe.enqueue(
-			"atlas.atlas.central_report.deliver",
+			"atlas.atlas.core.central_report.deliver",
 			queue="default",
 			timeout=60,
 			log_name=self.name,

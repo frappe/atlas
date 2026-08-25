@@ -11,7 +11,7 @@ from unittest.mock import patch
 import frappe
 from frappe.tests import IntegrationTestCase
 
-from atlas.atlas import local_task
+from atlas.atlas.core import local_task
 
 
 class TestRunLocalTask(IntegrationTestCase):

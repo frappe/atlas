@@ -42,7 +42,7 @@ class RootDomain(Document):
 		explicit value (a migration backfill, or a test) is honoured. Mirrors
 		`_denormalize_provider_types`."""
 		if not self.region:
-			from atlas.atlas.placement import atlas_region
+			from atlas.atlas.core.placement import atlas_region
 
 			self.region = atlas_region()
 

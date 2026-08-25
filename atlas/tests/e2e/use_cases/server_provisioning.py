@@ -29,9 +29,9 @@ import traceback
 
 import frappe
 
-from atlas.atlas import providers
-from atlas.atlas.provisioning import region_server_title
-from atlas.atlas.ssh import run_task
+from atlas.atlas.core import providers
+from atlas.atlas.core.provisioning import region_server_title
+from atlas.atlas.core.ssh import run_task
 from atlas.tests.e2e._shared import (
 	cleanup_droplet,
 	ensure_e2e_provider,
@@ -220,7 +220,7 @@ def _check_get_scripts(server) -> None:
 def _check_finish_provisioning_idempotent(server) -> None:
 	"""finish_provisioning normally runs in a worker. Every step is idempotent;
 	re-running it against an already-Active row should leave the row Active."""
-	from atlas.atlas.providers.worker import finish_provisioning
+	from atlas.atlas.core.providers.worker import finish_provisioning
 
 	assert server.provider_resource_id, "shared server has no provider_resource_id"
 	finish_provisioning(server.name)

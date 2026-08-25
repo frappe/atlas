@@ -6,7 +6,7 @@ from unittest.mock import patch
 import frappe
 from frappe.tests import IntegrationTestCase
 
-from atlas.atlas import scripts_catalog
+from atlas.atlas.core import scripts_catalog
 from atlas.tests._mocks import fake_task
 from atlas.tests.fixtures import make_provider, make_server
 
