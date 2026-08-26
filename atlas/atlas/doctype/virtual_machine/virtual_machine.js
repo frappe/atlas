@@ -99,6 +99,16 @@ function add_lifecycle_buttons(frm) {
 			frappe.atlas.add_action(frm, action.label, () => action.handler(frm));
 		}
 	}
+	if (status === "Running" && frm.doc.is_garage) {
+		frappe.atlas.add_action(frm, "Configure Garage", () =>
+			frappe.call({
+				doc: frm.doc,
+				method: "configure_garage",
+				freeze: true,
+				freeze_message: "Configuring garage...",
+			}).then(() => frm.reload_doc())
+		);
+	}
 	if (status === "Running" || status === "Paused") {
 		// Live snapshot: no stop required. Crash-consistent (the dialog says so).
 		frappe.atlas.add_action(frm, "Snapshot (live)", () =>
