@@ -11,13 +11,13 @@ from unittest.mock import MagicMock, patch
 import frappe
 from frappe.tests import IntegrationTestCase
 
-from atlas.atlas import image_builder
+from atlas.atlas.core import image_builder
+from atlas.atlas.core.image_recipes import RECIPES, get_recipe
 from atlas.atlas.doctype.virtual_machine.test_virtual_machine import (
 	_ensure_test_image,
 	_ensure_test_server,
 	_new_vm,
 )
-from atlas.atlas.image_recipes import RECIPES, get_recipe
 
 _BENCH = get_recipe("bench")
 _PROXY = get_recipe("proxy")
@@ -75,7 +75,7 @@ def _mock_build_ssh(build_result, finalize_result=("", "", 0)):
 			"connection_for_guest",
 			return_value=MagicMock(ssh_private_key="KEY", host="2400::dead"),
 		),
-		patch("atlas.atlas.image_recipes.run_ssh", finalize_run_ssh),
+		patch("atlas.atlas.core.image_recipes.run_ssh", finalize_run_ssh),
 	):
 		yield run_ssh, run_scp, run_detached, forget_host, finalize_run_ssh
 
@@ -106,7 +106,7 @@ class TestRecipeRegistry(IntegrationTestCase):
 		self.assertIs(get_recipe("bench"), RECIPES["bench-v16"])
 
 	def test_recipe_names_excludes_alias(self) -> None:
-		from atlas.atlas.image_recipes import recipe_names
+		from atlas.atlas.core.image_recipes import recipe_names
 
 		names = recipe_names()
 		self.assertNotIn("bench", names)
@@ -125,7 +125,7 @@ class TestRecipeRegistry(IntegrationTestCase):
 		import json
 		from pathlib import Path
 
-		from atlas.atlas.image_recipes import recipe_names
+		from atlas.atlas.core.image_recipes import recipe_names
 
 		path = Path(frappe.get_app_path("atlas")) / "atlas" / "doctype" / "image_build" / "image_build.json"
 		doc = json.loads(path.read_text())
@@ -180,7 +180,7 @@ class TestRecipeRegistry(IntegrationTestCase):
 		# same name the Image Build promote path uses AND parses back to the version token.
 		import re
 
-		from atlas.atlas.placement import version_from_image
+		from atlas.atlas.core.placement import version_from_image
 
 		def slug(title: str) -> str:
 			return re.sub(r"^-+|-+$", "", re.sub(r"[^a-z0-9.-]+", "-", title.lower()))
@@ -519,7 +519,7 @@ class TestRenderBenchToml(IntegrationTestCase):
 		# Section-aware: a second [[apps]] block's branch must NOT be rewritten. Drive
 		# the helper against a synthetic toml via the real substitution path by
 		# temporarily standing up a recipe-shaped object.
-		from atlas.atlas.image_recipes import ImageRecipe
+		from atlas.atlas.core.image_recipes import ImageRecipe
 
 		toml = (
 			"[bench]\n"
@@ -571,7 +571,7 @@ class TestRenderBenchToml(IntegrationTestCase):
 		from pathlib import Path
 		from unittest.mock import patch
 
-		from atlas.atlas.image_recipes import ImageRecipe
+		from atlas.atlas.core.image_recipes import ImageRecipe
 
 		with tempfile.TemporaryDirectory() as d:
 			(Path(d) / "bench.toml").write_text('[bench]\nname = "atlas"\n')
@@ -627,7 +627,7 @@ class TestBuildCommand(IntegrationTestCase):
 	def test_command_passes_admin_mode(self) -> None:
 		import dataclasses
 
-		from atlas.atlas.image_recipes import RECIPES
+		from atlas.atlas.core.image_recipes import RECIPES
 
 		# A hypothetical admin variant: only build_mode differs. Use replace to avoid
 		# minting one in the registry.

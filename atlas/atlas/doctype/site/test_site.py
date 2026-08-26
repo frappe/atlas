@@ -229,8 +229,8 @@ class TestSiteOrchestration(IntegrationTestCase):
 			patch.object(site_module, "_wait_for_http") as m_http,
 			patch.object(site_module, "_create_subdomain", return_value="sub-1") as m_sub,
 			patch.object(
-				site_module, "_provision_pilot", return_value="acme-pilot.blr1.frappe.dev"
-			) as m_pilot,
+				site_module, "_provision_console", return_value="acme-pilot.blr1.frappe.dev"
+			) as m_console,
 			patch.object(site_module.frappe.db, "commit"),
 		):
 			site_module.auto_provision(site_name)
@@ -240,7 +240,7 @@ class TestSiteOrchestration(IntegrationTestCase):
 			"deploy": m_deploy,
 			"http": m_http,
 			"sub": m_sub,
-			"pilot": m_pilot,
+			"console": m_console,
 		}
 
 	def test_happy_path_reaches_running(self) -> None:
@@ -266,14 +266,14 @@ class TestSiteOrchestration(IntegrationTestCase):
 		http_args = mocks["http"].call_args.args
 		self.assertEqual(http_args[1], "cloned-vm")
 		mocks["sub"].assert_called_once()
-		# The attached Pilot admin console was stood up on the SAME backing VM (the
+		# The attached admin console was stood up on the SAME backing VM (the
 		# front door Central's Asset resolves for "Open") — see spec/14-self-serve.md.
 		# (auto_provision passes its own re-fetched Site doc, so assert on the args:
 		# the Site name + the just-cloned VM name.)
-		mocks["pilot"].assert_called_once()
-		pilot_args = mocks["pilot"].call_args.args
-		self.assertEqual(pilot_args[0].name, site.name)
-		self.assertEqual(pilot_args[1], "cloned-vm")
+		mocks["console"].assert_called_once()
+		console_args = mocks["console"].call_args.args
+		self.assertEqual(console_args[0].name, site.name)
+		self.assertEqual(console_args[1], "cloned-vm")
 		# Each phase transition stamped its start time (drives the status page's
 		# per-phase timing). All three real phases were entered, so all three carry
 		# a stamp, in non-decreasing order.
@@ -351,7 +351,7 @@ class TestSiteOrchestration(IntegrationTestCase):
 			),
 			patch.object(site_module, "_wait_for_http"),
 			patch.object(site_module, "_create_subdomain", return_value="sub-1"),
-			patch.object(site_module, "_provision_pilot", side_effect=RuntimeError("no session verb")),
+			patch.object(site_module, "_provision_console", side_effect=RuntimeError("no session verb")),
 			patch.object(site_module.frappe, "log_error") as m_log,
 			patch.object(site_module.frappe.db, "commit"),
 		):
@@ -361,7 +361,7 @@ class TestSiteOrchestration(IntegrationTestCase):
 		self.assertTrue(site.running_started)
 		# The tenant's own handoff is untouched; only the console is missing.
 		self.assertEqual(site.login_url, f"https://{site.name}/app?sid=tok")
-		self.assertFalse(site.pilot)
+		self.assertFalse(site.console)
 		# Not swallowed quietly — the operator gets the traceback in the Error Log.
 		m_log.assert_called_once()
 
@@ -385,7 +385,7 @@ class TestSiteOrchestration(IntegrationTestCase):
 			),
 			patch.object(site_module, "_wait_for_http"),
 			patch.object(site_module, "_create_subdomain", return_value="sub-1"),
-			patch.object(site_module, "_provision_pilot", return_value="acme-pilot.blr1.frappe.dev"),
+			patch.object(site_module, "_provision_console", return_value="acme-pilot.blr1.frappe.dev"),
 			patch.object(site_module.frappe.db, "commit", side_effect=lambda: order.append("commit")),
 		):
 			site_module.auto_provision(site.name)
@@ -437,7 +437,7 @@ class TestSiteOrchestration(IntegrationTestCase):
 				return_value={"login_url": f"https://{site.name}/app?sid=tok"},
 			),
 			patch.object(site_module, "_wait_for_http"),
-			patch.object(site_module, "_provision_pilot", return_value="acme-pilot.blr1.frappe.dev"),
+			patch.object(site_module, "_provision_console", return_value="acme-pilot.blr1.frappe.dev"),
 			patch.object(site_module.frappe.db, "commit"),
 		):
 			site_module.auto_provision(site.name)
@@ -481,7 +481,7 @@ class TestSiteFakeProvisionStages(IntegrationTestCase):
 		self.site = _new_site("acme")
 
 	def test_deploy_site_noops_on_fake_vm(self) -> None:
-		from atlas.atlas import deploy_site as deploy_module
+		from atlas.atlas.services import deploy_site as deploy_module
 
 		with patch.object(deploy_module, "deploy_site") as m_deploy:
 			result = site_module._deploy_site(self.site, self.fake_vm.name)
@@ -491,14 +491,14 @@ class TestSiteFakeProvisionStages(IntegrationTestCase):
 		self.assertTrue(result["login_url"])
 
 	def test_wait_for_http_noops_on_fake_vm(self) -> None:
-		from atlas.atlas import deploy_site as deploy_module
+		from atlas.atlas.services import deploy_site as deploy_module
 
 		with patch.object(deploy_module, "wait_for_http") as m_http:
 			site_module._wait_for_http(self.site, self.fake_vm.name)
 		m_http.assert_not_called()
 
 	def test_deploy_site_calls_through_on_real_vm(self) -> None:
-		from atlas.atlas import deploy_site as deploy_module
+		from atlas.atlas.services import deploy_site as deploy_module
 
 		with patch.object(deploy_module, "deploy_site") as m_deploy:
 			site_module._deploy_site(self.site, self.real_vm.name)
@@ -508,7 +508,7 @@ class TestSiteFakeProvisionStages(IntegrationTestCase):
 		m_deploy.assert_called_once_with(self.real_vm.name, self.site.name, None, None, admin_domain=None)
 
 	def test_wait_for_http_calls_through_on_real_vm(self) -> None:
-		from atlas.atlas import deploy_site as deploy_module
+		from atlas.atlas.services import deploy_site as deploy_module
 
 		with patch.object(deploy_module, "wait_for_http") as m_http:
 			site_module._wait_for_http(self.site, self.real_vm.name)
@@ -625,49 +625,48 @@ class TestSiteWarmFirstProvision(IntegrationTestCase):
 		self.assertEqual(recorded[0]["kwargs"]["title"], "acme")
 
 
-class TestPilotSubdomainFor(IntegrationTestCase):
-	"""`pilot_subdomain_for` derives the attached-Pilot label from a site's label:
+class TestConsoleSubdomainFor(IntegrationTestCase):
+	"""`console_subdomain_for` derives the attached-console label from a site's label:
 	`acme` → `acme-pilot`, disambiguated on collision (spec/14-self-serve.md)."""
 
 	def setUp(self) -> None:
 		_ensure_root_domain()
-		for name in frappe.get_all("Pilot", pluck="name"):
-			frappe.delete_doc("Pilot", name, force=1, ignore_permissions=True)
+		for name in frappe.get_all("Site", pluck="name"):
+			frappe.delete_doc("Site", name, force=1, ignore_permissions=True)
 
-	def test_appends_pilot_suffix(self) -> None:
-		from atlas.atlas.subdomain_label import pilot_subdomain_for
+	def test_appends_console_suffix(self) -> None:
+		from atlas.atlas.services.subdomain_label import console_subdomain_for
 
-		self.assertEqual(pilot_subdomain_for("acme"), "acme-pilot")
+		self.assertEqual(console_subdomain_for("acme"), "acme-pilot")
 
 	def test_collision_appends_random_tail(self) -> None:
-		"""When `<label>-pilot` already backs a Pilot, a short random tail disambiguates
+		"""When `<label>-pilot` already backs a console, a short random tail disambiguates
 		so a re-created / colliding site still gets a unique console name."""
-		from atlas.atlas.doctype.pilot import pilot as pilot_module
-		from atlas.atlas.subdomain_label import PILOT_SUFFIX, pilot_subdomain_for
+		from atlas.atlas.services.subdomain_label import CONSOLE_SUFFIX, console_subdomain_for
 
-		# Stand up a Pilot at `acme-pilot.<domain>` so the base name is taken. Patch the
-		# own-VM provisioner + enqueue so the row exists without a real backing VM.
-		with (
-			patch.object(pilot_module, "_provision_backing_vm", return_value="stub-vm"),
-			patch.object(pilot_module.frappe, "enqueue"),
-		):
-			frappe.get_doc({"doctype": "Pilot", "subdomain": "acme-pilot"}).insert(ignore_permissions=True)
-		label = pilot_subdomain_for("acme")
+		# Stand up a pilot-console Site at `acme-pilot.<domain>` so the base name is taken.
+		# The attach path binds a stub VM, so no real backing VM is provisioned.
+		console = frappe.get_doc(
+			{"doctype": "Site", "kind": "pilot-console", "subdomain": "acme-pilot"}
+		)
+		console.flags.attach_vm = "stub-vm"
+		console.insert(ignore_permissions=True)
+		label = console_subdomain_for("acme")
 		self.assertNotEqual(label, "acme-pilot")
-		self.assertTrue(label.startswith("acme" + PILOT_SUFFIX + "-"))
+		self.assertTrue(label.startswith("acme" + CONSOLE_SUFFIX + "-"))
 		# The result is still a valid Contract-A label.
-		from atlas.atlas.subdomain_label import validate_label
+		from atlas.atlas.services.subdomain_label import validate_label
 
 		validate_label(label)
 
 
 class TestSitePilotAttachment(IntegrationTestCase):
-	"""create_site stands up an attached Pilot admin console on the site's OWN backing
-	VM (spec/14-self-serve.md): `<subdomain>-pilot.<region>` → the same VM, so Central's
-	Asset "Open" resolves a bench console (front_door_for_vm prefers Pilot), not the
-	customer site. The deploy short-circuits on the Fake VM, so the real `_provision_pilot`
-	orchestration (create the Pilot, attach it, mint, route, mark Running, link back) runs
-	hostless here."""
+	"""create_site stands up an attached admin console (a Site of kind pilot-console) on
+	the site's OWN backing VM (spec/14-self-serve.md): `<subdomain>-pilot.<region>` → the
+	same VM, so Central's Asset "Open" resolves a bench console (front_door_for_vm prefers
+	the console), not the customer site. The deploy short-circuits on the Fake VM, so the
+	real `_provision_console` orchestration (create the console, attach it, mint, route, mark
+	Running, link back) runs hostless here."""
 
 	def setUp(self) -> None:
 		_ensure_root_domain()
@@ -675,8 +674,6 @@ class TestSitePilotAttachment(IntegrationTestCase):
 
 		for name in frappe.get_all("Site", pluck="name"):
 			frappe.delete_doc("Site", name, force=1, ignore_permissions=True)
-		for name in frappe.get_all("Pilot", pluck="name"):
-			frappe.delete_doc("Pilot", name, force=1, ignore_permissions=True)
 		for name in frappe.get_all("Subdomain", pluck="name"):
 			frappe.delete_doc("Subdomain", name, force=1, ignore_permissions=True)
 		image = make_image("pilot-attach-image")
@@ -690,73 +687,74 @@ class TestSitePilotAttachment(IntegrationTestCase):
 			fake_server, image, title="pilot-attach-vm", ipv6_address="2001:db8:f::9"
 		)
 		self.site = _new_site("acme")
-		# deploy_attached commits on its FAILURE path (so a Failed pilot survives the job
+		# deploy_attached commits on its FAILURE path (so a Failed console survives the job
 		# rollback, like the other auto_provision funcs). In-test that commit would leak
 		# rows past IntegrationTestCase's per-test rollback and poison the shared DB with a
 		# committed `acme` row that later `delete_doc`s deadlock on (FOR UPDATE NOWAIT). Mock
 		# commit to a no-op for the whole class — the same discipline TestPilot._drive_provision
 		# uses. Rows then roll back cleanly between tests.
-		from atlas.atlas.doctype.pilot import pilot as pilot_module
+		from atlas.atlas.services import site_console as site_console_module
 
 		self._commit_patches = [
 			patch.object(site_module.frappe.db, "commit"),
-			patch.object(pilot_module.frappe.db, "commit"),
+			patch.object(site_console_module.frappe.db, "commit"),
 		]
 		for p in self._commit_patches:
 			p.start()
 		self.addCleanup(lambda: [p.stop() for p in self._commit_patches])
 
-	def test_provision_pilot_attaches_console_to_same_vm(self) -> None:
-		pilot_name = site_module._provision_pilot(self.site, self.fake_vm.name, "acme-pilot")
+	def test_provision_console_attaches_console_to_same_vm(self) -> None:
+		console_name = site_module._provision_console(self.site, self.fake_vm.name, "acme-pilot")
 		# Named `<subdomain>-pilot.<region>` and linked back on the Site.
-		self.assertEqual(pilot_name, "acme-pilot.blr1.frappe.dev")
+		self.assertEqual(console_name, "acme-pilot.blr1.frappe.dev")
 		self.site.reload()
-		self.assertEqual(self.site.pilot, pilot_name)
-		pilot = frappe.get_doc("Pilot", pilot_name)
-		# Attached: bound to the site's VM, admin build_mode, and Running with a login URL.
-		self.assertTrue(pilot.attached)
-		self.assertEqual(pilot.virtual_machine, self.fake_vm.name)
-		self.assertEqual(pilot.build_mode, "admin")
-		self.assertEqual(pilot.status, "Running")
-		self.assertTrue(pilot.login_url)
-		# The Pilot's own Subdomain routes `acme-pilot` → the SAME backing VM /128.
-		self.assertTrue(pilot.subdomain_doc)
-		pilot_sub = frappe.get_doc("Subdomain", pilot.subdomain_doc)
-		self.assertEqual(pilot_sub.subdomain, "acme-pilot")
-		self.assertEqual(pilot_sub.virtual_machine, self.fake_vm.name)
+		self.assertEqual(self.site.console, console_name)
+		console = frappe.get_doc("Site", console_name)
+		# Attached: a pilot-console bound to the site's VM, admin build_mode, Running with a URL.
+		self.assertEqual(console.kind, "pilot-console")
+		self.assertTrue(console.attached)
+		self.assertEqual(console.virtual_machine, self.fake_vm.name)
+		self.assertEqual(console.build_mode, "admin")
+		self.assertEqual(console.status, "Running")
+		self.assertTrue(console.login_url)
+		# The console's own Subdomain routes `acme-pilot` → the SAME backing VM /128.
+		self.assertTrue(console.subdomain_doc)
+		console_sub = frappe.get_doc("Subdomain", console.subdomain_doc)
+		self.assertEqual(console_sub.subdomain, "acme-pilot")
+		self.assertEqual(console_sub.virtual_machine, self.fake_vm.name)
 
-	def test_attached_pilot_does_not_create_or_boot_its_own_vm(self) -> None:
+	def test_attached_console_does_not_create_or_boot_its_own_vm(self) -> None:
 		# The attach path must NOT provision a VM or enqueue a boot job (the Site owns
-		# the VM). Assert the module's own-VM provisioner is never touched.
-		from atlas.atlas.doctype.pilot import pilot as pilot_module
+		# the VM). Assert the console module's own-VM provisioner is never touched.
+		from atlas.atlas.services import site_console as site_console_module
 
-		with patch.object(pilot_module, "_provision_backing_vm") as m_prov:
-			site_module._provision_pilot(self.site, self.fake_vm.name, "acme-pilot")
+		with patch.object(site_console_module, "_provision_backing_vm") as m_prov:
+			site_module._provision_console(self.site, self.fake_vm.name, "acme-pilot")
 		m_prov.assert_not_called()
 
-	def test_attached_pilot_terminate_does_not_touch_the_vm(self) -> None:
-		# The attached Pilot's own terminate() must NOT terminate the shared VM (the Site
-		# owns it) — the `.attached` guard makes _terminate_backing_vm a no-op. Terminate
-		# the Pilot alone and assert the VM is untouched (only the Site would terminate it).
-		site_module._provision_pilot(self.site, self.fake_vm.name, "acme-pilot")
-		pilot = frappe.get_doc("Pilot", self.site.pilot)
-		pilot.terminate()
-		pilot.reload()
-		self.assertEqual(pilot.status, "Terminated")
-		self.assertFalse(frappe.db.exists("Subdomain", pilot.get("subdomain_doc")))
-		# The shared VM is NOT terminated by the Pilot (attached guard).
+	def test_attached_console_terminate_does_not_touch_the_vm(self) -> None:
+		# The attached console's own terminate() must NOT terminate the shared VM (the Site
+		# owns it) — the `.attached` guard makes terminate_backing_vm a no-op. Terminate
+		# the console alone and assert the VM is untouched (only the Site would terminate it).
+		site_module._provision_console(self.site, self.fake_vm.name, "acme-pilot")
+		console = frappe.get_doc("Site", self.site.console)
+		console.terminate()
+		console.reload()
+		self.assertEqual(console.status, "Terminated")
+		self.assertFalse(frappe.db.exists("Subdomain", console.get("subdomain_doc")))
+		# The shared VM is NOT terminated by the console (attached guard).
 		self.assertNotEqual(frappe.db.get_value("Virtual Machine", self.fake_vm.name, "status"), "Terminated")
 
-	def test_terminate_cascades_to_pilot_and_vm_once(self) -> None:
-		# Full cascade: Site.terminate → Pilot Terminated + VM Terminated (once each).
-		site_module._provision_pilot(self.site, self.fake_vm.name, "acme-pilot")
+	def test_terminate_cascades_to_console_and_vm_once(self) -> None:
+		# Full cascade: Site.terminate → console Terminated + VM Terminated (once each).
+		site_module._provision_console(self.site, self.fake_vm.name, "acme-pilot")
 		self.site.db_set("virtual_machine", self.fake_vm.name)
 		self.site.reload()
-		pilot_name = self.site.pilot
+		console_name = self.site.console
 		self.site.terminate()
 		self.site.reload()
 		self.assertEqual(self.site.status, "Terminated")
-		self.assertEqual(frappe.db.get_value("Pilot", pilot_name, "status"), "Terminated")
+		self.assertEqual(frappe.db.get_value("Site", console_name, "status"), "Terminated")
 		self.assertEqual(frappe.db.get_value("Virtual Machine", self.fake_vm.name, "status"), "Terminated")
 
 
@@ -818,3 +816,164 @@ class TestSiteTerminate(IntegrationTestCase):
 			"Terminated",
 			"backing VM terminated",
 		)
+
+
+class TestSitePilotConsoleKind(IntegrationTestCase):
+	"""A `Site(kind="pilot-console")` runs the bench-image console flow (the old Pilot):
+	its VM is created SYNCHRONOUSLY in after_insert from a bench image, it reaches Running
+	with no HTTP gate, and it reports AS its VM (`vm.*`). The flow lives in
+	`services/site_console.py`; the Site controller dispatches to it on `kind`. All
+	hostless: the backing VM is a Fake server, so the deploy short-circuits."""
+
+	def setUp(self) -> None:
+		from atlas.atlas.doctype.tenant.tenant import ensure_tenant
+		from atlas.tests.fixtures import make_image, make_provider_row, make_server
+
+		_ensure_root_domain()
+		frappe.db.set_single_value("Atlas Settings", "ssh_public_key", "ssh-ed25519 AAAAFLEET")
+		self.tenant = ensure_tenant("team-console")
+		self.server = make_server(
+			make_provider_row("console-provider", provider_type="Fake"),
+			title="console-server",
+			provider_type="Fake",
+			status="Active",
+			ipv6_address="2001:db8:c::1",
+			ipv6_prefix="2001:db8:c::/64",
+			ipv6_virtual_machine_range="2001:db8:c::/120",
+		)
+		self.admin_image = make_image("console-admin-image", build_mode="admin")
+		for name in frappe.get_all("Site", pluck="name"):
+			frappe.delete_doc("Site", name, force=1, ignore_permissions=True)
+		for name in frappe.get_all("Subdomain", pluck="name"):
+			frappe.delete_doc("Subdomain", name, force=1, ignore_permissions=True)
+		# auto_provision commits on its terminal transitions; mock it to a no-op so nothing
+		# leaks past IntegrationTestCase's per-test rollback (same discipline as TestPilot).
+		from atlas.atlas.services import site_console as site_console_module
+
+		self._commit_patch = patch.object(site_console_module.frappe.db, "commit")
+		self._commit_patch.start()
+		self.addCleanup(self._commit_patch.stop)
+
+	def _new_console(self, subdomain: str = "acme"):
+		site = frappe.get_doc(
+			{"doctype": "Site", "subdomain": subdomain, "kind": "pilot-console", "tenant": self.tenant}
+		)
+		site.flags.vm_spec = {"server": self.server.name, "image": self.admin_image.name}
+		return site.insert(ignore_permissions=True)
+
+	def _drive(self, site) -> None:
+		from atlas.atlas.services import site_console as site_console_module
+
+		frappe.db.set_value("Virtual Machine", site.virtual_machine, "status", "Running")
+		with patch.object(site_console_module, "_wait_for_vm_running"):
+			site_module.auto_provision(site.name)
+
+	def test_after_insert_creates_and_links_the_backing_vm(self) -> None:
+		"""A pilot-console creates its VM synchronously (so create_vm can return its
+		identity) and inherits the image's build_mode onto its own row."""
+		site = self._new_console("acme")
+		self.assertEqual(site.name, "acme.blr1.frappe.dev")
+		self.assertTrue(site.virtual_machine)
+		vm = frappe.get_doc("Virtual Machine", site.virtual_machine)
+		self.assertEqual(vm.title, "acme")
+		self.assertEqual(vm.build_mode, "admin")
+		self.assertEqual(site.build_mode, "admin")
+
+	def test_auto_provision_reaches_running_with_login(self) -> None:
+		site = self._new_console("acme")
+		self._drive(site)
+		site.reload()
+		self.assertEqual(site.status, "Running")
+		# admin mode → the synthesized Fake login URL, stamped with an expiry.
+		self.assertEqual(site.login_url, "https://acme.blr1.frappe.dev/app?sid=fake-sid")
+		self.assertTrue(site.login_url_expires_at)
+		# A Subdomain (proxy route) was created and linked back.
+		self.assertTrue(site.subdomain_doc)
+		subdomain = frappe.get_doc("Subdomain", site.subdomain_doc)
+		self.assertEqual(subdomain.subdomain, "acme")
+		self.assertEqual(subdomain.virtual_machine, site.virtual_machine)
+
+	def test_regenerate_login_url_returns_vm_payload(self) -> None:
+		site = self._new_console("acme")
+		self._drive(site)
+		site.reload()
+		fresh = "https://acme.blr1.frappe.dev/app?sid=fresh"
+		with patch.object(site_module.site_console, "_regenerate_login", return_value={"login_url": fresh}):
+			payload = site.regenerate_login_url()
+		# The returned mirror is the VM-shaped one Central re-reads (keyed by the VM uuid),
+		# NOT the site.* shape.
+		self.assertEqual(payload["name"], site.virtual_machine)
+		self.assertEqual(payload["login_url"], fresh)
+		self.assertEqual(payload["gateway_url"], "https://acme.blr1.frappe.dev")
+
+	def test_terminate_tears_down_subdomain_and_vm(self) -> None:
+		from unittest.mock import patch as _patch
+
+		from atlas.atlas.doctype.virtual_machine import virtual_machine as vm_module
+		from atlas.tests._mocks import fake_task
+
+		site = self._new_console("acme")
+		self._drive(site)
+		site.reload()
+		vm_name = site.virtual_machine
+		frappe.db.set_value("Virtual Machine", vm_name, "status", "Running")
+		with (
+			_patch.object(vm_module, "run_boat_task", return_value=fake_task(name="task-term-console")),
+			_patch.object(vm_module, "put_desired_state", return_value={}),
+		):
+			site.terminate()
+		site.reload()
+		self.assertEqual(site.status, "Terminated")
+		self.assertFalse(frappe.db.exists("Subdomain", site.get("subdomain_doc")))
+		self.assertEqual(frappe.db.get_value("Virtual Machine", vm_name, "status"), "Terminated")
+
+	def test_front_door_gateway_is_the_console_host_in_site_mode(self) -> None:
+		"""A site-mode console (a server) serves the baked site at its FQDN, so Central
+		deep-links its `-pilot` console host — resolved through the merged doctype."""
+		from atlas.atlas.services.front_door import front_door_for_vm
+		from atlas.tests.fixtures import make_image
+
+		image = make_image("console-site-image", build_mode="site")
+		site = frappe.get_doc(
+			{"doctype": "Site", "subdomain": "srv", "kind": "pilot-console", "tenant": self.tenant}
+		)
+		site.flags.vm_spec = {"server": self.server.name, "image": image.name}
+		site.insert(ignore_permissions=True)
+		front_door = front_door_for_vm(site.virtual_machine)
+		self.assertEqual(front_door.gateway_url, "https://srv-pilot.blr1.frappe.dev")
+
+	def test_status_change_reports_as_the_vm_not_the_site(self) -> None:
+		"""A pilot-console reports AS its backing VM: an on_update status change emits
+		vm.status_changed (the shape Central mirrors), never site.status_changed."""
+		from atlas.atlas.services import reporting
+
+		site = self._new_console("acme")
+		self._drive(site)
+		site.reload()
+		with (
+			patch.object(reporting.central_report, "_enabled", return_value=True),
+			patch.object(reporting.central_report, "_emit") as m_emit,
+		):
+			site.status = "Failed"
+			site.save(ignore_permissions=True)
+		events = [call.args[0] for call in m_emit.call_args_list]
+		self.assertIn("vm.status_changed", events)
+		self.assertNotIn("site.status_changed", events)
+
+	def test_front_door_prefers_the_console_over_the_bench_site(self) -> None:
+		"""A self-serve VM is backed by BOTH a bench-site Site and its pilot-console (the
+		attached admin console). What Central deep-links is the console, so front_door_for_vm
+		must resolve the pilot-console kind ahead of the bench-site."""
+		from atlas.atlas.services.front_door import front_door_for_vm
+
+		console = frappe.get_doc(
+			{"doctype": "Site", "subdomain": "acme-pilot", "kind": "pilot-console", "tenant": self.tenant}
+		)
+		console.flags.attach_vm = "shared-vm-uuid"
+		console.insert(ignore_permissions=True)
+		bench = frappe.get_doc({"doctype": "Site", "subdomain": "acme", "tenant": self.tenant})
+		bench.insert(ignore_permissions=True)
+		bench.db_set("virtual_machine", "shared-vm-uuid")
+		front_door = front_door_for_vm("shared-vm-uuid")
+		self.assertEqual(front_door.doc.name, console.name)
+		self.assertEqual(front_door.doc.kind, "pilot-console")

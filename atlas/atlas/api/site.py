@@ -28,6 +28,7 @@ def create_site(
 	pilot_credential_id: str | None = None,
 	central_endpoint: str | None = None,
 	bootstrap_token: str | None = None,
+	correlation_id: str | None = None,
 ) -> dict:
 	"""Provision a self-serve site for a Central team and return its mirror row.
 
@@ -51,7 +52,11 @@ def create_site(
 	# homes: pilot_credential_id on the backing VM (echoed to Central on vm.* events) and
 	# the endpoint/token in the bench's bench.toml (written at deploy). Nothing is
 	# persisted on the Site, and the token never appears in _mirror.
-	site = frappe.get_doc({"doctype": "Site", "subdomain": subdomain, "tenant": tenant})
+	# correlation_id persists on the Site (unlike the bench creds) so every site.* event —
+	# including the eventual Running from auto_provision — echoes it to Central.
+	site = frappe.get_doc(
+		{"doctype": "Site", "subdomain": subdomain, "tenant": tenant, "correlation_id": correlation_id}
+	)
 	site.flags.pilot_credential_id = pilot_credential_id
 	site.flags.central_endpoint = central_endpoint
 	site.flags.bootstrap_token = bootstrap_token
@@ -64,13 +69,13 @@ def create_site(
 def check_subdomain(subdomain: str, region: str | None = None) -> dict:
 	"""Best-effort availability pre-check for Central's signup form.
 
-	Wraps the shared Contract-A rules (`atlas.atlas.subdomain_label`) so Central
+	Wraps the shared Contract-A rules (`atlas.atlas.services.subdomain_label`) so Central
 	can tell a user "taken" / "reserved" / "bad shape" before it calls
 	`create_site` — the authoritative uniqueness still lives in the `Site` FQDN
 	key at insert. Returns the resolved `fqdn`/`domain` so Central renders the real
 	suffix (never guesses `.frappe.cloud`). Operator-authorized (Central token)."""
-	from atlas.atlas import subdomain_label
-	from atlas.atlas.placement import active_root_domain
+	from atlas.atlas.core.placement import active_root_domain
+	from atlas.atlas.services import subdomain_label
 
 	domain = active_root_domain().domain
 	label = subdomain_label.normalize(subdomain)

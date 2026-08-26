@@ -8,13 +8,14 @@ size), never *where* — placement (server) and the base image are Atlas's conce
 WIRE SHAPE (unchanged) vs. WHAT'S BEHIND IT (changed): Central still calls
 `create_vm` and mirrors a VM-shaped row — `name`, `ipv6_address`, `gateway_url`,
 `login_url`, etc. But a *bench* VM (a baked-image tenant environment) is now owned
-by a `Pilot` DocType, not the `Virtual Machine` itself: the bench provision (boot a
-bench image, deploy in-guest, mint the one-click login URL) lives on the Pilot so
-the Virtual Machine stays a pure microVM. So `create_vm` creates a **Pilot** (which
-creates and owns the VM), and the bench fields in the mirror row — `gateway_url`
-(`https://<subdomain>.<region domain>`) and, once Running, `login_url` + its expiry
-— are read back THROUGH the Pilot. The plain VM facts (name, ipv6) are read through
-the VM the Pilot created. Central sees the same VM-shaped payload as before.
+by a `Site(kind="pilot-console")`, not the `Virtual Machine` itself: the bench
+provision (boot a bench image, deploy in-guest, mint the one-click login URL) lives
+on the console so the Virtual Machine stays a pure microVM. So `create_vm` creates a
+**pilot-console Site** (which creates and owns the VM), and the bench fields in the
+mirror row — `gateway_url` (`https://<subdomain>.<region domain>`) and, once Running,
+`login_url` + its expiry — are read back THROUGH the console. The plain VM facts
+(name, ipv6) are read through the VM the console created. Central sees the same
+VM-shaped payload as before.
 
 This is the write half of the Central↔Atlas tenancy contract whose read half is
 the Tenant DocType (resources stamped with the owning `team`). It returns the VM
@@ -27,6 +28,7 @@ from __future__ import annotations
 import frappe
 
 from atlas.atlas.doctype.tenant.tenant import ensure_tenant
+from atlas.atlas.services import site_console
 
 
 @frappe.whitelist()
@@ -41,6 +43,7 @@ def create_vm(
 	pilot_credential_id: str | None = None,
 	central_endpoint: str | None = None,
 	bootstrap_token: str | None = None,
+	correlation_id: str | None = None,
 ) -> dict:
 	"""Provision a bench VM for a Central team and return its (VM-shaped) mirror row.
 
@@ -50,16 +53,16 @@ def create_vm(
 	bench at `<title>.<region domain>` (derived, never stored — the same Contract-A
 	rule `create_site` uses, so region/domain never leave Atlas).
 
-	Creates a `Pilot`, which owns the backing VM: the Pilot's `before_insert`
-	validates the label (a bad one fails at the boundary) and its `after_insert`
-	creates the VM synchronously (so its identity is available for this return) and
-	enqueues the boot→deploy→mint job. Runs with `ignore_permissions`: operator
-	orchestration authorized by the Central token, not desk RBAC.
+	Creates a `Site(kind="pilot-console")`, which owns the backing VM: its
+	`before_insert` validates the label (a bad one fails at the boundary) and its
+	`after_insert` creates the VM synchronously (so its identity is available for this
+	return) and enqueues the boot→deploy→mint job. Runs with `ignore_permissions`:
+	operator orchestration authorized by the Central token, not desk RBAC.
 	"""
 	if not team:
 		frappe.throw("team is required.")
 
-	from atlas.atlas.placement import image_for_version, version_from_image
+	from atlas.atlas.core.placement import image_for_version, version_from_image
 
 	tenant = ensure_tenant(team)
 
@@ -79,10 +82,12 @@ def create_vm(
 	if cpu_max_cores:
 		spec["cpu_max_cores"] = float(cpu_max_cores)
 
-	pilot = frappe.get_doc({"doctype": "Pilot", "subdomain": title or "server", "tenant": tenant})
-	# The VM spec rides the insert (flags → after_insert) to the VM the Pilot creates;
-	# it is never persisted on the Pilot row, which stores only bench-level state.
-	pilot.flags.vm_spec = spec
+	console = frappe.get_doc(
+		{"doctype": "Site", "kind": "pilot-console", "subdomain": title or "server", "tenant": tenant}
+	)
+	# The VM spec rides the insert (flags → after_insert) to the VM the console creates;
+	# it is never persisted on the console row, which stores only bench-level state.
+	console.flags.vm_spec = spec
 	# Same carriage for the pilot credential as `api.site.create_site`: Central mints the
 	# id + the endpoint/token the bench calls back with, and they ride the insert (flags →
 	# after_insert → the provision job) to their real homes — pilot_credential_id onto the
@@ -91,29 +96,23 @@ def create_vm(
 	# long-lived credential. Without them the guest never enrolls and Central refuses to
 	# open the console ("This VM's pilot hasn't enrolled yet") — servers were missing this
 	# entirely while sites had it.
-	pilot.flags.pilot_credential_id = pilot_credential_id
-	pilot.flags.central_endpoint = central_endpoint
-	pilot.flags.bootstrap_token = bootstrap_token
-	pilot.insert(ignore_permissions=True)
+	console.flags.central_endpoint = central_endpoint
+	console.flags.bootstrap_token = bootstrap_token
+	# The pilot credential id and correlation id must be on the VM BEFORE it is inserted: the
+	# VM's after_insert emits vm.created and snapshots its payload right then. Stamping them
+	# afterwards left vm.created carrying nulls — so Central couldn't bind its reserved Pilot
+	# Credential to the VM (the console then refused it as "pilot hasn't enrolled yet") nor
+	# attribute that first event to the create action. Ride both onto the VM via these flags,
+	# which _provision_backing_vm sets on the VM doc before it inserts it.
+	console.flags.pilot_credential_id = pilot_credential_id
+	console.flags.correlation_id = correlation_id
+	console.insert(ignore_permissions=True)
 
-	# Stamp the credential id on the backing VM HERE, synchronously, rather than leaving it
-	# to the provision job. The Pilot's after_insert already created the VM (that is why
-	# this function can return its identity), so the row exists — and doing it inline means
-	# the very first `vm.*` event Atlas emits already carries the id, which is what lets
-	# Central bind its reserved Pilot Credential to this VM. Deferring it to the background
-	# job loses the earliest events, and Central then has an Active credential with no
-	# `asset`, which `api/sso.get_bench_link` reads as "This VM's pilot hasn't enrolled
-	# yet" even though the bench enrolled perfectly well.
-	if pilot_credential_id and pilot.virtual_machine:
-		frappe.db.set_value(
-			"Virtual Machine", pilot.virtual_machine, "pilot_credential_id", pilot_credential_id
-		)
-
-	# The Pilot created its VM in after_insert; read the plain VM facts through the
-	# link and the bench fields off the Pilot. Shape matches central.atlas._mirror_vm
+	# The console created its VM in after_insert; read the plain VM facts through the
+	# link and the bench fields off the console. Shape matches central.atlas._mirror_vm
 	# so Central can upsert verbatim. login_url is minted after boot (auto_provision),
 	# so it (and its expiry) are empty here — Central learns them from the event.
-	vm = frappe.get_doc("Virtual Machine", pilot.virtual_machine)
+	vm = frappe.get_doc("Virtual Machine", console.virtual_machine)
 	return {
 		"name": vm.name,
 		"team": team,
@@ -124,7 +123,7 @@ def create_vm(
 		"disk_gigabytes": vm.disk_gigabytes,
 		"ipv6_address": vm.ipv6_address,
 		"public_ipv4": vm.public_ipv4,
-		"gateway_url": pilot.gateway_url,
+		"gateway_url": site_console.gateway_url(console),
 		# The version actually laid down (from the resolved image), so Central mirrors
 		# ground truth — not merely what it requested.
 		"frappe_version": version_from_image(vm.image),
@@ -160,9 +159,9 @@ def capacity() -> dict:
 	(capacity can change between this call and the create). Runs with the Central
 	token, like create_vm — operator orchestration, not desk RBAC.
 	"""
-	from atlas.atlas.placement import HostNotVisibleError, NoCapacityError, default_server
-	from atlas.atlas.placement import largest_vm as _largest_vm
-	from atlas.atlas.sizes import SIZE_PRESETS
+	from atlas.atlas.core.placement import HostNotVisibleError, NoCapacityError, default_server
+	from atlas.atlas.core.placement import largest_vm as _largest_vm
+	from atlas.atlas.core.sizes import SIZE_PRESETS
 
 	# Floor of "can we provision anything?" — the smallest preset must fit some
 	# host under the same predicate the create path uses.
@@ -210,7 +209,7 @@ def resize_capacity(vm: str) -> dict:
 	unreported axis (sentinel numbers — treat the ceiling as "size unknown"). Advisory:
 	the resize path on the host is the authoritative gate. Runs with the Central token,
 	like `capacity()` / `create_vm`."""
-	from atlas.atlas.placement import resize_headroom
+	from atlas.atlas.core.placement import resize_headroom
 
 	shape = resize_headroom(vm)
 	if shape is None:

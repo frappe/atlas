@@ -232,27 +232,43 @@ class VirtualMachineImage(Document):
 			"DEFAULT_DISK_GB": str(self.default_disk_gigabytes),
 			"GUEST_NETWORK_UNIT": "/tmp/atlas/atlas-network.service",
 		}
-		task = frappe.get_doc(
-			{
-				"doctype": "Task",
-				"server": server_name,
-				"script": "sync-image",
-				"status": "Pending",
-				"triggered_by": frappe.session.user if frappe.session else "Administrator",
-			}
-		)
-		task.variables_dict = variables
-		task.insert(ignore_permissions=True)
-		# nosemgrep: frappe-manual-commit -- persist the Pending sync Task before enqueuing execute_task so the background job can find it cross-transaction
-		frappe.db.commit()
+		return _enqueue_sync_image_task(server_name, variables)
 
-		frappe.enqueue(
-			"atlas.atlas.ssh.execute_task",
-			queue="long",
-			timeout=1800,
-			task_name=task.name,
-		)
-		return task.name
+
+def _enqueue_sync_image_task(server_name: str, variables: dict) -> str:
+	"""Insert a Pending `sync-image` Task for `server_name` from `variables` and enqueue
+	its runner, returning the Task name. The ONE place the `sync-image` Task shape lives.
+
+	Both producers of a sync build the identical Task through here: `sync_to_server`
+	(a from-URL image row) and `atlas.atlas.fleet_distribute` (a local image served
+	host-to-host over HTTP). Same `script` verb, same commit-before-enqueue — so both
+	get the same sidecar staging `execute_task` applies from `SCRIPT_UPLOADS` (the guest
+	network unit). A second call site that hand-rolled `run_task`/`run_boat_host_task`
+	would bypass that staging; funnelling both through here keeps them from drifting.
+
+	`variables` is the caller's fully-formed env for the verb: IMAGE_NAME, the
+	kernel/rootfs URL + digests, ROOTFS_FILENAME, DEFAULT_DISK_GB, GUEST_NETWORK_UNIT."""
+	task = frappe.get_doc(
+		{
+			"doctype": "Task",
+			"server": server_name,
+			"script": "sync-image",
+			"status": "Pending",
+			"triggered_by": frappe.session.user if frappe.session else "Administrator",
+		}
+	)
+	task.variables_dict = variables
+	task.insert(ignore_permissions=True)
+	# nosemgrep: frappe-manual-commit -- persist the Pending sync Task before enqueuing execute_task so the background job can find it cross-transaction
+	frappe.db.commit()
+
+	frappe.enqueue(
+		"atlas.atlas.core.ssh.execute_task",
+		queue="long",
+		timeout=1800,
+		task_name=task.name,
+	)
+	return task.name
 
 
 @frappe.whitelist()

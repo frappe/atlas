@@ -25,14 +25,14 @@ import time
 
 import frappe
 
-from atlas.atlas.provisioning import region_server_title
+from atlas.atlas.core.provisioning import region_server_title
 from atlas.tests.e2e._config import get_client
 from atlas.tests.e2e._droplets import cleanup_droplet, ensure_e2e_provider, sweep_old_droplets
 
 
 def _ssh(server_doc, command: str, timeout: int = 30) -> tuple[str, str, int]:
-	from atlas.atlas._ssh.transport import run_ssh, ssh_key_file
-	from atlas.atlas.ssh import connection_for_server
+	from atlas.atlas.core._ssh.transport import run_ssh, ssh_key_file
+	from atlas.atlas.core.ssh import connection_for_server
 
 	connection = connection_for_server(server_doc)
 	with ssh_key_file(connection.ssh_private_key) as key_path:
@@ -73,7 +73,7 @@ def _run(keep: bool, start: float) -> None:
 		# bench has no worker running, so run it INLINE (the SSH-wait + bootstrap)
 		# rather than waiting on a job that will never fire — the same recovery the
 		# operator uses for a lost finish_provisioning job.
-		from atlas.atlas.providers import worker
+		from atlas.atlas.core.providers import worker
 
 		print("[verify] running finish_provisioning inline (SSH-wait + bootstrap) …")
 		worker.finish_provisioning(server_name)
@@ -126,7 +126,7 @@ def _run(keep: bool, start: float) -> None:
 		# the venv interpreter's version — proof the carve-out is gone.
 		task = frappe.get_doc("Task", bootstrap_tasks[0]["name"])
 		assert "ATLAS_RESULT=" in (task.stdout or ""), "bootstrap Task has no ATLAS_RESULT line"
-		from atlas.atlas.task_results import parse_result
+		from atlas.atlas.core.task_results import parse_result
 
 		python_version = parse_result(task.stdout)["python_version"]
 		assert python_version in venv_version or venv_version in python_version, (
@@ -171,7 +171,7 @@ def _verify_vm_lifecycle(server) -> None:
 	"""Sync an image, then run a VM through provision/stop/start INLINE so each
 	`atlas <verb>` Task executes on the real host. Asserts each Task is the verb
 	and Succeeded — the end-to-end proof the runner's console-script path works."""
-	from atlas.atlas.ssh import run_task
+	from atlas.atlas.core.ssh import run_task
 	from atlas.tests.e2e._config import ephemeral_public_key
 	from atlas.tests.e2e._image import ensure_default_image_row
 

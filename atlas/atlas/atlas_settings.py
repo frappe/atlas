@@ -13,8 +13,8 @@ from __future__ import annotations
 import frappe
 from frappe import _
 
-from atlas.atlas import providers
-from atlas.atlas.providers.base import Provider, ProvisionRequest, ProvisionResult, SshKey
+from atlas.atlas.core import providers
+from atlas.atlas.core.providers.base import Provider, ProvisionRequest, ProvisionResult, SshKey
 
 
 def get_provider() -> Provider:

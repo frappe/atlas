@@ -1,7 +1,7 @@
 """S3 Settings — the S3 bucket + credentials for snapshot backups.
 
-The secret is read via `atlas.atlas.secrets.get_secret` by
-`atlas.atlas.s3.S3Backup`; the host never sees it (it gets only presigned URLs).
+The secret is read via `atlas.atlas.core.secrets.get_secret` by
+`atlas.atlas.core.s3.S3Backup`; the host never sees it (it gets only presigned URLs).
 `test_connection` is the Test Connection button (head_bucket). See
 spec/29-snapshot-backup.md.
 """
@@ -61,6 +61,6 @@ class S3Settings(Document):
 	@frappe.whitelist()
 	def test_connection(self) -> dict:
 		"""Test Connection button — prove the credentials reach the bucket."""
-		from atlas.atlas.s3 import S3Backup
+		from atlas.atlas.core.s3 import S3Backup
 
 		return dataclasses.asdict(S3Backup().test_connection())

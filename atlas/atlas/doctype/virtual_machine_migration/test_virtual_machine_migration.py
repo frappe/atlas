@@ -8,7 +8,8 @@ from unittest.mock import patch
 import frappe
 from frappe.tests import IntegrationTestCase
 
-from atlas.atlas import migration as migration_module
+from atlas.atlas.core import migration as migration_module
+from atlas.atlas.core import migration_forward, migration_layout, migration_preflight
 from atlas.atlas.doctype.virtual_machine import virtual_machine as vm_module
 from atlas.atlas.doctype.virtual_machine_migration.virtual_machine_migration import (
 	active_migration_for,
@@ -51,7 +52,7 @@ class TestMigrationPure(IntegrationTestCase):
 		self.assertTrue(10000 <= port < 15000)
 
 	def test_vm_tunnel_helpers_are_stable_and_safe(self) -> None:
-		from atlas.atlas import networking
+		from atlas.atlas.core import networking
 
 		uuid = "5d0943c8-4e43-48ad-b652-3f181e22fc4d"
 		device = networking.derive_vm_tunnel(uuid)
@@ -80,7 +81,7 @@ class TestMigrationPure(IntegrationTestCase):
 		self.assertEqual(slot, migration_module.nbd_base_slot(uuid))  # stable
 		# A 4-slot block that fits in nbds_max=16: base in {0,4,8,12}, +3 <= 15.
 		self.assertIn(slot, (0, 4, 8, 12))
-		self.assertLessEqual(slot + migration_module.NBD_SLOTS_PER_MIGRATION - 1, 15)
+		self.assertLessEqual(slot + migration_layout.NBD_SLOTS_PER_MIGRATION - 1, 15)
 
 	def test_nbd_base_slots_dont_overlap_across_vms(self) -> None:
 		# Two UUIDs in different residue classes get disjoint 4-slot blocks — the
@@ -89,8 +90,8 @@ class TestMigrationPure(IntegrationTestCase):
 		b = "00000001-0000-0000-0000-000000000000"  # hex[4:8]=0001 -> slot 4
 		sa, sb = migration_module.nbd_base_slot(a), migration_module.nbd_base_slot(b)
 		self.assertNotEqual(sa, sb)
-		block_a = set(range(sa, sa + migration_module.NBD_SLOTS_PER_MIGRATION))
-		block_b = set(range(sb, sb + migration_module.NBD_SLOTS_PER_MIGRATION))
+		block_a = set(range(sa, sa + migration_layout.NBD_SLOTS_PER_MIGRATION))
+		block_b = set(range(sb, sb + migration_layout.NBD_SLOTS_PER_MIGRATION))
 		self.assertEqual(block_a & block_b, set())
 
 	def test_boot_then_hydrate_phase_order(self) -> None:
@@ -273,7 +274,7 @@ class TestMigrationRow(IntegrationTestCase):
 				return fake_task(stdout='ATLAS_RESULT={"hydration_percent": 20}')  # holds
 			return fake_task(stdout="ok")
 
-		from atlas.atlas import proxy as proxy_module
+		from atlas.atlas.services import proxy as proxy_module
 
 		with (
 			patch.object(migration_module, "run_task", side_effect=_fake_run_task),
@@ -368,13 +369,13 @@ class TestAddressSchemeDerivation(IntegrationTestCase):
 		).insert(ignore_permissions=True)
 
 	def _with_forwardable(self, forwardable: bool):
-		import atlas.atlas.providers as providers_module
+		import atlas.atlas.core.providers as providers_module
 
 		class _Stub:
 			def vm_range_is_forwardable(self, _resource):
 				return forwardable
 
-		# _will_keep_address does a local `from atlas.atlas.providers import
+		# _will_keep_address does a local `from atlas.atlas.core.providers import
 		# for_provider_type`, so patch it at its source module.
 		return patch.object(providers_module, "for_provider_type", return_value=_Stub())
 
@@ -424,18 +425,18 @@ class TestMigrationPreflight(IntegrationTestCase):
 	def test_preflight_rejects_same_server(self) -> None:
 		vm = self._vm()
 		with self.assertRaisesRegex(frappe.ValidationError, "already on that server"):
-			migration_module.preflight_checks(vm, self.source, False)
+			migration_preflight.preflight_checks(vm, self.source, False)
 
 	def test_preflight_rejects_missing_target(self) -> None:
 		vm = self._vm()
 		with self.assertRaisesRegex(frappe.ValidationError, "does not exist"):
-			migration_module.preflight_checks(vm, "no-such-server", False)
+			migration_preflight.preflight_checks(vm, "no-such-server", False)
 
 	def test_preflight_rejects_inactive_target(self) -> None:
 		vm = self._vm()
 		frappe.db.set_value("Server", self.target, "status", "Pending")
 		with self.assertRaisesRegex(frappe.ValidationError, "not Active"):
-			migration_module.preflight_checks(vm, self.target, False)
+			migration_preflight.preflight_checks(vm, self.target, False)
 
 	def test_preflight_rejects_inflight(self) -> None:
 		vm = self._vm()
@@ -447,7 +448,7 @@ class TestMigrationPreflight(IntegrationTestCase):
 			}
 		).insert(ignore_permissions=True)
 		with self.assertRaisesRegex(frappe.ValidationError, "in-flight migration"):
-			migration_module.preflight_checks(vm, self.target, False)
+			migration_preflight.preflight_checks(vm, self.target, False)
 
 	def test_preflight_keep_address_rejects_collision_on_target(self) -> None:
 		"""The bug: a keep-address migration carries the VM's /128 onto a target that
@@ -460,7 +461,7 @@ class TestMigrationPreflight(IntegrationTestCase):
 		conflict = make_virtual_machine(self.target, self.image, status="Running")
 		frappe.db.set_value("Virtual Machine", conflict.name, "ipv6_address", vm.ipv6_address)
 		with self.assertRaisesRegex(frappe.ValidationError, "already hosts a live VM"):
-			migration_module.preflight_checks(vm, self.target, False)
+			migration_preflight.preflight_checks(vm, self.target, False)
 
 	def test_preflight_keep_address_allows_when_target_free(self) -> None:
 		"""The kept /128 is free on the target (only a Terminated holder) → no raise."""
@@ -468,7 +469,7 @@ class TestMigrationPreflight(IntegrationTestCase):
 		freed = make_virtual_machine(self.target, self.image, status="Terminated")
 		frappe.db.set_value("Virtual Machine", freed.name, "ipv6_address", vm.ipv6_address)
 		# Must not raise.
-		migration_module.preflight_checks(vm, self.target, False)
+		migration_preflight.preflight_checks(vm, self.target, False)
 
 
 class TestMigrationGateAndGuard(IntegrationTestCase):
@@ -559,7 +560,7 @@ class TestMigrationPhaseMachine(IntegrationTestCase):
 				return fake_task(stdout='ATLAS_RESULT={"hydration_percent": 100}')
 			return fake_task(stdout="ok")
 
-		from atlas.atlas import proxy as proxy_module
+		from atlas.atlas.services import proxy as proxy_module
 
 		with (
 			patch.object(migration_module, "run_task", side_effect=_fake_run_task),
@@ -685,7 +686,7 @@ class TestMigrationPhaseMachine(IntegrationTestCase):
 			"Cleanup",
 			"Done",
 		]
-		from atlas.atlas import proxy as proxy_module
+		from atlas.atlas.services import proxy as proxy_module
 
 		with (
 			patch.object(migration_module, "run_task", side_effect=_fake_run_task),
@@ -729,7 +730,7 @@ class TestMigrationPhaseMachine(IntegrationTestCase):
 				return fake_task(stdout='ATLAS_RESULT={"hydration_percent": 100}')
 			return fake_task(stdout="ok")
 
-		from atlas.atlas import proxy as proxy_module
+		from atlas.atlas.services import proxy as proxy_module
 
 		with (
 			patch.object(migration_module, "run_task", side_effect=_fake_run_task),
@@ -790,7 +791,7 @@ class TestMigrationPhaseMachine(IntegrationTestCase):
 				return fake_task(stdout='ATLAS_RESULT={"hydration_percent": 100}')
 			return fake_task(stdout="ok")
 
-		from atlas.atlas import proxy as proxy_module
+		from atlas.atlas.services import proxy as proxy_module
 
 		with (
 			patch.object(migration_module, "run_task", side_effect=_fake_run_task),
@@ -833,7 +834,7 @@ class TestMigrationPhaseMachine(IntegrationTestCase):
 				)
 			return fake_task(stdout="ok")
 
-		from atlas.atlas import proxy as proxy_module
+		from atlas.atlas.services import proxy as proxy_module
 
 		with (
 			patch.object(migration_module, "run_task", side_effect=_fake_run_task),
@@ -929,7 +930,7 @@ class TestPrivatePlaneCutoverOrdering(IntegrationTestCase):
 		return _run
 
 	def _drive(self, row):
-		from atlas.atlas import proxy as proxy_module
+		from atlas.atlas.services import proxy as proxy_module
 
 		calls: list = []
 		# One fake, both transports: the phases run over Boat (item 9) while
@@ -1052,7 +1053,7 @@ class TestLocalBaseImageShip(IntegrationTestCase):
 				return fake_task(stdout='ATLAS_RESULT={"hydration_percent": 100}')
 			return fake_task(stdout="ok")
 
-		from atlas.atlas import proxy as proxy_module
+		from atlas.atlas.services import proxy as proxy_module
 
 		with (
 			patch.object(migration_module, "run_task", side_effect=_fake_run_task),
@@ -1136,7 +1137,7 @@ class TestLocalBaseImageShip(IntegrationTestCase):
 				return fake_task(stdout='ATLAS_RESULT={"hydration_percent": 100}')
 			return fake_task(stdout="ok")
 
-		from atlas.atlas import proxy as proxy_module
+		from atlas.atlas.services import proxy as proxy_module
 
 		with (
 			patch.object(migration_module, "run_task", side_effect=_fake_run_task),
@@ -1235,7 +1236,7 @@ class TestLocalBaseImageShip(IntegrationTestCase):
 				return fake_task(stdout='ATLAS_RESULT={"hydration_percent": 100}')
 			return fake_task(stdout="ok")
 
-		from atlas.atlas import proxy as proxy_module
+		from atlas.atlas.services import proxy as proxy_module
 
 		with (
 			patch.object(migration_module, "run_task", side_effect=_fake_run_task),
@@ -1289,16 +1290,14 @@ class TestCollapseForward(IntegrationTestCase):
 				down_calls.append(f"{variables['ROLE']}@{server}")
 			return fake_task(stdout="ok")
 
-		from atlas.atlas import proxy as proxy_module
+		from atlas.atlas.services import proxy as proxy_module
 
 		with (
-			patch.object(migration_module, "run_task", side_effect=_fake_run_task),
-			# The migration phases, source-autostart and collapse_forward's forward-down
-			# now run over Boat (item 9); only the cutover provision-vm stays on run_task.
-			# Stub both entry points with the same fake so the phase machine is driven
-			# whichever transport a step uses.
-			patch.object(migration_module, "run_boat_migration_phase", side_effect=_fake_run_task),
-			# collapse_forward now stops the live VM first (so the disk converges off
+			# collapse_forward lives in migration_forward now, so its provision-vm
+			# run_task and its forward-down run_boat_migration_phase are patched there.
+			patch.object(migration_forward, "run_task", side_effect=_fake_run_task),
+			patch.object(migration_forward, "run_boat_migration_phase", side_effect=_fake_run_task),
+			# collapse_forward stops the live VM first (so the disk converges off
 			# any dm-clone before the re-provision); vm.stop() runs a host Task through
 			# the VM module's run_task, so mock that too. Every host is on Boat now, so
 			# that stop also states its intent over HTTP before the verb — stub both
@@ -1398,7 +1397,7 @@ class TestMigrationOverFakeTransport(IntegrationTestCase):
 		# Only reconcile_proxies is stubbed — that is proxy reconciliation, not the host
 		# transport. Every migration-* script runs on the Fake hosts unpatched, so this
 		# is the whole saga end to end over the transport audit M11 said no test exercised.
-		from atlas.atlas import proxy as proxy_module
+		from atlas.atlas.services import proxy as proxy_module
 
 		with patch.object(proxy_module, "reconcile_proxies", return_value=[]):
 			for _ in range(20):
@@ -1415,14 +1414,14 @@ class TestMigrationOverFakeTransport(IntegrationTestCase):
 		self.assertEqual(vm.status, "Running")
 
 	def test_keep_address_saga_runs_to_done_over_the_fake_transport(self) -> None:
-		from atlas.atlas import proxy as proxy_module
+		from atlas.atlas.services import proxy as proxy_module
 
 		vm = make_virtual_machine(self.source, self.image, status="Running")
 		# Force the keep-address path — Fake providers derive change-address, but
 		# keep-address is the DEFAULT on a real DO fleet and the branch the M1 cleanup
 		# fix lives on: the forward tunnel + return route are wired, Repointing skips the
 		# Subdomain re-point, and Cleanup runs with KEEP_ADDRESS=1 carrying the /128 over.
-		with patch.object(migration_module, "_will_keep_address", return_value=True):
+		with patch.object(migration_preflight, "_will_keep_address", return_value=True):
 			row = frappe.get_doc(
 				{
 					"doctype": "Virtual Machine Migration",

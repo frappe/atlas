@@ -165,7 +165,7 @@ MINIMAL_IMAGE_NAME = "ubuntu-24.04-minimal"
 # GOLDEN_BUILD_MEMORY_MB (headroom for the node-asset build), then this bake resizes it
 # DOWN to GOLDEN_MEMORY_MB before the snapshot — so the golden (and every site VM
 # cloned from it) restores small.
-from atlas.atlas.image_recipes import get_recipe as _get_recipe
+from atlas.atlas.core.image_recipes import get_recipe as _get_recipe
 
 _BENCH_RECIPE = _get_recipe("bench")
 GOLDEN_DISK_GB = _BENCH_RECIPE.disk_gigabytes
@@ -253,7 +253,7 @@ def run_with_proxy() -> None:
 	issue_certificate(tls_config["domain"])
 
 
-def run_self_serve(force_bake: bool = False) -> None:
+def run_self_serve(force_bake: bool = False, bake: bool = True) -> None:
 	"""From-scratch one-shot: stand up the ENTIRE signup flow and leave it running.
 
 	The durable sibling of the `self_serve_site` e2e (it drives the same proven
@@ -265,6 +265,13 @@ def run_self_serve(force_bake: bool = False) -> None:
 	`force_bake=True` re-bakes the golden image even if an Available one is already
 	configured (proves the from-scratch `build.sh` bake); the default reuses a
 	configured Available snapshot and skips the slow bake.
+
+	`bake=False` skips the built-in golden bake entirely — for the flow where an
+	EXTERNAL image service (chef) already baked the pilot golden and wired
+	`default_bench_snapshot` (via `service.register_bench_snapshot`). It then only
+	asserts that golden is registered + Available (fail loud before building the
+	proxy/cert on top of a signup path that can't clone anything), rather than
+	baking with the in-Atlas `bench_image` builder chef is replacing.
 
 	Billable, leaves infra up. Requires the TLS config keys + certbot/boto3 (it
 	throws via `_read_tls_config` / the bake / the cert if a prerequisite is
@@ -284,8 +291,15 @@ def run_self_serve(force_bake: bool = False) -> None:
 	server_name = run_compute()
 
 	# 2. Golden bench image — the snapshot site VMs clone from. Wires
-	#    Atlas Settings.default_bench_snapshot.
-	bake_golden_image(server_name, force=force_bake)
+	#    Atlas Settings.default_bench_snapshot. Skipped when an external image service
+	#    (chef) already baked + registered the golden — then just assert it is usable.
+	if bake:
+		bake_golden_image(server_name, force=force_bake)
+	else:
+		from atlas.atlas.core import placement
+
+		snapshot = placement.default_bench_snapshot()  # throws unless set + Available
+		print(f"[bootstrap] bake=False — using externally-registered golden snapshot {snapshot}")
 
 	# 3. TLS layer rows (Root Domain etc.) BEFORE the proxy: Site.before_insert and
 	#    build_proxy/cert-push all read the region off the Root Domain.
@@ -359,7 +373,7 @@ def ensure_provider() -> str:
 
 def provision_server(provider_type: str) -> str:
 	from atlas import setup
-	from atlas.atlas.provisioning import region_server_title
+	from atlas.atlas.core.provisioning import region_server_title
 
 	title = region_server_title()
 	settings = frappe.get_single("Atlas Settings")
@@ -388,7 +402,7 @@ def _active_timeout(provider_type: str) -> int:
 	host-side bootstrap-server.py Task that runs AFTER the vendor reports ready.
 	Floored at the historical 900s default so DO is never waited on for LESS than
 	before."""
-	from atlas.atlas import providers
+	from atlas.atlas.core import providers
 
 	impl = providers.for_provider_type(provider_type)
 	vendor_ready = getattr(impl, "ready_timeout_seconds", 600)
@@ -607,7 +621,7 @@ def bake_golden_image(server_name: str, force: bool = False) -> str:
 	+ mid-build resets), stop it, and snapshot it. The build VM is left Stopped (it
 	is e2e/bake scratch; terminate it once the snapshot is set if you want the RAM
 	back — the snapshot is the durable artifact)."""
-	from atlas.atlas import bench_image
+	from atlas.atlas.core import bench_image
 
 	configured = frappe.db.get_single_value("Atlas Settings", "default_bench_snapshot")
 	if configured and not force:

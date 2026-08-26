@@ -57,10 +57,11 @@ paid-for-what) is decided in Central before it calls.
 
 Atlas core owns only the VM fabric — "a VM exists". Service-specific logic
 (reverse-proxy routing, the customer gateway, the WireGuard host mesh, bench/site
-deploy) attaches to the VM lifecycle through an explicit registry and lives, or is
-moving, in a separate app, **`satellite`** — see
-[30-core-service-boundary.md](./30-core-service-boundary.md). Core never imports
-satellite; satellite drives every infra effect back through methods Atlas exposes.
+deploy) attaches to the VM lifecycle through an explicit callback registry and lives
+in a separate in-app module, **`atlas/atlas/services/`** — see
+[30-core-service-boundary.md](./30-core-service-boundary.md). `services` imports
+`core`, never the reverse (CI-enforced); core stays PaaS-blind and drives every
+service effect only *by name* through the registry.
 
 There is no Atlas agent on the server. Everything Atlas does on a server is
 the result of one SSH invocation that runs one shell script. The script comes

@@ -4,8 +4,8 @@ import frappe
 from frappe import _
 from frappe.model.document import Document
 
-from atlas.atlas.central import CentralClient
-from atlas.atlas.secrets import get_secret
+from atlas.atlas.core.central import CentralClient
+from atlas.atlas.core.secrets import get_secret
 
 
 class CentralSettings(Document):
@@ -28,6 +28,7 @@ class CentralSettings(Document):
 		tunnel_status: DF.Literal["Inactive", "Provisioning", "Active", "Reverting"]
 		url: DF.Data
 		version_image_map: DF.JSON | None
+		webhook_secret: DF.Password | None
 		wg_listen_port: DF.Int
 		wg_public_key: DF.Data | None
 	# end: auto-generated types
@@ -37,7 +38,7 @@ class CentralSettings(Document):
 		offer and the active admin image each resolves to. Live from this region's active
 		admin images, never stored: the field is read-only and this is the only writer, so
 		it always reflects what Central pulls from `available_frappe_versions`."""
-		from atlas.atlas.placement import version_image_map
+		from atlas.atlas.core.placement import version_image_map
 
 		self.version_image_map = json.dumps(version_image_map(), indent=2)
 
@@ -52,4 +53,8 @@ class CentralSettings(Document):
 		if not self.url or not self.api_key:
 			frappe.throw(_("Set Central URL and API Key first"))
 		secret = get_secret("Central Settings", "Central Settings", "api_secret")
-		return CentralClient(self.url, self.api_key, secret)
+		# raise_exception=False: a fresh Atlas has none, and client() must still build.
+		webhook_secret = get_secret(
+			"Central Settings", "Central Settings", "webhook_secret", raise_exception=False
+		)
+		return CentralClient(self.url, self.api_key, secret, webhook_secret=webhook_secret)

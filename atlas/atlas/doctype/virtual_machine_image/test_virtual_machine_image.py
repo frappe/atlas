@@ -1,7 +1,7 @@
 import frappe
 from frappe.tests import IntegrationTestCase
 
-from atlas.atlas.script_uploads import files_to_upload
+from atlas.atlas.core.script_uploads import files_to_upload
 from atlas.tests.fixtures import make_image, make_provider, make_server, no_commit_enqueue
 
 

@@ -108,7 +108,7 @@ def reset(server: str, confirm: str, delete_server: bool = False, skip_host: boo
 		)
 		print(f"!! Skipping on-host wipe — {reason}. Cleaning DB only.")
 	else:
-		from atlas.atlas.ssh import run_task
+		from atlas.atlas.core.ssh import run_task
 
 		# reset-server is a boat VERB now: run_task runs `boat reset-server` on
 		# PATH rather than scp-ing anything per Task. The durable package is still
@@ -167,7 +167,7 @@ def verify_dispatch(server: str) -> None:
 	all: a host without it fails here rather than half way through a wipe."""
 	require_developer_mode()
 	import atlas
-	from atlas.atlas.ssh import connection_for_server, run_ssh
+	from atlas.atlas.core.ssh import connection_for_server, run_ssh
 
 	doc = _resolve_server(server)
 	count = doc.sync_scripts()
@@ -191,7 +191,7 @@ def _census_host(doc) -> dict:
 	A host that is unreachable (already gone, or a Fake/private-IP fixture) yields
 	an 'unreachable' marker rather than raising — the DB-only cleanup still runs."""
 	import atlas
-	from atlas.atlas.ssh import connection_for_server, run_ssh
+	from atlas.atlas.core.ssh import connection_for_server, run_ssh
 
 	try:
 		connection = connection_for_server(doc)

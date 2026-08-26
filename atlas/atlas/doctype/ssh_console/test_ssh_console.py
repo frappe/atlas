@@ -5,7 +5,7 @@ from unittest.mock import patch
 import frappe
 from frappe.tests import IntegrationTestCase
 
-from atlas.atlas import ssh_console as engine
+from atlas.atlas.core import ssh_console as engine
 from atlas.atlas.doctype.ssh_console import ssh_console as controller
 from atlas.tests.fixtures import make_server
 

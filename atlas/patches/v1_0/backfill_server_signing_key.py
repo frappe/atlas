@@ -28,7 +28,7 @@ no-op.
 
 import frappe
 
-from atlas.atlas.networking import generate_host_signing_keypair
+from atlas.atlas.core.networking import generate_host_signing_keypair
 
 
 def execute() -> None:

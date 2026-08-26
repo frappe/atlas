@@ -258,10 +258,56 @@ clone the warm one with `clone_to_new_vm`. (Operator decision, 2026-06-19: "Memo
 is the real benefit of a warm snapshot. If we lose that, might as well not have
 it.")
 
-**Why no transport / no cross-server distribution.** With same-server scope the
-bytes never leave the host. Export-to-URL (reusing `sync-image.py`'s download path)
-and server-to-server copy are only relevant if fleet-wide distribution is wanted
-later; build none of it now.
+**Same-server scope, then opt-in distribution.** Promote itself never moves bytes —
+they stay on the host it ran on. Fleet-wide distribution, when wanted, is a
+SEPARATE step layered on top (never a hidden side effect of promote): a
+point-to-point **Export** (spec/24 §5.1) or the many-host **Sync Across Hosts**
+described next.
+
+### Distributing a local image over HTTP (no object store)
+
+A local (snapshot-promoted) base image has an empty `rootfs_url`, so `sync-image`
+has nothing to fetch and the fleet cannot provision from it anywhere but its home
+host. Two transports place it elsewhere **without an object store**:
+
+- **Export** ships the base LV point-to-point to ONE target over plain-TCP NBD
+  (spec/24 §5.1) — the migration's proven copy.
+- **Sync Across Hosts** fans the SAME bytes out to MANY targets by reusing the
+  ordinary `sync-image` verb, over HTTP on the host↔host mesh
+  (`atlas.atlas.fleet_distribute.distribute_local_image`, the Image form's
+  **Sync Across Hosts** action).
+
+The HTTP fan-out mirrors the from-URL sync path exactly, swapping the public
+download for an on-host, short-lived HTTP export:
+
+1. On the image's home host (root over SSH, like the fleet-image squash): activate
+   the read-only base LV `atlas-image-<name>`, mount it read-only, `mksquashfs` it
+   to `/var/lib/atlas/fleet-serve/<name>/rootfs.sqfs`, `sha256sum` it, then
+   `systemd-run` a `python3 -m http.server` bound to the host's mesh address
+   (`networking.derive_host_mesh_address`) on a stable per-image port (disjoint
+   from the NBD range). The served file is `rootfs.sqfs`, not `.squashfs`, so
+   `sync-image` skips the guest-module re-bake (the promoted rootfs already carries
+   its modules).
+2. Fan the `sync-image` verb out to the other Active hosts through the SAME Task
+   builder `Sync to All Servers` uses (so both share `execute_task`'s sidecar
+   staging), with `ROOTFS_URL=http://[<mesh>]:<port>/rootfs.sqfs`, the computed
+   rootfs digest, and the **kernel inherited from the promote provenance** — the
+   source image's public `kernel_url` + digest (the kernel is NOT transferred
+   host-to-host). Each target curls the squashfs, verifies the digest, unsquashes,
+   builds a pristine ext4 and imports the base LV `atlas-image-<name>` — identical
+   to a promote on that host.
+3. The serve unit is stopped and its directory removed once the fan-out finishes (a
+   `RuntimeMaxSec` cap is the backstop). The served URL is **ephemeral** — it is
+   never written to the image row, so the image stays local; placement treats every
+   host with a successful `sync-image` Task for it as holding its bytes
+   (`placement._local_image_home_servers`).
+
+The image row is **not mutated**: no new row (so no name collision with the local
+one), no persisted URL (it would dangle after teardown). Re-running is idempotent —
+the home host re-serves and `sync-image` short-circuits where the base LV already
+exists. No Boat or sudoers change: `sync-image` is reused unchanged, and the squash
+runs as root over SSH because the Boat sudoers grants neither `mount atlas-image-*`
+nor `mksquashfs`.
 
 The two entry points: **`Virtual Machine Snapshot` → Promote to image** (a dialog
 taking the image name) and **`Image Build` → Promote to image** (a thin delegate

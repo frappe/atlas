@@ -10,28 +10,22 @@
 > §7.1 key derivation and §8 bootstrap — the original Issue A resolution was deferred).
 >
 > Four correctness issues against the original draft were resolved by the smallest
-> possible changes — summarised in Appendix A. None of them disturbs the architectural
-> fixed points: no central controller, every host runs `atlas-networkd`,
-> gossip + anti-entropy dissemination, no leaders/route-reflectors/coordinators,
-> WireGuard data plane, nftables per-VM tenant isolation, ownership-only state.
+> possible changes — summarised in Appendix A — none disturbing the architectural
+> fixed points (restated in §21).
 
 ## Abstract
 
 Atlas previously relied on a centralized controller to orchestrate the networking
-state of every compute host. The controller maintained global cluster knowledge,
-computed WireGuard routing state, and remotely applied configuration changes
-whenever VM ownership changed via `reconcile_host_mesh()`.
+state of every compute host: it maintained global cluster knowledge, computed
+WireGuard routing state, and remotely applied configuration whenever VM ownership
+changed via `reconcile_host_mesh()`.
 
-ANCP replaces that centralized controller with a decentralized control plane.
-Every compute host runs an identical networking daemon (`atlas-networkd`) that
+ANCP removes that controller from the **networking** control plane entirely. Every
+compute host now runs an identical networking daemon (`atlas-networkd`) that
 collaboratively maintains cluster membership and VM ownership using epidemic
-(gossip-based) dissemination and periodic anti-entropy synchronization.
-
-The Atlas controller is completely removed from the **networking** control plane.
-
-Networking is now an eventually-consistent distributed system whose only
-responsibility is determining which compute host currently owns a private IP
-address.
+(gossip-based) dissemination and periodic anti-entropy synchronization. Networking
+becomes an eventually-consistent distributed system whose only responsibility is
+determining which compute host currently owns a private IP address.
 
 ## 1. Motivation
 
@@ -41,12 +35,9 @@ VM migrates → Atlas detects migration → Controller discovers cluster state �
 Controller computes WireGuard configuration → Controller SSHes into affected
 hosts → Hosts reload WireGuard.
 
-The controller owned multiple unrelated responsibilities: cluster
-membership, VM ownership, routing computation, route distribution, remote
-execution, and reconciliation. Every networking change required the controller
-to recompute global state. As the number of compute hosts increased, the
-controller became responsible for maintaining an increasingly large amount of
-distributed state.
+The controller owned multiple unrelated responsibilities — cluster membership,
+VM ownership, routing computation, route distribution, remote execution, and
+reconciliation — and recomputed global state on every networking change.
 
 ANCP eliminates the controller from networking entirely. The previous
 controller-side logic lived in `atlas/atlas/host_mesh.py`
@@ -143,9 +134,9 @@ see §11.
 Only two distributed objects exist. Everything else is derived.
 
 This section specifies the concrete wire shape of both records, the generation
-semantics, and the conflict-detection rule. It resolves **Issue A** (keys are
-self-generated, not derived) and **Issue C** (cross-origin generations are
-never compared).
+semantics, and the conflict-detection rule. It records the **Issue A** resolution
+(deferred — keys remain controller-derived, §7.1) and closes **Issue C**
+(cross-origin generations are never compared).
 
 ### 7.1 Membership Record
 
@@ -301,14 +292,11 @@ When Atlas provisions a new compute host, it supplies static configuration via
 the existing bootstrap path via `Server._write_ancp_bootstrap_state()`:
 
 - `HostID` (the Server UUID).
-- `WireGuard keypair` — the controller derives the keypair deterministically
-  from the HostID via `derive_host_wireguard_keypair` and writes both
-  `/etc/atlas-networkd/wg-private-key` (0600, via `sudo install -m 0600`) and
-  `/etc/atlas-networkd/wg-public-key` (0644) to the host. The daemon reads them
-  on startup via `keys.ensure_keypair()`, which is idempotent (falls back to
-  `wg genkey` if absent for dev/manual setups). Note: the original design
-  specified first-boot self-generation (Issue A); see §7.1 for the deviation
-  rationale.
+- `WireGuard keypair` — the controller derives it deterministically from the
+  HostID (per §7.1; Issue A deferred) and writes `/etc/atlas-networkd/wg-private-key`
+  (0600, via `sudo install -m 0600`) and `/etc/atlas-networkd/wg-public-key` (0644)
+  to the host. The daemon reads them on startup via `keys.ensure_keypair()`, which
+  is idempotent (falls back to `wg genkey` if absent for dev/manual setups).
 - `identity.json` — the host's `{host_id, endpoint, mesh_address}` record.
 - `Initial Membership Seed` (`seed.json`) — a list of `(host_id, endpoint,
   wg_public_key, mesh_address, generation=1)` records for every other Active
@@ -456,7 +444,7 @@ owned_local(N) =
 ```
 
 The addresses are the same pure HKDF derivations from
-`atlas/atlas/networking.py` (`derive_private_address`,
+`atlas/atlas/core/networking.py` (`derive_private_address`,
 `derive_client_address`). ANCP does not re-derive them — it reads the
 `/etc/atlas-networkd/local-ownership.json` cache that the VM-lifecycle scripts
 maintain (see §11.3) so it has the same source of truth without polling Frappe.
@@ -620,8 +608,8 @@ per-origin Generation check is the correctness primitive.)
   lower-generation) silently.
 - **Across origins** — no comparison is ever made; a record can only advance
   its own origin's state.
-- **WireGuard private key replay** — Issue A makes the key self-generated and
-  the public half ride the Membership Record; a stale old key advertized at a
+- **WireGuard private key replay** — the public half rides the Membership Record
+  (the private half is controller-derived, §7.1); a stale old key advertized at a
   lower Generation is rejected by the §10.3 guard (its recorded Generation for
   that origin is higher).
 - **Boot forged seed** — §9.2 (operator-signed seed file) is the only
@@ -885,7 +873,7 @@ a partition's reconciliation rides anti-entropy once the partition heals.
 Specifies how `atlas-networkd` keeps `wg-mesh` consistent with the effective
 Membership + Ownership tables. Resolves **Issue B** (the non-overlap invariant
 must survive eventual consistency) and reasserts the load-bearing apply facts
-proven on real hosts (the apply pipeline at `scripts/lib/atlas/networkd/apply.py`).
+proven on real hosts (the apply pipeline at `scripts/lib/atlas/networkd/render.py`).
 
 ### 16.1 What the daemon programs
 
@@ -910,7 +898,7 @@ It does **not** program (these stay where they are):
 ### 16.2 The current peer table (one source of truth, derived)
 
 `atlas-networkd` keeps a single in-memory `WgDesired` (the canonical text
-produced by the apply module at `scripts/lib/atlas/networkd/apply.py`),
+produced by the render module at `scripts/lib/atlas/networkd/render.py`),
 derived **purely** from the effective tables:
 
 ```
@@ -984,12 +972,10 @@ property of generation flow:
    `syncconf`, never two — important for the Issue B invariant and for not
    churning the WireGuard peer table.
 3. If `WgDesired == WgLive`, do nothing.
-4. Otherwise, write `WgDesired` to `/run/atlas-networkd/wg-mesh.conf` and apply:
-
-   ```sh
-   wg syncconf wg-mesh <(wg-quick strip /run/atlas-networkd/wg-mesh.conf)
-   wg set wg-mesh private-key /etc/atlas-networkd/wg-private-key listen-port 51820
-   ```
+4. Otherwise, write `WgDesired` to `/run/atlas-networkd/wg-mesh.conf`, then
+   `wg syncconf wg-mesh` from a `wg-quick strip`ped config and re-assert
+   `private-key` + `listen-port 51820` in a second `wg set` (the apply commands
+   live in `scripts/lib/atlas/networkd/commands.py`).
 
     **Load-bearing ordering** (proven on a real Scaleway host, exercised by the
     `atlas-networkd` apply pipeline): `syncconf` from a config that omits
@@ -1007,28 +993,21 @@ property of generation flow:
 
 ### 16.5 First-boot bring-up (mirrors the existing `bring_up_mesh`)
 
-```sh
-ip link add dev wg-mesh type wireguard        # if missing
-ip link set dev wg-mesh mtu 1420
-ip -6 addr replace <mesh_address>/128 dev wg-mesh
-wg set wg-mesh private-key /etc/atlas-networkd/wg-private-key listen-port 51820
-ip link set dev wg-mesh up
-ip -6 route replace fdaa::/16 dev wg-mesh
-# peer table populated by the first apply once Membership/Ownership anti-entropy runs
-```
-
-This is the same sequence as the original `bring_up_mesh` with the key file
-moved to the `atlas-networkd` data directory; the ordering rationale is
-preserved.
+Bring-up creates the `wg-mesh` device (if missing), sets MTU 1420, replaces the
+host's `<mesh_address>/128`, sets `private-key` + `listen-port 51820`, brings the
+link up, and replaces the `fdaa::/16` route out `wg-mesh`; the peer table is
+populated by the first apply once Membership/Ownership anti-entropy runs. This is
+the same sequence as the original `bring_up_mesh` with the key file moved to the
+`atlas-networkd` data directory — **the private key is set last**, the ordering
+rationale preserved.
 
 ### 16.6 Customer-gateway client /128s
 
-The VPC client `/128` folding is unchanged in shape: the host running the
-gateway VM sees those client /128s as locally owned and advertises them in its
-own Ownership advertisement — exactly one more line in §11's local scan. They
-ride the same gossip, the same §16.4 atomic apply, the same §7.3 non-overlap.
-The control plane does not know "this is a client /128" vs. "this is a VM
-/128"; both are just /128s.
+The VPC client `/128` folding is unchanged: the host running the gateway VM sees
+those client /128s as locally owned and advertises them in its own Ownership
+advertisement (one more line in §11's local scan). They ride the same gossip, the
+same §16.4 atomic apply, the same §7.3 non-overlap; the control plane does not
+distinguish a client /128 from a VM /128 — both are just /128s.
 
 ## 17. Consistency Model
 
@@ -1045,25 +1024,9 @@ leader.
 
 ### 17.2 The observable inconsistency window on a single /128
 
-Immediately after an ownership change (origin X stops advertising `/128 = A`,
-origin Y starts advertising it):
-
-```
-t=0            X drops A from its Ownership Advertisement
-               (Generation++, sent on next gossip round)
-t ≈ ε          X's first-fan-out peers apply it
-t ≈ k·gossip_interval·log(N)   every member has applied X's update
-                               (X no longer advertises A)
-t ≈ ε'         Y adds A to its Ownership Advertisement
-               (Generation++, sent on next gossip round)
-t ≈ k·gossip_interval·log(N)   every member has applied Y's update
-
-Sequence: A is owned by X
-   → (overlap window: both X and Y advertise A — §7.3 conflict, dropping)
-   → A is owned by Y
-```
-
-There are three phases:
+Immediately after an ownership change — origin X stops advertising `/128 = A`
+(Generation++) and origin Y starts advertising it (Generation++), each on its
+next gossip round — the /128 passes through three phases:
 
 1. **Pre-change**: A → X. Unicast routing, unambiguous.
 2. **Overlap**: both X and Y advertise A at their respective latest Generations.
@@ -1111,25 +1074,16 @@ budgets.
 ## 18. Conflict Detection (hoisted from §7.3)
 
 A **conflict** is any `/128` present in two or more origins' latest
-advertisements simultaneously. The protocol's response, restated here as a
-top-level invariant:
-
-1. **Never elects a winner.** Networking does not pick by Generation, HostID,
-   or any other field — there is no quorum, no lease, no last-writer-wins, no
-   lowest-host-id tiebreak. Conflict resolution is the virtualization layer's
-   responsibility (today: the migration controller's Server lock + the soft
-   sequencing of §16.3; in the long term: any out-of-band coordination).
-2. **Reports loudly.** `atlas-networkd` logs at `ERROR`, surfaces a counter in
-   `/var/lib/atlas-networkd/status.json`, and publishes an operator event
-   (hook). The conflict is operator-visible so the virtualization layer can
-   be notified.
-3. **Drops, then pins.** The conflicting /128 is removed from `WgDesired`
-   across every host — no peer advertises it. Traffic to that /128 blackholes
-   until the conflict clears. This is the only acceptable safe default: an
-   arbitrary pick risks silent misdelivery to the wrong tenant.
-4. **Self-heals.** The instant the virtualization layer resolves the double-
-   ownership (one origin drops the /128 from its next advertisement), the
-   conflict clears in one gossip round and unicast routing resumes.
+advertisements simultaneously. §7.3 specifies the operational response; as a
+top-level invariant it is: **never elect** (no quorum, lease, last-writer-wins,
+or lowest-host-id tiebreak — resolution is the virtualization layer's job, today
+the migration controller's Server lock + the §16.3 soft sequencing, long-term any
+out-of-band coordination), **report loudly** (`ERROR` log, a counter in
+`/var/lib/atlas-networkd/status.json`, and an operator event), **drop then pin**
+(the conflicting /128 leaves `WgDesired` on every host and traffic blackholes
+rather than risk silent misdelivery to the wrong tenant), and **self-heal** (the
+instant one origin drops the /128 from its next advertisement, the conflict
+clears in one gossip round and unicast routing resumes).
 
 ### 18.1 Where conflicts come from
 
@@ -1302,11 +1256,13 @@ rejected; only the established key can rotate itself off. This stops a relay
 that hijacks an origin's `host_id` from rotating the origin's signing key to
 one the relay controls.
 
-The signing key is generated alongside the wg keypair at first boot
-(`keys.ensure_signing_keypair`) and stored at
-`/etc/atlas-networkd/signing-private-key` (0600); the public half lives at
-`/etc/atlas-networkd/signing-public-key` (0644). Neither is derived (Issue A
-applies equally — a derived signing key's seed would be public).
+The ed25519 signing key is **randomly generated once** by the controller at first
+`Server.validate` (`generate_host_signing_keypair`), pushed to the host alongside
+the (derived, §7.1) wg keypair, and adopted verbatim by the daemon's idempotent
+`keys.ensure_signing_keypair` (self-generating only if absent). Stored at
+`/etc/atlas-networkd/signing-private-key` (0600), public half at
+`/etc/atlas-networkd/signing-public-key` (0644). The signing key is **not derived**
+(a derived signing key's seed would be public).
 
 ### 19.4 Bootstrap trust (seed-anchored trust directory)
 
@@ -1444,21 +1400,10 @@ without centralized coordination, with bounded observable inconsistency
 crisp SWIM-with-Lifeguard failure-detection ladder that avoids false eviction
 (§14).
 
-Four correctness issues against the original draft are resolved by the
-smallest possible changes — none of which disturb the architectural fixed
-points (no controller, every host runs networkd, gossip + anti-entropy, no
-leaders, WireGuard data plane, nftables per-VM isolation, ownership-only
-state):
-
-- **A** — keys self-generated, not derived (§7.1, §8).
-- **B** — atomic whole-table `syncconf` + conflict-driven drop preserves
-  per-host non-overlap; the hard two-push barrier becomes a soft sequencing
-  bounded by one anti-entropy round (§16).
-- **C** — per-origin full-set advertisements; generations compared only within
-  an origin; conflicts drop and report, never elect (§7.2, §7.3, §13.2).
-- **D** — SWIM-with-Lifeguard suspicion ladder, refute path,
-  `suspect_timeout`/`ownership_grace` knobs built to avoid false eviction
-  (§14).
+Four correctness issues against the original draft are resolved by the smallest
+possible changes — none disturbing the architectural fixed points (no controller,
+every host runs networkd, gossip + anti-entropy, no leaders, WireGuard data plane,
+nftables per-VM isolation, ownership-only state). They are tabulated in Appendix A.
 
 The Atlas controller no longer computes routing, distributes configuration,
 or performs remote execution. Its responsibility ends once a compute host has

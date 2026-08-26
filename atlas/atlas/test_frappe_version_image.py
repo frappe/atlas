@@ -4,7 +4,7 @@ import frappe
 from frappe.tests import IntegrationTestCase
 
 from atlas.atlas.api.inventory import available_frappe_versions
-from atlas.atlas.placement import image_for_version, version_from_image, version_image_map
+from atlas.atlas.core.placement import image_for_version, version_from_image, version_image_map
 from atlas.tests.fixtures import make_image, no_commit_enqueue
 
 

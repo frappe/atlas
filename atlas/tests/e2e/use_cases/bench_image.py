@@ -1,7 +1,7 @@
 """Operator action (and host-bound proof): bake the golden bench image.
 
 Provisions a plain Ubuntu VM, builds bench-cli + `bench init` inside it over
-guest-SSH (`atlas.atlas.bench_image.build_bench`), stops it, and snapshots it.
+guest-SSH (`atlas.atlas.core.bench_image.build_bench`), stops it, and snapshots it.
 That snapshot is the reusable "golden bench image" self-serve site VMs clone
 from (`Virtual Machine Snapshot.clone_to_new_vm`) — the build-in-guest +
 snapshot pattern the proxy uses, applied to bench (spec/08-images.md).
@@ -29,10 +29,10 @@ artifact. Teardown when done:
 
 import frappe
 
-from atlas.atlas import bench_image
-from atlas.atlas._ssh.transport import run_ssh, ssh_key_file
-from atlas.atlas.image_recipes import get_recipe
-from atlas.atlas.ssh import connection_for_guest
+from atlas.atlas.core import bench_image
+from atlas.atlas.core._ssh.transport import run_ssh, ssh_key_file
+from atlas.atlas.core.image_recipes import get_recipe
+from atlas.atlas.core.ssh import connection_for_guest
 from atlas.tests.e2e._config import control_plane_public_key, ephemeral_public_key
 from atlas.tests.e2e._droplets import phase
 from atlas.tests.e2e._image import ensure_image_on_server
@@ -283,7 +283,7 @@ def verify_admin_url(image_name: str, server: str, fqdn: str) -> dict:
 
 	Returns a dict with the VM name, the inherited build_mode, the minted
 	login_url, and the two probe results. Leaves the VM Running for inspection."""
-	from atlas.atlas.deploy_site import deploy_site, readiness_paths_for_mode, wait_for_http
+	from atlas.atlas.services.deploy_site import deploy_site, readiness_paths_for_mode, wait_for_http
 
 	ssh_public_key = ephemeral_public_key() + "\n" + control_plane_public_key()
 	default_disk = frappe.db.get_value("Virtual Machine Image", image_name, "default_disk_gigabytes")

@@ -37,7 +37,7 @@ class TestMemorySnapshotWiring(unittest.TestCase):
 				self.assertNotIn("snapshot", line)
 
 	def test_restore_hook_is_not_a_task(self) -> None:
-		from atlas.atlas import scripts_catalog
+		from atlas.atlas.core import scripts_catalog
 
 		# vm-restore is a `boat vm-restore` unit hook (ExecStartPost), never a Task:
 		# it owns no file in scripts/ and is deliberately in NO catalog set — not

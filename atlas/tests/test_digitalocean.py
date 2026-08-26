@@ -5,7 +5,7 @@ from unittest.mock import patch
 import frappe
 from frappe.tests import IntegrationTestCase
 
-from atlas.atlas.digitalocean import (
+from atlas.atlas.core.digitalocean import (
 	DigitalOceanClient,
 	DigitalOceanError,
 	_ssh_key_identity,
@@ -59,7 +59,7 @@ class TestDigitalOceanClient(IntegrationTestCase):
 
 	def test_account_ok(self) -> None:
 		fake = _FakeResponse(200, _fixture("account"))
-		with patch("atlas.atlas.digitalocean.requests.request", return_value=fake) as request:
+		with patch("atlas.atlas.core.digitalocean.requests.request", return_value=fake) as request:
 			account = self.client.account()
 		self.assertEqual(account["email"], "test@example.com")
 		_, kwargs = request.call_args
@@ -67,13 +67,13 @@ class TestDigitalOceanClient(IntegrationTestCase):
 
 	def test_account_bad_token(self) -> None:
 		fake = _FakeResponse(401, _fixture("error_unauthorized"))
-		with patch("atlas.atlas.digitalocean.requests.request", return_value=fake):
+		with patch("atlas.atlas.core.digitalocean.requests.request", return_value=fake):
 			with self.assertRaises(DigitalOceanError):
 				self.client.account()
 
 	def test_create_droplet_request_shape(self) -> None:
 		fake = _FakeResponse(202, _fixture("droplet_new"))
-		with patch("atlas.atlas.digitalocean.requests.request", return_value=fake) as request:
+		with patch("atlas.atlas.core.digitalocean.requests.request", return_value=fake) as request:
 			self.client.create_droplet(
 				name="atlas-e2e-x",
 				region="blr1",
@@ -95,7 +95,7 @@ class TestDigitalOceanClient(IntegrationTestCase):
 
 	def test_delete_droplet_treats_404_as_success(self) -> None:
 		fake = _FakeResponse(404)
-		with patch("atlas.atlas.digitalocean.requests.request", return_value=fake):
+		with patch("atlas.atlas.core.digitalocean.requests.request", return_value=fake):
 			self.client.delete_droplet(412345678)
 
 	def test_public_ipv6_from_droplet_fixture(self) -> None:
@@ -110,7 +110,7 @@ class TestDigitalOceanClient(IntegrationTestCase):
 
 	def test_list_droplets_by_tag_returns_array(self) -> None:
 		fake = _FakeResponse(200, {"droplets": [{"id": 1}, {"id": 2}]})
-		with patch("atlas.atlas.digitalocean.requests.request", return_value=fake) as request:
+		with patch("atlas.atlas.core.digitalocean.requests.request", return_value=fake) as request:
 			droplets = self.client.list_droplets_by_tag("atlas-e2e")
 		self.assertEqual([d["id"] for d in droplets], [1, 2])
 		args, _ = request.call_args
@@ -118,13 +118,13 @@ class TestDigitalOceanClient(IntegrationTestCase):
 
 	def test_list_droplets_by_tag_handles_missing_droplets_key(self) -> None:
 		fake = _FakeResponse(200, {})
-		with patch("atlas.atlas.digitalocean.requests.request", return_value=fake):
+		with patch("atlas.atlas.core.digitalocean.requests.request", return_value=fake):
 			droplets = self.client.list_droplets_by_tag("nonexistent")
 		self.assertEqual(droplets, [])
 
 	def test_list_droplets_unfiltered_returns_array(self) -> None:
 		fake = _FakeResponse(200, {"droplets": [{"id": 1}, {"id": 2}, {"id": 3}]})
-		with patch("atlas.atlas.digitalocean.requests.request", return_value=fake) as request:
+		with patch("atlas.atlas.core.digitalocean.requests.request", return_value=fake) as request:
 			droplets = self.client.list_droplets()
 		self.assertEqual([d["id"] for d in droplets], [1, 2, 3])
 		args, _ = request.call_args
@@ -134,13 +134,13 @@ class TestDigitalOceanClient(IntegrationTestCase):
 
 	def test_list_droplets_handles_missing_droplets_key(self) -> None:
 		fake = _FakeResponse(200, {})
-		with patch("atlas.atlas.digitalocean.requests.request", return_value=fake):
+		with patch("atlas.atlas.core.digitalocean.requests.request", return_value=fake):
 			droplets = self.client.list_droplets()
 		self.assertEqual(droplets, [])
 
 	def test_request_handles_204_no_content(self) -> None:
 		fake = _FakeResponse(204)
-		with patch("atlas.atlas.digitalocean.requests.request", return_value=fake):
+		with patch("atlas.atlas.core.digitalocean.requests.request", return_value=fake):
 			result = self.client._request("DELETE", "/droplets/1")
 		self.assertEqual(result, {})
 
@@ -153,7 +153,7 @@ class TestDigitalOceanClient(IntegrationTestCase):
 			def json(self):
 				return {}
 
-		with patch("atlas.atlas.digitalocean.requests.request", return_value=EmptyResponse()):
+		with patch("atlas.atlas.core.digitalocean.requests.request", return_value=EmptyResponse()):
 			result = self.client._request("GET", "/something")
 		self.assertEqual(result, {})
 
@@ -184,7 +184,7 @@ class TestDigitalOceanClient(IntegrationTestCase):
 			_fixture("account"),
 			headers={"RateLimit-Limit": "5000", "RateLimit-Remaining": "4998"},
 		)
-		with patch("atlas.atlas.digitalocean.requests.request", return_value=fake):
+		with patch("atlas.atlas.core.digitalocean.requests.request", return_value=fake):
 			result = self.client.verify_credentials()
 		self.assertEqual(result["email"], "test@example.com")
 		self.assertEqual(result["rate_limit"], 5000)
@@ -192,14 +192,14 @@ class TestDigitalOceanClient(IntegrationTestCase):
 
 	def test_verify_credentials_handles_missing_headers(self) -> None:
 		fake = _FakeResponse(200, _fixture("account"), headers={})
-		with patch("atlas.atlas.digitalocean.requests.request", return_value=fake):
+		with patch("atlas.atlas.core.digitalocean.requests.request", return_value=fake):
 			result = self.client.verify_credentials()
 		self.assertIsNone(result["rate_limit"])
 		self.assertIsNone(result["rate_remaining"])
 
 	def test_verify_credentials_raises_on_bad_token(self) -> None:
 		fake = _FakeResponse(401, _fixture("error_unauthorized"))
-		with patch("atlas.atlas.digitalocean.requests.request", return_value=fake):
+		with patch("atlas.atlas.core.digitalocean.requests.request", return_value=fake):
 			with self.assertRaises(DigitalOceanError):
 				self.client.verify_credentials()
 
@@ -209,7 +209,7 @@ class TestDigitalOceanClient(IntegrationTestCase):
 		fake = _FakeResponse(
 			202, {"reserved_ip": {"ip": "203.0.113.5", "region": {"slug": "blr1"}, "droplet": None}}
 		)
-		with patch("atlas.atlas.digitalocean.requests.request", return_value=fake) as request:
+		with patch("atlas.atlas.core.digitalocean.requests.request", return_value=fake) as request:
 			reserved = self.client.create_reserved_ip("blr1")
 		self.assertEqual(reserved["ip"], "203.0.113.5")
 		args, kwargs = request.call_args
@@ -219,7 +219,7 @@ class TestDigitalOceanClient(IntegrationTestCase):
 
 	def test_assign_reserved_ip_posts_action(self) -> None:
 		fake = _FakeResponse(201, {"action": {"id": 1, "type": "assign_ip", "status": "in-progress"}})
-		with patch("atlas.atlas.digitalocean.requests.request", return_value=fake) as request:
+		with patch("atlas.atlas.core.digitalocean.requests.request", return_value=fake) as request:
 			action = self.client.assign_reserved_ip("203.0.113.5", 999)
 		self.assertEqual(action["type"], "assign_ip")
 		args, kwargs = request.call_args
@@ -232,7 +232,7 @@ class TestDigitalOceanClient(IntegrationTestCase):
 		# the first GET already shows it unassigned, so the poll exits at once.
 		action = _FakeResponse(201, {"action": {"id": 2, "type": "unassign_ip", "status": "in-progress"}})
 		settled = _FakeResponse(200, {"reserved_ip": {"ip": "203.0.113.5", "droplet": None}})
-		with patch("atlas.atlas.digitalocean.requests.request", side_effect=[action, settled]) as request:
+		with patch("atlas.atlas.core.digitalocean.requests.request", side_effect=[action, settled]) as request:
 			self.client.unassign_reserved_ip("203.0.113.5")
 		# First call is the unassign POST; second is the settle-poll GET.
 		first_args, first_kwargs = request.call_args_list[0]
@@ -246,23 +246,23 @@ class TestDigitalOceanClient(IntegrationTestCase):
 		# If the IP is already gone by the time we poll, that's settled too.
 		action = _FakeResponse(201, {"action": {"id": 2, "type": "unassign_ip"}})
 		gone = _FakeResponse(404)
-		with patch("atlas.atlas.digitalocean.requests.request", side_effect=[action, gone]):
+		with patch("atlas.atlas.core.digitalocean.requests.request", side_effect=[action, gone]):
 			self.client.unassign_reserved_ip("203.0.113.5")
 
 	def test_list_reserved_ips_returns_array(self) -> None:
 		fake = _FakeResponse(200, {"reserved_ips": [{"ip": "203.0.113.5"}, {"ip": "203.0.113.6"}]})
-		with patch("atlas.atlas.digitalocean.requests.request", return_value=fake):
+		with patch("atlas.atlas.core.digitalocean.requests.request", return_value=fake):
 			reserved = self.client.list_reserved_ips()
 		self.assertEqual([r["ip"] for r in reserved], ["203.0.113.5", "203.0.113.6"])
 
 	def test_list_reserved_ips_handles_missing_key(self) -> None:
 		fake = _FakeResponse(200, {})
-		with patch("atlas.atlas.digitalocean.requests.request", return_value=fake):
+		with patch("atlas.atlas.core.digitalocean.requests.request", return_value=fake):
 			self.assertEqual(self.client.list_reserved_ips(), [])
 
 	def test_delete_reserved_ip_treats_404_as_success(self) -> None:
 		fake = _FakeResponse(404)
-		with patch("atlas.atlas.digitalocean.requests.request", return_value=fake):
+		with patch("atlas.atlas.core.digitalocean.requests.request", return_value=fake):
 			self.client.delete_reserved_ip("203.0.113.5")
 
 	def test_reserved_ip_droplet_id_reads_embedded_droplet(self) -> None:
@@ -278,7 +278,7 @@ class TestDigitalOceanClient(IntegrationTestCase):
 			200,
 			{"ssh_keys": [{"id": 1, "name": "atlas-ctrl"}, {"id": 2, "name": "laptop"}]},
 		)
-		with patch("atlas.atlas.digitalocean.requests.request", return_value=fake) as request:
+		with patch("atlas.atlas.core.digitalocean.requests.request", return_value=fake) as request:
 			keys = self.client.list_ssh_keys()
 		self.assertEqual([k["id"] for k in keys], [1, 2])
 		args, _ = request.call_args
@@ -286,7 +286,7 @@ class TestDigitalOceanClient(IntegrationTestCase):
 
 	def test_list_ssh_keys_handles_missing_key(self) -> None:
 		fake = _FakeResponse(200, {})
-		with patch("atlas.atlas.digitalocean.requests.request", return_value=fake):
+		with patch("atlas.atlas.core.digitalocean.requests.request", return_value=fake):
 			self.assertEqual(self.client.list_ssh_keys(), [])
 
 	def test_ensure_ssh_key_reuses_existing_match(self) -> None:
@@ -295,7 +295,7 @@ class TestDigitalOceanClient(IntegrationTestCase):
 			200,
 			{"ssh_keys": [{"id": 42, "name": "atlas-ctrl", "public_key": "ssh-ed25519 AAAA1234 other-comment"}]},
 		)
-		with patch("atlas.atlas.digitalocean.requests.request", return_value=list_resp) as request:
+		with patch("atlas.atlas.core.digitalocean.requests.request", return_value=list_resp) as request:
 			key_id = self.client.ensure_ssh_key("atlas-ctrl", pub)
 		self.assertEqual(key_id, "42")
 		# Only the list call should have been made — no POST to create.
@@ -309,7 +309,7 @@ class TestDigitalOceanClient(IntegrationTestCase):
 		list_resp = _FakeResponse(200, {"ssh_keys": []})
 		create_resp = _FakeResponse(201, {"ssh_key": {"id": 99, "name": "atlas-ctrl"}})
 		with patch(
-			"atlas.atlas.digitalocean.requests.request", side_effect=[list_resp, create_resp]
+			"atlas.atlas.core.digitalocean.requests.request", side_effect=[list_resp, create_resp]
 		) as request:
 			key_id = self.client.ensure_ssh_key("atlas-ctrl", pub)
 		self.assertEqual(key_id, "99")

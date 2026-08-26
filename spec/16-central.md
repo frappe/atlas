@@ -89,16 +89,18 @@ the fleet state the commands above produce.
 
 - **Central Settings** (single) — the credentials and this Atlas's tunnel identity.
   Mirrors `DigitalOcean Settings`. Fields: `url`, `api_key`, `api_secret` (Password),
-  `enabled` (master switch — event reporting is skipped when off), and a read-only
+  `webhook_secret` (Password, optional) — the HMAC signing secret for outbound
+  `event` webhooks, see *The wire contract* below — `enabled` (master switch —
+  event reporting is skipped when off), and a read-only
   `status` breadcrumb (the last register / event-delivery
   outcome — a glance-only convenience; the event *history* belongs to the planned
   `Central Event` log, not the Single). The region is read from `Atlas Settings.region`
   (`placement.atlas_region()`), not a Central Settings field. **Plus a Tunnel section**
   (`tunnel_ip`, `tunnel_cidr`, `hub_public_key`, `hub_endpoint`, `wg_public_key`,
-  `wg_listen_port`, `tunnel_status`); `url` / `api_key` / `api_secret` now hold the
-  **pushed per-Atlas Central service-user** creds — all written by Central's
-  `provision_tunnel`, no longer hand-entered (registration is **Central-initiated**;
-  see [21-tunnel.md](./21-tunnel.md)).
+  `wg_listen_port`, `tunnel_status`); `url` / `api_key` / `api_secret` /
+  `webhook_secret` now hold the **pushed per-Atlas Central service-user** creds —
+  all written by Central's `provision_tunnel`, no longer hand-entered (registration
+  is **Central-initiated**; see [21-tunnel.md](./21-tunnel.md)).
 
 Atlas keeps **no local catalog of Central's sizes or expected images**: Central
 sends a VM's resource values and `image` per provision call (`create_vm`), so
@@ -169,6 +171,36 @@ per-Atlas service user** ([21-tunnel.md](./21-tunnel.md)). The methods Atlas exp
 | `ping` | `central.api.atlas.ping` | `{ label }` |
 | `post_event` | `central.api.atlas.event` | (ignored) |
 
+`post_event`'s body is `{ event_id, type, payload, occurred_at }`. `event_id` is
+the `Central Event Log` row's own name — the emit's stable delivery identity, not
+a separate id Atlas has to mint. A `retry_pending` redelivery of the same row
+sends the same `event_id`, so Central can use it to dedup a resend from a
+genuinely new event.
+
+**`event` is HMAC-signed, not token-authenticated.** `ping` stays on the plain
+`Authorization` token above, but `post_event` authenticates with three headers
+instead — `X-Atlas-Region` (this Atlas's `Atlas Settings.region`, selecting which
+`webhook_secret` Central checks), `X-Atlas-Timestamp` (unix seconds), and
+`X-Atlas-Signature` — an `HMAC-SHA256(webhook_secret, "<timestamp>." + raw_body)`
+hex digest, computed over the exact bytes sent (`CentralClient` signs then sends
+`data=`, never `json=`, since `requests`' own JSON serialization isn't guaranteed
+byte-identical to what was signed). A signed request carries **no `Authorization`
+header at all**: Frappe authenticates any token it is given regardless of
+`allow_guest`, so sending one would put a stale `api_secret` back in the path of a
+correctly signed event — the signature is the whole authentication. Central rejects
+a request whose signature doesn't `hmac.compare_digest`-match — the header only
+*selects* the secret to check, it is never trusted on its own. A replayed request is
+caught by the unique `event_id`, not by a timestamp window. `webhook_secret` is
+optional on `Central Settings` specifically so a build with the signing code
+deployed but not yet re-registered skips delivery (durable outbox) instead of
+sending an unsigned request Central would reject anyway.
+
+Central stores the raw signed bytes and the signature on its `Atlas Event` row, so
+the stored row stays **re-verifiable**: the HMAC can be recomputed over the exact
+bytes long after the request is gone (`AtlasEvent.verify_signature`). The parsed
+payload is not a substitute — reserialized JSON is not byte-identical, so a
+signature never verifies against it.
+
 `register` is gone (registration is Central-initiated). **Central → Atlas
 (inbound)** now travels over the tunnel (`tunnel_url`) authenticated as the **Atlas
 admin** token, and adds the `provision_tunnel` / `confirm_tunnel` / `tunnel_status`
@@ -195,28 +227,30 @@ list periodically to correct drift. Atlas exposes one operator-only read for thi
 
 It returns every tenant-tagged VM (optionally scoped to one `team`);
 untenanted operator VMs are never returned. The wire shape stays **VM-shaped**, but
-a bench VM's front door lives on the [Pilot](./02-doctypes.md#pilot) that owns it:
-the handoff (`gateway_url` — the derived `https://<subdomain>.<region domain>` — plus
-`login_url` and `login_url_expires_at`) is read *through* that Pilot, and is present
-once the Pilot is `Running`; before then, and for an ordinary (non-bench) VM with no
-Pilot, those are `None`. Because a bench `login_url` is a 5-minute single-use admin
+a bench VM's front door lives on the admin console — a `Site(kind="pilot-console")`
+([02-doctypes.md § Site](./02-doctypes.md#site)) — that fronts it: the handoff
+(`gateway_url` — the derived `https://<subdomain>.<region domain>` — plus `login_url`
+and `login_url_expires_at`) is read *through* that console, and is present once the
+console is `Running`; before then, and for an ordinary (non-bench) VM with no console,
+those are `None`. Because a bench `login_url` is a 5-minute single-use admin
 session, Central re-mints it on **Open** (`get_bench_link`) when the stored URL has
-expired, via the whitelisted `Pilot.regenerate_login_url()` method (which returns the
-same VM-shaped payload). On a golden whose pilot carries **no in-guest session verb** —
-which upstream pilot does not, so this is the current normal — that re-mint comes back
-with an empty `login_url`, and Central signs the console's one-click `?sid=` link
-itself against the JWKS the bench trusts from `bench admin enroll`; the Atlas-side read
-and re-mint are unchanged either way ([08-images.md](./08-images.md)). This is the only
-Central→Atlas read; all Central→Atlas *writes* reuse the existing whitelisted
-controller methods.
+expired, via the whitelisted `Site.regenerate_login_url()` (dispatched on `kind`, which
+returns the same VM-shaped payload). On a golden whose bench-cli carries **no in-guest
+session verb** — which upstream pilot does not, so this is the current normal — that
+re-mint comes back with an empty `login_url`, and Central signs the console's one-click
+`?sid=` link itself against the JWKS the bench trusts from `bench admin enroll`; the
+Atlas-side read and re-mint are unchanged either way ([08-images.md](./08-images.md)).
+This is the only Central→Atlas read; all Central→Atlas *writes* reuse the existing
+whitelisted controller methods.
 
-**A self-serve site's Asset resolves the pilot console.** A `create_site` VM is backed
-by **both** a `Site` (the customer's Frappe site) and an attached `Pilot` (a bench admin
-console at `<subdomain>-pilot.<region>` on the same VM — see
-[14-self-serve.md § The attached Pilot admin console](./14-self-serve.md)). The VM→front-door
-resolver (`front_door_for_vm`) prefers the Pilot, so the **Asset's `gateway_url` / `login_url`
-point at the console** (a 5-min admin JWT), while the customer's site handoff (its 24h
-`bench browse` URL + live `url`) is surfaced separately through `get_site` /
-`site.*` events. **Open** on a self-serve Asset therefore re-mints via the Pilot exactly
-as a bench Asset does. (A Site-backed VM with no Pilot yet — mid-provision, or a directly
-created Site — still resolves the Site's handoff as a fallback.)
+**A self-serve site's Asset resolves the admin console.** A `create_site` VM is backed
+by **both** a `bench-site` Site (the customer's Frappe site) and an attached
+`pilot-console` Site (a bench admin console at `<subdomain>-pilot.<region>` on the same
+VM — see [14-self-serve.md § The attached admin console](./14-self-serve.md)). The
+VM→front-door resolver (`front_door_for_vm`) prefers the `pilot-console`, so the
+**Asset's `gateway_url` / `login_url` point at the console** (a 5-min admin JWT), while
+the customer's site handoff (its 24h `bench browse` URL + live `url`) is surfaced
+separately through `get_site` / `site.*` events. **Open** on a self-serve Asset
+therefore re-mints via the console exactly as a bench Asset does. (A VM with no console
+yet — mid-provision, or a directly created `bench-site` — still resolves the site's
+handoff as a fallback.)

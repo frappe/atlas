@@ -15,7 +15,7 @@ do not provision anything.
 import time
 import traceback
 
-from atlas.atlas.digitalocean import (
+from atlas.atlas.core.digitalocean import (
 	DigitalOceanError,
 	_network_cidr,
 	public_ipv4,

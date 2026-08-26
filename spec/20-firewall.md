@@ -6,14 +6,14 @@ by default that address is reachable from the **whole** v6 internet: the
 port the guest serves is exposed. A **Firewall** restricts that public surface to
 a chosen set of ports — "only 443", say — while leaving two paths untouched:
 
-- **the VPN tunnel keeps full access** to the whole VM (every port), and
+- **the owner's private / VPC access keeps full reach** to the whole VM (every port), and
 - **the VM's own outbound connections** keep working (their replies are not new
   public ingress).
 
-It is the public-ingress complement of the VPN broker
-([19-vpn-broker.md](./19-vpn-broker.md)): the broker gives the *owner* private,
-all-port reach over an encrypted link; the firewall governs what the rest of the
-*internet* may reach. Together they make "the owner reaches everything, the world
+It is the public-ingress complement of the private plane
+([25-private-networking.md](./25-private-networking.md)): the customer gateway gives
+the *owner* private, all-port reach to their VMs over the mesh; the firewall governs
+what the rest of the *internet* may reach. Together they make "the owner reaches everything, the world
 reaches only what you publish" true. Read [06-networking.md](./06-networking.md)
 first — this chapter states only where the firewall differs.
 
@@ -53,7 +53,7 @@ is evaluated **first**. Three properties make this exactly right:
 - **The VPN bypasses the firewall for free.** Every rule is scoped to
   `iifname <uplink>` (the host's public NIC). Tunnel traffic arrives on a `wg-…`
   interface, never the uplink, so it matches nothing here and falls through to
-  `forward`, where the tunnel's own accept/drop ([19-vpn-broker.md](./19-vpn-broker.md))
+  `forward`, where the private-plane rules ([25-private-networking.md](./25-private-networking.md))
   govern it. No special case is needed.
 - **`drop` is terminal; `accept` is not.** A `drop` in this earlier chain ends the
   packet's life across all chains, so a disallowed public port is unreachable. An
@@ -104,8 +104,10 @@ disk** with no Frappe DB:
   holds even under concurrent inserts; the controller's `exists` check is just the
   friendly message over it): `virtual_machine` (immutable), denormalized `server`
   / `tenant`, an `enabled` toggle, a read-only `status` (Active/Disabled), and a
-  child table of **Firewall Rule** (`protocol` tcp/udp, `port`). Owner-scoped
-  (Atlas User `if_owner`, System Manager full), like `VPN Tunnel`.
+  child table of **Firewall Rule** (`protocol` tcp/udp, `port`). Owner-scoped by
+  the API — `set_firewall` gates on `_assert_can_access_vm` (the VM's owner or a
+  System Manager), not a DocType `if_owner` perm row. The
+  DocType itself is System-Manager-only (the retired `Atlas User` role's row is gone).
 - The controller keeps the host in step on save: `on_update` → `firewall-apply.py
   --action apply` with the rules when `enabled`, else `--action clear` (the VM
   reverts to public); `on_trash` clears. A **terminated** VM is skipped — its host

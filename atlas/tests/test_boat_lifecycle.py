@@ -21,7 +21,7 @@ from unittest.mock import patch
 import frappe
 from frappe.tests import IntegrationTestCase
 
-from atlas.atlas.boat_client import (
+from atlas.atlas.core.boat_client import (
 	FIRST_BOOT_EPOCH,
 	REBUILD_ANSWERED_ELSEWHERE,
 	REBUILD_GUEST_FILES,
@@ -35,8 +35,8 @@ from atlas.atlas.boat_client import (
 	rebuild_request,
 	run_boat_task,
 )
+from atlas.atlas.core.task_results import parse_result
 from atlas.atlas.doctype.virtual_machine import virtual_machine as virtual_machine_module
-from atlas.atlas.task_results import parse_result
 from atlas.tests import fixtures
 from atlas.tests._mocks import fake_task
 from atlas.tests.test_boat_client import (
@@ -520,7 +520,7 @@ class TestRebuildThroughBoat(_BoatHostTestCase):
 		if not frappe.db.exists("Tenant", "boat-rebuild-team"):
 			frappe.get_doc({"doctype": "Tenant", "team": "boat-rebuild-team"}).insert(ignore_permissions=True)
 		frappe.db.set_single_value(
-			"Atlas Settings", "satellite_routing_base_url", "https://orchestrator.blr1.frappe.dev"
+			"Atlas Settings", "guest_routing_base_url", "https://orchestrator.blr1.frappe.dev"
 		)
 		return self._fresh(
 			status="Stopped",
@@ -601,7 +601,7 @@ class TestBoatFailuresAreLoud(_BoatHostTestCase):
 		with (
 			_boat_host_token(self.server.name),
 			patch(REQUEST, side_effect=answers),
-			patch("atlas.atlas._ssh.runner.run_ssh") as run_ssh,
+			patch("atlas.atlas.core._ssh.runner.run_ssh") as run_ssh,
 			self.assertRaises(frappe.ValidationError) as raised,
 		):
 			virtual_machine.start()

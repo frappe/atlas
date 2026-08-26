@@ -4,7 +4,7 @@ import subprocess
 
 from frappe.tests import IntegrationTestCase
 
-from atlas.atlas.wireguard import (
+from atlas.atlas.services.wireguard import (
 	ENCODED_KEY_LENGTH,
 	KEY_BYTES,
 	is_valid_public_key,

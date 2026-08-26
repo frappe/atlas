@@ -21,7 +21,7 @@ import time
 
 import frappe
 
-from atlas.atlas.scaleway import ScalewayClient
+from atlas.atlas.core.scaleway import ScalewayClient
 from atlas.tests.e2e._config import TAG, get_scaleway_config, get_ssh_private_key_path
 
 # The control-plane IAM SSH-key name prefix (the Provider DocType is gone; the
@@ -116,7 +116,7 @@ def ensure_scaleway_provider() -> str:
 
 	# 4. Mark the chosen size/image rows the catalog default (what the Provision
 	#    dialog and provision_server fall back to).
-	from atlas.atlas.setup_catalog import set_default
+	from atlas.atlas.core.setup_catalog import set_default
 
 	size_name = f"Scaleway/{config['size']}"
 	image_name = f"Scaleway/{config['image']}"

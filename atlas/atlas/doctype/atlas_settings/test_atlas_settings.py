@@ -16,12 +16,7 @@ import frappe
 from frappe.tests import IntegrationTestCase
 
 from atlas.atlas import atlas_settings
-from atlas.atlas.doctype.atlas_settings.atlas_settings import (
-	get_ancp_operator_private_key,
-	get_ancp_operator_public_key,
-	get_ancp_wg_derivation_secret,
-)
-from atlas.atlas.providers.base import (
+from atlas.atlas.core.providers.base import (
 	AuthResult,
 	Capabilities,
 	DiscoveredServer,
@@ -29,6 +24,11 @@ from atlas.atlas.providers.base import (
 	ProvisionResult,
 	ReservedIp,
 	SizeInfo,
+)
+from atlas.atlas.doctype.atlas_settings.atlas_settings import (
+	get_ancp_operator_private_key,
+	get_ancp_operator_public_key,
+	get_ancp_wg_derivation_secret,
 )
 from atlas.tests.fixtures import (
 	_ensure_fake_ssh_key_path,
@@ -41,7 +41,7 @@ from atlas.tests.fixtures import (
 
 class TestAtlasSettingsAccessors(IntegrationTestCase):
 	def test_get_ssh_key_returns_dataclass(self) -> None:
-		from atlas.atlas.providers.base import SshKey
+		from atlas.atlas.core.providers.base import SshKey
 
 		provider = make_provider_row(name="test-ssh-prov")
 		set_atlas_settings(
@@ -210,10 +210,10 @@ class TestAtlasSettingsProvisionServer(IntegrationTestCase):
 		)
 		with (
 			patch(
-				"atlas.atlas.provisioning.providers.for_provider_type",
+				"atlas.atlas.core.provisioning.providers.for_provider_type",
 				return_value=fake_impl,
 			),
-			patch("atlas.atlas.provisioning.frappe.enqueue") as enqueue,
+			patch("atlas.atlas.core.provisioning.frappe.enqueue") as enqueue,
 		):
 			returned = self.settings.provision_server(title)
 
@@ -225,7 +225,7 @@ class TestAtlasSettingsProvisionServer(IntegrationTestCase):
 		self.assertEqual(server.size, "DigitalOcean/s-2vcpu-4gb-intel")
 		enqueue.assert_called_once()
 		args, kwargs = enqueue.call_args
-		self.assertEqual(args[0], "atlas.atlas.providers.worker.finish_provisioning")
+		self.assertEqual(args[0], "atlas.atlas.core.providers.worker.finish_provisioning")
 		self.assertEqual(kwargs["server_name"], returned)
 		frappe.db.delete("Server", {"title": title})
 
@@ -257,7 +257,7 @@ class TestAtlasSettingsProvisionServerSelfManaged(IntegrationTestCase):
 		title = "settings-self-managed-1"
 		frappe.db.delete("Server", {"title": title})
 
-		with patch("atlas.atlas.provisioning.frappe.enqueue") as enqueue:
+		with patch("atlas.atlas.core.provisioning.frappe.enqueue") as enqueue:
 			returned = self.settings.provision_server(
 				title,
 				ipv4_address="203.0.113.10",
@@ -408,7 +408,7 @@ class TestAtlasSettingsDiscoverServers(IntegrationTestCase):
 		fake_impl = MagicMock()
 		fake_impl.list_servers.return_value = self._list_servers()
 		with patch(
-			"atlas.atlas.provisioning.providers.for_provider_type",
+			"atlas.atlas.core.provisioning.providers.for_provider_type",
 			return_value=fake_impl,
 		):
 			out = self.settings.discover_servers()
@@ -439,7 +439,7 @@ class TestAtlasSettingsDiscoverServers(IntegrationTestCase):
 			networking=None,
 		)
 		with patch(
-			"atlas.atlas.provisioning.providers.for_provider_type",
+			"atlas.atlas.core.provisioning.providers.for_provider_type",
 			return_value=fake_impl,
 		):
 			result = self.settings.import_servers(json.dumps(["srv-modeled", "srv-new"]))
@@ -489,7 +489,7 @@ class TestAtlasSettingsDiscoverServers(IntegrationTestCase):
 			ReservedIp("51.159.10.3", "51.159.10.3", droplet_resource_id=None),  # floating
 		)
 		with patch(
-			"atlas.atlas.provisioning.providers.for_provider_type",
+			"atlas.atlas.core.provisioning.providers.for_provider_type",
 			return_value=fake_impl,
 		):
 			out = self.settings.discover_reserved_ips()
@@ -520,7 +520,7 @@ class TestAtlasSettingsDiscoverServers(IntegrationTestCase):
 			ReservedIp("51.159.20.3", "51.159.20.3", droplet_resource_id=None),  # floating
 		)
 		with patch(
-			"atlas.atlas.provisioning.providers.for_provider_type",
+			"atlas.atlas.core.provisioning.providers.for_provider_type",
 			return_value=fake_impl,
 		):
 			result = self.settings.import_reserved_ips(
@@ -704,7 +704,7 @@ class TestAncpWgDerivationSecret(IntegrationTestCase):
 	def test_secret_gates_the_derived_wg_key(self) -> None:
 		# The C1 property, end-to-end through the accessor: the same Server UUID under
 		# the real cluster secret vs. an attacker's guessed secret yield different keys.
-		from atlas.atlas.networking import derive_host_wireguard_keypair
+		from atlas.atlas.core.networking import derive_host_wireguard_keypair
 
 		self.settings.save(ignore_permissions=True)
 		uuid_public = "11111111-2222-3333-4444-555555555555"

@@ -15,6 +15,7 @@
   "status",
   "tenant",
   "pilot_credential_id",
+  "correlation_id",
   "section_break_resources",
   "size_preset",
   "column_break_resources_0",
@@ -69,8 +70,7 @@
   "desired_power",
   "observed_status",
   "column_break_boat",
-  "boot_epoch",
-  "observed_authority"
+  "boot_epoch"
  ],
  "fields": [
   {
@@ -481,6 +481,13 @@
    "description": "Central-minted per-pilot credential id, copied from the owning Site. Echoed to Central on vm.* events so Central links/revokes the credential."
   },
   {
+   "fieldname": "correlation_id",
+   "fieldtype": "Data",
+   "label": "Correlation ID",
+   "read_only": 1,
+   "description": "Central Server Action id for the last lifecycle command. Echoed on vm.* events so Central matches the outcome to the action that requested it."
+  },
+  {
    "collapsible": 1,
    "fieldname": "section_break_boat",
    "fieldtype": "Section Break",
@@ -513,14 +520,6 @@
    "fieldtype": "Int",
    "label": "Boot Epoch",
    "read_only": 1
-  },
-  {
-   "default": "DB",
-   "description": "Whose observation wins for this VM. DB (the default) keeps today's behaviour exactly: the row's `status` is authority and Boat's report is advisory. Boat, from spec/33 WO-2, makes the host's observation authoritative for this VM. Reversible per VM — flipping it back to DB is that work order's rollback.",
-   "fieldname": "observed_authority",
-   "fieldtype": "Select",
-   "label": "Observed Authority",
-   "options": "DB\nBoat"
   }
  ],
  "links": [],

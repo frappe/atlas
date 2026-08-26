@@ -12,8 +12,8 @@ from unittest.mock import patch
 import frappe
 from frappe.tests import IntegrationTestCase
 
-from atlas.atlas import placement
-from atlas.atlas.placement import (
+from atlas.atlas.core import placement
+from atlas.atlas.core.placement import (
 	ConsolidationInProgressError,
 	HostNotVisibleError,
 	NoCapacityError,
@@ -429,7 +429,7 @@ class TestPlacement(IntegrationTestCase):
 			with self.assertRaises(ConsolidationInProgressError):
 				default_server(0.0625, 2048, 4)
 			enqueue.assert_called_once()
-			self.assertEqual(enqueue.call_args.args[0], "atlas.atlas.placement.consolidate")
+			self.assertEqual(enqueue.call_args.args[0], "atlas.atlas.core.placement.consolidate")
 
 	def test_consolidate_triggers_the_planned_migration(self) -> None:
 		self._fragmented_pair()
@@ -650,7 +650,7 @@ class TestPlacement(IntegrationTestCase):
 		cannot reach. `Active` was the only gate — and Active is an operator's
 		judgement about the host, made once, not a statement that Atlas can see it
 		now."""
-		from atlas.atlas.migration import preflight_checks
+		from atlas.atlas.core.migration_preflight import preflight_checks
 
 		source = self._measured_server("atlas-placement-migrate-source", 45, memory_megabytes_total=8192)
 		target = self._measured_server("atlas-placement-migrate-target", 46, memory_megabytes_total=8192)
@@ -663,7 +663,7 @@ class TestPlacement(IntegrationTestCase):
 	def test_a_migration_off_an_unseen_host_is_still_allowed(self) -> None:
 		"""Only the target is gated. Moving a VM OFF a host Atlas has lost sight of
 		is the migration an operator most wants to be able to run."""
-		from atlas.atlas.migration import preflight_checks
+		from atlas.atlas.core.migration_preflight import preflight_checks
 
 		source = self._measured_server("atlas-placement-migrate-source", 45, memory_megabytes_total=8192)
 		target = self._measured_server("atlas-placement-migrate-target", 46, memory_megabytes_total=8192)

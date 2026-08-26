@@ -27,7 +27,7 @@ import math
 
 import frappe
 
-from atlas.atlas.sizes import SHARE_UNIT
+from atlas.atlas.core.sizes import SHARE_UNIT
 
 # vCPUs per DigitalOcean size slug. Legacy fallback for the CPU axis when the
 # agent hasn't stamped `vcpus_total`. Hand-maintained; a missing slug (and no
@@ -158,7 +158,7 @@ def capacity_for_server(server: str) -> dict:
 	# capacity (never the unreported→sentinel fallback). Synthesize its totals from
 	# the Fake size catalog so every axis is catalogued.
 	if s.get("provider_type") == "Fake":
-		from atlas.atlas.providers.fake import fake_host_totals
+		from atlas.atlas.core.providers.fake import fake_host_totals
 
 		s.update(fake_host_totals(size))
 	# Server.size is a Link to Provider Size, stored as "{type}/{slug}". Strip

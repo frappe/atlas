@@ -28,7 +28,7 @@ import time
 
 import frappe
 
-from atlas.atlas._ssh.runner import run_task
+from atlas.atlas.core._ssh.runner import run_task
 from atlas.tests.e2e._shared import (
 	expect_validation_error,
 	phase,
@@ -233,7 +233,7 @@ def _check_ssh_console(server) -> None:
 	an arbitrary command runs as root over the same transport, classified into
 	Success / Failure / Unreachable without raising. Mirrors run_on_target's unit
 	coverage against a live droplet (and a guest if one is up)."""
-	from atlas.atlas import ssh_console
+	from atlas.atlas.core import ssh_console
 
 	server_target = ssh_console.Target(kind="Server", name=server.name)
 

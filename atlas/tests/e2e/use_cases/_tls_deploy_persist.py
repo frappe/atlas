@@ -21,7 +21,7 @@ Teardown when done (releases the billable reserved IP, terminates both VMs):
 
 import frappe
 
-from atlas.atlas import proxy
+from atlas.atlas.services import proxy
 from atlas.tests.e2e._config import get_tls_config, get_tls_domain
 from atlas.tests.e2e._droplets import ensure_bootstrapped_server
 from atlas.tests.e2e._image import ensure_image_on_server

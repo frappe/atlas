@@ -159,7 +159,7 @@ def port_map() -> dict[str, str]:
 	bracketed-v6 host:port literal so the guest does no formatting.
 
 	This is the full map every proxy VM serves (spec/17-tcp-proxy.md "each proxy
-	holds the whole map"). The TCP reconcile (atlas.atlas.tcp_proxy) compares this,
+	holds the whole map"). The TCP reconcile (atlas.atlas.services.tcp_proxy) compares this,
 	serialized canonically, against each proxy guest's live map and bulk-`SYNC`s on
 	drift."""
 	rows = frappe.get_all(
@@ -173,9 +173,9 @@ def port_map() -> dict[str, str]:
 def tcp_reconcile() -> None:
 	"""Background-job entrypoint. Enqueued by Port Mapping's insert/active-toggle/
 	delete hooks so a mapping change reaches the proxy fleet without the operator
-	running a reconcile. Thin wrapper over atlas.atlas.tcp_proxy.reconcile_proxies —
+	running a reconcile. Thin wrapper over atlas.atlas.services.tcp_proxy.reconcile_proxies —
 	kept here (not a direct enqueue of tcp_proxy.reconcile_proxies) so the Port
 	Mapping module owns its own background verb and the import stays lazy."""
-	from atlas.atlas.tcp_proxy import reconcile_proxies
+	from atlas.atlas.services.tcp_proxy import reconcile_proxies
 
 	reconcile_proxies()

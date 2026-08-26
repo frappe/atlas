@@ -221,7 +221,7 @@ class TestWarmClone(IntegrationTestCase):
 		self.assertEqual(variables["TAP_DEVICE"], "atlas-golden999")
 
 	def test_warm_resolution_is_per_server_and_newest(self) -> None:
-		from atlas.atlas.placement import warm_bench_snapshot_for_server
+		from atlas.atlas.core.placement import warm_bench_snapshot_for_server
 
 		self.assertIsNone(warm_bench_snapshot_for_server(self.server))
 		older = _make_warm_snapshot(self.server)
@@ -312,7 +312,7 @@ class TestWarmSnapshotAction(IntegrationTestCase):
 	def test_capture_creates_warm_row_with_captured_config(self) -> None:
 		vm = self._running_vm()
 		with patch(
-			"atlas.atlas.doctype.virtual_machine.virtual_machine.run_task",
+			"atlas.atlas.core.vm_images.run_task",
 			return_value=fake_task(stdout=self.RESULT_STDOUT),
 		) as mocked:
 			snapshot_name = vm.capture_warm_snapshot(title="hot")
@@ -344,7 +344,7 @@ class TestWarmSnapshotAction(IntegrationTestCase):
 		vm.db_set("status", "Paused")
 		vm.reload()
 		with patch(
-			"atlas.atlas.doctype.virtual_machine.virtual_machine.run_task",
+			"atlas.atlas.core.vm_images.run_task",
 			return_value=fake_task(stdout=self.RESULT_STDOUT),
 		):
 			self.assertTrue(vm.capture_warm_snapshot())
@@ -376,7 +376,7 @@ class TestWarmImageBuild(IntegrationTestCase):
 		self.assertIn("no warm entrypoint", str(raised.exception))
 
 	def test_bench_recipe_declares_warm_entrypoint(self) -> None:
-		from atlas.atlas.image_recipes import get_recipe
+		from atlas.atlas.core.image_recipes import get_recipe
 
 		self.assertEqual(get_recipe("bench").warm_entrypoint, "warm.sh")
 		self.assertEqual(get_recipe("proxy").warm_entrypoint, "")

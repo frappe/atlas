@@ -16,9 +16,9 @@ from unittest.mock import patch
 import frappe
 from frappe.tests import IntegrationTestCase
 
-from atlas.atlas import scripts_catalog
-from atlas.atlas.boat_client import run_boat_host_read, run_boat_host_task
-from atlas.atlas.ssh import run_probe, run_task
+from atlas.atlas.core import scripts_catalog
+from atlas.atlas.core.boat_client import run_boat_host_read, run_boat_host_task
+from atlas.atlas.core.ssh import run_probe, run_task
 from atlas.tests import fixtures
 from atlas.tests.test_boat_client import (
 	REQUEST,
@@ -55,9 +55,9 @@ class TestHostVerbCatalog(IntegrationTestCase):
 			self.assertTrue(scripts_catalog.runs_on_boat_http(verb), verb)
 
 	def test_the_heavier_verbs_route_over_http_now(self) -> None:
-		# provision-vm, sync-image, warm-snapshot-vm and vm-tunnel moved off SSH once
-		# their scoped grants landed in sudoers.d/boat.
-		for verb in ("provision-vm", "sync-image", "warm-snapshot-vm", "vm-tunnel", "upload-snapshot-s3"):
+		# provision-vm, sync-image, warm-snapshot-vm moved off SSH once their scoped
+		# grants landed in sudoers.d/boat.
+		for verb in ("provision-vm", "sync-image", "warm-snapshot-vm", "upload-snapshot-s3"):
 			self.assertTrue(scripts_catalog.runs_on_boat_http(verb), verb)
 
 	def test_bootstrap_and_reset_stay_on_ssh(self) -> None:
@@ -164,7 +164,7 @@ class TestRunTaskDelegatesHostVerbs(IntegrationTestCase):
 		self.server = _boat_server()
 
 	def test_run_task_delegates_an_http_host_verb_to_the_daemon(self) -> None:
-		with patch("atlas.atlas.boat_client.run_boat_host_task") as delegated:
+		with patch("atlas.atlas.core.boat_client.run_boat_host_task") as delegated:
 			run_task(
 				server=self.server.name,
 				script="snapshot-vm",
@@ -183,9 +183,9 @@ class TestRunTaskDelegatesHostVerbs(IntegrationTestCase):
 		# run_task must NOT route it to the daemon. It reaches the SSH runner, which we
 		# stop at _execute_into so no real connection is opened.
 		with (
-			patch("atlas.atlas.boat_client.run_boat_host_task") as delegated,
-			patch("atlas.atlas._ssh.runner._execute_into"),
-			patch("atlas.atlas._ssh.runner.connection_for_server"),
+			patch("atlas.atlas.core.boat_client.run_boat_host_task") as delegated,
+			patch("atlas.atlas.core._ssh.runner._execute_into"),
+			patch("atlas.atlas.core._ssh.runner.connection_for_server"),
 		):
 			run_task(server=self.server.name, script="reset-server", variables={}, timeout_seconds=30)
 
@@ -228,7 +228,7 @@ class TestHostReadsOverHttp(IntegrationTestCase):
 		self.assertEqual(output, "")
 
 	def test_run_probe_delegates_a_read_verb_to_the_daemon(self) -> None:
-		with patch("atlas.atlas.boat_client.run_boat_host_read", return_value="") as delegated:
+		with patch("atlas.atlas.core.boat_client.run_boat_host_read", return_value="") as delegated:
 			run_probe(server=self.server.name, script="poll-vm-traffic", variables={"VMS_JSON": "[]"})
 
 		delegated.assert_called_once()

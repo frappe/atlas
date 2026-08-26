@@ -24,3 +24,9 @@ atlas.patches.v1_0.backfill_server_signing_key
 atlas.patches.v1_0.terminate_front_doors_over_dead_vms
 atlas.patches.v1_0.upgrade_hosts_to_current_boat
 atlas.patches.v1_0.rename_satellite_public_keys
+atlas.patches.v1_0.rename_guest_routing_base_url
+atlas.patches.v1_0.fold_pilots_into_sites
+atlas.patches.v1_0.delete_pilot_doctype
+atlas.patches.v1_0.rename_site_pilot_field_to_console
+atlas.patches.v1_0.drop_vpn_tunnel_transport
+atlas.patches.v1_0.drop_vpn_tunnel

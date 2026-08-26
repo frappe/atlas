@@ -179,7 +179,7 @@ class TestSleepyVmsLifecycle(IntegrationTestCase):
 	def test_migration_rejects_a_sleeping_vm_by_name(self) -> None:
 		"""spec/32: the memory snapshot is not transportable, so migration from
 		Sleeping is refused — and says which action unblocks it."""
-		from atlas.atlas.migration import preflight_checks
+		from atlas.atlas.core.migration_preflight import preflight_checks
 
 		vm = self._make_sleeping_vm()
 		with self.assertRaises(frappe.ValidationError) as caught:
@@ -199,7 +199,7 @@ class TestSleepyVmsFakeTasks(IntegrationTestCase):
 
 	def setUp(self) -> None:
 		_clean_virtual_machines()
-		from atlas.atlas.providers.fake_tasks import _poll_vm_traffic_result, _sleep_vm_result
+		from atlas.atlas.core.providers.fake_tasks import _poll_vm_traffic_result, _sleep_vm_result
 
 		self._sleep_vm_result = _sleep_vm_result
 		self._poll_vm_traffic_result = _poll_vm_traffic_result
@@ -226,13 +226,13 @@ class TestSleepyVmsFakeTasks(IntegrationTestCase):
 		self.assertEqual(result["counters"], {})
 
 	def test_probe_woken_vms_result_reports_none_woken(self) -> None:
-		from atlas.atlas.providers.fake_tasks import _probe_woken_vms_result
+		from atlas.atlas.core.providers.fake_tasks import _probe_woken_vms_result
 
 		result = _probe_woken_vms_result({"VMS_JSON": json.dumps(["u1", "u2"])})
 		self.assertEqual(result["woken"], {"u1": False, "u2": False})
 
 	def test_probe_woken_vms_result_bad_json_returns_empty(self) -> None:
-		from atlas.atlas.providers.fake_tasks import _probe_woken_vms_result
+		from atlas.atlas.core.providers.fake_tasks import _probe_woken_vms_result
 
 		self.assertEqual(_probe_woken_vms_result({"VMS_JSON": "not-json"}), {"woken": {}})
 

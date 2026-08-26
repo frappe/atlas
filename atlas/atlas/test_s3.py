@@ -1,4 +1,4 @@
-"""Unit tests for atlas.atlas.s3 — the snapshot-backup S3 client.
+"""Unit tests for atlas.atlas.core.s3 — the snapshot-backup S3 client.
 
 `backup_plan` is pure over the snapshot's fields (tested with stubs, no DB). The
 key-layout / presign methods need `S3 Settings` configured; presign itself needs
@@ -13,7 +13,7 @@ import unittest
 import frappe
 from frappe.tests import IntegrationTestCase
 
-from atlas.atlas import s3
+from atlas.atlas.core import s3
 
 
 def _boto3_available() -> bool:

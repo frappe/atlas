@@ -11,18 +11,22 @@
   "tenant",
   "column_break_header",
   "status",
+  "kind",
+  "build_mode",
+  "attached",
   "section_break_backing",
   "virtual_machine",
   "column_break_backing",
   "subdomain_doc",
-  "pilot",
+  "console",
   "section_break_timing",
   "provisioning_started",
   "deploying_started",
   "running_started",
   "section_break_credentials",
   "login_url",
-  "login_url_expires_at"
+  "login_url_expires_at",
+  "correlation_id"
  ],
  "fields": [
   {
@@ -31,7 +35,7 @@
    "label": "Overview"
   },
   {
-   "description": "The bare DNS label the user chose, e.g. acme. A single label (no dots) so the site stays inside the one regional wildcard the proxy already terminates. The full site URL is <subdomain>.<region domain> — that FQDN is this row's name, the site-name-on-disk, and the proxy Host header (one routing string).",
+   "description": "The bare DNS label the user chose, e.g. acme. A single label (no dots) so the site stays inside the one regional wildcard the proxy already terminates. The full site URL is <subdomain>.<region domain> \u2014 that FQDN is this row's name, the site-name-on-disk, and the proxy Host header (one routing string).",
    "fieldname": "subdomain",
    "fieldtype": "Data",
    "in_global_search": 1,
@@ -56,7 +60,7 @@
   },
   {
    "default": "Pending",
-   "description": "Controller-written lifecycle state. Running is reached ONLY on an observed HTTP 200 from the guest :80 (Frappe is actually serving), not when the backing VM boots. Pending → Provisioning → Deploying → Running; Failed on any error; Terminated after teardown.",
+   "description": "Controller-written lifecycle state. Running is reached ONLY on an observed HTTP 200 from the guest :80 (Frappe is actually serving), not when the backing VM boots. Pending \u2192 Provisioning \u2192 Deploying \u2192 Running; Failed on any error; Terminated after teardown.",
    "fieldname": "status",
    "fieldtype": "Select",
    "in_list_view": 1,
@@ -64,6 +68,34 @@
    "label": "Status",
    "options": "Pending\nProvisioning\nDeploying\nRunning\nFailed\nTerminated",
    "read_only": 1
+  },
+  {
+   "default": "bench-site",
+   "description": "Discriminates the two kinds of bench-backed tenant environment this DocType models: `bench-site` (a self-serve customer site, cloned from the golden bench snapshot) or `pilot-console` (a bench admin console on a backing VM, created by `create_vm` — the former Pilot DocType). Set once at insert; drives which lifecycle the controller runs (bench-site inline, pilot-console via services/site_console.py).",
+   "fieldname": "kind",
+   "fieldtype": "Select",
+   "in_standard_filter": 1,
+   "label": "Kind",
+   "options": "bench-site\npilot-console",
+   "read_only": 1,
+   "set_only_once": 1
+  },
+  {
+   "description": "Which bench front door the baked image serves: admin (the bench admin console, minted via `bench generate-admin-session`) or site (a single baked site, minted via `bench browse`). Inherited from the backing VM's image at insert; drives the login-URL mint mode and its TTL. Only meaningful for a `pilot-console` row — a `bench-site` is always site-mode (its 24h TTL).",
+   "fieldname": "build_mode",
+   "fieldtype": "Data",
+   "label": "Build Mode",
+   "read_only": 1,
+   "set_only_once": 1
+  },
+  {
+   "default": "0",
+   "description": "Set when this console was ATTACHED to a VM another aggregate owns (a self-serve Site's backing VM) rather than creating its own. An attached console only wires the admin console (vhost + login mint) on the shared VM; it never provisions or terminates the VM — the owning site does. Only meaningful for a `pilot-console` row.",
+   "fieldname": "attached",
+   "fieldtype": "Check",
+   "label": "Attached",
+   "read_only": 1,
+   "set_only_once": 1
   },
   {
    "fieldname": "section_break_backing",
@@ -85,7 +117,7 @@
    "fieldtype": "Column Break"
   },
   {
-   "description": "The Subdomain (proxy map) row this site created once it began serving — deleting it takes the site off the front door. Written by the controller after the readiness gate.",
+   "description": "The Subdomain (proxy map) row this site created once it began serving \u2014 deleting it takes the site off the front door. Written by the controller after the readiness gate.",
    "fieldname": "subdomain_doc",
    "fieldtype": "Link",
    "label": "Routing Entry",
@@ -93,11 +125,11 @@
    "read_only": 1
   },
   {
-   "description": "The attached Pilot (bench admin console) this site stood up on its OWN backing VM — fronted at <subdomain>-pilot.<region domain>, the front door Central's Asset resolves for 'Open'. Created by auto_provision after the site serves; terminated with the site. The customer's Frappe site is this Site itself (surfaced via get_site); the Pilot is the admin console on the same bench.",
-   "fieldname": "pilot",
+   "description": "The attached admin console (a Site of kind pilot-console) this site stood up on its OWN backing VM — fronted at <subdomain>-pilot.<region domain>, the front door Central's Asset resolves for 'Open'. Created by auto_provision after the site serves; terminated with the site. The customer's Frappe site is this Site itself (surfaced via get_site); the console is the admin bench on the same VM.",
+   "fieldname": "console",
    "fieldtype": "Link",
-   "label": "Pilot",
-   "options": "Pilot",
+   "label": "Console",
+   "options": "Site",
    "read_only": 1
   },
   {
@@ -132,7 +164,7 @@
    "label": "Handoff"
   },
   {
-   "description": "The one-click Administrator session URL handed to the tenant instead of a password — minted by deploy-site.py (`bench browse --sid`, a real 24h session) and stamped before the readiness wait. The baked Administrator password is a long random secret generated at bake time and never surfaced. Surfaced to Central (event payload + get_site poll) once the site is Running. Controller-written.",
+   "description": "The one-click Administrator session URL handed to the tenant instead of a password \u2014 minted by deploy-site.py (`bench browse --sid`, a real 24h session) and stamped before the readiness wait. The baked Administrator password is a long random secret generated at bake time and never surfaced. Surfaced to Central (event payload + get_site poll) once the site is Running. Controller-written.",
    "fieldname": "login_url",
    "fieldtype": "Small Text",
    "label": "Login URL",
@@ -145,6 +177,13 @@
    "label": "Login URL Expires At",
    "no_copy": 1,
    "read_only": 1
+  },
+  {
+   "fieldname": "correlation_id",
+   "fieldtype": "Data",
+   "label": "Correlation ID",
+   "read_only": 1,
+   "description": "Central Resource Action id for the last lifecycle command. Echoed on site.* events so Central matches the outcome to the action that requested it."
   }
  ],
  "links": [],

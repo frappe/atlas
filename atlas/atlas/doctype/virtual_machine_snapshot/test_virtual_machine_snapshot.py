@@ -20,9 +20,9 @@ def _stopped_vm() -> "frappe.model.document.Document":
 
 
 def _make_snapshot(vm) -> "frappe.model.document.Document":
-	from atlas.atlas.doctype.virtual_machine import virtual_machine as module
-
-	with patch.object(module, "run_task", return_value=fake_task(stdout='ATLAS_RESULT={"size_bytes": 1024}')):
+	with patch(
+		"atlas.atlas.core.vm_images.run_task", return_value=fake_task(stdout='ATLAS_RESULT={"size_bytes": 1024}')
+	):
 		name = vm.snapshot("snap")
 	return frappe.get_doc("Virtual Machine Snapshot", name)
 
@@ -187,9 +187,8 @@ class TestVirtualMachineSnapshot(IntegrationTestCase):
 		source = _new_vm(data_disk_gigabytes=2, data_disk_format_and_mount=1, data_disk_mount_point="/home")
 		source.db_set("status", "Stopped")
 		source.reload()
-		with patch.object(
-			vm_module,
-			"run_task",
+		with patch(
+			"atlas.atlas.core.vm_images.run_task",
 			return_value=fake_task(stdout='ATLAS_RESULT={"size_bytes": 1024, "data_size_bytes": 2048}'),
 		):
 			snapshot = frappe.get_doc("Virtual Machine Snapshot", source.snapshot("snap-data"))
@@ -209,15 +208,13 @@ class TestVirtualMachineSnapshot(IntegrationTestCase):
 		self.assertEqual(variables["DATA_DISK_GB"], "2")
 
 	def test_on_trash_removes_data_snapshot_lv(self) -> None:
-		from atlas.atlas.doctype.virtual_machine import virtual_machine as vm_module
 		from atlas.atlas.doctype.virtual_machine_snapshot import virtual_machine_snapshot as module
 
 		source = _new_vm(data_disk_gigabytes=2)
 		source.db_set("status", "Stopped")
 		source.reload()
-		with patch.object(
-			vm_module,
-			"run_task",
+		with patch(
+			"atlas.atlas.core.vm_images.run_task",
 			return_value=fake_task(stdout='ATLAS_RESULT={"size_bytes": 1, "data_size_bytes": 2}'),
 		):
 			snapshot = frappe.get_doc("Virtual Machine Snapshot", source.snapshot("doomed-data"))
@@ -361,15 +358,13 @@ class TestVirtualMachineSnapshot(IntegrationTestCase):
 		# Promote is root-only: a base image has no data-disk fields, so promoting a
 		# data-disk snapshot would silently drop the data. Reject loudly before any
 		# host work — clone instead to keep the data disk.
-		from atlas.atlas.doctype.virtual_machine import virtual_machine as vm_module
 		from atlas.atlas.doctype.virtual_machine_snapshot import virtual_machine_snapshot as module
 
 		source = _new_vm(data_disk_gigabytes=2)
 		source.db_set("status", "Stopped")
 		source.reload()
-		with patch.object(
-			vm_module,
-			"run_task",
+		with patch(
+			"atlas.atlas.core.vm_images.run_task",
 			return_value=fake_task(stdout='ATLAS_RESULT={"size_bytes": 1, "data_size_bytes": 2}'),
 		):
 			snapshot = frappe.get_doc("Virtual Machine Snapshot", source.snapshot("snap-with-data"))
@@ -706,7 +701,7 @@ class TestSnapshotS3Backup(IntegrationTestCase):
 		self.assertEqual(call.kwargs["snapshot_name"], snapshot.name)
 
 	def test_run_upload_records_manifest(self) -> None:
-		from atlas.atlas import s3
+		from atlas.atlas.core import s3
 		from atlas.atlas.doctype.virtual_machine_snapshot import virtual_machine_snapshot as module
 
 		self._configure_s3()
@@ -741,7 +736,7 @@ class TestSnapshotS3Backup(IntegrationTestCase):
 		self.assertEqual(plan[0]["url"], "https://signed-put")
 
 	def test_run_upload_failure_sets_failed(self) -> None:
-		from atlas.atlas import s3
+		from atlas.atlas.core import s3
 		from atlas.atlas.doctype.virtual_machine_snapshot import virtual_machine_snapshot as module
 
 		self._configure_s3()
@@ -786,7 +781,7 @@ class TestSnapshotS3Backup(IntegrationTestCase):
 		self.assertEqual(call.kwargs["snapshot_name"], snapshot.name)
 
 	def test_run_restore_cold_rehydrates_then_rolls_back(self) -> None:
-		from atlas.atlas import s3
+		from atlas.atlas.core import s3
 		from atlas.atlas.doctype.virtual_machine import virtual_machine as vm_module
 		from atlas.atlas.doctype.virtual_machine_snapshot import virtual_machine_snapshot as module
 
@@ -817,7 +812,7 @@ class TestSnapshotS3Backup(IntegrationTestCase):
 		self.assertEqual(plan[0]["sha256"], "deadbeef")
 
 	def test_run_restore_warm_rehydrates_only(self) -> None:
-		from atlas.atlas import s3
+		from atlas.atlas.core import s3
 		from atlas.atlas.doctype.virtual_machine import virtual_machine as vm_module
 		from atlas.atlas.doctype.virtual_machine_snapshot import virtual_machine_snapshot as module
 
@@ -872,7 +867,7 @@ class TestSnapshotS3Backup(IntegrationTestCase):
 	# --- on_trash S3 cleanup ---
 
 	def test_on_trash_deletes_s3_backup(self) -> None:
-		from atlas.atlas import s3
+		from atlas.atlas.core import s3
 		from atlas.atlas.doctype.virtual_machine_snapshot import virtual_machine_snapshot as module
 
 		self._configure_s3()
@@ -885,7 +880,7 @@ class TestSnapshotS3Backup(IntegrationTestCase):
 		deleter.assert_called_once_with(snapshot.name)
 
 	def test_on_trash_skips_s3_when_not_uploaded(self) -> None:
-		from atlas.atlas import s3
+		from atlas.atlas.core import s3
 		from atlas.atlas.doctype.virtual_machine_snapshot import virtual_machine_snapshot as module
 
 		snapshot = _make_snapshot(_stopped_vm())  # s3_status empty

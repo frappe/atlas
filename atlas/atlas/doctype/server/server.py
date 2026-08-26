@@ -1,6 +1,5 @@
 import hashlib
 import json
-import secrets
 import shlex
 import uuid
 from contextlib import contextmanager
@@ -11,10 +10,11 @@ import frappe
 from frappe import _
 from frappe.model.document import Document
 
-from atlas.atlas import scripts_catalog
-from atlas.atlas.providers.fake_tasks import is_fake_server
-from atlas.atlas.ssh import connection_for_server, run_ssh, run_task, ssh_key_file, upload_files
-from atlas.atlas.task_results import parse_result
+from atlas.atlas.core import scripts_catalog, server_ancp, server_boat
+from atlas.atlas.core.providers.fake_tasks import is_fake_server
+from atlas.atlas.core.server_boat import BOAT_ARTIFACTS
+from atlas.atlas.core.ssh import connection_for_server, run_ssh, run_task, ssh_key_file, upload_files
+from atlas.atlas.core.task_results import parse_result
 
 # --- WHERE THE BOAT ARTIFACTS COME FROM ---------------------------------------
 #
@@ -62,30 +62,6 @@ from atlas.atlas.task_results import parse_result
 # §5's desired `Server.boat_version` exists, comparing the two is the drift check
 # and this is the place it goes.
 DEFAULT_BOAT_DISTRIBUTION = "/opt/boat"
-
-# Host paths. The binary is staged in its OWN directory (see _install_boat step 3
-# for why the rename has to stay on one filesystem); the rest stage under
-# /var/lib/atlas/boat, where they also serve as the record of what was installed.
-BOAT_BINARY = "/usr/local/bin/boat"
-BOAT_INCOMING_BINARY = f"{BOAT_BINARY}.incoming"
-BOAT_STAGING_DIRECTORY = "/var/lib/atlas/boat"
-BOAT_ARTIFACTS: list[tuple[str, str]] = [
-	("bin/boat", BOAT_INCOMING_BINARY),
-	("sudoers.d/boat", f"{BOAT_STAGING_DIRECTORY}/sudoers"),
-	("systemd/boat.service", f"{BOAT_STAGING_DIRECTORY}/boat.service"),
-	("systemd/boat-networkd.service", f"{BOAT_STAGING_DIRECTORY}/boat-networkd.service"),
-]
-
-# Where the daemon reads its bearer token, and the token's lifetimes (spec/33 §12).
-# The daemon serves a minted token until BOAT_TOKEN_TTL_DAYS past minting and
-# refuses it after (fail-closed); Atlas re-mints within BOAT_TOKEN_REMINT_WITHIN_DAYS
-# of that on every bootstrap/upgrade, so a reachable host is always handed a fresh
-# token well before the hard expiry — and a leaked-but-unrotated one is still bounded.
-BOAT_TOKEN_PATH = "/etc/boat/token"
-DATUM_TOKENS_PATH = "/etc/boat/datum-tokens.json"
-DATUM_DROPIN_PATH = "/etc/systemd/system/boat.service.d/10-datum.conf"
-BOAT_TOKEN_TTL_DAYS = 30
-BOAT_TOKEN_REMINT_WITHIN_DAYS = 7
 
 
 def boat_distribution() -> Path:
@@ -229,18 +205,18 @@ class Server(Document):
 		Password) so the controller can write it to the host during bootstrap and
 		push it to existing hosts when resyncing networkd state."""
 		if not self.wireguard_public_key:
+			from atlas.atlas.core.networking import derive_host_wireguard_keypair
 			from atlas.atlas.doctype.atlas_settings.atlas_settings import get_ancp_wg_derivation_secret
-			from atlas.atlas.networking import derive_host_wireguard_keypair
 
 			_private_key, self.wireguard_public_key = derive_host_wireguard_keypair(
 				self.name, get_ancp_wg_derivation_secret()
 			)
 		if not self.mesh_address:
-			from atlas.atlas.networking import derive_host_mesh_address
+			from atlas.atlas.core.networking import derive_host_mesh_address
 
 			self.mesh_address = derive_host_mesh_address(self.name)
 		if not self.signing_public_key:
-			from atlas.atlas.networking import generate_host_signing_keypair
+			from atlas.atlas.core.networking import generate_host_signing_keypair
 
 			priv_b64, self.signing_public_key = generate_host_signing_keypair()
 			# Persist the private key so it's available at bootstrap time and
@@ -277,7 +253,7 @@ class Server(Document):
 		one (`atlas.get_provider()`) — a host outlives a vendor switch, so destroy()
 		must hit the client that owns the resource. Mirrors `reserved_ip.py`'s
 		`_provider_for_server`."""
-		from atlas.atlas.providers import for_provider_type
+		from atlas.atlas.core.providers import for_provider_type
 
 		if self.status == "Archived":
 			frappe.throw(_("Server is already archived"))
@@ -301,7 +277,7 @@ class Server(Document):
 		recover() runs the full describe()-poll first to fill them. Returns True if a
 		job was enqueued, False if one was already queued/running.
 		"""
-		from atlas.atlas.providers.worker import enqueue_finish_provisioning
+		from atlas.atlas.core.providers.worker import enqueue_finish_provisioning
 
 		if self.status not in ("Pending", "Bootstrapping", "Broken"):
 			frappe.throw(f"Cannot recover from status {self.status}; nothing is stuck")
@@ -362,6 +338,16 @@ class Server(Document):
 		self._absorb_bootstrap_output(task.stdout)
 		if connection is not None:
 			self._start_boat(connection)
+			self._start_ancp_units(connection)
+		# Reaching here means every host step succeeded (run_task raises otherwise),
+		# so the host IS VM-ready — reflect that in the row. Without this, the desk
+		# **Bootstrap** button on an adopted `Pending` server (or a re-bootstrap of a
+		# `Broken` one) left it stuck in its old status: only the provider worker's
+		# `finish_provisioning` set `Active`, so a hand-driven adopt→Bootstrap never
+		# reached Active. `finish_provisioning` re-asserting Active afterwards is a
+		# harmless no-op. Bootstrap is gated to Pending/Bootstrapping/Active/Broken,
+		# all of which a successful bootstrap legitimately makes Active.
+		self.status = "Active"
 		self.save(ignore_permissions=True)
 		return task.name
 
@@ -394,70 +380,10 @@ class Server(Document):
 		  keypair when configured.
 		After the first boot these files are stale (the daemon keeps its own
 		state); they're only the initial seed-of-trust."""
-		from atlas.atlas.networking import derive_host_mesh_address
-
-		identity = {
-			"host_id": self.name,
-			"endpoint": self.ipv6_address,
-			"mesh_address": self.mesh_address or derive_host_mesh_address(self.name),
-		}
-		# The seed = every OTHER Active Server (excluding this one). The daemon
-		# will reconcile any drift via gossip+anti-entropy once it cold-joins.
-		other_actives = frappe.get_all(
-			"Server",
-			filters={"status": "Active", "name": ["!=", self.name]},
-			fields=["name", "ipv6_address", "wireguard_public_key", "mesh_address", "signing_public_key"],
-		)
-		seed = []
-		for row in other_actives:
-			if not row.ipv6_address:
-				continue
-			# §19.4 — the seed anchors each other host's ed25519 pubkey so the
-			# envelope verifier's `signing_pubkey_cache` is populated at build
-			# time. A legacy host bootstrapped before `signing_public_key`
-			# existed has an EMPTY key here. SKIP it rather than emit an empty
-			# entry: `seed.signing_pubkey_index` drops empty keys anyway, so an
-			# emitted-empty entry gives the peer NO cached key AND forces the
-			# §19.5 introduction path — but the introduction cert only rides the
-			# legacy host's OWN first direct MembershipAdvertisement, never a
-			# relayed/gossiped record, so a peer that first learns of it via a
-			# relay silently drops (`signature_failed`) → one-sided partition.
-			# Skipping is strictly safer: the peer just isn't seeded with this
-			# host and learns it later once it HAS a key (the `backfill_server_
-			# signing_key` migration fills every legacy row, so this is a
-			# belt-and-braces guard for a row that slipped through). Warn loud so
-			# an operator sees the gap instead of it silently partitioning.
-			signing_public_key = getattr(row, "signing_public_key", "") or ""
-			if not signing_public_key:
-				frappe.logger("atlas").warning(
-					f"skipping {row.name} from {self.name}'s ANCP seed: it has no "
-					"signing_public_key (a host bootstrapped before the field existed). "
-					"Run `bench migrate` (the backfill_server_signing_key patch) or "
-					"resync_networkd_keys on it so it gets a signing key and can be seeded."
-				)
-				continue
-			seed.append(
-				{
-					"host_id": row.name,
-					"endpoint": row.ipv6_address,
-					"wg_public_key": row.wireguard_public_key or "",
-					"signing_public_key": signing_public_key,
-					"mesh_address": row.mesh_address or derive_host_mesh_address(row.name),
-					"generation": 1,
-				}
-			)
-		from atlas.atlas.doctype.atlas_settings.atlas_settings import get_ancp_wg_derivation_secret
-		from atlas.atlas.networking import derive_host_wireguard_keypair
-
-		wg_private_key, _wg_public_key = derive_host_wireguard_keypair(
-			self.name, get_ancp_wg_derivation_secret()
-		)
-		# Stage 5+ — the host's signing keypair. validate() generated one on first
-		# insert and persisted the priv in `signing_private_key`. A re-Bootstrap
-		# or resync reads it from the persisted field (encrypted Password) and
-		# writes the key files again. If the field is empty (a host bootstrapped
-		# before this migration), we read the existing keys from the host instead.
-		#
+		identity = server_ancp.build_identity(self)
+		seed = server_ancp.build_seed(self)
+		seed_content = server_ancp.seed_document(seed)
+		wg_private_key, _wg_public_key = server_ancp.derive_wireguard_keypair(self)
 		# IMPORTANT: `signing_private_key` is a Frappe Password field. Frappe's
 		# `_save_passwords` (base_document.py) stores the plaintext encrypted in
 		# `__Auth` and REPLACES the in-memory + column value with a `"****"` mask
@@ -470,30 +396,46 @@ class Server(Document):
 		# host's MembershipAdvertisement → silent cluster partition. Use
 		# `get_password` (which reads the decrypted plaintext from `__Auth`)
 		# instead — the canonical Frappe way to read a Password field in code.
+		# validate() generated the keypair on first insert; a re-Bootstrap/resync
+		# reads it back here and writes the key files again.
 		pending_signing_priv = self.get_password("signing_private_key", raise_exception=False) or ""
-		if pending_signing_priv:
-			# Defensive in depth — refuse to push a non-ed25519-shaped priv.
-			# `b64decode(validate=True)` rejects the `"****"` mask (which
-			# contains non-base64 chars) and any other malformed value loud,
-			# surfacing a regression here instead of letting the daemon mute-
-			# regenerate a mismatched keypair.
-			import base64
+		self._validate_signing_priv(pending_signing_priv)
+		self._push_host_key_files(connection, wg_private_key, _wg_public_key, pending_signing_priv)
+		self._push_seed_files(connection, identity=identity, seed=seed, seed_content=seed_content)
 
-			try:
-				priv_raw = base64.b64decode(pending_signing_priv, validate=True)
-			except Exception as exc:
-				frappe.throw(
-					f"signing_private_key for {self.name} is not valid base64: {exc} — "
-					"the field was likely read as the Frappe Password-field mask "
-					"('****') instead of the decrypted plaintext"
-				)
-			if len(priv_raw) != 32:
-				frappe.throw(
-					f"signing_private_key for {self.name} is {len(priv_raw)} bytes, "
-					"expected 32 (an ed25519 seed) — refusing to push a malformed "
-					"signing key to the host (the daemon would silently regenerate "
-					"a mismatched keypair and partition from the cluster)"
-				)
+	def _validate_signing_priv(self, pending_signing_priv: str) -> None:
+		"""Refuse to push a non-ed25519-shaped signing priv to the host. Defensive
+		in depth: `b64decode(validate=True)` rejects the Frappe Password `"****"`
+		mask (non-base64 chars) and any other malformed value loud, surfacing a
+		regression HERE instead of letting the daemon mute-regenerate a mismatched
+		keypair and partition from the cluster (see the mask-trap note at the
+		`get_password` read)."""
+		if not pending_signing_priv:
+			return
+		import base64
+
+		try:
+			priv_raw = base64.b64decode(pending_signing_priv, validate=True)
+		except Exception as exc:
+			frappe.throw(
+				f"signing_private_key for {self.name} is not valid base64: {exc} — "
+				"the field was likely read as the Frappe Password-field mask "
+				"('****') instead of the decrypted plaintext"
+			)
+		if len(priv_raw) != 32:
+			frappe.throw(
+				f"signing_private_key for {self.name} is {len(priv_raw)} bytes, "
+				"expected 32 (an ed25519 seed) — refusing to push a malformed "
+				"signing key to the host (the daemon would silently regenerate "
+				"a mismatched keypair and partition from the cluster)"
+			)
+
+	def _push_host_key_files(self, connection, wg_private_key, wg_public_key, pending_signing_priv) -> None:
+		"""Push the wg-mesh keypair and, when the controller holds them, the host's
+		ed25519 signing keypair to /etc/atlas-networkd — then read the signing pub
+		back and assert it equals `Server.signing_public_key`. The canary catches a
+		daemon about to regenerate a mismatched keypair (a silent cluster partition
+		on the next MembershipAdvertisement verify) at the controller, loud."""
 		with ssh_key_file(connection.ssh_private_key) as key_path:
 			run_ssh(
 				connection,
@@ -510,49 +452,58 @@ class Server(Document):
 				"sudo install -m 0644 /dev/stdin {}",
 				"/etc/atlas-networkd/wg-public-key",
 				timeout_seconds=30,
-				stdin=_wg_public_key + "\n",
+				stdin=wg_public_key + "\n",
 			)
-			if pending_signing_priv and self.signing_public_key:
-				# Stage 5+ — push the host's ed25519 signing keypair. The daemon's
-				# `ensure_signing_keypair` is idempotent and validates the files;
-				# if we wrote them here, the daemon reads them instead of generating.
-				run_ssh(
-					connection,
-					key_path,
-					"sudo install -m 0600 /dev/stdin {}",
-					"/etc/atlas-networkd/signing-private-key",
-					timeout_seconds=30,
-					stdin=pending_signing_priv + "\n",
+			if not (pending_signing_priv and self.signing_public_key):
+				return
+			# Stage 5+ — push the host's ed25519 signing keypair. The daemon's
+			# `ensure_signing_keypair` is idempotent and validates the files;
+			# if we wrote them here, the daemon reads them instead of generating.
+			run_ssh(
+				connection,
+				key_path,
+				"sudo install -m 0600 /dev/stdin {}",
+				"/etc/atlas-networkd/signing-private-key",
+				timeout_seconds=30,
+				stdin=pending_signing_priv + "\n",
+			)
+			run_ssh(
+				connection,
+				key_path,
+				"sudo install -m 0644 /dev/stdin {}",
+				"/etc/atlas-networkd/signing-public-key",
+				timeout_seconds=30,
+				stdin=self.signing_public_key + "\n",
+			)
+			# CANARY — read back the on-disk signing-pub and assert it equals
+			# `Server.signing_public_key`. If the daemon's `ensure_signing_keypair`
+			# were about to regenerate (because the priv we pushed failed
+			# validation), the on-disk pub would diverge from what the controller
+			# signed the introduction cert over. Surface the divergence HERE,
+			# at the controller, loud — the alternative is a silent cluster
+			# partition on the next MembershipAdvertisement verify.
+			read_back, _rb_err, rb_exit = run_ssh(
+				connection,
+				key_path,
+				"sudo cat /etc/atlas-networkd/signing-public-key",
+				timeout_seconds=30,
+			)
+			if rb_exit != 0 or (read_back or "").strip() != (self.signing_public_key or "").strip():
+				frappe.throw(
+					f"signing-public-key read-back from {self.name} "
+					f"({(read_back or '').strip()!r}) doesn't match "
+					f"Server.signing_public_key ({(self.signing_public_key or '').strip()!r}) — "
+					"the daemon's ensure_signing_keypair is about to regenerate a "
+					"mismatched keypair; the controller and host would diverge."
 				)
-				run_ssh(
-					connection,
-					key_path,
-					"sudo install -m 0644 /dev/stdin {}",
-					"/etc/atlas-networkd/signing-public-key",
-					timeout_seconds=30,
-					stdin=self.signing_public_key + "\n",
-				)
-				# CANARY — read back the on-disk signing-pub and assert it equals
-				# `Server.signing_public_key`. If the daemon's `ensure_signing_keypair`
-				# were about to regenerate (because the priv we pushed failed
-				# validation), the on-disk pub would diverge from what the controller
-				# signed the introduction cert over. Surface the divergence HERE,
-				# at the controller, loud — the alternative is a silent cluster
-				# partition on the next MembershipAdvertisement verify.
-				read_back, _rb_err, rb_exit = run_ssh(
-					connection,
-					key_path,
-					"sudo cat /etc/atlas-networkd/signing-public-key",
-					timeout_seconds=30,
-				)
-				if rb_exit != 0 or (read_back or "").strip() != (self.signing_public_key or "").strip():
-					frappe.throw(
-						f"signing-public-key read-back from {self.name} "
-						f"({(read_back or '').strip()!r}) doesn't match "
-						f"Server.signing_public_key ({(self.signing_public_key or '').strip()!r}) — "
-						"the daemon's ensure_signing_keypair is about to regenerate a "
-						"mismatched keypair; the controller and host would diverge."
-					)
+
+	def _push_seed_files(self, connection, *, identity, seed, seed_content) -> None:
+		"""Push identity.json and seed.json, then — when the operator keypair is
+		configured — the §19.5 trust-root files: operator-public-key, the detached
+		seed.json.sig (over the exact seed_content bytes), and, for a host joining
+		an existing cluster, this host's introduction-signature. An empty operator
+		pubkey means no §19.5 trust root and none of them are written, leaving the
+		host's verifier fail-closed on any future newcomer until one is configured."""
 		with ssh_key_file(connection.ssh_private_key) as key_path:
 			run_ssh(
 				connection,
@@ -562,11 +513,6 @@ class Server(Document):
 				timeout_seconds=30,
 				stdin=json.dumps(identity, sort_keys=True) + "\n",
 			)
-			# The exact bytes we push to the host — sign THESE below so the
-			# controller's signature is byte-identical to what the host's
-			# `seed.load_seed` verifies (spec §9.2 / §19.4: the seed is the sole
-			# trust root, so its operator signature is a hard load-time MUST).
-			seed_content = json.dumps(seed, sort_keys=True) + "\n"
 			run_ssh(
 				connection,
 				key_path,
@@ -575,162 +521,59 @@ class Server(Document):
 				timeout_seconds=30,
 				stdin=seed_content,
 			)
-			# Stage 5+ (§19.5) — write the operator provision pubkey so the
-			# host can verify any future newcomer's introduction certificate.
-			# Also write the introduction-signature for THIS host when it's
-			# joining an existing cluster (seed is non-empty → there are
-			# existing hosts that don't know us yet) and the controller has
-			# the operator priv key configured. Initial-seed hosts (seed is
-			# empty → this is the first host in a fresh cluster) get no
-			# introduction cert — every other host gets their pubkey via their
-			# own seed.json on their own first boot. Empty operator pubkey
-			# (no Atlas Settings keypair yet) means no §19.5 trust root; we
-			# write nothing, leave the host's verifier fail-closed on any
-			# future newcomer until the operator configures one.
 			from atlas.atlas.doctype.atlas_settings.atlas_settings import (
 				get_ancp_operator_private_key,
 				get_ancp_operator_public_key,
 			)
 
 			operator_pub = get_ancp_operator_public_key()
-			if operator_pub:
+			if not operator_pub:
+				return
+			run_ssh(
+				connection,
+				key_path,
+				"sudo install -m 0644 /dev/stdin {}",
+				"/etc/atlas-networkd/operator-public-key",
+				timeout_seconds=30,
+				stdin=operator_pub + "\n",
+			)
+			operator_priv = get_ancp_operator_private_key()
+			if not operator_priv:
+				return
+			# The signing module (loaded once) serves BOTH the seed signature and
+			# the introduction signature. The seed is the sole trust root (spec
+			# §9.2 / §19.4): sign the EXACT bytes pushed to seed.json above so the
+			# host's `seed.load_seed` verifies against operator-public-key.
+			host_signing = server_ancp.load_host_signing_module()
+			seed_sig = server_ancp.sign_seed_document(seed_content, operator_priv, host_signing=host_signing)
+			run_ssh(
+				connection,
+				key_path,
+				"sudo install -m 0644 /dev/stdin {}",
+				"/etc/atlas-networkd/seed.json.sig",
+				timeout_seconds=30,
+				stdin=seed_sig + "\n",
+			)
+			# A host joining an existing cluster (seed has peers → the existing
+			# hosts didn't get us in their initial seed.json). The §19.5 verifier
+			# accepts the self-asserted signing_public_key iff this signature
+			# verifies against operator_pub. Initial-seed hosts skip this (their
+			# pubkey is already anchored on every peer via the seed).
+			if seed and self.signing_public_key:
+				intro_sig = server_ancp.build_introduction_signature(
+					self, operator_priv, host_signing=host_signing
+				)
 				run_ssh(
 					connection,
 					key_path,
-					"sudo install -m 0644 /dev/stdin {}",
-					"/etc/atlas-networkd/operator-public-key",
+					"sudo install -m 0600 /dev/stdin {}",
+					"/etc/atlas-networkd/introduction-signature",
 					timeout_seconds=30,
-					stdin=operator_pub + "\n",
+					stdin=intro_sig + "\n",
 				)
-				operator_priv = get_ancp_operator_private_key()
-				# Re-use the host-lib's pure signing primitives (pure above the
-				# keypair file — runs in the bench venv where `cryptography` is
-				# already a dep). Use importlib to bypass the cached top-level
-				# `atlas` package (the bench app) — sys.path insertion alone
-				# won't reach scripts/lib/atlas/networkd/signing.py. Loaded once;
-				# reused for the seed signature AND the introduction signature.
-				if operator_priv:
-					import importlib.util
-					from pathlib import Path
-
-					signing_path = str(
-						Path(frappe.get_app_path("atlas")).parent
-						/ "scripts"
-						/ "lib"
-						/ "atlas"
-						/ "networkd"
-						/ "signing.py"
-					)
-					_spec = importlib.util.spec_from_file_location("_host_signing", signing_path)
-					_host_signing = importlib.util.module_from_spec(_spec)
-					_spec.loader.exec_module(_host_signing)  # type: ignore[union-attr]
-
-					# The seed is the sole trust root (spec §9.2 / §19.4), so the
-					# host's `seed.load_seed` fails closed unless the exact bytes
-					# of seed.json verify against operator_pub. Sign the SAME
-					# bytes we pushed to /etc/atlas-networkd/seed.json above and
-					# write the detached signature to the sibling seed.json.sig
-					# (0644, matching the other pushed non-secret files).
-					seed_sig = _host_signing.sign_detached(seed_content.encode("utf-8"), operator_priv)
-					run_ssh(
-						connection,
-						key_path,
-						"sudo install -m 0644 /dev/stdin {}",
-						"/etc/atlas-networkd/seed.json.sig",
-						timeout_seconds=30,
-						stdin=seed_sig + "\n",
-					)
-					# A host joining an existing cluster (seed has peers → the
-					# existing hosts didn't get us in their initial seed.json).
-					# Sign {host_id, signing_public_key, generation=1} with the
-					# operator priv; the §19.5 verifier accepts the self-asserted
-					# signing_public_key iff this signature verifies against
-					# operator_pub. Initial-seed hosts skip this (their pubkey is
-					# already anchored on every peer via the seed).
-					if seed and self.signing_public_key:
-						intro_body = {
-							"host_id": self.name,
-							"signing_public_key": self.signing_public_key,
-							"generation": 1,
-						}
-						intro_sig = _host_signing.sign_introduction(intro_body, operator_priv)
-						run_ssh(
-							connection,
-							key_path,
-							"sudo install -m 0600 /dev/stdin {}",
-							"/etc/atlas-networkd/introduction-signature",
-							timeout_seconds=30,
-							stdin=intro_sig + "\n",
-						)
 
 	def _install_boat(self, connection) -> None:
-		"""Install the boat binary, its allow-list, its service user and its units —
-		the step that makes `boat <verb>` a command this host has. Runs after the
-		upload (which staged all four artifacts) and before install.sh, whose last
-		gate is `command -v boat`.
-
-		THE ORDER IS THE POINT, and it is deliberately not the boat README's:
-
-		  1. the `boat` system user. Both units run as it and every line of the
-		     allow-list grants to it by name, so nothing below means anything until
-		     it exists. Idempotent: a re-bootstrap finds it and adds nothing.
-		  2. `visudo -cf` the STAGED allow-list, and only then `install` it 0440
-		     root:root. Validate-then-install, never the README's reverse: a sudoers
-		     file sudo cannot parse does not merely disable boat's grants, it takes
-		     out the whole /etc/sudoers.d directory — the boat user ends up with no
-		     grants at all and every verb on the host fails at once. Checking the
-		     staged copy means an invalid file never reaches /etc.
-		  3. the binary, renamed into place from a staging name in the SAME
-		     directory. `mv` within one filesystem is rename(2), so a process that
-		     execs /usr/local/bin/boat mid-install gets the whole old inode or the
-		     whole new one and never a half-written file — and a running daemon
-		     keeps its own open inode until it is restarted. That is
-		     internal/update's Install reasoning, and the same reason it stages
-		     inside /usr/local/bin rather than in /tmp.
-		  4. the two units, then `daemon-reload`: systemd has to be told about a
-		     unit file before anything asks it to start one.
-
-		Starting boat.service is NOT here — see _start_boat for why it waits.
-		"""
-		digest = self._staged_boat_digest()
-		steps = [
-			(
-				"creating the boat service user",
-				"id boat >/dev/null 2>&1 || sudo useradd --system --home-dir /var/lib/boat "
-				"--shell /usr/sbin/nologin boat",
-			),
-			("checking the sudoers allow-list", f"sudo visudo -cf {BOAT_STAGING_DIRECTORY}/sudoers"),
-			(
-				"installing the sudoers allow-list",
-				f"sudo install -m 0440 -o root -g root {BOAT_STAGING_DIRECTORY}/sudoers /etc/sudoers.d/boat",
-			),
-			(
-				"installing the boat binary",
-				f"sudo chmod 0755 {BOAT_INCOMING_BINARY} && sudo mv -f {BOAT_INCOMING_BINARY} {BOAT_BINARY}",
-			),
-			(
-				"installing boat.service",
-				f"sudo install -m 0644 {BOAT_STAGING_DIRECTORY}/boat.service "
-				"/etc/systemd/system/boat.service",
-			),
-			(
-				"installing boat-networkd.service",
-				f"sudo install -m 0644 {BOAT_STAGING_DIRECTORY}/boat-networkd.service "
-				"/etc/systemd/system/boat-networkd.service",
-			),
-			("reloading systemd", "sudo systemctl daemon-reload"),
-		]
-		with ssh_key_file(connection.ssh_private_key) as key_path:
-			for description, command in steps:
-				self._boat_ssh(connection, key_path, description, command)
-			self._verify_boat_binary(connection, key_path, digest)
-			# The bearer token last: it is a per-host secret, minted here and written
-			# to /etc/boat/token, not one of the four static artifacts the tar stream
-			# carried. _start_boat's restart reads it.
-			self._install_boat_token(connection, key_path)
-			# The datum token bundle + its drop-in, when metrics export is configured. A
-			# no-op otherwise, so a fleet without datum installs nothing extra.
-			self._install_datum_tokens(connection, key_path)
+		server_boat.install_boat(self, connection)
 
 	def _staged_boat_digest(self) -> str:
 		"""SHA-256 of the boat binary this bootstrap is shipping, read on the
@@ -739,182 +582,57 @@ class Server(Document):
 		/usr/local/bin/boat are the bytes the operator staged."""
 		return hashlib.sha256((boat_distribution() / "bin" / "boat").read_bytes()).hexdigest()
 
-	def _verify_boat_binary(self, connection, key_path, digest: str) -> None:
-		"""Prove the binary that landed is the one Atlas shipped, and that it runs.
-
-		Two different failures, both silent without this: bytes that changed in
-		flight (the digest), and a binary built for another architecture or a
-		non-executable file (`boat version`, which is also the only way Atlas can
-		learn the version — it cannot run a host's binary locally). The answer lands
-		on `observed_boat_version` so the field records what was installed at
-		install time rather than only what a later mirror sweep happened to see."""
-		landed = self._boat_ssh(
-			connection, key_path, "reading the installed digest", f"sha256sum {BOAT_BINARY}"
-		)
-		if landed.split()[:1] != [digest]:
-			frappe.throw(
-				f"boat on {self.name} is not the binary Atlas shipped: the host reports "
-				f"{landed.split()[0] if landed.split() else '(nothing)'}, Atlas shipped {digest}"
-			)
-		version = self._boat_ssh(
-			connection, key_path, "running boat version", f"{BOAT_BINARY} version"
-		).strip()
-		if not version:
-			frappe.throw(f"`boat version` on {self.name} printed nothing; the binary is not usable")
-		self.observed_boat_version = version
-
 	def mint_boat_token(self) -> str:
-		"""Mint this host's bearer token and stamp its hard expiry (spec/33 §12).
-
-		Short-lived and per-host. The token is stored ENCRYPTED — a Password field, so
-		it lives in __Auth and never in the row or a log — and returned so the caller
-		installs the exact value without re-reading it. The expiry is the hard one the
-		daemon enforces; the re-mint window (below) means a reachable host is handed a
-		fresh token well before it and never reaches it.
-
-		Written with set_encrypted_password + db_set rather than a full self.save():
-		this runs mid-bootstrap/upgrade, and re-running every validate/before_save hook
-		to stamp one credential is both needless and a way to trip a half-built doc."""
-		from frappe.utils.password import set_encrypted_password
-
-		token = secrets.token_urlsafe(32)
-		set_encrypted_password(self.doctype, self.name, token, "boat_token")
-		# Carry the token on the in-memory doc too: `Document._save_passwords`
-		# REMOVES any Password field that is empty at save time, and bootstrap /
-		# upgrade_boat both end with `self.save()` — so a mint that only wrote
-		# __Auth was silently deleted by the very save that closed the operation,
-		# leaving the host's /etc/boat/token the only copy (and the row tokenless
-		# on the next read). Setting the attribute makes the trailing save re-write
-		# the same value (then mask it), keeping row and host in agreement.
-		self.boat_token = token
-		self.db_set(
-			"boat_token_expires_at",
-			frappe.utils.add_to_date(frappe.utils.now_datetime(), days=BOAT_TOKEN_TTL_DAYS),
-		)
-		return token
+		return server_boat.mint_boat_token(self)
 
 	def _current_or_minted_boat_token(self) -> str:
-		"""The stored token if it is present and not yet within the re-mint window of
-		its hard expiry, else a freshly minted one. Re-minting early is what keeps a
-		reachable host from ever reaching the hard expiry the daemon fails closed on."""
-		token = self.get_password("boat_token", raise_exception=False)
-		expires = self.boat_token_expires_at
-		if token and expires:
-			remaining = frappe.utils.get_datetime(expires) - frappe.utils.now_datetime()
-			if remaining.days > BOAT_TOKEN_REMINT_WITHIN_DAYS:
-				return token
-		return self.mint_boat_token()
+		return server_boat.current_or_minted_boat_token(self)
 
 	def _install_boat_token(self, connection, key_path) -> None:
-		"""Write this host's bearer token to /etc/boat/token, minting or rotating it
-		first. The file is the JSON form Boat reads — the token and the hard expiry it
-		enforces — installed 0640 root:boat so the daemon user reads it and nobody
-		else. The secret is piped on stdin, never argv (§12). _start_boat's restart
-		reads it fresh; a rotation with no restart is this same write followed by
-		`systemctl reload boat` (the daemon reloads the token on SIGHUP)."""
-		token = self._current_or_minted_boat_token()
-		payload = json.dumps(
-			{
-				"token": token,
-				"hard_expires_at": frappe.utils.get_datetime(self.boat_token_expires_at).astimezone().isoformat(),
-			}
-		)
-		self._boat_ssh(
-			connection,
-			key_path,
-			"installing the boat token",
-			f"sudo install -D -m 0640 -o root -g boat /dev/stdin {BOAT_TOKEN_PATH}",
-			stdin=payload,
-		)
+		server_boat.install_boat_token(self, connection, key_path)
 
-	def _datum_dropin_contents(self) -> str:
-		"""The systemd drop-in that turns metrics export on: it resets ExecStart and re-adds
-		the daemon command with --server-name and the datum flags. NOTE: this fully owns
-		ExecStart, so a host that also needs --listen must fold it in here too."""
-		url = frappe.conf.get("atlas_datum_url")
-		return (
-			"[Service]\n"
-			"ExecStart=\n"
-			"ExecStart=/usr/local/bin/boat daemon --socket /run/boat/boat.sock "
-			"--store /var/lib/boat/boat.db --token-file /etc/boat/token "
-			f"--server-name {self.name} --datum-url {url} "
-			"--datum-token-file /etc/boat/datum-tokens.json\n"
-		)
-
-	def _install_datum_tokens(self, connection, key_path) -> None:
-		"""Ship this host's datum token bundle and the drop-in that points boat at datum.
-		A no-op when metrics export is not configured (no atlas_datum_url), so a fleet that
-		has not turned datum on installs nothing. The bundle is a single fleet token (resource_id="boat")
-		with an empty VM map — host and VMs both report under it, told apart by server=/vm= labels; a
-		static `atlas_datum_token` from site config is used when present, else a token is minted. The
-		secret travels on stdin, never argv."""
-		if not frappe.conf.get("atlas_datum_url"):
-			return
-		from atlas.atlas import datum_token
-
-		payload = datum_token.single_token_file_json()
-		self._boat_ssh(
-			connection,
-			key_path,
-			"installing the datum tokens",
-			f"sudo install -D -m 0640 -o root -g boat /dev/stdin {DATUM_TOKENS_PATH}",
-			stdin=payload,
-		)
-		self._boat_ssh(
-			connection,
-			key_path,
-			"installing the datum systemd drop-in",
-			f"sudo install -D -m 0644 -o root -g root /dev/stdin {DATUM_DROPIN_PATH}",
-			stdin=self._datum_dropin_contents(),
-		)
-		self._boat_ssh(connection, key_path, "reloading systemd for datum", "sudo systemctl daemon-reload")
+	def _boat_dropin_contents(self) -> str:
+		return server_boat.boat_dropin_contents(self)
 
 	@frappe.whitelist()
 	def refresh_datum_tokens(self) -> None:
-		"""Re-mint and re-ship this host's datum bundle, then SIGHUP boat so it picks up the
-		new tokens without a restart. This is the token-rotation path; bootstrap already
-		installs the first bundle. A no-op on a Fake server or when datum is not configured."""
-		if is_fake_server(self.name) or not frappe.conf.get("atlas_datum_url"):
-			return
-		connection = connection_for_server(self)
-		with ssh_key_file(connection.ssh_private_key) as key_path:
-			self._install_datum_tokens(connection, key_path)
-			self._boat_ssh(
-				connection, key_path, "reloading boat for datum rotation", "sudo systemctl reload boat.service"
-			)
+		server_boat.refresh_datum_tokens(self)
 
 	def _start_boat(self, connection) -> None:
-		"""Enable and (re)start boat.service — after the `boat bootstrap` Task.
+		server_boat.start_boat(self, connection)
 
-		The order is not obvious, so: the daemon's first act is to scan the host and
-		adopt what it finds (spec/33 §3.4), and on a fresh box there is nothing to
-		find until `boat bootstrap` has made /var/lib/atlas, the thin pool and the
-		nft scaffold. Starting it earlier points the adoption scan at a host that
-		does not exist yet and makes a daemon fault indistinguishable from an
-		unbootstrapped host.
+	def _start_ancp_units(self, connection) -> None:
+		"""Enable + start the ANCP host units after the `boat bootstrap` Task has laid
+		the tree they read.
 
-		`restart`, not `start`: on a re-bootstrap the unit is already running the
-		PREVIOUS binary and `start` would leave it there — the rename in
-		_install_boat only takes effect on re-exec. `enable` is separate and
-		idempotent, and is what survives a reboot.
-
-		boat-networkd.service is installed but deliberately NOT started: ANCP is
-		still served by atlas-networkd on these hosts, and two daemons programming
-		one wg-mesh is worse than either.
-		"""
+		bootstrap() writes `/etc/atlas-networkd/*` (`_write_ancp_bootstrap_state`) and
+		the Task creates `/var/lib/atlas`, the thin pool and the nft scaffold — but
+		nothing STARTS these units. `boat bootstrap` does not (they are Atlas units,
+		not boat's), and the shell `bootstrap-server.py` that used to enable them is
+		gone. Without this the wg-mesh never comes up (`atlas-networkd`), the loop PV
+		is not re-asserted on reboot (`atlas-pool`), and the wake trap is never armed
+		(`atlas-wake-trap`). `enable --now` is idempotent, so a re-bootstrap is a clean
+		no-op. `boat-networkd` stays installed-not-started (see `_start_boat`)."""
 		with ssh_key_file(connection.ssh_private_key) as key_path:
 			self._boat_ssh(
-				connection, key_path, "enabling boat.service", "sudo systemctl enable boat.service"
+				connection,
+				key_path,
+				"enabling the ANCP units",
+				"sudo systemctl enable --now atlas-networkd.service atlas-pool.service "
+				"atlas-wake-trap.service",
 			)
+			# is-active AFTER enable --now: the mesh daemon is what "networking works"
+			# rests on, so fail the bootstrap loud if it did not stay up.
 			self._boat_ssh(
-				connection, key_path, "starting boat.service", "sudo systemctl restart boat.service"
+				connection,
+				key_path,
+				"atlas-networkd.service did not stay up",
+				"sudo systemctl is-active atlas-networkd.service",
 			)
-			# is-active AFTER the restart: `systemctl restart` returns once the unit
-			# has been exec'd (the unit is Type=exec), not once it has settled, so a
-			# daemon that dies on its first read of the host exits 0 here.
-			self._boat_ssh(
-				connection, key_path, "boat.service did not stay up", "sudo systemctl is-active boat.service"
-			)
+
+	@frappe.whitelist()
+	def configure_boat_listener(self) -> None:
+		server_boat.configure_boat_listener(self)
 
 	def _boat_ssh(
 		self, connection, key_path, description: str, command: str, stdin: str | None = None
@@ -1355,7 +1073,7 @@ def _maybe_adopt_host_keys(server, connection, key_path: str) -> None:
 		timeout_seconds=30,
 	)
 	if exit_code != 0 or not _stdout.strip():
-		from atlas.atlas.networking import generate_host_signing_keypair
+		from atlas.atlas.core.networking import generate_host_signing_keypair
 
 		priv_b64, server.signing_public_key = generate_host_signing_keypair()
 		server.signing_private_key = priv_b64
@@ -1370,7 +1088,7 @@ def _maybe_adopt_host_keys(server, connection, key_path: str) -> None:
 		if _exit2 == 0 and _stdout2.strip():
 			host_pub = _stdout2.strip()
 		else:
-			from atlas.atlas.networking import generate_host_signing_keypair
+			from atlas.atlas.core.networking import generate_host_signing_keypair
 
 			priv_b64, host_pub = generate_host_signing_keypair()
 			host_priv = priv_b64

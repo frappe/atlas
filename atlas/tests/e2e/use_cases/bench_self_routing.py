@@ -52,10 +52,10 @@ import json
 
 import frappe
 
-from atlas.atlas import proxy
-from atlas.atlas._ssh.transport import run_ssh, ssh_key_file
-from atlas.atlas.placement import active_root_domain
-from atlas.atlas.ssh import connection_for_guest
+from atlas.atlas.core._ssh.transport import run_ssh, ssh_key_file
+from atlas.atlas.core.placement import active_root_domain
+from atlas.atlas.core.ssh import connection_for_guest
+from atlas.atlas.services import proxy
 
 # The label used for the guest-reserved test site. Short and clearly synthetic so a
 # leaked row is obvious, distinct from the acme/shop labels other e2e use cases use.

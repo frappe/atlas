@@ -72,7 +72,19 @@ BENCH_HOME = f"/home/{BENCH_USER}"
 BENCH_CLI_DIR = f"{BENCH_HOME}/pilot"
 BENCH_NAME = "atlas"
 BENCH_DIR = f"{BENCH_CLI_DIR}/benches/{BENCH_NAME}"
-BENCH = f"{BENCH_CLI_DIR}/bench"
+
+
+def _resolve_bench_cli() -> str:
+	"""The baked CLI executable. frappe/bench-cli was renamed frappe/pilot: the tool is
+	now `pilot` at `bin/pilot`, not a top-level `bench` (the rename moved the executable,
+	not just the ~/bench-cli → ~/pilot directory). Prefer it; fall back to a legacy
+	top-level `bench` for older goldens. Both take `<cli> -b <bench> <cmd>` identically,
+	so every `_bench(...)` call below is unchanged."""
+	pilot = f"{BENCH_CLI_DIR}/bin/pilot"
+	return pilot if os.path.exists(pilot) else f"{BENCH_CLI_DIR}/bench"
+
+
+BENCH = _resolve_bench_cli()
 # The bench DB's UNIX socket — the readiness contract `_await_db_ready` probes, and
 # what the baked site_config.json's `db_socket` points at. pilot v0.0.9 runs MariaDB
 # as a user-owned `pilot-mariadb.service` with its datadir + socket under the pilot
@@ -307,7 +319,10 @@ def _preflight() -> None:
 	The site-vs-admin baked-content check is mode-specific and lives in the rename
 	path (`_rename_site_to_fqdn`) / admin path, not here."""
 	if not os.path.exists(BENCH):
-		sys.exit(f"bench-cli not found at {BENCH}; this VM was not baked from the golden image")
+		sys.exit(
+			f"pilot CLI not found at {BENCH_CLI_DIR}/bin/pilot or {BENCH_CLI_DIR}/bench; "
+			"this VM was not baked from the golden image"
+		)
 	if not os.path.isdir(BENCH_DIR):
 		sys.exit(f"baked bench {BENCH_DIR} missing; this VM was not baked from the golden image")
 

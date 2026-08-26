@@ -119,7 +119,7 @@ def custom_domain_sni_map() -> dict[str, str]:
 	this map the moment it is registered — there is no readiness gate. If the VM's cert isn't
 	issued yet the proxy forwards a handshake the VM can't complete (a transient client-side
 	cert error that self-heals once the cert lands); pure passthrough, no cross-tenant effect.
-	The proxy reconcile (atlas.atlas.proxy) compares this, serialized canonically, against
+	The proxy reconcile (atlas.atlas.services.proxy) compares this, serialized canonically, against
 	each proxy guest's live SNI map and syncs on drift."""
 	rows = frappe.get_all(
 		"Custom Domain",

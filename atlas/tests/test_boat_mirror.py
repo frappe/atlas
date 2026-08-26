@@ -22,7 +22,7 @@ import frappe
 import requests
 from frappe.tests import IntegrationTestCase
 
-from atlas.atlas import boat_mirror
+from atlas.atlas.core import boat_mirror
 from atlas.atlas.doctype.host_state_snapshot import host_state_snapshot as snapshot_module
 from atlas.tests import fixtures
 from atlas.tests.test_boat_client import (
@@ -760,7 +760,7 @@ class TestTheSweepIsWhatMakesTheMirrorLive(_MirrorTestCase):
 		from atlas import hooks
 
 		cron_jobs = [job for jobs in hooks.scheduler_events.get("cron", {}).values() for job in jobs]
-		self.assertIn("atlas.atlas.boat_mirror.sweep_mirrors", cron_jobs)
+		self.assertIn("atlas.atlas.core.boat_mirror.sweep_mirrors", cron_jobs)
 
 	def test_every_host_is_swept(self) -> None:
 		# There is no longer a class of host that is verb-free: the flag that used
@@ -812,7 +812,7 @@ class TestTheSweepIsWhatMakesTheMirrorLive(_MirrorTestCase):
 		):
 			boat_mirror.enqueue_sync_mirror(self.server.name)
 
-		self.assertEqual(enqueue.call_args.args[0], "atlas.atlas.boat_mirror.sync_mirror")
+		self.assertEqual(enqueue.call_args.args[0], "atlas.atlas.core.boat_mirror.sync_mirror")
 		self.assertEqual(enqueue.call_args.kwargs["queue"], "short")
 		self.assertTrue(enqueue.call_args.kwargs["deduplicate"])
 		self.assertEqual(enqueue.call_args.kwargs["timeout"], boat_mirror.SYNC_JOB_TIMEOUT_SECONDS)
