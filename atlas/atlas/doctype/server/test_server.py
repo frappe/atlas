@@ -640,6 +640,37 @@ class TestServerSigningKeyBackfill(IntegrationTestCase):
 		self.assertTrue(all(entry["signing_public_key"] for entry in seed))
 
 
+class TestServerValidateWithDanglingSettingsLink(IntegrationTestCase):
+	"""A Server save must succeed even when `Atlas Settings.default_user_image`
+	(or `default_bench_snapshot`) is a dangling Link — an image/snapshot deleted
+	out from under the Single. `validate()` materializes the ANCP secrets via the
+	DB-level `ensure_*_in_db` helpers, NOT a full `Atlas Settings` doc save, so it
+	never re-validates the unrelated Single Links that would otherwise block every
+	Server op (bootstrap, provision, upgrade_boat, resync_networkd_keys)."""
+
+	def test_server_saves_despite_dangling_default_user_image(self) -> None:
+		# Point the Single at an image that does not exist. `set_single_value`
+		# bypasses validation, reproducing the on-disk dangling-Link state.
+		frappe.db.set_single_value(
+			"Atlas Settings", "default_user_image", "no-such-image-deleted", update_modified=False
+		)
+		frappe.db.delete("Server", {"title": "test-server-dangling"})
+		# Insert AND re-save: both run validate(), and neither may raise
+		# LinkValidationError for the unrelated Atlas Settings Link.
+		server = make_server(
+			make_provider("test-provider-dangling"),
+			"test-server-dangling",
+			provider_resource_id="99",
+			status="Pending",
+		)
+		server.reload()
+		server.save(ignore_permissions=True)
+		# The Single's dangling link is untouched — we never rewrote it.
+		self.assertEqual(
+			frappe.db.get_single_value("Atlas Settings", "default_user_image"), "no-such-image-deleted"
+		)
+
+
 class TestServerUpgradeBoat(IntegrationTestCase):
 	"""`Server.upgrade_boat` — the boat-artifact + unit + durable-script subset of
 	bootstrap, made idempotent and re-runnable so a new binary, allow-list line or
