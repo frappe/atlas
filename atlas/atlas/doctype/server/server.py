@@ -163,19 +163,23 @@ class Server(Document):
 		self.name = str(uuid.uuid4())
 
 	def validate(self) -> None:
-		atlas_settings = frappe.get_single("Atlas Settings")
-		atlas_settings._ensure_ancp_operator_keypair()
-		atlas_settings._ensure_ancp_wg_derivation_secret()
-		# ignore_mandatory: this save is incidental — we are only persisting the two
-		# lazily-generated ANCP secrets, not asking the operator to have finished
-		# configuring Atlas Settings. Without it, a Single with an empty `region`
-		# (any site that has not been through setup(), including every fresh test
-		# site) makes EVERY Server insert die with "Value missing for Atlas
-		# Settings: Region" — an error naming a field the caller never touched.
-		# The operator's required fields are still enforced when they save the
-		# Single themselves.
-		atlas_settings.flags.ignore_mandatory = True
-		atlas_settings.save(ignore_permissions=True)
+		# Materialize the two lazily-generated ANCP secrets (operator keypair + wg
+		# key-derivation secret) that `_denormalize_mesh_identity` / bootstrap read
+		# straight from the DB. Use the DB-level `ensure_*_in_db` helpers rather than
+		# a full `Atlas Settings` doc save: a `save()` here re-runs FULL link
+		# validation on the Single, so a dangling `default_user_image` /
+		# `default_bench_snapshot` Link (an image/snapshot deleted out from under the
+		# Single) would make EVERY Server op — bootstrap, provision, upgrade_boat,
+		# resync_networkd_keys — die with "Could not find Default User Image: <x>",
+		# an error naming a field the Server save never touched. The DB-level path is
+		# idempotent (no-op once the secrets exist) and validates nothing unrelated.
+		from atlas.atlas.doctype.atlas_settings.atlas_settings import (
+			ensure_ancp_operator_keypair_in_db,
+			ensure_ancp_wg_derivation_secret_in_db,
+		)
+
+		ensure_ancp_operator_keypair_in_db()
+		ensure_ancp_wg_derivation_secret_in_db()
 		self._validate_immutability()
 		self._denormalize_mesh_identity()
 
