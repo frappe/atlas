@@ -17,7 +17,7 @@ const ATLAS_BASE_URL =
 	"http://atlas.localhost:8000";
 
 const ATLAS_VALIDATE_URL =
-	`${ATLAS_BASE_URL}/api/method/atlas.atlas.doctype.vm_web_console_api_keys.vm_web_console_api_keys.get_console_session`;
+	`${ATLAS_BASE_URL}/api/method/atlas.atlas.doctype.virtual_machine.virtual_machine.consume_console_session`;
 
 const VM_BASE = "/var/lib/atlas/virtual-machines";
 

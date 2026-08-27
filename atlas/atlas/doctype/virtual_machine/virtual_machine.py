@@ -1,6 +1,7 @@
 import uuid
 
 import frappe
+import secrets
 from frappe import _
 from frappe.model.document import Document
 from frappe.utils import add_to_date, now_datetime
@@ -627,41 +628,21 @@ class VirtualMachine(Document):
 
 	@frappe.whitelist()
 	def get_console_api_key(self):
-		key = frappe.db.get_value(
-			"VM Web Console API Keys",
-			{
-				"virtual_machine": self.name,
-				"expiry_time": (">", now_datetime()),
-				"used": 0,
-			},
-			"name",
-		)
+	    token = secrets.token_urlsafe(32)
+
+	    frappe.cache.set_value(
+	        f"machine_token:{token}",
+	        self.name,
+	        expires_in_sec=3600
+	    )
 
 		root_domain = frappe.db.get_value("Root Domain",
 					{ "is_active": True }, "domain" )
 
 		base_url = "https://console-"+self.server+"."+root_domain
 
-		if key:
-			return {
-				"api_key": key,
-				"base_url": base_url
-			}
-
-		doc = frappe.new_doc("VM Web Console API Keys")
-		doc.virtual_machine = self.name
-		doc.creation_time = now_datetime()
-		doc.expiry_time = add_to_date(
-			now_datetime(),
-			hours=1,
-			as_datetime=True,
-		)
-		doc.used = 0
-
-		doc.insert(ignore_permissions=True)
-
 		return {
-			"api_key": doc.name,
+			"api_key": token,
 			"base_url": base_url
 		}
 
@@ -906,3 +887,15 @@ def _adopt_wake(name: str, now) -> None:
 			"has_memory_snapshot": 0,
 		},
 	)
+
+@frappe.whitelist(allow_guest=True)
+def consume_console_session(token):
+    key = f"machine_console_token:{token}"
+	machine_uuid = frappe.cache().get_value(key)
+
+	if not machine_uuid:
+	    frappe.throw("Invalid or expired console token")
+
+	frappe.cache().delete_value(key)
+
+	return machine_uuid
