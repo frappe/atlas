@@ -59,9 +59,9 @@ def configure_garage(virtual_machine: str) -> str:
 	server {{
 		listen 80;
         listen [::]:80;
-		server_name {garage.web_domain}
+		server_name {garage.web_domain};
 		location / {{
-			proxy_pass http://127.0.0.1:3902
+			proxy_pass http://127.0.0.1:3902;
 			proxy_set_header Host $host;
 			proxy_set_header X-Real-IP $remote_addr;
 		}}
