@@ -628,13 +628,13 @@ class VirtualMachine(Document):
 
 	@frappe.whitelist()
 	def get_console_api_key(self):
-	    token = secrets.token_urlsafe(32)
+		token = secrets.token_urlsafe(32)
 
-	    frappe.cache.set_value(
-	        f"machine_token:{token}",
-	        self.name,
-	        expires_in_sec=3600
-	    )
+		frappe.cache.set_value(
+			f"machine_token:{token}",
+			self.name,
+			expires_in_sec=3600
+		)
 
 		root_domain = frappe.db.get_value("Root Domain",
 					{ "is_active": True }, "domain" )
@@ -890,11 +890,11 @@ def _adopt_wake(name: str, now) -> None:
 
 @frappe.whitelist(allow_guest=True)
 def consume_console_session(token):
-    key = f"machine_console_token:{token}"
+	key = f"machine_console_token:{token}"
 	machine_uuid = frappe.cache().get_value(key)
 
 	if not machine_uuid:
-	    frappe.throw("Invalid or expired console token")
+		frappe.throw("Invalid or expired console token")
 
 	frappe.cache().delete_value(key)
 
