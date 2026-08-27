@@ -1,27 +1,36 @@
 // Package storage resolves logical image refs into drives prepared for a VM.
-// Provisional: the current backend hard-links files into the jailer chroot;
-// LVM/ZFS backends (TBD) will activate or clone volumes, so nothing here may
-// assume plain files.
+// The backend is thin LVM: each VM's rootfs is a thin snapshot of a base LV,
+// optionally grown to a requested size, exposed as a block device inside the
+// chroot and owned by the VM's uid; the kernel is a hard-linked file.
 package storage
 
 import "context"
 
 type Resolver interface {
-	// Prepare makes vmID's kernel + rootfs available under chrootRoot and
-	// returns what the driver needs to configure firecracker.
-	Prepare(ctx context.Context, vmID, ref, chrootRoot string) (Prepared, error)
+	// Prepare provisions the VM's kernel + rootfs and returns what firecracker
+	// needs to boot.
+	Prepare(ctx context.Context, req Request) (BootConfig, error)
 	// Release frees whatever Prepare allocated for vmID.
 	Release(ctx context.Context, vmID string) error
 }
 
-type Prepared struct {
-	KernelPath string // path inside the chroot
-	BootArgs   string
-	Drives     []PreparedDrive
+type Request struct {
+	VMID       string
+	Ref        string
+	ChrootRoot string
+	UID, GID   uint32
+	DiskMiB    int // grow the rootfs to this size; 0 keeps the base size
 }
 
-type PreparedDrive struct {
-	PathInChroot string
-	ReadOnly     bool
-	IsRoot       bool
+// BootConfig is the resolved image: what firecracker needs to boot the VM.
+type BootConfig struct {
+	Kernel     string // kernel path inside the chroot
+	KernelArgs string
+	Drives     []Drive
+}
+
+type Drive struct {
+	Path     string // block device or file path inside the chroot
+	ReadOnly bool
+	Root     bool
 }
