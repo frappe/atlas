@@ -17,6 +17,7 @@ class VMWebConsoleAPIKeys(Document):
 
 		creation_time: DF.Datetime | None
 		expiry_time: DF.Datetime | None
+		used: DF.Check
 		virtual_machine: DF.Link | None
 	# end: auto-generated types
 
@@ -24,23 +25,23 @@ class VMWebConsoleAPIKeys(Document):
 
 @frappe.whitelist(allow_guest=True)
 def get_console_session(name: str):
-	doc = frappe.db.get_value(
+	doc = frappe.get_doc(
 		"VM Web Console API Keys",
 		name,
-		[
-			"expiry_time",
-			"virtual_machine",
-		],
-		as_dict=True,
 	)
 
 	if not doc:
 		frappe.throw("Invalid console session")
+
+	if doc.used == 1:
+		frappe.throw("Console session is already in use")
 
 	if (
 		doc.expiry_time
 		and doc.expiry_time < now_datetime()
 	):
 		frappe.throw("Console session has expired")
+	doc.used = 1
+	doc.save(ignore_permissions=True)
 
 	return doc.virtual_machine

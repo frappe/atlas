@@ -9,7 +9,8 @@
   "vm_web_console_api_keys_section",
   "creation_time",
   "expiry_time",
-  "virtual_machine"
+  "virtual_machine",
+  "used"
  ],
  "fields": [
   {
@@ -32,12 +33,18 @@
    "fieldname": "vm_web_console_api_keys_section",
    "fieldtype": "Section Break",
    "label": "VM Web Console API Keys"
+  },
+  {
+   "default": "0",
+   "fieldname": "used",
+   "fieldtype": "Check",
+   "label": "Used"
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2026-07-23 15:34:22.909954",
+ "modified": "2026-08-27 14:05:46.350833",
  "modified_by": "Administrator",
  "module": "Atlas",
  "name": "VM Web Console API Keys",

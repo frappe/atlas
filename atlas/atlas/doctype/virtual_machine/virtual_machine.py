@@ -632,6 +632,7 @@ class VirtualMachine(Document):
 			{
 				"virtual_machine": self.name,
 				"expiry_time": (">", now_datetime()),
+				"used": 0,
 			},
 			"name",
 		)
@@ -655,6 +656,7 @@ class VirtualMachine(Document):
 			hours=1,
 			as_datetime=True,
 		)
+		doc.used = 0
 
 		doc.insert(ignore_permissions=True)
 
