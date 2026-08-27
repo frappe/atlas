@@ -889,8 +889,8 @@ def _adopt_wake(name: str, now) -> None:
 	)
 
 @frappe.whitelist(allow_guest=True)
-def consume_console_session(token):
-	key = f"machine_console_token:{token}"
+def consume_console_session(name: str) -> str:
+	key = f"machine_token:{name}"
 	machine_uuid = frappe.cache().get_value(key)
 
 	if not machine_uuid:
