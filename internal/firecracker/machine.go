@@ -77,12 +77,17 @@ func (m *machine) Info(ctx context.Context) (vm.Info, error) {
 		return vm.Info{}, err
 	}
 	return vm.Info{
-		ID:    m.cfg.ID,
-		State: m.state(ctx, st),
-		PID:   st.PID,
-		IP:    m.cfg.IP,
-		MAC:   m.cfg.MAC,
-		Sock:  m.cfg.Sock,
+		ID:      m.cfg.ID,
+		State:   m.state(ctx, st),
+		PID:     st.PID,
+		IP:      m.cfg.IP,
+		MAC:     m.cfg.MAC,
+		Sock:    m.cfg.Sock,
+		VCPUs:   m.cfg.Spec.VCPUs,
+		MemMiB:  m.cfg.Spec.MemMiB,
+		DiskMiB: m.cfg.Spec.DiskMiB,
+		Image:   m.cfg.Spec.Image.Name,
+		Network: m.cfg.Spec.Network.Name,
 	}, nil
 }
 

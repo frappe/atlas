@@ -71,13 +71,15 @@ func TestBootAndSSH(t *testing.T) {
 	}
 
 	// SSH via the VM's netns; the guest IP is fixed (see network/linux.go).
+	// The CI rootfs logs in as 'root'; the MMDS shim installs the key there.
 	netns := "metal-" + m.ID()
+	user := env("METAL_SSH_USER", "root")
 	var out []byte
 	for range 30 {
 		out, err = exec.CommandContext(ctx, "ip", "netns", "exec", netns,
 			"ssh", "-i", privPath,
 			"-o", "StrictHostKeyChecking=no", "-o", "ConnectTimeout=3",
-			"root@172.16.0.2", "echo", "metal-ok").CombinedOutput()
+			user+"@172.16.0.2", "echo", "metal-ok").CombinedOutput()
 		if err == nil && strings.Contains(string(out), "metal-ok") {
 			return // success
 		}

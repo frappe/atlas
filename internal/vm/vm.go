@@ -14,12 +14,17 @@ type VM interface {
 }
 
 type Info struct {
-	ID    string
-	State State
-	PID   int
-	IP    string
-	MAC   string
-	Sock  string
+	ID      string
+	State   State
+	PID     int
+	IP      string
+	MAC     string
+	Sock    string
+	VCPUs   int
+	MemMiB  int
+	DiskMiB int
+	Image   string
+	Network string
 }
 
 type ExitStatus struct {

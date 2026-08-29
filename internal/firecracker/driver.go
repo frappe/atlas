@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"strconv"
 	"sync"
@@ -82,6 +83,7 @@ func (d *Driver) Create(ctx context.Context, spec vm.Spec) (_ vm.VM, err error) 
 		return nil, err
 	}
 
+	log.Printf("firecracker: vm %s kernel=%s cmdline=%q", id, boot.Kernel, bootArgs(boot, nic))
 	if err = configure(ctx, api.New(vc.Sock), spec, boot, nic); err != nil {
 		return nil, err
 	}
