@@ -14,10 +14,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/frappe/metal/internal/network"
-	"github.com/frappe/metal/internal/storage"
-	"github.com/frappe/metal/internal/systemd"
-	"github.com/frappe/metal/internal/vm"
+	"github.com/frappe/atlas-neo/metal/internal/network"
+	"github.com/frappe/atlas-neo/metal/internal/storage"
+	"github.com/frappe/atlas-neo/metal/internal/systemd"
+	"github.com/frappe/atlas-neo/metal/internal/vm"
 )
 
 func env(k, def string) string {

@@ -13,11 +13,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/frappe/metal/internal/firecracker/api"
-	"github.com/frappe/metal/internal/network"
-	"github.com/frappe/metal/internal/storage"
-	"github.com/frappe/metal/internal/systemd"
-	"github.com/frappe/metal/internal/vm"
+	"github.com/frappe/atlas-neo/metal/internal/firecracker/api"
+	"github.com/frappe/atlas-neo/metal/internal/network"
+	"github.com/frappe/atlas-neo/metal/internal/storage"
+	"github.com/frappe/atlas-neo/metal/internal/systemd"
+	"github.com/frappe/atlas-neo/metal/internal/vm"
 )
 
 var errNotImplemented = errors.New("firecracker: not implemented")

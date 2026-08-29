@@ -17,11 +17,11 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/frappe/metal/internal/api"
-	"github.com/frappe/metal/internal/firecracker"
-	"github.com/frappe/metal/internal/network"
-	"github.com/frappe/metal/internal/storage"
-	"github.com/frappe/metal/internal/systemd"
+	"github.com/frappe/atlas-neo/metal/internal/api"
+	"github.com/frappe/atlas-neo/metal/internal/firecracker"
+	"github.com/frappe/atlas-neo/metal/internal/network"
+	"github.com/frappe/atlas-neo/metal/internal/storage"
+	"github.com/frappe/atlas-neo/metal/internal/systemd"
 )
 
 //go:embed up.sh

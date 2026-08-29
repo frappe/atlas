@@ -7,8 +7,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/frappe/metal/internal/idalloc"
-	"github.com/frappe/metal/internal/vm"
+	"github.com/frappe/atlas-neo/metal/internal/idalloc"
+	"github.com/frappe/atlas-neo/metal/internal/vm"
 )
 
 // Config holds the driver's host paths and id range.

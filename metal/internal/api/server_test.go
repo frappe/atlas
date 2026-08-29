@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/frappe/metal/internal/vm"
+	"github.com/frappe/atlas-neo/metal/internal/vm"
 )
 
 // fakeVM / fakeDriver implement the vm interfaces in-memory for handler tests.
