@@ -158,12 +158,31 @@ func waitSocket(ctx context.Context, path string) error {
 	}
 }
 
+// Load reconstructs a VM handle from its persisted config, so it survives a
+// metald restart. Returns vm.ErrNotFound if no such VM exists.
 func (d *Driver) Load(ctx context.Context, id string) (vm.VM, error) {
-	return nil, errNotImplemented
+	vc, err := d.cfg.readVMConfig(id)
+	if err != nil {
+		return nil, err
+	}
+	return d.newMachine(vc), nil
 }
 
+// List reconstructs handles for every VM with persisted state.
 func (d *Driver) List(ctx context.Context) ([]vm.VM, error) {
-	return nil, errNotImplemented
+	ids, err := d.cfg.listVMIDs()
+	if err != nil {
+		return nil, err
+	}
+	vms := make([]vm.VM, 0, len(ids))
+	for _, id := range ids {
+		vc, err := d.cfg.readVMConfig(id)
+		if err != nil {
+			continue // skip half-written dirs
+		}
+		vms = append(vms, d.newMachine(vc))
+	}
+	return vms, nil
 }
 
 var _ vm.VMDriver = (*Driver)(nil)
