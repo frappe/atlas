@@ -1,6 +1,6 @@
 package api
 
-import "github.com/frappe/atlas-neo/metal/internal/vm"
+import "github.com/frappe/atlas/metal/internal/vm"
 
 type createReq struct {
 	VCPUs   int      `json:"vcpus"`

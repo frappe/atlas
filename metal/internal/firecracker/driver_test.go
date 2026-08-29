@@ -3,9 +3,9 @@ package firecracker
 import (
 	"testing"
 
-	"github.com/frappe/atlas-neo/metal/internal/network"
-	"github.com/frappe/atlas-neo/metal/internal/storage"
-	"github.com/frappe/atlas-neo/metal/internal/vm"
+	"github.com/frappe/atlas/metal/internal/network"
+	"github.com/frappe/atlas/metal/internal/storage"
+	"github.com/frappe/atlas/metal/internal/vm"
 )
 
 func TestBootArgs(t *testing.T) {

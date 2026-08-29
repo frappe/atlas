@@ -1,4 +1,4 @@
-module github.com/frappe/atlas-neo/metal
+module github.com/frappe/atlas/metal
 
 go 1.26.2
 

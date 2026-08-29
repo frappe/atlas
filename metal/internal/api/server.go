@@ -9,7 +9,7 @@ import (
 
 	"github.com/labstack/echo/v4"
 
-	"github.com/frappe/atlas-neo/metal/internal/vm"
+	"github.com/frappe/atlas/metal/internal/vm"
 )
 
 type Server struct {

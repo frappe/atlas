@@ -5,11 +5,11 @@ import (
 	"os"
 	"syscall"
 
-	"github.com/frappe/atlas-neo/metal/internal/firecracker/api"
-	"github.com/frappe/atlas-neo/metal/internal/network"
-	"github.com/frappe/atlas-neo/metal/internal/storage"
-	"github.com/frappe/atlas-neo/metal/internal/systemd"
-	"github.com/frappe/atlas-neo/metal/internal/vm"
+	"github.com/frappe/atlas/metal/internal/firecracker/api"
+	"github.com/frappe/atlas/metal/internal/network"
+	"github.com/frappe/atlas/metal/internal/storage"
+	"github.com/frappe/atlas/metal/internal/systemd"
+	"github.com/frappe/atlas/metal/internal/vm"
 )
 
 // machine implements vm.VM as a client-side handle: a systemd unit (metal-vm@id)
