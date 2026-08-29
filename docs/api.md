@@ -39,8 +39,10 @@ the client polls `GET /vms/{id}` until `state` settles. A failure shows as
 | `GET` | `/vms/{id}/console` | stream serial console |
 | `GET` | `/health` | liveness |
 
-**Create** `POST /vms` — `{ "vcpus", "mem_mib", "disk_mib", "image", "network" }`.
-metald assigns `id`/`ip`/`mac` and boots the guest.
+**Create** `POST /vms` —
+`{ "vcpus", "mem_mib", "disk_mib", "image", "network", "ssh_keys" }`.
+`ssh_keys` is a list of public keys, served to the guest via MMDS so it can
+install them at boot. metald assigns `id`/`ip`/`mac` and boots the guest.
 
 **Stop** `POST /vms/{id}/stop` — `{ "force": false }`. `false` = Ctrl+Alt+Del,
 `true` = SIGKILL.

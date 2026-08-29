@@ -112,6 +112,12 @@ func (d *Driver) cleanup(ctx context.Context, id string) {
 	_ = os.RemoveAll(d.cfg.vmDir(id))
 }
 
+const (
+	ifaceID     = "eth0"
+	mmdsAddr    = "169.254.169.254"
+	mmdsVersion = "V1" // simplest guest-side (plain GET); V2 adds token auth
+)
+
 // configure sends firecracker its pre-boot configuration over the API socket.
 func configure(ctx context.Context, cli *api.Client, spec vm.Spec, boot storage.BootConfig, nic network.NIC) error {
 	if err := cli.PutMachineConfig(ctx, api.MachineConfig{VCPUCount: spec.VCPUs, MemSizeMiB: spec.MemMiB}); err != nil {
@@ -128,7 +134,28 @@ func configure(ctx context.Context, cli *api.Client, spec vm.Spec, boot storage.
 			return err
 		}
 	}
-	return cli.PutNetworkInterface(ctx, api.NetworkInterface{IfaceID: "eth0", HostDevName: nic.TapName, GuestMAC: nic.MAC})
+	if err := cli.PutNetworkInterface(ctx, api.NetworkInterface{IfaceID: ifaceID, HostDevName: nic.TapName, GuestMAC: nic.MAC}); err != nil {
+		return err
+	}
+	if len(spec.SSHKeys) > 0 {
+		if err := cli.PutMmdsConfig(ctx, api.MmdsConfig{NetworkInterfaces: []string{ifaceID}, Version: mmdsVersion, IPv4Address: mmdsAddr}); err != nil {
+			return err
+		}
+		if err := cli.PutMmds(ctx, mmdsData(spec.SSHKeys)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// mmdsData builds an EC2-style metadata tree so cloud-init's Ec2 datasource
+// finds the keys at /latest/meta-data/public-keys/<n>/openssh-key.
+func mmdsData(keys []string) map[string]any {
+	pk := make(map[string]any, len(keys))
+	for i, k := range keys {
+		pk[strconv.Itoa(i)] = map[string]any{"openssh-key": k}
+	}
+	return map[string]any{"latest": map[string]any{"meta-data": map[string]any{"public-keys": pk}}}
 }
 
 // bootArgs appends the guest network config, since firecracker does not set it.

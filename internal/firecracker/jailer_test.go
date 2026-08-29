@@ -2,6 +2,7 @@ package firecracker
 
 import (
 	"os"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -71,7 +72,7 @@ func TestVMConfigRoundtrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != vc {
+	if !reflect.DeepEqual(got, vc) {
 		t.Errorf("got %+v, want %+v", got, vc)
 	}
 

@@ -29,6 +29,13 @@ type action struct {
 	ActionType string `json:"action_type"`
 }
 
+// MmdsConfig enables the microVM metadata service on the given interfaces.
+type MmdsConfig struct {
+	NetworkInterfaces []string `json:"network_interfaces"`
+	Version           string   `json:"version,omitempty"`      // "V1" or "V2"
+	IPv4Address       string   `json:"ipv4_address,omitempty"` // link-local, e.g. 169.254.169.254
+}
+
 // InstanceInfo is firecracker's runtime state, from GET "/".
 type InstanceInfo struct {
 	ID    string `json:"id"`

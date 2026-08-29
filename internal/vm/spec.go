@@ -6,6 +6,7 @@ type Spec struct {
 	DiskMiB int
 	Image   ImageRef
 	Network NetworkRef
+	SSHKeys []string // authorized public keys, served to the guest via MMDS
 }
 
 type ImageRef struct {

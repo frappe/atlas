@@ -54,6 +54,15 @@ func (c *Client) SendCtrlAltDel(ctx context.Context) error {
 	return c.do(ctx, http.MethodPut, "/actions", action{ActionType: "SendCtrlAltDel"}, nil)
 }
 
+func (c *Client) PutMmdsConfig(ctx context.Context, cfg MmdsConfig) error {
+	return c.do(ctx, http.MethodPut, "/mmds/config", cfg, nil)
+}
+
+// PutMmds sets the metadata payload the guest reads from the metadata service.
+func (c *Client) PutMmds(ctx context.Context, data any) error {
+	return c.do(ctx, http.MethodPut, "/mmds", data, nil)
+}
+
 // do sends one request to the socket. The URL host is ignored; the dialer
 // always connects to the socket. body/out are JSON-encoded/decoded if non-nil.
 func (c *Client) do(ctx context.Context, method, path string, body, out any) error {
