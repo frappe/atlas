@@ -30,6 +30,7 @@ func NewLVM(vg, kernelDir string) *LVM {
 
 func diskName(vmID string) string { return "vm-" + vmID }
 func baseName(ref string) string  { return "base-" + ref }
+func vmTag(vmID string) string    { return "metal-vm-" + vmID }
 
 func (l *LVM) lv(name string) string      { return l.vg + "/" + name }
 func (l *LVM) devPath(name string) string { return "/dev/" + l.vg + "/" + name }
@@ -45,7 +46,7 @@ func (l *LVM) Prepare(ctx context.Context, req Request) (BootConfig, error) {
 	}
 
 	disk := diskName(req.VMID)
-	if err := run(ctx, "lvcreate", "-s", "-kn", "--name", disk, l.lv(baseName(req.Ref))); err != nil {
+	if err := run(ctx, "lvcreate", "-s", "-kn", "--name", disk, "--addtag", vmTag(req.VMID), l.lv(baseName(req.Ref))); err != nil {
 		return BootConfig{}, err
 	}
 	if err := l.grow(ctx, disk, req.DiskMiB); err != nil {
@@ -83,8 +84,9 @@ func (l *LVM) grow(ctx context.Context, disk string, diskMiB int) error {
 	return run(ctx, "lvextend", "-L", fmt.Sprintf("%dM", diskMiB), l.lv(disk))
 }
 
+// Release removes every LV tagged for the VM (the disk and any later snapshots).
 func (l *LVM) Release(ctx context.Context, vmID string) error {
-	return run(ctx, "lvremove", "--force", l.lv(diskName(vmID)))
+	return run(ctx, "lvremove", "--force", "@"+vmTag(vmID))
 }
 
 func lvBytes(ctx context.Context, vglv string) (int64, error) {

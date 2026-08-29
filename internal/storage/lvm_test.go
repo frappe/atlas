@@ -14,6 +14,9 @@ func TestNames(t *testing.T) {
 	if got := baseName("ubuntu"); got != "base-ubuntu" {
 		t.Errorf("baseName = %q", got)
 	}
+	if got := vmTag("abc"); got != "metal-vm-abc" {
+		t.Errorf("vmTag = %q", got)
+	}
 	if got := l.devPath("vm-abc"); got != "/dev/metalvg/vm-abc" {
 		t.Errorf("devPath = %q", got)
 	}
