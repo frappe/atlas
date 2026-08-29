@@ -28,3 +28,9 @@ type NetworkInterface struct {
 type action struct {
 	ActionType string `json:"action_type"`
 }
+
+// InstanceInfo is firecracker's runtime state, from GET "/".
+type InstanceInfo struct {
+	ID    string `json:"id"`
+	State string `json:"state"` // "Not started", "Running", "Paused"
+}

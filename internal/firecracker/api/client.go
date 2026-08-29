@@ -44,6 +44,12 @@ func (c *Client) InstanceStart(ctx context.Context) error {
 	return c.do(ctx, http.MethodPut, "/actions", action{ActionType: "InstanceStart"}, nil)
 }
 
+func (c *Client) InstanceInfo(ctx context.Context) (InstanceInfo, error) {
+	var ii InstanceInfo
+	err := c.do(ctx, http.MethodGet, "/", nil, &ii)
+	return ii, err
+}
+
 func (c *Client) SendCtrlAltDel(ctx context.Context) error {
 	return c.do(ctx, http.MethodPut, "/actions", action{ActionType: "SendCtrlAltDel"}, nil)
 }
