@@ -39,6 +39,12 @@ func showVersion() error {
 }
 
 func upgradeBPF(force bool) error {
+	unlock, err := lockVMState()
+	if err != nil {
+		return err
+	}
+	defer unlock()
+
 	installed, err := readInstalledHash()
 	if err == nil && installed == bpfHash() {
 		fmt.Println("Atlas WG Mesh BPF is already current")

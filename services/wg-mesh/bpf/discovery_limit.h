@@ -48,13 +48,11 @@ static __always_inline int discovery_allowed(const struct config *local_config,
 
 	/* Cap elapsed time before multiplication so a long idle period cannot overflow. */
 	elapsed_ns = now - limit->last_ns;
-	full_refill_ns = (__u64)local_config->who_has_burst * 1000000000ULL /
-					 local_config->who_has_rate;
+	full_refill_ns = (__u64)local_config->who_has_burst * 1000000000ULL / local_config->who_has_rate;
 	if (elapsed_ns >= full_refill_ns)
 		tokens = cap;
 	else
-		tokens = limit->tokens_milli +
-				 (__s64)(elapsed_ns * local_config->who_has_rate / 1000000ULL);
+		tokens = limit->tokens_milli + (__s64)(elapsed_ns * local_config->who_has_rate / 1000000ULL);
 	limit->last_ns = now;
 
 	if (tokens < 1000)
