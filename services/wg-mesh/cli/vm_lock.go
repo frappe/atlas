@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"syscall"
 )
 
@@ -21,8 +22,12 @@ func lockVMState() (func(), error) {
 		file.Close()
 		return nil, fmt.Errorf("lock VM state: %w", err)
 	}
+	// Make the deferred unlock safe after an early release.
+	var once sync.Once
 	return func() {
-		_ = syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
-		_ = file.Close()
+		once.Do(func() {
+			_ = syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
+			_ = file.Close()
+		})
 	}, nil
 }

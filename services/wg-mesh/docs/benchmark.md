@@ -41,3 +41,17 @@ Debug enabled without a reader had no measurable cost. `debug dump` uses one use
 ## Discovery rate limiting
 
 The limiter runs only on remote-cache misses. It had no measurable effect on established-flow throughput at default, custom, or disabled settings.
+
+## VM move convergence
+
+`vm add` releases the state lock, then sends three spaced `NOW_HERE` announcements. Parallel adds are not delayed by notification.
+
+| Measure | Before | Current |
+| --- | ---: | ---: |
+| `vm add` wall time | 263 ms | 111 ms |
+| Announcements | 5 | 3 |
+| Lock held during announcement | Yes, 250 ms | No |
+| Two parallel adds | Serialized | 14 ms |
+| Announcement failure | Removes the VM | Warns and keeps the VM |
+
+If an observer misses `NOW_HERE`, its next packet gets `NOT_HERE`, then `WHO_HAS`/`FOUND` repairs the cache. In the 100-ping, 100 ms-interval test, this lost two packets (about 200 ms). An idle observer remains harmlessly stale until it sends traffic.

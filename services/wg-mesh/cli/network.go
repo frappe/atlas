@@ -11,10 +11,16 @@ import (
 )
 
 const (
-	meshPort                 = 7373
-	meshMulticastAddress     = "239.1.1.1"
-	meshAnnouncementAttempts = 5
-	meshAnnouncementSize     = 36
+	meshPort             = 7373
+	meshMulticastAddress = "239.1.1.1"
+	meshAnnouncementSize = 36
+
+	// Multicast is unreliable, so repeat announcements to replace stale caches.
+	// RFC 5227 uses two ARP announcements and QEMU sends five after migration;
+	// both space them because back-to-back packets can be lost together. Three
+	// give Atlas enough redundancy: a miss costs one WHO_HAS, not reachability.
+	meshAnnouncementAttempts = 3
+	meshAnnouncementInterval = 50 * time.Millisecond
 )
 
 func readHostConfig(uplinkName, wireGuardName string) (hostConfig, error) {
@@ -149,11 +155,13 @@ func announceVirtualMachine(address [16]byte, config hostConfig) error {
 	copy(message[20:], config.WireGuardIPv6[:])
 
 	destination := &net.UDPAddr{IP: net.ParseIP(meshMulticastAddress), Port: meshPort}
-	for range meshAnnouncementAttempts {
+	for attempt := range meshAnnouncementAttempts {
+		if attempt > 0 {
+			time.Sleep(meshAnnouncementInterval)
+		}
 		if _, err := conn.WriteToUDP(message, destination); err != nil {
 			return err
 		}
-		time.Sleep(50 * time.Millisecond)
 	}
 	return nil
 }
