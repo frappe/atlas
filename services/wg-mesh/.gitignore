@@ -1,0 +1,8 @@
+# Generated BPF object.
+*.bpf.o
+
+# Release binaries.
+dist/
+
+# Local Go build output.
+/atlas-wg-mesh
