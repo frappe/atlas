@@ -39,7 +39,7 @@ VMs use `fdaa::/16`; host WireGuard addresses use `fdab::/16`. The VM hook drops
 
 Nonzero tenant IDs are isolated from each other. Tenant `0` can communicate with every tenant and must be assigned only to trusted platform services.
 
-Discovery runs on a trusted multicast Layer-2 domain. `WHO_HAS`, `FOUND`, and `NOW_HERE` messages are not authenticated, so a host on that network can influence learned VM locations. WireGuard encrypts traffic only to configured peers.
+Discovery runs on a trusted multicast Layer-2 domain. `WHO_HAS`, `FOUND`, and `NOW_HERE` messages are not authenticated, so a host on that network can influence learned VM locations. On networks that use the [discovery relay](unicast-network.md), allow UDP port `7373` only between trusted relay peers; unicast discovery is not limited to the multicast TTL. WireGuard encrypts traffic only to configured peers.
 
 Each VM defaults to 10 `WHO_HAS` messages per second with a burst of 50. This limits multicast floods from a VM; it does not authenticate discovery messages.
 
@@ -53,7 +53,7 @@ Each VM defaults to 10 `WHO_HAS` messages per second with a burst of 50. This li
 
 | Map | Purpose |
 | --- | --- |
-| `config` | Host configuration and discovery limits. |
+| `config` | Host configuration, the discovery interface, and discovery limits. |
 | `local_vms`, `remote_vms` | Local ownership and learned remote locations. |
 | `discovery_limits` | Per-VM discovery rate-limit state. |
 | `debug_config`, `debug_stats`, `debug_events` | Optional debug state and events. |

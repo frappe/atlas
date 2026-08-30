@@ -13,7 +13,7 @@ static __always_inline int send_discovery_message(
 	struct __sk_buff *packet, struct config *local_config,
 	const __u8 *recipient_mac, __be32 recipient_ipv4,
 	__u8 message_operation, const struct in6_addr *virtual_machine,
-	const struct in6_addr *virtual_machine_host, __u32 uplink_ifindex)
+	const struct in6_addr *virtual_machine_host, __u32 egress_ifindex)
 {
 	struct atlas_msg msg = {};
 	struct ethhdr eth = {};
@@ -27,7 +27,7 @@ static __always_inline int send_discovery_message(
 	ip.version = 4;
 	ip.ihl = 5;
 	ip.tot_len = bpf_htons((__u16)(DISCOVERY_PACKET_LENGTH - ETH_HLEN));
-	ip.ttl = ATLAS_TTL;
+	ip.ttl = recipient_ipv4 == bpf_htonl(ATLAS_MCAST4) ? ATLAS_MULTICAST_TTL : ATLAS_UNICAST_TTL;
 	ip.protocol = IPPROTO_UDP;
 	ip.saddr = local_config->underlay_ip4;
 	ip.daddr = recipient_ipv4;
@@ -59,7 +59,7 @@ static __always_inline int send_discovery_message(
 		bpf_skb_store_bytes(packet, DISCOVERY_MESSAGE_OFFSET, &msg, sizeof(msg), 0))
 		return TC_ACT_SHOT;
 
-	return bpf_redirect(uplink_ifindex, 0);
+	return bpf_redirect(egress_ifindex, 0);
 }
 
 /* Send a host discovery request for a virtual machine. */
@@ -79,7 +79,7 @@ static __always_inline int ask_for_virtual_machine_host(
 
 	return send_discovery_message(packet, local_config, multicast_mac,
 								  bpf_htonl(ATLAS_MCAST4), MESSAGE_OPERATION_WHO_HAS,
-								  virtual_machine, NULL, local_config->uplink_ifindex);
+								  virtual_machine, NULL, local_config->discovery_ifindex);
 }
 
 /* Tell the requesting host that its VM location is stale. */

@@ -288,11 +288,25 @@ func showStatus() error {
 	if err != nil {
 		return err
 	}
-	fmt.Printf("uplink index: %d\nlocal VMs: %d\nremote locations: %d/%d\nWireGuard address: %s\n", config.UplinkIndex, count, remoteCount, remoteCapacity, netip.AddrFrom16(config.WireGuardIPv6))
+	fmt.Printf("discovery interface: %s\nlocal VMs: %d\nremote locations: %d/%d\nWireGuard address: %s\n", discoveryInterfaceName(config), count, remoteCount, remoteCapacity, netip.AddrFrom16(config.WireGuardIPv6))
 	if config.WhoHasRate == 0 {
 		fmt.Println("WHO_HAS rate limit: disabled")
 	} else {
 		fmt.Printf("WHO_HAS rate limit: %d/s burst %d\n", config.WhoHasRate, config.WhoHasBurst)
 	}
 	return nil
+}
+
+// discoveryInterfaceName names where WHO_HAS is sent. A relay killed without
+// its cleanup leaves an index no interface owns, which drops every WHO_HAS, so
+// report that rather than a bare number.
+func discoveryInterfaceName(config hostConfig) string {
+	device, err := net.InterfaceByIndex(int(config.DiscoveryIndex))
+	if err != nil {
+		return fmt.Sprintf("ifindex:%d (missing; rerun the discovery relay or configure)", config.DiscoveryIndex)
+	}
+	if device.Name == interfaceWithIPv4(config.UplinkIPv4) {
+		return device.Name + " (multicast)"
+	}
+	return device.Name + " (relay)"
 }

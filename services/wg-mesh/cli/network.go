@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"net/netip"
@@ -48,9 +49,9 @@ func readHostConfig(uplinkName, wireGuardName string) (hostConfig, error) {
 	}
 
 	config := hostConfig{
-		UplinkIndex:   uint32(uplinkInterface.Index),
-		UplinkIPv4:    [4]byte(uplinkIPv4.To4()),
-		WireGuardIPv6: [16]byte(wireGuardIPv6.To16()),
+		DiscoveryIndex: uint32(uplinkInterface.Index),
+		UplinkIPv4:     [4]byte(uplinkIPv4.To4()),
+		WireGuardIPv6:  [16]byte(wireGuardIPv6.To16()),
 	}
 	copy(config.UplinkMAC[:], uplinkInterface.HardwareAddr)
 	return config, nil
@@ -80,13 +81,31 @@ func configuredInterfaces() (hostInterfaces, error) {
 		return hostInterfaces{}, err
 	}
 	interfaces := hostInterfaces{}
-	if uplink, err := net.InterfaceByIndex(int(config.UplinkIndex)); err == nil {
-		interfaces.uplinkName = uplink.Name
-	}
+	interfaces.uplinkName = interfaceWithIPv4(config.UplinkIPv4)
 	if wireGuardName := interfaceWithAddress(config.WireGuardIPv6); wireGuardName != "" {
 		interfaces.wireGuardName = wireGuardName
 	}
 	return interfaces, nil
+}
+
+func interfaceWithIPv4(target [4]byte) string {
+	interfaces, err := net.Interfaces()
+	if err != nil {
+		return ""
+	}
+	for _, iface := range interfaces {
+		addresses, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, address := range addresses {
+			network, ok := address.(*net.IPNet)
+			if ok && network.IP.To4() != nil && [4]byte(network.IP.To4()) == target {
+				return iface.Name
+			}
+		}
+	}
+	return ""
 }
 
 func interfaceWithAddress(target [16]byte) string {
@@ -139,14 +158,24 @@ func parseMeshAddress(addressText string) ([16]byte, error) {
 }
 
 func announceVirtualMachine(address [16]byte, config hostConfig) error {
-	conn, err := net.ListenUDP("udp4", nil)
+	destination, multicast, err := discoveryAnnouncementDestination(config)
+	if err != nil {
+		return err
+	}
+	localAddress := (*net.UDPAddr)(nil)
+	if !multicast {
+		localAddress = &net.UDPAddr{IP: net.IP(config.UplinkIPv4[:])}
+	}
+	conn, err := net.ListenUDP("udp4", localAddress)
 	if err != nil {
 		return err
 	}
 	defer conn.Close()
 
-	if err := configureMulticastSocket(conn, config.UplinkIPv4); err != nil {
-		return err
+	if multicast {
+		if err := configureMulticastSocket(conn, config.UplinkIPv4); err != nil {
+			return err
+		}
 	}
 	message := make([]byte, meshAnnouncementSize)
 	message[0] = 1
@@ -154,7 +183,6 @@ func announceVirtualMachine(address [16]byte, config hostConfig) error {
 	copy(message[4:20], address[:])
 	copy(message[20:], config.WireGuardIPv6[:])
 
-	destination := &net.UDPAddr{IP: net.ParseIP(meshMulticastAddress), Port: meshPort}
 	for attempt := range meshAnnouncementAttempts {
 		if attempt > 0 {
 			time.Sleep(meshAnnouncementInterval)
@@ -164,6 +192,21 @@ func announceVirtualMachine(address [16]byte, config hostConfig) error {
 		}
 	}
 	return nil
+}
+
+func discoveryAnnouncementDestination(config hostConfig) (*net.UDPAddr, bool, error) {
+	uplinkName := interfaceWithIPv4(config.UplinkIPv4)
+	if uplinkName == "" {
+		return nil, false, errors.New("cannot find the configured uplink")
+	}
+	uplink, err := net.InterfaceByName(uplinkName)
+	if err != nil {
+		return nil, false, err
+	}
+	if config.DiscoveryIndex != uint32(uplink.Index) {
+		return &net.UDPAddr{IP: net.IP(config.UplinkIPv4[:]), Port: meshPort}, false, nil
+	}
+	return &net.UDPAddr{IP: net.ParseIP(meshMulticastAddress), Port: meshPort}, true, nil
 }
 
 func configureMulticastSocket(conn *net.UDPConn, source [4]byte) error {

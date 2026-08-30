@@ -4,18 +4,23 @@ The `atlas-wg-mesh` CLI configures local host and VM lifecycle state. It embeds 
 
 ## Contents
 
-- [Requirements](#requirements)
-- [Network and security](#network-and-security)
-- [Build a release](#build-a-release)
-- [Install a host](#install-a-host)
-- [Add a VM](#add-a-vm)
-- [Move a VM](#move-a-vm)
-- [Remove a VM](#remove-a-vm)
-- [Check status](#check-status)
-- [Debug in production](#debug-in-production)
-- [Upgrade BPF programs](#upgrade-bpf-programs)
-- [Remove remote entries](#remove-remote-entries)
-- [Remove a host installation](#remove-a-host-installation)
+- [Atlas WG Mesh operations guide](#atlas-wg-mesh-operations-guide)
+  - [Contents](#contents)
+  - [Requirements](#requirements)
+  - [Network and security](#network-and-security)
+  - [Build a release](#build-a-release)
+  - [Install a host](#install-a-host)
+  - [Add a VM](#add-a-vm)
+  - [Move a VM](#move-a-vm)
+  - [Remove a VM](#remove-a-vm)
+  - [List local VM ownership](#list-local-vm-ownership)
+  - [Rejoin after a dead declaration](#rejoin-after-a-dead-declaration)
+  - [Check status](#check-status)
+  - [Debug in production](#debug-in-production)
+  - [Upgrade BPF programs](#upgrade-bpf-programs)
+  - [Remove remote entries](#remove-remote-entries)
+  - [Remove a host installation](#remove-a-host-installation)
+  - [Force reset fallback](#force-reset-fallback)
 
 ## Requirements
 
@@ -25,14 +30,14 @@ Atlas WG Mesh pins state at `/sys/fs/bpf/atlas-wg-mesh`.
 
 ## Network and security
 
-| Use | Value |
-| --- | --- |
-| VM address range | `fdaa::/16` |
-| WireGuard address range | `fdab::/16` |
-| Discovery destination | `239.1.1.1:7373` |
-| Uplink MTU | 1500 or greater |
-| WireGuard MTU | 1420 |
-| VM interface and guest MTU | 1380 |
+| Use                        | Value                                                                                       |
+| -------------------------- | ------------------------------------------------------------------------------------------- |
+| VM address range           | `fdaa::/16`                                                                                 |
+| WireGuard address range    | `fdab::/16`                                                                                 |
+| Discovery destination      | `239.1.1.1:7373`, or each peer on UDP `7373` with the [discovery relay](unicast-network.md) |
+| Uplink MTU                 | 1500 or greater                                                                             |
+| WireGuard MTU              | 1420                                                                                        |
+| VM interface and guest MTU | 1380                                                                                        |
 
 Discovery uses IPv4 multicast with a time to live of `1`. Restrict this Layer-2 domain to trusted participating hosts: `WHO_HAS`, `FOUND`, and `NOW_HERE` messages are not authenticated. Tenant `0` can communicate with every tenant, so reserve it for trusted platform services.
 
@@ -90,7 +95,7 @@ atlas-wg-mesh vm remove --interface veth0 --address fdaa:1:0:7::1
 atlas-wg-mesh vm add --interface veth0 --address fdaa:1:0:7::1
 ```
 
-The `vm add` command sends five `NOW_HERE` messages. Hosts that already know the VM update the learned WireGuard path. The VM keeps its private IPv6 address.
+The `vm add` command sends three `NOW_HERE` messages. Hosts that already know the VM update the learned WireGuard path. The VM keeps its private IPv6 address.
 
 ## Remove a VM
 
@@ -147,6 +152,7 @@ Run this command to show the host configuration and local VM count:
 ```sh
 atlas-wg-mesh status
 ```
+
 
 ## Debug in production
 
