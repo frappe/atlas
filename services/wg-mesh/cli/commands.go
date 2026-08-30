@@ -105,6 +105,12 @@ func rollbackInstall(cause error, interfaceNames ...string) error {
 }
 
 func removeHost(force bool) error {
+	unlock, err := lockVMState()
+	if err != nil {
+		return err
+	}
+	defer unlock()
+
 	virtualMachines, err := localVirtualMachines()
 	if err != nil {
 		return err
@@ -154,6 +160,11 @@ func addVirtualMachine(interfaceName, addressText string, mtu uint32) error {
 	if mtu == 0 {
 		return errors.New("mtu must be greater than 0")
 	}
+	unlock, err := lockVMState()
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	// Resolve the interface before changing host state.
 	device, err := net.InterfaceByName(interfaceName)
 	if err != nil {
@@ -197,6 +208,11 @@ func removeVirtualMachine(interfaceName, addressText string) error {
 	if err != nil {
 		return err
 	}
+	unlock, err := lockVMState()
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	local, err := isLocalVirtualMachine(address)
 	if err != nil {
 		return err
