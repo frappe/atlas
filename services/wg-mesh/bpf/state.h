@@ -27,7 +27,8 @@ struct
 /* Host configuration. */
 struct config
 {
-	__u32 uplink_ifindex;
+	/* Destination for locally generated WHO_HAS frames. */
+	__u32 discovery_ifindex;
 	__be32 underlay_ip4;
 	__u8 uplink_mac[ETH_ALEN];
 	__u8 pad[2];

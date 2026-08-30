@@ -50,7 +50,8 @@ func init() {
 	virtualMachineCommand.AddCommand(addVirtualMachineCommand, removeVirtualMachineCommand, listVirtualMachinesCommand)
 	debugCommand.AddCommand(debugStatusCommand, debugEnableCommand, debugDisableCommand, inspectCommand, dumpCommand, topCommand)
 	remoteCommand.AddCommand(remotePurgeCommand)
-	rootCommand.AddCommand(configureCommand, statusCommand, virtualMachineCommand, remoteCommand, debugCommand, upgradeCommand, versionCommand, resetCommand)
+	discoveryRelayCommand.Flags().BoolVar(&discoveryVerbose, "verbose", false, "log relayed discovery messages")
+	rootCommand.AddCommand(configureCommand, statusCommand, virtualMachineCommand, remoteCommand, debugCommand, discoveryRelayCommand, upgradeCommand, versionCommand, resetCommand)
 }
 
 func main() {

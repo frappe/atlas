@@ -29,7 +29,10 @@
 /* Discovery uses IPv4 multicast on the local physical network. */
 #define ATLAS_MCAST4 0xef010101u /* 239.1.1.1 */
 #define ATLAS_PORT 7373
-#define ATLAS_TTL 1
+#define ATLAS_MULTICAST_TTL 1
+
+/* A unicast reply has no multicast scope to keep and must survive routers. */
+#define ATLAS_UNICAST_TTL 64
 
 /* Recovery travels inside WireGuard as an experimental IPv6 next header. */
 #define ATLAS_CONTROL_NEXT_HEADER 253

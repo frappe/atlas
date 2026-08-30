@@ -14,6 +14,7 @@ Atlas WG Mesh does not provide inter-region VM connectivity yet.
 
 - [Operations guide](docs/operations.md): requirements, build, installation, VM lifecycle, debugging, and upgrades.
 - [Design guide](docs/design.md): addressing, [trust model](docs/design.md#trust-model), BPF maps and hooks, packet paths, and recovery behavior.
+- [Unicast network guide](docs/unicast-network.md): use the discovery relay when multicast is unavailable.
 - [Benchmark results](docs/benchmark.md): throughput, packet rate, debug cost, and rate-limiter impact.
 - [Debug in production](docs/debug-in-production.md): inspect routes and packet decisions.
 
