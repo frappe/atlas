@@ -190,7 +190,7 @@ func addVirtualMachine(interfaceName, addressText string, mtu uint32) error {
 		return err
 	}
 	if err := attachHook(interfaceName, vmBPFProgram); err != nil {
-		return rollbackVirtualMachineAddition(address, uint32(device.Index), addressText, interfaceName, err)
+		return rollbackVirtualMachineAddition(address, addressText, interfaceName, err)
 	}
 	// Release the state lock before the network notification.
 	unlock()
