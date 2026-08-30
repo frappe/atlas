@@ -63,7 +63,7 @@ func upgradeBPF(force bool) error {
 	collection, err := loadCollection(replacements)
 	if err != nil {
 		if force {
-			return forceUpgrade(config, err)
+			return forceUpgrade(config)
 		}
 		return fmt.Errorf("BPF maps are incompatible; rerun with --force after adding a migration: %w", err)
 	}
@@ -124,7 +124,7 @@ func upgradeBPF(force bool) error {
 	return nil
 }
 
-func forceUpgrade(config hostConfig, incompatible error) error {
+func forceUpgrade(config hostConfig) error {
 	vmInterfaces, err := virtualMachineInterfaces()
 	if err != nil {
 		return err
@@ -169,7 +169,8 @@ func forceUpgrade(config hostConfig, incompatible error) error {
 			return err
 		}
 	}
-	fmt.Printf("Atlas WG Mesh BPF force-upgraded; remote state was cleared (%v)\n", incompatible)
+	hash := bpfHash()
+	fmt.Printf("Atlas WG Mesh BPF force-upgraded to %x; learned remote locations were cleared\n", hash[:6])
 	return nil
 }
 

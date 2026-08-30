@@ -125,8 +125,22 @@ func setDebug(enabled bool) error {
 	value := uint8(0)
 	if enabled {
 		value = 1
+		// Start the new debug session with fresh counters.
+		if err := resetDebugStats(); err != nil {
+			return err
+		}
 	}
 	return config.Put(uint32(0), value)
+}
+
+func resetDebugStats() error {
+	statsMap, err := openMap("debug_stats")
+	if err != nil {
+		return err
+	}
+	defer statsMap.Close()
+
+	return statsMap.Put(uint32(0), make([]debugStats, ebpf.MustPossibleCPU()))
 }
 
 func showDebugStatus() error {

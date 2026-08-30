@@ -215,6 +215,24 @@ func localVirtualMachines() ([]localVirtualMachine, error) {
 	return virtualMachines, nil
 }
 
+// remoteLocationCount returns learned-cache occupancy and capacity.
+// A full LRU evicts entries, which are rediscovered with WHO_HAS.
+func remoteLocationCount() (int, uint32, error) {
+	remoteMap, err := openMap("remote_vms")
+	if err != nil {
+		return 0, 0, err
+	}
+	defer remoteMap.Close()
+
+	var vm, host [16]byte
+	count := 0
+	iterator := remoteMap.Iterate()
+	for iterator.Next(&vm, &host) {
+		count++
+	}
+	return count, remoteMap.MaxEntries(), iterator.Err()
+}
+
 func localVirtualMachineCount() (int, error) {
 	vmMap, err := openMap("local_vms")
 	if err != nil {

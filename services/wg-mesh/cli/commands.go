@@ -284,7 +284,11 @@ func showStatus() error {
 	if err != nil {
 		return err
 	}
-	fmt.Printf("uplink index: %d\nlocal VMs: %d\nWireGuard address: %s\n", config.UplinkIndex, count, netip.AddrFrom16(config.WireGuardIPv6))
+	remoteCount, remoteCapacity, err := remoteLocationCount()
+	if err != nil {
+		return err
+	}
+	fmt.Printf("uplink index: %d\nlocal VMs: %d\nremote locations: %d/%d\nWireGuard address: %s\n", config.UplinkIndex, count, remoteCount, remoteCapacity, netip.AddrFrom16(config.WireGuardIPv6))
 	if config.WhoHasRate == 0 {
 		fmt.Println("WHO_HAS rate limit: disabled")
 	} else {

@@ -31,14 +31,20 @@ func dumpDebug(filter debugFilter) error {
 	}
 	defer closeReader()
 
+	// Report boot-time timestamps relative to the first printed event.
+	var first uint64
 	for {
 		event, err := readDebugEvent(reader)
 		if err != nil {
 			return err
 		}
-		if filter.matches(event) {
-			printDebugEvent(event)
+		if !filter.matches(event) {
+			continue
 		}
+		if first == 0 {
+			first = event.Timestamp
+		}
+		printDebugEvent(event, first)
 	}
 }
 
@@ -128,10 +134,11 @@ func printDebugTop(pairs map[debugPair]debugPairStats) {
 	}
 }
 
-func printDebugEvent(event debugEvent) {
+func printDebugEvent(event debugEvent, first uint64) {
+	elapsed := time.Duration(event.Timestamp - first).Seconds()
 	if event.Operation != 0 {
-		fmt.Printf("%-9s %s %s vm=%s host=%s tenant=%d\n", hookName(event.Hook), directionName(event.Direction), operationName(event.Operation), netip.AddrFrom16(event.VM), netip.AddrFrom16(event.Host), binary.BigEndian.Uint32(event.Tenant[:]))
+		fmt.Printf("%8.3f %-9s %s %s vm=%s host=%s tenant=%d\n", elapsed, hookName(event.Hook), directionName(event.Direction), operationName(event.Operation), netip.AddrFrom16(event.VM), netip.AddrFrom16(event.Host), binary.BigEndian.Uint32(event.Tenant[:]))
 		return
 	}
-	fmt.Printf("%-9s %-8s src=%s dst=%s tenant=%d\n", hookName(event.Hook), verdictName(event.Verdict), netip.AddrFrom16(event.Source), netip.AddrFrom16(event.Destination), binary.BigEndian.Uint32(event.Tenant[:]))
+	fmt.Printf("%8.3f %-9s %-8s src=%s dst=%s tenant=%d\n", elapsed, hookName(event.Hook), verdictName(event.Verdict), netip.AddrFrom16(event.Source), netip.AddrFrom16(event.Destination), binary.BigEndian.Uint32(event.Tenant[:]))
 }
