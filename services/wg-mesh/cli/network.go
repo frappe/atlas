@@ -55,6 +55,19 @@ type hostInterfaces struct {
 	wireGuardName string
 }
 
+func findNetworkInterface(name string) (net.Interface, bool, error) {
+	interfaces, err := net.Interfaces()
+	if err != nil {
+		return net.Interface{}, false, err
+	}
+	for _, networkInterface := range interfaces {
+		if networkInterface.Name == name {
+			return networkInterface, true, nil
+		}
+	}
+	return net.Interface{}, false, nil
+}
+
 func configuredInterfaces() (hostInterfaces, error) {
 	config, err := readPinnedConfig()
 	if err != nil {

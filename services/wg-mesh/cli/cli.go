@@ -15,6 +15,7 @@ const (
 var (
 	uplinkName, wireGuardName string
 	whoHasRate, whoHasBurst   uint32
+	resetForce                bool
 )
 
 var rootCommand = &cobra.Command{
@@ -43,7 +44,7 @@ var resetCommand = &cobra.Command{
 	Short: "remove Atlas WG Mesh from this host",
 	Args:  cobra.NoArgs,
 	RunE: func(*cobra.Command, []string) error {
-		return removeHost()
+		return removeHost(resetForce)
 	},
 }
 

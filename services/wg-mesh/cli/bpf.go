@@ -6,8 +6,11 @@ import (
 	_ "embed"
 	"encoding/hex"
 	"fmt"
+	"net"
+	"net/netip"
 	"os"
 	"path/filepath"
+	"sort"
 
 	"github.com/cilium/ebpf"
 )
@@ -166,6 +169,50 @@ func hasOtherLocalVirtualMachineOnInterface(address [16]byte, ifindex uint32) (b
 		}
 	}
 	return false, iterator.Err()
+}
+
+type localVirtualMachine struct {
+	address       netip.Addr
+	ifindex       uint32
+	interfaceName string
+}
+
+func (virtualMachine localVirtualMachine) interfaceLabel() string {
+	if virtualMachine.interfaceName != "" {
+		return virtualMachine.interfaceName
+	}
+	return fmt.Sprintf("ifindex:%d", virtualMachine.ifindex)
+}
+
+func localVirtualMachines() ([]localVirtualMachine, error) {
+	vmMap, err := openMap("local_vms")
+	if err != nil {
+		return nil, err
+	}
+	defer vmMap.Close()
+
+	virtualMachines := make([]localVirtualMachine, 0)
+	var address [16]byte
+	var ifindex uint32
+	iterator := vmMap.Iterate()
+	for iterator.Next(&address, &ifindex) {
+		interfaceName := ""
+		if device, err := net.InterfaceByIndex(int(ifindex)); err == nil {
+			interfaceName = device.Name
+		}
+		virtualMachines = append(virtualMachines, localVirtualMachine{
+			address:       netip.AddrFrom16(address),
+			ifindex:       ifindex,
+			interfaceName: interfaceName,
+		})
+	}
+	if err := iterator.Err(); err != nil {
+		return nil, err
+	}
+	sort.Slice(virtualMachines, func(left, right int) bool {
+		return virtualMachines[left].address.Less(virtualMachines[right].address)
+	})
+	return virtualMachines, nil
 }
 
 func localVirtualMachineCount() (int, error) {

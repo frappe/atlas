@@ -28,6 +28,8 @@ func init() {
 	removeVirtualMachineCommand.Flags().StringVar(&removeAddressText, "address", "", "VM private IPv6 address")
 	removeVirtualMachineCommand.MarkFlagRequired("interface")
 	removeVirtualMachineCommand.MarkFlagRequired("address")
+	listVirtualMachinesCommand.Flags().BoolVar(&listVirtualMachinesJSON, "json", false, "print JSON")
+	resetCommand.Flags().BoolVar(&resetForce, "force", false, "detach VM hooks and remove BPF state even when local VM entries remain")
 
 	inspectCommand.Flags().StringVar(&inspectAddressText, "address", "", "VM IPv6 address")
 	inspectCommand.MarkFlagRequired("address")
@@ -43,9 +45,9 @@ func init() {
 
 	remotePurgeCommand.Flags().StringVar(&remoteHostText, "host", "", "WireGuard IPv6 address")
 	remotePurgeCommand.MarkFlagRequired("host")
-	upgradeCommand.Flags().BoolVar(&force, "force", false, "allow a state-breaking upgrade")
+	upgradeCommand.Flags().BoolVar(&upgradeForce, "force", false, "allow a state-breaking upgrade")
 
-	virtualMachineCommand.AddCommand(addVirtualMachineCommand, removeVirtualMachineCommand)
+	virtualMachineCommand.AddCommand(addVirtualMachineCommand, removeVirtualMachineCommand, listVirtualMachinesCommand)
 	debugCommand.AddCommand(debugStatusCommand, debugEnableCommand, debugDisableCommand, inspectCommand, dumpCommand, topCommand)
 	remoteCommand.AddCommand(remotePurgeCommand)
 	rootCommand.AddCommand(configureCommand, statusCommand, virtualMachineCommand, remoteCommand, debugCommand, upgradeCommand, versionCommand, resetCommand)

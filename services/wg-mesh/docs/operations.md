@@ -102,6 +102,44 @@ atlas-wg-mesh vm remove --interface veth0 --address fdaa:1:0:7::1
 
 The command removes the VM hook, the local BPF map entry, and the host route.
 
+## List local VM ownership
+
+Use this command to reconcile a host with the controller:
+
+```sh
+atlas-wg-mesh vm list
+atlas-wg-mesh vm list --json
+```
+
+Each line contains the VM address and the owning host interface:
+
+```text
+fdaa:1:0:7::1	veth0
+```
+
+`--json` returns an array of objects with `address` and `interface` fields for controller automation.
+
+An `ifindex:N` value means the registered interface no longer exists.
+
+To clear that single orphaned ownership entry, run `vm remove` with the missing interface name and VM address. The command removes the map entry without resetting the rest of the host.
+
+## Rejoin after a dead declaration
+
+This is the normal controller rejoin path. It preserves the uplink and WireGuard hooks, healthy VM registrations, and learned remote locations:
+
+1. Run `atlas-wg-mesh vm list --json`.
+2. Compare the result with the controller's current desired state.
+3. Remove addresses that the controller no longer assigns to this host.
+4. Add addresses assigned to this host but missing from the list.
+
+For example, remove one stale ownership entry without interrupting other VMs:
+
+```sh
+atlas-wg-mesh vm remove --interface fc-zomb --address fdaa:1:0:2::20
+```
+
+Reconcile immediately when the host reconnects. Until stale entries are removed, the host can still answer `WHO_HAS` for them. Do not replay a stale local manifest at boot; always use the controller's current desired state.
+
 ## Check status
 
 Run this command to show the host configuration and local VM count:
@@ -141,3 +179,20 @@ Remove every VM from the host first. Then remove the host hooks and pinned BPF s
 ```sh
 atlas-wg-mesh reset
 ```
+
+## Force reset fallback
+
+Use `reset --force` only when surgical reconciliation is not safe: for example, the pinned configuration cannot identify its uplink after a NIC change, the controller cannot establish desired state, or an operator needs a clean slate. It detaches every still-present VM hook, then clears local VM ownership and all pinned BPF state:
+
+```sh
+atlas-wg-mesh reset --force
+```
+
+Reconfigure the host and re-register only the VMs in the controller's current desired state:
+
+```sh
+atlas-wg-mesh configure --uplink eth0 --wireguard wg0
+atlas-wg-mesh vm add --interface veth0 --address fdaa:1:0:7::1 --mtu 1380
+```
+
+A forced reset also clears `remote_vms`; discovery rebuilds those entries.

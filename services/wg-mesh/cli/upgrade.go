@@ -16,14 +16,14 @@ import (
 
 var version = "dev"
 
-var force bool
+var upgradeForce bool
 
 var upgradeCommand = &cobra.Command{
 	Use:   "upgrade",
 	Short: "replace BPF programs with this binary's version",
 	Args:  cobra.NoArgs,
 	RunE: func(*cobra.Command, []string) error {
-		return upgradeBPF(force)
+		return upgradeBPF(upgradeForce)
 	},
 }
 

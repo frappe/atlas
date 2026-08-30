@@ -104,27 +104,43 @@ func rollbackInstall(cause error, interfaceNames ...string) error {
 	return cause
 }
 
-func removeHost() error {
-	count, err := localVirtualMachineCount()
+func removeHost(force bool) error {
+	virtualMachines, err := localVirtualMachines()
 	if err != nil {
 		return err
 	}
-	if count != 0 {
+	count := len(virtualMachines)
+	if count != 0 && !force {
 		return fmt.Errorf("remove every VM first; %d local VM entries remain", count)
 	}
 	interfaces, err := configuredInterfaces()
 	if err != nil {
 		return err
 	}
-	for _, name := range []string{interfaces.uplinkName, interfaces.wireGuardName} {
+	hookInterfaces := []string{interfaces.uplinkName, interfaces.wireGuardName}
+	if force {
+		for _, virtualMachine := range virtualMachines {
+			hookInterfaces = append(hookInterfaces, virtualMachine.interfaceName)
+		}
+	}
+	detached := make(map[string]struct{})
+	for _, name := range hookInterfaces {
+		if _, alreadyDetached := detached[name]; alreadyDetached {
+			continue
+		}
 		if name != "" {
 			if err := detachHook(name); err != nil {
 				return err
 			}
+			detached[name] = struct{}{}
 		}
 	}
 	if err := clearPinDirectory(); err != nil {
 		return err
+	}
+	if force && count != 0 {
+		fmt.Printf("Atlas WG Mesh is force-removed; detached VM hooks and cleared %d local VM entries\n", count)
+		return nil
 	}
 	fmt.Println("Atlas WG Mesh is removed")
 	return nil
@@ -182,11 +198,26 @@ func removeVirtualMachine(interfaceName, addressText string) error {
 		return err
 	}
 	if !local {
+		routeRemoved, err := removeVirtualMachineRoute(addressText, interfaceName)
+		if err != nil {
+			return err
+		}
+		if routeRemoved {
+			fmt.Printf("Removed stale route for VM %s from %s\n", addressText, interfaceName)
+			return nil
+		}
 		return fmt.Errorf("%s is not a registered local VM", addressText)
 	}
-	device, err := net.InterfaceByName(interfaceName)
+	device, interfaceExists, err := findNetworkInterface(interfaceName)
 	if err != nil {
 		return err
+	}
+	if !interfaceExists {
+		if err := removeLocalVirtualMachine(address); err != nil {
+			return err
+		}
+		fmt.Printf("VM %s is removed; interface %s no longer exists\n", addressText, interfaceName)
+		return nil
 	}
 	routeRemoved, err := removeVirtualMachineRoute(addressText, interfaceName)
 	if err != nil {
@@ -222,56 +253,6 @@ func removeVirtualMachineRoute(addressText, interfaceName string) (bool, error) 
 		return false, err
 	}
 	return true, nil
-}
-
-func rollbackVirtualMachineRemoval(routeRemoved, hookDetached bool, addressText, interfaceName string, cause error) error {
-	rollbackError := cause
-	if hookDetached {
-		if err := attachHook(interfaceName, vmBPFProgram); err != nil {
-			rollbackError = errors.Join(rollbackError, fmt.Errorf("restore hook on %s: %w", interfaceName, err))
-		}
-	}
-	if routeRemoved {
-		if err := runCommand("ip", "-6", "route", "replace", addressText+"/128", "dev", interfaceName); err != nil {
-			rollbackError = errors.Join(rollbackError, fmt.Errorf("restore route for %s: %w", addressText, err))
-		}
-	}
-	return rollbackError
-}
-
-func rollbackVirtualMachineAddition(address [16]byte, ifindex uint32, hookAttached bool, addressText, interfaceName string, cause error) error {
-	hasOtherVM, err := hasOtherLocalVirtualMachineOnInterface(address, ifindex)
-	if err != nil {
-		return errors.Join(cause, fmt.Errorf("find other VMs on %s: %w", interfaceName, err))
-	}
-	hookDetached := false
-	if hookAttached && !hasOtherVM {
-		if err := detachHook(interfaceName); err != nil {
-			return errors.Join(cause, fmt.Errorf("remove hook from %s: %w", interfaceName, err))
-		}
-		hookDetached = true
-	}
-	if err := removeLocalVirtualMachine(address); err != nil {
-		return restoreVirtualMachineAdditionHook(hookDetached, interfaceName, errors.Join(cause, fmt.Errorf("remove VM registration: %w", err)))
-	}
-	if err := runCommand("ip", "-6", "route", "del", addressText+"/128", "dev", interfaceName); err != nil {
-		rollbackError := errors.Join(cause, fmt.Errorf("remove route for %s: %w", addressText, err))
-		if restoreErr := addLocalVirtualMachine(address, ifindex); restoreErr != nil {
-			rollbackError = errors.Join(rollbackError, fmt.Errorf("restore VM registration: %w", restoreErr))
-		}
-		return restoreVirtualMachineAdditionHook(hookDetached, interfaceName, rollbackError)
-	}
-	return cause
-}
-
-func restoreVirtualMachineAdditionHook(detached bool, interfaceName string, cause error) error {
-	if !detached {
-		return cause
-	}
-	if err := attachHook(interfaceName, vmBPFProgram); err != nil {
-		return errors.Join(cause, fmt.Errorf("restore hook on %s: %w", interfaceName, err))
-	}
-	return cause
 }
 
 func showStatus() error {
