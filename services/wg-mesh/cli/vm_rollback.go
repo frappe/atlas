@@ -8,9 +8,7 @@ import (
 func rollbackVirtualMachineRemoval(routeRemoved, hookDetached bool, addressText, interfaceName string, cause error) error {
 	rollbackError := cause
 	if hookDetached {
-		if err := attachHook(interfaceName, vmBPFProgram); err != nil {
-			rollbackError = errors.Join(rollbackError, fmt.Errorf("restore hook on %s: %w", interfaceName, err))
-		}
+		rollbackError = restoreVirtualMachineHook(interfaceName, rollbackError)
 	}
 	if routeRemoved {
 		if err := runCommand("ip", "-6", "route", "replace", addressText+"/128", "dev", interfaceName); err != nil {
@@ -49,8 +47,16 @@ func restoreVirtualMachineAdditionHook(detached bool, interfaceName string, caus
 	if !detached {
 		return cause
 	}
+	return restoreVirtualMachineHook(interfaceName, cause)
+}
+
+func restoreVirtualMachineHook(interfaceName string, cause error) error {
 	if err := attachHook(interfaceName, vmBPFProgram); err != nil {
-		return errors.Join(cause, fmt.Errorf("restore hook on %s: %w", interfaceName, err))
+		rollbackError := errors.Join(cause, fmt.Errorf("restore hook on %s: %w", interfaceName, err))
+		if err := runCommand("ip", "link", "set", interfaceName, "down"); err != nil {
+			return errors.Join(rollbackError, fmt.Errorf("isolate unguarded VM interface %s: %w", interfaceName, err))
+		}
+		return rollbackError
 	}
 	return cause
 }
