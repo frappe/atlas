@@ -51,18 +51,21 @@ func topDebug(filter debugFilter) error {
 
 	pairs := make(map[debugPair]debugPairStats)
 	printDebugTop(pairs)
+	refresher := time.NewTicker(5 * time.Second)
+	defer refresher.Stop()
 	for {
-		reader.SetDeadline(time.Now().Add(5 * time.Second))
+		reader.SetDeadline(time.Now().Add(100 * time.Millisecond))
 		event, err := readDebugEvent(reader)
-		if errors.Is(err, os.ErrDeadlineExceeded) {
-			printDebugTop(pairs)
-			continue
-		}
-		if err != nil {
+		if err != nil && !errors.Is(err, os.ErrDeadlineExceeded) {
 			return err
 		}
-		if event.Operation == 0 && filter.matches(event) {
+		if err == nil && event.Operation == 0 && filter.matches(event) {
 			updateDebugPair(pairs, event)
+		}
+		select {
+		case <-refresher.C:
+			printDebugTop(pairs)
+		default:
 		}
 	}
 }

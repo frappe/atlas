@@ -141,7 +141,7 @@ fdaa:1:0:2::10      fe80::1             1       0     0
 
 A tunneled flow appears as two rows: `redirect` counts guest packets leaving, while `accept` counts replies arriving.
 
-`top` redraws only after five seconds with no events at all; every event resets its read deadline. On a busy host it can remain on the initial header indefinitely. Use `debug dump` there until the refresh timer is decoupled from `topDebug()`'s read deadline.
+`top` redraws every five seconds, including while traffic is continuous. Use `debug dump` when you need individual packet decisions.
 
 ## `debug inspect`
 

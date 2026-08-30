@@ -17,6 +17,7 @@ This document explains packet paths, BPF state, and recovery behavior. Read the 
   - [Scenario 5: planned VM move](#scenario-5-planned-vm-move)
   - [Scenario 6: missed move announcement](#scenario-6-missed-move-announcement)
   - [Scenario 7: old host failure](#scenario-7-old-host-failure)
+  - [Scenario 8: falsely declared-dead host returns](#scenario-8-falsely-declared-dead-host-returns)
   - [Code map](#code-map)
 
 ## Addressing and state
@@ -223,7 +224,30 @@ flowchart LR
     G --> H["New Host C replies FOUND"]
 ```
 
-Atlas WG Mesh has no timer for remote locations. A liveness process must delete locations that name a host after it leaves the deployment.
+Atlas WG Mesh has no timer for remote locations. A liveness process must delete locations that name a host after it leaves the deployment. If the host later returns, use Scenario 8 before allowing it to rejoin.
+
+## Scenario 8: falsely declared-dead host returns
+
+This path applies when liveness declares Host B dead during a partition, but Host B was still running when VM X moved to Host C. Host B retains VM X in `local_vms`.
+
+```mermaid
+sequenceDiagram
+    participant A as Host A
+    participant B as Returned Host B
+    participant C as Current Host C
+    participant R as Controller
+
+    A->>B: WHO_HAS VM X
+    B->>A: FOUND VM X, Host B
+    A->>B: Tunnel for VM X
+    B->>B: local_vms says VM X is local
+    Note over B: Delivers the tunnel; does not send NOT_HERE
+    R->>B: vm list --json
+    R->>B: vm remove stale VM X
+    A->>C: Next WHO_HAS / FOUND path reaches Host C
+```
+
+The stale owner suppresses the `NOT_HERE` repair path, so recovery is not automatic. On reconnect, the controller must compare `vm list --json` with current desired state and remove every stale ownership entry before the host resumes normal service. Do not replay a stale local manifest at boot.
 
 ## Code map
 
