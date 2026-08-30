@@ -15,13 +15,13 @@ struct
 	__uint(max_entries, 4096);
 } local_vms SEC(".maps");
 
-/* Recently learned VM-to-WireGuard-host locations. */
+/* Learned remote VM-to-WireGuard-host locations. A miss sends WHO_HAS. */
 struct
 {
 	__uint(type, BPF_MAP_TYPE_LRU_HASH);
 	__type(key, struct in6_addr);
 	__type(value, struct in6_addr);
-	__uint(max_entries, 1048576);
+	__uint(max_entries, 262144);
 } remote_vms SEC(".maps");
 
 /* Host configuration. */

@@ -69,11 +69,11 @@ struct
 	__uint(max_entries, 1);
 } debug_stats SEC(".maps");
 
-/* Ring buffer preserves event order across all hooks without per-CPU merging. */
+/* Global ring buffer; it is allocated even while debug is disabled. */
 struct
 {
 	__uint(type, BPF_MAP_TYPE_RINGBUF);
-	__uint(max_entries, 16777216);
+	__uint(max_entries, 4194304);
 } debug_events SEC(".maps");
 
 static __always_inline void record_debug_stats(__u8 packet_action,
