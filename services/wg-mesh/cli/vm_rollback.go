@@ -20,13 +20,9 @@ func rollbackVirtualMachineRemoval(routeRemoved, hookDetached bool, addressText,
 	return rollbackError
 }
 
-func rollbackVirtualMachineAddition(address [16]byte, ifindex uint32, hookAttached bool, addressText, interfaceName string, cause error) error {
-	hasOtherVM, err := hasOtherLocalVirtualMachineOnInterface(address, ifindex)
-	if err != nil {
-		return errors.Join(cause, fmt.Errorf("find other VMs on %s: %w", interfaceName, err))
-	}
+func rollbackVirtualMachineAddition(address [16]byte, ifindex uint32, removeHook bool, addressText, interfaceName string, cause error) error {
 	hookDetached := false
-	if hookAttached && !hasOtherVM {
+	if removeHook {
 		if err := detachHook(interfaceName); err != nil {
 			return errors.Join(cause, fmt.Errorf("remove hook from %s: %w", interfaceName, err))
 		}

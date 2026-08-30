@@ -163,6 +163,10 @@ func addVirtualMachine(interfaceName, addressText string, mtu uint32) error {
 	if err != nil {
 		return err
 	}
+	hasOtherVM, err := hasOtherLocalVirtualMachineOnInterface(address, uint32(device.Index))
+	if err != nil {
+		return err
+	}
 	if err := runCommand("ip", "-6", "addr", "replace", "fe80::1/64", "dev", interfaceName, "nodad"); err != nil {
 		return err
 	}
@@ -182,7 +186,7 @@ func addVirtualMachine(interfaceName, addressText string, mtu uint32) error {
 		return rollbackVirtualMachineAddition(address, uint32(device.Index), false, addressText, interfaceName, err)
 	}
 	if err := announceVirtualMachine(address, config); err != nil {
-		return rollbackVirtualMachineAddition(address, uint32(device.Index), true, addressText, interfaceName, err)
+		return rollbackVirtualMachineAddition(address, uint32(device.Index), !hasOtherVM, addressText, interfaceName, err)
 	}
 	fmt.Printf("VM %s is ready on %s\n", addressText, interfaceName)
 	return nil
