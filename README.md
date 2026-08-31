@@ -5,3 +5,6 @@
 
 VM Management service of Frappe Cloud V2
 
+### License
+
+agpl-3.0
