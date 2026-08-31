@@ -4,7 +4,7 @@ metald serves this over the unix socket `/run/metal.sock`. JSON in/out. Auth is
 socket permissions only. Stateless: responses reflect host truth, so they
 survive a metald restart.
 
-**Async:** `create`/`start`/`stop`/`resize`/`delete` return `202` immediately;
+**Async:** `create`/`start`/`stop`/`delete` return `202` immediately;
 the client polls `GET /vms/{id}` until `state` settles. A failure shows as
 `state:"failed"` + `reason`. Read-only and disk-only ops return synchronously.
 
@@ -44,18 +44,22 @@ the client polls `GET /vms/{id}` until `state` settles. A failure shows as
 `ssh_keys` is a list of public keys, served to the guest via MMDS so it can
 install them at boot. metald assigns `id`/`ip`/`mac` and boots the guest.
 
-**Stop** `POST /vms/{id}/stop` — `{ "force": false }`. `false` = Ctrl+Alt+Del,
-`true` = SIGKILL.
+**Start** `POST /vms/{id}/start` — boots the guest. A stopped VM is relaunched
+(a fresh jailer process) and reboots from its persisted disk and network; a
+running VM → `409`.
 
-**Resize** `POST /vms/{id}/resize` — `{ "vcpus"?, "mem_mib"?, "disk_mib"? }`. All
-optional; omitted = unchanged; `disk_mib` is grow-only. A disk-only change grows
-online (`lvextend` + firecracker rescan; guest grows its own fs). Firecracker
-can't hotplug cpu/mem, so if `vcpus` and/or `mem_mib` change metald **restarts
-the VM** to apply them (brief downtime).
+**Stop** `POST /vms/{id}/stop` — `{ "force": false }`. `false` = Ctrl+Alt+Del,
+`true` = SIGKILL. The disk, network and state are kept, so the VM can be started
+again.
+
+**Resize** `POST /vms/{id}/resize` — `{ "disk_mib" }`. `disk_mib` is grow-only; a
+smaller value → `409`. The disk grows online (`zfs set volsize` + firecracker
+drive rescan; the guest grows its own fs) and returns the updated VM. CPU/mem
+resize is not yet implemented (`vcpus`/`mem_mib` → `501`).
 
 ## Snapshots
 
-Disk (LVM) snapshots of a VM — distinct from VM-state/memory snapshots (deferred).
+Disk (ZFS) snapshots of a VM — distinct from VM-state/memory snapshots (deferred).
 
 ```json
 { "name": "pre-upgrade", "vm_id": "a1b2c3d4e5f6a7b8", "size_mib": 2048, "used_mib": 12 }
@@ -69,8 +73,9 @@ Disk (LVM) snapshots of a VM — distinct from VM-state/memory snapshots (deferr
 | `POST` | `/vms/{id}/snapshots/{name}/restore` | roll disk back |
 
 **Create** is crash-consistent while running (clean/fsfreeze later, needs a guest
-agent). **Restore** replaces the disk in place; VM keeps its id/network but must
-be **stopped** → `409` otherwise.
+agent). **Restore** rolls the disk back in place (`zfs rollback -r`, so any
+snapshots newer than the target are discarded); the VM keeps its id/network but
+must be **stopped** → `409` otherwise.
 
 ## Errors
 
@@ -81,6 +86,8 @@ be **stopped** → `409` otherwise.
 running VM, restore while running, shrink a disk) · `500` internal.
 
 ## Deferred
+
+Image management (build/download/serve images) — to be specified.
 
 Idempotency-key on create; `PATCH`/console interactivity; list pagination;
 snapshot caps / snapshot-of-snapshot / restore-vs-pool-exhaustion.

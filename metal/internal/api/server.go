@@ -6,6 +6,7 @@ package api
 import (
 	"errors"
 	"net/http"
+	"regexp"
 
 	"github.com/labstack/echo/v4"
 
@@ -29,12 +30,14 @@ func New(driver vm.VMDriver) *echo.Echo {
 	e.POST("/vms/:id/stop", s.stop)
 	e.DELETE("/vms/:id", s.destroy)
 
+	e.GET("/vms/:id/snapshots", s.listSnapshots)
+	e.POST("/vms/:id/snapshots", s.createSnapshot)
+	e.DELETE("/vms/:id/snapshots/:name", s.deleteSnapshot)
+	e.POST("/vms/:id/snapshots/:name/restore", s.restoreSnapshot)
+
+	e.POST("/vms/:id/resize", s.resize)
+
 	// Specced but not implemented yet.
-	e.POST("/vms/:id/resize", notImplemented)
-	e.GET("/vms/:id/snapshots", notImplemented)
-	e.POST("/vms/:id/snapshots", notImplemented)
-	e.DELETE("/vms/:id/snapshots/:name", notImplemented)
-	e.POST("/vms/:id/snapshots/:name/restore", notImplemented)
 	e.GET("/vms/:id/console", notImplemented)
 
 	e.GET("/health", func(c echo.Context) error { return c.NoContent(http.StatusOK) })
@@ -117,6 +120,97 @@ func (s *Server) destroy(c echo.Context) error {
 	return c.NoContent(http.StatusNoContent)
 }
 
+func (s *Server) listSnapshots(c echo.Context) error {
+	m, err := s.load(c)
+	if err != nil {
+		return fromDriverErr(c, err)
+	}
+	snaps, err := m.DiskSnapshots(c.Request().Context())
+	if err != nil {
+		return fromDriverErr(c, err)
+	}
+	out := make([]snapResp, 0, len(snaps))
+	for _, sn := range snaps {
+		out = append(out, toSnap(m.ID(), sn))
+	}
+	return c.JSON(http.StatusOK, echo.Map{"snapshots": out})
+}
+
+func (s *Server) createSnapshot(c echo.Context) error {
+	m, err := s.load(c)
+	if err != nil {
+		return fromDriverErr(c, err)
+	}
+	var body snapReq
+	if err := c.Bind(&body); err != nil {
+		return apiError(c, http.StatusBadRequest, err)
+	}
+	if !validSnapName(body.Name) {
+		return apiError(c, http.StatusBadRequest, errors.New("invalid snapshot name"))
+	}
+	if err := m.DiskSnapshot(c.Request().Context(), body.Name); err != nil {
+		return fromDriverErr(c, err)
+	}
+	return c.JSON(http.StatusCreated, echo.Map{"name": body.Name})
+}
+
+func (s *Server) deleteSnapshot(c echo.Context) error {
+	m, err := s.load(c)
+	if err != nil {
+		return fromDriverErr(c, err)
+	}
+	name := c.Param("name")
+	if !validSnapName(name) {
+		return apiError(c, http.StatusBadRequest, errors.New("invalid snapshot name"))
+	}
+	if err := m.DeleteDiskSnapshot(c.Request().Context(), name); err != nil {
+		return fromDriverErr(c, err)
+	}
+	return c.NoContent(http.StatusNoContent)
+}
+
+func (s *Server) restoreSnapshot(c echo.Context) error {
+	m, err := s.load(c)
+	if err != nil {
+		return fromDriverErr(c, err)
+	}
+	name := c.Param("name")
+	if !validSnapName(name) {
+		return apiError(c, http.StatusBadRequest, errors.New("invalid snapshot name"))
+	}
+	if err := m.RestoreDiskSnapshot(c.Request().Context(), name); err != nil {
+		return fromDriverErr(c, err)
+	}
+	return c.NoContent(http.StatusNoContent)
+}
+
+// snapNameRe matches ZFS-legal snapshot names (the part after '@').
+var snapNameRe = regexp.MustCompile(`^[A-Za-z0-9_.:-]+$`)
+
+func validSnapName(s string) bool { return snapNameRe.MatchString(s) }
+
+// resize currently grows only the disk. CPU/mem changes are not yet supported.
+func (s *Server) resize(c echo.Context) error {
+	m, err := s.load(c)
+	if err != nil {
+		return fromDriverErr(c, err)
+	}
+	var body resizeReq
+	if err := c.Bind(&body); err != nil {
+		return apiError(c, http.StatusBadRequest, err)
+	}
+	if body.VCPUs != nil || body.MemMiB != nil {
+		return apiError(c, http.StatusNotImplemented, errors.New("cpu/mem resize not yet supported"))
+	}
+	if body.DiskMiB == nil {
+		return apiError(c, http.StatusBadRequest, errors.New("disk_mib required"))
+	}
+	if err := m.Resize(c.Request().Context(), *body.DiskMiB); err != nil {
+		return fromDriverErr(c, err)
+	}
+	return s.respond(c, http.StatusOK, m)
+}
+
 func (s *Server) load(c echo.Context) (vm.VM, error) {
 	return s.driver.Load(c.Request().Context(), c.Param("id"))
 }
@@ -135,10 +229,14 @@ func notImplemented(c echo.Context) error {
 }
 
 func fromDriverErr(c echo.Context, err error) error {
-	if errors.Is(err, vm.ErrNotFound) {
+	switch {
+	case errors.Is(err, vm.ErrNotFound):
 		return apiError(c, http.StatusNotFound, err)
+	case errors.Is(err, vm.ErrConflict):
+		return apiError(c, http.StatusConflict, err)
+	default:
+		return apiError(c, http.StatusInternalServerError, err)
 	}
-	return apiError(c, http.StatusInternalServerError, err)
 }
 
 func apiError(c echo.Context, status int, err error) error {

@@ -7,11 +7,11 @@
 set -euo pipefail
 
 WORKDIR=${METALD_WORKDIR:-/tmp/metald}
-# Bulk storage (loop pool + image downloads) can live on any fs — point it at a
-# big disk. The rest (chroot, kernels, keys, socket) needs a POSIX fs for
+# Bulk storage (zfs pool image + image downloads) can live on any fs — point it
+# at a big disk. The rest (chroot, kernels, keys, socket) needs a POSIX fs for
 # mknod/hardlinks/perms, so it stays under WORKDIR.
 BULK=${METALD_BULK_DIR:-$WORKDIR}
-VG=${METALD_VG:-metalvg}
+POOL=${METALD_POOL:-metal}
 KERNEL_DIR=${METALD_KERNEL_DIR:-$WORKDIR/kernels}
 BIN=$(dirname "${METALD_FIRECRACKER:-$WORKDIR/bin/firecracker}")
 KEYDIR=$WORKDIR/keys
@@ -27,11 +27,11 @@ fetch() { [[ -f $2 ]] || { curl -fsSL -o "$2.part" "$1" && mv "$2.part" "$2"; };
 mkdir -p "$WORKDIR" "$BIN" "$KERNEL_DIR/ubuntu" "$BULK/images" "$KEYDIR" \
          "$METALD_CHROOT_BASE" "$METALD_VAR_DIR"
 
-# Loop size: half the bulk dir's free space, clamped to [8G, 30G] (a cloud image
-# base is ~3.5G; the rest is thin-snapshot headroom). Override with METALD_LOOP_SIZE.
+# Pool size: half the bulk dir's free space, clamped to [8G, 30G] (a cloud image
+# base is ~3.5G; the rest is clone headroom). Override with METALD_POOL_SIZE.
 avail_gb=$(( $(df -Pk "$BULK" | awk 'NR==2{print $4}') / 1024 / 1024 ))
 sz=$(( avail_gb / 2 )); (( sz < 8 )) && sz=8; (( sz > 30 )) && sz=30
-LOOP_SIZE=${METALD_LOOP_SIZE:-${sz}G}
+POOL_SIZE=${METALD_POOL_SIZE:-${sz}G}
 (( avail_gb < 6 )) && echo "WARNING: only ${avail_gb}G free under $BULK; a cloud image needs ~4G." >&2
 
 step "firecracker + jailer ($FC_VER)"
@@ -87,20 +87,30 @@ umount "$mnt"
 step "ssh keypair"
 [[ -f $KEYDIR/id_ed25519 ]] || ssh-keygen -q -t ed25519 -N "" -f "$KEYDIR/id_ed25519"
 
-step "loop device + thin pool ($LOOP_SIZE)"
-img=$BULK/pool.img
-[[ -f $img ]] || truncate -s "$LOOP_SIZE" "$img"
-loop=$(losetup -j "$img" | cut -d: -f1)
-[[ -n $loop ]] || loop=$(losetup --find --show "$img")
-pvs "$loop" >/dev/null 2>&1 || pvcreate -f "$loop"
-vgs "$VG" >/dev/null 2>&1 || vgcreate "$VG" "$loop"
-lvs "$VG/pool" >/dev/null 2>&1 || lvcreate --type thin-pool -l 90%FREE -n pool "$VG"
+step "zfs pool ($POOL_SIZE)"
+# A file vdev: zpool uses the image file directly as the pool's backing store.
+img=$(realpath -m "$BULK")/pool.img
+[[ -f $img ]] || truncate -s "$POOL_SIZE" "$img"
+# zpool create -f -m none <pool> <file>: create the pool on the image; -f lets a
+# plain file act as the vdev (zpool otherwise expects a whole disk/partition);
+# -m none leaves the pool unmounted (we only use zvols under it).
+zpool list "$POOL" >/dev/null 2>&1 || zpool create -f -m none "$POOL" "$img"
+# Container datasets. zfs create/clone never make missing parents, so base/<ref>
+# and vms/<id> need their parents to exist first. mountpoint=none keeps them off
+# the host fs (zvols under them still get /dev/zvol nodes).
+zfs list "$POOL/base" >/dev/null 2>&1 || zfs create -o mountpoint=none "$POOL/base"
+zfs list "$POOL/vms" >/dev/null 2>&1 || zfs create -o mountpoint=none "$POOL/vms"
 
-step "base-ubuntu image"
-if ! lvs "$VG/base-ubuntu" >/dev/null 2>&1; then
+step "base image ($POOL/base/ubuntu)"
+if ! zfs list "$POOL/base/ubuntu" >/dev/null 2>&1; then
 	bytes=$(stat -c %s "$rootfs")
-	lvcreate --thin -V "$((bytes / 1024 / 1024 + 64))M" -n base-ubuntu "$VG/pool"
-	dd if="$rootfs" of="/dev/$VG/base-ubuntu" bs=4M conv=sparse,fsync status=none
+	# zfs create -V <size> -o volblocksize=16k: a zvol (raw block device) of the
+	# given provisioned size, 16k record size (per-VM clones inherit it).
+	zfs create -V "$((bytes / 1024 / 1024 + 64))M" -o volblocksize=16k "$POOL/base/ubuntu"
+	udevadm settle  # wait for /dev/zvol/... to appear
+	dd if="$rootfs" of="/dev/zvol/$POOL/base/ubuntu" bs=4M conv=sparse,fsync status=none
+	# zfs snapshot <base>@ready: the read-only source every per-VM clone branches from.
+	zfs snapshot "$POOL/base/ubuntu@ready"
 fi
 
 step "systemd template unit (metal-vm@.service)"

@@ -2,6 +2,7 @@ package firecracker
 
 import (
 	"context"
+	"errors"
 	"os"
 	"syscall"
 
@@ -15,29 +16,46 @@ import (
 // machine implements vm.VM as a client-side handle: a systemd unit (metal-vm@id)
 // plus an API client over that unit's socket. It holds no child process.
 type machine struct {
-	cfg    vmConfig
-	dir    string // per-VM state dir
-	units  systemd.Manager
-	images storage.Resolver
-	net    network.Allocator
-	api    *api.Client
+	cfg      vmConfig
+	dir      string // per-VM state dir
+	units    systemd.Manager
+	images   storage.Resolver
+	net      network.Allocator
+	api      *api.Client
+	persist  func(vmConfig) error        // rewrite the VM's config.json
+	relaunch func(context.Context) error // (re)start a stopped VM's jailer unit
 }
 
 func (d *Driver) newMachine(vc vmConfig) *machine {
 	return &machine{
-		cfg:    vc,
-		dir:    d.cfg.vmDir(vc.ID),
-		units:  d.units,
-		images: d.images,
-		net:    d.net,
-		api:    api.New(vc.Sock),
+		cfg:      vc,
+		dir:      d.cfg.vmDir(vc.ID),
+		units:    d.units,
+		images:   d.images,
+		net:      d.net,
+		api:      api.New(vc.Sock),
+		persist:  d.cfg.writeVMConfig,
+		relaunch: func(ctx context.Context) error { return d.relaunch(ctx, vc) },
 	}
 }
 
 func (m *machine) ID() string { return m.cfg.ID }
 
-// Start boots the guest.
+// Start boots the guest. A fully stopped VM (its jailer process is gone) is
+// relaunched first; a running VM is a conflict.
 func (m *machine) Start(ctx context.Context) error {
+	st, err := m.units.Status(ctx, m.cfg.ID)
+	if err != nil {
+		return err
+	}
+	switch m.state(ctx, st) {
+	case vm.StateRunning:
+		return vm.ErrConflict
+	case vm.StateStopped, vm.StateFailed:
+		if err := m.relaunch(ctx); err != nil {
+			return err
+		}
+	}
 	return m.api.InstanceStart(ctx)
 }
 
@@ -76,7 +94,7 @@ func (m *machine) Info(ctx context.Context) (vm.Info, error) {
 	if err != nil {
 		return vm.Info{}, err
 	}
-	return vm.Info{
+	info := vm.Info{
 		ID:      m.cfg.ID,
 		State:   m.state(ctx, st),
 		PID:     st.PID,
@@ -88,7 +106,17 @@ func (m *machine) Info(ctx context.Context) (vm.Info, error) {
 		DiskMiB: m.cfg.Spec.DiskMiB,
 		Image:   m.cfg.Spec.Image.Name,
 		Network: m.cfg.Spec.Network.Name,
-	}, nil
+	}
+	// Disk size/usage/snapshot count are best-effort: a missing zvol (e.g. a
+	// half-built VM) must not fail Info.
+	if u, err := m.images.Usage(ctx, m.cfg.ID); err == nil {
+		if u.SizeMiB > 0 {
+			info.DiskMiB = u.SizeMiB
+		}
+		info.DiskUsedMiB = u.UsedMiB
+		info.Snapshots = u.Snapshots
+	}
+	return info, nil
 }
 
 // state derives the VM state from the unit plus firecracker: systemd knows if
@@ -114,9 +142,85 @@ func (m *machine) state(ctx context.Context, st systemd.Status) vm.State {
 	}
 }
 
-// Snapshot is deferred: the current milestone excludes snapshotting.
+// Snapshot is deferred: the current milestone excludes memory snapshotting.
 func (m *machine) Snapshot(ctx context.Context, dir string, typ vm.SnapshotType) (vm.Snapshot, error) {
 	return vm.Snapshot{}, errNotImplemented
+}
+
+// Resize grows the VM's disk to diskMiB and makes a running guest see it.
+// Grow-only: a smaller request is ErrConflict; an equal one is a no-op.
+func (m *machine) Resize(ctx context.Context, diskMiB int) error {
+	u, err := m.images.Usage(ctx, m.cfg.ID)
+	if err != nil {
+		return storageErr(err)
+	}
+	switch {
+	case diskMiB < u.SizeMiB:
+		return vm.ErrConflict
+	case diskMiB == u.SizeMiB:
+		return nil
+	}
+	if err := m.images.Resize(ctx, m.cfg.ID, diskMiB); err != nil {
+		return storageErr(err)
+	}
+	// If the guest is running, have firecracker rescan the grown block device.
+	st, err := m.units.Status(ctx, m.cfg.ID)
+	if err != nil {
+		return err
+	}
+	if m.state(ctx, st) == vm.StateRunning {
+		if err := m.api.PatchDrive(ctx, api.PartialDrive{DriveID: rootDriveID, PathOnHost: rootDrivePath}); err != nil {
+			return err
+		}
+	}
+	// Persist the new size so Load/List/Info stay truthful.
+	m.cfg.Spec.DiskMiB = diskMiB
+	return m.persist(m.cfg)
+}
+
+// DiskSnapshot takes a named snapshot of the VM's rootfs disk.
+func (m *machine) DiskSnapshot(ctx context.Context, name string) error {
+	return storageErr(m.images.Snapshot(ctx, m.cfg.ID, name))
+}
+
+// DiskSnapshots lists the VM's disk snapshots.
+func (m *machine) DiskSnapshots(ctx context.Context) ([]vm.DiskSnapshot, error) {
+	snaps, err := m.images.Snapshots(ctx, m.cfg.ID)
+	if err != nil {
+		return nil, storageErr(err)
+	}
+	out := make([]vm.DiskSnapshot, len(snaps))
+	for i, s := range snaps {
+		out[i] = vm.DiskSnapshot{Name: s.Name, SizeMiB: s.SizeMiB, UsedMiB: s.UsedMiB}
+	}
+	return out, nil
+}
+
+// DeleteDiskSnapshot removes one disk snapshot.
+func (m *machine) DeleteDiskSnapshot(ctx context.Context, name string) error {
+	return storageErr(m.images.DeleteSnapshot(ctx, m.cfg.ID, name))
+}
+
+// RestoreDiskSnapshot rolls the disk back to a snapshot. The VM must be stopped
+// (no live firecracker holding the disk), else ErrConflict.
+func (m *machine) RestoreDiskSnapshot(ctx context.Context, name string) error {
+	st, err := m.units.Status(ctx, m.cfg.ID)
+	if err != nil {
+		return err
+	}
+	if s := m.state(ctx, st); s != vm.StateStopped && s != vm.StateFailed {
+		return vm.ErrConflict
+	}
+	return storageErr(m.images.Restore(ctx, m.cfg.ID, name))
+}
+
+// storageErr maps storage's not-found sentinel to the vm-layer one so the API
+// returns 404.
+func storageErr(err error) error {
+	if errors.Is(err, storage.ErrNotFound) {
+		return vm.ErrNotFound
+	}
+	return err
 }
 
 var _ vm.VM = (*machine)(nil)

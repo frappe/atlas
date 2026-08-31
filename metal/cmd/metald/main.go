@@ -48,9 +48,9 @@ func main() {
 }
 
 type opts struct {
-	cfg           firecracker.Config
-	vg, kernelDir string
-	listen        string
+	cfg             firecracker.Config
+	pool, kernelDir string
+	listen          string
 }
 
 func optsFromEnv() opts {
@@ -61,7 +61,7 @@ func optsFromEnv() opts {
 	setIf(&cfg.FirecrackerBin, "METALD_FIRECRACKER")
 	return opts{
 		cfg:       cfg,
-		vg:        envOr("METALD_VG", "metalvg"),
+		pool:      envOr("METALD_POOL", "metal"),
 		kernelDir: envOr("METALD_KERNEL_DIR", "/var/lib/metal/kernels"),
 		// TCP host:port by default; "unix:/path" for a unix socket instead.
 		listen: envOr("METALD_LISTEN", "127.0.0.1:8080"),
@@ -92,7 +92,7 @@ func serve() error {
 	}
 	defer units.Close()
 
-	driver := firecracker.New(o.cfg, units, storage.NewLVM(o.vg, o.kernelDir), network.NewLinux())
+	driver := firecracker.New(o.cfg, units, storage.NewZFS(o.pool, o.kernelDir), network.NewLinux())
 	e := api.New(driver)
 
 	ln, err := listen(o.listen)

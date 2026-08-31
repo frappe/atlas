@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -15,6 +16,7 @@ import (
 type fakeVM struct {
 	info    vm.Info
 	started bool
+	snaps   map[string]bool
 }
 
 func (f *fakeVM) ID() string { return f.info.ID }
@@ -30,11 +32,49 @@ func (f *fakeVM) Info(context.Context) (vm.Info, error)       { return f.info, n
 func (f *fakeVM) Snapshot(context.Context, string, vm.SnapshotType) (vm.Snapshot, error) {
 	return vm.Snapshot{}, nil
 }
+func (f *fakeVM) Resize(_ context.Context, diskMiB int) error {
+	if diskMiB < f.info.DiskMiB {
+		return vm.ErrConflict
+	}
+	f.info.DiskMiB = diskMiB
+	return nil
+}
+
+func (f *fakeVM) DiskSnapshot(_ context.Context, name string) error {
+	if f.snaps == nil {
+		f.snaps = map[string]bool{}
+	}
+	f.snaps[name] = true
+	return nil
+}
+func (f *fakeVM) DiskSnapshots(context.Context) ([]vm.DiskSnapshot, error) {
+	out := make([]vm.DiskSnapshot, 0, len(f.snaps))
+	for n := range f.snaps {
+		out = append(out, vm.DiskSnapshot{Name: n, SizeMiB: 1024, UsedMiB: 8})
+	}
+	return out, nil
+}
+func (f *fakeVM) DeleteDiskSnapshot(_ context.Context, name string) error {
+	if !f.snaps[name] {
+		return vm.ErrNotFound
+	}
+	delete(f.snaps, name)
+	return nil
+}
+func (f *fakeVM) RestoreDiskSnapshot(_ context.Context, name string) error {
+	if f.info.State != vm.StateStopped {
+		return vm.ErrConflict
+	}
+	if !f.snaps[name] {
+		return vm.ErrNotFound
+	}
+	return nil
+}
 
 type fakeDriver struct{ vms map[string]*fakeVM }
 
 func (d *fakeDriver) Create(_ context.Context, spec vm.Spec) (vm.VM, error) {
-	m := &fakeVM{info: vm.Info{ID: "vm1", State: vm.StateCreated, VCPUs: spec.VCPUs, MemMiB: spec.MemMiB, Image: spec.Image.Name}}
+	m := &fakeVM{info: vm.Info{ID: "vm1", State: vm.StateCreated, VCPUs: spec.VCPUs, MemMiB: spec.MemMiB, DiskMiB: spec.DiskMiB, Image: spec.Image.Name}}
 	d.vms[m.info.ID] = m
 	return m, nil
 }
@@ -88,12 +128,29 @@ func TestGetUnknownIs404(t *testing.T) {
 	}
 }
 
-func TestResizeNotImplemented(t *testing.T) {
-	rec := httptest.NewRecorder()
-	newTestServer().ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/vms/vm1/resize", nil))
-	if rec.Code != http.StatusNotImplemented {
-		t.Fatalf("status = %d", rec.Code)
+func TestResizeDiskGrows(t *testing.T) {
+	srv := newTestServer()
+	do(t, srv, http.MethodPost, "/vms", `{"image":"ubuntu","disk_mib":1024}`, http.StatusCreated)
+	rec := do(t, srv, http.MethodPost, "/vms/vm1/resize", `{"disk_mib":2048}`, http.StatusOK)
+	var got vmResp
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
 	}
+	if got.Disk.SizeMiB != 2048 {
+		t.Fatalf("disk size = %d, want 2048", got.Disk.SizeMiB)
+	}
+}
+
+func TestResizeShrinkIs409(t *testing.T) {
+	srv := newTestServer()
+	do(t, srv, http.MethodPost, "/vms", `{"image":"ubuntu","disk_mib":2048}`, http.StatusCreated)
+	do(t, srv, http.MethodPost, "/vms/vm1/resize", `{"disk_mib":1024}`, http.StatusConflict)
+}
+
+func TestResizeCPUMemNotImplemented(t *testing.T) {
+	srv := newTestServer()
+	do(t, srv, http.MethodPost, "/vms", `{"image":"ubuntu"}`, http.StatusCreated)
+	do(t, srv, http.MethodPost, "/vms/vm1/resize", `{"mem_mib":1024}`, http.StatusNotImplemented)
 }
 
 func TestHealth(t *testing.T) {
@@ -102,4 +159,60 @@ func TestHealth(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d", rec.Code)
 	}
+}
+
+// do sends one request and asserts the status code.
+func do(t *testing.T, srv http.Handler, method, path, body string, want int) *httptest.ResponseRecorder {
+	t.Helper()
+	var r io.Reader
+	if body != "" {
+		r = strings.NewReader(body)
+	}
+	req := httptest.NewRequest(method, path, r)
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	if rec.Code != want {
+		t.Fatalf("%s %s = %d, want %d (body %s)", method, path, rec.Code, want, rec.Body)
+	}
+	return rec
+}
+
+func TestSnapshotLifecycle(t *testing.T) {
+	srv := newTestServer()
+	do(t, srv, http.MethodPost, "/vms", `{"image":"ubuntu"}`, http.StatusCreated) // vm1, running
+
+	do(t, srv, http.MethodPost, "/vms/vm1/snapshots", `{"name":"snap1"}`, http.StatusCreated)
+
+	rec := do(t, srv, http.MethodGet, "/vms/vm1/snapshots", "", http.StatusOK)
+	var listed struct {
+		Snapshots []snapResp `json:"snapshots"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &listed); err != nil {
+		t.Fatal(err)
+	}
+	if len(listed.Snapshots) != 1 || listed.Snapshots[0].Name != "snap1" || listed.Snapshots[0].VMID != "vm1" {
+		t.Fatalf("snapshots = %+v", listed.Snapshots)
+	}
+
+	// Restore while running is a conflict; stop first, then it succeeds.
+	do(t, srv, http.MethodPost, "/vms/vm1/snapshots/snap1/restore", "", http.StatusConflict)
+	do(t, srv, http.MethodPost, "/vms/vm1/stop", `{"force":true}`, http.StatusOK)
+	do(t, srv, http.MethodPost, "/vms/vm1/snapshots/snap1/restore", "", http.StatusNoContent)
+
+	// Delete once, then again -> 404.
+	do(t, srv, http.MethodDelete, "/vms/vm1/snapshots/snap1", "", http.StatusNoContent)
+	do(t, srv, http.MethodDelete, "/vms/vm1/snapshots/snap1", "", http.StatusNotFound)
+}
+
+func TestCreateSnapshotBadName(t *testing.T) {
+	srv := newTestServer()
+	do(t, srv, http.MethodPost, "/vms", `{"image":"ubuntu"}`, http.StatusCreated)
+	do(t, srv, http.MethodPost, "/vms/vm1/snapshots", `{"name":"bad/name"}`, http.StatusBadRequest)
+}
+
+func TestSnapshotUnknownVMIs404(t *testing.T) {
+	srv := newTestServer()
+	do(t, srv, http.MethodPost, "/vms/nope/snapshots", `{"name":"x"}`, http.StatusNotFound)
+	do(t, srv, http.MethodGet, "/vms/nope/snapshots", "", http.StatusNotFound)
 }

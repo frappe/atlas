@@ -19,6 +19,14 @@ type Drive struct {
 	IsReadOnly   bool   `json:"is_read_only"`
 }
 
+// PartialDrive is the PATCH /drives/{id} body. Re-sending the same path_on_host
+// makes firecracker re-read the backing device's size (a rescan). Firecracker's
+// PartialDrive schema only accepts drive_id + path_on_host here.
+type PartialDrive struct {
+	DriveID    string `json:"drive_id"`
+	PathOnHost string `json:"path_on_host"`
+}
+
 type NetworkInterface struct {
 	IfaceID     string `json:"iface_id"`
 	HostDevName string `json:"host_dev_name"`

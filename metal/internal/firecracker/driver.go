@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 	"strconv"
 	"sync"
 	"time"
@@ -62,32 +63,45 @@ func (d *Driver) Create(ctx context.Context, spec vm.Spec) (_ vm.VM, err error) 
 		return nil, err
 	}
 
-	if err = d.cfg.writeJailerEnv(id, d.cfg.jailerArgs(id, uid, uid, nic.NetnsPath)); err != nil {
-		return nil, err
-	}
-	if err = d.units.Start(ctx, id); err != nil {
-		return nil, err
-	}
-	if err = d.units.SetLimits(ctx, id, limits(spec)); err != nil {
-		return nil, err
-	}
-
-	if err = waitSocket(ctx, vc.Sock); err != nil {
-		return nil, err
-	}
-	boot, err := d.images.Prepare(ctx, storage.Request{
-		VMID: id, Ref: spec.Image.Name, ChrootRoot: d.cfg.chrootRoot(id),
-		UID: uid, GID: uid, DiskMiB: spec.DiskMiB,
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	log.Printf("firecracker: vm %s kernel=%s cmdline=%q", id, boot.Kernel, bootArgs(boot, nic))
-	if err = configure(ctx, api.New(vc.Sock), spec, boot, nic); err != nil {
+	if err = d.bootPrep(ctx, vc, nic); err != nil {
 		return nil, err
 	}
 	return d.newMachine(vc), nil
+}
+
+// bootPrep (re)starts the VM's jailer unit and does all pre-boot configuration,
+// leaving the guest ready for InstanceStart. Shared by Create and relaunch.
+func (d *Driver) bootPrep(ctx context.Context, vc vmConfig, nic network.NIC) error {
+	if err := d.cfg.writeJailerEnv(vc.ID, d.cfg.jailerArgs(vc.ID, vc.UID, vc.GID, nic.NetnsPath)); err != nil {
+		return err
+	}
+	if err := d.units.Start(ctx, vc.ID); err != nil {
+		return err
+	}
+	if err := d.units.SetLimits(ctx, vc.ID, limits(vc.Spec)); err != nil {
+		return err
+	}
+	if err := waitSocket(ctx, vc.Sock); err != nil {
+		return err
+	}
+	boot, err := d.images.Prepare(ctx, storage.Request{
+		VMID: vc.ID, Ref: vc.Spec.Image.Name, ChrootRoot: d.cfg.chrootRoot(vc.ID),
+		UID: vc.UID, GID: vc.GID, DiskMiB: vc.Spec.DiskMiB,
+	})
+	if err != nil {
+		return err
+	}
+	log.Printf("firecracker: vm %s kernel=%s cmdline=%q", vc.ID, boot.Kernel, bootArgs(boot, nic))
+	return configure(ctx, api.New(vc.Sock), vc.Spec, boot, nic)
+}
+
+// relaunch brings a stopped VM back up: it clears the old unit and jailer chroot,
+// then re-runs bootPrep against the persisted disk and still-present netns,
+// leaving the guest ready for InstanceStart.
+func (d *Driver) relaunch(ctx context.Context, vc vmConfig) error {
+	_ = d.units.Stop(ctx, vc.ID)                            // clear any failed/leftover unit state
+	_ = os.RemoveAll(filepath.Dir(d.cfg.chrootRoot(vc.ID))) // jailer will not reuse an existing chroot
+	return d.bootPrep(ctx, vc, d.net.Resolve(vc.ID))
 }
 
 // allocate reserves a uid/gid and persists an initial config so a concurrent
@@ -118,6 +132,9 @@ const (
 	ifaceID     = "eth0"
 	mmdsAddr    = "169.254.169.254"
 	mmdsVersion = "V1" // simplest guest-side (plain GET); V2 adds token auth
+
+	rootDriveID   = "drive0"      // the first (root) drive, see configure
+	rootDrivePath = "/rootfs.img" // the in-chroot block node, see storage.Prepare
 )
 
 // configure sends firecracker its pre-boot configuration over the API socket.
