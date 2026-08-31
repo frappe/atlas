@@ -176,6 +176,7 @@ local function health()
 	local site_count = #sites:get_keys(0)
 	return send_json(200, {
 		ok = true,
+		boot_id = atlas_boot_id,
 		entries = site_count,
 		sites = site_count,
 		domains = #domains_http:get_keys(0),

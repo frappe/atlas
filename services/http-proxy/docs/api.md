@@ -1,7 +1,6 @@
 # Control API
 
-The control daemon listens on `127.0.0.1:9000` by default. Set the token in
-`ATLAS_CONTROL_TOKEN` and send it as a bearer token:
+The control daemon listens on `127.0.0.1:9000` by default. Set the token in `ATLAS_CONTROL_TOKEN` and send it as a bearer token:
 
 ```sh
 curl -H "Authorization: Bearer $ATLAS_CONTROL_TOKEN" \

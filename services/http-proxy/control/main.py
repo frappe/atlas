@@ -48,6 +48,7 @@ class ControlState:
         self.last_reconcile: float | None = None
         self.last_error: str | None = None
         self.proxy_ok = False
+        self.proxy_boot_id: str | None = None
 
     def load(self) -> None:
         try:
@@ -97,7 +98,12 @@ proxy = ProxyClient(_socket_path)
 
 async def reconcile() -> None:
     async with state.lock:
-        await _sync({"sites": state.sites, "domains": state.domains})
+        health = await _proxy_health()
+        boot_id = health["boot_id"]
+        if state.proxy_ok and state.proxy_boot_id == boot_id:
+            return
+        await _sync_maps({"sites": state.sites, "domains": state.domains})
+        state.proxy_boot_id = boot_id
         state.last_reconcile = time.time()
         state.last_error = None
         state.proxy_ok = True
@@ -226,15 +232,26 @@ async def _delete(kind: str, key: str) -> None:
 
 
 async def _sync(maps: dict[str, dict[str, str]]) -> None:
-    # A sync is also the daemon's recovery action after an OpenResty restart.
+    health = await _proxy_health()
+    await _sync_maps(maps)
+    state.proxy_boot_id = health["boot_id"]
+    state.proxy_ok = True
+    state.last_error = None
+
+
+async def _proxy_health() -> dict[str, Any]:
     health_status, health_body = await proxy.request("GET", "/v1/healthz")
     _check_proxy_response(health_status, health_body)
+    if not isinstance(health_body, dict) or not isinstance(health_body.get("boot_id"), str):
+        raise RuntimeError("proxy health response has no boot_id")
+    return health_body
+
+
+async def _sync_maps(maps: dict[str, dict[str, str]]) -> None:
     for kind in ("sites", "domains"):
         path = f"/v1/{kind}/sync"
         response_status, body = await proxy.request("POST", path, maps[kind])
         _check_proxy_response(response_status, body)
-    state.proxy_ok = True
-    state.last_error = None
 
 
 def _check_proxy_response(response_status: int, body: Any) -> None:
