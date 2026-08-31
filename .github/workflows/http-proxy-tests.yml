@@ -1,0 +1,42 @@
+name: Atlas HTTP proxy tests
+
+on:
+  pull_request:
+    paths:
+      - "services/http-proxy/**"
+  push:
+    branches:
+      - develop
+    paths:
+      - "services/http-proxy/**"
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/http-proxy
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install test tools
+        run: python -m pip install --upgrade pytest
+
+      - name: Start test stack
+        run: docker compose -f tests/docker/docker-compose.yml up --build -d
+
+      - name: Run tests
+        run: python -m pytest -q tests
+
+      - name: Stop test stack
+        if: always()
+        run: docker compose -f tests/docker/docker-compose.yml down -v
