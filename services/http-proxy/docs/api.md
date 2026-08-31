@@ -11,7 +11,7 @@ Unauthenticated lifecycle endpoints are available for systemd and monitoring:
 
 ```text
 GET /healthz  daemon is running
-GET /readyz   daemon has successfully reconciled with OpenResty
+GET /readyz   OpenResty admin API is available
 ```
 
 Authenticated configuration endpoints:
@@ -25,7 +25,7 @@ PUT    /v1/domains               replace all custom-domain mappings
 PATCH  /v1/domains/<name>        set one custom-domain mapping
 DELETE /v1/domains/<name>        remove one custom-domain mapping
 
-GET    /v1/state                 read daemon desired state
+GET    /v1/state                 read current OpenResty state
 ```
 
 Examples:

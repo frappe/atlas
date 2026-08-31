@@ -193,7 +193,6 @@ local function health()
 	local site_count = meta:get("sites_count") or 0
 	return send_json(200, {
 		ok = true,
-		boot_id = atlas_boot_id,
 		entries = site_count,
 		sites = site_count,
 		domains = meta:get("domains_http_count") or 0,

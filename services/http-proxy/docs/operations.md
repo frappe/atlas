@@ -29,16 +29,15 @@ curl -fsS -o /dev/null http://127.0.0.1:9000/readyz
 sudo systemctl status openresty.service atlas-proxy-control.service
 ```
 
-After restarting OpenResty, `readyz` may briefly return `503`. The daemon retries every five seconds and returns `204` after it has restored both maps.
+After restarting OpenResty, `readyz` may briefly return `503` while OpenResty loads its persisted maps. It returns `204` when the admin API is available.
 
-After restarting the daemon, it loads `control-state.json` before starting its reconciliation loop. State-file writes are debounced for one second, so a burst of changes becomes one atomic write. A missing or invalid state file is an error and prevents a misconfigured daemon from claiming readiness.
+Restarting the control daemon does not change proxy configuration. The daemon reads current maps from OpenResty when `/v1/state` is requested and forwards later changes directly to the admin API.
 
 ## Logs and state
 
 ```sh
 journalctl -u atlas-proxy-control.service -f
 journalctl -u openresty.service -f
-cat /var/lib/nginx/control-state.json
 ```
 
-The control daemon must be able to read `/run/nginx/admin.sock` and write `/var/lib/nginx/control-state.json`. The build creates both paths for the `nginx` service account.
+The control daemon must be able to access `/run/nginx/admin.sock`. OpenResty must be able to read and write its persisted map files under `/var/lib/nginx`.
