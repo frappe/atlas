@@ -12,5 +12,5 @@ Install:
     systemctl daemon-reload
     systemctl enable --now metal.service
 
-Host prerequisites: `firecracker` and `jailer` on `PATH`, `/dev/kvm`, a thin
-LVM pool (`scripts/lvm-setup.sh`), and forwarding/NAT (`scripts/net-setup.sh`).
+Host prerequisites: `firecracker` and `jailer` on `PATH`, `/dev/kvm`, a ZFS
+pool (`scripts/zfs-setup.sh`), and forwarding/NAT (`scripts/net-setup.sh`).
