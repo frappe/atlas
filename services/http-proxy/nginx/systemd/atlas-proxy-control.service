@@ -1,0 +1,18 @@
+[Unit]
+Description=Atlas proxy control daemon
+Requires=openresty.service
+After=openresty.service
+
+[Service]
+Type=simple
+User=root
+Group=root
+EnvironmentFile=-/etc/default/atlas-proxy-control
+ExecStart=/opt/atlas/proxy-control/bin/python -m proxy_control.main
+Restart=on-failure
+RestartSec=2s
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

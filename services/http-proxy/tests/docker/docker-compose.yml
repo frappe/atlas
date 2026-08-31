@@ -1,0 +1,81 @@
+
+services:
+  proxy:
+    build:
+      context: ../..         # the service root, including nginx/ and tests/
+      dockerfile: tests/docker/Dockerfile
+    image: test-proxy:latest  # a name, thus proxy-noregion uses the same image
+    networks:
+      sixnet:
+        ipv4_address: 172.30.0.10
+    ports:
+      - "127.0.0.1:8443:443"
+      - "127.0.0.1:8080:80"
+    depends_on:
+      - vm-a
+      - vm-b
+      - vm-bad
+      - tls-vm
+
+  proxy-noregion:
+    image: test-proxy:latest
+    networks:
+      sixnet:
+        ipv4_address: 172.30.0.11
+    ports:
+      - "127.0.0.1:8444:443"
+    entrypoint:
+      - /bin/sh
+      - -c
+      - ": > /var/lib/nginx/region && mkdir -p /run/nginx && exec /usr/local/openresty/nginx/sbin/nginx -g 'daemon off;' -c /etc/nginx/nginx.conf"
+    depends_on:
+      - proxy   # thus the image exists before this service uses it
+      - vm-a
+      - vm-b
+
+  vm-a:
+    build:
+      context: fixtures
+      dockerfile: upstream.Dockerfile
+    environment:
+      UPSTREAM_NAME: vm-a
+    networks:
+      sixnet:
+        ipv6_address: fd00:a71a:5::a
+
+  vm-b:
+    build:
+      context: fixtures
+      dockerfile: upstream.Dockerfile
+    environment:
+      UPSTREAM_NAME: vm-b
+    networks:
+      sixnet:
+        ipv6_address: fd00:a71a:5::b
+
+  tls-vm:
+    build:
+      context: fixtures
+      dockerfile: tls_upstream.Dockerfile
+    environment:
+      UPSTREAM_NAME: tls-vm
+      CUSTOM_DOMAIN: tls-vm.custom.example
+    networks:
+      sixnet:
+        ipv6_address: fd00:a71a:5::7a
+
+  vm-bad:
+    build:
+      context: fixtures
+      dockerfile: misbehave.Dockerfile
+    networks:
+      sixnet:
+        ipv6_address: fd00:a71a:5::bad
+
+networks:
+  sixnet:
+    enable_ipv6: true
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
+        - subnet: fd00:a71a:5::/64
