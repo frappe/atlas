@@ -55,7 +55,7 @@ the VM** to apply them (brief downtime).
 
 ## Snapshots
 
-Disk (LVM) snapshots of a VM — distinct from VM-state/memory snapshots (deferred).
+Disk (ZFS) snapshots of a VM — distinct from VM-state/memory snapshots (deferred).
 
 ```json
 { "name": "pre-upgrade", "vm_id": "a1b2c3d4e5f6a7b8", "size_mib": 2048, "used_mib": 12 }
@@ -69,8 +69,9 @@ Disk (LVM) snapshots of a VM — distinct from VM-state/memory snapshots (deferr
 | `POST` | `/vms/{id}/snapshots/{name}/restore` | roll disk back |
 
 **Create** is crash-consistent while running (clean/fsfreeze later, needs a guest
-agent). **Restore** replaces the disk in place; VM keeps its id/network but must
-be **stopped** → `409` otherwise.
+agent). **Restore** rolls the disk back in place (`zfs rollback -r`, so any
+snapshots newer than the target are discarded); the VM keeps its id/network but
+must be **stopped** → `409` otherwise.
 
 ## Errors
 

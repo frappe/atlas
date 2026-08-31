@@ -91,14 +91,19 @@ step "zfs pool ($POOL_SIZE)"
 # A file vdev: zpool uses the image file directly, so no loop device is needed.
 img=$(realpath -m "$BULK")/pool.img
 [[ -f $img ]] || truncate -s "$POOL_SIZE" "$img"
+# zpool create -f <pool> <file>: create the pool on the image; -f lets a plain
+# file act as the vdev (zpool otherwise expects a whole disk/partition).
 zpool list "$POOL" >/dev/null 2>&1 || zpool create -f "$POOL" "$img"
 
 step "base-ubuntu image"
 if ! zfs list "$POOL/base/ubuntu" >/dev/null 2>&1; then
 	bytes=$(stat -c %s "$rootfs")
+	# zfs create -V <size> -o volblocksize=16k: a zvol (raw block device) of the
+	# given provisioned size, 16k record size (per-VM clones inherit it).
 	zfs create -V "$((bytes / 1024 / 1024 + 64))M" -o volblocksize=16k "$POOL/base/ubuntu"
-	udevadm settle
+	udevadm settle  # wait for /dev/zvol/... to appear
 	dd if="$rootfs" of="/dev/zvol/$POOL/base/ubuntu" bs=4M conv=sparse,fsync status=none
+	# zfs snapshot <base>@ready: the read-only source every per-VM clone branches from.
 	zfs snapshot "$POOL/base/ubuntu@ready"
 fi
 

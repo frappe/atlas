@@ -2,6 +2,7 @@ package firecracker
 
 import (
 	"context"
+	"errors"
 	"os"
 	"syscall"
 
@@ -76,7 +77,7 @@ func (m *machine) Info(ctx context.Context) (vm.Info, error) {
 	if err != nil {
 		return vm.Info{}, err
 	}
-	return vm.Info{
+	info := vm.Info{
 		ID:      m.cfg.ID,
 		State:   m.state(ctx, st),
 		PID:     st.PID,
@@ -88,7 +89,17 @@ func (m *machine) Info(ctx context.Context) (vm.Info, error) {
 		DiskMiB: m.cfg.Spec.DiskMiB,
 		Image:   m.cfg.Spec.Image.Name,
 		Network: m.cfg.Spec.Network.Name,
-	}, nil
+	}
+	// Disk size/usage/snapshot count are best-effort: a missing zvol (e.g. a
+	// half-built VM) must not fail Info.
+	if u, err := m.images.Usage(ctx, m.cfg.ID); err == nil {
+		if u.SizeMiB > 0 {
+			info.DiskMiB = u.SizeMiB
+		}
+		info.DiskUsedMiB = u.UsedMiB
+		info.Snapshots = u.Snapshots
+	}
+	return info, nil
 }
 
 // state derives the VM state from the unit plus firecracker: systemd knows if
@@ -114,9 +125,54 @@ func (m *machine) state(ctx context.Context, st systemd.Status) vm.State {
 	}
 }
 
-// Snapshot is deferred: the current milestone excludes snapshotting.
+// Snapshot is deferred: the current milestone excludes memory snapshotting.
 func (m *machine) Snapshot(ctx context.Context, dir string, typ vm.SnapshotType) (vm.Snapshot, error) {
 	return vm.Snapshot{}, errNotImplemented
+}
+
+// DiskSnapshot takes a named snapshot of the VM's rootfs disk.
+func (m *machine) DiskSnapshot(ctx context.Context, name string) error {
+	return storageErr(m.images.Snapshot(ctx, m.cfg.ID, name))
+}
+
+// DiskSnapshots lists the VM's disk snapshots.
+func (m *machine) DiskSnapshots(ctx context.Context) ([]vm.DiskSnapshot, error) {
+	snaps, err := m.images.Snapshots(ctx, m.cfg.ID)
+	if err != nil {
+		return nil, storageErr(err)
+	}
+	out := make([]vm.DiskSnapshot, len(snaps))
+	for i, s := range snaps {
+		out[i] = vm.DiskSnapshot{Name: s.Name, SizeMiB: s.SizeMiB, UsedMiB: s.UsedMiB}
+	}
+	return out, nil
+}
+
+// DeleteDiskSnapshot removes one disk snapshot.
+func (m *machine) DeleteDiskSnapshot(ctx context.Context, name string) error {
+	return storageErr(m.images.DeleteSnapshot(ctx, m.cfg.ID, name))
+}
+
+// RestoreDiskSnapshot rolls the disk back to a snapshot. The VM must be stopped
+// (no live firecracker holding the disk), else ErrConflict.
+func (m *machine) RestoreDiskSnapshot(ctx context.Context, name string) error {
+	st, err := m.units.Status(ctx, m.cfg.ID)
+	if err != nil {
+		return err
+	}
+	if s := m.state(ctx, st); s != vm.StateStopped && s != vm.StateFailed {
+		return vm.ErrConflict
+	}
+	return storageErr(m.images.Restore(ctx, m.cfg.ID, name))
+}
+
+// storageErr maps storage's not-found sentinel to the vm-layer one so the API
+// returns 404.
+func storageErr(err error) error {
+	if errors.Is(err, storage.ErrNotFound) {
+		return vm.ErrNotFound
+	}
+	return err
 }
 
 var _ vm.VM = (*machine)(nil)

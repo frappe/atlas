@@ -40,7 +40,9 @@ type vmResp struct {
 }
 
 type diskResp struct {
-	SizeMiB int `json:"size_mib"`
+	SizeMiB   int `json:"size_mib"`
+	UsedMiB   int `json:"used_mib"`
+	Snapshots int `json:"snapshots"`
 }
 
 func toVM(i vm.Info) vmResp {
@@ -54,6 +56,21 @@ func toVM(i vm.Info) vmResp {
 		IP:      i.IP,
 		MAC:     i.MAC,
 		PID:     i.PID,
-		Disk:    diskResp{SizeMiB: i.DiskMiB},
+		Disk:    diskResp{SizeMiB: i.DiskMiB, UsedMiB: i.DiskUsedMiB, Snapshots: i.Snapshots},
 	}
+}
+
+type snapReq struct {
+	Name string `json:"name"`
+}
+
+type snapResp struct {
+	Name    string `json:"name"`
+	VMID    string `json:"vm_id"`
+	SizeMiB int    `json:"size_mib"`
+	UsedMiB int    `json:"used_mib"`
+}
+
+func toSnap(vmID string, s vm.DiskSnapshot) snapResp {
+	return snapResp{Name: s.Name, VMID: vmID, SizeMiB: s.SizeMiB, UsedMiB: s.UsedMiB}
 }
