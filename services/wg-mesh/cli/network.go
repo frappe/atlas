@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"net"
@@ -155,6 +156,10 @@ func parseMeshAddress(addressText string) ([16]byte, error) {
 		return [16]byte{}, fmt.Errorf("%q is not in fdaa::/16", addressText)
 	}
 	return meshAddress, nil
+}
+
+func meshTenant(address [16]byte) uint32 {
+	return binary.BigEndian.Uint32(address[4:8])
 }
 
 func announceVirtualMachine(address [16]byte, config hostConfig) error {

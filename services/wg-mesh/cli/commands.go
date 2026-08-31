@@ -288,7 +288,15 @@ func showStatus() error {
 	if err != nil {
 		return err
 	}
-	fmt.Printf("discovery interface: %s\nlocal VMs: %d\nremote locations: %d/%d\nWireGuard address: %s\n", discoveryInterfaceName(config), count, remoteCount, remoteCapacity, netip.AddrFrom16(config.WireGuardIPv6))
+	privilegedVMs, err := privilegedTenantAllowedAddresses()
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	privilegedCount := "unavailable"
+	if err == nil {
+		privilegedCount = fmt.Sprint(len(privilegedVMs))
+	}
+	fmt.Printf("discovery interface: %s\nlocal VMs: %d\nprivileged VMs: %s\nremote locations: %d/%d\nWireGuard address: %s\n", discoveryInterfaceName(config), count, privilegedCount, remoteCount, remoteCapacity, netip.AddrFrom16(config.WireGuardIPv6))
 	if config.WhoHasRate == 0 {
 		fmt.Println("WHO_HAS rate limit: disabled")
 	} else {
