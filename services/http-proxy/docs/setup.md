@@ -40,8 +40,8 @@ The setup script enables both services. They start when the VM starts after the 
 
 ```sh
 sudo systemctl status openresty.service atlas-proxy-control.service
-curl -kfsS -H "Authorization: Bearer $ATLAS_CONTROL_PASSWORD" https://127.0.0.1:9000/healthz
-curl -kfsS -H "Authorization: Bearer $ATLAS_CONTROL_PASSWORD" -o /dev/null https://127.0.0.1:9000/readyz
+curl -fsS -H "Authorization: Bearer $ATLAS_CONTROL_PASSWORD" http://127.0.0.1:9000/healthz
+curl -fsS -H "Authorization: Bearer $ATLAS_CONTROL_PASSWORD" -o /dev/null http://127.0.0.1:9000/readyz
 ```
 
 5. Send the wildcard certificate and the full maps from the controller.

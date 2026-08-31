@@ -1,31 +1,24 @@
 import asyncio
 import socket
-from pathlib import Path
 
 import uvicorn
 from fastapi import FastAPI
 
 
-def run(app: FastAPI, port: int, cert_file: Path, key_file: Path) -> None:
+def run(app: FastAPI, port: int) -> None:
     try:
-        asyncio.run(_serve(app, port, cert_file, key_file))
+        asyncio.run(_serve(app, port))
     except KeyboardInterrupt:
         pass
 
 
-async def _serve(app: FastAPI, port: int, cert_file: Path, key_file: Path) -> None:
+async def _serve(app: FastAPI, port: int) -> None:
     listeners = [
         _listener(socket.AF_INET, "0.0.0.0", port),
         _listener(socket.AF_INET6, "::", port),
     ]
     try:
-        config = uvicorn.Config(
-            app,
-            log_level="info",
-            ssl_certfile=str(cert_file),
-            ssl_keyfile=str(key_file),
-        )
-        await uvicorn.Server(config).serve(sockets=listeners)
+        await uvicorn.Server(uvicorn.Config(app, log_level="info")).serve(sockets=listeners)
     finally:
         for listener in listeners:
             listener.close()

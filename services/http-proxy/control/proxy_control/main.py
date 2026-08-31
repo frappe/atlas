@@ -54,23 +54,17 @@ class Authentication:
             return False
 
 
-def _config() -> tuple[int, str, Path, Path, Path, Path]:
+def _config() -> tuple[int, str, Path, Path]:
     port = int(os.environ.get("ATLAS_CONTROL_PORT", "9000"))
     socket_path = os.environ.get("ATLAS_PROXY_ADMIN_SOCKET", "/run/nginx/admin.sock")
     cert_dir = Path(os.environ.get("ATLAS_PROXY_CERT_DIR", "/var/lib/nginx/certs"))
     auth_file = Path(
         os.environ.get("ATLAS_CONTROL_AUTH_FILE", "/etc/atlas/proxy-control.htpasswd")
     )
-    cert_file = Path(
-        os.environ.get("ATLAS_CONTROL_TLS_CERT_FILE", "/var/lib/nginx/certs/fullchain.pem")
-    )
-    key_file = Path(
-        os.environ.get("ATLAS_CONTROL_TLS_KEY_FILE", "/var/lib/nginx/certs/privkey.pem")
-    )
-    return port, socket_path, cert_dir, auth_file, cert_file, key_file
+    return port, socket_path, cert_dir, auth_file
 
 
-_port, _socket_path, _cert_dir, _auth_file, _cert_file, _key_file = _config()
+_port, _socket_path, _cert_dir, _auth_file = _config()
 auth = Authentication(_auth_file)
 proxy = ProxyClient(_socket_path)
 maps = MappingStore(proxy)
@@ -146,4 +140,4 @@ def update_certificate(update: CertificateUpdate) -> dict[str, str | bool]:
 
 
 if __name__ == "__main__":
-    run(app, _port, _cert_file, _key_file)
+    run(app, _port)
