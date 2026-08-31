@@ -3,6 +3,7 @@ import shutil
 import ssl
 import subprocess
 import tempfile
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -20,8 +21,13 @@ class CertificateStore:
 
     def __init__(self, directory: Path):
         self.directory = directory
+        self._lock = threading.Lock()
 
     def install(self, wildcard_domain: str, fullchain_pem: str, private_key_pem: str) -> str:
+        with self._lock:
+            return self._install(wildcard_domain, fullchain_pem, private_key_pem)
+
+    def _install(self, wildcard_domain: str, fullchain_pem: str, private_key_pem: str) -> str:
         wildcard = wildcard_domain.strip().lower()
         region = self._region(wildcard)
         target = self.directory / region
