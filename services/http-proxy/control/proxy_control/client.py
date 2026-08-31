@@ -4,6 +4,8 @@ import httpx
 
 
 class ProxyClient:
+    """Send asynchronous HTTP requests to OpenResty through its Unix socket."""
+
     def __init__(self, socket_path: str):
         self.client = httpx.AsyncClient(
             transport=httpx.AsyncHTTPTransport(uds=socket_path),

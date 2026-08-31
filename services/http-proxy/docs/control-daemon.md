@@ -1,6 +1,6 @@
 # Control daemon
 
-The control daemon is the main API for the controller. It listens on `0.0.0.0:9000` and `[::]:9000` by default.
+The control daemon is the main API for the controller. It listens on HTTPS at `0.0.0.0:9000` and `[::]:9000` by default.
 
 The daemon reads the OpenResty maps through a Unix socket. The daemon does not store a second copy of the maps.
 
@@ -12,11 +12,13 @@ Send the raw password in a bearer token. The daemon checks the password against 
 
 ```sh
 export ATLAS_CONTROL_PASSWORD='replace-with-the-raw-password'
-export ATLAS_CONTROL_URL='http://[2001:db8::1]:9000'
+export ATLAS_CONTROL_URL='https://control.iad.frappe.dev:9000'
 curl -H "Authorization: Bearer $ATLAS_CONTROL_PASSWORD" "$ATLAS_CONTROL_URL/v1/state"
 ```
 
 The daemon returns `401` if the file is missing, empty, not valid, or does not match the password.
+
+The daemon uses the active proxy wildcard certificate for HTTPS. Use a hostname covered by that certificate in `ATLAS_CONTROL_URL`. Restart the control daemon after a certificate update so it loads the new certificate.
 
 ## Health endpoints
 

@@ -1,11 +1,23 @@
 import os
+import shutil
 import ssl
 import subprocess
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 
 
+@dataclass
+class _State:
+    region: tuple[bytes, int] | None
+    links: dict[str, str | None]
+    files: dict[str, tuple[bytes, int] | None]
+    target_existed: bool
+
+
 class CertificateStore:
+    """Validate, install, and activate the regional proxy certificate."""
+
     def __init__(self, directory: Path):
         self.directory = directory
 
@@ -13,10 +25,11 @@ class CertificateStore:
         wildcard = wildcard_domain.strip().lower()
         region = self._region(wildcard)
         target = self.directory / region
-        target.mkdir(mode=0o750, parents=True, exist_ok=True)
+        state = self._save_state(region)
 
         certificate = private_key = None
         try:
+            target.mkdir(mode=0o750, parents=True, exist_ok=True)
             certificate = self._write_temp(target, fullchain_pem.encode(), 0o644)
             private_key = self._write_temp(target, private_key_pem.encode(), 0o640)
             self._validate_pair(certificate, private_key)
@@ -28,13 +41,69 @@ class CertificateStore:
             self._write_region(region)
             self._activate(region)
             self._reload_openresty()
-        except OSError as error:
-            raise RuntimeError("cannot install proxy certificate") from error
+        except (OSError, RuntimeError, ValueError) as error:
+            self._restore_state(region, state)
+            if isinstance(error, OSError):
+                raise RuntimeError("cannot install proxy certificate") from error
+            raise
         finally:
             for path in (certificate, private_key):
                 if path:
                     Path(path).unlink(missing_ok=True)
         return region
+
+    def _save_state(self, region: str) -> _State:
+        target = self.directory / region
+        region_path = self.directory.parent / "region"
+        links = {
+            name: os.readlink(self.directory / name)
+            if (self.directory / name).is_symlink()
+            else None
+            for name in ("fullchain.pem", "privkey.pem")
+        }
+        files = {
+            name: self._read_file(target / name)
+            for name in ("fullchain.pem", "privkey.pem")
+        }
+        return _State(
+            region=self._read_file(region_path),
+            links=links,
+            files=files,
+            target_existed=target.exists(),
+        )
+
+    def _restore_state(self, region: str, state: _State) -> None:
+        target = self.directory / region
+        if state.target_existed:
+            for name, value in state.files.items():
+                path = target / name
+                path.unlink(missing_ok=True)
+                if value:
+                    self._write_file(path, *value)
+        else:
+            shutil.rmtree(target, ignore_errors=True)
+
+        for name, link_target in state.links.items():
+            link = self.directory / name
+            link.unlink(missing_ok=True)
+            if link_target:
+                link.symlink_to(link_target)
+
+        region_path = self.directory.parent / "region"
+        region_path.unlink(missing_ok=True)
+        if state.region:
+            self._write_file(region_path, *state.region)
+
+    def _read_file(self, path: Path) -> tuple[bytes, int] | None:
+        if not path.is_file():
+            return None
+        return path.read_bytes(), path.stat().st_mode & 0o777
+
+    def _write_file(self, path: Path, content: bytes, mode: int) -> None:
+        temporary = path.with_name(f".{path.name}.restore")
+        temporary.write_bytes(content)
+        os.chmod(temporary, mode)
+        os.replace(temporary, path)
 
     def _region(self, wildcard: str) -> str:
         if not wildcard.startswith("*."):

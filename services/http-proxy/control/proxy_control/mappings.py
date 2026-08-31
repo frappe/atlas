@@ -6,6 +6,8 @@ from .client import ProxyClient
 
 
 class MappingStore:
+    """Read and change site and custom-domain maps in OpenResty."""
+
     def __init__(self, client: ProxyClient):
         self.client = client
 
