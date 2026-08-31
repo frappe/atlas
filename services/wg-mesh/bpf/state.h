@@ -3,7 +3,7 @@
 #ifndef ATLAS_STATE_H
 #define ATLAS_STATE_H
 
-#include "protocol.h"
+#include "address.h"
 
 /* VMs connected to this host. The value is the ifindex of the interface that owns
  * the VM, so one VM cannot send traffic with another VM's source address. */
@@ -14,6 +14,16 @@ struct
 	__type(value, __u32);
 	__uint(max_entries, 4096);
 } local_vms SEC(".maps");
+
+/* Privileged-tenant addresses allowed to communicate with other tenants. The
+ * controller keeps this whitelist in sync on every host. */
+struct
+{
+	__uint(type, BPF_MAP_TYPE_HASH);
+	__type(key, struct in6_addr);
+	__type(value, __u8);
+	__uint(max_entries, 4096);
+} privileged_tenant_allowed_addresses SEC(".maps");
 
 /* Learned remote VM-to-WireGuard-host locations. A miss sends WHO_HAS. */
 struct
@@ -77,6 +87,22 @@ static __always_inline int owns_source_address(
 	__u32 *owner = bpf_map_lookup_elem(&local_vms, virtual_machine);
 
 	return owner && *owner == ifindex;
+}
+
+/* Cross-tenant traffic is permitted only when one endpoint is a whitelisted
+ * privileged-tenant address. This preserves request and response traffic. */
+static __always_inline int tenants_can_communicate(
+	const struct in6_addr *source, const struct in6_addr *destination)
+{
+	if (get_tenant(source) == get_tenant(destination))
+		return 1;
+
+	if (get_tenant(source) == 0 &&
+		bpf_map_lookup_elem(&privileged_tenant_allowed_addresses, source) != NULL)
+		return 1;
+
+	return get_tenant(destination) == 0 &&
+		   bpf_map_lookup_elem(&privileged_tenant_allowed_addresses, destination) != NULL;
 }
 
 /* Get the remote location (WireGuard address of the bare metal host) of the given VM. */

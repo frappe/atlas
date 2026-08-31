@@ -14,6 +14,7 @@ The `atlas-wg-mesh` CLI configures local host and VM lifecycle state. It embeds 
   - [Move a VM](#move-a-vm)
   - [Remove a VM](#remove-a-vm)
   - [List local VM ownership](#list-local-vm-ownership)
+  - [Manage privileged VMs](#manage-privileged-vms)
   - [Rejoin after a dead declaration](#rejoin-after-a-dead-declaration)
   - [Check status](#check-status)
   - [Debug in production](#debug-in-production)
@@ -39,7 +40,7 @@ Atlas WG Mesh pins state at `/sys/fs/bpf/atlas-wg-mesh`.
 | WireGuard MTU              | 1420                                                                                        |
 | VM interface and guest MTU | 1380                                                                                        |
 
-Discovery uses IPv4 multicast with a time to live of `1`. Restrict this Layer-2 domain to trusted participating hosts: `WHO_HAS`, `FOUND`, and `NOW_HERE` messages are not authenticated. Tenant `0` can communicate with every tenant, so reserve it for trusted platform services.
+Discovery uses IPv4 multicast with a time to live of `1`. Restrict this Layer-2 domain to trusted participating hosts: `WHO_HAS`, `FOUND`, and `NOW_HERE` messages are not authenticated. Cross-tenant traffic is permitted only when one endpoint is a controller-whitelisted privileged tenant-`0` VM address, so reserve those addresses for trusted platform services.
 
 ## Build a release
 
@@ -105,7 +106,7 @@ Run this command before you delete the VM interface:
 atlas-wg-mesh vm remove --interface veth0 --address fdaa:1:0:7::1
 ```
 
-The command removes the VM hook, the local BPF map entry, and the host route.
+The command removes the VM hook, the local BPF map entry, and the host route. It does not change privileged-VM policy: when an address is retired or reassigned, the controller must remove it from the privileged VM whitelist separately.
 
 ## List local VM ownership
 
@@ -128,6 +129,19 @@ An `ifindex:N` value means the registered interface no longer exists.
 
 To clear that single orphaned ownership entry, run `vm remove` with the missing interface name and VM address. The command removes the map entry without resetting the rest of the host.
 
+## Manage privileged VMs
+
+Tenant-`0` is the privileged tenant. A privileged VM can communicate with other tenants only after the controller adds its full IPv6 address to the whitelist on each host. Other tenants can communicate only with those whitelisted privileged VMs, which preserves request and response traffic without exposing every tenant-`0` VM:
+
+```sh
+atlas-wg-mesh privileged-vm add --address fdaa:1:0:0::1
+atlas-wg-mesh privileged-vm remove --address fdaa:1:0:0::1
+atlas-wg-mesh privileged-vm list
+atlas-wg-mesh privileged-vm list --json
+```
+
+`list --json` returns an array of objects with an `address` field, matching the shape used by `vm list --json`. The controller owns reconciliation: compare those addresses with the desired privileged-tenant VM addresses, and use `add` and `remove` to apply the difference. The whitelist is BPF state shared by all local hooks, so its desired contents must be synced to every Atlas WG Mesh host.
+
 ## Rejoin after a dead declaration
 
 This is the normal controller rejoin path. It preserves the uplink and WireGuard hooks, healthy VM registrations, and learned remote locations:
@@ -147,7 +161,7 @@ Reconcile immediately when the host reconnects. Until stale entries are removed,
 
 ## Check status
 
-Run this command to show the host configuration and local VM count:
+Run this command to show the host configuration, local VM count, and privileged-VM count:
 
 ```sh
 atlas-wg-mesh status
@@ -166,7 +180,7 @@ Run the newer CLI binary on the host:
 atlas-wg-mesh upgrade
 ```
 
-It compares the embedded BPF hash, keeps compatible pinned maps, and replaces every Atlas WG Mesh hook. If the embedded BPF hash differs and maps are incompatible, run `atlas-wg-mesh upgrade --force`; it rebuilds BPF state, restores local VMs from their routes, and clears learned remote locations. When the hashes already match, `upgrade --force` does nothing.
+It compares the embedded BPF hash, keeps compatible pinned maps including `privileged_tenant_allowed_addresses`, and replaces every Atlas WG Mesh hook. If the embedded BPF hash differs and maps are incompatible, run `atlas-wg-mesh upgrade --force`; it rebuilds BPF state, restores local VMs from their routes, and clears learned remote locations. When the hashes already match, `upgrade --force` does nothing.
 
 Use `atlas-wg-mesh version` to show CLI and BPF hashes.
 
@@ -201,4 +215,4 @@ atlas-wg-mesh configure --uplink eth0 --wireguard wg0
 atlas-wg-mesh vm add --interface veth0 --address fdaa:1:0:7::1 --mtu 1380
 ```
 
-A forced reset also clears `remote_vms`; discovery rebuilds those entries.
+A forced reset also clears `remote_vms` and `privileged_tenant_allowed_addresses`; discovery rebuilds remote locations, while the controller must reconcile privileged VMs again.

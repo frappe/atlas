@@ -29,6 +29,11 @@ func init() {
 	removeVirtualMachineCommand.MarkFlagRequired("interface")
 	removeVirtualMachineCommand.MarkFlagRequired("address")
 	listVirtualMachinesCommand.Flags().BoolVar(&listVirtualMachinesJSON, "json", false, "print JSON")
+	addPrivilegedVMCommand.Flags().StringVar(&privilegedVMAddress, "address", "", "privileged VM IPv6 address")
+	addPrivilegedVMCommand.MarkFlagRequired("address")
+	removePrivilegedVMCommand.Flags().StringVar(&privilegedVMAddress, "address", "", "privileged VM IPv6 address")
+	removePrivilegedVMCommand.MarkFlagRequired("address")
+	listPrivilegedVMCommand.Flags().BoolVar(&listPrivilegedVMJSON, "json", false, "print JSON")
 	resetCommand.Flags().BoolVar(&resetForce, "force", false, "detach VM hooks and remove BPF state even when local VM entries remain")
 
 	inspectCommand.Flags().StringVar(&inspectAddressText, "address", "", "VM IPv6 address")
@@ -48,10 +53,11 @@ func init() {
 	upgradeCommand.Flags().BoolVar(&upgradeForce, "force", false, "allow a state-breaking upgrade")
 
 	virtualMachineCommand.AddCommand(addVirtualMachineCommand, removeVirtualMachineCommand, listVirtualMachinesCommand)
+	privilegedVMCommand.AddCommand(addPrivilegedVMCommand, removePrivilegedVMCommand, listPrivilegedVMCommand)
 	debugCommand.AddCommand(debugStatusCommand, debugEnableCommand, debugDisableCommand, inspectCommand, dumpCommand, topCommand)
 	remoteCommand.AddCommand(remotePurgeCommand)
 	discoveryRelayCommand.Flags().BoolVar(&discoveryVerbose, "verbose", false, "log relayed discovery messages")
-	rootCommand.AddCommand(configureCommand, statusCommand, virtualMachineCommand, remoteCommand, debugCommand, discoveryRelayCommand, upgradeCommand, versionCommand, resetCommand)
+	rootCommand.AddCommand(configureCommand, statusCommand, virtualMachineCommand, privilegedVMCommand, remoteCommand, debugCommand, discoveryRelayCommand, upgradeCommand, versionCommand, resetCommand)
 }
 
 func main() {

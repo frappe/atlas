@@ -23,13 +23,6 @@ static __always_inline __be32 get_tenant(const struct in6_addr *ipv6_address)
 	return ipv6_address->s6_addr32[1];
 }
 
-static __always_inline int tenants_can_communicate(const struct in6_addr *source, const struct in6_addr *destination)
-{
-	/* Tenant zero is reserved for trusted shared services such as proxies. */
-	return !get_tenant(source) || !get_tenant(destination) ||
-		   get_tenant(source) == get_tenant(destination);
-}
-
 static __always_inline int are_ipv6_addresses_equal(const struct in6_addr *left, const struct in6_addr *right)
 {
 	return left->s6_addr32[0] == right->s6_addr32[0] &&

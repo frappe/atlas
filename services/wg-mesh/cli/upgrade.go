@@ -205,7 +205,7 @@ func virtualMachineInterfaces() (map[[16]byte]string, error) {
 }
 
 func existingMaps() (map[string]*ebpf.Map, func(), error) {
-	names := []string{"config", "local_vms", "remote_vms", "discovery_limits", "debug_config", "debug_stats", "debug_events", "build_hash"}
+	names := []string{"config", "local_vms", privilegedTenantAllowedAddressesMap, "remote_vms", "discovery_limits", "debug_config", "debug_stats", "debug_events", "build_hash"}
 	maps := make(map[string]*ebpf.Map)
 	for _, name := range names {
 		bpfMap, err := openMap(name)
