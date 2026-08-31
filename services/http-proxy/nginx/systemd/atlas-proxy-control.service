@@ -5,8 +5,8 @@ After=openresty.service
 
 [Service]
 Type=simple
-User=nginx
-Group=nginx
+User=root
+Group=root
 EnvironmentFile=-/etc/default/atlas-proxy-control
 ExecStart=/opt/atlas/proxy-control/bin/python -m main
 Restart=on-failure

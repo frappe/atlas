@@ -26,6 +26,7 @@ PATCH  /v1/domains/<name>        set one custom-domain mapping
 DELETE /v1/domains/<name>        remove one custom-domain mapping
 
 GET    /v1/state                 read current OpenResty state
+PUT    /v1/certificate           replace the active regional wildcard certificate
 ```
 
 Examples:
@@ -38,7 +39,14 @@ curl -X PATCH -H "Authorization: Bearer $ATLAS_CONTROL_TOKEN" \
 
 curl -X DELETE -H "Authorization: Bearer $ATLAS_CONTROL_TOKEN" \
   http://127.0.0.1:9000/v1/domains/example.com
+
+curl -X PUT -H "Authorization: Bearer $ATLAS_CONTROL_TOKEN" \
+  -H 'Content-Type: application/json' \
+  --data-binary @certificate.json \
+  http://127.0.0.1:9000/v1/certificate
 ```
+
+The certificate request body must contain `fullchain_pem` and `private_key_pem`. The daemon validates that they match, writes them atomically for the region in `/var/lib/nginx/region`, validates OpenResty, and performs a graceful reload.
 
 The daemon accepts raw IPv6 addresses. It validates and forwards them to the OpenResty API, which adds the correct port for each traffic path.
 

@@ -1,7 +1,10 @@
 import asyncio
 import os
 import secrets
+import subprocess
+import tempfile
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Annotated, Any
 
 import httpx
@@ -13,6 +16,13 @@ class AddressUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     address: str = Field(min_length=1)
+
+
+class CertificateUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    fullchain_pem: str = Field(min_length=1, max_length=1024 * 1024)
+    private_key_pem: str = Field(min_length=1, max_length=1024 * 1024)
 
 
 class ProxyClient:
@@ -36,14 +46,15 @@ class ProxyClient:
         await self.client.aclose()
 
 
-def _config() -> tuple[str, int, str]:
+def _config() -> tuple[str, int, str, Path]:
     host = os.environ.get("ATLAS_CONTROL_HOST", "127.0.0.1")
     port = int(os.environ.get("ATLAS_CONTROL_PORT", "9000"))
     socket_path = os.environ.get("ATLAS_PROXY_ADMIN_SOCKET", "/run/nginx/admin.sock")
-    return host, port, socket_path
+    cert_dir = Path(os.environ.get("ATLAS_PROXY_CERT_DIR", "/var/lib/nginx/certs"))
+    return host, port, socket_path, cert_dir
 
 
-_host, _port, _socket_path = _config()
+_host, _port, _socket_path, _cert_dir = _config()
 proxy = ProxyClient(_socket_path)
 
 
@@ -121,6 +132,17 @@ async def delete_domain(key: str) -> Response:
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
+@app.put("/v1/certificate", dependencies=[Depends(authenticated)])
+async def update_certificate(update: CertificateUpdate) -> dict[str, str]:
+    try:
+        region = await asyncio.to_thread(_update_certificate, update)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    except RuntimeError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+    return {"updated": True, "region": region}
+
+
 async def _get_map(kind: str) -> dict[str, str]:
     response_status, body = await proxy.request("GET", f"/v1/{kind}")
     _check_proxy_response(response_status, body)
@@ -150,6 +172,103 @@ def _check_proxy_response(response_status: int, body: Any) -> None:
             status_code=502,
             detail={"proxy_status": response_status, "proxy": body},
         )
+
+
+def _update_certificate(update: CertificateUpdate) -> str:
+    region_path = _cert_dir.parent / "region"
+    try:
+        region = region_path.read_text().strip()
+    except OSError as error:
+        raise RuntimeError("cannot read proxy region") from error
+    if not region or "/" in region or "\\" in region or region in {".", ".."}:
+        raise ValueError("proxy region is invalid")
+
+    target_dir = _cert_dir / region
+    target_dir.mkdir(mode=0o750, parents=True, exist_ok=True)
+    cert_temp = key_temp = None
+    try:
+        cert_temp = _write_temp(target_dir, update.fullchain_pem.encode(), 0o644)
+        key_temp = _write_temp(target_dir, update.private_key_pem.encode(), 0o640)
+        _validate_certificate_pair(cert_temp, key_temp)
+        _replace_file(cert_temp, target_dir / "fullchain.pem", 0o644)
+        cert_temp = None
+        _replace_file(key_temp, target_dir / "privkey.pem", 0o640)
+        key_temp = None
+        _activate_certificates(region)
+        _reload_openresty()
+    except OSError as error:
+        raise RuntimeError("cannot install proxy certificate") from error
+    finally:
+        for path in (cert_temp, key_temp):
+            if path:
+                Path(path).unlink(missing_ok=True)
+    return region
+
+
+def _write_temp(directory: Path, content: bytes, mode: int) -> str:
+    descriptor, path = tempfile.mkstemp(prefix=".atlas-cert-", dir=directory)
+    try:
+        os.fchmod(descriptor, mode)
+        with os.fdopen(descriptor, "wb") as file:
+            file.write(content)
+    except BaseException:
+        os.close(descriptor)
+        Path(path).unlink(missing_ok=True)
+        raise
+    return path
+
+
+def _replace_file(source: str, destination: Path, mode: int) -> None:
+    os.chmod(source, mode)
+    os.replace(source, destination)
+
+
+def _activate_certificates(region: str) -> None:
+    for name in ("fullchain.pem", "privkey.pem"):
+        link = _cert_dir / name
+        temporary = _cert_dir / f".{name}.new"
+        temporary.unlink(missing_ok=True)
+        temporary.symlink_to(Path(region) / name)
+        os.replace(temporary, link)
+
+
+def _validate_certificate_pair(cert_path: str, key_path: str) -> None:
+    _openssl(cert_path, "x509", "-noout", "-checkend", "0")
+    cert = _openssl(cert_path, "x509", "-pubkey", "-noout")
+    key = _openssl(key_path, "pkey", "-pubout")
+    if cert != key:
+        raise ValueError("certificate and private key do not match")
+
+
+def _openssl(path: str, kind: str, *arguments: str) -> bytes:
+    result = subprocess.run(
+        ["openssl", kind, "-in", path, *arguments],
+        capture_output=True,
+        check=False,
+        timeout=10,
+    )
+    if result.returncode != 0:
+        raise ValueError(f"invalid {kind} PEM")
+    return result.stdout
+
+
+def _reload_openresty() -> None:
+    result = subprocess.run(
+        ["/usr/local/openresty/nginx/sbin/nginx", "-t", "-c", "/etc/nginx/nginx.conf"],
+        capture_output=True,
+        check=False,
+        timeout=10,
+    )
+    if result.returncode != 0:
+        raise RuntimeError("OpenResty rejected the new certificate configuration")
+    result = subprocess.run(
+        ["/usr/local/openresty/nginx/sbin/nginx", "-s", "reload", "-c", "/etc/nginx/nginx.conf"],
+        capture_output=True,
+        check=False,
+        timeout=10,
+    )
+    if result.returncode != 0:
+        raise RuntimeError("OpenResty reload failed")
 
 
 if __name__ == "__main__":

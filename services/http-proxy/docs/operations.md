@@ -40,4 +40,4 @@ journalctl -u atlas-proxy-control.service -f
 journalctl -u openresty.service -f
 ```
 
-The control daemon must be able to access `/run/nginx/admin.sock`. OpenResty must be able to read and write its persisted map files under `/var/lib/nginx`.
+The control daemon runs as root because certificate replacement and OpenResty reload require root privileges. OpenResty workers still run as `nginx`. OpenResty must be able to read and write its persisted map files under `/var/lib/nginx`.
