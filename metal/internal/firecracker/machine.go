@@ -16,31 +16,46 @@ import (
 // machine implements vm.VM as a client-side handle: a systemd unit (metal-vm@id)
 // plus an API client over that unit's socket. It holds no child process.
 type machine struct {
-	cfg     vmConfig
-	dir     string // per-VM state dir
-	units   systemd.Manager
-	images  storage.Resolver
-	net     network.Allocator
-	api     *api.Client
-	persist func(vmConfig) error // rewrite the VM's config.json
+	cfg      vmConfig
+	dir      string // per-VM state dir
+	units    systemd.Manager
+	images   storage.Resolver
+	net      network.Allocator
+	api      *api.Client
+	persist  func(vmConfig) error        // rewrite the VM's config.json
+	relaunch func(context.Context) error // (re)start a stopped VM's jailer unit
 }
 
 func (d *Driver) newMachine(vc vmConfig) *machine {
 	return &machine{
-		cfg:     vc,
-		dir:     d.cfg.vmDir(vc.ID),
-		units:   d.units,
-		images:  d.images,
-		net:     d.net,
-		api:     api.New(vc.Sock),
-		persist: d.cfg.writeVMConfig,
+		cfg:      vc,
+		dir:      d.cfg.vmDir(vc.ID),
+		units:    d.units,
+		images:   d.images,
+		net:      d.net,
+		api:      api.New(vc.Sock),
+		persist:  d.cfg.writeVMConfig,
+		relaunch: func(ctx context.Context) error { return d.relaunch(ctx, vc) },
 	}
 }
 
 func (m *machine) ID() string { return m.cfg.ID }
 
-// Start boots the guest.
+// Start boots the guest. A fully stopped VM (its jailer process is gone) is
+// relaunched first; a running VM is a conflict.
 func (m *machine) Start(ctx context.Context) error {
+	st, err := m.units.Status(ctx, m.cfg.ID)
+	if err != nil {
+		return err
+	}
+	switch m.state(ctx, st) {
+	case vm.StateRunning:
+		return vm.ErrConflict
+	case vm.StateStopped, vm.StateFailed:
+		if err := m.relaunch(ctx); err != nil {
+			return err
+		}
+	}
 	return m.api.InstanceStart(ctx)
 }
 

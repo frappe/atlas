@@ -7,6 +7,9 @@ import "context"
 type Allocator interface {
 	// Allocate creates the netns + TAP for the VM and returns the resolved NIC.
 	Allocate(ctx context.Context, req Request) (NIC, error)
+	// Resolve returns the VM's NIC deterministically, without creating anything.
+	// Used to reconfigure a stopped VM whose netns still exists.
+	Resolve(vmID string) NIC
 	// Release tears down whatever Allocate created for vmID.
 	Release(ctx context.Context, vmID string) error
 }

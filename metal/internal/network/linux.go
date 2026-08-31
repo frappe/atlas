@@ -83,6 +83,19 @@ func (l *Linux) Allocate(ctx context.Context, req Request) (NIC, error) {
 	}, nil
 }
 
+// Resolve returns the VM's NIC without touching the system. Every field is
+// deterministic (see Allocate), so a stopped VM whose netns still exists can be
+// reconfigured from just its id.
+func (l *Linux) Resolve(vmID string) NIC {
+	return NIC{
+		NetnsPath: nsPath(vmID),
+		TapName:   tapName,
+		MAC:       macFor(vmID),
+		GuestIP:   guestIP,
+		GatewayIP: gatewayIP,
+	}
+}
+
 // Release deletes the netns, which tears down the TAP and both veth ends.
 func (l *Linux) Release(ctx context.Context, vmID string) error {
 	return run(ctx, "ip", "netns", "del", nsName(vmID))

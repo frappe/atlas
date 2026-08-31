@@ -44,8 +44,13 @@ the client polls `GET /vms/{id}` until `state` settles. A failure shows as
 `ssh_keys` is a list of public keys, served to the guest via MMDS so it can
 install them at boot. metald assigns `id`/`ip`/`mac` and boots the guest.
 
+**Start** `POST /vms/{id}/start` — boots the guest. A stopped VM is relaunched
+(a fresh jailer process) and reboots from its persisted disk and network; a
+running VM → `409`.
+
 **Stop** `POST /vms/{id}/stop` — `{ "force": false }`. `false` = Ctrl+Alt+Del,
-`true` = SIGKILL.
+`true` = SIGKILL. The disk, network and state are kept, so the VM can be started
+again.
 
 **Resize** `POST /vms/{id}/resize` — `{ "disk_mib" }`. `disk_mib` is grow-only; a
 smaller value → `409`. The disk grows online (`zfs set volsize` + firecracker

@@ -20,19 +20,31 @@ func (z *ZFS) Prepare(ctx context.Context, req Request) (BootConfig, error) {
 		return BootConfig{}, err
 	}
 
-	// zfs clone <base>@ready <vm>: create the VM's writable zvol from the base
-	// snapshot; copy-on-write, so it shares the base's blocks until written.
-	if err := run(ctx, "zfs", "clone", z.baseSnapshot(req.Ref), z.vmDataset(req.VMID)); err != nil {
-		return BootConfig{}, err
+	// The disk persists across a stop, so a restart reuses it: only clone when it
+	// is absent. rollback destroys the disk only if this call created it, so a
+	// restart never discards existing data on a later error.
+	created := false
+	if !datasetExists(ctx, z.vmDataset(req.VMID)) {
+		// zfs clone <base>@ready <vm>: create the VM's writable zvol from the base
+		// snapshot; copy-on-write, so it shares the base's blocks until written.
+		if err := run(ctx, "zfs", "clone", z.baseSnapshot(req.Ref), z.vmDataset(req.VMID)); err != nil {
+			return BootConfig{}, err
+		}
+		created = true
+	}
+	rollback := func() {
+		if created {
+			_ = z.Release(ctx, req.VMID)
+		}
 	}
 	if err := z.grow(ctx, req.VMID, req.DiskMiB); err != nil {
-		_ = z.Release(ctx, req.VMID)
+		rollback()
 		return BootConfig{}, err
 	}
 
 	node := filepath.Join(req.ChrootRoot, "rootfs.img")
 	if err := mknodBlock(z.devPath(req.VMID), node, req.UID, req.GID); err != nil {
-		_ = z.Release(ctx, req.VMID)
+		rollback()
 		return BootConfig{}, err
 	}
 
@@ -80,6 +92,12 @@ func (z *ZFS) Release(ctx context.Context, vmID string) error {
 		return err
 	}
 	return nil
+}
+
+// datasetExists reports whether a dataset (here, a VM's zvol) is present.
+func datasetExists(ctx context.Context, name string) bool {
+	// zfs list <dataset>: exits 0 if it exists, non-zero otherwise.
+	return run(ctx, "zfs", "list", name) == nil
 }
 
 // volsizeBytes reads a zvol's provisioned size in bytes.
