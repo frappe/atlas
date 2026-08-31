@@ -71,7 +71,9 @@ python3 -m venv /opt/atlas/proxy-control
 
 # Create runtime state, bootstrap authentication, and certificate files.
 install -d -m 0750 /etc/atlas
-install -m 0640 /dev/null /etc/atlas/proxy-control.htpasswd
+if [ ! -e /etc/atlas/proxy-control.htpasswd ]; then
+	install -m 0640 /dev/null /etc/atlas/proxy-control.htpasswd
+fi
 install -d -o root -g nginx -m 0770 "$RUN_DIR"
 install -d -m 0755 "$LOG_DIR"
 install -d -m 0750 "$STATE_DIR/certs"
@@ -79,15 +81,23 @@ install -d -o root -g nginx -m 0770 "$STATE_DIR"
 install -d -o root -g nginx -m 0750 "$STATE_DIR/acme"
 # The placeholder certificate makes first boot possible before cloud-init pushes
 # the real region and wildcard certificate.
-: > "$STATE_DIR/region"
+if [ ! -e "$STATE_DIR/region" ]; then
+	: > "$STATE_DIR/region"
+fi
 install -d -m 0750 "$STATE_DIR/certs/_placeholder"
-openssl req -x509 -newkey rsa:2048 -nodes -days 3650 \
-	-keyout "$STATE_DIR/certs/_placeholder/privkey.pem" \
-	-out "$STATE_DIR/certs/_placeholder/fullchain.pem" \
-	-subj "/CN=This domain is not connected to a site yet/O=Frappe Cloud/OU=Connect it in your dashboard: frappe.dev\/domains"
-chmod 0640 "$STATE_DIR/certs/_placeholder/privkey.pem"
-ln -sfn _placeholder/fullchain.pem "$STATE_DIR/certs/fullchain.pem"
-ln -sfn _placeholder/privkey.pem   "$STATE_DIR/certs/privkey.pem"
+if [ ! -f "$STATE_DIR/certs/_placeholder/fullchain.pem" ] || [ ! -f "$STATE_DIR/certs/_placeholder/privkey.pem" ]; then
+	openssl req -x509 -newkey rsa:2048 -nodes -days 3650 \
+		-keyout "$STATE_DIR/certs/_placeholder/privkey.pem" \
+		-out "$STATE_DIR/certs/_placeholder/fullchain.pem" \
+		-subj "/CN=This domain is not connected to a site yet/O=Frappe Cloud/OU=Connect it in your dashboard: frappe.dev\/domains"
+	chmod 0640 "$STATE_DIR/certs/_placeholder/privkey.pem"
+fi
+if [ ! -e "$STATE_DIR/certs/fullchain.pem" ]; then
+	ln -sfn _placeholder/fullchain.pem "$STATE_DIR/certs/fullchain.pem"
+fi
+if [ ! -e "$STATE_DIR/certs/privkey.pem" ]; then
+	ln -sfn _placeholder/privkey.pem "$STATE_DIR/certs/privkey.pem"
+fi
 
 # Install and enable both services. They start on the next boot.
 install -d /etc/systemd/system/openresty.service.d

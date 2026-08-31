@@ -13,8 +13,8 @@ dependencies = [
     "uvicorn==0.52.4",
 ]
 
-[tool.setuptools]
-py-modules = ["main"]
+[tool.setuptools.packages.find]
+include = ["proxy_control*"]
 
 [tool.fastapi]
-entrypoint = "main:app"
+entrypoint = "proxy_control.main:app"

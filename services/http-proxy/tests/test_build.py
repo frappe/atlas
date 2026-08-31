@@ -154,7 +154,7 @@ def test_control_daemon_is_installed():
     res = exec_proxy(
         "/opt/atlas/proxy-control/bin/python",
         "-c",
-        "import fastapi, httpx, main, uvicorn",
+        "import proxy_control.main, fastapi, httpx, uvicorn",
     )
     assert res.returncode == 0
     unit = exec_proxy("cat", "/etc/systemd/system/atlas-proxy-control.service")
