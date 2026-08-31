@@ -74,9 +74,12 @@ function persist.load()
 		ngx.log(ngx.ERR, "domains_http_persist: domains-http-map.json is not an object; ignoring")
 		return
 	end
+	local count = 0
 	for domain, backend in pairs(map) do
 		ngx.shared.domains_http:set(domain, backend)
+		count = count + 1
 	end
+	ngx.shared.meta:set("domains_http_count", count)
 end
 
 return persist

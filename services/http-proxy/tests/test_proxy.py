@@ -214,10 +214,12 @@ def test_patch_empty_address_rejected():
 
 def test_v1_patch_and_delete_update_one_site():
     """Targeted updates must not require sending the regional map."""
+    before = json.loads(admin("GET", "/v1/healthz")[1])["entries"]
     status, body = admin(
         "PATCH", "/v1/sites/targeted", json.dumps({"address": VM_A})
     )
     assert status == 200 and json.loads(body)["address"] == VM_A
+    assert json.loads(admin("GET", "/v1/healthz")[1])["entries"] == before + 1
     assert fetch("targeted")[0] == 200
 
     status, body = admin(
@@ -228,6 +230,7 @@ def test_v1_patch_and_delete_update_one_site():
 
     status, _ = admin("DELETE", "/v1/sites/targeted")
     assert status == 204
+    assert json.loads(admin("GET", "/v1/healthz")[1])["entries"] == before
     assert fetch("targeted")[0] == 404
 
 

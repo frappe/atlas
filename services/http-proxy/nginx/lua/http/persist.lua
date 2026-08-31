@@ -75,9 +75,12 @@ function persist.load()
 		ngx.log(ngx.ERR, "persist: map.json is not an object; ignoring")
 		return
 	end
+	local count = 0
 	for subdomain, address in pairs(map) do
 		ngx.shared.sites:set(subdomain, address)
+		count = count + 1
 	end
+	ngx.shared.meta:set("sites_count", count)
 end
 
 return persist

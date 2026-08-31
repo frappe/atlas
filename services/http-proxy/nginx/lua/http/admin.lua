@@ -4,7 +4,16 @@ local domains_http_persist = require("domains_http_persist")
 
 local sites = ngx.shared.sites
 local domains_http = ngx.shared.domains_http
+local meta = ngx.shared.meta
 local SNI_SOCKET = "unix:/run/nginx/sni-bridge.sock"
+
+local function table_size(value)
+	local count = 0
+	for _ in pairs(value) do
+		count = count + 1
+	end
+	return count
+end
 
 local function send(status, body, content_type)
 	ngx.status = status
@@ -63,7 +72,7 @@ local function decode_address()
 	return address
 end
 
-local function replace_map(dict, desired)
+local function replace_map(dict, desired, count_key)
 	local existing = dict:get_keys(0)
 	local keep = {}
 	for key, value in pairs(desired) do
@@ -75,7 +84,9 @@ local function replace_map(dict, desired)
 			dict:delete(key)
 		end
 	end
-	return #dict:get_keys(0)
+	local entries = table_size(desired)
+	meta:set(count_key, entries)
+	return entries
 end
 
 local function sni_request(command, payload)
@@ -105,7 +116,7 @@ local function sni_request(command, payload)
 	return true
 end
 
-local function full_map(method, dict, store, error_message, bridge)
+local function full_map(method, dict, store, error_message, bridge, count_key)
 	if method == "GET" then
 		return send(200, store.serialize(), "application/json")
 	end
@@ -127,12 +138,12 @@ local function full_map(method, dict, store, error_message, bridge)
 			return send_json(503, { error = "SNI bridge unavailable", detail = bridge_error })
 		end
 	end
-	local entries = replace_map(dict, desired)
+	local entries = replace_map(dict, desired, count_key)
 	store.schedule_dump()
 	return send_json(200, { synced = true, entries = entries })
 end
 
-local function one_mapping(method, dict, store, key, kind, bridge)
+local function one_mapping(method, dict, store, key, kind, bridge, count_key)
 	if method == "GET" then
 		local address = dict:get(key)
 		if not address then
@@ -154,6 +165,9 @@ local function one_mapping(method, dict, store, key, kind, bridge)
 				return send_json(503, { error = "SNI bridge unavailable", detail = bridge_error })
 			end
 		end
+		if not dict:get(key) then
+			meta:incr(count_key, 1, 0)
+		end
 		dict:set(key, address)
 		store.schedule_dump()
 		return send_json(200, { [kind] = key, address = address })
@@ -165,7 +179,10 @@ local function one_mapping(method, dict, store, key, kind, bridge)
 				return send_json(503, { error = "SNI bridge unavailable", detail = bridge_error })
 			end
 		end
-		dict:delete(key)
+		if dict:get(key) then
+			dict:delete(key)
+			meta:incr(count_key, -1, 0)
+		end
 		store.schedule_dump()
 		return send(204)
 	end
@@ -173,13 +190,13 @@ local function one_mapping(method, dict, store, key, kind, bridge)
 end
 
 local function health()
-	local site_count = #sites:get_keys(0)
+	local site_count = meta:get("sites_count") or 0
 	return send_json(200, {
 		ok = true,
 		boot_id = atlas_boot_id,
 		entries = site_count,
 		sites = site_count,
-		domains = #domains_http:get_keys(0),
+		domains = meta:get("domains_http_count") or 0,
 		last_dump = persist.last_dump(),
 		last_sites_dump = persist.last_dump(),
 		last_domains_dump = domains_http_persist.last_dump(),
@@ -193,22 +210,22 @@ if method == "GET" and uri == "/v1/healthz" then
 	return health()
 end
 if uri == "/v1/sites" then
-	return full_map(method, sites, persist, "body must be a JSON object of subdomain->address strings", false)
+	return full_map(method, sites, persist, "body must be a JSON object of subdomain->address strings", false, "sites_count")
 end
 if uri == "/v1/domains" then
-	return full_map(method, domains_http, domains_http_persist, "body must be a JSON object of domain->address strings", true)
+	return full_map(method, domains_http, domains_http_persist, "body must be a JSON object of domain->address strings", true, "domains_http_count")
 end
 if uri == "/v1/sites/sync" then
 	if method ~= "POST" then
 		return send_json(405, { error = "method not allowed" })
 	end
-	return full_map("PUT", sites, persist, "body must be a JSON object of subdomain->address strings", false)
+	return full_map("PUT", sites, persist, "body must be a JSON object of subdomain->address strings", false, "sites_count")
 end
 if uri == "/v1/domains/sync" then
 	if method ~= "POST" then
 		return send_json(405, { error = "method not allowed" })
 	end
-	return full_map("PUT", domains_http, domains_http_persist, "body must be a JSON object of domain->address strings", true)
+	return full_map("PUT", domains_http, domains_http_persist, "body must be a JSON object of domain->address strings", true, "domains_http_count")
 end
 if uri == "/v1/dump" and method == "POST" then
 	local dumped = persist.dump()
@@ -218,9 +235,9 @@ end
 local collection, key = uri:match("^/v1/(sites|domains)/(.+)$")
 if collection and key then
 	if collection == "sites" then
-		return one_mapping(method, sites, persist, key, "site", false)
+		return one_mapping(method, sites, persist, key, "site", false, "sites_count")
 	end
-	return one_mapping(method, domains_http, domains_http_persist, key, "domain", true)
+	return one_mapping(method, domains_http, domains_http_persist, key, "domain", true, "domains_http_count")
 end
 
 return send_json(404, { error = "unknown route" })
