@@ -41,7 +41,7 @@ jobs:
       - name: Find tests
         run: |
           echo "Finding tests"
-          grep -rn "def test" atlas > /dev/null
+          test -n "$(find atlas -type f -name 'test_*.py' -print -quit)"
 
       - name: Setup Python
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
