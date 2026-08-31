@@ -46,7 +46,7 @@ curl -X PUT -H "Authorization: Bearer $ATLAS_CONTROL_TOKEN" \
   http://127.0.0.1:9000/v1/certificate
 ```
 
-The certificate request body must contain `fullchain_pem` and `private_key_pem`. The daemon validates that they match, writes them atomically for the region in `/var/lib/nginx/region`, validates OpenResty, and performs a graceful reload.
+The certificate request body must contain `wildcard_domain`, `fullchain_pem`, and `private_key_pem`. For example, `wildcard_domain` can be `*.iad.frappe.dev`. The daemon verifies that the certificate covers the wildcard and that the key matches, writes the region and certificate atomically, validates OpenResty, and performs a graceful reload.
 
 The daemon accepts raw IPv6 addresses. It validates and forwards them to the OpenResty API, which adds the correct port for each traffic path.
 

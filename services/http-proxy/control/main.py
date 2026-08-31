@@ -1,6 +1,7 @@
 import asyncio
 import os
 import secrets
+import ssl
 import subprocess
 import tempfile
 from contextlib import asynccontextmanager
@@ -21,6 +22,7 @@ class AddressUpdate(BaseModel):
 class CertificateUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    wildcard_domain: str = Field(min_length=5, max_length=253)
     fullchain_pem: str = Field(min_length=1, max_length=1024 * 1024)
     private_key_pem: str = Field(min_length=1, max_length=1024 * 1024)
 
@@ -175,13 +177,12 @@ def _check_proxy_response(response_status: int, body: Any) -> None:
 
 
 def _update_certificate(update: CertificateUpdate) -> str:
-    region_path = _cert_dir.parent / "region"
-    try:
-        region = region_path.read_text().strip()
-    except OSError as error:
-        raise RuntimeError("cannot read proxy region") from error
-    if not region or "/" in region or "\\" in region or region in {".", ".."}:
-        raise ValueError("proxy region is invalid")
+    wildcard = update.wildcard_domain.strip().lower()
+    if not wildcard.startswith("*."):
+        raise ValueError("wildcard_domain must start with *.")
+    region = wildcard[2:]
+    if not _valid_region(region):
+        raise ValueError("wildcard_domain contains an invalid domain")
 
     target_dir = _cert_dir / region
     target_dir.mkdir(mode=0o750, parents=True, exist_ok=True)
@@ -190,10 +191,12 @@ def _update_certificate(update: CertificateUpdate) -> str:
         cert_temp = _write_temp(target_dir, update.fullchain_pem.encode(), 0o644)
         key_temp = _write_temp(target_dir, update.private_key_pem.encode(), 0o640)
         _validate_certificate_pair(cert_temp, key_temp)
+        _validate_certificate_name(cert_temp, wildcard)
         _replace_file(cert_temp, target_dir / "fullchain.pem", 0o644)
         cert_temp = None
         _replace_file(key_temp, target_dir / "privkey.pem", 0o640)
         key_temp = None
+        _write_region(region)
         _activate_certificates(region)
         _reload_openresty()
     except OSError as error:
@@ -203,6 +206,23 @@ def _update_certificate(update: CertificateUpdate) -> str:
             if path:
                 Path(path).unlink(missing_ok=True)
     return region
+
+
+def _valid_region(region: str) -> bool:
+    return (
+        region not in {"", ".", ".."}
+        and "/" not in region
+        and "\\" not in region
+        and all(label and label[0].isalnum() and label[-1].isalnum() for label in region.split("."))
+    )
+
+
+def _write_region(region: str) -> None:
+    source = _cert_dir.parent / "region"
+    temporary = _cert_dir.parent / ".atlas-region.new"
+    temporary.write_text(region + "\n")
+    os.chmod(temporary, 0o640)
+    os.replace(temporary, source)
 
 
 def _write_temp(directory: Path, content: bytes, mode: int) -> str:
@@ -238,6 +258,20 @@ def _validate_certificate_pair(cert_path: str, key_path: str) -> None:
     key = _openssl(key_path, "pkey", "-pubout")
     if cert != key:
         raise ValueError("certificate and private key do not match")
+
+
+def _validate_certificate_name(cert_path: str, wildcard: str) -> None:
+    try:
+        certificate = ssl._ssl._test_decode_cert(cert_path)
+        names = {
+            value.lower().rstrip(".")
+            for kind, value in certificate.get("subjectAltName", [])
+            if kind == "DNS"
+        }
+    except (OSError, ValueError) as error:
+        raise ValueError("certificate does not cover wildcard_domain") from error
+    if wildcard.rstrip(".") not in names:
+        raise ValueError("certificate does not cover wildcard_domain")
 
 
 def _openssl(path: str, kind: str, *arguments: str) -> bytes:
