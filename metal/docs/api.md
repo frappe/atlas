@@ -82,5 +82,7 @@ running VM, restore while running, shrink a disk) · `500` internal.
 
 ## Deferred
 
+Image management (build/download/serve images) — to be specified.
+
 Idempotency-key on create; `PATCH`/console interactivity; list pagination;
 snapshot caps / snapshot-of-snapshot / restore-vs-pool-exhaustion.

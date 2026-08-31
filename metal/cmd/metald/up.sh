@@ -88,14 +88,20 @@ step "ssh keypair"
 [[ -f $KEYDIR/id_ed25519 ]] || ssh-keygen -q -t ed25519 -N "" -f "$KEYDIR/id_ed25519"
 
 step "zfs pool ($POOL_SIZE)"
-# A file vdev: zpool uses the image file directly, so no loop device is needed.
+# A file vdev: zpool uses the image file directly as the pool's backing store.
 img=$(realpath -m "$BULK")/pool.img
 [[ -f $img ]] || truncate -s "$POOL_SIZE" "$img"
-# zpool create -f <pool> <file>: create the pool on the image; -f lets a plain
-# file act as the vdev (zpool otherwise expects a whole disk/partition).
-zpool list "$POOL" >/dev/null 2>&1 || zpool create -f "$POOL" "$img"
+# zpool create -f -m none <pool> <file>: create the pool on the image; -f lets a
+# plain file act as the vdev (zpool otherwise expects a whole disk/partition);
+# -m none leaves the pool unmounted (we only use zvols under it).
+zpool list "$POOL" >/dev/null 2>&1 || zpool create -f -m none "$POOL" "$img"
+# Container datasets. zfs create/clone never make missing parents, so base/<ref>
+# and vms/<id> need their parents to exist first. mountpoint=none keeps them off
+# the host fs (zvols under them still get /dev/zvol nodes).
+zfs list "$POOL/base" >/dev/null 2>&1 || zfs create -o mountpoint=none "$POOL/base"
+zfs list "$POOL/vms" >/dev/null 2>&1 || zfs create -o mountpoint=none "$POOL/vms"
 
-step "base-ubuntu image"
+step "base image ($POOL/base/ubuntu)"
 if ! zfs list "$POOL/base/ubuntu" >/dev/null 2>&1; then
 	bytes=$(stat -c %s "$rootfs")
 	# zfs create -V <size> -o volblocksize=16k: a zvol (raw block device) of the
