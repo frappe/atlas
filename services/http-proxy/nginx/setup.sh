@@ -16,7 +16,7 @@ SERVICE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 export DEBIAN_FRONTEND=noninteractive
 
-# Install the pinned OpenResty package.
+# Install the exact OpenResty package required by the proxy.
 apt-get update
 apt-get install -y --no-install-recommends ca-certificates curl gnupg lsb-release
 install -d -m 0755 /usr/share/keyrings
@@ -40,11 +40,12 @@ fi
 	|| { echo "FATAL: binary lacks stream_ssl_preread - the SNI front door needs it" >&2; exit 1; }
 echo "installed stock OpenResty ${OPENRESTY_VERSION} (${OPENRESTY_PKG_VERSION})"
 
-# Create the worker account and install the proxy files.
+# Install the proxy files and create the unprivileged worker account.
 if ! id -u nginx >/dev/null 2>&1; then
 	useradd --system --no-create-home --shell /usr/sbin/nologin nginx
 fi
 
+# Keep runtime files under the package paths expected by the systemd units.
 install -d "$CONF_DIR" "$LUA_DIR" "$HTML_DIR"
 install -m 0644 "$SERVICE_DIR/nginx/nginx.conf"  "$CONF_DIR/nginx.conf"
 install -m 0644 "$SERVICE_DIR/nginx/lua/http/pages.lua"    "$LUA_DIR/pages.lua"
@@ -63,16 +64,21 @@ install -m 0644 "$SERVICE_DIR/nginx/lua/domain_lookup.lua"        "$LUA_DIR/doma
 install -m 0644 "$SERVICE_DIR/nginx/pages/not_found.html" "$HTML_DIR/not_found.html"
 install -m 0644 "$SERVICE_DIR/nginx/pages/domain_unconfigured.html" "$HTML_DIR/domain_unconfigured.html"
 
+# Install the control daemon into its own isolated Python environment.
 install -d /opt/atlas/proxy-control
 python3 -m venv /opt/atlas/proxy-control
 /opt/atlas/proxy-control/bin/pip install --no-cache-dir "$SERVICE_DIR/control"
 
-# Create state, certificate, and runtime directories.
+# Create runtime state, bootstrap authentication, and certificate files.
+install -d -m 0750 /etc/atlas
+install -m 0640 /dev/null /etc/atlas/proxy-control.htpasswd
 install -d -o root -g nginx -m 0770 "$RUN_DIR"
 install -d -m 0755 "$LOG_DIR"
 install -d -m 0750 "$STATE_DIR/certs"
 install -d -o root -g nginx -m 0770 "$STATE_DIR"
 install -d -o root -g nginx -m 0750 "$STATE_DIR/acme"
+# The placeholder certificate makes first boot possible before cloud-init pushes
+# the real region and wildcard certificate.
 : > "$STATE_DIR/region"
 install -d -m 0750 "$STATE_DIR/certs/_placeholder"
 openssl req -x509 -newkey rsa:2048 -nodes -days 3650 \
@@ -83,6 +89,7 @@ chmod 0640 "$STATE_DIR/certs/_placeholder/privkey.pem"
 ln -sfn _placeholder/fullchain.pem "$STATE_DIR/certs/fullchain.pem"
 ln -sfn _placeholder/privkey.pem   "$STATE_DIR/certs/privkey.pem"
 
+# Install and enable both services. They start on the next boot.
 install -d /etc/systemd/system/openresty.service.d
 install -m 0644 "$SERVICE_DIR/nginx/systemd/openresty.service.d/atlas.conf" \
 	/etc/systemd/system/openresty.service.d/atlas.conf

@@ -1,7 +1,7 @@
 FROM ubuntu:24.04
 
 COPY . /src/proxy
-RUN chmod +x /src/proxy/nginx/build.sh && /src/proxy/nginx/build.sh
+RUN chmod +x /src/proxy/nginx/setup.sh && /src/proxy/nginx/setup.sh
 
 RUN printf 'test.x.frappe.dev\n' > /var/lib/nginx/region \
     && mkdir -p /var/lib/nginx/certs/test \

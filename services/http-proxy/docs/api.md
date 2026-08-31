@@ -1,9 +1,9 @@
 # Control API
 
-The control daemon listens on `127.0.0.1:9000` by default. Set the token in `ATLAS_CONTROL_TOKEN` and send it as a bearer token:
+The control daemon listens on `127.0.0.1:9000` by default. Store a bcrypt htpasswd entry in `/etc/atlas/proxy-control.htpasswd` and send the raw password as a bearer token:
 
 ```sh
-curl -H "Authorization: Bearer $ATLAS_CONTROL_TOKEN" \
+curl -H "Authorization: Bearer $ATLAS_CONTROL_PASSWORD" \
   http://127.0.0.1:9000/v1/state
 ```
 
@@ -32,15 +32,15 @@ PUT    /v1/certificate           replace the active regional wildcard certificat
 Examples:
 
 ```sh
-curl -X PATCH -H "Authorization: Bearer $ATLAS_CONTROL_TOKEN" \
+curl -X PATCH -H "Authorization: Bearer $ATLAS_CONTROL_PASSWORD" \
   -H 'Content-Type: application/json' \
   -d '{"address":"2001:db8::10"}' \
   http://127.0.0.1:9000/v1/sites/example
 
-curl -X DELETE -H "Authorization: Bearer $ATLAS_CONTROL_TOKEN" \
+curl -X DELETE -H "Authorization: Bearer $ATLAS_CONTROL_PASSWORD" \
   http://127.0.0.1:9000/v1/domains/example.com
 
-curl -X PUT -H "Authorization: Bearer $ATLAS_CONTROL_TOKEN" \
+curl -X PUT -H "Authorization: Bearer $ATLAS_CONTROL_PASSWORD" \
   -H 'Content-Type: application/json' \
   --data-binary @certificate.json \
   http://127.0.0.1:9000/v1/certificate

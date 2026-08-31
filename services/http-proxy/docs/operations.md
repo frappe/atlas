@@ -1,18 +1,18 @@
 # Operations
 
-## Build and configure
+## Setup and configure
 
 Build the VM as root:
 
 ```sh
-sudo ./nginx/build.sh
+sudo ./nginx/setup.sh
 sudo install -d -m 0750 -o root -g nginx /etc/default
 sudo install -m 0640 -o root -g nginx control/atlas-proxy-control.env.example \
   /etc/default/atlas-proxy-control
 sudoedit /etc/default/atlas-proxy-control
 ```
 
-Set a long random `ATLAS_CONTROL_TOKEN`. Change `ATLAS_CONTROL_PORT` if the default port is already used. The daemon binds to localhost unless `ATLAS_CONTROL_HOST` is changed.
+Set a long random bcrypt password in `/etc/atlas/proxy-control.htpasswd`. Change `ATLAS_CONTROL_PORT` if the default port is already used. The daemon binds to localhost unless `ATLAS_CONTROL_HOST` is changed.
 
 Start both services:
 

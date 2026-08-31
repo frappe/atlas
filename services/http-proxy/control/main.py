@@ -1,6 +1,5 @@
 import asyncio
 import os
-import secrets
 import ssl
 import subprocess
 import tempfile
@@ -8,6 +7,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated, Any
 
+import bcrypt
 import httpx
 from fastapi import Depends, FastAPI, Header, HTTPException, Response, status
 from pydantic import BaseModel, ConfigDict, Field
@@ -57,13 +57,12 @@ def _config() -> tuple[str, int, str, Path]:
 
 
 _host, _port, _socket_path, _cert_dir = _config()
+_auth_file = Path(os.environ.get("ATLAS_CONTROL_AUTH_FILE", "/etc/atlas/proxy-control.htpasswd"))
 proxy = ProxyClient(_socket_path)
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    if not os.environ.get("ATLAS_CONTROL_TOKEN"):
-        raise RuntimeError("ATLAS_CONTROL_TOKEN is required")
     yield
     await proxy.close()
 
@@ -74,10 +73,23 @@ app = FastAPI(title="Atlas proxy control", lifespan=lifespan)
 async def authenticated(
     authorization: Annotated[str | None, Header()] = None,
 ) -> None:
-    expected = os.environ["ATLAS_CONTROL_TOKEN"]
     scheme, _, supplied = (authorization or "").partition(" ")
-    if scheme.lower() != "bearer" or not secrets.compare_digest(supplied, expected):
+    if scheme.lower() != "bearer" or not _password_matches(supplied):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="unauthorized")
+
+
+def _password_matches(password: str) -> bool:
+    try:
+        line = next(
+            line for line in _auth_file.read_text().splitlines()
+            if line.strip() and not line.lstrip().startswith("#")
+        )
+        _, separator, password_hash = line.partition(":")
+        if not separator or not password_hash:
+            return False
+        return bcrypt.checkpw(password.encode(), password_hash.encode())
+    except (OSError, ValueError, StopIteration):
+        return False
 
 
 @app.get("/healthz")

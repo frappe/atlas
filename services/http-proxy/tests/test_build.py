@@ -47,7 +47,7 @@ def test_openresty_is_apt_package():
 
 
 def test_openresty_package_is_held():
-    """build.sh holds the package, thus no upgrade can move the stack silently."""
+    """setup.sh holds the package, thus no upgrade can move the stack silently."""
     res = exec_proxy("apt-mark", "showhold")
     assert "openresty" in res.stdout.split(), f"openresty not held: {res.stdout!r}"
 
@@ -59,7 +59,7 @@ def test_running_binary_matches_the_build_pin(nginx_V):
     assert "openresty/" in first, first
     running = first.split("openresty/")[1].split()[0]
     assert running == pin, (
-        f"running OpenResty {running} != build.sh pin {pin} (rebake needed?)"
+        f"running OpenResty {running} != setup.sh pin {pin} (rebake needed?)"
     )
 
 
@@ -79,7 +79,7 @@ def test_shipped_files_are_unmodified():
 def test_no_compiler_toolchain_in_the_image():
     """Nothing is built in the guest, thus no compiler needs to be there.
 
-    A toolchain here would mean build.sh started compiling something again.
+    A toolchain here would mean setup.sh started compiling something again.
     """
     res = exec_proxy("sh", "-c", "command -v gcc cc make || true", check=False)
     assert not res.stdout.strip(), (
@@ -88,7 +88,7 @@ def test_no_compiler_toolchain_in_the_image():
 
 
 def test_openresty_has_its_own_openssl(nginx_V):
-    """The package supplies OpenSSL. build.sh compiles none."""
+    """The package supplies OpenSSL. setup.sh compiles none."""
     assert "OpenSSL" in nginx_V, nginx_V
 
 
@@ -359,7 +359,7 @@ REGION = "test"
 ZONE = "test.x.frappe.dev"
 VM_A = "fd00:a71a:5::a"
 HTTPS_PORT = "8443"
-BUILD_SH = os.path.join(HERE, "..", "nginx", "build.sh")
+SETUP_SH = os.path.join(HERE, "..", "nginx", "setup.sh")
 
 
 def _upstream_conns() -> int:
@@ -369,13 +369,13 @@ def _upstream_conns() -> int:
 
 
 def _build_pin(name: str) -> str:
-    """Read a pin from build.sh, so the gate checks the one source of truth."""
-    with open(BUILD_SH) as f:
+    """Read a pin from setup.sh, so the gate checks the one source of truth."""
+    with open(SETUP_SH) as f:
         for line in f:
             stripped = line.strip()
             if stripped.startswith(f"{name}="):
                 return stripped.split("=", 1)[1].split("#")[0].strip().strip('"')
-    raise AssertionError(f"{name} not found in build.sh")
+    raise AssertionError(f"{name} not found in setup.sh")
 
 
 def _ensure_mapped(subdomain: str) -> None:

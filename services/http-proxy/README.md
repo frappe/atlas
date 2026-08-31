@@ -8,7 +8,7 @@ reads SNI and passes their TLS connection through without decrypting it.
 ## Layout
 
 ```text
-nginx/build.sh                 reproducible guest image build
+nginx/setup.sh                 reproducible guest image setup
 nginx/nginx.conf               OpenResty configuration
 nginx/lua/http/                HTTP routing, persistence and API
 nginx/lua/stream/              SNI routing, passthrough and private bridge
@@ -26,7 +26,7 @@ The build installs its own files at familiar runtime paths, including
 `/run/nginx/sni-bridge.sock`.
 
 The control daemon listens on localhost port `9000` by default. Configure its
-token and lifecycle in [docs/operations.md](docs/operations.md).
+htpasswd file and lifecycle in [docs/operations.md](docs/operations.md).
 
 ## Traffic
 
@@ -87,7 +87,7 @@ Run the build inside a freshly provisioned Ubuntu guest as root:
 
 ```sh
 cd /path/to/http-proxy
-sudo ./nginx/build.sh
+sudo ./nginx/setup.sh
 sudo systemctl daemon-reload
 sudo systemctl enable --now openresty.service atlas-proxy-control.service
 ```
@@ -98,7 +98,7 @@ certificate symlinks, and snapshots the VM.
 
 ## Tests
 
-The Docker test uses the same `nginx/build.sh`:
+The Docker test uses the same `nginx/setup.sh`:
 
 ```sh
 cd tests
