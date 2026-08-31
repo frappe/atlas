@@ -13,9 +13,9 @@ requests. The stream worker reads TLS SNI without terminating custom-domain TLS.
 The HTTP and stream workers use separate shared dictionaries, so a domain update
 passes through the private `sni-bridge.sock`.
 
-The control daemon is the only network API for configuration. It keeps the
-desired `sites` and `domains` maps in
-`/var/lib/nginx/control-state.json`, applies changes to OpenResty, and retries
+Domain lookups check the exact hostname first. If there is no exact entry, the lookup derives wildcard suffix keys such as `*-something.example.com` from the hostname. It checks the most specific suffix first without scanning the map.
+
+The control daemon is the only network API for configuration. It keeps the desired `sites` and `domains` maps in `/var/lib/nginx/control-state.json`, applies changes to OpenResty, and retries
 the complete state every five seconds. This makes either process restart safe:
 the daemon reloads its state on startup, and its next reconciliation repairs the
 proxy state.

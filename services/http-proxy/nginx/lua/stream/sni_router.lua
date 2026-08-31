@@ -1,4 +1,5 @@
 local domains = ngx.shared.domains
+local domain_lookup = require("domain_lookup")
 
 local WILDCARD_TERMINATOR = "127.0.0.1:8443"
 local CUSTOM_STRIP_PATH = "127.0.0.1:8445"
@@ -20,7 +21,7 @@ if atlas_root_domain and atlas_root_domain ~= "" then
 	end
 end
 
-if domains:get(sni) then
+if domain_lookup.get(domains, sni) then
 	ngx.var.sni_upstream = CUSTOM_STRIP_PATH
 	return
 end

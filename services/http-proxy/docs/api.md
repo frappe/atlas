@@ -41,5 +41,6 @@ curl -X DELETE -H "Authorization: Bearer $ATLAS_CONTROL_TOKEN" \
   http://127.0.0.1:9000/v1/domains/example.com
 ```
 
-The daemon accepts raw IPv6 addresses. It validates and forwards them to the
-OpenResty API, which adds the correct port for each traffic path.
+The daemon accepts raw IPv6 addresses. It validates and forwards them to the OpenResty API, which adds the correct port for each traffic path.
+
+Domain keys can be exact names or wildcard suffix patterns. For example, `*-something.example.com` matches `one-something.example.com` and `two-something.example.com`. Exact names take priority, followed by the most specific wildcard.

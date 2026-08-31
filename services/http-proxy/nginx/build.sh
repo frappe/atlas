@@ -59,6 +59,7 @@ install -m 0644 "$SERVICE_DIR/nginx/lua/stream/sni_router.lua"      "$LUA_DIR/sn
 install -m 0644 "$SERVICE_DIR/nginx/lua/stream/sni_passthrough.lua" "$LUA_DIR/sni_passthrough.lua"
 install -m 0644 "$SERVICE_DIR/nginx/lua/stream/sni_persist.lua"     "$LUA_DIR/sni_persist.lua"
 install -m 0644 "$SERVICE_DIR/nginx/lua/http/unconfigured.lua"    "$LUA_DIR/unconfigured.lua"
+install -m 0644 "$SERVICE_DIR/nginx/lua/domain_lookup.lua"        "$LUA_DIR/domain_lookup.lua"
 install -m 0644 "$SERVICE_DIR/nginx/pages/not_found.html" "$HTML_DIR/not_found.html"
 install -m 0644 "$SERVICE_DIR/nginx/pages/domain_unconfigured.html" "$HTML_DIR/domain_unconfigured.html"
 
@@ -67,7 +68,7 @@ python3 -m venv /opt/atlas/proxy-control
 /opt/atlas/proxy-control/bin/pip install --no-cache-dir "$SERVICE_DIR/control"
 
 # Create state, certificate, and runtime directories.
-install -d -m 0750 "$RUN_DIR"
+install -d -o root -g nginx -m 0770 "$RUN_DIR"
 install -d -m 0755 "$LOG_DIR"
 install -d -m 0750 "$STATE_DIR/certs"
 install -d -o root -g nginx -m 0770 "$STATE_DIR"

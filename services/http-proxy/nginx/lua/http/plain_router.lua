@@ -1,5 +1,6 @@
 
 local pages = require("pages")
+local domain_lookup = require("domain_lookup")
 
 local sites = ngx.shared.sites
 local domains_http = ngx.shared.domains_http
@@ -29,7 +30,7 @@ if subdomain and subdomain ~= "" then
 	return
 end
 
-local backend = domains_http:get(host)
+local backend = domain_lookup.get(domains_http, host)
 if not backend then
 	return pages.serve("domain_unconfigured", ngx.HTTP_NOT_FOUND)
 end

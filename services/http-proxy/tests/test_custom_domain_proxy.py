@@ -117,6 +117,32 @@ def test_custom_sni_passes_through_to_backend_tls():
     assert f"sni={CUSTOM_DOMAIN}" in body, body
 
 
+def test_suffix_wildcard_routes_tls_and_plain_http():
+    wildcard = "*-something.custom.example"
+    host = "blue-something.custom.example"
+    admin("PUT", "/v1/domains", json.dumps({wildcard: SNI_BACKEND}))
+
+    tls = _curl(FRONT_443, host)
+    assert "@@STATUS@@200" in tls.stdout, tls.stdout + tls.stderr
+    assert "upstream=tls-vm" in tls.stdout, tls.stdout
+
+    plain = subprocess.run(
+        [
+            "curl",
+            "-s",
+            "-w",
+            "\n@@STATUS@@%{http_code}",
+            "--resolve",
+            f"{host}:8080:127.0.0.1",
+            f"http://{host}:8080/",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert "@@STATUS@@200" in plain.stdout, plain.stdout + plain.stderr
+    assert "tls=plain" in plain.stdout, plain.stdout
+
+
 def test_passthrough_presents_the_backend_cert_not_the_proxy_wildcard():
     """The decisive proof of a passthrough: the client sees the backend certificate.
 
