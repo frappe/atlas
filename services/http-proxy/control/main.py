@@ -49,6 +49,7 @@ class ControlState:
         self.last_error: str | None = None
         self.proxy_ok = False
         self.proxy_boot_id: str | None = None
+        self.save_task: asyncio.Task[None] | None = None
 
     def load(self) -> None:
         try:
@@ -69,6 +70,20 @@ class ControlState:
             + "\n"
         )
         os.replace(temporary, self.path)
+
+    def schedule_save(self) -> None:
+        if self.save_task is None or self.save_task.done():
+            self.save_task = asyncio.create_task(self._save_after_delay())
+
+    async def _save_after_delay(self) -> None:
+        await asyncio.sleep(1)
+        async with self.lock:
+            self.save()
+
+    async def flush_save(self) -> None:
+        if self.save_task is not None:
+            await self.save_task
+            self.save_task = None
 
 
 def _mapping(value: Any) -> dict[str, str]:
@@ -126,6 +141,7 @@ async def lifespan(_: FastAPI):
     yield
     task.cancel()
     await asyncio.gather(task, return_exceptions=True)
+    await state.flush_save()
     await proxy.close()
 
 
@@ -202,7 +218,7 @@ async def _replace(kind: str, values: dict[str, str]) -> dict[str, Any]:
         candidate[kind] = mapping
         await _sync(candidate)
         setattr(state, kind, mapping)
-        state.save()
+        state.schedule_save()
     return {"synced": True, "entries": len(mapping)}
 
 
@@ -216,7 +232,7 @@ async def _patch(kind: str, key: str, address: str) -> dict[str, str]:
         mapping = dict(getattr(state, kind))
         mapping[key] = address
         setattr(state, kind, mapping)
-        state.save()
+        state.schedule_save()
     return {kind[:-1]: key, "address": address}
 
 
@@ -228,7 +244,7 @@ async def _delete(kind: str, key: str) -> None:
         mapping = dict(getattr(state, kind))
         mapping.pop(key, None)
         setattr(state, kind, mapping)
-        state.save()
+        state.schedule_save()
 
 
 async def _sync(maps: dict[str, dict[str, str]]) -> None:

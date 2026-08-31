@@ -31,7 +31,7 @@ sudo systemctl status openresty.service atlas-proxy-control.service
 
 After restarting OpenResty, `readyz` may briefly return `503`. The daemon retries every five seconds and returns `204` after it has restored both maps.
 
-After restarting the daemon, it loads `control-state.json` before starting its reconciliation loop. A missing or invalid state file is an error and prevents a misconfigured daemon from claiming readiness.
+After restarting the daemon, it loads `control-state.json` before starting its reconciliation loop. State-file writes are debounced for one second, so a burst of changes becomes one atomic write. A missing or invalid state file is an error and prevents a misconfigured daemon from claiming readiness.
 
 ## Logs and state
 
