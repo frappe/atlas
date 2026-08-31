@@ -7,17 +7,17 @@ import (
 )
 
 func TestNames(t *testing.T) {
-	l := NewLVM("metalvg", "/imgs")
-	if got := diskName("abc"); got != "vm-abc" {
-		t.Errorf("diskName = %q", got)
+	z := NewZFS("metal", "/imgs")
+	if got := z.baseDataset("ubuntu"); got != "metal/base/ubuntu" {
+		t.Errorf("baseDataset = %q", got)
 	}
-	if got := baseName("ubuntu"); got != "base-ubuntu" {
-		t.Errorf("baseName = %q", got)
+	if got := z.baseSnapshot("ubuntu"); got != "metal/base/ubuntu@ready" {
+		t.Errorf("baseSnapshot = %q", got)
 	}
-	if got := vmTag("abc"); got != "metal-vm-abc" {
-		t.Errorf("vmTag = %q", got)
+	if got := z.vmDataset("abc"); got != "metal/vms/abc" {
+		t.Errorf("vmDataset = %q", got)
 	}
-	if got := l.devPath("vm-abc"); got != "/dev/metalvg/vm-abc" {
+	if got := z.devPath("abc"); got != "/dev/zvol/metal/vms/abc" {
 		t.Errorf("devPath = %q", got)
 	}
 }

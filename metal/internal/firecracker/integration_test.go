@@ -51,7 +51,7 @@ func TestBootAndSSH(t *testing.T) {
 
 	d := New(DefaultConfig(),
 		units,
-		storage.NewLVM(env("METAL_VG", "metalvg"), env("METAL_KERNEL_DIR", "/var/lib/metal/kernels")),
+		storage.NewZFS(env("METAL_POOL", "metal"), env("METAL_KERNEL_DIR", "/var/lib/metal/kernels")),
 		network.NewLinux(),
 	)
 

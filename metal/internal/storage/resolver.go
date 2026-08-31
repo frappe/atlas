@@ -1,7 +1,7 @@
 // Package storage resolves logical image refs into drives prepared for a VM.
-// The backend is thin LVM: each VM's rootfs is a thin snapshot of a base LV,
-// optionally grown to a requested size, exposed as a block device inside the
-// chroot and owned by the VM's uid; the kernel is a hard-linked file.
+// The backend is ZFS: each VM's rootfs is a clone of a base zvol's @ready
+// snapshot, optionally grown to a requested size, exposed as a block device
+// inside the chroot and owned by the VM's uid; the kernel is a hard-linked file.
 package storage
 
 import "context"
