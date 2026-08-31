@@ -837,17 +837,15 @@ def test_concurrent_crud_stays_coherent():
 
 
 def test_debounce_coalesces_burst():
-    """The debounce is 1s, thus a burst coalesces. Direction only: "exactly one"
-    flakes on a slow box.
-    """
+    """A burst is persisted by one or more delayed dumps, not one per update."""
     admin("POST", "/v1/sites/sync", "{}")
+    previous = _last_dump() or 0
     admin("POST", "/v1/dump")
-    time.sleep(1.2)
-    baseline = _last_dump()
+    baseline = _wait_for_dump(previous)
     for i in range(8):
         set_site(f"burst{i}", VM_A)
     seen = set()
-    deadline = time.time() + 4
+    deadline = time.time() + 6
     while time.time() < deadline:
         ld = _last_dump()
         if ld:
@@ -961,6 +959,17 @@ def _last_dump() -> float | None:
     """The last_dump time from GET /v1/healthz, or None if there is no dump yet."""
     _, body = admin("GET", "/v1/healthz")
     return json.loads(body).get("last_dump")
+
+
+def _wait_for_dump(previous: float = 0, timeout: float = 6) -> float:
+    """Wait until OpenResty has completed a scheduled site-map dump."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        dumped = _last_dump()
+        if dumped and dumped > previous:
+            return dumped
+        time.sleep(0.1)
+    raise AssertionError("OpenResty did not complete a map dump")
 
 
 def noregion_admin(method: str, path: str, body: str | None = None) -> tuple[int, str]:
