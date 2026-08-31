@@ -41,7 +41,7 @@ jobs:
       - name: Find tests
         run: |
           echo "Finding tests"
-          grep -rn "def test" > /dev/null
+          grep -rn "def test" atlas > /dev/null
 
       - name: Setup Python
         uses: actions/setup-python@v6
