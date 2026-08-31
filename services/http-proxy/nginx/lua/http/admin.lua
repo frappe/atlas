@@ -231,8 +231,10 @@ if uri == "/v1/dump" and method == "POST" then
 	return send_json(dumped and 200 or 500, { dumped = dumped })
 end
 
-local collection, key = uri:match("^/v1/(sites|domains)/(.+)$")
-if collection and key then
+-- Lua patterns have no alternation, so match the collection as a word and compare
+-- it against the known names.
+local collection, key = uri:match("^/v1/(%a+)/(.+)$")
+if key and (collection == "sites" or collection == "domains") then
 	if collection == "sites" then
 		return one_mapping(method, sites, persist, key, "site", false, "sites_count")
 	end

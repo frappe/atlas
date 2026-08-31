@@ -32,7 +32,7 @@ The site map uses the first host label as its key. For example, `erp.iad.frappe.
 
 ## Custom-domain traffic
 
-OpenResty does not decrypt custom-domain TLS traffic. The site VM must listen on port `443` and must have the certificate for its custom domain.
+OpenResty does not decrypt custom-domain TLS traffic. It connects directly to the site VM and sends a PROXY protocol v2 header before the TLS data. The site VM must listen on port `443`, accept PROXY protocol v2, and have the certificate for its custom domain. This header gives the site VM the client address.
 
 The HTTP worker and stream worker use separate maps. A custom-domain update goes through the private SNI bridge so both maps get the same data.
 

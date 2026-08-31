@@ -57,7 +57,6 @@ install -m 0644 "$SERVICE_DIR/nginx/lua/http/acme_router.lua"  "$LUA_DIR/acme_ro
 install -m 0644 "$SERVICE_DIR/nginx/lua/http/domains_http_persist.lua" "$LUA_DIR/domains_http_persist.lua"
 install -m 0644 "$SERVICE_DIR/nginx/lua/stream/sni_bridge.lua"    "$LUA_DIR/sni_bridge.lua"
 install -m 0644 "$SERVICE_DIR/nginx/lua/stream/sni_router.lua"      "$LUA_DIR/sni_router.lua"
-install -m 0644 "$SERVICE_DIR/nginx/lua/stream/sni_passthrough.lua" "$LUA_DIR/sni_passthrough.lua"
 install -m 0644 "$SERVICE_DIR/nginx/lua/stream/sni_persist.lua"     "$LUA_DIR/sni_persist.lua"
 install -m 0644 "$SERVICE_DIR/nginx/lua/http/unconfigured.lua"    "$LUA_DIR/unconfigured.lua"
 install -m 0644 "$SERVICE_DIR/nginx/lua/domain_lookup.lua"        "$LUA_DIR/domain_lookup.lua"

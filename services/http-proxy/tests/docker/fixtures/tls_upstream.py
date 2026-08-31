@@ -30,6 +30,8 @@ _acme_lock = threading.Lock()
 # Keyed by the file number of the socket, thus the handler can report the name the
 # client asked for - the proof the SNI survived the passthrough.
 _sni_by_fileno: dict[int, str] = {}
+# The client address the PROXY header carried, keyed the same way.
+_client_by_fileno: dict[int, str] = {}
 _sni_lock = threading.Lock()
 
 
@@ -85,15 +87,17 @@ class _Handler(BaseHTTPRequestHandler):
                 _acme_tokens[token] = value
             self._send(200, b"seeded\n")
             return
-        sni = ""
+        sni, client = "", ""
         if isinstance(self.connection, ssl.SSLSocket):
             with _sni_lock:
                 sni = _sni_by_fileno.pop(self.connection.fileno(), "")
+                client = _client_by_fileno.pop(self.connection.fileno(), "")
         tls = "backend" if isinstance(self.connection, ssl.SSLSocket) else "plain"
         host = self.headers.get("Host", "")
         self._send(
             200,
-            f"upstream={NAME} sni={sni} tls={tls} host={host} path={self.path}\n".encode(),
+            f"upstream={NAME} sni={sni} tls={tls} client={client} "
+            f"host={host} path={self.path}\n".encode(),
         )
 
     def _send(self, status: int, body: bytes) -> None:
@@ -105,6 +109,36 @@ class _Handler(BaseHTTPRequestHandler):
 
     def log_message(self, *args) -> None:
         pass
+
+
+PROXY_V2_SIGNATURE = b"\r\n\r\n\x00\r\nQUIT\n"
+FAMILY_TCP4 = 0x11
+FAMILY_TCP6 = 0x21
+
+
+def _recv_exact(sock: socket.socket, count: int) -> bytes:
+    chunks = []
+    while count:
+        data = sock.recv(count)
+        if not data:
+            break
+        chunks.append(data)
+        count -= len(data)
+    return b"".join(chunks)
+
+
+def _read_proxy_v2(sock: socket.socket) -> str:
+    """Read a PROXY v2 header and return its client address."""
+    header = _recv_exact(sock, 16)
+    if not header.startswith(PROXY_V2_SIGNATURE):
+        return ""
+    family = header[13]
+    body = _recv_exact(sock, int.from_bytes(header[14:16], "big"))
+    if family == FAMILY_TCP4:
+        return socket.inet_ntop(socket.AF_INET, body[0:4])
+    if family == FAMILY_TCP6:
+        return socket.inet_ntop(socket.AF_INET6, body[0:16])
+    return ""
 
 
 class _V6Server(socketserver.ThreadingTCPServer):
@@ -122,9 +156,12 @@ class _TLSV6Server(_V6Server):
 
     def get_request(self):
         sock, addr = super().get_request()
+        client = _read_proxy_v2(sock)
         # wrap_socket runs the handshake, thus the servername callback already keyed
         # the SNI by a file number the handler also sees. Do not re-key it here.
         tls_sock = self.ssl_context.wrap_socket(sock, server_side=True)
+        with _sni_lock:
+            _client_by_fileno[tls_sock.fileno()] = client
         return tls_sock, addr
 
 

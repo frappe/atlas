@@ -18,7 +18,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from test_proxy import (
     HERE,
-    REGION,
+    ZONE,
     VM_A,
     admin,
     exec_proxy_text,
@@ -86,7 +86,7 @@ def test_streaming_first_byte_before_body():
     byte long before the body completes; a buffering one withholds everything.
     """
     set_site("acme", VM_A)
-    host = f"acme.{REGION}.frappe.dev"
+    host = f"acme.{ZONE}"
     # A curl -w string must not start with "@", because curl then reads a file. Use a
     # marker word and remove it again. The body and the times both go to stdout.
     marker = "TIMING:"
@@ -122,7 +122,7 @@ def test_tls_session_resumption_works():
     s_client writes the session, then reads it back and reports "Reused".
     """
     sess = "/tmp/proxy_sess.pem"
-    host = f"acme.{REGION}.frappe.dev"
+    host = f"acme.{ZONE}"
     first = _openssl_session(host, sess_out=sess)
     assert "New, " in first or "Session-ID:" in first, (
         f"first handshake odd:\n{first[-400:]}"

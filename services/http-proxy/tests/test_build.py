@@ -6,8 +6,8 @@ correctly: stock OpenResty from its own signed repository, installed and left
 alone, with the files of Atlas beside it. Nothing is compiled in the guest and no
 file that dpkg owns is overwritten.
 
-	docker compose -f docker/docker-compose.yml up --build -d
-	python3 -m pytest test_build.py -v
+        docker compose -f docker/docker-compose.yml up --build -d
+        python3 -m pytest test_build.py -v
 """
 
 import json
@@ -33,8 +33,6 @@ def nginx_V() -> str:
     """The output of `nginx -V`. The configure arguments go to stderr."""
     res = exec_proxy(SBIN, "-V")
     return (res.stdout + res.stderr).strip()
-
-
 
 
 def test_openresty_is_apt_package():
@@ -66,9 +64,8 @@ def test_running_binary_matches_the_build_pin(nginx_V):
 def test_shipped_files_are_unmodified():
     """The decisive check: every file of the package is exactly as shipped.
 
-    `dpkg --verify` compares the checksum of each file against the package. An
-    earlier design overwrote the nginx binary with a patched recompile, which left
-    dpkg claiming to own a file it had never shipped. Nothing may do that now.
+    `dpkg --verify` compares each file against the checksum the package recorded,
+    so a binary swapped in behind the back of dpkg fails here.
     """
     res = exec_proxy("dpkg", "--verify", "openresty", check=False)
     assert res.returncode == 0 and not res.stdout.strip(), (
@@ -90,8 +87,6 @@ def test_no_compiler_toolchain_in_the_image():
 def test_openresty_has_its_own_openssl(nginx_V):
     """The package supplies OpenSSL. setup.sh compiles none."""
     assert "OpenSSL" in nginx_V, nginx_V
-
-
 
 
 def test_lua_and_stream_lua_are_built_in(nginx_V):
@@ -138,14 +133,16 @@ def test_config_parses_and_loads_the_lua():
     assert "test is successful" in combined.lower(), combined
 
 
-
-
 def test_cjson_safe_resolves_in_lua():
     """Go through the admin path that encodes JSON, thus a regression names cjson
     rather than "routing broke".
     """
     res = exec_proxy(
-        "curl", "-s", "--unix-socket", "/run/nginx/admin.sock", "http://localhost/v1/healthz"
+        "curl",
+        "-s",
+        "--unix-socket",
+        "/run/nginx/admin.sock",
+        "http://localhost/v1/healthz",
     )
     assert json.loads(res.stdout) is not None or res.stdout.strip() in ("{}", "{}\n")
 
@@ -196,8 +193,6 @@ def test_luajit_is_the_openresty_fork():
     assert "LuaJIT 2.1" in res.stdout, res.stdout
 
 
-
-
 def test_security_headers_present_on_response():
     """The cheap canary for a broken header chain."""
     _ensure_mapped("acme")
@@ -216,8 +211,6 @@ def test_server_tokens_off_hides_version():
     ]
     assert server_line, "no Server header"
     assert "/" not in server_line[0], f"version leaked: {server_line[0]}"
-
-
 
 
 def test_proxy_read_timeout_is_finite_and_nonzero():
@@ -350,7 +343,6 @@ def test_privkey_stays_root_only_after_user_switch():
     assert int(mode[-1]) == 0, (
         f"privkey is group/world-accessible ({mode}) after user switch"
     )
-
 
 
 REGION = "test"

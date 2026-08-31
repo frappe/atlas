@@ -187,11 +187,11 @@ def test_empty_sni_is_dropped_at_l4():
 
 
 def test_wildcard_sni_still_terminates_at_the_proxy():
-    """A regression guard on the unchanged layer 7 path.
+    """A wildcard name must terminate at the proxy, not pass through.
 
-    With an empty sites map it brands a 404, which proves it terminated HERE: a
-    passthrough would have failed the handshake, since only the proxy holds the
-    certificate the wildcard SNI matches.
+    With an empty sites map it brands a 404, which proves it terminated here: only
+    the proxy holds the certificate the wildcard SNI matches, so a passthrough
+    could not complete the handshake.
     """
     sync_domains("{}")
     # Empty the HTTP sites map also. A mapping that another test left gives a 200.
@@ -271,6 +271,23 @@ def test_wildcard_acme_challenge_is_served_locally_not_proxied():
     )
     _, _, status = res.stdout.rpartition("\n")
     assert status == "404", res.stdout
+
+
+def test_passthrough_carries_the_client_address():
+    """The backend receives the original client address."""
+    sync_domains(json.dumps({CUSTOM_DOMAIN: SNI_BACKEND}))
+    res = _curl(FRONT_443, CUSTOM_DOMAIN)
+    assert "@@STATUS@@200" in res.stdout, res.stdout + res.stderr
+    body = res.stdout.split("@@STATUS@@")[0]
+    client = ""
+    for token in body.split():
+        if token.startswith("client="):
+            client = token[len("client=") :]
+    assert client, f"the VM saw no PROXY header: {body!r}"
+    assert not client.startswith("127.0.0."), (
+        f"the VM did not receive the client address: {client}"
+    )
+    assert client != TLS_VM_V6, f"the VM saw its own address: {client}"
 
 
 def test_custom_domain_plain_http_reaches_the_vm():

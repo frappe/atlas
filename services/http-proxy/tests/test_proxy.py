@@ -158,7 +158,7 @@ def test_unmapped_serves_branded_404():
     admin("POST", "/v1/sites/sync", "{}")
     status, body, _ = fetch("nope")
     assert status == 404
-    assert "isn't here" in body
+    assert "Site not found" in body
 
 
 def test_tombstone_serves_503():
@@ -166,7 +166,7 @@ def test_tombstone_serves_503():
     set_site("paused", "-")
     status, body, _ = fetch("paused")
     assert status == 503
-    assert "isn't here" in body
+    assert "Site not found" in body
 
 
 def test_no_region_suffix_serves_404():
@@ -475,7 +475,7 @@ def test_socketio_plain_get_routes_and_misses():
     assert status == 200 and "upstream=vm-a" in body
     assert "path=/socket.io/EIO=4" in body
     status, body, _ = fetch("nope", path="/socket.io/")
-    assert status == 404 and "isn't here" in body
+    assert status == 404 and "Site not found" in body
 
 
 
@@ -621,12 +621,21 @@ def test_get_map_sub_404_shape():
 
 
 def test_method_dispatch_405_vs_404():
-    for method in ("POST", "PATCH"):
+    """A known route with an unhandled method gives 405; an unknown route gives 404.
+
+    A single mapping takes GET, PATCH and DELETE; the collection takes GET and PUT.
+    Everything else is a 405.
+    """
+    for method in ("POST", "PUT"):
         status, body = admin(method, "/v1/sites/acme")
         assert status == 405, f"{method} /v1/sites/acme gave {status}"
         assert "method not allowed" in body.lower(), body
-    status, body = admin("PUT", "/v1/sites")
-    assert status == 405 and "method not allowed" in body.lower()
+    for method in ("POST", "PATCH", "DELETE"):
+        status, body = admin(method, "/v1/sites")
+        assert status == 405, f"{method} /v1/sites gave {status}"
+        assert "method not allowed" in body.lower(), body
+    status, body = admin("GET", "/v1/nope")
+    assert status == 404 and "unknown route" in body.lower()
 
 
 def test_admin_wrong_method_route_combos():
@@ -711,7 +720,9 @@ def test_weird_host_headers_degrade():
     expect = {
         f".{ZONE}": ("404",),
         "192.0.2.7": ("404",),
-        "fd00:a71a:5::1": ("400",),
+        # An unbracketed IPv6 literal is not a valid Host. nginx either rejects it
+        # with a 400 or hands it to the router, which brands it. Both degrade cleanly.
+        "fd00:a71a:5::1": ("400", "404"),
     }
     for host, want in expect.items():
         cmd = [
@@ -781,7 +792,9 @@ def test_large_sync_body_spills_and_applies():
 def test_concurrent_reads_during_sync_never_partial():
     """admin.lua upserts then deletes leftovers, thus there is no empty window.
 
-    The two maps hold 200 disjoint keys each, so any count but 200 is a torn read.
+    The two maps hold 200 disjoint keys each. During a sync both sets are briefly
+    present, so the count rises toward 400 and only a count BELOW 200 means the
+    reader saw a torn map.
     """
     map_a = {f"a{i}": VM_A for i in range(200)}
     map_b = {f"b{i}": VM_B for i in range(200)}
@@ -793,7 +806,7 @@ def test_concurrent_reads_during_sync_never_partial():
         while not stop.is_set():
             _, body = admin("GET", "/v1/sites")
             n = len(json.loads(body))
-            if n != 200:
+            if n < 200:
                 seen_bad.append(n)
 
     t = threading.Thread(target=reader, daemon=True)
@@ -804,7 +817,7 @@ def test_concurrent_reads_during_sync_never_partial():
     finally:
         stop.set()
         t.join(timeout=5)
-    assert not seen_bad, f"reader saw partial map sizes: {seen_bad[:10]}"
+    assert not seen_bad, f"reader saw a torn map: {seen_bad[:10]}"
     admin("POST", "/v1/sites/sync", "{}")
 
 

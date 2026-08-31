@@ -2,7 +2,6 @@ local domains = ngx.shared.domains
 local domain_lookup = require("domain_lookup")
 
 local WILDCARD_TERMINATOR = "127.0.0.1:8443"
-local CUSTOM_STRIP_PATH = "127.0.0.1:8445"
 local UNCONFIGURED_TERMINATOR = "127.0.0.1:8446"
 
 local sni = ngx.var.ssl_preread_server_name or ""
@@ -21,8 +20,10 @@ if atlas_root_domain and atlas_root_domain ~= "" then
 	end
 end
 
-if domain_lookup.get(domains, sni) then
-	ngx.var.sni_upstream = CUSTOM_STRIP_PATH
+-- Custom-domain TLS uses PROXY v2 so the VM gets the client address.
+local backend = domain_lookup.get(domains, sni)
+if backend then
+	ngx.var.sni_upstream = backend
 	return
 end
 
