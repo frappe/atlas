@@ -236,12 +236,11 @@ sequenceDiagram
     participant B as Returned Host B
     participant C as Current Host C
     participant R as Controller
-
     A->>B: WHO_HAS VM X
     B->>A: FOUND VM X, Host B
     A->>B: Tunnel for VM X
     B->>B: local_vms says VM X is local
-    Note over B: Delivers the tunnel; does not send NOT_HERE
+    Note over B: Delivers the tunnel, does not send NOT_HERE
     R->>B: vm list --json
     R->>B: vm remove stale VM X
     A->>C: Next WHO_HAS / FOUND path reaches Host C
