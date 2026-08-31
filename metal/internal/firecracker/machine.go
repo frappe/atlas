@@ -16,22 +16,24 @@ import (
 // machine implements vm.VM as a client-side handle: a systemd unit (metal-vm@id)
 // plus an API client over that unit's socket. It holds no child process.
 type machine struct {
-	cfg    vmConfig
-	dir    string // per-VM state dir
-	units  systemd.Manager
-	images storage.Resolver
-	net    network.Allocator
-	api    *api.Client
+	cfg     vmConfig
+	dir     string // per-VM state dir
+	units   systemd.Manager
+	images  storage.Resolver
+	net     network.Allocator
+	api     *api.Client
+	persist func(vmConfig) error // rewrite the VM's config.json
 }
 
 func (d *Driver) newMachine(vc vmConfig) *machine {
 	return &machine{
-		cfg:    vc,
-		dir:    d.cfg.vmDir(vc.ID),
-		units:  d.units,
-		images: d.images,
-		net:    d.net,
-		api:    api.New(vc.Sock),
+		cfg:     vc,
+		dir:     d.cfg.vmDir(vc.ID),
+		units:   d.units,
+		images:  d.images,
+		net:     d.net,
+		api:     api.New(vc.Sock),
+		persist: d.cfg.writeVMConfig,
 	}
 }
 
@@ -128,6 +130,37 @@ func (m *machine) state(ctx context.Context, st systemd.Status) vm.State {
 // Snapshot is deferred: the current milestone excludes memory snapshotting.
 func (m *machine) Snapshot(ctx context.Context, dir string, typ vm.SnapshotType) (vm.Snapshot, error) {
 	return vm.Snapshot{}, errNotImplemented
+}
+
+// Resize grows the VM's disk to diskMiB and makes a running guest see it.
+// Grow-only: a smaller request is ErrConflict; an equal one is a no-op.
+func (m *machine) Resize(ctx context.Context, diskMiB int) error {
+	u, err := m.images.Usage(ctx, m.cfg.ID)
+	if err != nil {
+		return storageErr(err)
+	}
+	switch {
+	case diskMiB < u.SizeMiB:
+		return vm.ErrConflict
+	case diskMiB == u.SizeMiB:
+		return nil
+	}
+	if err := m.images.Resize(ctx, m.cfg.ID, diskMiB); err != nil {
+		return storageErr(err)
+	}
+	// If the guest is running, have firecracker rescan the grown block device.
+	st, err := m.units.Status(ctx, m.cfg.ID)
+	if err != nil {
+		return err
+	}
+	if m.state(ctx, st) == vm.StateRunning {
+		if err := m.api.PatchDrive(ctx, api.PartialDrive{DriveID: rootDriveID, PathOnHost: rootDrivePath}); err != nil {
+			return err
+		}
+	}
+	// Persist the new size so Load/List/Info stay truthful.
+	m.cfg.Spec.DiskMiB = diskMiB
+	return m.persist(m.cfg)
 }
 
 // DiskSnapshot takes a named snapshot of the VM's rootfs disk.

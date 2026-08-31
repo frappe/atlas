@@ -32,6 +32,13 @@ func (f *fakeVM) Info(context.Context) (vm.Info, error)       { return f.info, n
 func (f *fakeVM) Snapshot(context.Context, string, vm.SnapshotType) (vm.Snapshot, error) {
 	return vm.Snapshot{}, nil
 }
+func (f *fakeVM) Resize(_ context.Context, diskMiB int) error {
+	if diskMiB < f.info.DiskMiB {
+		return vm.ErrConflict
+	}
+	f.info.DiskMiB = diskMiB
+	return nil
+}
 
 func (f *fakeVM) DiskSnapshot(_ context.Context, name string) error {
 	if f.snaps == nil {
@@ -67,7 +74,7 @@ func (f *fakeVM) RestoreDiskSnapshot(_ context.Context, name string) error {
 type fakeDriver struct{ vms map[string]*fakeVM }
 
 func (d *fakeDriver) Create(_ context.Context, spec vm.Spec) (vm.VM, error) {
-	m := &fakeVM{info: vm.Info{ID: "vm1", State: vm.StateCreated, VCPUs: spec.VCPUs, MemMiB: spec.MemMiB, Image: spec.Image.Name}}
+	m := &fakeVM{info: vm.Info{ID: "vm1", State: vm.StateCreated, VCPUs: spec.VCPUs, MemMiB: spec.MemMiB, DiskMiB: spec.DiskMiB, Image: spec.Image.Name}}
 	d.vms[m.info.ID] = m
 	return m, nil
 }
@@ -121,12 +128,29 @@ func TestGetUnknownIs404(t *testing.T) {
 	}
 }
 
-func TestResizeNotImplemented(t *testing.T) {
-	rec := httptest.NewRecorder()
-	newTestServer().ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/vms/vm1/resize", nil))
-	if rec.Code != http.StatusNotImplemented {
-		t.Fatalf("status = %d", rec.Code)
+func TestResizeDiskGrows(t *testing.T) {
+	srv := newTestServer()
+	do(t, srv, http.MethodPost, "/vms", `{"image":"ubuntu","disk_mib":1024}`, http.StatusCreated)
+	rec := do(t, srv, http.MethodPost, "/vms/vm1/resize", `{"disk_mib":2048}`, http.StatusOK)
+	var got vmResp
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
 	}
+	if got.Disk.SizeMiB != 2048 {
+		t.Fatalf("disk size = %d, want 2048", got.Disk.SizeMiB)
+	}
+}
+
+func TestResizeShrinkIs409(t *testing.T) {
+	srv := newTestServer()
+	do(t, srv, http.MethodPost, "/vms", `{"image":"ubuntu","disk_mib":2048}`, http.StatusCreated)
+	do(t, srv, http.MethodPost, "/vms/vm1/resize", `{"disk_mib":1024}`, http.StatusConflict)
+}
+
+func TestResizeCPUMemNotImplemented(t *testing.T) {
+	srv := newTestServer()
+	do(t, srv, http.MethodPost, "/vms", `{"image":"ubuntu"}`, http.StatusCreated)
+	do(t, srv, http.MethodPost, "/vms/vm1/resize", `{"mem_mib":1024}`, http.StatusNotImplemented)
 }
 
 func TestHealth(t *testing.T) {

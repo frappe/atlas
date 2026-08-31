@@ -9,6 +9,9 @@ type VM interface {
 	Stop(ctx context.Context, force bool) error
 	Destroy(ctx context.Context) error
 	Wait(ctx context.Context) (ExitStatus, error)
+	// Resize grows the VM's disk to diskMiB. Grow-only; returns ErrConflict on
+	// a smaller request.
+	Resize(ctx context.Context, diskMiB int) error
 	Snapshot(ctx context.Context, dir string, typ SnapshotType) (Snapshot, error)
 	// DiskSnapshot takes a named snapshot of the VM's rootfs disk.
 	DiskSnapshot(ctx context.Context, name string) error

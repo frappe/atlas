@@ -35,8 +35,9 @@ func New(driver vm.VMDriver) *echo.Echo {
 	e.DELETE("/vms/:id/snapshots/:name", s.deleteSnapshot)
 	e.POST("/vms/:id/snapshots/:name/restore", s.restoreSnapshot)
 
+	e.POST("/vms/:id/resize", s.resize)
+
 	// Specced but not implemented yet.
-	e.POST("/vms/:id/resize", notImplemented)
 	e.GET("/vms/:id/console", notImplemented)
 
 	e.GET("/health", func(c echo.Context) error { return c.NoContent(http.StatusOK) })
@@ -187,6 +188,28 @@ func (s *Server) restoreSnapshot(c echo.Context) error {
 var snapNameRe = regexp.MustCompile(`^[A-Za-z0-9_.:-]+$`)
 
 func validSnapName(s string) bool { return snapNameRe.MatchString(s) }
+
+// resize currently grows only the disk. CPU/mem changes are not yet supported.
+func (s *Server) resize(c echo.Context) error {
+	m, err := s.load(c)
+	if err != nil {
+		return fromDriverErr(c, err)
+	}
+	var body resizeReq
+	if err := c.Bind(&body); err != nil {
+		return apiError(c, http.StatusBadRequest, err)
+	}
+	if body.VCPUs != nil || body.MemMiB != nil {
+		return apiError(c, http.StatusNotImplemented, errors.New("cpu/mem resize not yet supported"))
+	}
+	if body.DiskMiB == nil {
+		return apiError(c, http.StatusBadRequest, errors.New("disk_mib required"))
+	}
+	if err := m.Resize(c.Request().Context(), *body.DiskMiB); err != nil {
+		return fromDriverErr(c, err)
+	}
+	return s.respond(c, http.StatusOK, m)
+}
 
 func (s *Server) load(c echo.Context) (vm.VM, error) {
 	return s.driver.Load(c.Request().Context(), c.Param("id"))

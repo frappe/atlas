@@ -26,6 +26,14 @@ type stopReq struct {
 	Force bool `json:"force"`
 }
 
+// resizeReq uses pointers so an omitted field differs from a zero value. Only
+// disk_mib is honored today; vcpus/mem_mib are rejected as not-implemented.
+type resizeReq struct {
+	VCPUs   *int `json:"vcpus"`
+	MemMiB  *int `json:"mem_mib"`
+	DiskMiB *int `json:"disk_mib"`
+}
+
 type vmResp struct {
 	ID      string   `json:"id"`
 	State   string   `json:"state"`

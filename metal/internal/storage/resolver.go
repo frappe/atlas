@@ -18,6 +18,8 @@ type Resolver interface {
 	Prepare(ctx context.Context, req Request) (BootConfig, error)
 	// Release frees whatever Prepare allocated for vmID.
 	Release(ctx context.Context, vmID string) error
+	// Resize grows the VM disk to diskMiB. Grow-only; never shrinks.
+	Resize(ctx context.Context, vmID string, diskMiB int) error
 	// Snapshot takes a named point-in-time snapshot of the VM's disk.
 	Snapshot(ctx context.Context, vmID, name string) error
 	// Snapshots lists the VM's disk snapshots.

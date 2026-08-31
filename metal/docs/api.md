@@ -4,7 +4,7 @@ metald serves this over the unix socket `/run/metal.sock`. JSON in/out. Auth is
 socket permissions only. Stateless: responses reflect host truth, so they
 survive a metald restart.
 
-**Async:** `create`/`start`/`stop`/`resize`/`delete` return `202` immediately;
+**Async:** `create`/`start`/`stop`/`delete` return `202` immediately;
 the client polls `GET /vms/{id}` until `state` settles. A failure shows as
 `state:"failed"` + `reason`. Read-only and disk-only ops return synchronously.
 
@@ -47,11 +47,10 @@ install them at boot. metald assigns `id`/`ip`/`mac` and boots the guest.
 **Stop** `POST /vms/{id}/stop` — `{ "force": false }`. `false` = Ctrl+Alt+Del,
 `true` = SIGKILL.
 
-**Resize** `POST /vms/{id}/resize` — `{ "vcpus"?, "mem_mib"?, "disk_mib"? }`. All
-optional; omitted = unchanged; `disk_mib` is grow-only. A disk-only change grows
-online (`lvextend` + firecracker rescan; guest grows its own fs). Firecracker
-can't hotplug cpu/mem, so if `vcpus` and/or `mem_mib` change metald **restarts
-the VM** to apply them (brief downtime).
+**Resize** `POST /vms/{id}/resize` — `{ "disk_mib" }`. `disk_mib` is grow-only; a
+smaller value → `409`. The disk grows online (`zfs set volsize` + firecracker
+drive rescan; the guest grows its own fs) and returns the updated VM. CPU/mem
+resize is not yet implemented (`vcpus`/`mem_mib` → `501`).
 
 ## Snapshots
 

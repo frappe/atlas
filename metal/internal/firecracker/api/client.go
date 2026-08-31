@@ -36,6 +36,12 @@ func (c *Client) PutDrive(ctx context.Context, d Drive) error {
 	return c.do(ctx, http.MethodPut, "/drives/"+d.DriveID, d, nil)
 }
 
+// PatchDrive updates a live drive; used after a host-side resize so firecracker
+// rescans the block device and the guest sees the new size.
+func (c *Client) PatchDrive(ctx context.Context, d PartialDrive) error {
+	return c.do(ctx, http.MethodPatch, "/drives/"+d.DriveID, d, nil)
+}
+
 func (c *Client) PutNetworkInterface(ctx context.Context, n NetworkInterface) error {
 	return c.do(ctx, http.MethodPut, "/network-interfaces/"+n.IfaceID, n, nil)
 }

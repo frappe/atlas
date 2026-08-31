@@ -118,6 +118,9 @@ const (
 	ifaceID     = "eth0"
 	mmdsAddr    = "169.254.169.254"
 	mmdsVersion = "V1" // simplest guest-side (plain GET); V2 adds token auth
+
+	rootDriveID   = "drive0"      // the first (root) drive, see configure
+	rootDrivePath = "/rootfs.img" // the in-chroot block node, see storage.Prepare
 )
 
 // configure sends firecracker its pre-boot configuration over the API socket.

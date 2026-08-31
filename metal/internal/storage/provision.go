@@ -62,6 +62,12 @@ func (z *ZFS) grow(ctx context.Context, vmID string, diskMiB int) error {
 	return run(ctx, "zfs", "set", fmt.Sprintf("volsize=%dM", diskMiB), z.vmDataset(vmID))
 }
 
+// Resize grows the VM disk to diskMiB (no-op if not already smaller). It never
+// shrinks; the caller rejects a smaller request before reaching here.
+func (z *ZFS) Resize(ctx context.Context, vmID string, diskMiB int) error {
+	return z.grow(ctx, vmID, diskMiB)
+}
+
 // Release destroys the VM's disk and every snapshot under it. Idempotent: an
 // already-gone dataset is not an error.
 func (z *ZFS) Release(ctx context.Context, vmID string) error {
