@@ -70,6 +70,10 @@ func (d *DBus) Kill(ctx context.Context, id string, sig syscall.Signal) error {
 	return d.conn.KillUnitWithTarget(ctx, unitName(id), sd.All, int32(sig))
 }
 
+func (d *DBus) ResetFailed(ctx context.Context, id string) error {
+	return d.conn.ResetFailedUnitContext(ctx, unitName(id))
+}
+
 func (d *DBus) Status(ctx context.Context, id string) (Status, error) {
 	unit := unitName(id)
 	props, err := d.conn.GetUnitPropertiesContext(ctx, unit)

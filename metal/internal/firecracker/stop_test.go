@@ -12,13 +12,16 @@ import (
 
 	"github.com/frappe/atlas/metal/internal/firecracker/api"
 	"github.com/frappe/atlas/metal/internal/systemd"
+	"github.com/frappe/atlas/metal/internal/vm"
 )
 
 // stubUnits is a systemd.Manager whose unit stays active until it is stopped or
 // killed. Wait blocks while the unit is active, like the D-Bus manager does.
+// A killed unit reports "failed" until ResetFailed clears it, as systemd does.
 type stubUnits struct {
 	mu     sync.Mutex
 	active bool
+	failed bool
 	stops  int
 	kills  int
 	waits  int
@@ -45,11 +48,27 @@ func (s *stubUnits) Kill(context.Context, string, syscall.Signal) error {
 	defer s.mu.Unlock()
 	s.kills++
 	s.active = false
+	s.failed = true
+	return nil
+}
+
+func (s *stubUnits) ResetFailed(context.Context, string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.failed = false
 	return nil
 }
 
 func (s *stubUnits) Status(context.Context, string) (systemd.Status, error) {
-	return systemd.Status{}, nil
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	switch {
+	case s.failed:
+		return systemd.Status{ActiveState: "failed"}, nil
+	case s.active:
+		return systemd.Status{ActiveState: "active"}, nil
+	}
+	return systemd.Status{ActiveState: "inactive"}, nil
 }
 
 func (s *stubUnits) Wait(ctx context.Context, _ string) (systemd.Result, error) {
@@ -150,11 +169,48 @@ func TestStopForceKills(t *testing.T) {
 	if err := m.Stop(context.Background(), true); err != nil {
 		t.Fatal(err)
 	}
-	stops, kills, _ := units.counts()
+	stops, kills, waits := units.counts()
 	if kills != 1 {
 		t.Errorf("kills = %d, want 1", kills)
 	}
 	if stops != 0 {
 		t.Errorf("systemd stops = %d, want 0", stops)
+	}
+	if waits == 0 {
+		t.Error("Stop did not wait for the process to exit")
+	}
+}
+
+// systemd flags a unit killed out of band as failed. A VM stopped on purpose
+// must still report StateStopped.
+func TestStopClearsTheFailedUnitState(t *testing.T) {
+	for _, force := range []bool{true, false} {
+		units := &stubUnits{active: true}
+		m := testMachine(units, fcSocket(t, nil), 20*time.Millisecond)
+
+		if err := m.Stop(context.Background(), force); err != nil {
+			t.Fatalf("force=%v: %v", force, err)
+		}
+		st, err := units.Status(context.Background(), m.cfg.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := m.state(context.Background(), st); got != vm.StateStopped {
+			t.Errorf("force=%v: state = %q, want %q", force, got, vm.StateStopped)
+		}
+	}
+}
+
+// A VM that died on its own was not stopped on purpose, so it keeps StateFailed.
+func TestCrashedVMReportsFailed(t *testing.T) {
+	units := &stubUnits{failed: true}
+	m := testMachine(units, fcSocket(t, nil), time.Minute)
+
+	st, err := units.Status(context.Background(), m.cfg.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := m.state(context.Background(), st); got != vm.StateFailed {
+		t.Errorf("state = %q, want %q", got, vm.StateFailed)
 	}
 }

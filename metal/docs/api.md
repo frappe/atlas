@@ -25,7 +25,9 @@ the client polls `GET /vms/{id}` until `state` settles. A failure shows as
   "disk": { "size_mib": 2048, "used_mib": 137, "snapshots": 2 }
 }
 ```
-`state` ∈ `created | running | paused | stopped | failed | destroyed`.
+`state` ∈ `created | running | paused | stopped | failed | destroyed`. `state` is
+derived from the VM's systemd unit. A VM stopped on request reports `stopped`;
+`failed` means the VM died on its own.
 
 | Method | Path | Action |
 |---|---|---|

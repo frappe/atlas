@@ -67,12 +67,23 @@ func (m *machine) Start(ctx context.Context) error {
 }
 
 // Stop shuts the guest down: force sends SIGKILL via systemd, otherwise the
-// guest is asked to shut itself down first.
+// guest is asked to shut itself down first. Stop returns only once the process
+// has exited, so the VM state it leaves behind is truthful.
 func (m *machine) Stop(ctx context.Context, force bool) error {
 	if force {
-		return m.units.Kill(ctx, m.cfg.ID, syscall.SIGKILL)
+		if err := m.units.Kill(ctx, m.cfg.ID, syscall.SIGKILL); err != nil {
+			return err
+		}
+	} else if err := m.shutdownGuest(ctx); err != nil {
+		return err
 	}
-	return m.shutdownGuest(ctx)
+	if _, err := m.units.Wait(ctx, m.cfg.ID); err != nil {
+		return err
+	}
+	// systemd marks a unit failed when its main process is killed or exits
+	// non-zero, which a deliberate stop always is. Clear that, so a stopped VM
+	// reports StateStopped and only a real crash reports StateFailed.
+	return m.units.ResetFailed(ctx, m.cfg.ID)
 }
 
 // shutdownGuest sends Ctrl+Alt+Del and gives the guest stopTimeout to shut
@@ -99,6 +110,7 @@ func (m *machine) shutdownGuest(ctx context.Context) error {
 // so it is idempotent: a resource already gone is not an error.
 func (m *machine) Destroy(ctx context.Context) error {
 	_ = m.units.Stop(ctx, m.cfg.ID)
+	_ = m.units.ResetFailed(ctx, m.cfg.ID) // do not leave a failed unit behind
 	_ = m.net.Release(ctx, m.cfg.ID)
 	_ = m.images.Release(ctx, m.cfg.ID)
 	return os.RemoveAll(m.dir)
