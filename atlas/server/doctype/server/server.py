@@ -37,6 +37,7 @@ class Server(Document):
 		server_image: DF.Link
 		server_size: DF.Link
 		status: DF.Literal["Pending", "Installing", "Running", "Stopped", "Failed", "Deleted"]
+		wireguard_public_key: DF.Data | None
 	# end: auto-generated types
 
 	# A provider can take more than one hour to install the OS on a bare-metal server.

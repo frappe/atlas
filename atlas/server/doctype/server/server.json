@@ -20,6 +20,8 @@
   "column_break_xwpk",
   "private_ipv4_address",
   "private_network_interface",
+  "wireguard_section",
+  "wireguard_public_key",
   "section_break_metadata",
   "provider_metadata"
  ],
@@ -119,6 +121,16 @@
   {
    "fieldname": "column_break_xwpk",
    "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "wireguard_section",
+   "fieldtype": "Section Break",
+   "label": "Wireguard"
+  },
+  {
+   "fieldname": "wireguard_public_key",
+   "fieldtype": "Data",
+   "label": "Wireguard Public Key"
   }
  ],
  "grid_page_length": 50,
@@ -130,7 +142,7 @@
    "link_fieldname": "server"
   }
  ],
- "modified": "2026-09-01 23:40:35.205318",
+ "modified": "2026-09-02 00:10:52.796925",
  "modified_by": "Administrator",
  "module": "Server",
  "name": "Server",
