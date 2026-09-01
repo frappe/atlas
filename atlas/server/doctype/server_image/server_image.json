@@ -6,8 +6,6 @@
  "field_order": [
   "provider_type",
   "image",
-  "os",
-  "version",
   "column_break_header",
   "enabled",
   "section_break_metadata",
@@ -54,26 +52,6 @@
    "fieldtype": "Data",
    "in_list_view": 1,
    "label": "Image",
-   "reqd": 1,
-   "set_only_once": 1
-  },
-  {
-   "fieldname": "os",
-   "fieldtype": "Select",
-   "in_list_view": 1,
-   "in_standard_filter": 1,
-   "label": "OS",
-   "options": "Ubuntu\nDebian",
-   "reqd": 1,
-   "set_only_once": 1
-  },
-  {
-   "fieldname": "version",
-   "fieldtype": "Select",
-   "in_list_view": 1,
-   "in_standard_filter": 1,
-   "label": "Version",
-   "options": "22.04\n24.04\n26.04\n11\n12\n13",
    "reqd": 1,
    "set_only_once": 1
   }

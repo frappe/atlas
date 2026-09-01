@@ -1,0 +1,183 @@
+{
+ "actions": [],
+ "allow_bulk_edit": 1,
+ "allow_rename": 1,
+ "creation": "2026-09-01 14:22:34.229534",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "status",
+  "is_provisioning_completed",
+  "column_break_qbap",
+  "provider_server_id",
+  "section_break_configuration",
+  "server_image",
+  "column_break_njar",
+  "server_size",
+  "section_break_public_network",
+  "public_ipv4_address",
+  "public_network_interface",
+  "column_break_xwpk",
+  "private_ipv4_address",
+  "private_network_interface",
+  "section_break_metadata",
+  "provider_metadata"
+ ],
+ "fields": [
+  {
+   "default": "0",
+   "fieldname": "is_provisioning_completed",
+   "fieldtype": "Check",
+   "label": "Provisioning Completed",
+   "read_only": 1
+  },
+  {
+   "default": "Pending",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Status",
+   "options": "Pending\nInstalling\nRunning\nStopped\nFailed\nDeleted",
+   "read_only": 1
+  },
+  {
+   "fieldname": "provider_server_id",
+   "fieldtype": "Data",
+   "label": "Provider Server ID",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_break_configuration",
+   "fieldtype": "Section Break",
+   "label": "Configuration"
+  },
+  {
+   "fieldname": "server_size",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Server Size",
+   "options": "Server Size",
+   "reqd": 1
+  },
+  {
+   "fieldname": "server_image",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Server Image",
+   "options": "Server Image",
+   "reqd": 1
+  },
+  {
+   "fieldname": "section_break_public_network",
+   "fieldtype": "Section Break",
+   "label": "Networking"
+  },
+  {
+   "fieldname": "public_ipv4_address",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Public IPv4 Address"
+  },
+  {
+   "fieldname": "private_ipv4_address",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Private IPv4 Address"
+  },
+  {
+   "fieldname": "private_network_interface",
+   "fieldtype": "Data",
+   "label": "Private Network Interface"
+  },
+  {
+   "collapsible": 1,
+   "fieldname": "section_break_metadata",
+   "fieldtype": "Section Break",
+   "label": "Provider Metadata"
+  },
+  {
+   "fieldname": "provider_metadata",
+   "fieldtype": "Code",
+   "label": "Provider Metadata",
+   "options": "JSON",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_qbap",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "column_break_njar",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "public_network_interface",
+   "fieldtype": "Data",
+   "label": "Public Network Interface"
+  },
+  {
+   "fieldname": "column_break_xwpk",
+   "fieldtype": "Column Break"
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "links": [
+  {
+   "group": "Logs",
+   "link_doctype": "Server SSH Task",
+   "link_fieldname": "server"
+  }
+ ],
+ "modified": "2026-09-01 23:40:35.205318",
+ "modified_by": "Administrator",
+ "module": "Server",
+ "name": "Server",
+ "naming_rule": "By script",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "rows_threshold_for_grid_search": 20,
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [
+  {
+   "color": "Yellow",
+   "title": "Pending"
+  },
+  {
+   "color": "Blue",
+   "title": "Installing"
+  },
+  {
+   "color": "Green",
+   "title": "Running"
+  },
+  {
+   "color": "Orange",
+   "title": "Stopped"
+  },
+  {
+   "color": "Red",
+   "title": "Failed"
+  },
+  {
+   "color": "Gray",
+   "title": "Deleted"
+  }
+ ]
+}

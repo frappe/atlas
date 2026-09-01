@@ -23,6 +23,7 @@ Atlas is a monorepo for Frappe Cloud V2 VM infrastructure. It contains a Frappe/
 - Keep comments and documentation concise. Explain only information that the code does not make clear.
 - Update the relevant documentation when behavior, interfaces, operations, or structure changes.
 - Keep each documentation file focused on one topic. Split a file when it becomes too large or covers several topics.
+- Keep each `SPEC.md` file short. Use it as a router to focused component documentation.
 
 ## Commits and pull requests
 

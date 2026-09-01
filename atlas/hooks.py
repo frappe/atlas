@@ -173,6 +173,12 @@ app_license = "agpl-3.0"
 # 	],
 # }
 
+scheduler_events = {
+	"cron": {
+		"* * * * *": ["atlas.server.doctype.server_ssh_task.server_ssh_task.mark_timed_out_ssh_tasks"],
+	}
+}
+
 # Testing
 # -------
 
