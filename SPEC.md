@@ -21,6 +21,7 @@ SPEC.md                        This file
 
 ## Component specifications
 
+- [Atlas app](atlas/SPEC.md): Frappe application and provider catalog.
 - [Metal](metal/SPEC.md): Host VM management.
 - [HTTP proxy](services/http-proxy/SPEC.md): Regional proxy service.
 - [WG Mesh](services/wg-mesh/SPEC.md): Private VM network.

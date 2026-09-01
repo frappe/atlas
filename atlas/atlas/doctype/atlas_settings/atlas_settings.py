@@ -11,7 +11,7 @@ from frappe.model.document import Document
 
 if TYPE_CHECKING:
 	from atlas.atlas.core.dns_providers.base import DnsProvider
-	from atlas.atlas.core.metal_providers.base import MetalProvider
+	from atlas.atlas.core.server_providers.base import ServerProvider
 
 
 class AtlasSettings(Document):
@@ -25,9 +25,8 @@ class AtlasSettings(Document):
 
 		dns_provider: DF.Literal["Route53"]
 		is_dns_setup_completed: DF.Check
-		is_metal_provider_setup_completed: DF.Check
+		is_server_provider_setup_completed: DF.Check
 		is_setup_completed: DF.Check
-		metal_provider: DF.Literal["Scaleway"]
 		private_network_cidr: DF.Data
 		private_network_mtu: DF.Int
 		public_ssh_key: DF.SmallText
@@ -55,6 +54,7 @@ class AtlasSettings(Document):
 			"pl-waw-2",
 			"pl-waw-3",
 		]
+		server_provider: DF.Literal["Scaleway"]
 		wildcard_domain: DF.Data
 	# end: auto-generated types
 
@@ -63,10 +63,10 @@ class AtlasSettings(Document):
 		return f"atlas-{self.region_name.lower()}-"
 
 	@cached_property
-	def metal_provider_controller(self) -> "MetalProvider":
-		from atlas.atlas.core.metal_providers import get_metal_provider
+	def server_provider_controller(self) -> "ServerProvider":
+		from atlas.atlas.core.server_providers import get_server_provider
 
-		return get_metal_provider(settings=self)
+		return get_server_provider(settings=self)
 
 	@cached_property
 	def dns_provider_controller(self) -> "DnsProvider":
@@ -76,11 +76,11 @@ class AtlasSettings(Document):
 
 	def validate(self) -> None:
 		if self.is_setup_completed and not (
-			self.is_metal_provider_setup_completed and self.is_dns_setup_completed
+			self.is_server_provider_setup_completed and self.is_dns_setup_completed
 		):
 			frappe.throw("Atlas Settings cannot be marked as completed before provider setup is complete.")
 
-		self.metal_provider_controller.validate_settings()
+		self.server_provider_controller.validate_settings()
 		self.dns_provider_controller.validate_settings()
 
 		if self.wildcard_domain.startswith("*."):
@@ -89,8 +89,8 @@ class AtlasSettings(Document):
 			)
 
 	def on_update(self) -> None:
-		if any(self.has_value_changed(field) for field in self.metal_provider_controller.credential_fields):
-			self.metal_provider_controller.validate_credentials()
+		if any(self.has_value_changed(field) for field in self.server_provider_controller.credential_fields):
+			self.server_provider_controller.validate_credentials()
 
 		if any(self.has_value_changed(field) for field in self.dns_provider_controller.credential_fields):
 			self.dns_provider_controller.validate_credentials()
@@ -98,23 +98,61 @@ class AtlasSettings(Document):
 	def before_save(self) -> None:
 		if (
 			self.is_dns_setup_completed
-			and self.is_metal_provider_setup_completed
+			and self.is_server_provider_setup_completed
 			and not self.is_setup_completed
 		):
 			self.is_setup_completed = True
 
-	@frappe.whitelist()
-	def setup_metal_provider(self) -> None:
+	@frappe.whitelist(methods=["POST"])
+	def setup_server_provider(self) -> None:
 		frappe.only_for("System Manager")
 		try:
-			self.metal_provider_controller.bootstrap()
+			self.server_provider_controller.bootstrap()
 		except Exception:
 			# Commit any changes to the database before re-raising the exception
 			# to avoid losing the setup progress.
 			frappe.db.commit()  # nosemgrep
 			raise
 
-	@frappe.whitelist()
+	@frappe.whitelist(methods=["POST"])
 	def setup_dns_provider(self) -> None:
 		frappe.only_for("System Manager")
 		self.dns_provider_controller.bootstrap()
+
+	@frappe.whitelist(methods=["POST"])
+	def sync_server_sizes(self) -> None:
+		frappe.only_for("System Manager")
+		if not self.is_setup_completed:
+			frappe.throw("Atlas Settings must be fully set up before syncing server sizes.")
+
+		frappe.enqueue_doc(
+			self.doctype,
+			self.name,
+			"_sync_server_sizes",
+			queue="default",
+			job_id="atlas-sync-server-sizes",
+			deduplicate=True,
+		)
+		frappe.msgprint("Server sizes sync has been queued. Please check after some time.")
+
+	def _sync_server_sizes(self) -> None:
+		self.server_provider_controller.sync_provider_sizes()
+
+	@frappe.whitelist(methods=["POST"])
+	def sync_server_images(self) -> None:
+		frappe.only_for("System Manager")
+		if not self.is_setup_completed:
+			frappe.throw("Atlas Settings must be fully set up before syncing server images.")
+
+		frappe.enqueue_doc(
+			self.doctype,
+			self.name,
+			"_sync_server_images",
+			queue="default",
+			job_id="atlas-sync-server-images",
+			deduplicate=True,
+		)
+		frappe.msgprint("Server images sync has been queued. Please check after some time.")
+
+	def _sync_server_images(self) -> None:
+		self.server_provider_controller.sync_provider_images()

@@ -9,9 +9,9 @@ frappe.ui.form.on("Atlas Settings", {
 
 		[
 			[
-				__("Setup metal provider"),
-				"setup_metal_provider",
-				!frm.doc.is_setup_completed && !frm.doc.is_metal_provider_setup_completed,
+				__("Setup server provider"),
+				"setup_server_provider",
+				!frm.doc.is_setup_completed && !frm.doc.is_server_provider_setup_completed,
 				true,
 			],
 			[
@@ -20,6 +20,8 @@ frappe.ui.form.on("Atlas Settings", {
 				!frm.doc.is_setup_completed && !frm.doc.is_dns_setup_completed,
 				true,
 			],
+			[__("Sync server sizes"), "sync_server_sizes", frm.doc.is_setup_completed, true],
+			[__("Sync server images"), "sync_server_images", frm.doc.is_setup_completed, true],
 		].forEach(([label, method, condition, grouped]) => {
 			if (condition) {
 				frm.add_custom_button(
