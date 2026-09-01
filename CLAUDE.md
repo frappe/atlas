@@ -10,6 +10,7 @@ Atlas is a monorepo for Frappe Cloud V2 VM infrastructure. It contains a Frappe/
 - Do not touch unrelated dirty files, generated artifacts, or local data.
 - Do not add plan or planning markdown files such as `plan_*.md`.
 - Use `apply_patch` for manual edits.
+- Add blank lines between logical sections of code to keep methods readable.
 
 ## Comments and documentation
 
