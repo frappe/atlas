@@ -48,9 +48,12 @@ install them at boot. metald assigns `id`/`ip`/`mac` and boots the guest.
 (a fresh jailer process) and reboots from its persisted disk and network; a
 running VM → `409`.
 
-**Stop** `POST /vms/{id}/stop` — `{ "force": false }`. `false` = Ctrl+Alt+Del,
-`true` = SIGKILL. The disk, network and state are kept, so the VM can be started
-again.
+**Stop** `POST /vms/{id}/stop` — `{ "force": false }`. `true` = SIGKILL at once.
+`false` sends Ctrl+Alt+Del and gives the guest 30s to shut itself down, then
+escalates to a systemd stop job. Firecracker delivers Ctrl+Alt+Del through its
+emulated i8042 controller, so a guest kernel built without an i8042 keyboard
+driver never sees it and always reaches the escalation. The disk, network and
+state are kept, so the VM can be started again.
 
 **Resize** `POST /vms/{id}/resize` — `{ "disk_mib" }`. `disk_mib` is grow-only; a
 smaller value → `409`. The disk grows online (`zfs set volsize` + firecracker
