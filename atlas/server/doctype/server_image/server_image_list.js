@@ -1,13 +1,15 @@
 function sync_server_images(listview) {
-	frappe.call({
-		method: "run_doc_method",
-		args: {
-			dt: "Atlas Settings",
-			method: "sync_server_images",
-		},
-		freeze: true,
-		freeze_message: __("Queuing sync..."),
-	}).then(() => listview.refresh());
+	frappe
+		.call({
+			method: "run_doc_method",
+			args: {
+				dt: "Atlas Settings",
+				method: "sync_server_images",
+			},
+			freeze: true,
+			freeze_message: __("Queuing sync..."),
+		})
+		.then(() => listview.refresh());
 }
 
 frappe.listview_settings["Server Image"] = {

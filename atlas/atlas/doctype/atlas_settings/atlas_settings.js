@@ -33,10 +33,10 @@ frappe.ui.form.on("Atlas Settings", {
 									freeze: true,
 									freeze_message: __("Please wait..."),
 								})
-								.then(() => frm.refresh()),
+								.then(() => frm.refresh())
 						);
 					},
-					grouped ? __("Actions") : null,
+					grouped ? __("Actions") : null
 				);
 			}
 		});

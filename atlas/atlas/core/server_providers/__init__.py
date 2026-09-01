@@ -25,9 +25,7 @@ def get_server_provider(
 	_load_implementations()
 
 	resolved_type = provider_type or (
-		settings.server_provider
-		if settings
-		else frappe.get_single_value("Atlas Settings", "server_provider")
+		settings.server_provider if settings else frappe.get_single_value("Atlas Settings", "server_provider")
 	)
 	provider_class = _REGISTRY.get(resolved_type)
 	if provider_class is None:

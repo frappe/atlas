@@ -83,6 +83,65 @@ class Route53Provider(DnsProvider):
 			raise Route53Error(f"Failed to create zone for {domain}: {error}") from error
 		return self._zone_id(result["HostedZone"]["Id"])
 
+	@override
+	def upsert_record(self, record_type: str, name: str, values: list[str], ttl: int = 300) -> None:
+		"""Create the record if missing, or update it to match the given values."""
+		self._change_record("UPSERT", record_type, name, values, ttl)
+
+	@override
+	def remove_record(self, record_type: str, name: str) -> None:
+		"""Remove the record for the name and type, if it exists."""
+		existing = self._get_record(record_type, name)
+		if existing is None:
+			return
+		values = [record["Value"] for record in existing["ResourceRecords"]]
+		self._change_record("DELETE", record_type, name, values, existing["TTL"])
+
+	# Internal methods
+
+	def _change_record(self, action: str, record_type: str, name: str, values: list[str], ttl: int) -> None:
+		zone_id = self.create_zone(self.domain_name)
+		try:
+			self.client.change_resource_record_sets(
+				HostedZoneId=zone_id,
+				ChangeBatch={
+					"Changes": [
+						{
+							"Action": action,
+							"ResourceRecordSet": {
+								"Name": name,
+								"Type": record_type,
+								"TTL": ttl,
+								"ResourceRecords": [{"Value": value} for value in values],
+							},
+						}
+					]
+				},
+			)
+		except (BotoCoreError, ClientError) as error:
+			raise Route53Error(f"Failed to {action.lower()} {record_type} record {name}: {error}") from error
+
+	def _get_record(self, record_type: str, name: str) -> dict | None:
+		zone_id = self.create_zone(self.domain_name)
+		try:
+			result = self.client.list_resource_record_sets(
+				HostedZoneId=zone_id,
+				StartRecordName=name,
+				StartRecordType=record_type,
+				MaxItems="1",
+			)
+		except (BotoCoreError, ClientError) as error:
+			raise Route53Error(f"Failed to list records for {name}: {error}") from error
+
+		records = result.get("ResourceRecordSets", [])
+		if not records:
+			return None
+
+		record = records[0]
+		if record["Type"] != record_type or record["Name"].rstrip(".") != name.rstrip("."):
+			return None
+		return record
+
 	def _validate_zone(self, zone_id: str, domain: str) -> None:
 		try:
 			zone = self.client.get_hosted_zone(Id=zone_id)["HostedZone"]

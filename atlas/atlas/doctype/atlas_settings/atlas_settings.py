@@ -88,6 +88,8 @@ class AtlasSettings(Document):
 				"Remove '*.' from the wildcard domain in Atlas Settings. It is automatically added by Atlas."
 			)
 
+		self.region_name = self.region_name.strip().lower()
+
 	def on_update(self) -> None:
 		if any(self.has_value_changed(field) for field in self.server_provider_controller.credential_fields):
 			self.server_provider_controller.validate_credentials()
