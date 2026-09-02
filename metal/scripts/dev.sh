@@ -28,8 +28,12 @@ CI=https://s3.amazonaws.com/spec.ccfc.min/firecracker-ci/v1.10/$ARCH
 
 step() { echo "==> $*"; }
 
-# fetch URL DEST downloads to a temporary file and renames it on success.
-fetch() { [[ -f $2 ]] || { curl -fsSL -o "$2.part" "$1" && mv "$2.part" "$2"; }; }
+# fetch URL DEST downloads to a temporary file and renames it on success. It
+fetch() {
+	[[ -f $2 ]] && return 0
+	echo "    downloading $(basename "$2")"
+	curl -fL --progress-bar -o "$2.part" "$1" && mv "$2.part" "$2"
+}
 
 # Create the directories used by the development host.
 mkdir -p "$WORKDIR" "$BIN" "$KERNEL_DIR/ubuntu" "$BULK/downloads" "$KEYDIR" \
@@ -45,7 +49,8 @@ POOL_SIZE=${METALD_POOL_SIZE:-${sz}G}
 # Download Firecracker and Jailer when they are not present.
 step "Firecracker and Jailer ($FC_VER)"
 if [[ ! -x $BIN/firecracker || ! -x $BIN/jailer ]]; then
-	curl -fsSL -o "$WORKDIR/fc.tgz" \
+	echo "    downloading firecracker-$FC_VER-$ARCH.tgz"
+	curl -fL --progress-bar -o "$WORKDIR/fc.tgz" \
 		"https://github.com/firecracker-microvm/firecracker/releases/download/$FC_VER/firecracker-$FC_VER-$ARCH.tgz"
 	tar -xzf "$WORKDIR/fc.tgz" -C "$WORKDIR"
 	cp "$WORKDIR/release-$FC_VER-$ARCH/firecracker-$FC_VER-$ARCH" "$BIN/firecracker"

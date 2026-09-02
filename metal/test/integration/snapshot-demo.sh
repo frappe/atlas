@@ -52,7 +52,7 @@ if ! api /health >/dev/null 2>&1; then
 	# owns no VMs, so metal-* here is stale; otherwise a reused uid collides on the
 	# host veth name vh<uid> and the first VM create fails.
 	for ns in $(ip netns list 2>/dev/null | awk '/^metal-/{print $1}'); do ip netns del "$ns" 2>/dev/null || true; done
-	for vh in $(ip -o link show 2>/dev/null | grep -o 'vh[0-9]\+' | sort -u); do ip link del "$vh" 2>/dev/null || true; done
+	for vh in $(ip -o link show 2>/dev/null | grep -o 'vh-[0-9]\+' | sort -u); do ip link del "$vh" 2>/dev/null || true; done
 	systemctl reset-failed 'metal-vm@*' 2>/dev/null || true
 	if ! zpool list "$POOL" >/dev/null 2>&1 || [[ ! -f $CONFIG ]]; then
 		echo "==> bootstrapping the development host"
