@@ -57,3 +57,12 @@ jspm_packages/
 # Claude / tooling
 .claude
 .ruff_cache/
+
+# Go build artifacts
+/metal/metald
+/metal/cmd/metald/metald
+*.test
+
+# wg-mesh build outputs
+/services/wg-mesh/dist/
+/services/wg-mesh/cli/atlas-wg-mesh.bpf.o
