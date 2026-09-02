@@ -108,6 +108,7 @@ func (m *machine) Destroy(ctx context.Context) error {
 	_ = m.d.units.ResetFailed(ctx, m.cfg.ID) // do not leave a failed unit behind
 	_ = m.d.net.Release(ctx, m.cfg.ID)
 	_ = m.d.images.Release(ctx, m.cfg.ID)
+	_ = os.Remove(m.d.cfg.sockPath(m.cfg.ID))
 	return os.RemoveAll(m.d.cfg.vmDir(m.cfg.ID))
 }
 

@@ -74,16 +74,16 @@ func (z *ZFS) Promote(ctx context.Context, r PromoteRequest) error {
 
 // Images lists the pool's images and whether each carries a memory capture.
 func (z *ZFS) Images(ctx context.Context) ([]ImageInfo, error) {
-	// zfs list -Hp -t volume -o name,volsize,creation -r <pool>/base: the image
-	// zvols under base, with exact size (bytes) and creation (Unix epoch).
-	out, err := hostcmd.Output(ctx, "zfs", "list", "-Hp", "-t", "volume", "-o", "name,volsize,creation", "-r", z.pool+"/base")
+	// zfs list -Hp -t volume -o name,volsize,creation -r <pool>/images: the image
+	// zvols, with exact size (bytes) and creation (Unix epoch).
+	out, err := hostcmd.Output(ctx, "zfs", "list", "-Hp", "-t", "volume", "-o", "name,volsize,creation", "-r", z.imagesDataset())
 	if err != nil {
 		if notFoundAware(err) == ErrNotFound {
-			return nil, nil // no base dataset yet, so no images
+			return nil, nil // no images dataset yet, so no images
 		}
 		return nil, err
 	}
-	prefix := z.pool + "/base/"
+	prefix := z.imagesDataset() + "/"
 	var imgs []ImageInfo
 	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
 		f := strings.Fields(line)

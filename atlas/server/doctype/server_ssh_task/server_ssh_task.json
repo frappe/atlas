@@ -1,0 +1,158 @@
+{
+ "actions": [],
+ "creation": "2026-09-01 18:30:00",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "server",
+  "status",
+  "column_break_status",
+  "port",
+  "ssh_user",
+  "timeout_seconds",
+  "section_break_yomh",
+  "started_at",
+  "column_break_flcx",
+  "ended_at",
+  "column_break_visc",
+  "exit_code",
+  "section_break_output",
+  "output",
+  "section_break_script",
+  "script",
+  "environment"
+ ],
+ "fields": [
+  {
+   "fieldname": "server",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Server",
+   "options": "Server",
+   "reqd": 1,
+   "search_index": 1,
+   "set_only_once": 1
+  },
+  {
+   "default": "Pending",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Status",
+   "options": "Pending\nRunning\nSuccess\nFailed",
+   "read_only": 1
+  },
+  {
+   "default": "22",
+   "fieldname": "port",
+   "fieldtype": "Int",
+   "label": "Port",
+   "reqd": 1,
+   "set_only_once": 1
+  },
+  {
+   "default": "root",
+   "fieldname": "ssh_user",
+   "fieldtype": "Data",
+   "label": "SSH User",
+   "reqd": 1,
+   "set_only_once": 1
+  },
+  {
+   "default": "1800",
+   "fieldname": "timeout_seconds",
+   "fieldtype": "Int",
+   "label": "Timeout (seconds)",
+   "reqd": 1,
+   "set_only_once": 1
+  },
+  {
+   "collapsible": 1,
+   "collapsible_depends_on": "eval: false",
+   "fieldname": "section_break_script",
+   "fieldtype": "Section Break",
+   "label": "Input"
+  },
+  {
+   "fieldname": "script",
+   "fieldtype": "Code",
+   "label": "Script or Command",
+   "options": "Shell",
+   "reqd": 1,
+   "set_only_once": 1
+  },
+  {
+   "fieldname": "section_break_output",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "output",
+   "fieldtype": "Code",
+   "label": "Output",
+   "read_only": 1
+  },
+  {
+   "fieldname": "exit_code",
+   "fieldtype": "Int",
+   "label": "Exit Code",
+   "read_only": 1
+  },
+  {
+   "fieldname": "started_at",
+   "fieldtype": "Datetime",
+   "label": "Started",
+   "read_only": 1
+  },
+  {
+   "fieldname": "ended_at",
+   "fieldtype": "Datetime",
+   "label": "Ended",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_status",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "{}",
+   "fieldname": "environment",
+   "fieldtype": "JSON",
+   "label": "Environment",
+   "options": "JSON",
+   "set_only_once": 1
+  },
+  {
+   "fieldname": "section_break_yomh",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "column_break_flcx",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "column_break_visc",
+   "fieldtype": "Column Break"
+  }
+ ],
+ "links": [],
+ "modified": "2026-09-02 00:07:57.747086",
+ "modified_by": "Administrator",
+ "module": "Server",
+ "name": "Server SSH Task",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "read": 1,
+   "role": "System Manager",
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": []
+}

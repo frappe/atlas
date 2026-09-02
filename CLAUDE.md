@@ -10,6 +10,8 @@ Atlas is a monorepo for Frappe Cloud V2 VM infrastructure. It contains a Frappe/
 - Do not touch unrelated dirty files, generated artifacts, or local data.
 - Do not add plan or planning markdown files such as `plan_*.md`.
 - Use `apply_patch` for manual edits.
+- Add blank lines between logical sections of code to keep methods readable.
+- Use complete words in Go and Python function, method, and variable names. Do not use abbreviations. A Go method may use a short receiver name such as `m` for `*Manager`; all other names must clearly express their purpose.
 
 ## Comments and documentation
 
@@ -22,6 +24,7 @@ Atlas is a monorepo for Frappe Cloud V2 VM infrastructure. It contains a Frappe/
 - Keep comments and documentation concise. Explain only information that the code does not make clear.
 - Update the relevant documentation when behavior, interfaces, operations, or structure changes.
 - Keep each documentation file focused on one topic. Split a file when it becomes too large or covers several topics.
+- Keep each `SPEC.md` file short. Use it as a router to focused component documentation.
 
 ## Commits and pull requests
 

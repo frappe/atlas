@@ -4,7 +4,7 @@
 
 ## Purpose
 
-Metal manages VMs on a host. Its executable is `metald`.
+Metal manages virtual machines on a host. Its executable is `metald`.
 
 ## Layout
 
@@ -17,7 +17,8 @@ internal/network/            Linux networking
 internal/storage/            ZFS storage
 internal/systemd/            systemd and dbus support
 internal/vm/                 VM domain logic
-deploy/                      systemd units
+scripts/                     host bootstrap scripts
+Makefile                     build metald into dist/
 docs/                        API and test docs
 test/                        Integration test data
 ```
@@ -33,9 +34,14 @@ The module path is `github.com/frappe/atlas/metal`. Run Go commands from `metal/
 ## Validation
 
 Run `go test ./...`. Run integration tests when host dependencies are available.
+Run `make build` to build the stripped Linux binaries into `dist/`.
+Run `make openapi` to build the API specification. The binary embeds it, so run
+this once after a clone or `go build` fails. `make build` runs it first, and
+metald serves the result at `/api/docs`.
 
 ## Documentation
 
+Read [`docs/host-layout.md`](docs/host-layout.md) for host paths and storage.
 Read [`docs/api.md`](docs/api.md) for the API. Read [`docs/testing.md`](docs/testing.md) for tests.
 
 ## Scope

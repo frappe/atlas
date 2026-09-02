@@ -6,7 +6,7 @@ import (
 	"github.com/frappe/atlas/metal/internal/vm"
 )
 
-type createReq struct {
+type createRequest struct {
 	VCPUs   int      `json:"vcpus"`
 	MemMiB  int      `json:"mem_mib"`
 	DiskMiB int      `json:"disk_mib"`
@@ -15,7 +15,7 @@ type createReq struct {
 	SSHKeys []string `json:"ssh_keys"`
 }
 
-func (r createReq) spec() vm.Spec {
+func (r createRequest) spec() vm.Spec {
 	return vm.Spec{
 		VCPUs:   r.VCPUs,
 		MemMiB:  r.MemMiB,
@@ -26,39 +26,71 @@ func (r createReq) spec() vm.Spec {
 	}
 }
 
-type stopReq struct {
+type stopRequest struct {
 	Force bool `json:"force"`
 }
 
-// resizeReq uses pointers so an omitted field differs from a zero value. Only
-// disk_mib is honored today; vcpus/mem_mib are rejected as not-implemented.
-type resizeReq struct {
+// resizeRequest uses pointers so an omitted field differs from a zero value. Only
+// disk_mib is supported today. vcpus and mem_mib are rejected.
+type resizeRequest struct {
 	VCPUs   *int `json:"vcpus"`
 	MemMiB  *int `json:"mem_mib"`
 	DiskMiB *int `json:"disk_mib"`
 }
 
-type vmResp struct {
-	ID      string   `json:"id"`
-	State   string   `json:"state"`
-	VCPUs   int      `json:"vcpus"`
-	MemMiB  int      `json:"mem_mib"`
-	Image   string   `json:"image"`
-	Network string   `json:"network"`
-	IP      string   `json:"ip"`
-	MAC     string   `json:"mac"`
-	PID     int      `json:"pid"`
-	Disk    diskResp `json:"disk"`
+type virtualMachineResponse struct {
+	ID      string       `json:"id"`
+	State   string       `json:"state"`
+	VCPUs   int          `json:"vcpus"`
+	MemMiB  int          `json:"mem_mib"`
+	Image   string       `json:"image"`
+	Network string       `json:"network"`
+	IP      string       `json:"ip"`
+	MAC     string       `json:"mac"`
+	PID     int          `json:"pid"`
+	Disk    diskResponse `json:"disk"`
 }
 
-type diskResp struct {
+// The generated application programming interface specification carries their
+// shape.
+
+type virtualMachineListResponse struct {
+	VMs []virtualMachineResponse `json:"vms"`
+}
+
+type snapshotListResponse struct {
+	Snapshots []snapshotResponse `json:"snapshots"`
+}
+
+type imageListResponse struct {
+	Images []imageResponse `json:"images"`
+}
+
+type snapshotCreatedResponse struct {
+	Name   string `json:"name"`
+	Memory bool   `json:"memory"`
+}
+
+type imageCreatedResponse struct {
+	Ref string `json:"ref"`
+}
+
+type errorBody struct {
+	Message string `json:"message"`
+}
+
+type errorResponse struct {
+	Error errorBody `json:"error"`
+}
+
+type diskResponse struct {
 	SizeMiB   int `json:"size_mib"`
 	UsedMiB   int `json:"used_mib"`
 	Snapshots int `json:"snapshots"`
 }
 
-func toVM(i vm.Info) vmResp {
-	return vmResp{
+func toVirtualMachine(i vm.Info) virtualMachineResponse {
+	return virtualMachineResponse{
 		ID:      i.ID,
 		State:   string(i.State),
 		VCPUs:   i.VCPUs,
@@ -68,20 +100,20 @@ func toVM(i vm.Info) vmResp {
 		IP:      i.IP,
 		MAC:     i.MAC,
 		PID:     i.PID,
-		Disk:    diskResp{SizeMiB: i.DiskMiB, UsedMiB: i.DiskUsedMiB, Snapshots: i.Snapshots},
+		Disk:    diskResponse{SizeMiB: i.DiskMiB, UsedMiB: i.DiskUsedMiB, Snapshots: i.Snapshots},
 	}
 }
 
-type snapReq struct {
+type snapshotRequest struct {
 	Name   string `json:"name"`
 	Memory bool   `json:"memory"`
 }
 
-type promoteReq struct {
+type promoteRequest struct {
 	Image string `json:"image"`
 }
 
-type snapResp struct {
+type snapshotResponse struct {
 	Name      string `json:"name"`
 	VMID      string `json:"vm_id"`
 	Memory    bool   `json:"memory"`
@@ -90,25 +122,25 @@ type snapResp struct {
 	CreatedAt string `json:"created_at"`
 }
 
-func toSnap(vmID string, s vm.Snapshot) snapResp {
-	return snapResp{
+func toSnapshot(vmID string, s vm.Snapshot) snapshotResponse {
+	return snapshotResponse{
 		Name: s.Name, VMID: vmID, Memory: s.Memory,
 		SizeMiB: s.SizeMiB, UsedMiB: s.UsedMiB, CreatedAt: rfc3339(s.CreatedAt),
 	}
 }
 
-type imageResp struct {
+type imageResponse struct {
 	Ref       string `json:"ref"`
 	Warm      bool   `json:"warm"`
 	SizeMiB   int    `json:"size_mib"`
 	CreatedAt string `json:"created_at"`
 }
 
-func toImage(i vm.Image) imageResp {
-	return imageResp{Ref: i.Ref, Warm: i.Warm, SizeMiB: i.SizeMiB, CreatedAt: rfc3339(i.CreatedAt)}
+func toImage(i vm.Image) imageResponse {
+	return imageResponse{Ref: i.Ref, Warm: i.Warm, SizeMiB: i.SizeMiB, CreatedAt: rfc3339(i.CreatedAt)}
 }
 
-// rfc3339 formats a time for the API and returns "" for the zero time.
+// rfc3339 formats a time for the application programming interface and returns an empty string for the zero time.
 func rfc3339(t time.Time) string {
 	if t.IsZero() {
 		return ""

@@ -1,42 +1,48 @@
 #!/usr/bin/env bash
-# Idempotent dev bootstrap for `metald up`. Everything lives under $METALD_WORKDIR
-# (default /tmp/metald). Safe to re-run. Requires root.
-#
-# Uses an Ubuntu *cloud* image (ships cloud-init), so per-VM SSH keys arrive via
-# MMDS: the API's ssh_keys -> firecracker MMDS -> cloud-init -> authorized_keys.
+# Prepare a disposable host for metald. Run as root before `metald serve`.
+# Uses an Ubuntu cloud image and the Firecracker metadata service.
 set -euo pipefail
 
-WORKDIR=${METALD_WORKDIR:-/tmp/metald}
-# Bulk storage (zfs pool image + image downloads) can live on any fs — point it
-# at a big disk. The rest (chroot, kernels, keys, socket) needs a POSIX fs for
-# mknod/hardlinks/perms, so it stays under WORKDIR.
+# Keep external settings in the environment.
+WORKDIR=/tmp/metald
 BULK=${METALD_BULK_DIR:-$WORKDIR}
 POOL=${METALD_POOL:-metal}
-KERNEL_DIR=${METALD_KERNEL_DIR:-$WORKDIR/kernels}
-BIN=$(dirname "${METALD_FIRECRACKER:-$WORKDIR/bin/firecracker}")
-KEYDIR=$WORKDIR/keys
 FC_VER=${METALD_FC_VERSION:-v1.10.1}
+LISTEN=${METALD_LISTEN:-127.0.0.1:8080}
+KERNEL_DIR=$WORKDIR/kernels
+VAR_DIR=$WORKDIR/machines
+BIN=$WORKDIR/bin
+KEYDIR=$WORKDIR/keys
+CONFIG=$WORKDIR/metald.toml
 ARCH=$(uname -m)
 CI=https://s3.amazonaws.com/spec.ccfc.min/firecracker-ci/v1.10/$ARCH
 
-[[ $EUID -eq 0 ]] || { echo "metald up: must run as root" >&2; exit 1; }
-step() { echo "==> $*"; }
-# fetch URL DEST — atomic: download to .part, rename on success, so a partial
-# download is never mistaken for a complete file on the next run.
-fetch() { [[ -f $2 ]] || { curl -fsSL -o "$2.part" "$1" && mv "$2.part" "$2"; }; }
-mkdir -p "$WORKDIR" "$BIN" "$KERNEL_DIR/ubuntu" "$BULK/images" "$KEYDIR" \
-         "$METALD_CHROOT_BASE" "$METALD_VAR_DIR"
+# Bulk storage can use any file system. Runtime files need a POSIX file system.
 
-# Pool size: half the bulk dir's free space, clamped to [8G, 30G] (a cloud image
-# base is ~3.5G; the rest is clone headroom). Override with METALD_POOL_SIZE.
+[[ $EUID -eq 0 ]] || { echo "metald dev script: must run as root" >&2; exit 1; }
+
+step() { echo "==> $*"; }
+
+fetch() {
+	[[ -f $2 ]] && return 0
+	echo "    downloading $(basename "$2")"
+	curl -fL --progress-bar -o "$2.part" "$1" && mv "$2.part" "$2"
+}
+
+mkdir -p "$WORKDIR" "$BIN" "$KERNEL_DIR/ubuntu" "$BULK/downloads" "$KEYDIR" \
+         "$VAR_DIR" "$(dirname "$CONFIG")"
+
+# Use half the free space for the pool, limited to 8G through 30G.
+# Set METALD_POOL_SIZE to choose a different size.
 avail_gb=$(( $(df -Pk "$BULK" | awk 'NR==2{print $4}') / 1024 / 1024 ))
 sz=$(( avail_gb / 2 )); (( sz < 8 )) && sz=8; (( sz > 30 )) && sz=30
 POOL_SIZE=${METALD_POOL_SIZE:-${sz}G}
 (( avail_gb < 6 )) && echo "WARNING: only ${avail_gb}G free under $BULK; a cloud image needs ~4G." >&2
 
-step "firecracker + jailer ($FC_VER)"
+step "Firecracker and Jailer ($FC_VER)"
 if [[ ! -x $BIN/firecracker || ! -x $BIN/jailer ]]; then
-	curl -fsSL -o "$WORKDIR/fc.tgz" \
+	echo "    downloading firecracker-$FC_VER-$ARCH.tgz"
+	curl -fL --progress-bar -o "$WORKDIR/fc.tgz" \
 		"https://github.com/firecracker-microvm/firecracker/releases/download/$FC_VER/firecracker-$FC_VER-$ARCH.tgz"
 	tar -xzf "$WORKDIR/fc.tgz" -C "$WORKDIR"
 	cp "$WORKDIR/release-$FC_VER-$ARCH/firecracker-$FC_VER-$ARCH" "$BIN/firecracker"
@@ -44,17 +50,15 @@ if [[ ! -x $BIN/firecracker || ! -x $BIN/jailer ]]; then
 	chmod +x "$BIN/firecracker" "$BIN/jailer"
 fi
 
-step "kernel"
+step "guest kernel"
 fetch "$CI/vmlinux-5.10.223" "$KERNEL_DIR/ubuntu/vmlinux"
-# The CI rootfs is a partitionless ext4: the whole /dev/vda IS the filesystem.
+# The image is a partitionless ext4 file system on /dev/vda.
 echo "console=ttyS0 reboot=k panic=1 pci=off root=/dev/vda rw" > "$KERNEL_DIR/ubuntu/boot-args"
 
-step "firecracker ubuntu rootfs + MMDS ssh-key shim"
-rootfs=$BULK/images/ubuntu.ext4
+step "Ubuntu file system and metadata service SSH key helper"
+rootfs=$BULK/downloads/ubuntu.ext4
 fetch "$CI/ubuntu-22.04.ext4" "$rootfs"
-# Bake a keyless boot shim that pulls the per-VM key from MMDS. The key always
-# comes through the API (ssh_keys -> MMDS); only the fetch is baked in. Guarded
-# on the shim's presence so a pre-staged rootfs still gets it.
+# Add a helper that pulls each VM's SSH key from the metadata service.
 mnt=$BULK/mnt; mkdir -p "$mnt"
 mount -o loop "$rootfs" "$mnt"
 if [[ ! -e "$mnt/usr/local/sbin/metal-sshkey" ]]; then
@@ -70,7 +74,7 @@ if [[ ! -e "$mnt/usr/local/sbin/metal-sshkey" ]]; then
 	EOF
 	cat > "$mnt/etc/systemd/system/metal-sshkey.service" <<-'EOF'
 		[Unit]
-		Description=install ssh key from MMDS
+		Description=install Secure Shell key from the metadata service
 		Before=ssh.service sshd.service
 		[Service]
 		Type=oneshot
@@ -82,10 +86,8 @@ if [[ ! -e "$mnt/usr/local/sbin/metal-sshkey" ]]; then
 	mkdir -p "$mnt/etc/systemd/system/multi-user.target.wants"
 	ln -sf ../metal-sshkey.service "$mnt/etc/systemd/system/multi-user.target.wants/metal-sshkey.service"
 fi
-# Bake a clone-refresh agent. It watches the MMDS "generation" token; metald sets a
-# new one each warm start, so a resumed clone re-keys and re-syncs a fresh identity.
-# Cold VMs never get a token, so the agent stays idle for them.
-# Note: temporary hack, will replace with vmgenid in the future.
+# Add an agent that refreshes a warm clone when metald changes its MMDS generation.
+# Cold VMs do not receive a generation token.
 if [[ ! -e "$mnt/usr/local/sbin/metal-refresh" ]]; then
 	install -Dm755 /dev/stdin "$mnt/usr/local/sbin/metal-refresh" <<-'EOF'
 		#!/bin/sh
@@ -123,55 +125,61 @@ if [[ ! -e "$mnt/usr/local/sbin/metal-refresh" ]]; then
 fi
 umount "$mnt"
 
-step "ssh keypair"
+step "Secure Shell key pair"
 [[ -f $KEYDIR/id_ed25519 ]] || ssh-keygen -q -t ed25519 -N "" -f "$KEYDIR/id_ed25519"
 
-step "zfs pool ($POOL_SIZE)"
-# A file vdev: zpool uses the image file directly as the pool's backing store.
+step "ZFS pool ($POOL_SIZE)"
 img=$(realpath -m "$BULK")/pool.img
 [[ -f $img ]] || truncate -s "$POOL_SIZE" "$img"
-# zpool create -f -m none <pool> <file>: create the pool on the image; -f lets a
-# plain file act as the vdev (zpool otherwise expects a whole disk/partition);
-# -m none leaves the pool unmounted (we only use zvols under it).
 zpool list "$POOL" >/dev/null 2>&1 || zpool create -f -m none "$POOL" "$img"
-# Container datasets. zfs create/clone never make missing parents, so base/<ref>
-# and vms/<id> need their parents to exist first. mountpoint=none keeps them off
-# the host fs (zvols under them still get /dev/zvol nodes).
-zfs list "$POOL/base" >/dev/null 2>&1 || zfs create -o mountpoint=none "$POOL/base"
+zfs list "$POOL/images" >/dev/null 2>&1 || zfs create -o mountpoint=none "$POOL/images"
 zfs list "$POOL/vms" >/dev/null 2>&1 || zfs create -o mountpoint=none "$POOL/vms"
 
-step "base image ($POOL/base/ubuntu)"
-if ! zfs list "$POOL/base/ubuntu" >/dev/null 2>&1; then
+step "base image ($POOL/images/ubuntu)"
+if ! zfs list "$POOL/images/ubuntu" >/dev/null 2>&1; then
 	bytes=$(stat -c %s "$rootfs")
-	# zfs create -V <size> -o volblocksize=16k: a zvol (raw block device) of the
-	# given provisioned size, 16k record size (per-VM clones inherit it).
-	zfs create -V "$((bytes / 1024 / 1024 + 64))M" -o volblocksize=16k "$POOL/base/ubuntu"
-	udevadm settle  # wait for /dev/zvol/... to appear
-	dd if="$rootfs" of="/dev/zvol/$POOL/base/ubuntu" bs=4M conv=sparse,fsync status=none
-	# zfs snapshot <base>@ready: the read-only source every per-VM clone branches from.
-	zfs snapshot "$POOL/base/ubuntu@ready"
+	zfs create -V "$((bytes / 1024 / 1024 + 64))M" -o volblocksize=16k "$POOL/images/ubuntu"
+	udevadm settle
+	dd if="$rootfs" of="/dev/zvol/$POOL/images/ubuntu" bs=4M conv=sparse,fsync status=none
+	zfs snapshot "$POOL/images/ubuntu@ready"
 fi
 
 step "systemd template unit (metal-vm@.service)"
-# Generated with the dev paths so metald's StartUnit resolves it. The committed
-# deploy/metal-vm@.service uses production paths (/var/lib/metal, /usr/bin).
 cat > /etc/systemd/system/metal-vm@.service <<EOF
 [Unit]
 Description=metal microVM %i
 After=network.target
 [Service]
 Type=exec
-EnvironmentFile=$METALD_VAR_DIR/%i/jailer.env
-ExecStart=${METALD_JAILER:-/usr/bin/jailer} \$JAILER_ARGS
+EnvironmentFile=$VAR_DIR/%i/jailer.env
+ExecStart=$BIN/jailer \$JAILER_ARGS
 Restart=no
 EOF
 systemctl daemon-reload
 
-step "forwarding + NAT"
+step "forwarding and network address translation"
 uplink=$(ip route show default | awk '{print $5; exit}')
 sysctl -q -w net.ipv4.ip_forward=1
 if [[ -n $uplink ]] && ! iptables -t nat -C POSTROUTING -s 10.0.0.0/8 -o "$uplink" -j MASQUERADE 2>/dev/null; then
 	iptables -t nat -A POSTROUTING -s 10.0.0.0/8 -o "$uplink" -j MASQUERADE
 fi
 
-step "ready — API on ${METALD_LISTEN:-127.0.0.1:8080}; key $KEYDIR/id_ed25519; ssh as user 'root'"
+step "config ($CONFIG)"
+cat > "$CONFIG" <<EOF
+[metald]
+base_dir = "$WORKDIR"
+listen   = "$LISTEN"
+
+[firecracker]
+binary_path = "$BIN/firecracker"
+sockets_dir = "$WORKDIR/run"
+
+[jailer]
+binary_path = "$BIN/jailer"
+
+[zfs]
+pool = "$POOL"
+EOF
+
+step "ready: run metald serve --config $CONFIG"
+step "key $KEYDIR/id_ed25519; ssh as user 'root'"

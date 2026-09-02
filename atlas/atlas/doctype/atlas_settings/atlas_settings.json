@@ -1,0 +1,327 @@
+{
+ "actions": [],
+ "allow_bulk_edit": 1,
+ "allow_rename": 1,
+ "creation": "2026-08-31 21:49:05.811875",
+ "default_view": "List",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "general_tab",
+  "section_break_ftdp",
+  "is_setup_completed",
+  "column_break_vkzm",
+  "is_server_provider_setup_completed",
+  "column_break_uldl",
+  "is_dns_setup_completed",
+  "general_section",
+  "server_provider",
+  "column_break_ywxk",
+  "region_name",
+  "column_break_qqfv",
+  "region_id",
+  "private_network_config_section",
+  "private_network_cidr",
+  "column_break_jzip",
+  "private_network_mtu",
+  "ssh_section",
+  "public_ssh_key",
+  "metald_section",
+  "metald_binary_x86_64_download_url",
+  "scaleway_tab",
+  "scaleway_settings_section",
+  "scaleway_organization_id",
+  "scaleway_project_id",
+  "scaleway_zone",
+  "scaleway_machine_billing_cycle",
+  "column_break_cfka",
+  "scaleway_access_key",
+  "scaleway_secret_key",
+  "scaleway_ssh_key_id",
+  "scaleway_vpc_id",
+  "scaleway_private_network_id",
+  "dns_tab",
+  "dns_provider",
+  "column_break_caqd",
+  "wildcard_domain",
+  "route53_settings_section",
+  "route53_access_key_id",
+  "route53_dns_zone_id",
+  "column_break_bbav",
+  "route53_access_key_secret"
+ ],
+ "fields": [
+  {
+   "fieldname": "public_ssh_key",
+   "fieldtype": "Small Text",
+   "label": "Public SSH Key",
+   "read_only_depends_on": "eval: doc.is_server_provider_setup_completed",
+   "reqd": 1
+  },
+  {
+   "depends_on": "eval: doc.server_provider == \"Scaleway\"",
+   "fieldname": "scaleway_settings_section",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "scaleway_organization_id",
+   "fieldtype": "Data",
+   "label": "Organization ID",
+   "mandatory_depends_on": "eval: doc.server_provider == \"Scaleway\"",
+   "read_only_depends_on": "eval: doc.is_server_provider_setup_completed"
+  },
+  {
+   "fieldname": "scaleway_zone",
+   "fieldtype": "Select",
+   "label": "Zone",
+   "mandatory_depends_on": "eval: doc.server_provider == \"Scaleway\"",
+   "options": "fr-par-1\nfr-par-2\nfr-par-3\nnl-ams-1\nnl-ams-2\nnl-ams-3\npl-waw-1\npl-waw-2\npl-waw-3",
+   "read_only_depends_on": "eval: doc.is_server_provider_setup_completed"
+  },
+  {
+   "fieldname": "column_break_cfka",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "scaleway_project_id",
+   "fieldtype": "Data",
+   "label": "Project ID",
+   "mandatory_depends_on": "eval: doc.server_provider == \"Scaleway\"",
+   "read_only_depends_on": "eval: doc.is_server_provider_setup_completed"
+  },
+  {
+   "fieldname": "scaleway_ssh_key_id",
+   "fieldtype": "Data",
+   "label": "SSH Key ID",
+   "read_only_depends_on": "eval: doc.is_server_provider_setup_completed"
+  },
+  {
+   "fieldname": "scaleway_secret_key",
+   "fieldtype": "Password",
+   "label": "Secret Key",
+   "mandatory_depends_on": "eval: doc.server_provider == \"Scaleway\""
+  },
+  {
+   "fieldname": "scaleway_private_network_id",
+   "fieldtype": "Data",
+   "label": "Private Network ID",
+   "read_only_depends_on": "eval: doc.is_server_provider_setup_completed"
+  },
+  {
+   "fieldname": "scaleway_vpc_id",
+   "fieldtype": "Data",
+   "label": "VPC ID",
+   "read_only_depends_on": "eval: doc.is_server_provider_setup_completed"
+  },
+  {
+   "fieldname": "region_id",
+   "fieldtype": "Int",
+   "label": "Region ID",
+   "read_only_depends_on": "eval: doc.is_server_provider_setup_completed",
+   "reqd": 1
+  },
+  {
+   "fieldname": "section_break_ftdp",
+   "fieldtype": "Section Break"
+  },
+  {
+   "default": "10.1.0.0/20",
+   "fieldname": "private_network_cidr",
+   "fieldtype": "Data",
+   "label": "CIDR",
+   "read_only_depends_on": "eval: doc.is_server_provider_setup_completed",
+   "reqd": 1
+  },
+  {
+   "fieldname": "column_break_jzip",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "1500",
+   "fieldname": "private_network_mtu",
+   "fieldtype": "Int",
+   "label": "MTU",
+   "reqd": 1
+  },
+  {
+   "fieldname": "private_network_config_section",
+   "fieldtype": "Section Break",
+   "label": "Private Network"
+  },
+  {
+   "fieldname": "scaleway_machine_billing_cycle",
+   "fieldtype": "Select",
+   "label": "Machine Billing Cycle",
+   "mandatory_depends_on": "eval: doc.server_provider == \"Scaleway\"",
+   "options": "Hourly\nMonthly"
+  },
+  {
+   "fieldname": "general_section",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "column_break_ywxk",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "ssh_section",
+   "fieldtype": "Section Break",
+   "label": "SSH"
+  },
+  {
+   "depends_on": "eval: doc.server_provider == \"Scaleway\"",
+   "fieldname": "scaleway_tab",
+   "fieldtype": "Tab Break",
+   "label": "Scaleway"
+  },
+  {
+   "fieldname": "server_provider",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Server Provider",
+   "options": "Scaleway",
+   "read_only_depends_on": "eval: doc.is_server_provider_setup_completed",
+   "reqd": 1
+  },
+  {
+   "fieldname": "dns_tab",
+   "fieldtype": "Tab Break",
+   "label": "DNS"
+  },
+  {
+   "fieldname": "dns_provider",
+   "fieldtype": "Select",
+   "label": "DNS Provider",
+   "options": "Route53",
+   "read_only_depends_on": "eval: doc.is_dns_setup_completed",
+   "reqd": 1
+  },
+  {
+   "fieldname": "column_break_caqd",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "wildcard_domain",
+   "fieldtype": "Data",
+   "label": "Wildcard Domain",
+   "read_only_depends_on": "eval: doc.is_dns_setup_completed",
+   "reqd": 1
+  },
+  {
+   "depends_on": "eval: doc.dns_provider == \"Route53\"",
+   "fieldname": "route53_settings_section",
+   "fieldtype": "Section Break",
+   "label": "Route53 Settings"
+  },
+  {
+   "fieldname": "route53_access_key_id",
+   "fieldtype": "Data",
+   "label": "Access Key ID",
+   "mandatory_depends_on": "eval: doc.dns_provider == \"Route53\""
+  },
+  {
+   "fieldname": "column_break_bbav",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "route53_access_key_secret",
+   "fieldtype": "Password",
+   "label": "Access Key Secret",
+   "mandatory_depends_on": "eval: doc.dns_provider == \"Route53\""
+  },
+  {
+   "fieldname": "route53_dns_zone_id",
+   "fieldtype": "Data",
+   "label": "Zone ID",
+   "read_only_depends_on": "eval: doc.is_dns_setup_completed"
+  },
+  {
+   "fieldname": "scaleway_access_key",
+   "fieldtype": "Data",
+   "label": "Access Key",
+   "mandatory_depends_on": "eval: doc.server_provider == \"Scaleway\""
+  },
+  {
+   "fieldname": "region_name",
+   "fieldtype": "Data",
+   "label": "Region Name",
+   "read_only_depends_on": "eval: doc.is_server_provider_setup_completed",
+   "reqd": 1
+  },
+  {
+   "fieldname": "column_break_qqfv",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "column_break_vkzm",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "column_break_uldl",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "0",
+   "fieldname": "is_setup_completed",
+   "fieldtype": "Check",
+   "label": "Setup Completed",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "is_dns_setup_completed",
+   "fieldtype": "Check",
+   "label": "DNS Setup",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "is_server_provider_setup_completed",
+   "fieldtype": "Check",
+   "label": "Server Provider Setup",
+   "read_only": 1
+  },
+  {
+   "fieldname": "general_tab",
+   "fieldtype": "Tab Break",
+   "label": "General"
+  },
+  {
+   "fieldname": "metald_section",
+   "fieldtype": "Section Break",
+   "label": "Metal Daemon"
+  },
+  {
+   "fieldname": "metald_binary_x86_64_download_url",
+   "fieldtype": "Data",
+   "label": "X86_64 Download URL",
+   "reqd": 1
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "issingle": 1,
+ "links": [],
+ "modified": "2026-09-02 21:11:38.455570",
+ "modified_by": "test@gmail.com",
+ "module": "Atlas",
+ "name": "Atlas Settings",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "rows_threshold_for_grid_search": 20,
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": []
+}

@@ -83,9 +83,9 @@ func snapSocket(t *testing.T, chroot string) (string, *[]string) {
 func snapTestMachine(t *testing.T) (*machine, *fakeImages, *[]string) {
 	t.Helper()
 	tmp := t.TempDir()
+	// The jail nests in the VM directory, so one base covers both.
 	cfg := Config{
-		ChrootBase:     filepath.Join(tmp, "chroot"),
-		VarDir:         filepath.Join(tmp, "vms"),
+		MachinesDir:    filepath.Join(tmp, "machines"),
 		FirecrackerBin: "/usr/bin/firecracker",
 	}
 	id := "abc"

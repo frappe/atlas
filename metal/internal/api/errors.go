@@ -29,7 +29,7 @@ func errorHandler(err error, c echo.Context) {
 			msg = fmt.Sprint(he.Message)
 		}
 	}
-	_ = c.JSON(status, echo.Map{"error": echo.Map{"message": msg}})
+	_ = c.JSON(status, errorResponse{Error: errorBody{Message: msg}})
 }
 
 // badRequest returns a 400 carrying msg.

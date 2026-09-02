@@ -10,14 +10,33 @@ import (
 // apiSockRel is the firecracker API socket path relative to the chroot root.
 const apiSockRel = "run/firecracker.socket"
 
-// chrootRoot is where jailer builds the VM's chroot: <base>/<exec>/<id>/root.
+// chrootRoot returns the path where jailer builds the VM chroot. The base is the
+// VM's own directory, so removing that directory takes the chroot with it, and
+// the kernel hard link stays on one filesystem.
 func (c Config) chrootRoot(id string) string {
-	return filepath.Join(c.ChrootBase, filepath.Base(c.FirecrackerBin), id, "root")
+	return filepath.Join(c.vmDir(id), filepath.Base(c.FirecrackerBin), id, "root")
 }
 
-// sockPath is the host path to a VM's API socket.
+// sockPath returns the short path metald dials for a VM's API socket.
 func (c Config) sockPath(id string) string {
+	return filepath.Join(c.SocketsDir, id+".sock")
+}
+
+// chrootSockPath returns the real socket path inside the VM jail.
+func (c Config) chrootSockPath(id string) string {
 	return filepath.Join(c.chrootRoot(id), apiSockRel)
+}
+
+// linkSocket creates the short socket symlink before Firecracker starts.
+func (c Config) linkSocket(id string) error {
+	if err := os.MkdirAll(c.SocketsDir, 0o700); err != nil {
+		return err
+	}
+	link := c.sockPath(id)
+	if err := os.Remove(link); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return os.Symlink(c.chrootSockPath(id), link)
 }
 
 // jailerArgs builds the argv the systemd unit runs: jailer flags, then "--",
@@ -28,7 +47,7 @@ func (c Config) jailerArgs(id string, uid, gid uint32, netns string) []string {
 		"--exec-file", c.FirecrackerBin,
 		"--uid", fmt.Sprint(uid),
 		"--gid", fmt.Sprint(gid),
-		"--chroot-base-dir", c.ChrootBase,
+		"--chroot-base-dir", c.vmDir(id),
 		"--netns", netns,
 		"--",
 		"--api-sock", apiSockRel,

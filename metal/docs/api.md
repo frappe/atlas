@@ -1,5 +1,9 @@
 # metal HTTP API — draft
 
+metald generates this application programming interface specification from the
+handler annotations, embeds it, and serves it at `/docs`. `make build` regenerates it. The file is
+`internal/api/swagger.json`.
+
 metald serves this over the unix socket `/run/metal.sock`. JSON in/out. Auth is
 socket permissions only. Stateless: responses reflect host truth, so they
 survive a metald restart.

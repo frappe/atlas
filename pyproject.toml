@@ -9,6 +9,7 @@ readme = "README.md"
 dynamic = ["version"]
 dependencies = [
     # "frappe~=16.0.0" # Installed and managed by bench.
+    "boto3~=1.43",
 ]
 
 [build-system]
@@ -26,8 +27,7 @@ packages = []
 [tool.ruff]
 line-length = 110
 target-version = "py314"
-# The standalone services keep their own style (spaces, older target).
-extend-exclude = ["metal", "services"]
+extend-exclude = ["metal", "services/wg-mesh"]
 
 [tool.ruff.lint]
 select = [

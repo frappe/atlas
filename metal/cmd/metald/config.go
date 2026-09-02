@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log"
-	"os"
+	"path/filepath"
 
 	"github.com/BurntSushi/toml"
 
@@ -18,60 +18,80 @@ type opts struct {
 	cfg                        firecracker.Config
 	pool, kernelDir, imagesDir string
 	listen                     string
+	baseDir                    string
 }
 
-// defaultOpts returns the built-in defaults. This is the lowest config layer.
+const defaultConfigPath = "/var/lib/metal/metald.toml"
+
+const defaultBaseDir = "/var/lib/metal"
+
+// defaultOpts returns the built-in defaults.
 func defaultOpts() opts {
-	return opts{
-		cfg:       firecracker.DefaultConfig(),
-		pool:      "metal",
-		kernelDir: "/var/lib/metal/kernels",
-		imagesDir: "/var/lib/metal/images",
+	o := opts{
+		cfg:     firecracker.DefaultConfig(),
+		pool:    "metal",
+		baseDir: defaultBaseDir,
 		// TCP host:port by default; "unix:/path" for a unix socket instead.
 		listen: "127.0.0.1:8080",
 	}
+	o.deriveDirs()
+	return o
 }
 
-// fileConfig mirrors the optional config.toml. Sections group the keys by the
-// package that owns them. An unset key keeps the value from the layer below.
+// deriveDirs places the directories metald owns under baseDir. They are a
+// convention, not separate keys, so one base_dir moves all of them.
+func (o *opts) deriveDirs() {
+	o.cfg.MachinesDir = filepath.Join(o.baseDir, "machines")
+	o.kernelDir = filepath.Join(o.baseDir, "kernels")
+	// The warm-image memory store must share a filesystem with the jails, so a
+	// mem file stages into a VM as a hard link.
+	o.imagesDir = filepath.Join(o.baseDir, "images")
+}
+
+// fileConfig mirrors the optional metald configuration file. Sections group the
+// keys by the package that owns them. An unset key keeps the default value.
 type fileConfig struct {
-	Listen      string          `toml:"listen"`
+	Metald      metaldFile      `toml:"metald"`
 	Firecracker firecrackerFile `toml:"firecracker"`
-	Storage     storageFile     `toml:"storage"`
+	Jailer      jailerFile      `toml:"jailer"`
+	ZFS         zfsFile         `toml:"zfs"`
+}
+
+type metaldFile struct {
+	BaseDir string `toml:"base_dir"`
+	Listen  string `toml:"listen"`
 }
 
 type firecrackerFile struct {
-	ChrootBase     string `toml:"chroot_base"`
-	VarDir         string `toml:"var_dir"`
-	JailerBin      string `toml:"jailer_bin"`
-	FirecrackerBin string `toml:"firecracker_bin"`
+	BinaryPath string `toml:"binary_path"`
+	SocketsDir string `toml:"sockets_dir"`
 }
 
-type storageFile struct {
-	Pool      string `toml:"pool"`
-	KernelDir string `toml:"kernel_dir"`
-	ImagesDir string `toml:"images_dir"`
+type jailerFile struct {
+	BinaryPath string `toml:"binary_path"`
 }
 
-// load resolves the configuration in three layers, lowest to highest: built-in
-// defaults, the optional config.toml, then the environment. If path is empty,
-// "config.toml" in the working dir is used when it exists; a path given
-// explicitly must exist.
+type zfsFile struct {
+	Pool string `toml:"pool"`
+}
+
+// load resolves built-in defaults and the optional configuration file.
+// An empty path uses the default configuration file.
 func load(path string) (opts, error) {
 	o := defaultOpts()
 	if err := applyFile(&o, path); err != nil {
 		return opts{}, err
 	}
-	applyEnv(&o)
+	o.deriveDirs()
 	return o, nil
 }
 
-// applyFile overlays config.toml onto o. A missing default file is not an error;
-// a missing explicit path is.
+// applyFile overlays the configuration file onto o. A missing default file is
+// not an error; a missing explicit path is.
 func applyFile(o *opts, path string) error {
 	explicit := path != ""
 	if path == "" {
-		path = "config.toml"
+		path = defaultConfigPath
 	}
 	var fc fileConfig
 	if _, err := toml.DecodeFile(path, &fc); err != nil {
@@ -80,44 +100,18 @@ func applyFile(o *opts, path string) error {
 		}
 		return fmt.Errorf("config %s: %w", path, err)
 	}
-	overlay(&o.listen, fc.Listen)
-	overlay(&o.cfg.ChrootBase, fc.Firecracker.ChrootBase)
-	overlay(&o.cfg.VarDir, fc.Firecracker.VarDir)
-	overlay(&o.cfg.JailerBin, fc.Firecracker.JailerBin)
-	overlay(&o.cfg.FirecrackerBin, fc.Firecracker.FirecrackerBin)
-	overlay(&o.pool, fc.Storage.Pool)
-	overlay(&o.kernelDir, fc.Storage.KernelDir)
-	overlay(&o.imagesDir, fc.Storage.ImagesDir)
+	overlay(&o.baseDir, fc.Metald.BaseDir)
+	overlay(&o.listen, fc.Metald.Listen)
+	overlay(&o.cfg.FirecrackerBin, fc.Firecracker.BinaryPath)
+	overlay(&o.cfg.SocketsDir, fc.Firecracker.SocketsDir)
+	overlay(&o.cfg.JailerBin, fc.Jailer.BinaryPath)
+	overlay(&o.pool, fc.ZFS.Pool)
 	log.Printf("loaded config from %s", path)
 	return nil
 }
 
-// overlay sets *dst to v when v is non-empty, so an unset value is a no-op.
 func overlay(dst *string, v string) {
 	if v != "" {
-		*dst = v
-	}
-}
-
-// applyEnv overlays the METALD_* environment variables onto o. This is the
-// highest config layer, so a set env var wins over the file and the defaults.
-// Use setIf for each field. The env vars are METALD_CHROOT_BASE,
-// METALD_VAR_DIR, METALD_JAILER, METALD_FIRECRACKER, METALD_POOL,
-// METALD_KERNEL_DIR, METALD_IMAGES_DIR, and METALD_LISTEN.
-func applyEnv(o *opts) {
-	setIf(&o.cfg.ChrootBase, "METALD_CHROOT_BASE")
-	setIf(&o.cfg.VarDir, "METALD_VAR_DIR")
-	setIf(&o.cfg.JailerBin, "METALD_JAILER")
-	setIf(&o.cfg.FirecrackerBin, "METALD_FIRECRACKER")
-	setIf(&o.pool, "METALD_POOL")
-	setIf(&o.kernelDir, "METALD_KERNEL_DIR")
-	setIf(&o.imagesDir, "METALD_IMAGES_DIR")
-	setIf(&o.listen, "METALD_LISTEN")
-}
-
-// setIf sets *dst to the value of env var k when k is set and non-empty.
-func setIf(dst *string, k string) {
-	if v := os.Getenv(k); v != "" {
 		*dst = v
 	}
 }

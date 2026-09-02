@@ -1,17 +1,25 @@
 # Example metald configuration. All keys are optional; each shows its default.
-# Pass this file with `metald serve --config /path/to/config.toml`, or place a
-# config.toml in the working dir. A matching METALD_* env var overrides any key.
+# Each section is named for the thing it configures. Pass this file with
+# `metald serve --config /path/to/metald.toml`; metald otherwise reads
+# /var/lib/metal/metald.toml. This file is the only way to change a key.
 
+[metald]
+# metald puts the machines, kernels and images directories under base_dir.
+# The images directory holds the warm-image memory files, and it shares a
+# filesystem with the jails so a mem file stages into a VM as a hard link.
+base_dir = "/var/lib/metal"
 # API address; "host:port" for TCP, or "unix:/path" for a unix socket.
 listen = "127.0.0.1:8080"
 
 [firecracker]
-chroot_base     = "/srv/jailer"          # jailer chroot base dir
-var_dir         = "/var/lib/metal/vms"   # per-VM state dir
-jailer_bin      = "/usr/bin/jailer"
-firecracker_bin = "/usr/bin/firecracker"
+binary_path = "/usr/bin/firecracker"
+# Short symlinks to each VM's API socket. A unix address holds 108 bytes, and
+# the path inside the jail is longer than that.
+sockets_dir = "/run/metal"
 
-[storage]
-pool       = "metal"                     # ZFS pool name
-kernel_dir = "/var/lib/metal/kernels"
-images_dir = "/var/lib/metal/images"     # warm-image memory store
+[jailer]
+binary_path = "/usr/bin/jailer"
+# VM's own directory, so removing that directory removes the jail with it.
+
+[zfs]
+pool = "metal"

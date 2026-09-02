@@ -3,6 +3,8 @@ package network
 import (
 	"strings"
 	"testing"
+
+	"github.com/frappe/atlas/metal/internal/idalloc"
 )
 
 func TestNames(t *testing.T) {
@@ -33,5 +35,19 @@ func TestMacFor(t *testing.T) {
 	}
 	if !strings.HasPrefix(m, "02:") || len(m) != 17 {
 		t.Errorf("mac = %q", m)
+	}
+}
+
+// A veth name must fit the 15 character limit for an interface name, at the
+// highest uid the allocator can hand out.
+func TestVethNamesFitInterfaceLimit(t *testing.T) {
+	host, guest := vethNames(idalloc.DefaultRange.Max)
+	if host != "vh-165535" || guest != "vg-165535" {
+		t.Errorf("vethNames = %q, %q", host, guest)
+	}
+	for _, name := range []string{host, guest} {
+		if len(name) > 15 {
+			t.Errorf("%q is %d characters, over the 15 character limit", name, len(name))
+		}
 	}
 }

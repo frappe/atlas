@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Creates a VM via the metald API and SSHes into it with the dev key.
-# Run (as root) while `metald up` is running in another terminal:
+# Run (as root) while `metald serve` is running in another terminal:
 #   sudo test/integration/ssh-test.sh
 set -euo pipefail
 

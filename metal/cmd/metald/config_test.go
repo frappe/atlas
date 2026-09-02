@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// writeConfig writes a config.toml in a temp dir and returns its path.
+// writeConfig writes a configuration file in a temporary directory.
 func writeConfig(t *testing.T, body string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "config.toml")
@@ -16,10 +16,8 @@ func writeConfig(t *testing.T, body string) string {
 	return path
 }
 
-// A run with no file and no env keeps the built-in defaults.
 func TestLoadDefaults(t *testing.T) {
-	t.Chdir(t.TempDir()) // no config.toml in the working dir
-	o, err := load("")
+	o, err := load(writeConfig(t, ""))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -28,9 +26,8 @@ func TestLoadDefaults(t *testing.T) {
 	}
 }
 
-// A config.toml value overrides the default.
 func TestLoadFileOverridesDefault(t *testing.T) {
-	path := writeConfig(t, "listen = \"0.0.0.0:9000\"\n[storage]\npool = \"tank\"\n")
+	path := writeConfig(t, "[metald]\nlisten = \"0.0.0.0:9000\"\n[zfs]\npool = \"tank\"\n")
 	o, err := load(path)
 	if err != nil {
 		t.Fatal(err)
@@ -46,26 +43,53 @@ func TestLoadFileOverridesDefault(t *testing.T) {
 	}
 }
 
-// An env var overrides both the file and the default.
-func TestLoadEnvOverridesFile(t *testing.T) {
-	path := writeConfig(t, "listen = \"0.0.0.0:9000\"\n")
-	t.Setenv("METALD_LISTEN", "127.0.0.1:1234")
+// base_dir moves every directory metald derives from it.
+func TestLoadBaseDirMovesDerivedDirs(t *testing.T) {
+	path := writeConfig(t, "[metald]\nbase_dir = \"/srv/metal\"\n")
 	o, err := load(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if o.listen != "127.0.0.1:1234" {
-		t.Errorf("listen = %q, want the env value", o.listen)
+	if o.cfg.MachinesDir != "/srv/metal/machines" {
+		t.Errorf("machinesDir = %q", o.cfg.MachinesDir)
+	}
+	if o.kernelDir != "/srv/metal/kernels" {
+		t.Errorf("kernelDir = %q", o.kernelDir)
 	}
 }
 
-// An explicit path that does not exist is an error; a missing default file is not.
 func TestLoadMissingFile(t *testing.T) {
 	if _, err := load("/no/such/config.toml"); err == nil {
 		t.Error("explicit missing path: want error, got nil")
 	}
-	t.Chdir(t.TempDir())
-	if _, err := load(""); err != nil {
-		t.Errorf("missing default file: want no error, got %v", err)
+}
+
+// Startup creates every directory the config names, each with its own mode.
+func TestMakeDirs(t *testing.T) {
+	dir := t.TempDir()
+	o := defaultOpts()
+	o.baseDir = dir
+	o.deriveDirs()
+	o.cfg.SocketsDir = filepath.Join(dir, "run")
+
+	if err := makeDirs(o); err != nil {
+		t.Fatal(err)
+	}
+	if err := makeDirs(o); err != nil {
+		t.Fatalf("makeDirs is not repeatable: %v", err)
+	}
+	for path, want := range map[string]os.FileMode{
+		o.cfg.MachinesDir: 0o750,
+		o.cfg.SocketsDir:  0o700,
+		o.kernelDir:       0o755,
+		o.imagesDir:       0o755,
+	} {
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := info.Mode().Perm(); got != want {
+			t.Errorf("%s mode = %o, want %o", path, got, want)
+		}
 	}
 }
