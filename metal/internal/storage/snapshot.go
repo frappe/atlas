@@ -4,6 +4,7 @@ import (
 	"context"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/frappe/atlas/metal/internal/hostcmd"
 )
@@ -17,17 +18,18 @@ func (z *ZFS) Snapshot(ctx context.Context, vmID, name string) error {
 
 // Snapshots lists the VM disk's snapshots (name after '@', sizes in MiB).
 func (z *ZFS) Snapshots(ctx context.Context, vmID string) ([]SnapshotInfo, error) {
-	// zfs list -Hp -t snapshot -o name,volsize,used -r <vm>: -H drops the header,
-	// -p prints exact bytes (not 1.5G), -t snapshot limits to snapshots, -o picks
-	// the columns, -r recurses into the zvol (its snapshots).
-	out, err := hostcmd.Output(ctx, "zfs", "list", "-Hp", "-t", "snapshot", "-o", "name,volsize,used", "-r", z.vmDataset(vmID))
+	// zfs list -Hp -t snapshot -o name,volsize,used,creation -r <vm>: -H drops the
+	// header, -p prints exact numbers (bytes, and creation as a Unix epoch), -t
+	// snapshot limits to snapshots, -o picks the columns, -r recurses into the
+	// zvol (its snapshots).
+	out, err := hostcmd.Output(ctx, "zfs", "list", "-Hp", "-t", "snapshot", "-o", "name,volsize,used,creation", "-r", z.vmDataset(vmID))
 	if err != nil {
 		return nil, notFoundAware(err)
 	}
 	var snaps []SnapshotInfo
 	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
 		f := strings.Fields(line)
-		if len(f) != 3 {
+		if len(f) != 4 {
 			continue
 		}
 		_, name, ok := strings.Cut(f[0], "@")
@@ -36,7 +38,11 @@ func (z *ZFS) Snapshots(ctx context.Context, vmID string) ([]SnapshotInfo, error
 		}
 		size, _ := strconv.ParseInt(f[1], 10, 64)
 		used, _ := strconv.ParseInt(f[2], 10, 64)
-		snaps = append(snaps, SnapshotInfo{Name: name, SizeMiB: int(size >> 20), UsedMiB: int(used >> 20)})
+		created, _ := strconv.ParseInt(f[3], 10, 64)
+		snaps = append(snaps, SnapshotInfo{
+			Name: name, SizeMiB: int(size >> 20), UsedMiB: int(used >> 20),
+			CreatedAt: time.Unix(created, 0),
+		})
 	}
 	return snaps, nil
 }

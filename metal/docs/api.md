@@ -31,11 +31,13 @@ derived from the VM's systemd unit. A VM stopped on request reports `stopped`;
 
 | Method | Path | Action |
 |---|---|---|
-| `POST` | `/vms` | create + boot → `202` |
+| `POST` | `/vms` | create + boot (warm-start from a warm image) → `202` |
 | `GET` | `/vms` | list → `{ "vms": [VM] }` |
 | `GET` | `/vms/{id}` | get (includes `disk`) |
 | `POST` | `/vms/{id}/start` | boot a stopped VM → `202` |
 | `POST` | `/vms/{id}/stop` | shut down → `202` |
+| `POST` | `/vms/{id}/pause` | pause the guest (halt vCPUs) |
+| `POST` | `/vms/{id}/resume` | resume a paused guest |
 | `POST` | `/vms/{id}/resize` | change cpu/mem/disk |
 | `DELETE` | `/vms/{id}` | destroy + free → `202` |
 | `GET` | `/vms/{id}/console` | stream serial console |
@@ -44,7 +46,13 @@ derived from the VM's systemd unit. A VM stopped on request reports `stopped`;
 **Create** `POST /vms` —
 `{ "vcpus", "mem_mib", "disk_mib", "image", "network", "ssh_keys" }`.
 `ssh_keys` is a list of public keys, served to the guest via MMDS so it can
-install them at boot. metald assigns `id`/`ip`/`mac` and boots the guest.
+install them at boot. metald assigns `id`/`ip`/`mac` and boots the guest. If
+`image` names a warm image (see Images), the VM warm-starts from the image's
+captured memory instead of a cold boot.
+
+**Pause / Resume** `POST /vms/{id}/pause` halts the guest's vCPUs and reports
+`state:"paused"`; `POST /vms/{id}/resume` returns it to `running`. Pause holds the
+process and its memory, unlike stop, which frees them.
 
 **Start** `POST /vms/{id}/start` — boots the guest. A stopped VM is relaunched
 (a fresh jailer process) and reboots from its persisted disk and network; a
@@ -64,35 +72,77 @@ resize is not yet implemented (`vcpus`/`mem_mib` → `501`).
 
 ## Snapshots
 
-Disk (ZFS) snapshots of a VM — distinct from VM-state/memory snapshots (deferred).
+A snapshot captures a VM's disk, and optionally its memory. Set `memory:true` to
+also capture guest RAM and device state, paired with the disk snapshot so a restore
+is consistent.
 
 ```json
-{ "name": "pre-upgrade", "vm_id": "a1b2c3d4e5f6a7b8", "size_mib": 2048, "used_mib": 12 }
+{ "name": "pre-upgrade", "vm_id": "a1b2c3d4e5f6a7b8", "memory": true,
+  "size_mib": 2048, "used_mib": 12, "created_at": "2026-09-02T10:00:00Z" }
 ```
 
 | Method | Path | Action |
 |---|---|---|
-| `GET` | `/vms/{id}/snapshots` | list |
-| `POST` | `/vms/{id}/snapshots` | create → `{ "name" }` |
+| `GET` | `/vms/{id}/snapshots` | list → `{ "snapshots": [Snapshot] }` |
+| `POST` | `/vms/{id}/snapshots` | create → `{ "name", "memory" }` |
 | `DELETE` | `/vms/{id}/snapshots/{name}` | delete → `204` |
-| `POST` | `/vms/{id}/snapshots/{name}/restore` | roll disk back |
+| `POST` | `/vms/{id}/snapshots/{name}/restore` | restore in place |
+| `POST` | `/vms/{id}/snapshots/{name}/promote` | promote to an image → `202` |
 
-**Create** is crash-consistent while running (clean/fsfreeze later, needs a guest
-agent). **Restore** rolls the disk back in place (`zfs rollback -r`, so any
-snapshots newer than the target are discarded); the VM keeps its id/network but
-must be **stopped** → `409` otherwise.
+**Create** `POST /vms/{id}/snapshots` — `{ "name", "memory": false }`.
+`memory:false` is a disk-only ZFS snapshot, taken with no pause. `memory:true`
+pauses the guest, takes the disk snapshot, writes the memory and device state, then
+resumes; the pause is brief and happens once. The guest must be booted.
+
+**Restore** `POST /vms/{id}/snapshots/{name}/restore` rolls the disk back
+(`zfs rollback -r`, so snapshots newer than the target are discarded). When the
+snapshot has memory, it also reloads RAM so the VM resumes at the captured instant.
+metald stops the VM and brings it back; a memory-less snapshot cold-boots from the
+rolled-back disk on the next start.
+
+**Promote** `POST /vms/{id}/snapshots/{name}/promote` — `{ "image": "<ref>" }`.
+Builds a standalone warm image from the snapshot: a full independent disk copy
+(`zfs send | zfs receive`), the kernel, and the memory files. The image shares no
+lineage with the VM, so the VM can be deleted afterward. Requires a `memory:true`
+snapshot.
+
+## Images
+
+An image is a template that VMs are created from. A **warm** image also carries a
+memory capture, so a VM created from it starts from restored RAM instead of a cold
+boot. Promote is how a warm image is made.
+
+```json
+{ "ref": "golden", "warm": true, "size_mib": 2048, "created_at": "2026-09-02T10:05:00Z" }
+```
+
+| Method | Path | Action |
+|---|---|---|
+| `GET` | `/images` | list → `{ "images": [Image] }` |
+| `DELETE` | `/images/{ref}` | delete → `204` |
+
+**Create a VM from an image** is the normal `POST /vms` with `image` set to the
+ref. A warm image is detected automatically: the VM loads the captured RAM,
+refreshes its SSH keys and clock through MMDS, and resumes. A cold image boots as
+usual.
+
+**Delete** `DELETE /images/{ref}` frees the image. It returns `409` while any VM
+created from it still exists, so destroy those VMs first.
 
 ## Errors
 
 ```json
 { "error": { "message": "image \"ubuntu\" not found" } }
 ```
-`400` malformed · `404` unknown id/snapshot · `409` invalid state (start a
-running VM, restore while running, shrink a disk) · `500` internal.
+`400` malformed · `404` unknown id/snapshot/image · `409` invalid state (start a
+running VM, shrink a disk, snapshot a VM that has not booted, promote a
+memory-less snapshot, delete an image that still has clones) · `500` internal.
 
 ## Deferred
 
-Image management (build/download/serve images) — to be specified.
+Image build/download from external sources (promote is the only way to make an
+image today).
 
-Idempotency-key on create; `PATCH`/console interactivity; list pagination;
-snapshot caps / snapshot-of-snapshot / restore-vs-pool-exhaustion.
+Idempotency-key on create; `PATCH`/console interactivity; list pagination; diff
+(incremental) memory snapshots; snapshot caps / snapshot-of-snapshot /
+restore-vs-pool-exhaustion.

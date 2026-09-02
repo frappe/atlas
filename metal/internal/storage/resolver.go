@@ -7,6 +7,7 @@ package storage
 import (
 	"context"
 	"errors"
+	"time"
 )
 
 // ErrNotFound is returned when a VM disk or snapshot does not exist.
@@ -56,9 +57,10 @@ type Drive struct {
 
 // SnapshotInfo describes one disk snapshot.
 type SnapshotInfo struct {
-	Name    string
-	SizeMiB int
-	UsedMiB int
+	Name      string
+	SizeMiB   int
+	UsedMiB   int
+	CreatedAt time.Time
 }
 
 // Usage is a VM disk's provisioned size, consumed space, and snapshot count.
