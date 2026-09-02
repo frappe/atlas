@@ -15,9 +15,9 @@ import (
 // opts is the resolved metald configuration: the firecracker driver paths plus
 // the storage pool, kernel dir, and API listen address.
 type opts struct {
-	cfg             firecracker.Config
-	pool, kernelDir string
-	listen          string
+	cfg                        firecracker.Config
+	pool, kernelDir, imagesDir string
+	listen                     string
 }
 
 // defaultOpts returns the built-in defaults. This is the lowest config layer.
@@ -26,6 +26,7 @@ func defaultOpts() opts {
 		cfg:       firecracker.DefaultConfig(),
 		pool:      "metal",
 		kernelDir: "/var/lib/metal/kernels",
+		imagesDir: "/var/lib/metal/images",
 		// TCP host:port by default; "unix:/path" for a unix socket instead.
 		listen: "127.0.0.1:8080",
 	}
@@ -49,6 +50,7 @@ type firecrackerFile struct {
 type storageFile struct {
 	Pool      string `toml:"pool"`
 	KernelDir string `toml:"kernel_dir"`
+	ImagesDir string `toml:"images_dir"`
 }
 
 // load resolves the configuration in three layers, lowest to highest: built-in
@@ -85,6 +87,7 @@ func applyFile(o *opts, path string) error {
 	overlay(&o.cfg.FirecrackerBin, fc.Firecracker.FirecrackerBin)
 	overlay(&o.pool, fc.Storage.Pool)
 	overlay(&o.kernelDir, fc.Storage.KernelDir)
+	overlay(&o.imagesDir, fc.Storage.ImagesDir)
 	log.Printf("loaded config from %s", path)
 	return nil
 }
@@ -100,7 +103,7 @@ func overlay(dst *string, v string) {
 // highest config layer, so a set env var wins over the file and the defaults.
 // Use setIf for each field. The env vars are METALD_CHROOT_BASE,
 // METALD_VAR_DIR, METALD_JAILER, METALD_FIRECRACKER, METALD_POOL,
-// METALD_KERNEL_DIR, and METALD_LISTEN.
+// METALD_KERNEL_DIR, METALD_IMAGES_DIR, and METALD_LISTEN.
 func applyEnv(o *opts) {
 	setIf(&o.cfg.ChrootBase, "METALD_CHROOT_BASE")
 	setIf(&o.cfg.VarDir, "METALD_VAR_DIR")
@@ -108,6 +111,7 @@ func applyEnv(o *opts) {
 	setIf(&o.cfg.FirecrackerBin, "METALD_FIRECRACKER")
 	setIf(&o.pool, "METALD_POOL")
 	setIf(&o.kernelDir, "METALD_KERNEL_DIR")
+	setIf(&o.imagesDir, "METALD_IMAGES_DIR")
 	setIf(&o.listen, "METALD_LISTEN")
 }
 

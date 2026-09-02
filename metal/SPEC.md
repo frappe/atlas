@@ -14,7 +14,7 @@ internal/api/                HTTP API
 internal/firecracker/        Firecracker support
 internal/idalloc/            ID allocation
 internal/network/            Linux networking
-internal/storage/            LVM storage
+internal/storage/            ZFS storage
 internal/systemd/            systemd and dbus support
 internal/vm/                 VM domain logic
 deploy/                      systemd units
@@ -24,7 +24,7 @@ test/                        Integration test data
 
 ## Software
 
-Metal uses Go 1.26.2, Echo, Firecracker, systemd, dbus, LVM, and Linux host features.
+Metal uses Go 1.26.2, Echo, Firecracker, systemd, dbus, ZFS, and Linux host features.
 
 ## Module
 

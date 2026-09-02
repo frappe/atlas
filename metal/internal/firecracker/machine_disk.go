@@ -40,47 +40,15 @@ func (m *machine) Resize(ctx context.Context, diskMiB int) error {
 	return m.d.cfg.writeVMConfig(m.cfg)
 }
 
-// DiskSnapshot takes a named snapshot of the VM's rootfs disk.
-func (m *machine) DiskSnapshot(ctx context.Context, name string) error {
-	return storageErr(m.d.images.Snapshot(ctx, m.cfg.ID, name))
-}
-
-// DiskSnapshots lists the VM's disk snapshots.
-func (m *machine) DiskSnapshots(ctx context.Context) ([]vm.DiskSnapshot, error) {
-	snaps, err := m.d.images.Snapshots(ctx, m.cfg.ID)
-	if err != nil {
-		return nil, storageErr(err)
-	}
-	out := make([]vm.DiskSnapshot, len(snaps))
-	for i, s := range snaps {
-		out[i] = vm.DiskSnapshot{Name: s.Name, SizeMiB: s.SizeMiB, UsedMiB: s.UsedMiB}
-	}
-	return out, nil
-}
-
-// DeleteDiskSnapshot removes one disk snapshot.
-func (m *machine) DeleteDiskSnapshot(ctx context.Context, name string) error {
-	return storageErr(m.d.images.DeleteSnapshot(ctx, m.cfg.ID, name))
-}
-
-// RestoreDiskSnapshot rolls the disk back to a snapshot. The VM must be stopped
-// (no live firecracker holding the disk), else ErrConflict.
-func (m *machine) RestoreDiskSnapshot(ctx context.Context, name string) error {
-	st, err := m.d.units.Status(ctx, m.cfg.ID)
-	if err != nil {
+// storageErr maps storage's sentinels to the vm-layer ones so the API returns the
+// right status: 404 for not-found, 409 for in-use.
+func storageErr(err error) error {
+	switch {
+	case errors.Is(err, storage.ErrNotFound):
+		return vm.ErrNotFound
+	case errors.Is(err, storage.ErrInUse):
+		return vm.ErrConflict
+	default:
 		return err
 	}
-	if s := m.state(ctx, st); s != vm.StateStopped && s != vm.StateFailed {
-		return vm.ErrConflict
-	}
-	return storageErr(m.d.images.Restore(ctx, m.cfg.ID, name))
-}
-
-// storageErr maps storage's not-found sentinel to the vm-layer one so the API
-// returns 404.
-func storageErr(err error) error {
-	if errors.Is(err, storage.ErrNotFound) {
-		return vm.ErrNotFound
-	}
-	return err
 }

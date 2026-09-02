@@ -31,8 +31,10 @@ func TestMmdsData(t *testing.T) {
 
 func TestLimits(t *testing.T) {
 	l := limits(vm.Spec{VCPUs: 2, MemMiB: 512})
-	if l.MemoryMaxBytes != 512<<20 {
-		t.Errorf("mem = %d", l.MemoryMaxBytes)
+	// 2x the guest RAM plus 128 MiB headroom, so a memory snapshot (guest pages +
+	// an equal-size mem file, both charged to the cgroup) does not OOM-kill the VM.
+	if want := int64(2*512+128) << 20; l.MemoryMaxBytes != want {
+		t.Errorf("mem = %d, want %d", l.MemoryMaxBytes, want)
 	}
 	if l.CPUQuotaPct != 200 {
 		t.Errorf("cpu = %d", l.CPUQuotaPct)

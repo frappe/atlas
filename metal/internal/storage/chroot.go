@@ -4,12 +4,15 @@ package storage
 // hard-linked kernel, the rootfs block-device node, and the kernel cmdline.
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/frappe/atlas/metal/internal/hostcmd"
 )
 
 const defaultBootArgs = "console=ttyS0 reboot=k panic=1 pci=off"
@@ -48,6 +51,20 @@ func statBlock(path string) (syscall.Stat_t, error) {
 func link(src, dst string) error {
 	_ = os.Remove(dst)
 	return os.Link(src, dst)
+}
+
+// LinkOrReflink makes dst share src's data as fast as possible: a hard link when
+// src and dst are on one filesystem, else a copy-on-write reflink where the
+// filesystem supports it, else a full copy. Callers use it to stage a large,
+// read-only snapshot memory file into a VM's chroot without an O(size) copy.
+func LinkOrReflink(ctx context.Context, src, dst string) error {
+	_ = os.Remove(dst)
+	if err := os.Link(src, dst); err == nil {
+		return nil
+	}
+	// cp --reflink=auto: a reflink (COW) when the filesystem supports it, else a
+	// normal copy. It never fails only because reflink is unavailable.
+	return hostcmd.Run(ctx, "cp", "--reflink=auto", src, dst)
 }
 
 // bootArgs reads the kernel cmdline from imageDir/boot-args, or the default.

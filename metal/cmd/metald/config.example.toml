@@ -14,3 +14,4 @@ firecracker_bin = "/usr/bin/firecracker"
 [storage]
 pool       = "metal"                     # ZFS pool name
 kernel_dir = "/var/lib/metal/kernels"
+images_dir = "/var/lib/metal/images"     # warm-image memory store

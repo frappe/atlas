@@ -11,14 +11,16 @@ import "strings"
 // The implementation is split by concern:
 //   - provision.go — Prepare/grow/Release, the per-VM disk lifecycle
 //   - snapshot.go  — Snapshot/Snapshots/DeleteSnapshot/Restore/Usage
+//   - image.go     — Promote/Images/DeleteImage/ImageMemory, warm images
 //   - chroot.go    — materialize the kernel + rootfs node into the jailer chroot
 type ZFS struct {
 	pool      string
 	kernelDir string
+	imagesDir string // warm-image memory store, e.g. /var/lib/metal/images
 }
 
-func NewZFS(pool, kernelDir string) *ZFS {
-	return &ZFS{pool: pool, kernelDir: kernelDir}
+func NewZFS(pool, kernelDir, imagesDir string) *ZFS {
+	return &ZFS{pool: pool, kernelDir: kernelDir, imagesDir: imagesDir}
 }
 
 // Dataset/snapshot name helpers. A ref's base lives at <pool>/base/<ref> with a

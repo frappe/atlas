@@ -7,15 +7,23 @@ package storage
 import (
 	"context"
 	"errors"
+	"time"
 )
 
-// ErrNotFound is returned when a VM disk or snapshot does not exist.
+// ErrNotFound is returned when a VM disk, snapshot, or image does not exist.
 var ErrNotFound = errors.New("storage: not found")
+
+// ErrInUse is returned when an image cannot be removed because VMs cloned from it
+// still exist.
+var ErrInUse = errors.New("storage: in use")
 
 type Resolver interface {
 	// Prepare provisions the VM's kernel + rootfs and returns what firecracker
 	// needs to boot.
 	Prepare(ctx context.Context, req Request) (BootConfig, error)
+	// PrepareRootfs provisions only the VM's rootfs block device, for restoring or
+	// warm-starting from a snapshot. The guest kernel is inside the memory snapshot.
+	PrepareRootfs(ctx context.Context, req Request) error
 	// Release frees whatever Prepare allocated for vmID.
 	Release(ctx context.Context, vmID string) error
 	// Resize grows the VM disk to diskMiB. Grow-only; never shrinks.
@@ -31,6 +39,16 @@ type Resolver interface {
 	Restore(ctx context.Context, vmID, name string) error
 	// Usage reports the VM disk's provisioned/used size and snapshot count.
 	Usage(ctx context.Context, vmID string) (Usage, error)
+	// Promote builds a standalone warm image from a VM's snapshot.
+	Promote(ctx context.Context, req PromoteRequest) error
+	// ImageMemory returns an image's state and memory file paths and whether the
+	// image is warm (it carries a memory capture).
+	ImageMemory(ref string) (state, mem string, warm bool)
+	// Images lists the available images.
+	Images(ctx context.Context) ([]ImageInfo, error)
+	// DeleteImage removes an image. ErrInUse if VMs cloned from it still exist,
+	// ErrNotFound if it is unknown.
+	DeleteImage(ctx context.Context, ref string) error
 }
 
 type Request struct {
@@ -56,9 +74,10 @@ type Drive struct {
 
 // SnapshotInfo describes one disk snapshot.
 type SnapshotInfo struct {
-	Name    string
-	SizeMiB int
-	UsedMiB int
+	Name      string
+	SizeMiB   int
+	UsedMiB   int
+	CreatedAt time.Time
 }
 
 // Usage is a VM disk's provisioned size, consumed space, and snapshot count.
@@ -66,4 +85,24 @@ type Usage struct {
 	SizeMiB   int
 	UsedMiB   int
 	Snapshots int
+}
+
+// ImageInfo describes one image. A warm image also carries a memory capture, so
+// VMs from it start from restored RAM instead of a cold boot.
+type ImageInfo struct {
+	Ref       string
+	Warm      bool
+	SizeMiB   int
+	CreatedAt time.Time
+}
+
+// PromoteRequest asks to build image Ref from srcVMID's SnapName snapshot. The
+// state and memory files are the source VM's snapshot files, copied into the image.
+type PromoteRequest struct {
+	SrcVMID   string
+	SnapName  string
+	SrcRef    string // source image ref, so the kernel can be copied to the new image
+	Ref       string // new image ref
+	StateFile string // source device/vCPU state file (host path)
+	MemFile   string // source guest memory file (host path)
 }

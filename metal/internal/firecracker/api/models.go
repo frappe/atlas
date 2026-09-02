@@ -49,3 +49,33 @@ type InstanceInfo struct {
 	ID    string `json:"id"`
 	State string `json:"state"` // "Not started", "Running", "Paused"
 }
+
+// vmState is the PATCH /vm body that changes the run state.
+type vmState struct {
+	State string `json:"state"` // "Paused" or "Resumed"
+}
+
+// CreateSnapshotReq is the PUT /snapshot/create body. The paths are relative to
+// the jailed process's chroot root and are written as the VM's uid.
+type CreateSnapshotReq struct {
+	SnapshotType string `json:"snapshot_type"` // "Full"
+	SnapshotPath string `json:"snapshot_path"` // device + vCPU state file
+	MemFilePath  string `json:"mem_file_path"` // guest memory file
+	// SyncFiles fsyncs the snapshot files before create returns. nil keeps
+	// firecracker's default (true); false trades crash-safety for a shorter pause.
+	SyncFiles *bool `json:"sync_snapshot_files,omitempty"`
+}
+
+// MemBackend tells firecracker how to read a snapshot's guest memory on load.
+type MemBackend struct {
+	BackendPath string `json:"backend_path"` // memory file (File) or socket (Uffd), chroot-relative
+	BackendType string `json:"backend_type"` // "File" or "Uffd"
+}
+
+// LoadSnapshotReq is the PUT /snapshot/load body. The block device and TAP named
+// in the snapshot must already exist at the same paths before the call.
+type LoadSnapshotReq struct {
+	SnapshotPath string     `json:"snapshot_path"`
+	MemBackend   MemBackend `json:"mem_backend"`
+	ResumeVM     bool       `json:"resume_vm"`
+}

@@ -91,7 +91,7 @@ func serve(configPath string) error {
 	}
 	defer units.Close()
 
-	driver := firecracker.New(o.cfg, units, storage.NewZFS(o.pool, o.kernelDir), network.NewLinux())
+	driver := firecracker.New(o.cfg, units, storage.NewZFS(o.pool, o.kernelDir, o.imagesDir), network.NewLinux())
 	e := api.New(driver)
 
 	ln, err := listen(o.listen)
@@ -114,6 +114,7 @@ func up(configPath string) error {
 	setDefault("METALD_CHROOT_BASE", filepath.Join(workdir, "chroot"))
 	setDefault("METALD_VAR_DIR", filepath.Join(workdir, "vms"))
 	setDefault("METALD_KERNEL_DIR", filepath.Join(workdir, "kernels"))
+	setDefault("METALD_IMAGES_DIR", filepath.Join(workdir, "images"))
 	setDefault("METALD_LISTEN", "127.0.0.1:8080")
 	setDefault("METALD_JAILER", filepath.Join(workdir, "bin", "jailer"))
 	setDefault("METALD_FIRECRACKER", filepath.Join(workdir, "bin", "firecracker"))
