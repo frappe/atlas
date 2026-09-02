@@ -4,8 +4,8 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
-	"os/exec"
-	"strings"
+
+	"github.com/frappe/atlas/metal/internal/hostcmd"
 )
 
 const (
@@ -68,19 +68,13 @@ func (l *Linux) Allocate(ctx context.Context, req Request) (NIC, error) {
 		{"ip", "netns", "exec", ns, "iptables", "-t", "nat", "-A", "POSTROUTING", "-o", vg, "-j", "MASQUERADE"},
 	}
 	for _, s := range steps {
-		if err := run(ctx, s[0], s[1:]...); err != nil {
+		if err := hostcmd.Run(ctx, s[0], s[1:]...); err != nil {
 			_ = l.Release(ctx, req.VMID)
-			_ = run(ctx, "ip", "link", "del", vh) // in case the veth was created but not yet moved
+			_ = hostcmd.Run(ctx, "ip", "link", "del", vh) // in case the veth was created but not yet moved
 			return NIC{}, err
 		}
 	}
-	return NIC{
-		NetnsPath: nsPath(req.VMID),
-		TapName:   tapName,
-		MAC:       macFor(req.VMID),
-		GuestIP:   guestIP,
-		GatewayIP: gatewayIP,
-	}, nil
+	return l.Resolve(req.VMID), nil
 }
 
 // Resolve returns the VM's NIC without touching the system. Every field is
@@ -98,21 +92,13 @@ func (l *Linux) Resolve(vmID string) NIC {
 
 // Release deletes the netns, which tears down the TAP and both veth ends.
 func (l *Linux) Release(ctx context.Context, vmID string) error {
-	return run(ctx, "ip", "netns", "del", nsName(vmID))
+	return hostcmd.Run(ctx, "ip", "netns", "del", nsName(vmID))
 }
 
 // macFor derives a stable locally-administered unicast MAC from the VM id.
 func macFor(vmID string) string {
 	h := sha256.Sum256([]byte(vmID))
 	return fmt.Sprintf("02:%02x:%02x:%02x:%02x:%02x", h[0], h[1], h[2], h[3], h[4])
-}
-
-func run(ctx context.Context, name string, args ...string) error {
-	cmd := exec.CommandContext(ctx, name, args...)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("%s: %w: %s", name, err, strings.TrimSpace(string(out)))
-	}
-	return nil
 }
 
 var _ Allocator = (*Linux)(nil)

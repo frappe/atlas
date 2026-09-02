@@ -33,13 +33,30 @@ Creates a VM via the HTTP API with your key in `ssh_keys`, then SSHes in as
 
 ## Config
 
+metald resolves its config in three layers, lowest to highest: built-in
+defaults, an optional `config.toml`, then the environment. A set `METALD_*` env
+var wins over the file. Pass the file with `metald serve --config path`, or put a
+`config.toml` in the working dir. See `cmd/metald/config.example.toml`.
+
+These keys map to the daemon config file and env:
+
+| Env | `config.toml` key | Default | Meaning |
+|---|---|---|---|
+| `METALD_LISTEN` | `listen` | `127.0.0.1:8080` | API address; `host:port` or `unix:/path` |
+| `METALD_CHROOT_BASE` | `firecracker.chroot_base` | `/srv/jailer` | jailer chroot base dir |
+| `METALD_VAR_DIR` | `firecracker.var_dir` | `/var/lib/metal/vms` | per-VM state dir |
+| `METALD_JAILER` | `firecracker.jailer_bin` | `/usr/bin/jailer` | jailer binary |
+| `METALD_FIRECRACKER` | `firecracker.firecracker_bin` | `/usr/bin/firecracker` | firecracker binary |
+| `METALD_POOL` | `storage.pool` | `metal` | ZFS pool name |
+| `METALD_KERNEL_DIR` | `storage.kernel_dir` | `/var/lib/metal/kernels` | guest kernel dir |
+
+These env vars drive the `up` bootstrap script only (not the config file):
+
 | Env | Default | Meaning |
 |---|---|---|
-| `METALD_LISTEN` | `127.0.0.1:8080` | API address; `host:port` or `unix:/path` |
 | `METALD_WORKDIR` | `/tmp/metald` | POSIX runtime (chroot, kernels, keys) |
 | `METALD_BULK_DIR` | = workdir | zfs pool image + rootfs image (point at a big disk) |
 | `METALD_POOL_SIZE` | auto (8–30 G) | zfs pool image size |
-| `METALD_POOL` | `metal` | ZFS pool name |
 
 ## Reaching a VM by hand
 

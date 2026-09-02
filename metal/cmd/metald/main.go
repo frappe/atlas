@@ -8,6 +8,7 @@ package main
 import (
 	"context"
 	_ "embed"
+	"flag"
 	"fmt"
 	"log"
 	"net"
@@ -28,18 +29,23 @@ import (
 var upScript string
 
 func main() {
+	// The subcommand is optional and comes first; anything else is a flag.
+	args := os.Args[1:]
 	cmd := "serve"
-	if len(os.Args) > 1 {
-		cmd = os.Args[1]
+	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+		cmd, args = args[0], args[1:]
 	}
-	var err error
+	configPath, err := parseFlags(cmd, args)
+	if err != nil {
+		os.Exit(2)
+	}
 	switch cmd {
 	case "serve":
-		err = serve()
+		err = serve(configPath)
 	case "up":
-		err = up()
+		err = up(configPath)
 	default:
-		fmt.Fprintf(os.Stderr, "usage: metald [serve|up]\n")
+		fmt.Fprintf(os.Stderr, "usage: metald [serve|up] [--config path]\n")
 		os.Exit(2)
 	}
 	if err != nil {
@@ -47,25 +53,15 @@ func main() {
 	}
 }
 
-type opts struct {
-	cfg             firecracker.Config
-	pool, kernelDir string
-	listen          string
-}
-
-func optsFromEnv() opts {
-	cfg := firecracker.DefaultConfig()
-	setIf(&cfg.ChrootBase, "METALD_CHROOT_BASE")
-	setIf(&cfg.VarDir, "METALD_VAR_DIR")
-	setIf(&cfg.JailerBin, "METALD_JAILER")
-	setIf(&cfg.FirecrackerBin, "METALD_FIRECRACKER")
-	return opts{
-		cfg:       cfg,
-		pool:      envOr("METALD_POOL", "metal"),
-		kernelDir: envOr("METALD_KERNEL_DIR", "/var/lib/metal/kernels"),
-		// TCP host:port by default; "unix:/path" for a unix socket instead.
-		listen: envOr("METALD_LISTEN", "127.0.0.1:8080"),
+// parseFlags reads the shared --config flag for a subcommand. An empty path
+// means no explicit config file was given.
+func parseFlags(cmd string, args []string) (string, error) {
+	fs := flag.NewFlagSet(cmd, flag.ContinueOnError)
+	path := fs.String("config", "", "path to config.toml (optional; defaults to ./config.toml)")
+	if err := fs.Parse(args); err != nil {
+		return "", err
 	}
+	return *path, nil
 }
 
 // listen opens the API listener. addr is a TCP host:port, or "unix:/path".
@@ -84,8 +80,11 @@ func listen(addr string) (net.Listener, error) {
 	return net.Listen("tcp", addr)
 }
 
-func serve() error {
-	o := optsFromEnv()
+func serve(configPath string) error {
+	o, err := load(configPath)
+	if err != nil {
+		return err
+	}
 	units, err := systemd.Connect(context.Background())
 	if err != nil {
 		return fmt.Errorf("connect systemd: %w", err)
@@ -109,7 +108,7 @@ func serve() error {
 
 // up bootstraps a throwaway dev host under a /tmp workdir, then serves. Env
 // defaults point every path into the workdir so it never touches system dirs.
-func up() error {
+func up(configPath string) error {
 	workdir := envOr("METALD_WORKDIR", "/tmp/metald")
 	setDefault("METALD_WORKDIR", workdir)
 	setDefault("METALD_CHROOT_BASE", filepath.Join(workdir, "chroot"))
@@ -126,7 +125,7 @@ func up() error {
 	if err := c.Run(); err != nil {
 		return fmt.Errorf("bootstrap: %w", err)
 	}
-	return serve()
+	return serve(configPath)
 }
 
 func envOr(k, def string) string {
@@ -134,12 +133,6 @@ func envOr(k, def string) string {
 		return v
 	}
 	return def
-}
-
-func setIf(dst *string, k string) {
-	if v := os.Getenv(k); v != "" {
-		*dst = v
-	}
 }
 
 func setDefault(k, v string) {
