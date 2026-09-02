@@ -80,8 +80,12 @@ func bootArgs(boot storage.BootConfig, nic network.NIC) string {
 }
 
 func limits(spec vm.Spec) systemd.Limits {
+	// A full memory snapshot faults every guest page in and writes an equal-size
+	// memory file whose pages are charged to this same cgroup, so the peak is about
+	// twice the guest RAM. Cap at 2x plus headroom for firecracker's own memory, or
+	// the cgroup OOM-kills the VM mid-snapshot.
 	return systemd.Limits{
-		MemoryMaxBytes: int64(spec.MemMiB) << 20,
+		MemoryMaxBytes: int64(2*spec.MemMiB+128) << 20,
 		CPUQuotaPct:    spec.VCPUs * 100,
 	}
 }
