@@ -23,6 +23,10 @@
   "private_ipv4_address",
   "private_network_interface",
   "wireguard_section",
+  "wireguard_ip_address",
+  "column_break_ffpx",
+  "port",
+  "column_break_zhfx",
   "wireguard_public_key",
   "section_break_metadata",
   "provider_metadata"
@@ -133,7 +137,7 @@
   {
    "fieldname": "wireguard_public_key",
    "fieldtype": "Data",
-   "label": "Wireguard Public Key",
+   "label": "Public Key",
    "read_only": 1
   },
   {
@@ -147,6 +151,25 @@
    "label": "Disks",
    "options": "Server Disk",
    "read_only": 1
+  },
+  {
+   "fieldname": "wireguard_ip_address",
+   "fieldtype": "Data",
+   "label": "IP Address"
+  },
+  {
+   "fieldname": "column_break_ffpx",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "51820",
+   "fieldname": "port",
+   "fieldtype": "Int",
+   "label": "Port"
+  },
+  {
+   "fieldname": "column_break_zhfx",
+   "fieldtype": "Column Break"
   }
  ],
  "grid_page_length": 50,
@@ -158,8 +181,8 @@
    "link_fieldname": "server"
   }
  ],
- "modified": "2026-09-02 17:46:09.414833",
- "modified_by": "Administrator",
+ "modified": "2026-09-02 21:25:46.610527",
+ "modified_by": "test@gmail.com",
  "module": "Server",
  "name": "Server",
  "naming_rule": "By script",

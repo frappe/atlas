@@ -166,6 +166,14 @@ class ServerProvider(ABC):
 			self.save_server_setup_progress(server)
 			raise
 
+	def configure_wireguard(self, server: "Server") -> None:
+		"""Configure the host WireGuard interface. Every provider shares this step."""
+		server._configure_wireguard()
+
+	def install_metald(self, server: "Server") -> None:
+		"""Install metald and its host dependencies. Every provider shares this step."""
+		server._install_metald()
+
 	def wait_for_ssh(self, server: "Server") -> None:
 		"""Wait for root SSH access on a provider server."""
 		from atlas.atlas.core.ssh import wait_for_server

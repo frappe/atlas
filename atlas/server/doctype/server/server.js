@@ -22,6 +22,20 @@ frappe.ui.form.on("Server", {
 			[__("Ping Server"), "ping_server", is_running, __("Pinging server..."), false],
 			[__("Sync Disks"), "sync_disks", is_running, __("Syncing disks..."), false],
 			[
+				__("Re-configure WireGuard"),
+				"configure_wireguard",
+				is_running,
+				__("Configuring WireGuard..."),
+				false,
+			],
+			[
+				__("Re-configure Metald"),
+				"install_metald",
+				is_running,
+				__("Configuring Metald..."),
+				false,
+			],
+			[
 				__("Reboot"),
 				"reboot_server",
 				!is_deleted && !is_stopped,

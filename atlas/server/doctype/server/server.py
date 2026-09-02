@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-import contextlib
+import ipaddress
 import json
 from collections import deque
 from typing import TYPE_CHECKING
@@ -20,6 +20,10 @@ from atlas.server.doctype.server_ssh_task.server_ssh_task import ServerSSHTask
 if TYPE_CHECKING:
 	from atlas.atlas.doctype.atlas_settings.atlas_settings import AtlasSettings
 
+WIREGUARD_OVERHEAD_BYTES = 60
+WIREGUARD_CONFIGURE_TIMEOUT_SECONDS = 300
+METALD_INSTALL_TIMEOUT_SECONDS = 1_200
+
 
 class Server(Document):
 	# begin: auto-generated types
@@ -34,6 +38,7 @@ class Server(Document):
 
 		disks: DF.Table[ServerDisk]
 		is_provisioning_completed: DF.Check
+		port: DF.Int
 		private_ipv4_address: DF.Data | None
 		private_network_interface: DF.Data | None
 		provider_metadata: DF.Code | None
@@ -43,30 +48,31 @@ class Server(Document):
 		server_image: DF.Link
 		server_size: DF.Link
 		status: DF.Literal["Pending", "Installing", "Running", "Stopped", "Failed", "Deleted"]
+		wireguard_ip_address: DF.Data | None
 		wireguard_public_key: DF.Data | None
 	# end: auto-generated types
 
-	# A provider can take more than one hour to install the OS on a bare-metal server.
-	setup_timeout_seconds = 7_200
-
 	@property
 	def settings(self) -> AtlasSettings:
-		return frappe.get_single("Atlas Settings")
+		if not hasattr(self, "_settings"):
+			self._settings = frappe.get_single("Atlas Settings")
+
+		return self._settings
 
 	def autoname(self) -> None:
-		settings = frappe.get_single("Atlas Settings")
-		if not settings.region_name:
+		if not self.settings.region_name:
 			frappe.throw(_("Atlas Settings requires a region name before creating a Server"))
 
-		self.name = make_autoname(f"node-{slug(settings.region_name)}-.#####", doc=self)
+		self.name = make_autoname(f"node-{slug(self.settings.region_name)}-.#####", doc=self)
+
+	def before_validate(self) -> None:
+		if not self.provider_server_id:
+			self.settings.server_provider_controller.create_server(self)
 
 	def validate(self) -> None:
 		self._validate_provider_catalog()
 		self._sync_disks_if_running()
-
-	def before_insert(self) -> None:
-		if not self.provider_server_id:
-			self.settings.server_provider_controller.create_server(self)
+		self._set_wireguard_ip_address_if_not_set()
 
 	def after_insert(self) -> None:
 		self._enqueue_setup_server()
@@ -74,19 +80,6 @@ class Server(Document):
 	@property
 	def setup_job_id(self) -> str:
 		return f"atlas||server-provision||{self.name}"
-
-	@frappe.whitelist(methods=["POST"])
-	def setup_server(self) -> None:
-		"""Queue server setup again after a provisioning failure."""
-		frappe.only_for("System Manager")
-		if self.is_provisioning_completed:
-			return
-
-		if is_job_enqueued(self.setup_job_id):
-			frappe.throw(_("Server setup already runs for {0}.").format(self.name))
-
-		self.db_set("status", "Pending")
-		self._enqueue_setup_server()
 
 	@frappe.whitelist(methods=["POST"])
 	def ping_server(self) -> str:
@@ -99,6 +92,42 @@ class Server(Document):
 			server=self.name, script_path="ping-server.sh"
 		).name
 		frappe.msgprint(_(f"Check ping status <a href='/app/server-ssh-task/{ssh_task_name}'>here</a>"))
+
+	@frappe.whitelist(methods=["POST"])
+	def setup_server(self) -> None:
+		"""Queue server setup again after a provisioning failure."""
+		frappe.only_for("System Manager")
+		if self.is_provisioning_completed:
+			return
+
+		if is_job_enqueued(self.setup_job_id):
+			frappe.throw(_("Server setup is already running for {0}.").format(self.name))
+
+		self.db_set("status", "Pending")
+		self._enqueue_setup_server()
+
+	@frappe.whitelist(methods=["POST"])
+	def configure_wireguard(self) -> None:
+		"""Queue the WireGuard setup for this server."""
+		frappe.only_for("System Manager")
+		if self.status != "Running":
+			frappe.throw(_("Server {0} is not running.").format(self.name))
+
+		job_id = f"atlas||server||configure-wireguard||{self.name}"
+
+		if is_job_enqueued(job_id):
+			frappe.throw(_("WireGuard setup is already running for {0}.").format(self.name))
+
+		frappe.enqueue_doc(
+			self.doctype,
+			self.name,
+			"_configure_wireguard",
+			queue="long",
+			timeout=WIREGUARD_CONFIGURE_TIMEOUT_SECONDS,
+			job_id=job_id,
+			deduplicate=True,
+			enqueue_after_commit=True,
+		)
 
 	@frappe.whitelist(methods=["POST"])
 	def reboot_server(self) -> None:
@@ -129,7 +158,7 @@ class Server(Document):
 			return
 
 		if is_job_enqueued(self.setup_job_id):
-			frappe.throw(_("Server setup still runs for {0}.").format(self.name))
+			frappe.throw(_("Server setup is still running for {0}.").format(self.name))
 
 		self.settings.server_provider_controller.archive_server(self)
 		self.db_set({"status": "Deleted", "is_provisioning_completed": 0})
@@ -140,7 +169,7 @@ class Server(Document):
 			self.name,
 			"_setup_server",
 			queue="long",
-			timeout=self.setup_timeout_seconds,
+			timeout=7200,
 			job_id=self.setup_job_id,
 			deduplicate=True,
 			enqueue_after_commit=True,
@@ -163,6 +192,29 @@ class Server(Document):
 
 		self.set("disks", self._parse_disks(result.output))
 		self.save()
+
+	@frappe.whitelist(methods=["POST"])
+	def install_metald(self) -> None:
+		"""Queue the metald setup for this server."""
+		frappe.only_for("System Manager")
+		if self.status != "Running":
+			frappe.throw(_("Server {0} is not running.").format(self.name))
+
+		job_id = f"atlas||server||install-metald||{self.name}"
+
+		if is_job_enqueued(job_id):
+			frappe.throw(_("Metald setup already runs for {0}.").format(self.name))
+
+		frappe.enqueue_doc(
+			self.doctype,
+			self.name,
+			"_install_metald",
+			queue="long",
+			timeout=METALD_INSTALL_TIMEOUT_SECONDS,
+			job_id=job_id,
+			deduplicate=True,
+			enqueue_after_commit=True,
+		)
 
 	# Static methods
 
@@ -210,6 +262,84 @@ class Server(Document):
 			frappe.throw(_("No enabled Server Size has more than 2 CPUs and at least 32 GiB of memory"))
 		return sizes[0].name
 
+	def _install_metald(self) -> None:
+		"""Install metald and its host dependencies."""
+		if not self.settings.metald_binary_x86_64_download_url:
+			frappe.throw(_("Atlas Settings needs a metald download URL."))
+
+		# Only the provider knows which array the install left raw.
+		result = ServerSSHTask.create_for_script_file(
+			server=self.name,
+			script_path="install-metald.sh",
+			environment={
+				"METALD_DOWNLOAD_URL": self.settings.metald_binary_x86_64_download_url,
+				"STORAGE_POOL_DEVICE": self.settings.server_provider_controller.get_storage_pool_device(self),
+			},
+			timeout_seconds=METALD_INSTALL_TIMEOUT_SECONDS,
+			run_in_background=False,
+		).result
+		if not result or not result.is_success:
+			frappe.throw(_("Could not install metald on server {0}.").format(self.name))
+
+	def _configure_wireguard(self) -> None:
+		"""Configure the host WireGuard interface and record its identity.
+
+		The SSH task runs inline, because this job is already the asynchronous
+		boundary and the public key is on the task output.
+		"""
+		self._set_wireguard_ip_address_if_not_set()
+		result = ServerSSHTask.create_for_script_file(
+			server=self.name,
+			script_path="configure-wireguard.sh",
+			environment={
+				"WIREGUARD_ADDRESS": self.wireguard_ip_address,
+				"WIREGUARD_MTU": self.settings.private_network_mtu - WIREGUARD_OVERHEAD_BYTES,
+			},
+			timeout_seconds=WIREGUARD_CONFIGURE_TIMEOUT_SECONDS,
+			run_in_background=False,
+		).result
+		if not result or not result.is_success:
+			frappe.throw(_("Could not configure WireGuard on server {0}.").format(self.name))
+
+		# The script wraps the key in markers. See scripts/configure-wireguard.sh.
+		after_start = result.output.partition("===PUBLIC_KEY_START===")[2]
+		public_key = after_start.partition("===PUBLIC_KEY_END===")[0].strip()
+		if not public_key:
+			frappe.throw(_("Server {0} reported no WireGuard public key.").format(self.name))
+
+		self.db_set("wireguard_public_key", public_key)
+
+	def _get_wireguard_ip_address(self) -> str:
+		"""Return this server's address in the fdab::/16 host mesh.
+
+		The last part of the server name is its node number,
+		such as 7 in node-par-1-00007.
+		"""
+		node_number = self.name.rsplit("-", 1)[-1]
+		if not node_number.isdigit():
+			frappe.throw(_("Server {0} has no node number in its name.").format(self.name))
+
+		region_id = self.settings.region_id
+		if not 0 <= region_id <= 0xFFFF:
+			frappe.throw(_("Atlas Settings region ID must fit in one IPv6 field."))
+
+		return str(ipaddress.IPv6Address((0xFDAB << 112) | (region_id << 96) | int(node_number)))
+
+	def _set_wireguard_ip_address_if_not_set(self) -> None:
+		"""Set the WireGuard IP address if it is not already set."""
+		if not self.wireguard_ip_address:
+			self.db_set("wireguard_ip_address", self._get_wireguard_ip_address())
+
+	def _sync_disks_if_running(self) -> None:
+		"""Fill the disks table once the server runs."""
+		if self.status != "Running" or self.disks:
+			return
+
+		try:
+			self.sync_disks()
+		except Exception:
+			frappe.log_error(title=f"Could not sync the disks of server {self.name}")
+
 	def _parse_disks(self, lsblk_output: str) -> list[dict[str, str]]:
 		"""Return one row for each mounted device and the raw storage pool device."""
 		storage_pool_device = self.settings.server_provider_controller.get_storage_pool_device(self)
@@ -235,11 +365,6 @@ class Server(Document):
 		for doctype, name in (("Server Size", self.server_size), ("Server Image", self.server_image)):
 			if name and frappe.db.get_value(doctype, name, "provider_type") != provider_type:
 				frappe.throw(_("{0} must belong to the configured server provider").format(doctype))
-
-	def _sync_disks_if_running(self) -> None:
-		if self.status == "Running" and not self.disks:
-			with contextlib.suppress(Exception):
-				self.sync_disks()
 
 	def _validate_power_action(self) -> None:
 		"""Check that a power action can run for this Server."""

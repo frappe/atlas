@@ -1,20 +1,19 @@
 // Command metald is the metal daemon: an HTTP server (over a unix socket) that
 // drives firecracker microVMs.
 //
-//	metald serve   run the server (default)
-//	metald up      idempotently bootstrap a /tmp dev host, then serve
+//	metald serve [--config path]   run the server (default)
+//
+// Use scripts/dev.sh to prepare a throwaway dev host before serve.
 package main
 
 import (
 	"context"
-	_ "embed"
 	"flag"
 	"fmt"
 	"log"
 	"net"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -25,11 +24,11 @@ import (
 	"github.com/frappe/atlas/metal/internal/systemd"
 )
 
-//go:embed up.sh
-var upScript string
+// version is the build version
+// set with -ldflags "-X main.version=...".
+var version = "dev"
 
 func main() {
-	// The subcommand is optional and comes first; anything else is a flag.
 	args := os.Args[1:]
 	cmd := "serve"
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
@@ -39,25 +38,22 @@ func main() {
 	if err != nil {
 		os.Exit(2)
 	}
-	switch cmd {
-	case "serve":
-		err = serve(configPath)
-	case "up":
-		err = up(configPath)
-	default:
-		fmt.Fprintf(os.Stderr, "usage: metald [serve|up] [--config path]\n")
+	if cmd != "serve" {
+		fmt.Fprintf(os.Stderr, "usage: metald [serve] [--config path]\n")
 		os.Exit(2)
+	}
+	o, err := load(configPath)
+	if err == nil {
+		err = serve(o)
 	}
 	if err != nil {
 		log.Fatal(err)
 	}
 }
 
-// parseFlags reads the shared --config flag for a subcommand. An empty path
-// means no explicit config file was given.
 func parseFlags(cmd string, args []string) (string, error) {
 	fs := flag.NewFlagSet(cmd, flag.ContinueOnError)
-	path := fs.String("config", "", "path to config.toml (optional; defaults to ./config.toml)")
+	path := fs.String("config", "", "path to the configuration file (optional; defaults to "+defaultConfigPath+")")
 	if err := fs.Parse(args); err != nil {
 		return "", err
 	}
@@ -80,9 +76,28 @@ func listen(addr string) (net.Listener, error) {
 	return net.Listen("tcp", addr)
 }
 
-func serve(configPath string) error {
-	o, err := load(configPath)
-	if err != nil {
+// makeDirs creates the directories the config names. metald makes most of them
+// when it starts a VM, but a fresh host has no kernel dir at all, and a missing
+// one only shows up as a link failure on the first create.
+func makeDirs(o opts) error {
+	dirs := []struct {
+		path string
+		mode os.FileMode
+	}{
+		{o.cfg.MachinesDir, 0o750},
+		{o.cfg.SocketsDir, 0o700},
+		{o.kernelDir, 0o755},
+	}
+	for _, d := range dirs {
+		if err := os.MkdirAll(d.path, d.mode); err != nil {
+			return fmt.Errorf("create %s: %w", d.path, err)
+		}
+	}
+	return nil
+}
+
+func serve(o opts) error {
+	if err := makeDirs(o); err != nil {
 		return err
 	}
 	units, err := systemd.Connect(context.Background())
@@ -98,45 +113,10 @@ func serve(configPath string) error {
 	if err != nil {
 		return fmt.Errorf("listen %s: %w", o.listen, err)
 	}
-	log.Printf("metald listening on %s", o.listen)
+	log.Printf("metald %s listening on %s", version, o.listen)
 	e.Listener = ln
 	if err := e.Start(""); err != nil && err != http.ErrServerClosed {
 		return err
 	}
 	return nil
-}
-
-// up bootstraps a throwaway dev host under a /tmp workdir, then serves. Env
-// defaults point every path into the workdir so it never touches system dirs.
-func up(configPath string) error {
-	workdir := envOr("METALD_WORKDIR", "/tmp/metald")
-	setDefault("METALD_WORKDIR", workdir)
-	setDefault("METALD_CHROOT_BASE", filepath.Join(workdir, "chroot"))
-	setDefault("METALD_VAR_DIR", filepath.Join(workdir, "vms"))
-	setDefault("METALD_KERNEL_DIR", filepath.Join(workdir, "kernels"))
-	setDefault("METALD_LISTEN", "127.0.0.1:8080")
-	setDefault("METALD_JAILER", filepath.Join(workdir, "bin", "jailer"))
-	setDefault("METALD_FIRECRACKER", filepath.Join(workdir, "bin", "firecracker"))
-
-	c := exec.Command("bash", "-s")
-	c.Stdin = strings.NewReader(upScript)
-	c.Stdout, c.Stderr = os.Stdout, os.Stderr
-	c.Env = os.Environ()
-	if err := c.Run(); err != nil {
-		return fmt.Errorf("bootstrap: %w", err)
-	}
-	return serve(configPath)
-}
-
-func envOr(k, def string) string {
-	if v := os.Getenv(k); v != "" {
-		return v
-	}
-	return def
-}
-
-func setDefault(k, v string) {
-	if os.Getenv(k) == "" {
-		_ = os.Setenv(k, v)
-	}
 }

@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from frappe.tests import UnitTestCase
 
 from atlas.atlas.core.server_providers.scaleway.catalog import ScalewayCatalog
+from atlas.atlas.core.server_providers.scaleway.client import ScalewayError
 
 
 class TestScalewayCatalog(UnitTestCase):
@@ -38,6 +39,33 @@ class TestScalewayCatalog(UnitTestCase):
 			),
 		)
 
-		option_id = ScalewayCatalog().get_private_network_option_id(size)
+		option_id = ScalewayCatalog().get_private_network_option_id(size, "hourly")
 
 		self.assertEqual(option_id, "private-network-id")
+
+	def test_get_private_network_option_id_matches_the_subscription_period(self) -> None:
+		size = SimpleNamespace(
+			name="Scaleway/EM-A410X",
+			provider_metadata=json.dumps(
+				{
+					"hourly": {"options": [{"id": "hourly-option", "private_network": {}}]},
+					"monthly": {"options": [{"id": "monthly-option", "private_network": {}}]},
+				}
+			),
+		)
+
+		option_id = ScalewayCatalog().get_private_network_option_id(size, "monthly")
+
+		self.assertEqual(option_id, "monthly-option")
+
+	def test_get_private_network_option_id_rejects_a_missing_period(self) -> None:
+		"""Sending an hourly option with a monthly offer makes Scaleway fail."""
+		size = SimpleNamespace(
+			name="Scaleway/EM-A410X",
+			provider_metadata=json.dumps(
+				{"hourly": {"options": [{"id": "hourly-option", "private_network": {}}]}}
+			),
+		)
+
+		with self.assertRaises(ScalewayError):
+			ScalewayCatalog().get_private_network_option_id(size, "monthly")

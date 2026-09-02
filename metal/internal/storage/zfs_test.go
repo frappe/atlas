@@ -8,10 +8,10 @@ import (
 
 func TestNames(t *testing.T) {
 	z := NewZFS("metal", "/imgs")
-	if got := z.baseDataset("ubuntu"); got != "metal/base/ubuntu" {
+	if got := z.baseDataset("ubuntu"); got != "metal/images/ubuntu" {
 		t.Errorf("baseDataset = %q", got)
 	}
-	if got := z.baseSnapshot("ubuntu"); got != "metal/base/ubuntu@ready" {
+	if got := z.baseSnapshot("ubuntu"); got != "metal/images/ubuntu@ready" {
 		t.Errorf("baseSnapshot = %q", got)
 	}
 	if got := z.vmDataset("abc"); got != "metal/vms/abc" {

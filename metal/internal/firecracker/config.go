@@ -13,8 +13,10 @@ import (
 
 // Config holds the driver's host paths and id range.
 type Config struct {
-	ChrootBase     string // jailer chroot base dir, e.g. /srv/jailer
-	VarDir         string // per-VM state dir, e.g. /var/lib/metal/vms
+	// MachinesDir holds one directory for each VM, e.g. /var/lib/metal/machines.
+	MachinesDir string
+	// SocketsDir holds the short API socket symlinks.
+	SocketsDir     string
 	JailerBin      string
 	FirecrackerBin string
 	IDs            idalloc.Range
@@ -22,15 +24,15 @@ type Config struct {
 
 func DefaultConfig() Config {
 	return Config{
-		ChrootBase:     "/srv/jailer",
-		VarDir:         "/var/lib/metal/vms",
+		MachinesDir:    "/var/lib/metal/machines",
+		SocketsDir:     "/run/metal",
 		JailerBin:      "/usr/bin/jailer",
 		FirecrackerBin: "/usr/bin/firecracker",
 		IDs:            idalloc.DefaultRange,
 	}
 }
 
-// vmConfig is the per-VM state persisted under VarDir/<id>. It is co-located
+// vmConfig is the per-VM state persisted under MachinesDir/<id>. It is co-located
 // with the VM (not a central store), so metald stays stateless: List/Load
 // reconstruct handles from these files plus systemd.
 type vmConfig struct {
@@ -43,7 +45,7 @@ type vmConfig struct {
 	Spec vm.Spec `json:"spec"`
 }
 
-func (c Config) vmDir(id string) string      { return filepath.Join(c.VarDir, id) }
+func (c Config) vmDir(id string) string      { return filepath.Join(c.MachinesDir, id) }
 func (c Config) configPath(id string) string { return filepath.Join(c.vmDir(id), "config.json") }
 
 func (c Config) writeVMConfig(vc vmConfig) error {
@@ -71,7 +73,7 @@ func (c Config) readVMConfig(id string) (vmConfig, error) {
 
 // listVMIDs returns the ids of every VM with persisted state.
 func (c Config) listVMIDs() ([]string, error) {
-	entries, err := os.ReadDir(c.VarDir)
+	entries, err := os.ReadDir(c.MachinesDir)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, nil
 	}

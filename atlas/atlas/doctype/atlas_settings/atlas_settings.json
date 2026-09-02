@@ -26,6 +26,8 @@
   "private_network_mtu",
   "ssh_section",
   "public_ssh_key",
+  "metald_section",
+  "metald_binary_x86_64_download_url",
   "scaleway_tab",
   "scaleway_settings_section",
   "scaleway_organization_id",
@@ -283,14 +285,25 @@
    "fieldname": "general_tab",
    "fieldtype": "Tab Break",
    "label": "General"
+  },
+  {
+   "fieldname": "metald_section",
+   "fieldtype": "Section Break",
+   "label": "Metal Daemon"
+  },
+  {
+   "fieldname": "metald_binary_x86_64_download_url",
+   "fieldtype": "Data",
+   "label": "X86_64 Download URL",
+   "reqd": 1
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-09-02 15:57:14.752893",
- "modified_by": "Administrator",
+ "modified": "2026-09-02 21:11:38.455570",
+ "modified_by": "test@gmail.com",
  "module": "Atlas",
  "name": "Atlas Settings",
  "owner": "Administrator",

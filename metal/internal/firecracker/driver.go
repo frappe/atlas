@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"sync"
 
+	"github.com/google/uuid"
+
 	"github.com/frappe/atlas/metal/internal/firecracker/api"
 	"github.com/frappe/atlas/metal/internal/network"
 	"github.com/frappe/atlas/metal/internal/storage"
@@ -38,7 +40,9 @@ func (d *Driver) Type() vm.DriverType { return vm.DriverFirecracker }
 // and does all pre-boot configuration. The guest is not booted (StateCreated);
 // call Start for that.
 func (d *Driver) Create(ctx context.Context, spec vm.Spec) (_ vm.VM, err error) {
-	id := newID()
+	// A version 7 UUID sorts by creation time. metald dials a VM's API socket
+	// through a short symlink, so the id length has no limit to respect.
+	id := uuid.Must(uuid.NewV7()).String()
 
 	uid, err := d.allocate(id, spec)
 	if err != nil {
@@ -70,6 +74,9 @@ func (d *Driver) Create(ctx context.Context, spec vm.Spec) (_ vm.VM, err error) 
 // leaving the guest ready for InstanceStart. Shared by Create and relaunch.
 func (d *Driver) bootPrep(ctx context.Context, vc vmConfig, nic network.NIC) error {
 	if err := d.cfg.writeJailerEnv(vc.ID, d.cfg.jailerArgs(vc.ID, vc.UID, vc.GID, nic.NetnsPath)); err != nil {
+		return err
+	}
+	if err := d.cfg.linkSocket(vc.ID); err != nil {
 		return err
 	}
 	if err := d.units.Start(ctx, vc.ID); err != nil {
@@ -122,6 +129,7 @@ func (d *Driver) cleanup(ctx context.Context, id string) {
 	_ = d.units.Stop(ctx, id)
 	_ = d.net.Release(ctx, id)
 	_ = d.images.Release(ctx, id)
+	_ = os.Remove(d.cfg.sockPath(id))
 	_ = os.RemoveAll(d.cfg.vmDir(id))
 }
 

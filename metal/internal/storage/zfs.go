@@ -3,7 +3,7 @@ package storage
 import "strings"
 
 // ZFS resolves images from a ZFS pool. Each image ref has a read-only base zvol
-// base/<ref> with a @ready snapshot; each VM's rootfs disk vms/<id> is a clone
+// images/<ref> with a @ready snapshot; each VM's rootfs disk vms/<id> is a clone
 // of it, optionally grown to a requested size, exposed as a block device node
 // inside its chroot and owned by the VM's uid/gid. The kernel is a file under
 // kernelDir/<ref>, hard-linked into the chroot.
@@ -21,9 +21,10 @@ func NewZFS(pool, kernelDir string) *ZFS {
 	return &ZFS{pool: pool, kernelDir: kernelDir}
 }
 
-// Dataset/snapshot name helpers. A ref's base lives at <pool>/base/<ref> with a
-// @ready snapshot; each VM's disk is <pool>/vms/<id>, exposed at /dev/zvol/...
-func (z *ZFS) baseDataset(ref string) string  { return z.pool + "/base/" + ref }
+// Dataset and snapshot name helpers. A ref's base lives at <pool>/images/<ref>
+// with a @ready snapshot. Each VM's disk is <pool>/vms/<id>, exposed at
+// /dev/zvol/.... The VM ID and its rootfs disk use the same ID.
+func (z *ZFS) baseDataset(ref string) string  { return z.pool + "/images/" + ref }
 func (z *ZFS) baseSnapshot(ref string) string { return z.baseDataset(ref) + "@ready" }
 func (z *ZFS) vmDataset(vmID string) string   { return z.pool + "/vms/" + vmID }
 func (z *ZFS) devPath(vmID string) string     { return "/dev/zvol/" + z.vmDataset(vmID) }

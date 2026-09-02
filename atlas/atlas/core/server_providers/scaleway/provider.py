@@ -106,6 +106,8 @@ class ScalewayProvider(ServerProvider):
 			self.wait_for_ssh,
 			self._configure_private_network,
 			self._wait_for_private_address,
+			self.configure_wireguard,
+			self.install_metald,
 		)
 
 	@override
@@ -180,13 +182,16 @@ class ScalewayProvider(ServerProvider):
 			server.flags.provider_server_created = True
 			size_document = frappe.get_doc("Server Size", server.server_size)
 			image_document = frappe.get_doc("Server Image", server.server_image)
-			offer_id = self.catalog.get_offer_id(size_document, self._subscription_period())
+			subscription_period = self._subscription_period()
+			offer_id = self.catalog.get_offer_id(size_document, subscription_period)
 			remote_server = self._request(
 				"POST",
 				f"/baremetal/v1/zones/{self.zone}/servers",
 				json={
 					"offer_id": offer_id,
-					"option_ids": [self.catalog.get_private_network_option_id(size_document)],
+					"option_ids": [
+						self.catalog.get_private_network_option_id(size_document, subscription_period)
+					],
 					"project_id": self.project_id,
 					"name": server.name,
 					"description": f"Atlas server {server.name}",

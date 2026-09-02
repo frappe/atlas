@@ -35,7 +35,7 @@ class ScalewayCatalog:
 
 	def get_offer_id(self, size_document: object, subscription_period: str) -> str:
 		"""Return the offer ID for the selected subscription period."""
-		offer = self._hourly_offer(size_document)
+		offer = self._offer(size_document, "hourly")
 		offer_id = offer.get("monthly_offer_id") if subscription_period == "monthly" else offer.get("id")
 		if not isinstance(offer_id, str):
 			raise ScalewayError(
@@ -43,9 +43,13 @@ class ScalewayCatalog:
 			)
 		return offer_id
 
-	def get_private_network_option_id(self, size_document: object) -> str:
-		"""Return the Private Network option ID from a Server Size."""
-		for option in self._hourly_offer(size_document).get("options", []):
+	def get_private_network_option_id(self, size_document: object, subscription_period: str) -> str:
+		"""Return the Private Network option ID for the selected subscription period.
+
+		Scaleway gives an option its own ID for each period, and it rejects an
+		option that does not match the offer.
+		"""
+		for option in self._offer(size_document, subscription_period).get("options", []):
 			if (
 				isinstance(option, Mapping)
 				and "private_network" in option
@@ -78,11 +82,13 @@ class ScalewayCatalog:
 		)
 
 	@staticmethod
-	def _hourly_offer(size_document: object) -> Mapping:
+	def _offer(size_document: object, subscription_period: str) -> Mapping:
 		metadata = frappe.parse_json(size_document.provider_metadata or "{}")
-		offer = metadata.get("hourly") if isinstance(metadata, Mapping) else None
+		offer = metadata.get(subscription_period) if isinstance(metadata, Mapping) else None
 		if not isinstance(offer, Mapping):
-			raise ScalewayError(f"Server Size {size_document.name} has no hourly Scaleway offer")
+			raise ScalewayError(
+				f"Server Size {size_document.name} has no {subscription_period} Scaleway offer"
+			)
 		return offer
 
 	@staticmethod

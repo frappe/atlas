@@ -27,8 +27,9 @@ func NewLinux() *Linux { return &Linux{} }
 func nsName(vmID string) string { return "metal-" + vmID }
 func nsPath(vmID string) string { return "/run/netns/" + nsName(vmID) }
 
+// vethNames returns readable interface names that fit Linux's 15-character limit.
 func vethNames(uid uint32) (host, guest string) {
-	return fmt.Sprintf("vh%d", uid), fmt.Sprintf("vg%d", uid)
+	return fmt.Sprintf("vh-%d", uid), fmt.Sprintf("vg-%d", uid)
 }
 
 // transitAddrs derives the veth /30 endpoints (host, netns) from the uid.
@@ -63,7 +64,7 @@ func (l *Linux) Allocate(ctx context.Context, req Request) (NIC, error) {
 		{"ip", "-n", ns, "addr", "add", nsIP + "/30", "dev", vg},
 		{"ip", "-n", ns, "link", "set", vg, "up"},
 		{"ip", "-n", ns, "route", "add", "default", "via", hostIP},
-		// forward + NAT inside the netns, hiding the fixed guest IP behind the uplink
+		// Forward traffic with network address translation inside the namespace.
 		{"ip", "netns", "exec", ns, "sysctl", "-q", "-w", "net.ipv4.ip_forward=1"},
 		{"ip", "netns", "exec", ns, "iptables", "-t", "nat", "-A", "POSTROUTING", "-o", vg, "-j", "MASQUERADE"},
 	}

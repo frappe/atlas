@@ -16,8 +16,8 @@ mkdir -p "$(dirname "$IMG")"
 zpool list "$POOL" >/dev/null 2>&1 || zpool create -f -m none "$POOL" "$(realpath -m "$IMG")"
 
 # Container datasets. zfs create/clone never make missing parents, so the
-# base/<ref> and vms/<id> parents must exist first.
-zfs list "$POOL/base" >/dev/null 2>&1 || zfs create -o mountpoint=none "$POOL/base"
+# images/<ref> and vms/<id> parents must exist first.
+zfs list "$POOL/images" >/dev/null 2>&1 || zfs create -o mountpoint=none "$POOL/images"
 zfs list "$POOL/vms" >/dev/null 2>&1 || zfs create -o mountpoint=none "$POOL/vms"
 
 zfs list -r "$POOL"  # show the pool's datasets
@@ -26,12 +26,12 @@ cat <<EOF
 ZFS pool "$POOL" is ready.
 
 Create a base image (zvol) and write a rootfs into it:
-  zfs create -V 1G -o volblocksize=16k $POOL/base/ubuntu   # -V = zvol, 16k blocks
-  dd if=rootfs.ext4 of=/dev/zvol/$POOL/base/ubuntu bs=4M   # write the rootfs raw
-  zfs snapshot $POOL/base/ubuntu@ready              # the clone source
+  zfs create -V 1G -o volblocksize=16k $POOL/images/ubuntu   # -V = zvol, 16k blocks
+  dd if=rootfs.ext4 of=/dev/zvol/$POOL/images/ubuntu bs=4M   # write the rootfs raw
+  zfs snapshot $POOL/images/ubuntu@ready              # the clone source
 
 metal then does, per VM:
-  zfs clone $POOL/base/ubuntu@ready $POOL/vms/<id>  # CoW clone, cheap
+  zfs clone $POOL/images/ubuntu@ready $POOL/vms/<id>  # CoW clone, cheap
   zfs set volsize=<sizeM> $POOL/vms/<id>            # grow to the requested disk size
   # the guest grows its filesystem on boot (growpart + resize2fs)
 
