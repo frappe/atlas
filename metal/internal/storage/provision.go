@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/frappe/atlas/metal/internal/hostcmd"
 )
 
 // Prepare provisions the VM's kernel + rootfs and returns the boot config.
@@ -27,7 +29,7 @@ func (z *ZFS) Prepare(ctx context.Context, req Request) (BootConfig, error) {
 	if !datasetExists(ctx, z.vmDataset(req.VMID)) {
 		// zfs clone <base>@ready <vm>: create the VM's writable zvol from the base
 		// snapshot; copy-on-write, so it shares the base's blocks until written.
-		if err := run(ctx, "zfs", "clone", z.baseSnapshot(req.Ref), z.vmDataset(req.VMID)); err != nil {
+		if err := hostcmd.Run(ctx, "zfs", "clone", z.baseSnapshot(req.Ref), z.vmDataset(req.VMID)); err != nil {
 			return BootConfig{}, err
 		}
 		created = true
@@ -71,7 +73,7 @@ func (z *ZFS) grow(ctx context.Context, vmID string, diskMiB int) error {
 	}
 	// zfs set volsize=<N>M <vm>: change the zvol's provisioned block-device
 	// capacity (M = MiB). Only ever grown here; the guest resizes its own fs.
-	return run(ctx, "zfs", "set", fmt.Sprintf("volsize=%dM", diskMiB), z.vmDataset(vmID))
+	return hostcmd.Run(ctx, "zfs", "set", fmt.Sprintf("volsize=%dM", diskMiB), z.vmDataset(vmID))
 }
 
 // Resize grows the VM disk to diskMiB (no-op if not already smaller). It never
@@ -85,7 +87,7 @@ func (z *ZFS) Resize(ctx context.Context, vmID string, diskMiB int) error {
 func (z *ZFS) Release(ctx context.Context, vmID string) error {
 	// zfs destroy -r <vm>: destroy the zvol; -r (recursive) also destroys every
 	// snapshot taken under it.
-	if err := run(ctx, "zfs", "destroy", "-r", z.vmDataset(vmID)); err != nil {
+	if err := hostcmd.Run(ctx, "zfs", "destroy", "-r", z.vmDataset(vmID)); err != nil {
 		if strings.Contains(err.Error(), "does not exist") {
 			return nil
 		}
@@ -97,14 +99,14 @@ func (z *ZFS) Release(ctx context.Context, vmID string) error {
 // datasetExists reports whether a dataset (here, a VM's zvol) is present.
 func datasetExists(ctx context.Context, name string) bool {
 	// zfs list <dataset>: exits 0 if it exists, non-zero otherwise.
-	return run(ctx, "zfs", "list", name) == nil
+	return hostcmd.Run(ctx, "zfs", "list", name) == nil
 }
 
 // volsizeBytes reads a zvol's provisioned size in bytes.
 func volsizeBytes(ctx context.Context, dataset string) (int64, error) {
 	// zfs get -Hp -o value volsize <dataset>: the zvol's provisioned size in
 	// exact bytes (-H no header, -p exact, -o value = just the number).
-	out, err := output(ctx, "zfs", "get", "-Hp", "-o", "value", "volsize", dataset)
+	out, err := hostcmd.Output(ctx, "zfs", "get", "-Hp", "-o", "value", "volsize", dataset)
 	if err != nil {
 		return 0, err
 	}

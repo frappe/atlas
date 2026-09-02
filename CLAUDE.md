@@ -61,6 +61,7 @@ Atlas is a monorepo for Frappe Cloud V2 VM infrastructure. It contains a Frappe/
 - Start an exported Go doc comment with the name of the declaration.
 - Keep one package comment in one file for each Go package.
 - Use clear, short package names. Avoid names such as `util`, `common`, `misc`, and `interfaces`.
+- When one helper is shared across packages, put it in a small package named for what it does, not in a `util` or `common` grab-bag.
 - Use `NewType` for Go constructors. Do not add unnecessary `Get` prefixes.
 - Wrap Go errors with useful context. Preserve errors that callers must inspect.
 - Pass `context.Context` as the first parameter to Go operations that can block.

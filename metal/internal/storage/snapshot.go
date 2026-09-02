@@ -4,13 +4,15 @@ import (
 	"context"
 	"strconv"
 	"strings"
+
+	"github.com/frappe/atlas/metal/internal/hostcmd"
 )
 
 // Snapshot takes a named point-in-time snapshot of the VM's disk.
 func (z *ZFS) Snapshot(ctx context.Context, vmID, name string) error {
 	// zfs snapshot <vm>@<name>: create a read-only, point-in-time snapshot of
 	// the zvol. Cheap: it just pins the current blocks.
-	return run(ctx, "zfs", "snapshot", z.snap(vmID, name))
+	return hostcmd.Run(ctx, "zfs", "snapshot", z.snap(vmID, name))
 }
 
 // Snapshots lists the VM disk's snapshots (name after '@', sizes in MiB).
@@ -18,7 +20,7 @@ func (z *ZFS) Snapshots(ctx context.Context, vmID string) ([]SnapshotInfo, error
 	// zfs list -Hp -t snapshot -o name,volsize,used -r <vm>: -H drops the header,
 	// -p prints exact bytes (not 1.5G), -t snapshot limits to snapshots, -o picks
 	// the columns, -r recurses into the zvol (its snapshots).
-	out, err := output(ctx, "zfs", "list", "-Hp", "-t", "snapshot", "-o", "name,volsize,used", "-r", z.vmDataset(vmID))
+	out, err := hostcmd.Output(ctx, "zfs", "list", "-Hp", "-t", "snapshot", "-o", "name,volsize,used", "-r", z.vmDataset(vmID))
 	if err != nil {
 		return nil, notFoundAware(err)
 	}
@@ -43,7 +45,7 @@ func (z *ZFS) Snapshots(ctx context.Context, vmID string) ([]SnapshotInfo, error
 func (z *ZFS) DeleteSnapshot(ctx context.Context, vmID, name string) error {
 	// zfs destroy <vm>@<name>: destroy one snapshot (no -r; a snapshot has no
 	// children of its own).
-	return notFoundAware(run(ctx, "zfs", "destroy", z.snap(vmID, name)))
+	return notFoundAware(hostcmd.Run(ctx, "zfs", "destroy", z.snap(vmID, name)))
 }
 
 // Restore rolls the disk back to a snapshot, discarding newer snapshots. The
@@ -51,7 +53,7 @@ func (z *ZFS) DeleteSnapshot(ctx context.Context, vmID, name string) error {
 func (z *ZFS) Restore(ctx context.Context, vmID, name string) error {
 	// zfs rollback -r <vm>@<name>: revert the zvol to the snapshot's contents;
 	// -r destroys any snapshots newer than it (rollback requires that).
-	return notFoundAware(run(ctx, "zfs", "rollback", "-r", z.snap(vmID, name)))
+	return notFoundAware(hostcmd.Run(ctx, "zfs", "rollback", "-r", z.snap(vmID, name)))
 }
 
 // Usage reports the VM disk's provisioned/used size and snapshot count.
@@ -59,7 +61,7 @@ func (z *ZFS) Usage(ctx context.Context, vmID string) (Usage, error) {
 	// zfs get -Hp -o property,value volsize,used <vm>: -H no header, -p exact
 	// bytes, -o property,value emits a "<prop>\t<bytes>" row per requested prop
 	// (volsize = provisioned, used = consumed).
-	out, err := output(ctx, "zfs", "get", "-Hp", "-o", "property,value", "volsize,used", z.vmDataset(vmID))
+	out, err := hostcmd.Output(ctx, "zfs", "get", "-Hp", "-o", "property,value", "volsize,used", z.vmDataset(vmID))
 	if err != nil {
 		return Usage{}, notFoundAware(err)
 	}

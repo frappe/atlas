@@ -34,17 +34,21 @@ func defaultOpts() opts {
 // fileConfig mirrors the optional config.toml. Sections group the keys by the
 // package that owns them. An unset key keeps the value from the layer below.
 type fileConfig struct {
-	Listen      string `toml:"listen"`
-	Firecracker struct {
-		ChrootBase     string `toml:"chroot_base"`
-		VarDir         string `toml:"var_dir"`
-		JailerBin      string `toml:"jailer_bin"`
-		FirecrackerBin string `toml:"firecracker_bin"`
-	} `toml:"firecracker"`
-	Storage struct {
-		Pool      string `toml:"pool"`
-		KernelDir string `toml:"kernel_dir"`
-	} `toml:"storage"`
+	Listen      string          `toml:"listen"`
+	Firecracker firecrackerFile `toml:"firecracker"`
+	Storage     storageFile     `toml:"storage"`
+}
+
+type firecrackerFile struct {
+	ChrootBase     string `toml:"chroot_base"`
+	VarDir         string `toml:"var_dir"`
+	JailerBin      string `toml:"jailer_bin"`
+	FirecrackerBin string `toml:"firecracker_bin"`
+}
+
+type storageFile struct {
+	Pool      string `toml:"pool"`
+	KernelDir string `toml:"kernel_dir"`
 }
 
 // load resolves the configuration in three layers, lowest to highest: built-in
