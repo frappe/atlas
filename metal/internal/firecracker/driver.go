@@ -57,6 +57,14 @@ func (d *Driver) Create(ctx context.Context, spec vm.Spec) (_ vm.VM, err error) 
 		return nil, err
 	}
 
+	// A warm image is loaded on the first Start, not cold-booted here. Mark it and
+	// skip the cold pre-boot; Start does the load.
+	if _, _, warm := d.images.ImageMemory(spec.Image.Name); warm {
+		if err = d.cfg.writeWarmMark(id, spec.Image.Name); err != nil {
+			return nil, err
+		}
+		return d.newMachine(vc), nil
+	}
 	if err = d.bootPrep(ctx, vc, nic); err != nil {
 		return nil, err
 	}
@@ -153,6 +161,20 @@ func (d *Driver) loadLaunch(ctx context.Context, vc vmConfig, stateFile, memFile
 		}
 	}
 	return cli.Resume(ctx)
+}
+
+// warmLaunch loads a VM from a warm image's memory and hands the guest a fresh
+// metadata payload so it can re-key and re-sync as a clone.
+func (d *Driver) warmLaunch(ctx context.Context, vc vmConfig, ref string) error {
+	state, mem, warm := d.images.ImageMemory(ref)
+	if !warm {
+		return vm.ErrNotFound
+	}
+	var mmds map[string]any
+	if len(vc.Spec.SSHKeys) > 0 {
+		mmds = refreshMMDS(vc.ID, vc.Spec.SSHKeys)
+	}
+	return d.loadLaunch(ctx, vc, state, mem, mmds)
 }
 
 // allocate reserves a uid/gid and persists an initial config so a concurrent

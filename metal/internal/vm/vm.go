@@ -27,6 +27,8 @@ type VM interface {
 	// reloads RAM so the VM resumes at the captured instant; a disk-only snapshot
 	// leaves the VM stopped to cold-boot from the rolled-back disk.
 	RestoreSnapshot(ctx context.Context, name string) error
+	// Promote builds a standalone warm image from one of the VM's memory snapshots.
+	Promote(ctx context.Context, name, imageRef string) error
 	Info(ctx context.Context) (Info, error)
 }
 

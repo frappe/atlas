@@ -77,6 +77,10 @@ type snapReq struct {
 	Memory bool   `json:"memory"`
 }
 
+type promoteReq struct {
+	Image string `json:"image"`
+}
+
 type snapResp struct {
 	Name      string `json:"name"`
 	VMID      string `json:"vm_id"`

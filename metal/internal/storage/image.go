@@ -58,10 +58,18 @@ func (z *ZFS) Promote(ctx context.Context, r PromoteRequest) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
-	if err := hostcmd.Run(ctx, "cp", "--reflink=auto", r.StateFile, filepath.Join(dir, "state")); err != nil {
+	state, mem := filepath.Join(dir, "state"), filepath.Join(dir, "mem")
+	if err := hostcmd.Run(ctx, "cp", "--reflink=auto", r.StateFile, state); err != nil {
 		return err
 	}
-	return hostcmd.Run(ctx, "cp", "--reflink=auto", r.MemFile, filepath.Join(dir, "mem"))
+	if err := hostcmd.Run(ctx, "cp", "--reflink=auto", r.MemFile, mem); err != nil {
+		return err
+	}
+	// 0644 so any VM's uid can read the files when they are hard-linked into a
+	// chroot on warm start.
+	_ = os.Chmod(state, 0o644)
+	_ = os.Chmod(mem, 0o644)
+	return nil
 }
 
 // Images lists the pool's images and whether each carries a memory capture.

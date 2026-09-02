@@ -71,7 +71,35 @@ func (s *Server) restoreSnapshot(c echo.Context) error {
 	return s.respond(c, http.StatusOK, m)
 }
 
+func (s *Server) promoteSnapshot(c echo.Context) error {
+	m, err := s.load(c)
+	if err != nil {
+		return err
+	}
+	name := c.Param("name")
+	if !validSnapName(name) {
+		return badRequest("invalid snapshot name")
+	}
+	var body promoteReq
+	if err := c.Bind(&body); err != nil {
+		return badRequest(err.Error())
+	}
+	if !validImageRef(body.Image) {
+		return badRequest("invalid image ref")
+	}
+	if err := m.Promote(c.Request().Context(), name, body.Image); err != nil {
+		return err
+	}
+	return c.JSON(http.StatusCreated, echo.Map{"ref": body.Image})
+}
+
 // snapNameRe matches ZFS-legal snapshot names (the part after '@').
 var snapNameRe = regexp.MustCompile(`^[A-Za-z0-9_.:-]+$`)
 
 func validSnapName(s string) bool { return snapNameRe.MatchString(s) }
+
+// imageRefRe matches a legal image ref. The ref becomes a ZFS dataset name, so it
+// must start alphanumeric and use only [A-Za-z0-9_.-].
+var imageRefRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]*$`)
+
+func validImageRef(s string) bool { return imageRefRe.MatchString(s) }

@@ -67,6 +67,12 @@ func (f *fakeVM) RestoreSnapshot(_ context.Context, name string) error {
 	f.info.State = vm.StateRunning
 	return nil
 }
+func (f *fakeVM) Promote(_ context.Context, name, _ string) error {
+	if !f.snaps[name] { // promote needs a memory snapshot
+		return vm.ErrConflict
+	}
+	return nil
+}
 
 type fakeDriver struct{ vms map[string]*fakeVM }
 
@@ -219,6 +225,20 @@ func TestPauseResume(t *testing.T) {
 	if got.State != "running" {
 		t.Errorf("state = %q, want running", got.State)
 	}
+}
+
+func TestPromoteNeedsMemorySnapshot(t *testing.T) {
+	srv := newTestServer()
+	do(t, srv, http.MethodPost, "/vms", `{"image":"ubuntu"}`, http.StatusCreated)
+
+	// A disk-only snapshot cannot be promoted.
+	do(t, srv, http.MethodPost, "/vms/vm1/snapshots", `{"name":"disk"}`, http.StatusCreated)
+	do(t, srv, http.MethodPost, "/vms/vm1/snapshots/disk/promote", `{"image":"golden"}`, http.StatusConflict)
+
+	// A memory snapshot can, and a bad image ref is rejected.
+	do(t, srv, http.MethodPost, "/vms/vm1/snapshots", `{"name":"warm","memory":true}`, http.StatusCreated)
+	do(t, srv, http.MethodPost, "/vms/vm1/snapshots/warm/promote", `{"image":"golden"}`, http.StatusCreated)
+	do(t, srv, http.MethodPost, "/vms/vm1/snapshots/warm/promote", `{"image":"bad/ref"}`, http.StatusBadRequest)
 }
 
 func TestCreateSnapshotBadName(t *testing.T) {

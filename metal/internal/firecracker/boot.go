@@ -63,6 +63,16 @@ func mmdsData(keys []string) map[string]any {
 	return map[string]any{"latest": map[string]any{"meta-data": map[string]any{"public-keys": pk}}}
 }
 
+// refreshMMDS builds the metadata a restored clone reads: the ssh keys plus a
+// generation token under "metal". A guest agent watches the token to re-key and
+// re-sync (ssh keys, clock, machine-id) after a warm load. The token is the new
+// VM id, which differs from the source, so every clone sees a change.
+func refreshMMDS(id string, keys []string) map[string]any {
+	data := mmdsData(keys)
+	data["metal"] = map[string]any{"generation": id}
+	return data
+}
+
 // bootArgs appends the guest network config, since firecracker does not set it.
 func bootArgs(boot storage.BootConfig, nic network.NIC) string {
 	ip := fmt.Sprintf("ip=%s::%s:255.255.255.0::eth0:off", nic.GuestIP, nic.GatewayIP)

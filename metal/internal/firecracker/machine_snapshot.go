@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 
 	"github.com/frappe/atlas/metal/internal/firecracker/api"
+	"github.com/frappe/atlas/metal/internal/storage"
 	"github.com/frappe/atlas/metal/internal/vm"
 )
 
@@ -155,6 +156,22 @@ func (m *machine) RestoreSnapshot(ctx context.Context, name string) error {
 	}
 	state, mem := m.d.cfg.snapFiles(m.cfg.ID, name)
 	return m.d.loadLaunch(ctx, m.cfg, state, mem, nil)
+}
+
+// Promote builds a standalone warm image from one of the VM's memory snapshots.
+func (m *machine) Promote(ctx context.Context, name, imageRef string) error {
+	if !m.d.cfg.hasSnapMemory(m.cfg.ID, name) {
+		return vm.ErrConflict // promote needs a memory snapshot
+	}
+	state, mem := m.d.cfg.snapFiles(m.cfg.ID, name)
+	return storageErr(m.d.images.Promote(ctx, storage.PromoteRequest{
+		SrcVMID:   m.cfg.ID,
+		SnapName:  name,
+		SrcRef:    m.cfg.Spec.Image.Name,
+		Ref:       imageRef,
+		StateFile: state,
+		MemFile:   mem,
+	}))
 }
 
 // mkdirChown makes a directory owned by the VM's uid/gid, so the jailed
