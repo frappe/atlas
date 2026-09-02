@@ -8,7 +8,7 @@ import (
 )
 
 func TestNames(t *testing.T) {
-	z := NewZFS("metal", "/imgs")
+	z := NewZFS("metal", "/imgs", "/images")
 	if got := z.baseDataset("ubuntu"); got != "metal/base/ubuntu" {
 		t.Errorf("baseDataset = %q", got)
 	}
