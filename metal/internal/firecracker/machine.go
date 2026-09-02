@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"syscall"
+	"time"
 
 	"github.com/frappe/atlas/metal/internal/firecracker/api"
 	"github.com/frappe/atlas/metal/internal/network"
@@ -13,29 +14,35 @@ import (
 	"github.com/frappe/atlas/metal/internal/vm"
 )
 
+// defaultStopTimeout is how long a guest gets to shut itself down after
+// Ctrl+Alt+Del before metald escalates to a systemd stop job.
+const defaultStopTimeout = 30 * time.Second
+
 // machine implements vm.VM as a client-side handle: a systemd unit (metal-vm@id)
 // plus an API client over that unit's socket. It holds no child process.
 type machine struct {
-	cfg      vmConfig
-	dir      string // per-VM state dir
-	units    systemd.Manager
-	images   storage.Resolver
-	net      network.Allocator
-	api      *api.Client
-	persist  func(vmConfig) error        // rewrite the VM's config.json
-	relaunch func(context.Context) error // (re)start a stopped VM's jailer unit
+	cfg         vmConfig
+	dir         string // per-VM state dir
+	units       systemd.Manager
+	images      storage.Resolver
+	net         network.Allocator
+	api         *api.Client
+	stopTimeout time.Duration
+	persist     func(vmConfig) error        // rewrite the VM's config.json
+	relaunch    func(context.Context) error // (re)start a stopped VM's jailer unit
 }
 
 func (d *Driver) newMachine(vc vmConfig) *machine {
 	return &machine{
-		cfg:      vc,
-		dir:      d.cfg.vmDir(vc.ID),
-		units:    d.units,
-		images:   d.images,
-		net:      d.net,
-		api:      api.New(vc.Sock),
-		persist:  d.cfg.writeVMConfig,
-		relaunch: func(ctx context.Context) error { return d.relaunch(ctx, vc) },
+		cfg:         vc,
+		dir:         d.cfg.vmDir(vc.ID),
+		units:       d.units,
+		images:      d.images,
+		net:         d.net,
+		api:         api.New(vc.Sock),
+		stopTimeout: defaultStopTimeout,
+		persist:     d.cfg.writeVMConfig,
+		relaunch:    func(ctx context.Context) error { return d.relaunch(ctx, vc) },
 	}
 }
 
@@ -59,23 +66,51 @@ func (m *machine) Start(ctx context.Context) error {
 	return m.api.InstanceStart(ctx)
 }
 
-// Stop shuts the guest down: force sends SIGKILL via systemd, otherwise a
-// graceful Ctrl+Alt+Del followed by waiting (bounded by ctx) for exit.
+// Stop shuts the guest down: force sends SIGKILL via systemd, otherwise the
+// guest is asked to shut itself down first. Stop returns only once the process
+// has exited, so the VM state it leaves behind is truthful.
 func (m *machine) Stop(ctx context.Context, force bool) error {
 	if force {
-		return m.units.Kill(ctx, m.cfg.ID, syscall.SIGKILL)
+		if err := m.units.Kill(ctx, m.cfg.ID, syscall.SIGKILL); err != nil {
+			return err
+		}
+	} else if err := m.shutdownGuest(ctx); err != nil {
+		return err
 	}
+	if _, err := m.units.Wait(ctx, m.cfg.ID); err != nil {
+		return err
+	}
+	// systemd marks a unit failed when its main process is killed or exits
+	// non-zero, which a deliberate stop always is. Clear that, so a stopped VM
+	// reports StateStopped and only a real crash reports StateFailed.
+	return m.units.ResetFailed(ctx, m.cfg.ID)
+}
+
+// shutdownGuest sends Ctrl+Alt+Del and gives the guest stopTimeout to shut
+// itself down. Firecracker delivers the keys through its emulated i8042
+// controller, so a guest kernel built without an i8042 keyboard driver never
+// sees them. The wait is therefore bounded, and metald escalates to a systemd
+// stop job when the guest does not exit.
+func (m *machine) shutdownGuest(ctx context.Context) error {
 	if err := m.api.SendCtrlAltDel(ctx); err != nil {
 		return err
 	}
-	_, err := m.units.Wait(ctx, m.cfg.ID)
-	return err
+	wait, cancel := context.WithTimeout(ctx, m.stopTimeout)
+	defer cancel()
+	if _, err := m.units.Wait(wait, m.cfg.ID); err == nil {
+		return nil
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return m.units.Stop(ctx, m.cfg.ID)
 }
 
 // Destroy stops the unit and frees the VM's network, disk and state. Best-effort
 // so it is idempotent: a resource already gone is not an error.
 func (m *machine) Destroy(ctx context.Context) error {
 	_ = m.units.Stop(ctx, m.cfg.ID)
+	_ = m.units.ResetFailed(ctx, m.cfg.ID) // do not leave a failed unit behind
 	_ = m.net.Release(ctx, m.cfg.ID)
 	_ = m.images.Release(ctx, m.cfg.ID)
 	return os.RemoveAll(m.dir)
