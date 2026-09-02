@@ -11,20 +11,23 @@ import "strings"
 // The implementation is split by concern:
 //   - provision.go — Prepare/grow/Release, the per-VM disk lifecycle
 //   - snapshot.go  — Snapshot/Snapshots/DeleteSnapshot/Restore/Usage
+//   - image.go     — Promote/Images/DeleteImage/ImageMemory, warm images
 //   - chroot.go    — materialize the kernel + rootfs node into the jailer chroot
 type ZFS struct {
 	pool      string
 	kernelDir string
+	imagesDir string // warm-image memory store, e.g. /var/lib/metal/images
 }
 
-func NewZFS(pool, kernelDir string) *ZFS {
-	return &ZFS{pool: pool, kernelDir: kernelDir}
+func NewZFS(pool, kernelDir, imagesDir string) *ZFS {
+	return &ZFS{pool: pool, kernelDir: kernelDir, imagesDir: imagesDir}
 }
 
 // Dataset and snapshot name helpers. A ref's base lives at <pool>/images/<ref>
 // with a @ready snapshot. Each VM's disk is <pool>/vms/<id>, exposed at
 // /dev/zvol/.... The VM ID and its rootfs disk use the same ID.
-func (z *ZFS) baseDataset(ref string) string  { return z.pool + "/images/" + ref }
+func (z *ZFS) imagesDataset() string          { return z.pool + "/images" }
+func (z *ZFS) baseDataset(ref string) string  { return z.imagesDataset() + "/" + ref }
 func (z *ZFS) baseSnapshot(ref string) string { return z.baseDataset(ref) + "@ready" }
 func (z *ZFS) vmDataset(vmID string) string   { return z.pool + "/vms/" + vmID }
 func (z *ZFS) devPath(vmID string) string     { return "/dev/zvol/" + z.vmDataset(vmID) }

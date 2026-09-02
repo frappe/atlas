@@ -1,6 +1,10 @@
 package api
 
-import "github.com/frappe/atlas/metal/internal/vm"
+import (
+	"time"
+
+	"github.com/frappe/atlas/metal/internal/vm"
+)
 
 type createReq struct {
 	VCPUs   int      `json:"vcpus"`
@@ -69,16 +73,45 @@ func toVM(i vm.Info) vmResp {
 }
 
 type snapReq struct {
-	Name string `json:"name"`
+	Name   string `json:"name"`
+	Memory bool   `json:"memory"`
+}
+
+type promoteReq struct {
+	Image string `json:"image"`
 }
 
 type snapResp struct {
-	Name    string `json:"name"`
-	VMID    string `json:"vm_id"`
-	SizeMiB int    `json:"size_mib"`
-	UsedMiB int    `json:"used_mib"`
+	Name      string `json:"name"`
+	VMID      string `json:"vm_id"`
+	Memory    bool   `json:"memory"`
+	SizeMiB   int    `json:"size_mib"`
+	UsedMiB   int    `json:"used_mib"`
+	CreatedAt string `json:"created_at"`
 }
 
-func toSnap(vmID string, s vm.DiskSnapshot) snapResp {
-	return snapResp{Name: s.Name, VMID: vmID, SizeMiB: s.SizeMiB, UsedMiB: s.UsedMiB}
+func toSnap(vmID string, s vm.Snapshot) snapResp {
+	return snapResp{
+		Name: s.Name, VMID: vmID, Memory: s.Memory,
+		SizeMiB: s.SizeMiB, UsedMiB: s.UsedMiB, CreatedAt: rfc3339(s.CreatedAt),
+	}
+}
+
+type imageResp struct {
+	Ref       string `json:"ref"`
+	Warm      bool   `json:"warm"`
+	SizeMiB   int    `json:"size_mib"`
+	CreatedAt string `json:"created_at"`
+}
+
+func toImage(i vm.Image) imageResp {
+	return imageResp{Ref: i.Ref, Warm: i.Warm, SizeMiB: i.SizeMiB, CreatedAt: rfc3339(i.CreatedAt)}
+}
+
+// rfc3339 formats a time for the API and returns "" for the zero time.
+func rfc3339(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return t.Format(time.RFC3339)
 }

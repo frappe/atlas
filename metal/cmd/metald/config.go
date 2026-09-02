@@ -15,10 +15,10 @@ import (
 // opts is the resolved metald configuration: the firecracker driver paths plus
 // the storage pool, kernel dir, and API listen address.
 type opts struct {
-	cfg             firecracker.Config
-	pool, kernelDir string
-	listen          string
-	baseDir         string
+	cfg                        firecracker.Config
+	pool, kernelDir, imagesDir string
+	listen                     string
+	baseDir                    string
 }
 
 const defaultConfigPath = "/var/lib/metal/metald.toml"
@@ -43,6 +43,9 @@ func defaultOpts() opts {
 func (o *opts) deriveDirs() {
 	o.cfg.MachinesDir = filepath.Join(o.baseDir, "machines")
 	o.kernelDir = filepath.Join(o.baseDir, "kernels")
+	// The warm-image memory store must share a filesystem with the jails, so a
+	// mem file stages into a VM as a hard link.
+	o.imagesDir = filepath.Join(o.baseDir, "images")
 }
 
 // fileConfig mirrors the optional metald configuration file. Sections group the

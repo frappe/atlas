@@ -1,22 +1,23 @@
 package vm
 
-type SnapshotType string
+import "time"
 
-const (
-	SnapshotFull SnapshotType = "full"
-	SnapshotDiff SnapshotType = "diff"
-)
-
+// Snapshot is a point-in-time snapshot of a VM. A memory snapshot also captures
+// guest RAM and device state, paired with the disk snapshot, so a restore resumes
+// at the captured instant.
 type Snapshot struct {
-	MemFilePath   string
-	StateFilePath string
-	Type          SnapshotType
+	Name      string
+	Memory    bool
+	SizeMiB   int
+	UsedMiB   int
+	CreatedAt time.Time
 }
 
-// DiskSnapshot is a point-in-time snapshot of a VM's rootfs disk (distinct from
-// the memory Snapshot above). Sizes are in MiB.
-type DiskSnapshot struct {
-	Name    string
-	SizeMiB int
-	UsedMiB int
+// Image is a template that VMs are created from. A warm image also carries a
+// memory capture, so a VM created from it starts from restored RAM.
+type Image struct {
+	Ref       string
+	Warm      bool
+	SizeMiB   int
+	CreatedAt time.Time
 }

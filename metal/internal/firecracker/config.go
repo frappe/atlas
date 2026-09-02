@@ -48,6 +48,46 @@ type vmConfig struct {
 func (c Config) vmDir(id string) string      { return filepath.Join(c.MachinesDir, id) }
 func (c Config) configPath(id string) string { return filepath.Join(c.vmDir(id), "config.json") }
 
+// snapsDir is the per-VM directory that holds memory-snapshot files.
+func (c Config) snapsDir(id string) string { return filepath.Join(c.vmDir(id), "snapshots") }
+
+// snapDir holds one snapshot's memory files (state, mem).
+func (c Config) snapDir(id, name string) string { return filepath.Join(c.snapsDir(id), name) }
+
+// snapFiles returns a snapshot's device-state and guest-memory file paths.
+func (c Config) snapFiles(id, name string) (state, mem string) {
+	d := c.snapDir(id, name)
+	return filepath.Join(d, "state"), filepath.Join(d, "mem")
+}
+
+// hasSnapMemory reports whether a snapshot carries a memory capture.
+func (c Config) hasSnapMemory(id, name string) bool {
+	_, mem := c.snapFiles(id, name)
+	_, err := os.Stat(mem)
+	return err == nil
+}
+
+// warmMarkPath is a marker file whose presence tells a VM's first Start to load a
+// warm image's memory instead of cold-booting. It is cleared after the load.
+func (c Config) warmMarkPath(id string) string { return filepath.Join(c.vmDir(id), "warmload") }
+
+// writeWarmMark records that the VM's first Start should load warm image ref.
+func (c Config) writeWarmMark(id, ref string) error {
+	return os.WriteFile(c.warmMarkPath(id), []byte(ref), 0o640)
+}
+
+// readWarmMark returns the pending warm image ref, if the marker is present.
+func (c Config) readWarmMark(id string) (string, bool) {
+	b, err := os.ReadFile(c.warmMarkPath(id))
+	if err != nil {
+		return "", false
+	}
+	return string(b), true
+}
+
+// clearWarmMark removes the warm-load marker after a warm start.
+func (c Config) clearWarmMark(id string) { _ = os.Remove(c.warmMarkPath(id)) }
+
 func (c Config) writeVMConfig(vc vmConfig) error {
 	if err := os.MkdirAll(c.vmDir(vc.ID), 0o750); err != nil {
 		return err

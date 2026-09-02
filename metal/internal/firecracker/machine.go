@@ -35,9 +35,17 @@ func (d *Driver) newMachine(vc vmConfig) *machine {
 
 func (m *machine) ID() string { return m.cfg.ID }
 
-// Start boots the guest. A fully stopped VM (its jailer process is gone) is
-// relaunched first; a running VM is a conflict.
+// Start boots the guest. A never-run warm VM loads its image's memory instead of
+// cold-booting. A fully stopped VM (its jailer process is gone) is relaunched
+// first; a running VM is a conflict.
 func (m *machine) Start(ctx context.Context) error {
+	if ref, ok := m.d.cfg.readWarmMark(m.cfg.ID); ok {
+		if err := m.d.warmLaunch(ctx, m.cfg, ref); err != nil {
+			return err
+		}
+		m.d.cfg.clearWarmMark(m.cfg.ID)
+		return nil
+	}
 	st, err := m.d.units.Status(ctx, m.cfg.ID)
 	if err != nil {
 		return err
@@ -110,11 +118,6 @@ func (m *machine) Wait(ctx context.Context) (vm.ExitStatus, error) {
 		return vm.ExitStatus{}, err
 	}
 	return vm.ExitStatus{Code: r.Code, Signal: r.Signal}, nil
-}
-
-// Snapshot is deferred: the current milestone excludes memory snapshotting.
-func (m *machine) Snapshot(ctx context.Context, dir string, typ vm.SnapshotType) (vm.Snapshot, error) {
-	return vm.Snapshot{}, errNotImplemented
 }
 
 var _ vm.VM = (*machine)(nil)

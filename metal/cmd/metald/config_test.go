@@ -68,9 +68,9 @@ func TestLoadMissingFile(t *testing.T) {
 func TestMakeDirs(t *testing.T) {
 	dir := t.TempDir()
 	o := defaultOpts()
-	o.cfg.MachinesDir = filepath.Join(dir, "machines")
+	o.baseDir = dir
+	o.deriveDirs()
 	o.cfg.SocketsDir = filepath.Join(dir, "run")
-	o.kernelDir = filepath.Join(dir, "kernels")
 
 	if err := makeDirs(o); err != nil {
 		t.Fatal(err)
@@ -82,6 +82,7 @@ func TestMakeDirs(t *testing.T) {
 		o.cfg.MachinesDir: 0o750,
 		o.cfg.SocketsDir:  0o700,
 		o.kernelDir:       0o755,
+		o.imagesDir:       0o755,
 	} {
 		info, err := os.Stat(path)
 		if err != nil {

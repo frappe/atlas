@@ -44,15 +44,15 @@ Each section is named for the thing it configures.
 
 | Configuration key | Default | Meaning |
 |---|---|---|
-| `metald.base_dir` | `/var/lib/metal` | holds the `machines` and `kernels` dirs |
+| `metald.base_dir` | `/var/lib/metal` | holds the `machines`, `kernels` and `images` dirs |
 | `metald.listen` | `127.0.0.1:8080` | API address; `host:port` or `unix:/path` |
 | `firecracker.binary_path` | `/usr/bin/firecracker` | Firecracker binary |
 | `firecracker.sockets_dir` | `/run/metal` | short symlinks to each VM API socket |
 | `jailer.binary_path` | `/usr/bin/jailer` | jailer binary |
 | `zfs.pool` | `metal` | ZFS pool name |
 
-The machines and kernels directories are a convention below `base_dir`, not
-separate keys, so one value moves both.
+The machines, kernels and images directories are a convention below
+`base_dir`, not separate keys, so one value moves all of them.
 
 metald does not bootstrap a host. `scripts/dev.sh` owns the development layout.
 It puts runtime paths under `/tmp/metald` and writes `/var/lib/metal/metald.toml`.

@@ -87,6 +87,7 @@ func makeDirs(o opts) error {
 		{o.cfg.MachinesDir, 0o750},
 		{o.cfg.SocketsDir, 0o700},
 		{o.kernelDir, 0o755},
+		{o.imagesDir, 0o755},
 	}
 	for _, d := range dirs {
 		if err := os.MkdirAll(d.path, d.mode); err != nil {
@@ -106,7 +107,7 @@ func serve(o opts) error {
 	}
 	defer units.Close()
 
-	driver := firecracker.New(o.cfg, units, storage.NewZFS(o.pool, o.kernelDir), network.NewLinux())
+	driver := firecracker.New(o.cfg, units, storage.NewZFS(o.pool, o.kernelDir, o.imagesDir), network.NewLinux())
 	e := api.New(driver)
 
 	ln, err := listen(o.listen)

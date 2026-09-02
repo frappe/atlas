@@ -16,12 +16,33 @@ func (z *ZFS) Prepare(ctx context.Context, req Request) (BootConfig, error) {
 	if err := os.MkdirAll(req.ChrootRoot, 0o755); err != nil {
 		return BootConfig{}, err
 	}
-
 	kdir := filepath.Join(z.kernelDir, req.Ref)
 	if err := link(filepath.Join(kdir, "vmlinux"), filepath.Join(req.ChrootRoot, "vmlinux")); err != nil {
 		return BootConfig{}, err
 	}
+	if err := z.provisionDisk(ctx, req); err != nil {
+		return BootConfig{}, err
+	}
+	return BootConfig{
+		Kernel:     "/vmlinux",
+		KernelArgs: bootArgs(kdir),
+		Drives:     []Drive{{Path: "/rootfs.img", ReadOnly: false, Root: true}},
+	}, nil
+}
 
+// PrepareRootfs provisions only the rootfs block device, for restoring or warm-
+// starting from a snapshot. The guest kernel is inside the memory snapshot, so no
+// kernel file is linked and no boot config is returned.
+func (z *ZFS) PrepareRootfs(ctx context.Context, req Request) error {
+	if err := os.MkdirAll(req.ChrootRoot, 0o755); err != nil {
+		return err
+	}
+	return z.provisionDisk(ctx, req)
+}
+
+// provisionDisk clones the VM's rootfs from its base image when absent, grows it
+// to the requested size, and materializes the block-device node in the chroot.
+func (z *ZFS) provisionDisk(ctx context.Context, req Request) error {
 	// The disk persists across a stop, so a restart reuses it: only clone when it
 	// is absent. rollback destroys the disk only if this call created it, so a
 	// restart never discards existing data on a later error.
@@ -30,7 +51,7 @@ func (z *ZFS) Prepare(ctx context.Context, req Request) (BootConfig, error) {
 		// zfs clone <base>@ready <vm>: create the VM's writable zvol from the base
 		// snapshot; copy-on-write, so it shares the base's blocks until written.
 		if err := hostcmd.Run(ctx, "zfs", "clone", z.baseSnapshot(req.Ref), z.vmDataset(req.VMID)); err != nil {
-			return BootConfig{}, err
+			return err
 		}
 		created = true
 	}
@@ -41,20 +62,14 @@ func (z *ZFS) Prepare(ctx context.Context, req Request) (BootConfig, error) {
 	}
 	if err := z.grow(ctx, req.VMID, req.DiskMiB); err != nil {
 		rollback()
-		return BootConfig{}, err
+		return err
 	}
-
 	node := filepath.Join(req.ChrootRoot, "rootfs.img")
 	if err := mknodBlock(z.devPath(req.VMID), node, req.UID, req.GID); err != nil {
 		rollback()
-		return BootConfig{}, err
+		return err
 	}
-
-	return BootConfig{
-		Kernel:     "/vmlinux",
-		KernelArgs: bootArgs(kdir),
-		Drives:     []Drive{{Path: "/rootfs.img", ReadOnly: false, Root: true}},
-	}, nil
+	return nil
 }
 
 // grow extends the disk to diskMiB when that is larger than the current size.

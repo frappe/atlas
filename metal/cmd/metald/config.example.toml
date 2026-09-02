@@ -4,7 +4,9 @@
 # /var/lib/metal/metald.toml. This file is the only way to change a key.
 
 [metald]
-# metald puts the machines and kernels directories under base_dir.
+# metald puts the machines, kernels and images directories under base_dir.
+# The images directory holds the warm-image memory files, and it shares a
+# filesystem with the jails so a mem file stages into a VM as a hard link.
 base_dir = "/var/lib/metal"
 # API address; "host:port" for TCP, or "unix:/path" for a unix socket.
 listen = "127.0.0.1:8080"

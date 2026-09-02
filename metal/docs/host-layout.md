@@ -10,6 +10,10 @@ from these paths. Each virtual machine ID is a UUID V7.
 
 /var/lib/metal/
 ├── metald.toml                     metald configuration; metald.base_dir is this dir
+├── images/                         derived from metald.base_dir
+│   └── ubuntu/                     one dir for each warm image ref
+│       ├── state                   firecracker device state
+│       └── mem                     guest memory, hard-linked into a jail
 ├── kernels/                        derived from metald.base_dir
 │   └── ubuntu/                     one dir for each image ref
 │       ├── vmlinux                 guest kernel, hard-linked into the jail
@@ -18,6 +22,11 @@ from these paths. Each virtual machine ID is a UUID V7.
     └── <uuid>/                     one dir for each VM id
         ├── config.json             ID, user ID, group ID, IP, MAC, socket, and spec
         ├── jailer.env              JAILER_ARGS for metal-vm@<uuid>.service
+        ├── warmload                marker: the next start loads a warm image
+        ├── snapshots/              one dir for each memory snapshot
+        │   └── <name>/
+        │       ├── state
+        │       └── mem
         └── firecracker/            the exec-file name that jailer appends
             └── <uuid>/
                 └── root/           the VM sees this as /
@@ -49,5 +58,9 @@ metal/vms/<uuid>          the VM disk, a clone of the base snapshot
 ```
 
 A VM disk keeps the id of the VM that owns it, so the directory `machines/<uuid>` and the dataset `vms/<uuid>` name the same VM in two namespaces.
+
+The images directory shares a filesystem with the jails, because a warm start
+hard-links an image's memory file into the VM's chroot. Every directory metald
+uses comes from `metald.base_dir`, so that holds by construction.
 
 ZFS is the only storage backend. metald does not create the pool or select its device. Host setup creates the pool before metald starts, and `zfs.pool` names it.
