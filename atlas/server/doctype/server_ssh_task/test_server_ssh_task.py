@@ -89,13 +89,15 @@ class TestServerSSHTask(UnitTestCase):
 			timeout_seconds=120,
 			_mark_running=Mock(),
 			_environment=Mock(return_value={}),
+			_append_output=Mock(),
 			_finish=Mock(),
 		)
 
+		# server_ssh_task imports SSHRunner by name, so patch it in that module.
 		with (
 			patch("atlas.server.doctype.server_ssh_task.server_ssh_task.frappe.get_doc"),
 			patch(
-				"atlas.atlas.core.ssh.SSHRunner",
+				"atlas.server.doctype.server_ssh_task.server_ssh_task.SSHRunner",
 				side_effect=OSError("offline"),
 			),
 		):
