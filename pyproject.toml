@@ -27,8 +27,7 @@ packages = []
 [tool.ruff]
 line-length = 110
 target-version = "py314"
-# The standalone services keep their own style (spaces, older target).
-extend-exclude = ["metal", "services"]
+extend-exclude = ["metal", "services/wg-mesh"]
 
 [tool.ruff.lint]
 select = [

@@ -1,8 +1,8 @@
 # Atlas HTTP proxy
 
-Atlas HTTP proxy is a VM image for one Atlas region. It routes site traffic and custom-domain traffic to site VMs over IPv6.
+Atlas HTTP proxy is a VM image for one region. It routes site and custom-domain traffic to site VMs over IPv6.
 
-Use the control daemon for normal configuration. The daemon listens on IPv4 and IPv6 port `9000` by default.
+Use the control daemon for configuration. It listens on IPv4 and IPv6 port `9000` by default.
 
 Read these documents in this order:
 
@@ -11,11 +11,13 @@ Read these documents in this order:
 3. [OpenResty](docs/openresty.md)
 4. [Development](docs/development.md)
 
-The control daemon is the normal API. OpenResty has a private Unix socket API. Do not expose that socket to a network.
+The control daemon is the public API. OpenResty uses a private Unix socket. Do not expose it to a network.
 
 ## Main paths
 
 ```text
+build-image.sh                  Build `proxy.ext4` with Firecracker.
+run-image.sh                    Boot a built image with Firecracker.
 nginx/setup.sh                  Set up a new Ubuntu VM image.
 nginx/nginx.conf                Configure OpenResty.
 nginx/lua/http/                 Route HTTP traffic and store HTTP maps.
@@ -36,9 +38,18 @@ sudo ./nginx/setup.sh
 sudo systemctl enable --now openresty.service atlas-proxy-control.service
 ```
 
-The setup script creates a placeholder certificate and an empty authentication file. The proxy can start before the controller sends a real region, certificate, or map.
+The setup script creates a placeholder certificate and an empty authentication file. The proxy can start before the controller sends its configuration.
 
 Follow the [setup guide](docs/setup.md) to configure the proxy.
+
+## Local testing with firecracker
+
+```sh
+sudo ./build-image.sh
+sudo ./run-image.sh -j https://issuer.example.com/jwks.json -a atlas-proxy-control
+```
+
+`build-image.sh` boots the pinned Ubuntu 24.04 minimal image, runs `nginx/setup.sh`, and saves `proxy.ext4`. It removes build-only SSH access first. `run-image.sh` requires `proxy.ext4`. It writes the password into the boot copy and can seed JWKS through MMDS. See [Development](docs/development.md).
 
 ## License
 

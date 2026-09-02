@@ -4,6 +4,8 @@ set -euo pipefail
 
 OPENRESTY_VERSION="1.29.2.5"
 OPENRESTY_PKG_RELEASE="1"
+PYTHON_VERSION="3.14"
+DEADSNAKES_KEY="F23C5A6CF475977595C89F51BA6932366A755776"
 
 CONF_DIR="/etc/nginx"
 HTML_DIR="/usr/share/nginx/html"
@@ -28,7 +30,7 @@ apt-get update
 OPENRESTY_PKG_VERSION="${OPENRESTY_VERSION}-${OPENRESTY_PKG_RELEASE}~$(lsb_release -sc)1"
 apt-mark unhold openresty 2>/dev/null || true
 apt-get install -y --reinstall --no-install-recommends "openresty=${OPENRESTY_PKG_VERSION}"
-apt-get install -y --no-install-recommends python3 python3-venv
+apt-get install -y --no-install-recommends sudo
 apt-mark hold openresty
 
 INSTALLED_VERSION="$("$SBIN_PATH" -v 2>&1 | sed 's#.*openresty/##')"
@@ -40,7 +42,17 @@ fi
 	|| { echo "FATAL: binary lacks stream_ssl_preread - the SNI front door needs it" >&2; exit 1; }
 echo "installed stock OpenResty ${OPENRESTY_VERSION} (${OPENRESTY_PKG_VERSION})"
 
-# Install the proxy files and create the unprivileged worker account.
+# Create the privileged operator account and the unprivileged worker account.
+if ! id -u frappe >/dev/null 2>&1; then
+	useradd --create-home --shell /bin/bash --groups sudo frappe
+fi
+passwd -l frappe
+install -d -m 0750 /etc/sudoers.d
+install -m 0440 /dev/stdin /etc/sudoers.d/frappe <<'EOF'
+frappe ALL=(ALL:ALL) NOPASSWD: ALL
+EOF
+visudo -cf /etc/sudoers.d/frappe
+
 if ! id -u nginx >/dev/null 2>&1; then
 	useradd --system --no-create-home --shell /usr/sbin/nologin nginx
 fi
@@ -64,9 +76,19 @@ install -m 0644 "$SERVICE_DIR/nginx/pages/not_found.html" "$HTML_DIR/not_found.h
 install -m 0644 "$SERVICE_DIR/nginx/pages/domain_unconfigured.html" "$HTML_DIR/domain_unconfigured.html"
 
 # Install the control daemon into its own isolated Python environment.
+curl -fsSL "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x${DEADSNAKES_KEY}" \
+	| gpg --batch --yes --dearmor -o /usr/share/keyrings/deadsnakes.gpg
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/deadsnakes.gpg] https://ppa.launchpadcontent.net/deadsnakes/ppa/ubuntu $(lsb_release -sc) main" \
+	> /etc/apt/sources.list.d/deadsnakes.list
+apt-get update
+apt-get install -y --no-install-recommends "python${PYTHON_VERSION}" "python${PYTHON_VERSION}-venv"
+
 install -d /opt/atlas/proxy-control
-python3 -m venv /opt/atlas/proxy-control
+"python${PYTHON_VERSION}" -m venv /opt/atlas/proxy-control
 /opt/atlas/proxy-control/bin/pip install --no-cache-dir "$SERVICE_DIR/control"
+
+# Ensure that the codebase is compatible with the guest Python version.
+/opt/atlas/proxy-control/bin/python -m compileall -q /opt/atlas/proxy-control/lib/python3*/site-packages/proxy_control
 
 # Create runtime state, bootstrap authentication, and certificate files.
 install -d -m 0750 /etc/atlas

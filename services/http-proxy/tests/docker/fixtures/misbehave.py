@@ -19,35 +19,35 @@ import threading
 
 
 def handle(conn: socket.socket) -> None:
-    try:
-        data = conn.recv(65536)
-        host = ""
-        for line in data.split(b"\r\n"):
-            if line.lower().startswith(b"host:"):
-                host = line.split(b":", 1)[1].strip().lower().decode("latin1")
-                break
-        if "truncated" in host:
-            conn.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\nABC")
-        else:
-            conn.sendall(b"GARBAGE NOT HTTP\r\n\r\nstill garbage")
-    except OSError:
-        pass
-    finally:
-        try:
-            conn.close()
-        except OSError:
-            pass
+	try:
+		data = conn.recv(65536)
+		host = ""
+		for line in data.split(b"\r\n"):
+			if line.lower().startswith(b"host:"):
+				host = line.split(b":", 1)[1].strip().lower().decode("latin1")
+				break
+		if "truncated" in host:
+			conn.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\nABC")
+		else:
+			conn.sendall(b"GARBAGE NOT HTTP\r\n\r\nstill garbage")
+	except OSError:
+		pass
+	finally:
+		try:
+			conn.close()
+		except OSError:
+			pass
 
 
 def main() -> None:
-    srv = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
-    srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    srv.bind(("::", 80))
-    srv.listen(64)
-    while True:
-        conn, _ = srv.accept()
-        threading.Thread(target=handle, args=(conn,), daemon=True).start()
+	srv = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
+	srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+	srv.bind(("::", 80))
+	srv.listen(64)
+	while True:
+		conn, _ = srv.accept()
+		threading.Thread(target=handle, args=(conn,), daemon=True).start()
 
 
 if __name__ == "__main__":
-    main()
+	main()
