@@ -82,6 +82,45 @@ if [[ ! -e "$mnt/usr/local/sbin/metal-sshkey" ]]; then
 	mkdir -p "$mnt/etc/systemd/system/multi-user.target.wants"
 	ln -sf ../metal-sshkey.service "$mnt/etc/systemd/system/multi-user.target.wants/metal-sshkey.service"
 fi
+# Bake a clone-refresh agent. It watches the MMDS "generation" token; metald sets a
+# new one each warm start, so a resumed clone re-keys and re-syncs a fresh identity.
+# Cold VMs never get a token, so the agent stays idle for them.
+# Note: temporary hack, will replace with vmgenid in the future.
+if [[ ! -e "$mnt/usr/local/sbin/metal-refresh" ]]; then
+	install -Dm755 /dev/stdin "$mnt/usr/local/sbin/metal-refresh" <<-'EOF'
+		#!/bin/sh
+		ip route add 169.254.169.254 dev eth0 2>/dev/null || true
+		url=http://169.254.169.254/metal/generation
+		state=/run/metal-generation
+		last=""
+		[ -f "$state" ] && last=$(cat "$state")
+		while :; do
+			gen=$(curl -fsS "$url" 2>/dev/null || wget -qO- "$url" 2>/dev/null || true)
+			gen=$(printf '%s' "$gen" | tr -d '"[:space:]')
+			if [ -n "$gen" ] && [ "$gen" != "$last" ]; then
+				/usr/local/sbin/metal-sshkey || true
+				systemctl restart systemd-timesyncd 2>/dev/null || chronyc makestep 2>/dev/null || true
+				rm -f /etc/machine-id && systemd-machine-id-setup >/dev/null 2>&1 || true
+				rm -f /etc/ssh/ssh_host_*_key /etc/ssh/ssh_host_*_key.pub && ssh-keygen -A >/dev/null 2>&1 || true
+				printf '%s' "$gen" > "$state"
+				last=$gen
+			fi
+			sleep 2
+		done
+	EOF
+	cat > "$mnt/etc/systemd/system/metal-refresh.service" <<-'EOF'
+		[Unit]
+		Description=metal clone refresh (watch MMDS generation)
+		After=network.target
+		[Service]
+		ExecStart=/usr/local/sbin/metal-refresh
+		Restart=always
+		[Install]
+		WantedBy=multi-user.target
+	EOF
+	mkdir -p "$mnt/etc/systemd/system/multi-user.target.wants"
+	ln -sf ../metal-refresh.service "$mnt/etc/systemd/system/multi-user.target.wants/metal-refresh.service"
+fi
 umount "$mnt"
 
 step "ssh keypair"
