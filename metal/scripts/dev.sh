@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Prepare a throwaway host for metald. Run this before `metald serve`.
-# Runtime files live under /tmp/metald. The config file lives under /var/lib/metal.
+# Prepare a throwaway host for metald. Run this before `metald serve --config`.
+# Everything, including the config file, lives under /tmp/metald.
 # Safe to run again. Requires root.
 #
 # Uses an Ubuntu *cloud* image with cloud-init. Each VM gets its Secure Shell key
@@ -17,7 +17,7 @@ KERNEL_DIR=$WORKDIR/kernels
 VAR_DIR=$WORKDIR/machines
 BIN=$WORKDIR/bin
 KEYDIR=$WORKDIR/keys
-CONFIG=/var/lib/metal/metald.toml
+CONFIG=$WORKDIR/metald.toml
 ARCH=$(uname -m)
 CI=https://s3.amazonaws.com/spec.ccfc.min/firecracker-ci/v1.10/$ARCH
 
@@ -33,7 +33,7 @@ fetch() { [[ -f $2 ]] || { curl -fsSL -o "$2.part" "$1" && mv "$2.part" "$2"; };
 
 # Create the directories used by the development host.
 mkdir -p "$WORKDIR" "$BIN" "$KERNEL_DIR/ubuntu" "$BULK/downloads" "$KEYDIR" \
-         "$VAR_DIR"
+         "$VAR_DIR" "$(dirname "$CONFIG")"
 
 # Use half the free space for the pool, limited to 8G through 30G.
 # Set METALD_POOL_SIZE to choose a different size.
@@ -161,7 +161,7 @@ if ! zfs list "$POOL/images/ubuntu" >/dev/null 2>&1; then
 fi
 
 step "systemd template unit (metal-vm@.service)"
-# Use development paths in the generated unit. The committed unit uses production paths.
+# Use the development paths in the generated unit. Host setup writes its own.
 cat > /etc/systemd/system/metal-vm@.service <<EOF
 [Unit]
 Description=metal microVM %i
@@ -200,5 +200,5 @@ binary_path = "$BIN/jailer"
 pool = "$POOL"
 EOF
 
-step "ready: run metald serve"
+step "ready: run metald serve --config $CONFIG"
 step "key $KEYDIR/id_ed25519; ssh as user 'root'"

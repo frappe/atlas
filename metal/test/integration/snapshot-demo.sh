@@ -16,7 +16,7 @@ ADDR=${METALD_ADDR:-127.0.0.1:8080}
 KEY=${METALD_KEY:-$WORKDIR/keys/id_ed25519}
 USER=${METALD_SSH_USER:-root}
 POOL=${METALD_POOL:-metal}
-CONFIG=$WORKDIR/config.toml
+CONFIG=$WORKDIR/metald.toml # scripts/dev.sh writes it here
 REF=${METALD_IMAGE_REF:-golden-$$} # unique per run, so re-runs never collide
 
 [[ $EUID -eq 0 ]] || { echo "run as root: sudo -E $0" >&2; exit 1; }

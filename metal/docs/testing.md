@@ -9,7 +9,7 @@ and root file system) goes under `$METALD_BULK_DIR` (a large disk).
 
 ```sh
 sudo env METALD_BULK_DIR=/path/to/big/disk scripts/dev.sh
-sudo go run ./cmd/metald serve
+sudo go run ./cmd/metald serve --config /tmp/metald/metald.toml
 ```
 
 `scripts/dev.sh` is safe to run again. It:
@@ -21,7 +21,7 @@ sudo go run ./cmd/metald serve
 - makes a ZFS pool and `images/ubuntu` virtual block device with an `@ready` snapshot,
 - generates a Secure Shell key at `/tmp/metald/keys/id_ed25519`,
 - sets up forwarding and network address translation,
-- writes `/var/lib/metal/metald.toml` for `metald serve`.
+- writes `/tmp/metald/metald.toml`, which you pass to `metald serve --config`.
 
 ## Secure Shell test (another terminal, while `serve` runs)
 
@@ -55,7 +55,7 @@ The machines, kernels and images directories are a convention below
 `base_dir`, not separate keys, so one value moves all of them.
 
 metald does not bootstrap a host. `scripts/dev.sh` owns the development layout.
-It puts runtime paths under `/tmp/metald` and writes `/var/lib/metal/metald.toml`.
+It puts everything, including the config file, under `/tmp/metald`.
 
 These env vars drive `scripts/dev.sh` only:
 
