@@ -9,6 +9,7 @@ from frappe.tests import UnitTestCase
 
 from atlas.atlas.core.server_providers.base import ServerProviderError
 from atlas.atlas.core.server_providers.scaleway import ScalewayError, ScalewayProvider
+from atlas.atlas.core.server_providers.scaleway.partitioning import ScalewayPartitioning
 
 
 class TestScalewayProvider(UnitTestCase):
@@ -39,6 +40,41 @@ class TestScalewayProvider(UnitTestCase):
 
 		self.assertEqual(server.provider_server_id, "server-id")
 		provider._request.assert_not_called()
+
+	def test_get_storage_pool_device_returns_the_raw_raid_array(self) -> None:
+		provider = self._provider()
+
+		self.assertEqual(provider.get_storage_pool_device(self._server()), "/dev/md2")
+
+	def test_get_install_configuration_reserves_the_storage_array(self) -> None:
+		provider = self._provider()
+		provider._request.return_value = {"disks": [{"device": "/dev/nvme0n1"}, {"device": "/dev/nvme1n1"}]}
+		image_document = SimpleNamespace(get_provider_metadata=Mock(return_value="os-id"))
+
+		install = provider._get_install_configuration(self._server(), "offer-id", image_document)
+
+		self.assertEqual(install["os_id"], "os-id")
+		self.assertEqual(install["hostname"], "node-test-00001")
+		self.assertEqual(
+			provider._request.call_args.args,
+			("GET", "/baremetal/v1/zones/fr-par-1/partitioning-schemas/default"),
+		)
+		self.assertEqual(
+			provider._request.call_args.kwargs["params"], {"offer_id": "offer-id", "os_id": "os-id"}
+		)
+		arrays = [raid["name"] for raid in install["partitioning_schema"]["raids"]]
+		self.assertIn(provider.get_storage_pool_device(self._server()), arrays)
+
+	def test_get_install_configuration_keeps_the_vendor_layout_without_a_vendor_schema(self) -> None:
+		"""An offer without custom partitioning answers 404, which _request maps to {}."""
+		provider = self._provider()
+		provider._request.return_value = {}
+		image_document = SimpleNamespace(get_provider_metadata=Mock(return_value="os-id"))
+
+		install = provider._get_install_configuration(self._server(), "offer-id", image_document)
+
+		self.assertNotIn("partitioning_schema", install)
+		self.assertTrue(provider._request.call_args.kwargs["allow_missing"])
 
 	def test_power_actions_post_the_matching_endpoint(self) -> None:
 		for action, path in (
@@ -259,6 +295,7 @@ class TestScalewayProvider(UnitTestCase):
 			scaleway_private_network_id="private-network-id",
 			scaleway_ssh_key_id="ssh-key-id",
 		)
+		provider.partitioning = ScalewayPartitioning()
 		provider._find_server = Mock()
 		provider._request = Mock()
 		provider._server_private_network = Mock()

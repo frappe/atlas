@@ -13,6 +13,7 @@ from atlas.atlas.core.server_providers.base import ImageInfo, ServerProvider, Se
 from .catalog import ScalewayCatalog
 from .client import ScalewayClient, ScalewayError
 from .infrastructure import ScalewayInfrastructure
+from .partitioning import ScalewayPartitioning
 
 if TYPE_CHECKING:
 	from atlas.atlas.doctype.atlas_settings.atlas_settings import AtlasSettings
@@ -49,6 +50,7 @@ class ScalewayProvider(ServerProvider):
 		self.organization_id = self.settings.scaleway_organization_id
 		self.client = ScalewayClient(self.settings.get_password("scaleway_secret_key"))
 		self.catalog = ScalewayCatalog()
+		self.partitioning = ScalewayPartitioning()
 		self.infrastructure = ScalewayInfrastructure(self)
 
 	@override
@@ -112,6 +114,11 @@ class ScalewayProvider(ServerProvider):
 		self._create_server(server)
 
 	@override
+	def get_storage_pool_device(self, server: "Server") -> str:
+		"""Return the raw device for the VM storage pool."""
+		return self.partitioning.storage_array
+
+	@override
 	def reboot_server(self, server: "Server") -> None:
 		"""Reboot the Scaleway server."""
 		self._post_server_action(server, "reboot")
@@ -173,21 +180,18 @@ class ScalewayProvider(ServerProvider):
 			server.flags.provider_server_created = True
 			size_document = frappe.get_doc("Server Size", server.server_size)
 			image_document = frappe.get_doc("Server Image", server.server_image)
+			offer_id = self.catalog.get_offer_id(size_document, self._subscription_period())
 			remote_server = self._request(
 				"POST",
 				f"/baremetal/v1/zones/{self.zone}/servers",
 				json={
-					"offer_id": self.catalog.get_offer_id(size_document, self._subscription_period()),
+					"offer_id": offer_id,
 					"option_ids": [self.catalog.get_private_network_option_id(size_document)],
 					"project_id": self.project_id,
 					"name": server.name,
 					"description": f"Atlas server {server.name}",
 					"tags": [self._server_tag(server)],
-					"install": {
-						"os_id": image_document.get_provider_metadata("id"),
-						"hostname": server.name,
-						"ssh_key_ids": [self.settings.scaleway_ssh_key_id],
-					},
+					"install": self._get_install_configuration(server, offer_id, image_document),
 				},
 			)
 
@@ -197,6 +201,33 @@ class ScalewayProvider(ServerProvider):
 
 		server.provider_server_id = server_id
 		self._update_server_details(server, remote_server)
+
+	def _get_install_configuration(self, server: "Server", offer_id: str, image_document: object) -> dict:
+		"""Return install settings with custom partitioning when supported."""
+		os_id = image_document.get_provider_metadata("id")
+		install = {
+			"os_id": os_id,
+			"hostname": server.name,
+			"ssh_key_ids": [self.settings.scaleway_ssh_key_id],
+		}
+
+		schema = self._get_partitioning_schema(offer_id, os_id)
+		if schema is not None:
+			install["partitioning_schema"] = schema
+		return install
+
+	def _get_partitioning_schema(self, offer_id: str, os_id: str) -> dict | None:
+		"""Return the partitioning schema for an offer and operating system.
+
+		Keep the vendor layout when the endpoint returns 404.
+		"""
+		default_schema = self._request(
+			"GET",
+			f"/baremetal/v1/zones/{self.zone}/partitioning-schemas/default",
+			allow_missing=True,
+			params={"offer_id": offer_id, "os_id": os_id},
+		)
+		return self.partitioning.get_schema(default_schema)
 
 	def _attach_private_network(self, server: "Server") -> None:
 		if not server.provider_server_id:

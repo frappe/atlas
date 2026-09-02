@@ -14,6 +14,8 @@
   "server_image",
   "column_break_njar",
   "server_size",
+  "section_break_cjau",
+  "disks",
   "section_break_public_network",
   "public_ipv4_address",
   "public_network_interface",
@@ -51,8 +53,7 @@
   },
   {
    "fieldname": "section_break_configuration",
-   "fieldtype": "Section Break",
-   "label": "Configuration"
+   "fieldtype": "Section Break"
   },
   {
    "fieldname": "server_size",
@@ -60,7 +61,8 @@
    "in_list_view": 1,
    "label": "Server Size",
    "options": "Server Size",
-   "reqd": 1
+   "reqd": 1,
+   "set_only_once": 1
   },
   {
    "fieldname": "server_image",
@@ -68,7 +70,8 @@
    "in_list_view": 1,
    "label": "Server Image",
    "options": "Server Image",
-   "reqd": 1
+   "reqd": 1,
+   "set_only_once": 1
   },
   {
    "fieldname": "section_break_public_network",
@@ -130,7 +133,20 @@
   {
    "fieldname": "wireguard_public_key",
    "fieldtype": "Data",
-   "label": "Wireguard Public Key"
+   "label": "Wireguard Public Key",
+   "read_only": 1
+  },
+  {
+   "fieldname": "section_break_cjau",
+   "fieldtype": "Section Break",
+   "label": "Disks"
+  },
+  {
+   "fieldname": "disks",
+   "fieldtype": "Table",
+   "label": "Disks",
+   "options": "Server Disk",
+   "read_only": 1
   }
  ],
  "grid_page_length": 50,
@@ -142,7 +158,7 @@
    "link_fieldname": "server"
   }
  ],
- "modified": "2026-09-02 00:10:52.796925",
+ "modified": "2026-09-02 17:46:09.414833",
  "modified_by": "Administrator",
  "module": "Server",
  "name": "Server",
@@ -191,5 +207,6 @@
    "color": "Gray",
    "title": "Deleted"
   }
- ]
+ ],
+ "track_changes": 1
 }

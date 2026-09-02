@@ -17,14 +17,17 @@ frappe.ui.form.on("Server", {
 				"setup_server",
 				!frm.doc.is_provisioning_completed && !is_deleted,
 				__("Starting server setup..."),
+				true,
 			],
-			[__("Ping Server"), "ping_server", is_running, __("Pinging server...")],
+			[__("Ping Server"), "ping_server", is_running, __("Pinging server..."), false],
+			[__("Sync Disks"), "sync_disks", is_running, __("Syncing disks..."), false],
 			[
 				__("Reboot"),
 				"reboot_server",
 				!is_deleted && !is_stopped,
 				__("Rebooting server..."),
 				__("Reboot {0}?", [frm.doc.name.bold()]),
+				true,
 			],
 			[
 				__("Power Off"),
@@ -32,6 +35,7 @@ frappe.ui.form.on("Server", {
 				!is_deleted && !is_stopped,
 				__("Powering off server..."),
 				__("Power off {0}?", [frm.doc.name.bold()]),
+				true,
 			],
 			[__("Power On"), "poweron_server", is_stopped, __("Powering on server...")],
 			[
@@ -42,8 +46,9 @@ frappe.ui.form.on("Server", {
 				__("Delete the provider server for {0}? The machine and its data are lost.", [
 					frm.doc.name.bold(),
 				]),
+				true,
 			],
-		].forEach(([label, method, condition, freeze_message, confirm_message]) => {
+		].forEach(([label, method, condition, freeze_message, confirm_message, is_dangerous]) => {
 			if (!condition) {
 				return;
 			}
@@ -54,7 +59,7 @@ frappe.ui.form.on("Server", {
 			frm.add_custom_button(
 				label,
 				() => (confirm_message ? frappe.confirm(confirm_message, call) : call()),
-				__("Actions")
+				is_dangerous ? __("Dangerous Actions") : __("Actions")
 			);
 		});
 	},

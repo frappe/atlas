@@ -7,6 +7,7 @@
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
+  "general_tab",
   "section_break_ftdp",
   "is_setup_completed",
   "column_break_vkzm",
@@ -277,13 +278,18 @@
    "fieldtype": "Check",
    "label": "Server Provider Setup",
    "read_only": 1
+  },
+  {
+   "fieldname": "general_tab",
+   "fieldtype": "Tab Break",
+   "label": "General"
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-09-01 02:59:16.938367",
+ "modified": "2026-09-02 15:57:14.752893",
  "modified_by": "Administrator",
  "module": "Atlas",
  "name": "Atlas Settings",

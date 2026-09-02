@@ -12,6 +12,9 @@ The class must define `provider_type` and `credential_fields`. Implement the abs
 - server image and size catalog data
 - server creation and power actions
 - private network and SSH key resources
+- the storage device that metald uses for the VM storage pool
+
+`get_storage_pool_device` must return a raw block device with no filesystem or mountpoint for use as the ZFS pool.
 
 Return post-creation functions from `provisioning_steps`. Atlas calls them in order.
 

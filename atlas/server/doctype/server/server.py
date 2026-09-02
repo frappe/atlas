@@ -3,6 +3,9 @@
 
 from __future__ import annotations
 
+import contextlib
+import json
+from collections import deque
 from typing import TYPE_CHECKING
 
 import frappe
@@ -27,6 +30,9 @@ class Server(Document):
 	if TYPE_CHECKING:
 		from frappe.types import DF
 
+		from atlas.server.doctype.server_disk.server_disk import ServerDisk
+
+		disks: DF.Table[ServerDisk]
 		is_provisioning_completed: DF.Check
 		private_ipv4_address: DF.Data | None
 		private_network_interface: DF.Data | None
@@ -54,8 +60,11 @@ class Server(Document):
 
 		self.name = make_autoname(f"node-{slug(settings.region_name)}-.#####", doc=self)
 
-	def before_validate(self) -> None:
+	def validate(self) -> None:
 		self._validate_provider_catalog()
+		self._sync_disks_if_running()
+
+	def before_insert(self) -> None:
 		if not self.provider_server_id:
 			self.settings.server_provider_controller.create_server(self)
 
@@ -106,11 +115,7 @@ class Server(Document):
 
 	@frappe.whitelist(methods=["POST"])
 	def poweron_server(self) -> None:
-		"""Start the provider server.
-
-		The status stays as it is while provisioning is not complete, because setup
-		owns the status until it finishes.
-		"""
+		"""Start the provider server."""
 		self._validate_power_action()
 		self.settings.server_provider_controller.poweron_server(self)
 		if self.is_provisioning_completed:
@@ -140,6 +145,24 @@ class Server(Document):
 			deduplicate=True,
 			enqueue_after_commit=True,
 		)
+
+	@frappe.whitelist(methods=["POST"])
+	def sync_disks(self) -> None:
+		"""Read the block devices on the server and replace the disks table."""
+		frappe.only_for("System Manager")
+		if self.status != "Running":
+			frappe.throw(_("Server {0} is not running.").format(self.name))
+
+		result = ServerSSHTask.create_for_command(
+			server=self.name,
+			command="lsblk --json --bytes --paths --output NAME,UUID,SIZE,MOUNTPOINT",
+			run_in_background=False,
+		).result
+		if not result or not result.is_success:
+			frappe.throw(_("Could not read the disks of server {0}.").format(self.name))
+
+		self.set("disks", self._parse_disks(result.output))
+		self.save()
 
 	# Static methods
 
@@ -187,11 +210,36 @@ class Server(Document):
 			frappe.throw(_("No enabled Server Size has more than 2 CPUs and at least 32 GiB of memory"))
 		return sizes[0].name
 
+	def _parse_disks(self, lsblk_output: str) -> list[dict[str, str]]:
+		"""Return one row for each mounted device and the raw storage pool device."""
+		storage_pool_device = self.settings.server_provider_controller.get_storage_pool_device(self)
+		devices = deque(json.loads(lsblk_output).get("blockdevices", []))
+		disks: dict[str, dict[str, str]] = {}
+		while devices:
+			device = devices.popleft()
+			devices.extendleft(reversed(device.get("children") or []))
+			name = device["name"]
+			if not device.get("mountpoint") and name != storage_pool_device:
+				continue
+
+			disks[name] = {
+				"device": name,
+				"uuid": device.get("uuid") or "",
+				"mount_point": device.get("mountpoint") or "",
+				"size_gb": f"{int(device.get('size') or 0) / 1024**3:.2f}",
+			}
+		return list(disks.values())
+
 	def _validate_provider_catalog(self) -> None:
 		provider_type = self.settings.server_provider
 		for doctype, name in (("Server Size", self.server_size), ("Server Image", self.server_image)):
 			if name and frappe.db.get_value(doctype, name, "provider_type") != provider_type:
 				frappe.throw(_("{0} must belong to the configured server provider").format(doctype))
+
+	def _sync_disks_if_running(self) -> None:
+		if self.status == "Running" and not self.disks:
+			with contextlib.suppress(Exception):
+				self.sync_disks()
 
 	def _validate_power_action(self) -> None:
 		"""Check that a power action can run for this Server."""

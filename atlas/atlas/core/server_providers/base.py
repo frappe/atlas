@@ -119,6 +119,11 @@ class ServerProvider(ABC):
 		...
 
 	@abstractmethod
+	def get_storage_pool_device(self, server: "Server") -> str:
+		"""Return the raw block device for the VM storage pool."""
+		...
+
+	@abstractmethod
 	def reboot_server(self, server: "Server") -> None:
 		"""Reboot the provider server."""
 		...
