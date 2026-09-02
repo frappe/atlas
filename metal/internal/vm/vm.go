@@ -12,16 +12,21 @@ type VM interface {
 	// Resize grows the VM's disk to diskMiB. Grow-only; returns ErrConflict on
 	// a smaller request.
 	Resize(ctx context.Context, diskMiB int) error
-	Snapshot(ctx context.Context, dir string, typ SnapshotType) (Snapshot, error)
-	// DiskSnapshot takes a named snapshot of the VM's rootfs disk.
-	DiskSnapshot(ctx context.Context, name string) error
-	// DiskSnapshots lists the VM's disk snapshots.
-	DiskSnapshots(ctx context.Context) ([]DiskSnapshot, error)
-	// DeleteDiskSnapshot removes one disk snapshot.
-	DeleteDiskSnapshot(ctx context.Context, name string) error
-	// RestoreDiskSnapshot rolls the disk back to a snapshot. The VM must be
-	// stopped; returns ErrConflict otherwise.
-	RestoreDiskSnapshot(ctx context.Context, name string) error
+	// Pause halts the guest's vCPUs. Returns ErrConflict unless the VM is running.
+	Pause(ctx context.Context) error
+	// Resume returns a paused guest to running. Returns ErrConflict otherwise.
+	Resume(ctx context.Context) error
+	// Snapshot takes a named snapshot of the VM's disk. When memory is true it also
+	// captures RAM and device state, paired with the disk snapshot.
+	Snapshot(ctx context.Context, name string, memory bool) error
+	// Snapshots lists the VM's snapshots.
+	Snapshots(ctx context.Context) ([]Snapshot, error)
+	// DeleteSnapshot removes one snapshot and its memory files, if any.
+	DeleteSnapshot(ctx context.Context, name string) error
+	// RestoreSnapshot rolls the VM back to a snapshot. A memory snapshot also
+	// reloads RAM so the VM resumes at the captured instant; a disk-only snapshot
+	// leaves the VM stopped to cold-boot from the rolled-back disk.
+	RestoreSnapshot(ctx context.Context, name string) error
 	Info(ctx context.Context) (Info, error)
 }
 

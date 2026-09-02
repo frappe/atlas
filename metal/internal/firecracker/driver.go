@@ -5,7 +5,6 @@ package firecracker
 
 import (
 	"context"
-	"errors"
 	"log"
 	"os"
 	"path/filepath"
@@ -17,8 +16,6 @@ import (
 	"github.com/frappe/atlas/metal/internal/systemd"
 	"github.com/frappe/atlas/metal/internal/vm"
 )
-
-var errNotImplemented = errors.New("firecracker: not implemented")
 
 type Driver struct {
 	cfg    Config
@@ -99,6 +96,63 @@ func (d *Driver) relaunch(ctx context.Context, vc vmConfig) error {
 	_ = d.units.Stop(ctx, vc.ID)                            // clear any failed/leftover unit state
 	_ = os.RemoveAll(filepath.Dir(d.cfg.chrootRoot(vc.ID))) // jailer will not reuse an existing chroot
 	return d.bootPrep(ctx, vc, d.net.Resolve(vc.ID))
+}
+
+// loadLaunch starts a fresh jailer unit for vc and resumes it from a memory
+// snapshot (the state and mem files). It is shared by warm restore and warm
+// create. When mmds is non-nil it refreshes the metadata service (new ssh keys and
+// a generation token) after the load and before the resume, so a clone's guest can
+// re-key and re-sync.
+func (d *Driver) loadLaunch(ctx context.Context, vc vmConfig, stateFile, memFile string, mmds map[string]any) error {
+	_ = d.units.Stop(ctx, vc.ID)
+	_ = os.RemoveAll(filepath.Dir(d.cfg.chrootRoot(vc.ID))) // jailer will not reuse a chroot
+	nic := d.net.Resolve(vc.ID)
+	if err := d.cfg.writeJailerEnv(vc.ID, d.cfg.jailerArgs(vc.ID, vc.UID, vc.GID, nic.NetnsPath)); err != nil {
+		return err
+	}
+	if err := d.units.Start(ctx, vc.ID); err != nil {
+		return err
+	}
+	if err := d.units.SetLimits(ctx, vc.ID, limits(vc.Spec)); err != nil {
+		return err
+	}
+	if err := waitSocket(ctx, vc.Sock); err != nil {
+		return err
+	}
+	// Recreate the rootfs block node at /rootfs.img, the path the snapshot expects.
+	// The kernel is inside the memory snapshot, so it is not needed here.
+	if err := d.images.PrepareRootfs(ctx, storage.Request{
+		VMID: vc.ID, Ref: vc.Spec.Image.Name, ChrootRoot: d.cfg.chrootRoot(vc.ID),
+		UID: vc.UID, GID: vc.GID, DiskMiB: vc.Spec.DiskMiB,
+	}); err != nil {
+		return err
+	}
+	// Stage the snapshot files into a uid-owned dir in the chroot: copy the small
+	// state file, hard-link the large read-only mem file.
+	stage := filepath.Join(d.cfg.chrootRoot(vc.ID), "snap")
+	if err := mkdirChown(stage, vc.UID, vc.GID); err != nil {
+		return err
+	}
+	if err := copyChown(stateFile, filepath.Join(stage, "state"), vc.UID, vc.GID); err != nil {
+		return err
+	}
+	if err := storage.LinkOrReflink(ctx, memFile, filepath.Join(stage, "mem")); err != nil {
+		return err
+	}
+	cli := api.New(vc.Sock)
+	if err := cli.LoadSnapshot(ctx, api.LoadSnapshotReq{
+		SnapshotPath: "snap/state",
+		MemBackend:   api.MemBackend{BackendPath: "snap/mem", BackendType: "File"},
+		ResumeVM:     false, // load paused so a metadata refresh lands before the guest runs
+	}); err != nil {
+		return err
+	}
+	if mmds != nil {
+		if err := cli.PutMmds(ctx, mmds); err != nil {
+			log.Printf("firecracker: vm %s mmds refresh: %v", vc.ID, err)
+		}
+	}
+	return cli.Resume(ctx)
 }
 
 // allocate reserves a uid/gid and persists an initial config so a concurrent

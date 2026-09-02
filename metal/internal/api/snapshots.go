@@ -12,7 +12,7 @@ func (s *Server) listSnapshots(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	snaps, err := m.DiskSnapshots(c.Request().Context())
+	snaps, err := m.Snapshots(c.Request().Context())
 	if err != nil {
 		return err
 	}
@@ -35,10 +35,10 @@ func (s *Server) createSnapshot(c echo.Context) error {
 	if !validSnapName(body.Name) {
 		return badRequest("invalid snapshot name")
 	}
-	if err := m.DiskSnapshot(c.Request().Context(), body.Name); err != nil {
+	if err := m.Snapshot(c.Request().Context(), body.Name, body.Memory); err != nil {
 		return err
 	}
-	return c.JSON(http.StatusCreated, echo.Map{"name": body.Name})
+	return c.JSON(http.StatusCreated, echo.Map{"name": body.Name, "memory": body.Memory})
 }
 
 func (s *Server) deleteSnapshot(c echo.Context) error {
@@ -50,7 +50,7 @@ func (s *Server) deleteSnapshot(c echo.Context) error {
 	if !validSnapName(name) {
 		return badRequest("invalid snapshot name")
 	}
-	if err := m.DeleteDiskSnapshot(c.Request().Context(), name); err != nil {
+	if err := m.DeleteSnapshot(c.Request().Context(), name); err != nil {
 		return err
 	}
 	return c.NoContent(http.StatusNoContent)
@@ -65,10 +65,10 @@ func (s *Server) restoreSnapshot(c echo.Context) error {
 	if !validSnapName(name) {
 		return badRequest("invalid snapshot name")
 	}
-	if err := m.RestoreDiskSnapshot(c.Request().Context(), name); err != nil {
+	if err := m.RestoreSnapshot(c.Request().Context(), name); err != nil {
 		return err
 	}
-	return c.NoContent(http.StatusNoContent)
+	return s.respond(c, http.StatusOK, m)
 }
 
 // snapNameRe matches ZFS-legal snapshot names (the part after '@').

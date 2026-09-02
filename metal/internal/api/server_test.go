@@ -16,7 +16,7 @@ import (
 type fakeVM struct {
 	info    vm.Info
 	started bool
-	snaps   map[string]bool
+	snaps   map[string]bool // snapshot name -> has memory
 }
 
 func (f *fakeVM) ID() string { return f.info.ID }
@@ -29,9 +29,8 @@ func (f *fakeVM) Stop(context.Context, bool) error            { f.info.State = v
 func (f *fakeVM) Destroy(context.Context) error               { return nil }
 func (f *fakeVM) Wait(context.Context) (vm.ExitStatus, error) { return vm.ExitStatus{}, nil }
 func (f *fakeVM) Info(context.Context) (vm.Info, error)       { return f.info, nil }
-func (f *fakeVM) Snapshot(context.Context, string, vm.SnapshotType) (vm.Snapshot, error) {
-	return vm.Snapshot{}, nil
-}
+func (f *fakeVM) Pause(context.Context) error                 { f.info.State = vm.StatePaused; return nil }
+func (f *fakeVM) Resume(context.Context) error                { f.info.State = vm.StateRunning; return nil }
 func (f *fakeVM) Resize(_ context.Context, diskMiB int) error {
 	if diskMiB < f.info.DiskMiB {
 		return vm.ErrConflict
@@ -40,34 +39,32 @@ func (f *fakeVM) Resize(_ context.Context, diskMiB int) error {
 	return nil
 }
 
-func (f *fakeVM) DiskSnapshot(_ context.Context, name string) error {
+func (f *fakeVM) Snapshot(_ context.Context, name string, memory bool) error {
 	if f.snaps == nil {
 		f.snaps = map[string]bool{}
 	}
-	f.snaps[name] = true
+	f.snaps[name] = memory
 	return nil
 }
-func (f *fakeVM) DiskSnapshots(context.Context) ([]vm.DiskSnapshot, error) {
-	out := make([]vm.DiskSnapshot, 0, len(f.snaps))
-	for n := range f.snaps {
-		out = append(out, vm.DiskSnapshot{Name: n, SizeMiB: 1024, UsedMiB: 8})
+func (f *fakeVM) Snapshots(context.Context) ([]vm.Snapshot, error) {
+	out := make([]vm.Snapshot, 0, len(f.snaps))
+	for n, mem := range f.snaps {
+		out = append(out, vm.Snapshot{Name: n, Memory: mem, SizeMiB: 1024, UsedMiB: 8})
 	}
 	return out, nil
 }
-func (f *fakeVM) DeleteDiskSnapshot(_ context.Context, name string) error {
-	if !f.snaps[name] {
+func (f *fakeVM) DeleteSnapshot(_ context.Context, name string) error {
+	if _, ok := f.snaps[name]; !ok {
 		return vm.ErrNotFound
 	}
 	delete(f.snaps, name)
 	return nil
 }
-func (f *fakeVM) RestoreDiskSnapshot(_ context.Context, name string) error {
-	if f.info.State != vm.StateStopped {
-		return vm.ErrConflict
-	}
-	if !f.snaps[name] {
+func (f *fakeVM) RestoreSnapshot(_ context.Context, name string) error {
+	if _, ok := f.snaps[name]; !ok {
 		return vm.ErrNotFound
 	}
+	f.info.State = vm.StateRunning
 	return nil
 }
 
@@ -182,7 +179,7 @@ func TestSnapshotLifecycle(t *testing.T) {
 	srv := newTestServer()
 	do(t, srv, http.MethodPost, "/vms", `{"image":"ubuntu"}`, http.StatusCreated) // vm1, running
 
-	do(t, srv, http.MethodPost, "/vms/vm1/snapshots", `{"name":"snap1"}`, http.StatusCreated)
+	do(t, srv, http.MethodPost, "/vms/vm1/snapshots", `{"name":"snap1","memory":true}`, http.StatusCreated)
 
 	rec := do(t, srv, http.MethodGet, "/vms/vm1/snapshots", "", http.StatusOK)
 	var listed struct {
@@ -191,18 +188,37 @@ func TestSnapshotLifecycle(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &listed); err != nil {
 		t.Fatal(err)
 	}
-	if len(listed.Snapshots) != 1 || listed.Snapshots[0].Name != "snap1" || listed.Snapshots[0].VMID != "vm1" {
+	if len(listed.Snapshots) != 1 || listed.Snapshots[0].Name != "snap1" || !listed.Snapshots[0].Memory {
 		t.Fatalf("snapshots = %+v", listed.Snapshots)
 	}
 
-	// Restore while running is a conflict; stop first, then it succeeds.
-	do(t, srv, http.MethodPost, "/vms/vm1/snapshots/snap1/restore", "", http.StatusConflict)
-	do(t, srv, http.MethodPost, "/vms/vm1/stop", `{"force":true}`, http.StatusOK)
-	do(t, srv, http.MethodPost, "/vms/vm1/snapshots/snap1/restore", "", http.StatusNoContent)
+	// Restore brings the VM back (metald stops and reloads it internally).
+	do(t, srv, http.MethodPost, "/vms/vm1/snapshots/snap1/restore", "", http.StatusOK)
 
 	// Delete once, then again -> 404.
 	do(t, srv, http.MethodDelete, "/vms/vm1/snapshots/snap1", "", http.StatusNoContent)
 	do(t, srv, http.MethodDelete, "/vms/vm1/snapshots/snap1", "", http.StatusNotFound)
+}
+
+func TestPauseResume(t *testing.T) {
+	srv := newTestServer()
+	do(t, srv, http.MethodPost, "/vms", `{"image":"ubuntu"}`, http.StatusCreated)
+
+	rec := do(t, srv, http.MethodPost, "/vms/vm1/pause", "", http.StatusOK)
+	var got vmResp
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.State != "paused" {
+		t.Errorf("state = %q, want paused", got.State)
+	}
+	rec = do(t, srv, http.MethodPost, "/vms/vm1/resume", "", http.StatusOK)
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.State != "running" {
+		t.Errorf("state = %q, want running", got.State)
+	}
 }
 
 func TestCreateSnapshotBadName(t *testing.T) {

@@ -111,9 +111,4 @@ func (m *machine) Wait(ctx context.Context) (vm.ExitStatus, error) {
 	return vm.ExitStatus{Code: r.Code, Signal: r.Signal}, nil
 }
 
-// Snapshot is deferred: the current milestone excludes memory snapshotting.
-func (m *machine) Snapshot(ctx context.Context, dir string, typ vm.SnapshotType) (vm.Snapshot, error) {
-	return vm.Snapshot{}, errNotImplemented
-}
-
 var _ vm.VM = (*machine)(nil)

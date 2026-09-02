@@ -27,6 +27,8 @@ func New(driver vm.VMDriver) *echo.Echo {
 	e.GET("/vms/:id", s.get)
 	e.POST("/vms/:id/start", s.start)
 	e.POST("/vms/:id/stop", s.stop)
+	e.POST("/vms/:id/pause", s.pause)
+	e.POST("/vms/:id/resume", s.resume)
 	e.DELETE("/vms/:id", s.destroy)
 
 	e.GET("/vms/:id/snapshots", s.listSnapshots)
@@ -103,6 +105,28 @@ func (s *Server) stop(c echo.Context) error {
 	var body stopReq
 	_ = c.Bind(&body)
 	if err := m.Stop(c.Request().Context(), body.Force); err != nil {
+		return err
+	}
+	return s.respond(c, http.StatusOK, m)
+}
+
+func (s *Server) pause(c echo.Context) error {
+	m, err := s.load(c)
+	if err != nil {
+		return err
+	}
+	if err := m.Pause(c.Request().Context()); err != nil {
+		return err
+	}
+	return s.respond(c, http.StatusOK, m)
+}
+
+func (s *Server) resume(c echo.Context) error {
+	m, err := s.load(c)
+	if err != nil {
+		return err
+	}
+	if err := m.Resume(c.Request().Context()); err != nil {
 		return err
 	}
 	return s.respond(c, http.StatusOK, m)
