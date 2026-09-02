@@ -11,6 +11,7 @@ Atlas is a monorepo for Frappe Cloud V2 VM infrastructure. It contains a Frappe/
 - Do not add plan or planning markdown files such as `plan_*.md`.
 - Use `apply_patch` for manual edits.
 - Add blank lines between logical sections of code to keep methods readable.
+- Use complete words in Go and Python function, method, and variable names. Do not use abbreviations. A Go method may use a short receiver name such as `m` for `*Manager`; all other names must clearly express their purpose.
 
 ## Comments and documentation
 

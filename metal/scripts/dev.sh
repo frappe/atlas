@@ -1,13 +1,9 @@
 #!/usr/bin/env bash
-# Prepare a throwaway host for metald. Run this before `metald serve --config`.
-# Everything, including the config file, lives under /tmp/metald.
-# Safe to run again. Requires root.
-#
-# Uses an Ubuntu *cloud* image with cloud-init. Each VM gets its Secure Shell key
-# through the Firecracker metadata service and the guest initialization service.
+# Prepare a disposable host for metald. Run as root before `metald serve`.
+# Uses an Ubuntu cloud image and the Firecracker metadata service.
 set -euo pipefail
 
-# Development paths. Keep external settings in the environment.
+# Keep external settings in the environment.
 WORKDIR=/tmp/metald
 BULK=${METALD_BULK_DIR:-$WORKDIR}
 POOL=${METALD_POOL:-metal}
@@ -21,21 +17,18 @@ CONFIG=$WORKDIR/metald.toml
 ARCH=$(uname -m)
 CI=https://s3.amazonaws.com/spec.ccfc.min/firecracker-ci/v1.10/$ARCH
 
-# Bulk storage can use any file system. Point it at a large disk.
-# Runtime files stay under WORKDIR because they need a POSIX file system.
+# Bulk storage can use any file system. Runtime files need a POSIX file system.
 
 [[ $EUID -eq 0 ]] || { echo "metald dev script: must run as root" >&2; exit 1; }
 
 step() { echo "==> $*"; }
 
-# fetch URL DEST downloads to a temporary file and renames it on success. It
 fetch() {
 	[[ -f $2 ]] && return 0
 	echo "    downloading $(basename "$2")"
 	curl -fL --progress-bar -o "$2.part" "$1" && mv "$2.part" "$2"
 }
 
-# Create the directories used by the development host.
 mkdir -p "$WORKDIR" "$BIN" "$KERNEL_DIR/ubuntu" "$BULK/downloads" "$KEYDIR" \
          "$VAR_DIR" "$(dirname "$CONFIG")"
 
@@ -46,7 +39,6 @@ sz=$(( avail_gb / 2 )); (( sz < 8 )) && sz=8; (( sz > 30 )) && sz=30
 POOL_SIZE=${METALD_POOL_SIZE:-${sz}G}
 (( avail_gb < 6 )) && echo "WARNING: only ${avail_gb}G free under $BULK; a cloud image needs ~4G." >&2
 
-# Download Firecracker and Jailer when they are not present.
 step "Firecracker and Jailer ($FC_VER)"
 if [[ ! -x $BIN/firecracker || ! -x $BIN/jailer ]]; then
 	echo "    downloading firecracker-$FC_VER-$ARCH.tgz"
@@ -58,19 +50,15 @@ if [[ ! -x $BIN/firecracker || ! -x $BIN/jailer ]]; then
 	chmod +x "$BIN/firecracker" "$BIN/jailer"
 fi
 
-# Download the guest kernel and write its boot arguments.
 step "guest kernel"
 fetch "$CI/vmlinux-5.10.223" "$KERNEL_DIR/ubuntu/vmlinux"
-# The continuous integration root file system is partitionless ext4. The whole
-# /dev/vda is the file system.
+# The image is a partitionless ext4 file system on /dev/vda.
 echo "console=ttyS0 reboot=k panic=1 pci=off root=/dev/vda rw" > "$KERNEL_DIR/ubuntu/boot-args"
 
-# Download the root file system and add the guest key helper.
-step "Ubuntu root file system and metadata service key helper"
+step "Ubuntu file system and metadata service SSH key helper"
 rootfs=$BULK/downloads/ubuntu.ext4
 fetch "$CI/ubuntu-22.04.ext4" "$rootfs"
-# Add a keyless boot helper that pulls each VM key from the metadata service.
-# Only the fetch is stored in the image. Skip it when the helper already exists.
+# Add a helper that pulls each VM's SSH key from the metadata service.
 mnt=$BULK/mnt; mkdir -p "$mnt"
 mount -o loop "$rootfs" "$mnt"
 if [[ ! -e "$mnt/usr/local/sbin/metal-sshkey" ]]; then
@@ -98,10 +86,8 @@ if [[ ! -e "$mnt/usr/local/sbin/metal-sshkey" ]]; then
 	mkdir -p "$mnt/etc/systemd/system/multi-user.target.wants"
 	ln -sf ../metal-sshkey.service "$mnt/etc/systemd/system/multi-user.target.wants/metal-sshkey.service"
 fi
-# Bake a clone-refresh agent. It watches the MMDS "generation" token; metald sets a
-# new one each warm start, so a resumed clone re-keys and re-syncs a fresh identity.
-# Cold VMs never get a token, so the agent stays idle for them.
-# Note: temporary hack, will replace with vmgenid in the future.
+# Add an agent that refreshes a warm clone when metald changes its MMDS generation.
+# Cold VMs do not receive a generation token.
 if [[ ! -e "$mnt/usr/local/sbin/metal-refresh" ]]; then
 	install -Dm755 /dev/stdin "$mnt/usr/local/sbin/metal-refresh" <<-'EOF'
 		#!/bin/sh
@@ -139,34 +125,26 @@ if [[ ! -e "$mnt/usr/local/sbin/metal-refresh" ]]; then
 fi
 umount "$mnt"
 
-# Create the key used by the integration test.
 step "Secure Shell key pair"
 [[ -f $KEYDIR/id_ed25519 ]] || ssh-keygen -q -t ed25519 -N "" -f "$KEYDIR/id_ed25519"
 
 step "ZFS pool ($POOL_SIZE)"
-# Use a file as the pool's virtual device.
 img=$(realpath -m "$BULK")/pool.img
 [[ -f $img ]] || truncate -s "$POOL_SIZE" "$img"
-# Keep the pool unmounted because it only contains virtual block devices.
 zpool list "$POOL" >/dev/null 2>&1 || zpool create -f -m none "$POOL" "$img"
-# Create the parent data sets. Their virtual block devices still get /dev/zvol nodes.
 zfs list "$POOL/images" >/dev/null 2>&1 || zfs create -o mountpoint=none "$POOL/images"
 zfs list "$POOL/vms" >/dev/null 2>&1 || zfs create -o mountpoint=none "$POOL/vms"
 
-# Create the base virtual block device and its clone snapshot.
 step "base image ($POOL/images/ubuntu)"
 if ! zfs list "$POOL/images/ubuntu" >/dev/null 2>&1; then
 	bytes=$(stat -c %s "$rootfs")
-	# Create a raw virtual block device with a 16K block size.
 	zfs create -V "$((bytes / 1024 / 1024 + 64))M" -o volblocksize=16k "$POOL/images/ubuntu"
-	udevadm settle  # wait for the virtual block device
+	udevadm settle
 	dd if="$rootfs" of="/dev/zvol/$POOL/images/ubuntu" bs=4M conv=sparse,fsync status=none
-	# Create the read-only source for each VM clone.
 	zfs snapshot "$POOL/images/ubuntu@ready"
 fi
 
 step "systemd template unit (metal-vm@.service)"
-# Use the development paths in the generated unit. Host setup writes its own.
 cat > /etc/systemd/system/metal-vm@.service <<EOF
 [Unit]
 Description=metal microVM %i
@@ -179,7 +157,6 @@ Restart=no
 EOF
 systemctl daemon-reload
 
-# Enable forwarding and network address translation for guest traffic.
 step "forwarding and network address translation"
 uplink=$(ip route show default | awk '{print $5; exit}')
 sysctl -q -w net.ipv4.ip_forward=1
@@ -187,7 +164,6 @@ if [[ -n $uplink ]] && ! iptables -t nat -C POSTROUTING -s 10.0.0.0/8 -o "$uplin
 	iptables -t nat -A POSTROUTING -s 10.0.0.0/8 -o "$uplink" -j MASQUERADE
 fi
 
-# Write the configuration file used by metald.
 step "config ($CONFIG)"
 cat > "$CONFIG" <<EOF
 [metald]
