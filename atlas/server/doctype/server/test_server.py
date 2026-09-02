@@ -56,13 +56,20 @@ class TestServer(UnitTestCase):
 		server = SimpleNamespace(
 			provider_server_id=None,
 			settings=SimpleNamespace(server_provider_controller=provider),
-			_validate_provider_catalog=Mock(),
 		)
 
 		Server.before_validate(server)
 
-		server._validate_provider_catalog.assert_called_once()
 		provider.create_server.assert_called_once_with(server)
+
+	def test_validate_checks_the_provider_catalog(self) -> None:
+		server = self._server(status="Pending")
+		server._validate_provider_catalog = Mock()
+		server._sync_disks_if_running = Mock()
+
+		Server.validate(server)
+
+		server._validate_provider_catalog.assert_called_once()
 
 	def test_setup_server_queues_when_no_setup_job_runs(self) -> None:
 		server = self._server(status="Failed")
@@ -208,11 +215,11 @@ class TestServer(UnitTestCase):
 
 		enqueue_doc.assert_called_once_with(
 			"Server",
-			"node-test-00001",
+			"node-test-00007",
 			"_install_metald",
 			queue="long",
 			timeout=1200,
-			job_id="atlas||server||install-metald||node-test-00001",
+			job_id="atlas||server||install-metald||node-test-00007",
 			deduplicate=True,
 			enqueue_after_commit=True,
 		)
@@ -506,11 +513,11 @@ class TestServer(UnitTestCase):
 	def _server(*, status: str) -> SimpleNamespace:
 		server = SimpleNamespace(
 			doctype="Server",
-			name="node-test-00001",
+			name="node-test-00007",
 			status=status,
 			is_provisioning_completed=False,
-			setup_job_id="atlas||server-provision||node-test-00001",
-			wireguard_job_id="atlas||server-wireguard||node-test-00001",
+			setup_job_id="atlas||server-provision||node-test-00007",
+			wireguard_job_id="atlas||server-wireguard||node-test-00007",
 			wireguard_ip_address=None,
 			settings=SimpleNamespace(
 				server_provider_controller=SimpleNamespace(
@@ -521,14 +528,22 @@ class TestServer(UnitTestCase):
 				region_id=1,
 				private_network_mtu=1500,
 			),
-			db_set=Mock(),
 			set=Mock(),
 			save=Mock(),
 			_enqueue_setup_server=Mock(),
 		)
+
+		def db_set(fieldname, value=None, **_options) -> None:
+			"""Write the fields on the fake document, as Document.db_set does."""
+			values = fieldname if isinstance(fieldname, dict) else {fieldname: value}
+			for name, field_value in values.items():
+				setattr(server, name, field_value)
+
+		server.db_set = Mock(side_effect=db_set)
 		server._parse_disks = MethodType(Server._parse_disks, server)
 		server._get_wireguard_ip_address = MethodType(Server._get_wireguard_ip_address, server)
 		server._set_wireguard_ip_address_if_not_set = MethodType(
 			Server._set_wireguard_ip_address_if_not_set, server
 		)
+		server._validate_power_action = MethodType(Server._validate_power_action, server)
 		return server

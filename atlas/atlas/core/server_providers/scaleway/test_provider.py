@@ -27,6 +27,8 @@ class TestScalewayProvider(UnitTestCase):
 				"wait_for_ssh",
 				"_configure_private_network",
 				"_wait_for_private_address",
+				"configure_wireguard",
+				"install_metald",
 			),
 		)
 
@@ -209,7 +211,8 @@ class TestScalewayProvider(UnitTestCase):
 			]
 		}
 
-		private_network = provider._server_private_network("server-id")
+		# The helper replaces this method with a mock, so call the real one.
+		private_network = ScalewayProvider._server_private_network(provider, "server-id")
 
 		self.assertEqual(private_network["vlan"], 123)
 		self.assertEqual(
@@ -288,6 +291,7 @@ class TestScalewayProvider(UnitTestCase):
 		provider = object.__new__(ScalewayProvider)
 		provider.project_id = "project-id"
 		provider.zone = "fr-par-1"
+		provider.region = "fr-par"
 		provider.settings = SimpleNamespace(
 			private_network_cidr="10.1.0.0/20",
 			private_network_mtu=1500,

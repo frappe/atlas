@@ -91,7 +91,10 @@ class Server(Document):
 		ssh_task_name = ServerSSHTask.create_for_script_file(
 			server=self.name, script_path="ping-server.sh"
 		).name
-		frappe.msgprint(_(f"Check ping status <a href='/app/server-ssh-task/{ssh_task_name}'>here</a>"))
+		frappe.msgprint(
+			_("Check the ping status <a href='/app/server-ssh-task/{0}'>here</a>").format(ssh_task_name)
+		)
+		return ssh_task_name
 
 	@frappe.whitelist(methods=["POST"])
 	def setup_server(self) -> None:

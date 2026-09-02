@@ -86,6 +86,7 @@ class TestServerSSHTask(UnitTestCase):
 			port=22,
 			ssh_user="root",
 			script="echo done",
+			timeout_seconds=120,
 			_mark_running=Mock(),
 			_environment=Mock(return_value={}),
 			_finish=Mock(),
@@ -105,9 +106,12 @@ class TestServerSSHTask(UnitTestCase):
 		log._finish.assert_called_once_with(result)
 
 	def test_append_output_writes_progress(self) -> None:
-		log = SimpleNamespace(output="first\n", db_set=Mock())
+		log = SimpleNamespace(doctype="Server SSH Task", name="SSH-00001", output="first\n", db_set=Mock())
 
-		with patch("atlas.server.doctype.server_ssh_task.server_ssh_task.frappe.db.commit"):
+		with (
+			patch("atlas.server.doctype.server_ssh_task.server_ssh_task.frappe.db.commit"),
+			patch("atlas.server.doctype.server_ssh_task.server_ssh_task.frappe.publish_realtime"),
+		):
 			ServerSSHTask._append_output(log, "second\n")
 
 		self.assertEqual(log.output, "first\nsecond\n")
@@ -133,10 +137,11 @@ class TestServerSSHTask(UnitTestCase):
 		self.assertIn("timed out", log.output)
 
 	def test_mark_timed_out_keeps_a_task_inside_the_timeout_buffer(self) -> None:
+		# The task started 19 seconds ago, one second before the 20 second deadline.
 		now = datetime(2026, 9, 1, 12, 0, 10)
 		log = SimpleNamespace(
 			status="Running",
-			started_at=now - timedelta(seconds=20),
+			started_at=now - timedelta(seconds=19),
 			timeout_seconds=10,
 			timeout_buffer_seconds=10,
 		)

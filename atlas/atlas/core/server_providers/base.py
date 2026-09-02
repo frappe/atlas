@@ -264,7 +264,7 @@ class ServerProvider(ABC):
 		this writes only the fields the provider owns.
 		"""
 		server.db_set({field: server.get(field) for field in cls.server_setup_fields})
-		frappe.db.commit()  # nosemgrep: setup progress must survive a later provider error
+		frappe.db.commit()  # nosemgrep
 
 	def sync_provider_sizes(self) -> None:
 		"""Sync provider sizes with Server Size records."""
