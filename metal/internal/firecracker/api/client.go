@@ -60,6 +60,30 @@ func (c *Client) SendCtrlAltDel(ctx context.Context) error {
 	return c.do(ctx, http.MethodPut, "/actions", action{ActionType: "SendCtrlAltDel"}, nil)
 }
 
+// Pause moves the microVM to the Paused state, which halts vCPU execution.
+// Firecracker requires the Paused state before it creates a snapshot.
+func (c *Client) Pause(ctx context.Context) error {
+	return c.do(ctx, http.MethodPatch, "/vm", vmState{State: "Paused"}, nil)
+}
+
+// Resume moves the microVM back to the Running state after a Pause or a
+// snapshot load.
+func (c *Client) Resume(ctx context.Context) error {
+	return c.do(ctx, http.MethodPatch, "/vm", vmState{State: "Resumed"}, nil)
+}
+
+// CreateSnapshot writes a snapshot of the paused microVM to the chroot-relative
+// paths in r. The VM must be Paused first.
+func (c *Client) CreateSnapshot(ctx context.Context, r CreateSnapshotReq) error {
+	return c.do(ctx, http.MethodPut, "/snapshot/create", r, nil)
+}
+
+// LoadSnapshot restores a microVM from a snapshot into a fresh firecracker
+// process. Set r.ResumeVM to resume at once, or keep it false to stay Paused.
+func (c *Client) LoadSnapshot(ctx context.Context, r LoadSnapshotReq) error {
+	return c.do(ctx, http.MethodPut, "/snapshot/load", r, nil)
+}
+
 func (c *Client) PutMmdsConfig(ctx context.Context, cfg MmdsConfig) error {
 	return c.do(ctx, http.MethodPut, "/mmds/config", cfg, nil)
 }
