@@ -97,6 +97,17 @@ func toSnap(vmID string, s vm.Snapshot) snapResp {
 	}
 }
 
+type imageResp struct {
+	Ref       string `json:"ref"`
+	Warm      bool   `json:"warm"`
+	SizeMiB   int    `json:"size_mib"`
+	CreatedAt string `json:"created_at"`
+}
+
+func toImage(i vm.Image) imageResp {
+	return imageResp{Ref: i.Ref, Warm: i.Warm, SizeMiB: i.SizeMiB, CreatedAt: rfc3339(i.CreatedAt)}
+}
+
 // rfc3339 formats a time for the API and returns "" for the zero time.
 func rfc3339(t time.Time) string {
 	if t.IsZero() {

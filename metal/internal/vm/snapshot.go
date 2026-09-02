@@ -12,3 +12,12 @@ type Snapshot struct {
 	UsedMiB   int
 	CreatedAt time.Time
 }
+
+// Image is a template that VMs are created from. A warm image also carries a
+// memory capture, so a VM created from it starts from restored RAM.
+type Image struct {
+	Ref       string
+	Warm      bool
+	SizeMiB   int
+	CreatedAt time.Time
+}

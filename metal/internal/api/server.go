@@ -37,6 +37,9 @@ func New(driver vm.VMDriver) *echo.Echo {
 	e.POST("/vms/:id/snapshots/:name/restore", s.restoreSnapshot)
 	e.POST("/vms/:id/snapshots/:name/promote", s.promoteSnapshot)
 
+	e.GET("/images", s.listImages)
+	e.DELETE("/images/:ref", s.deleteImage)
+
 	e.POST("/vms/:id/resize", s.resize)
 
 	// Specced but not implemented yet.

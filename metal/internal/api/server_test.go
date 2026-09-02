@@ -74,7 +74,10 @@ func (f *fakeVM) Promote(_ context.Context, name, _ string) error {
 	return nil
 }
 
-type fakeDriver struct{ vms map[string]*fakeVM }
+type fakeDriver struct {
+	vms    map[string]*fakeVM
+	images []vm.Image
+}
 
 func (d *fakeDriver) Create(_ context.Context, spec vm.Spec) (vm.VM, error) {
 	m := &fakeVM{info: vm.Info{ID: "vm1", State: vm.StateCreated, VCPUs: spec.VCPUs, MemMiB: spec.MemMiB, DiskMiB: spec.DiskMiB, Image: spec.Image.Name}}
@@ -94,6 +97,16 @@ func (d *fakeDriver) List(context.Context) ([]vm.VM, error) {
 		out = append(out, m)
 	}
 	return out, nil
+}
+func (d *fakeDriver) Images(context.Context) ([]vm.Image, error) { return d.images, nil }
+func (d *fakeDriver) DeleteImage(_ context.Context, ref string) error {
+	for i, im := range d.images {
+		if im.Ref == ref {
+			d.images = append(d.images[:i], d.images[i+1:]...)
+			return nil
+		}
+	}
+	return vm.ErrNotFound
 }
 func (d *fakeDriver) Type() vm.DriverType { return "fake" }
 
@@ -239,6 +252,24 @@ func TestPromoteNeedsMemorySnapshot(t *testing.T) {
 	do(t, srv, http.MethodPost, "/vms/vm1/snapshots", `{"name":"warm","memory":true}`, http.StatusCreated)
 	do(t, srv, http.MethodPost, "/vms/vm1/snapshots/warm/promote", `{"image":"golden"}`, http.StatusCreated)
 	do(t, srv, http.MethodPost, "/vms/vm1/snapshots/warm/promote", `{"image":"bad/ref"}`, http.StatusBadRequest)
+}
+
+func TestImages(t *testing.T) {
+	d := &fakeDriver{vms: map[string]*fakeVM{}, images: []vm.Image{{Ref: "golden", Warm: true, SizeMiB: 2048}}}
+	srv := New(d)
+
+	rec := do(t, srv, http.MethodGet, "/images", "", http.StatusOK)
+	var listed struct {
+		Images []imageResp `json:"images"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &listed); err != nil {
+		t.Fatal(err)
+	}
+	if len(listed.Images) != 1 || listed.Images[0].Ref != "golden" || !listed.Images[0].Warm {
+		t.Fatalf("images = %+v", listed.Images)
+	}
+	do(t, srv, http.MethodDelete, "/images/nope", "", http.StatusNotFound)
+	do(t, srv, http.MethodDelete, "/images/golden", "", http.StatusNoContent)
 }
 
 func TestCreateSnapshotBadName(t *testing.T) {

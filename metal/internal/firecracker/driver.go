@@ -177,6 +177,24 @@ func (d *Driver) warmLaunch(ctx context.Context, vc vmConfig, ref string) error 
 	return d.loadLaunch(ctx, vc, state, mem, mmds)
 }
 
+// Images lists the images VMs can be created from.
+func (d *Driver) Images(ctx context.Context) ([]vm.Image, error) {
+	imgs, err := d.images.Images(ctx)
+	if err != nil {
+		return nil, storageErr(err)
+	}
+	out := make([]vm.Image, len(imgs))
+	for i, im := range imgs {
+		out[i] = vm.Image{Ref: im.Ref, Warm: im.Warm, SizeMiB: im.SizeMiB, CreatedAt: im.CreatedAt}
+	}
+	return out, nil
+}
+
+// DeleteImage removes an image. ErrConflict if VMs cloned from it still exist.
+func (d *Driver) DeleteImage(ctx context.Context, ref string) error {
+	return storageErr(d.images.DeleteImage(ctx, ref))
+}
+
 // allocate reserves a uid/gid and persists an initial config so a concurrent
 // Create sees the id as used.
 func (d *Driver) allocate(id string, spec vm.Spec) (uint32, error) {
