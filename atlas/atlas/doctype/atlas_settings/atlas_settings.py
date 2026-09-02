@@ -7,6 +7,7 @@ from functools import cached_property
 from typing import TYPE_CHECKING
 
 import frappe
+from frappe import _
 from frappe.model.document import Document
 
 if TYPE_CHECKING:
@@ -79,19 +80,25 @@ class AtlasSettings(Document):
 		if self.is_setup_completed and not (
 			self.is_server_provider_setup_completed and self.is_dns_setup_completed
 		):
-			frappe.throw("Atlas Settings cannot be marked as completed before provider setup is complete.")
+			frappe.throw(_("Atlas Settings cannot be marked as completed before provider setup is complete."))
 
 		self.server_provider_controller.validate_settings()
 		self.dns_provider_controller.validate_settings()
 
 		if self.wildcard_domain.startswith("*."):
 			frappe.throw(
-				"Remove '*.' from the wildcard domain in Atlas Settings. It is automatically added by Atlas."
+				_(
+					"Remove '*.' from the wildcard domain in Atlas Settings. It is automatically added by Atlas."
+				)
 			)
 
 		self.region_name = self.region_name.strip().lower()
 
 	def on_update(self) -> None:
+		"""App install creates this single document empty, so there is nothing to check then."""
+		if self.flags.in_insert:
+			return
+
 		if any(self.has_value_changed(field) for field in self.server_provider_controller.credential_fields):
 			self.server_provider_controller.validate_credentials()
 
@@ -126,7 +133,7 @@ class AtlasSettings(Document):
 	def sync_server_sizes(self) -> None:
 		frappe.only_for("System Manager")
 		if not self.is_setup_completed:
-			frappe.throw("Atlas Settings must be fully set up before syncing server sizes.")
+			frappe.throw(_("Atlas Settings must be fully set up before syncing server sizes."))
 
 		frappe.enqueue_doc(
 			self.doctype,
@@ -135,8 +142,9 @@ class AtlasSettings(Document):
 			queue="default",
 			job_id="atlas-sync-server-sizes",
 			deduplicate=True,
+			enqueue_after_commit=True,
 		)
-		frappe.msgprint("Server sizes sync has been queued. Please check after some time.")
+		frappe.msgprint(_("Server sizes sync has been queued. Please check after some time."))
 
 	def _sync_server_sizes(self) -> None:
 		self.server_provider_controller.sync_provider_sizes()
@@ -145,7 +153,7 @@ class AtlasSettings(Document):
 	def sync_server_images(self) -> None:
 		frappe.only_for("System Manager")
 		if not self.is_setup_completed:
-			frappe.throw("Atlas Settings must be fully set up before syncing server images.")
+			frappe.throw(_("Atlas Settings must be fully set up before syncing server images."))
 
 		frappe.enqueue_doc(
 			self.doctype,
@@ -154,8 +162,9 @@ class AtlasSettings(Document):
 			queue="default",
 			job_id="atlas-sync-server-images",
 			deduplicate=True,
+			enqueue_after_commit=True,
 		)
-		frappe.msgprint("Server images sync has been queued. Please check after some time.")
+		frappe.msgprint(_("Server images sync has been queued. Please check after some time."))
 
 	def _sync_server_images(self) -> None:
 		self.server_provider_controller.sync_provider_images()

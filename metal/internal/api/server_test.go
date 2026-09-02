@@ -124,7 +124,7 @@ func TestCreateBootsAndReturnsVM(t *testing.T) {
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("status = %d, body %s", rec.Code, rec.Body)
 	}
-	var got vmResp
+	var got virtualMachineResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatal(err)
 	}
@@ -148,7 +148,7 @@ func TestResizeDiskGrows(t *testing.T) {
 	srv := newTestServer()
 	do(t, srv, http.MethodPost, "/vms", `{"image":"ubuntu","disk_mib":1024}`, http.StatusCreated)
 	rec := do(t, srv, http.MethodPost, "/vms/vm1/resize", `{"disk_mib":2048}`, http.StatusOK)
-	var got vmResp
+	var got virtualMachineResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatal(err)
 	}
@@ -202,7 +202,7 @@ func TestSnapshotLifecycle(t *testing.T) {
 
 	rec := do(t, srv, http.MethodGet, "/vms/vm1/snapshots", "", http.StatusOK)
 	var listed struct {
-		Snapshots []snapResp `json:"snapshots"`
+		Snapshots []snapshotResponse `json:"snapshots"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &listed); err != nil {
 		t.Fatal(err)
@@ -224,7 +224,7 @@ func TestPauseResume(t *testing.T) {
 	do(t, srv, http.MethodPost, "/vms", `{"image":"ubuntu"}`, http.StatusCreated)
 
 	rec := do(t, srv, http.MethodPost, "/vms/vm1/pause", "", http.StatusOK)
-	var got vmResp
+	var got virtualMachineResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatal(err)
 	}
@@ -260,7 +260,7 @@ func TestImages(t *testing.T) {
 
 	rec := do(t, srv, http.MethodGet, "/images", "", http.StatusOK)
 	var listed struct {
-		Images []imageResp `json:"images"`
+		Images []imageResponse `json:"images"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &listed); err != nil {
 		t.Fatal(err)

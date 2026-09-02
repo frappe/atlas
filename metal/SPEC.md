@@ -35,6 +35,9 @@ The module path is `github.com/frappe/atlas/metal`. Run Go commands from `metal/
 
 Run `go test ./...`. Run integration tests when host dependencies are available.
 Run `make build` to build the stripped Linux binaries into `dist/`.
+Run `make openapi` to build the API specification. The binary embeds it, so run
+this once after a clone or `go build` fails. `make build` runs it first, and
+metald serves the result at `/api/docs`.
 
 ## Documentation
 

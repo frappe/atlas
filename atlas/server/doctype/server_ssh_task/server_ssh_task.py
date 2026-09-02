@@ -191,7 +191,7 @@ class ServerSSHTask(Document):
 			{"status": self.status, "ended_at": self.ended_at, "output": self.output},
 			update_modified=False,
 		)
-		frappe.db.commit()
+		frappe.db.commit()  # nosemgrep: the Secure Shell run holds one transaction and must publish progress
 		return True
 
 	def _mark_running(self) -> None:
@@ -203,7 +203,7 @@ class ServerSSHTask(Document):
 			{"status": self.status, "started_at": self.started_at, "ended_at": None, "output": self.output},
 			update_modified=False,
 		)
-		frappe.db.commit()
+		frappe.db.commit()  # nosemgrep: the Secure Shell run holds one transaction and must publish progress
 
 	def _append_output(self, output: str) -> None:
 		"""Append a received SSH output chunk to this task."""
@@ -216,7 +216,7 @@ class ServerSSHTask(Document):
 			message={"name": self.name, "output": self.output},
 			user=frappe.session.user,
 		)
-		frappe.db.commit()
+		frappe.db.commit()  # nosemgrep: the Secure Shell run holds one transaction and must publish progress
 
 	def _finish(self, result: SSHResult) -> None:
 		if frappe.db.get_value(self.doctype, self.name, "status") != "Running":
@@ -235,7 +235,7 @@ class ServerSSHTask(Document):
 			},
 			update_modified=False,
 		)
-		frappe.db.commit()
+		frappe.db.commit()  # nosemgrep: the Secure Shell run holds one transaction and must publish progress
 
 	def _environment(self) -> dict[str, object]:
 		environment = frappe.parse_json(self.environment or "{}")

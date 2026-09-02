@@ -1,6 +1,6 @@
-// Package api serves the metal HTTP API (see docs/api.md) over the driver.
-// Implemented endpoints are wired to the driver; specced-but-unbuilt ones
-// (console) return 501.
+// Package api serves the Metal HTTP application programming interface over the
+// driver. Implemented endpoints are wired to the driver. The console endpoint
+// is specified but not implemented and returns status 501.
 package api
 
 import (
@@ -42,15 +42,35 @@ func New(driver vm.VMDriver) *echo.Echo {
 
 	e.POST("/vms/:id/resize", s.resize)
 
-	// Specced but not implemented yet.
+	// Specified but not implemented yet.
 	e.GET("/vms/:id/console", notImplemented)
 
-	e.GET("/health", func(c echo.Context) error { return c.NoContent(http.StatusOK) })
+	e.GET("/health", s.health)
+
+	e.GET("/docs", s.docs)
+	e.GET("/docs/swagger.json", s.specificationJSON)
 	return e
 }
 
+// @Summary		Liveness check
+// @Description	It answers while the process runs. It checks no dependency.
+// @Tags			health
+// @Success		200	"No content"
+// @Router			/health [get]
+func (s *Server) health(c echo.Context) error {
+	return c.NoContent(http.StatusOK)
+}
+
+// @Summary	Create and start a virtual machine
+// @Tags		vms
+// @Accept		json
+// @Produce	json
+// @Param		body	body		createRequest	true	"Virtual machine specification"
+// @Success	201		{object}	virtualMachineResponse
+// @Failure	400		{object}	errorResponse
+// @Router		/vms [post]
 func (s *Server) create(c echo.Context) error {
-	var req createReq
+	var req createRequest
 	if err := c.Bind(&req); err != nil {
 		return badRequest(err.Error())
 	}
@@ -65,23 +85,35 @@ func (s *Server) create(c echo.Context) error {
 	return s.respond(c, http.StatusCreated, m)
 }
 
+// @Summary	List virtual machines
+// @Tags		vms
+// @Produce	json
+// @Success	200	{object}	virtualMachineListResponse
+// @Router		/vms [get]
 func (s *Server) list(c echo.Context) error {
 	ctx := c.Request().Context()
 	vms, err := s.driver.List(ctx)
 	if err != nil {
 		return err
 	}
-	out := make([]vmResp, 0, len(vms))
+	out := make([]virtualMachineResponse, 0, len(vms))
 	for _, m := range vms {
 		info, err := m.Info(ctx)
 		if err != nil {
 			continue
 		}
-		out = append(out, toVM(info))
+		out = append(out, toVirtualMachine(info))
 	}
-	return c.JSON(http.StatusOK, echo.Map{"vms": out})
+	return c.JSON(http.StatusOK, virtualMachineListResponse{VMs: out})
 }
 
+// @Summary	Get a virtual machine
+// @Tags		vms
+// @Produce	json
+// @Param		id	path		string	true	"Virtual machine identifier"
+// @Success	200	{object}	virtualMachineResponse
+// @Failure	404	{object}	errorResponse
+// @Router		/vms/{id} [get]
 func (s *Server) get(c echo.Context) error {
 	m, err := s.load(c)
 	if err != nil {
@@ -90,6 +122,14 @@ func (s *Server) get(c echo.Context) error {
 	return s.respond(c, http.StatusOK, m)
 }
 
+// @Summary	Start a virtual machine
+// @Tags		vms
+// @Produce	json
+// @Param		id	path		string	true	"Virtual machine identifier"
+// @Success	200	{object}	virtualMachineResponse
+// @Failure	404	{object}	errorResponse
+// @Failure	409	{object}	errorResponse
+// @Router		/vms/{id}/start [post]
 func (s *Server) start(c echo.Context) error {
 	m, err := s.load(c)
 	if err != nil {
@@ -101,12 +141,21 @@ func (s *Server) start(c echo.Context) error {
 	return s.respond(c, http.StatusOK, m)
 }
 
+// @Summary	Stop a virtual machine
+// @Tags		vms
+// @Accept		json
+// @Produce	json
+// @Param		id		path		string	true	"Virtual machine identifier"
+// @Param		body	body		stopRequest	false	"Set force to stop immediately"
+// @Success	200		{object}	virtualMachineResponse
+// @Failure	404		{object}	errorResponse
+// @Router		/vms/{id}/stop [post]
 func (s *Server) stop(c echo.Context) error {
 	m, err := s.load(c)
 	if err != nil {
 		return err
 	}
-	var body stopReq
+	var body stopRequest
 	_ = c.Bind(&body)
 	if err := m.Stop(c.Request().Context(), body.Force); err != nil {
 		return err
@@ -114,6 +163,14 @@ func (s *Server) stop(c echo.Context) error {
 	return s.respond(c, http.StatusOK, m)
 }
 
+// @Summary	Pause a virtual machine
+// @Tags		vms
+// @Produce	json
+// @Param		id	path		string	true	"Virtual machine identifier"
+// @Success	200	{object}	virtualMachineResponse
+// @Failure	404	{object}	errorResponse
+// @Failure	409	{object}	errorResponse
+// @Router		/vms/{id}/pause [post]
 func (s *Server) pause(c echo.Context) error {
 	m, err := s.load(c)
 	if err != nil {
@@ -125,6 +182,14 @@ func (s *Server) pause(c echo.Context) error {
 	return s.respond(c, http.StatusOK, m)
 }
 
+// @Summary	Resume a paused virtual machine
+// @Tags		vms
+// @Produce	json
+// @Param		id	path		string	true	"Virtual machine identifier"
+// @Success	200	{object}	virtualMachineResponse
+// @Failure	404	{object}	errorResponse
+// @Failure	409	{object}	errorResponse
+// @Router		/vms/{id}/resume [post]
 func (s *Server) resume(c echo.Context) error {
 	m, err := s.load(c)
 	if err != nil {
@@ -136,6 +201,12 @@ func (s *Server) resume(c echo.Context) error {
 	return s.respond(c, http.StatusOK, m)
 }
 
+// @Summary	Destroy a virtual machine
+// @Tags		vms
+// @Param		id	path	string	true	"Virtual machine identifier"
+// @Success	204	"No content"
+// @Failure	404	{object}	errorResponse
+// @Router		/vms/{id} [delete]
 func (s *Server) destroy(c echo.Context) error {
 	m, err := s.load(c)
 	if err != nil {
@@ -147,21 +218,35 @@ func (s *Server) destroy(c echo.Context) error {
 	return c.NoContent(http.StatusNoContent)
 }
 
-// resize currently grows only the disk. CPU/mem changes are not yet supported.
+// resize currently grows only the disk. Processor and memory changes are not
+// yet supported.
+//
+//	@Summary		Resize a virtual machine disk
+//	@Description	disk_mib grows only. vcpus and mem_mib are not implemented.
+//	@Tags			vms
+//	@Accept			json
+//	@Produce		json
+//	@Param			id		path		string		true	"Virtual machine identifier"
+//	@Param			body	body		resizeRequest	true	"New size"
+//	@Success		200		{object}	virtualMachineResponse
+//	@Failure		400		{object}	errorResponse
+//	@Failure		409		{object}	errorResponse
+//	@Failure		501		{object}	errorResponse
+//	@Router			/vms/{id}/resize [post]
 func (s *Server) resize(c echo.Context) error {
 	m, err := s.load(c)
 	if err != nil {
 		return err
 	}
-	var body resizeReq
+	var body resizeRequest
 	if err := c.Bind(&body); err != nil {
 		return badRequest(err.Error())
 	}
 	if body.VCPUs != nil || body.MemMiB != nil {
-		return echo.NewHTTPError(http.StatusNotImplemented, "cpu/mem resize not yet supported")
+		return echo.NewHTTPError(http.StatusNotImplemented, "processor and memory resize not yet supported")
 	}
 	if body.DiskMiB == nil {
-		return badRequest("disk_mib required")
+		return badRequest("disk_mib is required")
 	}
 	if err := m.Resize(c.Request().Context(), *body.DiskMiB); err != nil {
 		return err
@@ -173,11 +258,11 @@ func (s *Server) load(c echo.Context) (vm.VM, error) {
 	return s.driver.Load(c.Request().Context(), c.Param("id"))
 }
 
-// respond fetches live Info for m and writes it as the VM resource.
+// respond fetches live Info for m and writes it as the virtual machine resource.
 func (s *Server) respond(c echo.Context, status int, m vm.VM) error {
 	info, err := m.Info(c.Request().Context())
 	if err != nil {
 		return err
 	}
-	return c.JSON(status, toVM(info))
+	return c.JSON(status, toVirtualMachine(info))
 }

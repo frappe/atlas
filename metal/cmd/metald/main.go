@@ -24,6 +24,11 @@ import (
 	"github.com/frappe/atlas/metal/internal/systemd"
 )
 
+//	@title			Metal HTTP application programming interface
+//	@version		1.0
+//	@description	metald manages Firecracker micro virtual machines on one host.
+//	@BasePath		/
+
 // version is the build version
 // set with -ldflags "-X main.version=...".
 var version = "dev"
@@ -60,7 +65,8 @@ func parseFlags(cmd string, args []string) (string, error) {
 	return *path, nil
 }
 
-// listen opens the API listener. addr is a TCP host:port, or "unix:/path".
+// listen opens the application programming interface listener. addr is a TCP
+// host:port, or "unix:/path".
 func listen(addr string) (net.Listener, error) {
 	if path, ok := strings.CutPrefix(addr, "unix:"); ok {
 		_ = os.Remove(path)
