@@ -8,9 +8,10 @@ metald serves this over the unix socket `/run/metal.sock`. JSON in/out. Auth is
 socket permissions only. Stateless: responses reflect host truth, so they
 survive a metald restart.
 
-**Async:** `create`/`start`/`stop`/`delete` return `202` immediately;
-the client polls `GET /vms/{id}` until `state` settles. A failure shows as
-`state:"failed"` + `reason`. Read-only and disk-only ops return synchronously.
+**Synchronous:** every call blocks until the operation settles, then returns the
+current VM. `create` boots the guest inline and returns `201`. There is no polling
+yet. A VM that later dies on its own shows as `state:"failed"` with a `reason` on the
+next `GET /vms/{id}`. An asynchronous mode (`202` + poll) is planned; see Deferred.
 
 ## VM
 
@@ -35,15 +36,15 @@ derived from the VM's systemd unit. A VM stopped on request reports `stopped`;
 
 | Method | Path | Action |
 |---|---|---|
-| `POST` | `/vms` | create + boot (warm-start from a warm image) → `202` |
+| `POST` | `/vms` | create + boot (warm-start from a warm image) → `201` |
 | `GET` | `/vms` | list → `{ "vms": [VM] }` |
 | `GET` | `/vms/{id}` | get (includes `disk`) |
-| `POST` | `/vms/{id}/start` | boot a stopped VM → `202` |
-| `POST` | `/vms/{id}/stop` | shut down → `202` |
+| `POST` | `/vms/{id}/start` | boot a stopped VM → `200` |
+| `POST` | `/vms/{id}/stop` | shut down → `200` |
 | `POST` | `/vms/{id}/pause` | pause the guest (halt vCPUs) |
 | `POST` | `/vms/{id}/resume` | resume a paused guest |
 | `POST` | `/vms/{id}/resize` | change cpu/mem/disk |
-| `DELETE` | `/vms/{id}` | destroy + free → `202` |
+| `DELETE` | `/vms/{id}` | destroy + free → `204` |
 | `GET` | `/vms/{id}/console` | stream serial console |
 | `GET` | `/health` | liveness |
 
@@ -91,7 +92,7 @@ is consistent.
 | `POST` | `/vms/{id}/snapshots` | create → `{ "name", "memory" }` |
 | `DELETE` | `/vms/{id}/snapshots/{name}` | delete → `204` |
 | `POST` | `/vms/{id}/snapshots/{name}/restore` | restore in place |
-| `POST` | `/vms/{id}/snapshots/{name}/promote` | promote to an image → `202` |
+| `POST` | `/vms/{id}/snapshots/{name}/promote` | promote to an image → `201` |
 
 **Create** `POST /vms/{id}/snapshots` — `{ "name", "memory": false }`.
 `memory:false` is a disk-only ZFS snapshot, taken with no pause. `memory:true`
@@ -146,6 +147,10 @@ memory-less snapshot, delete an image that still has clones) · `500` internal.
 
 Image build/download from external sources (promote is the only way to make an
 image today).
+
+Asynchronous `create`/`start`/`stop`/`delete`: return `202` at once, then poll
+`GET /vms/{id}` until `state` settles, with a failure shown as `state:"failed"` +
+`reason`.
 
 Idempotency-key on create; `PATCH`/console interactivity; list pagination; diff
 (incremental) memory snapshots; snapshot caps / snapshot-of-snapshot /
