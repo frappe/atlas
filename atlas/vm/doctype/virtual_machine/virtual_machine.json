@@ -1,6 +1,6 @@
 {
  "actions": [],
- "autoname": "format:VM-{#####}",
+ "autoname": "format:vm-{#####}",
  "creation": "2026-09-03 03:25:50.873793",
  "doctype": "DocType",
  "engine": "InnoDB",
@@ -26,7 +26,9 @@
   "wireguard_mesh_ipv6",
   "column_break_network",
   "public_ipv4",
-  "mac"
+  "mac",
+  "ssh_section",
+  "ssh_keys"
  ],
  "fields": [
   {
@@ -169,6 +171,12 @@
    "read_only": 1
   },
   {
+   "fieldname": "ssh_keys",
+   "fieldtype": "Table",
+   "label": "SSH Keys",
+   "options": "Virtual Machine SSH Key"
+  },
+  {
    "fieldname": "column_break_status",
    "fieldtype": "Column Break"
   },
@@ -180,11 +188,16 @@
   {
    "fieldname": "column_break_gmmt",
    "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "ssh_section",
+   "fieldtype": "Section Break",
+   "label": "SSH"
   }
  ],
  "in_create": 1,
  "links": [],
- "modified": "2026-09-04 00:53:02.453391",
+ "modified": "2026-09-04 02:46:31.814864",
  "modified_by": "Administrator",
  "module": "VM",
  "name": "Virtual Machine",

@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 import frappe
-from frappe import _
+from frappe import _, request_cache
 from frappe.model.document import Document
 from frappe.utils import add_to_date, cint, now_datetime
 
@@ -30,15 +30,31 @@ class VirtualMachine(Document):
 	if TYPE_CHECKING:
 		from frappe.types import DF
 
+		from atlas.vm.doctype.virtual_machine_ssh_key.virtual_machine_ssh_key import VirtualMachineSSHKey
+
 		disk_mib: DF.Int
 		is_draft: DF.Check
 		is_terminating: DF.Check
 		memory_mib: DF.Int
 		server: DF.Link
+		ssh_keys: DF.Table[VirtualMachineSSHKey]
 		tenant_id: DF.Int
 		vcpus: DF.Int
 		virtual_machine_image: DF.Link
 	# end: auto-generated types
+
+	@request_cache
+	def get_metal_vm_info(self) -> dict[str, Any]:
+		try:
+			info = MetalClient(frappe.get_doc("Server", self.server)).get_virtual_machine(self.name)
+		except MetalClientError as error:
+			if not error.is_not_found:
+				frappe.log_error(
+					frappe.get_traceback(),
+					f"Could not get Virtual Machine {self.name} from Metal",
+				)
+			info = {}
+		return info
 
 	def before_insert(self) -> None:
 		if not getattr(self.flags, "created_by_virtual_machine_api", False):
@@ -65,77 +81,85 @@ class VirtualMachine(Document):
 		if address_name:
 			frappe.get_doc("Server IP Address", address_name).release()
 
-	def get_metal_info(self) -> dict[str, Any]:
-		"""Get this VM once for the current document load."""
-		cached = getattr(self, "_metal_info_cache", None)
-		if cached is not None:
-			return cached
-		try:
-			info = MetalClient(frappe.get_doc("Server", self.server)).get_virtual_machine(self.name)
-		except MetalClientError as error:
-			if not error.is_not_found:
-				frappe.log_error(
-					frappe.get_traceback(),
-					f"Could not get Virtual Machine {self.name} from Metal",
-				)
-			info = {}
-		self._metal_info_cache = info
-		return info
-
 	@property
 	def status(self) -> str:
 		if self.is_draft:
 			return "Unknown"
+
 		if self.is_terminating:
 			return "Terminating"
-		info = self.get_metal_info()
+
+		info = self.get_metal_vm_info()
 		if not info:
 			return "Unknown"
+
 		return _STATUS_BY_STATE.get(info.get("state", ""), "Unknown")
 
 	@property
 	def desired_state(self) -> str | None:
-		return self.get_metal_info().get("desired_state")
+		return self.get_metal_vm_info().get("desired_state")
 
 	@property
 	def error(self) -> str | None:
-		return self.get_metal_info().get("error")
+		return self.get_metal_vm_info().get("error")
 
 	@property
 	def hostname(self) -> str | None:
-		return self.get_metal_info().get("hostname")
+		return self.get_metal_vm_info().get("hostname")
 
 	@property
 	def mac(self) -> str | None:
-		return (self.get_metal_info().get("network") or {}).get("mac")
+		return (self.get_metal_vm_info().get("network") or {}).get("mac")
 
 	@property
 	def egress(self) -> str | None:
-		return (self.get_metal_info().get("network") or {}).get("egress")
+		return (self.get_metal_vm_info().get("network") or {}).get("egress")
 
 	@property
 	def wireguard_mesh_ipv6(self) -> str | None:
-		return (self.get_metal_info().get("network") or {}).get("wireguard_mesh_ipv6")
+		return (self.get_metal_vm_info().get("network") or {}).get("wireguard_mesh_ipv6")
 
 	@property
 	def public_ipv4(self) -> str | None:
-		return (self.get_metal_info().get("network") or {}).get("public_ipv4")
+		return (self.get_metal_vm_info().get("network") or {}).get("public_ipv4")
+
+	def onload(self) -> None:
+		"""Show the SSH keys that Metal currently holds for this VM."""
+		if ssh_keys := self.get_metal_vm_info().get("ssh_keys"):
+			self.set("ssh_keys", [{"ssh_key": key} for key in ssh_keys])
+
+	def before_save(self) -> None:
+		if self.is_new():
+			return
+
+		# If the SSH keys have changed, update them in metal
+		desired = [row.ssh_key.strip() for row in self.ssh_keys if row.ssh_key and row.ssh_key.strip()]
+		current = self.get_metal_vm_info().get("ssh_keys") or []
+		if set(desired) == set(current):
+			return
+
+		try:
+			MetalClient(frappe.get_doc("Server", self.server)).replace_virtual_machine_ssh_keys(
+				self.name, desired
+			)
+		except MetalClientError as error:
+			throw_metal_error(error)
 
 	@frappe.whitelist(methods=["POST"])
 	def start(self) -> None:
-		self.perform_power_action("start")
+		self.perform_action("start")
 
 	@frappe.whitelist(methods=["POST"])
 	def stop(self) -> None:
-		self.perform_power_action("stop")
+		self.perform_action("stop")
 
 	@frappe.whitelist(methods=["POST"])
 	def pause(self) -> None:
-		self.perform_power_action("pause")
+		self.perform_action("pause")
 
 	@frappe.whitelist(methods=["POST"])
 	def resume(self) -> None:
-		self.perform_power_action("resume")
+		self.perform_action("resume")
 
 	@frappe.whitelist(methods=["POST"])
 	def terminate(self) -> None:
@@ -209,7 +233,7 @@ class VirtualMachine(Document):
 			throw_metal_error(error)
 		self.db_set("disk_mib", disk_mib)
 
-	def perform_power_action(self, action: str) -> None:
+	def perform_action(self, action: str) -> None:
 		"""Ask Metal to apply one power action."""
 		frappe.only_for("System Manager")
 		try:
