@@ -8,13 +8,24 @@ WORKDIR=${METALD_WORKDIR:-/tmp/metald}
 ADDR=${METALD_ADDR:-127.0.0.1:8080}
 KEY=${METALD_KEY:-$WORKDIR/keys/id_ed25519}
 USER=${METALD_SSH_USER:-root}
-IMAGE_URL=${METALD_IMAGE_URL:?set METALD_IMAGE_URL}
-IMAGE_SHA256=${METALD_IMAGE_SHA256:?set METALD_IMAGE_SHA256}
-KERNEL_URL=${METALD_KERNEL_URL:?set METALD_KERNEL_URL}
-KERNEL_SHA256=${METALD_KERNEL_SHA256:?set METALD_KERNEL_SHA256}
-ARCHITECTURE=${METALD_ARCHITECTURE:-amd64}
+AUTH_TOKEN=${METALD_AUTH_TOKEN:-metal-development-token}
+BULK=${METALD_BULK_DIR:-$WORKDIR}
+HOST_ARCHITECTURE=$(uname -m)
+IMAGE_BASE_URL=https://s3.amazonaws.com/spec.ccfc.min/firecracker-ci/v1.10/$HOST_ARCHITECTURE
 
-api() { curl -sS "http://$ADDR$1" "${@:2}"; }
+case $HOST_ARCHITECTURE in
+	x86_64) DEFAULT_ARCHITECTURE=amd64 ;;
+	aarch64) DEFAULT_ARCHITECTURE=arm64 ;;
+	*) echo "unsupported architecture: $HOST_ARCHITECTURE" >&2; exit 1 ;;
+esac
+
+IMAGE_URL=${METALD_IMAGE_URL:-$IMAGE_BASE_URL/ubuntu-22.04.ext4}
+IMAGE_SHA256=${METALD_IMAGE_SHA256:-$(sha256sum "$BULK/downloads/ubuntu.ext4" | cut -d " " -f 1)}
+KERNEL_URL=${METALD_KERNEL_URL:-$IMAGE_BASE_URL/vmlinux-5.10.223}
+KERNEL_SHA256=${METALD_KERNEL_SHA256:-$(sha256sum "$WORKDIR/images/ubuntu/vmlinux" | cut -d " " -f 1)}
+ARCHITECTURE=${METALD_ARCHITECTURE:-$DEFAULT_ARCHITECTURE}
+
+api() { curl -sS "http://$ADDR$1" -H "Authorization: Bearer $AUTH_TOKEN" "${@:2}"; }
 
 pubkey=$(cat "$KEY.pub")
 requested_id="integration-$(cat /proc/sys/kernel/random/uuid)"

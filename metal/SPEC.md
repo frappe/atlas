@@ -52,9 +52,9 @@ Concept overviews:
 
 - [`docs/architecture.md`](docs/architecture.md) the big picture and dependency graph.
 - [`docs/vm.md`](docs/vm.md) the VM lifecycle and operations.
-- [`docs/storage.md`](docs/storage.md) ZFS disks, snapshots, and images.
-- [`docs/networking.md`](docs/networking.md) per-VM namespaces and NAT.
-- [`docs/snapshots.md`](docs/snapshots.md) disk and memory snapshots, and warm images.
+- [`docs/storage.md`](docs/storage.md) ZFS disks, images, and local artifacts.
+- [`docs/networking.md`](docs/networking.md) VM namespaces, public IPv4, and WireGuard peers.
+- [`docs/snapshots.md`](docs/snapshots.md) image staging and local warm artifacts.
 
 References:
 

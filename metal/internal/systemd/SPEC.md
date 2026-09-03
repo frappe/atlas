@@ -24,7 +24,7 @@ One template unit backs every VM. `Connect` opens the system bus. `Close` shuts 
 
 ```text
 template:   metal-vm@.service
-per VM:     metal-vm@<id>.service        id = VM UUID
+per VM:     metal-vm@<id>.service        ID comes from the controller
 
 metald --D-Bus--> system systemd --> jailer --> firecracker
 ```

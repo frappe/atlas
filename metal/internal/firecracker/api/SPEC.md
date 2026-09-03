@@ -14,7 +14,7 @@ library is used.
 | Type | Role |
 |---|---|
 | `Client` | An `http.Client` whose dialer binds to one VM's socket. `New(sockPath)`. |
-| models | Request and response structs: `MachineConfig`, `BootSource`, `Drive`, `PartialDrive`, `NetworkInterface`, `MmdsConfig`, `InstanceInfo`, `CreateSnapshotReq`, `MemBackend`, `LoadSnapshotReq`. |
+| models | Request and response structs: `MachineConfig`, `BootSource`, `Drive`, `PartialDrive`, `NetworkInterface`, `MMDSConfig`, `InstanceInfo`, `CreateSnapshotRequest`, `MemBackend`, `LoadSnapshotRequest`. |
 | `Error` | `{Status, Message}`. Reads firecracker's `fault_message`. |
 
 ## Transport
@@ -43,8 +43,8 @@ Client.do(method, path, body, out):
 | `Resume` | PATCH | `/vm` | Run the guest again. |
 | `CreateSnapshot` | PUT | `/snapshot/create` | Write state and memory. The VM must be paused. |
 | `LoadSnapshot` | PUT | `/snapshot/load` | Restore into a fresh firecracker process. |
-| `PutMmdsConfig` | PUT | `/mmds/config` | Enable the metadata service on an interface. |
-| `PutMmds` | PUT | `/mmds` | Set the metadata payload. |
+| `PutMMDSConfig` | PUT | `/mmds/config` | Enable the metadata service on an interface. |
+| `PutMMDS` | PUT | `/mmds` | Set the metadata payload. |
 
 ## Related
 

@@ -1,74 +1,69 @@
 # Storage
 
-[metal SPEC](../SPEC.md) · overview: [docs/architecture.md](architecture.md)
+[metal SPEC](../SPEC.md) · detail: [internal/storage/SPEC.md](../internal/storage/SPEC.md)
 
-metal stores each VM's disk on ZFS. The premise is one choice: a VM disk is a
-copy-on-write clone of a base image. That choice makes a create near-instant, keeps
-many VMs from one image cheap, and gives snapshots and warm images from the same
-primitives. Detail: [internal/storage/SPEC.md](../internal/storage/SPEC.md).
+Metal uses ZFS for image volumes and virtual machine disks. A VM disk is a copy-on-write clone of an image snapshot.
+
+## Storage owners
+
+| Type | Responsibility |
+|---|---|
+| `ZFSPool` | Pool capacity and ZFS names. |
+| `VirtualMachineStore` | VM disk preparation, resize, usage, and release. |
+| `ImageStore` | Image import, policy, pruning, and warm artifacts. |
+| `SnapshotStore` | Image staging, upload, deletion, and cleanup. |
+
+`NewStores` creates these services with one shared `ZFSPool`.
 
 ## Image and clone model
 
 ```text
-images/<ref>        base image (a zvol), treated as read-only
-   |  @ready snapshot
-   v
-vms/<id>            each VM's disk, a clone of images/<ref>@ready
+<pool>/images/<image>@ready
+              |
+              └─ zfs clone -> <pool>/vms/<vm-id>
 ```
 
-A clone shares the base's blocks until the VM writes, so it starts near zero size
-and grows only as it diverges. Detail:
-[internal/storage/SPEC.md](../internal/storage/SPEC.md).
+Image import downloads and verifies the root file system and kernel. Metal stores an immutable manifest for the image reference.
 
 ## Disk lifecycle
 
-```text
-create   zfs clone images/<ref>@ready vms/<id>
-grow     zfs set volsize   grow-only; the guest resizes its own filesystem
-persist  the disk survives a stop; a restart reuses it
-free     zfs destroy -r vms/<id>   on Destroy
-```
+VM disk preparation clones the image only when the VM disk is absent. Restarting a cold VM reuses its disk.
 
-## Snapshots and images
+Disk resize is grow-only. A running VM receives a Firecracker drive update after the ZFS volume grows.
 
-A disk snapshot is a cheap ZFS snapshot. A memory snapshot pairs it with captured
-RAM. Promote copies a snapshot into a standalone warm image with `zfs send | zfs
-recv`, so the image shares no blocks with the VM and outlives it. Full concept:
-[docs/snapshots.md](snapshots.md). Detail:
-[internal/storage/SPEC.md](../internal/storage/SPEC.md).
+Terminate removes the VM dataset and its snapshots after process and network cleanup.
+
+## Image cache
+
+`POST /sync` replaces the complete image policy set. Cached images for the host architecture download in the background.
+
+A successful VM start updates `last-used`. Metal prunes an image after 24 idle hours when policy does not retain it. A dependent VM disk prevents image deletion.
 
 ## Chroot substrate
 
-The VM disk is a real block device (a zvol). metald exposes it inside the jailer
-chroot as a block node, and hard-links the kernel next to it. Detail:
-[internal/storage/SPEC.md](../internal/storage/SPEC.md) and
-[docs/host-layout.md](host-layout.md).
+Metal hard-links the kernel into the jail. It creates a block device node for the VM ZFS volume.
+
+`LinkOrCopy` uses a hard link when possible. Otherwise, it uses `cp --reflink=auto`.
+
+## Snapshots and images
+
+### Snapshot staging
+
+A public snapshot creates an immutable image transfer. It does not create a VM rollback point.
+
+The snapshot store creates a source disk snapshot, a read-only staging clone, a kernel file, and metadata. See [docs/snapshots.md](snapshots.md).
+
+### Warm artifacts
+
+Memory and Firecracker state stay on the host. They are stored by image reference and an exact compatibility key.
+
+Warm disk artifacts use `<pool>/warm/<key>@ready`. They are separate from imported image volumes.
 
 ## Design notes
 
-Why the main choices were made.
-
-- Clone, not copy. `zfs clone` from `@ready` is near-instant and shares the base's
-  blocks until written, so VMs cost almost no space until they diverge. A clone needs
-  a snapshot source, hence the immutable `@ready`.
-- Grow-only disks. Shrinking under a live filesystem can drop data. Growing is safe:
-  the guest extends its own filesystem (`growpart`, `resize2fs`). A smaller resize is
-  rejected upstream.
-- Disk persists across a stop. `provisionDisk` clones only when the disk is absent, so
-  a restart reuses it. Rollback destroys the disk only if this call created it, so a
-  restart never discards data.
-- Snapshot is cheap; restore is destructive. `zfs snapshot` just pins blocks. `zfs
-  rollback -r` reverts and discards newer snapshots, since ZFS rolls back only to the
-  latest. The VM must be stopped, or the revert corrupts a live guest.
-- Promote copies in full. A promoted image must outlive its VM. A clone would block
-  the VM's deletion or share its fate. `zfs send | zfs recv` makes a standalone
-  dataset, so the VM can be deleted after. The cost is a full copy.
-- Block node, not a file. The disk is a zvol. The jail cannot reach `/dev`, so metald
-  makes a block node in the chroot mirroring `/dev/zvol/...`, owned by the VM uid.
-  udev creates the symlink async, so `statBlock` waits up to ~3 s.
-- Hard-link the kernel. A hard link is free and shares the read-only kernel. It cannot
-  cross a filesystem, so `kernelDir` sits with the chroots.
-- Memory files are 0644. On warm start any VM uid hard-links an image's `state` and
-  `mem` files into its chroot, so they are world-readable on a trusted host.
-
-Detail: [internal/storage/SPEC.md](../internal/storage/SPEC.md).
+- ZFS clone creation keeps VM disk reservation fast.
+- Immutable manifests prevent one image reference from changing content.
+- Grow-only resize avoids host-side filesystem shrink risk.
+- Separate stores keep pool, VM disk, image, and staging state with one owner.
+- Image policy controls retention, not whether a VM can download an image.
+- Memory and Firecracker state stay on the host.

@@ -8,6 +8,15 @@ All routes except `/docs` and `/docs/swagger.json` require a bearer token. `meta
 Authorization: Bearer <token>
 ```
 
+## Service routes
+
+| Method | Path | Action |
+|---|---|---|
+| `GET` | `/health` | return `200` when the API is available |
+| `POST` | `/sync` | apply controller state and return host capacity |
+| `GET` | `/docs` | serve the API documentation |
+| `GET` | `/docs/swagger.json` | serve the OpenAPI document |
+
 ## Virtual machines
 
 VM create is an idempotent resource operation.
@@ -52,11 +61,11 @@ Content-Type: application/json
 }
 ```
 
-The first request reserves the supplied ID and returns `202`. A repeat request for the same ID and specification also returns `202`. A request that reuses the ID with a different specification returns `409`. The background reconciler starts the VM. The response can report `state: "unknown"` until the driver observes the VM.
+The first request reserves the supplied ID and returns `202`. A repeat request for the same ID and specification also returns `202`. A request that changes reservation identity for the same ID returns `409`. The background reconciler starts the VM. The response can report `state: "unknown"` until the driver observes the VM.
 
 Metal stores one immutable manifest for each `image.ref`. The manifest contains the root file system digest, kernel digest, and architecture. Metal verifies downloads before import. A request that reuses an image reference with different content returns `409`.
 
-VM responses contain immutable image data:
+VM responses contain image identity and cache policy:
 
 ```json
 {
@@ -64,7 +73,14 @@ VM responses contain immutable image data:
     "ref": "ubuntu-24.04-1",
     "architecture": "amd64",
     "rootfs": {"sha256": "64 hexadecimal characters"},
-    "kernel": {"sha256": "64 hexadecimal characters"}
+    "kernel": {"sha256": "64 hexadecimal characters"},
+    "cache_image": true,
+    "memory_snapshot": true,
+    "memory_snapshot_configuration": {
+      "virtual_cpu_count": 2,
+      "memory_mib": 512,
+      "disk_mib": 2048
+    }
   },
   "ssh_keys": ["ssh-ed25519 AAAA... user@example"]
 }
@@ -89,7 +105,7 @@ They do not contain image transport URLs, the internal guest IP, or the Firecrac
 
 Lifecycle requests return `202`. Poll `GET /vms/{id}` until `state` reaches `desired_state`.
 
-`PUT /vms/{id}/ssh-keys` accepts the complete desired `ssh_keys` list and returns the updated VM. An empty list removes all keys. Running and paused VMs receive updated MMDS immediately. Stopped VMs use the keys at their next boot. VM list and info responses include the stored keys.
+`PUT /vms/{id}/ssh-keys` accepts the complete desired `ssh_keys` list and returns the updated VM. An empty list removes all keys. The list can contain at most 100 unique OpenSSH keys. Each key must use one line and be at most 16 KiB. Running and paused VMs receive updated MMDS immediately. Stopped VMs use the keys at their next boot.
 
 ## Image staging
 
@@ -98,10 +114,10 @@ Metal does not expose image list, image delete, or in-place snapshot restore API
 | Method | Path | Action |
 |---|---|---|
 | `POST` | `/vms/{id}/snapshots` | create local rootfs and kernel staging with a new UUIDv7 |
-| `POST` | `/snapshots/{snapshot_id}/upload` | upload staged artifacts with signed multipart URLs |
+| `POST` | `/snapshots/{snapshot_id}/upload` | upload staged artifacts with multipart HTTP URLs |
 | `DELETE` | `/snapshots/{snapshot_id}` | remove local staging |
 
-The create response contains the Metal-generated snapshot ID and the exact rootfs and kernel sizes. Atlas uses the ID as its Machine image document name. Upload parts are 2 GiB, except for the final part. Metal streams each part and returns its S3 ETag plus the SHA-256 value of each complete artifact. Atlas completes the multipart uploads, then deletes local staging.
+The create response contains the Metal-generated snapshot ID and the exact rootfs and kernel sizes. Atlas uses the ID as its Machine image document name. Upload parts are 2 GiB, except for the final part. Metal streams each part and returns its HTTP ETag plus the SHA-256 value of each complete artifact. Atlas completes the multipart uploads, then deletes local staging.
 
 Metal updates snapshot activity when an upload starts or finishes. The image reconciler deletes local staging after 48 hours without activity.
 
@@ -148,7 +164,7 @@ A staging snapshot is only an image-transfer resource. It cannot roll back its s
 }
 ```
 
-Node names, node IDs, public keys, and image references must be unique. Metal saves both desired sets atomically and reconciles images outside the request. Cached images remain local. Other images are pruned after 24 hours without a successful VM start when no dependent disk exists. A cached memory-snapshot image uses local warm artifacts only when CPU, memory, and disk match exactly.
+Node names, node IDs, public keys, and image references must be unique. Metal applies WireGuard peers, then saves the image policy. It reconciles images outside the request. Cached images for the host architecture remain local. Other images are pruned after 24 hours without a successful VM start when no dependent disk exists. A cached memory-snapshot image uses local warm artifacts only when CPU, memory, and disk match exactly.
 
 ## Errors
 

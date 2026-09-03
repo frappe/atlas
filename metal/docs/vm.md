@@ -1,54 +1,63 @@
 # VM functionality
 
-[metal SPEC](../SPEC.md) · overview: [docs/architecture.md](architecture.md)
+[metal SPEC](../SPEC.md) · contract: [internal/vm/SPEC.md](../internal/vm/SPEC.md)
 
-A virtual machine in metal is one firecracker guest with its own disk, network, and
-optional memory snapshots. This is the broad view. The contract is in
-[internal/vm/SPEC.md](../internal/vm/SPEC.md); the implementation is in
-[internal/firecracker/SPEC.md](../internal/firecracker/SPEC.md).
+A virtual machine has persisted metadata, desired state, and observed host state. The controller requests state changes, and Metal reconciles them.
 
 ## Lifecycle
 
 ```text
- create ----> created ----start----> running ----stop----> stopped ----start--> running
-                                       |  ^
-                                 pause |  | resume
-                                       v  |
-                                     paused
- destroy: any state -> destroyed        crash: running -> failed
+reservation -> unknown -> running <-> paused
+                           |
+                           v
+                         stopped
+
+any retained state -> desired destroyed -> cleanup -> removed
+runtime error -> failed
 ```
 
-`stopped` is a stop on request. `failed` is a guest that died on its own. Full
-transition table: [internal/vm/SPEC.md](../internal/vm/SPEC.md).
+Create reserves the supplied VM ID and sets the desired state to `running`. It does not wait for Firecracker to start.
+
+Start, stop, pause, resume, and terminate return `202`. Poll the VM until `state` matches `desired_state`.
 
 ## Operations
 
 | Operation | Effect |
 |---|---|
-| Create | Allocate id, uid, network. Configure the guest. Boot on `Start`. |
-| Start | Cold-boot, warm-load, or relaunch a stopped VM. |
-| Stop | Graceful shutdown, or forced kill. Keeps disk and network. |
-| Pause / Resume | Halt or run the vCPUs. Pause keeps memory. |
-| Resize | Grow the disk. Grow-only. |
-| Destroy | Free disk, network, socket, and files. |
-| Snapshot / Restore / Promote | See [docs/snapshots.md](snapshots.md). |
+| Create | Store a VM reservation and request `running`. |
+| Start | Request `running`. |
+| Stop | Request `stopped`. Keep the VM disk and network reservation. |
+| Pause | Request `paused`. |
+| Resume | Request `running`. |
+| Terminate | Request cleanup of all VM resources. |
+| Compute resize | Change CPU and memory while stopped, then request `running`. |
+| Disk resize | Grow the VM disk. |
+| SSH key replacement | Replace all keys and refresh MMDS when active. |
+| Snapshot | Create rootfs and kernel image staging. |
 
-Detail: [internal/firecracker/SPEC.md](../internal/firecracker/SPEC.md).
+Metal does not support in-place snapshot restore or promotion.
 
 ## Cold boot vs warm start
 
-```text
-COLD  boot the kernel and rootfs, then run
-WARM  load a warm image's captured RAM and resume, so the guest skips boot
-```
+Cold boot clones an image disk, links the kernel, configures Firecracker, and starts the guest.
 
-A warm image is made by promoting a memory snapshot. The warm load refreshes the
-guest's ssh keys and clock through the metadata service before it runs. Detail:
-[internal/firecracker/SPEC.md](../internal/firecracker/SPEC.md) and
-[docs/snapshots.md](snapshots.md).
+Warm boot loads host-local disk, state, and memory artifacts for an exact image and VM shape. If warm boot fails, Metal uses cold boot.
 
 ## Stop escalation
 
-A graceful stop sends Ctrl+Alt+Del, waits 30 s, then escalates to a systemd stop
-job. A forced stop sends SIGKILL. Detail:
-[internal/firecracker/SPEC.md](../internal/firecracker/SPEC.md).
+Metal sends Ctrl+Alt+Del and waits up to 30 seconds. It sends `SIGKILL` when the guest does not stop.
+
+## Cleanup
+
+Terminate stores the desired `destroyed` state. Reconciliation records cleanup progress for systemd, network, and storage.
+
+Metal removes the VM directory only after all cleanup steps succeed.
+
+## Design notes
+
+- The controller supplies the VM ID, so reservation retries use one stable resource.
+- Desired state keeps API requests fast and lets reconciliation retry host operations.
+- Observed state remains separate because process changes are asynchronous.
+- Stop keeps the disk for restart. Terminate removes all owned resources.
+- Compute and disk resize use separate endpoints because their safety rules differ.
+- Warm boot is an optimization. Cold boot remains the reliable path.
