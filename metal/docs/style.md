@@ -44,8 +44,9 @@ code. This file governs the docs.
   in the Related links.
 - Lead the Purpose with the premise: the one core idea the package rests on, before
   the mechanics. State it in a sentence or two.
-- Give the rationale for non-obvious design decisions. State each "why" in one or two
-  lines. A short "Design notes" section is a good home when there are several.
+- Put design rationale in the concept doc, not the SPEC. A "Design notes" section in
+  the `docs/*.md` overview holds the "why", one or two tight lines each. The SPEC
+  states the premise in its Purpose and otherwise stays mechanics.
 - Parent and root SPEC files are routers. Keep them short. Link to children and
   concept docs.
 
