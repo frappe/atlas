@@ -30,6 +30,14 @@ class SizeInfo:
 
 
 @dataclass(frozen=True, slots=True)
+class ReservedIPAddress:
+	"""Store one public IP address from a provider."""
+
+	address: str
+	provider_resource_id: str
+
+
+@dataclass(frozen=True, slots=True)
 class ImageInfo:
 	"""Vendor server OS image data."""
 
@@ -149,6 +157,22 @@ class ServerProvider(ABC):
 	def cleanup_provisioned_server(self, server: "Server") -> None:
 		"""Remove a newly created provider server after a local provisioning failure."""
 		return None
+
+	def reserve_ip(self) -> ReservedIPAddress:
+		"""Reserve one public IPv4 address."""
+		raise ServerProviderError("This provider cannot reserve public IP addresses")
+
+	def delete_ip(self, provider_resource_id: str) -> None:
+		"""Delete one public IPv4 address."""
+		raise ServerProviderError("This provider cannot delete public IP addresses")
+
+	def attach_ip(self, provider_resource_id: str, server: "Server") -> None:
+		"""Attach an IP address to a bare-metal server."""
+		raise ServerProviderError("This provider cannot attach public IP addresses")
+
+	def detach_ip(self, provider_resource_id: str) -> None:
+		"""Detach an IP address from its bare-metal server."""
+		raise ServerProviderError("This provider cannot detach public IP addresses")
 
 	def run_provisioning(self, server: "Server") -> None:
 		"""Run the post-creation setup functions in order."""
