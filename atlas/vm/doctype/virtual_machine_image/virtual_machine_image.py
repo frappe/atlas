@@ -138,6 +138,13 @@ class VirtualMachineImage(Document):
 		if self.status != "Available":
 			frappe.throw(_("Virtual Machine Image {0} is not available.").format(self.title))
 
+	def validate_compatibility(self, disk_mib: int) -> None:
+		"""Check that the requested disk can hold the image."""
+		if disk_mib < self.image_size_mib:
+			frappe.throw(
+				_("Disk must be at least {0} MiB for image {1}.").format(self.image_size_mib, self.title)
+			)
+
 	def validate_user_data(self, user_data: str) -> None:
 		if user_data and not self.supports_cloud_init:
 			frappe.throw(_("This Virtual Machine Image does not support cloud-init user data."))

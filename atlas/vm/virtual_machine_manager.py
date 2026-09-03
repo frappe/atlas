@@ -103,6 +103,7 @@ class VirtualMachineManager:
 			raise AssertionError from error
 
 		image = self.get_image(request.virtual_machine_image)
+		image.validate_compatibility(request.disk_mib)
 		server = self.select_server(request, image.platform)
 
 		image_name = cast(str, image.name)

@@ -57,6 +57,29 @@ class TestVirtualMachineImage(UnitTestCase):
 		self.assertEqual(request["rootfs"]["sha256"], "a" * 64)
 		self.assertEqual(request["kernel"]["sha256"], "b" * 64)
 
+	def test_image_requires_disk_to_hold_rootfs(self) -> None:
+		image = self.make_image(image_size_mib=10240)
+
+		image.validate_compatibility(disk_mib=10240)
+		image.validate_compatibility(disk_mib=20480)
+		with self.assertRaises(frappe.ValidationError):
+			image.validate_compatibility(disk_mib=1024)
+
+	def test_memory_snapshot_image_allows_any_matching_disk(self) -> None:
+		# Metal cold boots on a spec mismatch, so a memory snapshot image only needs
+		# a disk that holds its root file system.
+		image = self.make_image(
+			image_size_mib=10240,
+			memory_snapshot=1,
+			memory_snapshot_virtual_cpu_count=2,
+			memory_snapshot_memory_mib=2048,
+			memory_snapshot_disk_mib=10240,
+		)
+
+		image.validate_compatibility(disk_mib=20480)
+		with self.assertRaises(frappe.ValidationError):
+			image.validate_compatibility(disk_mib=1024)
+
 	def test_memory_snapshot_requires_positive_configuration(self) -> None:
 		image = self.make_image(
 			memory_snapshot=1,
