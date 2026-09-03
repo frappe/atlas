@@ -35,6 +35,13 @@ frappe.ui.form.on("Virtual Machine", {
 			__("Actions")
 		);
 		frm.add_custom_button(__("Resize Disk"), () => showResizeDiskDialog(frm), __("Actions"));
+		if (is_stopped) {
+			frm.add_custom_button(
+				__("Resize Compute"),
+				() => showResizeComputeDialog(frm),
+				__("Actions")
+			);
+		}
 		frm.add_custom_button(
 			__("Terminate"),
 			() =>
@@ -122,6 +129,39 @@ function showResizeDiskDialog(frm) {
 				})
 				.then(() => frm.reload_doc()),
 		__("Resize Disk"),
+		__("Resize")
+	);
+}
+
+function showResizeComputeDialog(frm) {
+	frappe.prompt(
+		[
+			{
+				fieldname: "vcpus",
+				fieldtype: "Int",
+				label: __("vCPUs"),
+				reqd: 1,
+				default: frm.doc.vcpus,
+			},
+			{
+				fieldname: "memory_mib",
+				fieldtype: "Int",
+				label: __("Memory (MiB)"),
+				reqd: 1,
+				default: frm.doc.memory_mib,
+			},
+		],
+		({ vcpus, memory_mib }) =>
+			frm
+				.call({
+					method: "resize_compute",
+					doc: frm.doc,
+					args: { vcpus, memory_mib },
+					freeze: true,
+					freeze_message: __("Resizing compute..."),
+				})
+				.then(() => frm.reload_doc()),
+		__("Resize Compute"),
 		__("Resize")
 	);
 }

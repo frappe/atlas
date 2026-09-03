@@ -110,6 +110,7 @@ class TestMetalClient(UnitTestCase):
 		with patch("atlas.vm.metal_client.requests.request", return_value=response) as request:
 			client.perform_action("VM-00001", "start")
 			client.resize_virtual_machine_disk("VM-00001", 2048)
+			client.resize_virtual_machine_compute("VM-00001", 2, 2048)
 			client.terminate_virtual_machine("VM-00001")
 
 		paths = [call.args[1] for call in request.call_args_list]
@@ -118,9 +119,11 @@ class TestMetalClient(UnitTestCase):
 			[
 				"http://10.0.0.2:9000/vms/VM-00001/actions/start",
 				"http://10.0.0.2:9000/vms/VM-00001/resize/disk",
+				"http://10.0.0.2:9000/vms/VM-00001/resize/compute",
 				"http://10.0.0.2:9000/vms/VM-00001/actions/terminate",
 			],
 		)
+		self.assertEqual(request.call_args_list[2].kwargs["json"], {"vcpus": 2, "memory_mib": 2048})
 
 	def test_replace_ssh_keys_uses_vm_subresource(self) -> None:
 		client = MetalClient.__new__(MetalClient)

@@ -95,6 +95,15 @@ class MetalClient:
 			expected_status=202,
 		)
 
+	def resize_virtual_machine_compute(self, virtual_machine_id: str, vcpus: int, memory_mib: int) -> None:
+		"""Ask Metal to change VM CPU and memory. The VM must be stopped."""
+		self._request(
+			"POST",
+			f"/vms/{virtual_machine_id}/resize/compute",
+			json={"vcpus": vcpus, "memory_mib": memory_mib},
+			expected_status=202,
+		)
+
 	def create_snapshot(self, virtual_machine_id: str) -> dict[str, Any]:
 		"""Create local image staging for one VM."""
 		return self._request(

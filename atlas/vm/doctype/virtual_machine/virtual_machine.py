@@ -221,6 +221,20 @@ class VirtualMachine(Document):
 			throw_metal_error(error)
 		self.db_set("disk_mib", disk_mib)
 
+	@frappe.whitelist(methods=["POST"])
+	def resize_compute(self, vcpus: int, memory_mib: int) -> None:
+		"""Ask Metal to change this VM CPU and memory. The VM must be stopped."""
+		frappe.only_for("System Manager")
+		vcpus = int(vcpus)
+		memory_mib = int(memory_mib)
+		try:
+			MetalClient(frappe.get_doc("Server", self.server)).resize_virtual_machine_compute(
+				self.name, vcpus, memory_mib
+			)
+		except MetalClientError as error:
+			throw_metal_error(error)
+		self.db_set({"vcpus": vcpus, "memory_mib": memory_mib})
+
 	def perform_action(self, action: str) -> None:
 		"""Ask Metal to apply one power action."""
 		frappe.only_for("System Manager")
