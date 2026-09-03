@@ -42,6 +42,10 @@ code. This file governs the docs.
 
 - No "Dependencies" section. Put dependency direction in the `internal/` graph and
   in the Related links.
+- Lead the Purpose with the premise: the one core idea the package rests on, before
+  the mechanics. State it in a sentence or two.
+- Give the rationale for non-obvious design decisions. State each "why" in one or two
+  lines. A short "Design notes" section is a good home when there are several.
 - Parent and root SPEC files are routers. Keep them short. Link to children and
   concept docs.
 
