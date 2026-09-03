@@ -138,5 +138,4 @@ Why the main choices were made.
 - [docs/storage.md](../../docs/storage.md) broad storage overview.
 - [docs/snapshots.md](../../docs/snapshots.md) disk and memory snapshots, warm images.
 - [internal/firecracker/SPEC.md](../firecracker/SPEC.md) the caller: boot, warm-start, restore.
-- [internal/hostcmd/SPEC.md](../hostcmd/SPEC.md) runs the `zfs` and `cp` commands.
 - [docs/host-layout.md](../../docs/host-layout.md) the on-disk paths and dataset names.

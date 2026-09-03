@@ -25,9 +25,9 @@ docs/                        concept docs and references
 test/                        Integration test data
 ```
 
-Each package has a `SPEC.md`. Start at [`internal/SPEC.md`](internal/SPEC.md) for the
-package map and dependency graph, or [`cmd/metald/SPEC.md`](cmd/metald/SPEC.md) for
-the daemon.
+Most packages have a `SPEC.md`. Start at [`internal/SPEC.md`](internal/SPEC.md) for
+the package map and dependency graph, or [`cmd/metald/SPEC.md`](cmd/metald/SPEC.md)
+for the daemon.
 
 ## Software
 

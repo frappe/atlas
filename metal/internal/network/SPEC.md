@@ -131,5 +131,4 @@ Why the main choices were made.
 
 - [docs/networking.md](../../docs/networking.md) broad networking overview.
 - [internal/firecracker/SPEC.md](../firecracker/SPEC.md) attaches the guest to `tap0` and serves MMDS.
-- [internal/hostcmd/SPEC.md](../hostcmd/SPEC.md) runs the `ip`, `sysctl`, and `iptables` commands.
 - [docs/host-layout.md](../../docs/host-layout.md) the netns and interface names on the host.

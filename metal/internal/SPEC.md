@@ -21,7 +21,7 @@ concretes together.
 | [network](network/SPEC.md) | Per-VM network namespace, TAP, and NAT. |
 | [systemd](systemd/SPEC.md) | Unit control over D-Bus. |
 | [idalloc](idalloc/SPEC.md) | Per-VM uid/gid allocation. |
-| [hostcmd](hostcmd/SPEC.md) | Host command execution with folded errors. |
+| hostcmd | Host command execution with folded errors. |
 
 ## Dependency graph
 
