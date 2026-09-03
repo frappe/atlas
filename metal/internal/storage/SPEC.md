@@ -111,31 +111,27 @@ warm memory file is a hard link with no data copy.
 Why the main choices were made.
 
 - Clone, not copy. `zfs clone` from `@ready` is near-instant and shares the base's
-  blocks until written, so many VMs from one image cost almost no space until they
-  diverge. A clone needs a snapshot source, so the base carries an immutable
-  `@ready` point.
-- Grow-only disks. Shrinking a zvol under a live guest filesystem can drop data past
-  the new end. Growing is safe: the guest extends its own filesystem with `growpart`
-  and `resize2fs`. A smaller resize is rejected before it reaches here.
-- Disk persists across a stop. `provisionDisk` clones only when the disk is absent,
-  so a restart reuses it. Rollback destroys the disk only when this call created it,
-  so a failure on restart never discards data.
-- Snapshot is cheap; restore is destructive. `zfs snapshot` only pins the current
-  blocks. `zfs rollback -r` reverts the disk and discards newer snapshots, because
-  ZFS rolls back only to the latest snapshot. The VM must be stopped first, or the
-  revert corrupts a live guest.
-- Promote copies in full. A promoted image must outlive its source VM. A clone would
-  block the VM's deletion as a dependent clone, or share its fate. `zfs send | zfs
-  recv` makes a standalone dataset with no shared blocks, so the VM can be deleted
-  after. The cost is a full copy in time and space.
-- Block node, not a file. The disk is a zvol, a real block device. The jail cannot
-  reach `/dev`, so metald makes a block node inside the chroot that mirrors
-  `/dev/zvol/...`, owned by the VM uid so the jailed firecracker can open it. udev
-  makes the `/dev/zvol` symlink asynchronously, so `statBlock` waits up to ~3 s.
-- Hard-link the kernel. A hard link is free and shares the read-only kernel. It
-  cannot cross a filesystem, so `kernelDir` shares the filesystem with the chroots.
+  blocks until written, so VMs cost almost no space until they diverge. A clone needs
+  a snapshot source, hence the immutable `@ready`.
+- Grow-only disks. Shrinking under a live filesystem can drop data. Growing is safe:
+  the guest extends its own filesystem (`growpart`, `resize2fs`). A smaller resize is
+  rejected upstream.
+- Disk persists across a stop. `provisionDisk` clones only when the disk is absent, so
+  a restart reuses it. Rollback destroys the disk only if this call created it, so a
+  restart never discards data.
+- Snapshot is cheap; restore is destructive. `zfs snapshot` just pins blocks. `zfs
+  rollback -r` reverts and discards newer snapshots, since ZFS rolls back only to the
+  latest. The VM must be stopped, or the revert corrupts a live guest.
+- Promote copies in full. A promoted image must outlive its VM. A clone would block
+  the VM's deletion or share its fate. `zfs send | zfs recv` makes a standalone
+  dataset, so the VM can be deleted after. The cost is a full copy.
+- Block node, not a file. The disk is a zvol. The jail cannot reach `/dev`, so metald
+  makes a block node in the chroot mirroring `/dev/zvol/...`, owned by the VM uid.
+  udev creates the symlink async, so `statBlock` waits up to ~3 s.
+- Hard-link the kernel. A hard link is free and shares the read-only kernel. It cannot
+  cross a filesystem, so `kernelDir` sits with the chroots.
 - Memory files are 0644. On warm start any VM uid hard-links an image's `state` and
-  `mem` files into its chroot, so they must be readable by any uid on a trusted host.
+  `mem` files into its chroot, so they are world-readable on a trusted host.
 
 ## Related
 
