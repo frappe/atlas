@@ -10,10 +10,13 @@
   "is_provisioning_completed",
   "column_break_qbap",
   "provider_server_id",
+  "metald_api_token",
   "section_break_configuration",
   "server_image",
   "column_break_njar",
   "server_size",
+  "column_break_iiyh",
+  "architecture",
   "section_break_cjau",
   "disks",
   "section_break_public_network",
@@ -56,6 +59,13 @@
    "read_only": 1
   },
   {
+   "fieldname": "metald_api_token",
+   "fieldtype": "Password",
+   "hidden": 1,
+   "label": "Metal API Token",
+   "read_only": 1
+  },
+  {
    "fieldname": "section_break_configuration",
    "fieldtype": "Section Break"
   },
@@ -74,6 +84,16 @@
    "in_list_view": 1,
    "label": "Server Image",
    "options": "Server Image",
+   "reqd": 1,
+   "set_only_once": 1
+  },
+  {
+   "default": "amd64",
+   "fieldname": "architecture",
+   "fieldtype": "Select",
+   "label": "Architecture",
+   "options": "amd64\narm64",
+   "read_only": 1,
    "reqd": 1,
    "set_only_once": 1
   },
@@ -170,6 +190,10 @@
   {
    "fieldname": "column_break_zhfx",
    "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "column_break_iiyh",
+   "fieldtype": "Column Break"
   }
  ],
  "grid_page_length": 50,
@@ -179,10 +203,15 @@
    "group": "Logs",
    "link_doctype": "Server SSH Task",
    "link_fieldname": "server"
+  },
+  {
+   "group": "Logs",
+   "link_doctype": "Server Usage",
+   "link_fieldname": "server"
   }
  ],
- "modified": "2026-09-02 21:25:46.610527",
- "modified_by": "test@gmail.com",
+ "modified": "2026-09-03 22:00:13.169319",
+ "modified_by": "Administrator",
  "module": "Server",
  "name": "Server",
  "naming_rule": "By script",
