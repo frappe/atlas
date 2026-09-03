@@ -1,47 +1,122 @@
-// Package firecracker implements vm.VMDriver on Firecracker. Each VM is a
-// jailer'd firecracker process run as a systemd template unit; metald is only a
-// client, talking to systemd (D-Bus) and each VM's API socket.
+// Package firecracker controls Firecracker virtual machines.
 package firecracker
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log"
 	"os"
 	"path/filepath"
 	"sync"
-
-	"github.com/google/uuid"
+	"time"
 
 	"github.com/frappe/atlas/metal/internal/firecracker/api"
 	"github.com/frappe/atlas/metal/internal/network"
 	"github.com/frappe/atlas/metal/internal/storage"
 	"github.com/frappe/atlas/metal/internal/systemd"
 	"github.com/frappe/atlas/metal/internal/vm"
+	"github.com/google/uuid"
 )
 
+type virtualMachineStorage interface {
+	PrepareBoot(ctx context.Context, request storage.VirtualMachineStorageRequest) (storage.BootConfiguration, error)
+	PrepareRootFileSystem(ctx context.Context, request storage.VirtualMachineStorageRequest) error
+	Release(ctx context.Context, virtualMachineID string) error
+	ResizeDisk(ctx context.Context, virtualMachineID string, diskMiB int) error
+	DiskUsage(ctx context.Context, virtualMachineID string) (storage.Usage, error)
+}
+
+type snapshotStore interface {
+	StageSnapshot(ctx context.Context, virtualMachineID, snapshotID, imageReference string) (storage.StagedSnapshot, error)
+}
+
+type imageStore interface {
+	EnsureImage(ctx context.Context, image vm.ImageRef) error
+	WarmImage(
+		ctx context.Context,
+		image vm.ImageRef,
+		configuration vm.MemorySnapshotConfiguration,
+		firecrackerCompatibility string,
+	) (storage.WarmImageArtifacts, bool, error)
+	CreateWarmSourceSnapshot(ctx context.Context, virtualMachineID, snapshotName string) error
+	DeleteWarmSourceSnapshot(ctx context.Context, virtualMachineID, snapshotName string) error
+	PromoteWarmSnapshot(ctx context.Context, promotion storage.WarmImagePromotion) (storage.WarmImageArtifacts, error)
+	RemoveOtherWarmImages(ctx context.Context, imageReference, desiredKey string) error
+	RecordImageUse(imageReference string, usedAt time.Time) error
+}
+
+// Driver manages Firecracker virtual machines on one host.
 type Driver struct {
-	cfg    Config
-	units  systemd.Manager
-	images storage.Resolver
-	net    network.Allocator
-	mu     sync.Mutex // guards id allocation
+	cfg                   Config
+	units                 systemd.Manager
+	virtualMachineStorage virtualMachineStorage
+	imageStore            imageStore
+	snapshotStore         snapshotStore
+	networkAllocator      network.Allocator
+	allocationMutex       sync.Mutex
+	operationLocks        operationLocks
+	warmupDelay           time.Duration
 }
 
-func New(cfg Config, units systemd.Manager, images storage.Resolver, net network.Allocator) *Driver {
-	return &Driver{cfg: cfg, units: units, images: images, net: net}
+// New returns a Firecracker driver.
+func New(
+	configuration Config,
+	units systemd.Manager,
+	virtualMachineStorage virtualMachineStorage,
+	imageStore imageStore,
+	snapshotStore snapshotStore,
+	networkAllocator network.Allocator,
+) *Driver {
+	return &Driver{
+		cfg:                   configuration,
+		units:                 units,
+		virtualMachineStorage: virtualMachineStorage,
+		imageStore:            imageStore,
+		snapshotStore:         snapshotStore,
+		networkAllocator:      networkAllocator,
+		warmupDelay:           5 * time.Minute,
+	}
 }
 
-func (d *Driver) Type() vm.DriverType { return vm.DriverFirecracker }
+// Create reserves a virtual machine in the running state.
+func (d *Driver) Create(ctx context.Context, id string, spec vm.Spec) (_ vm.VM, err error) {
+	unlock, err := d.operationLocks.lock(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
 
-// Create allocates the VM's ids/network, starts the jailer'd firecracker unit,
-// and does all pre-boot configuration. The guest is not booted (StateCreated);
-// call Start for that.
-func (d *Driver) Create(ctx context.Context, spec vm.Spec) (_ vm.VM, err error) {
-	// A version 7 UUID sorts by creation time. metald dials a VM's API socket
-	// through a short symlink, so the id length has no limit to respect.
-	id := uuid.Must(uuid.NewV7()).String()
+	if id == "" || id == "." || filepath.Base(id) != id {
+		return nil, vm.ErrConflict
+	}
+	existing, loadError := d.cfg.readVMConfig(id)
+	if loadError == nil {
+		if existing.DesiredState == vm.StateDestroyed || !existing.Spec.SameReservation(spec) {
+			return nil, vm.ErrConflict
+		}
+		existing.Spec = existing.Spec.RefreshImageSource(spec)
+		if err := d.cfg.writeVMConfig(existing); err != nil {
+			return nil, err
+		}
+		return d.newMachine(existing), nil
+	}
+	if !errors.Is(loadError, vm.ErrNotFound) {
+		return nil, loadError
+	}
 
-	uid, err := d.allocate(id, spec)
+	d.allocationMutex.Lock()
+	defer d.allocationMutex.Unlock()
+
+	inUse, err := d.isPublicIPv4InUse(id, spec.Network.PublicIPv4)
+	if err != nil {
+		return nil, err
+	}
+	if inUse {
+		return nil, vm.ErrConflict
+	}
+
+	userID, err := d.allocateUserID()
 	if err != nil {
 		return nil, err
 	}
@@ -50,213 +125,479 @@ func (d *Driver) Create(ctx context.Context, spec vm.Spec) (_ vm.VM, err error) 
 			d.cleanup(context.WithoutCancel(ctx), id)
 		}
 	}()
-	vc := vmConfig{ID: id, UID: uid, GID: uid, Sock: d.cfg.sockPath(id), Spec: spec}
+	configuration := vmConfig{
+		ID:           id,
+		UID:          userID,
+		GID:          userID,
+		Sock:         d.cfg.sockPath(id),
+		DesiredState: vm.StateRunning,
+		Spec:         spec,
+	}
 
-	nic, err := d.net.Allocate(ctx, network.Request{VMID: id, Ref: spec.Network.Name, UID: uid, GID: uid})
-	if err != nil {
+	networkInterface := d.networkAllocator.Resolve(id)
+	configuration.IP = networkInterface.GuestIPAddress
+	configuration.MAC = networkInterface.MACAddress
+
+	if err = d.cfg.writeVMConfig(configuration); err != nil {
 		return nil, err
 	}
-	vc.IP, vc.MAC = nic.GuestIP, nic.MAC
-	if err = d.cfg.writeVMConfig(vc); err != nil {
-		return nil, err
-	}
-
-	// A warm image is loaded on the first Start, not cold-booted here. Mark it and
-	// skip the cold pre-boot; Start does the load.
-	if _, _, warm := d.images.ImageMemory(spec.Image.Name); warm {
-		if err = d.cfg.writeWarmMark(id, spec.Image.Name); err != nil {
-			return nil, err
-		}
-		return d.newMachine(vc), nil
-	}
-	if err = d.bootPrep(ctx, vc, nic); err != nil {
-		return nil, err
-	}
-	return d.newMachine(vc), nil
+	return d.newMachine(configuration), nil
 }
 
-// bootPrep (re)starts the VM's jailer unit and does all pre-boot configuration,
-// leaving the guest ready for InstanceStart. Shared by Create and relaunch.
-func (d *Driver) bootPrep(ctx context.Context, vc vmConfig, nic network.NIC) error {
-	if err := d.cfg.writeJailerEnv(vc.ID, d.cfg.jailerArgs(vc.ID, vc.UID, vc.GID, nic.NetnsPath)); err != nil {
-		return err
-	}
-	if err := d.cfg.linkSocket(vc.ID); err != nil {
-		return err
-	}
-	if err := d.units.Start(ctx, vc.ID); err != nil {
-		return err
-	}
-	if err := d.units.SetLimits(ctx, vc.ID, limits(vc.Spec)); err != nil {
-		return err
-	}
-	if err := waitSocket(ctx, vc.Sock); err != nil {
-		return err
-	}
-	boot, err := d.images.Prepare(ctx, storage.Request{
-		VMID: vc.ID, Ref: vc.Spec.Image.Name, ChrootRoot: d.cfg.chrootRoot(vc.ID),
-		UID: vc.UID, GID: vc.GID, DiskMiB: vc.Spec.DiskMiB,
-	})
-	if err != nil {
-		return err
-	}
-	log.Printf("firecracker: vm %s kernel=%s cmdline=%q", vc.ID, boot.Kernel, bootArgs(boot, nic))
-	return configure(ctx, api.New(vc.Sock), vc.Spec, boot, nic)
-}
-
-// relaunch brings a stopped VM back up: it clears the old unit and jailer chroot,
-// then re-runs bootPrep against the persisted disk and still-present netns,
-// leaving the guest ready for InstanceStart.
-func (d *Driver) relaunch(ctx context.Context, vc vmConfig) error {
-	_ = d.units.Stop(ctx, vc.ID)                            // clear any failed/leftover unit state
-	_ = os.RemoveAll(filepath.Dir(d.cfg.chrootRoot(vc.ID))) // jailer will not reuse an existing chroot
-	return d.bootPrep(ctx, vc, d.net.Resolve(vc.ID))
-}
-
-// loadLaunch starts a fresh jailer unit for vc and resumes it from a memory
-// snapshot (the state and mem files). It is shared by warm restore and warm
-// create. When mmds is non-nil it refreshes the metadata service (new ssh keys and
-// a generation token) after the load and before the resume, so a clone's guest can
-// re-key and re-sync.
-func (d *Driver) loadLaunch(ctx context.Context, vc vmConfig, stateFile, memFile string, mmds map[string]any) error {
-	_ = d.units.Stop(ctx, vc.ID)
-	_ = os.RemoveAll(filepath.Dir(d.cfg.chrootRoot(vc.ID))) // jailer will not reuse a chroot
-	nic := d.net.Resolve(vc.ID)
-	if err := d.cfg.writeJailerEnv(vc.ID, d.cfg.jailerArgs(vc.ID, vc.UID, vc.GID, nic.NetnsPath)); err != nil {
-		return err
-	}
-	// vc.Sock is the short symlink, and /run is tmpfs, so a warm start after a
-	// host reboot has to write it again.
-	if err := d.cfg.linkSocket(vc.ID); err != nil {
-		return err
-	}
-	if err := d.units.Start(ctx, vc.ID); err != nil {
-		return err
-	}
-	if err := d.units.SetLimits(ctx, vc.ID, limits(vc.Spec)); err != nil {
-		return err
-	}
-	if err := waitSocket(ctx, vc.Sock); err != nil {
-		return err
-	}
-	// Recreate the rootfs block node at /rootfs.img, the path the snapshot expects.
-	// The kernel is inside the memory snapshot, so it is not needed here.
-	if err := d.images.PrepareRootfs(ctx, storage.Request{
-		VMID: vc.ID, Ref: vc.Spec.Image.Name, ChrootRoot: d.cfg.chrootRoot(vc.ID),
-		UID: vc.UID, GID: vc.GID, DiskMiB: vc.Spec.DiskMiB,
-	}); err != nil {
-		return err
-	}
-	// Stage the snapshot files into a uid-owned dir in the chroot: copy the small
-	// state file, hard-link the large read-only mem file.
-	stage := filepath.Join(d.cfg.chrootRoot(vc.ID), "snap")
-	if err := mkdirChown(stage, vc.UID, vc.GID); err != nil {
-		return err
-	}
-	if err := copyChown(stateFile, filepath.Join(stage, "state"), vc.UID, vc.GID); err != nil {
-		return err
-	}
-	if err := storage.LinkOrReflink(ctx, memFile, filepath.Join(stage, "mem")); err != nil {
-		return err
-	}
-	cli := api.New(vc.Sock)
-	if err := cli.LoadSnapshot(ctx, api.LoadSnapshotReq{
-		SnapshotPath: "snap/state",
-		MemBackend:   api.MemBackend{BackendPath: "snap/mem", BackendType: "File"},
-		ResumeVM:     false, // load paused so a metadata refresh lands before the guest runs
-	}); err != nil {
-		return err
-	}
-	if mmds != nil {
-		if err := cli.PutMmds(ctx, mmds); err != nil {
-			log.Printf("firecracker: vm %s mmds refresh: %v", vc.ID, err)
-		}
-	}
-	return cli.Resume(ctx)
-}
-
-// warmLaunch loads a VM from a warm image's memory and hands the guest a fresh
-// metadata payload so it can re-key and re-sync as a clone.
-func (d *Driver) warmLaunch(ctx context.Context, vc vmConfig, ref string) error {
-	state, mem, warm := d.images.ImageMemory(ref)
-	if !warm {
-		return vm.ErrNotFound
-	}
-	var mmds map[string]any
-	if len(vc.Spec.SSHKeys) > 0 {
-		mmds = refreshMMDS(vc.ID, vc.Spec.SSHKeys)
-	}
-	return d.loadLaunch(ctx, vc, state, mem, mmds)
-}
-
-// Images lists the images VMs can be created from.
-func (d *Driver) Images(ctx context.Context) ([]vm.Image, error) {
-	imgs, err := d.images.Images(ctx)
-	if err != nil {
-		return nil, storageErr(err)
-	}
-	out := make([]vm.Image, len(imgs))
-	for i, im := range imgs {
-		out[i] = vm.Image{Ref: im.Ref, Warm: im.Warm, SizeMiB: im.SizeMiB, CreatedAt: im.CreatedAt}
-	}
-	return out, nil
-}
-
-// DeleteImage removes an image. ErrConflict if VMs cloned from it still exist.
-func (d *Driver) DeleteImage(ctx context.Context, ref string) error {
-	return storageErr(d.images.DeleteImage(ctx, ref))
-}
-
-// allocate reserves a uid/gid and persists an initial config so a concurrent
-// Create sees the id as used.
-func (d *Driver) allocate(id string, spec vm.Spec) (uint32, error) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	used, err := d.cfg.usedIDs()
-	if err != nil {
-		return 0, err
-	}
-	uid, err := d.cfg.IDs.Allocate(used)
-	if err != nil {
-		return 0, err
-	}
-	return uid, d.cfg.writeVMConfig(vmConfig{ID: id, UID: uid, GID: uid, Sock: d.cfg.sockPath(id), Spec: spec})
-}
-
-// cleanup best-effort releases everything Create allocated for id.
-func (d *Driver) cleanup(ctx context.Context, id string) {
-	_ = d.units.Stop(ctx, id)
-	_ = d.net.Release(ctx, id)
-	_ = d.images.Release(ctx, id)
-	_ = os.Remove(d.cfg.sockPath(id))
-	_ = os.RemoveAll(d.cfg.vmDir(id))
-}
-
-// Load reconstructs a VM handle from its persisted config, so it survives a
-// metald restart. Returns vm.ErrNotFound if no such VM exists.
+// Load returns a virtual machine reservation.
 func (d *Driver) Load(ctx context.Context, id string) (vm.VM, error) {
-	vc, err := d.cfg.readVMConfig(id)
+	configuration, err := d.cfg.readVMConfig(id)
 	if err != nil {
 		return nil, err
 	}
-	return d.newMachine(vc), nil
+	return d.newMachine(configuration), nil
 }
 
-// List reconstructs handles for every VM with persisted state.
+// List returns all virtual machine reservations.
 func (d *Driver) List(ctx context.Context) ([]vm.VM, error) {
 	ids, err := d.cfg.listVMIDs()
 	if err != nil {
 		return nil, err
 	}
-	vms := make([]vm.VM, 0, len(ids))
+
+	virtualMachines := make([]vm.VM, 0, len(ids))
 	for _, id := range ids {
-		vc, err := d.cfg.readVMConfig(id)
-		if err != nil {
-			continue // skip half-written dirs
+		configuration, err := d.cfg.readVMConfig(id)
+		if errors.Is(err, vm.ErrNotFound) {
+			continue
 		}
-		vms = append(vms, d.newMachine(vc))
+		if err != nil {
+			return nil, fmt.Errorf("load VM %s: %w", id, err)
+		}
+		virtualMachines = append(virtualMachines, d.newMachine(configuration))
 	}
-	return vms, nil
+	return virtualMachines, nil
 }
 
-var _ vm.VMDriver = (*Driver)(nil)
+// IDs returns all reserved virtual machine IDs.
+func (d *Driver) IDs(ctx context.Context) ([]string, error) {
+	return d.cfg.listVMIDs()
+}
+
+// SetDesiredState records the requested state.
+func (d *Driver) SetDesiredState(ctx context.Context, id string, state vm.State) error {
+	unlock, err := d.operationLocks.lock(ctx, id)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+
+	if !vm.IsDesiredState(state) {
+		return vm.ErrConflict
+	}
+	configuration, err := d.cfg.readVMConfig(id)
+	if err != nil {
+		return err
+	}
+	configuration.DesiredState = state
+	return d.cfg.writeVMConfig(configuration)
+}
+
+// ReplaceSSHKeys replaces the authorized SSH keys for one virtual machine.
+func (d *Driver) ReplaceSSHKeys(ctx context.Context, id string, sshKeys []string) error {
+	unlock, err := d.operationLocks.lock(ctx, id)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+
+	configuration, err := d.cfg.readVMConfig(id)
+	if err != nil {
+		return err
+	}
+	configuration.Spec.SSHKeys = append([]string(nil), sshKeys...)
+	if err := d.cfg.writeVMConfig(configuration); err != nil {
+		return err
+	}
+
+	unitStatus, err := d.units.Status(ctx, id)
+	if err != nil {
+		return err
+	}
+	if unitStatus.ActiveState != "active" {
+		return nil
+	}
+	return d.newMachine(configuration).api.PutMMDS(ctx, metadataServiceData(id, configuration.Spec))
+}
+
+// ResizeCompute changes a stopped virtual machine.
+func (d *Driver) ResizeCompute(ctx context.Context, id string, virtualCPUCount, memoryMiB int) error {
+	unlock, err := d.operationLocks.lock(ctx, id)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+
+	configuration, err := d.cfg.readVMConfig(id)
+	if err != nil {
+		return err
+	}
+	machine := d.newMachine(configuration)
+	unitStatus, err := d.units.Status(ctx, id)
+	if err != nil {
+		return err
+	}
+	if machine.state(ctx, unitStatus) != vm.StateStopped {
+		return vm.ErrConflict
+	}
+
+	configuration.Spec.VCPUs = virtualCPUCount
+	configuration.Spec.MemoryMiB = memoryMiB
+	configuration.DesiredState = vm.StateRunning
+	return d.cfg.writeVMConfig(configuration)
+}
+
+// CreateSnapshot creates image staging with a new UUID.
+func (d *Driver) CreateSnapshot(ctx context.Context, virtualMachineID string) (storage.StagedSnapshot, error) {
+	snapshotID, err := uuid.NewV7()
+	if err != nil {
+		return storage.StagedSnapshot{}, fmt.Errorf("create snapshot ID: %w", err)
+	}
+
+	unlock, err := d.operationLocks.lock(ctx, virtualMachineID)
+	if err != nil {
+		return storage.StagedSnapshot{}, err
+	}
+	defer unlock()
+
+	configuration, err := d.cfg.readVMConfig(virtualMachineID)
+	if err != nil {
+		return storage.StagedSnapshot{}, err
+	}
+	machine := d.newMachine(configuration)
+	state, err := machine.status(ctx)
+	if err != nil {
+		return storage.StagedSnapshot{}, err
+	}
+	if state != vm.StateRunning && state != vm.StatePaused && state != vm.StateStopped {
+		return storage.StagedSnapshot{}, vm.ErrConflict
+	}
+
+	resume := state == vm.StateRunning
+	if resume {
+		if err := machine.api.Pause(ctx); err != nil {
+			return storage.StagedSnapshot{}, err
+		}
+	}
+
+	snapshot, snapshotError := d.snapshotStore.StageSnapshot(ctx, virtualMachineID, snapshotID.String(), configuration.Spec.Image.Name)
+	if resume {
+		resumeError := machine.api.Resume(context.WithoutCancel(ctx))
+		return snapshot, errors.Join(snapshotError, resumeError)
+	}
+	return snapshot, snapshotError
+}
+
+// Reconcile moves one virtual machine toward its desired state.
+func (d *Driver) Reconcile(ctx context.Context, id string) error {
+	unlock, err := d.operationLocks.lock(ctx, id)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+
+	configuration, err := d.cfg.readVMConfig(id)
+	if err != nil {
+		return err
+	}
+	if configuration.DesiredState == vm.StateDestroyed {
+		return d.newMachine(configuration).destroyUnlocked(ctx)
+	}
+
+	machine := d.newMachine(configuration)
+	unitStatus, err := d.units.Status(ctx, id)
+	if err != nil {
+		return err
+	}
+	observedState := machine.state(ctx, unitStatus)
+	reconcileError := advance(ctx, machine, configuration.DesiredState, observedState)
+	statusError := d.cfg.writeStatus(id, observedState, reconcileError)
+	return errors.Join(reconcileError, statusError)
+}
+
+func (d *Driver) prepareBoot(ctx context.Context, configuration vmConfig, networkInterface network.Interface) error {
+	if err := d.cfg.writeJailerEnv(
+		configuration.ID,
+		d.cfg.jailerArgs(
+			configuration.ID,
+			configuration.UID,
+			configuration.GID,
+			networkInterface.NetworkNamespacePath,
+		),
+	); err != nil {
+		return err
+	}
+	if err := d.cfg.linkSocket(configuration.ID); err != nil {
+		return err
+	}
+	if err := d.units.Start(ctx, configuration.ID); err != nil {
+		return err
+	}
+	if err := d.units.SetLimits(ctx, configuration.ID, resourceLimits(configuration.Spec)); err != nil {
+		return err
+	}
+	if err := waitSocket(ctx, configuration.Sock); err != nil {
+		return err
+	}
+
+	bootConfiguration, err := d.virtualMachineStorage.PrepareBoot(ctx, storage.VirtualMachineStorageRequest{
+		VirtualMachineID: configuration.ID,
+		ImageReference:   configuration.Spec.Image.Name,
+		Image:            configuration.Spec.Image,
+		ChrootRoot:       d.cfg.chrootRoot(configuration.ID),
+		UserID:           configuration.UID,
+		GroupID:          configuration.GID,
+		DiskMiB:          configuration.Spec.DiskMiB,
+	})
+	if err != nil {
+		return err
+	}
+	log.Printf(
+		"firecracker: vm %s kernel=%s cmdline=%q",
+		configuration.ID,
+		bootConfiguration.Kernel,
+		bootArguments(bootConfiguration, networkInterface),
+	)
+	return configure(
+		ctx,
+		api.New(configuration.Sock),
+		configuration.ID,
+		configuration.Spec,
+		bootConfiguration,
+		networkInterface,
+	)
+}
+
+func (d *Driver) relaunch(ctx context.Context, configuration vmConfig) error {
+	_ = d.units.Stop(ctx, configuration.ID)
+	_ = os.RemoveAll(filepath.Dir(d.cfg.chrootRoot(configuration.ID)))
+
+	networkInterface, err := d.allocateNetwork(ctx, configuration)
+	if err != nil {
+		return err
+	}
+	return d.prepareBoot(ctx, configuration, networkInterface)
+}
+
+func (d *Driver) launchSnapshot(
+	ctx context.Context,
+	configuration vmConfig,
+	rootSnapshot string,
+	stateFile string,
+	memoryFile string,
+	metadata map[string]any,
+) error {
+	_ = d.units.Stop(ctx, configuration.ID)
+	_ = os.RemoveAll(filepath.Dir(d.cfg.chrootRoot(configuration.ID)))
+
+	networkInterface, err := d.allocateNetwork(ctx, configuration)
+	if err != nil {
+		return err
+	}
+
+	if err := d.cfg.writeJailerEnv(
+		configuration.ID,
+		d.cfg.jailerArgs(
+			configuration.ID,
+			configuration.UID,
+			configuration.GID,
+			networkInterface.NetworkNamespacePath,
+		),
+	); err != nil {
+		return err
+	}
+	if err := d.cfg.linkSocket(configuration.ID); err != nil {
+		return err
+	}
+	if err := d.units.Start(ctx, configuration.ID); err != nil {
+		return err
+	}
+	if err := d.units.SetLimits(ctx, configuration.ID, resourceLimits(configuration.Spec)); err != nil {
+		return err
+	}
+	if err := waitSocket(ctx, configuration.Sock); err != nil {
+		return err
+	}
+
+	if err := d.virtualMachineStorage.PrepareRootFileSystem(ctx, storage.VirtualMachineStorageRequest{
+		VirtualMachineID: configuration.ID,
+		ImageReference:   configuration.Spec.Image.Name,
+		Image:            configuration.Spec.Image,
+		ChrootRoot:       d.cfg.chrootRoot(configuration.ID),
+		UserID:           configuration.UID,
+		GroupID:          configuration.GID,
+		DiskMiB:          configuration.Spec.DiskMiB,
+		SourceSnapshot:   rootSnapshot,
+	}); err != nil {
+		return err
+	}
+
+	stage := filepath.Join(d.cfg.chrootRoot(configuration.ID), "snap")
+	if err := mkdirChown(stage, configuration.UID, configuration.GID); err != nil {
+		return err
+	}
+	if err := copyChown(
+		ctx,
+		stateFile,
+		filepath.Join(stage, "state"),
+		configuration.UID,
+		configuration.GID,
+	); err != nil {
+		return err
+	}
+	if err := copyChown(
+		ctx,
+		memoryFile,
+		filepath.Join(stage, "mem"),
+		configuration.UID,
+		configuration.GID,
+	); err != nil {
+		return err
+	}
+
+	client := api.New(configuration.Sock)
+	if err := client.LoadSnapshot(ctx, api.LoadSnapshotRequest{
+		SnapshotPath: "snap/state",
+		Memory:       api.MemoryBackend{Path: "snap/mem", Type: "File"},
+		Resume:       false,
+	}); err != nil {
+		return err
+	}
+	if metadata != nil {
+		if err := client.PutMMDS(ctx, metadata); err != nil {
+			log.Printf("firecracker: vm %s MMDS refresh: %v", configuration.ID, err)
+		}
+	}
+	return client.Resume(ctx)
+}
+
+func (d *Driver) launchWarmImage(ctx context.Context, configuration vmConfig, ref string) error {
+	memorySnapshotConfiguration := configuration.Spec.Image.MemorySnapshotConfiguration
+	if memorySnapshotConfiguration == nil || configuration.Spec.Image.Name != ref {
+		return vm.ErrNotFound
+	}
+
+	artifacts, found, err := d.imageStore.WarmImage(
+		ctx,
+		configuration.Spec.Image,
+		*memorySnapshotConfiguration,
+		d.firecrackerCompatibility(),
+	)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return vm.ErrNotFound
+	}
+
+	metadata := metadataServiceData(configuration.ID, configuration.Spec)
+	return d.launchSnapshot(
+		ctx,
+		configuration,
+		artifacts.RootSnapshot,
+		artifacts.StateFile,
+		artifacts.MemoryFile,
+		metadata,
+	)
+}
+
+func (d *Driver) firecrackerCompatibility() string {
+	information, err := os.Stat(d.cfg.FirecrackerBin)
+	if err != nil {
+		return d.cfg.FirecrackerBin
+	}
+	return fmt.Sprintf(
+		"%s:%d:%d",
+		d.cfg.FirecrackerBin,
+		information.Size(),
+		information.ModTime().UnixNano(),
+	)
+}
+
+func (d *Driver) hasMatchingMemorySnapshot(spec vm.Spec) bool {
+	configuration := spec.Image.MemorySnapshotConfiguration
+	return spec.Image.CacheImage &&
+		spec.Image.MemorySnapshot &&
+		configuration != nil &&
+		configuration.VirtualCPUCount == spec.VCPUs &&
+		configuration.MemoryMiB == spec.MemoryMiB &&
+		configuration.DiskMiB == spec.DiskMiB
+}
+
+func mkdirChown(path string, userID, groupID uint32) error {
+	if err := os.MkdirAll(path, 0o750); err != nil {
+		return err
+	}
+	return os.Chown(path, int(userID), int(groupID))
+}
+
+func copyChown(
+	ctx context.Context,
+	source string,
+	destination string,
+	userID uint32,
+	groupID uint32,
+) error {
+	if err := storage.LinkOrCopy(ctx, source, destination); err != nil {
+		return err
+	}
+	return os.Chown(destination, int(userID), int(groupID))
+}
+
+func (d *Driver) allocateNetwork(ctx context.Context, configuration vmConfig) (network.Interface, error) {
+	return d.networkAllocator.Allocate(ctx, network.Request{
+		VirtualMachineID: configuration.ID,
+		Egress:           configuration.Spec.Network.Egress,
+		PublicIPv4:       configuration.Spec.Network.PublicIPv4,
+		UserID:           configuration.UID,
+		GroupID:          configuration.GID,
+	})
+}
+
+func (d *Driver) allocateUserID() (uint32, error) {
+	usedIDs, err := d.cfg.usedIDs()
+	if err != nil {
+		return 0, err
+	}
+	return d.cfg.IDs.Allocate(usedIDs)
+}
+
+func (d *Driver) isPublicIPv4InUse(id, address string) (bool, error) {
+	if address == "" {
+		return false, nil
+	}
+
+	ids, err := d.cfg.listVMIDs()
+	if err != nil {
+		return false, err
+	}
+	for _, otherID := range ids {
+		if otherID == id {
+			continue
+		}
+
+		configuration, err := d.cfg.readVMConfig(otherID)
+		if err != nil {
+			return false, err
+		}
+		if configuration.Spec.Network.PublicIPv4 == address {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (d *Driver) cleanup(ctx context.Context, id string) {
+	_ = d.units.Stop(ctx, id)
+	_ = d.networkAllocator.Release(ctx, id)
+	_ = d.virtualMachineStorage.Release(ctx, id)
+	_ = os.Remove(d.cfg.sockPath(id))
+	_ = os.RemoveAll(d.cfg.vmDir(id))
+}
+
+var _ vm.Driver = (*Driver)(nil)

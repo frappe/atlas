@@ -56,10 +56,7 @@ func (c Config) jailerArgs(id string, uid, gid uint32, netns string) []string {
 
 // writeJailerEnv writes the EnvironmentFile the metal-vm@ template reads. systemd
 // word-splits $JAILER_ARGS in ExecStart, so the args must not contain spaces.
-func (c Config) writeJailerEnv(id string, args []string) error {
-	if err := os.MkdirAll(c.vmDir(id), 0o750); err != nil {
-		return err
-	}
-	line := "JAILER_ARGS=" + strings.Join(args, " ") + "\n"
-	return os.WriteFile(filepath.Join(c.vmDir(id), "jailer.env"), []byte(line), 0o640)
+func (c Config) writeJailerEnv(id string, arguments []string) error {
+	line := "JAILER_ARGS=" + strings.Join(arguments, " ") + "\n"
+	return atomicWriteFile(filepath.Join(c.vmDir(id), "jailer.env"), []byte(line), 0o640)
 }

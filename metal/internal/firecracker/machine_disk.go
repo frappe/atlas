@@ -9,39 +9,46 @@ import (
 	"github.com/frappe/atlas/metal/internal/vm"
 )
 
-// Resize grows the VM's disk to diskMiB and makes a running guest see it.
-// Grow-only: a smaller request is ErrConflict; an equal one is a no-op.
-func (m *machine) Resize(ctx context.Context, diskMiB int) error {
-	u, err := m.d.images.Usage(ctx, m.cfg.ID)
+// ResizeDisk grows a disk and updates a running guest.
+func (m *machine) ResizeDisk(ctx context.Context, diskMiB int) error {
+	unlock, err := m.d.operationLocks.lock(ctx, m.cfg.ID)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+
+	usage, err := m.d.virtualMachineStorage.DiskUsage(ctx, m.cfg.ID)
 	if err != nil {
 		return storageErr(err)
 	}
 	switch {
-	case diskMiB < u.SizeMiB:
+	case diskMiB < usage.SizeMiB:
 		return vm.ErrConflict
-	case diskMiB == u.SizeMiB:
+	case diskMiB == usage.SizeMiB:
 		return nil
 	}
-	if err := m.d.images.Resize(ctx, m.cfg.ID, diskMiB); err != nil {
+	if err := m.d.virtualMachineStorage.ResizeDisk(ctx, m.cfg.ID, diskMiB); err != nil {
 		return storageErr(err)
 	}
-	// If the guest is running, have firecracker rescan the grown block device.
-	st, err := m.d.units.Status(ctx, m.cfg.ID)
+	unitStatus, err := m.d.units.Status(ctx, m.cfg.ID)
 	if err != nil {
 		return err
 	}
-	if m.state(ctx, st) == vm.StateRunning {
-		if err := m.api.PatchDrive(ctx, api.PartialDrive{DriveID: rootDriveID, PathOnHost: rootDrivePath}); err != nil {
+	if m.state(ctx, unitStatus) == vm.StateRunning {
+		if err := m.api.PatchDrive(ctx, api.PartialDrive{DriveID: rootDriveIdentifier, PathOnHost: rootDrivePath}); err != nil {
 			return err
 		}
 	}
-	// Persist the new size so Load/List/Info stay truthful.
-	m.cfg.Spec.DiskMiB = diskMiB
-	return m.d.cfg.writeVMConfig(m.cfg)
+	// Preserve changes made after this handle was loaded.
+	configuration, err := m.d.cfg.readVMConfig(m.cfg.ID)
+	if err != nil {
+		return err
+	}
+	configuration.Spec.DiskMiB = diskMiB
+	m.cfg = configuration
+	return m.d.cfg.writeVMConfig(configuration)
 }
 
-// storageErr maps storage's sentinels to the vm-layer ones so the API returns the
-// right status: 404 for not-found, 409 for in-use.
 func storageErr(err error) error {
 	switch {
 	case errors.Is(err, storage.ErrNotFound):

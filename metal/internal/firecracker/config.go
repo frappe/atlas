@@ -6,22 +6,22 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/frappe/atlas/metal/internal/idalloc"
 	"github.com/frappe/atlas/metal/internal/vm"
 )
 
-// Config holds the driver's host paths and id range.
+// Config contains Firecracker host paths and user IDs.
 type Config struct {
-	// MachinesDir holds one directory for each VM, e.g. /var/lib/metal/machines.
-	MachinesDir string
-	// SocketsDir holds the short API socket symlinks.
+	MachinesDir    string
 	SocketsDir     string
 	JailerBin      string
 	FirecrackerBin string
 	IDs            idalloc.Range
 }
 
+// DefaultConfig returns the standard Firecracker host paths.
 func DefaultConfig() Config {
 	return Config{
 		MachinesDir:    "/var/lib/metal/machines",
@@ -32,71 +32,109 @@ func DefaultConfig() Config {
 	}
 }
 
-// vmConfig is the per-VM state persisted under MachinesDir/<id>. It is co-located
-// with the VM (not a central store), so metald stays stateless: List/Load
-// reconstruct handles from these files plus systemd.
+// vmConfig stores one virtual machine reservation.
 type vmConfig struct {
-	ID   string  `json:"id"`
-	UID  uint32  `json:"uid"`
-	GID  uint32  `json:"gid"`
-	IP   string  `json:"ip"`
-	MAC  string  `json:"mac"`
-	Sock string  `json:"sock"`
-	Spec vm.Spec `json:"spec"`
+	ID           string        `json:"id"`
+	UID          uint32        `json:"uid"`
+	GID          uint32        `json:"gid"`
+	IP           string        `json:"ip"`
+	MAC          string        `json:"mac"`
+	Sock         string        `json:"sock"`
+	DesiredState vm.State      `json:"desired_state"`
+	Cleanup      cleanupStatus `json:"cleanup,omitempty"`
+	Spec         vm.Spec       `json:"spec"`
+}
+
+type cleanupStatus struct {
+	Systemd bool `json:"systemd,omitempty"`
+	Network bool `json:"network,omitempty"`
+	Storage bool `json:"storage,omitempty"`
 }
 
 func (c Config) vmDir(id string) string      { return filepath.Join(c.MachinesDir, id) }
 func (c Config) configPath(id string) string { return filepath.Join(c.vmDir(id), "config.json") }
+func (c Config) statusPath(id string) string { return filepath.Join(c.vmDir(id), "status.json") }
 
-// snapsDir is the per-VM directory that holds memory-snapshot files.
-func (c Config) snapsDir(id string) string { return filepath.Join(c.vmDir(id), "snapshots") }
-
-// snapDir holds one snapshot's memory files (state, mem).
-func (c Config) snapDir(id, name string) string { return filepath.Join(c.snapsDir(id), name) }
-
-// snapFiles returns a snapshot's device-state and guest-memory file paths.
-func (c Config) snapFiles(id, name string) (state, mem string) {
-	d := c.snapDir(id, name)
-	return filepath.Join(d, "state"), filepath.Join(d, "mem")
+// vmStatus stores observed state and reconciliation errors.
+type vmStatus struct {
+	State     vm.State  `json:"state"`
+	Error     string    `json:"error,omitempty"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
-// hasSnapMemory reports whether a snapshot carries a memory capture.
-func (c Config) hasSnapMemory(id, name string) bool {
-	_, mem := c.snapFiles(id, name)
-	_, err := os.Stat(mem)
-	return err == nil
-}
-
-// warmMarkPath is a marker file whose presence tells a VM's first Start to load a
-// warm image's memory instead of cold-booting. It is cleared after the load.
-func (c Config) warmMarkPath(id string) string { return filepath.Join(c.vmDir(id), "warmload") }
-
-// writeWarmMark records that the VM's first Start should load warm image ref.
-func (c Config) writeWarmMark(id, ref string) error {
-	return os.WriteFile(c.warmMarkPath(id), []byte(ref), 0o640)
-}
-
-// readWarmMark returns the pending warm image ref, if the marker is present.
-func (c Config) readWarmMark(id string) (string, bool) {
-	b, err := os.ReadFile(c.warmMarkPath(id))
-	if err != nil {
-		return "", false
+func (c Config) writeStatus(id string, state vm.State, reconcileErr error) error {
+	status := vmStatus{State: state, UpdatedAt: time.Now().UTC()}
+	if reconcileErr != nil {
+		status.Error = reconcileErr.Error()
 	}
-	return string(b), true
-}
-
-// clearWarmMark removes the warm-load marker after a warm start.
-func (c Config) clearWarmMark(id string) { _ = os.Remove(c.warmMarkPath(id)) }
-
-func (c Config) writeVMConfig(vc vmConfig) error {
-	if err := os.MkdirAll(c.vmDir(vc.ID), 0o750); err != nil {
-		return err
-	}
-	b, err := json.MarshalIndent(vc, "", "  ")
+	b, err := json.MarshalIndent(status, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(c.configPath(vc.ID), b, 0o640)
+	return atomicWriteFile(c.statusPath(id), b, 0o640)
+}
+
+func (c Config) readStatus(id string) (vmStatus, bool) {
+	b, err := os.ReadFile(c.statusPath(id))
+	if err != nil {
+		return vmStatus{}, false
+	}
+	var status vmStatus
+	if err := json.Unmarshal(b, &status); err != nil {
+		return vmStatus{}, false
+	}
+	return status, true
+}
+
+func (c Config) writeVMConfig(configuration vmConfig) error {
+	data, err := json.MarshalIndent(configuration, "", "  ")
+	if err != nil {
+		return err
+	}
+	return atomicWriteFile(c.configPath(configuration.ID), data, 0o640)
+}
+
+func atomicWriteFile(path string, data []byte, mode fs.FileMode) error {
+	directory := filepath.Dir(path)
+	if err := os.MkdirAll(directory, 0o750); err != nil {
+		return err
+	}
+
+	temporaryFile, err := os.CreateTemp(directory, "."+filepath.Base(path)+"-*")
+	if err != nil {
+		return err
+	}
+	temporaryPath := temporaryFile.Name()
+	defer func() {
+		_ = temporaryFile.Close()
+		_ = os.Remove(temporaryPath)
+	}()
+
+	if err := temporaryFile.Chmod(mode); err != nil {
+		return err
+	}
+	if _, err := temporaryFile.Write(data); err != nil {
+		return err
+	}
+	if err := temporaryFile.Sync(); err != nil {
+		return err
+	}
+	if err := temporaryFile.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(temporaryPath, path); err != nil {
+		return err
+	}
+	return syncDirectory(directory)
+}
+
+func syncDirectory(path string) error {
+	directory, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer directory.Close()
+	return directory.Sync()
 }
 
 func (c Config) readVMConfig(id string) (vmConfig, error) {
@@ -111,7 +149,6 @@ func (c Config) readVMConfig(id string) (vmConfig, error) {
 	return vc, json.Unmarshal(b, &vc)
 }
 
-// listVMIDs returns the ids of every VM with persisted state.
 func (c Config) listVMIDs() ([]string, error) {
 	entries, err := os.ReadDir(c.MachinesDir)
 	if errors.Is(err, fs.ErrNotExist) {
@@ -129,8 +166,7 @@ func (c Config) listVMIDs() ([]string, error) {
 	return ids, nil
 }
 
-// usedIDs reconstructs the set of allocated uids by reading every VM's config,
-// so allocation needs no separate state.
+// usedIDs returns assigned user IDs.
 func (c Config) usedIDs() (map[uint32]bool, error) {
 	ids, err := c.listVMIDs()
 	if err != nil {
@@ -138,11 +174,11 @@ func (c Config) usedIDs() (map[uint32]bool, error) {
 	}
 	used := make(map[uint32]bool, len(ids))
 	for _, id := range ids {
-		vc, err := c.readVMConfig(id)
+		configuration, err := c.readVMConfig(id)
 		if err != nil {
-			continue // a half-written dir shouldn't block allocation
+			return nil, err
 		}
-		used[vc.UID] = true
+		used[configuration.UID] = true
 	}
 	return used, nil
 }

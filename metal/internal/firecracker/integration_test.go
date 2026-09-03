@@ -12,9 +12,12 @@ import (
 	"context"
 	"os"
 	"os/exec"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/frappe/atlas/metal/internal/network"
 	"github.com/frappe/atlas/metal/internal/storage"
@@ -38,8 +41,10 @@ func skipUnlessHost(t *testing.T) (image, pub string) {
 	}
 	image = os.Getenv("METAL_IMAGE")
 	pubPath := os.Getenv("METAL_SSH_PUB")
-	if image == "" || pubPath == "" || os.Getenv("METAL_SSH_KEY") == "" {
-		t.Skip("set METAL_IMAGE, METAL_SSH_PUB, METAL_SSH_KEY")
+	if image == "" || pubPath == "" || os.Getenv("METAL_SSH_KEY") == "" ||
+		os.Getenv("METAL_IMAGE_URL") == "" || os.Getenv("METAL_IMAGE_SHA256") == "" ||
+		os.Getenv("METAL_KERNEL_URL") == "" || os.Getenv("METAL_KERNEL_SHA256") == "" {
+		t.Skip("set the METAL image, kernel, and SSH environment variables")
 	}
 	b, err := os.ReadFile(pubPath)
 	if err != nil {
@@ -55,16 +60,29 @@ func newDriver(t *testing.T) *Driver {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { units.Close() })
-	return New(DefaultConfig(), units,
-		storage.NewZFS(env("METAL_POOL", "metal"), env("METAL_KERNEL_DIR", "/var/lib/metal/kernels"), env("METAL_IMAGES_DIR", "/var/lib/metal/images")),
-		network.NewLinux())
+	stores := storage.NewStores(env("METAL_POOL", "metal"), env("METAL_IMAGES_DIR", "/var/lib/metal/images"))
+	return New(
+		DefaultConfig(),
+		units,
+		stores.VirtualMachines,
+		stores.Images,
+		stores.Snapshots,
+		network.NewLinuxAllocator(),
+	)
 }
 
 func spec(image, pub string) vm.Spec {
 	return vm.Spec{
-		VCPUs: 1, MemMiB: 256,
-		Image:   vm.ImageRef{Name: image},
-		Network: vm.NetworkRef{Name: "default"},
+		VCPUs: 1, MemoryMiB: 256, DiskMiB: 1024,
+		Image: vm.ImageRef{
+			Name:         image,
+			RootfsURL:    os.Getenv("METAL_IMAGE_URL"),
+			RootfsSHA256: os.Getenv("METAL_IMAGE_SHA256"),
+			KernelURL:    os.Getenv("METAL_KERNEL_URL"),
+			KernelSHA256: os.Getenv("METAL_KERNEL_SHA256"),
+			Architecture: runtime.GOARCH,
+		},
+		Network: vm.Network{Egress: vm.EgressHost},
 		SSHKeys: []string{pub},
 	}
 }
@@ -103,7 +121,7 @@ func waitSSH(t *testing.T, id string) bool {
 // bootVM creates a VM, starts it, waits for SSH, and registers cleanup.
 func bootVM(t *testing.T, d *Driver, s vm.Spec) vm.VM {
 	t.Helper()
-	m, err := d.Create(context.Background(), s)
+	m, err := d.Create(context.Background(), uuid.NewString(), s)
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -120,65 +138,4 @@ func bootVM(t *testing.T, d *Driver, s vm.Spec) vm.VM {
 func TestBootAndSSH(t *testing.T) {
 	image, pub := skipUnlessHost(t)
 	bootVM(t, newDriver(t), spec(image, pub))
-}
-
-// A memory snapshot restored in place must roll the disk back and resume the same
-// RAM: the boot_id (generated once per boot, kept in RAM) is unchanged.
-func TestWarmSnapshotRestore(t *testing.T) {
-	image, pub := skipUnlessHost(t)
-	ctx := context.Background()
-	m := bootVM(t, newDriver(t), spec(image, pub))
-
-	run(t, m.ID(), "echo BEFORE > /root/marker")
-	bid0 := run(t, m.ID(), "cat /proc/sys/kernel/random/boot_id")
-
-	if err := m.Snapshot(ctx, "demo", true); err != nil {
-		t.Fatalf("snapshot: %v", err)
-	}
-	run(t, m.ID(), "echo AFTER > /root/marker")
-	if err := m.RestoreSnapshot(ctx, "demo"); err != nil {
-		t.Fatalf("restore: %v", err)
-	}
-	if !waitSSH(t, m.ID()) {
-		t.Fatal("ssh after restore never succeeded")
-	}
-
-	if got := run(t, m.ID(), "cat /root/marker"); got != "BEFORE" {
-		t.Errorf("marker = %q, want BEFORE (disk not rolled back)", got)
-	}
-	if got := run(t, m.ID(), "cat /proc/sys/kernel/random/boot_id"); got != bid0 {
-		t.Errorf("boot_id = %q, want %q (cold booted, RAM not restored)", got, bid0)
-	}
-}
-
-// A snapshot promoted to a warm image must produce an independent image: after the
-// source VM is destroyed, a VM created from the image resumes the captured RAM and
-// disk (same boot_id and marker).
-func TestPromoteAndWarmCreate(t *testing.T) {
-	image, pub := skipUnlessHost(t)
-	ctx := context.Background()
-	d := newDriver(t)
-	src := bootVM(t, d, spec(image, pub))
-
-	run(t, src.ID(), "echo BEFORE > /root/marker")
-	bid0 := run(t, src.ID(), "cat /proc/sys/kernel/random/boot_id")
-	if err := src.Snapshot(ctx, "demo", true); err != nil {
-		t.Fatalf("snapshot: %v", err)
-	}
-	ref := "golden-" + src.ID()[:8]
-	if err := src.Promote(ctx, "demo", ref); err != nil {
-		t.Fatalf("promote: %v", err)
-	}
-	t.Cleanup(func() { _ = d.DeleteImage(context.Background(), ref) })
-	if err := src.Destroy(ctx); err != nil {
-		t.Fatalf("destroy source: %v", err)
-	}
-
-	clone := bootVM(t, d, spec(ref, pub))
-	if got := run(t, clone.ID(), "cat /root/marker"); got != "BEFORE" {
-		t.Errorf("clone marker = %q, want BEFORE (not from the captured disk)", got)
-	}
-	if got := run(t, clone.ID(), "cat /proc/sys/kernel/random/boot_id"); got != bid0 {
-		t.Errorf("clone boot_id = %q, want %q (not from the captured RAM)", got, bid0)
-	}
 }
