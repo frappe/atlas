@@ -3,103 +3,201 @@ package network
 import (
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/frappe/atlas/metal/internal/hostcmd"
+	"github.com/frappe/atlas/metal/internal/vm"
 )
 
 const (
-	tapName   = "tap0"
-	gatewayIP = "172.16.0.1"
-	guestIP   = "172.16.0.2"
-	prefixLen = 24
+	tapName             = "tap0"
+	gatewayIPAddress    = "172.16.0.1"
+	guestIPAddress      = "172.16.0.2"
+	networkPrefixLength = 24
 )
 
-// Linux gives each VM its own network namespace with a TAP the guest uses, plus
-// a veth uplink to the host for external traffic. The guest-facing addresses are
-// fixed (each netns is isolated); the veth transit /30 is derived from the VM's
-// uid, which is already unique, so no separate IP allocator is needed. The host
-// must have ip_forward and an uplink MASQUERADE in place (see scripts/net-setup.sh).
-type Linux struct{}
+// LinuxAllocator creates Linux network resources for virtual machines.
+type LinuxAllocator struct{}
 
-func NewLinux() *Linux { return &Linux{} }
+// NewLinuxAllocator returns a Linux network allocator.
+func NewLinuxAllocator() *LinuxAllocator { return &LinuxAllocator{} }
 
-func nsName(vmID string) string { return "metal-" + vmID }
-func nsPath(vmID string) string { return "/run/netns/" + nsName(vmID) }
+// Allocate creates virtual machine network resources.
+func (allocator *LinuxAllocator) Allocate(ctx context.Context, request Request) (Interface, error) {
+	exists, err := networkNamespaceExists(ctx, request.VirtualMachineID)
+	if err != nil {
+		return Interface{}, err
+	}
+	if exists {
+		return allocator.Resolve(request.VirtualMachineID), nil
+	}
 
-// vethNames returns readable interface names that fit Linux's 15-character limit.
-func vethNames(uid uint32) (host, guest string) {
-	return fmt.Sprintf("vh-%d", uid), fmt.Sprintf("vg-%d", uid)
-}
-
-// transitAddrs derives the veth /30 endpoints (host, netns) from the uid.
-func transitAddrs(uid uint32) (hostIP, nsIP string) {
-	base := uint32(0x0A000000) | ((uid & 0x3FFFFF) << 2) // 10.0.0.0/8 + uid*4
-	return ipString(base + 1), ipString(base + 2)
-}
-
-func ipString(v uint32) string {
-	return fmt.Sprintf("%d.%d.%d.%d", byte(v>>24), byte(v>>16), byte(v>>8), byte(v))
-}
-
-func (l *Linux) Allocate(ctx context.Context, req Request) (NIC, error) {
-	ns := nsName(req.VMID)
-	uid, gid := fmt.Sprint(req.UID), fmt.Sprint(req.GID)
-	vh, vg := vethNames(req.UID)
-	hostIP, nsIP := transitAddrs(req.UID)
-	gwCIDR := fmt.Sprintf("%s/%d", gatewayIP, prefixLen)
+	namespace := namespaceName(request.VirtualMachineID)
+	userID, groupID := fmt.Sprint(request.UserID), fmt.Sprint(request.GroupID)
+	hostVirtualEthernet, guestVirtualEthernet := virtualEthernetNames(request.UserID)
+	hostIPAddress, namespaceIPAddress := transitAddresses(request.UserID)
+	gatewayCIDR := fmt.Sprintf("%s/%d", gatewayIPAddress, networkPrefixLength)
 
 	steps := [][]string{
-		{"ip", "netns", "add", ns},
-		{"ip", "-n", ns, "link", "set", "lo", "up"},
-		// TAP the guest attaches to
-		{"ip", "-n", ns, "tuntap", "add", tapName, "mode", "tap", "user", uid, "group", gid},
-		{"ip", "-n", ns, "addr", "add", gwCIDR, "dev", tapName},
-		{"ip", "-n", ns, "link", "set", tapName, "up"},
-		// veth uplink: host <-> netns
-		{"ip", "link", "add", vh, "type", "veth", "peer", "name", vg},
-		{"ip", "link", "set", vg, "netns", ns},
-		{"ip", "addr", "add", hostIP + "/30", "dev", vh},
-		{"ip", "link", "set", vh, "up"},
-		{"ip", "-n", ns, "addr", "add", nsIP + "/30", "dev", vg},
-		{"ip", "-n", ns, "link", "set", vg, "up"},
-		{"ip", "-n", ns, "route", "add", "default", "via", hostIP},
-		// Forward traffic with network address translation inside the namespace.
-		{"ip", "netns", "exec", ns, "sysctl", "-q", "-w", "net.ipv4.ip_forward=1"},
-		{"ip", "netns", "exec", ns, "iptables", "-t", "nat", "-A", "POSTROUTING", "-o", vg, "-j", "MASQUERADE"},
+		{"ip", "netns", "add", namespace},
+		{"ip", "-n", namespace, "link", "set", "lo", "up"},
+
+		{"ip", "-n", namespace, "tuntap", "add", tapName, "mode", "tap", "user", userID, "group", groupID},
+		{"ip", "-n", namespace, "addr", "add", gatewayCIDR, "dev", tapName},
+		{"ip", "-n", namespace, "link", "set", tapName, "up"},
 	}
-	for _, s := range steps {
-		if err := hostcmd.Run(ctx, s[0], s[1:]...); err != nil {
-			_ = l.Release(ctx, req.VMID)
-			_ = hostcmd.Run(ctx, "ip", "link", "del", vh) // in case the veth was created but not yet moved
-			return NIC{}, err
+	egress := request.Egress
+	if egress == "" {
+		egress = vm.EgressHost
+	}
+	if egress == vm.EgressHost {
+		steps = append(steps,
+			[]string{"ip", "link", "add", hostVirtualEthernet, "type", "veth", "peer", "name", guestVirtualEthernet},
+			[]string{"ip", "link", "set", guestVirtualEthernet, "netns", namespace},
+			[]string{"ip", "addr", "add", hostIPAddress + "/30", "dev", hostVirtualEthernet},
+			[]string{"ip", "link", "set", hostVirtualEthernet, "up"},
+			[]string{"ip", "-n", namespace, "addr", "add", namespaceIPAddress + "/30", "dev", guestVirtualEthernet},
+			[]string{"ip", "-n", namespace, "link", "set", guestVirtualEthernet, "up"},
+			[]string{"ip", "-n", namespace, "route", "add", "default", "via", hostIPAddress},
+			[]string{"ip", "netns", "exec", namespace, "sysctl", "-q", "-w", "net.ipv4.ip_forward=1"},
+			[]string{"ip", "netns", "exec", namespace, "iptables", "-t", "nat", "-A", "POSTROUTING", "-o", guestVirtualEthernet, "-j", "MASQUERADE"},
+		)
+	}
+	if request.PublicIPv4 != "" {
+		if egress != vm.EgressHost {
+			return Interface{}, fmt.Errorf("public IPv4 requires host egress")
+		}
+		steps = append(steps, publicIPv4Steps(request.VirtualMachineID, namespace, guestVirtualEthernet, namespaceIPAddress, request.PublicIPv4)...)
+	}
+	for _, step := range steps {
+		if err := hostcmd.Run(ctx, step[0], step[1:]...); err != nil {
+			releaseError := allocator.Release(ctx, request.VirtualMachineID)
+			linkError := hostcmd.Run(ctx, "ip", "link", "del", hostVirtualEthernet)
+			return Interface{}, errors.Join(err, releaseError, linkError)
 		}
 	}
-	return l.Resolve(req.VMID), nil
+	return allocator.Resolve(request.VirtualMachineID), nil
 }
 
-// Resolve returns the VM's NIC without touching the system. Every field is
-// deterministic (see Allocate), so a stopped VM whose netns still exists can be
-// reconfigured from just its id.
-func (l *Linux) Resolve(vmID string) NIC {
-	return NIC{
-		NetnsPath: nsPath(vmID),
-		TapName:   tapName,
-		MAC:       macFor(vmID),
-		GuestIP:   guestIP,
-		GatewayIP: gatewayIP,
+// Resolve returns network settings for one virtual machine.
+func (allocator *LinuxAllocator) Resolve(virtualMachineID string) Interface {
+	return Interface{
+		NetworkNamespacePath: namespacePath(virtualMachineID),
+		TapName:              tapName,
+		MACAddress:           macAddressFor(virtualMachineID),
+		GuestIPAddress:       guestIPAddress,
+		GatewayIPAddress:     gatewayIPAddress,
 	}
 }
 
-// Release deletes the netns, which tears down the TAP and both veth ends.
-func (l *Linux) Release(ctx context.Context, vmID string) error {
-	return hostcmd.Run(ctx, "ip", "netns", "del", nsName(vmID))
+// Release removes a virtual machine network.
+func (allocator *LinuxAllocator) Release(ctx context.Context, virtualMachineID string) error {
+	rulesError := removePublicIPv4Rules(ctx, virtualMachineID)
+
+	exists, err := networkNamespaceExists(ctx, virtualMachineID)
+	if err != nil {
+		return errors.Join(rulesError, err)
+	}
+	if !exists {
+		return rulesError
+	}
+
+	namespaceError := hostcmd.Run(ctx, "ip", "netns", "del", namespaceName(virtualMachineID))
+	return errors.Join(rulesError, namespaceError)
 }
 
-// macFor derives a stable locally-administered unicast MAC from the VM id.
-func macFor(vmID string) string {
-	h := sha256.Sum256([]byte(vmID))
-	return fmt.Sprintf("02:%02x:%02x:%02x:%02x:%02x", h[0], h[1], h[2], h[3], h[4])
+func namespaceName(virtualMachineID string) string { return "metal-" + virtualMachineID }
+
+func namespacePath(virtualMachineID string) string {
+	return "/run/netns/" + namespaceName(virtualMachineID)
 }
 
-var _ Allocator = (*Linux)(nil)
+func virtualEthernetNames(userID uint32) (host, guest string) {
+	return fmt.Sprintf("vh-%d", userID), fmt.Sprintf("vg-%d", userID)
+}
+
+func transitAddresses(userID uint32) (hostIPAddress, namespaceIPAddress string) {
+	networkAddress := uint32(0x0A000000) | ((userID & 0x3FFFFF) << 2)
+	return addressString(networkAddress + 1), addressString(networkAddress + 2)
+}
+
+func addressString(value uint32) string {
+	return fmt.Sprintf("%d.%d.%d.%d", byte(value>>24), byte(value>>16), byte(value>>8), byte(value))
+}
+
+func networkNamespaceExists(ctx context.Context, virtualMachineID string) (bool, error) {
+	output, err := hostcmd.Output(ctx, "ip", "netns", "list")
+	if err != nil {
+		return false, fmt.Errorf("list network namespaces: %w", err)
+	}
+
+	name := namespaceName(virtualMachineID)
+	for _, line := range strings.Split(output, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) > 0 && fields[0] == name {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func publicIPv4Steps(virtualMachineID, namespace, guestVirtualEthernet, namespaceIPAddress, publicIPv4 string) [][]string {
+	comment := publicIPv4Comment(virtualMachineID)
+	return [][]string{
+		{"iptables", "-t", "nat", "-A", "PREROUTING", "-d", publicIPv4, "-m", "comment", "--comment", comment, "-j", "DNAT", "--to-destination", namespaceIPAddress},
+		{"iptables", "-t", "nat", "-I", "POSTROUTING", "1", "-s", namespaceIPAddress, "-m", "comment", "--comment", comment, "-j", "SNAT", "--to-source", publicIPv4},
+		{"iptables", "-A", "FORWARD", "-d", namespaceIPAddress, "-m", "conntrack", "--ctstate", "NEW,ESTABLISHED,RELATED", "-m", "comment", "--comment", comment, "-j", "ACCEPT"},
+		{"iptables", "-A", "FORWARD", "-s", namespaceIPAddress, "-m", "conntrack", "--ctstate", "ESTABLISHED,RELATED", "-m", "comment", "--comment", comment, "-j", "ACCEPT"},
+		{"ip", "netns", "exec", namespace, "iptables", "-t", "nat", "-A", "PREROUTING", "-i", guestVirtualEthernet, "-d", namespaceIPAddress, "-m", "comment", "--comment", comment, "-j", "DNAT", "--to-destination", guestIPAddress},
+	}
+}
+
+func removePublicIPv4Rules(ctx context.Context, virtualMachineID string) error {
+	var cleanupErrors []error
+	for _, table := range []string{"nat", "filter"} {
+		output, err := hostcmd.Output(ctx, "iptables", "-t", table, "-S")
+		if err != nil {
+			cleanupErrors = append(cleanupErrors, fmt.Errorf("list %s rules: %w", table, err))
+			continue
+		}
+		for _, line := range strings.Split(output, "\n") {
+			arguments := strings.Fields(line)
+			if !hasRuleComment(arguments, publicIPv4Comment(virtualMachineID)) {
+				continue
+			}
+			if len(arguments) < 2 || arguments[0] != "-A" {
+				continue
+			}
+			arguments[0] = "-D"
+			for index, argument := range arguments {
+				arguments[index] = strings.Trim(argument, "\"")
+			}
+			if err := hostcmd.Run(ctx, "iptables", append([]string{"-t", table}, arguments...)...); err != nil {
+				cleanupErrors = append(cleanupErrors, fmt.Errorf("remove %s rule: %w", table, err))
+			}
+		}
+	}
+	return errors.Join(cleanupErrors...)
+}
+
+func hasRuleComment(arguments []string, expected string) bool {
+	for index, argument := range arguments {
+		if argument == "--comment" && index+1 < len(arguments) {
+			return strings.Trim(arguments[index+1], "\"") == expected
+		}
+	}
+	return false
+}
+
+func publicIPv4Comment(virtualMachineID string) string {
+	return "metal-public-ipv4-" + virtualMachineID
+}
+
+func macAddressFor(virtualMachineID string) string {
+	digest := sha256.Sum256([]byte(virtualMachineID))
+	return fmt.Sprintf("02:%02x:%02x:%02x:%02x:%02x", digest[0], digest[1], digest[2], digest[3], digest[4])
+}
+
+var _ Allocator = (*LinuxAllocator)(nil)
