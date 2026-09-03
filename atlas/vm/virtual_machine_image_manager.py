@@ -34,17 +34,16 @@ class VirtualMachineImageManager:
 		*,
 		cache_image: bool = False,
 		memory_snapshot: bool = False,
-		memory_snapshot_virtual_cpu_count: int = 0,
-		memory_snapshot_memory_mib: int = 0,
-		memory_snapshot_disk_mib: int = 0,
 	) -> str:
-		memory_snapshot_configuration = self.validate_memory_snapshot_configuration(
-			memory_snapshot,
-			memory_snapshot_virtual_cpu_count,
-			memory_snapshot_memory_mib,
-			memory_snapshot_disk_mib,
-			minimum_disk_mib=virtual_machine.disk_mib,
-		)
+		if memory_snapshot:
+			memory_snapshot_configuration = (
+				virtual_machine.vcpus,
+				virtual_machine.memory_mib,
+				virtual_machine.disk_mib,
+			)
+		else:
+			memory_snapshot_configuration = (0, 0, 0)
+
 		original_image = cast(
 			"VirtualMachineImage",
 			frappe.get_doc("Virtual Machine Image", virtual_machine.virtual_machine_image),
@@ -90,23 +89,6 @@ class VirtualMachineImageManager:
 
 		self.enqueue_transfer(snapshot_id)
 		return snapshot_id
-
-	@staticmethod
-	def validate_memory_snapshot_configuration(
-		memory_snapshot: bool,
-		virtual_cpu_count: int,
-		memory_mib: int,
-		disk_mib: int,
-		*,
-		minimum_disk_mib: int,
-	) -> tuple[int, int, int]:
-		if not memory_snapshot:
-			return 0, 0, 0
-		if virtual_cpu_count <= 0 or memory_mib <= 0 or disk_mib <= 0:
-			frappe.throw(_("Memory snapshot CPU, memory, and disk values must be positive."))
-		if disk_mib < minimum_disk_mib:
-			frappe.throw(_("Memory snapshot disk must be at least {0} MiB.").format(minimum_disk_mib))
-		return virtual_cpu_count, memory_mib, disk_mib
 
 	def enqueue_transfer(self, image_name: str) -> None:
 		frappe.enqueue(

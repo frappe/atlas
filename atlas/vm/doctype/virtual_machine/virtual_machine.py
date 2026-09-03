@@ -168,9 +168,6 @@ class VirtualMachine(Document):
 		title: str,
 		cache_image: bool = False,
 		memory_snapshot: bool = False,
-		memory_snapshot_virtual_cpu_count: int = 0,
-		memory_snapshot_memory_mib: int = 0,
-		memory_snapshot_disk_mib: int = 0,
 	) -> str:
 		"""Queue a Machine image transfer from this VM."""
 		frappe.only_for("System Manager")
@@ -187,9 +184,6 @@ class VirtualMachine(Document):
 			title,
 			cache_image=bool(cint(cache_image)),
 			memory_snapshot=bool(cint(memory_snapshot)),
-			memory_snapshot_virtual_cpu_count=cint(memory_snapshot_virtual_cpu_count),
-			memory_snapshot_memory_mib=cint(memory_snapshot_memory_mib),
-			memory_snapshot_disk_mib=cint(memory_snapshot_disk_mib),
 		)
 
 	@frappe.whitelist(methods=["POST"])
