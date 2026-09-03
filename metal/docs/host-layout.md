@@ -11,22 +11,23 @@ from these paths. Each virtual machine ID is a UUID V7.
 /var/lib/metal/
 ├── metald.toml                     metald configuration; metald.base_dir is this dir
 ├── images/                         derived from metald.base_dir
-│   └── ubuntu/                     one dir for each warm image ref
-│       ├── state                   firecracker device state
-│       └── mem                     guest memory, hard-linked into a jail
-├── kernels/                        derived from metald.base_dir
-│   └── ubuntu/                     one dir for each image ref
+│   └── ubuntu/                     one directory for each image reference
+│       ├── manifest.json           immutable digests and architecture
 │       ├── vmlinux                 guest kernel, hard-linked into the jail
-│       └── boot-args               kernel cmdline, optional
+│       ├── boot-args               kernel command line, optional
+│       ├── last-used               last successful VM start
+│       └── warm/<key>/              local warm artifacts for one exact shape
+│           ├── state               Firecracker device state
+│           └── memory              guest memory
+├── snapshots/<id>/                 temporary Machine image staging
+│   ├── metadata.json
+│   └── vmlinux
+├── image-policies.json             desired cached images from the controller
+├── wireguard-peers.json            atomically saved managed peer set
 └── machines/                       derived from metald.base_dir
     └── <uuid>/                     one dir for each VM id
         ├── config.json             ID, user ID, group ID, IP, MAC, socket, and spec
         ├── jailer.env              JAILER_ARGS for metal-vm@<uuid>.service
-        ├── warmload                marker: the next start loads a warm image
-        ├── snapshots/              one dir for each memory snapshot
-        │   └── <name>/
-        │       ├── state
-        │       └── mem
         └── firecracker/            the exec-file name that jailer appends
             └── <uuid>/
                 └── root/           the VM sees this as /
@@ -52,15 +53,16 @@ A Unix socket address holds 108 bytes. The jail path repeats the VM id, so metal
 The ZFS pool holds the VM disks. These are dataset names, not directories:
 
 ```text
-metal/images/ubuntu       read-only base zvol, with a @ready snapshot
-metal/images/ubuntu@ready the source that each VM disk clones
-metal/vms/<uuid>          the VM disk, a clone of the base snapshot
+metal/images/ubuntu          read-only base zvol, with a @ready snapshot
+metal/images/ubuntu@ready    source for normal VM disks
+metal/vms/<uuid>             one VM disk clone
+metal/staging/<image-id>     temporary read-only Machine image upload source
+metal/warm/<key>@ready       local warm disk for one image and exact VM shape
 ```
 
 A VM disk keeps the id of the VM that owns it, so the directory `machines/<uuid>` and the dataset `vms/<uuid>` name the same VM in two namespaces.
 
-The images directory shares a filesystem with the jails, because a warm start
-hard-links an image's memory file into the VM's chroot. Every directory metald
-uses comes from `metald.base_dir`, so that holds by construction.
 
-ZFS is the only storage backend. metald does not create the pool or select its device. Host setup creates the pool before metald starts, and `zfs.pool` names it.
+ZFS owns image import, local warm artifacts, image staging, and pool capacity reporting. metald does not create the pool or select its device. Host setup creates the pool before metald starts, and `zfs.pool` names it. Each imported image has an immutable manifest. Metal rejects a request that reuses an image reference with different digests or architecture.
+
+Memory snapshots stay on the host. Atlas sends cached-image policy through `/sync`. Metal builds a memory snapshot only for an exact CPU, memory, and disk configuration. A VM cold-boots when compatible warm artifacts are not ready.

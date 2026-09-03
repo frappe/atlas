@@ -13,8 +13,9 @@ cmd/metald/                  metald executable
 internal/api/                HTTP API
 internal/firecracker/        Firecracker support
 internal/idalloc/            ID allocation
-internal/network/            Linux networking
-internal/storage/            ZFS storage
+internal/network/            Linux VM networking and WireGuard peer management
+internal/reconciler/         VM and image reconciliation
+internal/storage/            ZFS images, VM disks, and pool capacity
 internal/systemd/            systemd and dbus support
 internal/vm/                 VM domain logic
 scripts/                     host bootstrap scripts
@@ -50,4 +51,4 @@ Metal manages host VMs. It does not define the proxy or WG Mesh services.
 
 ## Ownership
 
-Keep VM logic in `internal/vm/`. Keep host integrations in their matching packages.
+Keep VM logic in `internal/vm/`. Keep HTTP handlers thin. `internal/network/` owns WireGuard peer reconciliation and persistent peer state. `internal/storage/` separates the ZFS pool, VM disks, images, and snapshot staging. `internal/reconciler/` owns the asynchronous VM and image loops.

@@ -16,8 +16,7 @@ sudo go run ./cmd/metald serve --config /tmp/metald/metald.toml
 
 - downloads Firecracker, Jailer, and the continuous integration kernel, plus a **partitionless
   Ubuntu 22.04 rootfs** (boots directly, `root=/dev/vda`),
-- adds a **keyless metadata service helper** to the root file system. It pulls
-  the Secure Shell key from `169.254.169.254` and installs it for `root`,
+- uses cloud-init to read Secure Shell keys from Firecracker MMDSv2,
 - makes a ZFS pool and `images/ubuntu` virtual block device with an `@ready` snapshot,
 - generates a Secure Shell key at `/tmp/metald/keys/id_ed25519`,
 - sets up forwarding and network address translation,
@@ -31,8 +30,7 @@ sudo test/integration/ssh-test.sh
 
 Creates a virtual machine through the HTTP API with your key in `ssh_keys`, then
 uses Secure Shell to log in as `root`. The key flows through the application
-programming interface, metadata service, guest helper, and
-`/root/.ssh/authorized_keys`.
+programming interface, MMDSv2, cloud-init, and `/root/.ssh/authorized_keys`.
 
 ## Config
 
@@ -44,15 +42,16 @@ Each section is named for the thing it configures.
 
 | Configuration key | Default | Meaning |
 |---|---|---|
-| `metald.base_dir` | `/var/lib/metal` | holds the `machines`, `kernels` and `images` dirs |
+| `metald.base_dir` | `/var/lib/metal` | holds the `machines` and `images` dirs |
 | `metald.listen` | `127.0.0.1:8080` | API address; `host:port` or `unix:/path` |
+| `metald.auth_token_hash` | required | lowercase SHA-256 digest of the bearer token |
 | `firecracker.binary_path` | `/usr/bin/firecracker` | Firecracker binary |
 | `firecracker.sockets_dir` | `/run/metal` | short symlinks to each VM API socket |
 | `jailer.binary_path` | `/usr/bin/jailer` | jailer binary |
 | `zfs.pool` | `metal` | ZFS pool name |
 
-The machines, kernels and images directories are a convention below
-`base_dir`, not separate keys, so one value moves all of them.
+The machines and images directories are a convention below
+`base_dir`, not separate keys, so one value moves all of them. The development scripts must write `metald.auth_token_hash` and API requests must send the matching bearer token.
 
 metald does not bootstrap a host. `scripts/dev.sh` owns the development layout.
 It puts everything, including the config file, under `/tmp/metald`.
