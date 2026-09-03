@@ -46,16 +46,6 @@ Client.do(method, path, body, out):
 | `PutMmdsConfig` | PUT | `/mmds/config` | Enable the metadata service on an interface. |
 | `PutMmds` | PUT | `/mmds` | Set the metadata payload. |
 
-## Design notes
-
-- No dependencies. `net/http` only, so the module carries no third-party API client
-  and the surface stays small.
-- One socket per client. Each `Client` binds to one VM's socket. The driver makes one
-  client per `machine`.
-- State strings are firecracker's. `Not started`, `Running`, `Paused`, and the
-  `Paused`/`Resumed` transitions are firecracker's vocabulary. The driver maps them to
-  `vm.State`.
-
 ## Related
 
 - [firecracker SPEC](../SPEC.md) the caller and the boot, snapshot, and stop flows.

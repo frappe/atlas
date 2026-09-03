@@ -114,28 +114,6 @@ socket:                metald dials SocketsDir/<id>.sock (short symlink)
                        sockaddr limit, so the short symlink is dialed instead
 ```
 
-## Design notes
-
-Why the main choices were made.
-
-- Client, not parent. systemd owns the firecracker process as `metal-vm@<id>`, so a
-  metald restart or crash never kills a VM, and `Load`/`List` rebuild handles from
-  disk.
-- UUIDv7 ids. They sort by creation time. metald dials a short socket symlink, so the
-  id length has no path limit (see the socket note).
-- Warm load is deferred and paused. A warm create writes a marker and loads on the
-  first `Start`. `LoadSnapshot` runs with `resume_vm=false` so an MMDS refresh (new
-  ssh keys and a generation token) lands before the guest runs, letting a clone
-  re-key and re-sync.
-- Files move out of the chroot. firecracker writes snapshot files as the VM uid
-  inside the chroot. metald moves them to `machines/<id>/snapshots/<name>`, which
-  outlives the chroot that a relaunch wipes.
-- Memory cap sized for snapshot. A full snapshot faults every page in and writes an
-  equal-size memory file charged to the same cgroup, so `limits` caps memory at about
-  2x guest RAM plus 128 MiB, or the cgroup OOM-kills the VM mid-snapshot.
-- Idempotent teardown. `Destroy` and `cleanup` ignore an already-gone resource, so a
-  partial create or a repeated destroy is safe.
-
 ## Related
 
 - [internal/firecracker/api/SPEC.md](api/SPEC.md) the REST client over the VM socket.

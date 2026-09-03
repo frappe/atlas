@@ -56,16 +56,6 @@ main -> load(config) -> serve:
 
 See `config.example.toml`. Full config and dev-host setup: [docs/testing.md](../../docs/testing.md).
 
-## Design notes
-
-- One base_dir. `machines`, `kernels`, and `images` are a convention under `base_dir`,
-  so one value relocates the layout. The images dir must share a filesystem with the
-  jails, because a warm start hard-links a memory file into a chroot.
-- Interfaces below, concretes here. Each package takes an interface, so the whole
-  dependency graph is one readable function and a test swaps a fake.
-- Socket auth. A `unix:/path` listener removes a stale socket and sets mode 0660, so
-  access control is file permissions. A TCP listener has no auth.
-
 ## Related
 
 - [docs/architecture.md](../../docs/architecture.md) the startup graph and request path.
