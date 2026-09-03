@@ -55,75 +55,9 @@ fetch "$CI/vmlinux-5.10.223" "$KERNEL_DIR/ubuntu/vmlinux"
 # The image is a partitionless ext4 file system on /dev/vda.
 echo "console=ttyS0 reboot=k panic=1 pci=off root=/dev/vda rw" > "$KERNEL_DIR/ubuntu/boot-args"
 
-step "Ubuntu file system and metadata service SSH key helper"
+step "Ubuntu file system"
 rootfs=$BULK/downloads/ubuntu.ext4
 fetch "$CI/ubuntu-22.04.ext4" "$rootfs"
-# Add a helper that pulls each VM's SSH key from the metadata service.
-mnt=$BULK/mnt; mkdir -p "$mnt"
-mount -o loop "$rootfs" "$mnt"
-if [[ ! -e "$mnt/usr/local/sbin/metal-sshkey" ]]; then
-	install -Dm755 /dev/stdin "$mnt/usr/local/sbin/metal-sshkey" <<-'EOF'
-		#!/bin/sh
-		ip route add 169.254.169.254 dev eth0 2>/dev/null || true
-		url=http://169.254.169.254/latest/meta-data/public-keys/0/openssh-key
-		key=$(curl -fsS "$url" 2>/dev/null || wget -qO- "$url" 2>/dev/null || true)
-		[ -n "$key" ] || exit 0
-		mkdir -p /root/.ssh && chmod 700 /root/.ssh
-		grep -qxF "$key" /root/.ssh/authorized_keys 2>/dev/null || echo "$key" >> /root/.ssh/authorized_keys
-		chmod 600 /root/.ssh/authorized_keys
-	EOF
-	cat > "$mnt/etc/systemd/system/metal-sshkey.service" <<-'EOF'
-		[Unit]
-		Description=install Secure Shell key from the metadata service
-		Before=ssh.service sshd.service
-		[Service]
-		Type=oneshot
-		ExecStart=/usr/local/sbin/metal-sshkey
-		RemainAfterExit=yes
-		[Install]
-		WantedBy=multi-user.target
-	EOF
-	mkdir -p "$mnt/etc/systemd/system/multi-user.target.wants"
-	ln -sf ../metal-sshkey.service "$mnt/etc/systemd/system/multi-user.target.wants/metal-sshkey.service"
-fi
-# Add an agent that refreshes a warm clone when metald changes its MMDS generation.
-# Cold VMs do not receive a generation token.
-if [[ ! -e "$mnt/usr/local/sbin/metal-refresh" ]]; then
-	install -Dm755 /dev/stdin "$mnt/usr/local/sbin/metal-refresh" <<-'EOF'
-		#!/bin/sh
-		ip route add 169.254.169.254 dev eth0 2>/dev/null || true
-		url=http://169.254.169.254/metal/generation
-		state=/run/metal-generation
-		last=""
-		[ -f "$state" ] && last=$(cat "$state")
-		while :; do
-			gen=$(curl -fsS "$url" 2>/dev/null || wget -qO- "$url" 2>/dev/null || true)
-			gen=$(printf '%s' "$gen" | tr -d '"[:space:]')
-			if [ -n "$gen" ] && [ "$gen" != "$last" ]; then
-				/usr/local/sbin/metal-sshkey || true
-				systemctl restart systemd-timesyncd 2>/dev/null || chronyc makestep 2>/dev/null || true
-				rm -f /etc/machine-id && systemd-machine-id-setup >/dev/null 2>&1 || true
-				rm -f /etc/ssh/ssh_host_*_key /etc/ssh/ssh_host_*_key.pub && ssh-keygen -A >/dev/null 2>&1 || true
-				printf '%s' "$gen" > "$state"
-				last=$gen
-			fi
-			sleep 2
-		done
-	EOF
-	cat > "$mnt/etc/systemd/system/metal-refresh.service" <<-'EOF'
-		[Unit]
-		Description=metal clone refresh (watch MMDS generation)
-		After=network.target
-		[Service]
-		ExecStart=/usr/local/sbin/metal-refresh
-		Restart=always
-		[Install]
-		WantedBy=multi-user.target
-	EOF
-	mkdir -p "$mnt/etc/systemd/system/multi-user.target.wants"
-	ln -sf ../metal-refresh.service "$mnt/etc/systemd/system/multi-user.target.wants/metal-refresh.service"
-fi
-umount "$mnt"
 
 step "Secure Shell key pair"
 [[ -f $KEYDIR/id_ed25519 ]] || ssh-keygen -q -t ed25519 -N "" -f "$KEYDIR/id_ed25519"
