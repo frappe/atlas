@@ -74,7 +74,7 @@ class ScalewayCatalog:
 		return SizeInfo(
 			size=offer["name"],
 			cpu_count=sum(cpu["core_count"] for cpu in offer.get("cpus", [])),
-			memory_mb=sum(memory["capacity"] for memory in offer.get("memories", [])) // 1_048_576,
+			memory_mib=sum(memory["capacity"] for memory in offer.get("memories", [])) // 1_048_576,
 			disk_gib=sum(disk["capacity"] for disk in offer.get("disks", [])) // 1_073_741_824,
 			hourly_pricing_usd_cents=hourly_amount,
 			monthly_pricing_usd_cents=monthly_amount,

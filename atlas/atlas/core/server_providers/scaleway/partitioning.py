@@ -6,9 +6,9 @@ from collections.abc import Mapping
 class ScalewayPartitioning:
 	"""Build the Scaleway partitioning schema for Atlas."""
 
-	firmware_size_bytes = 512 * 1024**2
-	boot_size_bytes = 1024**3
-	root_size_bytes = 64 * 1024**3
+	firmware_size_mib = 512
+	boot_size_mib = 1024
+	root_size_mib = 64 * 1024
 	raid_level = "raid_level_1"
 	boot_array = "/dev/md0"
 	root_array = "/dev/md1"
@@ -60,9 +60,9 @@ class ScalewayPartitioning:
 		return {
 			"device": device,
 			"partitions": [
-				{"label": firmware_label, "number": 1, "size": self.firmware_size_bytes},
-				{"label": "boot", "number": 2, "size": self.boot_size_bytes},
-				{"label": "root", "number": 3, "size": self.root_size_bytes},
+				{"label": firmware_label, "number": 1, "size": self.firmware_size_mib * 1024**2},
+				{"label": "boot", "number": 2, "size": self.boot_size_mib * 1024**2},
+				{"label": "root", "number": 3, "size": self.root_size_mib * 1024**2},
 				{"label": "data", "number": 4, "use_all_available_space": True},
 			],
 		}
