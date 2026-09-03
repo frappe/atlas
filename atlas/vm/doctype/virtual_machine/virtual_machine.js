@@ -5,10 +5,10 @@ frappe.ui.form.on("Virtual Machine", {
 			return;
 		}
 
-		const status = frm.doc.status;
-		const is_running = status === "Running";
-		const is_stopped = status === "Stopped";
-		const is_paused = status === "Paused";
+		const current_state = frm.doc.current_state;
+		const is_running = current_state === "running";
+		const is_stopped = current_state === "stopped";
+		const is_paused = current_state === "paused";
 
 		[
 			[__("Start"), "start", is_stopped, __("Starting...")],

@@ -10,14 +10,6 @@ from frappe.utils import add_to_date, cint, now_datetime
 from atlas.vm.metal_client import MetalClient, MetalClientError, throw_metal_error
 from atlas.vm.virtual_machine_manager import VirtualMachineManager
 
-_STATUS_BY_STATE = {
-	"created": "Creating",
-	"running": "Running",
-	"stopped": "Stopped",
-	"paused": "Paused",
-	"failed": "Failed",
-	"unknown": "Unknown",
-}
 DRAFT_EXPIRY_MINUTES = 15
 
 
@@ -82,18 +74,14 @@ class VirtualMachine(Document):
 			frappe.get_doc("Server IP Address", address_name).release()
 
 	@property
-	def status(self) -> str:
+	def current_state(self) -> str:
 		if self.is_draft:
-			return "Unknown"
+			return "unknown"
 
 		if self.is_terminating:
-			return "Terminating"
+			return "terminating"
 
-		info = self.get_metal_vm_info()
-		if not info:
-			return "Unknown"
-
-		return _STATUS_BY_STATE.get(info.get("state", ""), "Unknown")
+		return self.get_metal_vm_info().get("state") or "unknown"
 
 	@property
 	def desired_state(self) -> str | None:

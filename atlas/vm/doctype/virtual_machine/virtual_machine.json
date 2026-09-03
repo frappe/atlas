@@ -7,7 +7,7 @@
  "field_order": [
   "is_draft",
   "is_terminating",
-  "status",
+  "current_state",
   "desired_state",
   "tenant_id",
   "column_break_status",
@@ -48,10 +48,10 @@
    "read_only": 1
   },
   {
-   "fieldname": "status",
+   "fieldname": "current_state",
    "fieldtype": "Data",
    "is_virtual": 1,
-   "label": "Status",
+   "label": "Current State",
    "read_only": 1
   },
   {
@@ -65,6 +65,7 @@
    "fieldname": "server",
    "fieldtype": "Link",
    "in_list_view": 1,
+   "in_standard_filter": 1,
    "label": "Server",
    "options": "Server",
    "read_only": 1,
@@ -74,6 +75,7 @@
    "fieldname": "virtual_machine_image",
    "fieldtype": "Link",
    "in_list_view": 1,
+   "in_standard_filter": 1,
    "label": "Virtual Machine Image",
    "options": "Virtual Machine Image",
    "read_only": 1,
@@ -91,6 +93,7 @@
   {
    "fieldname": "vcpus",
    "fieldtype": "Int",
+   "in_list_view": 1,
    "label": "vCPUs",
    "read_only": 1,
    "reqd": 1,
@@ -103,6 +106,7 @@
   {
    "fieldname": "memory_mib",
    "fieldtype": "Int",
+   "in_list_view": 1,
    "label": "Memory (MiB)",
    "read_only": 1,
    "reqd": 1,
@@ -197,7 +201,7 @@
  ],
  "in_create": 1,
  "links": [],
- "modified": "2026-09-04 02:46:31.814864",
+ "modified": "2026-09-04 02:50:03.518237",
  "modified_by": "Administrator",
  "module": "VM",
  "name": "Virtual Machine",
@@ -217,27 +221,31 @@
  "states": [
   {
    "color": "Gray",
-   "title": "Unknown"
+   "title": "unknown"
   },
   {
    "color": "Blue",
-   "title": "Creating"
+   "title": "created"
   },
   {
    "color": "Green",
-   "title": "Running"
+   "title": "running"
   },
   {
    "color": "Gray",
-   "title": "Stopped"
+   "title": "stopped"
   },
   {
    "color": "Orange",
-   "title": "Paused"
+   "title": "paused"
   },
   {
    "color": "Red",
-   "title": "Failed"
+   "title": "failed"
+  },
+  {
+   "color": "Orange",
+   "title": "terminating"
   }
  ]
 }
