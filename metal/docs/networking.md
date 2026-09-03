@@ -31,7 +31,7 @@ Detail: [internal/network/SPEC.md](../internal/network/SPEC.md).
 
 Traffic is source-NATed twice: once inside the namespace on egress, then on the host
 uplink. The host prerequisite (`ip_forward` plus an uplink `MASQUERADE`) is set once
-by `scripts/net-setup.sh`. Detail:
+by `internal/vm/scripts/net-setup.sh`. Detail:
 [internal/network/SPEC.md](../internal/network/SPEC.md).
 
 ## Metadata service

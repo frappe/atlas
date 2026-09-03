@@ -66,10 +66,11 @@ uid names the veth pair and the transit subnet, so two VMs never collide.
 ```
 
 NAT happens twice. Inside the netns, `MASQUERADE -o vg` rewrites the guest source to
-the transit address. On the host, the uplink rule from `scripts/net-setup.sh`
-rewrites the transit source to the uplink address. The guest reaches the metadata
-service at `169.254.169.254`, which firecracker serves (see
-[internal/firecracker/SPEC.md](../firecracker/SPEC.md)), not this package.
+the transit address. On the host, the uplink rule from
+`internal/vm/scripts/net-setup.sh` rewrites the transit source to the uplink
+address. The guest reaches the metadata service at `169.254.169.254`, which
+firecracker serves (see [internal/firecracker/SPEC.md](../firecracker/SPEC.md)), not
+this package.
 
 ## Allocate
 
@@ -102,7 +103,7 @@ on any failure -> Release (ip netns del) + ip link del vh-<uid>
 ## Prerequisite
 
 The host must already have `ip_forward` on and an uplink `MASQUERADE` for the
-transit range. `scripts/net-setup.sh` sets these once. metald does not.
+transit range. `internal/vm/scripts/net-setup.sh` sets these once. metald does not.
 
 ## Design notes
 
