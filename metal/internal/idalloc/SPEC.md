@@ -4,46 +4,21 @@
 
 ## Purpose
 
-Package `idalloc` hands out one id per virtual machine from a reserved range. It holds no state.
-The caller passes the used ids, so metald stays stateless.
-
-## Types
-
-| Type | Role |
-|---|---|
-| `Range{Min, Max uint32}` | Inclusive id range. |
-| `DefaultRange` | `{100000, 165535}`, the classic subuid range (65536 ids). |
-| `ErrExhausted` | The range is full. |
-| `Range.Allocate(used map[uint32]bool)` | Returns the lowest id in the range not in `used`. |
-
-## Id model
-
-One id serves as both uid and gid, so each VM gets a private group.
-
-```text
-reserved range  [100000 .. 165535]   65536 ids
-      |
-      | Allocate(used) -> lowest id not in used
-      v
-   one id per VM  =>  uid == gid   (private per-VM group)
-      used by jailer (--uid --gid) and as the network uid
-```
-
-The uid also names the veth pair and the transit subnet. See
-[internal/network/SPEC.md](../network/SPEC.md).
+Package `idalloc` hands out one id per virtual machine from the reserved subuid range
+`[100000, 165535]`. One id is both uid and gid, so each VM gets a private group.
 
 ## Stateless allocation
 
-`idalloc` keeps no table. The used set is rebuilt on each `Create` by scanning the
-live VMs' persisted configs. A mutex plus a write-then-release makes it safe for
-concurrent creates.
+`idalloc` keeps no table. `Allocate` rebuilds the used set by scanning the live VMs'
+persisted configs, so metald stays stateless. A mutex plus a write-then-release makes
+concurrent creates safe.
 
 ```text
 Create (in internal/firecracker):
   lock d.mu
-    used = scan machines/<uuid>/config.json of live VMs   (state lives on disk)
-    id   = Range.Allocate(used)
-    write machines/<uuid>/config.json with id             (next Create sees it used)
+    used = scan machines/<uuid>/config.json of live VMs
+    id   = Allocate(used)               lowest id not in use
+    write machines/<uuid>/config.json   next Create sees the id as used
   unlock d.mu
 ```
 
