@@ -10,29 +10,26 @@ import (
 	"testing"
 )
 
-// recordedReq is one request the fake firecracker socket saw.
-type recordedReq struct {
+type recordedRequest struct {
 	method string
 	path   string
 	body   map[string]any
 }
 
-// recordingSocket serves a firecracker API socket that records every request and
-// replies 204. It returns a client bound to that socket and the recorded slice.
-func recordingSocket(t *testing.T) (*Client, *[]recordedReq) {
+func recordingSocket(t *testing.T) (*Client, *[]recordedRequest) {
 	t.Helper()
 	sock := filepath.Join(t.TempDir(), "fc.socket")
 	l, err := net.Listen("unix", sock)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var got []recordedReq
+	var got []recordedRequest
 	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body map[string]any
 		if b, _ := io.ReadAll(r.Body); len(b) > 0 {
 			_ = json.Unmarshal(b, &body)
 		}
-		got = append(got, recordedReq{method: r.Method, path: r.URL.Path, body: body})
+		got = append(got, recordedRequest{method: r.Method, path: r.URL.Path, body: body})
 		w.WriteHeader(http.StatusNoContent)
 	})}
 	go srv.Serve(l)
@@ -49,14 +46,16 @@ func TestSnapshotClientRequests(t *testing.T) {
 	if err := cli.Pause(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if err := cli.CreateSnapshot(ctx, CreateSnapshotReq{
-		SnapshotType: "Full", SnapshotPath: "snap/state", MemFilePath: "snap/mem",
+	if err := cli.CreateSnapshot(ctx, CreateSnapshotRequest{
+		SnapshotType: "Full",
+		SnapshotPath: "snap/state",
+		MemoryFile:   "snap/mem",
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := cli.LoadSnapshot(ctx, LoadSnapshotReq{
+	if err := cli.LoadSnapshot(ctx, LoadSnapshotRequest{
 		SnapshotPath: "snap/state",
-		MemBackend:   MemBackend{BackendPath: "snap/mem", BackendType: "File"},
+		Memory:       MemoryBackend{Path: "snap/mem", Type: "File"},
 	}); err != nil {
 		t.Fatal(err)
 	}
