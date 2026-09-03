@@ -4,13 +4,14 @@ metald generates this application programming interface specification from the
 handler annotations, embeds it, and serves it at `/docs`. `make build` regenerates it. The file is
 `internal/api/swagger.json`.
 
-metald serves this over the unix socket `/run/metal.sock`. JSON in/out. Auth is
-socket permissions only. Stateless: responses reflect host truth, so they
-survive a metald restart.
+metald listens on `127.0.0.1:8080` by default. Set `metald.listen` to `unix:/path`
+for a unix socket instead, where access is file permissions. JSON in and out.
+Stateless: responses reflect host truth, so they survive a metald restart.
 
-**Async:** `create`/`start`/`stop`/`delete` return `202` immediately;
-the client polls `GET /vms/{id}` until `state` settles. A failure shows as
-`state:"failed"` + `reason`. Read-only and disk-only ops return synchronously.
+**Synchronous:** every call blocks until the operation settles, then returns the
+current VM. `create` boots the guest inline and returns `201`. There is no polling
+yet. A VM that later dies on its own reports `state:"failed"` on the next
+`GET /vms/{id}`. An asynchronous mode (`202` + poll) is planned; see Deferred.
 
 ## VM
 
@@ -18,7 +19,6 @@ the client polls `GET /vms/{id}` until `state` settles. A failure shows as
 {
   "id": "a1b2c3d4e5f6a7b8",
   "state": "running",
-  "reason": "",
   "vcpus": 2,
   "mem_mib": 512,
   "image": "ubuntu",
@@ -35,16 +35,16 @@ derived from the VM's systemd unit. A VM stopped on request reports `stopped`;
 
 | Method | Path | Action |
 |---|---|---|
-| `POST` | `/vms` | create + boot (warm-start from a warm image) → `202` |
+| `POST` | `/vms` | create + boot (warm-start from a warm image) → `201` |
 | `GET` | `/vms` | list → `{ "vms": [VM] }` |
 | `GET` | `/vms/{id}` | get (includes `disk`) |
-| `POST` | `/vms/{id}/start` | boot a stopped VM → `202` |
-| `POST` | `/vms/{id}/stop` | shut down → `202` |
+| `POST` | `/vms/{id}/start` | boot a stopped VM → `200` |
+| `POST` | `/vms/{id}/stop` | shut down → `200` |
 | `POST` | `/vms/{id}/pause` | pause the guest (halt vCPUs) |
 | `POST` | `/vms/{id}/resume` | resume a paused guest |
 | `POST` | `/vms/{id}/resize` | change cpu/mem/disk |
-| `DELETE` | `/vms/{id}` | destroy + free → `202` |
-| `GET` | `/vms/{id}/console` | stream serial console |
+| `DELETE` | `/vms/{id}` | destroy + free → `204` |
+| `GET` | `/vms/{id}/console` | stream serial console (not implemented → `501`) |
 | `GET` | `/health` | liveness |
 
 **Create** `POST /vms` —
@@ -91,7 +91,7 @@ is consistent.
 | `POST` | `/vms/{id}/snapshots` | create → `{ "name", "memory" }` |
 | `DELETE` | `/vms/{id}/snapshots/{name}` | delete → `204` |
 | `POST` | `/vms/{id}/snapshots/{name}/restore` | restore in place |
-| `POST` | `/vms/{id}/snapshots/{name}/promote` | promote to an image → `202` |
+| `POST` | `/vms/{id}/snapshots/{name}/promote` | promote to an image → `201` |
 
 **Create** `POST /vms/{id}/snapshots` — `{ "name", "memory": false }`.
 `memory:false` is a disk-only ZFS snapshot, taken with no pause. `memory:true`
@@ -147,6 +147,20 @@ memory-less snapshot, delete an image that still has clones) · `500` internal.
 Image build/download from external sources (promote is the only way to make an
 image today).
 
+Asynchronous `create`/`start`/`stop`/`delete`: return `202` at once, then poll
+`GET /vms/{id}` until `state` settles. A failure settles as `state:"failed"`.
+
 Idempotency-key on create; `PATCH`/console interactivity; list pagination; diff
 (incremental) memory snapshots; snapshot caps / snapshot-of-snapshot /
 restore-vs-pool-exhaustion.
+
+## Design notes
+
+- Depends only on `vm`. The concrete firecracker driver is injected in `main`, so the
+  API never imports it and a handler tests against a fake `VMDriver`.
+- Synchronous today. Each call blocks and returns the settled state, so a client needs
+  no poll loop. An asynchronous mode (`202` + poll) is planned; see Deferred above.
+- `respond` returns live truth. It re-fetches `Info` after a mutation, which matches
+  the stateless model: a response reflects host state, not a cached copy.
+
+Detail: [internal/api/SPEC.md](../internal/api/SPEC.md).
