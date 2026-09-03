@@ -1,0 +1,221 @@
+{
+ "actions": [],
+ "autoname": "format:VM-{#####}",
+ "creation": "2026-09-03 03:25:50.873793",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "is_draft",
+  "status",
+  "desired_state",
+  "tenant_id",
+  "column_break_status",
+  "server",
+  "virtual_machine_image",
+  "hostname",
+  "error",
+  "section_break_compute_and_storage",
+  "vcpus",
+  "column_break_compute",
+  "memory_mib",
+  "column_break_gmmt",
+  "disk_mib",
+  "section_break_network",
+  "egress",
+  "wireguard_mesh_ipv6",
+  "column_break_network",
+  "public_ipv4",
+  "mac"
+ ],
+ "fields": [
+  {
+   "default": "0",
+   "fieldname": "is_draft",
+   "fieldtype": "Check",
+   "hidden": 1,
+   "label": "Draft",
+   "read_only": 1
+  },
+  {
+   "fieldname": "status",
+   "fieldtype": "Data",
+   "is_virtual": 1,
+   "label": "Status",
+   "read_only": 1
+  },
+  {
+   "fieldname": "desired_state",
+   "fieldtype": "Data",
+   "is_virtual": 1,
+   "label": "Desired State",
+   "read_only": 1
+  },
+  {
+   "fieldname": "server",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Server",
+   "options": "Server",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "virtual_machine_image",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Virtual Machine Image",
+   "options": "Virtual Machine Image",
+   "read_only": 1,
+   "reqd": 1,
+   "set_only_once": 1
+  },
+  {
+   "fieldname": "error",
+   "fieldtype": "Data",
+   "is_virtual": 1,
+   "label": "Error",
+   "length": 512,
+   "read_only": 1
+  },
+  {
+   "fieldname": "vcpus",
+   "fieldtype": "Int",
+   "label": "vCPUs",
+   "read_only": 1,
+   "reqd": 1,
+   "set_only_once": 1
+  },
+  {
+   "fieldname": "column_break_compute",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "memory_mib",
+   "fieldtype": "Int",
+   "label": "Memory (MiB)",
+   "read_only": 1,
+   "reqd": 1,
+   "set_only_once": 1
+  },
+  {
+   "fieldname": "disk_mib",
+   "fieldtype": "Int",
+   "label": "Disk (MiB)",
+   "read_only": 1,
+   "reqd": 1,
+   "set_only_once": 1
+  },
+  {
+   "description": "VMs in the same tenant can connect through the mesh.",
+   "fieldname": "tenant_id",
+   "fieldtype": "Int",
+   "label": "Tenant ID",
+   "read_only": 1,
+   "reqd": 1,
+   "set_only_once": 1,
+   "show_description_on_click": 1
+  },
+  {
+   "fieldname": "section_break_network",
+   "fieldtype": "Section Break",
+   "label": "Network"
+  },
+  {
+   "fieldname": "hostname",
+   "fieldtype": "Data",
+   "is_virtual": 1,
+   "label": "Hostname",
+   "read_only": 1
+  },
+  {
+   "fieldname": "egress",
+   "fieldtype": "Data",
+   "is_virtual": 1,
+   "label": "Egress",
+   "read_only": 1
+  },
+  {
+   "fieldname": "wireguard_mesh_ipv6",
+   "fieldtype": "Data",
+   "is_virtual": 1,
+   "label": "WireGuard Mesh IPv6",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_network",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "public_ipv4",
+   "fieldtype": "Data",
+   "is_virtual": 1,
+   "label": "Public IPv4",
+   "read_only": 1
+  },
+  {
+   "fieldname": "mac",
+   "fieldtype": "Data",
+   "is_virtual": 1,
+   "label": "MAC",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_status",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "section_break_compute_and_storage",
+   "fieldtype": "Section Break",
+   "label": "Compute and Storage"
+  },
+  {
+   "fieldname": "column_break_gmmt",
+   "fieldtype": "Column Break"
+  }
+ ],
+ "in_create": 1,
+ "links": [],
+ "modified": "2026-09-04 00:53:02.453391",
+ "modified_by": "Administrator",
+ "module": "VM",
+ "name": "Virtual Machine",
+ "naming_rule": "Expression (old style)",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "delete": 1,
+   "read": 1,
+   "role": "System Manager",
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [
+  {
+   "color": "Gray",
+   "title": "Unknown"
+  },
+  {
+   "color": "Blue",
+   "title": "Creating"
+  },
+  {
+   "color": "Green",
+   "title": "Running"
+  },
+  {
+   "color": "Gray",
+   "title": "Stopped"
+  },
+  {
+   "color": "Orange",
+   "title": "Paused"
+  },
+  {
+   "color": "Red",
+   "title": "Failed"
+  }
+ ]
+}
