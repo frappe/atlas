@@ -4,14 +4,14 @@ metald generates this application programming interface specification from the
 handler annotations, embeds it, and serves it at `/docs`. `make build` regenerates it. The file is
 `internal/api/swagger.json`.
 
-metald serves this over the unix socket `/run/metal.sock`. JSON in/out. Auth is
-socket permissions only. Stateless: responses reflect host truth, so they
-survive a metald restart.
+metald listens on `127.0.0.1:8080` by default. Set `metald.listen` to `unix:/path`
+for a unix socket instead, where access is file permissions. JSON in and out.
+Stateless: responses reflect host truth, so they survive a metald restart.
 
 **Synchronous:** every call blocks until the operation settles, then returns the
 current VM. `create` boots the guest inline and returns `201`. There is no polling
-yet. A VM that later dies on its own shows as `state:"failed"` with a `reason` on the
-next `GET /vms/{id}`. An asynchronous mode (`202` + poll) is planned; see Deferred.
+yet. A VM that later dies on its own reports `state:"failed"` on the next
+`GET /vms/{id}`. An asynchronous mode (`202` + poll) is planned; see Deferred.
 
 ## VM
 
@@ -19,7 +19,6 @@ next `GET /vms/{id}`. An asynchronous mode (`202` + poll) is planned; see Deferr
 {
   "id": "a1b2c3d4e5f6a7b8",
   "state": "running",
-  "reason": "",
   "vcpus": 2,
   "mem_mib": 512,
   "image": "ubuntu",
@@ -45,7 +44,7 @@ derived from the VM's systemd unit. A VM stopped on request reports `stopped`;
 | `POST` | `/vms/{id}/resume` | resume a paused guest |
 | `POST` | `/vms/{id}/resize` | change cpu/mem/disk |
 | `DELETE` | `/vms/{id}` | destroy + free → `204` |
-| `GET` | `/vms/{id}/console` | stream serial console |
+| `GET` | `/vms/{id}/console` | stream serial console (not implemented → `501`) |
 | `GET` | `/health` | liveness |
 
 **Create** `POST /vms` —
@@ -149,8 +148,7 @@ Image build/download from external sources (promote is the only way to make an
 image today).
 
 Asynchronous `create`/`start`/`stop`/`delete`: return `202` at once, then poll
-`GET /vms/{id}` until `state` settles, with a failure shown as `state:"failed"` +
-`reason`.
+`GET /vms/{id}` until `state` settles. A failure settles as `state:"failed"`.
 
 Idempotency-key on create; `PATCH`/console interactivity; list pagination; diff
 (incremental) memory snapshots; snapshot caps / snapshot-of-snapshot /
