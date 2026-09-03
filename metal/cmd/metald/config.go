@@ -12,20 +12,18 @@ import (
 	"github.com/frappe/atlas/metal/internal/firecracker"
 )
 
-// opts is the resolved metald configuration: the firecracker driver paths plus
-// the storage pool, kernel dir, and API listen address.
 type opts struct {
-	cfg                        firecracker.Config
-	pool, kernelDir, imagesDir string
-	listen                     string
-	baseDir                    string
+	cfg             firecracker.Config
+	pool, imagesDir string
+	listen          string
+	authTokenHash   string
+	baseDir         string
 }
 
 const defaultConfigPath = "/var/lib/metal/metald.toml"
 
 const defaultBaseDir = "/var/lib/metal"
 
-// defaultOpts returns the built-in defaults.
 func defaultOpts() opts {
 	o := opts{
 		cfg:     firecracker.DefaultConfig(),
@@ -42,14 +40,9 @@ func defaultOpts() opts {
 // convention, not separate keys, so one base_dir moves all of them.
 func (o *opts) deriveDirs() {
 	o.cfg.MachinesDir = filepath.Join(o.baseDir, "machines")
-	o.kernelDir = filepath.Join(o.baseDir, "kernels")
-	// The warm-image memory store must share a filesystem with the jails, so a
-	// mem file stages into a VM as a hard link.
 	o.imagesDir = filepath.Join(o.baseDir, "images")
 }
 
-// fileConfig mirrors the optional metald configuration file. Sections group the
-// keys by the package that owns them. An unset key keeps the default value.
 type fileConfig struct {
 	Metald      metaldFile      `toml:"metald"`
 	Firecracker firecrackerFile `toml:"firecracker"`
@@ -58,8 +51,9 @@ type fileConfig struct {
 }
 
 type metaldFile struct {
-	BaseDir string `toml:"base_dir"`
-	Listen  string `toml:"listen"`
+	BaseDir       string `toml:"base_dir"`
+	Listen        string `toml:"listen"`
+	AuthTokenHash string `toml:"auth_token_hash"`
 }
 
 type firecrackerFile struct {
@@ -75,8 +69,6 @@ type zfsFile struct {
 	Pool string `toml:"pool"`
 }
 
-// load resolves built-in defaults and the optional configuration file.
-// An empty path uses the default configuration file.
 func load(path string) (opts, error) {
 	o := defaultOpts()
 	if err := applyFile(&o, path); err != nil {
@@ -102,6 +94,7 @@ func applyFile(o *opts, path string) error {
 	}
 	overlay(&o.baseDir, fc.Metald.BaseDir)
 	overlay(&o.listen, fc.Metald.Listen)
+	overlay(&o.authTokenHash, fc.Metald.AuthTokenHash)
 	overlay(&o.cfg.FirecrackerBin, fc.Firecracker.BinaryPath)
 	overlay(&o.cfg.SocketsDir, fc.Firecracker.SocketsDir)
 	overlay(&o.cfg.JailerBin, fc.Jailer.BinaryPath)
