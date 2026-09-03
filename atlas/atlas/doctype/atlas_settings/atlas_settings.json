@@ -48,7 +48,16 @@
   "route53_access_key_id",
   "route53_dns_zone_id",
   "column_break_bbav",
-  "route53_access_key_secret"
+  "route53_access_key_secret",
+  "storage_tab",
+  "s3_section",
+  "s3_bucket",
+  "s3_endpoint_url",
+  "s3_region",
+  "column_break_s3",
+  "s3_access_key_id",
+  "s3_secret_access_key",
+  "s3_signed_url_expiry"
  ],
  "fields": [
   {
@@ -296,14 +305,60 @@
    "fieldtype": "Data",
    "label": "X86_64 Download URL",
    "reqd": 1
+  },
+  {
+   "fieldname": "storage_tab",
+   "fieldtype": "Tab Break",
+   "label": "Storage"
+  },
+  {
+   "fieldname": "s3_section",
+   "fieldtype": "Section Break",
+   "label": "S3 Object Storage"
+  },
+  {
+   "fieldname": "s3_bucket",
+   "fieldtype": "Data",
+   "label": "Bucket"
+  },
+  {
+   "fieldname": "s3_endpoint_url",
+   "fieldtype": "Data",
+   "label": "Endpoint URL"
+  },
+  {
+   "default": "us-east-1",
+   "fieldname": "s3_region",
+   "fieldtype": "Data",
+   "label": "Region"
+  },
+  {
+   "fieldname": "column_break_s3",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "s3_access_key_id",
+   "fieldtype": "Data",
+   "label": "Access Key ID"
+  },
+  {
+   "fieldname": "s3_secret_access_key",
+   "fieldtype": "Password",
+   "label": "Secret Access Key"
+  },
+  {
+   "default": "86400",
+   "fieldname": "s3_signed_url_expiry",
+   "fieldtype": "Int",
+   "label": "Signed URL Expiry (seconds)"
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-09-02 21:11:38.455570",
- "modified_by": "test@gmail.com",
+ "modified": "2026-09-03 14:48:32.349059",
+ "modified_by": "Administrator",
  "module": "Atlas",
  "name": "Atlas Settings",
  "owner": "Administrator",
