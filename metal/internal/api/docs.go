@@ -2,17 +2,33 @@ package api
 
 import (
 	_ "embed"
+	"encoding/json"
 	"net/http"
 
 	"github.com/labstack/echo/v4"
 )
 
-// swagger.json is generated, not committed. Run `make openapi` after a clone,
-// or `go generate ./...`.
+// Generate swagger.json for the embedded API documentation.
 //
 //go:generate go run github.com/swaggo/swag/cmd/swag@v1.16.4 init -g main.go --dir ../../cmd/metald,. --parseInternal --outputTypes json -o .
 //go:embed swagger.json
 var specification []byte
+
+// securedSpecification requires bearer authentication.
+var securedSpecification = withBearerSecurity(specification)
+
+func withBearerSecurity(specification []byte) []byte {
+	var document map[string]any
+	if err := json.Unmarshal(specification, &document); err != nil {
+		panic(err)
+	}
+	document["security"] = []map[string][]string{{"BearerAuth": {}}}
+	secured, err := json.Marshal(document)
+	if err != nil {
+		panic(err)
+	}
+	return secured
+}
 
 const docsPage = `<!doctype html>
 <html lang="en">
@@ -36,12 +52,10 @@ const docsPage = `<!doctype html>
 </html>
 `
 
-// docs serves the page that displays the application programming interface specification.
-func (s *Server) docs(c echo.Context) error {
+func (s *Server) showDocumentation(c echo.Context) error {
 	return c.HTML(http.StatusOK, docsPage)
 }
 
-// specificationJSON serves the embedded API specification.
-func (s *Server) specificationJSON(c echo.Context) error {
-	return c.JSONBlob(http.StatusOK, specification)
+func (s *Server) getOpenAPISpecification(c echo.Context) error {
+	return c.JSONBlob(http.StatusOK, securedSpecification)
 }
