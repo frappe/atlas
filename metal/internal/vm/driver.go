@@ -1,22 +1,14 @@
-// Package vm defines Metal's hypervisor-agnostic VM abstraction.
+// Package vm defines virtual machine contracts.
 package vm
 
 import "context"
 
-type VMDriver interface {
-	Create(ctx context.Context, spec Spec) (VM, error)
+// Driver manages virtual machine reservations.
+type Driver interface {
+	Create(ctx context.Context, id string, specification Spec) (VM, error)
 	Load(ctx context.Context, id string) (VM, error)
 	List(ctx context.Context) ([]VM, error)
-	// Images lists the images VMs can be created from.
-	Images(ctx context.Context) ([]Image, error)
-	// DeleteImage removes an image. Returns ErrConflict if VMs cloned from it still
-	// exist, ErrNotFound if it is unknown.
-	DeleteImage(ctx context.Context, ref string) error
-	Type() DriverType
+	SetDesiredState(ctx context.Context, id string, state State) error
+	ReplaceSSHKeys(ctx context.Context, id string, sshKeys []string) error
+	ResizeCompute(ctx context.Context, id string, virtualCPUCount, memoryMiB int) error
 }
-
-type DriverType string
-
-const (
-	DriverFirecracker DriverType = "firecracker"
-)
