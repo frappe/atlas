@@ -1,0 +1,116 @@
+{
+ "actions": [],
+ "autoname": "hash",
+ "creation": "2026-09-03 10:54:12.613488",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "server",
+  "column_break_nzkt",
+  "virtual_machine_count",
+  "section_break_umfi",
+  "total_cpu_count",
+  "available_cpu_count",
+  "column_break_dmzd",
+  "total_memory_mib",
+  "available_memory_mib",
+  "column_break_rspx",
+  "total_storage_mib",
+  "available_storage_mib"
+ ],
+ "fields": [
+  {
+   "fieldname": "server",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Server",
+   "options": "Server",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "total_cpu_count",
+   "fieldtype": "Int",
+   "label": "Total CPUs",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "available_cpu_count",
+   "fieldtype": "Int",
+   "label": "Available CPUs",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "virtual_machine_count",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Virtual Machines",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "total_memory_mib",
+   "fieldtype": "Int",
+   "label": "Total Memory (MiB)",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "available_memory_mib",
+   "fieldtype": "Int",
+   "label": "Available Memory (MiB)",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "total_storage_mib",
+   "fieldtype": "Int",
+   "label": "Total Storage (MiB)",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "available_storage_mib",
+   "fieldtype": "Int",
+   "label": "Available Storage (MiB)",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "column_break_nzkt",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "section_break_umfi",
+   "fieldtype": "Section Break"
+  },
+  {
+   "fieldname": "column_break_dmzd",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "column_break_rspx",
+   "fieldtype": "Column Break"
+  }
+ ],
+ "links": [],
+ "modified": "2026-09-03 21:55:31.959836",
+ "modified_by": "Administrator",
+ "module": "Server",
+ "name": "Server Usage",
+ "naming_rule": "Random",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "read": 1,
+   "role": "System Manager"
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": []
+}
