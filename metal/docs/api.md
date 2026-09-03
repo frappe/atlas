@@ -153,3 +153,14 @@ Asynchronous `create`/`start`/`stop`/`delete`: return `202` at once, then poll
 Idempotency-key on create; `PATCH`/console interactivity; list pagination; diff
 (incremental) memory snapshots; snapshot caps / snapshot-of-snapshot /
 restore-vs-pool-exhaustion.
+
+## Design notes
+
+- Depends only on `vm`. The concrete firecracker driver is injected in `main`, so the
+  API never imports it and a handler tests against a fake `VMDriver`.
+- Synchronous today. Each call blocks and returns the settled state, so a client needs
+  no poll loop. An asynchronous mode (`202` + poll) is planned; see Deferred above.
+- `respond` returns live truth. It re-fetches `Info` after a mutation, which matches
+  the stateless model: a response reflects host state, not a cached copy.
+
+Detail: [internal/api/SPEC.md](../internal/api/SPEC.md).
