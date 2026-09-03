@@ -12,6 +12,7 @@ The `atlas` Python module contains the Frappe application code for Atlas setting
 core/server_providers/      Provider interfaces and implementations
 core/dns_providers/         DNS provider interfaces and implementations
 doctype/atlas_settings/     Atlas Settings DocType (module: Atlas)
+../vm/doctype/              Virtual machine and image DocTypes (module: VM)
 ../server/doctype/          Server catalog DocTypes (module: Server)
   server_size/               Server Size DocType
   server_image/               Server Image DocType
@@ -20,6 +21,7 @@ doctype/atlas_settings/     Atlas Settings DocType (module: Atlas)
 ## Ownership
 
 Keep provider behavior in the matching `core/` package. Keep document behavior in the matching DocType controller. Keep provider metadata in the related catalog record.
+Keep VM records, image records, image transfer, and image builders in `../vm/`. Keep S3 operations in `s3.py`.
 
 ## Interfaces
 
