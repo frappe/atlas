@@ -13,6 +13,7 @@
   "column_break_identity",
   "operating_system",
   "operating_system_version",
+  "transfer_progress",
   "supports_cloud_init",
   "cache_image",
   "memory_snapshot",
@@ -220,6 +221,15 @@
    "label": "Transfer"
   },
   {
+   "description": "Upload progress in percent.",
+   "fieldname": "transfer_progress",
+   "fieldtype": "Int",
+   "label": "Progress (%)",
+   "non_negative": 1,
+   "read_only": 1,
+   "show_description_on_click": 1
+  },
+  {
    "fieldname": "rootfs_multipart_upload_id",
    "fieldtype": "Data",
    "hidden": 1,
@@ -274,7 +284,7 @@
   }
  ],
  "links": [],
- "modified": "2026-09-04 00:55:56.386759",
+ "modified": "2026-09-04 03:44:34.257430",
  "modified_by": "Administrator",
  "module": "VM",
  "name": "Virtual Machine Image",

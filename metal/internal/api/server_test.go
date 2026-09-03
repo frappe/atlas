@@ -152,15 +152,25 @@ func (services *fakeRuntimeServices) CreateSnapshot(
 	return snapshot, nil
 }
 
-func (services *fakeRuntimeServices) UploadSnapshot(
+func (services *fakeRuntimeServices) StartUpload(
 	_ context.Context,
 	snapshotID string,
 	_ storage.SnapshotUploadRequest,
-) (storage.SnapshotUploadResult, error) {
+) error {
 	if _, found := services.snapshots[snapshotID]; !found {
-		return storage.SnapshotUploadResult{}, storage.ErrNotFound
+		return storage.ErrNotFound
 	}
-	return storage.SnapshotUploadResult{}, nil
+	return nil
+}
+
+func (services *fakeRuntimeServices) UploadStatus(
+	_ context.Context,
+	snapshotID string,
+) (storage.SnapshotUploadStatus, error) {
+	if _, found := services.snapshots[snapshotID]; !found {
+		return storage.SnapshotUploadStatus{}, storage.ErrNotFound
+	}
+	return storage.SnapshotUploadStatus{ID: snapshotID, State: storage.UploadStateUploading}, nil
 }
 
 func (services *fakeRuntimeServices) DeleteSnapshot(_ context.Context, snapshotID string) error {

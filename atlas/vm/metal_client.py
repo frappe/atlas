@@ -41,7 +41,6 @@ class MetalClient:
 	timeout_seconds = (3, 10)
 	create_timeout_seconds = (2, 5)
 	snapshot_timeout_seconds = (5, 3600)
-	upload_timeout_seconds = (5, 7200)
 
 	def __init__(self, server: "Server") -> None:
 		if not server.private_ipv4_address:
@@ -106,14 +105,23 @@ class MetalClient:
 			timeout=self.snapshot_timeout_seconds,
 		)
 
-	def upload_snapshot(self, snapshot_id: str, request: dict[str, Any]) -> dict[str, Any]:
-		"""Ask Metal to upload staged rootfs and kernel artifacts."""
-		return self._request(
+	def start_snapshot_upload(self, snapshot_id: str, request: dict[str, Any]) -> None:
+		"""Ask Metal to start uploading staged artifacts. Returns at once."""
+		self._request(
 			"POST",
 			f"/snapshots/{quote(snapshot_id, safe='')}/upload",
 			json=request,
+			expected_status=202,
 			uncertain_on_failure=True,
-			timeout=self.upload_timeout_seconds,
+			timeout=self.snapshot_timeout_seconds,
+		)
+
+	def get_snapshot(self, snapshot_id: str) -> dict[str, Any]:
+		"""Get the upload status for one staged snapshot."""
+		return self._request(
+			"GET",
+			f"/snapshots/{quote(snapshot_id, safe='')}",
+			timeout=self.snapshot_timeout_seconds,
 		)
 
 	def delete_snapshot(self, snapshot_id: str) -> None:

@@ -34,6 +34,9 @@ type SnapshotStore struct {
 	directory     string
 	httpClient    *http.Client
 	snapshotLocks sync.Map
+
+	uploadsMutex sync.Mutex
+	uploads      map[string]*snapshotUpload
 }
 
 // Stores contains the host storage services.
@@ -64,6 +67,7 @@ func NewStores(poolName, imagesDirectory string) Stores {
 			images:     images,
 			directory:  filepath.Join(baseDirectory, "snapshots"),
 			httpClient: newImageHTTPClient(),
+			uploads:    make(map[string]*snapshotUpload),
 		},
 	}
 }

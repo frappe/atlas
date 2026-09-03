@@ -180,12 +180,15 @@ scheduler_events = {
 			"atlas.server.doctype.server_ip_address.server_ip_address.enqueue_pending_ip_address_reconcilation",
 			"atlas.server.usage.enqueue_server_syncs",
 		],
+		# Poll and advance in-progress Machine image uploads every 30 seconds.
+		"* * * * * */30": [
+			"atlas.vm.virtual_machine_image_manager.enqueue_pending_machine_image_transfers",
+		],
 		"* * * * *": [
 			"atlas.server.doctype.server_ssh_task.server_ssh_task.mark_timed_out_ssh_tasks",
 		],
 		"*/10 * * * *": [
 			"atlas.vm.doctype.virtual_machine.virtual_machine.reconcile_stale_drafts",
-			"atlas.vm.virtual_machine_image_manager.enqueue_pending_machine_image_transfers",
 		],
 	},
 	"hourly": ["atlas.server.usage.delete_old_usage_samples"],

@@ -219,11 +219,73 @@ class TestVirtualMachineImageTransfer(UnitTestCase):
 			patch("atlas.vm.virtual_machine_image_manager.frappe.db.commit"),
 			patch.object(manager, "complete_stored_uploads"),
 		):
-			manager.perform_transfer(image)
+			manager.advance_transfer(image)
 
 		metal_client.delete_snapshot.assert_called_once_with("image-1")
 		self.assertEqual(image.status, "Available")
 		self.assertIsNone(image.transfer_error)
+
+	def test_completed_upload_status_records_sha256_and_finalizes(self) -> None:
+		image = SimpleNamespace(
+			name="image-1",
+			image_sha256=None,
+			kernel_sha256=None,
+			source_server="server-1",
+			status="Uploading",
+			transfer_error=None,
+			save=Mock(),
+		)
+		metal_client = Mock()
+		metal_client.get_snapshot.return_value = {
+			"state": "completed",
+			"rootfs": {"sha256": "a" * 64},
+			"kernel": {"sha256": "b" * 64},
+		}
+		settings = SimpleNamespace(get_s3_client=Mock(return_value=Mock()))
+		manager = VirtualMachineImageManager()
+
+		with (
+			patch(
+				"atlas.vm.virtual_machine_image_manager.frappe.get_doc",
+				return_value=SimpleNamespace(name="server-1"),
+			),
+			patch("atlas.vm.virtual_machine_image_manager.frappe.get_single", return_value=settings),
+			patch("atlas.vm.virtual_machine_image_manager.MetalClient", return_value=metal_client),
+			patch("atlas.vm.virtual_machine_image_manager.frappe.db.commit"),
+			patch.object(manager, "complete_stored_uploads"),
+		):
+			manager.advance_transfer(image)
+
+		self.assertEqual(image.image_sha256, "a" * 64)
+		self.assertEqual(image.kernel_sha256, "b" * 64)
+		metal_client.delete_snapshot.assert_called_once_with("image-1")
+		self.assertEqual(image.status, "Available")
+
+	def test_pending_upload_status_starts_the_upload(self) -> None:
+		image = SimpleNamespace(
+			name="image-1",
+			image_sha256=None,
+			kernel_sha256=None,
+			source_server="server-1",
+		)
+		metal_client = Mock()
+		metal_client.get_snapshot.return_value = {"state": "pending"}
+		settings = SimpleNamespace(get_s3_client=Mock(return_value=Mock()))
+		manager = VirtualMachineImageManager()
+
+		with (
+			patch(
+				"atlas.vm.virtual_machine_image_manager.frappe.get_doc",
+				return_value=SimpleNamespace(name="server-1"),
+			),
+			patch("atlas.vm.virtual_machine_image_manager.frappe.get_single", return_value=settings),
+			patch("atlas.vm.virtual_machine_image_manager.MetalClient", return_value=metal_client),
+			patch.object(manager, "start_upload") as start_upload,
+		):
+			manager.advance_transfer(image)
+
+		start_upload.assert_called_once()
+		metal_client.delete_snapshot.assert_not_called()
 
 	def test_transfer_failure_keeps_identifiers_and_sets_actionable_error(self) -> None:
 		image = SimpleNamespace(name="image-1", status="Uploading", transfer_error=None, save=Mock())
@@ -233,7 +295,7 @@ class TestVirtualMachineImageTransfer(UnitTestCase):
 			patch("atlas.vm.virtual_machine_image_manager.frappe.get_doc", return_value=image),
 			patch("atlas.vm.virtual_machine_image_manager.frappe.db.commit"),
 			patch("atlas.vm.virtual_machine_image_manager.frappe.log_error"),
-			patch.object(manager, "perform_transfer", side_effect=S3Error("upload failed")),
+			patch.object(manager, "advance_transfer", side_effect=S3Error("upload failed")),
 		):
 			manager.transfer("image-1")
 

@@ -51,6 +51,7 @@ class VirtualMachineImage(Document):
 		supports_cloud_init: DF.Check
 		title: DF.Data
 		transfer_error: DF.SmallText | None
+		transfer_progress: DF.Int
 		version: DF.Int
 	# end: auto-generated types
 

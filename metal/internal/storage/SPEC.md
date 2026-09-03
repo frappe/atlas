@@ -69,7 +69,7 @@ A successful VM start records image use. Metal keeps an image when a dependent V
 
 `StageSnapshot` creates a VM disk snapshot, a read-only staging clone, a staged kernel, and metadata. Snapshot IDs are UUIDv7 values from the Firecracker driver.
 
-`UploadSnapshot` validates 2 GiB multipart ranges and streams each artifact. It returns SHA-256 values and HTTP ETag values.
+`StartUpload` validates 2 GiB multipart ranges and starts an asynchronous upload. `UploadStatus` returns the upload state, SHA-256 values, and HTTP ETag values after completion.
 
 `DeleteSnapshot` removes the staging clone before the source snapshot and files. `PruneStagedSnapshots` removes staging after 48 idle hours.
 

@@ -38,7 +38,8 @@ type SnapshotCreator interface {
 
 // SnapshotStore uploads and removes local image staging snapshots.
 type SnapshotStore interface {
-	UploadSnapshot(ctx context.Context, snapshotID string, request storage.SnapshotUploadRequest) (storage.SnapshotUploadResult, error)
+	StartUpload(ctx context.Context, snapshotID string, request storage.SnapshotUploadRequest) error
+	UploadStatus(ctx context.Context, snapshotID string) (storage.SnapshotUploadStatus, error)
 	DeleteSnapshot(ctx context.Context, snapshotID string) error
 }
 

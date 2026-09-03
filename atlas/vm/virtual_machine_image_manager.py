@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 
 MEBIBYTE = 1 << 20
 MULTIPART_PART_SIZE_MIB = 2 * 1024
-TRANSFER_TIMEOUT_SECONDS = 7200
+TRANSFER_TIMEOUT_SECONDS = 900
 ImageStatus = Literal["Pending", "Uploading", "Completing", "Cleaning", "Available", "Failed"]
 
 
@@ -111,7 +111,7 @@ class VirtualMachineImageManager:
 	def enqueue_transfer(self, image_name: str) -> None:
 		frappe.enqueue(
 			"atlas.vm.virtual_machine_image_manager.transfer_machine_image",
-			queue="long",
+			queue="default",
 			timeout=TRANSFER_TIMEOUT_SECONDS,
 			image_name=image_name,
 			job_id=f"atlas||machine-image||{image_name}",
@@ -122,7 +122,7 @@ class VirtualMachineImageManager:
 	def transfer(self, image_name: str) -> None:
 		image = cast("VirtualMachineImage", frappe.get_doc("Virtual Machine Image", image_name))
 		try:
-			self.perform_transfer(image)
+			self.advance_transfer(image)
 		except (MetalClientError, S3Error, VirtualMachineImageTransferError) as error:
 			self.mark_failed(image, str(error))
 			frappe.log_error(
@@ -130,40 +130,77 @@ class VirtualMachineImageManager:
 				message=frappe.get_traceback(),
 			)
 
-	def perform_transfer(self, image: VirtualMachineImage) -> None:
-		server_name = self.require_value(image.source_server, "source server")
-		snapshot_id = cast(str, image.name)
-		server = cast("Server", frappe.get_doc("Server", server_name))
+	def advance_transfer(self, image: VirtualMachineImage) -> None:
+		"""Move one Machine image transfer forward by one step.
+
+		Metal uploads the snapshot in the background. This starts the upload, polls
+		its status, and finishes the transfer once Metal reports it complete.
+		"""
+		server = cast(
+			"Server",
+			frappe.get_doc("Server", self.require_value(image.source_server, "source server")),
+		)
 		metal_client = MetalClient(server)
-		settings = cast("AtlasSettings", frappe.get_single("Atlas Settings"))
-		s3_client = settings.get_s3_client()
+		s3_client = cast("AtlasSettings", frappe.get_single("Atlas Settings")).get_s3_client()
 
 		if image.image_sha256 and image.kernel_sha256:
-			self.complete_stored_uploads(image, s3_client)
+			self.finalize(image, metal_client, s3_client)
+			return
+
+		try:
+			status = metal_client.get_snapshot(cast(str, image.name))
+		except MetalClientError as error:
+			if error.is_not_found:
+				raise VirtualMachineImageTransferError(
+					"Metal has no staged snapshot for this image"
+				) from error
+			raise
+
+		state = status.get("state")
+		if state == "completed":
+			self.record_completed_upload(image, status)
+			self.finalize(image, metal_client, s3_client)
+		elif state == "failed":
+			self.mark_failed(image, status.get("error") or "Metal reported an upload failure")
+		elif state == "pending":
+			self.start_upload(image, metal_client, s3_client)
 		else:
-			self.upload_snapshot(image, metal_client, s3_client)
+			self.record_progress(image, status)
 
-		self.update_status(image, "Cleaning")
-		metal_client.delete_snapshot(snapshot_id)
-		self.mark_available(image)
+	def record_progress(self, image: VirtualMachineImage, status: dict[str, Any]) -> None:
+		percent = status.get("progress_percent")
+		if isinstance(percent, int) and percent != image.transfer_progress:
+			image.db_set("transfer_progress", max(0, min(100, percent)))
 
-	def upload_snapshot(
+	def start_upload(
 		self, image: VirtualMachineImage, metal_client: MetalClient, s3_client: S3Client
 	) -> None:
-		snapshot_id = cast(str, image.name)
+		image.transfer_progress = 0
 		self.update_status(image, "Uploading")
 		self.ensure_multipart_uploads(image, s3_client)
 		upload_request = self.get_upload_request(image, s3_client)
-		upload_response = metal_client.upload_snapshot(snapshot_id, upload_request)
-		parts_by_artifact = self.validate_upload_response(image, upload_response)
+		metal_client.start_snapshot_upload(cast(str, image.name), upload_request)
 
-		image.image_sha256 = upload_response["rootfs"]["sha256"]
-		image.kernel_sha256 = upload_response["kernel"]["sha256"]
+	def record_completed_upload(self, image: VirtualMachineImage, status: dict[str, Any]) -> None:
+		image.image_sha256 = self.require_artifact_sha256(status, "rootfs")
+		image.kernel_sha256 = self.require_artifact_sha256(status, "kernel")
 		image.status = "Completing"
+		image.transfer_progress = 100
 		image.transfer_error = None
 		image.save(ignore_permissions=True)
 		frappe.db.commit()
-		self.complete_uploads(image, s3_client, parts_by_artifact)
+
+	def finalize(self, image: VirtualMachineImage, metal_client: MetalClient, s3_client: S3Client) -> None:
+		self.complete_stored_uploads(image, s3_client)
+		self.update_status(image, "Cleaning")
+		metal_client.delete_snapshot(cast(str, image.name))
+		self.mark_available(image)
+
+	def require_artifact_sha256(self, status: dict[str, Any], artifact: str) -> str:
+		value = status.get(artifact)
+		sha256 = value.get("sha256") if isinstance(value, dict) else None
+		self.validate_sha256(artifact, sha256)
+		return cast(str, sha256)
 
 	def complete_stored_uploads(self, image: VirtualMachineImage, s3_client: S3Client) -> None:
 		self.update_status(image, "Completing")
@@ -254,29 +291,6 @@ class VirtualMachineImageManager:
 			}
 			for part_number in range(1, get_multipart_part_count(size_mib) + 1)
 		]
-
-	def validate_upload_response(
-		self, image: VirtualMachineImage, response: dict[str, Any]
-	) -> dict[str, list[dict[str, Any]]]:
-		parts_by_artifact = {}
-		for artifact, expected_mib in (
-			("rootfs", image.image_size_mib),
-			("kernel", image.kernel_size_mib),
-		):
-			value = response.get(artifact)
-			if not isinstance(value, dict):
-				raise VirtualMachineImageTransferError(f"Metal returned invalid {artifact} data")
-
-			size_bytes = value.get("size_bytes")
-			if not isinstance(size_bytes, int) or bytes_to_mib(size_bytes) != expected_mib:
-				raise VirtualMachineImageTransferError(f"Metal returned an invalid {artifact} size")
-			self.validate_sha256(artifact, value.get("sha256"))
-			parts = value.get("parts")
-			if not isinstance(parts, list):
-				raise VirtualMachineImageTransferError(f"Metal returned invalid {artifact} parts")
-			self.validate_parts(artifact, expected_mib, parts)
-			parts_by_artifact[artifact] = parts
-		return parts_by_artifact
 
 	@staticmethod
 	def validate_sha256(artifact: str, sha256: object) -> None:

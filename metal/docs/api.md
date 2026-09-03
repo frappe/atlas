@@ -115,9 +115,12 @@ Metal does not expose image list, image delete, or in-place snapshot restore API
 |---|---|---|
 | `POST` | `/vms/{id}/snapshots` | create local rootfs and kernel staging with a new UUIDv7 |
 | `POST` | `/snapshots/{snapshot_id}/upload` | upload staged artifacts with multipart HTTP URLs |
+| `GET` | `/snapshots/{snapshot_id}` | get upload status and completed artifact details |
 | `DELETE` | `/snapshots/{snapshot_id}` | remove local staging |
 
-The create response contains the Metal-generated snapshot ID and the exact rootfs and kernel sizes. Atlas uses the ID as its Machine image document name. Upload parts are 2 GiB, except for the final part. Metal streams each part and returns its HTTP ETag plus the SHA-256 value of each complete artifact. Atlas completes the multipart uploads, then deletes local staging.
+The create response contains the Metal-generated snapshot ID and the exact rootfs and kernel sizes. Atlas uses the ID as its Machine image document name. Upload parts are 2 GiB, except for the final part. Metal streams each part in the background. The status reports each part HTTP ETag and the SHA-256 value of each complete artifact. Atlas completes the multipart uploads, then deletes local staging.
+
+The upload request returns `202`. Poll `GET /snapshots/{snapshot_id}` until the state is `completed` or `failed`. The status reports `uploaded_bytes`, `total_bytes`, and `progress_percent` while the upload runs. The completed response also contains the artifact sizes, SHA-256 values, and ETags.
 
 Metal updates snapshot activity when an upload starts or finishes. The image reconciler deletes local staging after 48 hours without activity.
 

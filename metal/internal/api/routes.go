@@ -29,6 +29,7 @@ func (s *Server) registerRoutes(router *echo.Echo) {
 
 	snapshotRoutes := router.Group("/snapshots")
 	snapshotRoutes.POST("/:snapshot_id/upload", s.uploadSnapshot)
+	snapshotRoutes.GET("/:snapshot_id", s.getSnapshot)
 	snapshotRoutes.DELETE("/:snapshot_id", s.deleteSnapshot)
 
 	router.GET("/docs", s.showDocumentation)

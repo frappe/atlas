@@ -137,19 +137,23 @@ class TestMetalClient(UnitTestCase):
 		)
 		self.assertEqual(request.call_args.kwargs["json"], {"ssh_keys": ["ssh-ed25519 AAAA"]})
 
-	def test_snapshot_calls_use_unified_image_paths_and_long_timeouts(self) -> None:
+	def test_snapshot_calls_use_unified_image_paths(self) -> None:
 		client = MetalClient.__new__(MetalClient)
 		client.base_url = "http://10.0.0.2:9000"
 		client.headers = {"Authorization": "Bearer token"}
 		responses = [
 			SimpleNamespace(status_code=201, content=b"{}", json=lambda: {}),
-			SimpleNamespace(status_code=200, content=b"{}", json=lambda: {}),
+			SimpleNamespace(status_code=202, content=b""),
+			SimpleNamespace(
+				status_code=200, content=b'{"state": "uploading"}', json=lambda: {"state": "uploading"}
+			),
 			SimpleNamespace(status_code=204, content=b""),
 		]
 
 		with patch("atlas.vm.metal_client.requests.request", side_effect=responses) as request:
 			client.create_snapshot("VM-00001")
-			client.upload_snapshot("image-1", {"rootfs": {"parts": []}, "kernel": {"parts": []}})
+			client.start_snapshot_upload("image-1", {"rootfs": {"parts": []}, "kernel": {"parts": []}})
+			client.get_snapshot("image-1")
 			client.delete_snapshot("image-1")
 
 		self.assertEqual(
@@ -157,11 +161,12 @@ class TestMetalClient(UnitTestCase):
 			[
 				("POST", "http://10.0.0.2:9000/vms/VM-00001/snapshots"),
 				("POST", "http://10.0.0.2:9000/snapshots/image-1/upload"),
+				("GET", "http://10.0.0.2:9000/snapshots/image-1"),
 				("DELETE", "http://10.0.0.2:9000/snapshots/image-1"),
 			],
 		)
 		self.assertEqual(request.call_args_list[0].kwargs["timeout"], client.snapshot_timeout_seconds)
-		self.assertEqual(request.call_args_list[1].kwargs["timeout"], client.upload_timeout_seconds)
+		self.assertEqual(request.call_args_list[1].kwargs["timeout"], client.snapshot_timeout_seconds)
 
 	def test_sync_sends_wireguard_peers_and_images(self) -> None:
 		client = MetalClient.__new__(MetalClient)
@@ -188,7 +193,7 @@ class TestMetalClient(UnitTestCase):
 			patch("atlas.vm.metal_client.requests.request", side_effect=requests.ConnectionError("lost")),
 			self.assertRaises(MetalClientError) as raised,
 		):
-			client.upload_snapshot("image-1", {})
+			client.start_snapshot_upload("image-1", {})
 
 		self.assertTrue(raised.exception.uncertain)
 
