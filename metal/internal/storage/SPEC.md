@@ -106,33 +106,6 @@ warm mem:    LinkOrReflink stages a large snapshot memory file:
 written. The image memory store and the chroots sit on one filesystem, so staging a
 warm memory file is a hard link with no data copy.
 
-## Design notes
-
-Why the main choices were made.
-
-- Clone, not copy. `zfs clone` from `@ready` is near-instant and shares the base's
-  blocks until written, so VMs cost almost no space until they diverge. A clone needs
-  a snapshot source, hence the immutable `@ready`.
-- Grow-only disks. Shrinking under a live filesystem can drop data. Growing is safe:
-  the guest extends its own filesystem (`growpart`, `resize2fs`). A smaller resize is
-  rejected upstream.
-- Disk persists across a stop. `provisionDisk` clones only when the disk is absent, so
-  a restart reuses it. Rollback destroys the disk only if this call created it, so a
-  restart never discards data.
-- Snapshot is cheap; restore is destructive. `zfs snapshot` just pins blocks. `zfs
-  rollback -r` reverts and discards newer snapshots, since ZFS rolls back only to the
-  latest. The VM must be stopped, or the revert corrupts a live guest.
-- Promote copies in full. A promoted image must outlive its VM. A clone would block
-  the VM's deletion or share its fate. `zfs send | zfs recv` makes a standalone
-  dataset, so the VM can be deleted after. The cost is a full copy.
-- Block node, not a file. The disk is a zvol. The jail cannot reach `/dev`, so metald
-  makes a block node in the chroot mirroring `/dev/zvol/...`, owned by the VM uid.
-  udev creates the symlink async, so `statBlock` waits up to ~3 s.
-- Hard-link the kernel. A hard link is free and shares the read-only kernel. It cannot
-  cross a filesystem, so `kernelDir` sits with the chroots.
-- Memory files are 0644. On warm start any VM uid hard-links an image's `state` and
-  `mem` files into its chroot, so they are world-readable on a trusted host.
-
 ## Related
 
 - [docs/storage.md](../../docs/storage.md) broad storage overview.
