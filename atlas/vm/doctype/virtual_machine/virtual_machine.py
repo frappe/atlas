@@ -32,6 +32,7 @@ class VirtualMachine(Document):
 
 		disk_mib: DF.Int
 		is_draft: DF.Check
+		is_terminating: DF.Check
 		memory_mib: DF.Int
 		server: DF.Link
 		tenant_id: DF.Int
@@ -85,6 +86,8 @@ class VirtualMachine(Document):
 	def status(self) -> str:
 		if self.is_draft:
 			return "Unknown"
+		if self.is_terminating:
+			return "Terminating"
 		info = self.get_metal_info()
 		if not info:
 			return "Unknown"
@@ -136,13 +139,16 @@ class VirtualMachine(Document):
 
 	@frappe.whitelist(methods=["POST"])
 	def terminate(self) -> None:
-		"""Ask Metal to remove this VM."""
+		"""Ask Metal to remove this VM and release its IP address."""
 		frappe.only_for("System Manager")
 		try:
 			MetalClient(frappe.get_doc("Server", self.server)).terminate_virtual_machine(self.name)
 		except MetalClientError as error:
 			if not error.is_not_found:
 				throw_metal_error(error)
+
+		self.db_set("is_terminating", 1)
+		self.release_ip_address()
 
 	@frappe.whitelist(methods=["POST"])
 	def create_machine_image(
@@ -243,3 +249,22 @@ def reconcile_stale_draft(name: str) -> None:
 		virtual_machine.delete(ignore_permissions=True)
 		return
 	virtual_machine.db_set("is_draft", 0)
+
+
+def reconcile_terminating_virtual_machines() -> None:
+	"""Delete terminated VMs that Metal reports as absent."""
+	names = frappe.get_all("Virtual Machine", filters={"is_terminating": 1}, pluck="name")
+	for name in names:
+		reconcile_terminating_virtual_machine(name)
+
+
+def reconcile_terminating_virtual_machine(name: str) -> None:
+	"""Delete a terminated VM once Metal confirms it is absent."""
+	virtual_machine = frappe.get_doc("Virtual Machine", name)
+	try:
+		MetalClient(frappe.get_doc("Server", virtual_machine.server)).get_virtual_machine(name)
+	except MetalClientError as error:
+		if not error.is_not_found:
+			return
+		virtual_machine.flags.metal_absence_confirmed = True
+		virtual_machine.delete(ignore_permissions=True)

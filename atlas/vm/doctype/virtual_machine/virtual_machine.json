@@ -6,6 +6,7 @@
  "engine": "InnoDB",
  "field_order": [
   "is_draft",
+  "is_terminating",
   "status",
   "desired_state",
   "tenant_id",
@@ -34,6 +35,14 @@
    "fieldtype": "Check",
    "hidden": 1,
    "label": "Draft",
+   "read_only": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "is_terminating",
+   "fieldtype": "Check",
+   "hidden": 1,
+   "label": "Terminating",
    "read_only": 1
   },
   {

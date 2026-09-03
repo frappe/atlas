@@ -4,6 +4,7 @@ from unittest.mock import Mock, patch
 import requests
 from frappe.tests import UnitTestCase
 
+from atlas.vm.doctype.virtual_machine import virtual_machine as virtual_machine_module
 from atlas.vm.metal_client import MetalClient, MetalClientError
 from atlas.vm.virtual_machine_manager import (
 	PlacementCapacity,
@@ -203,3 +204,36 @@ class TestMetalClient(UnitTestCase):
 			client.put_virtual_machine("VM-00001", {})
 
 		self.assertTrue(raised.exception.uncertain)
+
+
+class TestReconcileTerminating(UnitTestCase):
+	"""Cover the scheduled cleanup of terminated VMs."""
+
+	def _run(self, error: MetalClientError | None) -> Mock:
+		virtual_machine = Mock(server="node-1", flags=SimpleNamespace())
+		client = Mock()
+		if error is not None:
+			client.get_virtual_machine.side_effect = error
+		with (
+			patch.object(
+				virtual_machine_module.frappe,
+				"get_doc",
+				side_effect=[virtual_machine, Mock()],
+			),
+			patch.object(virtual_machine_module, "MetalClient", return_value=client),
+		):
+			virtual_machine_module.reconcile_terminating_virtual_machine("VM-00001")
+		return virtual_machine
+
+	def test_absent_vm_is_deleted(self) -> None:
+		virtual_machine = self._run(MetalClientError("gone", status=404))
+		self.assertTrue(virtual_machine.flags.metal_absence_confirmed)
+		virtual_machine.delete.assert_called_once()
+
+	def test_present_vm_is_kept(self) -> None:
+		virtual_machine = self._run(None)
+		virtual_machine.delete.assert_not_called()
+
+	def test_other_error_keeps_vm(self) -> None:
+		virtual_machine = self._run(MetalClientError("busy", status=503))
+		virtual_machine.delete.assert_not_called()

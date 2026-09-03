@@ -129,7 +129,7 @@ class ServerIPAddress(Document):
 		).run()
 
 
-def enqueue_pending_ip_address_reconciles() -> None:
+def enqueue_pending_ip_address_reconcilation() -> None:
 	"""Queue a reconcile job for each pending intent."""
 	for name in frappe.get_all(
 		"Server IP Address",

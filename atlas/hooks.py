@@ -175,10 +175,13 @@ app_license = "agpl-3.0"
 
 scheduler_events = {
 	"cron": {
+		"* * * * * */10": [
+			"atlas.vm.doctype.virtual_machine.virtual_machine.reconcile_terminating_virtual_machines",
+			"atlas.server.doctype.server_ip_address.server_ip_address.enqueue_pending_ip_address_reconcilation",
+			"atlas.server.usage.enqueue_server_syncs",
+		],
 		"* * * * *": [
 			"atlas.server.doctype.server_ssh_task.server_ssh_task.mark_timed_out_ssh_tasks",
-			"atlas.server.doctype.server_ip_address.server_ip_address.enqueue_pending_ip_address_reconciles",
-			"atlas.server.usage.enqueue_server_syncs",
 		],
 		"*/10 * * * *": [
 			"atlas.vm.doctype.virtual_machine.virtual_machine.reconcile_stale_drafts",
