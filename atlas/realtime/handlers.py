@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import contextlib
 import json
 
 import frappe
@@ -34,10 +35,10 @@ class ConsoleSession:
 	def __init__(self, socket: Socket, connection: websockets.ClientConnection):
 		self.socket = socket
 		self.connection = connection
-		self.pump_task = asyncio.create_task(self.pump_output())
+		self.stream_task = asyncio.create_task(self.stream_output())
 
-	async def pump_output(self) -> None:
-		"""Forward console output until the socket closes."""
+	async def stream_output(self) -> None:
+		"""Forward console output until either side closes, then clean up the session."""
 		try:
 			async for message in self.connection:
 				data = message if isinstance(message, bytes) else message.encode()
@@ -45,7 +46,14 @@ class ConsoleSession:
 		except (websockets.WebSocketException, asyncio.CancelledError):
 			pass
 		finally:
-			await self.socket.emit("atlas_console_closed")
+			# The Metal side may close first, so remove this session here instead of
+			# relying only on the browser disconnect.
+			if _sessions.get(self.socket.sid) is self:
+				del _sessions[self.socket.sid]
+			with contextlib.suppress(Exception):
+				await self.connection.close()
+			with contextlib.suppress(Exception):
+				await self.socket.emit("atlas_console_closed")
 
 	async def send_input(self, data: bytes) -> None:
 		await self.connection.send(data)
@@ -54,7 +62,7 @@ class ConsoleSession:
 		await self.connection.send(json.dumps({"resize": {"cols": cols, "rows": rows}}))
 
 	async def close(self) -> None:
-		self.pump_task.cancel()
+		self.stream_task.cancel()
 		await self.connection.close()
 
 
