@@ -2,7 +2,7 @@
 
 {%- block head_include %}
 <meta name="referrer" content="no-referrer" />
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css" />
+<link rel="stylesheet" href="/assets/atlas/vendor/console/xterm.min.css" />
 <style>
 	html, body { margin: 0; height: 100%; background: #1e1e1e; overflow: hidden; }
 	#atlas-console { position: fixed; inset: 0; padding: 4px; }
@@ -25,9 +25,9 @@
 	</div>
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/socket.io-client@4.7.5/dist/socket.io.min.js"></script>
+<script src="/assets/atlas/vendor/console/xterm.min.js"></script>
+<script src="/assets/atlas/vendor/console/addon-fit.min.js"></script>
+<script src="/assets/atlas/vendor/console/socket.io.min.js"></script>
 <script>
 (function () {
 	// The token is in the URL fragment so it never reaches the server or a Referer.
@@ -66,7 +66,10 @@
 	const socket = io(host(), { withCredentials: true, reconnection: false });
 
 	socket.on("connect", () => socket.emit("atlas_console_open", token));
-	socket.on("atlas_console_ready", () => term.focus());
+	socket.on("atlas_console_ready", () => {
+		sendResize();
+		term.focus();
+	});
 	socket.on("atlas_console_output", (data) =>
 		term.write(Uint8Array.from(atob(data), (c) => c.charCodeAt(0)))
 	);
