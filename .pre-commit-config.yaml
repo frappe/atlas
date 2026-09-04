@@ -45,7 +45,9 @@ repos:
                 .*node_modules.*|
                 .*boilerplate.*|
                 atlas/templates/includes/.*|
-                atlas/public/js/lib/.*
+                atlas/public/js/lib/.*|
+                atlas/public/vendor/.*|
+                atlas/www/.*
             )$
 
 
@@ -63,7 +65,8 @@ repos:
                 .*node_modules.*|
                 .*boilerplate.*|
                 atlas/templates/includes/.*|
-                atlas/public/js/lib/.*
+                atlas/public/js/lib/.*|
+                atlas/public/vendor/.*
             )$
 
 ci:
