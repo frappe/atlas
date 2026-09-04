@@ -164,10 +164,11 @@ func TestDestroyRetainsTombstoneUntilCleanupSucceeds(t *testing.T) {
 }
 
 func TestMetadataServiceData(t *testing.T) {
-	data := metadataServiceData("vm1", vm.Spec{
+	data := metadataServiceData("vm1", "10.20.3.14", "06:8f:2a:1b:44:e0", vm.Spec{
 		SSHKeys:  []string{"ssh-ed25519 AAAA...", "ssh-rsa BBBB..."},
 		Hostname: "worker-1",
 		UserData: "#cloud-config\npackages: [curl]",
+		Network:  vm.Network{PublicIPv4: "203.0.113.7"},
 	})
 	publicKeys := data["latest"].(map[string]any)["meta-data"].(map[string]any)["public-keys"].(map[string]any)
 	if got := publicKeys["0"].(map[string]any)["openssh-key"]; got != "ssh-ed25519 AAAA..." {
@@ -182,6 +183,15 @@ func TestMetadataServiceData(t *testing.T) {
 	}
 	if got := metadata["local-hostname"]; got != "worker-1" {
 		t.Errorf("hostname = %v", got)
+	}
+	if got := metadata["local-ipv4"]; got != "10.20.3.14" {
+		t.Errorf("local ipv4 = %v", got)
+	}
+	if got := metadata["mac"]; got != "06:8f:2a:1b:44:e0" {
+		t.Errorf("mac = %v", got)
+	}
+	if got := metadata["public-ipv4"]; got != "203.0.113.7" {
+		t.Errorf("public ipv4 = %v", got)
 	}
 	if got := data["latest"].(map[string]any)["user-data"]; got != "#cloud-config\npackages: [curl]" {
 		t.Errorf("user data = %v", got)

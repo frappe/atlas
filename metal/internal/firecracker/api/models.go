@@ -44,6 +44,7 @@ type MMDSConfig struct {
 	NetworkInterfaces []string `json:"network_interfaces"`
 	Version           string   `json:"version,omitempty"`
 	IPv4Address       string   `json:"ipv4_address,omitempty"`
+	IMDSCompat        bool     `json:"imds_compat,omitempty"`
 }
 
 // InstanceInfo contains the Firecracker process state.

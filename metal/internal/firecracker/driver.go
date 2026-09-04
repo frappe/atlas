@@ -276,7 +276,9 @@ func (d *Driver) ReplaceSSHKeys(ctx context.Context, id string, sshKeys []string
 	if unitStatus.ActiveState != "active" {
 		return nil
 	}
-	return d.newMachine(configuration).api.PutMMDS(ctx, metadataServiceData(id, configuration.Spec))
+	return d.newMachine(configuration).api.PutMMDS(ctx, metadataServiceData(
+		id, configuration.IP, configuration.MAC, configuration.Spec,
+	))
 }
 
 // ResizeCompute changes a stopped virtual machine.
@@ -557,7 +559,9 @@ func (d *Driver) launchWarmImage(ctx context.Context, configuration vmConfig, re
 		return vm.ErrNotFound
 	}
 
-	metadata := metadataServiceData(configuration.ID, configuration.Spec)
+	metadata := metadataServiceData(
+		configuration.ID, configuration.IP, configuration.MAC, configuration.Spec,
+	)
 	return d.launchSnapshot(
 		ctx,
 		configuration,
