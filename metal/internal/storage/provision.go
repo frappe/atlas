@@ -152,7 +152,11 @@ func (store *VirtualMachineStore) destroyDependentClones(ctx context.Context, da
 		return err
 	}
 
+	stagingPrefix := store.pool.name + "/staging/"
 	for _, clone := range parseCloneList(output) {
+		if !strings.HasPrefix(clone, stagingPrefix) {
+			continue
+		}
 		if err := destroyIfPresent(ctx, clone); err != nil {
 			return fmt.Errorf("destroy dependent clone %s: %w", clone, err)
 		}

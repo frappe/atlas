@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import frappe
@@ -7,7 +8,6 @@ from frappe import _, request_cache
 from frappe.model.document import Document
 from frappe.utils import add_to_date, cint, now_datetime
 
-from atlas.vm.core.metadata import validate_metadata_rows
 from atlas.vm.core.metal_client import MetalClient, MetalClientError, throw_metal_error
 from atlas.vm.core.virtual_machine_manager import VirtualMachineManager
 
@@ -23,16 +23,12 @@ class VirtualMachine(Document):
 	if TYPE_CHECKING:
 		from frappe.types import DF
 
-		from atlas.vm.doctype.virtual_machine_metadata.virtual_machine_metadata import VirtualMachineMetadata
-		from atlas.vm.doctype.virtual_machine_ssh_key.virtual_machine_ssh_key import VirtualMachineSSHKey
-
 		disk_mib: DF.Int
 		is_draft: DF.Check
 		is_terminating: DF.Check
 		memory_mib: DF.Int
+		metadata: DF.Code | None
 		server: DF.Link
-		ssh_keys: DF.Table[VirtualMachineSSHKey]
-		metadata: DF.Table[VirtualMachineMetadata]
 		tenant_id: DF.Int
 		vcpus: DF.Int
 		virtual_machine_image: DF.Link
@@ -114,40 +110,13 @@ class VirtualMachine(Document):
 	def public_ipv4(self) -> str | None:
 		return (self.get_metal_vm_info().get("network") or {}).get("public_ipv4")
 
-	def validate(self) -> None:
-		validate_metadata_rows(self.metadata)
+	@property
+	def ssh_keys(self) -> str:
+		return "\n".join(self.get_metal_vm_info().get("ssh_keys") or [])
 
-	def onload(self) -> None:
-		"""Show the SSH keys and metadata that Metal currently holds for this VM."""
-		info = self.get_metal_vm_info()
-		if ssh_keys := info.get("ssh_keys"):
-			self.set("ssh_keys", [{"ssh_key": key} for key in ssh_keys])
-		if metadata := info.get("metadata"):
-			self.set("metadata", [{"key": key, "value": value} for key, value in metadata.items()])
-
-	def get_metadata_map(self) -> dict[str, str]:
-		return {key: (row.value or "") for row in self.metadata if (key := (row.key or "").strip())}
-
-	def before_save(self) -> None:
-		if self.is_new():
-			return
-
-		info = self.get_metal_vm_info()
-		client = MetalClient(frappe.get_doc("Server", self.server))
-
-		desired_keys = [row.ssh_key.strip() for row in self.ssh_keys if row.ssh_key and row.ssh_key.strip()]
-		if set(desired_keys) != set(info.get("ssh_keys") or []):
-			try:
-				client.replace_virtual_machine_ssh_keys(self.name, desired_keys)
-			except MetalClientError as error:
-				throw_metal_error(error)
-
-		desired_metadata = self.get_metadata_map()
-		if desired_metadata != (info.get("metadata") or {}):
-			try:
-				client.replace_virtual_machine_metadata(self.name, desired_metadata)
-			except MetalClientError as error:
-				throw_metal_error(error)
+	@property
+	def metadata(self) -> str:
+		return json.dumps(self.get_metal_vm_info().get("metadata") or {}, indent=2)
 
 	@frappe.whitelist(methods=["POST"])
 	def start(self) -> None:
