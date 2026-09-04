@@ -22,11 +22,19 @@ class SizeInfo:
 
 	size: str
 	cpu_count: int
-	memory_mb: int
+	memory_mib: int
 	disk_gib: int
 	hourly_pricing_usd_cents: int | None
 	monthly_pricing_usd_cents: int | None
 	provider_metadata: Mapping[str, Any] | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ReservedIPAddress:
+	"""Store one public IP address from a provider."""
+
+	address: str
+	provider_resource_id: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -150,6 +158,22 @@ class ServerProvider(ABC):
 		"""Remove a newly created provider server after a local provisioning failure."""
 		return None
 
+	def reserve_ip(self) -> ReservedIPAddress:
+		"""Reserve one public IPv4 address."""
+		raise ServerProviderError("This provider cannot reserve public IP addresses")
+
+	def delete_ip(self, provider_resource_id: str) -> None:
+		"""Delete one public IPv4 address."""
+		raise ServerProviderError("This provider cannot delete public IP addresses")
+
+	def attach_ip(self, provider_resource_id: str, server: "Server") -> None:
+		"""Attach an IP address to a bare-metal server."""
+		raise ServerProviderError("This provider cannot attach public IP addresses")
+
+	def detach_ip(self, provider_resource_id: str) -> None:
+		"""Detach an IP address from its bare-metal server."""
+		raise ServerProviderError("This provider cannot detach public IP addresses")
+
 	def run_provisioning(self, server: "Server") -> None:
 		"""Run the post-creation setup functions in order."""
 		try:
@@ -257,12 +281,7 @@ class ServerProvider(ABC):
 
 	@classmethod
 	def save_server_setup_progress(cls, server: "Server") -> None:
-		"""Write the provider-owned fields and commit before the next provider call.
-
-		Server setup holds one Server document for several minutes. A full save()
-		compares timestamps and fails when anything else writes the same Server, so
-		this writes only the fields the provider owns.
-		"""
+		"""Commit only the provider fields during long server setup."""
 		server.db_set({field: server.get(field) for field in cls.server_setup_fields})
 		frappe.db.commit()  # nosemgrep
 
@@ -275,7 +294,7 @@ class ServerProvider(ABC):
 				document = frappe.get_doc("Server Size", name)
 				if (
 					document.cpu_count == size.cpu_count
-					and document.memory_mb == size.memory_mb
+					and document.memory_mib == size.memory_mib
 					and document.disk_gib == size.disk_gib
 					and document.hourly_pricing_usd_cents == size.hourly_pricing_usd_cents
 					and document.monthly_pricing_usd_cents == size.monthly_pricing_usd_cents
@@ -284,7 +303,7 @@ class ServerProvider(ABC):
 					continue
 
 				document.cpu_count = size.cpu_count
-				document.memory_mb = size.memory_mb
+				document.memory_mib = size.memory_mib
 				document.disk_gib = size.disk_gib
 				document.hourly_pricing_usd_cents = size.hourly_pricing_usd_cents
 				document.monthly_pricing_usd_cents = size.monthly_pricing_usd_cents
@@ -298,7 +317,7 @@ class ServerProvider(ABC):
 					"provider_type": self.provider_type,
 					"size": size.size,
 					"cpu_count": size.cpu_count,
-					"memory_mb": size.memory_mb,
+					"memory_mib": size.memory_mib,
 					"disk_gib": size.disk_gib,
 					"hourly_pricing_usd_cents": size.hourly_pricing_usd_cents,
 					"monthly_pricing_usd_cents": size.monthly_pricing_usd_cents,

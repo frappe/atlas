@@ -13,6 +13,7 @@ from frappe.model.document import Document
 if TYPE_CHECKING:
 	from atlas.atlas.core.dns_providers.base import DnsProvider
 	from atlas.atlas.core.server_providers.base import ServerProvider
+	from atlas.atlas.s3 import S3Client
 
 
 class AtlasSettings(Document):
@@ -37,6 +38,12 @@ class AtlasSettings(Document):
 		route53_access_key_id: DF.Data | None
 		route53_access_key_secret: DF.Password | None
 		route53_dns_zone_id: DF.Data | None
+		s3_access_key_id: DF.Data | None
+		s3_bucket: DF.Data | None
+		s3_endpoint_url: DF.Data | None
+		s3_region: DF.Data | None
+		s3_secret_access_key: DF.Password | None
+		s3_signed_url_expiry: DF.Int
 		scaleway_access_key: DF.Data | None
 		scaleway_machine_billing_cycle: DF.Literal["Hourly", "Monthly"]
 		scaleway_organization_id: DF.Data | None
@@ -75,6 +82,19 @@ class AtlasSettings(Document):
 		from atlas.atlas.core.dns_providers import get_dns_provider
 
 		return get_dns_provider(settings=self)
+
+	def get_s3_client(self) -> "S3Client":
+		"""Create the configured S3 client."""
+		from atlas.atlas.s3 import S3Client
+
+		return S3Client(
+			bucket=self.s3_bucket,
+			access_key_id=self.s3_access_key_id,
+			secret_access_key=self.get_password("s3_secret_access_key", raise_exception=False),
+			endpoint_url=self.s3_endpoint_url or "",
+			region=self.s3_region or "",
+			signed_url_expiry=self.s3_signed_url_expiry or 86400,
+		)
 
 	def validate(self) -> None:
 		if self.is_setup_completed and not (

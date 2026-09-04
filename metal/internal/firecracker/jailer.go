@@ -10,6 +10,9 @@ import (
 // apiSockRel is the firecracker API socket path relative to the chroot root.
 const apiSockRel = "run/firecracker.socket"
 
+// firecrackerLogRel is the Firecracker log path inside the chroot.
+const firecrackerLogRel = "firecracker.log"
+
 // chrootRoot returns the path where jailer builds the VM chroot. The base is the
 // VM's own directory, so removing that directory takes the chroot with it, and
 // the kernel hard link stays on one filesystem.
@@ -51,15 +54,14 @@ func (c Config) jailerArgs(id string, uid, gid uint32, netns string) []string {
 		"--netns", netns,
 		"--",
 		"--api-sock", apiSockRel,
+		"--log-path", firecrackerLogRel,
+		"--level", "Warn",
 	}
 }
 
 // writeJailerEnv writes the EnvironmentFile the metal-vm@ template reads. systemd
 // word-splits $JAILER_ARGS in ExecStart, so the args must not contain spaces.
-func (c Config) writeJailerEnv(id string, args []string) error {
-	if err := os.MkdirAll(c.vmDir(id), 0o750); err != nil {
-		return err
-	}
-	line := "JAILER_ARGS=" + strings.Join(args, " ") + "\n"
-	return os.WriteFile(filepath.Join(c.vmDir(id), "jailer.env"), []byte(line), 0o640)
+func (c Config) writeJailerEnv(id string, arguments []string) error {
+	line := "JAILER_ARGS=" + strings.Join(arguments, " ") + "\n"
+	return atomicWriteFile(filepath.Join(c.vmDir(id), "jailer.env"), []byte(line), 0o640)
 }

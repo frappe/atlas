@@ -8,7 +8,13 @@ from typing import TYPE_CHECKING, Any, ClassVar, override
 import frappe
 
 from atlas.atlas.core.server_providers import register
-from atlas.atlas.core.server_providers.base import ImageInfo, ServerProvider, ServerProviderError, SizeInfo
+from atlas.atlas.core.server_providers.base import (
+	ImageInfo,
+	ReservedIPAddress,
+	ServerProvider,
+	ServerProviderError,
+	SizeInfo,
+)
 
 from .catalog import ScalewayCatalog
 from .client import ScalewayClient, ScalewayError
@@ -35,8 +41,6 @@ class ScalewayProvider(ServerProvider):
 	}
 	credential_fields = ("scaleway_secret_key", "scaleway_access_key")
 	setup_poll_interval_seconds: ClassVar[int] = 5
-	# Scaleway Elastic Metal names the first NIC eno1 and carries the public
-	# address on it. The private network arrives tagged on the same NIC.
 	public_network_interface: ClassVar[str] = "eno1"
 	private_address_attempts: ClassVar[int] = 60
 	setup_poll_timeout_seconds: ClassVar[int] = 7_200
@@ -135,15 +139,43 @@ class ScalewayProvider(ServerProvider):
 		"""Start the Scaleway server."""
 		self._post_server_action(server, "start")
 
-	def _post_server_action(self, server: "Server", action: str) -> None:
-		"""Post one Scaleway power action for a server."""
-		if not server.provider_server_id:
-			raise ScalewayError("Atlas server has no Scaleway server ID")
+	@override
+	def reserve_ip(self) -> ReservedIPAddress:
+		flexible_ip = self._request(
+			"POST",
+			f"/flexible-ip/v1alpha1/zones/{self.zone}/fips",
+			json={"project_id": self.project_id, "is_ipv6": False},
+		)
+		address = flexible_ip.get("ip_address") or flexible_ip.get("address")
+		provider_resource_id = flexible_ip.get("id")
 
+		if not isinstance(address, str) or not isinstance(provider_resource_id, str):
+			raise ScalewayError("Scaleway did not return a Flexible IP address and ID")
+
+		return ReservedIPAddress(address=address, provider_resource_id=provider_resource_id)
+
+	@override
+	def delete_ip(self, provider_resource_id: str) -> None:
+		self._request(
+			"DELETE",
+			f"/flexible-ip/v1alpha1/zones/{self.zone}/fips/{provider_resource_id}",
+			allow_missing=True,
+		)
+
+	@override
+	def attach_ip(self, provider_resource_id: str, server: "Server") -> None:
 		self._request(
 			"POST",
-			f"/baremetal/v1/zones/{self.zone}/servers/{server.provider_server_id}/{action}",
-			json={},
+			f"/flexible-ip/v1alpha1/zones/{self.zone}/fips/attach",
+			json={"fips_ids": [provider_resource_id], "server_id": server.provider_server_id},
+		)
+
+	@override
+	def detach_ip(self, provider_resource_id: str) -> None:
+		self._request(
+			"POST",
+			f"/flexible-ip/v1alpha1/zones/{self.zone}/fips/detach",
+			json={"fips_ids": [provider_resource_id]},
 		)
 
 	@override
@@ -172,6 +204,17 @@ class ScalewayProvider(ServerProvider):
 			return
 
 		self._request("DELETE", f"/baremetal/v1/zones/{self.zone}/servers/{server_id}")
+
+	def _post_server_action(self, server: "Server", action: str) -> None:
+		"""Post one Scaleway power action for a server."""
+		if not server.provider_server_id:
+			raise ScalewayError("Atlas server has no Scaleway server ID")
+
+		self._request(
+			"POST",
+			f"/baremetal/v1/zones/{self.zone}/servers/{server.provider_server_id}/{action}",
+			json={},
+		)
 
 	def _create_server(self, server: "Server") -> None:
 		if server.provider_server_id:
@@ -222,10 +265,7 @@ class ScalewayProvider(ServerProvider):
 		return install
 
 	def _get_partitioning_schema(self, offer_id: str, os_id: str) -> dict | None:
-		"""Return the partitioning schema for an offer and operating system.
-
-		Keep the vendor layout when the endpoint returns 404.
-		"""
+		"""Return the custom partitioning schema when it is available."""
 		default_schema = self._request(
 			"GET",
 			f"/baremetal/v1/zones/{self.zone}/partitioning-schemas/default",
@@ -264,12 +304,7 @@ class ScalewayProvider(ServerProvider):
 		return ipaddress.ip_network(self.settings.private_network_cidr, strict=False).prefixlen
 
 	def get_private_ipv4_address(self, private_nic_id: str) -> str:
-		"""Return the private IPv4 address that Scaleway IPAM assigned to a NIC.
-
-		IPAM holds the address as soon as the NIC attaches, so Atlas does not wait
-		for the server to boot before it records the private address. IPAM reports
-		the address with its prefix, which Atlas Settings already holds.
-		"""
+		"""Return the private IPv4 address for a Scaleway NIC."""
 		response = self._request(
 			"GET",
 			f"/ipam/v1/regions/{self.region}/ips",
@@ -316,11 +351,7 @@ class ScalewayProvider(ServerProvider):
 		)
 
 	def _wait_for_server_ready(self, server: "Server") -> None:
-		"""Wait for the server and its OS install.
-
-		Scaleway reports the server as ready while it still installs the OS, so the
-		install status decides when the server can accept SSH.
-		"""
+		"""Wait for the server and operating system installation."""
 
 		def is_ready() -> Mapping | None:
 			remote_server = self._fetch_server(server)

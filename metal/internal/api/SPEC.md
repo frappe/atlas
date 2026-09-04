@@ -1,84 +1,80 @@
-# api: HTTP server over the driver
+# api: Metal HTTP server
 
-[internal SPEC](../SPEC.md) · overview: [docs/api.md](../../docs/api.md)
+[internal SPEC](../SPEC.md) · endpoint guide: [docs/api.md](../../docs/api.md)
 
 ## Purpose
 
-Package `api` serves the Metal HTTP API over a `vm.VMDriver`. The premise is a thin
-translation layer: each handler turns one HTTP request into a driver or VM call and
-maps domain errors to status codes. It is synchronous. It depends only on the `vm`
-interfaces, never on a concrete driver, which `cmd/metald` injects.
+Package `api` validates HTTP requests and calls small service interfaces. Lifecycle handlers store desired state and wake the reconciler.
 
 ## Types
 
-| Type | Role |
-|---|---|
-| `Server` | Holds one field, `driver vm.VMDriver`. Every handler is a method on it. |
-| `New(driver) *echo.Echo` | Builds the router, installs the single error handler, registers routes. |
-| DTOs (`types.go`) | `createRequest` (`.spec()`), `stopRequest`, `resizeRequest` (pointer fields to tell unset from zero), `virtualMachineResponse`, list and snapshot and image wrappers, `errorResponse`. Converters `toVirtualMachine`, `toSnapshot`, `toImage`. |
+`New(Config, Dependencies)` validates authentication and required services. It returns the configured Echo router or an error.
+
+`Dependencies` contains the VM driver, snapshot services, image policy store, reconciler wake function, WireGuard manager, and capacity provider.
+
+Request and response types are split by resource. `Server` owns the handlers and injected services.
 
 ## Request flow
 
 ```text
-HTTP -> echo route -> Server.<handler>
-   s.load(c)              = driver.Load(id) -> vm.VM
-   m.<Action>(ctx, ...)    the driver does the work
-   s.respond(c, status, m) = m.Info(ctx) -> toVirtualMachine -> JSON
-errors bubble to errorHandler, the router's single HTTPErrorHandler
+HTTP -> validate -> call a service -> wake a reconciler when required -> JSON
 ```
 
-The model is synchronous. `create` runs `Create` then `Start` inline and returns
-`201` with the booted VM. There is no `202` or polling yet. `respond` re-reads live
-`Info` after every mutation, so a response reflects current host truth, not a cache.
+Create and lifecycle handlers return before host reconciliation completes.
 
 ## Routes
 
-| Method + path | Handler call | Success |
-|---|---|---|
-| `POST /vms` | `Create` then `Start` | 201 |
-| `GET /vms` | `List` + per-VM `Info` | 200 |
-| `GET /vms/:id` | `Load` -> `Info` | 200 |
-| `POST /vms/:id/start` | `Start` | 200 |
-| `POST /vms/:id/stop` | `Stop(force)` | 200 |
-| `POST /vms/:id/pause` | `Pause` | 200 |
-| `POST /vms/:id/resume` | `Resume` | 200 |
-| `POST /vms/:id/resize` | `Resize(disk_mib)` | 200 |
-| `DELETE /vms/:id` | `Destroy` | 204 |
-| `GET /vms/:id/snapshots` | `Snapshots` | 200 |
-| `POST /vms/:id/snapshots` | `Snapshot` | 201 |
-| `DELETE /vms/:id/snapshots/:name` | `DeleteSnapshot` | 204 |
-| `POST /vms/:id/snapshots/:name/restore` | `RestoreSnapshot` | 200 |
-| `POST /vms/:id/snapshots/:name/promote` | `Promote` | 201 |
-| `GET /images` | `Images` | 200 |
-| `DELETE /images/:ref` | `DeleteImage` | 204 |
-| `GET /vms/:id/console` | not implemented | 501 |
-| `GET /health` | none | 200 |
-| `GET /docs`, `GET /docs/swagger.json` | serve the API spec | 200 |
+```text
+GET    /health
+POST   /sync
+
+PUT    /vms/:id
+GET    /vms
+GET    /vms/:id
+PUT    /vms/:id/ssh-keys
+
+POST   /vms/:id/actions/start
+POST   /vms/:id/actions/stop
+POST   /vms/:id/actions/pause
+POST   /vms/:id/actions/resume
+POST   /vms/:id/actions/terminate
+
+POST   /vms/:id/resize/compute
+POST   /vms/:id/resize/disk
+
+POST   /vms/:id/snapshots
+POST   /snapshots/:id/upload
+DELETE /snapshots/:id
+
+GET    /vms/:id/console
+GET    /docs
+GET    /docs/swagger.json
+```
+
+Create and lifecycle changes return `202`. Snapshot staging creation returns `201`. The console route returns `501`.
+
+## Authentication
+
+All routes except `/docs` and `/docs/swagger.json` require a bearer token. Metal compares its SHA-256 digest with the configured digest.
 
 ## Error mapping
 
-```text
-vm.ErrNotFound    -> 404
-vm.ErrConflict    -> 409
-*echo.HTTPError   -> its own code   (badRequest 400, notImplemented 501)
-otherwise         -> 500
-body: {"error":{"message": <text>}}
-```
+Error responses contain a stable `code` and a safe `message`. Domain image conflicts and integrity failures have separate codes.
 
-`resize` returns `501` for a `vcpus` or `mem_mib` change (disk grow-only for now).
-Snapshot names match `^[A-Za-z0-9_.:-]+$`, and image refs match
-`^[A-Za-z0-9][A-Za-z0-9_.-]*$`, because a ref becomes a ZFS dataset name.
+The server does not return host command output or signed URL query values.
+
+## DTO layout
+
+Request and response objects have separate files. The VM response groups image artifacts and network data into nested objects.
+
+The VM response does not include transport URLs, the internal guest IPv4 address, or the Firecracker process ID.
 
 ## API specification
 
-`GET /docs` serves a Scalar HTML page. `GET /docs/swagger.json` serves the embedded
-spec. `swagger.json` is generated by swaggo/swag (`make openapi` or `go generate`),
-not committed, and embedded with `//go:embed`. The `@title` and `@BasePath` live in
-`cmd/metald/main.go`.
+`GET /docs` serves the API page. `GET /docs/swagger.json` serves the generated OpenAPI document.
 
 ## Related
 
-- [docs/api.md](../../docs/api.md) the endpoint reference.
-- [internal/vm/SPEC.md](../vm/SPEC.md) the driver interface the handlers call.
-- [cmd/metald/SPEC.md](../../cmd/metald/SPEC.md) constructs and injects the driver.
-- [docs/architecture.md](../../docs/architecture.md) the request path.
+- [docs/api.md](../../docs/api.md) gives request and response details.
+- [internal/vm/SPEC.md](../vm/SPEC.md) defines the VM contracts.
+- [cmd/metald/SPEC.md](../../cmd/metald/SPEC.md) injects server dependencies.

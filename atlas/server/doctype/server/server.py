@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import ipaddress
 import json
 from collections import deque
@@ -14,6 +15,7 @@ from frappe.desk.utils import slug
 from frappe.model.document import Document
 from frappe.model.naming import make_autoname
 from frappe.utils.background_jobs import is_job_enqueued
+from frappe.utils.password import get_decrypted_password
 
 from atlas.server.doctype.server_ssh_task.server_ssh_task import ServerSSHTask
 
@@ -36,8 +38,10 @@ class Server(Document):
 
 		from atlas.server.doctype.server_disk.server_disk import ServerDisk
 
+		architecture: DF.Literal["amd64", "arm64"]
 		disks: DF.Table[ServerDisk]
 		is_provisioning_completed: DF.Check
+		metald_api_token: DF.Password | None
 		port: DF.Int
 		private_ipv4_address: DF.Data | None
 		private_network_interface: DF.Data | None
@@ -255,10 +259,10 @@ class Server(Document):
 				"enabled": 1,
 				"provider_type": provider_type,
 				"cpu_count": [">", 2],
-				"memory_mb": [">=", 32768],
+				"memory_mib": [">=", 32768],
 			},
 			fields=["name"],
-			order_by="memory_mb asc, cpu_count asc, disk_gib asc",
+			order_by="memory_mib asc, cpu_count asc, disk_gib asc",
 			limit=1,
 		)
 		if not sizes:
@@ -269,13 +273,23 @@ class Server(Document):
 		"""Install metald and its host dependencies."""
 		if not self.settings.metald_binary_x86_64_download_url:
 			frappe.throw(_("Atlas Settings needs a metald download URL."))
+		if not self.private_ipv4_address:
+			frappe.throw(_("Server {0} needs a private IPv4 address.").format(self.name))
 
-		# Only the provider knows which array the install left raw.
+		token = get_decrypted_password("Server", self.name, "metald_api_token", raise_exception=False)
+		if not token:
+			token = frappe.generate_hash(length=128)
+			self.metald_api_token = token
+			self.save(ignore_permissions=True, ignore_version=True)
+
+		token_hash = hashlib.sha256(token.encode()).hexdigest()
 		result = ServerSSHTask.create_for_script_file(
 			server=self.name,
 			script_path="install-metald.sh",
 			environment={
 				"METALD_DOWNLOAD_URL": self.settings.metald_binary_x86_64_download_url,
+				"METALD_AUTH_TOKEN_HASH": token_hash,
+				"LISTEN_ADDRESS": "0.0.0.0:9000",
 				"STORAGE_POOL_DEVICE": self.settings.server_provider_controller.get_storage_pool_device(self),
 			},
 			timeout_seconds=METALD_INSTALL_TIMEOUT_SECONDS,
@@ -285,17 +299,14 @@ class Server(Document):
 			frappe.throw(_("Could not install metald on server {0}.").format(self.name))
 
 	def _configure_wireguard(self) -> None:
-		"""Configure the host WireGuard interface and record its identity.
-
-		The SSH task runs inline, because this job is already the asynchronous
-		boundary and the public key is on the task output.
-		"""
+		"""Configure WireGuard and store its public key."""
 		self._set_wireguard_ip_address_if_not_set()
 		result = ServerSSHTask.create_for_script_file(
 			server=self.name,
 			script_path="configure-wireguard.sh",
 			environment={
 				"WIREGUARD_ADDRESS": self.wireguard_ip_address,
+				"WIREGUARD_LISTEN_PORT": self.port,
 				"WIREGUARD_MTU": self.settings.private_network_mtu - WIREGUARD_OVERHEAD_BYTES,
 			},
 			timeout_seconds=WIREGUARD_CONFIGURE_TIMEOUT_SECONDS,
@@ -304,7 +315,6 @@ class Server(Document):
 		if not result or not result.is_success:
 			frappe.throw(_("Could not configure WireGuard on server {0}.").format(self.name))
 
-		# The script wraps the key in markers. See scripts/configure-wireguard.sh.
 		after_start = result.output.partition("===PUBLIC_KEY_START===")[2]
 		public_key = after_start.partition("===PUBLIC_KEY_END===")[0].strip()
 		if not public_key:
@@ -313,11 +323,7 @@ class Server(Document):
 		self.db_set("wireguard_public_key", public_key)
 
 	def _get_wireguard_ip_address(self) -> str:
-		"""Return this server's address in the fdab::/16 host mesh.
-
-		The last part of the server name is its node number,
-		such as 7 in node-par-1-00007.
-		"""
+		"""Return this server's fdab::/16 host mesh address."""
 		node_number = self.name.rsplit("-", 1)[-1]
 		if not node_number.isdigit():
 			frappe.throw(_("Server {0} has no node number in its name.").format(self.name))

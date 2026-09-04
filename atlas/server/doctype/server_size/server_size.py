@@ -21,7 +21,7 @@ class ServerSize(Document):
 		disk_gib: DF.Int
 		enabled: DF.Check
 		hourly_pricing_usd_cents: DF.Int
-		memory_mb: DF.Int
+		memory_mib: DF.Int
 		monthly_pricing_usd_cents: DF.Int
 		provider_metadata: DF.Code | None
 		provider_type: DF.Literal["Scaleway"]

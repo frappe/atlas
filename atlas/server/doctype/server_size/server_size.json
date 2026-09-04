@@ -10,7 +10,7 @@
   "size",
   "column_break_header",
   "cpu_count",
-  "memory_mb",
+  "memory_mib",
   "disk_gib",
   "section_break_hzyb",
   "hourly_pricing_usd_cents",
@@ -50,11 +50,11 @@
    "label": "CPU Count"
   },
   {
-   "fieldname": "memory_mb",
+   "fieldname": "memory_mib",
    "fieldtype": "Int",
    "in_list_view": 1,
    "in_standard_filter": 1,
-   "label": "Memory (MB)"
+   "label": "Memory (MiB)"
   },
   {
    "fieldname": "disk_gib",

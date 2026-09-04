@@ -70,6 +70,8 @@ func TestJailerArgs(t *testing.T) {
 		"--netns", "/run/netns/metal-abc",
 		"--",
 		"--api-sock", "run/firecracker.socket",
+		"--log-path", "firecracker.log",
+		"--level", "Warn",
 	}
 	if !slices.Equal(args, want) {
 		t.Errorf("args = %v", args)

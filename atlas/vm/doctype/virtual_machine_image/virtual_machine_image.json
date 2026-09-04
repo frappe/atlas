@@ -1,0 +1,336 @@
+{
+ "actions": [],
+ "autoname": "hash",
+ "creation": "2026-09-03 02:29:43.867211",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "enabled",
+  "status",
+  "title",
+  "image_type",
+  "platform",
+  "column_break_identity",
+  "operating_system",
+  "operating_system_version",
+  "transfer_progress",
+  "supports_cloud_init",
+  "cache_image",
+  "memory_snapshot",
+  "section_break_memory_snapshot_config",
+  "memory_snapshot_virtual_cpu_count",
+  "column_break_memory_snapshot",
+  "memory_snapshot_memory_mib",
+  "column_break_ueib",
+  "memory_snapshot_disk_mib",
+  "section_break_files",
+  "image_object_key",
+  "image_sha256",
+  "image_size_mib",
+  "column_break_files",
+  "kernel_object_key",
+  "kernel_sha256",
+  "kernel_size_mib",
+  "section_break_source",
+  "source_virtual_machine",
+  "column_break_igol",
+  "source_server",
+  "column_break_exjv",
+  "source_local_snapshot_id",
+  "section_break_transfer",
+  "rootfs_multipart_upload_id",
+  "kernel_multipart_upload_id",
+  "transfer_error",
+  "version"
+ ],
+ "fields": [
+  {
+   "default": "1",
+   "fieldname": "enabled",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "label": "Enabled"
+  },
+  {
+   "default": "System",
+   "fieldname": "image_type",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Image Type",
+   "options": "System\nMachine",
+   "reqd": 1,
+   "set_only_once": 1
+  },
+  {
+   "default": "Pending",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Status",
+   "options": "Pending\nSnapshotting\nUploading\nCompleting\nCleaning\nAvailable\nFailed",
+   "read_only": 1,
+   "reqd": 1
+  },
+  {
+   "fieldname": "title",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Title",
+   "reqd": 1,
+   "unique": 1
+  },
+  {
+   "fieldname": "platform",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Platform",
+   "options": "amd64\narm64",
+   "reqd": 1,
+   "set_only_once": 1
+  },
+  {
+   "fieldname": "operating_system",
+   "fieldtype": "Data",
+   "label": "Operating System",
+   "reqd": 1,
+   "set_only_once": 1
+  },
+  {
+   "fieldname": "operating_system_version",
+   "fieldtype": "Data",
+   "label": "Operating System Version",
+   "reqd": 1,
+   "set_only_once": 1
+  },
+  {
+   "default": "1",
+   "fieldname": "supports_cloud_init",
+   "fieldtype": "Check",
+   "label": "Supports Cloud-Init"
+  },
+  {
+   "fieldname": "column_break_identity",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "0",
+   "fieldname": "cache_image",
+   "fieldtype": "Check",
+   "label": "Cache Image"
+  },
+  {
+   "default": "0",
+   "fieldname": "memory_snapshot",
+   "fieldtype": "Check",
+   "label": "Memory Snapshot"
+  },
+  {
+   "fieldname": "column_break_memory_snapshot",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "memory_snapshot_virtual_cpu_count",
+   "fieldtype": "Int",
+   "label": "vCPUs",
+   "mandatory_depends_on": "eval: doc.memory_snapshot"
+  },
+  {
+   "fieldname": "memory_snapshot_memory_mib",
+   "fieldtype": "Int",
+   "label": "Memory (MiB)",
+   "mandatory_depends_on": "eval: doc.memory_snapshot"
+  },
+  {
+   "fieldname": "memory_snapshot_disk_mib",
+   "fieldtype": "Int",
+   "label": "Disk (MiB)",
+   "mandatory_depends_on": "eval: doc.memory_snapshot"
+  },
+  {
+   "fieldname": "section_break_files",
+   "fieldtype": "Section Break",
+   "label": "Artifacts"
+  },
+  {
+   "description": "S3 object key of the rootfs image.",
+   "fieldname": "image_object_key",
+   "fieldtype": "Data",
+   "label": "Image Object Key",
+   "read_only": 1,
+   "show_description_on_click": 1
+  },
+  {
+   "fieldname": "image_sha256",
+   "fieldtype": "Data",
+   "label": "Image SHA-256",
+   "read_only": 1
+  },
+  {
+   "fieldname": "image_size_mib",
+   "fieldtype": "Int",
+   "label": "Image Size (MiB)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_files",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "S3 object key of the kernel.",
+   "fieldname": "kernel_object_key",
+   "fieldtype": "Data",
+   "label": "Kernel Object Key",
+   "read_only": 1,
+   "show_description_on_click": 1
+  },
+  {
+   "fieldname": "kernel_sha256",
+   "fieldtype": "Data",
+   "label": "Kernel SHA-256",
+   "read_only": 1
+  },
+  {
+   "fieldname": "kernel_size_mib",
+   "fieldtype": "Int",
+   "label": "Kernel Size (MiB)",
+   "read_only": 1
+  },
+  {
+   "depends_on": "eval:doc.image_type === 'Machine'",
+   "fieldname": "section_break_source",
+   "fieldtype": "Section Break",
+   "label": "Machine Image Source"
+  },
+  {
+   "fieldname": "source_virtual_machine",
+   "fieldtype": "Data",
+   "label": "Source Virtual Machine",
+   "read_only": 1
+  },
+  {
+   "fieldname": "source_server",
+   "fieldtype": "Data",
+   "label": "Source Server",
+   "read_only": 1
+  },
+  {
+   "collapsible": 1,
+   "depends_on": "eval:doc.image_type === 'Machine'",
+   "fieldname": "section_break_transfer",
+   "fieldtype": "Section Break",
+   "label": "Transfer"
+  },
+  {
+   "description": "Upload progress in percent.",
+   "fieldname": "transfer_progress",
+   "fieldtype": "Int",
+   "label": "Progress (%)",
+   "non_negative": 1,
+   "read_only": 1,
+   "show_description_on_click": 1
+  },
+  {
+   "fieldname": "rootfs_multipart_upload_id",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "Rootfs Multipart Upload ID",
+   "read_only": 1
+  },
+  {
+   "fieldname": "kernel_multipart_upload_id",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "Kernel Multipart Upload ID",
+   "read_only": 1
+  },
+  {
+   "fieldname": "transfer_error",
+   "fieldtype": "Small Text",
+   "label": "Transfer Error",
+   "read_only": 1
+  },
+  {
+   "default": "1",
+   "fieldname": "version",
+   "fieldtype": "Int",
+   "hidden": 1,
+   "label": "Version"
+  },
+  {
+   "depends_on": "eval: doc.memory_snapshot",
+   "fieldname": "section_break_memory_snapshot_config",
+   "fieldtype": "Section Break",
+   "label": "Memory Snapshot Config",
+   "read_only": 1,
+   "read_only_depends_on": "eval: doc.memory_snapshot"
+  },
+  {
+   "fieldname": "column_break_ueib",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "column_break_igol",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "column_break_exjv",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "source_local_snapshot_id",
+   "fieldtype": "Data",
+   "label": "Source Local Snapshot ID",
+   "read_only": 1
+  }
+ ],
+ "links": [],
+ "modified": "2026-09-04 03:44:34.257430",
+ "modified_by": "Administrator",
+ "module": "VM",
+ "name": "Virtual Machine Image",
+ "naming_rule": "Random",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "read": 1,
+   "role": "System Manager",
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [
+  {
+   "color": "Gray",
+   "title": "Pending"
+  },
+  {
+   "color": "Blue",
+   "title": "Snapshotting"
+  },
+  {
+   "color": "Blue",
+   "title": "Uploading"
+  },
+  {
+   "color": "Blue",
+   "title": "Completing"
+  },
+  {
+   "color": "Blue",
+   "title": "Cleaning"
+  },
+  {
+   "color": "Green",
+   "title": "Available"
+  },
+  {
+   "color": "Red",
+   "title": "Failed"
+  }
+ ],
+ "title_field": "title"
+}

@@ -9,16 +9,15 @@ Metal manages virtual machines on a host. Its executable is `metald`.
 ## Layout
 
 ```text
-cmd/metald/                  metald executable            SPEC.md
-internal/                    metald packages              SPEC.md (router)
-internal/api/                HTTP API                     SPEC.md
-internal/firecracker/        Firecracker support          SPEC.md
-internal/firecracker/api/    firecracker REST client      SPEC.md
-internal/idalloc/            ID allocation                SPEC.md
-internal/network/            Linux networking             SPEC.md
-internal/storage/            ZFS storage                  SPEC.md
-internal/systemd/            systemd and dbus support     SPEC.md
-internal/vm/                 VM domain logic              SPEC.md
+cmd/metald/                  metald executable
+internal/api/                HTTP API
+internal/firecracker/        Firecracker support
+internal/idalloc/            ID allocation
+internal/network/            Linux VM networking and WireGuard peer management
+internal/reconciler/         VM and image reconciliation
+internal/storage/            ZFS images, VM disks, and pool capacity
+internal/systemd/            systemd and dbus support
+internal/vm/                 VM domain logic
 scripts/                     host bootstrap scripts
 Makefile                     build metald into dist/
 docs/                        concept docs and references
@@ -53,9 +52,9 @@ Concept overviews:
 
 - [`docs/architecture.md`](docs/architecture.md) the big picture and dependency graph.
 - [`docs/vm.md`](docs/vm.md) the VM lifecycle and operations.
-- [`docs/storage.md`](docs/storage.md) ZFS disks, snapshots, and images.
-- [`docs/networking.md`](docs/networking.md) per-VM namespaces and NAT.
-- [`docs/snapshots.md`](docs/snapshots.md) disk and memory snapshots, and warm images.
+- [`docs/storage.md`](docs/storage.md) ZFS disks, images, and local artifacts.
+- [`docs/networking.md`](docs/networking.md) VM namespaces, public IPv4, and WireGuard peers.
+- [`docs/snapshots.md`](docs/snapshots.md) image staging and local warm artifacts.
 
 References:
 
@@ -71,4 +70,4 @@ Metal manages host VMs. It does not define the proxy or WG Mesh services.
 
 ## Ownership
 
-Keep VM logic in `internal/vm/`. Keep host integrations in their matching packages.
+Keep VM logic in `internal/vm/`. Keep HTTP handlers thin. `internal/network/` owns WireGuard peer reconciliation and persistent peer state. `internal/storage/` separates the ZFS pool, VM disks, images, and snapshot staging. `internal/reconciler/` owns the asynchronous VM and image loops.

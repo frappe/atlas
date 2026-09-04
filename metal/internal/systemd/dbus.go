@@ -2,6 +2,7 @@ package systemd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"syscall"
@@ -10,6 +11,8 @@ import (
 	sd "github.com/coreos/go-systemd/v22/dbus"
 	godbus "github.com/godbus/dbus/v5"
 )
+
+const errorNoSuchUnit = "org.freedesktop.systemd1.NoSuchUnit"
 
 const (
 	unitPrefix = "metal-vm@"
@@ -70,8 +73,25 @@ func (d *DBus) Kill(ctx context.Context, id string, sig syscall.Signal) error {
 	return d.conn.KillUnitWithTarget(ctx, unitName(id), sd.All, int32(sig))
 }
 
+// ResetFailed clears a unit's failed state. It succeeds when the unit is absent.
 func (d *DBus) ResetFailed(ctx context.Context, id string) error {
-	return d.conn.ResetFailedUnitContext(ctx, unitName(id))
+	err := d.conn.ResetFailedUnitContext(ctx, unitName(id))
+	if isUnitNotLoaded(err) {
+		return nil
+	}
+	return err
+}
+
+// isUnitNotLoaded reports whether systemd says the unit is absent.
+func isUnitNotLoaded(err error) bool {
+	if err == nil {
+		return false
+	}
+	var dbusError godbus.Error
+	if errors.As(err, &dbusError) && dbusError.Name == errorNoSuchUnit {
+		return true
+	}
+	return strings.Contains(err.Error(), "not loaded")
 }
 
 func (d *DBus) Status(ctx context.Context, id string) (Status, error) {

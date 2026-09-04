@@ -16,21 +16,33 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/frappe/atlas/metal/internal/api"
+	"github.com/frappe/atlas/metal/internal/console"
 	"github.com/frappe/atlas/metal/internal/firecracker"
 	"github.com/frappe/atlas/metal/internal/network"
+	"github.com/frappe/atlas/metal/internal/reconciler"
 	"github.com/frappe/atlas/metal/internal/storage"
 	"github.com/frappe/atlas/metal/internal/systemd"
+)
+
+const (
+	reconcileInterval      = 5 * time.Second
+	imageReconcileInterval = time.Hour
 )
 
 //	@title			Metal HTTP application programming interface
 //	@version		1.0
 //	@description	metald manages Firecracker micro virtual machines on one host.
 //	@BasePath		/
+//
+//	@securityDefinitions.apikey	BearerAuth
+//	@in							header
+//	@name						Authorization
+//	@description				Type "Bearer" then a space and the API token.
 
-// version is the build version
-// set with -ldflags "-X main.version=...".
+// version is the build version set with -ldflags "-X main.version=...".
 var version = "dev"
 
 func main() {
@@ -65,8 +77,6 @@ func parseFlags(cmd string, args []string) (string, error) {
 	return *path, nil
 }
 
-// listen opens the application programming interface listener. addr is a TCP
-// host:port, or "unix:/path".
 func listen(addr string) (net.Listener, error) {
 	if path, ok := strings.CutPrefix(addr, "unix:"); ok {
 		_ = os.Remove(path)
@@ -82,9 +92,6 @@ func listen(addr string) (net.Listener, error) {
 	return net.Listen("tcp", addr)
 }
 
-// makeDirs creates the directories the config names. metald makes most of them
-// when it starts a VM, but a fresh host has no kernel dir at all, and a missing
-// one only shows up as a link failure on the first create.
 func makeDirs(o opts) error {
 	dirs := []struct {
 		path string
@@ -92,7 +99,6 @@ func makeDirs(o opts) error {
 	}{
 		{o.cfg.MachinesDir, 0o750},
 		{o.cfg.SocketsDir, 0o700},
-		{o.kernelDir, 0o755},
 		{o.imagesDir, 0o755},
 	}
 	for _, d := range dirs {
@@ -104,6 +110,9 @@ func makeDirs(o opts) error {
 }
 
 func serve(o opts) error {
+	if o.authTokenHash == "" {
+		return fmt.Errorf("metald.auth_token_hash is required")
+	}
 	if err := makeDirs(o); err != nil {
 		return err
 	}
@@ -113,16 +122,70 @@ func serve(o opts) error {
 	}
 	defer units.Close()
 
-	driver := firecracker.New(o.cfg, units, storage.NewZFS(o.pool, o.kernelDir, o.imagesDir), network.NewLinux())
-	e := api.New(driver)
+	stores := storage.NewStores(o.pool, o.imagesDir)
+	wireGuardManager, err := network.NewWireGuardManager(network.WireGuardConfig{
+		InterfaceName: "wg0",
+		StatePath:     filepath.Join(o.baseDir, "wireguard-peers.json"),
+	})
+	if err != nil {
+		return fmt.Errorf("configure WireGuard manager: %w", err)
+	}
+	consoleBroker := console.NewBroker(filepath.Join(o.cfg.SocketsDir, "consoles"))
+	defer consoleBroker.Shutdown()
 
-	ln, err := listen(o.listen)
+	virtualMachineDriver := firecracker.New(
+		o.cfg,
+		units,
+		stores.VirtualMachines,
+		stores.Images,
+		stores.Snapshots,
+		network.NewLinuxAllocator(),
+		consoleBroker,
+	)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	virtualMachineReconciler := reconciler.New(
+		virtualMachineDriver,
+		reconcileInterval,
+		reconciler.Config{},
+	)
+	imageReconciler := reconciler.NewImageReconciler(
+		stores.Images,
+		stores.Snapshots,
+		virtualMachineDriver,
+		imageReconcileInterval,
+		reconciler.ImageConfig{},
+	)
+	go virtualMachineReconciler.Run(ctx)
+	go imageReconciler.Run(ctx)
+
+	wakeReconcilers := func() {
+		virtualMachineReconciler.Wake()
+		imageReconciler.Wake()
+	}
+	server, err := api.New(api.Config{AuthTokenHash: o.authTokenHash}, api.Dependencies{
+		VirtualMachineDriver: virtualMachineDriver,
+		SnapshotCreator:      virtualMachineDriver,
+		SnapshotStore:        stores.Snapshots,
+		ImagePolicyStore:     stores.Images,
+		WakeReconciler:       wakeReconcilers,
+		WireGuardManager:     wireGuardManager,
+		Storage:              stores.Pool,
+		ConsoleBroker:        consoleBroker,
+		SSHConnector:         virtualMachineDriver,
+	})
+	if err != nil {
+		return fmt.Errorf("configure API: %w", err)
+	}
+
+	listener, err := listen(o.listen)
 	if err != nil {
 		return fmt.Errorf("listen %s: %w", o.listen, err)
 	}
 	log.Printf("metald %s listening on %s", version, o.listen)
-	e.Listener = ln
-	if err := e.Start(""); err != nil && err != http.ErrServerClosed {
+	server.Listener = listener
+	if err := server.Start(""); err != nil && err != http.ErrServerClosed {
 		return err
 	}
 	return nil

@@ -11,119 +11,146 @@ import (
 	"github.com/frappe/atlas/metal/internal/hostcmd"
 )
 
-// Prepare provisions the VM's kernel + rootfs and returns the boot config.
-func (z *ZFS) Prepare(ctx context.Context, req Request) (BootConfig, error) {
-	if err := os.MkdirAll(req.ChrootRoot, 0o755); err != nil {
-		return BootConfig{}, err
+// PrepareBoot prepares a disk and kernel for a cold boot.
+func (store *VirtualMachineStore) PrepareBoot(ctx context.Context, request VirtualMachineStorageRequest) (BootConfiguration, error) {
+	if err := os.MkdirAll(request.ChrootRoot, 0o755); err != nil {
+		return BootConfiguration{}, err
 	}
-	kdir := filepath.Join(z.kernelDir, req.Ref)
-	if err := link(filepath.Join(kdir, "vmlinux"), filepath.Join(req.ChrootRoot, "vmlinux")); err != nil {
-		return BootConfig{}, err
+	if err := store.images.ensureImage(ctx, request.ImageReference, request.Image); err != nil {
+		return BootConfiguration{}, err
 	}
-	if err := z.provisionDisk(ctx, req); err != nil {
-		return BootConfig{}, err
+	if err := replaceHardLink(store.images.kernelFile(request.ImageReference), filepath.Join(request.ChrootRoot, "vmlinux")); err != nil {
+		return BootConfiguration{}, err
 	}
-	return BootConfig{
+	if err := store.provisionDisk(ctx, request); err != nil {
+		return BootConfiguration{}, err
+	}
+
+	return BootConfiguration{
 		Kernel:     "/vmlinux",
-		KernelArgs: bootArgs(kdir),
-		Drives:     []Drive{{Path: "/rootfs.img", ReadOnly: false, Root: true}},
+		KernelArgs: kernelArguments(store.images.imageDirectory(request.ImageReference)),
+		Drives:     []Drive{{Path: "/rootfs.img", Root: true}},
 	}, nil
 }
 
-// PrepareRootfs provisions only the rootfs block device, for restoring or warm-
-// starting from a snapshot. The guest kernel is inside the memory snapshot, so no
-// kernel file is linked and no boot config is returned.
-func (z *ZFS) PrepareRootfs(ctx context.Context, req Request) error {
-	if err := os.MkdirAll(req.ChrootRoot, 0o755); err != nil {
+// PrepareRootFileSystem prepares a disk for snapshot restore.
+func (store *VirtualMachineStore) PrepareRootFileSystem(ctx context.Context, request VirtualMachineStorageRequest) error {
+	if err := os.MkdirAll(request.ChrootRoot, 0o755); err != nil {
 		return err
 	}
-	return z.provisionDisk(ctx, req)
+
+	return store.provisionDisk(ctx, request)
 }
 
-// provisionDisk clones the VM's rootfs from its base image when absent, grows it
-// to the requested size, and materializes the block-device node in the chroot.
-func (z *ZFS) provisionDisk(ctx context.Context, req Request) error {
-	// The disk persists across a stop, so a restart reuses it: only clone when it
-	// is absent. rollback destroys the disk only if this call created it, so a
-	// restart never discards existing data on a later error.
+func (store *VirtualMachineStore) provisionDisk(ctx context.Context, request VirtualMachineStorageRequest) error {
+	exists, err := datasetExists(ctx, store.pool.virtualMachineDataset(request.VirtualMachineID))
+	if err != nil {
+		return err
+	}
+
 	created := false
-	if !datasetExists(ctx, z.vmDataset(req.VMID)) {
-		// zfs clone <base>@ready <vm>: create the VM's writable zvol from the base
-		// snapshot; copy-on-write, so it shares the base's blocks until written.
-		if err := hostcmd.Run(ctx, "zfs", "clone", z.baseSnapshot(req.Ref), z.vmDataset(req.VMID)); err != nil {
+	if !exists {
+		if err := store.images.ensureImage(ctx, request.ImageReference, request.Image); err != nil {
+			return err
+		}
+		sourceSnapshot := request.SourceSnapshot
+		if sourceSnapshot == "" {
+			sourceSnapshot = store.pool.baseSnapshot(request.ImageReference)
+		}
+		if err := hostcmd.Run(
+			ctx,
+			"zfs",
+			"clone",
+			sourceSnapshot,
+			store.pool.virtualMachineDataset(request.VirtualMachineID),
+		); err != nil {
 			return err
 		}
 		created = true
 	}
-	rollback := func() {
-		if created {
-			_ = z.Release(ctx, req.VMID)
-		}
-	}
-	if err := z.grow(ctx, req.VMID, req.DiskMiB); err != nil {
-		rollback()
+
+	if err := store.growDisk(ctx, request.VirtualMachineID, request.DiskMiB); err != nil {
+		store.releaseCreatedDisk(ctx, request.VirtualMachineID, created)
 		return err
 	}
-	node := filepath.Join(req.ChrootRoot, "rootfs.img")
-	if err := mknodBlock(z.devPath(req.VMID), node, req.UID, req.GID); err != nil {
-		rollback()
+
+	rootFileSystem := filepath.Join(request.ChrootRoot, "rootfs.img")
+	if err := createBlockDevice(
+		store.pool.virtualMachineDevicePath(request.VirtualMachineID),
+		rootFileSystem,
+		request.UserID,
+		request.GroupID,
+	); err != nil {
+		store.releaseCreatedDisk(ctx, request.VirtualMachineID, created)
 		return err
 	}
+
 	return nil
 }
 
-// grow extends the disk to diskMiB when that is larger than the current size.
-// The guest must grow its filesystem to use the extra space.
-func (z *ZFS) grow(ctx context.Context, vmID string, diskMiB int) error {
+func (store *VirtualMachineStore) releaseCreatedDisk(ctx context.Context, virtualMachineID string, created bool) {
+	if created {
+		_ = store.Release(ctx, virtualMachineID)
+	}
+}
+
+func (store *VirtualMachineStore) growDisk(ctx context.Context, virtualMachineID string, diskMiB int) error {
 	if diskMiB <= 0 {
 		return nil
 	}
-	want := int64(diskMiB) << 20
-	cur, err := volsizeBytes(ctx, z.vmDataset(vmID))
+
+	requestedSizeBytes := int64(diskMiB) << 20
+	currentSizeBytes, err := volumeSizeBytes(ctx, store.pool.virtualMachineDataset(virtualMachineID))
 	if err != nil {
 		return err
 	}
-	if want <= cur {
+	if requestedSizeBytes <= currentSizeBytes {
 		return nil
 	}
-	// zfs set volsize=<N>M <vm>: change the zvol's provisioned block-device
-	// capacity (M = MiB). Only ever grown here; the guest resizes its own fs.
-	return hostcmd.Run(ctx, "zfs", "set", fmt.Sprintf("volsize=%dM", diskMiB), z.vmDataset(vmID))
+
+	return hostcmd.Run(
+		ctx,
+		"zfs",
+		"set",
+		fmt.Sprintf("volsize=%dM", diskMiB),
+		store.pool.virtualMachineDataset(virtualMachineID),
+	)
 }
 
-// Resize grows the VM disk to diskMiB (no-op if not already smaller). It never
-// shrinks; the caller rejects a smaller request before reaching here.
-func (z *ZFS) Resize(ctx context.Context, vmID string, diskMiB int) error {
-	return z.grow(ctx, vmID, diskMiB)
+// ResizeDisk grows a virtual machine disk.
+func (store *VirtualMachineStore) ResizeDisk(ctx context.Context, virtualMachineID string, diskMiB int) error {
+	return store.growDisk(ctx, virtualMachineID, diskMiB)
 }
 
-// Release destroys the VM's disk and every snapshot under it. Idempotent: an
-// already-gone dataset is not an error.
-func (z *ZFS) Release(ctx context.Context, vmID string) error {
-	// zfs destroy -r <vm>: destroy the zvol; -r (recursive) also destroys every
-	// snapshot taken under it.
-	if err := hostcmd.Run(ctx, "zfs", "destroy", "-r", z.vmDataset(vmID)); err != nil {
+// Release removes a virtual machine disk and its snapshots.
+func (store *VirtualMachineStore) Release(ctx context.Context, virtualMachineID string) error {
+	if err := hostcmd.Run(ctx, "zfs", "destroy", "-r", store.pool.virtualMachineDataset(virtualMachineID)); err != nil {
 		if strings.Contains(err.Error(), "does not exist") {
 			return nil
 		}
 		return err
 	}
+
 	return nil
 }
 
-// datasetExists reports whether a dataset (here, a VM's zvol) is present.
-func datasetExists(ctx context.Context, name string) bool {
-	// zfs list <dataset>: exits 0 if it exists, non-zero otherwise.
-	return hostcmd.Run(ctx, "zfs", "list", name) == nil
+func datasetExists(ctx context.Context, name string) (bool, error) {
+	err := hostcmd.Run(ctx, "zfs", "list", name)
+	if err == nil {
+		return true, nil
+	}
+	if strings.Contains(err.Error(), "does not exist") {
+		return false, nil
+	}
+
+	return false, fmt.Errorf("check ZFS dataset %s: %w", name, err)
 }
 
-// volsizeBytes reads a zvol's provisioned size in bytes.
-func volsizeBytes(ctx context.Context, dataset string) (int64, error) {
-	// zfs get -Hp -o value volsize <dataset>: the zvol's provisioned size in
-	// exact bytes (-H no header, -p exact, -o value = just the number).
-	out, err := hostcmd.Output(ctx, "zfs", "get", "-Hp", "-o", "value", "volsize", dataset)
+func volumeSizeBytes(ctx context.Context, dataset string) (int64, error) {
+	output, err := hostcmd.Output(ctx, "zfs", "get", "-Hp", "-o", "value", "volsize", dataset)
 	if err != nil {
 		return 0, err
 	}
-	return strconv.ParseInt(strings.TrimSpace(out), 10, 64)
+
+	return strconv.ParseInt(strings.TrimSpace(output), 10, 64)
 }

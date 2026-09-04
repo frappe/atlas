@@ -1,123 +1,115 @@
-# firecracker: the microVM driver
+# firecracker: VM driver
 
 [internal SPEC](../SPEC.md) · overview: [docs/architecture.md](../../docs/architecture.md)
 
 ## Purpose
 
-Package `firecracker` implements the `vm` contract on Firecracker. The premise is
-that metald is only a client: each virtual machine is a jailer'd firecracker process
-that runs as the systemd template unit `metal-vm@<id>.service`. metald holds no child
-process. It drives a VM through systemd over D-Bus and through the VM's own API
-socket. All per-VM truth lives on disk, so metald is stateless and survives a
-restart.
+Package `firecracker` implements the `vm` contracts. Systemd owns each jailed Firecracker process.
 
 ## Types
 
 | Type | Role |
 |---|---|
-| `Driver` | Implements `vm.VMDriver`. Owns the collaborators and guards id allocation with a mutex. |
-| `machine` | Implements `vm.VM`. A client-side handle: a back-pointer to the `Driver`, the VM's `vmConfig`, and an API client. Holds no process. |
-| `Config` | Host paths and the id range: `MachinesDir`, `SocketsDir`, `JailerBin`, `FirecrackerBin`, `IDs`. All layout helpers hang off it. |
-| `vmConfig` | Per-VM state persisted as `machines/<id>/config.json`: `ID`, `UID`, `GID`, `IP`, `MAC`, `Sock`, `Spec`. |
+| `Driver` | VM reservations, desired state, host dependencies, locks, and warm artifact creation. |
+| `machine` | One VM handle with persisted configuration and a Firecracker API client. |
+| `Config` | Machine paths, socket paths, binaries, and user ID range. |
+| `vmConfig` | Reservation, desired state, resource ownership, and cleanup progress. |
+| `vmStatus` | Observed state, error, and update time. |
+
+The driver receives separate VM storage, image, snapshot, systemd, and network dependencies.
 
 ## Composition
 
-The `Driver` composes the three host packages plus a per-VM API client.
-
 ```text
 Driver
- ├─ systemd.Manager    start/stop/limits/state of the unit
- ├─ storage.Resolver   kernel, rootfs, disk snapshots
- ├─ network.Allocator  netns and tap0
- └─ api.Client         firecracker REST over each VM's socket
+ ├─ systemd manager
+ ├─ VM storage
+ ├─ image store
+ ├─ snapshot store
+ ├─ network allocator
+ └─ Firecracker API client for each machine
 ```
+
+## Reservation and reconciliation
+
+```text
+Create(id, specification)
+   -> validate the supplied ID and reservation
+   -> allocate a host user ID
+   -> derive network values
+   -> write config.json with desired running
+   -> return without starting Firecracker
+
+reconciler
+   -> compare desired and observed states
+   -> call Start, Stop, Pause, Resume, or Destroy
+   -> write status.json
+```
+
+Repeat create calls can refresh signed image URLs and cache policy. They cannot change reservation identity.
 
 ## Cold boot
 
 ```text
-Create(spec):
-  id = UUIDv7 ; allocate uid=gid under mu ; write config.json
-  net.Allocate -> netns metal-<id>, tap0, MAC, IP
-  warm image?  write the warmload mark, return (the load waits for Start)
-  else bootPrep:
-     write jailer.env (JAILER_ARGS) ; link the short socket symlink
-     units.Start metal-vm@<id>  ->  jailer  ->  firecracker (in the chroot)
-     units.SetLimits (memory, cpu)
-     waitSocket
-     images.Prepare -> kernel + rootfs block node in the chroot -> BootConfig
-     configure(api): machine-config, boot-source, drive(s), network, [MMDS]
-  => Created (guest not booted)
-
-Start:  api.InstanceStart  =>  Running
+allocate the Linux network
+write jailer.env and socket link
+start the systemd unit
+set resource limits
+wait for the Firecracker socket
+prepare the kernel and VM disk
+configure machine, boot source, drive, network, and MMDS
+start the instance
 ```
 
 ## Cold start vs warm start
 
-```text
-COLD  Create -> bootPrep -> configure -> Start(InstanceStart)     boots kernel + rootfs
-WARM  Create -> write warmload mark -> first Start -> warmLaunch -> loadLaunch:
-         fresh unit, PrepareRootfs, stage state + mem into the chroot,
-         api.LoadSnapshot(resume_vm=false) -> [PutMmds refresh] -> api.Resume
-      resumes from captured RAM
-```
+### Warm start
 
-`loadLaunch` also serves restore of a memory snapshot. `LoadSnapshot` runs paused so
-an MMDS refresh lands before the guest runs.
+The driver selects warm artifacts by image identity, VM shape, and Firecracker compatibility. It loads the snapshot while paused, updates MMDS, and resumes the VM.
+
+If warm start fails, the caller removes the attempted VM disk and starts cold.
+
+## Warm artifact creation
+
+The image reconciler calls `EnsureMemorySnapshot`. The driver creates a temporary VM without egress, waits five minutes, and pauses it.
+
+The driver captures Firecracker state and memory. The image store copies these files and the disk snapshot into the warm cache.
 
 ## Stop escalation
 
-```text
-Stop(force=true):   units.Kill SIGKILL
-Stop(force=false):  api.SendCtrlAltDel
-                    wait up to 30 s (units.Wait)
-                       guest exits        -> done
-                       timeout, no i8042  -> units.Stop (systemd stop job)
-always: units.Wait, then units.ResetFailed
-        so a deliberate stop reports stopped, and only a crash reports failed
-```
+Stop sends Ctrl+Alt+Del and waits 30 seconds. It sends `SIGKILL` when the guest does not stop.
+
+### Destroy
+
+Destroy records progress for systemd, network, and storage cleanup. It removes the VM directory only after all cleanup steps succeed.
 
 ## Snapshot, restore, promote
 
-```text
-Snapshot(memory):
-  Running --api.Pause--> Paused
-  images.Snapshot            disk snapshot, quiescent
-  api.CreateSnapshot Full    state + mem into a uid-owned chroot dir
-  move files -> machines/<id>/snapshots/<name>/{state,mem}   outlive the chroot
-  defer api.Resume           always, even on error
+### Machine image snapshot
 
-Restore:  stop -> images.Restore (rollback) -> warm? loadLaunch : stay stopped
-Promote:  needs a memory snapshot -> images.Promote (zfs send | recv, full copy)
-```
+`CreateSnapshot` generates a UUIDv7 staging ID. It briefly pauses a running VM and asks the snapshot store to stage the disk and kernel.
+
+This operation does not capture memory. It does not support in-place restore or promotion.
+
+### Internal warm snapshot load
+
+A new VM can load a compatible local warm snapshot. If the load fails, the driver removes the attempted disk and uses a cold boot.
+
+### Policy-driven warm artifact
+
+`EnsureMemorySnapshot` creates a local warm artifact for an exact image and VM shape. It does not create a public image reference.
 
 ## State derivation
 
-```text
-units.Status.ActiveState:
-  "failed"                    -> Failed
-  "inactive" / "deactivating" -> Stopped
-  active -> api.InstanceInfo.State:
-       "Not started" -> Created
-       "Paused"      -> Paused
-       else          -> Running
-```
+The driver combines systemd state, Firecracker state, desired state, and the last reconciliation error. Unknown runtime values produce `StateUnknown`.
 
 ## Statelessness and the socket
 
-```text
-per-VM truth on disk:  machines/<id>/config.json, snapshots/, the warmload mark,
-                       plus the systemd unit state
-metald restart:        Load / List rebuild handles from config.json; no in-memory registry
-socket:                metald dials SocketsDir/<id>.sock (short symlink)
-                       -> chroot/run/firecracker.socket
-                       the jail path repeats the id and overflows the 108-byte
-                       sockaddr limit, so the short symlink is dialed instead
-```
+`config.json` stores reservation and cleanup state. `status.json` stores observed state. A short socket link avoids the Unix socket path limit.
 
 ## Related
 
-- [internal/firecracker/api/SPEC.md](api/SPEC.md) the REST client over the VM socket.
-- [internal/vm/SPEC.md](../vm/SPEC.md) the contract this package implements.
-- [internal/systemd/SPEC.md](../systemd/SPEC.md), [internal/storage/SPEC.md](../storage/SPEC.md), [internal/network/SPEC.md](../network/SPEC.md) the collaborators.
-- [docs/vm.md](../../docs/vm.md), [docs/snapshots.md](../../docs/snapshots.md) the broad overviews.
-- [docs/host-layout.md](../../docs/host-layout.md) the on-disk layout and the socket symlink.
+- [internal/firecracker/api/SPEC.md](api/SPEC.md) describes the Firecracker client.
+- [internal/vm/SPEC.md](../vm/SPEC.md) defines the implemented contracts.
+- [internal/storage/SPEC.md](../storage/SPEC.md) and [internal/network/SPEC.md](../network/SPEC.md) describe host resources.
+- [docs/vm.md](../../docs/vm.md) gives the broad VM lifecycle.

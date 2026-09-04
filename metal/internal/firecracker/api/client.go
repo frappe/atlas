@@ -1,5 +1,4 @@
-// Package api is a hand-rolled client for Firecracker's REST API, served over a
-// Unix-domain socket. No external deps: net/http with a socket dialer.
+// Package api provides a Firecracker API client for a Unix socket.
 package api
 
 import (
@@ -8,117 +7,146 @@ import (
 	"encoding/json"
 	"net"
 	"net/http"
+	"sync"
 )
 
+var socketLocks sync.Map
+
+// Client sends requests to one Firecracker API socket.
 type Client struct {
-	http *http.Client
+	httpClient *http.Client
+	lock       *sync.Mutex
 }
 
-// New binds a Client to the firecracker API socket at sockPath.
-func New(sockPath string) *Client {
-	return &Client{http: &http.Client{Transport: &http.Transport{
-		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-			var d net.Dialer
-			return d.DialContext(ctx, "unix", sockPath)
-		},
-	}}}
+// New returns a client for one Firecracker API socket.
+func New(socketPath string) *Client {
+	lock, _ := socketLocks.LoadOrStore(socketPath, &sync.Mutex{})
+	return &Client{
+		lock: lock.(*sync.Mutex),
+		httpClient: &http.Client{Transport: &http.Transport{
+			DisableKeepAlives: true,
+			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+				var dialer net.Dialer
+				return dialer.DialContext(ctx, "unix", socketPath)
+			},
+		}},
+	}
 }
 
-func (c *Client) PutMachineConfig(ctx context.Context, m MachineConfig) error {
-	return c.do(ctx, http.MethodPut, "/machine-config", m, nil)
+// PutMachineConfig sets compute resources.
+func (client *Client) PutMachineConfig(ctx context.Context, configuration MachineConfig) error {
+	return client.send(ctx, http.MethodPut, "/machine-config", configuration, nil)
 }
 
-func (c *Client) PutBootSource(ctx context.Context, b BootSource) error {
-	return c.do(ctx, http.MethodPut, "/boot-source", b, nil)
+// PutBootSource sets the kernel and boot arguments.
+func (client *Client) PutBootSource(ctx context.Context, source BootSource) error {
+	return client.send(ctx, http.MethodPut, "/boot-source", source, nil)
 }
 
-func (c *Client) PutDrive(ctx context.Context, d Drive) error {
-	return c.do(ctx, http.MethodPut, "/drives/"+d.DriveID, d, nil)
+// PutDrive adds one drive.
+func (client *Client) PutDrive(ctx context.Context, drive Drive) error {
+	return client.send(ctx, http.MethodPut, "/drives/"+drive.DriveID, drive, nil)
 }
 
-// PatchDrive updates a live drive; used after a host-side resize so firecracker
-// rescans the block device and the guest sees the new size.
-func (c *Client) PatchDrive(ctx context.Context, d PartialDrive) error {
-	return c.do(ctx, http.MethodPatch, "/drives/"+d.DriveID, d, nil)
+// PatchDrive rescans a live drive after a resize.
+func (client *Client) PatchDrive(ctx context.Context, drive PartialDrive) error {
+	return client.send(ctx, http.MethodPatch, "/drives/"+drive.DriveID, drive, nil)
 }
 
-func (c *Client) PutNetworkInterface(ctx context.Context, n NetworkInterface) error {
-	return c.do(ctx, http.MethodPut, "/network-interfaces/"+n.IfaceID, n, nil)
+// PutNetworkInterface adds one network interface.
+func (client *Client) PutNetworkInterface(ctx context.Context, networkInterface NetworkInterface) error {
+	return client.send(
+		ctx,
+		http.MethodPut,
+		"/network-interfaces/"+networkInterface.IfaceID,
+		networkInterface,
+		nil,
+	)
 }
 
-func (c *Client) InstanceStart(ctx context.Context) error {
-	return c.do(ctx, http.MethodPut, "/actions", action{ActionType: "InstanceStart"}, nil)
+// InstanceStart starts the virtual machine.
+func (client *Client) InstanceStart(ctx context.Context) error {
+	return client.send(ctx, http.MethodPut, "/actions", action{ActionType: "InstanceStart"}, nil)
 }
 
-func (c *Client) InstanceInfo(ctx context.Context) (InstanceInfo, error) {
-	var ii InstanceInfo
-	err := c.do(ctx, http.MethodGet, "/", nil, &ii)
-	return ii, err
+// InstanceInfo returns the Firecracker process state.
+func (client *Client) InstanceInfo(ctx context.Context) (InstanceInfo, error) {
+	var information InstanceInfo
+	err := client.send(ctx, http.MethodGet, "/", nil, &information)
+	return information, err
 }
 
-func (c *Client) SendCtrlAltDel(ctx context.Context) error {
-	return c.do(ctx, http.MethodPut, "/actions", action{ActionType: "SendCtrlAltDel"}, nil)
+// SendCtrlAltDel requests a guest shutdown.
+func (client *Client) SendCtrlAltDel(ctx context.Context) error {
+	return client.send(ctx, http.MethodPut, "/actions", action{ActionType: "SendCtrlAltDel"}, nil)
 }
 
-// Pause moves the microVM to the Paused state, which halts vCPU execution.
-// Firecracker requires the Paused state before it creates a snapshot.
-func (c *Client) Pause(ctx context.Context) error {
-	return c.do(ctx, http.MethodPatch, "/vm", vmState{State: "Paused"}, nil)
+// Pause pauses virtual CPU execution.
+func (client *Client) Pause(ctx context.Context) error {
+	return client.send(ctx, http.MethodPatch, "/vm", virtualMachineState{State: "Paused"}, nil)
 }
 
-// Resume moves the microVM back to the Running state after a Pause or a
-// snapshot load.
-func (c *Client) Resume(ctx context.Context) error {
-	return c.do(ctx, http.MethodPatch, "/vm", vmState{State: "Resumed"}, nil)
+// Resume resumes virtual CPU execution.
+func (client *Client) Resume(ctx context.Context) error {
+	return client.send(ctx, http.MethodPatch, "/vm", virtualMachineState{State: "Resumed"}, nil)
 }
 
-// CreateSnapshot writes a snapshot of the paused microVM to the chroot-relative
-// paths in r. The VM must be Paused first.
-func (c *Client) CreateSnapshot(ctx context.Context, r CreateSnapshotReq) error {
-	return c.do(ctx, http.MethodPut, "/snapshot/create", r, nil)
+// CreateSnapshot writes a snapshot to the requested paths.
+func (client *Client) CreateSnapshot(ctx context.Context, request CreateSnapshotRequest) error {
+	return client.send(ctx, http.MethodPut, "/snapshot/create", request, nil)
 }
 
-// LoadSnapshot restores a microVM from a snapshot into a fresh firecracker
-// process. Set r.ResumeVM to resume at once, or keep it false to stay Paused.
-func (c *Client) LoadSnapshot(ctx context.Context, r LoadSnapshotReq) error {
-	return c.do(ctx, http.MethodPut, "/snapshot/load", r, nil)
+// LoadSnapshot restores a snapshot into a new process.
+func (client *Client) LoadSnapshot(ctx context.Context, request LoadSnapshotRequest) error {
+	return client.send(ctx, http.MethodPut, "/snapshot/load", request, nil)
 }
 
-func (c *Client) PutMmdsConfig(ctx context.Context, cfg MmdsConfig) error {
-	return c.do(ctx, http.MethodPut, "/mmds/config", cfg, nil)
+// PutMMDSConfig configures the metadata service.
+func (client *Client) PutMMDSConfig(ctx context.Context, configuration MMDSConfig) error {
+	return client.send(ctx, http.MethodPut, "/mmds/config", configuration, nil)
 }
 
-// PutMmds sets the metadata payload the guest reads from the metadata service.
-func (c *Client) PutMmds(ctx context.Context, data any) error {
-	return c.do(ctx, http.MethodPut, "/mmds", data, nil)
+// PutMMDS sets guest metadata.
+func (client *Client) PutMMDS(ctx context.Context, data any) error {
+	return client.send(ctx, http.MethodPut, "/mmds", data, nil)
 }
 
-// do sends one request to the socket. The URL host is ignored; the dialer
-// always connects to the socket. body/out are JSON-encoded/decoded if non-nil.
-func (c *Client) do(ctx context.Context, method, path string, body, out any) error {
-	var buf bytes.Reader
+// PatchMMDS merges data into the guest metadata. A null value removes a key.
+func (client *Client) PatchMMDS(ctx context.Context, data any) error {
+	return client.send(ctx, http.MethodPatch, "/mmds", data, nil)
+}
+
+func (client *Client) send(ctx context.Context, method, path string, body, output any) error {
+	client.lock.Lock()
+	defer client.lock.Unlock()
+
+	var requestBody bytes.Reader
 	if body != nil {
-		b, err := json.Marshal(body)
+		encodedBody, err := json.Marshal(body)
 		if err != nil {
 			return err
 		}
-		buf.Reset(b)
+		requestBody.Reset(encodedBody)
 	}
-	req, err := http.NewRequestWithContext(ctx, method, "http://localhost"+path, &buf)
+
+	request, err := http.NewRequestWithContext(ctx, method, "http://localhost"+path, &requestBody)
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := c.http.Do(req)
+	request.Header.Set("Content-Type", "application/json")
+
+	response, err := client.httpClient.Do(request)
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 300 {
-		return decodeFault(resp)
+	defer response.Body.Close()
+
+	if response.StatusCode >= http.StatusMultipleChoices {
+		return decodeFault(response)
 	}
-	if out != nil {
-		return json.NewDecoder(resp.Body).Decode(out)
+	if output != nil {
+		return json.NewDecoder(response.Body).Decode(output)
 	}
+
 	return nil
 }

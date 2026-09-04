@@ -6,7 +6,6 @@ import (
 	"testing"
 )
 
-// writeConfig writes a configuration file in a temporary directory.
 func writeConfig(t *testing.T, body string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "config.toml")
@@ -38,12 +37,11 @@ func TestLoadFileOverridesDefault(t *testing.T) {
 	if o.pool != "tank" {
 		t.Errorf("pool = %q, want the file value", o.pool)
 	}
-	if o.kernelDir != defaultOpts().kernelDir {
-		t.Errorf("kernelDir = %q, want the default for an unset key", o.kernelDir)
+	if o.imagesDir != defaultOpts().imagesDir {
+		t.Errorf("imagesDir = %q, want the default for an unset key", o.imagesDir)
 	}
 }
 
-// base_dir moves every directory metald derives from it.
 func TestLoadBaseDirMovesDerivedDirs(t *testing.T) {
 	path := writeConfig(t, "[metald]\nbase_dir = \"/srv/metal\"\n")
 	o, err := load(path)
@@ -53,8 +51,20 @@ func TestLoadBaseDirMovesDerivedDirs(t *testing.T) {
 	if o.cfg.MachinesDir != "/srv/metal/machines" {
 		t.Errorf("machinesDir = %q", o.cfg.MachinesDir)
 	}
-	if o.kernelDir != "/srv/metal/kernels" {
-		t.Errorf("kernelDir = %q", o.kernelDir)
+	if o.imagesDir != "/srv/metal/images" {
+		t.Errorf("imagesDir = %q", o.imagesDir)
+	}
+}
+
+func TestLoadAuthenticationTokenHash(t *testing.T) {
+	const tokenHash = "4c5dc9b7708905f77f5e5d16316b5dfb425e68cb326dcd55a860e90a7707031e"
+	path := writeConfig(t, "[metald]\nauth_token_hash = \""+tokenHash+"\"\n")
+	options, err := load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if options.authTokenHash != tokenHash {
+		t.Errorf("authTokenHash = %q, want configured hash", options.authTokenHash)
 	}
 }
 
@@ -64,7 +74,6 @@ func TestLoadMissingFile(t *testing.T) {
 	}
 }
 
-// Startup creates every directory the config names, each with its own mode.
 func TestMakeDirs(t *testing.T) {
 	dir := t.TempDir()
 	o := defaultOpts()
@@ -81,7 +90,6 @@ func TestMakeDirs(t *testing.T) {
 	for path, want := range map[string]os.FileMode{
 		o.cfg.MachinesDir: 0o750,
 		o.cfg.SocketsDir:  0o700,
-		o.kernelDir:       0o755,
 		o.imagesDir:       0o755,
 	} {
 		info, err := os.Stat(path)

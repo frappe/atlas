@@ -121,28 +121,26 @@ func fcSocket(t *testing.T, onRequest func()) string {
 
 func testMachine(units systemd.Manager, sock string, timeout time.Duration) *machine {
 	return &machine{
-		d:           &Driver{units: units},
+		d:           &Driver{units: units, consoleBroker: &stubConsoleBroker{}},
 		cfg:         vmConfig{ID: "abc", Sock: sock},
 		api:         api.New(sock),
 		stopTimeout: timeout,
 	}
 }
 
-// A guest without an i8042 keyboard driver never sees Ctrl+Alt+Del, so Stop must
-// give up waiting and let systemd terminate the VM.
-func TestStopEscalatesWhenGuestIgnoresCtrlAltDel(t *testing.T) {
+func TestStopKillsWhenGuestIgnoresCtrlAltDel(t *testing.T) {
 	units := &stubUnits{active: true}
 	m := testMachine(units, fcSocket(t, nil), 20*time.Millisecond)
 
-	if err := m.Stop(context.Background(), false); err != nil {
+	if err := m.Stop(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	stops, kills, _ := units.counts()
-	if stops != 1 {
-		t.Errorf("systemd stops = %d, want 1", stops)
+	if kills != 1 {
+		t.Errorf("kills = %d, want 1", kills)
 	}
-	if kills != 0 {
-		t.Errorf("kills = %d, want 0", kills)
+	if stops != 0 {
+		t.Errorf("systemd stops = %d, want 0", stops)
 	}
 }
 
@@ -150,7 +148,7 @@ func TestStopLetsGuestShutItselfDown(t *testing.T) {
 	units := &stubUnits{active: true}
 	m := testMachine(units, fcSocket(t, units.shutdown), time.Minute)
 
-	if err := m.Stop(context.Background(), false); err != nil {
+	if err := m.Stop(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	stops, kills, waits := units.counts()
@@ -162,11 +160,11 @@ func TestStopLetsGuestShutItselfDown(t *testing.T) {
 	}
 }
 
-func TestStopForceKills(t *testing.T) {
+func TestKillTerminates(t *testing.T) {
 	units := &stubUnits{active: true}
 	m := testMachine(units, fcSocket(t, nil), time.Minute)
 
-	if err := m.Stop(context.Background(), true); err != nil {
+	if err := m.killUnlocked(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	stops, kills, waits := units.counts()
@@ -177,31 +175,39 @@ func TestStopForceKills(t *testing.T) {
 		t.Errorf("systemd stops = %d, want 0", stops)
 	}
 	if waits == 0 {
-		t.Error("Stop did not wait for the process to exit")
+		t.Error("kill did not wait for the process to exit")
 	}
 }
 
-// systemd flags a unit killed out of band as failed. A VM stopped on purpose
-// must still report StateStopped.
 func TestStopClearsTheFailedUnitState(t *testing.T) {
-	for _, force := range []bool{true, false} {
-		units := &stubUnits{active: true}
-		m := testMachine(units, fcSocket(t, nil), 20*time.Millisecond)
+	units := &stubUnits{active: true}
+	m := testMachine(units, fcSocket(t, nil), 20*time.Millisecond)
 
-		if err := m.Stop(context.Background(), force); err != nil {
-			t.Fatalf("force=%v: %v", force, err)
-		}
-		st, err := units.Status(context.Background(), m.cfg.ID)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if got := m.state(context.Background(), st); got != vm.StateStopped {
-			t.Errorf("force=%v: state = %q, want %q", force, got, vm.StateStopped)
-		}
+	if err := m.Stop(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	st, err := units.Status(context.Background(), m.cfg.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := m.state(context.Background(), st); got != vm.StateStopped {
+		t.Errorf("state = %q, want %q", got, vm.StateStopped)
 	}
 }
 
-// A VM that died on its own was not stopped on purpose, so it keeps StateFailed.
+func TestActiveVMWithUnreadableStateReportsUnknown(t *testing.T) {
+	units := &stubUnits{active: true}
+	machine := testMachine(units, fcSocket(t, nil), time.Minute)
+
+	status, err := units.Status(context.Background(), machine.cfg.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := machine.state(context.Background(), status); got != vm.StateUnknown {
+		t.Errorf("state = %q, want %q", got, vm.StateUnknown)
+	}
+}
+
 func TestCrashedVMReportsFailed(t *testing.T) {
 	units := &stubUnits{failed: true}
 	m := testMachine(units, fcSocket(t, nil), time.Minute)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from hashlib import sha256
 from types import MethodType, SimpleNamespace
 from unittest.mock import Mock, patch
 
@@ -258,9 +259,12 @@ class TestServer(UnitTestCase):
 		server.settings.metald_binary_x86_64_download_url = "https://example.test/metald"
 		task = SimpleNamespace(result=SimpleNamespace(is_success=True))
 
-		with patch(
-			"atlas.server.doctype.server.server.ServerSSHTask.create_for_script_file", return_value=task
-		) as create_for_script_file:
+		with (
+			patch("atlas.server.doctype.server.server.get_decrypted_password", return_value="test-token"),
+			patch(
+				"atlas.server.doctype.server.server.ServerSSHTask.create_for_script_file", return_value=task
+			) as create_for_script_file,
+		):
 			Server._install_metald(server)
 
 		arguments = create_for_script_file.call_args.kwargs
@@ -269,6 +273,8 @@ class TestServer(UnitTestCase):
 			arguments["environment"],
 			{
 				"METALD_DOWNLOAD_URL": "https://example.test/metald",
+				"METALD_AUTH_TOKEN_HASH": sha256(b"test-token").hexdigest(),
+				"LISTEN_ADDRESS": "0.0.0.0:9000",
 				"STORAGE_POOL_DEVICE": "/dev/md2",
 			},
 		)
@@ -356,7 +362,11 @@ class TestServer(UnitTestCase):
 		arguments = create_for_script_file.call_args.kwargs
 		self.assertEqual(
 			arguments["environment"],
-			{"WIREGUARD_ADDRESS": "fdab:1::7", "WIREGUARD_MTU": 1440},
+			{
+				"WIREGUARD_ADDRESS": "fdab:1::7",
+				"WIREGUARD_LISTEN_PORT": 51820,
+				"WIREGUARD_MTU": 1440,
+			},
 		)
 		self.assertFalse(arguments["run_in_background"])
 		server.db_set.assert_any_call("wireguard_ip_address", "fdab:1::7")
@@ -519,6 +529,8 @@ class TestServer(UnitTestCase):
 			setup_job_id="atlas||server-provision||node-test-00007",
 			wireguard_job_id="atlas||server-wireguard||node-test-00007",
 			wireguard_ip_address=None,
+			private_ipv4_address="10.0.0.7",
+			port=51820,
 			settings=SimpleNamespace(
 				server_provider_controller=SimpleNamespace(
 					archive_server=Mock(),

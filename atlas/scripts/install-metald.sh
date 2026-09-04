@@ -1,20 +1,19 @@
 #!/usr/bin/env bash
-#
-# Installs metald and its host dependencies.
-# The script is idempotent and can be run multiple times in case of failure.
+# Install metald and its host dependencies. You can run this script again after a failure.
 
 set -eu
 
 : "${METALD_DOWNLOAD_URL:?METALD_DOWNLOAD_URL is required}"
+: "${METALD_AUTH_TOKEN_HASH:?METALD_AUTH_TOKEN_HASH is required}"
 : "${STORAGE_POOL_DEVICE:?STORAGE_POOL_DEVICE is required}"
 
 storage_pool_name=${STORAGE_POOL_NAME:-metal}
 firecracker_version=${FIRECRACKER_VERSION:-latest}
-listen_address=${LISTEN_ADDRESS:-0.0.0.0:9001}
+listen_address=${LISTEN_ADDRESS:?LISTEN_ADDRESS is required}
 
 base_dir=/var/lib/metal
 machines_dir=$base_dir/machines
-kernel_dir=$base_dir/kernels
+images_dir=$base_dir/images
 sockets_dir=/run/metal
 config_file=$base_dir/metald.toml
 
@@ -26,17 +25,17 @@ fi
 step() { echo "==> $*"; }
 skip() { echo "    $* is already installed"; }
 
-# Install required packages
+
 step "install required packages"
-if ! command -v zpool >/dev/null || ! command -v curl >/dev/null; then
+if ! command -v zpool >/dev/null || ! command -v curl >/dev/null || ! command -v iptables >/dev/null; then
 	export DEBIAN_FRONTEND=noninteractive
 	apt update -qq
-	apt install -y -qq curl tar zfsutils-linux
+	apt install -y -qq curl iptables tar zfsutils-linux
 else
 	skip "packages"
 fi
 
-# Install firecracker and jailer
+
 step "install firecracker and jailer"
 if [ -x /usr/bin/firecracker ] && [ -x /usr/bin/jailer ]; then
 	skip "firecracker $(/usr/bin/firecracker --version | head -1)"
@@ -67,24 +66,20 @@ else
 	trap - EXIT
 fi
 
-# Install metald binary
+
 step "install metald"
-if [ -x /usr/bin/metald ]; then
-	skip "metald"
-else
-	metald_download=$(mktemp)
-	trap 'rm -f "$metald_download"' EXIT
-	curl -fsSL -o "$metald_download" "$METALD_DOWNLOAD_URL"
-	install -m 755 "$metald_download" /usr/bin/metald
-	rm -f "$metald_download"
-	trap - EXIT
-fi
+metald_download=$(mktemp)
+trap 'rm -f "$metald_download"' EXIT
+curl -fsSL -o "$metald_download" "$METALD_DOWNLOAD_URL"
+install -m 755 "$metald_download" /usr/bin/metald
+rm -f "$metald_download"
+trap - EXIT
 
-# Create directories for metald
+
 step "create directories for metald"
-mkdir -p "$machines_dir" "$kernel_dir"
+mkdir -p "$machines_dir" "$images_dir"
 
-# Init ZFS pool if needed
+
 step "zfs pool ($storage_pool_name)"
 if zpool list "$storage_pool_name" >/dev/null 2>&1; then
 	skip "pool $storage_pool_name"
@@ -93,16 +88,24 @@ else
 fi
 zfs list "$storage_pool_name/images" >/dev/null 2>&1 || zfs create -o mountpoint=none "$storage_pool_name/images"
 zfs list "$storage_pool_name/vms" >/dev/null 2>&1 || zfs create -o mountpoint=none "$storage_pool_name/vms"
+zfs list "$storage_pool_name/staging" >/dev/null 2>&1 || zfs create -o mountpoint=none "$storage_pool_name/staging"
+zfs list "$storage_pool_name/warm" >/dev/null 2>&1 || zfs create -o mountpoint=none "$storage_pool_name/warm"
 
-# Create metald config file
+
 step "config ($config_file)"
 if [ -f "$config_file" ]; then
-	skip "$config_file"
+	sed -i "s|^listen[[:space:]]*=.*|listen   = \"$listen_address\"|" "$config_file"
+	if grep -q '^auth_token_hash =' "$config_file"; then
+		sed -i "s/^auth_token_hash = .*/auth_token_hash = \"$METALD_AUTH_TOKEN_HASH\"/" "$config_file"
+	else
+		sed -i "/^listen[[:space:]]*=/a auth_token_hash = \"$METALD_AUTH_TOKEN_HASH\"" "$config_file"
+	fi
 else
 	cat > "$config_file" <<EOF
 [metald]
 base_dir = "$base_dir"
 listen   = "$listen_address"
+auth_token_hash = "$METALD_AUTH_TOKEN_HASH"
 
 [firecracker]
 binary_path = "/usr/bin/firecracker"
@@ -117,17 +120,34 @@ EOF
 	chmod 600 "$config_file"
 fi
 
-# Create systemd units for metald and its microVMs
+
+step "network setup"
+install -d -m 0755 /usr/local/lib/metal
+cat > /usr/local/lib/metal/network-setup <<'EOF'
+#!/bin/sh
+set -eu
+
+uplink=$(ip -4 route show default | awk 'NR == 1 { print $5 }')
+[ -n "$uplink" ] || {
+	echo "metald network setup requires an IPv4 default route" >&2
+	exit 1
+}
+
+iptables -t nat -C POSTROUTING -s 10.0.0.0/8 -o "$uplink" -j MASQUERADE 2>/dev/null ||
+	iptables -t nat -A POSTROUTING -s 10.0.0.0/8 -o "$uplink" -j MASQUERADE
+EOF
+chmod 0755 /usr/local/lib/metal/network-setup
+
+
 step "systemd units"
-if [ -f /etc/systemd/system/metal.service ]; then
-	skip "metal.service"
-else
-	cat > /etc/systemd/system/metal.service <<EOF
+cat > /etc/systemd/system/metal.service <<EOF
 [Unit]
 Description=metal daemon
-After=network.target
+Wants=network-online.target
+After=network-online.target
 
 [Service]
+ExecStartPre=/usr/local/lib/metal/network-setup
 ExecStart=/usr/bin/metald serve --config $config_file
 Restart=on-failure
 RestartSec=1
@@ -135,7 +155,6 @@ RestartSec=1
 [Install]
 WantedBy=multi-user.target
 EOF
-fi
 
 if [ -f /etc/systemd/system/metal-vm@.service ]; then
 	skip "metal-vm@.service"
@@ -149,17 +168,25 @@ After=network.target
 Type=exec
 EnvironmentFile=$machines_dir/%i/jailer.env
 ExecStart=/usr/bin/jailer \$JAILER_ARGS
+StandardInput=tty-force
+StandardOutput=tty
+StandardError=journal
+TTYPath=/run/metal/consoles/%i
+TTYReset=yes
+TTYVHangup=yes
 Restart=no
 EOF
 fi
 
-# Enable IP forwarding
+
 step "enable IP forwarding"
 printf 'net.ipv4.ip_forward = 1\n' > /etc/sysctl.d/99-metald.conf
 sysctl -q -w net.ipv4.ip_forward=1
+/usr/local/lib/metal/network-setup
 
-# Enable and start metald service
+
 step "enable and start metal service"
 systemctl daemon-reload
-systemctl enable --now metal.service
+systemctl enable metal.service
+systemctl restart metal.service
 systemctl is-active metal.service

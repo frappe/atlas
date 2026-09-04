@@ -1,20 +1,17 @@
-# Example metald configuration. All keys are optional; each shows its default.
-# Each section is named for the thing it configures. Pass this file with
-# `metald serve --config /path/to/metald.toml`; metald otherwise reads
-# /var/lib/metal/metald.toml. This file is the only way to change a key.
+# Example metald configuration.
+# auth_token_hash is required. Other values show their defaults.
 
 [metald]
-# metald puts the machines, kernels and images directories under base_dir.
-# The images directory holds the warm-image memory files, and it shares a
-# filesystem with the jails so a mem file stages into a VM as a hard link.
+# Stores VM, image, snapshot, and WireGuard state.
 base_dir = "/var/lib/metal"
-# API address; "host:port" for TCP, or "unix:/path" for a unix socket.
+# TCP address or unix:/path.
 listen = "127.0.0.1:8080"
+# Lowercase SHA-256 hash of the bearer token.
+auth_token_hash = "0000000000000000000000000000000000000000000000000000000000000000"
 
 [firecracker]
 binary_path = "/usr/bin/firecracker"
-# Short symlinks to each VM's API socket. A unix address holds 108 bytes, and
-# the path inside the jail is longer than that.
+# Short paths to VM API sockets.
 sockets_dir = "/run/metal"
 
 [jailer]
@@ -22,4 +19,5 @@ binary_path = "/usr/bin/jailer"
 # VM's own directory, so removing that directory removes the jail with it.
 
 [zfs]
+# Existing ZFS pool for VM disks and images.
 pool = "metal"

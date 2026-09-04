@@ -15,90 +15,118 @@ import (
 )
 
 const (
-	ifaceID     = "eth0"
-	mmdsAddr    = "169.254.169.254"
-	mmdsVersion = "V1" // simplest guest-side (plain GET); V2 adds token auth
-
-	rootDriveID   = "drive0"      // the first (root) drive, see configure
-	rootDrivePath = "/rootfs.img" // the in-chroot block node, see storage.Prepare
+	networkInterfaceID     = "eth0"
+	metadataServiceAddress = "169.254.169.254"
+	metadataServiceVersion = "V2"
+	rootDriveIdentifier    = "drive0"
+	rootDrivePath          = "/rootfs.img"
 )
 
-// configure sends firecracker its pre-boot configuration over the API socket.
-func configure(ctx context.Context, cli *api.Client, spec vm.Spec, boot storage.BootConfig, nic network.NIC) error {
-	if err := cli.PutMachineConfig(ctx, api.MachineConfig{VCPUCount: spec.VCPUs, MemSizeMiB: spec.MemMiB}); err != nil {
+func configure(
+	operationContext context.Context,
+	client *api.Client,
+	virtualMachineID string,
+	specification vm.Spec,
+	bootConfiguration storage.BootConfiguration,
+	networkInterface network.Interface,
+) error {
+	machineConfiguration := api.MachineConfig{
+		VCPUCount:  specification.VCPUs,
+		MemSizeMiB: specification.MemoryMiB,
+	}
+	if err := client.PutMachineConfig(operationContext, machineConfiguration); err != nil {
 		return err
 	}
-	if err := cli.PutBootSource(ctx, api.BootSource{KernelImagePath: boot.Kernel, BootArgs: bootArgs(boot, nic)}); err != nil {
+
+	bootSource := api.BootSource{
+		KernelImagePath: bootConfiguration.Kernel,
+		BootArgs:        bootArguments(bootConfiguration, networkInterface),
+	}
+	if err := client.PutBootSource(operationContext, bootSource); err != nil {
 		return err
 	}
-	for i, dr := range boot.Drives {
-		if err := cli.PutDrive(ctx, api.Drive{
-			DriveID: "drive" + strconv.Itoa(i), PathOnHost: dr.Path,
-			IsRootDevice: dr.Root, IsReadOnly: dr.ReadOnly,
-		}); err != nil {
+
+	for driveIndex, drive := range bootConfiguration.Drives {
+		request := api.Drive{
+			DriveID:      "drive" + strconv.Itoa(driveIndex),
+			PathOnHost:   drive.Path,
+			IsRootDevice: drive.Root,
+			IsReadOnly:   drive.ReadOnly,
+		}
+		if err := client.PutDrive(operationContext, request); err != nil {
 			return err
 		}
 	}
-	if err := cli.PutNetworkInterface(ctx, api.NetworkInterface{IfaceID: ifaceID, HostDevName: nic.TapName, GuestMAC: nic.MAC}); err != nil {
+
+	interfaceRequest := api.NetworkInterface{
+		IfaceID:     networkInterfaceID,
+		HostDevName: networkInterface.TapName,
+		GuestMAC:    networkInterface.MACAddress,
+	}
+	if err := client.PutNetworkInterface(operationContext, interfaceRequest); err != nil {
 		return err
 	}
-	if len(spec.SSHKeys) > 0 {
-		if err := cli.PutMmdsConfig(ctx, api.MmdsConfig{NetworkInterfaces: []string{ifaceID}, Version: mmdsVersion, IPv4Address: mmdsAddr}); err != nil {
-			return err
-		}
-		if err := cli.PutMmds(ctx, mmdsData(spec.SSHKeys)); err != nil {
-			return err
-		}
+
+	metadataConfiguration := api.MMDSConfig{
+		NetworkInterfaces: []string{networkInterfaceID},
+		Version:           metadataServiceVersion,
+		IPv4Address:       metadataServiceAddress,
 	}
-	return nil
+	if err := client.PutMMDSConfig(operationContext, metadataConfiguration); err != nil {
+		return err
+	}
+
+	return client.PutMMDS(operationContext, metadataServiceData(virtualMachineID, specification))
 }
 
-// mmdsData builds an EC2-style metadata tree so cloud-init's Ec2 datasource
-// finds the keys at /latest/meta-data/public-keys/<n>/openssh-key.
-func mmdsData(keys []string) map[string]any {
-	pk := make(map[string]any, len(keys))
-	for i, k := range keys {
-		pk[strconv.Itoa(i)] = map[string]any{"openssh-key": k}
+func metadataServiceData(virtualMachineID string, specification vm.Spec) map[string]any {
+	publicKeys := make(map[string]any, len(specification.SSHKeys))
+	for keyIndex, sshKey := range specification.SSHKeys {
+		publicKeys[strconv.Itoa(keyIndex)] = map[string]any{"openssh-key": sshKey}
 	}
-	return map[string]any{"latest": map[string]any{"meta-data": map[string]any{"public-keys": pk}}}
-}
 
-// refreshMMDS builds the metadata a restored clone reads: the ssh keys plus a
-// generation token under "metal". A guest agent watches the token to re-key and
-// re-sync (ssh keys, clock, machine-id) after a warm load. The token is the new
-// VM id, which differs from the source, so every clone sees a change.
-func refreshMMDS(id string, keys []string) map[string]any {
-	data := mmdsData(keys)
-	data["metal"] = map[string]any{"generation": id}
+	metadata := map[string]any{
+		"instance-id": virtualMachineID,
+		"public-keys": publicKeys,
+	}
+	if specification.Hostname != "" {
+		metadata["local-hostname"] = specification.Hostname
+	}
+
+	data := map[string]any{"latest": map[string]any{"meta-data": metadata}}
+	if specification.UserData != "" {
+		data["latest"].(map[string]any)["user-data"] = specification.UserData
+	}
+
 	return data
 }
 
-// bootArgs appends the guest network config, since firecracker does not set it.
-func bootArgs(boot storage.BootConfig, nic network.NIC) string {
-	ip := fmt.Sprintf("ip=%s::%s:255.255.255.0::eth0:off", nic.GuestIP, nic.GatewayIP)
-	return boot.KernelArgs + " " + ip
+func bootArguments(bootConfiguration storage.BootConfiguration, networkInterface network.Interface) string {
+	networkArgument := fmt.Sprintf(
+		"ip=%s::%s:255.255.255.0::eth0:off",
+		networkInterface.GuestIPAddress,
+		networkInterface.GatewayIPAddress,
+	)
+	return bootConfiguration.KernelArgs + " " + networkArgument
 }
 
-func limits(spec vm.Spec) systemd.Limits {
-	// A full memory snapshot faults every guest page in and writes an equal-size
-	// memory file whose pages are charged to this same cgroup, so the peak is about
-	// twice the guest RAM. Cap at 2x plus headroom for firecracker's own memory, or
-	// the cgroup OOM-kills the VM mid-snapshot.
+func resourceLimits(specification vm.Spec) systemd.Limits {
+	// A memory snapshot needs space for guest memory and its memory file.
 	return systemd.Limits{
-		MemoryMaxBytes: int64(2*spec.MemMiB+128) << 20,
-		CPUQuotaPct:    spec.VCPUs * 100,
+		MemoryMaxBytes: (2*int64(specification.MemoryMiB) + 128) << 20,
+		CPUQuotaPct:    specification.VCPUs * 100,
 	}
 }
 
-// waitSocket blocks until the firecracker API socket appears or ctx is done.
-func waitSocket(ctx context.Context, path string) error {
+func waitSocket(operationContext context.Context, path string) error {
 	for {
 		if _, err := os.Stat(path); err == nil {
 			return nil
 		}
+
 		select {
-		case <-ctx.Done():
-			return ctx.Err()
+		case <-operationContext.Done():
+			return operationContext.Err()
 		case <-time.After(50 * time.Millisecond):
 		}
 	}

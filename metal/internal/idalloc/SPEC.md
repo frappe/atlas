@@ -4,22 +4,19 @@
 
 ## Purpose
 
-Package `idalloc` hands out one id per virtual machine from the reserved subuid range
-`[100000, 165535]`. One id is both uid and gid, so each VM gets a private group.
+Package `idalloc` supplies one host user ID for each virtual machine from `[100000, 165535]`. The user ID is also the group ID.
 
 ## Stateless allocation
 
-`idalloc` keeps no table. `Allocate` rebuilds the used set by scanning the live VMs'
-persisted configs, so metald stays stateless. A mutex plus a write-then-release makes
-concurrent creates safe.
+`idalloc` keeps no table. The Firecracker driver scans persisted VM configurations before allocation. A mutex protects concurrent reservations.
 
 ```text
-Create (in internal/firecracker):
-  lock d.mu
-    used = scan machines/<uuid>/config.json of live VMs
-    id   = Allocate(used)               lowest id not in use
-    write machines/<uuid>/config.json   next Create sees the id as used
-  unlock d.mu
+Create in internal/firecracker:
+  lock allocationMutex
+    used IDs = scan machines/<vm-id>/config.json
+    user ID = Allocate(used IDs)
+    write machines/<vm-id>/config.json
+  unlock allocationMutex
 ```
 
 ## Related

@@ -1,8 +1,5 @@
 package storage
 
-// Helpers that materialize a VM's boot files inside the jailer chroot: the
-// hard-linked kernel, the rootfs block-device node, and the kernel cmdline.
-
 import (
 	"context"
 	"fmt"
@@ -15,63 +12,57 @@ import (
 	"github.com/frappe/atlas/metal/internal/hostcmd"
 )
 
-const defaultBootArgs = "console=ttyS0 reboot=k panic=1 pci=off"
+const defaultKernelArguments = "console=ttyS0 reboot=k panic=1 pci=off"
 
-// mknodBlock creates a block-device node at dstPath mirroring srcDev, owned by
-// the VM's uid/gid so the jailed firecracker can open it.
-func mknodBlock(srcDev, dstPath string, uid, gid uint32) error {
-	st, err := statBlock(srcDev)
+func createBlockDevice(sourceDevice, destinationPath string, userID, groupID uint32) error {
+	deviceInformation, err := waitForBlockDevice(sourceDevice)
 	if err != nil {
 		return err
 	}
-	_ = os.Remove(dstPath)
-	if err := syscall.Mknod(dstPath, syscall.S_IFBLK|0o600, int(st.Rdev)); err != nil {
-		return fmt.Errorf("mknod %s: %w", dstPath, err)
+
+	_ = os.Remove(destinationPath)
+	if err := syscall.Mknod(destinationPath, syscall.S_IFBLK|0o600, int(deviceInformation.Rdev)); err != nil {
+		return fmt.Errorf("create block device %s: %w", destinationPath, err)
 	}
-	if err := os.Chmod(dstPath, 0o600); err != nil {
+	if err := os.Chmod(destinationPath, 0o600); err != nil {
 		return err
 	}
-	return os.Chown(dstPath, int(uid), int(gid))
+
+	return os.Chown(destinationPath, int(userID), int(groupID))
 }
 
-// statBlock waits briefly for a freshly created device node to appear. A zvol's
-// /dev/zvol symlink is created asynchronously by udev, so allow a few seconds.
-func statBlock(path string) (syscall.Stat_t, error) {
-	var st syscall.Stat_t
+func waitForBlockDevice(path string) (syscall.Stat_t, error) {
+	var deviceInformation syscall.Stat_t
 	for range 60 {
-		if err := syscall.Stat(path, &st); err == nil {
-			return st, nil
+		if err := syscall.Stat(path, &deviceInformation); err == nil {
+			return deviceInformation, nil
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	return st, fmt.Errorf("device %s did not appear", path)
+
+	return deviceInformation, fmt.Errorf("device %s did not appear", path)
 }
 
-// link hard-links src to dst, replacing any existing dst.
-func link(src, dst string) error {
-	_ = os.Remove(dst)
-	return os.Link(src, dst)
+func replaceHardLink(source, destination string) error {
+	_ = os.Remove(destination)
+	return os.Link(source, destination)
 }
 
-// LinkOrReflink makes dst share src's data as fast as possible: a hard link when
-// src and dst are on one filesystem, else a copy-on-write reflink where the
-// filesystem supports it, else a full copy. Callers use it to stage a large,
-// read-only snapshot memory file into a VM's chroot without an O(size) copy.
-func LinkOrReflink(ctx context.Context, src, dst string) error {
-	_ = os.Remove(dst)
-	if err := os.Link(src, dst); err == nil {
+// LinkOrCopy shares data when possible and copies it when required.
+func LinkOrCopy(ctx context.Context, source, destination string) error {
+	_ = os.Remove(destination)
+	if err := os.Link(source, destination); err == nil {
 		return nil
 	}
-	// cp --reflink=auto: a reflink (COW) when the filesystem supports it, else a
-	// normal copy. It never fails only because reflink is unavailable.
-	return hostcmd.Run(ctx, "cp", "--reflink=auto", src, dst)
+
+	return hostcmd.Run(ctx, "cp", "--reflink=auto", source, destination)
 }
 
-// bootArgs reads the kernel cmdline from imageDir/boot-args, or the default.
-func bootArgs(imageDir string) string {
-	b, err := os.ReadFile(filepath.Join(imageDir, "boot-args"))
+func kernelArguments(imageDirectory string) string {
+	arguments, err := os.ReadFile(filepath.Join(imageDirectory, "boot-args"))
 	if err != nil {
-		return defaultBootArgs
+		return defaultKernelArguments
 	}
-	return strings.TrimSpace(string(b))
+
+	return strings.TrimSpace(string(arguments))
 }

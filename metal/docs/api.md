@@ -1,166 +1,187 @@
-# metal HTTP API — draft
+# Metal HTTP API
 
-metald generates this application programming interface specification from the
-handler annotations, embeds it, and serves it at `/docs`. `make build` regenerates it. The file is
-`internal/api/swagger.json`.
+metald serves JSON on its configured listener. It generates the OpenAPI document from handler annotations and serves the document at `/docs`.
 
-metald listens on `127.0.0.1:8080` by default. Set `metald.listen` to `unix:/path`
-for a unix socket instead, where access is file permissions. JSON in and out.
-Stateless: responses reflect host truth, so they survive a metald restart.
+All routes except `/docs` and `/docs/swagger.json` require a bearer token. `metald.auth_token_hash` must contain the lowercase SHA-256 digest of this token.
 
-**Synchronous:** every call blocks until the operation settles, then returns the
-current VM. `create` boots the guest inline and returns `201`. There is no polling
-yet. A VM that later dies on its own reports `state:"failed"` on the next
-`GET /vms/{id}`. An asynchronous mode (`202` + poll) is planned; see Deferred.
+```http
+Authorization: Bearer <token>
+```
 
-## VM
+## Service routes
+
+| Method | Path | Action |
+|---|---|---|
+| `GET` | `/health` | return `200` when the API is available |
+| `POST` | `/sync` | apply controller state and return host capacity |
+| `GET` | `/docs` | serve the API documentation |
+| `GET` | `/docs/swagger.json` | serve the OpenAPI document |
+
+## Virtual machines
+
+VM create is an idempotent resource operation.
+
+```http
+PUT /vms/{id}
+Content-Type: application/json
+```
 
 ```json
 {
-  "id": "a1b2c3d4e5f6a7b8",
-  "state": "running",
   "vcpus": 2,
-  "mem_mib": 512,
-  "image": "ubuntu",
-  "network": "default",
-  "ip": "172.16.0.2",
-  "mac": "02:aa:bb:cc:dd:ee",
-  "pid": 41234,
-  "disk": { "size_mib": 2048, "used_mib": 137, "snapshots": 2 }
+  "memory_mib": 512,
+  "disk_mib": 2048,
+  "image": {
+    "ref": "ubuntu-24.04-1",
+    "architecture": "amd64",
+    "rootfs": {
+      "url": "https://images.example/rootfs?signature=...",
+      "sha256": "64 hexadecimal characters"
+    },
+    "kernel": {
+      "url": "https://images.example/vmlinux?signature=...",
+      "sha256": "64 hexadecimal characters"
+    },
+    "cache_image": true,
+    "memory_snapshot": true,
+    "memory_snapshot_configuration": {
+      "virtual_cpu_count": 2,
+      "memory_mib": 512,
+      "disk_mib": 2048
+    }
+  },
+  "hostname": "worker-1",
+  "ssh_keys": ["ssh-ed25519 ..."],
+  "user_data": "...",
+  "network": {
+    "public_ipv4": "203.0.113.10",
+    "wireguard_mesh_ipv6": "fdaa:1:0:7::1",
+    "egress": "host"
+  }
 }
 ```
-`state` ∈ `created | running | paused | stopped | failed | destroyed`. `state` is
-derived from the VM's systemd unit. A VM stopped on request reports `stopped`;
-`failed` means the VM died on its own.
 
-| Method | Path | Action |
-|---|---|---|
-| `POST` | `/vms` | create + boot (warm-start from a warm image) → `201` |
-| `GET` | `/vms` | list → `{ "vms": [VM] }` |
-| `GET` | `/vms/{id}` | get (includes `disk`) |
-| `POST` | `/vms/{id}/start` | boot a stopped VM → `200` |
-| `POST` | `/vms/{id}/stop` | shut down → `200` |
-| `POST` | `/vms/{id}/pause` | pause the guest (halt vCPUs) |
-| `POST` | `/vms/{id}/resume` | resume a paused guest |
-| `POST` | `/vms/{id}/resize` | change cpu/mem/disk |
-| `DELETE` | `/vms/{id}` | destroy + free → `204` |
-| `GET` | `/vms/{id}/console` | stream serial console (not implemented → `501`) |
-| `GET` | `/health` | liveness |
+The first request reserves the supplied ID and returns `202`. A repeat request for the same ID and specification also returns `202`. A request that changes reservation identity for the same ID returns `409`. The background reconciler starts the VM. The response can report `state: "unknown"` until the driver observes the VM.
 
-**Create** `POST /vms` —
-`{ "vcpus", "mem_mib", "disk_mib", "image", "network", "ssh_keys" }`.
-`ssh_keys` is a list of public keys, served to the guest via MMDS so it can
-install them at boot. metald assigns `id`/`ip`/`mac` and boots the guest. If
-`image` names a warm image (see Images), the VM warm-starts from the image's
-captured memory instead of a cold boot.
+Metal stores one immutable manifest for each `image.ref`. The manifest contains the root file system digest, kernel digest, and architecture. Metal verifies downloads before import. A request that reuses an image reference with different content returns `409`.
 
-**Pause / Resume** `POST /vms/{id}/pause` halts the guest's vCPUs and reports
-`state:"paused"`; `POST /vms/{id}/resume` returns it to `running`. Pause holds the
-process and its memory, unlike stop, which frees them.
-
-**Start** `POST /vms/{id}/start` — boots the guest. A stopped VM is relaunched
-(a fresh jailer process) and reboots from its persisted disk and network; a
-running VM → `409`.
-
-**Stop** `POST /vms/{id}/stop` — `{ "force": false }`. `true` = SIGKILL at once.
-`false` sends Ctrl+Alt+Del and gives the guest 30s to shut itself down, then
-escalates to a systemd stop job. Firecracker delivers Ctrl+Alt+Del through its
-emulated i8042 controller, so a guest kernel built without an i8042 keyboard
-driver never sees it and always reaches the escalation. The disk, network and
-state are kept, so the VM can be started again.
-
-**Resize** `POST /vms/{id}/resize` — `{ "disk_mib" }`. `disk_mib` is grow-only; a
-smaller value → `409`. The disk grows online (`zfs set volsize` + firecracker
-drive rescan; the guest grows its own fs) and returns the updated VM. CPU/mem
-resize is not yet implemented (`vcpus`/`mem_mib` → `501`).
-
-## Snapshots
-
-A snapshot captures a VM's disk, and optionally its memory. Set `memory:true` to
-also capture guest RAM and device state, paired with the disk snapshot so a restore
-is consistent.
+VM responses contain image identity and cache policy:
 
 ```json
-{ "name": "pre-upgrade", "vm_id": "a1b2c3d4e5f6a7b8", "memory": true,
-  "size_mib": 2048, "used_mib": 12, "created_at": "2026-09-02T10:00:00Z" }
+{
+  "image": {
+    "ref": "ubuntu-24.04-1",
+    "architecture": "amd64",
+    "rootfs": {"sha256": "64 hexadecimal characters"},
+    "kernel": {"sha256": "64 hexadecimal characters"},
+    "cache_image": true,
+    "memory_snapshot": true,
+    "memory_snapshot_configuration": {
+      "virtual_cpu_count": 2,
+      "memory_mib": 512,
+      "disk_mib": 2048
+    }
+  },
+  "ssh_keys": ["ssh-ed25519 AAAA... user@example"]
+}
 ```
+
+They do not contain image transport URLs, the internal guest IP, or the Firecracker PID. The MAC address is in the `network` object.
 
 | Method | Path | Action |
 |---|---|---|
-| `GET` | `/vms/{id}/snapshots` | list → `{ "snapshots": [Snapshot] }` |
-| `POST` | `/vms/{id}/snapshots` | create → `{ "name", "memory" }` |
-| `DELETE` | `/vms/{id}/snapshots/{name}` | delete → `204` |
-| `POST` | `/vms/{id}/snapshots/{name}/restore` | restore in place |
-| `POST` | `/vms/{id}/snapshots/{name}/promote` | promote to an image → `201` |
+| `PUT` | `/vms/{id}` | create or confirm a VM reservation |
+| `GET` | `/vms` | list VMs |
+| `GET` | `/vms/{id}` | get one VM |
+| `PUT` | `/vms/{id}/ssh-keys` | replace all authorized SSH keys |
+| `POST` | `/vms/{id}/actions/start` | request the running state |
+| `POST` | `/vms/{id}/actions/stop` | request the stopped state |
+| `POST` | `/vms/{id}/actions/pause` | request the paused state |
+| `POST` | `/vms/{id}/actions/resume` | request the running state |
+| `POST` | `/vms/{id}/actions/terminate` | request destruction |
+| `POST` | `/vms/{id}/resize/compute` | change stopped VM compute size and request a boot |
+| `POST` | `/vms/{id}/resize/disk` | grow the VM disk |
+| `GET` | `/vms/{id}/console` | open the serial console websocket |
 
-**Create** `POST /vms/{id}/snapshots` — `{ "name", "memory": false }`.
-`memory:false` is a disk-only ZFS snapshot, taken with no pause. `memory:true`
-pauses the guest, takes the disk snapshot, writes the memory and device state, then
-resumes; the pause is brief and happens once. The guest must be booted.
+Lifecycle requests return `202`. Poll `GET /vms/{id}` until `state` reaches `desired_state`.
 
-**Restore** `POST /vms/{id}/snapshots/{name}/restore` rolls the disk back
-(`zfs rollback -r`, so snapshots newer than the target are discarded). When the
-snapshot has memory, it also reloads RAM so the VM resumes at the captured instant.
-metald stops the VM and brings it back; a memory-less snapshot cold-boots from the
-rolled-back disk on the next start.
+`PUT /vms/{id}/ssh-keys` accepts the complete desired `ssh_keys` list and returns the updated VM. An empty list removes all keys. The list can contain at most 100 unique OpenSSH keys. Each key must use one line and be at most 16 KiB. Running and paused VMs receive updated MMDS immediately. Stopped VMs use the keys at their next boot.
 
-**Promote** `POST /vms/{id}/snapshots/{name}/promote` — `{ "image": "<ref>" }`.
-Builds a standalone warm image from the snapshot: a full independent disk copy
-(`zfs send | zfs receive`), the kernel, and the memory files. The image shares no
-lineage with the VM, so the VM can be deleted afterward. Requires a `memory:true`
-snapshot.
+`GET /vms/{id}/console` upgrades the request to a websocket for the serial console. The bearer token guards the handshake. Metal sends console output as binary frames. A viewer sends keystrokes as binary frames and a terminal resize as a text frame `{"resize":{"cols":80,"rows":24}}`. New viewers first receive the recent scrollback. Metal keeps the console open only while the VM runs. After a metald restart, the console is unavailable until the VM starts again, and the socket closes with a going-away status.
 
-## Images
+## Image staging
 
-An image is a template that VMs are created from. A **warm** image also carries a
-memory capture, so a VM created from it starts from restored RAM instead of a cold
-boot. Promote is how a warm image is made.
+Metal does not expose image list, image delete, or in-place snapshot restore APIs. Atlas uses a VM disk checkpoint to create a new immutable image.
+
+| Method | Path | Action |
+|---|---|---|
+| `POST` | `/vms/{id}/snapshots` | create local rootfs and kernel staging with a new UUIDv7 |
+| `POST` | `/snapshots/{snapshot_id}/upload` | upload staged artifacts with multipart HTTP URLs |
+| `GET` | `/snapshots/{snapshot_id}` | get upload status and completed artifact details |
+| `DELETE` | `/snapshots/{snapshot_id}` | remove local staging |
+
+The create response contains the Metal-generated snapshot ID and the exact rootfs and kernel sizes. Atlas uses the ID as its Machine image document name. Upload parts are 2 GiB, except for the final part. Metal streams each part in the background. The status reports each part HTTP ETag and the SHA-256 value of each complete artifact. Atlas completes the multipart uploads, then deletes local staging.
+
+The upload request returns `202`. Poll `GET /snapshots/{snapshot_id}` until the state is `completed` or `failed`. The status reports `uploaded_bytes`, `total_bytes`, and `progress_percent` while the upload runs. The completed response also contains the artifact sizes, SHA-256 values, and ETags.
+
+Metal updates snapshot activity when an upload starts or finishes. The image reconciler deletes local staging after 48 hours without activity.
+
+A staging snapshot is only an image-transfer resource. It cannot roll back its source VM.
+
+## Controller exchange
+
+`POST /sync` applies controller state and returns host state. `wireguard_peers` and `images` are required. Send an empty list to remove all managed remote peers or cached-image policies.
 
 ```json
-{ "ref": "golden", "warm": true, "size_mib": 2048, "created_at": "2026-09-02T10:05:00Z" }
+{
+  "wireguard_peers": [
+    {
+      "node": "node-2",
+      "node_id": 2,
+      "public_key": "base64 WireGuard public key",
+      "address": "192.0.2.2:51820"
+    }
+  ],
+  "images": [
+    {
+      "ref": "sha256:immutable-reference",
+      "architecture": "amd64",
+      "rootfs": {"url": "https://images.example/rootfs?...", "sha256": "..."},
+      "kernel": {"url": "https://images.example/kernel?...", "sha256": "..."},
+      "cache_image": true,
+      "memory_snapshot": false
+    }
+  ]
+}
 ```
 
-| Method | Path | Action |
-|---|---|---|
-| `GET` | `/images` | list → `{ "images": [Image] }` |
-| `DELETE` | `/images/{ref}` | delete → `204` |
+```json
+{
+  "capacity": {
+    "total_cpu_count": 32,
+    "available_cpu_count": 24,
+    "virtual_machine_count": 4,
+    "total_memory_mib": 131072,
+    "available_memory_mib": 81920,
+    "total_storage_mib": 3662109,
+    "available_storage_mib": 2288818
+  }
+}
+```
 
-**Create a VM from an image** is the normal `POST /vms` with `image` set to the
-ref. A warm image is detected automatically: the VM loads the captured RAM,
-refreshes its SSH keys and clock through MMDS, and resumes. A cold image boots as
-usual.
-
-**Delete** `DELETE /images/{ref}` frees the image. It returns `409` while any VM
-created from it still exists, so destroy those VMs first.
+Node names, node IDs, public keys, and image references must be unique. Metal applies WireGuard peers, then saves the image policy. It reconciles images outside the request. Cached images for the host architecture remain local. Other images are pruned after 24 hours without a successful VM start when no dependent disk exists. A cached memory-snapshot image uses local warm artifacts only when CPU, memory, and disk match exactly.
 
 ## Errors
 
+Errors have a stable code and a safe public message.
+
 ```json
-{ "error": { "message": "image \"ubuntu\" not found" } }
+{
+  "error": {
+    "code": "not_found",
+    "message": "resource not found"
+  }
+}
 ```
-`400` malformed · `404` unknown id/snapshot/image · `409` invalid state (start a
-running VM, shrink a disk, snapshot a VM that has not booted, promote a
-memory-less snapshot, delete an image that still has clones) · `500` internal.
 
-## Deferred
-
-Image build/download from external sources (promote is the only way to make an
-image today).
-
-Asynchronous `create`/`start`/`stop`/`delete`: return `202` at once, then poll
-`GET /vms/{id}` until `state` settles. A failure settles as `state:"failed"`.
-
-Idempotency-key on create; `PATCH`/console interactivity; list pagination; diff
-(incremental) memory snapshots; snapshot caps / snapshot-of-snapshot /
-restore-vs-pool-exhaustion.
-
-## Design notes
-
-- Depends only on `vm`. The concrete firecracker driver is injected in `main`, so the
-  API never imports it and a handler tests against a fake `VMDriver`.
-- Synchronous today. Each call blocks and returns the settled state, so a client needs
-  no poll loop. An asynchronous mode (`202` + poll) is planned; see Deferred above.
-- `respond` returns live truth. It re-fetches `Info` after a mutation, which matches
-  the stateless model: a response reflects host state, not a cached copy.
-
-Detail: [internal/api/SPEC.md](../internal/api/SPEC.md).
+Common codes are `invalid_request`, `unauthorized`, `not_found`, `conflict`, `image_content_conflict`, `image_integrity_failed`, `internal_error`, and `not_implemented`. Internal command errors and signed URL query values are not included in responses.

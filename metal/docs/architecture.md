@@ -2,107 +2,113 @@
 
 [metal SPEC](../SPEC.md) · packages: [internal SPEC](../internal/SPEC.md)
 
-metald runs microVMs on one host. The premise is a stateless client: it turns HTTP
-calls into per-VM systemd units and reaches each guest over its own socket. It keeps
-no in-memory registry. All per-VM truth lives on disk.
+Metal manages Firecracker virtual machines on one host. It stores host state on disk and keeps no VM registry in memory.
 
 ## Components
 
 ```text
-   HTTP client
-       |
-       v
-   api  (Echo server over vm.VMDriver)
-       |
-       v
-   firecracker.Driver ──> systemd (D-Bus)  ──> metal-vm@<id> ──> jailer ──> firecracker
-       |                                                                       ^
-       ├──> storage (ZFS)   kernel + rootfs + snapshots                        |
-       ├──> network (netns) tap0 + veth + NAT                                  |
-       └──> firecracker/api  REST over the VM socket  ─────────────────────────┘
+controller
+    |
+    v
+api ----> firecracker.Driver ----> systemd ----> jailer ----> Firecracker
+ |                |                    |
+ |                |                    └─ one unit for each VM
+ |                ├─ storage stores
+ |                └─ network allocator
+ |
+ └─ wake reconcilers
+       ├─ VM desired-state reconciliation
+       └─ image cache and snapshot staging cleanup
 ```
 
-metald is a client, not a parent. systemd owns each firecracker process, so a metald
-restart or crash never kills a VM. Detail:
-[internal/firecracker/SPEC.md](../internal/firecracker/SPEC.md).
+`cmd/metald` creates all concrete services. Consumer packages define the small interfaces that they use.
 
 ## Layering
 
-`vm` defines the contract. `firecracker` implements it on the host packages. `api`
-serves it. `cmd/metald` is the only place the concretes are built and injected. The
-full dependency graph is in [internal/SPEC.md](../internal/SPEC.md).
+`vm` defines the host-independent contract. `firecracker` implements that contract. `api` exposes controller operations, and `reconciler` applies desired state.
+
+The storage, network, systemd, and Firecracker API packages own host integration. See [internal/SPEC.md](../internal/SPEC.md) for the package graph.
 
 ## Stateless design
 
 ```text
-per-VM truth on disk:  machines/<id>/config.json, snapshots/, the warmload mark
-                       + the systemd unit state
-on restart:            Load / List rebuild handles from disk, no registry to recover
+machines/<id>/config.json   reservation, desired state, and cleanup progress
+machines/<id>/status.json   observed state and the last reconciliation error
+systemd                     Firecracker process state
+ZFS                         images, VM disks, staging, and warm disks
 ```
 
-Detail: [internal/firecracker/SPEC.md](../internal/firecracker/SPEC.md) and
-[docs/host-layout.md](host-layout.md).
-
-## systemd unit model
-
-Every VM is the template instance `metal-vm@<id>.service`. metald drives it over
-D-Bus. Detail: [internal/systemd/SPEC.md](../internal/systemd/SPEC.md).
+A metald restart does not stop a VM. `Load` and `List` rebuild VM handles from `config.json`.
 
 ## Request flow
 
-The API is synchronous. A handler calls the driver, blocks, and returns the settled
-VM state. There is no polling. Detail: [internal/api/SPEC.md](../internal/api/SPEC.md).
+Create and lifecycle requests are asynchronous.
+
+```text
+HTTP request
+   -> save the desired state
+   -> wake the VM reconciler
+   -> return 202
+   -> reconcile host state
+```
+
+Poll `GET /vms/{id}` until `state` equals `desired_state`. The first create response can contain `state: "unknown"`.
+
+## systemd unit model
+
+Systemd owns each `metal-vm@<id>.service` process. Metal controls the unit through D-Bus and uses the Firecracker Unix socket for guest operations.
+
+Metal dials a short socket link in `/run/metal`. This avoids the Unix socket path limit inside the jail.
+
+## Storage and warm boot
+
+Normal VM disks are ZFS clones of an image `@ready` snapshot. This keeps cold VM creation fast.
+
+The image reconciler can create host-local warm artifacts for a cached image. Warm artifacts require an exact image, CPU, memory, disk, architecture, and Firecracker match.
+
+If warm boot fails, Metal removes the attempted VM disk and uses cold boot.
+
+## Network
+
+Each VM uses one Linux network namespace and one `tap0` device. Host egress adds a veth pair, routes, and NAT rules. Public IPv4 support adds host forwarding rules.
+
+`POST /sync` also applies the managed WireGuard peer set for the host.
+
+## API access
+
+All routes except the documentation routes require a bearer token. The configuration stores the lowercase SHA-256 digest of that token.
 
 ## Design notes
 
-Why the main choices were made across the daemon and driver.
+**Composition root**
 
-**metald (composition root)**
+- `cmd/metald` creates concrete services in one place.
+- Small consumer interfaces keep image, snapshot, VM disk, and network work separate.
+- One `base_dir` keeps persistent host files under one root.
 
-- One base_dir. `machines`, `kernels`, and `images` are a convention under `base_dir`,
-  so one value relocates the layout. The images dir must share a filesystem with the
-  jails, because a warm start hard-links a memory file into a chroot.
-- Interfaces below, concretes here. Each package takes an interface, so the whole
-  dependency graph is one readable function and a test swaps a fake.
-- Socket auth. A `unix:/path` listener removes a stale socket and sets mode 0660, so
-  access control is file permissions. A TCP listener has no auth.
+**Desired state**
 
-**firecracker driver**
+- HTTP handlers return quickly after they save desired state.
+- Reconciliation makes retries safe after daemon or host operation failures.
+- `status.json` keeps observed state separate from reservation metadata.
 
-- Client, not parent. systemd owns the firecracker process as `metal-vm@<id>`, so a
-  metald restart or crash never kills a VM, and `Load`/`List` rebuild handles from
-  disk.
-- UUIDv7 ids. They sort by creation time. metald dials a short socket symlink, so the
-  id length has no path limit.
-- Warm load is deferred and paused. A warm create writes a marker and loads on the
-  first `Start`. `LoadSnapshot` runs with `resume_vm=false` so an MMDS refresh (new
-  ssh keys and a generation token) lands before the guest runs, letting a clone re-key
-  and re-sync.
-- Files move out of the chroot. firecracker writes snapshot files as the VM uid inside
-  the chroot. metald moves them to `machines/<id>/snapshots/<name>`, which outlives the
-  chroot that a relaunch wipes.
-- Memory cap sized for snapshot. A full snapshot faults every page in and writes an
-  equal-size memory file charged to the same cgroup, so the limit is about 2x guest RAM
-  plus 128 MiB, or the cgroup OOM-kills the VM mid-snapshot.
-- Idempotent teardown. `Destroy` and `cleanup` ignore an already-gone resource, so a
-  partial create or a repeated destroy is safe.
+**VM start**
 
-**firecracker API client**
+- ZFS clones keep disk creation fast.
+- Systemd owns each Firecracker process, so daemon restart does not stop guests.
+- Warm artifacts are optional. Cold boot remains the fallback.
 
-- No dependencies. `net/http` only, so the module carries no third-party API client and
-  the surface stays small.
-- One socket per client. Each `Client` binds to one VM's socket. The driver makes one
-  client per `machine`.
-- State strings are firecracker's. `Not started`, `Running`, `Paused`, and the
-  `Paused`/`Resumed` transitions are firecracker's vocabulary. The driver maps them to
-  `vm.State`.
+**Host safety**
 
-Detail: [internal/firecracker/SPEC.md](../internal/firecracker/SPEC.md),
-[internal/firecracker/api/SPEC.md](../internal/firecracker/api/SPEC.md),
-[cmd/metald/SPEC.md](../cmd/metald/SPEC.md).
+- Bearer authentication applies to TCP and Unix listeners.
+- Per-VM operation locks serialize conflicting changes.
+- Cleanup progress remains on disk until all owned resources are gone.
 
 ## Read next
 
-- [docs/vm.md](vm.md) the VM lifecycle and operations.
-- [docs/storage.md](storage.md), [docs/networking.md](networking.md), [docs/snapshots.md](snapshots.md).
-- [docs/host-layout.md](host-layout.md), [docs/api.md](api.md), [docs/testing.md](testing.md).
+- [docs/api.md](api.md) lists the HTTP API.
+- [docs/vm.md](vm.md) describes VM lifecycle behavior.
+- [docs/storage.md](storage.md) describes images and disks.
+- [docs/snapshots.md](snapshots.md) describes image staging and warm artifacts.
+- [docs/networking.md](networking.md) describes host networking.
+- [docs/host-layout.md](host-layout.md) lists host paths.

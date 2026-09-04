@@ -13,49 +13,60 @@ func (m *machine) Info(ctx context.Context) (vm.Info, error) {
 		return vm.Info{}, err
 	}
 	info := vm.Info{
-		ID:      m.cfg.ID,
-		State:   m.state(ctx, st),
-		PID:     st.PID,
-		IP:      m.cfg.IP,
-		MAC:     m.cfg.MAC,
-		Sock:    m.cfg.Sock,
-		VCPUs:   m.cfg.Spec.VCPUs,
-		MemMiB:  m.cfg.Spec.MemMiB,
-		DiskMiB: m.cfg.Spec.DiskMiB,
-		Image:   m.cfg.Spec.Image.Name,
-		Network: m.cfg.Spec.Network.Name,
+		ID:                m.cfg.ID,
+		State:             m.state(ctx, st),
+		DesiredState:      m.cfg.DesiredState,
+		VCPUs:             m.cfg.Spec.VCPUs,
+		MemoryMiB:         m.cfg.Spec.MemoryMiB,
+		DiskMiB:           m.cfg.Spec.DiskMiB,
+		Image:             m.cfg.Spec.Image,
+		SSHKeys:           append([]string(nil), m.cfg.Spec.SSHKeys...),
+		Hostname:          m.cfg.Spec.Hostname,
+		MAC:               m.cfg.MAC,
+		PublicIPv4:        m.cfg.Spec.Network.PublicIPv4,
+		WireGuardMeshIPv6: m.cfg.Spec.Network.WireGuardMeshIPv6,
+		Egress:            m.cfg.Spec.Network.Egress,
 	}
-	// Disk size/usage/snapshot count are best-effort: a missing zvol (e.g. a
-	// half-built VM) must not fail Info.
-	if u, err := m.d.images.Usage(ctx, m.cfg.ID); err == nil {
-		if u.SizeMiB > 0 {
-			info.DiskMiB = u.SizeMiB
+
+	if usage, err := m.d.virtualMachineStorage.DiskUsage(ctx, m.cfg.ID); err == nil {
+		if usage.SizeMiB > 0 {
+			info.DiskMiB = usage.SizeMiB
 		}
-		info.DiskUsedMiB = u.UsedMiB
-		info.Snapshots = u.Snapshots
+		info.DiskUsedMiB = usage.UsedMiB
+	}
+
+	if status, ok := m.d.cfg.readStatus(m.cfg.ID); ok && status.Error != "" {
+		info.Error = status.Error
+		if info.State != vm.StateRunning {
+			info.State = vm.StateFailed
+		}
 	}
 	return info, nil
 }
 
-// state derives the VM state from the unit plus firecracker: systemd knows if
-// the process is up, firecracker knows if the guest has booted.
 func (m *machine) state(ctx context.Context, st systemd.Status) vm.State {
 	switch st.ActiveState {
 	case "failed":
 		return vm.StateFailed
 	case "inactive", "deactivating":
 		return vm.StateStopped
+	case "active":
+	default:
+		return vm.StateUnknown
 	}
-	ii, err := m.api.InstanceInfo(ctx)
+
+	instance, err := m.api.InstanceInfo(ctx)
 	if err != nil {
-		return vm.StateRunning // process is up but state is unknowable
+		return vm.StateUnknown
 	}
-	switch ii.State {
+	switch instance.State {
 	case "Not started":
 		return vm.StateCreated
+	case "Running":
+		return vm.StateRunning
 	case "Paused":
 		return vm.StatePaused
 	default:
-		return vm.StateRunning
+		return vm.StateUnknown
 	}
 }
