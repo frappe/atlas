@@ -168,6 +168,12 @@ After=network.target
 Type=exec
 EnvironmentFile=$machines_dir/%i/jailer.env
 ExecStart=/usr/bin/jailer \$JAILER_ARGS
+StandardInput=tty-force
+StandardOutput=tty
+StandardError=journal
+TTYPath=/run/metal/consoles/%i
+TTYReset=yes
+TTYVHangup=yes
 Restart=no
 EOF
 fi

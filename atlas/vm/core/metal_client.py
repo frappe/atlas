@@ -39,7 +39,8 @@ class MetalClient:
 	"""Call the Metal API on one bare-metal Server."""
 
 	timeout_seconds = (3, 10)
-	create_timeout_seconds = (2, 5)
+	create_timeout_seconds = (3, 15)
+	status_timeout_seconds = (5, 30)
 	snapshot_timeout_seconds = (5, 3600)
 
 	def __init__(self, server: "Server") -> None:
@@ -51,6 +52,14 @@ class MetalClient:
 
 		self.base_url = f"http://{server.public_ipv4_address}:9000"
 		self.headers = {"Authorization": f"Bearer {token}"}
+
+	def get_console_connection(self, virtual_machine_id: str, mode: str = "tty") -> dict[str, str]:
+		"""Return the websocket URL and auth header for a VM console."""
+		websocket_url = self.base_url.replace("http://", "ws://", 1)
+		return {
+			"url": f"{websocket_url}/vms/{quote(virtual_machine_id, safe='')}/console?mode={mode}",
+			"authorization": self.headers["Authorization"],
+		}
 
 	def put_virtual_machine(self, virtual_machine_id: str, request: dict[str, Any]) -> None:
 		"""Store one VM request under its stable Atlas ID."""
@@ -64,8 +73,8 @@ class MetalClient:
 		)
 
 	def get_virtual_machine(self, virtual_machine_id: str) -> dict[str, Any]:
-		"""Return the live data for one VM."""
-		return self._request("GET", f"/vms/{virtual_machine_id}")
+		"""Return live data for one VM."""
+		return self._request("GET", f"/vms/{virtual_machine_id}", timeout=self.status_timeout_seconds)
 
 	def terminate_virtual_machine(self, virtual_machine_id: str) -> None:
 		"""Ask Metal to remove one VM."""

@@ -94,6 +94,7 @@ func (m *machine) stopUnlocked(ctx context.Context) error {
 	if _, err := m.d.units.Wait(ctx, m.cfg.ID); err != nil {
 		return err
 	}
+	_ = m.d.consoleBroker.Close(m.cfg.ID)
 
 	// Clear the failed state after an intentional process stop.
 	return m.d.units.ResetFailed(ctx, m.cfg.ID)
@@ -106,6 +107,7 @@ func (m *machine) killUnlocked(ctx context.Context) error {
 	if _, err := m.d.units.Wait(ctx, m.cfg.ID); err != nil {
 		return err
 	}
+	_ = m.d.consoleBroker.Close(m.cfg.ID)
 	return m.d.units.ResetFailed(ctx, m.cfg.ID)
 }
 
@@ -187,6 +189,7 @@ func (m *machine) cleanupSystemd(ctx context.Context) error {
 	if err := m.d.units.Stop(ctx, m.cfg.ID); err != nil {
 		return fmt.Errorf("stop VM unit: %w", err)
 	}
+	_ = m.d.consoleBroker.Close(m.cfg.ID)
 	if err := m.d.units.ResetFailed(ctx, m.cfg.ID); err != nil {
 		return fmt.Errorf("reset VM unit: %w", err)
 	}

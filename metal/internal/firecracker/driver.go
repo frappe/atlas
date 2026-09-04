@@ -46,6 +46,12 @@ type imageStore interface {
 	RecordImageUse(imageReference string, usedAt time.Time) error
 }
 
+// consoleBroker manages each VM's serial console PTY.
+type consoleBroker interface {
+	Open(id string) error
+	Close(id string) error
+}
+
 // Driver manages Firecracker virtual machines on one host.
 type Driver struct {
 	cfg                   Config
@@ -54,10 +60,15 @@ type Driver struct {
 	imageStore            imageStore
 	snapshotStore         snapshotStore
 	networkAllocator      network.Allocator
+	consoleBroker         consoleBroker
 	allocationMutex       sync.Mutex
 	operationLocks        operationLocks
 	warmupDelay           time.Duration
+	sshSlots              chan struct{}
 }
+
+// maxConcurrentSSHSessions limits host-wide SSH console sessions.
+const maxConcurrentSSHSessions = 32
 
 // New returns a Firecracker driver.
 func New(
@@ -67,6 +78,7 @@ func New(
 	imageStore imageStore,
 	snapshotStore snapshotStore,
 	networkAllocator network.Allocator,
+	consoleBroker consoleBroker,
 ) *Driver {
 	return &Driver{
 		cfg:                   configuration,
@@ -75,7 +87,9 @@ func New(
 		imageStore:            imageStore,
 		snapshotStore:         snapshotStore,
 		networkAllocator:      networkAllocator,
+		consoleBroker:         consoleBroker,
 		warmupDelay:           5 * time.Minute,
+		sshSlots:              make(chan struct{}, maxConcurrentSSHSessions),
 	}
 }
 
@@ -335,6 +349,10 @@ func (d *Driver) prepareBoot(ctx context.Context, configuration vmConfig, networ
 	if err := d.cfg.linkSocket(configuration.ID); err != nil {
 		return err
 	}
+	// Open the PTY before systemd starts the unit.
+	if err := d.consoleBroker.Open(configuration.ID); err != nil {
+		return err
+	}
 	if err := d.units.Start(ctx, configuration.ID); err != nil {
 		return err
 	}
@@ -412,6 +430,10 @@ func (d *Driver) launchSnapshot(
 		return err
 	}
 	if err := d.cfg.linkSocket(configuration.ID); err != nil {
+		return err
+	}
+	// Open the PTY before systemd starts the unit.
+	if err := d.consoleBroker.Open(configuration.ID); err != nil {
 		return err
 	}
 	if err := d.units.Start(ctx, configuration.ID); err != nil {

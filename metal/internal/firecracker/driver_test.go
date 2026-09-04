@@ -39,9 +39,14 @@ func testDriver(t *testing.T) (*Driver, *fakeNetwork, *fakeImages) {
 		MachinesDir: filepath.Join(directory, "machines"),
 		SocketsDir:  filepath.Join(directory, "sockets"),
 		IDs:         idalloc.Range{Min: 1000, Max: 1001},
-	}, &stubUnits{}, images, images, images, networkAllocator)
+	}, &stubUnits{}, images, images, images, networkAllocator, &stubConsoleBroker{})
 	return driver, networkAllocator, images
 }
+
+type stubConsoleBroker struct{}
+
+func (*stubConsoleBroker) Open(string) error  { return nil }
+func (*stubConsoleBroker) Close(string) error { return nil }
 
 func TestBootArgs(t *testing.T) {
 	boot := storage.BootConfiguration{KernelArgs: "console=ttyS0"}

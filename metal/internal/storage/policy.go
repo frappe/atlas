@@ -118,6 +118,14 @@ func (store *ImageStore) imageLastUsed(imageReference string) (time.Time, error)
 	}
 
 	information, err := os.Stat(store.manifestFile(imageReference))
+	if errors.Is(err, os.ErrNotExist) {
+		// Use directory age for incomplete images.
+		directory, directoryErr := os.Stat(store.imageDirectory(imageReference))
+		if directoryErr != nil {
+			return time.Time{}, nil
+		}
+		return directory.ModTime(), nil
+	}
 	if err != nil {
 		return time.Time{}, err
 	}

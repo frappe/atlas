@@ -1,0 +1,91 @@
+{% block title %}Console {{ virtual_machine }}{% endblock %}
+
+{%- block head_include %}
+<meta name="referrer" content="no-referrer" />
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css" />
+<style>
+	html, body { margin: 0; height: 100%; background: #1e1e1e; overflow: hidden; }
+	#atlas-console { position: fixed; inset: 0; padding: 4px; }
+	#atlas-overlay {
+		position: fixed; inset: 0; display: none; align-items: center; justify-content: center;
+		background: rgba(20, 20, 20, 0.88); color: #e6e6e6; font: 14px/1.6 system-ui, sans-serif;
+		text-align: center; z-index: 10;
+	}
+	#atlas-overlay .box { max-width: 460px; padding: 24px; }
+	#atlas-overlay .title { font-size: 16px; font-weight: 600; margin-bottom: 8px; }
+	#atlas-overlay .hint { color: #9aa; }
+</style>
+{%- endblock %}
+
+{% block content %}
+<div id="atlas-console"></div>
+<div id="atlas-overlay">
+	<div class="box">
+		<div class="title" id="atlas-overlay-title">Console disconnected</div>
+		<div class="hint" id="atlas-overlay-hint">Reopen the console from the Virtual Machine page.</div>
+	</div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/socket.io-client@4.7.5/dist/socket.io.min.js"></script>
+<script>
+(function () {
+	// The token is in the URL fragment so it never reaches the server or a Referer.
+	const token = new URLSearchParams(window.location.hash.slice(1)).get("token") || "";
+	const sitename = {{ sitename | tojson }};
+	const socketioPort = {{ socketio_port | tojson }};
+
+	const overlay = document.getElementById("atlas-overlay");
+	const overlayTitle = document.getElementById("atlas-overlay-title");
+	const overlayHint = document.getElementById("atlas-overlay-hint");
+	let ended = false;
+
+	// The token is one-time, so the session cannot be reopened from this page.
+	function end(title, hint) {
+		if (ended) return;
+		ended = true;
+		overlayTitle.textContent = title;
+		overlayHint.textContent = hint || "Reopen the console from the Virtual Machine page.";
+		overlay.style.display = "flex";
+		try { socket.disconnect(); } catch (e) {}
+	}
+
+	const term = new Terminal({ cursorBlink: true, fontFamily: "monospace", fontSize: 13 });
+	const fit = new FitAddon.FitAddon();
+	term.loadAddon(fit);
+	term.open(document.getElementById("atlas-console"));
+	fit.fit();
+
+	function host() {
+		let origin = window.location.origin;
+		if (window.location.hostname.endsWith("localhost")) {
+			origin = window.location.protocol + "//" + window.location.hostname + ":" + socketioPort;
+		}
+		return origin + "/" + sitename;
+	}
+
+	// One-time token: do not auto-reconnect, or it would resend a spent token.
+	const socket = io(host(), { withCredentials: true, reconnection: false });
+
+	socket.on("connect", () => socket.emit("atlas_console_open", token));
+	socket.on("atlas_console_ready", () => term.focus());
+	socket.on("atlas_console_output", (data) =>
+		term.write(Uint8Array.from(atob(data), (c) => c.charCodeAt(0)))
+	);
+	socket.on("atlas_console_error", (message) => end("Console unavailable", message));
+	socket.on("atlas_console_closed", () => end("Console session ended"));
+	socket.on("disconnect", () => end("Console disconnected"));
+	socket.on("connect_error", () => end("Could not connect to the console"));
+
+	term.onData((data) => socket.emit("atlas_console_input", btoa(data)));
+
+	function sendResize() {
+		fit.fit();
+		socket.emit("atlas_console_resize", { cols: term.cols, rows: term.rows });
+	}
+	window.addEventListener("resize", sendResize);
+	term.onResize(() => socket.emit("atlas_console_resize", { cols: term.cols, rows: term.rows }));
+})();
+</script>
+{% endblock %}

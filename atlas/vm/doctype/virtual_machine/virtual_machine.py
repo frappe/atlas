@@ -7,10 +7,10 @@ from frappe import _, request_cache
 from frappe.model.document import Document
 from frappe.utils import add_to_date, cint, now_datetime
 
-from atlas.vm.metal_client import MetalClient, MetalClientError, throw_metal_error
-from atlas.vm.virtual_machine_manager import VirtualMachineManager
+from atlas.vm.core.metal_client import MetalClient, MetalClientError, throw_metal_error
+from atlas.vm.core.virtual_machine_manager import VirtualMachineManager
 
-DRAFT_EXPIRY_MINUTES = 15
+DRAFT_EXPIRY_MINUTES = 2
 
 
 class VirtualMachine(Document):
@@ -177,7 +177,7 @@ class VirtualMachine(Document):
 		if not title:
 			frappe.throw(_("Image title is required."))
 
-		from atlas.vm.virtual_machine_image_manager import VirtualMachineImageManager
+		from atlas.vm.core.virtual_machine_image_manager import VirtualMachineImageManager
 
 		return VirtualMachineImageManager().create_from_virtual_machine(
 			self,
@@ -236,6 +236,19 @@ class VirtualMachine(Document):
 			MetalClient(frappe.get_doc("Server", self.server)).perform_action(self.name, action)
 		except MetalClientError as error:
 			throw_metal_error(error)
+
+	@frappe.whitelist(methods=["POST"])
+	def get_console_token(self, mode: str = "tty") -> dict[str, str]:
+		"""Issue a one-time token to open this VM console in tty or ssh mode."""
+		frappe.only_for("System Manager")
+		if mode not in {"tty", "ssh"}:
+			frappe.throw(_("Console mode must be tty or ssh."))
+		from atlas.vm.core.console_token import issue_console_token
+
+		connection = MetalClient(frappe.get_doc("Server", self.server)).get_console_connection(
+			self.name, mode
+		)
+		return {"token": issue_console_token(connection)}
 
 
 @frappe.whitelist(methods=["POST"])

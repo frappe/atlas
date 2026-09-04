@@ -6,7 +6,7 @@ import frappe
 from frappe import _
 
 from atlas.atlas.s3 import S3Client, S3Error
-from atlas.vm.metal_client import MetalClient, MetalClientError, throw_metal_error
+from atlas.vm.core.metal_client import MetalClient, MetalClientError, throw_metal_error
 
 if TYPE_CHECKING:
 	from atlas.atlas.doctype.atlas_settings.atlas_settings import AtlasSettings
@@ -92,7 +92,7 @@ class VirtualMachineImageManager:
 
 	def enqueue_transfer(self, image_name: str) -> None:
 		frappe.enqueue(
-			"atlas.vm.virtual_machine_image_manager.transfer_machine_image",
+			"atlas.vm.core.virtual_machine_image_manager.transfer_machine_image",
 			queue="default",
 			timeout=TRANSFER_TIMEOUT_SECONDS,
 			image_name=image_name,

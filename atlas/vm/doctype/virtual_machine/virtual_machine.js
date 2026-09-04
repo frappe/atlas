@@ -29,6 +29,21 @@ frappe.ui.form.on("Virtual Machine", {
 			);
 		});
 
+		if (is_running || is_paused || current_state === "created") {
+			frm.add_custom_button(
+				__("TTY Console"),
+				() => openConsole(frm, "tty"),
+				__("Console Access")
+			);
+		}
+		if (is_running) {
+			frm.add_custom_button(
+				__("SSH Console"),
+				() => openConsole(frm, "ssh"),
+				__("Console Access")
+			);
+		}
+
 		frm.add_custom_button(
 			__("Create Machine Image"),
 			() => showCreateMachineImageDialog(frm),
@@ -57,6 +72,36 @@ frappe.ui.form.on("Virtual Machine", {
 		);
 	},
 });
+
+function openConsole(frm, mode) {
+	// Open a tab before the async token request to avoid popup blocking.
+	const consoleTab = window.open("about:blank", "_blank");
+	frm.call({
+		method: "get_console_token",
+		doc: frm.doc,
+		args: { mode },
+		freeze: true,
+		freeze_message: __("Opening console..."),
+	}).then((response) => {
+		const token = response.message && response.message.token;
+		if (!token) {
+			if (consoleTab) consoleTab.close();
+			frappe.msgprint(__("Could not open the console."));
+			return;
+		}
+		// Keep the token in the fragment.
+		const url =
+			"/vm_console?vm=" +
+			encodeURIComponent(frm.doc.name) +
+			"#token=" +
+			encodeURIComponent(token);
+		if (consoleTab) {
+			consoleTab.location = url;
+		} else {
+			window.open(url, "_blank");
+		}
+	});
+}
 
 function showCreateMachineImageDialog(frm) {
 	frappe.prompt(

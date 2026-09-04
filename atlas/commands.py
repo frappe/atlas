@@ -13,7 +13,7 @@ from frappe.commands import pass_context
 from frappe.exceptions import SiteNotSpecifiedError
 from frappe.utils.bench_helper import CliCtxObj
 
-from atlas.vm.virtual_machine_image_manager import bytes_to_mib
+from atlas.vm.core.virtual_machine_image_manager import bytes_to_mib
 
 if TYPE_CHECKING:
 	from atlas.atlas.s3 import S3Client
@@ -104,7 +104,6 @@ def publish_ubuntu_image(
 		existing = frappe.get_doc("Virtual Machine Image", existing_name)
 		if existing.image_sha256 == image_sha256 and existing.kernel_sha256 == kernel_sha256:
 			return
-		raise click.UsageError(f"Virtual Machine Image {title} already identifies different files")
 
 	image_key = f"vm-images/sha256/{image_sha256}/{image_path.name}"
 	kernel_key = f"vm-images/sha256/{kernel_sha256}/{kernel_path.name}"
@@ -117,13 +116,8 @@ def publish_ubuntu_image(
 	except S3Error as error:
 		raise click.UsageError(str(error)) from error
 
-	image_values = {
-		"image_type": "System",
+	file_values = {
 		"status": "Available",
-		"platform": platform,
-		"operating_system": "Ubuntu",
-		"operating_system_version": version,
-		"supports_cloud_init": 1,
 		"image_object_key": image_key,
 		"image_sha256": image_sha256,
 		"image_size_mib": bytes_to_mib(image_path.stat().st_size),
@@ -131,12 +125,24 @@ def publish_ubuntu_image(
 		"kernel_sha256": kernel_sha256,
 		"kernel_size_mib": bytes_to_mib(kernel_path.stat().st_size),
 	}
+
+	if existing_name:
+		existing.update(file_values)
+		existing.version = (existing.version or 1) + 1
+		existing.save()
+		return
+
 	frappe.get_doc(
 		{
 			"doctype": "Virtual Machine Image",
 			"title": title,
 			"version": 1,
-			**image_values,
+			"image_type": "System",
+			"platform": platform,
+			"operating_system": "Ubuntu",
+			"operating_system_version": version,
+			"supports_cloud_init": 1,
+			**file_values,
 		}
 	).insert()
 

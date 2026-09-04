@@ -6,14 +6,14 @@ import frappe
 from frappe.tests import UnitTestCase
 
 from atlas.atlas.s3 import S3Error
-from atlas.vm.doctype.virtual_machine_image.virtual_machine_image import VirtualMachineImage
-from atlas.vm.virtual_machine_image_manager import (
+from atlas.vm.core.virtual_machine_image_manager import (
 	MEBIBYTE,
 	MULTIPART_PART_SIZE_MIB,
 	VirtualMachineImageManager,
 	bytes_to_mib,
 	get_multipart_part_count,
 )
+from atlas.vm.doctype.virtual_machine_image.virtual_machine_image import VirtualMachineImage
 
 
 class TestVirtualMachineImage(UnitTestCase):
@@ -178,8 +178,8 @@ class TestVirtualMachineImageTransfer(UnitTestCase):
 			return server
 
 		with (
-			patch("atlas.vm.virtual_machine_image_manager.frappe.get_doc", side_effect=get_doc),
-			patch("atlas.vm.virtual_machine_image_manager.MetalClient", return_value=metal_client),
+			patch("atlas.vm.core.virtual_machine_image_manager.frappe.get_doc", side_effect=get_doc),
+			patch("atlas.vm.core.virtual_machine_image_manager.MetalClient", return_value=metal_client),
 			patch.object(manager, "enqueue_transfer") as enqueue_transfer,
 		):
 			image_name = manager.create_from_virtual_machine(virtual_machine, "Machine image")
@@ -236,10 +236,10 @@ class TestVirtualMachineImageTransfer(UnitTestCase):
 		manager = VirtualMachineImageManager()
 
 		with (
-			patch("atlas.vm.virtual_machine_image_manager.frappe.get_doc", return_value=server),
-			patch("atlas.vm.virtual_machine_image_manager.frappe.get_single", return_value=settings),
-			patch("atlas.vm.virtual_machine_image_manager.MetalClient", return_value=metal_client),
-			patch("atlas.vm.virtual_machine_image_manager.frappe.db.commit"),
+			patch("atlas.vm.core.virtual_machine_image_manager.frappe.get_doc", return_value=server),
+			patch("atlas.vm.core.virtual_machine_image_manager.frappe.get_single", return_value=settings),
+			patch("atlas.vm.core.virtual_machine_image_manager.MetalClient", return_value=metal_client),
+			patch("atlas.vm.core.virtual_machine_image_manager.frappe.db.commit"),
 			patch.object(manager, "complete_stored_uploads"),
 		):
 			manager.advance_transfer(image)
@@ -269,12 +269,12 @@ class TestVirtualMachineImageTransfer(UnitTestCase):
 
 		with (
 			patch(
-				"atlas.vm.virtual_machine_image_manager.frappe.get_doc",
+				"atlas.vm.core.virtual_machine_image_manager.frappe.get_doc",
 				return_value=SimpleNamespace(name="server-1"),
 			),
-			patch("atlas.vm.virtual_machine_image_manager.frappe.get_single", return_value=settings),
-			patch("atlas.vm.virtual_machine_image_manager.MetalClient", return_value=metal_client),
-			patch("atlas.vm.virtual_machine_image_manager.frappe.db.commit"),
+			patch("atlas.vm.core.virtual_machine_image_manager.frappe.get_single", return_value=settings),
+			patch("atlas.vm.core.virtual_machine_image_manager.MetalClient", return_value=metal_client),
+			patch("atlas.vm.core.virtual_machine_image_manager.frappe.db.commit"),
 			patch.object(manager, "complete_stored_uploads"),
 		):
 			manager.advance_transfer(image)
@@ -298,11 +298,11 @@ class TestVirtualMachineImageTransfer(UnitTestCase):
 
 		with (
 			patch(
-				"atlas.vm.virtual_machine_image_manager.frappe.get_doc",
+				"atlas.vm.core.virtual_machine_image_manager.frappe.get_doc",
 				return_value=SimpleNamespace(name="server-1"),
 			),
-			patch("atlas.vm.virtual_machine_image_manager.frappe.get_single", return_value=settings),
-			patch("atlas.vm.virtual_machine_image_manager.MetalClient", return_value=metal_client),
+			patch("atlas.vm.core.virtual_machine_image_manager.frappe.get_single", return_value=settings),
+			patch("atlas.vm.core.virtual_machine_image_manager.MetalClient", return_value=metal_client),
 			patch.object(manager, "start_upload") as start_upload,
 		):
 			manager.advance_transfer(image)
@@ -315,9 +315,9 @@ class TestVirtualMachineImageTransfer(UnitTestCase):
 		manager = VirtualMachineImageManager()
 
 		with (
-			patch("atlas.vm.virtual_machine_image_manager.frappe.get_doc", return_value=image),
-			patch("atlas.vm.virtual_machine_image_manager.frappe.db.commit"),
-			patch("atlas.vm.virtual_machine_image_manager.frappe.log_error"),
+			patch("atlas.vm.core.virtual_machine_image_manager.frappe.get_doc", return_value=image),
+			patch("atlas.vm.core.virtual_machine_image_manager.frappe.db.commit"),
+			patch("atlas.vm.core.virtual_machine_image_manager.frappe.log_error"),
 			patch.object(manager, "advance_transfer", side_effect=S3Error("upload failed")),
 		):
 			manager.transfer("image-1")

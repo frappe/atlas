@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/frappe/atlas/metal/internal/api"
+	"github.com/frappe/atlas/metal/internal/console"
 	"github.com/frappe/atlas/metal/internal/firecracker"
 	"github.com/frappe/atlas/metal/internal/network"
 	"github.com/frappe/atlas/metal/internal/reconciler"
@@ -129,6 +130,9 @@ func serve(o opts) error {
 	if err != nil {
 		return fmt.Errorf("configure WireGuard manager: %w", err)
 	}
+	consoleBroker := console.NewBroker(filepath.Join(o.cfg.SocketsDir, "consoles"))
+	defer consoleBroker.Shutdown()
+
 	virtualMachineDriver := firecracker.New(
 		o.cfg,
 		units,
@@ -136,6 +140,7 @@ func serve(o opts) error {
 		stores.Images,
 		stores.Snapshots,
 		network.NewLinuxAllocator(),
+		consoleBroker,
 	)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -167,6 +172,8 @@ func serve(o opts) error {
 		WakeReconciler:       wakeReconcilers,
 		WireGuardManager:     wireGuardManager,
 		Storage:              stores.Pool,
+		ConsoleBroker:        consoleBroker,
+		SSHConnector:         virtualMachineDriver,
 	})
 	if err != nil {
 		return fmt.Errorf("configure API: %w", err)

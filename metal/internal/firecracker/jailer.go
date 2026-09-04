@@ -10,6 +10,9 @@ import (
 // apiSockRel is the firecracker API socket path relative to the chroot root.
 const apiSockRel = "run/firecracker.socket"
 
+// firecrackerLogRel is the Firecracker log path inside the chroot.
+const firecrackerLogRel = "firecracker.log"
+
 // chrootRoot returns the path where jailer builds the VM chroot. The base is the
 // VM's own directory, so removing that directory takes the chroot with it, and
 // the kernel hard link stays on one filesystem.
@@ -51,6 +54,8 @@ func (c Config) jailerArgs(id string, uid, gid uint32, netns string) []string {
 		"--netns", netns,
 		"--",
 		"--api-sock", apiSockRel,
+		"--log-path", firecrackerLogRel,
+		"--level", "Warn",
 	}
 }
 

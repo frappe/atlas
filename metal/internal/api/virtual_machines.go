@@ -110,7 +110,3 @@ func virtualMachineReservationResponse(virtualMachineID string, specification vm
 		Disk: diskResponse{SizeMiB: specification.DiskMiB},
 	}
 }
-
-func (s *Server) getVirtualMachineConsole(echo.Context) error {
-	return newAPIError(http.StatusNotImplemented, "not_implemented", "not implemented")
-}

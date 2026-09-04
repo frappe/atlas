@@ -101,11 +101,13 @@ They do not contain image transport URLs, the internal guest IP, or the Firecrac
 | `POST` | `/vms/{id}/actions/terminate` | request destruction |
 | `POST` | `/vms/{id}/resize/compute` | change stopped VM compute size and request a boot |
 | `POST` | `/vms/{id}/resize/disk` | grow the VM disk |
-| `GET` | `/vms/{id}/console` | return `501` |
+| `GET` | `/vms/{id}/console` | open the serial console websocket |
 
 Lifecycle requests return `202`. Poll `GET /vms/{id}` until `state` reaches `desired_state`.
 
 `PUT /vms/{id}/ssh-keys` accepts the complete desired `ssh_keys` list and returns the updated VM. An empty list removes all keys. The list can contain at most 100 unique OpenSSH keys. Each key must use one line and be at most 16 KiB. Running and paused VMs receive updated MMDS immediately. Stopped VMs use the keys at their next boot.
+
+`GET /vms/{id}/console` upgrades the request to a websocket for the serial console. The bearer token guards the handshake. Metal sends console output as binary frames. A viewer sends keystrokes as binary frames and a terminal resize as a text frame `{"resize":{"cols":80,"rows":24}}`. New viewers first receive the recent scrollback. Metal keeps the console open only while the VM runs. After a metald restart, the console is unavailable until the VM starts again, and the socket closes with a going-away status.
 
 ## Image staging
 

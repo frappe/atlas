@@ -102,6 +102,12 @@ After=network.target
 Type=exec
 EnvironmentFile=$VAR_DIR/%i/jailer.env
 ExecStart=$BIN/jailer \$JAILER_ARGS
+StandardInput=tty-force
+StandardOutput=tty
+StandardError=journal
+TTYPath=/run/metal/consoles/%i
+TTYReset=yes
+TTYVHangup=yes
 Restart=no
 EOF
 systemctl daemon-reload

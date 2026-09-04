@@ -7,10 +7,12 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"strings"
 
 	"github.com/labstack/echo/v4"
 
+	"github.com/frappe/atlas/metal/internal/console"
 	"github.com/frappe/atlas/metal/internal/network"
 	"github.com/frappe/atlas/metal/internal/storage"
 	"github.com/frappe/atlas/metal/internal/vm"
@@ -48,6 +50,16 @@ type ImagePolicyStore interface {
 	SetImagePolicies(ctx context.Context, images []vm.ImageRef) error
 }
 
+// ConsoleBroker streams a virtual machine serial console to one viewer.
+type ConsoleBroker interface {
+	Attach(ctx context.Context, id string, client io.ReadWriter, resize <-chan console.Winsize) error
+}
+
+// SSHConnector opens an interactive SSH session to a virtual machine guest.
+type SSHConnector interface {
+	DialSSH(ctx context.Context, id string) (vm.SSHConn, error)
+}
+
 // Dependencies contains services used by the HTTP handlers.
 type Dependencies struct {
 	VirtualMachineDriver vm.Driver
@@ -57,6 +69,8 @@ type Dependencies struct {
 	WakeReconciler       func()
 	WireGuardManager     WireGuardManager
 	Storage              CapacityProvider
+	ConsoleBroker        ConsoleBroker
+	SSHConnector         SSHConnector
 }
 
 // Server owns the HTTP handlers and their dependencies.
@@ -68,6 +82,8 @@ type Server struct {
 	wakeReconciler       func()
 	wireGuardManager     WireGuardManager
 	storage              CapacityProvider
+	consoleBroker        ConsoleBroker
+	sshConnector         SSHConnector
 	authTokenHash        []byte
 }
 
@@ -85,6 +101,8 @@ func New(configuration Config, dependencies Dependencies) (*echo.Echo, error) {
 		wakeReconciler:       dependencies.WakeReconciler,
 		wireGuardManager:     dependencies.WireGuardManager,
 		storage:              dependencies.Storage,
+		consoleBroker:        dependencies.ConsoleBroker,
+		sshConnector:         dependencies.SSHConnector,
 		authTokenHash:        []byte(configuration.AuthTokenHash),
 	}
 
@@ -104,7 +122,7 @@ func validateServerConfiguration(configuration Config, dependencies Dependencies
 	if _, err := hex.DecodeString(configuration.AuthTokenHash); err != nil || configuration.AuthTokenHash != strings.ToLower(configuration.AuthTokenHash) {
 		return fmt.Errorf("API authentication token SHA-256 hash is invalid")
 	}
-	if dependencies.VirtualMachineDriver == nil || dependencies.SnapshotCreator == nil || dependencies.SnapshotStore == nil || dependencies.ImagePolicyStore == nil || dependencies.WakeReconciler == nil || dependencies.WireGuardManager == nil || dependencies.Storage == nil {
+	if dependencies.VirtualMachineDriver == nil || dependencies.SnapshotCreator == nil || dependencies.SnapshotStore == nil || dependencies.ImagePolicyStore == nil || dependencies.WakeReconciler == nil || dependencies.WireGuardManager == nil || dependencies.Storage == nil || dependencies.ConsoleBroker == nil || dependencies.SSHConnector == nil {
 		return fmt.Errorf("API dependencies are required")
 	}
 	return nil

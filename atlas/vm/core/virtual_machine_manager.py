@@ -9,7 +9,7 @@ from frappe import _
 from frappe.model.document import Document
 from frappe.utils import add_to_date, now_datetime
 
-from atlas.vm.metal_client import MetalClient, MetalClientError, throw_metal_error
+from atlas.vm.core.metal_client import MetalClient, MetalClientError, throw_metal_error
 
 if TYPE_CHECKING:
 	from atlas.atlas.doctype.atlas_settings.atlas_settings import AtlasSettings

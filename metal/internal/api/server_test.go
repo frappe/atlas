@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/frappe/atlas/metal/internal/console"
 	"github.com/frappe/atlas/metal/internal/network"
 	"github.com/frappe/atlas/metal/internal/storage"
 	"github.com/frappe/atlas/metal/internal/vm"
@@ -229,12 +230,26 @@ func newServerWithServices(
 		WakeReconciler:       func() {},
 		WireGuardManager:     wireGuardManager,
 		Storage:              fakeCapacityProvider{},
+		ConsoleBroker:        stubConsoleBroker{},
+		SSHConnector:         stubSSHConnector{},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	return server
+}
+
+type stubSSHConnector struct{}
+
+func (stubSSHConnector) DialSSH(context.Context, string) (vm.SSHConn, error) {
+	return nil, errors.New("ssh unavailable")
+}
+
+type stubConsoleBroker struct{}
+
+func (stubConsoleBroker) Attach(context.Context, string, io.ReadWriter, <-chan console.Winsize) error {
+	return console.ErrConsoleNotFound
 }
 
 const (

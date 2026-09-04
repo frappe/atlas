@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any, cast
 import frappe
 from frappe.utils import now_datetime
 
-from atlas.vm.metal_client import MetalClient, MetalClientError
+from atlas.vm.core.metal_client import MetalClient, MetalClientError
 
 if TYPE_CHECKING:
 	from atlas.server.doctype.server.server import Server

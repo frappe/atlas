@@ -148,6 +148,11 @@ Destination=169.254.169.254/32
 Scope=link
 EOF
 
+# Enable a login prompt on the serial console.
+install -d -m 0755 "$rootfs_directory/etc/systemd/system/getty.target.wants"
+ln -sf /lib/systemd/system/serial-getty@.service \
+	"$rootfs_directory/etc/systemd/system/getty.target.wants/serial-getty@ttyS0.service"
+
 install -d -m 0755 "$rootfs_directory/usr/local/lib/atlas"
 cat > "$rootfs_directory/usr/local/lib/atlas/authorized-keys-command" <<'EOF'
 #!/usr/bin/python3

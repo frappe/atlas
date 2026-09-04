@@ -4,13 +4,13 @@ from unittest.mock import Mock, patch
 import requests
 from frappe.tests import UnitTestCase
 
-from atlas.vm.doctype.virtual_machine import virtual_machine as virtual_machine_module
-from atlas.vm.metal_client import MetalClient, MetalClientError
-from atlas.vm.virtual_machine_manager import (
+from atlas.vm.core.metal_client import MetalClient, MetalClientError
+from atlas.vm.core.virtual_machine_manager import (
 	PlacementCapacity,
 	VirtualMachineCreateRequest,
 	VirtualMachineManager,
 )
+from atlas.vm.doctype.virtual_machine import virtual_machine as virtual_machine_module
 
 
 class TestVirtualMachineRequest(UnitTestCase):
@@ -96,7 +96,7 @@ class TestMetalClient(UnitTestCase):
 		client.headers = {"Authorization": "Bearer token"}
 		response = SimpleNamespace(status_code=202, content=b"")
 
-		with patch("atlas.vm.metal_client.requests.request", return_value=response) as request:
+		with patch("atlas.vm.core.metal_client.requests.request", return_value=response) as request:
 			client.put_virtual_machine("VM-00001", {"vcpus": 1})
 
 		self.assertEqual(request.call_args.args[:2], ("PUT", "http://10.0.0.2:9000/vms/VM-00001"))
@@ -107,7 +107,7 @@ class TestMetalClient(UnitTestCase):
 		client.headers = {"Authorization": "Bearer token"}
 		response = SimpleNamespace(status_code=202, content=b"")
 
-		with patch("atlas.vm.metal_client.requests.request", return_value=response) as request:
+		with patch("atlas.vm.core.metal_client.requests.request", return_value=response) as request:
 			client.perform_action("VM-00001", "start")
 			client.resize_virtual_machine_disk("VM-00001", 2048)
 			client.resize_virtual_machine_compute("VM-00001", 2, 2048)
@@ -125,13 +125,25 @@ class TestMetalClient(UnitTestCase):
 		)
 		self.assertEqual(request.call_args_list[2].kwargs["json"], {"vcpus": 2, "memory_mib": 2048})
 
+	def test_console_connection_builds_websocket_url(self) -> None:
+		client = MetalClient.__new__(MetalClient)
+		client.base_url = "http://10.0.0.2:9000"
+		client.headers = {"Authorization": "Bearer token"}
+
+		connection = client.get_console_connection("VM-00001")
+		ssh_connection = client.get_console_connection("VM-00001", "ssh")
+
+		self.assertEqual(connection["url"], "ws://10.0.0.2:9000/vms/VM-00001/console?mode=tty")
+		self.assertEqual(ssh_connection["url"], "ws://10.0.0.2:9000/vms/VM-00001/console?mode=ssh")
+		self.assertEqual(connection["authorization"], "Bearer token")
+
 	def test_replace_ssh_keys_uses_vm_subresource(self) -> None:
 		client = MetalClient.__new__(MetalClient)
 		client.base_url = "http://10.0.0.2:9000"
 		client.headers = {"Authorization": "Bearer token"}
 		response = SimpleNamespace(status_code=200, content=b"{}", json=lambda: {})
 
-		with patch("atlas.vm.metal_client.requests.request", return_value=response) as request:
+		with patch("atlas.vm.core.metal_client.requests.request", return_value=response) as request:
 			client.replace_virtual_machine_ssh_keys("VM-00001", ["ssh-ed25519 AAAA"])
 
 		self.assertEqual(
@@ -153,7 +165,7 @@ class TestMetalClient(UnitTestCase):
 			SimpleNamespace(status_code=204, content=b""),
 		]
 
-		with patch("atlas.vm.metal_client.requests.request", side_effect=responses) as request:
+		with patch("atlas.vm.core.metal_client.requests.request", side_effect=responses) as request:
 			client.create_snapshot("VM-00001")
 			client.start_snapshot_upload("image-1", {"rootfs": {"parts": []}, "kernel": {"parts": []}})
 			client.get_snapshot("image-1")
@@ -177,7 +189,7 @@ class TestMetalClient(UnitTestCase):
 		client.headers = {"Authorization": "Bearer token"}
 		response = SimpleNamespace(status_code=200, content=b"{}", json=lambda: {"capacity": {}})
 
-		with patch("atlas.vm.metal_client.requests.request", return_value=response) as request:
+		with patch("atlas.vm.core.metal_client.requests.request", return_value=response) as request:
 			result = client.sync([{"node": "node-1"}], [{"ref": "sha256:image"}])
 
 		self.assertEqual(result, {"capacity": {}})
@@ -193,7 +205,9 @@ class TestMetalClient(UnitTestCase):
 		client.headers = {}
 
 		with (
-			patch("atlas.vm.metal_client.requests.request", side_effect=requests.ConnectionError("lost")),
+			patch(
+				"atlas.vm.core.metal_client.requests.request", side_effect=requests.ConnectionError("lost")
+			),
 			self.assertRaises(MetalClientError) as raised,
 		):
 			client.start_snapshot_upload("image-1", {})
@@ -206,7 +220,9 @@ class TestMetalClient(UnitTestCase):
 		client.headers = {}
 
 		with (
-			patch("atlas.vm.metal_client.requests.request", side_effect=requests.ConnectionError("lost")),
+			patch(
+				"atlas.vm.core.metal_client.requests.request", side_effect=requests.ConnectionError("lost")
+			),
 			self.assertRaises(MetalClientError) as raised,
 		):
 			client.put_virtual_machine("VM-00001", {})

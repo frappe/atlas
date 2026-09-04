@@ -111,6 +111,11 @@ func (client *Client) PutMMDS(ctx context.Context, data any) error {
 	return client.send(ctx, http.MethodPut, "/mmds", data, nil)
 }
 
+// PatchMMDS merges data into the guest metadata. A null value removes a key.
+func (client *Client) PatchMMDS(ctx context.Context, data any) error {
+	return client.send(ctx, http.MethodPatch, "/mmds", data, nil)
+}
+
 func (client *Client) send(ctx context.Context, method, path string, body, output any) error {
 	client.lock.Lock()
 	defer client.lock.Unlock()
