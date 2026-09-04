@@ -121,7 +121,7 @@ func fcSocket(t *testing.T, onRequest func()) string {
 
 func testMachine(units systemd.Manager, sock string, timeout time.Duration) *machine {
 	return &machine{
-		d:           &Driver{units: units},
+		d:           &Driver{units: units, consoleBroker: &stubConsoleBroker{}},
 		cfg:         vmConfig{ID: "abc", Sock: sock},
 		api:         api.New(sock),
 		stopTimeout: timeout,

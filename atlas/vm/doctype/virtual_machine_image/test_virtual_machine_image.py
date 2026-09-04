@@ -277,10 +277,16 @@ class TestVirtualMachineImageTransfer(UnitTestCase):
 			patch("atlas.vm.core.virtual_machine_image_manager.frappe.db.commit"),
 			patch.object(manager, "complete_stored_uploads"),
 		):
+			# First poll records the checksums; finalize runs on the next poll.
+			manager.advance_transfer(image)
+			self.assertEqual(image.image_sha256, "a" * 64)
+			self.assertEqual(image.kernel_sha256, "b" * 64)
+			self.assertEqual(image.status, "Completing")
+			metal_client.delete_snapshot.assert_not_called()
+
+			# Next poll finalizes, deletes the snapshot, and marks it available.
 			manager.advance_transfer(image)
 
-		self.assertEqual(image.image_sha256, "a" * 64)
-		self.assertEqual(image.kernel_sha256, "b" * 64)
 		metal_client.delete_snapshot.assert_called_once_with("image-1")
 		self.assertEqual(image.status, "Available")
 

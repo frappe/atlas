@@ -34,7 +34,8 @@ func newTestConsole(t *testing.T) (*console, *os.File) {
 	}
 	link := filepath.Join(t.TempDir(), "console")
 	c := newConsole(master, link, 1<<16)
-	t.Cleanup(func() { _ = c.close(); slave.Close() })
+	// Close the slave first so the drain read returns.
+	t.Cleanup(func() { slave.Close(); _ = c.close() })
 	return c, slave
 }
 
@@ -44,8 +45,12 @@ func TestAttachReplaysScrollbackAndStreamsLive(t *testing.T) {
 	if _, err := slave.Write([]byte("history\r\n")); err != nil {
 		t.Fatal(err)
 	}
-	// Record scrollback before the viewer attaches.
-	waitFor(t, func() bool { return len(c.ring.snapshot()) > 0 })
+	// Read the ring under its lock while the drain writes it.
+	waitFor(t, func() bool {
+		c.mutex.Lock()
+		defer c.mutex.Unlock()
+		return len(c.ring.snapshot()) > 0
+	})
 
 	client := newFakeClient()
 	go func() { _ = c.attach(context.Background(), client, make(chan Winsize)) }()

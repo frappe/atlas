@@ -59,7 +59,8 @@ func (c *console) drain() {
 		if err == nil {
 			continue
 		}
-		if errors.Is(err, syscall.EIO) {
+		// Stop on EIO after the master closes.
+		if errors.Is(err, syscall.EIO) && !c.isClosed() {
 			time.Sleep(20 * time.Millisecond)
 			continue
 		}
@@ -165,6 +166,12 @@ func (c *console) removeSubscriber(target *subscriber) {
 	c.mutex.Unlock()
 }
 
+func (c *console) isClosed() bool {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+	return c.closed
+}
+
 func (c *console) close() error {
 	c.mutex.Lock()
 	if c.closed {
@@ -174,9 +181,12 @@ func (c *console) close() error {
 	c.closed = true
 	c.mutex.Unlock()
 
-	// Closing the master ends the drain and attached readers.
+	// Stop waiting if a blocked PTY read does not return.
 	err := c.master.Close()
-	<-c.drainDone
+	select {
+	case <-c.drainDone:
+	case <-time.After(time.Second):
+	}
 	if removeErr := os.Remove(c.link); removeErr != nil && !os.IsNotExist(removeErr) && err == nil {
 		err = removeErr
 	}
