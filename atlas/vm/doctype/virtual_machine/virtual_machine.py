@@ -188,18 +188,17 @@ class VirtualMachine(Document):
 			raise AssertionError from error
 
 	@frappe.whitelist(methods=["POST"])
-	def replace_metadata(self, metadata: str | dict[str, str]) -> dict[str, Any]:
+	def replace_metadata(self, metadata: dict[str, str]) -> dict[str, Any]:
 		"""Replace all custom metadata for this VM with a plain string-to-string map."""
 		frappe.only_for("System Manager")
-		values = frappe.parse_json(metadata) if isinstance(metadata, str) else metadata
-		if not isinstance(values, dict) or any(
-			not isinstance(key, str) or not isinstance(value, str) for key, value in values.items()
+		if not isinstance(metadata, dict) or any(
+			not isinstance(key, str) or not isinstance(value, str) for key, value in metadata.items()
 		):
 			frappe.throw(_("Metadata must be a string-to-string map."))
 
 		try:
 			return MetalClient(frappe.get_doc("Server", self.server)).replace_virtual_machine_metadata(
-				self.name, values
+				self.name, metadata
 			)
 		except MetalClientError as error:
 			throw_metal_error(error)

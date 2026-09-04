@@ -207,28 +207,38 @@ function showEditSSHKeysDialog(frm) {
 }
 
 function showEditMetadataDialog(frm) {
-	frappe.prompt(
-		{
-			fieldname: "metadata",
-			fieldtype: "Code",
-			options: "JSON",
-			label: __("Metadata"),
-			default: frm.doc.metadata || "{}",
-			description: __("A JSON object of string keys and values."),
+	const dialog = new frappe.ui.Dialog({
+		title: __("Edit Metadata"),
+		fields: [
+			{
+				fieldname: "metadata",
+				fieldtype: "Code",
+				options: "JSON",
+				label: __("Metadata"),
+				default: frm.doc.metadata || "{}",
+				description: __("A JSON object of string keys and values."),
+			},
+		],
+		primary_action_label: __("Save"),
+		primary_action({ metadata }) {
+			let parsed;
+			try {
+				parsed = JSON.parse(metadata || "{}");
+			} catch (error) {
+				frappe.msgprint(__("Metadata must be valid JSON."));
+				return;
+			}
+			dialog.hide();
+			frm.call({
+				method: "replace_metadata",
+				doc: frm.doc,
+				args: { metadata: parsed },
+				freeze: true,
+				freeze_message: __("Updating metadata..."),
+			}).then(() => frm.reload_doc());
 		},
-		({ metadata }) =>
-			frm
-				.call({
-					method: "replace_metadata",
-					doc: frm.doc,
-					args: { metadata },
-					freeze: true,
-					freeze_message: __("Updating metadata..."),
-				})
-				.then(() => frm.reload_doc()),
-		__("Edit Metadata"),
-		__("Save")
-	);
+	});
+	dialog.show();
 }
 
 function showResizeComputeDialog(frm) {

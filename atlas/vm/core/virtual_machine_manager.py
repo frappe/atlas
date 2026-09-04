@@ -77,10 +77,12 @@ class VirtualMachineCreateRequest:
 			raise ValueError("Metadata must be a string-to-string map.")
 		metadata: dict[str, str] = {}
 		for key, value in raw.items():
-			key = str(key).strip()
+			if not isinstance(key, str) or not isinstance(value, str):
+				raise ValueError("Metadata keys and values must be strings.")
+			key = key.strip()
 			if not key:
 				raise ValueError("Metadata key cannot be empty.")
-			metadata[key] = str(value)
+			metadata[key] = value
 		return metadata
 
 	@staticmethod
