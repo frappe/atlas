@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import frappe
@@ -22,14 +23,12 @@ class VirtualMachine(Document):
 	if TYPE_CHECKING:
 		from frappe.types import DF
 
-		from atlas.vm.doctype.virtual_machine_ssh_key.virtual_machine_ssh_key import VirtualMachineSSHKey
-
 		disk_mib: DF.Int
 		is_draft: DF.Check
 		is_terminating: DF.Check
 		memory_mib: DF.Int
+		metadata: DF.Code | None
 		server: DF.Link
-		ssh_keys: DF.Table[VirtualMachineSSHKey]
 		tenant_id: DF.Int
 		vcpus: DF.Int
 		virtual_machine_image: DF.Link
@@ -111,27 +110,13 @@ class VirtualMachine(Document):
 	def public_ipv4(self) -> str | None:
 		return (self.get_metal_vm_info().get("network") or {}).get("public_ipv4")
 
-	def onload(self) -> None:
-		"""Show the SSH keys that Metal currently holds for this VM."""
-		if ssh_keys := self.get_metal_vm_info().get("ssh_keys"):
-			self.set("ssh_keys", [{"ssh_key": key} for key in ssh_keys])
+	@property
+	def ssh_keys(self) -> str:
+		return "\n".join(self.get_metal_vm_info().get("ssh_keys") or [])
 
-	def before_save(self) -> None:
-		if self.is_new():
-			return
-
-		# If the SSH keys have changed, update them in metal
-		desired = [row.ssh_key.strip() for row in self.ssh_keys if row.ssh_key and row.ssh_key.strip()]
-		current = self.get_metal_vm_info().get("ssh_keys") or []
-		if set(desired) == set(current):
-			return
-
-		try:
-			MetalClient(frappe.get_doc("Server", self.server)).replace_virtual_machine_ssh_keys(
-				self.name, desired
-			)
-		except MetalClientError as error:
-			throw_metal_error(error)
+	@property
+	def metadata(self) -> str:
+		return json.dumps(self.get_metal_vm_info().get("metadata") or {}, indent=2)
 
 	@frappe.whitelist(methods=["POST"])
 	def start(self) -> None:
@@ -197,6 +182,23 @@ class VirtualMachine(Document):
 		try:
 			return MetalClient(frappe.get_doc("Server", self.server)).replace_virtual_machine_ssh_keys(
 				self.name, values
+			)
+		except MetalClientError as error:
+			throw_metal_error(error)
+			raise AssertionError from error
+
+	@frappe.whitelist(methods=["POST"])
+	def replace_metadata(self, metadata: dict[str, str]) -> dict[str, Any]:
+		"""Replace all custom metadata for this VM with a plain string-to-string map."""
+		frappe.only_for("System Manager")
+		if not isinstance(metadata, dict) or any(
+			not isinstance(key, str) or not isinstance(value, str) for key, value in metadata.items()
+		):
+			frappe.throw(_("Metadata must be a string-to-string map."))
+
+		try:
+			return MetalClient(frappe.get_doc("Server", self.server)).replace_virtual_machine_metadata(
+				self.name, metadata
 			)
 		except MetalClientError as error:
 			throw_metal_error(error)

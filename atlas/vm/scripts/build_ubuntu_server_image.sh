@@ -121,10 +121,79 @@ step "extracted $(basename "$kernel_path")"
 step "extract root file system"
 unsquashfs -q -d "$rootfs_directory" "$rootfs_path"
 
-# Firecracker MMDS V2 does not accept the AWS IMDSv2 token headers that cloud-init sends.
+# Use Atlas MMDS v2 as the cloud-init datasource. Firecracker has no DMI probe.
 cat > "$rootfs_directory/etc/cloud/cloud.cfg.d/99-atlas-datasource.cfg" <<'EOF'
-datasource_list: [ None ]
+datasource_list: [ Atlas ]
 EOF
+
+# DataSourceAtlas reads metadata and user-data from MMDS v2. Fetch errors return no data.
+cat > "$rootfs_directory/usr/lib/python3/dist-packages/cloudinit/sources/DataSourceAtlas.py" <<'EOF'
+from cloudinit import sources, url_helper
+
+METADATA_BASE = "http://169.254.169.254/latest"
+TOKEN_TTL_SECONDS = "21600"
+
+
+class DataSourceAtlas(sources.DataSource):
+    dsname = "Atlas"
+
+    def __init__(self, sys_cfg, distro, paths, ud_proc=None):
+        sources.DataSource.__init__(self, sys_cfg, distro, paths, ud_proc)
+        self.metadata = {}
+        self.userdata_raw = None
+
+    def _fetch_text(self, path, headers):
+        response = url_helper.readurl(
+            f"{METADATA_BASE}/{path}", headers=headers, timeout=5, retries=3
+        )
+        return response.contents.decode().strip()
+
+    def _get_data(self):
+        try:
+            token = url_helper.readurl(
+                f"{METADATA_BASE}/api/token",
+                request_method="PUT",
+                headers={"X-metadata-token-ttl-seconds": TOKEN_TTL_SECONDS},
+                timeout=5,
+                retries=3,
+            ).contents.decode().strip()
+            headers = {"X-metadata-token": token}
+            self.metadata["instance-id"] = self._fetch_text("meta-data/instance-id", headers)
+        except Exception:
+            return False
+
+        try:
+            self.metadata["local-hostname"] = self._fetch_text("meta-data/local-hostname", headers)
+        except Exception:
+            pass
+
+        try:
+            self.userdata_raw = url_helper.readurl(
+                f"{METADATA_BASE}/user-data", headers=headers, timeout=5, retries=3
+            ).contents
+        except Exception:
+            self.userdata_raw = None
+
+        return True
+
+    def _get_subplatform(self):
+        return "metadata (Atlas MMDS v2)"
+
+    def get_instance_id(self):
+        return self.metadata.get("instance-id")
+
+
+datasources = [
+    (DataSourceAtlas, (sources.DEP_FILESYSTEM, sources.DEP_NETWORK)),
+]
+
+
+def get_datasource_list(depends):
+    return sources.list_from_depends(depends, datasources)
+EOF
+
+# Fail the build if the datasource has a syntax error.
+python3 -m py_compile "$rootfs_directory/usr/lib/python3/dist-packages/cloudinit/sources/DataSourceAtlas.py"
 
 # Disable cloud-init networking. systemd-networkd owns the static guest network.
 # Each VM can use this fixed address because each VM has a separate network namespace.

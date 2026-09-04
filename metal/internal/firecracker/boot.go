@@ -71,15 +71,21 @@ func configure(
 		NetworkInterfaces: []string{networkInterfaceID},
 		Version:           metadataServiceVersion,
 		IPv4Address:       metadataServiceAddress,
+		IMDSCompat:        true,
 	}
 	if err := client.PutMMDSConfig(operationContext, metadataConfiguration); err != nil {
 		return err
 	}
 
-	return client.PutMMDS(operationContext, metadataServiceData(virtualMachineID, specification))
+	return client.PutMMDS(operationContext, metadataServiceData(
+		virtualMachineID,
+		networkInterface.GuestIPAddress,
+		networkInterface.MACAddress,
+		specification,
+	))
 }
 
-func metadataServiceData(virtualMachineID string, specification vm.Spec) map[string]any {
+func metadataServiceData(virtualMachineID, ipAddress, macAddress string, specification vm.Spec) map[string]any {
 	publicKeys := make(map[string]any, len(specification.SSHKeys))
 	for keyIndex, sshKey := range specification.SSHKeys {
 		publicKeys[strconv.Itoa(keyIndex)] = map[string]any{"openssh-key": sshKey}
@@ -89,8 +95,29 @@ func metadataServiceData(virtualMachineID string, specification vm.Spec) map[str
 		"instance-id": virtualMachineID,
 		"public-keys": publicKeys,
 	}
+
 	if specification.Hostname != "" {
 		metadata["local-hostname"] = specification.Hostname
+	}
+
+	if ipAddress != "" {
+		metadata["local-ipv4"] = ipAddress
+	}
+
+	if macAddress != "" {
+		metadata["mac"] = macAddress
+	}
+
+	if specification.Network.PublicIPv4 != "" {
+		metadata["public-ipv4"] = specification.Network.PublicIPv4
+	}
+
+	if len(specification.Metadata) > 0 {
+		customMetadata := make(map[string]any, len(specification.Metadata))
+		for key, value := range specification.Metadata {
+			customMetadata[key] = value
+		}
+		metadata["attributes"] = customMetadata
 	}
 
 	data := map[string]any{"latest": map[string]any{"meta-data": metadata}}

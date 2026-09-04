@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import ipaddress
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, cast
 
 import frappe
@@ -32,6 +32,7 @@ class VirtualMachineCreateRequest:
 	user_data: str = ""
 	egress: str = "host"
 	server_ip_address: str | None = None
+	metadata: dict[str, str] = field(default_factory=dict)
 
 	@classmethod
 	def from_value(cls, value: str | dict[str, Any]) -> "VirtualMachineCreateRequest":
@@ -42,12 +43,15 @@ class VirtualMachineCreateRequest:
 		image = payload.get("virtual_machine_image")
 		if not isinstance(image, str) or not image:
 			raise ValueError("Virtual Machine Image is required.")
+
 		vcpus = cls._positive_integer(payload, "vcpus", "vCPUs")
 		memory_mib = cls._positive_integer(payload, "memory_mib", "Memory")
 		disk_mib = cls._positive_integer(payload, "disk_mib", "Disk")
 		tenant_id = payload.get("tenant_id")
+
 		if not isinstance(tenant_id, int) or isinstance(tenant_id, bool) or not 0 <= tenant_id <= 0xFFFFFFFF:
 			raise ValueError("Tenant ID must be a 32-bit unsigned integer.")
+
 		egress = payload.get("egress") or "host"
 		if egress not in {"host", "none"}:
 			raise ValueError("Egress must be host or none.")
@@ -63,7 +67,23 @@ class VirtualMachineCreateRequest:
 			user_data=str(payload.get("user_data") or ""),
 			egress=egress,
 			server_ip_address=payload.get("server_ip_address") or None,
+			metadata=cls._metadata(payload),
 		)
+
+	@staticmethod
+	def _metadata(payload: dict[str, Any]) -> dict[str, str]:
+		raw = payload.get("metadata") or {}
+		if not isinstance(raw, dict):
+			raise ValueError("Metadata must be a string-to-string map.")
+		metadata: dict[str, str] = {}
+		for key, value in raw.items():
+			if not isinstance(key, str) or not isinstance(value, str):
+				raise ValueError("Metadata keys and values must be strings.")
+			key = key.strip()
+			if not key:
+				raise ValueError("Metadata key cannot be empty.")
+			metadata[key] = value
+		return metadata
 
 	@staticmethod
 	def _positive_integer(payload: dict[str, Any], field: str, label: str) -> int:
@@ -227,6 +247,7 @@ class VirtualMachineManager:
 			"hostname": request.hostname,
 			"ssh_keys": list(request.ssh_keys),
 			"user_data": request.user_data,
+			"metadata": dict(request.metadata),
 			"network": {
 				"public_ipv4": server_ip_address.address if server_ip_address else None,
 				"wireguard_mesh_ipv6": self.get_wireguard_mesh_ipv6(virtual_machine),

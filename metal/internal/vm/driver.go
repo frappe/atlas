@@ -10,6 +10,7 @@ type Driver interface {
 	List(ctx context.Context) ([]VM, error)
 	SetDesiredState(ctx context.Context, id string, state State) error
 	ReplaceSSHKeys(ctx context.Context, id string, sshKeys []string) error
+	ReplaceMetadata(ctx context.Context, id string, metadata map[string]string) error
 	ResizeCompute(ctx context.Context, id string, virtualCPUCount, memoryMiB int) error
 	Reboot(ctx context.Context, id string) error
 }

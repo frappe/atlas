@@ -1,6 +1,7 @@
 package vm
 
 import (
+	"maps"
 	"slices"
 	"strings"
 )
@@ -15,6 +16,7 @@ type Spec struct {
 	SSHKeys   []string
 	Hostname  string
 	UserData  string
+	Metadata  map[string]string
 }
 
 // ImageRef identifies immutable boot files and their transport URLs.
@@ -56,7 +58,8 @@ func (spec Spec) SameReservation(other Spec) bool {
 		spec.Network == other.Network &&
 		slices.Equal(spec.SSHKeys, other.SSHKeys) &&
 		spec.Hostname == other.Hostname &&
-		spec.UserData == other.UserData
+		spec.UserData == other.UserData &&
+		maps.Equal(spec.Metadata, other.Metadata)
 }
 
 // RefreshImageSource replaces expired image transport URLs.

@@ -1,6 +1,6 @@
 {
  "actions": [],
- "autoname": "format:vm-{#####}",
+ "autoname": "vm-.#####",
  "creation": "2026-09-03 03:25:50.873793",
  "doctype": "DocType",
  "engine": "InnoDB",
@@ -27,8 +27,9 @@
   "column_break_network",
   "public_ipv4",
   "mac",
-  "ssh_section",
-  "ssh_keys"
+  "other_data_section",
+  "ssh_keys",
+  "metadata"
  ],
  "fields": [
   {
@@ -176,9 +177,18 @@
   },
   {
    "fieldname": "ssh_keys",
-   "fieldtype": "Table",
+   "fieldtype": "Small Text",
+   "is_virtual": 1,
    "label": "SSH Keys",
-   "options": "Virtual Machine SSH Key"
+   "read_only": 1
+  },
+  {
+   "fieldname": "metadata",
+   "fieldtype": "Code",
+   "is_virtual": 1,
+   "label": "Metadata",
+   "options": "JSON",
+   "read_only": 1
   },
   {
    "fieldname": "column_break_status",
@@ -194,18 +204,17 @@
    "fieldtype": "Column Break"
   },
   {
-   "fieldname": "ssh_section",
-   "fieldtype": "Section Break",
-   "label": "SSH"
+   "fieldname": "other_data_section",
+   "fieldtype": "Section Break"
   }
  ],
  "in_create": 1,
  "links": [],
- "modified": "2026-09-04 02:50:03.518237",
+ "modified": "2026-09-04 19:10:51.233607",
  "modified_by": "Administrator",
  "module": "VM",
  "name": "Virtual Machine",
- "naming_rule": "Expression (old style)",
+ "naming_rule": "Expression",
  "owner": "Administrator",
  "permissions": [
   {

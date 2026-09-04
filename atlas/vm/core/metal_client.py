@@ -38,8 +38,8 @@ class MetalClientError(Exception):
 class MetalClient:
 	"""Call the Metal API on one bare-metal Server."""
 
-	timeout_seconds = (3, 10)
-	create_timeout_seconds = (3, 15)
+	timeout_seconds = (5, 60)
+	create_timeout_seconds = (5, 60)
 	status_timeout_seconds = (5, 30)
 	snapshot_timeout_seconds = (5, 3600)
 
@@ -96,6 +96,17 @@ class MetalClient:
 			"PUT",
 			f"/vms/{quote(virtual_machine_id, safe='')}/ssh-keys",
 			json={"ssh_keys": ssh_keys},
+			expected_status=200,
+		)
+
+	def replace_virtual_machine_metadata(
+		self, virtual_machine_id: str, metadata: dict[str, str]
+	) -> dict[str, Any]:
+		"""Replace all custom metadata for one VM with a plain string-to-string map."""
+		return self._request(
+			"PUT",
+			f"/vms/{quote(virtual_machine_id, safe='')}/metadata",
+			json={"metadata": metadata},
 			expected_status=200,
 		)
 

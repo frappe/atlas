@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -111,6 +112,19 @@ func (driver *fakeVirtualMachineDriver) ReplaceSSHKeys(
 		return vm.ErrNotFound
 	}
 	virtualMachine.info.SSHKeys = append([]string(nil), sshKeys...)
+	return nil
+}
+
+func (driver *fakeVirtualMachineDriver) ReplaceMetadata(
+	_ context.Context,
+	id string,
+	metadata map[string]string,
+) error {
+	virtualMachine, found := driver.virtualMachines[id]
+	if !found {
+		return vm.ErrNotFound
+	}
+	virtualMachine.info.Metadata = maps.Clone(metadata)
 	return nil
 }
 
@@ -300,6 +314,29 @@ func TestReplaceSSHKeysRejectsMissingAndDuplicateLists(t *testing.T) {
 	body := `{"ssh_keys":["` + validSSHKey + `","` + validSSHKey + `"]}`
 	do(t, server, http.MethodPut, "/vms/vm1/ssh-keys", body, http.StatusBadRequest)
 	do(t, server, http.MethodPut, "/vms/vm1/ssh-keys", `{"ssh_keys":[]}`, http.StatusOK)
+}
+
+func TestReplaceMetadataReturnsUpdatedVirtualMachine(t *testing.T) {
+	server := newTestServer(t)
+	do(t, server, http.MethodPut, "/vms/vm1", validCreateRequest, http.StatusAccepted)
+
+	body := `{"metadata":{"env":"prod","team":"platform"}}`
+	recorder := do(t, server, http.MethodPut, "/vms/vm1/metadata", body, http.StatusOK)
+	var response virtualMachineResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Metadata["env"] != "prod" || response.Metadata["team"] != "platform" {
+		t.Fatalf("metadata = %v", response.Metadata)
+	}
+}
+
+func TestReplaceMetadataRejectsEmptyKeyAndAllowsClearing(t *testing.T) {
+	server := newTestServer(t)
+	do(t, server, http.MethodPut, "/vms/vm1", validCreateRequest, http.StatusAccepted)
+
+	do(t, server, http.MethodPut, "/vms/vm1/metadata", `{"metadata":{"":"value"}}`, http.StatusBadRequest)
+	do(t, server, http.MethodPut, "/vms/vm1/metadata", `{"metadata":{}}`, http.StatusOK)
 }
 
 func TestCreateIsIdempotentAndReturnsAccepted(t *testing.T) {

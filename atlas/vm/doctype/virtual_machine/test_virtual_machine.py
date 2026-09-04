@@ -29,6 +29,33 @@ class TestVirtualMachineRequest(UnitTestCase):
 		self.assertEqual(request.ssh_keys, ("key-one", "key-two"))
 		self.assertEqual(request.egress, "host")
 
+	def test_request_parses_metadata(self) -> None:
+		request = VirtualMachineCreateRequest.from_value(
+			{
+				"virtual_machine_image": "Ubuntu 24.04",
+				"vcpus": 2,
+				"memory_mib": 2048,
+				"disk_mib": 10240,
+				"tenant_id": 7,
+				"metadata": {" env ": "prod", "team": "platform"},
+			}
+		)
+
+		self.assertEqual(request.metadata, {"env": "prod", "team": "platform"})
+
+	def test_request_rejects_empty_metadata_key(self) -> None:
+		with self.assertRaises(ValueError):
+			VirtualMachineCreateRequest.from_value(
+				{
+					"virtual_machine_image": "Ubuntu 24.04",
+					"vcpus": 2,
+					"memory_mib": 2048,
+					"disk_mib": 10240,
+					"tenant_id": 7,
+					"metadata": {"": "value"},
+				}
+			)
+
 	def test_request_rejects_boolean_capacity(self) -> None:
 		with self.assertRaises(ValueError):
 			VirtualMachineCreateRequest.from_value(
@@ -151,6 +178,21 @@ class TestMetalClient(UnitTestCase):
 			("PUT", "http://10.0.0.2:9000/vms/VM-00001/ssh-keys"),
 		)
 		self.assertEqual(request.call_args.kwargs["json"], {"ssh_keys": ["ssh-ed25519 AAAA"]})
+
+	def test_replace_metadata_uses_vm_subresource(self) -> None:
+		client = MetalClient.__new__(MetalClient)
+		client.base_url = "http://10.0.0.2:9000"
+		client.headers = {"Authorization": "Bearer token"}
+		response = SimpleNamespace(status_code=200, content=b"{}", json=lambda: {})
+
+		with patch("atlas.vm.core.metal_client.requests.request", return_value=response) as request:
+			client.replace_virtual_machine_metadata("VM-00001", {"env": "prod"})
+
+		self.assertEqual(
+			request.call_args.args[:2],
+			("PUT", "http://10.0.0.2:9000/vms/VM-00001/metadata"),
+		)
+		self.assertEqual(request.call_args.kwargs["json"], {"metadata": {"env": "prod"}})
 
 	def test_snapshot_calls_use_unified_image_paths(self) -> None:
 		client = MetalClient.__new__(MetalClient)

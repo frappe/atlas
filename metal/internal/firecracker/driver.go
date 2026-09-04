@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"maps"
 	"os"
 	"path/filepath"
 	"sync"
@@ -265,10 +266,35 @@ func (d *Driver) ReplaceSSHKeys(ctx context.Context, id string, sshKeys []string
 		return err
 	}
 	configuration.Spec.SSHKeys = append([]string(nil), sshKeys...)
-	if err := d.cfg.writeVMConfig(configuration); err != nil {
+
+	if err := d.updateRunningMetadata(ctx, id, configuration); err != nil {
 		return err
 	}
+	return d.cfg.writeVMConfig(configuration)
+}
 
+// ReplaceMetadata replaces the custom metadata for one virtual machine.
+func (d *Driver) ReplaceMetadata(ctx context.Context, id string, metadata map[string]string) error {
+	unlock, err := d.operationLocks.lock(ctx, id)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+
+	configuration, err := d.cfg.readVMConfig(id)
+	if err != nil {
+		return err
+	}
+	configuration.Spec.Metadata = maps.Clone(metadata)
+
+	if err := d.updateRunningMetadata(ctx, id, configuration); err != nil {
+		return err
+	}
+	return d.cfg.writeVMConfig(configuration)
+}
+
+// updateRunningMetadata updates MMDS before persisting the new VM spec
+func (d *Driver) updateRunningMetadata(ctx context.Context, id string, configuration vmConfig) error {
 	unitStatus, err := d.units.Status(ctx, id)
 	if err != nil {
 		return err
@@ -276,7 +302,9 @@ func (d *Driver) ReplaceSSHKeys(ctx context.Context, id string, sshKeys []string
 	if unitStatus.ActiveState != "active" {
 		return nil
 	}
-	return d.newMachine(configuration).api.PutMMDS(ctx, metadataServiceData(id, configuration.Spec))
+	return d.newMachine(configuration).api.PutMMDS(ctx, metadataServiceData(
+		id, configuration.IP, configuration.MAC, configuration.Spec,
+	))
 }
 
 // ResizeCompute changes a stopped virtual machine.
@@ -557,7 +585,9 @@ func (d *Driver) launchWarmImage(ctx context.Context, configuration vmConfig, re
 		return vm.ErrNotFound
 	}
 
-	metadata := metadataServiceData(configuration.ID, configuration.Spec)
+	metadata := metadataServiceData(
+		configuration.ID, configuration.IP, configuration.MAC, configuration.Spec,
+	)
 	return d.launchSnapshot(
 		ctx,
 		configuration,

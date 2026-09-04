@@ -5,10 +5,28 @@ frappe.ui.form.on("Virtual Machine", {
 			return;
 		}
 
+		// All fields mirror Metal and are edited through actions, never a direct save.
+		frm.disable_save();
+
 		const current_state = frm.doc.current_state;
 		const is_running = current_state === "running";
 		const is_stopped = current_state === "stopped";
 		const is_paused = current_state === "paused";
+
+		if (is_running || is_paused || current_state === "created") {
+			frm.add_custom_button(
+				__("TTY Console"),
+				() => openConsole(frm, "tty"),
+				__("Console Access")
+			);
+		}
+		if (is_running) {
+			frm.add_custom_button(
+				__("SSH Console"),
+				() => openConsole(frm, "ssh"),
+				__("Console Access")
+			);
+		}
 
 		[
 			[__("Start"), "start", is_stopped, __("Starting...")],
@@ -30,23 +48,8 @@ frappe.ui.form.on("Virtual Machine", {
 			);
 		});
 
-		if (is_running || is_paused || current_state === "created") {
-			frm.add_custom_button(
-				__("TTY Console"),
-				() => openConsole(frm, "tty"),
-				__("Console Access")
-			);
-		}
-		if (is_running) {
-			frm.add_custom_button(
-				__("SSH Console"),
-				() => openConsole(frm, "ssh"),
-				__("Console Access")
-			);
-		}
-
 		frm.add_custom_button(
-			__("Create Machine Image"),
+			__("Snapshot"),
 			() => showCreateMachineImageDialog(frm),
 			__("Actions")
 		);
@@ -59,6 +62,16 @@ frappe.ui.form.on("Virtual Machine", {
 			);
 		}
 		frm.add_custom_button(
+			__("Edit SSH Keys"),
+			() => showEditSSHKeysDialog(frm),
+			__("Actions")
+		);
+		frm.add_custom_button(
+			__("Edit Metadata"),
+			() => showEditMetadataDialog(frm),
+			__("Actions")
+		);
+		frm.add_custom_button(
 			__("Terminate"),
 			() =>
 				frm
@@ -69,7 +82,7 @@ frappe.ui.form.on("Virtual Machine", {
 						freeze_message: __("Requesting termination..."),
 					})
 					.then(() => frm.reload_doc()),
-			__("Actions")
+			__("Dangerous Actions")
 		);
 	},
 });
@@ -158,6 +171,74 @@ function showResizeDiskDialog(frm) {
 		__("Resize Disk"),
 		__("Resize")
 	);
+}
+
+function showEditSSHKeysDialog(frm) {
+	const dialog = new frappe.ui.Dialog({
+		title: __("Edit SSH Keys"),
+		size: "large",
+		fields: [
+			{
+				fieldname: "ssh_keys",
+				fieldtype: "Small Text",
+				label: __("SSH Keys"),
+				default: frm.doc.ssh_keys,
+				description: __("One public key per line."),
+			},
+		],
+		primary_action_label: __("Save"),
+		primary_action({ ssh_keys }) {
+			dialog.hide();
+			frm.call({
+				method: "replace_ssh_keys",
+				doc: frm.doc,
+				args: {
+					ssh_keys: (ssh_keys || "")
+						.split("\n")
+						.map((line) => line.trim())
+						.filter((line) => line),
+				},
+				freeze: true,
+				freeze_message: __("Updating SSH keys..."),
+			}).then(() => frm.reload_doc());
+		},
+	});
+	dialog.show();
+}
+
+function showEditMetadataDialog(frm) {
+	const dialog = new frappe.ui.Dialog({
+		title: __("Edit Metadata"),
+		fields: [
+			{
+				fieldname: "metadata",
+				fieldtype: "Code",
+				options: "JSON",
+				label: __("Metadata"),
+				default: frm.doc.metadata || "{}",
+				description: __("A JSON object of string keys and values."),
+			},
+		],
+		primary_action_label: __("Save"),
+		primary_action({ metadata }) {
+			let parsed;
+			try {
+				parsed = JSON.parse(metadata || "{}");
+			} catch (error) {
+				frappe.msgprint(__("Metadata must be valid JSON."));
+				return;
+			}
+			dialog.hide();
+			frm.call({
+				method: "replace_metadata",
+				doc: frm.doc,
+				args: { metadata: parsed },
+				freeze: true,
+				freeze_message: __("Updating metadata..."),
+			}).then(() => frm.reload_doc());
+		},
+	});
+	dialog.show();
 }
 
 function showResizeComputeDialog(frm) {

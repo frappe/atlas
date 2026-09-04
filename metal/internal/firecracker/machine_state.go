@@ -2,6 +2,7 @@ package firecracker
 
 import (
 	"context"
+	"maps"
 
 	"github.com/frappe/atlas/metal/internal/systemd"
 	"github.com/frappe/atlas/metal/internal/vm"
@@ -22,6 +23,7 @@ func (m *machine) Info(ctx context.Context) (vm.Info, error) {
 		Image:             m.cfg.Spec.Image,
 		SSHKeys:           append([]string(nil), m.cfg.Spec.SSHKeys...),
 		Hostname:          m.cfg.Spec.Hostname,
+		Metadata:          maps.Clone(m.cfg.Spec.Metadata),
 		MAC:               m.cfg.MAC,
 		PublicIPv4:        m.cfg.Spec.Network.PublicIPv4,
 		WireGuardMeshIPv6: m.cfg.Spec.Network.WireGuardMeshIPv6,
