@@ -192,6 +192,9 @@ def get_datasource_list(depends):
     return sources.list_from_depends(depends, datasources)
 EOF
 
+# Fail the build if the datasource has a syntax error.
+python3 -m py_compile "$rootfs_directory/usr/lib/python3/dist-packages/cloudinit/sources/DataSourceAtlas.py"
+
 # Disable cloud-init networking. systemd-networkd owns the static guest network.
 # Each VM can use this fixed address because each VM has a separate network namespace.
 # The link route provides access to MMDS at 169.254.169.254.
