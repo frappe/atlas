@@ -51,7 +51,7 @@ The script reserves a VM, waits for reconciliation, and connects to `172.16.0.2`
 |---|---|---|
 | `METALD_BULK_DIR` | `/tmp/metald` | Directory for the ZFS pool file. |
 | `METALD_POOL_SIZE` | 8 GiB to 30 GiB | ZFS pool file size. |
-| `METALD_FC_VERSION` | `v1.10.1` | Firecracker release. |
+| `METALD_FC_VERSION` | `v1.16.1` | Firecracker release. |
 | `METALD_POOL` | `metal` | ZFS pool name. |
 | `METALD_LISTEN` | `127.0.0.1:8080` | API address in the generated configuration. |
 | `METALD_AUTH_TOKEN` | `metal-development-token` | API bearer token. |

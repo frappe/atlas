@@ -8,7 +8,7 @@ set -eu
 : "${STORAGE_POOL_DEVICE:?STORAGE_POOL_DEVICE is required}"
 
 storage_pool_name=${STORAGE_POOL_NAME:-metal}
-firecracker_version=${FIRECRACKER_VERSION:-latest}
+firecracker_version=${FIRECRACKER_VERSION:-v1.16.1}
 listen_address=${LISTEN_ADDRESS:?LISTEN_ADDRESS is required}
 
 base_dir=/var/lib/metal

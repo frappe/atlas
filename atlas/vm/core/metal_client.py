@@ -38,8 +38,8 @@ class MetalClientError(Exception):
 class MetalClient:
 	"""Call the Metal API on one bare-metal Server."""
 
-	timeout_seconds = (3, 10)
-	create_timeout_seconds = (3, 15)
+	timeout_seconds = (5, 60)
+	create_timeout_seconds = (5, 60)
 	status_timeout_seconds = (5, 30)
 	snapshot_timeout_seconds = (5, 3600)
 
