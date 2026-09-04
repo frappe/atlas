@@ -76,6 +76,10 @@ class MetalClient:
 		"""Return live data for one VM."""
 		return self._request("GET", f"/vms/{virtual_machine_id}", timeout=self.status_timeout_seconds)
 
+	def reboot_virtual_machine(self, virtual_machine_id: str) -> None:
+		"""Request a background VM restart."""
+		self._request("POST", f"/vms/{virtual_machine_id}/actions/reboot", expected_status=202)
+
 	def terminate_virtual_machine(self, virtual_machine_id: str) -> None:
 		"""Ask Metal to remove one VM."""
 		self._request("POST", f"/vms/{virtual_machine_id}/actions/terminate", expected_status=202)

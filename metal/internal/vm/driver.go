@@ -11,4 +11,5 @@ type Driver interface {
 	SetDesiredState(ctx context.Context, id string, state State) error
 	ReplaceSSHKeys(ctx context.Context, id string, sshKeys []string) error
 	ResizeCompute(ctx context.Context, id string, virtualCPUCount, memoryMiB int) error
+	Reboot(ctx context.Context, id string) error
 }

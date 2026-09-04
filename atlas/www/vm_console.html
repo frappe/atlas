@@ -22,7 +22,6 @@
 <div id="atlas-overlay">
 	<div class="box">
 		<div class="title" id="atlas-overlay-title">Console disconnected</div>
-		<div class="hint" id="atlas-overlay-hint">Reopen the console from the Virtual Machine page.</div>
 	</div>
 </div>
 
@@ -38,7 +37,6 @@
 
 	const overlay = document.getElementById("atlas-overlay");
 	const overlayTitle = document.getElementById("atlas-overlay-title");
-	const overlayHint = document.getElementById("atlas-overlay-hint");
 	let ended = false;
 
 	// The token is one-time, so the session cannot be reopened from this page.
@@ -46,7 +44,6 @@
 		if (ended) return;
 		ended = true;
 		overlayTitle.textContent = title;
-		overlayHint.textContent = hint || "Reopen the console from the Virtual Machine page.";
 		overlay.style.display = "flex";
 		try { socket.disconnect(); } catch (e) {}
 	}

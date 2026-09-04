@@ -212,6 +212,46 @@ func (d *Driver) SetDesiredState(ctx context.Context, id string, state vm.State)
 	return d.cfg.writeVMConfig(configuration)
 }
 
+// Reboot starts an asynchronous restart without changing desired state.
+func (d *Driver) Reboot(_ context.Context, id string) error {
+	configuration, err := d.cfg.readVMConfig(id)
+	if err != nil {
+		return err
+	}
+	if configuration.DesiredState != vm.StateRunning {
+		return vm.ErrConflict
+	}
+
+	go d.reboot(id)
+	return nil
+}
+
+// reboot stops and starts the guest.
+func (d *Driver) reboot(id string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	unlock, err := d.operationLocks.lock(ctx, id)
+	if err != nil {
+		log.Printf("firecracker: reboot vm %s: lock: %v", id, err)
+		return
+	}
+	defer unlock()
+
+	configuration, err := d.cfg.readVMConfig(id)
+	if err != nil || configuration.DesiredState != vm.StateRunning {
+		return
+	}
+	machine := d.newMachine(configuration)
+	if err := machine.stopUnlocked(ctx); err != nil {
+		log.Printf("firecracker: reboot vm %s: stop: %v", id, err)
+		return
+	}
+	if err := machine.startUnlocked(ctx); err != nil {
+		log.Printf("firecracker: reboot vm %s: start: %v", id, err)
+	}
+}
+
 // ReplaceSSHKeys replaces the authorized SSH keys for one virtual machine.
 func (d *Driver) ReplaceSSHKeys(ctx context.Context, id string, sshKeys []string) error {
 	unlock, err := d.operationLocks.lock(ctx, id)

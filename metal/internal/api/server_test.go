@@ -129,6 +129,18 @@ func (driver *fakeVirtualMachineDriver) ResizeCompute(_ context.Context, id stri
 	return nil
 }
 
+func (driver *fakeVirtualMachineDriver) Reboot(_ context.Context, id string) error {
+	virtualMachine, found := driver.virtualMachines[id]
+	if !found {
+		return vm.ErrNotFound
+	}
+	if virtualMachine.info.DesiredState != vm.StateRunning {
+		return vm.ErrConflict
+	}
+	virtualMachine.info.State = vm.StateRunning
+	return nil
+}
+
 type fakeRuntimeServices struct {
 	policies  []vm.ImageRef
 	snapshots map[string]storage.StagedSnapshot

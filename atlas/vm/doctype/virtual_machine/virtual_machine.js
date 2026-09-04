@@ -13,6 +13,7 @@ frappe.ui.form.on("Virtual Machine", {
 		[
 			[__("Start"), "start", is_stopped, __("Starting...")],
 			[__("Stop"), "stop", is_running || is_paused, __("Stopping...")],
+			[__("Reboot"), "reboot", is_running, __("Rebooting...")],
 			[__("Pause"), "pause", is_running, __("Pausing...")],
 			[__("Resume"), "resume", is_paused, __("Resuming...")],
 		].forEach(([label, method, condition, freeze_message]) => {

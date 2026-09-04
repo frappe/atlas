@@ -68,6 +68,20 @@ func (s *Server) terminateVirtualMachine(c echo.Context) error {
 	return c.NoContent(http.StatusAccepted)
 }
 
+// @Summary	Reboot a virtual machine
+// @Tags		vms
+// @Param		id	path	string	true	"Virtual machine identifier"
+// @Success	202	"Accepted"
+// @Failure	404	{object}	errorResponse
+// @Failure	409	{object}	errorResponse
+// @Router		/vms/{id}/actions/reboot [post]
+func (s *Server) rebootVirtualMachine(c echo.Context) error {
+	if err := s.virtualMachineDriver.Reboot(c.Request().Context(), c.Param("id")); err != nil {
+		return err
+	}
+	return c.NoContent(http.StatusAccepted)
+}
+
 func (s *Server) setDesiredState(c echo.Context, desiredState vm.State) error {
 	if err := s.virtualMachineDriver.SetDesiredState(c.Request().Context(), c.Param("id"), desiredState); err != nil {
 		return err

@@ -17,6 +17,7 @@ func (s *Server) registerRoutes(router *echo.Echo) {
 	actionRoutes.POST("/stop", s.stopVirtualMachine)
 	actionRoutes.POST("/pause", s.pauseVirtualMachine)
 	actionRoutes.POST("/resume", s.resumeVirtualMachine)
+	actionRoutes.POST("/reboot", s.rebootVirtualMachine)
 	actionRoutes.POST("/terminate", s.terminateVirtualMachine)
 
 	resizeRoutes := virtualMachineRoutes.Group("/:id/resize")

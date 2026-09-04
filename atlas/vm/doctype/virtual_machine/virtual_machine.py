@@ -238,6 +238,15 @@ class VirtualMachine(Document):
 			throw_metal_error(error)
 
 	@frappe.whitelist(methods=["POST"])
+	def reboot(self) -> None:
+		"""Request an in-place VM restart."""
+		frappe.only_for("System Manager")
+		try:
+			MetalClient(frappe.get_doc("Server", self.server)).reboot_virtual_machine(self.name)
+		except MetalClientError as error:
+			throw_metal_error(error)
+
+	@frappe.whitelist(methods=["POST"])
 	def get_console_token(self, mode: str = "tty") -> dict[str, str]:
 		"""Issue a one-time token to open this VM console in tty or ssh mode."""
 		frappe.only_for("System Manager")
