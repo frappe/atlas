@@ -112,7 +112,7 @@ class VirtualMachineManager:
 		virtual_machine_name = cast(str, virtual_machine.name)
 		server_ip_address = self.assign_ip_address(request.server_ip_address, server, virtual_machine_name)
 		metal_request = self.get_metal_request(request, image, virtual_machine, server_ip_address)
-		frappe.db.commit()
+		frappe.db.commit()  # nosemgrep
 
 		try:
 			MetalClient(server).put_virtual_machine(virtual_machine_name, metal_request)

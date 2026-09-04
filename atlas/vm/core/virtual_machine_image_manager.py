@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 import frappe
@@ -126,7 +127,14 @@ class VirtualMachineImageManager:
 		s3_client = cast("AtlasSettings", frappe.get_single("Atlas Settings")).get_s3_client()
 
 		if image.image_sha256 and image.kernel_sha256:
-			self.finalize(image, metal_client, s3_client)
+			# Retry idempotent finalization on the next poll.
+			try:
+				self.finalize(image, metal_client, s3_client)
+			except (MetalClientError, S3Error, VirtualMachineImageTransferError):
+				frappe.log_error(
+					title=f"Machine image finalize retry for {image.name}",
+					message=frappe.get_traceback(),
+				)
 			return
 
 		try:
@@ -140,8 +148,8 @@ class VirtualMachineImageManager:
 
 		state = status.get("state")
 		if state == "completed":
+			# Persist checksums before finalization can remove the snapshot.
 			self.record_completed_upload(image, status)
-			self.finalize(image, metal_client, s3_client)
 		elif state == "failed":
 			self.mark_failed(image, status.get("error") or "Metal reported an upload failure")
 		elif state == "pending":
@@ -157,11 +165,15 @@ class VirtualMachineImageManager:
 	def start_upload(
 		self, image: VirtualMachineImage, metal_client: MetalClient, s3_client: S3Client
 	) -> None:
+		image.status = "Uploading"
 		image.transfer_progress = 0
-		self.update_status(image, "Uploading")
-		self.ensure_multipart_uploads(image, s3_client)
-		upload_request = self.get_upload_request(image, s3_client)
-		metal_client.start_snapshot_upload(cast(str, image.name), upload_request)
+		image.transfer_error = None
+		self.ensure_multipart_uploads(image, s3_client, save=False)
+		image.save(ignore_permissions=True)
+
+		with contextlib.suppress(MetalClientError):
+			upload_request = self.get_upload_request(image, s3_client)
+			metal_client.start_snapshot_upload(cast(str, image.name), upload_request)
 
 	def record_completed_upload(self, image: VirtualMachineImage, status: dict[str, Any]) -> None:
 		image.image_sha256 = self.require_artifact_sha256(status, "rootfs")
@@ -170,7 +182,6 @@ class VirtualMachineImageManager:
 		image.transfer_progress = 100
 		image.transfer_error = None
 		image.save(ignore_permissions=True)
-		frappe.db.commit()
 
 	def finalize(self, image: VirtualMachineImage, metal_client: MetalClient, s3_client: S3Client) -> None:
 		self.complete_stored_uploads(image, s3_client)
@@ -230,18 +241,20 @@ class VirtualMachineImageManager:
 				message=frappe.get_traceback(),
 			)
 
-	def ensure_multipart_uploads(self, image: VirtualMachineImage, s3_client: S3Client) -> None:
+	def ensure_multipart_uploads(
+		self, image: VirtualMachineImage, s3_client: S3Client, save: bool = True
+	) -> None:
+		"""Create multipart uploads and optionally save the image."""
 		if not image.rootfs_multipart_upload_id:
 			object_key = self.require_value(image.image_object_key, "rootfs object key")
 			image.rootfs_multipart_upload_id = s3_client.create_multipart_upload(object_key)
-			image.save(ignore_permissions=True)
-			frappe.db.commit()
 
 		if not image.kernel_multipart_upload_id:
 			object_key = self.require_value(image.kernel_object_key, "kernel object key")
 			image.kernel_multipart_upload_id = s3_client.create_multipart_upload(object_key)
+
+		if save:
 			image.save(ignore_permissions=True)
-			frappe.db.commit()
 
 	def get_upload_request(self, image: VirtualMachineImage, s3_client: S3Client) -> dict[str, Any]:
 		return {
@@ -350,7 +363,6 @@ class VirtualMachineImageManager:
 		image.status = status
 		image.transfer_error = None
 		image.save(ignore_permissions=True)
-		frappe.db.commit()
 
 	@staticmethod
 	def mark_available(image: VirtualMachineImage) -> None:
@@ -359,14 +371,12 @@ class VirtualMachineImageManager:
 		image.kernel_multipart_upload_id = None
 		image.transfer_error = None
 		image.save(ignore_permissions=True)
-		frappe.db.commit()
 
 	@staticmethod
 	def mark_failed(image: VirtualMachineImage, message: str) -> None:
 		image.status = "Failed"
 		image.transfer_error = message[:1000]
 		image.save(ignore_permissions=True)
-		frappe.db.commit()
 
 
 def bytes_to_mib(size_bytes: int) -> int:

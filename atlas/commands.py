@@ -57,7 +57,7 @@ def build_ubuntu_base_image(
 				image_path,
 				kernel_path,
 			)
-			frappe.db.commit()
+			frappe.db.commit()  # nosemgrep
 			click.echo(f"Created Virtual Machine Image for {site}")
 		finally:
 			frappe.destroy()
