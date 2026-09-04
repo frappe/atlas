@@ -274,7 +274,7 @@ class TestServer(UnitTestCase):
 			{
 				"METALD_DOWNLOAD_URL": "https://example.test/metald",
 				"METALD_AUTH_TOKEN_HASH": sha256(b"test-token").hexdigest(),
-				"LISTEN_ADDRESS": "10.0.0.7:9000",
+				"LISTEN_ADDRESS": "0.0.0.0:9000",
 				"STORAGE_POOL_DEVICE": "/dev/md2",
 			},
 		)
