@@ -1,6 +1,10 @@
 package api
 
-import "github.com/frappe/atlas/metal/internal/vm"
+import (
+	"maps"
+
+	"github.com/frappe/atlas/metal/internal/vm"
+)
 
 type virtualMachineResponse struct {
 	ID           string                      `json:"id"`
@@ -12,6 +16,7 @@ type virtualMachineResponse struct {
 	Image        virtualMachineImageResponse `json:"image"`
 	SSHKeys      []string                    `json:"ssh_keys"`
 	Hostname     string                      `json:"hostname"`
+	Metadata     map[string]string           `json:"metadata,omitempty"`
 	Network      networkResponse             `json:"network"`
 	Disk         diskResponse                `json:"disk"`
 }
@@ -63,6 +68,7 @@ func toVirtualMachine(information vm.Info) virtualMachineResponse {
 		Image:        toVirtualMachineImage(information.Image),
 		SSHKeys:      append([]string(nil), information.SSHKeys...),
 		Hostname:     information.Hostname,
+		Metadata:     maps.Clone(information.Metadata),
 		Network: networkResponse{
 			MAC:               information.MAC,
 			PublicIPv4:        information.PublicIPv4,

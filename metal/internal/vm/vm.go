@@ -28,6 +28,7 @@ type Info struct {
 	Image             ImageRef
 	SSHKeys           []string
 	Hostname          string
+	Metadata          map[string]string
 	MAC               string
 	PublicIPv4        string
 	WireGuardMeshIPv6 string

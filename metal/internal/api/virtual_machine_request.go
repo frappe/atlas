@@ -23,14 +23,15 @@ var (
 )
 
 type createRequest struct {
-	VCPUs     int            `json:"vcpus"`
-	MemoryMiB int            `json:"memory_mib"`
-	DiskMiB   int            `json:"disk_mib"`
-	Image     imageRequest   `json:"image"`
-	Network   networkRequest `json:"network"`
-	SSHKeys   []string       `json:"ssh_keys"`
-	Hostname  string         `json:"hostname"`
-	UserData  string         `json:"user_data"`
+	VCPUs     int               `json:"vcpus"`
+	MemoryMiB int               `json:"memory_mib"`
+	DiskMiB   int               `json:"disk_mib"`
+	Image     imageRequest      `json:"image"`
+	Network   networkRequest    `json:"network"`
+	SSHKeys   []string          `json:"ssh_keys"`
+	Hostname  string            `json:"hostname"`
+	UserData  string            `json:"user_data"`
+	Metadata  map[string]string `json:"metadata"`
 }
 
 type imageRequest struct {
@@ -79,8 +80,11 @@ func (request createRequest) validate() error {
 	if err := request.Image.validate(); err != nil {
 		return err
 	}
+	if err := request.Network.validate(); err != nil {
+		return err
+	}
 
-	return request.Network.validate()
+	return validateMetadata(request.Metadata)
 }
 
 func (request createRequest) spec() vm.Spec {
@@ -93,6 +97,7 @@ func (request createRequest) spec() vm.Spec {
 		SSHKeys:   request.SSHKeys,
 		Hostname:  request.Hostname,
 		UserData:  request.UserData,
+		Metadata:  request.Metadata,
 	}
 }
 

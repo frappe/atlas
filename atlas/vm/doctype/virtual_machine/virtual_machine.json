@@ -28,7 +28,8 @@
   "public_ipv4",
   "mac",
   "ssh_section",
-  "ssh_keys"
+  "ssh_keys",
+  "metadata"
  ],
  "fields": [
   {
@@ -179,6 +180,12 @@
    "fieldtype": "Table",
    "label": "SSH Keys",
    "options": "Virtual Machine SSH Key"
+  },
+  {
+   "fieldname": "metadata",
+   "fieldtype": "Table",
+   "label": "Metadata",
+   "options": "Virtual Machine Metadata"
   },
   {
    "fieldname": "column_break_status",

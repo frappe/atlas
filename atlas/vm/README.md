@@ -59,6 +59,12 @@ The publisher creates an Available System image and stores exact artifact sizes.
 
 Atlas can replace the complete VM SSH key list without storing it in the Virtual Machine DocType. Metal saves the list and updates MMDS for an active VM. The base image `AuthorizedKeysCommand` reads the current MMDS keys during each login.
 
+## Custom metadata
+
+Atlas stores custom VM metadata as key-value rows and sends it to Metal. Guests read each value from `latest/meta-data/attributes/<key>`.
+
+The Ubuntu image builder installs the Atlas cloud-init datasource. See [`build_ubuntu_server_image.sh`](scripts/build_ubuntu_server_image.sh).
+
 ## Termination and deletion
 
 The Terminate action asks Metal to remove the VM. Atlas keeps the request metadata. Delete the document only after Metal confirms that the VM is absent.

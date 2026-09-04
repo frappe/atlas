@@ -1,6 +1,7 @@
 package api
 
 import (
+	"maps"
 	"net/http"
 
 	"github.com/labstack/echo/v4"
@@ -102,6 +103,7 @@ func virtualMachineReservationResponse(virtualMachineID string, specification vm
 		Image:        toVirtualMachineImage(specification.Image),
 		SSHKeys:      append([]string(nil), specification.SSHKeys...),
 		Hostname:     specification.Hostname,
+		Metadata:     maps.Clone(specification.Metadata),
 		Network: networkResponse{
 			PublicIPv4:        specification.Network.PublicIPv4,
 			WireGuardMeshIPv6: specification.Network.WireGuardMeshIPv6,

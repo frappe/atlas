@@ -99,6 +99,17 @@ class MetalClient:
 			expected_status=200,
 		)
 
+	def replace_virtual_machine_metadata(
+		self, virtual_machine_id: str, metadata: dict[str, str]
+	) -> dict[str, Any]:
+		"""Replace all custom metadata for one VM with a plain string-to-string map."""
+		return self._request(
+			"PUT",
+			f"/vms/{quote(virtual_machine_id, safe='')}/metadata",
+			json={"metadata": metadata},
+			expected_status=200,
+		)
+
 	def resize_virtual_machine_disk(self, virtual_machine_id: str, disk_mib: int) -> None:
 		"""Ask Metal to increase one VM disk size."""
 		self._request(
