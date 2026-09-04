@@ -122,9 +122,15 @@ func (store *VirtualMachineStore) ResizeDisk(ctx context.Context, virtualMachine
 	return store.growDisk(ctx, virtualMachineID, diskMiB)
 }
 
-// Release removes a virtual machine disk and its snapshots.
+// Release removes the VM disk and dependent staging clones.
 func (store *VirtualMachineStore) Release(ctx context.Context, virtualMachineID string) error {
-	if err := hostcmd.Run(ctx, "zfs", "destroy", "-r", store.pool.virtualMachineDataset(virtualMachineID)); err != nil {
+	dataset := store.pool.virtualMachineDataset(virtualMachineID)
+
+	if err := store.destroyDependentClones(ctx, dataset); err != nil {
+		return err
+	}
+
+	if err := hostcmd.Run(ctx, "zfs", "destroy", "-r", dataset); err != nil {
 		if strings.Contains(err.Error(), "does not exist") {
 			return nil
 		}
@@ -132,6 +138,46 @@ func (store *VirtualMachineStore) Release(ctx context.Context, virtualMachineID 
 	}
 
 	return nil
+}
+
+// destroyDependentClones removes the staging clones a snapshot upload leaves on
+// the VM snapshots. ZFS cannot destroy a snapshot while a clone of it exists.
+func (store *VirtualMachineStore) destroyDependentClones(ctx context.Context, dataset string) error {
+	output, err := hostcmd.Output(ctx,
+		"zfs", "get", "-Hp", "-r", "-t", "snapshot", "-o", "value", "clones", dataset)
+	if err != nil {
+		if strings.Contains(err.Error(), "does not exist") {
+			return nil
+		}
+		return err
+	}
+
+	for _, clone := range parseCloneList(output) {
+		if err := destroyIfPresent(ctx, clone); err != nil {
+			return fmt.Errorf("destroy dependent clone %s: %w", clone, err)
+		}
+	}
+
+	return nil
+}
+
+// parseCloneList reads clone values from `zfs get` output. One line per
+// snapshot: "-" means no clones, and several clones are comma-separated.
+func parseCloneList(output string) []string {
+	var clones []string
+	for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || line == "-" {
+			continue
+		}
+		for _, clone := range strings.Split(line, ",") {
+			if clone = strings.TrimSpace(clone); clone != "" {
+				clones = append(clones, clone)
+			}
+		}
+	}
+
+	return clones
 }
 
 func datasetExists(ctx context.Context, name string) (bool, error) {
