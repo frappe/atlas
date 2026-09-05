@@ -78,7 +78,8 @@ func (allocator *LinuxAllocator) Allocate(ctx context.Context, request Request) 
 	return allocator.Resolve(request.VirtualMachineID), nil
 }
 
-// Update applies mutable network settings to an allocated virtual machine.
+// Update applies mutable network settings to an allocated virtual machine. A
+// failure rolls back with the reverse transition, so every step is safe to repeat.
 func (allocator *LinuxAllocator) Update(ctx context.Context, request UpdateRequest) error {
 	if err := allocator.update(ctx, request); err != nil {
 		rollbackRequest := request
@@ -88,8 +89,7 @@ func (allocator *LinuxAllocator) Update(ctx context.Context, request UpdateReque
 	return nil
 }
 
-// update reconciles the host to the desired settings. It asks three independent
-// questions instead of enumerating the transitions between modes.
+// update reconciles the host to the desired settings.
 func (allocator *LinuxAllocator) update(ctx context.Context, request UpdateRequest) error {
 	exists, err := networkNamespaceExists(ctx, request.VirtualMachineID)
 	if err != nil || !exists {
@@ -101,7 +101,6 @@ func (allocator *LinuxAllocator) update(ctx context.Context, request UpdateReque
 		return fmt.Errorf("public IPv4 requires %s egress", vm.EgressUplink)
 	}
 
-	// Remove the public IPv4 rules first, while the interface still carries them.
 	if request.Previous.PublicIPv4 != request.Desired.PublicIPv4 {
 		if err := removePublicIPv4Rules(ctx, request.VirtualMachineID); err != nil {
 			return err
@@ -180,8 +179,7 @@ func virtualEthernetNames(userID uint32) (host, guest string) {
 	return fmt.Sprintf("vh-%d", userID), fmt.Sprintf("vg-%d", userID)
 }
 
-// virtualEthernetSteps builds the private network attachment. Every mode except
-// EgressNone keeps it, so Atlas WG Mesh always finds the host end.
+// virtualEthernetSteps builds the private network attachment. Only EgressNone drops it.
 func virtualEthernetSteps(namespace, hostVirtualEthernet, guestVirtualEthernet, hostIPAddress, namespaceIPAddress string) [][]string {
 	return [][]string{
 		{"ip", "link", "add", hostVirtualEthernet, "type", "veth", "peer", "name", guestVirtualEthernet},
@@ -195,17 +193,27 @@ func virtualEthernetSteps(namespace, hostVirtualEthernet, guestVirtualEthernet, 
 
 // internetPathSteps builds the route out of the namespace. Only EgressUplink has it.
 func internetPathSteps(namespace, guestVirtualEthernet, hostIPAddress string) [][]string {
+	return append(defaultRouteSteps(namespace, hostIPAddress),
+		[]string{"ip", "netns", "exec", namespace, "iptables", "-t", "nat", "-A", "POSTROUTING", "-o", guestVirtualEthernet, "-j", "MASQUERADE"},
+	)
+}
+
+// defaultRouteSteps builds the namespace route and forwarding.
+func defaultRouteSteps(namespace, hostIPAddress string) [][]string {
 	return [][]string{
-		{"ip", "-n", namespace, "route", "add", "default", "via", hostIPAddress},
+		{"ip", "-n", namespace, "route", "replace", "default", "via", hostIPAddress},
 		{"ip", "netns", "exec", namespace, "sysctl", "-q", "-w", "net.ipv4.ip_forward=1"},
-		{"ip", "netns", "exec", namespace, "iptables", "-t", "nat", "-A", "POSTROUTING", "-o", guestVirtualEthernet, "-j", "MASQUERADE"},
 	}
 }
 
-// setVirtualEthernet adds or removes the veth pair for one virtual machine.
+// setVirtualEthernet adds or removes the veth pair.
 func setVirtualEthernet(ctx context.Context, virtualMachineID string, userID uint32, present bool) error {
 	namespace := namespaceName(virtualMachineID)
 	hostVirtualEthernet, guestVirtualEthernet := virtualEthernetNames(userID)
+	exists, err := networkLinkExists(ctx, hostVirtualEthernet)
+	if err != nil || exists == present {
+		return err
+	}
 	if !present {
 		return hostcmd.Run(ctx, "ip", "link", "del", hostVirtualEthernet)
 	}
@@ -214,21 +222,75 @@ func setVirtualEthernet(ctx context.Context, virtualMachineID string, userID uin
 	return runSteps(ctx, virtualEthernetSteps(namespace, hostVirtualEthernet, guestVirtualEthernet, hostIPAddress, namespaceIPAddress))
 }
 
+// addInternetPath adds the namespace route and NAT rule.
 func addInternetPath(ctx context.Context, virtualMachineID string, userID uint32) error {
 	namespace := namespaceName(virtualMachineID)
 	_, guestVirtualEthernet := virtualEthernetNames(userID)
 	hostIPAddress, _ := transitAddresses(userID)
-	return runSteps(ctx, internetPathSteps(namespace, guestVirtualEthernet, hostIPAddress))
+	if err := runSteps(ctx, defaultRouteSteps(namespace, hostIPAddress)); err != nil {
+		return err
+	}
+	return setMasquerade(ctx, namespace, guestVirtualEthernet, true)
 }
 
+// removeInternetPath removes the NAT rule before the route.
 func removeInternetPath(ctx context.Context, virtualMachineID string, userID uint32) error {
 	namespace := namespaceName(virtualMachineID)
 	_, guestVirtualEthernet := virtualEthernetNames(userID)
-	hostIPAddress, _ := transitAddresses(userID)
-	return runSteps(ctx, [][]string{
-		{"ip", "netns", "exec", namespace, "iptables", "-t", "nat", "-D", "POSTROUTING", "-o", guestVirtualEthernet, "-j", "MASQUERADE"},
-		{"ip", "-n", namespace, "route", "del", "default", "via", hostIPAddress},
-	})
+	if err := setMasquerade(ctx, namespace, guestVirtualEthernet, false); err != nil {
+		return err
+	}
+	return removeDefaultRoute(ctx, namespace)
+}
+
+// setMasquerade adds or removes the namespace NAT rule. iptables fails on a
+// duplicate add and on a delete for an absent rule, so it checks first.
+func setMasquerade(ctx context.Context, namespace, guestVirtualEthernet string, present bool) error {
+	prefix := namespaceCommandPrefix(namespace)
+	rule := []string{"POSTROUTING", "-o", guestVirtualEthernet, "-j", "MASQUERADE"}
+
+	check := commandWithPrefix(prefix, "iptables", append([]string{"-t", "nat", "-C"}, rule...)...)
+	if exists := hostcmd.Run(ctx, check[0], check[1:]...) == nil; exists == present {
+		return nil
+	}
+
+	action := "-D"
+	if present {
+		action = "-A"
+	}
+	command := commandWithPrefix(prefix, "iptables", append([]string{"-t", "nat", action}, rule...)...)
+	return hostcmd.Run(ctx, command[0], command[1:]...)
+}
+
+// removeDefaultRoute removes the namespace default route when it is present.
+func removeDefaultRoute(ctx context.Context, namespace string) error {
+	output, err := hostcmd.Output(ctx, "ip", "-n", namespace, "route", "show", "default")
+	if err != nil {
+		return fmt.Errorf("show default route: %w", err)
+	}
+	if strings.TrimSpace(output) == "" {
+		return nil
+	}
+	return hostcmd.Run(ctx, "ip", "-n", namespace, "route", "del", "default")
+}
+
+// networkLinkExists reports whether one host network interface is present.
+func networkLinkExists(ctx context.Context, name string) (bool, error) {
+	output, err := hostcmd.Output(ctx, "ip", "-o", "link", "show")
+	if err != nil {
+		return false, fmt.Errorf("list network links: %w", err)
+	}
+	for _, line := range strings.Split(output, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+		device := strings.SplitN(strings.TrimSuffix(fields[1], ":"), "@", 2)[0]
+		if device == name {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func runSteps(ctx context.Context, steps [][]string) error {

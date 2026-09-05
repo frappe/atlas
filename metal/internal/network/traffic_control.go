@@ -43,8 +43,7 @@ func (request trafficControlRequest) hasVirtualEthernet() bool {
 }
 
 // configureTrafficControl applies the policers to the namespace end of the veth.
-// The host end belongs to Atlas WG Mesh, which attaches a terminating
-// direct-action program there. A shared hook would let one of the two run.
+// The host end belongs to Atlas WG Mesh and its terminating direct-action program.
 func configureTrafficControl(ctx context.Context, request trafficControlRequest) error {
 	if !request.hasVirtualEthernet() {
 		return nil
@@ -80,13 +79,11 @@ func removeTrafficControl(ctx context.Context, namespace, interfaceName string) 
 }
 
 // trafficControlSteps builds the tc commands for the namespace end of the veth.
-// The private filters use the lower priority, so a private packet stops at the
-// private policer and never reaches the public filter, which matches every IPv4
-// address.
+// The private filters take the lower priority, so a private packet never reaches
+// the public filter, which matches every IPv4 address.
 //
-// The VM is inside the namespace, so egress carries traffic from the VM and the
-// remote end is the destination. Ingress carries traffic to the VM and the two
-// are reversed.
+// The VM is inside the namespace: egress carries traffic from it and matches the
+// destination, ingress carries traffic to it and matches the source.
 func trafficControlSteps(namespace, guestVirtualEthernet string, request trafficControlRequest) [][]string {
 	hasPublicLimit := request.PublicNetworkThroughputMbps > 0 && request.Egress.HasInternetPath()
 	if request.PrivateNetworkThroughputMbps == 0 && !hasPublicLimit {
