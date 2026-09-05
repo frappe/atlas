@@ -11,6 +11,7 @@ type Spec struct {
 	VCPUs     int
 	MemoryMiB int
 	DiskMiB   int
+	Disk      Disk
 	Image     ImageRef
 	Network   Network
 	SSHKeys   []string
@@ -39,13 +40,19 @@ type MemorySnapshotConfiguration struct {
 	DiskMiB         int
 }
 
+// Disk contains the requested VM disk limits. A zero value is unlimited.
+type Disk struct {
+	ThroughputMiBps int
+	IOPS            int
+}
+
 // Network contains the requested VM network configuration.
 type Network struct {
-	PublicIPv4                   string
-	WireGuardMeshIPv6            string
-	PrivateNetworkThroughputMbps int
-	PublicNetworkThroughputMbps  int
-	Egress                       Egress
+	PublicIPv4                    string
+	WireGuardMeshIPv6             string
+	PrivateNetworkThroughputMiBps int
+	PublicNetworkThroughputMiBps  int
+	Egress                        Egress
 }
 
 // SameReservation reports whether two specifications reserve the same VM.
@@ -53,6 +60,7 @@ func (spec Spec) SameReservation(other Spec) bool {
 	return spec.VCPUs == other.VCPUs &&
 		spec.MemoryMiB == other.MemoryMiB &&
 		spec.DiskMiB == other.DiskMiB &&
+		spec.Disk == other.Disk &&
 		spec.Image.Name == other.Image.Name &&
 		strings.EqualFold(spec.Image.RootfsSHA256, other.Image.RootfsSHA256) &&
 		strings.EqualFold(spec.Image.KernelSHA256, other.Image.KernelSHA256) &&

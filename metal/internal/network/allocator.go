@@ -25,22 +25,22 @@ type UpdateRequest struct {
 
 // Request contains one virtual machine network request.
 type Request struct {
-	VirtualMachineID             string
-	Egress                       vm.Egress
-	PublicIPv4                   string
-	PrivateNetworkThroughputMbps int
-	PublicNetworkThroughputMbps  int
-	UserID                       uint32
-	GroupID                      uint32
+	VirtualMachineID              string
+	Egress                        vm.Egress
+	PublicIPv4                    string
+	PrivateNetworkThroughputMiBps int
+	PublicNetworkThroughputMiBps  int
+	UserID                        uint32
+	GroupID                       uint32
 }
 
 func (request Request) trafficControl() trafficControlRequest {
 	return trafficControlRequest{
-		VirtualMachineID:             request.VirtualMachineID,
-		UserID:                       request.UserID,
-		Egress:                       request.Egress,
-		PrivateNetworkThroughputMbps: request.PrivateNetworkThroughputMbps,
-		PublicNetworkThroughputMbps:  request.PublicNetworkThroughputMbps,
+		VirtualMachineID:              request.VirtualMachineID,
+		UserID:                        request.UserID,
+		Egress:                        request.Egress,
+		PrivateNetworkThroughputMiBps: request.PrivateNetworkThroughputMiBps,
+		PublicNetworkThroughputMiBps:  request.PublicNetworkThroughputMiBps,
 	}
 }
 

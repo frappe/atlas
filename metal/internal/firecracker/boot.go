@@ -52,6 +52,7 @@ func configure(
 			PathOnHost:   drive.Path,
 			IsRootDevice: drive.Root,
 			IsReadOnly:   drive.ReadOnly,
+			RateLimiter:  driveRateLimiter(specification.Disk),
 		}
 		if err := client.PutDrive(operationContext, request); err != nil {
 			return err

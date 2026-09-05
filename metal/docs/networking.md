@@ -55,7 +55,7 @@ Each rule has the comment `metal-public-ipv4-<vm-id>`. This lets Metal remove on
 
 ## Throughput limits
 
-The VM network configuration can set `private_network_throughput_mbps` and `public_network_throughput_mbps`. Each value applies in both directions. A value of `0` does not apply a limit.
+The VM network configuration can set `private_network_throughput_mibps` and `public_network_throughput_mibps`. Each value applies in both directions. A value of `0` does not apply a limit.
 
 Metal applies the limits inside the namespace, on `vg-<user-id>`. The host end `vh-<user-id>` belongs to Atlas WG Mesh, which attaches a terminating `direct-action` program to its `clsact` hook. Metal keeps the policers on the end that it owns, so neither component can stop the other. Private traffic uses the RFC 1918 ranges `10.0.0.0/8`, `172.16.0.0/12`, and `192.168.0.0/16`, and the IPv6 unique local range `fc00::/7`, which contains every mesh prefix. Public traffic uses the remaining IPv4 addresses.
 

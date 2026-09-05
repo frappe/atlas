@@ -56,8 +56,8 @@ Content-Type: application/json
   "network": {
     "public_ipv4": "203.0.113.10",
     "wireguard_mesh_ipv6": "fdaa:1:0:7::1",
-    "private_network_throughput_mbps": 100,
-    "public_network_throughput_mbps": 50,
+    "private_network_throughput_mibps": 100,
+    "public_network_throughput_mibps": 50,
     "egress": "uplink"
   }
 }
@@ -96,6 +96,7 @@ They do not contain image transport URLs, the internal guest IP, or the Firecrac
 | `GET` | `/vms` | list VMs |
 | `GET` | `/vms/{id}` | get one VM |
 | `PUT` | `/vms/{id}/network` | update mutable network settings |
+| `PUT` | `/vms/{id}/disk` | update disk throughput and IOPS limits |
 | `PUT` | `/vms/{id}/ssh-keys` | replace all authorized SSH keys |
 | `POST` | `/vms/{id}/actions/start` | request the running state |
 | `POST` | `/vms/{id}/actions/stop` | request the stopped state |
@@ -116,8 +117,8 @@ Lifecycle requests return `202`. Poll `GET /vms/{id}` until `state` reaches `des
 {
   "egress": "uplink",
   "public_ipv4": "203.0.113.10",
-  "private_network_throughput_mbps": 100,
-  "public_network_throughput_mbps": 50
+  "private_network_throughput_mibps": 100,
+  "public_network_throughput_mibps": 50
 }
 ```
 
@@ -132,6 +133,17 @@ Lifecycle requests return `202`. Poll `GET /vms/{id}` until `state` reaches `des
 `egress` is required.
 
 Use an empty `public_ipv4` to detach the address. Throughput values apply in both directions. `0` removes a limit. Metal keeps a limit that the mode does not permit and applies it when the mode permits it. Active connections can stop when the public IPv4 address or the egress mode changes.
+
+`PUT /vms/{id}/disk` replaces the disk limits and returns the updated VM. It applies them without a VM restart.
+
+```json
+{
+  "throughput_mibps": 50,
+  "iops": 2000
+}
+```
+
+Each limit covers reads and writes together. A value of `0` does not apply a limit. The same object sets the limits at creation, under `disk`.
 
 `GET /vms/{id}/console` upgrades the request to a websocket for the serial console. The bearer token guards the handshake. Metal sends console output as binary frames. A viewer sends keystrokes as binary frames and a terminal resize as a text frame `{"resize":{"cols":80,"rows":24}}`. New viewers first receive the recent scrollback. Metal keeps the console open only while the VM runs. After a metald restart, the console is unavailable until the VM starts again, and the socket closes with a going-away status.
 

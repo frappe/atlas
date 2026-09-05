@@ -323,8 +323,8 @@ func (d *Driver) UpdateNetwork(ctx context.Context, id string, update vm.Network
 	desired := configuration.Spec.Network
 	desired.Egress = update.Egress
 	desired.PublicIPv4 = update.PublicIPv4
-	desired.PrivateNetworkThroughputMbps = update.PrivateNetworkThroughputMbps
-	desired.PublicNetworkThroughputMbps = update.PublicNetworkThroughputMbps
+	desired.PrivateNetworkThroughputMiBps = update.PrivateNetworkThroughputMiBps
+	desired.PublicNetworkThroughputMiBps = update.PublicNetworkThroughputMiBps
 
 	request := network.UpdateRequest{
 		VirtualMachineID: id,
@@ -695,13 +695,13 @@ func copyChown(
 
 func (d *Driver) allocateNetwork(ctx context.Context, configuration vmConfig) (network.Interface, error) {
 	return d.networkAllocator.Allocate(ctx, network.Request{
-		VirtualMachineID:             configuration.ID,
-		Egress:                       configuration.Spec.Network.Egress,
-		PublicIPv4:                   configuration.Spec.Network.PublicIPv4,
-		PrivateNetworkThroughputMbps: configuration.Spec.Network.PrivateNetworkThroughputMbps,
-		PublicNetworkThroughputMbps:  configuration.Spec.Network.PublicNetworkThroughputMbps,
-		UserID:                       configuration.UID,
-		GroupID:                      configuration.GID,
+		VirtualMachineID:              configuration.ID,
+		Egress:                        configuration.Spec.Network.Egress,
+		PublicIPv4:                    configuration.Spec.Network.PublicIPv4,
+		PrivateNetworkThroughputMiBps: configuration.Spec.Network.PrivateNetworkThroughputMiBps,
+		PublicNetworkThroughputMiBps:  configuration.Spec.Network.PublicNetworkThroughputMiBps,
+		UserID:                        configuration.UID,
+		GroupID:                       configuration.GID,
 	})
 }
 

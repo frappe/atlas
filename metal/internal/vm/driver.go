@@ -18,8 +18,8 @@ type Driver interface {
 
 // NetworkUpdate contains mutable virtual machine network settings.
 type NetworkUpdate struct {
-	Egress                       Egress
-	PublicIPv4                   string
-	PrivateNetworkThroughputMbps int
-	PublicNetworkThroughputMbps  int
+	Egress                        Egress
+	PublicIPv4                    string
+	PrivateNetworkThroughputMiBps int
+	PublicNetworkThroughputMiBps  int
 }

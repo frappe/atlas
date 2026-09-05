@@ -93,6 +93,9 @@ Atlas is a monorepo for Frappe Cloud V2 VM infrastructure. It contains a Frappe/
 - Group related files in subfolders. Avoid crowded folders and repeated file prefixes.
 - Avoid lazy re-exports in package `__init__.py` files.
 - Avoid abbreviations.
+- Use binary units for every size and rate: MiB and MiB/s. Do not mix in MB, Mbps,
+  or megabits. Name a field for its unit, such as `disk_mib` and `throughput_mibps`.
+  Convert at the boundary when a tool needs another unit.
 - Reuse standard APIs and existing repository helpers.
 - Delete or simplify existing code before adding new code.
 - Keep one owner for mutable state.

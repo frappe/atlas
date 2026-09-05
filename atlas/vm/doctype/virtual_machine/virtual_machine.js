@@ -54,6 +54,11 @@ frappe.ui.form.on("Virtual Machine", {
 			__("Actions")
 		);
 		frm.add_custom_button(__("Resize Disk"), () => showResizeDiskDialog(frm), __("Actions"));
+		frm.add_custom_button(
+			__("Edit Disk Limits"),
+			() => showEditDiskLimitsDialog(frm),
+			__("Actions")
+		);
 		if (is_stopped) {
 			frm.add_custom_button(
 				__("Resize Compute"),
@@ -301,17 +306,17 @@ function showEditThroughputDialog(frm) {
 	frappe.prompt(
 		[
 			{
-				fieldname: "private_network_throughput_mbps",
+				fieldname: "private_network_throughput_mibps",
 				fieldtype: "Int",
-				label: __("Private Throughput (Mbps)"),
-				default: frm.doc.private_network_throughput_mbps,
+				label: __("Private Throughput (MiB/s)"),
+				default: frm.doc.private_network_throughput_mibps,
 				description: __("0 does not apply a limit."),
 			},
 			{
-				fieldname: "public_network_throughput_mbps",
+				fieldname: "public_network_throughput_mibps",
 				fieldtype: "Int",
-				label: __("Public Throughput (Mbps)"),
-				default: frm.doc.public_network_throughput_mbps,
+				label: __("Public Throughput (MiB/s)"),
+				default: frm.doc.public_network_throughput_mibps,
 				description: __("0 does not apply a limit."),
 			},
 		],
@@ -322,7 +327,7 @@ function showEditThroughputDialog(frm) {
 					doc: frm.doc,
 					args: values,
 					freeze: true,
-					freeze_message: __("Updating throughput limits..."),
+					freeze_message: __("Updating network throughput..."),
 				})
 				.then(() => frm.reload_doc()),
 		__("Edit Network Throughput"),
@@ -397,5 +402,38 @@ function detachIPAddress(frm) {
 					freeze_message: __("Detaching IP address..."),
 				})
 				.then(() => frm.reload_doc())
+	);
+}
+
+function showEditDiskLimitsDialog(frm) {
+	frappe.prompt(
+		[
+			{
+				fieldname: "disk_throughput_mibps",
+				fieldtype: "Int",
+				label: __("Disk Throughput (MiB/s)"),
+				default: frm.doc.disk_throughput_mibps,
+				description: __("Covers reads and writes. 0 does not apply a limit."),
+			},
+			{
+				fieldname: "disk_iops",
+				fieldtype: "Int",
+				label: __("Disk IOPS"),
+				default: frm.doc.disk_iops,
+				description: __("Covers reads and writes. 0 does not apply a limit."),
+			},
+		],
+		(values) =>
+			frm
+				.call({
+					method: "update_disk_limits",
+					doc: frm.doc,
+					args: values,
+					freeze: true,
+					freeze_message: __("Updating disk limits..."),
+				})
+				.then(() => frm.reload_doc()),
+		__("Edit Disk Limits"),
+		__("Save")
 	);
 }

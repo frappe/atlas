@@ -17,18 +17,19 @@
   "error",
   "section_break_compute_and_storage",
   "vcpus",
-  "column_break_compute",
   "memory_mib",
-  "column_break_gmmt",
+  "column_break_compute",
   "disk_mib",
+  "disk_throughput_mibps",
+  "disk_iops",
   "section_break_network",
   "egress",
   "wireguard_mesh_ipv6",
-  "private_network_throughput_mbps",
+  "private_network_throughput_mibps",
   "column_break_network",
   "public_ipv4",
   "mac",
-  "public_network_throughput_mbps",
+  "public_network_throughput_mibps",
   "other_data_section",
   "ssh_keys",
   "metadata"
@@ -124,6 +125,20 @@
    "set_only_once": 1
   },
   {
+   "fieldname": "disk_throughput_mibps",
+   "fieldtype": "Int",
+   "is_virtual": 1,
+   "label": "Disk Throughput (MiB/s)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "disk_iops",
+   "fieldtype": "Int",
+   "is_virtual": 1,
+   "label": "Disk IOPS",
+   "read_only": 1
+  },
+  {
    "description": "VMs in the same tenant can connect through the mesh.",
    "fieldname": "tenant_id",
    "fieldtype": "Int",
@@ -178,17 +193,17 @@
    "read_only": 1
   },
   {
-   "fieldname": "private_network_throughput_mbps",
+   "fieldname": "private_network_throughput_mibps",
    "fieldtype": "Int",
    "is_virtual": 1,
-   "label": "Private Throughput (Mbps)",
+   "label": "Private Throughput (MiB/s)",
    "read_only": 1
   },
   {
-   "fieldname": "public_network_throughput_mbps",
+   "fieldname": "public_network_throughput_mibps",
    "fieldtype": "Int",
    "is_virtual": 1,
-   "label": "Public Throughput (Mbps)",
+   "label": "Public Throughput (MiB/s)",
    "read_only": 1
   },
   {
@@ -216,17 +231,13 @@
    "label": "Compute and Storage"
   },
   {
-   "fieldname": "column_break_gmmt",
-   "fieldtype": "Column Break"
-  },
-  {
    "fieldname": "other_data_section",
    "fieldtype": "Section Break"
   }
  ],
  "in_create": 1,
  "links": [],
- "modified": "2026-09-05 09:55:41.374911",
+ "modified": "2026-09-05 13:00:00.000000",
  "modified_by": "Administrator",
  "module": "VM",
  "name": "Virtual Machine",

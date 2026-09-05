@@ -103,8 +103,8 @@ func TestAllocateNetworkPassesThroughputLimits(t *testing.T) {
 		UID: 1000,
 		GID: 1000,
 		Spec: vm.Spec{Network: vm.Network{
-			PrivateNetworkThroughputMbps: 100,
-			PublicNetworkThroughputMbps:  50,
+			PrivateNetworkThroughputMiBps: 100,
+			PublicNetworkThroughputMiBps:  50,
 		}},
 	}
 
@@ -114,7 +114,7 @@ func TestAllocateNetworkPassesThroughputLimits(t *testing.T) {
 	if networkAllocator.allocateCalls != 1 {
 		t.Fatalf("network allocations = %d, want 1", networkAllocator.allocateCalls)
 	}
-	if networkAllocator.request.PrivateNetworkThroughputMbps != 100 || networkAllocator.request.PublicNetworkThroughputMbps != 50 {
+	if networkAllocator.request.PrivateNetworkThroughputMiBps != 100 || networkAllocator.request.PublicNetworkThroughputMiBps != 50 {
 		t.Fatalf("throughput limits = %+v", networkAllocator.request)
 	}
 }
@@ -126,10 +126,10 @@ func TestUpdateNetworkPersistsAndAppliesSettings(t *testing.T) {
 	}
 
 	update := vm.NetworkUpdate{
-		Egress:                       vm.EgressUplink,
-		PublicIPv4:                   "203.0.113.10",
-		PrivateNetworkThroughputMbps: 100,
-		PublicNetworkThroughputMbps:  50,
+		Egress:                        vm.EgressUplink,
+		PublicIPv4:                    "203.0.113.10",
+		PrivateNetworkThroughputMiBps: 100,
+		PublicNetworkThroughputMiBps:  50,
 	}
 	if err := driver.UpdateNetwork(context.Background(), "vm-1", update); err != nil {
 		t.Fatal(err)
@@ -142,7 +142,7 @@ func TestUpdateNetworkPersistsAndAppliesSettings(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if configuration.Spec.Network != (vm.Network{Egress: vm.EgressUplink, PublicIPv4: update.PublicIPv4, PrivateNetworkThroughputMbps: 100, PublicNetworkThroughputMbps: 50}) {
+	if configuration.Spec.Network != (vm.Network{Egress: vm.EgressUplink, PublicIPv4: update.PublicIPv4, PrivateNetworkThroughputMiBps: 100, PublicNetworkThroughputMiBps: 50}) {
 		t.Fatalf("network = %+v", configuration.Spec.Network)
 	}
 }

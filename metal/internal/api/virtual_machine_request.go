@@ -26,6 +26,7 @@ type createRequest struct {
 	VCPUs     int               `json:"vcpus"`
 	MemoryMiB int               `json:"memory_mib"`
 	DiskMiB   int               `json:"disk_mib"`
+	Disk      diskRequest       `json:"disk"`
 	Image     imageRequest      `json:"image"`
 	Network   networkRequest    `json:"network"`
 	SSHKeys   []string          `json:"ssh_keys"`
@@ -55,12 +56,28 @@ type imageArtifactRequest struct {
 	SHA256 string `json:"sha256"`
 }
 
+type diskRequest struct {
+	ThroughputMiBps int `json:"throughput_mibps"`
+	IOPS            int `json:"iops"`
+}
+
+func (request diskRequest) validate() error {
+	if request.ThroughputMiBps < 0 || request.IOPS < 0 {
+		return fmt.Errorf("disk limits must not be negative")
+	}
+	return nil
+}
+
+func (request diskRequest) spec() vm.Disk {
+	return vm.Disk{ThroughputMiBps: request.ThroughputMiBps, IOPS: request.IOPS}
+}
+
 type networkRequest struct {
-	PublicIPv4                   string `json:"public_ipv4"`
-	WireGuardMeshIPv6            string `json:"wireguard_mesh_ipv6"`
-	PrivateNetworkThroughputMbps int    `json:"private_network_throughput_mbps"`
-	PublicNetworkThroughputMbps  int    `json:"public_network_throughput_mbps"`
-	Egress                       string `json:"egress"`
+	PublicIPv4                    string `json:"public_ipv4"`
+	WireGuardMeshIPv6             string `json:"wireguard_mesh_ipv6"`
+	PrivateNetworkThroughputMiBps int    `json:"private_network_throughput_mibps"`
+	PublicNetworkThroughputMiBps  int    `json:"public_network_throughput_mibps"`
+	Egress                        string `json:"egress"`
 }
 
 type computeResizeRequest struct {
@@ -73,6 +90,9 @@ type diskResizeRequest struct {
 }
 
 func (request createRequest) validate() error {
+	if err := request.Disk.validate(); err != nil {
+		return err
+	}
 	if request.VCPUs <= 0 || request.MemoryMiB <= 0 || request.DiskMiB <= 0 {
 		return fmt.Errorf("vcpus, memory_mib, and disk_mib must be positive")
 	}
@@ -94,6 +114,7 @@ func (request createRequest) spec() vm.Spec {
 		VCPUs:     request.VCPUs,
 		MemoryMiB: request.MemoryMiB,
 		DiskMiB:   request.DiskMiB,
+		Disk:      request.Disk.spec(),
 		Image:     request.Image.specification(),
 		Network:   request.Network.spec(),
 		SSHKeys:   request.SSHKeys,
@@ -153,7 +174,7 @@ func (request *memorySnapshotConfigurationRequest) specification() *vm.MemorySna
 }
 
 func (request networkRequest) validate() error {
-	if request.PrivateNetworkThroughputMbps < 0 || request.PublicNetworkThroughputMbps < 0 {
+	if request.PrivateNetworkThroughputMiBps < 0 || request.PublicNetworkThroughputMiBps < 0 {
 		return fmt.Errorf("network throughput values must not be negative")
 	}
 
@@ -181,11 +202,11 @@ func (request networkRequest) validate() error {
 
 func (request networkRequest) spec() vm.Network {
 	return vm.Network{
-		PublicIPv4:                   request.PublicIPv4,
-		WireGuardMeshIPv6:            request.WireGuardMeshIPv6,
-		PrivateNetworkThroughputMbps: request.PrivateNetworkThroughputMbps,
-		PublicNetworkThroughputMbps:  request.PublicNetworkThroughputMbps,
-		Egress:                       vm.Egress(request.Egress),
+		PublicIPv4:                    request.PublicIPv4,
+		WireGuardMeshIPv6:             request.WireGuardMeshIPv6,
+		PrivateNetworkThroughputMiBps: request.PrivateNetworkThroughputMiBps,
+		PublicNetworkThroughputMiBps:  request.PublicNetworkThroughputMiBps,
+		Egress:                        vm.Egress(request.Egress),
 	}
 }
 

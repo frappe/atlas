@@ -16,16 +16,31 @@ type BootSource struct {
 
 // Drive contains one Firecracker drive.
 type Drive struct {
-	DriveID      string `json:"drive_id"`
-	PathOnHost   string `json:"path_on_host"`
-	IsRootDevice bool   `json:"is_root_device"`
-	IsReadOnly   bool   `json:"is_read_only"`
+	DriveID      string       `json:"drive_id"`
+	PathOnHost   string       `json:"path_on_host"`
+	IsRootDevice bool         `json:"is_root_device"`
+	IsReadOnly   bool         `json:"is_read_only"`
+	RateLimiter  *RateLimiter `json:"rate_limiter,omitempty"`
 }
 
-// PartialDrive contains the fields that rescan a drive.
+// PartialDrive contains the fields that rescan a drive or change its limits.
 type PartialDrive struct {
-	DriveID    string `json:"drive_id"`
-	PathOnHost string `json:"path_on_host"`
+	DriveID     string       `json:"drive_id"`
+	PathOnHost  string       `json:"path_on_host,omitempty"`
+	RateLimiter *RateLimiter `json:"rate_limiter,omitempty"`
+}
+
+// RateLimiter limits drive bandwidth and operations.
+type RateLimiter struct {
+	Bandwidth *TokenBucket `json:"bandwidth,omitempty"`
+	Ops       *TokenBucket `json:"ops,omitempty"`
+}
+
+// TokenBucket refills Size tokens every RefillTime milliseconds.
+type TokenBucket struct {
+	Size         int64 `json:"size"`
+	OneTimeBurst int64 `json:"one_time_burst,omitempty"`
+	RefillTime   int64 `json:"refill_time"`
 }
 
 // NetworkInterface contains one Firecracker network interface.

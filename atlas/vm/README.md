@@ -73,7 +73,7 @@ Metal owns the VM network state. Atlas reads it, changes one setting, and sends 
 |---|---|
 | Attach IP Address | Sets an attach intent and sends the address with `uplink` egress. |
 | Detach IP Address | Sends an empty address and sets a detach intent. |
-| Edit Throughput Limits | Sends private and public limits in Mbps. `0` removes a limit. |
+| Edit Network Throughput | Sends private and public limits in MiB/s. `0` removes a limit. |
 | Change Egress Mode | Sends `uplink`, `mesh`, or `none`. |
 
 Atlas applies the Metal change before it releases an address. A VM can hold one public IPv4 address. Public IPv4, egress, and throughput limits can also be set during creation.
@@ -89,6 +89,12 @@ Egress controls internet reachability. It does not control mesh reachability.
 A public IPv4 address needs `uplink`. Atlas refuses `mesh` and `none` while an address is attached.
 
 Active connections can stop when the public IPv4 address or the egress mode changes.
+
+## Disk limits
+
+The VM configuration can set `disk_throughput_mibps` and `disk_iops`. Each limit covers reads and writes together. A value of `0` does not apply a limit.
+
+The Edit Disk Limits action sends both values with `PUT /vms/{name}/disk`. Metal sets a Firecracker drive rate limiter, so a change needs no VM restart.
 
 ## Termination and deletion
 
