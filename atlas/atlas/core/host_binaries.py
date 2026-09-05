@@ -21,7 +21,11 @@ GO_VERSION = "1.26.2"
 GO_DOWNLOAD_URL = "https://go.dev/dl/go{version}.linux-{architecture}.tar.gz"
 BUILD_TIMEOUT_SECONDS = 900
 # Directories that hold the system headers a build includes.
-INCLUDE_DIRECTORIES = ("/usr/include", "/usr/local/include")
+INCLUDE_DIRECTORIES = (
+	"/usr/include",
+	f"/usr/include/{platform.machine()}-linux-gnu",
+	"/usr/local/include",
+)
 
 
 @dataclass(frozen=True)
@@ -62,7 +66,7 @@ HOST_BINARIES = (
 		# from libbpf-dev and linux-libc-dev on Debian, and from libbpf-devel
 		# and kernel-headers on Fedora.
 		required_commands=("make", "clang"),
-		required_headers=("bpf/bpf_helpers.h", "bpf/bpf_endian.h", "linux/bpf.h"),
+		required_headers=("bpf/bpf_helpers.h", "bpf/bpf_endian.h", "linux/bpf.h", "asm/types.h"),
 	),
 )
 
