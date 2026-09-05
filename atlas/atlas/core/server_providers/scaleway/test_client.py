@@ -29,9 +29,12 @@ class TestScalewayClient(UnitTestCase):
 			patch(
 				"atlas.atlas.core.server_providers.scaleway.client.requests.request", return_value=response
 			),
-			self.assertRaises(ScalewayError),
+			self.assertRaises(ScalewayError) as raised,
 		):
 			ScalewayClient("secret-key").request("GET", "/servers")
+
+		self.assertEqual(raised.exception.code, "provider_http_error")
+		self.assertTrue(raised.exception.is_retryable)
 
 	def test_request_rejects_a_non_object_json_response(self) -> None:
 		response = Mock(status_code=200, content=b"[]")

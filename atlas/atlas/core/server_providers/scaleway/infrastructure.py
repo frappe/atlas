@@ -3,10 +3,10 @@ from __future__ import annotations
 import ipaddress
 from typing import TYPE_CHECKING
 
-from .client import ScalewayError
+from atlas.atlas.core.server_providers.scaleway.client import ScalewayError
 
 if TYPE_CHECKING:
-	from .provider import ScalewayProvider
+	from atlas.atlas.core.server_providers.scaleway.provider import ScalewayProvider
 
 
 class ScalewayInfrastructure:
@@ -17,7 +17,8 @@ class ScalewayInfrastructure:
 
 	def validate_settings(self) -> None:
 		"""Validate the Scaleway private network settings."""
-		self.provider._subscription_period()
+		if self.provider.settings.scaleway_machine_billing_cycle not in {"Hourly", "Monthly"}:
+			raise ScalewayError("Scaleway Machine Billing Cycle must be Hourly or Monthly")
 		try:
 			network = ipaddress.ip_network(self.provider.settings.private_network_cidr, strict=False)
 		except ValueError as error:
@@ -34,23 +35,6 @@ class ScalewayInfrastructure:
 				f"Private network CIDR {self.provider.settings.private_network_cidr} must have a prefix length "
 				f"between /{self.provider.private_network_min_prefix} and /{self.provider.private_network_max_prefix}."
 			)
-
-	def bootstrap(self) -> None:
-		"""Create and store the Scaleway resources used by Atlas."""
-		settings = self.provider.settings
-		settings.scaleway_vpc_id = self.create_vpc()
-		settings.db_set("scaleway_vpc_id", settings.scaleway_vpc_id, update_modified=False)
-
-		settings.scaleway_private_network_id = self.create_private_network(settings.private_network_cidr)
-		settings.db_set(
-			"scaleway_private_network_id", settings.scaleway_private_network_id, update_modified=False
-		)
-
-		settings.scaleway_ssh_key_id = self.create_ssh_key(settings.public_ssh_key)
-		settings.db_set("scaleway_ssh_key_id", settings.scaleway_ssh_key_id, update_modified=False)
-
-		settings.is_server_provider_setup_completed = 1
-		settings.save()
 
 	def validate_credentials(self) -> bool:
 		"""Return true when the configured key can access Scaleway."""
@@ -82,7 +66,7 @@ class ScalewayInfrastructure:
 		)
 		return result["id"]
 
-	def create_private_network(self, cidr: str) -> str:
+	def create_private_network(self, cidr: str, vpc_id: str | None = None) -> str:
 		"""Return the Atlas private network ID, or create a network."""
 		settings = self.provider.settings
 		if settings.scaleway_private_network_id:
@@ -90,7 +74,7 @@ class ScalewayInfrastructure:
 				"GET",
 				f"/vpc/v2/regions/{self.provider.region}/private-networks/{settings.scaleway_private_network_id}",
 			)
-			self._validate_private_network(network, cidr)
+			self._validate_private_network(network, cidr, vpc_id or settings.scaleway_vpc_id)
 			return settings.scaleway_private_network_id
 
 		result = self.provider._request(
@@ -100,7 +84,7 @@ class ScalewayInfrastructure:
 				"name": f"{self.provider.resource_name_prefix}private-network",
 				"project_id": self.provider.project_id,
 				"subnets": [cidr],
-				"vpc_id": settings.scaleway_vpc_id,
+				"vpc_id": vpc_id or settings.scaleway_vpc_id,
 			},
 		)
 		return result["id"]
@@ -136,12 +120,11 @@ class ScalewayInfrastructure:
 		)
 		return str(result["id"])
 
-	def _validate_private_network(self, network: dict, cidr: str) -> None:
+	def _validate_private_network(self, network: dict, cidr: str, vpc_id: str | None) -> None:
 		settings = self.provider.settings
-		if network.get("vpc_id") != settings.scaleway_vpc_id:
+		if network.get("vpc_id") != vpc_id:
 			raise ScalewayError(
-				f"Private network {settings.scaleway_private_network_id} does not belong to VPC "
-				f"{settings.scaleway_vpc_id}"
+				f"Private network {settings.scaleway_private_network_id} does not belong to VPC {vpc_id}"
 			)
 
 		expected_network = ipaddress.ip_network(cidr, strict=False)

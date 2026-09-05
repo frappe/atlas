@@ -1,15 +1,13 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass
-from time import monotonic, sleep
+from enum import StrEnum
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, ClassVar, TypeVar
+from typing import TYPE_CHECKING, Any, ClassVar
 
 import frappe
-
-PollResult = TypeVar("PollResult")
 
 if TYPE_CHECKING:
 	from atlas.atlas.doctype.atlas_settings.atlas_settings import AtlasSettings
@@ -17,8 +15,8 @@ if TYPE_CHECKING:
 
 
 @dataclass(frozen=True, slots=True)
-class SizeInfo:
-	"""Vendor server size data."""
+class ServerSizeData:
+	"""Store one server size from a provider."""
 
 	size: str
 	cpu_count: int
@@ -30,16 +28,8 @@ class SizeInfo:
 
 
 @dataclass(frozen=True, slots=True)
-class ReservedIPAddress:
-	"""Store one public IP address from a provider."""
-
-	address: str
-	provider_resource_id: str
-
-
-@dataclass(frozen=True, slots=True)
-class ImageInfo:
-	"""Vendor server OS image data."""
+class ServerImageData:
+	"""Store one server image from a provider."""
 
 	image: str
 	os: str
@@ -47,8 +37,61 @@ class ImageInfo:
 	provider_metadata: Mapping[str, Any] | None = None
 
 
-class ServerProviderError(Exception):
-	"""Raised when a provider cannot complete a server operation."""
+@dataclass(frozen=True, slots=True)
+class ServerCreateRequest:
+	"""Store the data for one idempotent provider server request."""
+
+	name: str
+	server_size: str
+	server_image: str
+	size_provider_metadata: Mapping[str, Any]
+	image_provider_metadata: Mapping[str, Any]
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderServer:
+	"""Store the provider state that belongs in an Atlas Server."""
+
+	provider_server_id: str
+	status: str | None
+	public_ipv4_address: str | None
+	provider_metadata: Mapping[str, Any]
+	was_created: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class ReservedIPAddress:
+	"""Store one public IP address from a provider."""
+
+	address: str
+	provider_resource_id: str
+
+
+class ServerPowerAction(StrEnum):
+	"""List the provider power operations that Atlas can request."""
+
+	REBOOT = "reboot"
+	START = "start"
+	STOP = "stop"
+
+
+class ProviderOperationError(Exception):
+	"""Report a server provider operation failure."""
+
+	def __init__(self, message: str, *, code: str = "provider_error", is_retryable: bool = False) -> None:
+		super().__init__(message)
+		self.code = code
+		self.is_retryable = is_retryable
+
+
+class UnsupportedProviderOperation(ProviderOperationError):
+	"""Report an optional operation that a provider does not support."""
+
+	def __init__(self, operation: str) -> None:
+		super().__init__(
+			f"The server provider does not support {operation}",
+			code="unsupported_provider_operation",
+		)
 
 
 ACCEPTED_OS_VERSIONS: Mapping[str, tuple[str, ...]] = MappingProxyType(
@@ -60,290 +103,86 @@ ACCEPTED_OS_VERSIONS: Mapping[str, tuple[str, ...]] = MappingProxyType(
 
 
 class ServerProvider(ABC):
-	"""Base class for providers registered with Atlas Settings."""
+	"""Define the server provider operations that Atlas uses."""
 
 	provider_type: ClassVar[str]
 	credential_fields: ClassVar[tuple[str, ...]]
-	server_setup_fields: ClassVar[tuple[str, ...]] = (
-		"status",
-		"is_provisioning_completed",
-		"provider_server_id",
-		"provider_metadata",
-		"public_ipv4_address",
-		"private_ipv4_address",
-		"public_network_interface",
-		"private_network_interface",
-	)
 	ssh_users: ClassVar[tuple[str, ...]] = ("root", "ubuntu")
-	ssh_timeout_seconds: ClassVar[int] = 1_000
-	ssh_poll_interval_seconds: ClassVar[int] = 1
 
 	def __init__(self, settings: "AtlasSettings | None" = None) -> None:
 		self.settings: AtlasSettings = settings or frappe.get_single("Atlas Settings")
 
 	@abstractmethod
-	def bootstrap(self) -> None:
-		"""Set up the provider resources required by Atlas."""
+	def setup_infrastructure(self) -> None:
+		"""Set up the named provider resources that Atlas needs."""
 		...
 
 	@abstractmethod
 	def validate_settings(self) -> None:
-		"""Check the provider fields when Atlas Settings validates."""
+		"""Check the provider settings."""
 		...
 
 	@abstractmethod
 	def validate_credentials(self) -> bool:
-		"""Use before provider operations to check the configured credentials."""
+		"""Check that the provider credentials permit an API request."""
 		...
 
 	@abstractmethod
-	def create_private_network(self, cidr: str) -> str:
-		"""Return the existing private network ID, or create one."""
+	def fetch_server_sizes(self) -> tuple[ServerSizeData, ...]:
+		"""Return the server sizes from the provider."""
 		...
 
 	@abstractmethod
-	def create_ssh_key(self, public_key: str) -> str:
-		"""Return the existing SSH key ID, or upload the Atlas public key."""
+	def fetch_server_images(self) -> tuple[ServerImageData, ...]:
+		"""Return the server images from the provider."""
 		...
 
 	@abstractmethod
-	def fetch_server_sizes(self) -> tuple[SizeInfo, ...]:
-		"""Return the server sizes available from the vendor."""
+	def ensure_server(self, request: ServerCreateRequest) -> ProviderServer:
+		"""Return the named server, and create it when it does not exist."""
 		...
 
 	@abstractmethod
-	def fetch_server_images(self) -> tuple[ImageInfo, ...]:
-		"""Return the server images available from the vendor."""
+	def prepare_server(self, server: "Server") -> None:
+		"""Prepare provider resources before Atlas connects with Secure Shell."""
 		...
 
-	@property
-	def provisioning_steps(self) -> tuple[Callable[["Server"], None], ...]:
-		"""Return the post-creation setup functions in execution order."""
-		return ()
-
 	@abstractmethod
-	def create_server(self, server: "Server") -> None:
-		"""Create the remote server before Atlas inserts the Server document."""
+	def configure_server_network(self, server: "Server") -> None:
+		"""Configure the provider network after Secure Shell access is ready."""
 		...
 
 	@abstractmethod
 	def get_storage_pool_device(self, server: "Server") -> str:
-		"""Return the raw block device for the VM storage pool."""
+		"""Return the raw block device for the virtual machine storage pool."""
 		...
 
 	@abstractmethod
-	def reboot_server(self, server: "Server") -> None:
-		"""Reboot the provider server."""
+	def set_power_state(self, provider_server_id: str, action: ServerPowerAction) -> None:
+		"""Apply one power action to a provider server."""
 		...
 
 	@abstractmethod
-	def poweroff_server(self, server: "Server") -> None:
-		"""Stop the provider server."""
+	def delete_server(self, provider_server_id: str) -> None:
+		"""Delete a provider server if it exists."""
 		...
 
-	@abstractmethod
-	def poweron_server(self, server: "Server") -> None:
-		"""Start the provider server."""
-		...
-
-	@abstractmethod
-	def archive_server(self, server: "Server") -> None:
-		"""Delete the provider server that backs an Atlas Server.
-
-		This must succeed when the provider server is already gone.
-		"""
-		...
-
-	def cleanup_provisioned_server(self, server: "Server") -> None:
-		"""Remove a newly created provider server after a local provisioning failure."""
-		return None
-
-	def reserve_ip(self) -> ReservedIPAddress:
+	def reserve_public_ipv4_address(self) -> ReservedIPAddress:
 		"""Reserve one public IPv4 address."""
-		raise ServerProviderError("This provider cannot reserve public IP addresses")
+		raise UnsupportedProviderOperation("public IPv4 address reservation")
 
-	def delete_ip(self, provider_resource_id: str) -> None:
+	def delete_public_ipv4_address(self, provider_resource_id: str) -> None:
 		"""Delete one public IPv4 address."""
-		raise ServerProviderError("This provider cannot delete public IP addresses")
+		raise UnsupportedProviderOperation("public IPv4 address deletion")
 
-	def attach_ip(self, provider_resource_id: str, server: "Server") -> None:
-		"""Attach an IP address to a bare-metal server."""
-		raise ServerProviderError("This provider cannot attach public IP addresses")
+	def attach_public_ipv4_address(self, provider_resource_id: str, server: "Server") -> None:
+		"""Attach one public IPv4 address to a provider server."""
+		raise UnsupportedProviderOperation("public IPv4 address attachment")
 
-	def detach_ip(self, provider_resource_id: str) -> None:
-		"""Detach an IP address from its bare-metal server."""
-		raise ServerProviderError("This provider cannot detach public IP addresses")
-
-	def run_provisioning(self, server: "Server") -> None:
-		"""Run the post-creation setup functions in order."""
-		try:
-			server.status = "Installing"
-			self.save_server_setup_progress(server)
-			for provisioning_step in self.provisioning_steps:
-				provisioning_step(server)
-				self.save_server_setup_progress(server)
-			server.status = "Running"
-			server.is_provisioning_completed = 1
-			self.save_server_setup_progress(server)
-		except Exception:
-			server.status = "Failed"
-			self.save_server_setup_progress(server)
-			raise
-
-	def configure_wireguard(self, server: "Server") -> None:
-		"""Configure the host WireGuard interface. Every provider shares this step."""
-		server._configure_wireguard()
-
-	def install_metald(self, server: "Server") -> None:
-		"""Install metald and its host dependencies. Every provider shares this step."""
-		server._install_metald()
-
-	def wait_for_ssh(self, server: "Server") -> None:
-		"""Wait for root SSH access on a provider server."""
-		from atlas.atlas.core.ssh import wait_for_server
-
-		if not server.public_ipv4_address:
-			raise ServerProviderError("Server has no public IPv4 address")
-
-		try:
-			user = wait_for_server(
-				host=server.public_ipv4_address,
-				users=self.ssh_users,
-				timeout_seconds=self.ssh_timeout_seconds,
-				poll_interval_seconds=self.ssh_poll_interval_seconds,
-			)
-		except TimeoutError as error:
-			raise ServerProviderError(str(error)) from error
-		if user == "root":
-			return
-
-		self.promote_ssh_user(server, user)
-		try:
-			root_user = wait_for_server(
-				host=server.public_ipv4_address,
-				users=("root",),
-				timeout_seconds=self.ssh_timeout_seconds,
-				poll_interval_seconds=self.ssh_poll_interval_seconds,
-			)
-		except TimeoutError as error:
-			raise ServerProviderError("Root SSH did not become ready after user promotion") from error
-		if root_user != "root":
-			raise ServerProviderError("Root SSH did not become ready after user promotion")
+	def detach_public_ipv4_address(self, provider_resource_id: str) -> None:
+		"""Detach one public IPv4 address from its provider server."""
+		raise UnsupportedProviderOperation("public IPv4 address detachment")
 
 	def promote_ssh_user(self, server: "Server", user: str) -> None:
-		"""Promote a provider SSH user to root access."""
-		raise ServerProviderError(f"Provider cannot promote SSH user {user}")
-
-	def run_setup_script(
-		self,
-		server: "Server",
-		script: str,
-		*,
-		ssh_user: str = "root",
-		environment: Mapping[str, object] | None = None,
-		timeout_seconds: int = 120,
-	) -> None:
-		"""Run a packaged setup script and require a successful SSH result."""
-		from atlas.server.doctype.server_ssh_task.server_ssh_task import ServerSSHTask
-
-		task = ServerSSHTask.create_for_script_file(
-			server=server.name,
-			script_path=script,
-			ssh_user=ssh_user,
-			environment=environment,
-			timeout_seconds=timeout_seconds,
-			run_in_background=False,
-		)
-		result = task.result
-		if result is None or not result.is_success:
-			output = result.output.strip() if result else "The SSH task did not complete"
-			raise ServerProviderError(f"Setup script {script} failed: {output}")
-
-	def poll(
-		self,
-		operation: Callable[[], PollResult | None],
-		*,
-		timeout_seconds: int,
-		poll_interval_seconds: int,
-		description: str,
-		on_retry: Callable[[], None] | None = None,
-	) -> PollResult:
-		"""Poll an operation until it returns a result or times out."""
-		deadline = monotonic() + timeout_seconds
-		while monotonic() < deadline:
-			result = operation()
-			if result is not None:
-				return result
-			if on_retry:
-				on_retry()
-			sleep(poll_interval_seconds)
-		raise ServerProviderError(f"Timed out while waiting for {description}")
-
-	@classmethod
-	def save_server_setup_progress(cls, server: "Server") -> None:
-		"""Commit only the provider fields during long server setup."""
-		server.db_set({field: server.get(field) for field in cls.server_setup_fields})
-		frappe.db.commit()  # nosemgrep
-
-	def sync_provider_sizes(self) -> None:
-		"""Sync provider sizes with Server Size records."""
-		for size in self.fetch_server_sizes():
-			name = f"{self.provider_type}/{size.size}"
-			metadata_json = frappe.as_json(size.provider_metadata)
-			if frappe.db.exists("Server Size", name):
-				document = frappe.get_doc("Server Size", name)
-				if (
-					document.cpu_count == size.cpu_count
-					and document.memory_mib == size.memory_mib
-					and document.disk_gib == size.disk_gib
-					and document.hourly_pricing_usd_cents == size.hourly_pricing_usd_cents
-					and document.monthly_pricing_usd_cents == size.monthly_pricing_usd_cents
-					and document.provider_metadata == metadata_json
-				):
-					continue
-
-				document.cpu_count = size.cpu_count
-				document.memory_mib = size.memory_mib
-				document.disk_gib = size.disk_gib
-				document.hourly_pricing_usd_cents = size.hourly_pricing_usd_cents
-				document.monthly_pricing_usd_cents = size.monthly_pricing_usd_cents
-				document.provider_metadata = metadata_json
-				document.save(ignore_permissions=True)
-				continue
-
-			frappe.get_doc(
-				{
-					"doctype": "Server Size",
-					"provider_type": self.provider_type,
-					"size": size.size,
-					"cpu_count": size.cpu_count,
-					"memory_mib": size.memory_mib,
-					"disk_gib": size.disk_gib,
-					"hourly_pricing_usd_cents": size.hourly_pricing_usd_cents,
-					"monthly_pricing_usd_cents": size.monthly_pricing_usd_cents,
-					"provider_metadata": metadata_json,
-				}
-			).insert(ignore_permissions=True)
-
-	def sync_provider_images(self) -> None:
-		"""Sync provider images with Server Image records."""
-		for image in self.fetch_server_images():
-			name = f"{self.provider_type}/{image.image}"
-			metadata_json = frappe.as_json(image.provider_metadata)
-			if frappe.db.exists("Server Image", name):
-				document = frappe.get_doc("Server Image", name)
-				if document.provider_metadata == metadata_json:
-					continue
-
-				document.provider_metadata = metadata_json
-				document.save(ignore_permissions=True)
-				continue
-
-			frappe.get_doc(
-				{
-					"doctype": "Server Image",
-					"provider_type": self.provider_type,
-					"image": image.image,
-					"provider_metadata": metadata_json,
-				}
-			).insert(ignore_permissions=True)
+		"""Promote a provider Secure Shell user to root access."""
+		raise ProviderOperationError(f"The provider cannot promote Secure Shell user {user}")
