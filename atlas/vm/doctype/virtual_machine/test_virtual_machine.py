@@ -360,7 +360,7 @@ class TestMetalClient(UnitTestCase):
 		self.assertEqual(request.call_args_list[0].kwargs["timeout"], client.snapshot_timeout_seconds)
 		self.assertEqual(request.call_args_list[1].kwargs["timeout"], client.snapshot_timeout_seconds)
 
-	def test_sync_sends_wireguard_peers_and_images(self) -> None:
+	def test_sync_sends_wireguard_peers_images_and_privileged_addresses(self) -> None:
 		client = MetalClient.__new__(MetalClient)
 		client.base_url = "http://10.0.0.2:9000"
 		client.headers = {"Authorization": "Bearer token"}
@@ -373,7 +373,11 @@ class TestMetalClient(UnitTestCase):
 		self.assertEqual(request.call_args.args[:2], ("POST", "http://10.0.0.2:9000/sync"))
 		self.assertEqual(
 			request.call_args.kwargs["json"],
-			{"wireguard_peers": [{"node": "node-1"}], "images": [{"ref": "sha256:image"}]},
+			{
+				"wireguard_peers": [{"node": "node-1"}],
+				"images": [{"ref": "sha256:image"}],
+				"privileged_vm_addresses": ["fdaa:1::1"],
+			},
 		)
 
 	def test_snapshot_transport_error_is_uncertain(self) -> None:
@@ -625,3 +629,56 @@ class TestReconcileTerminating(UnitTestCase):
 	def test_other_error_keeps_vm(self) -> None:
 		virtual_machine = self._run(MetalClientError("busy", status=503))
 		virtual_machine.delete.assert_not_called()
+
+
+class TestVirtualMachinePrivilege(UnitTestCase):
+	"""Cover the Atlas WG Mesh privilege flag."""
+
+	def build_virtual_machine(self, *, tenant_id: int, is_privileged: int = 0) -> VirtualMachine:
+		virtual_machine = VirtualMachine.__new__(VirtualMachine)
+		virtual_machine.name = "VM-00001"
+		virtual_machine.tenant_id = tenant_id
+		virtual_machine.is_privileged = is_privileged
+		virtual_machine.is_draft = 0
+		virtual_machine.is_terminating = 0
+		virtual_machine.save = Mock()
+		return virtual_machine
+
+	def test_set_privileged_reads_the_boolean(self) -> None:
+		virtual_machine = self.build_virtual_machine(tenant_id=0)
+
+		with patch.object(virtual_machine_module.frappe, "only_for"):
+			virtual_machine.set_privileged("true")
+
+		self.assertTrue(virtual_machine.is_privileged)
+		virtual_machine.save.assert_called_once()
+
+	def test_set_privileged_revokes(self) -> None:
+		virtual_machine = self.build_virtual_machine(tenant_id=0, is_privileged=1)
+
+		with patch.object(virtual_machine_module.frappe, "only_for"):
+			virtual_machine.set_privileged(False)
+
+		self.assertFalse(virtual_machine.is_privileged)
+
+	def test_set_privileged_rejects_a_draft(self) -> None:
+		virtual_machine = self.build_virtual_machine(tenant_id=0)
+		virtual_machine.is_draft = 1
+
+		with (
+			patch.object(virtual_machine_module.frappe, "only_for"),
+			self.assertRaises(frappe.ValidationError),
+		):
+			virtual_machine.set_privileged(True)
+
+		virtual_machine.save.assert_not_called()
+
+	def test_validate_refuses_privilege_outside_tenant_zero(self) -> None:
+		virtual_machine = self.build_virtual_machine(tenant_id=5, is_privileged=1)
+
+		with self.assertRaises(frappe.ValidationError):
+			virtual_machine.validate()
+
+	def test_validate_allows_tenant_zero_without_privilege(self) -> None:
+		"""Tenant 0 alone is not privileged, so a plain tenant-0 VM is valid."""
+		self.build_virtual_machine(tenant_id=0).validate()

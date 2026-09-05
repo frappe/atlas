@@ -1,6 +1,8 @@
 package network
 
 import (
+	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -125,5 +127,66 @@ func TestNewMeshNeedsTheCommandOnTheHost(t *testing.T) {
 		UplinkName:    "eno1.1878",
 	}); err == nil {
 		t.Error("accepted a command path that is not on the host")
+	}
+}
+
+// scriptedMesh runs a stub CLI that records each call and fails one address.
+func scriptedMesh(t *testing.T, installed, failing string) (*Mesh, string) {
+	t.Helper()
+	directory := t.TempDir()
+	callLog := filepath.Join(directory, "calls")
+	command := filepath.Join(directory, "atlas-wg-mesh")
+
+	script := fmt.Sprintf(`#!/bin/sh
+if [ "$2" = "list" ]; then echo '%s'; exit 0; fi
+echo "$@" >> %s
+case "$*" in *%s*) exit 1 ;; esac
+exit 0
+`, installed, callLog, failing)
+	if err := os.WriteFile(command, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	mesh, err := NewMesh(MeshConfig{CommandPath: command, WireGuardName: "wg0", UplinkName: "eno1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return mesh, callLog
+}
+
+// A partial apply converges on the next sync, so one failure must not stop the
+// other changes, and a revocation must not wait behind an addition.
+func TestApplyPrivilegedAddressesAttemptsEveryChange(t *testing.T) {
+	mesh, callLog := scriptedMesh(t, `[{"address":"fdaa:1::2"},{"address":"fdaa:1::3"}]`, "fdaa:1::9")
+
+	err := mesh.ApplyPrivilegedAddresses(context.Background(), []string{"fdaa:1::2", "fdaa:1::9"})
+	if err == nil {
+		t.Fatal("a failed command did not report an error")
+	}
+
+	recorded, readErr := os.ReadFile(callLog)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	calls := strings.Split(strings.TrimSpace(string(recorded)), "\n")
+	if len(calls) != 2 {
+		t.Fatalf("calls = %v, want one remove and one add", calls)
+	}
+	if !strings.Contains(calls[0], "remove --address fdaa:1::3") {
+		t.Errorf("first call = %q, want the removal", calls[0])
+	}
+	if !strings.Contains(calls[1], "add --address fdaa:1::9") {
+		t.Errorf("second call = %q, want the addition", calls[1])
+	}
+}
+
+func TestApplyPrivilegedAddressesLeavesAMatchingSetAlone(t *testing.T) {
+	mesh, callLog := scriptedMesh(t, `[{"address":"fdaa:1::2"}]`, "none")
+
+	if err := mesh.ApplyPrivilegedAddresses(context.Background(), []string{"fdaa:1::2"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(callLog); !os.IsNotExist(err) {
+		t.Error("a matching set still ran a command")
 	}
 }

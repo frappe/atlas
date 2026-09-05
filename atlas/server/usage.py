@@ -71,21 +71,17 @@ def get_desired_images() -> list[dict[str, Any]]:
 
 
 def get_privileged_vm_addresses() -> list[str]:
-	"""Return the mesh addresses that Atlas WG Mesh permits across tenants.
-
-	Every host holds the same whitelist, so one region-wide set goes to each.
-	"""
-	names = frappe.get_all(
+	"""Return the mesh addresses that Atlas WG Mesh permits across tenants."""
+	virtual_machines = frappe.get_all(
 		"Virtual Machine",
 		filters={"is_privileged": 1, "is_draft": 0, "is_terminating": 0},
-		pluck="name",
+		fields=["name", "tenant_id"],
 	)
-	addresses = []
-	for name in names:
-		address = VirtualMachineManager.get_wireguard_mesh_ipv6(frappe.get_doc("Virtual Machine", name))
-		if address:
-			addresses.append(address)
-	return addresses
+	return [
+		address
+		for virtual_machine in virtual_machines
+		if (address := VirtualMachineManager.get_wireguard_mesh_ipv6(virtual_machine))
+	]
 
 
 def get_wireguard_peers() -> list[dict[str, Any]]:

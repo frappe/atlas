@@ -38,13 +38,14 @@ class TestServerUsage(UnitTestCase):
 
 	def test_privileged_addresses_select_live_privileged_vms(self) -> None:
 		"""Every host holds the same whitelist, so one region-wide set goes out."""
+		rows = [{"name": "vm-00001", "tenant_id": 0}]
 		with (
-			patch("atlas.server.usage.frappe.get_all", return_value=["vm-00001"]) as get_all,
-			patch("atlas.server.usage.frappe.get_doc", return_value=Mock()),
+			patch("atlas.server.usage.frappe.get_all", return_value=rows) as get_all,
 			patch(
 				"atlas.server.usage.VirtualMachineManager.get_wireguard_mesh_ipv6",
 				return_value="fdaa:1:0:0::1",
 			),
+			patch("atlas.server.usage.frappe.get_doc") as get_doc,
 		):
 			addresses = get_privileged_vm_addresses()
 
@@ -53,6 +54,9 @@ class TestServerUsage(UnitTestCase):
 			get_all.call_args.kwargs["filters"],
 			{"is_privileged": 1, "is_draft": 0, "is_terminating": 0},
 		)
+		# One query, so the address list does not scale its queries with the VMs.
+		self.assertEqual(get_all.call_args.kwargs["fields"], ["name", "tenant_id"])
+		get_doc.assert_not_called()
 
 	def test_desired_images_only_select_available_cached_images(self) -> None:
 		image = Mock()

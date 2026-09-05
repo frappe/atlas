@@ -177,8 +177,17 @@ func (driver *fakeVirtualMachineDriver) Reboot(_ context.Context, id string) err
 }
 
 type fakeRuntimeServices struct {
-	policies  []vm.ImageRef
-	snapshots map[string]storage.StagedSnapshot
+	policies   []vm.ImageRef
+	privileged []string
+	snapshots  map[string]storage.StagedSnapshot
+}
+
+func (services *fakeRuntimeServices) ApplyPrivilegedAddresses(
+	_ context.Context,
+	addresses []string,
+) error {
+	services.privileged = append([]string(nil), addresses...)
+	return nil
 }
 
 func newFakeRuntimeServices() *fakeRuntimeServices {
@@ -240,15 +249,6 @@ func (manager *fakeWireGuardManager) Apply(_ context.Context, peers []network.Wi
 	return nil
 }
 
-type fakeMesh struct {
-	privileged []string
-}
-
-func (mesh *fakeMesh) ApplyPrivilegedAddresses(_ context.Context, addresses []string) error {
-	mesh.privileged = append([]string(nil), addresses...)
-	return nil
-}
-
 type fakeCapacityProvider struct{}
 
 func (fakeCapacityProvider) Capacity(context.Context) (storage.Capacity, error) {
@@ -285,7 +285,7 @@ func newServerWithServices(
 		ImagePolicyStore:     services,
 		WakeReconciler:       func() {},
 		WireGuardManager:     wireGuardManager,
-		Mesh:                 &fakeMesh{},
+		Mesh:                 services,
 		Storage:              fakeCapacityProvider{},
 		ConsoleBroker:        stubConsoleBroker{},
 		SSHConnector:         stubSSHConnector{},
@@ -644,9 +644,13 @@ func TestSyncAppliesControllerStateAndReturnsCapacity(t *testing.T) {
 			"rootfs":{"url":"https://atlas.example/rootfs","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
 			"kernel":{"url":"https://atlas.example/kernel","sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},
 			"cache_image":true
-		}]
+		}],
+		"privileged_vm_addresses":["fdaa:1:0:0::1"]
 	}`
 	recorder := do(t, server, http.MethodPost, "/sync", request, http.StatusOK)
+	if len(services.privileged) != 1 || services.privileged[0] != "fdaa:1:0:0::1" {
+		t.Fatalf("privileged addresses = %+v", services.privileged)
+	}
 	if len(wireGuardManager.peers) != 1 || wireGuardManager.peers[0].Node != "node-2" {
 		t.Fatalf("peers = %+v", wireGuardManager.peers)
 	}
@@ -663,10 +667,17 @@ func TestSyncAppliesControllerStateAndReturnsCapacity(t *testing.T) {
 	}
 }
 
+// A missing collection would read as an empty set and clear host state.
 func TestSyncRequiresControllerCollections(t *testing.T) {
 	server := newTestServer(t)
 	do(t, server, http.MethodPost, "/sync", `{}`, http.StatusBadRequest)
 	do(t, server, http.MethodPost, "/sync", `{"wireguard_peers":[]}`, http.StatusBadRequest)
+	do(t, server, http.MethodPost, "/sync", `{"wireguard_peers":[],"images":[]}`, http.StatusBadRequest)
+	do(
+		t, server, http.MethodPost, "/sync",
+		`{"wireguard_peers":[],"images":[],"privileged_vm_addresses":[]}`,
+		http.StatusOK,
+	)
 }
 
 func TestDocsSkipAuthentication(t *testing.T) {

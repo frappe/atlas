@@ -288,9 +288,9 @@ class VirtualMachineManager:
 		}
 
 	@staticmethod
-	def get_wireguard_mesh_ipv6(virtual_machine: Document) -> str:
+	def get_wireguard_mesh_ipv6(virtual_machine: "Document | frappe._dict") -> str:
 		"""Return the mesh address from stable Atlas request metadata."""
-		settings = cast("AtlasSettings", frappe.get_single("Atlas Settings"))
+		settings: AtlasSettings = frappe.get_single("Atlas Settings")
 		region_id = settings.region_id
 		if not 0 <= region_id <= 0xFFFF:
 			frappe.throw(_("Atlas Settings region ID must be a 16-bit unsigned integer."))

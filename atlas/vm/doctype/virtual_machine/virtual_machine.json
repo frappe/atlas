@@ -151,7 +151,7 @@
   },
   {
    "default": "0",
-   "description": "Reaches every tenant. Needs tenant 0. Removing it ends cross-tenant traffic.",
+   "description": "Reaches every tenant, and every tenant reaches it. Needs tenant 0.",
    "fieldname": "is_privileged",
    "fieldtype": "Check",
    "label": "Is Privileged",

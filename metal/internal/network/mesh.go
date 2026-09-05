@@ -135,14 +135,14 @@ func (mesh *Mesh) ApplyPrivilegedAddresses(ctx context.Context, desired []string
 	}
 
 	var applyErrors []error
-	for address := range wanted {
-		if _, present := current[address]; !present {
-			applyErrors = append(applyErrors, mesh.setPrivileged(ctx, "add", address))
-		}
-	}
 	for address := range current {
 		if _, keep := wanted[address]; !keep {
 			applyErrors = append(applyErrors, mesh.setPrivileged(ctx, "remove", address))
+		}
+	}
+	for address := range wanted {
+		if _, present := current[address]; !present {
+			applyErrors = append(applyErrors, mesh.setPrivileged(ctx, "add", address))
 		}
 	}
 	return errors.Join(applyErrors...)

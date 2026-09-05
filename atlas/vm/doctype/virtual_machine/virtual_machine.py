@@ -8,6 +8,7 @@ from frappe import _, request_cache
 from frappe.model.document import Document
 from frappe.utils import add_to_date, cint, now_datetime
 
+from atlas.atlas.core.parsing import strict_bool
 from atlas.vm.core.metal_client import MetalClient, MetalClientError, throw_metal_error
 from atlas.vm.core.virtual_machine_manager import EGRESS_MODES, VirtualMachineManager
 
@@ -173,6 +174,15 @@ class VirtualMachine(Document):
 	@frappe.whitelist(methods=["POST"])
 	def resume(self) -> None:
 		self.perform_action("resume")
+
+	@frappe.whitelist(methods=["POST"])
+	def set_privileged(self, is_privileged: bool | int | str) -> None:
+		frappe.only_for("System Manager")
+		if self.is_draft or self.is_terminating:
+			frappe.throw(_("Virtual Machine {0} is not ready for this change.").format(self.name))
+
+		self.is_privileged = strict_bool(is_privileged, "is_privileged")
+		self.save(ignore_permissions=True)
 
 	@frappe.whitelist(methods=["POST"])
 	def terminate(self) -> None:
