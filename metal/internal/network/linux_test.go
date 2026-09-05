@@ -1,6 +1,7 @@
 package network
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -59,5 +60,33 @@ func TestVirtualEthernetNamesFitInterfaceLimit(t *testing.T) {
 		if len(name) > 15 {
 			t.Errorf("%q is %d characters, over the 15 character limit", name, len(name))
 		}
+	}
+}
+
+// A failed update rolls back by replaying the reverse transition, so every step
+// must be safe to repeat. A plain "route add" fails when the route is present.
+func TestDefaultRouteStepsAreSafeToRepeat(t *testing.T) {
+	steps := defaultRouteSteps("metal-vm-1", "10.0.0.1")
+
+	if !slices.Contains(steps[0], "replace") || slices.Contains(steps[0], "add") {
+		t.Fatalf("default route step = %v, want replace", steps[0])
+	}
+}
+
+// The internet path keeps the route steps, so one caller cannot drift from the other.
+func TestInternetPathStepsExtendTheDefaultRoute(t *testing.T) {
+	route := defaultRouteSteps("metal-vm-1", "10.0.0.1")
+	steps := internetPathSteps("metal-vm-1", "vg-1000", "10.0.0.1")
+
+	if len(steps) != len(route)+1 {
+		t.Fatalf("internet path steps = %d, want %d", len(steps), len(route)+1)
+	}
+	for index, step := range route {
+		if !slices.Equal(steps[index], step) {
+			t.Fatalf("step %d = %v, want %v", index, steps[index], step)
+		}
+	}
+	if !slices.Contains(steps[len(steps)-1], "MASQUERADE") {
+		t.Fatalf("last step = %v, want MASQUERADE", steps[len(steps)-1])
 	}
 }

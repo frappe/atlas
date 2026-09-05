@@ -15,7 +15,11 @@ if TYPE_CHECKING:
 	from atlas.atlas.doctype.atlas_settings.atlas_settings import AtlasSettings
 	from atlas.server.doctype.server.server import Server
 	from atlas.server.doctype.server_ip_address.server_ip_address import ServerIPAddress
+	from atlas.vm.doctype.virtual_machine.virtual_machine import VirtualMachine
 	from atlas.vm.doctype.virtual_machine_image.virtual_machine_image import VirtualMachineImage
+
+
+EGRESS_MODES = ("uplink", "mesh", "none")
 
 
 @dataclass(frozen=True, slots=True)
@@ -30,7 +34,9 @@ class VirtualMachineCreateRequest:
 	hostname: str = ""
 	ssh_keys: tuple[str, ...] = ()
 	user_data: str = ""
-	egress: str = "host"
+	egress: str = "uplink"
+	private_network_throughput_mbps: int = 0
+	public_network_throughput_mbps: int = 0
 	server_ip_address: str | None = None
 	metadata: dict[str, str] = field(default_factory=dict)
 
@@ -52,9 +58,13 @@ class VirtualMachineCreateRequest:
 		if not isinstance(tenant_id, int) or isinstance(tenant_id, bool) or not 0 <= tenant_id <= 0xFFFFFFFF:
 			raise ValueError("Tenant ID must be a 32-bit unsigned integer.")
 
-		egress = payload.get("egress") or "host"
-		if egress not in {"host", "none"}:
-			raise ValueError("Egress must be host or none.")
+		egress = payload.get("egress") or "uplink"
+		if egress not in EGRESS_MODES:
+			raise ValueError("Egress must be uplink, mesh, or none.")
+
+		public_throughput = cls._throughput(payload, "public_network_throughput_mbps")
+		server_ip_address = payload.get("server_ip_address") or None
+		cls._validate_internet_path(egress, server_ip_address)
 
 		return cls(
 			virtual_machine_image=image,
@@ -66,9 +76,25 @@ class VirtualMachineCreateRequest:
 			ssh_keys=tuple(str(payload.get("ssh_keys") or "").splitlines()),
 			user_data=str(payload.get("user_data") or ""),
 			egress=egress,
-			server_ip_address=payload.get("server_ip_address") or None,
+			private_network_throughput_mbps=cls._throughput(payload, "private_network_throughput_mbps"),
+			public_network_throughput_mbps=public_throughput,
+			server_ip_address=server_ip_address,
 			metadata=cls._metadata(payload),
 		)
+
+	@staticmethod
+	def _validate_internet_path(egress: str, server_ip_address: str | None) -> None:
+		"""Reject a public IPv4 address when the mode has no internet path."""
+		if egress != "uplink" and server_ip_address:
+			raise ValueError("A public IPv4 address requires uplink egress.")
+
+	@staticmethod
+	def _throughput(payload: dict[str, Any], field: str) -> int:
+		"""Return one throughput limit in Mbps. A value of 0 does not apply a limit."""
+		value = payload.get(field) or 0
+		if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+			raise ValueError(f"{field} must be a non-negative integer.")
+		return value
 
 	@staticmethod
 	def _metadata(payload: dict[str, Any]) -> dict[str, str]:
@@ -130,7 +156,11 @@ class VirtualMachineManager:
 		server_name = cast(str, server.name)
 		virtual_machine = self.insert_draft(request, image_name, server_name)
 		virtual_machine_name = cast(str, virtual_machine.name)
-		server_ip_address = self.assign_ip_address(request.server_ip_address, server, virtual_machine_name)
+		server_ip_address = (
+			virtual_machine.assign_ip_address(request.server_ip_address)
+			if request.server_ip_address
+			else None
+		)
 		metal_request = self.get_metal_request(request, image, virtual_machine, server_ip_address)
 		frappe.db.commit()  # nosemgrep
 
@@ -204,7 +234,7 @@ class VirtualMachineManager:
 		)
 		return cast("Server", frappe.get_doc("Server", selected_capacity.server))
 
-	def insert_draft(self, request: VirtualMachineCreateRequest, image: str, server: str) -> Document:
+	def insert_draft(self, request: VirtualMachineCreateRequest, image: str, server: str) -> "VirtualMachine":
 		virtual_machine = frappe.get_doc(
 			{
 				"doctype": "Virtual Machine",
@@ -218,19 +248,7 @@ class VirtualMachineManager:
 			}
 		)
 		virtual_machine.flags.created_by_virtual_machine_api = True
-		return virtual_machine.insert(ignore_permissions=True)
-
-	def assign_ip_address(
-		self, name: str | None, server: "Server", virtual_machine: str
-	) -> "ServerIPAddress | None":
-		if not name:
-			return None
-		address = cast(
-			"ServerIPAddress",
-			frappe.get_doc("Server IP Address", name, for_update=True),
-		)
-		address.begin_assignment(server, virtual_machine)
-		return address
+		return cast("VirtualMachine", virtual_machine.insert(ignore_permissions=True))
 
 	def get_metal_request(
 		self,
@@ -251,6 +269,8 @@ class VirtualMachineManager:
 			"network": {
 				"public_ipv4": server_ip_address.address if server_ip_address else None,
 				"wireguard_mesh_ipv6": self.get_wireguard_mesh_ipv6(virtual_machine),
+				"private_network_throughput_mbps": request.private_network_throughput_mbps,
+				"public_network_throughput_mbps": request.public_network_throughput_mbps,
 				"egress": request.egress,
 			},
 		}

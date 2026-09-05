@@ -51,13 +51,13 @@ class ServerIPAddress(Document):
 			frappe.throw(_("Detach this IP address before deletion."))
 		frappe.get_single("Atlas Settings").server_provider_controller.delete_ip(self.provider_resource_id)
 
-	def begin_assignment(self, server: Document, virtual_machine: str) -> None:
+	def begin_assignment(self, server: str, virtual_machine: str) -> None:
 		"""Set an attach intent for this address."""
 		if self.status != "Allocated":
 			frappe.throw(_("Server IP Address {0} is not available.").format(self.name))
 
 		self.status = "Attaching"
-		self.server = server.name
+		self.server = server
 		self.virtual_machine = virtual_machine
 		self.intent_version = (self.intent_version or 0) + 1
 		self.save(ignore_permissions=True)

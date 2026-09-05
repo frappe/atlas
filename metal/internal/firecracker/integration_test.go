@@ -82,7 +82,7 @@ func spec(image, pub string) vm.Spec {
 			KernelSHA256: os.Getenv("METAL_KERNEL_SHA256"),
 			Architecture: runtime.GOARCH,
 		},
-		Network: vm.Network{Egress: vm.EgressHost},
+		Network: vm.Network{Egress: vm.EgressUplink},
 		SSHKeys: []string{pub},
 	}
 }

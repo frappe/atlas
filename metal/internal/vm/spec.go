@@ -41,9 +41,11 @@ type MemorySnapshotConfiguration struct {
 
 // Network contains the requested VM network configuration.
 type Network struct {
-	PublicIPv4        string
-	WireGuardMeshIPv6 string
-	Egress            Egress
+	PublicIPv4                   string
+	WireGuardMeshIPv6            string
+	PrivateNetworkThroughputMbps int
+	PublicNetworkThroughputMbps  int
+	Egress                       Egress
 }
 
 // SameReservation reports whether two specifications reserve the same VM.
@@ -72,12 +74,36 @@ func (spec Spec) RefreshImageSource(other Spec) Spec {
 	return spec
 }
 
-// Egress controls VM access to the host uplink.
+// Egress controls internet reachability for a VM. It does not control mesh
+// reachability. A VM keeps its private network attachment for every mode except
+// EgressNone.
 type Egress string
 
 const (
-	// EgressHost routes VM traffic through the host.
-	EgressHost Egress = "host"
-	// EgressNone disables VM traffic through the host.
+	// EgressUplink routes VM traffic to the internet through the host uplink.
+	EgressUplink Egress = "uplink"
+	// EgressMesh keeps the private network attachment and gives no internet path.
+	EgressMesh Egress = "mesh"
+	// EgressNone removes the private network attachment and isolates the VM.
 	EgressNone Egress = "none"
 )
+
+// IsValid reports whether the value names one egress mode.
+func (egress Egress) IsValid() bool {
+	switch egress {
+	case EgressUplink, EgressMesh, EgressNone:
+		return true
+	default:
+		return false
+	}
+}
+
+// HasVirtualEthernet reports whether the mode keeps the private network attachment.
+func (egress Egress) HasVirtualEthernet() bool {
+	return egress == EgressUplink || egress == EgressMesh
+}
+
+// HasInternetPath reports whether the mode gives the VM a route to the internet.
+func (egress Egress) HasInternetPath() bool {
+	return egress == EgressUplink
+}

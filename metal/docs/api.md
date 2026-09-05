@@ -56,7 +56,9 @@ Content-Type: application/json
   "network": {
     "public_ipv4": "203.0.113.10",
     "wireguard_mesh_ipv6": "fdaa:1:0:7::1",
-    "egress": "host"
+    "private_network_throughput_mbps": 100,
+    "public_network_throughput_mbps": 50,
+    "egress": "uplink"
   }
 }
 ```
@@ -93,6 +95,7 @@ They do not contain image transport URLs, the internal guest IP, or the Firecrac
 | `PUT` | `/vms/{id}` | create or confirm a VM reservation |
 | `GET` | `/vms` | list VMs |
 | `GET` | `/vms/{id}` | get one VM |
+| `PUT` | `/vms/{id}/network` | update mutable network settings |
 | `PUT` | `/vms/{id}/ssh-keys` | replace all authorized SSH keys |
 | `POST` | `/vms/{id}/actions/start` | request the running state |
 | `POST` | `/vms/{id}/actions/stop` | request the stopped state |
@@ -107,11 +110,34 @@ Lifecycle requests return `202`. Poll `GET /vms/{id}` until `state` reaches `des
 
 `PUT /vms/{id}/ssh-keys` accepts the complete desired `ssh_keys` list and returns the updated VM. An empty list removes all keys. The list can contain at most 100 unique OpenSSH keys. Each key must use one line and be at most 16 KiB. Running and paused VMs receive updated MMDS immediately. Stopped VMs use the keys at their next boot.
 
+`PUT /vms/{id}/network` replaces mutable network settings without a VM restart and returns the updated VM.
+
+```json
+{
+  "egress": "uplink",
+  "public_ipv4": "203.0.113.10",
+  "private_network_throughput_mbps": 100,
+  "public_network_throughput_mbps": 50
+}
+```
+
+`egress` controls internet reachability. It does not control mesh reachability.
+
+| Value | VM can reach | Public IPv4 | Throughput limits |
+|---|---|---|---|
+| `uplink` | mesh peers and the internet | allowed | private and public |
+| `mesh` | mesh peers only | rejected | private applied, public stored |
+| `none` | nothing | rejected | none |
+
+`egress` is required.
+
+Use an empty `public_ipv4` to detach the address. Throughput values apply in both directions. `0` removes a limit. Metal keeps a limit that the mode does not permit and applies it when the mode permits it. Active connections can stop when the public IPv4 address or the egress mode changes.
+
 `GET /vms/{id}/console` upgrades the request to a websocket for the serial console. The bearer token guards the handshake. Metal sends console output as binary frames. A viewer sends keystrokes as binary frames and a terminal resize as a text frame `{"resize":{"cols":80,"rows":24}}`. New viewers first receive the recent scrollback. Metal keeps the console open only while the VM runs. After a metald restart, the console is unavailable until the VM starts again, and the socket closes with a going-away status.
 
 ## Image staging
 
-Metal does not expose image list, image delete, or in-place snapshot restore APIs. Atlas uses a VM disk checkpoint to create a new immutable image.
+Metal uses a VM disk checkpoint to create a new immutable image. It does not expose image list, delete, or restore APIs.
 
 | Method | Path | Action |
 |---|---|---|
@@ -120,13 +146,11 @@ Metal does not expose image list, image delete, or in-place snapshot restore API
 | `GET` | `/snapshots/{snapshot_id}` | get upload status and completed artifact details |
 | `DELETE` | `/snapshots/{snapshot_id}` | remove local staging |
 
-The create response contains the Metal-generated snapshot ID and the exact rootfs and kernel sizes. Atlas uses the ID as its Machine image document name. Upload parts are 2 GiB, except for the final part. Metal streams each part in the background. The status reports each part HTTP ETag and the SHA-256 value of each complete artifact. Atlas completes the multipart uploads, then deletes local staging.
+The create response contains the snapshot ID and rootfs and kernel sizes. Atlas uses the ID as its Machine image name. Parts are 2 GiB, except the final part. The status reports part ETags and artifact SHA-256 values.
 
-The upload request returns `202`. Poll `GET /snapshots/{snapshot_id}` until the state is `completed` or `failed`. The status reports `uploaded_bytes`, `total_bytes`, and `progress_percent` while the upload runs. The completed response also contains the artifact sizes, SHA-256 values, and ETags.
+The upload request returns `202`. Poll `GET /snapshots/{snapshot_id}` until `completed` or `failed`. The response reports progress during upload and artifact details when complete.
 
-Metal updates snapshot activity when an upload starts or finishes. The image reconciler deletes local staging after 48 hours without activity.
-
-A staging snapshot is only an image-transfer resource. It cannot roll back its source VM.
+Metal updates snapshot activity during upload. The image reconciler deletes staging after 48 hours without activity. A staging snapshot cannot roll back its source VM.
 
 ## Controller exchange
 

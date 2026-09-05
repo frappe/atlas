@@ -29,11 +29,11 @@ frappe.ui.form.on("Virtual Machine", {
 		}
 
 		[
-			[__("Start"), "start", is_stopped, __("Starting...")],
-			[__("Stop"), "stop", is_running || is_paused, __("Stopping...")],
-			[__("Reboot"), "reboot", is_running, __("Rebooting...")],
-			[__("Pause"), "pause", is_running, __("Pausing...")],
-			[__("Resume"), "resume", is_paused, __("Resuming...")],
+			[__("Start VM"), "start", is_stopped, __("Starting...")],
+			[__("Stop VM"), "stop", is_running || is_paused, __("Stopping...")],
+			[__("Reboot VM"), "reboot", is_running, __("Rebooting...")],
+			[__("Pause VM"), "pause", is_running, __("Pausing...")],
+			[__("Resume VM"), "resume", is_paused, __("Resuming...")],
 		].forEach(([label, method, condition, freeze_message]) => {
 			if (!condition) {
 				return;
@@ -49,7 +49,7 @@ frappe.ui.form.on("Virtual Machine", {
 		});
 
 		frm.add_custom_button(
-			__("Snapshot"),
+			__("Snapshot VM"),
 			() => showCreateMachineImageDialog(frm),
 			__("Actions")
 		);
@@ -72,7 +72,30 @@ frappe.ui.form.on("Virtual Machine", {
 			__("Actions")
 		);
 		frm.add_custom_button(
-			__("Terminate"),
+			__("Edit Network Throughput"),
+			() => showEditThroughputDialog(frm),
+			__("Actions")
+		);
+		frm.add_custom_button(
+			__("Change Egress Mode"),
+			() => showEgressDialog(frm),
+			__("Actions")
+		);
+		if (frm.doc.public_ipv4) {
+			frm.add_custom_button(
+				__("Detach IP Address"),
+				() => detachIPAddress(frm),
+				__("Actions")
+			);
+		} else {
+			frm.add_custom_button(
+				__("Attach IP Address"),
+				() => showAttachIPAddressDialog(frm),
+				__("Actions")
+			);
+		}
+		frm.add_custom_button(
+			__("Terminate VM"),
 			() =>
 				frm
 					.call({
@@ -271,5 +294,108 @@ function showResizeComputeDialog(frm) {
 				.then(() => frm.reload_doc()),
 		__("Resize Compute"),
 		__("Resize")
+	);
+}
+
+function showEditThroughputDialog(frm) {
+	frappe.prompt(
+		[
+			{
+				fieldname: "private_network_throughput_mbps",
+				fieldtype: "Int",
+				label: __("Private Throughput (Mbps)"),
+				default: frm.doc.private_network_throughput_mbps,
+				description: __("0 does not apply a limit."),
+			},
+			{
+				fieldname: "public_network_throughput_mbps",
+				fieldtype: "Int",
+				label: __("Public Throughput (Mbps)"),
+				default: frm.doc.public_network_throughput_mbps,
+				description: __("0 does not apply a limit."),
+			},
+		],
+		(values) =>
+			frm
+				.call({
+					method: "update_network_throughput",
+					doc: frm.doc,
+					args: values,
+					freeze: true,
+					freeze_message: __("Updating throughput limits..."),
+				})
+				.then(() => frm.reload_doc()),
+		__("Edit Network Throughput"),
+		__("Save")
+	);
+}
+
+function showEgressDialog(frm) {
+	frappe.prompt(
+		{
+			fieldname: "egress",
+			fieldtype: "Select",
+			label: __("Egress"),
+			options: ["uplink", "mesh", "none"],
+			reqd: 1,
+			default: frm.doc.egress,
+			description: __(
+				"uplink reaches the internet. mesh reaches tenant VMs only. none isolates the VM. Active connections can stop."
+			),
+		},
+		({ egress }) =>
+			frm
+				.call({
+					method: "update_egress",
+					doc: frm.doc,
+					args: { egress },
+					freeze: true,
+					freeze_message: __("Changing egress mode..."),
+				})
+				.then(() => frm.reload_doc()),
+		__("Change Egress Mode"),
+		__("Save")
+	);
+}
+
+function showAttachIPAddressDialog(frm) {
+	frappe.prompt(
+		{
+			fieldname: "server_ip_address",
+			fieldtype: "Link",
+			label: __("Server IP Address"),
+			options: "Server IP Address",
+			reqd: 1,
+			filters: { status: "Allocated" },
+		},
+		({ server_ip_address }) =>
+			frm
+				.call({
+					method: "attach_ip_address",
+					doc: frm.doc,
+					args: { server_ip_address },
+					freeze: true,
+					freeze_message: __("Attaching IP address..."),
+				})
+				.then(() => frm.reload_doc()),
+		__("Attach IP Address"),
+		__("Attach")
+	);
+}
+
+function detachIPAddress(frm) {
+	frappe.confirm(
+		__("Detach {0} from this Virtual Machine? Active connections can stop.", [
+			frm.doc.public_ipv4,
+		]),
+		() =>
+			frm
+				.call({
+					method: "detach_ip_address",
+					doc: frm.doc,
+					freeze: true,
+					freeze_message: __("Detaching IP address..."),
+				})
+				.then(() => frm.reload_doc())
 	);
 }

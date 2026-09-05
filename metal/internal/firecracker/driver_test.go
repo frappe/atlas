@@ -16,14 +16,22 @@ type fakeNetwork struct {
 	allocateCalls int
 	releaseCalls  int
 	releaseError  error
+	request       network.Request
+	updateRequest network.UpdateRequest
 }
 
-func (f *fakeNetwork) Allocate(context.Context, network.Request) (network.Interface, error) {
+func (f *fakeNetwork) Allocate(_ context.Context, request network.Request) (network.Interface, error) {
 	f.allocateCalls++
+	f.request = request
 	return network.Interface{GuestIPAddress: "172.16.0.2", MACAddress: "02:00:00:00:00:01"}, nil
 }
 
 func (f *fakeNetwork) Resolve(string) network.Interface { return network.Interface{} }
+
+func (f *fakeNetwork) Update(_ context.Context, request network.UpdateRequest) error {
+	f.updateRequest = request
+	return nil
+}
 
 func (f *fakeNetwork) Release(context.Context, string) error {
 	f.releaseCalls++
@@ -85,6 +93,75 @@ func TestCreateRejectsChangedSpecForStableID(t *testing.T) {
 	}
 	if _, err := driver.Create(context.Background(), "vm-1", vm.Spec{VCPUs: 2}); !errors.Is(err, vm.ErrConflict) {
 		t.Fatalf("create changed spec = %v, want ErrConflict", err)
+	}
+}
+
+func TestAllocateNetworkPassesThroughputLimits(t *testing.T) {
+	driver, networkAllocator, _ := testDriver(t)
+	configuration := vmConfig{
+		ID:  "vm-1",
+		UID: 1000,
+		GID: 1000,
+		Spec: vm.Spec{Network: vm.Network{
+			PrivateNetworkThroughputMbps: 100,
+			PublicNetworkThroughputMbps:  50,
+		}},
+	}
+
+	if _, err := driver.allocateNetwork(context.Background(), configuration); err != nil {
+		t.Fatal(err)
+	}
+	if networkAllocator.allocateCalls != 1 {
+		t.Fatalf("network allocations = %d, want 1", networkAllocator.allocateCalls)
+	}
+	if networkAllocator.request.PrivateNetworkThroughputMbps != 100 || networkAllocator.request.PublicNetworkThroughputMbps != 50 {
+		t.Fatalf("throughput limits = %+v", networkAllocator.request)
+	}
+}
+
+func TestUpdateNetworkPersistsAndAppliesSettings(t *testing.T) {
+	driver, networkAllocator, _ := testDriver(t)
+	if _, err := driver.Create(context.Background(), "vm-1", vm.Spec{Network: vm.Network{Egress: vm.EgressNone}}); err != nil {
+		t.Fatal(err)
+	}
+
+	update := vm.NetworkUpdate{
+		Egress:                       vm.EgressUplink,
+		PublicIPv4:                   "203.0.113.10",
+		PrivateNetworkThroughputMbps: 100,
+		PublicNetworkThroughputMbps:  50,
+	}
+	if err := driver.UpdateNetwork(context.Background(), "vm-1", update); err != nil {
+		t.Fatal(err)
+	}
+	if networkAllocator.updateRequest.Previous.Egress != vm.EgressNone || networkAllocator.updateRequest.Desired.PublicIPv4 != update.PublicIPv4 {
+		t.Fatalf("network update = %+v", networkAllocator.updateRequest)
+	}
+
+	configuration, err := driver.cfg.readVMConfig("vm-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if configuration.Spec.Network != (vm.Network{Egress: vm.EgressUplink, PublicIPv4: update.PublicIPv4, PrivateNetworkThroughputMbps: 100, PublicNetworkThroughputMbps: 50}) {
+		t.Fatalf("network = %+v", configuration.Spec.Network)
+	}
+}
+
+func TestUpdateNetworkRejectsPublicIPv4WithoutUplink(t *testing.T) {
+	driver, networkAllocator, _ := testDriver(t)
+	if _, err := driver.Create(context.Background(), "vm-1", vm.Spec{Network: vm.Network{Egress: vm.EgressUplink}}); err != nil {
+		t.Fatal(err)
+	}
+
+	err := driver.UpdateNetwork(context.Background(), "vm-1", vm.NetworkUpdate{
+		Egress:     vm.EgressMesh,
+		PublicIPv4: "203.0.113.10",
+	})
+	if err == nil {
+		t.Fatal("a public IPv4 address without an internet path must fail")
+	}
+	if networkAllocator.updateRequest.VirtualMachineID != "" {
+		t.Fatal("the network must not change when the request is invalid")
 	}
 }
 
