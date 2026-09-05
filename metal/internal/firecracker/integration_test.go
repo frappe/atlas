@@ -19,6 +19,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/frappe/atlas/metal/internal/console"
 	"github.com/frappe/atlas/metal/internal/network"
 	"github.com/frappe/atlas/metal/internal/storage"
 	"github.com/frappe/atlas/metal/internal/systemd"
@@ -53,6 +54,21 @@ func skipUnlessHost(t *testing.T) (image, pub string) {
 	return image, strings.TrimSpace(string(b))
 }
 
+// integrationMesh builds the mesh that the host integration test needs. The
+// test already requires a configured host, so a missing CLI skips it.
+func integrationMesh(t *testing.T) *network.Mesh {
+	t.Helper()
+	mesh, err := network.NewMesh(network.MeshConfig{
+		CommandPath:   "atlas-wg-mesh",
+		UplinkName:    "eth0",
+		WireGuardName: "wg0",
+	})
+	if err != nil {
+		t.Skipf("Atlas WG Mesh is not installed: %v", err)
+	}
+	return mesh
+}
+
 func newDriver(t *testing.T) *Driver {
 	t.Helper()
 	units, err := systemd.Connect(context.Background())
@@ -61,13 +77,16 @@ func newDriver(t *testing.T) *Driver {
 	}
 	t.Cleanup(func() { units.Close() })
 	stores := storage.NewStores(env("METAL_POOL", "metal"), env("METAL_IMAGES_DIR", "/var/lib/metal/images"))
+	consoleBroker := console.NewBroker(t.TempDir())
+	t.Cleanup(consoleBroker.Shutdown)
 	return New(
 		DefaultConfig(),
 		units,
 		stores.VirtualMachines,
 		stores.Images,
 		stores.Snapshots,
-		network.NewLinuxAllocator(),
+		network.NewLinuxAllocator(integrationMesh(t)),
+		consoleBroker,
 	)
 }
 

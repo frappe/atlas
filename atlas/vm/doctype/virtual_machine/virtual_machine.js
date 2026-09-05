@@ -99,6 +99,14 @@ frappe.ui.form.on("Virtual Machine", {
 				__("Actions")
 			);
 		}
+		// Only a tenant 0 VM can hold the Atlas WG Mesh privilege.
+		if (frm.doc.tenant_id === 0) {
+			frm.add_custom_button(
+				frm.doc.is_privileged ? __("Revoke Privilege") : __("Grant Privilege"),
+				() => showPrivilegeDialog(frm),
+				__("Dangerous Actions")
+			);
+		}
 		frm.add_custom_button(
 			__("Terminate VM"),
 			() =>
@@ -114,6 +122,37 @@ frappe.ui.form.on("Virtual Machine", {
 		);
 	},
 });
+
+function showPrivilegeDialog(frm) {
+	const granting = !frm.doc.is_privileged;
+	const lines = granting
+		? [
+				__("This Virtual Machine reaches every tenant, and every tenant reaches it."),
+				__("A privileged Virtual Machine must use tenant 0."),
+		  ]
+		: [__("This Virtual Machine stops reaching other tenants, and they stop reaching it.")];
+	lines.push(__("Each host applies the change on its next sync. It can take up to 30 seconds."));
+
+	frappe.confirm(lines.map((line) => `<p>${line}</p>`).join(""), () =>
+		frm
+			.call({
+				method: "set_privileged",
+				doc: frm.doc,
+				args: { is_privileged: granting },
+				freeze: true,
+				freeze_message: granting
+					? __("Granting privilege...")
+					: __("Revoking privilege..."),
+			})
+			.then(() => {
+				frappe.show_alert({
+					message: __("Every host applies this within 30 seconds."),
+					indicator: "orange",
+				});
+				frm.reload_doc();
+			})
+	);
+}
 
 function openConsole(frm, mode) {
 	// Open a tab before the async token request to avoid popup blocking.

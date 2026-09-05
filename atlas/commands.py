@@ -13,10 +13,57 @@ from frappe.commands import pass_context
 from frappe.exceptions import SiteNotSpecifiedError
 from frappe.utils.bench_helper import CliCtxObj
 
+from atlas.atlas.core.host_binaries import (
+	HostBinary,
+	ensure_build_environment,
+	ensure_go_toolchain,
+	find_host_binary,
+	is_published,
+	publish_host_binary,
+	source_digest,
+)
 from atlas.vm.core.virtual_machine_image_manager import bytes_to_mib
 
 if TYPE_CHECKING:
 	from atlas.atlas.s3 import S3Client
+
+
+@click.command("build-metald")
+@pass_context
+def build_metald(context: CliCtxObj) -> None:
+	"""Build metald and link it in Atlas Settings."""
+	build_and_publish(context, find_host_binary("metald"))
+
+
+@click.command("build-wg-mesh")
+@pass_context
+def build_wg_mesh(context: CliCtxObj) -> None:
+	"""Build the Atlas WG Mesh CLI and link it in Atlas Settings."""
+	build_and_publish(context, find_host_binary("wg-mesh"))
+
+
+def build_and_publish(context: CliCtxObj, binary: HostBinary) -> None:
+	"""Build one host binary for each site, unless its sources are unchanged."""
+	if not context.sites:
+		raise SiteNotSpecifiedError
+
+	for site in context.sites:
+		try:
+			frappe.init(site)
+			frappe.connect()
+
+			digest = source_digest(binary)
+			if is_published(binary, digest):
+				click.echo(f"{binary.label} is current on {site}")
+				continue
+
+			ensure_build_environment((binary,))
+			click.echo(f"Building {binary.label} for {site}")
+			file_name = publish_host_binary(binary, ensure_go_toolchain(), digest)
+			frappe.db.commit()  # nosemgrep
+			click.echo(f"Published {binary.label} as File {file_name} on {site}")
+		finally:
+			frappe.destroy()
 
 
 @click.command("build-ubuntu-base-image")
@@ -175,4 +222,4 @@ def _upload_with_progress(s3_client: "S3Client", source: Path, key: str) -> None
 	click.echo()
 
 
-commands = [build_ubuntu_base_image]
+commands = [build_metald, build_wg_mesh, build_ubuntu_base_image]

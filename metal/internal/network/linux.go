@@ -2,7 +2,6 @@ package network
 
 import (
 	"context"
-	"crypto/sha256"
 	"errors"
 	"fmt"
 	"os/exec"
@@ -17,13 +16,21 @@ const (
 	gatewayIPAddress    = "172.16.0.1"
 	guestIPAddress      = "172.16.0.2"
 	networkPrefixLength = 24
+	guestMACAddress     = "06:00:ac:10:00:02"
 )
 
+type meshRegistrar interface {
+	Add(ctx context.Context, address, interfaceName string) error
+	Remove(ctx context.Context, address, interfaceName string) error
+}
+
 // LinuxAllocator creates Linux network resources for virtual machines.
-type LinuxAllocator struct{}
+type LinuxAllocator struct {
+	mesh meshRegistrar
+}
 
 // NewLinuxAllocator returns a Linux network allocator.
-func NewLinuxAllocator() *LinuxAllocator { return &LinuxAllocator{} }
+func NewLinuxAllocator(mesh *Mesh) *LinuxAllocator { return &LinuxAllocator{mesh: mesh} }
 
 // Allocate creates virtual machine network resources.
 func (allocator *LinuxAllocator) Allocate(ctx context.Context, request Request) (Interface, error) {
@@ -34,6 +41,11 @@ func (allocator *LinuxAllocator) Allocate(ctx context.Context, request Request) 
 	if exists {
 		if err := configureTrafficControl(ctx, request.trafficControl()); err != nil {
 			return Interface{}, fmt.Errorf("configure traffic control: %w", err)
+		}
+		if request.Egress.HasVirtualEthernet() {
+			if err := allocator.addMeshRegistration(ctx, request.VirtualMachineID, request.UserID, request.WireGuardMeshIPv6); err != nil {
+				return Interface{}, err
+			}
 		}
 		return allocator.Resolve(request.VirtualMachineID), nil
 	}
@@ -67,14 +79,18 @@ func (allocator *LinuxAllocator) Allocate(ctx context.Context, request Request) 
 	}
 	for _, step := range steps {
 		if err := hostcmd.Run(ctx, step[0], step[1:]...); err != nil {
-			releaseError := allocator.Release(ctx, request.VirtualMachineID)
+			releaseError := allocator.Release(ctx, request.release())
 			linkError := hostcmd.Run(ctx, "ip", "link", "del", hostVirtualEthernet)
 			return Interface{}, errors.Join(err, releaseError, linkError)
 		}
 	}
 	if err := configureTrafficControl(ctx, request.trafficControl()); err != nil {
-		releaseError := allocator.Release(ctx, request.VirtualMachineID)
-		return Interface{}, errors.Join(fmt.Errorf("configure traffic control: %w", err), releaseError)
+		return Interface{}, errors.Join(fmt.Errorf("configure traffic control: %w", err), allocator.Release(ctx, request.release()))
+	}
+	if egress.HasVirtualEthernet() {
+		if err := allocator.addMeshRegistration(ctx, request.VirtualMachineID, request.UserID, request.WireGuardMeshIPv6); err != nil {
+			return Interface{}, errors.Join(err, allocator.Release(ctx, request.release()))
+		}
 	}
 	return allocator.Resolve(request.VirtualMachineID), nil
 }
@@ -111,6 +127,13 @@ func (allocator *LinuxAllocator) update(ctx context.Context, request UpdateReque
 		}
 	}
 
+	meshAddress := request.Desired.WireGuardMeshIPv6
+	if !desired.HasVirtualEthernet() {
+		if err := allocator.removeMeshRegistration(ctx, request.UserID, meshAddress); err != nil {
+			return err
+		}
+	}
+
 	if previous.HasInternetPath() && !desired.HasInternetPath() {
 		if err := removeInternetPath(ctx, request.VirtualMachineID, request.UserID); err != nil {
 			return err
@@ -133,6 +156,12 @@ func (allocator *LinuxAllocator) update(ctx context.Context, request UpdateReque
 		}
 	}
 
+	if desired.HasVirtualEthernet() {
+		if err := allocator.addMeshRegistration(ctx, request.VirtualMachineID, request.UserID, meshAddress); err != nil {
+			return err
+		}
+	}
+
 	return configureTrafficControl(ctx, trafficControlRequest{
 		VirtualMachineID:              request.VirtualMachineID,
 		UserID:                        request.UserID,
@@ -147,27 +176,62 @@ func (allocator *LinuxAllocator) Resolve(virtualMachineID string) Interface {
 	return Interface{
 		NetworkNamespacePath: namespacePath(virtualMachineID),
 		TapName:              tapName,
-		MACAddress:           macAddressFor(virtualMachineID),
+		MACAddress:           guestMACAddress,
 		GuestIPAddress:       guestIPAddress,
 		GatewayIPAddress:     gatewayIPAddress,
 	}
 }
 
-// Release removes a virtual machine network.
-func (allocator *LinuxAllocator) Release(ctx context.Context, virtualMachineID string) error {
+// Release removes a virtual machine network. It removes the mesh registration
+// first, because deleting the namespace also deletes the veth pair that the
+// registration names.
+func (allocator *LinuxAllocator) Release(ctx context.Context, request ReleaseRequest) error {
+	virtualMachineID := request.VirtualMachineID
+	meshError := allocator.removeMeshRegistration(ctx, request.UserID, request.WireGuardMeshIPv6)
 	rulesError := removePublicIPv4Rules(ctx, virtualMachineID)
 
 	exists, err := networkNamespaceExists(ctx, virtualMachineID)
 	if err != nil {
-		return errors.Join(rulesError, err)
+		return errors.Join(meshError, rulesError, err)
 	}
 	if !exists {
-		return rulesError
+		return errors.Join(meshError, rulesError)
 	}
 	namespaceRulesError := removePublicIPv4NamespaceRules(ctx, virtualMachineID)
 
 	namespaceError := hostcmd.Run(ctx, "ip", "netns", "del", namespaceName(virtualMachineID))
-	return errors.Join(rulesError, namespaceRulesError, namespaceError)
+	return errors.Join(meshError, rulesError, namespaceRulesError, namespaceError)
+}
+
+// addMeshRegistration routes the guest mesh address through the namespace and
+// registers it with Atlas WG Mesh. The registration announces the VM location,
+// so it comes last and the first packet that it attracts finds a complete path.
+func (allocator *LinuxAllocator) addMeshRegistration(ctx context.Context, virtualMachineID string, userID uint32, address string) error {
+	if address == "" {
+		return nil
+	}
+
+	hostVirtualEthernet, guestVirtualEthernet := virtualEthernetNames(userID)
+	if err := runSteps(ctx, meshNamespaceSteps(namespaceName(virtualMachineID), guestVirtualEthernet, address)); err != nil {
+		return fmt.Errorf("route mesh address %s: %w", address, err)
+	}
+	if err := allocator.mesh.Add(ctx, address, hostVirtualEthernet); err != nil {
+		return fmt.Errorf("register mesh address %s: %w", address, err)
+	}
+	return nil
+}
+
+// removeMeshRegistration unregisters the guest mesh address.
+func (allocator *LinuxAllocator) removeMeshRegistration(ctx context.Context, userID uint32, address string) error {
+	if address == "" {
+		return nil
+	}
+
+	hostVirtualEthernet, _ := virtualEthernetNames(userID)
+	if err := allocator.mesh.Remove(ctx, address, hostVirtualEthernet); err != nil {
+		return fmt.Errorf("unregister mesh address %s: %w", address, err)
+	}
+	return nil
 }
 
 func namespaceName(virtualMachineID string) string { return "metal-" + virtualMachineID }
@@ -423,11 +487,6 @@ func hasRuleComment(arguments []string, expected string) bool {
 
 func publicIPv4Comment(virtualMachineID string) string {
 	return "metal-public-ipv4-" + virtualMachineID
-}
-
-func macAddressFor(virtualMachineID string) string {
-	digest := sha256.Sum256([]byte(virtualMachineID))
-	return fmt.Sprintf("02:%02x:%02x:%02x:%02x:%02x", digest[0], digest[1], digest[2], digest[3], digest[4])
 }
 
 var _ Allocator = (*LinuxAllocator)(nil)

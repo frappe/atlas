@@ -12,7 +12,14 @@ type Allocator interface {
 	Allocate(ctx context.Context, request Request) (Interface, error)
 	Update(ctx context.Context, request UpdateRequest) error
 	Resolve(virtualMachineID string) Interface
-	Release(ctx context.Context, virtualMachineID string) error
+	Release(ctx context.Context, request ReleaseRequest) error
+}
+
+// ReleaseRequest identifies the virtual machine network to remove.
+type ReleaseRequest struct {
+	VirtualMachineID  string
+	UserID            uint32
+	WireGuardMeshIPv6 string
 }
 
 // UpdateRequest contains one live virtual machine network update.
@@ -28,10 +35,20 @@ type Request struct {
 	VirtualMachineID              string
 	Egress                        vm.Egress
 	PublicIPv4                    string
+	WireGuardMeshIPv6             string
 	PrivateNetworkThroughputMiBps int
 	PublicNetworkThroughputMiBps  int
 	UserID                        uint32
 	GroupID                       uint32
+}
+
+// release returns the request that removes this allocation.
+func (request Request) release() ReleaseRequest {
+	return ReleaseRequest{
+		VirtualMachineID:  request.VirtualMachineID,
+		UserID:            request.UserID,
+		WireGuardMeshIPv6: request.WireGuardMeshIPv6,
+	}
 }
 
 func (request Request) trafficControl() trafficControlRequest {

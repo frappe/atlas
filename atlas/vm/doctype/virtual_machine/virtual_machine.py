@@ -8,6 +8,7 @@ from frappe import _, request_cache
 from frappe.model.document import Document
 from frappe.utils import add_to_date, cint, now_datetime
 
+from atlas.atlas.core.parsing import strict_bool
 from atlas.vm.core.metal_client import MetalClient, MetalClientError, throw_metal_error
 from atlas.vm.core.virtual_machine_manager import EGRESS_MODES, VirtualMachineManager
 
@@ -15,6 +16,8 @@ if TYPE_CHECKING:
 	from atlas.server.doctype.server_ip_address.server_ip_address import ServerIPAddress
 
 DRAFT_EXPIRY_MINUTES = 2
+# Atlas WG Mesh reserves tenant 0 for the privileged tenant.
+PRIVILEGED_TENANT_ID = 0
 
 
 class VirtualMachine(Document):
@@ -28,6 +31,7 @@ class VirtualMachine(Document):
 
 		disk_mib: DF.Int
 		is_draft: DF.Check
+		is_privileged: DF.Check
 		is_terminating: DF.Check
 		memory_mib: DF.Int
 		metadata: DF.Code | None
@@ -53,6 +57,15 @@ class VirtualMachine(Document):
 	def before_insert(self) -> None:
 		if not getattr(self.flags, "created_by_virtual_machine_api", False):
 			frappe.throw(_("Create Virtual Machines from the Virtual Machine list."))
+
+	def validate(self) -> None:
+		"""A privileged VM must use tenant 0. Tenant 0 alone is not privileged.
+
+		This runs on every save, because the flag is removable. Removing it drops
+		the address from the next whitelist and ends cross-tenant traffic.
+		"""
+		if self.is_privileged and self.tenant_id != PRIVILEGED_TENANT_ID:
+			frappe.throw(_("A privileged Virtual Machine must use tenant {0}.").format(PRIVILEGED_TENANT_ID))
 
 	def on_trash(self) -> None:
 		"""Delete only after Metal confirms that the VM is absent."""
@@ -161,6 +174,15 @@ class VirtualMachine(Document):
 	@frappe.whitelist(methods=["POST"])
 	def resume(self) -> None:
 		self.perform_action("resume")
+
+	@frappe.whitelist(methods=["POST"])
+	def set_privileged(self, is_privileged: bool | int | str) -> None:
+		frappe.only_for("System Manager")
+		if self.is_draft or self.is_terminating:
+			frappe.throw(_("Virtual Machine {0} is not ready for this change.").format(self.name))
+
+		self.is_privileged = strict_bool(is_privileged, "is_privileged")
+		self.save(ignore_permissions=True)
 
 	@frappe.whitelist(methods=["POST"])
 	def terminate(self) -> None:

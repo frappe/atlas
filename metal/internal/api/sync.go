@@ -18,8 +18,9 @@ import (
 )
 
 type syncRequest struct {
-	WireGuardPeers []wireGuardPeerRequest `json:"wireguard_peers"`
-	Images         []imageRequest         `json:"images"`
+	WireGuardPeers        []wireGuardPeerRequest `json:"wireguard_peers"`
+	Images                []imageRequest         `json:"images"`
+	PrivilegedVMAddresses []string               `json:"privileged_vm_addresses"`
 }
 
 type wireGuardPeerRequest struct {
@@ -62,6 +63,10 @@ func (s *Server) exchangeControllerState(c echo.Context) error {
 	if request.Images == nil {
 		return badRequest("images is required")
 	}
+	// A missing field would read as an empty set and clear the whitelist.
+	if request.PrivilegedVMAddresses == nil {
+		return badRequest("privileged_vm_addresses is required")
+	}
 	for _, image := range request.Images {
 		if err := image.validate(); err != nil {
 			return badRequest(err.Error())
@@ -69,6 +74,9 @@ func (s *Server) exchangeControllerState(c echo.Context) error {
 	}
 
 	ctx := c.Request().Context()
+	if err := s.mesh.ApplyPrivilegedAddresses(ctx, request.PrivilegedVMAddresses); err != nil {
+		return err
+	}
 	if err := s.wireGuardManager.Apply(ctx, request.toWireGuardPeers()); err != nil {
 		return err
 	}

@@ -6,10 +6,14 @@ set -eu
 : "${METALD_DOWNLOAD_URL:?METALD_DOWNLOAD_URL is required}"
 : "${METALD_AUTH_TOKEN_HASH:?METALD_AUTH_TOKEN_HASH is required}"
 : "${STORAGE_POOL_DEVICE:?STORAGE_POOL_DEVICE is required}"
+: "${MESH_UPLINK_INTERFACE:?MESH_UPLINK_INTERFACE is required}"
+: "${WG_MESH_DOWNLOAD_URL:?WG_MESH_DOWNLOAD_URL is required}"
 
 storage_pool_name=${STORAGE_POOL_NAME:-metal}
 firecracker_version=${FIRECRACKER_VERSION:-v1.16.1}
 listen_address=${LISTEN_ADDRESS:?LISTEN_ADDRESS is required}
+wireguard_interface=${WIREGUARD_INTERFACE:-wg0}
+mesh_binary_path=${MESH_BINARY_PATH:-/usr/local/bin/atlas-wg-mesh}
 
 base_dir=/var/lib/metal
 machines_dir=$base_dir/machines
@@ -67,13 +71,31 @@ else
 fi
 
 
+# install_binary downloads one tool. An existing tool is left alone, because
+# replacing a running daemon is an upgrade and needs its own steps.
+install_binary() {
+	destination=$1
+	source_url=$2
+	if [ -x "$destination" ]; then
+		skip "$(basename "$destination")"
+		return
+	fi
+	download=$(mktemp)
+	trap 'rm -f "$download"' EXIT
+	curl -fsSL -o "$download" "$source_url"
+	install -m 755 "$download" "$destination"
+	rm -f "$download"
+	trap - EXIT
+}
+
+
 step "install metald"
-metald_download=$(mktemp)
-trap 'rm -f "$metald_download"' EXIT
-curl -fsSL -o "$metald_download" "$METALD_DOWNLOAD_URL"
-install -m 755 "$metald_download" /usr/bin/metald
-rm -f "$metald_download"
-trap - EXIT
+install_binary /usr/bin/metald "$METALD_DOWNLOAD_URL"
+
+
+step "install atlas-wg-mesh"
+install -d -m 0755 "$(dirname "$mesh_binary_path")"
+install_binary "$mesh_binary_path" "$WG_MESH_DOWNLOAD_URL"
 
 
 step "create directories for metald"
@@ -92,6 +114,20 @@ zfs list "$storage_pool_name/staging" >/dev/null 2>&1 || zfs create -o mountpoin
 zfs list "$storage_pool_name/warm" >/dev/null 2>&1 || zfs create -o mountpoint=none "$storage_pool_name/warm"
 
 
+# mesh_sections appends the WireGuard and Atlas WG Mesh settings. Atlas owns the
+# uplink name, because only Atlas knows which interface carries discovery.
+mesh_sections() {
+	cat >> "$config_file" <<EOF
+
+[wireguard]
+interface = "$wireguard_interface"
+
+[wg_mesh]
+binary_path = "$mesh_binary_path"
+uplink = "$MESH_UPLINK_INTERFACE"
+EOF
+}
+
 step "config ($config_file)"
 if [ -f "$config_file" ]; then
 	sed -i "s|^listen[[:space:]]*=.*|listen   = \"$listen_address\"|" "$config_file"
@@ -99,6 +135,12 @@ if [ -f "$config_file" ]; then
 		sed -i "s/^auth_token_hash = .*/auth_token_hash = \"$METALD_AUTH_TOKEN_HASH\"/" "$config_file"
 	else
 		sed -i "/^listen[[:space:]]*=/a auth_token_hash = \"$METALD_AUTH_TOKEN_HASH\"" "$config_file"
+	fi
+	if grep -q '^\[wg_mesh\]' "$config_file"; then
+		sed -i "s|^uplink = .*|uplink = \"$MESH_UPLINK_INTERFACE\"|" "$config_file"
+		sed -i "s|^binary_path = \"/usr/local/bin/atlas-wg-mesh\"|binary_path = \"$mesh_binary_path\"|" "$config_file"
+	else
+		mesh_sections
 	fi
 else
 	cat > "$config_file" <<EOF
@@ -117,6 +159,7 @@ binary_path = "/usr/bin/jailer"
 [zfs]
 pool = "$storage_pool_name"
 EOF
+	mesh_sections
 	chmod 600 "$config_file"
 fi
 

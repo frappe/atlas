@@ -86,7 +86,8 @@ app_license = "agpl-3.0"
 # ------------
 
 # before_install = "atlas.install.before_install"
-# after_install = "atlas.install.after_install"
+after_install = "atlas.atlas.core.host_binaries.publish_host_binaries"
+after_migrate = "atlas.atlas.core.host_binaries.publish_host_binaries"
 
 # Uninstallation
 # ------------

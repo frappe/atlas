@@ -5,6 +5,10 @@
 
 VM Management service of Frappe Cloud V2
 
+### Host binaries
+
+Atlas builds its host binaries during installation and migration. Install the [Ubuntu build tools](atlas/SPEC.md#ubuntu-build-tools) first.
+
 ### License
 
 agpl-3.0

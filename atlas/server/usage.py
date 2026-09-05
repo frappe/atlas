@@ -7,6 +7,7 @@ import frappe
 from frappe.utils import now_datetime
 
 from atlas.vm.core.metal_client import MetalClient, MetalClientError
+from atlas.vm.core.virtual_machine_manager import VirtualMachineManager
 
 if TYPE_CHECKING:
 	from atlas.server.doctype.server.server import Server
@@ -23,6 +24,7 @@ def enqueue_server_syncs() -> None:
 		pluck="name",
 	)
 	peers = get_wireguard_peers()
+	privileged_addresses = get_privileged_vm_addresses()
 	for server_name in servers:
 		frappe.enqueue(
 			sync_server,
@@ -30,16 +32,21 @@ def enqueue_server_syncs() -> None:
 			timeout=30,
 			server_name=server_name,
 			wireguard_peers=peers,
+			privileged_vm_addresses=privileged_addresses,
 			job_id=f"atlas||server-sync||{server_name}",
 			deduplicate=True,
 		)
 
 
-def sync_server(server_name: str, wireguard_peers: list[dict[str, Any]]) -> None:
+def sync_server(
+	server_name: str,
+	wireguard_peers: list[dict[str, Any]],
+	privileged_vm_addresses: list[str],
+) -> None:
 	"""Exchange state with one host and store its capacity."""
 	server = cast("Server", frappe.get_doc("Server", server_name))
 	try:
-		response = MetalClient(server).sync(wireguard_peers, get_desired_images())
+		response = MetalClient(server).sync(wireguard_peers, get_desired_images(), privileged_vm_addresses)
 		values = get_usage_values(response.get("capacity"))
 	except MetalClientError, ValueError:
 		frappe.log_error(frappe.get_traceback(), f"Could not sync Server {server.name}")
@@ -60,6 +67,20 @@ def get_desired_images() -> list[dict[str, Any]]:
 	return [
 		cast("VirtualMachineImage", frappe.get_doc("Virtual Machine Image", name)).get_desired_image()
 		for name in names
+	]
+
+
+def get_privileged_vm_addresses() -> list[str]:
+	"""Return the mesh addresses that Atlas WG Mesh permits across tenants."""
+	virtual_machines = frappe.get_all(
+		"Virtual Machine",
+		filters={"is_privileged": 1, "is_draft": 0, "is_terminating": 0},
+		fields=["name", "tenant_id"],
+	)
+	return [
+		address
+		for virtual_machine in virtual_machines
+		if (address := VirtualMachineManager.get_wireguard_mesh_ipv6(virtual_machine))
 	]
 
 

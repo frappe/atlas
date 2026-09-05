@@ -18,6 +18,14 @@ type opts struct {
 	listen          string
 	authTokenHash   string
 	baseDir         string
+	wireGuardName   string
+	mesh            meshOpts
+}
+
+// meshOpts configures the Atlas WG Mesh integration.
+type meshOpts struct {
+	binaryPath string
+	uplinkName string
 }
 
 const defaultConfigPath = "/var/lib/metal/metald.toml"
@@ -26,9 +34,11 @@ const defaultBaseDir = "/var/lib/metal"
 
 func defaultOpts() opts {
 	o := opts{
-		cfg:     firecracker.DefaultConfig(),
-		pool:    "metal",
-		baseDir: defaultBaseDir,
+		cfg:           firecracker.DefaultConfig(),
+		pool:          "metal",
+		baseDir:       defaultBaseDir,
+		wireGuardName: "wg0",
+		mesh:          meshOpts{binaryPath: "/usr/local/bin/atlas-wg-mesh"},
 		// TCP host:port by default; "unix:/path" for a unix socket instead.
 		listen: "127.0.0.1:8080",
 	}
@@ -48,6 +58,8 @@ type fileConfig struct {
 	Firecracker firecrackerFile `toml:"firecracker"`
 	Jailer      jailerFile      `toml:"jailer"`
 	ZFS         zfsFile         `toml:"zfs"`
+	WireGuard   wireGuardFile   `toml:"wireguard"`
+	WGMesh      wgMeshFile      `toml:"wg_mesh"`
 }
 
 type metaldFile struct {
@@ -67,6 +79,15 @@ type jailerFile struct {
 
 type zfsFile struct {
 	Pool string `toml:"pool"`
+}
+
+type wireGuardFile struct {
+	Interface string `toml:"interface"`
+}
+
+type wgMeshFile struct {
+	BinaryPath string `toml:"binary_path"`
+	Uplink     string `toml:"uplink"`
 }
 
 func load(path string) (opts, error) {
@@ -99,6 +120,9 @@ func applyFile(o *opts, path string) error {
 	overlay(&o.cfg.SocketsDir, fc.Firecracker.SocketsDir)
 	overlay(&o.cfg.JailerBin, fc.Jailer.BinaryPath)
 	overlay(&o.pool, fc.ZFS.Pool)
+	overlay(&o.wireGuardName, fc.WireGuard.Interface)
+	overlay(&o.mesh.binaryPath, fc.WGMesh.BinaryPath)
+	overlay(&o.mesh.uplinkName, fc.WGMesh.Uplink)
 	log.Printf("loaded config from %s", path)
 	return nil
 }

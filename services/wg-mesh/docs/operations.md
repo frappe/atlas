@@ -11,6 +11,7 @@ The `atlas-wg-mesh` CLI configures local host and VM lifecycle state. It embeds 
   - [Build a release](#build-a-release)
   - [Install a host](#install-a-host)
   - [Add a VM](#add-a-vm)
+    - [VMs behind a router](#vms-behind-a-router)
   - [Move a VM](#move-a-vm)
   - [Remove a VM](#remove-a-vm)
   - [List local VM ownership](#list-local-vm-ownership)
@@ -86,6 +87,10 @@ atlas-wg-mesh vm add --interface veth0 --address fdaa:1:0:7::1 --mtu 1380
 The command configures the host interface, adds the VM to the local BPF map, attaches the VM hook, and announces the VM location with multicast.
 
 `--mtu` defaults to `1380`. Set the guest address to `fdaa:1:0:7::1/128`, gateway to `fe80::1`, and MTU to the same value. Do not exceed the WireGuard MTU minus 40 bytes.
+
+### VMs behind a router
+
+`vm add` adds an on-link host route for the VM address on `--interface`. When the VM is not directly behind that interface, for example a Metal VM in its own network namespace, the router between them must forward IPv6, hold a route to the VM address, and answer neighbour solicitations for it with proxy NDP.
 
 ## Move a VM
 

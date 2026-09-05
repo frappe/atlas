@@ -21,3 +21,15 @@ binary_path = "/usr/bin/jailer"
 [zfs]
 # Existing ZFS pool for VM disks and images.
 pool = "metal"
+
+[wireguard]
+# Underlay interface for managed peers and Atlas WG Mesh.
+interface = "wg0"
+
+[wg_mesh]
+# Atlas WG Mesh is required. metald refuses to start without this CLI.
+binary_path = "/usr/local/bin/atlas-wg-mesh"
+# The interface that carries discovery. Atlas WG Mesh attaches its uplink hook
+# here, and that hook consumes discovery traffic for every VLAN under the
+# interface, so name the VLAN itself and never its parent. Required.
+uplink = "eno1.1878"

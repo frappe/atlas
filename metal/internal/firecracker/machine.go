@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/frappe/atlas/metal/internal/firecracker/api"
+	"github.com/frappe/atlas/metal/internal/network"
 	"github.com/frappe/atlas/metal/internal/vm"
 )
 
@@ -161,7 +162,12 @@ func (m *machine) destroyUnlocked(ctx context.Context) error {
 		}
 	}
 	if !configuration.Cleanup.Network {
-		if err := m.d.networkAllocator.Release(ctx, configuration.ID); err != nil {
+		release := network.ReleaseRequest{
+			VirtualMachineID:  configuration.ID,
+			UserID:            configuration.UID,
+			WireGuardMeshIPv6: configuration.Spec.Network.WireGuardMeshIPv6,
+		}
+		if err := m.d.networkAllocator.Release(ctx, release); err != nil {
 			return fmt.Errorf("release VM network: %w", err)
 		}
 		configuration.Cleanup.Network = true

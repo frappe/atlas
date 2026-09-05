@@ -3,6 +3,7 @@ BPF_SOURCE := bpf/bpf.c
 BPF_HEADERS := $(wildcard bpf/*.h)
 OUTPUT_DIRECTORY := dist
 CLI_NAME := atlas-wg-mesh
+
 # A tag if one exists, else the short commit, with -dirty on uncommitted work.
 # Falls back to "dev" in a tree with no commits. Override: make build VERSION=1.2.3
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
@@ -12,8 +13,12 @@ GO_BUILD_FLAGS := -trimpath -buildvcs=false -ldflags="-s -w -X main.version=$(VE
 
 bpf: $(BPF_OBJECT)
 
+# Debian keeps the asm headers in a multiarch directory. The bpfel target stops
+# clang from searching it, so name it. The directory is absent on other layouts.
+BPF_INCLUDE_FLAGS := -I/usr/include/$(shell uname -m)-linux-gnu
+
 $(BPF_OBJECT): $(BPF_SOURCE) $(BPF_HEADERS)
-	clang -Oz -g -Wall -Werror -target bpfel -c $(BPF_SOURCE) -o $@
+	clang -Oz -g -Wall -Werror $(BPF_INCLUDE_FLAGS) -target bpfel -c $(BPF_SOURCE) -o $@
 
 build: bpf
 	mkdir -p $(OUTPUT_DIRECTORY)

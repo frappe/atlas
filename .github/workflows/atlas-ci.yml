@@ -75,10 +75,10 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-yarn-
 
-      - name: Install MariaDB Client
+      - name: Install system packages
         run: |
           sudo apt update
-          sudo apt-get install mariadb-client
+          sudo apt-get install --yes mariadb-client make clang libbpf-dev linux-libc-dev
 
       - name: Setup
         run: |

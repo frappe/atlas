@@ -18,8 +18,8 @@ The default configuration path is `/var/lib/metal/metald.toml`. A missing defaul
 
 | Type | Role |
 |---|---|
-| `opts` | Resolved Firecracker, ZFS, listener, authentication, and base-directory settings. |
-| `fileConfig` | TOML sections for metald, Firecracker, Jailer, and ZFS. |
+| `opts` | Resolved Firecracker, ZFS, WireGuard, Atlas WG Mesh, listener, authentication, and base-directory settings. |
+| `fileConfig` | TOML sections for metald, Firecracker, Jailer, ZFS, WireGuard, and Atlas WG Mesh. |
 
 ## Startup wiring
 
@@ -29,7 +29,9 @@ load configuration
    -> connect to systemd
    -> create storage stores
    -> create the WireGuard manager
+   -> connect Atlas WG Mesh and configure the host
    -> create the Firecracker driver
+   -> restore VM mesh registrations
    -> start the VM and image reconcilers
    -> create the authenticated API
    -> listen and serve
@@ -37,7 +39,11 @@ load configuration
 
 The storage constructor is `storage.NewStores(pool, imagesDirectory)`. It returns the pool, VM, image, and snapshot stores.
 
-The network constructor is `network.NewLinuxAllocator()`. The Firecracker driver receives separate VM, image, and snapshot dependencies.
+The network constructor is `network.NewLinuxAllocator(mesh)`. `NewMesh` checks that the CLI exists, so metald fails before it starts anything when Atlas WG Mesh is absent. The Firecracker driver receives separate VM, image, and snapshot dependencies.
+
+`connectMesh` runs on every start. It runs `atlas-wg-mesh status`, and configures the host when the CLI reports no configuration. `RestoreNetworks` then replays each non-destroyed VM network, so a reinstalled or reset host recovers its VM mesh registrations without an operator.
+
+`wg_mesh.uplink` has no default. The Atlas WG Mesh uplink hook consumes discovery traffic for every VLAN under the interface it attaches to, so a parent interface silently blackholes discovery for its own VLANs. Only the controller knows which interface carries discovery, so metald requires the name.
 
 ## Config keys
 
@@ -50,6 +56,9 @@ The network constructor is `network.NewLinuxAllocator()`. The Firecracker driver
 | `firecracker.sockets_dir` | `/run/metal` | Short API socket links. |
 | `jailer.binary_path` | `/usr/bin/jailer` | Jailer binary. |
 | `zfs.pool` | `metal` | ZFS pool name. |
+| `wireguard.interface` | `wg0` | Underlay interface for managed peers and Atlas WG Mesh. |
+| `wg_mesh.binary_path` | `/usr/local/bin/atlas-wg-mesh` | Atlas WG Mesh CLI. Required. |
+| `wg_mesh.uplink` | none | Discovery uplink. Required when the mesh is enabled. |
 
 See `config.example.toml` for the complete file format.
 

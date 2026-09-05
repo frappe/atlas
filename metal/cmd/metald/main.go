@@ -29,6 +29,7 @@ import (
 
 const (
 	reconcileInterval      = 5 * time.Second
+	meshSetupTimeout       = 2 * time.Minute
 	imageReconcileInterval = time.Hour
 )
 
@@ -109,9 +110,33 @@ func makeDirs(o opts) error {
 	return nil
 }
 
+// connectMesh prepares the Atlas WG Mesh integration. It configures the host on
+// every start, so a reinstalled or reset host recovers without an operator.
+func connectMesh(o opts) (*network.Mesh, error) {
+	mesh, err := network.NewMesh(network.MeshConfig{
+		CommandPath:   o.mesh.binaryPath,
+		UplinkName:    o.mesh.uplinkName,
+		WireGuardName: o.wireGuardName,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("configure Atlas WG Mesh: %w", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), meshSetupTimeout)
+	defer cancel()
+	if err := mesh.EnsureHost(ctx); err != nil {
+		return nil, fmt.Errorf("configure Atlas WG Mesh host: %w", err)
+	}
+	return mesh, nil
+}
+
 func serve(o opts) error {
 	if o.authTokenHash == "" {
 		return fmt.Errorf("metald.auth_token_hash is required")
+	}
+	// Atlas WG Mesh is required, so fail before metald builds anything.
+	mesh, err := connectMesh(o)
+	if err != nil {
+		return err
 	}
 	if err := makeDirs(o); err != nil {
 		return err
@@ -124,7 +149,7 @@ func serve(o opts) error {
 
 	stores := storage.NewStores(o.pool, o.imagesDir)
 	wireGuardManager, err := network.NewWireGuardManager(network.WireGuardConfig{
-		InterfaceName: "wg0",
+		InterfaceName: o.wireGuardName,
 		StatePath:     filepath.Join(o.baseDir, "wireguard-peers.json"),
 	})
 	if err != nil {
@@ -139,9 +164,14 @@ func serve(o opts) error {
 		stores.VirtualMachines,
 		stores.Images,
 		stores.Snapshots,
-		network.NewLinuxAllocator(),
+		network.NewLinuxAllocator(mesh),
 		consoleBroker,
 	)
+	// A VM keeps running without its mesh registration, so report the failure
+	// and serve. Refusing to start would take the API and the reconcilers down.
+	if err := virtualMachineDriver.RestoreNetworks(context.Background()); err != nil {
+		log.Printf("metald: restore VM networks: %v", err)
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -171,6 +201,7 @@ func serve(o opts) error {
 		ImagePolicyStore:     stores.Images,
 		WakeReconciler:       wakeReconcilers,
 		WireGuardManager:     wireGuardManager,
+		Mesh:                 mesh,
 		Storage:              stores.Pool,
 		ConsoleBroker:        consoleBroker,
 		SSHConnector:         virtualMachineDriver,

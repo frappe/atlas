@@ -186,12 +186,21 @@ class MetalClient:
 			timeout=self.snapshot_timeout_seconds,
 		)
 
-	def sync(self, wireguard_peers: list[dict[str, Any]], images: list[dict[str, Any]]) -> dict[str, Any]:
+	def sync(
+		self,
+		wireguard_peers: list[dict[str, Any]],
+		images: list[dict[str, Any]],
+		privileged_vm_addresses: list[str],
+	) -> dict[str, Any]:
 		"""Exchange controller and host state."""
 		return self._request(
 			"POST",
 			"/sync",
-			json={"wireguard_peers": wireguard_peers, "images": images},
+			json={
+				"wireguard_peers": wireguard_peers,
+				"images": images,
+				"privileged_vm_addresses": privileged_vm_addresses,
+			},
 		)
 
 	def _request(

@@ -29,7 +29,8 @@ class AtlasSettings(Document):
 		is_dns_setup_completed: DF.Check
 		is_server_provider_setup_completed: DF.Check
 		is_setup_completed: DF.Check
-		metald_binary_x86_64_download_url: DF.Data
+		metald_binary_x86_64_file: DF.Link | None
+		metald_source_hash: DF.Data | None
 		private_network_cidr: DF.Data
 		private_network_mtu: DF.Int
 		public_ssh_key: DF.SmallText
@@ -64,6 +65,8 @@ class AtlasSettings(Document):
 			"pl-waw-3",
 		]
 		server_provider: DF.Literal["Scaleway"]
+		wg_mesh_binary_x86_64_file: DF.Link | None
+		wg_mesh_source_hash: DF.Data | None
 		wildcard_domain: DF.Data
 	# end: auto-generated types
 

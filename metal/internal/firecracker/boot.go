@@ -113,6 +113,10 @@ func metadataServiceData(virtualMachineID, ipAddress, macAddress string, specifi
 		metadata["public-ipv4"] = specification.Network.PublicIPv4
 	}
 
+	if specification.Network.WireGuardMeshIPv6 != "" {
+		metadata["mesh-ipv6"] = specification.Network.WireGuardMeshIPv6
+	}
+
 	if len(specification.Metadata) > 0 {
 		customMetadata := make(map[string]any, len(specification.Metadata))
 		for key, value := range specification.Metadata {

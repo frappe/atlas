@@ -9,6 +9,7 @@ from frappe import _
 from frappe.model.document import Document
 from frappe.utils import add_to_date, now_datetime
 
+from atlas.atlas.core.parsing import strict_bool
 from atlas.vm.core.metal_client import MetalClient, MetalClientError, throw_metal_error
 
 if TYPE_CHECKING:
@@ -31,6 +32,7 @@ class VirtualMachineCreateRequest:
 	memory_mib: int
 	disk_mib: int
 	tenant_id: int
+	is_privileged: bool = False
 	hostname: str = ""
 	ssh_keys: tuple[str, ...] = ()
 	user_data: str = ""
@@ -74,6 +76,7 @@ class VirtualMachineCreateRequest:
 			memory_mib=memory_mib,
 			disk_mib=disk_mib,
 			tenant_id=tenant_id,
+			is_privileged=strict_bool(payload.get("is_privileged"), "is_privileged"),
 			hostname=str(payload.get("hostname") or ""),
 			ssh_keys=tuple(str(payload.get("ssh_keys") or "").splitlines()),
 			user_data=str(payload.get("user_data") or ""),
@@ -249,6 +252,7 @@ class VirtualMachineManager:
 				"memory_mib": request.memory_mib,
 				"disk_mib": request.disk_mib,
 				"tenant_id": request.tenant_id,
+				"is_privileged": request.is_privileged,
 			}
 		)
 		virtual_machine.flags.created_by_virtual_machine_api = True
@@ -284,9 +288,9 @@ class VirtualMachineManager:
 		}
 
 	@staticmethod
-	def get_wireguard_mesh_ipv6(virtual_machine: Document) -> str:
+	def get_wireguard_mesh_ipv6(virtual_machine: "Document | frappe._dict") -> str:
 		"""Return the mesh address from stable Atlas request metadata."""
-		settings = cast("AtlasSettings", frappe.get_single("Atlas Settings"))
+		settings: AtlasSettings = frappe.get_single("Atlas Settings")
 		region_id = settings.region_id
 		if not 0 <= region_id <= 0xFFFF:
 			frappe.throw(_("Atlas Settings region ID must be a 16-bit unsigned integer."))

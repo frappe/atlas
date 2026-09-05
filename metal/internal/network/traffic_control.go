@@ -9,10 +9,13 @@ import (
 	"github.com/frappe/atlas/metal/internal/vm"
 )
 
+// One tc priority holds one protocol, so IPv4 and IPv6 filters need separate
+// priorities. Both private priorities outrank the public one.
 const (
-	trafficControlBurst    = "1mb"
-	privateTrafficPriority = "10"
-	publicTrafficPriority  = "20"
+	trafficControlBurst        = "1mb"
+	privateIPv4TrafficPriority = "10"
+	privateIPv6TrafficPriority = "11"
+	publicTrafficPriority      = "20"
 )
 
 // privatePrefixes are the address ranges that the private throughput limit
@@ -21,11 +24,12 @@ const (
 var privatePrefixes = []struct {
 	Protocol string
 	Prefix   string
+	Priority string
 }{
-	{"ip", "10.0.0.0/8"},
-	{"ip", "172.16.0.0/12"},
-	{"ip", "192.168.0.0/16"},
-	{"ipv6", "fc00::/7"},
+	{"ip", "10.0.0.0/8", privateIPv4TrafficPriority},
+	{"ip", "172.16.0.0/12", privateIPv4TrafficPriority},
+	{"ip", "192.168.0.0/16", privateIPv4TrafficPriority},
+	{"ipv6", "fc00::/7", privateIPv6TrafficPriority},
 }
 
 // trafficControlRequest describes the throughput policers for one VM veth.
@@ -99,14 +103,14 @@ func trafficControlSteps(namespace, guestVirtualEthernet string, request traffic
 			steps = append(steps,
 				commandWithPrefix(prefix,
 					"tc", "filter", "add", "dev", guestVirtualEthernet, "egress",
-					"protocol", private.Protocol, "prio", privateTrafficPriority,
+					"protocol", private.Protocol, "prio", private.Priority,
 					"flower", "dst_ip", private.Prefix,
 					"action", "police", "rate", privateRate, "burst", trafficControlBurst,
 					"conform-exceed", "drop/ok",
 				),
 				commandWithPrefix(prefix,
 					"tc", "filter", "add", "dev", guestVirtualEthernet, "ingress",
-					"protocol", private.Protocol, "prio", privateTrafficPriority,
+					"protocol", private.Protocol, "prio", private.Priority,
 					"flower", "src_ip", private.Prefix,
 					"action", "police", "rate", privateRate, "burst", trafficControlBurst,
 					"conform-exceed", "drop/ok",
