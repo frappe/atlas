@@ -83,7 +83,7 @@ Egress controls internet reachability. It does not control mesh reachability.
 | Mode | VM can reach | Public IPv4 | Throughput limits |
 |---|---|---|---|
 | `uplink` | mesh peers and the internet | allowed | private and public |
-| `mesh` | mesh peers only | rejected | private only |
+| `mesh` | mesh peers only | rejected | private applied, public stored |
 | `none` | nothing | rejected | none |
 
 A public IPv4 address needs `uplink`. Atlas refuses `mesh` and `none` while an address is attached.

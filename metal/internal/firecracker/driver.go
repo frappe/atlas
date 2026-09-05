@@ -305,9 +305,15 @@ func (d *Driver) UpdateNetwork(ctx context.Context, id string, update vm.Network
 	if err != nil {
 		return err
 	}
-	if update.PublicIPv4 != "" {
-		update.Egress = vm.EgressHost
+	if update.PublicIPv4 != "" && !update.Egress.HasInternetPath() {
+		return fmt.Errorf("public IPv4 requires %s egress", vm.EgressUplink)
 	}
+
+	// Hold the allocation mutex across the check and the write, so two VMs cannot
+	// claim one public IPv4 address. Create takes the same lock in this order.
+	d.allocationMutex.Lock()
+	defer d.allocationMutex.Unlock()
+
 	if inUse, err := d.isPublicIPv4InUse(id, update.PublicIPv4); err != nil {
 		return err
 	} else if inUse {

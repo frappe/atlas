@@ -34,9 +34,10 @@ function showCreateVirtualMachineDialog() {
 				fieldname: "egress",
 				fieldtype: "Select",
 				label: __("Egress"),
-				options: "host\nnone",
-				default: "host",
+				options: "uplink\nmesh\nnone",
+				default: "uplink",
 				reqd: 1,
+				description: __("uplink reaches the internet. mesh reaches tenant VMs only."),
 			},
 			{
 				fieldname: "private_network_throughput_mbps",

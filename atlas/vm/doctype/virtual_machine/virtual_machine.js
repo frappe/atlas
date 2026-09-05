@@ -336,11 +336,11 @@ function showEgressDialog(frm) {
 			fieldname: "egress",
 			fieldtype: "Select",
 			label: __("Egress"),
-			options: ["host", "none"],
+			options: ["uplink", "mesh", "none"],
 			reqd: 1,
 			default: frm.doc.egress,
 			description: __(
-				"none leaves the VM without a host uplink. Active connections can stop."
+				"uplink reaches the internet. mesh reaches tenant VMs only. none isolates the VM. Active connections can stop."
 			),
 		},
 		({ egress }) =>

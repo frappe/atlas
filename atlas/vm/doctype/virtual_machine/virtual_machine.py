@@ -9,7 +9,7 @@ from frappe.model.document import Document
 from frappe.utils import add_to_date, cint, now_datetime
 
 from atlas.vm.core.metal_client import MetalClient, MetalClientError, throw_metal_error
-from atlas.vm.core.virtual_machine_manager import VirtualMachineManager
+from atlas.vm.core.virtual_machine_manager import EGRESS_MODES, VirtualMachineManager
 
 if TYPE_CHECKING:
 	from atlas.server.doctype.server_ip_address.server_ip_address import ServerIPAddress
@@ -232,7 +232,7 @@ class VirtualMachine(Document):
 			frappe.throw(_("Detach the current public IPv4 address first."))
 
 		address = self.assign_ip_address(server_ip_address)
-		return self.update_network(egress="host", public_ipv4=address.address)
+		return self.update_network(egress="uplink", public_ipv4=address.address)
 
 	@frappe.whitelist(methods=["POST"])
 	def detach_ip_address(self) -> dict[str, Any]:
@@ -247,12 +247,12 @@ class VirtualMachine(Document):
 
 	@frappe.whitelist(methods=["POST"])
 	def update_egress(self, egress: str) -> dict[str, Any]:
-		"""Change the host uplink mode without a VM restart."""
+		"""Change internet reachability without a VM restart. Mesh reachability does not change."""
 		frappe.only_for("System Manager")
-		if egress not in {"host", "none"}:
-			frappe.throw(_("Egress must be host or none."))
-		if egress == "none" and frappe.db.exists("Server IP Address", {"virtual_machine": self.name}):
-			frappe.throw(_("Detach the public IPv4 address before you remove host egress."))
+		if egress not in EGRESS_MODES:
+			frappe.throw(_("Egress must be uplink, mesh, or none."))
+		if egress != "uplink" and frappe.db.exists("Server IP Address", {"virtual_machine": self.name}):
+			frappe.throw(_("Detach the public IPv4 address before you remove the internet path."))
 
 		return self.update_network(egress=egress)
 
@@ -262,14 +262,21 @@ class VirtualMachine(Document):
 	) -> dict[str, Any]:
 		"""Change the throughput limits in Mbps without a VM restart. A value of 0 removes the limit."""
 		frappe.only_for("System Manager")
-		limits = {
-			"private_network_throughput_mbps": cint(private_network_throughput_mbps),
-			"public_network_throughput_mbps": cint(public_network_throughput_mbps),
-		}
-		if any(value < 0 for value in limits.values()):
-			frappe.throw(_("Network throughput must not be negative."))
+		return self.update_network(
+			private_network_throughput_mbps=self.parse_throughput(private_network_throughput_mbps),
+			public_network_throughput_mbps=self.parse_throughput(public_network_throughput_mbps),
+		)
 
-		return self.update_network(**limits)
+	def parse_throughput(self, value: object) -> int:
+		"""Return one throughput limit in Mbps. A malformed value is an error, not 0."""
+		try:
+			throughput = int(str(value).strip())
+		except TypeError, ValueError:
+			frappe.throw(_("Network throughput must be a whole number of Mbps."))
+			raise AssertionError from None
+		if throughput < 0:
+			frappe.throw(_("Network throughput must not be negative."))
+		return throughput
 
 	def update_network(self, **changes: Any) -> dict[str, Any]:
 		"""Send the complete desired network settings to Metal.

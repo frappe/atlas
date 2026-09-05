@@ -126,7 +126,7 @@ func TestUpdateNetworkPersistsAndAppliesSettings(t *testing.T) {
 	}
 
 	update := vm.NetworkUpdate{
-		Egress:                       vm.EgressHost,
+		Egress:                       vm.EgressUplink,
 		PublicIPv4:                   "203.0.113.10",
 		PrivateNetworkThroughputMbps: 100,
 		PublicNetworkThroughputMbps:  50,
@@ -142,8 +142,26 @@ func TestUpdateNetworkPersistsAndAppliesSettings(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if configuration.Spec.Network != (vm.Network{Egress: vm.EgressHost, PublicIPv4: update.PublicIPv4, PrivateNetworkThroughputMbps: 100, PublicNetworkThroughputMbps: 50}) {
+	if configuration.Spec.Network != (vm.Network{Egress: vm.EgressUplink, PublicIPv4: update.PublicIPv4, PrivateNetworkThroughputMbps: 100, PublicNetworkThroughputMbps: 50}) {
 		t.Fatalf("network = %+v", configuration.Spec.Network)
+	}
+}
+
+func TestUpdateNetworkRejectsPublicIPv4WithoutUplink(t *testing.T) {
+	driver, networkAllocator, _ := testDriver(t)
+	if _, err := driver.Create(context.Background(), "vm-1", vm.Spec{Network: vm.Network{Egress: vm.EgressUplink}}); err != nil {
+		t.Fatal(err)
+	}
+
+	err := driver.UpdateNetwork(context.Background(), "vm-1", vm.NetworkUpdate{
+		Egress:     vm.EgressMesh,
+		PublicIPv4: "203.0.113.10",
+	})
+	if err == nil {
+		t.Fatal("a public IPv4 address without an internet path must fail")
+	}
+	if networkAllocator.updateRequest.VirtualMachineID != "" {
+		t.Fatal("the network must not change when the request is invalid")
 	}
 }
 

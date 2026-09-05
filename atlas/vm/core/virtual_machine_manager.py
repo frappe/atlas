@@ -19,6 +19,9 @@ if TYPE_CHECKING:
 	from atlas.vm.doctype.virtual_machine_image.virtual_machine_image import VirtualMachineImage
 
 
+EGRESS_MODES = ("uplink", "mesh", "none")
+
+
 @dataclass(frozen=True, slots=True)
 class VirtualMachineCreateRequest:
 	"""Store the validated values for one VM request."""
@@ -31,7 +34,7 @@ class VirtualMachineCreateRequest:
 	hostname: str = ""
 	ssh_keys: tuple[str, ...] = ()
 	user_data: str = ""
-	egress: str = "host"
+	egress: str = "uplink"
 	private_network_throughput_mbps: int = 0
 	public_network_throughput_mbps: int = 0
 	server_ip_address: str | None = None
@@ -55,9 +58,13 @@ class VirtualMachineCreateRequest:
 		if not isinstance(tenant_id, int) or isinstance(tenant_id, bool) or not 0 <= tenant_id <= 0xFFFFFFFF:
 			raise ValueError("Tenant ID must be a 32-bit unsigned integer.")
 
-		egress = payload.get("egress") or "host"
-		if egress not in {"host", "none"}:
-			raise ValueError("Egress must be host or none.")
+		egress = payload.get("egress") or "uplink"
+		if egress not in EGRESS_MODES:
+			raise ValueError("Egress must be uplink, mesh, or none.")
+
+		public_throughput = cls._throughput(payload, "public_network_throughput_mbps")
+		server_ip_address = payload.get("server_ip_address") or None
+		cls._validate_internet_path(egress, server_ip_address)
 
 		return cls(
 			virtual_machine_image=image,
@@ -70,10 +77,16 @@ class VirtualMachineCreateRequest:
 			user_data=str(payload.get("user_data") or ""),
 			egress=egress,
 			private_network_throughput_mbps=cls._throughput(payload, "private_network_throughput_mbps"),
-			public_network_throughput_mbps=cls._throughput(payload, "public_network_throughput_mbps"),
-			server_ip_address=payload.get("server_ip_address") or None,
+			public_network_throughput_mbps=public_throughput,
+			server_ip_address=server_ip_address,
 			metadata=cls._metadata(payload),
 		)
+
+	@staticmethod
+	def _validate_internet_path(egress: str, server_ip_address: str | None) -> None:
+		"""Reject a public IPv4 address when the mode has no internet path."""
+		if egress != "uplink" and server_ip_address:
+			raise ValueError("A public IPv4 address requires uplink egress.")
 
 	@staticmethod
 	def _throughput(payload: dict[str, Any], field: str) -> int:

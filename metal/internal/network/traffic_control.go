@@ -39,7 +39,7 @@ type trafficControlRequest struct {
 
 // hasVirtualEthernet reports whether the VM has a veth pair that can hold the policers.
 func (request trafficControlRequest) hasVirtualEthernet() bool {
-	return effectiveEgress(request.Egress) == vm.EgressHost
+	return request.Egress.HasVirtualEthernet()
 }
 
 // configureTrafficControl applies the policers to the namespace end of the veth.
@@ -88,7 +88,8 @@ func removeTrafficControl(ctx context.Context, namespace, interfaceName string) 
 // remote end is the destination. Ingress carries traffic to the VM and the two
 // are reversed.
 func trafficControlSteps(namespace, guestVirtualEthernet string, request trafficControlRequest) [][]string {
-	if request.PrivateNetworkThroughputMbps == 0 && request.PublicNetworkThroughputMbps == 0 {
+	hasPublicLimit := request.PublicNetworkThroughputMbps > 0 && request.Egress.HasInternetPath()
+	if request.PrivateNetworkThroughputMbps == 0 && !hasPublicLimit {
 		return nil
 	}
 
@@ -117,7 +118,7 @@ func trafficControlSteps(namespace, guestVirtualEthernet string, request traffic
 		}
 	}
 
-	if request.PublicNetworkThroughputMbps > 0 {
+	if request.PublicNetworkThroughputMbps > 0 && request.Egress.HasInternetPath() {
 		publicRate := fmt.Sprintf("%dmbit", request.PublicNetworkThroughputMbps)
 		steps = append(steps,
 			commandWithPrefix(prefix,

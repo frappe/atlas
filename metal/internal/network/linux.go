@@ -52,15 +52,15 @@ func (allocator *LinuxAllocator) Allocate(ctx context.Context, request Request) 
 		{"ip", "-n", namespace, "link", "set", tapName, "up"},
 	}
 	egress := request.Egress
-	if egress == "" {
-		egress = vm.EgressHost
+	if egress.HasVirtualEthernet() {
+		steps = append(steps, virtualEthernetSteps(namespace, hostVirtualEthernet, guestVirtualEthernet, hostIPAddress, namespaceIPAddress)...)
 	}
-	if egress == vm.EgressHost {
-		steps = append(steps, hostEgressSteps(namespace, hostVirtualEthernet, guestVirtualEthernet, hostIPAddress, namespaceIPAddress)...)
+	if egress.HasInternetPath() {
+		steps = append(steps, internetPathSteps(namespace, guestVirtualEthernet, hostIPAddress)...)
 	}
 	if request.PublicIPv4 != "" {
-		if egress != vm.EgressHost {
-			return Interface{}, fmt.Errorf("public IPv4 requires host egress")
+		if !egress.HasInternetPath() {
+			return Interface{}, fmt.Errorf("public IPv4 requires %s egress", vm.EgressUplink)
 		}
 		steps = append(steps, publicIPv4Steps(request.VirtualMachineID, namespace, guestVirtualEthernet, namespaceIPAddress, request.PublicIPv4)...)
 	}
@@ -88,14 +88,20 @@ func (allocator *LinuxAllocator) Update(ctx context.Context, request UpdateReque
 	return nil
 }
 
+// update reconciles the host to the desired settings. It asks three independent
+// questions instead of enumerating the transitions between modes.
 func (allocator *LinuxAllocator) update(ctx context.Context, request UpdateRequest) error {
 	exists, err := networkNamespaceExists(ctx, request.VirtualMachineID)
 	if err != nil || !exists {
 		return err
 	}
 
-	previousEgress := effectiveEgress(request.Previous.Egress)
-	desiredEgress := effectiveEgress(request.Desired.Egress)
+	previous, desired := request.Previous.Egress, request.Desired.Egress
+	if request.Desired.PublicIPv4 != "" && !desired.HasInternetPath() {
+		return fmt.Errorf("public IPv4 requires %s egress", vm.EgressUplink)
+	}
+
+	// Remove the public IPv4 rules first, while the interface still carries them.
 	if request.Previous.PublicIPv4 != request.Desired.PublicIPv4 {
 		if err := removePublicIPv4Rules(ctx, request.VirtualMachineID); err != nil {
 			return err
@@ -104,16 +110,20 @@ func (allocator *LinuxAllocator) update(ctx context.Context, request UpdateReque
 			return err
 		}
 	}
-	if previousEgress != desiredEgress {
-		if previousEgress == vm.EgressHost {
-			if err := removeHostEgress(ctx, request.VirtualMachineID, request.UserID); err != nil {
-				return err
-			}
+
+	if previous.HasInternetPath() && !desired.HasInternetPath() {
+		if err := removeInternetPath(ctx, request.VirtualMachineID, request.UserID); err != nil {
+			return err
 		}
-		if desiredEgress == vm.EgressHost {
-			if err := addHostEgress(ctx, request.VirtualMachineID, request.UserID); err != nil {
-				return err
-			}
+	}
+	if previous.HasVirtualEthernet() != desired.HasVirtualEthernet() {
+		if err := setVirtualEthernet(ctx, request.VirtualMachineID, request.UserID, desired.HasVirtualEthernet()); err != nil {
+			return err
+		}
+	}
+	if desired.HasInternetPath() && !(previous.HasInternetPath() && previous.HasVirtualEthernet()) {
+		if err := addInternetPath(ctx, request.VirtualMachineID, request.UserID); err != nil {
+			return err
 		}
 	}
 
@@ -126,7 +136,7 @@ func (allocator *LinuxAllocator) update(ctx context.Context, request UpdateReque
 	return configureTrafficControl(ctx, trafficControlRequest{
 		VirtualMachineID:             request.VirtualMachineID,
 		UserID:                       request.UserID,
-		Egress:                       desiredEgress,
+		Egress:                       desired,
 		PrivateNetworkThroughputMbps: request.Desired.PrivateNetworkThroughputMbps,
 		PublicNetworkThroughputMbps:  request.Desired.PublicNetworkThroughputMbps,
 	})
@@ -170,14 +180,9 @@ func virtualEthernetNames(userID uint32) (host, guest string) {
 	return fmt.Sprintf("vh-%d", userID), fmt.Sprintf("vg-%d", userID)
 }
 
-func effectiveEgress(egress vm.Egress) vm.Egress {
-	if egress == "" {
-		return vm.EgressHost
-	}
-	return egress
-}
-
-func hostEgressSteps(namespace, hostVirtualEthernet, guestVirtualEthernet, hostIPAddress, namespaceIPAddress string) [][]string {
+// virtualEthernetSteps builds the private network attachment. Every mode except
+// EgressNone keeps it, so Atlas WG Mesh always finds the host end.
+func virtualEthernetSteps(namespace, hostVirtualEthernet, guestVirtualEthernet, hostIPAddress, namespaceIPAddress string) [][]string {
 	return [][]string{
 		{"ip", "link", "add", hostVirtualEthernet, "type", "veth", "peer", "name", guestVirtualEthernet},
 		{"ip", "link", "set", guestVirtualEthernet, "netns", namespace},
@@ -185,41 +190,61 @@ func hostEgressSteps(namespace, hostVirtualEthernet, guestVirtualEthernet, hostI
 		{"ip", "link", "set", hostVirtualEthernet, "up"},
 		{"ip", "-n", namespace, "addr", "add", namespaceIPAddress + "/30", "dev", guestVirtualEthernet},
 		{"ip", "-n", namespace, "link", "set", guestVirtualEthernet, "up"},
+	}
+}
+
+// internetPathSteps builds the route out of the namespace. Only EgressUplink has it.
+func internetPathSteps(namespace, guestVirtualEthernet, hostIPAddress string) [][]string {
+	return [][]string{
 		{"ip", "-n", namespace, "route", "add", "default", "via", hostIPAddress},
 		{"ip", "netns", "exec", namespace, "sysctl", "-q", "-w", "net.ipv4.ip_forward=1"},
 		{"ip", "netns", "exec", namespace, "iptables", "-t", "nat", "-A", "POSTROUTING", "-o", guestVirtualEthernet, "-j", "MASQUERADE"},
 	}
 }
 
-func addHostEgress(ctx context.Context, virtualMachineID string, userID uint32) error {
+// setVirtualEthernet adds or removes the veth pair for one virtual machine.
+func setVirtualEthernet(ctx context.Context, virtualMachineID string, userID uint32, present bool) error {
 	namespace := namespaceName(virtualMachineID)
 	hostVirtualEthernet, guestVirtualEthernet := virtualEthernetNames(userID)
+	if !present {
+		return hostcmd.Run(ctx, "ip", "link", "del", hostVirtualEthernet)
+	}
+
 	hostIPAddress, namespaceIPAddress := transitAddresses(userID)
-	for _, step := range hostEgressSteps(namespace, hostVirtualEthernet, guestVirtualEthernet, hostIPAddress, namespaceIPAddress) {
+	return runSteps(ctx, virtualEthernetSteps(namespace, hostVirtualEthernet, guestVirtualEthernet, hostIPAddress, namespaceIPAddress))
+}
+
+func addInternetPath(ctx context.Context, virtualMachineID string, userID uint32) error {
+	namespace := namespaceName(virtualMachineID)
+	_, guestVirtualEthernet := virtualEthernetNames(userID)
+	hostIPAddress, _ := transitAddresses(userID)
+	return runSteps(ctx, internetPathSteps(namespace, guestVirtualEthernet, hostIPAddress))
+}
+
+func removeInternetPath(ctx context.Context, virtualMachineID string, userID uint32) error {
+	namespace := namespaceName(virtualMachineID)
+	_, guestVirtualEthernet := virtualEthernetNames(userID)
+	hostIPAddress, _ := transitAddresses(userID)
+	return runSteps(ctx, [][]string{
+		{"ip", "netns", "exec", namespace, "iptables", "-t", "nat", "-D", "POSTROUTING", "-o", guestVirtualEthernet, "-j", "MASQUERADE"},
+		{"ip", "-n", namespace, "route", "del", "default", "via", hostIPAddress},
+	})
+}
+
+func runSteps(ctx context.Context, steps [][]string) error {
+	for _, step := range steps {
 		if err := hostcmd.Run(ctx, step[0], step[1:]...); err != nil {
 			return err
 		}
 	}
 	return nil
-}
-
-func removeHostEgress(ctx context.Context, virtualMachineID string, userID uint32) error {
-	namespace := namespaceName(virtualMachineID)
-	hostVirtualEthernet, guestVirtualEthernet := virtualEthernetNames(userID)
-	_ = hostcmd.Run(ctx, "ip", "netns", "exec", namespace, "iptables", "-t", "nat", "-D", "POSTROUTING", "-o", guestVirtualEthernet, "-j", "MASQUERADE")
-	return hostcmd.Run(ctx, "ip", "link", "del", hostVirtualEthernet)
 }
 
 func addPublicIPv4(ctx context.Context, virtualMachineID string, userID uint32, publicIPv4 string) error {
 	namespace := namespaceName(virtualMachineID)
 	_, guestVirtualEthernet := virtualEthernetNames(userID)
 	_, namespaceIPAddress := transitAddresses(userID)
-	for _, step := range publicIPv4Steps(virtualMachineID, namespace, guestVirtualEthernet, namespaceIPAddress, publicIPv4) {
-		if err := hostcmd.Run(ctx, step[0], step[1:]...); err != nil {
-			return err
-		}
-	}
-	return nil
+	return runSteps(ctx, publicIPv4Steps(virtualMachineID, namespace, guestVirtualEthernet, namespaceIPAddress, publicIPv4))
 }
 
 func transitAddresses(userID uint32) (hostIPAddress, namespaceIPAddress string) {

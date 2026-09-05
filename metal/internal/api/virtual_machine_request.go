@@ -161,8 +161,9 @@ func (request networkRequest) validate() error {
 	if err != nil || !wireGuardMeshPrefix.Contains(wireGuardAddress) {
 		return fmt.Errorf("network.wireguard_mesh_ipv6 must be in fdaa::/16")
 	}
-	if request.Egress != string(vm.EgressHost) && request.Egress != string(vm.EgressNone) {
-		return fmt.Errorf("network.egress must be host or none")
+	egress := vm.Egress(request.Egress)
+	if !egress.IsValid() {
+		return fmt.Errorf("network.egress must be %s, %s, or %s", vm.EgressUplink, vm.EgressMesh, vm.EgressNone)
 	}
 	if request.PublicIPv4 == "" {
 		return nil
@@ -172,20 +173,19 @@ func (request networkRequest) validate() error {
 	if err != nil || !publicAddress.Is4() {
 		return fmt.Errorf("network.public_ipv4 must be an IPv4 address")
 	}
+	if !egress.HasInternetPath() {
+		return fmt.Errorf("network.public_ipv4 requires %s egress", vm.EgressUplink)
+	}
 	return nil
 }
 
 func (request networkRequest) spec() vm.Network {
-	egress := vm.Egress(request.Egress)
-	if request.PublicIPv4 != "" {
-		egress = vm.EgressHost
-	}
 	return vm.Network{
 		PublicIPv4:                   request.PublicIPv4,
 		WireGuardMeshIPv6:            request.WireGuardMeshIPv6,
 		PrivateNetworkThroughputMbps: request.PrivateNetworkThroughputMbps,
 		PublicNetworkThroughputMbps:  request.PublicNetworkThroughputMbps,
-		Egress:                       egress,
+		Egress:                       vm.Egress(request.Egress),
 	}
 }
 

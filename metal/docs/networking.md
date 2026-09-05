@@ -28,8 +28,6 @@ Egress controls internet reachability. It does not control mesh reachability. Th
 | `mesh` | yes | no | rejected | mesh peers only |
 | `none` | no | no | rejected | nothing |
 
-`host` is a deprecated alias for `uplink`. Metal reads it and writes `uplink` at the next update.
-
 A change between `uplink` and `mesh` keeps the veth pair. A change to `none` removes it.
 
 ## Addressing
@@ -65,7 +63,7 @@ The VM is inside the namespace, so `egress` carries traffic from the VM and the 
 
 The private filters use a lower `tc` priority than the public filter, so a private packet stops at the private policer. The virtual Ethernet removal clears the traffic-control rules.
 
-`uplink` and `mesh` have a veth pair, so both receive the limits. A `mesh` VM has no internet path, so Metal rejects a public limit for it. A `none` VM has no veth pair and receives no limits. Metal keeps the requested values and applies them when the veth pair returns.
+`uplink` and `mesh` have a veth pair, so both receive the private limit. A `mesh` VM has no internet path, so Metal keeps a public limit and does not apply it. A `none` VM has no veth pair and receives no limits. Metal keeps the requested values and applies them when the veth pair returns.
 
 ## WireGuard peers
 

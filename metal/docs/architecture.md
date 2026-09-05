@@ -70,7 +70,7 @@ If warm boot fails, Metal removes the attempted VM disk and uses cold boot.
 
 ## Network
 
-Each VM uses one Linux network namespace and one `tap0` device. Host egress adds a veth pair, routes, and NAT rules. Public IPv4 support adds host forwarding rules.
+Each VM uses one Linux network namespace and one `tap0` device. `uplink` and `mesh` egress add a veth pair. `uplink` also adds routes and NAT rules. Public IPv4 support adds host forwarding rules.
 
 `POST /sync` also applies the managed WireGuard peer set for the host.
 

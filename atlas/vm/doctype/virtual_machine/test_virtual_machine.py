@@ -30,7 +30,7 @@ class TestVirtualMachineRequest(UnitTestCase):
 		)
 
 		self.assertEqual(request.ssh_keys, ("key-one", "key-two"))
-		self.assertEqual(request.egress, "host")
+		self.assertEqual(request.egress, "uplink")
 
 	def test_request_parses_metadata(self) -> None:
 		request = VirtualMachineCreateRequest.from_value(
@@ -73,6 +73,38 @@ class TestVirtualMachineRequest(UnitTestCase):
 
 		self.assertEqual(request.private_network_throughput_mbps, 100)
 		self.assertEqual(request.public_network_throughput_mbps, 0)
+
+	def test_request_accepts_mesh_egress(self) -> None:
+		request = VirtualMachineCreateRequest.from_value(
+			{
+				"virtual_machine_image": "Ubuntu 24.04",
+				"vcpus": 2,
+				"memory_mib": 2048,
+				"disk_mib": 10240,
+				"tenant_id": 7,
+				"egress": "mesh",
+				"private_network_throughput_mbps": 100,
+			}
+		)
+
+		self.assertEqual(request.egress, "mesh")
+		self.assertEqual(request.private_network_throughput_mbps, 100)
+
+	def test_request_rejects_a_public_address_without_uplink(self) -> None:
+		base = {
+			"virtual_machine_image": "Ubuntu 24.04",
+			"vcpus": 2,
+			"memory_mib": 2048,
+			"disk_mib": 10240,
+			"tenant_id": 7,
+			"egress": "mesh",
+		}
+		with self.assertRaises(ValueError):
+			VirtualMachineCreateRequest.from_value({**base, "server_ip_address": "203.0.113.10"})
+
+		# A public limit is stored, not rejected, so a mode change needs no cleanup.
+		request = VirtualMachineCreateRequest.from_value({**base, "public_network_throughput_mbps": 50})
+		self.assertEqual(request.public_network_throughput_mbps, 50)
 
 	def test_request_rejects_negative_throughput(self) -> None:
 		with self.assertRaises(ValueError):
@@ -250,7 +282,7 @@ class TestMetalClient(UnitTestCase):
 		client.headers = {"Authorization": "Bearer token"}
 		response = SimpleNamespace(status_code=200, content=b"{}", json=lambda: {})
 		network = {
-			"egress": "host",
+			"egress": "uplink",
 			"public_ipv4": "203.0.113.10",
 			"private_network_throughput_mbps": 100,
 			"public_network_throughput_mbps": 50,
@@ -373,7 +405,7 @@ class TestVirtualMachineNetwork(UnitTestCase):
 	def test_update_network_keeps_the_unchanged_metal_values(self) -> None:
 		virtual_machine, client = self.build_virtual_machine(
 			{
-				"egress": "host",
+				"egress": "uplink",
 				"public_ipv4": "203.0.113.10",
 				"private_network_throughput_mbps": 100,
 				"public_network_throughput_mbps": 50,
@@ -389,7 +421,7 @@ class TestVirtualMachineNetwork(UnitTestCase):
 		client.update_virtual_machine_network.assert_called_once_with(
 			"VM-00001",
 			{
-				"egress": "host",
+				"egress": "uplink",
 				"public_ipv4": "203.0.113.10",
 				"private_network_throughput_mbps": 100,
 				"public_network_throughput_mbps": 25,
@@ -410,7 +442,7 @@ class TestVirtualMachineNetwork(UnitTestCase):
 		client.update_virtual_machine_network.assert_not_called()
 
 	def test_update_network_rejects_a_draft(self) -> None:
-		virtual_machine, client = self.build_virtual_machine({"egress": "host"})
+		virtual_machine, client = self.build_virtual_machine({"egress": "uplink"})
 		virtual_machine.is_draft = 1
 
 		with (
@@ -435,11 +467,11 @@ class TestVirtualMachineNetwork(UnitTestCase):
 
 		assign.assert_called_once_with("203.0.113.10")
 		request = client.update_virtual_machine_network.call_args.args[1]
-		self.assertEqual(request["egress"], "host")
+		self.assertEqual(request["egress"], "uplink")
 		self.assertEqual(request["public_ipv4"], "203.0.113.10")
 
 	def test_attach_ip_address_rejects_a_second_address(self) -> None:
-		virtual_machine, client = self.build_virtual_machine({"egress": "host"})
+		virtual_machine, client = self.build_virtual_machine({"egress": "uplink"})
 		metal_client, get_doc, only_for, database = self.patches(client, "203.0.113.10")
 
 		with metal_client, get_doc, only_for, database, self.assertRaises(frappe.ValidationError):
@@ -449,7 +481,7 @@ class TestVirtualMachineNetwork(UnitTestCase):
 
 	def test_detach_ip_address_updates_metal_before_the_release(self) -> None:
 		virtual_machine, client = self.build_virtual_machine(
-			{"egress": "host", "public_ipv4": "203.0.113.10"}
+			{"egress": "uplink", "public_ipv4": "203.0.113.10"}
 		)
 		calls: list[str] = []
 		client.update_virtual_machine_network.side_effect = lambda *arguments: calls.append("metal") or {}
@@ -471,19 +503,19 @@ class TestVirtualMachineNetwork(UnitTestCase):
 		self.assertEqual(calls, ["metal", "release"])
 		request = client.update_virtual_machine_network.call_args.args[1]
 		self.assertEqual(request["public_ipv4"], "")
-		self.assertEqual(request["egress"], "host")
+		self.assertEqual(request["egress"], "uplink")
 
 	def test_update_egress_sends_the_new_mode(self) -> None:
-		virtual_machine, client = self.build_virtual_machine({"egress": "host"})
+		virtual_machine, client = self.build_virtual_machine({"egress": "uplink"})
 		metal_client, get_doc, only_for, database = self.patches(client, None)
 
 		with metal_client, get_doc, only_for, database:
-			virtual_machine.update_egress("none")
+			virtual_machine.update_egress("mesh")
 
-		self.assertEqual(client.update_virtual_machine_network.call_args.args[1]["egress"], "none")
+		self.assertEqual(client.update_virtual_machine_network.call_args.args[1]["egress"], "mesh")
 
 	def test_update_egress_rejects_an_unknown_mode(self) -> None:
-		virtual_machine, client = self.build_virtual_machine({"egress": "host"})
+		virtual_machine, client = self.build_virtual_machine({"egress": "uplink"})
 		metal_client, get_doc, only_for, database = self.patches(client, None)
 
 		with metal_client, get_doc, only_for, database, self.assertRaises(frappe.ValidationError):
@@ -491,26 +523,43 @@ class TestVirtualMachineNetwork(UnitTestCase):
 
 		client.update_virtual_machine_network.assert_not_called()
 
-	def test_update_egress_keeps_host_uplink_for_an_attached_address(self) -> None:
-		"""Metal forces host egress for a public IPv4 address, so Atlas refuses the change."""
+	def test_update_egress_keeps_the_internet_path_for_an_attached_address(self) -> None:
+		"""A public IPv4 address needs uplink, so Atlas refuses mesh and none."""
 		virtual_machine, client = self.build_virtual_machine(
-			{"egress": "host", "public_ipv4": "203.0.113.10"}
+			{"egress": "uplink", "public_ipv4": "203.0.113.10"}
 		)
-		metal_client, get_doc, only_for, database = self.patches(client, "203.0.113.10")
 
-		with metal_client, get_doc, only_for, database, self.assertRaises(frappe.ValidationError):
-			virtual_machine.update_egress("none")
+		for egress in ("mesh", "none"):
+			metal_client, get_doc, only_for, database = self.patches(client, "203.0.113.10")
+			with metal_client, get_doc, only_for, database, self.assertRaises(frappe.ValidationError):
+				virtual_machine.update_egress(egress)
 
 		client.update_virtual_machine_network.assert_not_called()
 
-	def test_update_network_throughput_rejects_negative_values(self) -> None:
-		virtual_machine, client = self.build_virtual_machine({"egress": "host"})
+	def test_update_network_throughput_rejects_bad_values(self) -> None:
+		"""A malformed value must fail, not silently become 0 and remove the limit."""
+		virtual_machine, client = self.build_virtual_machine({"egress": "uplink"})
+
+		for private, public in ((-1, 0), ("abc", 0), (0, "")):
+			metal_client, get_doc, only_for, database = self.patches(client, None)
+			with metal_client, get_doc, only_for, database, self.assertRaises(frappe.ValidationError):
+				virtual_machine.update_network_throughput(private, public)
+
+		client.update_virtual_machine_network.assert_not_called()
+
+	def test_update_egress_keeps_a_stored_public_limit(self) -> None:
+		"""Atlas resends every setting, so a stored public limit must not block a mode change."""
+		virtual_machine, client = self.build_virtual_machine(
+			{"egress": "uplink", "public_network_throughput_mbps": 31}
+		)
 		metal_client, get_doc, only_for, database = self.patches(client, None)
 
-		with metal_client, get_doc, only_for, database, self.assertRaises(frappe.ValidationError):
-			virtual_machine.update_network_throughput(-1, 0)
+		with metal_client, get_doc, only_for, database:
+			virtual_machine.update_egress("mesh")
 
-		client.update_virtual_machine_network.assert_not_called()
+		request = client.update_virtual_machine_network.call_args.args[1]
+		self.assertEqual(request["egress"], "mesh")
+		self.assertEqual(request["public_network_throughput_mbps"], 31)
 
 
 class TestReconcileTerminating(UnitTestCase):

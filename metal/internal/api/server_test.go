@@ -294,7 +294,7 @@ func (stubConsoleBroker) Attach(context.Context, string, io.ReadWriter, <-chan c
 }
 
 const (
-	validCreateRequest = `{"vcpus":1,"memory_mib":512,"disk_mib":1024,"image":{"ref":"ubuntu","architecture":"amd64","rootfs":{"url":"https://atlas.example/ubuntu.ext4?signature=secret","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"kernel":{"url":"https://atlas.example/vmlinux?signature=secret","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}},"network":{"wireguard_mesh_ipv6":"fdaa:1:0:7::1","egress":"host"}}`
+	validCreateRequest = `{"vcpus":1,"memory_mib":512,"disk_mib":1024,"image":{"ref":"ubuntu","architecture":"amd64","rootfs":{"url":"https://atlas.example/ubuntu.ext4?signature=secret","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"kernel":{"url":"https://atlas.example/vmlinux?signature=secret","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}},"network":{"wireguard_mesh_ipv6":"fdaa:1:0:7::1","egress":"uplink"}}`
 	validSSHKey        = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA user@example"
 )
 
@@ -433,9 +433,9 @@ func TestInternalErrorDoesNotLeakDetails(t *testing.T) {
 func TestCreateRejectsInvalidNetwork(t *testing.T) {
 	srv := newTestServer(t)
 	invalidAddress := strings.Replace(validCreateRequest, "fdaa:1:0:7::1", "2001:db8::1", 1)
-	invalidEgress := strings.Replace(validCreateRequest, `"egress":"host"`, `"egress":"server"`, 1)
-	negativePrivateThroughput := strings.Replace(validCreateRequest, `"egress":"host"`, `"private_network_throughput_mbps":-1,"egress":"host"`, 1)
-	negativePublicThroughput := strings.Replace(validCreateRequest, `"egress":"host"`, `"public_network_throughput_mbps":-1,"egress":"host"`, 1)
+	invalidEgress := strings.Replace(validCreateRequest, `"egress":"uplink"`, `"egress":"server"`, 1)
+	negativePrivateThroughput := strings.Replace(validCreateRequest, `"egress":"uplink"`, `"private_network_throughput_mbps":-1,"egress":"host"`, 1)
+	negativePublicThroughput := strings.Replace(validCreateRequest, `"egress":"uplink"`, `"public_network_throughput_mbps":-1,"egress":"host"`, 1)
 	do(t, srv, http.MethodPut, "/vms/vm1", invalidAddress, http.StatusBadRequest)
 	do(t, srv, http.MethodPut, "/vms/vm1", invalidEgress, http.StatusBadRequest)
 	do(t, srv, http.MethodPut, "/vms/vm1", negativePrivateThroughput, http.StatusBadRequest)
@@ -444,7 +444,7 @@ func TestCreateRejectsInvalidNetwork(t *testing.T) {
 
 func TestCreateReturnsNetworkThroughput(t *testing.T) {
 	srv := newTestServer(t)
-	body := strings.Replace(validCreateRequest, `"egress":"host"`, `"private_network_throughput_mbps":100,"public_network_throughput_mbps":50,"egress":"host"`, 1)
+	body := strings.Replace(validCreateRequest, `"egress":"uplink"`, `"private_network_throughput_mbps":100,"public_network_throughput_mbps":50,"egress":"uplink"`, 1)
 	recorder := do(t, srv, http.MethodPut, "/vms/vm1", body, http.StatusAccepted)
 
 	var response virtualMachineResponse
@@ -456,17 +456,31 @@ func TestCreateReturnsNetworkThroughput(t *testing.T) {
 	}
 }
 
-func TestCreatePublicIPv4EnablesHostEgress(t *testing.T) {
+// A public IPv4 address needs an internet path. The request is rejected instead
+// of silently changing the egress mode that the caller asked for.
+func TestCreateRejectsPublicIPv4WithoutUplink(t *testing.T) {
 	srv := newTestServer(t)
-	body := strings.Replace(validCreateRequest, `"egress":"host"`, `"public_ipv4":"203.0.113.10","egress":"none"`, 1)
+	for _, egress := range []string{"mesh", "none"} {
+		body := strings.Replace(validCreateRequest, `"egress":"uplink"`,
+			`"public_ipv4":"203.0.113.10","egress":"`+egress+`"`, 1)
+		do(t, srv, http.MethodPut, "/vms/vm1", body, http.StatusBadRequest)
+	}
+}
+
+// A mode without an internet path keeps a public limit but does not apply it.
+// This lets a caller change the mode without clearing the stored limits first.
+func TestCreateKeepsThePublicThroughputWithoutUplink(t *testing.T) {
+	srv := newTestServer(t)
+	body := strings.Replace(validCreateRequest, `"egress":"uplink"`,
+		`"public_network_throughput_mbps":50,"egress":"mesh"`, 1)
 	recorder := do(t, srv, http.MethodPut, "/vms/vm1", body, http.StatusAccepted)
 
 	var response virtualMachineResponse
 	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
 	}
-	if response.Network.Egress != string(vm.EgressHost) {
-		t.Fatalf("egress = %q, want host", response.Network.Egress)
+	if response.Network.PublicNetworkThroughputMbps != 50 {
+		t.Fatalf("public throughput = %+v", response.Network)
 	}
 }
 
@@ -474,19 +488,42 @@ func TestUpdateNetworkAppliesLiveSettings(t *testing.T) {
 	srv := newTestServer(t)
 	do(t, srv, http.MethodPut, "/vms/vm1", validCreateRequest, http.StatusAccepted)
 
-	body := `{"egress":"none","public_ipv4":"203.0.113.10","private_network_throughput_mbps":100,"public_network_throughput_mbps":50}`
+	body := `{"egress":"uplink","public_ipv4":"203.0.113.10","private_network_throughput_mbps":100,"public_network_throughput_mbps":50}`
 	recorder := do(t, srv, http.MethodPut, "/vms/vm1/network", body, http.StatusOK)
 
 	var response virtualMachineResponse
 	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
 	}
-	if response.Network.Egress != string(vm.EgressHost) || response.Network.PublicIPv4 != "203.0.113.10" {
+	if response.Network.Egress != string(vm.EgressUplink) || response.Network.PublicIPv4 != "203.0.113.10" {
 		t.Fatalf("network = %+v", response.Network)
 	}
 	if response.Network.PrivateNetworkThroughputMbps != 100 || response.Network.PublicNetworkThroughputMbps != 50 {
 		t.Fatalf("network throughput = %+v", response.Network)
 	}
+}
+
+func TestUpdateNetworkAcceptsMeshAndRejectsPublicIPv4(t *testing.T) {
+	srv := newTestServer(t)
+	do(t, srv, http.MethodPut, "/vms/vm1", validCreateRequest, http.StatusAccepted)
+
+	recorder := do(t, srv, http.MethodPut, "/vms/vm1/network",
+		`{"egress":"mesh","private_network_throughput_mbps":100}`, http.StatusOK)
+	var response virtualMachineResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Network.Egress != string(vm.EgressMesh) {
+		t.Fatalf("egress = %q, want %q", response.Network.Egress, vm.EgressMesh)
+	}
+
+	do(t, srv, http.MethodPut, "/vms/vm1/network",
+		`{"egress":"mesh","public_ipv4":"203.0.113.10"}`, http.StatusBadRequest)
+
+	// Atlas resends every mutable setting, so a stored public limit must not
+	// block a change to a mode that cannot apply it.
+	do(t, srv, http.MethodPut, "/vms/vm1/network",
+		`{"egress":"none","public_network_throughput_mbps":50}`, http.StatusOK)
 }
 
 func TestResizeDiskGrows(t *testing.T) {

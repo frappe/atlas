@@ -58,8 +58,6 @@ guest -> tap0 -> namespace -> guest veth -> host veth -> uplink
 | `mesh` | yes | no | rejected |
 | `none` | no | no | rejected |
 
-`host` is a deprecated alias for `uplink`. An empty value reads as `uplink`. The API requires the field.
-
 ## Allocate
 
 Metal always creates the namespace, loopback, TAP, and gateway. `uplink` and `mesh` also create the veth pair and the transit addresses. `uplink` also creates the default route, forwarding, and NAT.
@@ -85,7 +83,7 @@ Each row is one add or remove against the current host state. `uplink <-> mesh` 
 
 `Request` supports private and public limits in Mbps. `0` leaves a traffic type unlimited. Metal applies `tc` policers to `vg-<user-id>`. Private traffic uses RFC 1918 and `fc00::/7`. Public traffic uses the remaining IPv4 addresses. `Update` changes the limits, egress, and public IPv4 rules without a restart.
 
-Atlas WG Mesh owns `vh-<user-id>`. Metal owns `vg-<user-id>` and keeps the limits there. `uplink` and `mesh` have a veth pair and receive the limits. A `mesh` VM has no internet path, so Metal rejects a public limit for it. `egress: none` applies no limits. Metal keeps the values and applies them when the veth pair returns.
+Atlas WG Mesh owns `vh-<user-id>`. Metal owns `vg-<user-id>` and keeps the limits there. `uplink` and `mesh` have a veth pair and receive the private limit. A `mesh` VM has no internet path, so Metal keeps a public limit and does not apply it. `egress: none` applies no limits. Metal keeps the values and applies them when the veth pair returns.
 
 ## Resolve and Release
 

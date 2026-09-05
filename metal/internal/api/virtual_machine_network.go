@@ -53,8 +53,9 @@ func (s *Server) updateVirtualMachineNetwork(c echo.Context) error {
 }
 
 func (request networkUpdateRequest) validate() error {
-	if request.Egress != string(vm.EgressHost) && request.Egress != string(vm.EgressNone) {
-		return fmt.Errorf("egress must be host or none")
+	egress := vm.Egress(request.Egress)
+	if !egress.IsValid() {
+		return fmt.Errorf("egress must be %s, %s, or %s", vm.EgressUplink, vm.EgressMesh, vm.EgressNone)
 	}
 	if request.PrivateNetworkThroughputMbps < 0 || request.PublicNetworkThroughputMbps < 0 {
 		return fmt.Errorf("network throughput values must not be negative")
@@ -66,16 +67,15 @@ func (request networkUpdateRequest) validate() error {
 	if err != nil || !publicAddress.Is4() {
 		return fmt.Errorf("public_ipv4 must be an IPv4 address")
 	}
+	if !egress.HasInternetPath() {
+		return fmt.Errorf("public_ipv4 requires %s egress", vm.EgressUplink)
+	}
 	return nil
 }
 
 func (request networkUpdateRequest) update() vm.NetworkUpdate {
-	egress := vm.Egress(request.Egress)
-	if request.PublicIPv4 != "" {
-		egress = vm.EgressHost
-	}
 	return vm.NetworkUpdate{
-		Egress:                       egress,
+		Egress:                       vm.Egress(request.Egress),
 		PublicIPv4:                   request.PublicIPv4,
 		PrivateNetworkThroughputMbps: request.PrivateNetworkThroughputMbps,
 		PublicNetworkThroughputMbps:  request.PublicNetworkThroughputMbps,

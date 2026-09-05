@@ -126,10 +126,10 @@ Lifecycle requests return `202`. Poll `GET /vms/{id}` until `state` reaches `des
 | Value | VM can reach | Public IPv4 | Throughput limits |
 |---|---|---|---|
 | `uplink` | mesh peers and the internet | allowed | private and public |
-| `mesh` | mesh peers only | rejected | private only |
+| `mesh` | mesh peers only | rejected | private applied, public stored |
 | `none` | nothing | rejected | none |
 
-`host` is a deprecated alias for `uplink`. `egress` is required.
+`egress` is required.
 
 Use an empty `public_ipv4` to detach the address. Throughput values apply in both directions. `0` removes a limit. Metal keeps a limit that the mode does not permit and applies it when the mode permits it. Active connections can stop when the public IPv4 address or the egress mode changes.
 
