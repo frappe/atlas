@@ -1,16 +1,19 @@
 function showCreateVirtualMachineDialog() {
 	const dialog = new frappe.ui.Dialog({
 		title: __("Create Virtual Machine"),
+		size: "large",
 		fields: [
+			{ fieldtype: "Section Break", label: __("Machine") },
 			{
 				fieldname: "virtual_machine_image",
 				fieldtype: "Link",
 				label: __("Virtual Machine Image"),
 				options: "Virtual Machine Image",
 				reqd: 1,
-				get_query: () => ({ filters: { enabled: 1, status: "Available" } }),
+				filters: { enabled: 1, status: "Available" },
 			},
 			{ fieldname: "vcpus", fieldtype: "Int", label: __("vCPUs"), reqd: 1, default: 1 },
+			{ fieldtype: "Column Break" },
 			{
 				fieldname: "memory_mib",
 				fieldtype: "Int",
@@ -27,8 +30,19 @@ function showCreateVirtualMachineDialog() {
 			},
 			{ fieldtype: "Section Break", label: __("Guest") },
 			{ fieldname: "hostname", fieldtype: "Data", label: __("Hostname") },
-			{ fieldname: "ssh_keys", fieldtype: "Small Text", label: __("SSH Keys") },
-			{ fieldname: "user_data", fieldtype: "Code", label: __("User Data"), options: "YAML" },
+			{
+				fieldname: "ssh_keys",
+				fieldtype: "Code",
+				label: __("SSH Keys"),
+				description: __("One public key per line."),
+			},
+			{ fieldtype: "Column Break" },
+			{
+				fieldname: "user_data",
+				fieldtype: "Code",
+				label: __("User Data"),
+				options: "YAML",
+			},
 			{ fieldtype: "Section Break", label: __("Network") },
 			{
 				fieldname: "egress",
@@ -38,20 +52,6 @@ function showCreateVirtualMachineDialog() {
 				default: "uplink",
 				reqd: 1,
 				description: __("uplink reaches the internet. mesh reaches tenant VMs only."),
-			},
-			{
-				fieldname: "private_network_throughput_mbps",
-				fieldtype: "Int",
-				label: __("Private Network Throughput (Mbps)"),
-				default: 0,
-				description: __("0 does not apply a limit."),
-			},
-			{
-				fieldname: "public_network_throughput_mbps",
-				fieldtype: "Int",
-				label: __("Public Network Throughput (Mbps)"),
-				default: 0,
-				description: __("0 does not apply a limit."),
 			},
 			{
 				fieldname: "tenant_id",
@@ -65,7 +65,23 @@ function showCreateVirtualMachineDialog() {
 				fieldtype: "Link",
 				label: __("Public IPv4"),
 				options: "Server IP Address",
-				get_query: () => ({ filters: { status: "Allocated" } }),
+				depends_on: 'eval:doc.egress == "uplink"',
+				filters: { status: "Allocated" },
+			},
+			{ fieldtype: "Column Break" },
+			{
+				fieldname: "private_network_throughput_mbps",
+				fieldtype: "Int",
+				label: __("Private Network Throughput (Mbps)"),
+				default: 0,
+				description: __("0 does not apply a limit."),
+			},
+			{
+				fieldname: "public_network_throughput_mbps",
+				fieldtype: "Int",
+				label: __("Public Network Throughput (Mbps)"),
+				default: 0,
+				description: __("0 does not apply a limit."),
 			},
 		],
 		primary_action_label: __("Create"),

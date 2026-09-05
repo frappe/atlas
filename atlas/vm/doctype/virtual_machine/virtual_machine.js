@@ -366,7 +366,7 @@ function showAttachIPAddressDialog(frm) {
 			label: __("Server IP Address"),
 			options: "Server IP Address",
 			reqd: 1,
-			get_query: () => ({ filters: { status: "Allocated" } }),
+			filters: { status: "Allocated" },
 		},
 		({ server_ip_address }) =>
 			frm
