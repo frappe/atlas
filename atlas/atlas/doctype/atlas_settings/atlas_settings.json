@@ -308,7 +308,8 @@
    "fieldname": "metald_binary_x86_64_file",
    "fieldtype": "Link",
    "label": "Metald Binary (x86_64)",
-   "options": "File"
+   "options": "File",
+   "read_only": 1
   },
   {
    "fieldname": "metald_source_hash",
@@ -320,7 +321,8 @@
    "fieldname": "wg_mesh_binary_x86_64_file",
    "fieldtype": "Link",
    "label": "WG Mesh Binary (x86_64)",
-   "options": "File"
+   "options": "File",
+   "read_only": 1
   },
   {
    "fieldname": "wg_mesh_source_hash",
@@ -383,7 +385,7 @@
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-09-05 17:15:45.017252",
+ "modified": "2026-09-05 17:28:42.151965",
  "modified_by": "test@gmail.com",
  "module": "Atlas",
  "name": "Atlas Settings",
