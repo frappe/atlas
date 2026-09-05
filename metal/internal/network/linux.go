@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"os/exec"
 	"strings"
 
 	"github.com/frappe/atlas/metal/internal/hostcmd"
@@ -250,8 +251,9 @@ func setMasquerade(ctx context.Context, namespace, guestVirtualEthernet string, 
 	rule := []string{"POSTROUTING", "-o", guestVirtualEthernet, "-j", "MASQUERADE"}
 
 	check := commandWithPrefix(prefix, "iptables", append([]string{"-t", "nat", "-C"}, rule...)...)
-	if exists := hostcmd.Run(ctx, check[0], check[1:]...) == nil; exists == present {
-		return nil
+	exists, err := ruleExists(ctx, check)
+	if err != nil || exists == present {
+		return err
 	}
 
 	action := "-D"
@@ -260,6 +262,21 @@ func setMasquerade(ctx context.Context, namespace, guestVirtualEthernet string, 
 	}
 	command := commandWithPrefix(prefix, "iptables", append([]string{"-t", "nat", action}, rule...)...)
 	return hostcmd.Run(ctx, command[0], command[1:]...)
+}
+
+// ruleExists runs an iptables check. Exit code 1 means absent. Any other failure
+// is an error, so a broken check does not read as absent.
+func ruleExists(ctx context.Context, check []string) (bool, error) {
+	err := hostcmd.Run(ctx, check[0], check[1:]...)
+	if err == nil {
+		return true, nil
+	}
+
+	var exitError *exec.ExitError
+	if errors.As(err, &exitError) && exitError.ExitCode() == 1 {
+		return false, nil
+	}
+	return false, err
 }
 
 // removeDefaultRoute removes the namespace default route when it is present.
