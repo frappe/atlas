@@ -96,9 +96,9 @@ func (m *machine) UpdateDiskLimits(ctx context.Context, limits vm.Disk) error {
 // nil when both limits are unlimited.
 func driveRateLimiter(disk vm.Disk) *api.RateLimiter {
 	limiter := api.RateLimiter{}
-	if disk.ThroughputMbps > 0 {
+	if disk.ThroughputMiBps > 0 {
 		limiter.Bandwidth = &api.TokenBucket{
-			Size:       int64(disk.ThroughputMbps) * 1_000_000 / 8,
+			Size:       int64(disk.ThroughputMiBps) * 1024 * 1024,
 			RefillTime: rateLimiterRefillMilliseconds,
 		}
 	}

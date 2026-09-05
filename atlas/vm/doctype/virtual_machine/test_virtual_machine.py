@@ -67,12 +67,12 @@ class TestVirtualMachineRequest(UnitTestCase):
 				"memory_mib": 2048,
 				"disk_mib": 10240,
 				"tenant_id": 7,
-				"disk_throughput_mbps": 50,
+				"disk_throughput_mibps": 50,
 				"disk_iops": 2000,
 			}
 		)
 
-		self.assertEqual(request.disk_throughput_mbps, 50)
+		self.assertEqual(request.disk_throughput_mibps, 50)
 		self.assertEqual(request.disk_iops, 2000)
 
 	def test_request_parses_throughput_limits(self) -> None:
@@ -83,12 +83,12 @@ class TestVirtualMachineRequest(UnitTestCase):
 				"memory_mib": 2048,
 				"disk_mib": 10240,
 				"tenant_id": 7,
-				"private_network_throughput_mbps": 100,
+				"private_network_throughput_mibps": 100,
 			}
 		)
 
-		self.assertEqual(request.private_network_throughput_mbps, 100)
-		self.assertEqual(request.public_network_throughput_mbps, 0)
+		self.assertEqual(request.private_network_throughput_mibps, 100)
+		self.assertEqual(request.public_network_throughput_mibps, 0)
 
 	def test_request_accepts_mesh_egress(self) -> None:
 		request = VirtualMachineCreateRequest.from_value(
@@ -99,12 +99,12 @@ class TestVirtualMachineRequest(UnitTestCase):
 				"disk_mib": 10240,
 				"tenant_id": 7,
 				"egress": "mesh",
-				"private_network_throughput_mbps": 100,
+				"private_network_throughput_mibps": 100,
 			}
 		)
 
 		self.assertEqual(request.egress, "mesh")
-		self.assertEqual(request.private_network_throughput_mbps, 100)
+		self.assertEqual(request.private_network_throughput_mibps, 100)
 
 	def test_request_rejects_a_public_address_without_uplink(self) -> None:
 		base = {
@@ -119,8 +119,8 @@ class TestVirtualMachineRequest(UnitTestCase):
 			VirtualMachineCreateRequest.from_value({**base, "server_ip_address": "203.0.113.10"})
 
 		# A public limit is stored, not rejected, so a mode change needs no cleanup.
-		request = VirtualMachineCreateRequest.from_value({**base, "public_network_throughput_mbps": 50})
-		self.assertEqual(request.public_network_throughput_mbps, 50)
+		request = VirtualMachineCreateRequest.from_value({**base, "public_network_throughput_mibps": 50})
+		self.assertEqual(request.public_network_throughput_mibps, 50)
 
 	def test_request_rejects_negative_throughput(self) -> None:
 		with self.assertRaises(ValueError):
@@ -131,7 +131,7 @@ class TestVirtualMachineRequest(UnitTestCase):
 					"memory_mib": 2048,
 					"disk_mib": 10240,
 					"tenant_id": 7,
-					"public_network_throughput_mbps": -1,
+					"public_network_throughput_mibps": -1,
 				}
 			)
 
@@ -192,8 +192,8 @@ class TestVirtualMachineManager(UnitTestCase):
 			2048,
 			10240,
 			7,
-			private_network_throughput_mbps=100,
-			public_network_throughput_mbps=50,
+			private_network_throughput_mibps=100,
+			public_network_throughput_mibps=50,
 		)
 		image = SimpleNamespace(get_metal_image_request=Mock(return_value={}))
 		virtual_machine = SimpleNamespace(tenant_id=7, name="VM-00001")
@@ -201,8 +201,8 @@ class TestVirtualMachineManager(UnitTestCase):
 		with patch.object(VirtualMachineManager, "get_wireguard_mesh_ipv6", return_value="fdaa::1"):
 			metal_request = VirtualMachineManager().get_metal_request(request, image, virtual_machine, None)
 
-		self.assertEqual(metal_request["network"]["private_network_throughput_mbps"], 100)
-		self.assertEqual(metal_request["network"]["public_network_throughput_mbps"], 50)
+		self.assertEqual(metal_request["network"]["private_network_throughput_mibps"], 100)
+		self.assertEqual(metal_request["network"]["public_network_throughput_mibps"], 50)
 
 
 class TestMetalClient(UnitTestCase):
@@ -297,7 +297,7 @@ class TestMetalClient(UnitTestCase):
 		client.base_url = "http://10.0.0.2:9000"
 		client.headers = {"Authorization": "Bearer token"}
 		response = SimpleNamespace(status_code=200, content=b"{}", json=lambda: {})
-		disk = {"throughput_mbps": 50, "iops": 2000}
+		disk = {"throughput_mibps": 50, "iops": 2000}
 
 		with patch("atlas.vm.core.metal_client.requests.request", return_value=response) as request:
 			client.update_virtual_machine_disk("VM-00001", disk)
@@ -316,8 +316,8 @@ class TestMetalClient(UnitTestCase):
 		network = {
 			"egress": "uplink",
 			"public_ipv4": "203.0.113.10",
-			"private_network_throughput_mbps": 100,
-			"public_network_throughput_mbps": 50,
+			"private_network_throughput_mibps": 100,
+			"public_network_throughput_mibps": 50,
 		}
 
 		with patch("atlas.vm.core.metal_client.requests.request", return_value=response) as request:
@@ -439,8 +439,8 @@ class TestVirtualMachineNetwork(UnitTestCase):
 			{
 				"egress": "uplink",
 				"public_ipv4": "203.0.113.10",
-				"private_network_throughput_mbps": 100,
-				"public_network_throughput_mbps": 50,
+				"private_network_throughput_mibps": 100,
+				"public_network_throughput_mibps": 50,
 			}
 		)
 
@@ -448,15 +448,15 @@ class TestVirtualMachineNetwork(UnitTestCase):
 			patch.object(virtual_machine_module, "MetalClient", return_value=client),
 			patch.object(virtual_machine_module.frappe, "get_doc", return_value=Mock()),
 		):
-			virtual_machine.update_network(public_network_throughput_mbps=25)
+			virtual_machine.update_network(public_network_throughput_mibps=25)
 
 		client.update_virtual_machine_network.assert_called_once_with(
 			"VM-00001",
 			{
 				"egress": "uplink",
 				"public_ipv4": "203.0.113.10",
-				"private_network_throughput_mbps": 100,
-				"public_network_throughput_mbps": 25,
+				"private_network_throughput_mibps": 100,
+				"public_network_throughput_mibps": 25,
 			},
 		)
 
@@ -469,7 +469,7 @@ class TestVirtualMachineNetwork(UnitTestCase):
 			patch.object(virtual_machine_module.frappe, "get_doc", return_value=Mock()),
 			self.assertRaises(frappe.ValidationError),
 		):
-			virtual_machine.update_network(public_network_throughput_mbps=25)
+			virtual_machine.update_network(public_network_throughput_mibps=25)
 
 		client.update_virtual_machine_network.assert_not_called()
 
@@ -481,7 +481,7 @@ class TestVirtualMachineNetwork(UnitTestCase):
 			patch.object(virtual_machine_module, "MetalClient", return_value=client),
 			self.assertRaises(frappe.ValidationError),
 		):
-			virtual_machine.update_network(public_network_throughput_mbps=25)
+			virtual_machine.update_network(public_network_throughput_mibps=25)
 
 	def test_attach_ip_address_requests_host_egress(self) -> None:
 		virtual_machine, client = self.build_virtual_machine({"egress": "none"})
@@ -582,7 +582,7 @@ class TestVirtualMachineNetwork(UnitTestCase):
 	def test_update_egress_keeps_a_stored_public_limit(self) -> None:
 		"""Atlas resends every setting, so a stored public limit must not block a mode change."""
 		virtual_machine, client = self.build_virtual_machine(
-			{"egress": "uplink", "public_network_throughput_mbps": 31}
+			{"egress": "uplink", "public_network_throughput_mibps": 31}
 		)
 		metal_client, get_doc, only_for, database = self.patches(client, None)
 
@@ -591,7 +591,7 @@ class TestVirtualMachineNetwork(UnitTestCase):
 
 		request = client.update_virtual_machine_network.call_args.args[1]
 		self.assertEqual(request["egress"], "mesh")
-		self.assertEqual(request["public_network_throughput_mbps"], 31)
+		self.assertEqual(request["public_network_throughput_mibps"], 31)
 
 
 class TestReconcileTerminating(UnitTestCase):

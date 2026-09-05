@@ -70,7 +70,7 @@ Warm disk artifacts use `<pool>/warm/<key>@ready`. They are separate from import
 
 ## Throughput and IOPS limits
 
-The VM configuration can set `disk.throughput_mbps` and `disk.iops`. Each limit covers reads and writes together. A value of `0` does not apply a limit.
+The VM configuration can set `disk.throughput_mibps` and `disk.iops`. Each limit covers reads and writes together. A value of `0` does not apply a limit.
 
 Metal sets a Firecracker drive rate limiter. Each limit becomes one token bucket that refills every second. `PATCH /drives/{id}` changes the buckets on a running VM, so a limit change needs no restart.
 

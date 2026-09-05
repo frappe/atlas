@@ -134,11 +134,11 @@ func (allocator *LinuxAllocator) update(ctx context.Context, request UpdateReque
 	}
 
 	return configureTrafficControl(ctx, trafficControlRequest{
-		VirtualMachineID:             request.VirtualMachineID,
-		UserID:                       request.UserID,
-		Egress:                       desired,
-		PrivateNetworkThroughputMbps: request.Desired.PrivateNetworkThroughputMbps,
-		PublicNetworkThroughputMbps:  request.Desired.PublicNetworkThroughputMbps,
+		VirtualMachineID:              request.VirtualMachineID,
+		UserID:                        request.UserID,
+		Egress:                        desired,
+		PrivateNetworkThroughputMiBps: request.Desired.PrivateNetworkThroughputMiBps,
+		PublicNetworkThroughputMiBps:  request.Desired.PublicNetworkThroughputMiBps,
 	})
 }
 

@@ -123,20 +123,20 @@ class VirtualMachine(Document):
 		return (self.get_metal_vm_info().get("network") or {}).get("public_ipv4")
 
 	@property
-	def disk_throughput_mbps(self) -> int:
-		return (self.get_metal_vm_info().get("disk") or {}).get("throughput_mbps") or 0
+	def disk_throughput_mibps(self) -> int:
+		return (self.get_metal_vm_info().get("disk") or {}).get("throughput_mibps") or 0
 
 	@property
 	def disk_iops(self) -> int:
 		return (self.get_metal_vm_info().get("disk") or {}).get("iops") or 0
 
 	@property
-	def private_network_throughput_mbps(self) -> int:
-		return (self.get_metal_vm_info().get("network") or {}).get("private_network_throughput_mbps") or 0
+	def private_network_throughput_mibps(self) -> int:
+		return (self.get_metal_vm_info().get("network") or {}).get("private_network_throughput_mibps") or 0
 
 	@property
-	def public_network_throughput_mbps(self) -> int:
-		return (self.get_metal_vm_info().get("network") or {}).get("public_network_throughput_mbps") or 0
+	def public_network_throughput_mibps(self) -> int:
+		return (self.get_metal_vm_info().get("network") or {}).get("public_network_throughput_mibps") or 0
 
 	@property
 	def ssh_keys(self) -> str:
@@ -266,24 +266,24 @@ class VirtualMachine(Document):
 
 	@frappe.whitelist(methods=["POST"])
 	def update_network_throughput(
-		self, private_network_throughput_mbps: int, public_network_throughput_mbps: int
+		self, private_network_throughput_mibps: int, public_network_throughput_mibps: int
 	) -> dict[str, Any]:
-		"""Change the throughput limits in Mbps without a VM restart. A value of 0 removes the limit."""
+		"""Change the throughput limits in MiB/s without a VM restart. A value of 0 removes the limit."""
 		frappe.only_for("System Manager")
 		return self.update_network(
-			private_network_throughput_mbps=self.parse_throughput(private_network_throughput_mbps),
-			public_network_throughput_mbps=self.parse_throughput(public_network_throughput_mbps),
+			private_network_throughput_mibps=self.parse_throughput(private_network_throughput_mibps),
+			public_network_throughput_mibps=self.parse_throughput(public_network_throughput_mibps),
 		)
 
 	@frappe.whitelist(methods=["POST"])
-	def update_disk_limits(self, disk_throughput_mbps: int, disk_iops: int) -> dict[str, Any]:
-		"""Change the disk limits in Mbps and IOPS without a VM restart. 0 removes a limit."""
+	def update_disk_limits(self, disk_throughput_mibps: int, disk_iops: int) -> dict[str, Any]:
+		"""Change the disk limits in MiB/s and IOPS without a VM restart. 0 removes a limit."""
 		frappe.only_for("System Manager")
 		if self.is_draft:
 			frappe.throw(_("Wait for Virtual Machine creation before a disk change."))
 
 		disk = {
-			"throughput_mbps": self.parse_throughput(disk_throughput_mbps),
+			"throughput_mibps": self.parse_throughput(disk_throughput_mibps),
 			"iops": self.parse_throughput(disk_iops),
 		}
 		try:
@@ -295,11 +295,11 @@ class VirtualMachine(Document):
 			raise AssertionError from error
 
 	def parse_throughput(self, value: object) -> int:
-		"""Return one throughput limit in Mbps. A malformed value is an error, not 0."""
+		"""Return one throughput limit in MiB/s. A malformed value is an error, not 0."""
 		try:
 			throughput = int(str(value).strip())
 		except TypeError, ValueError:
-			frappe.throw(_("Network throughput must be a whole number of Mbps."))
+			frappe.throw(_("Network throughput must be a whole number of MiB/s."))
 			raise AssertionError from None
 		if throughput < 0:
 			frappe.throw(_("Network throughput must not be negative."))
@@ -324,8 +324,8 @@ class VirtualMachine(Document):
 			request = {
 				"egress": network["egress"],
 				"public_ipv4": network.get("public_ipv4") or "",
-				"private_network_throughput_mbps": network.get("private_network_throughput_mbps") or 0,
-				"public_network_throughput_mbps": network.get("public_network_throughput_mbps") or 0,
+				"private_network_throughput_mibps": network.get("private_network_throughput_mibps") or 0,
+				"public_network_throughput_mibps": network.get("public_network_throughput_mibps") or 0,
 				**changes,
 			}
 			return client.update_virtual_machine_network(self.name, request)

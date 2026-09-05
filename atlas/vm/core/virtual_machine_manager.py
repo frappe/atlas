@@ -35,10 +35,10 @@ class VirtualMachineCreateRequest:
 	ssh_keys: tuple[str, ...] = ()
 	user_data: str = ""
 	egress: str = "uplink"
-	disk_throughput_mbps: int = 0
+	disk_throughput_mibps: int = 0
 	disk_iops: int = 0
-	private_network_throughput_mbps: int = 0
-	public_network_throughput_mbps: int = 0
+	private_network_throughput_mibps: int = 0
+	public_network_throughput_mibps: int = 0
 	server_ip_address: str | None = None
 	metadata: dict[str, str] = field(default_factory=dict)
 
@@ -64,7 +64,7 @@ class VirtualMachineCreateRequest:
 		if egress not in EGRESS_MODES:
 			raise ValueError("Egress must be uplink, mesh, or none.")
 
-		public_throughput = cls._throughput(payload, "public_network_throughput_mbps")
+		public_throughput = cls._throughput(payload, "public_network_throughput_mibps")
 		server_ip_address = payload.get("server_ip_address") or None
 		cls._validate_internet_path(egress, server_ip_address)
 
@@ -78,10 +78,10 @@ class VirtualMachineCreateRequest:
 			ssh_keys=tuple(str(payload.get("ssh_keys") or "").splitlines()),
 			user_data=str(payload.get("user_data") or ""),
 			egress=egress,
-			disk_throughput_mbps=cls._throughput(payload, "disk_throughput_mbps"),
+			disk_throughput_mibps=cls._throughput(payload, "disk_throughput_mibps"),
 			disk_iops=cls._throughput(payload, "disk_iops"),
-			private_network_throughput_mbps=cls._throughput(payload, "private_network_throughput_mbps"),
-			public_network_throughput_mbps=public_throughput,
+			private_network_throughput_mibps=cls._throughput(payload, "private_network_throughput_mibps"),
+			public_network_throughput_mibps=public_throughput,
 			server_ip_address=server_ip_address,
 			metadata=cls._metadata(payload),
 		)
@@ -94,7 +94,7 @@ class VirtualMachineCreateRequest:
 
 	@staticmethod
 	def _throughput(payload: dict[str, Any], field: str) -> int:
-		"""Return one throughput limit in Mbps. A value of 0 does not apply a limit."""
+		"""Return one throughput limit in MiB/s. A value of 0 does not apply a limit."""
 		value = payload.get(field) or 0
 		if not isinstance(value, int) or isinstance(value, bool) or value < 0:
 			raise ValueError(f"{field} must be a non-negative integer.")
@@ -271,14 +271,14 @@ class VirtualMachineManager:
 			"user_data": request.user_data,
 			"metadata": dict(request.metadata),
 			"disk": {
-				"throughput_mbps": request.disk_throughput_mbps,
+				"throughput_mibps": request.disk_throughput_mibps,
 				"iops": request.disk_iops,
 			},
 			"network": {
 				"public_ipv4": server_ip_address.address if server_ip_address else None,
 				"wireguard_mesh_ipv6": self.get_wireguard_mesh_ipv6(virtual_machine),
-				"private_network_throughput_mbps": request.private_network_throughput_mbps,
-				"public_network_throughput_mbps": request.public_network_throughput_mbps,
+				"private_network_throughput_mibps": request.private_network_throughput_mibps,
+				"public_network_throughput_mibps": request.public_network_throughput_mibps,
 				"egress": request.egress,
 			},
 		}

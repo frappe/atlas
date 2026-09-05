@@ -42,19 +42,19 @@ type imageArtifactResponse struct {
 }
 
 type networkResponse struct {
-	MAC                          string `json:"mac"`
-	PublicIPv4                   string `json:"public_ipv4,omitempty"`
-	WireGuardMeshIPv6            string `json:"wireguard_mesh_ipv6"`
-	PrivateNetworkThroughputMbps int    `json:"private_network_throughput_mbps"`
-	PublicNetworkThroughputMbps  int    `json:"public_network_throughput_mbps"`
-	Egress                       string `json:"egress"`
+	MAC                           string `json:"mac"`
+	PublicIPv4                    string `json:"public_ipv4,omitempty"`
+	WireGuardMeshIPv6             string `json:"wireguard_mesh_ipv6"`
+	PrivateNetworkThroughputMiBps int    `json:"private_network_throughput_mibps"`
+	PublicNetworkThroughputMiBps  int    `json:"public_network_throughput_mibps"`
+	Egress                        string `json:"egress"`
 }
 
 type diskResponse struct {
-	ThroughputMbps int `json:"throughput_mbps"`
-	IOPS           int `json:"iops"`
-	SizeMiB        int `json:"size_mib"`
-	UsedMiB        int `json:"used_mib"`
+	ThroughputMiBps int `json:"throughput_mibps"`
+	IOPS            int `json:"iops"`
+	SizeMiB         int `json:"size_mib"`
+	UsedMiB         int `json:"used_mib"`
 }
 
 type virtualMachineListResponse struct {
@@ -74,18 +74,18 @@ func toVirtualMachine(information vm.Info) virtualMachineResponse {
 		Hostname:     information.Hostname,
 		Metadata:     maps.Clone(information.Metadata),
 		Network: networkResponse{
-			MAC:                          information.MAC,
-			PublicIPv4:                   information.PublicIPv4,
-			WireGuardMeshIPv6:            information.WireGuardMeshIPv6,
-			PrivateNetworkThroughputMbps: information.PrivateNetworkThroughputMbps,
-			PublicNetworkThroughputMbps:  information.PublicNetworkThroughputMbps,
-			Egress:                       string(information.Egress),
+			MAC:                           information.MAC,
+			PublicIPv4:                    information.PublicIPv4,
+			WireGuardMeshIPv6:             information.WireGuardMeshIPv6,
+			PrivateNetworkThroughputMiBps: information.PrivateNetworkThroughputMiBps,
+			PublicNetworkThroughputMiBps:  information.PublicNetworkThroughputMiBps,
+			Egress:                        string(information.Egress),
 		},
 		Disk: diskResponse{
-			ThroughputMbps: information.DiskThroughputMbps,
-			IOPS:           information.DiskIOPS,
-			SizeMiB:        information.DiskMiB,
-			UsedMiB:        information.DiskUsedMiB,
+			ThroughputMiBps: information.DiskThroughputMiBps,
+			IOPS:            information.DiskIOPS,
+			SizeMiB:         information.DiskMiB,
+			UsedMiB:         information.DiskUsedMiB,
 		},
 	}
 }

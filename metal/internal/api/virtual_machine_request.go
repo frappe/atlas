@@ -57,27 +57,27 @@ type imageArtifactRequest struct {
 }
 
 type diskRequest struct {
-	ThroughputMbps int `json:"throughput_mbps"`
-	IOPS           int `json:"iops"`
+	ThroughputMiBps int `json:"throughput_mibps"`
+	IOPS            int `json:"iops"`
 }
 
 func (request diskRequest) validate() error {
-	if request.ThroughputMbps < 0 || request.IOPS < 0 {
+	if request.ThroughputMiBps < 0 || request.IOPS < 0 {
 		return fmt.Errorf("disk limits must not be negative")
 	}
 	return nil
 }
 
 func (request diskRequest) spec() vm.Disk {
-	return vm.Disk{ThroughputMbps: request.ThroughputMbps, IOPS: request.IOPS}
+	return vm.Disk{ThroughputMiBps: request.ThroughputMiBps, IOPS: request.IOPS}
 }
 
 type networkRequest struct {
-	PublicIPv4                   string `json:"public_ipv4"`
-	WireGuardMeshIPv6            string `json:"wireguard_mesh_ipv6"`
-	PrivateNetworkThroughputMbps int    `json:"private_network_throughput_mbps"`
-	PublicNetworkThroughputMbps  int    `json:"public_network_throughput_mbps"`
-	Egress                       string `json:"egress"`
+	PublicIPv4                    string `json:"public_ipv4"`
+	WireGuardMeshIPv6             string `json:"wireguard_mesh_ipv6"`
+	PrivateNetworkThroughputMiBps int    `json:"private_network_throughput_mibps"`
+	PublicNetworkThroughputMiBps  int    `json:"public_network_throughput_mibps"`
+	Egress                        string `json:"egress"`
 }
 
 type computeResizeRequest struct {
@@ -174,7 +174,7 @@ func (request *memorySnapshotConfigurationRequest) specification() *vm.MemorySna
 }
 
 func (request networkRequest) validate() error {
-	if request.PrivateNetworkThroughputMbps < 0 || request.PublicNetworkThroughputMbps < 0 {
+	if request.PrivateNetworkThroughputMiBps < 0 || request.PublicNetworkThroughputMiBps < 0 {
 		return fmt.Errorf("network throughput values must not be negative")
 	}
 
@@ -202,11 +202,11 @@ func (request networkRequest) validate() error {
 
 func (request networkRequest) spec() vm.Network {
 	return vm.Network{
-		PublicIPv4:                   request.PublicIPv4,
-		WireGuardMeshIPv6:            request.WireGuardMeshIPv6,
-		PrivateNetworkThroughputMbps: request.PrivateNetworkThroughputMbps,
-		PublicNetworkThroughputMbps:  request.PublicNetworkThroughputMbps,
-		Egress:                       vm.Egress(request.Egress),
+		PublicIPv4:                    request.PublicIPv4,
+		WireGuardMeshIPv6:             request.WireGuardMeshIPv6,
+		PrivateNetworkThroughputMiBps: request.PrivateNetworkThroughputMiBps,
+		PublicNetworkThroughputMiBps:  request.PublicNetworkThroughputMiBps,
+		Egress:                        vm.Egress(request.Egress),
 	}
 }
 

@@ -7,11 +7,11 @@ import (
 )
 
 func TestDriveRateLimiterConvertsLimits(t *testing.T) {
-	limiter := driveRateLimiter(vm.Disk{ThroughputMbps: 40, IOPS: 2000})
+	limiter := driveRateLimiter(vm.Disk{ThroughputMiBps: 40, IOPS: 2000})
 	if limiter == nil {
 		t.Fatal("limiter must be set")
 	}
-	if limiter.Bandwidth.Size != 5_000_000 || limiter.Bandwidth.RefillTime != 1000 {
+	if limiter.Bandwidth.Size != 40*1024*1024 || limiter.Bandwidth.RefillTime != 1000 {
 		t.Fatalf("bandwidth = %+v", limiter.Bandwidth)
 	}
 	if limiter.Ops.Size != 2000 || limiter.Ops.RefillTime != 1000 {

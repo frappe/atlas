@@ -56,8 +56,8 @@ Content-Type: application/json
   "network": {
     "public_ipv4": "203.0.113.10",
     "wireguard_mesh_ipv6": "fdaa:1:0:7::1",
-    "private_network_throughput_mbps": 100,
-    "public_network_throughput_mbps": 50,
+    "private_network_throughput_mibps": 100,
+    "public_network_throughput_mibps": 50,
     "egress": "uplink"
   }
 }
@@ -117,8 +117,8 @@ Lifecycle requests return `202`. Poll `GET /vms/{id}` until `state` reaches `des
 {
   "egress": "uplink",
   "public_ipv4": "203.0.113.10",
-  "private_network_throughput_mbps": 100,
-  "public_network_throughput_mbps": 50
+  "private_network_throughput_mibps": 100,
+  "public_network_throughput_mibps": 50
 }
 ```
 
@@ -138,7 +138,7 @@ Use an empty `public_ipv4` to detach the address. Throughput values apply in bot
 
 ```json
 {
-  "throughput_mbps": 50,
+  "throughput_mibps": 50,
   "iops": 2000
 }
 ```

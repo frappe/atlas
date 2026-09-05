@@ -81,7 +81,7 @@ Each row is one add or remove against the current host state. `uplink <-> mesh` 
 
 ## Traffic control
 
-`Request` supports private and public limits in Mbps. `0` leaves a traffic type unlimited. Metal applies `tc` policers to `vg-<user-id>`. Private traffic uses RFC 1918 and `fc00::/7`. Public traffic uses the remaining IPv4 addresses. `Update` changes the limits, egress, and public IPv4 rules without a restart.
+`Request` supports private and public limits in MiB/s. `0` leaves a traffic type unlimited. Metal applies `tc` policers to `vg-<user-id>`. Private traffic uses RFC 1918 and `fc00::/7`. Public traffic uses the remaining IPv4 addresses. `Update` changes the limits, egress, and public IPv4 rules without a restart.
 
 Atlas WG Mesh owns `vh-<user-id>`. Metal owns `vg-<user-id>` and keeps the limits there. `uplink` and `mesh` have a veth pair and receive the private limit. A `mesh` VM has no internet path, so Metal keeps a public limit and does not apply it. `egress: none` applies no limits. Metal keeps the values and applies them when the veth pair returns.
 

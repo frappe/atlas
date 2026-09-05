@@ -42,17 +42,17 @@ type MemorySnapshotConfiguration struct {
 
 // Disk contains the requested VM disk limits. A zero value is unlimited.
 type Disk struct {
-	ThroughputMbps int
-	IOPS           int
+	ThroughputMiBps int
+	IOPS            int
 }
 
 // Network contains the requested VM network configuration.
 type Network struct {
-	PublicIPv4                   string
-	WireGuardMeshIPv6            string
-	PrivateNetworkThroughputMbps int
-	PublicNetworkThroughputMbps  int
-	Egress                       Egress
+	PublicIPv4                    string
+	WireGuardMeshIPv6             string
+	PrivateNetworkThroughputMiBps int
+	PublicNetworkThroughputMiBps  int
+	Egress                        Egress
 }
 
 // SameReservation reports whether two specifications reserve the same VM.

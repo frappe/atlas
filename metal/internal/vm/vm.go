@@ -18,26 +18,26 @@ type VM interface {
 
 // Info describes a virtual machine.
 type Info struct {
-	ID                           string
-	State                        State
-	DesiredState                 State
-	Error                        string
-	VCPUs                        int
-	MemoryMiB                    int
-	DiskMiB                      int
-	DiskUsedMiB                  int
-	DiskThroughputMbps           int
-	DiskIOPS                     int
-	Image                        ImageRef
-	SSHKeys                      []string
-	Hostname                     string
-	Metadata                     map[string]string
-	MAC                          string
-	PublicIPv4                   string
-	WireGuardMeshIPv6            string
-	PrivateNetworkThroughputMbps int
-	PublicNetworkThroughputMbps  int
-	Egress                       Egress
+	ID                            string
+	State                         State
+	DesiredState                  State
+	Error                         string
+	VCPUs                         int
+	MemoryMiB                     int
+	DiskMiB                       int
+	DiskUsedMiB                   int
+	DiskThroughputMiBps           int
+	DiskIOPS                      int
+	Image                         ImageRef
+	SSHKeys                       []string
+	Hostname                      string
+	Metadata                      map[string]string
+	MAC                           string
+	PublicIPv4                    string
+	WireGuardMeshIPv6             string
+	PrivateNetworkThroughputMiBps int
+	PublicNetworkThroughputMiBps  int
+	Egress                        Egress
 }
 
 // ExitStatus describes a stopped virtual machine process.

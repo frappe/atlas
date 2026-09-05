@@ -30,11 +30,11 @@ var privatePrefixes = []struct {
 
 // trafficControlRequest describes the throughput policers for one VM veth.
 type trafficControlRequest struct {
-	VirtualMachineID             string
-	UserID                       uint32
-	Egress                       vm.Egress
-	PrivateNetworkThroughputMbps int
-	PublicNetworkThroughputMbps  int
+	VirtualMachineID              string
+	UserID                        uint32
+	Egress                        vm.Egress
+	PrivateNetworkThroughputMiBps int
+	PublicNetworkThroughputMiBps  int
 }
 
 // hasVirtualEthernet reports whether the VM has a veth pair that can hold the policers.
@@ -85,16 +85,16 @@ func removeTrafficControl(ctx context.Context, namespace, interfaceName string) 
 // The VM is inside the namespace: egress carries traffic from it and matches the
 // destination, ingress carries traffic to it and matches the source.
 func trafficControlSteps(namespace, guestVirtualEthernet string, request trafficControlRequest) [][]string {
-	hasPublicLimit := request.PublicNetworkThroughputMbps > 0 && request.Egress.HasInternetPath()
-	if request.PrivateNetworkThroughputMbps == 0 && !hasPublicLimit {
+	hasPublicLimit := request.PublicNetworkThroughputMiBps > 0 && request.Egress.HasInternetPath()
+	if request.PrivateNetworkThroughputMiBps == 0 && !hasPublicLimit {
 		return nil
 	}
 
 	prefix := namespaceCommandPrefix(namespace)
 	steps := [][]string{commandWithPrefix(prefix, "tc", "qdisc", "add", "dev", guestVirtualEthernet, "clsact")}
 
-	if request.PrivateNetworkThroughputMbps > 0 {
-		privateRate := fmt.Sprintf("%dmbit", request.PrivateNetworkThroughputMbps)
+	if request.PrivateNetworkThroughputMiBps > 0 {
+		privateRate := fmt.Sprintf("%dmibps", request.PrivateNetworkThroughputMiBps)
 		for _, private := range privatePrefixes {
 			steps = append(steps,
 				commandWithPrefix(prefix,
@@ -115,8 +115,8 @@ func trafficControlSteps(namespace, guestVirtualEthernet string, request traffic
 		}
 	}
 
-	if request.PublicNetworkThroughputMbps > 0 && request.Egress.HasInternetPath() {
-		publicRate := fmt.Sprintf("%dmbit", request.PublicNetworkThroughputMbps)
+	if request.PublicNetworkThroughputMiBps > 0 && request.Egress.HasInternetPath() {
+		publicRate := fmt.Sprintf("%dmibps", request.PublicNetworkThroughputMiBps)
 		steps = append(steps,
 			commandWithPrefix(prefix,
 				"tc", "filter", "add", "dev", guestVirtualEthernet, "egress",

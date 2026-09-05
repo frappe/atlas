@@ -20,16 +20,16 @@
   "memory_mib",
   "column_break_compute",
   "disk_mib",
-  "disk_throughput_mbps",
+  "disk_throughput_mibps",
   "disk_iops",
   "section_break_network",
   "egress",
   "wireguard_mesh_ipv6",
-  "private_network_throughput_mbps",
+  "private_network_throughput_mibps",
   "column_break_network",
   "public_ipv4",
   "mac",
-  "public_network_throughput_mbps",
+  "public_network_throughput_mibps",
   "other_data_section",
   "ssh_keys",
   "metadata"
@@ -125,10 +125,10 @@
    "set_only_once": 1
   },
   {
-   "fieldname": "disk_throughput_mbps",
+   "fieldname": "disk_throughput_mibps",
    "fieldtype": "Int",
    "is_virtual": 1,
-   "label": "Disk Throughput (Mbps)",
+   "label": "Disk Throughput (MiB/s)",
    "read_only": 1
   },
   {
@@ -193,17 +193,17 @@
    "read_only": 1
   },
   {
-   "fieldname": "private_network_throughput_mbps",
+   "fieldname": "private_network_throughput_mibps",
    "fieldtype": "Int",
    "is_virtual": 1,
-   "label": "Private Throughput (Mbps)",
+   "label": "Private Throughput (MiB/s)",
    "read_only": 1
   },
   {
-   "fieldname": "public_network_throughput_mbps",
+   "fieldname": "public_network_throughput_mibps",
    "fieldtype": "Int",
    "is_virtual": 1,
-   "label": "Public Throughput (Mbps)",
+   "label": "Public Throughput (MiB/s)",
    "read_only": 1
   },
   {
@@ -237,7 +237,7 @@
  ],
  "in_create": 1,
  "links": [],
- "modified": "2026-09-05 12:11:12.576216",
+ "modified": "2026-09-05 13:00:00.000000",
  "modified_by": "Administrator",
  "module": "VM",
  "name": "Virtual Machine",

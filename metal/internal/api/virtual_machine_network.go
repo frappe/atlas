@@ -11,10 +11,10 @@ import (
 )
 
 type networkUpdateRequest struct {
-	Egress                       string `json:"egress"`
-	PublicIPv4                   string `json:"public_ipv4"`
-	PrivateNetworkThroughputMbps int    `json:"private_network_throughput_mbps"`
-	PublicNetworkThroughputMbps  int    `json:"public_network_throughput_mbps"`
+	Egress                        string `json:"egress"`
+	PublicIPv4                    string `json:"public_ipv4"`
+	PrivateNetworkThroughputMiBps int    `json:"private_network_throughput_mibps"`
+	PublicNetworkThroughputMiBps  int    `json:"public_network_throughput_mibps"`
 }
 
 // @Summary	Update mutable VM network settings
@@ -57,7 +57,7 @@ func (request networkUpdateRequest) validate() error {
 	if !egress.IsValid() {
 		return fmt.Errorf("egress must be %s, %s, or %s", vm.EgressUplink, vm.EgressMesh, vm.EgressNone)
 	}
-	if request.PrivateNetworkThroughputMbps < 0 || request.PublicNetworkThroughputMbps < 0 {
+	if request.PrivateNetworkThroughputMiBps < 0 || request.PublicNetworkThroughputMiBps < 0 {
 		return fmt.Errorf("network throughput values must not be negative")
 	}
 	if request.PublicIPv4 == "" {
@@ -75,9 +75,9 @@ func (request networkUpdateRequest) validate() error {
 
 func (request networkUpdateRequest) update() vm.NetworkUpdate {
 	return vm.NetworkUpdate{
-		Egress:                       vm.Egress(request.Egress),
-		PublicIPv4:                   request.PublicIPv4,
-		PrivateNetworkThroughputMbps: request.PrivateNetworkThroughputMbps,
-		PublicNetworkThroughputMbps:  request.PublicNetworkThroughputMbps,
+		Egress:                        vm.Egress(request.Egress),
+		PublicIPv4:                    request.PublicIPv4,
+		PrivateNetworkThroughputMiBps: request.PrivateNetworkThroughputMiBps,
+		PublicNetworkThroughputMiBps:  request.PublicNetworkThroughputMiBps,
 	}
 }
