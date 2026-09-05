@@ -12,6 +12,7 @@ type VM interface {
 	Destroy(ctx context.Context) error
 	Wait(ctx context.Context) (ExitStatus, error)
 	ResizeDisk(ctx context.Context, diskMiB int) error
+	UpdateDiskLimits(ctx context.Context, limits Disk) error
 	Info(ctx context.Context) (Info, error)
 }
 
@@ -25,6 +26,8 @@ type Info struct {
 	MemoryMiB                    int
 	DiskMiB                      int
 	DiskUsedMiB                  int
+	DiskThroughputMbps           int
+	DiskIOPS                     int
 	Image                        ImageRef
 	SSHKeys                      []string
 	Hostname                     string

@@ -11,6 +11,7 @@ func (s *Server) registerRoutes(router *echo.Echo) {
 	virtualMachineRoutes.PUT("/:id", s.createVirtualMachine)
 	virtualMachineRoutes.GET("/:id", s.getVirtualMachine)
 	virtualMachineRoutes.PUT("/:id/network", s.updateVirtualMachineNetwork)
+	virtualMachineRoutes.PUT("/:id/disk", s.updateVirtualMachineDiskLimits)
 	virtualMachineRoutes.PUT("/:id/ssh-keys", s.replaceVirtualMachineSSHKeys)
 	virtualMachineRoutes.PUT("/:id/metadata", s.replaceVirtualMachineMetadata)
 

@@ -17,10 +17,11 @@
   "error",
   "section_break_compute_and_storage",
   "vcpus",
-  "column_break_compute",
   "memory_mib",
-  "column_break_gmmt",
+  "column_break_compute",
   "disk_mib",
+  "disk_throughput_mbps",
+  "disk_iops",
   "section_break_network",
   "egress",
   "wireguard_mesh_ipv6",
@@ -124,6 +125,20 @@
    "set_only_once": 1
   },
   {
+   "fieldname": "disk_throughput_mbps",
+   "fieldtype": "Int",
+   "is_virtual": 1,
+   "label": "Disk Throughput (Mbps)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "disk_iops",
+   "fieldtype": "Int",
+   "is_virtual": 1,
+   "label": "Disk IOPS",
+   "read_only": 1
+  },
+  {
    "description": "VMs in the same tenant can connect through the mesh.",
    "fieldname": "tenant_id",
    "fieldtype": "Int",
@@ -216,17 +231,13 @@
    "label": "Compute and Storage"
   },
   {
-   "fieldname": "column_break_gmmt",
-   "fieldtype": "Column Break"
-  },
-  {
    "fieldname": "other_data_section",
    "fieldtype": "Section Break"
   }
  ],
  "in_create": 1,
  "links": [],
- "modified": "2026-09-05 09:55:41.374911",
+ "modified": "2026-09-05 12:11:12.576216",
  "modified_by": "Administrator",
  "module": "VM",
  "name": "Virtual Machine",

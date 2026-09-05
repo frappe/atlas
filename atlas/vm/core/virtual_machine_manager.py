@@ -35,6 +35,8 @@ class VirtualMachineCreateRequest:
 	ssh_keys: tuple[str, ...] = ()
 	user_data: str = ""
 	egress: str = "uplink"
+	disk_throughput_mbps: int = 0
+	disk_iops: int = 0
 	private_network_throughput_mbps: int = 0
 	public_network_throughput_mbps: int = 0
 	server_ip_address: str | None = None
@@ -76,6 +78,8 @@ class VirtualMachineCreateRequest:
 			ssh_keys=tuple(str(payload.get("ssh_keys") or "").splitlines()),
 			user_data=str(payload.get("user_data") or ""),
 			egress=egress,
+			disk_throughput_mbps=cls._throughput(payload, "disk_throughput_mbps"),
+			disk_iops=cls._throughput(payload, "disk_iops"),
 			private_network_throughput_mbps=cls._throughput(payload, "private_network_throughput_mbps"),
 			public_network_throughput_mbps=public_throughput,
 			server_ip_address=server_ip_address,
@@ -266,6 +270,10 @@ class VirtualMachineManager:
 			"ssh_keys": list(request.ssh_keys),
 			"user_data": request.user_data,
 			"metadata": dict(request.metadata),
+			"disk": {
+				"throughput_mbps": request.disk_throughput_mbps,
+				"iops": request.disk_iops,
+			},
 			"network": {
 				"public_ipv4": server_ip_address.address if server_ip_address else None,
 				"wireguard_mesh_ipv6": self.get_wireguard_mesh_ipv6(virtual_machine),

@@ -26,6 +26,7 @@ type createRequest struct {
 	VCPUs     int               `json:"vcpus"`
 	MemoryMiB int               `json:"memory_mib"`
 	DiskMiB   int               `json:"disk_mib"`
+	Disk      diskRequest       `json:"disk"`
 	Image     imageRequest      `json:"image"`
 	Network   networkRequest    `json:"network"`
 	SSHKeys   []string          `json:"ssh_keys"`
@@ -55,6 +56,22 @@ type imageArtifactRequest struct {
 	SHA256 string `json:"sha256"`
 }
 
+type diskRequest struct {
+	ThroughputMbps int `json:"throughput_mbps"`
+	IOPS           int `json:"iops"`
+}
+
+func (request diskRequest) validate() error {
+	if request.ThroughputMbps < 0 || request.IOPS < 0 {
+		return fmt.Errorf("disk limits must not be negative")
+	}
+	return nil
+}
+
+func (request diskRequest) spec() vm.Disk {
+	return vm.Disk{ThroughputMbps: request.ThroughputMbps, IOPS: request.IOPS}
+}
+
 type networkRequest struct {
 	PublicIPv4                   string `json:"public_ipv4"`
 	WireGuardMeshIPv6            string `json:"wireguard_mesh_ipv6"`
@@ -73,6 +90,9 @@ type diskResizeRequest struct {
 }
 
 func (request createRequest) validate() error {
+	if err := request.Disk.validate(); err != nil {
+		return err
+	}
 	if request.VCPUs <= 0 || request.MemoryMiB <= 0 || request.DiskMiB <= 0 {
 		return fmt.Errorf("vcpus, memory_mib, and disk_mib must be positive")
 	}
@@ -94,6 +114,7 @@ func (request createRequest) spec() vm.Spec {
 		VCPUs:     request.VCPUs,
 		MemoryMiB: request.MemoryMiB,
 		DiskMiB:   request.DiskMiB,
+		Disk:      request.Disk.spec(),
 		Image:     request.Image.specification(),
 		Network:   request.Network.spec(),
 		SSHKeys:   request.SSHKeys,

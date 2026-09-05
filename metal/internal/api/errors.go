@@ -1,8 +1,11 @@
 package api
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 
 	"github.com/labstack/echo/v4"
@@ -13,8 +16,9 @@ import (
 )
 
 type errorBody struct {
-	Code    string `json:"code"`
-	Message string `json:"message"`
+	Code      string `json:"code"`
+	Message   string `json:"message"`
+	RequestID string `json:"request_id,omitempty"`
 }
 
 type errorResponse struct {
@@ -37,10 +41,28 @@ func errorHandler(err error, c echo.Context) {
 	}
 
 	publicError := publicAPIError(err)
+
+	// A masked error tells the caller nothing, so log the cause under an ID that
+	// the response carries back.
+	requestID := ""
+	if publicError.status >= http.StatusInternalServerError {
+		requestID = newRequestID()
+		log.Printf("api: %s %s: request %s: %v", c.Request().Method, c.Path(), requestID, err)
+	}
+
 	_ = c.JSON(publicError.status, errorResponse{Error: errorBody{
-		Code:    publicError.code,
-		Message: publicError.message,
+		Code:      publicError.code,
+		Message:   publicError.message,
+		RequestID: requestID,
 	}})
+}
+
+func newRequestID() string {
+	value := make([]byte, 8)
+	if _, err := rand.Read(value); err != nil {
+		return "unknown"
+	}
+	return hex.EncodeToString(value)
 }
 
 func publicAPIError(err error) *apiError {

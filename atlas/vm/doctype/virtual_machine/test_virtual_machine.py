@@ -59,6 +59,22 @@ class TestVirtualMachineRequest(UnitTestCase):
 				}
 			)
 
+	def test_request_parses_disk_limits(self) -> None:
+		request = VirtualMachineCreateRequest.from_value(
+			{
+				"virtual_machine_image": "Ubuntu 24.04",
+				"vcpus": 2,
+				"memory_mib": 2048,
+				"disk_mib": 10240,
+				"tenant_id": 7,
+				"disk_throughput_mbps": 50,
+				"disk_iops": 2000,
+			}
+		)
+
+		self.assertEqual(request.disk_throughput_mbps, 50)
+		self.assertEqual(request.disk_iops, 2000)
+
 	def test_request_parses_throughput_limits(self) -> None:
 		request = VirtualMachineCreateRequest.from_value(
 			{
@@ -275,6 +291,22 @@ class TestMetalClient(UnitTestCase):
 			("PUT", "http://10.0.0.2:9000/vms/VM-00001/metadata"),
 		)
 		self.assertEqual(request.call_args.kwargs["json"], {"metadata": {"env": "prod"}})
+
+	def test_update_disk_uses_vm_subresource(self) -> None:
+		client = MetalClient.__new__(MetalClient)
+		client.base_url = "http://10.0.0.2:9000"
+		client.headers = {"Authorization": "Bearer token"}
+		response = SimpleNamespace(status_code=200, content=b"{}", json=lambda: {})
+		disk = {"throughput_mbps": 50, "iops": 2000}
+
+		with patch("atlas.vm.core.metal_client.requests.request", return_value=response) as request:
+			client.update_virtual_machine_disk("VM-00001", disk)
+
+		self.assertEqual(
+			request.call_args.args[:2],
+			("PUT", "http://10.0.0.2:9000/vms/VM-00001/disk"),
+		)
+		self.assertEqual(request.call_args.kwargs["json"], disk)
 
 	def test_update_network_uses_vm_subresource(self) -> None:
 		client = MetalClient.__new__(MetalClient)

@@ -90,6 +90,12 @@ A public IPv4 address needs `uplink`. Atlas refuses `mesh` and `none` while an a
 
 Active connections can stop when the public IPv4 address or the egress mode changes.
 
+## Disk limits
+
+The VM configuration can set `disk_throughput_mbps` and `disk_iops`. Each limit covers reads and writes together. A value of `0` does not apply a limit.
+
+The Edit Disk Limits action sends both values with `PUT /vms/{name}/disk`. Metal sets a Firecracker drive rate limiter, so a change needs no VM restart.
+
 ## Termination and deletion
 
 The Terminate action asks Metal to remove the VM. Atlas keeps the request metadata. Delete the document only after Metal confirms that the VM is absent.

@@ -123,6 +123,14 @@ class VirtualMachine(Document):
 		return (self.get_metal_vm_info().get("network") or {}).get("public_ipv4")
 
 	@property
+	def disk_throughput_mbps(self) -> int:
+		return (self.get_metal_vm_info().get("disk") or {}).get("throughput_mbps") or 0
+
+	@property
+	def disk_iops(self) -> int:
+		return (self.get_metal_vm_info().get("disk") or {}).get("iops") or 0
+
+	@property
 	def private_network_throughput_mbps(self) -> int:
 		return (self.get_metal_vm_info().get("network") or {}).get("private_network_throughput_mbps") or 0
 
@@ -266,6 +274,25 @@ class VirtualMachine(Document):
 			private_network_throughput_mbps=self.parse_throughput(private_network_throughput_mbps),
 			public_network_throughput_mbps=self.parse_throughput(public_network_throughput_mbps),
 		)
+
+	@frappe.whitelist(methods=["POST"])
+	def update_disk_limits(self, disk_throughput_mbps: int, disk_iops: int) -> dict[str, Any]:
+		"""Change the disk limits in Mbps and IOPS without a VM restart. 0 removes a limit."""
+		frappe.only_for("System Manager")
+		if self.is_draft:
+			frappe.throw(_("Wait for Virtual Machine creation before a disk change."))
+
+		disk = {
+			"throughput_mbps": self.parse_throughput(disk_throughput_mbps),
+			"iops": self.parse_throughput(disk_iops),
+		}
+		try:
+			return MetalClient(frappe.get_doc("Server", self.server)).update_virtual_machine_disk(
+				self.name, disk
+			)
+		except MetalClientError as error:
+			throw_metal_error(error)
+			raise AssertionError from error
 
 	def parse_throughput(self, value: object) -> int:
 		"""Return one throughput limit in Mbps. A malformed value is an error, not 0."""

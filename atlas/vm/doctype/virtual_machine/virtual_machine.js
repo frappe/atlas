@@ -54,6 +54,11 @@ frappe.ui.form.on("Virtual Machine", {
 			__("Actions")
 		);
 		frm.add_custom_button(__("Resize Disk"), () => showResizeDiskDialog(frm), __("Actions"));
+		frm.add_custom_button(
+			__("Edit Disk Limits"),
+			() => showEditDiskLimitsDialog(frm),
+			__("Actions")
+		);
 		if (is_stopped) {
 			frm.add_custom_button(
 				__("Resize Compute"),
@@ -397,5 +402,38 @@ function detachIPAddress(frm) {
 					freeze_message: __("Detaching IP address..."),
 				})
 				.then(() => frm.reload_doc())
+	);
+}
+
+function showEditDiskLimitsDialog(frm) {
+	frappe.prompt(
+		[
+			{
+				fieldname: "disk_throughput_mbps",
+				fieldtype: "Int",
+				label: __("Disk Throughput (Mbps)"),
+				default: frm.doc.disk_throughput_mbps,
+				description: __("Covers reads and writes. 0 does not apply a limit."),
+			},
+			{
+				fieldname: "disk_iops",
+				fieldtype: "Int",
+				label: __("Disk IOPS"),
+				default: frm.doc.disk_iops,
+				description: __("Covers reads and writes. 0 does not apply a limit."),
+			},
+		],
+		(values) =>
+			frm
+				.call({
+					method: "update_disk_limits",
+					doc: frm.doc,
+					args: values,
+					freeze: true,
+					freeze_message: __("Updating disk limits..."),
+				})
+				.then(() => frm.reload_doc()),
+		__("Edit Disk Limits"),
+		__("Save")
 	);
 }

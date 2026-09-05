@@ -51,8 +51,10 @@ type networkResponse struct {
 }
 
 type diskResponse struct {
-	SizeMiB int `json:"size_mib"`
-	UsedMiB int `json:"used_mib"`
+	ThroughputMbps int `json:"throughput_mbps"`
+	IOPS           int `json:"iops"`
+	SizeMiB        int `json:"size_mib"`
+	UsedMiB        int `json:"used_mib"`
 }
 
 type virtualMachineListResponse struct {
@@ -80,8 +82,10 @@ func toVirtualMachine(information vm.Info) virtualMachineResponse {
 			Egress:                       string(information.Egress),
 		},
 		Disk: diskResponse{
-			SizeMiB: information.DiskMiB,
-			UsedMiB: information.DiskUsedMiB,
+			ThroughputMbps: information.DiskThroughputMbps,
+			IOPS:           information.DiskIOPS,
+			SizeMiB:        information.DiskMiB,
+			UsedMiB:        information.DiskUsedMiB,
 		},
 	}
 }

@@ -28,6 +28,20 @@ function showCreateVirtualMachineDialog() {
 				reqd: 1,
 				default: 10240,
 			},
+			{
+				fieldname: "disk_throughput_mbps",
+				fieldtype: "Int",
+				label: __("Disk Throughput (Mbps)"),
+				default: 0,
+				description: __("0 does not apply a limit."),
+			},
+			{
+				fieldname: "disk_iops",
+				fieldtype: "Int",
+				label: __("Disk IOPS"),
+				default: 0,
+				description: __("0 does not apply a limit."),
+			},
 			{ fieldtype: "Section Break", label: __("Guest") },
 			{ fieldname: "hostname", fieldtype: "Data", label: __("Hostname") },
 			{

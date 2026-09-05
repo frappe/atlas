@@ -143,6 +143,12 @@ func (driver *fakeVirtualMachineDriver) UpdateNetwork(_ context.Context, id stri
 	return nil
 }
 
+func (virtualMachine *fakeVM) UpdateDiskLimits(_ context.Context, limits vm.Disk) error {
+	virtualMachine.info.DiskThroughputMbps = limits.ThroughputMbps
+	virtualMachine.info.DiskIOPS = limits.IOPS
+	return nil
+}
+
 func (driver *fakeVirtualMachineDriver) ResizeCompute(_ context.Context, id string, virtualCPUCount, memoryMiB int) error {
 	virtualMachine, found := driver.virtualMachines[id]
 	if !found {
@@ -524,6 +530,23 @@ func TestUpdateNetworkAcceptsMeshAndRejectsPublicIPv4(t *testing.T) {
 	// block a change to a mode that cannot apply it.
 	do(t, srv, http.MethodPut, "/vms/vm1/network",
 		`{"egress":"none","public_network_throughput_mbps":50}`, http.StatusOK)
+}
+
+func TestUpdateDiskLimitsAppliesAndRejects(t *testing.T) {
+	srv := newTestServer(t)
+	do(t, srv, http.MethodPut, "/vms/vm1", validCreateRequest, http.StatusAccepted)
+
+	recorder := do(t, srv, http.MethodPut, "/vms/vm1/disk", `{"throughput_mbps":50,"iops":2000}`, http.StatusOK)
+	var response virtualMachineResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Disk.ThroughputMbps != 50 || response.Disk.IOPS != 2000 {
+		t.Fatalf("disk = %+v", response.Disk)
+	}
+
+	do(t, srv, http.MethodPut, "/vms/vm1/disk", `{"throughput_mbps":-1}`, http.StatusBadRequest)
+	do(t, srv, http.MethodPut, "/vms/vm1/disk", `{"iops":-1}`, http.StatusBadRequest)
 }
 
 func TestResizeDiskGrows(t *testing.T) {

@@ -20,6 +20,8 @@ func (m *machine) Info(ctx context.Context) (vm.Info, error) {
 		VCPUs:                        m.cfg.Spec.VCPUs,
 		MemoryMiB:                    m.cfg.Spec.MemoryMiB,
 		DiskMiB:                      m.cfg.Spec.DiskMiB,
+		DiskThroughputMbps:           m.cfg.Spec.Disk.ThroughputMbps,
+		DiskIOPS:                     m.cfg.Spec.Disk.IOPS,
 		Image:                        m.cfg.Spec.Image,
 		SSHKeys:                      append([]string(nil), m.cfg.Spec.SSHKeys...),
 		Hostname:                     m.cfg.Spec.Hostname,

@@ -121,6 +121,15 @@ class MetalClient:
 			expected_status=200,
 		)
 
+	def update_virtual_machine_disk(self, virtual_machine_id: str, disk: dict[str, Any]) -> dict[str, Any]:
+		"""Replace the disk limits for one VM without a restart."""
+		return self._request(
+			"PUT",
+			f"/vms/{quote(virtual_machine_id, safe='')}/disk",
+			json=disk,
+			expected_status=200,
+		)
+
 	def resize_virtual_machine_disk(self, virtual_machine_id: str, disk_mib: int) -> None:
 		"""Ask Metal to increase one VM disk size."""
 		self._request(
