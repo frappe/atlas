@@ -75,7 +75,8 @@ func (m *machine) UpdateDiskLimits(ctx context.Context, limits vm.Disk) error {
 	if err != nil {
 		return err
 	}
-	if m.state(ctx, unitStatus) == vm.StateRunning {
+	state := m.state(ctx, unitStatus)
+	if state == vm.StateRunning || state == vm.StatePaused {
 		drive := api.PartialDrive{DriveID: rootDriveIdentifier, RateLimiter: driveRateLimiter(limits)}
 		if err := m.api.PatchDrive(ctx, drive); err != nil {
 			return err

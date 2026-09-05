@@ -111,6 +111,10 @@ func virtualMachineReservationResponse(virtualMachineID string, specification vm
 			PublicNetworkThroughputMiBps:  specification.Network.PublicNetworkThroughputMiBps,
 			Egress:                        string(specification.Network.Egress),
 		},
-		Disk: diskResponse{SizeMiB: specification.DiskMiB},
+		Disk: diskResponse{
+			ThroughputMiBps: specification.Disk.ThroughputMiBps,
+			IOPS:            specification.Disk.IOPS,
+			SizeMiB:         specification.DiskMiB,
+		},
 	}
 }
