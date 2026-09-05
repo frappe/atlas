@@ -3,10 +3,6 @@
 
 from __future__ import annotations
 
-import hashlib
-import ipaddress
-import json
-from collections import deque
 from typing import TYPE_CHECKING
 
 import frappe
@@ -15,17 +11,19 @@ from frappe.desk.utils import slug
 from frappe.model.document import Document
 from frappe.model.naming import make_autoname
 from frappe.utils.background_jobs import is_job_enqueued
-from frappe.utils.password import get_decrypted_password
 
-from atlas.atlas.core.host_binaries import get_binary_download_url
+from atlas.atlas.core.server_providers.base import ServerCreateRequest, ServerPowerAction
+from atlas.server.core.disk_inventory import DiskInventory
+from atlas.server.core.host_installation import (
+	METALD_INSTALL_TIMEOUT_SECONDS,
+	WIREGUARD_CONFIGURE_TIMEOUT_SECONDS,
+	HostInstallation,
+)
+from atlas.server.core.provisioning import ServerProvisioner
 from atlas.server.doctype.server_ssh_task.server_ssh_task import ServerSSHTask
 
 if TYPE_CHECKING:
 	from atlas.atlas.doctype.atlas_settings.atlas_settings import AtlasSettings
-
-WIREGUARD_OVERHEAD_BYTES = 60
-WIREGUARD_CONFIGURE_TIMEOUT_SECONDS = 300
-METALD_INSTALL_TIMEOUT_SECONDS = 1_200
 
 
 class Server(Document):
@@ -70,9 +68,36 @@ class Server(Document):
 
 		self.name = make_autoname(f"node-{slug(self.settings.region_name)}-.#####", doc=self)
 
+	def insert(self, *args: object, **kwargs: object) -> "Server":
+		"""Insert this Server and remove only a new provider server after failure."""
+		try:
+			return super().insert(*args, **kwargs)
+		except Exception:
+			self._cleanup_provider_server_after_failed_insert()
+			raise
+
 	def before_validate(self) -> None:
-		if not self.provider_server_id:
-			self.settings.server_provider_controller.create_server(self)
+		self.settings.server_provider_controller.validate_settings()
+		self._validate_provider_catalog()
+		if self.provider_server_id:
+			return
+
+		size = frappe.get_doc("Server Size", self.server_size)
+		image = frappe.get_doc("Server Image", self.server_image)
+		request = ServerCreateRequest(
+			name=self.name,
+			server_size=self.server_size,
+			server_image=self.server_image,
+			size_provider_metadata=self._provider_metadata(size.provider_metadata),
+			image_provider_metadata=self._provider_metadata(image.provider_metadata),
+		)
+		provider_server = self.settings.server_provider_controller.ensure_server(request)
+		self.provider_server_id = provider_server.provider_server_id
+		if provider_server.status:
+			self.status = provider_server.status
+		self.public_ipv4_address = provider_server.public_ipv4_address
+		self.provider_metadata = frappe.as_json(provider_server.provider_metadata)
+		self.flags.provider_server_created = provider_server.was_created
 
 	def validate(self) -> None:
 		self._validate_provider_catalog()
@@ -141,20 +166,26 @@ class Server(Document):
 	def reboot_server(self) -> None:
 		"""Reboot the provider server."""
 		self._validate_power_action()
-		self.settings.server_provider_controller.reboot_server(self)
+		self.settings.server_provider_controller.set_power_state(
+			self._provider_server_id(), ServerPowerAction.REBOOT
+		)
 
 	@frappe.whitelist(methods=["POST"])
 	def poweroff_server(self) -> None:
 		"""Stop the provider server."""
 		self._validate_power_action()
-		self.settings.server_provider_controller.poweroff_server(self)
+		self.settings.server_provider_controller.set_power_state(
+			self._provider_server_id(), ServerPowerAction.STOP
+		)
 		self.db_set("status", "Stopped")
 
 	@frappe.whitelist(methods=["POST"])
 	def poweron_server(self) -> None:
 		"""Start the provider server."""
 		self._validate_power_action()
-		self.settings.server_provider_controller.poweron_server(self)
+		self.settings.server_provider_controller.set_power_state(
+			self._provider_server_id(), ServerPowerAction.START
+		)
 		if self.is_provisioning_completed:
 			self.db_set("status", "Running")
 
@@ -168,7 +199,7 @@ class Server(Document):
 		if is_job_enqueued(self.setup_job_id):
 			frappe.throw(_("Server setup is still running for {0}.").format(self.name))
 
-		self.settings.server_provider_controller.archive_server(self)
+		self.settings.server_provider_controller.delete_server(self._provider_server_id())
 		self.db_set({"status": "Deleted", "is_provisioning_completed": 0})
 
 	def _enqueue_setup_server(self) -> None:
@@ -190,16 +221,7 @@ class Server(Document):
 		if self.status != "Running":
 			frappe.throw(_("Server {0} is not running.").format(self.name))
 
-		result = ServerSSHTask.create_for_command(
-			server=self.name,
-			command="lsblk --json --bytes --paths --output NAME,UUID,SIZE,MOUNTPOINT",
-			run_in_background=False,
-		).result
-		if not result or not result.is_success:
-			frappe.throw(_("Could not read the disks of server {0}.").format(self.name))
-
-		self.set("disks", self._parse_disks(result.output))
-		self.save()
+		DiskInventory(self).sync()
 
 	@frappe.whitelist(methods=["POST"])
 	def install_metald(self) -> None:
@@ -236,21 +258,13 @@ class Server(Document):
 		server.server_size = size or Server._find_default_server_size(settings.server_provider)
 		server.server_image = image.name
 		server.status = "Pending"
-		provider = settings.server_provider_controller
-		try:
-			server.insert()
-		except Exception:
-			try:
-				provider.cleanup_provisioned_server(server)
-			except Exception:
-				frappe.log_error(title=f"Could not clean up server {server.name}")
-			raise
+		server.insert()
 		return server
 
 	# Internal methods
 
 	def _setup_server(self) -> None:
-		self.settings.server_provider_controller.run_provisioning(self)
+		ServerProvisioner(self).run()
 
 	@staticmethod
 	def _find_default_server_size(provider_type: str) -> str:
@@ -272,80 +286,19 @@ class Server(Document):
 
 	def _install_metald(self) -> None:
 		"""Install metald and its host dependencies."""
-		if not self.private_ipv4_address:
-			frappe.throw(_("Server {0} needs a private IPv4 address.").format(self.name))
-		if not self.private_network_interface:
-			frappe.throw(_("Server {0} needs a private network interface.").format(self.name))
-
-		if not self.settings.metald_binary_x86_64_file or not self.settings.wg_mesh_binary_x86_64_file:
-			frappe.throw(_("Atlas Settings needs the metald and Atlas WG Mesh binaries."))
-
-		token = get_decrypted_password("Server", self.name, "metald_api_token", raise_exception=False)
-		if not token:
-			token = frappe.generate_hash(length=128)
-			self.metald_api_token = token
-			self.save(ignore_permissions=True, ignore_version=True)
-
-		token_hash = hashlib.sha256(token.encode()).hexdigest()
-		result = ServerSSHTask.create_for_script_file(
-			server=self.name,
-			script_path="install-metald.sh",
-			environment={
-				"METALD_DOWNLOAD_URL": get_binary_download_url(self.settings.metald_binary_x86_64_file),
-				"WG_MESH_DOWNLOAD_URL": get_binary_download_url(self.settings.wg_mesh_binary_x86_64_file),
-				"METALD_AUTH_TOKEN_HASH": token_hash,
-				"LISTEN_ADDRESS": "0.0.0.0:9000",
-				"STORAGE_POOL_DEVICE": self.settings.server_provider_controller.get_storage_pool_device(self),
-				# Atlas WG Mesh discovery runs on the private network, so its hook
-				# belongs on that interface and never on the public uplink.
-				"MESH_UPLINK_INTERFACE": self.private_network_interface,
-			},
-			timeout_seconds=METALD_INSTALL_TIMEOUT_SECONDS,
-			run_in_background=False,
-		).result
-		if not result or not result.is_success:
-			frappe.throw(_("Could not install metald on server {0}.").format(self.name))
+		HostInstallation(self).install_metal()
 
 	def _configure_wireguard(self) -> None:
 		"""Configure WireGuard and store its public key."""
-		self._set_wireguard_ip_address_if_not_set()
-		result = ServerSSHTask.create_for_script_file(
-			server=self.name,
-			script_path="configure-wireguard.sh",
-			environment={
-				"WIREGUARD_ADDRESS": self.wireguard_ip_address,
-				"WIREGUARD_LISTEN_PORT": self.port,
-				"WIREGUARD_MTU": self.settings.private_network_mtu - WIREGUARD_OVERHEAD_BYTES,
-			},
-			timeout_seconds=WIREGUARD_CONFIGURE_TIMEOUT_SECONDS,
-			run_in_background=False,
-		).result
-		if not result or not result.is_success:
-			frappe.throw(_("Could not configure WireGuard on server {0}.").format(self.name))
-
-		after_start = result.output.partition("===PUBLIC_KEY_START===")[2]
-		public_key = after_start.partition("===PUBLIC_KEY_END===")[0].strip()
-		if not public_key:
-			frappe.throw(_("Server {0} reported no WireGuard public key.").format(self.name))
-
-		self.db_set("wireguard_public_key", public_key)
+		HostInstallation(self).configure_wireguard()
 
 	def _get_wireguard_ip_address(self) -> str:
 		"""Return this server's fdab::/16 host mesh address."""
-		node_number = self.name.rsplit("-", 1)[-1]
-		if not node_number.isdigit():
-			frappe.throw(_("Server {0} has no node number in its name.").format(self.name))
-
-		region_id = self.settings.region_id
-		if not 0 <= region_id <= 0xFFFF:
-			frappe.throw(_("Atlas Settings region ID must fit in one IPv6 field."))
-
-		return str(ipaddress.IPv6Address((0xFDAB << 112) | (region_id << 96) | int(node_number)))
+		return HostInstallation(self).wireguard_ip_address
 
 	def _set_wireguard_ip_address_if_not_set(self) -> None:
 		"""Set the WireGuard IP address if it is not already set."""
-		if not self.wireguard_ip_address:
-			self.db_set("wireguard_ip_address", self._get_wireguard_ip_address())
+		HostInstallation(self).set_wireguard_ip_address()
 
 	def _sync_disks_if_running(self) -> None:
 		"""Fill the disks table once the server runs."""
@@ -359,23 +312,7 @@ class Server(Document):
 
 	def _parse_disks(self, lsblk_output: str) -> list[dict[str, str]]:
 		"""Return one row for each mounted device and the raw storage pool device."""
-		storage_pool_device = self.settings.server_provider_controller.get_storage_pool_device(self)
-		devices = deque(json.loads(lsblk_output).get("blockdevices", []))
-		disks: dict[str, dict[str, str]] = {}
-		while devices:
-			device = devices.popleft()
-			devices.extendleft(reversed(device.get("children") or []))
-			name = device["name"]
-			if not device.get("mountpoint") and name != storage_pool_device:
-				continue
-
-			disks[name] = {
-				"device": name,
-				"uuid": device.get("uuid") or "",
-				"mount_point": device.get("mountpoint") or "",
-				"size_gb": f"{int(device.get('size') or 0) / 1024**3:.2f}",
-			}
-		return list(disks.values())
+		return DiskInventory(self).parse(lsblk_output)
 
 	def _validate_provider_catalog(self) -> None:
 		provider_type = self.settings.server_provider
@@ -391,3 +328,27 @@ class Server(Document):
 
 		if is_job_enqueued(self.setup_job_id):
 			frappe.throw(_("Server setup still runs for {0}.").format(self.name))
+
+	def _provider_server_id(self) -> str:
+		"""Return the provider server ID for a remote operation."""
+		if not self.provider_server_id:
+			frappe.throw(_("Server {0} has no provider server ID.").format(self.name))
+		return self.provider_server_id
+
+	def _cleanup_provider_server_after_failed_insert(self) -> None:
+		"""Delete the provider server that this insert request created."""
+		if not getattr(self.flags, "provider_server_created", False) or not self.provider_server_id:
+			return
+		try:
+			self.settings.server_provider_controller.delete_server(self.provider_server_id)
+			self.flags.provider_server_created = False
+		except Exception:
+			frappe.log_error(title=f"Could not clean up server {self.name}")
+
+	@staticmethod
+	def _provider_metadata(value: str | None) -> dict:
+		"""Return provider metadata as an object."""
+		metadata = frappe.parse_json(value or "{}")
+		if not isinstance(metadata, dict):
+			frappe.throw(_("Provider metadata must be a JSON object."))
+		return metadata

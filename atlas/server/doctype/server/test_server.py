@@ -8,6 +8,7 @@ from unittest.mock import Mock, patch
 import frappe
 from frappe.tests import UnitTestCase
 
+from atlas.atlas.core.server_providers.base import ProviderServer, ServerPowerAction
 from atlas.server.doctype.server.server import Server
 
 
@@ -54,15 +55,56 @@ _LSBLK_OUTPUT = json.dumps({"blockdevices": [_disk("sda"), _disk("sdb")]})
 
 class TestServer(UnitTestCase):
 	def test_before_validate_creates_the_named_server(self) -> None:
-		provider = SimpleNamespace(create_server=Mock())
+		provider = SimpleNamespace(
+			validate_settings=Mock(),
+			ensure_server=Mock(
+				return_value=ProviderServer(
+					provider_server_id="server-id",
+					status="Installing",
+					public_ipv4_address="203.0.113.1",
+					provider_metadata={"server": {"id": "server-id"}},
+					was_created=True,
+				)
+			),
+		)
 		server = SimpleNamespace(
+			name="node-test-00007",
 			provider_server_id=None,
+			server_size="Scaleway/size",
+			server_image="Scaleway/image",
+			status="Pending",
+			flags=SimpleNamespace(),
 			settings=SimpleNamespace(server_provider_controller=provider),
+			_validate_provider_catalog=Mock(),
+			_provider_metadata=Server._provider_metadata,
 		)
 
-		Server.before_validate(server)
+		with patch(
+			"atlas.server.doctype.server.server.frappe.get_doc",
+			return_value=SimpleNamespace(provider_metadata="{}"),
+		):
+			Server.before_validate(server)
 
-		provider.create_server.assert_called_once_with(server)
+		self.assertEqual(provider.ensure_server.call_args.args[0].name, "node-test-00007")
+		provider.validate_settings.assert_called_once_with()
+		self.assertEqual(server.provider_server_id, "server-id")
+		self.assertTrue(server.flags.provider_server_created)
+
+	def test_failed_insert_cleanup_deletes_only_a_new_provider_server(self) -> None:
+		server = self._server(status="Pending")
+		server.flags.provider_server_created = True
+
+		Server._cleanup_provider_server_after_failed_insert(server)
+
+		server.settings.server_provider_controller.delete_server.assert_called_once_with("server-id")
+		self.assertFalse(server.flags.provider_server_created)
+
+	def test_failed_insert_cleanup_keeps_a_reused_provider_server(self) -> None:
+		server = self._server(status="Pending")
+
+		Server._cleanup_provider_server_after_failed_insert(server)
+
+		server.settings.server_provider_controller.delete_server.assert_not_called()
 
 	def test_validate_checks_the_provider_catalog(self) -> None:
 		server = self._server(status="Pending")
@@ -142,7 +184,7 @@ class TestServer(UnitTestCase):
 		with (
 			patch("atlas.server.doctype.server.server.frappe.only_for"),
 			patch(
-				"atlas.server.doctype.server.server.ServerSSHTask.create_for_command", return_value=task
+				"atlas.server.core.disk_inventory.ServerSSHTask.create_for_command", return_value=task
 			) as create_for_command,
 		):
 			Server.sync_disks(server)
@@ -169,7 +211,7 @@ class TestServer(UnitTestCase):
 
 		with (
 			patch("atlas.server.doctype.server.server.frappe.only_for"),
-			patch("atlas.server.doctype.server.server.ServerSSHTask.create_for_command", return_value=task),
+			patch("atlas.server.core.disk_inventory.ServerSSHTask.create_for_command", return_value=task),
 		):
 			Server.sync_disks(server)
 
@@ -183,7 +225,7 @@ class TestServer(UnitTestCase):
 		with (
 			patch("atlas.server.doctype.server.server.frappe.only_for"),
 			patch("atlas.server.doctype.server.server.frappe.throw", side_effect=ValueError),
-			patch("atlas.server.doctype.server.server.ServerSSHTask.create_for_command", return_value=task),
+			patch("atlas.server.core.disk_inventory.ServerSSHTask.create_for_command", return_value=task),
 		):
 			with self.assertRaises(ValueError):
 				Server.sync_disks(server)
@@ -196,9 +238,7 @@ class TestServer(UnitTestCase):
 		with (
 			patch("atlas.server.doctype.server.server.frappe.only_for"),
 			patch("atlas.server.doctype.server.server.frappe.throw", side_effect=ValueError),
-			patch(
-				"atlas.server.doctype.server.server.ServerSSHTask.create_for_command"
-			) as create_for_command,
+			patch("atlas.server.core.disk_inventory.ServerSSHTask.create_for_command") as create_for_command,
 		):
 			with self.assertRaises(ValueError):
 				Server.sync_disks(server)
@@ -232,7 +272,7 @@ class TestServer(UnitTestCase):
 		with (
 			patch("atlas.server.doctype.server.server.frappe.throw", side_effect=ValueError),
 			patch(
-				"atlas.server.doctype.server.server.ServerSSHTask.create_for_script_file"
+				"atlas.server.core.host_installation.ServerSSHTask.create_for_script_file"
 			) as create_for_script_file,
 		):
 			with self.assertRaises(ValueError):
@@ -247,7 +287,7 @@ class TestServer(UnitTestCase):
 			patch("atlas.server.doctype.server.server.frappe.only_for"),
 			patch("atlas.server.doctype.server.server.frappe.throw", side_effect=ValueError),
 			patch(
-				"atlas.server.doctype.server.server.ServerSSHTask.create_for_script_file"
+				"atlas.server.core.host_installation.ServerSSHTask.create_for_script_file"
 			) as create_for_script_file,
 		):
 			with self.assertRaises(ValueError):
@@ -265,13 +305,13 @@ class TestServer(UnitTestCase):
 		}
 
 		with (
-			patch("atlas.server.doctype.server.server.get_decrypted_password", return_value="test-token"),
+			patch("atlas.server.core.host_installation.get_decrypted_password", return_value="test-token"),
 			patch(
-				"atlas.server.doctype.server.server.get_binary_download_url",
+				"atlas.server.core.host_installation.get_binary_download_url",
 				side_effect=lambda file_name: file_urls[file_name],
 			),
 			patch(
-				"atlas.server.doctype.server.server.ServerSSHTask.create_for_script_file", return_value=task
+				"atlas.server.core.host_installation.ServerSSHTask.create_for_script_file", return_value=task
 			) as create_for_script_file,
 		):
 			Server._install_metald(server)
@@ -297,9 +337,9 @@ class TestServer(UnitTestCase):
 		server.private_network_interface = None
 
 		with (
-			patch("atlas.server.doctype.server.server.get_decrypted_password", return_value="test-token"),
+			patch("atlas.server.core.host_installation.get_decrypted_password", return_value="test-token"),
 			patch(
-				"atlas.server.doctype.server.server.ServerSSHTask.create_for_script_file"
+				"atlas.server.core.host_installation.ServerSSHTask.create_for_script_file"
 			) as create_for_script_file,
 			self.assertRaises(frappe.ValidationError),
 		):
@@ -383,7 +423,7 @@ class TestServer(UnitTestCase):
 		task = SimpleNamespace(result=SimpleNamespace(output=output, is_success=True))
 
 		with patch(
-			"atlas.server.doctype.server.server.ServerSSHTask.create_for_script_file", return_value=task
+			"atlas.server.core.host_installation.ServerSSHTask.create_for_script_file", return_value=task
 		) as create_for_script_file:
 			Server._configure_wireguard(server)
 
@@ -408,7 +448,7 @@ class TestServer(UnitTestCase):
 		with (
 			patch("atlas.server.doctype.server.server.frappe.throw", side_effect=ValueError),
 			patch(
-				"atlas.server.doctype.server.server.ServerSSHTask.create_for_script_file", return_value=task
+				"atlas.server.core.host_installation.ServerSSHTask.create_for_script_file", return_value=task
 			),
 		):
 			with self.assertRaises(ValueError):
@@ -421,7 +461,7 @@ class TestServer(UnitTestCase):
 		with (
 			patch("atlas.server.doctype.server.server.frappe.throw", side_effect=ValueError),
 			patch(
-				"atlas.server.doctype.server.server.ServerSSHTask.create_for_script_file", return_value=task
+				"atlas.server.core.host_installation.ServerSSHTask.create_for_script_file", return_value=task
 			),
 		):
 			with self.assertRaises(ValueError):
@@ -434,7 +474,7 @@ class TestServer(UnitTestCase):
 			patch("atlas.server.doctype.server.server.frappe.only_for"),
 			patch("atlas.server.doctype.server.server.frappe.throw", side_effect=ValueError),
 			patch(
-				"atlas.server.doctype.server.server.ServerSSHTask.create_for_script_file"
+				"atlas.server.core.host_installation.ServerSSHTask.create_for_script_file"
 			) as create_for_script_file,
 		):
 			with self.assertRaises(ValueError):
@@ -444,7 +484,6 @@ class TestServer(UnitTestCase):
 
 	def test_poweroff_server_marks_the_server_stopped(self) -> None:
 		server = self._server(status="Running")
-		server.settings.server_provider_controller.poweroff_server = Mock()
 
 		with (
 			patch("atlas.server.doctype.server.server.frappe.only_for"),
@@ -452,13 +491,14 @@ class TestServer(UnitTestCase):
 		):
 			Server.poweroff_server(server)
 
-		server.settings.server_provider_controller.poweroff_server.assert_called_once_with(server)
+		server.settings.server_provider_controller.set_power_state.assert_called_once_with(
+			"server-id", ServerPowerAction.STOP
+		)
 		server.db_set.assert_called_once_with("status", "Stopped")
 
 	def test_poweron_server_marks_a_provisioned_server_running(self) -> None:
 		server = self._server(status="Stopped")
 		server.is_provisioning_completed = True
-		server.settings.server_provider_controller.poweron_server = Mock()
 
 		with (
 			patch("atlas.server.doctype.server.server.frappe.only_for"),
@@ -470,7 +510,6 @@ class TestServer(UnitTestCase):
 
 	def test_poweron_server_keeps_the_status_while_provisioning(self) -> None:
 		server = self._server(status="Failed")
-		server.settings.server_provider_controller.poweron_server = Mock()
 
 		with (
 			patch("atlas.server.doctype.server.server.frappe.only_for"),
@@ -478,12 +517,13 @@ class TestServer(UnitTestCase):
 		):
 			Server.poweron_server(server)
 
-		server.settings.server_provider_controller.poweron_server.assert_called_once_with(server)
+		server.settings.server_provider_controller.set_power_state.assert_called_once_with(
+			"server-id", ServerPowerAction.START
+		)
 		server.db_set.assert_not_called()
 
 	def test_reboot_server_keeps_the_status(self) -> None:
 		server = self._server(status="Running")
-		server.settings.server_provider_controller.reboot_server = Mock()
 
 		with (
 			patch("atlas.server.doctype.server.server.frappe.only_for"),
@@ -491,7 +531,9 @@ class TestServer(UnitTestCase):
 		):
 			Server.reboot_server(server)
 
-		server.settings.server_provider_controller.reboot_server.assert_called_once_with(server)
+		server.settings.server_provider_controller.set_power_state.assert_called_once_with(
+			"server-id", ServerPowerAction.REBOOT
+		)
 		server.db_set.assert_not_called()
 
 	def test_power_action_rejects_a_deleted_server(self) -> None:
@@ -524,7 +566,7 @@ class TestServer(UnitTestCase):
 		):
 			Server.archive_server(server)
 
-		server.settings.server_provider_controller.archive_server.assert_called_once_with(server)
+		server.settings.server_provider_controller.delete_server.assert_called_once_with("server-id")
 		server.db_set.assert_called_once_with({"status": "Deleted", "is_provisioning_completed": 0})
 
 	def test_archive_server_skips_a_deleted_server(self) -> None:
@@ -533,7 +575,7 @@ class TestServer(UnitTestCase):
 		with patch("atlas.server.doctype.server.server.frappe.only_for"):
 			Server.archive_server(server)
 
-		server.settings.server_provider_controller.archive_server.assert_not_called()
+		server.settings.server_provider_controller.delete_server.assert_not_called()
 		server.db_set.assert_not_called()
 
 	def test_archive_server_rejects_a_running_setup_job(self) -> None:
@@ -553,6 +595,8 @@ class TestServer(UnitTestCase):
 			doctype="Server",
 			name="node-test-00007",
 			status=status,
+			provider_server_id="server-id",
+			flags=SimpleNamespace(provider_server_created=False),
 			is_provisioning_completed=False,
 			setup_job_id="atlas||server-provision||node-test-00007",
 			wireguard_job_id="atlas||server-wireguard||node-test-00007",
@@ -562,7 +606,8 @@ class TestServer(UnitTestCase):
 			port=51820,
 			settings=SimpleNamespace(
 				server_provider_controller=SimpleNamespace(
-					archive_server=Mock(),
+					delete_server=Mock(),
+					set_power_state=Mock(),
 					get_storage_pool_device=Mock(return_value="/dev/md2"),
 				),
 				metald_binary_x86_64_file=None,
@@ -588,4 +633,5 @@ class TestServer(UnitTestCase):
 			Server._set_wireguard_ip_address_if_not_set, server
 		)
 		server._validate_power_action = MethodType(Server._validate_power_action, server)
+		server._provider_server_id = MethodType(Server._provider_server_id, server)
 		return server

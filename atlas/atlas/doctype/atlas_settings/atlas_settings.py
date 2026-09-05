@@ -140,7 +140,7 @@ class AtlasSettings(Document):
 	def setup_server_provider(self) -> None:
 		frappe.only_for("System Manager")
 		try:
-			self.server_provider_controller.bootstrap()
+			self.server_provider_controller.setup_infrastructure()
 		except Exception:
 			# Commit any changes to the database before re-raising the exception
 			# to avoid losing the setup progress.
@@ -170,7 +170,9 @@ class AtlasSettings(Document):
 		frappe.msgprint(_("Server sizes sync has been queued. Please check after some time."))
 
 	def _sync_server_sizes(self) -> None:
-		self.server_provider_controller.sync_provider_sizes()
+		from atlas.server.core.catalog_sync import CatalogSynchronizer
+
+		CatalogSynchronizer(self.server_provider_controller).sync_server_sizes()
 
 	@frappe.whitelist(methods=["POST"])
 	def sync_server_images(self) -> None:
@@ -190,4 +192,6 @@ class AtlasSettings(Document):
 		frappe.msgprint(_("Server images sync has been queued. Please check after some time."))
 
 	def _sync_server_images(self) -> None:
-		self.server_provider_controller.sync_provider_images()
+		from atlas.server.core.catalog_sync import CatalogSynchronizer
+
+		CatalogSynchronizer(self.server_provider_controller).sync_server_images()

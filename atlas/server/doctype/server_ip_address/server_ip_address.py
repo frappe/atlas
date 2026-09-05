@@ -49,7 +49,9 @@ class ServerIPAddress(Document):
 	def on_trash(self) -> None:
 		if self.status != "Allocated":
 			frappe.throw(_("Detach this IP address before deletion."))
-		frappe.get_single("Atlas Settings").server_provider_controller.delete_ip(self.provider_resource_id)
+		frappe.get_single("Atlas Settings").server_provider_controller.delete_public_ipv4_address(
+			self.provider_resource_id
+		)
 
 	def begin_assignment(self, server: str, virtual_machine: str) -> None:
 		"""Set an attach intent for this address."""
@@ -110,9 +112,11 @@ class ServerIPAddress(Document):
 		if intent.status == "Attaching":
 			if not intent.server:
 				raise ValueError("An attach intent needs a Server")
-			provider.attach_ip(intent.provider_resource_id, frappe.get_doc("Server", intent.server))
+			provider.attach_public_ipv4_address(
+				intent.provider_resource_id, frappe.get_doc("Server", intent.server)
+			)
 		else:
-			provider.detach_ip(intent.provider_resource_id)
+			provider.detach_public_ipv4_address(intent.provider_resource_id)
 
 	def complete_intent(self, intent: IPAddressIntent) -> None:
 		"""Complete an intent only when no newer intent exists."""
@@ -144,7 +148,7 @@ def reserve() -> str:
 	"""Reserve one public IPv4 address from the provider."""
 	frappe.only_for("System Manager")
 	provider = frappe.get_single("Atlas Settings").server_provider_controller
-	reserved = provider.reserve_ip()
+	reserved = provider.reserve_public_ipv4_address()
 	try:
 		return (
 			frappe.get_doc(
@@ -159,7 +163,7 @@ def reserve() -> str:
 		)
 	except Exception:
 		try:
-			provider.delete_ip(reserved.provider_resource_id)
+			provider.delete_public_ipv4_address(reserved.provider_resource_id)
 		except Exception:
 			frappe.log_error(title="Could not delete reserved Server IP Address")
 		raise
