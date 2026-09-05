@@ -68,3 +68,8 @@ jspm_packages/
 # wg-mesh build outputs
 /services/wg-mesh/dist/
 /services/wg-mesh/cli/atlas-wg-mesh.bpf.o
+
+# tmp
+1_gpt_atlas_plan.md
+1_gpt_metal_plan.md
+final_plan.md

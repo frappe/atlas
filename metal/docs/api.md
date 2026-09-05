@@ -1,5 +1,7 @@
 # Metal HTTP API
 
+This document describes the current unversioned API. The [target `/v1` contract](../../docs/metal-v1-contract.md) will replace these controller routes in Stage 4.
+
 metald serves JSON on its configured listener. It generates the OpenAPI document from handler annotations and serves the document at `/docs`.
 
 All routes except `/docs` and `/docs/swagger.json` require a bearer token. `metald.auth_token_hash` must contain the lowercase SHA-256 digest of this token.

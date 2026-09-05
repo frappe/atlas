@@ -4,6 +4,8 @@
 
 Metal manages Firecracker virtual machines on one host. It stores host state on disk and keeps no VM registry in memory.
 
+Read the [system architecture](../../docs/architecture.md) for the Atlas-to-Metal ownership boundary.
+
 ## Components
 
 ```text

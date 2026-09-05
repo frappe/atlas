@@ -8,6 +8,8 @@
 
 The Atlas app provides Frappe settings and provider catalog records for Atlas infrastructure.
 
+Read [the Atlas README](README.md) for the human entry point.
+
 ## Layout
 
 ```text
@@ -16,6 +18,7 @@ atlas/                       Atlas module (settings)
   doctype/                   Settings records
 vm/                          Virtual machine records, image records, and image builders
 server/                      Server module (catalog)
+	core/                    Provisioning, host installation, disk inventory, and catalog sync
   doctype/                   Server Size and Server Image records
 scripts/                     Host installation scripts
 ```
@@ -85,6 +88,17 @@ The command skips the build when the linked File and source hash are current. A 
 
 Run the Frappe tests described in [the CI workflow](../.github/workflows/atlas-ci.yml).
 
+## Module specifications
+
+- [Atlas settings](atlas/SPEC.md)
+- [Servers](server/SPEC.md)
+- [Virtual machines](vm/SPEC.md)
+- [Realtime console bridge](realtime/SPEC.md)
+
 ## Ownership
 
-Keep provider behavior in `atlas/core/server_providers/`. Keep settings behavior in `atlas/doctype/`. Keep catalog behavior in `server/doctype/`. Keep VM orchestration in `vm/virtual_machine_manager.py` and Machine image transfer in `vm/virtual_machine_image_manager.py`.
+Keep provider behavior in `atlas/core/server_providers/`. Keep settings behavior in `atlas/doctype/`.
+
+Keep server orchestration in `server/core/`. Keep DocType controllers as lifecycle and API boundaries.
+
+Keep virtual machine orchestration and image transfers in `vm/core/`.

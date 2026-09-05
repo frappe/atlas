@@ -6,6 +6,8 @@
 
 The `atlas` Python module contains the Frappe application code for Atlas settings and provider catalogs.
 
+Read [the module README](README.md) for entry points.
+
 ## Layout
 
 ```text
@@ -25,6 +27,12 @@ Keep VM records, image records, image transfer, and image builders in `../vm/`. 
 
 ## Interfaces
 
-Server providers expose settings validation, infrastructure setup, server sizes, and server images through `ServerProvider`. The Atlas Settings controller queues catalog synchronization jobs after setup.
+Server providers implement `ServerProvider`. The registry maps one stable provider type to one implementation.
+
+Providers use typed creation, result, catalog, power, address, and error values. Low-level provider components do not save Frappe documents.
+
+The Atlas Settings controller queues catalog synchronization jobs after setup. `server/core/catalog_sync.py` owns catalog persistence.
 
 Server size records store disk capacity in GiB and prices in integer USD cents. The provider controller preserves the provider price and fills a missing billing period from the available price.
+
+Read [the provider guide](../docs/providers.md) for the complete contract.
