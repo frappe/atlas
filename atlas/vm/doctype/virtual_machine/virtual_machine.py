@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
 import frappe
 from frappe import _, request_cache
@@ -10,6 +10,9 @@ from frappe.utils import add_to_date, cint, now_datetime
 
 from atlas.vm.core.metal_client import MetalClient, MetalClientError, throw_metal_error
 from atlas.vm.core.virtual_machine_manager import VirtualMachineManager
+
+if TYPE_CHECKING:
+	from atlas.server.doctype.server_ip_address.server_ip_address import ServerIPAddress
 
 DRAFT_EXPIRY_MINUTES = 2
 
@@ -67,6 +70,15 @@ class VirtualMachine(Document):
 				frappe.throw(_("Terminate Virtual Machine {0} before deletion.").format(self.name))
 		self.release_ip_address()
 
+	def assign_ip_address(self, server_ip_address: str) -> "ServerIPAddress":
+		"""Set an attach intent for one reserved address."""
+		address = cast(
+			"ServerIPAddress",
+			frappe.get_doc("Server IP Address", server_ip_address, for_update=True),
+		)
+		address.begin_assignment(self.server, self.name)
+		return address
+
 	def release_ip_address(self) -> None:
 		address_name = frappe.db.get_value("Server IP Address", {"virtual_machine": self.name})
 		if address_name:
@@ -109,6 +121,14 @@ class VirtualMachine(Document):
 	@property
 	def public_ipv4(self) -> str | None:
 		return (self.get_metal_vm_info().get("network") or {}).get("public_ipv4")
+
+	@property
+	def private_network_throughput_mbps(self) -> int:
+		return (self.get_metal_vm_info().get("network") or {}).get("private_network_throughput_mbps") or 0
+
+	@property
+	def public_network_throughput_mbps(self) -> int:
+		return (self.get_metal_vm_info().get("network") or {}).get("public_network_throughput_mbps") or 0
 
 	@property
 	def ssh_keys(self) -> str:
@@ -200,6 +220,81 @@ class VirtualMachine(Document):
 			return MetalClient(frappe.get_doc("Server", self.server)).replace_virtual_machine_metadata(
 				self.name, metadata
 			)
+		except MetalClientError as error:
+			throw_metal_error(error)
+			raise AssertionError from error
+
+	@frappe.whitelist(methods=["POST"])
+	def attach_ip_address(self, server_ip_address: str) -> dict[str, Any]:
+		"""Attach one reserved public IPv4 address without a VM restart."""
+		frappe.only_for("System Manager")
+		if frappe.db.exists("Server IP Address", {"virtual_machine": self.name}):
+			frappe.throw(_("Detach the current public IPv4 address first."))
+
+		address = self.assign_ip_address(server_ip_address)
+		return self.update_network(egress="host", public_ipv4=address.address)
+
+	@frappe.whitelist(methods=["POST"])
+	def detach_ip_address(self) -> dict[str, Any]:
+		"""Remove the public IPv4 address without a VM restart."""
+		frappe.only_for("System Manager")
+		if not frappe.db.exists("Server IP Address", {"virtual_machine": self.name}):
+			frappe.throw(_("This Virtual Machine has no public IPv4 address."))
+
+		information = self.update_network(public_ipv4="")
+		self.release_ip_address()
+		return information
+
+	@frappe.whitelist(methods=["POST"])
+	def update_egress(self, egress: str) -> dict[str, Any]:
+		"""Change the host uplink mode without a VM restart."""
+		frappe.only_for("System Manager")
+		if egress not in {"host", "none"}:
+			frappe.throw(_("Egress must be host or none."))
+		if egress == "none" and frappe.db.exists("Server IP Address", {"virtual_machine": self.name}):
+			frappe.throw(_("Detach the public IPv4 address before you remove host egress."))
+
+		return self.update_network(egress=egress)
+
+	@frappe.whitelist(methods=["POST"])
+	def update_network_throughput(
+		self, private_network_throughput_mbps: int, public_network_throughput_mbps: int
+	) -> dict[str, Any]:
+		"""Change the throughput limits in Mbps without a VM restart. A value of 0 removes the limit."""
+		frappe.only_for("System Manager")
+		limits = {
+			"private_network_throughput_mbps": cint(private_network_throughput_mbps),
+			"public_network_throughput_mbps": cint(public_network_throughput_mbps),
+		}
+		if any(value < 0 for value in limits.values()):
+			frappe.throw(_("Network throughput must not be negative."))
+
+		return self.update_network(**limits)
+
+	def update_network(self, **changes: Any) -> dict[str, Any]:
+		"""Send the complete desired network settings to Metal.
+
+		Metal replaces every mutable setting, so unchanged values come from the
+		live Metal state instead of a local default.
+		"""
+		if self.is_draft:
+			frappe.throw(_("Wait for Virtual Machine creation before a network change."))
+		if self.is_terminating:
+			frappe.throw(_("Virtual Machine {0} is terminating.").format(self.name))
+
+		try:
+			client = MetalClient(frappe.get_doc("Server", self.server))
+			network = client.get_virtual_machine(self.name).get("network") or {}
+			if not network.get("egress"):
+				frappe.throw(_("Metal did not report the current network settings."))
+			request = {
+				"egress": network["egress"],
+				"public_ipv4": network.get("public_ipv4") or "",
+				"private_network_throughput_mbps": network.get("private_network_throughput_mbps") or 0,
+				"public_network_throughput_mbps": network.get("public_network_throughput_mbps") or 0,
+				**changes,
+			}
+			return client.update_virtual_machine_network(self.name, request)
 		except MetalClientError as error:
 			throw_metal_error(error)
 			raise AssertionError from error

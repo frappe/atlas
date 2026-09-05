@@ -105,9 +105,11 @@ func virtualMachineReservationResponse(virtualMachineID string, specification vm
 		Hostname:     specification.Hostname,
 		Metadata:     maps.Clone(specification.Metadata),
 		Network: networkResponse{
-			PublicIPv4:        specification.Network.PublicIPv4,
-			WireGuardMeshIPv6: specification.Network.WireGuardMeshIPv6,
-			Egress:            string(specification.Network.Egress),
+			PublicIPv4:                   specification.Network.PublicIPv4,
+			WireGuardMeshIPv6:            specification.Network.WireGuardMeshIPv6,
+			PrivateNetworkThroughputMbps: specification.Network.PrivateNetworkThroughputMbps,
+			PublicNetworkThroughputMbps:  specification.Network.PublicNetworkThroughputMbps,
+			Egress:                       string(specification.Network.Egress),
 		},
 		Disk: diskResponse{SizeMiB: specification.DiskMiB},
 	}

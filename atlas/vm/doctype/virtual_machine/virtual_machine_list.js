@@ -39,6 +39,20 @@ function showCreateVirtualMachineDialog() {
 				reqd: 1,
 			},
 			{
+				fieldname: "private_network_throughput_mbps",
+				fieldtype: "Int",
+				label: __("Private Network Throughput (Mbps)"),
+				default: 0,
+				description: __("0 does not apply a limit."),
+			},
+			{
+				fieldname: "public_network_throughput_mbps",
+				fieldtype: "Int",
+				label: __("Public Network Throughput (Mbps)"),
+				default: 0,
+				description: __("0 does not apply a limit."),
+			},
+			{
 				fieldname: "tenant_id",
 				fieldtype: "Int",
 				label: __("Tenant ID"),

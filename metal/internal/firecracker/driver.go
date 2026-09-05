@@ -293,6 +293,52 @@ func (d *Driver) ReplaceMetadata(ctx context.Context, id string, metadata map[st
 	return d.cfg.writeVMConfig(configuration)
 }
 
+// UpdateNetwork updates mutable network settings without restarting the VM.
+func (d *Driver) UpdateNetwork(ctx context.Context, id string, update vm.NetworkUpdate) error {
+	unlock, err := d.operationLocks.lock(ctx, id)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+
+	configuration, err := d.cfg.readVMConfig(id)
+	if err != nil {
+		return err
+	}
+	if update.PublicIPv4 != "" {
+		update.Egress = vm.EgressHost
+	}
+	if inUse, err := d.isPublicIPv4InUse(id, update.PublicIPv4); err != nil {
+		return err
+	} else if inUse {
+		return vm.ErrConflict
+	}
+
+	desired := configuration.Spec.Network
+	desired.Egress = update.Egress
+	desired.PublicIPv4 = update.PublicIPv4
+	desired.PrivateNetworkThroughputMbps = update.PrivateNetworkThroughputMbps
+	desired.PublicNetworkThroughputMbps = update.PublicNetworkThroughputMbps
+
+	request := network.UpdateRequest{
+		VirtualMachineID: id,
+		UserID:           configuration.UID,
+		Previous:         configuration.Spec.Network,
+		Desired:          desired,
+	}
+	if err := d.networkAllocator.Update(ctx, request); err != nil {
+		return fmt.Errorf("update network: %w", err)
+	}
+
+	configuration.Spec.Network = desired
+	if err := d.cfg.writeVMConfig(configuration); err != nil {
+		rollbackRequest := request
+		rollbackRequest.Previous, rollbackRequest.Desired = request.Desired, request.Previous
+		return errors.Join(err, d.networkAllocator.Update(ctx, rollbackRequest))
+	}
+	return nil
+}
+
 // updateRunningMetadata updates MMDS before persisting the new VM spec
 func (d *Driver) updateRunningMetadata(ctx context.Context, id string, configuration vmConfig) error {
 	unitStatus, err := d.units.Status(ctx, id)
@@ -643,11 +689,13 @@ func copyChown(
 
 func (d *Driver) allocateNetwork(ctx context.Context, configuration vmConfig) (network.Interface, error) {
 	return d.networkAllocator.Allocate(ctx, network.Request{
-		VirtualMachineID: configuration.ID,
-		Egress:           configuration.Spec.Network.Egress,
-		PublicIPv4:       configuration.Spec.Network.PublicIPv4,
-		UserID:           configuration.UID,
-		GroupID:          configuration.GID,
+		VirtualMachineID:             configuration.ID,
+		Egress:                       configuration.Spec.Network.Egress,
+		PublicIPv4:                   configuration.Spec.Network.PublicIPv4,
+		PrivateNetworkThroughputMbps: configuration.Spec.Network.PrivateNetworkThroughputMbps,
+		PublicNetworkThroughputMbps:  configuration.Spec.Network.PublicNetworkThroughputMbps,
+		UserID:                       configuration.UID,
+		GroupID:                      configuration.GID,
 	})
 }
 

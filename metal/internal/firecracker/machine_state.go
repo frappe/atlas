@@ -14,20 +14,22 @@ func (m *machine) Info(ctx context.Context) (vm.Info, error) {
 		return vm.Info{}, err
 	}
 	info := vm.Info{
-		ID:                m.cfg.ID,
-		State:             m.state(ctx, st),
-		DesiredState:      m.cfg.DesiredState,
-		VCPUs:             m.cfg.Spec.VCPUs,
-		MemoryMiB:         m.cfg.Spec.MemoryMiB,
-		DiskMiB:           m.cfg.Spec.DiskMiB,
-		Image:             m.cfg.Spec.Image,
-		SSHKeys:           append([]string(nil), m.cfg.Spec.SSHKeys...),
-		Hostname:          m.cfg.Spec.Hostname,
-		Metadata:          maps.Clone(m.cfg.Spec.Metadata),
-		MAC:               m.cfg.MAC,
-		PublicIPv4:        m.cfg.Spec.Network.PublicIPv4,
-		WireGuardMeshIPv6: m.cfg.Spec.Network.WireGuardMeshIPv6,
-		Egress:            m.cfg.Spec.Network.Egress,
+		ID:                           m.cfg.ID,
+		State:                        m.state(ctx, st),
+		DesiredState:                 m.cfg.DesiredState,
+		VCPUs:                        m.cfg.Spec.VCPUs,
+		MemoryMiB:                    m.cfg.Spec.MemoryMiB,
+		DiskMiB:                      m.cfg.Spec.DiskMiB,
+		Image:                        m.cfg.Spec.Image,
+		SSHKeys:                      append([]string(nil), m.cfg.Spec.SSHKeys...),
+		Hostname:                     m.cfg.Spec.Hostname,
+		Metadata:                     maps.Clone(m.cfg.Spec.Metadata),
+		MAC:                          m.cfg.MAC,
+		PublicIPv4:                   m.cfg.Spec.Network.PublicIPv4,
+		WireGuardMeshIPv6:            m.cfg.Spec.Network.WireGuardMeshIPv6,
+		PrivateNetworkThroughputMbps: m.cfg.Spec.Network.PrivateNetworkThroughputMbps,
+		PublicNetworkThroughputMbps:  m.cfg.Spec.Network.PublicNetworkThroughputMbps,
+		Egress:                       m.cfg.Spec.Network.Egress,
 	}
 
 	if usage, err := m.d.virtualMachineStorage.DiskUsage(ctx, m.cfg.ID); err == nil {

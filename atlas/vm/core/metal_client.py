@@ -110,6 +110,17 @@ class MetalClient:
 			expected_status=200,
 		)
 
+	def update_virtual_machine_network(
+		self, virtual_machine_id: str, network: dict[str, Any]
+	) -> dict[str, Any]:
+		"""Replace the mutable network settings for one VM without a restart."""
+		return self._request(
+			"PUT",
+			f"/vms/{quote(virtual_machine_id, safe='')}/network",
+			json=network,
+			expected_status=200,
+		)
+
 	def resize_virtual_machine_disk(self, virtual_machine_id: str, disk_mib: int) -> None:
 		"""Ask Metal to increase one VM disk size."""
 		self._request(

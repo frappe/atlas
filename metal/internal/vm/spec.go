@@ -41,9 +41,11 @@ type MemorySnapshotConfiguration struct {
 
 // Network contains the requested VM network configuration.
 type Network struct {
-	PublicIPv4        string
-	WireGuardMeshIPv6 string
-	Egress            Egress
+	PublicIPv4                   string
+	WireGuardMeshIPv6            string
+	PrivateNetworkThroughputMbps int
+	PublicNetworkThroughputMbps  int
+	Egress                       Egress
 }
 
 // SameReservation reports whether two specifications reserve the same VM.

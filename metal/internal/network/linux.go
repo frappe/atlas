@@ -31,6 +31,9 @@ func (allocator *LinuxAllocator) Allocate(ctx context.Context, request Request) 
 		return Interface{}, err
 	}
 	if exists {
+		if err := configureTrafficControl(ctx, request.trafficControl()); err != nil {
+			return Interface{}, fmt.Errorf("configure traffic control: %w", err)
+		}
 		return allocator.Resolve(request.VirtualMachineID), nil
 	}
 
@@ -53,17 +56,7 @@ func (allocator *LinuxAllocator) Allocate(ctx context.Context, request Request) 
 		egress = vm.EgressHost
 	}
 	if egress == vm.EgressHost {
-		steps = append(steps,
-			[]string{"ip", "link", "add", hostVirtualEthernet, "type", "veth", "peer", "name", guestVirtualEthernet},
-			[]string{"ip", "link", "set", guestVirtualEthernet, "netns", namespace},
-			[]string{"ip", "addr", "add", hostIPAddress + "/30", "dev", hostVirtualEthernet},
-			[]string{"ip", "link", "set", hostVirtualEthernet, "up"},
-			[]string{"ip", "-n", namespace, "addr", "add", namespaceIPAddress + "/30", "dev", guestVirtualEthernet},
-			[]string{"ip", "-n", namespace, "link", "set", guestVirtualEthernet, "up"},
-			[]string{"ip", "-n", namespace, "route", "add", "default", "via", hostIPAddress},
-			[]string{"ip", "netns", "exec", namespace, "sysctl", "-q", "-w", "net.ipv4.ip_forward=1"},
-			[]string{"ip", "netns", "exec", namespace, "iptables", "-t", "nat", "-A", "POSTROUTING", "-o", guestVirtualEthernet, "-j", "MASQUERADE"},
-		)
+		steps = append(steps, hostEgressSteps(namespace, hostVirtualEthernet, guestVirtualEthernet, hostIPAddress, namespaceIPAddress)...)
 	}
 	if request.PublicIPv4 != "" {
 		if egress != vm.EgressHost {
@@ -78,7 +71,65 @@ func (allocator *LinuxAllocator) Allocate(ctx context.Context, request Request) 
 			return Interface{}, errors.Join(err, releaseError, linkError)
 		}
 	}
+	if err := configureTrafficControl(ctx, request.trafficControl()); err != nil {
+		releaseError := allocator.Release(ctx, request.VirtualMachineID)
+		return Interface{}, errors.Join(fmt.Errorf("configure traffic control: %w", err), releaseError)
+	}
 	return allocator.Resolve(request.VirtualMachineID), nil
+}
+
+// Update applies mutable network settings to an allocated virtual machine.
+func (allocator *LinuxAllocator) Update(ctx context.Context, request UpdateRequest) error {
+	if err := allocator.update(ctx, request); err != nil {
+		rollbackRequest := request
+		rollbackRequest.Previous, rollbackRequest.Desired = request.Desired, request.Previous
+		return errors.Join(err, allocator.update(ctx, rollbackRequest))
+	}
+	return nil
+}
+
+func (allocator *LinuxAllocator) update(ctx context.Context, request UpdateRequest) error {
+	exists, err := networkNamespaceExists(ctx, request.VirtualMachineID)
+	if err != nil || !exists {
+		return err
+	}
+
+	previousEgress := effectiveEgress(request.Previous.Egress)
+	desiredEgress := effectiveEgress(request.Desired.Egress)
+	if request.Previous.PublicIPv4 != request.Desired.PublicIPv4 {
+		if err := removePublicIPv4Rules(ctx, request.VirtualMachineID); err != nil {
+			return err
+		}
+		if err := removePublicIPv4NamespaceRules(ctx, request.VirtualMachineID); err != nil {
+			return err
+		}
+	}
+	if previousEgress != desiredEgress {
+		if previousEgress == vm.EgressHost {
+			if err := removeHostEgress(ctx, request.VirtualMachineID, request.UserID); err != nil {
+				return err
+			}
+		}
+		if desiredEgress == vm.EgressHost {
+			if err := addHostEgress(ctx, request.VirtualMachineID, request.UserID); err != nil {
+				return err
+			}
+		}
+	}
+
+	if request.Previous.PublicIPv4 != request.Desired.PublicIPv4 && request.Desired.PublicIPv4 != "" {
+		if err := addPublicIPv4(ctx, request.VirtualMachineID, request.UserID, request.Desired.PublicIPv4); err != nil {
+			return err
+		}
+	}
+
+	return configureTrafficControl(ctx, trafficControlRequest{
+		VirtualMachineID:             request.VirtualMachineID,
+		UserID:                       request.UserID,
+		Egress:                       desiredEgress,
+		PrivateNetworkThroughputMbps: request.Desired.PrivateNetworkThroughputMbps,
+		PublicNetworkThroughputMbps:  request.Desired.PublicNetworkThroughputMbps,
+	})
 }
 
 // Resolve returns network settings for one virtual machine.
@@ -103,9 +154,10 @@ func (allocator *LinuxAllocator) Release(ctx context.Context, virtualMachineID s
 	if !exists {
 		return rulesError
 	}
+	namespaceRulesError := removePublicIPv4NamespaceRules(ctx, virtualMachineID)
 
 	namespaceError := hostcmd.Run(ctx, "ip", "netns", "del", namespaceName(virtualMachineID))
-	return errors.Join(rulesError, namespaceError)
+	return errors.Join(rulesError, namespaceRulesError, namespaceError)
 }
 
 func namespaceName(virtualMachineID string) string { return "metal-" + virtualMachineID }
@@ -116,6 +168,58 @@ func namespacePath(virtualMachineID string) string {
 
 func virtualEthernetNames(userID uint32) (host, guest string) {
 	return fmt.Sprintf("vh-%d", userID), fmt.Sprintf("vg-%d", userID)
+}
+
+func effectiveEgress(egress vm.Egress) vm.Egress {
+	if egress == "" {
+		return vm.EgressHost
+	}
+	return egress
+}
+
+func hostEgressSteps(namespace, hostVirtualEthernet, guestVirtualEthernet, hostIPAddress, namespaceIPAddress string) [][]string {
+	return [][]string{
+		{"ip", "link", "add", hostVirtualEthernet, "type", "veth", "peer", "name", guestVirtualEthernet},
+		{"ip", "link", "set", guestVirtualEthernet, "netns", namespace},
+		{"ip", "addr", "add", hostIPAddress + "/30", "dev", hostVirtualEthernet},
+		{"ip", "link", "set", hostVirtualEthernet, "up"},
+		{"ip", "-n", namespace, "addr", "add", namespaceIPAddress + "/30", "dev", guestVirtualEthernet},
+		{"ip", "-n", namespace, "link", "set", guestVirtualEthernet, "up"},
+		{"ip", "-n", namespace, "route", "add", "default", "via", hostIPAddress},
+		{"ip", "netns", "exec", namespace, "sysctl", "-q", "-w", "net.ipv4.ip_forward=1"},
+		{"ip", "netns", "exec", namespace, "iptables", "-t", "nat", "-A", "POSTROUTING", "-o", guestVirtualEthernet, "-j", "MASQUERADE"},
+	}
+}
+
+func addHostEgress(ctx context.Context, virtualMachineID string, userID uint32) error {
+	namespace := namespaceName(virtualMachineID)
+	hostVirtualEthernet, guestVirtualEthernet := virtualEthernetNames(userID)
+	hostIPAddress, namespaceIPAddress := transitAddresses(userID)
+	for _, step := range hostEgressSteps(namespace, hostVirtualEthernet, guestVirtualEthernet, hostIPAddress, namespaceIPAddress) {
+		if err := hostcmd.Run(ctx, step[0], step[1:]...); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func removeHostEgress(ctx context.Context, virtualMachineID string, userID uint32) error {
+	namespace := namespaceName(virtualMachineID)
+	hostVirtualEthernet, guestVirtualEthernet := virtualEthernetNames(userID)
+	_ = hostcmd.Run(ctx, "ip", "netns", "exec", namespace, "iptables", "-t", "nat", "-D", "POSTROUTING", "-o", guestVirtualEthernet, "-j", "MASQUERADE")
+	return hostcmd.Run(ctx, "ip", "link", "del", hostVirtualEthernet)
+}
+
+func addPublicIPv4(ctx context.Context, virtualMachineID string, userID uint32, publicIPv4 string) error {
+	namespace := namespaceName(virtualMachineID)
+	_, guestVirtualEthernet := virtualEthernetNames(userID)
+	_, namespaceIPAddress := transitAddresses(userID)
+	for _, step := range publicIPv4Steps(virtualMachineID, namespace, guestVirtualEthernet, namespaceIPAddress, publicIPv4) {
+		if err := hostcmd.Run(ctx, step[0], step[1:]...); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func transitAddresses(userID uint32) (hostIPAddress, namespaceIPAddress string) {
@@ -155,31 +259,53 @@ func publicIPv4Steps(virtualMachineID, namespace, guestVirtualEthernet, namespac
 }
 
 func removePublicIPv4Rules(ctx context.Context, virtualMachineID string) error {
+	return removePublicIPv4RulesFrom(ctx, nil, virtualMachineID)
+}
+
+func removePublicIPv4NamespaceRules(ctx context.Context, virtualMachineID string) error {
+	return removePublicIPv4RulesFrom(ctx, namespaceCommandPrefix(namespaceName(virtualMachineID)), virtualMachineID)
+}
+
+// namespaceCommandPrefix runs a host command inside one VM network namespace.
+func namespaceCommandPrefix(namespace string) []string {
+	return []string{"ip", "netns", "exec", namespace}
+}
+
+func removePublicIPv4RulesFrom(ctx context.Context, prefix []string, virtualMachineID string) error {
 	var cleanupErrors []error
 	for _, table := range []string{"nat", "filter"} {
-		output, err := hostcmd.Output(ctx, "iptables", "-t", table, "-S")
+		arguments := commandWithPrefix(prefix, "iptables", "-t", table, "-S")
+		output, err := hostcmd.Output(ctx, arguments[0], arguments[1:]...)
 		if err != nil {
 			cleanupErrors = append(cleanupErrors, fmt.Errorf("list %s rules: %w", table, err))
 			continue
 		}
 		for _, line := range strings.Split(output, "\n") {
-			arguments := strings.Fields(line)
-			if !hasRuleComment(arguments, publicIPv4Comment(virtualMachineID)) {
+			ruleArguments := strings.Fields(line)
+			if !hasRuleComment(ruleArguments, publicIPv4Comment(virtualMachineID)) {
 				continue
 			}
-			if len(arguments) < 2 || arguments[0] != "-A" {
+			if len(ruleArguments) < 2 || ruleArguments[0] != "-A" {
 				continue
 			}
-			arguments[0] = "-D"
-			for index, argument := range arguments {
-				arguments[index] = strings.Trim(argument, "\"")
+			ruleArguments[0] = "-D"
+			for index, argument := range ruleArguments {
+				ruleArguments[index] = strings.Trim(argument, "\"")
 			}
-			if err := hostcmd.Run(ctx, "iptables", append([]string{"-t", table}, arguments...)...); err != nil {
+			arguments = commandWithPrefix(prefix, "iptables", "-t", table)
+			arguments = append(arguments, ruleArguments...)
+			if err := hostcmd.Run(ctx, arguments[0], arguments[1:]...); err != nil {
 				cleanupErrors = append(cleanupErrors, fmt.Errorf("remove %s rule: %w", table, err))
 			}
 		}
 	}
 	return errors.Join(cleanupErrors...)
+}
+
+func commandWithPrefix(prefix []string, command string, arguments ...string) []string {
+	result := append([]string(nil), prefix...)
+	result = append(result, command)
+	return append(result, arguments...)
 }
 
 func hasRuleComment(arguments []string, expected string) bool {

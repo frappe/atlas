@@ -42,10 +42,12 @@ type imageArtifactResponse struct {
 }
 
 type networkResponse struct {
-	MAC               string `json:"mac"`
-	PublicIPv4        string `json:"public_ipv4,omitempty"`
-	WireGuardMeshIPv6 string `json:"wireguard_mesh_ipv6"`
-	Egress            string `json:"egress"`
+	MAC                          string `json:"mac"`
+	PublicIPv4                   string `json:"public_ipv4,omitempty"`
+	WireGuardMeshIPv6            string `json:"wireguard_mesh_ipv6"`
+	PrivateNetworkThroughputMbps int    `json:"private_network_throughput_mbps"`
+	PublicNetworkThroughputMbps  int    `json:"public_network_throughput_mbps"`
+	Egress                       string `json:"egress"`
 }
 
 type diskResponse struct {
@@ -70,10 +72,12 @@ func toVirtualMachine(information vm.Info) virtualMachineResponse {
 		Hostname:     information.Hostname,
 		Metadata:     maps.Clone(information.Metadata),
 		Network: networkResponse{
-			MAC:               information.MAC,
-			PublicIPv4:        information.PublicIPv4,
-			WireGuardMeshIPv6: information.WireGuardMeshIPv6,
-			Egress:            string(information.Egress),
+			MAC:                          information.MAC,
+			PublicIPv4:                   information.PublicIPv4,
+			WireGuardMeshIPv6:            information.WireGuardMeshIPv6,
+			PrivateNetworkThroughputMbps: information.PrivateNetworkThroughputMbps,
+			PublicNetworkThroughputMbps:  information.PublicNetworkThroughputMbps,
+			Egress:                       string(information.Egress),
 		},
 		Disk: diskResponse{
 			SizeMiB: information.DiskMiB,

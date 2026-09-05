@@ -24,9 +24,11 @@
   "section_break_network",
   "egress",
   "wireguard_mesh_ipv6",
+  "private_network_throughput_mbps",
   "column_break_network",
   "public_ipv4",
   "mac",
+  "public_network_throughput_mbps",
   "other_data_section",
   "ssh_keys",
   "metadata"
@@ -176,6 +178,20 @@
    "read_only": 1
   },
   {
+   "fieldname": "private_network_throughput_mbps",
+   "fieldtype": "Int",
+   "is_virtual": 1,
+   "label": "Private Throughput (Mbps)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "public_network_throughput_mbps",
+   "fieldtype": "Int",
+   "is_virtual": 1,
+   "label": "Public Throughput (Mbps)",
+   "read_only": 1
+  },
+  {
    "fieldname": "ssh_keys",
    "fieldtype": "Small Text",
    "is_virtual": 1,
@@ -210,7 +226,7 @@
  ],
  "in_create": 1,
  "links": [],
- "modified": "2026-09-04 19:10:51.233607",
+ "modified": "2026-09-05 09:55:41.374911",
  "modified_by": "Administrator",
  "module": "VM",
  "name": "Virtual Machine",

@@ -56,9 +56,11 @@ type imageArtifactRequest struct {
 }
 
 type networkRequest struct {
-	PublicIPv4        string `json:"public_ipv4"`
-	WireGuardMeshIPv6 string `json:"wireguard_mesh_ipv6"`
-	Egress            string `json:"egress"`
+	PublicIPv4                   string `json:"public_ipv4"`
+	WireGuardMeshIPv6            string `json:"wireguard_mesh_ipv6"`
+	PrivateNetworkThroughputMbps int    `json:"private_network_throughput_mbps"`
+	PublicNetworkThroughputMbps  int    `json:"public_network_throughput_mbps"`
+	Egress                       string `json:"egress"`
 }
 
 type computeResizeRequest struct {
@@ -151,6 +153,10 @@ func (request *memorySnapshotConfigurationRequest) specification() *vm.MemorySna
 }
 
 func (request networkRequest) validate() error {
+	if request.PrivateNetworkThroughputMbps < 0 || request.PublicNetworkThroughputMbps < 0 {
+		return fmt.Errorf("network throughput values must not be negative")
+	}
+
 	wireGuardAddress, err := netip.ParseAddr(request.WireGuardMeshIPv6)
 	if err != nil || !wireGuardMeshPrefix.Contains(wireGuardAddress) {
 		return fmt.Errorf("network.wireguard_mesh_ipv6 must be in fdaa::/16")
@@ -166,18 +172,20 @@ func (request networkRequest) validate() error {
 	if err != nil || !publicAddress.Is4() {
 		return fmt.Errorf("network.public_ipv4 must be an IPv4 address")
 	}
-	if request.Egress != string(vm.EgressHost) {
-		return fmt.Errorf("network.public_ipv4 requires host egress")
-	}
-
 	return nil
 }
 
 func (request networkRequest) spec() vm.Network {
+	egress := vm.Egress(request.Egress)
+	if request.PublicIPv4 != "" {
+		egress = vm.EgressHost
+	}
 	return vm.Network{
-		PublicIPv4:        request.PublicIPv4,
-		WireGuardMeshIPv6: request.WireGuardMeshIPv6,
-		Egress:            vm.Egress(request.Egress),
+		PublicIPv4:                   request.PublicIPv4,
+		WireGuardMeshIPv6:            request.WireGuardMeshIPv6,
+		PrivateNetworkThroughputMbps: request.PrivateNetworkThroughputMbps,
+		PublicNetworkThroughputMbps:  request.PublicNetworkThroughputMbps,
+		Egress:                       egress,
 	}
 }
 

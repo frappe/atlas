@@ -53,17 +53,20 @@ func (driver *fakeVirtualMachineDriver) Create(_ context.Context, id string, spe
 	}
 
 	virtualMachine := &fakeVM{info: vm.Info{
-		ID:                id,
-		State:             vm.StateUnknown,
-		DesiredState:      vm.StateRunning,
-		VCPUs:             specification.VCPUs,
-		MemoryMiB:         specification.MemoryMiB,
-		DiskMiB:           specification.DiskMiB,
-		Image:             specification.Image,
-		SSHKeys:           append([]string(nil), specification.SSHKeys...),
-		MAC:               "06:00:00:00:00:01",
-		Egress:            specification.Network.Egress,
-		WireGuardMeshIPv6: specification.Network.WireGuardMeshIPv6,
+		ID:                           id,
+		State:                        vm.StateUnknown,
+		DesiredState:                 vm.StateRunning,
+		VCPUs:                        specification.VCPUs,
+		MemoryMiB:                    specification.MemoryMiB,
+		DiskMiB:                      specification.DiskMiB,
+		Image:                        specification.Image,
+		SSHKeys:                      append([]string(nil), specification.SSHKeys...),
+		MAC:                          "06:00:00:00:00:01",
+		PublicIPv4:                   specification.Network.PublicIPv4,
+		Egress:                       specification.Network.Egress,
+		WireGuardMeshIPv6:            specification.Network.WireGuardMeshIPv6,
+		PrivateNetworkThroughputMbps: specification.Network.PrivateNetworkThroughputMbps,
+		PublicNetworkThroughputMbps:  specification.Network.PublicNetworkThroughputMbps,
 	}}
 	driver.virtualMachines[id] = virtualMachine
 
@@ -125,6 +128,18 @@ func (driver *fakeVirtualMachineDriver) ReplaceMetadata(
 		return vm.ErrNotFound
 	}
 	virtualMachine.info.Metadata = maps.Clone(metadata)
+	return nil
+}
+
+func (driver *fakeVirtualMachineDriver) UpdateNetwork(_ context.Context, id string, update vm.NetworkUpdate) error {
+	virtualMachine, found := driver.virtualMachines[id]
+	if !found {
+		return vm.ErrNotFound
+	}
+	virtualMachine.info.Egress = update.Egress
+	virtualMachine.info.PublicIPv4 = update.PublicIPv4
+	virtualMachine.info.PrivateNetworkThroughputMbps = update.PrivateNetworkThroughputMbps
+	virtualMachine.info.PublicNetworkThroughputMbps = update.PublicNetworkThroughputMbps
 	return nil
 }
 
@@ -419,8 +434,59 @@ func TestCreateRejectsInvalidNetwork(t *testing.T) {
 	srv := newTestServer(t)
 	invalidAddress := strings.Replace(validCreateRequest, "fdaa:1:0:7::1", "2001:db8::1", 1)
 	invalidEgress := strings.Replace(validCreateRequest, `"egress":"host"`, `"egress":"server"`, 1)
+	negativePrivateThroughput := strings.Replace(validCreateRequest, `"egress":"host"`, `"private_network_throughput_mbps":-1,"egress":"host"`, 1)
+	negativePublicThroughput := strings.Replace(validCreateRequest, `"egress":"host"`, `"public_network_throughput_mbps":-1,"egress":"host"`, 1)
 	do(t, srv, http.MethodPut, "/vms/vm1", invalidAddress, http.StatusBadRequest)
 	do(t, srv, http.MethodPut, "/vms/vm1", invalidEgress, http.StatusBadRequest)
+	do(t, srv, http.MethodPut, "/vms/vm1", negativePrivateThroughput, http.StatusBadRequest)
+	do(t, srv, http.MethodPut, "/vms/vm1", negativePublicThroughput, http.StatusBadRequest)
+}
+
+func TestCreateReturnsNetworkThroughput(t *testing.T) {
+	srv := newTestServer(t)
+	body := strings.Replace(validCreateRequest, `"egress":"host"`, `"private_network_throughput_mbps":100,"public_network_throughput_mbps":50,"egress":"host"`, 1)
+	recorder := do(t, srv, http.MethodPut, "/vms/vm1", body, http.StatusAccepted)
+
+	var response virtualMachineResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Network.PrivateNetworkThroughputMbps != 100 || response.Network.PublicNetworkThroughputMbps != 50 {
+		t.Fatalf("network throughput = %+v", response.Network)
+	}
+}
+
+func TestCreatePublicIPv4EnablesHostEgress(t *testing.T) {
+	srv := newTestServer(t)
+	body := strings.Replace(validCreateRequest, `"egress":"host"`, `"public_ipv4":"203.0.113.10","egress":"none"`, 1)
+	recorder := do(t, srv, http.MethodPut, "/vms/vm1", body, http.StatusAccepted)
+
+	var response virtualMachineResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Network.Egress != string(vm.EgressHost) {
+		t.Fatalf("egress = %q, want host", response.Network.Egress)
+	}
+}
+
+func TestUpdateNetworkAppliesLiveSettings(t *testing.T) {
+	srv := newTestServer(t)
+	do(t, srv, http.MethodPut, "/vms/vm1", validCreateRequest, http.StatusAccepted)
+
+	body := `{"egress":"none","public_ipv4":"203.0.113.10","private_network_throughput_mbps":100,"public_network_throughput_mbps":50}`
+	recorder := do(t, srv, http.MethodPut, "/vms/vm1/network", body, http.StatusOK)
+
+	var response virtualMachineResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Network.Egress != string(vm.EgressHost) || response.Network.PublicIPv4 != "203.0.113.10" {
+		t.Fatalf("network = %+v", response.Network)
+	}
+	if response.Network.PrivateNetworkThroughputMbps != 100 || response.Network.PublicNetworkThroughputMbps != 50 {
+		t.Fatalf("network throughput = %+v", response.Network)
+	}
 }
 
 func TestResizeDiskGrows(t *testing.T) {
