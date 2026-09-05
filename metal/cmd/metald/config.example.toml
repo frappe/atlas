@@ -21,3 +21,16 @@ binary_path = "/usr/bin/jailer"
 [zfs]
 # Existing ZFS pool for VM disks and images.
 pool = "metal"
+
+[wireguard]
+# Underlay interface for managed peers and Atlas WG Mesh.
+interface = "wg0"
+
+[wg_mesh]
+# Register VM mesh addresses with the Atlas WG Mesh CLI.
+enabled = false
+binary_path = "/usr/local/bin/atlas-wg-mesh"
+# The interface that carries discovery. Atlas WG Mesh attaches its uplink hook
+# here, and that hook consumes discovery traffic for every VLAN under the
+# interface, so name the VLAN itself and never its parent. Required.
+uplink = "eno1.1878"

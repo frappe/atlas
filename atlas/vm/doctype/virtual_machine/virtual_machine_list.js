@@ -13,6 +13,13 @@ function showCreateVirtualMachineDialog() {
 				filters: { enabled: 1, status: "Available" },
 			},
 			{ fieldname: "vcpus", fieldtype: "Int", label: __("vCPUs"), reqd: 1, default: 1 },
+			{
+				fieldname: "disk_throughput_mibps",
+				fieldtype: "Int",
+				label: __("Disk Throughput (MiB/s)"),
+				default: 0,
+				description: __("0 does not apply a limit."),
+			},
 			{ fieldtype: "Column Break" },
 			{
 				fieldname: "memory_mib",
@@ -27,13 +34,6 @@ function showCreateVirtualMachineDialog() {
 				label: __("Disk (MiB)"),
 				reqd: 1,
 				default: 10240,
-			},
-			{
-				fieldname: "disk_throughput_mibps",
-				fieldtype: "Int",
-				label: __("Disk Throughput (MiB/s)"),
-				default: 0,
-				description: __("0 does not apply a limit."),
 			},
 			{
 				fieldname: "disk_iops",

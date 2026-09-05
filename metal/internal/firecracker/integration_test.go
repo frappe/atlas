@@ -19,6 +19,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/frappe/atlas/metal/internal/console"
 	"github.com/frappe/atlas/metal/internal/network"
 	"github.com/frappe/atlas/metal/internal/storage"
 	"github.com/frappe/atlas/metal/internal/systemd"
@@ -61,13 +62,16 @@ func newDriver(t *testing.T) *Driver {
 	}
 	t.Cleanup(func() { units.Close() })
 	stores := storage.NewStores(env("METAL_POOL", "metal"), env("METAL_IMAGES_DIR", "/var/lib/metal/images"))
+	consoleBroker := console.NewBroker(t.TempDir())
+	t.Cleanup(consoleBroker.Shutdown)
 	return New(
 		DefaultConfig(),
 		units,
 		stores.VirtualMachines,
 		stores.Images,
 		stores.Snapshots,
-		network.NewLinuxAllocator(),
+		network.NewLinuxAllocator(nil),
+		consoleBroker,
 	)
 }
 

@@ -24,8 +24,8 @@ func TestTrafficControlStepsLimitPrivateAndPublicTraffic(t *testing.T) {
 		{"ip", "netns", "exec", "metal-vm-1", "tc", "filter", "add", "dev", "vg-1000", "ingress", "protocol", "ip", "prio", "10", "flower", "src_ip", "172.16.0.0/12", "action", "police", "rate", "100mibps", "burst", "1mb", "conform-exceed", "drop/ok"},
 		{"ip", "netns", "exec", "metal-vm-1", "tc", "filter", "add", "dev", "vg-1000", "egress", "protocol", "ip", "prio", "10", "flower", "dst_ip", "192.168.0.0/16", "action", "police", "rate", "100mibps", "burst", "1mb", "conform-exceed", "drop/ok"},
 		{"ip", "netns", "exec", "metal-vm-1", "tc", "filter", "add", "dev", "vg-1000", "ingress", "protocol", "ip", "prio", "10", "flower", "src_ip", "192.168.0.0/16", "action", "police", "rate", "100mibps", "burst", "1mb", "conform-exceed", "drop/ok"},
-		{"ip", "netns", "exec", "metal-vm-1", "tc", "filter", "add", "dev", "vg-1000", "egress", "protocol", "ipv6", "prio", "10", "flower", "dst_ip", "fc00::/7", "action", "police", "rate", "100mibps", "burst", "1mb", "conform-exceed", "drop/ok"},
-		{"ip", "netns", "exec", "metal-vm-1", "tc", "filter", "add", "dev", "vg-1000", "ingress", "protocol", "ipv6", "prio", "10", "flower", "src_ip", "fc00::/7", "action", "police", "rate", "100mibps", "burst", "1mb", "conform-exceed", "drop/ok"},
+		{"ip", "netns", "exec", "metal-vm-1", "tc", "filter", "add", "dev", "vg-1000", "egress", "protocol", "ipv6", "prio", "11", "flower", "dst_ip", "fc00::/7", "action", "police", "rate", "100mibps", "burst", "1mb", "conform-exceed", "drop/ok"},
+		{"ip", "netns", "exec", "metal-vm-1", "tc", "filter", "add", "dev", "vg-1000", "ingress", "protocol", "ipv6", "prio", "11", "flower", "src_ip", "fc00::/7", "action", "police", "rate", "100mibps", "burst", "1mb", "conform-exceed", "drop/ok"},
 		{"ip", "netns", "exec", "metal-vm-1", "tc", "filter", "add", "dev", "vg-1000", "egress", "protocol", "ip", "prio", "20", "flower", "action", "police", "rate", "50mibps", "burst", "1mb", "conform-exceed", "drop/ok"},
 		{"ip", "netns", "exec", "metal-vm-1", "tc", "filter", "add", "dev", "vg-1000", "ingress", "protocol", "ip", "prio", "20", "flower", "action", "police", "rate", "50mibps", "burst", "1mb", "conform-exceed", "drop/ok"},
 	}
@@ -43,18 +43,33 @@ func TestPrivateFiltersOutrankThePublicFilter(t *testing.T) {
 		PublicNetworkThroughputMiBps:  50,
 	})
 
+	// One tc priority holds one protocol, so a priority must never carry two.
+	protocolByPriority := map[string]string{}
 	for _, step := range steps[1:] {
 		priority := step[slices.Index(step, "prio")+1]
+		protocol := step[slices.Index(step, "protocol")+1]
 		hasPrefix := slices.Contains(step, "dst_ip") || slices.Contains(step, "src_ip")
-		if hasPrefix && priority != privateTrafficPriority {
-			t.Fatalf("private filter %v uses priority %s", step, priority)
+
+		if existing, seen := protocolByPriority[priority]; seen && existing != protocol {
+			t.Fatalf("priority %s carries %s and %s", priority, existing, protocol)
 		}
-		if !hasPrefix && priority != publicTrafficPriority {
-			t.Fatalf("public filter %v uses priority %s", step, priority)
+		protocolByPriority[priority] = protocol
+
+		wanted := publicTrafficPriority
+		if hasPrefix {
+			wanted = privateIPv4TrafficPriority
+			if protocol == "ipv6" {
+				wanted = privateIPv6TrafficPriority
+			}
+		}
+		if priority != wanted {
+			t.Fatalf("filter %v uses priority %s, want %s", step, priority, wanted)
 		}
 	}
-	if privateTrafficPriority >= publicTrafficPriority {
-		t.Fatalf("private priority %s must sort before %s", privateTrafficPriority, publicTrafficPriority)
+	for _, private := range []string{privateIPv4TrafficPriority, privateIPv6TrafficPriority} {
+		if private >= publicTrafficPriority {
+			t.Fatalf("private priority %s must sort before %s", private, publicTrafficPriority)
+		}
 	}
 }
 

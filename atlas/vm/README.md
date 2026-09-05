@@ -59,11 +59,23 @@ The publisher creates an Available System image and stores exact artifact sizes.
 
 Atlas can replace the complete VM SSH key list without storing it in the Virtual Machine DocType. Metal saves the list and updates MMDS for an active VM. The base image `AuthorizedKeysCommand` reads the current MMDS keys during each login.
 
+## Per-VM metadata
+
+The image is shared, so nothing per VM can be baked into it. `atlas-metadata.service` reads MMDS and applies the hostname and the mesh address. It writes a systemd-networkd drop-in with the address and the `fdaa::/16` route, then reloads networkd. Each step does nothing when the value already matches.
+
+`atlas-metadata.timer` repeats the unit every 10 seconds. A warm snapshot resumes with new MMDS content, and systemd does not start a unit again after a resume, so a warm VM needs the repeat to receive its own hostname and address. cloud-init uses `preserve_hostname`, so the unit is the only owner of the hostname.
+
 ## Custom metadata
 
 Atlas stores custom VM metadata as key-value rows and sends it to Metal. Guests read each value from `latest/meta-data/attributes/<key>`.
 
 The Ubuntu image builder installs the Atlas cloud-init datasource. See [`build_ubuntu_server_image.sh`](scripts/build_ubuntu_server_image.sh).
+
+## Mesh address
+
+Atlas derives the Atlas WG Mesh address for a VM from the region ID, the tenant ID, and the VM number, and sends it as `network.wireguard_mesh_ipv6`. Metal registers the address on the host and publishes it at `latest/meta-data/mesh-ipv6`.
+
+`atlas-metadata.service` in the guest applies it. See [Per-VM metadata](#per-vm-metadata).
 
 ## Network changes
 

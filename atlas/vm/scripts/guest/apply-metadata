@@ -1,0 +1,81 @@
+#!/usr/bin/python3
+import ipaddress
+import pathlib
+import socket
+import subprocess
+from urllib.request import Request, urlopen
+
+METADATA_BASE = "http://169.254.169.254/latest"
+DROP_IN_PATH = pathlib.Path("/run/systemd/network/10-atlas.network.d/mesh.conf")
+MESH_GATEWAY = "fe80::1"
+MESH_PREFIX = "fdaa::/16"
+MESH_MTU = 1380
+TOKEN_TTL_SECONDS = "21600"
+
+
+def fetch(path, token="", method="GET", headers=None):
+    request_headers = dict(headers or {})
+    if token:
+        request_headers["X-metadata-token"] = token
+    request = Request(
+        f"{METADATA_BASE}/{path}", method=method, headers=request_headers
+    )
+    return urlopen(request, timeout=3).read().decode().strip()
+
+
+def read(path, token):
+    try:
+        return fetch(path, token)
+    except Exception:
+        return ""
+
+
+def apply_hostname(token):
+    hostname = read("meta-data/local-hostname", token)
+    if not hostname or hostname == socket.gethostname():
+        return
+    subprocess.run(["hostnamectl", "set-hostname", hostname], check=True)
+
+
+def mesh_drop_in(address):
+    return (
+        "[Network]\n"
+        f"Address={address}/128\n"
+        "IPv6AcceptRA=no\n"
+        "\n"
+        "[Route]\n"
+        f"Destination={MESH_PREFIX}\n"
+        f"Gateway={MESH_GATEWAY}\n"
+        f"MTUBytes={MESH_MTU}\n"
+    )
+
+
+def apply_mesh_network(token):
+    address = read("meta-data/mesh-ipv6", token)
+    if not address:
+        return
+
+    drop_in = mesh_drop_in(ipaddress.IPv6Address(address))
+    if DROP_IN_PATH.exists() and DROP_IN_PATH.read_text() == drop_in:
+        return
+
+    DROP_IN_PATH.parent.mkdir(parents=True, exist_ok=True)
+    DROP_IN_PATH.write_text(drop_in)
+    subprocess.run(["networkctl", "reload"], check=True)
+
+
+def main():
+    try:
+        token = fetch(
+            "api/token",
+            method="PUT",
+            headers={"X-metadata-token-ttl-seconds": TOKEN_TTL_SECONDS},
+        )
+    except Exception:
+        return
+
+    apply_hostname(token)
+    apply_mesh_network(token)
+
+
+main()

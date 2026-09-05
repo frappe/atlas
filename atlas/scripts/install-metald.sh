@@ -6,9 +6,6 @@ set -eu
 : "${METALD_DOWNLOAD_URL:?METALD_DOWNLOAD_URL is required}"
 : "${METALD_AUTH_TOKEN_HASH:?METALD_AUTH_TOKEN_HASH is required}"
 : "${STORAGE_POOL_DEVICE:?STORAGE_POOL_DEVICE is required}"
-# Atlas WG Mesh attaches its uplink hook to this interface. The hook consumes
-# discovery traffic for every VLAN under it, so name the interface that carries
-# discovery, never its parent.
 : "${MESH_UPLINK_INTERFACE:?MESH_UPLINK_INTERFACE is required}"
 : "${WG_MESH_DOWNLOAD_URL:?WG_MESH_DOWNLOAD_URL is required}"
 
@@ -17,8 +14,6 @@ firecracker_version=${FIRECRACKER_VERSION:-v1.16.1}
 listen_address=${LISTEN_ADDRESS:?LISTEN_ADDRESS is required}
 wireguard_interface=${WIREGUARD_INTERFACE:-wg0}
 mesh_binary_path=${MESH_BINARY_PATH:-/usr/local/bin/atlas-wg-mesh}
-# metald runs "atlas-wg-mesh configure" at start, so enable this only when the
-# CLI is on the host. A re-run keeps the value already in the config file.
 mesh_enabled=${MESH_ENABLED:-true}
 
 base_dir=/var/lib/metal

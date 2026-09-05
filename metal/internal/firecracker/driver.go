@@ -135,9 +135,14 @@ func (d *Driver) Create(ctx context.Context, id string, spec vm.Spec) (_ vm.VM, 
 	if err != nil {
 		return nil, err
 	}
+	release := network.ReleaseRequest{
+		VirtualMachineID:  id,
+		UserID:            userID,
+		WireGuardMeshIPv6: spec.Network.WireGuardMeshIPv6,
+	}
 	defer func() {
 		if err != nil {
-			d.cleanup(context.WithoutCancel(ctx), id)
+			d.cleanup(context.WithoutCancel(ctx), release)
 		}
 	}()
 	configuration := vmConfig{
@@ -192,6 +197,49 @@ func (d *Driver) List(ctx context.Context) ([]vm.VM, error) {
 // IDs returns all reserved virtual machine IDs.
 func (d *Driver) IDs(ctx context.Context) ([]string, error) {
 	return d.cfg.listVMIDs()
+}
+
+// RestoreNetworks reapplies persisted network configuration after daemon start.
+func (d *Driver) RestoreNetworks(ctx context.Context) error {
+	ids, err := d.IDs(ctx)
+	if err != nil {
+		return err
+	}
+
+	// One deadline for every VM would scale with the VM count, and one failed
+	// VM must not stop the rest, so bound and report each VM on its own.
+	var restoreErrors []error
+	for _, id := range ids {
+		virtualMachineContext, cancel := context.WithTimeout(ctx, restoreNetworkTimeout)
+		err := d.restoreNetwork(virtualMachineContext, id)
+		cancel()
+		if err != nil {
+			restoreErrors = append(restoreErrors, fmt.Errorf("restore VM %s network: %w", id, err))
+		}
+	}
+	return errors.Join(restoreErrors...)
+}
+
+// restoreNetworkTimeout bounds one VM, so restoration does not scale with the
+// VM count.
+const restoreNetworkTimeout = 2 * time.Minute
+
+func (d *Driver) restoreNetwork(ctx context.Context, id string) error {
+	unlock, err := d.operationLocks.lock(ctx, id)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+
+	configuration, err := d.cfg.readVMConfig(id)
+	if err != nil {
+		return err
+	}
+	if configuration.DesiredState == vm.StateDestroyed {
+		return nil
+	}
+	_, err = d.allocateNetwork(ctx, configuration)
+	return err
 }
 
 // SetDesiredState records the requested state.
@@ -698,6 +746,7 @@ func (d *Driver) allocateNetwork(ctx context.Context, configuration vmConfig) (n
 		VirtualMachineID:              configuration.ID,
 		Egress:                        configuration.Spec.Network.Egress,
 		PublicIPv4:                    configuration.Spec.Network.PublicIPv4,
+		WireGuardMeshIPv6:             configuration.Spec.Network.WireGuardMeshIPv6,
 		PrivateNetworkThroughputMiBps: configuration.Spec.Network.PrivateNetworkThroughputMiBps,
 		PublicNetworkThroughputMiBps:  configuration.Spec.Network.PublicNetworkThroughputMiBps,
 		UserID:                        configuration.UID,
@@ -738,9 +787,10 @@ func (d *Driver) isPublicIPv4InUse(id, address string) (bool, error) {
 	return false, nil
 }
 
-func (d *Driver) cleanup(ctx context.Context, id string) {
+func (d *Driver) cleanup(ctx context.Context, release network.ReleaseRequest) {
+	id := release.VirtualMachineID
 	_ = d.units.Stop(ctx, id)
-	_ = d.networkAllocator.Release(ctx, id)
+	_ = d.networkAllocator.Release(ctx, release)
 	_ = d.virtualMachineStorage.Release(ctx, id)
 	_ = os.Remove(d.cfg.sockPath(id))
 	_ = os.RemoveAll(d.cfg.vmDir(id))

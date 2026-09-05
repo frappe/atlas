@@ -1,0 +1,33 @@
+#!/usr/bin/python3
+from urllib.request import Request, urlopen
+
+METADATA_BASE = "http://169.254.169.254/latest"
+TOKEN_TTL_SECONDS = "21600"
+
+
+def fetch(path, token="", method="GET", headers=None):
+    request_headers = dict(headers or {})
+    if token:
+        request_headers["X-metadata-token"] = token
+    request = Request(
+        f"{METADATA_BASE}/{path}", method=method, headers=request_headers
+    )
+    return urlopen(request, timeout=3).read().decode().strip()
+
+
+def main():
+    try:
+        token = fetch(
+            "api/token",
+            method="PUT",
+            headers={"X-metadata-token-ttl-seconds": TOKEN_TTL_SECONDS},
+        )
+        for entry in fetch("meta-data/public-keys/", token).splitlines():
+            index = entry.partition("=")[0]
+            if index:
+                print(fetch(f"meta-data/public-keys/{index}/openssh-key", token))
+    except Exception:
+        return
+
+
+main()

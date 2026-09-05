@@ -13,17 +13,18 @@ import (
 )
 
 type fakeNetwork struct {
-	allocateCalls int
-	releaseCalls  int
-	releaseError  error
-	request       network.Request
-	updateRequest network.UpdateRequest
+	allocateCalls  int
+	releaseCalls   int
+	releaseError   error
+	request        network.Request
+	releaseRequest network.ReleaseRequest
+	updateRequest  network.UpdateRequest
 }
 
 func (f *fakeNetwork) Allocate(_ context.Context, request network.Request) (network.Interface, error) {
 	f.allocateCalls++
 	f.request = request
-	return network.Interface{GuestIPAddress: "172.16.0.2", MACAddress: "02:00:00:00:00:01"}, nil
+	return network.Interface{GuestIPAddress: "172.16.0.2", MACAddress: "06:00:ac:10:00:02"}, nil
 }
 
 func (f *fakeNetwork) Resolve(string) network.Interface { return network.Interface{} }
@@ -33,8 +34,9 @@ func (f *fakeNetwork) Update(_ context.Context, request network.UpdateRequest) e
 	return nil
 }
 
-func (f *fakeNetwork) Release(context.Context, string) error {
+func (f *fakeNetwork) Release(_ context.Context, request network.ReleaseRequest) error {
 	f.releaseCalls++
+	f.releaseRequest = request
 	return f.releaseError
 }
 
@@ -116,6 +118,39 @@ func TestAllocateNetworkPassesThroughputLimits(t *testing.T) {
 	}
 	if networkAllocator.request.PrivateNetworkThroughputMiBps != 100 || networkAllocator.request.PublicNetworkThroughputMiBps != 50 {
 		t.Fatalf("throughput limits = %+v", networkAllocator.request)
+	}
+}
+
+func TestRestoreNetworksReplaysExistingVirtualMachineNetworks(t *testing.T) {
+	driver, networkAllocator, _ := testDriver(t)
+	active := vmConfig{
+		ID:           "vm-1",
+		UID:          100,
+		GID:          100,
+		DesiredState: vm.StateRunning,
+		Spec: vm.Spec{Network: vm.Network{
+			Egress:            vm.EgressMesh,
+			WireGuardMeshIPv6: "fdaa:1:0:7::1",
+		}},
+	}
+	destroyed := active
+	destroyed.ID = "vm-2"
+	destroyed.DesiredState = vm.StateDestroyed
+	if err := driver.cfg.writeVMConfig(active); err != nil {
+		t.Fatal(err)
+	}
+	if err := driver.cfg.writeVMConfig(destroyed); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := driver.RestoreNetworks(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if networkAllocator.allocateCalls != 1 {
+		t.Fatalf("network allocations = %d, want 1", networkAllocator.allocateCalls)
+	}
+	if networkAllocator.request.VirtualMachineID != active.ID || networkAllocator.request.WireGuardMeshIPv6 != active.Spec.Network.WireGuardMeshIPv6 {
+		t.Fatalf("network request = %+v", networkAllocator.request)
 	}
 }
 
@@ -207,7 +242,12 @@ func TestResizeComputeUpdatesStoppedVMAndRequestsBoot(t *testing.T) {
 
 func TestDestroyRetainsTombstoneUntilCleanupSucceeds(t *testing.T) {
 	driver, networkAllocator, images := testDriver(t)
-	configuration := vmConfig{ID: "vm-1", DesiredState: vm.StateRunning}
+	configuration := vmConfig{
+		ID:           "vm-1",
+		UID:          100,
+		DesiredState: vm.StateRunning,
+		Spec:         vm.Spec{Network: vm.Network{WireGuardMeshIPv6: "fdaa:1:0:7::1"}},
+	}
 	if err := driver.cfg.writeVMConfig(configuration); err != nil {
 		t.Fatal(err)
 	}
@@ -238,6 +278,11 @@ func TestDestroyRetainsTombstoneUntilCleanupSucceeds(t *testing.T) {
 	if networkAllocator.releaseCalls != 1 {
 		t.Fatalf("network releases = %d, want 1", networkAllocator.releaseCalls)
 	}
+	// The mesh registration names the host veth, so release needs both values.
+	wanted := network.ReleaseRequest{VirtualMachineID: "vm-1", UserID: 100, WireGuardMeshIPv6: "fdaa:1:0:7::1"}
+	if networkAllocator.releaseRequest != wanted {
+		t.Fatalf("release request = %+v, want %+v", networkAllocator.releaseRequest, wanted)
+	}
 }
 
 func TestMetadataServiceData(t *testing.T) {
@@ -245,7 +290,7 @@ func TestMetadataServiceData(t *testing.T) {
 		SSHKeys:  []string{"ssh-ed25519 AAAA...", "ssh-rsa BBBB..."},
 		Hostname: "worker-1",
 		UserData: "#cloud-config\npackages: [curl]",
-		Network:  vm.Network{PublicIPv4: "203.0.113.7"},
+		Network:  vm.Network{PublicIPv4: "203.0.113.7", WireGuardMeshIPv6: "fdaa:1:0:7::1"},
 		Metadata: map[string]string{"env": "prod", "team": "platform"},
 	})
 	publicKeys := data["latest"].(map[string]any)["meta-data"].(map[string]any)["public-keys"].(map[string]any)
@@ -270,6 +315,9 @@ func TestMetadataServiceData(t *testing.T) {
 	}
 	if got := metadata["public-ipv4"]; got != "203.0.113.7" {
 		t.Errorf("public ipv4 = %v", got)
+	}
+	if got := metadata["mesh-ipv6"]; got != "fdaa:1:0:7::1" {
+		t.Errorf("mesh ipv6 = %v", got)
 	}
 	customMetadata := metadata["attributes"].(map[string]any)
 	if got := customMetadata["env"]; got != "prod" {

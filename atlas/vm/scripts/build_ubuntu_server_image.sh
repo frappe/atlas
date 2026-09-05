@@ -7,6 +7,7 @@ kernel_output=""
 platform=""
 version=""
 minimal=false
+script_directory=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 
 step() { echo "==> $*"; }
 
@@ -104,6 +105,102 @@ extract_vmlinux() {
 	fi
 }
 
+install_cloud_init_datasource() {
+	install -d -m 0755 "$rootfs_directory/etc/cloud/cloud.cfg.d"
+	cat > "$rootfs_directory/etc/cloud/cloud.cfg.d/99-atlas-datasource.cfg" <<'EOF'
+datasource_list: [ Atlas ]
+EOF
+
+	install -m 0644 "$script_directory/guest/DataSourceAtlas.py" \
+		"$rootfs_directory/usr/lib/python3/dist-packages/cloudinit/sources/DataSourceAtlas.py"
+	python3 -m py_compile "$rootfs_directory/usr/lib/python3/dist-packages/cloudinit/sources/DataSourceAtlas.py"
+}
+
+install_guest_network() {
+	install -d -m 0755 "$rootfs_directory/etc/cloud/cloud.cfg.d"
+	cat > "$rootfs_directory/etc/cloud/cloud.cfg.d/99-atlas-network.cfg" <<'EOF'
+network: {config: disabled}
+EOF
+
+	install -d -m 0755 "$rootfs_directory/etc/systemd/network"
+	cat > "$rootfs_directory/etc/systemd/network/10-atlas.network" <<'EOF'
+[Match]
+Name=eth0
+
+[Network]
+Address=172.16.0.2/24
+Gateway=172.16.0.1
+DNS=1.1.1.1
+
+[Route]
+Destination=169.254.169.254/32
+Scope=link
+EOF
+}
+
+# Apply the per-VM MMDS values that a shared image cannot hold. Do not order the
+# unit before cloud-init.service: that service uses DefaultDependencies=no and
+# runs before sysinit.target, so the order makes a cycle. systemd breaks the
+# cycle by dropping cloud-init.service, which then never generates SSH host keys.
+install_metadata_service() {
+	install -d -m 0755 "$rootfs_directory/etc/cloud/cloud.cfg.d"
+	cat > "$rootfs_directory/etc/cloud/cloud.cfg.d/99-atlas-hostname.cfg" <<'EOF'
+preserve_hostname: true
+EOF
+
+	install -D -m 0755 "$script_directory/guest/apply-metadata" \
+		"$rootfs_directory/usr/local/lib/atlas/apply-metadata"
+	cat > "$rootfs_directory/etc/systemd/system/atlas-metadata.service" <<'EOF'
+[Unit]
+Description=Apply the per-VM Atlas metadata
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/lib/atlas/apply-metadata
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+	cat > "$rootfs_directory/etc/systemd/system/atlas-metadata.timer" <<'EOF'
+[Unit]
+Description=Reapply the per-VM Atlas metadata
+
+[Timer]
+OnBootSec=10s
+OnUnitActiveSec=10s
+AccuracySec=1s
+
+[Install]
+WantedBy=timers.target
+EOF
+
+	install -d -m 0755 "$rootfs_directory/etc/systemd/system/multi-user.target.wants"
+	ln -sf /etc/systemd/system/atlas-metadata.service \
+		"$rootfs_directory/etc/systemd/system/multi-user.target.wants/atlas-metadata.service"
+	install -d -m 0755 "$rootfs_directory/etc/systemd/system/timers.target.wants"
+	ln -sf /etc/systemd/system/atlas-metadata.timer \
+		"$rootfs_directory/etc/systemd/system/timers.target.wants/atlas-metadata.timer"
+}
+
+install_serial_console() {
+	install -d -m 0755 "$rootfs_directory/etc/systemd/system/getty.target.wants"
+	ln -sf /lib/systemd/system/serial-getty@.service \
+		"$rootfs_directory/etc/systemd/system/getty.target.wants/serial-getty@ttyS0.service"
+}
+
+install_ssh_metadata() {
+	install -D -m 0755 "$script_directory/guest/authorized-keys-command" \
+		"$rootfs_directory/usr/local/lib/atlas/authorized-keys-command"
+	install -d -m 0755 "$rootfs_directory/etc/ssh/sshd_config.d"
+	cat > "$rootfs_directory/etc/ssh/sshd_config.d/90-atlas-mmds.conf" <<'EOF'
+AuthorizedKeysCommand /usr/local/lib/atlas/authorized-keys-command
+AuthorizedKeysCommandUser nobody
+EOF
+}
+
 rootfs_path="$work_path/rootfs.squashfs"
 rootfs_directory="$work_path/rootfs"
 fetch "$rootfs_url" "$rootfs_sha256" "$rootfs_path"
@@ -121,141 +218,11 @@ step "extracted $(basename "$kernel_path")"
 step "extract root file system"
 unsquashfs -q -d "$rootfs_directory" "$rootfs_path"
 
-# Use Atlas MMDS v2 as the cloud-init datasource. Firecracker has no DMI probe.
-cat > "$rootfs_directory/etc/cloud/cloud.cfg.d/99-atlas-datasource.cfg" <<'EOF'
-datasource_list: [ Atlas ]
-EOF
-
-# DataSourceAtlas reads metadata and user-data from MMDS v2. Fetch errors return no data.
-cat > "$rootfs_directory/usr/lib/python3/dist-packages/cloudinit/sources/DataSourceAtlas.py" <<'EOF'
-from cloudinit import sources, url_helper
-
-METADATA_BASE = "http://169.254.169.254/latest"
-TOKEN_TTL_SECONDS = "21600"
-
-
-class DataSourceAtlas(sources.DataSource):
-    dsname = "Atlas"
-
-    def __init__(self, sys_cfg, distro, paths, ud_proc=None):
-        sources.DataSource.__init__(self, sys_cfg, distro, paths, ud_proc)
-        self.metadata = {}
-        self.userdata_raw = None
-
-    def _fetch_text(self, path, headers):
-        response = url_helper.readurl(
-            f"{METADATA_BASE}/{path}", headers=headers, timeout=5, retries=3
-        )
-        return response.contents.decode().strip()
-
-    def _get_data(self):
-        try:
-            token = url_helper.readurl(
-                f"{METADATA_BASE}/api/token",
-                request_method="PUT",
-                headers={"X-metadata-token-ttl-seconds": TOKEN_TTL_SECONDS},
-                timeout=5,
-                retries=3,
-            ).contents.decode().strip()
-            headers = {"X-metadata-token": token}
-            self.metadata["instance-id"] = self._fetch_text("meta-data/instance-id", headers)
-        except Exception:
-            return False
-
-        try:
-            self.metadata["local-hostname"] = self._fetch_text("meta-data/local-hostname", headers)
-        except Exception:
-            pass
-
-        try:
-            self.userdata_raw = url_helper.readurl(
-                f"{METADATA_BASE}/user-data", headers=headers, timeout=5, retries=3
-            ).contents
-        except Exception:
-            self.userdata_raw = None
-
-        return True
-
-    def _get_subplatform(self):
-        return "metadata (Atlas MMDS v2)"
-
-    def get_instance_id(self):
-        return self.metadata.get("instance-id")
-
-
-datasources = [
-    (DataSourceAtlas, (sources.DEP_FILESYSTEM, sources.DEP_NETWORK)),
-]
-
-
-def get_datasource_list(depends):
-    return sources.list_from_depends(depends, datasources)
-EOF
-
-# Fail the build if the datasource has a syntax error.
-python3 -m py_compile "$rootfs_directory/usr/lib/python3/dist-packages/cloudinit/sources/DataSourceAtlas.py"
-
-# Disable cloud-init networking. systemd-networkd owns the static guest network.
-# Each VM can use this fixed address because each VM has a separate network namespace.
-# The link route provides access to MMDS at 169.254.169.254.
-cat > "$rootfs_directory/etc/cloud/cloud.cfg.d/99-atlas-network.cfg" <<'EOF'
-network: {config: disabled}
-EOF
-
-install -d -m 0755 "$rootfs_directory/etc/systemd/network"
-cat > "$rootfs_directory/etc/systemd/network/10-atlas.network" <<'EOF'
-[Match]
-Name=eth0
-
-[Network]
-Address=172.16.0.2/24
-Gateway=172.16.0.1
-DNS=1.1.1.1
-
-[Route]
-Destination=169.254.169.254/32
-Scope=link
-EOF
-
-# Enable a login prompt on the serial console.
-install -d -m 0755 "$rootfs_directory/etc/systemd/system/getty.target.wants"
-ln -sf /lib/systemd/system/serial-getty@.service \
-	"$rootfs_directory/etc/systemd/system/getty.target.wants/serial-getty@ttyS0.service"
-
-install -d -m 0755 "$rootfs_directory/usr/local/lib/atlas"
-cat > "$rootfs_directory/usr/local/lib/atlas/authorized-keys-command" <<'EOF'
-#!/usr/bin/python3
-from urllib.request import Request, urlopen
-
-metadata_url = "http://169.254.169.254/latest"
-
-
-def fetch(path, token, method="GET", headers=None):
-	request_headers = {}
-	if token:
-		request_headers["X-metadata-token"] = token
-	if headers:
-		request_headers.update(headers)
-	request = Request(f"{metadata_url}/{path}", method=method, headers=request_headers)
-	return urlopen(request, timeout=3).read().decode().strip()
-
-
-try:
-	token = fetch("api/token", "", method="PUT", headers={"X-metadata-token-ttl-seconds": "21600"})
-	for entry in fetch("meta-data/public-keys/", token).splitlines():
-		index = entry.partition("=")[0]
-		if index:
-			print(fetch(f"meta-data/public-keys/{index}/openssh-key", token))
-except Exception:
-	pass
-EOF
-chmod 0755 "$rootfs_directory/usr/local/lib/atlas/authorized-keys-command"
-
-install -d -m 0755 "$rootfs_directory/etc/ssh/sshd_config.d"
-cat > "$rootfs_directory/etc/ssh/sshd_config.d/90-atlas-mmds.conf" <<'EOF'
-AuthorizedKeysCommand /usr/local/lib/atlas/authorized-keys-command
-AuthorizedKeysCommandUser nobody
-EOF
+install_cloud_init_datasource
+install_guest_network
+install_metadata_service
+install_serial_console
+install_ssh_metadata
 
 step "create ext4 image"
 truncate -s 4G "$image_path.part"

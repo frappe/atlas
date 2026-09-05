@@ -29,6 +29,7 @@
   "metald_section",
   "metald_binary_x86_64_file",
   "metald_source_hash",
+  "column_break_bgjv",
   "wg_mesh_binary_x86_64_file",
   "wg_mesh_source_hash",
   "scaleway_tab",
@@ -307,29 +308,25 @@
    "fieldname": "metald_binary_x86_64_file",
    "fieldtype": "Link",
    "label": "Metald Binary (x86_64)",
-   "options": "File",
-   "read_only": 1
+   "options": "File"
   },
   {
    "fieldname": "metald_source_hash",
    "fieldtype": "Data",
    "label": "Metald Source Hash",
-   "read_only": 1,
-   "hidden": 1
+   "read_only": 1
   },
   {
    "fieldname": "wg_mesh_binary_x86_64_file",
    "fieldtype": "Link",
    "label": "WG Mesh Binary (x86_64)",
-   "options": "File",
-   "read_only": 1
+   "options": "File"
   },
   {
    "fieldname": "wg_mesh_source_hash",
    "fieldtype": "Data",
    "label": "WG Mesh Source Hash",
-   "read_only": 1,
-   "hidden": 1
+   "read_only": 1
   },
   {
    "fieldname": "storage_tab",
@@ -376,14 +373,18 @@
    "fieldname": "s3_signed_url_expiry",
    "fieldtype": "Int",
    "label": "Signed URL Expiry (seconds)"
+  },
+  {
+   "fieldname": "column_break_bgjv",
+   "fieldtype": "Column Break"
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-09-03 14:48:32.349059",
- "modified_by": "Administrator",
+ "modified": "2026-09-05 17:15:45.017252",
+ "modified_by": "test@gmail.com",
  "module": "Atlas",
  "name": "Atlas Settings",
  "owner": "Administrator",
