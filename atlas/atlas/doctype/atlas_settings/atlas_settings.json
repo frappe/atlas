@@ -27,7 +27,10 @@
   "ssh_section",
   "public_ssh_key",
   "metald_section",
-  "metald_binary_x86_64_download_url",
+  "metald_binary_x86_64_file",
+  "metald_source_hash",
+  "wg_mesh_binary_x86_64_file",
+  "wg_mesh_source_hash",
   "scaleway_tab",
   "scaleway_settings_section",
   "scaleway_organization_id",
@@ -301,10 +304,32 @@
    "label": "Metal Daemon"
   },
   {
-   "fieldname": "metald_binary_x86_64_download_url",
+   "fieldname": "metald_binary_x86_64_file",
+   "fieldtype": "Link",
+   "label": "Metald Binary (x86_64)",
+   "options": "File",
+   "read_only": 1
+  },
+  {
+   "fieldname": "metald_source_hash",
    "fieldtype": "Data",
-   "label": "X86_64 Download URL",
-   "reqd": 1
+   "label": "Metald Source Hash",
+   "read_only": 1,
+   "hidden": 1
+  },
+  {
+   "fieldname": "wg_mesh_binary_x86_64_file",
+   "fieldtype": "Link",
+   "label": "WG Mesh Binary (x86_64)",
+   "options": "File",
+   "read_only": 1
+  },
+  {
+   "fieldname": "wg_mesh_source_hash",
+   "fieldtype": "Data",
+   "label": "WG Mesh Source Hash",
+   "read_only": 1,
+   "hidden": 1
   },
   {
    "fieldname": "storage_tab",

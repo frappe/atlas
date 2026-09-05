@@ -5,6 +5,7 @@ from hashlib import sha256
 from types import MethodType, SimpleNamespace
 from unittest.mock import Mock, patch
 
+import frappe
 from frappe.tests import UnitTestCase
 
 from atlas.server.doctype.server.server import Server
@@ -225,7 +226,7 @@ class TestServer(UnitTestCase):
 			enqueue_after_commit=True,
 		)
 
-	def test_install_metald_rejects_a_missing_download_url(self) -> None:
+	def test_install_metald_rejects_a_missing_binary(self) -> None:
 		server = self._server(status="Running")
 
 		with (
@@ -256,11 +257,19 @@ class TestServer(UnitTestCase):
 
 	def test_install_metald_worker_passes_the_pool_device(self) -> None:
 		server = self._server(status="Running")
-		server.settings.metald_binary_x86_64_download_url = "https://example.test/metald"
+		server.settings.metald_binary_x86_64_file = "metald-file"
 		task = SimpleNamespace(result=SimpleNamespace(is_success=True))
+		file_urls = {
+			"metald-file": "https://atlas.test/files/metald-linux-amd64",
+			"wg-mesh-file": "https://atlas.test/files/atlas-wg-mesh-linux-amd64",
+		}
 
 		with (
 			patch("atlas.server.doctype.server.server.get_decrypted_password", return_value="test-token"),
+			patch(
+				"atlas.server.doctype.server.server.get_binary_download_url",
+				side_effect=lambda file_name: file_urls[file_name],
+			),
 			patch(
 				"atlas.server.doctype.server.server.ServerSSHTask.create_for_script_file", return_value=task
 			) as create_for_script_file,
@@ -272,12 +281,31 @@ class TestServer(UnitTestCase):
 		self.assertEqual(
 			arguments["environment"],
 			{
-				"METALD_DOWNLOAD_URL": "https://example.test/metald",
+				"METALD_DOWNLOAD_URL": "https://atlas.test/files/metald-linux-amd64",
+				"WG_MESH_DOWNLOAD_URL": "https://atlas.test/files/atlas-wg-mesh-linux-amd64",
 				"METALD_AUTH_TOKEN_HASH": sha256(b"test-token").hexdigest(),
 				"LISTEN_ADDRESS": "0.0.0.0:9000",
 				"STORAGE_POOL_DEVICE": "/dev/md2",
+				"MESH_UPLINK_INTERFACE": "eno1.1878",
 			},
 		)
+
+	def test_install_metald_worker_needs_a_private_network_interface(self) -> None:
+		"""Atlas WG Mesh hooks this interface, so metald cannot guess it."""
+		server = self._server(status="Running")
+		server.settings.metald_binary_x86_64_file = "metald-file"
+		server.private_network_interface = None
+
+		with (
+			patch("atlas.server.doctype.server.server.get_decrypted_password", return_value="test-token"),
+			patch(
+				"atlas.server.doctype.server.server.ServerSSHTask.create_for_script_file"
+			) as create_for_script_file,
+			self.assertRaises(frappe.ValidationError),
+		):
+			Server._install_metald(server)
+
+		create_for_script_file.assert_not_called()
 
 	def test_get_wireguard_ip_address_uses_the_node_number(self) -> None:
 		server = self._server(status="Running")
@@ -530,13 +558,15 @@ class TestServer(UnitTestCase):
 			wireguard_job_id="atlas||server-wireguard||node-test-00007",
 			wireguard_ip_address=None,
 			private_ipv4_address="10.0.0.7",
+			private_network_interface="eno1.1878",
 			port=51820,
 			settings=SimpleNamespace(
 				server_provider_controller=SimpleNamespace(
 					archive_server=Mock(),
 					get_storage_pool_device=Mock(return_value="/dev/md2"),
 				),
-				metald_binary_x86_64_download_url=None,
+				metald_binary_x86_64_file=None,
+				wg_mesh_binary_x86_64_file="wg-mesh-file",
 				region_id=1,
 				private_network_mtu=1500,
 			),

@@ -17,6 +17,7 @@ from frappe.model.naming import make_autoname
 from frappe.utils.background_jobs import is_job_enqueued
 from frappe.utils.password import get_decrypted_password
 
+from atlas.atlas.core.host_binaries import get_binary_download_url
 from atlas.server.doctype.server_ssh_task.server_ssh_task import ServerSSHTask
 
 if TYPE_CHECKING:
@@ -271,10 +272,13 @@ class Server(Document):
 
 	def _install_metald(self) -> None:
 		"""Install metald and its host dependencies."""
-		if not self.settings.metald_binary_x86_64_download_url:
-			frappe.throw(_("Atlas Settings needs a metald download URL."))
 		if not self.private_ipv4_address:
 			frappe.throw(_("Server {0} needs a private IPv4 address.").format(self.name))
+		if not self.private_network_interface:
+			frappe.throw(_("Server {0} needs a private network interface.").format(self.name))
+
+		if not self.settings.metald_binary_x86_64_file or not self.settings.wg_mesh_binary_x86_64_file:
+			frappe.throw(_("Atlas Settings needs the metald and Atlas WG Mesh binaries."))
 
 		token = get_decrypted_password("Server", self.name, "metald_api_token", raise_exception=False)
 		if not token:
@@ -287,10 +291,14 @@ class Server(Document):
 			server=self.name,
 			script_path="install-metald.sh",
 			environment={
-				"METALD_DOWNLOAD_URL": self.settings.metald_binary_x86_64_download_url,
+				"METALD_DOWNLOAD_URL": get_binary_download_url(self.settings.metald_binary_x86_64_file),
+				"WG_MESH_DOWNLOAD_URL": get_binary_download_url(self.settings.wg_mesh_binary_x86_64_file),
 				"METALD_AUTH_TOKEN_HASH": token_hash,
 				"LISTEN_ADDRESS": "0.0.0.0:9000",
 				"STORAGE_POOL_DEVICE": self.settings.server_provider_controller.get_storage_pool_device(self),
+				# Atlas WG Mesh discovery runs on the private network, so its hook
+				# belongs on that interface and never on the public uplink.
+				"MESH_UPLINK_INTERFACE": self.private_network_interface,
 			},
 			timeout_seconds=METALD_INSTALL_TIMEOUT_SECONDS,
 			run_in_background=False,
