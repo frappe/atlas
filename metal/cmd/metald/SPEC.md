@@ -39,7 +39,7 @@ load configuration
 
 The storage constructor is `storage.NewStores(pool, imagesDirectory)`. It returns the pool, VM, image, and snapshot stores.
 
-The network constructor is `network.NewLinuxAllocator(mesh)`. A `nil` mesh leaves VMs off Atlas WG Mesh. The Firecracker driver receives separate VM, image, and snapshot dependencies.
+The network constructor is `network.NewLinuxAllocator(mesh)`. `NewMesh` checks that the CLI exists, so metald fails before it starts anything when Atlas WG Mesh is absent. The Firecracker driver receives separate VM, image, and snapshot dependencies.
 
 `connectMesh` runs on every start. It runs `atlas-wg-mesh status`, and configures the host when the CLI reports no configuration. `RestoreNetworks` then replays each non-destroyed VM network, so a reinstalled or reset host recovers its VM mesh registrations without an operator.
 
@@ -57,8 +57,7 @@ The network constructor is `network.NewLinuxAllocator(mesh)`. A `nil` mesh leave
 | `jailer.binary_path` | `/usr/bin/jailer` | Jailer binary. |
 | `zfs.pool` | `metal` | ZFS pool name. |
 | `wireguard.interface` | `wg0` | Underlay interface for managed peers and Atlas WG Mesh. |
-| `wg_mesh.enabled` | `false` | Register VM mesh addresses with Atlas WG Mesh. |
-| `wg_mesh.binary_path` | `/usr/local/bin/atlas-wg-mesh` | Atlas WG Mesh CLI. |
+| `wg_mesh.binary_path` | `/usr/local/bin/atlas-wg-mesh` | Atlas WG Mesh CLI. Required. |
 | `wg_mesh.uplink` | none | Discovery uplink. Required when the mesh is enabled. |
 
 See `config.example.toml` for the complete file format.

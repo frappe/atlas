@@ -27,8 +27,7 @@ pool = "metal"
 interface = "wg0"
 
 [wg_mesh]
-# Register VM mesh addresses with the Atlas WG Mesh CLI.
-enabled = false
+# Atlas WG Mesh is required. metald refuses to start without this CLI.
 binary_path = "/usr/local/bin/atlas-wg-mesh"
 # The interface that carries discovery. Atlas WG Mesh attaches its uplink hook
 # here, and that hook consumes discovery traffic for every VLAN under the

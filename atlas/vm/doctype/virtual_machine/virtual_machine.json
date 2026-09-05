@@ -10,6 +10,7 @@
   "current_state",
   "desired_state",
   "tenant_id",
+  "is_privileged",
   "column_break_status",
   "server",
   "virtual_machine_image",
@@ -149,6 +150,15 @@
    "show_description_on_click": 1
   },
   {
+   "default": "0",
+   "description": "Reaches every tenant. Needs tenant 0. Removing it ends cross-tenant traffic.",
+   "fieldname": "is_privileged",
+   "fieldtype": "Check",
+   "label": "Is Privileged",
+   "show_description_on_click": 1,
+   "read_only": 1
+  },
+  {
    "fieldname": "section_break_network",
    "fieldtype": "Section Break",
    "label": "Network"
@@ -237,8 +247,8 @@
  ],
  "in_create": 1,
  "links": [],
- "modified": "2026-09-05 13:00:00.000000",
- "modified_by": "Administrator",
+ "modified": "2026-09-05 17:41:51.084574",
+ "modified_by": "test@gmail.com",
  "module": "VM",
  "name": "Virtual Machine",
  "naming_rule": "Expression",

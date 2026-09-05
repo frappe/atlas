@@ -130,7 +130,7 @@ class VirtualMachineImageManager:
 			# Retry idempotent finalization on the next poll.
 			try:
 				self.finalize(image, metal_client, s3_client)
-			except (MetalClientError, S3Error, VirtualMachineImageTransferError):
+			except MetalClientError, S3Error, VirtualMachineImageTransferError:
 				frappe.log_error(
 					title=f"Machine image finalize retry for {image.name}",
 					message=frappe.get_traceback(),

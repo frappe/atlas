@@ -29,14 +29,8 @@ type LinuxAllocator struct {
 	mesh meshRegistrar
 }
 
-// NewLinuxAllocator returns a Linux network allocator. A nil mesh leaves virtual
-// machines off Atlas WG Mesh.
-func NewLinuxAllocator(mesh *Mesh) *LinuxAllocator {
-	if mesh == nil {
-		return &LinuxAllocator{}
-	}
-	return &LinuxAllocator{mesh: mesh}
-}
+// NewLinuxAllocator returns a Linux network allocator.
+func NewLinuxAllocator(mesh *Mesh) *LinuxAllocator { return &LinuxAllocator{mesh: mesh} }
 
 // Allocate creates virtual machine network resources.
 func (allocator *LinuxAllocator) Allocate(ctx context.Context, request Request) (Interface, error) {
@@ -213,7 +207,7 @@ func (allocator *LinuxAllocator) Release(ctx context.Context, request ReleaseReq
 // registers it with Atlas WG Mesh. The registration announces the VM location,
 // so it comes last and the first packet that it attracts finds a complete path.
 func (allocator *LinuxAllocator) addMeshRegistration(ctx context.Context, virtualMachineID string, userID uint32, address string) error {
-	if allocator.mesh == nil || address == "" {
+	if address == "" {
 		return nil
 	}
 
@@ -229,7 +223,7 @@ func (allocator *LinuxAllocator) addMeshRegistration(ctx context.Context, virtua
 
 // removeMeshRegistration unregisters the guest mesh address.
 func (allocator *LinuxAllocator) removeMeshRegistration(ctx context.Context, userID uint32, address string) error {
-	if allocator.mesh == nil || address == "" {
+	if address == "" {
 		return nil
 	}
 

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
+	"os/exec"
 	"strconv"
 	"strings"
 
@@ -45,6 +46,9 @@ func NewMesh(configuration MeshConfig) (*Mesh, error) {
 	}
 	if configuration.UplinkName == "" {
 		return nil, errors.New("Atlas WG Mesh uplink interface name is required")
+	}
+	if _, err := exec.LookPath(configuration.CommandPath); err != nil {
+		return nil, fmt.Errorf("Atlas WG Mesh CLI %s: %w", configuration.CommandPath, err)
 	}
 
 	return &Mesh{
@@ -116,6 +120,78 @@ func (mesh *Mesh) Remove(ctx context.Context, address, interfaceName string) err
 		return err
 	}
 	return hostcmd.Run(ctx, mesh.commandPath, "vm", "remove", "--interface", interfaceName, "--address", address)
+}
+
+// ApplyPrivilegedAddresses replaces the privileged VM whitelist with the
+// complete desired set. Only these tenant-0 addresses cross tenants.
+func (mesh *Mesh) ApplyPrivilegedAddresses(ctx context.Context, desired []string) error {
+	wanted, err := parseMeshAddresses(desired)
+	if err != nil {
+		return err
+	}
+	current, err := mesh.privilegedAddresses(ctx)
+	if err != nil {
+		return err
+	}
+
+	var applyErrors []error
+	for address := range wanted {
+		if _, present := current[address]; !present {
+			applyErrors = append(applyErrors, mesh.setPrivileged(ctx, "add", address))
+		}
+	}
+	for address := range current {
+		if _, keep := wanted[address]; !keep {
+			applyErrors = append(applyErrors, mesh.setPrivileged(ctx, "remove", address))
+		}
+	}
+	return errors.Join(applyErrors...)
+}
+
+func (mesh *Mesh) setPrivileged(ctx context.Context, action, address string) error {
+	if err := hostcmd.Run(ctx, mesh.commandPath, "privileged-vm", action, "--address", address); err != nil {
+		return fmt.Errorf("%s privileged mesh address %s: %w", action, address, err)
+	}
+	return nil
+}
+
+// privilegedAddresses returns the whitelist that this host holds now.
+func (mesh *Mesh) privilegedAddresses(ctx context.Context) (map[string]struct{}, error) {
+	output, err := hostcmd.Output(ctx, mesh.commandPath, "privileged-vm", "list", "--json")
+	if err != nil {
+		return nil, fmt.Errorf("list privileged mesh addresses: %w", err)
+	}
+
+	var entries []struct {
+		Address string `json:"address"`
+	}
+	if err := json.Unmarshal([]byte(output), &entries); err != nil {
+		return nil, fmt.Errorf("decode privileged mesh addresses: %w", err)
+	}
+
+	addresses := make(map[string]struct{}, len(entries))
+	for _, entry := range entries {
+		address, err := netip.ParseAddr(entry.Address)
+		if err != nil {
+			return nil, fmt.Errorf("parse privileged mesh address %q: %w", entry.Address, err)
+		}
+		addresses[address.String()] = struct{}{}
+	}
+	return addresses, nil
+}
+
+// parseMeshAddresses normalises the desired set, so a differently written
+// address does not read as a change.
+func parseMeshAddresses(values []string) (map[string]struct{}, error) {
+	addresses := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		address, err := netip.ParseAddr(value)
+		if err != nil {
+			return nil, fmt.Errorf("parse privileged mesh address %q: %w", value, err)
+		}
+		addresses[address.String()] = struct{}{}
+	}
+	return addresses, nil
 }
 
 // IsRegistered reports whether this host owns one VM address.

@@ -22,10 +22,8 @@ type opts struct {
 	mesh            meshOpts
 }
 
-// meshOpts configures the Atlas WG Mesh integration. An empty uplink name uses
-// the interface of the host default route.
+// meshOpts configures the Atlas WG Mesh integration.
 type meshOpts struct {
-	enabled    bool
 	binaryPath string
 	uplinkName string
 }
@@ -88,7 +86,6 @@ type wireGuardFile struct {
 }
 
 type wgMeshFile struct {
-	Enabled    bool   `toml:"enabled"`
 	BinaryPath string `toml:"binary_path"`
 	Uplink     string `toml:"uplink"`
 }
@@ -126,7 +123,6 @@ func applyFile(o *opts, path string) error {
 	overlay(&o.wireGuardName, fc.WireGuard.Interface)
 	overlay(&o.mesh.binaryPath, fc.WGMesh.BinaryPath)
 	overlay(&o.mesh.uplinkName, fc.WGMesh.Uplink)
-	o.mesh.enabled = fc.WGMesh.Enabled
 	log.Printf("loaded config from %s", path)
 	return nil
 }

@@ -1,14 +1,27 @@
 package network
 
 import (
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 )
 
+// stubMeshCommand returns an executable path, because NewMesh checks that the
+// CLI is on the host.
+func stubMeshCommand(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "atlas-wg-mesh")
+	if err := os.WriteFile(path, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
 func TestNewMeshNeedsACommandAndBothInterfaces(t *testing.T) {
 	complete := MeshConfig{
-		CommandPath:   "/usr/local/bin/atlas-wg-mesh",
+		CommandPath:   stubMeshCommand(t),
 		WireGuardName: "wg0",
 		UplinkName:    "eno1.1878",
 	}
@@ -71,7 +84,7 @@ func TestDiscoveryInterfaceReadsTheStatusLine(t *testing.T) {
 
 func TestVerifyDiscoveryInterfaceRejectsAnotherInterface(t *testing.T) {
 	mesh, err := NewMesh(MeshConfig{
-		CommandPath:   "/usr/local/bin/atlas-wg-mesh",
+		CommandPath:   stubMeshCommand(t),
 		WireGuardName: "wg0",
 		UplinkName:    "eno1.1878",
 	})
@@ -87,5 +100,30 @@ func TestVerifyDiscoveryInterfaceRejectsAnotherInterface(t *testing.T) {
 	}
 	if err := mesh.verifyDiscoveryInterface("local VMs: 0\n"); err == nil {
 		t.Error("accepted a status with no discovery interface")
+	}
+}
+
+func TestParseMeshAddressesNormalisesTheSet(t *testing.T) {
+	addresses, err := parseMeshAddresses([]string{"fdaa:1:0:0::1", "fdaa:0001:0000:0000:0000:0000:0000:0002"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, wanted := range []string{"fdaa:1::1", "fdaa:1::2"} {
+		if _, found := addresses[wanted]; !found {
+			t.Errorf("missing %s in %v", wanted, addresses)
+		}
+	}
+	if _, err := parseMeshAddresses([]string{"not-an-address"}); err == nil {
+		t.Error("accepted an invalid address")
+	}
+}
+
+func TestNewMeshNeedsTheCommandOnTheHost(t *testing.T) {
+	if _, err := NewMesh(MeshConfig{
+		CommandPath:   "/nonexistent/atlas-wg-mesh",
+		WireGuardName: "wg0",
+		UplinkName:    "eno1.1878",
+	}); err == nil {
+		t.Error("accepted a command path that is not on the host")
 	}
 }

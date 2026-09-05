@@ -23,6 +23,11 @@ type Config struct {
 	AuthTokenHash string
 }
 
+// PrivilegedMesh replaces the Atlas WG Mesh privileged VM whitelist.
+type PrivilegedMesh interface {
+	ApplyPrivilegedAddresses(ctx context.Context, addresses []string) error
+}
+
 // WireGuardManager manages WireGuard peers.
 type WireGuardManager interface {
 	Apply(ctx context.Context, peers []network.WireGuardPeer) error
@@ -68,6 +73,7 @@ type Dependencies struct {
 	ImagePolicyStore     ImagePolicyStore
 	WakeReconciler       func()
 	WireGuardManager     WireGuardManager
+	Mesh                 PrivilegedMesh
 	Storage              CapacityProvider
 	ConsoleBroker        ConsoleBroker
 	SSHConnector         SSHConnector
@@ -81,6 +87,7 @@ type Server struct {
 	imagePolicyStore     ImagePolicyStore
 	wakeReconciler       func()
 	wireGuardManager     WireGuardManager
+	mesh                 PrivilegedMesh
 	storage              CapacityProvider
 	consoleBroker        ConsoleBroker
 	sshConnector         SSHConnector
@@ -100,6 +107,7 @@ func New(configuration Config, dependencies Dependencies) (*echo.Echo, error) {
 		imagePolicyStore:     dependencies.ImagePolicyStore,
 		wakeReconciler:       dependencies.WakeReconciler,
 		wireGuardManager:     dependencies.WireGuardManager,
+		mesh:                 dependencies.Mesh,
 		storage:              dependencies.Storage,
 		consoleBroker:        dependencies.ConsoleBroker,
 		sshConnector:         dependencies.SSHConnector,
@@ -122,7 +130,7 @@ func validateServerConfiguration(configuration Config, dependencies Dependencies
 	if _, err := hex.DecodeString(configuration.AuthTokenHash); err != nil || configuration.AuthTokenHash != strings.ToLower(configuration.AuthTokenHash) {
 		return fmt.Errorf("API authentication token SHA-256 hash is invalid")
 	}
-	if dependencies.VirtualMachineDriver == nil || dependencies.SnapshotCreator == nil || dependencies.SnapshotStore == nil || dependencies.ImagePolicyStore == nil || dependencies.WakeReconciler == nil || dependencies.WireGuardManager == nil || dependencies.Storage == nil || dependencies.ConsoleBroker == nil || dependencies.SSHConnector == nil {
+	if dependencies.VirtualMachineDriver == nil || dependencies.SnapshotCreator == nil || dependencies.SnapshotStore == nil || dependencies.ImagePolicyStore == nil || dependencies.WakeReconciler == nil || dependencies.WireGuardManager == nil || dependencies.Mesh == nil || dependencies.Storage == nil || dependencies.ConsoleBroker == nil || dependencies.SSHConnector == nil {
 		return fmt.Errorf("API dependencies are required")
 	}
 	return nil

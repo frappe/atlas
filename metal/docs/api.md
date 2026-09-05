@@ -168,6 +168,8 @@ Metal updates snapshot activity during upload. The image reconciler deletes stag
 
 `POST /sync` applies controller state and returns host state. `wireguard_peers` and `images` are required. Send an empty list to remove all managed remote peers or cached-image policies.
 
+`privileged_vm_addresses` is the complete Atlas WG Mesh whitelist. Only these tenant-0 addresses cross tenants. Metal replaces the whole set, so an empty list clears it. The field is required, because a missing one would read as an empty set.
+
 ```json
 {
   "wireguard_peers": [

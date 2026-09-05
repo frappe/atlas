@@ -15,6 +15,8 @@ if TYPE_CHECKING:
 	from atlas.server.doctype.server_ip_address.server_ip_address import ServerIPAddress
 
 DRAFT_EXPIRY_MINUTES = 2
+# Atlas WG Mesh reserves tenant 0 for the privileged tenant.
+PRIVILEGED_TENANT_ID = 0
 
 
 class VirtualMachine(Document):
@@ -28,6 +30,7 @@ class VirtualMachine(Document):
 
 		disk_mib: DF.Int
 		is_draft: DF.Check
+		is_privileged: DF.Check
 		is_terminating: DF.Check
 		memory_mib: DF.Int
 		metadata: DF.Code | None
@@ -53,6 +56,15 @@ class VirtualMachine(Document):
 	def before_insert(self) -> None:
 		if not getattr(self.flags, "created_by_virtual_machine_api", False):
 			frappe.throw(_("Create Virtual Machines from the Virtual Machine list."))
+
+	def validate(self) -> None:
+		"""A privileged VM must use tenant 0. Tenant 0 alone is not privileged.
+
+		This runs on every save, because the flag is removable. Removing it drops
+		the address from the next whitelist and ends cross-tenant traffic.
+		"""
+		if self.is_privileged and self.tenant_id != PRIVILEGED_TENANT_ID:
+			frappe.throw(_("A privileged Virtual Machine must use tenant {0}.").format(PRIVILEGED_TENANT_ID))
 
 	def on_trash(self) -> None:
 		"""Delete only after Metal confirms that the VM is absent."""

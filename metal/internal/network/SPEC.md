@@ -25,7 +25,7 @@ Package `network` creates isolated VM networks and manages host WireGuard peers.
 | `Egress` | Internet reachability mode: `uplink`, `mesh`, or `none`. |
 | `Interface` | Namespace path, TAP name, MAC address, guest address, and gateway. |
 
-`NewLinuxAllocator(mesh)` returns the concrete allocator. It keeps no mutable state. A `nil` mesh leaves VMs off Atlas WG Mesh.
+`NewLinuxAllocator(mesh)` returns the concrete allocator. It keeps no mutable state. The mesh is required.
 
 ## Naming and addressing
 
@@ -99,6 +99,8 @@ guest fdaa::x -- tap0 (fe80::1) -- [namespace] -- vg -- vh (fe80::1) -- vm_hook 
 ```
 
 `Mesh` runs the `atlas-wg-mesh` CLI. `EnsureHost` configures the host when `status` reports no configuration. `Add` and `Remove` register one address on `vh-<user-id>`. `IsRegistered` reads `vm list --json`, so `Remove` is safe for an address this host does not own.
+
+`ApplyPrivilegedAddresses` replaces the privileged VM whitelist with the complete desired set. Only those tenant-0 addresses cross tenants.
 
 The registration follows the veth pair. `uplink` and `mesh` have it. `none` removes it. `Release` removes the registration before the namespace, because deleting the namespace also deletes the veth pair.
 

@@ -113,10 +113,6 @@ func makeDirs(o opts) error {
 // connectMesh prepares the Atlas WG Mesh integration. It configures the host on
 // every start, so a reinstalled or reset host recovers without an operator.
 func connectMesh(o opts) (*network.Mesh, error) {
-	if !o.mesh.enabled {
-		return nil, nil
-	}
-
 	mesh, err := network.NewMesh(network.MeshConfig{
 		CommandPath:   o.mesh.binaryPath,
 		UplinkName:    o.mesh.uplinkName,
@@ -137,6 +133,11 @@ func serve(o opts) error {
 	if o.authTokenHash == "" {
 		return fmt.Errorf("metald.auth_token_hash is required")
 	}
+	// Atlas WG Mesh is required, so fail before metald builds anything.
+	mesh, err := connectMesh(o)
+	if err != nil {
+		return err
+	}
 	if err := makeDirs(o); err != nil {
 		return err
 	}
@@ -154,10 +155,6 @@ func serve(o opts) error {
 	if err != nil {
 		return fmt.Errorf("configure WireGuard manager: %w", err)
 	}
-	mesh, err := connectMesh(o)
-	if err != nil {
-		return err
-	}
 	consoleBroker := console.NewBroker(filepath.Join(o.cfg.SocketsDir, "consoles"))
 	defer consoleBroker.Shutdown()
 
@@ -170,13 +167,10 @@ func serve(o opts) error {
 		network.NewLinuxAllocator(mesh),
 		consoleBroker,
 	)
-	if mesh != nil {
-		// A VM keeps running without its mesh registration, so report the
-		// failure and serve. Refusing to start would take the API and the
-		// reconcilers down with it.
-		if err := virtualMachineDriver.RestoreNetworks(context.Background()); err != nil {
-			log.Printf("metald: restore VM networks: %v", err)
-		}
+	// A VM keeps running without its mesh registration, so report the failure
+	// and serve. Refusing to start would take the API and the reconcilers down.
+	if err := virtualMachineDriver.RestoreNetworks(context.Background()); err != nil {
+		log.Printf("metald: restore VM networks: %v", err)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -207,6 +201,7 @@ func serve(o opts) error {
 		ImagePolicyStore:     stores.Images,
 		WakeReconciler:       wakeReconcilers,
 		WireGuardManager:     wireGuardManager,
+		Mesh:                 mesh,
 		Storage:              stores.Pool,
 		ConsoleBroker:        consoleBroker,
 		SSHConnector:         virtualMachineDriver,

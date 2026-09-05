@@ -240,6 +240,15 @@ func (manager *fakeWireGuardManager) Apply(_ context.Context, peers []network.Wi
 	return nil
 }
 
+type fakeMesh struct {
+	privileged []string
+}
+
+func (mesh *fakeMesh) ApplyPrivilegedAddresses(_ context.Context, addresses []string) error {
+	mesh.privileged = append([]string(nil), addresses...)
+	return nil
+}
+
 type fakeCapacityProvider struct{}
 
 func (fakeCapacityProvider) Capacity(context.Context) (storage.Capacity, error) {
@@ -276,6 +285,7 @@ func newServerWithServices(
 		ImagePolicyStore:     services,
 		WakeReconciler:       func() {},
 		WireGuardManager:     wireGuardManager,
+		Mesh:                 &fakeMesh{},
 		Storage:              fakeCapacityProvider{},
 		ConsoleBroker:        stubConsoleBroker{},
 		SSHConnector:         stubSSHConnector{},

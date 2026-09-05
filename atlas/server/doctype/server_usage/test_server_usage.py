@@ -7,6 +7,7 @@ from atlas.server.usage import (
 	delete_old_usage_samples,
 	enqueue_server_syncs,
 	get_desired_images,
+	get_privileged_vm_addresses,
 	get_usage_values,
 	sync_server,
 )
@@ -15,9 +16,11 @@ from atlas.server.usage import (
 class TestServerUsage(UnitTestCase):
 	def test_enqueue_uses_one_exchange_per_server(self) -> None:
 		peers = [{"node": "server-1"}]
+		addresses = ["fdaa:1::1"]
 		with (
 			patch("atlas.server.usage.frappe.get_all", return_value=["server-1"]),
 			patch("atlas.server.usage.get_wireguard_peers", return_value=peers),
+			patch("atlas.server.usage.get_privileged_vm_addresses", return_value=addresses),
 			patch("atlas.server.usage.frappe.enqueue") as enqueue,
 		):
 			enqueue_server_syncs()
@@ -28,8 +31,27 @@ class TestServerUsage(UnitTestCase):
 			timeout=30,
 			server_name="server-1",
 			wireguard_peers=peers,
+			privileged_vm_addresses=addresses,
 			job_id="atlas||server-sync||server-1",
 			deduplicate=True,
+		)
+
+	def test_privileged_addresses_select_live_privileged_vms(self) -> None:
+		"""Every host holds the same whitelist, so one region-wide set goes out."""
+		with (
+			patch("atlas.server.usage.frappe.get_all", return_value=["vm-00001"]) as get_all,
+			patch("atlas.server.usage.frappe.get_doc", return_value=Mock()),
+			patch(
+				"atlas.server.usage.VirtualMachineManager.get_wireguard_mesh_ipv6",
+				return_value="fdaa:1:0:0::1",
+			),
+		):
+			addresses = get_privileged_vm_addresses()
+
+		self.assertEqual(addresses, ["fdaa:1:0:0::1"])
+		self.assertEqual(
+			get_all.call_args.kwargs["filters"],
+			{"is_privileged": 1, "is_draft": 0, "is_terminating": 0},
 		)
 
 	def test_desired_images_only_select_available_cached_images(self) -> None:

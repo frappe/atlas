@@ -14,7 +14,6 @@ firecracker_version=${FIRECRACKER_VERSION:-v1.16.1}
 listen_address=${LISTEN_ADDRESS:?LISTEN_ADDRESS is required}
 wireguard_interface=${WIREGUARD_INTERFACE:-wg0}
 mesh_binary_path=${MESH_BINARY_PATH:-/usr/local/bin/atlas-wg-mesh}
-mesh_enabled=${MESH_ENABLED:-true}
 
 base_dir=/var/lib/metal
 machines_dir=$base_dir/machines
@@ -124,7 +123,6 @@ mesh_sections() {
 interface = "$wireguard_interface"
 
 [wg_mesh]
-enabled = $mesh_enabled
 binary_path = "$mesh_binary_path"
 uplink = "$MESH_UPLINK_INTERFACE"
 EOF

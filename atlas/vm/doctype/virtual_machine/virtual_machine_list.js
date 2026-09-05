@@ -75,6 +75,13 @@ function showCreateVirtualMachineDialog() {
 				reqd: 1,
 			},
 			{
+				fieldname: "is_privileged",
+				fieldtype: "Check",
+				label: __("Privileged"),
+				default: 0,
+				description: __("Reaches every tenant. Needs tenant 0."),
+			},
+			{
 				fieldname: "server_ip_address",
 				fieldtype: "Link",
 				label: __("Public IPv4"),

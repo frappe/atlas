@@ -54,6 +54,21 @@ func skipUnlessHost(t *testing.T) (image, pub string) {
 	return image, strings.TrimSpace(string(b))
 }
 
+// integrationMesh builds the mesh that the host integration test needs. The
+// test already requires a configured host, so a missing CLI skips it.
+func integrationMesh(t *testing.T) *network.Mesh {
+	t.Helper()
+	mesh, err := network.NewMesh(network.MeshConfig{
+		CommandPath:   "atlas-wg-mesh",
+		UplinkName:    "eth0",
+		WireGuardName: "wg0",
+	})
+	if err != nil {
+		t.Skipf("Atlas WG Mesh is not installed: %v", err)
+	}
+	return mesh
+}
+
 func newDriver(t *testing.T) *Driver {
 	t.Helper()
 	units, err := systemd.Connect(context.Background())
@@ -70,7 +85,7 @@ func newDriver(t *testing.T) *Driver {
 		stores.VirtualMachines,
 		stores.Images,
 		stores.Snapshots,
-		network.NewLinuxAllocator(nil),
+		network.NewLinuxAllocator(integrationMesh(t)),
 		consoleBroker,
 	)
 }

@@ -32,7 +32,7 @@ func TestTransitAddresses(t *testing.T) {
 }
 
 func TestGuestMACAddressIsTheSameForEveryVirtualMachine(t *testing.T) {
-	allocator := NewLinuxAllocator(nil)
+	allocator := &LinuxAllocator{}
 	address := allocator.Resolve("vm-1").MACAddress
 	if address != allocator.Resolve("vm-2").MACAddress {
 		t.Error("MAC address differs between virtual machines")
@@ -134,18 +134,6 @@ func TestMeshRegistrationSkipsAVirtualMachineWithoutAnAddress(t *testing.T) {
 	}
 	if len(mesh.removed) != 0 || len(mesh.added) != 0 {
 		t.Errorf("mesh calls = %v and %v, want none", mesh.added, mesh.removed)
-	}
-}
-
-// A typed nil inside an interface is not a nil interface.
-func TestNewLinuxAllocatorWithoutAMeshMakesNoMeshCalls(t *testing.T) {
-	allocator := NewLinuxAllocator(nil)
-
-	if allocator.mesh != nil {
-		t.Fatal("a nil mesh produced a non-nil registrar")
-	}
-	if err := allocator.removeMeshRegistration(context.Background(), 100000, "fdaa:1:0:1::1"); err != nil {
-		t.Errorf("removeMeshRegistration = %v", err)
 	}
 }
 

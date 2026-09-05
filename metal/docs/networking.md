@@ -85,13 +85,17 @@ namespace metal-<id>          route fdaa::x/128 dev tap0
 
 Atlas WG Mesh assumes the VM is directly behind the interface that it hooks. Metal puts a network namespace between them, so the namespace forwards IPv6 and answers neighbour solicitations for the guest with proxy NDP. The host route from `vm add` is on-link on `vh-<user-id>`.
 
-`metald` runs the `atlas-wg-mesh` CLI. On every start it runs `status` and configures the host when the CLI reports no configuration. It then replays the existing VM network configurations, so a reinstalled or reset host restores the VM registrations without an operator. Enable it with `wg_mesh.enabled`.
+`metald` runs the `atlas-wg-mesh` CLI. On every start it runs `status` and configures the host when the CLI reports no configuration. It then replays the existing VM network configurations, so a reinstalled or reset host restores the VM registrations without an operator.
+
+Atlas WG Mesh is required. `NewMesh` checks for the CLI before metald starts anything, and metald refuses to run without it, because a VM with no mesh registration has no private network.
 
 A VM learns its address from MMDS. `atlas-metadata.service` in the guest reads `meta-data/mesh-ipv6`, writes a systemd-networkd drop-in, and reloads networkd. A timer repeats the unit, because a warm snapshot resumes with new MMDS content and systemd does not start a unit again after a resume. A warm VM receives its own address within the timer period.
 
 The MTU is 1380 on `vh-<user-id>` and `vg-<user-id>`. A mesh packet gains a 40-byte outer IPv6 header and must fit the 1420-byte WireGuard MTU. The guest keeps its 1500-byte TAP, and the namespace returns ICMPv6 Packet Too Big for a larger packet.
 
 `egress: none` removes the veth pair, so it also removes the mesh registration.
+
+Tenant 0 is the privileged tenant. A tenant-0 VM crosses tenants only when its address is in the Atlas WG Mesh whitelist. `POST /sync` carries the complete whitelist in `privileged_vm_addresses`, and Metal applies the difference on the host.
 
 ## WireGuard peers
 

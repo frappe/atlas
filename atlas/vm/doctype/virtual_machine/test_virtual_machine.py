@@ -367,7 +367,7 @@ class TestMetalClient(UnitTestCase):
 		response = SimpleNamespace(status_code=200, content=b"{}", json=lambda: {"capacity": {}})
 
 		with patch("atlas.vm.core.metal_client.requests.request", return_value=response) as request:
-			result = client.sync([{"node": "node-1"}], [{"ref": "sha256:image"}])
+			result = client.sync([{"node": "node-1"}], [{"ref": "sha256:image"}], ["fdaa:1::1"])
 
 		self.assertEqual(result, {"capacity": {}})
 		self.assertEqual(request.call_args.args[:2], ("POST", "http://10.0.0.2:9000/sync"))
