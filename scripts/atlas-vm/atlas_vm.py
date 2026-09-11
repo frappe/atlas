@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Manage the Atlas Pilot VM on one bare metal host. One VM per host."""
+"""Manage the Atlas VM on one bare metal host. One VM per host."""
 
 from __future__ import annotations
 
@@ -7,21 +7,20 @@ import argparse
 import hashlib
 import json
 import os
-import shlex
 import shutil
 import subprocess
 import sys
 import time
 import tomllib
 from collections import deque
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 SERVICE_NAME = "atlas-pilot-vm.service"
 UNIT_FILE = Path("/etc/systemd/system") / SERVICE_NAME
-INSTALLED_PATH = Path("/usr/local/bin/atlas-deployer")
+INSTALLED_PATH = Path("/usr/local/bin/atlas-vm")
 BASE_DIRECTORY = Path(os.environ.get("BASE_DIRECTORY", "/var/lib/atlas-vm"))
-STATE_FILE = BASE_DIRECTORY / "deployer.toml"
+CONFIG_FILE = BASE_DIRECTORY / "atlas-vm.toml"
 
 # Ubuntu 24.04 server cloud image, the same release the guest image builder uses.
 ROOTFS_URL = (
@@ -49,7 +48,7 @@ SSH_OPTIONS = (
 )
 
 
-class DeployerError(Exception):
+class AtlasVmError(Exception):
 	"""An error the operator must act on."""
 
 
@@ -82,98 +81,64 @@ def run(command: list[str], **keywords) -> subprocess.CompletedProcess:
 
 @dataclass
 class Settings:
-	"""What the deployer knows about the VM. `create` reads the configuration file and saves this state."""
+	"""The configuration this host runs. `create` copies the file, and every later command reads the copy."""
 
+	path: Path
 	vcpu_count: int = 4
 	memory_mib: int = 8192
 	disk_gib: int = 24
 	ssh_port: int = 2222
 	setup_script_url: str = ""
-	guest_environment: dict[str, str] = field(default_factory=dict)
 
 	@classmethod
-	def from_config_file(cls, path: Path) -> Settings:
+	def read(cls, path: Path) -> Settings:
+		if not path.is_file():
+			raise AtlasVmError(f"no configuration at {path}; run: atlas-vm create --config FILE")
 		document = tomllib.loads(path.read_text())
 		vm = document.get("vm", {})
 		pilot = document.get("pilot", {})
 		atlas = document.get("atlas", {})
-		images = document.get("image", [])
+		if not pilot.get("site") or not pilot.get("password"):
+			raise AtlasVmError(f"{path} needs pilot.site and pilot.password")
+		validate_images(document.get("image", []), path)
 
-		site = pilot.get("site", "")
-		password = pilot.get("password", "")
-		if not site or not password:
-			raise DeployerError(f"{path} needs pilot.site and pilot.password")
-
-		repository = atlas.get("repository", "https://github.com/frappe/atlas")
+		repository = atlas.get("repository", "https://github.com/frappe/atlas").removesuffix(".git")
+		raw = repository.replace("github.com", "raw.githubusercontent.com")
 		branch = atlas.get("branch", "develop")
-		raw = repository.removesuffix(".git").replace("github.com", "raw.githubusercontent.com")
 		return cls(
+			path=path,
 			vcpu_count=int(vm.get("vcpu_count", 4)),
 			memory_mib=int(vm.get("memory_mib", 8192)),
 			disk_gib=int(vm.get("disk_gib", 24)),
 			ssh_port=int(vm.get("ssh_port", 2222)),
-			setup_script_url=vm.get("setup_script_url", f"{raw}/{branch}/scripts/atlas-vm/setup.sh"),
-			guest_environment={
-				"BENCH_NAME": BENCH_NAME,
-				"SITE_NAME": site,
-				"ADMIN_DOMAIN": pilot.get("admin_domain", f"admin.{site}"),
-				"PASSWORD": password,
-				"BENCH_USER": pilot.get("user", "frappe"),
-				"PILOT_BRANCH": pilot.get("branch", "develop"),
-				"LETSENCRYPT_EMAIL": pilot.get("letsencrypt_email", ""),
-				"ATLAS_REPOSITORY": repository,
-				"ATLAS_BRANCH": branch,
-				"IMAGES": read_image_variants(images, path),
-			},
+			setup_script_url=vm.get("setup_script_url", f"{raw}/{branch}/scripts/atlas-vm/setup.py"),
 		)
 
-	def guest_environment_text(self) -> str:
-		"""setup.sh sources the file, so every value is quoted shell."""
-		lines = [f"{key}={shlex.quote(value)}" for key, value in self.guest_environment.items()]
-		return "\n".join(lines) + "\n"
-
-	@classmethod
-	def load(cls, path: Path = STATE_FILE) -> Settings:
-		if not path.is_file():
-			raise DeployerError(
-			f"no deployer state at {path}; run: atlas-deployer create --config FILE"
-		)
-		return cls(**tomllib.loads(path.read_text()))
-
-	def save(self, path: Path = STATE_FILE) -> None:
-		"""The state holds the guest password, so keep it readable by root only."""
-		values = asdict(self)
-		guest_environment = values.pop("guest_environment")
-		lines = [f"{key} = {as_toml(value)}" for key, value in values.items()]
-		lines += ["", "[guest_environment]"]
-		lines += [f"{key} = {as_toml(value)}" for key, value in guest_environment.items()]
-		write_file(path, "\n".join(lines) + "\n", mode=0o600)
+	def update_sizes(self, changes: dict[str, int]) -> None:
+		"""Rewrite the [vm] values in place, so the rest of the file keeps its comments."""
+		lines = self.path.read_text().splitlines()
+		for key, value in changes.items():
+			for index, line in enumerate(lines):
+				if line.split("=", 1)[0].strip() == key:
+					lines[index] = f"{key} = {value}"
+					break
+			else:
+				lines.insert(lines.index("[vm]") + 1, f"{key} = {value}")
+			setattr(self, key, value)
+		self.path.write_text("\n".join(lines) + "\n")
 
 
-def as_toml(value: str | int | bool) -> str:
-	"""JSON string escapes are valid TOML basic strings."""
-	if isinstance(value, bool):
-		return "true" if value else "false"
-	if isinstance(value, int):
-		return str(value)
-	return json.dumps(value)
-
-
-def read_image_variants(images: list[dict], path: Path) -> str:
-	"""Render the [[image]] tables as `version:architecture:variant` words for setup.sh."""
-	variants = []
-	for image in images or [{"version": "24.04"}]:
+def validate_images(images: list[dict], path: Path) -> None:
+	"""Refuse an image the builder cannot make, before the VM boots."""
+	for image in images:
 		version = str(image.get("version", "24.04"))
 		architecture = image.get("architecture", "amd64")
-		minimal = bool(image.get("minimal", False))
 		if version not in ("22.04", "24.04"):
-			raise DeployerError(f"{path} asks for Ubuntu {version}; only 22.04 and 24.04 are supported")
+			raise AtlasVmError(f"{path} asks for Ubuntu {version}; only 22.04 and 24.04 are supported")
 		if architecture != "amd64":
-			raise DeployerError(f"{path} asks for {architecture}; only amd64 is supported")
-		if minimal and version != "24.04":
-			raise DeployerError(f"{path} asks for a minimal Ubuntu {version}; only 24.04 has one")
-		variants.append(f"{version}:{architecture}:{'minimal' if minimal else 'server'}")
-	return " ".join(variants)
+			raise AtlasVmError(f"{path} asks for {architecture}; only amd64 is supported")
+		if image.get("minimal") and version != "24.04":
+			raise AtlasVmError(f"{path} asks for a minimal Ubuntu {version}; only 24.04 has one")
 
 
 def find_host_key() -> Path:
@@ -186,7 +151,7 @@ def find_host_key() -> Path:
 			candidate = home / ".ssh" / name
 			if candidate.is_file() and candidate.with_suffix(".pub").is_file():
 				return candidate
-	raise DeployerError("no Secure Shell key pair for this host; create one with: ssh-keygen -t ed25519")
+	raise AtlasVmError("no Secure Shell key pair for this host; create one with: ssh-keygen -t ed25519")
 
 
 class GuestImage:
@@ -299,10 +264,6 @@ class Paths:
 	def setup_log(self) -> Path:
 		return self.vm_directory / "setup.log"
 
-	@property
-	def saved_configuration(self) -> Path:
-		return self.vm_directory / "atlas-deployer.toml"
-
 
 def write_file(path: Path, content: str, mode: int = 0o644) -> None:
 	path.parent.mkdir(parents=True, exist_ok=True)
@@ -320,7 +281,7 @@ def download(url: str, path: Path, checksum: str = "") -> None:
 		digest = hashlib.sha256(staged.read_bytes()).hexdigest()
 		if digest != checksum:
 			staged.unlink()
-			raise DeployerError(f"{path.name} does not match its checksum")
+			raise AtlasVmError(f"{path.name} does not match its checksum")
 	staged.rename(path)
 
 
@@ -474,7 +435,7 @@ class VirtualMachine:
 	def write_network_script(self) -> None:
 		forwards = " ".join(f"{host}:{guest}" for host, guest in self.port_forwards)
 		header = f"""#!/usr/bin/env bash
-# Host network for the {VM_NAME} VM. Generated by atlas-deployer.
+# Host network for the {VM_NAME} VM. Generated by atlas-vm.
 set -euo pipefail
 
 tap_device={self.tap_device}
@@ -573,7 +534,7 @@ WantedBy=multi-user.target
 			console.drain()
 			if not self.is_running:
 				console.report()
-				raise DeployerError(f"the VM stopped; read {self.paths.console_log}")
+				raise AtlasVmError(f"the VM stopped; read {self.paths.console_log}")
 			probe = subprocess.run(
 				self.ssh_arguments(["true"]), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
 			)
@@ -586,28 +547,28 @@ WantedBy=multi-user.target
 				detail(f"still waiting after {int(elapsed)}s")
 			time.sleep(2)
 		console.report()
-		raise DeployerError(
+		raise AtlasVmError(
 			f"no Secure Shell answer on port {self.settings.ssh_port} after {seconds}s;"
 			f" read {self.paths.console_log}"
 		)
 
 	def run_setup(self, script: Path | None = None) -> None:
-		"""Run setup.sh from the repository, or a local copy while it is unpushed."""
-		step("run setup.sh in the VM")
+		"""Run setup.py from the repository, or a local copy while it is unpushed."""
+		step("run setup.py in the VM")
 		if script:
 			if not script.is_file():
-				raise DeployerError(f"no setup script at {script}")
+				raise AtlasVmError(f"no setup script at {script}")
 			detail(f"from {script}")
-			self.copy_to_guest(script, "/root/setup.sh")
-			command = "bash /root/setup.sh"
+			self.copy_to_guest(script, "/root/setup.py")
 		else:
 			url = self.settings.setup_script_url
 			detail(url)
-			command = f"curl -fsS --show-error -L -o /root/setup.sh '{url}' && bash /root/setup.sh"
+			self.run_in_guest(f"curl -fsS --show-error -L -o /root/setup.py '{url}'")
+		command = "python3 /root/setup.py"
 		detail(f"log: {self.paths.setup_log}")
 
 		# The file holds the site password, so the guest keeps it for this run only.
-		self.write_in_guest("/root/atlas-vm.env", self.settings.guest_environment_text())
+		self.write_in_guest("/root/atlas-vm.toml", self.settings.path.read_text())
 		try:
 			with subprocess.Popen(
 				self.ssh_arguments([command]), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
@@ -616,9 +577,9 @@ WantedBy=multi-user.target
 					print(line, end="", flush=True)
 					log.write(line)
 		finally:
-			self.run_in_guest("rm -f /root/atlas-vm.env /root/setup.sh")
+			self.run_in_guest("rm -f /root/atlas-vm.toml /root/setup.py")
 		if process.returncode != 0:
-			raise DeployerError(f"setup.sh failed; read {self.paths.setup_log}")
+			raise AtlasVmError(f"setup.py failed; read {self.paths.setup_log}")
 
 
 DESTROY_WARNING = """DANGER: this deletes the VM in {directory}. The bench, every site, every
@@ -632,22 +593,22 @@ next create downloads them again. Use --keep-downloads to keep them."""
 def confirm(prompt: str, expected: str) -> None:
 	answer = input(f"{prompt} ").strip()
 	if answer != expected:
-		raise DeployerError("stopped; nothing changed")
+		raise AtlasVmError("stopped; nothing changed")
 
 
 def require_root() -> None:
 	if os.geteuid() != 0:
-		raise DeployerError("run this as root")
+		raise AtlasVmError("run this as root")
 
 
 def require_host_support() -> None:
 	missing = [name for name in REQUIRED_COMMANDS if shutil.which(name) is None]
 	if missing:
-		raise DeployerError(f"missing commands: {', '.join(missing)}")
+		raise AtlasVmError(f"missing commands: {', '.join(missing)}")
 	if not Path("/dev/kvm").exists():
-		raise DeployerError("no /dev/kvm on this host")
+		raise AtlasVmError("no /dev/kvm on this host")
 	if os.uname().machine != "x86_64":
-		raise DeployerError("this CLI supports x86_64 only")
+		raise AtlasVmError("this CLI supports x86_64 only")
 
 
 def install_self() -> None:
@@ -661,9 +622,9 @@ def install_self() -> None:
 
 def report_running_vm(machine: VirtualMachine) -> None:
 	print(f"{SERVICE_NAME} already runs the VM in {machine.paths.vm_directory}.", file=sys.stderr)
-	print("\nConnect to it:\n  atlas-deployer ssh\n", file=sys.stderr)
+	print("\nConnect to it:\n  atlas-vm ssh\n", file=sys.stderr)
 	print(DESTROY_WARNING.format(directory=machine.paths.vm_directory), file=sys.stderr)
-	print("\n  atlas-deployer destroy", file=sys.stderr)
+	print("\n  atlas-vm destroy", file=sys.stderr)
 
 
 def command_create(machine: VirtualMachine, arguments: argparse.Namespace) -> None:
@@ -691,10 +652,10 @@ def command_create(machine: VirtualMachine, arguments: argparse.Namespace) -> No
 		public_key = machine.private_key.with_suffix(".pub").read_text()
 		GuestImage(machine.settings, paths, public_key).build()
 
-	if arguments.config_file.resolve() != paths.saved_configuration.resolve():
-		shutil.copy(arguments.config_file, paths.saved_configuration)
-		paths.saved_configuration.chmod(0o600)
-	machine.settings.save()
+	if arguments.config_file.resolve() != CONFIG_FILE.resolve():
+		shutil.copy(arguments.config_file, CONFIG_FILE)
+		CONFIG_FILE.chmod(0o600)
+		machine.settings.path = CONFIG_FILE
 	machine.write_network_script()
 	machine.write_configuration()
 	machine.write_unit()
@@ -708,16 +669,16 @@ def command_create(machine: VirtualMachine, arguments: argparse.Namespace) -> No
 
 def command_start(machine: VirtualMachine, arguments: argparse.Namespace) -> None:
 	if machine.is_running:
-		raise DeployerError(f"{SERVICE_NAME} is already running")
+		raise AtlasVmError(f"{SERVICE_NAME} is already running")
 	if not machine.is_created:
-		raise DeployerError(f"no VM in {machine.paths.vm_directory}; run: atlas-deployer create")
+		raise AtlasVmError(f"no VM in {machine.paths.vm_directory}; run: atlas-vm create")
 	machine.start(arguments.verbose)
 	command_status(machine, arguments)
 
 
 def command_stop(machine: VirtualMachine, arguments: argparse.Namespace) -> None:
 	if not machine.is_running:
-		raise DeployerError(f"{SERVICE_NAME} is not running")
+		raise AtlasVmError(f"{SERVICE_NAME} is not running")
 	machine.stop()
 	detail(f"the guest disk in {machine.paths.rootfs_image} is kept")
 
@@ -745,22 +706,22 @@ def command_status(machine: VirtualMachine, arguments: argparse.Namespace) -> No
 		# The image is sparse: the host gives it blocks as the guest writes them.
 		allocated_gib = paths.rootfs_image.stat().st_blocks * 512 / 1024**3
 		print(f"disk:     {settings.disk_gib} GiB in the guest, {allocated_gib:.1f} GiB allocated on the host")
-	print(f"state:    {STATE_FILE}")
+	print(f"config:   {CONFIG_FILE}")
 	print(f"logs:     {paths.console_log}, {paths.setup_log}")
-	print("ssh:      atlas-deployer ssh")
+	print("ssh:      atlas-vm ssh")
 	print(f"          ssh -i {machine.private_key} -p {settings.ssh_port} root@{HOST_ADDRESS}")
 
 
 def command_ssh(machine: VirtualMachine, arguments: argparse.Namespace) -> None:
 	if not machine.is_running:
-		raise DeployerError(f"{SERVICE_NAME} is not running; start it with: atlas-deployer start")
+		raise AtlasVmError(f"{SERVICE_NAME} is not running; start it with: atlas-vm start")
 	os.execvp("ssh", machine.ssh_arguments(arguments.command))
 
 
 def command_logs(machine: VirtualMachine, arguments: argparse.Namespace) -> None:
 	path = machine.paths.setup_log if arguments.setup else machine.paths.console_log
 	if not path.exists():
-		raise DeployerError(f"no log at {path}")
+		raise AtlasVmError(f"no log at {path}")
 	if arguments.follow:
 		os.execvp("tail", ["tail", "-n", "50", "-F", str(path)])
 	sys.stdout.write(path.read_text())
@@ -768,14 +729,14 @@ def command_logs(machine: VirtualMachine, arguments: argparse.Namespace) -> None
 
 def command_setup(machine: VirtualMachine, arguments: argparse.Namespace) -> None:
 	if not machine.is_running:
-		raise DeployerError(f"{SERVICE_NAME} is not running; start it with: atlas-deployer start")
+		raise AtlasVmError(f"{SERVICE_NAME} is not running; start it with: atlas-vm start")
 	machine.run_setup(arguments.script)
 
 
 def command_destroy(machine: VirtualMachine, arguments: argparse.Namespace) -> None:
 	paths = machine.paths
 	if not paths.vm_directory.exists():
-		raise DeployerError(f"no VM in {paths.vm_directory}")
+		raise AtlasVmError(f"no VM in {paths.vm_directory}")
 	print(DESTROY_WARNING.format(directory=paths.vm_directory), file=sys.stderr)
 	if not arguments.force:
 		confirm(f"\nType the VM name ({VM_NAME}) to delete it:", VM_NAME)
@@ -787,8 +748,8 @@ def command_destroy(machine: VirtualMachine, arguments: argparse.Namespace) -> N
 	UNIT_FILE.unlink(missing_ok=True)
 	run(["systemctl", "daemon-reload"])
 	shutil.rmtree(paths.vm_directory)
-	STATE_FILE.unlink(missing_ok=True)
-	detail(f"deleted {paths.vm_directory}, {STATE_FILE}, and {UNIT_FILE}")
+	CONFIG_FILE.unlink(missing_ok=True)
+	detail(f"deleted {paths.vm_directory}, {CONFIG_FILE}, and {UNIT_FILE}")
 
 	if arguments.keep_downloads:
 		detail(f"the cloud image, the kernel, and firecracker in {paths.base} are kept")
@@ -804,7 +765,7 @@ def command_resize(machine: VirtualMachine, arguments: argparse.Namespace) -> No
 	"""Firecracker fixes the machine size at boot, so every resize reboots the VM."""
 	settings = machine.settings
 	if not machine.is_created:
-		raise DeployerError(f"no VM in {machine.paths.vm_directory}; run: atlas-deployer create")
+		raise AtlasVmError(f"no VM in {machine.paths.vm_directory}; run: atlas-vm create")
 
 	changes: dict[str, int] = {}
 	if arguments.vcpu and arguments.vcpu != settings.vcpu_count:
@@ -813,12 +774,12 @@ def command_resize(machine: VirtualMachine, arguments: argparse.Namespace) -> No
 		changes["memory_mib"] = arguments.memory
 	if arguments.disk and arguments.disk != settings.disk_gib:
 		if arguments.disk < settings.disk_gib:
-			raise DeployerError(
+			raise AtlasVmError(
 				f"a disk can only grow; it is {settings.disk_gib}G and cannot become {arguments.disk}G"
 			)
 		changes["disk_gib"] = arguments.disk
 	if not changes:
-		raise DeployerError("give a new --vcpu, --memory, or --disk value that differs from the current one")
+		raise AtlasVmError("give a new --vcpu, --memory, or --disk value that differs from the current one")
 
 	print("This changes the VM:")
 	for key, value in changes.items():
@@ -833,9 +794,7 @@ def command_resize(machine: VirtualMachine, arguments: argparse.Namespace) -> No
 	if machine.is_running:
 		machine.stop()
 
-	for key, value in changes.items():
-		setattr(settings, key, value)
-	settings.save()
+	settings.update_sizes(changes)
 	if "disk_gib" in changes:
 		step(f"grow the guest disk to {settings.disk_gib}G")
 		run(["truncate", "-s", f"{settings.disk_gib}G", str(machine.paths.rootfs_image)])
@@ -845,23 +804,23 @@ def command_resize(machine: VirtualMachine, arguments: argparse.Namespace) -> No
 	if "disk_gib" in changes:
 		step("grow the guest file system")
 		if machine.run_in_guest("resize2fs /dev/vda") != 0:
-			raise DeployerError("resize2fs failed in the guest; the VM runs with the old file system size")
+			raise AtlasVmError("resize2fs failed in the guest; the VM runs with the old file system size")
 	command_status(machine, arguments)
 
 
 def build_parser() -> argparse.ArgumentParser:
-	parser = argparse.ArgumentParser(prog="atlas-deployer", description=__doc__)
+	parser = argparse.ArgumentParser(prog="atlas-vm", description=__doc__)
 	parser.add_argument(
 		"-v", "--verbose", action="store_true", help="print the guest console while the VM boots"
 	)
 	subparsers = parser.add_subparsers(dest="command", required=True)
 
-	create = subparsers.add_parser("create", help="build the VM, start it, and run setup.sh")
+	create = subparsers.add_parser("create", help="build the VM, start it, and run setup.py")
 	create.add_argument(
-		"--config", type=Path, help="configuration file to build the VM from (default: ./atlas-deployer.toml)"
+		"--config", type=Path, help="configuration file to build the VM from (default: ./atlas-vm.toml)"
 	)
-	create.add_argument("--skip-setup", action="store_true", help="do not run setup.sh")
-	create.add_argument("--script", type=Path, help="run this local setup.sh instead of the one in the repository")
+	create.add_argument("--skip-setup", action="store_true", help="do not run setup.py")
+	create.add_argument("--script", type=Path, help="run this local setup.py instead of the one in the repository")
 	create.add_argument("--rebuild", action="store_true", help="delete the guest disk and build it again")
 	create.set_defaults(handler=command_create)
 
@@ -876,8 +835,8 @@ def build_parser() -> argparse.ArgumentParser:
 	logs.add_argument("--setup", action="store_true", help="read the setup log")
 	logs.add_argument("--follow", "-f", action="store_true", help="follow the log")
 	logs.set_defaults(handler=command_logs)
-	setup = subparsers.add_parser("setup", help="run setup.sh again in a running VM")
-	setup.add_argument("--script", type=Path, help="run this local setup.sh instead of the one in the repository")
+	setup = subparsers.add_parser("setup", help="run setup.py again in a running VM")
+	setup.add_argument("--script", type=Path, help="run this local setup.py instead of the one in the repository")
 	setup.set_defaults(handler=command_setup)
 	resize = subparsers.add_parser("resize", help="change the vCPU count, the memory, or the disk size")
 	resize.add_argument("--vcpu", type=int, help="new vCPU count")
@@ -901,19 +860,19 @@ def resolve_config_file(given: Path | None) -> Path:
 	"""Only `create` reads the configuration file."""
 	if given:
 		if not given.is_file():
-			raise DeployerError(f"no configuration file at {given}")
+			raise AtlasVmError(f"no configuration file at {given}")
 		return given
 	candidates = []
 	if os.environ.get("ATLAS_DEPLOYER_CONFIG"):
 		candidates.append(Path(os.environ["ATLAS_DEPLOYER_CONFIG"]))
-	candidates.append(Path.cwd() / "atlas-deployer.toml")
-	candidates.append(Path(__file__).resolve().parent / "atlas-deployer.toml")
-	candidates.append(BASE_DIRECTORY / VM_NAME / "atlas-deployer.toml")
+	candidates.append(Path.cwd() / "atlas-vm.toml")
+	candidates.append(Path(__file__).resolve().parent / "atlas-vm.toml")
+	candidates.append(CONFIG_FILE)
 	for candidate in candidates:
 		if candidate.is_file():
 			return candidate
-	raise DeployerError(
-		"no configuration file; copy atlas-deployer.example.toml to atlas-deployer.toml"
+	raise AtlasVmError(
+		"no configuration file; copy atlas-vm.example.toml to atlas-vm.toml"
 		" and pass it with --config"
 	)
 
@@ -924,11 +883,9 @@ def main() -> int:
 		require_root()
 		if arguments.command == "create":
 			arguments.config_file = resolve_config_file(arguments.config)
-			settings = Settings.from_config_file(arguments.config_file)
-		else:
-			settings = Settings.load()
+		settings = Settings.read(arguments.config_file if arguments.command == "create" else CONFIG_FILE)
 		arguments.handler(VirtualMachine(settings), arguments)
-	except DeployerError as error:
+	except AtlasVmError as error:
 		print(f"{paint('error:', '1;31')} {error}", file=sys.stderr)
 		return 1
 	except subprocess.CalledProcessError as error:

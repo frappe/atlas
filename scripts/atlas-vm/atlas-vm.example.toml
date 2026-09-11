@@ -1,6 +1,5 @@
-# Copy to atlas-deployer.toml and change what you need.
-# atlas-deployer create reads this file. It writes the pilot values into
-# /root/atlas-vm.env in the guest, which setup.sh reads.
+# Copy to atlas-vm.toml and change what you need.
+# atlas-vm create reads this file, and setup.py reads a copy of it in the VM.
 
 [vm]
 vcpu_count = 4
