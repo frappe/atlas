@@ -121,7 +121,7 @@ enable_unit() {
 	local unit=$1 target_directory=$2 unit_file=$1
 	[[ $unit == *@*.* ]] && unit_file="${unit%%@*}@.${unit##*.}"
 	install -d -m 0755 "$rootfs_directory/etc/systemd/system/$target_directory"
-	ln -sf "/lib/systemd/system/$unit_file" \
+	ln -sf "/usr/lib/systemd/system/$unit_file" \
 		"$rootfs_directory/etc/systemd/system/$target_directory/$unit"
 }
 

@@ -11,7 +11,6 @@ memory_mib=8192
 disk_gib=24
 host_address=172.16.100.1
 vm_address=172.16.100.2
-network_mask=255.255.255.0
 network_prefix=24
 guest_mac=06:00:ac:10:64:02
 bench_name=atlas-bench
@@ -192,12 +191,14 @@ teardown_network() {
 	fi
 }
 
+# The guest address comes from systemd-networkd in the image. The Ubuntu kernel
+# is built without CONFIG_IP_PNP, so an `ip=` boot argument would do nothing.
 write_configuration() {
 	cat > "$configuration_path" <<JSON
 {
   "boot-source": {
     "kernel_image_path": "$kernel_path",
-    "boot_args": "console=ttyS0 reboot=k panic=1 pci=off ip=$vm_address::$host_address:$network_mask::eth0:off"
+    "boot_args": "console=ttyS0 reboot=k panic=1 pci=off"
   },
   "drives": [
     {
