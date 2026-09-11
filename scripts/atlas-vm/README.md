@@ -58,6 +58,20 @@ host                                     guest
 
 The repository reaches the guest as the files Git tracks plus `.git`, so local build output and caches stay on the host. Pilot clones the last commit, and the working tree is copied over it. A file you deleted without committing stays present in the VM.
 
+## Next steps in the VM
+
+A Metal host downloads `metald` and Atlas WG Mesh from the Atlas site, so the site needs an address that the host can reach.
+
+```sh
+scripts/atlas-vm/run.sh ssh
+su - frappe
+pilot -b atlas-bench --site atlas.localhost set-config atlas_base_url http://172.16.100.2:8000
+```
+
+Use a public tunnel address instead when the Metal host is not on this machine.
+
+Then follow [getting started](../../atlas/docs/getting-started.md) from the Atlas Settings step.
+
 ## Files
 
 | File | Purpose |
