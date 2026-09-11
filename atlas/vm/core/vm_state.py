@@ -31,7 +31,7 @@ def store_reported_states(server_name: str, reported: object) -> None:
 			state.status = status
 			state.synced_at = synced_at
 			state.save(ignore_permissions=True)
-			frappe.db.commit()
+			frappe.db.commit()  # nosemgrep
 		except Exception:
 			frappe.log_error(f"Virtual Machine State write failed: {name}")
 

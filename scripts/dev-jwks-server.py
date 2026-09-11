@@ -1,9 +1,8 @@
-"""Development JWKS server. Serves one RSA key set and mints a token for each audience you type."""
+"""Development Central JWKS server that mints an unrestricted token for each audience."""
 
 from __future__ import annotations
 
 import argparse
-import base64
 import json
 import threading
 import time
@@ -12,19 +11,20 @@ from pathlib import Path
 
 import jwt
 from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from jwt.algorithms import OKPAlgorithm
 
-KEY_PATH = Path(__file__).parent / ".dev-jwks-key.pem"
-KEY_ID = "dev"
-ISSUER = "atlas-dev-jwks"
-SUBJECT = "dev@atlas.local"
+KEY_PATH = Path(__file__).parent / ".dev-jwks-ed25519-key.pem"
+KEY_ID = "central:dev"
+ISSUER = "central"
+SUBJECT = "central"
 LIFETIME = 24 * 60 * 60
 
 
-def load_private_key() -> rsa.RSAPrivateKey:
+def load_private_key() -> Ed25519PrivateKey:
 	"""Return the stored signing key, and create it on first use."""
 	if not KEY_PATH.exists():
-		key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+		key = Ed25519PrivateKey.generate()
 		KEY_PATH.write_bytes(
 			key.private_bytes(
 				encoding=serialization.Encoding.PEM,
@@ -40,25 +40,10 @@ def load_private_key() -> rsa.RSAPrivateKey:
 PRIVATE_KEY = load_private_key()
 
 
-def to_base64url(value: int) -> str:
-	raw = value.to_bytes((value.bit_length() + 7) // 8, "big")
-	return base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
-
-
 def get_key_set() -> dict:
-	numbers = PRIVATE_KEY.public_key().public_numbers()
-	return {
-		"keys": [
-			{
-				"kty": "RSA",
-				"use": "sig",
-				"alg": "RS256",
-				"kid": KEY_ID,
-				"n": to_base64url(numbers.n),
-				"e": to_base64url(numbers.e),
-			}
-		]
-	}
+	jwk = OKPAlgorithm.to_jwk(PRIVATE_KEY.public_key(), as_dict=True)
+	jwk.update({"use": "sig", "alg": "EdDSA", "kid": KEY_ID})
+	return {"keys": [jwk]}
 
 
 def mint_token(audience: str) -> str:
@@ -67,10 +52,13 @@ def mint_token(audience: str) -> str:
 		"iss": ISSUER,
 		"sub": SUBJECT,
 		"aud": audience,
+		"scope": "*",
+		"tenant": "*",
 		"iat": now,
+		"nbf": now,
 		"exp": now + LIFETIME,
 	}
-	return jwt.encode(claims, PRIVATE_KEY, algorithm="RS256", headers={"kid": KEY_ID})
+	return jwt.encode(claims, PRIVATE_KEY, algorithm="EdDSA", headers={"kid": KEY_ID})
 
 
 class Handler(BaseHTTPRequestHandler):

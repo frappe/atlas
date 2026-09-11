@@ -10,6 +10,30 @@ The `proxy` site name and every site name with the `proxy-` prefix are reserved.
 
 Every public route except the health and documentation routes needs a Bearer credential. Use the regional proxy password or a valid JSON Web Token (JWT).
 
+A token needs a trusted issuer, the Proxy audience, a `sub` claim, and a `scope` claim. The daemon reads the authority from the signed `scope` and `constraints` claims and not from the subject. A `tenant` claim makes the token an Atlas API credential, and the daemon refuses it.
+
+The `scope` claim selects the permitted resources. Use `site:*` for the site map, `domain:*` for the custom-domain map, or `*` for all resources. The cluster status route needs `*`. Use a space between two scopes, such as `site:* domain:*`.
+
+The optional `constraints` claim limits the names inside a resource. Use the `site` key, the `domain` key, or both. Each key holds 1 or more of these fields:
+
+| Field | Effect |
+|---|---|
+| `prefix` | The name must start with this text. |
+| `suffix` | The name must end with this text. |
+| `names` | The name must be one of these exact names. |
+
+A name is permitted when it is in `names`, or when it matches each `prefix` and `suffix` field in the claim. A resource without a constraint applies to all names for that resource. A read route returns only the permitted names. A constrained resource cannot replace its complete map. Name comparison is case-sensitive, and Atlas issues lowercase names.
+
+```json
+{
+  "scope": "site:* domain:*",
+  "constraints": {
+    "site": { "prefix": "erp-", "suffix": "-svc" },
+    "domain": { "names": ["www.customer.com"] }
+  }
+}
+```
+
 ```sh
 export ATLAS_PROXY_CONTROL_URL='https://proxy-001.iad.frappe.dev'
 export ATLAS_PROXY_CONTROL_TOKEN='replace-with-the-proxy-password-or-a-jwt'
@@ -78,6 +102,7 @@ A custom-domain map accepts exact domain names only. A domain that equals the re
 | Status | Meaning                                                                                     |
 | ------ | ------------------------------------------------------------------------------------------- |
 | `401`  | The Bearer credential is missing or invalid.                                                |
+| `403`  | The credential does not grant access to the resource or name.                               |
 | `409`  | A site name is reserved, a domain belongs to the wildcard zone, or cluster state conflicts. |
 | `422`  | The request does not match the API schema, or a custom-domain key starts with `*`.           |
 | `502`  | OpenResty cannot apply or return a map.                                                     |

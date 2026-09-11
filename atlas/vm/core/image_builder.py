@@ -84,7 +84,7 @@ def publish_ubuntu_image(
 			"doctype": "Virtual Machine Image",
 			"title": title,
 			"version": 1,
-			"image_type": "System",
+			"image_type": "system",
 			"platform": platform,
 			"operating_system": "Ubuntu",
 			"operating_system_version": version,

@@ -38,11 +38,11 @@ SECURITY_SCHEMES: dict[str, dict[str, str]] = {
 		"bearerFormat": "token",
 		"description": "Use: Bearer <access_token>. [Learn more](https://docs.frappe.io/framework/user/en/api/rest#3-access-token)",
 	},
-	"Central Token Authentication": {
-		"type": "apiKey",
-		"in": "header",
-		"name": "X-Atlas-Central-Token",
-		"description": "Use: X-Atlas-Central-Token <token>.",
+	"Service Token Authentication": {
+		"type": "http",
+		"scheme": "bearer",
+		"bearerFormat": "JWT",
+		"description": "Use a Central or regional Atlas service token.",
 	},
 }
 SCALAR_SCRIPT_URL = "https://cdn.jsdelivr.net/npm/@scalar/api-reference"
@@ -123,6 +123,8 @@ def generate_specification(router: Router) -> dict[str, Any]:
 		path, path_parameters = convert_path(route.path)
 		for method in route.methods:
 			operation = build_operation(route, path_parameters, schemas, config.default_responses)
+			if route.public:
+				operation["security"] = []
 			operation["operationId"] = pick_operation_id(route.function.__name__, operation_ids)
 			paths.setdefault(path, {})[method.lower()] = operation
 

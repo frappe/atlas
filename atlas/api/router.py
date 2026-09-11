@@ -63,4 +63,5 @@ def register_atlas_api() -> None:
 	"""Import each module that registers Atlas API routes."""
 	import atlas.api.routes.images
 	import atlas.api.routes.ip_addresses
+	import atlas.api.routes.jwks
 	import atlas.api.routes.virtual_machines

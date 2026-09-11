@@ -37,6 +37,7 @@ class CreateVirtualMachinePayload:
             egress (CreateVirtualMachinePayloadEgress | Unset):  Default: CreateVirtualMachinePayloadEgress.UPLINK.
             hostname (str | Unset):  Default: ''.
             ip_address_id (None | str | Unset):
+            is_privileged (bool | Unset):  Default: False.
             metadata (CreateVirtualMachinePayloadMetadata | Unset):
             private_network_throughput_mibps (int | Unset):  Default: 0.
             public_network_throughput_mibps (int | Unset):  Default: 0.
@@ -54,6 +55,7 @@ class CreateVirtualMachinePayload:
     egress: CreateVirtualMachinePayloadEgress | Unset = CreateVirtualMachinePayloadEgress.UPLINK
     hostname: str | Unset = ''
     ip_address_id: None | str | Unset = UNSET
+    is_privileged: bool | Unset = False
     metadata: CreateVirtualMachinePayloadMetadata | Unset = UNSET
     private_network_throughput_mibps: int | Unset = 0
     public_network_throughput_mibps: int | Unset = 0
@@ -92,6 +94,8 @@ class CreateVirtualMachinePayload:
         else:
             ip_address_id = self.ip_address_id
 
+        is_privileged = self.is_privileged
+
         metadata: dict[str, Any] | Unset = UNSET
         if not isinstance(self.metadata, Unset):
             metadata = self.metadata.to_dict()
@@ -129,6 +133,8 @@ class CreateVirtualMachinePayload:
             field_dict["hostname"] = hostname
         if ip_address_id is not UNSET:
             field_dict["ip_address_id"] = ip_address_id
+        if is_privileged is not UNSET:
+            field_dict["is_privileged"] = is_privileged
         if metadata is not UNSET:
             field_dict["metadata"] = metadata
         if private_network_throughput_mibps is not UNSET:
@@ -184,6 +190,8 @@ class CreateVirtualMachinePayload:
         ip_address_id = _parse_ip_address_id(d.pop("ip_address_id", UNSET))
 
 
+        is_privileged = d.pop("is_privileged", UNSET)
+
         _metadata = d.pop("metadata", UNSET)
         metadata: CreateVirtualMachinePayloadMetadata | Unset
         if isinstance(_metadata,  Unset):
@@ -215,6 +223,7 @@ class CreateVirtualMachinePayload:
             egress=egress,
             hostname=hostname,
             ip_address_id=ip_address_id,
+            is_privileged=is_privileged,
             metadata=metadata,
             private_network_throughput_mibps=private_network_throughput_mibps,
             public_network_throughput_mibps=public_network_throughput_mibps,

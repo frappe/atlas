@@ -1,4 +1,5 @@
 import os
+import re
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
@@ -22,6 +23,7 @@ class AuthConfig:
 	previous_password_valid_until: int = 0
 	jwks_url: str = ""
 	jwks_audience_id: str = ""
+	jwks_issuers: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -93,6 +95,10 @@ def load(path: Path | None = None) -> ControlConfig:
 	document = _read(path or config_path())
 	control = _section(document, "control")
 	auth = _section(document, "auth")
+	jwks_issuers = auth.get("jwks_issuers", [])
+	if not isinstance(jwks_issuers, list) or not all(isinstance(value, str) for value in jwks_issuers):
+		raise ConfigError("auth.jwks_issuers must be an array of strings")
+	_validate_jwks_authority(auth, jwks_issuers)
 	auto_proxy = _section(document, "auto_proxy")
 	host_prefixes = auto_proxy.get("host_prefixes", [])
 	if not isinstance(host_prefixes, list) or not all(isinstance(value, str) for value in host_prefixes):
@@ -112,6 +118,7 @@ def load(path: Path | None = None) -> ControlConfig:
 			previous_password_valid_until=_integer(auth, "previous_password_valid_until"),
 			jwks_url=_text(auth, "jwks_url"),
 			jwks_audience_id=_text(auth, "jwks_audience_id"),
+			jwks_issuers=tuple(jwks_issuers),
 		),
 		auto_proxy_address_prefix=_text(auto_proxy, "address_prefix"),
 		auto_proxy_host_prefixes=tuple(host_prefixes),
@@ -153,6 +160,20 @@ def _cluster(section: dict[str, object]) -> ClusterConfig:
 	if len(cluster.peers) > 5:
 		raise ConfigError("cluster.peers supports at most 5 members")
 	return cluster
+
+
+def _validate_jwks_authority(section: dict[str, object], issuers: list[str]) -> None:
+	if not issuers:
+		return
+	if len(issuers) != 2 or issuers.count("central") != 1:
+		raise ConfigError("auth.jwks_issuers must contain central and one regional Atlas issuer")
+
+	atlas_issuer = next((issuer for issuer in issuers if issuer != "central"), "")
+	match = re.fullmatch(r"atlas:([0-9]+)", atlas_issuer)
+	if match is None:
+		raise ConfigError("the regional Atlas issuer must use atlas:<region ID>")
+	if _text(section, "jwks_audience_id") != f"atlas-proxy:{match.group(1)}":
+		raise ConfigError("auth.jwks_audience_id must match the regional Atlas issuer")
 
 
 def _domain(domain: str, tls: TLSConfig) -> str:

@@ -8,13 +8,13 @@ For the provider overview, see [docs/providers.md](../docs/providers.md).
 
 Atlas talks to an infrastructure provider only through one interface. Everything provider-specific lives behind it, so adding a provider never reaches into server or virtual machine code.
 
-This module also holds site-wide settings, the regional wildcard TLS certificate, and the binaries a host downloads during installation.
+This module also holds site settings, the regional token key, the wildcard TLS certificate, and the host binaries.
 
 ## Types
 
 | Type | Owns |
 |---|---|
-| `AtlasSettings` (DocType) | Provider selection, credentials, and the published binary links. |
+| `AtlasSettings` (DocType) | Provider selection, credentials, the regional token key, and the published binary links. |
 | `ServerProvider` | The contract every server provider implements. |
 | `registry` | The map from a stable provider name to its implementation. |
 | `DNSProvider`, `Route53Provider` | The DNS contract and its Route 53 implementation. |

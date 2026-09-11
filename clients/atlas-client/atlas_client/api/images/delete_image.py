@@ -76,8 +76,8 @@ def sync_detailed(
 ) -> Response[Any | ImageResponse]:
     """ Delete image
 
-     Starts deletion of an unused Available Machine image. A cleanup job removes its stored artifacts and
-    remaining host snapshot data.
+     Starts deletion of an unused Available image that the tenant owns. A cleanup job removes its stored
+    artifacts and remaining host snapshot data.
 
     Args:
         image_id (str):
@@ -113,8 +113,8 @@ def sync(
 ) -> Any | ImageResponse | None:
     """ Delete image
 
-     Starts deletion of an unused Available Machine image. A cleanup job removes its stored artifacts and
-    remaining host snapshot data.
+     Starts deletion of an unused Available image that the tenant owns. A cleanup job removes its stored
+    artifacts and remaining host snapshot data.
 
     Args:
         image_id (str):
@@ -145,8 +145,8 @@ async def asyncio_detailed(
 ) -> Response[Any | ImageResponse]:
     """ Delete image
 
-     Starts deletion of an unused Available Machine image. A cleanup job removes its stored artifacts and
-    remaining host snapshot data.
+     Starts deletion of an unused Available image that the tenant owns. A cleanup job removes its stored
+    artifacts and remaining host snapshot data.
 
     Args:
         image_id (str):
@@ -182,8 +182,8 @@ async def asyncio(
 ) -> Any | ImageResponse | None:
     """ Delete image
 
-     Starts deletion of an unused Available Machine image. A cleanup job removes its stored artifacts and
-    remaining host snapshot data.
+     Starts deletion of an unused Available image that the tenant owns. A cleanup job removes its stored
+    artifacts and remaining host snapshot data.
 
     Args:
         image_id (str):

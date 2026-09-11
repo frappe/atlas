@@ -20,6 +20,7 @@ from atlas.vm.core.vm_service import VirtualMachineService
 DRAFT_EXPIRY_MINUTES = 2
 # Atlas WG Mesh reserves tenant 0 for the privileged tenant.
 PRIVILEGED_TENANT_ID = 0
+IMAGE_TYPES = ("machine", "system")
 
 
 class VirtualMachine(Document):
@@ -202,7 +203,9 @@ class VirtualMachine(Document):
 	@frappe.whitelist(methods=["POST"])
 	def set_privileged(self, is_privileged: bool | int | str) -> None:
 		"""Set or clear the privileged flag. Only tenant 0 may hold it."""
-		frappe.only_for("System Manager")
+		self.check_permission("write")
+		if self.tenant_id != PRIVILEGED_TENANT_ID:
+			frappe.throw(_("Only tenant {0} can hold the privileged flag.").format(PRIVILEGED_TENANT_ID))
 		if self.is_draft or self.is_terminating:
 			frappe.throw(_("Virtual Machine {0} is not ready for this change.").format(self.name))
 
@@ -219,10 +222,11 @@ class VirtualMachine(Document):
 	def create_machine_image(
 		self,
 		title: str,
+		image_type: str = "machine",
 		cache_image: bool = False,
 		memory_snapshot: bool = False,
 	) -> str:
-		"""Queue a Machine image transfer from this VM."""
+		"""Queue an image transfer from this VM. A System image needs tenant 0."""
 		self.check_permission("write")
 		if self.is_draft:
 			frappe.throw(_("Wait for Virtual Machine creation before creating an image."), exc=AtlasUserError)
@@ -230,13 +234,31 @@ class VirtualMachine(Document):
 		if not title:
 			frappe.throw(_("Image title is required."), exc=AtlasUserError)
 
+		if image_type not in IMAGE_TYPES:
+			frappe.throw(
+				_("Image type must be one of {0}.").format(", ".join(IMAGE_TYPES)), exc=AtlasUserError
+			)
+
+		cache_image = bool(cint(cache_image))
+		memory_snapshot = bool(cint(memory_snapshot))
+		if (
+			image_type == "system" or cache_image or memory_snapshot
+		) and self.tenant_id != PRIVILEGED_TENANT_ID:
+			frappe.throw(
+				_("Only tenant {0} can create a System image or set the host image flags.").format(
+					PRIVILEGED_TENANT_ID
+				),
+				exc=AtlasUserError,
+			)
+
 		from atlas.vm.core.vm_image_transfer import VirtualMachineImageTransferService
 
 		return VirtualMachineImageTransferService().create_from_virtual_machine(
 			self,
 			title,
-			cache_image=bool(cint(cache_image)),
-			memory_snapshot=bool(cint(memory_snapshot)),
+			image_type=image_type,
+			cache_image=cache_image,
+			memory_snapshot=memory_snapshot,
 		)
 
 	@frappe.whitelist(methods=["POST"])
@@ -409,8 +431,6 @@ def create(request: str | dict[str, Any] | VirtualMachineCreateRequest) -> dict[
 	except ValueError as error:
 		frappe.throw(_(str(error)))
 		raise AssertionError from error
-	if request_value.tenant_id == PRIVILEGED_TENANT_ID or request_value.is_privileged:
-		frappe.only_for("System Manager")
 	return VirtualMachineService.create(request_value)
 
 

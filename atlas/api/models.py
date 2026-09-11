@@ -31,6 +31,24 @@ def to_unix_timestamp(value: str | datetime) -> int:
 	return int(moment.timestamp())
 
 
+class JSONWebKey(BaseModel):
+	"""One public Ed25519 signature key."""
+
+	kty: Literal["OKP"]
+	crv: Literal["Ed25519"]
+	x: str
+	kid: str
+	alg: Literal["EdDSA"]
+	use: Literal["sig"]
+	key_ops: list[Literal["verify"]] = Field(default_factory=lambda: ["verify"])
+
+
+class JSONWebKeySetResponse(BaseModel):
+	"""The public keys that this Atlas region trusts."""
+
+	keys: list[JSONWebKey]
+
+
 class ReserveIPAddressPayload(StrictModel):
 	"""Select the source of an IP address reservation."""
 
@@ -130,7 +148,7 @@ class ImageResponse(BaseModel):
 			id=image.name,
 			tenant_id=image.tenant_id,
 			title=image.title,
-			image_type=image.image_type.lower(),
+			image_type=image.image_type,
 			platform=image.platform,
 			operating_system=image.operating_system,
 			operating_system_version=image.operating_system_version,
@@ -204,6 +222,7 @@ class CreateVirtualMachinePayload(StrictModel):
 	metadata: dict[str, str] = Field(default_factory=dict)
 	ip_address_id: str | None = None
 	egress: EgressMode = "uplink"
+	is_privileged: bool = False
 	sleep_after_idle_seconds: int = Field(default=0, ge=0, le=9_223_372_036)
 	disk_throughput_mibps: int = Field(default=0, ge=0)
 	disk_iops: int = Field(default=0, ge=0)
@@ -225,6 +244,7 @@ class CreateVirtualMachinePayload(StrictModel):
 			user_data=self.user_data,
 			metadata=self.metadata,
 			egress=self.egress,
+			is_privileged=self.is_privileged,
 			sleep_after_idle_seconds=self.sleep_after_idle_seconds,
 			disk_throughput_mibps=self.disk_throughput_mibps,
 			disk_iops=self.disk_iops,
@@ -291,9 +311,10 @@ class IPAddressAssignmentPayload(StrictModel):
 
 
 class SnapshotPayload(StrictModel):
-	"""Values that create one Machine image from a virtual machine."""
+	"""Values that create one image from a virtual machine."""
 
 	title: str = Field(min_length=1)
+	image_type: Literal["machine", "system"] = "machine"
 	cache_image: bool = False
 	memory_snapshot: bool = False
 
@@ -388,35 +409,133 @@ class VirtualMachineListResponse(VirtualMachineResponse):
 		)
 
 
-class VirtualMachineDetailResponse(VirtualMachineResponse):
-	"""A stored virtual machine with its live host state."""
+class VirtualMachineCompute(BaseModel):
+	"""The compute shape of one virtual machine."""
+
+	vcpus: int
+	memory_mib: int
+	sleep_after_idle_seconds: int
+
+
+class VirtualMachineDisk(BaseModel):
+	"""The disk size and its rate limits."""
+
+	size_mib: int
+	throughput_mibps: int
+	iops: int
+	used_mib: int | None
+
+
+class VirtualMachineNetwork(BaseModel):
+	"""The addresses and network limits of one virtual machine."""
+
+	egress: str | None
+	public_ipv4: str | None
+	mesh_ipv6: str | None
+	mac: str | None
+	private_network_throughput_mibps: int
+	public_network_throughput_mibps: int
+
+
+class VirtualMachineGuest(BaseModel):
+	"""The guest configuration of one virtual machine."""
+
+	hostname: str | None
+	ssh_keys: list[str]
+	metadata: dict[str, str]
+
+
+class VirtualMachineDetailResponse(BaseModel):
+	"""One virtual machine with its state, addresses, and guest configuration."""
 
 	model_config = ConfigDict(
 		json_schema_extra={
 			"examples": [
 				{
-					**VirtualMachineResponse.model_config["json_schema_extra"]["examples"][0],
+					"id": "vm-00001",
+					"tenant_id": 7,
+					"image_id": "8f1c2d3e4b5a6978",
+					"created_at": 1788834165,
+					"is_privileged": False,
 					"desired_state": "running",
 					"current_state": "running",
+					"error": None,
+					"compute": {"vcpus": 2, "memory_mib": 2048, "sleep_after_idle_seconds": 0},
+					"disk": {"size_mib": 20480, "throughput_mibps": 0, "iops": 0, "used_mib": 8123},
+					"network": {
+						"egress": "uplink",
+						"public_ipv4": "203.0.113.10",
+						"mesh_ipv6": "fdaa:1::5",
+						"mac": "52:54:00:12:34:56",
+						"private_network_throughput_mibps": 0,
+						"public_network_throughput_mibps": 0,
+					},
+					"guest": {
+						"hostname": "worker-1",
+						"ssh_keys": ["ssh-ed25519 AAAA"],
+						"metadata": {"role": "worker"},
+					},
 				}
 			]
 		}
 	)
 
+	id: str
+	tenant_id: int
+	image_id: str
+	created_at: int
+	is_privileged: bool
 	desired_state: str | None
 	current_state: str
+	error: str | None
+	compute: VirtualMachineCompute
+	disk: VirtualMachineDisk
+	network: VirtualMachineNetwork
+	guest: VirtualMachineGuest
 
 	@classmethod
 	def from_document_and_metal(
 		cls, virtual_machine: VirtualMachine, information: MetalVirtualMachine | None
 	) -> VirtualMachineDetailResponse:
-		"""Build a detailed response from Atlas and Metal state."""
-		stored = VirtualMachineResponse.from_document(virtual_machine)
+		"""Build a detailed response from Atlas storage and the live Metal state."""
+		desired = information.desired if information else None
+		observed = information.observed if information else None
 		return cls(
-			**stored.model_dump(),
-			desired_state=information.desired.state if information else None,
-			current_state=get_current_state(
-				virtual_machine, information.observed.state if information else None
+			id=virtual_machine.name,
+			tenant_id=virtual_machine.tenant_id,
+			image_id=virtual_machine.virtual_machine_image,
+			created_at=to_unix_timestamp(virtual_machine.creation),
+			is_privileged=bool(virtual_machine.is_privileged),
+			desired_state=desired.state if desired else None,
+			current_state=get_current_state(virtual_machine, observed.state if observed else None),
+			error=observed.error.message if observed and observed.error else None,
+			compute=VirtualMachineCompute(
+				vcpus=virtual_machine.vcpus,
+				memory_mib=virtual_machine.memory_mib,
+				sleep_after_idle_seconds=virtual_machine.sleep_after_idle_seconds,
+			),
+			disk=VirtualMachineDisk(
+				size_mib=virtual_machine.disk_mib,
+				throughput_mibps=desired.disk.throughput_mibps if desired else 0,
+				iops=desired.disk.iops if desired else 0,
+				used_mib=observed.disk.used_mib if observed else None,
+			),
+			network=VirtualMachineNetwork(
+				egress=desired.network.egress if desired else None,
+				public_ipv4=desired.network.public_ipv4 or None if desired else None,
+				mesh_ipv6=desired.network.wireguard_mesh_ipv6 or None if desired else None,
+				mac=observed.network.mac or None if observed else None,
+				private_network_throughput_mibps=(
+					desired.network.private_network_throughput_mibps if desired else 0
+				),
+				public_network_throughput_mibps=(
+					desired.network.public_network_throughput_mibps if desired else 0
+				),
+			),
+			guest=VirtualMachineGuest(
+				hostname=desired.guest.hostname or None if desired else None,
+				ssh_keys=list(desired.guest.ssh_keys) if desired else [],
+				metadata=dict(desired.guest.metadata) if desired else {},
 			),
 		)
 

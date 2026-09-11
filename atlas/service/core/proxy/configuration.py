@@ -40,6 +40,7 @@ previous_password_hash = "$previous_password_hash"
 previous_password_valid_until = $previous_password_valid_until
 jwks_url = "$jwks_url"
 jwks_audience_id = "$jwks_audience_id"
+jwks_issuers = $jwks_issuers
 
 [cluster]
 node_id = "$node_id"
@@ -116,8 +117,9 @@ class ProxyConfiguration:
 			password_hash=self.password_hash,
 			previous_password_hash=self.previous_password_hash,
 			previous_password_valid_until=self.previous_password_valid_until,
-			jwks_url=self.settings.central_jwks_url or "",
+			jwks_url=self.settings.jwks_url,
 			jwks_audience_id=self.settings.proxy_audience_id,
+			jwks_issuers=json.dumps(["central", self.settings.issuer]),
 			node_id=self.proxy_server.name,
 			cluster_password=self.cluster_password,
 			previous_cluster_password=self.previous_cluster_password,
@@ -211,8 +213,9 @@ class ProxyConfiguration:
 			self.cluster_password,
 			self.previous_cluster_password,
 			json.dumps(self.peers, sort_keys=True),
-			self.settings.central_jwks_url or "",
+			self.settings.jwks_url,
 			self.settings.proxy_audience_id,
+			self.settings.issuer,
 			self.settings.get_password("wildcard_tls_certificate", raise_exception=False) or "",
 			self.settings.get_password("wildcard_tls_private_key", raise_exception=False) or "",
 		)

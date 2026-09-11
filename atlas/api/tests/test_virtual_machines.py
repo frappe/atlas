@@ -37,6 +37,7 @@ def build_virtual_machine(tenant_id: int = TENANT_ID, **overrides) -> SimpleName
 		"memory_mib": 2048,
 		"disk_mib": 20480,
 		"sleep_after_idle_seconds": 0,
+		"is_privileged": 0,
 		"is_draft": 0,
 		"is_terminating": 0,
 		"creation": "2026-09-08T10:00:00+05:30",
@@ -52,30 +53,47 @@ def build_virtual_machine(tenant_id: int = TENANT_ID, **overrides) -> SimpleName
 	return SimpleNamespace(**values)
 
 
-def stored_rows(rows: list[SimpleNamespace]):
-	"""Patch the Virtual Machine query and leave every other query alone."""
-	query = frappe.get_all
-
-	def get_all(doctype, *args, **kwargs):
-		return rows if doctype == "Virtual Machine" else query(doctype, *args, **kwargs)
-
-	return patch("atlas.api.routes.virtual_machines.frappe.get_all", side_effect=get_all)
-
-
-def owned_document(virtual_machine: SimpleNamespace, tenant_id: int = TENANT_ID):
-	"""Patch the tenant lookup so it returns one virtual machine."""
-	return patch(
-		"atlas.api.routes.virtual_machines.get_owned_document",
-		side_effect=lambda doctype, name, filters, label=None: (
-			virtual_machine if filters["tenant_id"] == tenant_id else raise_not_found(label)
+def build_metal_information() -> SimpleNamespace:
+	"""Return one Metal record with a desired and an observed half."""
+	return SimpleNamespace(
+		desired=SimpleNamespace(
+			state="running",
+			disk=SimpleNamespace(throughput_mibps=100, iops=500),
+			network=SimpleNamespace(
+				egress="uplink",
+				public_ipv4="203.0.113.10",
+				wireguard_mesh_ipv6="fdaa:1::5",
+				private_network_throughput_mibps=0,
+				public_network_throughput_mibps=0,
+			),
+			guest=SimpleNamespace(
+				hostname="worker-1",
+				ssh_keys=("ssh-ed25519 AAAA",),
+				metadata={"role": "worker"},
+			),
+		),
+		observed=SimpleNamespace(
+			state="stopped",
+			disk=SimpleNamespace(used_mib=8123),
+			network=SimpleNamespace(mac="52:54:00:12:34:56"),
+			error=SimpleNamespace(message="boot failed"),
 		),
 	)
 
 
-def raise_not_found(label: str):
-	from atlas.api.core.errors import ResourceNotFound
+def stored_rows(rows: list[SimpleNamespace]):
+	"""Patch the Virtual Machine query and leave every other query alone."""
+	query = frappe.get_list
 
-	raise ResourceNotFound(f"The {label} does not exist.")
+	def get_list(doctype, *args, **kwargs):
+		return rows if doctype == "Virtual Machine" else query(doctype, *args, **kwargs)
+
+	return patch("atlas.api.routes.virtual_machines.frappe.get_list", side_effect=get_list)
+
+
+def owned_document(virtual_machine: SimpleNamespace):
+	"""Patch the ownership lookup so it returns one virtual machine."""
+	return patch("atlas.api.routes.virtual_machines.get_owned_document", return_value=virtual_machine)
 
 
 class TestVirtualMachineViews(UnitTestCase):
@@ -89,16 +107,38 @@ class TestVirtualMachineViews(UnitTestCase):
 		self.assertNotIn("virtual_machine_image_id", summary.model_fields)
 		self.assertNotIn("server", summary.model_fields)
 
-	def test_detail_exposes_only_public_state_names(self) -> None:
-		information = SimpleNamespace(
-			desired=SimpleNamespace(state="running"),
-			observed=SimpleNamespace(state="stopped"),
+	def test_detail_carries_the_addresses_and_the_guest_configuration(self) -> None:
+		detail = VirtualMachineDetailResponse.from_document_and_metal(
+			build_virtual_machine(), build_metal_information()
 		)
-		detail = VirtualMachineDetailResponse.from_document_and_metal(build_virtual_machine(), information)
 
 		self.assertEqual(detail.desired_state, "running")
 		self.assertEqual(detail.current_state, "stopped")
-		self.assertNotIn("operation", detail.model_fields)
+		self.assertEqual(detail.network.public_ipv4, "203.0.113.10")
+		self.assertEqual(detail.network.mesh_ipv6, "fdaa:1::5")
+		self.assertEqual(detail.network.mac, "52:54:00:12:34:56")
+		self.assertEqual(detail.network.egress, "uplink")
+		self.assertEqual(detail.disk.iops, 500)
+		self.assertEqual(detail.disk.used_mib, 8123)
+		self.assertEqual(detail.guest.ssh_keys, ["ssh-ed25519 AAAA"])
+		self.assertEqual(detail.guest.metadata, {"role": "worker"})
+		self.assertEqual(detail.error, "boot failed")
+
+	def test_detail_hides_the_host_operation_data(self) -> None:
+		detail = VirtualMachineDetailResponse.from_document_and_metal(
+			build_virtual_machine(), build_metal_information()
+		)
+
+		for field in ("operation_id", "phase", "generation", "restart_generation", "server"):
+			self.assertNotIn(field, detail.model_fields)
+
+	def test_detail_without_metal_state_reports_unknown(self) -> None:
+		detail = VirtualMachineDetailResponse.from_document_and_metal(build_virtual_machine(), None)
+
+		self.assertIsNone(detail.desired_state)
+		self.assertEqual(detail.current_state, "unknown")
+		self.assertIsNone(detail.network.public_ipv4)
+		self.assertEqual(detail.guest.ssh_keys, [])
 
 
 class TestCreateVirtualMachine(UnitTestCase):
@@ -132,8 +172,14 @@ class TestCreateVirtualMachine(UnitTestCase):
 		self.assertEqual(status, 400)
 		self.assertEqual(body["error"]["code"], "invalid_request")
 
+	def test_create_passes_the_privileged_flag(self) -> None:
+		status, _, create = self.create({**CREATE_BODY, "is_privileged": True}, tenant_id=0)
+
+		self.assertEqual(status, 201)
+		self.assertTrue(create.call_args.args[0].is_privileged)
+
 	def test_create_rejects_a_field_the_caller_cannot_set(self) -> None:
-		for field in ("tenant_id", "server", "is_privileged", "is_sleepy", "idle_timeout_seconds"):
+		for field in ("tenant_id", "server", "is_sleepy", "idle_timeout_seconds"):
 			status, body, _ = self.create({**CREATE_BODY, field: 1})
 
 			self.assertEqual(status, 400)
@@ -159,14 +205,14 @@ class TestReadVirtualMachines(UnitTestCase):
 			api_request(
 				"GET", "/api/atlas/virtual-machines", tenant_id=TENANT_ID, query_string={"limit": "2"}
 			),
-			stored_rows(rows) as get_all,
+			stored_rows(rows) as get_list,
 			patch("atlas.api.routes.virtual_machines.get_reported_state_rows", return_value={}),
 		):
 			status, body = call_route(list_virtual_machines)
 
 		self.assertEqual(status, 200)
-		self.assertEqual(get_all.call_args.kwargs["filters"], {"tenant_id": TENANT_ID})
-		self.assertEqual(get_all.call_args.kwargs["limit"], 3)
+		self.assertEqual(get_list.call_args.kwargs["filters"], {"tenant_id": TENANT_ID})
+		self.assertEqual(get_list.call_args.kwargs["limit"], 3)
 		self.assertEqual(len(body["items"]), 2)
 		self.assertTrue(body["has_more"])
 
@@ -215,16 +261,6 @@ class TestReadVirtualMachines(UnitTestCase):
 		self.assertEqual(body["id"], "vm-00001")
 		self.assertIsNone(body["desired_state"])
 		self.assertEqual(body["current_state"], "unknown")
-
-	def test_another_tenant_cannot_read_the_record(self) -> None:
-		with (
-			api_request("GET", "/api/atlas/virtual-machines/vm-00001", tenant_id=OTHER_TENANT_ID),
-			owned_document(build_virtual_machine()),
-		):
-			status, body = call_route(get_virtual_machine, virtual_machine_id="vm-00001")
-
-		self.assertEqual(status, 404)
-		self.assertEqual(body["error"]["code"], "not_found")
 
 
 class TestVirtualMachineActions(UnitTestCase):

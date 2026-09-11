@@ -14,7 +14,7 @@ from atlas.api.core.base import (
 from atlas.api.core.docs import api_docs
 from atlas.api.models import IPAddressResponse, ReserveIPAddressPayload
 from atlas.api.router import get_resource_location, ip_addresses
-from atlas.auth.tenant import get_tenant_id
+from atlas.auth.identity import get_current_tenant_id
 from atlas.metal_server.doctype.metal_server_ip_address.metal_server_ip_address import reserve_for_tenant
 
 if TYPE_CHECKING:
@@ -25,13 +25,7 @@ if TYPE_CHECKING:
 
 def get_owned_ip_address(ip_address_id: str) -> MetalServerIPAddress:
 	"""Return one IP address that the request tenant reserved."""
-	ip_address: MetalServerIPAddress = get_owned_document(
-		"Metal Server IP Address",
-		ip_address_id,
-		{"tenant_id": get_tenant_id()},
-		"IP address",
-	)
-	return ip_address
+	return get_owned_document("Metal Server IP Address", ip_address_id, "IP address")
 
 
 @ip_addresses.post("")
@@ -47,7 +41,7 @@ def reserve_ip_address(payload: ReserveIPAddressPayload) -> ApiResult[IPAddressR
 
 	Reserves an IP address for the tenant. The pool source claims an unowned Atlas address, and the provider source creates a provider reservation.
 	"""
-	ip_address_name = reserve_for_tenant(get_tenant_id(), payload.source)
+	ip_address_name = reserve_for_tenant(get_current_tenant_id(), payload.source)
 	ip_address: MetalServerIPAddress = frappe.get_doc("Metal Server IP Address", ip_address_name)
 
 	return ApiResult(
@@ -64,12 +58,12 @@ def list_ip_addresses(query: ListQuery) -> Page[IPAddressResponse]:
 
 	Returns one page of IP addresses reserved by the tenant in newest-first order.
 	"""
-	rows: list[MetalServerIPAddress] = frappe.get_all(
+	rows: list[MetalServerIPAddress] = frappe.get_list(
 		"Metal Server IP Address",
-		filters={"tenant_id": get_tenant_id()},
+		filters={"tenant_id": get_current_tenant_id()},
 		fields=["name", "tenant_id", "address", "status", "virtual_machine", "creation"],
 		order_by="creation desc",
-		start=query.offset,
+		offset=query.offset,
 		limit=query.fetch_limit,
 	)
 	return build_page([IPAddressResponse.from_document(row) for row in rows], query)

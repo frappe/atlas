@@ -100,14 +100,10 @@ code_only_modules = {
 
 # before_install = "atlas.install.before_install"
 after_install = [
-	"atlas.auth.user.create_central_admin_user",
-	"atlas.atlas.doctype.atlas_settings.atlas_settings.initialize_proxy_cluster_password",
 	"atlas.atlas.core.host_binaries.publish_host_binaries",
 	"atlas.service.core.http_proxy_package.publish_http_proxy_package",
 ]
 after_migrate = [
-	"atlas.auth.user.create_central_admin_user",
-	"atlas.atlas.doctype.atlas_settings.atlas_settings.initialize_proxy_cluster_password",
 	"atlas.atlas.core.host_binaries.publish_host_binaries",
 	"atlas.service.core.http_proxy_package.publish_http_proxy_package",
 ]
@@ -157,29 +153,13 @@ after_migrate = [
 # Permissions evaluated in scripted ways
 
 permission_query_conditions = {
-	"Atlas Settings": "atlas.auth.overrides.get_permission_query_conditions",
-	"SSH Task": "atlas.auth.overrides.get_permission_query_conditions",
-	"Metal Server": "atlas.auth.overrides.get_permission_query_conditions",
-	"Metal Server Disk": "atlas.auth.overrides.get_permission_query_conditions",
-	"Metal Server Image": "atlas.auth.overrides.get_permission_query_conditions",
 	"Metal Server IP Address": "atlas.auth.overrides.get_permission_query_conditions",
-	"Metal Server Size": "atlas.auth.overrides.get_permission_query_conditions",
-	"Metal Server Usage": "atlas.auth.overrides.get_permission_query_conditions",
-	"Proxy Server": "atlas.auth.overrides.get_permission_query_conditions",
 	"Virtual Machine": "atlas.auth.overrides.get_permission_query_conditions",
 	"Virtual Machine Image": "atlas.auth.overrides.get_permission_query_conditions",
 }
 
 has_permission = {
-	"Atlas Settings": "atlas.auth.overrides.has_permission",
-	"SSH Task": "atlas.auth.overrides.has_permission",
-	"Metal Server": "atlas.auth.overrides.has_permission",
-	"Metal Server Disk": "atlas.auth.overrides.has_permission",
-	"Metal Server Image": "atlas.auth.overrides.has_permission",
 	"Metal Server IP Address": "atlas.auth.overrides.has_permission",
-	"Metal Server Size": "atlas.auth.overrides.has_permission",
-	"Metal Server Usage": "atlas.auth.overrides.has_permission",
-	"Proxy Server": "atlas.auth.overrides.has_permission",
 	"Virtual Machine": "atlas.auth.overrides.has_permission",
 	"Virtual Machine Image": "atlas.auth.overrides.has_permission",
 }
@@ -219,6 +199,9 @@ has_permission = {
 
 scheduler_events = {
 	"cron": {
+		"*/5 * * * *": [
+			"atlas.auth.jwks.sync_central_jwks",
+		],
 		"* * * * * */10": [
 			"atlas.vm.doctype.virtual_machine.virtual_machine.reconcile_terminating_virtual_machines",
 			"atlas.metal_server.doctype.metal_server_ip_address.metal_server_ip_address.enqueue_pending_ip_address_reconcilation",

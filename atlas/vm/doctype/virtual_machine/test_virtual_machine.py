@@ -6,6 +6,7 @@ import frappe
 import requests
 from frappe.tests import UnitTestCase
 
+from atlas.atlas.core.exceptions import AtlasUserError
 from atlas.vm.core import vm_service as virtual_machine_service_module
 from atlas.vm.core.metal_client import MetalClient, MetalClientError
 from atlas.vm.core.metal_models import MetalVirtualMachine
@@ -886,14 +887,14 @@ class TestVirtualMachinePrivilege(UnitTestCase):
 		virtual_machine.is_privileged = is_privileged
 		virtual_machine.is_draft = 0
 		virtual_machine.is_terminating = 0
+		virtual_machine.check_permission = Mock()
 		virtual_machine.save = Mock()
 		return virtual_machine
 
 	def test_set_privileged_reads_the_boolean(self) -> None:
 		virtual_machine = self.build_virtual_machine(tenant_id=0)
 
-		with patch.object(virtual_machine_module.frappe, "only_for"):
-			virtual_machine.set_privileged("true")
+		virtual_machine.set_privileged("true")
 
 		self.assertTrue(virtual_machine.is_privileged)
 		virtual_machine.save.assert_called_once()
@@ -928,7 +929,7 @@ class TestVirtualMachinePrivilege(UnitTestCase):
 		"""Tenant 0 alone is not privileged, so a plain tenant-0 VM is valid."""
 		self.build_virtual_machine(tenant_id=0).validate()
 
-	def test_create_requires_system_manager_for_a_privileged_vm(self) -> None:
+	def test_create_accepts_a_privileged_vm_of_tenant_zero(self) -> None:
 		request = VirtualMachineCreateRequest.from_value(
 			{
 				"virtual_machine_image": "image-1",
@@ -942,11 +943,49 @@ class TestVirtualMachinePrivilege(UnitTestCase):
 
 		with (
 			patch.object(virtual_machine_module.frappe, "has_permission", return_value=True),
-			patch.object(virtual_machine_module.frappe, "only_for") as only_for,
 			patch.object(
 				VirtualMachineService, "create", return_value={"name": "VM-00001", "is_draft": False}
-			),
+			) as create,
 		):
 			virtual_machine_module.create(request)
 
-		only_for.assert_called_once_with("System Manager")
+		self.assertTrue(create.call_args.args[0].is_privileged)
+
+
+class TestSystemImageCreation(UnitTestCase):
+	"""Only tenant 0 may share an image or set the host image flags."""
+
+	def create_image(self, *, tenant_id: int, **options):
+		"""Run one snapshot request for one tenant."""
+		virtual_machine = VirtualMachine.__new__(VirtualMachine)
+		virtual_machine.name = "VM-00001"
+		virtual_machine.tenant_id = tenant_id
+		virtual_machine.is_draft = 0
+		virtual_machine.check_permission = Mock()
+		with patch(
+			"atlas.vm.core.vm_image_transfer.VirtualMachineImageTransferService.create_from_virtual_machine",
+			return_value="IMG-00001",
+		) as create:
+			name = virtual_machine.create_machine_image("golden", **options)
+		return name, create
+
+	def test_tenant_zero_creates_a_system_image(self) -> None:
+		name, create = self.create_image(
+			tenant_id=0, image_type="system", cache_image=True, memory_snapshot=True
+		)
+
+		self.assertEqual(name, "IMG-00001")
+		self.assertEqual(create.call_args.kwargs["image_type"], "system")
+		self.assertTrue(create.call_args.kwargs["cache_image"])
+		self.assertTrue(create.call_args.kwargs["memory_snapshot"])
+
+	def test_another_tenant_creates_a_machine_image(self) -> None:
+		name, create = self.create_image(tenant_id=7)
+
+		self.assertEqual(name, "IMG-00001")
+		self.assertEqual(create.call_args.kwargs["image_type"], "machine")
+
+	def test_another_tenant_cannot_use_a_shared_option(self) -> None:
+		for options in ({"image_type": "system"}, {"cache_image": True}, {"memory_snapshot": True}):
+			with self.assertRaises(AtlasUserError):
+				self.create_image(tenant_id=7, **options)

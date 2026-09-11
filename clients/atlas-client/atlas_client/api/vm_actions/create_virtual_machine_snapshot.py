@@ -80,12 +80,14 @@ def sync_detailed(
 
      Creates a reusable Machine image from the current VM disk. The new image belongs to the same tenant.
 
-    If `memory_snapshot` is true, Atlas also records the VM shape for compatible warm starts.
+    If `memory_snapshot` is true, Atlas also records the VM shape for compatible warm starts. Only
+    tenant 0 can set `image_type` to `system`, which shares the image with every tenant, and only tenant
+    0 can set `cache_image` and `memory_snapshot`. These values cannot change after creation.
 
     Args:
         virtual_machine_id (str):
         x_tenant_id (int):
-        body (SnapshotPayload): Values that create one Machine image from a virtual machine.
+        body (SnapshotPayload): Values that create one image from a virtual machine.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -121,12 +123,14 @@ def sync(
 
      Creates a reusable Machine image from the current VM disk. The new image belongs to the same tenant.
 
-    If `memory_snapshot` is true, Atlas also records the VM shape for compatible warm starts.
+    If `memory_snapshot` is true, Atlas also records the VM shape for compatible warm starts. Only
+    tenant 0 can set `image_type` to `system`, which shares the image with every tenant, and only tenant
+    0 can set `cache_image` and `memory_snapshot`. These values cannot change after creation.
 
     Args:
         virtual_machine_id (str):
         x_tenant_id (int):
-        body (SnapshotPayload): Values that create one Machine image from a virtual machine.
+        body (SnapshotPayload): Values that create one image from a virtual machine.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -157,12 +161,14 @@ async def asyncio_detailed(
 
      Creates a reusable Machine image from the current VM disk. The new image belongs to the same tenant.
 
-    If `memory_snapshot` is true, Atlas also records the VM shape for compatible warm starts.
+    If `memory_snapshot` is true, Atlas also records the VM shape for compatible warm starts. Only
+    tenant 0 can set `image_type` to `system`, which shares the image with every tenant, and only tenant
+    0 can set `cache_image` and `memory_snapshot`. These values cannot change after creation.
 
     Args:
         virtual_machine_id (str):
         x_tenant_id (int):
-        body (SnapshotPayload): Values that create one Machine image from a virtual machine.
+        body (SnapshotPayload): Values that create one image from a virtual machine.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -198,12 +204,14 @@ async def asyncio(
 
      Creates a reusable Machine image from the current VM disk. The new image belongs to the same tenant.
 
-    If `memory_snapshot` is true, Atlas also records the VM shape for compatible warm starts.
+    If `memory_snapshot` is true, Atlas also records the VM shape for compatible warm starts. Only
+    tenant 0 can set `image_type` to `system`, which shares the image with every tenant, and only tenant
+    0 can set `cache_image` and `memory_snapshot`. These values cannot change after creation.
 
     Args:
         virtual_machine_id (str):
         x_tenant_id (int):
-        body (SnapshotPayload): Values that create one Machine image from a virtual machine.
+        body (SnapshotPayload): Values that create one image from a virtual machine.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

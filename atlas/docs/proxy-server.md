@@ -36,7 +36,7 @@ Atlas retries a Pending record every minute. A failed step changes the record to
 
 Atlas Settings owns one regional proxy password and one previous password. Atlas rotates the current password every 6 hours and pushes both values to active nodes. A System Manager can also select **Rotate proxy password** from the Atlas Settings Actions menu.
 
-Public API clients can use the regional proxy password or a matching JWT. Peer requests use the same password in the cluster header. Nodes accept the previous password for 10 minutes after rotation.
+Public API clients can use the regional Proxy password or a valid JSON Web Token. Each Proxy gets the merged regional key set from Atlas. Central has unrestricted access. A regional token can restrict site names with a signed suffix constraint. Peer requests use the Proxy password in the cluster header. Nodes accept the earlier password for 10 minutes after rotation.
 
 ## Configuration reconciliation
 

@@ -10,6 +10,11 @@ from ..types import UNSET, Unset
 
 from typing import cast
 
+if TYPE_CHECKING:
+  from ..models.virtual_machine_compute import VirtualMachineCompute
+  from ..models.virtual_machine_disk import VirtualMachineDisk
+  from ..models.virtual_machine_guest import VirtualMachineGuest
+  from ..models.virtual_machine_network import VirtualMachineNetwork
 
 
 
@@ -21,31 +26,35 @@ T = TypeVar("T", bound="VirtualMachineDetailResponse")
 
 @_attrs_define
 class VirtualMachineDetailResponse:
-    """ A stored virtual machine with its live host state.
+    """ One virtual machine with its state, addresses, and guest configuration.
 
         Attributes:
+            compute (VirtualMachineCompute): The compute shape of one virtual machine.
             created_at (int):
             current_state (str):
             desired_state (None | str):
-            disk_mib (int):
+            disk (VirtualMachineDisk): The disk size and its rate limits.
+            error (None | str):
+            guest (VirtualMachineGuest): The guest configuration of one virtual machine.
             id (str):
             image_id (str):
-            memory_mib (int):
-            sleep_after_idle_seconds (int):
+            is_privileged (bool):
+            network (VirtualMachineNetwork): The addresses and network limits of one virtual machine.
             tenant_id (int):
-            vcpus (int):
      """
 
+    compute: VirtualMachineCompute
     created_at: int
     current_state: str
     desired_state: None | str
-    disk_mib: int
+    disk: VirtualMachineDisk
+    error: None | str
+    guest: VirtualMachineGuest
     id: str
     image_id: str
-    memory_mib: int
-    sleep_after_idle_seconds: int
+    is_privileged: bool
+    network: VirtualMachineNetwork
     tenant_id: int
-    vcpus: int
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
 
@@ -53,6 +62,12 @@ class VirtualMachineDetailResponse:
 
 
     def to_dict(self) -> dict[str, Any]:
+        from ..models.virtual_machine_compute import VirtualMachineCompute # noqa: PLC0415
+        from ..models.virtual_machine_disk import VirtualMachineDisk # noqa: PLC0415
+        from ..models.virtual_machine_guest import VirtualMachineGuest # noqa: PLC0415
+        from ..models.virtual_machine_network import VirtualMachineNetwork # noqa: PLC0415
+        compute = self.compute.to_dict()
+
         created_at = self.created_at
 
         current_state = self.current_state
@@ -60,34 +75,39 @@ class VirtualMachineDetailResponse:
         desired_state: None | str
         desired_state = self.desired_state
 
-        disk_mib = self.disk_mib
+        disk = self.disk.to_dict()
+
+        error: None | str
+        error = self.error
+
+        guest = self.guest.to_dict()
 
         id = self.id
 
         image_id = self.image_id
 
-        memory_mib = self.memory_mib
+        is_privileged = self.is_privileged
 
-        sleep_after_idle_seconds = self.sleep_after_idle_seconds
+        network = self.network.to_dict()
 
         tenant_id = self.tenant_id
-
-        vcpus = self.vcpus
 
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update({
+            "compute": compute,
             "created_at": created_at,
             "current_state": current_state,
             "desired_state": desired_state,
-            "disk_mib": disk_mib,
+            "disk": disk,
+            "error": error,
+            "guest": guest,
             "id": id,
             "image_id": image_id,
-            "memory_mib": memory_mib,
-            "sleep_after_idle_seconds": sleep_after_idle_seconds,
+            "is_privileged": is_privileged,
+            "network": network,
             "tenant_id": tenant_id,
-            "vcpus": vcpus,
         })
 
         return field_dict
@@ -96,7 +116,16 @@ class VirtualMachineDetailResponse:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.virtual_machine_compute import VirtualMachineCompute # noqa: PLC0415
+        from ..models.virtual_machine_disk import VirtualMachineDisk # noqa: PLC0415
+        from ..models.virtual_machine_guest import VirtualMachineGuest # noqa: PLC0415
+        from ..models.virtual_machine_network import VirtualMachineNetwork # noqa: PLC0415
         d = dict(src_dict)
+        compute = VirtualMachineCompute.from_dict(d.pop("compute"))
+
+
+
+
         created_at = d.pop("created_at")
 
         current_state = d.pop("current_state")
@@ -109,31 +138,50 @@ class VirtualMachineDetailResponse:
         desired_state = _parse_desired_state(d.pop("desired_state"))
 
 
-        disk_mib = d.pop("disk_mib")
+        disk = VirtualMachineDisk.from_dict(d.pop("disk"))
+
+
+
+
+        def _parse_error(data: object) -> None | str:
+            if data is None:
+                return data
+            return cast(None | str, data)
+
+        error = _parse_error(d.pop("error"))
+
+
+        guest = VirtualMachineGuest.from_dict(d.pop("guest"))
+
+
+
 
         id = d.pop("id")
 
         image_id = d.pop("image_id")
 
-        memory_mib = d.pop("memory_mib")
+        is_privileged = d.pop("is_privileged")
 
-        sleep_after_idle_seconds = d.pop("sleep_after_idle_seconds")
+        network = VirtualMachineNetwork.from_dict(d.pop("network"))
+
+
+
 
         tenant_id = d.pop("tenant_id")
 
-        vcpus = d.pop("vcpus")
-
         virtual_machine_detail_response = cls(
+            compute=compute,
             created_at=created_at,
             current_state=current_state,
             desired_state=desired_state,
-            disk_mib=disk_mib,
+            disk=disk,
+            error=error,
+            guest=guest,
             id=id,
             image_id=image_id,
-            memory_mib=memory_mib,
-            sleep_after_idle_seconds=sleep_after_idle_seconds,
+            is_privileged=is_privileged,
+            network=network,
             tenant_id=tenant_id,
-            vcpus=vcpus,
         )
 
 

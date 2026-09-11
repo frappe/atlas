@@ -7,7 +7,7 @@ from fastapi.routing import APIRoute
 from pydantic import BaseModel, ConfigDict, Field
 
 from . import docs
-from .auth import Authentication
+from .auth import Authentication, Authorization
 from .client import ProxyClient
 from .cluster import (
 	ClusterManager,
@@ -104,7 +104,7 @@ app = FastAPI(
 		{"name": "Domains", "description": "Route custom domains to backend IPv6 addresses."},
 	],
 )
-protected = [Depends(auth.require_request)]
+ControlAuthorization = Annotated[Authorization, Depends(auth.require_request)]
 
 
 def require_cluster_password(
@@ -157,18 +157,16 @@ async def readyz() -> Response:
 
 @app.get(
 	"/v1/sites",
-	dependencies=protected,
 	tags=["Sites"],
 	summary="List site routes",
 	description="Read site routes during reconciliation.",
 )
-async def get_sites() -> dict[str, str]:
-	return await maps.get("sites")
+async def get_sites(authorization: ControlAuthorization) -> dict[str, str]:
+	return authorization.filter("site", await maps.get("sites"))
 
 
 @app.put(
 	"/v1/sites",
-	dependencies=protected,
 	tags=["Sites"],
 	summary="Sync site routes",
 	description="Replace every site route after a controller restart or full reconciliation. Example: `erp` routes to `2001:db8::10`.",
@@ -179,7 +177,9 @@ async def replace_sites(
 		dict[str, str],
 		Body(examples=[SITE_MAP_EXAMPLE], description="The complete desired site map."),
 	],
+	authorization: ControlAuthorization,
 ) -> MapReplaced:
+	authorization.require_unconstrained("site", "update")
 	result = await cluster.mutate(Mutation(kind="sites", action="replace", values=values))
 	response.headers["X-Atlas-Proxy-Generation"] = str(result.generation)
 	return MapReplaced(**result.body)
@@ -187,18 +187,16 @@ async def replace_sites(
 
 @app.get(
 	"/v1/domains",
-	dependencies=protected,
 	tags=["Domains"],
 	summary="List domain routes",
 	description="Read custom-domain routes during reconciliation.",
 )
-async def get_domains() -> dict[str, str]:
-	return await maps.get("domains")
+async def get_domains(authorization: ControlAuthorization) -> dict[str, str]:
+	return authorization.filter("domain", await maps.get("domains"))
 
 
 @app.put(
 	"/v1/domains",
-	dependencies=protected,
 	tags=["Domains"],
 	summary="Sync domain routes",
 	description="Replace every custom-domain route after a controller restart or full reconciliation. Example: `www.example.com` routes to `2001:db8::20`.",
@@ -209,7 +207,9 @@ async def replace_domains(
 		dict[str, str],
 		Body(examples=[DOMAIN_MAP_EXAMPLE], description="The complete desired custom-domain map."),
 	],
+	authorization: ControlAuthorization,
 ) -> MapReplaced:
+	authorization.require_unconstrained("domain", "update")
 	result = await cluster.mutate(Mutation(kind="domains", action="replace", values=values))
 	response.headers["X-Atlas-Proxy-Generation"] = str(result.generation)
 	return MapReplaced(**result.body)
@@ -217,7 +217,6 @@ async def replace_domains(
 
 @app.patch(
 	"/v1/sites/{name}",
-	dependencies=protected,
 	tags=["Sites"],
 	summary="Update site route",
 	description="Add or change one site route without changing other sites. Example: route `erp` to `2001:db8::10`.",
@@ -226,7 +225,9 @@ async def patch_site(
 	response: Response,
 	name: Annotated[str, Path(description="The site subdomain.")],
 	value: AddressUpdate,
+	authorization: ControlAuthorization,
 ) -> SiteMapping:
+	authorization.require("site", "update", name)
 	result = await cluster.mutate(Mutation(kind="sites", action="update", key=name, address=value.address))
 	response.headers["X-Atlas-Proxy-Generation"] = str(result.generation)
 	return SiteMapping(**result.body)
@@ -234,13 +235,16 @@ async def patch_site(
 
 @app.delete(
 	"/v1/sites/{name}",
-	dependencies=protected,
 	tags=["Sites"],
 	status_code=status.HTTP_204_NO_CONTENT,
 	summary="Remove site route",
 	description="Remove one site route when it no longer needs proxy traffic. This succeeds when the site is absent.",
 )
-async def delete_site(name: Annotated[str, Path(description="The site subdomain.")]) -> Response:
+async def delete_site(
+	name: Annotated[str, Path(description="The site subdomain.")],
+	authorization: ControlAuthorization,
+) -> Response:
+	authorization.require("site", "delete", name)
 	result = await cluster.mutate(Mutation(kind="sites", action="delete", key=name))
 	return Response(
 		status_code=status.HTTP_204_NO_CONTENT,
@@ -250,7 +254,6 @@ async def delete_site(name: Annotated[str, Path(description="The site subdomain.
 
 @app.patch(
 	"/v1/domains/{domain}",
-	dependencies=protected,
 	tags=["Domains"],
 	summary="Update domain route",
 	description="Add or change one custom-domain route without changing other domains. Example: route `www.example.com` to `2001:db8::20`.",
@@ -259,7 +262,9 @@ async def patch_domain(
 	response: Response,
 	domain: Annotated[str, Path(description="The complete custom domain.")],
 	value: AddressUpdate,
+	authorization: ControlAuthorization,
 ) -> DomainMapping:
+	authorization.require("domain", "update", domain)
 	result = await cluster.mutate(
 		Mutation(kind="domains", action="update", key=domain, address=value.address)
 	)
@@ -269,13 +274,16 @@ async def patch_domain(
 
 @app.delete(
 	"/v1/domains/{domain}",
-	dependencies=protected,
 	tags=["Domains"],
 	status_code=status.HTTP_204_NO_CONTENT,
 	summary="Remove domain route",
 	description="Remove one custom-domain route when it no longer needs proxy traffic. This succeeds when the domain is absent.",
 )
-async def delete_domain(domain: Annotated[str, Path(description="The complete custom domain.")]) -> Response:
+async def delete_domain(
+	domain: Annotated[str, Path(description="The complete custom domain.")],
+	authorization: ControlAuthorization,
+) -> Response:
+	authorization.require("domain", "delete", domain)
 	result = await cluster.mutate(Mutation(kind="domains", action="delete", key=domain))
 	return Response(
 		status_code=status.HTTP_204_NO_CONTENT,
@@ -283,9 +291,10 @@ async def delete_domain(domain: Annotated[str, Path(description="The complete cu
 	)
 
 
-@app.get("/v1/cluster/status", dependencies=protected, tags=["Health"])
-async def cluster_status() -> dict[str, object]:
+@app.get("/v1/cluster/status", tags=["Health"])
+async def cluster_status(authorization: ControlAuthorization) -> dict[str, object]:
 	"""Return the local cluster status."""
+	authorization.require("cluster", "read")
 	return cluster.status()
 
 

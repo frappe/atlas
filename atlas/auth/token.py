@@ -1,70 +1,61 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import Any
 
 import frappe
+import jwt
 
-if TYPE_CHECKING:
-	from jwt import PyJWKClient
-
-JWKS_ALGORITHMS = (
-	"RS256",
-	"RS384",
-	"RS512",
-	"ES256",
-	"ES384",
-	"ES512",
-	"PS256",
-	"PS384",
-	"PS512",
-	"EdDSA",
-)
+from atlas.auth.jwks import issuer_for_key_id, trusted_keys
 
 
-class CentralTokenValidator:
-	"""Validate the tokens that the central issuer mints for the Atlas API."""
+class TokenValidator:
+	"""Validate issuer-bound tokens for the Atlas API."""
 
-	jwks_clients: ClassVar[dict[str, PyJWKClient]] = {}
-
-	def get_claims(self, token: str) -> dict[str, Any] | None:
-		"""Return the claims of one valid token, or None when it is not usable."""
-		import jwt
-		from jwt import PyJWKClient
-
+	def claims(self, token: str) -> dict[str, Any] | None:
+		"""Return valid Atlas API claims, or None when the token is not usable."""
 		settings = frappe.get_cached_doc("Atlas Settings")
-		jwks_url = settings.central_jwks_url
-		if not token or not jwks_url:
+		if not token:
 			return None
 
 		try:
-			kid = jwt.get_unverified_header(token).get("kid")
-			if not isinstance(kid, str):
+			header = jwt.get_unverified_header(token)
+			key_id = header.get("kid")
+			if not isinstance(key_id, str) or header.get("alg") != "EdDSA":
 				return None
 
-			# An unknown key ID must not make an attacker refetch the key set.
-			signing_key = PyJWKClient.match_kid(self.get_client(jwks_url).get_signing_keys(), kid)
-			if signing_key is None:
+			issuer = issuer_for_key_id(key_id, settings.region_id)
+			key = trusted_keys().key(key_id)
+			if issuer is None or key is None:
 				return None
 
-			return jwt.decode(
+			claims = jwt.decode(
 				token,
-				signing_key.key,
-				algorithms=JWKS_ALGORITHMS,
+				key.key,
+				algorithms=["EdDSA"],
 				audience=settings.admin_audience_id,
-				options={"require": ["exp", "aud"], "verify_aud": True},
+				issuer=issuer,
+				options={
+					"require": ["iss", "sub", "aud", "scope", "tenant", "iat", "exp"],
+					"verify_aud": True,
+				},
 			)
-		except jwt.PyJWTError:
+			if claims.get("aud") != settings.admin_audience_id:
+				return None
+			return claims if self._has_atlas_authority(claims) else None
+		except jwt.PyJWTError, ValueError, TypeError:
 			return None
 
-	@classmethod
-	def get_client(cls, jwks_url: str) -> PyJWKClient:
-		"""Return the cached key set client for one issuer."""
-		from jwt import PyJWKClient
+	def _has_atlas_authority(self, claims: dict[str, Any]) -> bool:
+		"""Accept one unrestricted administrative token. AtlasIdentity validates the tenant."""
+		if claims.get("scope") != "*":
+			return False
+		if claims.get("constraints", {}) != {}:
+			return False
 
-		client = cls.jwks_clients.get(jwks_url)
-		if client is None:
-			# A real user agent. The urllib default is blocked as a bot by some issuers.
-			client = PyJWKClient(jwks_url, headers={"User-Agent": "atlas"})
-			cls.jwks_clients[jwks_url] = client
+		if not all(_is_timestamp(claims.get(name)) for name in ("iat", "exp")):
+			return False
+		return "nbf" not in claims or _is_timestamp(claims["nbf"])
 
-		return client
+
+def _is_timestamp(value: Any) -> bool:
+	return isinstance(value, int | float) and not isinstance(value, bool)

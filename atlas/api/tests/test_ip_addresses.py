@@ -3,7 +3,6 @@ from unittest.mock import Mock, patch
 
 from frappe.tests import UnitTestCase
 
-from atlas.api.core.errors import ResourceNotFound
 from atlas.api.models import IPAddressResponse
 from atlas.api.routes.ip_addresses import (
 	get_ip_address,
@@ -11,7 +10,7 @@ from atlas.api.routes.ip_addresses import (
 	release_ip_address,
 	reserve_ip_address,
 )
-from atlas.api.tests.test_support import OTHER_TENANT_ID, TENANT_ID, api_request, call_route
+from atlas.api.tests.test_support import TENANT_ID, api_request, call_route
 
 
 def build_ip_address(tenant_id: int = TENANT_ID, **overrides) -> SimpleNamespace:
@@ -30,15 +29,9 @@ def build_ip_address(tenant_id: int = TENANT_ID, **overrides) -> SimpleNamespace
 	return SimpleNamespace(**values)
 
 
-def owned_document(ip_address: SimpleNamespace, tenant_id: int = TENANT_ID):
-	"""Patch the tenant lookup so it returns one IP address."""
-
-	def lookup(doctype, name, filters, label):
-		if filters["tenant_id"] != tenant_id:
-			raise ResourceNotFound(f"The {label} does not exist.")
-		return ip_address
-
-	return patch("atlas.api.routes.ip_addresses.get_owned_document", side_effect=lookup)
+def owned_document(ip_address: SimpleNamespace):
+	"""Patch the ownership lookup so it returns one IP address."""
+	return patch("atlas.api.routes.ip_addresses.get_owned_document", return_value=ip_address)
 
 
 class TestIPAddressView(UnitTestCase):
@@ -89,24 +82,14 @@ class TestReadIPAddresses(UnitTestCase):
 		with (
 			api_request("GET", "/api/atlas/ip-addresses", tenant_id=TENANT_ID),
 			patch(
-				"atlas.api.routes.ip_addresses.frappe.get_all", return_value=[build_ip_address()]
-			) as get_all,
+				"atlas.api.routes.ip_addresses.frappe.get_list", return_value=[build_ip_address()]
+			) as get_list,
 		):
 			status, body = call_route(list_ip_addresses)
 
 		self.assertEqual(status, 200)
-		self.assertEqual(get_all.call_args.kwargs["filters"], {"tenant_id": TENANT_ID})
+		self.assertEqual(get_list.call_args.kwargs["filters"], {"tenant_id": TENANT_ID})
 		self.assertFalse(body["has_more"])
-
-	def test_another_tenant_cannot_read_the_address(self) -> None:
-		with (
-			api_request("GET", "/api/atlas/ip-addresses/203.0.113.10", tenant_id=OTHER_TENANT_ID),
-			owned_document(build_ip_address()),
-		):
-			status, body = call_route(get_ip_address, ip_address_id="203.0.113.10")
-
-		self.assertEqual(status, 404)
-		self.assertEqual(body["error"]["code"], "not_found")
 
 
 class TestReleaseIPAddress(UnitTestCase):

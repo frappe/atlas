@@ -53,12 +53,12 @@
    "label": "Enabled"
   },
   {
-   "default": "System",
+   "default": "system",
    "fieldname": "image_type",
    "fieldtype": "Select",
    "in_list_view": 1,
    "label": "Image Type",
-   "options": "System\nMachine",
+   "options": "system\nmachine",
    "reqd": 1,
    "set_only_once": 1
   },
@@ -196,7 +196,7 @@
    "read_only": 1
   },
   {
-   "depends_on": "eval:doc.image_type === 'Machine'",
+   "depends_on": "eval:doc.image_type === 'machine'",
    "fieldname": "section_break_source",
    "fieldtype": "Section Break",
    "label": "Machine Image Source"
@@ -215,7 +215,7 @@
   },
   {
    "collapsible": 1,
-   "depends_on": "eval:doc.image_type === 'Machine'",
+   "depends_on": "eval:doc.image_type === 'machine'",
    "fieldname": "section_break_transfer",
    "fieldtype": "Section Break",
    "label": "Transfer"

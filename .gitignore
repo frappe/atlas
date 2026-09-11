@@ -77,4 +77,5 @@ jspm_packages/
 
 # tmp
 scripts/.dev-jwks-key.pem
+scripts/.dev-jwks-ed25519-key.pem
 .tmp

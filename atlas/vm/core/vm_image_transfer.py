@@ -32,6 +32,7 @@ class VirtualMachineImageTransferService:
 		virtual_machine: VirtualMachine,
 		title: str,
 		*,
+		image_type: str = "machine",
 		cache_image: bool = False,
 		memory_snapshot: bool = False,
 	) -> str:
@@ -57,7 +58,7 @@ class VirtualMachineImageTransferService:
 			{
 				"doctype": "Virtual Machine Image",
 				"title": title,
-				"image_type": "Machine",
+				"image_type": image_type,
 				"tenant_id": virtual_machine.tenant_id,
 				"status": "Pending",
 				"enabled": 1,
@@ -271,7 +272,7 @@ def enqueue_pending_machine_image_transfers() -> None:
 	names = frappe.get_all(
 		"Virtual Machine Image",
 		filters={
-			"image_type": "Machine",
+			"image_type": "machine",
 			"status": ["in", ["Pending", "Uploading", "Completing", "Cleaning"]],
 		},
 		pluck="name",

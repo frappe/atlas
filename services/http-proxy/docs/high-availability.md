@@ -64,7 +64,7 @@ The readiness route returns `503` until the node has synchronized and knows a le
 
 ## Authentication
 
-Public API requests use the regional proxy password or a JSON Web Token (JWT). The JWT must come from the configured JSON Web Key Set issuer.
+Public API requests use the regional Proxy password or a JSON Web Token. Each node gets the merged regional key set from Atlas. It accepts Central and its regional Atlas issuer. The key namespace must match the issuer.
 
 Peer requests use the regional proxy password in the `X-Atlas-Cluster-Password` header. Public requests use the same password as a Bearer credential.
 

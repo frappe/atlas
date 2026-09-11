@@ -4,7 +4,7 @@
 
 ## Authentication
 
-The Atlas API reads two headers on each request. `X-Atlas-Central-Token` holds the token of the central issuer. `X-Tenant-ID` holds the tenant that owns the resource. The generated client sends the tenant header as the `x_tenant_id` argument. Give the token to the client as a default header.
+The Atlas API reads a Bearer token. The `tenant` claim of the token decides the tenant. A Central token uses `tenant=*` and must also send the `X-Tenant-ID` header, which the generated client accepts as the optional `x_tenant_id` argument. A regional token can omit the header. If it sends the header, the value must match the token tenant.
 
 `scripts/dev-jwks-server.py` mints a token for a local site. Start it, set `central_jwks_url` in Atlas Settings to its `/jwks` URL, and type the `admin_audience_id` of the site to get a token.
 
@@ -18,7 +18,7 @@ from atlas_client.api.vm_actions import create_virtual_machine_console_token
 from atlas_client.models import ConsoleTokenPayload, ConsoleTokenPayloadMode
 
 BASE_URL = "https://atlas.localhost"
-client = Client(base_url=BASE_URL, headers={"X-Atlas-Central-Token": CENTRAL_TOKEN})
+client = Client(base_url=BASE_URL, token=CENTRAL_TOKEN)
 
 with client as client:
     console = create_virtual_machine_console_token.sync(

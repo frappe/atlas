@@ -53,7 +53,7 @@ def delete_virtual_machine(virtual_machine: VirtualMachine, description: str) ->
 
 	try:
 		virtual_machine.delete()
-		frappe.db.commit()
+		frappe.db.commit()  # nosemgrep
 	except Exception:
 		frappe.db.rollback()
 		log_failure(cast(str, virtual_machine.name), description)

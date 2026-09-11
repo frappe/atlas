@@ -46,7 +46,7 @@ class VirtualMachineImage(Document):
 		image_object_key: DF.Data | None
 		image_sha256: DF.Data | None
 		image_size_mib: DF.Int
-		image_type: DF.Literal["System", "Machine"]
+		image_type: DF.Literal["system", "machine"]
 		kernel_multipart_upload_id: DF.Data | None
 		kernel_object_key: DF.Data | None
 		kernel_sha256: DF.Data | None
@@ -118,7 +118,7 @@ class VirtualMachineImage(Document):
 	@property
 	def is_shared(self) -> bool:
 		"""Return whether every tenant can read and boot this image."""
-		return self.image_type == "System"
+		return self.image_type == "system"
 
 	def is_visible_to_tenant(self, tenant_id: int) -> bool:
 		"""Return whether one tenant can read and boot this image."""
@@ -232,7 +232,7 @@ class VirtualMachineImage(Document):
 	def retry_transfer(self) -> None:
 		"""Start the image transfer again, keeping the existing identifiers."""
 		self.check_permission("write")
-		if self.image_type != "Machine" or self.status != "Failed":
+		if self.image_type != "machine" or self.status != "Failed":
 			frappe.throw(_("Only a failed Machine image transfer can be retried."))
 
 		from atlas.vm.core.vm_image_transfer import VirtualMachineImageTransferService

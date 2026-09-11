@@ -36,8 +36,9 @@ host_prefixes = ["site-", "*-vm-"]
 password_hash = "$2b$12$replace-with-the-current-bcrypt-hash"
 previous_password_hash = "$2b$12$replace-with-the-previous-bcrypt-hash"
 previous_password_valid_until = 1788800000
-jwks_url = "https://issuer.example.com/jwks.json"
-jwks_audience_id = "atlas-proxy-control"
+jwks_url = "https://atlas-42.example.com/api/atlas/jwks.json"
+jwks_audience_id = "atlas-proxy:42"
+jwks_issuers = ["central", "atlas:42"]
 
 [cluster]
 node_id = "proxy-001"
@@ -69,7 +70,7 @@ private_key_pem = '''
 
 `auto_proxy.address_prefix` contains the first two hextets of the regional VM mesh address. `auto_proxy.host_prefixes` lists literal prefixes. A leading `*` matches any non-empty prefix before the remaining text. Leave the section out to turn static routing off. Read [`openresty.md`](openresty.md) for the label form.
 
-`auth` protects the public map API. The daemon accepts the current password hash. It accepts the previous hash until `previous_password_valid_until`. This value is a Unix time in seconds. The daemon also accepts JWTs from `jwks_url` when the audience matches `jwks_audience_id`.
+`auth` protects the public map API. The daemon accepts the current password hash. It accepts the earlier hash until `previous_password_valid_until`. This value is a Unix time in seconds. The daemon gets Central and regional Atlas keys from `jwks_url`. The token audience must match `jwks_audience_id`. A token issuer must occur in `jwks_issuers` and match the key namespace.
 
 `cluster` protects internal peer routes. It contains the raw regional passwords. It accepts the previous password until `previous_password_valid_until`. The peer array must include the local `node_id` and unique node IDs. It supports at most 5 entries. Every peer address must use HTTPS.
 

@@ -19,7 +19,7 @@ DOWNLOAD = {
 }
 
 
-def insert_image(tenant_id: int, image_type: str = "Machine", **overrides) -> str:
+def insert_image(tenant_id: int, image_type: str = "machine", **overrides) -> str:
 	"""Insert one Available virtual machine image and return its name."""
 	values = {
 		"doctype": "Virtual Machine Image",
@@ -49,7 +49,7 @@ class TestImageView(UnitTestCase):
 				name="image-1",
 				tenant_id=TENANT_ID,
 				title="Ubuntu 24.04",
-				image_type="Machine",
+				image_type="machine",
 				platform="amd64",
 				operating_system="Ubuntu",
 				operating_system_version="24.04",
@@ -76,8 +76,8 @@ class TestImageView(UnitTestCase):
 
 class TestImageAccess(IntegrationTestCase):
 	def setUp(self) -> None:
-		self.system_image = insert_image(TENANT_ID, "System")
-		self.zero_tenant_image = insert_image(0, "System")
+		self.system_image = insert_image(TENANT_ID, "system")
+		self.zero_tenant_image = insert_image(0, "system")
 		self.own_image = insert_image(TENANT_ID)
 		self.other_image = insert_image(OTHER_TENANT_ID)
 
@@ -178,8 +178,16 @@ class TestImageDeletion(IntegrationTestCase):
 		self.assertEqual(body["id"], image_name)
 		request_deletion.assert_called_once()
 
-	def test_a_shared_system_image_cannot_be_deleted(self) -> None:
-		image_name = insert_image(TENANT_ID, "System")
+	def test_the_owner_deletes_its_own_system_image(self) -> None:
+		image_name = insert_image(TENANT_ID, "system")
+		status, body, request_deletion = self.delete(image_name, TENANT_ID)
+
+		self.assertEqual(status, 202)
+		self.assertEqual(body["id"], image_name)
+		request_deletion.assert_called_once()
+
+	def test_a_system_image_of_another_tenant_cannot_be_deleted(self) -> None:
+		image_name = insert_image(0, "system")
 		status, body, request_deletion = self.delete(image_name, TENANT_ID)
 
 		self.assertEqual(status, 409)

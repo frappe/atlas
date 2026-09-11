@@ -77,7 +77,8 @@ def sync_detailed(
     """ Create VM
 
      Creates a tenant VM from an image and requests the specified compute, disk, network, and guest
-    configuration.
+    configuration. Only tenant 0 can set `is_privileged`, which lets the VM reach every tenant through
+    the mesh.
 
     Args:
         x_tenant_id (int):
@@ -114,7 +115,8 @@ def sync(
     """ Create VM
 
      Creates a tenant VM from an image and requests the specified compute, disk, network, and guest
-    configuration.
+    configuration. Only tenant 0 can set `is_privileged`, which lets the VM reach every tenant through
+    the mesh.
 
     Args:
         x_tenant_id (int):
@@ -146,7 +148,8 @@ async def asyncio_detailed(
     """ Create VM
 
      Creates a tenant VM from an image and requests the specified compute, disk, network, and guest
-    configuration.
+    configuration. Only tenant 0 can set `is_privileged`, which lets the VM reach every tenant through
+    the mesh.
 
     Args:
         x_tenant_id (int):
@@ -183,7 +186,8 @@ async def asyncio(
     """ Create VM
 
      Creates a tenant VM from an image and requests the specified compute, disk, network, and guest
-    configuration.
+    configuration. Only tenant 0 can set `is_privileged`, which lets the VM reach every tenant through
+    the mesh.
 
     Args:
         x_tenant_id (int):

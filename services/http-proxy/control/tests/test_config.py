@@ -24,7 +24,8 @@ password_hash = "current-hash"
 previous_password_hash = "previous-hash"
 previous_password_valid_until = 1788800000
 jwks_url = "https://issuer.example.com/jwks.json"
-jwks_audience_id = "atlas-proxy-control"
+jwks_audience_id = "atlas-proxy:42"
+jwks_issuers = ["central", "atlas:42"]
 
 [cluster]
 node_id = "proxy-001"
@@ -73,7 +74,8 @@ def test_a_full_file_is_read(tmp_path: Path):
 
 	assert config.admin_socket == "/run/nginx/other.sock"
 	assert config.cert_dir == Path("/srv/certs")
-	assert config.auth.jwks_audience_id == "atlas-proxy-control"
+	assert config.auth.jwks_audience_id == "atlas-proxy:42"
+	assert config.auth.jwks_issuers == ("central", "atlas:42")
 	assert config.auth.password_hash == "current-hash"
 	assert config.auth.previous_password_hash == "previous-hash"
 	assert config.auth.previous_password_valid_until == 1788800000
@@ -105,6 +107,22 @@ def test_a_partial_file_keeps_the_defaults(tmp_path: Path):
 	assert config.auto_proxy_address_prefix == ""
 	assert config.auto_proxy_host_prefixes == ()
 	assert config.tls.wildcard_domain == "*.par-1.example.com"
+
+
+@pytest.mark.parametrize(
+	"auth",
+	[
+		'jwks_audience_id = "atlas-proxy:42"\njwks_issuers = ["central", "atlas:43"]',
+		'jwks_audience_id = "atlas-proxy:42"\njwks_issuers = ["central"]',
+		'jwks_audience_id = "atlas-proxy:42"\njwks_issuers = ["central", "other"]',
+	],
+)
+def test_jwks_issuer_and_audience_must_name_one_region(tmp_path: Path, auth: str):
+	path = tmp_path / "proxy-control.toml"
+	path.write_text(f"{TLS_SECTION}\n[auth]\n{auth}\n")
+
+	with pytest.raises(ConfigError):
+		load(path)
 
 
 def test_malformed_toml_is_refused(tmp_path: Path):

@@ -154,6 +154,11 @@
             "default": null,
             "title": "Ip Address Id"
           },
+          "is_privileged": {
+            "default": false,
+            "title": "Is Privileged",
+            "type": "boolean"
+          },
           "memory_mib": {
             "exclusiveMinimum": 0,
             "title": "Memory Mib",
@@ -506,6 +511,74 @@
         "title": "ImageResponse",
         "type": "object"
       },
+      "JSONWebKey": {
+        "description": "One public Ed25519 signature key.",
+        "properties": {
+          "alg": {
+            "const": "EdDSA",
+            "title": "Alg",
+            "type": "string"
+          },
+          "crv": {
+            "const": "Ed25519",
+            "title": "Crv",
+            "type": "string"
+          },
+          "key_ops": {
+            "items": {
+              "const": "verify",
+              "type": "string"
+            },
+            "title": "Key Ops",
+            "type": "array"
+          },
+          "kid": {
+            "title": "Kid",
+            "type": "string"
+          },
+          "kty": {
+            "const": "OKP",
+            "title": "Kty",
+            "type": "string"
+          },
+          "use": {
+            "const": "sig",
+            "title": "Use",
+            "type": "string"
+          },
+          "x": {
+            "title": "X",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kty",
+          "crv",
+          "x",
+          "kid",
+          "alg",
+          "use"
+        ],
+        "title": "JSONWebKey",
+        "type": "object"
+      },
+      "JSONWebKeySetResponse": {
+        "description": "The public keys that this Atlas region trusts.",
+        "properties": {
+          "keys": {
+            "items": {
+              "$ref": "#/components/schemas/JSONWebKey"
+            },
+            "title": "Keys",
+            "type": "array"
+          }
+        },
+        "required": [
+          "keys"
+        ],
+        "title": "JSONWebKeySetResponse",
+        "type": "object"
+      },
       "MetadataReplacementPayload": {
         "additionalProperties": false,
         "description": "The complete custom metadata map.",
@@ -729,12 +802,21 @@
       },
       "SnapshotPayload": {
         "additionalProperties": false,
-        "description": "Values that create one Machine image from a virtual machine.",
+        "description": "Values that create one image from a virtual machine.",
         "properties": {
           "cache_image": {
             "default": false,
             "title": "Cache Image",
             "type": "boolean"
+          },
+          "image_type": {
+            "default": "machine",
+            "enum": [
+              "machine",
+              "system"
+            ],
+            "title": "Image Type",
+            "type": "string"
           },
           "memory_snapshot": {
             "default": false,
@@ -753,23 +835,76 @@
         "title": "SnapshotPayload",
         "type": "object"
       },
+      "VirtualMachineCompute": {
+        "description": "The compute shape of one virtual machine.",
+        "properties": {
+          "memory_mib": {
+            "title": "Memory Mib",
+            "type": "integer"
+          },
+          "sleep_after_idle_seconds": {
+            "title": "Sleep After Idle Seconds",
+            "type": "integer"
+          },
+          "vcpus": {
+            "title": "Vcpus",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "vcpus",
+          "memory_mib",
+          "sleep_after_idle_seconds"
+        ],
+        "title": "VirtualMachineCompute",
+        "type": "object"
+      },
       "VirtualMachineDetailResponse": {
-        "description": "A stored virtual machine with its live host state.",
+        "description": "One virtual machine with its state, addresses, and guest configuration.",
         "examples": [
           {
+            "compute": {
+              "memory_mib": 2048,
+              "sleep_after_idle_seconds": 0,
+              "vcpus": 2
+            },
             "created_at": 1788834165,
             "current_state": "running",
             "desired_state": "running",
-            "disk_mib": 20480,
+            "disk": {
+              "iops": 0,
+              "size_mib": 20480,
+              "throughput_mibps": 0,
+              "used_mib": 8123
+            },
+            "error": null,
+            "guest": {
+              "hostname": "worker-1",
+              "metadata": {
+                "role": "worker"
+              },
+              "ssh_keys": [
+                "ssh-ed25519 AAAA"
+              ]
+            },
             "id": "vm-00001",
             "image_id": "8f1c2d3e4b5a6978",
-            "memory_mib": 2048,
-            "sleep_after_idle_seconds": 0,
-            "tenant_id": 7,
-            "vcpus": 2
+            "is_privileged": false,
+            "network": {
+              "egress": "uplink",
+              "mac": "52:54:00:12:34:56",
+              "mesh_ipv6": "fdaa:1::5",
+              "private_network_throughput_mibps": 0,
+              "public_ipv4": "203.0.113.10",
+              "public_network_throughput_mibps": 0
+            },
+            "tenant_id": 7
           }
         ],
         "properties": {
+          "compute": {
+            "$ref": "#/components/schemas/VirtualMachineCompute"
+          },
           "created_at": {
             "title": "Created At",
             "type": "integer"
@@ -789,9 +924,22 @@
             ],
             "title": "Desired State"
           },
-          "disk_mib": {
-            "title": "Disk Mib",
-            "type": "integer"
+          "disk": {
+            "$ref": "#/components/schemas/VirtualMachineDisk"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "guest": {
+            "$ref": "#/components/schemas/VirtualMachineGuest"
           },
           "id": {
             "title": "Id",
@@ -801,20 +949,15 @@
             "title": "Image Id",
             "type": "string"
           },
-          "memory_mib": {
-            "title": "Memory Mib",
-            "type": "integer"
+          "is_privileged": {
+            "title": "Is Privileged",
+            "type": "boolean"
           },
-          "sleep_after_idle_seconds": {
-            "title": "Sleep After Idle Seconds",
-            "type": "integer"
+          "network": {
+            "$ref": "#/components/schemas/VirtualMachineNetwork"
           },
           "tenant_id": {
             "title": "Tenant Id",
-            "type": "integer"
-          },
-          "vcpus": {
-            "title": "Vcpus",
             "type": "integer"
           }
         },
@@ -822,15 +965,90 @@
           "id",
           "tenant_id",
           "image_id",
-          "vcpus",
-          "memory_mib",
-          "disk_mib",
-          "sleep_after_idle_seconds",
           "created_at",
+          "is_privileged",
           "desired_state",
-          "current_state"
+          "current_state",
+          "error",
+          "compute",
+          "disk",
+          "network",
+          "guest"
         ],
         "title": "VirtualMachineDetailResponse",
+        "type": "object"
+      },
+      "VirtualMachineDisk": {
+        "description": "The disk size and its rate limits.",
+        "properties": {
+          "iops": {
+            "title": "Iops",
+            "type": "integer"
+          },
+          "size_mib": {
+            "title": "Size Mib",
+            "type": "integer"
+          },
+          "throughput_mibps": {
+            "title": "Throughput Mibps",
+            "type": "integer"
+          },
+          "used_mib": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Used Mib"
+          }
+        },
+        "required": [
+          "size_mib",
+          "throughput_mibps",
+          "iops",
+          "used_mib"
+        ],
+        "title": "VirtualMachineDisk",
+        "type": "object"
+      },
+      "VirtualMachineGuest": {
+        "description": "The guest configuration of one virtual machine.",
+        "properties": {
+          "hostname": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hostname"
+          },
+          "metadata": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Metadata",
+            "type": "object"
+          },
+          "ssh_keys": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Ssh Keys",
+            "type": "array"
+          }
+        },
+        "required": [
+          "hostname",
+          "ssh_keys",
+          "metadata"
+        ],
+        "title": "VirtualMachineGuest",
         "type": "object"
       },
       "VirtualMachineListResponse": {
@@ -913,6 +1131,73 @@
         "title": "VirtualMachineListResponse",
         "type": "object"
       },
+      "VirtualMachineNetwork": {
+        "description": "The addresses and network limits of one virtual machine.",
+        "properties": {
+          "egress": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Egress"
+          },
+          "mac": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mac"
+          },
+          "mesh_ipv6": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mesh Ipv6"
+          },
+          "private_network_throughput_mibps": {
+            "title": "Private Network Throughput Mibps",
+            "type": "integer"
+          },
+          "public_ipv4": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Public Ipv4"
+          },
+          "public_network_throughput_mibps": {
+            "title": "Public Network Throughput Mibps",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "egress",
+          "public_ipv4",
+          "mesh_ipv6",
+          "mac",
+          "private_network_throughput_mibps",
+          "public_network_throughput_mibps"
+        ],
+        "title": "VirtualMachineNetwork",
+        "type": "object"
+      },
       "VirtualMachineResponse": {
         "description": "A stored tenant virtual machine.",
         "examples": [
@@ -982,11 +1267,11 @@
         "scheme": "bearer",
         "type": "http"
       },
-      "Central Token Authentication": {
-        "description": "Use: X-Atlas-Central-Token <token>.",
-        "in": "header",
-        "name": "X-Atlas-Central-Token",
-        "type": "apiKey"
+      "Service Token Authentication": {
+        "bearerFormat": "JWT",
+        "description": "Use a Central or regional Atlas service token.",
+        "scheme": "bearer",
+        "type": "http"
       },
       "Token Based Authentication": {
         "description": "Use: token api_key:api_secret. [Learn more](https://docs.frappe.io/framework/user/en/api/rest#1-token-based-authentication)",
@@ -1008,7 +1293,7 @@
         "operationId": "list_images",
         "parameters": [
           {
-            "description": "Tenant that owns the resource, from 1 through 4294967295.",
+            "description": "Tenant that owns the resource, from 0 through 4294967295. A regional token must send the tenant of its own claim, and a Central token (tenant=*) names the tenant it acts for.",
             "in": "header",
             "name": "X-Tenant-ID",
             "required": true,
@@ -1062,7 +1347,7 @@
     },
     "/api/atlas/images/{image_id}": {
       "delete": {
-        "description": "Starts deletion of an unused Available Machine image. A cleanup job removes its stored artifacts and remaining host snapshot data.",
+        "description": "Starts deletion of an unused Available image that the tenant owns. A cleanup job removes its stored artifacts and remaining host snapshot data.",
         "operationId": "delete_image",
         "parameters": [
           {
@@ -1074,7 +1359,7 @@
             }
           },
           {
-            "description": "Tenant that owns the resource, from 1 through 4294967295.",
+            "description": "Tenant that owns the resource, from 0 through 4294967295. A regional token must send the tenant of its own claim, and a Central token (tenant=*) names the tenant it acts for.",
             "in": "header",
             "name": "X-Tenant-ID",
             "required": true,
@@ -1097,7 +1382,7 @@
             "description": "Deletion started. Poll the image route."
           },
           "409": {
-            "description": "A virtual machine uses this image, or the image is not a Machine image."
+            "description": "A virtual machine uses this image, or another tenant owns it."
           }
         },
         "summary": "Delete image",
@@ -1118,7 +1403,7 @@
             }
           },
           {
-            "description": "Tenant that owns the resource, from 1 through 4294967295.",
+            "description": "Tenant that owns the resource, from 0 through 4294967295. A regional token must send the tenant of its own claim, and a Central token (tenant=*) names the tenant it acts for.",
             "in": "header",
             "name": "X-Tenant-ID",
             "required": true,
@@ -1161,7 +1446,7 @@
             }
           },
           {
-            "description": "Tenant that owns the resource, from 1 through 4294967295.",
+            "description": "Tenant that owns the resource, from 0 through 4294967295. A regional token must send the tenant of its own claim, and a Central token (tenant=*) names the tenant it acts for.",
             "in": "header",
             "name": "X-Tenant-ID",
             "required": true,
@@ -1209,7 +1494,7 @@
         "operationId": "list_ip_addresses",
         "parameters": [
           {
-            "description": "Tenant that owns the resource, from 1 through 4294967295.",
+            "description": "Tenant that owns the resource, from 0 through 4294967295. A regional token must send the tenant of its own claim, and a Central token (tenant=*) names the tenant it acts for.",
             "in": "header",
             "name": "X-Tenant-ID",
             "required": true,
@@ -1265,7 +1550,7 @@
         "operationId": "reserve_ip_address",
         "parameters": [
           {
-            "description": "Tenant that owns the resource, from 1 through 4294967295.",
+            "description": "Tenant that owns the resource, from 0 through 4294967295. A regional token must send the tenant of its own claim, and a Central token (tenant=*) names the tenant it acts for.",
             "in": "header",
             "name": "X-Tenant-ID",
             "required": true,
@@ -1324,7 +1609,7 @@
             }
           },
           {
-            "description": "Tenant that owns the resource, from 1 through 4294967295.",
+            "description": "Tenant that owns the resource, from 0 through 4294967295. A regional token must send the tenant of its own claim, and a Central token (tenant=*) names the tenant it acts for.",
             "in": "header",
             "name": "X-Tenant-ID",
             "required": true,
@@ -1361,7 +1646,7 @@
             }
           },
           {
-            "description": "Tenant that owns the resource, from 1 through 4294967295.",
+            "description": "Tenant that owns the resource, from 0 through 4294967295. A regional token must send the tenant of its own claim, and a Central token (tenant=*) names the tenant it acts for.",
             "in": "header",
             "name": "X-Tenant-ID",
             "required": true,
@@ -1390,13 +1675,35 @@
         ]
       }
     },
+    "/api/atlas/jwks.json": {
+      "get": {
+        "operationId": "get_jwks",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JSONWebKeySetResponse"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "security": [],
+        "summary": "JSON Web Key Set (JWKS)",
+        "tags": [
+          "Atlas"
+        ]
+      }
+    },
     "/api/atlas/virtual-machines": {
       "get": {
         "description": "Returns one page of tenant VM records in newest-first order, with the state each host last reported. This request does not contact the host.",
         "operationId": "list_virtual_machines",
         "parameters": [
           {
-            "description": "Tenant that owns the resource, from 1 through 4294967295.",
+            "description": "Tenant that owns the resource, from 0 through 4294967295. A regional token must send the tenant of its own claim, and a Central token (tenant=*) names the tenant it acts for.",
             "in": "header",
             "name": "X-Tenant-ID",
             "required": true,
@@ -1448,11 +1755,11 @@
         ]
       },
       "post": {
-        "description": "Creates a tenant VM from an image and requests the specified compute, disk, network, and guest configuration.",
+        "description": "Creates a tenant VM from an image and requests the specified compute, disk, network, and guest configuration. Only tenant 0 can set `is_privileged`, which lets the VM reach every tenant through the mesh.",
         "operationId": "create_virtual_machine",
         "parameters": [
           {
-            "description": "Tenant that owns the resource, from 1 through 4294967295.",
+            "description": "Tenant that owns the resource, from 0 through 4294967295. A regional token must send the tenant of its own claim, and a Central token (tenant=*) names the tenant it acts for.",
             "in": "header",
             "name": "X-Tenant-ID",
             "required": true,
@@ -1515,7 +1822,7 @@
             }
           },
           {
-            "description": "Tenant that owns the resource, from 1 through 4294967295.",
+            "description": "Tenant that owns the resource, from 0 through 4294967295. A regional token must send the tenant of its own claim, and a Central token (tenant=*) names the tenant it acts for.",
             "in": "header",
             "name": "X-Tenant-ID",
             "required": true,
@@ -1556,7 +1863,7 @@
             }
           },
           {
-            "description": "Tenant that owns the resource, from 1 through 4294967295.",
+            "description": "Tenant that owns the resource, from 0 through 4294967295. A regional token must send the tenant of its own claim, and a Central token (tenant=*) names the tenant it acts for.",
             "in": "header",
             "name": "X-Tenant-ID",
             "required": true,
@@ -1599,7 +1906,7 @@
             }
           },
           {
-            "description": "Tenant that owns the resource, from 1 through 4294967295.",
+            "description": "Tenant that owns the resource, from 0 through 4294967295. A regional token must send the tenant of its own claim, and a Central token (tenant=*) names the tenant it acts for.",
             "in": "header",
             "name": "X-Tenant-ID",
             "required": true,
@@ -1655,7 +1962,7 @@
             }
           },
           {
-            "description": "Tenant that owns the resource, from 1 through 4294967295.",
+            "description": "Tenant that owns the resource, from 0 through 4294967295. A regional token must send the tenant of its own claim, and a Central token (tenant=*) names the tenant it acts for.",
             "in": "header",
             "name": "X-Tenant-ID",
             "required": true,
@@ -1698,7 +2005,7 @@
             }
           },
           {
-            "description": "Tenant that owns the resource, from 1 through 4294967295.",
+            "description": "Tenant that owns the resource, from 0 through 4294967295. A regional token must send the tenant of its own claim, and a Central token (tenant=*) names the tenant it acts for.",
             "in": "header",
             "name": "X-Tenant-ID",
             "required": true,
@@ -1741,7 +2048,7 @@
             }
           },
           {
-            "description": "Tenant that owns the resource, from 1 through 4294967295.",
+            "description": "Tenant that owns the resource, from 0 through 4294967295. A regional token must send the tenant of its own claim, and a Central token (tenant=*) names the tenant it acts for.",
             "in": "header",
             "name": "X-Tenant-ID",
             "required": true,
@@ -1772,7 +2079,7 @@
     },
     "/api/atlas/virtual-machines/{virtual_machine_id}/actions/snapshot": {
       "post": {
-        "description": "Creates a reusable Machine image from the current VM disk. The new image belongs to the same tenant.\n\nIf `memory_snapshot` is true, Atlas also records the VM shape for compatible warm starts.",
+        "description": "Creates a reusable Machine image from the current VM disk. The new image belongs to the same tenant.\n\nIf `memory_snapshot` is true, Atlas also records the VM shape for compatible warm starts. Only tenant 0 can set `image_type` to `system`, which shares the image with every tenant, and only tenant 0 can set `cache_image` and `memory_snapshot`. These values cannot change after creation.",
         "operationId": "create_virtual_machine_snapshot",
         "parameters": [
           {
@@ -1784,7 +2091,7 @@
             }
           },
           {
-            "description": "Tenant that owns the resource, from 1 through 4294967295.",
+            "description": "Tenant that owns the resource, from 0 through 4294967295. A regional token must send the tenant of its own claim, and a Central token (tenant=*) names the tenant it acts for.",
             "in": "header",
             "name": "X-Tenant-ID",
             "required": true,
@@ -1800,6 +2107,7 @@
             "application/json": {
               "example": {
                 "cache_image": false,
+                "image_type": "machine",
                 "memory_snapshot": false,
                 "title": "worker-1 golden"
               },
@@ -1842,7 +2150,7 @@
             }
           },
           {
-            "description": "Tenant that owns the resource, from 1 through 4294967295.",
+            "description": "Tenant that owns the resource, from 0 through 4294967295. A regional token must send the tenant of its own claim, and a Central token (tenant=*) names the tenant it acts for.",
             "in": "header",
             "name": "X-Tenant-ID",
             "required": true,
@@ -1885,7 +2193,7 @@
             }
           },
           {
-            "description": "Tenant that owns the resource, from 1 through 4294967295.",
+            "description": "Tenant that owns the resource, from 0 through 4294967295. A regional token must send the tenant of its own claim, and a Central token (tenant=*) names the tenant it acts for.",
             "in": "header",
             "name": "X-Tenant-ID",
             "required": true,
@@ -1928,7 +2236,7 @@
             }
           },
           {
-            "description": "Tenant that owns the resource, from 1 through 4294967295.",
+            "description": "Tenant that owns the resource, from 0 through 4294967295. A regional token must send the tenant of its own claim, and a Central token (tenant=*) names the tenant it acts for.",
             "in": "header",
             "name": "X-Tenant-ID",
             "required": true,
@@ -1985,7 +2293,7 @@
             }
           },
           {
-            "description": "Tenant that owns the resource, from 1 through 4294967295.",
+            "description": "Tenant that owns the resource, from 0 through 4294967295. A regional token must send the tenant of its own claim, and a Central token (tenant=*) names the tenant it acts for.",
             "in": "header",
             "name": "X-Tenant-ID",
             "required": true,
@@ -2042,7 +2350,7 @@
             }
           },
           {
-            "description": "Tenant that owns the resource, from 1 through 4294967295.",
+            "description": "Tenant that owns the resource, from 0 through 4294967295. A regional token must send the tenant of its own claim, and a Central token (tenant=*) names the tenant it acts for.",
             "in": "header",
             "name": "X-Tenant-ID",
             "required": true,
@@ -2083,7 +2391,7 @@
             }
           },
           {
-            "description": "Tenant that owns the resource, from 1 through 4294967295.",
+            "description": "Tenant that owns the resource, from 0 through 4294967295. A regional token must send the tenant of its own claim, and a Central token (tenant=*) names the tenant it acts for.",
             "in": "header",
             "name": "X-Tenant-ID",
             "required": true,
@@ -2139,7 +2447,7 @@
             }
           },
           {
-            "description": "Tenant that owns the resource, from 1 through 4294967295.",
+            "description": "Tenant that owns the resource, from 0 through 4294967295. A regional token must send the tenant of its own claim, and a Central token (tenant=*) names the tenant it acts for.",
             "in": "header",
             "name": "X-Tenant-ID",
             "required": true,
@@ -2197,7 +2505,7 @@
             }
           },
           {
-            "description": "Tenant that owns the resource, from 1 through 4294967295.",
+            "description": "Tenant that owns the resource, from 0 through 4294967295. A regional token must send the tenant of its own claim, and a Central token (tenant=*) names the tenant it acts for.",
             "in": "header",
             "name": "X-Tenant-ID",
             "required": true,
@@ -2254,7 +2562,7 @@
             }
           },
           {
-            "description": "Tenant that owns the resource, from 1 through 4294967295.",
+            "description": "Tenant that owns the resource, from 0 through 4294967295. A regional token must send the tenant of its own claim, and a Central token (tenant=*) names the tenant it acts for.",
             "in": "header",
             "name": "X-Tenant-ID",
             "required": true,
@@ -2307,7 +2615,7 @@
       "Access Token Authentication": []
     },
     {
-      "Central Token Authentication": []
+      "Service Token Authentication": []
     }
   ],
   "tags": [

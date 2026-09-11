@@ -10,7 +10,7 @@ from atlas.vm.core.vm_service import VirtualMachineCreateError, VirtualMachineSe
 from atlas.vm.doctype.virtual_machine_image.virtual_machine_image import VirtualMachineImage
 
 
-def build_image(tenant_id: int, image_type: str = "Machine") -> VirtualMachineImage:
+def build_image(tenant_id: int, image_type: str = "machine") -> VirtualMachineImage:
 	"""Return one image document that answers the tenant visibility rule."""
 	image = VirtualMachineImage.__new__(VirtualMachineImage)
 	image.tenant_id = tenant_id
@@ -59,7 +59,7 @@ class TestVirtualMachineCreation(UnitTestCase):
 		self.assertEqual(virtual_machine.is_draft, 0)
 
 	def test_a_system_image_can_boot_for_any_tenant(self) -> None:
-		image = build_image(tenant_id=0, image_type="System")
+		image = build_image(tenant_id=0, image_type="system")
 
 		with patch("atlas.vm.core.vm_service.frappe.get_doc", return_value=image):
 			self.assertIs(VirtualMachineService.get_image("system-image", 7), image)

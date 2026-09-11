@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from typing import Any
 
+import frappe
+
 from atlas.api.core.errors import InvalidRequest
+from atlas.auth.identity import current_identity, get_current_tenant_id
 from atlas.auth.roles import has_role
-from atlas.auth.tenant import get_tenant_id
 
 TENANT_DOCUMENT_TYPES = {
 	"Metal Server IP Address",
@@ -13,33 +15,45 @@ TENANT_DOCUMENT_TYPES = {
 }
 
 
+def is_document_visible(document: Any, ptype: str = "read") -> bool:
+	"""Return whether the tenant of the current request may use one Atlas document."""
+	if document.doctype not in TENANT_DOCUMENT_TYPES:
+		return False
+
+	tenant_id = _request_tenant_id()
+	if tenant_id is None:
+		return False
+
+	if document.doctype == "Virtual Machine Image" and ptype == "read":
+		return document.is_visible_to_tenant(tenant_id)
+
+	return document.tenant_id == tenant_id
+
+
 def get_permission_query_conditions(user: str | None = None, doctype: str | None = None) -> str:
 	"""Return the list condition for one Atlas DocType."""
-	if has_role("System Manager", user):
-		return ""
+	tenant_id = _request_tenant_id()
+	if tenant_id is None:
+		return "" if current_identity() is None and has_role("System Manager", user) else "1=0"
 	if doctype not in TENANT_DOCUMENT_TYPES:
 		return "1=0"
-	try:
-		tenant_id = get_tenant_id()
-	except InvalidRequest:
-		return "1=0"
 
-	query = f"`tab{doctype}`.`tenant_id` = {tenant_id}"
+	condition = f"`tab{doctype}`.`tenant_id` = {tenant_id}"
 	if doctype == "Virtual Machine Image":
-		return f"({query} OR `tabVirtual Machine Image`.`image_type` = 'System')"
-	return query
+		return f"({condition} OR `tabVirtual Machine Image`.`image_type` = 'system')"
+	return condition
 
 
 def has_permission(doc: Any, ptype: str, user: str | None = None, debug: bool = False) -> bool:
 	"""Return whether a user can access one Atlas document."""
-	if has_role("System Manager", user):
-		return True
-	if doc.doctype not in TENANT_DOCUMENT_TYPES:
-		return False
+	if _request_tenant_id() is None:
+		return current_identity() is None and has_role("System Manager", user)
+
+	return is_document_visible(doc, ptype)
+
+
+def _request_tenant_id() -> int | None:
 	try:
-		tenant_id = get_tenant_id()
-	except InvalidRequest:
-		return False
-	if doc.doctype == "Virtual Machine Image" and ptype == "read" and doc.is_shared:
-		return True
-	return doc.tenant_id == tenant_id
+		return get_current_tenant_id()
+	except InvalidRequest, frappe.PermissionError:
+		return None

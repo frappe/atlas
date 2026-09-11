@@ -27,6 +27,7 @@ class _FakeSettings:
 		self.wildcard_domain = "par-1.example.com"
 		self.region_id = 1
 		self.central_jwks_url = "https://issuer.example.com/jwks.json"
+		self.jwks_url = "https://atlas.example.com/api/atlas/jwks.json"
 		self.wildcard_tls_expires_on = None
 		self.proxy_cluster_password_rotated_on = now_datetime() - timedelta(minutes=5)
 		self.passwords = {
@@ -38,7 +39,11 @@ class _FakeSettings:
 
 	@property
 	def proxy_audience_id(self) -> str:
-		return f"atlas-{self.region_id}-proxy"
+		return f"atlas-proxy:{self.region_id}"
+
+	@property
+	def issuer(self) -> str:
+		return f"atlas:{self.region_id}"
 
 	def get_password(self, fieldname: str, raise_exception: bool = True) -> str | None:
 		return self.passwords.get(fieldname)
@@ -79,7 +84,8 @@ class TestProxyConfiguration(UnitTestCase):
 		self.assertEqual(document["tls"]["wildcard_domain"], "*.par-1.example.com")
 		self.assertEqual(document["tls"]["fullchain_pem"].strip(), CERTIFICATE)
 		self.assertEqual(document["tls"]["private_key_pem"].strip(), PRIVATE_KEY)
-		self.assertEqual(document["auth"]["jwks_audience_id"], "atlas-1-proxy")
+		self.assertEqual(document["auth"]["jwks_audience_id"], "atlas-proxy:1")
+		self.assertEqual(document["auth"]["jwks_issuers"], ["central", "atlas:1"])
 		self.assertTrue(bcrypt.checkpw(b"a-control-password", document["auth"]["password_hash"].encode()))
 		self.assertEqual(document["cluster"]["node_id"], "proxy-001")
 		self.assertEqual(document["cluster"]["password"], "a-control-password")
@@ -99,8 +105,11 @@ class TestProxyConfiguration(UnitTestCase):
 			document["cluster"]["previous_password_valid_until"],
 			document["auth"]["previous_password_valid_until"],
 		)
-		self.assertEqual(document["auth"]["jwks_url"], "https://issuer.example.com/jwks.json")
-		self.assertEqual(document["auth"]["jwks_audience_id"], "atlas-1-proxy")
+		self.assertEqual(
+			document["auth"]["jwks_url"],
+			"https://atlas.example.com/api/atlas/jwks.json",
+		)
+		self.assertEqual(document["auth"]["jwks_audience_id"], "atlas-proxy:1")
 		self.assertEqual(document["cluster"]["password"], "a-control-password")
 		self.assertEqual(document["cluster"]["previous_password"], "previous-control-password")
 

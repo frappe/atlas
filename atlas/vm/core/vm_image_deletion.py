@@ -31,7 +31,7 @@ class VirtualMachineImageDeletionService:
 
 	def request(self, image: VirtualMachineImage) -> None:
 		"""Mark one unused Machine image for deletion and queue its cleanup."""
-		if image.image_type != "Machine":
+		if image.image_type != "machine":
 			frappe.throw(_("Only a Machine image can be deleted."), exc=AtlasUserError)
 		if image.status != "Available":
 			frappe.throw(_("Only an Available Machine image can be deleted."), exc=AtlasUserError)
@@ -105,7 +105,7 @@ def enqueue_pending_virtual_machine_image_deletions() -> None:
 	"""Resume Machine image deletions that did not finish."""
 	names = frappe.get_all(
 		"Virtual Machine Image",
-		filters={"image_type": "Machine", "status": "Deleting"},
+		filters={"image_type": "machine", "status": "Deleting"},
 		pluck="name",
 	)
 	service = VirtualMachineImageDeletionService()

@@ -12,7 +12,7 @@ def build_image(**overrides) -> SimpleNamespace:
 	"""Return one Machine image that a transfer left behind."""
 	values = {
 		"name": "image-1",
-		"image_type": "Machine",
+		"image_type": "machine",
 		"status": "Available",
 		"image_object_key": "images/image-1/rootfs.img",
 		"kernel_object_key": "images/image-1/kernel",
@@ -30,7 +30,7 @@ class TestMachineImageDeletionRequest(UnitTestCase):
 		service = VirtualMachineImageDeletionService()
 
 		with self.assertRaises(frappe.ValidationError):
-			service.request(build_image(image_type="System"))
+			service.request(build_image(image_type="system"))
 
 	def test_an_image_in_use_cannot_be_deleted(self) -> None:
 		service = VirtualMachineImageDeletionService()
