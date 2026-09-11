@@ -91,6 +91,7 @@ parse_arguments() {
 	console_path="$work_path/console.log"
 	pid_path="$work_path/firecracker.pid"
 	ssh_key_path="$work_path/ssh-key"
+	download_path="${ATLAS_VM_HOME:-${XDG_CACHE_HOME:-$HOME/.cache}/atlas-vm}/downloads"
 }
 
 require_commands() {
@@ -125,11 +126,12 @@ build_rootfs() {
 		--prefix "$network_prefix" \
 		--gateway "$host_address" \
 		--authorized-key "$ssh_key_path.pub" \
+		--cache-directory "$download_path" \
 		--rootfs-url "$rootfs_url" \
 		--rootfs-sha256 "$rootfs_sha256" \
 		--kernel-url "$kernel_url" \
 		--kernel-sha256 "$kernel_sha256"
-	sudo chown "$(id -u):$(id -g)" "$rootfs_path" "$kernel_path"
+	sudo chown -R "$(id -u):$(id -g)" "$rootfs_path" "$kernel_path" "$download_path"
 }
 
 ensure_ssh_key() {
@@ -294,7 +296,7 @@ command_up() {
 	[[ -e /dev/kvm ]] || fail "/dev/kvm is missing, this host cannot run Firecracker"
 	[[ -r /dev/kvm && -w /dev/kvm ]] || fail "/dev/kvm is not readable and writable by $(id -un)"
 
-	mkdir -p "$work_path"
+	mkdir -p "$work_path" "$download_path"
 	ensure_ssh_key
 	if $rebuild || [[ ! -f $rootfs_path || ! -f $kernel_path ]]; then
 		build_rootfs

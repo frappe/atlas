@@ -9,6 +9,7 @@ address=""
 prefix=24
 gateway=""
 authorized_key=""
+cache_directory=""
 rootfs_url=""
 rootfs_sha256=""
 kernel_url=""
@@ -27,6 +28,7 @@ while [[ $# -gt 0 ]]; do
 		--prefix) prefix=$2; shift 2 ;;
 		--gateway) gateway=$2; shift 2 ;;
 		--authorized-key) authorized_key=$2; shift 2 ;;
+		--cache-directory) cache_directory=$2; shift 2 ;;
 		--rootfs-url) rootfs_url=$2; shift 2 ;;
 		--rootfs-sha256) rootfs_sha256=$2; shift 2 ;;
 		--kernel-url) kernel_url=$2; shift 2 ;;
@@ -48,14 +50,23 @@ image_path=$(realpath -m "$output")
 kernel_path=$(realpath -m "$kernel_output")
 work_path=$(mktemp -d)
 rootfs_directory="$work_path/rootfs"
+cache_directory=${cache_directory:-$work_path}
+mkdir -p "$cache_directory"
 
 cleanup() { rm -rf "$work_path"; }
 trap cleanup EXIT
 
 mkdir -p "$(dirname "$image_path")" "$(dirname "$kernel_path")"
 
+# A verified download stays in the cache, so a second build starts at the
+# extraction step.
 fetch() {
 	local url=$1 checksum=$2 path=$3
+	if [[ -f $path ]] && echo "$checksum  $path" | sha256sum --check --status; then
+		step "use the cached $(basename "$path")"
+		return 0
+	fi
+
 	step "download $url"
 	curl -fL --progress-bar --output "$path" "$url"
 	echo "$checksum  $path" | sha256sum --check --status
@@ -125,15 +136,15 @@ enable_unit() {
 		"$rootfs_directory/etc/systemd/system/$target_directory/$unit"
 }
 
-fetch "$rootfs_url" "$rootfs_sha256" "$work_path/rootfs.squashfs"
-fetch "$kernel_url" "$kernel_sha256" "$work_path/vmlinuz"
+fetch "$rootfs_url" "$rootfs_sha256" "$cache_directory/rootfs.squashfs"
+fetch "$kernel_url" "$kernel_sha256" "$cache_directory/vmlinuz"
 
 step "extract the kernel"
-extract_vmlinux "$work_path/vmlinuz" "$kernel_path.part"
+extract_vmlinux "$cache_directory/vmlinuz" "$kernel_path.part"
 mv "$kernel_path.part" "$kernel_path"
 
 step "extract the root file system"
-unsquashfs -q -d "$rootfs_directory" "$work_path/rootfs.squashfs"
+unsquashfs -q -d "$rootfs_directory" "$cache_directory/rootfs.squashfs"
 
 install_network
 install_identity

@@ -20,6 +20,8 @@ scripts/atlas-vm/run.sh down      # stop the VM and remove its host network
 
 `up` is safe to run again. It reuses a running VM, copies the repository again, and repeats each provisioning step that is not complete. Use `--rebuild` to build the root file system again.
 
+The Ubuntu download stays in `~/.cache/atlas-vm/downloads`, so a rebuild starts at the extraction step.
+
 | Option | Default | Purpose |
 |---|---|---|
 | `--name` | `atlas` | VM name, TAP device, and work directory |
