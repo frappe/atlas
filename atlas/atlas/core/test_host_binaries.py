@@ -24,6 +24,12 @@ class TestHostBinaries(UnitTestCase):
 	def test_file_name_comes_from_the_artifact(self) -> None:
 		self.assertEqual(HOST_BINARIES[0].file_name, "metald-linux-amd64")
 
+	def test_the_toolchain_path_is_absolute(self) -> None:
+		with patch.object(
+			host_binaries.frappe, "get_site_path", return_value="site.local/private/files/toolchain"
+		):
+			self.assertTrue(host_binaries.toolchain_path().is_absolute())
+
 	def test_find_host_binary_reads_the_command_line_key(self) -> None:
 		self.assertEqual(host_binaries.find_host_binary("metald").label, "metald")
 		self.assertEqual(host_binaries.find_host_binary("wg-mesh").label, "Atlas WG Mesh")

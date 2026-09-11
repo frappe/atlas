@@ -165,8 +165,11 @@ def repository_path() -> Path:
 
 
 def toolchain_path() -> Path:
-	"""Return the directory that holds the downloaded Go toolchain."""
-	return Path(frappe.get_site_path("private", "files", "toolchain"))
+	"""Return the directory that holds the downloaded Go toolchain.
+
+	A site path is relative, and the build runs in the module directory.
+	"""
+	return Path(frappe.get_site_path("private", "files", "toolchain")).resolve()
 
 
 def ensure_go_toolchain() -> str:
