@@ -2,6 +2,10 @@
 
 Run Atlas commands from the pilot bench. Always name the site.
 
+## Atlas in a local VM
+
+`scripts/atlas-vm/run.sh up` runs Atlas itself in a local Firecracker VM. It builds the guest image, boots the VM, installs Pilot, creates the bench and the site, and leaves the site up. See [scripts/atlas-vm/README.md](../../scripts/atlas-vm/README.md).
+
 ## Static checks
 
 Run Ruff before you submit an Atlas change:
