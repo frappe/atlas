@@ -8,6 +8,7 @@ const MAXIMUM_CONSOLE_INPUT_BYTES = 64 * 1024;
 const INVALID_TOKEN_MESSAGE = "This console link is invalid or expired.";
 const UNREACHABLE_MESSAGE = "Could not reach the virtual machine console.";
 const INVALID_INPUT_MESSAGE = "Console input is invalid.";
+const METAL_OPEN_TIMEOUT_MILLISECONDS = 10 * 1000;
 
 // Active bridges by socket ID, and the sockets that are still opening one.
 const sessions = new Map();
@@ -16,16 +17,24 @@ const opening_sockets = new Set();
 let cache_connection = null;
 
 function cache() {
-	if (!cache_connection) {
-		const client = get_redis_subscriber("redis_cache");
-		cache_connection = client
-			.connect()
-			.then(() => client)
-			.catch((error) => {
-				cache_connection = null;
-				throw error;
-			});
+	if (cache_connection) {
+		return cache_connection;
 	}
+
+	const client = get_redis_subscriber("redis_cache");
+	// node-redis raises an uncaught exception, which ends the socketio process, when
+	// nothing listens for its errors.
+	client.on("error", (error) => console.error("Console cache client failed", error));
+	client.on("end", () => {
+		cache_connection = null;
+	});
+	cache_connection = client
+		.connect()
+		.then(() => client)
+		.catch((error) => {
+			cache_connection = null;
+			throw error;
+		});
 	return cache_connection;
 }
 
@@ -101,12 +110,17 @@ function is_websocket_url(value) {
 	}
 }
 
-/** Resolve once Metal accepts or refuses the console connection. */
+/** Resolve once Metal accepts, refuses, or stops answering the console connection. */
 function wait_for_open(connection) {
 	return new Promise((resolve) => {
-		connection.onopen = () => resolve(true);
-		connection.onerror = () => resolve(false);
-		connection.onclose = () => resolve(false);
+		const timer = setTimeout(() => resolve(false), METAL_OPEN_TIMEOUT_MILLISECONDS);
+		const settle = (is_open) => {
+			clearTimeout(timer);
+			resolve(is_open);
+		};
+		connection.onopen = () => settle(true);
+		connection.onerror = () => settle(false);
+		connection.onclose = () => settle(false);
 	});
 }
 
@@ -144,6 +158,7 @@ async function open_console(socket, token) {
 			headers: { Authorization: connection.authorization },
 		});
 		if (!(await wait_for_open(metal_connection))) {
+			metal_connection.close();
 			socket.emit("atlas_console_error", UNREACHABLE_MESSAGE);
 			return;
 		}
