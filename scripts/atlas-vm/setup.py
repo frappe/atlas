@@ -24,6 +24,23 @@ PILOT_INSTALL_URL = "https://raw.githubusercontent.com/frappe/pilot/develop/inst
 PYTHON_VERSION = "3.14"
 SETUP_GRANT = "/etc/sudoers.d/{user}-atlas-setup"
 IMAGE_BUILDER_GRANT = "/etc/sudoers.d/{user}-atlas-image-builder"
+# Pilot is a stdlib-only source tree, so its own config API can edit bench.toml.
+BENCH_PROCESSES_SCRIPT = """\
+import sys
+
+sys.path.insert(0, "{pilot_home}")
+
+from pathlib import Path
+
+from pilot.config import BenchConfig, WorkerGroup
+
+with BenchConfig.open(Path("{bench_path}")) as config:
+	config.lite_mode.enabled = False
+	config.workers.groups = [
+		WorkerGroup(queues=["default", "short"], count=3),
+		WorkerGroup(queues=["default", "short", "long"], count=2),
+	]
+"""
 
 
 class SetupError(Exception):
@@ -239,11 +256,21 @@ class Setup:
 			)
 		if not os.access(configuration.bench_path / "env/bin/python", os.X_OK):
 			self.pilot("init")
+		self.configure_bench_processes()
 		self.configure_common_site_config()
+
+	def configure_bench_processes(self) -> None:
+		"""Full processes with dedicated worker groups, not one lite process."""
+		configuration = self.configuration
+		self.as_bench(
+			"python3 -",
+			input_text=BENCH_PROCESSES_SCRIPT.format(
+				pilot_home=configuration.pilot_home, bench_path=configuration.bench_path
+			),
+		)
 
 	def configure_common_site_config(self) -> None:
 		"""Bench wide values the scheduler and the web server need."""
-		self.pilot("frappe set-config -g -p enable_scheduler 1")
 		self.pilot("frappe set-config -g -p scheduler_tick_interval 5")
 		self.pilot("frappe set-config -g webserver_host 127.0.0.1")
 
@@ -256,6 +283,9 @@ class Setup:
 				f"new-site {configuration.site}"
 				f" --admin-password {shlex.quote(configuration.bootstrap_password)}"
 			)
+
+		# A new site pauses the scheduler, and Atlas needs its scheduled jobs.
+		self.pilot(f"frappe --site {configuration.site} enable-scheduler")
 
 	def get_atlas(self) -> None:
 		# Pilot skips an app that is already there, so this stage is safe to repeat.
