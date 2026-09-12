@@ -35,6 +35,7 @@ from pathlib import Path
 from pilot.config import BenchConfig, WorkerGroup
 
 with BenchConfig.open(Path("{bench_path}")) as config:
+	config.socketio_backend = "python"
 	config.lite_mode.enabled = False
 	config.workers.groups = [
 		WorkerGroup(queues=["default", "short"], count=3),
