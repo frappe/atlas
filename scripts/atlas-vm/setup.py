@@ -25,7 +25,7 @@ PYTHON_VERSION = "3.14"
 SETUP_GRANT = "/etc/sudoers.d/{user}-atlas-setup"
 IMAGE_BUILDER_GRANT = "/etc/sudoers.d/{user}-atlas-image-builder"
 # Pilot is a stdlib-only source tree, so its own config API can edit bench.toml.
-BENCH_PROCESSES_SCRIPT = """\
+BENCH_CONFIGURATION_SCRIPT = """\
 import sys
 
 sys.path.insert(0, "{pilot_home}")
@@ -35,6 +35,7 @@ from pathlib import Path
 from pilot.config import BenchConfig, WorkerGroup
 
 with BenchConfig.open(Path("{bench_path}")) as config:
+	config.get_app_by_name("frappe").branch = "develop"
 	config.socketio_backend = "python"
 	config.lite_mode.enabled = False
 	config.workers.groups = [
@@ -255,17 +256,18 @@ class Setup:
 				f"pilot new {configuration.bench_name} --admin-password {password}"
 				f" --admin-domain {configuration.admin_domain} --database mariadb"
 			)
+		# The branch has to be set before init clones the framework.
+		self.configure_bench()
 		if not os.access(configuration.bench_path / "env/bin/python", os.X_OK):
 			self.pilot("init")
-		self.configure_bench_processes()
 		self.configure_common_site_config()
 
-	def configure_bench_processes(self) -> None:
-		"""Full processes with dedicated worker groups, not one lite process."""
+	def configure_bench(self) -> None:
+		"""The framework branch, and full processes with dedicated worker groups."""
 		configuration = self.configuration
 		self.as_bench(
 			"python3 -",
-			input_text=BENCH_PROCESSES_SCRIPT.format(
+			input_text=BENCH_CONFIGURATION_SCRIPT.format(
 				pilot_home=configuration.pilot_home, bench_path=configuration.bench_path
 			),
 		)
