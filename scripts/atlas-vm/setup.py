@@ -239,6 +239,13 @@ class Setup:
 			)
 		if not os.access(configuration.bench_path / "env/bin/python", os.X_OK):
 			self.pilot("init")
+		self.configure_common_site_config()
+
+	def configure_common_site_config(self) -> None:
+		"""Bench wide values the scheduler and the web server need."""
+		self.pilot("frappe set-config -g -p enable_scheduler 1")
+		self.pilot("frappe set-config -g -p scheduler_tick_interval 5")
+		self.pilot("frappe set-config -g webserver_host 127.0.0.1")
 
 	def create_site(self) -> None:
 		configuration = self.configuration
