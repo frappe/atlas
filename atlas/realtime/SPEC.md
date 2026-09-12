@@ -8,7 +8,7 @@ The realtime module bridges an authenticated Atlas console session to Metal.
 
 ## Ownership
 
-`handlers.py` validates the console token and owns the WebSocket bridge lifecycle.
+`handlers.py` validates the console token and owns the WebSocket bridge lifecycle. `realtime/handlers.js` in the repository root is the same bridge for the node socketio backend. Pilot uses the python backend by default.
 
 Metal owns the serial console. Atlas owns the browser session and its token.
 
