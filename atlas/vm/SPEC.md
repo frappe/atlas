@@ -59,6 +59,12 @@ A Virtual Machine property calls Metal once per request and caches the result. A
 
 The list route does not call Metal. It returns `last_known_state` from Virtual Machine State, which holds the last status each host reported. `POST /v1/sync` carries that status for every VM on the host, so one exchange per host refreshes every record. The status is as fresh as the last host reconcile pass, and `state_synced_at` records when Atlas last stored it.
 
+## Writing state
+
+A host reports every VM it runs on each sync, so most reports repeat a status Atlas already holds. `vm_state` saves the Virtual Machine State document only for a first report or a changed status. An unchanged report writes `synced_at` through the database, which runs no document event.
+
+The state Webhooks below deliver on document events, so this rule is what keeps them quiet. Saving on every report would send one `vm.state` call for every VM on every sync, for as long as the host runs. A first report and a real transition still save, so a receiver still hears each change once.
+
 ## State delivery
 
 `PUT /api/atlas/webhooks` points the event deliveries of one Central at its receiver. It takes the URL, a shared secret, `central_id` (default 1), and `enabled`. Only a Central token, which carries tenant `*`, can use it. Atlas creates one state Webhook for `on_update` and one for `on_trash`. Their names use `Virtual Machine State - <Event> - Central - <central_id>`. A repeated call refreshes the Webhooks. `central_id` must be `1` unless developer mode is active or site configuration sets `allow_multiple_central_webhooks` to `1`.
