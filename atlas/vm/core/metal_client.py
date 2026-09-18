@@ -239,6 +239,7 @@ class MetalClient:
 		wireguard_peers: list[dict[str, Any]],
 		images: list[dict[str, Any]],
 		privileged_vm_addresses: list[str],
+		unicast_peers: list[str] | None = None,
 	) -> dict[str, Any]:
 		"""Exchange controller and host state."""
 		request = {
@@ -246,6 +247,9 @@ class MetalClient:
 			"images": images,
 			"privileged_vm_addresses": privileged_vm_addresses,
 		}
+		# Metal decodes the request strictly, so the unicast field travels only in unicast mode.
+		if unicast_peers is not None:
+			request["unicast_peers"] = unicast_peers
 		return self._request("POST", "/v1/sync", json=request, uncertain_on_failure=True)
 
 	def put_migration(self, migration_id: str, virtual_machine_id: str, source: str) -> dict[str, Any]:

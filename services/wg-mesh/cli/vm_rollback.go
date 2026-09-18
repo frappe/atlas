@@ -18,9 +18,12 @@ func rollbackVirtualMachineRemoval(routeRemoved, hookDetached bool, addressText,
 	return rollbackError
 }
 
-func rollbackVirtualMachineAddition(address [16]byte, addressText, interfaceName string, cause error) error {
+func rollbackVirtualMachineAddition(address [16]byte, addressText, interfaceName, uplinkName string, cause error) error {
 	if err := removeLocalVirtualMachine(address); err != nil {
 		return isolateVirtualMachine(interfaceName, errors.Join(cause, fmt.Errorf("remove VM registration: %w", err)))
+	}
+	if err := removeProxyNeighbour(addressText, uplinkName); err != nil {
+		return isolateVirtualMachine(interfaceName, errors.Join(cause, fmt.Errorf("remove proxy NDP entry for %s: %w", addressText, err)))
 	}
 	if err := runCommand("ip", "-6", "route", "del", addressText+"/128", "dev", interfaceName); err != nil {
 		return isolateVirtualMachine(interfaceName, errors.Join(cause, fmt.Errorf("remove route for %s: %w", addressText, err)))
@@ -29,7 +32,7 @@ func rollbackVirtualMachineAddition(address [16]byte, addressText, interfaceName
 }
 
 func restoreVirtualMachineHook(interfaceName string, cause error) error {
-	if err := attachHook(interfaceName, vmBPFProgram); err != nil {
+	if err := attachHook(interfaceName, vmBPFProgram, "ingress"); err != nil {
 		return isolateVirtualMachine(interfaceName, errors.Join(cause, fmt.Errorf("restore hook on %s: %w", interfaceName, err)))
 	}
 	return cause

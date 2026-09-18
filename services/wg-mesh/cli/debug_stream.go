@@ -31,19 +31,22 @@ func dumpDebug(filter debugFilter) error {
 	}
 	defer closeReader()
 
-	// Report boot-time timestamps relative to the first printed event.
 	var first uint64
+
 	for {
 		event, err := readDebugEvent(reader)
 		if err != nil {
 			return err
 		}
+
 		if !filter.matches(event) {
 			continue
 		}
+
 		if first == 0 {
 			first = event.Timestamp
 		}
+
 		printDebugEvent(event, first)
 	}
 }
@@ -56,18 +59,27 @@ func topDebug(filter debugFilter) error {
 	defer closeReader()
 
 	pairs := make(map[debugPair]debugPairStats)
+
 	printDebugTop(pairs)
+
 	refresher := time.NewTicker(5 * time.Second)
 	defer refresher.Stop()
+
 	for {
 		reader.SetDeadline(time.Now().Add(100 * time.Millisecond))
+
 		event, err := readDebugEvent(reader)
+
 		if err != nil && !errors.Is(err, os.ErrDeadlineExceeded) {
 			return err
 		}
-		if err == nil && event.Operation == 0 && filter.matches(event) {
+
+		if err == nil &&
+			event.Hook == debugVMHook &&
+			filter.matches(event) {
 			updateDebugPair(pairs, event)
 		}
+
 		select {
 		case <-refresher.C:
 			printDebugTop(pairs)
@@ -81,12 +93,17 @@ func openDebugReader() (*ringbuf.Reader, func(), error) {
 	if err != nil {
 		return nil, func() {}, err
 	}
+
 	reader, err := ringbuf.NewReader(events)
 	if err != nil {
 		events.Close()
 		return nil, func() {}, err
 	}
-	return reader, func() { reader.Close(); events.Close() }, nil
+
+	return reader, func() {
+		reader.Close()
+		events.Close()
+	}, nil
 }
 
 func readDebugEvent(reader *ringbuf.Reader) (debugEvent, error) {
@@ -94,14 +111,22 @@ func readDebugEvent(reader *ringbuf.Reader) (debugEvent, error) {
 	if err != nil {
 		return debugEvent{}, err
 	}
+
 	var event debugEvent
+
 	err = binary.Read(bytes.NewReader(record.RawSample), binary.NativeEndian, &event)
+
 	return event, err
 }
 
 func updateDebugPair(pairs map[debugPair]debugPairStats, event debugEvent) {
-	pair := debugPair{netip.AddrFrom16(event.Source), netip.AddrFrom16(event.Destination)}
+	pair := debugPair{
+		netip.AddrFrom16(event.Source),
+		netip.AddrFrom16(event.Destination),
+	}
+
 	stats := pairs[pair]
+
 	switch event.Verdict {
 	case 0:
 		stats.accepted++
@@ -110,6 +135,7 @@ func updateDebugPair(pairs map[debugPair]debugPairStats, event debugEvent) {
 	case 2:
 		stats.redirect++
 	}
+
 	pairs[pair] = stats
 }
 
@@ -118,17 +144,30 @@ func printDebugTop(pairs map[debugPair]debugPairStats) {
 		pair  debugPair
 		stats debugPairStats
 	}
+
 	rows := make([]row, 0, len(pairs))
+
 	for pair, stats := range pairs {
 		rows = append(rows, row{pair, stats})
 	}
+
 	sort.Slice(rows, func(left, right int) bool {
-		leftTotal := rows[left].stats.accepted + rows[left].stats.dropped + rows[left].stats.redirect
-		rightTotal := rows[right].stats.accepted + rows[right].stats.dropped + rows[right].stats.redirect
+		leftTotal :=
+			rows[left].stats.accepted +
+				rows[left].stats.dropped +
+				rows[left].stats.redirect
+
+		rightTotal :=
+			rows[right].stats.accepted +
+				rows[right].stats.dropped +
+				rows[right].stats.redirect
+
 		return leftTotal > rightTotal
 	})
+
 	fmt.Print("\033[2J\033[H")
 	fmt.Println("src\tdst\taccept\tdrop\tredirect")
+
 	for _, row := range rows {
 		fmt.Printf("%s\t%s\t%d\t%d\t%d\n", row.pair.source, row.pair.destination, row.stats.accepted, row.stats.dropped, row.stats.redirect)
 	}
@@ -136,9 +175,31 @@ func printDebugTop(pairs map[debugPair]debugPairStats) {
 
 func printDebugEvent(event debugEvent, first uint64) {
 	elapsed := time.Duration(event.Timestamp - first).Seconds()
-	if event.Operation != 0 {
-		fmt.Printf("%8.3f %-9s %s %s vm=%s host=%s tenant=%d\n", elapsed, hookName(event.Hook), directionName(event.Direction), operationName(event.Operation), netip.AddrFrom16(event.VM), netip.AddrFrom16(event.Host), binary.BigEndian.Uint32(event.Tenant[:]))
+
+	/*
+	 * VM events are packet events and use the VM-specific
+	 * operation namespace.
+	 */
+	if event.Hook == debugVMHook {
+		operation := debugOperationName(event)
+
+		if operation != "" {
+			fmt.Printf("%8.3f %-9s %-8s op=%-18s src=%s dst=%s tenant=%d\n", elapsed, hookName(event.Hook), verdictName(event.Verdict), operation, netip.AddrFrom16(event.Source), netip.AddrFrom16(event.Destination), binary.BigEndian.Uint32(event.Tenant[:]))
+			return
+		}
+
+		fmt.Printf("%8.3f %-9s %-8s src=%s dst=%s tenant=%d\n", elapsed, hookName(event.Hook), verdictName(event.Verdict), netip.AddrFrom16(event.Source), netip.AddrFrom16(event.Destination), binary.BigEndian.Uint32(event.Tenant[:]))
+
 		return
 	}
+
+	/*
+	 * Non-VM events with an operation are protocol events.
+	 */
+	if event.Operation != 0 {
+		fmt.Printf("%8.3f %-9s %-2s %-10s vm=%s host=%s tenant=%d\n", elapsed, hookName(event.Hook), directionName(event.Direction), debugOperationName(event), netip.AddrFrom16(event.VM), netip.AddrFrom16(event.Host), binary.BigEndian.Uint32(event.Tenant[:]))
+		return
+	}
+
 	fmt.Printf("%8.3f %-9s %-8s src=%s dst=%s tenant=%d\n", elapsed, hookName(event.Hook), verdictName(event.Verdict), netip.AddrFrom16(event.Source), netip.AddrFrom16(event.Destination), binary.BigEndian.Uint32(event.Tenant[:]))
 }

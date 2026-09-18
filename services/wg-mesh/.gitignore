@@ -4,5 +4,17 @@
 # Release binaries.
 dist/
 
+# Kernel module build output.
+kernel/*.ko
+kernel/*.mod.c
+kernel/*.o
+kernel/*.mod
+kernel/.*.cmd
+kernel/modules.order
+kernel/Module.symvers
+
+# Kernel module sources staged for the CLI embed.
+kernel_module/
+
 # Local Go build output.
 /atlas-wg-mesh

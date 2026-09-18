@@ -46,14 +46,12 @@ func upgradeBPF(force bool) error {
 	defer unlock()
 
 	installed, err := readInstalledHash()
-	if err == nil && installed == bpfHash() {
-		fmt.Println("Atlas WG Mesh BPF is already current")
-		return nil
-	}
+
 	config, err := readPinnedConfig()
 	if err != nil {
 		return err
 	}
+
 	replacements, closeMaps, err := existingMaps()
 	if err != nil {
 		return err
@@ -68,10 +66,12 @@ func upgradeBPF(force bool) error {
 		return fmt.Errorf("BPF maps are incompatible; rerun with --force after adding a migration: %w", err)
 	}
 	defer collection.Close()
+
 	for name, bpfMap := range collection.Maps {
 		if _, exists := replacements[name]; exists {
 			continue
 		}
+
 		if err := bpfMap.Pin(filepath.Join(pinDirectory, name)); err != nil {
 			return err
 		}
@@ -80,46 +80,76 @@ func upgradeBPF(force bool) error {
 	candidateHash := bpfHash()
 	hash := hex.EncodeToString(candidateHash[:])
 	release := filepath.Join(pinDirectory, "releases", hash)
+
 	if err := os.MkdirAll(release, 0755); err != nil {
 		return err
 	}
+
 	for name, program := range collection.Programs {
-		if err := program.Pin(filepath.Join(release, name)); err != nil && !errors.Is(err, os.ErrExist) {
+		if err := program.Pin(filepath.Join(release, name)); err != nil &&
+			!errors.Is(err, os.ErrExist) {
 			return err
 		}
 	}
+
 	interfaces, err := configuredInterfaces()
 	if err != nil {
 		return err
 	}
+
 	if interfaces.uplinkName == "" || interfaces.wireGuardName == "" {
 		return fmt.Errorf("cannot find configured uplink and WireGuard interfaces")
 	}
-	if err := attachHookPath(interfaces.uplinkName, filepath.Join(release, uplinkProgram)); err != nil {
+
+	if err := attachHookPath(interfaces.uplinkName, filepath.Join(release, ndpProgram), "ingress"); err != nil {
 		return err
 	}
-	if err := attachHookPath(interfaces.wireGuardName, filepath.Join(release, wireguardProgram)); err != nil {
+
+	if err := attachHookPath(interfaces.uplinkName, filepath.Join(release, ndpProgram), "egress"); err != nil {
 		return err
 	}
+
+	if err := attachHookPath(interfaces.wireGuardName, filepath.Join(release, wireguardProgram), "ingress"); err != nil {
+		return err
+	}
+
 	vmInterfaces, err := virtualMachineInterfaces()
 	if err != nil {
 		return err
 	}
+
 	for _, interfaceName := range vmInterfaces {
-		if err := attachHookPath(interfaceName, filepath.Join(release, vmBPFProgram)); err != nil {
+		if err := attachHookPath(interfaceName, filepath.Join(release, vmBPFProgram), "ingress"); err != nil {
 			return err
 		}
 	}
+
+	if err := attachNUDHooksFromRelease(release); err != nil {
+		return err
+	}
+
 	if err := collection.Maps["config"].Put(uint32(0), config); err != nil {
 		return err
 	}
+
 	if err := collection.Maps["build_hash"].Put(uint32(0), bpfHash()); err != nil {
 		return err
 	}
-	for _, program := range []string{vmBPFProgram, uplinkProgram, wireguardProgram} {
+
+	// The new release owns these programs, so remove the top level pins
+	// of a previous install.
+	for _, program := range []string{
+		vmBPFProgram,
+		ndpProgram,
+		wireguardProgram,
+		nudFailureProgram,
+		nudReachableProgram,
+	} {
 		_ = os.Remove(filepath.Join(pinDirectory, program))
 	}
+
 	cleanReleases(hash, installed)
+
 	fmt.Printf("Atlas WG Mesh BPF upgraded to %s\n", hash[:12])
 	return nil
 }
@@ -129,10 +159,12 @@ func forceUpgrade(config hostConfig) error {
 	if err != nil {
 		return err
 	}
+
 	interfaces, err := configuredInterfaces()
 	if err != nil {
 		return err
 	}
+
 	if interfaces.uplinkName == "" || interfaces.wireGuardName == "" {
 		return fmt.Errorf("cannot find configured uplink and WireGuard interfaces")
 	}
@@ -148,29 +180,47 @@ func forceUpgrade(config hostConfig) error {
 	if err := clearPinDirectory(); err != nil {
 		return err
 	}
+
 	if err := pinCollection(collection, config); err != nil {
 		return err
 	}
-	if err := attachHook(interfaces.uplinkName, uplinkProgram); err != nil {
+
+	if err := attachHook(interfaces.uplinkName, ndpProgram, "ingress"); err != nil {
 		return err
 	}
-	if err := attachHook(interfaces.wireGuardName, wireguardProgram); err != nil {
+
+	if err := attachHook(interfaces.uplinkName, ndpProgram, "egress"); err != nil {
 		return err
 	}
+
+	if err := attachHook(interfaces.wireGuardName, wireguardProgram, "ingress"); err != nil {
+		return err
+	}
+
 	for vm, interfaceName := range vmInterfaces {
-		if err := attachHook(interfaceName, vmBPFProgram); err != nil {
+		if err := attachHook(interfaceName, vmBPFProgram, "ingress"); err != nil {
 			return err
 		}
+
 		device, err := net.InterfaceByName(interfaceName)
 		if err != nil {
 			return err
 		}
+
 		if err := addLocalVirtualMachine(vm, uint32(device.Index)); err != nil {
 			return err
 		}
 	}
+
+	// The NUD hook is a tracepoint link, so its attach owns no tc filter.
+	if err := attachNUDHooks(); err != nil {
+		return err
+	}
+
 	hash := bpfHash()
+
 	fmt.Printf("Atlas WG Mesh BPF force-upgraded to %x; learned remote locations were cleared\n", hash[:6])
+
 	return nil
 }
 
@@ -188,35 +238,58 @@ func virtualMachineInterfaces() (map[[16]byte]string, error) {
 	value := make([]byte, vmMap.ValueSize())
 	var vm [16]byte
 	interfaces := make(map[[16]byte]string)
+
 	iterator := vmMap.Iterate()
 	for iterator.Next(&vm, &value) {
 		address := netip.AddrFrom16(vm).String()
+
 		output, err := commandOutput("ip", "-o", "-6", "route", "show", address+"/128")
 		if err != nil {
 			return nil, err
 		}
+
 		interfaceName := fieldAfter(strings.Fields(output), "dev")
 		if interfaceName == "" {
 			return nil, fmt.Errorf("no route for local VM %s", address)
 		}
+
 		interfaces[vm] = interfaceName
 	}
+
 	return interfaces, iterator.Err()
 }
 
 func existingMaps() (map[string]*ebpf.Map, func(), error) {
-	names := []string{"config", "local_vms", privilegedTenantAllowedAddressesMap, "remote_vms", "discovery_limits", "debug_config", "debug_stats", "debug_events", "build_hash"}
+	names := []string{
+		"config",
+		"local_vms",
+		privilegedTenantAllowedAddressesMap,
+		"remote_vms",
+		"nud_failures",
+		"peer_list",
+		"vm_peer_map",
+		"ndp_requesters",
+		"debug_config",
+		"debug_stats",
+		"debug_events",
+		"build_hash",
+	}
+
 	maps := make(map[string]*ebpf.Map)
+
 	for _, name := range names {
 		bpfMap, err := openMap(name)
 		if errors.Is(err, os.ErrNotExist) {
 			continue
 		}
+
 		if err != nil {
 			return nil, func() {}, err
 		}
+
 		maps[name] = bpfMap
 	}
+
 	return maps, func() {
 		for _, bpfMap := range maps {
 			bpfMap.Close()
@@ -229,11 +302,14 @@ func cleanReleases(current string, previous [32]byte) {
 	if err != nil {
 		return
 	}
+
 	previousName := hex.EncodeToString(previous[:])
+
 	for _, entry := range entries {
 		if entry.Name() == current || entry.Name() == previousName {
 			continue
 		}
+
 		_ = os.RemoveAll(filepath.Join(pinDirectory, "releases", entry.Name()))
 	}
 }

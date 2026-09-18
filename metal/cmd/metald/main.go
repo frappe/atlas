@@ -254,6 +254,18 @@ func serve(options options, logger *slog.Logger) (serveError error) {
 	if err != nil {
 		return fmt.Errorf("configure WireGuard manager: %w", err)
 	}
+	// The unicast transport needs the uplink that Atlas WG Mesh owns, so it is
+	// absent when the mesh is disabled and a unicast sync then fails loudly.
+	var unicastManager *network.UnicastManager
+	if options.mesh.enabled {
+		unicastManager, err = network.NewUnicastManager(network.UnicastConfig{
+			PeersFilePath: options.unicastPeersFilePath(),
+			UplinkName:    options.mesh.uplinkName,
+		})
+		if err != nil {
+			return fmt.Errorf("configure unicast manager: %w", err)
+		}
+	}
 	var trafficMonitor *traffic.Monitor
 	if options.trafficMonitor.enabled {
 		trafficMonitor, err = traffic.NewMonitor(traffic.Config{
@@ -324,11 +336,15 @@ func serve(options options, logger *slog.Logger) (serveError error) {
 		}
 		return migrationManager.TargetReservations(ctx)
 	}
-	hostService, err := host.NewService(host.Dependencies{
+	hostDependencies := host.Dependencies{
 		Mesh: mesh, WireGuard: wireGuardManager, Images: stores.Images,
 		VirtualMachines: virtualMachineManager, Storage: stores.Pool,
 		MigrationReservations: migrationReservations, Wake: notifyReconcilers,
-	})
+	}
+	if unicastManager != nil {
+		hostDependencies.Unicast = unicastManager
+	}
+	hostService, err := host.NewService(hostDependencies)
 	if err != nil {
 		return fmt.Errorf("configure host service: %w", err)
 	}

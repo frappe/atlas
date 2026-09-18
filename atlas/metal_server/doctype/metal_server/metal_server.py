@@ -20,6 +20,7 @@ from atlas.metal_server.core.host_installation import (
 	WIREGUARD_CONFIGURE_TIMEOUT_SECONDS,
 	HostInstallation,
 )
+from atlas.metal_server.core.mesh_peers import get_mesh_peer_file_contents
 from atlas.metal_server.core.provisioning import ServerProvisioner
 from atlas.metal_server.usage import enqueue_server_sync
 
@@ -246,6 +247,16 @@ class MetalServer(Document):
 			frappe.throw(_("Metal Server {0} is not ready to synchronize.").format(self.name))
 
 		enqueue_server_sync(self.name)
+
+	@frappe.whitelist(methods=["GET"])
+	def get_mesh_peer_file(self) -> str:
+		"""Return the unicast peer file contents for this region.
+
+		The contents list every running Metal Server with a private IPv4 address, so the same file can go to every host.
+		"""
+		frappe.only_for("System Manager")
+
+		return get_mesh_peer_file_contents()
 
 	@property
 	def metald_job_id(self) -> str:

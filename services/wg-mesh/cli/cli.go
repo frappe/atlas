@@ -4,17 +4,10 @@ import "github.com/spf13/cobra"
 
 const pinDirectory = "/sys/fs/bpf/atlas-wg-mesh"
 
-// Discovery rate-limit defaults. A VM rarely starts more than a few flows per
-// second; these absorb that while capping a flood. Tunable at configure time.
-const (
-	defaultWhoHasRate  = 10
-	defaultWhoHasBurst = 50
-	defaultVMMTU       = 1380
-)
+const defaultVMMTU = 1380
 
 var (
 	uplinkName, wireGuardName string
-	whoHasRate, whoHasBurst   uint32
 	resetForce                bool
 )
 
@@ -35,7 +28,7 @@ var configureCommand = &cobra.Command{
 	Short: "configure Atlas WG Mesh on this host",
 	Args:  cobra.NoArgs,
 	RunE: func(*cobra.Command, []string) error {
-		return installHost(uplinkName, wireGuardName, whoHasRate, whoHasBurst)
+		return installHost(uplinkName, wireGuardName)
 	},
 }
 

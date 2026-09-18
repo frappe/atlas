@@ -124,7 +124,7 @@ A domain error is mapped to one status and one safe message. An unrecognized err
 | `storage.ErrImageConflict` | `409` | `image_content_conflict` |
 | `storage.ErrImageIntegrity` | `422` | `image_integrity_failed` |
 | `storage.ErrShuttingDown` | `503` | `unavailable` |
-| `network.ErrInvalidPeers`, `storage.ErrInvalidUpload` | `400` | `invalid_request` |
+| `network.ErrInvalidPeers`, `network.ErrInvalidUnicastPeers`, `storage.ErrInvalidUpload` | `400` | `invalid_request` |
 | `token.ErrUnauthorized` | `401` | `unauthorized` |
 | `token.ErrForbidden` | `403` | `forbidden` |
 | `token.ErrInvalidKeys` | `400` | `invalid_request` |

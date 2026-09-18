@@ -55,7 +55,7 @@ The source migration listener binds the migration `transfer_port` (default 9001)
 
 `wg_mesh.enabled = false` does not disable managed WireGuard peers.
 
-`wg_mesh.uplink` has no default. The Atlas WG Mesh uplink hook consumes discovery traffic for every VLAN under the interface it attaches to, so a parent interface silently blackholes discovery for its own VLANs. Only the controller knows which interface carries discovery, so metald requires the name.
+`wg_mesh.uplink` has no default. The Atlas WG Mesh NDP hook and its proxy NDP entries attach to this interface, so it must name the shared VLAN itself and never its parent. Only the controller knows which interface carries Atlas NDP, so metald requires the name.
 
 ## Config keys
 
@@ -72,6 +72,7 @@ The source migration listener binds the migration `transfer_port` (default 9001)
 | `wg_mesh.enabled` | `true` | Enables Atlas WG Mesh host setup and VM mesh registration. |
 | `wg_mesh.binary_path` | `/usr/local/bin/atlas-wg-mesh` | Atlas WG Mesh CLI. Required. |
 | `wg_mesh.uplink` | none | Discovery uplink. Required. |
+| `wg_mesh.peers_file` | `base_dir/unicast-peers` | The unicast peer file that metald writes and the unicast daemon reads. |
 | `traffic_monitor.enabled` | `true` | Enables VM packet monitoring and idle shutdown. |
 | `migration.final_delta_mib` | `512` | Incremental size at or below which the target stops the source and takes the final snapshot. |
 | `migration.transfer_port` | `9001` | TCP port the source listens on for the disk stream. Use the same value on every host in the region. |

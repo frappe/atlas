@@ -113,6 +113,28 @@ func TestLoadMissingFile(t *testing.T) {
 	}
 }
 
+func TestUnicastPeersFilePath(t *testing.T) {
+	defaults := defaultOptions()
+	if got := defaults.unicastPeersFilePath(); got != "/var/lib/metal/unicast-peers" {
+		t.Fatalf("default unicast peers file = %q", got)
+	}
+
+	moved := defaultOptions()
+	moved.baseDir = "/srv/metal"
+	if got := moved.unicastPeersFilePath(); got != "/srv/metal/unicast-peers" {
+		t.Fatalf("base_dir unicast peers file = %q", got)
+	}
+
+	configured := writeConfig(t, "[wg_mesh]\npeers_file = \"/etc/atlas/unicast-peers\"\n")
+	options, err := load(configured)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := options.unicastPeersFilePath(); got != "/etc/atlas/unicast-peers" {
+		t.Fatalf("configured unicast peers file = %q", got)
+	}
+}
+
 func TestMakeDirs(t *testing.T) {
 	dir := t.TempDir()
 	options := defaultOptions()

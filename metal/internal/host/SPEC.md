@@ -6,7 +6,7 @@ For Go code, follow the repository [Go anti-pattern rules](../../../llm/go-code-
 
 ## Purpose
 
-The controller owns some host state directly: WireGuard peers, image policies, and the privileged virtual machine address set. The `host` package is the one place that accepts those sets and applies them.
+The controller owns some host state directly: WireGuard peers, image policies, the privileged virtual machine address set, and the unicast peer set. The `host` package is the one place that accepts those sets and applies them.
 
 Each set arrives complete and replaces the previous one. The controller sends no incremental changes, so a lost message costs one sync interval, not a divergent host.
 
@@ -15,12 +15,12 @@ Each set arrives complete and replaces the previous one. The controller sends no
 | Type | Responsibility |
 |---|---|
 | `Service` | Applies desired host state, then reports the sync result. |
-| `DesiredState` | The 3 controller-owned sets, each complete. |
+| `DesiredState` | The 4 controller-owned sets, each complete. |
 | `SyncResult` | What one sync returns: capacity and VM states. |
 | `Capacity` | What the controller needs to place the next VM. |
-| `PrivilegedMesh`, `WireGuardManager`, `ImagePolicyStore`, `VirtualMachineSource`, `StorageCapacitySource` | The services a sync calls out to. |
+| `PrivilegedMesh`, `WireGuardManager`, `UnicastTransport`, `ImagePolicyStore`, `VirtualMachineSource`, `StorageCapacitySource` | The services a sync calls out to. |
 
-`Service` holds no state of its own. Each named service owns the state it applies, and `metald` supplies them at startup. The mesh service is absent when Atlas WG Mesh is disabled.
+`Service` holds no state of its own. Each named service owns the state it applies, and `metald` supplies them at startup. The mesh service is absent when Atlas WG Mesh is disabled, and the unicast transport with it.
 
 ## Synchronize
 
@@ -29,6 +29,7 @@ POST /v1/sync
    |
    +-> ApplyPrivilegedAddresses   privileged VM address set
    +-> Apply                      WireGuard peers
+   +-> Apply or Disable           unicast peer set and daemon
    +-> SetImagePolicies           image policies
    +-> Wake                       start a reconcile pass now
    +-> List                       one read, used for capacity and states
@@ -36,6 +37,8 @@ POST /v1/sync
 ```
 
 The steps run in order and stop at the first error, so a failed step leaves the later sets untouched and the controller retries the whole sync. `Wake` follows the writes, so the reconciler acts on the new policies at once instead of at its next tick.
+
+A nil unicast peer set means multicast mode and disables the transport. A requested peer set without a transport is an error, because the host must not silently stay in multicast mode.
 
 ## Capacity
 

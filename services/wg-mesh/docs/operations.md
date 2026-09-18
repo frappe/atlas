@@ -1,8 +1,6 @@
 # Atlas WG Mesh operations guide
 
-For Go code, follow the repository [Go anti-pattern rules](../../../llm/go-code-review-guide.md).
-
-The `atlas-wg-mesh` CLI configures local host and VM lifecycle state. It embeds the BPF object. It does not run as a daemon. Atlas WG Mesh discovers remote VM owners and routes packets in BPF after the CLI exits.
+The `atlas-wg-mesh` CLI configures local host and VM lifecycle state. It embeds the BPF object. It does not run as a daemon. Linux NDP discovers remote VM owners, Linux NUD maintains them, and BPF routes packets after the CLI exits.
 
 ## Contents
 
@@ -30,20 +28,32 @@ The `atlas-wg-mesh` CLI configures local host and VM lifecycle state. It embeds 
 
 Run the CLI as root. Configure WireGuard before you install Atlas WG Mesh. Give each host a global `fdab::/16` address on its WireGuard interface. Use a prefix that covers every other host, because the VM hook returns the tunnel packet to Linux routing and the host must have a route to the remote host address. Add a WireGuard peer for every other host. Set each peer `AllowedIPs` value to that peer's `/128` address.
 
+Build and load the Atlas neighbour kernel module on every host before you configure Atlas WG Mesh. The NDP and NUD hooks call its kfuncs, so the BPF object cannot load without it:
+
+```sh
+atlas-wg-mesh module install
+```
+
+The command writes the embedded module sources to `/usr/src`, builds them against the running kernel headers, links the module into `/lib/modules`, and loads it. The build takes the kernel BTF from `/sys/kernel/btf/vmlinux`, so the module carries the BTF section that the BPF object needs. The host needs the `build-essential`, `dwarves`, and `linux-headers-$(uname -r)` packages. The metald install script runs the command automatically.
+
+Run the command again after a kernel upgrade, because a module of one kernel release cannot serve another.
+
 Atlas WG Mesh pins state at `/sys/fs/bpf/atlas-wg-mesh`.
 
 ## Network and security
 
-| Use                        | Value                                                                                       |
-| -------------------------- | ------------------------------------------------------------------------------------------- |
-| VM address range           | `fdaa::/16`                                                                                 |
-| WireGuard address range    | `fdab::/16`                                                                                 |
-| Discovery destination      | `239.1.1.1:7373`, or each peer on UDP `7373` with the [discovery relay](unicast-network.md) |
-| Uplink MTU                 | 1500 or greater                                                                             |
-| WireGuard MTU              | 1420                                                                                        |
-| VM interface and guest MTU | 1380                                                                                        |
+| Use                        | Value                        |
+| -------------------------- | ---------------------------- |
+| VM address range           | `fdaa::/16`                  |
+| WireGuard address range    | `fdab::/16`                  |
+| Shared VLAN route          | `fdaa::/16 dev <uplink>`     |
+| Uplink MTU                 | 1500 or greater              |
+| WireGuard MTU              | Uplink MTU minus 60          |
+| VM interface and guest MTU | 1380                         |
 
-Discovery uses IPv4 multicast with a time to live of `1`. Restrict this Layer-2 domain to trusted participating hosts: `WHO_HAS`, `FOUND`, and `NOW_HERE` messages are not authenticated. Cross-tenant traffic is permitted only when one endpoint is a controller-whitelisted privileged tenant-`0` VM address, so reserve those addresses for trusted platform services.
+Discovery uses IPv6 NDP on the shared VLAN. Neighbour advertisements are not authenticated, so restrict the VLAN to trusted participating hosts. Cross-tenant traffic is permitted only when one endpoint is a controller-whitelisted privileged tenant-`0` VM address, so reserve those addresses for trusted platform services.
+
+Hosts without a shared Layer-2 domain use [unicast NDP transport](unicast-network.md) over a routed IPv4 underlay instead.
 
 ## Build a release
 
@@ -64,19 +74,19 @@ dist/atlas-wg-mesh-linux-arm64
 
 Each binary embeds the BPF object. Copy the binary that matches the host CPU architecture. The host does not need `clang`, `bpftool`, or a separate BPF object file.
 
-Use `make bpf` to build only the embedded BPF object. Use `make clean` to remove generated BPF and release files.
+Use `make bpf` to build only the embedded BPF object. Use `make module` to build the kernel module. Use `make clean` to remove generated BPF and release files.
 
 ## Install a host
 
 Run this command once on each host:
 
 ```sh
-atlas-wg-mesh configure --uplink eth0 --wireguard wg0
+atlas-wg-mesh configure --uplink eno1.1680 --wireguard wg0
 ```
 
-The command mounts BPF file storage when necessary, enables IPv6 forwarding, enables uplink multicast, writes the host configuration, pins BPF state, and attaches the uplink and WireGuard hooks.
+Name the shared VLAN interface itself, never its parent. The command mounts BPF file storage when necessary, enables IPv6 forwarding, enables proxy NDP on the uplink, installs the `fdaa::/16` VLAN route, writes the host configuration, pins BPF state, and attaches the NDP hook to both TC directions of the uplink and the WireGuard hook to `wg0`.
 
-Each VM defaults to 10 `WHO_HAS` messages per second with a burst of 50. Change the limits with `--who-has-rate` and `--who-has-burst`; use `--who-has-rate 0` to disable rate limiting.
+The VLAN route is not a WireGuard route. It lets route lookup for a VM destination select the VLAN, so Linux runs NDP on that link. Local VM delivery always uses the more specific host route on the VM interface.
 
 ## Add a VM
 
@@ -86,7 +96,7 @@ Create the VM interface with your virtualization system. Then register the VM ad
 atlas-wg-mesh vm add --interface veth0 --address fdaa:1:0:7::1 --mtu 1380
 ```
 
-The command configures the host interface, adds the VM to the local BPF map, attaches the VM hook, and announces the VM location with multicast.
+The command configures the host interface, adds the VM to the local BPF map, attaches the VM hook, and adds a proxy NDP entry for the VM address on the uplink. The host then answers neighbour solicitations for the VM on the shared VLAN.
 
 `--mtu` defaults to `1380`. Set the guest address to `fdaa:1:0:7::1/128`, gateway to `fe80::1`, and MTU to the same value. Do not exceed the WireGuard MTU minus 40 bytes.
 
@@ -103,7 +113,7 @@ atlas-wg-mesh vm remove --interface veth0 --address fdaa:1:0:7::1
 atlas-wg-mesh vm add --interface veth0 --address fdaa:1:0:7::1
 ```
 
-The `vm add` command sends three `NOW_HERE` messages. Hosts that already know the VM update the learned WireGuard path. The VM keeps its private IPv6 address.
+The first neighbour solicitation after the move reaches the new host, which answers with its own WireGuard address in the Atlas option. Senders update the learned location. The VM keeps its private IPv6 address, and no WireGuard change is required.
 
 ## Remove a VM
 
@@ -113,7 +123,7 @@ Run this command before you delete the VM interface:
 atlas-wg-mesh vm remove --interface veth0 --address fdaa:1:0:7::1
 ```
 
-The command removes the VM hook, the local BPF map entry, and the host route. It does not change privileged-VM policy: when an address is retired or reassigned, the controller must remove it from the privileged VM whitelist separately.
+The command removes the VM hook, the local BPF map entry, the host route, and the proxy NDP entry. It does not change privileged-VM policy: when an address is retired or reassigned, the controller must remove it from the privileged VM whitelist separately.
 
 ## List local VM ownership
 
@@ -164,7 +174,7 @@ For example, remove one stale ownership entry without interrupting other VMs:
 atlas-wg-mesh vm remove --interface fc-zomb --address fdaa:1:0:2::20
 ```
 
-Reconcile immediately when the host reconnects. Until stale entries are removed, the host can still answer `WHO_HAS` for them. Do not replay a stale local manifest at boot; always use the controller's current desired state.
+Reconcile immediately when the host reconnects. Until stale entries are removed, the host still answers neighbour solicitations for them. Do not replay a stale local manifest at boot; always use the controller's current desired state.
 
 ## Check status
 
@@ -201,7 +211,7 @@ atlas-wg-mesh remote purge --host fdab::10
 
 ## Remove a host installation
 
-Remove every VM from the host first. Then remove the host hooks and pinned BPF state:
+Remove every VM from the host first. Then remove the host hooks, the VLAN route, and the pinned BPF state:
 
 ```sh
 atlas-wg-mesh reset
@@ -222,4 +232,4 @@ atlas-wg-mesh configure --uplink eth0 --wireguard wg0
 atlas-wg-mesh vm add --interface veth0 --address fdaa:1:0:7::1 --mtu 1380
 ```
 
-A forced reset also clears `remote_vms` and `privileged_tenant_allowed_addresses`; discovery rebuilds remote locations, while the controller must reconcile privileged VMs again.
+A forced reset also clears `remote_vms` and `privileged_tenant_allowed_addresses`; NDP rebuilds remote locations, while the controller must reconcile privileged VMs again.

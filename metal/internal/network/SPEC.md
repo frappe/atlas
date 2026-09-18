@@ -25,6 +25,7 @@ This package makes one virtual machine network agree with its desired state, and
 | `LinuxAllocator` | Convergence of one VM network. Implements `vm.Network`. |
 | `Mesh` | Registration of VM addresses through the Atlas WG Mesh CLI. |
 | `WireGuardManager` | The managed peer set of one WireGuard interface. |
+| `UnicastManager` | The controller-driven unicast peer set and the unicast daemon state. |
 | [`traffic.Monitor`](traffic/SPEC.md) | Traffic samples and packet events for monitored VMs. |
 
 ## Convergence
@@ -105,6 +106,16 @@ When Atlas WG Mesh is enabled, it assumes the VM sits directly behind the interf
 `EnsureHost` configures an unconfigured host and refuses a host that discovers on another interface, because the uplink hook consumes the discovery traffic of every VLAN beneath it.
 
 `ApplyPrivilegedAddresses` and `WireGuardManager.Apply` each replace a complete set. `Apply` drops this host from the peer set it receives and records what it applied, so it never peers with itself and never disturbs peers added by other tools.
+
+## Unicast transport
+
+`UnicastManager` applies the controller's unicast peer set. The controller sends every running host of the region, so the manager drops the uplink IPv4 address of this host before it decides: a host without a remote peer keeps the multicast NDP filters, because unicast transport has no destination.
+
+The peer file is the interface to the unicast daemon. The manager writes the complete set, one IPv4 address per line, only when the contents changed, because the daemon watches the file modification time. The daemon then rewrites the pinned peer list map.
+
+The systemd unit `atlas-wg-mesh-unicast.service` owns the daemon process. The host installer writes the unit and leaves it disabled. `Apply` enables and starts it, which attaches the unicast hooks and removes the multicast NDP filters. `Disable` stops it, which restores the multicast filters. Both directions are idempotent, and a missing unit file reads as multicast mode, so a host that never received the unit still syncs.
+
+See the [WG Mesh unicast network guide](../../../services/wg-mesh/docs/unicast-network.md) for the transport itself.
 
 ## Related
 

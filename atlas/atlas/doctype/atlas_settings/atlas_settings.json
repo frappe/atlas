@@ -24,6 +24,7 @@
   "private_network_cidr",
   "column_break_jzip",
   "private_network_mtu",
+  "is_unicast_network_enabled",
   "ssh_section",
   "public_ssh_key",
   "metald_section",
@@ -179,6 +180,14 @@
    "fieldtype": "Int",
    "label": "MTU",
    "reqd": 1
+  },
+  {
+   "default": "0",
+   "description": "Atlas WG Mesh transports NDP between hosts over the routed IPv4 underlay instead of the shared Layer-2 VLAN.",
+   "fieldname": "is_unicast_network_enabled",
+   "fieldtype": "Check",
+   "label": "Use Unicast Networking",
+   "show_description_on_click": 1
   },
   {
    "fieldname": "private_network_config_section",
@@ -546,7 +555,7 @@
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-09-11 09:45:00.000000",
+ "modified": "2026-09-15 10:00:00.000000",
  "modified_by": "Administrator",
  "module": "Atlas",
  "name": "Atlas Settings",

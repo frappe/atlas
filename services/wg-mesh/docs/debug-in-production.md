@@ -36,25 +36,21 @@ Counters are cumulative for the lifetime of the pinned maps. `events lost` means
 
 ## `debug dump`
 
-`dump` prints packet decisions and discovery messages. `--tenant` filters every event. `--src`, `--dst`, and `--action` filter packet events only.
+`dump` prints packet decisions and NDP messages. `--tenant` filters every event. `--src`, `--dst`, and `--action` filter packet events only.
 
 ### Cold remote cache
 
-The first packet becomes discovery:
+The first packet continues to Linux routing, which triggers NDP. The NDP hook learns the owner from the advertisement, and the guest retry is tunneled:
 
 ```text
-UPLINK    TX WHO_HAS vm=fdaa:1:0:7::20 host=:: tenant=7
-UPLINK    RX FOUND vm=fdaa:1:0:7::20 host=fdab::2 tenant=7
-VM        REDIRECT src=fdaa:1:0:7::10 dst=fdaa:1:0:7::20 tenant=7
-WIREGUARD ACCEPT   src=fdaa:1:0:7::20 dst=fdaa:1:0:7::10 tenant=7
-VM        REDIRECT src=fdaa:1:0:7::10 dst=fdaa:1:0:7::20 tenant=7
-WIREGUARD ACCEPT   src=fdaa:1:0:7::20 dst=fdaa:1:0:7::10 tenant=7
+VM        ACCEPT   src=fdaa:1:0:7::10 dst=fdaa:1:0:7::20 tenant=7
+NDP       RX LEARN vm=fdaa:1:0:7::20 host=fdab::2 tenant=7
 VM        REDIRECT src=fdaa:1:0:7::10 dst=fdaa:1:0:7::20 tenant=7
 WIREGUARD ACCEPT   src=fdaa:1:0:7::20 dst=fdaa:1:0:7::10 tenant=7
 VM        ACCEPT   src=fdaa:1:0:7::10 dst=fe80::1 tenant=7
 ```
 
-The triggering packet is gone, so a cold flow loses its first packet. The last line is the guest reaching its gateway. `fe80::1` is outside `fdaa::/16`, so Linux handles it normally.
+The owner also logs `NDP TX ANNOUNCE` with the same VM and host pair. The last line is the guest reaching its gateway. `fe80::1` is outside `fdaa::/16`, so Linux handles it normally.
 
 ### Warm remote cache
 
@@ -98,22 +94,21 @@ These lines show, in order: tenant isolation, the host-underlay guard, and sourc
 
 ### Stale location recovery
 
-When a VM moves from `fdab::2` to `fdab::3` and the sender misses every `NOW_HERE` announcement:
+When a VM moves from `fdab::2` to `fdab::3`, the managed neighbour entry on each sender keeps probing, and the first advertisement from the new owner refreshes the location:
 
 ```text
 VM        REDIRECT src=fdaa:1:0:2::10 dst=fdaa:1:0:2::20 tenant=2
-WIREGUARD RX NOT_HERE vm=fdaa:1:0:2::20 host=fdab::2 tenant=2
-UPLINK    TX WHO_HAS vm=fdaa:1:0:2::20 host=:: tenant=2
-UPLINK    RX FOUND vm=fdaa:1:0:2::20 host=fdab::3 tenant=2
+WIREGUARD DROP     src=fdaa:1:0:2::10 dst=fdaa:1:0:2::20 tenant=2
+NDP       RX LEARN vm=fdaa:1:0:2::20 host=fdab::3 tenant=2
 VM        REDIRECT src=fdaa:1:0:2::10 dst=fdaa:1:0:2::20 tenant=2
 WIREGUARD ACCEPT   src=fdaa:1:0:2::20 dst=fdaa:1:0:2::10 tenant=2
 ```
 
-The first `REDIRECT` is lost. `NOT_HERE` immediately restarts discovery; the sender does not wait for the guest to retry.
+The old host drops the tunnel for a VM it no longer owns. Linux NUD probing of the managed neighbour entry produces the neighbour solicitation, and the new owner answers it with the Atlas option.
 
 ### Unreachable owner
 
-Repeated `REDIRECT` events with no matching `WIREGUARD ACCEPT` or `NOT_HERE` indicate an unreachable cached owner:
+Repeated `REDIRECT` events with no matching `WIREGUARD ACCEPT` indicate an unreachable cached owner:
 
 ```text
 VM        REDIRECT src=fdaa:1:0:2::10 dst=fdaa:1:0:2::20 tenant=2
@@ -128,7 +123,7 @@ atlas-wg-mesh remote purge --host fdab::2
 # removed 2 remote entries
 ```
 
-The next packet triggers discovery. A recovered host must remove registrations for VMs it no longer owns before it rejoins.
+The next guest packet triggers NDP again. A recovered host must remove registrations for VMs it no longer owns before it rejoins.
 
 ## `debug top`
 

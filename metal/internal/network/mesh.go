@@ -23,8 +23,9 @@ const meshGatewayAddress = "fe80::1"
 // meshPrefix is the Atlas mesh address block.
 const meshPrefix = "fdaa::/16"
 
-// MeshConfig identifies the Atlas WG Mesh CLI and host interfaces. UplinkName
-// must name the discovery interface, not its parent.
+// MeshConfig identifies the Atlas WG Mesh CLI and the host interfaces it uses.
+// UplinkName must name the shared VLAN interface that carries Atlas NDP, never
+// its parent, because the NDP hook and the proxy NDP entries attach to it.
 type MeshConfig struct {
 	CommandPath   string
 	UplinkName    string
@@ -79,8 +80,8 @@ func (mesh *Mesh) EnsureHost(ctx context.Context) error {
 	return nil
 }
 
-// verifyDiscoveryInterface rejects a host that discovers on another interface,
-// because the uplink hook consumes discovery traffic for its VLANs.
+// verifyDiscoveryInterface rejects a host that carries Atlas NDP on another
+// interface. The CLI reads the interface from the pinned configuration.
 func (mesh *Mesh) verifyDiscoveryInterface(status string) error {
 	name := discoveryInterface(status)
 	if name == "" {
@@ -88,7 +89,7 @@ func (mesh *Mesh) verifyDiscoveryInterface(status string) error {
 	}
 	if name != mesh.uplinkName {
 		return fmt.Errorf(
-			"Atlas WG Mesh discovers on %s and not %s: reset the host to change the interface",
+			"Atlas WG Mesh carries NDP on %s and not %s: reset the host to change the interface",
 			name, mesh.uplinkName,
 		)
 	}
@@ -224,14 +225,18 @@ func (mesh *Mesh) IsRegistered(ctx context.Context, address string) (bool, error
 	return false, nil
 }
 
-// meshNamespaceSteps routes mesh traffic through the namespace. Proxy NDP
-// handles the veth, and a permanent tap0 neighbour reaches a stopped guest.
+// meshNamespaceSteps routes mesh traffic through the namespace. The mesh
+// address is assigned to the veth inside the namespace, so the address is
+// present from creation without depending on the guest applying its own copy.
+// Proxy NDP handles the veth, and a permanent tap0 neighbour reaches a
+// stopped guest.
 func meshNamespaceSteps(guestVirtualEthernet, address string) [][]string {
 	return [][]string{
 		{"sysctl", "-q", "-w", "net.ipv6.conf.all.forwarding=1"},
 		{"sysctl", "-q", "-w", "net.ipv6.conf." + guestVirtualEthernet + ".proxy_ndp=1"},
 		{"ip", "link", "set", guestVirtualEthernet, "mtu", strconv.Itoa(meshMTU)},
 		{"ip", "-6", "addr", "replace", meshGatewayAddress + "/64", "dev", tapName, "nodad"},
+		{"ip", "-6", "addr", "replace", address + "/128", "dev", guestVirtualEthernet},
 		{"ip", "-6", "route", "replace", address + "/128", "dev", tapName},
 		{"ip", "-6", "neigh", "replace", address, "lladdr", guestMACAddress, "dev", tapName, "nud", "permanent"},
 		{"ip", "-6", "route", "replace", meshPrefix, "via", meshGatewayAddress, "dev", guestVirtualEthernet},

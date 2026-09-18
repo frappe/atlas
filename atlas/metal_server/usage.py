@@ -7,6 +7,7 @@ import frappe
 from frappe.utils import now_datetime
 
 from atlas.atlas.core.mesh_address import get_virtual_machine_mesh_address
+from atlas.metal_server.core.mesh_peers import get_mesh_peers
 from atlas.vm.core.metal_client import MetalClient, MetalClientError
 from atlas.vm.core.vm_state import store_reported_states
 
@@ -26,14 +27,16 @@ def enqueue_server_syncs() -> None:
 	)
 	peers = get_wireguard_peers()
 	privileged_addresses = get_privileged_vm_addresses()
+	unicast_peers = get_desired_unicast_peers()
 	for server_name in servers:
-		enqueue_server_sync(server_name, peers, privileged_addresses)
+		enqueue_server_sync(server_name, peers, privileged_addresses, unicast_peers)
 
 
 def enqueue_server_sync(
 	server_name: str,
 	wireguard_peers: list[dict[str, Any]] | None = None,
 	privileged_vm_addresses: list[str] | None = None,
+	unicast_peers: list[str] | None = None,
 ) -> None:
 	"""Queue one state exchange. A caller that queues many syncs reads the shared
 	sets once and supplies them."""
@@ -41,6 +44,8 @@ def enqueue_server_sync(
 		wireguard_peers = get_wireguard_peers()
 	if privileged_vm_addresses is None:
 		privileged_vm_addresses = get_privileged_vm_addresses()
+	if unicast_peers is None:
+		unicast_peers = get_desired_unicast_peers()
 
 	frappe.enqueue(
 		sync_server,
@@ -49,6 +54,7 @@ def enqueue_server_sync(
 		server_name=server_name,
 		wireguard_peers=wireguard_peers,
 		privileged_vm_addresses=privileged_vm_addresses,
+		unicast_peers=unicast_peers,
 		job_id=f"atlas||server-sync||{server_name}",
 		deduplicate=True,
 	)
@@ -58,6 +64,7 @@ def sync_server(
 	server_name: str,
 	wireguard_peers: list[dict[str, Any]],
 	privileged_vm_addresses: list[str],
+	unicast_peers: list[str] | None = None,
 ) -> None:
 	"""Exchange state with one host, then store its capacity and VM states."""
 	server = cast("MetalServer", frappe.get_doc("Metal Server", server_name))
@@ -66,6 +73,7 @@ def sync_server(
 			wireguard_peers,
 			get_desired_images(),
 			privileged_vm_addresses,
+			unicast_peers,
 		)
 		values = get_usage_values(response.get("capacity"))
 		store_reported_states(server_name, response.get("virtual_machines"))
@@ -137,6 +145,18 @@ def get_wireguard_peers() -> list[dict[str, Any]]:
 			}
 		)
 	return peers
+
+
+def get_desired_unicast_peers() -> list[str] | None:
+	"""Return the complete unicast peer set, or None in multicast mode.
+
+	Metal decodes the sync request strictly, so the unicast field travels only in unicast mode.
+	"""
+	settings = frappe.get_single("Atlas Settings")
+	if not settings.is_unicast_network_enabled:
+		return None
+
+	return get_mesh_peers()
 
 
 def get_usage_values(usage: object) -> dict[str, int]:

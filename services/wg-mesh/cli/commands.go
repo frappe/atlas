@@ -43,10 +43,7 @@ var removeVirtualMachineCommand = &cobra.Command{
 	},
 }
 
-func installHost(uplinkName, wireGuardName string, whoHasRate, whoHasBurst uint32) error {
-	if whoHasRate > 0 && whoHasBurst < 1 {
-		return errors.New("who-has-burst must be at least 1 when who-has-rate is set")
-	}
+func installHost(uplinkName, wireGuardName string) error {
 	if _, err := os.Stat(filepath.Join(pinDirectory, "config")); err == nil {
 		return errors.New("Atlas WG Mesh is already configured")
 	} else if !errors.Is(err, os.ErrNotExist) {
@@ -57,8 +54,9 @@ func installHost(uplinkName, wireGuardName string, whoHasRate, whoHasBurst uint3
 	if err != nil {
 		return err
 	}
-	config.WhoHasRate = whoHasRate
-	config.WhoHasBurst = whoHasBurst
+	if err := requireNeighbourKfunc(); err != nil {
+		return err
+	}
 
 	collection, err := loadCollection(nil)
 	if err != nil {
@@ -69,38 +67,68 @@ func installHost(uplinkName, wireGuardName string, whoHasRate, whoHasBurst uint3
 	if err := mountBPFFileSystem(); err != nil {
 		return err
 	}
+
 	if err := runCommand("sysctl", "-qw", "net.ipv6.conf.all.forwarding=1"); err != nil {
 		return err
 	}
+
 	if err := runCommand("ip", "link", "set", uplinkName, "allmulticast", "on"); err != nil {
 		return err
 	}
+
+	proxyNDPPath := "/proc/sys/net/ipv6/conf/" + uplinkName + "/proxy_ndp"
+	if err := os.WriteFile(proxyNDPPath, []byte("1\n"), 0644); err != nil {
+		return fmt.Errorf("enable proxy_ndp on %s: %w", uplinkName, err)
+	}
+
+	if err := setMeshRoute(uplinkName); err != nil {
+		return err
+	}
+
 	if err := pinCollection(collection, config); err != nil {
-		return rollbackInstall(err)
+		return rollbackInstall(err, uplinkName, wireGuardName)
 	}
-	if err := attachHook(uplinkName, uplinkProgram); err != nil {
-		return rollbackInstall(err)
+
+	if err := attachHook(uplinkName, ndpProgram, "ingress"); err != nil {
+		return rollbackInstall(err, uplinkName, wireGuardName)
 	}
-	if err := attachHook(wireGuardName, wireguardProgram); err != nil {
-		return rollbackInstall(err, uplinkName)
+
+	if err := attachHook(uplinkName, ndpProgram, "egress"); err != nil {
+		return rollbackInstall(err, uplinkName, wireGuardName)
 	}
+
+	if err := attachHook(wireGuardName, wireguardProgram, "ingress"); err != nil {
+		return rollbackInstall(err, uplinkName, wireGuardName)
+	}
+
+	if err := attachNUDHooks(); err != nil {
+		return rollbackInstall(err, uplinkName, wireGuardName)
+	}
+
 	fmt.Printf("Atlas WG Mesh is installed on %s and %s\n", uplinkName, wireGuardName)
 	return nil
 }
 
-func rollbackInstall(cause error, interfaceNames ...string) error {
-	var detachErr error
-	for _, interfaceName := range interfaceNames {
-		if err := detachHook(interfaceName); err != nil {
-			detachErr = errors.Join(detachErr, fmt.Errorf("detach %s hook: %w", interfaceName, err))
-		}
+// rollbackInstall removes the VLAN route, detaches the hooks on the uplink and
+// the WireGuard interface, and removes the pinned BPF state. A hook that was
+// not attached yet is not an error.
+func rollbackInstall(cause error, uplinkName, wireGuardName string) error {
+	if err := removeMeshRoute(uplinkName); err != nil {
+		return errors.Join(cause, fmt.Errorf("remove VLAN route: %w", err))
 	}
-	if detachErr != nil {
-		return errors.Join(cause, detachErr)
+
+	if err := detachHook(uplinkName); err != nil {
+		return errors.Join(cause, fmt.Errorf("detach %s hook: %w", uplinkName, err))
 	}
+
+	if err := detachHook(wireGuardName); err != nil {
+		return errors.Join(cause, fmt.Errorf("detach %s hook: %w", wireGuardName, err))
+	}
+
 	if err := clearPinDirectory(); err != nil {
 		return errors.Join(cause, fmt.Errorf("remove partial BPF state: %w", err))
 	}
+
 	return cause
 }
 
@@ -138,7 +166,24 @@ func removeHost(force bool) error {
 			if err := detachHook(name); err != nil {
 				return err
 			}
+			// A host that ran the unicast daemon also holds the
+			// unicast filters on its uplink.
+			if name == interfaces.uplinkName {
+				detachUnicastHookWarning(name, "ingress")
+				detachUnicastHookWarning(name, "egress")
+			}
 			detached[name] = struct{}{}
+		}
+	}
+	if interfaces.uplinkName != "" {
+		// Every VM entry is cleared with force, so no proxy entry may remain.
+		if force {
+			for _, virtualMachine := range virtualMachines {
+				_ = removeProxyNeighbour(virtualMachine.address.String(), interfaces.uplinkName)
+			}
+		}
+		if err := removeMeshRoute(interfaces.uplinkName); err != nil {
+			return err
 		}
 	}
 	if err := clearPinDirectory(); err != nil {
@@ -174,6 +219,10 @@ func addVirtualMachine(interfaceName, addressText string, mtu uint32) error {
 	if err != nil {
 		return err
 	}
+	uplinkName := interfaceWithIPv4(config.UplinkIPv4)
+	if uplinkName == "" {
+		return errors.New("cannot find the configured uplink")
+	}
 	if err := runCommand("ip", "-6", "addr", "replace", "fe80::1/64", "dev", interfaceName, "nodad"); err != nil {
 		return err
 	}
@@ -183,19 +232,20 @@ func addVirtualMachine(interfaceName, addressText string, mtu uint32) error {
 	if err := runCommand("ip", "-6", "route", "replace", addressText+"/128", "dev", interfaceName); err != nil {
 		return err
 	}
-	if err := addLocalVirtualMachine(address, uint32(device.Index)); err != nil {
-		if routeErr := runCommand("ip", "-6", "route", "del", addressText+"/128", "dev", interfaceName); routeErr != nil {
-			return errors.Join(err, fmt.Errorf("remove route for %s: %w", addressText, routeErr))
-		}
+	// Proxy NDP first, so the host answers for the VM as soon as it is claimed.
+	if err := setProxyNeighbour(addressText, uplinkName); err != nil {
 		return err
 	}
-	if err := attachHook(interfaceName, vmBPFProgram); err != nil {
-		return rollbackVirtualMachineAddition(address, addressText, interfaceName, err)
+	if err := addLocalVirtualMachine(address, uint32(device.Index)); err != nil {
+		return rollbackVirtualMachineAddition(address, addressText, interfaceName, uplinkName, err)
+	}
+	if err := attachHook(interfaceName, vmBPFProgram, "ingress"); err != nil {
+		return rollbackVirtualMachineAddition(address, addressText, interfaceName, uplinkName, err)
 	}
 	// Release the state lock before the network notification.
 	unlock()
 
-	// A missed announcement is repaired by WHO_HAS.
+	// Send the multicast announcement on the shared VLAN.
 	if err := announceVirtualMachine(address, config); err != nil {
 		fmt.Fprintf(os.Stderr, "atlas-wg-mesh: warning: announce %s: %v\n", addressText, err)
 	}
@@ -213,6 +263,17 @@ func removeVirtualMachine(interfaceName, addressText string) error {
 		return err
 	}
 	defer unlock()
+	config, err := readPinnedConfig()
+	if err != nil {
+		return err
+	}
+	uplinkName := interfaceWithIPv4(config.UplinkIPv4)
+	if uplinkName == "" {
+		return errors.New("cannot find the configured uplink")
+	}
+	if err := removeProxyNeighbour(addressText, uplinkName); err != nil {
+		return err
+	}
 	local, err := isLocalVirtualMachine(address)
 	if err != nil {
 		return err
@@ -297,24 +358,19 @@ func showStatus() error {
 		privilegedCount = fmt.Sprint(len(privilegedVMs))
 	}
 	fmt.Printf("discovery interface: %s\nlocal VMs: %d\nprivileged VMs: %s\nremote locations: %d/%d\nWireGuard address: %s\n", discoveryInterfaceName(config), count, privilegedCount, remoteCount, remoteCapacity, netip.AddrFrom16(config.WireGuardIPv6))
-	if config.WhoHasRate == 0 {
-		fmt.Println("WHO_HAS rate limit: disabled")
-	} else {
-		fmt.Printf("WHO_HAS rate limit: %d/s burst %d\n", config.WhoHasRate, config.WhoHasBurst)
-	}
 	return nil
 }
 
-// discoveryInterfaceName names where WHO_HAS is sent. A relay killed without
-// its cleanup leaves an index no interface owns, which drops every WHO_HAS, so
-// report that rather than a bare number.
+// discoveryInterfaceName names the interface that carries neighbour
+// discovery. A configure run records the uplink, so any other index means the
+// state is stale and configure must run again.
 func discoveryInterfaceName(config hostConfig) string {
 	device, err := net.InterfaceByIndex(int(config.DiscoveryIndex))
 	if err != nil {
-		return fmt.Sprintf("ifindex:%d (missing; rerun the discovery relay or configure)", config.DiscoveryIndex)
+		return fmt.Sprintf("ifindex:%d (missing; rerun configure)", config.DiscoveryIndex)
 	}
 	if device.Name == interfaceWithIPv4(config.UplinkIPv4) {
 		return device.Name + " (multicast)"
 	}
-	return device.Name + " (relay)"
+	return device.Name
 }

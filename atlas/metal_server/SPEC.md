@@ -18,6 +18,7 @@ Provisioning is a sequence of phases, not one transaction. Each phase records pr
 | `provisioning` | The phase order, progress saves, and failure logs. |
 | `host_installation` | Installing and configuring Metal on the host. |
 | `disk_inventory` | Reading block devices into Metal Server Disk rows. |
+| `mesh_peers` | The region unicast peer set and its peer file contents. |
 | `catalog_sync` | Refreshing Metal Server Size and Metal Server Image from the provider. |
 | `MetalServerIPAddress` (DocType) | One public IPv4 address and its provider intent. |
 | `IPAddressService` | Tenant reservation, shared-pool claims, and release. |
@@ -41,6 +42,8 @@ Every phase is safe to repeat. A creation retry reuses the provider identity fro
 ## Capacity
 
 `POST /v1/sync` sends the desired host state and returns capacity in the same exchange. Atlas records the result as a Metal Server Usage row, which is what placement later reads.
+
+When Atlas Settings enables unicast networking, the same exchange carries the complete unicast peer set. metald writes the set into the peer file and enables the unicast daemon unit, so the unicast hooks replace the multicast NDP filters. The peer set comes from `mesh_peers`, which also builds the peer file that `get_mesh_peer_file` returns. The unit arrives with the host installation, so a host installed before the unit existed must run the installation again before the switch.
 
 A scheduled job queues one exchange for each ready server. The `sync_state` action queues one exchange for a single server, so an operator does not wait for the next scheduled run.
 

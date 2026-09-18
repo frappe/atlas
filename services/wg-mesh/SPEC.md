@@ -6,9 +6,7 @@
 
 WG Mesh gives VMs private IPv6 addresses. It routes traffic between bare-metal hosts.
 
-For Go code, follow the repository [Go anti-pattern rules](../../llm/go-code-review-guide.md).
-
-It uses eBPF, WireGuard, and multicast discovery. It serves one region.
+It uses eBPF, WireGuard, Linux NDP with proxy NDP, and a small neighbour kfunc kernel module. It serves one region.
 
 ## Layout
 
@@ -16,12 +14,13 @@ It uses eBPF, WireGuard, and multicast discovery. It serves one region.
 bpf/                         eBPF source and headers
 cli/                         Go CLI
 docs/                        Design and operations docs
+kernel/                      Atlas neighbour kfunc kernel module
 Makefile                     Build targets
 ```
 
 ## Software
 
-The CLI uses Go. It builds for Linux with CGO disabled. The dataplane uses Clang and eBPF.
+The CLI uses Go. It builds for Linux with CGO disabled. The dataplane uses Clang and eBPF. The kernel module builds against the running kernel headers.
 
 ## Module
 
@@ -29,7 +28,7 @@ The module path is `github.com/frappe/atlas/services/wg-mesh/cli`. Run Go comman
 
 ## Validation
 
-From this directory, run `make bpf` and `make build`. Run Go tests from `cli/`.
+From this directory, run `make bpf`, `make module`, and `make build`. Run Go tests from `cli/`.
 
 ## Documentation
 
@@ -41,4 +40,4 @@ WG Mesh does not manage peers, keys, NAT, DNS, DHCP, firewalls, or inter-region 
 
 ## Ownership
 
-Keep eBPF code in `bpf/`. Keep CLI code in `cli/`. Keep design and operation docs in `docs/`.
+Keep eBPF code in `bpf/`. Keep CLI code in `cli/`. Keep the kernel module in `kernel/`. Keep design and operation docs in `docs/`.

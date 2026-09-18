@@ -58,7 +58,25 @@ Metal inspects changed firewalls on the next reconcile pass. It also audits unch
 
 Each VM has a private IPv6 address in `fdaa::/16`. Atlas WG Mesh routes it between hosts. Metal registers the address when it creates the veth pair and unregisters it when it removes the pair.
 
-Atlas WG Mesh is required. metald refuses to run without the CLI, because a VM with no mesh registration has no private mesh network. On every start it configures an unconfigured host and replays existing VM registrations, so a reinstalled host restores itself without an operator.
+```text
+guest fdaa::x
+    |
+   tap0  fe80::1
+    |
+namespace metal-<id>          route fdaa::x/128 dev tap0
+    |                         route fdaa::/16 via fe80::1 dev vg-<user-id>
+ vg-<user-id>                 proxy NDP for fdaa::x
+    |
+ vh-<user-id>  fe80::1        Atlas WG Mesh vm_hook, TC ingress
+    |
+   wg0
+```
+
+Atlas WG Mesh assumes the VM is directly behind the interface that it hooks. Metal puts a network namespace between them, so the namespace forwards IPv6 and answers neighbour solicitations for the guest with proxy NDP. The host route from `vm add` is on-link on `vh-<user-id>`.
+
+Atlas WG Mesh also adds a proxy NDP entry for the guest address on the shared VLAN, so other hosts resolve the guest through the hosting node. Remote hosts learn the guest location from the NDP advertisement, which carries the owning host's `fdab::/16` address in the Atlas option. No Atlas discovery daemon runs, and the `atlas_neigh` kernel module must be loaded before the CLI configures a host.
+
+`metald` runs the `atlas-wg-mesh` CLI. On every start it runs `status` and configures the host when the CLI reports no configuration. It then replays the existing VM network configurations, so a reinstalled or reset host restores the VM registrations without an operator.
 
 Tenant 0 is the privileged tenant. A tenant-0 VM crosses tenants only when its address is in the Atlas WG Mesh whitelist, which `POST /v1/sync` carries in full.
 
@@ -85,6 +103,8 @@ The first packet can be lost while Firecracker starts. Clients must retry. A met
 `POST /v1/sync` supplies the complete managed peer set. Metal applies it to `wg0` and records what it applied, so it never disturbs peers added by other tools.
 
 Each peer endpoint is a public address, so the tunnel crosses the uplink. Atlas WG Mesh discovery uses the private network. The WireGuard MTU follows the uplink MTU for this reason.
+
+The region prefix on `wg0` makes every peer on-link. Runtime `wg set` installs no system routes, so the manager additionally owns one `/128` route per peer into `wg0`. A peer that leaves the set loses its peer entry and its route; a missing route is reinstalled on the next apply, because routes do not survive a reboot while the managed peer state does.
 
 ## Design notes
 

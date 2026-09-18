@@ -58,6 +58,7 @@ class AtlasSettings(Document):
 		is_letsencrypt_staging: DF.Check
 		is_server_provider_setup_completed: DF.Check
 		is_setup_completed: DF.Check
+		is_unicast_network_enabled: DF.Check
 		is_wildcard_tls_auto_renew_enabled: DF.Check
 		jwt_signing_key_id: DF.Data | None
 		jwt_signing_private_key: DF.Password | None

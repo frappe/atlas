@@ -249,6 +249,41 @@ class TestMetalClientPaths(UnitTestCase):
 			request.call_args.args[:2], ("POST", "http://10.0.0.2:9000/v1/snapshots/SNAP-1/upload")
 		)
 
+	def test_sync_omits_the_unicast_field_in_multicast_mode(self) -> None:
+		"""Metal decodes the sync request strictly, so an unknown field fails the exchange."""
+		client = build_client()
+
+		with patch(
+			"atlas.vm.core.metal_client.requests.request",
+			return_value=build_response(200, {"capacity": {}}),
+		) as request:
+			client.sync([], [], [])
+
+		self.assertEqual(request.call_args.args[:2], ("POST", "http://10.0.0.2:9000/v1/sync"))
+		self.assertEqual(
+			request.call_args.kwargs["json"],
+			{"wireguard_peers": [], "images": [], "privileged_vm_addresses": []},
+		)
+
+	def test_sync_carries_the_unicast_peers_in_unicast_mode(self) -> None:
+		client = build_client()
+
+		with patch(
+			"atlas.vm.core.metal_client.requests.request",
+			return_value=build_response(200, {"capacity": {}}),
+		) as request:
+			client.sync([], [], [], unicast_peers=["10.20.0.11"])
+
+		self.assertEqual(
+			request.call_args.kwargs["json"],
+			{
+				"wireguard_peers": [],
+				"images": [],
+				"privileged_vm_addresses": [],
+				"unicast_peers": ["10.20.0.11"],
+			},
+		)
+
 
 class TestMetalClientMigrations(UnitTestCase):
 	def test_put_migration_sends_the_target_pull_request(self) -> None:

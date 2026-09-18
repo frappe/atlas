@@ -55,5 +55,3 @@ The limiter runs only on remote-cache misses. It had no measurable effect on est
 | Lock held during announcement | Yes, 250 ms | No |
 | Two parallel adds | Serialized | 14 ms |
 | Announcement failure | Removes the VM | Warns and keeps the VM |
-
-If an observer misses `NOW_HERE`, its next packet gets `NOT_HERE`, then `WHO_HAS`/`FOUND` repairs the cache. In the 100-ping, 100 ms-interval test, this lost two packets (about 200 ms). An idle observer remains harmlessly stale until it sends traffic.

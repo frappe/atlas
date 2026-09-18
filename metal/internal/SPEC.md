@@ -22,7 +22,7 @@ The `vm` package defines the contracts. The other packages implement or consume 
 | [console](console/SPEC.md) | VM serial consoles over PTYs. |
 | [reconciler](reconciler/SPEC.md) | VM state, image cache, warm artifact, and staging cleanup loops. |
 | [storage](storage/SPEC.md) | ZFS pool, VM disks, images, and snapshot staging. |
-| [network](network/SPEC.md) | VM namespaces, host rules, and managed WireGuard peers. |
+| [network](network/SPEC.md) | VM namespaces, host rules, managed WireGuard peers, and the unicast transport. |
 | [network/traffic](network/traffic/SPEC.md) | eBPF traffic tracking and packet events. |
 | [platform](platform/SPEC.md) | Host files, commands, and systemd control. |
 | [vm_migration](vm_migration/SPEC.md) | VM live migration: lifecycle, records, and host-to-host transport. |

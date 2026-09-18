@@ -15,8 +15,6 @@ func init() {
 	configureCommand.Flags().StringVar(&wireGuardName, "wireguard", "", "WireGuard interface")
 	configureCommand.MarkFlagRequired("uplink")
 	configureCommand.MarkFlagRequired("wireguard")
-	configureCommand.Flags().Uint32Var(&whoHasRate, "who-has-rate", defaultWhoHasRate, "sustained WHO_HAS per second per VM (0 disables)")
-	configureCommand.Flags().Uint32Var(&whoHasBurst, "who-has-burst", defaultWhoHasBurst, "discovery burst capacity per VM")
 
 	addVirtualMachineCommand.Flags().StringVar(&addInterfaceName, "interface", "", "VM interface")
 	addVirtualMachineCommand.Flags().StringVar(&addAddressText, "address", "", "VM private IPv6 address")
@@ -52,12 +50,16 @@ func init() {
 	remotePurgeCommand.MarkFlagRequired("host")
 	upgradeCommand.Flags().BoolVar(&upgradeForce, "force", false, "allow a state-breaking upgrade")
 
+	unicastStartCommand.Flags().BoolVar(&unicastVerbose, "verbose", false, "log every peer list update")
+
 	virtualMachineCommand.AddCommand(addVirtualMachineCommand, removeVirtualMachineCommand, listVirtualMachinesCommand)
 	privilegedVMCommand.AddCommand(addPrivilegedVMCommand, removePrivilegedVMCommand, listPrivilegedVMCommand)
 	debugCommand.AddCommand(debugStatusCommand, debugEnableCommand, debugDisableCommand, inspectCommand, dumpCommand, topCommand)
 	remoteCommand.AddCommand(remotePurgeCommand)
-	discoveryRelayCommand.Flags().BoolVar(&discoveryVerbose, "verbose", false, "log relayed discovery messages")
-	rootCommand.AddCommand(configureCommand, statusCommand, virtualMachineCommand, privilegedVMCommand, remoteCommand, debugCommand, discoveryRelayCommand, upgradeCommand, versionCommand, resetCommand)
+	moduleCommand.AddCommand(moduleInstallCommand)
+	unicastCommand.AddCommand(unicastPeerCommand, unicastStartCommand)
+	unicastPeerCommand.AddCommand(unicastPeerAddCommand, unicastPeerRemoveCommand, unicastPeerListCommand)
+	rootCommand.AddCommand(configureCommand, statusCommand, virtualMachineCommand, privilegedVMCommand, remoteCommand, debugCommand, unicastCommand, moduleCommand, upgradeCommand, versionCommand, resetCommand)
 }
 
 func main() {

@@ -20,6 +20,8 @@ machines_dir=$base_dir/machines
 images_dir=$base_dir/images
 sockets_dir=/run/metal
 config_file=$base_dir/metald.toml
+unicast_peers_file=$base_dir/unicast-peers
+unicast_unit=/etc/systemd/system/atlas-wg-mesh-unicast.service
 
 if [ "$(id -u)" -ne 0 ]; then
 	echo "install-metald must run as root" >&2
@@ -41,11 +43,15 @@ reported_version() {
 }
 
 
+kernel_release=$(uname -r)
+
 step "install required packages"
-if ! command -v zpool >/dev/null || ! command -v curl >/dev/null || ! command -v iptables >/dev/null; then
+if ! command -v zpool >/dev/null || ! command -v curl >/dev/null || ! command -v iptables >/dev/null ||
+	! command -v make >/dev/null || ! command -v cc >/dev/null || ! command -v pahole >/dev/null ||
+	[ ! -d "/lib/modules/$kernel_release/build" ]; then
 	export DEBIAN_FRONTEND=noninteractive
 	apt update -qq
-	apt install -y -qq curl iptables tar zfsutils-linux
+	apt install -y -qq curl iptables tar zfsutils-linux build-essential dwarves "linux-headers-$kernel_release"
 else
 	skip "packages"
 fi
@@ -115,6 +121,19 @@ install -d -m 0755 "$(dirname "$mesh_binary_path")"
 install_binary "$mesh_binary_path" "$WG_MESH_DOWNLOAD_URL"
 
 
+# The Atlas neighbour kernel module must be loaded before metald starts,
+# because Atlas WG Mesh refuses to configure a host without its kfunc. The
+# module builds against the running kernel headers on this host. An old mesh
+# binary has no module command. Skip the step for that binary, because this
+# script does not upgrade an installed binary.
+step "install Atlas neighbour kernel module"
+if "$mesh_binary_path" module --help >/dev/null 2>&1; then
+	"$mesh_binary_path" module install
+else
+	echo "    atlas-wg-mesh has no module command. Skip the neighbour kernel module." >&2
+fi
+
+
 step "create directories for metald"
 mkdir -p "$machines_dir" "$images_dir"
 
@@ -132,7 +151,7 @@ zfs list "$storage_pool_name/warm" >/dev/null 2>&1 || zfs create -o mountpoint=n
 
 
 # mesh_sections appends the WireGuard and Atlas WG Mesh settings. Atlas owns the
-# uplink name, because only Atlas knows which interface carries discovery.
+# uplink name, because only Atlas knows which interface carries Atlas NDP.
 mesh_sections() {
 	cat >> "$config_file" <<EOF
 
@@ -142,7 +161,18 @@ interface = "$wireguard_interface"
 [wg_mesh]
 binary_path = "$mesh_binary_path"
 uplink = "$MESH_UPLINK_INTERFACE"
+peers_file = "$unicast_peers_file"
 EOF
+}
+
+# ensure_mesh_peers_file_setting keeps the unicast peer file path in an existing
+# configuration, because metald and the unicast unit must agree on it.
+ensure_mesh_peers_file_setting() {
+	if grep -q '^peers_file = ' "$config_file"; then
+		sed -i "s|^peers_file = .*|peers_file = \"$unicast_peers_file\"|" "$config_file"
+	else
+		sed -i "/^\\[wg_mesh\\]/a peers_file = \"$unicast_peers_file\"" "$config_file"
+	fi
 }
 
 step "config ($config_file)"
@@ -156,6 +186,7 @@ if [ -f "$config_file" ]; then
 	if grep -q '^\[wg_mesh\]' "$config_file"; then
 		sed -i "s|^uplink = .*|uplink = \"$MESH_UPLINK_INTERFACE\"|" "$config_file"
 		sed -i "s|^binary_path = \"/usr/local/bin/atlas-wg-mesh\"|binary_path = \"$mesh_binary_path\"|" "$config_file"
+		ensure_mesh_peers_file_setting
 	else
 		mesh_sections
 	fi
@@ -236,6 +267,29 @@ TTYPath=/run/metal/consoles/%i
 TTYReset=yes
 TTYVHangup=yes
 Restart=no
+EOF
+
+# The unicast daemon replaces the multicast NDP filters with the unicast hooks.
+# It stays disabled here: metald enables it when the controller syncs a unicast
+# peer set, and disables it when the controller returns to multicast.
+cat > "$unicast_unit" <<EOF
+[Unit]
+Description=Atlas WG Mesh unicast NDP transport
+Requires=metal.service
+After=metal.service network-online.target
+Wants=network-online.target
+
+[Service]
+# metald configures Atlas WG Mesh on every boot, and the daemon must wait for
+# that, because its start removes the multicast NDP filters that configure
+# attaches.
+ExecStartPre=/bin/sh -c 'for waiting_second in \$(seq 30); do "$mesh_binary_path" status >/dev/null 2>&1 && exit 0; sleep 1; done; echo "Atlas WG Mesh is not configured" >&2; exit 1'
+ExecStart=$mesh_binary_path unicast start $unicast_peers_file
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
 EOF
 
 

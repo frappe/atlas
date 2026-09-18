@@ -1,6 +1,8 @@
 BPF_OBJECT := cli/atlas-wg-mesh.bpf.o
 BPF_SOURCE := bpf/bpf.c
 BPF_HEADERS := $(wildcard bpf/*.h)
+MODULE_SOURCE_FILES := kernel/atlas_neigh.c kernel/Makefile
+MODULE_SOURCE_DIRECTORY := cli/kernel_module
 OUTPUT_DIRECTORY := dist
 CLI_NAME := atlas-wg-mesh
 
@@ -9,9 +11,18 @@ CLI_NAME := atlas-wg-mesh
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 GO_BUILD_FLAGS := -trimpath -buildvcs=false -ldflags="-s -w -X main.version=$(VERSION)"
 
-.PHONY: bpf build clean version
+.PHONY: bpf module module-sources build clean version
 
 bpf: $(BPF_OBJECT)
+
+module:
+	$(MAKE) -C kernel
+
+# The CLI embeds the kernel module sources and builds them on each host, so a
+# host with only its running kernel headers gets a matching module.
+module-sources:
+	mkdir -p $(MODULE_SOURCE_DIRECTORY)
+	cp $(MODULE_SOURCE_FILES) $(MODULE_SOURCE_DIRECTORY)/
 
 # Debian keeps the asm headers in a multiarch directory. The bpfel target stops
 # clang from searching it, so name it. The directory is absent on other layouts.
@@ -20,7 +31,7 @@ BPF_INCLUDE_FLAGS := -I/usr/include/$(shell uname -m)-linux-gnu
 $(BPF_OBJECT): $(BPF_SOURCE) $(BPF_HEADERS)
 	clang -Oz -g -Wall -Werror $(BPF_INCLUDE_FLAGS) -target bpfel -c $(BPF_SOURCE) -o $@
 
-build: bpf
+build: bpf module-sources
 	mkdir -p $(OUTPUT_DIRECTORY)
 	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -C cli $(GO_BUILD_FLAGS) -o ../$(OUTPUT_DIRECTORY)/$(CLI_NAME)-linux-amd64 .
 	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -C cli $(GO_BUILD_FLAGS) -o ../$(OUTPUT_DIRECTORY)/$(CLI_NAME)-linux-arm64 .
