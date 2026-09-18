@@ -1956,6 +1956,9 @@
               }
             },
             "description": "The virtual machine request is stored."
+          },
+          "503": {
+            "description": "Host capacity is pending. Retry after the reported interval."
           }
         },
         "summary": "Create VM",

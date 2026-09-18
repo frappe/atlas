@@ -44,7 +44,7 @@ def _get_kwargs(
 
 
 
-def _parse_response(*, client: AuthenticatedClient | Client, response: httpx.Response) -> VirtualMachineResponse | None:
+def _parse_response(*, client: AuthenticatedClient | Client, response: httpx.Response) -> Any | VirtualMachineResponse | None:
     if response.status_code == 201:
         response_201 = VirtualMachineResponse.from_dict(response.json())
 
@@ -52,13 +52,17 @@ def _parse_response(*, client: AuthenticatedClient | Client, response: httpx.Res
 
         return response_201
 
+    if response.status_code == 503:
+        response_503 = cast(Any, None)
+        return response_503
+
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
     else:
         return None
 
 
-def _build_response(*, client: AuthenticatedClient | Client, response: httpx.Response) -> Response[VirtualMachineResponse]:
+def _build_response(*, client: AuthenticatedClient | Client, response: httpx.Response) -> Response[Any | VirtualMachineResponse]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -73,7 +77,7 @@ def sync_detailed(
     body: CreateVirtualMachinePayload,
     x_tenant_id: int,
 
-) -> Response[VirtualMachineResponse]:
+) -> Response[Any | VirtualMachineResponse]:
     """ Create VM
 
      Creates a tenant VM from an image and requests the specified compute, disk, network, and guest
@@ -89,7 +93,7 @@ def sync_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[VirtualMachineResponse]
+        Response[Any | VirtualMachineResponse]
      """
 
 
@@ -111,7 +115,7 @@ def sync(
     body: CreateVirtualMachinePayload,
     x_tenant_id: int,
 
-) -> VirtualMachineResponse | None:
+) -> Any | VirtualMachineResponse | None:
     """ Create VM
 
      Creates a tenant VM from an image and requests the specified compute, disk, network, and guest
@@ -127,7 +131,7 @@ def sync(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        VirtualMachineResponse
+        Any | VirtualMachineResponse
      """
 
 
@@ -144,7 +148,7 @@ async def asyncio_detailed(
     body: CreateVirtualMachinePayload,
     x_tenant_id: int,
 
-) -> Response[VirtualMachineResponse]:
+) -> Response[Any | VirtualMachineResponse]:
     """ Create VM
 
      Creates a tenant VM from an image and requests the specified compute, disk, network, and guest
@@ -160,7 +164,7 @@ async def asyncio_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[VirtualMachineResponse]
+        Response[Any | VirtualMachineResponse]
      """
 
 
@@ -182,7 +186,7 @@ async def asyncio(
     body: CreateVirtualMachinePayload,
     x_tenant_id: int,
 
-) -> VirtualMachineResponse | None:
+) -> Any | VirtualMachineResponse | None:
     """ Create VM
 
      Creates a tenant VM from an image and requests the specified compute, disk, network, and guest
@@ -198,7 +202,7 @@ async def asyncio(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        VirtualMachineResponse
+        Any | VirtualMachineResponse
      """
 
 
