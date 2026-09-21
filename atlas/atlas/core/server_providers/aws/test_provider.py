@@ -18,6 +18,7 @@ from atlas.atlas.core.server_providers.aws.infrastructure import AwsInfrastructu
 from atlas.atlas.core.server_providers.aws.ip_addresses import AwsIPAddresses
 from atlas.atlas.core.server_providers.aws.provider import AwsProvider
 from atlas.atlas.core.server_providers.aws.servers import MESH_MULTICAST_GROUP, AwsServers
+from atlas.atlas.core.server_providers.aws.volumes import AwsVolumes
 from atlas.atlas.core.server_providers.base import ProviderServer, ServerCreateRequest, ServerPowerAction
 from atlas.atlas.core.server_providers.registry import get_server_provider
 
@@ -426,6 +427,7 @@ class TestAwsProvider(UnitTestCase):
 		provider.infrastructure = Mock()
 		provider.servers = Mock()
 		provider.ip_addresses = Mock()
+		provider.volumes = AwsVolumes(provider)
 		return provider
 
 	@staticmethod

@@ -8,13 +8,11 @@ import frappe
 from atlas.atlas.core.server_providers import register
 from atlas.atlas.core.server_providers.aws.catalog import IMAGE_OWNERS, AwsCatalog
 from atlas.atlas.core.server_providers.aws.client import AwsClient, AwsError
-from atlas.atlas.core.server_providers.aws.configuration import (
-	STORAGE_VOLUME_DEVICE_NAME,
-	AwsConfiguration,
-)
+from atlas.atlas.core.server_providers.aws.configuration import AwsConfiguration
 from atlas.atlas.core.server_providers.aws.infrastructure import AwsInfrastructure
 from atlas.atlas.core.server_providers.aws.ip_addresses import AwsIPAddresses
 from atlas.atlas.core.server_providers.aws.servers import AwsServers
+from atlas.atlas.core.server_providers.aws.volumes import AwsVolumes
 from atlas.atlas.core.server_providers.base import (
 	ProviderServer,
 	ReservedIPAddress,
@@ -57,6 +55,7 @@ class AwsProvider(ServerProvider):
 		self.infrastructure = AwsInfrastructure(self)
 		self.servers = AwsServers(self.client, self.configuration, self.catalog)
 		self.ip_addresses = AwsIPAddresses(self.client, self.configuration)
+		self.volumes = AwsVolumes(self)
 
 	@override
 	def validate_settings(self) -> None:
@@ -185,18 +184,9 @@ class AwsProvider(ServerProvider):
 	@override
 	def storage_pool_device(self, server: "MetalServer") -> str:
 		"""Return the stable device path of the EBS volume for the storage pool."""
-		metadata = frappe.parse_json(server.provider_metadata or "{}")
-		instance = metadata.get("instance") if isinstance(metadata, Mapping) else None
-		mappings = instance.get("BlockDeviceMappings") if isinstance(instance, Mapping) else None
-		for mapping in mappings or []:
-			if not isinstance(mapping, Mapping) or mapping.get("DeviceName") != STORAGE_VOLUME_DEVICE_NAME:
-				continue
-			volume = mapping.get("Ebs")
-			volume_id = volume.get("VolumeId") if isinstance(volume, Mapping) else None
-			if isinstance(volume_id, str) and volume_id:
-				# The NVMe serial of an EBS volume is its id without the dash.
-				return f"/dev/disk/by-id/nvme-Amazon_Elastic_Block_Store_{volume_id.replace('-', '')}"
-		raise AwsError(f"Atlas server {server.name} has no AWS storage volume")
+		volume_id = self.volumes.volume_id(server, "storage")
+		# The NVMe serial of an EBS volume is its id without the dash.
+		return f"/dev/disk/by-id/nvme-Amazon_Elastic_Block_Store_{volume_id.replace('-', '')}"
 
 	@override
 	def set_power_state(self, provider_server_id: str, action: ServerPowerAction) -> None:

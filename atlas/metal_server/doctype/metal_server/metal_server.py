@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 import frappe
 from frappe import _
 from frappe.model.document import Document
-from frappe.utils import add_days, now_datetime
+from frappe.utils import add_days, cint, now_datetime
 from frappe.utils.background_jobs import is_job_enqueued
 
 from atlas.atlas.core.background_jobs import run_as_admin
@@ -25,6 +25,7 @@ from atlas.metal_server.core.provisioning import ServerProvisioner
 from atlas.metal_server.usage import enqueue_server_sync
 
 if TYPE_CHECKING:
+	from atlas.atlas.core.server_providers.aws.volumes import AwsVolumes
 	from atlas.atlas.doctype.atlas_settings.atlas_settings import AtlasSettings
 
 
@@ -250,6 +251,42 @@ class MetalServer(Document):
 
 	def _sync_disks(self) -> None:
 		DiskInventory(self).sync()
+
+	def onload(self) -> None:
+		self.set_onload("server_provider", self.settings.server_provider)
+
+	@frappe.whitelist(methods=["POST"])
+	def get_volume(self, kind: str) -> dict:
+		"""Return the current AWS values of the root or the storage volume."""
+		frappe.only_for("System Manager")
+		return self._aws_volumes(kind).describe(self, kind)
+
+	@frappe.whitelist(methods=["POST"])
+	def resize_volume(self, kind: str, size_gib: int, iops: int = 0, throughput_mibps: int = 0) -> None:
+		"""Change one AWS volume and queue its growth on the host."""
+		frappe.only_for("System Manager")
+		if self.status != "Running":
+			frappe.throw(_("Metal Server {0} is not running.").format(self.name))
+		self._aws_volumes(kind).modify(self, kind, cint(size_gib), cint(iops), cint(throughput_mibps))
+		frappe.enqueue_doc(
+			self.doctype,
+			self.name,
+			"_grow_volume",
+			kind=kind,
+			queue="long",
+			timeout=2_400,
+			job_id=f"atlas||server||grow-volume||{kind}||{self.name}",
+			deduplicate=True,
+			enqueue_after_commit=True,
+		)
+
+	def _grow_volume(self, kind: str) -> None:
+		self._aws_volumes(kind).grow(self, kind)
+
+	def _aws_volumes(self, kind: str) -> "AwsVolumes":
+		if self.settings.server_provider != "AWS" or kind not in ("root", "storage"):
+			frappe.throw(_("Only an AWS root or storage volume can be resized."))
+		return self.settings.server_provider_controller.volumes
 
 	@frappe.whitelist(methods=["POST"])
 	def sync_state(self) -> None:

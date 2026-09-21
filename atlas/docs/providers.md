@@ -110,6 +110,8 @@ Atlas creates a 64 GiB `gp3` root volume and a 500 GiB `gp3` storage volume. Bot
 
 The image metadata supplies the root device name. AWS does not give stable NVMe device names, so the provider sends the `/dev/disk/by-id` path of the storage volume. The path holds the volume ID without its dash.
 
+On an AWS server, the Metal Server actions **Resize Root Disk** and **Resize Storage Disk** change the size, IOPS, and throughput of an EBS volume. AWS refuses a smaller size and a second change to a volume within 6 hours. When the guest sees the new size, `aws/grow-disk.sh` grows the root partition and its ext4 file system, or runs `zpool online -e` for the storage pool.
+
 Both volumes have `DeleteOnTermination` enabled. A stop or a hardware change does not remove the storage volume, but instance deletion removes it.
 
 ### Public IPv4 addresses
