@@ -277,7 +277,7 @@ class MetalServer(Document):
 			timeout=2_400,
 			job_id=f"atlas||server||grow-volume||{kind}||{self.name}",
 			deduplicate=True,
-			enqueue_after_commit=True,
+			enqueue_after_commit=False,
 		)
 
 	def _grow_volume(self, kind: str) -> None:

@@ -372,6 +372,21 @@ class TestServer(UnitTestCase):
 
 		create_for_command.assert_not_called()
 
+	def test_resize_volume_queues_growth_without_waiting_for_commit(self) -> None:
+		server = self._server(status="Running")
+		volumes = Mock()
+		server.settings.server_provider = "AWS"
+		server._aws_volumes = Mock(return_value=volumes)
+
+		with (
+			patch("atlas.metal_server.doctype.metal_server.metal_server.frappe.only_for"),
+			patch("atlas.metal_server.doctype.metal_server.metal_server.frappe.enqueue_doc") as enqueue_doc,
+		):
+			MetalServer.resize_volume(server, "storage", 600, 3000, 250)
+
+		volumes.modify.assert_called_once_with(server, "storage", 600, 3000, 250)
+		self.assertFalse(enqueue_doc.call_args.kwargs["enqueue_after_commit"])
+
 	# An unprovisioned host has no Metal token.
 	def test_sync_state_rejects_a_server_that_is_not_ready(self) -> None:
 		server = self._server(status="Running")
