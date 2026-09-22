@@ -35,6 +35,7 @@ The Placement Strategy section selects a registered placement strategy and defau
 ```mermaid
 flowchart LR
     Domain[Server and VM domain code] --> Contract[ServerProvider contract]
+    Contract --> Generic[Generic implementation]
     Contract --> Scaleway[Scaleway implementation]
     Contract --> AWS[AWS implementation]
     Scaleway --> SParts[Client, servers, addresses,<br/>catalog, partitions, infrastructure]

@@ -26,7 +26,17 @@ function showReserveServerIPAddressDialog() {
 }
 
 frappe.listview_settings["Metal Server IP Address"] = {
+	async onload(listview) {
+		listview.server_provider = await frappe.db.get_single_value(
+			"Atlas Settings",
+			"server_provider"
+		);
+		listview.refresh();
+	},
 	refresh(listview) {
+		// Generic addresses are added by hand with the standard Add button.
+		if (!listview.server_provider || listview.server_provider === "Generic") return;
+
 		listview.page.clear_primary_action();
 		if (!has_common(frappe.user_roles, ["System Manager"])) return;
 		listview.page.add_inner_button(

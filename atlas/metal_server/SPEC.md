@@ -19,6 +19,7 @@ Provisioning is a sequence of phases, not one transaction. Each phase records pr
 | `host_installation` | Installing and configuring Metal on the host. |
 | `disk_inventory` | Reading block devices into Metal Server Disk rows. |
 | `catalog_sync` | Refreshing Metal Server Size and Metal Server Image from the provider. |
+| `host_inspection` | Inspecting and registering a Generic provider host. See [providers](../docs/providers.md#generic-provider). |
 | `MetalServerIPAddress` (DocType) | One public IPv4 address and its provider intent. |
 | `IPAddressService` | Tenant reservation, shared-pool claims, and release. |
 | `MetalServerUsage` (DocType) | One capacity sample reported by Metal. |

@@ -1,6 +1,42 @@
 const UNOWNED_TENANT_ID = -1;
 
 frappe.ui.form.on("Metal Server IP Address", {
+	async onload(frm) {
+		if (!frm.is_new()) return;
+
+		const provider = await frappe.db.get_single_value("Atlas Settings", "server_provider");
+		frm.is_manual_address = provider === "Generic";
+		frm.toggle_display("provider_resource_id", !frm.is_manual_address);
+	},
+
+	address(frm) {
+		if (frm.is_manual_address) {
+			frm.set_value("provider_resource_id", frm.doc.address);
+		}
+	},
+
+	async validate(frm) {
+		if (!frm.is_new()) return;
+
+		const is_generic_provider =
+			frm.is_manual_address ??
+			(await frappe.db.get_single_value("Atlas Settings", "server_provider")) === "Generic";
+		if (!is_generic_provider) return;
+
+		const is_confirmed = await new Promise((resolve) =>
+			frappe.confirm(
+				__(
+					"Confirm that your provider routes this IPv4 address through VXLAN to every Metal Server. A virtual machine can then use it on any host."
+				),
+				() => resolve(true),
+				() => resolve(false)
+			)
+		);
+		if (!is_confirmed) {
+			frappe.validated = false;
+		}
+	},
+
 	refresh(frm) {
 		const is_detached = frm.doc.status === "Allocated" && !frm.doc.virtual_machine;
 		const is_owned = frm.doc.tenant_id !== UNOWNED_TENANT_ID;
