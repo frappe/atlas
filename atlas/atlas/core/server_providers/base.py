@@ -131,6 +131,10 @@ class ServerProvider(ABC):
 		"""Check the provider settings."""
 		...
 
+	def validate_server(self, server: "MetalServer") -> None:
+		"""Check the Metal Server values that this provider needs."""
+		return None
+
 	@abstractmethod
 	def validate_credentials(self) -> bool:
 		"""Check that the provider credentials permit an API request."""

@@ -251,7 +251,7 @@
    "fieldtype": "Select",
    "in_list_view": 1,
    "label": "Server Provider",
-   "options": "Scaleway\nAWS",
+   "options": "Generic\nScaleway\nAWS",
    "read_only_depends_on": "eval: doc.is_server_provider_setup_completed",
    "reqd": 1
   },
@@ -790,7 +790,7 @@
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-09-21 04:16:11.422513",
+ "modified": "2026-09-22 12:00:00.000000",
  "modified_by": "test@gmail.com",
  "module": "Atlas",
  "name": "Atlas Settings",

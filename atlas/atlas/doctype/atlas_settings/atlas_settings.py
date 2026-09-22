@@ -122,7 +122,7 @@ class AtlasSettings(Document):
 			"pl-waw-2",
 			"pl-waw-3",
 		]
-		server_provider: DF.Literal["Scaleway", "AWS"]
+		server_provider: DF.Literal["Generic", "Scaleway", "AWS"]
 		sleepy_vm_overcommit_factor: DF.Float
 		use_dedicated_sleepy_vm_hosts: DF.Check
 		use_public_ip_for_metald: DF.Check

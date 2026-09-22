@@ -17,6 +17,7 @@ from atlas.metal_server.core.catalog_sync import CatalogSynchronizer
 # The setup input carries the fields of the selected server provider only.
 PROVIDER_FIELDS: Mapping[str, tuple[str, ...]] = MappingProxyType(
 	{
+		"Generic": (),
 		"Scaleway": (
 			"scaleway_organization_id",
 			"scaleway_project_id",
@@ -37,6 +38,7 @@ PROVIDER_FIELDS: Mapping[str, tuple[str, ...]] = MappingProxyType(
 # A provider resource carries these values, so a completed region cannot change them.
 PROVIDER_IMMUTABLE_FIELDS: Mapping[str, tuple[str, ...]] = MappingProxyType(
 	{
+		"Generic": (),
 		"Scaleway": ("scaleway_organization_id", "scaleway_project_id", "scaleway_zone"),
 		"AWS": ("aws_region", "aws_availability_zone"),
 	}

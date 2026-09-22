@@ -42,4 +42,5 @@ def get_server_provider(
 def load_implementations() -> None:
 	"""Load the built-in server provider implementations."""
 	import atlas.atlas.core.server_providers.aws
+	import atlas.atlas.core.server_providers.generic
 	import atlas.atlas.core.server_providers.scaleway
