@@ -21,6 +21,9 @@ def migration_doc(**overrides: object) -> SimpleNamespace:
 		"started_at": None,
 		"progress_percent": 0,
 		"destination_metal_server_selection_attempts": 0,
+		"target_cpu_millicores": 0,
+		"target_memory_mib": 0,
+		"target_disk_mib": 0,
 		"transfers": [],
 	}
 	values.update(overrides)
@@ -36,6 +39,11 @@ def source_vm(**overrides: object) -> SimpleNamespace:
 		"is_terminating": 0,
 		"current_state": "running",
 		"architecture": "amd64",
+		"tenant_id": 7,
+		"cpu_millicores": 1000,
+		"memory_mib": 512,
+		"disk_mib": 1024,
+		"sleep_after_idle_seconds": 0,
 	}
 	values.update(overrides)
 	return SimpleNamespace(**values)
@@ -89,19 +97,11 @@ class TestDestinationMetalServerSelection(UnitTestCase):
 		service.record_destination_metal_server_selection_failure = Mock()
 		with (
 			patch("atlas.vm.core.vm_migration.frappe.get_doc", return_value=source_vm()),
-			patch("atlas.vm.core.vm_migration.MigrationService.get_shape") as get_shape,
 			patch(
 				"atlas.vm.core.vm_migration.PlacementStrategy.find_server",
 				side_effect=AtlasUserError("out of capacity"),
 			),
 		):
-			get_shape.return_value = SimpleNamespace(
-				cpu_millicores=1000,
-				memory_mib=512,
-				disk_mib=1024,
-				tenant_id=7,
-				sleep_after_idle_seconds=0,
-			)
 			self.assertFalse(service.select_destination_metal_server())
 		service.record_destination_metal_server_selection_failure.assert_called_once()
 
@@ -112,24 +112,108 @@ class TestDestinationMetalServerSelection(UnitTestCase):
 		with (
 			patch("atlas.vm.core.vm_migration.frappe.get_doc", return_value=source_vm()),
 			patch("atlas.vm.core.vm_migration.now_datetime", return_value="2026-09-21 12:00:00"),
-			patch("atlas.vm.core.vm_migration.MigrationService.get_shape") as get_shape,
 			patch(
 				"atlas.vm.core.vm_migration.PlacementStrategy.reserve_server",
 				return_value="metal-3",
 			) as reserve_server,
 		):
-			get_shape.return_value = SimpleNamespace(
-				cpu_millicores=1000,
-				memory_mib=512,
-				disk_mib=1024,
-				tenant_id=7,
-				sleep_after_idle_seconds=0,
-			)
 			self.assertTrue(service.select_destination_metal_server())
 
 		reserve_server.assert_called_once()
 		self.assertEqual(service.update.call_args.args[0]["destination_metal_server"], "metal-3")
 		self.assertEqual(service.update.call_args.args[0]["status"], "preparing")
+
+	def test_a_resize_migration_places_the_target_shape(self) -> None:
+		service = MigrationService(
+			migration_doc(
+				status="scheduled",
+				destination_metal_server=None,
+				target_cpu_millicores=4000,
+				target_memory_mib=8192,
+				target_disk_mib=40960,
+			)
+		)
+		service.update = Mock()
+
+		with (
+			patch("atlas.vm.core.vm_migration.frappe.get_doc", return_value=source_vm()),
+			patch(
+				"atlas.vm.core.vm_migration.PlacementStrategy.find_server", return_value="metal-2"
+			) as find_server,
+		):
+			self.assertTrue(service.select_destination_metal_server())
+
+		requirements = find_server.call_args.args[0]
+		self.assertEqual(
+			(requirements.cpu_millicores, requirements.memory_mib, requirements.disk_mib), (4000, 8192, 40960)
+		)
+		self.assertEqual(find_server.call_args.kwargs["exclude_servers"], {"metal-1"})
+
+	def test_a_resize_migration_sends_the_target_shape_to_the_destination(self) -> None:
+		service = MigrationService(
+			migration_doc(target_cpu_millicores=4000, target_memory_mib=8192, target_disk_mib=40960)
+		)
+		destination_client = Mock()
+
+		with (
+			patch("atlas.vm.core.vm_migration.frappe.get_doc", return_value=source_vm()),
+			patch(
+				"atlas.vm.core.vm_migration.MetalClient.get_coordination_url",
+				return_value="https://10.0.0.1:9001",
+			),
+			patch.object(MigrationService, "destination_client", destination_client),
+		):
+			service.send_request()
+
+		destination_client.put_migration.assert_called_once_with(
+			"mig-00001",
+			"vm-00001",
+			"https://10.0.0.1:9001",
+			{"cpu_millicores": 4000, "memory_mib": 8192, "disk_mib": 40960},
+		)
+
+	def test_a_plain_migration_sends_no_resize(self) -> None:
+		service = MigrationService(migration_doc())
+		destination_client = Mock()
+
+		with (
+			patch("atlas.vm.core.vm_migration.frappe.get_doc", return_value=source_vm()),
+			patch(
+				"atlas.vm.core.vm_migration.MetalClient.get_coordination_url",
+				return_value="https://10.0.0.1:9001",
+			),
+			patch.object(MigrationService, "destination_client", destination_client),
+		):
+			service.send_request()
+
+		self.assertIsNone(destination_client.put_migration.call_args.args[3])
+
+	def test_the_commit_stores_the_server_and_the_resized_shape(self) -> None:
+		virtual_machine = SimpleNamespace(server="metal-1", db_set=Mock())
+		migration = SimpleNamespace(
+			destination_metal_server="metal-2",
+			target_cpu_millicores=4000,
+			target_memory_mib=8192,
+			target_disk_mib=40960,
+			db_set=Mock(),
+		)
+		service = MigrationService(migration_doc())
+
+		with (
+			patch(
+				"atlas.vm.core.vm_migration.frappe.get_doc",
+				side_effect=lambda doctype, *_args, **_kwargs: (
+					virtual_machine if doctype == "Virtual Machine" else migration
+				),
+			),
+			patch("atlas.vm.core.vm_migration.frappe.db.commit"),
+		):
+			service.commit_destination()
+
+		virtual_machine.db_set.assert_any_call("server", "metal-2")
+		virtual_machine.db_set.assert_any_call(
+			{"cpu_millicores": 4000, "memory_mib": 8192, "disk_mib": 40960}
+		)
 
 	def test_scheduled_abort_does_not_contact_an_unreserved_destination(self) -> None:
 		service = MigrationService(migration_doc(status="scheduled", destination_metal_server="metal-2"))

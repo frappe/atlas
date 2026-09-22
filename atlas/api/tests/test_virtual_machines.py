@@ -13,10 +13,10 @@ from atlas.api.routes.virtual_machines import (
 	detach_virtual_machine_ip_address,
 	get_virtual_machine,
 	list_virtual_machines,
+	resize_virtual_machine,
 	restart_virtual_machine,
 	start_virtual_machine,
 	stop_virtual_machine,
-	update_virtual_machine_compute,
 	update_virtual_machine_network,
 )
 from atlas.api.tests.test_support import (
@@ -57,12 +57,13 @@ def build_virtual_machine(tenant_id: int = TENANT_ID, **overrides) -> SimpleName
 		"is_termination_protected": 0,
 		"is_draft": 0,
 		"is_terminating": 0,
+		"active_migration": None,
 		"creation": "2026-09-08T10:00:00+05:30",
 		"set_power_state": Mock(),
 		"reboot": Mock(),
 		"terminate": Mock(),
 		"get_metal_vm_info": Mock(return_value=None),
-		"update_compute": Mock(),
+		"resize": Mock(),
 		"attach_ip_address": Mock(),
 		"detach_ip_address": Mock(),
 		"update_network": Mock(),
@@ -157,6 +158,13 @@ class TestVirtualMachineViews(UnitTestCase):
 		self.assertEqual(detail.guest.ssh_keys, ["ssh-ed25519 AAAA"])
 		self.assertEqual(detail.guest.metadata, {"role": "worker"})
 		self.assertEqual(detail.error, "boot failed")
+
+	def test_a_migration_hides_the_host_state(self) -> None:
+		detail = VirtualMachineDetailResponse.from_document_and_metal(
+			build_virtual_machine(active_migration="mig-00001"), build_metal_information()
+		)
+
+		self.assertEqual(detail.current_state, "migrating")
 
 	def test_detail_hides_the_host_operation_data(self) -> None:
 		detail = VirtualMachineDetailResponse.from_document_and_metal(
@@ -408,97 +416,37 @@ class TestVirtualMachineConfiguration(UnitTestCase):
 		self.assertEqual(status, 400)
 		virtual_machine.update_network.assert_not_called()
 
-	def test_compute_change_rejects_cpu_below_the_minimum(self) -> None:
+	def resize(self, json: dict) -> tuple[int, dict, SimpleNamespace]:
+		"""Run the resize route with one request body."""
 		with (
 			api_request(
-				"PATCH",
-				"/api/atlas/virtual-machines/vm-00001/compute",
-				tenant_id=TENANT_ID,
-				json={"cpu_millicores": 99},
+				"POST", "/api/atlas/virtual-machines/vm-00001/actions/resize", tenant_id=TENANT_ID, json=json
 			),
 			owned_document(virtual_machine := build_virtual_machine()),
 		):
-			status, _body = call_route(update_virtual_machine_compute, virtual_machine_id="vm-00001")
+			status, body = call_route(resize_virtual_machine, virtual_machine_id="vm-00001")
+		return status, body, virtual_machine
 
-		self.assertEqual(status, 400)
-		virtual_machine.update_compute.assert_not_called()
-
-	def test_compute_change_calls_the_virtual_machine_method(self) -> None:
-		with (
-			api_request(
-				"PATCH",
-				"/api/atlas/virtual-machines/vm-00001/compute",
-				tenant_id=TENANT_ID,
-				json={"cpu_millicores": 4000},
-			),
-			owned_document(virtual_machine := build_virtual_machine()),
-		):
-			status, body = call_route(update_virtual_machine_compute, virtual_machine_id="vm-00001")
+	def test_resize_passes_only_the_given_values(self) -> None:
+		status, body, virtual_machine = self.resize({"cpu_millicores": 4000, "disk_mib": 40960})
 
 		self.assertEqual(status, 202)
 		self.assertEqual(body["id"], "vm-00001")
-		virtual_machine.update_compute.assert_called_once_with({"cpu_millicores": 4000})
+		virtual_machine.resize.assert_called_once_with(cpu_millicores=4000, disk_mib=40960)
 
-	def test_compute_change_keeps_the_value_that_is_absent(self) -> None:
-		with (
-			api_request(
-				"PATCH",
-				"/api/atlas/virtual-machines/vm-00001/compute",
-				tenant_id=TENANT_ID,
-				json={"cpu_millicores": 4000},
-			),
-			owned_document(virtual_machine := build_virtual_machine()),
-		):
-			status, _ = call_route(update_virtual_machine_compute, virtual_machine_id="vm-00001")
+	def test_resize_accepts_an_idle_shutdown_change_alone(self) -> None:
+		status, _body, virtual_machine = self.resize({"sleep_after_idle_seconds": 1800})
 
 		self.assertEqual(status, 202)
-		virtual_machine.update_compute.assert_called_once_with({"cpu_millicores": 4000})
+		virtual_machine.resize.assert_called_once_with(sleep_after_idle_seconds=1800)
 
-	def test_an_idle_timeout_change_reaches_the_virtual_machine_method(self) -> None:
-		with (
-			api_request(
-				"PATCH",
-				"/api/atlas/virtual-machines/vm-00001/compute",
-				tenant_id=TENANT_ID,
-				json={"sleep_after_idle_seconds": 1800},
-			),
-			owned_document(virtual_machine := build_virtual_machine()),
-		):
-			status, _ = call_route(update_virtual_machine_compute, virtual_machine_id="vm-00001")
+	def test_resize_rejects_an_invalid_body(self) -> None:
+		for json in ({}, {"cpu_millicores": 99}, {"disk_mib": 0}, {"is_sleepy": 1}):
+			status, body, virtual_machine = self.resize(json)
 
-		self.assertEqual(status, 202)
-		virtual_machine.update_compute.assert_called_once_with({"sleep_after_idle_seconds": 1800})
-
-	def test_a_patch_without_a_supported_field_is_rejected(self) -> None:
-		with (
-			api_request(
-				"PATCH",
-				"/api/atlas/virtual-machines/vm-00001/compute",
-				tenant_id=TENANT_ID,
-				json={},
-			),
-			owned_document(build_virtual_machine()),
-		):
-			status, body = call_route(update_virtual_machine_compute, virtual_machine_id="vm-00001")
-
-		self.assertEqual(status, 400)
-		self.assertEqual(body["error"]["code"], "invalid_request")
-
-	def test_compute_change_rejects_old_idle_fields(self) -> None:
-		for field in ("is_sleepy", "idle_timeout_seconds"):
-			with (
-				api_request(
-					"PATCH",
-					"/api/atlas/virtual-machines/vm-00001/compute",
-					tenant_id=TENANT_ID,
-					json={field: 1},
-				),
-				owned_document(build_virtual_machine()),
-			):
-				status, body = call_route(update_virtual_machine_compute, virtual_machine_id="vm-00001")
-
-			self.assertEqual(status, 400)
-			self.assertIn(field, [item["name"] for item in body["error"]["fields"]])
+			self.assertEqual(status, 400, json)
+			self.assertEqual(body["error"]["code"], "invalid_request")
+			virtual_machine.resize.assert_not_called()
 
 	def attach(self, attached: str | None, requested: str):
 		"""Run the attach route with one currently attached address."""

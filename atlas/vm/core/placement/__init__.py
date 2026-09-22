@@ -1,6 +1,6 @@
 """Public host placement API."""
 
-from atlas.vm.core.placement.models import PlacementRequirements
+from atlas.vm.core.placement.models import CurrentPlacement, PlacementRequirements
 from atlas.vm.core.placement.strategies.base import (
 	OutOfCapacity,
 	PlacementBusy,
@@ -9,6 +9,7 @@ from atlas.vm.core.placement.strategies.base import (
 )
 
 __all__ = [
+	"CurrentPlacement",
 	"OutOfCapacity",
 	"PlacementBusy",
 	"PlacementRequirements",

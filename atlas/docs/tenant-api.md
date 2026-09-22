@@ -72,6 +72,14 @@ A protected resource refuses removal. `is_termination_protected` on a virtual ma
 
 A snapshot request with `memory_snapshot` can carry `memory_snapshot_configuration` to record a different warm start shape. It accepts `virtual_cpu_count`, `memory_mib`, and `disk_mib`. Each absent value keeps the source VM value. A configuration without `memory_snapshot` returns `400`.
 
+The resize action changes CPU, memory, disk, or idle shutdown. Omitted fields keep their current values. Stop the VM before changing resources. Atlas moves it when its host cannot fit the new shape. It reports `migrating` during the move. The disk route grows a running VM disk and returns `409 insufficient_capacity` when the host is full.
+
+```bash
+curl -X POST "$ATLAS/api/atlas/virtual-machines/vm-00001/actions/resize" \
+  -H "Authorization: Bearer $TOKEN" -H "X-Tenant-ID: 7" -H "Content-Type: application/json" \
+  -d '{"cpu_millicores": 4000, "memory_mib": 8192, "disk_mib": 40960}'
+```
+
 ## Conventions
 
 An error response has `error.code`, `error.message`, and `error.fields`. Validation errors use `400`; missing authentication uses `401`; denied access uses `403`; missing resources use `404`; and invalid resource state uses `409`.

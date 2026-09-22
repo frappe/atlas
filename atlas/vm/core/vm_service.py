@@ -13,8 +13,6 @@ from atlas.vm.core.metal_client import MetalClient, MetalClientError
 from atlas.vm.core.metal_models import MetalVirtualMachine
 from atlas.vm.core.models import (
 	EGRESS_MODES,
-	MAXIMUM_CPU_MILLICORES,
-	MINIMUM_CPU_MILLICORES,
 	FirewallConfiguration,
 	VirtualMachineCreateRequest,
 )
@@ -34,6 +32,13 @@ class MetalOperationError(frappe.ValidationError):
 	"""Report that the assigned host could not complete the request."""
 
 	http_status_code = 502
+
+
+class InsufficientHostCapacity(AtlasUserError):
+	"""The assigned host has no room for an online increase."""
+
+	code = "insufficient_capacity"
+	http_status_code = 409
 
 
 class VirtualMachineCreateError(MetalOperationError):
@@ -263,48 +268,6 @@ class VirtualMachineService:
 		)
 		return information.as_dict()
 
-	def update_compute(self, changes: dict[str, Any]) -> dict[str, Any]:
-		"""Apply selected compute changes."""
-		cpu_millicores = changes.get("cpu_millicores")
-		if cpu_millicores is not None and (
-			not isinstance(cpu_millicores, int)
-			or isinstance(cpu_millicores, bool)
-			or not MINIMUM_CPU_MILLICORES <= cpu_millicores <= MAXIMUM_CPU_MILLICORES
-		):
-			frappe.throw(
-				_("CPU must be between {0} and {1} millicores.").format(
-					MINIMUM_CPU_MILLICORES, MAXIMUM_CPU_MILLICORES
-				),
-				exc=AtlasUserError,
-			)
-
-		information = self.require_information()
-		current_compute = information.desired.compute
-		request = {
-			"cpu_millicores": current_compute.cpu_millicores,
-			"memory_mib": current_compute.memory_mib,
-			"sleep_after_idle_seconds": self.virtual_machine.sleep_after_idle_seconds,
-			**changes,
-		}
-		is_shape_changed = (
-			request["cpu_millicores"] != current_compute.cpu_millicores
-			or request["memory_mib"] != current_compute.memory_mib
-		)
-		if is_shape_changed and information.observed.state != "stopped":
-			frappe.throw(
-				_("Stop the Virtual Machine before you change its compute values."), exc=AtlasUserError
-			)
-
-		result = self.set_compute(request)
-		if is_shape_changed:
-			self.virtual_machine.db_set(
-				{"cpu_millicores": request["cpu_millicores"], "memory_mib": request["memory_mib"]}
-			)
-		if request["sleep_after_idle_seconds"] != self.virtual_machine.sleep_after_idle_seconds:
-			self.virtual_machine.db_set("sleep_after_idle_seconds", request["sleep_after_idle_seconds"])
-
-		return result
-
 	def set_disk(self, size_mib: int, throughput_mibps: int, iops: int) -> dict[str, Any]:
 		"""Set the complete disk values in Metal."""
 		information = self.perform_metal_operation(
@@ -450,5 +413,10 @@ class VirtualMachineService:
 	@staticmethod
 	def raise_metal_error(error: MetalClientError) -> Never:
 		"""Raise one safe Metal failure at the Frappe boundary."""
+		if error.is_insufficient_capacity:
+			frappe.throw(
+				_("The host has no room for this change. Stop the Virtual Machine and resize it to move it."),
+				exc=InsufficientHostCapacity,
+			)
 		frappe.throw(_("Metal request failed: {0}").format(error), exc=MetalOperationError)
 		raise AssertionError from error

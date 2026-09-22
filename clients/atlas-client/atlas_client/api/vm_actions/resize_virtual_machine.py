@@ -8,7 +8,8 @@ from ...client import AuthenticatedClient, Client
 from ...types import Response, UNSET
 from ... import errors
 
-from ...models.compute_update_payload import ComputeUpdatePayload
+from ...models.capacity_unavailable_response import CapacityUnavailableResponse
+from ...models.resize_payload import ResizePayload
 from ...models.virtual_machine_response import VirtualMachineResponse
 from typing import cast
 
@@ -17,7 +18,7 @@ from typing import cast
 def _get_kwargs(
     virtual_machine_id: str,
     *,
-    body: ComputeUpdatePayload,
+    body: ResizePayload,
     x_tenant_id: int,
 
 ) -> dict[str, Any]:
@@ -32,8 +33,8 @@ def _get_kwargs(
     
 
     _kwargs: dict[str, Any] = {
-        "method": "patch",
-        "url": "/api/atlas/virtual-machines/{virtual_machine_id}/compute".format(virtual_machine_id=quote(str(virtual_machine_id), safe=""),),
+        "method": "post",
+        "url": "/api/atlas/virtual-machines/{virtual_machine_id}/actions/resize".format(virtual_machine_id=quote(str(virtual_machine_id), safe=""),),
     }
 
     _kwargs["json"] = body.to_dict()
@@ -45,7 +46,7 @@ def _get_kwargs(
 
 
 
-def _parse_response(*, client: AuthenticatedClient | Client, response: httpx.Response) -> VirtualMachineResponse | None:
+def _parse_response(*, client: AuthenticatedClient | Client, response: httpx.Response) -> CapacityUnavailableResponse | VirtualMachineResponse | None:
     if response.status_code == 202:
         response_202 = VirtualMachineResponse.from_dict(response.json())
 
@@ -53,13 +54,20 @@ def _parse_response(*, client: AuthenticatedClient | Client, response: httpx.Res
 
         return response_202
 
+    if response.status_code == 503:
+        response_503 = CapacityUnavailableResponse.from_dict(response.json())
+
+
+
+        return response_503
+
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
     else:
         return None
 
 
-def _build_response(*, client: AuthenticatedClient | Client, response: httpx.Response) -> Response[VirtualMachineResponse]:
+def _build_response(*, client: AuthenticatedClient | Client, response: httpx.Response) -> Response[CapacityUnavailableResponse | VirtualMachineResponse]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -72,28 +80,29 @@ def sync_detailed(
     virtual_machine_id: str,
     *,
     client: AuthenticatedClient | Client,
-    body: ComputeUpdatePayload,
+    body: ResizePayload,
     x_tenant_id: int,
 
-) -> Response[VirtualMachineResponse]:
-    """ Update compute
+) -> Response[CapacityUnavailableResponse | VirtualMachineResponse]:
+    """ Resize VM
 
-     Changes the CPU entitlement, the memory size, and the idle shutdown delay. A CPU or memory change
-    needs a stopped VM.
+     Changes CPU, memory, disk, or idle shutdown. Omitted fields keep their current value. The disk only
+    grows.
 
-    A value of `0` disables automatic idle shutdown.
+    Stop the VM before changing CPU, memory, or disk. Atlas resizes in place or migrates it. Idle-only
+    changes work in any VM state. `0` disables idle shutdown.
 
     Args:
         virtual_machine_id (str):
         x_tenant_id (int):
-        body (ComputeUpdatePayload): New compute configuration.
+        body (ResizePayload): VM resource and idle shutdown changes.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[VirtualMachineResponse]
+        Response[CapacityUnavailableResponse | VirtualMachineResponse]
      """
 
 
@@ -114,28 +123,29 @@ def sync(
     virtual_machine_id: str,
     *,
     client: AuthenticatedClient | Client,
-    body: ComputeUpdatePayload,
+    body: ResizePayload,
     x_tenant_id: int,
 
-) -> VirtualMachineResponse | None:
-    """ Update compute
+) -> CapacityUnavailableResponse | VirtualMachineResponse | None:
+    """ Resize VM
 
-     Changes the CPU entitlement, the memory size, and the idle shutdown delay. A CPU or memory change
-    needs a stopped VM.
+     Changes CPU, memory, disk, or idle shutdown. Omitted fields keep their current value. The disk only
+    grows.
 
-    A value of `0` disables automatic idle shutdown.
+    Stop the VM before changing CPU, memory, or disk. Atlas resizes in place or migrates it. Idle-only
+    changes work in any VM state. `0` disables idle shutdown.
 
     Args:
         virtual_machine_id (str):
         x_tenant_id (int):
-        body (ComputeUpdatePayload): New compute configuration.
+        body (ResizePayload): VM resource and idle shutdown changes.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        VirtualMachineResponse
+        CapacityUnavailableResponse | VirtualMachineResponse
      """
 
 
@@ -151,28 +161,29 @@ async def asyncio_detailed(
     virtual_machine_id: str,
     *,
     client: AuthenticatedClient | Client,
-    body: ComputeUpdatePayload,
+    body: ResizePayload,
     x_tenant_id: int,
 
-) -> Response[VirtualMachineResponse]:
-    """ Update compute
+) -> Response[CapacityUnavailableResponse | VirtualMachineResponse]:
+    """ Resize VM
 
-     Changes the CPU entitlement, the memory size, and the idle shutdown delay. A CPU or memory change
-    needs a stopped VM.
+     Changes CPU, memory, disk, or idle shutdown. Omitted fields keep their current value. The disk only
+    grows.
 
-    A value of `0` disables automatic idle shutdown.
+    Stop the VM before changing CPU, memory, or disk. Atlas resizes in place or migrates it. Idle-only
+    changes work in any VM state. `0` disables idle shutdown.
 
     Args:
         virtual_machine_id (str):
         x_tenant_id (int):
-        body (ComputeUpdatePayload): New compute configuration.
+        body (ResizePayload): VM resource and idle shutdown changes.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[VirtualMachineResponse]
+        Response[CapacityUnavailableResponse | VirtualMachineResponse]
      """
 
 
@@ -193,28 +204,29 @@ async def asyncio(
     virtual_machine_id: str,
     *,
     client: AuthenticatedClient | Client,
-    body: ComputeUpdatePayload,
+    body: ResizePayload,
     x_tenant_id: int,
 
-) -> VirtualMachineResponse | None:
-    """ Update compute
+) -> CapacityUnavailableResponse | VirtualMachineResponse | None:
+    """ Resize VM
 
-     Changes the CPU entitlement, the memory size, and the idle shutdown delay. A CPU or memory change
-    needs a stopped VM.
+     Changes CPU, memory, disk, or idle shutdown. Omitted fields keep their current value. The disk only
+    grows.
 
-    A value of `0` disables automatic idle shutdown.
+    Stop the VM before changing CPU, memory, or disk. Atlas resizes in place or migrates it. Idle-only
+    changes work in any VM state. `0` disables idle shutdown.
 
     Args:
         virtual_machine_id (str):
         x_tenant_id (int):
-        body (ComputeUpdatePayload): New compute configuration.
+        body (ResizePayload): VM resource and idle shutdown changes.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        VirtualMachineResponse
+        CapacityUnavailableResponse | VirtualMachineResponse
      """
 
 

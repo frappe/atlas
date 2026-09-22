@@ -46,6 +46,17 @@ Use **Migrate VM** in **Dangerous Actions** on the Virtual Machine form. Select 
 
 Desk users cannot create or edit migration records directly. Atlas creates the record and starts the workflow after the request commits.
 
+## Resize a VM that does not fit
+
+A resize of a stopped VM starts a migration when the current host cannot hold the new CPU, memory, or disk size. See [resize](../vm/SPEC.md#resize). The migration stores the target shape in `target_cpu_millicores`, `target_memory_mib`, and `target_disk_mib`. These fields stay `0` on a plain migration.
+
+- Atlas selects a destination that holds the target shape. It excludes the source host.
+- Atlas sends the target shape in the Metal create request. The destination checks and reserves that shape, grows the copied disk, and starts nothing because the VM is stopped.
+- At `finalizing`, Atlas stores the new server and the target shape in one transaction.
+- When the migration fails or aborts, the VM stays on the source with its old shape.
+
+While the migration runs, the tenant API reports the VM state as `migrating`.
+
 ## How the copy works
 
 Metal first copies a full snapshot while the VM runs. It then copies incremental snapshots. The source keeps the last acknowledged snapshot as the next incremental base.

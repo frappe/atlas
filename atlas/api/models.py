@@ -427,16 +427,13 @@ class CreateVirtualMachinePayload(StrictModel):
 		)
 
 
-class ComputeUpdatePayload(PatchPayload):
-	"""New compute configuration."""
+class ResizePayload(PatchPayload):
+	"""VM resource and idle shutdown changes."""
 
 	cpu_millicores: int | None = Field(default=None, ge=MINIMUM_CPU_MILLICORES, le=MAXIMUM_CPU_MILLICORES)
 	memory_mib: int | None = Field(default=None, gt=0)
+	disk_mib: int | None = Field(default=None, gt=0)
 	sleep_after_idle_seconds: int | None = Field(default=None, ge=0, le=9_223_372_036)
-
-	def to_domain_changes(self) -> dict[str, Any]:
-		"""Return the field names that the VM service accepts."""
-		return self.model_dump(exclude_none=True)
 
 
 class DiskUpdatePayload(PatchPayload):
@@ -524,6 +521,8 @@ def get_current_state(virtual_machine: VirtualMachine, reported_state: str | Non
 		return "pending"
 	if virtual_machine.is_terminating:
 		return "terminating"
+	if virtual_machine.active_migration:
+		return "migrating"
 	return reported_state or "unknown"
 
 

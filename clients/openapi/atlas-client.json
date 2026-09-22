@@ -48,55 +48,6 @@
         "title": "CapacityUnavailableResponse",
         "type": "object"
       },
-      "ComputeUpdatePayload": {
-        "additionalProperties": false,
-        "description": "New compute configuration.",
-        "properties": {
-          "cpu_millicores": {
-            "anyOf": [
-              {
-                "maximum": 32000,
-                "minimum": 100,
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "title": "Cpu Millicores"
-          },
-          "memory_mib": {
-            "anyOf": [
-              {
-                "exclusiveMinimum": 0,
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "title": "Memory Mib"
-          },
-          "sleep_after_idle_seconds": {
-            "anyOf": [
-              {
-                "maximum": 9223372036,
-                "minimum": 0,
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "title": "Sleep After Idle Seconds"
-          }
-        },
-        "title": "ComputeUpdatePayload",
-        "type": "object"
-      },
       "ConfigureWebhooksPayload": {
         "additionalProperties": false,
         "description": "The destination of the event deliveries of one Central.",
@@ -1184,6 +1135,68 @@
           }
         },
         "title": "ReserveIPAddressPayload",
+        "type": "object"
+      },
+      "ResizePayload": {
+        "additionalProperties": false,
+        "description": "VM resource and idle shutdown changes.",
+        "properties": {
+          "cpu_millicores": {
+            "anyOf": [
+              {
+                "maximum": 32000,
+                "minimum": 100,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Cpu Millicores"
+          },
+          "disk_mib": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Disk Mib"
+          },
+          "memory_mib": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Memory Mib"
+          },
+          "sleep_after_idle_seconds": {
+            "anyOf": [
+              {
+                "maximum": 9223372036,
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Sleep After Idle Seconds"
+          }
+        },
+        "title": "ResizePayload",
         "type": "object"
       },
       "SSHKeysReplacementPayload": {
@@ -2694,6 +2707,74 @@
         ]
       }
     },
+    "/api/atlas/virtual-machines/{virtual_machine_id}/actions/resize": {
+      "post": {
+        "description": "Changes CPU, memory, disk, or idle shutdown. Omitted fields keep their current value. The disk only grows.\n\nStop the VM before changing CPU, memory, or disk. Atlas resizes in place or migrates it. Idle-only changes work in any VM state. `0` disables idle shutdown.",
+        "operationId": "resize_virtual_machine",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "virtual_machine_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Tenant that owns the resource, from 0 through 4294967295. A regional token must send the tenant of its own claim, and a Central token (tenant=*) names the tenant it acts for.",
+            "in": "header",
+            "name": "X-Tenant-ID",
+            "required": true,
+            "schema": {
+              "maximum": 4294967295,
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "example": {
+                "cpu_millicores": 4000,
+                "disk_mib": 40960,
+                "memory_mib": 8192
+              },
+              "schema": {
+                "$ref": "#/components/schemas/ResizePayload"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VirtualMachineResponse"
+                }
+              }
+            },
+            "description": "The change is accepted. Poll the virtual machine route."
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CapacityUnavailableResponse"
+                }
+              }
+            },
+            "description": "No host can hold the new shape. `error.code` is `out_of_capacity` or `placement_busy`."
+          }
+        },
+        "summary": "Resize VM",
+        "tags": [
+          "VM Actions"
+        ]
+      }
+    },
     "/api/atlas/virtual-machines/{virtual_machine_id}/actions/restart": {
       "post": {
         "description": "Requests an in-place restart. Poll the VM route to observe completion.",
@@ -2933,66 +3014,9 @@
         ]
       }
     },
-    "/api/atlas/virtual-machines/{virtual_machine_id}/compute": {
-      "patch": {
-        "description": "Changes the CPU entitlement, the memory size, and the idle shutdown delay. A CPU or memory change needs a stopped VM.\n\nA value of `0` disables automatic idle shutdown.",
-        "operationId": "update_virtual_machine_compute",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "virtual_machine_id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "description": "Tenant that owns the resource, from 0 through 4294967295. A regional token must send the tenant of its own claim, and a Central token (tenant=*) names the tenant it acts for.",
-            "in": "header",
-            "name": "X-Tenant-ID",
-            "required": true,
-            "schema": {
-              "maximum": 4294967295,
-              "minimum": 1,
-              "type": "integer"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "example": {
-                "cpu_millicores": 4000,
-                "sleep_after_idle_seconds": 1800
-              },
-              "schema": {
-                "$ref": "#/components/schemas/ComputeUpdatePayload"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "202": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/VirtualMachineResponse"
-                }
-              }
-            },
-            "description": "The change is accepted. Poll the virtual machine route."
-          }
-        },
-        "summary": "Update compute",
-        "tags": [
-          "VM Configuration"
-        ]
-      }
-    },
     "/api/atlas/virtual-machines/{virtual_machine_id}/disk": {
       "patch": {
-        "description": "Increases the disk size or changes its throughput and IOPS limits. The disk size cannot decrease, and a limit of 0 removes that limit.",
+        "description": "Works while the VM runs. The disk only grows, and `0` removes a limit. A full host returns `409 insufficient_capacity`. Stop the VM and use resize to move it.",
         "operationId": "update_virtual_machine_disk",
         "parameters": [
           {
@@ -3039,9 +3063,12 @@
               }
             },
             "description": "The change is accepted. Poll the virtual machine route."
+          },
+          "409": {
+            "description": "The host has no room. `error.code` is `insufficient_capacity`."
           }
         },
-        "summary": "Resize disk",
+        "summary": "Update disk in-place",
         "tags": [
           "VM Configuration"
         ]

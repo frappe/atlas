@@ -2,7 +2,6 @@
 
 from .api_error_field import ApiErrorField
 from .capacity_unavailable_response import CapacityUnavailableResponse
-from .compute_update_payload import ComputeUpdatePayload
 from .configure_webhooks_payload import ConfigureWebhooksPayload
 from .console_token_payload import ConsoleTokenPayload
 from .console_token_payload_mode import ConsoleTokenPayloadMode
@@ -41,6 +40,7 @@ from .page_ip_address_response import PageIPAddressResponse
 from .page_virtual_machine_list_response import PageVirtualMachineListResponse
 from .placement_busy_error import PlacementBusyError
 from .reserve_ip_address_payload import ReserveIPAddressPayload
+from .resize_payload import ResizePayload
 from .snapshot_payload import SnapshotPayload
 from .snapshot_payload_image_type import SnapshotPayloadImageType
 from .snapshot_payload_tags import SnapshotPayloadTags
@@ -62,7 +62,6 @@ from .webhook_configuration_response import WebhookConfigurationResponse
 __all__ = (
     "ApiErrorField",
     "CapacityUnavailableResponse",
-    "ComputeUpdatePayload",
     "ConfigureWebhooksPayload",
     "ConsoleTokenPayload",
     "ConsoleTokenPayloadMode",
@@ -101,6 +100,7 @@ __all__ = (
     "PageVirtualMachineListResponse",
     "PlacementBusyError",
     "ReserveIPAddressPayload",
+    "ResizePayload",
     "SnapshotPayload",
     "SnapshotPayloadImageType",
     "SnapshotPayloadTags",

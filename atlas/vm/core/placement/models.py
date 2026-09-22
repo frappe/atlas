@@ -33,6 +33,15 @@ class PlacementRequirements:
 
 
 @dataclass(frozen=True, slots=True)
+class CurrentPlacement:
+	"""The host of a resized VM and the memory and disk it already holds there."""
+
+	host_name: str
+	memory_mib: int
+	disk_mib: int
+
+
+@dataclass(frozen=True, slots=True)
 class HostUsage:
 	"""One fresh host sample with free capacity after local reservations."""
 

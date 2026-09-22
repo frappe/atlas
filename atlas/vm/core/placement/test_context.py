@@ -15,7 +15,7 @@ from atlas.vm.core.placement.context import (
 	is_pool_known_full,
 	remember_pool_is_full,
 )
-from atlas.vm.core.placement.models import PlacementRequirements, Resources
+from atlas.vm.core.placement.models import CurrentPlacement, PlacementRequirements, Resources
 
 NOW = datetime(2026, 9, 17, 12)
 
@@ -413,6 +413,14 @@ class TestPlacementContext(UnitTestCase):
 
 		self.assertNotIn("available_cpu_millicores", sql.call_args.args[0])
 
+	def test_a_current_placement_marks_the_operation_as_a_resize(self) -> None:
+		placement = self.context(
+			[[host_row("a")]], current_placement=CurrentPlacement("a", memory_mib=1024, disk_mib=1024)
+		)
+
+		self.assertEqual(placement.action, "resize")
+		self.assertEqual(placement.current_host_name, "a")
+
 	def test_a_second_selection_is_a_programming_error(self) -> None:
 		placement = self.context([[host_row("a")]])
 		with (
@@ -461,9 +469,12 @@ class TestPlacementLockQuery(IntegrationTestCase):
 
 		self.assertNotEqual(primary_connection_id, secondary_connection_id)
 
-	def placement(self, **overrides: object) -> PlacementContext:
+	def placement(
+		self, current_placement: CurrentPlacement | None = None, **overrides: object
+	) -> PlacementContext:
 		placement = object.__new__(PlacementContext)
 		placement.requirements = TestPlacementContext.requirements(**overrides)
+		placement.current_placement = current_placement
 		placement._created_at = NOW
 		placement._deadline = None
 		placement._excluded_servers = frozenset()
@@ -482,6 +493,45 @@ class TestPlacementLockQuery(IntegrationTestCase):
 	def test_capacity_query_rejects_a_host_without_capacity(self) -> None:
 		with self.primary_connection():
 			self.assertFalse(self.placement(memory_mib=8192)._host_has_capacity(self.host_name))
+
+	def test_the_current_host_of_a_resize_needs_room_only_for_the_increase(self) -> None:
+		current_placement = CurrentPlacement(self.host_name, memory_mib=2048, disk_mib=0)
+		with self.primary_connection():
+			self.assertTrue(
+				self.placement(current_placement, memory_mib=6144)._host_has_capacity(self.host_name)
+			)
+			self.assertFalse(self.placement(memory_mib=6144)._host_has_capacity(self.host_name))
+
+	def test_a_resize_migration_reserves_its_target_shape(self) -> None:
+		virtual_machine_name = f"test-vm-{frappe.generate_hash(length=8)}"
+		with self.primary_connection():
+			frappe.db.sql(
+				"""
+				INSERT INTO `tabVirtual Machine`
+					(name, creation, modified, owner, modified_by, memory_mib, disk_mib)
+				VALUES
+					(%(name)s, %(created)s, %(created)s, 'Administrator', 'Administrator', 1024, 1024)
+				""",
+				{"name": virtual_machine_name, "created": NOW - timedelta(days=1)},
+			)
+			frappe.db.sql(
+				"""
+				INSERT INTO `tabVirtual Machine Migration`
+					(name, creation, modified, owner, modified_by, virtual_machine, status,
+					 destination_metal_server, target_memory_mib, target_disk_mib)
+				VALUES
+					(%(name)s, %(now)s, %(now)s, 'Administrator', 'Administrator', %(virtual_machine)s,
+					 'copying', %(server)s, 4096, 1024)
+				""",
+				{
+					"name": str(uuid7()),
+					"now": NOW,
+					"virtual_machine": virtual_machine_name,
+					"server": self.host_name,
+				},
+			)
+
+			self.assertFalse(self.placement(memory_mib=1024)._host_has_capacity(self.host_name))
 
 	def test_rejected_host_releases_its_placement_lock(self) -> None:
 		placement = self.placement(memory_mib=8192)

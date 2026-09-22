@@ -20,6 +20,12 @@
   "finished_at",
   "column_break_twnb",
   "duration_seconds",
+  "section_break_resize_requirements",
+  "target_cpu_millicores",
+  "column_break_resize",
+  "target_disk_mib",
+  "column_break_hbyc",
+  "target_memory_mib",
   "section_break_transfer_history",
   "transfers",
   "section_break_error",
@@ -200,6 +206,37 @@
    "fieldtype": "Column Break"
   },
   {
+   "default": "0",
+   "fieldname": "target_cpu_millicores",
+   "fieldtype": "Int",
+   "label": "Target CPU (Millicores)",
+   "non_negative": 1,
+   "read_only": 1,
+   "set_only_once": 1
+  },
+  {
+   "default": "0",
+   "fieldname": "target_memory_mib",
+   "fieldtype": "Int",
+   "label": "Target Memory (MiB)",
+   "non_negative": 1,
+   "read_only": 1,
+   "set_only_once": 1
+  },
+  {
+   "fieldname": "column_break_resize",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "0",
+   "fieldname": "target_disk_mib",
+   "fieldtype": "Int",
+   "label": "Target Disk (MiB)",
+   "non_negative": 1,
+   "read_only": 1,
+   "set_only_once": 1
+  },
+  {
    "fieldname": "section_break_time",
    "fieldtype": "Section Break"
   },
@@ -209,11 +246,25 @@
    "fieldname": "section_break_destination_selection",
    "fieldtype": "Section Break",
    "label": "Destination Selection"
+  },
+  {
+   "collapsible": 1,
+   "collapsible_depends_on": "false",
+   "depends_on": "eval:doc.target_memory_mib",
+   "description": "The CPU, memory, and disk size the destination gives the VM. It is empty when the migration keeps the current shape.",
+   "fieldname": "section_break_resize_requirements",
+   "fieldtype": "Section Break",
+   "label": "Resize requirements",
+   "show_description_on_click": 1
+  },
+  {
+   "fieldname": "column_break_hbyc",
+   "fieldtype": "Column Break"
   }
  ],
  "links": [],
- "modified": "2026-09-21 01:05:00.132487",
- "modified_by": "test@gmail.com",
+ "modified": "2026-09-22 18:17:10.027876",
+ "modified_by": "Administrator",
  "module": "VM",
  "name": "Virtual Machine Migration",
  "naming_rule": "UUID",

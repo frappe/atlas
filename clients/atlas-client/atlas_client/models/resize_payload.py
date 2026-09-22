@@ -16,21 +16,23 @@ from typing import cast
 
 
 
-T = TypeVar("T", bound="ComputeUpdatePayload")
+T = TypeVar("T", bound="ResizePayload")
 
 
 
 @_attrs_define
-class ComputeUpdatePayload:
-    """ New compute configuration.
+class ResizePayload:
+    """ VM resource and idle shutdown changes.
 
         Attributes:
             cpu_millicores (int | None | Unset):
+            disk_mib (int | None | Unset):
             memory_mib (int | None | Unset):
             sleep_after_idle_seconds (int | None | Unset):
      """
 
     cpu_millicores: int | None | Unset = UNSET
+    disk_mib: int | None | Unset = UNSET
     memory_mib: int | None | Unset = UNSET
     sleep_after_idle_seconds: int | None | Unset = UNSET
 
@@ -44,6 +46,12 @@ class ComputeUpdatePayload:
             cpu_millicores = UNSET
         else:
             cpu_millicores = self.cpu_millicores
+
+        disk_mib: int | None | Unset
+        if isinstance(self.disk_mib, Unset):
+            disk_mib = UNSET
+        else:
+            disk_mib = self.disk_mib
 
         memory_mib: int | None | Unset
         if isinstance(self.memory_mib, Unset):
@@ -64,6 +72,8 @@ class ComputeUpdatePayload:
         })
         if cpu_millicores is not UNSET:
             field_dict["cpu_millicores"] = cpu_millicores
+        if disk_mib is not UNSET:
+            field_dict["disk_mib"] = disk_mib
         if memory_mib is not UNSET:
             field_dict["memory_mib"] = memory_mib
         if sleep_after_idle_seconds is not UNSET:
@@ -86,6 +96,16 @@ class ComputeUpdatePayload:
         cpu_millicores = _parse_cpu_millicores(d.pop("cpu_millicores", UNSET))
 
 
+        def _parse_disk_mib(data: object) -> int | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(int | None | Unset, data)
+
+        disk_mib = _parse_disk_mib(d.pop("disk_mib", UNSET))
+
+
         def _parse_memory_mib(data: object) -> int | None | Unset:
             if data is None:
                 return data
@@ -106,11 +126,12 @@ class ComputeUpdatePayload:
         sleep_after_idle_seconds = _parse_sleep_after_idle_seconds(d.pop("sleep_after_idle_seconds", UNSET))
 
 
-        compute_update_payload = cls(
+        resize_payload = cls(
             cpu_millicores=cpu_millicores,
+            disk_mib=disk_mib,
             memory_mib=memory_mib,
             sleep_after_idle_seconds=sleep_after_idle_seconds,
         )
 
-        return compute_update_payload
+        return resize_payload
 

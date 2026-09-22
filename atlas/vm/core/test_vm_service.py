@@ -6,7 +6,11 @@ from frappe.tests import UnitTestCase
 
 from atlas.vm.core.metal_client import MetalClientError
 from atlas.vm.core.placement import OutOfCapacity, PlacementStrategy
-from atlas.vm.core.vm_service import VirtualMachineCreateError, VirtualMachineService
+from atlas.vm.core.vm_service import (
+	InsufficientHostCapacity,
+	VirtualMachineCreateError,
+	VirtualMachineService,
+)
 from atlas.vm.doctype.virtual_machine_image.virtual_machine_image import VirtualMachineImage
 
 
@@ -221,6 +225,22 @@ class TestVirtualMachineDisk(UnitTestCase):
 		set_disk.assert_called_once_with(40960, 50, 2000)
 		service.virtual_machine.db_set.assert_called_once_with("disk_mib", 40960)
 
+	def test_a_full_host_tells_the_caller_to_stop_and_resize(self) -> None:
+		service, information = self.build_service()
+		metal_client = Mock()
+		metal_client.set_virtual_machine_disk.side_effect = MetalClientError(
+			"no room", status=409, code="insufficient_capacity"
+		)
+
+		with (
+			patch.object(service, "require_information", return_value=information),
+			patch.object(VirtualMachineService, "metal_client", metal_client),
+			self.assertRaisesRegex(InsufficientHostCapacity, "Stop the Virtual Machine"),
+		):
+			service.update_disk({"size_mib": 40960})
+
+		service.virtual_machine.db_set.assert_not_called()
+
 	def test_a_smaller_disk_is_rejected(self) -> None:
 		service, information = self.build_service()
 
@@ -232,85 +252,6 @@ class TestVirtualMachineDisk(UnitTestCase):
 			service.update_disk({"size_mib": 10240})
 
 		set_disk.assert_not_called()
-
-
-class TestVirtualMachineCompute(UnitTestCase):
-	def build_service(self, observed_state: str = "running") -> tuple[VirtualMachineService, SimpleNamespace]:
-		"""Return a service whose host reports one desired compute object."""
-		virtual_machine = SimpleNamespace(name="VM-00001", sleep_after_idle_seconds=0, db_set=Mock())
-		information = SimpleNamespace(
-			desired=SimpleNamespace(
-				compute=SimpleNamespace(
-					cpu_millicores=2000,
-					memory_mib=2048,
-					sleep_after_idle_seconds=0,
-				)
-			),
-			observed=SimpleNamespace(state=observed_state),
-		)
-		return VirtualMachineService(virtual_machine), information
-
-	def test_an_idle_timeout_change_does_not_need_a_stopped_virtual_machine(self) -> None:
-		service, information = self.build_service("running")
-
-		with (
-			patch.object(service, "require_information", return_value=information),
-			patch.object(service, "set_compute", return_value={}) as set_compute,
-		):
-			service.update_compute({"sleep_after_idle_seconds": 1800})
-
-		set_compute.assert_called_once_with(
-			{
-				"cpu_millicores": 2000,
-				"memory_mib": 2048,
-				"sleep_after_idle_seconds": 1800,
-			}
-		)
-		service.virtual_machine.db_set.assert_called_once_with("sleep_after_idle_seconds", 1800)
-
-	def test_a_shape_change_keeps_the_stored_idle_timeout(self) -> None:
-		"""Metal replaces the complete compute object, so a resize must resend the timeout."""
-		service, information = self.build_service("stopped")
-		information.desired.compute.sleep_after_idle_seconds = 1800
-		service.virtual_machine.sleep_after_idle_seconds = 1800
-
-		with (
-			patch.object(service, "require_information", return_value=information),
-			patch.object(service, "set_compute", return_value={}) as set_compute,
-		):
-			service.update_compute({"cpu_millicores": 4000})
-
-		set_compute.assert_called_once_with(
-			{
-				"cpu_millicores": 4000,
-				"memory_mib": 2048,
-				"sleep_after_idle_seconds": 1800,
-			}
-		)
-		service.virtual_machine.db_set.assert_called_once_with({"cpu_millicores": 4000, "memory_mib": 2048})
-
-	def test_a_shape_change_needs_a_stopped_virtual_machine(self) -> None:
-		service, information = self.build_service("running")
-
-		with (
-			patch.object(service, "require_information", return_value=information),
-			patch.object(service, "set_compute") as set_compute,
-			self.assertRaises(frappe.ValidationError),
-		):
-			service.update_compute({"memory_mib": 4096})
-
-		set_compute.assert_not_called()
-
-	def test_cpu_below_the_minimum_is_rejected_before_a_host_read(self) -> None:
-		service, _information = self.build_service("stopped")
-
-		with (
-			patch.object(service, "require_information") as require_information,
-			self.assertRaises(frappe.ValidationError),
-		):
-			service.update_compute({"cpu_millicores": 99})
-
-		require_information.assert_not_called()
 
 
 class TestVirtualMachineNetworkChanges(UnitTestCase):

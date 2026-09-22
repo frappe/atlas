@@ -47,6 +47,9 @@ class VirtualMachineMigration(Document):
 			"failed",
 			"aborted",
 		]
+		target_cpu_millicores: DF.Int
+		target_disk_mib: DF.Int
+		target_memory_mib: DF.Int
 		transfers: DF.Table[VirtualMachineMigrationTransfer]
 		virtual_machine: DF.Link
 	# end: auto-generated types

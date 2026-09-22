@@ -39,6 +39,11 @@ class MetalClientError(Exception):
 		"""Report whether Metal answered that the resource does not exist."""
 		return self.status == 404
 
+	@property
+	def is_insufficient_capacity(self) -> bool:
+		"""Report whether the host has no room for a compute or disk increase."""
+		return self.status == 409 and self.code == "insufficient_capacity"
+
 
 class MetalClient:
 	"""Call the Metal API on one bare-metal Server."""
@@ -206,6 +211,17 @@ class MetalClient:
 		)
 		return self._virtual_machine(response)
 
+	def resize_virtual_machine(self, virtual_machine_id: str, shape: dict[str, int]) -> MetalVirtualMachine:
+		"""Replace the complete VM resource and idle shutdown shape."""
+		response = self._request(
+			"PUT",
+			f"/v1/vms/{quote(virtual_machine_id, safe='')}/resize",
+			json=shape,
+			expected_status=202,
+			uncertain_on_failure=True,
+		)
+		return self._virtual_machine(response)
+
 	def create_snapshot(self, virtual_machine_id: str) -> dict[str, Any]:
 		"""Create local image staging for one VM."""
 		return self._request(
@@ -259,12 +275,21 @@ class MetalClient:
 		}
 		return self._request("POST", "/v1/sync", json=request, uncertain_on_failure=True)
 
-	def put_migration(self, migration_id: str, virtual_machine_id: str, source: str) -> dict[str, Any]:
+	def put_migration(
+		self,
+		migration_id: str,
+		virtual_machine_id: str,
+		source: str,
+		resize: dict[str, Any] | None = None,
+	) -> dict[str, Any]:
 		"""Store one migration request at the target host. Safe to repeat."""
+		request: dict[str, Any] = {"virtual_machine_id": virtual_machine_id, "source": source}
+		if resize is not None:
+			request["resize"] = resize
 		return self._request(
 			"PUT",
 			f"/v1/migrations/{quote(migration_id, safe='')}",
-			json={"virtual_machine_id": virtual_machine_id, "source": source},
+			json=request,
 			expected_status=202,
 			uncertain_on_failure=True,
 			timeout=self.create_timeout_seconds,

@@ -322,6 +322,37 @@ class TestVirtualMachineDocument(UnitTestCase):
 		self.assertIsNone(virtual_machine.desired_state)
 
 
+class TestVirtualMachineResize(UnitTestCase):
+	def build_virtual_machine(self, *, is_terminating: int = 0) -> VirtualMachine:
+		virtual_machine = VirtualMachine.__new__(VirtualMachine)
+		virtual_machine.name = "VM-00001"
+		virtual_machine.is_draft = 0
+		virtual_machine.is_terminating = is_terminating
+		virtual_machine.check_permission = Mock()
+		virtual_machine.ensure_not_migrating = Mock()
+		return virtual_machine
+
+	def test_rejects_a_terminating_virtual_machine(self) -> None:
+		virtual_machine = self.build_virtual_machine(is_terminating=1)
+
+		with self.assertRaisesRegex(AtlasUserError, "terminating"):
+			virtual_machine.resize(memory_mib=4096)
+
+	def test_rejects_a_non_integer_value(self) -> None:
+		virtual_machine = self.build_virtual_machine()
+
+		for value in (True, 1.5, "1.5"):
+			with self.assertRaisesRegex(AtlasUserError, "must be integers"):
+				virtual_machine.resize(sleep_after_idle_seconds=value)
+
+	def test_resize_disk_rejects_a_non_integer_value(self) -> None:
+		virtual_machine = self.build_virtual_machine()
+
+		for value in (True, 1.5, "1.5"):
+			with self.assertRaisesRegex(AtlasUserError, "whole number"):
+				virtual_machine.resize_disk(value)
+
+
 class TestVirtualMachineService(UnitTestCase):
 	def test_create_request_waits_for_the_provider_host_address(self) -> None:
 		request = VirtualMachineCreateRequest("machine-image", 2000, 2048, 10240, 7)

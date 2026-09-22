@@ -49,7 +49,7 @@ Atlas calls the Metal API through HTTPS on the server public IPv4 address. Atlas
 
 ## Placement
 
-`PlacementStrategy.find_server(requirements)` returns the name of a ready host for VM creation or migration. It does not return a document.
+`PlacementStrategy.find_server(requirements)` returns the name of a ready host for VM creation, migration, or resize. It does not return a document. A resize also passes `current_placement`, a `CurrentPlacement` with the current host and the memory and disk that the VM already holds there. The current host then needs room only for the increase, and every other host needs room for the full shape.
 
 `PlacementRequirements` contains the resource, architecture, tenant, and host pool constraints. A strategy owns its snapshot and lock. An explicit migration destination uses `PlacementStrategy.reserve_server`.
 
@@ -278,17 +278,37 @@ A public IPv4 address needs `uplink`. Atlas refuses `mesh` and `none` while an a
 
 Active connections can stop when the public IPv4 address or the egress mode changes.
 
+## Resize
+
+`VirtualMachine.resize` changes `cpu_millicores`, `memory_mib`, `disk_mib`, and `sleep_after_idle_seconds`. The Resize VM action and `POST /api/atlas/virtual-machines/{id}/actions/resize` call it. An absent value keeps the value that Metal stores. `VirtualMachineResize` in `vm/core/vm_resize.py` owns the flow.
+
+```text
+resize request
+   │  CPU, memory, or disk change needs a stopped VM; the disk only grows
+   ▼
+find_server(target shape, current_placement)
+	├── current host ──► PUT resize ──► store the shape
+	│                      └── 409 insufficient_capacity ──┐
+   └── other host ────────────────────────────────────────┴──► resize migration
+```
+
+- An idle shutdown change alone needs no capacity. It changes in place on a VM in any state.
+- A resize migration stores `target_cpu_millicores`, `target_memory_mib`, and `target_disk_mib`. Placement reserves that target shape on the destination. Metal gives the VM the target shape on the destination, and Atlas stores it with the new server in one transaction. See [virtual machine migration](../docs/virtual-machine-migrations.md#resize-a-vm-that-does-not-fit).
+- An idle shutdown change that goes with a move changes on the source first, so the migration copies it.
+- `sleep_after_idle_seconds > 0` selects the sleepy host pool. A resize places the VM in the pool of its new value. An idle shutdown change alone does not move the VM.
+- A capacity sample can be older than the host. When Metal refuses the current host with `409 insufficient_capacity`, Atlas starts a resize migration.
+
 ## Automatic idle shutdown
 
-`sleep_after_idle_seconds` lets Metal preserve and stop an idle VM after the configured duration. `0` disables automatic idle shutdown. Set it during creation or with the Edit Idle Shutdown action.
+`sleep_after_idle_seconds` lets Metal preserve and stop an idle VM after the configured duration. `0` disables automatic idle shutdown. Set it during creation or with a resize.
 
-`PUT /v1/vms/{name}/compute` replaces the complete compute object, so Atlas merges each change into the desired compute object. `cpu_millicores` is the exact CPU entitlement. `1000` millicores equals one CPU core. The valid range is 100 through 32000 millicores. The lower limit prevents impractical VM CPU quotas. The upper limit follows Firecracker's maximum of 32 guest vCPUs. A CPU or memory change needs a stopped VM. Atlas stores the timeout and does not implement idle or traffic behavior.
+`PUT /v1/vms/{name}/compute` replaces the complete compute object, so Atlas sends the complete CPU, memory, and idle shutdown values. `cpu_millicores` is the exact CPU entitlement. `1000` millicores equals one CPU core. The valid range is 100 through 32000 millicores. The lower limit prevents impractical VM CPU quotas. The upper limit follows Firecracker's maximum of 32 guest vCPUs. Atlas stores the timeout and does not implement idle or traffic behavior.
 
 ## Disk limits
 
 The VM configuration can set `disk_throughput_mibps` and `disk_iops`. Each limit covers reads and writes together. A value of `0` does not apply a limit.
 
-The Edit Disk Limits action sends the size and both limits with `PUT /v1/vms/{name}/disk`. Metal applies the change through reconciliation.
+The Edit Disk Limits action sends the size and both limits with `PUT /v1/vms/{name}/disk`. Metal applies the change through reconciliation. The Resize Disk action grows the disk of a running VM on its current host. When the host has no room, it returns `409 insufficient_capacity`, and the caller stops the VM and uses a resize to move it.
 
 ## Termination and deletion
 

@@ -37,8 +37,7 @@ frappe.ui.form.on("Virtual Machine", {
 			[__("Snapshot VM"), () => showCreateMachineImageDialog(frm), true, ACTIONS],
 			[__("Resize Disk"), () => showResizeDiskDialog(frm), true, ACTIONS],
 			[__("Edit Disk Limits"), () => showEditDiskLimitsDialog(frm), true, ACTIONS],
-			[__("Resize Compute"), () => showResizeComputeDialog(frm), is_stopped, ACTIONS],
-			[__("Edit Idle Sleep"), () => showEditIdleShutdownDialog(frm), true, ACTIONS],
+			[__("Resize VM"), () => showResizeDialog(frm), true, ACTIONS],
 			[__("Edit SSH Keys"), () => showEditSSHKeysDialog(frm), true, ACTIONS],
 			[__("Edit Metadata"), () => showEditMetadataDialog(frm), true, ACTIONS],
 			[__("Edit Network Throughput"), () => showEditThroughputDialog(frm), true, ACTIONS],
@@ -379,7 +378,7 @@ function showEditMetadataDialog(frm) {
 	dialog.show();
 }
 
-function showResizeComputeDialog(frm) {
+function showResizeDialog(frm) {
 	frappe.prompt(
 		[
 			{
@@ -402,25 +401,14 @@ function showResizeComputeDialog(frm) {
 				reqd: 1,
 				default: frm.doc.memory_mib,
 			},
-		],
-		({ cpu_millicores, memory_mib }) =>
-			frm
-				.call({
-					method: "resize_compute",
-					doc: frm.doc,
-					args: { cpu_millicores, memory_mib },
-					freeze: true,
-					freeze_message: __("Resizing compute..."),
-				})
-				.then(() => frm.reload_doc()),
-		__("Resize Compute"),
-		__("Resize")
-	);
-}
-
-function showEditIdleShutdownDialog(frm) {
-	frappe.prompt(
-		[
+			{
+				fieldname: "disk_mib",
+				fieldtype: "Int",
+				label: __("Disk (MiB)"),
+				reqd: 1,
+				default: frm.doc.disk_mib,
+				description: __("The disk can only grow."),
+			},
 			{
 				fieldname: "sleep_after_idle_seconds",
 				fieldtype: "Int",
@@ -432,15 +420,23 @@ function showEditIdleShutdownDialog(frm) {
 		(values) =>
 			frm
 				.call({
-					method: "update_idle_shutdown",
+					method: "resize",
 					doc: frm.doc,
 					args: values,
 					freeze: true,
-					freeze_message: __("Updating idle sleep..."),
+					freeze_message: __("Resizing..."),
 				})
-				.then(() => frm.reload_doc()),
-		__("Edit Idle Sleep"),
-		__("Save")
+				.then((response) => {
+					if (response.message) {
+						frappe.show_alert({
+							message: __("The host has no room. Moving the VM to another host."),
+							indicator: "blue",
+						});
+					}
+					frm.reload_doc();
+				}),
+		__("Resize VM"),
+		__("Resize")
 	);
 }
 

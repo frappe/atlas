@@ -19,6 +19,47 @@ FIREWALL_PORTS_PATTERN = re.compile(r"^[0-9]+(?:-[0-9]+)?$")
 
 
 @dataclass(frozen=True, slots=True)
+class VirtualMachineShape:
+	"""The CPU, memory, disk, and idle shutdown values of one VM."""
+
+	cpu_millicores: int
+	memory_mib: int
+	disk_mib: int
+	sleep_after_idle_seconds: int
+
+	def has_same_resources(self, other: VirtualMachineShape) -> bool:
+		"""Report whether CPU, memory, and disk size match."""
+		return (self.cpu_millicores, self.memory_mib, self.disk_mib) == (
+			other.cpu_millicores,
+			other.memory_mib,
+			other.disk_mib,
+		)
+
+	@property
+	def compute(self) -> dict[str, int]:
+		"""Return the complete Metal compute object."""
+		return {
+			"cpu_millicores": self.cpu_millicores,
+			"memory_mib": self.memory_mib,
+			"sleep_after_idle_seconds": self.sleep_after_idle_seconds,
+		}
+
+	@property
+	def migration_resize(self) -> dict[str, int]:
+		"""Return the resize object of a Metal migration request."""
+		return {
+			"cpu_millicores": self.cpu_millicores,
+			"memory_mib": self.memory_mib,
+			"disk_mib": self.disk_mib,
+		}
+
+	@property
+	def resize(self) -> dict[str, int]:
+		"""Return the complete Metal in-place resize object."""
+		return {**self.compute, "disk_mib": self.disk_mib}
+
+
+@dataclass(frozen=True, slots=True)
 class FirewallRule:
 	"""Store one validated firewall allow rule."""
 

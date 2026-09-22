@@ -197,6 +197,19 @@ class TestMetalClientErrors(UnitTestCase):
 
 		self.assertTrue(caught.exception.is_not_found)
 
+	def test_insufficient_capacity_is_told_apart_from_other_conflicts(self) -> None:
+		client = build_client()
+
+		for code, expected in (("insufficient_capacity", True), ("conflict", False)):
+			with patch(
+				"atlas.vm.core.metal_client.requests.Session.request",
+				return_value=build_response(409, {"error": {"code": code, "message": "no room"}}),
+			):
+				with self.assertRaises(MetalClientError) as caught:
+					client.set_virtual_machine_compute("VM-00001", {})
+
+			self.assertEqual(caught.exception.is_insufficient_capacity, expected)
+
 	def test_unparsable_error_body_keeps_the_status(self) -> None:
 		client = build_client()
 		response = build_response(502)
@@ -512,6 +525,18 @@ class TestMetalClientMigrations(UnitTestCase):
 			request.call_args.kwargs["json"],
 			{"virtual_machine_id": "vm-00001", "source": "http://10.0.0.3:9000"},
 		)
+
+	def test_put_migration_sends_an_optional_resize(self) -> None:
+		client = build_client()
+		resize = {"cpu_millicores": 4000, "memory_mib": 8192, "disk_mib": 40960}
+
+		with patch(
+			"atlas.vm.core.metal_client.requests.Session.request",
+			return_value=build_response(202, {"status": "running"}),
+		) as request:
+			client.put_migration("mig-00001", "vm-00001", "http://10.0.0.3:9000", resize)
+
+		self.assertEqual(request.call_args.kwargs["json"]["resize"], resize)
 
 	def test_get_migration_reads_status(self) -> None:
 		client = build_client()

@@ -4,7 +4,13 @@ from types import SimpleNamespace
 from unittest import TestCase
 from unittest.mock import Mock, call, patch
 
-from atlas.vm.core.placement.models import FleetUsage, HostUsage, PlacementRequirements, Resources
+from atlas.vm.core.placement.models import (
+	CurrentPlacement,
+	FleetUsage,
+	HostUsage,
+	PlacementRequirements,
+	Resources,
+)
 from atlas.vm.core.placement.strategies.balanced import BalancedStrategy
 from atlas.vm.core.placement.strategies.base import (
 	PLACEMENT_ATTEMPTS,
@@ -135,7 +141,21 @@ class TestComparisonStrategies(TestCase):
 
 		SpreadThreeStrategy(placement).select_host()
 
-		placement.try_select.assert_called_once_with("current", wait=False)
+		placement.try_select.assert_called_once_with("current", wait=True)
+
+	def test_a_resize_moves_when_the_current_host_has_no_room(self) -> None:
+		placement = self._placement(
+			(self._host("current", used_memory_mib=9500), self._host("other")),
+			action="resize",
+			current_host_name="current",
+		)
+		placement.try_select = Mock(side_effect=lambda host_name, wait=False: host_name == "other")
+
+		BalancedStrategy(placement).select_host()
+
+		self.assertEqual(
+			placement.try_select.call_args_list, [call("current", wait=True), call("other", wait=False)]
+		)
 
 	def test_ranked_selection_queues_on_a_candidate_when_every_host_is_busy(self) -> None:
 		hosts = (self._host("a"), self._host("b"), self._host("c"))
@@ -185,7 +205,7 @@ class TestComparisonStrategies(TestCase):
 
 		BalancedStrategy(placement).select_host()
 
-		placement.try_select.assert_called_once_with("current", wait=False)
+		placement.try_select.assert_called_once_with("current", wait=True)
 
 	def test_one_pool_lets_a_sleepy_request_use_any_host(self) -> None:
 		placement = self._placement((self._host("regular"),), is_sleepy=True)
@@ -298,6 +318,19 @@ class TestPlacementRetry(TestCase):
 		context.assert_not_called()
 		settings.assert_not_called()
 		expansion.assert_called_once()
+
+	def test_a_resize_checks_its_current_host_when_the_pool_is_known_full(self) -> None:
+		current_placement = CurrentPlacement("a", memory_mib=1024, disk_mib=1024)
+		with (
+			self._patched([self._placement_result("a")]) as (context, _wait, _expansion, _full),
+			patch("atlas.vm.core.placement.strategies.base.is_pool_known_full", return_value=True),
+		):
+			self.assertEqual(
+				PlacementStrategy.find_server(self._requirements(), current_placement=current_placement),
+				"a",
+			)
+
+		self.assertIs(context.call_args.kwargs["current_placement"], current_placement)
 
 	def test_pure_contention_never_marks_a_healthy_pool_full(self) -> None:
 		placements = [self._placement_result(contended=True) for _ in range(PLACEMENT_ATTEMPTS)]

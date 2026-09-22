@@ -12,7 +12,7 @@ from atlas.atlas.core.background_jobs import run_as_admin
 from atlas.atlas.core.exceptions import AtlasUserError
 from atlas.vm.core.metal_client import MetalClient, MetalClientError
 from atlas.vm.core.metal_models import timestamp_field
-from atlas.vm.core.models import VirtualMachineCreateRequest
+from atlas.vm.core.models import VirtualMachineShape
 from atlas.vm.core.placement import PlacementRequirements, PlacementStrategy
 from atlas.vm.core.placement.transaction import use_read_committed
 from atlas.vm.core.vm_state import LIVE_STATES
@@ -41,8 +41,13 @@ class MigrationService:
 
 	@classmethod
 	@use_read_committed
-	def create(cls, virtual_machine: VirtualMachine, destination_metal_server: str | None = None) -> str:
-		"""Create a scheduled migration from the VM action."""
+	def create(
+		cls,
+		virtual_machine: VirtualMachine,
+		destination_metal_server: str | None = None,
+		resize: VirtualMachineShape | None = None,
+	) -> str:
+		"""Create a scheduled migration. A resize gives the VM a new shape on the destination."""
 		locked = cast(
 			"VirtualMachine", frappe.get_doc("Virtual Machine", virtual_machine.name, for_update=True)
 		)
@@ -56,6 +61,10 @@ class MigrationService:
 				"destination_metal_server": destination_metal_server,
 			}
 		)
+		if resize:
+			migration.target_cpu_millicores = resize.cpu_millicores
+			migration.target_memory_mib = resize.memory_mib
+			migration.target_disk_mib = resize.disk_mib
 		migration.flags.created_by_vm_migration_action = True
 		migration.insert(ignore_permissions=True)
 		return cast(str, migration.name)
@@ -98,16 +107,20 @@ class MigrationService:
 				exc=AtlasUserError,
 			)
 
-	@staticmethod
-	def get_shape(virtual_machine: VirtualMachine) -> VirtualMachineCreateRequest:
-		"""Return the placement shape for the migrating VM."""
-		return VirtualMachineCreateRequest(
-			virtual_machine_image=virtual_machine.virtual_machine_image,
-			cpu_millicores=virtual_machine.cpu_millicores,
-			memory_mib=virtual_machine.memory_mib,
-			disk_mib=virtual_machine.disk_mib,
-			tenant_id=virtual_machine.tenant_id,
-			sleep_after_idle_seconds=virtual_machine.sleep_after_idle_seconds,
+	def destination_shape(self, virtual_machine: VirtualMachine) -> VirtualMachineShape:
+		"""Return the shape the VM has on the destination."""
+		if self.has_target_shape:
+			return VirtualMachineShape(
+				self.migration.target_cpu_millicores,
+				self.migration.target_memory_mib,
+				self.migration.target_disk_mib,
+				virtual_machine.sleep_after_idle_seconds,
+			)
+		return VirtualMachineShape(
+			virtual_machine.cpu_millicores,
+			virtual_machine.memory_mib,
+			virtual_machine.disk_mib,
+			virtual_machine.sleep_after_idle_seconds,
 		)
 
 	def run(self) -> None:
@@ -141,13 +154,13 @@ class MigrationService:
 		virtual_machine = cast(
 			"VirtualMachine", frappe.get_doc("Virtual Machine", self.migration.virtual_machine)
 		)
-		shape = self.get_shape(virtual_machine)
+		shape = self.destination_shape(virtual_machine)
 		requirements = PlacementRequirements(
 			shape.cpu_millicores,
 			shape.memory_mib,
 			shape.disk_mib,
 			cast(str, virtual_machine.architecture),
-			shape.tenant_id,
+			virtual_machine.tenant_id,
 			shape.sleep_after_idle_seconds > 0,
 		)
 		requested_destination = self.migration.destination_metal_server
@@ -254,8 +267,14 @@ class MigrationService:
 	def send_request(self) -> None:
 		"""Send the repeatable destination-pull request."""
 		source_coordination_url = MetalClient.get_coordination_url(self.source_metal_server)
+		resize = None
+		if self.has_target_shape:
+			virtual_machine = cast(
+				"VirtualMachine", frappe.get_doc("Virtual Machine", self.migration.virtual_machine)
+			)
+			resize = self.destination_shape(virtual_machine).migration_resize
 		self.destination_client.put_migration(
-			self.migration.name, self.migration.virtual_machine, source_coordination_url
+			self.migration.name, self.migration.virtual_machine, source_coordination_url, resize
 		)
 
 	def poll(self) -> dict[str, Any]:
@@ -321,14 +340,25 @@ class MigrationService:
 		)
 
 	def commit_destination(self) -> None:
-		"""Commit the VM server and finalizing status in one transaction."""
-		virtual_machine = frappe.get_doc("Virtual Machine", self.migration.virtual_machine, for_update=True)
+		"""Commit the VM server, a resized shape, and finalizing status in one transaction."""
+		virtual_machine = cast(
+			"VirtualMachine",
+			frappe.get_doc("Virtual Machine", self.migration.virtual_machine, for_update=True),
+		)
 		migration = cast(
 			"VirtualMachineMigration",
 			frappe.get_doc("Virtual Machine Migration", self.migration.name, for_update=True),
 		)
 		if virtual_machine.server != migration.destination_metal_server:
 			virtual_machine.db_set("server", migration.destination_metal_server)
+		if migration.target_memory_mib:
+			virtual_machine.db_set(
+				{
+					"cpu_millicores": migration.target_cpu_millicores,
+					"memory_mib": migration.target_memory_mib,
+					"disk_mib": migration.target_disk_mib,
+				}
+			)
 		migration.db_set("status", "finalizing")
 		migration.db_set("progress_percent", 95)
 		frappe.db.commit()  # nosemgrep
@@ -426,6 +456,11 @@ class MigrationService:
 			row.total_mib = transfer.get("total_mib", 0)
 			row.throughput_mibps = transfer.get("throughput_mibps", 0)
 			row.completed = transfer.get("completed", False)
+
+	@property
+	def has_target_shape(self) -> bool:
+		"""Report whether the destination gives the VM a new shape."""
+		return bool(self.migration.target_memory_mib)
 
 	@property
 	def is_canceling(self) -> bool:

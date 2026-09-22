@@ -17,7 +17,6 @@ from atlas.api.core.errors import ResourceConflict
 from atlas.api.models import (
 	AUTO_IP_ADDRESS,
 	CapacityUnavailableResponse,
-	ComputeUpdatePayload,
 	ConsoleTokenPayload,
 	ConsoleTokenResponse,
 	CreateVirtualMachinePayload,
@@ -26,6 +25,7 @@ from atlas.api.models import (
 	IPAddressAssignmentPayload,
 	MetadataReplacementPayload,
 	NetworkUpdatePayload,
+	ResizePayload,
 	SnapshotPayload,
 	SSHKeysReplacementPayload,
 	TerminationProtectionPayload,
@@ -172,6 +172,7 @@ def list_virtual_machines(query: ListQuery) -> Page[VirtualMachineListResponse]:
 			"is_draft",
 			"is_terminating",
 			"is_termination_protected",
+			"active_migration",
 			"creation",
 		],
 		order_by="creation desc",
@@ -280,6 +281,33 @@ def restart_virtual_machine(virtual_machine_id: str) -> ApiResult[VirtualMachine
 	return ApiResult(VirtualMachineResponse.from_document(virtual_machine), status=202)
 
 
+@virtual_machine_actions.post("<virtual_machine_id>/actions/resize")
+@api_docs(
+	request_example={"cpu_millicores": 4000, "memory_mib": 8192, "disk_mib": 40960},
+	responses={
+		**ACCEPTED_RESPONSE,
+		503: {
+			"description": (
+				"No host can hold the new shape. `error.code` is `out_of_capacity` or `placement_busy`."
+			),
+			"model": CapacityUnavailableResponse,
+		},
+	},
+)
+def resize_virtual_machine(
+	virtual_machine_id: str, payload: ResizePayload
+) -> ApiResult[VirtualMachineResponse]:
+	"""Resize VM.
+
+	Changes CPU, memory, disk, or idle shutdown. Omitted fields keep their current value. The disk only grows.
+
+	Stop the VM before changing CPU, memory, or disk. Atlas resizes in place or migrates it. Idle-only changes work in any VM state. `0` disables idle shutdown.
+	"""
+	virtual_machine = get_owned_virtual_machine(virtual_machine_id)
+	virtual_machine.resize(**payload.model_dump(exclude_none=True))
+	return ApiResult(VirtualMachineResponse.from_document(virtual_machine), status=202)
+
+
 @virtual_machine_actions.post("<virtual_machine_id>/actions/snapshot")
 @api_docs(
 	request_example={
@@ -348,25 +376,6 @@ def create_virtual_machine_console_token(
 	)
 
 
-@virtual_machine_configuration.patch("<virtual_machine_id>/compute")
-@api_docs(
-	request_example={"cpu_millicores": 4000, "sleep_after_idle_seconds": 1800},
-	responses=ACCEPTED_RESPONSE,
-)
-def update_virtual_machine_compute(
-	virtual_machine_id: str, payload: ComputeUpdatePayload
-) -> ApiResult[VirtualMachineResponse]:
-	"""Update compute.
-
-	Changes the CPU entitlement, the memory size, and the idle shutdown delay. A CPU or memory change needs a stopped VM.
-
-	A value of `0` disables automatic idle shutdown.
-	"""
-	virtual_machine = get_owned_virtual_machine(virtual_machine_id)
-	virtual_machine.update_compute(payload.to_domain_changes())
-	return ApiResult(VirtualMachineResponse.from_document(virtual_machine), status=202)
-
-
 @virtual_machine_configuration.patch("<virtual_machine_id>/termination-protection")
 @api_docs(
 	request_example={"enabled": True},
@@ -387,14 +396,17 @@ def update_virtual_machine_termination_protection(
 @virtual_machine_configuration.patch("<virtual_machine_id>/disk")
 @api_docs(
 	request_example={"disk_mib": 40960, "disk_throughput_mibps": 100},
-	responses=ACCEPTED_RESPONSE,
+	responses={
+		**ACCEPTED_RESPONSE,
+		409: {"description": "The host has no room. `error.code` is `insufficient_capacity`."},
+	},
 )
 def update_virtual_machine_disk(
 	virtual_machine_id: str, payload: DiskUpdatePayload
 ) -> ApiResult[VirtualMachineResponse]:
-	"""Resize disk.
+	"""Update disk in-place.
 
-	Increases the disk size or changes its throughput and IOPS limits. The disk size cannot decrease, and a limit of 0 removes that limit.
+	Works while the VM runs. The disk only grows, and `0` removes a limit. A full host returns `409 insufficient_capacity`. Stop the VM and use resize to move it.
 	"""
 	virtual_machine = get_owned_virtual_machine(virtual_machine_id)
 	virtual_machine.update_disk(payload.to_domain_changes())

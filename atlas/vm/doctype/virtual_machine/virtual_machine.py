@@ -446,32 +446,43 @@ class VirtualMachine(Document):
 	@frappe.whitelist(methods=["POST"])
 	def resize_disk(self, disk_mib: int) -> dict[str, Any]:
 		"""Ask Metal to increase this VM disk size."""
-		return self.update_disk({"size_mib": int(disk_mib)})
+		size_mib = self.parse_limit(disk_mib, _("Disk size"))
+		if size_mib == 0:
+			frappe.throw(_("Disk size must be positive."), exc=AtlasUserError)
+		return self.update_disk({"size_mib": size_mib})
 
 	@frappe.whitelist(methods=["POST"])
-	def resize_compute(self, cpu_millicores: int, memory_mib: int) -> dict[str, Any]:
-		"""Ask Metal to change this VM CPU and memory. The VM must be stopped."""
-		return self.update_compute({"cpu_millicores": int(cpu_millicores), "memory_mib": int(memory_mib)})
-
-	@frappe.whitelist(methods=["POST"])
-	def update_idle_shutdown(self, sleep_after_idle_seconds: int) -> dict[str, Any]:
-		"""Change the idle shutdown delay. A value of 0 disables it."""
-		return self.update_compute(
-			{
-				"sleep_after_idle_seconds": self.parse_limit(
-					sleep_after_idle_seconds, _("Idle shutdown delay")
-				),
-			}
-		)
-
-	def update_compute(self, changes: dict[str, Any]) -> dict[str, Any]:
-		"""Apply selected compute changes."""
+	def resize(
+		self,
+		cpu_millicores: int | None = None,
+		memory_mib: int | None = None,
+		disk_mib: int | None = None,
+		sleep_after_idle_seconds: int | None = None,
+	) -> str | None:
+		"""Change CPU, memory, disk size, or idle shutdown delay. Return the migration name when the
+		current host cannot hold the new shape."""
 		self.check_permission("write")
 		self.ensure_not_migrating()
 		if self.is_draft:
-			frappe.throw(_("Wait for Virtual Machine creation before a compute change."), exc=AtlasUserError)
+			frappe.throw(_("Wait for Virtual Machine creation before a resize."), exc=AtlasUserError)
+		if self.is_terminating:
+			frappe.throw(_("Virtual Machine {0} is terminating.").format(self.name), exc=AtlasUserError)
 
-		return VirtualMachineService(self).update_compute(changes)
+		from atlas.vm.core.vm_resize import VirtualMachineResize
+
+		values = {
+			"cpu_millicores": cpu_millicores,
+			"memory_mib": memory_mib,
+			"disk_mib": disk_mib,
+			"sleep_after_idle_seconds": sleep_after_idle_seconds,
+		}
+		if any(isinstance(value, (bool, float)) for value in values.values() if value is not None):
+			frappe.throw(_("Resize values must be integers."), exc=AtlasUserError)
+		try:
+			changes = {field: int(value) for field, value in values.items() if value is not None}
+		except (TypeError, ValueError):
+			frappe.throw(_("Resize values must be integers."), exc=AtlasUserError)
+		return VirtualMachineResize(self).apply(changes)
 
 	def update_disk(self, changes: dict[str, int]) -> dict[str, Any]:
 		"""Apply selected disk size and limit changes."""

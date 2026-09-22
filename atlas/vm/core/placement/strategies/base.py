@@ -18,7 +18,12 @@ from atlas.vm.core.placement.context import (
 	is_pool_known_full,
 	remember_pool_is_full,
 )
-from atlas.vm.core.placement.models import FleetUsage, HostUsage, PlacementRequirements
+from atlas.vm.core.placement.models import (
+	CurrentPlacement,
+	FleetUsage,
+	HostUsage,
+	PlacementRequirements,
+)
 
 Strategy = TypeVar("Strategy", bound="PlacementStrategy")
 _REGISTERED_STRATEGIES: dict[str, type[PlacementStrategy]] = {}
@@ -133,12 +138,12 @@ class PlacementStrategy(ABC):
 		"""
 
 	def try_current_host(self, pool: Sequence[HostUsage]) -> bool:
-		"""Keep a non-create operation on its current eligible host when possible."""
+		"""Keep a non-create operation on its current host, waiting for its lock."""
 		if self.action == "create" or not self.current_host_name:
 			return False
 		if not any(host.name == self.current_host_name for host in pool):
 			return False
-		return self.try_select(self.current_host_name)
+		return self.try_select(self.current_host_name, wait=True)
 
 	def get_eligible_hosts(self, pool: Sequence[HostUsage]) -> list[HostUsage]:
 		"""Return hosts with enough reported memory and storage."""
@@ -194,10 +199,19 @@ class PlacementStrategy(ABC):
 
 	@classmethod
 	def find_server(
-		cls, requirements: PlacementRequirements, *, exclude_servers: set[str] | None = None
+		cls,
+		requirements: PlacementRequirements,
+		*,
+		exclude_servers: set[str] | None = None,
+		current_placement: CurrentPlacement | None = None,
 	) -> str:
-		"""Return a locked host name or report that the pool has no capacity."""
-		if is_pool_known_full(requirements):
+		"""Return a locked host name or report that the pool has no capacity.
+
+		A resize passes its current placement, so the strategy keeps the VM on its
+		host when the host has room for the increase.
+		"""
+		# A full pool can still hold the increase on the current host.
+		if not current_placement and is_pool_known_full(requirements):
 			cls._report_out_of_capacity(requirements)
 
 		strategy_name, overcommit_factor, dedicated_sleepy_hosts = cls._load_settings()
@@ -212,6 +226,7 @@ class PlacementStrategy(ABC):
 				cache_snapshot=attempt == 0,
 				deadline=deadline,
 				use_dedicated_sleepy_vm_hosts=dedicated_sleepy_hosts,
+				current_placement=current_placement,
 			)
 			cls.bind_strategy(strategy_name, placement).select_host()
 			if placement.selected_host is not None:

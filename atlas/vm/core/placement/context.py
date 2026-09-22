@@ -8,7 +8,13 @@ from hashlib import sha256
 import frappe
 from frappe.utils import now_datetime
 
-from atlas.vm.core.placement.models import FleetUsage, HostUsage, PlacementRequirements, Resources
+from atlas.vm.core.placement.models import (
+	CurrentPlacement,
+	FleetUsage,
+	HostUsage,
+	PlacementRequirements,
+	Resources,
+)
 from atlas.vm.core.placement.transaction import is_read_committed
 
 CAPACITY_MAXIMUM_AGE = timedelta(minutes=2)
@@ -61,13 +67,18 @@ class PlacementContext:
 		cache_snapshot: bool = False,
 		deadline: float | None = None,
 		use_dedicated_sleepy_vm_hosts: bool = True,
+		current_placement: CurrentPlacement | None = None,
 	) -> None:
 		if not is_read_committed():
 			raise RuntimeError("Placement needs a READ COMMITTED transaction to recheck committed capacity.")
 
 		self.requirements = requirements
-		self.action = "migration" if exclude_servers else "create"
-		self.current_host_name: str | None = None
+		self.current_placement = current_placement
+		if current_placement:
+			self.action = "resize"
+		else:
+			self.action = "migration" if exclude_servers else "create"
+		self.current_host_name = current_placement.host_name if current_placement else None
 		self.sleepy_vm_overcommit_factor = sleepy_vm_overcommit_factor
 		self.use_dedicated_sleepy_vm_hosts = use_dedicated_sleepy_vm_hosts
 		self.has_contended_hosts = False
@@ -184,7 +195,12 @@ class PlacementContext:
 		frappe.db.after_rollback.add(release)
 
 	def _host_has_capacity(self, host_name: str) -> bool:
-		"""Check current host state and capacity while holding its placement lock."""
+		"""Check host capacity while holding its placement lock."""
+		memory_mib = self.requirements.memory_mib
+		disk_mib = self.requirements.disk_mib
+		if self.current_placement and self.current_placement.host_name == host_name:
+			memory_mib -= self.current_placement.memory_mib
+			disk_mib -= self.current_placement.disk_mib
 		sleepy_host_filter = self._sleepy_host_filter()
 		# The interpolated filter is a literal fragment. No caller value reaches the query.
 		rows = frappe.db.sql(  # nosemgrep
@@ -208,7 +224,7 @@ class PlacementContext:
 											AND (vm.is_draft = 1 OR vm.creation > sample.creation)
 									), 0)
 									- COALESCE((
-										SELECT SUM(vm.memory_mib)
+										SELECT SUM(IF(migration.target_memory_mib > 0, migration.target_memory_mib, vm.memory_mib))
 										FROM `tabVirtual Machine Migration` AS migration
 										INNER JOIN `tabVirtual Machine` AS vm
 											ON vm.name = migration.virtual_machine
@@ -227,7 +243,7 @@ class PlacementContext:
 											AND (vm.is_draft = 1 OR vm.creation > sample.creation)
 									), 0)
 									- COALESCE((
-										SELECT SUM(vm.disk_mib)
+										SELECT SUM(IF(migration.target_memory_mib > 0, migration.target_disk_mib, vm.disk_mib))
 										FROM `tabVirtual Machine Migration` AS migration
 										INNER JOIN `tabVirtual Machine` AS vm
 											ON vm.name = migration.virtual_machine
@@ -247,8 +263,8 @@ class PlacementContext:
 				"host_name": host_name,
 				"architecture": self.requirements.architecture,
 				"is_sleepy": int(self.requirements.is_sleepy),
-				"memory_mib": self.requirements.memory_mib,
-				"disk_mib": self.requirements.disk_mib,
+				"memory_mib": memory_mib,
+				"disk_mib": disk_mib,
 				"capacity_cutoff": self._created_at - CAPACITY_MAXIMUM_AGE,
 				"reservation_cutoff": self._created_at - RESERVATION_MAXIMUM_AGE,
 			},
@@ -346,9 +362,12 @@ class PlacementContext:
 			migration_usage AS (
 				SELECT
 					migration.destination_metal_server AS server,
-					SUM(vm.cpu_millicores) AS cpu_millicores,
-					SUM(vm.memory_mib) AS memory_mib,
-					SUM(vm.disk_mib) AS storage_mib
+					SUM(IF(migration.target_memory_mib > 0, migration.target_cpu_millicores, vm.cpu_millicores))
+						AS cpu_millicores,
+					SUM(IF(migration.target_memory_mib > 0, migration.target_memory_mib, vm.memory_mib))
+						AS memory_mib,
+					SUM(IF(migration.target_memory_mib > 0, migration.target_disk_mib, vm.disk_mib))
+						AS storage_mib
 				FROM `tabVirtual Machine Migration` AS migration
 				INNER JOIN `tabVirtual Machine` AS vm ON vm.name = migration.virtual_machine
 				WHERE migration.status IN ('preparing', 'copying', 'cutting_over', 'starting', 'finalizing', 'canceling')
