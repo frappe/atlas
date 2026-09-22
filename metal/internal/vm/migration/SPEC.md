@@ -27,6 +27,16 @@ flowchart TD
     Records --> Copying[Set state to copying]
 ```
 
+The create request can carry an optional `resize`. The destination then replaces the CPU, memory, and disk size of the source definition before the capacity check, so it checks, reserves, and reconstructs the resized shape. A resize never shrinks the disk. A retry must repeat the same resize, or it returns `409`. The destination grows the received disk to the resized size before it applies the VM state.
+
+```json
+{
+  "virtual_machine_id": "vm-1",
+  "source": "https://10.0.0.3:9001",
+  "resize": {"cpu_millicores": 4000, "memory_mib": 8192, "disk_mib": 40960}
+}
+```
+
 The destination reserves compute only after the source supplies the VM definition. One host allocation lock covers the capacity check and the saved reservation. Host capacity subtracts that reservation while the destination stays out of the VM list. A destination that stays in `preparing` for 10 minutes expires. The destination then aborts the source and releases the reservation.
 
 ## Copying
@@ -78,6 +88,8 @@ flowchart TD
     Start --> Verify[Verify destination state]
     Verify --> Ready[Set status to ready]
 ```
+
+A source that is not running sends its whole disk as the final snapshot, so the destination reports `copying` until it arrives.
 
 The source is stopped before the final snapshot. A running VM stops. A paused VM resumes, then stops. A created VM stops without guest work. A stopped VM with saved state restores, then stops. Saved memory is not transferred. The destination cold-starts the disk and keeps the record at `ready` until Atlas commits.
 

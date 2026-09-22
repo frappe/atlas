@@ -94,12 +94,16 @@ func (host *MigrationHost) EnsureMigrationNetwork(ctx context.Context, virtualMa
 	return manager.store.writeObserved(virtualMachineID, observed)
 }
 
-// ApplyMigratedDestinationState applies the original state with a cold start.
+// ApplyMigratedDestinationState grows the received disk to a resized shape, then
+// applies the original state with a cold start.
 func (host *MigrationHost) ApplyMigratedDestinationState(ctx context.Context, virtualMachineID string) error {
 	manager := host.manager
 	desired, err := manager.store.readDesired(virtualMachineID)
 	if err != nil {
 		return err
+	}
+	if err := manager.storage.ResizeDisk(ctx, virtualMachineID, desired.Specification.DiskMiB); err != nil {
+		return fmt.Errorf("grow migrated disk %s: %w", virtualMachineID, err)
 	}
 	return host.RestoreRuntimeState(ctx, virtualMachineID, desired.State)
 }

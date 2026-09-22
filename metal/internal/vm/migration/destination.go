@@ -75,6 +75,10 @@ func (m *Manager) AdvanceDestination(ctx context.Context, virtualMachineID strin
 	if definition.VirtualMachineID != virtualMachineID {
 		return m.recordDestinationError(record, fmt.Errorf("source returned definition for %s", definition.VirtualMachineID))
 	}
+	definition, err = record.Resize.apply(definition)
+	if err != nil {
+		return m.recordDestinationError(record, err)
+	}
 	if err := m.reserveAndReconstructDestination(ctx, record, definition, observedState); err != nil {
 		return err
 	}

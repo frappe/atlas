@@ -37,6 +37,19 @@ func TestDestinationRecordRoundTrips(t *testing.T) {
 	}
 }
 
+func TestAColdCopyReportsCopyingUntilTheFinalSnapshotArrives(t *testing.T) {
+	record := newDestinationRecord()
+	record.State = destinationStopping
+	if phase := record.progress().Phase; phase != PhaseCopying {
+		t.Fatalf("cold copy phase = %s, want %s", phase, PhaseCopying)
+	}
+
+	record.Intervals = []TransferProgress{{Sequence: 1, Completed: true}}
+	if phase := record.progress().Phase; phase != PhaseStopping {
+		t.Fatalf("live cutover phase = %s, want %s", phase, PhaseStopping)
+	}
+}
+
 func TestTerminalRecordNeedsNoPhase(t *testing.T) {
 	store := newMigrationStore(t.TempDir())
 	record := newDestinationRecord()

@@ -181,7 +181,9 @@ Compute replaces the CPU entitlement, memory shape, and idle shutdown timeout. `
 {"cpu_millicores": 4000, "memory_mib": 4096, "sleep_after_idle_seconds": 1800}
 ```
 
-Disk replaces the complete mutable disk object. Metal rejects disk shrink requests.
+Disk replaces the complete mutable disk object. Metal rejects disk shrink requests. A compute or disk increase that the host cannot hold returns `409` with the code `insufficient_capacity`.
+
+Resize replaces CPU, memory, disk, and idle shutdown as one shape. Metal checks capacity before it writes the shape.
 
 ```json
 {"size_mib": 40960, "throughput_mibps": 100, "iops": 4000}
@@ -282,6 +284,7 @@ Every HTTP error uses one safe object:
 | `403` | `forbidden` | A valid Atlas token does not allow the request. |
 | `404` | `not_found` | The resource does not exist. |
 | `409` | `conflict` | Current state or immutable identity blocks the request. |
+| `409` | `insufficient_capacity` | A compute or disk increase does not fit on this host. |
 | `409` | `image_content_conflict` | An image reference identifies different content. |
 | `422` | `image_integrity_failed` | Downloaded image data failed verification. |
 | `500` | `internal_error` | Metal failed and did not expose a host error. |

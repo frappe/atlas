@@ -30,6 +30,10 @@ type fakeVirtualMachineManager struct {
 	deferMetadata   bool
 }
 
+func (manager *fakeVirtualMachineManager) LockCapacity() func() {
+	return func() {}
+}
+
 func (manager *fakeVirtualMachineManager) Create(_ context.Context, id string, specification vm.Specification) (vm.Information, error) {
 	if existing, found := manager.virtualMachines[id]; found {
 		return existing.info, nil
@@ -167,6 +171,25 @@ func (manager *fakeVirtualMachineManager) SetCompute(_ context.Context, id strin
 		virtualMachine.info.DesiredState = vm.StateRunning
 	}
 
+	virtualMachine.info.SleepAfterIdleSeconds = compute.SleepAfterIdleSeconds
+	virtualMachine.info.DesiredGeneration++
+	return nil
+}
+
+func (manager *fakeVirtualMachineManager) Resize(_ context.Context, id string, compute vm.Compute, diskMiB int) error {
+	virtualMachine, found := manager.virtualMachines[id]
+	if !found {
+		return vm.ErrNotFound
+	}
+	shapeChanged := virtualMachine.info.CPUMillicores != compute.CPUMillicores ||
+		virtualMachine.info.MemoryMiB != compute.MemoryMiB ||
+		virtualMachine.info.DiskMiB != diskMiB
+	if (shapeChanged && virtualMachine.info.State != vm.StateStopped) || diskMiB < virtualMachine.info.DiskMiB {
+		return vm.ErrConflict
+	}
+	virtualMachine.info.CPUMillicores = compute.CPUMillicores
+	virtualMachine.info.MemoryMiB = compute.MemoryMiB
+	virtualMachine.info.DiskMiB = diskMiB
 	virtualMachine.info.SleepAfterIdleSeconds = compute.SleepAfterIdleSeconds
 	virtualMachine.info.DesiredGeneration++
 	return nil
@@ -644,6 +667,19 @@ func TestSetComputeStoresTheIdleTimeout(t *testing.T) {
 	}
 }
 
+func TestResizeStoresTheCompleteShape(t *testing.T) {
+	srv := newTestServer(t)
+	do(t, srv, http.MethodPut, "/v1/vms/vm1", validCreateRequest, http.StatusAccepted)
+	recorder := do(t, srv, http.MethodPut, "/v1/vms/vm1/resize", `{"cpu_millicores":1000,"memory_mib":512,"disk_mib":1024,"sleep_after_idle_seconds":1800}`, http.StatusAccepted)
+	var response virtualMachineResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Desired.Compute.CPUMillicores != 1000 || response.Desired.Compute.MemoryMiB != 512 || response.Desired.Disk.SizeMiB != 1024 || response.Desired.Compute.SleepAfterIdleSeconds != 1800 {
+		t.Fatalf("resized shape = %+v", response.Desired)
+	}
+}
+
 func TestSetComputeRejectsANegativeIdleTimeout(t *testing.T) {
 	srv := newTestServer(t)
 	do(t, srv, http.MethodPut, "/v1/vms/vm1", validCreateRequest, http.StatusAccepted)
@@ -737,7 +773,15 @@ func TestSetDiskGrows(t *testing.T) {
 func TestSetDiskRejectsInsufficientCapacity(t *testing.T) {
 	srv := newTestServer(t)
 	do(t, srv, http.MethodPut, "/v1/vms/vm1", validCreateRequest, http.StatusAccepted)
-	do(t, srv, http.MethodPut, "/v1/vms/vm1/disk", `{"size_mib":2048,"throughput_mibps":0,"iops":0}`, http.StatusConflict)
+	recorder := do(t, srv, http.MethodPut, "/v1/vms/vm1/disk", `{"size_mib":2048,"throughput_mibps":0,"iops":0}`, http.StatusConflict)
+
+	var response errorResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Error.Code != insufficientCapacityCode {
+		t.Fatalf("error code = %q, want %q", response.Error.Code, insufficientCapacityCode)
+	}
 }
 
 func TestSetDiskRejectsShrink(t *testing.T) {

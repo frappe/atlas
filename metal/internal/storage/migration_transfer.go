@@ -332,7 +332,8 @@ func (transfer *MigrationTransfer) CreateSnapshot(ctx context.Context, virtualMa
 func (transfer *MigrationTransfer) RemoveSnapshot(ctx context.Context, virtualMachineID, snapshotName string) error {
 	// zfs destroy: remove one snapshot, leaving the volume and other snapshots.
 	err := transfer.runner.Run(ctx, "zfs", "destroy", transfer.pool.snapshot(virtualMachineID, snapshotName))
-	if err != nil && strings.Contains(err.Error(), "does not exist") {
+	if err != nil && (strings.Contains(err.Error(), "does not exist") ||
+		strings.Contains(err.Error(), "could not find any snapshots to destroy")) {
 		return nil
 	}
 	return err

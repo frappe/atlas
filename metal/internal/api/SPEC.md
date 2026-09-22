@@ -92,7 +92,7 @@ The network PUT requires the complete network object, including `firewall`. Fire
 
 ## Capacity
 
-Compute and disk updates are checked against host memory and storage before they are stored, and an increase the host cannot satisfy is refused with `409`. Only the increase is checked, because the VM already holds what it reserves. CPU entitlement is oversubscribed, so a CPU increase is always accepted when `cpu_millicores` is in the valid range from 100 through 32000.
+Compute and disk updates are checked against host memory and storage before they are stored, and an increase the host cannot satisfy is refused with `409` and the code `insufficient_capacity`. Atlas reads that code as a request to move the VM to another host. Only the increase is checked, because the VM already holds what it reserves. CPU entitlement is oversubscribed, so a CPU increase is always accepted when `cpu_millicores` is in the valid range from 100 through 32000.
 
 Nothing else is checked this way: the remaining fields do not consume a host resource.
 
@@ -130,6 +130,7 @@ A domain error is mapped to one status and one safe message. An unrecognized err
 |---|---|---|
 | `vm.ErrNotFound`, `storage.ErrNotFound` | `404` | `not_found` |
 | `vm.ErrConflict`, `storage.ErrInUse` | `409` | `conflict` |
+| Compute or disk increase without host capacity | `409` | `insufficient_capacity` |
 | `storage.ErrImageConflict` | `409` | `image_content_conflict` |
 | `storage.ErrImageIntegrity` | `422` | `image_integrity_failed` |
 | `storage.ErrShuttingDown` | `503` | `unavailable` |

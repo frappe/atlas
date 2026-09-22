@@ -118,7 +118,7 @@ func TestApplyMigratedDestinationState(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			machines, runtime, _, _ := newTestManager(t)
+			machines, runtime, _, storage := newTestManager(t)
 			runtime.state = StateStopped
 			seedDestinationVM(t, machines, tc.desiredState)
 
@@ -127,6 +127,10 @@ func TestApplyMigratedDestinationState(t *testing.T) {
 			}
 			if runtime.coldStarts != tc.wantColdStarts || runtime.pauses != tc.wantPauses {
 				t.Fatalf("cold starts = %d, pauses = %d", runtime.coldStarts, runtime.pauses)
+			}
+			// A resize migration grows the received disk before start.
+			if storage.resizes != 1 {
+				t.Fatalf("disk resizes = %d, want 1", storage.resizes)
 			}
 			observed, err := machines.store.readObserved("vm-1")
 			if err != nil {

@@ -77,6 +77,49 @@ func (manager *Manager) SetDisk(ctx context.Context, identifier string, diskMiB 
 	})
 }
 
+// Resize stores the complete compute and disk shape in one desired-record write.
+func (manager *Manager) Resize(ctx context.Context, identifier string, compute Compute, diskMiB int) error {
+	return manager.mutate(ctx, identifier, func(record *DesiredRecord) (bool, error) {
+		if record.State == StateDestroyed || diskMiB < record.Specification.DiskMiB {
+			return false, ErrConflict
+		}
+
+		shapeChanged := record.Specification.CPUMillicores != compute.CPUMillicores ||
+			record.Specification.MemoryMiB != compute.MemoryMiB ||
+			record.Specification.DiskMiB != diskMiB
+		if shapeChanged {
+			observed, err := manager.store.readObserved(identifier)
+			if err != nil {
+				return false, err
+			}
+			if observed.State != StateStopped {
+				return false, ErrConflict
+			}
+		}
+
+		timeoutChanged := record.Specification.SleepAfterIdleSeconds != compute.SleepAfterIdleSeconds
+		if !shapeChanged && !timeoutChanged {
+			return false, nil
+		}
+
+		record.Specification.CPUMillicores = compute.CPUMillicores
+		record.Specification.MemoryMiB = compute.MemoryMiB
+		record.Specification.DiskMiB = diskMiB
+		record.Specification.SleepAfterIdleSeconds = compute.SleepAfterIdleSeconds
+		if shapeChanged {
+			record.SpecificationGeneration++
+			record.State = StateRunning
+		}
+		return true, nil
+	})
+}
+
+// LockCapacity serializes capacity checks with VM resource changes.
+func (manager *Manager) LockCapacity() func() {
+	manager.allocationMutex.Lock()
+	return manager.allocationMutex.Unlock
+}
+
 // SetNetwork stores the complete requested network configuration.
 func (manager *Manager) SetNetwork(ctx context.Context, identifier string, configuration NetworkConfiguration) error {
 	unlock, err := manager.operationLocks.Lock(ctx, identifier)

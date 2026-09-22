@@ -170,8 +170,9 @@ func newManager(host migrationHost, source sourceOperations, disks migrationStor
 	}, nil
 }
 
-// CreateDestination reserves a VM ID or returns a matching in-progress record.
-func (m *Manager) CreateDestination(ctx context.Context, migrationID, virtualMachineID, source string) (DestinationProgress, error) {
+// CreateDestination reserves a VM ID or returns a matching in-progress record. An
+// optional resize replaces the source shape on the destination.
+func (m *Manager) CreateDestination(ctx context.Context, migrationID, virtualMachineID, source string, resize *Resize) (DestinationProgress, error) {
 	if !vm.ValidIdentifier(migrationID) || !vm.ValidIdentifier(virtualMachineID) || !validSourceAddress(source) {
 		return DestinationProgress{}, vm.ErrConflict
 	}
@@ -202,7 +203,7 @@ func (m *Manager) CreateDestination(ctx context.Context, migrationID, virtualMac
 			if existing.State.terminal() {
 				return existing.progress(), nil
 			}
-			if existing.Source != source {
+			if existing.Source != source || !existing.Resize.equal(resize) {
 				return DestinationProgress{}, vm.ErrConflict
 			}
 			return existing.progress(), nil
@@ -230,6 +231,7 @@ func (m *Manager) CreateDestination(ctx context.Context, migrationID, virtualMac
 		ID:               migrationID,
 		VirtualMachineID: virtualMachineID,
 		Source:           source,
+		Resize:           resize,
 		State:            destinationPreparing,
 		CreatedAt:        m.now(),
 		LastControlAt:    m.now(),

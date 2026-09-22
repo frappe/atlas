@@ -62,7 +62,7 @@ func (s *Server) validateDiskCapacity(c echo.Context, request diskRequest, curre
 		return err
 	}
 	if needsMoreThanAvailable(request.SizeMiB, current.DiskMiB, capacity.AvailableStorageMiB) {
-		return newAPIError(http.StatusConflict, "conflict", "not enough host storage capacity")
+		return newAPIError(http.StatusConflict, insufficientCapacityCode, "not enough host storage capacity")
 	}
 
 	return nil

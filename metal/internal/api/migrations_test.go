@@ -23,6 +23,7 @@ type stubMigrationManager struct {
 	snapshot          migration.SourceSnapshot
 	snapshotErr       error
 	createArgs        []string
+	createResize      *migration.Resize
 	lockArgs          []string
 	unlockArgs        []string
 	snapshotArgs      []string
@@ -43,8 +44,9 @@ type stubMigrationManager struct {
 	destroyErr        error
 }
 
-func (m *stubMigrationManager) CreateDestination(_ context.Context, migrationID, virtualMachineID, source string) (migration.DestinationProgress, error) {
+func (m *stubMigrationManager) CreateDestination(_ context.Context, migrationID, virtualMachineID, source string, resize *migration.Resize) (migration.DestinationProgress, error) {
 	m.createArgs = []string{migrationID, virtualMachineID, source}
+	m.createResize = resize
 	return m.record, m.createErr
 }
 
@@ -156,6 +158,31 @@ func TestCreateMigrationDrivesTheDestination(t *testing.T) {
 	}
 	if response.ID != "mig-1" || response.Status != "running" {
 		t.Fatalf("response = %+v", response)
+	}
+}
+
+func TestCreateMigrationPassesTheResize(t *testing.T) {
+	stub := &stubMigrationManager{record: migration.DestinationProgress{ID: "mig-1", VirtualMachineID: "vm-1", Status: migration.StatusRunning}}
+	server := newMigrationTestServer(t, stub)
+
+	body := `{"virtual_machine_id":"vm-1","source":"https://10.0.0.3:9000","resize":{"cpu_millicores":2000,"memory_mib":4096,"disk_mib":20480}}`
+	do(t, server, http.MethodPut, "/v1/migrations/mig-1", body, http.StatusAccepted)
+
+	want := migration.Resize{CPUMillicores: 2000, MemoryMiB: 4096, DiskMiB: 20480}
+	if stub.createResize == nil || *stub.createResize != want {
+		t.Fatalf("resize = %+v, want %+v", stub.createResize, want)
+	}
+}
+
+func TestCreateMigrationRejectsAnInvalidResize(t *testing.T) {
+	server := newMigrationTestServer(t, &stubMigrationManager{})
+	for _, resize := range []string{
+		`{"cpu_millicores":50,"memory_mib":4096,"disk_mib":20480}`,
+		`{"cpu_millicores":2000,"memory_mib":0,"disk_mib":20480}`,
+		`{"cpu_millicores":2000,"memory_mib":4096,"disk_mib":0}`,
+	} {
+		body := `{"virtual_machine_id":"vm-1","source":"https://10.0.0.3:9000","resize":` + resize + `}`
+		do(t, server, http.MethodPut, "/v1/migrations/mig-1", body, http.StatusBadRequest)
 	}
 }
 

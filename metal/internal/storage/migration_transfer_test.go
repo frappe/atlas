@@ -249,11 +249,16 @@ func TestCreateSnapshotIgnoresAlreadyExists(t *testing.T) {
 }
 
 func TestRemoveSnapshotIgnoresMissing(t *testing.T) {
-	runner := &fakeRunner{runErr: map[string]error{
-		"destroy metal/vms/vm-1@migration-m1-1": errors.New("could not find any snapshots to destroy; dataset does not exist"),
-	}}
-	if err := newTransfer(runner).RemoveSnapshot(context.Background(), "vm-1", "migration-m1-1"); err != nil {
-		t.Fatalf("remove missing snapshot = %v, want nil", err)
+	for _, message := range []string{
+		"could not find any snapshots to destroy; check snapshot names.",
+		"cannot open 'metal/vms/vm-1': dataset does not exist",
+	} {
+		runner := &fakeRunner{runErr: map[string]error{
+			"destroy metal/vms/vm-1@migration-m1-1": errors.New(message),
+		}}
+		if err := newTransfer(runner).RemoveSnapshot(context.Background(), "vm-1", "migration-m1-1"); err != nil {
+			t.Fatalf("remove missing snapshot after %q = %v, want nil", message, err)
+		}
 	}
 }
 

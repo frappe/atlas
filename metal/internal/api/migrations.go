@@ -2,6 +2,7 @@ package api
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -15,16 +16,46 @@ var errInvalidMigrationRequest = errors.New("virtual_machine_id and source are r
 
 // createMigrationRequest is Atlas's destination-pull request.
 type createMigrationRequest struct {
-	VirtualMachineID string `json:"virtual_machine_id"`
-	Source           string `json:"source"`
+	VirtualMachineID string                  `json:"virtual_machine_id"`
+	Source           string                  `json:"source"`
+	Resize           *migrationResizeRequest `json:"resize,omitempty"`
 }
 
-// validate rejects a request missing a required field.
+// migrationResizeRequest is the CPU, memory, and disk size the destination gives the VM.
+type migrationResizeRequest struct {
+	CPUMillicores int `json:"cpu_millicores" minimum:"100" maximum:"32000"`
+	MemoryMiB     int `json:"memory_mib" minimum:"1"`
+	DiskMiB       int `json:"disk_mib" minimum:"1"`
+}
+
+// validate rejects a request missing a required field or with an unusable resize.
 func (r createMigrationRequest) validate() error {
 	if r.VirtualMachineID == "" || r.Source == "" {
 		return errInvalidMigrationRequest
 	}
+	if r.Resize == nil {
+		return nil
+	}
+	compute := computeRequest{CPUMillicores: r.Resize.CPUMillicores, MemoryMiB: r.Resize.MemoryMiB}
+	if err := compute.validate(); err != nil {
+		return fmt.Errorf("resize: %w", err)
+	}
+	if r.Resize.DiskMiB <= 0 {
+		return errors.New("resize: disk_mib must be positive")
+	}
 	return nil
+}
+
+// resize converts the optional request resize into the migration shape.
+func (r createMigrationRequest) resize() *migration.Resize {
+	if r.Resize == nil {
+		return nil
+	}
+	return &migration.Resize{
+		CPUMillicores: r.Resize.CPUMillicores,
+		MemoryMiB:     r.Resize.MemoryMiB,
+		DiskMiB:       r.Resize.DiskMiB,
+	}
 }
 
 // migrationResponse is the public migration view.
@@ -69,7 +100,7 @@ func (s *Server) createMigration(c echo.Context) error {
 		return badRequest(err.Error())
 	}
 
-	record, err := s.migrationManager.CreateDestination(c.Request().Context(), identifier, request.VirtualMachineID, request.Source)
+	record, err := s.migrationManager.CreateDestination(c.Request().Context(), identifier, request.VirtualMachineID, request.Source, request.resize())
 	if err != nil {
 		return err
 	}

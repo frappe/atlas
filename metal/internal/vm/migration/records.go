@@ -140,6 +140,37 @@ type VirtualMachineDefinition struct {
 	Specification           vm.Specification `json:"specification"`
 }
 
+// Resize is the shape a destination gives the migrated VM in place of the source shape.
+type Resize struct {
+	CPUMillicores int `json:"cpu_millicores"`
+	MemoryMiB     int `json:"memory_mib"`
+	DiskMiB       int `json:"disk_mib"`
+}
+
+// apply returns the definition with the resized shape. A disk never shrinks.
+func (resize *Resize) apply(definition VirtualMachineDefinition) (VirtualMachineDefinition, error) {
+	if resize == nil {
+		return definition, nil
+	}
+	if resize.DiskMiB < definition.Specification.DiskMiB {
+		return VirtualMachineDefinition{}, fmt.Errorf("resize disk %d MiB is smaller than the source disk %d MiB", resize.DiskMiB, definition.Specification.DiskMiB)
+	}
+
+	definition.Specification.CPUMillicores = resize.CPUMillicores
+	definition.Specification.MemoryMiB = resize.MemoryMiB
+	definition.Specification.DiskMiB = resize.DiskMiB
+	definition.SpecificationGeneration++
+	return definition, nil
+}
+
+// equal reports whether two optional resizes request the same shape.
+func (resize *Resize) equal(other *Resize) bool {
+	if resize == nil || other == nil {
+		return resize == other
+	}
+	return *resize == *other
+}
+
 // TransferProgress records the transfer of one snapshot interval on the destination.
 type TransferProgress struct {
 	Sequence         int       `json:"sequence"`
@@ -168,6 +199,7 @@ type destinationRecord struct {
 	ID                  string                    `json:"id"`
 	VirtualMachineID    string                    `json:"virtual_machine_id"`
 	Source              string                    `json:"source"`
+	Resize              *Resize                   `json:"resize,omitempty"`
 	State               destinationState          `json:"state"`
 	Definition          *VirtualMachineDefinition `json:"config,omitempty"`
 	SourceObservedState vm.State                  `json:"source_observed_state,omitempty"`
@@ -183,11 +215,16 @@ type destinationRecord struct {
 }
 
 func (record destinationRecord) progress() DestinationProgress {
+	phase := record.State.phase()
+	// A source that was not running sends its whole disk as the final snapshot.
+	if record.State == destinationStopping && lastCompletedSequence(record) == 0 {
+		phase = PhaseCopying
+	}
 	return DestinationProgress{
 		ID:               record.ID,
 		VirtualMachineID: record.VirtualMachineID,
 		Status:           record.State.status(),
-		Phase:            record.State.phase(),
+		Phase:            phase,
 		Intervals:        record.Intervals,
 		Error:            record.Error,
 	}

@@ -14,7 +14,9 @@ Each VM response nests `desired` and `observed`, so one read shows both what was
 
 `PUT /v1/vms/{id}/power` sets the power state with `{"state": "running"|"stopped"|"paused"}`. A `stopped` request is always a hard stop and removes saved VM state.
 
-`PUT /v1/vms/{id}/compute` sets `cpu_millicores`, `memory_mib`, and `sleep_after_idle_seconds`. `1000` millicores equals one CPU core. The valid CPU range is 100 through 32000 millicores. The lower limit prevents impractical VM CPU quotas. The upper limit follows Firecracker's maximum of 32 guest vCPUs. A CPU or memory change needs a stopped VM. An idle timeout change is accepted in any state. `0` disables automatic idle shutdown. The response reports the value in `desired.compute`.
+`PUT /v1/vms/{id}/compute` sets `cpu_millicores`, `memory_mib`, and `sleep_after_idle_seconds`. `1000` millicores equals one CPU core. The valid CPU range is 100 through 32000 millicores. The lower limit prevents impractical VM CPU quotas. The upper limit follows Firecracker's maximum of 32 guest vCPUs. A CPU or memory change needs a stopped VM. An idle timeout change is accepted in any state. `0` disables automatic idle shutdown. The response reports the value in `desired.compute`. A memory increase that the host cannot hold returns `409` with the code `insufficient_capacity`. A disk increase uses the same code.
+
+`PUT /v1/vms/{id}/resize` stores CPU, memory, disk, and idle shutdown as one shape. It checks both increases before it changes the desired state.
 
 The port 9000 listener requires the Atlas client certificate and accepts only its configured common name. Source-side migration routes are on the port 9001 coordination API, which requires a node certificate. Liveness and the documentation carry no VM data, but they sit behind the same listener.
 

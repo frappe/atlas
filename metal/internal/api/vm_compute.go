@@ -61,10 +61,13 @@ func (s *Server) validateComputeCapacity(c echo.Context, request computeRequest,
 		return err
 	}
 	if needsMoreThanAvailable(request.MemoryMiB, current.MemoryMiB, capacity.AvailableMemoryMiB) {
-		return newAPIError(http.StatusConflict, "conflict", "not enough host memory capacity")
+		return newAPIError(http.StatusConflict, insufficientCapacityCode, "not enough host memory capacity")
 	}
 	return nil
 }
+
+// insufficientCapacityCode tells Atlas to move the VM to another host.
+const insufficientCapacityCode = "insufficient_capacity"
 
 // needsMoreThanAvailable reports whether the increase exceeds free capacity.
 func needsMoreThanAvailable(requested, current, available int) bool {
