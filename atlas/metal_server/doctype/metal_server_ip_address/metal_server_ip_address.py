@@ -63,7 +63,10 @@ class MetalServerIPAddress(Document):
 
 		if not isinstance(address, ipaddress.IPv4Interface) or address.network.prefixlen != 32:
 			frappe.throw(_("IPv4 Address must be a valid /32 address."))
+
 		self.address = str(address.ip)
+		if frappe.get_single("Atlas Settings").server_provider == "Generic":
+			self.provider_resource_id = self.address
 
 		# An unset Int becomes tenant 0, so set the shared-pool sentinel explicitly.
 		if self.get("tenant_id") is None:

@@ -96,7 +96,7 @@ Use a raw disk when possible. If the host has no empty disk, step 3 lets you cre
 
 CAUTION: A disk image shares the root file system storage and I/O. Use a raw disk for better VM performance.
 
-ZFS uses the file directly. It does not use a loop device. After a reboot, `zfs-import-cache` opens the file from `/etc/zfs/zpool.cache`. If this cache file is lost, run `zpool import -d /root/disks`. Atlas reads host facts from the cached report. It does not accept host facts from the browser.
+ZFS uses the file directly. It does not use a loop device. Atlas checks the selected storage device again before it creates the ZFS pool. After a reboot, `zfs-import-cache` opens the file from `/etc/zfs/zpool.cache`. If this cache file is lost, run `zpool import -d /root/disks`. Atlas reads host facts from the cached report. It does not accept host facts from the browser.
 
 The host check fails in these conditions:
 

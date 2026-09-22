@@ -138,12 +138,29 @@ step "create directories for metald"
 mkdir -p "$machines_dir" "$images_dir"
 
 
+# is_empty_storage_pool_device checks the device immediately before ZFS can overwrite it.
+is_empty_storage_pool_device() {
+	if [ -f "$STORAGE_POOL_DEVICE" ]; then
+		! blkid --probe "$STORAGE_POOL_DEVICE" >/dev/null 2>&1
+		return
+	fi
+
+	[ -b "$STORAGE_POOL_DEVICE" ] || return 1
+	[ "$(lsblk --raw --noheadings --output TYPE "$STORAGE_POOL_DEVICE")" = disk ] || return 1
+	[ "$(lsblk --raw --noheadings --output NAME "$STORAGE_POOL_DEVICE" | wc -l)" -eq 1 ] || return 1
+	[ -z "$(lsblk --raw --noheadings --output FSTYPE,PTTYPE,MOUNTPOINT "$STORAGE_POOL_DEVICE" | tr -d '[:space:]')" ] || return 1
+	[ "$(lsblk --raw --noheadings --output RO "$STORAGE_POOL_DEVICE")" = 0 ] || return 1
+	[ "$(lsblk --raw --noheadings --output RM "$STORAGE_POOL_DEVICE")" = 0 ] || return 1
+	! blkid --probe "$STORAGE_POOL_DEVICE" >/dev/null 2>&1
+}
+
+
 step "zfs pool ($storage_pool_name)"
 if zpool list "$storage_pool_name" >/dev/null 2>&1; then
 	skip "pool $storage_pool_name"
 else
-	if [ ! -e "$STORAGE_POOL_DEVICE" ]; then
-		echo "$STORAGE_POOL_DEVICE does not exist" >&2
+	if ! is_empty_storage_pool_device; then
+		echo "$STORAGE_POOL_DEVICE is not an empty storage pool device" >&2
 		exit 1
 	fi
 	echo "    device: $STORAGE_POOL_DEVICE"

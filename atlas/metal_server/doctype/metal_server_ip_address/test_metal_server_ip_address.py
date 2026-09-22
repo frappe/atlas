@@ -30,9 +30,25 @@ class TestServerIPAddress(UnitTestCase):
 			}
 		)
 
-		address.validate()
+		with patch("frappe.get_single", return_value=SimpleNamespace(server_provider="AWS")):
+			address.validate()
 
 		self.assertEqual(address.tenant_id, UNOWNED_TENANT_ID)
+		self.assertEqual(address.provider_resource_id, "provider-1")
+
+	def test_generic_address_is_its_own_provider_resource_id(self) -> None:
+		address = frappe.get_doc(
+			{
+				"doctype": "Metal Server IP Address",
+				"address": "203.0.113.10",
+				"provider_resource_id": "incorrect-resource-id",
+			}
+		)
+
+		with patch("frappe.get_single", return_value=SimpleNamespace(server_provider="Generic")):
+			address.validate()
+
+		self.assertEqual(address.provider_resource_id, "203.0.113.10")
 
 	def test_reset_tenant_returns_the_address_to_the_pool(self) -> None:
 		address = SimpleNamespace(
