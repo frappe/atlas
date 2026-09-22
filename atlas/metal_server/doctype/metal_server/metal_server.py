@@ -16,6 +16,7 @@ from atlas.atlas.core.server_providers.base import ServerCreateRequest, ServerPo
 from atlas.atlas.core.tls.metal import CERTIFICATE_RENEWAL_WINDOW_DAYS, is_certificate_authority_expiring
 from atlas.atlas.doctype.ssh_task.ssh_task import SSHTask
 from atlas.metal_server.core.disk_inventory import DiskInventory
+from atlas.metal_server.core.host_inspection import HostInspection
 from atlas.metal_server.core.host_installation import (
 	METALD_INSTALL_TIMEOUT_SECONDS,
 	WIREGUARD_CONFIGURE_TIMEOUT_SECONDS,
@@ -82,7 +83,9 @@ class MetalServer(Document):
 
 	def before_validate(self) -> None:
 		"""Fill values that depend on the selected size and image."""
-		self.settings.server_provider_controller.validate_settings()
+		provider = self.settings.server_provider_controller
+		provider.validate_settings()
+		provider.validate_server(self)
 		if self.provider_server_id:
 			return
 
@@ -470,6 +473,34 @@ def renew_expiring_tls_certificates() -> None:
 		if is_job_enqueued(server.metald_job_id):
 			continue
 		server.enqueue_tls_certificate_renewal()
+
+
+@frappe.whitelist(methods=["POST"])
+def inspect_host(public_ipv4_address: str, private_ipv4_address: str) -> str:
+	"""Queue a read-only inspection of an operator-prepared host."""
+	frappe.only_for("System Manager")
+	return HostInspection.start(public_ipv4_address, private_ipv4_address)
+
+
+@frappe.whitelist()
+def get_host_inspection(inspection_id: str) -> dict:
+	"""Return the state of one host inspection."""
+	frappe.only_for("System Manager")
+	return HostInspection(inspection_id).state
+
+
+@frappe.whitelist(methods=["POST"])
+def create_host_disk_image(inspection_id: str, size_gib: int) -> None:
+	"""Queue the creation of the disk image that holds the storage pool."""
+	frappe.only_for("System Manager")
+	HostInspection(inspection_id).start_disk_image_creation(int(size_gib))
+
+
+@frappe.whitelist(methods=["POST"])
+def register_host(inspection_id: str, storage_pool_device: str, provider_server_id: str | None = None) -> str:
+	"""Create the Metal Server for an inspected host and return its name."""
+	frappe.only_for("System Manager")
+	return HostInspection(inspection_id).register(storage_pool_device, provider_server_id).name
 
 
 def on_doctype_update() -> None:

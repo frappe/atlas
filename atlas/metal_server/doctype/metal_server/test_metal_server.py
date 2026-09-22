@@ -93,7 +93,7 @@ SERVER_MESH_ADDRESS = "fdab:1:e209:70ad:a183:dda2:a727:cd8b"
 
 class TestServer(UnitTestCase):
 	def test_before_validate_takes_the_architecture_without_provider_creation(self) -> None:
-		provider = SimpleNamespace(validate_settings=Mock(), ensure_server=Mock())
+		provider = SimpleNamespace(validate_settings=Mock(), validate_server=Mock(), ensure_server=Mock())
 		server = SimpleNamespace(
 			name=SERVER_NAME,
 			provider_server_id=None,
@@ -112,6 +112,7 @@ class TestServer(UnitTestCase):
 			MetalServer.before_validate(server)
 
 		provider.validate_settings.assert_called_once_with()
+		provider.validate_server.assert_called_once_with(server)
 		self.assertEqual(server.architecture, "amd64")
 		provider.ensure_server.assert_not_called()
 

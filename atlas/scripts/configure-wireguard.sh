@@ -55,21 +55,26 @@ if [ ! -f "$private_key_file" ]; then
 fi
 
 step "config ($config_file)"
-if [ ! -f "$config_file" ]; then
-	# The region prefix makes every peer on-link. The daemon adds peers, and
-	# `wg set` installs no route of its own.
-	cat > "$config_file" <<EOF
-[Interface]
+# The region prefix makes every peer on-link. The daemon adds peers, and
+# `wg set` installs no route of its own.
+config="[Interface]
 Address = $WIREGUARD_ADDRESS/32
 ListenPort = $listen_port
 MTU = $wireguard_mtu
-PostUp = wg set %i private-key $private_key_file
-EOF
-	chmod 600 "$config_file"
+PostUp = wg set %i private-key $private_key_file"
+
+# A reused host keeps the config of its earlier registration, so rewrite a stale one.
+is_config_changed=false
+if [ ! -f "$config_file" ] || [ "$(cat "$config_file")" != "$config" ]; then
+	(umask 077 && printf '%s\n' "$config" > "$config_file")
+	is_config_changed=true
 fi
 
 step "interface ($interface)"
 systemctl enable --now "wg-quick@$interface"
+if [ "$is_config_changed" = true ]; then
+	systemctl restart "wg-quick@$interface"
+fi
 systemctl is-active "wg-quick@$interface" >/dev/null
 
 
