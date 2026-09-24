@@ -1,0 +1,19 @@
+[Unit]
+Description=Atlas WireGuard gateway
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=-/usr/sbin/ip link add wg0 type wireguard
+ExecStart=/usr/bin/wg set wg0 private-key /opt/atlas/wg-gateway/privatekey listen-port @LISTEN_PORT@
+ExecStart=/usr/sbin/ip link set wg0 up
+ExecStart=/usr/sbin/ip -6 route replace fdac::/16 dev wg0
+ExecStart=/usr/sbin/ip -6 route replace default via fe80::1 dev eth0
+ExecStart=/usr/sbin/wg setconf wg0 /opt/atlas/wg-gateway/peers.conf
+ExecStart=/usr/sbin/nft -f /opt/atlas/wg-gateway/gateway.nft
+ExecStop=/usr/sbin/nft delete table ip6 atlas_wg_gateway
+
+[Install]
+WantedBy=multi-user.target
