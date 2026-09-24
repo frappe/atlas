@@ -138,6 +138,8 @@ class AtlasSettings(Document):
 		wildcard_tls_certificate: DF.Password | None
 		wildcard_tls_expires_on: DF.Datetime | None
 		wildcard_tls_private_key: DF.Password | None
+		wireguard_gateway_package_file: DF.Link | None
+		wireguard_gateway_package_hash: DF.Data | None
 		wireguard_ip_address: DF.Data | None
 		wireguard_private_key: DF.Password | None
 		wireguard_public_key: DF.Data | None

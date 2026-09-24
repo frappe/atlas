@@ -12,6 +12,7 @@ Behavior: [Service VMs](../../docs/region/service-vms.md). This module runs Atla
 | `CargoServer` (Single) | The regional Cargo VM |
 | `IPv6RouterServer` (DocType) | One router VM and its pool, `ipv6-router-NNN` |
 | `service_package` | Publishes a package when its digest changes |
+| `WireGuardGatewayServer` (DocType) | WireGuard gateways that give customer devices tenant-wide access to private VM addresses. See [its specification](doctype/wireguard_gateway_server/SPEC.md). |
 | `core/proxy`, `core/cargo`, `core/ipv6_router` | Provisioning |
 | `core/warpgate` | Warpgate client, target sync, host access grants, and the UI certificate. See [People access through Warpgate](../../docs/region/host-access.md#people-access-through-warpgate). |
 
