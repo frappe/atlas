@@ -61,6 +61,7 @@ An Atlas API token for tenant `7` in region `1` can have this decoded header and
 | Atlas tenant API | `atlas-admin:<region ID>` | `scope=*` plus signed `tenant`. [Tenant identity](tenant-api.md) restricts records and `X-Tenant-ID`. |
 | HTTP proxy control API | `atlas-proxy:<region ID>` | Signed `scope` and optional name `constraints`. No `tenant` claim. [Proxy authentication](../networking/http-proxy/control-daemon.md#authentication) defines the route rules. |
 | Cargo API | `atlas-cargo:<region ID>` for Atlas's bucket request | Atlas issues `scope=*`, `tenant=0`. Cargo's own validation rules are outside this repository. |
+| WireGuard gateway API | `atlas-wg-gateway:<region ID>` | Signed `scope` from `*`, `peers:*`, `peers:read`, `peers:update`, `gateway:read`. No `tenant` claim. The daemon validates against the Atlas JWKS like the proxy control daemon. |
 
 For example, a Central caller needs a Central-signed token with the regional proxy audience and a permitted scope to change proxy routes. To call Atlas, it needs another token with the Atlas audience and a tenant claim. Atlas can also sign tokens for these services with its regional key.
 

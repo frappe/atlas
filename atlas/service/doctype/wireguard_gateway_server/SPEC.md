@@ -34,8 +34,9 @@ name as its hostname, and the Atlas public Secure Shell key. Privilege permits
 cross-tenant mesh delivery; the gateway role is not needed, because the
 gateway SNATs every forwarded packet to its own mesh address.
 
-Creation returns the daemon bundle for Central: the daemon URL, the API token
-(shown once), the public IPv4 address, the listen port, and the region ID.
+Creation returns the daemon bundle for Central: the daemon URL, the audience
+its tokens must carry, the public IPv4 address, the listen port, and the
+region ID. No secret is stored or returned.
 
 The port is set once. A draft VM keeps the gateway Pending.
 
@@ -48,7 +49,7 @@ Provisioning waits until Metal has attached the public IPv4 allocation.
 | Phase | Action |
 | --- | --- |
 | `secure-shell` | Wait for root Secure Shell access on the public IPv4 address. |
-| `installation` | Install WireGuard, nftables, and the gateway daemon with `GATEWAY_MESH`, `LISTEN_PORT`, `REGION_ID`, and `DAEMON_TOKEN`. |
+| `installation` | Install WireGuard, nftables, and the gateway daemon with `GATEWAY_MESH`, `LISTEN_PORT`, `REGION_ID`, `JWKS_URL`, `GWGATEWAY_AUDIENCE`, and `JWKS_ISSUERS`. |
 | `gateway-api` | Register the `<gateway>.<wildcard-domain>` proxy route, wait for the daemon through the proxy, and read its public key. |
 
 The installer generates the gateway keypair on the VM and keeps it on
@@ -58,17 +59,20 @@ message.
 ## Daemon API
 
 Central calls the daemon directly through the HTTP proxy at
-`https://<gateway>.<wildcard-domain>/`, authenticated with the API token
-Bearer credential:
+`https://<gateway>.<wildcard-domain>/`. Callers present an Ed25519 JWT for
+the `atlas-wg-gateway:<region>` audience, verified against the Atlas JWKS the
+same way the proxy control daemon verifies tokens. The issuer is `central` or
+`atlas:<region>`, a `tenant` claim is refused, and the scopes are `*`,
+`peers:*`, `peers:read`, `peers:update`, and `gateway:read`.
 
-| Call | Meaning |
-| --- | --- |
-| `GET /healthz` | The daemon answers. |
-| `GET /config` | The gateway public key, listen port, region ID, and mesh address. |
-| `GET /peers` | The peer list with `fdac` addresses. |
-| `PUT /peers` | Replace the complete peer list; returns the list with added, removed, and updated counts. |
-| `PUT /peers/{tenant_id}/{client_id}` | Add one client; returns its record with the `fdac` address. |
-| `DELETE /peers/{tenant_id}/{client_id}` | Delete one client; missing peers are gone. |
+| Call | Scope | Meaning |
+| --- | --- | --- |
+| `GET /healthz` | public | The daemon answers. |
+| `GET /config` | `gateway:read` | The gateway public key, listen port, region ID, and mesh address. |
+| | `GET /peers` | `peers:read` | The peer list with `fdac` addresses. |
+| `PUT /peers` | `peers:update` | Replace the complete peer list; returns the list with added, removed, and updated counts. |
+| `PUT /peers/{tenant_id}/{client_id}` | `peers:update` | Add one client; returns its record with the `fdac` address. |
+| `DELETE /peers/{tenant_id}/{client_id}` | `peers:update` | Delete one client; missing peers are gone. |
 
 `add` takes the Central-provided `public_key`, `tenant_id`, and `client_id`
 and returns the assigned `fdac` address. Tenant and client IDs are integers
@@ -91,4 +95,4 @@ stays with status Archived, and the peer list dies with the VM.
 ## Access
 
 Only System Managers with System User accounts can create or archive a
-gateway. Central calls the daemon with the gateway API token.
+gateway. Central calls the daemon with its own signed token.
