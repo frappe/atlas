@@ -7,6 +7,7 @@ Wants=network-online.target
 Type=oneshot
 RemainAfterExit=yes
 ExecStart=-ip link add wg0 type wireguard
+ExecStart=ip link set wg0 mtu 1320
 ExecStart=ip link set wg0 up
 ExecStart=ip -6 route replace fdac::/16 dev wg0
 ExecStart=wg setconf wg0 /opt/atlas/wg-gateway/peers.conf

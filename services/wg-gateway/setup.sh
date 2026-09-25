@@ -60,6 +60,8 @@ if [ ! -f "$state_dir/peers.conf" ]; then
 fi
 
 ip link add wg0 type wireguard 2>/dev/null || true
+# A customer tunnel packet fits the 1380 mesh MTU on eth0: 1380 - 20 - 8 - 32.
+ip link set wg0 mtu 1320
 ip link set wg0 up
 wg setconf wg0 "$state_dir/peers.conf"
 ip -6 route replace fdac::/16 dev wg0
