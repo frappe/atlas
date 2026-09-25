@@ -43,14 +43,17 @@ sysctl -q -p /etc/sysctl.d/90-atlas-wg-gateway.conf
 
 step "create the WireGuard interface"
 install -d -m 0750 "$state_dir"
+
 if [ ! -f "$state_dir/privatekey" ]; then
 	wg genkey | tee "$state_dir/privatekey" | wg pubkey > "$state_dir/publickey"
 	chmod 0600 "$state_dir/privatekey"
 fi
+
 # Atlas overwrites peers.conf on every peer change; an empty file means no peers.
 if [ ! -f "$state_dir/peers.conf" ]; then
 	printf '# Managed by Atlas. Do not edit.\n' > "$state_dir/peers.conf"
 fi
+
 ip link add wg0 type wireguard 2>/dev/null || true
 wg set wg0 private-key "$state_dir/privatekey" listen-port "$LISTEN_PORT"
 ip link set wg0 up
@@ -84,12 +87,14 @@ table ip6 atlas_wg_gateway {
 	}
 }
 EOF
+
 nft -f "$state_dir/gateway.nft"
 
 
 step "start the gateway"
 sed -e "s|@LISTEN_PORT@|$LISTEN_PORT|" \
 	"$source_dir/systemd/atlas-wg-gateway.service" > /etc/systemd/system/atlas-wg-gateway.service
+
 systemctl daemon-reload
 systemctl enable atlas-wg-gateway.service
 systemctl restart atlas-wg-gateway.service
