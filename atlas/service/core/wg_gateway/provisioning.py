@@ -102,15 +102,18 @@ class WireGuardGatewayProvisioner:
 		)
 
 	def install_gateway(self) -> None:
-		"""Install the gateway package, then read its WireGuard public key."""
+		"""Install the gateway package with the daemon credential."""
+		settings = frappe.get_single("Atlas Settings")
 		task = SSHTask.create_for_script_file(
 			target_type="Virtual Machine",
 			target=self.gateway.virtual_machine,
 			script_path="install-service-package.sh",
 			environment={
 				**WG_GATEWAY_PACKAGE.get_install_environment(),
+				"REGION_ID": settings.region_id,
 				"GATEWAY_MESH": self.gateway.wireguard_mesh_ipv6,
 				"LISTEN_PORT": self.gateway.listen_port,
+				"DAEMON_TOKEN": self.gateway.api_token,
 			},
 			timeout_seconds=INSTALL_TIMEOUT_SECONDS,
 			run_in_background=False,
