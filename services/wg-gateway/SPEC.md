@@ -18,7 +18,8 @@ daemon/       Standalone gateway API package (peers, config, health)
 systemd/      Service units (reapply wg0 and run the API on boot)
 ```
 
-The daemon listens on the gateway mesh address at port 8080. Central reaches
+The daemon listens on the gateway mesh address at port 80, the port the proxy
+routes to site VMs. Central reaches
 it through the `<gateway>.<wildcard-domain>` proxy route. Callers present an
 Ed25519 JWT for the `atlas-wg-gateway:<region>` audience, validated against
 the Atlas JWKS exactly like the proxy control daemon: the key id prefix
