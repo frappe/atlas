@@ -203,6 +203,9 @@ def _validate_create_request(values: dict[str, Any]) -> None:
 	from atlas.vm.core.models import VirtualMachineCreateRequest
 	from atlas.vm.core.vm_service import VirtualMachineService
 
+	if not frappe.db.exists("Proxy Server", {"status": "Active"}):
+		frappe.throw(_("Provision an Active Proxy Server before you provision WireGuard Gateway Server."))
+
 	try:
 		request = VirtualMachineCreateRequest.from_value(_virtual_machine_request(values, "wg-gateway"))
 	except ValueError as error:
