@@ -1,10 +1,12 @@
 package storage
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -54,5 +56,30 @@ func TestDownloadDoesNotRetryPermanentFailure(t *testing.T) {
 func TestImageHTTPClientHasTimeout(t *testing.T) {
 	if timeout := newImageHTTPClient().Timeout; timeout <= 0 {
 		t.Fatalf("timeout = %s, want a positive duration", timeout)
+	}
+}
+
+type writeCounter struct{ writes int }
+
+func (counter *writeCounter) Write(data []byte) (int, error) {
+	counter.writes++
+	return len(data), nil
+}
+
+func TestUncompressedArtifactIsCopiedInLargeWrites(t *testing.T) {
+	content := bytes.Repeat([]byte{1}, 4<<20)
+	// The HTTP body reader has no WriteTo, so hide the one bytes.Reader has.
+	body, closeBody, err := decompressedBody(struct{ io.Reader }{bytes.NewReader(content)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeBody()
+
+	counter := &writeCounter{}
+	if _, err := io.Copy(io.MultiWriter(counter, sha256.New()), body); err != nil {
+		t.Fatal(err)
+	}
+	if counter.writes > 8 {
+		t.Fatalf("writes = %d for 4 MiB, want large writes", counter.writes)
 	}
 }

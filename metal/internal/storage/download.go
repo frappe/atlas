@@ -32,6 +32,10 @@ const (
 
 	// downloadTimeout bounds one whole artifact download, which can be several GiB.
 	downloadTimeout = 30 * time.Minute
+
+	// downloadBufferSize sets the write size of an uncompressed artifact. io.Copy
+	// writes through this buffer, so a small one costs one syscall per few bytes.
+	downloadBufferSize = 1 << 20
 )
 
 // download fetches one artifact into directory and returns its temporary path.
@@ -145,7 +149,7 @@ var zstdMagic = []byte{0x28, 0xB5, 0x2F, 0xFD}
 
 // decompressedBody detects zstd content and returns decoded artifact bytes.
 func decompressedBody(body io.Reader) (io.Reader, func(), error) {
-	buffered := bufio.NewReaderSize(body, len(zstdMagic))
+	buffered := bufio.NewReaderSize(body, downloadBufferSize)
 	prefix, err := buffered.Peek(len(zstdMagic))
 	if err != nil && !errors.Is(err, io.EOF) {
 		return nil, nil, fmt.Errorf("%w: read artifact header", errRetryableDownload)
