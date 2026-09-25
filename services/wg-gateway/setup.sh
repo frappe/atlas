@@ -26,6 +26,16 @@ apt-get update -qq
 apt-get install -y -qq wireguard-tools nftables iproute2
 
 
+step "load kernel modules"
+# Atlas boots the kernel from outside the root file system, so the image can miss these modules.
+apt-get install -y -qq "linux-modules-$(uname -r)" "linux-modules-extra-$(uname -r)"
+modprobe sch_ingress
+modprobe cls_bpf
+modprobe nf_tables
+modprobe wireguard
+printf '%s\n' sch_ingress cls_bpf nf_tables wireguard > /etc/modules-load.d/atlas-wg-gateway.conf
+
+
 step "enable IPv6 forwarding"
 cat > /etc/sysctl.d/90-atlas-wg-gateway.conf <<'SYSCTL'
 net.ipv6.conf.all.forwarding = 1
