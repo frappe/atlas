@@ -233,5 +233,8 @@ truncate -s 4G "$image_path.part"
 mkfs.ext4 -q -F -e remount-ro -d "$rootfs_directory" "$image_path.part"
 mv "$image_path.part" "$image_path"
 
-echo "Built $image_path"
+step "compress ext4 image"
+zstd -q -T0 -3 -f -o "$image_path.zst" "$image_path"
+
+echo "Built $image_path and $image_path.zst"
 echo "Built $kernel_path"

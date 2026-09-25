@@ -74,7 +74,8 @@ class TestUbuntuImageBuilder(UnitTestCase):
 		self.assertEqual(created["set_name"], "new-image")
 		self.assertNotIn("version", created)
 		self.assertEqual(created["image_object_key"], "rootfs-key")
-		upload.assert_called_once_with("new-image", Path("rootfs.img"), Path("kernel"))
+		upload.assert_called_once_with("new-image", Path("rootfs.img.zst"), Path("kernel"))
+		self.assertEqual(created["image_stored_size_mib"], 1)
 		deletion.return_value.request.assert_called_once_with(previous)
 		self.assertEqual(previous.is_termination_protected, 0)
 
@@ -135,7 +136,10 @@ class TestUbuntuImageBuilder(UnitTestCase):
 		self.assertEqual(created["kernel_file"], "file-kernel")
 		self.assertEqual(
 			publish_file.call_args_list,
-			[call(Path("rootfs.ext4"), "a" * 64, "site-image"), call(Path("kernel"), "b" * 64, "site-image")],
+			[
+				call(Path("rootfs.ext4.zst"), "a" * 64, "site-image"),
+				call(Path("kernel"), "b" * 64, "site-image"),
+			],
 		)
 		self.assertNotIn("image_object_key", created)
 		self.assertNotIn("kernel_object_key", created)
