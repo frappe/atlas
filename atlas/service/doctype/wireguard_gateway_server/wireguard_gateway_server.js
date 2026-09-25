@@ -9,20 +9,11 @@ frappe.ui.form.on("WireGuard Gateway Server", {
 		}
 
 		frm.add_custom_button(
-			__("Sync Peers"),
-			() =>
-				frm
-					.call({ method: "sync_peers", doc: frm.doc, freeze: true })
-					.then(() => frm.reload_doc()),
-			__("Actions")
-		);
-
-		frm.add_custom_button(
 			__("Archive"),
 			() =>
 				frappe.confirm(
 					__(
-						"Archive {0}? Its WireGuard peers lose access to their tenant VMs.",
+						"Archive {0}? Its gateway and API go offline, and its proxy route is removed.",
 						[frm.doc.name]
 					),
 					() =>
