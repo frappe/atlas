@@ -166,6 +166,11 @@ class AtlasSettings(Document):
 		return f"atlas-cargo:{self.region_id}"
 
 	@property
+	def wg_gateway_audience_id(self) -> str:
+		"""Return the audience that a token for a WireGuard gateway daemon must carry."""
+		return f"atlas-wg-gateway:{self.region_id}"
+
+	@property
 	def issuer(self) -> str:
 		"""Return this region's Atlas issuer."""
 		return f"atlas:{self.region_id}"
