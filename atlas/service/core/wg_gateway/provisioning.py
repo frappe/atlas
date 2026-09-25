@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import time
 from collections.abc import Callable
@@ -11,6 +12,7 @@ from frappe import _
 
 from atlas.atlas.core.ssh import wait_for_server
 from atlas.atlas.doctype.ssh_task.ssh_task import SSHTask
+from atlas.auth.issuer import issue_token
 from atlas.service.core.service_package import WG_GATEWAY_PACKAGE
 from atlas.service.doctype.wireguard_gateway_server.wireguard_gateway_server import (
 	wireguard_gateway_lifecycle_lock,
@@ -107,7 +109,7 @@ class WireGuardGatewayProvisioner:
 		)
 
 	def install_gateway(self) -> None:
-		"""Install the gateway package with the daemon credential."""
+		"""Install the gateway package with the regional signing authority."""
 		settings = frappe.get_single("Atlas Settings")
 		task = SSHTask.create_for_script_file(
 			target_type="Virtual Machine",
@@ -118,7 +120,9 @@ class WireGuardGatewayProvisioner:
 				"REGION_ID": settings.region_id,
 				"GATEWAY_MESH": self.gateway.wireguard_mesh_ipv6,
 				"LISTEN_PORT": self.gateway.listen_port,
-				"DAEMON_TOKEN": self.gateway.api_token,
+				"JWKS_URL": settings.jwks_url,
+				"GWGATEWAY_AUDIENCE": settings.wg_gateway_audience_id,
+				"JWKS_ISSUERS": json.dumps(["central", settings.issuer]),
 			},
 			timeout_seconds=INSTALL_TIMEOUT_SECONDS,
 			run_in_background=False,
@@ -141,10 +145,15 @@ class WireGuardGatewayProvisioner:
 		return f"https://{self.gateway.name}.{frappe.get_single('Atlas Settings').wildcard_domain}"
 
 	def daemon_headers(self) -> dict[str, str]:
-		"""Return the gateway daemon bearer credential."""
-		if not self.gateway.api_token:
-			frappe.throw(_("WireGuard Gateway Server {0} has no API token.").format(self.gateway.name))
-		return {"Authorization": f"Bearer {self.gateway.api_token}"}
+		"""Return a short-lived gateway daemon token for the public key read."""
+		settings = frappe.get_single("Atlas Settings")
+		token = issue_token(
+			settings,
+			audience=settings.wg_gateway_audience_id,
+			subject="atlas",
+			scope="gateway:read",
+		)
+		return {"Authorization": f"Bearer {token}"}
 
 	def proxy_headers(self) -> dict[str, str]:
 		"""Return the current regional Proxy bearer credential."""
@@ -194,11 +203,7 @@ class WireGuardGatewayProvisioner:
 		deadline = time.monotonic() + DAEMON_TIMEOUT_SECONDS
 		while time.monotonic() < deadline:
 			try:
-				response = requests.get(
-					f"{self.daemon_url}/healthz",
-					headers=self.daemon_headers(),
-					timeout=REQUEST_TIMEOUT_SECONDS,
-				)
+				response = requests.get(f"{self.daemon_url}/healthz", timeout=REQUEST_TIMEOUT_SECONDS)
 				if response.ok and response.json().get("status") == "ok":
 					return
 			except (requests.RequestException, ValueError):
