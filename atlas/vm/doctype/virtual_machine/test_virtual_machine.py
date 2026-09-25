@@ -1,3 +1,4 @@
+import json
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import Mock, call, patch
@@ -479,20 +480,11 @@ class TestVirtualMachineVirtualFields(UnitTestCase):
 		self.assertEqual(virtual_machine.disk_iops, 2000)
 		self.assertEqual(virtual_machine.private_network_throughput_mibps, 100)
 		self.assertEqual(virtual_machine.public_network_throughput_mibps, 50)
-		self.assertEqual(virtual_machine.firewall_summary, "")
+		self.assertEqual(
+			json.loads(virtual_machine.firewall_summary), {"enabled": False, "inbound": [], "outbound": []}
+		)
 		self.assertEqual(virtual_machine.ssh_keys, "ssh-ed25519 AAAA")
 		self.assertEqual(virtual_machine.metadata, '{\n  "env": "prod"\n}')
-
-	def test_read_firewall_returns_the_nested_model(self) -> None:
-		virtual_machine = VirtualMachine.__new__(VirtualMachine)
-		information = MetalVirtualMachine.from_dict(METAL_VIRTUAL_MACHINE_RESPONSE)
-		virtual_machine.check_permission = Mock()
-		virtual_machine.get_metal_vm_info = Mock(return_value=information)
-
-		firewall = virtual_machine.read_firewall()
-
-		virtual_machine.check_permission.assert_called_once_with("read")
-		self.assertEqual(firewall, {"enabled": False, "inbound": [], "outbound": []})
 
 
 class TestVirtualMachineNetwork(UnitTestCase):

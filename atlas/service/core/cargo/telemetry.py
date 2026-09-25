@@ -13,7 +13,8 @@ from frappe import _
 from atlas.service.core.cargo.storage_cluster import get_node_size
 
 CONFIG_FILE_PATH = ("private", "files", "cargo-telemetry.json")
-DATUM_FIELDS = ("repository", "version")
+DATUM_REPOSITORY = "https://github.com/frappe/Datum.git"
+DATUM_VERSION = "main"
 
 
 def config_file() -> Path:
@@ -48,11 +49,8 @@ def _validated_config(values: Any) -> dict[str, Any]:
 	if not isinstance(values, dict):
 		frappe.throw(_("The telemetry configuration must be an object."))
 
-	for field in DATUM_FIELDS:
-		if not isinstance(values.get(field), str) or not values[field].strip():
-			frappe.throw(_("telemetry {0} must be set.").format(field))
-
 	return {
-		**{field: values[field].strip() for field in DATUM_FIELDS},
+		"repository": DATUM_REPOSITORY,
+		"version": DATUM_VERSION,
 		"telemetry": get_node_size(values.get("telemetry"), "telemetry"),
 	}

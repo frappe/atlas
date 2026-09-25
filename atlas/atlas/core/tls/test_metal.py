@@ -10,7 +10,9 @@ from atlas.atlas.core.tls.certificate import (
 	verify_key_pair,
 )
 from atlas.atlas.core.tls.metal import (
+	_client_certificate_files,
 	atlas_client_identity,
+	client_certificate_files,
 	ensure_atlas_client_certificate,
 	ensure_server_certificate,
 )
@@ -150,3 +152,21 @@ class TestAtlasClientCertificate(UnitTestCase):
 		stored["atlas_tls_private_key"] = settings.atlas_tls_private_key
 
 		self.assertFalse(ensure_atlas_client_certificate(settings))
+
+	def test_client_certificate_check_runs_once_per_settings_version(self) -> None:
+		_client_certificate_files.clear_cache()
+		settings = SimpleNamespace(modified="2026-09-26 10:00:00", get_password=Mock(return_value="pem"))
+		with (
+			patch("atlas.atlas.core.tls.metal.frappe.get_cached_doc", return_value=settings),
+			patch("atlas.atlas.core.tls.metal.frappe.get_single", return_value=settings),
+			patch("atlas.atlas.core.tls.metal.ensure_atlas_client_certificate", return_value=False) as ensure,
+			patch("atlas.atlas.core.tls.metal._write_private_file", side_effect=lambda name, _content: name),
+		):
+			self.assertEqual(client_certificate_files(), ("atlas.crt", "atlas.key"))
+			client_certificate_files()
+			self.assertEqual(ensure.call_count, 1)
+
+			settings.modified = "2026-09-26 11:00:00"
+			client_certificate_files()
+			self.assertEqual(ensure.call_count, 2)
+		_client_certificate_files.clear_cache()
