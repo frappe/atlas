@@ -1,5 +1,4 @@
-#!/usr/bin/env python3
-"""Standalone WireGuard gateway API. Central calls this daemon through the HTTP proxy."""
+"""Peer API for one WireGuard gateway. The daemon owns the peer list."""
 
 from __future__ import annotations
 
@@ -7,16 +6,17 @@ import ipaddress
 import json
 import os
 import re
-import secrets
 import subprocess
 import threading
+from dataclasses import dataclass
 from typing import Any
 
-from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request
+
+from .auth import GatewayAuthorization
 
 FDAC_PREFIX = 0xFDAC
 MESH_PREFIX = 0xFDAA
-REGION_LIMIT = 1 << 16
 TENANT_LIMIT = 1 << 32
 CLIENT_LIMIT = 1 << 32
 PUBLIC_KEY_PATTERN = re.compile(r"[A-Za-z0-9+/]{43}=")
@@ -25,23 +25,28 @@ app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 _apply_lock = threading.Lock()
 
 
-def _config() -> dict[str, Any]:
-	"""Read the daemon configuration written by setup.sh."""
-	return {
-		"token": os.environ["WG_GATEWAY_TOKEN"],
-		"bind": os.environ["WG_GATEWAY_BIND"],
-		"port": int(os.environ.get("WG_GATEWAY_PORT", "8080")),
-		"region": int(os.environ["WG_GATEWAY_REGION"]),
-		"listen_port": int(os.environ["WG_GATEWAY_LISTEN_PORT"]),
-		"state_dir": os.environ.get("WG_GATEWAY_STATE_DIR", "/opt/atlas/wg-gateway"),
-		"interface": os.environ.get("WG_GATEWAY_INTERFACE", "wg0"),
-	}
+@dataclass(frozen=True)
+class Config:
+	"""The daemon configuration written by setup.sh."""
+
+	bind: str
+	port: int
+	region: int
+	listen_port: int
+	state_dir: str
+	interface: str
 
 
-def _authorize(authorization: str | None, token: str) -> None:
-	"""Reject any request without the bearer token."""
-	if not authorization or not secrets.compare_digest(authorization, f"Bearer {token}"):
-		raise HTTPException(status_code=401, detail="Unauthorized")
+def _config() -> Config:
+	"""Read the daemon configuration."""
+	return Config(
+		bind=os.environ.get("WG_GATEWAY_BIND", ""),
+		port=int(os.environ.get("WG_GATEWAY_PORT", "8080")),
+		region=int(os.environ.get("WG_GATEWAY_REGION", "0")),
+		listen_port=int(os.environ.get("WG_GATEWAY_LISTEN_PORT", "51820")),
+		state_dir=os.environ.get("WG_GATEWAY_STATE_DIR", "/opt/atlas/wg-gateway"),
+		interface=os.environ.get("WG_GATEWAY_INTERFACE", "wg0"),
+	)
 
 
 def _checked_int(label: str, value: object, low: int, high: int) -> int:
@@ -81,12 +86,12 @@ def _tenant_prefix(region: int, tenant: int) -> str:
 	return str(network)
 
 
-def _peers_path(config: dict[str, Any]) -> str:
+def _peers_path(config: Config) -> str:
 	"""Return the stored peer list path."""
-	return os.path.join(config["state_dir"], "peers.json")
+	return os.path.join(config.state_dir, "peers.json")
 
 
-def _load_peers(config: dict[str, Any]) -> list[dict[str, Any]]:
+def _load_peers(config: Config) -> list[dict[str, Any]]:
 	"""Return the stored peers, or an empty list on a fresh gateway."""
 	try:
 		with open(_peers_path(config), encoding="utf-8") as handle:
@@ -98,20 +103,24 @@ def _load_peers(config: dict[str, Any]) -> list[dict[str, Any]]:
 	return data["peers"]
 
 
-def _store_peers(config: dict[str, Any], peers: list[dict[str, Any]]) -> None:
-	"""Store the peer list with owner-only access."""
-	path = _peers_path(config)
+def _write_private(path: str, content: str) -> None:
+	"""Write a state file with owner-only access."""
 	mode = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
 	with os.fdopen(mode, "w", encoding="utf-8") as handle:
-		json.dump({"peers": peers}, handle, indent=2)
+		handle.write(content)
 	os.chmod(path, 0o600)
 
 
-def _render_wireguard_conf(config: dict[str, Any], peers: list[dict[str, Any]]) -> str:
+def _store_peers(config: Config, peers: list[dict[str, Any]]) -> None:
+	"""Store the peer list."""
+	_write_private(_peers_path(config), json.dumps({"peers": peers}, indent=2))
+
+
+def _render_wireguard_conf(config: Config, peers: list[dict[str, Any]]) -> str:
 	"""Return the wg setconf content with the interface section first."""
-	with open(os.path.join(config["state_dir"], "privatekey"), encoding="utf-8") as handle:
+	with open(os.path.join(config.state_dir, "privatekey"), encoding="utf-8") as handle:
 		private_key = handle.read().strip()
-	lines = ["[Interface]", f"PrivateKey = {private_key}", f"ListenPort = {config['listen_port']}", ""]
+	lines = ["[Interface]", f"PrivateKey = {private_key}", f"ListenPort = {config.listen_port}", ""]
 	for peer in peers:
 		lines += [
 			"[Peer]",
@@ -122,7 +131,7 @@ def _render_wireguard_conf(config: dict[str, Any], peers: list[dict[str, Any]]) 
 	return "\n".join(lines) + "\n"
 
 
-def _render_nft(config: dict[str, Any], peers: list[dict[str, Any]]) -> str:
+def _render_nft(config: Config, peers: list[dict[str, Any]]) -> str:
 	"""Return the atlas_wg_gateway table with one tenant-wide rule per tenant."""
 	by_tenant: dict[int, list[str]] = {}
 	for peer in peers:
@@ -131,7 +140,7 @@ def _render_nft(config: dict[str, Any], peers: list[dict[str, Any]]) -> str:
 	for tenant_id in sorted(by_tenant):
 		sources = ", ".join(sorted(by_tenant[tenant_id]))
 		rules.append(
-			f"\t\tip6 saddr {{ {sources} }} ip6 daddr {_tenant_prefix(config['region'], tenant_id)}"
+			f"\t\tip6 saddr {{ {sources} }} ip6 daddr {_tenant_prefix(config.region, tenant_id)}"
 			" ct state new counter accept"
 		)
 	accepts = "\n".join(rules)
@@ -146,7 +155,7 @@ table ip6 atlas_wg_gateway {{
 
 \tchain postrouting {{
 \t\ttype nat hook postrouting priority srcnat; policy accept;
-\t\tip6 saddr fdac::/16 ip6 daddr fdaa::/16 counter snat to {config["bind"]}
+\t\tip6 saddr fdac::/16 ip6 daddr fdaa::/16 counter snat to {config.bind}
 \t}}
 
 \t# The gateway forwards out of the interface that received the packet. A redirect would send the host around it.
@@ -158,24 +167,15 @@ table ip6 atlas_wg_gateway {{
 """
 
 
-def _write_private(path: str, content: str) -> None:
-	"""Write a secret file with owner-only access."""
-	mode = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-	with os.fdopen(mode, "w", encoding="utf-8") as handle:
-		handle.write(content)
-	os.chmod(path, 0o600)
-
-
-def _apply(config: dict[str, Any], peers: list[dict[str, Any]]) -> None:
+def _apply(config: Config, peers: list[dict[str, Any]]) -> None:
 	"""Replace the WireGuard peers and firewall with the desired state."""
-	state_dir = config["state_dir"]
-	peers_conf = os.path.join(state_dir, "peers.conf")
-	nft_path = os.path.join(state_dir, "gateway.nft")
+	peers_conf = os.path.join(config.state_dir, "peers.conf")
+	nft_path = os.path.join(config.state_dir, "gateway.nft")
 	_write_private(peers_conf, _render_wireguard_conf(config, peers))
 	_write_private(nft_path, _render_nft(config, peers))
 	try:
 		subprocess.run(
-			["wg", "setconf", config["interface"], peers_conf],
+			["wg", "setconf", config.interface, peers_conf],
 			check=True,
 			capture_output=True,
 			text=True,
@@ -188,7 +188,7 @@ def _apply(config: dict[str, Any], peers: list[dict[str, Any]]) -> None:
 		)
 
 
-def _validated_peers(config: dict[str, Any], peers: object) -> list[dict[str, Any]]:
+def _validated_peers(config: Config, peers: object) -> list[dict[str, Any]]:
 	"""Return the peer records with fdac addresses, or reject the list."""
 	if not isinstance(peers, list):
 		raise HTTPException(
@@ -214,47 +214,45 @@ def _validated_peers(config: dict[str, Any], peers: object) -> list[dict[str, An
 				"tenant_id": tenant,
 				"client_id": client,
 				"public_key": key,
-				"fdac": _client_fdac(config["region"], tenant, client),
+				"fdac": _client_fdac(config.region, tenant, client),
 			}
 		)
 	return wanted
 
 
 @app.get("/healthz")
-def health(authorization: str | None = Header(default=None)) -> dict[str, str]:
-	"""Report that the daemon answers."""
-	_authorize(authorization, _config()["token"])
+def health() -> dict[str, str]:
+	"""Report that the daemon answers. Public, like the proxy control daemon."""
 	return {"status": "ok"}
 
 
 @app.get("/config")
-def read_config(authorization: str | None = Header(default=None)) -> dict[str, Any]:
+def read_config(authorization: GatewayAuthorization) -> dict[str, Any]:
 	"""Return the connection values a customer needs for this gateway."""
+	authorization.require("gateway", "read")
 	config = _config()
-	_authorize(authorization, config["token"])
-	with open(os.path.join(config["state_dir"], "publickey"), encoding="utf-8") as handle:
+	with open(os.path.join(config.state_dir, "publickey"), encoding="utf-8") as handle:
 		public_key = handle.read().strip()
 	return {
 		"public_key": public_key,
-		"listen_port": config["listen_port"],
-		"region_id": config["region"],
-		"mesh": config["bind"],
+		"listen_port": config.listen_port,
+		"region_id": config.region,
+		"mesh": config.bind,
 	}
 
 
 @app.get("/peers")
-def list_peers(authorization: str | None = Header(default=None)) -> dict[str, Any]:
+def list_peers(authorization: GatewayAuthorization) -> dict[str, Any]:
 	"""Return the peers of this gateway."""
-	config = _config()
-	_authorize(authorization, config["token"])
-	return {"peers": _load_peers(config)}
+	authorization.require("peers", "read")
+	return {"peers": _load_peers(_config())}
 
 
 @app.put("/peers")
-async def replace_peers(request: Request, authorization: str | None = Header(default=None)) -> dict[str, Any]:
+async def replace_peers(request: Request, authorization: GatewayAuthorization) -> dict[str, Any]:
 	"""Replace the complete peer list of this gateway."""
+	authorization.require("peers", "update")
 	config = _config()
-	_authorize(authorization, config["token"])
 	try:
 		body = await request.json()
 	except ValueError:
@@ -282,11 +280,11 @@ async def replace_peers(request: Request, authorization: str | None = Header(def
 
 @app.put("/peers/{tenant_id}/{client_id}")
 async def upsert_peer(
-	tenant_id: str, client_id: str, request: Request, authorization: str | None = Header(default=None)
+	tenant_id: str, client_id: str, request: Request, authorization: GatewayAuthorization
 ) -> dict[str, Any]:
 	"""Add one client to this gateway and sync it."""
+	authorization.require("peers", "update")
 	config = _config()
-	_authorize(authorization, config["token"])
 	tenant = _path_int("Tenant ID", tenant_id, TENANT_LIMIT - 1)
 	client = _path_int("Client ID", client_id, CLIENT_LIMIT - 1)
 	try:
@@ -313,7 +311,7 @@ async def upsert_peer(
 			"tenant_id": tenant,
 			"client_id": client,
 			"public_key": key,
-			"fdac": _client_fdac(config["region"], tenant, client),
+			"fdac": _client_fdac(config.region, tenant, client),
 		}
 		peers.append(record)
 		_store_peers(config, peers)
@@ -322,12 +320,10 @@ async def upsert_peer(
 
 
 @app.delete("/peers/{tenant_id}/{client_id}")
-def delete_peer(
-	tenant_id: str, client_id: str, authorization: str | None = Header(default=None)
-) -> dict[str, Any]:
+def delete_peer(tenant_id: str, client_id: str, authorization: GatewayAuthorization) -> dict[str, Any]:
 	"""Delete one client of this gateway and sync it. Missing peers are gone."""
+	authorization.require("peers", "update")
 	config = _config()
-	_authorize(authorization, config["token"])
 	tenant = _path_int("Tenant ID", tenant_id, TENANT_LIMIT - 1)
 	client = _path_int("Client ID", client_id, CLIENT_LIMIT - 1)
 	with _apply_lock:
