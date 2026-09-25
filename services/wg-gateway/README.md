@@ -27,8 +27,8 @@ gateway's tenant-0 mesh address. The VM firewall still applies.
 | Path | Content |
 | --- | --- |
 | `setup.sh` | Installation on Ubuntu 24.04. |
-| `systemd/atlas-wg-gateway.service` | Reapplies `wg0` peers, routes, and nftables on boot. |
-| `peers.conf`, `gateway.nft` (on the VM) | Atlas-rendered desired state, replaced on every peer change. |
+| `systemd/atlas-wg-gateway.service` | Reapplies the `wg0` interface, routes, and nftables on boot. |
+| `peers.conf`, `gateway.nft` (on the VM) | Atlas-rendered desired state, replaced on every peer change. `peers.conf` carries the interface section, so `wg setconf` alone restores the key and port. |
 
 ## Setup
 

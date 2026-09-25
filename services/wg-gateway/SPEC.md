@@ -24,7 +24,7 @@ peer change and pushes it over SSH. See
 ## Interfaces
 
 - `setup.sh` reads `REGION_ID`, `GATEWAY_MESH`, and `LISTEN_PORT`.
-- `/opt/atlas/wg-gateway/peers.conf` holds the `wg setconf` peers.
+- `/opt/atlas/wg-gateway/peers.conf` holds the `wg setconf` interface and peers.
 - `/opt/atlas/wg-gateway/gateway.nft` holds the `atlas_wg_gateway` table.
 - `wg show wg0 public-key` reports the gateway public key to Atlas.
 

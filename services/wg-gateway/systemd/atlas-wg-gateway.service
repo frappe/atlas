@@ -7,7 +7,6 @@ Wants=network-online.target
 Type=oneshot
 RemainAfterExit=yes
 ExecStart=-ip link add wg0 type wireguard
-ExecStart=wg set wg0 private-key /opt/atlas/wg-gateway/privatekey listen-port @LISTEN_PORT@
 ExecStart=ip link set wg0 up
 ExecStart=ip -6 route replace fdac::/16 dev wg0
 ExecStart=ip -6 route replace default via fe80::1 dev eth0

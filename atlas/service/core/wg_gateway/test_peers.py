@@ -71,3 +71,26 @@ class TestPublicKey(UnitTestCase):
 	def test_a_non_key_is_refused(self) -> None:
 		with self.assertRaisesRegex(frappe.ValidationError, "public key"):
 			peers.validate_public_key(None)
+
+
+class TestSyncCommand(UnitTestCase):
+	def test_the_command_carries_the_interface_and_reads_the_key_on_the_vm(self) -> None:
+		command = peers.SYNC_COMMAND_TEMPLATE.substitute(
+			state_dir=peers.STATE_DIR,
+			privatekey_path=peers.PRIVATE_KEY_PATH,
+			listen_port=51820,
+			peers_temporary=f"{peers.PEERS_CONF_PATH}.tmp",
+			peers_content=render_wireguard_conf([peer(42, 7, KEY_A, "fdac:1:0:2a::7")]),
+			peers_path=peers.PEERS_CONF_PATH,
+			nft_temporary=f"{peers.NFT_PATH}.tmp",
+			nft_content=render_nft([], 1, "fdaa:1::99"),
+			nft_path=peers.NFT_PATH,
+		)
+
+		self.assertIn("IFS= read -r private_key < /opt/atlas/wg-gateway/privatekey", command)
+		self.assertIn('echo "PrivateKey = $private_key"', command)
+		self.assertIn('echo "ListenPort = 51820"', command)
+		self.assertIn("[Interface]", command)
+		self.assertIn(f"wg setconf wg0 {peers.PEERS_CONF_PATH}", command)
+		self.assertNotIn("$listen_port", command)
+		self.assertNotIn("$peers_content", command)

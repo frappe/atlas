@@ -49,13 +49,18 @@ if [ ! -f "$state_dir/privatekey" ]; then
 	chmod 0600 "$state_dir/privatekey"
 fi
 
-# Atlas overwrites peers.conf on every peer change; an empty file means no peers.
+# Atlas replaces peers.conf on every peer change. The first copy carries the
+# generated key and the port, so wg setconf alone configures the interface.
 if [ ! -f "$state_dir/peers.conf" ]; then
-	printf '# Managed by Atlas. Do not edit.\n' > "$state_dir/peers.conf"
+	install -m 0600 /dev/null "$state_dir/peers.conf"
+	{
+		echo "[Interface]"
+		echo "PrivateKey = $(cat "$state_dir/privatekey")"
+		echo "ListenPort = $LISTEN_PORT"
+	} > "$state_dir/peers.conf"
 fi
 
 ip link add wg0 type wireguard 2>/dev/null || true
-wg set wg0 private-key "$state_dir/privatekey" listen-port "$LISTEN_PORT"
 ip link set wg0 up
 wg setconf wg0 "$state_dir/peers.conf"
 ip -6 route replace fdac::/16 dev wg0
@@ -92,8 +97,7 @@ nft -f "$state_dir/gateway.nft"
 
 
 step "start the gateway"
-sed -e "s|@LISTEN_PORT@|$LISTEN_PORT|" \
-	"$source_dir/systemd/atlas-wg-gateway.service" > /etc/systemd/system/atlas-wg-gateway.service
+install -m 0644 "$source_dir/systemd/atlas-wg-gateway.service" /etc/systemd/system/atlas-wg-gateway.service
 
 systemctl daemon-reload
 systemctl enable atlas-wg-gateway.service

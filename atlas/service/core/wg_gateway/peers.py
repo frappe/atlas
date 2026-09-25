@@ -17,16 +17,23 @@ if TYPE_CHECKING:
 	)
 
 STATE_DIR = "/opt/atlas/wg-gateway"
+PRIVATE_KEY_PATH = f"{STATE_DIR}/privatekey"
 PEERS_CONF_PATH = f"{STATE_DIR}/peers.conf"
 NFT_PATH = f"{STATE_DIR}/gateway.nft"
 SYNC_TIMEOUT_SECONDS = 300
 PUBLIC_KEY_PATTERN = re.compile(r"[A-Za-z0-9+/]{43}=")
 
+# The private key never leaves the virtual machine, so the interface section
+# is read from the installed key file and joined with the rendered peers.
 SYNC_COMMAND_TEMPLATE = Template(
 	"""set -eu
 install -d -m 0750 $state_dir
+IFS= read -r private_key < $privatekey_path
 install -m 0600 /dev/null $peers_temporary
-cat > $peers_temporary <<'ATLAS_WG_PEERS_END'
+echo "[Interface]" > $peers_temporary
+echo "PrivateKey = $$private_key" >> $peers_temporary
+echo "ListenPort = $listen_port" >> $peers_temporary
+cat >> $peers_temporary <<'ATLAS_WG_PEERS_END'
 $peers_content
 ATLAS_WG_PEERS_END
 mv -f $peers_temporary $peers_path
@@ -118,6 +125,8 @@ def push(gateway_name: str) -> None:
 	peers = list_peers(gateway.name)
 	command = SYNC_COMMAND_TEMPLATE.substitute(
 		state_dir=STATE_DIR,
+		privatekey_path=PRIVATE_KEY_PATH,
+		listen_port=gateway.listen_port,
 		peers_temporary=f"{PEERS_CONF_PATH}.tmp",
 		peers_content=render_wireguard_conf(peers),
 		peers_path=PEERS_CONF_PATH,
