@@ -60,15 +60,14 @@
    "options": "Virtual Machine",
    "read_only": 1
   },
-  {
-   "fieldname": "wireguard_mesh_ipv6",
-   "fieldtype": "Data",
-   "label": "WireGuard Mesh IPv6",
-   "read_only": 1,
-   "set_only_once": 1,
-   "show_description_on_click": 1,
-   "unique": 1
-  },
+   {
+    "fieldname": "wireguard_mesh_ipv6",
+    "fieldtype": "Data",
+    "label": "WireGuard Mesh IPv6",
+    "read_only": 1,
+    "show_description_on_click": 1,
+    "unique": 1
+   },
   {
    "fieldname": "gateway_column",
    "fieldtype": "Column Break"
