@@ -27,7 +27,7 @@ gateway's tenant-0 mesh address. The VM firewall still applies.
 | Path | Content |
 | --- | --- |
 | `setup.sh` | Installation on Ubuntu 24.04. |
-| `gatewayd.py` | Standalone gateway API (peers, config, health). |
+| `daemon/` | Standalone gateway API package (peers, config, health). |
 | `systemd/atlas-wg-gateway.service` | Reapplies the `wg0` interface, routes, and nftables on boot. |
 | `systemd/atlas-wg-gateway-api.service` | Runs the gateway API on boot. |
 | `peers.conf`, `gateway.nft` (on the VM) | Daemon-rendered desired state, replaced on every peer change. `peers.conf` carries the interface section, so `wg setconf` alone restores the key and port. |
@@ -40,7 +40,10 @@ Atlas installs the gateway. See
 To install by hand, run this command as root on a tenant-0 gateway VM:
 
 ```sh
-REGION_ID=1 GATEWAY_MESH=fdaa:1::99 LISTEN_PORT=51820 DAEMON_TOKEN=secret ./setup.sh
+REGION_ID=1 GATEWAY_MESH=fdaa:1::99 LISTEN_PORT=51820 \
+  JWKS_URL=https://atlas.example.com/api/atlas/jwks.json \
+  GWGATEWAY_AUDIENCE=atlas-wg-gateway:1 \
+  JWKS_ISSUERS='["central", "atlas:1"]' ./setup.sh
 ```
 
 `setup.sh` installs WireGuard, nftables, and the gateway API daemon,
@@ -48,15 +51,18 @@ generates the gateway keypair unless one exists, creates `wg0`, and starts
 `atlas-wg-gateway.service` and `atlas-wg-gateway-api.service`. You can run it
 again; the keypair is kept.
 
-Central manages peers through the daemon:
+Central manages peers through the daemon with a JWT for the
+`atlas-wg-gateway:<region>` audience (`scope` `peers:*` or `*`):
 
 ```sh
-curl -H "Authorization: Bearer <token>" https://<gateway>.<wildcard-domain>/healthz
-curl -H "Authorization: Bearer <token>" https://<gateway>.<wildcard-domain>/peers
-curl -X PUT -H "Authorization: Bearer <token>" -H "Content-Type: application/json" \
+curl -H "Authorization: Bearer <jwt>" https://<gateway>.<wildcard-domain>/peers
+curl -X PUT -H "Authorization: Bearer <jwt>" -H "Content-Type: application/json" \
   -d '{"peers":[{"tenant_id":1,"client_id":7,"public_key":"<base64>"}]}' \
   https://<gateway>.<wildcard-domain>/peers
 ```
+
+`GET /healthz` is public. Every other route needs a valid token: `401` when
+the credential is missing or invalid, `403` when it lacks the scope.
 
 ## Checks
 
