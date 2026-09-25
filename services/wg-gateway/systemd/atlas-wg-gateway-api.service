@@ -5,9 +5,9 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-WorkingDirectory=/opt/atlas/src/wg-gateway
+WorkingDirectory=/opt/atlas/wg-gateway
 EnvironmentFile=/opt/atlas/wg-gateway/daemon.env
-ExecStart=/usr/bin/uvicorn gatewayd:app --host ${WG_GATEWAY_BIND} --port ${WG_GATEWAY_PORT}
+ExecStart=/opt/atlas/wg-gateway/venv/bin/wg-gatewayd
 Restart=always
 
 [Install]
