@@ -67,6 +67,7 @@ class WireGuardGatewayServer(Document):
 		gateway.flags.created_by_wg_gateway_api = True
 		gateway.listen_port = values.get("listen_port") or DEFAULT_LISTEN_PORT
 		gateway.insert(ignore_permissions=True)
+		frappe.db.commit()  # nosemgrep
 
 		is_draft = gateway._create_virtual_machine(values)
 		gateway.save(ignore_permissions=True)
