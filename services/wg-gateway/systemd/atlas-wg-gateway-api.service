@@ -1,0 +1,14 @@
+[Unit]
+Description=Atlas WireGuard gateway API
+After=network-online.target atlas-wg-gateway.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/atlas/src/wg-gateway
+EnvironmentFile=/opt/atlas/wg-gateway/daemon.env
+ExecStart=/usr/bin/uvicorn gatewayd:app --host ${WG_GATEWAY_BIND} --port ${WG_GATEWAY_PORT}
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
