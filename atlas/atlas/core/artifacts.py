@@ -5,6 +5,7 @@ import shutil
 from pathlib import Path
 
 import frappe
+from frappe import _
 
 
 def publish_public_file(file_name: str, label: str, content: bytes) -> str:
@@ -99,4 +100,6 @@ def get_public_base_url() -> str:
 def get_file_url(file_name: str, base_url: str) -> str:
 	"""Return the URL of one File below a base URL."""
 	file_url = frappe.db.get_value("File", file_name, "file_url")
+	if not file_url:
+		frappe.throw(_("File {0} has no download URL. Publish it again.").format(file_name))
 	return f"{base_url.rstrip('/')}{file_url}"
