@@ -63,8 +63,44 @@ class TestGatewayCreation(UnitTestCase):
 	def test_pending_and_interrupted_provisioning_are_queued(self) -> None:
 		gateway_server = MagicMock()
 		with (
-			patch.object(gateway_module.frappe, "get_all", return_value=["wg-gateway-001"]),
+			patch.object(gateway_module.frappe, "get_all", side_effect=[["wg-gateway-001"], []]),
 			patch.object(gateway_module.frappe, "get_doc", return_value=gateway_server),
 		):
 			gateway_module.enqueue_pending_gateway_provisioning()
 		gateway_server.enqueue_provisioning.assert_called_once_with(enqueue_after_commit=False)
+
+	def test_a_pending_gateway_without_a_virtual_machine_is_failed(self) -> None:
+		with (
+			patch.object(gateway_module.frappe, "get_all", side_effect=[[], ["wg-gateway-002"]]),
+			patch.object(gateway_module.frappe.db, "set_value") as set_value,
+		):
+			gateway_module.enqueue_pending_gateway_provisioning()
+
+		self.assertEqual(set_value.call_args.args[:2], ("WireGuard Gateway Server", "wg-gateway-002"))
+		self.assertEqual(set_value.call_args.args[2]["status"], "Failed")
+
+	def test_a_placement_failure_marks_the_gateway_failed(self) -> None:
+		from atlas.vm.core.placement import PlacementBusy
+
+		gateway = SimpleNamespace(name="wg-gateway-001", status="Pending", failure_message=None)
+		values = {
+			"virtual_machine_image": "image",
+			"cpu_millicores": 2000,
+			"memory_mib": 2048,
+			"disk_mib": 8192,
+			"public_ipv4": "allocation",
+		}
+		with (
+			patch.object(
+				gateway_module.frappe, "get_single", return_value=SimpleNamespace(public_ssh_key="ssh-key")
+			),
+			patch(
+				"atlas.vm.core.vm_service.VirtualMachineService.create",
+				side_effect=PlacementBusy("Every candidate Metal Server is busy."),
+			),
+		):
+			is_draft = WireGuardGatewayServer._create_virtual_machine(gateway, values)
+
+		self.assertFalse(is_draft)
+		self.assertEqual(gateway.status, "Failed")
+		self.assertTrue(gateway.failure_message.startswith("placement:"))

@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 import frappe
 from frappe import _
 from frappe.model.document import Document
+from frappe.utils import add_to_date, now_datetime
 from frappe.utils.file_lock import LockTimeoutError
 from frappe.utils.synchronization import filelock
 
@@ -21,6 +22,7 @@ if TYPE_CHECKING:
 	from atlas.vm.doctype.virtual_machine.virtual_machine import VirtualMachine
 
 DEFAULT_LISTEN_PORT = 51820
+ORPHANED_GATEWAY_MINUTES = 30
 
 
 class WireGuardGatewayServer(Document):
@@ -136,6 +138,7 @@ class WireGuardGatewayServer(Document):
 		WireGuardGatewayProvisioner(self).run()
 
 	def _create_virtual_machine(self, values: dict[str, Any]) -> bool:
+		from atlas.vm.core.placement import OutOfCapacity, PlacementBusy
 		from atlas.vm.core.vm_service import VirtualMachineCreateError, VirtualMachineService
 
 		request = {
@@ -154,6 +157,10 @@ class WireGuardGatewayServer(Document):
 			result = VirtualMachineService.create(request)
 			self._set_virtual_machine(result["name"])
 			return bool(result["is_draft"])
+		except (OutOfCapacity, PlacementBusy) as error:
+			self.status = "Failed"
+			self.failure_message = f"placement: {error}"
+			return False
 		except VirtualMachineCreateError as error:
 			self._set_virtual_machine(error.virtual_machine_name)
 			self.status = "Failed"
@@ -247,3 +254,25 @@ def enqueue_pending_gateway_provisioning() -> None:
 		pluck="name",
 	):
 		frappe.get_doc("WireGuard Gateway Server", name).enqueue_provisioning(enqueue_after_commit=False)
+	fail_orphaned_gateways()
+
+
+def fail_orphaned_gateways() -> None:
+	"""Fail a pending gateway whose virtual machine was never linked."""
+	cutoff = add_to_date(now_datetime(), minutes=-ORPHANED_GATEWAY_MINUTES)
+	for name in frappe.get_all(
+		"WireGuard Gateway Server",
+		filters={"status": "Pending", "virtual_machine": ["is", "not set"], "creation": ["<", cutoff]},
+		pluck="name",
+	):
+		frappe.db.set_value(
+			"WireGuard Gateway Server",
+			name,
+			{
+				"status": "Failed",
+				"failure_message": (
+					"virtual-machine: no virtual machine was linked. "
+					"Check for an unlinked Virtual Machine holding the public IPv4 allocation."
+				),
+			},
+		)
