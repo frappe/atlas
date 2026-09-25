@@ -16,7 +16,6 @@
   "server",
   "listen_port",
   "gateway_public_key",
-  "api_token",
   "failure_section",
   "failure_message"
  ],
@@ -94,12 +93,6 @@
    "fieldname": "gateway_public_key",
    "fieldtype": "Data",
    "label": "Gateway Public Key",
-   "read_only": 1
-  },
-  {
-   "fieldname": "api_token",
-   "fieldtype": "Password",
-   "label": "API Token",
    "read_only": 1
   },
   {

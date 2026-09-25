@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import secrets
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any
 
@@ -37,7 +36,6 @@ class WireGuardGatewayServer(Document):
 	if TYPE_CHECKING:
 		from frappe.types import DF
 
-		api_token: DF.Password | None
 		failure_message: DF.SmallText | None
 		gateway_public_key: DF.Data | None
 		installation_task: DF.Link | None
@@ -70,7 +68,6 @@ class WireGuardGatewayServer(Document):
 		gateway = frappe.new_doc("WireGuard Gateway Server")
 		gateway.flags.created_by_wg_gateway_api = True
 		gateway.listen_port = values.get("listen_port") or DEFAULT_LISTEN_PORT
-		gateway.api_token = secrets.token_urlsafe(32)
 		gateway.insert(ignore_permissions=True)
 		frappe.db.commit()  # nosemgrep
 
@@ -84,7 +81,7 @@ class WireGuardGatewayServer(Document):
 			"name": gateway.name,
 			"is_draft": is_draft,
 			"daemon_url": f"https://{gateway.name}.{settings.wildcard_domain}",
-			"api_token": gateway.api_token,
+			"audience": settings.wg_gateway_audience_id,
 			"public_ipv4": allocation.prefix.partition("/")[0],
 			"listen_port": gateway.listen_port,
 			"region_id": settings.region_id,
@@ -119,7 +116,6 @@ class WireGuardGatewayServer(Document):
 			gateway.virtual_machine = None
 			gateway.installation_task = None
 			gateway.gateway_public_key = None
-			gateway.api_token = None
 			gateway.save(ignore_permissions=True)
 
 		frappe.msgprint(_("WireGuard Gateway Server {0} is archived.").format(self.name))
