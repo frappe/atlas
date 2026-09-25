@@ -141,18 +141,7 @@ class WireGuardGatewayServer(Document):
 		from atlas.vm.core.placement import OutOfCapacity, PlacementBusy
 		from atlas.vm.core.vm_service import VirtualMachineCreateError, VirtualMachineService
 
-		request = {
-			"virtual_machine_image": values.get("virtual_machine_image"),
-			"cpu_millicores": values.get("cpu_millicores"),
-			"memory_mib": values.get("memory_mib"),
-			"disk_mib": values.get("disk_mib"),
-			"tenant_id": 0,
-			"is_privileged": True,
-			"is_termination_protected": True,
-			"hostname": self.name,
-			"ssh_keys": frappe.get_single("Atlas Settings").public_ssh_key,
-			"public_ipv4": values["public_ipv4"],
-		}
+		request = _virtual_machine_request(values, self.name)
 		try:
 			result = VirtualMachineService.create(request)
 			self._set_virtual_machine(result["name"])
@@ -180,12 +169,9 @@ def create(request: str | dict[str, Any]) -> dict[str, str | bool]:
 	return WireGuardGatewayServer.create(request)
 
 
-def _validate_create_request(values: dict[str, Any]) -> None:
-	"""Reject a create request that cannot produce a working gateway."""
-	from atlas.vm.core.models import VirtualMachineCreateRequest
-	from atlas.vm.core.vm_service import VirtualMachineService
-
-	virtual_machine_request = {
+def _virtual_machine_request(values: dict[str, Any], hostname: str) -> dict[str, Any]:
+	"""Return the gateway virtual machine request for validation and creation."""
+	return {
 		"virtual_machine_image": values.get("virtual_machine_image"),
 		"cpu_millicores": values.get("cpu_millicores"),
 		"memory_mib": values.get("memory_mib"),
@@ -193,12 +179,19 @@ def _validate_create_request(values: dict[str, Any]) -> None:
 		"tenant_id": 0,
 		"is_privileged": True,
 		"is_termination_protected": True,
-		"hostname": "wg-gateway",
+		"hostname": hostname,
 		"ssh_keys": frappe.get_single("Atlas Settings").public_ssh_key,
 		"public_ipv4": values.get("public_ipv4"),
 	}
+
+
+def _validate_create_request(values: dict[str, Any]) -> None:
+	"""Reject a create request that cannot produce a working gateway."""
+	from atlas.vm.core.models import VirtualMachineCreateRequest
+	from atlas.vm.core.vm_service import VirtualMachineService
+
 	try:
-		request = VirtualMachineCreateRequest.from_value(virtual_machine_request)
+		request = VirtualMachineCreateRequest.from_value(_virtual_machine_request(values, "wg-gateway"))
 	except ValueError as error:
 		frappe.throw(_(str(error)), exc=AtlasUserError)
 		raise AssertionError from error
