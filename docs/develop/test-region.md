@@ -86,6 +86,8 @@ Save the record. Wait for its status to become `Running`. Open its linked **SSH 
 
 ## 8. Build a VM image
 
+On Linux, the build needs `curl`, `sha256sum`, `unsquashfs`, `mkfs.ext4`, `truncate`, and `zstd`. On macOS, the build runs in the builder Docker image, which has them.
+
 Build and publish the Ubuntu 24.04 guest image:
 
 ```sh

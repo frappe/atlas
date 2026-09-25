@@ -81,11 +81,15 @@ def publish_ubuntu_image(
 		if image.image_sha256 == image_sha256 and image.kernel_sha256 == kernel_sha256:
 			return
 
+	# The digest and size describe the raw file system. Hosts download the zstd copy and verify the decoded bytes.
+	compressed_image_path = image_path.with_name(f"{image_path.name}.zst")
 	image_name = frappe.generate_hash(length=16)
 	if storage == "Site File":
-		location = publish_to_site_files(image_name, image_path, image_sha256, kernel_path, kernel_sha256)
+		location = publish_to_site_files(
+			image_name, compressed_image_path, image_sha256, kernel_path, kernel_sha256
+		)
 	else:
-		location = upload_to_object_storage(image_name, image_path, kernel_path)
+		location = upload_to_object_storage(image_name, compressed_image_path, kernel_path)
 
 	frappe.get_doc(
 		{
@@ -98,6 +102,7 @@ def publish_ubuntu_image(
 			"artifact_storage": storage,
 			"image_sha256": image_sha256,
 			"image_size_mib": bytes_to_mib(image_path.stat().st_size),
+			"image_stored_size_mib": bytes_to_mib(compressed_image_path.stat().st_size),
 			"kernel_sha256": kernel_sha256,
 			"kernel_size_mib": bytes_to_mib(kernel_path.stat().st_size),
 			"tags": [
