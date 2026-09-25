@@ -42,9 +42,10 @@ proxy route, then never touches peer state.
 Client addresses are `fdac | region 16 | tenant 32 | reserved 0 (32) |
 client 32`. Tenant access is tenant-wide: a client reaches the
 `fdaa:<region>:<tenant>::/64` of its own tenant. The layout helpers live in
-`atlas/service/core/wg_gateway/address.py`.
+`daemon/gatewayd/main.py` as `_client_fdac` and `_tenant_prefix`.
 
 ## Ownership
 
-Atlas owns the gateway VM, the peer list, and both state files. The gateway
-owns only the translation. VM-level firewalling stays with each VM.
+Atlas owns the gateway VM, the proxy route, and the daemon credential. The
+daemon inside the VM owns the peer list and both state files. VM-level
+firewalling stays with each VM.
