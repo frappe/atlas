@@ -36,6 +36,7 @@ class WireGuardGatewayServer(Document):
 	if TYPE_CHECKING:
 		from frappe.types import DF
 
+		api_token: DF.Password | None
 		failure_message: DF.SmallText | None
 		gateway_public_key: DF.Data | None
 		installation_task: DF.Link | None
