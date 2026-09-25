@@ -45,7 +45,7 @@ Provisioning waits until Metal has attached the public IPv4 allocation.
 | Phase | Action |
 | --- | --- |
 | `secure-shell` | Wait for root Secure Shell access on the public IPv4 address. |
-| `installation` | Install WireGuard and nftables with `REGION_ID`, `GATEWAY_MESH`, and `LISTEN_PORT`, then read the gateway public key. |
+| `installation` | Install WireGuard and nftables with `GATEWAY_MESH` and `LISTEN_PORT`, then read the gateway public key. |
 
 The installer generates the gateway keypair on the VM and keeps it on
 reinstalls. A failure sets the status to Failed and stores the phase and

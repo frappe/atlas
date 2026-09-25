@@ -38,7 +38,7 @@ Atlas installs the gateway. See
 To install by hand, run this command as root on a tenant-0 gateway VM:
 
 ```sh
-REGION_ID=1 GATEWAY_MESH=fdaa:1::99 LISTEN_PORT=51820 ./setup.sh
+GATEWAY_MESH=fdaa:1::99 LISTEN_PORT=51820 ./setup.sh
 ```
 
 `setup.sh` installs WireGuard and nftables, generates the gateway keypair

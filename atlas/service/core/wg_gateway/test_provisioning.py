@@ -51,7 +51,6 @@ class TestGatewayInstallation(UnitTestCase):
 				"get_install_environment",
 				return_value=PACKAGE_ENVIRONMENT,
 			),
-			patch.object(provisioning.frappe, "get_single", return_value=SimpleNamespace(region_id=3)),
 			patch.object(
 				provisioning.SSHTask, "create_for_script_file", return_value=install_task
 			) as create_task,
@@ -60,7 +59,7 @@ class TestGatewayInstallation(UnitTestCase):
 			provisioner.install_gateway()
 		return create_task
 
-	def test_the_installer_receives_the_region_mesh_and_port(self) -> None:
+	def test_the_installer_receives_the_mesh_and_port(self) -> None:
 		create_task = self.install(
 			SimpleNamespace(is_success=True), SimpleNamespace(is_success=True, output="pubkey\n", exit_code=0)
 		)
@@ -68,5 +67,5 @@ class TestGatewayInstallation(UnitTestCase):
 		arguments = create_task.call_args.kwargs
 		self.assertEqual(
 			arguments["environment"],
-			PACKAGE_ENVIRONMENT | {"REGION_ID": 3, "GATEWAY_MESH": "fdaa:1::99", "LISTEN_PORT": 51820},
+			PACKAGE_ENVIRONMENT | {"GATEWAY_MESH": "fdaa:1::99", "LISTEN_PORT": 51820},
 		)

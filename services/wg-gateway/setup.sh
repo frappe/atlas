@@ -3,7 +3,6 @@
 
 set -euo pipefail
 
-: "${REGION_ID:?REGION_ID is required}"
 : "${GATEWAY_MESH:?GATEWAY_MESH is required}"
 : "${LISTEN_PORT:?LISTEN_PORT is required}"
 
@@ -64,7 +63,6 @@ ip link add wg0 type wireguard 2>/dev/null || true
 ip link set wg0 up
 wg setconf wg0 "$state_dir/peers.conf"
 ip -6 route replace fdac::/16 dev wg0
-ip -6 route replace default via fe80::1 dev eth0
 
 
 step "write the firewall"

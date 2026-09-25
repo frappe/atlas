@@ -109,7 +109,6 @@ class WireGuardGatewayProvisioner:
 			script_path="install-service-package.sh",
 			environment={
 				**WG_GATEWAY_PACKAGE.get_install_environment(),
-				"REGION_ID": frappe.get_single("Atlas Settings").region_id,
 				"GATEWAY_MESH": self.gateway.wireguard_mesh_ipv6,
 				"LISTEN_PORT": self.gateway.listen_port,
 			},

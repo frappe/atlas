@@ -9,7 +9,6 @@ RemainAfterExit=yes
 ExecStart=-ip link add wg0 type wireguard
 ExecStart=ip link set wg0 up
 ExecStart=ip -6 route replace fdac::/16 dev wg0
-ExecStart=ip -6 route replace default via fe80::1 dev eth0
 ExecStart=wg setconf wg0 /opt/atlas/wg-gateway/peers.conf
 ExecStart=nft -f /opt/atlas/wg-gateway/gateway.nft
 ExecStop=nft delete table ip6 atlas_wg_gateway
