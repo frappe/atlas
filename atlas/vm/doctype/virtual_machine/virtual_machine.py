@@ -229,8 +229,11 @@ class VirtualMachine(Document):
 
 	@property
 	def firewall_summary(self) -> str:
-		"""Return the empty initial value that the form replaces after its explicit firewall read."""
-		return ""
+		"""Return the desired firewall that Metal holds."""
+		information = self.get_metal_vm_info()
+		if not information:
+			return json.dumps({"enabled": False, "inbound": [], "outbound": []}, indent=2)
+		return json.dumps(information.desired.network.firewall.as_dict(), indent=2)
 
 	@property
 	def ssh_keys(self) -> str:
@@ -457,15 +460,6 @@ class VirtualMachine(Document):
 				),
 			}
 		)
-
-	@frappe.whitelist(methods=["GET"])
-	def read_firewall(self) -> dict[str, Any]:
-		"""Return the complete desired firewall when the user opens the editor."""
-		self.check_permission("read")
-		information = self.get_metal_vm_info()
-		if not information:
-			return {"enabled": False, "inbound": [], "outbound": []}
-		return information.desired.network.firewall.as_dict()
 
 	@frappe.whitelist(methods=["POST"])
 	def update_firewall(self, firewall: dict[str, Any]) -> dict[str, Any]:

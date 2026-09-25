@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 import frappe
 from frappe import _
 from frappe.utils import convert_utc_to_system_timezone
+from frappe.utils.caching import site_cache
 
 from atlas.atlas.core.tls.certificate import (
 	CertificateError,
@@ -27,6 +28,7 @@ if TYPE_CHECKING:
 TLS_DIRECTORY = ("private", "atlas-metal-tls")
 CERTIFICATE_RENEWAL_WINDOW_DAYS = 30
 CERTIFICATE_AUTHORITY_WARNING_DAYS = 180
+CLIENT_CERTIFICATE_CHECK_SECONDS = 3600
 
 
 def ensure_certificate_authority(settings: "AtlasSettings") -> bool:
@@ -123,7 +125,16 @@ def ca_file() -> str:
 
 
 def client_certificate_files() -> tuple[str, str]:
-	"""Write the Atlas client pair to private site files and return both paths."""
+	"""Return the Atlas client pair files for a Metal request.
+
+	The renewal check verifies the key pair, which costs tens of milliseconds, so it
+	runs once per CLIENT_CERTIFICATE_CHECK_SECONDS or after Atlas Settings changes.
+	"""
+	return _client_certificate_files(str(frappe.get_cached_doc("Atlas Settings").modified))
+
+
+@site_cache(ttl=CLIENT_CERTIFICATE_CHECK_SECONDS, maxsize=4)
+def _client_certificate_files(_settings_modified: str) -> tuple[str, str]:
 	settings = frappe.get_single("Atlas Settings")
 	if ensure_atlas_client_certificate(settings):
 		settings.save(ignore_permissions=True, ignore_version=True)
