@@ -5,6 +5,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 import frappe
+import requests
 from frappe import _
 
 from atlas.atlas.core.ssh import wait_for_server
@@ -24,6 +25,7 @@ INSTALL_TIMEOUT_SECONDS = 1_800
 SSH_TIMEOUT_SECONDS = 600
 SSH_POLL_INTERVAL_SECONDS = 5
 COMMAND_TIMEOUT_SECONDS = 120
+REQUEST_TIMEOUT_SECONDS = 5
 
 
 class WireGuardGatewayProvisioner:
@@ -140,6 +142,59 @@ class WireGuardGatewayProvisioner:
 			)
 		self.gateway.gateway_public_key = public_key
 		self.save()
+
+	@property
+	def proxy_url(self) -> str:
+		"""Return the regional Proxy control API URL."""
+		return f"https://proxy.{frappe.get_single('Atlas Settings').wildcard_domain}"
+
+	@property
+	def daemon_url(self) -> str:
+		"""Return the gateway daemon URL through the regional proxy."""
+		return f"https://{self.gateway.name}.{frappe.get_single('Atlas Settings').wildcard_domain}"
+
+	def proxy_headers(self) -> dict[str, str]:
+		"""Return the current regional Proxy bearer credential."""
+		password = frappe.get_single("Atlas Settings").get_password(
+			"proxy_cluster_password", raise_exception=False
+		)
+		if not password:
+			frappe.throw(_("Atlas Settings holds no Proxy cluster password."))
+		return {"Authorization": f"Bearer {password}"}
+
+	def update_proxy_routes(self) -> None:
+		"""Map the gateway hostname to the virtual machine mesh address."""
+		mesh_address = self.gateway.wireguard_mesh_ipv6
+		if not mesh_address:
+			frappe.throw(
+				_("WireGuard Gateway Server {0} has no mesh IPv6 address.").format(self.gateway.name)
+			)
+		response = requests.patch(
+			f"{self.proxy_url}/v1/sites/{self.gateway.name}",
+			headers=self.proxy_headers(),
+			json={"address": mesh_address},
+			timeout=REQUEST_TIMEOUT_SECONDS,
+		)
+		if not response.ok:
+			frappe.throw(
+				_("The Proxy control API refused the {0} route with status {1}.").format(
+					self.gateway.name, response.status_code
+				)
+			)
+
+	def remove_proxy_routes(self) -> None:
+		"""Remove the gateway hostname before virtual machine termination."""
+		response = requests.delete(
+			f"{self.proxy_url}/v1/sites/{self.gateway.name}",
+			headers=self.proxy_headers(),
+			timeout=REQUEST_TIMEOUT_SECONDS,
+		)
+		if not response.ok:
+			frappe.throw(
+				_("The Proxy control API refused {0} route removal with status {1}.").format(
+					self.gateway.name, response.status_code
+				)
+			)
 
 	def save(self) -> None:
 		"""Store the current gateway state."""
