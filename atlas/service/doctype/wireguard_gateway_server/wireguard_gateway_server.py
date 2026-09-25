@@ -92,17 +92,17 @@ class WireGuardGatewayServer(Document):
 
 	@frappe.whitelist(methods=["POST"])
 	def archive(self) -> None:
-		"""Terminate the gateway virtual machine. Termination releases its addresses."""
+		"""Remove the proxy route, then terminate the gateway virtual machine."""
 		_validate_system_manager()
 		with wireguard_gateway_lifecycle_lock(self.name):
 			gateway: WireGuardGatewayServer = frappe.get_doc(self.doctype, self.name)
 			if gateway.status == "Archived":
 				return
 
-			if frappe.db.exists("WireGuard Gateway Peer", {"gateway": gateway.name}):
-				frappe.throw(_("Delete all WireGuard peers before you archive this gateway."))
-
 			try:
+				from atlas.service.core.wg_gateway.provisioning import WireGuardGatewayProvisioner
+
+				WireGuardGatewayProvisioner(gateway).remove_proxy_routes()
 				if gateway.virtual_machine and frappe.db.exists("Virtual Machine", gateway.virtual_machine):
 					virtual_machine = frappe.get_doc("Virtual Machine", gateway.virtual_machine)
 					virtual_machine.set_termination_protection(False)
@@ -119,6 +119,7 @@ class WireGuardGatewayServer(Document):
 			gateway.virtual_machine = None
 			gateway.installation_task = None
 			gateway.gateway_public_key = None
+			gateway.api_token = None
 			gateway.save(ignore_permissions=True)
 
 		frappe.msgprint(_("WireGuard Gateway Server {0} is archived.").format(self.name))
