@@ -55,6 +55,7 @@ class VirtualMachine(Document):
 		is_termination_protected: DF.Check
 		memory_mib: DF.Int
 		metadata: DF.Code | None
+		routes: DF.Code | None
 		server: DF.Link
 		sleep_after_idle_seconds: DF.Int
 		tags: DF.Table[AtlasTag]

@@ -20,8 +20,6 @@ function storageClusterConfig(values) {
 
 function telemetryConfig(values) {
 	return {
-		repository: values.datum_repository,
-		version: values.datum_version,
 		telemetry: {
 			cpu_millicores: values.datum_cpu_millicores,
 			ram_gb: values.datum_ram_gb,
@@ -30,149 +28,29 @@ function telemetryConfig(values) {
 	};
 }
 
+function intField(fieldname, label, defaultValue) {
+	return { fieldname, fieldtype: "Int", label, reqd: 1, default: defaultValue };
+}
+
 function showProvisionDialog(frm) {
 	const dialog = new frappe.ui.Dialog({
 		title: __("Provision Cargo Server"),
+		size: "large",
 		fields: [
+			{ fieldtype: "Section Break", label: __("Cargo Server") },
 			{
 				fieldname: "virtual_machine_image",
 				fieldtype: "Link",
-				label: __("Virtual Machine Image"),
+				label: __("Image"),
 				options: "Virtual Machine Image",
 				reqd: 1,
 				filters: { enabled: 1, status: "Available", image_type: "system" },
 			},
-			{
-				fieldname: "cpu_millicores",
-				fieldtype: "Int",
-				label: __("CPU (millicores)"),
-				description: __("1000 millicores equals one CPU core."),
-				reqd: 1,
-				default: 2000,
-			},
-			{
-				fieldname: "memory_mib",
-				fieldtype: "Int",
-				label: __("Memory (MiB)"),
-				reqd: 1,
-				default: 4096,
-			},
-			{
-				fieldname: "disk_mib",
-				fieldtype: "Int",
-				label: __("Disk (MiB)"),
-				reqd: 1,
-				default: 16384,
-			},
-			{ fieldtype: "Section Break", label: __("Storage Cluster") },
-			{
-				fieldname: "storage_node_count",
-				fieldtype: "Int",
-				label: __("Storage Nodes"),
-				reqd: 1,
-				default: 3,
-			},
-			{
-				fieldname: "replication_factor",
-				fieldtype: "Int",
-				label: __("Replication Factor"),
-				reqd: 1,
-				default: 3,
-				description: __(
-					"Copies of each object. Storage nodes must not be fewer than this."
-				),
-			},
 			{ fieldtype: "Column Break" },
-			{
-				fieldname: "gateway_cpu_millicores",
-				fieldtype: "Int",
-				label: __("Gateway CPU (millicores)"),
-				description: __("1000 millicores equals one CPU core."),
-				reqd: 1,
-				default: 2000,
-			},
-			{
-				fieldname: "gateway_ram_gb",
-				fieldtype: "Int",
-				label: __("Gateway Memory (GB)"),
-				reqd: 1,
-				default: 4,
-			},
-			{
-				fieldname: "gateway_disk_gb",
-				fieldtype: "Int",
-				label: __("Gateway Disk (GB)"),
-				reqd: 1,
-				default: 20,
-			},
-			{ fieldtype: "Column Break" },
-			{
-				fieldname: "storage_cpu_millicores",
-				fieldtype: "Int",
-				label: __("Storage CPU (millicores)"),
-				description: __("1000 millicores equals one CPU core."),
-				reqd: 1,
-				default: 4000,
-			},
-			{
-				fieldname: "storage_ram_gb",
-				fieldtype: "Int",
-				label: __("Storage Memory (GB)"),
-				reqd: 1,
-				default: 8,
-			},
-			{
-				fieldname: "storage_disk_gb",
-				fieldtype: "Int",
-				label: __("Storage Disk (GB)"),
-				reqd: 1,
-				default: 500,
-				description: __("Garage weights each node by this size."),
-			},
-			{ fieldtype: "Section Break", label: __("Datum Host") },
-			{
-				fieldname: "datum_repository",
-				fieldtype: "Data",
-				label: __("Datum Repository"),
-				reqd: 1,
-				default: "https://github.com/frappe/Datum.git",
-			},
-			{
-				fieldname: "datum_version",
-				fieldtype: "Data",
-				label: __("Datum Version"),
-				description: __("A branch, tag or commit."),
-				reqd: 1,
-				default: "main",
-			},
-			{ fieldtype: "Column Break" },
-			{
-				fieldname: "datum_cpu_millicores",
-				fieldtype: "Int",
-				label: __("Datum CPU (millicores)"),
-				description: __("1000 millicores equals one CPU core."),
-				reqd: 1,
-				default: 2000,
-			},
-			{
-				fieldname: "datum_ram_gb",
-				fieldtype: "Int",
-				label: __("Datum Memory (GB)"),
-				reqd: 1,
-				default: 4,
-			},
-			{
-				fieldname: "datum_disk_gb",
-				fieldtype: "Int",
-				label: __("Datum Disk (GB)"),
-				reqd: 1,
-				default: 20,
-			},
-			{ fieldtype: "Section Break" },
 			{
 				fieldname: "public_ipv4",
 				fieldtype: "Link",
-				label: __("Public IPv4 Allocation"),
+				label: __("Public IPv4"),
 				options: "Public IP Allocation",
 				reqd: 1,
 				filters: {
@@ -182,9 +60,39 @@ function showProvisionDialog(frm) {
 					virtual_machine: ["is", "not set"],
 				},
 			},
+			{ fieldtype: "Section Break", label: __("Cargo Server Resources") },
+			intField("cpu_millicores", __("CPU (millicores)"), 2000),
+			{ fieldtype: "Column Break" },
+			intField("memory_mib", __("Memory (MiB)"), 4096),
+			{ fieldtype: "Column Break" },
+			intField("disk_mib", __("Disk (MiB)"), 16384),
+
+			{ fieldtype: "Section Break", label: __("Object Storage Cluster (Garage)") },
+			intField("storage_node_count", __("Storage Nodes"), 3),
+			{ fieldtype: "Column Break" },
+			intField("replication_factor", __("Replication Factor"), 3),
+			{ fieldtype: "Section Break", label: __("Garage Node Resources") },
+			intField("gateway_cpu_millicores", __("Gateway CPU (millicores)"), 2000),
+			intField("storage_cpu_millicores", __("Storage CPU (millicores)"), 4000),
+			{ fieldtype: "Column Break" },
+			intField("gateway_ram_gb", __("Gateway Memory (GB)"), 4),
+			intField("storage_ram_gb", __("Storage Memory (GB)"), 8),
+			{ fieldtype: "Column Break" },
+			intField("gateway_disk_gb", __("Gateway Disk (GB)"), 20),
+			intField("storage_disk_gb", __("Storage Disk (GB)"), 500),
+
+			{ fieldtype: "Section Break", label: __("Datum (Telemetry Service)") },
+			intField("datum_cpu_millicores", __("CPU (millicores)"), 2000),
+			{ fieldtype: "Column Break" },
+			intField("datum_ram_gb", __("Memory (GB)"), 4),
+			{ fieldtype: "Column Break" },
+			intField("datum_disk_gb", __("Disk (GB)"), 20),
 		],
 		primary_action_label: __("Provision"),
 		primary_action(values) {
+			if (values.replication_factor > values.storage_node_count) {
+				frappe.throw(__("Replication factor cannot exceed the number of storage nodes."));
+			}
 			frm.call({
 				method: "provision",
 				doc: frm.doc,

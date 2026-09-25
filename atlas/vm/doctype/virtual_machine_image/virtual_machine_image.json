@@ -29,7 +29,6 @@
   "image_object_key",
   "image_file",
   "image_sha256",
-  "site_file_retention_until",
   "artifact_retention_until",
   "column_break_files",
   "kernel_size_mib",
@@ -37,6 +36,7 @@
   "kernel_object_key",
   "kernel_file",
   "kernel_sha256",
+  "site_file_retention_until",
   "section_break_tags",
   "tags",
   "version",
@@ -319,21 +319,17 @@
   },
   {
    "depends_on": "eval: doc.site_file_retention_until",
-   "description": "This image now lives in object storage. Its old site files stay until this time, so a host that is still downloading one is not cut off.",
    "fieldname": "site_file_retention_until",
    "fieldtype": "Datetime",
    "label": "Site Files Kept Until",
-   "read_only": 1,
-   "show_description_on_click": 1
+   "read_only": 1
   },
   {
    "depends_on": "eval: doc.artifact_retention_until",
-   "description": "Retired image artifacts stay available until this time. The archived record stays while any VM refers to it.",
    "fieldname": "artifact_retention_until",
    "fieldtype": "Datetime",
    "label": "Artifacts Kept Until",
-   "read_only": 1,
-   "show_description_on_click": 1
+   "read_only": 1
   },
   {
    "fieldname": "image_stored_size_mib",
@@ -349,8 +345,8 @@
   }
  ],
  "links": [],
- "modified": "2026-09-26 00:09:09.365301",
- "modified_by": "test@gmail.com",
+ "modified": "2026-09-26 03:12:25.626527",
+ "modified_by": "Administrator",
  "module": "VM",
  "name": "Virtual Machine Image",
  "naming_rule": "Random",
@@ -371,6 +367,7 @@
   }
  ],
  "row_format": "Dynamic",
+ "show_title_field_in_link": 1,
  "sort_field": "modified",
  "sort_order": "DESC",
  "states": [

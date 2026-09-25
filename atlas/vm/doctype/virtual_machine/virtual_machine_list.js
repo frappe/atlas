@@ -20,7 +20,7 @@ function firewallRuleFields() {
 			fieldname: "ports",
 			fieldtype: "Data",
 			label: __("Ports"),
-			description: __("Use one port or one range, such as 22 or 8000-9000."),
+			placeholder: "22 or 8000-9000",
 			in_list_view: 1,
 		},
 		{
@@ -28,7 +28,7 @@ function firewallRuleFields() {
 			fieldtype: "Data",
 			label: __("CIDRs"),
 			reqd: 1,
-			description: __("Separate IPv4 and IPv6 prefixes with commas or spaces."),
+			placeholder: "0.0.0.0/0, ::/0",
 			in_list_view: 1,
 		},
 	];
@@ -53,6 +53,59 @@ function firewallValue(enabled, rows) {
 	return firewall;
 }
 
+function publicAddressFields(getDialog, version) {
+	const mode = `public_ipv${version}_mode`;
+	const isReserved = `eval: doc.${mode} === "reserved"`;
+	return [
+		{
+			fieldname: mode,
+			fieldtype: "Select",
+			label: __("IPv{0}", [version]),
+			options: [
+				{ label: __("None"), value: "none" },
+				{ label: __("Automatic"), value: "auto" },
+				{ label: __("Reserved allocation"), value: "reserved" },
+			],
+			default: "none",
+		},
+		{
+			fieldname: `public_ipv${version}_allocation`,
+			fieldtype: "Link",
+			label: __("IPv{0} Allocation", [version]),
+			options: "Public IP Allocation",
+			depends_on: isReserved,
+			mandatory_depends_on: isReserved,
+			get_query: () => ({
+				filters: {
+					status: "Reserved",
+					version,
+					tenant_id: getDialog().get_value("tenant_id") || 0,
+					virtual_machine: ["is", "not set"],
+				},
+			}),
+		},
+	];
+}
+
+function publicAddressSelector(values, version) {
+	const mode = values[`public_ipv${version}_mode`];
+	const allocation = values[`public_ipv${version}_allocation`];
+	delete values[`public_ipv${version}_mode`];
+	delete values[`public_ipv${version}_allocation`];
+	if (mode === "auto") return "auto";
+	if (mode === "reserved") return allocation;
+	return "";
+}
+
+// A hostname label holds lowercase letters, digits, and inner hyphens, up to 63 characters.
+function hostnameSlug(text) {
+	return (text || "")
+		.toLowerCase()
+		.replace(/[^a-z0-9]+/g, "-")
+		.slice(0, 63)
+		.replace(/^-+|-+$/g, "");
+}
+
 function showCreateVirtualMachineDialog() {
 	const dialog = new frappe.ui.Dialog({
 		title: __("Create Virtual Machine"),
@@ -62,11 +115,27 @@ function showCreateVirtualMachineDialog() {
 			{
 				fieldname: "virtual_machine_image",
 				fieldtype: "Link",
-				label: __("Virtual Machine Image"),
+				label: __("Image"),
 				options: "Virtual Machine Image",
 				reqd: 1,
 				filters: { enabled: 1, status: "Available" },
+				async onchange() {
+					const image = dialog.get_value("virtual_machine_image");
+					if (!image) return;
+					const { message } = await frappe.db.get_value(
+						"Virtual Machine Image",
+						image,
+						"title"
+					);
+					dialog.set_value("hostname", hostnameSlug(message.title));
+				},
 			},
+			{ fieldtype: "Column Break" },
+			{ fieldname: "hostname", fieldtype: "Data", label: __("Hostname") },
+			{ fieldtype: "Column Break" },
+			{ fieldname: "tenant_id", fieldtype: "Int", label: __("Tenant ID"), default: 0 },
+
+			{ fieldtype: "Section Break", label: __("Resources") },
 			{
 				fieldname: "cpu_millicores",
 				fieldtype: "Int",
@@ -75,17 +144,6 @@ function showCreateVirtualMachineDialog() {
 				min: 100,
 				max: 32000,
 				default: 1000,
-				description: __(
-					"The valid range is 100 to 32000 millicores. 1000 millicores equals one CPU core."
-				),
-				show_description_on_click: 1,
-			},
-			{
-				fieldname: "disk_throughput_mibps",
-				fieldtype: "Int",
-				label: __("Disk Throughput (MiB/s)"),
-				default: 0,
-				description: __("0 does not apply a limit."),
 			},
 			{ fieldtype: "Column Break" },
 			{
@@ -95,6 +153,7 @@ function showCreateVirtualMachineDialog() {
 				reqd: 1,
 				default: 1024,
 			},
+			{ fieldtype: "Column Break" },
 			{
 				fieldname: "disk_mib",
 				fieldtype: "Int",
@@ -102,89 +161,73 @@ function showCreateVirtualMachineDialog() {
 				reqd: 1,
 				default: 10240,
 			},
+
+			{ fieldtype: "Section Break", label: __("Limits (0 = no limit)") },
 			{
-				fieldname: "disk_iops",
+				fieldname: "disk_throughput_mibps",
 				fieldtype: "Int",
-				label: __("Disk IOPS"),
-				default: 0,
-				description: __("0 does not apply a limit."),
-			},
-			{ fieldtype: "Section Break", label: __("Network") },
-			{
-				fieldname: "tenant_id",
-				fieldtype: "Int",
-				label: __("Tenant ID"),
-				description: __("Same tenant connects through the mesh. 0 is infrastructure."),
+				label: __("Disk Throughput (MiB/s)"),
 				default: 0,
 			},
-			{
-				fieldname: "is_privileged",
-				fieldtype: "Check",
-				label: __("Privileged"),
-				default: 0,
-				description: __("Reaches every tenant. Needs tenant 0."),
-			},
-			{ fieldtype: "Column Break" },
 			{
 				fieldname: "private_network_throughput_mibps",
 				fieldtype: "Int",
-				label: __("Private Network Throughput (MiB/s)"),
+				label: __("Private Network (MiB/s)"),
 				default: 0,
-				description: __("0 does not apply a limit."),
 			},
+			{ fieldtype: "Column Break" },
+			{ fieldname: "disk_iops", fieldtype: "Int", label: __("Disk IOPS"), default: 0 },
 			{
 				fieldname: "public_network_throughput_mibps",
 				fieldtype: "Int",
-				label: __("Public Network Throughput (MiB/s)"),
+				label: __("Public Network (MiB/s)"),
 				default: 0,
-				description: __("0 does not apply a limit."),
 			},
-			{
-				fieldname: "public_ipv4",
-				fieldtype: "Data",
-				label: __("Public IPv4 Selector"),
-				description: __("Use auto or a reserved allocation UUID. Leave empty for none."),
-			},
-			{
-				fieldname: "public_ipv6",
-				fieldtype: "Data",
-				label: __("Public IPv6 Selector"),
-				description: __("Use auto or a reserved allocation UUID. Leave empty for none."),
-			},
+
+			{ fieldtype: "Section Break", label: __("Public IP") },
+			...publicAddressFields(() => dialog, "4"),
+			{ fieldtype: "Column Break" },
+			...publicAddressFields(() => dialog, "6"),
+
 			{ fieldtype: "Section Break", label: __("Firewall") },
 			{
 				fieldname: "firewall_enabled",
 				fieldtype: "Check",
 				label: __("Enabled"),
 				default: 0,
-				description: __("When enabled, unmatched new traffic is blocked."),
 			},
 			{
 				fieldname: "firewall_rules",
 				fieldtype: "Table",
 				label: __("Allow Rules"),
+				depends_on: "eval: doc.firewall_enabled",
 				in_place_edit: true,
 				data: [],
 				fields: firewallRuleFields(),
 			},
+
 			{ fieldtype: "Section Break", label: __("Guest") },
-			{ fieldname: "hostname", fieldtype: "Data", label: __("Hostname") },
 			{
 				fieldname: "ssh_keys",
 				fieldtype: "Code",
-				label: __("SSH Keys"),
-				description: __("One public key per line."),
+				label: __("SSH Keys (one per line)"),
+				min_lines: 8,
+				max_lines: 8,
 			},
 			{ fieldtype: "Column Break" },
 			{
 				fieldname: "user_data",
 				fieldtype: "Code",
-				label: __("User Data"),
+				label: __("User Data (YAML)"),
 				options: "YAML",
+				min_lines: 8,
+				max_lines: 8,
 			},
 		],
 		primary_action_label: __("Create"),
 		primary_action(values) {
+			values.public_ipv4 = publicAddressSelector(values, "4");
+			values.public_ipv6 = publicAddressSelector(values, "6");
 			values.firewall = firewallValue(values.firewall_enabled, values.firewall_rules);
 			delete values.firewall_enabled;
 			delete values.firewall_rules;
@@ -215,7 +258,7 @@ frappe.listview_settings["Virtual Machine"] = {
 	refresh(listview) {
 		listview.page.clear_primary_action();
 		if (!has_common(frappe.user_roles, ["System Manager"])) return;
-		listview.page.add_inner_button(
+		listview.page.set_primary_action(
 			__("Create Virtual Machine"),
 			showCreateVirtualMachineDialog
 		);

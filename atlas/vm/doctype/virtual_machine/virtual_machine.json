@@ -11,13 +11,14 @@
   "active_migration",
   "tenant_id",
   "is_privileged",
-  "is_termination_protected",
+  "is_network_gateway",
   "column_break_status",
   "server",
   "virtual_machine_image",
   "architecture",
   "hostname",
   "error",
+  "is_termination_protected",
   "section_break_compute_and_storage",
   "cpu_millicores",
   "memory_mib",
@@ -29,11 +30,10 @@
   "section_break_network",
   "mac",
   "wireguard_mesh_ipv6",
-  "is_network_gateway",
-  "column_break_network",
-  "public_ipv4",
   "public_ipv6",
   "routed_ipv6",
+  "column_break_network",
+  "public_ipv4",
   "private_network_throughput_mibps",
   "public_network_throughput_mibps",
   "other_data_section",
@@ -215,14 +215,14 @@
    "read_only": 1
   },
   {
+   "description": "Each destination leaves through the host uplink (via host) or a gateway VM mesh address.",
    "fieldname": "routes",
    "fieldtype": "Code",
    "is_virtual": 1,
    "label": "Routes",
    "options": "JSON",
    "read_only": 1,
-   "show_description_on_click": 1,
-   "description": "Each destination leaves through the host uplink (via host) or a gateway VM mesh address."
+   "show_description_on_click": 1
   },
   {
    "default": "0",
@@ -266,6 +266,7 @@
    "read_only": 1
   },
   {
+   "depends_on": "eval: doc.private_network_throughput_mibps",
    "fieldname": "private_network_throughput_mibps",
    "fieldtype": "Int",
    "is_virtual": 1,
@@ -273,6 +274,7 @@
    "read_only": 1
   },
   {
+   "depends_on": "eval: doc.public_network_throughput_mibps",
    "fieldname": "public_network_throughput_mibps",
    "fieldtype": "Int",
    "is_virtual": 1,
@@ -353,7 +355,7 @@
    "link_fieldname": "virtual_machine"
   }
  ],
- "modified": "2026-09-24 16:00:00.000000",
+ "modified": "2026-09-26 03:05:51.552687",
  "modified_by": "Administrator",
  "module": "VM",
  "name": "Virtual Machine",
