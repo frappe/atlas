@@ -85,7 +85,9 @@ class Authentication:
 	def _auth(self) -> AuthConfig:
 		"""Return the trusted authority, refusing an incomplete environment."""
 		issuers = tuple(
-			issuer for issuer in (os.environ.get("WG_GATEWAY_JWKS_ISSUERS", "").split(",")) if issuer
+			issuer.strip()
+			for issuer in (os.environ.get("WG_GATEWAY_JWKS_ISSUERS", "").split(","))
+			if issuer.strip()
 		)
 		return AuthConfig(
 			jwks_url=os.environ.get("WG_GATEWAY_JWKS_URL", ""),

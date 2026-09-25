@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import logging
 import time
 from collections.abc import Callable
@@ -122,7 +121,7 @@ class WireGuardGatewayProvisioner:
 				"LISTEN_PORT": self.gateway.listen_port,
 				"JWKS_URL": settings.jwks_url,
 				"GWGATEWAY_AUDIENCE": settings.wg_gateway_audience_id,
-				"JWKS_ISSUERS": json.dumps(["central", settings.issuer]),
+				"JWKS_ISSUERS": ",".join(["central", settings.issuer]),
 			},
 			timeout_seconds=INSTALL_TIMEOUT_SECONDS,
 			run_in_background=False,

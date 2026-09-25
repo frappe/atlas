@@ -82,7 +82,7 @@ class TestGatewayInstallation(UnitTestCase):
 				"LISTEN_PORT": 51820,
 				"JWKS_URL": "https://atlas.example.com/api/atlas/jwks.json",
 				"GWGATEWAY_AUDIENCE": "atlas-wg-gateway:1",
-				"JWKS_ISSUERS": '["central", "atlas:1"]',
+				"JWKS_ISSUERS": "central,atlas:1",
 			},
 		)
 
