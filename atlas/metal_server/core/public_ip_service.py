@@ -151,11 +151,16 @@ class PublicIPService:
 		return frappe.get_doc("Public IP Allocation", name) if name else None
 
 	def apply_intent(self, allocation: PublicIPAllocation, intent: AllocationIntent) -> None:
+		from atlas.vm.core.vm_service import VirtualMachineService
+
 		if not intent.virtual_machine or not intent.server:
 			raise ValueError("An allocation intent needs a VM and Metal Server")
 		pool: PublicIPPool = frappe.get_doc("Public IP Pool", intent.pool)
 		virtual_machine: VirtualMachine = frappe.get_doc("Virtual Machine", intent.virtual_machine)
 		if intent.status == "Attaching":
+			if virtual_machine.is_draft and not VirtualMachineService(virtual_machine).get_information():
+				# The create request is still in flight. The pending reconciliation retries.
+				return
 			self._apply_attach(pool, virtual_machine, intent.prefix, intent.server)
 			self._complete_attach(allocation.name, intent.version)
 			return
@@ -339,6 +344,9 @@ class PublicIPService:
 			return
 		service = VirtualMachineService(virtual_machine)
 		service.lock_network()
+		# A VM that Metal does not hold has no network to change.
+		if not service.get_information():
+			return
 		if pool.is_routed:
 			service.update_network({"routes": service.get_routes_without(IPV6_INTERNET_DESTINATION)})
 		elif pool.version == "4":
