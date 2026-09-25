@@ -7,7 +7,6 @@ from frappe.tests import UnitTestCase
 
 import atlas.service.core.wg_gateway.provisioning as provisioning
 from atlas.service.core.wg_gateway.provisioning import WireGuardGatewayProvisioner
-from atlas.vm.core.models import Route
 
 PACKAGE_ENVIRONMENT = {
 	"PACKAGE_NAME": "wg-gateway",
@@ -32,45 +31,13 @@ def gateway(**values) -> SimpleNamespace:
 
 
 def virtual_machine(**values) -> Mock:
-	machine = Mock(**({"name": "vm-00001", "server": "metal-1", "is_network_gateway": 0} | values))
+	machine = Mock(**({"name": "vm-00001", "server": "metal-1"} | values))
 	machine.get_metal_vm_info.return_value = metal_information("151.115.112.94")
 	return machine
 
 
 def metal_information(public_ipv4: str) -> SimpleNamespace:
 	return SimpleNamespace(desired=SimpleNamespace(network=SimpleNamespace(public_ipv4=public_ipv4)))
-
-
-class TestGatewayNetwork(UnitTestCase):
-	def test_the_vm_becomes_a_gateway_with_the_internet_route(self) -> None:
-		machine = virtual_machine()
-		provisioner = WireGuardGatewayProvisioner(gateway())
-		with (
-			patch.object(provisioning.frappe, "get_doc", return_value=machine),
-			patch("atlas.vm.core.vm_service.VirtualMachineService") as service,
-		):
-			service.return_value.get_routes.return_value = []
-			provisioner.configure_network()
-
-		machine.set_network_gateway.assert_called_once_with(True)
-		network_service = service.return_value
-		network_service.update_network.assert_called_once_with(
-			{"routes": network_service.get_routes_with.return_value}
-		)
-		network_service.get_routes_with.assert_called_once_with(Route("2000::/3", "host"))
-
-	def test_a_configured_vm_is_not_changed_again(self) -> None:
-		machine = virtual_machine(is_network_gateway=1)
-		provisioner = WireGuardGatewayProvisioner(gateway())
-		with (
-			patch.object(provisioning.frappe, "get_doc", return_value=machine),
-			patch("atlas.vm.core.vm_service.VirtualMachineService") as service,
-		):
-			service.return_value.get_routes.return_value = [Route("2000::/3", "host")]
-			provisioner.configure_network()
-
-		machine.set_network_gateway.assert_not_called()
-		service.return_value.update_network.assert_not_called()
 
 
 class TestGatewayInstallation(UnitTestCase):

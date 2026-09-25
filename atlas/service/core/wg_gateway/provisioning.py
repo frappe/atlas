@@ -13,7 +13,6 @@ from atlas.service.core.service_package import WG_GATEWAY_PACKAGE
 from atlas.service.doctype.wireguard_gateway_server.wireguard_gateway_server import (
 	wireguard_gateway_lifecycle_lock,
 )
-from atlas.vm.core.models import IPV6_INTERNET_DESTINATION, ROUTE_VIA_HOST, Route
 
 if TYPE_CHECKING:
 	from atlas.service.doctype.wireguard_gateway_server.wireguard_gateway_server import (
@@ -71,17 +70,13 @@ class WireGuardGatewayProvisioner:
 	def steps(self) -> tuple[tuple[str, Callable[[], None]], ...]:
 		"""Return setup steps in execution order."""
 		return (
-			("network", self.configure_network),
 			("secure-shell", self.wait_for_ssh),
 			("installation", self.install_gateway),
 		)
 
 	@property
 	def is_virtual_machine_ready(self) -> bool:
-		"""Report whether the VM left the draft state and Metal holds its public IPv4 address.
-
-		The network step replaces the complete Metal network. It must not overlap the IPv4 reconcile job.
-		"""
+		"""Report whether the VM left the draft state and Metal holds its public IPv4 address."""
 		if not self.gateway.virtual_machine:
 			return False
 
@@ -96,18 +91,6 @@ class WireGuardGatewayProvisioner:
 	def virtual_machine(self) -> VirtualMachine:
 		"""Return the gateway virtual machine."""
 		return frappe.get_doc("Virtual Machine", self.gateway.virtual_machine)
-
-	def configure_network(self) -> None:
-		"""Give the VM the gateway role and an IPv6 Internet route for handshake replies."""
-		from atlas.vm.core.vm_service import VirtualMachineService
-
-		if not self.virtual_machine.is_network_gateway:
-			self.virtual_machine.set_network_gateway(True)
-		service = VirtualMachineService(self.virtual_machine)
-		route = Route(IPV6_INTERNET_DESTINATION, ROUTE_VIA_HOST)
-		if route in service.get_routes():
-			return
-		service.update_network({"routes": service.get_routes_with(route)})
 
 	def wait_for_ssh(self) -> None:
 		"""Wait for root SSH on the public IPv4 address."""

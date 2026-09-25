@@ -30,20 +30,20 @@ Creation needs an enabled Available System image, a reserved tenant-0 IPv4
 allocation, and a listen port. The gateway endpoint is that IPv4 address and
 port. Atlas creates the VM for tenant `0` with privileged mesh access, the
 default `0.0.0.0/0` route via `host`, the record name as its hostname, and
-the Atlas public Secure Shell key. Provisioning adds the `2000::/3` route via
-`host`, because handshake replies leave through the host uplink.
+the Atlas public Secure Shell key. Privilege permits cross-tenant mesh
+delivery; the gateway role is not needed, because the gateway SNATs every
+forwarded packet to its own mesh address.
 
 The port is set once. A draft VM keeps the gateway Pending.
 
 Atlas retries Pending and interrupted Provisioning records every minute.
 
-The network step waits until Metal has attached the public IPv4 allocation.
+Provisioning waits until Metal has attached the public IPv4 allocation.
 
 ## Installation
 
 | Phase | Action |
 | --- | --- |
-| `network` | Make the VM a network gateway and add the `2000::/3` route via `host`. |
 | `secure-shell` | Wait for root Secure Shell access on the public IPv4 address. |
 | `installation` | Install WireGuard and nftables with `REGION_ID`, `GATEWAY_MESH`, and `LISTEN_PORT`, then read the gateway public key. |
 
