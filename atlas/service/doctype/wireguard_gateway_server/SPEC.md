@@ -8,8 +8,8 @@ Each WireGuard Gateway Server owns one [WireGuard gateway](../../../../services/
 and its virtual machine. Customers reach their own tenant's private `fdaa`
 VMs through the gateway over WireGuard. Access is tenant-wide.
 
-Atlas names each record `wg-gateway-NNN`. Peers are `WireGuard Gateway Peer`
-records named `wg-peer-NNN`.
+Atlas names each record `wg-gateway-NNN`. The record owns the virtual machine
+and the daemon credential; the daemon inside the VM owns the peer list.
 
 ## Lifecycle
 
@@ -18,21 +18,24 @@ stateDiagram-v2
     [*] --> Pending: create requested
     Pending --> Provisioning: VM ready
     Pending --> Failed: VM create error
-    Provisioning --> Active: installation passes
-    Provisioning --> Failed: network or installation error
-    Active --> Archived: archive terminates the VM
-    Failed --> Archived: archive terminates the VM
+    Provisioning --> Active: installation and daemon pass
+    Provisioning --> Failed: installation or daemon error
+    Active --> Archived: archive removes the proxy route and terminates the VM
+    Failed --> Archived: archive removes the proxy route and terminates the VM
 ```
 
 Create the gateway from the WireGuard Gateway Server list.
 
 Creation needs an enabled Available System image, a reserved tenant-0 IPv4
-allocation, and a listen port. The gateway endpoint is that IPv4 address and
-port. Atlas creates the VM for tenant `0` with privileged mesh access, the
-default `0.0.0.0/0` route via `host`, the record name as its hostname, and
-the Atlas public Secure Shell key. Privilege permits cross-tenant mesh
-delivery; the gateway role is not needed, because the gateway SNATs every
-forwarded packet to its own mesh address.
+allocation, a listen port, and an Active Proxy Server. The gateway endpoint is
+that IPv4 address and port. Atlas creates the VM for tenant `0` with
+privileged mesh access, the default `0.0.0.0/0` route via `host`, the record
+name as its hostname, and the Atlas public Secure Shell key. Privilege permits
+cross-tenant mesh delivery; the gateway role is not needed, because the
+gateway SNATs every forwarded packet to its own mesh address.
+
+Creation returns the daemon bundle for Central: the daemon URL, the API token
+(shown once), the public IPv4 address, the listen port, and the region ID.
 
 The port is set once. A draft VM keeps the gateway Pending.
 
@@ -45,26 +48,36 @@ Provisioning waits until Metal has attached the public IPv4 allocation.
 | Phase | Action |
 | --- | --- |
 | `secure-shell` | Wait for root Secure Shell access on the public IPv4 address. |
-| `installation` | Install WireGuard and nftables with `GATEWAY_MESH` and `LISTEN_PORT`, then read the gateway public key. |
+| `installation` | Install WireGuard, nftables, and the gateway daemon with `GATEWAY_MESH`, `LISTEN_PORT`, `REGION_ID`, and `DAEMON_TOKEN`. |
+| `gateway-api` | Register the `<gateway>.<wildcard-domain>` proxy route, wait for the daemon through the proxy, and read its public key. |
 
 The installer generates the gateway keypair on the VM and keeps it on
 reinstalls. A failure sets the status to Failed and stores the phase and
 message.
 
-## Peers
+## Daemon API
 
-Central manages peers through the WireGuard Gateway API: `add_peer`,
-`delete_peer`, `list_peers`, `replace_peer_list`, and `get_wireguard_config`.
-`add_peer` takes the Central-provided `public_key`, `tenant_id`, and
-`client_id` and returns the assigned `fdac` address. Tenant and client IDs
-are integers from 1 to 2^32-1; the client ID is the low 32 bits of the
-`fdac` address. Atlas is the source of truth: every change rewrites `peers.conf` and `gateway.nft` on the gateway
-and applies them with `wg setconf` and `nft -f`.
+Central calls the daemon directly through the HTTP proxy at
+`https://<gateway>.<wildcard-domain>/`, authenticated with the API token
+Bearer credential:
+
+| Call | Meaning |
+| --- | --- |
+| `GET /healthz` | The daemon answers. |
+| `GET /config` | The gateway public key, listen port, region ID, and mesh address. |
+| `GET /peers` | The peer list with `fdac` addresses. |
+| `PUT /peers` | Replace the complete peer list; returns the list with added, removed, and updated counts. |
+| `PUT /peers/{tenant_id}/{client_id}` | Add one client; returns its record with the `fdac` address. |
+| `DELETE /peers/{tenant_id}/{client_id}` | Delete one client; missing peers are gone. |
+
+`add` takes the Central-provided `public_key`, `tenant_id`, and `client_id`
+and returns the assigned `fdac` address. Tenant and client IDs are integers
+from 1 to 2^32-1; the client ID is the low 32 bits of the `fdac` address.
+Every change rewrites `peers.conf` and `gateway.nft` on the gateway and
+applies them with `wg setconf` and `nft -f`.
 
 A reboot reapplies both files from disk through
-`atlas-wg-gateway.service`. Use Sync Peers to push the desired state again.
-
-Tenants cannot reserve anything here. After delete, the peer row is gone.
+`atlas-wg-gateway.service`.
 
 The VM firewall stays disabled on the gateway, so handshake and tunnel
 packets pass. Tenant isolation is the nftables tenant-wide rule; VM-level
@@ -72,10 +85,10 @@ firewalling stays with each VM.
 
 ## Archive
 
-Archive is refused while the gateway has peers. After the peers are deleted,
-archive terminates the gateway VM. The record stays with status Archived.
+Archive removes the proxy route and terminates the gateway VM. The record
+stays with status Archived, and the peer list dies with the VM.
 
 ## Access
 
-Only System Managers with System User accounts can create, archive, sync, or
-manage peers.
+Only System Managers with System User accounts can create or archive a
+gateway. Central calls the daemon with the gateway API token.
