@@ -151,6 +151,8 @@ def add_peer(gateway: str, tenant_id: int, client_id: int, public_key: str) -> d
 	server = active_gateway(gateway)
 	key = validate_public_key(public_key)
 	settings = frappe.get_single("Atlas Settings")
+	tenant_id = _coerced_int("Tenant ID", tenant_id)
+	client_id = _coerced_int("Client ID", client_id)
 	fdac = get_client_fdac(settings.region_id, tenant_id, client_id)
 	existing_name = frappe.db.get_value(
 		"WireGuard Gateway Peer",
@@ -245,8 +247,8 @@ def replace_peer_list(gateway: str, peers: list[dict[str, Any]]) -> dict[str, st
 		if not isinstance(peer, dict):
 			frappe.throw(_("Peer {0} must be an object.").format(index))
 		key = validate_public_key(peer.get("public_key"))
-		tenant_id = peer.get("tenant_id")
-		client_id = peer.get("client_id")
+		tenant_id = _coerced_int("Tenant ID", peer.get("tenant_id"))
+		client_id = _coerced_int("Client ID", peer.get("client_id"))
 		fdac = get_client_fdac(region_id, tenant_id, client_id)
 		if (tenant_id, client_id) in wanted:
 			frappe.throw(_("Client {0} of tenant {1} appears twice.").format(client_id, tenant_id))

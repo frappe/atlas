@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
+
 import frappe
 from frappe.tests import UnitTestCase
 
@@ -94,3 +97,23 @@ class TestSyncCommand(UnitTestCase):
 		self.assertIn(f"wg setconf wg0 {peers.PEERS_CONF_PATH}", command)
 		self.assertNotIn("$listen_port", command)
 		self.assertNotIn("$peers_content", command)
+
+
+class TestAddPeerCoercion(UnitTestCase):
+	def test_a_form_string_tenant_and_client_id_are_coerced(self) -> None:
+		gateway = SimpleNamespace(name="wg-gateway-001")
+		peer_doc = MagicMock()
+		peer_doc.name = "wg-peer-001"
+		with (
+			patch.object(peers, "active_gateway", return_value=gateway),
+			patch.object(peers.frappe, "get_single", return_value=SimpleNamespace(region_id=1)),
+			patch.object(peers.frappe.db, "get_value", return_value=None),
+			patch.object(peers.frappe.db, "exists", return_value=False),
+			patch.object(peers, "get_client_fdac", return_value="fdac:1:0:1::7") as get_fdac,
+			patch.object(peers, "push"),
+			patch.object(peers.frappe, "get_doc", return_value=peer_doc),
+		):
+			result = peers.add_peer("wg-gateway-001", "1", "7", KEY_A)
+
+		self.assertEqual(get_fdac.call_args.args, (1, 1, 7))
+		self.assertEqual(result, {"name": "wg-peer-001", "fdac": "fdac:1:0:1::7"})
