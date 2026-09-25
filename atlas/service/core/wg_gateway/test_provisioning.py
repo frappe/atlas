@@ -26,7 +26,6 @@ def gateway(**values) -> SimpleNamespace:
 		"wireguard_mesh_ipv6": "fdaa:1::99",
 		"gateway_public_key": None,
 		"installation_task": None,
-		"api_token": "daemon-token",
 		"save": Mock(),
 	}
 	return SimpleNamespace(**(defaults | values))
@@ -36,6 +35,9 @@ def settings(**values) -> SimpleNamespace:
 	defaults = {
 		"wildcard_domain": "par-1.example.com",
 		"region_id": 1,
+		"issuer": "atlas:1",
+		"jwks_url": "https://atlas.example.com/api/atlas/jwks.json",
+		"wg_gateway_audience_id": "atlas-wg-gateway:1",
 	}
 	return SimpleNamespace(
 		**(defaults | values),
@@ -54,7 +56,7 @@ def metal_information(public_ipv4: str) -> SimpleNamespace:
 
 
 class TestGatewayInstallation(UnitTestCase):
-	def test_the_installer_receives_the_daemon_credential(self) -> None:
+	def test_the_installer_receives_the_signing_authority(self) -> None:
 		provisioner = WireGuardGatewayProvisioner(gateway())
 		install_task = SimpleNamespace(name="task-1", result=SimpleNamespace(is_success=True))
 		with (
@@ -78,7 +80,9 @@ class TestGatewayInstallation(UnitTestCase):
 				"REGION_ID": 1,
 				"GATEWAY_MESH": "fdaa:1::99",
 				"LISTEN_PORT": 51820,
-				"DAEMON_TOKEN": "daemon-token",
+				"JWKS_URL": "https://atlas.example.com/api/atlas/jwks.json",
+				"GWGATEWAY_AUDIENCE": "atlas-wg-gateway:1",
+				"JWKS_ISSUERS": '["central", "atlas:1"]',
 			},
 		)
 
@@ -112,6 +116,7 @@ class TestGatewayApi(UnitTestCase):
 				provisioner.update_proxy_routes()
 
 	def test_the_daemon_answers_through_the_proxy(self) -> None:
+		"""The daemon health check is public, like the proxy control daemon."""
 		provisioner = WireGuardGatewayProvisioner(gateway())
 		response = SimpleNamespace(ok=True, json=lambda: {"status": "ok"})
 		with (
@@ -121,7 +126,7 @@ class TestGatewayApi(UnitTestCase):
 			provisioner.wait_for_daemon()
 
 		self.assertEqual(get.call_args.args, ("https://wg-gateway-001.par-1.example.com/healthz",))
-		self.assertEqual(get.call_args.kwargs["headers"], {"Authorization": "Bearer daemon-token"})
+		self.assertNotIn("headers", get.call_args.kwargs)
 
 	def test_a_silent_daemon_fails_the_phase(self) -> None:
 		provisioner = WireGuardGatewayProvisioner(gateway())
@@ -139,17 +144,23 @@ class TestGatewayApi(UnitTestCase):
 		response = SimpleNamespace(ok=True, json=lambda: {"public_key": "daemon-pubkey\n"})
 		with (
 			patch.object(provisioning.frappe, "get_single", return_value=settings()),
-			patch.object(provisioning.requests, "get", return_value=response),
+			patch.object(provisioning, "issue_token", return_value="minted-token") as issue,
+			patch.object(provisioning.requests, "get", return_value=response) as get,
 		):
 			provisioner.read_public_key()
 
 		self.assertEqual(provisioner.gateway.gateway_public_key, "daemon-pubkey")
+		self.assertEqual(issue.call_args.kwargs["audience"], "atlas-wg-gateway:1")
+		self.assertEqual(issue.call_args.kwargs["scope"], "gateway:read")
+		self.assertEqual(issue.call_args.kwargs["subject"], "atlas")
+		self.assertEqual(get.call_args.kwargs["headers"], {"Authorization": "Bearer minted-token"})
 
 	def test_a_missing_key_fails_the_phase(self) -> None:
 		provisioner = WireGuardGatewayProvisioner(gateway())
 		response = SimpleNamespace(ok=False, json=lambda: {})
 		with (
 			patch.object(provisioning.frappe, "get_single", return_value=settings()),
+			patch.object(provisioning, "issue_token", return_value="minted-token"),
 			patch.object(provisioning.requests, "get", return_value=response),
 		):
 			with self.assertRaisesRegex(frappe.ValidationError, "no WireGuard public key"):
