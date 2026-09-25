@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
@@ -24,7 +25,8 @@ if TYPE_CHECKING:
 INSTALL_TIMEOUT_SECONDS = 1_800
 SSH_TIMEOUT_SECONDS = 600
 SSH_POLL_INTERVAL_SECONDS = 5
-COMMAND_TIMEOUT_SECONDS = 120
+DAEMON_TIMEOUT_SECONDS = 300
+DAEMON_POLL_INTERVAL_SECONDS = 5
 REQUEST_TIMEOUT_SECONDS = 5
 
 
@@ -74,6 +76,7 @@ class WireGuardGatewayProvisioner:
 		return (
 			("secure-shell", self.wait_for_ssh),
 			("installation", self.install_gateway),
+			("gateway-api", self.publish_gateway_api),
 		)
 
 	@property
@@ -127,22 +130,6 @@ class WireGuardGatewayProvisioner:
 		if result is None or not result.is_success:
 			frappe.throw(_("WireGuard gateway installation failed. See SSH Task {0}.").format(task.name))
 
-		key_task = SSHTask.create_for_command(
-			target_type="Virtual Machine",
-			target=self.gateway.virtual_machine,
-			command="wg show wg0 public-key",
-			timeout_seconds=COMMAND_TIMEOUT_SECONDS,
-			run_in_background=False,
-		)
-		key_result = key_task.result
-		public_key = key_result.output.strip() if key_result else ""
-		if not key_result or not key_result.is_success or not public_key:
-			frappe.throw(
-				_("The gateway reported no WireGuard public key. See SSH Task {0}.").format(key_task.name)
-			)
-		self.gateway.gateway_public_key = public_key
-		self.save()
-
 	@property
 	def proxy_url(self) -> str:
 		"""Return the regional Proxy control API URL."""
@@ -152,6 +139,12 @@ class WireGuardGatewayProvisioner:
 	def daemon_url(self) -> str:
 		"""Return the gateway daemon URL through the regional proxy."""
 		return f"https://{self.gateway.name}.{frappe.get_single('Atlas Settings').wildcard_domain}"
+
+	def daemon_headers(self) -> dict[str, str]:
+		"""Return the gateway daemon bearer credential."""
+		if not self.gateway.api_token:
+			frappe.throw(_("WireGuard Gateway Server {0} has no API token.").format(self.gateway.name))
+		return {"Authorization": f"Bearer {self.gateway.api_token}"}
 
 	def proxy_headers(self) -> dict[str, str]:
 		"""Return the current regional Proxy bearer credential."""
@@ -195,6 +188,45 @@ class WireGuardGatewayProvisioner:
 					self.gateway.name, response.status_code
 				)
 			)
+
+	def wait_for_daemon(self) -> None:
+		"""Wait until the gateway daemon answers through the regional proxy."""
+		deadline = time.monotonic() + DAEMON_TIMEOUT_SECONDS
+		while time.monotonic() < deadline:
+			try:
+				response = requests.get(
+					f"{self.daemon_url}/healthz",
+					headers=self.daemon_headers(),
+					timeout=REQUEST_TIMEOUT_SECONDS,
+				)
+				if response.ok and response.json().get("status") == "ok":
+					return
+			except (requests.RequestException, ValueError):
+				pass
+			time.sleep(DAEMON_POLL_INTERVAL_SECONDS)
+		frappe.throw(_("The WireGuard gateway daemon did not answer through the Proxy."))
+
+	def read_public_key(self) -> None:
+		"""Read the gateway public key from its daemon."""
+		public_key = ""
+		try:
+			response = requests.get(
+				f"{self.daemon_url}/config", headers=self.daemon_headers(), timeout=REQUEST_TIMEOUT_SECONDS
+			)
+			if response.ok:
+				public_key = str(response.json().get("public_key") or "").strip()
+		except (requests.RequestException, ValueError):
+			pass
+		if not public_key:
+			frappe.throw(_("The gateway reported no WireGuard public key."))
+		self.gateway.gateway_public_key = public_key
+		self.save()
+
+	def publish_gateway_api(self) -> None:
+		"""Register the proxy route, wait for the daemon, and read its public key."""
+		self.update_proxy_routes()
+		self.wait_for_daemon()
+		self.read_public_key()
 
 	def save(self) -> None:
 		"""Store the current gateway state."""
