@@ -13,20 +13,24 @@ involved; the gateway is WireGuard plus one nftables table.
 ## Layout
 
 ```text
-setup.sh      Installer (wireguard-tools, nftables, wg0, boot firewall)
-systemd/      Service unit (reapplies wg0 peers and nftables on boot)
+setup.sh      Installer (wireguard-tools, nftables, wg0, daemon, boot firewall)
+gatewayd.py   Standalone gateway API (peers, config, health)
+systemd/      Service units (reapply wg0 and run the API on boot)
 ```
 
-Atlas renders the peer-dependent state (`peers.conf`, `gateway.nft`) on every
-peer change and pushes it over SSH. See
-`atlas/service/core/wg_gateway/peers.py`.
+The daemon listens on the gateway mesh address at port 8080. Central reaches
+it through the `<gateway>.<wildcard-domain>` proxy route with the gateway API
+token Bearer credential. `peers.json` persists the peer list on disk; every
+change rewrites `peers.conf` and `gateway.nft` and applies them with
+`wg setconf` and `nft -f`. Atlas installs the daemon and registers the proxy
+route, then never touches peer state.
 
 ## Interfaces
 
-- `setup.sh` reads `GATEWAY_MESH` and `LISTEN_PORT`.
+- `setup.sh` reads `GATEWAY_MESH`, `LISTEN_PORT`, `REGION_ID`, and `DAEMON_TOKEN`.
 - `/opt/atlas/wg-gateway/peers.conf` holds the `wg setconf` interface and peers.
 - `/opt/atlas/wg-gateway/gateway.nft` holds the `atlas_wg_gateway` table.
-- `wg show wg0 public-key` reports the gateway public key to Atlas.
+- `GET /config` on the daemon reports the gateway public key to Atlas.
 
 ## Addressing
 
