@@ -3,8 +3,10 @@
 
 set -euo pipefail
 
+: "${REGION_ID:?REGION_ID is required}"
 : "${GATEWAY_MESH:?GATEWAY_MESH is required}"
 : "${LISTEN_PORT:?LISTEN_PORT is required}"
+: "${DAEMON_TOKEN:?DAEMON_TOKEN is required}"
 
 source_dir=$(cd "$(dirname "$0")" && pwd)
 state_dir=/opt/atlas/wg-gateway
@@ -22,7 +24,7 @@ export DEBIAN_FRONTEND=noninteractive
 # needrestart would restart ssh and systemd-networkd during the install.
 export NEEDRESTART_SUSPEND=1
 apt-get update -qq
-apt-get install -y -qq wireguard-tools nftables iproute2
+apt-get install -y -qq wireguard-tools nftables iproute2 python3-fastapi python3-uvicorn
 
 
 step "load kernel modules"
@@ -104,8 +106,25 @@ systemctl enable atlas-wg-gateway.service
 systemctl restart atlas-wg-gateway.service
 
 
+step "start the gateway API"
+install -m 0600 /dev/null "$state_dir/daemon.env"
+cat > "$state_dir/daemon.env" <<EOF
+WG_GATEWAY_TOKEN=$DAEMON_TOKEN
+WG_GATEWAY_BIND=$GATEWAY_MESH
+WG_GATEWAY_PORT=8080
+WG_GATEWAY_REGION=$REGION_ID
+WG_GATEWAY_LISTEN_PORT=$LISTEN_PORT
+EOF
+install -m 0644 "$source_dir/systemd/atlas-wg-gateway-api.service" /etc/systemd/system/atlas-wg-gateway-api.service
+
+systemctl daemon-reload
+systemctl enable atlas-wg-gateway-api.service
+systemctl restart atlas-wg-gateway-api.service
+
+
 step "check the gateway"
 wg show wg0 >/dev/null
 nft list table ip6 atlas_wg_gateway >/dev/null
+systemctl is-active atlas-wg-gateway-api.service >/dev/null
 
 echo "the WireGuard gateway listens on port $LISTEN_PORT and SNATs fdac::/16 to $GATEWAY_MESH"
