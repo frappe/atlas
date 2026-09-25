@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import secrets
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any
 
@@ -58,7 +59,7 @@ class WireGuardGatewayServer(Document):
 			frappe.throw(_("Archive WireGuard Gateway Server {0} before you delete it.").format(self.name))
 
 	@staticmethod
-	def create(request: str | dict[str, Any]) -> dict[str, str | bool]:
+	def create(request: str | dict[str, Any]) -> dict[str, Any]:
 		"""Create a WireGuard Gateway Server and its virtual machine, then queue setup."""
 		_validate_system_manager()
 		values = frappe.parse_json(request) if isinstance(request, str) else request
@@ -69,6 +70,7 @@ class WireGuardGatewayServer(Document):
 		gateway = frappe.new_doc("WireGuard Gateway Server")
 		gateway.flags.created_by_wg_gateway_api = True
 		gateway.listen_port = values.get("listen_port") or DEFAULT_LISTEN_PORT
+		gateway.api_token = secrets.token_urlsafe(32)
 		gateway.insert(ignore_permissions=True)
 		frappe.db.commit()  # nosemgrep
 
@@ -76,7 +78,17 @@ class WireGuardGatewayServer(Document):
 		gateway.save(ignore_permissions=True)
 		if gateway.status != "Failed":
 			gateway.enqueue_provisioning()
-		return {"name": gateway.name, "is_draft": is_draft}
+		settings = frappe.get_single("Atlas Settings")
+		allocation = frappe.get_doc("Public IP Allocation", values["public_ipv4"])
+		return {
+			"name": gateway.name,
+			"is_draft": is_draft,
+			"daemon_url": f"https://{gateway.name}.{settings.wildcard_domain}",
+			"api_token": gateway.api_token,
+			"public_ipv4": allocation.prefix.partition("/")[0],
+			"listen_port": gateway.listen_port,
+			"region_id": settings.region_id,
+		}
 
 	@frappe.whitelist(methods=["POST"])
 	def archive(self) -> None:
@@ -164,7 +176,7 @@ class WireGuardGatewayServer(Document):
 
 
 @frappe.whitelist(methods=["POST"])
-def create(request: str | dict[str, Any]) -> dict[str, str | bool]:
+def create(request: str | dict[str, Any]) -> dict[str, Any]:
 	"""Call the WireGuard Gateway Server creation service from the list view."""
 	_validate_system_manager()
 	return WireGuardGatewayServer.create(request)
