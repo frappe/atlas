@@ -40,8 +40,8 @@ case "$version" in
 		release_url="https://cloud-images.ubuntu.com/releases/jammy/release-20260826"
 		rootfs_url="$release_url/ubuntu-22.04-server-cloudimg-amd64.squashfs"
 		rootfs_sha256="a4f612de4736d534a5617531eb7c1771b0b14878549c9d32191fd50e3077eb4f"
-		kernel_url="$release_url/unpacked/ubuntu-22.04-server-cloudimg-amd64-vmlinuz-generic"
-		kernel_sha256="a62ee965bcca969a9f0249e4e3394d02ece84e55e5a4bd7d10ba74fda24b114c"
+		kernel_url="https://cloud-images.ubuntu.com/releases/noble/release-20260518/unpacked/ubuntu-24.04-server-cloudimg-amd64-vmlinuz-generic"
+		kernel_sha256="3a33b65c88f98a5563c926d5b163ebe09706e5084ba587a19c1b15bd3e7a82d6"
 		;;
 	24.04)
 		if $minimal; then
