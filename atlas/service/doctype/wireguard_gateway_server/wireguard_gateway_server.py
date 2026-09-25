@@ -124,15 +124,6 @@ class WireGuardGatewayServer(Document):
 
 		frappe.msgprint(_("WireGuard Gateway Server {0} is archived.").format(self.name))
 
-	@frappe.whitelist(methods=["POST"])
-	def sync_peers(self) -> None:
-		"""Push the desired peer list to the gateway again."""
-		_validate_system_manager()
-		from atlas.service.core.wg_gateway.peers import push
-
-		push(self.name)
-		frappe.msgprint(_("WireGuard Gateway Server {0} peers are synced.").format(self.name))
-
 	def enqueue_provisioning(self, enqueue_after_commit: bool = True) -> None:
 		"""Queue gateway setup for the attached virtual machine."""
 		frappe.enqueue_doc(
