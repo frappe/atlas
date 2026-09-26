@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -110,6 +111,19 @@ func TestUploadArtifactDigestsTheWholeArtifact(t *testing.T) {
 	}
 	if uploaded.Load() != int64(len(contents)) {
 		t.Fatalf("uploaded = %d", uploaded.Load())
+	}
+}
+
+func TestUploadArtifactRejectsAShortArtifact(t *testing.T) {
+	contents := bytes.Repeat([]byte("atlas"), 1000)
+	store, snapshotID, path := uploadFixture(t, contents)
+	recorder := newPartRecorder()
+	request := SnapshotArtifactUpload{UploadID: "upload-1", Parts: partsFor(recorder.server(t), 1)}
+
+	var uploaded atomic.Int64
+	_, err := store.uploadArtifact(t.Context(), snapshotID, rootfsArtifact, path, int64(len(contents))+1, request, &uploaded)
+	if !errors.Is(err, ErrInvalidUpload) {
+		t.Fatalf("error = %v", err)
 	}
 }
 

@@ -2,7 +2,6 @@ package storage
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -377,22 +376,20 @@ func (store *SnapshotStore) uploadArtifact(ctx context.Context, snapshotID, arti
 	}
 	defer file.Close()
 
-	// The digest is one pass over the uncompressed artifact, so an image keeps
-	// one identity whether it is stored raw or compressed. It is separate from
-	// the part bodies, because a retried part must not feed the hash twice.
-	digest, err := artifactSHA256(file, sizeBytes)
-	if err != nil {
-		return UploadedArtifact{}, err
-	}
-
-	source := &countingReader{
+	// The digest covers the raw bytes, not the compressed parts.
+	source := newSHA256Reader(&countingReader{
 		reader:  io.NewSectionReader(file, 0, sizeBytes),
 		counter: uploaded,
-	}
+	})
 	storedBytes, parts, err := store.compressArtifact(ctx, snapshotID, artifact, source, request,
 		store.storedParts(snapshotID, artifact, request.UploadID))
+	// Call Sum before the error check, so the hash goroutine always exits.
+	digest := source.Sum()
 	if err != nil {
 		return UploadedArtifact{}, err
+	}
+	if source.readBytes != sizeBytes {
+		return UploadedArtifact{}, fmt.Errorf("%w: read %d of %d artifact bytes", ErrInvalidUpload, source.readBytes, sizeBytes)
 	}
 
 	return UploadedArtifact{
@@ -416,19 +413,6 @@ func (reader *countingReader) Read(buffer []byte) (int, error) {
 		reader.counter.Add(int64(read))
 	}
 	return read, err
-}
-
-// artifactSHA256 digests exactly sizeBytes of the artifact.
-func artifactSHA256(file *os.File, sizeBytes int64) ([]byte, error) {
-	digest := sha256.New()
-	read, err := io.Copy(digest, io.NewSectionReader(file, 0, sizeBytes))
-	if err != nil {
-		return nil, err
-	}
-	if read != sizeBytes {
-		return nil, fmt.Errorf("%w: read %d of %d artifact bytes", ErrInvalidUpload, read, sizeBytes)
-	}
-	return digest.Sum(nil), nil
 }
 
 // uploadPartWithRetry sends one part, repeating a failure the object store may
