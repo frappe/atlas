@@ -31,4 +31,4 @@ This package imports images, clones VM disks, manages warm artifacts, and stages
 
 ## Validation
 
-Use [snapshot upload tests](snapshot_upload_test.go) and [migration transfer tests](migration_transfer_test.go) for retry and cleanup changes. The [VM manager contract](../vm/SPEC.md) coordinates storage with runtime and network.
+Use [image upload tests](image_upload_test.go) and [migration transfer tests](migration_transfer_test.go) for retry and cleanup changes. The [VM manager contract](../vm/SPEC.md) coordinates storage with runtime and network.
