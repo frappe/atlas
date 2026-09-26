@@ -191,6 +191,10 @@ class TestApplySteps(UnitTestCase):
 				"get_single",
 				return_value={"http_proxy_package_file": "file-1", "http_proxy_package_hash": "sha-1"},
 			),
+			patch(
+				"atlas.service.core.service_package.get_download_url",
+				return_value="https://atlas.test/files/file-1",
+			),
 			patch.object(provisioning.SSHTask, "create_for_script_file") as create_task,
 		):
 			provisioner.install_package()

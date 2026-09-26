@@ -52,6 +52,10 @@
   "ipv6_router_package_file",
   "column_break_ipv6_router",
   "ipv6_router_package_hash",
+  "wireguard_gateway_section",
+  "wireguard_gateway_package_file",
+  "column_break_wireguard_gateway",
+  "wireguard_gateway_package_hash",
   "scaleway_tab",
   "scaleway_settings_section",
   "scaleway_organization_id",
@@ -606,6 +610,28 @@
   },
   {
    "fieldname": "ipv6_router_package_hash",
+   "fieldtype": "Data",
+   "label": "Package SHA-256",
+   "read_only": 1
+  },
+  {
+   "fieldname": "wireguard_gateway_section",
+   "fieldtype": "Section Break",
+   "label": "WireGuard Gateway"
+  },
+  {
+   "fieldname": "wireguard_gateway_package_file",
+   "fieldtype": "Link",
+   "label": "Package",
+   "options": "File",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_wireguard_gateway",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "wireguard_gateway_package_hash",
    "fieldtype": "Data",
    "label": "Package SHA-256",
    "read_only": 1

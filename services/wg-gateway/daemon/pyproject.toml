@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools==84.0.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "atlas-wg-gateway"
+version = "0.1.0"
+requires-python = ">=3.14"
+dependencies = [
+    "fastapi==0.141.1",
+    "pyjwt[crypto]==2.10.1",
+    "uvicorn==0.52.4",
+]
+
+[project.scripts]
+wg-gatewayd = "gatewayd.apply:main"
+
+[project.optional-dependencies]
+test = ["pytest==9.0.3", "ruff==0.16.5"]
+
+[tool.setuptools.packages.find]
+include = ["gatewayd*"]
+
+[tool.fastapi]
+entrypoint = "gatewayd.main:app"

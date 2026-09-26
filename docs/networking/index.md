@@ -97,6 +97,7 @@ A **privileged VM** is a tenant-0 VM that can talk to every tenant. Atlas sends 
 | HTTP proxy | Sends each site's traffic to that site's VM. |
 | Cargo | Monitors usage across tenants. |
 | IPv6 router | Carries public IPv6 traffic for every tenant's VMs. |
+| WireGuard gateway | Carries each customer's tunnel into that customer's own tenant VMs. |
 
 ## Gateway routes
 

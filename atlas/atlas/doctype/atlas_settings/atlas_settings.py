@@ -134,6 +134,8 @@ class AtlasSettings(Document):
 		wildcard_tls_certificate: DF.Password | None
 		wildcard_tls_expires_on: DF.Datetime | None
 		wildcard_tls_private_key: DF.Password | None
+		wireguard_gateway_package_file: DF.Link | None
+		wireguard_gateway_package_hash: DF.Data | None
 	# end: auto-generated types
 
 	@property
@@ -155,6 +157,11 @@ class AtlasSettings(Document):
 	def cargo_audience_id(self) -> str:
 		"""Return the audience that a token for the regional Cargo API must carry."""
 		return f"atlas-cargo:{self.region_id}"
+
+	@property
+	def wg_gateway_audience_id(self) -> str:
+		"""Return the audience that a token for a WireGuard gateway daemon must carry."""
+		return f"atlas-wg-gateway:{self.region_id}"
 
 	@property
 	def issuer(self) -> str:

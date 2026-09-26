@@ -58,6 +58,15 @@ class TestArtifacts(UnitTestCase):
 		self.assertEqual(url, "http://atlas.localhost:8000/files/metald-linux-amd64")
 		self.assertFalse(get_url.call_args.kwargs["allow_header_override"])
 
+	def test_download_url_refuses_a_file_without_url(self) -> None:
+		"""An empty file_url must fail the same way as a missing File."""
+		with (
+			patch.object(artifacts.frappe.db, "get_value", return_value=""),
+			patch.object(artifacts.frappe, "conf", SimpleNamespace(atlas_base_url="https://atlas.test/")),
+		):
+			with self.assertRaisesRegex(frappe.ValidationError, "has no download URL"):
+				artifacts.get_download_url("metald-file")
+
 
 class TestPublishedFiles(IntegrationTestCase):
 	"""The sweep deletes files on disk, which no rollback undoes.

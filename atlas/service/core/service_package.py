@@ -121,7 +121,8 @@ class ServicePackage:
 
 HTTP_PROXY_PACKAGE = ServicePackage("http-proxy", "HTTP proxy package", "nginx/setup.sh")
 IPV6_ROUTER_PACKAGE = ServicePackage("ipv6-router", "IPv6 router package", "setup.sh")
-SERVICE_PACKAGES = (HTTP_PROXY_PACKAGE, IPV6_ROUTER_PACKAGE)
+WG_GATEWAY_PACKAGE = ServicePackage("wg-gateway", "WireGuard gateway package", "setup.sh")
+SERVICE_PACKAGES = (HTTP_PROXY_PACKAGE, IPV6_ROUTER_PACKAGE, WG_GATEWAY_PACKAGE)
 
 
 def publish_service_packages() -> None:

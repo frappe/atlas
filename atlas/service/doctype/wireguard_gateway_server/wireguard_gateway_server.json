@@ -1,0 +1,151 @@
+{
+ "actions": [],
+ "autoname": "wg-gateway-.###",
+ "creation": "2026-09-24 12:00:00",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "status_section",
+  "status",
+  "status_column",
+  "installation_task",
+  "gateway_section",
+  "virtual_machine",
+  "wireguard_mesh_ipv6",
+  "gateway_column",
+  "server",
+  "listen_port",
+  "gateway_public_key",
+  "failure_section",
+  "failure_message"
+ ],
+ "fields": [
+  {
+   "fieldname": "status_section",
+   "fieldtype": "Section Break",
+   "label": "Status"
+  },
+  {
+   "default": "Pending",
+   "fieldname": "status",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Status",
+   "options": "Pending\nProvisioning\nActive\nFailed\nArchived",
+   "read_only": 1
+  },
+  {
+   "fieldname": "status_column",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "installation_task",
+   "fieldtype": "Link",
+   "label": "Installation Task",
+   "options": "SSH Task",
+   "read_only": 1
+  },
+  {
+   "fieldname": "gateway_section",
+   "fieldtype": "Section Break",
+   "label": "Gateway"
+  },
+  {
+   "fieldname": "virtual_machine",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Virtual Machine",
+   "options": "Virtual Machine",
+   "read_only": 1
+  },
+  {
+   "fieldname": "wireguard_mesh_ipv6",
+   "fieldtype": "Data",
+   "label": "WireGuard Mesh IPv6",
+   "read_only": 1,
+   "show_description_on_click": 1,
+   "unique": 1
+  },
+  {
+   "fieldname": "gateway_column",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fetch_from": "virtual_machine.server",
+   "fieldname": "server",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Metal Server",
+   "options": "Metal Server",
+   "read_only": 1
+  },
+  {
+   "default": 51820,
+   "fieldname": "listen_port",
+   "fieldtype": "Int",
+   "label": "Listen Port",
+   "set_only_once": 1
+  },
+  {
+   "fieldname": "gateway_public_key",
+   "fieldtype": "Data",
+   "label": "Gateway Public Key",
+   "read_only": 1
+  },
+  {
+   "depends_on": "failure_message",
+   "fieldname": "failure_section",
+   "fieldtype": "Section Break",
+   "label": "Failure"
+  },
+  {
+   "fieldname": "failure_message",
+   "fieldtype": "Small Text",
+   "label": "Failure",
+   "read_only": 1
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "modified": "2026-09-24 12:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Service",
+ "name": "WireGuard Gateway Server",
+ "naming_rule": "Expression",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "delete": 1,
+   "read": 1,
+   "role": "System Manager",
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [
+  {
+   "color": "Orange",
+   "title": "Pending"
+  },
+  {
+   "color": "Blue",
+   "title": "Provisioning"
+  },
+  {
+   "color": "Green",
+   "title": "Active"
+  },
+  {
+   "color": "Red",
+   "title": "Failed"
+  },
+  {
+   "color": "Gray",
+   "title": "Archived"
+  }
+ ]
+}

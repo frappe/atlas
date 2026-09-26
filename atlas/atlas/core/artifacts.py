@@ -5,6 +5,7 @@ import shutil
 from pathlib import Path
 
 import frappe
+from frappe import _
 
 
 def publish_public_file(file_name: str, label: str, content: bytes) -> str:
@@ -88,5 +89,7 @@ def get_download_url(file_name: str) -> str:
 	reach, which the site's own URL is not during local development.
 	"""
 	file_url = frappe.db.get_value("File", file_name, "file_url")
+	if not file_url:
+		frappe.throw(_("File {0} has no download URL. Publish it again.").format(file_name))
 	base_url = frappe.conf.atlas_base_url or frappe.utils.get_url(allow_header_override=False)
 	return f"{base_url.rstrip('/')}{file_url}"
