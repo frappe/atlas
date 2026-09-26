@@ -10,7 +10,7 @@ from urllib.parse import urlparse
 import frappe
 import redis
 
-CONSOLE_TOKEN_TTL_SECONDS = 60
+CONSOLE_TOKEN_TTL_SECONDS = 30
 CONSOLE_TOKEN_LENGTH = 256
 CONSOLE_TOKEN_ATTEMPTS = 3
 

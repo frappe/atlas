@@ -343,7 +343,7 @@ def create_virtual_machine_console_token(
 ) -> ConsoleTokenResponse:
 	"""Create console token.
 
-	Returns a single-use token for the Atlas realtime TTY or SSH console. The token expires after 60 seconds.
+	Returns a single-use token for the Atlas realtime TTY or SSH console. The token expires after 30 seconds.
 	"""
 	virtual_machine = get_owned_virtual_machine(virtual_machine_id)
 	connection = virtual_machine.get_console_token(payload.mode)

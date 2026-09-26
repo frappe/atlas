@@ -18,7 +18,7 @@ In Desk, the VM form opens `/vm_console` with a token in the URL fragment. The f
 
 The browser sends the token to the Atlas realtime bridge. The bridge takes it from Redis in one operation, then opens a mutual-TLS WebSocket to the VM's Metal host.
 
-The token is valid for **60 seconds** and works **once**. A reload cannot reuse it. Open a new console from the VM form, or request another token through the API. If Metal cannot be reached after the token is used, a new token is also needed.
+The token is valid for **30 seconds** and works **once**. A reload cannot reuse it. Open a new console from the VM form, or request another token through the API. If Metal cannot be reached after the token is used, a new token is also needed.
 
 ## Choose a mode
 

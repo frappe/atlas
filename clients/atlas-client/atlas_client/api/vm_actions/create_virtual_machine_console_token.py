@@ -114,7 +114,7 @@ def sync_detailed(
 ) -> Response[ApiErrorResponse | ConsoleTokenResponse]:
     """ Create console token
 
-     Returns a single-use token for the Atlas realtime TTY or SSH console. The token expires after 60
+     Returns a single-use token for the Atlas realtime TTY or SSH console. The token expires after 30
     seconds.
 
     Args:
@@ -154,7 +154,7 @@ def sync(
 ) -> ApiErrorResponse | ConsoleTokenResponse | None:
     """ Create console token
 
-     Returns a single-use token for the Atlas realtime TTY or SSH console. The token expires after 60
+     Returns a single-use token for the Atlas realtime TTY or SSH console. The token expires after 30
     seconds.
 
     Args:
@@ -189,7 +189,7 @@ async def asyncio_detailed(
 ) -> Response[ApiErrorResponse | ConsoleTokenResponse]:
     """ Create console token
 
-     Returns a single-use token for the Atlas realtime TTY or SSH console. The token expires after 60
+     Returns a single-use token for the Atlas realtime TTY or SSH console. The token expires after 30
     seconds.
 
     Args:
@@ -229,7 +229,7 @@ async def asyncio(
 ) -> ApiErrorResponse | ConsoleTokenResponse | None:
     """ Create console token
 
-     Returns a single-use token for the Atlas realtime TTY or SSH console. The token expires after 60
+     Returns a single-use token for the Atlas realtime TTY or SSH console. The token expires after 30
     seconds.
 
     Args:

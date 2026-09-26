@@ -114,27 +114,33 @@ async def atlas_console_open(socket: Socket, token: str) -> None:
 		await socket.emit("atlas_console_error", "This console link is invalid or expired.")
 		return
 
-	serialized_connection = await _cache().getdel(console_token_key(socket.site, token))
-	if not serialized_connection:
-		await socket.emit("atlas_console_error", "This console link is invalid or expired.")
-		return
-
+	# Claim the slot before the first await so a concurrent open cannot leak a second connection.
+	_sessions[socket.sid] = None
 	try:
-		connection = ConsoleConnection.from_json(serialized_connection)
-	except json.JSONDecodeError, UnicodeDecodeError, ValueError, TypeError:
-		frappe.log_error(title=f"Invalid console token payload for site {socket.site}")
-		await socket.emit("atlas_console_error", "This console link is invalid or expired.")
-		return
-	try:
-		metal_connection = await websockets.connect(
-			connection.url, max_size=None, ssl=_tls_context(socket.site)
-		)
-	except OSError, websockets.WebSocketException:
-		await socket.emit("atlas_console_error", "Could not reach the virtual machine console.")
-		return
+		serialized_connection = await _cache().getdel(console_token_key(socket.site, token))
+		if not serialized_connection:
+			await socket.emit("atlas_console_error", "This console link is invalid or expired.")
+			return
 
-	_sessions[socket.sid] = ConsoleSession(socket, metal_connection)
-	await socket.emit("atlas_console_ready")
+		try:
+			connection = ConsoleConnection.from_json(serialized_connection)
+		except json.JSONDecodeError, UnicodeDecodeError, ValueError, TypeError:
+			frappe.log_error(title=f"Invalid console token payload for site {socket.site}")
+			await socket.emit("atlas_console_error", "This console link is invalid or expired.")
+			return
+		try:
+			metal_connection = await websockets.connect(
+				connection.url, max_size=None, ssl=_tls_context(socket.site)
+			)
+		except OSError, websockets.WebSocketException:
+			await socket.emit("atlas_console_error", "Could not reach the virtual machine console.")
+			return
+
+		_sessions[socket.sid] = ConsoleSession(socket, metal_connection)
+		await socket.emit("atlas_console_ready")
+	finally:
+		if _sessions.get(socket.sid) is None:
+			_sessions.pop(socket.sid, None)
 
 
 @realtime.on("atlas_console_input", allow_guest=True)
