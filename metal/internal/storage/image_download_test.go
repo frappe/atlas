@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -83,6 +84,7 @@ func (destination *countingDestination) discard()      {}
 func serveArtifact(t *testing.T, body []byte) *httptest.Server {
 	t.Helper()
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		response.Header().Set("Content-Length", strconv.Itoa(len(body)))
 		_, _ = response.Write(body)
 	}))
 	t.Cleanup(server.Close)
