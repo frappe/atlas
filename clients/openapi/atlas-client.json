@@ -3700,7 +3700,7 @@
     },
     "/api/atlas/virtual-machines/{virtual_machine_id}/actions/console-token": {
       "post": {
-        "description": "Returns a single-use token for the Atlas realtime TTY or SSH console. The token expires after 60 seconds.",
+        "description": "Returns a single-use token for the Atlas realtime TTY or SSH console. The token expires after 30 seconds.",
         "operationId": "create_virtual_machine_console_token",
         "parameters": [
           {
