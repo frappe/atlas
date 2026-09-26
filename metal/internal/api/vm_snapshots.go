@@ -31,8 +31,9 @@ type snapshotUploadPartRequest struct {
 // ID identifies the multipart upload the parts belong to, so a resumed upload
 // never reuses an ETag from an upload the controller replaced.
 type snapshotArtifactUploadRequest struct {
-	UploadID string                      `json:"upload_id"`
-	Parts    []snapshotUploadPartRequest `json:"parts"`
+	UploadID    string                      `json:"upload_id"`
+	PartSizeMiB int64                       `json:"part_size_mib"`
+	Parts       []snapshotUploadPartRequest `json:"parts"`
 }
 
 // snapshotUploadRequest carries the parts of both artifacts.
@@ -207,8 +208,17 @@ func (s *Server) deleteSnapshot(c echo.Context) error {
 // storageRequest converts the request into the storage form.
 func (request snapshotUploadRequest) storageRequest() storage.SnapshotUploadRequest {
 	return storage.SnapshotUploadRequest{
-		Rootfs: storage.SnapshotArtifactUpload{UploadID: request.Rootfs.UploadID, Parts: storageParts(request.Rootfs.Parts)},
-		Kernel: storage.SnapshotArtifactUpload{UploadID: request.Kernel.UploadID, Parts: storageParts(request.Kernel.Parts)},
+		Rootfs: request.Rootfs.storageUpload(),
+		Kernel: request.Kernel.storageUpload(),
+	}
+}
+
+// storageUpload converts one artifact into the storage form.
+func (request snapshotArtifactUploadRequest) storageUpload() storage.SnapshotArtifactUpload {
+	return storage.SnapshotArtifactUpload{
+		UploadID:      request.UploadID,
+		PartSizeBytes: request.PartSizeMiB << 20,
+		Parts:         storageParts(request.Parts),
 	}
 }
 

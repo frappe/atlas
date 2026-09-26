@@ -220,26 +220,33 @@ func TestUploadStatusReportsPersistedState(t *testing.T) {
 }
 
 func TestSnapshotUploadPartsAreAnUpperBound(t *testing.T) {
-	onePart := []SnapshotUploadPart{{PartNumber: 1, URL: "https://storage.example/part-1"}}
-	if err := validateUploadParts(onePart, SnapshotPartSizeBytes); err != nil {
+	const partSizeBytes = 64 << 20
+	onePart := SnapshotArtifactUpload{PartSizeBytes: partSizeBytes, Parts: []SnapshotUploadPart{{PartNumber: 1, URL: "https://storage.example/part-1"}}}
+	if err := validateUploadParts(onePart, partSizeBytes); err != nil {
 		t.Fatalf("exact part boundary: %v", err)
 	}
 
-	twoParts := append(onePart, SnapshotUploadPart{
+	twoParts := onePart
+	twoParts.Parts = append(onePart.Parts, SnapshotUploadPart{
 		PartNumber: 2,
 		URL:        "https://storage.example/part-2",
 	})
 	// The artifact is stored compressed, so it usually needs fewer parts than
 	// its uncompressed size would take. A spare signed part is expected.
-	if err := validateUploadParts(twoParts, SnapshotPartSizeBytes); err != nil {
+	if err := validateUploadParts(twoParts, partSizeBytes); err != nil {
 		t.Fatalf("spare part rejected: %v", err)
 	}
 
-	if err := validateUploadParts(nil, SnapshotPartSizeBytes); err == nil {
+	if err := validateUploadParts(SnapshotArtifactUpload{PartSizeBytes: partSizeBytes}, partSizeBytes); err == nil {
 		t.Fatal("an artifact with no signed part was accepted")
 	}
-	gap := []SnapshotUploadPart{{PartNumber: 2, URL: "https://storage.example/part-2"}}
-	if err := validateUploadParts(gap, SnapshotPartSizeBytes); err == nil {
+	gap := SnapshotArtifactUpload{PartSizeBytes: partSizeBytes, Parts: []SnapshotUploadPart{{PartNumber: 2, URL: "https://storage.example/part-2"}}}
+	if err := validateUploadParts(gap, partSizeBytes); err == nil {
 		t.Fatal("parts that do not start at 1 were accepted")
+	}
+	tooSmall := onePart
+	tooSmall.PartSizeBytes = 1 << 20
+	if err := validateUploadParts(tooSmall, partSizeBytes); err == nil {
+		t.Fatal("a part size below the object store minimum was accepted")
 	}
 }

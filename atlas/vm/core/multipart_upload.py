@@ -7,8 +7,15 @@ if TYPE_CHECKING:
 	from atlas.vm.doctype.virtual_machine_image.virtual_machine_image import VirtualMachineImage
 
 MEBIBYTE = 1 << 20
-# Keep this in sync with Metal's SnapshotPartSizeBytes.
-MULTIPART_PART_SIZE_MIB = 256
+GIBIBYTE_IN_MIB = 1024
+MULTIPART_PART_LIMIT = 10_000
+# Larger artifacts use larger parts to stay under the part limit.
+MULTIPART_PART_SIZE_TIERS_MIB = (
+	(500 * GIBIBYTE_IN_MIB, 64),
+	(1024 * GIBIBYTE_IN_MIB, 128),
+	(2048 * GIBIBYTE_IN_MIB, 256),
+)
+LARGEST_MULTIPART_PART_SIZE_MIB = GIBIBYTE_IN_MIB
 
 
 class MultipartUploadError(Exception):
@@ -46,6 +53,7 @@ class MultipartUploadService:
 		return {
 			"rootfs": {
 				"upload_id": rootfs_upload_id,
+				"part_size_mib": get_multipart_part_size_mib(self.image.image_size_mib),
 				"parts": self.get_signed_parts(
 					self.require_value(self.image.image_object_key, "rootfs object key"),
 					rootfs_upload_id,
@@ -54,6 +62,7 @@ class MultipartUploadService:
 			},
 			"kernel": {
 				"upload_id": kernel_upload_id,
+				"part_size_mib": get_multipart_part_size_mib(self.image.kernel_size_mib),
 				"parts": self.get_signed_parts(
 					self.require_value(self.image.kernel_object_key, "kernel object key"),
 					kernel_upload_id,
@@ -165,11 +174,20 @@ def bytes_to_mib(size_bytes: int) -> int:
 	return (size_bytes + MEBIBYTE - 1) // MEBIBYTE
 
 
+def get_multipart_part_size_mib(size_mib: int) -> int:
+	"""Return the part size for an artifact of this uncompressed size."""
+	for largest_size_mib, part_size_mib in MULTIPART_PART_SIZE_TIERS_MIB:
+		if size_mib <= largest_size_mib:
+			return part_size_mib
+	return LARGEST_MULTIPART_PART_SIZE_MIB
+
+
 def get_multipart_part_count(size_mib: int) -> int:
 	"""Return the required multipart upload part count."""
 	if size_mib <= 0:
 		raise MultipartUploadError("Artifact size must be positive")
-	part_count = (size_mib + MULTIPART_PART_SIZE_MIB - 1) // MULTIPART_PART_SIZE_MIB
-	if part_count > 10_000:
-		raise MultipartUploadError("Artifact needs more than 10,000 multipart upload parts")
+	part_size_mib = get_multipart_part_size_mib(size_mib)
+	part_count = (size_mib + part_size_mib - 1) // part_size_mib
+	if part_count >= MULTIPART_PART_LIMIT:
+		raise MultipartUploadError(f"Artifact needs {MULTIPART_PART_LIMIT} or more multipart upload parts")
 	return part_count
