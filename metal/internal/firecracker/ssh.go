@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/creack/pty"
 
@@ -138,9 +139,11 @@ func generateSSHKey() (sshKeyPair, error) {
 	if err != nil {
 		return sshKeyPair{}, fmt.Errorf("build ssh public key: %w", err)
 	}
+	comment := fmt.Sprintf("atlas-ssh-console-%d", time.Now().Unix())
+	authorizedKey := fmt.Sprintf("%s %s", strings.TrimSpace(string(ssh.MarshalAuthorizedKey(signer))), comment)
 	return sshKeyPair{
 		privatePEM:    pem.EncodeToMemory(block),
-		authorizedKey: string(ssh.MarshalAuthorizedKey(signer)),
+		authorizedKey: authorizedKey,
 	}, nil
 }
 
