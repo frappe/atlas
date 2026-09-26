@@ -49,7 +49,7 @@ Metal preserves staging and upload progress. Correct object-storage access, expi
 - [Atlas image transfer](../../atlas/vm/core/vm_image_transfer.py) owns image status, upload IDs, and publication.
 - [Multipart upload service](../../atlas/vm/core/multipart_upload.py) owns object-storage completion.
 - [Metal image store](../../metal/internal/storage/image.go) downloads and verifies bases.
-- [Metal staging](../../metal/internal/storage/staging.go) and [upload](../../metal/internal/storage/upload.go) own local snapshot transfer.
+- [Metal staging](../../metal/internal/storage/staging.go) and [upload](../../metal/internal/storage/snapshot_upload.go) own local snapshot transfer.
 - [Firecracker start](../../metal/internal/firecracker/machine.go) enforces the fresh-disk warm rule.
 - [Image record tests](../../atlas/vm/doctype/virtual_machine_image/test_virtual_machine_image.py) and [Metal machine tests](../../metal/internal/firecracker/machine_test.go) check retry and boot rules.
 

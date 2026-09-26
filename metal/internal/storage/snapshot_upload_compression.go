@@ -142,9 +142,6 @@ func (chunker *partChunker) flush() error {
 		chunker.index++
 	}()
 
-	if err := chunker.current.Sync(); err != nil {
-		return err
-	}
 	etag, reused := chunker.reusableETag(part.PartNumber, length)
 	if reused {
 		chunker.skipped++

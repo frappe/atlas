@@ -80,7 +80,7 @@ The file-backed ZFS setup script is for development only. Normal installation us
 - [Storage construction](../../metal/internal/storage/stores.go) creates the local stores.
 - [Image store](../../metal/internal/storage/image.go) checks artifacts and cache policy.
 - [VM disk store](../../metal/internal/storage/disk.go) prepares and releases disks.
-- [Snapshot staging](../../metal/internal/storage/staging.go) and [upload](../../metal/internal/storage/upload.go) prepare machine images.
+- [Snapshot staging](../../metal/internal/storage/staging.go) and [upload](../../metal/internal/storage/snapshot_upload.go) prepare machine images.
 - [Experimental ZFS script](../../metal/internal/vm/scripts/zfs-setup.sh) labels its file-backed pool as experimental.
 
 :::
