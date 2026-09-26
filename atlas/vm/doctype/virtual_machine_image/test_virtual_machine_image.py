@@ -9,10 +9,11 @@ from atlas.atlas.object_storage import ObjectStorageError
 from atlas.vm.core.metal_client import MetalClientError
 from atlas.vm.core.multipart_upload import (
 	MEBIBYTE,
-	MULTIPART_PART_SIZE_MIB,
+	MultipartUploadError,
 	MultipartUploadService,
 	bytes_to_mib,
 	get_multipart_part_count,
+	get_multipart_part_size_mib,
 )
 from atlas.vm.core.vm_image_transfer import VirtualMachineImageTransferService
 from atlas.vm.doctype.virtual_machine_image.virtual_machine_image import (
@@ -491,8 +492,21 @@ class TestVirtualMachineImageTransfer(UnitTestCase):
 		self.assertEqual(values["tags"], [])
 
 	def test_part_count_has_no_empty_boundary_part(self) -> None:
-		self.assertEqual(get_multipart_part_count(MULTIPART_PART_SIZE_MIB), 1)
-		self.assertEqual(get_multipart_part_count(MULTIPART_PART_SIZE_MIB + 1), 2)
+		part_size_mib = get_multipart_part_size_mib(1)
+		self.assertEqual(get_multipart_part_count(part_size_mib), 1)
+		self.assertEqual(get_multipart_part_count(part_size_mib + 1), 2)
+
+	def test_part_size_grows_with_the_artifact(self) -> None:
+		sizes_mib = [1, 600 << 10, 1536 << 10, 5 << 20]
+		part_sizes_mib = [get_multipart_part_size_mib(size_mib) for size_mib in sizes_mib]
+
+		self.assertEqual(part_sizes_mib, sorted(set(part_sizes_mib)))
+		for size_mib in sizes_mib:
+			self.assertLess(get_multipart_part_count(size_mib), 10_000)
+
+	def test_part_count_rejects_an_artifact_over_the_part_limit(self) -> None:
+		with self.assertRaises(MultipartUploadError):
+			get_multipart_part_count(10 << 20)
 
 	def test_bytes_round_up_to_whole_mib(self) -> None:
 		self.assertEqual(bytes_to_mib(1), 1)
@@ -505,7 +519,7 @@ class TestVirtualMachineImageTransfer(UnitTestCase):
 			kernel_object_key="images/image/kernel",
 			rootfs_multipart_upload_id="rootfs-upload",
 			kernel_multipart_upload_id="kernel-upload",
-			image_size_mib=MULTIPART_PART_SIZE_MIB + 1,
+			image_size_mib=get_multipart_part_size_mib(1) + 1,
 			kernel_size_mib=1,
 		)
 		object_storage_client = Mock()
@@ -521,6 +535,9 @@ class TestVirtualMachineImageTransfer(UnitTestCase):
 		self.assertEqual([part["part_number"] for part in request["kernel"]["parts"]], [1, 2])
 		self.assertEqual(request["rootfs"]["upload_id"], "rootfs-upload")
 		self.assertEqual(request["kernel"]["upload_id"], "kernel-upload")
+		self.assertEqual(
+			request["rootfs"]["part_size_mib"], get_multipart_part_size_mib(image.image_size_mib)
+		)
 		self.assertTrue(
 			all(
 				call.kwargs["expiry_seconds"] == 86400
