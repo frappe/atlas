@@ -6,11 +6,14 @@ from uuid import UUID
 
 import frappe
 from frappe import _
+from frappe.utils import now_datetime
 
 from atlas.atlas.core.artifacts import get_download_url
 from atlas.atlas.core.ssh import SSHRunner
 from atlas.atlas.core.tls.metal import atlas_client_identity, ensure_server_certificate
 from atlas.atlas.doctype.ssh_task.ssh_task import SSHTask
+from atlas.auth import issuer
+from atlas.auth.datum_token import TOKEN_LIFETIME, issue_datum_token
 
 if TYPE_CHECKING:
 	from atlas.atlas.core.ssh import SSHResult
@@ -22,6 +25,7 @@ WIREGUARD_CONFIGURE_TIMEOUT_SECONDS = 300
 METALD_INSTALL_TIMEOUT_SECONDS = 1_200
 STORAGE_INSTALL_TIMEOUT_SECONDS = 600
 METALD_SETUP_TIMEOUT_SECONDS = 3_600
+DATUM_TOKENS_TIMEOUT_SECONDS = 120
 
 MESH_PREFIX = 0xFDAB
 # The prefix and the region take the first 32 bits of the address, so the low 96
@@ -77,6 +81,10 @@ class HostInstallation:
 
 		self.install_storage()
 		self.install_tls_credentials()
+		try:
+			self.install_datum_tokens()
+		except Exception:
+			frappe.log_error(title=f"Could not install datum tokens on server {self.server.name}")
 
 		listen_address = settings.server_provider_controller.metald_listen_address(self.server)
 		try:
@@ -145,6 +153,32 @@ class HostInstallation:
 				_("Could not install Metal TLS credentials on server {0}.").format(self.server.name),
 				result,
 			)
+
+	def install_datum_tokens(self) -> None:
+		"""Ship a fresh datum write token bundle. A no-op unless atlas_datum_url is set."""
+		if not frappe.conf.get("atlas_datum_url"):
+			return
+
+		key = issuer.signing_key(self.server.settings)
+		bundle = {
+			"host": issue_datum_token(self.server.settings, self.server.name, signing_key=key),
+			"vms": {
+				name: issue_datum_token(self.server.settings, name, signing_key=key)
+				for name in frappe.get_all(
+					"Virtual Machine", filters={"server": self.server.name}, pluck="name"
+				)
+			},
+		}
+		result = SSHRunner(self.server.ssh_host).run_script(
+			"install-datum-tokens.sh",
+			data={"DATUM_TOKEN_BUNDLE": frappe.as_json(bundle)},
+			timeout_seconds=DATUM_TOKENS_TIMEOUT_SECONDS,
+		)
+		if not result.is_success:
+			throw_script_failure(
+				_("Could not install datum tokens on server {0}.").format(self.server.name), result
+			)
+		self.server.db_set("datum_tokens_expire_on", now_datetime() + TOKEN_LIFETIME)
 
 	def upgrade_metald(self) -> None:
 		"""Replace the metald binary and restart its daemon."""

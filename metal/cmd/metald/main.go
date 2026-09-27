@@ -24,6 +24,7 @@ import (
 
 	"github.com/frappe/atlas/metal/internal/api"
 	"github.com/frappe/atlas/metal/internal/console"
+	"github.com/frappe/atlas/metal/internal/datum"
 	"github.com/frappe/atlas/metal/internal/firecracker"
 	"github.com/frappe/atlas/metal/internal/host"
 	"github.com/frappe/atlas/metal/internal/network"
@@ -39,6 +40,9 @@ const (
 	reconcileInterval      = 5 * time.Second
 	meshSetupTimeout       = 2 * time.Minute
 	imageReconcileInterval = time.Hour
+	datumPushInterval      = time.Minute
+	datumPushTimeout       = 5 * time.Second
+	datumRequestTimeout    = 10 * time.Second
 )
 
 //	@title			Metal API
@@ -319,11 +323,15 @@ func serve(options options, logger *slog.Logger) (serveError error) {
 	)
 	var migrationReconciler *reconciler.MigrationReconciler
 	var migrationManager *migration.Manager
+	var datumReconciler *reconciler.DatumReconciler
 	notifyReconcilers := func() {
 		virtualMachineReconciler.Wake()
 		imageReconciler.Wake()
 		if migrationReconciler != nil {
 			migrationReconciler.Wake()
+		}
+		if datumReconciler != nil {
+			datumReconciler.Wake()
 		}
 	}
 	migrationReservations := func(ctx context.Context) ([]migration.DestinationReservation, error) {
@@ -347,6 +355,18 @@ func serve(options options, logger *slog.Logger) (serveError error) {
 	hostService, err := host.NewService(hostDependencies)
 	if err != nil {
 		return fmt.Errorf("configure host service: %w", err)
+	}
+	if options.datum.url != "" {
+		datumClient := datum.NewClient(options.datum.url, datumRequestTimeout)
+		datumExporter := datum.NewExporter(
+			datumClient,
+			options.datum.tokenFile,
+			virtualMachineManager,
+			hostService,
+			datumPushTimeout,
+			logger,
+		)
+		datumReconciler = reconciler.NewDatumReconciler(datumExporter, datumPushInterval)
 	}
 	migrationCapacity := func(ctx context.Context) (migration.AvailableCapacity, error) {
 		capacity, err := hostService.Capacity(ctx)
@@ -417,6 +437,9 @@ func serve(options options, logger *slog.Logger) (serveError error) {
 	daemon.StartWorker(virtualMachineReconciler.Run)
 	daemon.StartWorker(imageReconciler.Run)
 	daemon.StartWorker(migrationReconciler.Run)
+	if datumReconciler != nil {
+		daemon.StartWorker(datumReconciler.Run)
+	}
 	if trafficMonitor != nil {
 		daemon.StartTrafficListener(trafficMonitor.Events(), virtualMachineManager.RestoreAfterTraffic)
 	}

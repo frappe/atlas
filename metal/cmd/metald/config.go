@@ -22,6 +22,7 @@ type options struct {
 	trafficMonitor     trafficMonitorOptions
 	migration          migrationOptions
 	tls                tlsOptions
+	datum              datumOptions
 	coordinationListen string
 }
 
@@ -30,6 +31,13 @@ type tlsOptions struct {
 	certificateFile string
 	privateKeyFile  string
 	atlasCommonName string
+}
+
+// datumOptions configures metric export to datum. An empty url disables it.
+// tokenFile is derived from baseDir, like the machines and images directories.
+type datumOptions struct {
+	url       string
+	tokenFile string
 }
 
 // migrationOptions holds VM migration settings.
@@ -76,6 +84,7 @@ func defaultOptions() options {
 func (resolvedOptions *options) deriveDirs() {
 	resolvedOptions.cfg.MachinesDir = filepath.Join(resolvedOptions.baseDir, "machines")
 	resolvedOptions.imagesDir = filepath.Join(resolvedOptions.baseDir, "images")
+	resolvedOptions.datum.tokenFile = filepath.Join(resolvedOptions.baseDir, "datum-tokens.json")
 }
 
 type fileConfig struct {
@@ -88,6 +97,11 @@ type fileConfig struct {
 	Traffic     trafficFile     `toml:"traffic_monitor"`
 	Migration   migrationFile   `toml:"migration"`
 	TLS         tlsFile         `toml:"tls"`
+	Datum       datumFile       `toml:"datum"`
+}
+
+type datumFile struct {
+	URL string `toml:"url"`
 }
 
 type tlsFile struct {
@@ -191,6 +205,7 @@ func applyFile(resolvedOptions *options, path string) error {
 	overlay(&resolvedOptions.tls.certificateFile, fc.TLS.CertificateFile)
 	overlay(&resolvedOptions.tls.privateKeyFile, fc.TLS.PrivateKeyFile)
 	overlay(&resolvedOptions.tls.atlasCommonName, fc.TLS.AtlasCommonName)
+	overlay(&resolvedOptions.datum.url, fc.Datum.URL)
 	return nil
 }
 

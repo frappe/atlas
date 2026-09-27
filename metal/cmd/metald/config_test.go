@@ -65,6 +65,23 @@ func TestLoadBaseDirMovesDerivedDirs(t *testing.T) {
 	if options.imagesDir != "/srv/metal/images" {
 		t.Errorf("imagesDir = %q", options.imagesDir)
 	}
+	if options.datum.tokenFile != "/srv/metal/datum-tokens.json" {
+		t.Errorf("datum.tokenFile = %q", options.datum.tokenFile)
+	}
+}
+
+func TestLoadDatumURL(t *testing.T) {
+	if got := defaultOptions().datum.url; got != "" {
+		t.Fatalf("default datum.url = %q, want empty", got)
+	}
+	path := writeConfig(t, "[datum]\nurl = \"https://datum.example:8000\"\n")
+	options, err := load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if options.datum.url != "https://datum.example:8000" {
+		t.Errorf("datum.url = %q, want the file value", options.datum.url)
+	}
 }
 
 func TestLoadMigrationFinalDelta(t *testing.T) {

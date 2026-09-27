@@ -10,7 +10,7 @@ Behavior: [provisioning](../../docs/region/index.md), [hosts](../../docs/region/
 |---|---|
 | `MetalServer` (DocType) | Lifecycle, permissions, whitelisted API |
 | `provisioning` | Phase order, progress, failure logs |
-| `host_installation` | Installs Metal on the host |
+| `host_installation` | Installs Metal on the host, including its datum write token bundle |
 | `disk_inventory` | Block devices to Metal Server Disk rows |
 | `catalog_sync` | Size and Image catalogs from the provider |
 | `host_inspection` | Generic host registration. See [providers](../../docs/region/provider-guide.md#generic-provider). |
@@ -29,6 +29,7 @@ Host commands use [SSH Task](../atlas/doctype/ssh_task/) from the Atlas module.
 - Certificate renewal restarts `metal.service` and shares the metald job lock with install and upgrade.
 - Placement reads Metal Server Usage rows that `usage` writes after each `POST /v1/sync`.
 - Atlas WG Mesh identifies a peer by `private_network_mac_address`. Sync writes it only when it changes.
+- `datum_tokens_expire_on` tracks the installed bundle's expiry. `refresh_expiring_datum_tokens` (a no-op unless `atlas_datum_url` is set) only re-ships a host whose bundle is inside its renewal window or was never shipped, the same shape as certificate renewal.
 
 ## Related
 

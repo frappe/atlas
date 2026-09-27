@@ -34,7 +34,7 @@ In each module, `core/` holds orchestration and `doctype/` holds DocType control
 |---|---|
 | HTTP framework | `api/core/`: `base.py`, `binding.py`, `errors.py`, `docs.py` |
 | Atlas API | `api/router.py`, `api/models.py`, `api/routes/` |
-| Tokens and keys | `auth/request.py`, `token.py`, `jwks.py`, `issuer.py` |
+| Tokens and keys | `auth/request.py`, `token.py`, `jwks.py`, `issuer.py`, `datum_token.py` |
 | Users and identity | `auth/user.py`, `roles.py`, `identity.py` |
 | Permission overrides | `auth/overrides.py` |
 | Job decorator | `atlas/core/background_jobs.py` |
