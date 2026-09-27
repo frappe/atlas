@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -47,10 +48,11 @@ type LinuxAllocator struct {
 	firewallMutex  sync.Mutex
 	firewallAudits map[string]firewallAudit
 	now            func() time.Time
+	logger         *slog.Logger
 }
 
 // NewLinuxAllocator returns a Linux network allocator.
-func NewLinuxAllocator(mesh *Mesh, monitor *traffic.Monitor) *LinuxAllocator {
+func NewLinuxAllocator(mesh *Mesh, monitor *traffic.Monitor, logger *slog.Logger) *LinuxAllocator {
 	var registrar meshRegistrar
 	if mesh != nil {
 		registrar = mesh
@@ -59,16 +61,20 @@ func NewLinuxAllocator(mesh *Mesh, monitor *traffic.Monitor) *LinuxAllocator {
 	if monitor != nil {
 		trafficMonitor = monitor
 	}
-	return newLinuxAllocator(registrar, trafficMonitor)
+	return newLinuxAllocator(registrar, trafficMonitor, logger)
 }
 
 // newLinuxAllocator returns an allocator with test dependencies.
-func newLinuxAllocator(mesh meshRegistrar, trafficMonitor trafficMonitor) *LinuxAllocator {
+func newLinuxAllocator(mesh meshRegistrar, trafficMonitor trafficMonitor, logger *slog.Logger) *LinuxAllocator {
+	if logger == nil {
+		logger = slog.Default()
+	}
 	return &LinuxAllocator{
 		mesh:           mesh,
 		trafficMonitor: trafficMonitor,
 		firewallAudits: make(map[string]firewallAudit),
 		now:            time.Now,
+		logger:         logger,
 	}
 }
 
@@ -87,7 +93,7 @@ func (allocator *LinuxAllocator) Ensure(ctx context.Context, desired vm.NetworkR
 	if err := allocator.converge(ctx, request, namespaceCreated); err != nil {
 		return vm.NetworkInterface{}, err
 	}
-	if err := allocator.convergeTrafficMonitoring(desired.TrackTraffic, request); err != nil {
+	if err := allocator.convergeTrafficMonitoring(desired.TrackTraffic, desired.RequireTrafficMonitor, request); err != nil {
 		return vm.NetworkInterface{}, err
 	}
 
@@ -120,26 +126,36 @@ func (allocator *LinuxAllocator) Release(ctx context.Context, request ReleaseReq
 	return errors.Join(trafficError, meshError, rulesError, namespaceRulesError, namespaceError)
 }
 
-// convergeTrafficMonitoring attaches or detaches packet monitoring as requested.
-func (allocator *LinuxAllocator) convergeTrafficMonitoring(enabled bool, request request) error {
+// convergeTrafficMonitoring attaches or detaches packet monitoring as
+// requested. A failed attach only fails the request when required is true;
+// otherwise it is logged and the VM proceeds without traffic counters.
+func (allocator *LinuxAllocator) convergeTrafficMonitoring(enabled, required bool, request request) error {
 	if allocator.trafficMonitor == nil {
 		return nil
 	}
-	if enabled {
-		err := allocator.trafficMonitor.Attach(traffic.AttachmentRequest{
-			Target: traffic.Target{
-				VirtualMachineID: request.VirtualMachineID,
-				UserID:           request.UserID,
-			},
-			NamespacePath: namespacePath(request.VirtualMachineID),
-			InterfaceName: tapName,
-		})
-		if err != nil {
-			return fmt.Errorf("attach traffic monitor: %w", err)
+	if !enabled {
+		if err := allocator.trafficMonitor.Detach(request.VirtualMachineID); err != nil {
+			return fmt.Errorf("detach traffic monitor: %w", err)
 		}
-	} else if err := allocator.trafficMonitor.Detach(request.VirtualMachineID); err != nil {
-		return fmt.Errorf("detach traffic monitor: %w", err)
+		return nil
 	}
+
+	err := allocator.trafficMonitor.Attach(traffic.AttachmentRequest{
+		Target: traffic.Target{
+			VirtualMachineID: request.VirtualMachineID,
+			UserID:           request.UserID,
+		},
+		NamespacePath: namespacePath(request.VirtualMachineID),
+		InterfaceName: tapName,
+	})
+	if err == nil {
+		return nil
+	}
+	if required {
+		return fmt.Errorf("attach traffic monitor: %w", err)
+	}
+	allocator.logger.Warn("traffic monitor attach failed, continuing without traffic metrics",
+		"virtual_machine_id", request.VirtualMachineID, "error", err)
 	return nil
 }
 

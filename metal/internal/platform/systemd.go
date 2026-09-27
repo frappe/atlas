@@ -30,6 +30,10 @@ type UnitManager interface {
 
 	// SetLimits applies resource limits to the running unit.
 	SetLimits(ctx context.Context, id string, limits Limits) error
+
+	// Usage reads the unit's current cgroup memory and CPU use. An absent
+	// unit reads as a zero Usage.
+	Usage(ctx context.Context, id string) (Usage, error)
 }
 
 // Status describes one systemd unit.

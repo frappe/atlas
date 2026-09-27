@@ -168,6 +168,28 @@ func (d *DBus) SetLimits(ctx context.Context, id string, limits Limits) error {
 	return d.connection.SetUnitPropertiesContext(ctx, unitName(id), true, properties...)
 }
 
+// Usage reads the unit's current cgroup memory and CPU use for id. An absent
+// unit reads as a zero Usage.
+func (d *DBus) Usage(ctx context.Context, id string) (Usage, error) {
+	unit := unitName(id)
+
+	// ControlGroup is a Service-type property, like MainPID, not a generic Unit
+	// property.
+	serviceProperties, err := d.connection.GetUnitTypePropertiesContext(ctx, unit, "Service")
+	if isUnitNotLoaded(err) {
+		return Usage{}, nil
+	}
+	if err != nil {
+		return Usage{}, err
+	}
+
+	controlGroup := asString(serviceProperties["ControlGroup"])
+	if controlGroup == "" {
+		return Usage{}, nil
+	}
+	return readUsage(controlGroup)
+}
+
 func cpuQuotaMicrosecondsPerSecond(cpuMillicores int) uint64 {
 	return uint64(cpuMillicores) * microsecondsPerCPUMillicore
 }

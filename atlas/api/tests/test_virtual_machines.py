@@ -14,6 +14,7 @@ from atlas.api.routes.virtual_machines import (
 	detach_virtual_machine_public_ipv4,
 	detach_virtual_machine_public_ipv6,
 	get_virtual_machine,
+	get_virtual_machine_metrics,
 	list_virtual_machines,
 	resize_virtual_machine,
 	restart_virtual_machine,
@@ -33,7 +34,14 @@ from atlas.atlas.core.tags import (
 	MAXIMUM_TAG_VALUE_LENGTH,
 	MAXIMUM_TAGS,
 )
-from atlas.vm.core.metal_models import MetalFirewall, MetalFirewallRule
+from atlas.vm.core.metal_models import (
+	MetalComputeUsage,
+	MetalDiskUsage,
+	MetalFirewall,
+	MetalFirewallRule,
+	MetalNetworkUsage,
+	MetalVirtualMachineMetrics,
+)
 from atlas.vm.core.models import DEFAULT_ROUTES, Route
 from atlas.vm.core.placement import OutOfCapacity
 
@@ -66,6 +74,7 @@ def build_virtual_machine(tenant_id: int = TENANT_ID, **overrides) -> SimpleName
 		"reboot": Mock(),
 		"terminate": Mock(),
 		"get_metal_vm_info": Mock(return_value=None),
+		"get_metal_vm_metrics": Mock(return_value=None),
 		"public_ipv6": "2001:db8:5::7/128",
 		"resize": Mock(),
 		"attach_public_ip": Mock(),
@@ -383,6 +392,43 @@ class TestReadVirtualMachines(UnitTestCase):
 		self.assertEqual(body["id"], "vm-00001")
 		self.assertIsNone(body["desired_state"])
 		self.assertEqual(body["current_state"], "unknown")
+
+	def test_metrics_returns_the_metal_read(self) -> None:
+		virtual_machine = build_virtual_machine(
+			get_metal_vm_metrics=Mock(
+				return_value=MetalVirtualMachineMetrics(
+					compute=MetalComputeUsage(cpu_microseconds=42_000_000, memory_bytes=536870912),
+					disk=MetalDiskUsage(size_mib=10240, used_mib=5),
+					network=MetalNetworkUsage(
+						received_bytes=0, received_packets=0, sent_bytes=2232, sent_packets=30
+					),
+				)
+			)
+		)
+		with (
+			api_request("GET", "/api/atlas/virtual-machines/vm-00001/metrics", tenant_id=TENANT_ID),
+			owned_document(virtual_machine),
+		):
+			status, body = call_route(get_virtual_machine_metrics, virtual_machine_id="vm-00001")
+
+		self.assertEqual(status, 200)
+		self.assertEqual(body["id"], "vm-00001")
+		self.assertEqual(body["compute"]["cpu_microseconds"], 42_000_000)
+		self.assertEqual(body["disk"]["size_mib"], 10240)
+		self.assertEqual(body["network"]["sent_packets"], 30)
+
+	def test_metrics_reads_as_zero_without_a_metal_record(self) -> None:
+		virtual_machine = build_virtual_machine()
+		with (
+			api_request("GET", "/api/atlas/virtual-machines/vm-00001/metrics", tenant_id=TENANT_ID),
+			owned_document(virtual_machine),
+		):
+			status, body = call_route(get_virtual_machine_metrics, virtual_machine_id="vm-00001")
+
+		self.assertEqual(status, 200)
+		self.assertEqual(body["compute"]["cpu_microseconds"], 0)
+		self.assertEqual(body["disk"]["size_mib"], 0)
+		self.assertEqual(body["network"]["sent_packets"], 0)
 
 
 class TestVirtualMachineActions(UnitTestCase):

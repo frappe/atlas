@@ -63,6 +63,7 @@ func TestMonitorObservesPacketsWithoutAGuest(t *testing.T) {
 	baseline := sampleTraffic(t, monitor, target)
 	sendHostPacket(t, namespacePath, "udp")
 	withoutReader := waitForNewTraffic(t, monitor, target, baseline.PacketSequence)
+	assertReceivedCounterAdvanced(t, monitor, target, TrafficCounters{})
 
 	tapQueue := openTapQueue(t, namespacePath)
 	t.Cleanup(func() { _ = unix.Close(tapQueue) })
@@ -70,9 +71,46 @@ func TestMonitorObservesPacketsWithoutAGuest(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertTrafficUnchanged(t, monitor, target, withoutReader.PacketSequence)
+	assertSentCounterAdvanced(t, monitor, target, TrafficCounters{})
 
 	sendHostPacket(t, namespacePath, "tcp")
 	waitForNewTraffic(t, monitor, target, withoutReader.PacketSequence)
+}
+
+// assertReceivedCounterAdvanced waits for the received counter to advance.
+func assertReceivedCounterAdvanced(t *testing.T, monitor *Monitor, target Target, previous TrafficCounters) TrafficCounters {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		received, _, err := monitor.Counters(target)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if received.Packets > previous.Packets {
+			return received
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatal("received counter did not advance")
+	return TrafficCounters{}
+}
+
+// assertSentCounterAdvanced waits for the sent counter to advance.
+func assertSentCounterAdvanced(t *testing.T, monitor *Monitor, target Target, previous TrafficCounters) TrafficCounters {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		_, sent, err := monitor.Counters(target)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if sent.Packets > previous.Packets {
+			return sent
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatal("sent counter did not advance")
+	return TrafficCounters{}
 }
 
 func sampleTraffic(t *testing.T, monitor *Monitor, target Target) Sample {

@@ -29,6 +29,7 @@ func (s *Server) registerRoutes(router *echo.Echo) {
 	virtualMachineRoutes.DELETE("/:id", s.deleteVirtualMachine)
 	virtualMachineRoutes.POST("/:id/snapshots", s.createVirtualMachineSnapshot)
 	virtualMachineRoutes.GET("/:id/console", s.getVirtualMachineConsole)
+	virtualMachineRoutes.GET("/:id/metrics", s.getVirtualMachineMetrics)
 
 	snapshotRoutes := versionOneRoutes.Group("/snapshots")
 	snapshotRoutes.POST("/:id/upload", s.uploadSnapshot)

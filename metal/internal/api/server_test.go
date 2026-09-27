@@ -20,7 +20,8 @@ import (
 )
 
 type fakeVM struct {
-	info vm.Information
+	info    vm.Information
+	metrics vm.Metrics
 }
 
 type fakeVirtualMachineManager struct {
@@ -70,6 +71,15 @@ func (manager *fakeVirtualMachineManager) Information(_ context.Context, id stri
 	}
 
 	return virtualMachine.info, nil
+}
+
+func (manager *fakeVirtualMachineManager) Metrics(_ context.Context, id string) (vm.Metrics, error) {
+	virtualMachine, found := manager.virtualMachines[id]
+	if !found {
+		return vm.Metrics{}, vm.ErrNotFound
+	}
+
+	return virtualMachine.metrics, nil
 }
 
 func (manager *fakeVirtualMachineManager) List(context.Context) ([]vm.Information, error) {
@@ -392,6 +402,43 @@ const (
 	validCreateRequest = `{"compute":{"cpu_millicores":1000,"memory_mib":512},"disk":{"size_mib":1024,"throughput_mibps":0,"iops":0},"image":{"ref":"ubuntu","architecture":"amd64","rootfs":{"url":"https://atlas.example/ubuntu.ext4?signature=secret","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"kernel":{"url":"https://atlas.example/vmlinux?signature=secret","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}},"network":{"wireguard_mesh_ipv6":"fdaa:1:0:7::1","routes":[{"destination":"0.0.0.0/0","via":"host"}],"firewall":{"enabled":false,"inbound":[],"outbound":[]}},"guest":{"hostname":"vm1","ssh_keys":[],"metadata":{},"user_data":""}}`
 	validSSHKey        = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA user@example"
 )
+
+func TestGetVirtualMachineMetricsReturnsUsage(t *testing.T) {
+	manager := &fakeVirtualMachineManager{virtualMachines: map[string]*fakeVM{}}
+	server := newServer(t, manager)
+	do(t, server, http.MethodPut, "/v1/vms/vm1", validCreateRequest, http.StatusAccepted)
+	manager.virtualMachines["vm1"].metrics = vm.Metrics{
+		DiskMiB:              1024,
+		DiskUsedMiB:          128,
+		CPUUsageMicroseconds: 42_000_000,
+		MemoryBytes:          536870912,
+		ReceivedBytes:        2048,
+		ReceivedPackets:      4,
+		SentBytes:            1024,
+		SentPackets:          2,
+	}
+
+	recorder := do(t, server, http.MethodGet, "/v1/vms/vm1/metrics", "", http.StatusOK)
+	var response virtualMachineMetricsResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Compute.CPUMicroseconds != 42_000_000 || response.Compute.MemoryBytes != 536870912 {
+		t.Fatalf("compute = %+v", response.Compute)
+	}
+	if response.Disk.SizeMiB != 1024 || response.Disk.UsedMiB != 128 {
+		t.Fatalf("disk = %+v", response.Disk)
+	}
+	if response.Network.ReceivedBytes != 2048 || response.Network.ReceivedPackets != 4 ||
+		response.Network.SentBytes != 1024 || response.Network.SentPackets != 2 {
+		t.Fatalf("network = %+v", response.Network)
+	}
+}
+
+func TestGetVirtualMachineMetricsRejectsAMissingVirtualMachine(t *testing.T) {
+	server := newTestServer(t)
+	do(t, server, http.MethodGet, "/v1/vms/missing/metrics", "", http.StatusNotFound)
+}
 
 func TestReplaceSSHKeysReturnsUpdatedVirtualMachine(t *testing.T) {
 	server := newTestServer(t)

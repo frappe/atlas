@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 from frappe.tests import UnitTestCase
 
-from atlas.vm.core.metal_models import MetalVirtualMachine, timestamp_field
+from atlas.vm.core.metal_models import MetalVirtualMachine, MetalVirtualMachineMetrics, timestamp_field
 
 SWAGGER_PATH = pathlib.Path(__file__).parents[3] / "metal" / "internal" / "api" / "swagger.json"
 
@@ -167,6 +167,45 @@ class TestMetalVirtualMachineParsing(UnitTestCase):
 		decoded = json.loads(json.dumps(machine.as_dict()))
 
 		self.assertEqual(MetalVirtualMachine.from_dict(decoded), machine)
+
+
+class TestMetalVirtualMachineMetricsParsing(UnitTestCase):
+	def test_a_complete_response_parses_into_typed_values(self) -> None:
+		metrics = MetalVirtualMachineMetrics.from_dict(
+			{
+				"compute": {"cpu_microseconds": 42_000_000, "memory_bytes": 536870912},
+				"disk": {"size_mib": 10240, "used_mib": 5},
+				"network": {
+					"received_bytes": 0,
+					"received_packets": 0,
+					"sent_bytes": 2232,
+					"sent_packets": 30,
+				},
+			}
+		)
+
+		self.assertEqual(metrics.compute.cpu_microseconds, 42_000_000)
+		self.assertEqual(metrics.compute.memory_bytes, 536870912)
+		self.assertEqual(metrics.disk.size_mib, 10240)
+		self.assertEqual(metrics.disk.used_mib, 5)
+		self.assertEqual(metrics.network.sent_bytes, 2232)
+		self.assertEqual(metrics.network.sent_packets, 30)
+
+	def test_a_response_missing_a_required_group_is_rejected(self) -> None:
+		for removed in ("compute", "disk", "network"):
+			response = {
+				"compute": {"cpu_microseconds": 0, "memory_bytes": 0},
+				"disk": {"size_mib": 0, "used_mib": 0},
+				"network": {
+					"received_bytes": 0,
+					"received_packets": 0,
+					"sent_bytes": 0,
+					"sent_packets": 0,
+				},
+			}
+			del response[removed]
+			with self.assertRaises(ValueError):
+				MetalVirtualMachineMetrics.from_dict(response)
 
 
 class TestMetalTimestamps(UnitTestCase):

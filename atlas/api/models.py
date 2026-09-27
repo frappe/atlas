@@ -32,7 +32,7 @@ if TYPE_CHECKING:
 	from atlas.metal_server.doctype.public_ip_allocation.public_ip_allocation import (
 		PublicIPAllocation,
 	)
-	from atlas.vm.core.metal_models import MetalVirtualMachine
+	from atlas.vm.core.metal_models import MetalVirtualMachine, MetalVirtualMachineMetrics
 	from atlas.vm.doctype.virtual_machine.virtual_machine import VirtualMachine
 	from atlas.vm.doctype.virtual_machine_image.virtual_machine_image import VirtualMachineImage
 
@@ -913,6 +913,83 @@ def public_ip_allocations_for(virtual_machine: str) -> dict[int, PublicIPRespons
 	)
 	tags = read_tags_for("Public IP Allocation", [row.name for row in rows])
 	return {int(row.version): PublicIPResponse.from_document(row, tags[row.name]) for row in rows}
+
+
+class VirtualMachineComputeUsage(BaseModel):
+	"""Cumulative CPU time and current memory use."""
+
+	cpu_microseconds: int = Field(description="Cumulative CPU time since the guest's process started.")
+	memory_bytes: int = Field(description="Current resident memory.")
+
+
+class VirtualMachineDiskUsage(BaseModel):
+	"""The disk's requested size and its use as of the last reconcile pass."""
+
+	size_mib: int = Field(description="Requested disk size.")
+	used_mib: int = Field(description="Disk use as of the last reconcile pass.")
+
+
+class VirtualMachineNetworkUsage(BaseModel):
+	"""Cumulative received and sent bytes and packets."""
+
+	received_bytes: int = Field(description="Cumulative bytes received by the guest.")
+	received_packets: int = Field(description="Cumulative packets received by the guest.")
+	sent_bytes: int = Field(description="Cumulative bytes sent by the guest.")
+	sent_packets: int = Field(description="Cumulative packets sent by the guest.")
+
+
+class VirtualMachineMetricsResponse(BaseModel):
+	"""The current resource use of one virtual machine.
+
+	A virtual machine that is neither running nor paused reports its disk
+	alone: CPU, memory, and network read as zero.
+	"""
+
+	model_config = ConfigDict(
+		json_schema_extra={
+			"examples": [
+				{
+					"id": "vm-0000001",
+					"compute": {"cpu_microseconds": 75979252, "memory_bytes": 811667456},
+					"disk": {"size_mib": 10240, "used_mib": 5},
+					"network": {
+						"received_bytes": 0,
+						"received_packets": 0,
+						"sent_bytes": 2232,
+						"sent_packets": 30,
+					},
+				}
+			]
+		}
+	)
+
+	id: str = Field(description="Virtual machine ID.")
+	compute: VirtualMachineComputeUsage
+	disk: VirtualMachineDiskUsage
+	network: VirtualMachineNetworkUsage
+
+	@classmethod
+	def from_metrics(
+		cls, virtual_machine_id: str, metrics: MetalVirtualMachineMetrics
+	) -> VirtualMachineMetricsResponse:
+		"""Build a metrics response from one Metal metrics read."""
+		return cls(
+			id=virtual_machine_id,
+			compute=VirtualMachineComputeUsage(
+				cpu_microseconds=metrics.compute.cpu_microseconds,
+				memory_bytes=metrics.compute.memory_bytes,
+			),
+			disk=VirtualMachineDiskUsage(
+				size_mib=metrics.disk.size_mib,
+				used_mib=metrics.disk.used_mib,
+			),
+			network=VirtualMachineNetworkUsage(
+				received_bytes=metrics.network.received_bytes,
+				received_packets=metrics.network.received_packets,
+				sent_bytes=metrics.network.sent_bytes,
+				sent_packets=metrics.network.sent_packets,
+			),
+		)
 
 
 class ConsoleTokenResponse(BaseModel):
