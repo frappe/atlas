@@ -64,6 +64,12 @@
    "read_only": 1
   },
   {
+   "fieldname": "datum_tokens_expire_on",
+   "fieldtype": "Datetime",
+   "label": "Datum Tokens Expire On",
+   "read_only": 1
+  },
+  {
    "default": "Pending",
    "fieldname": "status",
    "fieldtype": "Select",
