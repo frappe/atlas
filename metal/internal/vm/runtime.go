@@ -21,6 +21,17 @@ type Runtime interface {
 	// lower the limit in the machine specification for a temporary throttle.
 	RefreshDisk(context.Context, RuntimeMachine) error
 	ConnectSSH(context.Context, RuntimeMachine) (SSHConnection, error)
+	// Usage reads the machine's current cgroup memory and CPU use. A machine
+	// with no running process reads as a zero Usage.
+	Usage(context.Context, RuntimeMachine) (Usage, error)
+}
+
+// Usage describes a running machine's current resource use.
+type Usage struct {
+	// MemoryBytes is a gauge, not cumulative.
+	MemoryBytes uint64
+	// CPUUsageMicroseconds is cumulative CPU time.
+	CPUUsageMicroseconds uint64
 }
 
 // RuntimeMachine contains the complete input for one runtime operation.

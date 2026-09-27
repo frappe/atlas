@@ -328,6 +328,15 @@ def virtual_machine_response() -> dict:
 	}
 
 
+def virtual_machine_metrics_response() -> dict:
+	"""Return the metrics body the metrics route answers with."""
+	return {
+		"compute": {"cpu_microseconds": 42_000_000, "memory_bytes": 536870912},
+		"disk": {"size_mib": 10240, "used_mib": 5},
+		"network": {"received_bytes": 0, "received_packets": 0, "sent_bytes": 2232, "sent_packets": 30},
+	}
+
+
 COMPUTE_REQUEST = {
 	"cpu_millicores": 2000,
 	"memory_mib": 2048,
@@ -448,6 +457,21 @@ class TestMetalClientVirtualMachineRoutes(UnitTestCase):
 		self.assertEqual(bodies[4], network)
 		self.assertEqual(bodies[5], {"ssh_keys": ["ssh-ed25519 AAAA"]})
 		self.assertEqual(bodies[6], {"metadata": {"env": "prod"}})
+
+	def test_get_metrics_reads_the_metrics_route(self) -> None:
+		client = build_client()
+
+		with patch(
+			"atlas.vm.core.metal_client.requests.Session.request",
+			return_value=build_response(200, virtual_machine_metrics_response()),
+		) as request:
+			metrics = client.get_virtual_machine_metrics("VM-00001")
+
+		self.assertEqual(request.call_args.args[:2], ("GET", "https://10.0.0.2:9000/v1/vms/VM-00001/metrics"))
+		self.assertEqual(metrics.compute.cpu_microseconds, 42_000_000)
+		self.assertEqual(metrics.compute.memory_bytes, 536870912)
+		self.assertEqual(metrics.disk.size_mib, 10240)
+		self.assertEqual(metrics.network.sent_packets, 30)
 
 	def test_snapshot_calls_use_unified_image_paths(self) -> None:
 		client = build_client()

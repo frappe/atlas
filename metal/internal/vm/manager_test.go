@@ -33,6 +33,8 @@ type fakeRuntime struct {
 	saveError      error
 	deleteError    error
 	coldStartError error
+	usage          Usage
+	usageError     error
 }
 
 func (runtime *fakeRuntime) Inspect(context.Context, RuntimeMachine) (RuntimeStatus, error) {
@@ -132,6 +134,10 @@ func (runtime *fakeRuntime) RefreshDisk(_ context.Context, machine RuntimeMachin
 
 func (runtime *fakeRuntime) ConnectSSH(context.Context, RuntimeMachine) (SSHConnection, error) {
 	return nil, nil
+}
+
+func (runtime *fakeRuntime) Usage(context.Context, RuntimeMachine) (Usage, error) {
+	return runtime.usage, runtime.usageError
 }
 
 type fakeNetwork struct {

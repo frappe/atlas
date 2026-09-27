@@ -28,8 +28,12 @@ from atlas.api.models import (
 	SnapshotPayload,
 	SSHKeysReplacementPayload,
 	TerminationProtectionPayload,
+	VirtualMachineComputeUsage,
 	VirtualMachineDetailResponse,
+	VirtualMachineDiskUsage,
 	VirtualMachineListResponse,
+	VirtualMachineMetricsResponse,
+	VirtualMachineNetworkUsage,
 	VirtualMachineResponse,
 )
 from atlas.api.router import (
@@ -179,6 +183,27 @@ def get_virtual_machine(virtual_machine_id: str) -> VirtualMachineDetailResponse
 	virtual_machine = get_owned_virtual_machine(virtual_machine_id)
 	information = virtual_machine.get_metal_vm_info()
 	return VirtualMachineDetailResponse.from_document_and_metal(virtual_machine, information)
+
+
+@virtual_machines.get("<virtual_machine_id>/metrics")
+@api_docs()
+def get_virtual_machine_metrics(virtual_machine_id: str) -> VirtualMachineMetricsResponse:
+	"""Get VM metrics.
+
+	Returns the current CPU, memory, disk, and network use of one VM. CPU and network values are cumulative counters since the guest's current process started. Memory is a point-in-time gauge. Disk values are as fresh as the last reconcile pass. A VM that is neither running nor paused reports its disk alone.
+	"""
+	virtual_machine = get_owned_virtual_machine(virtual_machine_id)
+	metrics = virtual_machine.get_metal_vm_metrics()
+	if metrics is None:
+		return VirtualMachineMetricsResponse(
+			id=virtual_machine_id,
+			compute=VirtualMachineComputeUsage(cpu_microseconds=0, memory_bytes=0),
+			disk=VirtualMachineDiskUsage(size_mib=0, used_mib=0),
+			network=VirtualMachineNetworkUsage(
+				received_bytes=0, received_packets=0, sent_bytes=0, sent_packets=0
+			),
+		)
+	return VirtualMachineMetricsResponse.from_metrics(virtual_machine_id, metrics)
 
 
 @virtual_machines.delete("<virtual_machine_id>")

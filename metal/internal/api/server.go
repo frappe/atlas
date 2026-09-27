@@ -56,6 +56,7 @@ type VirtualMachineManager interface {
 	Delete(context.Context, string) error
 	CreateSnapshot(context.Context, string) (vm.StagedSnapshot, error)
 	ConnectSSH(context.Context, string) (vm.SSHConnection, error)
+	Metrics(context.Context, string) (vm.Metrics, error)
 }
 
 // MigrationManager owns this host's migration records and reservations.

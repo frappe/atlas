@@ -274,7 +274,7 @@ func serve(options options, logger *slog.Logger) (serveError error) {
 		}
 		daemon.OwnTrafficMonitor(trafficMonitor)
 	}
-	networkManager := network.NewLinuxAllocator(mesh, trafficMonitor)
+	networkManager := network.NewLinuxAllocator(mesh, trafficMonitor, logger)
 	virtualMachineRuntime := firecracker.NewRuntime(
 		options.cfg,
 		units,

@@ -177,6 +177,64 @@ class MetalVirtualMachine:
 		return asdict(self)
 
 
+@dataclass(frozen=True, slots=True)
+class MetalComputeUsage:
+	"""Store cumulative CPU time and current memory use."""
+
+	cpu_microseconds: int
+	memory_bytes: int
+
+
+@dataclass(frozen=True, slots=True)
+class MetalDiskUsage:
+	"""Store the disk's requested size and its use as of the last reconcile pass."""
+
+	size_mib: int
+	used_mib: int
+
+
+@dataclass(frozen=True, slots=True)
+class MetalNetworkUsage:
+	"""Store cumulative received and sent bytes and packets."""
+
+	received_bytes: int
+	received_packets: int
+	sent_bytes: int
+	sent_packets: int
+
+
+@dataclass(frozen=True, slots=True)
+class MetalVirtualMachineMetrics:
+	"""Store the current resource use of one virtual machine."""
+
+	compute: MetalComputeUsage
+	disk: MetalDiskUsage
+	network: MetalNetworkUsage
+
+	@classmethod
+	def from_dict(cls, value: dict[str, Any]) -> MetalVirtualMachineMetrics:
+		"""Parse one Metal virtual machine metrics response."""
+		compute = object_field(value, "compute")
+		disk = object_field(value, "disk")
+		network = object_field(value, "network")
+		return cls(
+			compute=MetalComputeUsage(
+				cpu_microseconds=integer_field(compute, "cpu_microseconds"),
+				memory_bytes=integer_field(compute, "memory_bytes"),
+			),
+			disk=MetalDiskUsage(
+				size_mib=integer_field(disk, "size_mib"),
+				used_mib=integer_field(disk, "used_mib"),
+			),
+			network=MetalNetworkUsage(
+				received_bytes=integer_field(network, "received_bytes"),
+				received_packets=integer_field(network, "received_packets"),
+				sent_bytes=integer_field(network, "sent_bytes"),
+				sent_packets=integer_field(network, "sent_packets"),
+			),
+		)
+
+
 def parse_desired_state(value: dict[str, Any]) -> MetalDesiredState:
 	"""Parse the desired half of a Metal VM response."""
 	compute = object_field(value, "compute")
