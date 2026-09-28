@@ -88,6 +88,23 @@ class TestVirtualMachineRequest(UnitTestCase):
 		self.assertEqual(request.cpu_millicores, 1500)
 		self.assertEqual(request.routes, DEFAULT_ROUTES)
 		self.assertEqual(request.firewall, FirewallConfiguration())
+		self.assertFalse(request.disk_encryption)
+
+	def test_request_parses_disk_encryption(self) -> None:
+		request = VirtualMachineCreateRequest.from_value(
+			{
+				"virtual_machine_image": "Ubuntu 24.04 (Disk Encryption)",
+				"cpu_millicores": 1500,
+				"memory_mib": 2048,
+				"disk_mib": 10240,
+				"tenant_id": 7,
+				"disk_encryption": True,
+				"sleep_after_idle_seconds": 1800,
+			}
+		)
+
+		self.assertTrue(request.disk_encryption)
+		self.assertEqual(request.sleep_after_idle_seconds, 1800)
 
 	def test_request_parses_a_firewall(self) -> None:
 		request = VirtualMachineCreateRequest.from_value(
@@ -963,7 +980,7 @@ class TestVirtualMachinePrivilege(UnitTestCase):
 class TestSystemImageCreation(UnitTestCase):
 	"""Only tenant 0 may share an image or set the host image flags."""
 
-	def create_image(self, *, tenant_id: int, **options):
+	def create_image(self, *, tenant_id: int, disk_encryption: bool = False, **options):
 		"""Run one snapshot request for one tenant."""
 		virtual_machine = VirtualMachine.__new__(VirtualMachine)
 		virtual_machine.name = "VM-00001"
@@ -971,6 +988,7 @@ class TestSystemImageCreation(UnitTestCase):
 		virtual_machine.is_draft = 0
 		virtual_machine.is_terminating = 0
 		virtual_machine.active_migration = None
+		virtual_machine.disk_encryption = disk_encryption
 		virtual_machine.check_permission = Mock()
 		with patch(
 			"atlas.vm.core.vm_image_transfer.VirtualMachineImageTransferService.create_from_virtual_machine",
@@ -994,6 +1012,10 @@ class TestSystemImageCreation(UnitTestCase):
 
 		self.assertEqual(name, "IMG-00001")
 		self.assertEqual(create.call_args.kwargs["image_type"], "machine")
+
+	def test_an_encrypted_virtual_machine_cannot_create_an_image(self) -> None:
+		with self.assertRaisesRegex(AtlasUserError, "encrypted"):
+			self.create_image(tenant_id=7, disk_encryption=True)
 
 	def test_a_shape_without_a_memory_snapshot_is_rejected(self) -> None:
 		with self.assertRaises(AtlasUserError):

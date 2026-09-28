@@ -62,6 +62,15 @@ class TestVirtualMachineResize(UnitTestCase):
 		self.virtual_machine.db_set.assert_called_once_with("sleep_after_idle_seconds", 1800)
 		self.find_server.assert_not_called()
 
+	def test_an_encrypted_virtual_machine_can_enable_idle_sleep(self) -> None:
+		self.virtual_machine.disk_encryption = 1
+
+		self.assertIsNone(self.apply({"sleep_after_idle_seconds": 1800}, state="running"))
+
+		self.metal_client.set_virtual_machine_compute.assert_called_once_with(
+			"VM-00001", {"cpu_millicores": 2000, "memory_mib": 2048, "sleep_after_idle_seconds": 1800}
+		)
+
 	def test_a_retry_repairs_stale_stored_resources(self) -> None:
 		self.virtual_machine.memory_mib = 2048
 		information = build_information()

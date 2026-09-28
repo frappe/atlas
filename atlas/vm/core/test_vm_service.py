@@ -4,9 +4,9 @@ from unittest.mock import Mock, patch
 import frappe
 from frappe.tests import UnitTestCase
 
-from atlas.atlas.core.exceptions import AtlasConflictError
+from atlas.atlas.core.exceptions import AtlasConflictError, AtlasUserError
 from atlas.vm.core.metal_client import MetalClientError
-from atlas.vm.core.models import Route
+from atlas.vm.core.models import Route, VirtualMachineCreateRequest
 from atlas.vm.core.placement import OutOfCapacity, PlacementStrategy
 from atlas.vm.core.vm_service import (
 	InsufficientHostCapacity,
@@ -28,6 +28,48 @@ def build_image(tenant_id: int, image_type: str = "machine") -> VirtualMachineIm
 
 
 class TestVirtualMachineCreation(UnitTestCase):
+	def test_draft_stores_disk_encryption(self) -> None:
+		request = VirtualMachineCreateRequest("encrypted-image", 2000, 2048, 10240, 7, disk_encryption=True)
+		image = SimpleNamespace(name="encrypted-image", architecture="amd64")
+		draft = SimpleNamespace(flags=SimpleNamespace(), insert=Mock())
+		draft.insert.return_value = draft
+
+		with patch("atlas.vm.core.vm_service.frappe.get_doc", return_value=draft) as get_doc:
+			created = VirtualMachineService.insert_draft(request, image, "metal-1")
+
+		self.assertIs(created, draft)
+		self.assertTrue(get_doc.call_args.args[0]["disk_encryption"])
+		self.assertTrue(draft.flags.created_by_virtual_machine_api)
+
+	def test_encryption_requires_an_image_with_an_initrd(self) -> None:
+		image = SimpleNamespace(title="Plain Ubuntu", has_initrd=False)
+		request = {**self.request(), "disk_encryption": True}
+		with (
+			patch.object(VirtualMachineService, "get_image", return_value=image),
+			patch.object(PlacementStrategy, "find_server") as find_server,
+			self.assertRaisesRegex(AtlasUserError, "does not support disk encryption"),
+		):
+			VirtualMachineService.create(request)
+
+		find_server.assert_not_called()
+
+	def test_encryption_with_idle_sleep_reaches_placement(self) -> None:
+		image = SimpleNamespace(
+			title="Encrypted Ubuntu",
+			has_initrd=True,
+			architecture="amd64",
+			validate_compatibility=Mock(),
+		)
+		request = {**self.request(), "disk_encryption": True, "sleep_after_idle_seconds": 1800}
+		with (
+			patch.object(VirtualMachineService, "get_image", return_value=image),
+			patch.object(PlacementStrategy, "find_server", side_effect=OutOfCapacity("retry later")) as find,
+			self.assertRaises(OutOfCapacity),
+		):
+			VirtualMachineService.create(request)
+
+		self.assertTrue(find.call_args.args[0].is_sleepy)
+
 	def test_out_of_capacity_does_not_create_a_vm_draft(self) -> None:
 		image = SimpleNamespace(architecture="amd64", validate_compatibility=Mock())
 		with (
