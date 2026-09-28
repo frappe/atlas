@@ -46,6 +46,51 @@ func TestOnlyOneAddressIsAPublicIPv6Address(t *testing.T) {
 	}
 }
 
+func TestDiskEncryptionIsValid(t *testing.T) {
+	for _, encryption := range []DiskEncryption{"", DiskEncryptionLUKS2} {
+		if !encryption.IsValid() {
+			t.Fatalf("disk encryption %q must be valid", encryption)
+		}
+	}
+	if DiskEncryption("luks1").IsValid() {
+		t.Fatal("LUKS1 must not be a valid disk encryption mode")
+	}
+}
+
+func TestSameReservationIncludesDiskEncryptionAndInitrdDigest(t *testing.T) {
+	first := testSpecification()
+	first.DiskEncryption = DiskEncryptionLUKS2
+	first.Image.InitrdSHA256 = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+	second := first
+	second.Image.InitrdSHA256 = "CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC"
+	if !first.SameReservation(second) {
+		t.Fatal("digest case changed the reservation")
+	}
+
+	second.DiskEncryption = ""
+	if first.SameReservation(second) {
+		t.Fatal("disk encryption did not change the reservation")
+	}
+	second = first
+	second.Image.InitrdSHA256 = "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+	if first.SameReservation(second) {
+		t.Fatal("initrd digest did not change the reservation")
+	}
+}
+
+func TestRefreshImageSourceReplacesTheInitrdURL(t *testing.T) {
+	first := testSpecification()
+	first.Image.InitrdURL = "https://example.com/initrd?token=first"
+	second := first
+	second.Image.InitrdURL = "https://example.com/initrd?token=second"
+
+	refreshed := first.RefreshImageSource(second)
+
+	if refreshed.Image.InitrdURL != second.Image.InitrdURL {
+		t.Fatal("signed initrd URL was not refreshed")
+	}
+}
+
 func TestVirtualCPUCountRoundsMillicoresUp(t *testing.T) {
 	for _, testCase := range []struct {
 		cpuMillicores int
