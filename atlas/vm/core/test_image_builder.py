@@ -276,40 +276,95 @@ class TestUbuntuImageBuilder(UnitTestCase):
 
 
 class TestUbuntuImageBuilderIntegration(IntegrationTestCase):
-	def publish(self, title: str, image_sha256: str) -> None:
+	def publish(self, title: str, image_sha256: str, initrd_sha256: str = "c" * 64) -> None:
 		with (
-			patch("atlas.vm.core.image_builder.get_sha256", side_effect=[image_sha256, "b" * 64]),
+			patch(
+				"atlas.vm.core.image_builder.get_sha256",
+				side_effect=[image_sha256, "b" * 64, initrd_sha256],
+			),
 			patch("atlas.vm.core.image_builder.Path.stat", return_value=SimpleNamespace(st_size=MEBIBYTE)),
 			patch(
 				"atlas.vm.core.image_builder.upload_to_object_storage",
-				side_effect=lambda name, _image, _kernel: {
+				side_effect=lambda name, _image, _kernel, initrd=None: {
 					"image_object_key": f"images/{name}/rootfs.img",
 					"kernel_object_key": f"images/{name}/kernel",
+					**({"initrd_object_key": f"images/{name}/initrd"} if initrd else {}),
 				},
 			),
 		):
-			publish_ubuntu_image(title, "24.04", "amd64", Path("rootfs.img"), Path("kernel"))
+			publish_ubuntu_image(
+				title,
+				"24.04",
+				"amd64",
+				Path("rootfs.img"),
+				Path("kernel"),
+				Path("initrd"),
+			)
 
-	def test_each_build_retires_the_protected_build_before_it(self) -> None:
+	def test_each_lineage_retires_the_protected_build_before_it(self) -> None:
 		title = f"test-ubuntu-{frappe.generate_hash(length=8)}"
 		self.publish(title, "a" * 64)
 		self.publish(title, "c" * 64)
 		self.publish(title, "d" * 64)
 
-		images = frappe.get_all(
-			"Virtual Machine Image",
-			filters={"title": title},
-			fields=["image_sha256", "status", "is_termination_protected"],
-		)
-		statuses = {image.image_sha256[0]: (image.status, image.is_termination_protected) for image in images}
-		self.assertEqual(statuses, {"a": ("Archived", 0), "c": ("Archived", 0), "d": ("Available", 1)})
+		for variant_title in (title, f"{title} (Disk Encryption)"):
+			images = frappe.get_all(
+				"Virtual Machine Image",
+				filters={"title": variant_title},
+				fields=["image_sha256", "status", "is_termination_protected"],
+			)
+			statuses = {
+				image.image_sha256[0]: (image.status, image.is_termination_protected) for image in images
+			}
+			self.assertEqual(
+				statuses,
+				{"a": ("Archived", 0), "c": ("Archived", 0), "d": ("Available", 1)},
+			)
 
-	def test_published_record_owns_its_object_keys(self) -> None:
+	def test_published_variants_own_their_object_keys(self) -> None:
 		title = f"test-ubuntu-{frappe.generate_hash(length=8)}"
 		self.publish(title, "a" * 64)
 
-		name = frappe.get_all("Virtual Machine Image", filters={"title": title}, pluck="name")[0]
-		image = frappe.get_doc("Virtual Machine Image", name)
-		self.assertEqual(image.image_object_key, f"images/{name}/rootfs.img")
-		self.assertEqual(image.kernel_object_key, f"images/{name}/kernel")
-		self.assertEqual(image.version, 1)
+		plain_name = frappe.get_all("Virtual Machine Image", filters={"title": title}, pluck="name")[0]
+		plain_image = frappe.get_doc("Virtual Machine Image", plain_name)
+		self.assertEqual(plain_image.image_object_key, f"images/{plain_name}/rootfs.img")
+		self.assertEqual(plain_image.kernel_object_key, f"images/{plain_name}/kernel")
+		self.assertFalse(plain_image.has_initrd)
+
+		encrypted_title = f"{title} (Disk Encryption)"
+		encrypted_name = frappe.get_all(
+			"Virtual Machine Image", filters={"title": encrypted_title}, pluck="name"
+		)[0]
+		encrypted_image = frappe.get_doc("Virtual Machine Image", encrypted_name)
+		self.assertEqual(encrypted_image.image_object_key, f"images/{encrypted_name}/rootfs.img")
+		self.assertEqual(encrypted_image.kernel_object_key, f"images/{encrypted_name}/kernel")
+		self.assertEqual(encrypted_image.initrd_object_key, f"images/{encrypted_name}/initrd")
+		self.assertTrue(encrypted_image.has_initrd)
+		self.assertEqual(
+			{tag.key: tag.value for tag in encrypted_image.tags}["disk_encryption"],
+			"luks2",
+		)
+
+	def test_an_initrd_change_replaces_only_the_encryption_lineage(self) -> None:
+		title = f"test-ubuntu-{frappe.generate_hash(length=8)}"
+		self.publish(title, "a" * 64, "c" * 64)
+		self.publish(title, "a" * 64, "d" * 64)
+
+		plain_images = frappe.get_all(
+			"Virtual Machine Image", filters={"title": title}, fields=["status", "is_termination_protected"]
+		)
+		self.assertEqual(
+			[(image.status, image.is_termination_protected) for image in plain_images],
+			[("Available", 1)],
+		)
+
+		encrypted_images = frappe.get_all(
+			"Virtual Machine Image",
+			filters={"title": f"{title} (Disk Encryption)"},
+			fields=["initrd_sha256", "status", "is_termination_protected"],
+		)
+		statuses = {
+			image.initrd_sha256[0]: (image.status, image.is_termination_protected)
+			for image in encrypted_images
+		}
+		self.assertEqual(statuses, {"c": ("Archived", 0), "d": ("Available", 1)})

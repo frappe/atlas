@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 from click.testing import CliRunner
 from frappe.tests import UnitTestCase
@@ -92,6 +92,23 @@ class TestBuildUbuntuBaseImageCommand(UnitTestCase):
 			"amd64",
 			image_path,
 			kernel_path,
+			initrd_path,
 			"Site File",
+		)
+		destroy.assert_called_once_with()
+
+	def test_skip_existing_requires_plain_and_encryption_variants(self) -> None:
+		with (
+			patch.object(commands.frappe, "init"),
+			patch.object(commands.frappe, "connect"),
+			patch.object(commands.frappe.db, "exists", side_effect=[True, False]) as exists,
+			patch.object(commands.frappe, "destroy") as destroy,
+		):
+			available = commands.is_image_available("test.local", "ubuntu-24.04", "amd64")
+
+		self.assertFalse(available)
+		self.assertEqual(
+			[call.args[1]["title"] for call in exists.call_args_list],
+			["ubuntu-24.04", "ubuntu-24.04 (Disk Encryption)"],
 		)
 		destroy.assert_called_once_with()
