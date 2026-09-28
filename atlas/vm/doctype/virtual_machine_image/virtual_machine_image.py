@@ -20,7 +20,7 @@ SIGNED_URL_EXPIRY_SECONDS = 86400
 MAXIMUM_SNAPSHOT_VIRTUAL_CPU_COUNT = MAXIMUM_CPU_MILLICORES // 1000
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 
-Artifact = Literal["rootfs", "kernel"]
+Artifact = Literal["rootfs", "kernel", "initrd"]
 
 
 class ImageDownload(TypedDict):
@@ -179,21 +179,33 @@ class VirtualMachineImage(Document):
 	@frappe.whitelist()
 	def get_presigned_download_url(self, artifact: Artifact) -> ImageDownload:
 		"""Return one signed artifact URL with its size, digest, and expiry time."""
-		if artifact not in ("rootfs", "kernel"):
-			frappe.throw(_("Artifact must be rootfs or kernel."))
+		if artifact not in ("rootfs", "kernel", "initrd"):
+			frappe.throw(_("Artifact must be rootfs or kernel, or initrd."))
 
 		self.validate_is_available()
+		if artifact == "initrd" and not self.has_initrd:
+			frappe.throw(_("Virtual Machine Image {0} has no initrd.").format(self.title))
 		if self.is_stored_in_site_file:
 			frappe.throw(
 				_("Virtual Machine Image {0} is not in object storage.").format(self.title),
 				exc=AtlasConflictError,
 			)
 
+		size_mib = {
+			"rootfs": self.image_size_mib,
+			"kernel": self.kernel_size_mib,
+			"initrd": self.get("initrd_size_mib"),
+		}[artifact]
+		sha256 = {
+			"rootfs": self.image_sha256,
+			"kernel": self.kernel_sha256,
+			"initrd": self.get("initrd_sha256"),
+		}[artifact]
 		return {
 			"artifact": artifact,
 			"url": self.get_artifact_url(artifact),
-			"size_mib": self.image_size_mib if artifact == "rootfs" else self.kernel_size_mib,
-			"sha256": self.image_sha256 if artifact == "rootfs" else self.kernel_sha256,
+			"size_mib": size_mib,
+			"sha256": sha256,
 			"expires_in": SIGNED_URL_EXPIRY_SECONDS,
 			"expires_at": str(add_to_date(now_datetime(), seconds=SIGNED_URL_EXPIRY_SECONDS)),
 		}
@@ -205,13 +217,23 @@ class VirtualMachineImage(Document):
 
 	def get_artifact_url(self, artifact: Artifact, expiry_seconds: int = SIGNED_URL_EXPIRY_SECONDS) -> str:
 		"""Return the download URL for one artifact."""
+		if artifact == "initrd" and not self.has_initrd:
+			frappe.throw(_("Virtual Machine Image {0} has no initrd.").format(self.title))
 		if self.is_stored_in_site_file:
-			file_name = self.image_file if artifact == "rootfs" else self.kernel_file
+			file_name = {
+				"rootfs": self.image_file,
+				"kernel": self.kernel_file,
+				"initrd": self.get("initrd_file"),
+			}[artifact]
 			if not file_name:
 				frappe.throw(_("Virtual Machine Image {0} has no {1} file.").format(self.title, artifact))
 			return get_download_url(file_name)
 
-		object_key = self.image_object_key if artifact == "rootfs" else self.kernel_object_key
+		object_key = {
+			"rootfs": self.image_object_key,
+			"kernel": self.kernel_object_key,
+			"initrd": self.get("initrd_object_key"),
+		}[artifact]
 		return self.get_object_url(object_key, expiry_seconds)
 
 	def validate_memory_snapshot_configuration(self) -> None:
