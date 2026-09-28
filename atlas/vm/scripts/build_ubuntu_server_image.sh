@@ -4,6 +4,7 @@ set -euo pipefail
 
 output=""
 kernel_output=""
+initrd_output=""
 architecture=""
 version=""
 minimal=false
@@ -15,6 +16,7 @@ while [[ $# -gt 0 ]]; do
 	case "$1" in
 		--output) output=$2; shift 2 ;;
 		--kernel-output) kernel_output=$2; shift 2 ;;
+		--initrd-output) initrd_output=$2; shift 2 ;;
 		--architecture) architecture=$2; shift 2 ;;
 		--version) version=$2; shift 2 ;;
 		--minimal) minimal=true; shift ;;
@@ -42,6 +44,8 @@ case "$version" in
 		rootfs_sha256="a4f612de4736d534a5617531eb7c1771b0b14878549c9d32191fd50e3077eb4f"
 		kernel_url="https://cloud-images.ubuntu.com/releases/noble/release-20260518/unpacked/ubuntu-24.04-server-cloudimg-amd64-vmlinuz-generic"
 		kernel_sha256="3a33b65c88f98a5563c926d5b163ebe09706e5084ba587a19c1b15bd3e7a82d6"
+		initrd_rootfs_url="https://cloud-images.ubuntu.com/releases/noble/release-20260518/ubuntu-24.04-server-cloudimg-amd64.squashfs"
+		initrd_rootfs_sha256="bb4bc95d539df92c96ad0ed34c017363e4a7a62772c6af1dc3553e06ce710b74"
 		;;
 	24.04)
 		if $minimal; then
@@ -56,25 +60,54 @@ case "$version" in
 			kernel_url="$release_url/unpacked/ubuntu-24.04-server-cloudimg-amd64-vmlinuz-generic"
 		fi
 		kernel_sha256="3a33b65c88f98a5563c926d5b163ebe09706e5084ba587a19c1b15bd3e7a82d6"
+		initrd_rootfs_url="https://cloud-images.ubuntu.com/releases/noble/release-20260518/ubuntu-24.04-server-cloudimg-amd64.squashfs"
+		initrd_rootfs_sha256="bb4bc95d539df92c96ad0ed34c017363e4a7a62772c6af1dc3553e06ce710b74"
 		;;
 	*) echo "unsupported version: $version" >&2; exit 2 ;;
 esac
 
+cryptsetup_version="2.8.8"
+cryptsetup_url="https://cdn.kernel.org/pub/linux/utils/cryptsetup/v2.8/cryptsetup-$cryptsetup_version.tar.xz"
+cryptsetup_sha256="3acfa685f2dd7fcc832e0b77bc7093aa7da554a51ce8dafbb4138eaa854eee35"
+
 for command in curl sha256sum unsquashfs mkfs.ext4 truncate zstd; do
 	command -v "$command" >/dev/null || { echo "missing command: $command" >&2; exit 1; }
 done
+if [[ -n $initrd_output ]]; then
+	for command in chroot findmnt lsinitramfs mount strings tar umount; do
+		command -v "$command" >/dev/null || { echo "missing command: $command" >&2; exit 1; }
+	done
+fi
 
 image_path=$(realpath -m "$output")
 kernel_path=$(realpath -m "$kernel_output")
+initrd_path=""
+if [[ -n $initrd_output ]]; then
+	initrd_path=$(realpath -m "$initrd_output")
+fi
 work_path=$(mktemp -d)
+initrd_rootfs_directory=""
+
+unmount_initrd_rootfs() {
+	[[ -n $initrd_rootfs_directory ]] || return 0
+	for mount_point in dev sys proc; do
+		if findmnt -n -M "$initrd_rootfs_directory/$mount_point" >/dev/null; then
+			umount "$initrd_rootfs_directory/$mount_point"
+		fi
+	done
+}
 
 cleanup() {
+	unmount_initrd_rootfs
 	rm -rf "$work_path"
 }
 trap cleanup EXIT
 
 mkdir -p "$(dirname "$image_path")"
 mkdir -p "$(dirname "$kernel_path")"
+if [[ -n $initrd_path ]]; then
+	mkdir -p "$(dirname "$initrd_path")"
+fi
 
 fetch() {
 	local url=$1
@@ -103,6 +136,88 @@ extract_vmlinux() {
 		echo "decompressed kernel is not an ELF vmlinux" >&2
 		return 1
 	fi
+}
+
+build_initrd() {
+	local initrd_rootfs_path="$rootfs_path"
+	local cryptsetup_archive_path="$work_path/cryptsetup-$cryptsetup_version.tar.xz"
+	local cryptsetup_source_directory
+	local initrd_contents="$work_path/initrd-contents"
+	local installed_version
+	local kernel_version
+	local multiarch
+
+	kernel_version=$(strings "$kernel_path" | awk '$1 == "Linux" && $2 == "version" && !found { print $3; found = 1 }')
+	[[ -n $kernel_version ]] || { echo "could not find the kernel version" >&2; return 1; }
+
+	if [[ $rootfs_sha256 != "$initrd_rootfs_sha256" ]]; then
+		initrd_rootfs_path="$work_path/initrd-rootfs.squashfs"
+		fetch "$initrd_rootfs_url" "$initrd_rootfs_sha256" "$initrd_rootfs_path"
+	fi
+	fetch "$cryptsetup_url" "$cryptsetup_sha256" "$cryptsetup_archive_path"
+
+	initrd_rootfs_directory="$work_path/initrd-rootfs"
+	step "extract initrd build root file system"
+	unsquashfs -q -d "$initrd_rootfs_directory" "$initrd_rootfs_path"
+	tar -xJf "$cryptsetup_archive_path" -C "$initrd_rootfs_directory/tmp"
+	cryptsetup_source_directory="/tmp/cryptsetup-$cryptsetup_version"
+
+	mount -t proc proc "$initrd_rootfs_directory/proc"
+	mount -t sysfs sysfs "$initrd_rootfs_directory/sys"
+	mount --bind /dev "$initrd_rootfs_directory/dev"
+	cp --remove-destination /etc/resolv.conf "$initrd_rootfs_directory/etc/resolv.conf"
+
+	step "install initrd build dependencies"
+	chroot "$initrd_rootfs_directory" /usr/bin/env -i \
+		HOME=/root PATH=/usr/sbin:/usr/bin:/sbin:/bin DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1 \
+		apt-get update
+	chroot "$initrd_rootfs_directory" /usr/bin/env -i \
+		HOME=/root PATH=/usr/sbin:/usr/bin:/sbin:/bin DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1 \
+		apt-get install -y --no-install-recommends \
+			cryptsetup-initramfs initramfs-tools "linux-modules-$kernel_version" \
+			build-essential pkg-config libssl-dev libdevmapper-dev libpopt-dev \
+			uuid-dev libjson-c-dev libblkid-dev libudev-dev libargon2-dev
+
+	multiarch=$(chroot "$initrd_rootfs_directory" dpkg-architecture -qDEB_HOST_MULTIARCH)
+	step "build cryptsetup $cryptsetup_version"
+	chroot "$initrd_rootfs_directory" /usr/bin/env -i \
+		HOME=/root PATH=/usr/sbin:/usr/bin:/sbin:/bin \
+		bash -c "cd '$cryptsetup_source_directory' && ./configure --prefix=/usr --libdir='/usr/lib/$multiarch' --disable-asciidoc --disable-ssh-token --enable-libargon2 && make -j\$(nproc) && make install && ldconfig"
+
+	installed_version=$(chroot "$initrd_rootfs_directory" cryptsetup --version)
+	case "$installed_version" in
+		"cryptsetup $cryptsetup_version "*) ;;
+		*) echo "unexpected cryptsetup version: $installed_version" >&2; return 1 ;;
+	esac
+	[[ -d $initrd_rootfs_directory/lib/modules/$kernel_version ]] || {
+		echo "modules do not match kernel $kernel_version" >&2
+		return 1
+	}
+	find "$initrd_rootfs_directory/lib/modules/$kernel_version" -name 'dm-crypt.ko*' -print -quit | grep -q . || {
+		echo "dm-crypt is missing for kernel $kernel_version" >&2
+		return 1
+	}
+
+	install -D -m 0755 "$script_directory/guest/initramfs/scripts/local-top/atlas-cryptroot" \
+		"$initrd_rootfs_directory/etc/initramfs-tools/scripts/local-top/atlas-cryptroot"
+	install -D -m 0755 "$script_directory/guest/initramfs/hooks/atlas-cryptroot" \
+		"$initrd_rootfs_directory/etc/initramfs-tools/hooks/atlas-cryptroot"
+	install -d -m 0755 "$initrd_rootfs_directory/etc/cryptsetup-initramfs"
+	printf '%s\n' 'CRYPTSETUP=y' > "$initrd_rootfs_directory/etc/cryptsetup-initramfs/conf-hook"
+
+	step "build initrd for kernel $kernel_version"
+	chroot "$initrd_rootfs_directory" /usr/bin/env -i \
+		HOME=/root PATH=/usr/sbin:/usr/bin:/sbin:/bin \
+		mkinitramfs -o /tmp/atlas-initrd.img "$kernel_version"
+	mv "$initrd_rootfs_directory/tmp/atlas-initrd.img" "$initrd_path.part"
+	unmount_initrd_rootfs
+
+	lsinitramfs "$initrd_path.part" > "$initrd_contents"
+	grep -qx 'scripts/local-top/atlas-cryptroot' "$initrd_contents"
+	grep -qx 'usr/sbin/cryptsetup' "$initrd_contents"
+	grep -Eq '(^|/)dm-crypt\.ko([^/]*)$' "$initrd_contents"
+	mv "$initrd_path.part" "$initrd_path"
+	step "built initrd with cryptsetup $cryptsetup_version"
 }
 
 install_cloud_init_datasource() {
@@ -236,5 +351,12 @@ mv "$image_path.part" "$image_path"
 step "compress ext4 image"
 zstd -q -T0 -3 -f -o "$image_path.zst" "$image_path"
 
+if [[ -n $initrd_path ]]; then
+	build_initrd
+fi
+
 echo "Built $image_path and $image_path.zst"
 echo "Built $kernel_path"
+if [[ -n $initrd_path ]]; then
+	echo "Built $initrd_path"
+fi
