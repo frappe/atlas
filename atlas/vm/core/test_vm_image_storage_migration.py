@@ -33,10 +33,14 @@ def build_image(**overrides) -> SimpleNamespace:
 		"is_stored_in_site_file": True,
 		"image_file": "file-rootfs",
 		"kernel_file": "file-kernel",
+		"initrd_file": None,
 		"image_object_key": None,
 		"kernel_object_key": None,
+		"initrd_object_key": None,
 		"image_sha256": "a" * 64,
 		"kernel_sha256": "b" * 64,
+		"initrd_sha256": None,
+		"has_initrd": False,
 		"site_file_retention_until": None,
 		"save": Mock(),
 	}
@@ -92,6 +96,7 @@ class TestVirtualMachineImageStorageMigration(UnitTestCase):
 
 		self.assertEqual(image.image_object_key, "images/image-1/rootfs.img")
 		self.assertEqual(image.kernel_object_key, "images/image-1/kernel")
+		self.assertIsNone(image.initrd_object_key)
 		self.assertEqual(image.artifact_storage, "Object Storage")
 		self.assertEqual(image.image_file, "file-rootfs")
 		self.assertEqual(image.kernel_file, "file-kernel")
@@ -99,6 +104,43 @@ class TestVirtualMachineImageStorageMigration(UnitTestCase):
 		image.save.assert_called_once()
 		self.assertEqual(validate_stored_size.call_count, 2)
 		delete_doc.assert_not_called()
+
+	def test_migration_uploads_an_initrd_when_present(self) -> None:
+		image = build_image(
+			has_initrd=True,
+			initrd_file="file-initrd",
+			initrd_sha256="c" * 64,
+		)
+		client = Mock()
+
+		with (
+			patch(
+				"atlas.vm.core.vm_image_storage_migration.frappe.get_doc",
+				side_effect=[
+					image,
+					SimpleNamespace(get_full_path=lambda: "/site/files/aaaaaaaaaaaa-rootfs.ext4"),
+					SimpleNamespace(get_full_path=lambda: "/site/files/bbbbbbbbbbbb-kernel"),
+					SimpleNamespace(get_full_path=lambda: "/site/files/cccccccccccc-initrd"),
+				],
+			),
+			patch(
+				"atlas.vm.core.vm_image_storage_migration.frappe.get_single",
+				return_value=SimpleNamespace(get_object_storage_client=lambda: client),
+			),
+			patch.object(Path, "stat", return_value=SimpleNamespace(st_size=1024)),
+			patch.object(VirtualMachineImageStorageMigration, "validate_stored_size") as validate_stored_size,
+			patch("atlas.vm.core.vm_image_storage_migration.frappe.db", Mock()),
+			patch("atlas.vm.core.vm_image_storage_migration.frappe.delete_doc"),
+			fixed_clock(),
+		):
+			VirtualMachineImageStorageMigration().migrate("image-1")
+
+		self.assertEqual(image.initrd_object_key, "images/image-1/initrd")
+		self.assertEqual(
+			[call.args[1] for call in client.upload_file.call_args_list],
+			["images/image-1/rootfs.img", "images/image-1/kernel", "images/image-1/initrd"],
+		)
+		self.assertEqual(validate_stored_size.call_count, 3)
 
 	def test_a_migrated_image_is_left_alone(self) -> None:
 		image = build_image(artifact_storage="Object Storage", is_stored_in_site_file=False)
@@ -174,15 +216,20 @@ class TestExpiredSiteFileRemoval(UnitTestCase):
 			artifact_storage="Object Storage",
 			is_stored_in_site_file=False,
 			site_file_retention_until="2026-09-16 10:00:00",
+			initrd_file="file-initrd",
 		)
 
 		delete_doc = self.delete(image)
 
 		self.assertIsNone(image.image_file)
 		self.assertIsNone(image.kernel_file)
+		self.assertIsNone(image.initrd_file)
 		self.assertIsNone(image.site_file_retention_until)
 		image.save.assert_called_once()
-		self.assertEqual([call.args[1] for call in delete_doc.call_args_list], ["file-rootfs", "file-kernel"])
+		self.assertEqual(
+			[call.args[1] for call in delete_doc.call_args_list],
+			["file-rootfs", "file-kernel", "file-initrd"],
+		)
 		self.assertTrue(all(call.kwargs["force"] for call in delete_doc.call_args_list))
 
 	def test_a_failed_delete_leaves_the_image_for_the_next_sweep(self) -> None:
