@@ -1,6 +1,7 @@
 package firecracker
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/frappe/atlas/metal/internal/network"
@@ -32,6 +33,26 @@ func TestBootSourceIncludesAnOptionalInitrd(t *testing.T) {
 			}
 			if source.BootArgs != "console=ttyS0 ip=172.16.0.2::172.16.0.1:255.255.255.0::eth0:off" {
 				t.Fatalf("boot arguments = %q", source.BootArgs)
+			}
+		})
+	}
+}
+
+func TestImageCannotSupplyTheDiskEncryptionMode(t *testing.T) {
+	for _, testCase := range []struct {
+		name          string
+		specification vm.Specification
+	}{
+		{"plain", vm.Specification{}},
+		{"encrypted", vm.Specification{DiskEncryption: vm.DiskEncryptionLUKS2}},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			err := validateBootConfiguration(testCase.specification, storage.BootConfiguration{
+				Initrd:     "/initrd",
+				KernelArgs: "console=ttyS0 atlas.disk_encryption=luks2",
+			})
+			if err == nil || !strings.Contains(err.Error(), "boot arguments contain atlas.disk_encryption") {
+				t.Fatalf("error = %v, want image-owned encryption mode rejection", err)
 			}
 		})
 	}
