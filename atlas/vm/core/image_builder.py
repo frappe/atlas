@@ -73,12 +73,36 @@ def publish_ubuntu_image(
 	kernel_path: Path,
 	storage: ArtifactStorage = "Object Storage",
 ) -> None:
-	"""Publish Ubuntu artifacts as a new image record and retire the records it replaces.
+	"""Publish one plain Ubuntu image."""
+	image_sha256 = get_sha256(image_path)
+	kernel_sha256 = get_sha256(kernel_path)
+	publish_ubuntu_image_variant(
+		title=title,
+		version=version,
+		architecture=architecture,
+		image_path=image_path,
+		image_sha256=image_sha256,
+		kernel_path=kernel_path,
+		kernel_sha256=kernel_sha256,
+		storage=storage,
+	)
+
+
+def publish_ubuntu_image_variant(
+	*,
+	title: str,
+	version: str,
+	architecture: str,
+	image_path: Path,
+	image_sha256: str,
+	kernel_path: Path,
+	kernel_sha256: str,
+	storage: ArtifactStorage,
+) -> None:
+	"""Publish one Ubuntu image variant and retire the records it replaces.
 
 	A record never changes its artifacts, because a VM keeps using the image it started from.
 	"""
-	image_sha256 = get_sha256(image_path)
-	kernel_sha256 = get_sha256(kernel_path)
 	previous_images = get_available_ubuntu_images(title, architecture)
 	for image in previous_images:
 		if image.image_sha256 == image_sha256 and image.kernel_sha256 == kernel_sha256:
