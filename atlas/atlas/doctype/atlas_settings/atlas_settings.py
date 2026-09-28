@@ -308,13 +308,13 @@ class AtlasSettings(Document):
 		"""Keep the stored certificate, its private key, and the expiry consistent."""
 		from atlas.atlas.core.tls.certificate import CertificateError, read_certificate, verify_key_pair
 
-		certificate = self.get_password("wildcard_tls_certificate", raise_exception=False)
-		private_key = self.get_password("wildcard_tls_private_key", raise_exception=False)
-		if not certificate:
+		if not self.wildcard_tls_certificate:
 			self.wildcard_tls_private_key = None
 			self.wildcard_tls_expires_on = None
 			return
 
+		certificate = self.get_password("wildcard_tls_certificate", raise_exception=False)
+		private_key = self.get_password("wildcard_tls_private_key", raise_exception=False)
 		if not private_key:
 			frappe.throw(_("Set the wildcard TLS private key together with the certificate."))
 
