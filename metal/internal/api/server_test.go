@@ -56,6 +56,7 @@ func (manager *fakeVirtualMachineManager) Create(_ context.Context, id string, s
 		PublicNetworkThroughputMiBps:  specification.Network.PublicNetworkThroughputMiBps,
 		Firewall:                      specification.Network.Firewall,
 		SleepAfterIdleSeconds:         specification.SleepAfterIdleSeconds,
+		DiskEncryption:                specification.DiskEncryption,
 		DesiredGeneration:             1,
 	}}
 	manager.virtualMachines[id] = virtualMachine
@@ -393,6 +394,11 @@ const (
 	validSSHKey        = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA user@example"
 )
 
+func encryptedCreateRequest() string {
+	body := strings.Replace(validCreateRequest, `{"compute":`, `{"disk_encryption":"luks2","compute":`, 1)
+	return strings.Replace(body, `}},"network":`, `},"initrd":{"url":"https://atlas.example/initrd?signature=secret","sha256":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}},"network":`, 1)
+}
+
 func TestReplaceSSHKeysReturnsUpdatedVirtualMachine(t *testing.T) {
 	server := newTestServer(t)
 	do(t, server, http.MethodPut, "/v1/vms/vm1", validCreateRequest, http.StatusAccepted)
@@ -508,6 +514,48 @@ func TestCreateIsIdempotentAndReturnsAccepted(t *testing.T) {
 	}
 	if got.Observed.Network.MAC != "06:00:00:00:00:01" {
 		t.Fatalf("network MAC = %q", got.Observed.Network.MAC)
+	}
+}
+
+func TestCreateAcceptsDiskEncryptionWithIdleSleep(t *testing.T) {
+	server := newTestServer(t)
+	body := strings.Replace(
+		encryptedCreateRequest(),
+		`"compute":{"cpu_millicores":1000,"memory_mib":512}`,
+		`"compute":{"cpu_millicores":1000,"memory_mib":512,"sleep_after_idle_seconds":1800}`,
+		1,
+	)
+	recorder := do(t, server, http.MethodPut, "/v1/vms/vm1", body, http.StatusAccepted)
+
+	var response virtualMachineResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Desired.DiskEncryption != "luks2" {
+		t.Fatalf("disk_encryption = %q, want luks2", response.Desired.DiskEncryption)
+	}
+	if response.Desired.Compute.SleepAfterIdleSeconds != 1800 {
+		t.Fatalf("sleep_after_idle_seconds = %d, want 1800", response.Desired.Compute.SleepAfterIdleSeconds)
+	}
+	if response.Desired.Image.Initrd == nil || response.Desired.Image.Initrd.SHA256 != strings.Repeat("c", 64) {
+		t.Fatalf("initrd = %+v", response.Desired.Image.Initrd)
+	}
+}
+
+func TestCreateAcceptsAnInitrdWithoutDiskEncryption(t *testing.T) {
+	server := newTestServer(t)
+	body := strings.Replace(encryptedCreateRequest(), `"disk_encryption":"luks2",`, "", 1)
+	do(t, server, http.MethodPut, "/v1/vms/vm1", body, http.StatusAccepted)
+}
+
+func TestCreateRejectsInvalidDiskEncryption(t *testing.T) {
+	for _, body := range []string{
+		strings.Replace(encryptedCreateRequest(), "luks2", "luks1", 1),
+		strings.Replace(validCreateRequest, `{"compute":`, `{"disk_encryption":"luks2","compute":`, 1),
+		strings.Replace(encryptedCreateRequest(), "https://atlas.example/initrd?signature=secret", "file:///initrd", 1),
+		strings.Replace(encryptedCreateRequest(), strings.Repeat("c", 64), "short", 1),
+	} {
+		do(t, newTestServer(t), http.MethodPut, "/v1/vms/vm1", body, http.StatusBadRequest)
 	}
 }
 
