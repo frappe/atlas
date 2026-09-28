@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 from click.testing import CliRunner
 from frappe.tests import UnitTestCase
@@ -108,7 +108,7 @@ class TestBuildUbuntuBaseImageCommand(UnitTestCase):
 
 		self.assertFalse(available)
 		self.assertEqual(
-			[call.args[1]["title"] for call in exists.call_args_list],
+			[recorded_call.args[1]["title"] for recorded_call in exists.call_args_list],
 			["ubuntu-24.04", "ubuntu-24.04 (Disk Encryption)"],
 		)
 		destroy.assert_called_once_with()

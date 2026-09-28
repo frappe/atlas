@@ -174,9 +174,7 @@ class TestUbuntuImageBuilder(UnitTestCase):
 			patch("atlas.vm.core.image_builder.frappe.get_single", return_value=settings),
 			patch("atlas.vm.core.image_builder.upload_with_progress") as upload,
 		):
-			location = upload_to_object_storage(
-				"image-1", Path("rootfs.img"), Path("kernel"), Path("initrd")
-			)
+			location = upload_to_object_storage("image-1", Path("rootfs.img"), Path("kernel"), Path("initrd"))
 
 		self.assertEqual(
 			location,
