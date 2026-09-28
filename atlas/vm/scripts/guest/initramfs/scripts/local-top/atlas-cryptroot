@@ -66,8 +66,9 @@ derive_ext_file_system_bytes() {
 $superblock
 EOF
 
-	[ "$block_count_fields" -eq 1 ] && [ "$block_size_fields" -eq 1 ] || \
+	if [ "$block_count_fields" -ne 1 ] || [ "$block_size_fields" -ne 1 ]; then
 		panic "Atlas: root file system geometry is ambiguous"
+	fi
 	block_count=$(normalize_positive_decimal "$block_count") || \
 		panic "Atlas: root file system block count is invalid"
 	block_size=$(normalize_positive_decimal "$block_size") || \
