@@ -27,6 +27,10 @@ SSH key and metadata updates try to finish within 2 seconds. They return `200` o
 
 Renewed signed image URLs do not change the fingerprint.
 
+Set `disk_encryption` to `luks2` only when `image.initrd` supplies an initrd URL and SHA-256 digest. Metal rejects an encryption request without the initrd. The guest initrd derives the plaintext filesystem boundary, so the create request has no host-calculated boundary value.
+
+See [guest disk encryption](../compute/disk-encryption.md) for the first-boot conversion, console, sleep, and recovery rules.
+
 ## Updates replace, not merge
 
 Power, compute, disk, network, SSH keys, and metadata each replace their complete object. Send the full value, not a change.
