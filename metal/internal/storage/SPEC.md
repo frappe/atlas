@@ -1,6 +1,6 @@
 # storage: ZFS images and VM disks code contract
 
-For Go code, follow the [Go review guide](../../../llm/go-code-review-guide.md). The handbook explains [image transfer](../../../docs/storage/index.md), [host storage](../../../docs/storage/host-storage.md), and the [host layout](../../../docs/storage/host-layout.md).
+For Go code, follow the [Go review guide](../../../llm/go-code-review-guide.md). The handbook explains [image transfer](../../../docs/storage/index.md), [disk encryption](../../../docs/compute/disk-encryption.md), [host storage](../../../docs/storage/host-storage.md), and the [host layout](../../../docs/storage/host-layout.md).
 
 This package imports images, clones VM disks, manages warm artifacts, and stages Machine image uploads. Consumers define the small interfaces they need. This package exports no broad storage interface.
 
@@ -17,8 +17,9 @@ This package imports images, clones VM disks, manages warm artifacts, and stages
 
 ## Invariants
 
-- `EnsureImage` validates architecture, URLs, and SHA-256 values. One image reference cannot identify different content. A dependent VM clone keeps its source image from deletion.
-- `PrepareBoot` ensures the image, kernel link, disk clone and growth, and block node in the jail. `PrepareRootFileSystem` does disk work without the kernel. `Release` promotes dependent staging clones before removing a VM disk.
+- `EnsureImage` validates architecture, URLs, and SHA-256 values. An optional initrd requires both its URL and digest. `EnsureImage` downloads and verifies that initrd. The image manifest stores the initrd digest as part of image identity. One image reference cannot identify different content. A dependent VM clone keeps its source image from deletion.
+- `PrepareBoot` ensures the image, kernel link, optional initrd link, disk clone and growth, and block node in the jail. It exposes an image initrd as `/initrd` in the jail. `PrepareRootFileSystem` does disk work without the boot artifacts. `Release` promotes dependent staging clones before removing a VM disk.
+- An image manifest and `BootConfiguration` do not contain a root file system byte size. Snapshot staging keeps `RootfsSizeBytes` because multipart upload and progress accounting use the captured artifact size.
 - `SetImagePolicies` atomically replaces the policy file. The [image reconciler](../reconciler/SPEC.md) downloads and prunes.
 - `Stage` creates a UUIDv7 snapshot ID. `StartUpload` checks signed parts, removes leftover part buffers, and starts asynchronous upload.
 - The controller chooses the multipart part size, because it signs each part. Part count is an upper bound until compressed size is known. The digest covers uncompressed bytes. `UploadedArtifact` reports both raw and stored sizes.
