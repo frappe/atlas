@@ -37,6 +37,10 @@ class TestVirtualMachineImage(UnitTestCase):
 			"kernel_object_key": "images/image/kernel",
 			"image_file": None,
 			"kernel_file": None,
+			"initrd_object_key": None,
+			"initrd_file": None,
+			"initrd_sha256": None,
+			"initrd_size_mib": 0,
 			"image_size_mib": 10,
 			"kernel_size_mib": 5,
 			"architecture": "amd64",
@@ -175,6 +179,48 @@ class TestVirtualMachineImage(UnitTestCase):
 		self.assertEqual(request["ref"], f"sha256:{expected_reference}")
 		self.assertEqual(request["rootfs"]["sha256"], "a" * 64)
 		self.assertEqual(request["kernel"]["sha256"], "b" * 64)
+		self.assertFalse(image.has_initrd)
+
+	def test_initrd_digest_extends_the_immutable_reference(self) -> None:
+		image = self.make_image(
+			initrd_object_key="images/image/initrd",
+			initrd_sha256="c" * 64,
+			initrd_size_mib=32,
+		)
+
+		identity = f"amd64\0{'a' * 64}\0{'b' * 64}\0{'c' * 64}"
+		expected_reference = hashlib.sha256(identity.encode()).hexdigest()
+		self.assertTrue(image.has_initrd)
+		self.assertEqual(image.immutable_reference, f"sha256:{expected_reference}")
+		image.validate_artifacts()
+
+	def test_incomplete_or_malformed_initrd_metadata_is_refused(self) -> None:
+		cases = (
+			{"initrd_object_key": "images/image/initrd", "initrd_size_mib": 32},
+			{"initrd_object_key": "images/image/initrd", "initrd_sha256": "invalid", "initrd_size_mib": 32},
+			{"initrd_object_key": "images/image/initrd", "initrd_sha256": "c" * 64},
+			{"initrd_sha256": "c" * 64, "initrd_size_mib": 32},
+		)
+		for values in cases:
+			with self.subTest(values=values), self.assertRaises(frappe.ValidationError):
+				self.make_image(**values).validate_artifacts()
+
+	def test_site_file_initrd_requires_its_file(self) -> None:
+		image = self.make_image(
+			artifact_storage="Site File",
+			image_type="system",
+			image_object_key=None,
+			kernel_object_key=None,
+			image_file="file-rootfs",
+			kernel_file="file-kernel",
+			initrd_sha256="c" * 64,
+			initrd_size_mib=32,
+		)
+
+		with self.assertRaises(frappe.ValidationError):
+			image.validate_artifacts()
+		image.initrd_file = "file-initrd"
+		image.validate_artifacts()
 
 	def test_a_site_file_image_uses_a_public_download_url(self) -> None:
 		image = self.make_image(
