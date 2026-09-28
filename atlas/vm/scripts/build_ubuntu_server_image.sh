@@ -92,7 +92,7 @@ unmount_initrd_rootfs() {
 	[[ -n $initrd_rootfs_directory ]] || return 0
 	for mount_point in dev sys proc; do
 		if findmnt -n -M "$initrd_rootfs_directory/$mount_point" >/dev/null; then
-			umount "$initrd_rootfs_directory/$mount_point"
+			umount --recursive "$initrd_rootfs_directory/$mount_point"
 		fi
 	done
 }
