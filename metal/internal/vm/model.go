@@ -12,6 +12,7 @@ type Specification struct {
 	CPUMillicores         int                  `json:"cpu_millicores"`
 	MemoryMiB             int                  `json:"memory_mib"`
 	SleepAfterIdleSeconds int                  `json:"sleep_after_idle_seconds,omitempty"`
+	DiskEncryption        DiskEncryption       `json:"disk_encryption,omitempty"`
 	DiskMiB               int                  `json:"disk_mib"`
 	Disk                  Disk                 `json:"disk"`
 	Image                 Image                `json:"image"`
@@ -36,10 +37,25 @@ type Image struct {
 	RootfsSHA256                string                       `json:"rootfs_sha256"`
 	KernelURL                   string                       `json:"kernel_url"`
 	KernelSHA256                string                       `json:"kernel_sha256"`
+	InitrdURL                   string                       `json:"initrd_url,omitempty"`
+	InitrdSHA256                string                       `json:"initrd_sha256,omitempty"`
 	Architecture                string                       `json:"architecture"`
 	CacheImage                  bool                         `json:"cache_image"`
 	MemorySnapshot              bool                         `json:"memory_snapshot"`
 	MemorySnapshotConfiguration *MemorySnapshotConfiguration `json:"memory_snapshot_configuration,omitempty"`
+}
+
+// DiskEncryption identifies the guest-managed root disk encryption mode.
+type DiskEncryption string
+
+const (
+	// DiskEncryptionLUKS2 encrypts the root disk through the guest initrd.
+	DiskEncryptionLUKS2 DiskEncryption = "luks2"
+)
+
+// IsValid reports whether the value is disabled or names a supported mode.
+func (encryption DiskEncryption) IsValid() bool {
+	return encryption == "" || encryption == DiskEncryptionLUKS2
 }
 
 // MemorySnapshotConfiguration is the exact shape of a local warm image.
@@ -139,11 +155,13 @@ func (specification Specification) SameReservation(other Specification) bool {
 	return specification.CPUMillicores == other.CPUMillicores &&
 		specification.MemoryMiB == other.MemoryMiB &&
 		specification.SleepAfterIdleSeconds == other.SleepAfterIdleSeconds &&
+		specification.DiskEncryption == other.DiskEncryption &&
 		specification.DiskMiB == other.DiskMiB &&
 		specification.Disk == other.Disk &&
 		specification.Image.Name == other.Image.Name &&
 		strings.EqualFold(specification.Image.RootfsSHA256, other.Image.RootfsSHA256) &&
 		strings.EqualFold(specification.Image.KernelSHA256, other.Image.KernelSHA256) &&
+		strings.EqualFold(specification.Image.InitrdSHA256, other.Image.InitrdSHA256) &&
 		specification.Image.Architecture == other.Image.Architecture &&
 		specification.Network.Equal(other.Network) &&
 		slices.Equal(specification.SSHKeys, other.SSHKeys) &&
@@ -166,6 +184,7 @@ func (specification Specification) VirtualCPUCount() int {
 func (specification Specification) RefreshImageSource(other Specification) Specification {
 	specification.Image.RootfsURL = other.Image.RootfsURL
 	specification.Image.KernelURL = other.Image.KernelURL
+	specification.Image.InitrdURL = other.Image.InitrdURL
 	specification.Image.CacheImage = other.Image.CacheImage
 	specification.Image.MemorySnapshot = other.Image.MemorySnapshot
 	specification.Image.MemorySnapshotConfiguration = other.Image.MemorySnapshotConfiguration
@@ -229,6 +248,7 @@ type Information struct {
 	Hostname                      string
 	Metadata                      map[string]string
 	SleepAfterIdleSeconds         int
+	DiskEncryption                DiskEncryption
 	MAC                           string
 	PublicIPv4                    string
 	WireGuardMeshIPv6             string
