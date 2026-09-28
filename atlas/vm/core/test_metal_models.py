@@ -214,8 +214,20 @@ class TestMetalContract(UnitTestCase):
 		self.assert_has_fields(
 			definitions,
 			"api.desiredVirtualMachineResponse",
-			{"generation", "restart_generation", "state", "compute", "disk", "image", "network", "guest"},
+			{
+				"generation",
+				"restart_generation",
+				"state",
+				"disk_encryption",
+				"compute",
+				"disk",
+				"image",
+				"network",
+				"guest",
+			},
 		)
+		self.assert_has_fields(definitions, "api.createRequest", {"disk_encryption"})
+		self.assert_has_fields(definitions, "api.imageRequest", {"initrd"})
 		self.assert_has_fields(
 			definitions,
 			"api.computeResponse",
@@ -232,7 +244,7 @@ class TestMetalContract(UnitTestCase):
 		self.assert_has_fields(
 			definitions,
 			"api.virtualMachineImageResponse",
-			{"ref", "architecture", "rootfs", "kernel", "cache_image", "memory_snapshot"},
+			{"ref", "architecture", "rootfs", "kernel", "initrd", "cache_image", "memory_snapshot"},
 		)
 
 	def test_metal_still_serves_the_routes_atlas_calls(self) -> None:
