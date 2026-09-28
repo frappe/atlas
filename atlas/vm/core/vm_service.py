@@ -143,6 +143,7 @@ class VirtualMachineService:
 				"tenant_id": request.tenant_id,
 				"is_privileged": request.is_privileged,
 				"is_termination_protected": request.is_termination_protected,
+				"disk_encryption": request.disk_encryption,
 				"sleep_after_idle_seconds": request.sleep_after_idle_seconds,
 			}
 		)

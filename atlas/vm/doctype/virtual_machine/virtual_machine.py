@@ -46,6 +46,7 @@ class VirtualMachine(Document):
 		active_migration: DF.Link | None
 		architecture: DF.Literal["amd64", "arm64"]
 		cpu_millicores: DF.Int
+		disk_encryption: DF.Check
 		disk_mib: DF.Int
 		firewall_summary: DF.Code | None
 		is_draft: DF.Check

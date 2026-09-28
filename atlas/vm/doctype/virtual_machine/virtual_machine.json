@@ -15,6 +15,7 @@
   "column_break_status",
   "server",
   "virtual_machine_image",
+  "disk_encryption",
   "architecture",
   "hostname",
   "error",
@@ -101,6 +102,15 @@
    "label": "Virtual Machine Image",
    "read_only": 1,
    "reqd": 1,
+   "set_only_once": 1
+  },
+  {
+   "default": "0",
+   "description": "Encrypts the root disk inside the guest. Unlock it through the serial console.",
+   "fieldname": "disk_encryption",
+   "fieldtype": "Check",
+   "label": "Disk Encryption",
+   "read_only": 1,
    "set_only_once": 1
   },
   {
