@@ -34,18 +34,26 @@ Each method checks permissions and local state before delegating long work.
 | Inventory | `ping_server`, `sync_disks`, `sync_state` |
 | Removal | `archive_server` |
 
-## Upgrade `metald`
+## Upgrade host binaries
 
-**Check console preservation before restarting Metal.** An empty systemd descriptor store means every running VM on the host stops.
+Atlas publishes `metald` and Atlas WG Mesh as one compatible pair. A host upgrade installs both binaries before it starts the new Metal process.
 
 | Action | Behavior |
 | --- | --- |
-| `install_metald` | Writes configuration and units. Installs missing binaries. Does not replace a running daemon. |
-| `upgrade_metald` | Downloads the build from Atlas Settings, saves `/usr/bin/metald.previous`, installs the build, and restarts `metal.service`. |
+| `install_metald` | Installs both binaries, writes configuration and units, and restarts `metal.service`. It restores the previous binaries and configuration when the service does not stay active. |
+| `upgrade_metald` | Stages and verifies both binaries, checks console preservation, saves the previous pair, installs the new pair, and restarts `metal.service`. |
 
-The upgrade script reports the descriptor count before restart. It checks the new service **five times**. On failure, it restores the previous binary, restarts the service, and reports the error.
+The normal upgrade does not clear WG Mesh state. It stops before mutation unless `metal.service` is active, `FileDescriptorStorePreserve=yes`, and systemd holds exactly one console descriptor for each active VM unit.
 
-If it reports an old unit, run **Re-configure Metald**. This adds `FileDescriptorStorePreserve=yes`, which the host systemd version must support.
+The script checks the new service five times. It also checks that the active VM unit set is unchanged and that the installed WG Mesh BPF hash matches the new binary. On failure, it restores both previous binaries, restarts the previous service, and reports the error.
+
+An operator can explicitly request a legacy WG Mesh reset with the `reset_wg_mesh=1` method argument. Use this mode only when the installed BPF map layout is incompatible with the new binary.
+
+Legacy reset mode is destructive. It removes private mesh state after both new binaries pass download and digest checks. Atlas host sync must then reconstruct VM, peer, privileged address, route, and transport state. Private VM traffic is interrupted until this convergence finishes.
+
+Binary rollback after a legacy reset does not restore the removed maps. The recovery path restores the previous pair and rebuilds the previous host mesh, then requires Atlas sync and complete traffic checks. Upgrade one host at a time and do not continue when reconciliation is incomplete.
+
+Use **Re-configure Metald** when an old host unit does not have descriptor preservation. The host systemd version must support `FileDescriptorStorePreserve=yes`.
 
 ## Capacity and state reports
 
@@ -65,6 +73,7 @@ Setup needs valid provider credentials, root SSH, network access, and a suitable
 - [Provider contract](../../atlas/atlas/core/server_providers/base.py) and [registry](../../atlas/atlas/core/server_providers/registry.py) define the integration boundary.
 - [Host provisioner](../../atlas/metal_server/core/provisioning.py) owns the phase order and commits.
 - [Host installation](../../atlas/metal_server/core/host_installation.py) installs Metal and host services.
+- [Host upgrade transaction test](../../atlas/scripts/tests/test-upgrade-metald.sh) checks the descriptor gates and rollback paths.
 - [Host sync](../../atlas/metal_server/usage.py) stores capacity and state reports.
 - [Metal Server tests](../../atlas/metal_server/doctype/metal_server/test_metal_server.py) check record lifecycle behavior.
 
