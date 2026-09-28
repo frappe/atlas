@@ -71,11 +71,13 @@ def publish_ubuntu_image(
 	architecture: str,
 	image_path: Path,
 	kernel_path: Path,
+	initrd_path: Path,
 	storage: ArtifactStorage = "Object Storage",
 ) -> None:
-	"""Publish one plain Ubuntu image."""
+	"""Publish plain and disk encryption variants of one Ubuntu image."""
 	image_sha256 = get_sha256(image_path)
 	kernel_sha256 = get_sha256(kernel_path)
+	initrd_sha256 = get_sha256(initrd_path)
 	publish_ubuntu_image_variant(
 		title=title,
 		version=version,
@@ -85,6 +87,18 @@ def publish_ubuntu_image(
 		kernel_path=kernel_path,
 		kernel_sha256=kernel_sha256,
 		storage=storage,
+	)
+	publish_ubuntu_image_variant(
+		title=f"{title} (Disk Encryption)",
+		version=version,
+		architecture=architecture,
+		image_path=image_path,
+		image_sha256=image_sha256,
+		kernel_path=kernel_path,
+		kernel_sha256=kernel_sha256,
+		storage=storage,
+		initrd_path=initrd_path,
+		initrd_sha256=initrd_sha256,
 	)
 
 
@@ -98,14 +112,23 @@ def publish_ubuntu_image_variant(
 	kernel_path: Path,
 	kernel_sha256: str,
 	storage: ArtifactStorage,
+	initrd_path: Path | None = None,
+	initrd_sha256: str | None = None,
 ) -> None:
 	"""Publish one Ubuntu image variant and retire the records it replaces.
 
 	A record never changes its artifacts, because a VM keeps using the image it started from.
 	"""
+	if (initrd_path is None) != (initrd_sha256 is None):
+		raise ValueError("initrd path and SHA-256 must be provided together")
+
 	previous_images = get_available_ubuntu_images(title, architecture)
 	for image in previous_images:
-		if image.image_sha256 == image_sha256 and image.kernel_sha256 == kernel_sha256:
+		if (
+			image.image_sha256 == image_sha256
+			and image.kernel_sha256 == kernel_sha256
+			and getattr(image, "initrd_sha256", None) == initrd_sha256
+		):
 			return
 
 	# The digest and size describe the raw file system. Hosts download the zstd copy and verify the decoded bytes.
@@ -113,10 +136,30 @@ def publish_ubuntu_image_variant(
 	image_name = frappe.generate_hash(length=16)
 	if storage == "Site File":
 		location = publish_to_site_files(
-			image_name, compressed_image_path, image_sha256, kernel_path, kernel_sha256
+			image_name,
+			compressed_image_path,
+			image_sha256,
+			kernel_path,
+			kernel_sha256,
+			initrd_path,
+			initrd_sha256,
 		)
 	else:
-		location = upload_to_object_storage(image_name, compressed_image_path, kernel_path)
+		location = upload_to_object_storage(image_name, compressed_image_path, kernel_path, initrd_path)
+
+	initrd_metadata = {}
+	if initrd_path and initrd_sha256:
+		initrd_metadata = {
+			"initrd_sha256": initrd_sha256,
+			"initrd_size_mib": bytes_to_mib(initrd_path.stat().st_size),
+		}
+	tags = [
+		{"key": "purpose", "value": "base"},
+		{"key": "os", "value": "Ubuntu"},
+		{"key": "os_version", "value": version},
+	]
+	if initrd_path:
+		tags.append({"key": "disk_encryption", "value": "luks2"})
 
 	frappe.get_doc(
 		{
@@ -132,11 +175,8 @@ def publish_ubuntu_image_variant(
 			"image_stored_size_mib": bytes_to_mib(compressed_image_path.stat().st_size),
 			"kernel_sha256": kernel_sha256,
 			"kernel_size_mib": bytes_to_mib(kernel_path.stat().st_size),
-			"tags": [
-				{"key": "purpose", "value": "base"},
-				{"key": "os", "value": "Ubuntu"},
-				{"key": "os_version", "value": version},
-			],
+			"tags": tags,
+			**initrd_metadata,
 			**location,
 		}
 	).insert(set_name=image_name)

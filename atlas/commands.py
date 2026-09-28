@@ -159,7 +159,7 @@ def build_ubuntu_base_image(
 		return
 
 	click.echo(f"Building {title} for {architecture}")
-	image_path, kernel_path, _initrd_path = build_ubuntu_image(version, architecture, minimal, output_directory)
+	image_path, kernel_path, initrd_path = build_ubuntu_image(version, architecture, minimal, output_directory)
 	for site in target_sites:
 		try:
 			frappe.init(site)
@@ -172,6 +172,7 @@ def build_ubuntu_base_image(
 					architecture,
 					image_path,
 					kernel_path,
+					initrd_path,
 					"Site File" if storage == "site-file" else "Object Storage",
 				)
 			except ObjectStorageError as error:
@@ -187,16 +188,17 @@ def is_image_available(site: str, title: str, architecture: str) -> bool:
 	try:
 		frappe.init(site)
 		frappe.connect()
-		return bool(
+		return all(
 			frappe.db.exists(
 				"Virtual Machine Image",
 				{
-					"title": title,
+					"title": variant_title,
 					"status": "Available",
 					"image_type": "system",
 					"architecture": architecture,
 				},
 			)
+			for variant_title in (title, f"{title} (Disk Encryption)")
 		)
 	finally:
 		frappe.destroy()
