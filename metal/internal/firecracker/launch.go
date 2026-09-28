@@ -30,15 +30,23 @@ func (runtime *Runtime) prepareBoot(ctx context.Context, configuration vm.Runtim
 	if err != nil {
 		return err
 	}
-	runtime.logger.Debug("configured Firecracker VM", "virtual_machine_id", configuration.ID, "kernel", bootConfiguration.Kernel, "cmdline", bootArguments(bootConfiguration, configuration.NetworkInterface))
-	return configure(
+	if err := configure(
 		ctx,
 		api.New(runtime.configuration.socketPath(configuration.ID)),
 		configuration.ID,
 		configuration.Specification,
 		bootConfiguration,
 		configuration.NetworkInterface,
+	); err != nil {
+		return err
+	}
+	runtime.logger.Debug(
+		"configured Firecracker VM",
+		"virtual_machine_id", configuration.ID,
+		"kernel", bootConfiguration.Kernel,
+		"cmdline", bootArguments(configuration.Specification, bootConfiguration, configuration.NetworkInterface),
 	)
+	return nil
 }
 
 // prepareLaunch creates the jail and starts the unit. It opens the console PTY
@@ -218,7 +226,8 @@ func (runtime *Runtime) firecrackerCompatibility() string {
 // image shape exactly.
 func (runtime *Runtime) hasMatchingMemorySnapshot(specification vm.Specification) bool {
 	configuration := specification.Image.MemorySnapshotConfiguration
-	return specification.Image.CacheImage &&
+	return specification.DiskEncryption == "" &&
+		specification.Image.CacheImage &&
 		specification.Image.MemorySnapshot &&
 		configuration != nil &&
 		configuration.VirtualCPUCount == specification.VirtualCPUCount() &&

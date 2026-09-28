@@ -42,6 +42,9 @@ func configure(
 	bootConfiguration storage.BootConfiguration,
 	networkInterface network.Interface,
 ) error {
+	if err := validateBootConfiguration(specification, bootConfiguration); err != nil {
+		return err
+	}
 	machineConfiguration := api.MachineConfig{
 		VCPUCount:  specification.VirtualCPUCount(),
 		MemSizeMiB: specification.MemoryMiB,
@@ -50,7 +53,7 @@ func configure(
 		return err
 	}
 
-	source := bootSource(bootConfiguration, networkInterface)
+	source := bootSource(specification, bootConfiguration, networkInterface)
 	if err := client.PutBootSource(operationContext, source); err != nil {
 		return err
 	}
@@ -90,25 +93,61 @@ func configure(
 
 // bootSource builds the Firecracker kernel and optional initrd configuration.
 func bootSource(
+	specification vm.Specification,
 	bootConfiguration storage.BootConfiguration,
 	networkInterface network.Interface,
 ) api.BootSource {
 	return api.BootSource{
 		KernelImagePath: bootConfiguration.Kernel,
-		BootArgs:        bootArguments(bootConfiguration, networkInterface),
+		BootArgs:        bootArguments(specification, bootConfiguration, networkInterface),
 		InitrdPath:      bootConfiguration.Initrd,
 	}
 }
 
+// validateBootConfiguration rejects an encrypted boot that cannot run its
+// initrd against the exact imported root file system region.
+func validateBootConfiguration(specification vm.Specification, bootConfiguration storage.BootConfiguration) error {
+	if !specification.DiskEncryption.IsValid() {
+		return fmt.Errorf("unsupported disk encryption mode %q", specification.DiskEncryption)
+	}
+
+	if specification.DiskEncryption == "" {
+		return nil
+	}
+
+	if bootConfiguration.Initrd == "" {
+		return fmt.Errorf("encrypted boot requires an initrd")
+	}
+	if bootConfiguration.RootfsSizeBytes <= 0 {
+		return fmt.Errorf("encrypted boot requires a positive root file system size")
+	}
+
+	return nil
+}
+
 // bootArguments appends the guest network to the image kernel arguments, so the
 // guest is addressable before any userspace network configuration runs.
-func bootArguments(bootConfiguration storage.BootConfiguration, networkInterface network.Interface) string {
+func bootArguments(
+	specification vm.Specification,
+	bootConfiguration storage.BootConfiguration,
+	networkInterface network.Interface,
+) string {
 	networkArgument := fmt.Sprintf(
 		"ip=%s::%s:"+guestNetworkMask+"::eth0:off",
 		networkInterface.GuestIPAddress,
 		networkInterface.GatewayIPAddress,
 	)
-	return bootConfiguration.KernelArgs + " " + networkArgument
+	arguments := bootConfiguration.KernelArgs + " " + networkArgument
+	if specification.DiskEncryption == "" {
+		return arguments
+	}
+
+	return fmt.Sprintf(
+		"%s atlas.disk_encryption=%s atlas.encrypt_bytes=%d",
+		arguments,
+		specification.DiskEncryption,
+		bootConfiguration.RootfsSizeBytes,
+	)
 }
 
 // resourceLimits caps the unit. Memory is twice the guest size plus overhead,

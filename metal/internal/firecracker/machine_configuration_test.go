@@ -5,6 +5,7 @@ import (
 
 	"github.com/frappe/atlas/metal/internal/network"
 	"github.com/frappe/atlas/metal/internal/storage"
+	"github.com/frappe/atlas/metal/internal/vm"
 )
 
 func TestBootSourceIncludesAnOptionalInitrd(t *testing.T) {
@@ -20,7 +21,7 @@ func TestBootSourceIncludesAnOptionalInitrd(t *testing.T) {
 		{"initrd", "/initrd"},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
-			source := bootSource(storage.BootConfiguration{
+			source := bootSource(vm.Specification{}, storage.BootConfiguration{
 				Kernel:     "/vmlinux",
 				Initrd:     testCase.initrd,
 				KernelArgs: "console=ttyS0",
