@@ -201,6 +201,12 @@
             "title": "Cpu Millicores",
             "type": "integer"
           },
+          "disk_encryption": {
+            "default": false,
+            "description": "Whether the guest encrypts its root disk with a user-held passphrase.",
+            "title": "Disk Encryption",
+            "type": "boolean"
+          },
           "disk_iops": {
             "default": 0,
             "description": "Disk IOPS limit. Zero removes the limit.",
@@ -1554,6 +1560,7 @@
               "throughput_mibps": 0,
               "used_mib": 8123
             },
+            "disk_encryption": false,
             "error": null,
             "guest": {
               "hostname": "worker-1",
@@ -1629,6 +1636,11 @@
           "disk": {
             "$ref": "#/components/schemas/VirtualMachineDisk",
             "description": "Disk configuration and usage."
+          },
+          "disk_encryption": {
+            "description": "Whether the guest encrypts its root disk.",
+            "title": "Disk Encryption",
+            "type": "boolean"
           },
           "error": {
             "anyOf": [
@@ -1709,6 +1721,7 @@
           "tags",
           "created_at",
           "is_privileged",
+          "disk_encryption",
           "public_ipv4",
           "public_ipv6",
           "desired_state",
@@ -1809,6 +1822,7 @@
             "architecture": "amd64",
             "cpu_millicores": 2000,
             "created_at": 1788834165,
+            "disk_encryption": false,
             "disk_mib": 20480,
             "id": "vm-00001",
             "image_id": "8f1c2d3e4b5a6978",
@@ -1845,6 +1859,11 @@
             "minimum": 0,
             "title": "Created At",
             "type": "integer"
+          },
+          "disk_encryption": {
+            "description": "Whether the guest encrypts its root disk.",
+            "title": "Disk Encryption",
+            "type": "boolean"
           },
           "disk_mib": {
             "description": "Root disk capacity in MiB.",
@@ -1938,6 +1957,7 @@
           "memory_mib",
           "disk_mib",
           "sleep_after_idle_seconds",
+          "disk_encryption",
           "is_termination_protected",
           "public_ipv4",
           "public_ipv6",
@@ -2040,6 +2060,7 @@
             "architecture": "amd64",
             "cpu_millicores": 2000,
             "created_at": 1788834165,
+            "disk_encryption": false,
             "disk_mib": 20480,
             "id": "vm-00001",
             "image_id": "8f1c2d3e4b5a6978",
@@ -2074,6 +2095,11 @@
             "minimum": 0,
             "title": "Created At",
             "type": "integer"
+          },
+          "disk_encryption": {
+            "description": "Whether the guest encrypts its root disk.",
+            "title": "Disk Encryption",
+            "type": "boolean"
           },
           "disk_mib": {
             "description": "Root disk capacity in MiB.",
@@ -2150,6 +2176,7 @@
           "memory_mib",
           "disk_mib",
           "sleep_after_idle_seconds",
+          "disk_encryption",
           "is_termination_protected",
           "public_ipv4",
           "public_ipv6",

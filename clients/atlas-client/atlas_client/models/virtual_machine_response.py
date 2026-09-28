@@ -31,6 +31,7 @@ class VirtualMachineResponse:
             architecture (VirtualMachineResponseArchitecture): CPU architecture.
             cpu_millicores (int): CPU capacity in millicores.
             created_at (int): Creation time as Unix seconds.
+            disk_encryption (bool): Whether the guest encrypts its root disk.
             disk_mib (int): Root disk capacity in MiB.
             id (str): Virtual machine ID.
             image_id (str): Image used to create the virtual machine.
@@ -46,6 +47,7 @@ class VirtualMachineResponse:
     architecture: VirtualMachineResponseArchitecture
     cpu_millicores: int
     created_at: int
+    disk_encryption: bool
     disk_mib: int
     id: str
     image_id: str
@@ -70,6 +72,8 @@ class VirtualMachineResponse:
         cpu_millicores = self.cpu_millicores
 
         created_at = self.created_at
+
+        disk_encryption = self.disk_encryption
 
         disk_mib = self.disk_mib
 
@@ -106,6 +110,7 @@ class VirtualMachineResponse:
             "architecture": architecture,
             "cpu_millicores": cpu_millicores,
             "created_at": created_at,
+            "disk_encryption": disk_encryption,
             "disk_mib": disk_mib,
             "id": id,
             "image_id": image_id,
@@ -135,6 +140,8 @@ class VirtualMachineResponse:
         cpu_millicores = d.pop("cpu_millicores")
 
         created_at = d.pop("created_at")
+
+        disk_encryption = d.pop("disk_encryption")
 
         disk_mib = d.pop("disk_mib")
 
@@ -195,6 +202,7 @@ class VirtualMachineResponse:
             architecture=architecture,
             cpu_millicores=cpu_millicores,
             created_at=created_at,
+            disk_encryption=disk_encryption,
             disk_mib=disk_mib,
             id=id,
             image_id=image_id,

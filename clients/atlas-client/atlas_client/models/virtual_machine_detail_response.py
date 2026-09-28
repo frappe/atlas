@@ -38,6 +38,7 @@ class VirtualMachineDetailResponse:
             current_state (str): Current state reported by the host or managed by Atlas.
             desired_state (None | str): State requested from the host, or null when unavailable.
             disk (VirtualMachineDisk): The disk size and its rate limits.
+            disk_encryption (bool): Whether the guest encrypts its root disk.
             error (None | str): Current host-reported error, or null.
             guest (VirtualMachineGuest): The guest configuration of one virtual machine.
             id (str): Virtual machine ID.
@@ -56,6 +57,7 @@ class VirtualMachineDetailResponse:
     current_state: str
     desired_state: None | str
     disk: VirtualMachineDisk
+    disk_encryption: bool
     error: None | str
     guest: VirtualMachineGuest
     id: str
@@ -91,6 +93,8 @@ class VirtualMachineDetailResponse:
         desired_state = self.desired_state
 
         disk = self.disk.to_dict()
+
+        disk_encryption = self.disk_encryption
 
         error: None | str
         error = self.error
@@ -131,6 +135,7 @@ class VirtualMachineDetailResponse:
             "current_state": current_state,
             "desired_state": desired_state,
             "disk": disk,
+            "disk_encryption": disk_encryption,
             "error": error,
             "guest": guest,
             "id": id,
@@ -182,6 +187,8 @@ class VirtualMachineDetailResponse:
 
 
 
+
+        disk_encryption = d.pop("disk_encryption")
 
         def _parse_error(data: object) -> None | str:
             if data is None:
@@ -257,6 +264,7 @@ class VirtualMachineDetailResponse:
             current_state=current_state,
             desired_state=desired_state,
             disk=disk,
+            disk_encryption=disk_encryption,
             error=error,
             guest=guest,
             id=id,
