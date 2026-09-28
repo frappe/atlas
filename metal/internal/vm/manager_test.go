@@ -440,6 +440,29 @@ func TestEncryptedVirtualMachineAllowsIdleTimeout(t *testing.T) {
 	}
 }
 
+func TestEncryptedVirtualMachineRestoresItsSavedState(t *testing.T) {
+	manager, runtime, _, _ := newTestManager(t)
+	manager.traffic = nil
+	specification := testSpecification()
+	specification.DiskEncryption = DiskEncryptionLUKS2
+	specification.SleepAfterIdleSeconds = 60
+	if _, err := manager.Create(context.Background(), "machine-1", specification); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.Reconcile(context.Background(), "machine-1"); err != nil {
+		t.Fatal(err)
+	}
+	runtime.state = StateStopped
+	runtime.hasSavedState = true
+
+	if err := manager.Reconcile(context.Background(), "machine-1"); err != nil {
+		t.Fatal(err)
+	}
+	if runtime.restores != 1 || runtime.state != StateRunning {
+		t.Fatalf("restores = %d, state = %s", runtime.restores, runtime.state)
+	}
+}
+
 func TestSetComputeRequestsRunningState(t *testing.T) {
 	manager, _, _, _ := newTestManager(t)
 	if _, err := manager.Create(context.Background(), "machine-1", testSpecification()); err != nil {
