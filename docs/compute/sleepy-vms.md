@@ -42,6 +42,8 @@ Only real traffic counts: unicast IPv4 or IPv6 packets from the host to the VM. 
 
 The saved state belongs to one VM and stays on its host. It is not the shared [warm artifact](../storage/host-storage.md#snapshots-and-warm-artifacts) that speeds up a VM's first boot.
 
+An encrypted VM can use the same VM-local sleep and restore flow. The host is in the trusted boundary, and its saved memory can contain an unlocked disk key. Metal does not use a shared warm artifact for an encrypted VM. See [guest disk encryption](disk-encryption.md#how-does-idle-sleep-work) for the encryption rules.
+
 ## Placement
 
 Sleepy VMs can live on their own hosts. With **Use Dedicated Sleepy VM Hosts** on in Atlas Settings, sleepy VMs go only to sleepy hosts, and regular VMs only to regular hosts. Auto-spawn creates a host for the right pool.
