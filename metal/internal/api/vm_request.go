@@ -45,11 +45,12 @@ var (
 // createRequest is the complete desired specification of a new VM. Each group
 // is required because creation stores state instead of merging it.
 type createRequest struct {
-	Compute computeRequest `json:"compute"`
-	Disk    diskRequest    `json:"disk"`
-	Image   imageRequest   `json:"image"`
-	Network networkRequest `json:"network"`
-	Guest   guestRequest   `json:"guest"`
+	DiskEncryption string         `json:"disk_encryption"`
+	Compute        computeRequest `json:"compute"`
+	Disk           diskRequest    `json:"disk"`
+	Image          imageRequest   `json:"image"`
+	Network        networkRequest `json:"network"`
+	Guest          guestRequest   `json:"guest"`
 }
 
 // computeRequest is the complete compute configuration.
@@ -65,6 +66,7 @@ type imageRequest struct {
 	Architecture                string                              `json:"architecture"`
 	Rootfs                      imageArtifactRequest                `json:"rootfs"`
 	Kernel                      imageArtifactRequest                `json:"kernel"`
+	Initrd                      *imageArtifactRequest               `json:"initrd,omitempty"`
 	CacheImage                  bool                                `json:"cache_image"`
 	MemorySnapshot              bool                                `json:"memory_snapshot"`
 	MemorySnapshotConfiguration *memorySnapshotConfigurationRequest `json:"memory_snapshot_configuration,omitempty"`
@@ -180,6 +182,10 @@ type powerRequest struct {
 
 // validate checks every group and the guest values a create carries.
 func (request createRequest) validate() error {
+	encryption := vm.DiskEncryption(request.DiskEncryption)
+	if !encryption.IsValid() {
+		return fmt.Errorf("disk_encryption must be empty or %s", vm.DiskEncryptionLUKS2)
+	}
 	if err := request.Compute.validate(); err != nil {
 		return err
 	}
@@ -188,6 +194,9 @@ func (request createRequest) validate() error {
 	}
 	if err := request.Image.validate(); err != nil {
 		return err
+	}
+	if encryption != "" && request.Image.Initrd == nil {
+		return fmt.Errorf("disk_encryption requires image.initrd")
 	}
 	if err := request.Network.validate(); err != nil {
 		return err
@@ -215,6 +224,7 @@ func (request createRequest) specification() vm.Specification {
 		CPUMillicores:         request.Compute.CPUMillicores,
 		MemoryMiB:             request.Compute.MemoryMiB,
 		SleepAfterIdleSeconds: request.Compute.SleepAfterIdleSeconds,
+		DiskEncryption:        vm.DiskEncryption(request.DiskEncryption),
 		DiskMiB:               request.Disk.SizeMiB,
 		Disk:                  request.Disk.specification(),
 		Image:                 request.Image.specification(),
@@ -251,7 +261,7 @@ func (request computeRequest) validate() error {
 
 // specification converts the request into the domain image.
 func (request imageRequest) specification() vm.Image {
-	return vm.Image{
+	image := vm.Image{
 		Name:                        request.Ref,
 		Architecture:                request.Architecture,
 		RootfsURL:                   request.Rootfs.URL,
@@ -262,6 +272,11 @@ func (request imageRequest) specification() vm.Image {
 		MemorySnapshot:              request.MemorySnapshot,
 		MemorySnapshotConfiguration: request.MemorySnapshotConfiguration.specification(),
 	}
+	if request.Initrd != nil {
+		image.InitrdURL = request.Initrd.URL
+		image.InitrdSHA256 = request.Initrd.SHA256
+	}
+	return image
 }
 
 // validate rejects an image that cannot be fetched or verified.
@@ -277,6 +292,14 @@ func (request imageRequest) validate() error {
 	}
 	if !validSHA256Digest(request.Rootfs.SHA256) || !validSHA256Digest(request.Kernel.SHA256) {
 		return fmt.Errorf("image rootfs and kernel SHA-256 values are invalid")
+	}
+	if request.Initrd != nil {
+		if !validHTTPURL(request.Initrd.URL) {
+			return fmt.Errorf("image initrd URL must use HTTP or HTTPS")
+		}
+		if !validSHA256Digest(request.Initrd.SHA256) {
+			return fmt.Errorf("image initrd SHA-256 value is invalid")
+		}
 	}
 	if request.MemorySnapshot {
 		configuration := request.MemorySnapshotConfiguration
