@@ -1,0 +1,62 @@
+#!/bin/sh
+
+PREREQ=""
+
+prereqs() {
+	echo "$PREREQ"
+}
+
+case "${1:-}" in
+	prereqs)
+		prereqs
+		exit 0
+		;;
+esac
+
+. /scripts/functions
+
+disk_encryption=""
+encrypt_bytes=""
+for argument in $(cat /proc/cmdline); do
+	case "$argument" in
+		atlas.disk_encryption=*) disk_encryption=${argument#*=} ;;
+		atlas.encrypt_bytes=*) encrypt_bytes=${argument#*=} ;;
+	esac
+done
+
+[ -n "$disk_encryption" ] || exit 0
+[ "$disk_encryption" = "luks2" ] || panic "Atlas: unsupported disk encryption mode: $disk_encryption"
+case "$encrypt_bytes" in
+	*[!0-9]*|'') panic "Atlas: atlas.encrypt_bytes must be a positive byte count" ;;
+	0) panic "Atlas: atlas.encrypt_bytes must be a positive byte count" ;;
+esac
+
+modprobe dm_crypt || panic "Atlas: could not load dm_crypt"
+udevadm settle || true
+
+if cryptsetup isLuks --type luks2 /dev/vda; then
+	while true; do
+		cryptsetup open /dev/vda root
+		status=$?
+		[ "$status" -eq 0 ] && break
+		[ "$status" -eq 2 ] || panic "Atlas: encrypted root disk could not open"
+		echo "Atlas: incorrect passphrase; try again"
+	done
+
+	cryptsetup reencrypt --resume-only --active-name root
+	status=$?
+	[ "$status" -eq 0 ] || [ "$status" -eq 1 ] || panic "Atlas: root disk reencryption could not resume"
+else
+	filesystem_type=$(blkid -p -s TYPE -o value /dev/vda 2>/dev/null || true)
+	case "$filesystem_type" in
+		ext2|ext3|ext4) ;;
+		*) panic "Atlas: /dev/vda is neither LUKS2 nor a supported root file system" ;;
+	esac
+
+	cryptsetup reencrypt --encrypt --type luks2 --batch-mode \
+		--device-size "$encrypt_bytes" --reduce-device-size 32m \
+		--pbkdf argon2id --pbkdf-memory 262144 \
+		--verify-passphrase /dev/vda root || panic "Atlas: initial root disk encryption failed"
+fi
+
+printf '%s\n' 'ROOT=/dev/mapper/root' >> /conf/param.conf
