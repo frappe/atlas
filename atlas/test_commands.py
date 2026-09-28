@@ -61,13 +61,16 @@ class TestBuildUbuntuBaseImageCommand(UnitTestCase):
 	def test_skip_existing_publishes_only_to_missing_sites(self) -> None:
 		image_path = Path("/tmp/image.raw")
 		kernel_path = Path("/tmp/vmlinux")
+		initrd_path = Path("/tmp/initrd")
 		with (
 			patch.object(
 				commands,
 				"is_image_available",
 				side_effect=lambda site, *_: site == "existing.local",
 			),
-			patch.object(commands, "build_ubuntu_image", return_value=(image_path, kernel_path)) as build,
+			patch.object(
+				commands, "build_ubuntu_image", return_value=(image_path, kernel_path, initrd_path)
+			) as build,
 			patch.object(commands, "publish_ubuntu_image") as publish,
 			patch.object(commands.frappe, "init") as initialize,
 			patch.object(commands.frappe, "connect"),

@@ -18,7 +18,9 @@ class TestUbuntuImageBuilder(UnitTestCase):
 			patch("atlas.vm.core.image_builder.os.geteuid", return_value=1000),
 			patch("atlas.vm.core.image_builder.subprocess.run") as run,
 		):
-			image_path, kernel_path = build_ubuntu_image("24.04", "amd64", True, Path(temporary_directory))
+			image_path, kernel_path, initrd_path = build_ubuntu_image(
+				"24.04", "amd64", True, Path(temporary_directory)
+			)
 
 		command = run.call_args.args[0]
 		self.assertEqual(command[0], "sudo")
@@ -26,6 +28,8 @@ class TestUbuntuImageBuilder(UnitTestCase):
 		self.assertIn("--minimal", command)
 		self.assertEqual(image_path.name, "ubuntu-24.04-minimal-amd64.ext4")
 		self.assertEqual(kernel_path.name, "vmlinux-ubuntu-24.04-minimal-server")
+		self.assertEqual(initrd_path.name, "initrd-ubuntu-24.04-minimal-server")
+		self.assertEqual(command[command.index("--initrd-output") + 1], initrd_path)
 		run.assert_called_once_with(command, check=True)
 
 	def test_publish_keeps_an_unchanged_image_record(self) -> None:
