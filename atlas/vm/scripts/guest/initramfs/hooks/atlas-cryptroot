@@ -13,8 +13,12 @@ case "${1:-}" in
 		;;
 esac
 
+# shellcheck source=/usr/share/initramfs-tools/hook-functions
+# shellcheck disable=SC1091
 . /usr/share/initramfs-tools/hook-functions
 
 manual_add_modules dm_crypt
 copy_exec /usr/sbin/cryptsetup /usr/sbin
 copy_exec /usr/sbin/blkid /usr/sbin
+copy_exec /usr/sbin/dumpe2fs /usr/sbin
+copy_exec /usr/sbin/blockdev /usr/sbin

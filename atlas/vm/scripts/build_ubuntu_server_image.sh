@@ -174,7 +174,7 @@ build_initrd() {
 	chroot "$initrd_rootfs_directory" /usr/bin/env -i \
 		HOME=/root PATH=/usr/sbin:/usr/bin:/sbin:/bin DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1 \
 		apt-get install -y --no-install-recommends \
-			cryptsetup-initramfs initramfs-tools "linux-modules-$kernel_version" \
+			cryptsetup-initramfs e2fsprogs initramfs-tools util-linux "linux-modules-$kernel_version" \
 			build-essential pkg-config libssl-dev libdevmapper-dev libpopt-dev \
 			uuid-dev libjson-c-dev libblkid-dev libudev-dev libargon2-dev
 
@@ -214,7 +214,9 @@ build_initrd() {
 
 	lsinitramfs "$initrd_path.part" > "$initrd_contents"
 	grep -qx 'scripts/local-top/atlas-cryptroot' "$initrd_contents"
+	grep -qx 'usr/sbin/blockdev' "$initrd_contents"
 	grep -qx 'usr/sbin/cryptsetup' "$initrd_contents"
+	grep -qx 'usr/sbin/dumpe2fs' "$initrd_contents"
 	grep -Eq '(^|/)dm-crypt\.ko([^/]*)$' "$initrd_contents"
 	mv "$initrd_path.part" "$initrd_path"
 	step "built initrd with cryptsetup $cryptsetup_version"
