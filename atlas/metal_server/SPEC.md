@@ -29,7 +29,7 @@ Host commands use [SSH Task](../atlas/doctype/ssh_task/) from the Atlas module.
 - Certificate renewal restarts `metal.service` and shares the metald job lock with install and upgrade.
 - Placement reads Metal Server Usage rows that `usage` writes after each `POST /v1/sync`.
 - Atlas WG Mesh identifies a peer by `private_network_mac_address`. Sync writes it only when it changes.
-- `datum_tokens_expire_on` tracks the installed bundle's expiry. `refresh_expiring_datum_tokens` (a no-op unless `atlas_datum_url` is set) only re-ships a host whose bundle is inside its renewal window or was never shipped, the same shape as certificate renewal.
+- `datum_tokens_revision` advances with VM placement changes. The same transaction clears `datum_tokens_expire_on` and requests delivery after commit. Shipment records the bundle's actual expiry only if the revision still matches. The scheduler retries pending or expiring bundles. See [metrics](../../docs/region/metrics.md).
 
 ## Related
 

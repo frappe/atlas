@@ -8,6 +8,8 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"runtime"
+	"sync"
 	"testing"
 	"time"
 	"unsafe"
@@ -221,4 +223,55 @@ func runQuietly(name string, arguments ...string) error {
 	commandContext, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	return exec.CommandContext(commandContext, name, arguments...).Run()
+}
+
+// TestTrafficCountersKeepConcurrentPackets checks both initialization and updates
+// through the kernel programs. Run on a Linux host with at least two CPUs.
+func TestTrafficCountersKeepConcurrentPackets(t *testing.T) {
+	if os.Geteuid() != 0 || runtime.NumCPU() < 2 {
+		t.Skip("needs root and at least two CPUs")
+	}
+	hooks := &bpfHooks{}
+	if err := hooks.open(1); err != nil {
+		t.Fatal(err)
+	}
+	defer hooks.reader.Close()
+	defer hooks.closeMaps()
+	const userID = 100001
+	programs, err := hooks.loadPrograms(userID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer programs.TrackTraffic.Close()
+	defer programs.TrackTrafficIngress.Close()
+	const workers = 8
+	const packetsPerWorker = 2000
+	start := make(chan struct{})
+	var group sync.WaitGroup
+	for range workers {
+		group.Go(func() {
+			<-start
+			packet := ipv4Frame(6)
+			for range packetsPerWorker {
+				if _, _, err := programs.TrackTraffic.Test(packet); err != nil {
+					t.Error(err)
+					return
+				}
+				if _, _, err := programs.TrackTrafficIngress.Test(packet); err != nil {
+					t.Error(err)
+					return
+				}
+			}
+		})
+	}
+	close(start)
+	group.Wait()
+	received, sent, err := hooks.counters(userID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected := TrafficCounters{Packets: workers * packetsPerWorker, Bytes: workers * packetsPerWorker * uint64(len(ipv4Frame(6)))}
+	if received != expected || sent != expected {
+		t.Fatalf("received=%+v sent=%+v want=%+v in each direction", received, sent, expected)
+	}
 }

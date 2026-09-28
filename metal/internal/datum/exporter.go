@@ -3,11 +3,14 @@ package datum
 import (
 	"context"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/frappe/atlas/metal/internal/host"
 	"github.com/frappe/atlas/metal/internal/vm"
 )
+
+const maximumConcurrentExports = 4
 
 // VirtualMachineSource supplies the VMs on this host and their current metrics.
 type VirtualMachineSource interface {
@@ -68,8 +71,30 @@ func (exporter *Exporter) PushAll(ctx context.Context) {
 		return
 	}
 
-	if bundle.Host != "" {
-		exporter.pushHost(ctx, bundle.Host)
+	var workers sync.WaitGroup
+	defer workers.Wait()
+	slots := make(chan struct{}, maximumConcurrentExports)
+	launch := func(push func(context.Context)) bool {
+		select {
+		case slots <- struct{}{}:
+		case <-ctx.Done():
+			return false
+		}
+		if ctx.Err() != nil {
+			<-slots
+			return false
+		}
+		workers.Go(func() {
+			defer func() { <-slots }()
+			pushContext, cancel := context.WithTimeout(ctx, exporter.pushTimeout)
+			defer cancel()
+			push(pushContext)
+		})
+		return true
+	}
+
+	if bundle.Host != "" && !launch(func(ctx context.Context) { exporter.pushHost(ctx, bundle.Host) }) {
+		return
 	}
 
 	ids, err := exporter.virtualMachines.ListIDs(ctx)
@@ -82,7 +107,9 @@ func (exporter *Exporter) PushAll(ctx context.Context) {
 		if !ok {
 			continue
 		}
-		exporter.pushVirtualMachine(ctx, id, token)
+		if !launch(func(ctx context.Context) { exporter.pushVirtualMachine(ctx, id, token) }) {
+			return
+		}
 	}
 }
 
@@ -137,10 +164,7 @@ func (exporter *Exporter) pushVirtualMachine(ctx context.Context, id, token stri
 }
 
 func (exporter *Exporter) send(ctx context.Context, token string, samples []Sample, resource string) {
-	pushContext, cancel := context.WithTimeout(ctx, exporter.pushTimeout)
-	defer cancel()
-
-	if err := exporter.client.Ingest(pushContext, token, samples); err != nil {
+	if err := exporter.client.Ingest(ctx, token, samples); err != nil {
 		exporter.logger.Warn("datum export failed", "resource", resource, "error", err)
 	}
 }

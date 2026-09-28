@@ -17,6 +17,7 @@ def issue_datum_token(
 	*,
 	signing_key: tuple[str, str] | None = None,
 	lifetime: timedelta = TOKEN_LIFETIME,
+	issued_at: datetime | None = None,
 ) -> str:
 	"""Return one write token for resource_id, signed with the regional key.
 
@@ -24,7 +25,7 @@ def issue_datum_token(
 	so no separate signing key exists for this. Pass signing_key when issuing
 	several tokens in a row, so the key is only fetched and decrypted once.
 	"""
-	now = datetime.now(UTC)
+	now = issued_at or datetime.now(UTC)
 	claims = {
 		"iss": settings.issuer,
 		"aud": f"atlas-datum:{settings.region_id}",

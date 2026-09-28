@@ -46,6 +46,7 @@ class MetalServer(Document):
 
 		architecture: DF.Literal["amd64", "arm64"]
 		datum_tokens_expire_on: DF.Datetime | None
+		datum_tokens_revision: DF.Int
 		disks: DF.Table[MetalServerDisk]
 		is_provisioning_completed: DF.Check
 		is_sleepy_vm_host: DF.Check
@@ -445,6 +446,7 @@ class MetalServer(Document):
 		"""Configure WireGuard and store its public key."""
 		HostInstallation(self).configure_wireguard()
 
+	@run_as_admin
 	def _refresh_datum_tokens(self) -> None:
 		"""Ship a fresh datum token bundle."""
 		HostInstallation(self).install_datum_tokens()
@@ -506,7 +508,7 @@ def renew_expiring_tls_certificates() -> None:
 		server.enqueue_tls_certificate_renewal()
 
 
-DATUM_TOKEN_RENEWAL_WINDOW_MINUTES = 20
+DATUM_TOKEN_RENEWAL_WINDOW_MINUTES = 30
 
 
 def refresh_expiring_datum_tokens() -> None:

@@ -54,10 +54,10 @@ service_is_stable() {
 
 
 step "install required packages"
-if ! command -v zpool >/dev/null || ! command -v curl >/dev/null || ! command -v iptables >/dev/null || ! command -v openssl >/dev/null; then
+if ! command -v zpool >/dev/null || ! command -v curl >/dev/null || ! command -v iptables >/dev/null || ! command -v openssl >/dev/null || ! command -v python3 >/dev/null; then
 	export DEBIAN_FRONTEND=noninteractive
 	apt update -qq
-	apt install -y -qq curl iptables openssl tar zfsutils-linux
+	apt install -y -qq curl iptables openssl python3 tar zfsutils-linux
 else
 	skip "packages"
 fi
@@ -210,6 +210,30 @@ EOF
 	chmod 600 "$config_file"
 fi
 
+
+# Atlas owns the endpoint. Preserve other Datum settings on reinstallation.
+DATUM_URL="${DATUM_URL:-}" python3 - "$config_file" <<'PY'
+import json
+import os
+from pathlib import Path
+import re
+import sys
+
+path = Path(sys.argv[1])
+configuration = path.read_text()
+url_line = "url = " + json.dumps(os.environ["DATUM_URL"], ensure_ascii=False) + "\n"
+section = re.search(r"(?ms)^[ \t]*\[datum\][^\n]*(?:\n|$).*?(?=^[ \t]*\[|\Z)", configuration)
+if section:
+    content = section.group()
+    if re.search(r"(?m)^\s*url\s*=", content):
+        content = re.sub(r"(?m)^\s*url\s*=[^\n]*\n?", lambda _: url_line, content)
+    else:
+        content = content.rstrip() + "\n" + url_line
+    configuration = configuration[:section.start()] + content + configuration[section.end():]
+else:
+    configuration = configuration.rstrip() + "\n\n[datum]\n" + url_line
+path.write_text(configuration)
+PY
 
 step "network setup"
 install -d -m 0755 /usr/local/lib/metal

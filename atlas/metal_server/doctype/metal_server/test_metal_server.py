@@ -513,6 +513,7 @@ class TestServer(UnitTestCase):
 				"ATLAS_COMMON_NAME": "atlas.example.test",
 				"COORDINATION_LISTEN_ADDRESS": "[fdab:1::7]:9001",
 				"MESH_UPLINK_INTERFACE": "eno1.1878",
+				"DATUM_URL": "",
 			},
 		)
 		ssh_runner.return_value.run_script.assert_called_once_with(
@@ -541,7 +542,7 @@ class TestServer(UnitTestCase):
 			patch(
 				"atlas.metal_server.core.host_installation.SSHTask.create_for_script_file",
 				return_value=task,
-			),
+			) as create_for_script_file,
 			patch(
 				"atlas.metal_server.core.host_installation.ensure_server_certificate",
 				return_value=("ca", "certificate", "private-key"),
@@ -551,6 +552,7 @@ class TestServer(UnitTestCase):
 				{"atlas_datum_url": "https://datum.example"},
 			),
 			patch("atlas.metal_server.core.host_installation.frappe.get_all", return_value=[]),
+			patch("atlas.metal_server.core.host_installation.frappe.db.get_value", return_value=0),
 			patch(
 				"atlas.metal_server.core.host_installation.issuer.signing_key",
 				return_value=("private-key", "atlas:1:key"),
@@ -563,6 +565,10 @@ class TestServer(UnitTestCase):
 			MetalServer._install_metald(server)
 
 		log_error.assert_called_once()
+
+		self.assertEqual(
+			create_for_script_file.call_args.kwargs["environment"]["DATUM_URL"], "https://datum.example"
+		)
 
 	def test_install_metald_listens_on_the_address_the_provider_chooses(self) -> None:
 		server = self._server(status="Running")

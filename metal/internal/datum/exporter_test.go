@@ -2,8 +2,11 @@ package datum
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -31,6 +34,7 @@ func (f *fakeHostCapacity) Capacity(context.Context) (host.Capacity, error) {
 }
 
 type fakeIngester struct {
+	mutex sync.Mutex
 	calls []ingestCall
 }
 
@@ -40,6 +44,8 @@ type ingestCall struct {
 }
 
 func (f *fakeIngester) Ingest(_ context.Context, token string, samples []Sample) error {
+	f.mutex.Lock()
+	defer f.mutex.Unlock()
 	f.calls = append(f.calls, ingestCall{token: token, samples: samples})
 	return nil
 }
@@ -70,11 +76,12 @@ func TestPushAllSendsHostAndEveryTokenedVM(t *testing.T) {
 	if len(ingester.calls) != 2 {
 		t.Fatalf("expected 2 pushes (host + vm-1), got %d", len(ingester.calls))
 	}
-	if ingester.calls[0].token != "host-token" {
-		t.Fatalf("first push token = %q", ingester.calls[0].token)
+	tokens := map[string]bool{}
+	for _, call := range ingester.calls {
+		tokens[call.token] = true
 	}
-	if ingester.calls[1].token != "vm-1-token" {
-		t.Fatalf("second push token = %q, vm-2 has no token and must be skipped", ingester.calls[1].token)
+	if !tokens["host-token"] || !tokens["vm-1-token"] {
+		t.Fatalf("unexpected tokens: %v", tokens)
 	}
 }
 
@@ -106,5 +113,82 @@ func TestPushAllToleratesAMissingBundle(t *testing.T) {
 
 	if len(ingester.calls) != 0 {
 		t.Fatalf("expected no pushes without a bundle, got %d", len(ingester.calls))
+	}
+}
+
+type blockingIngester struct {
+	started chan string
+	active  atomic.Int32
+	peak    atomic.Int32
+}
+
+func (client *blockingIngester) Ingest(ctx context.Context, token string, samples []Sample) error {
+	active := client.active.Add(1)
+	defer client.active.Add(-1)
+	for old := client.peak.Load(); active > old; old = client.peak.Load() {
+		if client.peak.CompareAndSwap(old, active) {
+			break
+		}
+	}
+	client.started <- token
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+func TestPushAllBoundsConcurrencyAndWaitsForCancellation(t *testing.T) {
+	path := writeBundle(t, `{"host":"host","vms":{"vm-1":"one","vm-2":"two","vm-3":"three","vm-4":"four"}}`)
+	client := &blockingIngester{started: make(chan string, 8)}
+	exporter := NewExporter(nil, path, &fakeVirtualMachines{ids: []string{"vm-1", "vm-2", "vm-3", "vm-4"}}, &fakeHostCapacity{}, time.Minute, nil)
+	exporter.client = client
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	done := make(chan struct{})
+	go func() { exporter.PushAll(ctx); close(done) }()
+	for range maximumConcurrentExports {
+		select {
+		case <-client.started:
+		case <-time.After(time.Second):
+			t.Fatal("exports did not run concurrently")
+		}
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("export pass did not stop")
+	}
+	if client.active.Load() != 0 || client.peak.Load() != maximumConcurrentExports {
+		t.Fatalf("active=%d peak=%d", client.active.Load(), client.peak.Load())
+	}
+	if len(client.started) != 0 {
+		t.Fatal("started another resource after cancellation")
+	}
+}
+
+type failingIngester struct{ calls atomic.Int32 }
+
+func (client *failingIngester) Ingest(ctx context.Context, token string, samples []Sample) error {
+	client.calls.Add(1)
+	if token == "host" {
+		return errors.New("unavailable")
+	}
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+func TestPushAllContinuesAfterFailuresAndTimesOutEveryResource(t *testing.T) {
+	path := writeBundle(t, `{"host":"host","vms":{"vm-1":"one","vm-2":"two","vm-3":"three","vm-4":"four"}}`)
+	client := &failingIngester{}
+	exporter := NewExporter(nil, path, &fakeVirtualMachines{ids: []string{"vm-1", "vm-2", "vm-3", "vm-4"}}, &fakeHostCapacity{}, 10*time.Millisecond, nil)
+	exporter.client = client
+	done := make(chan struct{})
+	go func() { exporter.PushAll(t.Context()); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("resource timeout did not finish pass")
+	}
+	if count := client.calls.Load(); count != 5 {
+		t.Fatalf("exported %d resources, want 5", count)
 	}
 }

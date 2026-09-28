@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import ipaddress
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from uuid import UUID
 
 import frappe
 from frappe import _
-from frappe.utils import now_datetime
+from frappe.utils import convert_utc_to_system_timezone
 
 from atlas.atlas.core.artifacts import get_download_url
 from atlas.atlas.core.ssh import SSHRunner
@@ -108,6 +109,7 @@ class HostInstallation:
 				"ATLAS_COMMON_NAME": atlas_client_identity(settings),
 				"COORDINATION_LISTEN_ADDRESS": f"[{self.server.wireguard_ip_address}]:9001",
 				"MESH_UPLINK_INTERFACE": self.server.private_network_interface,
+				"DATUM_URL": frappe.conf.get("atlas_datum_url") or "",
 			},
 			timeout_seconds=METALD_INSTALL_TIMEOUT_SECONDS,
 			run_in_background=False,
@@ -160,10 +162,14 @@ class HostInstallation:
 			return
 
 		key = issuer.signing_key(self.server.settings)
+		revision = frappe.db.get_value("Metal Server", self.server.name, "datum_tokens_revision")
+		issued_at = datetime.now(UTC).replace(microsecond=0)
 		bundle = {
-			"host": issue_datum_token(self.server.settings, self.server.name, signing_key=key),
+			"host": issue_datum_token(
+				self.server.settings, self.server.name, signing_key=key, issued_at=issued_at
+			),
 			"vms": {
-				name: issue_datum_token(self.server.settings, name, signing_key=key)
+				name: issue_datum_token(self.server.settings, name, signing_key=key, issued_at=issued_at)
 				for name in frappe.get_all(
 					"Virtual Machine", filters={"server": self.server.name}, pluck="name"
 				)
@@ -178,7 +184,15 @@ class HostInstallation:
 			throw_script_failure(
 				_("Could not install datum tokens on server {0}.").format(self.server.name), result
 			)
-		self.server.db_set("datum_tokens_expire_on", now_datetime() + TOKEN_LIFETIME)
+		expires_on = convert_utc_to_system_timezone(issued_at + TOKEN_LIFETIME).replace(tzinfo=None)
+		# Placement can change during SSH delivery. Keep that newer request pending.
+		frappe.db.set_value(
+			"Metal Server",
+			{"name": self.server.name, "datum_tokens_revision": revision},
+			"datum_tokens_expire_on",
+			expires_on,
+			update_modified=False,
+		)
 
 	def upgrade_metald(self) -> None:
 		"""Replace the metald binary and restart its daemon."""
@@ -216,6 +230,39 @@ class HostInstallation:
 
 		host = UUID(self.server.name).int & MESH_HOST_MASK
 		return str(ipaddress.IPv6Address((MESH_PREFIX << 112) | (region_id << 96) | host))
+
+
+def request_datum_token_refresh(server_name: str) -> None:
+	"""Invalidate a host's bundle with placement, then request delivery after commit."""
+	if not server_name or not frappe.conf.get("atlas_datum_url"):
+		return
+
+	server = frappe.qb.DocType("Metal Server")
+	(
+		frappe.qb.update(server)
+		.set(server.datum_tokens_revision, server.datum_tokens_revision + 1)
+		.set(server.datum_tokens_expire_on, None)
+		.where(server.name == server_name)
+	).run()
+	if not frappe.db.exists(
+		"Metal Server", {"name": server_name, "status": "Running", "is_provisioning_completed": 1}
+	):
+		return
+
+	def enqueue_refresh() -> None:
+		try:
+			frappe.enqueue_doc(
+				"Metal Server",
+				server_name,
+				"_refresh_datum_tokens",
+				job_id=f"atlas||server||refresh-datum-tokens||{server_name}",
+				deduplicate=True,
+			)
+		except Exception:
+			# The database request remains pending for the scheduler to retry.
+			frappe.logger().exception("Could not queue Datum token refresh for %s", server_name)
+
+	frappe.db.after_commit.add(enqueue_refresh)
 
 
 def throw_script_failure(message: str, result: "SSHResult | None") -> None:

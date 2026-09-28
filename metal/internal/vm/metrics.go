@@ -9,8 +9,8 @@ import (
 
 // Metrics describes the current resource use of one virtual machine. CPU and
 // network are cumulative counters; memory is a point-in-time gauge; disk
-// usage is as fresh as the last reconcile pass. A VM that is neither running
-// nor paused reports its disk alone.
+// usage is as fresh as the last reconcile pass. Network counters last for the
+// traffic attachment's lifetime, including while the guest is stopped.
 type Metrics struct {
 	Up                   bool
 	DiskMiB              int
@@ -42,16 +42,14 @@ func (manager *Manager) Metrics(ctx context.Context, identifier string) (Metrics
 	up := observed.State == StateRunning || observed.State == StatePaused
 	metrics := Metrics{Up: up, DiskMiB: diskMiB, DiskUsedMiB: observed.Disk.UsedMiB}
 
-	if !up {
-		return metrics, nil
+	if up {
+		usage, err := manager.runtime.Usage(ctx, RuntimeMachine{ID: desired.ID})
+		if err != nil {
+			return Metrics{}, err
+		}
+		metrics.CPUUsageMicroseconds = usage.CPUUsageMicroseconds
+		metrics.MemoryBytes = usage.MemoryBytes
 	}
-
-	usage, err := manager.runtime.Usage(ctx, RuntimeMachine{ID: desired.ID})
-	if err != nil {
-		return Metrics{}, err
-	}
-	metrics.CPUUsageMicroseconds = usage.CPUUsageMicroseconds
-	metrics.MemoryBytes = usage.MemoryBytes
 
 	if manager.traffic != nil {
 		target := traffic.Target{VirtualMachineID: desired.ID, UserID: desired.UserID}
