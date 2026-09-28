@@ -158,26 +158,47 @@ def get_available_ubuntu_images(title: str, architecture: str) -> list[VirtualMa
 	return [cast("VirtualMachineImage", frappe.get_doc("Virtual Machine Image", name)) for name in names]
 
 
-def upload_to_object_storage(image_name: str, image_path: Path, kernel_path: Path) -> dict[str, str]:
-	"""Upload both artifacts under keys owned by this image."""
+def upload_to_object_storage(
+	image_name: str, image_path: Path, kernel_path: Path, initrd_path: Path | None = None
+) -> dict[str, str]:
+	"""Upload image artifacts under keys owned by this image."""
 	image_key = f"images/{image_name}/rootfs.img"
 	kernel_key = f"images/{image_name}/kernel"
 	settings = frappe.get_single("Atlas Settings")
 	object_storage_client = settings.get_object_storage_client()
 	upload_with_progress(object_storage_client, image_path, image_key)
 	upload_with_progress(object_storage_client, kernel_path, kernel_key)
-	return {"image_object_key": image_key, "kernel_object_key": kernel_key}
+	location = {"image_object_key": image_key, "kernel_object_key": kernel_key}
+	if initrd_path:
+		initrd_key = f"images/{image_name}/initrd"
+		upload_with_progress(object_storage_client, initrd_path, initrd_key)
+		location["initrd_object_key"] = initrd_key
+	return location
 
 
 def publish_to_site_files(
-	image_name: str, image_path: Path, image_sha256: str, kernel_path: Path, kernel_sha256: str
+	image_name: str,
+	image_path: Path,
+	image_sha256: str,
+	kernel_path: Path,
+	kernel_sha256: str,
+	initrd_path: Path | None = None,
+	initrd_sha256: str | None = None,
 ) -> dict[str, str]:
-	"""Attach both artifacts as public site files for a host to download."""
-	click.echo(f"Publishing {image_path.name} and {kernel_path.name} as public site files")
-	return {
+	"""Attach image artifacts as public site files for a host to download."""
+	artifact_names = [image_path.name, kernel_path.name]
+	if initrd_path:
+		artifact_names.append(initrd_path.name)
+	click.echo(f"Publishing {', '.join(artifact_names)} as public site files")
+	location = {
 		"image_file": publish_public_file_path(image_path, image_sha256, image_name),
 		"kernel_file": publish_public_file_path(kernel_path, kernel_sha256, image_name),
 	}
+	if initrd_path:
+		if not initrd_sha256:
+			raise ValueError("initrd SHA-256 is required when publishing an initrd")
+		location["initrd_file"] = publish_public_file_path(initrd_path, initrd_sha256, image_name)
+	return location
 
 
 def get_sha256(path: Path) -> str:
