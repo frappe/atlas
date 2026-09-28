@@ -162,6 +162,11 @@ func (store *ImageStore) kernelFile(imageReference string) string {
 	return filepath.Join(store.imageDirectory(imageReference), "vmlinux")
 }
 
+// initrdFile is the optional initial RAM disk of one image.
+func (store *ImageStore) initrdFile(imageReference string) string {
+	return filepath.Join(store.imageDirectory(imageReference), "initrd")
+}
+
 // manifestFile records the content one image reference is bound to.
 func (store *ImageStore) manifestFile(imageReference string) string {
 	return filepath.Join(store.imageDirectory(imageReference), "manifest.json")

@@ -63,10 +63,12 @@ func (store *ImageStore) deleteImage(ctx context.Context, imageReference string)
 // imageManifest records the content an image reference is bound to. Local marks
 // an image built on this host, which has no URLs and no digests to verify.
 type imageManifest struct {
-	RootfsSHA256 string `json:"rootfs_sha256,omitempty"`
-	KernelSHA256 string `json:"kernel_sha256,omitempty"`
-	Architecture string `json:"architecture"`
-	Local        bool   `json:"local,omitempty"`
+	RootfsSHA256    string `json:"rootfs_sha256,omitempty"`
+	KernelSHA256    string `json:"kernel_sha256,omitempty"`
+	InitrdSHA256    string `json:"initrd_sha256,omitempty"`
+	RootfsSizeBytes int64  `json:"rootfs_size_bytes,omitempty"`
+	Architecture    string `json:"architecture"`
+	Local           bool   `json:"local,omitempty"`
 }
 
 // ensureImage makes one image present and verified. A reference is bound to its
@@ -102,7 +104,7 @@ func (store *ImageStore) ensureImage(ctx context.Context, imageReference string,
 	if manifest.Architecture != runtime.GOARCH {
 		return fmt.Errorf("%w: image architecture does not match the host", ErrImageIntegrity)
 	}
-	if found && storedManifest != manifest {
+	if found && !storedManifest.sameImage(manifest) {
 		return fmt.Errorf("%w: image reference %q already identifies different content", ErrImageConflict, imageReference)
 	}
 	artifactsExist, err := store.imageArtifactsExist(ctx, imageReference)
@@ -125,19 +127,33 @@ func (store *ImageStore) ensureImage(ctx context.Context, imageReference string,
 		}()
 	}
 
-	if err := store.ensureKernel(ctx, imageReference, image.KernelURL, manifest.KernelSHA256); err != nil {
+	if err := store.ensureImageArtifact(
+		ctx, imageReference, store.kernelFile(imageReference), "kernel", image.KernelURL, manifest.KernelSHA256,
+	); err != nil {
 		return err
+	}
+	if manifest.InitrdSHA256 != "" {
+		if err := store.ensureImageArtifact(
+			ctx, imageReference, store.initrdFile(imageReference), "initrd", image.InitrdURL, manifest.InitrdSHA256,
+		); err != nil {
+			return err
+		}
 	}
 	exists, err := datasetExists(ctx, store.pool.baseDataset(imageReference))
 	if err != nil {
 		return err
 	}
 	if !exists {
-		if err := store.importRootFileSystem(ctx, imageReference, image.RootfsURL, manifest.RootfsSHA256); err != nil {
+		manifest.RootfsSizeBytes, err = store.importRootFileSystem(
+			ctx, imageReference, image.RootfsURL, manifest.RootfsSHA256,
+		)
+		if err != nil {
 			return err
 		}
+	} else if found {
+		manifest.RootfsSizeBytes = storedManifest.RootfsSizeBytes
 	}
-	if !found {
+	if !found || manifest.RootfsSizeBytes != storedManifest.RootfsSizeBytes {
 		if err := store.saveImageManifest(imageReference, manifest); err != nil {
 			return fmt.Errorf("save image manifest: %w", err)
 		}
@@ -149,7 +165,7 @@ func (store *ImageStore) ensureImage(ctx context.Context, imageReference string,
 // hasImageSource reports whether a policy names remote image content.
 func hasImageSource(image vm.Image) bool {
 	return image.RootfsURL != "" || image.KernelURL != "" || image.RootfsSHA256 != "" ||
-		image.KernelSHA256 != "" || image.Architecture != ""
+		image.KernelSHA256 != "" || image.InitrdURL != "" || image.InitrdSHA256 != "" || image.Architecture != ""
 }
 
 // manifestForImage builds and validates the manifest a policy asks for.
@@ -160,6 +176,7 @@ func manifestForImage(image vm.Image) (imageManifest, error) {
 	manifest := imageManifest{
 		RootfsSHA256: strings.ToLower(image.RootfsSHA256),
 		KernelSHA256: strings.ToLower(image.KernelSHA256),
+		InitrdSHA256: strings.ToLower(image.InitrdSHA256),
 		Architecture: image.Architecture,
 	}
 	if !validSHA256(manifest.RootfsSHA256) || !validSHA256(manifest.KernelSHA256) {
@@ -168,7 +185,23 @@ func manifestForImage(image vm.Image) (imageManifest, error) {
 	if manifest.Architecture == "" {
 		return imageManifest{}, fmt.Errorf("%w: image architecture is required", ErrImageIntegrity)
 	}
+	if (image.InitrdURL == "") != (manifest.InitrdSHA256 == "") {
+		return imageManifest{}, fmt.Errorf("%w: initrd URL and SHA-256 digest must be provided together", ErrImageIntegrity)
+	}
+	if manifest.InitrdSHA256 != "" && !validSHA256(manifest.InitrdSHA256) {
+		return imageManifest{}, fmt.Errorf("%w: initrd SHA-256 digest is invalid", ErrImageIntegrity)
+	}
 	return manifest, nil
+}
+
+// sameImage reports whether two manifests bind a reference to the same source.
+// The root file system size is measured during import and is not source identity.
+func (manifest imageManifest) sameImage(other imageManifest) bool {
+	return manifest.RootfsSHA256 == other.RootfsSHA256 &&
+		manifest.KernelSHA256 == other.KernelSHA256 &&
+		manifest.InitrdSHA256 == other.InitrdSHA256 &&
+		manifest.Architecture == other.Architecture &&
+		manifest.Local == other.Local
 }
 
 // validSHA256 reports whether value is a full hexadecimal SHA-256 digest.
@@ -187,14 +220,16 @@ func (store *ImageStore) imageArtifactsExist(ctx context.Context, imageReference
 		return exists, err
 	}
 
-	_, err = os.Stat(store.kernelFile(imageReference))
-	if err == nil {
-		return true, nil
+	for _, path := range []string{store.kernelFile(imageReference), store.initrdFile(imageReference)} {
+		_, err = os.Stat(path)
+		if err == nil {
+			return true, nil
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return false, err
+		}
 	}
-	if errors.Is(err, os.ErrNotExist) {
-		return false, nil
-	}
-	return false, err
+	return false, nil
 }
 
 // localImageArtifactsExist reports whether a local image has every file it needs.
@@ -239,6 +274,12 @@ func (store *ImageStore) loadImageManifest(imageReference string) (imageManifest
 	if !manifest.Local && (!validSHA256(manifest.RootfsSHA256) || !validSHA256(manifest.KernelSHA256)) {
 		return imageManifest{}, false, fmt.Errorf("%w: stored image manifest is invalid", ErrImageIntegrity)
 	}
+	if manifest.InitrdSHA256 != "" && !validSHA256(manifest.InitrdSHA256) {
+		return imageManifest{}, false, fmt.Errorf("%w: stored image manifest is invalid", ErrImageIntegrity)
+	}
+	if manifest.RootfsSizeBytes < 0 {
+		return imageManifest{}, false, fmt.Errorf("%w: stored image manifest is invalid", ErrImageIntegrity)
+	}
 	return manifest, true, nil
 }
 
@@ -253,28 +294,34 @@ func (store *ImageStore) saveImageManifest(imageReference string, manifest image
 	return platform.WriteFile(store.manifestFile(imageReference), data, 0o644)
 }
 
-// ensureKernel makes the image kernel present and verified. A stored kernel that
-// fails verification is an integrity error, not a reason to download again.
-func (store *ImageStore) ensureKernel(ctx context.Context, imageReference, kernelURL, expectedDigest string) error {
-	target := store.kernelFile(imageReference)
+// ensureImageArtifact makes one image file present and verified. A stored file
+// that fails verification is an integrity error, not a reason to download again.
+func (store *ImageStore) ensureImageArtifact(
+	ctx context.Context,
+	imageReference string,
+	target string,
+	artifact string,
+	sourceURL string,
+	expectedDigest string,
+) error {
 	if _, err := os.Stat(target); err == nil {
 		if err := verifyFileSHA256(target, expectedDigest); err != nil {
-			return fmt.Errorf("%w: stored kernel verification failed", ErrImageIntegrity)
+			return fmt.Errorf("%w: stored %s verification failed", ErrImageIntegrity, artifact)
 		}
 		return os.Chmod(target, 0o644)
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
 
-	kernel := &temporaryFileDestination{directory: store.directory}
-	if err := download(ctx, store.httpClient, kernelURL, expectedDigest, kernel, store.logger); err != nil {
-		return fmt.Errorf("download kernel: %w", err)
+	downloaded := &temporaryFileDestination{directory: store.directory}
+	if err := download(ctx, store.httpClient, sourceURL, expectedDigest, downloaded, store.logger); err != nil {
+		return fmt.Errorf("download %s: %w", artifact, err)
 	}
-	defer os.Remove(kernel.file.Name())
+	defer os.Remove(downloaded.file.Name())
 	if err := os.MkdirAll(store.imageDirectory(imageReference), 0o755); err != nil {
 		return err
 	}
-	if err := os.Rename(kernel.file.Name(), target); err != nil {
+	if err := os.Rename(downloaded.file.Name(), target); err != nil {
 		return err
 	}
 	return os.Chmod(target, 0o644)
@@ -283,16 +330,18 @@ func (store *ImageStore) ensureKernel(ctx context.Context, imageReference, kerne
 // importRootFileSystem downloads the root file system straight into a new ZFS
 // volume and snapshots it. Every failure destroys the volume, so no half-written
 // base image can be cloned.
-func (store *ImageStore) importRootFileSystem(ctx context.Context, imageReference, rootfsURL, expectedDigest string) error {
+func (store *ImageStore) importRootFileSystem(
+	ctx context.Context, imageReference, rootfsURL, expectedDigest string,
+) (int64, error) {
 	volume := &volumeDestination{store: store, imageReference: imageReference}
 	if err := download(ctx, store.httpClient, rootfsURL, expectedDigest, volume, store.logger); err != nil {
-		return fmt.Errorf("download root file system: %w", err)
+		return 0, fmt.Errorf("download root file system: %w", err)
 	}
 	if err := platform.Run(ctx, "zfs", "snapshot", store.pool.baseSnapshot(imageReference)); err != nil {
 		volume.destroy()
-		return err
+		return 0, err
 	}
-	return nil
+	return volume.sizeBytes, nil
 }
 
 // volumeDestination downloads into a new ZFS volume for one image.
@@ -300,9 +349,14 @@ type volumeDestination struct {
 	store          *ImageStore
 	imageReference string
 	device         *os.File
+	sizeBytes      int64
 }
 
 func (destination *volumeDestination) open(ctx context.Context, sizeBytes int64) (io.Writer, error) {
+	if sizeBytes <= 0 {
+		return nil, fmt.Errorf("%w: root file system is empty", ErrImageIntegrity)
+	}
+	destination.sizeBytes = sizeBytes
 	sizeMiB := (sizeBytes+(1<<bytesToMiBShift)-1)>>bytesToMiBShift + rootFileSystemSlackMiB
 	dataset := destination.store.pool.baseDataset(destination.imageReference)
 	if err := platform.Run(ctx, "zfs", "create", "-V", fmt.Sprintf("%dM", sizeMiB), "-o", "volblocksize="+imageVolumeBlockSize, dataset); err != nil {
