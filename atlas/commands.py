@@ -159,7 +159,7 @@ def build_ubuntu_base_image(
 		return
 
 	click.echo(f"Building {title} for {architecture}")
-	image_path, kernel_path = build_ubuntu_image(version, architecture, minimal, output_directory)
+	image_path, kernel_path, _initrd_path = build_ubuntu_image(version, architecture, minimal, output_directory)
 	for site in target_sites:
 		try:
 			frappe.init(site)

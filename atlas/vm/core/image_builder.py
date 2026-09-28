@@ -24,13 +24,14 @@ ArtifactStorage = Literal["Object Storage", "Site File"]
 
 def build_ubuntu_image(
 	version: str, architecture: str, minimal: bool, output_directory: Path
-) -> tuple[Path, Path]:
-	"""Build one Ubuntu root file system and kernel."""
+) -> tuple[Path, Path, Path]:
+	"""Build one Ubuntu root file system, kernel, and initrd."""
 	output_directory = output_directory.resolve()
 	output_directory.mkdir(parents=True, exist_ok=True)
 	image_type = "minimal-" if minimal else ""
 	image_path = output_directory / f"ubuntu-{version}-{image_type}{architecture}.ext4"
 	kernel_path = output_directory / f"vmlinux-ubuntu-{version}-{image_type}server"
+	initrd_path = output_directory / f"initrd-ubuntu-{version}-{image_type}server"
 	builder_path = Path(__file__).parents[1] / "scripts" / "build_ubuntu_server_image.sh"
 	command = [builder_path]
 	if IS_MACOS:
@@ -51,6 +52,8 @@ def build_ubuntu_image(
 			image_path,
 			"--kernel-output",
 			kernel_path,
+			"--initrd-output",
+			initrd_path,
 			"--architecture",
 			architecture,
 			"--version",
@@ -59,7 +62,7 @@ def build_ubuntu_image(
 		]
 	)
 	subprocess.run([argument for argument in command if argument], check=True)
-	return image_path, kernel_path
+	return image_path, kernel_path, initrd_path
 
 
 def publish_ubuntu_image(
