@@ -2,13 +2,107 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
 )
+
+func TestLinkBootArtifactsIncludesAnOptionalInitrd(t *testing.T) {
+	for _, testCase := range []struct {
+		name       string
+		withInitrd bool
+	}{
+		{"plain", false},
+		{"initrd", true},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			store := NewStores(t.Context(), "metal", t.TempDir(), nil).Images
+			if err := os.MkdirAll(store.imageDirectory("ubuntu"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(store.kernelFile("ubuntu"), []byte("kernel"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			manifest := imageManifest{
+				RootfsSHA256:    strings.Repeat("a", 64),
+				KernelSHA256:    strings.Repeat("b", 64),
+				RootfsSizeBytes: 1 << 30,
+				Architecture:    runtime.GOARCH,
+			}
+			if testCase.withInitrd {
+				manifest.InitrdSHA256 = strings.Repeat("c", 64)
+				if err := os.WriteFile(store.initrdFile("ubuntu"), []byte("initrd"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := store.saveImageManifest("ubuntu", manifest); err != nil {
+				t.Fatal(err)
+			}
+
+			chroot := t.TempDir()
+			initrd, size, err := store.linkBootArtifacts("ubuntu", chroot)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if size != manifest.RootfsSizeBytes {
+				t.Fatalf("rootfs size = %d, want %d", size, manifest.RootfsSizeBytes)
+			}
+			assertSameFile(t, store.kernelFile("ubuntu"), filepath.Join(chroot, "vmlinux"))
+			if testCase.withInitrd {
+				if initrd != "/initrd" {
+					t.Fatalf("initrd = %q, want /initrd", initrd)
+				}
+				assertSameFile(t, store.initrdFile("ubuntu"), filepath.Join(chroot, "initrd"))
+			} else if initrd != "" {
+				t.Fatalf("plain image initrd = %q", initrd)
+			}
+		})
+	}
+}
+
+func TestLinkBootArtifactsRejectsAMissingInitrd(t *testing.T) {
+	store := NewStores(t.Context(), "metal", t.TempDir(), nil).Images
+	if err := os.MkdirAll(store.imageDirectory("ubuntu"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(store.kernelFile("ubuntu"), []byte("kernel"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	manifest := imageManifest{
+		RootfsSHA256: strings.Repeat("a", 64),
+		KernelSHA256: strings.Repeat("b", 64),
+		InitrdSHA256: strings.Repeat("c", 64),
+		Architecture: runtime.GOARCH,
+	}
+	if err := store.saveImageManifest("ubuntu", manifest); err != nil {
+		t.Fatal(err)
+	}
+
+	_, _, err := store.linkBootArtifacts("ubuntu", t.TempDir())
+	if !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("error = %v, want file not found", err)
+	}
+}
+
+func assertSameFile(t *testing.T, first, second string) {
+	t.Helper()
+	firstInformation, err := os.Stat(first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondInformation, err := os.Stat(second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !os.SameFile(firstInformation, secondInformation) {
+		t.Fatalf("%s and %s do not share one inode", first, second)
+	}
+}
 
 func TestLinkOrCopyUsesHardLinkOnOneFileSystem(t *testing.T) {
 	directory := t.TempDir()
