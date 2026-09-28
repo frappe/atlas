@@ -23,8 +23,10 @@ def build_image(**overrides) -> SimpleNamespace:
 		"site_file_retention_until": None,
 		"image_object_key": "images/image-1/rootfs.img",
 		"kernel_object_key": "images/image-1/kernel",
+		"initrd_object_key": None,
 		"image_file": None,
 		"kernel_file": None,
+		"initrd_file": None,
 		"rootfs_multipart_upload_id": "upload-1",
 		"kernel_multipart_upload_id": None,
 		"source_server": "node-1",
@@ -134,7 +136,11 @@ class TestImageCleanup(UnitTestCase):
 		delete_doc.assert_not_called()
 
 	def test_cleanup_removes_objects_but_keeps_a_referenced_record(self) -> None:
-		image = build_image(status="Archived", artifact_retention_until=NOW - timedelta(minutes=1))
+		image = build_image(
+			status="Archived",
+			artifact_retention_until=NOW - timedelta(minutes=1),
+			initrd_object_key="images/image-1/initrd",
+		)
 		client = Mock()
 		metal_client = Mock()
 		with (
@@ -151,13 +157,28 @@ class TestImageCleanup(UnitTestCase):
 		):
 			VirtualMachineImageDeletionService().delete("image-1")
 		client.abort_multipart_upload.assert_called_once_with("images/image-1/rootfs.img", "upload-1")
-		self.assertEqual(client.delete_object.call_count, 2)
+		self.assertEqual(
+			[entry.args[0] for entry in client.delete_object.call_args_list],
+			["images/image-1/rootfs.img", "images/image-1/kernel", "images/image-1/initrd"],
+		)
 		metal_client.delete_snapshot.assert_called_once_with("image-1")
 		self.assertEqual(image.status, "Archived")
 		self.assertIsNone(image.image_object_key)
+		self.assertIsNone(image.initrd_object_key)
 		self.assertIsNone(image.source_server)
 		image.save.assert_called_once_with()
 		delete_doc.assert_not_called()
+
+	def test_plain_image_keeps_the_two_object_cleanup_path(self) -> None:
+		image = build_image(initrd_object_key=None)
+		client = Mock()
+
+		VirtualMachineImageDeletionService.delete_objects(image, client)
+
+		self.assertEqual(
+			[entry.args[0] for entry in client.delete_object.call_args_list],
+			["images/image-1/rootfs.img", "images/image-1/kernel"],
+		)
 
 	def test_site_files_are_deleted_without_object_storage(self) -> None:
 		image = build_image(
@@ -168,6 +189,7 @@ class TestImageCleanup(UnitTestCase):
 			source_server=None,
 			image_file="rootfs-file",
 			kernel_file="kernel-file",
+			initrd_file="initrd-file",
 		)
 		with (
 			patch("atlas.vm.core.vm_image_deletion.frappe.get_doc", return_value=image),
@@ -179,10 +201,11 @@ class TestImageCleanup(UnitTestCase):
 		get_single.assert_not_called()
 		self.assertEqual(
 			[entry.args[:2] for entry in delete_doc.call_args_list],
-			[("File", "rootfs-file"), ("File", "kernel-file")],
+			[("File", "rootfs-file"), ("File", "kernel-file"), ("File", "initrd-file")],
 		)
 		self.assertTrue(all(entry.kwargs["force"] for entry in delete_doc.call_args_list))
 		self.assertIsNone(image.image_file)
+		self.assertIsNone(image.initrd_file)
 		image.save.assert_called_once_with()
 
 	def test_record_is_deleted_after_last_vm_record(self) -> None:
