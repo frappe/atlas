@@ -1,6 +1,6 @@
 # firecracker: VM runtime code contract
 
-For Go code, follow the [Go review guide](../../../llm/go-code-review-guide.md). The handbook owns [VM runtime behavior](../../../docs/compute/runtime.md) and [console access](../../../docs/compute/console.md).
+For Go code, follow the [Go review guide](../../../llm/go-code-review-guide.md). The handbook owns [VM runtime behavior](../../../docs/compute/runtime.md), [disk encryption](../../../docs/compute/disk-encryption.md), and [console access](../../../docs/compute/console.md).
 
 This package implements `vm.Runtime` and `vm.WarmRuntime`. It owns the jail, guest metadata, and Firecracker API calls inside one `metal-vm@` systemd unit. It holds no VM records. systemd owns the process lifecycle.
 
@@ -21,6 +21,9 @@ This package implements `vm.Runtime` and `vm.WarmRuntime`. It owns the jail, gue
 - Each launch discards the previous jail. The chroot base and kernel stay on the same file system because the kernel is hard linked. Jailer arguments in the systemd `EnvironmentFile` cannot contain spaces.
 - The console master remains open while its VM runs. Startup adopts masters from the systemd descriptor store. See the [console package](../console/SPEC.md).
 - Firecracker gets whole vCPUs rounded up from millicores. systemd applies the exact CPU quota. The API limit is 32000 millicores.
+- The Firecracker boot source uses `initrd_path` when storage supplies an initrd. An encrypted boot requires that path.
+- Image boot arguments cannot contain `atlas.disk_encryption`. Metal appends only `atlas.disk_encryption=luks2` when the VM specification selects LUKS2 encryption.
+- An encrypted VM cannot use shared warm memory. It can use its own VM-local saved state for idle stop and restore.
 - A memory snapshot restores only into the Firecracker build that wrote it. Binary size and modification time identify that build.
 - `SaveAndStop` writes VM-local state to temporary files, publishes it with one atomic rename, then stops Firecracker. A running VM with an existing valid snapshot conflicts. A paused VM with one terminates Firecracker. A stopped VM with one is complete.
 - Restore removes saved state only after the new jail loads its copy. Stop, restart, remove, and incompatible shape delete it.
