@@ -32,6 +32,7 @@ const handbook: DefaultTheme.SidebarItem[] = [
 			{ text: 'Atlas VM records', link: '/docs/compute/vm-records' },
 			{ text: 'Apply VM changes', link: '/docs/compute/reconciliation' },
 			{ text: 'Run a VM', link: '/docs/compute/runtime' },
+			{ text: 'Encrypt a VM disk', link: '/docs/compute/disk-encryption' },
 			{ text: 'Change SSH keys', link: '/docs/compute/ssh-keys' },
 			{ text: 'Open a console', link: '/docs/compute/console' },
 			{ text: 'Sleepy VMs', link: '/docs/compute/sleepy-vms' },
