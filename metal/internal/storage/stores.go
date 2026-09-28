@@ -213,9 +213,11 @@ type VirtualMachineStorageRequest struct {
 
 // BootConfiguration contains the files that Firecracker needs to boot.
 type BootConfiguration struct {
-	Kernel     string
-	KernelArgs string
-	Drives     []Drive
+	Kernel          string
+	Initrd          string
+	KernelArgs      string
+	RootfsSizeBytes int64
+	Drives          []Drive
 }
 
 // Drive describes one Firecracker block device.
