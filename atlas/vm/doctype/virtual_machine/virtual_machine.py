@@ -371,6 +371,8 @@ class VirtualMachine(Document):
 		self.ensure_not_migrating()
 		if self.is_draft:
 			frappe.throw(_("Wait for Virtual Machine creation before creating an image."), exc=AtlasUserError)
+		if self.disk_encryption:
+			frappe.throw(_("An encrypted Virtual Machine cannot create a Machine Image."), exc=AtlasUserError)
 		title = title.strip()
 		if not title:
 			frappe.throw(_("Image title is required."), exc=AtlasUserError)

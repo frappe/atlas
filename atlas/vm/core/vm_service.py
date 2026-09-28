@@ -77,6 +77,11 @@ class VirtualMachineService:
 				raise AssertionError from error
 
 		image = cls.get_image(request.virtual_machine_image, request.tenant_id)
+		if request.disk_encryption and not image.has_initrd:
+			frappe.throw(
+				_("Virtual Machine Image {0} does not support disk encryption.").format(image.title),
+				exc=AtlasUserError,
+			)
 		image.validate_compatibility(request.disk_mib)
 		requirements = PlacementRequirements(
 			request.cpu_millicores,
