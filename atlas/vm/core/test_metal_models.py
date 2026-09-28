@@ -19,6 +19,7 @@ def complete_response() -> dict:
 			"generation": 3,
 			"restart_generation": 1,
 			"state": "running",
+			"disk_encryption": "luks2",
 			"compute": {
 				"cpu_millicores": 2500,
 				"memory_mib": 2048,
@@ -30,6 +31,7 @@ def complete_response() -> dict:
 				"architecture": "amd64",
 				"rootfs": {"sha256": "a" * 64},
 				"kernel": {"sha256": "b" * 64},
+				"initrd": {"sha256": "c" * 64},
 				"cache_image": True,
 				"memory_snapshot": True,
 				"memory_snapshot_configuration": {
@@ -117,7 +119,9 @@ class TestMetalVirtualMachineParsing(UnitTestCase):
 		self.assertEqual(machine.id, "VM-00001")
 		self.assertEqual(machine.desired.compute.cpu_millicores, 2500)
 		self.assertEqual(machine.desired.compute.sleep_after_idle_seconds, 1800)
+		self.assertEqual(machine.desired.disk_encryption, "luks2")
 		self.assertEqual(machine.desired.image.rootfs.sha256, "a" * 64)
+		self.assertEqual(machine.desired.image.initrd.sha256, "c" * 64)
 		self.assertEqual(machine.desired.guest.ssh_keys, ("ssh-ed25519 AAAA",))
 		self.assertEqual(machine.desired.guest.metadata, {"role": "web"})
 		self.assertTrue(machine.desired.network.firewall.enabled)
@@ -131,6 +135,8 @@ class TestMetalVirtualMachineParsing(UnitTestCase):
 
 		self.assertEqual(machine.desired.state, "running")
 		self.assertEqual(machine.desired.compute.cpu_millicores, 0)
+		self.assertEqual(machine.desired.disk_encryption, "")
+		self.assertIsNone(machine.desired.image.initrd)
 		self.assertEqual(machine.desired.guest.ssh_keys, ())
 		self.assertEqual(machine.observed.state, "unknown")
 		self.assertIsNone(machine.observed.error)

@@ -409,6 +409,36 @@ class TestVirtualMachineService(UnitTestCase):
 			metal_request = VirtualMachineService(virtual_machine).get_metal_request(request, image)
 
 		self.assertEqual(metal_request["network"]["public_ipv4"], "")
+		self.assertEqual(metal_request["disk_encryption"], "")
+
+	def test_encrypted_request_sends_the_mode_initrd_and_idle_sleep(self) -> None:
+		request = VirtualMachineCreateRequest(
+			"encrypted-image",
+			2000,
+			2048,
+			10240,
+			7,
+			disk_encryption=True,
+			sleep_after_idle_seconds=1800,
+		)
+		image_request = {
+			"ref": "sha256:encrypted",
+			"architecture": "amd64",
+			"rootfs": {"url": "rootfs", "sha256": "a" * 64},
+			"kernel": {"url": "kernel", "sha256": "b" * 64},
+			"initrd": {"url": "initrd", "sha256": "c" * 64},
+		}
+		image = SimpleNamespace(get_metal_image_request=Mock(return_value=image_request))
+		virtual_machine = SimpleNamespace(tenant_id=7, name="VM-00001", is_network_gateway=0)
+
+		with patch.object(
+			virtual_machine_service_module, "get_virtual_machine_mesh_address", return_value="fdaa::1"
+		):
+			metal_request = VirtualMachineService(virtual_machine).get_metal_request(request, image)
+
+		self.assertEqual(metal_request["disk_encryption"], "luks2")
+		self.assertEqual(metal_request["compute"]["sleep_after_idle_seconds"], 1800)
+		self.assertEqual(metal_request["image"], image_request)
 
 	def test_machine_image_uses_its_own_artifacts(self) -> None:
 		request = VirtualMachineCreateRequest("machine-image", 2000, 2048, 10240, 7)

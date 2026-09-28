@@ -196,7 +196,20 @@ class TestVirtualMachineImage(UnitTestCase):
 		self.assertEqual(request["ref"], f"sha256:{expected_reference}")
 		self.assertEqual(request["rootfs"]["sha256"], "a" * 64)
 		self.assertEqual(request["kernel"]["sha256"], "b" * 64)
+		self.assertNotIn("initrd", request)
 		self.assertFalse(image.has_initrd)
+
+	def test_metal_request_contains_the_initrd_when_present(self) -> None:
+		image = self.make_image(
+			initrd_object_key="images/image/initrd",
+			initrd_sha256="c" * 64,
+			initrd_size_mib=32,
+		)
+
+		with patch.object(VirtualMachineImage, "get_artifact_url", artifact_url):
+			request = image.get_metal_image_request()
+
+		self.assertEqual(request["initrd"], {"url": "initrd-url", "sha256": "c" * 64})
 
 	def test_initrd_digest_extends_the_immutable_reference(self) -> None:
 		image = self.make_image(
