@@ -26,6 +26,12 @@ Tests sit beside the code as `test_*.py`.
 | Browser console | [Console access](../compute/console.md) | [VM module](../../atlas/vm/SPEC.md) | [Realtime handlers](../../atlas/realtime/handlers.py) |
 | Scheduled jobs | [Atlas troubleshooting](../operate/atlas.md) | [Atlas app](../../atlas/SPEC.md) | [Hooks](../../atlas/hooks.py) |
 
+## Guest image
+
+| Area | Handbook | Specification | Start in code |
+| --- | --- | --- | --- |
+| Root disk encryption | [Guest disk encryption](../compute/disk-encryption.md) | [VM module](../../atlas/vm/SPEC.md) | [Ubuntu image builder](../../atlas/vm/scripts/build_ubuntu_server_image.sh), [initramfs hook](https://github.com/frappe/atlas/blob/develop/atlas/vm/scripts/guest/initramfs/hooks/atlas-cryptroot), [boot script](https://github.com/frappe/atlas/blob/develop/atlas/vm/scripts/guest/initramfs/scripts/local-top/atlas-cryptroot) |
+
 ## Metal (Go, `metald`)
 
 | Area | Handbook | Specification | Start in code |
@@ -34,6 +40,7 @@ Tests sit beside the code as `test_*.py`.
 | HTTP API | [Daemon and API](../region/metald.md) | [API](../../metal/internal/api/SPEC.md) | [Routes](../../metal/internal/api/routes.go) |
 | VM records and reconcile | [Reconciliation](../compute/reconciliation.md) | [VM](../../metal/internal/vm/SPEC.md) | [Manager](../../metal/internal/vm/manager.go), [reconciler](../../metal/internal/vm/reconcile.go) |
 | Firecracker and systemd | [VM runtime](../compute/runtime.md) | [Firecracker](../../metal/internal/firecracker/SPEC.md) | [Machine](../../metal/internal/firecracker/machine.go) |
+| Encrypted guest boot | [Guest disk encryption](../compute/disk-encryption.md) | [API](../../metal/internal/api/SPEC.md), [VM](../../metal/internal/vm/SPEC.md), [Storage](../../metal/internal/storage/SPEC.md), [Firecracker](../../metal/internal/firecracker/SPEC.md) | [Create validation](../../metal/internal/api/vm_request.go), [boot configuration](../../metal/internal/firecracker/machine_configuration.go), [boot artifacts](../../metal/internal/storage/disk.go) |
 | Disks, images, snapshots | [Storage](../storage/host-storage.md) | [Storage](../../metal/internal/storage/SPEC.md) | [Storage package](../../metal/internal/storage/) |
 | VM networking | [Networking](../networking/host-networking.md) | [Network](../../metal/internal/network/SPEC.md) | [Linux allocator](../../metal/internal/network/linux_allocator.go) |
 | Migration | [Metal migration](../compute/migration-engine.md) | [Migration](../../metal/internal/vm/migration/SPEC.md) | [Migration package](../../metal/internal/vm/migration/) |
