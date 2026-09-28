@@ -2,7 +2,7 @@
 
 For Go code, follow the repository [Go anti-pattern rules](../../../llm/go-code-review-guide.md).
 
-[Metal specification](../../SPEC.md) · overview: [Metal reconciliation](../../../docs/compute/reconciliation.md)
+[Metal specification](../../SPEC.md) · overview: [Metal reconciliation](../../../docs/compute/reconciliation.md) and [disk encryption](../../../docs/compute/disk-encryption.md)
 
 ## Purpose
 
@@ -29,6 +29,8 @@ machines/<id>/status.json   observed state and operation progress
 ```
 
 - The create fingerprint excludes signed image URLs.
+- Desired state stores the disk encryption mode, initrd SHA-256 digest, and current initrd source URL.
+- The create fingerprint and reservation identity include the disk encryption mode and the initrd SHA-256 digest. A retry can refresh the initrd URL without changing that identity.
 - A firewall change increases the specification generation.
 - `cpu_millicores` accepts 100 through 32000. Firecracker receives `ceil(cpu_millicores / 1000)` vCPUs.
 - A `sleep_after_idle_seconds` change does not change `SpecificationGeneration`.
@@ -46,6 +48,7 @@ machines/<id>/status.json   observed state and operation progress
 Idle behavior is in [Sleepy VMs](../../../docs/compute/sleepy-vms.md).
 
 - A valid saved state is authoritative when Firecracker is stopped.
+- An encrypted VM can stop after an idle timeout and restore its own VM-local saved state.
 - A saved state beside a running Firecracker process is stale and is deleted.
 - A restore failure keeps the saved state.
 - A restart or machine shape change deletes the saved state.
@@ -65,6 +68,7 @@ The migration lifecycle lives in [internal/vm/migration/SPEC.md](migration/SPEC.
 - Host packages implement `Runtime`, `Network`, `Storage`, and `Snapshots`.
 - The daemon traffic listener passes each `traffic.Event` to `Manager.RestoreAfterTraffic`.
 - `WarmImageBuilder` creates shared start artifacts. It does not use the saved state of an idle VM.
+- Firecracker excludes encrypted VMs from shared warm starts. This rule does not block restore from VM-local saved state.
 
 ## Related
 
