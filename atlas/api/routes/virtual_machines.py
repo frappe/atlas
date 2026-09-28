@@ -190,7 +190,7 @@ def get_virtual_machine(virtual_machine_id: str) -> VirtualMachineDetailResponse
 def get_virtual_machine_metrics(virtual_machine_id: str) -> VirtualMachineMetricsResponse:
 	"""Get VM metrics.
 
-	Returns the current CPU, memory, disk, and network use of one VM. CPU and network values are cumulative counters since the guest's current process started. Memory is a point-in-time gauge. Disk values are as fresh as the last reconcile pass. A VM that is neither running nor paused reports its disk alone.
+	CPU time belongs to the current guest process. Memory is charged to the Firecracker cgroup. Disk use is from the last reconcile pass. Network counters last for the traffic attachment's lifetime, including guest stops. A stopped guest reports zero CPU and memory.
 	"""
 	virtual_machine = get_owned_virtual_machine(virtual_machine_id)
 	metrics = virtual_machine.get_metal_vm_metrics()

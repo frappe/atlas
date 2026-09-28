@@ -1,3 +1,4 @@
+from datetime import UTC, datetime
 from types import SimpleNamespace
 
 import jwt
@@ -19,6 +20,15 @@ class TestDatumToken(UnitTestCase):
 		self.assertEqual(claims["aud"], "atlas-datum:42")
 		self.assertEqual(claims["resource_id"], "vm-00001")
 		self.assertEqual(claims["access"], ["write"])
+
+	def test_bundle_tokens_share_the_exact_issue_time_and_expiry(self) -> None:
+		settings = _signed_settings()
+		issued_at = datetime(2026, 1, 1, tzinfo=UTC)
+		for resource in ("host-1", "vm-1"):
+			token = issue_datum_token(settings, resource, issued_at=issued_at)
+			claims = jwt.decode(token, options={"verify_signature": False})
+			self.assertEqual(claims["iat"], int(issued_at.timestamp()))
+			self.assertEqual(claims["exp"], int(issued_at.timestamp()) + 3600)
 
 	def test_a_pre_fetched_signing_key_skips_the_settings_lookup(self) -> None:
 		settings = _signed_settings()

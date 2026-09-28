@@ -919,7 +919,7 @@ class VirtualMachineComputeUsage(BaseModel):
 	"""Cumulative CPU time and current memory use."""
 
 	cpu_microseconds: int = Field(description="Cumulative CPU time since the guest's process started.")
-	memory_bytes: int = Field(description="Current resident memory.")
+	memory_bytes: int = Field(description="Current memory charged to the Firecracker cgroup, in bytes.")
 
 
 class VirtualMachineDiskUsage(BaseModel):
@@ -930,7 +930,11 @@ class VirtualMachineDiskUsage(BaseModel):
 
 
 class VirtualMachineNetworkUsage(BaseModel):
-	"""Cumulative received and sent bytes and packets."""
+	"""Cumulative unicast IP traffic for the lifetime of the traffic attachment.
+
+	Counters survive guest stops while the attachment remains. Recreating the
+	attachment or restarting Metal resets the counters.
+	"""
 
 	received_bytes: int = Field(description="Cumulative bytes received by the guest.")
 	received_packets: int = Field(description="Cumulative packets received by the guest.")
@@ -941,8 +945,8 @@ class VirtualMachineNetworkUsage(BaseModel):
 class VirtualMachineMetricsResponse(BaseModel):
 	"""The current resource use of one virtual machine.
 
-	A virtual machine that is neither running nor paused reports its disk
-	alone: CPU, memory, and network read as zero.
+	A virtual machine that is neither running nor paused reports zero CPU and
+	memory. Disk use and any surviving network counters remain available.
 	"""
 
 	model_config = ConfigDict(

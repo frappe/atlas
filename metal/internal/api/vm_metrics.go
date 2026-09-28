@@ -38,7 +38,7 @@ type networkUsageResponse struct {
 }
 
 // @Summary	Read virtual machine metrics
-// @Description	Return the current CPU, memory, disk, and network use of one virtual machine. CPU and network values are cumulative counters since the guest's current process started. Memory is a point-in-time gauge. Disk values are as fresh as the last reconcile pass. A virtual machine that is neither running nor paused reports its disk alone.
+// @Description	Return CPU time for the current guest process, current cgroup memory, disk use from the last reconcile pass, and network counters for the traffic attachment's lifetime. Stopped guests report zero CPU and memory. Network counters survive guest stops while the attachment remains, and reset when monitoring is recreated.
 // @ID			getVirtualMachineMetrics
 // @Tags		Virtual machines
 // @Produce	json

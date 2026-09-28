@@ -222,13 +222,11 @@ scheduler_events = {
 			"atlas.vm.core.vm_image_storage_migration.enqueue_site_file_image_migrations",
 			"atlas.vm.core.vm_image_storage_migration.delete_expired_site_files",
 		],
-		"*/20 * * * *": [
-			"atlas.metal_server.doctype.metal_server.metal_server.refresh_expiring_datum_tokens",
-		],
 		"0 */12 * * *": [
 			"atlas.atlas.doctype.atlas_settings.atlas_settings.rotate_proxy_cluster_password",
 		],
 		"* * * * *": [
+			"atlas.metal_server.doctype.metal_server.metal_server.refresh_expiring_datum_tokens",
 			"atlas.metal_server.core.public_ip_service.replenish_direct_allocations",
 			"atlas.atlas.doctype.ssh_task.ssh_task.mark_timed_out_ssh_tasks",
 			"atlas.vm.core.vm_migration.reconcile_migrations",

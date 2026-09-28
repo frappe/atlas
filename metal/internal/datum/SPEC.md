@@ -6,7 +6,7 @@ For Go code, follow the repository [Go anti-pattern rules](../../../llm/go-code-
 
 ## Purpose
 
-The `datum` package pushes host and per-VM metrics to the [datum](https://github.com/frappe/datum) telemetry service. It is opt-in: metald runs with it disabled unless `datum.url` is configured.
+The `datum` package pushes host and per-VM metrics to Datum. Read [metrics operation and validation](../../../docs/region/metrics.md) for configuration, metric meanings, and token delivery.
 
 ## Types
 
@@ -25,7 +25,7 @@ A VM the bundle carries no token for yet is skipped for that pass, not treated a
 
 ## Export
 
-Each resource (the host, each VM) gets its own push, under its own token, with its own short timeout. One resource's failure does not stop the others: `Exporter` logs and continues, because a metrics gap must never affect VM lifecycle operations.
+Each resource gets its own push under its own token. The pass owns at most four resource goroutines and waits for all of them before it returns. Each timeout covers metric collection and HTTP delivery. Cancellation stops scheduling more resources and propagates to active work. One resource's failure does not stop the others.
 
 Identity travels only on the bearer token. No sample carries a VM ID or host ID label. That is what the token's `resource_id` claim is for.
 

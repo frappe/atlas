@@ -65,14 +65,17 @@ const volatile __u32 virtual_machine_user_id = 0;
 static __always_inline void add_traffic_counters(void *counters_map, __u32 user_id, __u32 packet_length)
 {
 	struct traffic_counters *counters = bpf_map_lookup_elem(counters_map, &user_id);
-	if (counters) {
-		counters->bytes += packet_length;
-		counters->packets += 1;
-		return;
+	if (!counters) {
+		/* Another CPU can create the entry before this insertion. Never replace it. */
+		struct traffic_counters initial = {};
+		bpf_map_update_elem(counters_map, &user_id, &initial, BPF_NOEXIST);
+		counters = bpf_map_lookup_elem(counters_map, &user_id);
+		if (!counters)
+			return;
 	}
 
-	struct traffic_counters initial = {.bytes = packet_length, .packets = 1};
-	bpf_map_update_elem(counters_map, &user_id, &initial, BPF_ANY);
+	__sync_fetch_and_add(&counters->bytes, packet_length);
+	__sync_fetch_and_add(&counters->packets, 1);
 }
 
 /* Only IPv4 and IPv6 packets are considered activity. */
