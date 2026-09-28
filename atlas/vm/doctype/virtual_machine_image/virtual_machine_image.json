@@ -36,6 +36,11 @@
   "kernel_object_key",
   "kernel_file",
   "kernel_sha256",
+  "column_break_initrd",
+  "initrd_size_mib",
+  "initrd_object_key",
+  "initrd_file",
+  "initrd_sha256",
   "site_file_retention_until",
   "section_break_tags",
   "tags",
@@ -208,6 +213,36 @@
    "fieldname": "kernel_size_mib",
    "fieldtype": "Int",
    "label": "Kernel Size (MiB)",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_initrd",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "initrd_object_key",
+   "fieldtype": "Data",
+   "label": "Initrd Object Key",
+   "read_only": 1
+  },
+  {
+   "depends_on": "eval: doc.artifact_storage === 'Site File'",
+   "fieldname": "initrd_file",
+   "fieldtype": "Link",
+   "label": "Initrd File",
+   "options": "File",
+   "read_only": 1
+  },
+  {
+   "fieldname": "initrd_sha256",
+   "fieldtype": "Data",
+   "label": "Initrd SHA-256",
+   "read_only": 1
+  },
+  {
+   "fieldname": "initrd_size_mib",
+   "fieldtype": "Int",
+   "label": "Initrd Size (MiB)",
    "read_only": 1
   },
   {

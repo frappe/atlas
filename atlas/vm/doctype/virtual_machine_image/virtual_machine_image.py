@@ -47,9 +47,8 @@ class VirtualMachineImage(Document):
 	from typing import TYPE_CHECKING
 
 	if TYPE_CHECKING:
-		from frappe.types import DF
-
 		from atlas.atlas.doctype.atlas_tag.atlas_tag import AtlasTag
+		from frappe.types import DF
 
 		architecture: DF.Literal["amd64", "arm64"]
 		artifact_retention_until: DF.Datetime | None
@@ -62,6 +61,10 @@ class VirtualMachineImage(Document):
 		image_size_mib: DF.Int
 		image_stored_size_mib: DF.Int
 		image_type: DF.Literal["system", "machine"]
+		initrd_file: DF.Link | None
+		initrd_object_key: DF.Data | None
+		initrd_sha256: DF.Data | None
+		initrd_size_mib: DF.Int
 		is_termination_protected: DF.Check
 		kernel_file: DF.Link | None
 		kernel_multipart_upload_id: DF.Data | None
@@ -78,17 +81,7 @@ class VirtualMachineImage(Document):
 		source_local_snapshot_id: DF.Data | None
 		source_server: DF.Data | None
 		source_virtual_machine: DF.Data | None
-		status: DF.Literal[
-			"Pending",
-			"Snapshotting",
-			"Uploading",
-			"Completing",
-			"Cleaning",
-			"Available",
-			"Failed",
-			"Deleting",
-			"Archived",
-		]
+		status: DF.Literal["Pending", "Snapshotting", "Uploading", "Completing", "Cleaning", "Available", "Failed", "Deleting", "Archived"]
 		tags: DF.Table[AtlasTag]
 		tenant_id: DF.Int
 		title: DF.Data
@@ -155,6 +148,11 @@ class VirtualMachineImage(Document):
 		"""Return whether every tenant can read and boot this image."""
 		return self.image_type == "system"
 
+	@property
+	def has_initrd(self) -> bool:
+		"""Return whether this image includes an initrd artifact."""
+		return bool(self.get("initrd_sha256"))
+
 	def is_visible_to_tenant(self, tenant_id: int) -> bool:
 		"""Return whether one tenant can read and boot this image."""
 		return self.is_shared or self.tenant_id == tenant_id
@@ -163,6 +161,8 @@ class VirtualMachineImage(Document):
 	def immutable_reference(self) -> str:
 		"""Return the name that identifies this exact content on a host."""
 		identity = f"{self.architecture}\0{self.image_sha256}\0{self.kernel_sha256}"
+		if initrd_sha256 := self.get("initrd_sha256"):
+			identity = f"{identity}\0{initrd_sha256}"
 		return f"sha256:{hashlib.sha256(identity.encode()).hexdigest()}"
 
 	@property
@@ -249,6 +249,26 @@ class VirtualMachineImage(Document):
 			frappe.throw(_("Kernel SHA-256 must contain 64 lowercase hexadecimal characters."))
 		if self.image_size_mib <= 0 or self.kernel_size_mib <= 0:
 			frappe.throw(_("An available Virtual Machine Image requires positive artifact sizes."))
+		self.validate_initrd_artifact()
+
+	def validate_initrd_artifact(self) -> None:
+		"""Require complete metadata when an optional initrd is present."""
+		initrd_object_key = self.get("initrd_object_key")
+		initrd_file = self.get("initrd_file")
+		initrd_sha256 = self.get("initrd_sha256")
+		initrd_size_mib = self.get("initrd_size_mib")
+		if not any((initrd_object_key, initrd_file, initrd_sha256, initrd_size_mib)):
+			return
+
+		if self.is_stored_in_site_file:
+			if not initrd_file:
+				frappe.throw(_("An initrd stored as a site file requires an initrd file."))
+		elif not initrd_object_key:
+			frappe.throw(_("An initrd stored in object storage requires an initrd object key."))
+		if not SHA256_PATTERN.fullmatch(initrd_sha256 or ""):
+			frappe.throw(_("Initrd SHA-256 must contain 64 lowercase hexadecimal characters."))
+		if not isinstance(initrd_size_mib, int) or isinstance(initrd_size_mib, bool) or initrd_size_mib <= 0:
+			frappe.throw(_("An initrd requires a positive artifact size."))
 
 	def validate_site_file_artifacts(self) -> None:
 		"""Require both public files, and refuse tenant content on a public URL."""
