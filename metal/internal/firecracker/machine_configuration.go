@@ -50,11 +50,8 @@ func configure(
 		return err
 	}
 
-	bootSource := api.BootSource{
-		KernelImagePath: bootConfiguration.Kernel,
-		BootArgs:        bootArguments(bootConfiguration, networkInterface),
-	}
-	if err := client.PutBootSource(operationContext, bootSource); err != nil {
+	source := bootSource(bootConfiguration, networkInterface)
+	if err := client.PutBootSource(operationContext, source); err != nil {
 		return err
 	}
 
@@ -89,6 +86,18 @@ func configure(
 		networkInterface.GuestIPAddress,
 		networkInterface.MACAddress,
 	))
+}
+
+// bootSource builds the Firecracker kernel and optional initrd configuration.
+func bootSource(
+	bootConfiguration storage.BootConfiguration,
+	networkInterface network.Interface,
+) api.BootSource {
+	return api.BootSource{
+		KernelImagePath: bootConfiguration.Kernel,
+		BootArgs:        bootArguments(bootConfiguration, networkInterface),
+		InitrdPath:      bootConfiguration.Initrd,
+	}
 }
 
 // bootArguments appends the guest network to the image kernel arguments, so the
