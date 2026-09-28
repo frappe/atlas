@@ -26,6 +26,13 @@ func TestManifestIncludesInitrdWithoutRootFileSystemSize(t *testing.T) {
 	if err := store.saveImageManifest("ubuntu", manifest); err != nil {
 		t.Fatal(err)
 	}
+	data, err := os.ReadFile(store.manifestFile("ubuntu"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "rootfs_size_bytes") {
+		t.Fatalf("manifest contains rootfs_size_bytes: %s", data)
+	}
 
 	loaded, found, err := store.loadImageManifest("ubuntu")
 	if err != nil {
