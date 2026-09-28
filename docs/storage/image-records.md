@@ -7,15 +7,21 @@ Atlas owns image records and artifacts. Metal caches the artifacts on hosts and 
 | System | Shared with every tenant. |
 | Machine | Owned by the source VM's tenant. |
 
-An image records its kernel, root filesystem, architecture, sizes, and SHA-256 digests. **Only an enabled, Available image can create a VM.**
+An image records its kernel, root filesystem, optional initial RAM disk (initrd), architecture, sizes, and SHA-256 digests. **Only an enabled, Available image can create a VM.**
 
 ## System images
 
-The Ubuntu builder publishes a kernel and root filesystem as a new Available System image. Each build gets a new record and its own artifact paths.
+The Ubuntu builder supports AMD64 only. It publishes each Ubuntu build as two Available System image variants that use the same kernel and root filesystem.
 
-The builder checks earlier Available images with the same title and architecture. If one has the same digests, the build changes nothing.
+The plain variant has no initrd. The **Disk Encryption** variant has an initrd and the `disk_encryption=luks2` tag. The variants have separate image records, artifact paths, and replacement lineages.
 
-After publication, the builder retires the earlier images.
+The initrd lets the guest encrypt its own root disk on the first boot. See [guest disk encryption](../compute/disk-encryption.md) for the boot, trust, and recovery rules.
+
+The builder checks earlier Available images with the same title and architecture. If one has the same artifact digests, the build changes nothing.
+
+An initrd digest change replaces only the Disk Encryption lineage.
+
+After publication, the builder retires earlier records in each lineage separately.
 
 Atlas protects each new System image from termination. The builder removes this protection from the earlier images before it retires them.
 
@@ -34,6 +40,8 @@ The `artifact_storage` field selects the artifact location:
 | `Object Storage` | Atlas Settings bucket, under `images/<image ID>/` | Signed. Valid for 24 hours. |
 | `Site File` | Public site File under `/files/` | Public. No expiry. |
 
+When an image has an initrd, Atlas stores it in the selected artifact location with the root filesystem and kernel.
+
 ### Bootstrap without object storage
 
 Build the first System image with `--storage site-file`. Set `atlas_base_url` to an address the host can reach.
@@ -48,7 +56,7 @@ Use **Migrate to Object Storage** to start one migration immediately.
 
 For each image, the job:
 
-1. Uploads both artifacts under keys owned by the image and compares sizes.
+1. Uploads the root filesystem, kernel, and optional initrd under keys owned by the image, and compares their sizes.
 2. Saves the keys and changes `artifact_storage`.
 3. Keeps the site Files for six hours so hosts can finish earlier downloads, then deletes them.
 
@@ -57,6 +65,8 @@ Hosts have a downloadable copy at each step. The `immutable_reference` uses arch
 ## Machine images
 
 Select **Create Machine Image** to stage the VM disk and kernel on Metal. Metal's UUIDv7 snapshot ID becomes the image record name.
+
+An encrypted VM cannot create a Machine image.
 
 Atlas saves multipart upload IDs before it starts the transfer. It checks hashes and sizes before publication.
 
@@ -103,7 +113,7 @@ Atlas records a cleanup failure and retries every **30 seconds**.
 
 Host sync requests caching for enabled Available images with `cache_image`.
 
-A warm artifact contains disk, memory, and Firecracker state for one image and VM shape. It stays on its host.
+A warm artifact contains disk, memory, and Firecracker state for one image and VM shape. It stays on its host. Encrypted VMs do not use shared warm artifacts, but they can restore their own VM-local state after an automatic idle stop.
 
 If a shared warm artifact cannot be used, the VM starts without it.
 
@@ -117,7 +127,7 @@ See [Metal storage](host-storage.md) for local staging and cleanup. See the [Atl
 
 - [Image DocType](../../atlas/vm/doctype/virtual_machine_image/virtual_machine_image.py) owns image metadata and visibility.
 - [System image builder](../../atlas/vm/core/image_builder.py) publishes base artifacts.
-- [Ubuntu image script](../../atlas/vm/scripts/build_ubuntu_server_image.sh) builds the guest root filesystem and sets its error behavior.
+- [Ubuntu image script](../../atlas/vm/scripts/build_ubuntu_server_image.sh) builds the guest root filesystem, kernel, and initrd.
 - [Machine image transfer](../../atlas/vm/core/vm_image_transfer.py) owns snapshot progress.
 - [Storage migration](../../atlas/vm/core/vm_image_storage_migration.py) moves bootstrap files to object storage.
 - [Image deletion](../../atlas/vm/core/vm_image_deletion.py) retires and reclaims artifacts.
