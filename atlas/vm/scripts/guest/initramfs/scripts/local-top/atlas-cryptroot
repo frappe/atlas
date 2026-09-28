@@ -13,30 +13,104 @@ case "${1:-}" in
 		;;
 esac
 
-. /scripts/functions
+# shellcheck source=/scripts/functions
+# shellcheck disable=SC1091
+. "${ATLAS_CRYPTROOT_FUNCTIONS:-/scripts/functions}"
+
+root_device=${ATLAS_CRYPTROOT_ROOT_DEVICE:-/dev/vda}
+command_line_file=${ATLAS_CRYPTROOT_COMMAND_LINE_FILE:-/proc/cmdline}
+parameter_file=${ATLAS_CRYPTROOT_PARAMETER_FILE:-/conf/param.conf}
+reduction_bytes=33554432
+
+normalize_positive_decimal() {
+	decimal_value=$1
+	case "$decimal_value" in
+		*[!0-9]*|'') return 1 ;;
+	esac
+
+	while [ "${decimal_value#0}" != "$decimal_value" ]; do
+		decimal_value=${decimal_value#0}
+	done
+	[ -n "$decimal_value" ] || return 1
+	[ "${#decimal_value}" -le 18 ] || return 1
+
+	printf '%s\n' "$decimal_value"
+}
+
+trim_whitespace() {
+	trimmed_value=$1
+	trimmed_value=${trimmed_value#"${trimmed_value%%[![:space:]]*}"}
+	trimmed_value=${trimmed_value%"${trimmed_value##*[![:space:]]}"}
+	printf '%s\n' "$trimmed_value"
+}
+
+derive_ext_file_system_bytes() {
+	superblock=$(LC_ALL=C dumpe2fs -h "$root_device" 2>/dev/null) || \
+		panic "Atlas: could not read the root file system superblock"
+	block_count=""
+	block_size=""
+	block_count_fields=0
+	block_size_fields=0
+	while IFS=: read -r field value; do
+		case "$field" in
+			'Block count')
+				block_count_fields=$((block_count_fields + 1))
+				block_count=$(trim_whitespace "$value")
+				;;
+			'Block size')
+				block_size_fields=$((block_size_fields + 1))
+				block_size=$(trim_whitespace "$value")
+				;;
+		esac
+	done <<EOF
+$superblock
+EOF
+
+	[ "$block_count_fields" -eq 1 ] && [ "$block_size_fields" -eq 1 ] || \
+		panic "Atlas: root file system geometry is ambiguous"
+	block_count=$(normalize_positive_decimal "$block_count") || \
+		panic "Atlas: root file system block count is invalid"
+	block_size=$(normalize_positive_decimal "$block_size") || \
+		panic "Atlas: root file system block size is invalid"
+	if [ "$block_size" -lt 1024 ] || [ "$block_size" -gt 65536 ] || \
+		[ $((block_size & (block_size - 1))) -ne 0 ]; then
+		panic "Atlas: root file system block size is invalid"
+	fi
+	device_bytes=$(blockdev --getsize64 "$root_device" 2>/dev/null) || \
+		panic "Atlas: could not read the root disk size"
+	device_bytes=$(trim_whitespace "$device_bytes")
+	device_bytes=$(normalize_positive_decimal "$device_bytes") || \
+		panic "Atlas: root disk size is invalid"
+
+	[ "$device_bytes" -gt "$reduction_bytes" ] || \
+		panic "Atlas: root disk does not have space for encryption metadata"
+	usable_bytes=$((device_bytes - reduction_bytes))
+	maximum_blocks=$((usable_bytes / block_size))
+	[ "$block_count" -le "$maximum_blocks" ] || \
+		panic "Atlas: root file system does not leave space for encryption metadata"
+
+	file_system_bytes=$((block_count * block_size))
+	[ "$file_system_bytes" -gt 0 ] || panic "Atlas: root file system size is invalid"
+}
 
 disk_encryption=""
-encrypt_bytes=""
-for argument in $(cat /proc/cmdline); do
+# The kernel command line is one space-separated line, so word splitting is intentional.
+# shellcheck disable=SC2013
+for argument in $(cat "$command_line_file"); do
 	case "$argument" in
 		atlas.disk_encryption=*) disk_encryption=${argument#*=} ;;
-		atlas.encrypt_bytes=*) encrypt_bytes=${argument#*=} ;;
 	esac
 done
 
 [ -n "$disk_encryption" ] || exit 0
 [ "$disk_encryption" = "luks2" ] || panic "Atlas: unsupported disk encryption mode: $disk_encryption"
-case "$encrypt_bytes" in
-	*[!0-9]*|'') panic "Atlas: atlas.encrypt_bytes must be a positive byte count" ;;
-	0) panic "Atlas: atlas.encrypt_bytes must be a positive byte count" ;;
-esac
 
 modprobe dm_crypt || panic "Atlas: could not load dm_crypt"
 udevadm settle || true
 
-if cryptsetup isLuks --type luks2 /dev/vda; then
+if cryptsetup isLuks --type luks2 "$root_device"; then
 	while true; do
-		cryptsetup open /dev/vda root
+		cryptsetup open "$root_device" root
 		status=$?
 		[ "$status" -eq 0 ] && break
 		[ "$status" -eq 2 ] || panic "Atlas: encrypted root disk could not open"
@@ -47,16 +121,17 @@ if cryptsetup isLuks --type luks2 /dev/vda; then
 	status=$?
 	[ "$status" -eq 0 ] || [ "$status" -eq 1 ] || panic "Atlas: root disk reencryption could not resume"
 else
-	filesystem_type=$(blkid -p -s TYPE -o value /dev/vda 2>/dev/null || true)
+	filesystem_type=$(blkid -p -s TYPE -o value "$root_device" 2>/dev/null || true)
 	case "$filesystem_type" in
 		ext2|ext3|ext4) ;;
-		*) panic "Atlas: /dev/vda is neither LUKS2 nor a supported root file system" ;;
+		*) panic "Atlas: $root_device is neither LUKS2 nor a supported root file system" ;;
 	esac
+	derive_ext_file_system_bytes
 
 	cryptsetup reencrypt --encrypt --type luks2 --batch-mode \
-		--device-size "$encrypt_bytes" --reduce-device-size 32m \
+		--device-size "$file_system_bytes" --reduce-device-size 32m \
 		--pbkdf argon2id --pbkdf-memory 262144 \
-		--verify-passphrase /dev/vda root || panic "Atlas: initial root disk encryption failed"
+		--verify-passphrase "$root_device" root || panic "Atlas: initial root disk encryption failed"
 fi
 
-printf '%s\n' 'ROOT=/dev/mapper/root' >> /conf/param.conf
+printf '%s\n' 'ROOT=/dev/mapper/root' >> "$parameter_file"
