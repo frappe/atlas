@@ -162,6 +162,7 @@ class VirtualMachineService:
 	) -> dict[str, Any]:
 		"""Return the complete Metal create request."""
 		return {
+			"disk_encryption": "luks2" if request.disk_encryption else "",
 			"compute": {
 				"cpu_millicores": request.cpu_millicores,
 				"memory_mib": request.memory_mib,

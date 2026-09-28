@@ -47,8 +47,9 @@ class VirtualMachineImage(Document):
 	from typing import TYPE_CHECKING
 
 	if TYPE_CHECKING:
-		from atlas.atlas.doctype.atlas_tag.atlas_tag import AtlasTag
 		from frappe.types import DF
+
+		from atlas.atlas.doctype.atlas_tag.atlas_tag import AtlasTag
 
 		architecture: DF.Literal["amd64", "arm64"]
 		artifact_retention_until: DF.Datetime | None
@@ -81,7 +82,17 @@ class VirtualMachineImage(Document):
 		source_local_snapshot_id: DF.Data | None
 		source_server: DF.Data | None
 		source_virtual_machine: DF.Data | None
-		status: DF.Literal["Pending", "Snapshotting", "Uploading", "Completing", "Cleaning", "Available", "Failed", "Deleting", "Archived"]
+		status: DF.Literal[
+			"Pending",
+			"Snapshotting",
+			"Uploading",
+			"Completing",
+			"Cleaning",
+			"Available",
+			"Failed",
+			"Deleting",
+			"Archived",
+		]
 		tags: DF.Table[AtlasTag]
 		tenant_id: DF.Int
 		title: DF.Data
@@ -136,12 +147,18 @@ class VirtualMachineImage(Document):
 
 	def get_metal_image(self, expiry_seconds: int) -> dict[str, Any]:
 		"""Return the image object with freshly signed artifact URLs."""
-		return {
+		image = {
 			"ref": self.immutable_reference,
 			"architecture": self.architecture,
 			"rootfs": {"url": self.get_artifact_url("rootfs", expiry_seconds), "sha256": self.image_sha256},
 			"kernel": {"url": self.get_artifact_url("kernel", expiry_seconds), "sha256": self.kernel_sha256},
 		}
+		if self.has_initrd:
+			image["initrd"] = {
+				"url": self.get_artifact_url("initrd", expiry_seconds),
+				"sha256": self.initrd_sha256,
+			}
+		return image
 
 	@property
 	def is_shared(self) -> bool:

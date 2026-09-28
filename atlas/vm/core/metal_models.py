@@ -45,6 +45,7 @@ class MetalImage:
 	cache_image: bool
 	memory_snapshot: bool
 	memory_snapshot_configuration: dict[str, int] | None
+	initrd: MetalImageArtifact | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -112,6 +113,7 @@ class MetalDesiredState:
 	image: MetalImage
 	network: MetalNetwork
 	guest: MetalGuest
+	disk_encryption: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -189,6 +191,7 @@ def parse_desired_state(value: dict[str, Any]) -> MetalDesiredState:
 		generation=integer_field(value, "generation"),
 		restart_generation=integer_field(value, "restart_generation"),
 		state=string_field(value, "state"),
+		disk_encryption=string_field(value, "disk_encryption", default=""),
 		compute=MetalCompute(
 			cpu_millicores=integer_field(compute, "cpu_millicores"),
 			memory_mib=integer_field(compute, "memory_mib"),
@@ -246,6 +249,10 @@ def parse_image(value: dict[str, Any]) -> MetalImage:
 	configuration = value.get("memory_snapshot_configuration")
 	if configuration is not None:
 		configuration = integer_map(configuration, "memory_snapshot_configuration")
+	initrd_value = value.get("initrd")
+	initrd = None
+	if initrd_value is not None:
+		initrd = MetalImageArtifact(sha256=string_field(object_value(initrd_value, "initrd"), "sha256"))
 	return MetalImage(
 		ref=string_field(value, "ref"),
 		architecture=string_field(value, "architecture"),
@@ -254,6 +261,7 @@ def parse_image(value: dict[str, Any]) -> MetalImage:
 		cache_image=boolean_field(value, "cache_image"),
 		memory_snapshot=boolean_field(value, "memory_snapshot"),
 		memory_snapshot_configuration=configuration,
+		initrd=initrd,
 	)
 
 
