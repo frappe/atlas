@@ -6,7 +6,13 @@ from unittest.mock import Mock, call, patch
 import frappe
 from frappe.tests import IntegrationTestCase, UnitTestCase
 
-from atlas.vm.core.image_builder import build_ubuntu_image, publish_ubuntu_image, upload_to_object_storage
+from atlas.vm.core.image_builder import (
+	build_ubuntu_image,
+	publish_to_site_files,
+	publish_ubuntu_image,
+	publish_ubuntu_image_variant,
+	upload_to_object_storage,
+)
 from atlas.vm.core.multipart_upload import MEBIBYTE
 
 
@@ -32,23 +38,24 @@ class TestUbuntuImageBuilder(UnitTestCase):
 		self.assertEqual(command[command.index("--initrd-output") + 1], initrd_path)
 		run.assert_called_once_with(command, check=True)
 
-	def test_publish_keeps_an_unchanged_image_record(self) -> None:
-		existing = SimpleNamespace(image_sha256="a" * 64, kernel_sha256="b" * 64)
+	def test_variant_keeps_an_unchanged_image_record(self) -> None:
+		existing = SimpleNamespace(image_sha256="a" * 64, kernel_sha256="b" * 64, initrd_sha256=None)
 		with (
-			patch("atlas.vm.core.image_builder.get_sha256", side_effect=["a" * 64, "b" * 64]) as sha256,
 			patch("atlas.vm.core.image_builder.get_available_ubuntu_images", return_value=[existing]),
 			patch("atlas.vm.core.image_builder.frappe.get_single") as get_single,
 			patch("atlas.vm.core.image_builder.VirtualMachineImageDeletionService") as deletion,
 		):
-			publish_ubuntu_image(
-				"Ubuntu 24.04",
-				"24.04",
-				"amd64",
-				Path("rootfs.img"),
-				Path("kernel"),
+			publish_ubuntu_image_variant(
+				title="Ubuntu 24.04",
+				version="24.04",
+				architecture="amd64",
+				image_path=Path("rootfs.img"),
+				image_sha256="a" * 64,
+				kernel_path=Path("kernel"),
+				kernel_sha256="b" * 64,
+				storage="Object Storage",
 			)
 
-		self.assertEqual(sha256.call_args_list, [call(Path("rootfs.img")), call(Path("kernel"))])
 		get_single.assert_not_called()
 		deletion.assert_not_called()
 
@@ -57,7 +64,6 @@ class TestUbuntuImageBuilder(UnitTestCase):
 		created = {}
 
 		with (
-			patch("atlas.vm.core.image_builder.get_sha256", side_effect=["a" * 64, "b" * 64]),
 			patch("atlas.vm.core.image_builder.get_available_ubuntu_images", return_value=[previous]),
 			patch("atlas.vm.core.image_builder.frappe.generate_hash", return_value="new-image"),
 			patch(
@@ -73,15 +79,74 @@ class TestUbuntuImageBuilder(UnitTestCase):
 			),
 			patch("atlas.vm.core.image_builder.VirtualMachineImageDeletionService") as deletion,
 		):
-			publish_ubuntu_image("Ubuntu 24.04", "24.04", "amd64", Path("rootfs.img"), Path("kernel"))
+			publish_ubuntu_image_variant(
+				title="Ubuntu 24.04",
+				version="24.04",
+				architecture="amd64",
+				image_path=Path("rootfs.img"),
+				image_sha256="a" * 64,
+				kernel_path=Path("kernel"),
+				kernel_sha256="b" * 64,
+				storage="Object Storage",
+			)
 
 		self.assertEqual(created["set_name"], "new-image")
 		self.assertNotIn("version", created)
 		self.assertEqual(created["image_object_key"], "rootfs-key")
-		upload.assert_called_once_with("new-image", Path("rootfs.img.zst"), Path("kernel"))
+		upload.assert_called_once_with("new-image", Path("rootfs.img.zst"), Path("kernel"), None)
 		self.assertEqual(created["image_stored_size_mib"], 1)
 		deletion.return_value.request.assert_called_once_with(previous)
 		self.assertEqual(previous.is_termination_protected, 0)
+
+	def test_encryption_variant_records_its_initrd(self) -> None:
+		created = {}
+		with (
+			patch("atlas.vm.core.image_builder.get_available_ubuntu_images", return_value=[]),
+			patch("atlas.vm.core.image_builder.frappe.generate_hash", return_value="encrypted-image"),
+			patch(
+				"atlas.vm.core.image_builder.upload_to_object_storage",
+				return_value={
+					"image_object_key": "rootfs-key",
+					"kernel_object_key": "kernel-key",
+					"initrd_object_key": "initrd-key",
+				},
+			) as upload,
+			patch("atlas.vm.core.image_builder.Path.stat", return_value=SimpleNamespace(st_size=MEBIBYTE)),
+			patch(
+				"atlas.vm.core.image_builder.frappe.get_doc",
+				side_effect=lambda values: SimpleNamespace(
+					insert=lambda **kwargs: created.update(values | kwargs)
+				),
+			),
+		):
+			publish_ubuntu_image_variant(
+				title="Ubuntu 24.04 (Disk Encryption)",
+				version="24.04",
+				architecture="amd64",
+				image_path=Path("rootfs.img"),
+				image_sha256="a" * 64,
+				kernel_path=Path("kernel"),
+				kernel_sha256="b" * 64,
+				storage="Object Storage",
+				initrd_path=Path("initrd"),
+				initrd_sha256="c" * 64,
+			)
+
+		upload.assert_called_once_with(
+			"encrypted-image", Path("rootfs.img.zst"), Path("kernel"), Path("initrd")
+		)
+		self.assertEqual(created["initrd_object_key"], "initrd-key")
+		self.assertEqual(created["initrd_sha256"], "c" * 64)
+		self.assertEqual(created["initrd_size_mib"], 1)
+		self.assertEqual(
+			{tag["key"]: tag["value"] for tag in created["tags"]},
+			{
+				"purpose": "base",
+				"os": "Ubuntu",
+				"os_version": "24.04",
+				"disk_encryption": "luks2",
+			},
+		)
 
 	def test_different_images_use_different_object_keys_for_the_same_files(self) -> None:
 		client = Mock()
@@ -102,11 +167,66 @@ class TestUbuntuImageBuilder(UnitTestCase):
 			{"image_object_key": "images/image-2/rootfs.img", "kernel_object_key": "images/image-2/kernel"},
 		)
 
+	def test_object_storage_uploads_an_initrd_owned_by_the_image(self) -> None:
+		client = Mock()
+		settings = SimpleNamespace(get_object_storage_client=lambda: client)
+		with (
+			patch("atlas.vm.core.image_builder.frappe.get_single", return_value=settings),
+			patch("atlas.vm.core.image_builder.upload_with_progress") as upload,
+		):
+			location = upload_to_object_storage(
+				"image-1", Path("rootfs.img"), Path("kernel"), Path("initrd")
+			)
+
+		self.assertEqual(
+			location,
+			{
+				"image_object_key": "images/image-1/rootfs.img",
+				"kernel_object_key": "images/image-1/kernel",
+				"initrd_object_key": "images/image-1/initrd",
+			},
+		)
+		self.assertEqual(
+			upload.call_args_list,
+			[
+				call(client, Path("rootfs.img"), "images/image-1/rootfs.img"),
+				call(client, Path("kernel"), "images/image-1/kernel"),
+				call(client, Path("initrd"), "images/image-1/initrd"),
+			],
+		)
+
+	def test_site_files_publish_an_initrd_owned_by_the_image(self) -> None:
+		with patch(
+			"atlas.vm.core.image_builder.publish_public_file_path",
+			side_effect=["file-rootfs", "file-kernel", "file-initrd"],
+		) as publish_file:
+			location = publish_to_site_files(
+				"image-1",
+				Path("rootfs.img.zst"),
+				"a" * 64,
+				Path("kernel"),
+				"b" * 64,
+				Path("initrd"),
+				"c" * 64,
+			)
+
+		self.assertEqual(
+			location,
+			{"image_file": "file-rootfs", "kernel_file": "file-kernel", "initrd_file": "file-initrd"},
+		)
+		self.assertEqual(
+			publish_file.call_args_list,
+			[
+				call(Path("rootfs.img.zst"), "a" * 64, "image-1"),
+				call(Path("kernel"), "b" * 64, "image-1"),
+				call(Path("initrd"), "c" * 64, "image-1"),
+			],
+		)
+
 	def test_publish_to_site_files_does_not_touch_object_storage(self) -> None:
 		created = {}
 
 		with (
-			patch("atlas.vm.core.image_builder.get_sha256", side_effect=["a" * 64, "b" * 64]),
 			patch("atlas.vm.core.image_builder.get_available_ubuntu_images", return_value=[]),
 			patch("atlas.vm.core.image_builder.frappe.generate_hash", return_value="site-image"),
 			patch("atlas.vm.core.image_builder.frappe.get_single") as get_single,
@@ -122,13 +242,15 @@ class TestUbuntuImageBuilder(UnitTestCase):
 				),
 			),
 		):
-			publish_ubuntu_image(
-				"Ubuntu 24.04",
-				"24.04",
-				"amd64",
-				Path("rootfs.ext4"),
-				Path("kernel"),
-				"Site File",
+			publish_ubuntu_image_variant(
+				title="Ubuntu 24.04",
+				version="24.04",
+				architecture="amd64",
+				image_path=Path("rootfs.ext4"),
+				image_sha256="a" * 64,
+				kernel_path=Path("kernel"),
+				kernel_sha256="b" * 64,
+				storage="Site File",
 			)
 
 		get_single.assert_not_called()
