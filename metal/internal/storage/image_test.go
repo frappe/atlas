@@ -15,14 +15,13 @@ import (
 	"github.com/frappe/atlas/metal/internal/vm"
 )
 
-func TestManifestIncludesInitrdAndRootFileSystemSize(t *testing.T) {
+func TestManifestIncludesInitrdWithoutRootFileSystemSize(t *testing.T) {
 	store := NewStores(t.Context(), "metal", t.TempDir(), nil).Images
 	manifest := imageManifest{
-		RootfsSHA256:    strings.Repeat("a", 64),
-		KernelSHA256:    strings.Repeat("b", 64),
-		InitrdSHA256:    strings.Repeat("c", 64),
-		RootfsSizeBytes: 1073741824,
-		Architecture:    runtime.GOARCH,
+		RootfsSHA256: strings.Repeat("a", 64),
+		KernelSHA256: strings.Repeat("b", 64),
+		InitrdSHA256: strings.Repeat("c", 64),
+		Architecture: runtime.GOARCH,
 	}
 	if err := store.saveImageManifest("ubuntu", manifest); err != nil {
 		t.Fatal(err)
@@ -37,19 +36,14 @@ func TestManifestIncludesInitrdAndRootFileSystemSize(t *testing.T) {
 	}
 }
 
-func TestManifestIdentityIncludesInitrdButNotMeasuredSize(t *testing.T) {
+func TestManifestIdentityIncludesInitrd(t *testing.T) {
 	first := imageManifest{
-		RootfsSHA256:    strings.Repeat("a", 64),
-		KernelSHA256:    strings.Repeat("b", 64),
-		InitrdSHA256:    strings.Repeat("c", 64),
-		RootfsSizeBytes: 1024,
-		Architecture:    runtime.GOARCH,
+		RootfsSHA256: strings.Repeat("a", 64),
+		KernelSHA256: strings.Repeat("b", 64),
+		InitrdSHA256: strings.Repeat("c", 64),
+		Architecture: runtime.GOARCH,
 	}
 	second := first
-	second.RootfsSizeBytes = 2048
-	if !first.sameImage(second) {
-		t.Fatal("measured root file system size changed image identity")
-	}
 	second.InitrdSHA256 = strings.Repeat("d", 64)
 	if first.sameImage(second) {
 		t.Fatal("initrd digest did not change image identity")

@@ -29,10 +29,9 @@ func TestLinkBootArtifactsIncludesAnOptionalInitrd(t *testing.T) {
 				t.Fatal(err)
 			}
 			manifest := imageManifest{
-				RootfsSHA256:    strings.Repeat("a", 64),
-				KernelSHA256:    strings.Repeat("b", 64),
-				RootfsSizeBytes: 1 << 30,
-				Architecture:    runtime.GOARCH,
+				RootfsSHA256: strings.Repeat("a", 64),
+				KernelSHA256: strings.Repeat("b", 64),
+				Architecture: runtime.GOARCH,
 			}
 			if testCase.withInitrd {
 				manifest.InitrdSHA256 = strings.Repeat("c", 64)
@@ -45,12 +44,9 @@ func TestLinkBootArtifactsIncludesAnOptionalInitrd(t *testing.T) {
 			}
 
 			chroot := t.TempDir()
-			initrd, size, err := store.linkBootArtifacts("ubuntu", chroot)
+			initrd, err := store.linkBootArtifacts("ubuntu", chroot)
 			if err != nil {
 				t.Fatal(err)
-			}
-			if size != manifest.RootfsSizeBytes {
-				t.Fatalf("rootfs size = %d, want %d", size, manifest.RootfsSizeBytes)
 			}
 			assertSameFile(t, store.kernelFile("ubuntu"), filepath.Join(chroot, "vmlinux"))
 			if testCase.withInitrd {
@@ -83,7 +79,7 @@ func TestLinkBootArtifactsRejectsAMissingInitrd(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, _, err := store.linkBootArtifacts("ubuntu", t.TempDir())
+	_, err := store.linkBootArtifacts("ubuntu", t.TempDir())
 	if !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("error = %v, want file not found", err)
 	}

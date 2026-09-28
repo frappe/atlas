@@ -34,7 +34,7 @@ func (store *VirtualMachineStore) PrepareBoot(ctx context.Context, request Virtu
 	if err := store.images.ensureImage(ctx, request.ImageReference, request.Image); err != nil {
 		return BootConfiguration{}, err
 	}
-	initrd, rootfsSizeBytes, err := store.images.linkBootArtifacts(request.ImageReference, request.ChrootRoot)
+	initrd, err := store.images.linkBootArtifacts(request.ImageReference, request.ChrootRoot)
 	if err != nil {
 		return BootConfiguration{}, err
 	}
@@ -43,33 +43,32 @@ func (store *VirtualMachineStore) PrepareBoot(ctx context.Context, request Virtu
 	}
 
 	return BootConfiguration{
-		Kernel:          "/vmlinux",
-		Initrd:          initrd,
-		KernelArgs:      kernelArguments(store.images.imageDirectory(request.ImageReference)),
-		RootfsSizeBytes: rootfsSizeBytes,
-		Drives:          []Drive{{Path: "/rootfs.img", Root: true}},
+		Kernel:     "/vmlinux",
+		Initrd:     initrd,
+		KernelArgs: kernelArguments(store.images.imageDirectory(request.ImageReference)),
+		Drives:     []Drive{{Path: "/rootfs.img", Root: true}},
 	}, nil
 }
 
 // linkBootArtifacts links the kernel and optional initrd into one VM jail.
-func (store *ImageStore) linkBootArtifacts(imageReference, chrootRoot string) (string, int64, error) {
+func (store *ImageStore) linkBootArtifacts(imageReference, chrootRoot string) (string, error) {
 	manifest, found, err := store.loadImageManifest(imageReference)
 	if err != nil {
-		return "", 0, err
+		return "", err
 	}
 	if !found {
-		return "", 0, fmt.Errorf("%w: image manifest is missing", ErrImageIntegrity)
+		return "", fmt.Errorf("%w: image manifest is missing", ErrImageIntegrity)
 	}
 	if err := replaceHardLink(store.kernelFile(imageReference), filepath.Join(chrootRoot, "vmlinux")); err != nil {
-		return "", 0, err
+		return "", err
 	}
 	if manifest.InitrdSHA256 == "" {
-		return "", manifest.RootfsSizeBytes, nil
+		return "", nil
 	}
 	if err := replaceHardLink(store.initrdFile(imageReference), filepath.Join(chrootRoot, "initrd")); err != nil {
-		return "", 0, err
+		return "", err
 	}
-	return "/initrd", manifest.RootfsSizeBytes, nil
+	return "/initrd", nil
 }
 
 // PrepareRootFileSystem prepares a disk for snapshot restore.
