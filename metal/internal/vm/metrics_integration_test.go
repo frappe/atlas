@@ -17,7 +17,7 @@ func TestMetricsKeepsNetworkCountersAcrossStopStart(t *testing.T) {
 	if os.Geteuid() != 0 {
 		t.Skip("needs root")
 	}
-	manager, _, _, _ := newTestManager(t)
+	manager, _, network, _ := newTestManager(t)
 	if _, err := manager.Create(t.Context(), "machine-1", testSpecification()); err != nil {
 		t.Fatal(err)
 	}
@@ -65,6 +65,9 @@ func TestMetricsKeepsNetworkCountersAcrossStopStart(t *testing.T) {
 		}
 		if err := manager.Reconcile(t.Context(), desired.ID); err != nil {
 			t.Fatal(err)
+		}
+		if !network.lastRequest.TrackTraffic {
+			t.Fatalf("reconcile requested traffic detachment after %s", state)
 		}
 		after, err := manager.Metrics(t.Context(), desired.ID)
 		if err != nil {
