@@ -168,6 +168,23 @@ class TestVirtualMachineImage(UnitTestCase):
 		self.assertEqual(kernel["url"], "kernel-url")
 		self.assertEqual(kernel["size_mib"], 5)
 
+	def test_download_returns_initrd_metadata(self) -> None:
+		image = self.make_image(
+			initrd_object_key="images/image/initrd",
+			initrd_sha256="c" * 64,
+			initrd_size_mib=32,
+		)
+		with (
+			patch.object(VirtualMachineImage, "validate_is_available"),
+			patch.object(VirtualMachineImage, "get_artifact_url", artifact_url),
+		):
+			initrd = image.get_presigned_download_url("initrd")
+
+		self.assertEqual(initrd["artifact"], "initrd")
+		self.assertEqual(initrd["url"], "initrd-url")
+		self.assertEqual(initrd["size_mib"], 32)
+		self.assertEqual(initrd["sha256"], "c" * 64)
+
 	def test_metal_request_contains_immutable_image_data(self) -> None:
 		image = self.make_image()
 
@@ -229,6 +246,9 @@ class TestVirtualMachineImage(UnitTestCase):
 			kernel_object_key=None,
 			image_file="file-rootfs",
 			kernel_file="file-kernel",
+			initrd_file="file-initrd",
+			initrd_sha256="c" * 64,
+			initrd_size_mib=32,
 		)
 
 		with patch(
@@ -237,12 +257,32 @@ class TestVirtualMachineImage(UnitTestCase):
 		) as get_download_url:
 			self.assertEqual(image.get_artifact_url("rootfs"), "https://atlas.test/files/file-rootfs")
 			self.assertEqual(image.get_artifact_url("kernel"), "https://atlas.test/files/file-kernel")
+			self.assertEqual(image.get_artifact_url("initrd"), "https://atlas.test/files/file-initrd")
 
-		self.assertEqual(get_download_url.call_count, 2)
+		self.assertEqual(get_download_url.call_count, 3)
+
+	def test_an_object_storage_initrd_uses_its_object_key(self) -> None:
+		image = self.make_image(
+			initrd_object_key="images/image/initrd",
+			initrd_sha256="c" * 64,
+			initrd_size_mib=32,
+		)
+
+		with patch.object(VirtualMachineImage, "get_object_url", return_value="initrd-url") as get_object_url:
+			self.assertEqual(image.get_artifact_url("initrd", 60), "initrd-url")
+
+		get_object_url.assert_called_once_with("images/image/initrd", 60)
+
+	def test_an_image_without_an_initrd_refuses_its_url(self) -> None:
+		image = self.make_image()
+		with self.assertRaisesRegex(frappe.ValidationError, "has no initrd"):
+			image.get_artifact_url("initrd")
+		with self.assertRaisesRegex(frappe.ValidationError, "has no initrd"):
+			image.get_presigned_download_url("initrd")
 
 	def test_an_unknown_artifact_is_refused(self) -> None:
 		image = self.make_image()
-		with self.assertRaisesRegex(frappe.ValidationError, "rootfs or kernel"):
+		with self.assertRaisesRegex(frappe.ValidationError, "rootfs or kernel, or initrd"):
 			image.get_presigned_download_url("memory")
 
 	def test_a_site_file_image_has_no_signed_download(self) -> None:
