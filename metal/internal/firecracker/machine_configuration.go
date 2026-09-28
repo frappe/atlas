@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/frappe/atlas/metal/internal/firecracker/api"
@@ -104,11 +105,16 @@ func bootSource(
 	}
 }
 
-// validateBootConfiguration rejects an encrypted boot that cannot run its
-// initrd against the exact imported root file system region.
+// validateBootConfiguration rejects image-owned encryption modes and an
+// encrypted boot that cannot run the guest encryption script.
 func validateBootConfiguration(specification vm.Specification, bootConfiguration storage.BootConfiguration) error {
 	if !specification.DiskEncryption.IsValid() {
 		return fmt.Errorf("unsupported disk encryption mode %q", specification.DiskEncryption)
+	}
+	for _, argument := range strings.Fields(bootConfiguration.KernelArgs) {
+		if strings.HasPrefix(argument, "atlas.disk_encryption=") {
+			return fmt.Errorf("boot arguments contain atlas.disk_encryption")
+		}
 	}
 
 	if specification.DiskEncryption == "" {
@@ -117,9 +123,6 @@ func validateBootConfiguration(specification vm.Specification, bootConfiguration
 
 	if bootConfiguration.Initrd == "" {
 		return fmt.Errorf("encrypted boot requires an initrd")
-	}
-	if bootConfiguration.RootfsSizeBytes <= 0 {
-		return fmt.Errorf("encrypted boot requires a positive root file system size")
 	}
 
 	return nil
@@ -142,12 +145,7 @@ func bootArguments(
 		return arguments
 	}
 
-	return fmt.Sprintf(
-		"%s atlas.disk_encryption=%s atlas.encrypt_bytes=%d",
-		arguments,
-		specification.DiskEncryption,
-		bootConfiguration.RootfsSizeBytes,
-	)
+	return fmt.Sprintf("%s atlas.disk_encryption=%s", arguments, specification.DiskEncryption)
 }
 
 // resourceLimits caps the unit. Memory is twice the guest size plus overhead,
