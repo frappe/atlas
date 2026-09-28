@@ -2,7 +2,7 @@ package vm
 
 import "testing"
 
-func TestNetworkRequestTracksTrafficForRunningAndPausedVMs(t *testing.T) {
+func TestNetworkRequestKeepsTrafficTrackingUntilDestruction(t *testing.T) {
 	cases := []struct {
 		name         string
 		state        State
@@ -12,7 +12,9 @@ func TestNetworkRequestTracksTrafficForRunningAndPausedVMs(t *testing.T) {
 	}{
 		{"running without idle shutdown", StateRunning, 0, true, false},
 		{"running with idle shutdown", StateRunning, 300, true, true},
-		{"stopped", StateStopped, 0, false, false},
+		{"stopped", StateStopped, 0, true, false},
+		{"stopped with idle shutdown", StateStopped, 300, true, false},
+		{"destroyed", StateDestroyed, 0, false, false},
 		{"paused", StatePaused, 300, true, false},
 	}
 	for _, tc := range cases {
