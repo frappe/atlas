@@ -39,6 +39,8 @@ def build_ubuntu_image(
 			"docker",
 			"run",
 			"--rm",
+			"--platform=linux/amd64",
+			"--privileged",
 			f"--volume={builder_path.parent}:{builder_path.parent}",
 			f"--volume={output_directory}:{output_directory}",
 			BUILDER_IMAGE,
