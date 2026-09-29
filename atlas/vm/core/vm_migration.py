@@ -16,6 +16,7 @@ from atlas.vm.core.models import VirtualMachineShape
 from atlas.vm.core.placement import PlacementRequirements, PlacementStrategy
 from atlas.vm.core.placement.transaction import use_read_committed
 from atlas.vm.core.vm_state import LIVE_STATES
+from atlas.vm.doctype.virtual_machine_image.virtual_machine_image import SIGNED_URL_EXPIRY_SECONDS
 
 if TYPE_CHECKING:
 	from atlas.metal_server.doctype.metal_server.metal_server import MetalServer
@@ -274,14 +275,20 @@ class MigrationService:
 	def send_request(self) -> None:
 		"""Send the repeatable destination-pull request."""
 		source_coordination_url = MetalClient.get_coordination_url(self.source_metal_server)
+		virtual_machine = cast(
+			"VirtualMachine", frappe.get_doc("Virtual Machine", self.migration.virtual_machine)
+		)
+		image = frappe.get_doc("Virtual Machine Image", virtual_machine.virtual_machine_image)
+		image_request = image.get_metal_image(SIGNED_URL_EXPIRY_SECONDS)
 		resize = None
 		if self.has_target_shape:
-			virtual_machine = cast(
-				"VirtualMachine", frappe.get_doc("Virtual Machine", self.migration.virtual_machine)
-			)
 			resize = self.destination_shape(virtual_machine).migration_resize
 		self.destination_client.put_migration(
-			self.migration.name, self.migration.virtual_machine, source_coordination_url, resize
+			self.migration.name,
+			self.migration.virtual_machine,
+			source_coordination_url,
+			image_request,
+			resize,
 		)
 
 	def poll(self) -> dict[str, Any]:
