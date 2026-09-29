@@ -130,6 +130,15 @@ function showCreateVirtualMachineDialog() {
 					dialog.set_value("hostname", hostnameSlug(message.title));
 				},
 			},
+			{
+				fieldname: "disk_encryption",
+				fieldtype: "Check",
+				label: __("Disk Encryption"),
+				description: __(
+					"Requires an encryption-capable image. Set the passphrase in the VM console on first boot."
+				),
+				default: 0,
+			},
 			{ fieldtype: "Column Break" },
 			{ fieldname: "hostname", fieldtype: "Data", label: __("Hostname") },
 			{ fieldtype: "Column Break" },
