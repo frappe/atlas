@@ -55,6 +55,9 @@ jobs:
           node-version: 24
           check-latest: true
 
+      - name: Test the VM create dialog
+        run: node atlas/vm/doctype/virtual_machine/test_virtual_machine_list.mjs
+
       - name: Cache pip
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
