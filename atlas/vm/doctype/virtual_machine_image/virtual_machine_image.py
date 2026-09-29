@@ -63,9 +63,11 @@ class VirtualMachineImage(Document):
 		image_stored_size_mib: DF.Int
 		image_type: DF.Literal["system", "machine"]
 		initrd_file: DF.Link | None
+		initrd_multipart_upload_id: DF.Data | None
 		initrd_object_key: DF.Data | None
 		initrd_sha256: DF.Data | None
 		initrd_size_mib: DF.Int
+		initrd_stored_size_mib: DF.Int
 		is_termination_protected: DF.Check
 		kernel_file: DF.Link | None
 		kernel_multipart_upload_id: DF.Data | None

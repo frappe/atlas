@@ -38,6 +38,7 @@
   "kernel_sha256",
   "column_break_initrd",
   "initrd_size_mib",
+  "initrd_stored_size_mib",
   "initrd_object_key",
   "initrd_file",
   "initrd_sha256",
@@ -54,6 +55,7 @@
   "section_break_transfer",
   "rootfs_multipart_upload_id",
   "kernel_multipart_upload_id",
+  "initrd_multipart_upload_id",
   "transfer_error"
  ],
  "fields": [
@@ -246,6 +248,12 @@
    "read_only": 1
   },
   {
+   "fieldname": "initrd_stored_size_mib",
+   "fieldtype": "Int",
+   "label": "Initrd Stored Size (MiB)",
+   "read_only": 1
+  },
+  {
    "depends_on": "eval:doc.image_type === 'machine'",
    "fieldname": "section_break_source",
    "fieldtype": "Section Break",
@@ -289,6 +297,13 @@
    "fieldtype": "Data",
    "hidden": 1,
    "label": "Kernel Multipart Upload ID",
+   "read_only": 1
+  },
+  {
+   "fieldname": "initrd_multipart_upload_id",
+   "fieldtype": "Data",
+   "hidden": 1,
+   "label": "Initrd Multipart Upload ID",
    "read_only": 1
   },
   {
