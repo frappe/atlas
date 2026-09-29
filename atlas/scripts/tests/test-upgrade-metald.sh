@@ -6,6 +6,7 @@ script_directory=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 upgrade_script=$script_directory/../upgrade-metald.sh
 test_root=$(mktemp -d)
 fixtures=$test_root/fixtures
+original_path=$PATH
 
 cleanup() {
 	rm -rf "$test_root"
@@ -14,59 +15,21 @@ cleanup() {
 trap cleanup EXIT
 mkdir -p "$fixtures"
 
-cat > "$fixtures/metald-old" <<'EOF'
+cat > "$fixtures/metald-old" <<'FIXTURE'
 #!/usr/bin/env bash
 # metald-old
 [ "${1:-}" = version ] && echo "metald old"
-EOF
+FIXTURE
 
-cat > "$fixtures/metald-new" <<'EOF'
+cat > "$fixtures/metald-new" <<'FIXTURE'
 #!/usr/bin/env bash
 # metald-new
 [ "${1:-}" = version ] && echo "metald new"
-EOF
+FIXTURE
 
-cat > "$fixtures/mesh-old" <<'EOF'
-#!/usr/bin/env bash
-# mesh-old
-echo "old:$*" >> "$FAKE_MESH_LOG"
-case "${1:-}" in
-	version)
-		echo "CLI version: old"
-		echo "Embedded BPF: old-bpf"
-		echo "Installed BPF: old-bpf"
-		;;
-	status | reset | configure) ;;
-	*) exit 1 ;;
-esac
-EOF
-
-cat > "$fixtures/mesh-new" <<'EOF'
-#!/usr/bin/env bash
-# mesh-new
-echo "new:$*" >> "$FAKE_MESH_LOG"
-case "${1:-}" in
-	version)
-		echo "CLI version: new"
-		echo "Embedded BPF: new-bpf"
-		if [ "${MESH_BPF_MISMATCH:-0}" -eq 1 ]; then
-			echo "Installed BPF: other-bpf"
-		else
-			echo "Installed BPF: new-bpf"
-		fi
-		;;
-	status)
-		[ "${FAIL_MESH_STATUS:-0}" -eq 0 ]
-		;;
-	reset | configure) ;;
-	*) exit 1 ;;
-esac
-EOF
-
+printf 'wg-mesh-must-not-change\n' > "$fixtures/atlas-wg-mesh"
 chmod 0755 "$fixtures"/*
-
 new_metald_hash=$(sha256sum "$fixtures/metald-new" | awk '{ print $1 }')
-new_mesh_hash=$(sha256sum "$fixtures/mesh-new" | awk '{ print $1 }')
 
 assert_success() {
 	if [ "$run_status" -ne 0 ]; then
@@ -90,6 +53,17 @@ assert_contains() {
 
 	if [[ "$text" != *"$expected"* ]]; then
 		echo "expected output to contain: $expected" >&2
+		echo "$text" >&2
+		exit 1
+	fi
+}
+
+assert_not_contains() {
+	local text=$1
+	local unexpected=$2
+
+	if [[ "$text" == *"$unexpected"* ]]; then
+		echo "expected output not to contain: $unexpected" >&2
 		echo "$text" >&2
 		exit 1
 	fi
@@ -125,6 +99,17 @@ assert_command_count() {
 	fi
 }
 
+assert_mesh_unchanged() {
+	local current_hash
+
+	current_hash=$(sha256sum "$MESH_SENTINEL" | awk '{ print $1 }')
+	if [ "$current_hash" != "$mesh_hash_before" ]; then
+		echo "Upgrade Metald changed the WG Mesh sentinel" >&2
+		exit 1
+	fi
+	assert_file_missing "$MESH_SENTINEL.previous"
+}
+
 setup_case() {
 	case_directory=$(mktemp -d "$test_root/case.XXXXXX")
 	fake_bin=$case_directory/bin
@@ -132,9 +117,8 @@ setup_case() {
 	mkdir -p "$fake_bin" "$installed_directory"
 
 	METALD_BINARY_PATH=$installed_directory/metald
-	MESH_BINARY_PATH=$installed_directory/atlas-wg-mesh
+	MESH_SENTINEL=$installed_directory/atlas-wg-mesh
 	FAKE_SYSTEMCTL_LOG=$case_directory/systemctl.log
-	FAKE_MESH_LOG=$case_directory/mesh.log
 	FAKE_SERVICE_STATE=$case_directory/service-state
 	FAKE_DESCRIPTOR_COUNT=$case_directory/descriptor-count
 	FAKE_PRESERVE_SETTING=$case_directory/preserve-setting
@@ -142,28 +126,27 @@ setup_case() {
 	FAKE_LIST_UNITS_CALLS=$case_directory/list-units-calls
 
 	cp "$fixtures/metald-old" "$METALD_BINARY_PATH"
-	cp "$fixtures/mesh-old" "$MESH_BINARY_PATH"
-	chmod 0755 "$METALD_BINARY_PATH" "$MESH_BINARY_PATH"
+	cp "$fixtures/atlas-wg-mesh" "$MESH_SENTINEL"
+	chmod 0755 "$METALD_BINARY_PATH" "$MESH_SENTINEL"
+	mesh_hash_before=$(sha256sum "$MESH_SENTINEL" | awk '{ print $1 }')
 	: > "$FAKE_SYSTEMCTL_LOG"
-	: > "$FAKE_MESH_LOG"
 	printf 'active\n' > "$FAKE_SERVICE_STATE"
 	printf '2\n' > "$FAKE_DESCRIPTOR_COUNT"
 	printf 'yes\n' > "$FAKE_PRESERVE_SETTING"
 	printf '0\n' > "$FAKE_LIST_UNITS_CALLS"
-	cat > "$FAKE_ACTIVE_UNITS" <<'EOF'
+	cat > "$FAKE_ACTIVE_UNITS" <<'UNITS'
 metal-vm@vm-2.service loaded active running VM 2
 metal-vm@vm-1.service loaded active running VM 1
-EOF
+UNITS
 
-	cat > "$fake_bin/id" <<'EOF'
+	cat > "$fake_bin/id" <<'FIXTURE'
 #!/usr/bin/env bash
 [ "${1:-}" = -u ] && echo 0
-EOF
+FIXTURE
 
-	cat > "$fake_bin/curl" <<'EOF'
+	cat > "$fake_bin/curl" <<'FIXTURE'
 #!/usr/bin/env bash
 destination=
-url=
 while [ "$#" -gt 0 ]; do
 	case "$1" in
 		-o)
@@ -171,25 +154,15 @@ while [ "$#" -gt 0 ]; do
 			shift 2
 			;;
 		-*) shift ;;
-		*)
-			url=$1
-			shift
-			;;
+		*) shift ;;
 	esac
 done
 
-if [ "${FAIL_DOWNLOAD_URL:-}" = "$url" ]; then
-	exit 22
-fi
+[ "${FAIL_DOWNLOAD:-0}" -eq 0 ] || exit 22
+cp "$FAKE_FIXTURES/metald-new" "$destination"
+FIXTURE
 
-case "$url" in
-	https://downloads.test/metald) cp "$FAKE_FIXTURES/metald-new" "$destination" ;;
-	https://downloads.test/mesh) cp "$FAKE_FIXTURES/mesh-new" "$destination" ;;
-	*) exit 22 ;;
-esac
-EOF
-
-	cat > "$fake_bin/systemctl" <<'EOF'
+	cat > "$fake_bin/systemctl" <<'FIXTURE'
 #!/usr/bin/env bash
 echo "$*" >> "$FAKE_SYSTEMCTL_LOG"
 case "${1:-}" in
@@ -214,46 +187,53 @@ case "${1:-}" in
 	list-units)
 		calls=$(cat "$FAKE_LIST_UNITS_CALLS")
 		printf '%s\n' "$((calls + 1))" > "$FAKE_LIST_UNITS_CALLS"
-		if [ "${CHANGE_UNITS_BEFORE_STOP:-0}" -eq 1 ] && [ "$calls" -eq 1 ]; then
+		if [ "${CHANGE_UNITS_BEFORE_RESTART:-0}" -eq 1 ] && [ "$calls" -eq 1 ]; then
+			sed 's/vm-2/vm-3/' "$FAKE_ACTIVE_UNITS"
+		elif [ "${CHANGE_UNITS_AFTER_RESTART:-0}" -eq 1 ] && [ "$calls" -ge 2 ]; then
 			sed 's/vm-2/vm-3/' "$FAKE_ACTIVE_UNITS"
 		else
 			cat "$FAKE_ACTIVE_UNITS"
+		fi
+		;;
+	restart)
+		if [ "${FAIL_CANDIDATE_RESTART:-0}" -eq 1 ] &&
+			grep -Fq metald-new "$METALD_BINARY_PATH"; then
+			printf 'failed\n' > "$FAKE_SERVICE_STATE"
+			exit 1
+		fi
+		printf 'active\n' > "$FAKE_SERVICE_STATE"
+		if [ "${CHANGE_DESCRIPTORS_AFTER_RESTART:-0}" -eq 1 ]; then
+			printf '1\n' > "$FAKE_DESCRIPTOR_COUNT"
 		fi
 		;;
 	stop)
 		printf 'inactive\n' > "$FAKE_SERVICE_STATE"
 		;;
 	start)
-		if [ "${FAIL_CANDIDATE_START:-0}" -eq 1 ] && grep -Fq metald-new "$METALD_BINARY_PATH"; then
-			printf 'failed\n' > "$FAKE_SERVICE_STATE"
-			exit 1
-		fi
 		printf 'active\n' > "$FAKE_SERVICE_STATE"
 		;;
 	*) exit 1 ;;
 esac
-EOF
+FIXTURE
 
-	cat > "$fake_bin/sleep" <<'EOF'
+	cat > "$fake_bin/sleep" <<'FIXTURE'
 #!/usr/bin/env bash
 exit 0
-EOF
-
+FIXTURE
 	chmod 0755 "$fake_bin"/*
 
-	export PATH=$fake_bin:$PATH
-	export METALD_BINARY_PATH MESH_BINARY_PATH
-	export FAKE_SYSTEMCTL_LOG FAKE_MESH_LOG FAKE_SERVICE_STATE FAKE_DESCRIPTOR_COUNT
+	export PATH=$fake_bin:$original_path
+	export METALD_BINARY_PATH MESH_SENTINEL
+	export FAKE_SYSTEMCTL_LOG FAKE_SERVICE_STATE FAKE_DESCRIPTOR_COUNT
 	export FAKE_PRESERVE_SETTING FAKE_ACTIVE_UNITS FAKE_LIST_UNITS_CALLS
 	export FAKE_FIXTURES=$fixtures
 	export METALD_DOWNLOAD_URL=https://downloads.test/metald
-	export WG_MESH_DOWNLOAD_URL=https://downloads.test/mesh
 	export METALD_SHA256=$new_metald_hash
-	export WG_MESH_SHA256=$new_mesh_hash
-	export WG_MESH_RESET=0
-	unset FAIL_DOWNLOAD_URL FAIL_CANDIDATE_START FAIL_MESH_STATUS MESH_BPF_MISMATCH
-	unset CHANGE_UNITS_BEFORE_STOP
-	unset MESH_UPLINK_INTERFACE WIREGUARD_INTERFACE
+	unset FAIL_DOWNLOAD FAIL_CANDIDATE_RESTART
+	unset CHANGE_UNITS_BEFORE_RESTART CHANGE_UNITS_AFTER_RESTART
+	unset CHANGE_DESCRIPTORS_AFTER_RESTART
+	unset WG_MESH_DOWNLOAD_URL WG_MESH_SHA256 WG_MESH_RESET
+	unset MESH_BINARY_PATH MESH_UPLINK_INTERFACE WIREGUARD_INTERFACE
 }
 
 run_upgrade() {
@@ -265,28 +245,37 @@ run_upgrade() {
 
 test_download_failure_does_not_mutate() {
 	setup_case
-	export FAIL_DOWNLOAD_URL=$METALD_DOWNLOAD_URL
+	export FAIL_DOWNLOAD=1
 	run_upgrade
 	assert_failure
 	assert_contains "$run_output" "could not download metald"
 	assert_file_contains "$METALD_BINARY_PATH" metald-old
-	assert_file_contains "$MESH_BINARY_PATH" mesh-old
 	assert_file_missing "$METALD_BINARY_PATH.previous"
-	assert_file_missing "$MESH_BINARY_PATH.previous"
+	assert_mesh_unchanged
 	[ ! -s "$FAKE_SYSTEMCTL_LOG" ]
 }
 
 test_digest_failure_does_not_mutate() {
 	setup_case
-	export WG_MESH_SHA256=wrong-digest
+	export METALD_SHA256=wrong-digest
 	run_upgrade
 	assert_failure
 	assert_contains "$run_output" "expected wrong-digest"
 	assert_file_contains "$METALD_BINARY_PATH" metald-old
-	assert_file_contains "$MESH_BINARY_PATH" mesh-old
 	assert_file_missing "$METALD_BINARY_PATH.previous"
-	assert_file_missing "$MESH_BINARY_PATH.previous"
+	assert_mesh_unchanged
 	[ ! -s "$FAKE_SYSTEMCTL_LOG" ]
+}
+
+test_preservation_guard_prevents_mutation() {
+	setup_case
+	printf 'no\n' > "$FAKE_PRESERVE_SETTING"
+	run_upgrade
+	assert_failure
+	assert_contains "$run_output" "must set FileDescriptorStorePreserve=yes"
+	assert_file_missing "$METALD_BINARY_PATH.previous"
+	assert_mesh_unchanged
+	assert_command_count 0 "restart metal.service"
 }
 
 test_descriptor_guard_prevents_mutation() {
@@ -296,102 +285,84 @@ test_descriptor_guard_prevents_mutation() {
 	assert_failure
 	assert_contains "$run_output" "1 console descriptors for 2 active VM units"
 	assert_file_missing "$METALD_BINARY_PATH.previous"
-	assert_file_missing "$MESH_BINARY_PATH.previous"
-	assert_command_count 0 "stop metal.service"
-	assert_command_count 0 "start metal.service"
+	assert_mesh_unchanged
+	assert_command_count 0 "restart metal.service"
 }
 
-test_pre_stop_guard_catches_a_vm_change() {
+test_pre_restart_guard_catches_a_vm_change() {
 	setup_case
-	export CHANGE_UNITS_BEFORE_STOP=1
+	export CHANGE_UNITS_BEFORE_RESTART=1
 	run_upgrade
 	assert_failure
-	assert_contains "$run_output" "the active VM unit set changed before stopping metal.service"
+	assert_contains "$run_output" "active VM unit set changed before restarting metal.service"
 	assert_file_contains "$METALD_BINARY_PATH" metald-old
-	assert_file_contains "$MESH_BINARY_PATH" mesh-old
-	assert_command_count 0 "stop metal.service"
-	assert_command_count 0 "start metal.service"
+	assert_mesh_unchanged
+	assert_command_count 0 "restart metal.service"
 }
 
-test_success_replaces_the_binary_pair_once() {
+test_success_replaces_only_metald() {
 	setup_case
 	run_upgrade
 	assert_success
 	assert_file_contains "$METALD_BINARY_PATH" metald-new
-	assert_file_contains "$MESH_BINARY_PATH" mesh-new
 	assert_file_contains "$METALD_BINARY_PATH.previous" metald-old
-	assert_file_contains "$MESH_BINARY_PATH.previous" mesh-old
+	assert_mesh_unchanged
+	assert_not_contains "$run_output" "WG Mesh"
+	assert_command_count 1 "restart metal.service"
+	assert_command_count 0 "stop metal.service"
+	assert_command_count 0 "start metal.service"
+}
+
+test_service_failure_restores_metald() {
+	setup_case
+	export FAIL_CANDIDATE_RESTART=1
+	run_upgrade
+	assert_failure
+	assert_contains "$run_output" "restoring metald old"
+	assert_file_contains "$METALD_BINARY_PATH" metald-old
+	assert_file_contains "$METALD_BINARY_PATH.previous" metald-old
+	assert_mesh_unchanged
+	assert_command_count 1 "restart metal.service"
 	assert_command_count 1 "stop metal.service"
 	assert_command_count 1 "start metal.service"
-	assert_file_contains "$FAKE_MESH_LOG" "new:status"
-	if grep -Fq "reset --force" "$FAKE_MESH_LOG"; then
-		echo "default upgrade unexpectedly reset WG Mesh" >&2
-		exit 1
-	fi
 }
 
-test_service_failure_restores_both_without_mesh_reset() {
+test_changed_vm_set_restores_metald() {
 	setup_case
-	export FAIL_CANDIDATE_START=1
+	export CHANGE_UNITS_AFTER_RESTART=1
 	run_upgrade
 	assert_failure
-	assert_contains "$run_output" "restoring the previous binary pair"
+	assert_contains "$run_output" "active VM unit set changed during the upgrade"
 	assert_file_contains "$METALD_BINARY_PATH" metald-old
-	assert_file_contains "$MESH_BINARY_PATH" mesh-old
-	assert_command_count 2 "stop metal.service"
-	assert_command_count 2 "start metal.service"
-	if grep -Fq "reset --force" "$FAKE_MESH_LOG"; then
-		echo "default rollback unexpectedly reset WG Mesh" >&2
-		exit 1
-	fi
+	assert_mesh_unchanged
+	assert_command_count 1 "restart metal.service"
+	assert_command_count 1 "stop metal.service"
+	assert_command_count 1 "start metal.service"
 }
 
-test_bpf_mismatch_restores_both() {
+test_changed_descriptor_count_restores_metald() {
 	setup_case
-	export MESH_BPF_MISMATCH=1
+	export CHANGE_DESCRIPTORS_AFTER_RESTART=1
 	run_upgrade
 	assert_failure
-	assert_contains "$run_output" "embedded BPF new-bpf does not match installed BPF other-bpf"
+	assert_contains "$run_output" "stored console descriptor count changed during the upgrade"
 	assert_file_contains "$METALD_BINARY_PATH" metald-old
-	assert_file_contains "$MESH_BINARY_PATH" mesh-old
-}
-
-test_explicit_reset_recovers_with_the_old_cli() {
-	setup_case
-	export WG_MESH_RESET=1
-	export MESH_UPLINK_INTERFACE=eno1.1878
-	export WIREGUARD_INTERFACE=wg-test
-	export FAIL_CANDIDATE_START=1
-	run_upgrade
-	assert_failure
-	assert_contains "$run_output" "an Atlas sync is required"
-	assert_file_contains "$METALD_BINARY_PATH" metald-old
-	assert_file_contains "$MESH_BINARY_PATH" mesh-old
-	assert_file_contains "$FAKE_MESH_LOG" "old:reset --force"
-	assert_file_contains "$FAKE_MESH_LOG" "new:reset --force"
-	assert_file_contains "$FAKE_MESH_LOG" "old:configure --uplink eno1.1878 --wireguard wg-test"
-	assert_command_count 2 "start metal.service"
-}
-
-test_invalid_reset_value_is_rejected() {
-	setup_case
-	export WG_MESH_RESET=yes
-	run_upgrade
-	assert_failure
-	assert_contains "$run_output" "WG_MESH_RESET must be 0 or 1"
-	[ ! -s "$FAKE_SYSTEMCTL_LOG" ]
+	assert_mesh_unchanged
+	assert_command_count 1 "restart metal.service"
+	assert_command_count 1 "stop metal.service"
+	assert_command_count 1 "start metal.service"
 }
 
 tests=(
 	test_download_failure_does_not_mutate
 	test_digest_failure_does_not_mutate
+	test_preservation_guard_prevents_mutation
 	test_descriptor_guard_prevents_mutation
-	test_pre_stop_guard_catches_a_vm_change
-	test_success_replaces_the_binary_pair_once
-	test_service_failure_restores_both_without_mesh_reset
-	test_bpf_mismatch_restores_both
-	test_explicit_reset_recovers_with_the_old_cli
-	test_invalid_reset_value_is_rejected
+	test_pre_restart_guard_catches_a_vm_change
+	test_success_replaces_only_metald
+	test_service_failure_restores_metald
+	test_changed_vm_set_restores_metald
+	test_changed_descriptor_count_restores_metald
 )
 
 for test_name in "${tests[@]}"; do
