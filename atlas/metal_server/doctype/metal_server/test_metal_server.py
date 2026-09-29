@@ -747,9 +747,12 @@ class TestServer(UnitTestCase):
 				self.subTest(value=value),
 				patch("atlas.metal_server.doctype.metal_server.metal_server.frappe.only_for"),
 				patch(
-					"atlas.metal_server.doctype.metal_server.metal_server.frappe.throw", side_effect=ValueError
+					"atlas.metal_server.doctype.metal_server.metal_server.frappe.throw",
+					side_effect=ValueError,
 				),
-				patch("atlas.metal_server.doctype.metal_server.metal_server.frappe.enqueue_doc") as enqueue_doc,
+				patch(
+					"atlas.metal_server.doctype.metal_server.metal_server.frappe.enqueue_doc"
+				) as enqueue_doc,
 			):
 				with self.assertRaises(ValueError):
 					MetalServer.upgrade_metald(server, value)
