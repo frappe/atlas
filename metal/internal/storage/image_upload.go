@@ -17,6 +17,7 @@ import (
 const (
 	rootfsArtifact = "rootfs"
 	kernelArtifact = "kernel"
+	initrdArtifact = "initrd"
 )
 
 const (
@@ -45,10 +46,11 @@ type SnapshotArtifactUpload struct {
 	Parts         []SnapshotUploadPart
 }
 
-// SnapshotUploadRequest contains upload URLs for both image artifacts.
+// SnapshotUploadRequest contains upload URLs for all staged image artifacts.
 type SnapshotUploadRequest struct {
 	Rootfs SnapshotArtifactUpload
 	Kernel SnapshotArtifactUpload
+	Initrd *SnapshotArtifactUpload
 }
 
 // UploadedPart contains the ETag returned for one part.
@@ -66,10 +68,11 @@ type UploadedArtifact struct {
 	Parts           []UploadedPart `json:"parts"`
 }
 
-// SnapshotUploadResult describes both uploaded image artifacts.
+// SnapshotUploadResult describes all uploaded image artifacts.
 type SnapshotUploadResult struct {
-	Rootfs UploadedArtifact `json:"rootfs"`
-	Kernel UploadedArtifact `json:"kernel"`
+	Rootfs UploadedArtifact  `json:"rootfs"`
+	Kernel UploadedArtifact  `json:"kernel"`
+	Initrd *UploadedArtifact `json:"initrd,omitempty"`
 }
 
 // Snapshot upload states recorded in the staging metadata.
@@ -137,6 +140,14 @@ func (store *SnapshotStore) StartUpload(_ context.Context, snapshotID string, re
 	if err := validateUploadParts(request.Kernel, metadata.KernelSizeBytes); err != nil {
 		return fmt.Errorf("kernel parts: %w", err)
 	}
+	if (request.Initrd == nil) != (metadata.InitrdSizeBytes == 0) {
+		return fmt.Errorf("%w: initrd upload does not match the staged snapshot", ErrInvalidUpload)
+	}
+	if request.Initrd != nil {
+		if err := validateUploadParts(*request.Initrd, metadata.InitrdSizeBytes); err != nil {
+			return fmt.Errorf("initrd parts: %w", err)
+		}
+	}
 
 	uploadContext, cancel := context.WithCancel(rootContext)
 	upload := &snapshotUpload{
@@ -167,13 +178,13 @@ func (store *SnapshotStore) StartUpload(_ context.Context, snapshotID string, re
 	}
 
 	goroutineStarted = true
-	go store.runUpload(uploadContext, snapshotID, upload, metadata.RootfsSizeBytes, metadata.KernelSizeBytes, request)
+	go store.runUpload(uploadContext, snapshotID, upload, metadata.RootfsSizeBytes, metadata.KernelSizeBytes, metadata.InitrdSizeBytes, request)
 
 	return nil
 }
 
-// runUpload sends both artifacts and records the result.
-func (store *SnapshotStore) runUpload(ctx context.Context, snapshotID string, upload *snapshotUpload, rootfsSize, kernelSize int64, request SnapshotUploadRequest) {
+// runUpload sends every staged artifact and records the result.
+func (store *SnapshotStore) runUpload(ctx context.Context, snapshotID string, upload *snapshotUpload, rootfsSize, kernelSize, initrdSize int64, request SnapshotUploadRequest) {
 	defer func() {
 		store.removeUpload(snapshotID, upload)
 		close(upload.done)
@@ -192,7 +203,17 @@ func (store *SnapshotStore) runUpload(ctx context.Context, snapshotID string, up
 		store.failUpload(ctx, snapshotID, fmt.Errorf("upload kernel: %w", err))
 		return
 	}
-	store.finishUpload(snapshotID, SnapshotUploadResult{Rootfs: rootfs, Kernel: kernel})
+	result := SnapshotUploadResult{Rootfs: rootfs, Kernel: kernel}
+	if request.Initrd != nil {
+		initrd, err := store.uploadArtifact(ctx, snapshotID, initrdArtifact,
+			filepath.Join(store.snapshotDirectory(snapshotID), "initrd"), initrdSize, *request.Initrd, &upload.uploaded)
+		if err != nil {
+			store.failUpload(ctx, snapshotID, fmt.Errorf("upload initrd: %w", err))
+			return
+		}
+		result.Initrd = &initrd
+	}
+	store.finishUpload(snapshotID, result)
 }
 
 // finishUpload records a completed upload and its result.
@@ -280,7 +301,7 @@ func (store *SnapshotStore) UploadStatus(_ context.Context, snapshotID string) (
 	}
 	status := SnapshotUploadStatus{
 		ID:         snapshotID,
-		TotalBytes: metadata.RootfsSizeBytes + metadata.KernelSizeBytes,
+		TotalBytes: metadata.RootfsSizeBytes + metadata.KernelSizeBytes + metadata.InitrdSizeBytes,
 		Error:      metadata.UploadError,
 	}
 	if metadata.UploadResult != nil {
@@ -321,10 +342,14 @@ func (store *SnapshotStore) storedParts(snapshotID, artifact, uploadID string) [
 	if err != nil || !found {
 		return nil
 	}
-	if artifact == rootfsArtifact {
+	switch artifact {
+	case rootfsArtifact:
 		return metadata.RootfsProgress.storedParts(uploadID)
+	case initrdArtifact:
+		return metadata.InitrdProgress.storedParts(uploadID)
+	default:
+		return metadata.KernelProgress.storedParts(uploadID)
 	}
-	return metadata.KernelProgress.storedParts(uploadID)
 }
 
 // recordParts saves the parts stored so far. A failure only costs the resume,
@@ -334,11 +359,14 @@ func (store *SnapshotStore) recordParts(snapshotID, artifact, uploadID string, p
 	copy(saved, parts)
 	progress := &artifactProgress{UploadID: uploadID, Parts: saved}
 	store.updateUploadMetadata(snapshotID, func(metadata *stagedSnapshotMetadata) {
-		if artifact == rootfsArtifact {
+		switch artifact {
+		case rootfsArtifact:
 			metadata.RootfsProgress = progress
-			return
+		case initrdArtifact:
+			metadata.InitrdProgress = progress
+		default:
+			metadata.KernelProgress = progress
 		}
-		metadata.KernelProgress = progress
 	})
 }
 
