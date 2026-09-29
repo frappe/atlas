@@ -28,7 +28,7 @@ flowchart LR
     I --> E
 ```
 
-To create an encrypted VM, select the disk encryption image and enable disk encryption in the VM request. Atlas sends `luks2` as the encryption mode and includes the image initrd. Metal rejects an encrypted request that has no initrd.
+To create an encrypted VM, select the disk encryption image and enable disk encryption in the VM request. Atlas requires the requested disk to be at least 32 MiB larger than the image root filesystem. Atlas sends `luks2` as the encryption mode and includes the image initrd. Metal rejects an encrypted request that has no initrd.
 
 The image record stores the root filesystem, kernel, optional initrd, architecture, sizes, and SHA-256 digests. It does not store a root filesystem byte boundary. The Metal image manifest and boot configuration do not store that boundary either.
 

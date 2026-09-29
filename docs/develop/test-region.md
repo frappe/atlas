@@ -113,7 +113,7 @@ Without object storage credentials, add `--storage site-file` to serve the artif
 
 Open **Virtual Machine** and click **Create Virtual Machine**. Select the new Virtual Machine Image, then set the CPU, memory, disk, tenant, and network values.
 
-Select the plain image for an unencrypted root disk. Select the image with `(Disk Encryption)` in its title for first-boot LUKS2 encryption.
+Select the plain image for an unencrypted root disk. For first-boot LUKS2 encryption, select the image with `(Disk Encryption)` in its title and enable **Disk Encryption**.
 
 Atlas places the VM on the running Metal Server and sends the desired state to Metal. Keep the record if the first response is uncertain. Atlas reconciles it after Metal confirms the result.
 
