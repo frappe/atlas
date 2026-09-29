@@ -24,6 +24,7 @@ type Snapshots interface {
 type SnapshotRequest struct {
 	VirtualMachineID string
 	ImageReference   string
+	IsDiskEncrypted  bool
 }
 
 // StagedSnapshot describes a staged machine image.
@@ -32,4 +33,5 @@ type StagedSnapshot struct {
 	SourceVirtualMachineID string
 	RootfsSizeBytes        int64
 	KernelSizeBytes        int64
+	InitrdSizeBytes        int64
 }
