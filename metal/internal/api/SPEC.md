@@ -41,6 +41,7 @@ The generated [Metal API reference](../../../docs/region/metald.md#request-rules
 - VM create accepts a nullable `is_disk_encrypted` boolean. `true` selects LUKS2 encryption.
 - `image.initrd` is optional. When present, it must contain a valid HTTP or HTTPS URL and a SHA-256 digest.
 - A `luks2` create requires `image.initrd`.
+- A destination migration request includes fresh image artifact URLs and digests. Metal verifies the rootfs, kernel, optional initrd, architecture, and image reference against the source definition.
 - The network PUT requires the complete network object, including `firewall`.
 - Every coordination route carries the VM ID as the `virtual_machine_id` query value.
 - The coordination stop route is idempotent. It returns the final snapshot.

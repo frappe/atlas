@@ -163,7 +163,7 @@ See [Sleepy VMs](sleepy-vms.md) for idle detection, wake traffic, and saved-stat
 
 ## Know the current restrictions
 
-- Machine image capture is blocked for an encrypted VM.
+- A Machine image of an encrypted VM contains the encrypted disk and initrd. A new VM from that image must enable **Disk Encryption** and use the existing passphrase.
 - Shared warm boot is disabled for an encrypted VM.
 - An encrypted cold boot needs an interactive TTY passphrase.
 - The source filesystem must be ext2, ext3, or ext4 directly on `/dev/vda`.
@@ -187,9 +187,9 @@ If the VM does not prompt, confirm that the VM uses the disk encryption image, i
 - [Initramfs hook](https://github.com/frappe/atlas/blob/develop/atlas/vm/scripts/guest/initramfs/hooks/atlas-cryptroot) includes the required tools, and [initramfs boot script](https://github.com/frappe/atlas/blob/develop/atlas/vm/scripts/guest/initramfs/scripts/local-top/atlas-cryptroot) owns encryption and unlock.
 - [Atlas console bridge](../../atlas/realtime/handlers.py) and [Metal TTY endpoint](../../metal/internal/api/vm_console_tty.go) forward the serial console.
 - [Firecracker launch policy](../../metal/internal/firecracker/launch.go) excludes encrypted VMs from shared warm boot.
-- [Machine image action](../../atlas/vm/doctype/virtual_machine/virtual_machine.py) blocks capture from an encrypted VM.
+- [Machine image transfer](../../atlas/vm/core/vm_image_transfer.py) stores the optional initrd with the snapshot.
 - [Initramfs test harness](../../atlas/vm/scripts/guest/initramfs/tests/atlas-cryptroot-test.sh) checks filesystem geometry, failure cases, passphrase retry, and reencryption recovery.
 - [Firecracker configuration tests](../../metal/internal/firecracker/machine_configuration_test.go), [Firecracker machine tests](../../metal/internal/firecracker/machine_test.go), and [Metal VM manager tests](../../metal/internal/vm/manager_test.go) check boot arguments, warm boot exclusion, and VM-local restore.
-- [Metal API tests](../../metal/internal/api/server_test.go), [Atlas VM service tests](../../atlas/vm/core/test_vm_service.py), and [Atlas VM tests](../../atlas/vm/doctype/virtual_machine/test_virtual_machine.py) check request validation, idle sleep, and Machine image capture.
+- [Metal API tests](../../metal/internal/api/server_test.go), [Atlas VM service tests](../../atlas/vm/core/test_vm_service.py), [Atlas VM tests](../../atlas/vm/doctype/virtual_machine/test_virtual_machine.py), and [image tests](../../atlas/vm/doctype/virtual_machine_image/test_virtual_machine_image.py) check request validation, idle sleep, and Machine image capture.
 
 :::

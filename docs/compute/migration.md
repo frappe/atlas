@@ -10,6 +10,8 @@ Atlas picks the new host. Metal on the new host copies the disk from the old hos
 
 Atlas excludes the source host and checks destination capacity. Desk users cannot create or edit migration records directly.
 
+Atlas includes freshly signed rootfs, kernel, and optional initrd URLs in every destination request. Metal accepts rotated URLs only when their image reference, architecture, and artifact digests match the source VM. Disk encryption mode and the initrd digest stay unchanged across the move.
+
 A stopped VM also moves when a resize does not fit on its host. The migration stores `target_cpu_millicores`, `target_memory_mib`, and `target_disk_mib`, and commits the new host and shape together. On failure, the VM keeps its old host and shape. The tenant API reports `migrating` during the move.
 
 ## Migration sequence
@@ -69,6 +71,7 @@ Metal hides the incoming VM from normal reads until the move finishes.
 | Finish | Valid only after `ready`. The first finish or abort wins. |
 | Network interruption | Resumes the saved snapshot sequence. |
 | Snapshot identity mismatch | Fails the migration and keeps data for inspection. |
+| Boot artifact identity mismatch | Rejects the destination request without changing the source VM. |
 | Cutover or rollback fault | Keeps both hosts locked and preserves snapshots. |
 
 **Keep unfinished migration records** on both hosts and in Atlas. Their status and saved public IP requests can differ during recovery. The [migration engine](migration-engine.md) describes Metal's checkpoints.

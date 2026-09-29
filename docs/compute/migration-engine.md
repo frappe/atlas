@@ -9,6 +9,8 @@ Destination Metal drives the transfer after the Atlas app reserves a host. The A
 | Destination | Migration record, reserved VM ID, and checked capacity based on the source definition. |
 | Source | Lock that blocks normal VM changes. |
 
+The destination record also keeps the fresh image artifact URLs supplied by Atlas. Before reconstruction, Metal compares the image reference, architecture, rootfs digest, kernel digest, and optional initrd digest with the source definition. A matching retry may rotate URLs; it cannot change boot content or disk encryption mode.
+
 Normal get and list operations hide the incoming destination VM while the reservation is active, including `ready`.
 
 ```mermaid

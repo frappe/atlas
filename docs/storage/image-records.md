@@ -64,11 +64,11 @@ Hosts have a downloadable copy at each step. The `immutable_reference` uses arch
 
 ## Machine images
 
-Select **Create Machine Image** to stage the VM disk and kernel on Metal. Metal's UUIDv7 snapshot ID becomes the image record name.
+Select **Create Machine Image** to stage the VM disk, kernel, and optional initrd on Metal. Metal's UUIDv7 snapshot ID becomes the image record name.
 
-An encrypted VM cannot create a Machine image.
+An encrypted VM's Machine image keeps its encrypted disk and encryption initrd. When creating a VM from that image, enable **Disk Encryption** and use the source disk's passphrase at the TTY console.
 
-Atlas saves multipart upload IDs before it starts the transfer. It checks hashes and sizes before publication.
+Atlas saves each multipart upload ID before it starts the transfer. It checks hashes and sizes before publication.
 
 If a transfer fails, Atlas keeps the source host, snapshot ID, object keys, and upload IDs. **Retry Transfer** uses the same image record and upload IDs.
 

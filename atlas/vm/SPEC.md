@@ -30,7 +30,8 @@ This file identifies code owners and rules that a code change must preserve. The
 - `is_disk_encrypted` is a create-only VM value. Atlas accepts it only when the selected image has an initrd, and sends a nullable `is_disk_encrypted` boolean to Metal.
 - The image immutable reference includes the initrd SHA-256 digest when an initrd is present. A different initrd is different image content.
 - An encrypted VM can use automatic idle save and VM-local restore.
-- An encrypted VM cannot create a Machine image.
+- A Machine image preserves the source image's optional initrd. An encrypted root disk needs that initrd on every cold boot.
+- Atlas sends freshly signed rootfs, kernel, and optional initrd URLs with each migration request. Metal verifies their immutable identity before replacing the source URLs.
 - Atlas changes one network value, then sends the complete network object to Metal. Public address requests own their corresponding default routes.
 - Guest-specific keys, metadata, and mesh addresses go through Metal and guest metadata. Do not bake them into a shared image.
 - A protected VM cannot be terminated. An unprotected Atlas record is deleted only after Metal confirms that the VM is absent.
