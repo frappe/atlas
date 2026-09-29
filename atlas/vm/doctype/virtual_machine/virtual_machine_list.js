@@ -164,7 +164,7 @@ function showCreateVirtualMachineDialog() {
 			{
 				fieldname: "is_disk_encrypted",
 				fieldtype: "Check",
-				description: __("Unlock it in the TTY console on first boot."),
+				label: __("Disk Encryption"),
 				default: 0,
 			},
 
