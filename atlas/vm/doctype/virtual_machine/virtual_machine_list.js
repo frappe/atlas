@@ -235,6 +235,7 @@ function showCreateVirtualMachineDialog() {
 		],
 		primary_action_label: __("Create"),
 		primary_action(values) {
+			values.disk_encryption = Boolean(values.disk_encryption);
 			values.public_ipv4 = publicAddressSelector(values, "4");
 			values.public_ipv6 = publicAddressSelector(values, "6");
 			values.firewall = firewallValue(values.firewall_enabled, values.firewall_rules);
