@@ -12,6 +12,8 @@ Atlas excludes the source host and checks destination capacity. Desk users canno
 
 Atlas includes freshly signed rootfs, kernel, and optional initrd URLs in every destination request. Metal accepts rotated URLs only when their image reference, architecture, and artifact digests match the source VM. Disk encryption mode and the initrd digest stay unchanged across the move.
 
+An encrypted running VM cold-boots on the destination. The migration can complete while the guest waits for its passphrase in initramfs; after completion, open **Console Access → TTY Console** and unlock it. A stopped VM stays stopped and asks for the passphrase after its next start.
+
 A stopped VM also moves when a resize does not fit on its host. The migration stores `target_cpu_millicores`, `target_memory_mib`, and `target_disk_mib`, and commits the new host and shape together. On failure, the VM keeps its old host and shape. The tenant API reports `migrating` during the move.
 
 ## Migration sequence
