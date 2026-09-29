@@ -36,7 +36,7 @@ Each method checks permissions and local state before delegating long work.
 
 ## Upgrade host binaries
 
-Atlas publishes `metald` and Atlas WG Mesh as one compatible pair. A host upgrade installs both binaries before it starts the new Metal process.
+Atlas Settings holds one `metald` artifact and one Atlas WG Mesh artifact. A host upgrade treats the current artifacts as one installation pair. It stages and verifies both binaries before it stops `metal.service`, then installs both before it starts the new Metal process.
 
 | Action | Behavior |
 | --- | --- |
@@ -51,7 +51,7 @@ An operator can explicitly request a legacy WG Mesh reset with the `reset_wg_mes
 
 Legacy reset mode is destructive. It removes private mesh state after both new binaries pass download and digest checks. Atlas host sync must then reconstruct VM, peer, privileged address, route, and transport state. Private VM traffic is interrupted until this convergence finishes.
 
-Binary rollback after a legacy reset does not restore the removed maps. The recovery path restores the previous pair and rebuilds the previous host mesh, then requires Atlas sync and complete traffic checks. Upgrade one host at a time and do not continue when reconciliation is incomplete.
+Binary rollback after a legacy reset does not restore the removed maps. The recovery path restores the previous pair and rebuilds the previous host mesh, then requires Atlas sync and complete traffic checks. Stop after any failure or incomplete reconciliation. Atlas does not support rolling or mixed-version fleet upgrades.
 
 Use **Re-configure Metald** when an old host unit does not have descriptor preservation. The host systemd version must support `FileDescriptorStorePreserve=yes`.
 
