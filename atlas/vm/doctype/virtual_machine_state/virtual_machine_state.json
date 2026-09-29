@@ -5,8 +5,9 @@
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
-  "virtual_machine",
   "status",
+  "server",
+  "virtual_machine",
   "column_break_state",
   "synced_at"
  ],
@@ -20,6 +21,17 @@
    "read_only": 1,
    "reqd": 1,
    "unique": 1
+  },
+  {
+   "fieldname": "server",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Server",
+   "options": "Metal Server",
+   "read_only": 1,
+   "reqd": 1,
+   "search_index": 1
   },
   {
    "fieldname": "status",
@@ -44,7 +56,7 @@
   }
  ],
  "links": [],
- "modified": "2026-09-09 16:55:09.816290",
+ "modified": "2026-09-29 15:35:02.858934",
  "modified_by": "Administrator",
  "module": "VM",
  "name": "Virtual Machine State",

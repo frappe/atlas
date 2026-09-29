@@ -30,6 +30,7 @@ def store_reported_states(server_name: str, reported: object) -> None:
 				state = frappe.new_doc("Virtual Machine State")
 				state.virtual_machine = name
 
+			state.server = server_name
 			state.status = status
 			state.synced_at = synced_at
 			state.save(ignore_permissions=True)
