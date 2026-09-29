@@ -646,40 +646,34 @@ class TestServer(UnitTestCase):
 
 		create_for_script_file.assert_not_called()
 
-	def test_upgrade_metald_rejects_a_missing_artifact_hash_or_mesh_artifact(self) -> None:
-		for field in ("metald_binary_hash", "wg_mesh_binary_x86_64_file", "wg_mesh_binary_hash"):
-			with self.subTest(field=field):
-				server = self._server(status="Running")
-				server.settings.metald_binary_x86_64_file = "metald-file"
-				setattr(server.settings, field, None)
+	def test_upgrade_metald_rejects_a_missing_artifact_hash(self) -> None:
+		server = self._server(status="Running")
+		server.settings.metald_binary_x86_64_file = "metald-file"
+		server.settings.metald_binary_hash = None
 
-				with (
-					patch(
-						"atlas.metal_server.doctype.metal_server.metal_server.frappe.throw",
-						side_effect=ValueError,
-					),
-					patch(
-						"atlas.metal_server.core.host_installation.SSHTask.create_for_script_file"
-					) as create_for_script_file,
-				):
-					with self.assertRaises(ValueError):
-						MetalServer._upgrade_metald(server)
+		with (
+			patch(
+				"atlas.metal_server.doctype.metal_server.metal_server.frappe.throw", side_effect=ValueError
+			),
+			patch(
+				"atlas.metal_server.core.host_installation.SSHTask.create_for_script_file"
+			) as create_for_script_file,
+		):
+			with self.assertRaises(ValueError):
+				MetalServer._upgrade_metald(server)
 
-				create_for_script_file.assert_not_called()
+		create_for_script_file.assert_not_called()
 
-	def test_upgrade_metald_worker_sends_the_paired_artifacts_and_mesh_inputs(self) -> None:
+	def test_upgrade_metald_worker_sends_only_the_download_url_and_digest(self) -> None:
+		"""The upgrade replaces metald without changing WG Mesh."""
 		server = self._server(status="Running")
 		server.settings.metald_binary_x86_64_file = "metald-file"
 		task = SimpleNamespace(result=SimpleNamespace(is_success=True))
-		file_urls = {
-			"metald-file": "https://atlas.test/files/metald-linux-amd64",
-			"wg-mesh-file": "https://atlas.test/files/atlas-wg-mesh-linux-amd64",
-		}
 
 		with (
 			patch(
 				"atlas.metal_server.core.host_installation.get_download_url",
-				side_effect=lambda file_name: file_urls[file_name],
+				return_value="https://atlas.test/files/metald-linux-amd64",
 			),
 			patch(
 				"atlas.metal_server.core.host_installation.SSHTask.create_for_script_file",
@@ -695,38 +689,10 @@ class TestServer(UnitTestCase):
 			{
 				"METALD_DOWNLOAD_URL": "https://atlas.test/files/metald-linux-amd64",
 				"METALD_SHA256": "metald-binary-sha256",
-				"WG_MESH_DOWNLOAD_URL": "https://atlas.test/files/atlas-wg-mesh-linux-amd64",
-				"WG_MESH_SHA256": "wg-mesh-binary-sha256",
-				"WG_MESH_RESET": 0,
-				"MESH_UPLINK_INTERFACE": "eno1.1878",
-				"WIREGUARD_INTERFACE": "wg0",
 			},
 		)
 
-	def test_upgrade_metald_passes_an_explicit_mesh_reset_and_uplink(self) -> None:
-		server = self._server(status="Running")
-		server.settings.metald_binary_x86_64_file = "metald-file"
-		server.private_network_interface = "bond0.24"
-		task = SimpleNamespace(result=SimpleNamespace(is_success=True))
-
-		with (
-			patch(
-				"atlas.metal_server.core.host_installation.get_download_url",
-				return_value="https://atlas.test/files/binary",
-			),
-			patch(
-				"atlas.metal_server.core.host_installation.SSHTask.create_for_script_file",
-				return_value=task,
-			) as create_for_script_file,
-		):
-			MetalServer._upgrade_metald(server, "1")
-
-		environment = create_for_script_file.call_args.kwargs["environment"]
-		self.assertEqual(environment["WG_MESH_RESET"], 1)
-		self.assertEqual(environment["MESH_UPLINK_INTERFACE"], "bond0.24")
-		self.assertEqual(environment["WIREGUARD_INTERFACE"], "wg0")
-
-	def test_upgrade_metald_queues_the_normalized_mesh_reset(self) -> None:
+	def test_upgrade_metald_queues_the_worker_without_arguments(self) -> None:
 		server = self._server(status="Running")
 
 		with (
@@ -734,30 +700,10 @@ class TestServer(UnitTestCase):
 			patch("atlas.metal_server.doctype.metal_server.metal_server.is_job_enqueued", return_value=False),
 			patch("atlas.metal_server.doctype.metal_server.metal_server.frappe.enqueue_doc") as enqueue_doc,
 		):
-			MetalServer.upgrade_metald(server, True)
+			MetalServer.upgrade_metald(server)
 
-		self.assertEqual(enqueue_doc.call_args.kwargs["reset_wg_mesh"], 1)
+		self.assertEqual(enqueue_doc.call_args.args[2], "_upgrade_metald")
 		self.assertEqual(enqueue_doc.call_args.kwargs["job_id"], server.metald_job_id)
-
-	def test_upgrade_metald_rejects_an_ambiguous_mesh_reset(self) -> None:
-		server = self._server(status="Running")
-
-		for value in ("true", "false", 2, -1, 1.0):
-			with (
-				self.subTest(value=value),
-				patch("atlas.metal_server.doctype.metal_server.metal_server.frappe.only_for"),
-				patch(
-					"atlas.metal_server.doctype.metal_server.metal_server.frappe.throw",
-					side_effect=ValueError,
-				),
-				patch(
-					"atlas.metal_server.doctype.metal_server.metal_server.frappe.enqueue_doc"
-				) as enqueue_doc,
-			):
-				with self.assertRaises(ValueError):
-					MetalServer.upgrade_metald(server, value)
-
-				enqueue_doc.assert_not_called()
 
 	def test_upgrade_metald_reports_the_reason_the_script_printed(self) -> None:
 		server = self._server(status="Running")
