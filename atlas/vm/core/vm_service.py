@@ -28,6 +28,8 @@ if TYPE_CHECKING:
 	from atlas.vm.doctype.virtual_machine.virtual_machine import VirtualMachine
 	from atlas.vm.doctype.virtual_machine_image.virtual_machine_image import VirtualMachineImage
 
+DISK_ENCRYPTION_METADATA_MIB = 32
+
 
 class MetalOperationError(frappe.ValidationError):
 	"""Report that the assigned host could not complete the request."""
@@ -83,6 +85,15 @@ class VirtualMachineService:
 				exc=AtlasUserError,
 			)
 		image.validate_compatibility(request.disk_mib)
+		if request.disk_encryption:
+			minimum_disk_mib = image.image_size_mib + DISK_ENCRYPTION_METADATA_MIB
+			if request.disk_mib < minimum_disk_mib:
+				frappe.throw(
+					_("Encrypted disk must be at least {0} MiB for image {1}.").format(
+						minimum_disk_mib, image.title
+					),
+					exc=AtlasUserError,
+				)
 		requirements = PlacementRequirements(
 			request.cpu_millicores,
 			request.memory_mib,
