@@ -74,7 +74,7 @@ for command in curl sha256sum unsquashfs mkfs.ext4 truncate zstd; do
 	command -v "$command" >/dev/null || { echo "missing command: $command" >&2; exit 1; }
 done
 if [[ -n $initrd_output ]]; then
-	for command in chroot findmnt lsinitramfs mount strings tar umount; do
+	for command in chroot findmnt mount strings tar umount; do
 		command -v "$command" >/dev/null || { echo "missing command: $command" >&2; exit 1; }
 	done
 fi
@@ -184,7 +184,9 @@ build_initrd() {
 		HOME=/root PATH=/usr/sbin:/usr/bin:/sbin:/bin \
 		bash -c "cd '$cryptsetup_source_directory' && ./configure --prefix=/usr --libdir='/usr/lib/$multiarch' --disable-asciidoc --disable-ssh-token --enable-libargon2 && make -j\$(nproc) && make install && ldconfig"
 
-	installed_version=$(chroot "$initrd_rootfs_directory" cryptsetup --version)
+	installed_version=$(chroot "$initrd_rootfs_directory" /usr/bin/env -i \
+		PATH=/usr/sbin:/usr/bin:/sbin:/bin \
+		/usr/sbin/cryptsetup --version)
 	case "$installed_version" in
 		"cryptsetup $cryptsetup_version "*) ;;
 		*) echo "unexpected cryptsetup version: $installed_version" >&2; return 1 ;;
@@ -209,10 +211,10 @@ build_initrd() {
 	chroot "$initrd_rootfs_directory" /usr/bin/env -i \
 		HOME=/root PATH=/usr/sbin:/usr/bin:/sbin:/bin \
 		mkinitramfs -o /tmp/atlas-initrd.img "$kernel_version"
+	chroot "$initrd_rootfs_directory" /usr/bin/lsinitramfs /tmp/atlas-initrd.img > "$initrd_contents"
 	mv "$initrd_rootfs_directory/tmp/atlas-initrd.img" "$initrd_path.part"
 	unmount_initrd_rootfs
 
-	lsinitramfs "$initrd_path.part" > "$initrd_contents"
 	grep -qx 'scripts/local-top/atlas-cryptroot' "$initrd_contents"
 	grep -qx 'usr/sbin/blockdev' "$initrd_contents"
 	grep -qx 'usr/sbin/cryptsetup' "$initrd_contents"
