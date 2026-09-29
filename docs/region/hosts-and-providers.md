@@ -36,7 +36,7 @@ Each method checks permissions and local state before delegating long work.
 
 ## Upgrade metald
 
-Atlas Settings holds separate `metald` and Atlas WG Mesh artifacts. Initial host installation installs both components and writes their configuration. The **Upgrade Metald** action reads and replaces only the `metald` artifact. It does not read or change the Atlas WG Mesh binary or state.
+Atlas Settings holds separate `metald` and Atlas WG Mesh artifacts. Initial host installation installs both components and writes their configuration. The **Upgrade Metald** action reads and replaces only the `metald` artifact. It does not download, replace, or reset the Atlas WG Mesh artifact.
 
 The upgrade downloads the new `metald` binary, verifies its SHA-256 digest, and runs its version command before host mutation. It stops before mutation unless `metal.service` is active, `FileDescriptorStorePreserve=yes`, and systemd holds exactly one console descriptor for each active VM unit.
 
