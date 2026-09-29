@@ -39,9 +39,8 @@ class VirtualMachine(Document):
 	from typing import TYPE_CHECKING
 
 	if TYPE_CHECKING:
-		from frappe.types import DF
-
 		from atlas.atlas.doctype.atlas_tag.atlas_tag import AtlasTag
+		from frappe.types import DF
 
 		active_migration: DF.Link | None
 		architecture: DF.Literal["amd64", "arm64"]

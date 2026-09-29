@@ -15,7 +15,6 @@
   "column_break_status",
   "server",
   "virtual_machine_image",
-  "disk_encryption",
   "architecture",
   "hostname",
   "error",
@@ -28,6 +27,7 @@
   "disk_mib",
   "disk_throughput_mibps",
   "disk_iops",
+  "disk_encryption",
   "section_break_network",
   "mac",
   "wireguard_mesh_ipv6",
@@ -111,7 +111,8 @@
    "fieldtype": "Check",
    "label": "Disk Encryption",
    "read_only": 1,
-   "set_only_once": 1
+   "set_only_once": 1,
+   "show_description_on_click": 1
   },
   {
    "fieldname": "error",
@@ -365,7 +366,7 @@
    "link_fieldname": "virtual_machine"
   }
  ],
- "modified": "2026-09-26 03:05:51.552687",
+ "modified": "2026-09-29 18:58:36.761450",
  "modified_by": "Administrator",
  "module": "VM",
  "name": "Virtual Machine",
