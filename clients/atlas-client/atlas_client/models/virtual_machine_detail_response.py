@@ -38,11 +38,11 @@ class VirtualMachineDetailResponse:
             current_state (str): Current state reported by the host or managed by Atlas.
             desired_state (None | str): State requested from the host, or null when unavailable.
             disk (VirtualMachineDisk): The disk size and its rate limits.
-            disk_encryption (bool): Whether the guest encrypts its root disk.
             error (None | str): Current host-reported error, or null.
             guest (VirtualMachineGuest): The guest configuration of one virtual machine.
             id (str): Virtual machine ID.
             image_id (str): Image used to create the virtual machine.
+            is_disk_encrypted (bool): Whether the guest encrypts its root disk.
             is_privileged (bool): Whether the guest can reach every tenant through the mesh.
             network (VirtualMachineNetwork): The addresses, internet access, and network limits of one virtual machine.
             public_ipv4 (None | PublicIPResponse): Attached public IPv4 allocation, or null.
@@ -57,11 +57,11 @@ class VirtualMachineDetailResponse:
     current_state: str
     desired_state: None | str
     disk: VirtualMachineDisk
-    disk_encryption: bool
     error: None | str
     guest: VirtualMachineGuest
     id: str
     image_id: str
+    is_disk_encrypted: bool
     is_privileged: bool
     network: VirtualMachineNetwork
     public_ipv4: None | PublicIPResponse
@@ -94,8 +94,6 @@ class VirtualMachineDetailResponse:
 
         disk = self.disk.to_dict()
 
-        disk_encryption = self.disk_encryption
-
         error: None | str
         error = self.error
 
@@ -104,6 +102,8 @@ class VirtualMachineDetailResponse:
         id = self.id
 
         image_id = self.image_id
+
+        is_disk_encrypted = self.is_disk_encrypted
 
         is_privileged = self.is_privileged
 
@@ -135,11 +135,11 @@ class VirtualMachineDetailResponse:
             "current_state": current_state,
             "desired_state": desired_state,
             "disk": disk,
-            "disk_encryption": disk_encryption,
             "error": error,
             "guest": guest,
             "id": id,
             "image_id": image_id,
+            "is_disk_encrypted": is_disk_encrypted,
             "is_privileged": is_privileged,
             "network": network,
             "public_ipv4": public_ipv4,
@@ -188,8 +188,6 @@ class VirtualMachineDetailResponse:
 
 
 
-        disk_encryption = d.pop("disk_encryption")
-
         def _parse_error(data: object) -> None | str:
             if data is None:
                 return data
@@ -206,6 +204,8 @@ class VirtualMachineDetailResponse:
         id = d.pop("id")
 
         image_id = d.pop("image_id")
+
+        is_disk_encrypted = d.pop("is_disk_encrypted")
 
         is_privileged = d.pop("is_privileged")
 
@@ -264,11 +264,11 @@ class VirtualMachineDetailResponse:
             current_state=current_state,
             desired_state=desired_state,
             disk=disk,
-            disk_encryption=disk_encryption,
             error=error,
             guest=guest,
             id=id,
             image_id=image_id,
+            is_disk_encrypted=is_disk_encrypted,
             is_privileged=is_privileged,
             network=network,
             public_ipv4=public_ipv4,

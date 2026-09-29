@@ -32,14 +32,14 @@ class CreateVirtualMachinePayload:
             disk_mib (int): Root disk capacity in MiB.
             image_id (str): Image used to create the virtual machine.
             memory_mib (int): Memory capacity in MiB.
-            disk_encryption (bool | Unset): Whether the guest encrypts its root disk with a user-held passphrase. Default:
-                False.
             disk_iops (int | Unset): Disk IOPS limit. Zero removes the limit. Default: 0.
             disk_throughput_mibps (int | Unset): Disk throughput limit in MiB/s. Zero removes the limit. Default: 0.
             firewall (FirewallPayload | Unset): The complete desired firewall configuration.
             hostname (str | Unset): Guest hostname. Default: ''.
             ipv4_internet_access (bool | Unset): Reach the IPv4 internet through host NAT. A public IPv4 address needs it.
                 Without it and without a public IPv6 address, the VM reaches only the mesh. Default: True.
+            is_disk_encrypted (bool | Unset): Whether the guest encrypts its root disk with a user-held passphrase. Default:
+                False.
             is_privileged (bool | Unset): Whether the guest can reach every tenant through the mesh. Default: False.
             is_termination_protected (bool | Unset): Whether deletion is blocked. Default: False.
             metadata (CreateVirtualMachinePayloadMetadata | Unset): Custom guest metadata.
@@ -58,12 +58,12 @@ class CreateVirtualMachinePayload:
     disk_mib: int
     image_id: str
     memory_mib: int
-    disk_encryption: bool | Unset = False
     disk_iops: int | Unset = 0
     disk_throughput_mibps: int | Unset = 0
     firewall: FirewallPayload | Unset = UNSET
     hostname: str | Unset = ''
     ipv4_internet_access: bool | Unset = True
+    is_disk_encrypted: bool | Unset = False
     is_privileged: bool | Unset = False
     is_termination_protected: bool | Unset = False
     metadata: CreateVirtualMachinePayloadMetadata | Unset = UNSET
@@ -90,8 +90,6 @@ class CreateVirtualMachinePayload:
 
         memory_mib = self.memory_mib
 
-        disk_encryption = self.disk_encryption
-
         disk_iops = self.disk_iops
 
         disk_throughput_mibps = self.disk_throughput_mibps
@@ -103,6 +101,8 @@ class CreateVirtualMachinePayload:
         hostname = self.hostname
 
         ipv4_internet_access = self.ipv4_internet_access
+
+        is_disk_encrypted = self.is_disk_encrypted
 
         is_privileged = self.is_privileged
 
@@ -147,8 +147,6 @@ class CreateVirtualMachinePayload:
             "image_id": image_id,
             "memory_mib": memory_mib,
         })
-        if disk_encryption is not UNSET:
-            field_dict["disk_encryption"] = disk_encryption
         if disk_iops is not UNSET:
             field_dict["disk_iops"] = disk_iops
         if disk_throughput_mibps is not UNSET:
@@ -159,6 +157,8 @@ class CreateVirtualMachinePayload:
             field_dict["hostname"] = hostname
         if ipv4_internet_access is not UNSET:
             field_dict["ipv4_internet_access"] = ipv4_internet_access
+        if is_disk_encrypted is not UNSET:
+            field_dict["is_disk_encrypted"] = is_disk_encrypted
         if is_privileged is not UNSET:
             field_dict["is_privileged"] = is_privileged
         if is_termination_protected is not UNSET:
@@ -197,8 +197,6 @@ class CreateVirtualMachinePayload:
 
         memory_mib = d.pop("memory_mib")
 
-        disk_encryption = d.pop("disk_encryption", UNSET)
-
         disk_iops = d.pop("disk_iops", UNSET)
 
         disk_throughput_mibps = d.pop("disk_throughput_mibps", UNSET)
@@ -216,6 +214,8 @@ class CreateVirtualMachinePayload:
         hostname = d.pop("hostname", UNSET)
 
         ipv4_internet_access = d.pop("ipv4_internet_access", UNSET)
+
+        is_disk_encrypted = d.pop("is_disk_encrypted", UNSET)
 
         is_privileged = d.pop("is_privileged", UNSET)
 
@@ -267,12 +267,12 @@ class CreateVirtualMachinePayload:
             disk_mib=disk_mib,
             image_id=image_id,
             memory_mib=memory_mib,
-            disk_encryption=disk_encryption,
             disk_iops=disk_iops,
             disk_throughput_mibps=disk_throughput_mibps,
             firewall=firewall,
             hostname=hostname,
             ipv4_internet_access=ipv4_internet_access,
+            is_disk_encrypted=is_disk_encrypted,
             is_privileged=is_privileged,
             is_termination_protected=is_termination_protected,
             metadata=metadata,

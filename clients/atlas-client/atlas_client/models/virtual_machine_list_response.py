@@ -31,10 +31,10 @@ class VirtualMachineListResponse:
             architecture (VirtualMachineListResponseArchitecture): CPU architecture.
             cpu_millicores (int): CPU capacity in millicores.
             created_at (int): Creation time as Unix seconds.
-            disk_encryption (bool): Whether the guest encrypts its root disk.
             disk_mib (int): Root disk capacity in MiB.
             id (str): Virtual machine ID.
             image_id (str): Image used to create the virtual machine.
+            is_disk_encrypted (bool): Whether the guest encrypts its root disk.
             is_termination_protected (bool): Whether deletion is blocked.
             last_known_state (str): Last state reported by the host, including Atlas transition states.
             memory_mib (int): Memory capacity in MiB.
@@ -49,10 +49,10 @@ class VirtualMachineListResponse:
     architecture: VirtualMachineListResponseArchitecture
     cpu_millicores: int
     created_at: int
-    disk_encryption: bool
     disk_mib: int
     id: str
     image_id: str
+    is_disk_encrypted: bool
     is_termination_protected: bool
     last_known_state: str
     memory_mib: int
@@ -77,13 +77,13 @@ class VirtualMachineListResponse:
 
         created_at = self.created_at
 
-        disk_encryption = self.disk_encryption
-
         disk_mib = self.disk_mib
 
         id = self.id
 
         image_id = self.image_id
+
+        is_disk_encrypted = self.is_disk_encrypted
 
         is_termination_protected = self.is_termination_protected
 
@@ -119,10 +119,10 @@ class VirtualMachineListResponse:
             "architecture": architecture,
             "cpu_millicores": cpu_millicores,
             "created_at": created_at,
-            "disk_encryption": disk_encryption,
             "disk_mib": disk_mib,
             "id": id,
             "image_id": image_id,
+            "is_disk_encrypted": is_disk_encrypted,
             "is_termination_protected": is_termination_protected,
             "last_known_state": last_known_state,
             "memory_mib": memory_mib,
@@ -152,13 +152,13 @@ class VirtualMachineListResponse:
 
         created_at = d.pop("created_at")
 
-        disk_encryption = d.pop("disk_encryption")
-
         disk_mib = d.pop("disk_mib")
 
         id = d.pop("id")
 
         image_id = d.pop("image_id")
+
+        is_disk_encrypted = d.pop("is_disk_encrypted")
 
         is_termination_protected = d.pop("is_termination_protected")
 
@@ -223,10 +223,10 @@ class VirtualMachineListResponse:
             architecture=architecture,
             cpu_millicores=cpu_millicores,
             created_at=created_at,
-            disk_encryption=disk_encryption,
             disk_mib=disk_mib,
             id=id,
             image_id=image_id,
+            is_disk_encrypted=is_disk_encrypted,
             is_termination_protected=is_termination_protected,
             last_known_state=last_known_state,
             memory_mib=memory_mib,
