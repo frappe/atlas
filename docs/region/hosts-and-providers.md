@@ -34,24 +34,15 @@ Each method checks permissions and local state before delegating long work.
 | Inventory | `ping_server`, `sync_disks`, `sync_state` |
 | Removal | `archive_server` |
 
-## Upgrade host binaries
+## Upgrade metald
 
-Atlas Settings holds one `metald` artifact and one Atlas WG Mesh artifact. A host upgrade treats the current artifacts as one installation pair. It stages and verifies both binaries before it stops `metal.service`, then installs both before it starts the new Metal process.
+Atlas Settings holds separate `metald` and Atlas WG Mesh artifacts. Initial host installation installs both components and writes their configuration. The **Upgrade Metald** action reads and replaces only the `metald` artifact. It does not read or change the Atlas WG Mesh binary or state.
 
-| Action | Behavior |
-| --- | --- |
-| `install_metald` | Installs both binaries, writes configuration and units, and restarts `metal.service`. It restores the previous binaries and configuration when the service does not stay active. |
-| `upgrade_metald` | Stages and verifies both binaries, checks console preservation, saves the previous pair, installs the new pair, and restarts `metal.service`. |
+The upgrade downloads the new `metald` binary, verifies its SHA-256 digest, and runs its version command before host mutation. It stops before mutation unless `metal.service` is active, `FileDescriptorStorePreserve=yes`, and systemd holds exactly one console descriptor for each active VM unit.
 
-The normal upgrade does not clear WG Mesh state. It stops before mutation unless `metal.service` is active, `FileDescriptorStorePreserve=yes`, and systemd holds exactly one console descriptor for each active VM unit.
+The script repeats the service, VM unit, preservation, and descriptor checks immediately before it installs the binary. It saves the previous `metald` binary and restarts `metal.service` after the atomic replacement.
 
-The script checks the new service five times. It also checks that the active VM unit set is unchanged and that the installed WG Mesh BPF hash matches the new binary. On failure, it restores both previous binaries, restarts the previous service, and reports the error.
-
-An operator can explicitly request a legacy WG Mesh reset with the `reset_wg_mesh=1` method argument. Use this mode only when the installed BPF map layout is incompatible with the new binary.
-
-Legacy reset mode is destructive. It removes private mesh state after both new binaries pass download and digest checks. Atlas host sync must then reconstruct VM, peer, privileged address, route, and transport state. Private VM traffic is interrupted until this convergence finishes.
-
-Binary rollback after a legacy reset does not restore the removed maps. The recovery path restores the previous pair and rebuilds the previous host mesh, then requires Atlas sync and complete traffic checks. Stop after any failure or incomplete reconciliation. Atlas does not support rolling or mixed-version fleet upgrades.
+The script checks the new service five times. It also checks that the active VM unit set and stored console descriptor count are unchanged. On failure after restart, it restores only the previous `metald` binary, starts the previous service, and reports the error.
 
 Use **Re-configure Metald** when an old host unit does not have descriptor preservation. The host systemd version must support `FileDescriptorStorePreserve=yes`.
 
@@ -73,7 +64,7 @@ Setup needs valid provider credentials, root SSH, network access, and a suitable
 - [Provider contract](../../atlas/atlas/core/server_providers/base.py) and [registry](../../atlas/atlas/core/server_providers/registry.py) define the integration boundary.
 - [Host provisioner](../../atlas/metal_server/core/provisioning.py) owns the phase order and commits.
 - [Host installation](../../atlas/metal_server/core/host_installation.py) installs Metal and host services.
-- [Host upgrade transaction test](../../atlas/scripts/tests/test-upgrade-metald.sh) checks the descriptor gates and rollback paths.
+- [Metald upgrade transaction test](../../atlas/scripts/tests/test-upgrade-metald.sh) checks the descriptor gates and rollback paths.
 - [Host sync](../../atlas/metal_server/usage.py) stores capacity and state reports.
 - [Metal Server tests](../../atlas/metal_server/doctype/metal_server/test_metal_server.py) check record lifecycle behavior.
 
