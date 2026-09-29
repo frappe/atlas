@@ -57,6 +57,7 @@ class TestVirtualMachineCreation(UnitTestCase):
 		image = SimpleNamespace(
 			title="Encrypted Ubuntu",
 			has_initrd=True,
+			image_size_mib=8192,
 			architecture="amd64",
 			validate_compatibility=Mock(),
 		)
@@ -69,6 +70,44 @@ class TestVirtualMachineCreation(UnitTestCase):
 			VirtualMachineService.create(request)
 
 		self.assertTrue(find.call_args.args[0].is_sleepy)
+
+	def test_encryption_rejects_a_disk_without_metadata_space(self) -> None:
+		image = SimpleNamespace(
+			title="Encrypted Ubuntu",
+			has_initrd=True,
+			image_size_mib=10240,
+			architecture="amd64",
+			validate_compatibility=Mock(),
+		)
+		request = {**self.request(), "disk_mib": 10271, "disk_encryption": True}
+		with (
+			patch.object(VirtualMachineService, "get_image", return_value=image),
+			patch.object(PlacementStrategy, "find_server") as find_server,
+			self.assertRaisesRegex(AtlasUserError, "at least 10272 MiB"),
+		):
+			VirtualMachineService.create(request)
+
+		image.validate_compatibility.assert_called_once_with(10271)
+		find_server.assert_not_called()
+
+	def test_encryption_accepts_exactly_32_mib_of_metadata_space(self) -> None:
+		image = SimpleNamespace(
+			title="Encrypted Ubuntu",
+			has_initrd=True,
+			image_size_mib=10240,
+			architecture="amd64",
+			validate_compatibility=Mock(),
+		)
+		request = {**self.request(), "disk_mib": 10272, "disk_encryption": True}
+		with (
+			patch.object(VirtualMachineService, "get_image", return_value=image),
+			patch.object(PlacementStrategy, "find_server", side_effect=OutOfCapacity("retry later")) as find,
+			self.assertRaises(OutOfCapacity),
+		):
+			VirtualMachineService.create(request)
+
+		image.validate_compatibility.assert_called_once_with(10272)
+		self.assertEqual(find.call_args.args[0].disk_mib, 10272)
 
 	def test_out_of_capacity_does_not_create_a_vm_draft(self) -> None:
 		image = SimpleNamespace(architecture="amd64", validate_compatibility=Mock())
