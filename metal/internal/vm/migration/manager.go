@@ -172,8 +172,8 @@ func newManager(host migrationHost, source sourceOperations, disks migrationStor
 
 // CreateDestination reserves a VM ID or returns a matching in-progress record. An
 // optional resize replaces the source shape on the destination.
-func (m *Manager) CreateDestination(ctx context.Context, migrationID, virtualMachineID, source string, resize *Resize) (DestinationProgress, error) {
-	if !vm.ValidIdentifier(migrationID) || !vm.ValidIdentifier(virtualMachineID) || !validSourceAddress(source) {
+func (m *Manager) CreateDestination(ctx context.Context, migrationID, virtualMachineID, source string, image vm.Image, resize *Resize) (DestinationProgress, error) {
+	if !vm.ValidIdentifier(migrationID) || !vm.ValidIdentifier(virtualMachineID) || !validSourceAddress(source) || image.Name == "" {
 		return DestinationProgress{}, vm.ErrConflict
 	}
 	unlockCreation, err := m.destinationCreationLocks.Lock(ctx, migrationID)
@@ -203,8 +203,12 @@ func (m *Manager) CreateDestination(ctx context.Context, migrationID, virtualMac
 			if existing.State.terminal() {
 				return existing.progress(), nil
 			}
-			if existing.Source != source || !existing.Resize.equal(resize) {
+			if existing.Source != source || !existing.Resize.equal(resize) ||
+				(existing.ImageSource.Name != "" && !existing.ImageSource.SameContent(image)) {
 				return DestinationProgress{}, vm.ErrConflict
+			}
+			if err := m.refreshDestinationImageSource(&existing, image); err != nil {
+				return DestinationProgress{}, err
 			}
 			return existing.progress(), nil
 		}
@@ -231,6 +235,7 @@ func (m *Manager) CreateDestination(ctx context.Context, migrationID, virtualMac
 		ID:               migrationID,
 		VirtualMachineID: virtualMachineID,
 		Source:           source,
+		ImageSource:      image,
 		Resize:           resize,
 		State:            destinationPreparing,
 		CreatedAt:        m.now(),
@@ -240,6 +245,25 @@ func (m *Manager) CreateDestination(ctx context.Context, migrationID, virtualMac
 		return DestinationProgress{}, errors.Join(err, m.store.remove(virtualMachineID))
 	}
 	return record.progress(), nil
+}
+
+// refreshDestinationImageSource persists fresh signed URLs and updates a
+// reconstructed desired record when one already exists.
+func (m *Manager) refreshDestinationImageSource(record *destinationRecord, image vm.Image) error {
+	record.ImageSource = image
+	if record.Definition == nil {
+		return m.store.writeDestination(*record)
+	}
+	record.Definition.Specification.Image = record.Definition.Specification.Image.RefreshURLs(image)
+	desired, err := m.host.ReadDesired(record.VirtualMachineID)
+	if err != nil {
+		return err
+	}
+	desired.Specification.Image = desired.Specification.Image.RefreshURLs(image)
+	if err := m.host.WriteDesired(desired); err != nil {
+		return err
+	}
+	return m.store.writeDestination(*record)
 }
 
 func validSourceAddress(address string) bool {

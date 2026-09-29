@@ -45,6 +45,24 @@ type Image struct {
 	MemorySnapshotConfiguration *MemorySnapshotConfiguration `json:"memory_snapshot_configuration,omitempty"`
 }
 
+// SameContent reports whether two image descriptions identify the same boot
+// artifacts. Transport URLs and host-local caching intent may differ.
+func (image Image) SameContent(other Image) bool {
+	return image.Name == other.Name &&
+		strings.EqualFold(image.RootfsSHA256, other.RootfsSHA256) &&
+		strings.EqualFold(image.KernelSHA256, other.KernelSHA256) &&
+		strings.EqualFold(image.InitrdSHA256, other.InitrdSHA256) &&
+		image.Architecture == other.Architecture
+}
+
+// RefreshURLs returns the same image identity with current artifact sources.
+func (image Image) RefreshURLs(other Image) Image {
+	image.RootfsURL = other.RootfsURL
+	image.KernelURL = other.KernelURL
+	image.InitrdURL = other.InitrdURL
+	return image
+}
+
 // DiskEncryption identifies the guest-managed root disk encryption mode.
 type DiskEncryption string
 

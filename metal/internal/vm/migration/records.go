@@ -199,6 +199,7 @@ type destinationRecord struct {
 	ID                  string                    `json:"id"`
 	VirtualMachineID    string                    `json:"virtual_machine_id"`
 	Source              string                    `json:"source"`
+	ImageSource         vm.Image                  `json:"image"`
 	Resize              *Resize                   `json:"resize,omitempty"`
 	State               destinationState          `json:"state"`
 	Definition          *VirtualMachineDefinition `json:"config,omitempty"`
