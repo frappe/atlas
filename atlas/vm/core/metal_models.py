@@ -113,7 +113,7 @@ class MetalDesiredState:
 	image: MetalImage
 	network: MetalNetwork
 	guest: MetalGuest
-	disk_encryption: str = ""
+	is_disk_encrypted: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -191,7 +191,7 @@ def parse_desired_state(value: dict[str, Any]) -> MetalDesiredState:
 		generation=integer_field(value, "generation"),
 		restart_generation=integer_field(value, "restart_generation"),
 		state=string_field(value, "state"),
-		disk_encryption=string_field(value, "disk_encryption", default=""),
+		is_disk_encrypted=boolean_field(value, "is_disk_encrypted", default=False),
 		compute=MetalCompute(
 			cpu_millicores=integer_field(compute, "cpu_millicores"),
 			memory_mib=integer_field(compute, "memory_mib"),

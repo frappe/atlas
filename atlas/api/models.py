@@ -435,7 +435,7 @@ class CreateVirtualMachinePayload(StrictModel):
 		default=False, description="Whether the guest can reach every tenant through the mesh."
 	)
 	is_termination_protected: bool = Field(default=False, description="Whether deletion is blocked.")
-	disk_encryption: bool = Field(
+	is_disk_encrypted: bool = Field(
 		default=False, description="Whether the guest encrypts its root disk with a user-held passphrase."
 	)
 	sleep_after_idle_seconds: int = Field(
@@ -476,7 +476,7 @@ class CreateVirtualMachinePayload(StrictModel):
 			routes=DEFAULT_ROUTES if self.ipv4_internet_access else (),
 			is_privileged=self.is_privileged,
 			is_termination_protected=self.is_termination_protected,
-			disk_encryption=self.disk_encryption,
+			is_disk_encrypted=self.is_disk_encrypted,
 			sleep_after_idle_seconds=self.sleep_after_idle_seconds,
 			disk_throughput_mibps=self.disk_throughput_mibps,
 			disk_iops=self.disk_iops,
@@ -636,7 +636,7 @@ class VirtualMachineResponse(BaseModel):
 					"memory_mib": 2048,
 					"disk_mib": 20480,
 					"sleep_after_idle_seconds": 0,
-					"disk_encryption": False,
+					"is_disk_encrypted": False,
 					"is_termination_protected": False,
 					"public_ipv4": None,
 					"public_ipv6": None,
@@ -655,7 +655,7 @@ class VirtualMachineResponse(BaseModel):
 	memory_mib: int = Field(description="Memory capacity in MiB.")
 	disk_mib: int = Field(description="Root disk capacity in MiB.")
 	sleep_after_idle_seconds: int = Field(description="Idle time before automatic stop. Zero disables it.")
-	disk_encryption: bool = Field(description="Whether the guest encrypts its root disk.")
+	is_disk_encrypted: bool = Field(description="Whether the guest encrypts its root disk.")
 	is_termination_protected: bool = Field(description="Whether deletion is blocked.")
 	public_ipv4: PublicIPResponse | None = Field(description="Attached public IPv4 allocation, or null.")
 	public_ipv6: PublicIPResponse | None = Field(description="Attached public IPv6 allocation, or null.")
@@ -677,7 +677,7 @@ class VirtualMachineResponse(BaseModel):
 			memory_mib=virtual_machine.memory_mib,
 			disk_mib=virtual_machine.disk_mib,
 			sleep_after_idle_seconds=virtual_machine.sleep_after_idle_seconds,
-			disk_encryption=bool(virtual_machine.disk_encryption),
+			is_disk_encrypted=bool(virtual_machine.is_disk_encrypted),
 			is_termination_protected=bool(virtual_machine.is_termination_protected),
 			public_ipv4=allocations.get(4),
 			public_ipv6=allocations.get(6),
@@ -791,7 +791,7 @@ class VirtualMachineDetailResponse(BaseModel):
 					"tags": {"env": "prod"},
 					"created_at": 1788834165,
 					"is_privileged": False,
-					"disk_encryption": False,
+					"is_disk_encrypted": False,
 					"public_ipv4": None,
 					"public_ipv6": None,
 					"desired_state": "running",
@@ -826,7 +826,7 @@ class VirtualMachineDetailResponse(BaseModel):
 	tags: dict[str, str] = Field(description="Resource tags as key-value pairs.")
 	created_at: int = Field(ge=0, description="Creation time as Unix seconds.")
 	is_privileged: bool = Field(description="Whether the guest can reach every tenant through the mesh.")
-	disk_encryption: bool = Field(description="Whether the guest encrypts its root disk.")
+	is_disk_encrypted: bool = Field(description="Whether the guest encrypts its root disk.")
 	public_ipv4: PublicIPResponse | None = Field(description="Attached public IPv4 allocation, or null.")
 	public_ipv6: PublicIPResponse | None = Field(description="Attached public IPv6 allocation, or null.")
 	desired_state: str | None = Field(description="State requested from the host, or null when unavailable.")
@@ -853,7 +853,7 @@ class VirtualMachineDetailResponse(BaseModel):
 			tags=read_tags(virtual_machine),
 			created_at=to_unix_timestamp(virtual_machine.creation),
 			is_privileged=bool(virtual_machine.is_privileged),
-			disk_encryption=bool(virtual_machine.disk_encryption),
+			is_disk_encrypted=bool(virtual_machine.is_disk_encrypted),
 			public_ipv4=allocations.get(4),
 			public_ipv6=allocations.get(6),
 			desired_state=desired.state if desired else None,
