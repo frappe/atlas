@@ -36,13 +36,13 @@ context.showCreateVirtualMachineDialog();
 assert.equal(dialogs.length, 1);
 const configuration = dialogs[0];
 const encryptionField = configuration.fields.find(
-  (field) => field.fieldname === "disk_encryption"
+  (field) => field.fieldname === "is_disk_encrypted"
 );
 assert.equal(encryptionField.fieldtype, "Check");
 assert.equal(encryptionField.default, 0);
 
 configuration.primary_action({
-  disk_encryption: 1,
+  is_disk_encrypted: 1,
   firewall_enabled: 0,
   firewall_rules: [],
   public_ipv4_mode: "none",
@@ -50,5 +50,5 @@ configuration.primary_action({
 });
 
 assert.equal(requests.length, 1);
-assert.equal(requests[0].args.request.disk_encryption, true);
+assert.equal(requests[0].args.request.is_disk_encrypted, true);
 console.log("ok - VM create dialog submits disk encryption");

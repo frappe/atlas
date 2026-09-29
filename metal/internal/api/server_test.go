@@ -395,7 +395,7 @@ const (
 )
 
 func encryptedCreateRequest() string {
-	body := strings.Replace(validCreateRequest, `{"compute":`, `{"disk_encryption":"luks2","compute":`, 1)
+	body := strings.Replace(validCreateRequest, `{"compute":`, `{"is_disk_encrypted":true,"compute":`, 1)
 	return strings.Replace(body, `}},"network":`, `},"initrd":{"url":"https://atlas.example/initrd?signature=secret","sha256":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}},"network":`, 1)
 }
 
@@ -531,8 +531,8 @@ func TestCreateAcceptsDiskEncryptionWithIdleSleep(t *testing.T) {
 	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
 	}
-	if response.Desired.DiskEncryption != "luks2" {
-		t.Fatalf("disk_encryption = %q, want luks2", response.Desired.DiskEncryption)
+	if !response.Desired.IsDiskEncrypted {
+		t.Fatal("is_disk_encrypted = false, want true")
 	}
 	if response.Desired.Compute.SleepAfterIdleSeconds != 1800 {
 		t.Fatalf("sleep_after_idle_seconds = %d, want 1800", response.Desired.Compute.SleepAfterIdleSeconds)
@@ -544,14 +544,13 @@ func TestCreateAcceptsDiskEncryptionWithIdleSleep(t *testing.T) {
 
 func TestCreateAcceptsAnInitrdWithoutDiskEncryption(t *testing.T) {
 	server := newTestServer(t)
-	body := strings.Replace(encryptedCreateRequest(), `"disk_encryption":"luks2",`, "", 1)
+	body := strings.Replace(encryptedCreateRequest(), `"is_disk_encrypted":true,`, "", 1)
 	do(t, server, http.MethodPut, "/v1/vms/vm1", body, http.StatusAccepted)
 }
 
 func TestCreateRejectsInvalidDiskEncryption(t *testing.T) {
 	for _, body := range []string{
-		strings.Replace(encryptedCreateRequest(), "luks2", "luks1", 1),
-		strings.Replace(validCreateRequest, `{"compute":`, `{"disk_encryption":"luks2","compute":`, 1),
+		strings.Replace(validCreateRequest, `{"compute":`, `{"is_disk_encrypted":true,"compute":`, 1),
 		strings.Replace(encryptedCreateRequest(), "https://atlas.example/initrd?signature=secret", "file:///initrd", 1),
 		strings.Replace(encryptedCreateRequest(), strings.Repeat("c", 64), "short", 1),
 	} {

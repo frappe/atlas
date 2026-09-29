@@ -28,8 +28,8 @@ def build_image(tenant_id: int, image_type: str = "machine") -> VirtualMachineIm
 
 
 class TestVirtualMachineCreation(UnitTestCase):
-	def test_draft_stores_disk_encryption(self) -> None:
-		request = VirtualMachineCreateRequest("encrypted-image", 2000, 2048, 10240, 7, disk_encryption=True)
+	def test_draft_stores_is_disk_encrypted(self) -> None:
+		request = VirtualMachineCreateRequest("encrypted-image", 2000, 2048, 10240, 7, is_disk_encrypted=True)
 		image = SimpleNamespace(name="encrypted-image", architecture="amd64")
 		draft = SimpleNamespace(flags=SimpleNamespace(), insert=Mock())
 		draft.insert.return_value = draft
@@ -38,12 +38,12 @@ class TestVirtualMachineCreation(UnitTestCase):
 			created = VirtualMachineService.insert_draft(request, image, "metal-1")
 
 		self.assertIs(created, draft)
-		self.assertTrue(get_doc.call_args.args[0]["disk_encryption"])
+		self.assertTrue(get_doc.call_args.args[0]["is_disk_encrypted"])
 		self.assertTrue(draft.flags.created_by_virtual_machine_api)
 
 	def test_encryption_requires_an_image_with_an_initrd(self) -> None:
 		image = SimpleNamespace(title="Plain Ubuntu", has_initrd=False)
-		request = {**self.request(), "disk_encryption": True}
+		request = {**self.request(), "is_disk_encrypted": True}
 		with (
 			patch.object(VirtualMachineService, "get_image", return_value=image),
 			patch.object(PlacementStrategy, "find_server") as find_server,
@@ -61,7 +61,7 @@ class TestVirtualMachineCreation(UnitTestCase):
 			architecture="amd64",
 			validate_compatibility=Mock(),
 		)
-		request = {**self.request(), "disk_encryption": True, "sleep_after_idle_seconds": 1800}
+		request = {**self.request(), "is_disk_encrypted": True, "sleep_after_idle_seconds": 1800}
 		with (
 			patch.object(VirtualMachineService, "get_image", return_value=image),
 			patch.object(PlacementStrategy, "find_server", side_effect=OutOfCapacity("retry later")) as find,
@@ -79,7 +79,7 @@ class TestVirtualMachineCreation(UnitTestCase):
 			architecture="amd64",
 			validate_compatibility=Mock(),
 		)
-		request = {**self.request(), "disk_mib": 10271, "disk_encryption": True}
+		request = {**self.request(), "disk_mib": 10271, "is_disk_encrypted": True}
 		with (
 			patch.object(VirtualMachineService, "get_image", return_value=image),
 			patch.object(PlacementStrategy, "find_server") as find_server,
@@ -98,7 +98,7 @@ class TestVirtualMachineCreation(UnitTestCase):
 			architecture="amd64",
 			validate_compatibility=Mock(),
 		)
-		request = {**self.request(), "disk_mib": 10272, "disk_encryption": True}
+		request = {**self.request(), "disk_mib": 10272, "is_disk_encrypted": True}
 		with (
 			patch.object(VirtualMachineService, "get_image", return_value=image),
 			patch.object(PlacementStrategy, "find_server", side_effect=OutOfCapacity("retry later")) as find,

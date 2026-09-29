@@ -76,7 +76,7 @@ class TestVirtualMachineResize(UnitTestCase):
 		self.virtual_machine.db_set.assert_called_once_with("sleep_after_idle_seconds", 1800)
 
 	def test_an_encrypted_virtual_machine_can_enable_idle_sleep(self) -> None:
-		self.virtual_machine.disk_encryption = 1
+		self.virtual_machine.is_disk_encrypted = 1
 
 		self.assertIsNone(self.apply({"sleep_after_idle_seconds": 1800}, state="running"))
 

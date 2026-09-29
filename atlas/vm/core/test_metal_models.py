@@ -19,7 +19,7 @@ def complete_response() -> dict:
 			"generation": 3,
 			"restart_generation": 1,
 			"state": "running",
-			"disk_encryption": "luks2",
+			"is_disk_encrypted": True,
 			"compute": {
 				"cpu_millicores": 2500,
 				"memory_mib": 2048,
@@ -119,7 +119,7 @@ class TestMetalVirtualMachineParsing(UnitTestCase):
 		self.assertEqual(machine.id, "VM-00001")
 		self.assertEqual(machine.desired.compute.cpu_millicores, 2500)
 		self.assertEqual(machine.desired.compute.sleep_after_idle_seconds, 1800)
-		self.assertEqual(machine.desired.disk_encryption, "luks2")
+		self.assertTrue(machine.desired.is_disk_encrypted)
 		self.assertEqual(machine.desired.image.rootfs.sha256, "a" * 64)
 		self.assertEqual(machine.desired.image.initrd.sha256, "c" * 64)
 		self.assertEqual(machine.desired.guest.ssh_keys, ("ssh-ed25519 AAAA",))
@@ -135,7 +135,7 @@ class TestMetalVirtualMachineParsing(UnitTestCase):
 
 		self.assertEqual(machine.desired.state, "running")
 		self.assertEqual(machine.desired.compute.cpu_millicores, 0)
-		self.assertEqual(machine.desired.disk_encryption, "")
+		self.assertFalse(machine.desired.is_disk_encrypted)
 		self.assertIsNone(machine.desired.image.initrd)
 		self.assertEqual(machine.desired.guest.ssh_keys, ())
 		self.assertEqual(machine.observed.state, "unknown")
@@ -218,7 +218,7 @@ class TestMetalContract(UnitTestCase):
 				"generation",
 				"restart_generation",
 				"state",
-				"disk_encryption",
+				"is_disk_encrypted",
 				"compute",
 				"disk",
 				"image",
@@ -226,7 +226,7 @@ class TestMetalContract(UnitTestCase):
 				"guest",
 			},
 		)
-		self.assert_has_fields(definitions, "api.createRequest", {"disk_encryption"})
+		self.assert_has_fields(definitions, "api.createRequest", {"is_disk_encrypted"})
 		self.assert_has_fields(definitions, "api.imageRequest", {"initrd"})
 		self.assert_has_fields(
 			definitions,
