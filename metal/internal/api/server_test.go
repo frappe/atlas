@@ -224,8 +224,12 @@ func (manager *fakeVirtualMachineManager) CreateSnapshot(_ context.Context, id s
 	manager.services.snapshots[snapshotID] = storage.StagedSnapshot{
 		ID: snapshotID, SourceVirtualMachineID: id,
 		Rootfs: storage.ArtifactSize{SizeBytes: 1024}, Kernel: storage.ArtifactSize{SizeBytes: 512},
+		Initrd: storage.ArtifactSize{SizeBytes: 256},
 	}
-	return vm.StagedSnapshot{ID: snapshotID, SourceVirtualMachineID: id, RootfsSizeBytes: 1024, KernelSizeBytes: 512}, nil
+	return vm.StagedSnapshot{
+		ID: snapshotID, SourceVirtualMachineID: id,
+		RootfsSizeBytes: 1024, KernelSizeBytes: 512, InitrdSizeBytes: 256,
+	}, nil
 }
 
 func (manager *fakeVirtualMachineManager) ConnectSSH(context.Context, string) (vm.SSHConnection, error) {
@@ -272,6 +276,7 @@ func (services *fakeRuntimeServices) CreateSnapshot(
 		SourceVirtualMachineID: virtualMachineID,
 		Rootfs:                 storage.ArtifactSize{SizeBytes: 1024},
 		Kernel:                 storage.ArtifactSize{SizeBytes: 512},
+		Initrd:                 storage.ArtifactSize{SizeBytes: 256},
 	}
 	services.snapshots[snapshotID] = snapshot
 	return snapshot, nil
@@ -1136,7 +1141,7 @@ func TestCreateAndDeleteImageStagingSnapshot(t *testing.T) {
 	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
 	}
-	if response.ID != "01900000-0000-7000-8000-000000000001" || response.Rootfs.SizeBytes != 1024 || response.Kernel.SizeBytes != 512 {
+	if response.ID != "01900000-0000-7000-8000-000000000001" || response.Rootfs.SizeBytes != 1024 || response.Kernel.SizeBytes != 512 || response.Initrd == nil || response.Initrd.SizeBytes != 256 {
 		t.Fatalf("snapshot response = %+v", response)
 	}
 
