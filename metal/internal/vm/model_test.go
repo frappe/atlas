@@ -2,6 +2,7 @@ package vm
 
 import (
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -88,6 +89,31 @@ func TestRefreshImageSourceReplacesTheInitrdURL(t *testing.T) {
 
 	if refreshed.Image.InitrdURL != second.Image.InitrdURL {
 		t.Fatal("signed initrd URL was not refreshed")
+	}
+}
+
+func TestImageContentIgnoresSignedURLsAndRefreshesEveryArtifact(t *testing.T) {
+	first := Image{
+		Name: "sha256:image", Architecture: "amd64",
+		RootfsURL: "https://example.com/rootfs?token=first", RootfsSHA256: strings.Repeat("a", 64),
+		KernelURL: "https://example.com/kernel?token=first", KernelSHA256: strings.Repeat("b", 64),
+		InitrdURL: "https://example.com/initrd?token=first", InitrdSHA256: strings.Repeat("c", 64),
+	}
+	second := first
+	second.RootfsURL = "https://example.com/rootfs?token=second"
+	second.KernelURL = "https://example.com/kernel?token=second"
+	second.InitrdURL = "https://example.com/initrd?token=second"
+	if !first.SameContent(second) {
+		t.Fatal("rotated signed URLs changed image content identity")
+	}
+
+	refreshed := first.RefreshURLs(second)
+	if refreshed.RootfsURL != second.RootfsURL || refreshed.KernelURL != second.KernelURL || refreshed.InitrdURL != second.InitrdURL {
+		t.Fatalf("refreshed image = %+v", refreshed)
+	}
+	second.InitrdSHA256 = strings.Repeat("d", 64)
+	if first.SameContent(second) {
+		t.Fatal("a changed initrd digest kept the same image identity")
 	}
 }
 

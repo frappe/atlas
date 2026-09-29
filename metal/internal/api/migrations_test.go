@@ -23,6 +23,7 @@ type stubMigrationManager struct {
 	snapshot          migration.SourceSnapshot
 	snapshotErr       error
 	createArgs        []string
+	createImage       vm.Image
 	createResize      *migration.Resize
 	lockArgs          []string
 	unlockArgs        []string
@@ -44,11 +45,14 @@ type stubMigrationManager struct {
 	destroyErr        error
 }
 
-func (m *stubMigrationManager) CreateDestination(_ context.Context, migrationID, virtualMachineID, source string, resize *migration.Resize) (migration.DestinationProgress, error) {
+func (m *stubMigrationManager) CreateDestination(_ context.Context, migrationID, virtualMachineID, source string, image vm.Image, resize *migration.Resize) (migration.DestinationProgress, error) {
 	m.createArgs = []string{migrationID, virtualMachineID, source}
+	m.createImage = image
 	m.createResize = resize
 	return m.record, m.createErr
 }
+
+const validMigrationImageJSON = `"image":{"ref":"sha256:image","architecture":"amd64","rootfs":{"url":"https://images.example/rootfs","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"kernel":{"url":"https://images.example/kernel","sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},"initrd":{"url":"https://images.example/initrd","sha256":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}}`
 
 func (m *stubMigrationManager) DestinationStatus(context.Context, string) (migration.DestinationProgress, error) {
 	return m.record, m.statusErr
@@ -146,11 +150,14 @@ func TestCreateMigrationDrivesTheDestination(t *testing.T) {
 	stub := &stubMigrationManager{record: migration.DestinationProgress{ID: "mig-1", VirtualMachineID: "vm-1", Status: migration.StatusRunning, Phase: migration.PhasePreparing}}
 	server := newMigrationTestServer(t, stub)
 
-	body := `{"virtual_machine_id":"vm-1","source":"https://10.0.0.3:9000"}`
+	body := `{"virtual_machine_id":"vm-1","source":"https://10.0.0.3:9000",` + validMigrationImageJSON + `}`
 	recorder := do(t, server, http.MethodPut, "/v1/migrations/mig-1", body, http.StatusAccepted)
 
 	if want := []string{"mig-1", "vm-1", "https://10.0.0.3:9000"}; !equalStrings(stub.createArgs, want) {
 		t.Fatalf("create args = %v", stub.createArgs)
+	}
+	if stub.createImage.InitrdURL != "https://images.example/initrd" || stub.createImage.InitrdSHA256 == "" {
+		t.Fatalf("migration image = %+v", stub.createImage)
 	}
 	var response migrationResponse
 	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
@@ -165,7 +172,7 @@ func TestCreateMigrationPassesTheResize(t *testing.T) {
 	stub := &stubMigrationManager{record: migration.DestinationProgress{ID: "mig-1", VirtualMachineID: "vm-1", Status: migration.StatusRunning}}
 	server := newMigrationTestServer(t, stub)
 
-	body := `{"virtual_machine_id":"vm-1","source":"https://10.0.0.3:9000","resize":{"cpu_millicores":2000,"memory_mib":4096,"disk_mib":20480}}`
+	body := `{"virtual_machine_id":"vm-1","source":"https://10.0.0.3:9000",` + validMigrationImageJSON + `,"resize":{"cpu_millicores":2000,"memory_mib":4096,"disk_mib":20480}}`
 	do(t, server, http.MethodPut, "/v1/migrations/mig-1", body, http.StatusAccepted)
 
 	want := migration.Resize{CPUMillicores: 2000, MemoryMiB: 4096, DiskMiB: 20480}
@@ -181,7 +188,7 @@ func TestCreateMigrationRejectsAnInvalidResize(t *testing.T) {
 		`{"cpu_millicores":2000,"memory_mib":0,"disk_mib":20480}`,
 		`{"cpu_millicores":2000,"memory_mib":4096,"disk_mib":0}`,
 	} {
-		body := `{"virtual_machine_id":"vm-1","source":"https://10.0.0.3:9000","resize":` + resize + `}`
+		body := `{"virtual_machine_id":"vm-1","source":"https://10.0.0.3:9000",` + validMigrationImageJSON + `,"resize":` + resize + `}`
 		do(t, server, http.MethodPut, "/v1/migrations/mig-1", body, http.StatusBadRequest)
 	}
 }
@@ -189,6 +196,11 @@ func TestCreateMigrationRejectsAnInvalidResize(t *testing.T) {
 func TestCreateMigrationRejectsAMissingField(t *testing.T) {
 	server := newMigrationTestServer(t, &stubMigrationManager{})
 	do(t, server, http.MethodPut, "/v1/migrations/mig-1", `{"virtual_machine_id":"vm-1"}`, http.StatusBadRequest)
+	do(
+		t, server, http.MethodPut, "/v1/migrations/mig-1",
+		`{"virtual_machine_id":"vm-1","source":"https://10.0.0.3:9000"}`,
+		http.StatusBadRequest,
+	)
 }
 
 func TestGetAndAbortMigration(t *testing.T) {
