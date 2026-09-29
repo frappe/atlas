@@ -106,7 +106,7 @@
   },
   {
    "default": "0",
-   "description": "Encrypts the root disk inside the guest. Unlock it through the serial console.",
+   "description": "Encrypts the root disk. Unlock it through the serial console.",
    "fieldname": "disk_encryption",
    "fieldtype": "Check",
    "label": "Disk Encryption",
