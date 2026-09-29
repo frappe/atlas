@@ -45,12 +45,12 @@ var (
 // createRequest is the complete desired specification of a new VM. Each group
 // is required because creation stores state instead of merging it.
 type createRequest struct {
-	DiskEncryption string         `json:"disk_encryption"`
-	Compute        computeRequest `json:"compute"`
-	Disk           diskRequest    `json:"disk"`
-	Image          imageRequest   `json:"image"`
-	Network        networkRequest `json:"network"`
-	Guest          guestRequest   `json:"guest"`
+	IsDiskEncrypted *bool          `json:"is_disk_encrypted"`
+	Compute         computeRequest `json:"compute"`
+	Disk            diskRequest    `json:"disk"`
+	Image           imageRequest   `json:"image"`
+	Network         networkRequest `json:"network"`
+	Guest           guestRequest   `json:"guest"`
 }
 
 // computeRequest is the complete compute configuration.
@@ -182,10 +182,6 @@ type powerRequest struct {
 
 // validate checks every group and the guest values a create carries.
 func (request createRequest) validate() error {
-	encryption := vm.DiskEncryption(request.DiskEncryption)
-	if !encryption.IsValid() {
-		return fmt.Errorf("disk_encryption must be empty or %s", vm.DiskEncryptionLUKS2)
-	}
 	if err := request.Compute.validate(); err != nil {
 		return err
 	}
@@ -195,8 +191,8 @@ func (request createRequest) validate() error {
 	if err := request.Image.validate(); err != nil {
 		return err
 	}
-	if encryption != "" && request.Image.Initrd == nil {
-		return fmt.Errorf("disk_encryption requires image.initrd")
+	if request.IsDiskEncrypted != nil && *request.IsDiskEncrypted && request.Image.Initrd == nil {
+		return fmt.Errorf("is_disk_encrypted requires image.initrd")
 	}
 	if err := request.Network.validate(); err != nil {
 		return err
@@ -218,13 +214,21 @@ func (request guestRequest) validate() error {
 	return validateMetadata(request.Metadata)
 }
 
+// diskEncryption returns the default encryption mode when the API enables disk encryption.
+func (request createRequest) diskEncryption() vm.DiskEncryption {
+	if request.IsDiskEncrypted != nil && *request.IsDiskEncrypted {
+		return vm.DiskEncryptionLUKS2
+	}
+	return ""
+}
+
 // specification converts the request into the domain VM specification.
 func (request createRequest) specification() vm.Specification {
 	return vm.Specification{
 		CPUMillicores:         request.Compute.CPUMillicores,
 		MemoryMiB:             request.Compute.MemoryMiB,
 		SleepAfterIdleSeconds: request.Compute.SleepAfterIdleSeconds,
-		DiskEncryption:        vm.DiskEncryption(request.DiskEncryption),
+		DiskEncryption:        request.diskEncryption(),
 		DiskMiB:               request.Disk.SizeMiB,
 		Disk:                  request.Disk.specification(),
 		Image:                 request.Image.specification(),

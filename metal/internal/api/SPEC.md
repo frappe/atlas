@@ -38,7 +38,7 @@ The generated [Metal API reference](../../../docs/region/metald.md#request-rules
 
 - Use PUT when a request replaces desired state, so a repeat is safe.
 - Use POST only for an action that runs on each call, such as a restart, or to create a resource.
-- VM create accepts an empty `disk_encryption` value or `luks2`. Any other value is invalid.
+- VM create accepts a nullable `is_disk_encrypted` boolean. `true` selects LUKS2 encryption.
 - `image.initrd` is optional. When present, it must contain a valid HTTP or HTTPS URL and a SHA-256 digest.
 - A `luks2` create requires `image.initrd`.
 - The network PUT requires the complete network object, including `firewall`.

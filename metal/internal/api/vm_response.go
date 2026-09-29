@@ -19,7 +19,7 @@ type desiredVirtualMachineResponse struct {
 	Generation        uint64                      `json:"generation"`
 	RestartGeneration uint64                      `json:"restart_generation"`
 	State             string                      `json:"state"`
-	DiskEncryption    string                      `json:"disk_encryption"`
+	IsDiskEncrypted   bool                        `json:"is_disk_encrypted"`
 	Compute           computeResponse             `json:"compute"`
 	Disk              diskResponse                `json:"disk"`
 	Image             virtualMachineImageResponse `json:"image"`
@@ -153,7 +153,7 @@ func toVirtualMachine(information vm.Information) virtualMachineResponse {
 			Generation:        information.DesiredGeneration,
 			RestartGeneration: information.DesiredRestartGeneration,
 			State:             string(information.DesiredState),
-			DiskEncryption:    string(information.DiskEncryption),
+			IsDiskEncrypted:   information.DiskEncryption != "",
 			Compute: computeResponse{
 				CPUMillicores:         information.CPUMillicores,
 				MemoryMiB:             information.MemoryMiB,
