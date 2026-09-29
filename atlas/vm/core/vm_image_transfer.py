@@ -57,6 +57,13 @@ class VirtualMachineImageTransferService:
 			VirtualMachineService.raise_metal_error(error)
 
 		snapshot_id = self.get_snapshot_id(snapshot)
+		initrd = snapshot.get("initrd")
+		initrd_fields: dict[str, Any] = {}
+		if initrd is not None:
+			initrd_fields = {
+				"initrd_object_key": f"images/{snapshot_id}/initrd",
+				"initrd_size_mib": self.get_positive_size(snapshot, "initrd"),
+			}
 		image = frappe.get_doc(
 			{
 				"doctype": "Virtual Machine Image",
@@ -79,6 +86,7 @@ class VirtualMachineImageTransferService:
 				"kernel_size_mib": self.get_positive_size(snapshot, "kernel"),
 				"source_virtual_machine": virtual_machine.name,
 				"source_server": virtual_machine.server,
+				**initrd_fields,
 			}
 		)
 		try:
@@ -133,7 +141,11 @@ class VirtualMachineImageTransferService:
 		).get_object_storage_client()
 		multipart_upload = MultipartUploadService(image, object_storage_client)
 
-		if image.image_sha256 and image.kernel_sha256:
+		if (
+			image.image_sha256
+			and image.kernel_sha256
+			and (not multipart_upload.has_initrd or image.initrd_sha256)
+		):
 			self.finalize(image, metal_client, multipart_upload)
 			return
 
@@ -196,6 +208,9 @@ class VirtualMachineImageTransferService:
 		image.kernel_sha256 = self.require_artifact_sha256(status, "kernel")
 		image.image_stored_size_mib = self.get_stored_size(status, "rootfs")
 		image.kernel_stored_size_mib = self.get_stored_size(status, "kernel")
+		if status.get("initrd"):
+			image.initrd_sha256 = self.require_artifact_sha256(status, "initrd")
+			image.initrd_stored_size_mib = self.get_stored_size(status, "initrd")
 		image.status = "Completing"
 		image.transfer_progress = 100
 		image.transfer_error = None
@@ -269,6 +284,7 @@ class VirtualMachineImageTransferService:
 		image.status = "Available"
 		image.rootfs_multipart_upload_id = None
 		image.kernel_multipart_upload_id = None
+		image.initrd_multipart_upload_id = None
 		image.transfer_error = None
 		image.save()
 

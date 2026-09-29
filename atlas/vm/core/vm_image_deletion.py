@@ -56,6 +56,7 @@ class VirtualMachineImageDeletionService:
 				"initrd_object_key",
 				"rootfs_multipart_upload_id",
 				"kernel_multipart_upload_id",
+				"initrd_multipart_upload_id",
 				"image_file",
 				"kernel_file",
 				"initrd_file",
@@ -94,6 +95,7 @@ class VirtualMachineImageDeletionService:
 				getattr(image, "initrd_object_key", None),
 				image.rootfs_multipart_upload_id,
 				image.kernel_multipart_upload_id,
+				getattr(image, "initrd_multipart_upload_id", None),
 			)
 		):
 			client = cast("AtlasSettings", frappe.get_single("Atlas Settings")).get_object_storage_client()
@@ -113,6 +115,7 @@ class VirtualMachineImageDeletionService:
 				"initrd_object_key",
 				"rootfs_multipart_upload_id",
 				"kernel_multipart_upload_id",
+				"initrd_multipart_upload_id",
 				"image_file",
 				"kernel_file",
 				"initrd_file",
@@ -132,6 +135,10 @@ class VirtualMachineImageDeletionService:
 		for object_key, upload_id in (
 			(image.image_object_key, image.rootfs_multipart_upload_id),
 			(image.kernel_object_key, image.kernel_multipart_upload_id),
+			(
+				getattr(image, "initrd_object_key", None),
+				getattr(image, "initrd_multipart_upload_id", None),
+			),
 		):
 			if object_key and upload_id:
 				client.abort_multipart_upload(object_key, upload_id)
@@ -178,6 +185,7 @@ def has_stored_artifacts(image: VirtualMachineImage) -> bool:
 			"initrd_object_key",
 			"rootfs_multipart_upload_id",
 			"kernel_multipart_upload_id",
+			"initrd_multipart_upload_id",
 			"image_file",
 			"kernel_file",
 			"initrd_file",
