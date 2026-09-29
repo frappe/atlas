@@ -45,7 +45,7 @@ class VirtualMachine(Document):
 		active_migration: DF.Link | None
 		architecture: DF.Literal["amd64", "arm64"]
 		cpu_millicores: DF.Int
-		disk_encryption: DF.Check
+		is_disk_encrypted: DF.Check
 		disk_mib: DF.Int
 		firewall_summary: DF.Code | None
 		is_draft: DF.Check
@@ -370,7 +370,7 @@ class VirtualMachine(Document):
 		self.ensure_not_migrating()
 		if self.is_draft:
 			frappe.throw(_("Wait for Virtual Machine creation before creating an image."), exc=AtlasUserError)
-		if self.disk_encryption:
+		if self.is_disk_encrypted:
 			frappe.throw(_("An encrypted Virtual Machine cannot create a Machine Image."), exc=AtlasUserError)
 		title = title.strip()
 		if not title:

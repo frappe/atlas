@@ -162,9 +162,8 @@ function showCreateVirtualMachineDialog() {
 				default: 10240,
 			},
 			{
-				fieldname: "disk_encryption",
+				fieldname: "is_disk_encrypted",
 				fieldtype: "Check",
-				label: __("Disk Encryption"),
 				description: __("Unlock it in the TTY console on first boot."),
 				default: 0,
 			},
@@ -233,7 +232,7 @@ function showCreateVirtualMachineDialog() {
 		],
 		primary_action_label: __("Create"),
 		primary_action(values) {
-			values.disk_encryption = Boolean(values.disk_encryption);
+			values.is_disk_encrypted = Boolean(values.is_disk_encrypted);
 			values.public_ipv4 = publicAddressSelector(values, "4");
 			values.public_ipv6 = publicAddressSelector(values, "6");
 			values.firewall = firewallValue(values.firewall_enabled, values.firewall_rules);

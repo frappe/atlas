@@ -27,7 +27,7 @@
   "disk_mib",
   "disk_throughput_mibps",
   "disk_iops",
-  "disk_encryption",
+  "is_disk_encrypted",
   "section_break_network",
   "mac",
   "wireguard_mesh_ipv6",
@@ -107,7 +107,7 @@
   {
    "default": "0",
    "description": "Encrypts the root disk. Unlock it through the serial console.",
-   "fieldname": "disk_encryption",
+   "fieldname": "is_disk_encrypted",
    "fieldtype": "Check",
    "label": "Disk Encryption",
    "read_only": 1,

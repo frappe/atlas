@@ -79,13 +79,13 @@ class VirtualMachineService:
 				raise AssertionError from error
 
 		image = cls.get_image(request.virtual_machine_image, request.tenant_id)
-		if request.disk_encryption and not image.has_initrd:
+		if request.is_disk_encrypted and not image.has_initrd:
 			frappe.throw(
 				_("Virtual Machine Image {0} does not support disk encryption.").format(image.title),
 				exc=AtlasUserError,
 			)
 		image.validate_compatibility(request.disk_mib)
-		if request.disk_encryption:
+		if request.is_disk_encrypted:
 			minimum_disk_mib = image.image_size_mib + DISK_ENCRYPTION_METADATA_MIB
 			if request.disk_mib < minimum_disk_mib:
 				frappe.throw(
@@ -159,7 +159,7 @@ class VirtualMachineService:
 				"tenant_id": request.tenant_id,
 				"is_privileged": request.is_privileged,
 				"is_termination_protected": request.is_termination_protected,
-				"disk_encryption": request.disk_encryption,
+				"is_disk_encrypted": request.is_disk_encrypted,
 				"sleep_after_idle_seconds": request.sleep_after_idle_seconds,
 			}
 		)
@@ -173,7 +173,7 @@ class VirtualMachineService:
 	) -> dict[str, Any]:
 		"""Return the complete Metal create request."""
 		return {
-			"disk_encryption": "luks2" if request.disk_encryption else "",
+			"is_disk_encrypted": True if request.is_disk_encrypted else None,
 			"compute": {
 				"cpu_millicores": request.cpu_millicores,
 				"memory_mib": request.memory_mib,

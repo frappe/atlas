@@ -27,7 +27,7 @@ This file identifies code owners and rules that a code change must preserve. The
 - Metal is the authority for current host state. `Virtual Machine State` is a cache for lists and image checks. A failed Metal read must not appear as a guest state.
 - Placement checks capacity under a MariaDB named lock with READ COMMITTED isolation. Keep the lock until the draft or migration reservation commits. CPU can be oversubscribed. Memory and disk cannot.
 - A VM copies its image name and architecture at creation. Image references are immutable. A later VM action does not need the image record.
-- `disk_encryption` is a create-only VM value. Atlas accepts it only when the selected image has an initrd, and sends `luks2` to Metal when it is enabled.
+- `is_disk_encrypted` is a create-only VM value. Atlas accepts it only when the selected image has an initrd, and sends a nullable `is_disk_encrypted` boolean to Metal.
 - The image immutable reference includes the initrd SHA-256 digest when an initrd is present. A different initrd is different image content.
 - An encrypted VM can use automatic idle save and VM-local restore.
 - An encrypted VM cannot create a Machine image.
