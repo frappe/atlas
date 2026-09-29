@@ -146,20 +146,11 @@ class HostInstallation:
 				result,
 			)
 
-	def upgrade_metald(self, reset_wg_mesh: int = 0) -> None:
-		"""Replace the metald and WG Mesh binaries, then restart the daemon."""
+	def upgrade_metald(self) -> None:
+		"""Replace the metald binary and restart its daemon."""
 		settings = self.server.settings
-		if not all(
-			(
-				settings.metald_binary_x86_64_file,
-				settings.metald_binary_hash,
-				settings.wg_mesh_binary_x86_64_file,
-				settings.wg_mesh_binary_hash,
-			)
-		):
-			frappe.throw(_("Atlas Settings needs the metald and Atlas WG Mesh binaries and hashes."))
-		if not self.server.private_network_interface:
-			frappe.throw(_("Metal Server {0} needs a private network interface.").format(self.server.name))
+		if not settings.metald_binary_x86_64_file or not settings.metald_binary_hash:
+			frappe.throw(_("Atlas Settings needs the metald binary and hash."))
 
 		result = SSHTask.create_for_script_file(
 			target_type=self.server.doctype,
@@ -168,11 +159,6 @@ class HostInstallation:
 			environment={
 				"METALD_DOWNLOAD_URL": get_download_url(settings.metald_binary_x86_64_file),
 				"METALD_SHA256": settings.metald_binary_hash,
-				"WG_MESH_DOWNLOAD_URL": get_download_url(settings.wg_mesh_binary_x86_64_file),
-				"WG_MESH_SHA256": settings.wg_mesh_binary_hash,
-				"WG_MESH_RESET": reset_wg_mesh,
-				"MESH_UPLINK_INTERFACE": self.server.private_network_interface,
-				"WIREGUARD_INTERFACE": "wg0",
 			},
 			timeout_seconds=METALD_INSTALL_TIMEOUT_SECONDS,
 			run_in_background=False,

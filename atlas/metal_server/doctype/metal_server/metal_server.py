@@ -31,20 +31,6 @@ if TYPE_CHECKING:
 	from atlas.atlas.doctype.atlas_settings.atlas_settings import AtlasSettings
 
 
-def _reset_wg_mesh_value(value: object) -> int:
-	"""Return an explicit WG Mesh reset flag from one accepted request value."""
-	if value is None:
-		return 0
-	if type(value) is bool:
-		return int(value)
-	if type(value) is int and value in (0, 1):
-		return value
-	if type(value) is str and value in ("0", "1"):
-		return int(value)
-
-	frappe.throw(_("reset_wg_mesh must be 0 or 1."))
-
-
 class MetalServer(Document):
 	"""One Metal host, with its provider resources and provisioning state."""
 
@@ -372,13 +358,12 @@ class MetalServer(Document):
 		)
 
 	@frappe.whitelist(methods=["POST"])
-	def upgrade_metald(self, reset_wg_mesh: bool | int | str | None = None) -> None:
-		"""Queue a metald and WG Mesh binary upgrade for this server."""
+	def upgrade_metald(self) -> None:
+		"""Queue a metald binary upgrade for this server."""
 		frappe.only_for("System Manager")
 		if self.status != "Running":
 			frappe.throw(_("Metal Server {0} is not running.").format(self.name))
 
-		reset_wg_mesh = _reset_wg_mesh_value(reset_wg_mesh)
 		job_id = self.metald_job_id
 
 		if is_job_enqueued(job_id):
@@ -388,7 +373,6 @@ class MetalServer(Document):
 			self.doctype,
 			self.name,
 			"_upgrade_metald",
-			reset_wg_mesh=reset_wg_mesh,
 			queue="long",
 			timeout=METALD_INSTALL_TIMEOUT_SECONDS,
 			job_id=job_id,
@@ -428,9 +412,9 @@ class MetalServer(Document):
 		"""Issue a current certificate and restart Metal with it."""
 		HostInstallation(self).install_tls_credentials()
 
-	def _upgrade_metald(self, reset_wg_mesh: bool | int | str | None = None) -> None:
-		"""Replace the metald and WG Mesh binaries, then restart the daemon."""
-		HostInstallation(self).upgrade_metald(_reset_wg_mesh_value(reset_wg_mesh))
+	def _upgrade_metald(self) -> None:
+		"""Replace the metald binary and restart its daemon."""
+		HostInstallation(self).upgrade_metald()
 
 	def _configure_wireguard(self) -> None:
 		"""Configure WireGuard and store its public key."""
