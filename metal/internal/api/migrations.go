@@ -18,6 +18,7 @@ var errInvalidMigrationRequest = errors.New("virtual_machine_id and source are r
 type createMigrationRequest struct {
 	VirtualMachineID string                  `json:"virtual_machine_id"`
 	Source           string                  `json:"source"`
+	Image            imageRequest            `json:"image"`
 	Resize           *migrationResizeRequest `json:"resize,omitempty"`
 }
 
@@ -32,6 +33,9 @@ type migrationResizeRequest struct {
 func (r createMigrationRequest) validate() error {
 	if r.VirtualMachineID == "" || r.Source == "" {
 		return errInvalidMigrationRequest
+	}
+	if err := r.Image.validate(); err != nil {
+		return fmt.Errorf("image: %w", err)
 	}
 	if r.Resize == nil {
 		return nil
@@ -100,7 +104,10 @@ func (s *Server) createMigration(c echo.Context) error {
 		return badRequest(err.Error())
 	}
 
-	record, err := s.migrationManager.CreateDestination(c.Request().Context(), identifier, request.VirtualMachineID, request.Source, request.resize())
+	record, err := s.migrationManager.CreateDestination(
+		c.Request().Context(), identifier, request.VirtualMachineID, request.Source,
+		request.Image.specification(), request.resize(),
+	)
 	if err != nil {
 		return err
 	}
