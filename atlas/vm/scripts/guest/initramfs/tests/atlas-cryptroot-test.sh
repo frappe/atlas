@@ -104,8 +104,10 @@ prepare_case() {
 	stdout_file="$case_directory/stdout"
 	stderr_file="$case_directory/stderr"
 	open_attempts_file="$case_directory/open-attempts"
+	console_file="$case_directory/console"
 	: > "$parameter_file"
 	: > "$log_file"
+	printf '1\n' > "$console_file"
 	printf '0\n' > "$open_attempts_file"
 	printf '%s\n' 'atlas.disk_encryption=luks2' > "$command_line_file"
 	printf '%s\n' 'Block count: 4194304' 'Block size: 1024' > "$dumpe_output_file"
@@ -126,6 +128,7 @@ run_case() {
 		ATLAS_CRYPTROOT_ROOT_DEVICE="$case_directory/root-device" \
 		ATLAS_CRYPTROOT_COMMAND_LINE_FILE="$command_line_file" \
 		ATLAS_CRYPTROOT_PARAMETER_FILE="$parameter_file" \
+		ATLAS_CRYPTROOT_CONSOLE_DEVICE="$console_file" \
 		ATLAS_TEST_LOG="$log_file" \
 		ATLAS_TEST_LUKS="$test_luks" \
 		ATLAS_TEST_FILE_SYSTEM="$test_file_system" \
@@ -177,8 +180,29 @@ assert_contains 'unsupported disk encryption mode' "$stderr_file"
 prepare_case
 test_file_system=ext2
 expect_success 'plaintext ext2 with 1 KiB blocks failed'
+assert_contains 'Atlas root disk encryption' "$stdout_file"
 assert_contains '--device-size 4294967296 --reduce-device-size 32m' "$log_file"
 assert_contains 'ROOT=/dev/mapper/root' "$parameter_file"
+
+prepare_case
+printf '2\n' > "$console_file"
+expect_success 'skip encryption failed'
+assert_contains 'Booting without encryption' "$stdout_file"
+assert_not_contains 'dumpe2fs ' "$log_file"
+assert_not_contains 'cryptsetup reencrypt' "$log_file"
+[ ! -s "$parameter_file" ] || fail 'skip encryption changed the root parameter'
+
+prepare_case
+printf 'invalid\n2\n' > "$console_file"
+expect_success 'invalid choice retry failed'
+assert_contains 'Enter 1 to encrypt or 2 to boot without encryption.' "$stdout_file"
+assert_contains 'Booting without encryption' "$stdout_file"
+
+prepare_case
+: > "$console_file"
+expect_panic_result 'closed console did not fail safely'
+assert_contains 'serial console closed before a choice was made' "$stderr_file"
+assert_not_contains 'cryptsetup reencrypt' "$log_file"
 
 prepare_case
 printf '%s\n' 'Block count: 1048576' 'Block size: 4096' > "$dumpe_output_file"
@@ -285,6 +309,7 @@ prepare_case
 test_luks=1
 test_resume_status=1
 expect_success 'existing LUKS2 open and reencryption resume failed'
+assert_not_contains 'Atlas root disk encryption' "$stdout_file"
 assert_contains 'cryptsetup open' "$log_file"
 assert_contains 'cryptsetup reencrypt --resume-only --active-name root' "$log_file"
 assert_not_contains 'blkid ' "$log_file"

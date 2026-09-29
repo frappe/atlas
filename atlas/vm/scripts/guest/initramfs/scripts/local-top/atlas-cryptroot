@@ -20,7 +20,34 @@ esac
 root_device=${ATLAS_CRYPTROOT_ROOT_DEVICE:-/dev/vda}
 command_line_file=${ATLAS_CRYPTROOT_COMMAND_LINE_FILE:-/proc/cmdline}
 parameter_file=${ATLAS_CRYPTROOT_PARAMETER_FILE:-/conf/param.conf}
+console_device=${ATLAS_CRYPTROOT_CONSOLE_DEVICE:-/dev/console}
 reduction_bytes=33554432
+
+choose_first_boot_action() {
+	printf '\n%s\n' '  +------------------------------------------+'
+	printf '%s\n' '  |       Atlas root disk encryption         |'
+	printf '%s\n' '  +------------------------------------------+'
+	printf '%s\n' '  [1] Encrypt this VM now'
+	printf '%s\n' '  [2] Boot without encryption this time'
+	printf '%s\n\n' '  Your choice is required before boot continues.'
+
+	exec 3< "$console_device" || panic "Atlas: could not read the serial console"
+	while true; do
+		printf '%s' '  Choose 1 or 2: '
+		IFS= read -r choice <&3 || panic "Atlas: serial console closed before a choice was made"
+		case "$choice" in
+			1)
+				printf '%s\n' '  Starting disk encryption...'
+				return 0
+				;;
+			2)
+				printf '%s\n' '  Booting without encryption. You can choose again on the next cold boot.'
+				return 1
+				;;
+			*) printf '%s\n' '  Enter 1 to encrypt or 2 to boot without encryption.' ;;
+		esac
+	done
+}
 
 normalize_positive_decimal() {
 	decimal_value=$1
@@ -127,6 +154,7 @@ else
 		ext2|ext3|ext4) ;;
 		*) panic "Atlas: $root_device is neither LUKS2 nor a supported root file system" ;;
 	esac
+	choose_first_boot_action || exit 0
 	derive_ext_file_system_bytes
 
 	cryptsetup reencrypt --encrypt --type luks2 --batch-mode \

@@ -28,7 +28,7 @@ flowchart LR
     I --> E
 ```
 
-To create an encrypted VM, select the disk encryption image and enable disk encryption in the VM request. Atlas requires the requested disk to be at least 32 MiB larger than the image root filesystem. Atlas sends `luks2` as the encryption mode and includes the image initrd. Metal rejects an encrypted request that has no initrd.
+To create an encrypted VM, select the disk encryption image and enable disk encryption in the VM request. Atlas requires the requested disk to be at least 32 MiB larger than the image root filesystem. Atlas sends `is_disk_encrypted=true` and includes the image initrd. Metal selects LUKS2 and rejects an encrypted request that has no initrd.
 
 The image record stores the root filesystem, kernel, optional initrd, architecture, sizes, and SHA-256 digests. It does not store a root filesystem byte boundary. The Metal image manifest and boot configuration do not store that boundary either.
 
@@ -36,7 +36,7 @@ The image record stores the root filesystem, kernel, optional initrd, architectu
 
 | Component | Responsibility |
 | --- | --- |
-| Atlas | Publishes both image variants, records the VM encryption choice, sends the LUKS2 mode and initrd metadata, and provides console access. |
+| Atlas | Publishes both image variants, records the VM encryption choice, sends the encryption flag and initrd metadata, and provides console access. |
 | Metal storage | Downloads and verifies the artifacts, clones the root disk, grows the virtual disk, and links the kernel and optional initrd into the VM jail. |
 | Metal Firecracker runtime | Requires an initrd for an encrypted boot and adds only `atlas.disk_encryption=luks2` to the kernel command line. |
 | Guest initramfs | Detects the current disk format, derives the filesystem boundary, asks for the passphrase, encrypts or opens the disk, and selects `/dev/mapper/root` as the root device. |
@@ -56,15 +56,17 @@ flowchart TD
     O --> Q[Resume unfinished reencryption if present]
     D -->|No| F{Is the filesystem ext2, ext3, or ext4?}
     F -->|No| X[Stop boot with an error]
-    F -->|Yes| G[Derive and validate filesystem bytes]
-    G --> C[Encrypt in place as LUKS2]
-    C --> R[Use /dev/mapper/root]
+    F -->|Yes| CH{Console choice}
+    CH -->|Boot without encryption| N
+    CH -->|Encrypt now| G[Derive and validate filesystem bytes]
+    G --> EN[Encrypt in place as LUKS2]
+    EN --> R[Use /dev/mapper/root]
     Q --> R
 ```
 
 ### First encrypted boot
 
-On the first encrypted boot, `/dev/vda` contains a plaintext ext filesystem. The initramfs identifies its type with `blkid` and stops if the type is not ext2, ext3, or ext4.
+On the first encrypted boot, `/dev/vda` contains a plaintext ext filesystem. The initramfs identifies its type with `blkid` and stops if the type is not ext2, ext3, or ext4. It then asks through the TTY console whether to encrypt now or boot without encryption this time. Skipping does not change the disk. The choice appears again on the next cold boot until the disk is encrypted.
 
 The initramfs runs `LC_ALL=C dumpe2fs -h /dev/vda` once. It requires exactly one `Block count` field and exactly one `Block size` field.
 
