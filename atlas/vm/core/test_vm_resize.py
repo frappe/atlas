@@ -35,6 +35,7 @@ class TestVirtualMachineResize(UnitTestCase):
 			sleep_after_idle_seconds=0,
 			db_set=Mock(),
 		)
+		self.virtual_machine.db_set.side_effect = self.store_values
 		self.resize = VirtualMachineResize(self.virtual_machine)
 		self.metal_client = self.start_patch(patch.object(VirtualMachineService, "metal_client", Mock()))
 		self.find_server = self.start_patch(
@@ -49,6 +50,12 @@ class TestVirtualMachineResize(UnitTestCase):
 		self.addCleanup(active_patch.stop)
 		return mock
 
+	def store_values(self, field: str | dict[str, int], value: int | None = None) -> None:
+		"""Model the in-memory updates performed by a Frappe document db_set."""
+		values = field if isinstance(field, dict) else {field: value}
+		for key, stored_value in values.items():
+			setattr(self.virtual_machine, key, stored_value)
+
 	def apply(self, changes: dict[str, int], state: str = "stopped") -> str | None:
 		with patch.object(self.resize.service, "require_information", return_value=build_information(state)):
 			return self.resize.apply(changes)
@@ -61,6 +68,12 @@ class TestVirtualMachineResize(UnitTestCase):
 		)
 		self.virtual_machine.db_set.assert_called_once_with("sleep_after_idle_seconds", 1800)
 		self.find_server.assert_not_called()
+
+	def test_an_idle_change_does_not_restore_the_previous_stored_value(self) -> None:
+		self.assertIsNone(self.apply({"sleep_after_idle_seconds": 1800}, state="running"))
+
+		self.assertEqual(self.virtual_machine.sleep_after_idle_seconds, 1800)
+		self.virtual_machine.db_set.assert_called_once_with("sleep_after_idle_seconds", 1800)
 
 	def test_an_encrypted_virtual_machine_can_enable_idle_sleep(self) -> None:
 		self.virtual_machine.disk_encryption = 1
