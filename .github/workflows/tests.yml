@@ -41,7 +41,7 @@ jobs:
       - name: Test guest disk encryption initramfs
         run: atlas/vm/scripts/guest/initramfs/tests/atlas-cryptroot-test.sh
 
-      - name: Test host binary upgrade
+      - name: Test metald upgrade
         run: atlas/scripts/tests/test-upgrade-metald.sh
 
       - name: Set up Python
