@@ -46,5 +46,5 @@ configuration.primary_action({
 });
 
 assert.equal(requests.length, 1);
-assert.equal(requests[0].args.request.disk_encryption, 1);
+assert.equal(requests[0].args.request.disk_encryption, true);
 console.log("ok - VM create dialog submits disk encryption");
