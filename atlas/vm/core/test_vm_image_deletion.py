@@ -29,6 +29,7 @@ def build_image(**overrides) -> SimpleNamespace:
 		"initrd_file": None,
 		"rootfs_multipart_upload_id": "upload-1",
 		"kernel_multipart_upload_id": None,
+		"initrd_multipart_upload_id": None,
 		"source_server": "node-1",
 		"save": Mock(),
 		"ensure_not_termination_protected": Mock(),
@@ -140,6 +141,7 @@ class TestImageCleanup(UnitTestCase):
 			status="Archived",
 			artifact_retention_until=NOW - timedelta(minutes=1),
 			initrd_object_key="images/image-1/initrd",
+			initrd_multipart_upload_id="upload-initrd",
 		)
 		client = Mock()
 		metal_client = Mock()
@@ -156,7 +158,13 @@ class TestImageCleanup(UnitTestCase):
 			patch("atlas.vm.core.vm_image_deletion.frappe.delete_doc") as delete_doc,
 		):
 			VirtualMachineImageDeletionService().delete("image-1")
-		client.abort_multipart_upload.assert_called_once_with("images/image-1/rootfs.img", "upload-1")
+		self.assertEqual(
+			[entry.args for entry in client.abort_multipart_upload.call_args_list],
+			[
+				("images/image-1/rootfs.img", "upload-1"),
+				("images/image-1/initrd", "upload-initrd"),
+			],
+		)
 		self.assertEqual(
 			[entry.args[0] for entry in client.delete_object.call_args_list],
 			["images/image-1/rootfs.img", "images/image-1/kernel", "images/image-1/initrd"],
@@ -165,6 +173,7 @@ class TestImageCleanup(UnitTestCase):
 		self.assertEqual(image.status, "Archived")
 		self.assertIsNone(image.image_object_key)
 		self.assertIsNone(image.initrd_object_key)
+		self.assertIsNone(image.initrd_multipart_upload_id)
 		self.assertIsNone(image.source_server)
 		image.save.assert_called_once_with()
 		delete_doc.assert_not_called()

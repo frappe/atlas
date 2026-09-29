@@ -1043,9 +1043,11 @@ class TestSystemImageCreation(UnitTestCase):
 		self.assertEqual(name, "IMG-00001")
 		self.assertEqual(create.call_args.kwargs["image_type"], "machine")
 
-	def test_an_encrypted_virtual_machine_cannot_create_an_image(self) -> None:
-		with self.assertRaisesRegex(AtlasUserError, "encrypted"):
-			self.create_image(tenant_id=7, is_disk_encrypted=True)
+	def test_an_encrypted_virtual_machine_can_create_an_image(self) -> None:
+		name, create = self.create_image(tenant_id=7, is_disk_encrypted=True)
+
+		self.assertEqual(name, "IMG-00001")
+		create.assert_called_once()
 
 	def test_a_shape_without_a_memory_snapshot_is_rejected(self) -> None:
 		with self.assertRaises(AtlasUserError):
