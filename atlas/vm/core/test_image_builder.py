@@ -17,6 +17,19 @@ from atlas.vm.core.multipart_upload import MEBIBYTE
 
 
 class TestUbuntuImageBuilder(UnitTestCase):
+	def test_macos_build_uses_privileged_amd64_container(self) -> None:
+		with (
+			TemporaryDirectory() as temporary_directory,
+			patch("atlas.vm.core.image_builder.IS_MACOS", True),
+			patch("atlas.vm.core.image_builder.subprocess.run") as run,
+		):
+			build_ubuntu_image("24.04", "amd64", False, Path(temporary_directory))
+
+		command = run.call_args.args[0]
+		self.assertEqual(command[:5], ["docker", "run", "--rm", "--platform=linux/amd64", "--privileged"])
+		self.assertEqual(command[7], "ghcr.io/frappe/atlas-builder:latest")
+		run.assert_called_once_with(command, check=True)
+
 	def test_build_uses_the_virtual_machine_image_script_and_complete_names(self) -> None:
 		with (
 			TemporaryDirectory() as temporary_directory,
