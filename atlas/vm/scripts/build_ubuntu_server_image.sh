@@ -8,6 +8,7 @@ initrd_output=""
 architecture=""
 version=""
 minimal=false
+force=false
 script_directory=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 
 step() { echo "==> $*"; }
@@ -20,6 +21,7 @@ while [[ $# -gt 0 ]]; do
 		--architecture) architecture=$2; shift 2 ;;
 		--version) version=$2; shift 2 ;;
 		--minimal) minimal=true; shift ;;
+		--force) force=true; shift ;;
 		*) echo "unknown argument: $1" >&2; exit 2 ;;
 	esac
 done
@@ -85,8 +87,12 @@ initrd_path=""
 if [[ -n $initrd_output ]]; then
 	initrd_path=$(realpath -m "$initrd_output")
 fi
+cache_directory="$(dirname "$image_path")/.atlas-image-builder-cache"
+download_cache_directory="$cache_directory/downloads"
+fingerprint_directory="$cache_directory/fingerprints"
 work_path=$(mktemp -d)
 initrd_rootfs_directory=""
+initrd_rootfs_is_mounted=false
 
 unmount_initrd_rootfs() {
 	[[ -n $initrd_rootfs_directory ]] || return 0
@@ -95,6 +101,10 @@ unmount_initrd_rootfs() {
 			umount --recursive "$initrd_rootfs_directory/$mount_point"
 		fi
 	done
+	if $initrd_rootfs_is_mounted && findmnt -n -M "$initrd_rootfs_directory" >/dev/null; then
+		umount "$initrd_rootfs_directory"
+	fi
+	initrd_rootfs_is_mounted=false
 }
 
 cleanup() {
@@ -105,6 +115,7 @@ trap cleanup EXIT
 
 mkdir -p "$(dirname "$image_path")"
 mkdir -p "$(dirname "$kernel_path")"
+mkdir -p "$download_cache_directory" "$fingerprint_directory"
 if [[ -n $initrd_path ]]; then
 	mkdir -p "$(dirname "$initrd_path")"
 fi
@@ -112,11 +123,102 @@ fi
 fetch() {
 	local url=$1
 	local checksum=$2
-	local path=$3
+	local path="$download_cache_directory/$checksum"
+	local temporary_path="$path.part.$$"
+
+	if [[ -f $path ]] && echo "$checksum  $path" | sha256sum --check --status; then
+		step "reuse verified download $(basename "$path")"
+		fetched_path=$path
+		return
+	fi
+
+	rm -f "$path" "$temporary_path"
 	step "download $url"
-	curl -fL --progress-bar --output "$path" "$url"
-	echo "$checksum  $path" | sha256sum --check --status
-	step "verified $(basename "$path")"
+	if ! curl -fL --progress-bar --output "$temporary_path" "$url"; then
+		rm -f "$temporary_path"
+		return 1
+	fi
+	if ! echo "$checksum  $temporary_path" | sha256sum --check --status; then
+		rm -f "$temporary_path"
+		echo "checksum mismatch for $url" >&2
+		return 1
+	fi
+	mv "$temporary_path" "$path"
+	step "cached verified download $(basename "$path")"
+	fetched_path=$path
+}
+
+file_sha256() {
+	sha256sum "$1" | cut -d ' ' -f 1
+}
+
+input_fingerprint() {
+	printf '%s\0' "$@" | sha256sum | cut -d ' ' -f 1
+}
+
+artifact_cache_matches() {
+	local artifact=$1
+	local fingerprint=$2
+	local manifest=$3
+	local recorded_fingerprint recorded_sha256
+
+	$force && return 1
+	[[ -f $artifact && -f $manifest ]] || return 1
+	read -r recorded_fingerprint recorded_sha256 < "$manifest" || return 1
+	[[ $recorded_fingerprint = "$fingerprint" ]] || return 1
+	echo "$recorded_sha256  $artifact" | sha256sum --check --status
+}
+
+record_artifact_cache() {
+	local artifact=$1
+	local fingerprint=$2
+	local manifest=$3
+	local temporary_manifest="$manifest.part.$$"
+
+	printf '%s %s\n' "$fingerprint" "$(file_sha256 "$artifact")" > "$temporary_manifest"
+	mv "$temporary_manifest" "$manifest"
+}
+
+rootfs_cache_matches() {
+	local fingerprint=$1
+	local manifest=$2
+	local recorded_fingerprint recorded_image_sha256 recorded_compressed_sha256
+
+	$force && return 1
+	[[ -f $image_path && -f $image_path.zst && -f $manifest ]] || return 1
+	read -r recorded_fingerprint recorded_image_sha256 recorded_compressed_sha256 < "$manifest" || return 1
+	[[ $recorded_fingerprint = "$fingerprint" ]] || return 1
+	echo "$recorded_image_sha256  $image_path" | sha256sum --check --status || return 1
+	echo "$recorded_compressed_sha256  $image_path.zst" | sha256sum --check --status
+}
+
+record_rootfs_cache() {
+	local fingerprint=$1
+	local manifest=$2
+	local temporary_manifest="$manifest.part.$$"
+
+	printf '%s %s %s\n' \
+		"$fingerprint" "$(file_sha256 "$image_path")" "$(file_sha256 "$image_path.zst")" \
+		> "$temporary_manifest"
+	mv "$temporary_manifest" "$manifest"
+}
+
+adopt_existing_rootfs() {
+	local image_sha256_value compressed_image_sha256_value
+
+	$force && return 1
+	[[ -f $image_path && -f $image_path.zst ]] || return 1
+	image_sha256_value=$(file_sha256 "$image_path")
+	if ! compressed_image_sha256_value=$(zstd -cdq "$image_path.zst" | sha256sum | cut -d ' ' -f 1); then
+		return 1
+	fi
+	[[ $compressed_image_sha256_value = "$image_sha256_value" ]]
+}
+
+adopt_existing_kernel() {
+	$force && return 1
+	[[ -f $kernel_path ]] || return 1
+	[[ $(head -c 4 "$kernel_path" | od -An -tx1 | tr -d ' \n') = "7f454c46" ]]
 }
 
 
@@ -139,10 +241,11 @@ extract_vmlinux() {
 }
 
 build_initrd() {
-	local initrd_rootfs_path="$rootfs_path"
-	local cryptsetup_archive_path="$work_path/cryptsetup-$cryptsetup_version.tar.xz"
+	local initrd_rootfs_path=""
+	local cryptsetup_archive_path
 	local cryptsetup_source_directory
 	local initrd_contents="$work_path/initrd-contents"
+	local initrd_rootfs_image
 	local installed_version
 	local kernel_version
 	local multiarch
@@ -150,15 +253,27 @@ build_initrd() {
 	kernel_version=$(strings "$kernel_path" | awk '$1 == "Linux" && $2 == "version" && !found { print $3; found = 1 }')
 	[[ -n $kernel_version ]] || { echo "could not find the kernel version" >&2; return 1; }
 
-	if [[ $rootfs_sha256 != "$initrd_rootfs_sha256" ]]; then
-		initrd_rootfs_path="$work_path/initrd-rootfs.squashfs"
-		fetch "$initrd_rootfs_url" "$initrd_rootfs_sha256" "$initrd_rootfs_path"
-	fi
-	fetch "$cryptsetup_url" "$cryptsetup_sha256" "$cryptsetup_archive_path"
-
 	initrd_rootfs_directory="$work_path/initrd-rootfs"
-	step "extract initrd build root file system"
-	unsquashfs -q -d "$initrd_rootfs_directory" "$initrd_rootfs_path"
+	if $reuse_rootfs && [[ $rootfs_sha256 = "$initrd_rootfs_sha256" ]]; then
+		initrd_rootfs_image="$work_path/initrd-rootfs.ext4"
+		step "copy existing root file system for initrd build"
+		cp --reflink=auto --sparse=always "$image_path" "$initrd_rootfs_image"
+		mkdir -p "$initrd_rootfs_directory"
+		mount -o loop "$initrd_rootfs_image" "$initrd_rootfs_directory"
+		initrd_rootfs_is_mounted=true
+	else
+		if [[ $rootfs_sha256 = "$initrd_rootfs_sha256" && -n $rootfs_path ]]; then
+			initrd_rootfs_path=$rootfs_path
+		else
+			fetch "$initrd_rootfs_url" "$initrd_rootfs_sha256"
+			initrd_rootfs_path=$fetched_path
+		fi
+		step "extract initrd build root file system"
+		unsquashfs -q -d "$initrd_rootfs_directory" "$initrd_rootfs_path"
+	fi
+	fetch "$cryptsetup_url" "$cryptsetup_sha256"
+	cryptsetup_archive_path=$fetched_path
+
 	tar -xJf "$cryptsetup_archive_path" -C "$initrd_rootfs_directory/tmp"
 	cryptsetup_source_directory="/tmp/cryptsetup-$cryptsetup_version"
 
@@ -322,45 +437,92 @@ AuthorizedKeysCommandUser nobody
 EOF
 }
 
-rootfs_path="$work_path/rootfs.squashfs"
-rootfs_directory="$work_path/rootfs"
-fetch "$rootfs_url" "$rootfs_sha256" "$rootfs_path"
+# Increment the owning revision when embedded build steps change. File inputs are
+# hashed separately, so an initramfs script change invalidates only the initrd.
+rootfs_input_fingerprint=$(input_fingerprint \
+	"rootfs-v1" "$version" "$architecture" "$minimal" "$rootfs_sha256" \
+	"$(file_sha256 "$script_directory/guest/DataSourceAtlas.py")" \
+	"$(file_sha256 "$script_directory/guest/apply-metadata")" \
+	"$(file_sha256 "$script_directory/guest/authorized-keys-command")")
+kernel_input_fingerprint=$(input_fingerprint \
+	"kernel-v1" "$version" "$architecture" "$minimal" "$kernel_sha256")
+initrd_input_fingerprint=$(input_fingerprint \
+	"initrd-v1" "$version" "$architecture" "$minimal" "$initrd_rootfs_sha256" \
+	"$kernel_sha256" "$cryptsetup_sha256" \
+	"$(file_sha256 "$script_directory/guest/initramfs/scripts/local-top/atlas-cryptroot")" \
+	"$(file_sha256 "$script_directory/guest/initramfs/hooks/atlas-cryptroot")")
 
-vmlinuz_path="$work_path/vmlinuz"
-fetch "$kernel_url" "$kernel_sha256" "$vmlinuz_path"
-step "extract uncompressed vmlinux"
-extract_vmlinux "$vmlinuz_path" "$kernel_path.part" || {
-	echo "could not extract an ELF vmlinux from the Ubuntu kernel" >&2
-	exit 1
-}
-mv "$kernel_path.part" "$kernel_path"
-step "extracted $(basename "$kernel_path")"
-
-step "extract root file system"
-unsquashfs -q -d "$rootfs_directory" "$rootfs_path"
-
-install_cloud_init_datasource
-install_guest_network
-install_metadata_service
-install_serial_console
-install_ssh_metadata
-
-step "create ext4 image"
-truncate -s 4G "$image_path.part"
-
-# Remount read-only at the first file system error, so a damaged disk stops taking writes.
-mkfs.ext4 -q -F -e remount-ro -O ^orphan_file -d "$rootfs_directory" "$image_path.part"
-mv "$image_path.part" "$image_path"
-
-step "compress ext4 image"
-zstd -q -T0 -3 -f -o "$image_path.zst" "$image_path"
-
+rootfs_manifest="$fingerprint_directory/$(basename "$image_path").sha256"
+kernel_manifest="$fingerprint_directory/$(basename "$kernel_path").sha256"
+initrd_manifest=""
 if [[ -n $initrd_path ]]; then
-	build_initrd
+	initrd_manifest="$fingerprint_directory/$(basename "$initrd_path").sha256"
 fi
 
-echo "Built $image_path and $image_path.zst"
-echo "Built $kernel_path"
+rootfs_path=""
+rootfs_directory="$work_path/rootfs"
+reuse_rootfs=false
+if rootfs_cache_matches "$rootfs_input_fingerprint" "$rootfs_manifest"; then
+	reuse_rootfs=true
+	step "reuse verified root file system $(basename "$image_path")"
+elif [[ ! -e $rootfs_manifest ]] && adopt_existing_rootfs; then
+	reuse_rootfs=true
+	record_rootfs_cache "$rootfs_input_fingerprint" "$rootfs_manifest"
+	step "adopt verified root file system $(basename "$image_path")"
+else
+	fetch "$rootfs_url" "$rootfs_sha256"
+	rootfs_path=$fetched_path
+
+	step "extract root file system"
+	unsquashfs -q -d "$rootfs_directory" "$rootfs_path"
+
+	install_cloud_init_datasource
+	install_guest_network
+	install_metadata_service
+	install_serial_console
+	install_ssh_metadata
+
+	step "create ext4 image"
+	truncate -s 4G "$image_path.part"
+
+	# Remount read-only at the first file system error, so a damaged disk stops taking writes.
+	mkfs.ext4 -q -F -e remount-ro -O ^orphan_file -d "$rootfs_directory" "$image_path.part"
+	mv "$image_path.part" "$image_path"
+
+	step "compress ext4 image"
+	zstd -q -T0 -3 -f -o "$image_path.zst" "$image_path"
+	record_rootfs_cache "$rootfs_input_fingerprint" "$rootfs_manifest"
+fi
+
+if artifact_cache_matches "$kernel_path" "$kernel_input_fingerprint" "$kernel_manifest"; then
+	step "reuse verified kernel $(basename "$kernel_path")"
+elif [[ ! -e $kernel_manifest ]] && adopt_existing_kernel; then
+	record_artifact_cache "$kernel_path" "$kernel_input_fingerprint" "$kernel_manifest"
+	step "adopt verified kernel $(basename "$kernel_path")"
+else
+	fetch "$kernel_url" "$kernel_sha256"
+	vmlinuz_path=$fetched_path
+	step "extract uncompressed vmlinux"
+	extract_vmlinux "$vmlinuz_path" "$kernel_path.part" || {
+		echo "could not extract an ELF vmlinux from the Ubuntu kernel" >&2
+		exit 1
+	}
+	mv "$kernel_path.part" "$kernel_path"
+	record_artifact_cache "$kernel_path" "$kernel_input_fingerprint" "$kernel_manifest"
+	step "extracted $(basename "$kernel_path")"
+fi
+
 if [[ -n $initrd_path ]]; then
-	echo "Built $initrd_path"
+	if artifact_cache_matches "$initrd_path" "$initrd_input_fingerprint" "$initrd_manifest"; then
+		step "reuse verified initrd $(basename "$initrd_path")"
+	else
+		build_initrd
+		record_artifact_cache "$initrd_path" "$initrd_input_fingerprint" "$initrd_manifest"
+	fi
+fi
+
+echo "Ready $image_path and $image_path.zst"
+echo "Ready $kernel_path"
+if [[ -n $initrd_path ]]; then
+	echo "Ready $initrd_path"
 fi

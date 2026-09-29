@@ -105,6 +105,8 @@ pilot --site <site> build-ubuntu-base-image \
 
 The command builds one root file system, one kernel, and one encryption initrd. It publishes two Available System images. The plain variant has no initrd. The `ubuntu-24.04 (Disk Encryption)` variant has the initrd and the `disk_encryption=luks2` tag.
 
+The output directory is an incremental build cache. The builder verifies existing artifacts with SHA-256 before it reuses them. It also records separate input fingerprints for the root file system, kernel, and initrd. A change to an initramfs script rebuilds only the initrd. Add `--force-rebuild` to ignore the local artifacts. Upstream downloads are cached by their published SHA-256.
+
 The variants use the same root file system and kernel content. Each image record owns its artifact paths.
 
 Without object storage credentials, add `--storage site-file` to serve the artifacts from the site. Atlas moves both image variants into object storage after you set the credentials in Atlas Settings. See [Images](../storage/image-records.md#artifact-storage).

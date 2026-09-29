@@ -29,6 +29,7 @@ This file identifies code owners and rules that a code change must preserve. The
 - A VM copies its image name and architecture at creation. Image references are immutable. A later VM action does not need the image record.
 - `is_disk_encrypted` is a create-only VM value. Atlas accepts it only when the selected image has an initrd, and sends a nullable `is_disk_encrypted` boolean to Metal.
 - The image immutable reference includes the initrd SHA-256 digest when an initrd is present. A different initrd is different image content.
+- The Ubuntu builder verifies reusable local artifacts and cached downloads with SHA-256. Separate input fingerprints let an initramfs-only change reuse the root file system and kernel.
 - An encrypted VM can use automatic idle save and VM-local restore.
 - A Machine image preserves the source image's optional initrd. An encrypted root disk needs that initrd on every cold boot.
 - Atlas sends freshly signed rootfs, kernel, and optional initrd URLs with each migration request. Metal verifies their immutable identity before replacing the source URLs.

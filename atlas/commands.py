@@ -133,6 +133,7 @@ def build_service_packages(context: CliCtxObj) -> None:
 @click.option(
 	"--output-directory", type=click.Path(path_type=Path), default=Path("./dist"), show_default=True
 )
+@click.option("--force-rebuild", is_flag=True, help="Ignore verified local build artifacts.")
 @pass_context
 def build_ubuntu_base_image(
 	context: CliCtxObj,
@@ -143,6 +144,7 @@ def build_ubuntu_base_image(
 	skip_existing: bool,
 	storage: str,
 	output_directory: Path,
+	force_rebuild: bool,
 ) -> None:
 	"""Build and publish a public Ubuntu server cloud image."""
 	if not context.sites:
@@ -159,8 +161,9 @@ def build_ubuntu_base_image(
 		return
 
 	click.echo(f"Building {title} for {architecture}")
+	build_options = {"force": True} if force_rebuild else {}
 	image_path, kernel_path, initrd_path = build_ubuntu_image(
-		version, architecture, minimal, output_directory
+		version, architecture, minimal, output_directory, **build_options
 	)
 	for site in target_sites:
 		try:

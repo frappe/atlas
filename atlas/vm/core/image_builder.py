@@ -23,7 +23,12 @@ ArtifactStorage = Literal["Object Storage", "Site File"]
 
 
 def build_ubuntu_image(
-	version: str, architecture: str, minimal: bool, output_directory: Path
+	version: str,
+	architecture: str,
+	minimal: bool,
+	output_directory: Path,
+	*,
+	force: bool = False,
 ) -> tuple[Path, Path, Path]:
 	"""Build one Ubuntu root file system, kernel, and initrd."""
 	output_directory = output_directory.resolve()
@@ -61,6 +66,7 @@ def build_ubuntu_image(
 			"--version",
 			version,
 			"--minimal" if minimal else "",
+			"--force" if force else "",
 		]
 	)
 	subprocess.run([argument for argument in command if argument], check=True)
