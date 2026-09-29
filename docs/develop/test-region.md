@@ -86,22 +86,34 @@ Save the record. Wait for its status to become `Running`. Open its linked **SSH 
 
 ## 8. Build a VM image
 
-On Linux, the build needs `curl`, `sha256sum`, `unsquashfs`, `mkfs.ext4`, `truncate`, and `zstd`. On macOS, the build runs in the builder Docker image, which has them.
+On Linux, the command runs the builder with root permissions. Install its host tools before you build:
 
-Build and publish the Ubuntu 24.04 guest image:
+```sh
+sudo apt-get install --yes \
+  binutils coreutils curl e2fsprogs initramfs-tools-core mount \
+  squashfs-tools tar util-linux xz-utils zstd
+```
+
+The builder downloads Ubuntu artifacts and builds the encryption initrd in an Ubuntu chroot. The chroot needs access to Ubuntu package repositories. The host also needs access to the Ubuntu image and cryptsetup download sources. On macOS, Atlas runs the privileged AMD64 builder Docker image, which contains the host tools.
+
+Build and publish the plain and Disk Encryption Ubuntu 24.04 System image variants:
 
 ```sh
 pilot --site <site> build-ubuntu-base-image \
   --version 24.04 --architecture amd64
 ```
 
-The command uploads the root file system and kernel to object storage. It then creates an Available **Virtual Machine Image**.
+The command builds one root file system, one kernel, and one encryption initrd. It publishes two Available System images. The plain variant has no initrd. The `ubuntu-24.04 (Disk Encryption)` variant has the initrd and the `disk_encryption=luks2` tag.
 
-Without object storage credentials, add `--storage site-file` to serve both artifacts from the site itself. Atlas moves the image into object storage after you set the credentials in Atlas Settings. See [Images](../storage/image-records.md#artifact-storage).
+The variants use the same root file system and kernel content. Each image record owns its artifact paths.
+
+Without object storage credentials, add `--storage site-file` to serve the artifacts from the site. Atlas moves both image variants into object storage after you set the credentials in Atlas Settings. See [Images](../storage/image-records.md#artifact-storage).
 
 ## 9. Create a VM
 
 Open **Virtual Machine** and click **Create Virtual Machine**. Select the new Virtual Machine Image, then set the CPU, memory, disk, tenant, and network values.
+
+Select the plain image for an unencrypted root disk. Select the image with `(Disk Encryption)` in its title for first-boot LUKS2 encryption.
 
 Atlas places the VM on the running Metal Server and sends the desired state to Metal. Keep the record if the first response is uncertain. Atlas reconciles it after Metal confirms the result.
 
