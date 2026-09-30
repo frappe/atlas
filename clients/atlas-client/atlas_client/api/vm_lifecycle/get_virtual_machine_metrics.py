@@ -10,13 +10,17 @@ from ... import errors
 
 from ...models.api_error_response import ApiErrorResponse
 from ...models.virtual_machine_metrics_response import VirtualMachineMetricsResponse
+from ...types import UNSET, Unset
 from typing import cast
+import datetime
 
 
 
 def _get_kwargs(
     virtual_machine_id: str,
     *,
+    start: datetime.datetime | None | Unset = UNSET,
+    end: datetime.datetime | None | Unset = UNSET,
     x_tenant_id: int,
 
 ) -> dict[str, Any]:
@@ -28,11 +32,34 @@ def _get_kwargs(
 
     
 
-    
+    params: dict[str, Any] = {}
+
+    json_start: None | str | Unset
+    if isinstance(start, Unset):
+        json_start = UNSET
+    elif isinstance(start, datetime.datetime):
+        json_start = start.isoformat()
+    else:
+        json_start = start
+    params["start"] = json_start
+
+    json_end: None | str | Unset
+    if isinstance(end, Unset):
+        json_end = UNSET
+    elif isinstance(end, datetime.datetime):
+        json_end = end.isoformat()
+    else:
+        json_end = end
+    params["end"] = json_end
+
+
+    params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
+
 
     _kwargs: dict[str, Any] = {
         "method": "get",
         "url": "/api/atlas/virtual-machines/{virtual_machine_id}/metrics".format(virtual_machine_id=quote(str(virtual_machine_id), safe=""),),
+        "params": params,
     }
 
 
@@ -48,6 +75,13 @@ def _parse_response(*, client: AuthenticatedClient | Client, response: httpx.Res
 
 
         return response_200
+
+    if response.status_code == 400:
+        response_400 = ApiErrorResponse.from_dict(response.json())
+
+
+
+        return response_400
 
     if response.status_code == 401:
         response_401 = ApiErrorResponse.from_dict(response.json())
@@ -96,17 +130,17 @@ def sync_detailed(
     virtual_machine_id: str,
     *,
     client: AuthenticatedClient | Client,
+    start: datetime.datetime | None | Unset = UNSET,
+    end: datetime.datetime | None | Unset = UNSET,
     x_tenant_id: int,
 
 ) -> Response[ApiErrorResponse | VirtualMachineMetricsResponse]:
-    """ Get VM metrics
-
-     CPU time belongs to the current guest process. Memory is charged to the Firecracker cgroup. Disk use
-    is from the last reconcile pass. Network counters last for the traffic attachment's lifetime,
-    including guest stops. A stopped guest reports zero CPU and memory.
+    """ Get VM metrics history
 
     Args:
         virtual_machine_id (str):
+        start (datetime.datetime | None | Unset):
+        end (datetime.datetime | None | Unset):
         x_tenant_id (int):
 
     Raises:
@@ -120,6 +154,8 @@ def sync_detailed(
 
     kwargs = _get_kwargs(
         virtual_machine_id=virtual_machine_id,
+start=start,
+end=end,
 x_tenant_id=x_tenant_id,
 
     )
@@ -134,17 +170,17 @@ def sync(
     virtual_machine_id: str,
     *,
     client: AuthenticatedClient | Client,
+    start: datetime.datetime | None | Unset = UNSET,
+    end: datetime.datetime | None | Unset = UNSET,
     x_tenant_id: int,
 
 ) -> ApiErrorResponse | VirtualMachineMetricsResponse | None:
-    """ Get VM metrics
-
-     CPU time belongs to the current guest process. Memory is charged to the Firecracker cgroup. Disk use
-    is from the last reconcile pass. Network counters last for the traffic attachment's lifetime,
-    including guest stops. A stopped guest reports zero CPU and memory.
+    """ Get VM metrics history
 
     Args:
         virtual_machine_id (str):
+        start (datetime.datetime | None | Unset):
+        end (datetime.datetime | None | Unset):
         x_tenant_id (int):
 
     Raises:
@@ -159,6 +195,8 @@ def sync(
     return sync_detailed(
         virtual_machine_id=virtual_machine_id,
 client=client,
+start=start,
+end=end,
 x_tenant_id=x_tenant_id,
 
     ).parsed
@@ -167,17 +205,17 @@ async def asyncio_detailed(
     virtual_machine_id: str,
     *,
     client: AuthenticatedClient | Client,
+    start: datetime.datetime | None | Unset = UNSET,
+    end: datetime.datetime | None | Unset = UNSET,
     x_tenant_id: int,
 
 ) -> Response[ApiErrorResponse | VirtualMachineMetricsResponse]:
-    """ Get VM metrics
-
-     CPU time belongs to the current guest process. Memory is charged to the Firecracker cgroup. Disk use
-    is from the last reconcile pass. Network counters last for the traffic attachment's lifetime,
-    including guest stops. A stopped guest reports zero CPU and memory.
+    """ Get VM metrics history
 
     Args:
         virtual_machine_id (str):
+        start (datetime.datetime | None | Unset):
+        end (datetime.datetime | None | Unset):
         x_tenant_id (int):
 
     Raises:
@@ -191,6 +229,8 @@ async def asyncio_detailed(
 
     kwargs = _get_kwargs(
         virtual_machine_id=virtual_machine_id,
+start=start,
+end=end,
 x_tenant_id=x_tenant_id,
 
     )
@@ -205,17 +245,17 @@ async def asyncio(
     virtual_machine_id: str,
     *,
     client: AuthenticatedClient | Client,
+    start: datetime.datetime | None | Unset = UNSET,
+    end: datetime.datetime | None | Unset = UNSET,
     x_tenant_id: int,
 
 ) -> ApiErrorResponse | VirtualMachineMetricsResponse | None:
-    """ Get VM metrics
-
-     CPU time belongs to the current guest process. Memory is charged to the Firecracker cgroup. Disk use
-    is from the last reconcile pass. Network counters last for the traffic attachment's lifetime,
-    including guest stops. A stopped guest reports zero CPU and memory.
+    """ Get VM metrics history
 
     Args:
         virtual_machine_id (str):
+        start (datetime.datetime | None | Unset):
+        end (datetime.datetime | None | Unset):
         x_tenant_id (int):
 
     Raises:
@@ -230,6 +270,8 @@ async def asyncio(
     return (await asyncio_detailed(
         virtual_machine_id=virtual_machine_id,
 client=client,
+start=start,
+end=end,
 x_tenant_id=x_tenant_id,
 
     )).parsed

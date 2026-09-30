@@ -31,7 +31,6 @@ The module path is `github.com/frappe/atlas/metal`. Run Go commands from `metal/
 | [host](internal/host/SPEC.md) | Host synchronization and capacity. |
 | [console](internal/console/SPEC.md) | VM serial consoles over PTYs. |
 | [reconciler](internal/reconciler/SPEC.md) | VM and image loops. |
-| [datum](internal/datum/SPEC.md) | Host and per-VM metric export. |
 | [storage](internal/storage/SPEC.md) | ZFS pool, disks, images, and snapshots. |
 | [network](internal/network/SPEC.md) | VM networks and WireGuard peers. |
 | [platform](internal/platform/SPEC.md) | Host files, commands, systemd. |

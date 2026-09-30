@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 import frappe
 from frappe import _
 from frappe.model.document import Document
-from frappe.utils import add_days, add_to_date, cint, now_datetime
+from frappe.utils import add_days, cint, now_datetime
 from frappe.utils.background_jobs import is_job_enqueued
 
 from atlas.atlas.core.background_jobs import run_as_admin
@@ -45,8 +45,6 @@ class MetalServer(Document):
 		from atlas.metal_server.doctype.metal_server_disk.metal_server_disk import MetalServerDisk
 
 		architecture: DF.Literal["amd64", "arm64"]
-		datum_tokens_expire_on: DF.Datetime | None
-		datum_tokens_revision: DF.Int
 		disks: DF.Table[MetalServerDisk]
 		is_provisioning_completed: DF.Check
 		is_sleepy_vm_host: DF.Check
@@ -175,25 +173,6 @@ class MetalServer(Document):
 			queue="long",
 			timeout=WIREGUARD_CONFIGURE_TIMEOUT_SECONDS,
 			job_id=job_id,
-			deduplicate=True,
-			enqueue_after_commit=True,
-		)
-
-	@frappe.whitelist(methods=["POST"])
-	def refresh_datum_tokens(self) -> None:
-		"""Queue a fresh datum token bundle for this server."""
-		frappe.only_for("System Manager")
-		if self.status != "Running":
-			frappe.throw(_("Metal Server {0} is not running.").format(self.name))
-
-		if is_job_enqueued(self.datum_tokens_job_id):
-			frappe.throw(_("Datum token refresh is already running for {0}.").format(self.name))
-
-		frappe.enqueue_doc(
-			self.doctype,
-			self.name,
-			"_refresh_datum_tokens",
-			job_id=self.datum_tokens_job_id,
 			deduplicate=True,
 			enqueue_after_commit=True,
 		)
@@ -328,11 +307,6 @@ class MetalServer(Document):
 		"""Return one job ID for each metald operation on this server."""
 		return f"atlas||server||metald||{self.name}"
 
-	@property
-	def datum_tokens_job_id(self) -> str:
-		"""Return one job ID for each datum token refresh on this server."""
-		return f"atlas||server||refresh-datum-tokens||{self.name}"
-
 	@frappe.whitelist(methods=["POST"])
 	def install_metald(self) -> None:
 		"""Queue the metald setup for this server."""
@@ -446,11 +420,6 @@ class MetalServer(Document):
 		"""Configure WireGuard and store its public key."""
 		HostInstallation(self).configure_wireguard()
 
-	@run_as_admin
-	def _refresh_datum_tokens(self) -> None:
-		"""Ship a fresh datum token bundle."""
-		HostInstallation(self).install_datum_tokens()
-
 	def _get_wireguard_ip_address(self) -> str:
 		"""Return this server's fdab::/16 host mesh address."""
 		return HostInstallation(self).wireguard_ip_address
@@ -506,42 +475,6 @@ def renew_expiring_tls_certificates() -> None:
 		if is_job_enqueued(server.metald_job_id):
 			continue
 		server.enqueue_tls_certificate_renewal()
-
-
-DATUM_TOKEN_RENEWAL_WINDOW_MINUTES = 30
-
-
-def refresh_expiring_datum_tokens() -> None:
-	"""Queue a fresh datum token bundle for every ready host whose bundle is
-	expiring soon or was never shipped. A no-op unless atlas_datum_url is set."""
-	if not frappe.conf.get("atlas_datum_url"):
-		return
-
-	servers = frappe.get_all(
-		"Metal Server",
-		filters={"status": "Running", "is_provisioning_completed": 1},
-		or_filters=[
-			["Metal Server", "datum_tokens_expire_on", "is", "not set"],
-			[
-				"Metal Server",
-				"datum_tokens_expire_on",
-				"<=",
-				add_to_date(now_datetime(), minutes=DATUM_TOKEN_RENEWAL_WINDOW_MINUTES),
-			],
-		],
-		pluck="name",
-	)
-	for name in servers:
-		server: MetalServer = frappe.get_doc("Metal Server", name)
-		if is_job_enqueued(server.datum_tokens_job_id):
-			continue
-		frappe.enqueue_doc(
-			server.doctype,
-			server.name,
-			"_refresh_datum_tokens",
-			job_id=server.datum_tokens_job_id,
-			deduplicate=True,
-		)
 
 
 @frappe.whitelist(methods=["POST"])

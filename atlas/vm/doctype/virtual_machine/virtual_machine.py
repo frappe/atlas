@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from typing import Any
 
 import frappe
@@ -14,7 +15,6 @@ from atlas.atlas.core.exceptions import AtlasConflictError, AtlasUserError
 from atlas.atlas.core.parsing import strict_bool
 from atlas.atlas.core.tags import validate_tags
 from atlas.atlas.doctype.ssh_task.ssh_task import delete_tasks_for_target
-from atlas.metal_server.core.host_installation import request_datum_token_refresh
 from atlas.vm.core import reconciliation
 from atlas.vm.core.metal_models import MetalVirtualMachine, MetalVirtualMachineMetrics
 from atlas.vm.core.models import (
@@ -79,32 +79,17 @@ class VirtualMachine(Document):
 			return None
 		return VirtualMachineService(self).get_information()
 
-	def get_metal_vm_metrics(self) -> MetalVirtualMachineMetrics | None:
-		"""Return the current Metal resource use for this VM.
-
-		A record with no Server holds no Metal state.
-		"""
+	def get_metal_vm_metrics(
+		self, *, start: datetime | None = None, end: datetime | None = None
+	) -> MetalVirtualMachineMetrics | None:
 		if not self.server:
 			return None
-		return VirtualMachineService(self).get_metrics()
+		return VirtualMachineService(self).get_metrics(start=start, end=end)
 
 	def before_insert(self) -> None:
 		"""Reject a record created outside the Virtual Machine API."""
 		if not getattr(self.flags, "created_by_virtual_machine_api", False):
 			frappe.throw(_("Create Virtual Machines from the Virtual Machine list."))
-
-	def on_change(self) -> None:
-		"""Refresh both hosts' tokens when placement changes, including through db_set."""
-		if not frappe.conf.get("atlas_datum_url") or not self.has_value_changed("server"):
-			return
-		previous = self.get_doc_before_save()
-		servers = {self.server, previous.server if previous else None}
-		for server in sorted(name for name in servers if name):
-			request_datum_token_refresh(server)
-
-	def after_delete(self) -> None:
-		"""Remove this VM from its host's next token bundle."""
-		request_datum_token_refresh(self.server)
 
 	def validate(self) -> None:
 		"""A privileged VM must use tenant 0. Tenant 0 alone is not privileged.

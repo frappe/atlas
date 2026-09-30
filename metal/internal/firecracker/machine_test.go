@@ -107,7 +107,7 @@ func (s *stubUnits) Wait(ctx context.Context, _ string) (platform.Result, error)
 
 func (s *stubUnits) List(context.Context) ([]string, error)                   { return nil, nil }
 func (s *stubUnits) SetLimits(context.Context, string, platform.Limits) error { return nil }
-func (s *stubUnits) Usage(context.Context, string) (platform.Usage, error) {
+func (s *stubUnits) GetUsage(context.Context, string) (platform.Usage, error) {
 	return platform.Usage{}, nil
 }
 

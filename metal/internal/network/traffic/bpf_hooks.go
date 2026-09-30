@@ -192,9 +192,9 @@ func (hooks *bpfHooks) clear(userID uint32) error {
 	)
 }
 
-// counters reads the cumulative received and sent counters for one user ID. A
+// readTrafficCounters reads the cumulative received and sent counters for one user ID. A
 // direction with no traffic yet reads as zero.
-func (hooks *bpfHooks) counters(userID uint32) (rx, tx TrafficCounters, err error) {
+func (hooks *bpfHooks) readTrafficCounters(userID uint32) (rx, tx TrafficCounters, err error) {
 	rx, err = readCounters(hooks.rxCounters, userID)
 	if err != nil {
 		return TrafficCounters{}, TrafficCounters{}, err

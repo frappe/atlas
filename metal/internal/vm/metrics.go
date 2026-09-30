@@ -43,7 +43,7 @@ func (manager *Manager) Metrics(ctx context.Context, identifier string) (Metrics
 	metrics := Metrics{Up: up, DiskMiB: diskMiB, DiskUsedMiB: observed.Disk.UsedMiB}
 
 	if up {
-		usage, err := manager.runtime.Usage(ctx, RuntimeMachine{ID: desired.ID})
+		usage, err := manager.runtime.GetUsage(ctx, RuntimeMachine{ID: desired.ID})
 		if err != nil {
 			return Metrics{}, err
 		}
@@ -53,7 +53,7 @@ func (manager *Manager) Metrics(ctx context.Context, identifier string) (Metrics
 
 	if manager.traffic != nil {
 		target := traffic.Target{VirtualMachineID: desired.ID, UserID: desired.UserID}
-		received, sent, err := manager.traffic.Counters(target)
+		received, sent, err := manager.traffic.GetTrafficCounters(target)
 		if err != nil && !errors.Is(err, traffic.ErrNotFound) {
 			return Metrics{}, err
 		}

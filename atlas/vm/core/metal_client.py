@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ipaddress
 import time
+from datetime import datetime
 from time import monotonic
 from typing import TYPE_CHECKING, Any
 from urllib.parse import quote
@@ -117,11 +118,17 @@ class MetalClient:
 		)
 		return self._virtual_machine(response)
 
-	def get_virtual_machine_metrics(self, virtual_machine_id: str) -> MetalVirtualMachineMetrics:
-		"""Return the current resource use of one VM."""
+	def get_virtual_machine_metrics(
+		self, virtual_machine_id: str, *, start: datetime | None = None, end: datetime | None = None
+	) -> MetalVirtualMachineMetrics:
 		response = self._request(
 			"GET",
 			f"/v1/vms/{quote(virtual_machine_id, safe='')}/metrics",
+			params={
+				name: value.isoformat()
+				for name, value in (("start", start), ("end", end))
+				if value is not None
+			},
 			timeout=self.status_timeout_seconds,
 			attempts=self.status_attempts,
 			budget_seconds=self.status_budget_seconds,

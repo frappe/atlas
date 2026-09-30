@@ -33,20 +33,6 @@ def initialize_signing_key(settings: AtlasSettings) -> bool:
 	return True
 
 
-def signing_key(settings: AtlasSettings) -> tuple[str, str]:
-	"""Return the current (private_key, key_id) pair, raising if Atlas has none."""
-	private_key = settings.get_password("jwt_signing_private_key", raise_exception=False)
-	key_id = settings.jwt_signing_key_id
-	if not private_key or not key_id:
-		raise RuntimeError("Atlas has no JSON Web Token signing key.")
-	return private_key, key_id
-
-
-def sign(claims: dict[str, Any], private_key: str, key_id: str) -> str:
-	"""Return claims signed as a compact JSON Web Token under key_id."""
-	return jwt.encode(claims, private_key, algorithm="EdDSA", headers={"kid": key_id})
-
-
 def issue_token(
 	settings: AtlasSettings,
 	*,
@@ -74,5 +60,13 @@ def issue_token(
 	if constraints:
 		claims["constraints"] = constraints
 
-	private_key, key_id = signing_key(settings)
-	return sign(claims, private_key, key_id)
+	private_key = settings.get_password("jwt_signing_private_key", raise_exception=False)
+	if not private_key or not settings.jwt_signing_key_id:
+		raise RuntimeError("Atlas has no JSON Web Token signing key.")
+
+	return jwt.encode(
+		claims,
+		private_key,
+		algorithm="EdDSA",
+		headers={"kid": settings.jwt_signing_key_id},
+	)

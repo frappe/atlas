@@ -1992,26 +1992,27 @@
         "type": "object"
       },
       "VirtualMachineMetricsResponse": {
-        "description": "The current resource use of one virtual machine.\n\nA virtual machine that is neither running nor paused reports zero CPU and\nmemory. Disk use and any surviving network counters remain available.",
-        "examples": [
-          {
-            "compute": {
-              "cpu_microseconds": 75979252,
-              "memory_bytes": 811667456
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "samples": {
+            "items": {
+              "$ref": "#/components/schemas/VirtualMachineMetricsSample"
             },
-            "disk": {
-              "size_mib": 10240,
-              "used_mib": 5
-            },
-            "id": "vm-0000001",
-            "network": {
-              "received_bytes": 0,
-              "received_packets": 0,
-              "sent_bytes": 2232,
-              "sent_packets": 30
-            }
+            "title": "Samples",
+            "type": "array"
           }
+        },
+        "required": [
+          "id",
+          "samples"
         ],
+        "title": "VirtualMachineMetricsResponse",
+        "type": "object"
+      },
+      "VirtualMachineMetricsSample": {
         "properties": {
           "compute": {
             "$ref": "#/components/schemas/VirtualMachineComputeUsage"
@@ -2019,22 +2020,27 @@
           "disk": {
             "$ref": "#/components/schemas/VirtualMachineDiskUsage"
           },
-          "id": {
-            "description": "Virtual machine ID.",
-            "title": "Id",
-            "type": "string"
-          },
           "network": {
             "$ref": "#/components/schemas/VirtualMachineNetworkUsage"
+          },
+          "timestamp": {
+            "format": "date-time",
+            "title": "Timestamp",
+            "type": "string"
+          },
+          "up": {
+            "title": "Up",
+            "type": "boolean"
           }
         },
         "required": [
-          "id",
+          "timestamp",
+          "up",
           "compute",
           "disk",
           "network"
         ],
-        "title": "VirtualMachineMetricsResponse",
+        "title": "VirtualMachineMetricsSample",
         "type": "object"
       },
       "VirtualMachineNetwork": {
@@ -4812,7 +4818,6 @@
     },
     "/api/atlas/virtual-machines/{virtual_machine_id}/metrics": {
       "get": {
-        "description": "CPU time belongs to the current guest process. Memory is charged to the Firecracker cgroup. Disk use is from the last reconcile pass. Network counters last for the traffic attachment's lifetime, including guest stops. A stopped guest reports zero CPU and memory.",
         "operationId": "get_virtual_machine_metrics",
         "parameters": [
           {
@@ -4834,6 +4839,42 @@
               "minimum": 0,
               "type": "integer"
             }
+          },
+          {
+            "in": "query",
+            "name": "start",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Start"
+            }
+          },
+          {
+            "in": "query",
+            "name": "end",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "End"
+            }
           }
         ],
         "responses": {
@@ -4846,6 +4887,16 @@
               }
             },
             "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "The request is not valid."
           },
           "401": {
             "content": {
@@ -4888,7 +4939,7 @@
             "description": "The request could not be completed."
           }
         },
-        "summary": "Get VM metrics",
+        "summary": "Get VM metrics history",
         "tags": [
           "VM Lifecycle"
         ]

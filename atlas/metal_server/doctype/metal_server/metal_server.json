@@ -12,8 +12,6 @@
   "column_break_qbap",
   "provider_server_id",
   "metald_tls_expires_on",
-  "datum_tokens_expire_on",
-  "datum_tokens_revision",
   "is_sleepy_vm_host",
   "section_break_configuration",
   "server_image",
@@ -63,20 +61,6 @@
    "fieldname": "metald_tls_expires_on",
    "fieldtype": "Datetime",
    "label": "TLS Expires On",
-   "read_only": 1
-  },
-  {
-   "default": "0",
-   "fieldname": "datum_tokens_revision",
-   "fieldtype": "Int",
-   "hidden": 1,
-   "label": "Datum Tokens Revision",
-   "read_only": 1
-  },
-  {
-   "fieldname": "datum_tokens_expire_on",
-   "fieldtype": "Datetime",
-   "label": "Datum Tokens Expire On",
    "read_only": 1
   },
   {

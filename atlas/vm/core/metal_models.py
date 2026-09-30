@@ -204,20 +204,24 @@ class MetalNetworkUsage:
 
 
 @dataclass(frozen=True, slots=True)
-class MetalVirtualMachineMetrics:
-	"""Store the current resource use of one virtual machine."""
-
+class MetalVirtualMachineMetricsSample:
+	timestamp: datetime
+	up: bool
 	compute: MetalComputeUsage
 	disk: MetalDiskUsage
 	network: MetalNetworkUsage
 
 	@classmethod
-	def from_dict(cls, value: dict[str, Any]) -> MetalVirtualMachineMetrics:
-		"""Parse one Metal virtual machine metrics response."""
+	def from_dict(cls, value: dict[str, Any]) -> MetalVirtualMachineMetricsSample:
 		compute = object_field(value, "compute")
 		disk = object_field(value, "disk")
 		network = object_field(value, "network")
+		timestamp = datetime.fromisoformat(string_field(value, "timestamp"))
+		if timestamp.tzinfo is None:
+			raise ValueError("timestamp must include a timezone")
 		return cls(
+			timestamp=timestamp,
+			up=boolean_field(value, "up"),
 			compute=MetalComputeUsage(
 				cpu_microseconds=integer_field(compute, "cpu_microseconds"),
 				memory_bytes=integer_field(compute, "memory_bytes"),
@@ -232,6 +236,23 @@ class MetalVirtualMachineMetrics:
 				sent_bytes=integer_field(network, "sent_bytes"),
 				sent_packets=integer_field(network, "sent_packets"),
 			),
+		)
+
+
+@dataclass(frozen=True, slots=True)
+class MetalVirtualMachineMetrics:
+	samples: tuple[MetalVirtualMachineMetricsSample, ...]
+
+	@classmethod
+	def from_dict(cls, value: dict[str, Any]) -> MetalVirtualMachineMetrics:
+		samples = value.get("samples")
+		if not isinstance(samples, list):
+			raise ValueError("samples must be a list")
+		return cls(
+			samples=tuple(
+				MetalVirtualMachineMetricsSample.from_dict(object_value(sample, "sample"))
+				for sample in samples
+			)
 		)
 
 
