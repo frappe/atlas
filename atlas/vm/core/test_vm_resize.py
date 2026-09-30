@@ -35,6 +35,13 @@ class TestVirtualMachineResize(UnitTestCase):
 			sleep_after_idle_seconds=0,
 			db_set=Mock(),
 		)
+
+		def store(field, value=None):
+			values = field if isinstance(field, dict) else {field: value}
+			for name, stored_value in values.items():
+				setattr(self.virtual_machine, name, stored_value)
+
+		self.virtual_machine.db_set.side_effect = store
 		self.resize = VirtualMachineResize(self.virtual_machine)
 		self.metal_client = self.start_patch(patch.object(VirtualMachineService, "metal_client", Mock()))
 		self.find_server = self.start_patch(
@@ -61,6 +68,7 @@ class TestVirtualMachineResize(UnitTestCase):
 		)
 		self.virtual_machine.db_set.assert_called_once_with("sleep_after_idle_seconds", 1800)
 		self.find_server.assert_not_called()
+		self.assertEqual(self.virtual_machine.sleep_after_idle_seconds, 1800)
 
 	def test_a_retry_repairs_stale_stored_resources(self) -> None:
 		self.virtual_machine.memory_mib = 2048

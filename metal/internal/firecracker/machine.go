@@ -296,7 +296,11 @@ func (m *machine) Resume(ctx context.Context) error {
 // kill stops a VM without giving the guest a chance to shut down.
 func (m *machine) kill(ctx context.Context) error {
 	if err := m.runtime.units.Kill(ctx, m.input.ID, syscall.SIGKILL); err != nil {
-		return err
+		// systemd can kill the main process and still fail to signal auxiliary processes.
+		// A completed stop job confirms the whole unit has stopped before we reset it.
+		if stopError := m.runtime.units.Stop(ctx, m.input.ID); stopError != nil {
+			return errors.Join(err, fmt.Errorf("stop VM unit after kill failure: %w", stopError))
+		}
 	}
 	if _, err := m.runtime.units.Wait(ctx, m.input.ID); err != nil {
 		return err
@@ -320,7 +324,7 @@ func (m *machine) shutdownGuest(ctx context.Context) error {
 		}
 	}
 
-	return m.runtime.units.Kill(ctx, m.input.ID, syscall.SIGKILL)
+	return m.kill(ctx)
 }
 
 // cleanupSystemd stops the unit and clears its state, so the ID can be reused.

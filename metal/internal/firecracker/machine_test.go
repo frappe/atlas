@@ -28,12 +28,14 @@ func TestSaveAndStopRejectsAStoppedVMWithoutSavedState(t *testing.T) {
 
 // stubUnits models a systemd unit that stays active until stopped or killed.
 type stubUnits struct {
-	mu     sync.Mutex
-	active bool
-	failed bool
-	stops  int
-	kills  int
-	waits  int
+	mu        sync.Mutex
+	active    bool
+	failed    bool
+	stops     int
+	kills     int
+	waits     int
+	killError error
+	stopError error
 }
 
 type stubSerialBroker struct{}
@@ -54,6 +56,9 @@ func (s *stubUnits) Stop(context.Context, string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.stops++
+	if s.stopError != nil {
+		return s.stopError
+	}
 	s.active = false
 	return nil
 }
@@ -64,7 +69,7 @@ func (s *stubUnits) Kill(context.Context, string, syscall.Signal) error {
 	s.kills++
 	s.active = false
 	s.failed = true
-	return nil
+	return s.killError
 }
 
 func (s *stubUnits) ResetFailed(context.Context, string) error {
@@ -325,5 +330,32 @@ func TestPauseStoppedVirtualMachineReturnsConflict(t *testing.T) {
 
 	if err := machine.Pause(context.Background()); err != vm.ErrConflict {
 		t.Fatalf("pause stopped virtual machine = %v, want conflict", err)
+	}
+}
+
+func TestKillCompletesStopAfterPartialSignalFailure(t *testing.T) {
+	units := &stubUnits{active: true, killError: errors.New("auxiliary signal failed")}
+	m := testMachine(units, fcSocket(t, nil), time.Minute)
+	if err := m.kill(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	stops, _, waits := units.counts()
+	if stops != 1 || waits != 1 || units.failed {
+		t.Fatalf("stops=%d waits=%d failed=%v", stops, waits, units.failed)
+	}
+}
+
+func TestKillPreservesFailureWhenStopCannotComplete(t *testing.T) {
+	killError := errors.New("auxiliary signal failed")
+	stopError := errors.New("stop job failed")
+	units := &stubUnits{active: true, killError: killError, stopError: stopError}
+	m := testMachine(units, fcSocket(t, nil), time.Minute)
+	err := m.kill(context.Background())
+	if !errors.Is(err, killError) || !errors.Is(err, stopError) {
+		t.Fatalf("error=%v", err)
+	}
+	_, _, waits := units.counts()
+	if waits != 0 || !units.failed {
+		t.Fatalf("waits=%d failed=%v", waits, units.failed)
 	}
 }

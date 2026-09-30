@@ -337,10 +337,23 @@ func (manager *Manager) runRuntimeTransition(
 	resultState State,
 	operation func(context.Context, RuntimeMachine) error,
 ) (RuntimeStatus, error) {
+	status := RuntimeStatus{State: resultState}
 	err := manager.runOperation(ctx, identifier, observed, operationID, phase, func() error {
-		return operation(ctx, machine)
+		operationError := operation(ctx, machine)
+		if operationError == nil {
+			return nil
+		}
+
+		var inspectError error
+		status, inspectError = manager.runtime.Inspect(ctx, machine)
+		if inspectError != nil {
+			status = RuntimeStatus{State: StateUnknown}
+			operationError = errors.Join(operationError, fmt.Errorf("inspect failed transition: %w", inspectError))
+		}
+		observed.State = status.State
+		return operationError
 	})
-	return RuntimeStatus{State: resultState}, err
+	return status, err
 }
 
 // applyDesiredSpecification applies specification changes.
