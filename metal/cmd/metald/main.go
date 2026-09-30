@@ -24,9 +24,9 @@ import (
 
 	"github.com/frappe/atlas/metal/internal/api"
 	"github.com/frappe/atlas/metal/internal/console"
-	"github.com/frappe/atlas/metal/internal/datum"
 	"github.com/frappe/atlas/metal/internal/firecracker"
 	"github.com/frappe/atlas/metal/internal/host"
+	"github.com/frappe/atlas/metal/internal/metrics"
 	"github.com/frappe/atlas/metal/internal/network"
 	traffic "github.com/frappe/atlas/metal/internal/network/traffic"
 	platform "github.com/frappe/atlas/metal/internal/platform"
@@ -40,9 +40,6 @@ const (
 	reconcileInterval      = 5 * time.Second
 	meshSetupTimeout       = 2 * time.Minute
 	imageReconcileInterval = time.Hour
-	datumPushInterval      = time.Minute
-	datumPushTimeout       = 5 * time.Second
-	datumRequestTimeout    = 10 * time.Second
 )
 
 //	@title			Metal API
@@ -323,15 +320,11 @@ func serve(options options, logger *slog.Logger) (serveError error) {
 	)
 	var migrationReconciler *reconciler.MigrationReconciler
 	var migrationManager *migration.Manager
-	var datumReconciler *reconciler.DatumReconciler
 	notifyReconcilers := func() {
 		virtualMachineReconciler.Wake()
 		imageReconciler.Wake()
 		if migrationReconciler != nil {
 			migrationReconciler.Wake()
-		}
-		if datumReconciler != nil {
-			datumReconciler.Wake()
 		}
 	}
 	migrationReservations := func(ctx context.Context) ([]migration.DestinationReservation, error) {
@@ -356,18 +349,12 @@ func serve(options options, logger *slog.Logger) (serveError error) {
 	if err != nil {
 		return fmt.Errorf("configure host service: %w", err)
 	}
-	if options.datum.url != "" {
-		datumClient := datum.NewClient(options.datum.url, datumRequestTimeout)
-		datumExporter := datum.NewExporter(
-			datumClient,
-			options.datum.tokenFile,
-			virtualMachineManager,
-			hostService,
-			datumPushTimeout,
-			logger,
-		)
-		datumReconciler = reconciler.NewDatumReconciler(datumExporter, datumPushInterval)
+	metricsStore, err := metrics.NewStore(filepath.Join(options.baseDir, "metrics"))
+	if err != nil {
+		return fmt.Errorf("configure metrics store: %w", err)
 	}
+	metricsSampler := metrics.NewSampler(metricsStore, virtualMachineManager, hostService, logger)
+
 	migrationCapacity := func(ctx context.Context) (migration.AvailableCapacity, error) {
 		capacity, err := hostService.Capacity(ctx)
 		if err != nil {
@@ -415,6 +402,7 @@ func serve(options options, logger *slog.Logger) (serveError error) {
 		WakeReconciler:        notifyReconcilers,
 		HostService:           hostService,
 		SerialBroker:          serialBroker,
+		MetricsStore:          metricsStore,
 	})
 	if err != nil {
 		return fmt.Errorf("configure API: %w", err)
@@ -437,9 +425,7 @@ func serve(options options, logger *slog.Logger) (serveError error) {
 	daemon.StartWorker(virtualMachineReconciler.Run)
 	daemon.StartWorker(imageReconciler.Run)
 	daemon.StartWorker(migrationReconciler.Run)
-	if datumReconciler != nil {
-		daemon.StartWorker(datumReconciler.Run)
-	}
+	daemon.StartWorker(metricsSampler.Run)
 	if trafficMonitor != nil {
 		daemon.StartTrafficListener(trafficMonitor.Events(), virtualMachineManager.RestoreAfterTraffic)
 	}

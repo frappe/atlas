@@ -72,7 +72,7 @@ func (hooks *fakeTrafficHooks) clear(userID uint32) error {
 	return nil
 }
 
-func (hooks *fakeTrafficHooks) counters(userID uint32) (TrafficCounters, TrafficCounters, error) {
+func (hooks *fakeTrafficHooks) readTrafficCounters(userID uint32) (TrafficCounters, TrafficCounters, error) {
 	return hooks.rxCounters[userID], hooks.txCounters[userID], nil
 }
 
@@ -150,7 +150,7 @@ func TestMonitorCountersReadsBothDirections(t *testing.T) {
 	hooks.rxCounters[target.UserID] = TrafficCounters{Bytes: 4096, Packets: 4}
 	hooks.txCounters[target.UserID] = TrafficCounters{Bytes: 512, Packets: 2}
 
-	received, sent, err := monitor.Counters(target)
+	received, sent, err := monitor.GetTrafficCounters(target)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -164,7 +164,7 @@ func TestMonitorCountersReadsBothDirections(t *testing.T) {
 
 func TestMonitorCountersRejectsAnUnknownTarget(t *testing.T) {
 	monitor, _ := newTestMonitor(t)
-	_, _, err := monitor.Counters(Target{VirtualMachineID: "vm-1", UserID: 1001})
+	_, _, err := monitor.GetTrafficCounters(Target{VirtualMachineID: "vm-1", UserID: 1001})
 	if !errors.Is(err, ErrNotFound) {
 		t.Fatalf("err = %v, want %v", err, ErrNotFound)
 	}

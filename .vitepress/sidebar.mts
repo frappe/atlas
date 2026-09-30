@@ -20,7 +20,6 @@ const handbook: DefaultTheme.SidebarItem[] = [
 			{ text: 'Provision a host', link: '/docs/region/' },
 			{ text: 'Metal daemon', link: '/docs/region/metald' },
 			{ text: 'Host sync', link: '/docs/region/host-sync' },
-			{ text: 'Metrics', link: '/docs/region/metrics' },
 			{ text: 'Add a provider', link: '/docs/region/provider-guide' },
 		],
 	},

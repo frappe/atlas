@@ -136,7 +136,7 @@ func (runtime *fakeRuntime) ConnectSSH(context.Context, RuntimeMachine) (SSHConn
 	return nil, nil
 }
 
-func (runtime *fakeRuntime) Usage(context.Context, RuntimeMachine) (Usage, error) {
+func (runtime *fakeRuntime) GetUsage(context.Context, RuntimeMachine) (Usage, error) {
 	return runtime.usage, runtime.usageError
 }
 

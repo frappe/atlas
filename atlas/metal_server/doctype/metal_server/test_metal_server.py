@@ -11,9 +11,7 @@ from frappe.tests import UnitTestCase
 from atlas.atlas.core.server_providers.base import ProviderServer, ServerPowerAction
 from atlas.atlas.core.tls.metal import CERTIFICATE_RENEWAL_WINDOW_DAYS
 from atlas.metal_server.doctype.metal_server.metal_server import (
-	DATUM_TOKEN_RENEWAL_WINDOW_MINUTES,
 	MetalServer,
-	refresh_expiring_datum_tokens,
 	renew_expiring_tls_certificates,
 )
 
@@ -513,7 +511,6 @@ class TestServer(UnitTestCase):
 				"ATLAS_COMMON_NAME": "atlas.example.test",
 				"COORDINATION_LISTEN_ADDRESS": "[fdab:1::7]:9001",
 				"MESH_UPLINK_INTERFACE": "eno1.1878",
-				"DATUM_URL": "",
 			},
 		)
 		ssh_runner.return_value.run_script.assert_called_once_with(
@@ -524,50 +521,6 @@ class TestServer(UnitTestCase):
 				"METAL_TLS_PRIVATE_KEY": "private-key",
 			},
 			timeout_seconds=1200,
-		)
-
-	def test_install_metald_worker_survives_a_failed_datum_token_shipment(self) -> None:
-		server = self._server(status="Running")
-		server.settings.metald_binary_x86_64_file = "metald-file"
-		server.wireguard_ip_address = "fdab:1::7"
-		task = SimpleNamespace(result=SimpleNamespace(is_success=True))
-		tls_result = SimpleNamespace(is_success=True)
-		datum_result = SimpleNamespace(output="boom", is_success=False, exit_code=1)
-
-		with (
-			patch(
-				"atlas.metal_server.core.host_installation.get_download_url",
-				side_effect=lambda file_name: file_name,
-			),
-			patch(
-				"atlas.metal_server.core.host_installation.SSHTask.create_for_script_file",
-				return_value=task,
-			) as create_for_script_file,
-			patch(
-				"atlas.metal_server.core.host_installation.ensure_server_certificate",
-				return_value=("ca", "certificate", "private-key"),
-			),
-			patch(
-				"atlas.metal_server.core.host_installation.frappe.conf",
-				{"atlas_datum_url": "https://datum.example"},
-			),
-			patch("atlas.metal_server.core.host_installation.frappe.get_all", return_value=[]),
-			patch("atlas.metal_server.core.host_installation.frappe.db.get_value", return_value=0),
-			patch(
-				"atlas.metal_server.core.host_installation.issuer.signing_key",
-				return_value=("private-key", "atlas:1:key"),
-			),
-			patch("atlas.metal_server.core.host_installation.issue_datum_token", return_value="token"),
-			patch("atlas.metal_server.core.host_installation.SSHRunner") as ssh_runner,
-			patch("atlas.metal_server.core.host_installation.frappe.log_error") as log_error,
-		):
-			ssh_runner.return_value.run_script.side_effect = [tls_result, datum_result]
-			MetalServer._install_metald(server)
-
-		log_error.assert_called_once()
-
-		self.assertEqual(
-			create_for_script_file.call_args.kwargs["environment"]["DATUM_URL"], "https://datum.example"
 		)
 
 	def test_install_metald_listens_on_the_address_the_provider_chooses(self) -> None:
@@ -931,47 +884,6 @@ class TestServer(UnitTestCase):
 
 		create_for_script_file.assert_not_called()
 
-	def test_refresh_datum_tokens_rejects_a_running_job(self) -> None:
-		server = self._server(status="Running")
-
-		with (
-			patch("atlas.metal_server.doctype.metal_server.metal_server.frappe.only_for"),
-			patch("atlas.metal_server.doctype.metal_server.metal_server.is_job_enqueued", return_value=True),
-			patch(
-				"atlas.metal_server.doctype.metal_server.metal_server.frappe.throw", side_effect=ValueError
-			),
-			patch("atlas.metal_server.doctype.metal_server.metal_server.frappe.enqueue_doc") as enqueue_doc,
-		):
-			with self.assertRaises(ValueError):
-				MetalServer.refresh_datum_tokens(server)
-
-		enqueue_doc.assert_not_called()
-
-	def test_refresh_datum_tokens_rejects_a_server_that_is_not_running(self) -> None:
-		server = self._server(status="Stopped")
-
-		with (
-			patch("atlas.metal_server.doctype.metal_server.metal_server.frappe.only_for"),
-			patch(
-				"atlas.metal_server.doctype.metal_server.metal_server.frappe.throw", side_effect=ValueError
-			),
-			patch("atlas.metal_server.doctype.metal_server.metal_server.frappe.enqueue_doc") as enqueue_doc,
-		):
-			with self.assertRaises(ValueError):
-				MetalServer.refresh_datum_tokens(server)
-
-		enqueue_doc.assert_not_called()
-
-	def test_refresh_datum_tokens_job_delegates_to_host_installation(self) -> None:
-		server = self._server(status="Running")
-
-		with patch(
-			"atlas.metal_server.doctype.metal_server.metal_server.HostInstallation"
-		) as host_installation:
-			MetalServer._refresh_datum_tokens(server)
-
-		host_installation.return_value.install_datum_tokens.assert_called_once_with()
-
 	def test_poweroff_server_marks_the_server_stopped(self) -> None:
 		server = self._server(status="Running")
 
@@ -1116,7 +1028,6 @@ class TestServer(UnitTestCase):
 			setup_job_id=f"atlas||server-provision||{SERVER_NAME}",
 			wireguard_job_id=f"atlas||server-wireguard||{SERVER_NAME}",
 			metald_job_id=f"atlas||server||metald||{SERVER_NAME}",
-			datum_tokens_job_id=f"atlas||server||refresh-datum-tokens||{SERVER_NAME}",
 			wireguard_ip_address=None,
 			private_ipv4_address="10.0.0.7",
 			public_ipv4_address="203.0.113.7",
@@ -1246,90 +1157,3 @@ class TestExpiringCertificateRenewal(UnitTestCase):
 			renew_expiring_tls_certificates()
 
 		log_error.assert_called_once()
-
-
-class TestExpiringDatumTokenRefresh(UnitTestCase):
-	def test_refresh_is_a_no_op_without_a_datum_url(self) -> None:
-		with (
-			patch("atlas.metal_server.doctype.metal_server.metal_server.frappe.conf", {}),
-			patch("atlas.metal_server.doctype.metal_server.metal_server.frappe.get_all") as get_all,
-		):
-			refresh_expiring_datum_tokens()
-
-		get_all.assert_not_called()
-
-	def test_refresh_queues_every_ready_server(self) -> None:
-		server = Mock(datum_tokens_job_id=f"atlas||server||refresh-datum-tokens||{SERVER_NAME}")
-
-		with (
-			patch(
-				"atlas.metal_server.doctype.metal_server.metal_server.frappe.conf",
-				{"atlas_datum_url": "https://datum.example"},
-			),
-			patch(
-				"atlas.metal_server.doctype.metal_server.metal_server.now_datetime",
-				return_value=datetime(2026, 9, 20, 12, 0, 0),
-			),
-			patch(
-				"atlas.metal_server.doctype.metal_server.metal_server.add_to_date",
-				return_value=datetime(2026, 9, 20, 12, 20, 0),
-			) as add_to_date,
-			patch(
-				"atlas.metal_server.doctype.metal_server.metal_server.frappe.get_all",
-				return_value=[SERVER_NAME],
-			) as get_all,
-			patch("atlas.metal_server.doctype.metal_server.metal_server.frappe.get_doc", return_value=server),
-			patch("atlas.metal_server.doctype.metal_server.metal_server.is_job_enqueued", return_value=False),
-			patch("atlas.metal_server.doctype.metal_server.metal_server.frappe.enqueue_doc") as enqueue_doc,
-		):
-			refresh_expiring_datum_tokens()
-
-		add_to_date.assert_called_once_with(
-			datetime(2026, 9, 20, 12, 0, 0), minutes=DATUM_TOKEN_RENEWAL_WINDOW_MINUTES
-		)
-		self.assertEqual(
-			get_all.call_args.kwargs["filters"],
-			{"status": "Running", "is_provisioning_completed": 1},
-		)
-		self.assertEqual(
-			get_all.call_args.kwargs["or_filters"],
-			[
-				["Metal Server", "datum_tokens_expire_on", "is", "not set"],
-				["Metal Server", "datum_tokens_expire_on", "<=", datetime(2026, 9, 20, 12, 20, 0)],
-			],
-		)
-		enqueue_doc.assert_called_once_with(
-			server.doctype,
-			server.name,
-			"_refresh_datum_tokens",
-			job_id=server.datum_tokens_job_id,
-			deduplicate=True,
-		)
-
-	def test_refresh_skips_a_server_with_a_running_job(self) -> None:
-		server = Mock(datum_tokens_job_id=f"atlas||server||refresh-datum-tokens||{SERVER_NAME}")
-
-		with (
-			patch(
-				"atlas.metal_server.doctype.metal_server.metal_server.frappe.conf",
-				{"atlas_datum_url": "https://datum.example"},
-			),
-			patch(
-				"atlas.metal_server.doctype.metal_server.metal_server.now_datetime",
-				return_value=datetime(2026, 9, 20, 12, 0, 0),
-			),
-			patch(
-				"atlas.metal_server.doctype.metal_server.metal_server.add_to_date",
-				return_value=datetime(2026, 9, 20, 12, 20, 0),
-			),
-			patch(
-				"atlas.metal_server.doctype.metal_server.metal_server.frappe.get_all",
-				return_value=[SERVER_NAME],
-			),
-			patch("atlas.metal_server.doctype.metal_server.metal_server.frappe.get_doc", return_value=server),
-			patch("atlas.metal_server.doctype.metal_server.metal_server.is_job_enqueued", return_value=True),
-			patch("atlas.metal_server.doctype.metal_server.metal_server.frappe.enqueue_doc") as enqueue_doc,
-		):
-			refresh_expiring_datum_tokens()
-
-		enqueue_doc.assert_not_called()

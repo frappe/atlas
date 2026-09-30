@@ -28,12 +28,10 @@ from atlas.api.models import (
 	SnapshotPayload,
 	SSHKeysReplacementPayload,
 	TerminationProtectionPayload,
-	VirtualMachineComputeUsage,
 	VirtualMachineDetailResponse,
-	VirtualMachineDiskUsage,
 	VirtualMachineListResponse,
+	VirtualMachineMetricsQuery,
 	VirtualMachineMetricsResponse,
-	VirtualMachineNetworkUsage,
 	VirtualMachineResponse,
 )
 from atlas.api.router import (
@@ -187,22 +185,12 @@ def get_virtual_machine(virtual_machine_id: str) -> VirtualMachineDetailResponse
 
 @virtual_machines.get("<virtual_machine_id>/metrics")
 @api_docs()
-def get_virtual_machine_metrics(virtual_machine_id: str) -> VirtualMachineMetricsResponse:
-	"""Get VM metrics.
-
-	CPU time belongs to the current guest process. Memory is charged to the Firecracker cgroup. Disk use is from the last reconcile pass. Network counters last for the traffic attachment's lifetime, including guest stops. A stopped guest reports zero CPU and memory.
-	"""
+def get_virtual_machine_metrics(
+	virtual_machine_id: str, query: VirtualMachineMetricsQuery
+) -> VirtualMachineMetricsResponse:
+	"""Get VM metrics history."""
 	virtual_machine = get_owned_virtual_machine(virtual_machine_id)
-	metrics = virtual_machine.get_metal_vm_metrics()
-	if metrics is None:
-		return VirtualMachineMetricsResponse(
-			id=virtual_machine_id,
-			compute=VirtualMachineComputeUsage(cpu_microseconds=0, memory_bytes=0),
-			disk=VirtualMachineDiskUsage(size_mib=0, used_mib=0),
-			network=VirtualMachineNetworkUsage(
-				received_bytes=0, received_packets=0, sent_bytes=0, sent_packets=0
-			),
-		)
+	metrics = virtual_machine.get_metal_vm_metrics(start=query.start, end=query.end)
 	return VirtualMachineMetricsResponse.from_metrics(virtual_machine_id, metrics)
 
 

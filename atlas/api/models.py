@@ -1,12 +1,21 @@
 from __future__ import annotations
 
+from dataclasses import asdict
 from datetime import datetime
 from typing import TYPE_CHECKING, Annotated, Any, Literal
 from zoneinfo import ZoneInfo
 
 import frappe
 from frappe.utils import get_datetime, get_system_timezone
-from pydantic import AnyHttpUrl, BaseModel, ConfigDict, Field, StringConstraints, model_validator
+from pydantic import (
+	AnyHttpUrl,
+	AwareDatetime,
+	BaseModel,
+	ConfigDict,
+	Field,
+	StringConstraints,
+	model_validator,
+)
 
 from atlas.api.core.base import ListQuery, PatchPayload, StrictModel
 from atlas.api.core.errors import ApiErrorField
@@ -942,57 +951,38 @@ class VirtualMachineNetworkUsage(BaseModel):
 	sent_packets: int = Field(description="Cumulative packets sent by the guest.")
 
 
-class VirtualMachineMetricsResponse(BaseModel):
-	"""The current resource use of one virtual machine.
+class VirtualMachineMetricsQuery(StrictModel):
+	start: AwareDatetime | None = None
+	end: AwareDatetime | None = None
 
-	A virtual machine that is neither running nor paused reports zero CPU and
-	memory. Disk use and any surviving network counters remain available.
-	"""
+	@model_validator(mode="after")
+	def validate_range(self) -> VirtualMachineMetricsQuery:
+		if self.start is not None and self.end is not None and self.start >= self.end:
+			raise ValueError("start must precede end")
+		return self
 
-	model_config = ConfigDict(
-		json_schema_extra={
-			"examples": [
-				{
-					"id": "vm-0000001",
-					"compute": {"cpu_microseconds": 75979252, "memory_bytes": 811667456},
-					"disk": {"size_mib": 10240, "used_mib": 5},
-					"network": {
-						"received_bytes": 0,
-						"received_packets": 0,
-						"sent_bytes": 2232,
-						"sent_packets": 30,
-					},
-				}
-			]
-		}
-	)
 
-	id: str = Field(description="Virtual machine ID.")
+class VirtualMachineMetricsSample(BaseModel):
+	timestamp: AwareDatetime
+	up: bool
 	compute: VirtualMachineComputeUsage
 	disk: VirtualMachineDiskUsage
 	network: VirtualMachineNetworkUsage
 
+
+class VirtualMachineMetricsResponse(BaseModel):
+	id: str
+	samples: list[VirtualMachineMetricsSample]
+
 	@classmethod
 	def from_metrics(
-		cls, virtual_machine_id: str, metrics: MetalVirtualMachineMetrics
+		cls, virtual_machine_id: str, metrics: MetalVirtualMachineMetrics | None
 	) -> VirtualMachineMetricsResponse:
-		"""Build a metrics response from one Metal metrics read."""
 		return cls(
 			id=virtual_machine_id,
-			compute=VirtualMachineComputeUsage(
-				cpu_microseconds=metrics.compute.cpu_microseconds,
-				memory_bytes=metrics.compute.memory_bytes,
-			),
-			disk=VirtualMachineDiskUsage(
-				size_mib=metrics.disk.size_mib,
-				used_mib=metrics.disk.used_mib,
-			),
-			network=VirtualMachineNetworkUsage(
-				received_bytes=metrics.network.received_bytes,
-				received_packets=metrics.network.received_packets,
-				sent_bytes=metrics.network.sent_bytes,
-				sent_packets=metrics.network.sent_packets,
-			),
+			samples=[VirtualMachineMetricsSample.model_validate(asdict(sample)) for sample in metrics.samples]
+			if metrics is not None
+			else [],
 		)
 
 

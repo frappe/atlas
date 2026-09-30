@@ -89,7 +89,7 @@ type trafficHooks interface {
 	lastPacket(userID uint32) (nanoseconds uint64, found bool, err error)
 	setWatching(userID uint32, watching bool) error
 	clear(userID uint32) error
-	counters(userID uint32) (rx, tx TrafficCounters, err error)
+	readTrafficCounters(userID uint32) (rx, tx TrafficCounters, err error)
 	readEvent() (userID uint32, err error)
 	closeEventReader() error
 	closeMaps() error
@@ -220,8 +220,8 @@ func (monitor *Monitor) Sample(target Target) (Sample, error) {
 	return Sample{IdleFor: time.Duration(now - lastActivity), PacketSequence: packetTime}, nil
 }
 
-// Counters returns cumulative received and sent bytes and packets for one target.
-func (monitor *Monitor) Counters(target Target) (received, sent TrafficCounters, err error) {
+// GetTrafficCounters returns cumulative received and sent bytes and packets for one target.
+func (monitor *Monitor) GetTrafficCounters(target Target) (received, sent TrafficCounters, err error) {
 	monitor.mutex.Lock()
 	defer monitor.mutex.Unlock()
 
@@ -229,7 +229,7 @@ func (monitor *Monitor) Counters(target Target) (received, sent TrafficCounters,
 	if existing == nil || existing.target != target || !monitor.loaded {
 		return TrafficCounters{}, TrafficCounters{}, fmt.Errorf("read traffic counters for VM %s: %w", target.VirtualMachineID, ErrNotFound)
 	}
-	received, sent, err = monitor.hooks.counters(target.UserID)
+	received, sent, err = monitor.hooks.readTrafficCounters(target.UserID)
 	if err != nil {
 		return TrafficCounters{}, TrafficCounters{}, fmt.Errorf("read traffic counters for VM %s: %w", target.VirtualMachineID, err)
 	}

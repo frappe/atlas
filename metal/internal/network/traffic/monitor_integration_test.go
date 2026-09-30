@@ -84,7 +84,7 @@ func assertReceivedCounterAdvanced(t *testing.T, monitor *Monitor, target Target
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		received, _, err := monitor.Counters(target)
+		received, _, err := monitor.GetTrafficCounters(target)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -102,7 +102,7 @@ func assertSentCounterAdvanced(t *testing.T, monitor *Monitor, target Target, pr
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		_, sent, err := monitor.Counters(target)
+		_, sent, err := monitor.GetTrafficCounters(target)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -266,7 +266,7 @@ func TestTrafficCountersKeepConcurrentPackets(t *testing.T) {
 	}
 	close(start)
 	group.Wait()
-	received, sent, err := hooks.counters(userID)
+	received, sent, err := hooks.readTrafficCounters(userID)
 	if err != nil {
 		t.Fatal(err)
 	}

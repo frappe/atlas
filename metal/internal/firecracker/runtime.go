@@ -184,10 +184,10 @@ func (runtime *Runtime) RefreshDisk(ctx context.Context, input vm.RuntimeMachine
 	})
 }
 
-// Usage reads the machine's current cgroup memory and CPU use from its
+// GetUsage reads the machine's current cgroup memory and CPU use from its
 // systemd unit. A machine with no running unit reads as a zero Usage.
-func (runtime *Runtime) Usage(ctx context.Context, input vm.RuntimeMachine) (vm.Usage, error) {
-	usage, err := runtime.units.Usage(ctx, input.ID)
+func (runtime *Runtime) GetUsage(ctx context.Context, input vm.RuntimeMachine) (vm.Usage, error) {
+	usage, err := runtime.units.GetUsage(ctx, input.ID)
 	if err != nil {
 		return vm.Usage{}, err
 	}

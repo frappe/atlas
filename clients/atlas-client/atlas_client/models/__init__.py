@@ -67,6 +67,7 @@ from .virtual_machine_list_response import VirtualMachineListResponse
 from .virtual_machine_list_response_architecture import VirtualMachineListResponseArchitecture
 from .virtual_machine_list_response_tags import VirtualMachineListResponseTags
 from .virtual_machine_metrics_response import VirtualMachineMetricsResponse
+from .virtual_machine_metrics_sample import VirtualMachineMetricsSample
 from .virtual_machine_network import VirtualMachineNetwork
 from .virtual_machine_network_usage import VirtualMachineNetworkUsage
 from .virtual_machine_response import VirtualMachineResponse
@@ -142,6 +143,7 @@ __all__ = (
     "VirtualMachineListResponseArchitecture",
     "VirtualMachineListResponseTags",
     "VirtualMachineMetricsResponse",
+    "VirtualMachineMetricsSample",
     "VirtualMachineNetwork",
     "VirtualMachineNetworkUsage",
     "VirtualMachineResponse",

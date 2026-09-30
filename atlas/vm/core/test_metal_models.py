@@ -173,27 +173,35 @@ class TestMetalVirtualMachineMetricsParsing(UnitTestCase):
 	def test_a_complete_response_parses_into_typed_values(self) -> None:
 		metrics = MetalVirtualMachineMetrics.from_dict(
 			{
-				"compute": {"cpu_microseconds": 42_000_000, "memory_bytes": 536870912},
-				"disk": {"size_mib": 10240, "used_mib": 5},
-				"network": {
-					"received_bytes": 0,
-					"received_packets": 0,
-					"sent_bytes": 2232,
-					"sent_packets": 30,
-				},
+				"samples": [
+					{
+						"timestamp": "2026-09-30T10:00:00Z",
+						"up": True,
+						"compute": {"cpu_microseconds": 42_000_000, "memory_bytes": 536870912},
+						"disk": {"size_mib": 10240, "used_mib": 5},
+						"network": {
+							"received_bytes": 0,
+							"received_packets": 0,
+							"sent_bytes": 2232,
+							"sent_packets": 30,
+						},
+					}
+				]
 			}
 		)
 
-		self.assertEqual(metrics.compute.cpu_microseconds, 42_000_000)
-		self.assertEqual(metrics.compute.memory_bytes, 536870912)
-		self.assertEqual(metrics.disk.size_mib, 10240)
-		self.assertEqual(metrics.disk.used_mib, 5)
-		self.assertEqual(metrics.network.sent_bytes, 2232)
-		self.assertEqual(metrics.network.sent_packets, 30)
+		self.assertEqual(metrics.samples[0].compute.cpu_microseconds, 42_000_000)
+		self.assertEqual(metrics.samples[0].compute.memory_bytes, 536870912)
+		self.assertEqual(metrics.samples[0].disk.size_mib, 10240)
+		self.assertEqual(metrics.samples[0].disk.used_mib, 5)
+		self.assertEqual(metrics.samples[0].network.sent_bytes, 2232)
+		self.assertEqual(metrics.samples[0].network.sent_packets, 30)
 
 	def test_a_response_missing_a_required_group_is_rejected(self) -> None:
-		for removed in ("compute", "disk", "network"):
+		for removed in ("compute", "disk", "network", "timestamp", "up"):
 			response = {
+				"timestamp": "2026-09-30T10:00:00Z",
+				"up": True,
 				"compute": {"cpu_microseconds": 0, "memory_bytes": 0},
 				"disk": {"size_mib": 0, "used_mib": 0},
 				"network": {
@@ -205,7 +213,32 @@ class TestMetalVirtualMachineMetricsParsing(UnitTestCase):
 			}
 			del response[removed]
 			with self.assertRaises(ValueError):
+				MetalVirtualMachineMetrics.from_dict({"samples": [response]})
+
+	def test_history_requires_a_list_and_aware_timestamps(self) -> None:
+		for response in ({}, {"samples": None}, {"samples": [False]}):
+			with self.assertRaises(ValueError):
 				MetalVirtualMachineMetrics.from_dict(response)
+		self.assertEqual(MetalVirtualMachineMetrics.from_dict({"samples": []}).samples, ())
+		with self.assertRaisesRegex(ValueError, "timezone"):
+			MetalVirtualMachineMetrics.from_dict(
+				{
+					"samples": [
+						{
+							"timestamp": "2026-09-30T10:00:00",
+							"up": True,
+							"compute": {"cpu_microseconds": 0, "memory_bytes": 0},
+							"disk": {"size_mib": 0, "used_mib": 0},
+							"network": {
+								"received_bytes": 0,
+								"received_packets": 0,
+								"sent_bytes": 0,
+								"sent_packets": 0,
+							},
+						}
+					]
+				}
+			)
 
 
 class TestMetalTimestamps(UnitTestCase):

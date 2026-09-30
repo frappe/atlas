@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from datetime import datetime
 from typing import TYPE_CHECKING, Any, Never, TypedDict, cast
 
 import frappe
@@ -256,11 +257,13 @@ class VirtualMachineService:
 			)
 		)
 
-	def get_metrics(self) -> MetalVirtualMachineMetrics | None:
-		"""Return the current resource use from Metal, or no value when the
-		virtual machine is absent."""
+	def get_metrics(
+		self, *, start: datetime | None = None, end: datetime | None = None
+	) -> MetalVirtualMachineMetrics | None:
 		try:
-			return self.metal_client.get_virtual_machine_metrics(cast(str, self.virtual_machine.name))
+			return self.metal_client.get_virtual_machine_metrics(
+				cast(str, self.virtual_machine.name), start=start, end=end
+			)
 		except MetalClientError as error:
 			if error.is_not_found:
 				return None
