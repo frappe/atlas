@@ -18,27 +18,50 @@ func (runtime *Runtime) prepareBoot(ctx context.Context, configuration vm.Runtim
 		return err
 	}
 
-	bootConfiguration, err := runtime.virtualMachineStorage.PrepareBoot(ctx, storage.VirtualMachineStorageRequest{
-		VirtualMachineID: configuration.ID,
-		ImageReference:   configuration.Specification.Image.Name,
-		Image:            configuration.Specification.Image,
-		ChrootRoot:       runtime.configuration.chrootRoot(configuration.ID),
-		UserID:           configuration.UserID,
-		GroupID:          configuration.GroupID,
-		DiskMiB:          configuration.Specification.DiskMiB,
-	})
+	var bootConfiguration storage.BootConfiguration
+	var err error
+	if configuration.Specification.Rescue.Enabled {
+		bootConfiguration, err = runtime.virtualMachineStorage.PrepareRescueBoot(ctx, storage.VirtualMachineRescueBootRequest{
+			VirtualMachineID:     configuration.ID,
+			RescueGeneration:     configuration.RescueGeneration,
+			RescueImageReference: configuration.Specification.Rescue.Image.Name,
+			RescueImage:          configuration.Specification.Rescue.Image,
+			ChrootRoot:           runtime.configuration.chrootRoot(configuration.ID),
+			UserID:               configuration.UserID,
+			GroupID:              configuration.GroupID,
+		})
+	} else {
+		bootConfiguration, err = runtime.virtualMachineStorage.PrepareBoot(ctx, storage.VirtualMachineStorageRequest{
+			VirtualMachineID: configuration.ID,
+			ImageReference:   configuration.Specification.Image.Name,
+			Image:            configuration.Specification.Image,
+			ChrootRoot:       runtime.configuration.chrootRoot(configuration.ID),
+			UserID:           configuration.UserID,
+			GroupID:          configuration.GroupID,
+			DiskMiB:          configuration.Specification.DiskMiB,
+		})
+	}
 	if err != nil {
 		return err
 	}
 	runtime.logger.Debug("configured Firecracker VM", "virtual_machine_id", configuration.ID, "kernel", bootConfiguration.Kernel, "cmdline", bootArguments(bootConfiguration, configuration.NetworkInterface))
-	return configure(
+	if err := configure(
 		ctx,
 		api.New(runtime.configuration.socketPath(configuration.ID)),
 		configuration.ID,
 		configuration.Specification,
 		bootConfiguration,
 		configuration.NetworkInterface,
-	)
+	); err != nil {
+		return err
+	}
+	if configuration.Specification.Rescue.Enabled {
+		if err := runtime.prepareRescueListener(configuration); err != nil {
+			return err
+		}
+		return api.New(runtime.configuration.socketPath(configuration.ID)).PutVsock(ctx, api.Vsock{GuestCID: 3, UDSPath: "/rescue.vsock"})
+	}
+	return nil
 }
 
 // prepareLaunch creates the jail and starts the unit. It opens the console PTY
@@ -85,6 +108,10 @@ func (runtime *Runtime) prepareLaunch(ctx context.Context, configuration vm.Runt
 
 // relaunch discards the old jail and boots from a clean one.
 func (runtime *Runtime) relaunch(ctx context.Context, configuration vm.RuntimeMachine) error {
+	if err := runtime.clearRescueBoot(configuration.ID); err != nil {
+		return err
+	}
+
 	_ = runtime.units.Stop(ctx, configuration.ID)
 	_ = os.RemoveAll(filepath.Dir(runtime.configuration.chrootRoot(configuration.ID)))
 	return runtime.prepareBoot(ctx, configuration)
@@ -218,7 +245,7 @@ func (runtime *Runtime) firecrackerCompatibility() string {
 // image shape exactly.
 func (runtime *Runtime) hasMatchingMemorySnapshot(specification vm.Specification) bool {
 	configuration := specification.Image.MemorySnapshotConfiguration
-	return specification.Image.CacheImage &&
+	return !specification.Rescue.Enabled && specification.Image.CacheImage &&
 		specification.Image.MemorySnapshot &&
 		configuration != nil &&
 		configuration.VirtualCPUCount == specification.VirtualCPUCount() &&

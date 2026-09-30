@@ -81,7 +81,7 @@ class TestBuildUbuntuBaseImageCommand(UnitTestCase):
 			)
 
 		self.assertEqual(result.exit_code, 0, result.output)
-		build.assert_called_once_with("24.04", "amd64", False, Path("dist"))
+		build.assert_called_once_with("24.04", "amd64", False, Path("dist"), rescue=False)
 		initialize.assert_called_once_with("missing.local")
 		publish.assert_called_once_with(
 			"ubuntu-24.04",

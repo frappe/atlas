@@ -41,6 +41,9 @@ Optional `max_samples` sets the most samples to return, from 10 to 2000. The def
 Each sample is the latest sample in its bucket, with disk I/O rates averaged across the bucket. `sample_interval_seconds` is the bucket length. Network and CPU values are cumulative counters; divide the difference between adjacent samples by their elapsed seconds to calculate an average rate.
 
 Network counters count unicast IPv4 and IPv6 packets at the VM TAP. The protocol counters read direct transport headers; IPv6 extension headers and later IPv4 fragments still increase the total packet count but not the protocol count. A Metal restart or TAP reattachment resets network counters, so discard a negative counter difference when calculating rates.
+## Repair a VM
+
+Use [rescue mode](rescue.md) to boot a repair system with the original disk attached and unmounted.
 
 ## Terminate a VM
 

@@ -206,6 +206,18 @@ type VirtualMachineStorageRequest struct {
 	SourceSnapshot   string
 }
 
+// VirtualMachineRescueBootRequest identifies the rescue image and the virtual
+// machine whose own disk attaches alongside it.
+type VirtualMachineRescueBootRequest struct {
+	RescueGeneration     uint64
+	VirtualMachineID     string
+	RescueImageReference string
+	RescueImage          vm.Image
+	ChrootRoot           string
+	UserID               uint32
+	GroupID              uint32
+}
+
 // BootConfiguration contains the files that Firecracker needs to boot.
 type BootConfiguration struct {
 	Kernel     string

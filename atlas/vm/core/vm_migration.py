@@ -117,6 +117,11 @@ class MigrationService:
 				exc=AtlasUserError,
 			)
 
+		from atlas.vm.core.vm_service import VirtualMachineService
+
+		service = VirtualMachineService(virtual_machine)
+		service.ensure_rescue_inactive(service.require_information())
+
 	def destination_shape(self, virtual_machine: VirtualMachine) -> VirtualMachineShape:
 		"""Return the shape the VM has on the destination."""
 		if self.has_target_shape:

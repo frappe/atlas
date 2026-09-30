@@ -60,6 +60,7 @@ from .public_ip_response_delivery import PublicIPResponseDelivery
 from .public_ip_response_status import PublicIPResponseStatus
 from .public_ip_response_tags import PublicIPResponseTags
 from .public_ip_response_version import PublicIPResponseVersion
+from .rescue_payload import RescuePayload
 from .reserve_public_ip_payload import ReservePublicIPPayload
 from .reserve_public_ip_payload_version import ReservePublicIPPayloadVersion
 from .resize_payload import ResizePayload
@@ -84,6 +85,7 @@ from .virtual_machine_metrics_response import VirtualMachineMetricsResponse
 from .virtual_machine_metrics_sample import VirtualMachineMetricsSample
 from .virtual_machine_network import VirtualMachineNetwork
 from .virtual_machine_network_usage import VirtualMachineNetworkUsage
+from .virtual_machine_rescue import VirtualMachineRescue
 from .virtual_machine_response import VirtualMachineResponse
 from .virtual_machine_response_architecture import VirtualMachineResponseArchitecture
 from .virtual_machine_response_tags import VirtualMachineResponseTags
@@ -151,6 +153,7 @@ __all__ = (
     "PublicIPResponseStatus",
     "PublicIPResponseTags",
     "PublicIPResponseVersion",
+    "RescuePayload",
     "ReservePublicIPPayload",
     "ReservePublicIPPayloadVersion",
     "ResizePayload",
@@ -175,6 +178,7 @@ __all__ = (
     "VirtualMachineMetricsSample",
     "VirtualMachineNetwork",
     "VirtualMachineNetworkUsage",
+    "VirtualMachineRescue",
     "VirtualMachineResponse",
     "VirtualMachineResponseArchitecture",
     "VirtualMachineResponseTags",

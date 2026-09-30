@@ -1,0 +1,26 @@
+#!/usr/bin/python3
+"""Report a normal reboot during systemd's final shutdown phase."""
+import socket
+import sys
+
+
+def notify_reboot():
+    with socket.socket(socket.AF_VSOCK, socket.SOCK_STREAM) as connection:
+        connection.settimeout(2)
+        connection.connect((2, 187))
+        connection.sendall(b"reboot\n")
+        response = b""
+        while len(response) < 3:
+            chunk = connection.recv(3 - len(response))
+            if not chunk:
+                break
+            response += chunk
+        if response != b"ok\n":
+            raise OSError("Metal did not acknowledge rescue exit")
+
+
+if __name__ == "__main__" and sys.argv[1:] == ["reboot"]:
+    try:
+        notify_reboot()
+    except OSError as error:
+        print(f"Atlas rescue reboot notification failed: {error}", file=sys.stderr)

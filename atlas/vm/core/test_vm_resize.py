@@ -15,10 +15,12 @@ def build_information(state: str = "stopped") -> SimpleNamespace:
 	"""Return one Metal record with a 2 CPU, 2 GiB, 20 GiB shape."""
 	return SimpleNamespace(
 		desired=SimpleNamespace(
+			rescue=SimpleNamespace(enabled=False),
+			rescue_generation=0,
 			compute=SimpleNamespace(cpu_millicores=2000, memory_mib=2048, sleep_after_idle_seconds=0),
 			disk=SimpleNamespace(size_mib=20480, throughput_mibps=50, iops=2000),
 		),
-		observed=SimpleNamespace(state=state),
+		observed=SimpleNamespace(state=state, rescue_generation=0),
 	)
 
 
