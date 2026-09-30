@@ -42,7 +42,7 @@ class VirtualMachineResize:
 		if target_shape.has_same_resources(current_shape):
 			if target_shape != current_shape:
 				self._set_idle_shutdown(current_shape, target_shape.sleep_after_idle_seconds)
-			self._sync_shape(current_shape)
+			self._sync_shape(target_shape)
 			return None
 		if information.observed.state != "stopped":
 			frappe.throw(_("Stop the Virtual Machine before you resize it."), exc=AtlasUserError)
