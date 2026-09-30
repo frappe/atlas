@@ -117,6 +117,7 @@ def build_service_packages(context: CliCtxObj) -> None:
 @click.option("--version", type=click.Choice(["22.04", "24.04"]), required=True)
 @click.option("--architecture", type=click.Choice(["amd64"]), default="amd64", show_default=True)
 @click.option("--minimal", is_flag=True, help="Build the Ubuntu minimal cloud image.")
+@click.option("--rescue", is_flag=True, help="Include rescue tools and the reboot notification hook.")
 @click.option("--title")
 @click.option(
 	"--skip-existing",
@@ -139,6 +140,7 @@ def build_ubuntu_base_image(
 	version: str,
 	architecture: str,
 	minimal: bool,
+	rescue: bool,
 	title: str | None,
 	skip_existing: bool,
 	storage: str,
@@ -150,7 +152,7 @@ def build_ubuntu_base_image(
 	if minimal and version != "24.04":
 		raise click.UsageError("minimal images are available only for Ubuntu 24.04")
 
-	title = title or f"ubuntu-{version}" + ("-minimal" if minimal else "")
+	title = title or f"ubuntu-{version}" + ("-rescue" if rescue else "") + ("-minimal" if minimal else "")
 	target_sites = context.sites
 	if skip_existing:
 		target_sites = [site for site in context.sites if not is_image_available(site, title, architecture)]
@@ -159,7 +161,9 @@ def build_ubuntu_base_image(
 		return
 
 	click.echo(f"Building {title} for {architecture}")
-	image_path, kernel_path = build_ubuntu_image(version, architecture, minimal, output_directory)
+	image_path, kernel_path = build_ubuntu_image(
+		version, architecture, minimal, output_directory, rescue=rescue
+	)
 	for site in target_sites:
 		try:
 			frappe.init(site)

@@ -264,6 +264,48 @@ class VirtualMachineService:
 			)
 		)
 
+	def set_rescue(self, enabled: bool) -> dict[str, Any]:
+		"""Select the configured rescue image for a new session."""
+		current = self.require_information()
+		if current.desired.rescue.enabled == enabled:
+			return current.as_dict()
+		if current.desired.state not in {"running", "stopped"}:
+			frappe.throw(
+				_("Stop the paused Virtual Machine before changing rescue mode."), exc=AtlasConflictError
+			)
+		image_request = None
+		if enabled:
+			settings = frappe.get_single("Atlas Settings")
+			if not settings.rescue_virtual_machine_image:
+				frappe.throw(_("Select a rescue image in Atlas Settings first."), exc=AtlasUserError)
+			image = self.get_image(settings.rescue_virtual_machine_image, self.virtual_machine.tenant_id)
+			image.validate_rescue_image()
+			if image.architecture != self.virtual_machine.architecture:
+				frappe.throw(
+					_("The rescue image architecture does not match this Virtual Machine."),
+					exc=AtlasUserError,
+				)
+			image_request = image.get_metal_image_request()
+		information = self.perform_metal_operation(
+			lambda client: client.set_virtual_machine_rescue(
+				cast(str, self.virtual_machine.name), enabled, image_request
+			)
+		)
+		return information.as_dict()
+
+	def ensure_rescue_inactive(self, information: MetalVirtualMachine) -> None:
+		"""Block disk layout changes until rescue exit has been applied."""
+		if (
+			information.desired.rescue.enabled
+			or information.desired.rescue_generation != information.observed.rescue_generation
+		):
+			frappe.throw(
+				_(
+					"Exit rescue mode and wait for completion before resizing, migrating, or taking a snapshot."
+				),
+				exc=AtlasConflictError,
+			)
+
 	def set_compute(self, compute: dict[str, Any]) -> dict[str, Any]:
 		"""Set the complete compute values in Metal."""
 		information = self.perform_metal_operation(
@@ -285,8 +327,11 @@ class VirtualMachineService:
 
 	def update_disk(self, changes: dict[str, int]) -> dict[str, Any]:
 		"""Apply selected disk changes and keep the stored disk size in step."""
-		current_disk = self.require_information().desired.disk
+		information = self.require_information()
+		current_disk = information.desired.disk
 		size_mib = changes.get("size_mib", current_disk.size_mib)
+		if size_mib != current_disk.size_mib:
+			self.ensure_rescue_inactive(information)
 		if size_mib < current_disk.size_mib:
 			frappe.throw(_("Disk size can only increase."), exc=AtlasUserError)
 
@@ -484,6 +529,8 @@ class VirtualMachineService:
 	@staticmethod
 	def raise_metal_error(error: MetalClientError) -> Never:
 		"""Raise one safe Metal failure at the Frappe boundary."""
+		if error.status == 409 and not error.is_insufficient_capacity:
+			frappe.throw(_("Metal request failed: {0}").format(error), exc=AtlasConflictError)
 		if error.is_insufficient_capacity:
 			frappe.throw(
 				_("The host has no room for this change. Stop the Virtual Machine and resize it to move it."),

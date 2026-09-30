@@ -254,6 +254,10 @@ func (images *fakeImages) PrepareBoot(
 	return storage.BootConfiguration{}, nil
 }
 
+func (images *fakeImages) PrepareRescueBoot(context.Context, storage.VirtualMachineRescueBootRequest) (storage.BootConfiguration, error) {
+	return storage.BootConfiguration{Drives: []storage.Drive{{Path: "/rootfs.img", Root: true}, {Path: "/disk.img"}}}, nil
+}
+
 func (images *fakeImages) PrepareRootFileSystem(
 	context.Context,
 	storage.VirtualMachineStorageRequest,

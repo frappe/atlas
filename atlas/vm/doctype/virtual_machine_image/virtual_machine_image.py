@@ -122,6 +122,15 @@ class VirtualMachineImage(Document):
 		if frappe.db.exists("Virtual Machine", {"virtual_machine_image": self.name}):
 			frappe.throw(_("A Virtual Machine still refers to this image."), exc=AtlasConflictError)
 
+	def validate_rescue_image(self) -> None:
+		"""Require an enabled System image that can cold boot."""
+		self.validate_is_available()
+		if not self.enabled or self.image_type != "system" or self.memory_snapshot:
+			frappe.throw(
+				_("The rescue image must be an enabled System image without a memory snapshot."),
+				exc=AtlasUserError,
+			)
+
 	def get_metal_image_request(self) -> dict[str, Any]:
 		"""Return the image object for a Metal create request."""
 		self.validate_is_available()

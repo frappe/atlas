@@ -38,6 +38,7 @@ The generated [Metal API reference](../../../docs/region/metald.md#request-rules
 
 - Use PUT when a request replaces desired state, so a repeat is safe.
 - Use POST only for an action that runs on each call, such as a restart, or to create a resource.
+- The rescue PUT requires an explicit `enabled` boolean and a validated cold image when enabling. Desired responses include the pinned image identity without signed URLs. Desired and observed rescue generations expose transition progress. See [rescue mode](../../../docs/compute/rescue.md).
 - The network PUT requires the complete network object, including `firewall`.
 - Every coordination route carries the VM ID as the `virtual_machine_id` query value.
 - The coordination stop route is idempotent. It returns the final snapshot.

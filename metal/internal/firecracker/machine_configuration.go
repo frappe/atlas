@@ -59,7 +59,7 @@ func configure(
 	}
 
 	for driveIndex, drive := range bootConfiguration.Drives {
-		request := driveRequest(driveIndex, drive, specification.Disk)
+		request := driveRequest(driveIndex, drive, specification.Disk, len(bootConfiguration.Drives))
 		if err := client.PutDrive(operationContext, request); err != nil {
 			return err
 		}

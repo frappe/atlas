@@ -16,6 +16,10 @@ A resize uses the current host if it has enough capacity. Otherwise, Atlas can r
 
 Read [Metal's requested and applied generations](reconciliation.md) for current progress. The Atlas VM list uses [cached host reports](../region/host-sync.md).
 
+## Repair a VM
+
+Use [rescue mode](rescue.md) to boot a repair system with the original disk attached and unmounted.
+
 ## Terminate a VM
 
 1. Atlas requests destruction and marks its record as terminating.

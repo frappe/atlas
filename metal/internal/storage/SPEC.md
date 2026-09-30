@@ -29,6 +29,10 @@ This package imports images, clones VM disks, manages warm artifacts, and stages
 - One lock covers each image reference or snapshot ID. A failed multi-step create removes what it made. Deletes accept an absent resource.
 - A warm key includes image identity, exact VM shape, and Firecracker compatibility. Warm memory and Firecracker state stay on the host.
 
+## Rescue storage
+
+`PrepareRescueBoot` requires an existing original disk. It clones the selected rescue image into `<pool>/rescue/<vm>` and records `atlas:rescue-generation` on the clone. A matching session reuses the disk. A different generation replaces it only after the VM manager stops the old guest. `Release` removes both VM-owned disks. See [rescue mode](../../../docs/compute/rescue.md).
+
 ## Validation
 
 Use [image upload tests](image_upload_test.go) and [migration transfer tests](migration_transfer_test.go) for retry and cleanup changes. The [VM manager contract](../vm/SPEC.md) coordinates storage with runtime and network.

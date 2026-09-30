@@ -28,6 +28,13 @@ class TestUbuntuImageBuilder(UnitTestCase):
 		self.assertEqual(kernel_path.name, "vmlinux-ubuntu-24.04-minimal-server")
 		run.assert_called_once_with(command, check=True)
 
+	def test_rescue_build_has_distinct_artifacts_and_installs_the_hook(self) -> None:
+		with TemporaryDirectory() as directory, patch("atlas.vm.core.image_builder.subprocess.run") as run:
+			image, kernel = build_ubuntu_image("24.04", "amd64", False, Path(directory), rescue=True)
+		self.assertIn("--rescue", run.call_args.args[0])
+		self.assertEqual(image.name, "ubuntu-24.04-rescue-amd64.ext4")
+		self.assertEqual(kernel.name, "vmlinux-ubuntu-24.04-rescue-server")
+
 	def test_publish_keeps_an_unchanged_image_record(self) -> None:
 		existing = SimpleNamespace(image_sha256="a" * 64, kernel_sha256="b" * 64)
 		with (

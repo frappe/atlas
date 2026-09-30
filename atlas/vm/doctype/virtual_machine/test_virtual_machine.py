@@ -26,6 +26,8 @@ METAL_VIRTUAL_MACHINE_RESPONSE = {
 	"desired": {
 		"generation": 2,
 		"restart_generation": 1,
+		"rescue_generation": 0,
+		"rescue": {"enabled": False},
 		"state": "running",
 		"compute": {
 			"cpu_millicores": 2000,
@@ -59,6 +61,8 @@ METAL_VIRTUAL_MACHINE_RESPONSE = {
 	"observed": {
 		"generation": 1,
 		"restart_generation": 1,
+		"rescue_generation": 0,
+		"rescue": {"enabled": False},
 		"state": "running",
 		"phase": "network",
 		"operation_id": "operation-1",
@@ -972,10 +976,17 @@ class TestSystemImageCreation(UnitTestCase):
 		virtual_machine.is_terminating = 0
 		virtual_machine.active_migration = None
 		virtual_machine.check_permission = Mock()
-		with patch(
-			"atlas.vm.core.vm_image_transfer.VirtualMachineImageTransferService.create_from_virtual_machine",
-			return_value="IMG-00001",
-		) as create:
+		with (
+			patch(
+				"atlas.vm.core.vm_image_transfer.VirtualMachineImageTransferService.create_from_virtual_machine",
+				return_value="IMG-00001",
+			) as create,
+			patch.object(
+				VirtualMachineService,
+				"require_information",
+				return_value=MetalVirtualMachine.from_dict(METAL_VIRTUAL_MACHINE_RESPONSE),
+			),
+		):
 			name = virtual_machine.create_machine_image("golden", **options)
 		return name, create
 

@@ -29,6 +29,7 @@ type savedStateRequirement struct {
 	UserID                   uint32
 	SpecificationGeneration  uint64
 	RestartGeneration        uint64
+	RescueGeneration         uint64
 	FirecrackerCompatibility string
 }
 
@@ -37,6 +38,7 @@ type savedStateMetadata struct {
 	UserID                   uint32    `json:"user_id"`
 	SpecificationGeneration  uint64    `json:"specification_generation"`
 	RestartGeneration        uint64    `json:"restart_generation"`
+	RescueGeneration         uint64    `json:"rescue_generation"`
 	FirecrackerCompatibility string    `json:"firecracker_compatibility"`
 	CreatedAt                time.Time `json:"created_at"`
 	StateFileName            string    `json:"state_file_name"`
@@ -108,6 +110,7 @@ func (runtime *Runtime) createSavedState(ctx context.Context, machine vm.Runtime
 		UserID:                   machine.UserID,
 		SpecificationGeneration:  machine.SpecificationGeneration,
 		RestartGeneration:        machine.RestartGeneration,
+		RescueGeneration:         machine.RescueGeneration,
 		FirecrackerCompatibility: runtime.firecrackerCompatibility(),
 		CreatedAt:                time.Now().UTC(),
 		StateFileName:            memorySnapshotStateFileName,
@@ -147,6 +150,8 @@ func (metadata savedStateMetadata) validate(requirement savedStateRequirement) e
 		return fmt.Errorf("saved state specification generation %d does not match %d", metadata.SpecificationGeneration, requirement.SpecificationGeneration)
 	case metadata.RestartGeneration != requirement.RestartGeneration:
 		return fmt.Errorf("saved state restart generation %d does not match %d", metadata.RestartGeneration, requirement.RestartGeneration)
+	case metadata.RescueGeneration != requirement.RescueGeneration:
+		return fmt.Errorf("saved state rescue generation %d does not match %d", metadata.RescueGeneration, requirement.RescueGeneration)
 	case metadata.FirecrackerCompatibility != requirement.FirecrackerCompatibility:
 		return fmt.Errorf("saved state Firecracker compatibility %q does not match %q", metadata.FirecrackerCompatibility, requirement.FirecrackerCompatibility)
 	case metadata.StateFileName != memorySnapshotStateFileName || metadata.MemoryFileName != memorySnapshotMemoryFileName:

@@ -1,0 +1,15 @@
+Atlas rescue mode
+
+Your original disk is attached as /dev/vdb and is NOT mounted.
+Inspect it first: sudo lsblk -f /dev/vdb
+For a filesystem on the whole disk:
+  sudo mkdir -p /mnt/original
+  sudo mount /dev/vdb /mnt/original
+For a partitioned disk, mount the appropriate partition instead.
+Unmount a filesystem before running fsck or other offline repair tools.
+
+Repairs written to the original disk persist after rescue ends.
+Stop/Start keeps this rescue disk. Reboot or Exit Rescue discards it.
+Copy any tools or notes you need before you leave rescue.
+Ordinary sudo reboot reports exit to Metal and boots the original disk.
+A forced reset or failed notification can leave rescue selected; use Exit Rescue.

@@ -100,6 +100,7 @@ class AtlasSettings(Document):
 		public_ssh_key: DF.SmallText
 		region_id: DF.Int
 		region_name: DF.Data
+		rescue_virtual_machine_image: DF.Link | None
 		route53_access_key_id: DF.Data | None
 		route53_access_key_secret: DF.Password | None
 		route53_dns_zone_id: DF.Data | None
@@ -220,6 +221,8 @@ class AtlasSettings(Document):
 			frappe.throw(_("Unknown placement strategy: {0}.").format(self.placement_strategy))
 
 		self._validate_sleepy_vm_overcommit_factor()
+		if self.rescue_virtual_machine_image:
+			frappe.get_doc("Virtual Machine Image", self.rescue_virtual_machine_image).validate_rescue_image()
 
 		if not self.is_new() and self.has_value_changed("region_id"):
 			if frappe.db.exists("Virtual Machine") or frappe.db.exists(

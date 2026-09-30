@@ -40,7 +40,7 @@ func networkRequest(record DesiredRecord) NetworkRequest {
 		UserID:           record.UserID,
 		GroupID:          record.GroupID,
 		Configuration:    record.Specification.Network,
-		TrackTraffic:     record.State == StateRunning && record.Specification.SleepAfterIdleSeconds > 0,
+		TrackTraffic:     record.State == StateRunning && !record.Specification.Rescue.Enabled && record.Specification.SleepAfterIdleSeconds > 0,
 	}
 }
 
@@ -54,5 +54,6 @@ func runtimeMachine(record DesiredRecord, networkInterface NetworkInterface) Run
 		NetworkInterface:        networkInterface,
 		SpecificationGeneration: record.SpecificationGeneration,
 		RestartGeneration:       record.RestartGeneration,
+		RescueGeneration:        record.RescueGeneration,
 	}
 }

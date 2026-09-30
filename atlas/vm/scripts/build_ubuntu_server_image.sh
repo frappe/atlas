@@ -7,6 +7,7 @@ kernel_output=""
 architecture=""
 version=""
 minimal=false
+rescue=false
 script_directory=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 
 step() { echo "==> $*"; }
@@ -18,12 +19,18 @@ while [[ $# -gt 0 ]]; do
 		--architecture) architecture=$2; shift 2 ;;
 		--version) version=$2; shift 2 ;;
 		--minimal) minimal=true; shift ;;
+		--rescue) rescue=true; shift ;;
 		*) echo "unknown argument: $1" >&2; exit 2 ;;
 	esac
 done
 
 [[ -n $output && -n $kernel_output && -n $architecture && -n $version ]] || { echo "--output, --kernel-output, --architecture, and --version are required" >&2; exit 2; }
 [[ $EUID -eq 0 ]] || { echo "run this builder with root permissions" >&2; exit 1; }
+
+if $rescue && [[ $version != 24.04 ]]; then
+	echo "rescue images require Ubuntu 24.04 to match the supplied kernel modules" >&2
+	exit 2
+fi
 
 case "$architecture" in
 	amd64) ;;
@@ -203,19 +210,67 @@ AuthorizedKeysCommandUser nobody
 EOF
 }
 
+install_rescue_tools() {
+	install -D -m 0755 "$script_directory/guest/rescue-reboot" \
+		"$rootfs_directory/usr/lib/systemd/system-shutdown/atlas-rescue"
+	install -D -m 0644 "$script_directory/guest/rescue-motd" "$rootfs_directory/etc/motd"
+	# This image has a single root filesystem. Leave the attached original disk alone.
+	cat > "$rootfs_directory/etc/cloud/cloud.cfg.d/99-atlas-rescue.cfg" <<'EOF'
+mounts: []
+growpart:
+  mode: "off"
+resize_rootfs: false
+EOF
+	# Package scripts must not start daemons in the build host's namespaces.
+	cat > "$rootfs_directory/usr/sbin/policy-rc.d" <<'EOF'
+#!/bin/sh
+exit 101
+EOF
+	chmod 0755 "$rootfs_directory/usr/sbin/policy-rc.d"
+	rm -f "$rootfs_directory/etc/resolv.conf"
+	cp /etc/resolv.conf "$rootfs_directory/etc/resolv.conf"
+	chroot "$rootfs_directory" apt-get update
+	chroot "$rootfs_directory" env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+		python3 e2fsprogs xfsprogs btrfs-progs util-linux parted lvm2 mdadm \
+		cryptsetup-bin curl ca-certificates openssh-server vim-tiny linux-image-virtual
+	chroot "$rootfs_directory" apt-get clean
+	# Snap seeding can wait for Internet access and hold cloud-final indefinitely.
+	# The repair tools are installed by apt, so rescue does not need Snap services.
+	for unit in snapd.service snapd.socket snapd.seeded.service snapd.autoimport.service; do
+		ln -sf /dev/null "$rootfs_directory/etc/systemd/system/$unit"
+	done
+	# Use the kernel installed with the modules, rather than a separately downloaded version.
+	local rescue_kernel
+	rescue_kernel=$(find "$rootfs_directory/boot" -maxdepth 1 -name 'vmlinuz-*' | sort -V | tail -n1)
+	[[ -n $rescue_kernel ]] || { echo "rescue kernel was not installed" >&2; return 1; }
+	extract_vmlinux "$rescue_kernel" "$kernel_path.part"
+	mv "$kernel_path.part" "$kernel_path"
+	# Package installation can create host identities. Each guest must generate its own.
+	rm -f "$rootfs_directory"/etc/ssh/ssh_host_* "$rootfs_directory/var/lib/dbus/machine-id"
+	: > "$rootfs_directory/etc/machine-id"
+	ln -s /etc/machine-id "$rootfs_directory/var/lib/dbus/machine-id"
+	rm "$rootfs_directory/usr/sbin/policy-rc.d" "$rootfs_directory/etc/resolv.conf"
+	ln -s ../run/systemd/resolve/stub-resolv.conf "$rootfs_directory/etc/resolv.conf"
+	# Ubuntu ships the vsock transport as a module. Load it before shutdown begins.
+	install -d -m 0755 "$rootfs_directory/etc/modules-load.d"
+	printf 'vmw_vsock_virtio_transport\n' > "$rootfs_directory/etc/modules-load.d/atlas-rescue.conf"
+}
+
 rootfs_path="$work_path/rootfs.squashfs"
 rootfs_directory="$work_path/rootfs"
 fetch "$rootfs_url" "$rootfs_sha256" "$rootfs_path"
 
-vmlinuz_path="$work_path/vmlinuz"
-fetch "$kernel_url" "$kernel_sha256" "$vmlinuz_path"
-step "extract uncompressed vmlinux"
-extract_vmlinux "$vmlinuz_path" "$kernel_path.part" || {
-	echo "could not extract an ELF vmlinux from the Ubuntu kernel" >&2
-	exit 1
-}
-mv "$kernel_path.part" "$kernel_path"
-step "extracted $(basename "$kernel_path")"
+if ! $rescue; then
+	vmlinuz_path="$work_path/vmlinuz"
+	fetch "$kernel_url" "$kernel_sha256" "$vmlinuz_path"
+	step "extract uncompressed vmlinux"
+	extract_vmlinux "$vmlinuz_path" "$kernel_path.part" || {
+		echo "could not extract an ELF vmlinux from the Ubuntu kernel" >&2
+		exit 1
+	}
+	mv "$kernel_path.part" "$kernel_path"
+	step "extracted $(basename "$kernel_path")"
+fi
 
 step "extract root file system"
 unsquashfs -q -d "$rootfs_directory" "$rootfs_path"
@@ -225,6 +280,9 @@ install_guest_network
 install_metadata_service
 install_serial_console
 install_ssh_metadata
+if $rescue; then
+	install_rescue_tools
+fi
 
 step "create ext4 image"
 truncate -s 4G "$image_path.part"

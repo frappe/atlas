@@ -69,6 +69,11 @@ func (client *Client) PutNetworkInterface(ctx context.Context, networkInterface 
 	)
 }
 
+// PutVsock connects the guest's vsock device to a host Unix socket.
+func (client *Client) PutVsock(ctx context.Context, configuration Vsock) error {
+	return client.send(ctx, http.MethodPut, "/vsock", configuration, nil)
+}
+
 // InstanceStart starts the virtual machine.
 func (client *Client) InstanceStart(ctx context.Context) error {
 	return client.send(ctx, http.MethodPut, "/actions", action{ActionType: "InstanceStart"}, nil)

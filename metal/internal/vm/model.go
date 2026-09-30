@@ -20,6 +20,15 @@ type Specification struct {
 	Hostname              string               `json:"hostname"`
 	UserData              string               `json:"user_data"`
 	Metadata              map[string]string    `json:"metadata"`
+	Rescue                Rescue               `json:"rescue,omitempty"`
+}
+
+// Rescue is the requested rescue mode for one VM. Enabling it boots the
+// configured rescue image with the VM's own disk attached as a secondary
+// drive; disabling it returns to a normal cold boot from the VM's own disk.
+type Rescue struct {
+	Enabled bool  `json:"enabled"`
+	Image   Image `json:"image,omitempty"`
 }
 
 // Compute is the requested compute configuration of one VM.
@@ -214,6 +223,10 @@ func isObservedState(state State) bool {
 
 // Information describes a virtual machine.
 type Information struct {
+	Rescue                        Rescue
+	ObservedRescueEnabled         bool
+	DesiredRescueGeneration       uint64
+	ObservedRescueGeneration      uint64
 	ID                            string
 	State                         State
 	DesiredState                  State

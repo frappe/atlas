@@ -38,6 +38,10 @@ This file identifies code owners and rules that a code change must preserve. The
 - For guest network values and public addresses, read [VM records](../../docs/compute/vm-records.md), [host networking](../../docs/networking/host-networking.md), and [public IPs](../../docs/networking/public-ips.md).
 - For Central notifications, read [VM state updates](../../docs/interfaces/vm-state-updates.md) and the [tenant API](../../docs/interfaces/tenant-api.md).
 
+## Rescue
+
+`VirtualMachineService.set_rescue` selects the Atlas Settings image for a new session. The image is pinned by Metal. `MetalRescue` and rescue generations preserve requested and applied state in typed responses. The DocType and tenant API keep tenant and write permissions at their existing boundaries. See [rescue mode](../../docs/compute/rescue.md).
+
 ## Validation
 
 Tests sit beside the code in `core/test_*.py`, `core/placement/test_*.py`, and `doctype/*/test_*.py`. The [Metal VM specification](../../metal/internal/vm/SPEC.md) covers the other side of the request.

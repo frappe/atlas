@@ -101,11 +101,21 @@ class MetalGuest:
 
 
 @dataclass(frozen=True, slots=True)
+class MetalRescue:
+	"""Store the selected rescue mode and pinned image, when supplied."""
+
+	enabled: bool
+	image: MetalImage | None
+
+
+@dataclass(frozen=True, slots=True)
 class MetalDesiredState:
 	"""Store one desired virtual machine state."""
 
 	generation: int
 	restart_generation: int
+	rescue_generation: int
+	rescue: MetalRescue
 	state: str
 	compute: MetalCompute
 	disk: MetalDisk
@@ -143,6 +153,8 @@ class MetalObservedState:
 
 	generation: int
 	restart_generation: int
+	rescue_generation: int
+	rescue: MetalRescue
 	state: str
 	phase: str
 	operation_id: str
@@ -188,6 +200,8 @@ def parse_desired_state(value: dict[str, Any]) -> MetalDesiredState:
 	return MetalDesiredState(
 		generation=integer_field(value, "generation"),
 		restart_generation=integer_field(value, "restart_generation"),
+		rescue_generation=integer_field(value, "rescue_generation"),
+		rescue=parse_rescue(object_field(value, "rescue")),
 		state=string_field(value, "state"),
 		compute=MetalCompute(
 			cpu_millicores=integer_field(compute, "cpu_millicores"),
@@ -257,6 +271,15 @@ def parse_image(value: dict[str, Any]) -> MetalImage:
 	)
 
 
+def parse_rescue(value: dict[str, Any]) -> MetalRescue:
+	"""Parse rescue selection and the optional immutable image identity."""
+	image = value.get("image")
+	return MetalRescue(
+		enabled=boolean_field(value, "enabled"),
+		image=parse_image(object_value(image, "image")) if image is not None else None,
+	)
+
+
 def parse_observed_state(value: dict[str, Any]) -> MetalObservedState:
 	"""Parse the observed half of a Metal VM response."""
 	error_value = value.get("error")
@@ -271,6 +294,8 @@ def parse_observed_state(value: dict[str, Any]) -> MetalObservedState:
 	return MetalObservedState(
 		generation=integer_field(value, "generation"),
 		restart_generation=integer_field(value, "restart_generation"),
+		rescue_generation=integer_field(value, "rescue_generation"),
+		rescue=parse_rescue(object_field(value, "rescue")),
 		state=string_field(value, "state"),
 		phase=string_field(value, "phase", default=""),
 		operation_id=string_field(value, "operation_id", default=""),

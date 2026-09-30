@@ -297,6 +297,8 @@ def virtual_machine_response() -> dict:
 		"desired": {
 			"generation": 1,
 			"restart_generation": 0,
+			"rescue_generation": 0,
+			"rescue": {"enabled": False},
 			"state": "running",
 			"compute": {"cpu_millicores": 2000, "memory_mib": 2048, "sleep_after_idle_seconds": 0},
 			"disk": {"size_mib": 2048, "throughput_mibps": 50, "iops": 2000},
@@ -320,6 +322,8 @@ def virtual_machine_response() -> dict:
 		"observed": {
 			"generation": 0,
 			"restart_generation": 0,
+			"rescue_generation": 0,
+			"rescue": {"enabled": False},
 			"state": "unknown",
 			"updated_at": "2026-09-06T10:00:00Z",
 			"disk": {"used_mib": 0},

@@ -18,6 +18,7 @@ if TYPE_CHECKING:
   from ..models.virtual_machine_disk import VirtualMachineDisk
   from ..models.virtual_machine_guest import VirtualMachineGuest
   from ..models.virtual_machine_network import VirtualMachineNetwork
+  from ..models.virtual_machine_rescue import VirtualMachineRescue
 
 
 
@@ -46,6 +47,7 @@ class VirtualMachineDetailResponse:
             network (VirtualMachineNetwork): The addresses, internet access, and network limits of one virtual machine.
             public_ipv4 (None | PublicIPResponse): Attached public IPv4 allocation, or null.
             public_ipv6 (None | PublicIPResponse): Attached public IPv6 allocation, or null.
+            rescue (None | VirtualMachineRescue): Rescue selection and progress, or null when host state is unavailable.
             tags (VirtualMachineDetailResponseTags): Resource tags as key-value pairs.
             tenant_id (int): Tenant that owns the virtual machine.
      """
@@ -64,6 +66,7 @@ class VirtualMachineDetailResponse:
     network: VirtualMachineNetwork
     public_ipv4: None | PublicIPResponse
     public_ipv6: None | PublicIPResponse
+    rescue: None | VirtualMachineRescue
     tags: VirtualMachineDetailResponseTags
     tenant_id: int
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -79,6 +82,7 @@ class VirtualMachineDetailResponse:
         from ..models.virtual_machine_disk import VirtualMachineDisk # noqa: PLC0415
         from ..models.virtual_machine_guest import VirtualMachineGuest # noqa: PLC0415
         from ..models.virtual_machine_network import VirtualMachineNetwork # noqa: PLC0415
+        from ..models.virtual_machine_rescue import VirtualMachineRescue # noqa: PLC0415
         architecture = self.architecture.value
 
         compute = self.compute.to_dict()
@@ -117,6 +121,12 @@ class VirtualMachineDetailResponse:
         else:
             public_ipv6 = self.public_ipv6
 
+        rescue: dict[str, Any] | None
+        if isinstance(self.rescue, VirtualMachineRescue):
+            rescue = self.rescue.to_dict()
+        else:
+            rescue = self.rescue
+
         tags = self.tags.to_dict()
 
         tenant_id = self.tenant_id
@@ -139,6 +149,7 @@ class VirtualMachineDetailResponse:
             "network": network,
             "public_ipv4": public_ipv4,
             "public_ipv6": public_ipv6,
+            "rescue": rescue,
             "tags": tags,
             "tenant_id": tenant_id,
         })
@@ -155,6 +166,7 @@ class VirtualMachineDetailResponse:
         from ..models.virtual_machine_disk import VirtualMachineDisk # noqa: PLC0415
         from ..models.virtual_machine_guest import VirtualMachineGuest # noqa: PLC0415
         from ..models.virtual_machine_network import VirtualMachineNetwork # noqa: PLC0415
+        from ..models.virtual_machine_rescue import VirtualMachineRescue # noqa: PLC0415
         d = dict(src_dict)
         architecture = VirtualMachineDetailResponseArchitecture(d.pop("architecture"))
 
@@ -243,6 +255,24 @@ class VirtualMachineDetailResponse:
         public_ipv6 = _parse_public_ipv6(d.pop("public_ipv6"))
 
 
+        def _parse_rescue(data: object) -> None | VirtualMachineRescue:
+            if data is None:
+                return data
+            try:
+                if not isinstance(data, dict):
+                    raise TypeError()
+                rescue_type_0 = VirtualMachineRescue.from_dict(data)
+
+
+
+                return rescue_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(None | VirtualMachineRescue, data)
+
+        rescue = _parse_rescue(d.pop("rescue"))
+
+
         tags = VirtualMachineDetailResponseTags.from_dict(d.pop("tags"))
 
 
@@ -265,6 +295,7 @@ class VirtualMachineDetailResponse:
             network=network,
             public_ipv4=public_ipv4,
             public_ipv6=public_ipv6,
+            rescue=rescue,
             tags=tags,
             tenant_id=tenant_id,
         )
