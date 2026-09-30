@@ -13,17 +13,11 @@ import (
 )
 
 const (
-	// drainChunkBytes is the read size of the drain loop and the size of one
-	// broadcast chunk.
+	// drainChunkBytes is the read size of the drain loop.
 	drainChunkBytes = 32 << 10
 
 	// viewerBufferBytes is the output held for one viewer before it is dropped.
 	viewerBufferBytes = 256 << 10
-
-	// viewerQueueChunks is the queue depth for one viewer. It is one chunk more
-	// than viewerBufferBytes holds, so a buffer smaller than one chunk still
-	// queues a chunk instead of dropping the viewer on its first write.
-	viewerQueueChunks = viewerBufferBytes/drainChunkBytes + 1
 
 	// inputBufferBytes is the read size for viewer keystrokes.
 	inputBufferBytes = 4 << 10
@@ -56,7 +50,10 @@ type console struct {
 
 // viewer receives output for one attached client. Slow viewers are dropped.
 type viewer struct {
-	output  chan []byte
+	// pending is guarded by console.mutex. Firecracker writes serial output one
+	// byte at a time, so the limit counts bytes, not reads.
+	pending []byte
+	ready   chan struct{}
 	dropped chan struct{}
 }
 
@@ -74,8 +71,9 @@ func newConsole(master *os.File, link string, scrollbackBytes int) *console {
 	return c
 }
 
-// attach streams the console to one client until it disconnects.
-func (c *console) attach(ctx context.Context, client io.ReadWriter, resize <-chan Winsize) error {
+// attach streams console output to one client until ctx ends or the console
+// closes. It returns ErrViewerTooSlow when the client falls behind.
+func (c *console) attach(ctx context.Context, client io.Writer, resize <-chan Winsize) error {
 	attached, history, err := c.addViewer()
 	if err != nil {
 		return err
@@ -88,21 +86,23 @@ func (c *console) attach(ctx context.Context, client io.ReadWriter, resize <-cha
 		}
 	}
 
-	attachContext, cancel := context.WithCancel(ctx)
-	defer cancel()
-
-	go c.copyInput(attachContext, client, cancel)
-
 	for {
 		select {
-		case <-attachContext.Done():
+		case <-ctx.Done():
 			return nil
 		case <-attached.dropped:
-			return nil
+			if c.isClosed() {
+				return nil
+			}
+			return ErrViewerTooSlow
 		case size := <-resize:
 			_ = pty.Setsize(c.master, &pty.Winsize{Rows: size.Rows, Cols: size.Cols})
-		case chunk := <-attached.output:
-			if _, err := client.Write(chunk); err != nil {
+		case <-attached.ready:
+			output := c.takePending(attached)
+			if len(output) == 0 {
+				continue
+			}
+			if _, err := client.Write(output); err != nil {
 				return err
 			}
 		}
@@ -171,24 +171,37 @@ func (c *console) drain() {
 	}
 }
 
-// broadcast records a chunk in the scrollback and sends it to every viewer.
+// broadcast records output in the scrollback and queues it for every viewer.
 func (c *console) broadcast(data []byte) {
-	chunk := make([]byte, len(data))
-	copy(chunk, data)
-
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 
-	c.ring.write(chunk)
+	c.ring.write(data)
 	for attached := range c.viewers {
-		select {
-		case attached.output <- chunk:
-		default:
+		if len(attached.pending)+len(data) > viewerBufferBytes {
 			// Drop slow viewers so the drain keeps running.
 			delete(c.viewers, attached)
 			close(attached.dropped)
+			continue
+		}
+
+		attached.pending = append(attached.pending, data...)
+		select {
+		case attached.ready <- struct{}{}:
+		default:
 		}
 	}
+}
+
+// takePending returns and clears the output queued for one viewer.
+func (c *console) takePending(attached *viewer) []byte {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+
+	output := attached.pending
+	attached.pending = nil
+
+	return output
 }
 
 // addViewer registers one viewer and returns the scrollback it receives first.
@@ -205,7 +218,7 @@ func (c *console) addViewer() (*viewer, []byte, error) {
 
 	history := c.ring.snapshot()
 	attached := &viewer{
-		output:  make(chan []byte, viewerQueueChunks),
+		ready:   make(chan struct{}, 1),
 		dropped: make(chan struct{}),
 	}
 	c.viewers[attached] = struct{}{}
@@ -218,25 +231,6 @@ func (c *console) removeViewer(attached *viewer) {
 	c.mutex.Lock()
 	delete(c.viewers, attached)
 	c.mutex.Unlock()
-}
-
-// copyInput forwards viewer input to the PTY master.
-func (c *console) copyInput(ctx context.Context, client io.Reader, cancel context.CancelFunc) {
-	defer cancel()
-
-	buffer := make([]byte, inputBufferBytes)
-	for {
-		count, err := client.Read(buffer)
-		if count > 0 {
-			c.writeMaster(buffer[:count])
-		}
-		if err != nil {
-			return
-		}
-		if ctx.Err() != nil {
-			return
-		}
-	}
 }
 
 // writeMaster serializes viewer input onto the shared PTY master.

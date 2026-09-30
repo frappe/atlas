@@ -3,6 +3,7 @@ package console
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"sync"
@@ -90,6 +91,72 @@ func TestAttachReplaysScrollbackAndStreamsLive(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitFor(t, func() bool { return bytes.Contains(client.written(), []byte("live")) })
+}
+
+// blockingClient accepts no output until release closes.
+type blockingClient struct {
+	release chan struct{}
+}
+
+func (client *blockingClient) Write(data []byte) (int, error) {
+	<-client.release
+	return len(data), nil
+}
+
+// delayedClient records output after a network-like delay on each write.
+type delayedClient struct {
+	*fakeClient
+	delay time.Duration
+}
+
+func (client delayedClient) Write(data []byte) (int, error) {
+	time.Sleep(client.delay)
+	return client.fakeClient.Write(data)
+}
+
+func viewerCount(c *console) int {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+	return len(c.viewers)
+}
+
+func TestAttachDropsASlowViewer(t *testing.T) {
+	c, slave := newTestConsole(t)
+
+	client := &blockingClient{release: make(chan struct{})}
+	result := make(chan error, 1)
+	go func() { result <- c.attach(context.Background(), client, make(chan Winsize)) }()
+	waitFor(t, func() bool { return viewerCount(c) == 1 })
+
+	go func() { _, _ = slave.Write(bytes.Repeat([]byte("x"), 4*viewerBufferBytes)) }()
+	waitFor(t, func() bool { return viewerCount(c) == 0 })
+
+	close(client.release)
+	if err := <-result; !errors.Is(err, ErrViewerTooSlow) {
+		t.Fatalf("attach = %v, want ErrViewerTooSlow", err)
+	}
+}
+
+// Firecracker writes serial output one byte at a time. A viewer with network
+// latency must keep up with such a burst.
+func TestAttachKeepsAViewerThroughManySmallWrites(t *testing.T) {
+	c, slave := newTestConsole(t)
+
+	client := delayedClient{fakeClient: newFakeClient(), delay: 20 * time.Millisecond}
+	go func() { _ = c.attach(context.Background(), client, make(chan Winsize)) }()
+	waitFor(t, func() bool { return viewerCount(c) == 1 })
+
+	output := bytes.Repeat([]byte("x"), 1000)
+	for index := range output {
+		if _, err := slave.Write(output[index : index+1]); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	waitFor(t, func() bool { return bytes.Equal(client.written(), output) })
+	if viewerCount(c) != 1 {
+		t.Fatal("viewer was dropped during a burst of small writes")
+	}
 }
 
 func TestCloseIsIdempotent(t *testing.T) {
