@@ -221,6 +221,12 @@ class TestCreateVirtualMachine(UnitTestCase):
 		self.assertEqual(body["id"], "vm-00001")
 		self.assertEqual(create.call_args.args[0].tenant_id, TENANT_ID)
 
+	def test_create_accepts_an_affinity_field(self) -> None:
+		status, body, _ = self.create({**CREATE_BODY, "affinity": {"rack": "a"}})
+
+		self.assertEqual(status, 202)
+		self.assertEqual(body["id"], "vm-00001")
+
 	def test_create_reports_out_of_capacity_without_retry_header(self) -> None:
 		with (
 			api_request("POST", "/api/atlas/virtual-machines", tenant_id=TENANT_ID, json=CREATE_BODY),

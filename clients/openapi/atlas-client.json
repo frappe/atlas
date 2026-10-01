@@ -194,6 +194,14 @@
         "additionalProperties": false,
         "description": "Values that create one virtual machine.",
         "properties": {
+          "affinity": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Placement affinity rules. Atlas accepts the value and does not apply it yet.",
+            "title": "Affinity",
+            "type": "object"
+          },
           "cpu_millicores": {
             "description": "CPU capacity in millicores. 1000 millicores equals one virtual CPU.",
             "maximum": 32000,

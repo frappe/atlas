@@ -451,6 +451,10 @@ class CreateVirtualMachinePayload(StrictModel):
 	firewall: FirewallPayload = Field(
 		default_factory=FirewallPayload, description="Desired firewall configuration."
 	)
+	affinity: dict[str, str] = Field(
+		default_factory=dict,
+		description="Placement affinity rules. Atlas accepts the value and does not apply it yet.",
+	)
 
 	@model_validator(mode="after")
 	def validate_ipv4_internet_access(self) -> CreateVirtualMachinePayload:

@@ -12,6 +12,7 @@ from ..types import UNSET, Unset
 from typing import cast
 
 if TYPE_CHECKING:
+  from ..models.create_virtual_machine_payload_affinity import CreateVirtualMachinePayloadAffinity
   from ..models.create_virtual_machine_payload_metadata import CreateVirtualMachinePayloadMetadata
   from ..models.firewall_payload import FirewallPayload
 
@@ -32,6 +33,8 @@ class CreateVirtualMachinePayload:
             disk_mib (int): Root disk capacity in MiB.
             image_id (str): Image used to create the virtual machine.
             memory_mib (int): Memory capacity in MiB.
+            affinity (CreateVirtualMachinePayloadAffinity | Unset): Placement affinity rules. Atlas accepts the value and
+                does not apply it yet.
             disk_iops (int | Unset): Disk IOPS limit. Zero removes the limit. Default: 0.
             disk_throughput_mibps (int | Unset): Disk throughput limit in MiB/s. Zero removes the limit. Default: 0.
             firewall (FirewallPayload | Unset): The complete desired firewall configuration.
@@ -56,6 +59,7 @@ class CreateVirtualMachinePayload:
     disk_mib: int
     image_id: str
     memory_mib: int
+    affinity: CreateVirtualMachinePayloadAffinity | Unset = UNSET
     disk_iops: int | Unset = 0
     disk_throughput_mibps: int | Unset = 0
     firewall: FirewallPayload | Unset = UNSET
@@ -77,6 +81,7 @@ class CreateVirtualMachinePayload:
 
 
     def to_dict(self) -> dict[str, Any]:
+        from ..models.create_virtual_machine_payload_affinity import CreateVirtualMachinePayloadAffinity # noqa: PLC0415
         from ..models.create_virtual_machine_payload_metadata import CreateVirtualMachinePayloadMetadata # noqa: PLC0415
         from ..models.firewall_payload import FirewallPayload # noqa: PLC0415
         cpu_millicores = self.cpu_millicores
@@ -86,6 +91,10 @@ class CreateVirtualMachinePayload:
         image_id = self.image_id
 
         memory_mib = self.memory_mib
+
+        affinity: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.affinity, Unset):
+            affinity = self.affinity.to_dict()
 
         disk_iops = self.disk_iops
 
@@ -142,6 +151,8 @@ class CreateVirtualMachinePayload:
             "image_id": image_id,
             "memory_mib": memory_mib,
         })
+        if affinity is not UNSET:
+            field_dict["affinity"] = affinity
         if disk_iops is not UNSET:
             field_dict["disk_iops"] = disk_iops
         if disk_throughput_mibps is not UNSET:
@@ -179,6 +190,7 @@ class CreateVirtualMachinePayload:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.create_virtual_machine_payload_affinity import CreateVirtualMachinePayloadAffinity # noqa: PLC0415
         from ..models.create_virtual_machine_payload_metadata import CreateVirtualMachinePayloadMetadata # noqa: PLC0415
         from ..models.firewall_payload import FirewallPayload # noqa: PLC0415
         d = dict(src_dict)
@@ -189,6 +201,16 @@ class CreateVirtualMachinePayload:
         image_id = d.pop("image_id")
 
         memory_mib = d.pop("memory_mib")
+
+        _affinity = d.pop("affinity", UNSET)
+        affinity: CreateVirtualMachinePayloadAffinity | Unset
+        if isinstance(_affinity,  Unset):
+            affinity = UNSET
+        else:
+            affinity = CreateVirtualMachinePayloadAffinity.from_dict(_affinity)
+
+
+
 
         disk_iops = d.pop("disk_iops", UNSET)
 
@@ -258,6 +280,7 @@ class CreateVirtualMachinePayload:
             disk_mib=disk_mib,
             image_id=image_id,
             memory_mib=memory_mib,
+            affinity=affinity,
             disk_iops=disk_iops,
             disk_throughput_mibps=disk_throughput_mibps,
             firewall=firewall,

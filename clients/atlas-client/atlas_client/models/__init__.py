@@ -10,6 +10,7 @@ from .console_token_payload_mode import ConsoleTokenPayloadMode
 from .console_token_response import ConsoleTokenResponse
 from .console_token_response_mode import ConsoleTokenResponseMode
 from .create_virtual_machine_payload import CreateVirtualMachinePayload
+from .create_virtual_machine_payload_affinity import CreateVirtualMachinePayloadAffinity
 from .create_virtual_machine_payload_metadata import CreateVirtualMachinePayloadMetadata
 from .disk_update_payload import DiskUpdatePayload
 from .download_image_artifact import DownloadImageArtifact
@@ -81,6 +82,7 @@ __all__ = (
     "ConsoleTokenResponse",
     "ConsoleTokenResponseMode",
     "CreateVirtualMachinePayload",
+    "CreateVirtualMachinePayloadAffinity",
     "CreateVirtualMachinePayloadMetadata",
     "DiskUpdatePayload",
     "DownloadImageArtifact",
