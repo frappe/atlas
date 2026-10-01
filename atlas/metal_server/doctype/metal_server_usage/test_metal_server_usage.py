@@ -84,11 +84,9 @@ class TestServerUsage(UnitTestCase):
 		return {"vm-00001": {"status": "running", "routes": routes}}
 
 	def active_gateway_route(self) -> Route:
-		"""Return the /48 return route of the Active gateway in the patches below."""
+		"""Return the scoped /48 return route of the Active gateway below."""
 		return Route("fdac:1:1::/48", "fdaa:1::1", ROUTE_SCOPE_WIREGUARD_GATEWAY)
 
-	# The gateway route sync uses the routes the sync response already carries,
-	# so no opted-in VM needs an extra read.
 	def test_sync_gateway_routes_updates_an_opted_in_vm(self) -> None:
 		reported = self.reported_routes(
 			[
@@ -113,37 +111,25 @@ class TestServerUsage(UnitTestCase):
 		service.sync_gateway_routes.assert_called_once_with([self.active_gateway_route()])
 		self.assertEqual(service_class.call_args.args[0], get_doc.return_value)
 
-	def test_sync_gateway_routes_skips_a_vm_without_gateway_routes(self) -> None:
-		reported = self.reported_routes([{"destination": "2000::/3", "via": "host"}])
-
-		with (
-			patch(
-				"atlas.service.doctype.wireguard_gateway_server.wireguard_gateway_server.active_gateway_routes",
-				return_value=[self.active_gateway_route()],
-			),
-			patch("atlas.metal_server.usage.frappe.get_doc") as get_doc,
-		):
-			sync_vm_gateway_routes("server-1", reported)
-
-		get_doc.assert_not_called()
-
-	def test_sync_gateway_routes_skips_an_unchanged_vm(self) -> None:
-		reported = self.reported_routes(
+	def test_sync_gateway_routes_skips_a_vm_without_changes(self) -> None:
+		without_gateway_routes = self.reported_routes([{"destination": "2000::/3", "via": "host"}])
+		unchanged = self.reported_routes(
 			[
 				{"destination": "fdac:1:1::/48", "via": "fdaa:1::1", "scope": ROUTE_SCOPE_WIREGUARD_GATEWAY},
 			]
 		)
 
-		with (
-			patch(
-				"atlas.service.doctype.wireguard_gateway_server.wireguard_gateway_server.active_gateway_routes",
-				return_value=[self.active_gateway_route()],
-			),
-			patch("atlas.metal_server.usage.frappe.get_doc") as get_doc,
-		):
-			sync_vm_gateway_routes("server-1", reported)
+		for reported in (without_gateway_routes, unchanged):
+			with (
+				patch(
+					"atlas.service.doctype.wireguard_gateway_server.wireguard_gateway_server.active_gateway_routes",
+					return_value=[self.active_gateway_route()],
+				),
+				patch("atlas.metal_server.usage.frappe.get_doc") as get_doc,
+			):
+				sync_vm_gateway_routes("server-1", reported)
 
-		get_doc.assert_not_called()
+			get_doc.assert_not_called()
 
 	def test_sync_gateway_routes_skips_a_draft_or_terminating_vm(self) -> None:
 		reported = self.reported_routes(

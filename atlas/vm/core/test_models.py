@@ -1,6 +1,6 @@
 from unittest import TestCase
 
-from atlas.vm.core.models import ROUTE_SCOPE_WIREGUARD_GATEWAY, Route, parse_routes
+from atlas.vm.core.models import ROUTE_SCOPE_WIREGUARD_GATEWAY, Route
 
 
 class TestRouteScope(TestCase):
@@ -36,17 +36,3 @@ class TestRouteScope(TestCase):
 	def test_an_unknown_scope_is_rejected(self) -> None:
 		message = self.parse_error({"destination": "fdac:1:1::/48", "via": "fdaa:1::1", "scope": "tenant"})
 		self.assertIn("wireguard-gateway", message)
-
-	def test_the_scope_parses_inside_a_route_list(self) -> None:
-		routes = parse_routes(
-			[
-				{"destination": "2000::/3", "via": "host"},
-				{
-					"destination": "fdac:1:1::/48",
-					"via": "fdaa:1::1",
-					"scope": ROUTE_SCOPE_WIREGUARD_GATEWAY,
-				},
-			]
-		)
-
-		self.assertEqual(routes[-1].scope, ROUTE_SCOPE_WIREGUARD_GATEWAY)

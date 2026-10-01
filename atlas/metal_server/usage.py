@@ -101,12 +101,7 @@ def sync_server(
 
 
 def sync_vm_gateway_routes(server_name: str, reported: object) -> None:
-	"""Converge the WireGuard gateway routes that the host's VMs hold.
-
-	Only a VM that turned on the flag holds gateway routes, so the sync
-	updates those VMs and skips the rest. The routes stay in the VM
-	namespace on the host, so the routes inside a VM never change.
-	"""
+	"""Converge the scoped WireGuard gateway routes each opted-in VM holds."""
 	from atlas.service.doctype.wireguard_gateway_server.wireguard_gateway_server import (
 		active_gateway_routes,
 	)

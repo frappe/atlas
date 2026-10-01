@@ -253,12 +253,7 @@ def gateway_client_prefix(region: int, name: str) -> str:
 
 
 def active_gateway_routes() -> list[Route]:
-	"""Return the /48 return route of every Active gateway through its mesh address.
-
-	The route scope keeps each route in the VM namespace on the host, so the
-	routes inside a guest never change. The existing server sync installs
-	them in every VM that opted in.
-	"""
+	"""Return the scoped /48 return route of every Active gateway."""
 	region = frappe.get_single("Atlas Settings").region_id
 	return [
 		Route(

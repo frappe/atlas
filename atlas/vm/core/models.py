@@ -32,8 +32,7 @@ class Route:
 
 	destination: str
 	via: str
-	# The WireGuard gateway scope keeps a route in the VM namespace on the host.
-	# The guest metadata never lists it, so the routes inside the VM never change.
+	# A scoped route stays in the VM namespace on the host, out of the guest.
 	scope: str = ""
 
 	@property

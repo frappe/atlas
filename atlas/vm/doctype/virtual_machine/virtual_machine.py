@@ -196,18 +196,14 @@ class VirtualMachine(Document):
 
 	@property
 	def routes(self) -> str:
-		"""Return the routes that Metal holds.
-
-		The WireGuard gateway route sync owns the scoped routes, so they
-		appear in gateway_routes instead.
-		"""
+		"""Return the unscoped routes that Metal holds."""
 		information = self.get_metal_vm_info()
 		routes = information.desired.network.routes if information else ()
 		return json.dumps([route.as_dict() for route in routes if not route.is_wireguard_gateway], indent=2)
 
 	@property
 	def gateway_routes(self) -> str:
-		"""Return the WireGuard gateway routes that Metal holds in the VM namespace."""
+		"""Return the scoped WireGuard gateway routes that Metal holds."""
 		information = self.get_metal_vm_info()
 		routes = information.desired.network.routes if information else ()
 		return json.dumps([route.as_dict() for route in routes if route.is_wireguard_gateway], indent=2)
@@ -341,8 +337,7 @@ class VirtualMachine(Document):
 				frappe.throw(
 					_("Remove the gateway routes of this VM before it becomes a gateway."), exc=AtlasUserError
 				)
-			# A network gateway cannot use WireGuard client return routes, so the
-			# scoped routes leave with the role.
+			# A network gateway drops the scoped routes with the role.
 			routes = [
 				route
 				for route in service.get_routes()
@@ -356,11 +351,7 @@ class VirtualMachine(Document):
 
 	@frappe.whitelist(methods=["POST"])
 	def set_wg_gateway_accessible(self, enabled: bool | int | str) -> None:
-		"""Install or remove the WireGuard gateway return routes of this VM.
-
-		The routes stay in the VM namespace on the host, so the routes inside
-		the VM never change.
-		"""
+		"""Install or remove the scoped WireGuard gateway routes of this VM."""
 		self.check_permission("write")
 		self.ensure_not_migrating()
 		self.validate_network_change()

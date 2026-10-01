@@ -1021,21 +1021,16 @@ class TestVirtualMachineWgGatewayAccess(UnitTestCase):
 		virtual_machine.validate_network_change = Mock()
 		return virtual_machine
 
-	def test_enabling_installs_the_gateway_routes(self) -> None:
+	def test_enabling_or_disabling_sets_the_gateway_routes(self) -> None:
 		virtual_machine = self.build_virtual_machine()
 
 		with patch.object(VirtualMachineService, "set_wg_gateway_accessible") as set_wg_gateway_accessible:
 			virtual_machine.set_wg_gateway_accessible("true")
+			set_wg_gateway_accessible.assert_called_once_with(True)
 
-		set_wg_gateway_accessible.assert_called_once_with(True)
-
-	def test_disabling_removes_the_gateway_routes(self) -> None:
-		virtual_machine = self.build_virtual_machine()
-
-		with patch.object(VirtualMachineService, "set_wg_gateway_accessible") as set_wg_gateway_accessible:
+			set_wg_gateway_accessible.reset_mock()
 			virtual_machine.set_wg_gateway_accessible(False)
-
-		set_wg_gateway_accessible.assert_called_once_with(False)
+			set_wg_gateway_accessible.assert_called_once_with(False)
 
 	def test_a_network_gateway_cannot_use_the_gateway_routes(self) -> None:
 		virtual_machine = self.build_virtual_machine(is_network_gateway=1)
@@ -1050,6 +1045,12 @@ class TestVirtualMachineWgGatewayAccess(UnitTestCase):
 
 	def test_the_flag_and_the_gateway_routes_read_the_metal_routes(self) -> None:
 		virtual_machine = VirtualMachine.__new__(VirtualMachine)
+		virtual_machine.get_metal_vm_info = Mock(
+			return_value=MetalVirtualMachine.from_dict(METAL_VIRTUAL_MACHINE_RESPONSE)
+		)
+		self.assertFalse(virtual_machine.is_accessible_via_wg_gateway)
+		self.assertEqual(json.loads(virtual_machine.gateway_routes), [])
+
 		response = {
 			**METAL_VIRTUAL_MACHINE_RESPONSE,
 			"desired": {
@@ -1081,15 +1082,6 @@ class TestVirtualMachineWgGatewayAccess(UnitTestCase):
 			],
 		)
 		self.assertTrue(virtual_machine.is_accessible_via_wg_gateway)
-
-	def test_the_flag_is_off_without_gateway_routes(self) -> None:
-		virtual_machine = VirtualMachine.__new__(VirtualMachine)
-		virtual_machine.get_metal_vm_info = Mock(
-			return_value=MetalVirtualMachine.from_dict(METAL_VIRTUAL_MACHINE_RESPONSE)
-		)
-
-		self.assertFalse(virtual_machine.is_accessible_via_wg_gateway)
-		self.assertEqual(json.loads(virtual_machine.gateway_routes), [])
 
 
 class TestSystemImageCreation(UnitTestCase):

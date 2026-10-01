@@ -403,7 +403,6 @@ class TestVirtualMachineNetworkChanges(UnitTestCase):
 		update_network.assert_called_once_with(
 			{
 				"routes": [
-					# The edit replaces the normal route list and keeps the gateway routes.
 					{"destination": "2000::/3", "via": "host"},
 					{"destination": "fdac:1:1::/48", "via": "fdaa:1::1", "scope": "wireguard-gateway"},
 				]
@@ -422,8 +421,6 @@ class TestVirtualMachineNetworkChanges(UnitTestCase):
 
 		self.assertEqual(rows, [{"destination": "0.0.0.0/0", "via": "host", "gateway_virtual_machine": ""}])
 
-	# The gateway routes belong to the VM namespace on the host, so an edit of
-	# the normal routes never removes or replaces them.
 	def test_sync_gateway_routes_replaces_only_the_wireguard_gateway_routes(self) -> None:
 		service = self.build_service(None)
 		stale = Route("fdac:1:2::/48", "fdaa:1::2", "wireguard-gateway")
@@ -456,7 +453,7 @@ class TestVirtualMachineNetworkChanges(UnitTestCase):
 
 		update_network.assert_not_called()
 
-	def test_set_wg_gateway_accessible_installs_the_active_gateway_routes(self) -> None:
+	def test_set_wg_gateway_accessible_installs_or_removes_the_gateway_routes(self) -> None:
 		service = self.build_service(None)
 		wanted = Route("fdac:1:1::/48", "fdaa:1::1", "wireguard-gateway")
 
@@ -468,8 +465,11 @@ class TestVirtualMachineNetworkChanges(UnitTestCase):
 			patch.object(service, "sync_gateway_routes") as sync_gateway_routes,
 		):
 			service.set_wg_gateway_accessible(True)
+			sync_gateway_routes.assert_called_once_with([wanted])
 
-		sync_gateway_routes.assert_called_once_with([wanted])
+			sync_gateway_routes.reset_mock()
+			service.set_wg_gateway_accessible(False)
+			sync_gateway_routes.assert_called_once_with([])
 
 	def test_set_wg_gateway_accessible_without_an_active_gateway_fails(self) -> None:
 		service = self.build_service(None)
@@ -485,14 +485,6 @@ class TestVirtualMachineNetworkChanges(UnitTestCase):
 			service.set_wg_gateway_accessible(True)
 
 		sync_gateway_routes.assert_not_called()
-
-	def test_set_wg_gateway_accessible_removes_the_gateway_routes(self) -> None:
-		service = self.build_service(None)
-
-		with patch.object(service, "sync_gateway_routes") as sync_gateway_routes:
-			service.set_wg_gateway_accessible(False)
-
-		sync_gateway_routes.assert_called_once_with([])
 
 	def test_has_gateway_routes_ignores_the_wireguard_gateway_routes(self) -> None:
 		service = self.build_service(None)

@@ -373,22 +373,14 @@ class VirtualMachineService:
 		frappe.db.get_value("Virtual Machine", self.virtual_machine.name, "name", for_update=True)
 
 	def set_routes(self, value: Any) -> dict[str, Any]:
-		"""Replace the complete route list. Metal owns the routes.
-
-		The WireGuard gateway route sync owns the scoped routes, so an edit
-		keeps them in place.
-		"""
+		"""Replace the complete route list, keeping the scoped gateway routes."""
 		self.lock_network()
 		routes = self.validate_routes(value)
 		gateway_routes = [route for route in self.get_routes() if route.is_wireguard_gateway]
 		return self.update_network({"routes": [route.as_dict() for route in [*routes, *gateway_routes]]})
 
 	def sync_gateway_routes(self, desired: list[Route]) -> None:
-		"""Replace the WireGuard gateway routes, keeping every normal route in place.
-
-		The routes stay in the VM namespace on the host, so the routes inside
-		the VM never change.
-		"""
+		"""Replace only the scoped gateway routes, keeping every normal route."""
 		self.lock_network()
 		current = self.get_routes()
 		wanted = [route for route in current if not route.is_wireguard_gateway] + desired
@@ -446,7 +438,7 @@ class VirtualMachineService:
 		return list(self.require_information().desired.network.routes)
 
 	def has_gateway_routes(self) -> bool:
-		# The WireGuard gateway route sync owns the scoped routes.
+		# Scoped routes belong to the gateway sync, not to the route editor.
 		return any(not route.is_via_host and not route.is_wireguard_gateway for route in self.get_routes())
 
 	def get_routes_with(self, route: Route) -> list[dict[str, str]]:
@@ -457,11 +449,7 @@ class VirtualMachineService:
 		return [route.as_dict() for route in self.get_routes() if route.destination != destination]
 
 	def get_route_editor_rows(self) -> list[dict[str, str]]:
-		"""Add known gateway VM names for the route editor.
-
-		The editor owns the normal routes only. The WireGuard gateway route
-		sync owns the scoped routes.
-		"""
+		"""Add known gateway VM names for the route editor, skipping scoped routes."""
 		gateway_names = {
 			get_virtual_machine_mesh_address(gateway): gateway.name
 			for gateway in frappe.get_all(
