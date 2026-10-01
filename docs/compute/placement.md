@@ -45,7 +45,7 @@ Affinity rules limit the hosts that can hold a VM. A rule reads the tags of a ho
 
 Atlas validates the rules in a create request and stores them in the `placement_rules` field of the Virtual Machine record. Placement applies them when it creates the VM, when it migrates the VM to a host that it chooses, and when a resize moves the VM to another host. A resize that stays on the current host does not check them. A migration to a host that an operator names does not check them.
 
-Only a System Manager can set rules, and only on a privileged VM. Atlas rejects other requests with `403`.
+Any tenant can set rules on its own VMs.
 
 ### Rule types
 

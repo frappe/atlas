@@ -43,24 +43,11 @@ class TestVirtualMachineCreation(UnitTestCase):
 
 		insert_draft.assert_not_called()
 
-	def test_placement_rules_need_a_privileged_vm_and_a_system_manager(self) -> None:
-		for is_privileged, is_system_manager in ((False, True), (True, False)):
-			request = {**self.request(), "tenant_id": 0, "is_privileged": is_privileged}
-			with (
-				self.subTest(is_privileged=is_privileged, is_system_manager=is_system_manager),
-				patch("atlas.vm.core.vm_service.has_role", return_value=is_system_manager),
-				patch.object(PlacementStrategy, "find_server") as find_server,
-				self.assertRaises(frappe.PermissionError),
-			):
-				VirtualMachineService.create({**request, "placement_rules": AFFINITY_RULES})
-
-			find_server.assert_not_called()
-
-	def test_a_trusted_request_with_placement_rules_reaches_placement(self) -> None:
+	def test_any_tenant_can_send_placement_rules(self) -> None:
 		image = SimpleNamespace(architecture="amd64", validate_compatibility=Mock())
-		request = {**self.request(), "tenant_id": 0, "is_privileged": True, "placement_rules": AFFINITY_RULES}
+		# Tenant 7, on a VM that is not privileged.
+		request = {**self.request(), "placement_rules": AFFINITY_RULES}
 		with (
-			patch("atlas.vm.core.vm_service.has_role", return_value=True),
 			patch.object(VirtualMachineService, "get_image", return_value=image),
 			patch.object(
 				PlacementStrategy, "find_server", side_effect=OutOfCapacity("retry later")
@@ -69,7 +56,7 @@ class TestVirtualMachineCreation(UnitTestCase):
 		):
 			VirtualMachineService.create(request)
 
-		find_server.assert_called_once()
+		self.assertEqual(find_server.call_args.args[0].placement_rules.as_list(), AFFINITY_RULES)
 
 	def test_the_draft_stores_the_tags_and_placement_rules(self) -> None:
 		image = SimpleNamespace(name="image-1", architecture="amd64")

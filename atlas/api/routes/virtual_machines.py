@@ -110,7 +110,7 @@ def create_virtual_machine(
 
 	Set `is_termination_protected` to refuse deletion of the new VM. The termination protection route changes it later.
 
-	Use `tags` to label the VM, for example, `{"role": "cargo-server"}`. `placement_rules` limits the Metal Servers for the VM by host tags and by the tags of other VMs on the host. Only a System Manager can set rules, and only on a privileged VM. Atlas Settings selects whether a VM that no host with room can satisfy fails with `affinity_unsatisfied` or goes to any host.
+	Use `tags` to label the VM, for example, `{"role": "cargo-server"}`. `placement_rules` limits the Metal Servers for the VM by host tags and by the tags of other VMs on the host. Atlas Settings selects whether a VM that no host with room can satisfy fails with `affinity_unsatisfied` or goes to any host.
 	"""
 	image = get_owned_image(payload.image_id)
 	request = payload.to_domain_request(get_current_tenant_id(), image.name)

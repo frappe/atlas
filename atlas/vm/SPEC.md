@@ -26,7 +26,6 @@ This file identifies code owners and rules that a code change must preserve. The
 - Metal is the authority for current host state. `Virtual Machine State` is a cache for lists and image checks. A failed Metal read must not appear as a guest state.
 - Placement checks capacity under a MariaDB named lock with READ COMMITTED isolation. Keep the lock until the draft or migration reservation commits. CPU can be oversubscribed. Memory and disk cannot.
 - A VM copies its image name and architecture at creation. Image references are immutable. A later VM action does not need the image record.
-- Only a System Manager can set affinity rules, and only on a privileged VM. `VirtualMachineService.create` checks this before placement.
 - The draft commits its tags and affinity rules in the same transaction as its host reservation.
 - `PlacementContext` owns the affinity rules, so the strategies do not know about them. It removes the hosts that fail the rules from the snapshot, and checks the rules again under the host lock. Keep both checks: the snapshot can be 1 second old. A failed check under the lock counts as contention, so the next attempt reads a fresh snapshot.
 - A migration to a destination that an operator names does not apply the affinity rules.

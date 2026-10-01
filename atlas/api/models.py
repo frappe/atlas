@@ -524,7 +524,7 @@ class CreateVirtualMachinePayload(StrictModel):
 	tags: TagMap = Field(default_factory=dict)
 	placement_rules: list[AffinityNodePayload] = Field(
 		default_factory=list,
-		description="Rules that limit the Metal Servers for the virtual machine. Every listed rule or group must hold. Only a System Manager can set them, and only on a privileged virtual machine. Placement uses only the hosts that meet them.",
+		description="Rules that limit the Metal Servers for the virtual machine. Every listed rule or group must hold. Placement uses only the hosts that meet them.",
 	)
 
 	@model_validator(mode="after")

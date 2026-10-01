@@ -46,8 +46,8 @@ class CreateVirtualMachinePayload:
             is_termination_protected (bool | Unset): Whether deletion is blocked. Default: False.
             metadata (CreateVirtualMachinePayloadMetadata | Unset): Custom guest metadata.
             placement_rules (list[AffinityAllOfPayload | AffinityAnyOfPayload | AffinityRulePayload] | Unset): Rules that
-                limit the Metal Servers for the virtual machine. Every listed rule or group must hold. Only a System Manager can
-                set them, and only on a privileged virtual machine. Placement uses only the hosts that meet them.
+                limit the Metal Servers for the virtual machine. Every listed rule or group must hold. Placement uses only the
+                hosts that meet them.
             private_network_throughput_mibps (int | Unset): Private network throughput limit in MiB/s. Zero removes the
                 limit. Default: 0.
             public_ipv4 (None | str | Unset): Reserved public IPv4 allocation ID, or null.

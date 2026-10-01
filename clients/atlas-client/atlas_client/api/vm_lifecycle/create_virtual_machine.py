@@ -121,9 +121,9 @@ def sync_detailed(
     changes it later.
 
     Use `tags` to label the VM, for example, `{"role": "cargo-server"}`. `placement_rules` limits the
-    Metal Servers for the VM by host tags and by the tags of other VMs on the host. Only a System
-    Manager can set rules, and only on a privileged VM. Atlas Settings selects whether a VM that no host
-    with room can satisfy fails with `affinity_unsatisfied` or goes to any host.
+    Metal Servers for the VM by host tags and by the tags of other VMs on the host. Atlas Settings
+    selects whether a VM that no host with room can satisfy fails with `affinity_unsatisfied` or goes to
+    any host.
 
     Args:
         x_tenant_id (int):
@@ -167,9 +167,9 @@ def sync(
     changes it later.
 
     Use `tags` to label the VM, for example, `{"role": "cargo-server"}`. `placement_rules` limits the
-    Metal Servers for the VM by host tags and by the tags of other VMs on the host. Only a System
-    Manager can set rules, and only on a privileged VM. Atlas Settings selects whether a VM that no host
-    with room can satisfy fails with `affinity_unsatisfied` or goes to any host.
+    Metal Servers for the VM by host tags and by the tags of other VMs on the host. Atlas Settings
+    selects whether a VM that no host with room can satisfy fails with `affinity_unsatisfied` or goes to
+    any host.
 
     Args:
         x_tenant_id (int):
@@ -208,9 +208,9 @@ async def asyncio_detailed(
     changes it later.
 
     Use `tags` to label the VM, for example, `{"role": "cargo-server"}`. `placement_rules` limits the
-    Metal Servers for the VM by host tags and by the tags of other VMs on the host. Only a System
-    Manager can set rules, and only on a privileged VM. Atlas Settings selects whether a VM that no host
-    with room can satisfy fails with `affinity_unsatisfied` or goes to any host.
+    Metal Servers for the VM by host tags and by the tags of other VMs on the host. Atlas Settings
+    selects whether a VM that no host with room can satisfy fails with `affinity_unsatisfied` or goes to
+    any host.
 
     Args:
         x_tenant_id (int):
@@ -254,9 +254,9 @@ async def asyncio(
     changes it later.
 
     Use `tags` to label the VM, for example, `{"role": "cargo-server"}`. `placement_rules` limits the
-    Metal Servers for the VM by host tags and by the tags of other VMs on the host. Only a System
-    Manager can set rules, and only on a privileged VM. Atlas Settings selects whether a VM that no host
-    with room can satisfy fails with `affinity_unsatisfied` or goes to any host.
+    Metal Servers for the VM by host tags and by the tags of other VMs on the host. Atlas Settings
+    selects whether a VM that no host with room can satisfy fails with `affinity_unsatisfied` or goes to
+    any host.
 
     Args:
         x_tenant_id (int):

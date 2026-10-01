@@ -8,7 +8,6 @@ from frappe import _
 
 from atlas.atlas.core.exceptions import AtlasConflictError, AtlasUserError
 from atlas.atlas.core.mesh_address import get_virtual_machine_mesh_address
-from atlas.auth.roles import has_role
 from atlas.metal_server.core.public_ip_service import PublicIPService
 from atlas.vm.core.metal_client import MetalClient, MetalClientError
 from atlas.vm.core.metal_models import MetalVirtualMachine
@@ -76,12 +75,6 @@ class VirtualMachineService:
 			except ValueError as error:
 				frappe.throw(_(str(error)))
 				raise AssertionError from error
-
-		if request.placement_rules.nodes and not (request.is_privileged and has_role("System Manager")):
-			frappe.throw(
-				_("Only a System Manager can set affinity rules, and only on a privileged Virtual Machine."),
-				frappe.PermissionError,
-			)
 
 		image = cls.get_image(request.virtual_machine_image, request.tenant_id)
 		image.validate_compatibility(request.disk_mib)
