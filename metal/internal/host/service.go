@@ -32,7 +32,7 @@ type SyncResult struct {
 // VirtualMachineReport is the host state of one virtual machine.
 type VirtualMachineReport struct {
 	State vm.State
-	// Routes are the desired routes the host holds for the virtual machine.
+	// Routes are the desired VM routes the host holds.
 	Routes []vm.Route
 }
 

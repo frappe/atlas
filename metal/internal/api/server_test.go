@@ -939,8 +939,7 @@ func TestSyncAppliesControllerStateAndReturnsCapacity(t *testing.T) {
 	}
 }
 
-// The sync response carries each VM's desired routes, so the controller can
-// converge the WireGuard gateway routes without another round trip.
+// The sync response carries each VM's desired routes for the controller sync.
 func TestSyncReturnsVirtualMachineRoutes(t *testing.T) {
 	wireGuardManager := &fakeWireGuardManager{}
 	services := newFakeRuntimeServices()

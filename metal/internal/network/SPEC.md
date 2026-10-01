@@ -20,7 +20,7 @@ This package converges one VM network and applies the host WireGuard peer set. I
 - Apply both firewall tables before exposing the VM through a veth, public address, or mesh registration. If the second table update fails, restore the first. The drift cache is memory only.
 - A VM with a mesh address needs a veth pair. Only a warm-image capture VM has neither. `Release` removes mesh registration before deleting the namespace.
 - `routes.go` restores the `default` prefix and host route lengths that `ip` omits. IPv4 NAT exists only while an IPv4 route uses `host`.
-- A route with the WireGuard gateway scope converges like any other route in the VM namespace, but the guest metadata never lists it, so the guest routing table keeps no copy.
+- A scoped route converges in the VM namespace, but the guest metadata never lists it.
 - Public-address rules are found by their `metal-public-ipv4-<vm-id>` or `metal-public-ipv6-<vm-id>` comments. Treat each rule set as one unit. For `iptables -C`, only exit code 1 means absent.
 - Traffic policers sit on the namespace end of the veth. WG Mesh owns the host end. Private filters have priority over public filters.
 - `LinuxAllocator` attaches monitoring after TAP creation and detaches it before TAP removal. `vm.Manager` decides when a VM sleeps. The monitor only reports activity.

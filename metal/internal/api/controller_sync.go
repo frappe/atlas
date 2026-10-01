@@ -49,7 +49,7 @@ type syncResponse struct {
 // virtualMachineStateResponse is the state of one virtual machine on this host.
 type virtualMachineStateResponse struct {
 	Status string          `json:"status"`
-	// Routes are the desired routes the host holds for this virtual machine.
+	// Routes are the desired VM routes the host holds.
 	Routes []routeResponse `json:"routes"`
 }
 

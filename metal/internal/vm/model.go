@@ -58,14 +58,12 @@ type Disk struct {
 // RouteViaHost sends a destination through the Metal host uplink.
 const RouteViaHost = "host"
 
-// RouteScopeWireGuardGateway marks a return route for WireGuard gateway
-// clients. A scoped route lives only in the VM namespace, so the guest
-// metadata never lists it and the guest routing table keeps no copy.
+// RouteScopeWireGuardGateway keeps a return route in the VM namespace, out of the guest.
 const RouteScopeWireGuardGateway = "wireguard-gateway"
 
 // Route sends one destination range through the host or through a gateway VM.
 // Via is RouteViaHost or the WG Mesh address of a gateway VM. Scope is empty
-// for a guest route or RouteScopeWireGuardGateway for a namespace-only route.
+// for a guest route, or RouteScopeWireGuardGateway for a namespace-only route.
 type Route struct {
 	Destination string `json:"destination"`
 	Via         string `json:"via"`
@@ -77,8 +75,7 @@ func (route Route) IsViaHost() bool {
 	return route.Via == RouteViaHost
 }
 
-// IsWireGuardGateway reports whether the route returns WireGuard gateway
-// client traffic through a gateway VM and stays out of the guest.
+// IsWireGuardGateway reports a namespace-only WireGuard gateway route.
 func (route Route) IsWireGuardGateway() bool {
 	return route.Scope == RouteScopeWireGuardGateway
 }
@@ -93,7 +90,7 @@ type NetworkConfiguration struct {
 	PublicIPv4        string `json:"public_ipv4"`
 	WireGuardMeshIPv6 string `json:"wireguard_mesh_ipv6"`
 	// Routes send each destination range through the host or a gateway VM. A VM without routes reaches only the mesh.
-	// A route with the WireGuard gateway scope stays in the VM namespace instead.
+	// A scoped route stays in the VM namespace instead.
 	Routes []Route `json:"routes,omitempty"`
 	// IsNetworkGateway lets this VM send a source address it does not own, so it can carry traffic for other VMs.
 	IsNetworkGateway bool `json:"is_network_gateway,omitempty"`
@@ -270,8 +267,7 @@ type PublicOperationError struct {
 }
 
 // HostReachedDestinations lists the IPv6 destinations that a guest and its
-// namespace send to the host. The host uplink or a gateway VM then carries them.
-// A scoped route stays in the VM namespace, so the guest never installs it.
+// namespace send to the host. Scoped routes stay in the namespace.
 func HostReachedDestinations(network NetworkConfiguration) []string {
 	var destinations []string
 	for _, route := range network.Routes {

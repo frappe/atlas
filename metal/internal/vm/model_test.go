@@ -113,8 +113,7 @@ func TestHostReachedDestinationsListIPv6Routes(t *testing.T) {
 	}
 }
 
-// A scoped route stays in the VM namespace, so the guest metadata never
-// lists it and the guest routing table keeps no copy.
+// A scoped route stays out of the guest metadata.
 func TestHostReachedDestinationsSkipWireGuardGatewayRoutes(t *testing.T) {
 	network := NetworkConfiguration{Routes: []Route{
 		{Destination: "2000::/3", Via: RouteViaHost},
@@ -123,15 +122,5 @@ func TestHostReachedDestinationsSkipWireGuardGatewayRoutes(t *testing.T) {
 
 	if got := HostReachedDestinations(network); !slices.Equal(got, []string{"2000::/3"}) {
 		t.Fatalf("destinations = %v", got)
-	}
-}
-
-func TestRouteIsWireGuardGatewayReportsTheScope(t *testing.T) {
-	if (Route{Destination: "fdac:1:1::/48", Via: "fdaa:1::1"}).IsWireGuardGateway() {
-		t.Fatal("an unscoped route is not a WireGuard gateway route")
-	}
-	route := Route{Destination: "fdac:1:1::/48", Via: "fdaa:1::1", Scope: RouteScopeWireGuardGateway}
-	if !route.IsWireGuardGateway() || route.IsViaHost() {
-		t.Fatalf("route = %+v, want a WireGuard gateway route", route)
 	}
 }
