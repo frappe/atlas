@@ -1,3 +1,4 @@
+from contextlib import nullcontext
 from types import SimpleNamespace
 from unittest.mock import MagicMock, Mock, patch
 
@@ -125,3 +126,38 @@ class TestIPv6RouterCreation(UnitTestCase):
 		):
 			router_module.enqueue_pending_ipv6_router_provisioning()
 		router_server.enqueue_provisioning.assert_called_once_with(enqueue_after_commit=False)
+
+
+class TestIPv6RouterArchive(UnitTestCase):
+	def test_archive_queues_the_pool_detach_instead_of_running_it(self) -> None:
+		pool = MagicMock()
+		router = MagicMock(status="Failed", virtual_machine=None, pool=pool)
+		with (
+			patch.object(router_module, "_validate_system_manager"),
+			patch.object(router_module, "ipv6_router_lifecycle_lock", return_value=nullcontext()),
+			patch.object(router_module.frappe, "get_doc", return_value=router),
+			patch.object(router_module.frappe.db, "exists", return_value=False),
+			patch.object(router_module.frappe, "msgprint"),
+		):
+			IPv6RouterServer.archive(SimpleNamespace(doctype="IPv6 Router Server", name="ipv6-router-001"))
+
+		pool.begin_provider_detach.assert_called_once_with()
+		pool.queue_reconcile.assert_called_once_with()
+		pool.reconcile.assert_not_called()
+		self.assertEqual(router.status, "Archived")
+
+	def test_archive_returns_a_provider_pool_to_one_allocation(self) -> None:
+		pool = MagicMock(source="Provider", prefix="2001:db8::/80", allocation_prefix_length=128)
+		router = MagicMock(status="Failed", virtual_machine=None, pool=pool)
+		with (
+			patch.object(router_module, "_validate_system_manager"),
+			patch.object(router_module, "ipv6_router_lifecycle_lock", return_value=nullcontext()),
+			patch.object(router_module.frappe, "get_doc", return_value=router),
+			patch.object(router_module.frappe.db, "exists", return_value=False),
+			patch.object(router_module.frappe, "msgprint"),
+		):
+			IPv6RouterServer.archive(SimpleNamespace(doctype="IPv6 Router Server", name="ipv6-router-001"))
+
+		self.assertIsNone(pool.gateway)
+		self.assertEqual(pool.allocation_prefix_length, 80)
+		pool.save.assert_called_once_with(ignore_permissions=True)

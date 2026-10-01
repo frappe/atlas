@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import ipaddress
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any
 
@@ -108,7 +109,8 @@ class IPv6RouterServer(Document):
 			try:
 				if pool:
 					pool.begin_provider_detach()
-					pool.reconcile()
+					# Archive runs in a request. A worker detaches the block from the host.
+					pool.queue_reconcile()
 				if router.virtual_machine and frappe.db.exists("Virtual Machine", router.virtual_machine):
 					virtual_machine = frappe.get_doc("Virtual Machine", router.virtual_machine)
 					virtual_machine.set_termination_protection(False)
@@ -127,6 +129,9 @@ class IPv6RouterServer(Document):
 			router.save(ignore_permissions=True)
 			if pool:
 				pool.gateway = None
+				# A direct provider pool hands out its whole prefix.
+				if pool.source == "Provider":
+					pool.allocation_prefix_length = ipaddress.ip_network(pool.prefix, strict=False).prefixlen
 				pool.save(ignore_permissions=True)
 
 		frappe.msgprint(_("IPv6 Router Server {0} is archived.").format(self.name))
