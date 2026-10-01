@@ -43,7 +43,7 @@ To add a strategy, subclass `PlacementStrategy` and register it. The [VM module 
 
 Affinity rules limit the hosts that can hold a VM. A rule reads the tags of a host (Metal Server), or the tags of the VMs that run on the host.
 
-Atlas validates the rules in a create request and stores them in the `affinity_rules` field of the Virtual Machine record. **Placement does not apply the rules yet.**
+Atlas validates the rules in a create request and stores them in the `affinity_rules` field of the Virtual Machine record. Placement applies them when it creates the VM, when it migrates the VM to a host that it chooses, and when a resize moves the VM to another host. A resize that stays on the current host does not check them. A migration to a host that an operator names does not check them.
 
 Only a System Manager can set rules, and only on a privileged VM. Atlas rejects other requests with `403`.
 
@@ -113,7 +113,22 @@ Atlas rejects the request with `400` when one of these is true:
 - `tags` is empty, a tag breaks the limits above, or two keys are the same after Atlas trims them.
 - An `any_of` or `all_of` group is empty, or a group object has more than one key.
 - The request has more than 16 rules in total, including the rules in groups.
-- Groups nest more than 3 deep.
+- Groups nest more than 5 deep.
+
+### How placement applies the rules
+
+The rules are a filter before the strategy. When at least one host that meets the rules has room, placement removes the other hosts from its host pool. Then the strategy ranks the remaining hosts as usual.
+
+The host pool can be up to 1 second old, so two placements at the same time can see the same hosts. For this reason, Atlas checks the rules again while it holds the host lock, against the committed VMs on the host. If two Cargo Server VMs with `has_not {"role": "cargo-server"}` arrive together, the second one reads the draft of the first one. Placement then treats that host like a locked host and tries again with a fresh host pool, so the second VM goes to another host.
+
+The **Affinity Matching** setting in Atlas Settings, on the VM Scheduler tab, selects what happens when no host that meets the rules has room:
+
+| Value | No host that meets the rules has room | Every host that meets the rules is locked |
+| --- | --- | --- |
+| Enforced (default) | The request fails with `affinity_unsatisfied` (`503`). Atlas does not add a host. | `placement_busy` |
+| Preferred | Placement ignores the rules and uses every host. | `placement_busy` |
+
+A locked host is not proof that no host meets the rules. Thus, Preferred matching does not ignore the rules when the hosts are only locked.
 
 ## Under contention
 
