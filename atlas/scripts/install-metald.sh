@@ -10,6 +10,7 @@ set -eu
 : "${WG_MESH_SHA256:?WG_MESH_SHA256 is required}"
 : "${COORDINATION_LISTEN_ADDRESS:?COORDINATION_LISTEN_ADDRESS is required}"
 : "${ATLAS_COMMON_NAME:?ATLAS_COMMON_NAME is required}"
+: "${ATLAS_MESH_ADDRESS:?ATLAS_MESH_ADDRESS is required}"
 
 storage_pool_name=${STORAGE_POOL_NAME:-metal}
 firecracker_version=${FIRECRACKER_VERSION:-v1.16.1}
@@ -147,6 +148,7 @@ interface = "$wireguard_interface"
 [wg_mesh]
 binary_path = "$mesh_binary_path"
 uplink = "$MESH_UPLINK_INTERFACE"
+controller_address = "$ATLAS_MESH_ADDRESS"
 EOF
 }
 
@@ -181,6 +183,11 @@ if [ -f "$config_file" ]; then
 	sed -i "/^auth_token_hash[[:space:]]*=/d" "$config_file"
 	if grep -q '^\[wg_mesh\]' "$config_file"; then
 		sed -i "s|^uplink = .*|uplink = \"$MESH_UPLINK_INTERFACE\"|" "$config_file"
+		if grep -q '^controller_address[[:space:]]*=' "$config_file"; then
+			sed -i "s|^controller_address[[:space:]]*=.*|controller_address = \"$ATLAS_MESH_ADDRESS\"|" "$config_file"
+		else
+			sed -i "/^uplink = /a controller_address = \"$ATLAS_MESH_ADDRESS\"" "$config_file"
+		fi
 		sed -i "s|^binary_path = \"/usr/local/bin/atlas-wg-mesh\"|binary_path = \"$mesh_binary_path\"|" "$config_file"
 	else
 		mesh_sections

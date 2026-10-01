@@ -24,6 +24,12 @@ class TestMeshAddress(UnitTestCase):
 
 		self.assertEqual(address, "fdaa:1:0:7:ffff:ffff:ffff:ffff")
 
+	def test_a_tenant_zero_vm_cannot_take_the_atlas_address(self) -> None:
+		virtual_machine = frappe._dict(name="vm-18446744073709551615", tenant_id=0)
+
+		with self.assertRaises(frappe.ValidationError):
+			get_virtual_machine_mesh_address(virtual_machine)
+
 	def test_a_vm_number_above_64_bits_is_refused(self) -> None:
 		virtual_machine = frappe._dict(name="vm-18446744073709551616", tenant_id=7)
 

@@ -8,6 +8,7 @@ import frappe
 
 from atlas.atlas.core.server_providers.base import ProviderOperationError, ServerProvider
 from atlas.atlas.core.ssh import wait_for_server
+from atlas.metal_server.core.atlas_peer import AtlasPeer
 from atlas.metal_server.core.host_installation import HostInstallation
 
 if TYPE_CHECKING:
@@ -31,6 +32,7 @@ class ServerProvisioner:
 		"wireguard_public_key",
 	)
 	ssh_timeout_seconds = 1_000
+	wireguard_timeout_seconds = 120
 	ssh_poll_interval_seconds = 1
 
 	def __init__(self, server: "MetalServer", provider: ServerProvider | None = None) -> None:
@@ -70,6 +72,7 @@ class ServerProvisioner:
 			("secure-shell", self.wait_for_root_ssh),
 			("provider-network", lambda: self.provider.configure_server_network(self.server)),
 			("wireguard", self.host_installation.configure_wireguard),
+			("wireguard-link", self.wait_for_wireguard_ssh),
 			("metal", self.host_installation.install_metal),
 		)
 
@@ -83,13 +86,13 @@ class ServerProvisioner:
 		self.save_progress()
 
 	def wait_for_root_ssh(self) -> None:
-		"""Wait until the root Secure Shell account is available."""
-		if not self.server.public_ipv4_address:
+		"""Wait until the root Secure Shell account is available. A retry after WireGuard setup uses wg0."""
+		if not self.server.wireguard_public_key and not self.server.public_ipv4_address:
 			raise ProviderOperationError("Server has no public IPv4 address")
 
 		try:
 			user = wait_for_server(
-				host=self.server.public_ipv4_address,
+				host=self.server.ssh_host,
 				users=self.provider.ssh_users,
 				timeout_seconds=self.ssh_timeout_seconds,
 				poll_interval_seconds=self.ssh_poll_interval_seconds,
@@ -102,7 +105,7 @@ class ServerProvisioner:
 		self.provider.promote_ssh_user(self.server, user)
 		try:
 			root_user = wait_for_server(
-				host=self.server.public_ipv4_address,
+				host=self.server.ssh_host,
 				users=("root",),
 				timeout_seconds=self.ssh_timeout_seconds,
 				poll_interval_seconds=self.ssh_poll_interval_seconds,
@@ -117,6 +120,23 @@ class ServerProvisioner:
 				"Root Secure Shell access did not become ready after user promotion",
 				is_retryable=True,
 			)
+
+	def wait_for_wireguard_ssh(self) -> None:
+		"""Wait until root Secure Shell answers on the host wg0 address."""
+		# Publish the new host peer now instead of waiting for the scheduler.
+		AtlasPeer(self.server.settings).write_config()
+		try:
+			wait_for_server(
+				host=self.server.ssh_host,
+				users=("root",),
+				timeout_seconds=self.wireguard_timeout_seconds,
+				poll_interval_seconds=self.ssh_poll_interval_seconds,
+			)
+		except TimeoutError as error:
+			raise ProviderOperationError(
+				f"Atlas cannot reach {self.server.ssh_host} through wg0. Check that {AtlasPeer.interface} holds this host.",
+				is_retryable=True,
+			) from error
 
 	def save_progress(self) -> None:
 		"""Store the current setup fields and commit the setup transaction."""

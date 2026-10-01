@@ -8,9 +8,10 @@ A new Metal Server queues a background job:
 
 1. Create or reuse the provider host.
 2. Ask the provider to prepare it and wait for root SSH access.
-3. Configure the provider network and WireGuard.
-4. Install Metal, WG Mesh, TLS credentials, storage, and systemd units.
-5. Mark the host `Running` and queue disk inventory sync.
+3. Configure the provider network and WireGuard, with the Atlas peer on `wg0`.
+4. Wait for root SSH on the host `wg0` address.
+5. Install Metal, WG Mesh, TLS credentials, storage, and systemd units.
+6. Mark the host `Running` and queue disk inventory sync.
 
 The provider adapter supplies host-specific operations. An adapter for a manually prepared host can expect some resources to exist already.
 

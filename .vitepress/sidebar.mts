@@ -19,6 +19,7 @@ const handbook: DefaultTheme.SidebarItem[] = [
 			{ text: 'Regional settings', link: '/docs/region/configuration' },
 			{ text: 'Provision a host', link: '/docs/region/' },
 			{ text: 'Metal daemon', link: '/docs/region/metald' },
+			{ text: 'Atlas access to hosts', link: '/docs/region/host-access' },
 			{ text: 'Host sync', link: '/docs/region/host-sync' },
 			{ text: 'Add a provider', link: '/docs/region/provider-guide' },
 		],

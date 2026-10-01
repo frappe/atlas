@@ -72,7 +72,10 @@ class MetalServer(Document):
 
 	@property
 	def ssh_host(self) -> str:
-		"""Return the address an SSH Task connects to."""
+		"""Return the wg0 address once the host holds the Atlas peer. Setup before that uses the public address."""
+		if self.wireguard_public_key and self.wireguard_ip_address:
+			return self.wireguard_ip_address
+
 		if not self.public_ipv4_address:
 			frappe.throw(_("Metal Server {0} has no public IPv4 address.").format(self.name))
 

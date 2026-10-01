@@ -34,6 +34,8 @@ Each host has a WireGuard interface, `wg0`, with an address in `fdab::/16`. Ever
 
 The Atlas app keeps the list of hosts and their keys. It sends the complete peer list to each host during [host sync](../region/host-sync.md), and Metal applies it. A new host joins the mesh at the next sync.
 
+Atlas itself is one more `wg0` peer on each host, outside the mesh peer list. Hosts can reach Atlas. Among VMs, only tenant-0 VMs can reach its mesh address. [Atlas access to hosts](../region/host-access.md) explains the path.
+
 ## Layer 3: WG Mesh
 
 Each VM gets a stable address. The Atlas app derives it when it creates the VM:

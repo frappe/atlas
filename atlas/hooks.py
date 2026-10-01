@@ -212,6 +212,7 @@ scheduler_events = {
 			"atlas.metal_server.doctype.public_ip_allocation.public_ip_allocation.enqueue_pending_allocation_reconciliation",
 			"atlas.metal_server.doctype.public_ip_allocation.public_ip_allocation.enqueue_allocation_moves",
 			"atlas.metal_server.usage.enqueue_server_syncs",
+			"atlas.metal_server.core.atlas_peer.write_atlas_peer_config",
 		],
 		"* * * * * */30": [
 			"atlas.vm.core.vm_image_transfer.enqueue_pending_virtual_machine_image_transfers",

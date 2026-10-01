@@ -529,6 +529,7 @@ class TestServer(UnitTestCase):
 				"ATLAS_COMMON_NAME": "atlas.example.test",
 				"COORDINATION_LISTEN_ADDRESS": "[fdab:1::7]:9001",
 				"MESH_UPLINK_INTERFACE": "eno1.1878",
+				"ATLAS_MESH_ADDRESS": "fdaa:1::ffff:ffff:ffff:ffff",
 			},
 		)
 		ssh_runner.return_value.run_script.assert_called_once_with(
@@ -758,6 +759,16 @@ class TestServer(UnitTestCase):
 
 		create_for_script_file.assert_not_called()
 
+	def test_ssh_uses_wg0_once_the_host_has_a_wireguard_key(self) -> None:
+		server = self._server(status="Running")
+		server.wireguard_ip_address = "fdab:1::7"
+
+		server.wireguard_public_key = None
+		self.assertEqual(MetalServer.ssh_host.fget(server), "203.0.113.7")
+
+		server.wireguard_public_key = "host-key"
+		self.assertEqual(MetalServer.ssh_host.fget(server), "fdab:1::7")
+
 	def test_get_wireguard_ip_address_uses_the_server_uuid(self) -> None:
 		server = self._server(status="Running")
 
@@ -813,7 +824,7 @@ class TestServer(UnitTestCase):
 		server = self._server(status="Running")
 		output = (
 			"==> packages\n==> interface (wg0)\n"
-			"===PUBLIC_KEY_START===\nSGVsbG9XaXJlR3VhcmRQdWJsaWNLZXlIZXJlPQ=\n===PUBLIC_KEY_END===\n"
+			"===PUBLIC_KEY_START===\nC9VOcyTb+m1vKqzRZbDsbQ55e1OIzEwSj+ttwbjMv1w=\n===PUBLIC_KEY_END===\n"
 		)
 		task = SimpleNamespace(result=SimpleNamespace(output=output, is_success=True))
 
@@ -830,11 +841,51 @@ class TestServer(UnitTestCase):
 				"WIREGUARD_ADDRESS": SERVER_MESH_ADDRESS,
 				"WIREGUARD_LISTEN_PORT": 51820,
 				"MESH_UPLINK_INTERFACE": "eno1.1878",
+				"ATLAS_WIREGUARD_ADDRESS": "fdaa:1::ffff:ffff:ffff:ffff",
+				"ATLAS_WIREGUARD_PUBLIC_KEY": "atlas-key",
 			},
 		)
 		self.assertFalse(arguments["run_in_background"])
 		server.db_set.assert_any_call("wireguard_ip_address", SERVER_MESH_ADDRESS)
-		server.db_set.assert_called_with("wireguard_public_key", "SGVsbG9XaXJlR3VhcmRQdWJsaWNLZXlIZXJlPQ=")
+		server.db_set.assert_called_with(
+			"wireguard_public_key", "C9VOcyTb+m1vKqzRZbDsbQ55e1OIzEwSj+ttwbjMv1w="
+		)
+
+	def test_configure_wireguard_ignores_a_progress_line_between_the_markers(self) -> None:
+		server = self._server(status="Running")
+		output = (
+			"===PUBLIC_KEY_START===\nC9VOcyTb+m1vKqzRZbDsbQ55e1OIzEwSj+ttwbjMv1w=\n"
+			"==> Atlas peer (fdaa:1::ffff:ffff:ffff:ffff)\n===PUBLIC_KEY_END===\n"
+		)
+		task = SimpleNamespace(result=SimpleNamespace(output=output, is_success=True))
+
+		with (
+			patch(
+				"atlas.metal_server.core.host_installation.SSHTask.create_for_script_file",
+				return_value=task,
+			),
+		):
+			MetalServer._configure_wireguard(server)
+
+		server.db_set.assert_called_with(
+			"wireguard_public_key", "C9VOcyTb+m1vKqzRZbDsbQ55e1OIzEwSj+ttwbjMv1w="
+		)
+
+	def test_configure_wireguard_needs_the_atlas_identity(self) -> None:
+		"""Only atlas-wireguard creates the key, so two first provisions cannot make two keys."""
+		server = self._server(status="Running")
+
+		server.settings.wireguard_public_key = None
+
+		with (
+			patch(
+				"atlas.metal_server.core.host_installation.SSHTask.create_for_script_file"
+			) as create_for_script_file,
+			self.assertRaisesRegex(frappe.ValidationError, "atlas-wireguard"),
+		):
+			MetalServer._configure_wireguard(server)
+
+		create_for_script_file.assert_not_called()
 
 	def test_configure_wireguard_job_needs_the_mesh_uplink(self) -> None:
 		server = self._server(status="Running")
@@ -1067,6 +1118,8 @@ class TestServer(UnitTestCase):
 				region_id=1,
 				private_network_mtu=1500,
 				use_public_ip_for_metald=False,
+				wireguard_ip_address="fdaa:1::ffff:ffff:ffff:ffff",
+				wireguard_public_key="atlas-key",
 			),
 			set=Mock(),
 			save=Mock(),

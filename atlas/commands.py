@@ -21,6 +21,7 @@ from atlas.atlas.core.host_binaries import (
 )
 from atlas.atlas.core.setup import AtlasSetup, AtlasSetupConfiguration
 from atlas.atlas.object_storage import ObjectStorageError
+from atlas.metal_server.core.atlas_peer import AtlasPeer
 from atlas.service.core.service_package import SERVICE_PACKAGES
 from atlas.vm.core.image_builder import build_ubuntu_image, publish_ubuntu_image
 
@@ -202,4 +203,31 @@ def is_image_available(site: str, title: str, architecture: str) -> bool:
 		frappe.destroy()
 
 
-commands = [configure_atlas, build_metald, build_wg_mesh, build_service_packages, build_ubuntu_base_image]
+@click.command("atlas-wireguard")
+@pass_context
+def atlas_wireguard(context: CliCtxObj) -> None:
+	"""Create the Atlas wg0 identity once and write its wg-quick file."""
+	if not context.sites:
+		raise SiteNotSpecifiedError
+
+	for site in context.sites:
+		try:
+			frappe.init(site)
+			frappe.connect()
+			atlas_peer = AtlasPeer()
+			atlas_peer.ensure_identity()
+			atlas_peer.write_config()
+			frappe.db.commit()  # nosemgrep
+			click.echo(f"{site}: {atlas_peer.settings.wireguard_ip_address} {atlas_peer.config_path}")
+		finally:
+			frappe.destroy()
+
+
+commands = [
+	configure_atlas,
+	build_metald,
+	build_wg_mesh,
+	build_service_packages,
+	build_ubuntu_base_image,
+	atlas_wireguard,
+]
