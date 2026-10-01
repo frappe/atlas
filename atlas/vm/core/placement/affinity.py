@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Literal, assert_never, cast, get_args
 
 import frappe
 
+from atlas.atlas.core.exceptions import AtlasUserError
 from atlas.atlas.core.tags import (
 	MAXIMUM_TAG_KEY_LENGTH,
 	MAXIMUM_TAG_VALUE_LENGTH,
@@ -18,12 +20,31 @@ from atlas.atlas.core.tags import (
 AffinityResource = Literal["metal_server", "virtual_machine"]
 AffinityOperator = Literal["has", "has_not"]
 AffinityGroupKind = Literal["any_of", "all_of"]
+AffinityMatching = Literal["Enforced", "Preferred"]
 
 AFFINITY_RULE_FIELDS = ("resource", "operator", "tags")
 MAXIMUM_AFFINITY_RULES = 16
 MAXIMUM_AFFINITY_GROUP_DEPTH = 5
 # A migration in these states reserves its destination host, as in the capacity query.
 RESERVED_MIGRATION_STATUSES = ("preparing", "copying", "cutting_over", "starting", "finalizing", "canceling")
+
+
+class AffinityUnsatisfied(AtlasUserError):
+	"""No Metal Server that meets the affinity rules can hold the requested VM."""
+
+	code = "affinity_unsatisfied"
+	http_status_code = 503
+
+
+def load_affinity_matching() -> AffinityMatching:
+	"""Read how strictly placement applies affinity rules. An unsaved setting uses its default."""
+	value = frappe.get_cached_value("Atlas Settings", "Atlas Settings", "affinity_matching")
+	if not value:
+		value = frappe.get_meta("Atlas Settings").get_field("affinity_matching").default
+	if value not in get_args(AffinityMatching):
+		raise ValueError(f"Unknown affinity matching setting: {value}.")
+
+	return cast(AffinityMatching, value)
 
 
 @dataclass(frozen=True, slots=True)
@@ -268,6 +289,11 @@ class AffinityRules:
 			raise ValueError(f"A virtual machine takes at most {MAXIMUM_AFFINITY_RULES} affinity rules.")
 
 		return cls(nodes=nodes)
+
+	@classmethod
+	def from_json(cls, value: str | None) -> AffinityRules:
+		"""Parse the rules that a Virtual Machine stores. An empty value means no rules."""
+		return cls.from_value(json.loads(value) if value else None)
 
 	def filter_hosts(
 		self, host_names: Sequence[str], tenant_id: int, excluded_virtual_machine: str | None = None

@@ -92,6 +92,7 @@ class VirtualMachineService:
 			image.architecture,
 			request.tenant_id,
 			request.sleep_after_idle_seconds > 0,
+			affinity_rules=request.affinity_rules,
 		)
 		server_name = PlacementStrategy.find_server(requirements)
 		virtual_machine = cls.insert_draft(request, image, server_name)

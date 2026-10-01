@@ -50,6 +50,7 @@ class AtlasSettings(Document):
 	if TYPE_CHECKING:
 		from frappe.types import DF
 
+		affinity_matching: DF.Literal["Enforced", "Preferred"]
 		atlas_tls_certificate: DF.Password | None
 		atlas_tls_private_key: DF.Password | None
 		auto_spawn_metal_server: DF.Check

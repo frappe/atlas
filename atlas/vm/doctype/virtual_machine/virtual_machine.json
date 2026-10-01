@@ -306,7 +306,7 @@
    "read_only": 1
   },
   {
-   "description": "Rules that limit the Metal Servers for this virtual machine. Placement does not apply them yet.",
+   "description": "Rules that limit the Metal Servers for this virtual machine. Placement applies them at creation, at a migration to a host that placement chooses, and at a resize that moves the virtual machine.",
    "fieldname": "affinity_rules",
    "fieldtype": "Code",
    "label": "Affinity Rules",
@@ -365,7 +365,7 @@
    "link_fieldname": "virtual_machine"
   }
  ],
- "modified": "2026-10-01 00:00:00.000000",
+ "modified": "2026-10-01 00:00:02.000000",
  "modified_by": "Administrator",
  "module": "VM",
  "name": "Virtual Machine",

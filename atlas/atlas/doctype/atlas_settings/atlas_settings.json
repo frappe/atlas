@@ -116,6 +116,7 @@
   "vm_scheduler_tab",
   "placement_strategy_section",
   "placement_strategy",
+  "affinity_matching",
   "column_break_dxsw",
   "use_dedicated_sleepy_vm_hosts",
   "sleepy_vm_overcommit_factor",
@@ -739,6 +740,15 @@
    "show_description_on_click": 1
   },
   {
+   "default": "Enforced",
+   "description": "Enforced fails a VM whose affinity rules no host with capacity meets. Preferred places it on any host instead.",
+   "fieldname": "affinity_matching",
+   "fieldtype": "Select",
+   "label": "Affinity Matching",
+   "options": "Enforced\nPreferred",
+   "show_description_on_click": 1
+  },
+  {
    "default": "1.0",
    "description": "Memory weight for sleepy VM placement. Higher values allow denser placement; 1.0 means no overcommit.",
    "fieldname": "sleepy_vm_overcommit_factor",
@@ -819,7 +829,7 @@
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-09-24 04:43:01.505736",
+ "modified": "2026-10-01 00:00:00.000000",
  "modified_by": "Administrator",
  "module": "Atlas",
  "name": "Atlas Settings",

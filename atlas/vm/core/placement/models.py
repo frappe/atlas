@@ -1,7 +1,9 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
+
+from atlas.vm.core.placement.affinity import AffinityRules
 
 
 @dataclass(frozen=True, slots=True)
@@ -30,6 +32,9 @@ class PlacementRequirements:
 	architecture: str
 	tenant_id: int
 	is_sleepy: bool
+	affinity_rules: AffinityRules = field(default_factory=AffinityRules)
+	# The VM that placement moves. It never matches its own affinity rules.
+	virtual_machine: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

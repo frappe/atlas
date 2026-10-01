@@ -13,7 +13,7 @@ from atlas.vm.core.models import (
 	MINIMUM_CPU_MILLICORES,
 	VirtualMachineShape,
 )
-from atlas.vm.core.placement import CurrentPlacement, PlacementRequirements, PlacementStrategy
+from atlas.vm.core.placement import AffinityRules, CurrentPlacement, PlacementRequirements, PlacementStrategy
 from atlas.vm.core.placement.transaction import use_read_committed
 from atlas.vm.core.vm_migration import MigrationService
 from atlas.vm.core.vm_service import VirtualMachineService
@@ -132,6 +132,8 @@ class VirtualMachineResize:
 			cast(str, self.virtual_machine.architecture),
 			self.virtual_machine.tenant_id,
 			target.sleep_after_idle_seconds > 0,
+			affinity_rules=AffinityRules.from_json(self.virtual_machine.affinity_rules),
+			virtual_machine=self.virtual_machine.name,
 		)
 
 	def _set_idle_shutdown(self, current: VirtualMachineShape, sleep_after_idle_seconds: int) -> None:
