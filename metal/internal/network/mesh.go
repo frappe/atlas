@@ -37,6 +37,8 @@ type MeshConfig struct {
 	WireGuardName string
 	// WireGuardStatePath holds the managed WireGuard peer state that the mesh reads.
 	WireGuardStatePath string
+	// ControllerAddress is the Atlas mesh address on wg0.
+	ControllerAddress string
 }
 
 // Mesh registers virtual machine addresses with the Atlas WG Mesh CLI.
@@ -45,6 +47,7 @@ type Mesh struct {
 	uplinkName         string
 	wireGuardName      string
 	wireGuardStatePath string
+	controllerAddress  string
 }
 
 // NewMesh returns a mesh registrar for one host.
@@ -70,6 +73,7 @@ func NewMesh(configuration MeshConfig) (*Mesh, error) {
 		uplinkName:         configuration.UplinkName,
 		wireGuardName:      configuration.WireGuardName,
 		wireGuardStatePath: configuration.WireGuardStatePath,
+		controllerAddress:  configuration.ControllerAddress,
 	}, nil
 }
 
@@ -102,7 +106,7 @@ func (mesh *Mesh) PrivateNetworkMAC() (string, error) {
 // EnsureHost applies the host configuration and refreshes its BPF programs.
 func (mesh *Mesh) EnsureHost(ctx context.Context) error {
 	return platform.Run(ctx, mesh.commandPath, "configure",
-		"--uplink", mesh.uplinkName, "--wireguard", mesh.wireGuardName)
+		"--uplink", mesh.uplinkName, "--wireguard", mesh.wireGuardName, "--controller", mesh.controllerAddress)
 }
 
 // removeVM unregisters one VM address. An address this host does not own is not an error.

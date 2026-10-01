@@ -105,7 +105,7 @@ func recordingMesh(t *testing.T) (*Mesh, string) {
 		t.Fatal(err)
 	}
 	mesh, err := NewMesh(MeshConfig{
-		CommandPath: command, WireGuardName: "wg0", UplinkName: "eno1",
+		CommandPath: command, WireGuardName: "wg0", UplinkName: "eno1", ControllerAddress: "fdaa:1::ffff:ffff:ffff:ffff",
 		WireGuardStatePath: "/var/lib/metal/wireguard-peers.json",
 	})
 	if err != nil {
@@ -140,7 +140,7 @@ func TestMeshUsesConvergentHostCommands(t *testing.T) {
 	}
 
 	want := []string{
-		"configure --uplink eno1 --wireguard wg0",
+		"configure --uplink eno1 --wireguard wg0 --controller fdaa:1::ffff:ffff:ffff:ffff",
 		"peers sync /var/lib/metal/wireguard-peers.json --unicast",
 		"privileged-vm replace fdaa:1::1 fdaa:1::2",
 		"privileged-vm clear",
