@@ -245,6 +245,7 @@ class VirtualMachineCreateRequest:
 	tenant_id: int
 	is_privileged: bool = False
 	is_termination_protected: bool = False
+	is_disk_encrypted: bool = False
 	hostname: str = ""
 	ssh_keys: tuple[str, ...] = ()
 	user_data: str = ""
@@ -300,6 +301,7 @@ class VirtualMachineCreateRequest:
 			is_termination_protected=strict_bool(
 				payload.get("is_termination_protected"), "is_termination_protected"
 			),
+			is_disk_encrypted=strict_bool(payload.get("is_disk_encrypted"), "is_disk_encrypted"),
 			hostname=str(payload.get("hostname") or ""),
 			ssh_keys=cls.ssh_keys_tuple(payload),
 			user_data=str(payload.get("user_data") or ""),

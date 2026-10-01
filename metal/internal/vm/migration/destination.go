@@ -75,6 +75,10 @@ func (m *Manager) AdvanceDestination(ctx context.Context, virtualMachineID strin
 	if definition.VirtualMachineID != virtualMachineID {
 		return m.recordDestinationError(record, fmt.Errorf("source returned definition for %s", definition.VirtualMachineID))
 	}
+	if !definition.Specification.Image.SameContent(record.ImageSource) {
+		return m.recordDestinationError(record, fmt.Errorf("source returned a different image"))
+	}
+	definition.Specification.Image = definition.Specification.Image.RefreshURLs(record.ImageSource)
 	definition, err = record.Resize.apply(definition)
 	if err != nil {
 		return m.recordDestinationError(record, err)

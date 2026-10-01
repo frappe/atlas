@@ -29,6 +29,7 @@ type StagedSnapshot struct {
 	SourceVirtualMachineID string
 	Rootfs                 ArtifactSize
 	Kernel                 ArtifactSize
+	Initrd                 ArtifactSize
 }
 
 // stagedSnapshotMetadata is the on-disk record of one staged snapshot. It
@@ -40,6 +41,7 @@ type stagedSnapshotMetadata struct {
 	SourceSnapshot  string    `json:"source_snapshot"`
 	RootfsSizeBytes int64     `json:"rootfs_size_bytes"`
 	KernelSizeBytes int64     `json:"kernel_size_bytes"`
+	InitrdSizeBytes int64     `json:"initrd_size_bytes,omitempty"`
 	CreatedAt       time.Time `json:"created_at"`
 	LastActivityAt  time.Time `json:"last_activity_at"`
 
@@ -49,6 +51,7 @@ type stagedSnapshotMetadata struct {
 
 	RootfsProgress *artifactProgress `json:"rootfs_progress,omitempty"`
 	KernelProgress *artifactProgress `json:"kernel_progress,omitempty"`
+	InitrdProgress *artifactProgress `json:"initrd_progress,omitempty"`
 }
 
 // artifactProgress records parts already stored for a resumable upload.
@@ -78,7 +81,7 @@ func (store *SnapshotStore) Stage(ctx context.Context, request vm.SnapshotReques
 	if err != nil {
 		return vm.StagedSnapshot{}, fmt.Errorf("generate snapshot identifier: %w", err)
 	}
-	staged, err := store.StageSnapshot(ctx, request.VirtualMachineID, snapshotID.String(), request.ImageReference)
+	staged, err := store.StageSnapshot(ctx, request.VirtualMachineID, snapshotID.String(), request.ImageReference, request.IsDiskEncrypted)
 	if err != nil {
 		return vm.StagedSnapshot{}, err
 	}
@@ -87,11 +90,12 @@ func (store *SnapshotStore) Stage(ctx context.Context, request vm.SnapshotReques
 		SourceVirtualMachineID: staged.SourceVirtualMachineID,
 		RootfsSizeBytes:        staged.Rootfs.SizeBytes,
 		KernelSizeBytes:        staged.Kernel.SizeBytes,
+		InitrdSizeBytes:        staged.Initrd.SizeBytes,
 	}, nil
 }
 
-// StageSnapshot creates a stable root file system clone and kernel link.
-func (store *SnapshotStore) StageSnapshot(ctx context.Context, virtualMachineID, snapshotID, imageReference string) (StagedSnapshot, error) {
+// StageSnapshot creates a stable root file system clone and boot artifact links.
+func (store *SnapshotStore) StageSnapshot(ctx context.Context, virtualMachineID, snapshotID, imageReference string, isDiskEncrypted bool) (StagedSnapshot, error) {
 	lock := store.snapshotLock(snapshotID)
 	lock.Lock()
 	defer lock.Unlock()
@@ -107,13 +111,13 @@ func (store *SnapshotStore) StageSnapshot(ctx context.Context, virtualMachineID,
 		return metadata.snapshot(), nil
 	}
 
-	return store.createStagedSnapshot(ctx, virtualMachineID, snapshotID, imageReference)
+	return store.createStagedSnapshot(ctx, virtualMachineID, snapshotID, imageReference, isDiskEncrypted)
 }
 
 // createStagedSnapshot snapshots the live disk, clones it read-only, and stages
-// the kernel beside it. A failure attempts to destroy the clone and snapshot, so
-// a retry normally starts clean.
-func (store *SnapshotStore) createStagedSnapshot(ctx context.Context, virtualMachineID, snapshotID, imageReference string) (_ StagedSnapshot, resultError error) {
+// its boot artifacts beside it. A failure attempts to destroy the clone and
+// snapshot, so a retry normally starts clean.
+func (store *SnapshotStore) createStagedSnapshot(ctx context.Context, virtualMachineID, snapshotID, imageReference string, isDiskEncrypted bool) (_ StagedSnapshot, resultError error) {
 	sourceSnapshot := store.pool.snapshot(virtualMachineID, snapshotID)
 	stagingDataset := store.pool.stagingDataset(snapshotID)
 	directory := store.snapshotDirectory(snapshotID)
@@ -144,6 +148,20 @@ func (store *SnapshotStore) createStagedSnapshot(ctx context.Context, virtualMac
 	if err != nil {
 		return StagedSnapshot{}, err
 	}
+	manifest, found, err := store.images.loadImageManifest(imageReference)
+	if err != nil {
+		return StagedSnapshot{}, err
+	}
+	if isDiskEncrypted && (!found || manifest.InitrdSHA256 == "") {
+		return StagedSnapshot{}, fmt.Errorf("%w: source image has no encryption initrd", ErrImageIntegrity)
+	}
+	var initrdSize int64
+	if found && manifest.InitrdSHA256 != "" {
+		initrdSize, err = store.stageArtifact(ctx, store.images.initrdFile(imageReference), filepath.Join(directory, "initrd"), "initrd")
+		if err != nil {
+			return StagedSnapshot{}, err
+		}
+	}
 
 	now := time.Now().UTC()
 	metadata := stagedSnapshotMetadata{
@@ -152,6 +170,7 @@ func (store *SnapshotStore) createStagedSnapshot(ctx context.Context, virtualMac
 		SourceSnapshot:         sourceSnapshot,
 		RootfsSizeBytes:        rootfsSize,
 		KernelSizeBytes:        kernelSize,
+		InitrdSizeBytes:        initrdSize,
 		CreatedAt:              now,
 		LastActivityAt:         now,
 	}
@@ -165,16 +184,19 @@ func (store *SnapshotStore) createStagedSnapshot(ctx context.Context, virtualMac
 // stageKernel places the image kernel beside the staged disk and returns its
 // size. A hard link is used when the staging directory shares a file system.
 func (store *SnapshotStore) stageKernel(ctx context.Context, imageReference, destination string) (int64, error) {
-	source := store.images.kernelFile(imageReference)
+	return store.stageArtifact(ctx, store.images.kernelFile(imageReference), destination, "kernel")
+}
+
+func (store *SnapshotStore) stageArtifact(ctx context.Context, source, destination, name string) (int64, error) {
 	if err := os.Link(source, destination); err != nil {
 		if err := copyReflink(ctx, source, destination); err != nil {
-			return 0, fmt.Errorf("stage kernel: %w", err)
+			return 0, fmt.Errorf("stage %s: %w", name, err)
 		}
 	}
 
 	information, err := os.Stat(destination)
 	if err != nil {
-		return 0, fmt.Errorf("read staged kernel size: %w", err)
+		return 0, fmt.Errorf("read staged %s size: %w", name, err)
 	}
 	return information.Size(), nil
 }
@@ -399,6 +421,7 @@ func (metadata stagedSnapshotMetadata) snapshot() StagedSnapshot {
 		SourceVirtualMachineID: metadata.SourceVirtualMachineID,
 		Rootfs:                 ArtifactSize{SizeBytes: metadata.RootfsSizeBytes},
 		Kernel:                 ArtifactSize{SizeBytes: metadata.KernelSizeBytes},
+		Initrd:                 ArtifactSize{SizeBytes: metadata.InitrdSizeBytes},
 	}
 }
 

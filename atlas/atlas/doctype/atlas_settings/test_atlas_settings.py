@@ -214,7 +214,12 @@ class IntegrationTestWildcardCertificate(IntegrationTestCase):
 		self._store(None, serialize_private_key(self.private_key))
 		self.settings.wildcard_tls_expires_on = now_datetime()
 
-		self.settings.validate_wildcard_certificate()
+		with patch.object(
+			self.settings,
+			"get_password",
+			side_effect=AssertionError("a cleared certificate must not load the stored password"),
+		):
+			self.settings.validate_wildcard_certificate()
 
 		self.assertIsNone(self.settings.wildcard_tls_private_key)
 		self.assertIsNone(self.settings.wildcard_tls_expires_on)

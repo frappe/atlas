@@ -43,6 +43,12 @@ class MultipartUploadService:
 				object_key
 			)
 
+		if self.has_initrd and not self.image.initrd_multipart_upload_id:
+			object_key = self.require_value(self.image.initrd_object_key, "initrd object key")
+			self.image.initrd_multipart_upload_id = self.object_storage_client.create_multipart_upload(
+				object_key
+			)
+
 		if save:
 			self.image.save()
 
@@ -50,7 +56,7 @@ class MultipartUploadService:
 		"""Return signed parts and multipart upload IDs for each artifact."""
 		rootfs_upload_id = self.require_value(self.image.rootfs_multipart_upload_id, "rootfs upload ID")
 		kernel_upload_id = self.require_value(self.image.kernel_multipart_upload_id, "kernel upload ID")
-		return {
+		request = {
 			"rootfs": {
 				"upload_id": rootfs_upload_id,
 				"part_size_mib": get_multipart_part_size_mib(self.image.image_size_mib),
@@ -70,6 +76,18 @@ class MultipartUploadService:
 				),
 			},
 		}
+		if self.has_initrd:
+			initrd_upload_id = self.require_value(self.image.initrd_multipart_upload_id, "initrd upload ID")
+			request["initrd"] = {
+				"upload_id": initrd_upload_id,
+				"part_size_mib": get_multipart_part_size_mib(self.image.initrd_size_mib),
+				"parts": self.get_signed_parts(
+					self.require_value(self.image.initrd_object_key, "initrd object key"),
+					initrd_upload_id,
+					self.image.initrd_size_mib,
+				),
+			}
+		return request
 
 	def get_signed_parts(self, object_key: str, upload_id: str, size_mib: int) -> list[dict[str, int | str]]:
 		"""Return one signed URL for each required multipart upload part."""
@@ -84,7 +102,7 @@ class MultipartUploadService:
 		]
 
 	def complete_stored_uploads(self) -> None:
-		"""Validate and complete both stored image artifact uploads."""
+		"""Validate and complete every stored image artifact upload."""
 		parts_by_artifact = {
 			"rootfs": self.get_stored_parts(
 				self.require_value(self.image.image_object_key, "rootfs object key"),
@@ -97,13 +115,21 @@ class MultipartUploadService:
 				self.stored_size_mib("kernel"),
 			),
 		}
+		if self.has_initrd:
+			parts_by_artifact["initrd"] = self.get_stored_parts(
+				self.require_value(self.image.initrd_object_key, "initrd object key"),
+				self.require_value(self.image.initrd_multipart_upload_id, "initrd upload ID"),
+				self.stored_size_mib("initrd"),
+			)
 		self.complete_uploads(parts_by_artifact)
 
 	def stored_size_mib(self, artifact: str) -> int:
 		"""Return the compressed size that the object store holds."""
-		value = (
-			self.image.image_stored_size_mib if artifact == "rootfs" else self.image.kernel_stored_size_mib
-		)
+		value = {
+			"rootfs": getattr(self.image, "image_stored_size_mib", None),
+			"kernel": getattr(self.image, "kernel_stored_size_mib", None),
+			"initrd": getattr(self.image, "initrd_stored_size_mib", None),
+		}[artifact]
 		if not value or value <= 0:
 			raise MultipartUploadError(f"Machine image has no stored {artifact} size")
 		return value
@@ -118,7 +144,7 @@ class MultipartUploadService:
 		return parts
 
 	def complete_uploads(self, parts_by_artifact: dict[str, list[dict[str, Any]]]) -> None:
-		"""Complete both multipart uploads."""
+		"""Complete every multipart upload."""
 		self.complete_upload(
 			self.require_value(self.image.image_object_key, "rootfs object key"),
 			self.require_value(self.image.rootfs_multipart_upload_id, "rootfs upload ID"),
@@ -131,6 +157,18 @@ class MultipartUploadService:
 			self.stored_size_mib("kernel"),
 			parts_by_artifact["kernel"],
 		)
+		if self.has_initrd:
+			self.complete_upload(
+				self.require_value(self.image.initrd_object_key, "initrd object key"),
+				self.require_value(self.image.initrd_multipart_upload_id, "initrd upload ID"),
+				self.stored_size_mib("initrd"),
+				parts_by_artifact["initrd"],
+			)
+
+	@property
+	def has_initrd(self) -> bool:
+		"""Return whether this in-progress image includes an initrd."""
+		return bool(getattr(self.image, "initrd_object_key", None))
 
 	def complete_upload(
 		self, object_key: str, upload_id: str, size_mib: int, parts: list[dict[str, Any]]

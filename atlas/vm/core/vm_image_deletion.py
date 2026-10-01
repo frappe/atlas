@@ -53,10 +53,13 @@ class VirtualMachineImageDeletionService:
 				"site_file_retention_until",
 				"image_object_key",
 				"kernel_object_key",
+				"initrd_object_key",
 				"rootfs_multipart_upload_id",
 				"kernel_multipart_upload_id",
+				"initrd_multipart_upload_id",
 				"image_file",
 				"kernel_file",
+				"initrd_file",
 				"source_server",
 			],
 		):
@@ -89,8 +92,10 @@ class VirtualMachineImageDeletionService:
 			(
 				image.image_object_key,
 				image.kernel_object_key,
+				getattr(image, "initrd_object_key", None),
 				image.rootfs_multipart_upload_id,
 				image.kernel_multipart_upload_id,
+				getattr(image, "initrd_multipart_upload_id", None),
 			)
 		):
 			client = cast("AtlasSettings", frappe.get_single("Atlas Settings")).get_object_storage_client()
@@ -98,7 +103,7 @@ class VirtualMachineImageDeletionService:
 			self.delete_objects(image, client)
 		self.delete_staged_snapshot(image)
 		# The image still links its owned files until cleanup is saved.
-		for file_name in (image.image_file, image.kernel_file):
+		for file_name in (image.image_file, image.kernel_file, getattr(image, "initrd_file", None)):
 			if file_name:
 				frappe.delete_doc(
 					"File", file_name, force=True, ignore_permissions=True, delete_permanently=True
@@ -107,10 +112,13 @@ class VirtualMachineImageDeletionService:
 			for field in (
 				"image_object_key",
 				"kernel_object_key",
+				"initrd_object_key",
 				"rootfs_multipart_upload_id",
 				"kernel_multipart_upload_id",
+				"initrd_multipart_upload_id",
 				"image_file",
 				"kernel_file",
+				"initrd_file",
 				"source_server",
 				"site_file_retention_until",
 			):
@@ -127,14 +135,22 @@ class VirtualMachineImageDeletionService:
 		for object_key, upload_id in (
 			(image.image_object_key, image.rootfs_multipart_upload_id),
 			(image.kernel_object_key, image.kernel_multipart_upload_id),
+			(
+				getattr(image, "initrd_object_key", None),
+				getattr(image, "initrd_multipart_upload_id", None),
+			),
 		):
 			if object_key and upload_id:
 				client.abort_multipart_upload(object_key, upload_id)
 
 	@staticmethod
 	def delete_objects(image: VirtualMachineImage, client: ObjectStorageClient) -> None:
-		"""Remove both stored artifacts owned by this image."""
-		for object_key in (image.image_object_key, image.kernel_object_key):
+		"""Remove the stored artifacts owned by this image."""
+		for object_key in (
+			image.image_object_key,
+			image.kernel_object_key,
+			getattr(image, "initrd_object_key", None),
+		):
 			if object_key:
 				client.delete_object(object_key)
 
@@ -162,14 +178,17 @@ def is_retaining_artifacts(image: VirtualMachineImage) -> bool:
 
 def has_stored_artifacts(image: VirtualMachineImage) -> bool:
 	return any(
-		getattr(image, field)
+		getattr(image, field, None)
 		for field in (
 			"image_object_key",
 			"kernel_object_key",
+			"initrd_object_key",
 			"rootfs_multipart_upload_id",
 			"kernel_multipart_upload_id",
+			"initrd_multipart_upload_id",
 			"image_file",
 			"kernel_file",
+			"initrd_file",
 			"source_server",
 		)
 	)

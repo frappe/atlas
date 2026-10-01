@@ -38,6 +38,12 @@ jobs:
       - name: Check out source
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
+      - name: Test guest disk encryption initramfs
+        run: atlas/vm/scripts/guest/initramfs/tests/atlas-cryptroot-test.sh
+
+      - name: Test metald upgrade
+        run: atlas/scripts/tests/test-upgrade-metald.sh
+
       - name: Set up Python
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
@@ -48,6 +54,9 @@ jobs:
         with:
           node-version: 24
           check-latest: true
+
+      - name: Test the VM create dialog
+        run: node atlas/vm/doctype/virtual_machine/test_virtual_machine_list.mjs
 
       - name: Cache pip
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4

@@ -149,8 +149,8 @@ class HostInstallation:
 	def upgrade_metald(self) -> None:
 		"""Replace the metald binary and restart its daemon."""
 		settings = self.server.settings
-		if not settings.metald_binary_x86_64_file:
-			frappe.throw(_("Atlas Settings needs the metald binary."))
+		if not settings.metald_binary_x86_64_file or not settings.metald_binary_hash:
+			frappe.throw(_("Atlas Settings needs the metald binary and hash."))
 
 		result = SSHTask.create_for_script_file(
 			target_type=self.server.doctype,

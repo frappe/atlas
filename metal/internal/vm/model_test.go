@@ -2,6 +2,7 @@ package vm
 
 import (
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -43,6 +44,76 @@ func TestOnlyOneAddressIsAPublicIPv6Address(t *testing.T) {
 	}
 	if (NetworkConfiguration{PublicIPv6: "2001:db8::/64"}).HasPublicIPv6Address() {
 		t.Fatal("a /64 must stay a routed block")
+	}
+}
+
+func TestDiskEncryptionIsValid(t *testing.T) {
+	for _, encryption := range []DiskEncryption{"", DiskEncryptionLUKS2} {
+		if !encryption.IsValid() {
+			t.Fatalf("disk encryption %q must be valid", encryption)
+		}
+	}
+	if DiskEncryption("luks1").IsValid() {
+		t.Fatal("LUKS1 must not be a valid disk encryption mode")
+	}
+}
+
+func TestSameReservationIncludesDiskEncryptionAndInitrdDigest(t *testing.T) {
+	first := testSpecification()
+	first.DiskEncryption = DiskEncryptionLUKS2
+	first.Image.InitrdSHA256 = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+	second := first
+	second.Image.InitrdSHA256 = "CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC"
+	if !first.SameReservation(second) {
+		t.Fatal("digest case changed the reservation")
+	}
+
+	second.DiskEncryption = ""
+	if first.SameReservation(second) {
+		t.Fatal("disk encryption did not change the reservation")
+	}
+	second = first
+	second.Image.InitrdSHA256 = "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+	if first.SameReservation(second) {
+		t.Fatal("initrd digest did not change the reservation")
+	}
+}
+
+func TestRefreshImageSourceReplacesTheInitrdURL(t *testing.T) {
+	first := testSpecification()
+	first.Image.InitrdURL = "https://example.com/initrd?token=first"
+	second := first
+	second.Image.InitrdURL = "https://example.com/initrd?token=second"
+
+	refreshed := first.RefreshImageSource(second)
+
+	if refreshed.Image.InitrdURL != second.Image.InitrdURL {
+		t.Fatal("signed initrd URL was not refreshed")
+	}
+}
+
+func TestImageContentIgnoresSignedURLsAndRefreshesEveryArtifact(t *testing.T) {
+	first := Image{
+		Name: "sha256:image", Architecture: "amd64",
+		RootfsURL: "https://example.com/rootfs?token=first", RootfsSHA256: strings.Repeat("a", 64),
+		KernelURL: "https://example.com/kernel?token=first", KernelSHA256: strings.Repeat("b", 64),
+		InitrdURL: "https://example.com/initrd?token=first", InitrdSHA256: strings.Repeat("c", 64),
+	}
+	second := first
+	second.RootfsURL = "https://example.com/rootfs?token=second"
+	second.KernelURL = "https://example.com/kernel?token=second"
+	second.InitrdURL = "https://example.com/initrd?token=second"
+	if !first.SameContent(second) {
+		t.Fatal("rotated signed URLs changed image content identity")
+	}
+
+	refreshed := first.RefreshURLs(second)
+	if refreshed.RootfsURL != second.RootfsURL || refreshed.KernelURL != second.KernelURL || refreshed.InitrdURL != second.InitrdURL {
+		t.Fatalf("refreshed image = %+v", refreshed)
+	}
+	second.InitrdSHA256 = strings.Repeat("d", 64)
+	if first.SameContent(second) {
+		t.Fatal("a changed initrd digest kept the same image identity")
 	}
 }
 

@@ -23,14 +23,20 @@ ArtifactStorage = Literal["Object Storage", "Site File"]
 
 
 def build_ubuntu_image(
-	version: str, architecture: str, minimal: bool, output_directory: Path
-) -> tuple[Path, Path]:
-	"""Build one Ubuntu root file system and kernel."""
+	version: str,
+	architecture: str,
+	minimal: bool,
+	output_directory: Path,
+	*,
+	force: bool = False,
+) -> tuple[Path, Path, Path]:
+	"""Build one Ubuntu root file system, kernel, and initrd."""
 	output_directory = output_directory.resolve()
 	output_directory.mkdir(parents=True, exist_ok=True)
 	image_type = "minimal-" if minimal else ""
 	image_path = output_directory / f"ubuntu-{version}-{image_type}{architecture}.ext4"
 	kernel_path = output_directory / f"vmlinux-ubuntu-{version}-{image_type}server"
+	initrd_path = output_directory / f"initrd-ubuntu-{version}-{image_type}server"
 	builder_path = Path(__file__).parents[1] / "scripts" / "build_ubuntu_server_image.sh"
 	command = [builder_path]
 	if IS_MACOS:
@@ -38,6 +44,8 @@ def build_ubuntu_image(
 			"docker",
 			"run",
 			"--rm",
+			"--platform=linux/amd64",
+			"--privileged",
 			f"--volume={builder_path.parent}:{builder_path.parent}",
 			f"--volume={output_directory}:{output_directory}",
 			BUILDER_IMAGE,
@@ -51,15 +59,18 @@ def build_ubuntu_image(
 			image_path,
 			"--kernel-output",
 			kernel_path,
+			"--initrd-output",
+			initrd_path,
 			"--architecture",
 			architecture,
 			"--version",
 			version,
 			"--minimal" if minimal else "",
+			"--force" if force else "",
 		]
 	)
 	subprocess.run([argument for argument in command if argument], check=True)
-	return image_path, kernel_path
+	return image_path, kernel_path, initrd_path
 
 
 def publish_ubuntu_image(
@@ -68,17 +79,64 @@ def publish_ubuntu_image(
 	architecture: str,
 	image_path: Path,
 	kernel_path: Path,
+	initrd_path: Path,
 	storage: ArtifactStorage = "Object Storage",
 ) -> None:
-	"""Publish Ubuntu artifacts as a new image record and retire the records it replaces.
+	"""Publish plain and disk encryption variants of one Ubuntu image."""
+	image_sha256 = get_sha256(image_path)
+	kernel_sha256 = get_sha256(kernel_path)
+	initrd_sha256 = get_sha256(initrd_path)
+	publish_ubuntu_image_variant(
+		title=title,
+		version=version,
+		architecture=architecture,
+		image_path=image_path,
+		image_sha256=image_sha256,
+		kernel_path=kernel_path,
+		kernel_sha256=kernel_sha256,
+		storage=storage,
+	)
+	publish_ubuntu_image_variant(
+		title=f"{title} (Disk Encryption)",
+		version=version,
+		architecture=architecture,
+		image_path=image_path,
+		image_sha256=image_sha256,
+		kernel_path=kernel_path,
+		kernel_sha256=kernel_sha256,
+		storage=storage,
+		initrd_path=initrd_path,
+		initrd_sha256=initrd_sha256,
+	)
+
+
+def publish_ubuntu_image_variant(
+	*,
+	title: str,
+	version: str,
+	architecture: str,
+	image_path: Path,
+	image_sha256: str,
+	kernel_path: Path,
+	kernel_sha256: str,
+	storage: ArtifactStorage,
+	initrd_path: Path | None = None,
+	initrd_sha256: str | None = None,
+) -> None:
+	"""Publish one Ubuntu image variant and retire the records it replaces.
 
 	A record never changes its artifacts, because a VM keeps using the image it started from.
 	"""
-	image_sha256 = get_sha256(image_path)
-	kernel_sha256 = get_sha256(kernel_path)
+	if (initrd_path is None) != (initrd_sha256 is None):
+		raise ValueError("initrd path and SHA-256 must be provided together")
+
 	previous_images = get_available_ubuntu_images(title, architecture)
 	for image in previous_images:
-		if image.image_sha256 == image_sha256 and image.kernel_sha256 == kernel_sha256:
+		if (
+			image.image_sha256 == image_sha256
+			and image.kernel_sha256 == kernel_sha256
+			and getattr(image, "initrd_sha256", None) == initrd_sha256
+		):
 			return
 
 	# The digest and size describe the raw file system. Hosts download the zstd copy and verify the decoded bytes.
@@ -86,10 +144,30 @@ def publish_ubuntu_image(
 	image_name = frappe.generate_hash(length=16)
 	if storage == "Site File":
 		location = publish_to_site_files(
-			image_name, compressed_image_path, image_sha256, kernel_path, kernel_sha256
+			image_name,
+			compressed_image_path,
+			image_sha256,
+			kernel_path,
+			kernel_sha256,
+			initrd_path,
+			initrd_sha256,
 		)
 	else:
-		location = upload_to_object_storage(image_name, compressed_image_path, kernel_path)
+		location = upload_to_object_storage(image_name, compressed_image_path, kernel_path, initrd_path)
+
+	initrd_metadata = {}
+	if initrd_path and initrd_sha256:
+		initrd_metadata = {
+			"initrd_sha256": initrd_sha256,
+			"initrd_size_mib": bytes_to_mib(initrd_path.stat().st_size),
+		}
+	tags = [
+		{"key": "purpose", "value": "base"},
+		{"key": "os", "value": "Ubuntu"},
+		{"key": "os_version", "value": version},
+	]
+	if initrd_path:
+		tags.append({"key": "disk_encryption", "value": "luks2"})
 
 	frappe.get_doc(
 		{
@@ -105,11 +183,8 @@ def publish_ubuntu_image(
 			"image_stored_size_mib": bytes_to_mib(compressed_image_path.stat().st_size),
 			"kernel_sha256": kernel_sha256,
 			"kernel_size_mib": bytes_to_mib(kernel_path.stat().st_size),
-			"tags": [
-				{"key": "purpose", "value": "base"},
-				{"key": "os", "value": "Ubuntu"},
-				{"key": "os_version", "value": version},
-			],
+			"tags": tags,
+			**initrd_metadata,
 			**location,
 		}
 	).insert(set_name=image_name)
@@ -131,26 +206,47 @@ def get_available_ubuntu_images(title: str, architecture: str) -> list[VirtualMa
 	return [cast("VirtualMachineImage", frappe.get_doc("Virtual Machine Image", name)) for name in names]
 
 
-def upload_to_object_storage(image_name: str, image_path: Path, kernel_path: Path) -> dict[str, str]:
-	"""Upload both artifacts under keys owned by this image."""
+def upload_to_object_storage(
+	image_name: str, image_path: Path, kernel_path: Path, initrd_path: Path | None = None
+) -> dict[str, str]:
+	"""Upload image artifacts under keys owned by this image."""
 	image_key = f"images/{image_name}/rootfs.img"
 	kernel_key = f"images/{image_name}/kernel"
 	settings = frappe.get_single("Atlas Settings")
 	object_storage_client = settings.get_object_storage_client()
 	upload_with_progress(object_storage_client, image_path, image_key)
 	upload_with_progress(object_storage_client, kernel_path, kernel_key)
-	return {"image_object_key": image_key, "kernel_object_key": kernel_key}
+	location = {"image_object_key": image_key, "kernel_object_key": kernel_key}
+	if initrd_path:
+		initrd_key = f"images/{image_name}/initrd"
+		upload_with_progress(object_storage_client, initrd_path, initrd_key)
+		location["initrd_object_key"] = initrd_key
+	return location
 
 
 def publish_to_site_files(
-	image_name: str, image_path: Path, image_sha256: str, kernel_path: Path, kernel_sha256: str
+	image_name: str,
+	image_path: Path,
+	image_sha256: str,
+	kernel_path: Path,
+	kernel_sha256: str,
+	initrd_path: Path | None = None,
+	initrd_sha256: str | None = None,
 ) -> dict[str, str]:
-	"""Attach both artifacts as public site files for a host to download."""
-	click.echo(f"Publishing {image_path.name} and {kernel_path.name} as public site files")
-	return {
+	"""Attach image artifacts as public site files for a host to download."""
+	artifact_names = [image_path.name, kernel_path.name]
+	if initrd_path:
+		artifact_names.append(initrd_path.name)
+	click.echo(f"Publishing {', '.join(artifact_names)} as public site files")
+	location = {
 		"image_file": publish_public_file_path(image_path, image_sha256, image_name),
 		"kernel_file": publish_public_file_path(kernel_path, kernel_sha256, image_name),
 	}
+	if initrd_path:
+		if not initrd_sha256:
+			raise ValueError("initrd SHA-256 is required when publishing an initrd")
+		location["initrd_file"] = publish_public_file_path(initrd_path, initrd_sha256, image_name)
+	return location
 
 
 def get_sha256(path: Path) -> str:

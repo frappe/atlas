@@ -17,6 +17,16 @@ Metal inspects systemd first: an inactive unit has no live Firecracker API.
 
 This rule prevents the [warm-memory disk corruption incident](../incidents/2026-09-24-guest-disk-corruption.md).
 
+### Encrypted starts
+
+An encrypted VM cold-boots with the initrd from its System image. Metal adds `atlas.disk_encryption=luks2` to the kernel arguments.
+
+On the first boot, the guest initrd reads the ext2, ext3, or ext4 filesystem geometry and the disk capacity. It derives the safe encryption boundary and converts the root disk to LUKS2. Atlas and Metal do not calculate or persist the plaintext filesystem size.
+
+On later boots, the initrd opens the LUKS2 disk. It resumes an interrupted first-boot conversion before it mounts the root filesystem.
+
+An encrypted VM cannot use shared warm memory. It can use its own saved state after an automatic idle stop. See [guest disk encryption](disk-encryption.md) for the complete boot and recovery flow.
+
 ### Resource limits
 
 Firecracker receives guest CPUs rounded up from the millicore entitlement. systemd applies the exact CPU quota. Firecracker drive limiters enforce disk throughput and IOPS.

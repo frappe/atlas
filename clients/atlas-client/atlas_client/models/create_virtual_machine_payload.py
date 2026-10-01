@@ -38,6 +38,8 @@ class CreateVirtualMachinePayload:
             hostname (str | Unset): Guest hostname. Default: ''.
             ipv4_internet_access (bool | Unset): Reach the IPv4 internet through host NAT. A public IPv4 address needs it.
                 Without it and without a public IPv6 address, the VM reaches only the mesh. Default: True.
+            is_disk_encrypted (bool | Unset): Whether the guest encrypts its root disk with a user-held passphrase. Default:
+                False.
             is_privileged (bool | Unset): Whether the guest can reach every tenant through the mesh. Default: False.
             is_termination_protected (bool | Unset): Whether deletion is blocked. Default: False.
             metadata (CreateVirtualMachinePayloadMetadata | Unset): Custom guest metadata.
@@ -61,6 +63,7 @@ class CreateVirtualMachinePayload:
     firewall: FirewallPayload | Unset = UNSET
     hostname: str | Unset = ''
     ipv4_internet_access: bool | Unset = True
+    is_disk_encrypted: bool | Unset = False
     is_privileged: bool | Unset = False
     is_termination_protected: bool | Unset = False
     metadata: CreateVirtualMachinePayloadMetadata | Unset = UNSET
@@ -98,6 +101,8 @@ class CreateVirtualMachinePayload:
         hostname = self.hostname
 
         ipv4_internet_access = self.ipv4_internet_access
+
+        is_disk_encrypted = self.is_disk_encrypted
 
         is_privileged = self.is_privileged
 
@@ -152,6 +157,8 @@ class CreateVirtualMachinePayload:
             field_dict["hostname"] = hostname
         if ipv4_internet_access is not UNSET:
             field_dict["ipv4_internet_access"] = ipv4_internet_access
+        if is_disk_encrypted is not UNSET:
+            field_dict["is_disk_encrypted"] = is_disk_encrypted
         if is_privileged is not UNSET:
             field_dict["is_privileged"] = is_privileged
         if is_termination_protected is not UNSET:
@@ -208,6 +215,8 @@ class CreateVirtualMachinePayload:
 
         ipv4_internet_access = d.pop("ipv4_internet_access", UNSET)
 
+        is_disk_encrypted = d.pop("is_disk_encrypted", UNSET)
+
         is_privileged = d.pop("is_privileged", UNSET)
 
         is_termination_protected = d.pop("is_termination_protected", UNSET)
@@ -263,6 +272,7 @@ class CreateVirtualMachinePayload:
             firewall=firewall,
             hostname=hostname,
             ipv4_internet_access=ipv4_internet_access,
+            is_disk_encrypted=is_disk_encrypted,
             is_privileged=is_privileged,
             is_termination_protected=is_termination_protected,
             metadata=metadata,

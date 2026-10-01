@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/frappe/atlas/metal/internal/firecracker/api"
@@ -42,6 +43,9 @@ func configure(
 	bootConfiguration storage.BootConfiguration,
 	networkInterface network.Interface,
 ) error {
+	if err := validateBootConfiguration(specification, bootConfiguration); err != nil {
+		return err
+	}
 	machineConfiguration := api.MachineConfig{
 		VCPUCount:  specification.VirtualCPUCount(),
 		MemSizeMiB: specification.MemoryMiB,
@@ -50,11 +54,8 @@ func configure(
 		return err
 	}
 
-	bootSource := api.BootSource{
-		KernelImagePath: bootConfiguration.Kernel,
-		BootArgs:        bootArguments(bootConfiguration, networkInterface),
-	}
-	if err := client.PutBootSource(operationContext, bootSource); err != nil {
+	source := bootSource(specification, bootConfiguration, networkInterface)
+	if err := client.PutBootSource(operationContext, source); err != nil {
 		return err
 	}
 
@@ -91,15 +92,60 @@ func configure(
 	))
 }
 
+// bootSource builds the Firecracker kernel and optional initrd configuration.
+func bootSource(
+	specification vm.Specification,
+	bootConfiguration storage.BootConfiguration,
+	networkInterface network.Interface,
+) api.BootSource {
+	return api.BootSource{
+		KernelImagePath: bootConfiguration.Kernel,
+		BootArgs:        bootArguments(specification, bootConfiguration, networkInterface),
+		InitrdPath:      bootConfiguration.Initrd,
+	}
+}
+
+// validateBootConfiguration rejects image-owned encryption modes and an
+// encrypted boot that cannot run the guest encryption script.
+func validateBootConfiguration(specification vm.Specification, bootConfiguration storage.BootConfiguration) error {
+	if !specification.DiskEncryption.IsValid() {
+		return fmt.Errorf("unsupported disk encryption mode %q", specification.DiskEncryption)
+	}
+	for _, argument := range strings.Fields(bootConfiguration.KernelArgs) {
+		if strings.HasPrefix(argument, "atlas.disk_encryption=") {
+			return fmt.Errorf("boot arguments contain atlas.disk_encryption")
+		}
+	}
+
+	if specification.DiskEncryption == "" {
+		return nil
+	}
+
+	if bootConfiguration.Initrd == "" {
+		return fmt.Errorf("encrypted boot requires an initrd")
+	}
+
+	return nil
+}
+
 // bootArguments appends the guest network to the image kernel arguments, so the
 // guest is addressable before any userspace network configuration runs.
-func bootArguments(bootConfiguration storage.BootConfiguration, networkInterface network.Interface) string {
+func bootArguments(
+	specification vm.Specification,
+	bootConfiguration storage.BootConfiguration,
+	networkInterface network.Interface,
+) string {
 	networkArgument := fmt.Sprintf(
 		"ip=%s::%s:"+guestNetworkMask+"::eth0:off",
 		networkInterface.GuestIPAddress,
 		networkInterface.GatewayIPAddress,
 	)
-	return bootConfiguration.KernelArgs + " " + networkArgument
+	arguments := bootConfiguration.KernelArgs + " " + networkArgument
+	if specification.DiskEncryption == "" {
+		return arguments
+	}
+
+	return fmt.Sprintf("%s atlas.disk_encryption=%s", arguments, specification.DiskEncryption)
 }
 
 // resourceLimits caps the unit. Memory is twice the guest size plus overhead,

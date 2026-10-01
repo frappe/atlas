@@ -9,6 +9,14 @@ from frappe.tests import UnitTestCase
 from atlas.atlas.core.exceptions import AtlasUserError
 from atlas.vm.core.vm_migration import MigrationService
 
+MIGRATION_IMAGE = {
+	"ref": "sha256:image",
+	"architecture": "amd64",
+	"rootfs": {"url": "https://images.example/rootfs", "sha256": "a" * 64},
+	"kernel": {"url": "https://images.example/kernel", "sha256": "b" * 64},
+	"initrd": {"url": "https://images.example/initrd", "sha256": "c" * 64},
+}
+
 
 def migration_doc(**overrides: object) -> SimpleNamespace:
 	"""Build the migration fields used by unit tests."""
@@ -45,6 +53,7 @@ def source_vm(**overrides: object) -> SimpleNamespace:
 		"memory_mib": 512,
 		"disk_mib": 1024,
 		"sleep_after_idle_seconds": 0,
+		"virtual_machine_image": "image-1",
 	}
 	values.update(overrides)
 	return SimpleNamespace(**values)
@@ -138,6 +147,7 @@ class TestDestinationMetalServerSelection(UnitTestCase):
 
 		with (
 			patch("atlas.vm.core.vm_migration.frappe.get_doc", return_value=source_vm()),
+			patch("atlas.vm.core.vm_migration.now_datetime", return_value="2026-09-21 12:00:00"),
 			patch(
 				"atlas.vm.core.vm_migration.PlacementStrategy.find_server", return_value="metal-2"
 			) as find_server,
@@ -156,8 +166,13 @@ class TestDestinationMetalServerSelection(UnitTestCase):
 		)
 		destination_client = Mock()
 
+		image = Mock()
+		image.get_metal_image.return_value = MIGRATION_IMAGE
 		with (
-			patch("atlas.vm.core.vm_migration.frappe.get_doc", return_value=source_vm()),
+			patch(
+				"atlas.vm.core.vm_migration.frappe.get_doc",
+				side_effect=lambda doctype, *_args: source_vm() if doctype == "Virtual Machine" else image,
+			),
 			patch(
 				"atlas.vm.core.vm_migration.MetalClient.get_coordination_url",
 				return_value="https://10.0.0.1:9001",
@@ -170,15 +185,22 @@ class TestDestinationMetalServerSelection(UnitTestCase):
 			"mig-00001",
 			"vm-00001",
 			"https://10.0.0.1:9001",
+			MIGRATION_IMAGE,
 			{"cpu_millicores": 4000, "memory_mib": 8192, "disk_mib": 40960},
 		)
+		image.get_metal_image.assert_called_once_with(86400)
 
 	def test_a_plain_migration_sends_no_resize(self) -> None:
 		service = MigrationService(migration_doc())
 		destination_client = Mock()
+		image = Mock()
+		image.get_metal_image.return_value = MIGRATION_IMAGE
 
 		with (
-			patch("atlas.vm.core.vm_migration.frappe.get_doc", return_value=source_vm()),
+			patch(
+				"atlas.vm.core.vm_migration.frappe.get_doc",
+				side_effect=lambda doctype, *_args: source_vm() if doctype == "Virtual Machine" else image,
+			),
 			patch(
 				"atlas.vm.core.vm_migration.MetalClient.get_coordination_url",
 				return_value="https://10.0.0.1:9001",
@@ -187,7 +209,8 @@ class TestDestinationMetalServerSelection(UnitTestCase):
 		):
 			service.send_request()
 
-		self.assertIsNone(destination_client.put_migration.call_args.args[3])
+		self.assertEqual(destination_client.put_migration.call_args.args[3], MIGRATION_IMAGE)
+		self.assertIsNone(destination_client.put_migration.call_args.args[4])
 
 	def test_the_commit_stores_the_server_and_the_resized_shape(self) -> None:
 		virtual_machine = SimpleNamespace(name="vm-00001", server="metal-1", db_set=Mock())

@@ -23,6 +23,7 @@ func newDestinationRecord() destinationRecord {
 func TestDestinationRecordRoundTrips(t *testing.T) {
 	store := newMigrationStore(t.TempDir())
 	record := newDestinationRecord()
+	record.ImageSource = testImageSource("atlas-token")
 	record.Definition = &VirtualMachineDefinition{VirtualMachineID: "vm-1", Specification: vm.Specification{CPUMillicores: 2000, MemoryMiB: 2048}}
 
 	if err := store.writeDestination(record); err != nil {
@@ -32,7 +33,7 @@ func TestDestinationRecordRoundTrips(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.ID != "mig-1" || got.Definition == nil || got.Definition.Specification.MemoryMiB != 2048 {
+	if got.ID != "mig-1" || got.Definition == nil || got.Definition.Specification.MemoryMiB != 2048 || got.ImageSource.InitrdURL == "" {
 		t.Fatalf("destination record = %+v", got)
 	}
 }

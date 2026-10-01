@@ -9,6 +9,14 @@ from frappe.tests import UnitTestCase
 
 from atlas.vm.core.metal_client import MetalClient, MetalClientError
 
+MIGRATION_IMAGE = {
+	"ref": "sha256:image",
+	"architecture": "amd64",
+	"rootfs": {"url": "https://images.example/rootfs", "sha256": "a" * 64},
+	"kernel": {"url": "https://images.example/kernel", "sha256": "b" * 64},
+	"initrd": {"url": "https://images.example/initrd", "sha256": "c" * 64},
+}
+
 
 def build_client() -> MetalClient:
 	client = MetalClient.__new__(MetalClient)
@@ -538,14 +546,18 @@ class TestMetalClientMigrations(UnitTestCase):
 			"atlas.vm.core.metal_client.requests.Session.request",
 			return_value=build_response(202, migration),
 		) as request:
-			result = client.put_migration("mig-00001", "vm-00001", "http://10.0.0.3:9000")
+			result = client.put_migration("mig-00001", "vm-00001", "http://10.0.0.3:9000", MIGRATION_IMAGE)
 
 		self.assertEqual(result, migration)
 		self.assertEqual(request.call_args.args[:2], ("PUT", "https://10.0.0.2:9000/v1/migrations/mig-00001"))
 		# The keys must match Metal's createMigrationRequest, which decodes strictly.
 		self.assertEqual(
 			request.call_args.kwargs["json"],
-			{"virtual_machine_id": "vm-00001", "source": "http://10.0.0.3:9000"},
+			{
+				"virtual_machine_id": "vm-00001",
+				"source": "http://10.0.0.3:9000",
+				"image": MIGRATION_IMAGE,
+			},
 		)
 
 	def test_put_migration_sends_an_optional_resize(self) -> None:
@@ -556,7 +568,7 @@ class TestMetalClientMigrations(UnitTestCase):
 			"atlas.vm.core.metal_client.requests.Session.request",
 			return_value=build_response(202, {"status": "running"}),
 		) as request:
-			client.put_migration("mig-00001", "vm-00001", "http://10.0.0.3:9000", resize)
+			client.put_migration("mig-00001", "vm-00001", "http://10.0.0.3:9000", MIGRATION_IMAGE, resize)
 
 		self.assertEqual(request.call_args.kwargs["json"]["resize"], resize)
 
@@ -593,7 +605,7 @@ class TestMetalClientMigrations(UnitTestCase):
 		client = build_client()
 
 		for call_migration in (
-			lambda: client.put_migration("mig-00001", "vm-00001", "http://10.0.0.3:9000"),
+			lambda: client.put_migration("mig-00001", "vm-00001", "http://10.0.0.3:9000", MIGRATION_IMAGE),
 			lambda: client.abort_migration("mig-00001"),
 			lambda: client.finish_migration("mig-00001"),
 		):

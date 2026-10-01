@@ -28,6 +28,8 @@ if TYPE_CHECKING:
 	from atlas.vm.doctype.virtual_machine.virtual_machine import VirtualMachine
 	from atlas.vm.doctype.virtual_machine_image.virtual_machine_image import VirtualMachineImage
 
+DISK_ENCRYPTION_METADATA_MIB = 32
+
 
 class MetalOperationError(frappe.ValidationError):
 	"""Report that the assigned host could not complete the request."""
@@ -77,7 +79,21 @@ class VirtualMachineService:
 				raise AssertionError from error
 
 		image = cls.get_image(request.virtual_machine_image, request.tenant_id)
+		if request.is_disk_encrypted and not image.has_initrd:
+			frappe.throw(
+				_("Virtual Machine Image {0} does not support disk encryption.").format(image.title),
+				exc=AtlasUserError,
+			)
 		image.validate_compatibility(request.disk_mib)
+		if request.is_disk_encrypted:
+			minimum_disk_mib = image.image_size_mib + DISK_ENCRYPTION_METADATA_MIB
+			if request.disk_mib < minimum_disk_mib:
+				frappe.throw(
+					_("Encrypted disk must be at least {0} MiB for image {1}.").format(
+						minimum_disk_mib, image.title
+					),
+					exc=AtlasUserError,
+				)
 		requirements = PlacementRequirements(
 			request.cpu_millicores,
 			request.memory_mib,
@@ -143,6 +159,7 @@ class VirtualMachineService:
 				"tenant_id": request.tenant_id,
 				"is_privileged": request.is_privileged,
 				"is_termination_protected": request.is_termination_protected,
+				"is_disk_encrypted": request.is_disk_encrypted,
 				"sleep_after_idle_seconds": request.sleep_after_idle_seconds,
 			}
 		)
@@ -156,6 +173,7 @@ class VirtualMachineService:
 	) -> dict[str, Any]:
 		"""Return the complete Metal create request."""
 		return {
+			"is_disk_encrypted": True if request.is_disk_encrypted else None,
 			"compute": {
 				"cpu_millicores": request.cpu_millicores,
 				"memory_mib": request.memory_mib,

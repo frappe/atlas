@@ -37,6 +37,10 @@ class TestVirtualMachineImage(UnitTestCase):
 			"kernel_object_key": "images/image/kernel",
 			"image_file": None,
 			"kernel_file": None,
+			"initrd_object_key": None,
+			"initrd_file": None,
+			"initrd_sha256": None,
+			"initrd_size_mib": 0,
 			"image_size_mib": 10,
 			"kernel_size_mib": 5,
 			"architecture": "amd64",
@@ -164,6 +168,23 @@ class TestVirtualMachineImage(UnitTestCase):
 		self.assertEqual(kernel["url"], "kernel-url")
 		self.assertEqual(kernel["size_mib"], 5)
 
+	def test_download_returns_initrd_metadata(self) -> None:
+		image = self.make_image(
+			initrd_object_key="images/image/initrd",
+			initrd_sha256="c" * 64,
+			initrd_size_mib=32,
+		)
+		with (
+			patch.object(VirtualMachineImage, "validate_is_available"),
+			patch.object(VirtualMachineImage, "get_artifact_url", artifact_url),
+		):
+			initrd = image.get_presigned_download_url("initrd")
+
+		self.assertEqual(initrd["artifact"], "initrd")
+		self.assertEqual(initrd["url"], "initrd-url")
+		self.assertEqual(initrd["size_mib"], 32)
+		self.assertEqual(initrd["sha256"], "c" * 64)
+
 	def test_metal_request_contains_immutable_image_data(self) -> None:
 		image = self.make_image()
 
@@ -175,6 +196,61 @@ class TestVirtualMachineImage(UnitTestCase):
 		self.assertEqual(request["ref"], f"sha256:{expected_reference}")
 		self.assertEqual(request["rootfs"]["sha256"], "a" * 64)
 		self.assertEqual(request["kernel"]["sha256"], "b" * 64)
+		self.assertNotIn("initrd", request)
+		self.assertFalse(image.has_initrd)
+
+	def test_metal_request_contains_the_initrd_when_present(self) -> None:
+		image = self.make_image(
+			initrd_object_key="images/image/initrd",
+			initrd_sha256="c" * 64,
+			initrd_size_mib=32,
+		)
+
+		with patch.object(VirtualMachineImage, "get_artifact_url", artifact_url):
+			request = image.get_metal_image_request()
+
+		self.assertEqual(request["initrd"], {"url": "initrd-url", "sha256": "c" * 64})
+
+	def test_initrd_digest_extends_the_immutable_reference(self) -> None:
+		image = self.make_image(
+			initrd_object_key="images/image/initrd",
+			initrd_sha256="c" * 64,
+			initrd_size_mib=32,
+		)
+
+		identity = f"amd64\0{'a' * 64}\0{'b' * 64}\0{'c' * 64}"
+		expected_reference = hashlib.sha256(identity.encode()).hexdigest()
+		self.assertTrue(image.has_initrd)
+		self.assertEqual(image.immutable_reference, f"sha256:{expected_reference}")
+		image.validate_artifacts()
+
+	def test_incomplete_or_malformed_initrd_metadata_is_refused(self) -> None:
+		cases = (
+			{"initrd_object_key": "images/image/initrd", "initrd_size_mib": 32},
+			{"initrd_object_key": "images/image/initrd", "initrd_sha256": "invalid", "initrd_size_mib": 32},
+			{"initrd_object_key": "images/image/initrd", "initrd_sha256": "c" * 64},
+			{"initrd_sha256": "c" * 64, "initrd_size_mib": 32},
+		)
+		for values in cases:
+			with self.subTest(values=values), self.assertRaises(frappe.ValidationError):
+				self.make_image(**values).validate_artifacts()
+
+	def test_site_file_initrd_requires_its_file(self) -> None:
+		image = self.make_image(
+			artifact_storage="Site File",
+			image_type="system",
+			image_object_key=None,
+			kernel_object_key=None,
+			image_file="file-rootfs",
+			kernel_file="file-kernel",
+			initrd_sha256="c" * 64,
+			initrd_size_mib=32,
+		)
+
+		with self.assertRaises(frappe.ValidationError):
+			image.validate_artifacts()
+		image.initrd_file = "file-initrd"
+		image.validate_artifacts()
 
 	def test_a_site_file_image_uses_a_public_download_url(self) -> None:
 		image = self.make_image(
@@ -183,6 +259,9 @@ class TestVirtualMachineImage(UnitTestCase):
 			kernel_object_key=None,
 			image_file="file-rootfs",
 			kernel_file="file-kernel",
+			initrd_file="file-initrd",
+			initrd_sha256="c" * 64,
+			initrd_size_mib=32,
 		)
 
 		with patch(
@@ -191,12 +270,32 @@ class TestVirtualMachineImage(UnitTestCase):
 		) as get_download_url:
 			self.assertEqual(image.get_artifact_url("rootfs"), "https://atlas.test/files/file-rootfs")
 			self.assertEqual(image.get_artifact_url("kernel"), "https://atlas.test/files/file-kernel")
+			self.assertEqual(image.get_artifact_url("initrd"), "https://atlas.test/files/file-initrd")
 
-		self.assertEqual(get_download_url.call_count, 2)
+		self.assertEqual(get_download_url.call_count, 3)
+
+	def test_an_object_storage_initrd_uses_its_object_key(self) -> None:
+		image = self.make_image(
+			initrd_object_key="images/image/initrd",
+			initrd_sha256="c" * 64,
+			initrd_size_mib=32,
+		)
+
+		with patch.object(VirtualMachineImage, "get_object_url", return_value="initrd-url") as get_object_url:
+			self.assertEqual(image.get_artifact_url("initrd", 60), "initrd-url")
+
+		get_object_url.assert_called_once_with("images/image/initrd", 60)
+
+	def test_an_image_without_an_initrd_refuses_its_url(self) -> None:
+		image = self.make_image()
+		with self.assertRaisesRegex(frappe.ValidationError, "has no initrd"):
+			image.get_artifact_url("initrd")
+		with self.assertRaisesRegex(frappe.ValidationError, "has no initrd"):
+			image.get_presigned_download_url("initrd")
 
 	def test_an_unknown_artifact_is_refused(self) -> None:
 		image = self.make_image()
-		with self.assertRaisesRegex(frappe.ValidationError, "rootfs or kernel"):
+		with self.assertRaisesRegex(frappe.ValidationError, "rootfs or kernel, or initrd"):
 			image.get_presigned_download_url("memory")
 
 	def test_a_site_file_image_has_no_signed_download(self) -> None:
@@ -349,6 +448,7 @@ class TestVirtualMachineImageTransfer(UnitTestCase):
 			"id": "01900000-0000-7000-8000-000000000001",
 			"rootfs": {"size_bytes": 1024 * 1024},
 			"kernel": {"size_bytes": 1024 * 1024},
+			"initrd": {"size_bytes": 2 * 1024 * 1024},
 		}
 		service = VirtualMachineImageTransferService()
 
@@ -375,6 +475,11 @@ class TestVirtualMachineImageTransfer(UnitTestCase):
 		)
 		self.assertEqual(image_values["memory_snapshot_virtual_cpu_count"], 2)
 		self.assertEqual(image_values["memory_snapshot_memory_mib"], 2048)
+		self.assertEqual(
+			image_values["initrd_object_key"],
+			"images/01900000-0000-7000-8000-000000000001/initrd",
+		)
+		self.assertEqual(image_values["initrd_size_mib"], 2)
 		enqueue_transfer.assert_called_once_with("01900000-0000-7000-8000-000000000001")
 
 	def test_a_requested_shape_replaces_only_its_own_values(self) -> None:
@@ -545,6 +650,74 @@ class TestVirtualMachineImageTransfer(UnitTestCase):
 			)
 		)
 
+	def test_upload_request_includes_an_initrd(self) -> None:
+		image = SimpleNamespace(
+			image_object_key="images/image/rootfs.img",
+			kernel_object_key="images/image/kernel",
+			initrd_object_key="images/image/initrd",
+			rootfs_multipart_upload_id="rootfs-upload",
+			kernel_multipart_upload_id="kernel-upload",
+			initrd_multipart_upload_id="initrd-upload",
+			image_size_mib=1,
+			kernel_size_mib=1,
+			initrd_size_mib=1,
+		)
+		object_storage_client = Mock()
+		object_storage_client.sign_upload_part.return_value = "signed-url"
+
+		request = MultipartUploadService(image, object_storage_client).get_upload_request()
+
+		self.assertEqual(request["initrd"]["upload_id"], "initrd-upload")
+		self.assertEqual([part["part_number"] for part in request["initrd"]["parts"]], [1, 2])
+
+	def test_initrd_multipart_upload_is_created_and_completed(self) -> None:
+		image = SimpleNamespace(
+			image_object_key="images/image/rootfs.img",
+			kernel_object_key="images/image/kernel",
+			initrd_object_key="images/image/initrd",
+			rootfs_multipart_upload_id=None,
+			kernel_multipart_upload_id=None,
+			initrd_multipart_upload_id=None,
+			image_stored_size_mib=1,
+			kernel_stored_size_mib=1,
+			initrd_stored_size_mib=1,
+			save=Mock(),
+		)
+		object_storage_client = Mock()
+		object_storage_client.create_multipart_upload.side_effect = [
+			"rootfs-upload",
+			"kernel-upload",
+			"initrd-upload",
+		]
+		object_storage_client.head_object.side_effect = [
+			None,
+			{"ContentLength": MEBIBYTE},
+			None,
+			{"ContentLength": MEBIBYTE},
+			None,
+			{"ContentLength": MEBIBYTE},
+		]
+		service = MultipartUploadService(image, object_storage_client)
+
+		service.ensure_uploads()
+		service.complete_uploads(
+			{
+				"rootfs": [{"part_number": 1, "etag": "rootfs-etag"}],
+				"kernel": [{"part_number": 1, "etag": "kernel-etag"}],
+				"initrd": [{"part_number": 1, "etag": "initrd-etag"}],
+			}
+		)
+
+		self.assertEqual(image.initrd_multipart_upload_id, "initrd-upload")
+		self.assertEqual(
+			[entry.args[:2] for entry in object_storage_client.complete_multipart_upload.call_args_list],
+			[
+				("images/image/rootfs.img", "rootfs-upload"),
+				("images/image/kernel", "kernel-upload"),
+				("images/image/initrd", "initrd-upload"),
+			],
+		)
+
 	def test_successful_transfer_marks_image_available_and_deletes_staging(self) -> None:
 		image = SimpleNamespace(
 			name="image-1",
@@ -614,6 +787,29 @@ class TestVirtualMachineImageTransfer(UnitTestCase):
 
 		metal_client.delete_snapshot.assert_called_once_with("image-1")
 		self.assertEqual(image.status, "Available")
+
+	def test_completed_upload_records_initrd_metadata(self) -> None:
+		image = SimpleNamespace(
+			name="image-1",
+			image_sha256=None,
+			kernel_sha256=None,
+			initrd_sha256=None,
+			initrd_object_key="images/image-1/initrd",
+			source_server="server-1",
+			status="Uploading",
+			transfer_error=None,
+			save=Mock(),
+		)
+		status = {
+			"rootfs": {"sha256": "a" * 64, "stored_size_bytes": 3 * 1024 * 1024},
+			"kernel": {"sha256": "b" * 64, "stored_size_bytes": 1024 * 1024},
+			"initrd": {"sha256": "c" * 64, "stored_size_bytes": 2 * 1024 * 1024},
+		}
+
+		VirtualMachineImageTransferService().record_completed_upload(image, status)
+
+		self.assertEqual(image.initrd_sha256, "c" * 64)
+		self.assertEqual(image.initrd_stored_size_mib, 2)
 
 	def test_pending_upload_status_starts_the_upload(self) -> None:
 		image = SimpleNamespace(

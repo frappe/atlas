@@ -42,6 +42,7 @@ class VirtualMachineDetailResponse:
             guest (VirtualMachineGuest): The guest configuration of one virtual machine.
             id (str): Virtual machine ID.
             image_id (str): Image used to create the virtual machine.
+            is_disk_encrypted (bool): Whether the guest encrypts its root disk.
             is_privileged (bool): Whether the guest can reach every tenant through the mesh.
             network (VirtualMachineNetwork): The addresses, internet access, and network limits of one virtual machine.
             public_ipv4 (None | PublicIPResponse): Attached public IPv4 allocation, or null.
@@ -60,6 +61,7 @@ class VirtualMachineDetailResponse:
     guest: VirtualMachineGuest
     id: str
     image_id: str
+    is_disk_encrypted: bool
     is_privileged: bool
     network: VirtualMachineNetwork
     public_ipv4: None | PublicIPResponse
@@ -101,6 +103,8 @@ class VirtualMachineDetailResponse:
 
         image_id = self.image_id
 
+        is_disk_encrypted = self.is_disk_encrypted
+
         is_privileged = self.is_privileged
 
         network = self.network.to_dict()
@@ -135,6 +139,7 @@ class VirtualMachineDetailResponse:
             "guest": guest,
             "id": id,
             "image_id": image_id,
+            "is_disk_encrypted": is_disk_encrypted,
             "is_privileged": is_privileged,
             "network": network,
             "public_ipv4": public_ipv4,
@@ -200,6 +205,8 @@ class VirtualMachineDetailResponse:
 
         image_id = d.pop("image_id")
 
+        is_disk_encrypted = d.pop("is_disk_encrypted")
+
         is_privileged = d.pop("is_privileged")
 
         network = VirtualMachineNetwork.from_dict(d.pop("network"))
@@ -261,6 +268,7 @@ class VirtualMachineDetailResponse:
             guest=guest,
             id=id,
             image_id=image_id,
+            is_disk_encrypted=is_disk_encrypted,
             is_privileged=is_privileged,
             network=network,
             public_ipv4=public_ipv4,

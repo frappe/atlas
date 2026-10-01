@@ -646,8 +646,26 @@ class TestServer(UnitTestCase):
 
 		create_for_script_file.assert_not_called()
 
+	def test_upgrade_metald_rejects_a_missing_artifact_hash(self) -> None:
+		server = self._server(status="Running")
+		server.settings.metald_binary_x86_64_file = "metald-file"
+		server.settings.metald_binary_hash = None
+
+		with (
+			patch(
+				"atlas.metal_server.doctype.metal_server.metal_server.frappe.throw", side_effect=ValueError
+			),
+			patch(
+				"atlas.metal_server.core.host_installation.SSHTask.create_for_script_file"
+			) as create_for_script_file,
+		):
+			with self.assertRaises(ValueError):
+				MetalServer._upgrade_metald(server)
+
+		create_for_script_file.assert_not_called()
+
 	def test_upgrade_metald_worker_sends_only_the_download_url_and_digest(self) -> None:
-		"""The upgrade replaces the binary. It does not rewrite host configuration."""
+		"""The upgrade replaces metald without changing WG Mesh."""
 		server = self._server(status="Running")
 		server.settings.metald_binary_x86_64_file = "metald-file"
 		task = SimpleNamespace(result=SimpleNamespace(is_success=True))
@@ -673,6 +691,19 @@ class TestServer(UnitTestCase):
 				"METALD_SHA256": "metald-binary-sha256",
 			},
 		)
+
+	def test_upgrade_metald_queues_the_worker_without_arguments(self) -> None:
+		server = self._server(status="Running")
+
+		with (
+			patch("atlas.metal_server.doctype.metal_server.metal_server.frappe.only_for"),
+			patch("atlas.metal_server.doctype.metal_server.metal_server.is_job_enqueued", return_value=False),
+			patch("atlas.metal_server.doctype.metal_server.metal_server.frappe.enqueue_doc") as enqueue_doc,
+		):
+			MetalServer.upgrade_metald(server)
+
+		self.assertEqual(enqueue_doc.call_args.args[2], "_upgrade_metald")
+		self.assertEqual(enqueue_doc.call_args.kwargs["job_id"], server.metald_job_id)
 
 	def test_upgrade_metald_reports_the_reason_the_script_printed(self) -> None:
 		server = self._server(status="Running")

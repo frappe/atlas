@@ -2,7 +2,7 @@
 
 For Go code, follow the repository [Go anti-pattern rules](../../../llm/go-code-review-guide.md).
 
-[Metal specification](../../SPEC.md) · Behavior: [controller contract](../../../docs/interfaces/metal-contract.md) and [metald](../../../docs/region/metald.md)
+[Metal specification](../../SPEC.md) · Behavior: [controller contract](../../../docs/interfaces/metal-contract.md), [disk encryption](../../../docs/compute/disk-encryption.md), and [metald](../../../docs/region/metald.md)
 
 ## Purpose
 
@@ -38,6 +38,10 @@ The generated [Metal API reference](../../../docs/region/metald.md#request-rules
 
 - Use PUT when a request replaces desired state, so a repeat is safe.
 - Use POST only for an action that runs on each call, such as a restart, or to create a resource.
+- VM create accepts a nullable `is_disk_encrypted` boolean. `true` selects LUKS2 encryption.
+- `image.initrd` is optional. When present, it must contain a valid HTTP or HTTPS URL and a SHA-256 digest.
+- A `luks2` create requires `image.initrd`.
+- A destination migration request includes fresh image artifact URLs and digests. Metal verifies the rootfs, kernel, optional initrd, architecture, and image reference against the source definition.
 - The network PUT requires the complete network object, including `firewall`.
 - Every coordination route carries the VM ID as the `virtual_machine_id` query value.
 - The coordination stop route is idempotent. It returns the final snapshot.

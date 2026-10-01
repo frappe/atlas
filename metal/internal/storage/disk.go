@@ -34,7 +34,8 @@ func (store *VirtualMachineStore) PrepareBoot(ctx context.Context, request Virtu
 	if err := store.images.ensureImage(ctx, request.ImageReference, request.Image); err != nil {
 		return BootConfiguration{}, err
 	}
-	if err := replaceHardLink(store.images.kernelFile(request.ImageReference), filepath.Join(request.ChrootRoot, "vmlinux")); err != nil {
+	initrd, err := store.images.linkBootArtifacts(request.ImageReference, request.ChrootRoot)
+	if err != nil {
 		return BootConfiguration{}, err
 	}
 	if err := store.provisionDisk(ctx, request); err != nil {
@@ -43,9 +44,31 @@ func (store *VirtualMachineStore) PrepareBoot(ctx context.Context, request Virtu
 
 	return BootConfiguration{
 		Kernel:     "/vmlinux",
+		Initrd:     initrd,
 		KernelArgs: kernelArguments(store.images.imageDirectory(request.ImageReference)),
 		Drives:     []Drive{{Path: "/rootfs.img", Root: true}},
 	}, nil
+}
+
+// linkBootArtifacts links the kernel and optional initrd into one VM jail.
+func (store *ImageStore) linkBootArtifacts(imageReference, chrootRoot string) (string, error) {
+	manifest, found, err := store.loadImageManifest(imageReference)
+	if err != nil {
+		return "", err
+	}
+	if !found {
+		return "", fmt.Errorf("%w: image manifest is missing", ErrImageIntegrity)
+	}
+	if err := replaceHardLink(store.kernelFile(imageReference), filepath.Join(chrootRoot, "vmlinux")); err != nil {
+		return "", err
+	}
+	if manifest.InitrdSHA256 == "" {
+		return "", nil
+	}
+	if err := replaceHardLink(store.initrdFile(imageReference), filepath.Join(chrootRoot, "initrd")); err != nil {
+		return "", err
+	}
+	return "/initrd", nil
 }
 
 // PrepareRootFileSystem prepares a disk for snapshot restore.

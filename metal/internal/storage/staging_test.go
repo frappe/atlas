@@ -172,6 +172,7 @@ func TestUploadStatusReportsPersistedState(t *testing.T) {
 		SourceSnapshot:         "test/vms/vm-1@snapshot-1",
 		RootfsSizeBytes:        1024,
 		KernelSizeBytes:        512,
+		InitrdSizeBytes:        256,
 		CreatedAt:              now,
 		LastActivityAt:         now,
 	}
@@ -188,7 +189,10 @@ func TestUploadStatusReportsPersistedState(t *testing.T) {
 	}
 
 	metadata.UploadState = UploadStateCompleted
-	metadata.UploadResult = &SnapshotUploadResult{Rootfs: UploadedArtifact{SHA256: "abc"}}
+	metadata.UploadResult = &SnapshotUploadResult{
+		Rootfs: UploadedArtifact{SHA256: "abc"},
+		Initrd: &UploadedArtifact{SHA256: "def"},
+	}
 	if err := store.saveStagedSnapshot(metadata); err != nil {
 		t.Fatal(err)
 	}
@@ -196,10 +200,10 @@ func TestUploadStatusReportsPersistedState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if status.State != UploadStateCompleted || status.Result.Rootfs.SHA256 != "abc" {
+	if status.State != UploadStateCompleted || status.Result.Rootfs.SHA256 != "abc" || status.Result.Initrd == nil || status.Result.Initrd.SHA256 != "def" {
 		t.Fatalf("completed state not reported: %+v", status)
 	}
-	if status.UploadedBytes != status.TotalBytes || status.TotalBytes != 1536 {
+	if status.UploadedBytes != status.TotalBytes || status.TotalBytes != 1792 {
 		t.Fatalf("completed progress wrong: %+v", status)
 	}
 
@@ -216,6 +220,64 @@ func TestUploadStatusReportsPersistedState(t *testing.T) {
 	}
 	if status.State != UploadStatePending {
 		t.Fatalf("orphaned upload not reported pending: %+v", status)
+	}
+}
+
+func TestSnapshotUploadRequiresMatchingInitrdRequest(t *testing.T) {
+	store := NewStores(t.Context(), "test", filepath.Join(t.TempDir(), "images"), nil).Snapshots
+	now := time.Now().UTC()
+	metadata := stagedSnapshotMetadata{
+		ID: "snapshot-1", SourceVirtualMachineID: "vm-1", SourceSnapshot: "test/vms/vm-1@snapshot-1",
+		RootfsSizeBytes: 1024, KernelSizeBytes: 512, InitrdSizeBytes: 256,
+		CreatedAt: now, LastActivityAt: now,
+	}
+	if err := store.saveStagedSnapshot(metadata); err != nil {
+		t.Fatal(err)
+	}
+	artifact := SnapshotArtifactUpload{
+		PartSizeBytes: 64 << 20,
+		Parts:         []SnapshotUploadPart{{PartNumber: 1, URL: "https://storage.example/part-1"}},
+	}
+	if err := store.StartUpload(t.Context(), metadata.ID, SnapshotUploadRequest{
+		Rootfs: artifact,
+		Kernel: artifact,
+	}); err == nil {
+		t.Fatal("snapshot with an initrd accepted an upload request without it")
+	}
+
+	metadata.InitrdSizeBytes = 0
+	if err := store.saveStagedSnapshot(metadata); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.StartUpload(t.Context(), metadata.ID, SnapshotUploadRequest{
+		Rootfs: artifact,
+		Kernel: artifact,
+		Initrd: &artifact,
+	}); err == nil {
+		t.Fatal("snapshot without an initrd accepted an initrd upload")
+	}
+}
+
+func TestInitrdUploadProgressIsIndependent(t *testing.T) {
+	store := NewStores(t.Context(), "test", filepath.Join(t.TempDir(), "images"), nil).Snapshots
+	now := time.Now().UTC()
+	metadata := stagedSnapshotMetadata{
+		ID: "snapshot-1", SourceVirtualMachineID: "vm-1", SourceSnapshot: "test/vms/vm-1@snapshot-1",
+		RootfsSizeBytes: 1024, KernelSizeBytes: 512, InitrdSizeBytes: 256,
+		CreatedAt: now, LastActivityAt: now,
+	}
+	if err := store.saveStagedSnapshot(metadata); err != nil {
+		t.Fatal(err)
+	}
+
+	parts := []storedPart{{PartNumber: 1, ETag: "initrd-etag", SizeBytes: 128}}
+	store.recordParts(metadata.ID, initrdArtifact, "initrd-upload", parts)
+	got := store.storedParts(metadata.ID, initrdArtifact, "initrd-upload")
+	if len(got) != 1 || got[0].ETag != "initrd-etag" {
+		t.Fatalf("initrd progress = %+v", got)
+	}
+	if got := store.storedParts(metadata.ID, kernelArtifact, "initrd-upload"); len(got) != 0 {
+		t.Fatalf("initrd progress leaked into kernel: %+v", got)
 	}
 }
 

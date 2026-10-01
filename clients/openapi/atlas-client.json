@@ -243,6 +243,12 @@
             "title": "Ipv4 Internet Access",
             "type": "boolean"
           },
+          "is_disk_encrypted": {
+            "default": false,
+            "description": "Whether the guest encrypts its root disk with a user-held passphrase.",
+            "title": "Is Disk Encrypted",
+            "type": "boolean"
+          },
           "is_privileged": {
             "default": false,
             "description": "Whether the guest can reach every tenant through the mesh.",
@@ -1566,6 +1572,7 @@
             },
             "id": "vm-00001",
             "image_id": "8f1c2d3e4b5a6978",
+            "is_disk_encrypted": false,
             "is_privileged": false,
             "network": {
               "firewall": {
@@ -1656,6 +1663,11 @@
             "title": "Image Id",
             "type": "string"
           },
+          "is_disk_encrypted": {
+            "description": "Whether the guest encrypts its root disk.",
+            "title": "Is Disk Encrypted",
+            "type": "boolean"
+          },
           "is_privileged": {
             "description": "Whether the guest can reach every tenant through the mesh.",
             "title": "Is Privileged",
@@ -1709,6 +1721,7 @@
           "tags",
           "created_at",
           "is_privileged",
+          "is_disk_encrypted",
           "public_ipv4",
           "public_ipv6",
           "desired_state",
@@ -1812,6 +1825,7 @@
             "disk_mib": 20480,
             "id": "vm-00001",
             "image_id": "8f1c2d3e4b5a6978",
+            "is_disk_encrypted": false,
             "is_termination_protected": false,
             "last_known_state": "running",
             "memory_mib": 2048,
@@ -1860,6 +1874,11 @@
             "description": "Image used to create the virtual machine.",
             "title": "Image Id",
             "type": "string"
+          },
+          "is_disk_encrypted": {
+            "description": "Whether the guest encrypts its root disk.",
+            "title": "Is Disk Encrypted",
+            "type": "boolean"
           },
           "is_termination_protected": {
             "description": "Whether deletion is blocked.",
@@ -1938,6 +1957,7 @@
           "memory_mib",
           "disk_mib",
           "sleep_after_idle_seconds",
+          "is_disk_encrypted",
           "is_termination_protected",
           "public_ipv4",
           "public_ipv6",
@@ -2043,6 +2063,7 @@
             "disk_mib": 20480,
             "id": "vm-00001",
             "image_id": "8f1c2d3e4b5a6978",
+            "is_disk_encrypted": false,
             "is_termination_protected": false,
             "memory_mib": 2048,
             "public_ipv4": null,
@@ -2089,6 +2110,11 @@
             "description": "Image used to create the virtual machine.",
             "title": "Image Id",
             "type": "string"
+          },
+          "is_disk_encrypted": {
+            "description": "Whether the guest encrypts its root disk.",
+            "title": "Is Disk Encrypted",
+            "type": "boolean"
           },
           "is_termination_protected": {
             "description": "Whether deletion is blocked.",
@@ -2150,6 +2176,7 @@
           "memory_mib",
           "disk_mib",
           "sleep_after_idle_seconds",
+          "is_disk_encrypted",
           "is_termination_protected",
           "public_ipv4",
           "public_ipv6",

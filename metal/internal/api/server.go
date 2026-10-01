@@ -60,7 +60,7 @@ type VirtualMachineManager interface {
 
 // MigrationManager owns this host's migration records and reservations.
 type MigrationManager interface {
-	CreateDestination(ctx context.Context, migrationID, virtualMachineID, source string, resize *migration.Resize) (migration.DestinationProgress, error)
+	CreateDestination(ctx context.Context, migrationID, virtualMachineID, source string, image vm.Image, resize *migration.Resize) (migration.DestinationProgress, error)
 	DestinationStatus(ctx context.Context, migrationID string) (migration.DestinationProgress, error)
 	RequestFinish(ctx context.Context, migrationID string) error
 	AbortDestination(ctx context.Context, migrationID string) error

@@ -15,6 +15,8 @@ Each VM can have `machines/<vm-id>/migration/source.json` or `destination.json` 
 ## Invariants
 
 - One host allocation lock covers the destination capacity check and reservation. A retry with a different resize conflicts. A resize never shrinks the disk.
+- Atlas supplies fresh signed image URLs with the destination request. The destination persists them, rejects a changed rootfs, kernel, initrd, architecture, or image reference, and refreshes only URLs on a matching retry.
+- Reconstruction keeps the source disk encryption mode and initrd digest. An encrypted destination cold boot uses the refreshed initrd URL.
 - A destination record read before a long operation must be read again before mutation. Otherwise an abort can be lost.
 - Every destination record read-modify-write holds its VM migration lock. Code that already holds the lock uses `writeDestination`. Other code uses `mutateDestination`, which rereads under the lock. The lock is not reentrant.
 - A transfer holds no VM lock while bytes move. The source retains the last acknowledged snapshot as the next incremental base. A received interval counts only when its GUID matches.

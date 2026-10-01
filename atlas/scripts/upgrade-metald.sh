@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Replace the metald binary on a provisioned host.
 
-set -eu
+set -eu -o pipefail
 
 : "${METALD_DOWNLOAD_URL:?METALD_DOWNLOAD_URL is required}"
 : "${METALD_SHA256:?METALD_SHA256 is required}"
@@ -22,17 +22,24 @@ fi
 
 step() { echo "==> $*"; }
 
-# reported_version returns a tool version or "unknown".
+# reported_version returns the first line from the metald version command.
 reported_version() {
-	local tool_version
-	tool_version=$("$1" version 2>/dev/null | head -1) || tool_version=""
-	[ -n "$tool_version" ] || tool_version=unknown
+	local tool_version version_output
+	version_output=$("$1" version 2>/dev/null) || version_output=""
+	IFS= read -r tool_version <<< "$version_output"
+	[ -n "$tool_version" ] || return 1
 	echo "$tool_version"
 }
 
-# unit_property returns a systemd service property.
+# unit_property returns one systemd service property.
 unit_property() {
-	systemctl show "$service" -p "$1" --value 2>/dev/null || echo ""
+	systemctl show "$service" -p "$1" --value 2>/dev/null
+}
+
+# active_vm_units returns a stable list of active VM service names.
+active_vm_units() {
+	systemctl list-units "metal-vm@*.service" --state=active --no-legend --no-pager --plain |
+		awk 'NF { print $1 }' | LC_ALL=C sort
 }
 
 # service_is_stable checks that the service stays active.
@@ -48,70 +55,142 @@ service_is_stable() {
 	return 0
 }
 
-staged_binary=$(mktemp "$installed_binary.staged.XXXXXX")
-trap 'rm -f "$staged_binary"' EXIT
+staged_binary=
+
+cleanup() {
+	[ -z "$staged_binary" ] || rm -f "$staged_binary"
+}
+
+trap cleanup EXIT
+
+# restore_previous_binary restores metald and starts the previous service.
+restore_previous_binary() {
+	systemctl stop "$service" >/dev/null 2>&1 || true
+
+	if ! cp -a "$previous_binary" "$installed_binary"; then
+		echo "    could not restore $installed_binary" >&2
+		return 1
+	fi
+
+	if ! systemctl start "$service" || ! service_is_stable; then
+		echo "    $service did not start with the previous metald binary" >&2
+		return 1
+	fi
+}
+
+# fail_after_restart restores service operation after a failed candidate restart.
+fail_after_restart() {
+	local reason=$1
+
+	echo "    $reason" >&2
+	restore_previous_binary || true
+	exit 1
+}
 
 step "download metald"
-curl -fsSL -o "$staged_binary" "$METALD_DOWNLOAD_URL"
+staged_binary=$(mktemp "$installed_binary.staged.XXXXXX")
+if ! curl -fsSL -o "$staged_binary" "$METALD_DOWNLOAD_URL"; then
+	echo "could not download metald from $METALD_DOWNLOAD_URL" >&2
+	exit 1
+fi
 
-# The version command below runs this file, so check it before that.
-staged_hash=$(sha256sum "$staged_binary" | cut -d' ' -f1)
-if [ "$staged_hash" != "$METALD_SHA256" ]; then
-	echo "the file at $METALD_DOWNLOAD_URL has hash $staged_hash, expected $METALD_SHA256" >&2
+download_hash=$(sha256sum "$staged_binary" | awk '{ print $1 }')
+if [ "$download_hash" != "$METALD_SHA256" ]; then
+	echo "the file at $METALD_DOWNLOAD_URL has hash $download_hash, expected $METALD_SHA256" >&2
 	exit 1
 fi
 chmod 0755 "$staged_binary"
 
-# Run the new binary before it replaces the running one.
-new_version=$(reported_version "$staged_binary")
-if [ "$new_version" = unknown ]; then
+if ! new_version=$(reported_version "$staged_binary"); then
 	echo "the downloaded binary has no version command; it is not a metald build" >&2
 	exit 1
 fi
-
-current_version=$(reported_version "$installed_binary")
-step "upgrade metald from $current_version to $new_version"
-
-# A restart keeps the console descriptors that systemd holds, so the virtual
-# machines stay up. An empty store means that this metald never stored them.
-stored_console_count=$(unit_property NFileDescriptorStore)
-if [ "${stored_console_count:-0}" = "0" ]; then
-	echo "    systemd holds no console descriptor; running virtual machines stop during the restart"
-else
-	echo "    systemd holds $stored_console_count console descriptors; the virtual machines stay up"
+if ! current_version=$(reported_version "$installed_binary"); then
+	echo "$installed_binary has no version command; run install-metald.sh first" >&2
+	exit 1
 fi
 
-# Keep the running binary before anything changes, so every later step can undo.
-step "back up $current_version to $previous_binary"
-cp -a "$installed_binary" "$previous_binary"
+step "guard running virtual machines"
+if ! systemctl is-active --quiet "$service"; then
+	echo "$service must be active before an upgrade" >&2
+	exit 1
+fi
 
-# Rename instead of overwrite. The running process keeps its own inode.
+if [ "$(unit_property FileDescriptorStorePreserve)" != "yes" ]; then
+	echo "$service must set FileDescriptorStorePreserve=yes before an upgrade" >&2
+	exit 1
+fi
+
+active_units=$(active_vm_units)
+active_unit_count=$(printf '%s\n' "$active_units" | awk 'NF { count++ } END { print count + 0 }')
+stored_console_count=$(unit_property NFileDescriptorStore)
+if ! [[ "$stored_console_count" =~ ^[0-9]+$ ]]; then
+	echo "$service has a non-numeric NFileDescriptorStore value: $stored_console_count" >&2
+	exit 1
+fi
+if [ "$stored_console_count" -ne "$active_unit_count" ]; then
+	echo "$service stores $stored_console_count console descriptors for $active_unit_count active VM units" >&2
+	exit 1
+fi
+
+step "upgrade metald from $current_version to $new_version"
+step "back up $current_version to $previous_binary"
+if ! cp -a "$installed_binary" "$previous_binary"; then
+	echo "could not back up $installed_binary" >&2
+	exit 1
+fi
+
+if ! systemctl is-active --quiet "$service"; then
+	echo "$service stopped before the upgrade could start" >&2
+	exit 1
+fi
+if ! pre_restart_units=$(active_vm_units); then
+	echo "could not confirm the active VM unit set before restarting $service" >&2
+	exit 1
+fi
+if [ "$pre_restart_units" != "$active_units" ]; then
+	echo "the active VM unit set changed before restarting $service" >&2
+	exit 1
+fi
+if [ "$(unit_property FileDescriptorStorePreserve)" != "yes" ]; then
+	echo "$service lost FileDescriptorStorePreserve=yes before the upgrade could start" >&2
+	exit 1
+fi
+pre_restart_console_count=$(unit_property NFileDescriptorStore)
+if ! [[ "$pre_restart_console_count" =~ ^[0-9]+$ ]] ||
+	[ "$pre_restart_console_count" -ne "$active_unit_count" ]; then
+	echo "$service no longer stores one console descriptor for each active VM unit" >&2
+	exit 1
+fi
+
 step "install $installed_binary"
 if ! mv -f "$staged_binary" "$installed_binary"; then
 	echo "could not install $installed_binary; the running binary is unchanged" >&2
 	exit 1
 fi
+staged_binary=
 
-# Restart rather than stop and start. systemd keeps its descriptor store across a
-# restart even when the unit does not set FileDescriptorStorePreserve=yes.
 step "restart $service"
 if ! systemctl restart "$service" || ! service_is_stable; then
-	echo "    $service did not start; restoring $current_version" >&2
-	mv -f "$previous_binary" "$installed_binary"
-	if ! systemctl restart "$service" || ! service_is_stable; then
-		echo "    $service did not start with $current_version" >&2
-	fi
-	exit 1
+	fail_after_restart "$service did not stay active; restoring $current_version"
 fi
 
-step "running metald $(reported_version "$installed_binary")"
+if ! current_units=$(active_vm_units); then
+	fail_after_restart "could not read the active VM unit set after the upgrade"
+fi
+if [ "$current_units" != "$active_units" ]; then
+	fail_after_restart "the active VM unit set changed during the upgrade"
+fi
+
+if ! current_console_count=$(unit_property NFileDescriptorStore); then
+	fail_after_restart "could not read the stored console descriptor count after the upgrade"
+fi
+if ! [[ "$current_console_count" =~ ^[0-9]+$ ]] ||
+	[ "$current_console_count" -ne "$stored_console_count" ]; then
+	fail_after_restart "the stored console descriptor count changed during the upgrade"
+fi
+
+step "running metald $new_version"
+echo "    active VM units: $active_unit_count"
+echo "    stored console descriptors: $current_console_count"
 echo "    previous binary: $previous_binary"
-
-if [ "$(unit_property FileDescriptorStorePreserve)" != "yes" ]; then
-	echo "    warning: $service has no FileDescriptorStorePreserve=yes"
-	echo "    a stop of $service still stops every virtual machine"
-	echo "    run the Metal Server action Re-configure Metald to update the unit"
-fi
-
-step "virtual machines on this host"
-systemctl list-units "metal-vm@*" --all --no-legend --no-pager | cat

@@ -20,7 +20,7 @@ SIGNED_URL_EXPIRY_SECONDS = 86400
 MAXIMUM_SNAPSHOT_VIRTUAL_CPU_COUNT = MAXIMUM_CPU_MILLICORES // 1000
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 
-Artifact = Literal["rootfs", "kernel"]
+Artifact = Literal["rootfs", "kernel", "initrd"]
 
 
 class ImageDownload(TypedDict):
@@ -62,6 +62,12 @@ class VirtualMachineImage(Document):
 		image_size_mib: DF.Int
 		image_stored_size_mib: DF.Int
 		image_type: DF.Literal["system", "machine"]
+		initrd_file: DF.Link | None
+		initrd_multipart_upload_id: DF.Data | None
+		initrd_object_key: DF.Data | None
+		initrd_sha256: DF.Data | None
+		initrd_size_mib: DF.Int
+		initrd_stored_size_mib: DF.Int
 		is_termination_protected: DF.Check
 		kernel_file: DF.Link | None
 		kernel_multipart_upload_id: DF.Data | None
@@ -143,17 +149,28 @@ class VirtualMachineImage(Document):
 
 	def get_metal_image(self, expiry_seconds: int) -> dict[str, Any]:
 		"""Return the image object with freshly signed artifact URLs."""
-		return {
+		image = {
 			"ref": self.immutable_reference,
 			"architecture": self.architecture,
 			"rootfs": {"url": self.get_artifact_url("rootfs", expiry_seconds), "sha256": self.image_sha256},
 			"kernel": {"url": self.get_artifact_url("kernel", expiry_seconds), "sha256": self.kernel_sha256},
 		}
+		if self.has_initrd:
+			image["initrd"] = {
+				"url": self.get_artifact_url("initrd", expiry_seconds),
+				"sha256": self.initrd_sha256,
+			}
+		return image
 
 	@property
 	def is_shared(self) -> bool:
 		"""Return whether every tenant can read and boot this image."""
 		return self.image_type == "system"
+
+	@property
+	def has_initrd(self) -> bool:
+		"""Return whether this image includes an initrd artifact."""
+		return bool(self.get("initrd_sha256"))
 
 	def is_visible_to_tenant(self, tenant_id: int) -> bool:
 		"""Return whether one tenant can read and boot this image."""
@@ -163,6 +180,8 @@ class VirtualMachineImage(Document):
 	def immutable_reference(self) -> str:
 		"""Return the name that identifies this exact content on a host."""
 		identity = f"{self.architecture}\0{self.image_sha256}\0{self.kernel_sha256}"
+		if initrd_sha256 := self.get("initrd_sha256"):
+			identity = f"{identity}\0{initrd_sha256}"
 		return f"sha256:{hashlib.sha256(identity.encode()).hexdigest()}"
 
 	@property
@@ -179,21 +198,33 @@ class VirtualMachineImage(Document):
 	@frappe.whitelist()
 	def get_presigned_download_url(self, artifact: Artifact) -> ImageDownload:
 		"""Return one signed artifact URL with its size, digest, and expiry time."""
-		if artifact not in ("rootfs", "kernel"):
-			frappe.throw(_("Artifact must be rootfs or kernel."))
+		if artifact not in ("rootfs", "kernel", "initrd"):
+			frappe.throw(_("Artifact must be rootfs or kernel, or initrd."))
 
 		self.validate_is_available()
+		if artifact == "initrd" and not self.has_initrd:
+			frappe.throw(_("Virtual Machine Image {0} has no initrd.").format(self.title))
 		if self.is_stored_in_site_file:
 			frappe.throw(
 				_("Virtual Machine Image {0} is not in object storage.").format(self.title),
 				exc=AtlasConflictError,
 			)
 
+		size_mib = {
+			"rootfs": self.image_size_mib,
+			"kernel": self.kernel_size_mib,
+			"initrd": self.get("initrd_size_mib"),
+		}[artifact]
+		sha256 = {
+			"rootfs": self.image_sha256,
+			"kernel": self.kernel_sha256,
+			"initrd": self.get("initrd_sha256"),
+		}[artifact]
 		return {
 			"artifact": artifact,
 			"url": self.get_artifact_url(artifact),
-			"size_mib": self.image_size_mib if artifact == "rootfs" else self.kernel_size_mib,
-			"sha256": self.image_sha256 if artifact == "rootfs" else self.kernel_sha256,
+			"size_mib": size_mib,
+			"sha256": sha256,
 			"expires_in": SIGNED_URL_EXPIRY_SECONDS,
 			"expires_at": str(add_to_date(now_datetime(), seconds=SIGNED_URL_EXPIRY_SECONDS)),
 		}
@@ -205,13 +236,23 @@ class VirtualMachineImage(Document):
 
 	def get_artifact_url(self, artifact: Artifact, expiry_seconds: int = SIGNED_URL_EXPIRY_SECONDS) -> str:
 		"""Return the download URL for one artifact."""
+		if artifact == "initrd" and not self.has_initrd:
+			frappe.throw(_("Virtual Machine Image {0} has no initrd.").format(self.title))
 		if self.is_stored_in_site_file:
-			file_name = self.image_file if artifact == "rootfs" else self.kernel_file
+			file_name = {
+				"rootfs": self.image_file,
+				"kernel": self.kernel_file,
+				"initrd": self.get("initrd_file"),
+			}[artifact]
 			if not file_name:
 				frappe.throw(_("Virtual Machine Image {0} has no {1} file.").format(self.title, artifact))
 			return get_download_url(file_name)
 
-		object_key = self.image_object_key if artifact == "rootfs" else self.kernel_object_key
+		object_key = {
+			"rootfs": self.image_object_key,
+			"kernel": self.kernel_object_key,
+			"initrd": self.get("initrd_object_key"),
+		}[artifact]
 		return self.get_object_url(object_key, expiry_seconds)
 
 	def validate_memory_snapshot_configuration(self) -> None:
@@ -249,6 +290,26 @@ class VirtualMachineImage(Document):
 			frappe.throw(_("Kernel SHA-256 must contain 64 lowercase hexadecimal characters."))
 		if self.image_size_mib <= 0 or self.kernel_size_mib <= 0:
 			frappe.throw(_("An available Virtual Machine Image requires positive artifact sizes."))
+		self.validate_initrd_artifact()
+
+	def validate_initrd_artifact(self) -> None:
+		"""Require complete metadata when an optional initrd is present."""
+		initrd_object_key = self.get("initrd_object_key")
+		initrd_file = self.get("initrd_file")
+		initrd_sha256 = self.get("initrd_sha256")
+		initrd_size_mib = self.get("initrd_size_mib")
+		if not any((initrd_object_key, initrd_file, initrd_sha256, initrd_size_mib)):
+			return
+
+		if self.is_stored_in_site_file:
+			if not initrd_file:
+				frappe.throw(_("An initrd stored as a site file requires an initrd file."))
+		elif not initrd_object_key:
+			frappe.throw(_("An initrd stored in object storage requires an initrd object key."))
+		if not SHA256_PATTERN.fullmatch(initrd_sha256 or ""):
+			frappe.throw(_("Initrd SHA-256 must contain 64 lowercase hexadecimal characters."))
+		if not isinstance(initrd_size_mib, int) or isinstance(initrd_size_mib, bool) or initrd_size_mib <= 0:
+			frappe.throw(_("An initrd requires a positive artifact size."))
 
 	def validate_site_file_artifacts(self) -> None:
 		"""Require both public files, and refuse tenant content on a public URL."""

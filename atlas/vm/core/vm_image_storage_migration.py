@@ -49,7 +49,7 @@ class VirtualMachineImageStorageMigration:
 		)
 
 	def migrate(self, image_name: str) -> None:
-		"""Upload both artifacts and move the record to object storage.
+		"""Upload the image artifacts and move the record to object storage.
 
 		The site files stay for SITE_FILE_RETENTION, so a host that is still
 		downloading one keeps a working URL. delete_expired_site_files removes them.
@@ -61,6 +61,8 @@ class VirtualMachineImageStorageMigration:
 		client = cast("AtlasSettings", frappe.get_single("Atlas Settings")).get_object_storage_client()
 		image.image_object_key = self.upload(client, image, "rootfs")
 		image.kernel_object_key = self.upload(client, image, "kernel")
+		if getattr(image, "has_initrd", False):
+			image.initrd_object_key = self.upload(client, image, "initrd")
 		image.artifact_storage = "Object Storage"
 		image.site_file_retention_until = now_datetime() + SITE_FILE_RETENTION
 		image.save()
@@ -81,7 +83,7 @@ class VirtualMachineImageStorageMigration:
 		if image.is_stored_in_site_file:
 			return
 
-		for file_name in (image.image_file, image.kernel_file):
+		for file_name in (image.image_file, image.kernel_file, getattr(image, "initrd_file", None)):
 			if file_name:
 				frappe.delete_doc(
 					"File", file_name, force=True, ignore_permissions=True, delete_permanently=True
@@ -89,17 +91,19 @@ class VirtualMachineImageStorageMigration:
 
 		image.image_file = None
 		image.kernel_file = None
+		image.initrd_file = None
 		image.site_file_retention_until = None
 		image.save()
 
 	def upload(self, client: ObjectStorageClient, image: VirtualMachineImage, artifact: Artifact) -> str:
 		"""Upload one artifact under this image's key and verify its size."""
-		if artifact == "rootfs":
-			file_name = image.image_file
-			key = f"images/{image.name}/rootfs.img"
-		else:
-			file_name = image.kernel_file
-			key = f"images/{image.name}/kernel"
+		file_name, key = {
+			"rootfs": (image.image_file, f"images/{image.name}/rootfs.img"),
+			"kernel": (image.kernel_file, f"images/{image.name}/kernel"),
+			"initrd": (getattr(image, "initrd_file", None), f"images/{image.name}/initrd"),
+		}[artifact]
+		if not file_name:
+			frappe.throw(_("Virtual Machine Image {0} has no {1} file.").format(image.name, artifact))
 
 		source = Path(frappe.get_doc("File", file_name).get_full_path())
 		client.upload_file(str(source), key)

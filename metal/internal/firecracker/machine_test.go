@@ -327,3 +327,29 @@ func TestPauseStoppedVirtualMachineReturnsConflict(t *testing.T) {
 		t.Fatalf("pause stopped virtual machine = %v, want conflict", err)
 	}
 }
+
+func TestEncryptedVirtualMachineDoesNotMatchASharedWarmImage(t *testing.T) {
+	runtime := &Runtime{}
+	specification := vm.Specification{
+		CPUMillicores: 1000,
+		MemoryMiB:     512,
+		DiskMiB:       1024,
+		Image: vm.Image{
+			CacheImage:     true,
+			MemorySnapshot: true,
+			MemorySnapshotConfiguration: &vm.MemorySnapshotConfiguration{
+				VirtualCPUCount: 1,
+				MemoryMiB:       512,
+				DiskMiB:         1024,
+			},
+		},
+	}
+	if !runtime.hasMatchingMemorySnapshot(specification) {
+		t.Fatal("plain virtual machine did not match its shared warm image")
+	}
+
+	specification.DiskEncryption = vm.DiskEncryptionLUKS2
+	if runtime.hasMatchingMemorySnapshot(specification) {
+		t.Fatal("encrypted virtual machine matched a shared warm image")
+	}
+}

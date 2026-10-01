@@ -161,6 +161,12 @@ function showCreateVirtualMachineDialog() {
 				reqd: 1,
 				default: 10240,
 			},
+			{
+				fieldname: "is_disk_encrypted",
+				fieldtype: "Check",
+				label: __("Disk Encryption"),
+				default: 0,
+			},
 
 			{ fieldtype: "Section Break", label: __("Limits (0 = no limit)") },
 			{
@@ -226,6 +232,7 @@ function showCreateVirtualMachineDialog() {
 		],
 		primary_action_label: __("Create"),
 		primary_action(values) {
+			values.is_disk_encrypted = Boolean(values.is_disk_encrypted);
 			values.public_ipv4 = publicAddressSelector(values, "4");
 			values.public_ipv6 = publicAddressSelector(values, "6");
 			values.firewall = firewallValue(values.firewall_enabled, values.firewall_rules);

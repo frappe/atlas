@@ -88,6 +88,23 @@ class TestVirtualMachineRequest(UnitTestCase):
 		self.assertEqual(request.cpu_millicores, 1500)
 		self.assertEqual(request.routes, DEFAULT_ROUTES)
 		self.assertEqual(request.firewall, FirewallConfiguration())
+		self.assertFalse(request.is_disk_encrypted)
+
+	def test_request_parses_is_disk_encrypted(self) -> None:
+		request = VirtualMachineCreateRequest.from_value(
+			{
+				"virtual_machine_image": "Ubuntu 24.04 (Disk Encryption)",
+				"cpu_millicores": 1500,
+				"memory_mib": 2048,
+				"disk_mib": 10240,
+				"tenant_id": 7,
+				"is_disk_encrypted": True,
+				"sleep_after_idle_seconds": 1800,
+			}
+		)
+
+		self.assertTrue(request.is_disk_encrypted)
+		self.assertEqual(request.sleep_after_idle_seconds, 1800)
 
 	def test_request_parses_a_firewall(self) -> None:
 		request = VirtualMachineCreateRequest.from_value(
@@ -392,6 +409,36 @@ class TestVirtualMachineService(UnitTestCase):
 			metal_request = VirtualMachineService(virtual_machine).get_metal_request(request, image)
 
 		self.assertEqual(metal_request["network"]["public_ipv4"], "")
+		self.assertIsNone(metal_request["is_disk_encrypted"])
+
+	def test_encrypted_request_sends_the_flag_initrd_and_idle_sleep(self) -> None:
+		request = VirtualMachineCreateRequest(
+			"encrypted-image",
+			2000,
+			2048,
+			10240,
+			7,
+			is_disk_encrypted=True,
+			sleep_after_idle_seconds=1800,
+		)
+		image_request = {
+			"ref": "sha256:encrypted",
+			"architecture": "amd64",
+			"rootfs": {"url": "rootfs", "sha256": "a" * 64},
+			"kernel": {"url": "kernel", "sha256": "b" * 64},
+			"initrd": {"url": "initrd", "sha256": "c" * 64},
+		}
+		image = SimpleNamespace(get_metal_image_request=Mock(return_value=image_request))
+		virtual_machine = SimpleNamespace(tenant_id=7, name="VM-00001", is_network_gateway=0)
+
+		with patch.object(
+			virtual_machine_service_module, "get_virtual_machine_mesh_address", return_value="fdaa::1"
+		):
+			metal_request = VirtualMachineService(virtual_machine).get_metal_request(request, image)
+
+		self.assertTrue(metal_request["is_disk_encrypted"])
+		self.assertEqual(metal_request["compute"]["sleep_after_idle_seconds"], 1800)
+		self.assertEqual(metal_request["image"], image_request)
 
 	def test_machine_image_uses_its_own_artifacts(self) -> None:
 		request = VirtualMachineCreateRequest("machine-image", 2000, 2048, 10240, 7)
@@ -963,7 +1010,7 @@ class TestVirtualMachinePrivilege(UnitTestCase):
 class TestSystemImageCreation(UnitTestCase):
 	"""Only tenant 0 may share an image or set the host image flags."""
 
-	def create_image(self, *, tenant_id: int, **options):
+	def create_image(self, *, tenant_id: int, is_disk_encrypted: bool = False, **options):
 		"""Run one snapshot request for one tenant."""
 		virtual_machine = VirtualMachine.__new__(VirtualMachine)
 		virtual_machine.name = "VM-00001"
@@ -971,6 +1018,7 @@ class TestSystemImageCreation(UnitTestCase):
 		virtual_machine.is_draft = 0
 		virtual_machine.is_terminating = 0
 		virtual_machine.active_migration = None
+		virtual_machine.is_disk_encrypted = is_disk_encrypted
 		virtual_machine.check_permission = Mock()
 		with patch(
 			"atlas.vm.core.vm_image_transfer.VirtualMachineImageTransferService.create_from_virtual_machine",
@@ -994,6 +1042,12 @@ class TestSystemImageCreation(UnitTestCase):
 
 		self.assertEqual(name, "IMG-00001")
 		self.assertEqual(create.call_args.kwargs["image_type"], "machine")
+
+	def test_an_encrypted_virtual_machine_can_create_an_image(self) -> None:
+		name, create = self.create_image(tenant_id=7, is_disk_encrypted=True)
+
+		self.assertEqual(name, "IMG-00001")
+		create.assert_called_once()
 
 	def test_a_shape_without_a_memory_snapshot_is_rejected(self) -> None:
 		with self.assertRaises(AtlasUserError):

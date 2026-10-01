@@ -19,6 +19,7 @@ type desiredVirtualMachineResponse struct {
 	Generation        uint64                      `json:"generation"`
 	RestartGeneration uint64                      `json:"restart_generation"`
 	State             string                      `json:"state"`
+	IsDiskEncrypted   bool                        `json:"is_disk_encrypted"`
 	Compute           computeResponse             `json:"compute"`
 	Disk              diskResponse                `json:"disk"`
 	Image             virtualMachineImageResponse `json:"image"`
@@ -62,6 +63,7 @@ type virtualMachineImageResponse struct {
 	Architecture                string                               `json:"architecture"`
 	Rootfs                      imageArtifactResponse                `json:"rootfs"`
 	Kernel                      imageArtifactResponse                `json:"kernel"`
+	Initrd                      *imageArtifactResponse               `json:"initrd,omitempty"`
 	CacheImage                  bool                                 `json:"cache_image"`
 	MemorySnapshot              bool                                 `json:"memory_snapshot"`
 	MemorySnapshotConfiguration *memorySnapshotConfigurationResponse `json:"memory_snapshot_configuration,omitempty"`
@@ -151,6 +153,7 @@ func toVirtualMachine(information vm.Information) virtualMachineResponse {
 			Generation:        information.DesiredGeneration,
 			RestartGeneration: information.DesiredRestartGeneration,
 			State:             string(information.DesiredState),
+			IsDiskEncrypted:   information.DiskEncryption != "",
 			Compute: computeResponse{
 				CPUMillicores:         information.CPUMillicores,
 				MemoryMiB:             information.MemoryMiB,
@@ -235,7 +238,7 @@ func toOperationError(operationError *vm.PublicOperationError) *operationErrorRe
 
 // toVirtualMachineImage converts an image into the response form.
 func toVirtualMachineImage(image vm.Image) virtualMachineImageResponse {
-	return virtualMachineImageResponse{
+	response := virtualMachineImageResponse{
 		Ref:                         image.Name,
 		Architecture:                image.Architecture,
 		Rootfs:                      imageArtifactResponse{SHA256: image.RootfsSHA256},
@@ -244,6 +247,10 @@ func toVirtualMachineImage(image vm.Image) virtualMachineImageResponse {
 		MemorySnapshot:              image.MemorySnapshot,
 		MemorySnapshotConfiguration: toMemorySnapshotConfiguration(image.MemorySnapshotConfiguration),
 	}
+	if image.InitrdSHA256 != "" {
+		response.Initrd = &imageArtifactResponse{SHA256: image.InitrdSHA256}
+	}
+	return response
 }
 
 // toMemorySnapshotConfiguration converts a warm image shape to its response form.

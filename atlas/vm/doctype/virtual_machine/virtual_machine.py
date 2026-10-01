@@ -39,13 +39,13 @@ class VirtualMachine(Document):
 	from typing import TYPE_CHECKING
 
 	if TYPE_CHECKING:
-		from frappe.types import DF
-
 		from atlas.atlas.doctype.atlas_tag.atlas_tag import AtlasTag
+		from frappe.types import DF
 
 		active_migration: DF.Link | None
 		architecture: DF.Literal["amd64", "arm64"]
 		cpu_millicores: DF.Int
+		is_disk_encrypted: DF.Check
 		disk_mib: DF.Int
 		firewall_summary: DF.Code | None
 		is_draft: DF.Check

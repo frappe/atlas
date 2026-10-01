@@ -260,6 +260,7 @@ func (manager *Manager) CreateSnapshot(ctx context.Context, identifier string) (
 		snapshot, operationError = manager.snapshots.Stage(ctx, SnapshotRequest{
 			VirtualMachineID: identifier,
 			ImageReference:   desired.Specification.Image.Name,
+			IsDiskEncrypted:  desired.Specification.DiskEncryption != "",
 		})
 		return operationError
 	})

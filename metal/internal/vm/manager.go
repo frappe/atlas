@@ -303,6 +303,7 @@ func createFingerprint(specification Specification) (string, error) {
 	normalized := cloneSpecification(specification)
 	normalized.Image.RootfsURL = ""
 	normalized.Image.KernelURL = ""
+	normalized.Image.InitrdURL = ""
 	data, err := json.Marshal(normalized)
 	if err != nil {
 		return "", fmt.Errorf("encode create fingerprint: %w", err)
@@ -354,6 +355,7 @@ func informationFromRecords(desired DesiredRecord, observed ObservedRecord, usag
 		Hostname:                      desired.Specification.Hostname,
 		Metadata:                      maps.Clone(desired.Specification.Metadata),
 		SleepAfterIdleSeconds:         desired.Specification.SleepAfterIdleSeconds,
+		DiskEncryption:                desired.Specification.DiskEncryption,
 		MAC:                           observed.NetworkInterface.MACAddress,
 		PublicIPv4:                    desired.Specification.Network.PublicIPv4,
 		Routes:                        slices.Clone(desired.Specification.Network.Routes),

@@ -19,6 +19,7 @@ def complete_response() -> dict:
 			"generation": 3,
 			"restart_generation": 1,
 			"state": "running",
+			"is_disk_encrypted": True,
 			"compute": {
 				"cpu_millicores": 2500,
 				"memory_mib": 2048,
@@ -30,6 +31,7 @@ def complete_response() -> dict:
 				"architecture": "amd64",
 				"rootfs": {"sha256": "a" * 64},
 				"kernel": {"sha256": "b" * 64},
+				"initrd": {"sha256": "c" * 64},
 				"cache_image": True,
 				"memory_snapshot": True,
 				"memory_snapshot_configuration": {
@@ -117,7 +119,9 @@ class TestMetalVirtualMachineParsing(UnitTestCase):
 		self.assertEqual(machine.id, "VM-00001")
 		self.assertEqual(machine.desired.compute.cpu_millicores, 2500)
 		self.assertEqual(machine.desired.compute.sleep_after_idle_seconds, 1800)
+		self.assertTrue(machine.desired.is_disk_encrypted)
 		self.assertEqual(machine.desired.image.rootfs.sha256, "a" * 64)
+		self.assertEqual(machine.desired.image.initrd.sha256, "c" * 64)
 		self.assertEqual(machine.desired.guest.ssh_keys, ("ssh-ed25519 AAAA",))
 		self.assertEqual(machine.desired.guest.metadata, {"role": "web"})
 		self.assertTrue(machine.desired.network.firewall.enabled)
@@ -131,6 +135,8 @@ class TestMetalVirtualMachineParsing(UnitTestCase):
 
 		self.assertEqual(machine.desired.state, "running")
 		self.assertEqual(machine.desired.compute.cpu_millicores, 0)
+		self.assertFalse(machine.desired.is_disk_encrypted)
+		self.assertIsNone(machine.desired.image.initrd)
 		self.assertEqual(machine.desired.guest.ssh_keys, ())
 		self.assertEqual(machine.observed.state, "unknown")
 		self.assertIsNone(machine.observed.error)
@@ -208,8 +214,20 @@ class TestMetalContract(UnitTestCase):
 		self.assert_has_fields(
 			definitions,
 			"api.desiredVirtualMachineResponse",
-			{"generation", "restart_generation", "state", "compute", "disk", "image", "network", "guest"},
+			{
+				"generation",
+				"restart_generation",
+				"state",
+				"is_disk_encrypted",
+				"compute",
+				"disk",
+				"image",
+				"network",
+				"guest",
+			},
 		)
+		self.assert_has_fields(definitions, "api.createRequest", {"is_disk_encrypted"})
+		self.assert_has_fields(definitions, "api.imageRequest", {"initrd"})
 		self.assert_has_fields(
 			definitions,
 			"api.computeResponse",
@@ -226,7 +244,7 @@ class TestMetalContract(UnitTestCase):
 		self.assert_has_fields(
 			definitions,
 			"api.virtualMachineImageResponse",
-			{"ref", "architecture", "rootfs", "kernel", "cache_image", "memory_snapshot"},
+			{"ref", "architecture", "rootfs", "kernel", "initrd", "cache_image", "memory_snapshot"},
 		)
 
 	def test_metal_still_serves_the_routes_atlas_calls(self) -> None:

@@ -34,6 +34,7 @@ class VirtualMachineResponse:
             disk_mib (int): Root disk capacity in MiB.
             id (str): Virtual machine ID.
             image_id (str): Image used to create the virtual machine.
+            is_disk_encrypted (bool): Whether the guest encrypts its root disk.
             is_termination_protected (bool): Whether deletion is blocked.
             memory_mib (int): Memory capacity in MiB.
             public_ipv4 (None | PublicIPResponse): Attached public IPv4 allocation, or null.
@@ -49,6 +50,7 @@ class VirtualMachineResponse:
     disk_mib: int
     id: str
     image_id: str
+    is_disk_encrypted: bool
     is_termination_protected: bool
     memory_mib: int
     public_ipv4: None | PublicIPResponse
@@ -76,6 +78,8 @@ class VirtualMachineResponse:
         id = self.id
 
         image_id = self.image_id
+
+        is_disk_encrypted = self.is_disk_encrypted
 
         is_termination_protected = self.is_termination_protected
 
@@ -109,6 +113,7 @@ class VirtualMachineResponse:
             "disk_mib": disk_mib,
             "id": id,
             "image_id": image_id,
+            "is_disk_encrypted": is_disk_encrypted,
             "is_termination_protected": is_termination_protected,
             "memory_mib": memory_mib,
             "public_ipv4": public_ipv4,
@@ -141,6 +146,8 @@ class VirtualMachineResponse:
         id = d.pop("id")
 
         image_id = d.pop("image_id")
+
+        is_disk_encrypted = d.pop("is_disk_encrypted")
 
         is_termination_protected = d.pop("is_termination_protected")
 
@@ -198,6 +205,7 @@ class VirtualMachineResponse:
             disk_mib=disk_mib,
             id=id,
             image_id=image_id,
+            is_disk_encrypted=is_disk_encrypted,
             is_termination_protected=is_termination_protected,
             memory_mib=memory_mib,
             public_ipv4=public_ipv4,

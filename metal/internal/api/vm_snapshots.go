@@ -16,9 +16,10 @@ type snapshotArtifactResponse struct {
 
 // snapshotCreatedResponse identifies a new staged snapshot and its artifacts.
 type snapshotCreatedResponse struct {
-	ID     string                   `json:"id"`
-	Rootfs snapshotArtifactResponse `json:"rootfs"`
-	Kernel snapshotArtifactResponse `json:"kernel"`
+	ID     string                    `json:"id"`
+	Rootfs snapshotArtifactResponse  `json:"rootfs"`
+	Kernel snapshotArtifactResponse  `json:"kernel"`
+	Initrd *snapshotArtifactResponse `json:"initrd,omitempty"`
 }
 
 // snapshotUploadPartRequest is one presigned destination supplied by the controller.
@@ -36,10 +37,11 @@ type snapshotArtifactUploadRequest struct {
 	Parts       []snapshotUploadPartRequest `json:"parts"`
 }
 
-// snapshotUploadRequest carries the parts of both artifacts.
+// snapshotUploadRequest carries the parts of every staged artifact.
 type snapshotUploadRequest struct {
-	Rootfs snapshotArtifactUploadRequest `json:"rootfs"`
-	Kernel snapshotArtifactUploadRequest `json:"kernel"`
+	Rootfs snapshotArtifactUploadRequest  `json:"rootfs"`
+	Kernel snapshotArtifactUploadRequest  `json:"kernel"`
+	Initrd *snapshotArtifactUploadRequest `json:"initrd,omitempty"`
 }
 
 // uploadedPartResponse is the ETag the destination returned for one part.
@@ -67,11 +69,12 @@ type snapshotStatusResponse struct {
 	ProgressPercent int                       `json:"progress_percent"`
 	Rootfs          *uploadedArtifactResponse `json:"rootfs,omitempty"`
 	Kernel          *uploadedArtifactResponse `json:"kernel,omitempty"`
+	Initrd          *uploadedArtifactResponse `json:"initrd,omitempty"`
 	Error           string                    `json:"error,omitempty"`
 }
 
 // @Summary	Create an image staging snapshot
-// @Description	Create local root file system and kernel artifacts from one virtual machine.
+// @Description	Create local root file system and boot artifacts from one virtual machine.
 // @ID			createVirtualMachineSnapshot
 // @Tags		Snapshots
 // @Produce	json
@@ -96,15 +99,19 @@ func (s *Server) createVirtualMachineSnapshot(c echo.Context) error {
 	}
 	c.Response().Header().Set(echo.HeaderLocation, "/v1/snapshots/"+snapshot.ID)
 
-	return c.JSON(http.StatusCreated, snapshotCreatedResponse{
+	response := snapshotCreatedResponse{
 		ID:     snapshot.ID,
 		Rootfs: snapshotArtifactResponse{SizeBytes: snapshot.RootfsSizeBytes},
 		Kernel: snapshotArtifactResponse{SizeBytes: snapshot.KernelSizeBytes},
-	})
+	}
+	if snapshot.InitrdSizeBytes > 0 {
+		response.Initrd = &snapshotArtifactResponse{SizeBytes: snapshot.InitrdSizeBytes}
+	}
+	return c.JSON(http.StatusCreated, response)
 }
 
 // @Summary	Start an image staging snapshot upload
-// @Description	Start asynchronous multipart uploads for the staged root file system and kernel.
+// @Description	Start asynchronous multipart uploads for the staged image artifacts.
 // @ID			uploadSnapshot
 // @Tags		Snapshots
 // @Accept		json
@@ -168,6 +175,10 @@ func (s *Server) getSnapshot(c echo.Context) error {
 		kernel := uploadedArtifact(status.Result.Kernel)
 		response.Rootfs = &rootfs
 		response.Kernel = &kernel
+		if status.Result.Initrd != nil {
+			initrd := uploadedArtifact(*status.Result.Initrd)
+			response.Initrd = &initrd
+		}
 	}
 	return c.JSON(http.StatusOK, response)
 }
@@ -207,10 +218,15 @@ func (s *Server) deleteSnapshot(c echo.Context) error {
 
 // storageRequest converts the request into the storage form.
 func (request snapshotUploadRequest) storageRequest() storage.SnapshotUploadRequest {
-	return storage.SnapshotUploadRequest{
+	result := storage.SnapshotUploadRequest{
 		Rootfs: request.Rootfs.storageUpload(),
 		Kernel: request.Kernel.storageUpload(),
 	}
+	if request.Initrd != nil {
+		initrd := request.Initrd.storageUpload()
+		result.Initrd = &initrd
+	}
+	return result
 }
 
 // storageUpload converts one artifact into the storage form.

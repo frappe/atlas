@@ -226,11 +226,14 @@ func testSpecification() Specification {
 func TestCreateFingerprintAcceptsChangedSignedURLs(t *testing.T) {
 	manager, _, _, _ := newTestManager(t)
 	specification := testSpecification()
+	specification.Image.InitrdURL = "https://example.com/initrd?token=first"
+	specification.Image.InitrdSHA256 = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
 	if _, err := manager.Create(context.Background(), "machine-1", specification); err != nil {
 		t.Fatal(err)
 	}
 	specification.Image.RootfsURL = "https://example.com/rootfs?token=second"
 	specification.Image.KernelURL = "https://example.com/kernel?token=second"
+	specification.Image.InitrdURL = "https://example.com/initrd?token=second"
 	if _, err := manager.Create(context.Background(), "machine-1", specification); err != nil {
 		t.Fatalf("create retry failed: %v", err)
 	}
@@ -243,6 +246,9 @@ func TestCreateFingerprintAcceptsChangedSignedURLs(t *testing.T) {
 	}
 	if record.Specification.Image.RootfsURL != specification.Image.RootfsURL {
 		t.Fatal("signed URL was not refreshed")
+	}
+	if record.Specification.Image.InitrdURL != specification.Image.InitrdURL {
+		t.Fatal("signed initrd URL was not refreshed")
 	}
 }
 
@@ -267,6 +273,32 @@ func TestCreateFingerprintIncludesTheIdleTimeout(t *testing.T) {
 	specification.SleepAfterIdleSeconds = 60
 	if _, err := manager.Create(context.Background(), "machine-1", specification); !errors.Is(err, ErrConflict) {
 		t.Fatalf("create error = %v, want conflict", err)
+	}
+}
+
+func TestCreateFingerprintIncludesDiskEncryptionAndInitrdDigest(t *testing.T) {
+	for _, testCase := range []struct {
+		name   string
+		change func(*Specification)
+	}{
+		{"disk encryption", func(specification *Specification) {
+			specification.DiskEncryption = DiskEncryptionLUKS2
+		}},
+		{"initrd digest", func(specification *Specification) {
+			specification.Image.InitrdSHA256 = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+		}},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			manager, _, _, _ := newTestManager(t)
+			specification := testSpecification()
+			if _, err := manager.Create(context.Background(), "machine-1", specification); err != nil {
+				t.Fatal(err)
+			}
+			testCase.change(&specification)
+			if _, err := manager.Create(context.Background(), "machine-1", specification); !errors.Is(err, ErrConflict) {
+				t.Fatalf("create error = %v, want conflict", err)
+			}
+		})
 	}
 }
 
@@ -383,6 +415,51 @@ func TestIdleTimeoutDoesNotChangeSpecificationGeneration(t *testing.T) {
 	}
 	if after.SpecificationGeneration != before.SpecificationGeneration || after.Generation <= before.Generation {
 		t.Fatalf("before = %+v, after = %+v", before, after)
+	}
+}
+
+func TestEncryptedVirtualMachineAllowsIdleTimeout(t *testing.T) {
+	manager, _, _, _ := newTestManager(t)
+	specification := testSpecification()
+	specification.DiskEncryption = DiskEncryptionLUKS2
+	if _, err := manager.Create(context.Background(), "machine-1", specification); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := manager.SetCompute(context.Background(), "machine-1", Compute{
+		CPUMillicores: 2000, MemoryMiB: 2048, SleepAfterIdleSeconds: 60,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	record, err := manager.store.readDesired("machine-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.Specification.SleepAfterIdleSeconds != 60 {
+		t.Fatalf("sleep_after_idle_seconds = %d, want 60", record.Specification.SleepAfterIdleSeconds)
+	}
+}
+
+func TestEncryptedVirtualMachineRestoresItsSavedState(t *testing.T) {
+	manager, runtime, _, _ := newTestManager(t)
+	manager.traffic = nil
+	specification := testSpecification()
+	specification.DiskEncryption = DiskEncryptionLUKS2
+	specification.SleepAfterIdleSeconds = 60
+	if _, err := manager.Create(context.Background(), "machine-1", specification); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.Reconcile(context.Background(), "machine-1"); err != nil {
+		t.Fatal(err)
+	}
+	runtime.state = StateStopped
+	runtime.hasSavedState = true
+
+	if err := manager.Reconcile(context.Background(), "machine-1"); err != nil {
+		t.Fatal(err)
+	}
+	if runtime.restores != 1 || runtime.state != StateRunning {
+		t.Fatalf("restores = %d, state = %s", runtime.restores, runtime.state)
 	}
 }
 

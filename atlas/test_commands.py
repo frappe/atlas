@@ -61,13 +61,16 @@ class TestBuildUbuntuBaseImageCommand(UnitTestCase):
 	def test_skip_existing_publishes_only_to_missing_sites(self) -> None:
 		image_path = Path("/tmp/image.raw")
 		kernel_path = Path("/tmp/vmlinux")
+		initrd_path = Path("/tmp/initrd")
 		with (
 			patch.object(
 				commands,
 				"is_image_available",
 				side_effect=lambda site, *_: site == "existing.local",
 			),
-			patch.object(commands, "build_ubuntu_image", return_value=(image_path, kernel_path)) as build,
+			patch.object(
+				commands, "build_ubuntu_image", return_value=(image_path, kernel_path, initrd_path)
+			) as build,
 			patch.object(commands, "publish_ubuntu_image") as publish,
 			patch.object(commands.frappe, "init") as initialize,
 			patch.object(commands.frappe, "connect"),
@@ -89,6 +92,23 @@ class TestBuildUbuntuBaseImageCommand(UnitTestCase):
 			"amd64",
 			image_path,
 			kernel_path,
+			initrd_path,
 			"Site File",
+		)
+		destroy.assert_called_once_with()
+
+	def test_skip_existing_requires_plain_and_encryption_variants(self) -> None:
+		with (
+			patch.object(commands.frappe, "init"),
+			patch.object(commands.frappe, "connect"),
+			patch.object(commands.frappe.db, "exists", side_effect=[True, False]) as exists,
+			patch.object(commands.frappe, "destroy") as destroy,
+		):
+			available = commands.is_image_available("test.local", "ubuntu-24.04", "amd64")
+
+		self.assertFalse(available)
+		self.assertEqual(
+			[recorded_call.args[1]["title"] for recorded_call in exists.call_args_list],
+			["ubuntu-24.04", "ubuntu-24.04 (Disk Encryption)"],
 		)
 		destroy.assert_called_once_with()

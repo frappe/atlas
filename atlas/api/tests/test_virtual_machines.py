@@ -56,6 +56,7 @@ def build_virtual_machine(tenant_id: int = TENANT_ID, **overrides) -> SimpleName
 		"memory_mib": 2048,
 		"disk_mib": 20480,
 		"sleep_after_idle_seconds": 0,
+		"is_disk_encrypted": 0,
 		"is_privileged": 0,
 		"is_termination_protected": 0,
 		"is_draft": 0,
@@ -135,21 +136,23 @@ def owned_document(virtual_machine: SimpleNamespace):
 
 class TestVirtualMachineViews(UnitTestCase):
 	def test_summary_hides_the_assigned_host(self) -> None:
-		summary = VirtualMachineResponse.from_document(build_virtual_machine())
+		summary = VirtualMachineResponse.from_document(build_virtual_machine(is_disk_encrypted=1))
 
 		self.assertEqual(summary.id, "vm-00001")
 		self.assertEqual(summary.tenant_id, TENANT_ID)
 		self.assertEqual(summary.image_id, "system-image")
+		self.assertTrue(summary.is_disk_encrypted)
 		self.assertIsInstance(summary.created_at, int)
 		self.assertNotIn("virtual_machine_image_id", summary.model_fields)
 		self.assertNotIn("server", summary.model_fields)
 
 	def test_detail_carries_the_addresses_and_the_guest_configuration(self) -> None:
 		detail = VirtualMachineDetailResponse.from_document_and_metal(
-			build_virtual_machine(), build_metal_information()
+			build_virtual_machine(is_disk_encrypted=1), build_metal_information()
 		)
 
 		self.assertEqual(detail.desired_state, "running")
+		self.assertTrue(detail.is_disk_encrypted)
 		self.assertEqual(detail.current_state, "stopped")
 		self.assertEqual(detail.network.public_ipv4, "203.0.113.10")
 		self.assertEqual(detail.network.mesh_ipv6, "fdaa:1::5")
@@ -251,6 +254,16 @@ class TestCreateVirtualMachine(UnitTestCase):
 		self.assertEqual(status, 202)
 		self.assertTrue(create.call_args.args[0].is_privileged)
 
+	def test_create_passes_is_disk_encrypted_with_idle_sleep(self) -> None:
+		status, _, create = self.create(
+			{**CREATE_BODY, "is_disk_encrypted": True, "sleep_after_idle_seconds": 1800}
+		)
+
+		self.assertEqual(status, 202)
+		request = create.call_args.args[0]
+		self.assertTrue(request.is_disk_encrypted)
+		self.assertEqual(request.sleep_after_idle_seconds, 1800)
+
 	def test_create_passes_the_firewall(self) -> None:
 		status, _, create = self.create(
 			{
@@ -333,12 +346,13 @@ class TestReadVirtualMachines(UnitTestCase):
 		)
 		self.assertEqual(virtual_machine_call.kwargs["filters"], {"tenant_id": TENANT_ID})
 		self.assertEqual(virtual_machine_call.kwargs["limit"], 3)
+		self.assertIn("is_disk_encrypted", virtual_machine_call.kwargs["fields"])
 		self.assertEqual(len(body["items"]), 2)
 		self.assertTrue(body["has_more"])
 
 	def test_list_adds_the_last_reported_state(self) -> None:
 		"""The list route reads stored state and does not contact the host."""
-		rows = [build_virtual_machine(), build_virtual_machine(name="vm-00002")]
+		rows = [build_virtual_machine(is_disk_encrypted=1), build_virtual_machine(name="vm-00002")]
 		state = SimpleNamespace(status="running", synced_at="2026-09-08 10:05:00")
 		with (
 			api_request("GET", "/api/atlas/virtual-machines", tenant_id=TENANT_ID),
@@ -353,6 +367,7 @@ class TestReadVirtualMachines(UnitTestCase):
 
 		self.assertEqual(status, 200)
 		self.assertEqual(body["items"][0]["last_known_state"], "running")
+		self.assertTrue(body["items"][0]["is_disk_encrypted"])
 		self.assertIsNotNone(body["items"][0]["state_synced_at"])
 		self.assertEqual(body["items"][1]["last_known_state"], "unknown")
 		self.assertIsNone(body["items"][1]["state_synced_at"])
@@ -372,7 +387,7 @@ class TestReadVirtualMachines(UnitTestCase):
 		self.assertEqual(body["items"][0]["last_known_state"], "pending")
 
 	def test_read_adds_the_live_host_state(self) -> None:
-		virtual_machine = build_virtual_machine()
+		virtual_machine = build_virtual_machine(is_disk_encrypted=1)
 		with (
 			api_request("GET", "/api/atlas/virtual-machines/vm-00001", tenant_id=TENANT_ID),
 			owned_document(virtual_machine),
@@ -381,6 +396,7 @@ class TestReadVirtualMachines(UnitTestCase):
 
 		self.assertEqual(status, 200)
 		self.assertEqual(body["id"], "vm-00001")
+		self.assertTrue(body["is_disk_encrypted"])
 		self.assertIsNone(body["desired_state"])
 		self.assertEqual(body["current_state"], "unknown")
 

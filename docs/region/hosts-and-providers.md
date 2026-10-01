@@ -34,18 +34,17 @@ Each method checks permissions and local state before delegating long work.
 | Inventory | `ping_server`, `sync_disks`, `sync_state` |
 | Removal | `archive_server` |
 
-## Upgrade `metald`
+## Upgrade metald
 
-**Check console preservation before restarting Metal.** An empty systemd descriptor store means every running VM on the host stops.
+Atlas Settings holds separate `metald` and Atlas WG Mesh artifacts. Initial host installation installs both components and writes their configuration. The **Upgrade Metald** action reads and replaces only the `metald` artifact. It does not download, replace, or reset the Atlas WG Mesh artifact.
 
-| Action | Behavior |
-| --- | --- |
-| `install_metald` | Writes configuration and units. Installs missing binaries. Does not replace a running daemon. |
-| `upgrade_metald` | Downloads the build from Atlas Settings, saves `/usr/bin/metald.previous`, installs the build, and restarts `metal.service`. |
+The upgrade downloads the new `metald` binary, verifies its SHA-256 digest, and runs its version command before host mutation. It stops before mutation unless `metal.service` is active, `FileDescriptorStorePreserve=yes`, and systemd holds exactly one console descriptor for each active VM unit.
 
-The upgrade script reports the descriptor count before restart. It checks the new service **five times**. On failure, it restores the previous binary, restarts the service, and reports the error.
+The script repeats the service, VM unit, preservation, and descriptor checks immediately before it installs the binary. It saves the previous `metald` binary and restarts `metal.service` after the atomic replacement.
 
-If it reports an old unit, run **Re-configure Metald**. This adds `FileDescriptorStorePreserve=yes`, which the host systemd version must support.
+The script checks the new service five times. It also checks that the active VM unit set and stored console descriptor count are unchanged. On failure after restart, it restores only the previous `metald` binary, starts the previous service, and reports the error.
+
+Use **Re-configure Metald** when an old host unit does not have descriptor preservation. The host systemd version must support `FileDescriptorStorePreserve=yes`.
 
 ## Capacity and state reports
 
@@ -65,6 +64,7 @@ Setup needs valid provider credentials, root SSH, network access, and a suitable
 - [Provider contract](../../atlas/atlas/core/server_providers/base.py) and [registry](../../atlas/atlas/core/server_providers/registry.py) define the integration boundary.
 - [Host provisioner](../../atlas/metal_server/core/provisioning.py) owns the phase order and commits.
 - [Host installation](../../atlas/metal_server/core/host_installation.py) installs Metal and host services.
+- [Metald upgrade transaction test](../../atlas/scripts/tests/test-upgrade-metald.sh) checks the descriptor gates and rollback paths.
 - [Host sync](../../atlas/metal_server/usage.py) stores capacity and state reports.
 - [Metal Server tests](../../atlas/metal_server/doctype/metal_server/test_metal_server.py) check record lifecycle behavior.
 

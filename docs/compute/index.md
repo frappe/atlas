@@ -6,6 +6,8 @@ Atlas chooses a host and stores the VM request. Metal applies that request on th
 
 Atlas [chooses a host](placement.md), saves a draft reservation, and asks Metal to create the VM. Metal accepts the request before the guest is ready. Follow the linked request guide for the full create flow and lost-response behavior.
 
+Select a System image with an initial RAM disk (initrd) and enable disk encryption when the VM needs [guest disk encryption](disk-encryption.md). The guest initrd converts the root disk to LUKS2 during the first boot.
+
 ## Change a VM
 
 Atlas sends power, restart, resource, network, key, and metadata changes to the assigned host. Metal reports the applied generation separately from request acceptance.
