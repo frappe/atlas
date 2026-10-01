@@ -12,8 +12,11 @@ from ..types import UNSET, Unset
 from typing import cast
 
 if TYPE_CHECKING:
-  from ..models.create_virtual_machine_payload_affinity import CreateVirtualMachinePayloadAffinity
+  from ..models.affinity_all_of_payload import AffinityAllOfPayload
+  from ..models.affinity_any_of_payload import AffinityAnyOfPayload
+  from ..models.affinity_rule_payload import AffinityRulePayload
   from ..models.create_virtual_machine_payload_metadata import CreateVirtualMachinePayloadMetadata
+  from ..models.create_virtual_machine_payload_tags import CreateVirtualMachinePayloadTags
   from ..models.firewall_payload import FirewallPayload
 
 
@@ -33,8 +36,9 @@ class CreateVirtualMachinePayload:
             disk_mib (int): Root disk capacity in MiB.
             image_id (str): Image used to create the virtual machine.
             memory_mib (int): Memory capacity in MiB.
-            affinity (CreateVirtualMachinePayloadAffinity | Unset): Placement affinity rules. Atlas accepts the value and
-                does not apply it yet.
+            affinity_rules (list[AffinityAllOfPayload | AffinityAnyOfPayload | AffinityRulePayload] | Unset): Rules that
+                limit the Metal Servers for the virtual machine. Every listed rule or group must hold. Only a System Manager can
+                set them, and only on a privileged virtual machine. Placement does not apply them yet.
             disk_iops (int | Unset): Disk IOPS limit. Zero removes the limit. Default: 0.
             disk_throughput_mibps (int | Unset): Disk throughput limit in MiB/s. Zero removes the limit. Default: 0.
             firewall (FirewallPayload | Unset): The complete desired firewall configuration.
@@ -52,6 +56,7 @@ class CreateVirtualMachinePayload:
                 Default: 0.
             sleep_after_idle_seconds (int | Unset): Idle time before automatic stop. Zero disables it. Default: 0.
             ssh_keys (list[str] | Unset): Authorized SSH public keys.
+            tags (CreateVirtualMachinePayloadTags | Unset): Resource tags as key-value pairs.
             user_data (str | Unset): Cloud-init user data supplied to the guest. Default: ''.
      """
 
@@ -59,7 +64,7 @@ class CreateVirtualMachinePayload:
     disk_mib: int
     image_id: str
     memory_mib: int
-    affinity: CreateVirtualMachinePayloadAffinity | Unset = UNSET
+    affinity_rules: list[AffinityAllOfPayload | AffinityAnyOfPayload | AffinityRulePayload] | Unset = UNSET
     disk_iops: int | Unset = 0
     disk_throughput_mibps: int | Unset = 0
     firewall: FirewallPayload | Unset = UNSET
@@ -74,6 +79,7 @@ class CreateVirtualMachinePayload:
     public_network_throughput_mibps: int | Unset = 0
     sleep_after_idle_seconds: int | Unset = 0
     ssh_keys: list[str] | Unset = UNSET
+    tags: CreateVirtualMachinePayloadTags | Unset = UNSET
     user_data: str | Unset = ''
 
 
@@ -81,8 +87,11 @@ class CreateVirtualMachinePayload:
 
 
     def to_dict(self) -> dict[str, Any]:
-        from ..models.create_virtual_machine_payload_affinity import CreateVirtualMachinePayloadAffinity # noqa: PLC0415
+        from ..models.affinity_all_of_payload import AffinityAllOfPayload # noqa: PLC0415
+        from ..models.affinity_any_of_payload import AffinityAnyOfPayload # noqa: PLC0415
+        from ..models.affinity_rule_payload import AffinityRulePayload # noqa: PLC0415
         from ..models.create_virtual_machine_payload_metadata import CreateVirtualMachinePayloadMetadata # noqa: PLC0415
+        from ..models.create_virtual_machine_payload_tags import CreateVirtualMachinePayloadTags # noqa: PLC0415
         from ..models.firewall_payload import FirewallPayload # noqa: PLC0415
         cpu_millicores = self.cpu_millicores
 
@@ -92,9 +101,21 @@ class CreateVirtualMachinePayload:
 
         memory_mib = self.memory_mib
 
-        affinity: dict[str, Any] | Unset = UNSET
-        if not isinstance(self.affinity, Unset):
-            affinity = self.affinity.to_dict()
+        affinity_rules: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.affinity_rules, Unset):
+            affinity_rules = []
+            for affinity_rules_item_data in self.affinity_rules:
+                affinity_rules_item: dict[str, Any]
+                if isinstance(affinity_rules_item_data, AffinityRulePayload):
+                    affinity_rules_item = affinity_rules_item_data.to_dict()
+                elif isinstance(affinity_rules_item_data, AffinityAnyOfPayload):
+                    affinity_rules_item = affinity_rules_item_data.to_dict()
+                else:
+                    affinity_rules_item = affinity_rules_item_data.to_dict()
+
+                affinity_rules.append(affinity_rules_item)
+
+
 
         disk_iops = self.disk_iops
 
@@ -140,6 +161,10 @@ class CreateVirtualMachinePayload:
 
 
 
+        tags: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.tags, Unset):
+            tags = self.tags.to_dict()
+
         user_data = self.user_data
 
 
@@ -151,8 +176,8 @@ class CreateVirtualMachinePayload:
             "image_id": image_id,
             "memory_mib": memory_mib,
         })
-        if affinity is not UNSET:
-            field_dict["affinity"] = affinity
+        if affinity_rules is not UNSET:
+            field_dict["affinity_rules"] = affinity_rules
         if disk_iops is not UNSET:
             field_dict["disk_iops"] = disk_iops
         if disk_throughput_mibps is not UNSET:
@@ -181,6 +206,8 @@ class CreateVirtualMachinePayload:
             field_dict["sleep_after_idle_seconds"] = sleep_after_idle_seconds
         if ssh_keys is not UNSET:
             field_dict["ssh_keys"] = ssh_keys
+        if tags is not UNSET:
+            field_dict["tags"] = tags
         if user_data is not UNSET:
             field_dict["user_data"] = user_data
 
@@ -190,8 +217,11 @@ class CreateVirtualMachinePayload:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
-        from ..models.create_virtual_machine_payload_affinity import CreateVirtualMachinePayloadAffinity # noqa: PLC0415
+        from ..models.affinity_all_of_payload import AffinityAllOfPayload # noqa: PLC0415
+        from ..models.affinity_any_of_payload import AffinityAnyOfPayload # noqa: PLC0415
+        from ..models.affinity_rule_payload import AffinityRulePayload # noqa: PLC0415
         from ..models.create_virtual_machine_payload_metadata import CreateVirtualMachinePayloadMetadata # noqa: PLC0415
+        from ..models.create_virtual_machine_payload_tags import CreateVirtualMachinePayloadTags # noqa: PLC0415
         from ..models.firewall_payload import FirewallPayload # noqa: PLC0415
         d = dict(src_dict)
         cpu_millicores = d.pop("cpu_millicores")
@@ -202,14 +232,43 @@ class CreateVirtualMachinePayload:
 
         memory_mib = d.pop("memory_mib")
 
-        _affinity = d.pop("affinity", UNSET)
-        affinity: CreateVirtualMachinePayloadAffinity | Unset
-        if isinstance(_affinity,  Unset):
-            affinity = UNSET
-        else:
-            affinity = CreateVirtualMachinePayloadAffinity.from_dict(_affinity)
+        _affinity_rules = d.pop("affinity_rules", UNSET)
+        affinity_rules: list[AffinityAllOfPayload | AffinityAnyOfPayload | AffinityRulePayload] | Unset = UNSET
+        if _affinity_rules is not UNSET:
+            affinity_rules = []
+            for affinity_rules_item_data in _affinity_rules:
+                def _parse_affinity_rules_item(data: object) -> AffinityAllOfPayload | AffinityAnyOfPayload | AffinityRulePayload:
+                    try:
+                        if not isinstance(data, dict):
+                            raise TypeError()
+                        affinity_rules_item_type_0 = AffinityRulePayload.from_dict(data)
 
 
+
+                        return affinity_rules_item_type_0
+                    except (TypeError, ValueError, AttributeError, KeyError):
+                        pass
+                    try:
+                        if not isinstance(data, dict):
+                            raise TypeError()
+                        affinity_rules_item_type_1 = AffinityAnyOfPayload.from_dict(data)
+
+
+
+                        return affinity_rules_item_type_1
+                    except (TypeError, ValueError, AttributeError, KeyError):
+                        pass
+                    if not isinstance(data, dict):
+                        raise TypeError()
+                    affinity_rules_item_type_2 = AffinityAllOfPayload.from_dict(data)
+
+
+
+                    return affinity_rules_item_type_2
+
+                affinity_rules_item = _parse_affinity_rules_item(affinity_rules_item_data)
+
+                affinity_rules.append(affinity_rules_item)
 
 
         disk_iops = d.pop("disk_iops", UNSET)
@@ -273,6 +332,16 @@ class CreateVirtualMachinePayload:
         ssh_keys = cast(list[str], d.pop("ssh_keys", UNSET))
 
 
+        _tags = d.pop("tags", UNSET)
+        tags: CreateVirtualMachinePayloadTags | Unset
+        if isinstance(_tags,  Unset):
+            tags = UNSET
+        else:
+            tags = CreateVirtualMachinePayloadTags.from_dict(_tags)
+
+
+
+
         user_data = d.pop("user_data", UNSET)
 
         create_virtual_machine_payload = cls(
@@ -280,7 +349,7 @@ class CreateVirtualMachinePayload:
             disk_mib=disk_mib,
             image_id=image_id,
             memory_mib=memory_mib,
-            affinity=affinity,
+            affinity_rules=affinity_rules,
             disk_iops=disk_iops,
             disk_throughput_mibps=disk_throughput_mibps,
             firewall=firewall,
@@ -295,6 +364,7 @@ class CreateVirtualMachinePayload:
             public_network_throughput_mibps=public_network_throughput_mibps,
             sleep_after_idle_seconds=sleep_after_idle_seconds,
             ssh_keys=ssh_keys,
+            tags=tags,
             user_data=user_data,
         )
 

@@ -108,6 +108,8 @@ def create_virtual_machine(
 	Creates a tenant VM from an image and requests the specified compute, disk, network, and guest configuration. Only tenant 0 can set `is_privileged`, which lets the VM reach every tenant through the mesh.
 
 	Set `is_termination_protected` to refuse deletion of the new VM. The termination protection route changes it later.
+
+	Use `tags` to label the VM, for example, `{"role": "cargo-server"}`. `affinity_rules` limits the Metal Servers for the VM by host tags and by the tags of other VMs on the host. Only a System Manager can set rules, and only on a privileged VM. Atlas stores the rules, but placement does not apply them yet.
 	"""
 	image = get_owned_image(payload.image_id)
 	request = payload.to_domain_request(get_current_tenant_id(), image.name)

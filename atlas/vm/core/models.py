@@ -10,6 +10,7 @@ import frappe
 
 from atlas.atlas.core.mesh_address import MESH_NETWORK
 from atlas.atlas.core.parsing import strict_bool
+from atlas.vm.core.placement.affinity import AffinityRules
 
 ROUTE_VIA_HOST = "host"
 IPV4_INTERNET_DESTINATION = "0.0.0.0/0"
@@ -258,6 +259,8 @@ class VirtualMachineCreateRequest:
 	public_ipv6: str | None = None
 	metadata: dict[str, str] = field(default_factory=dict)
 	firewall: FirewallConfiguration = field(default_factory=FirewallConfiguration)
+	tags: dict[str, str] = field(default_factory=dict)
+	affinity_rules: AffinityRules = field(default_factory=AffinityRules)
 
 	@classmethod
 	def from_value(cls, value: str | dict[str, Any]) -> VirtualMachineCreateRequest:
@@ -315,6 +318,8 @@ class VirtualMachineCreateRequest:
 			public_ipv6=public_ipv6,
 			metadata=cls.metadata_map(payload),
 			firewall=FirewallConfiguration.from_value(payload.get("firewall")),
+			tags=cls.tag_map(payload),
+			affinity_rules=AffinityRules.from_value(payload.get("affinity_rules")),
 		)
 
 	@staticmethod
@@ -335,6 +340,17 @@ class VirtualMachineCreateRequest:
 		if not isinstance(value, int) or isinstance(value, bool) or value < 0:
 			raise ValueError(f"{field_name} must be a non-negative integer.")
 		return value
+
+	@staticmethod
+	def tag_map(payload: dict[str, Any]) -> dict[str, str]:
+		"""Return the VM tags. The Virtual Machine record trims them and applies the tag limits."""
+		value = payload.get("tags") or {}
+		if not isinstance(value, dict) or any(
+			not isinstance(key, str) or not isinstance(item, str) for key, item in value.items()
+		):
+			raise ValueError("Tags must be a string-to-string map.")
+
+		return dict(value)
 
 	@staticmethod
 	def metadata_map(payload: dict[str, Any]) -> dict[str, str]:

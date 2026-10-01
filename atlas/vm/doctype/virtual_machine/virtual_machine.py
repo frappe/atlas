@@ -44,6 +44,7 @@ class VirtualMachine(Document):
 		from atlas.atlas.doctype.atlas_tag.atlas_tag import AtlasTag
 
 		active_migration: DF.Link | None
+		affinity_rules: DF.Code | None
 		architecture: DF.Literal["amd64", "arm64"]
 		cpu_millicores: DF.Int
 		disk_mib: DF.Int

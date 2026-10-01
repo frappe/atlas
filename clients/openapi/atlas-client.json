@@ -1,6 +1,111 @@
 {
   "components": {
     "schemas": {
+      "AffinityAllOfPayload": {
+        "additionalProperties": false,
+        "description": "A group that holds when every one of its rules or groups holds.",
+        "properties": {
+          "all_of": {
+            "description": "Rules or groups. Every one must hold.",
+            "items": {
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/AffinityRulePayload"
+                },
+                {
+                  "$ref": "#/components/schemas/AffinityAnyOfPayload"
+                },
+                {
+                  "$ref": "#/components/schemas/AffinityAllOfPayload"
+                }
+              ]
+            },
+            "minItems": 1,
+            "title": "All Of",
+            "type": "array"
+          }
+        },
+        "required": [
+          "all_of"
+        ],
+        "title": "AffinityAllOfPayload",
+        "type": "object"
+      },
+      "AffinityAnyOfPayload": {
+        "additionalProperties": false,
+        "description": "A group that holds when at least one of its rules or groups holds.",
+        "properties": {
+          "any_of": {
+            "description": "Rules or groups. One must hold.",
+            "items": {
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/AffinityRulePayload"
+                },
+                {
+                  "$ref": "#/components/schemas/AffinityAnyOfPayload"
+                },
+                {
+                  "$ref": "#/components/schemas/AffinityAllOfPayload"
+                }
+              ]
+            },
+            "minItems": 1,
+            "title": "Any Of",
+            "type": "array"
+          }
+        },
+        "required": [
+          "any_of"
+        ],
+        "title": "AffinityAnyOfPayload",
+        "type": "object"
+      },
+      "AffinityRulePayload": {
+        "additionalProperties": false,
+        "description": "One rule on the tags of the candidate Metal Server, or of a VM that runs on it.",
+        "properties": {
+          "operator": {
+            "description": "`has` needs a resource with every tag pair. `has_not` rejects such a resource.",
+            "enum": [
+              "has",
+              "has_not"
+            ],
+            "title": "Operator",
+            "type": "string"
+          },
+          "resource": {
+            "description": "`metal_server` checks the candidate host. `virtual_machine` checks the VMs on the candidate host.",
+            "enum": [
+              "metal_server",
+              "virtual_machine"
+            ],
+            "title": "Resource",
+            "type": "string"
+          },
+          "tags": {
+            "additionalProperties": {
+              "maxLength": 1000,
+              "type": "string"
+            },
+            "description": "Tag pairs that must all be on one resource.",
+            "maxProperties": 32,
+            "minProperties": 1,
+            "propertyNames": {
+              "maxLength": 128
+            },
+            "title": "Tags",
+            "type": "object"
+          }
+        },
+        "required": [
+          "resource",
+          "operator",
+          "tags"
+        ],
+        "title": "AffinityRulePayload",
+        "type": "object"
+      },
       "ApiErrorDetail": {
         "description": "The stable error details returned by Atlas.",
         "properties": {
@@ -194,13 +299,23 @@
         "additionalProperties": false,
         "description": "Values that create one virtual machine.",
         "properties": {
-          "affinity": {
-            "additionalProperties": {
-              "type": "string"
+          "affinity_rules": {
+            "description": "Rules that limit the Metal Servers for the virtual machine. Every listed rule or group must hold. Only a System Manager can set them, and only on a privileged virtual machine. Placement does not apply them yet.",
+            "items": {
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/AffinityRulePayload"
+                },
+                {
+                  "$ref": "#/components/schemas/AffinityAnyOfPayload"
+                },
+                {
+                  "$ref": "#/components/schemas/AffinityAllOfPayload"
+                }
+              ]
             },
-            "description": "Placement affinity rules. Atlas accepts the value and does not apply it yet.",
-            "title": "Affinity",
-            "type": "object"
+            "title": "Affinity Rules",
+            "type": "array"
           },
           "cpu_millicores": {
             "description": "CPU capacity in millicores. 1000 millicores equals one virtual CPU.",
@@ -332,6 +447,19 @@
             },
             "title": "Ssh Keys",
             "type": "array"
+          },
+          "tags": {
+            "additionalProperties": {
+              "maxLength": 1000,
+              "type": "string"
+            },
+            "description": "Resource tags as key-value pairs.",
+            "maxProperties": 32,
+            "propertyNames": {
+              "maxLength": 128
+            },
+            "title": "Tags",
+            "type": "object"
           },
           "user_data": {
             "default": "",
@@ -3429,7 +3557,7 @@
         ]
       },
       "post": {
-        "description": "Creates a tenant VM from an image and requests the specified compute, disk, network, and guest configuration. Only tenant 0 can set `is_privileged`, which lets the VM reach every tenant through the mesh.\n\nSet `is_termination_protected` to refuse deletion of the new VM. The termination protection route changes it later.",
+        "description": "Creates a tenant VM from an image and requests the specified compute, disk, network, and guest configuration. Only tenant 0 can set `is_privileged`, which lets the VM reach every tenant through the mesh.\n\nSet `is_termination_protected` to refuse deletion of the new VM. The termination protection route changes it later.\n\nUse `tags` to label the VM, for example, `{\"role\": \"cargo-server\"}`. `affinity_rules` limits the Metal Servers for the VM by host tags and by the tags of other VMs on the host. Only a System Manager can set rules, and only on a privileged VM. Atlas stores the rules, but placement does not apply them yet.",
         "operationId": "create_virtual_machine",
         "parameters": [
           {

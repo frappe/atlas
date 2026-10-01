@@ -1,5 +1,11 @@
 """ Contains all the data models used in inputs/outputs """
 
+from .affinity_all_of_payload import AffinityAllOfPayload
+from .affinity_any_of_payload import AffinityAnyOfPayload
+from .affinity_rule_payload import AffinityRulePayload
+from .affinity_rule_payload_operator import AffinityRulePayloadOperator
+from .affinity_rule_payload_resource import AffinityRulePayloadResource
+from .affinity_rule_payload_tags import AffinityRulePayloadTags
 from .api_error_detail import ApiErrorDetail
 from .api_error_field import ApiErrorField
 from .api_error_response import ApiErrorResponse
@@ -10,8 +16,8 @@ from .console_token_payload_mode import ConsoleTokenPayloadMode
 from .console_token_response import ConsoleTokenResponse
 from .console_token_response_mode import ConsoleTokenResponseMode
 from .create_virtual_machine_payload import CreateVirtualMachinePayload
-from .create_virtual_machine_payload_affinity import CreateVirtualMachinePayloadAffinity
 from .create_virtual_machine_payload_metadata import CreateVirtualMachinePayloadMetadata
+from .create_virtual_machine_payload_tags import CreateVirtualMachinePayloadTags
 from .disk_update_payload import DiskUpdatePayload
 from .download_image_artifact import DownloadImageArtifact
 from .firewall_payload import FirewallPayload
@@ -72,6 +78,12 @@ from .virtual_machine_response_tags import VirtualMachineResponseTags
 from .webhook_configuration_response import WebhookConfigurationResponse
 
 __all__ = (
+    "AffinityAllOfPayload",
+    "AffinityAnyOfPayload",
+    "AffinityRulePayload",
+    "AffinityRulePayloadOperator",
+    "AffinityRulePayloadResource",
+    "AffinityRulePayloadTags",
     "ApiErrorDetail",
     "ApiErrorField",
     "ApiErrorResponse",
@@ -82,8 +94,8 @@ __all__ = (
     "ConsoleTokenResponse",
     "ConsoleTokenResponseMode",
     "CreateVirtualMachinePayload",
-    "CreateVirtualMachinePayloadAffinity",
     "CreateVirtualMachinePayloadMetadata",
+    "CreateVirtualMachinePayloadTags",
     "DiskUpdatePayload",
     "DownloadImageArtifact",
     "FirewallPayload",

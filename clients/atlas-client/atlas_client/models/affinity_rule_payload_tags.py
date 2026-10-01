@@ -14,13 +14,13 @@ from ..types import UNSET, Unset
 
 
 
-T = TypeVar("T", bound="CreateVirtualMachinePayloadAffinity")
+T = TypeVar("T", bound="AffinityRulePayloadTags")
 
 
 
 @_attrs_define
-class CreateVirtualMachinePayloadAffinity:
-    """ Placement affinity rules. Atlas accepts the value and does not apply it yet.
+class AffinityRulePayloadTags:
+    """ Tag pairs that must all be on one resource.
 
      """
 
@@ -42,12 +42,12 @@ class CreateVirtualMachinePayloadAffinity:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
-        create_virtual_machine_payload_affinity = cls(
+        affinity_rule_payload_tags = cls(
         )
 
 
-        create_virtual_machine_payload_affinity.additional_properties = d
-        return create_virtual_machine_payload_affinity
+        affinity_rule_payload_tags.additional_properties = d
+        return affinity_rule_payload_tags
 
     @property
     def additional_keys(self) -> list[str]:
