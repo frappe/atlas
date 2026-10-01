@@ -32,7 +32,7 @@ REQUEST_TIMEOUT_SECONDS = 5
 
 
 class WireGuardGatewayProvisioner:
-	"""Make the gateway VM a network gateway, then install WireGuard and nftables."""
+	"""Make the gateway VM a network gateway, then install WireGuard."""
 
 	def __init__(self, gateway: WireGuardGatewayServer) -> None:
 		self.gateway = gateway
@@ -75,6 +75,7 @@ class WireGuardGatewayProvisioner:
 	def steps(self) -> tuple[tuple[str, Callable[[], None]], ...]:
 		"""Return setup steps in execution order."""
 		return (
+			("network-gateway", self.enable_network_gateway),
 			("secure-shell", self.wait_for_ssh),
 			("installation", self.install_gateway),
 			("gateway-api", self.publish_gateway_api),
@@ -107,6 +108,12 @@ class WireGuardGatewayProvisioner:
 			poll_interval_seconds=SSH_POLL_INTERVAL_SECONDS,
 		)
 
+	def enable_network_gateway(self) -> None:
+		"""Let WG Mesh carry client source addresses without translation."""
+		virtual_machine = self.virtual_machine
+		if not virtual_machine.is_network_gateway:
+			virtual_machine.set_network_gateway(True)
+
 	def install_gateway(self) -> None:
 		"""Install the gateway package with the regional signing authority."""
 		settings = frappe.get_single("Atlas Settings")
@@ -117,6 +124,7 @@ class WireGuardGatewayProvisioner:
 			environment={
 				**WG_GATEWAY_PACKAGE.get_install_environment(),
 				"REGION_ID": settings.region_id,
+				"GATEWAY_ID": int(self.gateway.name.rsplit("-", 1)[-1]),
 				"GATEWAY_MESH": self.gateway.wireguard_mesh_ipv6,
 				"LISTEN_PORT": self.gateway.listen_port,
 				"JWKS_URL": settings.jwks_url,

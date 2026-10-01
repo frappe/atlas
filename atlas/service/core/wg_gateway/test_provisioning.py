@@ -78,6 +78,7 @@ class TestGatewayInstallation(UnitTestCase):
 			PACKAGE_ENVIRONMENT
 			| {
 				"REGION_ID": 1,
+				"GATEWAY_ID": 1,
 				"GATEWAY_MESH": "fdaa:1::99",
 				"LISTEN_PORT": 51820,
 				"JWKS_URL": "https://atlas.example.com/api/atlas/jwks.json",

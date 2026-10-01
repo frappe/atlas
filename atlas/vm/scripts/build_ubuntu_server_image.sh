@@ -144,7 +144,7 @@ Destination=169.254.169.254/32
 Scope=link
 
 [Route]
-Destination=fdaa::/16
+Destination=::/0
 Gateway=fe80::1
 EOF
 }
