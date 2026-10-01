@@ -1,6 +1,16 @@
 # How Atlas reaches hosts
 
-Atlas reaches each Metal host through WireGuard. SSH, the Metal control API, and the browser console use the host `wg0` interface. The host public address accepts no management traffic.
+Atlas reaches each Metal host through WireGuard. SSH, the Metal control API, and the browser console use the host `wg0` interface.
+
+Hosts use this path for file downloads when `atlas_internal_url` is set. After installation, the host firewall rejects new management connections on the public interface.
+
+```text
+Atlas atlas0 (fdaa:<region>::ffff:ffff:ffff:ffff)  ==WireGuard==>  host wg0 (fdab:<region>:<host>)
+                                                                    ├── sshd :22, metald :9000
+                                                                    ├── tenant-0 VMs (fdaa:<region>::<vm>)
+                                                                    └── ip netns exec metal-<vm> nc 172.16.0.2 22   (guest SSH)
+hosts and tenant-0 VMs  --http-->  atlas_internal_url  (an Atlas listener on its mesh address)
+```
 
 ## The Atlas peer
 
@@ -71,6 +81,14 @@ Atlas reads the VM host for each connection. The guest needs no public address f
 | ICMP, DHCP, and replies | Any address. |
 
 The Metal network setup, which `metal.service` runs at start, drops guest packets to the private network CIDR, on any interface. Guest public addresses, NAT, and mesh traffic do not change.
+
+## Internal URL
+
+Hosts and tenant-0 VMs download Atlas files from `atlas_internal_url`. Cargo uses it for the Atlas API and JWKS. Proxies use it for JWKS.
+
+Set it to an Atlas listener on the Atlas mesh address, for example `http://[fdaa:1::ffff:ffff:ffff:ffff]:8000`. The listener must send the Atlas site name in `Host`. If the port is not `80` or `443`, run the WireGuard install script with that port in `ATLAS_WIREGUARD_TCP_PORTS`.
+
+Without `atlas_internal_url`, clients use `atlas_base_url` or the site URL.
 
 ## Recovery
 

@@ -166,11 +166,11 @@ class AtlasSettings(Document):
 
 	@property
 	def jwks_url(self) -> str:
-		"""Return the public regional JSON Web Key Set URL."""
+		"""Return the regional JSON Web Key Set URL that the tenant-0 services fetch."""
+		from atlas.atlas.core.artifacts import get_internal_base_url
 		from atlas.auth.jwks import JWKS_PATH
 
-		base_url = frappe.conf.atlas_base_url or frappe.utils.get_url(allow_header_override=False)
-		return f"{base_url.rstrip('/')}{JWKS_PATH}"
+		return f"{get_internal_base_url().rstrip('/')}{JWKS_PATH}"
 
 	@cached_property
 	def server_provider_controller(self) -> "ServerProvider":

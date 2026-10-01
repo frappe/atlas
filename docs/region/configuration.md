@@ -1,6 +1,8 @@
 # Atlas configuration
 
-Use **Atlas Settings** for regional configuration. Set the site value `atlas_base_url` to an address hosts can reach for Atlas files.
+Use **Atlas Settings** for regional configuration. Set the site value `atlas_internal_url` to the Atlas listener on its mesh address. Hosts and tenant-0 VMs reach Atlas through it.
+
+Set `atlas_base_url` to the public Atlas address when the site URL is not public.
 
 ## Settings by purpose
 
@@ -31,13 +33,18 @@ Atlas creates regional signing and Metal trust material as part of settings setu
 
 | Network setting | Purpose |
 | --- | --- |
+| `atlas_internal_url` | Site URL that hosts and tenant-0 VMs use for Atlas files and APIs. |
+| `atlas_base_url` | Public site URL when the normal site URL is not public. It is the fallback for internal clients. |
+| `atlas_wireguard_mtu` | MTU of `atlas0`. Restart the interface after a change. |
 | `is_unicast_network_enabled` | Uses unicast discovery when the host network cannot carry multicast. |
+
+The first three values are site configuration keys. See [Atlas access to hosts](host-access.md) for setup and recovery.
 
 ## Limits and recovery
 
 **Saving a field does not prove that every host applied it.** Setup, sync, or service configuration may still need to run.
 
-Verify hosts and services after changing region identity, trust material, storage credentials, or public-address mode.
+Verify hosts and services after changing region identity, trust material, storage credentials, or the internal URL.
 
 ::: details Source code and tests
 

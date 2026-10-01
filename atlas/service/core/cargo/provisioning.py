@@ -13,6 +13,7 @@ import frappe
 import requests
 from frappe import _
 
+from atlas.atlas.core.artifacts import get_internal_base_url
 from atlas.atlas.core.ssh import wait_for_server
 from atlas.atlas.doctype.ssh_task.ssh_task import SSHTask
 from atlas.auth.issuer import issue_token
@@ -158,9 +159,7 @@ class CargoServerProvisioner:
 			constraints={"site": {"suffix": "-svc"}},
 			lifetime=TOKEN_LIFETIME,
 		)
-		atlas_url = (frappe.conf.atlas_base_url or frappe.utils.get_url(allow_header_override=False)).rstrip(
-			"/"
-		)
+		atlas_url = get_internal_base_url().rstrip("/")
 
 		return {
 			"PILOT_ADMIN_PASSWORD": generate_installer_password(),
