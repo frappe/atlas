@@ -1,3 +1,4 @@
+import json
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
@@ -6,7 +7,7 @@ from frappe.tests import UnitTestCase
 
 from atlas.atlas.core.exceptions import AtlasConflictError
 from atlas.vm.core.metal_client import MetalClientError
-from atlas.vm.core.models import Route
+from atlas.vm.core.models import Route, VirtualMachineCreateRequest
 from atlas.vm.core.placement import OutOfCapacity, PlacementStrategy
 from atlas.vm.core.vm_service import (
 	InsufficientHostCapacity,
@@ -14,6 +15,8 @@ from atlas.vm.core.vm_service import (
 	VirtualMachineService,
 )
 from atlas.vm.doctype.virtual_machine_image.virtual_machine_image import VirtualMachineImage
+
+AFFINITY_RULES = [{"resource": "virtual_machine", "operator": "has_not", "tags": {"role": "cargo-server"}}]
 
 
 def build_image(tenant_id: int, image_type: str = "machine") -> VirtualMachineImage:
@@ -39,6 +42,52 @@ class TestVirtualMachineCreation(UnitTestCase):
 			VirtualMachineService.create(self.request())
 
 		insert_draft.assert_not_called()
+
+	def test_affinity_rules_need_a_privileged_vm_and_a_system_manager(self) -> None:
+		for is_privileged, is_system_manager in ((False, True), (True, False)):
+			request = {**self.request(), "tenant_id": 0, "is_privileged": is_privileged}
+			with (
+				self.subTest(is_privileged=is_privileged, is_system_manager=is_system_manager),
+				patch("atlas.vm.core.vm_service.has_role", return_value=is_system_manager),
+				patch.object(PlacementStrategy, "find_server") as find_server,
+				self.assertRaises(frappe.PermissionError),
+			):
+				VirtualMachineService.create({**request, "affinity_rules": AFFINITY_RULES})
+
+			find_server.assert_not_called()
+
+	def test_a_trusted_request_with_affinity_rules_reaches_placement(self) -> None:
+		image = SimpleNamespace(architecture="amd64", validate_compatibility=Mock())
+		request = {**self.request(), "tenant_id": 0, "is_privileged": True, "affinity_rules": AFFINITY_RULES}
+		with (
+			patch("atlas.vm.core.vm_service.has_role", return_value=True),
+			patch.object(VirtualMachineService, "get_image", return_value=image),
+			patch.object(
+				PlacementStrategy, "find_server", side_effect=OutOfCapacity("retry later")
+			) as find_server,
+			self.assertRaises(OutOfCapacity),
+		):
+			VirtualMachineService.create(request)
+
+		find_server.assert_called_once()
+
+	def test_the_draft_stores_the_tags_and_affinity_rules(self) -> None:
+		image = SimpleNamespace(name="image-1", architecture="amd64")
+		for affinity_rules in (AFFINITY_RULES, []):
+			request = VirtualMachineCreateRequest.from_value(
+				{**self.request(), "tags": {"role": "cargo-server"}, "affinity_rules": affinity_rules}
+			)
+			with (
+				self.subTest(affinity_rules=affinity_rules),
+				patch("atlas.vm.core.vm_service.frappe.get_doc") as get_doc,
+			):
+				VirtualMachineService.insert_draft(request, image, "metal-1")
+
+				values = get_doc.call_args.args[0]
+				self.assertEqual(values["tags"], [{"key": "role", "value": "cargo-server"}])
+				# A VM without rules stores nothing.
+				stored_rules = values["affinity_rules"]
+				self.assertEqual(json.loads(stored_rules) if stored_rules else [], affinity_rules)
 
 	def test_creation_commits_the_draft_before_the_metal_request(self) -> None:
 		operations: list[str] = []

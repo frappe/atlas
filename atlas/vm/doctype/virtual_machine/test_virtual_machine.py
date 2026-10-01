@@ -110,6 +110,36 @@ class TestVirtualMachineRequest(UnitTestCase):
 			(FirewallRule(protocol="tcp", ports="22", cidrs=("203.0.113.0/24",)),),
 		)
 
+	def test_request_parses_tags_and_affinity_rules(self) -> None:
+		rules = [{"any_of": [{"resource": "metal_server", "operator": "has", "tags": {"rack": "a"}}]}]
+		request = VirtualMachineCreateRequest.from_value(
+			{
+				"virtual_machine_image": "Ubuntu 24.04",
+				"cpu_millicores": 1500,
+				"memory_mib": 2048,
+				"disk_mib": 10240,
+				"tenant_id": 0,
+				"tags": {"role": "cargo-server"},
+				"affinity_rules": rules,
+			}
+		)
+
+		self.assertEqual(request.tags, {"role": "cargo-server"})
+		self.assertEqual(request.affinity_rules.as_list(), rules)
+
+	def test_request_rejects_tags_that_are_not_strings(self) -> None:
+		with self.assertRaisesRegex(ValueError, "string-to-string"):
+			VirtualMachineCreateRequest.from_value(
+				{
+					"virtual_machine_image": "Ubuntu 24.04",
+					"cpu_millicores": 1500,
+					"memory_mib": 2048,
+					"disk_mib": 10240,
+					"tenant_id": 0,
+					"tags": {"role": 1},
+				}
+			)
+
 	def test_request_rejects_a_noncanonical_firewall_cidr(self) -> None:
 		with self.assertRaisesRegex(ValueError, "canonical"):
 			VirtualMachineCreateRequest.from_value(
