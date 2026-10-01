@@ -8,6 +8,7 @@ import atlas.service.doctype.wireguard_gateway_server.wireguard_gateway_server a
 from atlas.service.doctype.wireguard_gateway_server.wireguard_gateway_server import (
 	WireGuardGatewayServer,
 )
+from atlas.vm.core.models import ROUTE_SCOPE_WIREGUARD_GATEWAY, Route
 
 
 def ipv4_allocation(**values) -> SimpleNamespace:
@@ -50,6 +51,41 @@ class TestListenPortValidation(UnitTestCase):
 	def test_a_non_integer_is_refused(self) -> None:
 		with self.assertRaisesRegex(frappe.ValidationError, "Listen port"):
 			gateway_module._validate_listen_port("51820")
+
+
+class TestGatewayRoutes(UnitTestCase):
+	def test_each_active_gateway_owns_one_scoped_return_route(self) -> None:
+		gateways = [
+			SimpleNamespace(name="wg-gateway-001", wireguard_mesh_ipv6="fdaa:1::1"),
+			SimpleNamespace(name="wg-gateway-007", wireguard_mesh_ipv6="fdaa:1::7"),
+		]
+
+		with (
+			patch.object(gateway_module.frappe, "get_single", return_value=SimpleNamespace(region_id=1)),
+			patch.object(gateway_module.frappe, "get_all", return_value=gateways),
+		):
+			routes = gateway_module.active_gateway_routes()
+
+		self.assertEqual(
+			routes,
+			[
+				Route("fdac:1:1::/48", "fdaa:1::1", ROUTE_SCOPE_WIREGUARD_GATEWAY),
+				Route("fdac:1:7::/48", "fdaa:1::7", ROUTE_SCOPE_WIREGUARD_GATEWAY),
+			],
+		)
+
+	def test_a_gateway_without_a_mesh_address_has_no_route(self) -> None:
+		gateway = SimpleNamespace(name="wg-gateway-001", wireguard_mesh_ipv6=None)
+
+		with (
+			patch.object(gateway_module.frappe, "get_single", return_value=SimpleNamespace(region_id=1)),
+			patch.object(gateway_module.frappe, "get_all", return_value=[gateway]),
+		):
+			self.assertEqual(gateway_module.active_gateway_routes(), [])
+
+	def test_the_client_prefix_embeds_the_region_and_the_gateway_id(self) -> None:
+		self.assertEqual(gateway_module.gateway_client_prefix(1, "wg-gateway-001"), "fdac:1:1::/48")
+		self.assertEqual(gateway_module.gateway_client_prefix(2, "wg-gateway-007"), "fdac:2:7::/48")
 
 
 class TestGatewayCreation(UnitTestCase):

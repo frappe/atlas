@@ -13,6 +13,7 @@ from atlas.atlas.core.parsing import strict_bool
 from atlas.vm.core.placement.affinity import AffinityRules
 
 ROUTE_VIA_HOST = "host"
+ROUTE_SCOPE_WIREGUARD_GATEWAY = "wireguard-gateway"
 IPV4_INTERNET_DESTINATION = "0.0.0.0/0"
 IPV6_INTERNET_DESTINATION = "2000::/3"
 MINIMUM_CPU_MILLICORES = 100
@@ -31,17 +32,27 @@ class Route:
 
 	destination: str
 	via: str
+	# The WireGuard gateway scope keeps a route in the VM namespace on the host.
+	# The guest metadata never lists it, so the routes inside the VM never change.
+	scope: str = ""
 
 	@property
 	def is_via_host(self) -> bool:
 		return self.via == ROUTE_VIA_HOST
 
 	@property
+	def is_wireguard_gateway(self) -> bool:
+		return self.scope == ROUTE_SCOPE_WIREGUARD_GATEWAY
+
+	@property
 	def is_ipv4(self) -> bool:
 		return ipaddress.ip_network(self.destination).version == 4
 
 	def as_dict(self) -> dict[str, str]:
-		return {"destination": self.destination, "via": self.via}
+		value = {"destination": self.destination, "via": self.via}
+		if self.scope:
+			value["scope"] = self.scope
+		return value
 
 	@classmethod
 	def from_value(cls, value: Any) -> Route:
@@ -54,8 +65,11 @@ class Route:
 			raise ValueError("Route destination must be an IP prefix, such as 2000::/3.") from error
 
 		via = str(value.get("via") or "")
+		scope = str(value.get("scope") or "")
+		if scope not in ("", ROUTE_SCOPE_WIREGUARD_GATEWAY):
+			raise ValueError(f"Route scope must be empty or {ROUTE_SCOPE_WIREGUARD_GATEWAY}.")
 		if via == ROUTE_VIA_HOST:
-			return cls(str(destination), via)
+			return cls(str(destination), via, scope)
 		try:
 			gateway = ipaddress.IPv6Address(via)
 		except ValueError as error:
@@ -66,7 +80,7 @@ class Route:
 			raise ValueError(f"Route via must be {ROUTE_VIA_HOST} or a gateway address in {MESH_NETWORK}.")
 		if destination.version == 4:
 			raise ValueError(f"IPv4 route {destination} must use via {ROUTE_VIA_HOST}.")
-		return cls(str(destination), str(gateway))
+		return cls(str(destination), str(gateway), scope)
 
 
 DEFAULT_ROUTES = (Route(IPV4_INTERNET_DESTINATION, ROUTE_VIA_HOST),)

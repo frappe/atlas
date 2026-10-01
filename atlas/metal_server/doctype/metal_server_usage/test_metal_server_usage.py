@@ -11,12 +11,15 @@ from atlas.metal_server.usage import (
 	enqueue_server_syncs,
 	get_desired_images,
 	get_privileged_vm_addresses,
+	get_reported_routes,
 	get_usage_values,
 	get_wireguard_peers,
 	is_unicast_network_enabled,
 	sync_server,
+	sync_vm_gateway_routes,
 )
 from atlas.vm.core.metal_client import MetalClientError
+from atlas.vm.core.models import ROUTE_SCOPE_WIREGUARD_GATEWAY, Route
 
 CAPACITY = {
 	"total_cpu_millicores": 8000,
@@ -75,6 +78,179 @@ class TestServerUsage(UnitTestCase):
 			sync_server("server-1", [], [], False)
 
 		self.assertEqual(log_error.call_args.args[1], "Invalid synchronization response from Server server-1")
+
+	def reported_routes(self, routes: list[dict[str, str]]) -> dict[str, dict[str, object]]:
+		"""Return one sync response that reports these routes for one VM."""
+		return {"vm-00001": {"status": "running", "routes": routes}}
+
+	def active_gateway_route(self) -> Route:
+		"""Return the /48 return route of the Active gateway in the patches below."""
+		return Route("fdac:1:1::/48", "fdaa:1::1", ROUTE_SCOPE_WIREGUARD_GATEWAY)
+
+	# The gateway route sync uses the routes the sync response already carries,
+	# so no opted-in VM needs an extra read.
+	def test_sync_gateway_routes_updates_an_opted_in_vm(self) -> None:
+		reported = self.reported_routes(
+			[
+				{"destination": "2000::/3", "via": "host"},
+				{"destination": "fdac:1:2::/48", "via": "fdaa:1::2", "scope": ROUTE_SCOPE_WIREGUARD_GATEWAY},
+			]
+		)
+		ready = SimpleNamespace(is_draft=0, is_terminating=0, active_migration=None)
+		service = Mock()
+
+		with (
+			patch(
+				"atlas.service.doctype.wireguard_gateway_server.wireguard_gateway_server.active_gateway_routes",
+				return_value=[self.active_gateway_route()],
+			),
+			patch("atlas.metal_server.usage.frappe.db.get_value", return_value=ready),
+			patch("atlas.metal_server.usage.frappe.get_doc") as get_doc,
+			patch("atlas.vm.core.vm_service.VirtualMachineService", return_value=service) as service_class,
+		):
+			sync_vm_gateway_routes("server-1", reported)
+
+		service.sync_gateway_routes.assert_called_once_with([self.active_gateway_route()])
+		self.assertEqual(service_class.call_args.args[0], get_doc.return_value)
+
+	def test_sync_gateway_routes_skips_a_vm_without_gateway_routes(self) -> None:
+		reported = self.reported_routes([{"destination": "2000::/3", "via": "host"}])
+
+		with (
+			patch(
+				"atlas.service.doctype.wireguard_gateway_server.wireguard_gateway_server.active_gateway_routes",
+				return_value=[self.active_gateway_route()],
+			),
+			patch("atlas.metal_server.usage.frappe.get_doc") as get_doc,
+		):
+			sync_vm_gateway_routes("server-1", reported)
+
+		get_doc.assert_not_called()
+
+	def test_sync_gateway_routes_skips_an_unchanged_vm(self) -> None:
+		reported = self.reported_routes(
+			[
+				{"destination": "fdac:1:1::/48", "via": "fdaa:1::1", "scope": ROUTE_SCOPE_WIREGUARD_GATEWAY},
+			]
+		)
+
+		with (
+			patch(
+				"atlas.service.doctype.wireguard_gateway_server.wireguard_gateway_server.active_gateway_routes",
+				return_value=[self.active_gateway_route()],
+			),
+			patch("atlas.metal_server.usage.frappe.get_doc") as get_doc,
+		):
+			sync_vm_gateway_routes("server-1", reported)
+
+		get_doc.assert_not_called()
+
+	def test_sync_gateway_routes_skips_a_draft_or_terminating_vm(self) -> None:
+		reported = self.reported_routes(
+			[
+				{"destination": "fdac:1:2::/48", "via": "fdaa:1::2", "scope": ROUTE_SCOPE_WIREGUARD_GATEWAY},
+			]
+		)
+
+		for row in (
+			SimpleNamespace(is_draft=1, is_terminating=0, active_migration=None),
+			SimpleNamespace(is_draft=0, is_terminating=1, active_migration=None),
+			SimpleNamespace(is_draft=0, is_terminating=0, active_migration="migration-1"),
+		):
+			with (
+				patch(
+					"atlas.service.doctype.wireguard_gateway_server.wireguard_gateway_server.active_gateway_routes",
+					return_value=[self.active_gateway_route()],
+				),
+				patch("atlas.metal_server.usage.frappe.db.get_value", return_value=row),
+				patch("atlas.metal_server.usage.frappe.get_doc") as get_doc,
+			):
+				sync_vm_gateway_routes("server-1", reported)
+
+			get_doc.assert_not_called()
+
+	def test_sync_gateway_routes_continues_after_one_vm_fails(self) -> None:
+		reported = {
+			"vm-00001": {
+				"status": "running",
+				"routes": [
+					{
+						"destination": "fdac:1:2::/48",
+						"via": "fdaa:1::2",
+						"scope": ROUTE_SCOPE_WIREGUARD_GATEWAY,
+					},
+				],
+			},
+			"vm-00002": {
+				"status": "running",
+				"routes": [
+					{
+						"destination": "fdac:1:2::/48",
+						"via": "fdaa:1::2",
+						"scope": ROUTE_SCOPE_WIREGUARD_GATEWAY,
+					},
+				],
+			},
+		}
+		ready = SimpleNamespace(is_draft=0, is_terminating=0, active_migration=None)
+		services = [Mock(), Mock()]
+		services[0].sync_gateway_routes.side_effect = ValueError("metal is unavailable")
+
+		with (
+			patch(
+				"atlas.service.doctype.wireguard_gateway_server.wireguard_gateway_server.active_gateway_routes",
+				return_value=[self.active_gateway_route()],
+			),
+			patch("atlas.metal_server.usage.frappe.db.get_value", return_value=ready),
+			patch("atlas.metal_server.usage.frappe.get_doc"),
+			patch(
+				"atlas.vm.core.vm_service.VirtualMachineService",
+				side_effect=services,
+			),
+			patch("atlas.metal_server.usage.frappe.db.rollback"),
+			patch("atlas.metal_server.usage.frappe.log_error") as log_error,
+		):
+			sync_vm_gateway_routes("server-1", reported)
+
+		services[1].sync_gateway_routes.assert_called_once_with([self.active_gateway_route()])
+		self.assertIn("vm-00001", log_error.call_args.args[0])
+
+	def test_reported_routes_parse_each_vm(self) -> None:
+		reported = {
+			"vm-00001": {
+				"status": "running",
+				"routes": [
+					{"destination": "2000::/3", "via": "host"},
+					{
+						"destination": "fdac:1:1::/48",
+						"via": "fdaa:1::1",
+						"scope": ROUTE_SCOPE_WIREGUARD_GATEWAY,
+					},
+				],
+			},
+			"vm-00002": {"status": "stopped", "routes": []},
+		}
+
+		self.assertEqual(
+			get_reported_routes(reported),
+			{
+				"vm-00001": [
+					Route("2000::/3", "host"),
+					Route("fdac:1:1::/48", "fdaa:1::1", ROUTE_SCOPE_WIREGUARD_GATEWAY),
+				],
+				"vm-00002": [],
+			},
+		)
+
+	def test_reported_routes_reject_an_invalid_response(self) -> None:
+		for reported in (
+			[],
+			{"vm-00001": None},
+			{"vm-00001": {"status": "running"}},
+			{"vm-00001": {"status": "running", "routes": "2000::/3"}},
+		):
+			with self.assertRaises(ValueError):
+				get_reported_routes(reported)
 
 	def test_enqueue_uses_one_exchange_per_server(self) -> None:
 		peers = [{"node": "server-1"}]
@@ -209,7 +385,11 @@ class TestServerUsage(UnitTestCase):
 		server = Mock(private_network_mac_address=None)
 		server.name = "server-1"
 		client = Mock()
-		client.sync.return_value = {"capacity": CAPACITY, "private_network_mac_address": "aa:bb:cc:dd:ee:07"}
+		client.sync.return_value = {
+			"capacity": CAPACITY,
+			"private_network_mac_address": "aa:bb:cc:dd:ee:07",
+			"virtual_machines": {},
+		}
 
 		with (
 			patch("atlas.metal_server.usage.frappe.get_doc", return_value=server),
@@ -217,6 +397,7 @@ class TestServerUsage(UnitTestCase):
 			patch("atlas.metal_server.usage.get_desired_images", return_value=[]),
 			patch("atlas.metal_server.usage.store_reported_states"),
 			patch("atlas.metal_server.usage.get_usage_values", return_value={}),
+			patch("atlas.metal_server.usage.sync_vm_gateway_routes"),
 			patch("atlas.metal_server.usage.frappe.db.set_value") as set_value,
 		):
 			sync_server("server-1", [], [], False)

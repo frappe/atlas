@@ -389,3 +389,118 @@ class TestVirtualMachineNetworkChanges(UnitTestCase):
 			service.apply_network_changes({"public_network_throughput_mibps": 25})
 
 		update_network.assert_called_once_with({"public_network_throughput_mibps": 25})
+
+	def test_a_route_edit_preserves_the_wireguard_gateway_routes(self) -> None:
+		service = self.build_service(None)
+		gateway_route = Route("fdac:1:1::/48", "fdaa:1::1", "wireguard-gateway")
+
+		with (
+			patch.object(service, "get_routes", return_value=[Route("0.0.0.0/0", "host"), gateway_route]),
+			patch.object(service, "update_network", return_value={}) as update_network,
+		):
+			service.set_routes([{"destination": "2000::/3", "via": "host"}])
+
+		update_network.assert_called_once_with(
+			{
+				"routes": [
+					# The edit replaces the normal route list and keeps the gateway routes.
+					{"destination": "2000::/3", "via": "host"},
+					{"destination": "fdac:1:1::/48", "via": "fdaa:1::1", "scope": "wireguard-gateway"},
+				]
+			}
+		)
+
+	def test_the_route_editor_skips_the_wireguard_gateway_routes(self) -> None:
+		service = self.build_service(None)
+		gateway_route = Route("fdac:1:1::/48", "fdaa:1::1", "wireguard-gateway")
+
+		with (
+			patch("atlas.vm.core.vm_service.frappe.get_all", return_value=[]),
+			patch.object(service, "get_routes", return_value=[Route("0.0.0.0/0", "host"), gateway_route]),
+		):
+			rows = service.get_route_editor_rows()
+
+		self.assertEqual(rows, [{"destination": "0.0.0.0/0", "via": "host", "gateway_virtual_machine": ""}])
+
+	# The gateway routes belong to the VM namespace on the host, so an edit of
+	# the normal routes never removes or replaces them.
+	def test_sync_gateway_routes_replaces_only_the_wireguard_gateway_routes(self) -> None:
+		service = self.build_service(None)
+		stale = Route("fdac:1:2::/48", "fdaa:1::2", "wireguard-gateway")
+		wanted = Route("fdac:1:1::/48", "fdaa:1::1", "wireguard-gateway")
+
+		with (
+			patch.object(service, "get_routes", return_value=[Route("2000::/3", "host"), stale]),
+			patch.object(service, "update_network", return_value={}) as update_network,
+		):
+			service.sync_gateway_routes([wanted])
+
+		update_network.assert_called_once_with(
+			{
+				"routes": [
+					{"destination": "2000::/3", "via": "host"},
+					{"destination": "fdac:1:1::/48", "via": "fdaa:1::1", "scope": "wireguard-gateway"},
+				]
+			}
+		)
+
+	def test_sync_gateway_routes_skips_an_unchanged_set(self) -> None:
+		service = self.build_service(None)
+		current = Route("fdac:1:1::/48", "fdaa:1::1", "wireguard-gateway")
+
+		with (
+			patch.object(service, "get_routes", return_value=[Route("2000::/3", "host"), current]),
+			patch.object(service, "update_network", return_value={}) as update_network,
+		):
+			service.sync_gateway_routes([current])
+
+		update_network.assert_not_called()
+
+	def test_set_wg_gateway_accessible_installs_the_active_gateway_routes(self) -> None:
+		service = self.build_service(None)
+		wanted = Route("fdac:1:1::/48", "fdaa:1::1", "wireguard-gateway")
+
+		with (
+			patch(
+				"atlas.service.doctype.wireguard_gateway_server.wireguard_gateway_server.active_gateway_routes",
+				return_value=[wanted],
+			),
+			patch.object(service, "sync_gateway_routes") as sync_gateway_routes,
+		):
+			service.set_wg_gateway_accessible(True)
+
+		sync_gateway_routes.assert_called_once_with([wanted])
+
+	def test_set_wg_gateway_accessible_without_an_active_gateway_fails(self) -> None:
+		service = self.build_service(None)
+
+		with (
+			patch(
+				"atlas.service.doctype.wireguard_gateway_server.wireguard_gateway_server.active_gateway_routes",
+				return_value=[],
+			),
+			patch.object(service, "sync_gateway_routes") as sync_gateway_routes,
+			self.assertRaisesRegex(frappe.ValidationError, "Active WireGuard Gateway Server"),
+		):
+			service.set_wg_gateway_accessible(True)
+
+		sync_gateway_routes.assert_not_called()
+
+	def test_set_wg_gateway_accessible_removes_the_gateway_routes(self) -> None:
+		service = self.build_service(None)
+
+		with patch.object(service, "sync_gateway_routes") as sync_gateway_routes:
+			service.set_wg_gateway_accessible(False)
+
+		sync_gateway_routes.assert_called_once_with([])
+
+	def test_has_gateway_routes_ignores_the_wireguard_gateway_routes(self) -> None:
+		service = self.build_service(None)
+		gateway_route = Route("fdac:1:1::/48", "fdaa:1::1", "wireguard-gateway")
+
+		for routes, expected in (
+			([gateway_route], False),
+			([gateway_route, Route("2000::/3", "fdaa:1::56")], True),
+		):
+			with patch.object(service, "get_routes", return_value=routes):
+				self.assertEqual(service.has_gateway_routes(), expected)

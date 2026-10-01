@@ -8,6 +8,7 @@ from frappe.utils import now_datetime
 
 from atlas.atlas.core.mesh_address import get_virtual_machine_mesh_address
 from atlas.vm.core.metal_client import MetalClient, MetalClientError
+from atlas.vm.core.models import Route
 from atlas.vm.core.vm_state import store_reported_states
 
 if TYPE_CHECKING:
@@ -76,6 +77,7 @@ def sync_server(
 		)
 		values = get_usage_values(response.get("capacity"))
 		store_reported_states(server_name, response.get("virtual_machines"))
+		sync_vm_gateway_routes(server_name, response.get("virtual_machines"))
 	except MetalClientError:
 		frappe.log_error(
 			frappe.get_traceback(),
@@ -96,6 +98,57 @@ def sync_server(
 	mac_address = response.get("private_network_mac_address")
 	if mac_address and mac_address != server.private_network_mac_address:
 		frappe.db.set_value("Metal Server", server.name, "private_network_mac_address", mac_address)
+
+
+def sync_vm_gateway_routes(server_name: str, reported: object) -> None:
+	"""Converge the WireGuard gateway routes that the host's VMs hold.
+
+	Only a VM that turned on the flag holds gateway routes, so the sync
+	updates those VMs and skips the rest. The routes stay in the VM
+	namespace on the host, so the routes inside a VM never change.
+	"""
+	from atlas.service.doctype.wireguard_gateway_server.wireguard_gateway_server import (
+		active_gateway_routes,
+	)
+	from atlas.vm.core.vm_service import VirtualMachineService
+
+	desired = active_gateway_routes()
+	for name, routes in get_reported_routes(reported).items():
+		current = [route for route in routes if route.is_wireguard_gateway]
+		if not current or set(current) == set(desired):
+			continue
+		if not is_route_sync_ready(name):
+			continue
+		try:
+			VirtualMachineService(frappe.get_doc("Virtual Machine", name)).sync_gateway_routes(desired)
+		except Exception:
+			frappe.db.rollback()
+			frappe.log_error(f"Virtual Machine gateway route sync failed on {server_name}: {name}")
+
+
+def is_route_sync_ready(name: str) -> bool:
+	"""Report whether the sync may replace the gateway routes of one VM."""
+	row = frappe.db.get_value(
+		"Virtual Machine",
+		name,
+		["is_draft", "is_terminating", "active_migration"],
+		as_dict=True,
+	)
+	return bool(row) and not row.is_draft and not row.is_terminating and not row.active_migration
+
+
+def get_reported_routes(reported: object) -> dict[str, list[Route]]:
+	"""Return the desired routes of each virtual machine in a Metal sync response."""
+	if not isinstance(reported, dict):
+		raise ValueError("Metal virtual machine response must be an object")
+
+	routes: dict[str, list[Route]] = {}
+	for name, report in reported.items():
+		entries = report.get("routes") if isinstance(report, dict) else None
+		if not isinstance(entries, list):
+			raise ValueError("Metal virtual machine response has invalid values")
+		routes[name] = [Route.from_value(entry) for entry in entries]
+	return routes
 
 
 def get_desired_images() -> list[dict[str, Any]]:

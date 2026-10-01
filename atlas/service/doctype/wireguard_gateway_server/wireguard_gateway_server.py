@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import ipaddress
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any
 
@@ -15,6 +16,7 @@ from frappe.utils.synchronization import filelock
 
 from atlas.atlas.core.exceptions import AtlasUserError
 from atlas.atlas.core.mesh_address import get_virtual_machine_mesh_address
+from atlas.vm.core.models import ROUTE_SCOPE_WIREGUARD_GATEWAY, Route
 
 if TYPE_CHECKING:
 	from collections.abc import Iterator
@@ -241,6 +243,36 @@ def _validate_system_manager() -> None:
 	user_type = frappe.get_cached_value("User", frappe.session.user, "user_type")
 	if user_type != "System User":
 		frappe.throw(_("Only System Users can manage WireGuard Gateway Servers."), frappe.PermissionError)
+
+
+def gateway_client_prefix(region: int, name: str) -> str:
+	"""Return the /48 of client addresses that one gateway owns."""
+	identifier = int(name.rsplit("-", 1)[-1])
+	address = (0xFDAC << 112) | (region << 96) | (identifier << 80)
+	return str(ipaddress.IPv6Network((address, 48)))
+
+
+def active_gateway_routes() -> list[Route]:
+	"""Return the /48 return route of every Active gateway through its mesh address.
+
+	The route scope keeps each route in the VM namespace on the host, so the
+	routes inside a guest never change. The existing server sync installs
+	them in every VM that opted in.
+	"""
+	region = frappe.get_single("Atlas Settings").region_id
+	return [
+		Route(
+			gateway_client_prefix(region, gateway.name),
+			gateway.wireguard_mesh_ipv6,
+			ROUTE_SCOPE_WIREGUARD_GATEWAY,
+		)
+		for gateway in frappe.get_all(
+			"WireGuard Gateway Server",
+			filters={"status": "Active"},
+			fields=["name", "wireguard_mesh_ipv6"],
+		)
+		if gateway.wireguard_mesh_ipv6
+	]
 
 
 def enqueue_pending_gateway_provisioning() -> None:
