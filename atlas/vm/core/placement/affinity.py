@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Sequence
-from dataclasses import dataclass
+from collections.abc import Iterator, Sequence
+from dataclasses import dataclass, field
 from typing import Literal, assert_never, cast, get_args
 
 import frappe
@@ -23,6 +23,7 @@ AffinityGroupKind = Literal["any_of", "all_of"]
 AffinityMatching = Literal["Enforced", "Preferred"]
 
 AFFINITY_RULE_FIELDS = ("resource", "operator", "tags")
+OPTIONAL_AFFINITY_RULE_FIELDS = ("within",)
 MAXIMUM_AFFINITY_RULES = 16
 MAXIMUM_AFFINITY_GROUP_DEPTH = 5
 # A migration in these states reserves its destination host, as in the capacity query.
@@ -54,17 +55,53 @@ class AffinityHost:
 	name: str
 	tags: dict[str, str]
 	virtual_machine_tags: tuple[dict[str, str], ...]
+	# The VM tags on every host that shares this host's value, keyed by `within` tag key.
+	# A key that this host does not have is missing.
+	virtual_machine_tags_within: dict[str, tuple[dict[str, str], ...]] = field(default_factory=dict)
 
 	@classmethod
 	def load_many(
-		cls, host_names: Sequence[str], tenant_id: int, excluded_virtual_machine: str | None = None
+		cls,
+		host_names: Sequence[str],
+		tenant_id: int,
+		excluded_virtual_machine: str | None = None,
+		within_keys: Sequence[str] = (),
 	) -> list[AffinityHost]:
-		"""Load each host's tags and the tags of the tenant VMs that it holds.
+		"""Load each host's tags and the tags of the tenant VMs that it, and its groups, hold.
 
 		A VM counts on its assigned host, also as a draft, and on the destination of its active
 		migration. A VM that is being terminated and `excluded_virtual_machine` never count.
 		"""
 		host_tags = read_tags_for("Metal Server", list(host_names))
+		groups = {key: find_hosts_by_tag_value(key) for key in within_keys}
+		hosts_to_load = set(host_names)
+		for hosts_by_value in groups.values():
+			for members in hosts_by_value.values():
+				hosts_to_load.update(members)
+		tags_by_host = cls._load_virtual_machine_tags(
+			sorted(hosts_to_load), tenant_id, excluded_virtual_machine
+		)
+
+		hosts = []
+		for name in host_names:
+			virtual_machine_tags_within = {}
+			for key, hosts_by_value in groups.items():
+				if key not in host_tags[name]:
+					continue
+				group_tags = []
+				# A tag that changed between the two reads leaves the host in a group of its own.
+				for member in hosts_by_value.get(host_tags[name][key], [name]):
+					group_tags.extend(tags_by_host[member])
+				virtual_machine_tags_within[key] = tuple(group_tags)
+			hosts.append(cls(name, host_tags[name], tuple(tags_by_host[name]), virtual_machine_tags_within))
+
+		return hosts
+
+	@classmethod
+	def _load_virtual_machine_tags(
+		cls, host_names: Sequence[str], tenant_id: int, excluded_virtual_machine: str | None
+	) -> dict[str, list[dict[str, str]]]:
+		"""Return the tags of each tenant VM, grouped by the host that counts it."""
 		placements = cls._find_virtual_machine_hosts(host_names, tenant_id, excluded_virtual_machine)
 		virtual_machine_tags = read_tags_for("Virtual Machine", sorted({name for name, _ in placements}))
 
@@ -72,7 +109,7 @@ class AffinityHost:
 		for virtual_machine, host_name in placements:
 			tags_by_host[host_name].append(virtual_machine_tags[virtual_machine])
 
-		return [cls(name, host_tags[name], tuple(tags_by_host[name])) for name in host_names]
+		return tags_by_host
 
 	@staticmethod
 	def _find_virtual_machine_hosts(
@@ -119,6 +156,8 @@ class AffinityRule:
 	resource: AffinityResource
 	operator: AffinityOperator
 	tags: dict[str, str]
+	# A host tag key. The rule then reads the VMs on every host with the candidate's value.
+	within: str | None = None
 
 	def __post_init__(self) -> None:
 		"""Reject a rule whose fields do not match their types."""
@@ -136,22 +175,36 @@ class AffinityRule:
 			raise TypeError("Affinity rule tags must be a dict of strings to strings.")
 		if not self.tags:
 			raise ValueError("Affinity rule tags must be an object with at least one key.")
+		if self.within is not None:
+			self._check_within()
+
+	def _check_within(self) -> None:
+		if self.resource != "virtual_machine":
+			raise ValueError("Only a virtual_machine affinity rule takes within.")
+		if not isinstance(self.within, str):
+			raise TypeError("Affinity rule within must be a host tag key.")
+		if not self.within or len(self.within) > MAXIMUM_TAG_KEY_LENGTH:
+			raise ValueError(f"Affinity rule within takes 1 to {MAXIMUM_TAG_KEY_LENGTH} characters.")
 
 	@classmethod
 	def from_value(cls, value: dict[str, object]) -> AffinityRule:
 		"""Parse one rule. Every tag pair must be on the same resource."""
-		unknown = set(value) - set(AFFINITY_RULE_FIELDS)
+		unknown = set(value) - set(AFFINITY_RULE_FIELDS) - set(OPTIONAL_AFFINITY_RULE_FIELDS)
 		if unknown:
 			raise ValueError(f"Unknown affinity rule field: {sorted(unknown)[0]}.")
 		missing = [name for name in AFFINITY_RULE_FIELDS if name not in value]
 		if missing:
 			raise ValueError(f"An affinity rule needs {missing[0]}.")
+		within = value.get("within")
+		if within is not None and not isinstance(within, str):
+			raise ValueError("Affinity rule within must be a host tag key.")
 
-		# The constructor checks the resource and the operator.
+		# The constructor checks the resource, the operator, and within.
 		return cls(
 			resource=cast(AffinityResource, value["resource"]),
 			operator=cast(AffinityOperator, value["operator"]),
 			tags=cls._parse_tags(value["tags"]),
+			within=within.strip() if within is not None else None,
 		)
 
 	@classmethod
@@ -193,11 +246,10 @@ class AffinityRule:
 		if self.resource == "metal_server":
 			has_tags = self._is_found_in(host.tags)
 		elif self.resource == "virtual_machine":
-			has_tags = False
-			for virtual_machine_tags in host.virtual_machine_tags:
-				if self._is_found_in(virtual_machine_tags):
-					has_tags = True
-					break
+			if self.within is not None and self.within not in host.virtual_machine_tags_within:
+				# A host without the `within` key cannot show which group it is in.
+				return False
+			has_tags = self._is_found_on_a_virtual_machine(host)
 		else:
 			assert_never(self.resource)
 
@@ -207,6 +259,19 @@ class AffinityRule:
 			return not has_tags
 		else:
 			assert_never(self.operator)
+
+	def _is_found_on_a_virtual_machine(self, host: AffinityHost) -> bool:
+		"""Return whether one VM on the host, or in its `within` group, has every pair."""
+		if self.within is None:
+			virtual_machine_tags = host.virtual_machine_tags
+		else:
+			virtual_machine_tags = host.virtual_machine_tags_within[self.within]
+
+		for tags in virtual_machine_tags:
+			if self._is_found_in(tags):
+				return True
+
+		return False
 
 	def _is_found_in(self, tags: dict[str, str]) -> bool:
 		"""Return whether `tags` holds every key of this rule, with the same value."""
@@ -218,7 +283,14 @@ class AffinityRule:
 
 	def as_dict(self) -> dict[str, object]:
 		"""Return the JSON-compatible rule."""
-		return {"resource": self.resource, "operator": self.operator, "tags": dict(self.tags)}
+		value: dict[str, object] = {
+			"resource": self.resource,
+			"operator": self.operator,
+			"tags": dict(self.tags),
+		}
+		if self.within is not None:
+			value["within"] = self.within
+		return value
 
 
 @dataclass(frozen=True, slots=True)
@@ -290,7 +362,7 @@ class AffinityRules:
 			raise ValueError("Affinity rules must be a list.")
 
 		nodes = tuple(_parse_node(node, depth=0) for node in value)
-		if _count_rules(nodes) > MAXIMUM_AFFINITY_RULES:
+		if len(list(_iter_rules(nodes))) > MAXIMUM_AFFINITY_RULES:
 			raise ValueError(f"A virtual machine takes at most {MAXIMUM_AFFINITY_RULES} affinity rules.")
 
 		return cls(nodes=nodes)
@@ -311,8 +383,29 @@ class AffinityRules:
 		if not self.nodes:
 			return list(host_names)
 
-		hosts = AffinityHost.load_many(host_names, tenant_id, excluded_virtual_machine)
+		hosts = AffinityHost.load_many(host_names, tenant_id, excluded_virtual_machine, self.within_keys)
 		return [host.name for host in hosts if self.is_satisfied_by(host)]
+
+	@property
+	def within_keys(self) -> tuple[str, ...]:
+		"""Return the host tag keys that the `within` rules read, sorted."""
+		keys = {rule.within for rule in _iter_rules(self.nodes) if rule.within is not None}
+		return tuple(sorted(keys))
+
+	def find_related_hosts(self, host_name: str) -> list[str]:
+		"""Return the other hosts whose VMs the `within` rules read for this host, sorted."""
+		within_keys = self.within_keys
+		if not within_keys:
+			return []
+
+		host_tags = read_tags_for("Metal Server", [host_name])[host_name]
+		related: set[str] = set()
+		for key in within_keys:
+			if key in host_tags:
+				related.update(find_hosts_by_tag_value(key).get(host_tags[key], []))
+
+		related.discard(host_name)
+		return sorted(related)
 
 	def is_satisfied_by(self, host: AffinityHost) -> bool:
 		"""Return whether the host meets every top-level node."""
@@ -337,5 +430,24 @@ def _parse_node(value: object, depth: int) -> AffinityNode:
 	return AffinityGroup.from_value(kinds[0], value[kinds[0]], depth + 1)
 
 
-def _count_rules(nodes: tuple[AffinityNode, ...]) -> int:
-	return sum(1 if isinstance(node, AffinityRule) else _count_rules(node.nodes) for node in nodes)
+def _iter_rules(nodes: tuple[AffinityNode, ...]) -> Iterator[AffinityRule]:
+	for node in nodes:
+		if isinstance(node, AffinityRule):
+			yield node
+		else:
+			yield from _iter_rules(node.nodes)
+
+
+def find_hosts_by_tag_value(key: str) -> dict[str, list[str]]:
+	"""Return the Metal Servers for each value of one host tag key, whatever their status."""
+	rows = frappe.get_all(
+		"Atlas Tag",
+		filters={"parenttype": "Metal Server", "parentfield": "tags", "key": key},
+		fields=["parent", "value"],
+		order_by="parent",
+	)
+	hosts_by_value: dict[str, list[str]] = {}
+	for row in rows:
+		hosts_by_value.setdefault(row.value or "", []).append(row.parent)
+
+	return hosts_by_value

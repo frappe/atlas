@@ -132,24 +132,58 @@ class PlacementContext:
 			self.last_probe_was_contended = True
 			return False
 
+		held_locks = [lock_name]
 		try:
-			has_capacity = self._host_has_capacity(host_name)
-			is_selectable = has_capacity and self._host_meets_affinity(host_name)
+			is_selectable = self._check_locked_host(host_name, held_locks)
 		except Exception:
-			self._release_host_lock(lock_name)
+			self._release_host_locks(held_locks)
 			raise
 
 		if not is_selectable:
-			self._release_host_lock(lock_name)
-			if has_capacity:
-				# The snapshot missed a VM that a concurrent placement committed. Treat the
-				# host as contended, so the next attempt reads a fresh snapshot.
-				self.has_contended_hosts = True
+			self._release_host_locks(held_locks)
 			return False
 
-		self._keep_host_lock_for_transaction(lock_name)
+		for held_lock in held_locks:
+			self._keep_host_lock_for_transaction(held_lock)
 		self._selected_host = host_name
 		return True
+
+	def _check_locked_host(self, host_name: str, held_locks: list[str]) -> bool:
+		"""Check capacity and affinity while holding the host lock.
+
+		A `within` rule reads the VMs of every host in the group of this host. Each of those
+		hosts is locked too, so no VM lands there before this placement commits. Each extra
+		lock is added to `held_locks`.
+		"""
+		if not self._host_has_capacity(host_name):
+			return False
+
+		for member in self._find_affinity_group(host_name):
+			member_lock = self._host_lock_name(member)
+			# Do not wait, so two placements that lock the same group cannot deadlock.
+			if not self._acquire_host_lock(member_lock, wait=False):
+				self.has_contended_hosts = True
+				return False
+			held_locks.append(member_lock)
+
+		if not self._host_meets_affinity(host_name):
+			# The snapshot missed a VM that a concurrent placement committed. Treat the
+			# host as contended, so the next attempt reads a fresh snapshot.
+			self.has_contended_hosts = True
+			return False
+
+		return True
+
+	def _find_affinity_group(self, host_name: str) -> list[str]:
+		"""Return the other hosts whose VMs the `within` rules read for this host."""
+		if not self.apply_affinity or host_name == self.current_host_name:
+			return []
+
+		return self.requirements.affinity_rules.find_related_hosts(host_name)
+
+	def _release_host_locks(self, lock_names: list[str]) -> None:
+		for lock_name in lock_names:
+			self._release_host_lock(lock_name)
 
 	@staticmethod
 	def _host_lock_name(host_name: str) -> str:
