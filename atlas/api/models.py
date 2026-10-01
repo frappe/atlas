@@ -438,6 +438,10 @@ class AffinityRulePayload(StrictModel):
 		description="`has` needs a resource with every tag pair. `has_not` rejects such a resource."
 	)
 	tags: TagMap = Field(min_length=1, description="Tag pairs that must all be on one resource.")
+	within: Annotated[str, StringConstraints(min_length=1, max_length=MAXIMUM_TAG_KEY_LENGTH)] | None = Field(
+		default=None,
+		description="A host tag key, such as `rack`. A `virtual_machine` rule then reads the VMs on every host that has the same value for this key as the candidate host. A host without the key fails the rule.",
+	)
 
 
 class AffinityAnyOfPayload(StrictModel):
