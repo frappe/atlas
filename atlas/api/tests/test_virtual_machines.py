@@ -268,7 +268,7 @@ class TestCreateVirtualMachine(UnitTestCase):
 		self.assertTrue(firewall.enabled)
 		self.assertEqual(firewall.inbound[0].cidrs, ("203.0.113.0/24",))
 
-	def test_create_passes_tags_and_affinity_rules(self) -> None:
+	def test_create_passes_tags_and_placement_rules(self) -> None:
 		rules = [
 			{
 				"any_of": [
@@ -280,24 +280,24 @@ class TestCreateVirtualMachine(UnitTestCase):
 		]
 
 		status, _, create = self.create(
-			{**CREATE_BODY, "tags": {"role": "cargo-server"}, "affinity_rules": rules}
+			{**CREATE_BODY, "tags": {"role": "cargo-server"}, "placement_rules": rules}
 		)
 
 		self.assertEqual(status, 202)
 		request = create.call_args.args[0]
 		self.assertEqual(request.tags, {"role": "cargo-server"})
-		self.assertEqual(request.affinity_rules.as_list(), rules)
+		self.assertEqual(request.placement_rules.as_list(), rules)
 
-	def test_create_rejects_invalid_affinity_rules(self) -> None:
+	def test_create_rejects_invalid_placement_rules(self) -> None:
 		rule = {"resource": "virtual_machine", "operator": "has_not", "tags": {"role": "cargo-server"}}
-		for affinity_rules in (
+		for placement_rules in (
 			[{**rule, "weight": 1}],
 			[{"resource": "metal_server", "operator": "has", "tags": {"rack": "a"}, "within": "rack"}],
 			[{"any_of": []}],
 			[rule] * (MAXIMUM_AFFINITY_RULES + 1),
 		):
-			with self.subTest(affinity_rules=affinity_rules):
-				status, body, create = self.create({**CREATE_BODY, "affinity_rules": affinity_rules})
+			with self.subTest(placement_rules=placement_rules):
+				status, body, create = self.create({**CREATE_BODY, "placement_rules": placement_rules})
 
 				self.assertEqual(status, 400)
 				self.assertEqual(body["error"]["code"], "invalid_request")

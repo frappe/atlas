@@ -167,10 +167,10 @@ class MigrationService:
 		shape = self.destination_shape(virtual_machine)
 		requested_destination = self.migration.destination_metal_server
 		# A destination that the operator names is not limited by the affinity rules.
-		affinity_rules = (
+		placement_rules = (
 			AffinityRules()
 			if requested_destination
-			else AffinityRules.from_json(virtual_machine.affinity_rules)
+			else AffinityRules.from_json(virtual_machine.placement_rules)
 		)
 		requirements = PlacementRequirements(
 			shape.cpu_millicores,
@@ -179,7 +179,7 @@ class MigrationService:
 			cast(str, virtual_machine.architecture),
 			virtual_machine.tenant_id,
 			shape.sleep_after_idle_seconds > 0,
-			affinity_rules=affinity_rules,
+			placement_rules=placement_rules,
 			virtual_machine=virtual_machine.name,
 		)
 		exclude_servers = {self.migration.source_metal_server}

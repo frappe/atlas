@@ -260,7 +260,7 @@ class VirtualMachineCreateRequest:
 	metadata: dict[str, str] = field(default_factory=dict)
 	firewall: FirewallConfiguration = field(default_factory=FirewallConfiguration)
 	tags: dict[str, str] = field(default_factory=dict)
-	affinity_rules: AffinityRules = field(default_factory=AffinityRules)
+	placement_rules: AffinityRules = field(default_factory=AffinityRules)
 
 	@classmethod
 	def from_value(cls, value: str | dict[str, Any]) -> VirtualMachineCreateRequest:
@@ -319,7 +319,7 @@ class VirtualMachineCreateRequest:
 			metadata=cls.metadata_map(payload),
 			firewall=FirewallConfiguration.from_value(payload.get("firewall")),
 			tags=cls.tag_map(payload),
-			affinity_rules=AffinityRules.from_value(payload.get("affinity_rules")),
+			placement_rules=AffinityRules.from_value(payload.get("placement_rules")),
 		)
 
 	@staticmethod

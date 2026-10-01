@@ -349,24 +349,6 @@
         "additionalProperties": false,
         "description": "Values that create one virtual machine.",
         "properties": {
-          "affinity_rules": {
-            "description": "Rules that limit the Metal Servers for the virtual machine. Every listed rule or group must hold. Only a System Manager can set them, and only on a privileged virtual machine. Placement uses only the hosts that meet them.",
-            "items": {
-              "oneOf": [
-                {
-                  "$ref": "#/components/schemas/AffinityRulePayload"
-                },
-                {
-                  "$ref": "#/components/schemas/AffinityAnyOfPayload"
-                },
-                {
-                  "$ref": "#/components/schemas/AffinityAllOfPayload"
-                }
-              ]
-            },
-            "title": "Affinity Rules",
-            "type": "array"
-          },
           "cpu_millicores": {
             "description": "CPU capacity in millicores. 1000 millicores equals one virtual CPU.",
             "maximum": 32000,
@@ -441,6 +423,24 @@
             "description": "Custom guest metadata.",
             "title": "Metadata",
             "type": "object"
+          },
+          "placement_rules": {
+            "description": "Rules that limit the Metal Servers for the virtual machine. Every listed rule or group must hold. Only a System Manager can set them, and only on a privileged virtual machine. Placement uses only the hosts that meet them.",
+            "items": {
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/AffinityRulePayload"
+                },
+                {
+                  "$ref": "#/components/schemas/AffinityAnyOfPayload"
+                },
+                {
+                  "$ref": "#/components/schemas/AffinityAllOfPayload"
+                }
+              ]
+            },
+            "title": "Placement Rules",
+            "type": "array"
           },
           "private_network_throughput_mibps": {
             "default": 0,
@@ -3607,7 +3607,7 @@
         ]
       },
       "post": {
-        "description": "Creates a tenant VM from an image and requests the specified compute, disk, network, and guest configuration. Only tenant 0 can set `is_privileged`, which lets the VM reach every tenant through the mesh.\n\nSet `is_termination_protected` to refuse deletion of the new VM. The termination protection route changes it later.\n\nUse `tags` to label the VM, for example, `{\"role\": \"cargo-server\"}`. `affinity_rules` limits the Metal Servers for the VM by host tags and by the tags of other VMs on the host. Only a System Manager can set rules, and only on a privileged VM. Atlas Settings selects whether a VM that no host with room can satisfy fails with `affinity_unsatisfied` or goes to any host.",
+        "description": "Creates a tenant VM from an image and requests the specified compute, disk, network, and guest configuration. Only tenant 0 can set `is_privileged`, which lets the VM reach every tenant through the mesh.\n\nSet `is_termination_protected` to refuse deletion of the new VM. The termination protection route changes it later.\n\nUse `tags` to label the VM, for example, `{\"role\": \"cargo-server\"}`. `placement_rules` limits the Metal Servers for the VM by host tags and by the tags of other VMs on the host. Only a System Manager can set rules, and only on a privileged VM. Atlas Settings selects whether a VM that no host with room can satisfy fails with `affinity_unsatisfied` or goes to any host.",
         "operationId": "create_virtual_machine",
         "parameters": [
           {

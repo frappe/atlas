@@ -44,7 +44,6 @@ class VirtualMachine(Document):
 		from atlas.atlas.doctype.atlas_tag.atlas_tag import AtlasTag
 
 		active_migration: DF.Link | None
-		affinity_rules: DF.Code | None
 		architecture: DF.Literal["amd64", "arm64"]
 		cpu_millicores: DF.Int
 		disk_mib: DF.Int
@@ -56,6 +55,7 @@ class VirtualMachine(Document):
 		is_termination_protected: DF.Check
 		memory_mib: DF.Int
 		metadata: DF.Code | None
+		placement_rules: DF.Code | None
 		routes: DF.Code | None
 		server: DF.Link
 		sleep_after_idle_seconds: DF.Int

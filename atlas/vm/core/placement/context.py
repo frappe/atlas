@@ -179,7 +179,7 @@ class PlacementContext:
 		if not self.apply_affinity or host_name == self.current_host_name:
 			return []
 
-		return self.requirements.affinity_rules.find_related_hosts(host_name)
+		return self.requirements.placement_rules.find_related_hosts(host_name)
 
 	def _release_host_locks(self, lock_names: list[str]) -> None:
 		for lock_name in lock_names:
@@ -349,7 +349,7 @@ class PlacementContext:
 		Without such a host, `Enforced` matching fails and `Preferred` matching keeps every
 		host. The current host of a resize always stays, so an in-place resize ignores the rules.
 		"""
-		if not self.requirements.affinity_rules.nodes:
+		if not self.requirements.placement_rules.nodes:
 			return rows
 
 		allowed = set(self._find_affinity_hosts([row.name for row in rows]))
@@ -389,7 +389,7 @@ class PlacementContext:
 
 	def _find_affinity_hosts(self, host_names: list[str]) -> list[str]:
 		requirements = self.requirements
-		return requirements.affinity_rules.filter_hosts(
+		return requirements.placement_rules.filter_hosts(
 			host_names, requirements.tenant_id, requirements.virtual_machine
 		)
 

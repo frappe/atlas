@@ -132,7 +132,7 @@ class VirtualMachineResize:
 			cast(str, self.virtual_machine.architecture),
 			self.virtual_machine.tenant_id,
 			target.sleep_after_idle_seconds > 0,
-			affinity_rules=AffinityRules.from_json(self.virtual_machine.affinity_rules),
+			placement_rules=AffinityRules.from_json(self.virtual_machine.placement_rules),
 			virtual_machine=self.virtual_machine.name,
 		)
 

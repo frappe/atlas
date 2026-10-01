@@ -79,7 +79,7 @@ class TestPlacementContext(UnitTestCase):
 		rules = AffinityRules.from_value(
 			[{"resource": "metal_server", "operator": "has", "tags": {"rack": "a"}}]
 		)
-		placement.requirements = self.requirements(affinity_rules=rules)
+		placement.requirements = self.requirements(placement_rules=rules)
 		placement.current_host_name = current_host_name
 		placement.apply_affinity = False
 		placement._excluded_servers = frozenset()
@@ -625,7 +625,7 @@ class TestPlacementLockQuery(IntegrationTestCase):
 			[{"resource": "virtual_machine", "operator": "has_not", "tags": {"role": "cargo-server"}}]
 		)
 		with self.primary_connection():
-			placement = self.placement(affinity_rules=rules)
+			placement = self.placement(placement_rules=rules)
 			placement.apply_affinity = True
 			self.assertTrue(placement._host_meets_affinity(self.host_name))
 

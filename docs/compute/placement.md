@@ -43,14 +43,14 @@ To add a strategy, subclass `PlacementStrategy` and register it. The [VM module 
 
 Affinity rules limit the hosts that can hold a VM. A rule reads the tags of a host (Metal Server), or the tags of the VMs that run on the host.
 
-Atlas validates the rules in a create request and stores them in the `affinity_rules` field of the Virtual Machine record. Placement applies them when it creates the VM, when it migrates the VM to a host that it chooses, and when a resize moves the VM to another host. A resize that stays on the current host does not check them. A migration to a host that an operator names does not check them.
+Atlas validates the rules in a create request and stores them in the `placement_rules` field of the Virtual Machine record. Placement applies them when it creates the VM, when it migrates the VM to a host that it chooses, and when a resize moves the VM to another host. A resize that stays on the current host does not check them. A migration to a host that an operator names does not check them.
 
 Only a System Manager can set rules, and only on a privileged VM. Atlas rejects other requests with `403`.
 
 ### Rule types
 
 ```text
-affinity_rules = [node, ...]               every node must hold (AND); absent or [] = no rules
+placement_rules = [node, ...]               every node must hold (AND); absent or [] = no rules
 node           = rule | any_of | all_of
 any_of         = {"any_of": [node, ...]}   at least one node holds (OR)
 all_of         = {"all_of": [node, ...]}   every node holds (AND)
@@ -90,7 +90,7 @@ This create request tags a Cargo Server VM and asks for a host that has no other
 ```json
 {
   "tags": {"role": "cargo-server"},
-  "affinity_rules": [
+  "placement_rules": [
     {"resource": "virtual_machine", "operator": "has_not", "tags": {"role": "cargo-server"}}
   ]
 }
@@ -100,7 +100,7 @@ This request asks for a storage-optimised host in rack `a`, or for any memory-op
 
 ```json
 {
-  "affinity_rules": [
+  "placement_rules": [
     {"any_of": [
       {"resource": "metal_server", "operator": "has", "tags": {"type": "storage-optimised", "rack": "a"}},
       {"resource": "metal_server", "operator": "has", "tags": {"type": "memory-optimised"}}
@@ -114,7 +114,7 @@ This request keeps a database replica out of every rack that already has one:
 ```json
 {
   "tags": {"role": "db-replica"},
-  "affinity_rules": [
+  "placement_rules": [
     {"resource": "virtual_machine", "operator": "has_not", "tags": {"role": "db-replica"}, "within": "rack"}
   ]
 }

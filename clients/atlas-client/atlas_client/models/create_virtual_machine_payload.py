@@ -36,9 +36,6 @@ class CreateVirtualMachinePayload:
             disk_mib (int): Root disk capacity in MiB.
             image_id (str): Image used to create the virtual machine.
             memory_mib (int): Memory capacity in MiB.
-            affinity_rules (list[AffinityAllOfPayload | AffinityAnyOfPayload | AffinityRulePayload] | Unset): Rules that
-                limit the Metal Servers for the virtual machine. Every listed rule or group must hold. Only a System Manager can
-                set them, and only on a privileged virtual machine. Placement uses only the hosts that meet them.
             disk_iops (int | Unset): Disk IOPS limit. Zero removes the limit. Default: 0.
             disk_throughput_mibps (int | Unset): Disk throughput limit in MiB/s. Zero removes the limit. Default: 0.
             firewall (FirewallPayload | Unset): The complete desired firewall configuration.
@@ -48,6 +45,9 @@ class CreateVirtualMachinePayload:
             is_privileged (bool | Unset): Whether the guest can reach every tenant through the mesh. Default: False.
             is_termination_protected (bool | Unset): Whether deletion is blocked. Default: False.
             metadata (CreateVirtualMachinePayloadMetadata | Unset): Custom guest metadata.
+            placement_rules (list[AffinityAllOfPayload | AffinityAnyOfPayload | AffinityRulePayload] | Unset): Rules that
+                limit the Metal Servers for the virtual machine. Every listed rule or group must hold. Only a System Manager can
+                set them, and only on a privileged virtual machine. Placement uses only the hosts that meet them.
             private_network_throughput_mibps (int | Unset): Private network throughput limit in MiB/s. Zero removes the
                 limit. Default: 0.
             public_ipv4 (None | str | Unset): Reserved public IPv4 allocation ID, or null.
@@ -64,7 +64,6 @@ class CreateVirtualMachinePayload:
     disk_mib: int
     image_id: str
     memory_mib: int
-    affinity_rules: list[AffinityAllOfPayload | AffinityAnyOfPayload | AffinityRulePayload] | Unset = UNSET
     disk_iops: int | Unset = 0
     disk_throughput_mibps: int | Unset = 0
     firewall: FirewallPayload | Unset = UNSET
@@ -73,6 +72,7 @@ class CreateVirtualMachinePayload:
     is_privileged: bool | Unset = False
     is_termination_protected: bool | Unset = False
     metadata: CreateVirtualMachinePayloadMetadata | Unset = UNSET
+    placement_rules: list[AffinityAllOfPayload | AffinityAnyOfPayload | AffinityRulePayload] | Unset = UNSET
     private_network_throughput_mibps: int | Unset = 0
     public_ipv4: None | str | Unset = UNSET
     public_ipv6: None | str | Unset = UNSET
@@ -101,22 +101,6 @@ class CreateVirtualMachinePayload:
 
         memory_mib = self.memory_mib
 
-        affinity_rules: list[dict[str, Any]] | Unset = UNSET
-        if not isinstance(self.affinity_rules, Unset):
-            affinity_rules = []
-            for affinity_rules_item_data in self.affinity_rules:
-                affinity_rules_item: dict[str, Any]
-                if isinstance(affinity_rules_item_data, AffinityRulePayload):
-                    affinity_rules_item = affinity_rules_item_data.to_dict()
-                elif isinstance(affinity_rules_item_data, AffinityAnyOfPayload):
-                    affinity_rules_item = affinity_rules_item_data.to_dict()
-                else:
-                    affinity_rules_item = affinity_rules_item_data.to_dict()
-
-                affinity_rules.append(affinity_rules_item)
-
-
-
         disk_iops = self.disk_iops
 
         disk_throughput_mibps = self.disk_throughput_mibps
@@ -136,6 +120,22 @@ class CreateVirtualMachinePayload:
         metadata: dict[str, Any] | Unset = UNSET
         if not isinstance(self.metadata, Unset):
             metadata = self.metadata.to_dict()
+
+        placement_rules: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.placement_rules, Unset):
+            placement_rules = []
+            for placement_rules_item_data in self.placement_rules:
+                placement_rules_item: dict[str, Any]
+                if isinstance(placement_rules_item_data, AffinityRulePayload):
+                    placement_rules_item = placement_rules_item_data.to_dict()
+                elif isinstance(placement_rules_item_data, AffinityAnyOfPayload):
+                    placement_rules_item = placement_rules_item_data.to_dict()
+                else:
+                    placement_rules_item = placement_rules_item_data.to_dict()
+
+                placement_rules.append(placement_rules_item)
+
+
 
         private_network_throughput_mibps = self.private_network_throughput_mibps
 
@@ -176,8 +176,6 @@ class CreateVirtualMachinePayload:
             "image_id": image_id,
             "memory_mib": memory_mib,
         })
-        if affinity_rules is not UNSET:
-            field_dict["affinity_rules"] = affinity_rules
         if disk_iops is not UNSET:
             field_dict["disk_iops"] = disk_iops
         if disk_throughput_mibps is not UNSET:
@@ -194,6 +192,8 @@ class CreateVirtualMachinePayload:
             field_dict["is_termination_protected"] = is_termination_protected
         if metadata is not UNSET:
             field_dict["metadata"] = metadata
+        if placement_rules is not UNSET:
+            field_dict["placement_rules"] = placement_rules
         if private_network_throughput_mibps is not UNSET:
             field_dict["private_network_throughput_mibps"] = private_network_throughput_mibps
         if public_ipv4 is not UNSET:
@@ -232,45 +232,6 @@ class CreateVirtualMachinePayload:
 
         memory_mib = d.pop("memory_mib")
 
-        _affinity_rules = d.pop("affinity_rules", UNSET)
-        affinity_rules: list[AffinityAllOfPayload | AffinityAnyOfPayload | AffinityRulePayload] | Unset = UNSET
-        if _affinity_rules is not UNSET:
-            affinity_rules = []
-            for affinity_rules_item_data in _affinity_rules:
-                def _parse_affinity_rules_item(data: object) -> AffinityAllOfPayload | AffinityAnyOfPayload | AffinityRulePayload:
-                    try:
-                        if not isinstance(data, dict):
-                            raise TypeError()
-                        affinity_rules_item_type_0 = AffinityRulePayload.from_dict(data)
-
-
-
-                        return affinity_rules_item_type_0
-                    except (TypeError, ValueError, AttributeError, KeyError):
-                        pass
-                    try:
-                        if not isinstance(data, dict):
-                            raise TypeError()
-                        affinity_rules_item_type_1 = AffinityAnyOfPayload.from_dict(data)
-
-
-
-                        return affinity_rules_item_type_1
-                    except (TypeError, ValueError, AttributeError, KeyError):
-                        pass
-                    if not isinstance(data, dict):
-                        raise TypeError()
-                    affinity_rules_item_type_2 = AffinityAllOfPayload.from_dict(data)
-
-
-
-                    return affinity_rules_item_type_2
-
-                affinity_rules_item = _parse_affinity_rules_item(affinity_rules_item_data)
-
-                affinity_rules.append(affinity_rules_item)
-
-
         disk_iops = d.pop("disk_iops", UNSET)
 
         disk_throughput_mibps = d.pop("disk_throughput_mibps", UNSET)
@@ -301,6 +262,45 @@ class CreateVirtualMachinePayload:
             metadata = CreateVirtualMachinePayloadMetadata.from_dict(_metadata)
 
 
+
+
+        _placement_rules = d.pop("placement_rules", UNSET)
+        placement_rules: list[AffinityAllOfPayload | AffinityAnyOfPayload | AffinityRulePayload] | Unset = UNSET
+        if _placement_rules is not UNSET:
+            placement_rules = []
+            for placement_rules_item_data in _placement_rules:
+                def _parse_placement_rules_item(data: object) -> AffinityAllOfPayload | AffinityAnyOfPayload | AffinityRulePayload:
+                    try:
+                        if not isinstance(data, dict):
+                            raise TypeError()
+                        placement_rules_item_type_0 = AffinityRulePayload.from_dict(data)
+
+
+
+                        return placement_rules_item_type_0
+                    except (TypeError, ValueError, AttributeError, KeyError):
+                        pass
+                    try:
+                        if not isinstance(data, dict):
+                            raise TypeError()
+                        placement_rules_item_type_1 = AffinityAnyOfPayload.from_dict(data)
+
+
+
+                        return placement_rules_item_type_1
+                    except (TypeError, ValueError, AttributeError, KeyError):
+                        pass
+                    if not isinstance(data, dict):
+                        raise TypeError()
+                    placement_rules_item_type_2 = AffinityAllOfPayload.from_dict(data)
+
+
+
+                    return placement_rules_item_type_2
+
+                placement_rules_item = _parse_placement_rules_item(placement_rules_item_data)
+
+                placement_rules.append(placement_rules_item)
 
 
         private_network_throughput_mibps = d.pop("private_network_throughput_mibps", UNSET)
@@ -349,7 +349,6 @@ class CreateVirtualMachinePayload:
             disk_mib=disk_mib,
             image_id=image_id,
             memory_mib=memory_mib,
-            affinity_rules=affinity_rules,
             disk_iops=disk_iops,
             disk_throughput_mibps=disk_throughput_mibps,
             firewall=firewall,
@@ -358,6 +357,7 @@ class CreateVirtualMachinePayload:
             is_privileged=is_privileged,
             is_termination_protected=is_termination_protected,
             metadata=metadata,
+            placement_rules=placement_rules,
             private_network_throughput_mibps=private_network_throughput_mibps,
             public_ipv4=public_ipv4,
             public_ipv6=public_ipv6,

@@ -43,7 +43,7 @@ class TestVirtualMachineCreation(UnitTestCase):
 
 		insert_draft.assert_not_called()
 
-	def test_affinity_rules_need_a_privileged_vm_and_a_system_manager(self) -> None:
+	def test_placement_rules_need_a_privileged_vm_and_a_system_manager(self) -> None:
 		for is_privileged, is_system_manager in ((False, True), (True, False)):
 			request = {**self.request(), "tenant_id": 0, "is_privileged": is_privileged}
 			with (
@@ -52,13 +52,13 @@ class TestVirtualMachineCreation(UnitTestCase):
 				patch.object(PlacementStrategy, "find_server") as find_server,
 				self.assertRaises(frappe.PermissionError),
 			):
-				VirtualMachineService.create({**request, "affinity_rules": AFFINITY_RULES})
+				VirtualMachineService.create({**request, "placement_rules": AFFINITY_RULES})
 
 			find_server.assert_not_called()
 
-	def test_a_trusted_request_with_affinity_rules_reaches_placement(self) -> None:
+	def test_a_trusted_request_with_placement_rules_reaches_placement(self) -> None:
 		image = SimpleNamespace(architecture="amd64", validate_compatibility=Mock())
-		request = {**self.request(), "tenant_id": 0, "is_privileged": True, "affinity_rules": AFFINITY_RULES}
+		request = {**self.request(), "tenant_id": 0, "is_privileged": True, "placement_rules": AFFINITY_RULES}
 		with (
 			patch("atlas.vm.core.vm_service.has_role", return_value=True),
 			patch.object(VirtualMachineService, "get_image", return_value=image),
@@ -71,14 +71,14 @@ class TestVirtualMachineCreation(UnitTestCase):
 
 		find_server.assert_called_once()
 
-	def test_the_draft_stores_the_tags_and_affinity_rules(self) -> None:
+	def test_the_draft_stores_the_tags_and_placement_rules(self) -> None:
 		image = SimpleNamespace(name="image-1", architecture="amd64")
-		for affinity_rules in (AFFINITY_RULES, []):
+		for placement_rules in (AFFINITY_RULES, []):
 			request = VirtualMachineCreateRequest.from_value(
-				{**self.request(), "tags": {"role": "cargo-server"}, "affinity_rules": affinity_rules}
+				{**self.request(), "tags": {"role": "cargo-server"}, "placement_rules": placement_rules}
 			)
 			with (
-				self.subTest(affinity_rules=affinity_rules),
+				self.subTest(placement_rules=placement_rules),
 				patch("atlas.vm.core.vm_service.frappe.get_doc") as get_doc,
 			):
 				VirtualMachineService.insert_draft(request, image, "metal-1")
@@ -86,8 +86,8 @@ class TestVirtualMachineCreation(UnitTestCase):
 				values = get_doc.call_args.args[0]
 				self.assertEqual(values["tags"], [{"key": "role", "value": "cargo-server"}])
 				# A VM without rules stores nothing.
-				stored_rules = values["affinity_rules"]
-				self.assertEqual(json.loads(stored_rules) if stored_rules else [], affinity_rules)
+				stored_rules = values["placement_rules"]
+				self.assertEqual(json.loads(stored_rules) if stored_rules else [], placement_rules)
 
 	def test_creation_commits_the_draft_before_the_metal_request(self) -> None:
 		operations: list[str] = []

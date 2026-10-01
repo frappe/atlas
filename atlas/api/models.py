@@ -522,7 +522,7 @@ class CreateVirtualMachinePayload(StrictModel):
 		default_factory=FirewallPayload, description="Desired firewall configuration."
 	)
 	tags: TagMap = Field(default_factory=dict)
-	affinity_rules: list[AffinityNodePayload] = Field(
+	placement_rules: list[AffinityNodePayload] = Field(
 		default_factory=list,
 		description="Rules that limit the Metal Servers for the virtual machine. Every listed rule or group must hold. Only a System Manager can set them, and only on a privileged virtual machine. Placement uses only the hosts that meet them.",
 	)
@@ -534,9 +534,9 @@ class CreateVirtualMachinePayload(StrictModel):
 		return self
 
 	@model_validator(mode="after")
-	def validate_affinity_rules(self) -> CreateVirtualMachinePayload:
+	def validate_placement_rules(self) -> CreateVirtualMachinePayload:
 		"""Apply the shared affinity rule limits."""
-		AffinityRules.from_value([node.model_dump() for node in self.affinity_rules])
+		AffinityRules.from_value([node.model_dump() for node in self.placement_rules])
 		return self
 
 	def to_domain_request(self, tenant_id: int, image_name: str) -> VirtualMachineCreateRequest:
@@ -563,7 +563,7 @@ class CreateVirtualMachinePayload(StrictModel):
 			public_ipv4=self.public_ipv4,
 			public_ipv6=self.public_ipv6,
 			tags=self.tags,
-			affinity_rules=AffinityRules.from_value([node.model_dump() for node in self.affinity_rules]),
+			placement_rules=AffinityRules.from_value([node.model_dump() for node in self.placement_rules]),
 		)
 
 

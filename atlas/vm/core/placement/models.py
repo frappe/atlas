@@ -32,7 +32,7 @@ class PlacementRequirements:
 	architecture: str
 	tenant_id: int
 	is_sleepy: bool
-	affinity_rules: AffinityRules = field(default_factory=AffinityRules)
+	placement_rules: AffinityRules = field(default_factory=AffinityRules)
 	# The VM that placement moves. It never matches its own affinity rules.
 	virtual_machine: str | None = None
 

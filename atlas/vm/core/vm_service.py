@@ -77,7 +77,7 @@ class VirtualMachineService:
 				frappe.throw(_(str(error)))
 				raise AssertionError from error
 
-		if request.affinity_rules.nodes and not (request.is_privileged and has_role("System Manager")):
+		if request.placement_rules.nodes and not (request.is_privileged and has_role("System Manager")):
 			frappe.throw(
 				_("Only a System Manager can set affinity rules, and only on a privileged Virtual Machine."),
 				frappe.PermissionError,
@@ -92,7 +92,7 @@ class VirtualMachineService:
 			image.architecture,
 			request.tenant_id,
 			request.sleep_after_idle_seconds > 0,
-			affinity_rules=request.affinity_rules,
+			placement_rules=request.placement_rules,
 		)
 		server_name = PlacementStrategy.find_server(requirements)
 		virtual_machine = cls.insert_draft(request, image, server_name)
@@ -153,8 +153,8 @@ class VirtualMachineService:
 				"is_termination_protected": request.is_termination_protected,
 				"sleep_after_idle_seconds": request.sleep_after_idle_seconds,
 				"tags": [{"key": key, "value": value} for key, value in request.tags.items()],
-				"affinity_rules": frappe.as_json(request.affinity_rules.as_list())
-				if request.affinity_rules.nodes
+				"placement_rules": frappe.as_json(request.placement_rules.as_list())
+				if request.placement_rules.nodes
 				else None,
 			}
 		)

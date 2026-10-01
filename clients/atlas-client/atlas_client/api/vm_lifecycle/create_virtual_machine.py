@@ -120,7 +120,7 @@ def sync_detailed(
     Set `is_termination_protected` to refuse deletion of the new VM. The termination protection route
     changes it later.
 
-    Use `tags` to label the VM, for example, `{"role": "cargo-server"}`. `affinity_rules` limits the
+    Use `tags` to label the VM, for example, `{"role": "cargo-server"}`. `placement_rules` limits the
     Metal Servers for the VM by host tags and by the tags of other VMs on the host. Only a System
     Manager can set rules, and only on a privileged VM. Atlas Settings selects whether a VM that no host
     with room can satisfy fails with `affinity_unsatisfied` or goes to any host.
@@ -166,7 +166,7 @@ def sync(
     Set `is_termination_protected` to refuse deletion of the new VM. The termination protection route
     changes it later.
 
-    Use `tags` to label the VM, for example, `{"role": "cargo-server"}`. `affinity_rules` limits the
+    Use `tags` to label the VM, for example, `{"role": "cargo-server"}`. `placement_rules` limits the
     Metal Servers for the VM by host tags and by the tags of other VMs on the host. Only a System
     Manager can set rules, and only on a privileged VM. Atlas Settings selects whether a VM that no host
     with room can satisfy fails with `affinity_unsatisfied` or goes to any host.
@@ -207,7 +207,7 @@ async def asyncio_detailed(
     Set `is_termination_protected` to refuse deletion of the new VM. The termination protection route
     changes it later.
 
-    Use `tags` to label the VM, for example, `{"role": "cargo-server"}`. `affinity_rules` limits the
+    Use `tags` to label the VM, for example, `{"role": "cargo-server"}`. `placement_rules` limits the
     Metal Servers for the VM by host tags and by the tags of other VMs on the host. Only a System
     Manager can set rules, and only on a privileged VM. Atlas Settings selects whether a VM that no host
     with room can satisfy fails with `affinity_unsatisfied` or goes to any host.
@@ -253,7 +253,7 @@ async def asyncio(
     Set `is_termination_protected` to refuse deletion of the new VM. The termination protection route
     changes it later.
 
-    Use `tags` to label the VM, for example, `{"role": "cargo-server"}`. `affinity_rules` limits the
+    Use `tags` to label the VM, for example, `{"role": "cargo-server"}`. `placement_rules` limits the
     Metal Servers for the VM by host tags and by the tags of other VMs on the host. Only a System
     Manager can set rules, and only on a privileged VM. Atlas Settings selects whether a VM that no host
     with room can satisfy fails with `affinity_unsatisfied` or goes to any host.
