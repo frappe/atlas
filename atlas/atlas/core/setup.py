@@ -281,8 +281,9 @@ class AtlasSetup:
 		catalog.sync_server_images()
 
 	def _sync_central_keys(self) -> None:
+		# The scheduler retries every 5 minutes, so setup goes on without the keys.
 		if not sync_central_jwks():
-			frappe.throw(_("Atlas could not get the configured Central JSON Web Key Set."))
+			print("atlas: Central JSON Web Key Set is not available yet. See Error Log.")
 		self.settings.reload()
 
 	def _issue_wildcard_certificate(self) -> None:

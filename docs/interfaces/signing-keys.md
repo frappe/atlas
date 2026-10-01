@@ -15,7 +15,7 @@ flowchart LR
     Atlas --> AtlasAPI[Atlas API]
 ```
 
-1. Atlas fetches and validates Central's public keys from the **Central JWKS URL** every 5 minutes. A failed fetch keeps the last valid set. Removing the URL clears that set.
+1. Atlas fetches and validates Central's public keys from the **Central JWKS URL** every 5 minutes. A failed fetch keeps the last valid set. Removing the URL clears that set. Atlas setup does not stop when the fetch fails. It prints a warning, and the next sync tries again.
 2. Atlas creates one regional Ed25519 signing key. Its private half stays in an Atlas Settings Password field.
 3. `/api/atlas/jwks.json` serves **Central's stored public keys plus the regional Atlas public key**. It never serves a private key.
 4. Atlas uses that set for API tokens. The proxy fetches it using the configured URL. Atlas passes the URL to Cargo during installation.
