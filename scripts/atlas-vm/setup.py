@@ -234,6 +234,9 @@ class Setup:
 				"squashfs-tools",
 				"zstd",
 				"e2fsprogs",
+				"wireguard-tools",
+				# wg-quick falls back to it when the kernel has no WireGuard module.
+				"wireguard-go",
 			],
 			env=environment,
 		)
@@ -355,9 +358,21 @@ class Setup:
 			input_text=json.dumps(values),
 		)
 
+	def configure_wireguard(self) -> None:
+		configuration = self.configuration
+		step("stage 12: Atlas WireGuard peer")
+		site = configuration.site
+		self.pilot(f"frappe --site {site} atlas-wireguard")
+		run(
+			[
+				str(configuration.bench_path / "apps/atlas/scripts/install-atlas-wireguard.sh"),
+				str(configuration.bench_path / "sites" / site / "private/wireguard/atlas0.conf"),
+			]
+		)
+
 	def grant_image_builder_sudo(self) -> None:
 		# The image builder runs its root file system build through sudo on every build.
-		step("stage 12: sudo grant for the image builder")
+		step("stage 13: sudo grant for the image builder")
 		self.install_grant(
 			self.image_builder_grant,
 			f"{self.configuration.bench_user} ALL=(ALL) NOPASSWD: {self.configuration.image_builder_path} *",
@@ -366,7 +381,7 @@ class Setup:
 	def build_images(self) -> None:
 		# Bootstrap has no object storage credentials yet, so every image is a site file.
 		configuration = self.configuration
-		step(f"stage 13: guest images ({len(configuration.images)})")
+		step(f"stage 14: guest images ({len(configuration.images)})")
 		for version, architecture, minimal in configuration.images:
 			step(f"image {version} {architecture} {'minimal' if minimal else 'server'}")
 			arguments = (
@@ -389,6 +404,7 @@ class Setup:
 			self.setup_production()
 			self.install_atlas()
 			self.configure_atlas()
+			self.configure_wireguard()
 		finally:
 			Path(self.setup_grant).unlink(missing_ok=True)
 		self.grant_image_builder_sudo()
