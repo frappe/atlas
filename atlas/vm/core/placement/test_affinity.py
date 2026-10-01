@@ -72,6 +72,15 @@ class TestAffinityRules(UnitTestCase):
 
 		self.assertEqual(rules.as_list(), [RACK_A_HOST])
 
+	def test_within_is_trimmed_kept_and_listed(self) -> None:
+		value = [{"any_of": [{**NO_CARGO_SERVER, "within": " rack "}, {**NO_CARGO_SERVER, "within": "zone"}]}]
+
+		rules = AffinityRules.from_value(value)
+
+		self.assertEqual(rules.as_list()[0]["any_of"][0], {**NO_CARGO_SERVER, "within": "rack"})
+		self.assertNotIn("within", AffinityRules.from_value([NO_CARGO_SERVER]).as_list()[0])
+		self.assertEqual(rules.within_keys, ("rack", "zone"))
+
 	def test_rules_at_the_limits_are_accepted(self) -> None:
 		AffinityRules.from_value([NO_CARGO_SERVER] * MAXIMUM_AFFINITY_RULES)
 		AffinityRules.from_value([nest(NO_CARGO_SERVER, MAXIMUM_AFFINITY_GROUP_DEPTH)])
@@ -80,6 +89,16 @@ class TestAffinityRules(UnitTestCase):
 		rule = AffinityRule("metal_server", "has", {"rack": "a"})
 		cases = [
 			("unknown resource", ValueError, lambda: AffinityRule("rack", "has", {"rack": "a"})),
+			(
+				"within on a host rule",
+				ValueError,
+				lambda: AffinityRule("metal_server", "has", {"rack": "a"}, "rack"),
+			),
+			(
+				"within that is not a string",
+				TypeError,
+				lambda: AffinityRule("virtual_machine", "has", {"a": "b"}, 5),
+			),
 			("unknown operator", ValueError, lambda: AffinityRule("metal_server", "in", {"rack": "a"})),
 			("empty tags", ValueError, lambda: AffinityRule("metal_server", "has", {})),
 			(
@@ -106,7 +125,11 @@ class TestAffinityRules(UnitTestCase):
 			# An unknown group key is not a group, so the rule parser rejects it.
 			("Unknown affinity rule field: none_of.", [{"none_of": [STORAGE_HOST]}]),
 			("at least one rule or group", [{"all_of": []}]),
-			("Unknown affinity rule field: within.", [{**NO_CARGO_SERVER, "within": "rack"}]),
+			("Unknown affinity rule field: weight.", [{**NO_CARGO_SERVER, "weight": 1}]),
+			("Only a virtual_machine affinity rule takes within.", [{**RACK_A_HOST, "within": "rack"}]),
+			("within takes 1 to", [{**NO_CARGO_SERVER, "within": " "}]),
+			("within takes 1 to", [{**NO_CARGO_SERVER, "within": "k" * (MAXIMUM_TAG_KEY_LENGTH + 1)}]),
+			("within must be a host tag key", [{**NO_CARGO_SERVER, "within": 5}]),
 			("An affinity rule needs operator.", [{"resource": "metal_server", "tags": {"rack": "a"}}]),
 			("resource must be one of", [{**STORAGE_HOST, "resource": "metal-server"}]),
 			("operator must be one of", [{**STORAGE_HOST, "operator": "in"}]),
@@ -215,18 +238,49 @@ class TestAffinityEvaluation(UnitTestCase):
 			with self.subTest(label):
 				self.assertEqual(AffinityRules.from_value(value).is_satisfied_by(host), expected)
 
+	def test_within_reads_every_virtual_machine_in_the_group(self) -> None:
+		# A replica runs on another host of rack a. This host runs none itself.
+		rack_a = AffinityHost("a", {"rack": "a"}, (), {"rack": ({"role": "replica"},)})
+		rack_b = AffinityHost("b", {"rack": "b"}, (), {"rack": ()})
+		no_rack = AffinityHost("c", {}, (), {})
+		avoid = {
+			"resource": "virtual_machine",
+			"operator": "has_not",
+			"tags": {"role": "replica"},
+			"within": "rack",
+		}
+		join = {**avoid, "operator": "has"}
+		cases = [
+			("has_not rejects a rack with a replica", [avoid], rack_a, False),
+			("has_not accepts a rack without one", [avoid], rack_b, True),
+			("has accepts a rack with a replica", [join], rack_a, True),
+			("has rejects a rack without one", [join], rack_b, False),
+			("has_not fails on a host without the key", [avoid], no_rack, False),
+			("has fails on a host without the key", [join], no_rack, False),
+			("without within, only the host counts", [{**avoid, "within": None}], rack_a, True),
+		]
+		for label, value, host, expected in cases:
+			with self.subTest(label):
+				self.assertEqual(AffinityRules.from_value(value).is_satisfied_by(host), expected)
+
 
 class TestAffinityHostFilter(IntegrationTestCase):
 	def setUp(self) -> None:
 		super().setUp()
 		# Metal Server and Virtual Machine Migration names are UUID columns, so they reject other values.
 		self.storage_host = insert(
-			"Metal Server", name=str(uuid7()), tags=[{"key": "type", "value": "storage-optimised"}]
+			"Metal Server",
+			name=str(uuid7()),
+			tags=[{"key": "type", "value": "storage-optimised"}, {"key": "rack", "value": self.rack("a")}],
 		)
 		self.memory_host = insert(
-			"Metal Server", name=str(uuid7()), tags=[{"key": "type", "value": "memory-optimised"}]
+			"Metal Server",
+			name=str(uuid7()),
+			tags=[{"key": "type", "value": "memory-optimised"}, {"key": "rack", "value": self.rack("b")}],
 		)
-		self.plain_host = insert("Metal Server", name=str(uuid7()))
+		self.plain_host = insert(
+			"Metal Server", name=str(uuid7()), tags=[{"key": "rack", "value": self.rack("a")}]
+		)
 		self.hosts = [self.storage_host, self.memory_host, self.plain_host]
 
 		self.cargo_server = self.virtual_machine(0, self.storage_host, role="cargo-server")
@@ -236,12 +290,19 @@ class TestAffinityHostFilter(IntegrationTestCase):
 		moved_archive = self.virtual_machine(0, self.plain_host, role="archive")
 		self.migration(moved_archive, self.storage_host, "completed")
 
-	def virtual_machine(self, tenant_id: int, host: str, **tags: str) -> str:
+	def rack(self, name: str) -> str:
+		"""Return a rack value unique to this test, so other stored hosts never join its racks."""
+		if not hasattr(self, "_rack_suffix"):
+			self._rack_suffix = frappe.generate_hash(length=8)
+		return f"{name}-{self._rack_suffix}"
+
+	def virtual_machine(self, tenant_id: int, host: str, *, is_terminating: int = 0, **tags: str) -> str:
 		return insert(
 			"Virtual Machine",
 			name=f"test-vm-{frappe.generate_hash(length=8)}",
 			tenant_id=tenant_id,
 			server=host,
+			is_terminating=is_terminating,
 			tags=[{"key": key, "value": value} for key, value in tags.items()],
 		)
 
@@ -278,6 +339,34 @@ class TestAffinityHostFilter(IntegrationTestCase):
 			self.filter_hosts([rule("virtual_machine", "has", role="db")]),
 			[self.memory_host, self.plain_host],
 		)
+		self.assertEqual(
+			self.filter_hosts([rule("virtual_machine", "has", role="archive")]), [self.plain_host]
+		)
+
+	def test_within_reads_the_virtual_machines_of_the_whole_rack(self) -> None:
+		# The tenant-0 Cargo Server runs on the storage host in rack a, next to the plain host.
+		rule = {**NO_CARGO_SERVER, "within": "rack"}
+
+		self.assertEqual(self.filter_hosts([rule]), [self.memory_host])
+
+	def test_within_on_a_key_that_no_host_has_rejects_every_host(self) -> None:
+		self.assertEqual(self.filter_hosts([{**NO_CARGO_SERVER, "within": "zone"}]), [])
+
+	def test_the_related_hosts_share_the_rack(self) -> None:
+		rules = AffinityRules.from_value([{**NO_CARGO_SERVER, "within": "rack"}])
+
+		self.assertEqual(rules.find_related_hosts(self.storage_host), [self.plain_host])
+		self.assertEqual(rules.find_related_hosts(self.memory_host), [])
+		self.assertEqual(
+			AffinityRules.from_value([NO_CARGO_SERVER]).find_related_hosts(self.storage_host), []
+		)
+
+	def test_a_terminating_virtual_machine_does_not_count(self) -> None:
+		self.virtual_machine(0, self.plain_host, is_terminating=1, role="cargo-server")
+		leaving = self.virtual_machine(0, self.storage_host, is_terminating=1, role="archive")
+		self.migration(leaving, self.memory_host, "copying")
+
+		self.assertEqual(self.filter_hosts([NO_CARGO_SERVER]), [self.memory_host, self.plain_host])
 		self.assertEqual(
 			self.filter_hosts([rule("virtual_machine", "has", role="archive")]), [self.plain_host]
 		)

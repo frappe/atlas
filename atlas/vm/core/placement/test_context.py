@@ -1,4 +1,5 @@
 import time
+from contextlib import contextmanager
 from datetime import datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -139,12 +140,64 @@ class TestPlacementContext(UnitTestCase):
 				patch.object(PlacementContext, "_acquire_host_lock", return_value=True),
 				patch.object(PlacementContext, "_release_host_lock"),
 				patch.object(PlacementContext, "_host_has_capacity", return_value=has_capacity),
+				patch.object(PlacementContext, "_find_affinity_group", return_value=[]),
 				patch.object(PlacementContext, "_host_meets_affinity", return_value=False),
 			):
 				self.assertFalse(placement.try_select("a"))
 
 				self.assertEqual(placement.has_contended_hosts, is_contended)
 				self.assertFalse(placement.last_probe_was_contended)
+
+	@contextmanager
+	def locked_group(self, acquired: list[bool], meets_affinity: bool = True):
+		"""Patch the locks of host "a" and of its within group, hosts "b" and "c"."""
+		with (
+			patch.object(PlacementContext, "_find_snapshot_host", return_value=True),
+			patch.object(PlacementContext, "_host_lock_name", side_effect=lambda name: f"lock-{name}"),
+			patch.object(PlacementContext, "_acquire_host_lock", side_effect=acquired) as acquire,
+			patch.object(PlacementContext, "_release_host_lock") as release,
+			patch.object(PlacementContext, "_keep_host_lock_for_transaction") as keep,
+			patch.object(PlacementContext, "_host_has_capacity", return_value=True),
+			patch.object(PlacementContext, "_find_affinity_group", return_value=["b", "c"]),
+			patch.object(PlacementContext, "_host_meets_affinity", return_value=meets_affinity),
+		):
+			yield acquire, release, keep
+
+	@staticmethod
+	def unselected_placement() -> PlacementContext:
+		placement = object.__new__(PlacementContext)
+		placement._selected_host = None
+		placement._excluded_servers = frozenset()
+		placement.probe_count = 0
+		placement.has_contended_hosts = False
+		placement.last_probe_was_contended = False
+		return placement
+
+	def test_the_within_group_locks_are_kept_until_the_transaction_ends(self) -> None:
+		placement = self.unselected_placement()
+		with self.locked_group([True, True, True]) as (acquire, release, keep):
+			self.assertTrue(placement.try_select("a"))
+
+		self.assertEqual([c.kwargs["wait"] for c in acquire.call_args_list], [False, False, False])
+		self.assertEqual([c.args[0] for c in keep.call_args_list], ["lock-a", "lock-b", "lock-c"])
+		release.assert_not_called()
+
+	def test_a_busy_host_in_the_within_group_counts_as_contention(self) -> None:
+		placement = self.unselected_placement()
+		with self.locked_group([True, True, False]) as (_acquire, release, keep):
+			self.assertFalse(placement.try_select("a"))
+
+		self.assertTrue(placement.has_contended_hosts)
+		self.assertEqual([c.args[0] for c in release.call_args_list], ["lock-a", "lock-b"])
+		keep.assert_not_called()
+
+	def test_a_rule_that_fails_under_the_group_locks_releases_them_all(self) -> None:
+		placement = self.unselected_placement()
+		with self.locked_group([True, True, True], meets_affinity=False) as (_acquire, release, _keep):
+			self.assertFalse(placement.try_select("a"))
+
+		self.assertTrue(placement.has_contended_hosts)
+		self.assertEqual([c.args[0] for c in release.call_args_list], ["lock-a", "lock-b", "lock-c"])
 
 	def test_a_cached_snapshot_is_shared_between_placements(self) -> None:
 		rows = [host_row("a")]

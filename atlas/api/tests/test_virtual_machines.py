@@ -291,7 +291,8 @@ class TestCreateVirtualMachine(UnitTestCase):
 	def test_create_rejects_invalid_affinity_rules(self) -> None:
 		rule = {"resource": "virtual_machine", "operator": "has_not", "tags": {"role": "cargo-server"}}
 		for affinity_rules in (
-			[{**rule, "within": "rack"}],
+			[{**rule, "weight": 1}],
+			[{"resource": "metal_server", "operator": "has", "tags": {"rack": "a"}, "within": "rack"}],
 			[{"any_of": []}],
 			[rule] * (MAXIMUM_AFFINITY_RULES + 1),
 		):
