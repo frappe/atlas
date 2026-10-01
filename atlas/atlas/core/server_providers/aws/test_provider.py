@@ -247,18 +247,6 @@ class TestAwsProvider(UnitTestCase):
 		with self.assertRaises(AwsError):
 			provider.configure_server_network(server)
 
-	def test_metald_binds_the_primary_interface_not_the_mesh_interface(self) -> None:
-		provider = self.provider()
-		server = self.server()
-		server.provider_metadata = json.dumps(
-			{
-				"instance": {"PrivateIpAddress": "10.1.8.189", "PublicIpAddress": "56.155.92.65"},
-				"mesh_interface": {"PrivateIpAddress": "10.1.0.240"},
-			}
-		)
-
-		self.assertEqual(provider.metald_listen_address(server), "10.1.8.189")
-
 	def test_a_public_address_attaches_to_the_primary_interface(self) -> None:
 		provider = self.provider()
 		provider.ip_addresses = Mock()
@@ -293,14 +281,6 @@ class TestAwsProvider(UnitTestCase):
 
 		with self.assertRaisesRegex(AwsError, "primary network interface"):
 			provider.attach_public_ip_address("eipalloc-1", "203.0.113.9", server)
-
-	def test_metald_needs_the_primary_private_address(self) -> None:
-		provider = self.provider()
-		server = self.server()
-		server.provider_metadata = json.dumps({"instance": {"PublicIpAddress": "56.155.92.65"}})
-
-		with self.assertRaisesRegex(AwsError, "primary private IPv4 address"):
-			provider.metald_listen_address(server)
 
 	def test_the_storage_pool_device_names_the_attached_volume(self) -> None:
 		provider = self.provider()
@@ -401,6 +381,7 @@ class TestAwsProvider(UnitTestCase):
 			provider_server_id=provider_server_id,
 			provider_metadata="{}",
 			public_ipv4_address="203.0.113.1",
+			ssh_host="203.0.113.1",
 			private_ipv4_address=None,
 			public_network_interface=None,
 			private_network_interface=None,

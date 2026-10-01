@@ -7,7 +7,7 @@ Use **Atlas Settings** for regional configuration. Set the site value `atlas_bas
 | Group | What it controls | Important effect |
 | --- | --- | --- |
 | Region and provider | Region identity, provider adapter, host catalog defaults, and credentials. | New hosts and signed regional identities use these values. |
-| Host and network | Private network range, MTU, unicast mesh mode, and Metal endpoint choice. | Host setup and sync use these values. |
+| Host and network | Private network range, MTU, unicast mesh mode, and Atlas WireGuard identity. | Host setup and sync use these values. |
 | Placement | Strategy, sleepy VM pool, overcommit factor, and host auto-spawn. | New VM capacity checks and host expansion use these values. |
 | Trust | Metal certificate authority, Atlas client certificate, regional signing key, and Central public key source. | Atlas, Metal, and service clients use these credentials. |
 | Proxy and DNS | Wildcard domain, certificate, proxy password, and DNS access. | Proxy nodes receive updated configuration. |
@@ -31,7 +31,6 @@ Atlas creates regional signing and Metal trust material as part of settings setu
 
 | Network setting | Purpose |
 | --- | --- |
-| `use_public_ip_for_metald` | Selects the Atlas-facing Metal endpoint where supported. It leaves node-to-node WireGuard unchanged. |
 | `is_unicast_network_enabled` | Uses unicast discovery when the host network cannot carry multicast. |
 
 ## Limits and recovery

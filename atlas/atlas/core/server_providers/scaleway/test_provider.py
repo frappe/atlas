@@ -96,7 +96,7 @@ class TestScalewayProvider(UnitTestCase):
 		provider = self.provider()
 		server = self.server()
 		server.name = "server-1"
-		server.public_ipv4_address = "203.0.113.1"
+		server.ssh_host = "203.0.113.1"
 		server.private_network_interface = "eno1.123"
 		server.private_ipv4_address = "10.1.0.2"
 		server.private_network_mac_address = None

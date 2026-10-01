@@ -144,16 +144,6 @@ class AwsProvider(ServerProvider):
 		self.wait_for_private_address(server)
 
 	@override
-	def metald_listen_address(self, server: "MetalServer") -> str:
-		"""Return the primary interface address behind the internet gateway."""
-		metadata = frappe.parse_json(server.provider_metadata or "{}")
-		instance = metadata.get("instance") if isinstance(metadata, Mapping) else None
-		address = instance.get("PrivateIpAddress") if isinstance(instance, Mapping) else None
-		if not isinstance(address, str) or not address:
-			raise AwsError("Atlas server has no AWS primary private IPv4 address")
-		return address
-
-	@override
 	def storage_pool_device(self, server: "MetalServer") -> str:
 		"""Return the stable device path of the EBS volume for the storage pool."""
 		volume_id = self.volumes.volume_id(server, "storage")
@@ -303,9 +293,7 @@ class AwsProvider(ServerProvider):
 		"""Return the guest device name that carries the AWS default route."""
 		from atlas.atlas.core.ssh import SSHRunner
 
-		result = SSHRunner(server.public_ipv4_address).run_command(
-			"ip -4 -o route show default", timeout_seconds=15
-		)
+		result = SSHRunner(server.ssh_host).run_command("ip -4 -o route show default", timeout_seconds=15)
 		fields = result.output.split()
 		if result.exit_code != 0 or "dev" not in fields:
 			raise AwsError(f"Atlas server {server.name} has no default route device")

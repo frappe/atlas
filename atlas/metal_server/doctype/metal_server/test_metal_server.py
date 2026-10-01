@@ -514,9 +514,21 @@ class TestServer(UnitTestCase):
 			ssh_runner.return_value.run_script.return_value = tls_result
 			MetalServer._install_metald(server)
 
-		storage_arguments, arguments = (call.kwargs for call in create_for_script_file.call_args_list)
+		storage_arguments, arguments, firewall_arguments = (
+			call.kwargs for call in create_for_script_file.call_args_list
+		)
 		self.assertEqual(storage_arguments["script_path"], "install-metal-storage.sh")
 		self.assertEqual(storage_arguments["environment"], {"STORAGE_POOL_DEVICE": "/dev/md2"})
+		self.assertEqual(firewall_arguments["script_path"], "install-host-firewall.sh")
+		self.assertEqual(
+			firewall_arguments["environment"],
+			{
+				"ATLAS_WIREGUARD_ADDRESS": "fdaa:1::ffff:ffff:ffff:ffff",
+				"MESH_UPLINK_INTERFACE": "eno1.1878",
+				"PRIVATE_NETWORK_CIDR": "10.0.0.0/20",
+				"WIREGUARD_LISTEN_PORT": 51820,
+			},
+		)
 		self.assertEqual(arguments["script_path"], "install-metald.sh")
 		self.assertEqual(
 			arguments["environment"],
@@ -525,10 +537,11 @@ class TestServer(UnitTestCase):
 				"METALD_SHA256": "metald-binary-sha256",
 				"WG_MESH_DOWNLOAD_URL": "https://atlas.test/files/atlas-wg-mesh-linux-amd64",
 				"WG_MESH_SHA256": "wg-mesh-binary-sha256",
-				"LISTEN_ADDRESS": "10.0.0.7:9000",
+				"LISTEN_ADDRESS": "[fdab:1::7]:9000",
 				"ATLAS_COMMON_NAME": "atlas.example.test",
 				"COORDINATION_LISTEN_ADDRESS": "[fdab:1::7]:9001",
 				"MESH_UPLINK_INTERFACE": "eno1.1878",
+				"PRIVATE_NETWORK_CIDR": "10.0.0.0/20",
 				"ATLAS_MESH_ADDRESS": "fdaa:1::ffff:ffff:ffff:ffff",
 			},
 		)
@@ -541,49 +554,6 @@ class TestServer(UnitTestCase):
 			},
 			timeout_seconds=1200,
 		)
-
-	def test_install_metald_listens_on_the_address_the_provider_chooses(self) -> None:
-		server = self._server(status="Running")
-		server.settings.metald_binary_x86_64_file = "metald-file"
-		server.settings.server_provider_controller.metald_listen_address = Mock(return_value="203.0.113.7")
-		server.wireguard_ip_address = "fdab:1::7"
-		task = SimpleNamespace(result=SimpleNamespace(is_success=True))
-		tls_result = SimpleNamespace(is_success=True)
-
-		with (
-			patch(
-				"atlas.metal_server.core.host_installation.get_download_url",
-				return_value="https://atlas.test/files/metald-linux-amd64",
-			),
-			patch(
-				"atlas.metal_server.core.host_installation.SSHTask.create_for_script_file",
-				return_value=task,
-			) as create_for_script_file,
-			patch(
-				"atlas.metal_server.core.host_installation.ensure_server_certificate",
-				return_value=("ca", "certificate", "private-key"),
-			),
-			patch("atlas.metal_server.core.host_installation.SSHRunner") as ssh_runner,
-		):
-			ssh_runner.return_value.run_script.return_value = tls_result
-			MetalServer._install_metald(server)
-
-		self.assertEqual(
-			create_for_script_file.call_args.kwargs["environment"]["LISTEN_ADDRESS"], "203.0.113.7:9000"
-		)
-
-	def test_install_metald_rejects_an_address_that_is_not_ipv4(self) -> None:
-		server = self._server(status="Running")
-		server.settings.metald_binary_x86_64_file = "metald-file"
-		server.settings.server_provider_controller.metald_listen_address = Mock(return_value="0.0.0.0/0")
-
-		with (
-			patch("atlas.metal_server.core.host_installation.HostInstallation.install_storage"),
-			patch("atlas.metal_server.core.host_installation.HostInstallation.install_tls_credentials"),
-			patch("atlas.metal_server.core.host_installation.frappe.throw", side_effect=ValueError),
-		):
-			with self.assertRaises(ValueError):
-				MetalServer._install_metald(server)
 
 	def test_tls_renewal_waits_for_a_running_metald_job(self) -> None:
 		server = self._server(status="Running")
@@ -1108,7 +1078,6 @@ class TestServer(UnitTestCase):
 					delete_server=Mock(),
 					set_power_state=Mock(),
 					storage_pool_device=Mock(return_value="/dev/md2"),
-					metald_listen_address=Mock(return_value="10.0.0.7"),
 				),
 				metald_binary_x86_64_file=None,
 				metald_binary_hash="metald-binary-sha256",
@@ -1117,7 +1086,7 @@ class TestServer(UnitTestCase):
 				wildcard_domain="example.test",
 				region_id=1,
 				private_network_mtu=1500,
-				use_public_ip_for_metald=False,
+				private_network_cidr="10.0.0.0/20",
 				wireguard_ip_address="fdaa:1::ffff:ffff:ffff:ffff",
 				wireguard_public_key="atlas-key",
 			),

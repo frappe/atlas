@@ -6,6 +6,7 @@ set -eu
 : "${METALD_DOWNLOAD_URL:?METALD_DOWNLOAD_URL is required}"
 : "${METALD_SHA256:?METALD_SHA256 is required}"
 : "${MESH_UPLINK_INTERFACE:?MESH_UPLINK_INTERFACE is required}"
+: "${PRIVATE_NETWORK_CIDR:?PRIVATE_NETWORK_CIDR is required}"
 : "${WG_MESH_DOWNLOAD_URL:?WG_MESH_DOWNLOAD_URL is required}"
 : "${WG_MESH_SHA256:?WG_MESH_SHA256 is required}"
 : "${COORDINATION_LISTEN_ADDRESS:?COORDINATION_LISTEN_ADDRESS is required}"
@@ -220,18 +221,21 @@ fi
 
 step "network setup"
 install -d -m 0755 /usr/local/lib/metal
-cat > /usr/local/lib/metal/network-setup <<'EOF'
+cat > /usr/local/lib/metal/network-setup <<EOF
 #!/bin/sh
 set -eu
 
-uplink=$(ip -4 route show default | awk 'NR == 1 { print $5 }')
-[ -n "$uplink" ] || {
+uplink=\$(ip -4 route show default | awk 'NR == 1 { print \$5 }')
+[ -n "\$uplink" ] || {
 	echo "metald network setup requires an IPv4 default route" >&2
 	exit 1
 }
 
-iptables -t nat -C POSTROUTING -s 10.0.0.0/8 -o "$uplink" -j MASQUERADE 2>/dev/null ||
-	iptables -t nat -A POSTROUTING -s 10.0.0.0/8 -o "$uplink" -j MASQUERADE
+iptables -C FORWARD -i vh+ -d "$PRIVATE_NETWORK_CIDR" -j DROP 2>/dev/null ||
+	iptables -A FORWARD -i vh+ -d "$PRIVATE_NETWORK_CIDR" -j DROP
+
+iptables -t nat -C POSTROUTING -s 10.0.0.0/8 -o "\$uplink" -j MASQUERADE 2>/dev/null ||
+	iptables -t nat -A POSTROUTING -s 10.0.0.0/8 -o "\$uplink" -j MASQUERADE
 EOF
 chmod 0755 /usr/local/lib/metal/network-setup
 
@@ -240,8 +244,8 @@ step "systemd units"
 cat > /etc/systemd/system/metal.service <<EOF
 [Unit]
 Description=metal daemon
-Wants=network-online.target
-After=network-online.target
+Wants=network-online.target wg-quick@$wireguard_interface.service
+After=network-online.target wg-quick@$wireguard_interface.service
 RequiresMountsFor=$base_dir
 
 [Service]

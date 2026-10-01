@@ -127,7 +127,6 @@ class AtlasSettings(Document):
 		sleepy_vm_overcommit_factor: DF.Float
 		use_dedicated_sleepy_vm_hosts: DF.Check
 		use_ipv6_router_for_auto_assignment: DF.Check
-		use_public_ip_for_metald: DF.Check
 		wg_mesh_binary_hash: DF.Data | None
 		wg_mesh_binary_x86_64_file: DF.Link | None
 		wg_mesh_source_hash: DF.Data | None

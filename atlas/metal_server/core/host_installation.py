@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import ipaddress
 from typing import TYPE_CHECKING
 from uuid import UUID
 
@@ -23,6 +22,7 @@ FAILURE_REASON_LENGTH = 500
 WIREGUARD_CONFIGURE_TIMEOUT_SECONDS = 300
 METALD_INSTALL_TIMEOUT_SECONDS = 1_200
 STORAGE_INSTALL_TIMEOUT_SECONDS = 600
+FIREWALL_INSTALL_TIMEOUT_SECONDS = 120
 METALD_SETUP_TIMEOUT_SECONDS = 3_600
 
 
@@ -81,15 +81,6 @@ class HostInstallation:
 		self.install_storage()
 		self.install_tls_credentials()
 
-		listen_address = settings.server_provider_controller.metald_listen_address(self.server)
-		try:
-			listen_address = str(ipaddress.IPv4Address(listen_address))
-		except ipaddress.AddressValueError:
-			frappe.throw(
-				_("Metal Server {0} has an invalid address for the selected metald endpoint.").format(
-					self.server.name
-				),
-			)
 		result = SSHTask.create_for_script_file(
 			target_type=self.server.doctype,
 			target=self.server.name,
@@ -99,10 +90,11 @@ class HostInstallation:
 				"METALD_SHA256": settings.metald_binary_hash,
 				"WG_MESH_DOWNLOAD_URL": get_download_url(settings.wg_mesh_binary_x86_64_file),
 				"WG_MESH_SHA256": settings.wg_mesh_binary_hash,
-				"LISTEN_ADDRESS": f"{listen_address}:9000",
+				"LISTEN_ADDRESS": f"[{self.server.wireguard_ip_address}]:9000",
 				"ATLAS_COMMON_NAME": atlas_client_identity(settings),
 				"COORDINATION_LISTEN_ADDRESS": f"[{self.server.wireguard_ip_address}]:9001",
 				"MESH_UPLINK_INTERFACE": self.server.private_network_interface,
+				"PRIVATE_NETWORK_CIDR": settings.private_network_cidr,
 				"ATLAS_MESH_ADDRESS": settings.wireguard_ip_address,
 			},
 			timeout_seconds=METALD_INSTALL_TIMEOUT_SECONDS,
@@ -112,6 +104,8 @@ class HostInstallation:
 			throw_script_failure(
 				_("Could not install metald on server {0}.").format(self.server.name), result
 			)
+
+		self.install_host_firewall()
 
 	def install_storage(self) -> None:
 		"""Create the storage pool and mount host state on it before any file is written there."""
@@ -130,6 +124,27 @@ class HostInstallation:
 		if not result or not result.is_success:
 			throw_script_failure(
 				_("Could not prepare storage on server {0}.").format(self.server.name), result
+			)
+
+	def install_host_firewall(self) -> None:
+		"""Admit host SSH and Metal calls only through wg0, and keep guests off the private network."""
+		settings = self.server.settings
+		result = SSHTask.create_for_script_file(
+			target_type=self.server.doctype,
+			target=self.server.name,
+			script_path="install-host-firewall.sh",
+			environment={
+				"ATLAS_WIREGUARD_ADDRESS": settings.wireguard_ip_address,
+				"MESH_UPLINK_INTERFACE": self.server.private_network_interface,
+				"PRIVATE_NETWORK_CIDR": settings.private_network_cidr,
+				"WIREGUARD_LISTEN_PORT": self.server.port,
+			},
+			timeout_seconds=FIREWALL_INSTALL_TIMEOUT_SECONDS,
+			run_in_background=False,
+		).result
+		if not result or not result.is_success:
+			throw_script_failure(
+				_("Could not install the host firewall on server {0}.").format(self.server.name), result
 			)
 
 	def install_tls_credentials(self) -> None:

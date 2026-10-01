@@ -171,17 +171,6 @@ class ServerProvider(ABC):
 		"""Configure the provider network after Secure Shell access is ready."""
 		...
 
-	def metald_listen_address(self, server: "MetalServer") -> str:
-		"""Return the configured metald address."""
-		address = (
-			server.public_ipv4_address
-			if self.settings.use_public_ip_for_metald
-			else server.private_ipv4_address
-		)
-		if not address:
-			raise self.error_class(f"Atlas server {server.name} has no address for metald")
-		return address
-
 	@abstractmethod
 	def storage_pool_device(self, server: "MetalServer") -> str:
 		"""Return the raw block device for the virtual machine storage pool."""
@@ -233,7 +222,7 @@ class ServerProvider(ABC):
 		def get_private_network_mac_address() -> str | None:
 			"""Return the interface MAC once the server has its private network address."""
 			try:
-				result = SSHRunner(server.public_ipv4_address).run_command(
+				result = SSHRunner(server.ssh_host).run_command(
 					f"ip -4 -o addr show dev {device} scope global && cat /sys/class/net/{device}/address",
 					timeout_seconds=15,
 				)

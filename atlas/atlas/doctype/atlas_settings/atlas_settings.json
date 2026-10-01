@@ -26,7 +26,6 @@
   "metald_binary_x86_64_file",
   "metald_source_hash",
   "metald_binary_hash",
-  "use_public_ip_for_metald",
   "wireguard_ip_address",
   "wireguard_public_key",
   "wireguard_private_key",
@@ -388,14 +387,6 @@
    "fieldtype": "Data",
    "label": "Metald Binary SHA-256",
    "read_only": 1
-  },
-  {
-   "default": "0",
-   "description": "Enable when Atlas must reach Metald through the server's public IPv4 address.",
-   "fieldname": "use_public_ip_for_metald",
-   "fieldtype": "Check",
-   "label": "Reach Metald Over Public IP",
-   "show_description_on_click": 1
   },
   {
    "fieldname": "metal_tls_ca_certificate",

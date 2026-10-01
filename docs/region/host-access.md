@@ -1,6 +1,6 @@
 # How Atlas reaches hosts
 
-Atlas reaches each Metal host through WireGuard. Host SSH uses the host `wg0` interface after the host WireGuard setup.
+Atlas reaches each Metal host through WireGuard. SSH, the Metal control API, and the browser console use the host `wg0` interface. The host public address accepts no management traffic.
 
 ## The Atlas peer
 
@@ -44,6 +44,8 @@ WireGuard needs no port on `atlas0`, because Atlas starts every handshake from t
 
 Metal applies only the host peers from [host sync](host-sync.md). It removes only the peers that it added, so the Atlas peer stays. `metald.toml` names the Atlas address as `[wg_mesh] controller_address`, and WG Mesh lets tenant-0 VMs send to it through `wg0`.
 
+`metald` binds its control API to the host `wg0` address. The host certificate names that address.
+
 ## SSH
 
 | Target | Path |
@@ -53,6 +55,20 @@ Metal applies only the host peers from [host sync](host-sync.md). It removes onl
 
 Provisioning has a `wireguard-link` step. It writes `atlas0.conf` with the new host at once, then waits for root SSH on the `fdab` address before it installs Metal.
 
+## Host firewall
+
+`install_metal` installs table `inet atlas_host` and the `atlas-host-firewall` unit. The rules cover traffic to the host itself.
+
+| Input | Allowed from |
+| --- | --- |
+| WireGuard UDP | The private network, and the local atlas-vm (`tap-atlas`). |
+| SSH and Metal control `9000` | The Atlas address on `wg0`. |
+| Migration `9001` and `9002` | Host addresses on `wg0`. |
+| SSH for recovery | The private network on the private uplink. |
+| ICMP, DHCP, and replies | Any address. |
+
+The Metal network setup, which `metal.service` runs at start, drops guest packets to the private network CIDR, on any interface. Guest public addresses, NAT, and mesh traffic do not change.
+
 ## Recovery
 
 | Problem | Action |
@@ -60,12 +76,14 @@ Provisioning has a `wireguard-link` step. It writes `atlas0.conf` with the new h
 | No handshake on `atlas0` | Check `wg show atlas0` and UDP 51820 on the host. |
 | New host stops at `wireguard-link` | Check that `atlas0.conf` lists the host and that the timer applied it: `systemctl status atlas-wireguard-atlas0.service`. |
 | Atlas key lost | Restore the site backup with its `site_config.json`, because the encryption key is in that file. A new key needs the provider console on every host: clear `wireguard_public_key` in Atlas Settings, run `atlas-wireguard`, then run `configure-wireguard.sh` on each host. |
+| Host firewall blocks access | From the private network or console, run `systemctl disable --now atlas-host-firewall && nft delete table inet atlas_host`. |
 
 ::: details Source code and tests
 
 - [Atlas peer](../../atlas/metal_server/core/atlas_peer.py) owns the identity and `atlas0.conf`.
 - [Timer installer](../../scripts/install-atlas-wireguard.sh) applies a file and its input filter as root.
 - [WireGuard script](../../atlas/scripts/configure-wireguard.sh) adds the Atlas peer to a host.
+- [Host firewall script](../../atlas/scripts/install-host-firewall.sh) writes the host rules.
 - [WG Mesh VM hook](../../services/wg-mesh/bpf/vm.h) routes tenant-0 traffic to the controller.
 - [Atlas peer tests](../../atlas/metal_server/core/test_atlas_peer.py) and [provisioning tests](../../atlas/metal_server/core/test_provisioning.py) check identity and setup order.
 
