@@ -16,7 +16,7 @@ Behavior: [Service VMs](../../docs/region/service-vms.md). This module runs Atla
 
 ## Shared rules
 
-- Each VM is created through `VirtualMachineService` as a privileged tenant-0 VM. It needs a reserved tenant-0 IPv4 allocation.
+- Each VM is created through `VirtualMachineService` as a privileged tenant-0 VM. Only a Proxy VM needs a reserved tenant-0 IPv4 allocation. Its guest firewall, from `get_proxy_firewall`, admits only TCP 80 and 443 from public addresses.
 - Atlas reaches service SSH through the VM host. See [Atlas access to hosts](../../docs/region/host-access.md#ssh).
 - A job requeues `Pending` records every minute.
 - A failure sets `Failed` with the phase and message. Nothing replaces the VM automatically.
@@ -27,6 +27,7 @@ Behavior: [Service VMs](../../docs/region/service-vms.md). This module runs Atla
 ## Proxy Server
 
 - Atlas sends the new peer list to active nodes before it publishes a node in regional DNS.
+- The apply command maps each peer name to its mesh address in `/etc/hosts`, so replication stays on the mesh with the same name and certificate.
 - A job pushes a changed configuration digest every minute.
 
 See the [HTTP proxy specification](../../services/http-proxy/SPEC.md).

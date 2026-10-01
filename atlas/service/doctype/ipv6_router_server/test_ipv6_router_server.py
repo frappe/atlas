@@ -25,19 +25,6 @@ def public_ip_pool(**values) -> SimpleNamespace:
 	)
 
 
-def ipv4_allocation(**values) -> SimpleNamespace:
-	return SimpleNamespace(
-		**(
-			{
-				"version": "4",
-				"status": "Reserved",
-				"tenant_id": 0,
-			}
-			| values
-		)
-	)
-
-
 class TestIPv6PoolValidation(UnitTestCase):
 	def validate(self, pool: SimpleNamespace, has_allocations: bool = False) -> None:
 		def exists(doctype, *_args, **_kwargs):
@@ -63,26 +50,6 @@ class TestIPv6PoolValidation(UnitTestCase):
 	def test_a_small_pool_is_refused(self) -> None:
 		with self.assertRaisesRegex(frappe.ValidationError, "/84"):
 			self.validate(public_ip_pool(prefix="2001:db8::/96"))
-
-
-class TestIPv4AllocationValidation(UnitTestCase):
-	def validate(self, allocation: SimpleNamespace) -> None:
-		with (
-			patch.object(router_module.frappe.db, "exists", return_value=True),
-			patch.object(router_module.frappe, "get_doc", return_value=allocation),
-		):
-			router_module._validate_ipv4_allocation("allocation-1")
-
-	def test_a_tenant_zero_reservation_is_accepted(self) -> None:
-		self.validate(ipv4_allocation())
-
-	def test_an_unreserved_allocation_is_refused(self) -> None:
-		with self.assertRaisesRegex(frappe.ValidationError, "reserved by tenant 0"):
-			self.validate(ipv4_allocation(status="Available"))
-
-	def test_another_tenant_is_refused(self) -> None:
-		with self.assertRaisesRegex(frappe.ValidationError, "reserved by tenant 0"):
-			self.validate(ipv4_allocation(tenant_id=7))
 
 
 class TestIPv6RouterCreation(UnitTestCase):

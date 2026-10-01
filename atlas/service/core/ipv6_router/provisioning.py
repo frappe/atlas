@@ -73,19 +73,12 @@ class IPv6RouterServerProvisioner:
 
 	@property
 	def is_virtual_machine_ready(self) -> bool:
-		"""Report whether the VM left the draft state and Metal holds its public IPv4 address.
-
-		The network step replaces the complete Metal network. It must not overlap the IPv4 reconcile job.
-		"""
+		"""Report whether the VM left the draft state and Metal holds it."""
 		if not self.router.virtual_machine:
 			return False
 
 		virtual_machine = self.virtual_machine
-		if virtual_machine.is_draft:
-			return False
-
-		information = virtual_machine.get_metal_vm_info()
-		return bool(information and information.desired.network.public_ipv4)
+		return not virtual_machine.is_draft and bool(virtual_machine.get_metal_vm_info())
 
 	@property
 	def virtual_machine(self) -> VirtualMachine:

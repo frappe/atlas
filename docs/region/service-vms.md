@@ -12,7 +12,9 @@ Atlas owns each VM and its setup record. The software inside the VM owns its tra
 
 ## What Atlas creates
 
-Reserve a **tenant-0 public IPv4 allocation** on the Public IP Pool form before you provision a service. Each service VM uses one. Atlas creates a privileged, termination-protected VM through the normal VM service and attaches that allocation.
+Atlas creates a privileged, termination-protected VM through the normal VM service. Only the HTTP proxy needs a **tenant-0 public IPv4 allocation**. Reserve it on the Public IP Pool form first.
+
+The proxy guest firewall admits TCP 80 and 443 and ICMP from any address. It admits all traffic from tenant-0 mesh addresses in the region.
 
 Atlas reaches service SSH through the VM host, not a public address. See [Atlas access to hosts](host-access.md#ssh).
 
@@ -30,7 +32,7 @@ Cargo also starts as `Not Provisioned`. See [Cargo recovery](cargo.md#operate-an
 
 ## Why a service can wait
 
-Atlas queues a setup job after VM creation. If the VM is still a draft, the job leaves the service `Pending`. The scheduler queues it again. The router waits for Metal to apply its public IPv4 address as well, because its next step replaces the full network configuration.
+Atlas queues a setup job after VM creation. If the VM is still a draft, the job leaves the service `Pending`. The scheduler queues it again.
 
 ::: info Check the service record first
 A `Pending` record does not need a second provision request. A `Failed` record does not automatically retry. Read its Failure field and the linked SSH Task before taking the service-specific recovery action.

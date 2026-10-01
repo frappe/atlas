@@ -11,7 +11,7 @@ flowchart LR
 
 ## Before you provision
 
-Use the **Provision** action on Cargo Server. Select an Available System image and a reserved tenant-0 IPv4 allocation. An Active HTTP proxy must already exist because Cargo's public routes go through it.
+Use the **Provision** action on Cargo Server. Select an Available System image. Cargo needs no public IPv4 address. An Active HTTP proxy must already exist because Cargo's public routes go through it.
 
 | Resource | Provision form default |
 | --- | --- |

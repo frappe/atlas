@@ -77,7 +77,7 @@ The router checks address shape and packet format. WG Mesh checks whether the ta
 
 ## Prepare the router VM
 
-Atlas creates an [IPv6 Router Server service VM](../region/service-vms.md). It waits until the VM leaves draft state and Metal has applied its public IPv4 address. This wait keeps the router's full network update from overlapping the IPv4 update.
+Atlas creates an [IPv6 Router Server service VM](../region/service-vms.md) with no public IPv4 address. It waits until the VM leaves draft state and Metal holds the VM.
 
 The setup job then makes the VM a network gateway, attaches the public IPv6 pool through the provider, and gives the router a `2000::/3` route through its host. It waits for SSH, installs the hashed router package, and sets the service record to `Active`.
 

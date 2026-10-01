@@ -9,10 +9,27 @@ import frappe
 from frappe import _
 from frappe.model.document import Document
 
+from atlas.atlas.core.mesh_address import get_region_mesh_address_prefix
+
 if TYPE_CHECKING:
 	from frappe.types import DF
 
 MAX_PROXY_SERVERS = 5
+ANYWHERE = ["0.0.0.0/0", "::/0"]
+
+
+def get_proxy_firewall(region_id: int) -> dict[str, Any]:
+	"""Admit HTTP and HTTPS from anywhere, and everything from regional services. Atlas reaches SSH through the host."""
+	return {
+		"enabled": True,
+		"inbound": [
+			{"protocol": "any", "cidrs": [f"{get_region_mesh_address_prefix(region_id)}::/64"]},
+			{"protocol": "icmp", "cidrs": ANYWHERE},
+			{"protocol": "tcp", "ports": "80", "cidrs": ANYWHERE},
+			{"protocol": "tcp", "ports": "443", "cidrs": ANYWHERE},
+		],
+		"outbound": [{"protocol": "any", "cidrs": ANYWHERE}],
+	}
 
 
 class ProxyServer(Document):
@@ -80,6 +97,7 @@ class ProxyServer(Document):
 		"""Create the virtual machine and update the Proxy Server state."""
 		from atlas.vm.core.vm_service import VirtualMachineCreateError, VirtualMachineService
 
+		settings = frappe.get_single("Atlas Settings")
 		virtual_machine_request = {
 			"virtual_machine_image": values.get("virtual_machine_image"),
 			"cpu_millicores": values.get("cpu_millicores"),
@@ -89,8 +107,9 @@ class ProxyServer(Document):
 			"is_privileged": True,
 			"is_termination_protected": True,
 			"hostname": proxy_server.name,
-			"ssh_keys": frappe.get_single("Atlas Settings").public_ssh_key,
+			"ssh_keys": settings.public_ssh_key,
 			"public_ipv4": values["public_ipv4"],
+			"firewall": get_proxy_firewall(settings.region_id),
 		}
 		try:
 			result = VirtualMachineService.create(virtual_machine_request)

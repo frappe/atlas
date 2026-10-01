@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import shlex
 from datetime import UTC, timedelta
 from functools import cached_property
 from string import Template
@@ -13,7 +14,8 @@ import frappe
 from frappe import _
 from frappe.utils import get_datetime, get_system_timezone
 
-from atlas.atlas.core.mesh_address import get_region_mesh_address_prefix
+from atlas.atlas.core.mesh_address import get_region_mesh_address_prefix, get_virtual_machine_mesh_address
+from atlas.vm.doctype.virtual_machine.virtual_machine import PRIVILEGED_TENANT_ID
 
 if TYPE_CHECKING:
 	from atlas.atlas.doctype.atlas_settings.atlas_settings import AtlasSettings
@@ -70,8 +72,12 @@ ATLAS_PROXY_CONFIG_END
 mv -f $temporary_path $config_path"""
 )
 
+PEER_HOSTS_MARKER = "# atlas-proxy-peer"
+
 APPLY_COMMAND_TEMPLATE = Template(
 	"""set -eu
+sed -i '/ $peer_hosts_marker$$/d' /etc/hosts
+printf '%s' $peer_hosts >> /etc/hosts
 $apply_command
 systemctl enable --now $socket_unit
 systemctl enable $daemon_unit
@@ -187,6 +193,12 @@ class ProxyConfiguration:
 			{
 				"node_id": proxy_server.name,
 				"address": f"https://{proxy_server.get_domain()}",
+				"mesh_address": get_virtual_machine_mesh_address(
+					frappe._dict(name=proxy_server.virtual_machine, tenant_id=PRIVILEGED_TENANT_ID),
+					self.settings.region_id,
+				)
+				if proxy_server.virtual_machine
+				else "",
 			}
 			for proxy_server in sorted(proxy_servers, key=lambda item: item.name)
 		]
@@ -231,8 +243,17 @@ class ProxyConfiguration:
 
 	def get_apply_command(self) -> str:
 		"""Return the command that applies the configuration."""
+		peer_hosts = "".join(
+			f"{peer['mesh_address']} {peer['address'].removeprefix('https://')} {PEER_HOSTS_MARKER}\n"
+			for peer in self.peers
+			if peer["mesh_address"]
+		)
 		return APPLY_COMMAND_TEMPLATE.substitute(
-			apply_command=APPLY_COMMAND, socket_unit=DAEMON_SOCKET_UNIT, daemon_unit=DAEMON_UNIT
+			peer_hosts_marker=PEER_HOSTS_MARKER,
+			peer_hosts=shlex.quote(peer_hosts),
+			apply_command=APPLY_COMMAND,
+			socket_unit=DAEMON_SOCKET_UNIT,
+			daemon_unit=DAEMON_UNIT,
 		)
 
 
