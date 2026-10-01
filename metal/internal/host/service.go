@@ -23,8 +23,8 @@ type DesiredState struct {
 
 // SyncResult contains what the controller reads back from one sync exchange.
 type SyncResult struct {
-	Capacity         Capacity
-	VirtualMachines  map[string]VirtualMachineReport
+	Capacity        Capacity
+	VirtualMachines map[string]VirtualMachineReport
 	// PrivateNetworkMAC is the MAC of the mesh uplink. It is empty when the mesh is disabled.
 	PrivateNetworkMAC string
 }
