@@ -266,6 +266,8 @@ class TestNetworkRules(unittest.TestCase):
 			f"host_address={atlas_vm.HOST_ADDRESS}\n"
 			f"vm_address={atlas_vm.VM_ADDRESS}\n"
 			'forwards="443:443"\n'
+			'udp_forwards="51821:51821"\n'
+			'private_network_cidr="10.1.0.0/20"\n'
 			+ atlas_vm.NETWORK_SCRIPT_BODY.replace('case "${1:-}" in', 'rules\nexit 0\ncase "${1:-}" in')
 		)
 		script.chmod(0o755)
@@ -282,7 +284,7 @@ class TestNetworkRules(unittest.TestCase):
 			f"-t nat -A PREROUTING -d {self.uplink_address} -p tcp --dport 443 "
 			f"-j DNAT --to-destination {atlas_vm.VM_ADDRESS}:443"
 		)
-		prerouting = [rule for rule in self.rules if "-A PREROUTING" in rule]
+		prerouting = [rule for rule in self.rules if "-A PREROUTING" in rule and "-p tcp" in rule]
 		self.assertEqual(prerouting, [expected])
 
 	def test_the_host_reaches_a_forward_through_its_own_address(self) -> None:

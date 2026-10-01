@@ -22,6 +22,7 @@ from atlas.atlas.core.host_binaries import (
 from atlas.atlas.core.setup import AtlasSetup, AtlasSetupConfiguration
 from atlas.atlas.object_storage import ObjectStorageError
 from atlas.metal_server.core.atlas_peer import AtlasPeer
+from atlas.metal_server.core.development_gateway import DevelopmentGateway
 from atlas.metal_server.doctype.metal_server.metal_server import MetalServer
 from atlas.service.core.service_package import SERVICE_PACKAGES
 from atlas.vm.core.image_builder import build_ubuntu_image, publish_ubuntu_image
@@ -224,6 +225,30 @@ def atlas_wireguard(context: CliCtxObj) -> None:
 			frappe.destroy()
 
 
+@click.command("atlas-dev-gateway")
+@click.argument("metal_server")
+@click.option(
+	"--ssh-host",
+	help="Reach a host that has no Atlas link yet, for example the first host by its public IPv4.",
+)
+@pass_context
+def atlas_dev_gateway(context: CliCtxObj, metal_server: str, ssh_host: str | None = None) -> None:
+	"""Run the development gateway on a Metal host and write the local wg-quick file."""
+	if not context.sites:
+		raise SiteNotSpecifiedError
+
+	for site in context.sites:
+		try:
+			frappe.init(site)
+			frappe.connect()
+			frappe.set_user("Administrator")
+			config_path = DevelopmentGateway(frappe.get_doc("Metal Server", metal_server)).install(ssh_host)
+			frappe.db.commit()  # nosemgrep
+			click.echo(f"{site}: {config_path}")
+		finally:
+			frappe.destroy()
+
+
 @click.command("import-metal-server")
 @click.argument("provider_server_id")
 @click.option("--storage-pool-device", help="Device or disk image file for the storage pool.")
@@ -252,5 +277,6 @@ commands = [
 	build_service_packages,
 	build_ubuntu_base_image,
 	atlas_wireguard,
+	atlas_dev_gateway,
 	import_metal_server,
 ]

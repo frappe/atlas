@@ -26,9 +26,9 @@ Atlas writes `sites/<site>/private/wireguard/atlas0.conf`. Each host peer allows
 
 A root systemd timer applies the file every 10 seconds. When the file changed, it copies it to `/etc/wireguard/atlas0.conf` and runs `wg syncconf`, or `wg-quick up` for the first start. A timer is used because SELinux can hide a home directory from a path unit.
 
-Atlas uses each host private IPv4 address as the endpoint. The Atlas VM reaches it through the masquerade on its parent host.
+Atlas uses each host private IPv4 address as the endpoint. The Atlas VM reaches it through the masquerade on its parent host. A development Atlas reaches it through the [development gateway](#development-gateway).
 
-Site config `atlas_wireguard_mtu` sets the `atlas0` MTU.
+Site config `atlas_wireguard_mtu` sets the `atlas0` MTU. Use `1280` through the development gateway.
 
 ## Set up the Atlas machine
 
@@ -47,6 +47,24 @@ The service also applies table `inet atlas_atlas0`. It admits TCP `22`, `80`, `4
 To change the TCP ports, run the install script again with `ATLAS_WIREGUARD_TCP_PORTS`. For a development listener on port `8000`, set the value to `"22, 80, 443, 2222, 8000"`.
 
 WireGuard needs no port on `atlas0`, because Atlas starts every handshake from the uplink.
+
+## Development gateway
+
+A development Atlas runs outside the provider network. The gateway is atlas-vm in gateway mode on one Metal host. It carries the `atlas0` packets to the host private endpoints, so hosts expose no WireGuard port publicly.
+
+```text
+laptop atlas-gateway (172.16.100.3) ==outer WireGuard==> atlas-vm :51821 ── masquerade ──> 10.1.0.x:51820
+laptop atlas0 ======================= inner WireGuard, end to end ======================> host wg0
+```
+
+1. Create the first Metal Server record. Its setup can stop at `wireguard-link` after 120 seconds. The host firewall is not installed yet.
+2. Run `pilot --site SITE atlas-dev-gateway <metal-server-id> --ssh-host <public-IPv4>`. The command installs atlas-vm on that host and writes `atlas-gateway.conf`. When Atlas can reach that host later, omit `--ssh-host` to update the gateway.
+3. Run `sudo scripts/install-atlas-wireguard.sh <bench>/sites/SITE/private/wireguard/atlas-gateway.conf` on the Atlas machine.
+4. Set the Atlas MTU to `1280` with `pilot --site SITE set-config -p atlas_wireguard_mtu 1280`. Then run `pilot --site SITE atlas-wireguard` to rewrite `atlas0.conf`.
+5. Restart `atlas0` with `sudo wg-quick down atlas0 && sudo systemctl start atlas-wireguard-atlas0.service`. `wg syncconf` does not change the MTU of a running interface.
+6. If the Metal Server status is `Failed`, use **Setup Metal Server** to retry. Normal setup installs Metal and the host firewall after the WireGuard link works.
+
+The gateway cannot decrypt the `atlas0` sessions. The outer link carries only the provider private network.
 
 ## Host side
 
@@ -94,17 +112,18 @@ Without `atlas_internal_url`, clients use `atlas_base_url` or the site URL.
 
 | Problem | Action |
 | --- | --- |
-| No handshake on `atlas0` | Check `wg show atlas0` and UDP 51820 on the host. |
+| No handshake on `atlas0` | Check `wg show atlas0`, the gateway link, and UDP 51820 on the host. |
 | New host stops at `wireguard-link` | Check that `atlas0.conf` lists the host and that the timer applied it: `systemctl status atlas-wireguard-atlas0.service`. |
 | Atlas key lost | Restore the site backup with its `site_config.json`, because the encryption key is in that file. A new key needs the provider console on every host: clear `wireguard_public_key` in Atlas Settings, run `atlas-wireguard`, then run `configure-wireguard.sh` on each host. |
 | Host firewall blocks access | From the private network or console, run `systemctl disable --now atlas-host-firewall && nft delete table inet atlas_host`. |
 
 ::: details Source code and tests
 
-- [Atlas peer](../../atlas/metal_server/core/atlas_peer.py) owns the identity and `atlas0.conf`.
+- [Atlas peer](../../atlas/metal_server/core/atlas_peer.py) owns the identity and `atlas0.conf`. [Development gateway](../../atlas/metal_server/core/development_gateway.py) owns `atlas-gateway.conf`.
 - [Timer installer](../../scripts/install-atlas-wireguard.sh) applies a file and its input filter as root.
 - [WireGuard script](../../atlas/scripts/configure-wireguard.sh) adds the Atlas peer to a host.
 - [Host firewall script](../../atlas/scripts/install-host-firewall.sh) writes the host rules.
+- [atlas-vm](../../scripts/atlas-vm/atlas_vm.py) runs the gateway VM.
 - [WG Mesh VM hook](../../services/wg-mesh/bpf/vm.h) routes tenant-0 traffic to the controller.
 - [Atlas peer tests](../../atlas/metal_server/core/test_atlas_peer.py) and [provisioning tests](../../atlas/metal_server/core/test_provisioning.py) check identity and setup order.
 

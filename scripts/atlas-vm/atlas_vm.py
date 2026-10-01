@@ -47,6 +47,8 @@ FIRECRACKER_VERSION = "v1.16.1"
 HOST_ADDRESS = "172.16.100.1"
 VM_ADDRESS = "172.16.100.2"
 FORWARD_PORTS = (80, 443)
+GATEWAY_PORT = 51821
+GATEWAY_DEVELOPER_ADDRESS = "172.16.100.3"
 SCALEWAY_ZONES = {
 	"fr-par-1",
 	"fr-par-2",
@@ -137,6 +139,8 @@ class Settings:
 	setup_script_url: str = ""
 	import_server_id: str = ""
 	import_storage_pool_device: str = ""
+	private_network_cidr: str = ""
+	developer_public_key: str = ""
 
 	@classmethod
 	def read(cls, path: Path) -> Settings:
@@ -154,7 +158,7 @@ class Settings:
 		branch = atlas.get("branch", "develop")
 		return cls(
 			path=path,
-			site=pilot["site"],
+			site=pilot.get("site", ""),
 			bench_user=pilot.get("user", "frappe"),
 			vcpu_count=int(vm.get("vcpu_count", 4)),
 			memory_mib=int(vm.get("memory_mib", 8192)),
@@ -163,6 +167,8 @@ class Settings:
 			setup_script_url=f"{raw}/{branch}/scripts/atlas-vm/setup.py",
 			import_server_id=atlas.get("import_server_id", ""),
 			import_storage_pool_device=atlas.get("import_storage_pool_device", ""),
+			private_network_cidr=atlas.get("private_network_cidr", ""),
+			developer_public_key=document.get("gateway", {}).get("developer_public_key", ""),
 		)
 
 	def update_sizes(self, changes: dict[str, int]) -> None:
@@ -181,6 +187,12 @@ class Settings:
 
 def validate_configuration(document: dict, path: Path) -> None:
 	"""Reject an incomplete deployment configuration before the VM changes."""
+	if "gateway" in document:
+		_validate_keys(document, {"vm", "gateway", "atlas"}, path, "")
+		_validate_vm_configuration(document.get("vm", {}), path)
+		_required_string(document["gateway"], "developer_public_key", path, "gateway")
+		_required_string(_required_table(document, "atlas", path), "private_network_cidr", path, "atlas")
+		return
 	_validate_keys(document, {"vm", "pilot", "atlas", "image"}, path, "")
 	_validate_vm_configuration(document.get("vm", {}), path)
 	_validate_pilot_configuration(_required_table(document, "pilot", path), path)
@@ -639,6 +651,36 @@ class ConsoleReader:
 			guest(line)
 
 
+GATEWAY_SCRIPT = r"""set -eu
+interface=atlas-gateway
+# The guest kernel has no WireGuard module, so wg-quick starts wireguard-go.
+packages="wireguard-tools wireguard-go"
+if ! dpkg -s $packages >/dev/null 2>&1; then
+	apt-get update -qq
+	DEBIAN_FRONTEND=noninteractive apt-get install -y -qq $packages >/dev/null
+fi
+install -d -m 700 /etc/wireguard
+[ -f /etc/wireguard/$interface.key ] || (umask 077 && wg genkey > /etc/wireguard/$interface.key)
+config="[Interface]
+ListenPort = $LISTEN_PORT
+PostUp = wg set %i private-key /etc/wireguard/$interface.key
+
+[Peer]
+PublicKey = $DEVELOPER_PUBLIC_KEY
+AllowedIPs = $DEVELOPER_ADDRESS/32"
+if [ "$(cat /etc/wireguard/$interface.conf 2>/dev/null || true)" != "$config" ]; then
+	(umask 077 && printf '%s\n' "$config" > /etc/wireguard/$interface.conf)
+	systemctl restart wg-quick@$interface
+fi
+systemctl enable --quiet wg-quick@$interface
+systemctl is-active --quiet wg-quick@$interface || systemctl restart wg-quick@$interface
+# The developer address is in the guest subnet, so the host masquerade carries it.
+printf 'net.ipv4.ip_forward = 1\nnet.ipv4.conf.eth0.proxy_arp = 1\n' > /etc/sysctl.d/99-atlas-gateway.conf
+sysctl -q -p /etc/sysctl.d/99-atlas-gateway.conf
+wg show $interface public-key
+"""
+
+
 NETWORK_SCRIPT_BODY = r"""
 # Each forward matches the host address, because a match on the port alone also
 # captures traffic that another guest sends through this host to a remote server.
@@ -650,6 +692,13 @@ rules() {
 	[[ -n $uplink_address ]] || { echo "$uplink has no IPv4 address" >&2; exit 1; }
 
 	echo "-t nat -A POSTROUTING -s $vm_address/32 -o $uplink -j MASQUERADE"
+	# The guest subnet reaches the provider private network behind this host.
+	if [[ -n $private_network_cidr ]]; then
+		echo "-t nat -I POSTROUTING -s ${host_address%.*}.0/24 -d $private_network_cidr -j MASQUERADE"
+	fi
+	for pair in $udp_forwards; do
+		echo "-t nat -A PREROUTING -d $uplink_address -p udp --dport ${pair%%:*} -j DNAT --to-destination $vm_address:${pair##*:}"
+	done
 	echo "-t nat -A POSTROUTING -s 127.0.0.0/8 -d $vm_address -j SNAT --to-source $host_address"
 	echo "-t filter -I FORWARD -i $tap_device -j ACCEPT"
 	echo "-t filter -I FORWARD -o $tap_device -j ACCEPT"
@@ -726,7 +775,8 @@ class VirtualMachine:
 
 	@property
 	def port_forwards(self) -> list[tuple[int, int]]:
-		return [(self.settings.ssh_port, 22)] + [(port, port) for port in FORWARD_PORTS]
+		ports = () if self.settings.developer_public_key else FORWARD_PORTS
+		return [(self.settings.ssh_port, 22)] + [(port, port) for port in ports]
 
 	def ssh_arguments(self, command: list[str] | None = None) -> list[str]:
 		arguments = [
@@ -767,6 +817,7 @@ class VirtualMachine:
 
 	def write_network_script(self) -> None:
 		forwards = " ".join(f"{host}:{guest}" for host, guest in self.port_forwards)
+		cidr = self.settings.private_network_cidr
 		header = f"""#!/usr/bin/env bash
 # Host network for the {VM_NAME} VM. Generated by atlas-vm.
 set -euo pipefail
@@ -775,6 +826,8 @@ tap_device={self.tap_device}
 host_address={HOST_ADDRESS}
 vm_address={VM_ADDRESS}
 forwards="{forwards}"
+udp_forwards="{f"{GATEWAY_PORT}:{GATEWAY_PORT}" if self.settings.developer_public_key else ""}"
+private_network_cidr="{cidr}"
 """
 		write_file(self.paths.network_script, header + NETWORK_SCRIPT_BODY, mode=0o755)
 
@@ -927,6 +980,20 @@ WantedBy=multi-user.target
 		if process.returncode != 0:
 			raise AtlasVmError(f"setup.py failed; read {self.paths.setup_log}")
 
+	def setup_gateway(self) -> None:
+		"""Relay the developer WireGuard link to the provider private network."""
+		step("set up the development gateway")
+		environment = f"DEVELOPER_PUBLIC_KEY={shlex.quote(self.settings.developer_public_key)} LISTEN_PORT={GATEWAY_PORT} DEVELOPER_ADDRESS={GATEWAY_DEVELOPER_ADDRESS}"
+		result = subprocess.run(
+			self.ssh_arguments([f"{environment} bash -s"]),
+			input=GATEWAY_SCRIPT,
+			capture_output=True,
+			text=True,
+		)
+		if result.returncode != 0:
+			raise AtlasVmError(f"gateway setup failed: {result.stdout[-500:]}{result.stderr[-500:]}")
+		print(f"gateway public key: {result.stdout.strip().splitlines()[-1]}")
+
 	def import_host(self) -> None:
 		"""Add this host to Atlas as a Metal Server. Atlas connects to it with the key of its bench user."""
 		settings = self.settings
@@ -1042,7 +1109,9 @@ def command_create(machine: VirtualMachine, arguments: argparse.Namespace) -> No
 	install_self()
 
 	machine.start(arguments.verbose)
-	if not arguments.skip_setup:
+	if machine.settings.developer_public_key:
+		machine.setup_gateway()
+	elif not arguments.skip_setup:
 		machine.run_setup(arguments.script)
 		machine.import_host()
 	command_status(machine, arguments)
@@ -1115,6 +1184,9 @@ def command_logs(machine: VirtualMachine, arguments: argparse.Namespace) -> None
 def command_setup(machine: VirtualMachine, arguments: argparse.Namespace) -> None:
 	if not machine.is_running:
 		raise AtlasVmError(f"{SERVICE_NAME} is not running; start it with: atlas-vm start")
+	if machine.settings.developer_public_key:
+		machine.setup_gateway()
+		return
 	machine.run_setup(arguments.script)
 	machine.import_host()
 
