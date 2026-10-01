@@ -365,6 +365,33 @@ class TestAwsProvider(UnitTestCase):
 		with self.assertRaisesRegex(AwsError, "not the Atlas subnet subnet-atlas"):
 			provider.import_server(self.server("i-1"))
 
+	def test_an_import_matches_an_older_image_of_a_catalog_version(self) -> None:
+		"""The catalog keeps only the newest image, and an instance can run an older one."""
+		provider = self.provider()
+		provider.configuration = SimpleNamespace(subnet_id="subnet-atlas")
+		provider.servers.fetch.return_value = {
+			"ImageId": "ami-old",
+			"SubnetId": "subnet-atlas",
+			"InstanceType": "c7i.xlarge",
+			"Tags": [{"Key": "Name", "Value": "osa-host"}],
+		}
+		provider.client.call.return_value = {
+			"Images": [
+				{
+					"ImageId": "ami-old",
+					"Name": "ubuntu/images/hvm-ssd-gp3/ubuntu-noble-24.04-amd64-server-20260904",
+					"CreationDate": "2026-09-04T11:45:55.000Z",
+				}
+			]
+		}
+		provider.apply_provider_server = Mock()
+		server = self.server("i-1")
+
+		with patch("atlas.atlas.core.server_providers.aws.provider.frappe.db.exists", return_value=True):
+			provider.import_server(server)
+
+		self.assertEqual((server.server_image, server.title), ("Ubuntu_24.04", "osa-host"))
+
 	def provider(self) -> AwsProvider:
 		provider = object.__new__(AwsProvider)
 		provider.settings = SimpleNamespace(

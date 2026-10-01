@@ -135,11 +135,14 @@ class AwsProvider(ServerProvider):
 				f"No Metal Server Size matches {instance_type}. Sync the Metal Server Size catalog first."
 			)
 		server.server_size = instance_type
-		server.server_image = self.find_catalog_record(
-			"Metal Server Image",
-			lambda metadata: metadata.get("ImageId") == instance.get("ImageId"),
-			f"image {instance.get('ImageId')}",
-		)
+		# The catalog keeps only the newest image of each version, so match the version.
+		images = self.client.call("ec2", "describe_images", ImageIds=[instance["ImageId"]]).get("Images", [])
+		versions = self.catalog.get_server_images(images)
+		if not versions or not frappe.db.exists("Metal Server Image", versions[0].name):
+			raise AwsError(
+				f"No Metal Server Image matches image {instance['ImageId']}. Sync the Metal Server Image catalog first."
+			)
+		server.server_image = versions[0].name
 		tags = {
 			tag.get("Key"): tag.get("Value") for tag in instance.get("Tags") or [] if isinstance(tag, Mapping)
 		}
