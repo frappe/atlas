@@ -54,7 +54,7 @@ affinity_rules = [node, ...]               every node must hold (AND); absent or
 node           = rule | any_of | all_of
 any_of         = {"any_of": [node, ...]}   at least one node holds (OR)
 all_of         = {"all_of": [node, ...]}   every node holds (AND)
-rule           = {"resource": resource, "operator": operator, "tags": {key: value, ...}}
+rule           = {"resource": resource, "operator": operator, "tags": {key: value, ...}, "within": key}
 resource       = "metal_server" | "virtual_machine"
 operator       = "has" | "has_not"
 ```
@@ -64,6 +64,7 @@ operator       = "has" | "has_not"
 | `resource` | `metal_server`, `virtual_machine` | `metal_server` reads the tags of the host. `virtual_machine` reads the tags of each VM on the host. |
 | `operator` | `has`, `has_not` | `has` needs a resource with every pair in `tags`. `has_not` is the opposite of `has`. |
 | `tags` | 1 to 32 key and value pairs | Every pair must be on the same resource. Atlas trims each key and value. A key has 1 to 128 characters. A value has at most 1000 characters. |
+| `within` | A host tag key, such as `rack`. Optional. | Only for `virtual_machine`. The rule reads the VMs on every host that has the same value for this key as the candidate host. Without `within`, it reads only the VMs on the candidate host. |
 | `any_of` | 1 or more nodes | The group holds when at least one node holds. |
 | `all_of` | 1 or more nodes | The group holds when every node holds. |
 
@@ -77,6 +78,10 @@ A rule asks for one of these conditions on a candidate host:
 | `virtual_machine` | `has_not` | No VM on the host has every pair. |
 
 For `virtual_machine`, one rule with two pairs needs one VM that has both pairs. An `all_of` group of two rules accepts two different VMs.
+
+A `virtual_machine` rule counts only the VMs of the same tenant. It counts a VM on its host, also when the VM is a draft, and on the destination host of its active migration. It does not count a VM that is being terminated, or the VM that placement moves.
+
+With `within`, the hosts that share the candidate host's value for the key are its **group**. For example, with `"within": "rack"` and a candidate host tagged `rack: a`, the group is every host tagged `rack: a`, whatever its status. `has` then needs a VM with every pair somewhere in the group, and `has_not` needs no such VM in the group. A candidate host without the key fails the rule for both operators, because Atlas cannot tell which group it is in.
 
 ### Examples
 
@@ -104,11 +109,25 @@ This request asks for a storage-optimised host in rack `a`, or for any memory-op
 }
 ```
 
+This request keeps a database replica out of every rack that already has one:
+
+```json
+{
+  "tags": {"role": "db-replica"},
+  "affinity_rules": [
+    {"resource": "virtual_machine", "operator": "has_not", "tags": {"role": "db-replica"}, "within": "rack"}
+  ]
+}
+```
+
+If a replica runs on host 1 in rack `a`, host 3 in rack `a` fails the rule, although host 3 runs no replica itself. Hosts in rack `b` pass. A host without a `rack` tag fails.
+
 ### Validation
 
 Atlas rejects the request with `400` when one of these is true:
 
-- A rule has an unknown field, for example `within`, or a rule has no `resource`, `operator`, or `tags`.
+- A rule has an unknown field, for example `weight`, or a rule has no `resource`, `operator`, or `tags`.
+- A `metal_server` rule has `within`, or `within` is empty or longer than 128 characters.
 - `resource` or `operator` has an unknown value.
 - `tags` is empty, a tag breaks the limits above, or two keys are the same after Atlas trims them.
 - An `any_of` or `all_of` group is empty, or a group object has more than one key.
@@ -120,6 +139,8 @@ Atlas rejects the request with `400` when one of these is true:
 The rules are a filter before the strategy. When at least one host that meets the rules has room, placement removes the other hosts from its host pool. Then the strategy ranks the remaining hosts as usual.
 
 The host pool can be up to 1 second old, so two placements at the same time can see the same hosts. For this reason, Atlas checks the rules again while it holds the host lock, against the committed VMs on the host. If two Cargo Server VMs with `has_not {"role": "cargo-server"}` arrive together, the second one reads the draft of the first one. Placement then treats that host like a locked host and tries again with a fresh host pool, so the second VM goes to another host.
+
+A rule with `within` reads the VMs on every host of the group. Thus, placement also locks each other host of the group before it checks the rule, and keeps those locks until the VM record commits. It does not wait for these locks, so two placements that need the same group cannot deadlock. If another placement holds one of them, placement treats the candidate host as locked and tries again.
 
 The **Affinity Matching** setting in Atlas Settings, on the VM Scheduler tab, selects what happens when no host that meets the rules has room:
 

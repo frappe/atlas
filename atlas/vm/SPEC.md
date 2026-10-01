@@ -30,6 +30,7 @@ This file identifies code owners and rules that a code change must preserve. The
 - The draft commits its tags and affinity rules in the same transaction as its host reservation.
 - `PlacementContext` owns the affinity rules, so the strategies do not know about them. It removes the hosts that fail the rules from the snapshot, and checks the rules again under the host lock. Keep both checks: the snapshot can be 1 second old. A failed check under the lock counts as contention, so the next attempt reads a fresh snapshot.
 - A migration to a destination that an operator names does not apply the affinity rules.
+- A `within` rule reads the VMs of every host in the group of the candidate host. Placement locks each of those hosts without waiting, and keeps the locks until the draft commits.
 - Atlas changes one network value, then sends the complete network object to Metal. Public address requests own their corresponding default routes.
 - Guest-specific keys, metadata, and mesh addresses go through Metal and guest metadata. Do not bake them into a shared image.
 - A protected VM cannot be terminated. An unprotected Atlas record is deleted only after Metal confirms that the VM is absent.
