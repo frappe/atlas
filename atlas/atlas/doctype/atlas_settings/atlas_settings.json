@@ -26,9 +26,6 @@
   "metald_binary_x86_64_file",
   "metald_source_hash",
   "metald_binary_hash",
-  "wireguard_ip_address",
-  "wireguard_public_key",
-  "wireguard_private_key",
   "metal_tls_ca_private_key",
   "metal_tls_ca_certificate",
   "column_break_bgjv",
@@ -44,11 +41,16 @@
   "column_break_abbx",
   "central_jwks",
   "networking_tab",
+  "atlas_wireguard_peer_connectivity_section",
+  "wireguard_ip_address",
+  "column_break_uuos",
+  "wireguard_public_key",
+  "wireguard_private_key",
   "private_network_config_section",
   "private_network_cidr",
-  "is_unicast_network_enabled",
   "column_break_jzip",
   "private_network_mtu",
+  "is_unicast_network_enabled",
   "ipv6_router_section",
   "use_ipv6_router_for_auto_assignment",
   "ipv6_router_package_file",
@@ -819,7 +821,6 @@
    "label": "Networking"
   },
   {
-   "description": "The Atlas address on each server wg0. Atlas sets it once.",
    "fieldname": "wireguard_ip_address",
    "fieldtype": "Data",
    "label": "WireGuard IP Address",
@@ -837,13 +838,23 @@
    "hidden": 1,
    "label": "WireGuard Private Key",
    "read_only": 1
+  },
+  {
+   "description": "Atlas's own wireguard config. Use to connect to all other hosts.",
+   "fieldname": "atlas_wireguard_peer_connectivity_section",
+   "fieldtype": "Section Break",
+   "label": "Wireguard Config"
+  },
+  {
+   "fieldname": "column_break_uuos",
+   "fieldtype": "Column Break"
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-10-02 00:00:00.000000",
+ "modified": "2026-10-02 02:05:36.893228",
  "modified_by": "Administrator",
  "module": "Atlas",
  "name": "Atlas Settings",
