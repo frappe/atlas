@@ -88,7 +88,8 @@ def request_virtual_machine_power_state(
 				"The virtual machine was not placed. `error.code` is `out_of_capacity` when no host "
 				"can hold it, which needs more capacity in the region, or `placement_busy` when "
 				"every candidate host was held by another placement, which only needs a retry. A "
-				"busy response carries `Retry-After` in seconds."
+				"busy response carries `Retry-After` in seconds. `affinity_unsatisfied` means that no "
+				"host with room meets the affinity rules of the VM."
 			),
 			"model": CapacityUnavailableResponse,
 			"headers": {
@@ -109,7 +110,7 @@ def create_virtual_machine(
 
 	Set `is_termination_protected` to refuse deletion of the new VM. The termination protection route changes it later.
 
-	Use `tags` to label the VM, for example, `{"role": "cargo-server"}`. `affinity_rules` limits the Metal Servers for the VM by host tags and by the tags of other VMs on the host. Only a System Manager can set rules, and only on a privileged VM. Atlas stores the rules, but placement does not apply them yet.
+	Use `tags` to label the VM, for example, `{"role": "cargo-server"}`. `affinity_rules` limits the Metal Servers for the VM by host tags and by the tags of other VMs on the host. Only a System Manager can set rules, and only on a privileged VM. Atlas Settings selects whether a VM that no host with room can satisfy fails with `affinity_unsatisfied` or goes to any host.
 	"""
 	image = get_owned_image(payload.image_id)
 	request = payload.to_domain_request(get_current_tenant_id(), image.name)

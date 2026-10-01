@@ -122,8 +122,8 @@ def sync_detailed(
 
     Use `tags` to label the VM, for example, `{"role": "cargo-server"}`. `affinity_rules` limits the
     Metal Servers for the VM by host tags and by the tags of other VMs on the host. Only a System
-    Manager can set rules, and only on a privileged VM. Atlas stores the rules, but placement does not
-    apply them yet.
+    Manager can set rules, and only on a privileged VM. Atlas Settings selects whether a VM that no host
+    with room can satisfy fails with `affinity_unsatisfied` or goes to any host.
 
     Args:
         x_tenant_id (int):
@@ -168,8 +168,8 @@ def sync(
 
     Use `tags` to label the VM, for example, `{"role": "cargo-server"}`. `affinity_rules` limits the
     Metal Servers for the VM by host tags and by the tags of other VMs on the host. Only a System
-    Manager can set rules, and only on a privileged VM. Atlas stores the rules, but placement does not
-    apply them yet.
+    Manager can set rules, and only on a privileged VM. Atlas Settings selects whether a VM that no host
+    with room can satisfy fails with `affinity_unsatisfied` or goes to any host.
 
     Args:
         x_tenant_id (int):
@@ -209,8 +209,8 @@ async def asyncio_detailed(
 
     Use `tags` to label the VM, for example, `{"role": "cargo-server"}`. `affinity_rules` limits the
     Metal Servers for the VM by host tags and by the tags of other VMs on the host. Only a System
-    Manager can set rules, and only on a privileged VM. Atlas stores the rules, but placement does not
-    apply them yet.
+    Manager can set rules, and only on a privileged VM. Atlas Settings selects whether a VM that no host
+    with room can satisfy fails with `affinity_unsatisfied` or goes to any host.
 
     Args:
         x_tenant_id (int):
@@ -255,8 +255,8 @@ async def asyncio(
 
     Use `tags` to label the VM, for example, `{"role": "cargo-server"}`. `affinity_rules` limits the
     Metal Servers for the VM by host tags and by the tags of other VMs on the host. Only a System
-    Manager can set rules, and only on a privileged VM. Atlas stores the rules, but placement does not
-    apply them yet.
+    Manager can set rules, and only on a privileged VM. Atlas Settings selects whether a VM that no host
+    with room can satisfy fails with `affinity_unsatisfied` or goes to any host.
 
     Args:
         x_tenant_id (int):

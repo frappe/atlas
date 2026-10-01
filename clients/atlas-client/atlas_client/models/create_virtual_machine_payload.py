@@ -38,7 +38,7 @@ class CreateVirtualMachinePayload:
             memory_mib (int): Memory capacity in MiB.
             affinity_rules (list[AffinityAllOfPayload | AffinityAnyOfPayload | AffinityRulePayload] | Unset): Rules that
                 limit the Metal Servers for the virtual machine. Every listed rule or group must hold. Only a System Manager can
-                set them, and only on a privileged virtual machine. Placement does not apply them yet.
+                set them, and only on a privileged virtual machine. Placement uses only the hosts that meet them.
             disk_iops (int | Unset): Disk IOPS limit. Zero removes the limit. Default: 0.
             disk_throughput_mibps (int | Unset): Disk throughput limit in MiB/s. Zero removes the limit. Default: 0.
             firewall (FirewallPayload | Unset): The complete desired firewall configuration.

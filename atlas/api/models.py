@@ -90,8 +90,16 @@ class PlacementBusyError(BaseModel):
 	fields: list[ApiErrorField] = Field(description="Invalid request fields, or an empty list.")
 
 
+class AffinityUnsatisfiedError(BaseModel):
+	"""No host with room meets the affinity rules of the VM."""
+
+	code: Literal["affinity_unsatisfied"] = Field(description="Stable machine-readable error code.")
+	message: str = Field(description="Safe description of the failure.")
+	fields: list[ApiErrorField] = Field(description="Invalid request fields, or an empty list.")
+
+
 CapacityError = Annotated[
-	OutOfCapacityError | PlacementBusyError,
+	OutOfCapacityError | PlacementBusyError | AffinityUnsatisfiedError,
 	Field(discriminator="code"),
 ]
 
@@ -512,7 +520,7 @@ class CreateVirtualMachinePayload(StrictModel):
 	tags: TagMap = Field(default_factory=dict)
 	affinity_rules: list[AffinityNodePayload] = Field(
 		default_factory=list,
-		description="Rules that limit the Metal Servers for the virtual machine. Every listed rule or group must hold. Only a System Manager can set them, and only on a privileged virtual machine. Placement does not apply them yet.",
+		description="Rules that limit the Metal Servers for the virtual machine. Every listed rule or group must hold. Only a System Manager can set them, and only on a privileged virtual machine. Placement uses only the hosts that meet them.",
 	)
 
 	@model_validator(mode="after")

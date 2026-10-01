@@ -6,6 +6,7 @@ from .affinity_rule_payload import AffinityRulePayload
 from .affinity_rule_payload_operator import AffinityRulePayloadOperator
 from .affinity_rule_payload_resource import AffinityRulePayloadResource
 from .affinity_rule_payload_tags import AffinityRulePayloadTags
+from .affinity_unsatisfied_error import AffinityUnsatisfiedError
 from .api_error_detail import ApiErrorDetail
 from .api_error_field import ApiErrorField
 from .api_error_response import ApiErrorResponse
@@ -84,6 +85,7 @@ __all__ = (
     "AffinityRulePayloadOperator",
     "AffinityRulePayloadResource",
     "AffinityRulePayloadTags",
+    "AffinityUnsatisfiedError",
     "ApiErrorDetail",
     "ApiErrorField",
     "ApiErrorResponse",
