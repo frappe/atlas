@@ -415,8 +415,7 @@ class MetalServer(Document):
 		if not provider_server_id:
 			frappe.throw(_("Enter the provider server ID."))
 		with frappe.db.advisory_lock(f"{frappe.db.cur_db_name}:host-import:{provider_server_id}"):
-			# A waiter must not reuse a snapshot from before the lock holder committed.
-			frappe.db.rollback()
+			frappe.db.rollback()  # nosemgrep
 			name = frappe.db.get_value(
 				"Metal Server", {"provider_server_id": provider_server_id, "status": ["!=", "Deleted"]}
 			)

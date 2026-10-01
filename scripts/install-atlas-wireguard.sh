@@ -15,7 +15,7 @@ if [ "$(id -u)" -ne 0 ]; then
 	exit 1
 fi
 if [ ! -f "$config_file" ]; then
-	echo "$config_file does not exist. Run pilot --site SITE atlas-wireguard first." >&2
+	echo "$config_file does not exist. Run pilot --site SITE configure-atlas-wireguard first." >&2
 	exit 1
 fi
 if ! command -v nft >/dev/null; then

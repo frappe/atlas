@@ -75,7 +75,7 @@ Wait until both actions finish. Atlas marks the settings as complete after both 
 Connect this machine to the host network. Run:
 
 ```sh
-pilot --site <site> atlas-wireguard
+pilot --site <site> configure-atlas-wireguard
 sudo ATLAS_WIREGUARD_TCP_PORTS="22, 80, 443, 2222, 8000" scripts/install-atlas-wireguard.sh <bench>/sites/<site>/private/wireguard/atlas0.conf
 ```
 

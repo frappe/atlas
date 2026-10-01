@@ -40,7 +40,9 @@ class HostInstallation:
 		self.set_wireguard_ip_address()
 		settings = self.server.settings
 		if not settings.wireguard_public_key:
-			frappe.throw(_("Atlas has no WireGuard identity. Run pilot --site SITE atlas-wireguard first."))
+			frappe.throw(
+				_("Atlas has no WireGuard identity. Run pilot --site SITE configure-atlas-wireguard first.")
+			)
 		result = SSHTask.create_for_script_file(
 			target_type=self.server.doctype,
 			target=self.server.name,

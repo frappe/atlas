@@ -31,7 +31,7 @@ Set `atlas.import_server_id` to import this host as a Metal Server after Atlas s
 
 In Atlas mode, setup creates the Atlas WireGuard peer and its systemd timer. See [Atlas access to hosts](../../docs/region/host-access.md) for the network path and host SSH access.
 
-Gateway mode runs a development WireGuard gateway instead of Atlas. Deploy it with `pilot --site SITE atlas-dev-gateway <metal-server-id>`. See [development gateway setup](../../docs/region/host-access.md#development-gateway).
+Gateway mode runs a development WireGuard gateway instead of Atlas. Deploy it with `pilot --site SITE deploy-dev-gateway <metal-server-id>`. See [development gateway setup](../../docs/region/host-access.md#development-gateway).
 
 In Atlas mode, setup creates the server provider network resources and the Route53 records. It also gets the provider catalogs and a wildcard certificate. Each `[[image]]` table creates one system image in site-file storage. Cargo configures object storage later.
 

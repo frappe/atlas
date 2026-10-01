@@ -205,9 +205,9 @@ def is_image_available(site: str, title: str, architecture: str) -> bool:
 		frappe.destroy()
 
 
-@click.command("atlas-wireguard")
+@click.command("configure-atlas-wireguard")
 @pass_context
-def atlas_wireguard(context: CliCtxObj) -> None:
+def configure_atlas_wireguard(context: CliCtxObj) -> None:
 	"""Create the Atlas wg0 identity once and write its wg-quick file."""
 	if not context.sites:
 		raise SiteNotSpecifiedError
@@ -225,14 +225,14 @@ def atlas_wireguard(context: CliCtxObj) -> None:
 			frappe.destroy()
 
 
-@click.command("atlas-dev-gateway")
+@click.command("deploy-dev-gateway")
 @click.argument("metal_server")
 @click.option(
 	"--ssh-host",
 	help="Reach a host that has no Atlas link yet, for example the first host by its public IPv4.",
 )
 @pass_context
-def atlas_dev_gateway(context: CliCtxObj, metal_server: str, ssh_host: str | None = None) -> None:
+def deploy_dev_gateway(context: CliCtxObj, metal_server: str, ssh_host: str | None = None) -> None:
 	"""Run the development gateway on a Metal host and write the local wg-quick file."""
 	if not context.sites:
 		raise SiteNotSpecifiedError
@@ -241,7 +241,6 @@ def atlas_dev_gateway(context: CliCtxObj, metal_server: str, ssh_host: str | Non
 		try:
 			frappe.init(site)
 			frappe.connect()
-			frappe.set_user("Administrator")
 			config_path = DevelopmentGateway(frappe.get_doc("Metal Server", metal_server)).install(ssh_host)
 			frappe.db.commit()  # nosemgrep
 			click.echo(f"{site}: {config_path}")
@@ -262,7 +261,6 @@ def import_metal_server(context: CliCtxObj, provider_server_id: str, storage_poo
 		try:
 			frappe.init(site)
 			frappe.connect()
-			frappe.set_user("Administrator")
 			server = MetalServer.import_from_provider(provider_server_id, storage_pool_device)
 			frappe.db.commit()  # nosemgrep
 			click.echo(f"{site}: Metal Server {server.name} ({server.title}) is {server.status}")
@@ -276,7 +274,7 @@ commands = [
 	build_wg_mesh,
 	build_service_packages,
 	build_ubuntu_base_image,
-	atlas_wireguard,
-	atlas_dev_gateway,
+	configure_atlas_wireguard,
+	deploy_dev_gateway,
 	import_metal_server,
 ]

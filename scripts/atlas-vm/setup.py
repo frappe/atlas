@@ -362,7 +362,7 @@ class Setup:
 		configuration = self.configuration
 		step("stage 12: Atlas WireGuard peer")
 		site = configuration.site
-		self.pilot(f"frappe --site {site} atlas-wireguard")
+		self.pilot(f"frappe --site {site} configure-atlas-wireguard")
 		run(
 			[
 				str(configuration.bench_path / "apps/atlas/scripts/install-atlas-wireguard.sh"),

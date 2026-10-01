@@ -35,12 +35,12 @@ Site config `atlas_wireguard_mtu` sets the `atlas0` MTU. Use `1280` through the 
 Run these commands once on the machine that runs the Atlas bench:
 
 ```sh
-pilot --site SITE atlas-wireguard
+pilot --site SITE configure-atlas-wireguard
 sudo scripts/install-atlas-wireguard.sh <bench>/sites/SITE/private/wireguard/atlas0.conf
 wg show atlas0
 ```
 
-`atlas-wireguard` creates the identity once and writes the peer file. Run it before the first host setup, which refuses to start without it. The install script adds `atlas-wireguard-atlas0.timer` and `atlas-wireguard-atlas0.service`.
+`configure-atlas-wireguard` creates the identity once and writes the peer file. Run it before the first host setup, which refuses to start without it. The install script adds `atlas-wireguard-atlas0.timer` and `atlas-wireguard-atlas0.service`.
 
 The service also applies table `inet atlas_atlas0`. It admits TCP `22`, `80`, `443`, and `2222` on `atlas0`, plus ICMPv6 and replies.
 
@@ -58,9 +58,9 @@ laptop atlas0 ======================= inner WireGuard, end to end ==============
 ```
 
 1. Create the first Metal Server record. Its setup can stop at `wireguard-link` after 120 seconds. The host firewall is not installed yet.
-2. Run `pilot --site SITE atlas-dev-gateway <metal-server-id> --ssh-host <public-IPv4>`. The command installs atlas-vm on that host and writes `atlas-gateway.conf`. When Atlas can reach that host later, omit `--ssh-host` to update the gateway.
+2. Run `pilot --site SITE deploy-dev-gateway <metal-server-id> --ssh-host <public-IPv4>`. The command installs atlas-vm on that host and writes `atlas-gateway.conf`. When Atlas can reach that host later, omit `--ssh-host` to update the gateway.
 3. Run `sudo scripts/install-atlas-wireguard.sh <bench>/sites/SITE/private/wireguard/atlas-gateway.conf` on the Atlas machine.
-4. Set the Atlas MTU to `1280` with `pilot --site SITE set-config -p atlas_wireguard_mtu 1280`. Then run `pilot --site SITE atlas-wireguard` to rewrite `atlas0.conf`.
+4. Set the Atlas MTU to `1280` with `pilot --site SITE set-config -p atlas_wireguard_mtu 1280`. Then run `pilot --site SITE configure-atlas-wireguard` to rewrite `atlas0.conf`.
 5. Restart `atlas0` with `sudo wg-quick down atlas0 && sudo systemctl start atlas-wireguard-atlas0.service`. `wg syncconf` does not change the MTU of a running interface.
 6. If the Metal Server status is `Failed`, use **Setup Metal Server** to retry. Normal setup installs Metal and the host firewall after the WireGuard link works.
 
@@ -114,7 +114,7 @@ Without `atlas_internal_url`, clients use `atlas_base_url` or the site URL.
 | --- | --- |
 | No handshake on `atlas0` | Check `wg show atlas0`, the gateway link, and UDP 51820 on the host. |
 | New host stops at `wireguard-link` | Check that `atlas0.conf` lists the host and that the timer applied it: `systemctl status atlas-wireguard-atlas0.service`. |
-| Atlas key lost | Restore the site backup with its `site_config.json`, because the encryption key is in that file. A new key needs the provider console on every host: clear `wireguard_public_key` in Atlas Settings, run `atlas-wireguard`, then run `configure-wireguard.sh` on each host. |
+| Atlas key lost | Restore the site backup with its `site_config.json`, because the encryption key is in that file. A new key needs the provider console on every host: clear `wireguard_public_key` in Atlas Settings, run `configure-atlas-wireguard`, then run `configure-wireguard.sh` on each host. |
 | Host firewall blocks access | From the private network or console, run `systemctl disable --now atlas-host-firewall && nft delete table inet atlas_host`. |
 
 ::: details Source code and tests

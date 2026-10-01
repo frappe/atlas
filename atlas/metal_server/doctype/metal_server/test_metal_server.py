@@ -914,7 +914,7 @@ class TestServer(UnitTestCase):
 		)
 
 	def test_configure_wireguard_needs_the_atlas_identity(self) -> None:
-		"""Only atlas-wireguard creates the key, so two first provisions cannot make two keys."""
+		"""Only configure-atlas-wireguard creates the key, so two first provisions cannot make two keys."""
 		server = self._server(status="Running")
 
 		server.settings.wireguard_public_key = None
@@ -923,7 +923,7 @@ class TestServer(UnitTestCase):
 			patch(
 				"atlas.metal_server.core.host_installation.SSHTask.create_for_script_file"
 			) as create_for_script_file,
-			self.assertRaisesRegex(frappe.ValidationError, "atlas-wireguard"),
+			self.assertRaisesRegex(frappe.ValidationError, "configure-atlas-wireguard"),
 		):
 			MetalServer._configure_wireguard(server)
 
