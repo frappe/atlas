@@ -4,6 +4,7 @@
 set -euo pipefail
 
 : "${REGION_ID:?REGION_ID is required}"
+: "${GATEWAY_ID:?GATEWAY_ID is required}"
 : "${GATEWAY_MESH:?GATEWAY_MESH is required}"
 : "${LISTEN_PORT:?LISTEN_PORT is required}"
 : "${JWKS_URL:?JWKS_URL is required}"
@@ -28,15 +29,16 @@ export DEBIAN_FRONTEND=noninteractive
 # needrestart would restart ssh and systemd-networkd during the install.
 export NEEDRESTART_SUSPEND=1
 apt-get update -qq
-apt-get install -y -qq wireguard-tools nftables iproute2 ca-certificates curl gnupg lsb-release
+apt-get install -y -qq wireguard-tools clang libbpf-dev linux-libc-dev iproute2 python3 ca-certificates curl gnupg lsb-release
 
 
 step "load kernel modules"
 # Atlas boots the kernel from outside the root file system, so the image can miss these modules.
 apt-get install -y -qq "linux-modules-$(uname -r)" "linux-modules-extra-$(uname -r)"
-modprobe nf_tables
 modprobe wireguard
-printf '%s\n' nf_tables wireguard > /etc/modules-load.d/atlas-wg-gateway.conf
+modprobe sch_ingress
+modprobe cls_bpf
+printf '%s\n' wireguard sch_ingress cls_bpf > /etc/modules-load.d/atlas-wg-gateway.conf
 
 
 step "enable IPv6 forwarding"
@@ -70,36 +72,29 @@ ip link add wg0 type wireguard 2>/dev/null || true
 ip link set wg0 mtu 1320
 ip link set wg0 up
 wg setconf wg0 "$state_dir/peers.conf"
-ip -6 route replace fdac::/16 dev wg0
+read -r gateway_address gateway_prefix mesh0 mesh1 mesh2 mesh3 < <(python3 - "$REGION_ID" "$GATEWAY_ID" "$GATEWAY_MESH" <<'PYTHON'
+import ipaddress
+import sys
+
+region, gateway = map(int, sys.argv[1:3])
+if not 0 <= region <= 0xffff or not 1 <= gateway <= 0xffff:
+	sys.exit("REGION_ID or GATEWAY_ID is outside its IPv6 address field")
+base = (0xfdac << 112) | (region << 96) | (gateway << 80)
+mesh = ipaddress.IPv6Address(sys.argv[3]).packed
+print(ipaddress.IPv6Address(base | 1), ipaddress.IPv6Network((base, 48)),
+	*(int.from_bytes(mesh[index:index + 4], "big") for index in range(0, 16, 4)))
+PYTHON
+)
+ip -6 addr replace "$gateway_address/128" dev wg0
+ip -6 route replace "$gateway_prefix" dev wg0
+printf 'WG_GATEWAY_ADDRESS=%s/128\nWG_GATEWAY_PREFIX=%s\n' "$gateway_address" "$gateway_prefix" > "$state_dir/network.env"
 
 
-step "write the firewall"
-# Atlas replaces this file on every peer change. The boot copy drops new
-# client traffic and SNATs nothing, so a fresh gateway is closed by default.
-cat > "$state_dir/gateway.nft" <<EOF
-table ip6 atlas_wg_gateway {}
-delete table ip6 atlas_wg_gateway
-
-table ip6 atlas_wg_gateway {
-	chain forward {
-		type filter hook forward priority filter; policy drop;
-		ct state established,related counter accept
-	}
-
-	chain postrouting {
-		type nat hook postrouting priority srcnat; policy accept;
-		ip6 saddr fdac::/16 ip6 daddr fdaa::/16 counter snat to $GATEWAY_MESH
-	}
-
-	# The gateway forwards out of the interface that received the packet. A redirect would send the host around it.
-	chain output {
-		type filter hook output priority filter; policy accept;
-		icmpv6 type nd-redirect drop
-	}
-}
-EOF
-
-nft -f "$state_dir/gateway.nft"
+step "compile the tenant filter"
+clang -O2 -g -Wall -Werror -DREGION_ID="$REGION_ID" -DGATEWAY_ID="$GATEWAY_ID" \
+	-DMESH_WORD0="$mesh0" -DMESH_WORD1="$mesh1" -DMESH_WORD2="$mesh2" -DMESH_WORD3="$mesh3" \
+	-I"/usr/include/$(uname -m)-linux-gnu" -target bpf \
+	-c "$source_dir/bpf/gateway.c" -o "$state_dir/gateway.bpf.o"
 
 
 step "start the gateway"
@@ -130,6 +125,7 @@ WG_GATEWAY_JWKS_ISSUERS=$JWKS_ISSUERS
 WG_GATEWAY_BIND=$GATEWAY_MESH
 WG_GATEWAY_PORT=80
 WG_GATEWAY_REGION=$REGION_ID
+WG_GATEWAY_ID=$GATEWAY_ID
 WG_GATEWAY_LISTEN_PORT=$LISTEN_PORT
 EOF
 install -m 0644 "$source_dir/systemd/atlas-wg-gateway-api.service" /etc/systemd/system/atlas-wg-gateway-api.service
@@ -141,7 +137,8 @@ systemctl restart atlas-wg-gateway-api.service
 
 step "check the gateway"
 wg show wg0 >/dev/null
-nft list table ip6 atlas_wg_gateway >/dev/null
+tc filter show dev wg0 ingress | grep -q gateway.bpf.o
+tc filter show dev eth0 ingress | grep -q gateway.bpf.o
 systemctl is-active atlas-wg-gateway-api.service >/dev/null
 
-echo "the WireGuard gateway listens on port $LISTEN_PORT and SNATs fdac::/16 to $GATEWAY_MESH"
+echo "the WireGuard gateway listens on port $LISTEN_PORT and routes $gateway_prefix"

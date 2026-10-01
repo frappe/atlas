@@ -6,13 +6,19 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 RemainAfterExit=yes
+EnvironmentFile=/opt/atlas/wg-gateway/network.env
 ExecStart=-ip link add wg0 type wireguard
 ExecStart=ip link set wg0 mtu 1320
 ExecStart=ip link set wg0 up
-ExecStart=ip -6 route replace fdac::/16 dev wg0
+ExecStart=ip -6 addr replace ${WG_GATEWAY_ADDRESS} dev wg0
+ExecStart=ip -6 route replace ${WG_GATEWAY_PREFIX} dev wg0
 ExecStart=wg setconf wg0 /opt/atlas/wg-gateway/peers.conf
-ExecStart=nft -f /opt/atlas/wg-gateway/gateway.nft
-ExecStop=nft delete table ip6 atlas_wg_gateway
+ExecStart=tc qdisc replace dev wg0 clsact
+ExecStart=tc filter replace dev wg0 ingress pref 1 handle 1 bpf direct-action object-file /opt/atlas/wg-gateway/gateway.bpf.o section tc/client
+ExecStart=tc qdisc replace dev eth0 clsact
+ExecStart=tc filter replace dev eth0 ingress pref 1 handle 1 bpf direct-action object-file /opt/atlas/wg-gateway/gateway.bpf.o section tc/mesh
+ExecStop=-tc filter delete dev wg0 ingress pref 1 handle 1 bpf
+ExecStop=-tc filter delete dev eth0 ingress pref 1 handle 1 bpf
 
 [Install]
 WantedBy=multi-user.target
