@@ -61,8 +61,8 @@ class AffinityHost:
 	) -> list[AffinityHost]:
 		"""Load each host's tags and the tags of the tenant VMs that it holds.
 
-		A VM counts on its assigned host, also as a draft or while it terminates, and on the
-		destination of its active migration. `excluded_virtual_machine` never counts.
+		A VM counts on its assigned host, also as a draft, and on the destination of its active
+		migration. A VM that is being terminated and `excluded_virtual_machine` never count.
 		"""
 		host_tags = read_tags_for("Metal Server", list(host_names))
 		placements = cls._find_virtual_machine_hosts(host_names, tenant_id, excluded_virtual_machine)
@@ -87,7 +87,11 @@ class AffinityHost:
 		assigned = (
 			frappe.qb.from_(virtual_machine)
 			.select(virtual_machine.name, virtual_machine.server)
-			.where(virtual_machine.server.isin(list(host_names)) & (virtual_machine.tenant_id == tenant_id))
+			.where(
+				virtual_machine.server.isin(list(host_names))
+				& (virtual_machine.tenant_id == tenant_id)
+				& (virtual_machine.is_terminating == 0)
+			)
 		)
 		incoming = (
 			frappe.qb.from_(migration)
@@ -98,6 +102,7 @@ class AffinityHost:
 				migration.destination_metal_server.isin(list(host_names))
 				& migration.status.isin(RESERVED_MIGRATION_STATUSES)
 				& (virtual_machine.tenant_id == tenant_id)
+				& (virtual_machine.is_terminating == 0)
 			)
 		)
 		if excluded_virtual_machine:
