@@ -124,7 +124,7 @@ When a gateway forwards a packet with an outside client address, WG Mesh checks 
 
 ## Network gateway VMs
 
-A **network gateway** is a privileged VM that carries traffic the mesh does not own. Its own software forwards, translates, or filters packets. The [IPv6 router](ipv6-router.md) is Atlas's managed gateway today. The gateway role lets it keep the real client address. The [packet example](wg-mesh/gateways.md#how-the-packet-changes) shows what the guest sees and how the reply returns.
+A **network gateway** is a privileged VM that carries traffic the mesh does not own. Its own software forwards, translates, or filters packets. The [IPv6 router](ipv6-router.md) and [WireGuard gateway](../../services/wg-gateway/README.md) use this role to keep the real client address. The [packet example](wg-mesh/gateways.md#how-the-packet-changes) shows what the guest sees and how the reply returns.
 
 When Atlas attaches a routed public IPv6 address, it adds the VM's `2000::/3` route to the router. It removes that route on detach. The route also tells WG Mesh whether to admit inbound client packets. [Gateway VMs](wg-mesh/gateways.md) explains the full packet path.
 

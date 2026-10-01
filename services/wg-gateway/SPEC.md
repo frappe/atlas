@@ -1,51 +1,21 @@
 # WireGuard gateway component specification
 
-[Root specification](../../SPEC.md)
+[Root specification](../../SPEC.md) · [Overview](README.md)
 
 ## Purpose
 
-Each WireGuard gateway lets customer devices reach the private `fdaa::/16` VMs
-of their own tenant. The client holds an `fdac::/16` address, the gateway
-SNATs it to its own tenant-0 mesh address, and the WG Mesh carries the packet
-to the VM. Return traffic is restored by conntrack. No custom eBPF is
-involved; the gateway is WireGuard plus one nftables table.
-
-## Layout
-
-```text
-setup.sh      Installer (wireguard-tools, nftables, wg0, daemon, boot firewall)
-daemon/       Standalone gateway API package (peers, config, health)
-systemd/      Service units (reapply wg0 and run the API on boot)
-```
-
-The daemon listens on the gateway mesh address at port 80, the port the proxy
-routes to site VMs. Central reaches
-it through the `<gateway>.<wildcard-domain>` proxy route. Callers present an
-Ed25519 JWT for the `atlas-wg-gateway:<region>` audience, validated against
-the Atlas JWKS exactly like the proxy control daemon: the key id prefix
-selects the issuer (`central` or `atlas:<region>`), a `tenant` claim is
-refused, and the scopes are `*`, `peers:*`, `peers:read`, `peers:update`, and
-`gateway:read`. No shared secret exists. `peers.json` persists the peer list
-on disk; every change rewrites `peers.conf` and `gateway.nft` and applies them
-with `wg setconf` and `nft -f`. Atlas installs the daemon and registers the
-proxy route, then never touches peer state.
+One gateway forwards customer `fdac` packets to the same tenant's `fdaa` VMs. It keeps the client source address. Each eligible VM routes replies through the gateway's mesh address.
 
 ## Interfaces
 
-- `setup.sh` reads `GATEWAY_MESH`, `LISTEN_PORT`, `REGION_ID`, `JWKS_URL`, `GWGATEWAY_AUDIENCE`, and `JWKS_ISSUERS`.
-- `/opt/atlas/wg-gateway/peers.conf` holds the `wg setconf` interface and peers.
-- `/opt/atlas/wg-gateway/gateway.nft` holds the `atlas_wg_gateway` table.
-- `GET /config` on the daemon reports the gateway public key to Atlas.
+`setup.sh` compiles `bpf/gateway.c` as a tc object and installs the `systemd/` services. The `daemon/` package owns `peers.json` and applies `peers.conf` with `wg setconf`.
 
-## Addressing
+The installer takes `REGION_ID`, `GATEWAY_ID`, `GATEWAY_MESH`, `LISTEN_PORT`, `JWKS_URL`, `GWGATEWAY_AUDIENCE`, and `JWKS_ISSUERS`. The daemon binds to the gateway mesh address and validates Ed25519 JWTs for the `atlas-wg-gateway:<region>` audience. It accepts issuer prefixes `central` and `atlas:<region>` and scopes `*`, `peers:*`, `peers:read`, `peers:update`, and `gateway:read`.
 
-Client addresses are `fdac | region 16 | tenant 32 | reserved 0 (32) |
-client 32`. Tenant access is tenant-wide: a client reaches the
-`fdaa:<region>:<tenant>::/64` of its own tenant. The layout helpers live in
-`daemon/gatewayd/main.py` as `_client_fdac` and `_tenant_prefix`.
+## Address and packet contract
 
-## Ownership
+The client address is `fdac | region 16 | gateway ID 16 | tenant ID 32 | client ID 32 | zero 16`. The gateway has `fdac:<region>:<gateway ID>::1/128` on `wg0` and routes its `/48` there. WireGuard allows each peer's single `/128`.
 
-Atlas owns the gateway VM, the proxy route, and the daemon credential. The
-daemon inside the VM owns the peer list and both state files. VM-level
-firewalling stays with each VM.
+The `wg0` ingress program requires a client source for this gateway and a destination with the same region and tenant in `fdaa`. The `eth0` ingress program checks the tenant and gateway ID of replies to `fdac`. Both drop mismatches. No address translation occurs.
+
+Atlas owns the gateway VM and its network gateway role. The daemon owns peers. Atlas's existing server sync adds each active gateway's `/48` route, scoped `wireguard-gateway`, to every VM that holds an opted-in route set. The scope keeps the route in the VM namespace on the host: Metal converges it there and passes it to the WG Mesh return-route map, but the guest metadata never lists it, so the routes inside the VM never change.

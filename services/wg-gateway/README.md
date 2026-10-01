@@ -1,80 +1,11 @@
 # Atlas WireGuard gateway
 
-The WireGuard gateway gives customer devices access to the private IPv6
-addresses (`fdaa::/16`) of their own tenant's VMs. Each customer gets an
-address from `fdac::/16`:
+The gateway forwards customer WireGuard traffic to VMs of the same tenant without changing the client source address. See the [component specification](SPEC.md) and [gateway VM design](../../docs/networking/wg-mesh/gateways.md).
 
-```text
-fdac | region 16 bits | tenant 32 bits | reserved, all zero, 32 bits | client 32 bits
-```
+Client addresses use `fdac | region 16 | gateway ID 16 | tenant ID 32 | client ID 32 | zero 16`. The gateway owns `fdac:<region>:<gateway ID>::/48` and assigns its `::1/128` address to `wg0`.
 
-Access is tenant-wide: a client reaches `fdaa:<region>:<tenant>::/64`.
+The tc eBPF programs check tenants on packets entering `wg0` and replies entering `eth0`. Atlas adds a return route through the gateway mesh address to each VM with **Accessible via WireGuard Gateway** enabled. The route is scoped `wireguard-gateway`, so it lives only in the VM namespace on the host and the routes inside the VM never change.
 
-## Packet path
+Run `setup.sh` on a privileged network gateway VM with `REGION_ID`, `GATEWAY_ID`, `GATEWAY_MESH`, `LISTEN_PORT`, `JWKS_URL`, `GWGATEWAY_AUDIENCE`, and `JWKS_ISSUERS`. The installer compiles the eBPF object and starts the WireGuard and API services.
 
-```text
-Customer (fdac, WireGuard tunnel to gateway public IPv4:port)
-  -> gateway wg0 -> nftables forward (tenant check) -> SNAT to gateway mesh fdaa address
-  -> eth0 -> Metal host -> WG Mesh -> tenant VM
-VM reply -> gateway mesh -> conntrack restores fdac -> wg0 -> customer
-```
-
-The gateway performs SNAT when forwarding into the mesh, so the VM sees the
-gateway's tenant-0 mesh address. The VM firewall still applies.
-
-## Code
-
-| Path | Content |
-| --- | --- |
-| `setup.sh` | Installation on Ubuntu 24.04. |
-| `daemon/` | Standalone gateway API package (peers, config, health). |
-| `systemd/atlas-wg-gateway.service` | Reapplies the `wg0` interface, routes, and nftables on boot. |
-| `systemd/atlas-wg-gateway-api.service` | Runs the gateway API on boot. |
-| `peers.conf`, `gateway.nft` (on the VM) | Daemon-rendered desired state, replaced on every peer change. `peers.conf` carries the interface section, so `wg setconf` alone restores the key and port. |
-
-## Setup
-
-Atlas installs the gateway. See
-[WireGuard Gateway Server](../../atlas/service/doctype/wireguard_gateway_server/SPEC.md).
-
-To install by hand, run this command as root on a tenant-0 gateway VM:
-
-```sh
-REGION_ID=1 GATEWAY_MESH=fdaa:1::99 LISTEN_PORT=51820 \
-  JWKS_URL=https://atlas.example.com/api/atlas/jwks.json \
-  GWGATEWAY_AUDIENCE=atlas-wg-gateway:1 \
-  JWKS_ISSUERS='["central", "atlas:1"]' ./setup.sh
-```
-
-`setup.sh` installs WireGuard, nftables, and the gateway API daemon,
-generates the gateway keypair unless one exists, creates `wg0`, and starts
-`atlas-wg-gateway.service` and `atlas-wg-gateway-api.service`. You can run it
-again; the keypair is kept.
-
-Central manages peers through the daemon with a JWT for the
-`atlas-wg-gateway:<region>` audience (`scope` `peers:*` or `*`):
-
-```sh
-curl -H "Authorization: Bearer <jwt>" https://<gateway>.<wildcard-domain>/peers
-curl -X PUT -H "Authorization: Bearer <jwt>" -H "Content-Type: application/json" \
-  -d '{"peers":[{"tenant_id":1,"client_id":7,"public_key":"<base64>"}]}' \
-  https://<gateway>.<wildcard-domain>/peers
-```
-
-`GET /healthz` is public. Every other route needs a valid token: `401` when
-the credential is missing or invalid, `403` when it lacks the scope.
-
-## Checks
-
-```sh
-wg show wg0
-nft list table ip6 atlas_wg_gateway
-ip -6 route show dev wg0
-```
-
-## Limits
-
-| Limit | Reason |
-| --- | --- |
-| Tenant-wide access only | Per-VM restriction is not implemented; the VM firewall is the second layer. |
-| One listen port per gateway | The port is set when the gateway is created. |
+Check `wg show wg0`, `ip -6 addr show dev wg0`, `ip -6 route show dev wg0`, and `tc filter show dev wg0 ingress`. Check the eligible VM's `fdac` route and WG Mesh gateway route when replies fail.

@@ -32,6 +32,8 @@ Metal needs no per-VM guest-address allocator. WG Mesh discovers which host owns
 | `host` | Host uplink. IPv4 uses namespace NAT. | `0.0.0.0/0` via `host` |
 | Mesh address in `fdaa::/16` | Gateway VM through WG Mesh. IPv6 only. | `2000::/3` via `fdaa:1::56` |
 
+A route with the `wireguard-gateway` scope belongs to the [WireGuard gateway](wg-mesh/gateways.md#use-the-wireguard-gateway) return path. Metal converges it only in the VM namespace on the host, and the guest metadata never lists it, so the routes inside the VM never change.
+
 ## Attach a public address
 
 Direct public addresses need a route via `host` for replies.
