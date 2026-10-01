@@ -34,8 +34,12 @@ ROOTFS_URL = (
 	"ubuntu-24.04-server-cloudimg-amd64.squashfs"
 )
 ROOTFS_SHA256 = "bb4bc95d539df92c96ad0ed34c017363e4a7a62772c6af1dc3553e06ce710b74"
-# The Ubuntu kernel does not boot on the Firecracker device model. Use the CI kernel.
-KERNEL_URL = "https://s3.amazonaws.com/spec.ccfc.min/firecracker-ci/v1.10/x86_64/vmlinux-5.10.223"
+# Firecracker boots only the uncompressed ELF kernel inside the Ubuntu vmlinuz. It has TUN for wireguard-go.
+KERNEL_URL = (
+	"https://cloud-images.ubuntu.com/releases/noble/release-20260518/"
+	"unpacked/ubuntu-24.04-server-cloudimg-amd64-vmlinuz-generic"
+)
+KERNEL_SHA256 = "3a33b65c88f98a5563c926d5b163ebe09706e5084ba587a19c1b15bd3e7a82d6"
 BOOT_ARGUMENTS = "console=ttyS0 reboot=k panic=1 pci=off root=/dev/vda rw"
 VM_NAME = "atlas"
 BENCH_NAME = "atlas"
@@ -71,6 +75,7 @@ REQUIRED_COMMANDS = (
 	"ssh",
 	"scp",
 	"ssh-keygen",
+	"zstd",
 )
 SSH_OPTIONS = (
 	"-o",
@@ -531,7 +536,7 @@ class Paths:
 
 	@property
 	def kernel_image(self) -> Path:
-		return self.downloads / "vmlinux"
+		return self.downloads / "vmlinux-6.8.0-117"
 
 	@property
 	def vm_directory(self) -> Path:
@@ -584,6 +589,25 @@ def download(url: str, path: Path, checksum: str = "") -> None:
 	detail(f"{size / 1024**2:.0f} MiB" if size >= 1024**2 else f"{size / 1024:.0f} KiB")
 
 
+def extract_kernel(vmlinuz: Path, path: Path) -> None:
+	if path.exists():
+		return
+	data = vmlinuz.read_bytes()
+	staged = path.with_suffix(".part")
+	with staged.open("wb") as output:
+		# zstd rejects the trailing bzImage data after it writes the kernel.
+		subprocess.run(
+			["zstd", "-cdq"],
+			input=data[data.find(b"\x28\xb5\x2f\xfd") :],
+			stdout=output,
+			stderr=subprocess.DEVNULL,
+		)
+	if staged.read_bytes()[:4] != b"\x7fELF":
+		staged.unlink()
+		raise AtlasVmError(f"{vmlinuz.name} holds no ELF kernel")
+	staged.rename(path)
+
+
 class ConsoleReader:
 	"""Follow the guest console. The kept lines explain a boot that never reaches Secure Shell."""
 
@@ -627,8 +651,8 @@ rules() {
 
 	echo "-t nat -A POSTROUTING -s $vm_address/32 -o $uplink -j MASQUERADE"
 	echo "-t nat -A POSTROUTING -s 127.0.0.0/8 -d $vm_address -j SNAT --to-source $host_address"
-	echo "-I FORWARD -i $tap_device -j ACCEPT"
-	echo "-I FORWARD -o $tap_device -j ACCEPT"
+	echo "-t filter -I FORWARD -i $tap_device -j ACCEPT"
+	echo "-t filter -I FORWARD -o $tap_device -j ACCEPT"
 	for pair in $forwards; do
 		host_port=${pair%%:*}
 		guest_port=${pair##*:}
@@ -792,6 +816,7 @@ Wants=network-online.target
 
 [Service]
 Type=exec
+ExecStartPre=/bin/rm -f {self.paths.api_socket}
 ExecStartPre={self.paths.network_script} start
 ExecStart={self.paths.firecracker_binary} --api-sock {self.paths.api_socket} --config-file {self.paths.configuration}
 ExecStopPost={self.paths.network_script} stop
@@ -805,6 +830,7 @@ WantedBy=multi-user.target
 """,
 		)
 		run(["systemctl", "daemon-reload"])
+		run(["systemctl", "enable", "--quiet", SERVICE_NAME])
 
 	def install_firecracker(self) -> None:
 		if self.paths.firecracker_binary.exists():
@@ -995,7 +1021,8 @@ def command_create(machine: VirtualMachine, arguments: argparse.Namespace) -> No
 		warn(f"{paths.base} has {free_gib}G free for a {machine.settings.disk_gib}G guest disk")
 
 	machine.install_firecracker()
-	download(KERNEL_URL, paths.kernel_image)
+	download(KERNEL_URL, paths.downloads / "vmlinuz", KERNEL_SHA256)
+	extract_kernel(paths.downloads / "vmlinuz", paths.kernel_image)
 
 	if arguments.rebuild and paths.rootfs_image.exists():
 		print(DESTROY_WARNING.format(directory=paths.vm_directory), file=sys.stderr)
