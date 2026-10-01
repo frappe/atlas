@@ -11,6 +11,7 @@ from ..types import UNSET, Unset
 from typing import cast
 
 if TYPE_CHECKING:
+  from ..models.affinity_unsatisfied_error import AffinityUnsatisfiedError
   from ..models.out_of_capacity_error import OutOfCapacityError
   from ..models.placement_busy_error import PlacementBusyError
 
@@ -30,10 +31,10 @@ class CapacityUnavailableResponse:
     caller can retry a busy placement at once and escalate a full one.
 
         Attributes:
-            error (OutOfCapacityError | PlacementBusyError): Capacity failure details.
+            error (AffinityUnsatisfiedError | OutOfCapacityError | PlacementBusyError): Capacity failure details.
      """
 
-    error: OutOfCapacityError | PlacementBusyError
+    error: AffinityUnsatisfiedError | OutOfCapacityError | PlacementBusyError
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
 
@@ -41,10 +42,13 @@ class CapacityUnavailableResponse:
 
 
     def to_dict(self) -> dict[str, Any]:
+        from ..models.affinity_unsatisfied_error import AffinityUnsatisfiedError # noqa: PLC0415
         from ..models.out_of_capacity_error import OutOfCapacityError # noqa: PLC0415
         from ..models.placement_busy_error import PlacementBusyError # noqa: PLC0415
         error: dict[str, Any]
         if isinstance(self.error, OutOfCapacityError):
+            error = self.error.to_dict()
+        elif isinstance(self.error, PlacementBusyError):
             error = self.error.to_dict()
         else:
             error = self.error.to_dict()
@@ -63,10 +67,11 @@ class CapacityUnavailableResponse:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.affinity_unsatisfied_error import AffinityUnsatisfiedError # noqa: PLC0415
         from ..models.out_of_capacity_error import OutOfCapacityError # noqa: PLC0415
         from ..models.placement_busy_error import PlacementBusyError # noqa: PLC0415
         d = dict(src_dict)
-        def _parse_error(data: object) -> OutOfCapacityError | PlacementBusyError:
+        def _parse_error(data: object) -> AffinityUnsatisfiedError | OutOfCapacityError | PlacementBusyError:
             try:
                 if not isinstance(data, dict):
                     raise TypeError()
@@ -77,13 +82,23 @@ class CapacityUnavailableResponse:
                 return error_type_0
             except (TypeError, ValueError, AttributeError, KeyError):
                 pass
+            try:
+                if not isinstance(data, dict):
+                    raise TypeError()
+                error_type_1 = PlacementBusyError.from_dict(data)
+
+
+
+                return error_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
             if not isinstance(data, dict):
                 raise TypeError()
-            error_type_1 = PlacementBusyError.from_dict(data)
+            error_type_2 = AffinityUnsatisfiedError.from_dict(data)
 
 
 
-            return error_type_1
+            return error_type_2
 
         error = _parse_error(d.pop("error"))
 

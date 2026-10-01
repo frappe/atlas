@@ -13,6 +13,7 @@ from frappe.utils.background_jobs import is_job_enqueued
 
 from atlas.atlas.core.background_jobs import run_as_admin
 from atlas.atlas.core.server_providers.base import ServerCreateRequest, ServerPowerAction
+from atlas.atlas.core.tags import validate_tags
 from atlas.atlas.core.tls.metal import CERTIFICATE_RENEWAL_WINDOW_DAYS, is_certificate_authority_expiring
 from atlas.atlas.doctype.ssh_task.ssh_task import SSHTask
 from atlas.metal_server.core.disk_inventory import DiskInventory
@@ -42,6 +43,7 @@ class MetalServer(Document):
 	if TYPE_CHECKING:
 		from frappe.types import DF
 
+		from atlas.atlas.doctype.atlas_tag.atlas_tag import AtlasTag
 		from atlas.metal_server.doctype.metal_server_disk.metal_server_disk import MetalServerDisk
 
 		architecture: DF.Literal["amd64", "arm64"]
@@ -62,6 +64,7 @@ class MetalServer(Document):
 		server_image: DF.Link
 		server_size: DF.Link
 		status: DF.Literal["Pending", "Installing", "Running", "Stopped", "Failed", "Deleted"]
+		tags: DF.Table[AtlasTag]
 		title: DF.Data
 		wireguard_ip_address: DF.Data | None
 		wireguard_public_key: DF.Data | None
@@ -116,7 +119,8 @@ class MetalServer(Document):
 		self.provider_metadata = frappe.as_json(provider_server.provider_metadata)
 
 	def validate(self) -> None:
-		"""Fill the mesh address."""
+		"""Fill the mesh address and check the tags."""
+		validate_tags(self)
 		self._set_wireguard_ip_address_if_not_set()
 
 	def after_insert(self) -> None:

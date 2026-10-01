@@ -4,10 +4,13 @@ import time
 from collections.abc import Iterable
 from datetime import timedelta
 from hashlib import sha256
+from typing import assert_never
 
 import frappe
+from frappe import _
 from frappe.utils import now_datetime
 
+from atlas.vm.core.placement.affinity import AffinityUnsatisfied, load_affinity_matching
 from atlas.vm.core.placement.models import (
 	CurrentPlacement,
 	FleetUsage,
@@ -81,6 +84,8 @@ class PlacementContext:
 		self.current_host_name = current_placement.host_name if current_placement else None
 		self.sleepy_vm_overcommit_factor = sleepy_vm_overcommit_factor
 		self.use_dedicated_sleepy_vm_hosts = use_dedicated_sleepy_vm_hosts
+		# The affinity filter sets this when it removes hosts from the snapshot.
+		self.apply_affinity = False
 		self.has_contended_hosts = False
 		self.probe_count = 0
 		self.last_probe_was_contended = False
@@ -127,19 +132,58 @@ class PlacementContext:
 			self.last_probe_was_contended = True
 			return False
 
+		held_locks = [lock_name]
 		try:
-			has_capacity = self._host_has_capacity(host_name)
+			is_selectable = self._check_locked_host(host_name, held_locks)
 		except Exception:
-			self._release_host_lock(lock_name)
+			self._release_host_locks(held_locks)
 			raise
 
-		if not has_capacity:
-			self._release_host_lock(lock_name)
+		if not is_selectable:
+			self._release_host_locks(held_locks)
 			return False
 
-		self._keep_host_lock_for_transaction(lock_name)
+		for held_lock in held_locks:
+			self._keep_host_lock_for_transaction(held_lock)
 		self._selected_host = host_name
 		return True
+
+	def _check_locked_host(self, host_name: str, held_locks: list[str]) -> bool:
+		"""Check capacity and affinity while holding the host lock.
+
+		A `within` rule reads the VMs of every host in the group of this host. Each of those
+		hosts is locked too, so no VM lands there before this placement commits. Each extra
+		lock is added to `held_locks`.
+		"""
+		if not self._host_has_capacity(host_name):
+			return False
+
+		for member in self._find_affinity_group(host_name):
+			member_lock = self._host_lock_name(member)
+			# Do not wait, so two placements that lock the same group cannot deadlock.
+			if not self._acquire_host_lock(member_lock, wait=False):
+				self.has_contended_hosts = True
+				return False
+			held_locks.append(member_lock)
+
+		if not self._host_meets_affinity(host_name):
+			# The snapshot missed a VM that a concurrent placement committed. Treat the
+			# host as contended, so the next attempt reads a fresh snapshot.
+			self.has_contended_hosts = True
+			return False
+
+		return True
+
+	def _find_affinity_group(self, host_name: str) -> list[str]:
+		"""Return the other hosts whose VMs the `within` rules read for this host."""
+		if not self.apply_affinity or host_name == self.current_host_name:
+			return []
+
+		return self.requirements.placement_rules.find_related_hosts(host_name)
+
+	def _release_host_locks(self, lock_names: list[str]) -> None:
+		for lock_name in lock_names:
+			self._release_host_lock(lock_name)
 
 	@staticmethod
 	def _host_lock_name(host_name: str) -> str:
@@ -282,10 +326,11 @@ class PlacementContext:
 		return next((host for host in self.usage.hosts if host.name == host_name), None)
 
 	def _load_fleet_usage(self, cache_snapshot: bool) -> FleetUsage:
-		"""Build a fleet view from cached or current rows."""
-		if not cache_snapshot:
-			return self._build_fleet_usage(self._load_snapshot_rows())
+		"""Build a fleet view from cached or current rows, without hosts that fail the affinity rules."""
+		rows = self._load_cached_snapshot_rows() if cache_snapshot else self._load_snapshot_rows()
+		return self._build_fleet_usage(self._filter_by_affinity(rows))
 
+	def _load_cached_snapshot_rows(self) -> list[frappe._dict]:
 		cache = frappe.cache()
 		pool = int(self.requirements.is_sleepy) if self.use_dedicated_sleepy_vm_hosts else "any"
 		key = "atlas:placement-snapshot:{0}:{1}:{2}".format(
@@ -296,7 +341,57 @@ class PlacementContext:
 			rows = self._load_snapshot_rows()
 			cache.set_value(key, rows, expires_in_sec=SNAPSHOT_CACHE_SECONDS)
 
-		return self._build_fleet_usage(rows)
+		return rows
+
+	def _filter_by_affinity(self, rows: list[frappe._dict]) -> list[frappe._dict]:
+		"""Keep only the hosts that meet the affinity rules, when one of them has room.
+
+		Without such a host, `Enforced` matching fails and `Preferred` matching keeps every
+		host. The current host of a resize always stays, so an in-place resize ignores the rules.
+		"""
+		if not self.requirements.placement_rules.nodes:
+			return rows
+
+		allowed = set(self._find_affinity_hosts([row.name for row in rows]))
+		matching = [row for row in rows if row.name in allowed or row.name == self.current_host_name]
+		if self.current_host_name or any(self._has_room(row) for row in matching):
+			self.apply_affinity = True
+			return matching
+
+		affinity_matching = load_affinity_matching()
+		if affinity_matching == "Enforced":
+			frappe.throw(
+				_("No Metal Server that meets the affinity rules has capacity."), exc=AffinityUnsatisfied
+			)
+		elif affinity_matching == "Preferred":
+			return rows
+		else:
+			assert_never(affinity_matching)
+
+	def _has_room(self, row: frappe._dict) -> bool:
+		"""Return whether a snapshot row reports room for the request, as a strategy checks it."""
+		return (
+			row.name not in self._excluded_servers
+			and row.free_memory_mib >= self.requirements.memory_mib
+			and row.free_storage_mib >= self.requirements.disk_mib
+		)
+
+	def _host_meets_affinity(self, host_name: str) -> bool:
+		"""Check the affinity rules again under the host lock, against committed VMs.
+
+		Concurrent placements can share one snapshot. The host lock orders them, so the
+		second placement reads the committed draft of the first one here.
+		"""
+		if not self.apply_affinity or host_name == self.current_host_name:
+			return True
+
+		return bool(self._find_affinity_hosts([host_name]))
+
+	def _find_affinity_hosts(self, host_names: list[str]) -> list[str]:
+		requirements = self.requirements
+		return requirements.placement_rules.filter_hosts(
+			host_names, requirements.tenant_id, requirements.virtual_machine
+		)
 
 	def _load_snapshot_rows(self) -> list[frappe._dict]:
 		"""Load current capacity and rank data for the required host pool."""

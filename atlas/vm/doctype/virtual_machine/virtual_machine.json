@@ -41,6 +41,7 @@
   "ssh_keys",
   "firewall_summary",
   "metadata",
+  "placement_rules",
   "tags"
  ],
  "fields": [
@@ -305,6 +306,15 @@
    "read_only": 1
   },
   {
+   "description": "Rules that limit the Metal Servers for this virtual machine. Placement applies them at creation, at a migration to a host that placement chooses, and at a resize that moves the virtual machine.",
+   "fieldname": "placement_rules",
+   "fieldtype": "Code",
+   "label": "Placement Rules",
+   "options": "JSON",
+   "read_only": 1,
+   "show_description_on_click": 1
+  },
+  {
    "fieldname": "column_break_status",
    "fieldtype": "Column Break"
   },
@@ -355,7 +365,7 @@
    "link_fieldname": "virtual_machine"
   }
  ],
- "modified": "2026-09-26 03:05:51.552687",
+ "modified": "2026-10-02 00:00:00.000000",
  "modified_by": "Administrator",
  "module": "VM",
  "name": "Virtual Machine",

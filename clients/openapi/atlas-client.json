@@ -1,6 +1,157 @@
 {
   "components": {
     "schemas": {
+      "AffinityAllOfPayload": {
+        "additionalProperties": false,
+        "description": "A group that holds when every one of its rules or groups holds.",
+        "properties": {
+          "all_of": {
+            "description": "Rules or groups. Every one must hold.",
+            "items": {
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/AffinityRulePayload"
+                },
+                {
+                  "$ref": "#/components/schemas/AffinityAnyOfPayload"
+                },
+                {
+                  "$ref": "#/components/schemas/AffinityAllOfPayload"
+                }
+              ]
+            },
+            "minItems": 1,
+            "title": "All Of",
+            "type": "array"
+          }
+        },
+        "required": [
+          "all_of"
+        ],
+        "title": "AffinityAllOfPayload",
+        "type": "object"
+      },
+      "AffinityAnyOfPayload": {
+        "additionalProperties": false,
+        "description": "A group that holds when at least one of its rules or groups holds.",
+        "properties": {
+          "any_of": {
+            "description": "Rules or groups. One must hold.",
+            "items": {
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/AffinityRulePayload"
+                },
+                {
+                  "$ref": "#/components/schemas/AffinityAnyOfPayload"
+                },
+                {
+                  "$ref": "#/components/schemas/AffinityAllOfPayload"
+                }
+              ]
+            },
+            "minItems": 1,
+            "title": "Any Of",
+            "type": "array"
+          }
+        },
+        "required": [
+          "any_of"
+        ],
+        "title": "AffinityAnyOfPayload",
+        "type": "object"
+      },
+      "AffinityRulePayload": {
+        "additionalProperties": false,
+        "description": "One rule on the tags of the candidate Metal Server, or of a VM that runs on it.",
+        "properties": {
+          "operator": {
+            "description": "`has` needs a resource with every tag pair. `has_not` rejects such a resource.",
+            "enum": [
+              "has",
+              "has_not"
+            ],
+            "title": "Operator",
+            "type": "string"
+          },
+          "resource": {
+            "description": "`metal_server` checks the candidate host. `virtual_machine` checks the VMs on the candidate host.",
+            "enum": [
+              "metal_server",
+              "virtual_machine"
+            ],
+            "title": "Resource",
+            "type": "string"
+          },
+          "tags": {
+            "additionalProperties": {
+              "maxLength": 1000,
+              "type": "string"
+            },
+            "description": "Tag pairs that must all be on one resource.",
+            "maxProperties": 32,
+            "minProperties": 1,
+            "propertyNames": {
+              "maxLength": 128
+            },
+            "title": "Tags",
+            "type": "object"
+          },
+          "within": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "A host tag key, such as `rack`. A `virtual_machine` rule then reads the VMs on every host that has the same value for this key as the candidate host. A host without the key fails the rule.",
+            "title": "Within"
+          }
+        },
+        "required": [
+          "resource",
+          "operator",
+          "tags"
+        ],
+        "title": "AffinityRulePayload",
+        "type": "object"
+      },
+      "AffinityUnsatisfiedError": {
+        "description": "No host with room meets the affinity rules of the VM.",
+        "properties": {
+          "code": {
+            "const": "affinity_unsatisfied",
+            "description": "Stable machine-readable error code.",
+            "title": "Code",
+            "type": "string"
+          },
+          "fields": {
+            "description": "Invalid request fields, or an empty list.",
+            "items": {
+              "$ref": "#/components/schemas/ApiErrorField"
+            },
+            "title": "Fields",
+            "type": "array"
+          },
+          "message": {
+            "description": "Safe description of the failure.",
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "fields"
+        ],
+        "title": "AffinityUnsatisfiedError",
+        "type": "object"
+      },
       "ApiErrorDetail": {
         "description": "The stable error details returned by Atlas.",
         "properties": {
@@ -73,6 +224,7 @@
             "description": "Capacity failure details.",
             "discriminator": {
               "mapping": {
+                "affinity_unsatisfied": "#/components/schemas/AffinityUnsatisfiedError",
                 "out_of_capacity": "#/components/schemas/OutOfCapacityError",
                 "placement_busy": "#/components/schemas/PlacementBusyError"
               },
@@ -84,6 +236,9 @@
               },
               {
                 "$ref": "#/components/schemas/PlacementBusyError"
+              },
+              {
+                "$ref": "#/components/schemas/AffinityUnsatisfiedError"
               }
             ],
             "title": "Error"
@@ -269,6 +424,24 @@
             "title": "Metadata",
             "type": "object"
           },
+          "placement_rules": {
+            "description": "Rules that limit the Metal Servers for the virtual machine. Every listed rule or group must hold. Placement uses only the hosts that meet them.",
+            "items": {
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/AffinityRulePayload"
+                },
+                {
+                  "$ref": "#/components/schemas/AffinityAnyOfPayload"
+                },
+                {
+                  "$ref": "#/components/schemas/AffinityAllOfPayload"
+                }
+              ]
+            },
+            "title": "Placement Rules",
+            "type": "array"
+          },
           "private_network_throughput_mibps": {
             "default": 0,
             "description": "Private network throughput limit in MiB/s. Zero removes the limit.",
@@ -324,6 +497,19 @@
             },
             "title": "Ssh Keys",
             "type": "array"
+          },
+          "tags": {
+            "additionalProperties": {
+              "maxLength": 1000,
+              "type": "string"
+            },
+            "description": "Resource tags as key-value pairs.",
+            "maxProperties": 32,
+            "propertyNames": {
+              "maxLength": 128
+            },
+            "title": "Tags",
+            "type": "object"
           },
           "user_data": {
             "default": "",
@@ -3421,7 +3607,7 @@
         ]
       },
       "post": {
-        "description": "Creates a tenant VM from an image and requests the specified compute, disk, network, and guest configuration. Only tenant 0 can set `is_privileged`, which lets the VM reach every tenant through the mesh.\n\nSet `is_termination_protected` to refuse deletion of the new VM. The termination protection route changes it later.",
+        "description": "Creates a tenant VM from an image and requests the specified compute, disk, network, and guest configuration. Only tenant 0 can set `is_privileged`, which lets the VM reach every tenant through the mesh.\n\nSet `is_termination_protected` to refuse deletion of the new VM. The termination protection route changes it later.\n\nUse `tags` to label the VM, for example, `{\"role\": \"cargo-server\"}`. `placement_rules` limits the Metal Servers for the VM by host tags and by the tags of other VMs on the host. Atlas Settings selects whether a VM that no host with room can satisfy fails with `affinity_unsatisfied` or goes to any host.",
         "operationId": "create_virtual_machine",
         "parameters": [
           {
@@ -3515,7 +3701,7 @@
                 }
               }
             },
-            "description": "The virtual machine was not placed. `error.code` is `out_of_capacity` when no host can hold it, which needs more capacity in the region, or `placement_busy` when every candidate host was held by another placement, which only needs a retry. A busy response carries `Retry-After` in seconds.",
+            "description": "The virtual machine was not placed. `error.code` is `out_of_capacity` when no host can hold it, which needs more capacity in the region, or `placement_busy` when every candidate host was held by another placement, which only needs a retry. A busy response carries `Retry-After` in seconds. `affinity_unsatisfied` means that no host with room meets the affinity rules of the VM.",
             "headers": {
               "Retry-After": {
                 "description": "Seconds to wait before retrying a `placement_busy` response.",

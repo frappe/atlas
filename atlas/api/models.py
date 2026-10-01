@@ -6,7 +6,16 @@ from zoneinfo import ZoneInfo
 
 import frappe
 from frappe.utils import get_datetime, get_system_timezone
-from pydantic import AnyHttpUrl, BaseModel, ConfigDict, Field, StringConstraints, model_validator
+from pydantic import (
+	AnyHttpUrl,
+	BaseModel,
+	ConfigDict,
+	Discriminator,
+	Field,
+	StringConstraints,
+	Tag,
+	model_validator,
+)
 
 from atlas.api.core.base import ListQuery, PatchPayload, StrictModel
 from atlas.api.core.errors import ApiErrorField
@@ -27,6 +36,7 @@ from atlas.vm.core.models import (
 	FirewallRule,
 	VirtualMachineCreateRequest,
 )
+from atlas.vm.core.placement.affinity import AffinityOperator, AffinityResource, AffinityRules
 
 if TYPE_CHECKING:
 	from atlas.metal_server.doctype.public_ip_allocation.public_ip_allocation import (
@@ -80,8 +90,16 @@ class PlacementBusyError(BaseModel):
 	fields: list[ApiErrorField] = Field(description="Invalid request fields, or an empty list.")
 
 
+class AffinityUnsatisfiedError(BaseModel):
+	"""No host with room meets the affinity rules of the VM."""
+
+	code: Literal["affinity_unsatisfied"] = Field(description="Stable machine-readable error code.")
+	message: str = Field(description="Safe description of the failure.")
+	fields: list[ApiErrorField] = Field(description="Invalid request fields, or an empty list.")
+
+
 CapacityError = Annotated[
-	OutOfCapacityError | PlacementBusyError,
+	OutOfCapacityError | PlacementBusyError | AffinityUnsatisfiedError,
 	Field(discriminator="code"),
 ]
 
@@ -410,6 +428,58 @@ class FirewallUpdatePayload(PatchPayload):
 		return self
 
 
+class AffinityRulePayload(StrictModel):
+	"""One rule on the tags of the candidate Metal Server, or of a VM that runs on it."""
+
+	resource: AffinityResource = Field(
+		description="`metal_server` checks the candidate host. `virtual_machine` checks the VMs on the candidate host."
+	)
+	operator: AffinityOperator = Field(
+		description="`has` needs a resource with every tag pair. `has_not` rejects such a resource."
+	)
+	tags: TagMap = Field(min_length=1, description="Tag pairs that must all be on one resource.")
+	within: Annotated[str, StringConstraints(min_length=1, max_length=MAXIMUM_TAG_KEY_LENGTH)] | None = Field(
+		default=None,
+		description="A host tag key, such as `rack`. A `virtual_machine` rule then reads the VMs on every host that has the same value for this key as the candidate host. A host without the key fails the rule.",
+	)
+
+
+class AffinityAnyOfPayload(StrictModel):
+	"""A group that holds when at least one of its rules or groups holds."""
+
+	any_of: list[AffinityNodePayload] = Field(min_length=1, description="Rules or groups. One must hold.")
+
+
+class AffinityAllOfPayload(StrictModel):
+	"""A group that holds when every one of its rules or groups holds."""
+
+	all_of: list[AffinityNodePayload] = Field(
+		min_length=1, description="Rules or groups. Every one must hold."
+	)
+
+
+def _affinity_node_kind(value: object) -> str | None:
+	"""Pick the node model by its keys, so an invalid node reports the errors of one model."""
+	if isinstance(value, BaseModel):
+		keys = type(value).model_fields
+	elif isinstance(value, dict):
+		keys = value
+	else:
+		return None
+
+	return next((kind for kind in ("any_of", "all_of") if kind in keys), "rule")
+
+
+AffinityNodePayload = Annotated[
+	Annotated[AffinityRulePayload, Tag("rule")]
+	| Annotated[AffinityAnyOfPayload, Tag("any_of")]
+	| Annotated[AffinityAllOfPayload, Tag("all_of")],
+	Discriminator(_affinity_node_kind),
+]
+AffinityAnyOfPayload.model_rebuild()
+AffinityAllOfPayload.model_rebuild()
+
+
 class CreateVirtualMachinePayload(StrictModel):
 	"""Values that create one virtual machine."""
 
@@ -451,11 +521,22 @@ class CreateVirtualMachinePayload(StrictModel):
 	firewall: FirewallPayload = Field(
 		default_factory=FirewallPayload, description="Desired firewall configuration."
 	)
+	tags: TagMap = Field(default_factory=dict)
+	placement_rules: list[AffinityNodePayload] = Field(
+		default_factory=list,
+		description="Rules that limit the Metal Servers for the virtual machine. Every listed rule or group must hold. Placement uses only the hosts that meet them.",
+	)
 
 	@model_validator(mode="after")
 	def validate_ipv4_internet_access(self) -> CreateVirtualMachinePayload:
 		if self.public_ipv4 and not self.ipv4_internet_access:
 			raise ValueError("A public IPv4 address needs ipv4_internet_access.")
+		return self
+
+	@model_validator(mode="after")
+	def validate_placement_rules(self) -> CreateVirtualMachinePayload:
+		"""Apply the shared affinity rule limits."""
+		AffinityRules.from_value([node.model_dump() for node in self.placement_rules])
 		return self
 
 	def to_domain_request(self, tenant_id: int, image_name: str) -> VirtualMachineCreateRequest:
@@ -481,6 +562,8 @@ class CreateVirtualMachinePayload(StrictModel):
 			firewall=FirewallConfiguration.from_value(self.firewall.model_dump()),
 			public_ipv4=self.public_ipv4,
 			public_ipv6=self.public_ipv6,
+			tags=self.tags,
+			placement_rules=AffinityRules.from_value([node.model_dump() for node in self.placement_rules]),
 		)
 
 

@@ -116,6 +116,24 @@ class TestServer(UnitTestCase):
 		self.assertEqual(server.architecture, "amd64")
 		provider.ensure_server.assert_not_called()
 
+	def test_validate_trims_the_tags_and_fills_the_mesh_address(self) -> None:
+		tags = [SimpleNamespace(key=" env ", value=" local ")]
+		server = SimpleNamespace(get=lambda fieldname: tags, _set_wireguard_ip_address_if_not_set=Mock())
+
+		MetalServer.validate(server)
+
+		self.assertEqual((tags[0].key, tags[0].value), ("env", "local"))
+		server._set_wireguard_ip_address_if_not_set.assert_called_once_with()
+
+	def test_validate_rejects_a_repeated_tag_key(self) -> None:
+		tags = [SimpleNamespace(key="env", value="local"), SimpleNamespace(key="env", value="dev")]
+		server = SimpleNamespace(get=lambda fieldname: tags, _set_wireguard_ip_address_if_not_set=Mock())
+
+		with self.assertRaises(frappe.ValidationError):
+			MetalServer.validate(server)
+
+		server._set_wireguard_ip_address_if_not_set.assert_not_called()
+
 	def test_ensure_provider_server_identifies_the_host_by_name(self) -> None:
 		provider = SimpleNamespace(
 			ensure_server=Mock(

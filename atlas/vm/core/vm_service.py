@@ -85,6 +85,7 @@ class VirtualMachineService:
 			image.architecture,
 			request.tenant_id,
 			request.sleep_after_idle_seconds > 0,
+			placement_rules=request.placement_rules,
 		)
 		server_name = PlacementStrategy.find_server(requirements)
 		virtual_machine = cls.insert_draft(request, image, server_name)
@@ -144,6 +145,10 @@ class VirtualMachineService:
 				"is_privileged": request.is_privileged,
 				"is_termination_protected": request.is_termination_protected,
 				"sleep_after_idle_seconds": request.sleep_after_idle_seconds,
+				"tags": [{"key": key, "value": value} for key, value in request.tags.items()],
+				"placement_rules": frappe.as_json(request.placement_rules.as_list())
+				if request.placement_rules.nodes
+				else None,
 			}
 		)
 		virtual_machine.flags.created_by_virtual_machine_api = True

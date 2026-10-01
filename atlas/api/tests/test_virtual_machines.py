@@ -36,6 +36,7 @@ from atlas.atlas.core.tags import (
 from atlas.vm.core.metal_models import MetalFirewall, MetalFirewallRule
 from atlas.vm.core.models import DEFAULT_ROUTES, Route
 from atlas.vm.core.placement import OutOfCapacity
+from atlas.vm.core.placement.affinity import MAXIMUM_AFFINITY_RULES
 
 CREATE_BODY = {
 	"image_id": "system-image",
@@ -266,6 +267,41 @@ class TestCreateVirtualMachine(UnitTestCase):
 		firewall = create.call_args.args[0].firewall
 		self.assertTrue(firewall.enabled)
 		self.assertEqual(firewall.inbound[0].cidrs, ("203.0.113.0/24",))
+
+	def test_create_passes_tags_and_placement_rules(self) -> None:
+		rules = [
+			{
+				"any_of": [
+					{"resource": "metal_server", "operator": "has", "tags": {"rack": "a"}},
+					{"resource": "metal_server", "operator": "has", "tags": {"rack": "b"}},
+				]
+			},
+			{"resource": "virtual_machine", "operator": "has_not", "tags": {"role": "cargo-server"}},
+		]
+
+		status, _, create = self.create(
+			{**CREATE_BODY, "tags": {"role": "cargo-server"}, "placement_rules": rules}
+		)
+
+		self.assertEqual(status, 202)
+		request = create.call_args.args[0]
+		self.assertEqual(request.tags, {"role": "cargo-server"})
+		self.assertEqual(request.placement_rules.as_list(), rules)
+
+	def test_create_rejects_invalid_placement_rules(self) -> None:
+		rule = {"resource": "virtual_machine", "operator": "has_not", "tags": {"role": "cargo-server"}}
+		for placement_rules in (
+			[{**rule, "weight": 1}],
+			[{"resource": "metal_server", "operator": "has", "tags": {"rack": "a"}, "within": "rack"}],
+			[{"any_of": []}],
+			[rule] * (MAXIMUM_AFFINITY_RULES + 1),
+		):
+			with self.subTest(placement_rules=placement_rules):
+				status, body, create = self.create({**CREATE_BODY, "placement_rules": placement_rules})
+
+				self.assertEqual(status, 400)
+				self.assertEqual(body["error"]["code"], "invalid_request")
+				create.assert_not_called()
 
 	def test_create_passes_both_public_ip_selectors(self) -> None:
 		status, _, create = self.create({**CREATE_BODY, "public_ipv4": "auto", "public_ipv6": "auto"})
