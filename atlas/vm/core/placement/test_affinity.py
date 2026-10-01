@@ -1,4 +1,5 @@
 import re
+from unittest.mock import patch
 from uuid import uuid7
 
 import frappe
@@ -12,6 +13,7 @@ from atlas.vm.core.placement.affinity import (
 	AffinityHost,
 	AffinityRule,
 	AffinityRules,
+	load_affinity_matching,
 )
 
 STORAGE_HOST = {"resource": "metal_server", "operator": "has", "tags": {"type": "storage-optimised"}}
@@ -132,6 +134,19 @@ class TestAffinityRules(UnitTestCase):
 		for message, value in cases:
 			with self.subTest(message=message), self.assertRaisesRegex(ValueError, re.escape(message)):
 				AffinityRules.from_value(value)
+
+
+class TestAffinityMatching(UnitTestCase):
+	def test_an_unsaved_setting_uses_its_default(self) -> None:
+		with patch("atlas.vm.core.placement.affinity.frappe.get_cached_value", return_value=None):
+			self.assertEqual(load_affinity_matching(), "Enforced")
+
+	def test_an_unknown_setting_is_rejected(self) -> None:
+		with (
+			patch("atlas.vm.core.placement.affinity.frappe.get_cached_value", return_value="Sometimes"),
+			self.assertRaises(ValueError),
+		):
+			load_affinity_matching()
 
 
 class TestAffinityEvaluation(UnitTestCase):
