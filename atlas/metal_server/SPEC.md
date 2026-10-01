@@ -12,6 +12,7 @@ Behavior: [provisioning](../../docs/region/index.md), [hosts](../../docs/region/
 | `provisioning` | Phase order, progress, failure logs |
 | `host_installation` | Installs Metal and the host firewall on the host |
 | `AtlasPeer` | The Atlas wg0 identity and its `atlas0.conf` peer file |
+| `MetalServer.import_from_provider` | Adds a provider server that Atlas did not create. Idempotent by provider server ID. |
 | `disk_inventory` | Block devices to Metal Server Disk rows |
 | `catalog_sync` | Size and Image catalogs from the provider |
 | `host_inspection` | Generic host registration. See [providers](../../docs/region/provider-guide.md#generic-provider). |

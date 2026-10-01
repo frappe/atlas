@@ -43,6 +43,20 @@ class ConfigurationTest(unittest.TestCase):
 		self.path = Path(self.temporary_directory.name) / "atlas-vm.toml"
 		self.path.write_text(EXAMPLE.read_text())
 
+	def test_the_host_import_values_are_read(self) -> None:
+		text = self.path.read_text().replace('import_server_id = ""', 'import_server_id = "server-1"')
+		self.path.write_text(
+			text.replace(
+				'import_storage_pool_device = ""', 'import_storage_pool_device = "/root/disks/atlas.img"'
+			)
+		)
+
+		host = atlas_vm.Settings.read(self.path)
+
+		self.assertEqual(
+			(host.import_server_id, host.import_storage_pool_device), ("server-1", "/root/disks/atlas.img")
+		)
+
 	def test_example_is_valid_for_both_readers(self) -> None:
 		host = atlas_vm.Settings.read(self.path)
 		with patch.object(setup, "generate_password", return_value="generated-bootstrap-password"):

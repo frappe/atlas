@@ -114,9 +114,9 @@ class HostInstallation:
 			target=self.server.name,
 			script_path="install-metal-storage.sh",
 			environment={
-				"STORAGE_POOL_DEVICE": self.server.settings.server_provider_controller.storage_pool_device(
+				"STORAGE_POOL_DEVICE": self.server.settings.server_provider_controller.get_storage_pool_device(
 					self.server
-				),
+				)
 			},
 			timeout_seconds=STORAGE_INSTALL_TIMEOUT_SECONDS,
 			run_in_background=False,

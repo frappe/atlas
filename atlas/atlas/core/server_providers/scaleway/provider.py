@@ -115,6 +115,45 @@ class ScalewayProvider(ServerProvider):
 		return self.servers.ensure(request)
 
 	@override
+	def import_server(self, server: "MetalServer") -> None:
+		"""Match an existing Elastic Metal server to the catalog and give it the private network option."""
+		remote_server = self.servers.fetch(server.provider_server_id)
+		operating_system_id = (remote_server.get("install") or {}).get("os_id")
+		if not remote_server.get("offer_id") or not operating_system_id:
+			raise ScalewayError(
+				f"Scaleway server {server.provider_server_id} has no offer or operating system"
+			)
+		server.server_size, subscription_period = self.find_offer(remote_server.get("offer_id"))
+		server.server_image = self.find_catalog_record(
+			"Metal Server Image",
+			lambda metadata: metadata.get("id") == operating_system_id,
+			f"operating system {operating_system_id}",
+		)
+		server.title = remote_server.get("name") or server.provider_server_id
+		size = frappe.get_doc("Metal Server Size", server.server_size)
+		self.servers.ensure_private_network_option(
+			remote_server, self.catalog.get_private_network_option_id(size, subscription_period)
+		)
+		self.apply_provider_server(server, self.servers.to_provider_server(remote_server))
+
+	def find_offer(self, offer_id: object) -> tuple[str, str]:
+		"""Return the Metal Server Size and the subscription period of one Scaleway offer."""
+		for name, metadata in frappe.get_all(
+			"Metal Server Size", fields=["name", "provider_metadata"], as_list=True
+		):
+			values = frappe.parse_json(metadata or "{}")
+			for period, offer in values.items() if isinstance(values, Mapping) else ():
+				if not isinstance(offer, Mapping):
+					continue
+				if offer_id == offer.get("monthly_offer_id"):
+					return name, "monthly"
+				if offer_id == offer.get("id"):
+					return name, period
+		raise ScalewayError(
+			f"No Metal Server Size matches offer {offer_id}. Sync the Metal Server Size catalog first."
+		)
+
+	@override
 	def prepare_server(self, server: "MetalServer") -> None:
 		"""Prepare the Scaleway server before Secure Shell access."""
 		self.attach_private_network(server)

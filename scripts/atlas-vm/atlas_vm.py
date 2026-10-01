@@ -130,6 +130,8 @@ class Settings:
 	disk_gib: int = 24
 	ssh_port: int = 2222
 	setup_script_url: str = ""
+	import_server_id: str = ""
+	import_storage_pool_device: str = ""
 
 	@classmethod
 	def read(cls, path: Path) -> Settings:
@@ -154,6 +156,8 @@ class Settings:
 			disk_gib=int(vm.get("disk_gib", 24)),
 			ssh_port=int(vm.get("ssh_port", 2222)),
 			setup_script_url=f"{raw}/{branch}/scripts/atlas-vm/setup.py",
+			import_server_id=atlas.get("import_server_id", ""),
+			import_storage_pool_device=atlas.get("import_storage_pool_device", ""),
 		)
 
 	def update_sizes(self, changes: dict[str, int]) -> None:
@@ -214,6 +218,8 @@ def _validate_atlas_configuration(atlas: dict, path: Path) -> None:
 			"private_network_cidr",
 			"private_network_mtu",
 			"central_jwks_url",
+			"import_server_id",
+			"import_storage_pool_device",
 			"vm_scheduling",
 			"scaleway",
 			"aws",
@@ -228,7 +234,14 @@ def _validate_atlas_configuration(atlas: dict, path: Path) -> None:
 	for key in ("private_network_cidr", "private_network_mtu", "central_jwks_url"):
 		if key not in atlas:
 			raise AtlasVmError(f"{path}: atlas.{key} is required")
-	for key in ("repository", "branch", "base_url", "central_jwks_url"):
+	for key in (
+		"repository",
+		"branch",
+		"base_url",
+		"central_jwks_url",
+		"import_server_id",
+		"import_storage_pool_device",
+	):
 		if key in atlas and not isinstance(atlas[key], str):
 			raise AtlasVmError(f"{path}: atlas.{key} must be a string")
 	provider = atlas["server_provider"]
@@ -888,6 +901,28 @@ WantedBy=multi-user.target
 		if process.returncode != 0:
 			raise AtlasVmError(f"setup.py failed; read {self.paths.setup_log}")
 
+	def import_host(self) -> None:
+		"""Add this host to Atlas as a Metal Server. Atlas connects to it with the key of its bench user."""
+		settings = self.settings
+		if not settings.import_server_id:
+			return
+
+		step(f"import this host as Metal Server {settings.import_server_id}")
+		result = subprocess.run(
+			self.ssh_arguments([f"ssh-keygen -y -f /home/{settings.bench_user}/.ssh/id_ed25519"]),
+			capture_output=True,
+			text=True,
+		)
+		if result.returncode != 0:
+			raise AtlasVmError(f"could not read the Atlas SSH key in the VM: {result.stderr.strip()}")
+		authorize_root_key(result.stdout.strip())
+
+		command = f"pilot frappe --site {settings.site} import-metal-server {shlex.quote(settings.import_server_id)}"
+		if settings.import_storage_pool_device:
+			command += f" --storage-pool-device {shlex.quote(settings.import_storage_pool_device)}"
+		if self.run_as_bench(f"{command} --bench {BENCH_NAME}") != 0:
+			raise AtlasVmError("Atlas could not import this host")
+
 
 DESTROY_WARNING = """DANGER: this deletes the VM in {directory}. The bench, every site, every
 database, and every file in the guest disk are gone for ever. There is no
@@ -916,6 +951,17 @@ def require_host_support() -> None:
 		raise AtlasVmError("no /dev/kvm on this host")
 	if os.uname().machine != "x86_64":
 		raise AtlasVmError("this CLI supports x86_64 only")
+
+
+def authorize_root_key(public_key: str) -> None:
+	"""Let one key log in as root. The host firewall later limits SSH to wg0 and the private network."""
+	ssh_directory = Path("/root/.ssh")
+	ssh_directory.mkdir(mode=0o700, exist_ok=True)
+	authorized_keys = ssh_directory / "authorized_keys"
+	lines = authorized_keys.read_text().splitlines() if authorized_keys.exists() else []
+	if public_key not in lines:
+		authorized_keys.write_text("\n".join([*lines, public_key]) + "\n")
+	authorized_keys.chmod(0o600)
 
 
 def install_self() -> None:
@@ -971,6 +1017,7 @@ def command_create(machine: VirtualMachine, arguments: argparse.Namespace) -> No
 	machine.start(arguments.verbose)
 	if not arguments.skip_setup:
 		machine.run_setup(arguments.script)
+		machine.import_host()
 	command_status(machine, arguments)
 
 
@@ -1042,6 +1089,7 @@ def command_setup(machine: VirtualMachine, arguments: argparse.Namespace) -> Non
 	if not machine.is_running:
 		raise AtlasVmError(f"{SERVICE_NAME} is not running; start it with: atlas-vm start")
 	machine.run_setup(arguments.script)
+	machine.import_host()
 
 
 def command_reset_password(machine: VirtualMachine, arguments: argparse.Namespace) -> None:

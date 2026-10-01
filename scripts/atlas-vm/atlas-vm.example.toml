@@ -28,6 +28,11 @@ private_network_mtu = 1500
 # Set this URL when Central sends requests to this Atlas region.
 central_jwks_url = ""
 
+# Provider server ID of this host, to import it as a Metal Server after setup.
+# A storage pool device replaces the provider device. Atlas erases it.
+import_server_id = ""
+import_storage_pool_device = ""
+
 [atlas.vm_scheduling]
 use_dedicated_sleepy_vm_hosts = true
 placement_strategy = "balanced"

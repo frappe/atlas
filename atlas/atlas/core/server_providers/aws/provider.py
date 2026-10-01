@@ -118,6 +118,35 @@ class AwsProvider(ServerProvider):
 		return self.servers.ensure(request)
 
 	@override
+	def import_server(self, server: "MetalServer") -> None:
+		"""Match an existing instance to the catalog. Its storage volume must exist already."""
+		instance = self.servers.fetch(server.provider_server_id)
+		if not instance.get("ImageId"):
+			raise AwsError(f"AWS instance {server.provider_server_id} has no image")
+		# Public addresses attach to the primary interface, so it must be in the Atlas subnet.
+		if instance.get("SubnetId") != self.configuration.subnet_id:
+			raise AwsError(
+				f"AWS instance {server.provider_server_id} is in subnet {instance.get('SubnetId')}, "
+				f"not the Atlas subnet {self.configuration.subnet_id}"
+			)
+		instance_type = instance.get("InstanceType")
+		if not isinstance(instance_type, str) or not frappe.db.exists("Metal Server Size", instance_type):
+			raise AwsError(
+				f"No Metal Server Size matches {instance_type}. Sync the Metal Server Size catalog first."
+			)
+		server.server_size = instance_type
+		server.server_image = self.find_catalog_record(
+			"Metal Server Image",
+			lambda metadata: metadata.get("ImageId") == instance.get("ImageId"),
+			f"image {instance.get('ImageId')}",
+		)
+		tags = {
+			tag.get("Key"): tag.get("Value") for tag in instance.get("Tags") or [] if isinstance(tag, Mapping)
+		}
+		server.title = tags.get("Name") or server.provider_server_id
+		self.apply_provider_server(server, self.servers.to_provider_server(instance))
+
+	@override
 	def prepare_server(self, server: "MetalServer") -> None:
 		"""Prepare the AWS instance before Secure Shell access."""
 		self.wait_for_server_ready(server)

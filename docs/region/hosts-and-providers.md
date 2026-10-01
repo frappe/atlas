@@ -17,6 +17,16 @@ Atlas commits a `Pending` record before contacting the provider. The stable reco
 
 Setup prepares provider resources, SSH, networking, WireGuard, and Metal. It saves completed phases in MariaDB and marks the host `Running` only after completion. See the [provisioning sequence](index.md).
 
+### Import a provider server
+
+Use **Import Server** on the Metal Server list for a Scaleway or AWS server that Atlas did not create. Enter its provider server ID. Atlas matches its size and image to the catalog, adds the Scaleway private network option when it is missing, and runs the normal setup.
+
+The Atlas SSH key must allow login as a user that the provider supports. A non-root user needs passwordless `sudo`. Atlas copies that user's authorized keys to root and removes the user during promotion. Use root login if the existing user must remain.
+
+Atlas uses the Scaleway `/dev/md2` array or the AWS storage volume mapped as `/dev/sdb`. If an imported AWS server has no volume mapped as `/dev/sdb`, enter a **Storage Pool Device** that exists on the host. You can also name a disk image file that you created. A new pool needs an empty device. Setup reuses an existing `metal` pool.
+
+Importing the same server again continues setup if it is incomplete. The command line equivalent is `pilot --site SITE import-metal-server <id> [--storage-pool-device PATH]`. Generic hosts use **Add Server** instead.
+
 ### Retry setup
 
 On failure, read the phase in the Error Log. Correct the cause, then use **Setup Metal Server**. Keep the provider identity so the retry can reuse the host.

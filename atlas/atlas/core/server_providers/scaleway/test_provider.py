@@ -144,6 +144,63 @@ class TestScalewayProvider(UnitTestCase):
 
 		operation.assert_called_once_with()
 
+	def test_an_imported_server_takes_its_catalog_entries_and_private_network_option(self) -> None:
+		provider = self.provider()
+		provider.catalog = Mock()
+		provider.catalog.get_private_network_option_id.return_value = "monthly-option"
+		provider.servers.to_provider_server = ScalewayServers.to_provider_server
+		remote_server = {
+			"id": "server-1",
+			"name": "atlas-vm-host",
+			"offer_id": "monthly-offer",
+			"install": {"os_id": "ubuntu-id"},
+			"ips": [{"version": "IPv4", "address": "203.0.113.4"}],
+		}
+		provider.servers.fetch.return_value = remote_server
+		catalog = {
+			"Metal Server Size": [
+				[
+					"EM-A116X-SSD",
+					json.dumps({"hourly": {"id": "hourly-offer", "monthly_offer_id": "monthly-offer"}}),
+				]
+			],
+			"Metal Server Image": [["Ubuntu_24.04", json.dumps({"id": "ubuntu-id"})]],
+		}
+		server = self.server("server-1")
+
+		with (
+			patch(
+				"atlas.atlas.core.server_providers.base.frappe.get_all",
+				side_effect=lambda doctype, **_: catalog[doctype],
+			),
+			patch("atlas.atlas.core.server_providers.scaleway.provider.frappe.get_doc", return_value="size"),
+		):
+			provider.import_server(server)
+
+		self.assertEqual(
+			(server.server_size, server.server_image, server.title),
+			("EM-A116X-SSD", "Ubuntu_24.04", "atlas-vm-host"),
+		)
+		self.assertEqual(server.public_ipv4_address, "203.0.113.4")
+		provider.catalog.get_private_network_option_id.assert_called_once_with("size", "monthly")
+		provider.servers.ensure_private_network_option.assert_called_once_with(
+			remote_server, "monthly-option"
+		)
+
+	def test_an_import_without_a_catalog_offer_is_refused(self) -> None:
+		provider = self.provider()
+		provider.servers.fetch.return_value = {
+			"id": "server-1",
+			"offer_id": "unknown",
+			"install": {"os_id": "ubuntu-id"},
+		}
+
+		with (
+			patch("atlas.atlas.core.server_providers.base.frappe.get_all", return_value=[]),
+			self.assertRaisesRegex(ScalewayError, "Sync the Metal Server Size catalog"),
+		):
+			provider.import_server(self.server("server-1"))
+
 	def provider(self) -> ScalewayProvider:
 		provider = object.__new__(ScalewayProvider)
 		provider.settings = SimpleNamespace(
@@ -169,6 +226,17 @@ class TestScalewayProvider(UnitTestCase):
 
 
 class TestScalewayServers(UnitTestCase):
+	def test_the_private_network_option_is_added_only_when_missing(self) -> None:
+		servers = self.servers()
+
+		servers.ensure_private_network_option({"id": "server-1", "options": [{"id": "option"}]}, "option")
+		servers.client.request.assert_not_called()
+
+		servers.ensure_private_network_option({"id": "server-1", "options": []}, "option")
+		servers.client.request.assert_called_once_with(
+			"POST", "/baremetal/v1/zones/fr-par-1/servers/server-1/options/option", json={}
+		)
+
 	def test_create_uses_catalog_values_and_stable_identity(self) -> None:
 		servers = self.servers()
 		servers.catalog.offer.side_effect = [

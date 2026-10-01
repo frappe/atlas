@@ -409,6 +409,36 @@ class MetalServer(Document):
 		server.insert(ignore_permissions=True)
 		return server
 
+	@staticmethod
+	def import_from_provider(provider_server_id: str, storage_pool_device: str | None = None) -> MetalServer:
+		"""Insert a Metal Server for a provider server that Atlas did not create, or resume its setup."""
+		if not provider_server_id:
+			frappe.throw(_("Enter the provider server ID."))
+		with frappe.db.advisory_lock(f"{frappe.db.cur_db_name}:host-import:{provider_server_id}"):
+			# A waiter must not reuse a snapshot from before the lock holder committed.
+			frappe.db.rollback()
+			name = frappe.db.get_value(
+				"Metal Server", {"provider_server_id": provider_server_id, "status": ["!=", "Deleted"]}
+			)
+			if name:
+				server: MetalServer = frappe.get_doc("Metal Server", name)
+				if not server.is_provisioning_completed and not is_job_enqueued(server.setup_job_id):
+					server._set_storage_pool_device(storage_pool_device)
+					server.db_set({"provider_metadata": server.provider_metadata, "status": "Pending"})
+					server._enqueue_setup_server()
+			else:
+				server = frappe.new_doc("Metal Server")
+				server.provider_server_id = provider_server_id
+				server._set_storage_pool_device(storage_pool_device)
+				server.settings.server_provider_controller.import_server(server)
+				server.architecture = frappe.db.get_value(
+					"Metal Server Size", server.server_size, "architecture"
+				)
+				server.status = "Pending"
+				server.insert(ignore_permissions=True)
+			frappe.db.commit()  # nosemgrep
+		return server
+
 	# Internal methods
 
 	@run_as_admin
@@ -458,6 +488,12 @@ class MetalServer(Document):
 			frappe.throw(_("Metal Server {0} has no provider server ID.").format(self.name))
 		return self.provider_server_id
 
+	def _set_storage_pool_device(self, storage_pool_device: str | None) -> None:
+		"""Store the storage pool device that an import named in place of the provider device."""
+		if storage_pool_device:
+			metadata = self._provider_metadata(self.provider_metadata)
+			self.provider_metadata = frappe.as_json({**metadata, "storage_pool_device": storage_pool_device})
+
 	@staticmethod
 	def _provider_metadata(value: str | None) -> dict:
 		"""Return provider metadata as an object."""
@@ -486,6 +522,13 @@ def renew_expiring_tls_certificates() -> None:
 		if is_job_enqueued(server.metald_job_id):
 			continue
 		server.enqueue_tls_certificate_renewal()
+
+
+@frappe.whitelist(methods=["POST"])
+def import_server(provider_server_id: str, storage_pool_device: str | None = None) -> str:
+	"""Add a provider server that was created outside Atlas, and set it up."""
+	frappe.only_for("System Manager")
+	return MetalServer.import_from_provider(provider_server_id.strip(), storage_pool_device or None).name
 
 
 @frappe.whitelist(methods=["POST"])

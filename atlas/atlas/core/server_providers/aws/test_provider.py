@@ -356,6 +356,15 @@ class TestAwsProvider(UnitTestCase):
 		with patch("atlas.atlas.core.ssh.SSHRunner", return_value=runner), self.assertRaises(AwsError):
 			provider.uplink_interface(self.server())
 
+	def test_an_import_outside_the_atlas_subnet_is_refused(self) -> None:
+		"""Public addresses attach to the primary interface, so it must be in the Atlas subnet."""
+		provider = self.provider()
+		provider.configuration = SimpleNamespace(subnet_id="subnet-atlas")
+		provider.servers.fetch.return_value = {"ImageId": "ami-1", "SubnetId": "subnet-other"}
+
+		with self.assertRaisesRegex(AwsError, "not the Atlas subnet subnet-atlas"):
+			provider.import_server(self.server("i-1"))
+
 	def provider(self) -> AwsProvider:
 		provider = object.__new__(AwsProvider)
 		provider.settings = SimpleNamespace(

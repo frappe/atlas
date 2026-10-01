@@ -27,6 +27,8 @@ The setup generates a temporary password for Pilot and the site Administrator. I
 
 The setup creates one Secure Shell key for the `pilot.user`. Atlas uses this key to manage Metal Servers. The setup keeps this key when you run it again.
 
+Set `atlas.import_server_id` to import this host as a Metal Server after Atlas setup. The import is optional and continues in the background. Set `atlas.import_storage_pool_device` only if the host needs a different storage device. See [provider server import](../../docs/region/hosts-and-providers.md#import-a-provider-server) for prerequisites and recovery.
+
 The setup creates the server provider network resources and the Route53 records. It also gets the provider catalogs and a wildcard certificate. Each `[[image]]` table creates one system image in site-file storage. Cargo configures object storage later.
 
 The configuration contains provider secrets. `atlas-vm` stores its copy at `/var/lib/atlas-vm/atlas-vm.toml` with mode `0600`.

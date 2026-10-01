@@ -394,10 +394,51 @@ async function upgradeMetaldOnSelectedServers(listview) {
 	frappe.set_route("List", "SSH Task");
 }
 
+function showImportServerDialog(listview) {
+	const dialog = new frappe.ui.Dialog({
+		title: __("Import Server"),
+		fields: [
+			{
+				fieldname: "provider_server_id",
+				fieldtype: "Data",
+				label: __("Provider Server ID"),
+				reqd: 1,
+				description: __("Atlas key must allow root SSH. Atlas adds the private network."),
+			},
+			{
+				fieldname: "storage_pool_device",
+				fieldtype: "Data",
+				label: __("Storage Pool Device"),
+				description: __(
+					"Leave empty to use the provider storage device. Atlas destroys all data on it."
+				),
+			},
+		],
+		primary_action_label: __("Import"),
+		primary_action(values) {
+			frappe
+				.call({ method: `${HOST_REGISTRATION_METHOD}.import_server`, args: values })
+				.then(({ message }) => {
+					dialog.hide();
+					listview.refresh();
+					frappe.set_route("Form", "Metal Server", message);
+				});
+		},
+	});
+	dialog.show();
+}
+
 frappe.listview_settings["Metal Server"] = {
 	add_fields: ["title"],
 	onload(listview) {
 		if (!frappe.user.has_role("System Manager")) return;
+		frappe.db.get_single_value("Atlas Settings", "server_provider").then((provider) => {
+			if (provider !== "Generic") {
+				listview.page.add_inner_button(__("Import Server"), () =>
+					showImportServerDialog(listview)
+				);
+			}
+		});
 		listview.page.add_actions_menu_item(__("Upgrade Metald"), () =>
 			frappe.confirm(
 				__("Upgrade Metald on {0} selected servers?", [

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from contextlib import nullcontext
 from datetime import datetime
 from types import MethodType, SimpleNamespace
 from unittest.mock import Mock, patch
@@ -8,7 +9,7 @@ from unittest.mock import Mock, patch
 import frappe
 from frappe.tests import UnitTestCase
 
-from atlas.atlas.core.server_providers.base import ProviderServer, ServerPowerAction
+from atlas.atlas.core.server_providers.base import ProviderServer, ServerPowerAction, ServerProvider
 from atlas.atlas.core.tls.metal import CERTIFICATE_RENEWAL_WINDOW_DAYS
 from atlas.metal_server.doctype.metal_server.metal_server import (
 	MetalServer,
@@ -729,6 +730,77 @@ class TestServer(UnitTestCase):
 
 		create_for_script_file.assert_not_called()
 
+	def test_import_continues_the_setup_of_a_known_server(self) -> None:
+		"""Importing the same provider server again must not create a second record."""
+		server = self._server(status="Failed")
+		server._enqueue_setup_server = Mock()
+		server._set_storage_pool_device = MethodType(MetalServer._set_storage_pool_device, server)
+
+		with (
+			patch(
+				"atlas.metal_server.doctype.metal_server.metal_server.frappe.db.advisory_lock",
+				return_value=nullcontext(),
+			),
+			patch("atlas.metal_server.doctype.metal_server.metal_server.frappe.db.rollback"),
+			patch("atlas.metal_server.doctype.metal_server.metal_server.frappe.db.commit") as commit,
+			patch(
+				"atlas.metal_server.doctype.metal_server.metal_server.frappe.db.get_value",
+				return_value=SERVER_NAME,
+			),
+			patch("atlas.metal_server.doctype.metal_server.metal_server.frappe.get_doc", return_value=server),
+			patch("atlas.metal_server.doctype.metal_server.metal_server.frappe.new_doc") as new_doc,
+			patch("atlas.metal_server.doctype.metal_server.metal_server.is_job_enqueued", return_value=False),
+		):
+			MetalServer.import_from_provider("server-id", "/root/disks/atlas.img")
+
+		new_doc.assert_not_called()
+		commit.assert_called_once_with()
+		server._enqueue_setup_server.assert_called_once_with()
+		self.assertEqual(server.status, "Pending")
+		self.assertEqual(json.loads(server.provider_metadata)["storage_pool_device"], "/root/disks/atlas.img")
+
+	def test_import_inserts_a_pending_server_from_the_provider(self) -> None:
+		server = self._server(status="Pending")
+		server.provider_server_id = None
+		server.insert = Mock()
+		server._set_storage_pool_device = MethodType(MetalServer._set_storage_pool_device, server)
+		provider = server.settings.server_provider_controller
+		provider.import_server = Mock(
+			side_effect=lambda imported: setattr(imported, "server_size", "EM-A116X-SSD")
+		)
+
+		with (
+			patch(
+				"atlas.metal_server.doctype.metal_server.metal_server.frappe.db.advisory_lock",
+				return_value=nullcontext(),
+			),
+			patch("atlas.metal_server.doctype.metal_server.metal_server.frappe.db.rollback"),
+			patch("atlas.metal_server.doctype.metal_server.metal_server.frappe.db.commit") as commit,
+			patch(
+				"atlas.metal_server.doctype.metal_server.metal_server.frappe.db.get_value",
+				side_effect=[None, "amd64"],
+			),
+			patch("atlas.metal_server.doctype.metal_server.metal_server.frappe.new_doc", return_value=server),
+		):
+			MetalServer.import_from_provider("server-id")
+
+		provider.import_server.assert_called_once_with(server)
+		self.assertEqual(
+			(server.provider_server_id, server.architecture, server.status), ("server-id", "amd64", "Pending")
+		)
+		server.insert.assert_called_once_with(ignore_permissions=True)
+		commit.assert_called_once_with()
+
+	def test_an_imported_storage_device_replaces_the_provider_device(self) -> None:
+		server = self._server(status="Running")
+		server.provider_metadata = json.dumps({"storage_pool_device": "/root/disks/atlas.img"})
+
+		provider = SimpleNamespace(storage_pool_device=Mock(return_value="/dev/md2"))
+		self.assertEqual(ServerProvider.get_storage_pool_device(provider, server), "/root/disks/atlas.img")
+
+		server.provider_metadata = "{}"
+		self.assertEqual(ServerProvider.get_storage_pool_device(provider, server), "/dev/md2")
+
 	def test_ssh_uses_wg0_once_the_host_has_a_wireguard_key(self) -> None:
 		server = self._server(status="Running")
 		server.wireguard_ip_address = "fdab:1::7"
@@ -1078,6 +1150,7 @@ class TestServer(UnitTestCase):
 					delete_server=Mock(),
 					set_power_state=Mock(),
 					storage_pool_device=Mock(return_value="/dev/md2"),
+					get_storage_pool_device=Mock(return_value="/dev/md2"),
 				),
 				metald_binary_x86_64_file=None,
 				metald_binary_hash="metald-binary-sha256",

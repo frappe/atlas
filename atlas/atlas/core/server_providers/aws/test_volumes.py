@@ -73,7 +73,7 @@ class TestAwsVolumes(UnitTestCase):
 		volumes = self.volumes(
 			modifications=[{"StartTime": datetime.now(UTC), "ModificationState": "optimizing"}]
 		)
-		volumes.provider.storage_pool_device.return_value = "/dev/disk/by-id/pool"
+		volumes.provider.get_storage_pool_device.return_value = "/dev/disk/by-id/pool"
 		volumes.provider.poll.side_effect = lambda operation, **_: operation()
 		server = self.server()
 		task = SimpleNamespace(name="SSH-1", result=SimpleNamespace(is_success=True))
