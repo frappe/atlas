@@ -39,6 +39,82 @@ For example, if host A already runs 2 of the tenant's VMs and host B runs 1, hos
 
 To add a strategy, subclass `PlacementStrategy` and register it. The [VM module specification](../../atlas/vm/SPEC.md#placement) shows how.
 
+## Affinity rules
+
+Affinity rules limit the hosts that can hold a VM. A rule reads the tags of a host (Metal Server), or the tags of the VMs that run on the host.
+
+Atlas validates the rules in a create request and stores them in the `affinity_rules` field of the Virtual Machine record. **Placement does not apply the rules yet.**
+
+Only a System Manager can set rules, and only on a privileged VM. Atlas rejects other requests with `403`.
+
+### Rule types
+
+```text
+affinity_rules = [node, ...]               every node must hold (AND); absent or [] = no rules
+node           = rule | any_of | all_of
+any_of         = {"any_of": [node, ...]}   at least one node holds (OR)
+all_of         = {"all_of": [node, ...]}   every node holds (AND)
+rule           = {"resource": resource, "operator": operator, "tags": {key: value, ...}}
+resource       = "metal_server" | "virtual_machine"
+operator       = "has" | "has_not"
+```
+
+| Field | Values | Meaning |
+| --- | --- | --- |
+| `resource` | `metal_server`, `virtual_machine` | `metal_server` reads the tags of the host. `virtual_machine` reads the tags of each VM on the host. |
+| `operator` | `has`, `has_not` | `has` needs a resource with every pair in `tags`. `has_not` is the opposite of `has`. |
+| `tags` | 1 to 32 key and value pairs | Every pair must be on the same resource. Atlas trims each key and value. A key has 1 to 128 characters. A value has at most 1000 characters. |
+| `any_of` | 1 or more nodes | The group holds when at least one node holds. |
+| `all_of` | 1 or more nodes | The group holds when every node holds. |
+
+A rule asks for one of these conditions on a candidate host:
+
+| `resource` | `operator` | The host matches when |
+| --- | --- | --- |
+| `metal_server` | `has` | The host has every pair. |
+| `metal_server` | `has_not` | The host is missing at least one pair. |
+| `virtual_machine` | `has` | At least one VM on the host has every pair. |
+| `virtual_machine` | `has_not` | No VM on the host has every pair. |
+
+For `virtual_machine`, one rule with two pairs needs one VM that has both pairs. An `all_of` group of two rules accepts two different VMs.
+
+### Examples
+
+This create request tags a Cargo Server VM and asks for a host that has no other Cargo Server VM:
+
+```json
+{
+  "tags": {"role": "cargo-server"},
+  "affinity_rules": [
+    {"resource": "virtual_machine", "operator": "has_not", "tags": {"role": "cargo-server"}}
+  ]
+}
+```
+
+This request asks for a storage-optimised host in rack `a`, or for any memory-optimised host:
+
+```json
+{
+  "affinity_rules": [
+    {"any_of": [
+      {"resource": "metal_server", "operator": "has", "tags": {"type": "storage-optimised", "rack": "a"}},
+      {"resource": "metal_server", "operator": "has", "tags": {"type": "memory-optimised"}}
+    ]}
+  ]
+}
+```
+
+### Validation
+
+Atlas rejects the request with `400` when one of these is true:
+
+- A rule has an unknown field, for example `within`, or a rule has no `resource`, `operator`, or `tags`.
+- `resource` or `operator` has an unknown value.
+- `tags` is empty, a tag breaks the limits above, or two keys are the same after Atlas trims them.
+- An `any_of` or `all_of` group is empty, or a group object has more than one key.
+- The request has more than 16 rules in total, including the rules in groups.
+- Groups nest more than 3 deep.
+
 ## Under contention
 
 Concurrent requests rank hosts the same way, so they would all wait on the same top host. If another request holds that host's lock, Atlas tries the remaining hosts in random order.
@@ -65,8 +141,10 @@ Offline and live simulators compare strategies outside the request path. Their r
 
 - [Placement context](../../atlas/vm/core/placement/context.py) loads samples, subtracts reservations, and rechecks capacity under the host lock.
 - [Placement strategy base](../../atlas/vm/core/placement/strategies/base.py) ranks candidate hosts and defines capacity and busy results.
+- [Affinity rules](../../atlas/vm/core/placement/affinity.py) parse, validate, and serialize the rule tree.
 - [Transaction setup](../../atlas/vm/core/placement/transaction.py) enables READ COMMITTED.
 - [VM creation](../../atlas/vm/core/vm_service.py) commits the draft after placement.
 - [Placement tests](../../atlas/vm/core/placement/test_context.py) check capacity and lock behavior.
+- [Affinity tests](../../atlas/vm/core/placement/test_affinity.py) check the rule shape and each rejected input.
 
 :::

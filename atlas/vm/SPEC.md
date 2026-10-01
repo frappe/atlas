@@ -12,6 +12,7 @@ This file identifies code owners and rules that a code change must preserve. The
 | `core/vm_service.py` | Changes that span an Atlas record and a Metal host. |
 | `core/reconciliation.py` | Draft and termination checks after an uncertain Metal result. |
 | `core/placement/` | Host selection, capacity reservations, and placement strategies. |
+| `core/placement/affinity.py` | Affinity rule types, their validation, and their stored JSON form. |
 | `core/vm_migration.py` and `core/vm_resize.py` | Host moves and shape changes. |
 | `core/metal_client.py` and `core/metal_models.py` | Metal transport, errors, and typed responses. |
 | `core/vm_image_transfer.py`, `core/vm_image_deletion.py`, and `core/multipart_upload.py` | Image publication and removal. |
@@ -25,6 +26,8 @@ This file identifies code owners and rules that a code change must preserve. The
 - Metal is the authority for current host state. `Virtual Machine State` is a cache for lists and image checks. A failed Metal read must not appear as a guest state.
 - Placement checks capacity under a MariaDB named lock with READ COMMITTED isolation. Keep the lock until the draft or migration reservation commits. CPU can be oversubscribed. Memory and disk cannot.
 - A VM copies its image name and architecture at creation. Image references are immutable. A later VM action does not need the image record.
+- Only a System Manager can set affinity rules, and only on a privileged VM. `VirtualMachineService.create` checks this before placement.
+- The draft commits its tags and affinity rules in the same transaction as its host reservation.
 - Atlas changes one network value, then sends the complete network object to Metal. Public address requests own their corresponding default routes.
 - Guest-specific keys, metadata, and mesh addresses go through Metal and guest metadata. Do not bake them into a shared image.
 - A protected VM cannot be terminated. An unprotected Atlas record is deleted only after Metal confirms that the VM is absent.
@@ -33,6 +36,7 @@ This file identifies code owners and rules that a code change must preserve. The
 ## Add or change behavior
 
 - For a new host ranking rule, add a `PlacementStrategy` subclass under `core/placement/strategies/` and register it. Keep capacity checks in the shared placement path. Read [host selection](../../docs/compute/placement.md).
+- For an affinity rule type, change `core/placement/affinity.py` and the matching payload models in `api/models.py` together, then regenerate the API client. Read [affinity rules](../../docs/compute/placement.md#affinity-rules).
 - For create, resize, move, or delete rules, start in the owning service above. Read [VM lifecycle](../../docs/compute/index.md) and [migration](../../docs/compute/migration.md).
 - For image transfer or deletion, start in the image owner above. Read [image records](../../docs/storage/image-records.md).
 - For guest network values and public addresses, read [VM records](../../docs/compute/vm-records.md), [host networking](../../docs/networking/host-networking.md), and [public IPs](../../docs/networking/public-ips.md).
