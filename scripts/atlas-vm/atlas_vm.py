@@ -456,7 +456,7 @@ def generate_password(length: int = 24) -> str:
 
 
 def find_host_key() -> Path:
-	"""The VM trusts the key this host already uses for Secure Shell."""
+	"""The VM trusts the key this host already uses for Secure Shell. A new host gets a root key."""
 	homes = [Path("/root")]
 	if os.environ.get("SUDO_USER"):
 		homes.append(Path("/home") / os.environ["SUDO_USER"])
@@ -465,7 +465,10 @@ def find_host_key() -> Path:
 			candidate = home / ".ssh" / name
 			if candidate.is_file() and candidate.with_suffix(".pub").is_file():
 				return candidate
-	raise AtlasVmError("no Secure Shell key pair for this host; create one with: ssh-keygen -t ed25519")
+	key = Path("/root/.ssh/id_ed25519")
+	key.parent.mkdir(mode=0o700, exist_ok=True)
+	run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", str(key)])
+	return key
 
 
 class GuestImage:

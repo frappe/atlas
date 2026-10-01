@@ -34,8 +34,7 @@ if [ -f /var/lib/atlas-vm/atlas-vm.toml ] && ! grep -qxF '[gateway]' /var/lib/at
 	echo "This host runs an Atlas VM." >&2
 	exit 1
 fi
-install -d -m 0700 /var/lib/atlas-vm /root/.ssh
-[ -f /root/.ssh/id_ed25519 ] || ssh-keygen -q -t ed25519 -N '' -f /root/.ssh/id_ed25519
+install -d -m 0700 /var/lib/atlas-vm
 umask 077
 printf '%s' "$ATLAS_VM" > /usr/local/bin/atlas-vm
 chmod 0755 /usr/local/bin/atlas-vm
