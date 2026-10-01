@@ -12,6 +12,7 @@ from atlas.vm.core.metal_client import MetalClientError
 from atlas.vm.core.metal_models import MetalVirtualMachine
 from atlas.vm.core.models import (
 	DEFAULT_ROUTES,
+	ROUTE_SCOPE_WIREGUARD_GATEWAY,
 	FirewallConfiguration,
 	FirewallRule,
 	Route,
@@ -1003,6 +1004,92 @@ class TestVirtualMachinePrivilege(UnitTestCase):
 			virtual_machine_module.create(request)
 
 		self.assertTrue(create.call_args.args[0].is_privileged)
+
+
+class TestVirtualMachineWgGatewayAccess(UnitTestCase):
+	"""Cover the WireGuard gateway return-route opt-in."""
+
+	def build_virtual_machine(self, *, is_network_gateway: int = 0) -> VirtualMachine:
+		virtual_machine = VirtualMachine.__new__(VirtualMachine)
+		virtual_machine.name = "VM-00001"
+		virtual_machine.is_network_gateway = is_network_gateway
+		virtual_machine.is_draft = 0
+		virtual_machine.is_terminating = 0
+		virtual_machine.active_migration = None
+		virtual_machine.check_permission = Mock()
+		virtual_machine.ensure_not_migrating = Mock()
+		virtual_machine.validate_network_change = Mock()
+		return virtual_machine
+
+	def test_enabling_installs_the_gateway_routes(self) -> None:
+		virtual_machine = self.build_virtual_machine()
+
+		with patch.object(VirtualMachineService, "set_wg_gateway_accessible") as set_wg_gateway_accessible:
+			virtual_machine.set_wg_gateway_accessible("true")
+
+		set_wg_gateway_accessible.assert_called_once_with(True)
+
+	def test_disabling_removes_the_gateway_routes(self) -> None:
+		virtual_machine = self.build_virtual_machine()
+
+		with patch.object(VirtualMachineService, "set_wg_gateway_accessible") as set_wg_gateway_accessible:
+			virtual_machine.set_wg_gateway_accessible(False)
+
+		set_wg_gateway_accessible.assert_called_once_with(False)
+
+	def test_a_network_gateway_cannot_use_the_gateway_routes(self) -> None:
+		virtual_machine = self.build_virtual_machine(is_network_gateway=1)
+
+		with (
+			patch.object(VirtualMachineService, "set_wg_gateway_accessible") as set_wg_gateway_accessible,
+			self.assertRaisesRegex(AtlasUserError, "network gateway"),
+		):
+			virtual_machine.set_wg_gateway_accessible(True)
+
+		set_wg_gateway_accessible.assert_not_called()
+
+	def test_the_flag_and_the_gateway_routes_read_the_metal_routes(self) -> None:
+		virtual_machine = VirtualMachine.__new__(VirtualMachine)
+		response = {
+			**METAL_VIRTUAL_MACHINE_RESPONSE,
+			"desired": {
+				**METAL_VIRTUAL_MACHINE_RESPONSE["desired"],
+				"network": {
+					**METAL_VIRTUAL_MACHINE_RESPONSE["desired"]["network"],
+					"routes": [
+						{"destination": "2000::/3", "via": "host"},
+						{
+							"destination": "fdac:1:1::/48",
+							"via": "fdaa:1::1",
+							"scope": ROUTE_SCOPE_WIREGUARD_GATEWAY,
+						},
+					],
+				},
+			},
+		}
+		virtual_machine.get_metal_vm_info = Mock(return_value=MetalVirtualMachine.from_dict(response))
+
+		self.assertEqual(json.loads(virtual_machine.routes), [{"destination": "2000::/3", "via": "host"}])
+		self.assertEqual(
+			json.loads(virtual_machine.gateway_routes),
+			[
+				{
+					"destination": "fdac:1:1::/48",
+					"via": "fdaa:1::1",
+					"scope": ROUTE_SCOPE_WIREGUARD_GATEWAY,
+				}
+			],
+		)
+		self.assertTrue(virtual_machine.is_accessible_via_wg_gateway)
+
+	def test_the_flag_is_off_without_gateway_routes(self) -> None:
+		virtual_machine = VirtualMachine.__new__(VirtualMachine)
+		virtual_machine.get_metal_vm_info = Mock(
+			return_value=MetalVirtualMachine.from_dict(METAL_VIRTUAL_MACHINE_RESPONSE)
+		)
+
+		self.assertFalse(virtual_machine.is_accessible_via_wg_gateway)
+		self.assertEqual(json.loads(virtual_machine.gateway_routes), [])
 
 
 class TestSystemImageCreation(UnitTestCase):

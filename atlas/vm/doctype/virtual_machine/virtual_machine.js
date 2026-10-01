@@ -67,6 +67,14 @@ frappe.ui.form.on("Virtual Machine", {
 			],
 			[__("Edit Routes"), () => showRoutesDialog(frm), true, ACTIONS],
 			[
+				frm.doc.is_accessible_via_wg_gateway
+					? __("Disable WireGuard Gateway Access")
+					: __("Enable WireGuard Gateway Access"),
+				() => showWgGatewayAccessDialog(frm),
+				!frm.doc.is_network_gateway,
+				ACTIONS,
+			],
+			[
 				frm.doc.is_termination_protected
 					? __("Disable Termination Protection")
 					: __("Enable Termination Protection"),
@@ -769,6 +777,27 @@ function showNetworkGatewayDialog(frm) {
 				method: "set_network_gateway",
 				doc: frm.doc,
 				args: { is_network_gateway: !frm.doc.is_network_gateway },
+				freeze: true,
+			})
+			.then(() => frm.reload_doc())
+	);
+}
+
+function showWgGatewayAccessDialog(frm) {
+	const enabling = !frm.doc.is_accessible_via_wg_gateway;
+	const message = enabling
+		? __(
+				"Let WireGuard gateway clients reach {0}? Each active gateway's return route is installed in this VM's namespace on its host. The routes inside the VM never change.",
+				[frm.doc.name.bold()]
+		  )
+		: __("Remove the WireGuard gateway return routes of {0}?", [frm.doc.name.bold()]);
+
+	frappe.confirm(message, () =>
+		frm
+			.call({
+				method: "set_wg_gateway_accessible",
+				doc: frm.doc,
+				args: { enabled: enabling },
 				freeze: true,
 			})
 			.then(() => frm.reload_doc())

@@ -52,6 +52,8 @@ class VirtualMachine(Document):
 		cpu_millicores: DF.Int
 		disk_mib: DF.Int
 		firewall_summary: DF.Code | None
+		gateway_routes: DF.Code | None
+		is_accessible_via_wg_gateway: DF.Check
 		is_draft: DF.Check
 		is_network_gateway: DF.Check
 		is_privileged: DF.Check
@@ -194,10 +196,28 @@ class VirtualMachine(Document):
 
 	@property
 	def routes(self) -> str:
-		"""Return the routes that Metal holds."""
+		"""Return the routes that Metal holds.
+
+		The WireGuard gateway route sync owns the scoped routes, so they
+		appear in gateway_routes instead.
+		"""
 		information = self.get_metal_vm_info()
 		routes = information.desired.network.routes if information else ()
-		return json.dumps([route.as_dict() for route in routes], indent=2)
+		return json.dumps([route.as_dict() for route in routes if not route.is_wireguard_gateway], indent=2)
+
+	@property
+	def gateway_routes(self) -> str:
+		"""Return the WireGuard gateway routes that Metal holds in the VM namespace."""
+		information = self.get_metal_vm_info()
+		routes = information.desired.network.routes if information else ()
+		return json.dumps([route.as_dict() for route in routes if route.is_wireguard_gateway], indent=2)
+
+	@property
+	def is_accessible_via_wg_gateway(self) -> bool:
+		"""Report whether WireGuard gateway return routes reach this VM."""
+		information = self.get_metal_vm_info()
+		routes = information.desired.network.routes if information else ()
+		return any(route.is_wireguard_gateway for route in routes)
 
 	@property
 	def ssh_host(self) -> str:
@@ -321,9 +341,35 @@ class VirtualMachine(Document):
 				frappe.throw(
 					_("Remove the gateway routes of this VM before it becomes a gateway."), exc=AtlasUserError
 				)
-			changes["routes"] = service.get_routes_with(Route(IPV6_INTERNET_DESTINATION, ROUTE_VIA_HOST))
+			# A network gateway cannot use WireGuard client return routes, so the
+			# scoped routes leave with the role.
+			routes = [
+				route
+				for route in service.get_routes()
+				if not route.is_wireguard_gateway and route.destination != IPV6_INTERNET_DESTINATION
+			]
+			changes["routes"] = [
+				route.as_dict() for route in [*routes, Route(IPV6_INTERNET_DESTINATION, ROUTE_VIA_HOST)]
+			]
 		service.update_network(changes)
 		self.save()
+
+	@frappe.whitelist(methods=["POST"])
+	def set_wg_gateway_accessible(self, enabled: bool | int | str) -> None:
+		"""Install or remove the WireGuard gateway return routes of this VM.
+
+		The routes stay in the VM namespace on the host, so the routes inside
+		the VM never change.
+		"""
+		self.check_permission("write")
+		self.ensure_not_migrating()
+		self.validate_network_change()
+		enabled = strict_bool(enabled, "enabled")
+		if enabled and self.is_network_gateway:
+			frappe.throw(
+				_("A network gateway cannot use WireGuard client return routes."), exc=AtlasUserError
+			)
+		VirtualMachineService(self).set_wg_gateway_accessible(enabled)
 
 	@frappe.whitelist(methods=["POST"])
 	def terminate(self) -> None:
