@@ -219,3 +219,12 @@ class TestAtlasSetup(UnitTestCase):
 			setup._sync_central_keys()
 
 		settings.reload.assert_called_once_with()
+
+	def test_setup_continues_without_central_keys(self) -> None:
+		settings = MagicMock()
+		setup = self.setup(settings)
+
+		with patch("atlas.atlas.core.setup.sync_central_jwks", return_value=False):
+			setup._sync_central_keys()
+
+		settings.reload.assert_called_once_with()
