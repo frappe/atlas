@@ -235,8 +235,8 @@ class Setup:
 				"zstd",
 				"e2fsprogs",
 				"wireguard-tools",
-				# wg-quick falls back to it when the kernel has no WireGuard module.
-				"wireguard-go",
+				# The guest root file system has no modules for the Atlas VM kernel. nft and WireGuard need them.
+				f"linux-modules-{os.uname().release}",
 			],
 			env=environment,
 		)

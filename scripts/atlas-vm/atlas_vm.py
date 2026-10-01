@@ -34,7 +34,7 @@ ROOTFS_URL = (
 	"ubuntu-24.04-server-cloudimg-amd64.squashfs"
 )
 ROOTFS_SHA256 = "bb4bc95d539df92c96ad0ed34c017363e4a7a62772c6af1dc3553e06ce710b74"
-# Firecracker boots only the uncompressed ELF kernel inside the Ubuntu vmlinuz. It has TUN for wireguard-go.
+# Firecracker boots only the uncompressed ELF kernel inside the Ubuntu vmlinuz.
 KERNEL_URL = (
 	"https://cloud-images.ubuntu.com/releases/noble/release-20260518/"
 	"unpacked/ubuntu-24.04-server-cloudimg-amd64-vmlinuz-generic"
@@ -653,8 +653,8 @@ class ConsoleReader:
 
 GATEWAY_SCRIPT = r"""set -eu
 interface=atlas-gateway
-# The guest kernel has no WireGuard module, so wg-quick starts wireguard-go.
-packages="wireguard-tools wireguard-go"
+# The guest root file system has no modules for its kernel. WireGuard needs them.
+packages="wireguard-tools linux-modules-$(uname -r)"
 if ! dpkg -s $packages >/dev/null 2>&1; then
 	apt-get update -qq
 	DEBIAN_FRONTEND=noninteractive apt-get install -y -qq $packages >/dev/null
