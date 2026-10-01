@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+
+	"github.com/frappe/atlas/metal/internal/vm"
 )
 
 func TestFirewallValidationAcceptsSupportedRules(t *testing.T) {
@@ -65,6 +67,7 @@ func TestRouteValidationAcceptsHostAndGatewayRoutes(t *testing.T) {
 			{Destination: "0.0.0.0/0", Via: "host"},
 			{Destination: "2000::/3", Via: "fdaa:1::49"},
 			{Destination: "fdac::/16", Via: "fdaa:1::7f"},
+			{Destination: "fdac:1:1::/48", Via: "fdaa:1::1", Scope: vm.RouteScopeWireGuardGateway},
 		},
 	}
 	if err := request.validateRoutes(); err != nil {
@@ -83,6 +86,7 @@ func TestRouteValidationRejectsInvalidValues(t *testing.T) {
 		{"IPv4 through a gateway", routeRequest{Destination: "0.0.0.0/0", Via: "fdaa:1::49"}, `via "host"`},
 		{"destination with host bits", routeRequest{Destination: "fdac::5/16", Via: "fdaa:1::7f"}, "canonical"},
 		{"upper case", routeRequest{Destination: "2001:DB8::/32", Via: "host"}, "canonical"},
+		{"unknown scope", routeRequest{Destination: "fdac:1:1::/48", Via: "fdaa:1::1", Scope: "tenant"}, "wireguard-gateway"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

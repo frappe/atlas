@@ -939,6 +939,42 @@ func TestSyncAppliesControllerStateAndReturnsCapacity(t *testing.T) {
 	}
 }
 
+// The sync response carries each VM's desired routes, so the controller can
+// converge the WireGuard gateway routes without another round trip.
+func TestSyncReturnsVirtualMachineRoutes(t *testing.T) {
+	wireGuardManager := &fakeWireGuardManager{}
+	services := newFakeRuntimeServices()
+	driver := &fakeVirtualMachineManager{virtualMachines: map[string]*fakeVM{}}
+	server := newServerWithServices(t, driver, services, wireGuardManager)
+	driver.virtualMachines["vm-00001"] = &fakeVM{info: vm.Information{
+		ID:    "vm-00001",
+		State: vm.StateRunning,
+		Routes: []vm.Route{
+			{Destination: "2000::/3", Via: "host"},
+			{Destination: "fdac:1:1::/48", Via: "fdaa:1::1", Scope: vm.RouteScopeWireGuardGateway},
+		},
+	}}
+
+	recorder := do(
+		t, server, http.MethodPost, "/v1/sync",
+		`{"wireguard_peers":[],"images":[],"privileged_vm_addresses":[]}`,
+		http.StatusOK,
+	)
+
+	var response syncResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	report := response.VirtualMachines["vm-00001"]
+	if report.Status != string(vm.StateRunning) || len(report.Routes) != 2 {
+		t.Fatalf("virtual machine report = %+v", report)
+	}
+	gatewayRoute := report.Routes[1]
+	if gatewayRoute.Destination != "fdac:1:1::/48" || gatewayRoute.Scope != vm.RouteScopeWireGuardGateway {
+		t.Fatalf("gateway route = %+v", gatewayRoute)
+	}
+}
+
 // A host not-found has no addressed resource. A 404 tells the controller to
 // stop, so the sync must report a retryable host fault instead.
 func TestSyncReportsHostNotFoundAsUnavailable(t *testing.T) {

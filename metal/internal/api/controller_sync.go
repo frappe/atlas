@@ -48,7 +48,9 @@ type syncResponse struct {
 
 // virtualMachineStateResponse is the state of one virtual machine on this host.
 type virtualMachineStateResponse struct {
-	Status string `json:"status"`
+	Status string          `json:"status"`
+	// Routes are the desired routes the host holds for this virtual machine.
+	Routes []routeResponse `json:"routes"`
 }
 
 // capacityResponse is what the controller needs to place the next VM.
@@ -112,7 +114,7 @@ func (s *Server) exchangeControllerState(c echo.Context) error {
 
 	return c.JSON(http.StatusOK, syncResponse{
 		Capacity:          capacityResponseFromHost(result.Capacity),
-		VirtualMachines:   virtualMachineStateResponses(result.VirtualMachineStates),
+		VirtualMachines:   virtualMachineStateResponses(result.VirtualMachines),
 		PrivateNetworkMAC: result.PrivateNetworkMAC,
 	})
 }
@@ -196,11 +198,14 @@ func capacityResponseFromHost(capacity host.Capacity) capacityResponse {
 	}
 }
 
-// virtualMachineStateResponses converts host states into the response form.
-func virtualMachineStateResponses(states map[string]vm.State) map[string]virtualMachineStateResponse {
-	responses := make(map[string]virtualMachineStateResponse, len(states))
-	for identifier, state := range states {
-		responses[identifier] = virtualMachineStateResponse{Status: string(state)}
+// virtualMachineStateResponses converts host reports into the response form.
+func virtualMachineStateResponses(reports map[string]host.VirtualMachineReport) map[string]virtualMachineStateResponse {
+	responses := make(map[string]virtualMachineStateResponse, len(reports))
+	for identifier, report := range reports {
+		responses[identifier] = virtualMachineStateResponse{
+			Status: string(report.State),
+			Routes: toRoutes(report.Routes),
+		}
 	}
 	return responses
 }

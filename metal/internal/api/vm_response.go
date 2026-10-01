@@ -94,12 +94,17 @@ type networkResponse struct {
 type routeResponse struct {
 	Destination string `json:"destination"`
 	Via         string `json:"via"`
+	Scope       string `json:"scope,omitempty"`
 }
 
 func toRoutes(routes []vm.Route) []routeResponse {
 	responses := make([]routeResponse, len(routes))
 	for index, route := range routes {
-		responses[index] = routeResponse{Destination: route.Destination, Via: route.Via}
+		responses[index] = routeResponse{
+			Destination: route.Destination,
+			Via:         route.Via,
+			Scope:       route.Scope,
+		}
 	}
 	return responses
 }

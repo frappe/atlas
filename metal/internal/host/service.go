@@ -23,10 +23,17 @@ type DesiredState struct {
 
 // SyncResult contains what the controller reads back from one sync exchange.
 type SyncResult struct {
-	Capacity             Capacity
-	VirtualMachineStates map[string]vm.State
+	Capacity         Capacity
+	VirtualMachines  map[string]VirtualMachineReport
 	// PrivateNetworkMAC is the MAC of the mesh uplink. It is empty when the mesh is disabled.
 	PrivateNetworkMAC string
+}
+
+// VirtualMachineReport is the host state of one virtual machine.
+type VirtualMachineReport struct {
+	State vm.State
+	// Routes are the desired routes the host holds for the virtual machine.
+	Routes []vm.Route
 }
 
 // Capacity contains current host compute and storage capacity.
@@ -148,12 +155,12 @@ func (service *Service) Synchronize(ctx context.Context, desired DesiredState) (
 		return SyncResult{}, err
 	}
 
-	states := make(map[string]vm.State, len(virtualMachines))
+	reports := make(map[string]VirtualMachineReport, len(virtualMachines))
 	for _, information := range virtualMachines {
-		states[information.ID] = information.State
+		reports[information.ID] = VirtualMachineReport{State: information.State, Routes: information.Routes}
 	}
 
-	result := SyncResult{Capacity: capacity, VirtualMachineStates: states}
+	result := SyncResult{Capacity: capacity, VirtualMachines: reports}
 	if service.mesh != nil {
 		mac, err := service.mesh.PrivateNetworkMAC()
 		if err != nil {

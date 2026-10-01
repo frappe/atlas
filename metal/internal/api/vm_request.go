@@ -121,10 +121,17 @@ type networkRequest struct {
 type routeRequest struct {
 	Destination string `json:"destination"`
 	Via         string `json:"via" example:"host"`
+	// Scope keeps a route in the VM namespace. Only the WireGuard gateway scope exists.
+	Scope string `json:"scope,omitempty" example:"wireguard-gateway"`
 }
 
 // Only the host can carry IPv4 because gateway VMs use the IPv6 mesh.
 func (route routeRequest) validate() error {
+	if route.Scope != "" && route.Scope != vm.RouteScopeWireGuardGateway {
+		return fmt.Errorf(
+			"network.routes scope %q must be empty or %q", route.Scope, vm.RouteScopeWireGuardGateway,
+		)
+	}
 	destination, err := netip.ParsePrefix(route.Destination)
 	if err != nil || destination.Masked().String() != route.Destination || destination.Addr().Is4In6() {
 		return fmt.Errorf("network.routes destination %q must be a canonical IP prefix", route.Destination)
@@ -146,7 +153,7 @@ func (route routeRequest) validate() error {
 func toRouteSpecifications(routes []routeRequest) []vm.Route {
 	specifications := make([]vm.Route, len(routes))
 	for index, route := range routes {
-		specifications[index] = vm.Route{Destination: route.Destination, Via: route.Via}
+		specifications[index] = vm.Route{Destination: route.Destination, Via: route.Via, Scope: route.Scope}
 	}
 	return specifications
 }

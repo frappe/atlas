@@ -56,7 +56,10 @@ func (dependencies *testHostDependencies) Capacity(context.Context) (storage.Cap
 
 func TestSynchronizeAppliesControllerStateAndReportsCapacity(t *testing.T) {
 	dependencies := &testHostDependencies{
-		virtualMachines: []vm.Information{{ID: "vm-00001", State: vm.StateRunning, CPUMillicores: 1500}},
+		virtualMachines: []vm.Information{{
+			ID: "vm-00001", State: vm.StateRunning, CPUMillicores: 1500,
+			Routes: []vm.Route{{Destination: "fdac:1:1::/48", Via: "fdaa:1::1", Scope: vm.RouteScopeWireGuardGateway}},
+		}},
 	}
 	service, err := NewService(Dependencies{
 		Mesh: dependencies, WireGuard: dependencies, Images: dependencies,
@@ -87,8 +90,9 @@ func TestSynchronizeAppliesControllerStateAndReportsCapacity(t *testing.T) {
 	if capacity.AvailableCPUMillicores != max(runtime.NumCPU()*1000-1500, 0) || capacity.TotalStorageMiB != 4096 || capacity.AvailableStorageMiB != 3072 {
 		t.Fatalf("capacity = %+v", capacity)
 	}
-	if result.VirtualMachineStates["vm-00001"] != vm.StateRunning {
-		t.Fatalf("virtual machine states = %+v", result.VirtualMachineStates)
+	report := result.VirtualMachines["vm-00001"]
+	if report.State != vm.StateRunning || len(report.Routes) != 1 || report.Routes[0].Scope != vm.RouteScopeWireGuardGateway {
+		t.Fatalf("virtual machine reports = %+v", result.VirtualMachines)
 	}
 }
 
