@@ -31,6 +31,26 @@ class TestSSHRunner(UnitTestCase):
 			process.stdin.write.call_args.args[0], b"export MESSAGE='hello world'\necho $MESSAGE"
 		)
 
+	def test_a_guest_connection_runs_through_the_host_proxy_command(self) -> None:
+		host = SSHRunner("fdab:1::7")
+		proxy_command = host.get_proxy_command("ip netns exec metal-vm-00001 nc 172.16.0.2 22")
+		runner = SSHRunner("vm-00001", proxy_command=proxy_command)
+		process = Mock()
+		process.wait.return_value = 0
+
+		with (
+			patch("atlas.atlas.core.ssh.subprocess.Popen", return_value=process) as popen,
+			patch.object(runner, "_read_output", return_value=""),
+		):
+			runner.run_command("true")
+
+		arguments = popen.call_args.args[0]
+		self.assertIn(f"ProxyCommand={proxy_command}", arguments)
+		self.assertEqual(arguments[-2], "root@vm-00001")
+		self.assertTrue(
+			proxy_command.endswith("root@fdab:1::7 'ip netns exec metal-vm-00001 nc 172.16.0.2 22'")
+		)
+
 	def test_run_script_loads_a_script_file(self) -> None:
 		runner = SSHRunner("203.0.113.1")
 		with patch.object(runner, "_run", return_value=SSHResult("", 0)) as run:

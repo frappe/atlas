@@ -14,6 +14,8 @@ Atlas owns each VM and its setup record. The software inside the VM owns its tra
 
 Reserve a **tenant-0 public IPv4 allocation** on the Public IP Pool form before you provision a service. Each service VM uses one. Atlas creates a privileged, termination-protected VM through the normal VM service and attaches that allocation.
 
+Atlas reaches service SSH through the VM host, not a public address. See [Atlas access to hosts](host-access.md#ssh).
+
 The service record and VM have different states. For example, the VM can exist while its service record is still `Pending`. Do not infer service readiness from the VM state.
 
 | Service status | Meaning |

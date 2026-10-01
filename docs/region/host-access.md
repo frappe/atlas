@@ -52,8 +52,11 @@ Metal applies only the host peers from [host sync](host-sync.md). It removes onl
 | --- | --- |
 | Host before its WireGuard setup | Public IPv4 address. Used only during provisioning. |
 | Host after its WireGuard setup | Host `fdab` address. |
+| Guest | SSH to the host, then `ip netns exec metal-<vm> nc 172.16.0.2 22` as the SSH `ProxyCommand`. |
 
 Provisioning has a `wireguard-link` step. It writes `atlas0.conf` with the new host at once, then waits for root SSH on the `fdab` address before it installs Metal.
+
+Atlas reads the VM host for each connection. The guest needs no public address for Atlas SSH.
 
 ## Host firewall
 

@@ -81,6 +81,10 @@ class MetalServer(Document):
 
 		return self.public_ipv4_address
 
+	def get_ssh_proxy_command(self) -> None:
+		"""Return no proxy. Atlas connects to the host directly."""
+		return None
+
 	@property
 	def settings(self) -> AtlasSettings:
 		"""Return the Atlas settings this server uses."""

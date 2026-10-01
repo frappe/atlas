@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shlex
 from typing import Any
 
 import frappe
@@ -12,6 +13,7 @@ from frappe.utils import add_to_date, cint, now_datetime
 from atlas.atlas.core.background_jobs import run_as_admin
 from atlas.atlas.core.exceptions import AtlasConflictError, AtlasUserError
 from atlas.atlas.core.parsing import strict_bool
+from atlas.atlas.core.ssh import SSHRunner
 from atlas.atlas.core.tags import validate_tags
 from atlas.atlas.doctype.ssh_task.ssh_task import delete_tasks_for_target
 from atlas.vm.core import reconciliation
@@ -28,6 +30,8 @@ DRAFT_EXPIRY_MINUTES = 2
 # Atlas WG Mesh reserves tenant 0 for the privileged tenant.
 PRIVILEGED_TENANT_ID = 0
 IMAGE_TYPES = ("machine", "system")
+# The guest address inside the Metal namespace metal-<id>.
+GUEST_IP_ADDRESS = "172.16.0.2"
 
 
 class VirtualMachine(Document):
@@ -197,13 +201,18 @@ class VirtualMachine(Document):
 
 	@property
 	def ssh_host(self) -> str:
-		"""Return the address an SSH Task connects to."""
-		if not self.public_ipv4:
-			frappe.throw(
-				_("Virtual Machine {0} has no public IPv4 address. Attach one first.").format(self.name)
-			)
+		"""Return the SSH host name. The proxy command carries the connection."""
+		return self.name
 
-		return self.public_ipv4
+	def get_ssh_proxy_command(self) -> str:
+		"""Reach guest SSH from the VM network namespace on its current host, through the host wg0."""
+		if not self.server:
+			frappe.throw(_("Virtual Machine {0} has no Metal Server.").format(self.name))
+
+		server = frappe.get_doc("Metal Server", self.server)
+		return SSHRunner(server.ssh_host).get_proxy_command(
+			f"ip netns exec {shlex.quote('metal-' + self.name)} nc {GUEST_IP_ADDRESS} 22"
+		)
 
 	@property
 	def disk_throughput_mibps(self) -> int:

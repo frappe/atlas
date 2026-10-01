@@ -378,6 +378,21 @@ class TestVirtualMachineDocument(UnitTestCase):
 		self.assertEqual(virtual_machine.current_state, "unknown")
 		self.assertIsNone(virtual_machine.desired_state)
 
+	def test_guest_ssh_goes_through_the_current_host_namespace(self) -> None:
+		"""A migrated VM has a new host, so Atlas reads it for each connection."""
+		virtual_machine = frappe.new_doc("Virtual Machine")
+		virtual_machine.name = "vm-0000042"
+		virtual_machine.server = "metal-2"
+
+		with patch.object(
+			virtual_machine_module.frappe, "get_doc", return_value=SimpleNamespace(ssh_host="fdab:1::2")
+		) as get_doc:
+			proxy_command = virtual_machine.get_ssh_proxy_command()
+
+		get_doc.assert_called_once_with("Metal Server", "metal-2")
+		self.assertIn("root@fdab:1::2", proxy_command)
+		self.assertIn("ip netns exec metal-vm-0000042 nc 172.16.0.2 22", proxy_command)
+
 
 class TestVirtualMachineResize(UnitTestCase):
 	def build_virtual_machine(self, *, is_terminating: int = 0) -> VirtualMachine:

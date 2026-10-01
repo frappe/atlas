@@ -56,10 +56,10 @@ service_is_stable() {
 
 
 step "install required packages"
-if ! command -v zpool >/dev/null || ! command -v curl >/dev/null || ! command -v iptables >/dev/null || ! command -v openssl >/dev/null; then
+if ! command -v zpool >/dev/null || ! command -v curl >/dev/null || ! command -v iptables >/dev/null || ! command -v openssl >/dev/null || ! command -v nc >/dev/null; then
 	export DEBIAN_FRONTEND=noninteractive
 	apt update -qq
-	apt install -y -qq curl iptables openssl tar zfsutils-linux
+	apt install -y -qq curl iptables netcat-openbsd openssl tar zfsutils-linux
 else
 	skip "packages"
 fi

@@ -17,6 +17,7 @@ Behavior: [Service VMs](../../docs/region/service-vms.md). This module runs Atla
 ## Shared rules
 
 - Each VM is created through `VirtualMachineService` as a privileged tenant-0 VM. It needs a reserved tenant-0 IPv4 allocation.
+- Atlas reaches service SSH through the VM host. See [Atlas access to hosts](../../docs/region/host-access.md#ssh).
 - A job requeues `Pending` records every minute.
 - A failure sets `Failed` with the phase and message. Nothing replaces the VM automatically.
 - A site file lock guards each record. Code reads the record again under the lock.

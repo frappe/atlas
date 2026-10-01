@@ -112,12 +112,13 @@ class CargoServerProvisioner:
 		return f"https://proxy.{self.settings.wildcard_domain}"
 
 	def wait_for_ssh(self) -> None:
-		"""Wait for root SSH on the public IPv4 address."""
+		"""Wait for root SSH through the guest host."""
 		wait_for_server(
 			host=self.virtual_machine.ssh_host,
 			users=("root",),
 			timeout_seconds=SSH_TIMEOUT_SECONDS,
 			poll_interval_seconds=SSH_POLL_INTERVAL_SECONDS,
+			proxy_command=self.virtual_machine.get_ssh_proxy_command(),
 		)
 
 	def install_cargo(self) -> None:
